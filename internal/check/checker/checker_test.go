@@ -1678,14 +1678,34 @@ func TestReservedBuiltinNamesCannotBeShadowed(t *testing.T) {
 			if !strings.Contains(err.Error(), c.name) {
 				t.Errorf("error %q does not name %q", err.Error(), c.name)
 			}
-			if !IsReservedName(c.name) {
-				t.Errorf("IsReservedName(%q) returned false but the checker rejects it", c.name)
+			if !ast.IsReservedTypeName(c.name) {
+				t.Errorf("ast.IsReservedTypeName(%q) returned false but the checker rejects it", c.name)
 			}
 		})
 	}
 	for _, name := range []string{"Foo", "Bar", "main", "x"} {
-		if IsReservedName(name) {
-			t.Errorf("IsReservedName(%q) returned true for a user-name", name)
+		if ast.IsReservedTypeName(name) {
+			t.Errorf("ast.IsReservedTypeName(%q) returned true for a user-name", name)
+		}
+	}
+}
+
+func TestReservedTypeNamesAreTheBuiltinDecls(t *testing.T) {
+	builtin := map[string]bool{}
+	for _, ed := range builtinEnumDecls() {
+		builtin[ed.Name] = true
+	}
+	for _, sd := range builtinStructDecls() {
+		builtin[sd.Name] = true
+	}
+	for name := range builtin {
+		if !ast.IsReservedTypeName(name) {
+			t.Errorf("built-in %s is missing from ast.IsReservedTypeName, so the loader would let an entry declaration take its name", name)
+		}
+	}
+	for _, name := range ast.ReservedTypeNames() {
+		if !builtin[name] {
+			t.Errorf("ast.IsReservedTypeName lists %s, which the checker does not declare", name)
 		}
 	}
 }

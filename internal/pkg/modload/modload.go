@@ -165,6 +165,9 @@ type module struct {
 	pubUses          []pubUseEntry
 	packageScoped    map[string]bool
 	packageVariants  map[string]string
+	// builtinShadows maps each struct or enum the entry module declares
+	// under a built-in type's name to its bundle name.
+	builtinShadows map[string]string
 }
 
 // packageIdentity uses the manifest already read by the loader. The embedded
@@ -856,6 +859,14 @@ func combine(loaded map[string]*module, entryPath string) (*ast.Program, error) 
 		}
 	}
 	assignManglePrefixes(loaded, entryPath)
+	entry := loaded[entryPath]
+	entry.builtinShadows = entryBuiltinShadows(entry.prog)
+	for name, bundle := range entry.builtinShadows {
+		if combined.BuiltinShadows == nil {
+			combined.BuiltinShadows = map[string]string{}
+		}
+		combined.BuiltinShadows[bundle] = name
+	}
 	if err := resolveReexports(loaded); err != nil {
 		return nil, err
 	}
@@ -946,6 +957,27 @@ func assignManglePrefixes(loaded map[string]*module, entryPath string) {
 		m.manglePrefix = pref
 		used[pref] = true
 	}
+}
+
+// entryBuiltinShadows renames each entry declaration that takes a built-in
+// type's name, since every other module still means the built-in by it.
+func entryBuiltinShadows(prog *ast.Program) map[string]string {
+	var out map[string]string
+	add := func(name string) {
+		if ast.IsReservedTypeName(name) {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[name] = ast.BuiltinShadowName(name)
+		}
+	}
+	for _, sd := range prog.Structs {
+		add(sd.Name)
+	}
+	for _, ed := range prog.Enums {
+		add(ed.Name)
+	}
+	return out
 }
 
 func sanitizeManglePrefix(name string) string {
@@ -1114,6 +1146,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		modPath:       m.path,
 		packageRoot:   m.packageRoot,
 		selfPrefix:    selfPrefix,
+		shadows:       m.builtinShadows,
 		ownFuncs:      ownFuncs,
 		ownStructs:    ownStructs,
 		ownEnums:      ownEnums,
@@ -1141,7 +1174,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 	}
 	for _, sd := range m.prog.Structs {
 		restoreTypeParams := r.bindTypeParams(sd.TypeParams)
-		sd.Name = selfPrefix + sd.Name
+		sd.Name = r.ownTypeName(sd.Name)
 		for i := range sd.Fields {
 			r.rewriteType(&sd.Fields[i].Type)
 		}
@@ -1152,7 +1185,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 	}
 	for _, ed := range m.prog.Enums {
 		restoreTypeParams := r.bindTypeParams(ed.TypeParams)
-		ed.Name = selfPrefix + ed.Name
+		ed.Name = r.ownTypeName(ed.Name)
 		for i := range ed.Variants {
 			for j := range ed.Variants[i].Payloads {
 				r.rewriteType(&ed.Variants[i].Payloads[j])
@@ -1240,6 +1273,7 @@ func (r *rewriter) rewriteBounds(bounds map[string][]string, boundArgs map[strin
 type rewriter struct {
 	modPath       string
 	selfPrefix    string
+	shadows       map[string]string
 	ownFuncs      map[string]bool
 	ownStructs    map[string]bool
 	ownEnums      map[string]bool
@@ -1642,7 +1676,7 @@ func (r *rewriter) rewriteExpr(slot *ast.Expr) {
 		}
 		if id, ok := x.Target.(*ast.Ident); ok {
 			if (r.ownEnums[id.Name] || r.ownStructs[id.Name]) && !r.localVars[id.Name] && !r.typeParams[id.Name] {
-				id.Name = r.selfPrefix + id.Name
+				id.Name = r.ownTypeName(id.Name)
 				return
 			}
 			if mod, prefix, ok := r.importedModule(id.Name); ok && !r.localVars[id.Name] && !r.typeParams[id.Name] {
@@ -1766,7 +1800,7 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, pos
 			return
 		}
 		if r.ownEnums[*armModule] {
-			*armModule = r.selfPrefix + *armModule
+			*armModule = r.ownTypeName(*armModule)
 			return
 		}
 		mod, prefix, ok := r.importedModule(*armModule)
@@ -1794,7 +1828,7 @@ func (r *rewriter) rewriteVariantPattern(armModule *string, armName *string, pos
 		return
 	}
 	if r.ownStructs[*armName] {
-		*armName = r.selfPrefix + *armName
+		*armName = r.ownTypeName(*armName)
 	}
 }
 
@@ -1874,10 +1908,20 @@ func (r *rewriter) rewriteStructNameAt(name string, pos ast.Position) string {
 		}
 		return name
 	}
-	if r.ownStructs[name] || r.ownEnums[name] || r.ownTraits[name] {
+	if r.ownStructs[name] || r.ownEnums[name] {
+		return r.ownTypeName(name)
+	}
+	if r.ownTraits[name] {
 		return r.selfPrefix + name
 	}
 	return name
+}
+
+func (r *rewriter) ownTypeName(name string) string {
+	if b, ok := r.shadows[name]; ok {
+		return b
+	}
+	return r.selfPrefix + name
 }
 
 func (r *rewriter) rewriteTypeArgIndex(slot *ast.Expr) bool {
@@ -1887,7 +1931,7 @@ func (r *rewriter) rewriteTypeArgIndex(slot *ast.Expr) bool {
 			return false
 		}
 		if r.ownStructs[x.Name] || r.ownEnums[x.Name] {
-			x.Name = r.selfPrefix + x.Name
+			x.Name = r.ownTypeName(x.Name)
 			return true
 		}
 	case *ast.FieldAccess:

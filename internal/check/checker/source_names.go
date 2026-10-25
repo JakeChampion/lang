@@ -6,10 +6,14 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
-// sourceNamed spells each name an imported module declares as its source
-// does, `iter.ArrayIter` for the bundle's `iter__ArrayIter`.
+// sourceNamed spells each bundle name as its source does: `iter.ArrayIter`
+// for an imported module's `iter__ArrayIter`, and the entry's own name for a
+// declaration that shadows a built-in type.
 func sourceNamed(prog *ast.Program, errs []error) {
 	mangled := importedDeclNames(prog)
+	for bundle, name := range prog.BuiltinShadows {
+		mangled[bundle] = name
+	}
 	if len(mangled) == 0 {
 		return
 	}
@@ -26,13 +30,14 @@ func sourceNamed(prog *ast.Program, errs []error) {
 	}
 }
 
-// importedDeclNames is every bundle name an imported module's declaration
-// carries; an entry-module name is never mangled, whatever it contains.
-func importedDeclNames(prog *ast.Program) map[string]bool {
-	out := map[string]bool{}
+// importedDeclNames maps every bundle name an imported module's declaration
+// carries to its source spelling; an entry-module name is never mangled,
+// whatever it contains.
+func importedDeclNames(prog *ast.Program) map[string]string {
+	out := map[string]string{}
 	add := func(name, module string) {
 		if module != "" && module != prog.EntryModule && strings.Index(name, "__") > 0 {
-			out[name] = true
+			out[name] = demangle(name)
 		}
 	}
 	for _, d := range prog.Funcs {
@@ -56,9 +61,9 @@ func importedDeclNames(prog *ast.Program) map[string]bool {
 	return out
 }
 
-// demangleNamed demangles each whole word of s that mangled holds, leaving
+// demangleNamed respells each whole word of s that mangled holds, leaving
 // every other word as written.
-func demangleNamed(s string, mangled map[string]bool) string {
+func demangleNamed(s string, mangled map[string]string) string {
 	identPart := func(b byte) bool {
 		return b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
 	}
@@ -73,9 +78,9 @@ func demangleNamed(s string, mangled map[string]bool) string {
 		for j < len(s) && identPart(s[j]) {
 			j++
 		}
-		if mangled[s[i:j]] {
+		if src, ok := mangled[s[i:j]]; ok {
 			b.WriteString(s[kept:i])
-			b.WriteString(demangle(s[i:j]))
+			b.WriteString(src)
 			kept = j
 		}
 		i = j

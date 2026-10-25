@@ -25,8 +25,8 @@ never updated. Per-item current state:
   (`internal/oracle/interp/coverage_test.go` exists and passes for every AST
   variant), #4 (`internal/oracle/monomorph/monomorph_test.go` has tests),
   #6 (fernsmith fuzzer runs via `.github/workflows/test-fernsmith.yml`
-  + `fuzz-diff.yml` + `fuzz-parse.yml`), #7 (`IsReservedName` is a
-  public helper in checker.go), #8 (`evalChecked` was removed; the
+  + `fuzz-diff.yml` + `fuzz-parse.yml`), #7 (`ast.IsReservedTypeName` is the
+  one list, pinned to the checker's built-in declarations), #8 (`evalChecked` was removed; the
   remaining `evalProgram` runs parse + checker + interp end-to-end and
   is documented as such), #9 (the `noFloats bool` was replaced
   with a structured field — comment at fernsmith.go:225), #10

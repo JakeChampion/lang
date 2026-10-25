@@ -371,7 +371,7 @@ function main(): i32 {
 }
 
 func TestDemangleNamedRewritesOnlyDeclaredNames(t *testing.T) {
-	mangled := map[string]bool{"regex__RMatch": true, "box__Box": true, "point__Point": true}
+	mangled := map[string]string{"regex__RMatch": "regex.RMatch", "box__Box": "box.Box", "point__Point": "point.Point"}
 	for in, want := range map[string]string{
 		"P":                          "P",
 		"regex__RMatch":              "regex.RMatch",

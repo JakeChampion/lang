@@ -182,20 +182,6 @@ type DynCoercion struct {
 	Concrete string
 }
 
-func IsReservedName(name string) bool {
-	for _, ed := range builtinEnumDecls() {
-		if ed.Name == name {
-			return true
-		}
-	}
-	for _, sd := range builtinStructDecls() {
-		if sd.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
 func builtinEnumDecls() []*ast.EnumDecl {
 	return []*ast.EnumDecl{
 		{
@@ -555,18 +541,32 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	for _, sd := range prog.Structs {
 		userStructs[sd.Name] = sd
 	}
+	sourceName := func(name string) string {
+		if src, ok := prog.BuiltinShadows[name]; ok {
+			return src
+		}
+		return name
+	}
 	var shadowedEnums []*ast.EnumDecl
-	var shadowedStructs []*ast.StructDecl
-	shadow := func(name string) bool {
-		if ed, ok := userEnums[name]; ok && ed.P != (ast.Position{}) {
+	for _, ed := range prog.Enums {
+		if ed.P != (ast.Position{}) && ast.IsReservedTypeName(sourceName(ed.Name)) {
 			shadowedEnums = append(shadowedEnums, ed)
-			return true
 		}
-		if sd, ok := userStructs[name]; ok && sd.P != (ast.Position{}) {
+	}
+	var shadowedStructs []*ast.StructDecl
+	for _, sd := range prog.Structs {
+		if sd.P != (ast.Position{}) && ast.IsReservedTypeName(sourceName(sd.Name)) {
 			shadowedStructs = append(shadowedStructs, sd)
+		}
+	}
+	// A program the loader did not bundle keeps a shadowing declaration under
+	// the built-in's own name, and only its own code can see that name.
+	taken := func(name string) bool {
+		if ed, ok := userEnums[name]; ok && ed.P != (ast.Position{}) {
 			return true
 		}
-		return false
+		sd, ok := userStructs[name]
+		return ok && sd.P != (ast.Position{})
 	}
 	{
 		var inject []*ast.EnumDecl
@@ -574,7 +574,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			if existing, dup := userEnums[ed.Name]; dup && existing.P == (ast.Position{}) {
 				continue
 			}
-			if shadow(ed.Name) {
+			if taken(ed.Name) {
 				continue
 			}
 			inject = append(inject, ed)
@@ -589,7 +589,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			if existing, dup := userStructs[sd.Name]; dup && existing.P == (ast.Position{}) {
 				continue
 			}
-			if shadow(sd.Name) {
+			if taken(sd.Name) {
 				continue
 			}
 			inject = append(inject, sd)
@@ -640,11 +640,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 
 	for _, ed := range shadowedEnums {
-		c.errfCode(ed.P, "E010", "enum %q is a reserved built-in name and cannot be redeclared", ed.Name)
+		c.errfCode(ed.P, "E010", "enum %q is a reserved built-in name and cannot be redeclared", sourceName(ed.Name))
 		c.reservedShadows[ed.Name] = true
 	}
 	for _, sd := range shadowedStructs {
-		c.errfCode(sd.P, "E010", "struct %q is a reserved built-in name and cannot be redeclared", sd.Name)
+		c.errfCode(sd.P, "E010", "struct %q is a reserved built-in name and cannot be redeclared", sourceName(sd.Name))
 		c.reservedShadows[sd.Name] = true
 	}
 

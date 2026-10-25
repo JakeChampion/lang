@@ -366,6 +366,14 @@ sites. `ast.Program.LoadedStdlibPaths` records what was loaded, so a module
 pulled in twice (directly + transitively) dedupes rather than redeclaring its
 methods.
 
+An entry-module struct or enum that takes a built-in type's name (`enum Span`,
+`struct Option`; E010) is the one entry declaration the loader renames: it
+becomes `ast.BuiltinShadowName(name)`, the entry's references follow it, and
+`Program.BuiltinShadows` records the source spelling for the E010 message and
+for every other diagnostic that names it. An imported module that writes `Span`
+therefore still means the built-in, and the refused redeclaration cannot
+cascade into stdlib source (#13357).
+
 **`core/map`'s runtime helpers are the other exception.** `map_new_impl`,
 `__map_*` and `__mapiter_*` keep their bare names in the bundle under BOTH
 compilers — `modload.isRuntimeHelperName` and `flatten.is_runtime_helper_name`

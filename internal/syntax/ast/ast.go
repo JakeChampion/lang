@@ -2034,7 +2034,38 @@ type Program struct {
 	Comments          []Comment
 	BlankLines        []int
 	TypeRefs          []TypeRef
+	// BuiltinShadows maps the bundle name of an entry-module struct or enum
+	// that took a built-in type's name to the name its source wrote.
+	BuiltinShadows map[string]string
 }
+
+// reservedTypeNames is every built-in struct and enum, which every module
+// sees without an import and none may redeclare.
+var reservedTypeNames = map[string]bool{
+	"Option": true, "Result": true, "IoError": true, "Body": true,
+	"BodySource": true, "ByteStream": true, "BytesWriter": true, "Cell": true,
+	"ChunkProducer": true, "Date": true, "DateTime": true, "Dir": true,
+	"DirEntry": true, "Duration": true, "FileStat": true, "FsStat": true,
+	"HeaderMap": true, "HttpRequest": true, "HttpResponse": true,
+	"Instant": true, "Map": true, "MountEntry": true, "Pipe": true,
+	"ProcessResult": true, "Reader": true, "Span": true, "Time": true,
+	"Url": true, "WinSize": true, "Writer": true,
+}
+
+func IsReservedTypeName(name string) bool { return reservedTypeNames[name] }
+
+func ReservedTypeNames() []string {
+	names := make([]string, 0, len(reservedTypeNames))
+	for name := range reservedTypeNames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// BuiltinShadowName is the bundle name the loader gives an entry-module
+// declaration of the built-in type name, so the two never share a name.
+func BuiltinShadowName(name string) string { return "__shadows_" + name }
 
 type TypeRef struct {
 	P            Position
