@@ -161,6 +161,9 @@ function main(): i32 {
         let array: hash.CRC_STATE = hash.CRC_NEW().update(left).update(right);
         let view: hash.CRC_STATE = hash.CRC_NEW().update(bytes);
         if (array.finish() != view.finish() || array.byte_count() != (n as u64)) { return 3; }
+        let window: hash.CRC_STATE = hash.CRC_NEW().update(wide[off:off + cut]).update(wide[off + cut:off + n]);
+        let text_window: hash.CRC_STATE = hash.CRC_NEW().update(text.as_bytes()[off:off + n]);
+        if (window.finish() != array.finish() || text_window.finish() != array.finish() || window.byte_count() != (n as u64)) { return 12; }
         // Finish check
     }
     let bytes: u8[] = pattern(256);
