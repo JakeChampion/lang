@@ -24,7 +24,7 @@
 import "std/i64";
 import "std/string";
 
-struct M { a: i64, b: i64 }
+struct M { a: i64, b: string }
 
 function order_of(cost: i64, read_at: i64): string {
     if (cost == (0 as i64)) { return "no box"; }
@@ -36,7 +36,7 @@ function order_of(cost: i64, read_at: i64): string {
 
 function main(): i32 {
     let b0: i64 = __heap_alloc_count();
-    let m: M = M { a: __heap_alloc_count(), b: 0 as i64 };
+    let m: M = M { a: __heap_alloc_count(), b: "b" };
     let a0: i64 = __heap_alloc_count();
     print("struct: " + order_of(a0 - b0, a_of(m) - b0));
 
