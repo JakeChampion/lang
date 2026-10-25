@@ -90,11 +90,11 @@ function test_regsuball_replaces_every_match(): test.TestOutcome {
 }
 
 function test_regsub_rejects_partial_utf8(): test.TestOutcome {
-  return test.assert_eq(expr_result("regsub(\"é\", \".\", \"X\")"), "ERR:vcl_backend_response: regsub produced invalid UTF-8");
+  return test.assert_eq(expr_result("regsub(\"é\", \".\", \"X\")"), "ERR:vcl_backend_response: regsub: regex output is not valid UTF-8");
 }
 
 function test_regsuball_rejects_partial_utf8(): test.TestOutcome {
-  return test.assert_eq(expr_result("regsuball(\"é\", \"^.\", \"X\")"), "ERR:vcl_backend_response: regsuball produced invalid UTF-8");
+  return test.assert_eq(expr_result("regsuball(\"é\", \"^.\", \"X\")"), "ERR:vcl_backend_response: regsuball: regex output is not valid UTF-8");
 }
 
 function acl_program(): string {
