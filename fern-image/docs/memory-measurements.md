@@ -32,10 +32,10 @@ It does not report the maximum live payload or resident pages.
 Both counters stop before report construction.
 
 Raw results include compiler, binary, and source hashes in [memory-m4.json](../benchmarks/results/memory-m4.json).
-The compiler reports `fern 0a6db7d5686b-dirty` and includes the append and computed-scrutinee fixes.
+The compiler reports `fern 154843af7962` and includes the append and computed-scrutinee fixes.
 The measured compiler and library sources stayed fixed during collection.
 The collector rejects changes to measured sources, tools, or its own script during collection.
-The dirty state includes documentation and test integration changes.
+The compiler source includes main at 8a30c340b and both image-engine compiler fixes.
 
 ## Observations
 
