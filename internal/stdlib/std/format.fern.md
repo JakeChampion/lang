@@ -53,6 +53,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<dependencies 2>>=
 import "std/i64";
 import "std/string";
+import "std/time";
 import "std/utf8" as utf8;
 import "core/cmp" as cmp;
 ```
@@ -391,7 +392,9 @@ pub function format_bytes(n: i64): string {
   return (n / scale).to_string() + " " + units[u];
 }
 
-pub function format_duration_ms(ms: i64): string {
+// Hours, minutes, seconds, and milliseconds, such as `1h 1m 1s 1ms`.
+pub function format_duration(d: Duration): string {
+  let ms: i64 = d.as_millis();
   if (ms == 0) {
     return "0ms";
   }
@@ -435,7 +438,8 @@ pub function format_duration_ms(ms: i64): string {
   return sign + out;
 }
 
-pub function parse_duration_ms(s: string): Option[i64] {
+// Reads numbers with the units `ms`, `s`, `m`, `h`, and `d`, such as `1h 30m`.
+pub function parse_duration(s: string): Option[Duration] {
   let n: i32 = s.len();
   let i: i32 = 0;
   let total: i64 = 0;
@@ -479,6 +483,6 @@ pub function parse_duration_ms(s: string): Option[i64] {
   if (!saw) {
     return None;
   }
-  return Some(total);
+  return Some(time.duration_millis(total));
 }
 ```

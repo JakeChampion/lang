@@ -19,6 +19,7 @@ The producer owns the descriptor lifetime and closes it after cancellation. A cl
 
 ```fern
 <<Subscription types>>=
+import "std/time";
 import "std/net";
 import "std/async";
 import "std/http";
@@ -110,7 +111,7 @@ pub function wait_for(subscription: Subscription, timeout: i32): boolean {
   if (!subscription.alive.get() || async.task_cancelled()) {
     return false;
   }
-  let ready: i32 = async.wait_any([subscription.listener.fd, 1], timeout);
+  let ready: i32 = async.wait_any([subscription.listener.fd, 1], Some(time.duration_millis(timeout)));
   if (!subscription.alive.get() || async.task_cancelled()) {
     return false;
   }

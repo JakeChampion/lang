@@ -12,6 +12,7 @@ func TestReactorOneShotWatch(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "oneshot.fern")
 	prog := `import "std/async";
+import "std/time";
 function main(): i32 {
   let p: Pipe = match (pipe()) {
     Ok(p) => p,
@@ -22,17 +23,17 @@ function main(): i32 {
   let fd: i32 = p.r.fd;
   if (!d.oneshot()) { return 12; }
   if (d.watch(fd, 1) < 0) { return 13; }
-  if (d.wait(4, 0).len() != 2) { return 14; }
-  if (d.wait(4, 0).len() != 2) { return 15; }
+  if (d.wait(4, Some(time.duration_millis(0))).len() != 2) { return 14; }
+  if (d.wait(4, Some(time.duration_millis(0))).len() != 2) { return 15; }
   if (d.unwatch(fd) < 0) { return 16; }
   if (d.watch(fd, 1 | async.ONESHOT) < 0) { return 17; }
-  if (d.wait(4, 0).len() != 2) { return 18; }
-  if (d.wait(4, 50).len() != 0) { return 19; }
+  if (d.wait(4, Some(time.duration_millis(0))).len() != 2) { return 18; }
+  if (d.wait(4, Some(time.duration_millis(50))).len() != 0) { return 19; }
   if (d.watch(fd, 1 | async.ONESHOT) < 0) { return 20; }
-  if (d.wait(4, 0).len() != 2) { return 21; }
+  if (d.wait(4, Some(time.duration_millis(0))).len() != 2) { return 21; }
   if (d.watch(fd, 1) < 0) { return 22; }
-  if (d.wait(4, 0).len() != 2) { return 23; }
-  if (d.wait(4, 0).len() != 2) { return 24; }
+  if (d.wait(4, Some(time.duration_millis(0))).len() != 2) { return 23; }
+  if (d.wait(4, Some(time.duration_millis(0))).len() != 2) { return 24; }
   return 0;
 }
 `

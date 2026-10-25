@@ -156,10 +156,10 @@ The producer yields between checks and exits on task cancellation. SSE heartbeat
 pub function changes(room: Room, after: Option[i64]): Option[sse.Event] {
   let board: Board = room.state.rooms.get()[room.at];
   let Some(cursor) = after else {
-    return Some(sse.event(snapshot(room).to_json()).with_name("snapshot").with_id(board.revision.to_string()).with_retry(1000));
+    return Some(sse.event(snapshot(room).to_json()).with_name("snapshot").with_id(board.revision.to_string()).with_retry(time.duration_millis(1000)));
   };
   if (cursor < 0 || cursor > board.revision || cursor < board.revision - board.history.len() as i64) {
-    return Some(sse.event(snapshot(room).to_json()).with_name("snapshot").with_id(board.revision.to_string()).with_retry(1000));
+    return Some(sse.event(snapshot(room).to_json()).with_name("snapshot").with_id(board.revision.to_string()).with_retry(time.duration_millis(1000)));
   }
   for change in board.history {
     if (change.revision > cursor) {
@@ -180,7 +180,7 @@ pub function events(room: Room, req: HttpRequest): HttpResponse {
         },
         None => {}
       }
-      let ready: i32 = async.wait_any([], 100);
+      let ready: i32 = async.wait_any([], Some(time.duration_millis(100)));
     }
     return None;
   }).with_header("X-Accel-Buffering", "no");

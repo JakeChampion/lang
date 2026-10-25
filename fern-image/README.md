@@ -55,9 +55,9 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-Ninety-two TAP cases cover the essential, compression, pixel, color, resize, PNG, sequential PNG rows, row-pipeline, region, cache, RSS parser, and fusion suites.
+One hundred TAP cases cover the essential, compression, pixel, color, resize, PNG, sequential PNG rows, row-pipeline, region, cache, RSS parser, and fusion suites.
 The file I/O probe and pixel example also exit successfully.
-The native script checks twenty-four executables with the sanitizer.
+The native script checks twenty-five executables with the sanitizer.
 The separate Wasm script runs the same TAP cases and allocator smoke modes through Wasmtime.
 The Linux-only RSS workload records its own procfs observations and runs only in the native script.
 See [RSS observations](docs/rss-observations.md) for the parent-memory control and measurement limits.

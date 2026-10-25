@@ -48,10 +48,10 @@ function eval(method: string, fields: string[]): string {
   return shown(cache.evaluate(req(method, fields), current(), now()));
 }
 
-function opt(n: Option[i64]): string {
+function opt(n: Option[Duration]): string {
   match (n) {
     Some(v) => {
-      return v.to_string();
+      return v.as_seconds().to_string();
     },
     None => {
       return "-";
@@ -195,10 +195,10 @@ function test_respond_otherwise(): test.TestOutcome {
 }
 
 function test_cache_control_written(): test.TestOutcome {
-  let a: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), public: true, immutable: true, max_age: Some(31536000 as i64) };
+  let a: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), public: true, immutable: true, max_age: Some(time.duration_seconds(31536000)) };
   let fields: string[] = ["Set-Cookie", "X-Id"];
   let b: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), no_cache: true, no_cache_fields: fields, private: true, must_revalidate: true };
-  let c: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), max_stale: Some(cache.DELTA_MAX), min_fresh: Some(5 as i64), only_if_cached: true };
+  let c: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), max_stale: Some(cache.DELTA_MAX), min_fresh: Some(time.duration_seconds(5)), only_if_cached: true };
   return test.assert_eq(a.to_string() + "|" + b.to_string() + "|" + c.to_string() + "|" + cache.cache_control().to_string(), "public, immutable, max-age=31536000|no-cache=\"Set-Cookie, X-Id\", private, must-revalidate|only-if-cached, max-stale, min-fresh=5|");
 }
 

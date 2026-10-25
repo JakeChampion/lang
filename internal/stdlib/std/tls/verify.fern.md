@@ -30,7 +30,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<7 pub struct Roots>>
 
-<<8 pub function (r: Roots) distrusting(i: i32, after: i64): Roots>>
+<<8 pub function (r: Roots) distrusting(i: i32, after: time.Timestamp): Roots>>
 
 <<9 const BUNDLES: string[]>>
 
@@ -52,7 +52,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<18 function __leaf_ok(leaf: x509.Certificate, name: string, now: i64): Result[boolean, VerifyError]>>
 
-<<19 pub function verify_server(chain: u8[][], roots: Roots, name: string, now: i64): Result[x509.Certificate, V...>>
+<<19 pub function verify_server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Ce...>>
 
 <<20 function __parsed(chain: u8[][]): Result[x509.Certificate[], VerifyError]>>
 
@@ -89,6 +89,7 @@ import "std/tls/pem";
 import "std/tls/x509";
 import "std/error";
 import "core/cmp";
+import "std/time";
 ```
 
 ### `3 const MAX_PATH: i32`
@@ -216,12 +217,12 @@ pub function (e: VerifyError) message(): string {
 pub struct Roots { certs: x509.Certificate[], distrust_after: i64[] }
 ```
 
-### `8 pub function (r: Roots) distrusting(i: i32, after: i64): Roots`
+### `8 pub function (r: Roots) distrusting(i: i32, after: time.Timestamp): Roots`
 
 ```fern
-<<8 pub function (r: Roots) distrusting(i: i32, after: i64): Roots>>=
-pub function (r: Roots) distrusting(i: i32, after: i64): Roots {
-  return Roots { ...r, distrust_after: r.distrust_after.with(i, after) };
+<<8 pub function (r: Roots) distrusting(i: i32, after: time.Timestamp): Roots>>=
+pub function (r: Roots) distrusting(i: i32, after: time.Timestamp): Roots {
+  return Roots { ...r, distrust_after: r.distrust_after.with(i, after.sec) };
 }
 
 pub function no_roots(): Roots {
@@ -670,23 +671,23 @@ function __has(v: string[], x: string): boolean {
 }
 ```
 
-### `19 pub function verify_server(chain: u8[][], roots: Roots, name: string, now: i64): Result[x509.Certificate, V...`
+### `19 pub function verify_server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Ce...`
 
 ```fern
-<<19 pub function verify_server(chain: u8[][], roots: Roots, name: string, now: i64): Result[x509.Certificate, V...>>=
-pub function verify_server(chain: u8[][], roots: Roots, name: string, now: i64): Result[x509.Certificate, VerifyError] {
+<<19 pub function verify_server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Ce...>>=
+pub function verify_server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Certificate, VerifyError] {
   let certs: x509.Certificate[] = __parsed(chain)?;
-  __leaf_ok(certs[0], name, now)?;
-  return __rooted(certs, roots, now, true);
+  __leaf_ok(certs[0], name, now.sec)?;
+  return __rooted(certs, roots, now.sec, true);
 }
 
-pub function verify_client(chain: u8[][], roots: Roots, now: i64): Result[x509.Certificate, VerifyError] {
+pub function verify_client(chain: u8[][], roots: Roots, now: time.Timestamp): Result[x509.Certificate, VerifyError] {
   let certs: x509.Certificate[] = __parsed(chain)?;
-  __signing_leaf(certs[0], now)?;
+  __signing_leaf(certs[0], now.sec)?;
   if (certs[0].has_ext_key_usage && !__has(certs[0].ext_key_usage, x509.EKU_CLIENT_AUTH) && !__has(certs[0].ext_key_usage, x509.EKU_ANY)) {
     return Err(NotForClients);
   }
-  return __rooted(certs, roots, now, false);
+  return __rooted(certs, roots, now.sec, false);
 }
 ```
 

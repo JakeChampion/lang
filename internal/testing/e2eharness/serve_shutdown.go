@@ -23,8 +23,8 @@ import "std/time";
 import "std/platform";
 function burn(plat: platform.Platform, ns: i64): i32 {
     let x: i32 = 12345;
-    let until: i64 = plat.elapsed_ns() + ns;
-    while (plat.elapsed_ns() < until) {
+    let until: Instant = plat.instant().add(time.duration_nanos(ns));
+    while (plat.instant().cmp(until) < 0) {
         let i: i32 = 0;
         while (i < 100000) {
             x = (x * 1103515245 + 12345) & 2147483647;
