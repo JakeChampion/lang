@@ -567,14 +567,17 @@ function leaf_array_op(f: ssasem.Func, ins: ssa.SInst): boolean {
   return false;
 }
 
-// A scalar element or word read borrows its array or view and carries no
-// ownership units.
+// A scalar element or word read, or a length, borrows its array or view and
+// carries no ownership units.
 function leaf_element_read(f: ssasem.Func, ins: ssa.SInst): boolean {
   if (ins.result < 0 || !scalar(f.values[ins.result]) && !ssasem.is_usize(f.values[ins.result])) {
     return false;
   }
   if (ins.kind_tag == ssasem.array_get()) {
     return ins.args.len() == 2;
+  }
+  if (ins.kind_tag == ssasem.length()) {
+    return ins.args.len() == 1;
   }
   return ins.kind_tag == ssasem.call() && word_read(ins.str);
 }

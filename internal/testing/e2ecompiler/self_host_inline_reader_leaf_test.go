@@ -17,6 +17,10 @@ function le64(bs: u8[], at: i32): i64 {
   return bs[at] as i64 | bs[at + 1] as i64 << 8 | bs[at + 2] as i64 << 16 | bs[at + 3] as i64 << 24
     | bs[at + 4] as i64 << 32 | bs[at + 5] as i64 << 40 | bs[at + 6] as i64 << 48 | bs[at + 7] as i64 << 56;
 }
+function guarded(bs: [u8], at: i32): i32 {
+  if (at + 1 >= bs.len()) { return 0 - 1; }
+  return bs[at + 1] as i32;
+}
 @noinline function count(bs: [u8]): i32 { return bs.len(); }
 function passes(bs: [u8]): i32 { return count(bs) + 1; }
 function lends(bs: [u8]): [u8] { return bs; }
@@ -30,6 +34,7 @@ function lends(bs: [u8]): [u8] { return bs; }
   if (le64(xs, 8) != 3462114457792500269i64) { return 4; }
   if (passes(xs) != 17) { return 5; }
   if (lends(xs)[15] != 48u8) { return 6; }
+  if (guarded(xs, 2) != 116 || guarded(xs, 15) != 0 - 1) { return 7; }
   return 0;
 }
 function main(): i32 {
@@ -39,12 +44,12 @@ function main(): i32 {
 }
 `
 
-// An element or word read of a parameter is a leaf, so a small reader is
-// spliced into its caller. A view parameter that escapes into a call or the
-// result keeps its function out of line.
+// An element read, a word read or a length of a parameter is a leaf, so a
+// small reader is spliced into its caller. A view parameter that escapes into
+// a call or the result keeps its function out of line.
 func TestSelfHostInlineReaderLeaf(t *testing.T) {
 	runSemanticProgram(t, "reader-leaves", inlineReaderLeafProgram,
-		[]string{"peek", "pair", "le32", "le64", "count", "passes", "lends", "exercise"},
+		[]string{"peek", "pair", "le32", "le64", "guarded", "count", "passes", "lends", "exercise"},
 		semInlineWants("ok\n"), "count", "lends")
 
 	h := selfHostCLIForHost(t)
@@ -68,7 +73,7 @@ func TestSelfHostInlineReaderLeaf(t *testing.T) {
 		if target == "arm64-linux" {
 			call = "bl __fn_"
 		}
-		for _, name := range []string{"peek", "pair", "le32", "le64"} {
+		for _, name := range []string{"peek", "pair", "le32", "le64", "guarded"} {
 			if strings.Contains(body, call+name) {
 				t.Errorf("%s still calls the reader %s", target, name)
 			}
