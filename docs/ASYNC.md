@@ -175,7 +175,9 @@ Everything nondeterministic the combinators do funnels through one seam: the
 combinator has an `*_on(drv, …)` sibling — `gather_on` / `race_on` /
 `with_deadline_on` — carrying the loop; the plain forms delegate to it with the
 real driver (whose methods are exactly the `poll` / `monotonic_ns` /
-`wasm_timer_pollable` / `wasm_pollable_drop` builtins).
+`wasm_timer_pollable` / `wasm_pollable_drop` builtins, the last two on the
+wasi targets only: elsewhere a timer is the wait's timeout and a drop does
+nothing).
 
 `std/sim` substitutes a virtual driver (`docs/DST-PLATFORM-BRIEF.md`): a
 virtual clock starting at 0 ns that advances only inside `poll_ready`, tokens
