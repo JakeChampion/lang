@@ -281,7 +281,7 @@ pub function parse_request(request: string): Result[TileRequest, RequestError] {
   let x: i64 = request_integer(fields[2], "x")?;
   let y: i64 = request_integer(fields[3], "y")?;
   if (!request_range(id, z) || !fractal.valid(z as i32, x, y)) {
-    return Err(OutOfRange);
+    return Err(RequestError.OutOfRange);
   }
   return Ok(TileRequest { id: id as u32, z: z as i32, x: x, y: y });
 }
