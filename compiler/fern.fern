@@ -5234,7 +5234,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let typed: parser.Module = parser.module_with_builtins_typed(merged);
   let full: parser.Module = parser.erase_view_module(typed);
   let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden } };
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden } };
   if (array_report == semarrayreport.to_stdout()) {
     return 0;
   }
