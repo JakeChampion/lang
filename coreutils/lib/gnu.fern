@@ -512,7 +512,7 @@ pub function stream_put_bytes_range(o: Stream, bytes: u8[], lo: i32, hi: i32): S
 }
 
 function stream_written(o: Stream, written: Result[io_buffered.BufWriter, IoError]): Stream {
-  match (written) {
+  match (kept_failure(written)) {
     Ok(w) => {
       return Stream { ...o, w: w };
     },
@@ -884,6 +884,12 @@ pub function check(written: Result[io_buffered.BufWriter, IoError]): io_buffered
   return written_or_die(written, 1);
 }
 
+// For bytes pushed straight into the writer's buffer, where no write runs.
+pub function check_kept(o: io_buffered.BufWriter): io_buffered.BufWriter {
+  let kept: Result[io_buffered.BufWriter, IoError] = Ok(o);
+  return written_or_die(kept, 1);
+}
+
 pub function settle(o: io_buffered.BufWriter): io_buffered.BufWriter {
   return written_or_die(o.settle(), 1);
 }
@@ -925,8 +931,19 @@ pub function close_stdout_with(o: io_buffered.BufWriter, prev_fail: boolean, sta
   }
 }
 
+// A write that only buffered answers Ok even when the writer failed earlier;
+// like stdio's ferror, the failure an error_out flush kept still counts.
+function kept_failure(written: Result[io_buffered.BufWriter, IoError]): Result[io_buffered.BufWriter, IoError] {
+  if let Ok(w) = written {
+    if let Some(e) = w.error() {
+      return Err(e);
+    }
+  }
+  return written;
+}
+
 function written_or_die(written: Result[io_buffered.BufWriter, IoError], status: i32): io_buffered.BufWriter {
-  match (written) {
+  match (kept_failure(written)) {
     Ok(w) => {
       return w;
     },

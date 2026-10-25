@@ -474,18 +474,25 @@ function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): 
         t1 = t1 + 1 as u64;
       }
     }
+    let wrote: boolean = false;
     if (class == 1) {
       if (show1) {
         buf_push_bytes_range(h, cur1, lo1, hi1);
+        wrote = true;
       }
     } else if (class == 2) {
       if (show2) {
         buf_push(h, pre2);
         buf_push_bytes_range(h, cur2, lo2, hi2);
+        wrote = true;
       }
     } else if (show3) {
       buf_push(h, pre3);
       buf_push_bytes_range(h, cur2, lo2, hi2);
+      wrote = true;
+    }
+    if (wrote) {
+      out = gnu.check_kept(out);
     }
     if (buf_len(h) >= block) {
       out = gnu.settle(out);
