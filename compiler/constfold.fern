@@ -428,8 +428,7 @@ function eval_at(e: ast.Expr, t: parser.TypeRef, env: ConstEnv): ConstNum {
 
 // The last of `ts` is the type of every element past the end of it.
 function eval_elems(elems: ast.Expr[], ts: parser.TypeRef[], env: ConstEnv): ConstNum {
-  let i: i32 = 0;
-  while (i < elems.len()) {
+  for i in 0..elems.len() {
     let k: i32 = i;
     if (k >= ts.len()) {
       k = ts.len() - 1;
@@ -438,7 +437,6 @@ function eval_elems(elems: ast.Expr[], ts: parser.TypeRef[], env: ConstEnv): Con
     if (v.err.len() > 0) {
       return v;
     }
-    i = i + 1;
   }
   return no_num();
 }
@@ -1191,12 +1189,10 @@ function eval_cases(): i32 {
     "const A: i64 = 2147483647 + 1 + 2147483647 + 1;\nconst B: i64 = 5 / A;",
   ];
   let want: i64[] = [0 - 1073741824i64, 44i64, 2i64, 1073741822i64, 0 - 4i64, 9223372036854775807i64, 0i64];
-  let i: i32 = 0;
-  while (i < ints.len()) {
+  for i in 0..ints.len() {
     if (!eval_is_int(ints[i], want[i])) {
       return 220 + i;
     }
-    i = i + 1;
   }
   let srcs: string[] = [
     "const Z: i32 = 0;\nconst A: i32 = 10 / Z;",
@@ -1214,12 +1210,10 @@ function eval_cases(): i32 {
     "division by zero in constant expression",
     "",
   ];
-  i = 0;
-  while (i < srcs.len()) {
+  for i in 0..srcs.len() {
     if (eval_source(srcs[i]).err != errs[i]) {
       return 240 + i;
     }
-    i = i + 1;
   }
   return 0;
 }
