@@ -4073,7 +4073,7 @@ function promotes_view(from: typeinfo.Type, to: typeinfo.Type): boolean {
   match (from) {
     typeinfo.TypeArray(fa) => {
       if let typeinfo.TypeArray(ta) = to {
-        return promotes_view(fa.elem, ta.elem);
+        return fa.view && !ta.view || promotes_view(fa.elem, ta.elem);
       }
     },
     typeinfo.TypeTuple(ft) => {
@@ -13707,11 +13707,31 @@ function array_mix_diags(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Dia
         }
         k = k + 1;
       }
+    } else if (is_owned_array(anchor) || is_arr_view(anchor)) {
+      out = nested_array_mix(a, anchor, s, out);
     } else if (concrete_instance(anchor)) {
       out = struct_instance_mix(a, anchor, s, out);
     }
   }
 
+  return out;
+}
+
+function nested_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
+  let first: ast.Expr = a.elements[0];
+  let k: i32 = 1;
+  while (k < a.elements.len()) {
+    let element: ast.Expr = a.elements[k];
+    let ty: typeinfo.Type = check_expr(element, s);
+    if (!type_contains_unknown(ty) && !same_element_type(ty, anchor) && !settles_to(element, anchor, s)) {
+      if (!settles_to(first, ty, s)) {
+        return out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(ty), expr_line(element), expr_col(element)));
+      }
+      anchor = ty;
+      first = element;
+    }
+    k = k + 1;
+  }
   return out;
 }
 
@@ -14245,7 +14265,9 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
   if (!is_dyn_slot(elem_ty) && !is_str_view(elem_ty)) {
     if let typeinfo.TypeUnion(_) = elem_ty {} else {
       if let typeinfo.TypeStruct(_) = elem_ty {} else {
-        return out;
+        if let typeinfo.TypeArray(_) = elem_ty {} else {
+          return out;
+        }
       }
     }
   }
@@ -14309,7 +14331,7 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
   if (!is_unknown(elem) && !is_primitive_type(elem)) {
     if let ast.ExprArray(a) = e {
       let out: util.Diag[] = [];
-      if (is_func_type(elem) || is_tuple_type(elem)) {
+      if (is_func_type(elem) || is_tuple_type(elem) || is_owned_array(elem) || is_arr_view(elem)) {
         out = array_mix_diags(a, s, out);
       }
       for element in a.elements {
