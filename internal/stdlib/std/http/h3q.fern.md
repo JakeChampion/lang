@@ -249,11 +249,50 @@ function (c: Conn) __applied(now: i64): Conn {
       return cur;
     }
     cur = Conn { ...cur, session: cur.session.taken(), quic: __acts(cur.quic, acts, now) };
-    for e in evs {
-      cur = cur.__session_event(e);
+    let k: i32 = 0;
+    while (k < evs.len()) {
+      let id: i64 = __ended_by(evs, k);
+      if (id >= 0) {
+        cur = cur.__whole(id, evs[k]);
+        k = k + 2;
+      } else {
+        cur = cur.__session_event(evs[k]);
+        k = k + 1;
+      }
     }
   }
   return cur;
+}
+
+// __ended_by is the stream whose header section at evs[k] the next event
+// ends, or -1: a whole message with no body, taken without a Partial to
+// gather one.
+function __ended_by(evs: h3.Event[], k: i32): i64 {
+  if (k + 1 >= evs.len()) {
+    return 0 - 1 as i64;
+  }
+  let Some(id) = __headers_of(evs[k]) else {
+    return 0 - 1 as i64;
+  };
+  match (evs[k + 1]) {
+    h3.StreamEnded(end) => {
+      if (end == id) {
+        return id;
+      }
+    },
+    _ => {}
+  }
+  return 0 - 1 as i64;
+}
+
+function __headers_of(e: h3.Event): Option[i64] {
+  match (e) {
+    h3.HeadersReceived(id, _) => {
+      return Some(id);
+    },
+    _ => {}
+  }
+  return None;
 }
 
 function __acts(q: conn.Conn, acts: h3.Action[], now: i64): conn.Conn {
@@ -310,17 +349,48 @@ function (c: Conn) __session_event(e: h3.Event): Conn {
 }
 
 function (c: Conn) __headers(id: i64, fields: qpack.Field[]): Conn {
-  let next: i64 = c.next;
-  if (c.session.is_server()) {
-    if (c.stopping && id >= next) {
-      return Conn { ...c, session: c.session.abort(id, h3.H3_REQUEST_REJECTED) };
-    }
-    if (id + 4 > next) {
-      next = id + 4;
-    }
+  if (c.__rejects(id)) {
+    return Conn { ...c, session: c.session.abort(id, h3.H3_REQUEST_REJECTED) };
   }
   let kept: Partial[] = __without(c.partials, id);
-  return Conn { ...c, partials: kept.append(Partial { id: id, fields: fields, body: [], trailers: [] }), next: next };
+  return Conn { ...c, partials: kept.append(Partial { id: id, fields: fields, body: [], trailers: [] }), next: c.__next_for(id) };
+}
+
+// __whole takes a message whose header section, the event e, ends its
+// stream.
+function (c: Conn) __whole(id: i64, e: h3.Event): Conn {
+  if (c.__rejects(id)) {
+    return Conn { ...c, session: c.session.abort(id, h3.H3_REQUEST_REJECTED) };
+  }
+  let none: qpack.Field[] = [];
+  let next: i64 = c.__next_for(id);
+  let rest: Partial[] = c.partials;
+  if (__find(rest, id) >= 0) {
+    rest = __without(rest, id);
+  }
+  match (e) {
+    h3.HeadersReceived(_, fields) => {
+      if (c.session.is_server()) {
+        return Conn { ...c, partials: rest, next: next, events: c.events.append(Requested(id, __request(fields, [], none))) };
+      }
+      return Conn { ...c, partials: rest, next: next, events: c.events.append(Responded(id, __response(fields, [], none))) };
+    },
+    _ => {}
+  }
+  return Conn { ...c, partials: rest, next: next };
+}
+
+// __rejects says a server that is shutting down refuses request stream id.
+function (c: Conn) __rejects(id: i64): boolean {
+  return c.session.is_server() && c.stopping && id >= c.next;
+}
+
+// __next_for is the request stream a server's GOAWAY names once id opens.
+function (c: Conn) __next_for(id: i64): i64 {
+  if (c.session.is_server() && id + 4 > c.next) {
+    return id + 4;
+  }
+  return c.next;
 }
 
 function (c: Conn) __data(id: i64, data: u8[]): Conn {
@@ -352,17 +422,17 @@ function (c: Conn) __ended(id: i64): Conn {
   let p: Partial = c.partials[i];
   let rest: Partial[] = __without(c.partials, id);
   if (c.session.is_server()) {
-    return Conn { ...c, partials: rest, events: c.events.append(Requested(id, __request(p))) };
+    return Conn { ...c, partials: rest, events: c.events.append(Requested(id, __request(p.fields, p.body, p.trailers))) };
   }
-  return Conn { ...c, partials: rest, events: c.events.append(Responded(id, __response(p))) };
+  return Conn { ...c, partials: rest, events: c.events.append(Responded(id, __response(p.fields, p.body, p.trailers))) };
 }
 
-function __request(p: Partial): HttpRequest {
+function __request(fields: qpack.Field[], body: u8[], trailers: qpack.Field[]): HttpRequest {
   let hs: HeaderMap = headers.header_map_new();
   let authority: string = "";
   let method: string = "";
   let path: string = "";
-  for f in p.fields {
+  for f in fields {
     if (f.name == ":method") {
       method = f.value;
     } else if (f.name == ":path") {
@@ -376,20 +446,20 @@ function __request(p: Partial): HttpRequest {
   if (authority.len() > 0 && !hs.has("host")) {
     hs = hs.append("host", authority);
   }
-  return HttpRequest { method: method, path: path, body: ByteStream { data: p.body, pos: 0, source: None }, headers: hs, trailers: __map(p.trailers) };
+  return HttpRequest { method: method, path: path, body: ByteStream { data: body, pos: 0, source: None }, headers: hs, trailers: __map(trailers) };
 }
 
-function __response(p: Partial): HttpResponse {
+function __response(fields: qpack.Field[], body: u8[], trailers: qpack.Field[]): HttpResponse {
   let status: i32 = 0;
   let hs: HeaderMap = headers.header_map_new();
-  for f in p.fields {
+  for f in fields {
     if (f.name == ":status") {
       status = i32.parse_i32(f.value).unwrap_or(0);
     } else if (!f.name.starts_with(":")) {
       hs = hs.append(f.name, f.value);
     }
   }
-  return HttpResponse { status: status, body: BodyBytes(p.body), headers: hs, trailers: __map(p.trailers), background: None };
+  return HttpResponse { status: status, body: BodyBytes(body), headers: hs, trailers: __map(trailers), background: None };
 }
 
 function __map(fields: qpack.Field[]): HeaderMap {
