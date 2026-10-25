@@ -1,0 +1,19 @@
+{
+  "workload": "32x32 RGBA8 gradient setup plus ten 16x16 bilinear resizes per process",
+  "samples_ms": [
+    5.148746000031679,
+    3.0872039999394474,
+    22.43400899988046,
+    3.197227000100611,
+    3.0721239998001693
+  ],
+  "warmup_processes": 0,
+  "concurrency": 1,
+  "host": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "compiler": "fern ba2b7a8cb69a-dirty\nbuilt for x86-64-linux",
+  "compiler_sha256": "4aa66b6599ea950fb34ad15018bdc71b9b78257cd00e5450f6670f6ec98bb3fc",
+  "flags": "-target x86-64-linux (no sanitizer)",
+  "source_sha256": "eb51f4e9654b58cd0c7196e36846353cb1f394923e355959847260d0410c185a",
+  "cpu": "INTEL(R) XEON(R) PLATINUM 8573C",
+  "limits": "Includes process startup and source construction. No RSS, allocations or libvips comparison. Synthetic self-generated data only."
+}

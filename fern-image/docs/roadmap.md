@@ -1,8 +1,8 @@
 # Roadmap and proposed issues
 
-M0 and M1 are implemented.
+The M0, M1, and scalar M2 implementations exist. Only M0 is merged.
 M1 provides scalar pixel operations, whole-image RGB/RGBA conversion, and explicit alpha flattening.
-These issue proposals are local documents. No GitHub issues were created.
+Track delivery in [epic #13201](https://github.com/JakeChampion/lang/issues/13201) and its native milestone sub-issues.
 
 ## M1: Color primitives
 
