@@ -1,4 +1,5 @@
-# 2026-10-25 (#13302): three x86_64 .text rows from a local perf-bench run on the merge with main.
+# 2026-10-25 (#13302): three x86_64 .text rows from a local perf-bench run on the merge with main,
+# and aarch64 deflate_encode.text and utf8_ingest_validated.text from Perf run 40210493745.
 # Re-pinned 2026-10-25 (#13302) from Perf run 40205765929. The inline
 # back-reference copy cuts deflate_decode.ir by 14% on x86_64 and 20% on aarch64,
 # and adds 1% `.text` to x86_64 deflate_decode. The other aarch64 rows take the
@@ -386,7 +387,7 @@ aarch64/closure_call.ir	72624168
 aarch64/deflate_decode.ir	37668078
 aarch64/deflate_decode.text	13437
 aarch64/deflate_encode.ir	48587342
-aarch64/deflate_encode.text	7749
+aarch64/deflate_encode.text	7851
 aarch64/enum_match.text	1206
 aarch64/enum_match.ir	41175097
 aarch64/http_hello.text	18384
@@ -431,7 +432,7 @@ aarch64/tokenize.text	1278
 aarch64/tokenize.ir	38350102
 aarch64/utf8_ingest_unchecked.text	8747
 aarch64/utf8_ingest_unchecked.ir	2683450
-aarch64/utf8_ingest_validated.text	9210
+aarch64/utf8_ingest_validated.text	9310
 aarch64/utf8_ingest_validated.ir	6269853
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
