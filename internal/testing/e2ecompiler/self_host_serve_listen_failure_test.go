@@ -19,3 +19,14 @@ func TestSelfHostServeListenFailure(t *testing.T) {
 		held.Close()
 	}
 }
+
+func TestSelfHostServeListenErrorTyped(t *testing.T) {
+	held, err := net.Listen("tcp", "0.0.0.0:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Close()
+	port := held.Addr().(*net.TCPAddr).Port
+	bin, runner := selfHostServer(t, e2eharness.ListenErrorTypedSource(port))
+	e2eharness.CheckListenErrorTyped(t, binCmd(runner, bin))
+}

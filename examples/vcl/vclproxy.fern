@@ -136,7 +136,7 @@ function serve(decls: ast.Decl[], port: i32): i32 {
     cache.set(store.encode(o.cache));
     return to_response(o);
   };
-  return serve.run(port, serve.config(), handler);
+  return serve.exit_code(serve.run(port, serve.config(), handler));
 }
 
 function main(): i32 {

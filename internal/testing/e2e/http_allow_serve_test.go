@@ -65,7 +65,7 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 function main(): i32 {
   match (fetch.allow(["127.0.0.1"])) {
     Ok(a) => {
-      return serve.run(0, serve.Config { ...serve.config(), http_allow: Some(a) }, handle);
+      return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), http_allow: Some(a) }, handle));
     },
     Err(why) => {
       print(why);

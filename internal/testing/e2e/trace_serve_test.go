@@ -58,7 +58,7 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 }
 
 function main(): i32 {
-  return serve.run(0, serve.Config { ...serve.config(), trace: true }, handle);
+  return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), trace: true }, handle));
 }
 `
 

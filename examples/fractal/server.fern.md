@@ -483,7 +483,7 @@ function main(): i32 {
   match (source.load(".")) {
     Ok(sources) => {
       let handler: (HttpRequest, platform.Host) => HttpResponse = mounted_routes[platform.Host](state, "web", sources).handler();
-      return serve.run_shutdown(PORT, serve.config(), handler, (reason: string): void => eprint("server: stopped, " + reason));
+      return serve.exit_code(serve.run_shutdown(PORT, serve.config(), handler, (reason: string): void => eprint("server: stopped, " + reason)));
     },
     Err(message) => {
       eprint("server: " + message);

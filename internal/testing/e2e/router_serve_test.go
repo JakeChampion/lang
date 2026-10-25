@@ -74,7 +74,7 @@ function files(req: HttpRequest, params: router.Params, plat: platform.Host): Re
 }
 
 function main(): i32 {
-  return serve.run(0, serve.config(), router.new[platform.Host]().wrap(cross_origin).get("/users/{id}", show).post("/users", create).get("/files/{path...}", files).handler());
+  return serve.exit_code(serve.run(0, serve.config(), router.new[platform.Host]().wrap(cross_origin).get("/users/{id}", show).post("/users", create).get("/files/{path...}", files).handler()));
 }
 `
 
@@ -118,7 +118,7 @@ function main(): i32 {
   print("built");
   let h: (HttpRequest, platform.Host) => HttpResponse = r.handler();
   print("served");
-  return serve.run(0, serve.config(), h);
+  return serve.exit_code(serve.run(0, serve.config(), h));
 }
 `
 

@@ -136,8 +136,11 @@ HTTP/2 leg, and fails both above it and eight or more below it.
 `TestHTTPHandlerCensus` and its wasm and self-host twins are the leak
 half: a bounded serve loop under `FERN_LEAKCHECK` frees what it allocated.
 `TestServeListenFailure` and `TestSelfHostServeListenFailure` pin a server
-whose port is taken: exit 98 and the reason in words, from the single loop
-and the supervisor. `TestEscapingMatchPayloadIsReclaimed` is #8003's gate,
+whose port is taken: `serve.exit_code` answers 98 and the reason in words,
+from the single loop and the supervisor. `TestServeListenErrorTyped` and
+`TestSelfHostServeListenErrorTyped` pin the `Err(serve.ListenError)` itself,
+with the port and `AddrInUse`, for the server's port single-process,
+supervised and per worker under `reuse_port`, and for `metrics_port`. `TestEscapingMatchPayloadIsReclaimed` is #8003's gate,
 the per-request leak of a match on a call result whose payload escapes.
 
 `TestSelfHostArm64DarwinPoll` exercises the self-host kqueue helper with

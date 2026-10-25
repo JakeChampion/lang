@@ -47,5 +47,5 @@ function port(): i32 {
 
 function main(): i32 {
   let opts: serve.Config = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0 };
-  return serve.run(port(), opts, handle);
+  return serve.exit_code(serve.run(port(), opts, handle));
 }

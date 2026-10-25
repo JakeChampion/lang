@@ -161,7 +161,7 @@ function main(): i32 {
         },
         None => {}
       }
-      return serve.run(0, cfg, handle);
+      return serve.exit_code(serve.run(0, cfg, handle));
     },
     Err(e) => {
       eprint(e.message());

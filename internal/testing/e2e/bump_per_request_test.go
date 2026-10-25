@@ -37,6 +37,13 @@ func TestServeListenFailure(t *testing.T) {
 	}
 }
 
+func TestServeListenErrorTyped(t *testing.T) {
+	compiler := buildFernCLI(t)
+	held := heldLoopbackPort(t)
+	bin := buildNativeServer(t, compiler, "x86-64-linux", e2eharness.ListenErrorTypedSource(held))
+	e2eharness.CheckListenErrorTyped(t, nativeServerRunner(t, "x86-64-linux")(bin))
+}
+
 func heldLoopbackPort(t *testing.T) int {
 	t.Helper()
 	held, err := net.Listen("tcp", "0.0.0.0:0")

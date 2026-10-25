@@ -41,7 +41,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("hello");
 }
 function main(): i32 {
-    return serve.run(%d, serve.Config { ...%s, keep_alive_requests: %d }, handle);
+    return serve.exit_code(serve.run(%d, serve.Config { ...%s, keep_alive_requests: %d }, handle));
 }
 `, port, config, serveAllocsWarm+rounds+8)
 }
@@ -103,7 +103,7 @@ function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse,
     return Ok(http.ok("hello"));
 }
 function main(): i32 {
-    return serve.run(%d, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle);
+    return serve.exit_code(serve.run(%d, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle));
 }
 `, port, serveAllocsWarm+rounds+8)
 }
@@ -190,7 +190,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 function main(): i32 {
     let Ok(k) = identity.private_key_from_pem(ED_PKCS8) else { return 2; };
     let Ok(id) = identity.pair([__codec_bytes(hex.decode(ED_LEAF))], k) else { return 3; };
-    return serve.run(%d, serve.Config { ...serve.config().with_tls(server.config(id, random_bytes(32))).with_h3(), keep_alive_requests: %d }, handle);
+    return serve.exit_code(serve.run(%d, serve.Config { ...serve.config().with_tls(server.config(id, random_bytes(32))).with_h3(), keep_alive_requests: %d }, handle));
 }
 
 // Decode a valid fixture. Report a malformed fixture before ending the test.

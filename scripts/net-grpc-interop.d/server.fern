@@ -376,7 +376,7 @@ function tls_config(cfg: serve.Config): Result[serve.Config, string] {
 function main(): i32 {
   match (tls_config(serve.Config { ...serve.config().with_h2(), stream_bodies: true })) {
     Ok(cfg) => {
-      return serve.run(port(), cfg, handle);
+      return serve.exit_code(serve.run(port(), cfg, handle));
     },
     Err(message) => {
       eprint(message);

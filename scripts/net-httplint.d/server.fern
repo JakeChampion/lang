@@ -88,5 +88,5 @@ function routes(): router.Router[platform.Host] {
 }
 
 function main(): i32 {
-  return serve.run(port(), serve.config(), routes().handler());
+  return serve.exit_code(serve.run(port(), serve.config(), routes().handler()));
 }

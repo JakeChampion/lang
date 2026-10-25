@@ -530,7 +530,8 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
     args = args.append(hook);
   }
   let serve: ast.Expr = ast.ExprCall { callee: serve_ref(qual, entry_name), args: args, line: 0, col: 0, type_args: [], ty: "" };
-  body = body.append(ast.StmtReturn { value: serve, line: 0, col: 0 });
+  let status: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "exit_code"), args: [serve], line: 0, col: 0, type_args: [], ty: "" };
+  body = body.append(ast.StmtReturn { value: status, line: 0, col: 0 });
   let main: parser.FuncDecl = parser.FuncDecl {
     stdlib: "", no_inline: false, always_inline: false,
     name: "main", receiver_name: "", receiver_type: "", receiver_own: false, type_params: [],

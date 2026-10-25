@@ -321,7 +321,7 @@ function user[P: platform.Platform](req: HttpRequest, params: router.Params, pla
 }
 
 function main(): i32 {
-  return serve.supervise_shutdown(8080, serve.config(), routes[platform.Host]().handler(), (reason: string): void => eprint("api: stopped, " + reason));
+  return serve.exit_code(serve.supervise_shutdown(8080, serve.config(), routes[platform.Host]().handler(), (reason: string): void => eprint("api: stopped, " + reason)));
 }
 ```
 

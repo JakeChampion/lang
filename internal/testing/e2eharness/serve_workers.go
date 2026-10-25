@@ -22,7 +22,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.supervise(0, serve.config(), handle);
+    return serve.exit_code(serve.supervise(0, serve.config(), handle));
 }
 `)
 }
@@ -64,7 +64,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.supervise(0, serve.Config { ...serve.config(), workers: 4, shutdown_grace: time.duration_millis(100 as i64) }, handle);
+    return serve.exit_code(serve.supervise(0, serve.Config { ...serve.config(), workers: 4, shutdown_grace: time.duration_millis(100 as i64) }, handle));
 }
 `)
 }
@@ -95,7 +95,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.supervise(0, serve.Config { ...serve.config(), workers: 2, shutdown_grace: time.duration_millis(100 as i64) }, handle);
+    return serve.exit_code(serve.supervise(0, serve.Config { ...serve.config(), workers: 2, shutdown_grace: time.duration_millis(100 as i64) }, handle));
 }
 `)
 }

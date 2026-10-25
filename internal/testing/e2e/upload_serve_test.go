@@ -124,7 +124,7 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 
 function main(): i32 {
   let opts: serve.Config = serve.Config { ...serve.config(), workers: 1, stream_bodies: @STREAM@ };
-  return serve.run(0, opts, handle);
+  return serve.exit_code(serve.run(0, opts, handle));
 }
 `
 

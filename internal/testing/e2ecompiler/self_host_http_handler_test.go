@@ -21,7 +21,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 
 function main(): i32 {
-    return serve.run(8080, serve.config(), handle);
+    return serve.exit_code(serve.run(8080, serve.config(), handle));
 }
 `
 
@@ -155,13 +155,13 @@ function main(): i32 {
 
 func TestSelfHostHttpHandlerServesX86_64(t *testing.T) {
 	checkSelfHostHttpHandlerServes(t, func(port int) string {
-		return fmt.Sprintf("return serve.run(%d, serve.config(), handle);", port)
+		return fmt.Sprintf("return serve.exit_code(serve.run(%d, serve.config(), handle));", port)
 	})
 }
 
 func TestSelfHostHttpHandlerServesWithOptionsX86_64(t *testing.T) {
 	checkSelfHostHttpHandlerServes(t, func(port int) string {
-		return fmt.Sprintf("let opts: serve.Config = serve.Config { ...serve.config(), backlog: 4, reuse_port: true };\n    return serve.run(%d, opts, handle);", port)
+		return fmt.Sprintf("let opts: serve.Config = serve.Config { ...serve.config(), backlog: 4, reuse_port: true };\n    return serve.exit_code(serve.run(%d, opts, handle));", port)
 	})
 }
 
@@ -181,7 +181,7 @@ func TestSelfHostHttpHandlerServesArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	port := freeTCPPort(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
-	if err := os.WriteFile(src, []byte(httpServeSrc(fmt.Sprintf("return serve.run(%d, serve.config(), handle);", port))), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(httpServeSrc(fmt.Sprintf("return serve.exit_code(serve.run(%d, serve.config(), handle));", port))), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	checkServes(t, runArm64Bin(qemu, cli.arm64Binary(t, src)), port)

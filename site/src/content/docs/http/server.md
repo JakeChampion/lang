@@ -111,8 +111,12 @@ Each has a `_shutdown` variant that takes the shutdown hook as its last
 argument. The generated `main` uses `supervise` natively, `run` on
 `wasm32-wasi`, and nothing on `wasm32-wasi-http`.
 
-All of them return an exit code: `0` after a clean drain, `1` if a
-request had to be cut off, `98` if the port could not be bound. Port `0`
+All of them return `Result[i32, serve.ListenError]`: `Ok` with an exit
+code, `0` after a clean drain or `1` if a request had to be cut off, and
+`Err` when the server's port or its `metrics_port` could not be bound,
+with the port and the `net.NetError`. A `main` that only reports the
+failure returns `serve.exit_code(...)`, which prints it and answers `98`;
+the generated `main` does that. Port `0`
 asks the OS for a free port. When `LISTEN_FDS` is set (systemd socket
 activation, or a zero-downtime restart that hands the listener over),
 the server takes fd 3 instead of binding.

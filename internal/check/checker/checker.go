@@ -16247,7 +16247,7 @@ func synthesiseHandleMain(prog *ast.Program, supervised bool) *ast.FuncDecl {
 	default:
 		serveCall = serveRef(entry("supervise", "run"), portCall, opts, ident("handle"))
 	}
-	stmts = append(stmts, &ast.Return{P: pos, Value: serveCall})
+	stmts = append(stmts, &ast.Return{P: pos, Value: serveRef("exit_code", serveCall)})
 	return &ast.FuncDecl{
 		P:                        pos,
 		Name:                     "main",

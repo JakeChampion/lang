@@ -36,7 +36,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.run(0, serve.config(), handle);
+    return serve.exit_code(serve.run(0, serve.config(), handle));
 }
 `, path)
 }

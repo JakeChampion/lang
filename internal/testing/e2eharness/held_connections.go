@@ -32,7 +32,7 @@ import "std/platform";
 
 function main(): i32 {
     let opts: serve.Config = serve.Config { ...%s, recv_deadline: time.duration_seconds(120 as i64), max_connections_per_ip: 0, max_in_flight: %d };
-    return serve.run(0, opts, handle);
+    return serve.exit_code(serve.run(0, opts, handle));
 }
 `, imports, handler, config, 4*HeldConnectionsBatch)
 }
@@ -251,7 +251,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok(__heap_bump_bytes().to_string());
 }
 function main(): i32 {
-    return serve.run(0, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle);
+    return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle));
 }
 `, 2*BumpPerRequestRounds+1)
 }

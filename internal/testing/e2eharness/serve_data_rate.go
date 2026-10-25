@@ -24,7 +24,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 function main(): i32 {
     let opts: serve.Config = serve.Config { ...serve.config(), response_min_data_rate: 100000, response_data_rate_grace: time.duration_millis(300 as i64) };
-    return serve.run(0, opts, handle);
+    return serve.exit_code(serve.run(0, opts, handle));
 }
 `, DataRateResponseBytes)
 }

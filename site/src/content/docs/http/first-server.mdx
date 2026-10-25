@@ -186,13 +186,15 @@ function hello(req: HttpRequest, plat: platform.Host): HttpResponse {
 
 function main(): i32 {
     let opts: serve.Config = serve.Config { ...serve.config(), workers: 4 };
-    return serve.supervise(3000, opts, hello);
+    return serve.exit_code(serve.supervise(3000, opts, hello));
 }
 ```
 
 `serve.supervise` forks workers under a supervisor; `serve.run` serves
-in the current process. Both return an exit code: `98` when the port
-cannot be bound, `0` after a clean drain. [State and the
-server](../server/) covers the rest of `serve.Config`.
+in the current process. Both return `Ok` with an exit code, `0` after a
+clean drain, or `Err(serve.ListenError)` when the port cannot be bound.
+`serve.exit_code` turns that into `main`'s status, printing the error and
+answering `98` for a bind failure. [State and the server](../server/)
+covers the rest of `serve.Config`.
 
 Next: [Requests and responses →](../requests-responses/)

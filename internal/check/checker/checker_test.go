@@ -4121,18 +4121,41 @@ function platform__host(): platform__Host { return platform__Host { reactor: 0 }
 `
 
 const serveStubDecls = hostStubDecls + `struct serve__Config { backlog: i32 }
+struct serve__ListenError { port: i32 }
+function serve__exit_code(r: Result[i32, serve__ListenError]): i32 { return 0; }
 function serve__config(): serve__Config { return serve__Config { backlog: 128 }; }
 function serve____init_platform(): platform__Host { return platform__host(); }
-function serve__supervise(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse): i32 { return 0; }
-function serve__supervise_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
-function serve__supervise_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse)): i32 { return 0; }
-function serve__supervise_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
-function serve__run(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse): i32 { return 0; }
-function serve__run_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
-function serve__run_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse)): i32 { return 0; }
-function serve__run_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
+function serve__supervise(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse): Result[i32, serve__ListenError] { return Ok(0); }
+function serve__supervise_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse, shutdown: (string) => void): Result[i32, serve__ListenError] { return Ok(0); }
+function serve__supervise_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse)): Result[i32, serve__ListenError] { return Ok(0); }
+function serve__supervise_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse), shutdown: (string, S) => void): Result[i32, serve__ListenError] { return Ok(0); }
+function serve__run(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse): Result[i32, serve__ListenError] { return Ok(0); }
+function serve__run_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse, shutdown: (string) => void): Result[i32, serve__ListenError] { return Ok(0); }
+function serve__run_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse)): Result[i32, serve__ListenError] { return Ok(0); }
+function serve__run_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse), shutdown: (string, S) => void): Result[i32, serve__ListenError] { return Ok(0); }
 function serve____port_from_env(name: string, def: i32): i32 { return def; }
 `
+
+// synthServeCall is the serve entry a synthesised main hands to serve.exit_code.
+func synthServeCall(t *testing.T, main *ast.FuncDecl) *ast.Call {
+	t.Helper()
+	ret, ok := main.Body.Stmts[len(main.Body.Stmts)-1].(*ast.Return)
+	if !ok {
+		t.Fatalf("last stmt = %T, want *ast.Return", main.Body.Stmts[len(main.Body.Stmts)-1])
+	}
+	status, ok := ret.Value.(*ast.Call)
+	if !ok {
+		t.Fatalf("returned expression = %T, want *ast.Call", ret.Value)
+	}
+	if id, ok := status.Callee.(*ast.Ident); !ok || id.Name != "serve__exit_code" || len(status.Args) != 1 {
+		t.Fatalf("synth main returns %v, want serve__exit_code of the serve call", status.Callee)
+	}
+	call, ok := status.Args[0].(*ast.Call)
+	if !ok {
+		t.Fatalf("serve__exit_code's argument = %T, want the serve call", status.Args[0])
+	}
+	return call
+}
 
 func TestSynthesisedHandleMainFollowsTargetProcesses(t *testing.T) {
 	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }`
@@ -4159,7 +4182,7 @@ function shutdown(reason: string): void { print(reason); }`, "arm64-darwin", "se
 			if main == nil || !main.IsSynthesisedHandlerMain {
 				t.Fatal("no synthesised main")
 			}
-			call := main.Body.Stmts[len(main.Body.Stmts)-1].(*ast.Return).Value.(*ast.Call)
+			call := synthServeCall(t, main)
 			if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != tc.entry {
 				t.Fatalf("synth main for %s calls %v, want %s", tc.target, call.Callee, tc.entry)
 			}
@@ -4291,14 +4314,7 @@ function handle(hits: i32, req: HttpRequest, plat: platform__Host): (i32, HttpRe
 		t.Fatalf("synth main has %d stmts, want 1 (the serve return; init is an argument, not a statement)",
 			len(main.Body.Stmts))
 	}
-	ret, ok := main.Body.Stmts[0].(*ast.Return)
-	if !ok {
-		t.Fatalf("stmt = %T, want *ast.Return", main.Body.Stmts[0])
-	}
-	call, ok := ret.Value.(*ast.Call)
-	if !ok {
-		t.Fatalf("returned expression = %T, want *ast.Call", ret.Value)
-	}
+	call := synthServeCall(t, main)
 	id, ok := call.Callee.(*ast.Ident)
 	if !ok || id.Name != "serve__supervise_with" {
 		t.Fatalf("synth main calls %v, want serve__supervise_with", call.Callee)
@@ -4344,7 +4360,7 @@ function shutdown(reason: string, hits: i32): void { print(reason); }`)
 		} else if id, ok := plat.Callee.(*ast.Ident); !ok || id.Name != "serve____init_platform" {
 			t.Fatalf("init's argument calls %v, want serve____init_platform", plat.Callee)
 		}
-		call := main.Body.Stmts[1].(*ast.Return).Value.(*ast.Call)
+		call := synthServeCall(t, main)
 		if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != "serve__supervise_with_shutdown" {
 			t.Fatalf("synth main calls %v, want serve__supervise_with_shutdown", call.Callee)
 		}
@@ -4368,7 +4384,7 @@ function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return `
 		if main == nil || len(main.Body.Stmts) != 1 {
 			t.Fatalf("want a synthesised main of 1 statement, got %v", main)
 		}
-		call := main.Body.Stmts[0].(*ast.Return).Value.(*ast.Call)
+		call := synthServeCall(t, main)
 		if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != "serve__supervise" {
 			t.Fatalf("synth main calls %v, want serve__supervise", call.Callee)
 		}
@@ -4412,7 +4428,7 @@ function handle(c: Config, req: HttpRequest, plat: platform__Host): (Config, Htt
 			t.Fatalf("check: %v", err)
 		}
 		main := findDecl(prog, "main")
-		call := main.Body.Stmts[len(main.Body.Stmts)-1].(*ast.Return).Value.(*ast.Call)
+		call := synthServeCall(t, main)
 		if opts, ok := call.Args[1].(*ast.Call); !ok || opts.Callee.(*ast.Ident).Name != "serve__config" {
 			t.Fatalf("the config argument is %#v, want the serve__config() defaults", call.Args[1])
 		}
@@ -4470,8 +4486,7 @@ function shutdown(reason: string): void { print(reason); }`, "", "`shutdown` tak
 			if main == nil || !main.IsSynthesisedHandlerMain {
 				t.Fatal("no synthesised main")
 			}
-			ret := main.Body.Stmts[len(main.Body.Stmts)-1].(*ast.Return)
-			call := ret.Value.(*ast.Call)
+			call := synthServeCall(t, main)
 			if id, ok := call.Callee.(*ast.Ident); !ok || id.Name != tc.entry {
 				t.Fatalf("synth main calls %v, want %s", call.Callee, tc.entry)
 			}

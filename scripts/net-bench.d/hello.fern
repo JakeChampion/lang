@@ -150,7 +150,7 @@ function main(): i32 {
   }
   match (secured(opts)) {
     Ok(o) => {
-      return serve.supervise(env_int("PORT", 8080), o, handle);
+      return serve.exit_code(serve.supervise(env_int("PORT", 8080), o, handle));
     },
     Err(e) => {
       eprint("hello: " + e);

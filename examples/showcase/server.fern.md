@@ -285,7 +285,7 @@ function main(): i32 {
         Ok(_) => {
           let config: serve.Config = serve.config();
           config = serve.Config { ...config, limits: http.HttpLimits { ...config.limits, body: 16384 }, max_connections: 8192, max_connections_per_ip: 8192, max_in_flight: 16384, background_deadline: time.duration_seconds(0) };
-          return serve.run_shutdown(8080, config, app.handler(), (reason: string): void => eprint("showcase: " + reason));
+          return serve.exit_code(serve.run_shutdown(8080, config, app.handler(), (reason: string): void => eprint("showcase: " + reason)));
         },
         Err(error) => {
           eprint(error.message());

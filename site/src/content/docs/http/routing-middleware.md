@@ -46,7 +46,7 @@ function show_file[P: platform.Platform](req: HttpRequest, params: router.Params
 }
 
 function main(): i32 {
-    return serve.supervise(8080, serve.config(), routes[platform.Host]().handler());
+    return serve.exit_code(serve.supervise(8080, serve.config(), routes[platform.Host]().handler()));
 }
 ```
 
@@ -187,7 +187,7 @@ function whoami(req: HttpRequest, params: router.Params, plat: platform.Host): R
 }
 
 function main(): i32 {
-    return serve.supervise(8080, serve.config(), router.new[platform.Host]().get("/me", whoami).handler());
+    return serve.exit_code(serve.supervise(8080, serve.config(), router.new[platform.Host]().get("/me", whoami).handler()));
 }
 ```
 
@@ -334,7 +334,7 @@ function assets(req: HttpRequest, params: router.Params, plat: platform.Host): R
 }
 
 function main(): i32 {
-    return serve.supervise(8080, serve.config(), router.new[platform.Host]().get("/assets/{file...}", assets).handler());
+    return serve.exit_code(serve.supervise(8080, serve.config(), router.new[platform.Host]().get("/assets/{file...}", assets).handler()));
 }
 ```
 

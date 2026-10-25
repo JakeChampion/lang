@@ -90,7 +90,7 @@ function identity_of(): Result[identity.Identity, string] {
 function main(): i32 {
     match (identity_of()) {
         Ok(id) => {
-            return serve.run(%d, serve.Config { ...serve.config().with_tls(server.config(id, random_bytes(32))), keep_alive_requests: %d }, handle);
+            return serve.exit_code(serve.run(%d, serve.Config { ...serve.config().with_tls(server.config(id, random_bytes(32))), keep_alive_requests: %d }, handle));
         },
         Err(e) => {
             eprint("tls alloc server: " + e);

@@ -18,17 +18,19 @@ func TestSelfHostHandlerStateX86_64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/checker_run.fern")
 	formattedBin := buildSelfHostBin(t, gcc, dir, "drivers/checker_run.fern", "checker_run")
 	const decls = `struct serve__Config { backlog: i32 }
+struct serve__ListenError { port: i32 }
+function serve__exit_code(r: Result[i32, serve__ListenError]): i32 { return 0; }
 struct platform__Host { reactor: i32 }
 function serve__config(): serve__Config { return serve__Config { backlog: 128 }; }
 function serve____init_platform(): platform__Host { return platform__Host { reactor: 0 }; }
-function serve__supervise(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse): i32 { return 0; }
-function serve__supervise_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
-function serve__supervise_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse)): i32 { return 0; }
-function serve__supervise_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
-function serve__run(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse): i32 { return 0; }
-function serve__run_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse, shutdown: (string) => void): i32 { return 0; }
-function serve__run_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse)): i32 { return 0; }
-function serve__run_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse), shutdown: (string, S) => void): i32 { return 0; }
+function serve__supervise(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse): Result[i32, serve__ListenError] { return Ok(0); }
+function serve__supervise_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse, shutdown: (string) => void): Result[i32, serve__ListenError] { return Ok(0); }
+function serve__supervise_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse)): Result[i32, serve__ListenError] { return Ok(0); }
+function serve__supervise_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse), shutdown: (string, S) => void): Result[i32, serve__ListenError] { return Ok(0); }
+function serve__run(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse): Result[i32, serve__ListenError] { return Ok(0); }
+function serve__run_shutdown(port: i32, opts: serve__Config, handler: (HttpRequest, platform__Host) => HttpResponse, shutdown: (string) => void): Result[i32, serve__ListenError] { return Ok(0); }
+function serve__run_with[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse)): Result[i32, serve__ListenError] { return Ok(0); }
+function serve__run_with_shutdown[S](port: i32, opts: serve__Config, init: S, handler: (S, HttpRequest, platform__Host) => (S, HttpResponse), shutdown: (string, S) => void): Result[i32, serve__ListenError] { return Ok(0); }
 function serve____port_from_env(name: string, def: i32): i32 { return def; }
 `
 	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None }`

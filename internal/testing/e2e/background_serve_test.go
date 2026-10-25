@@ -66,7 +66,7 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 }
 
 function main(): i32 {
-  return serve.run(0, serve.Config { ...serve.config(), background_deadline: time.duration_millis(300 as i64) }, handle);
+  return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), background_deadline: time.duration_millis(300 as i64) }, handle));
 }
 `
 
@@ -142,6 +142,6 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
 }
 
 function main(): i32 {
-  return serve.run(0, serve.Config { ...serve.config(), shutdown_grace: time.duration_millis(0 as i64), drain_deadline: time.duration_millis(2000 as i64) }, handle);
+  return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), shutdown_grace: time.duration_millis(0 as i64), drain_deadline: time.duration_millis(2000 as i64) }, handle));
 }
 `
