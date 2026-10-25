@@ -5,9 +5,9 @@
   "concurrency": 1,
   "warmup_processes": 0,
   "flags": "-target x86-64-linux with FERN_LEAKCHECK=1, no quarantine",
-  "compiler": "fern 0a6db7d5686b-dirty\nbuilt for x86-64-linux",
-  "compiler_sha256": "e2133e25d0ca1fc48e17dc8fadb37d8793eb12ab01f1c1d57984ae6487bb7cae",
-  "binary_sha256": "b7cda780bd6814347f8254210a18c2a19548a9943c6cc7515d7b9eb986ccd6f0",
+  "compiler": "fern 154843af7962\nbuilt for x86-64-linux",
+  "compiler_sha256": "a533167fedb8b644d9f3e68c969377585c33d2d181527fe4539c8810596169a1",
+  "binary_sha256": "db59f3fa43ea8a4a068b85fa816fe565f35cc58c3f5aaaee590b66664b019728",
   "collector_sha256": "0ee590ee0a31e9fca121cafb197b9b63e9061bb9f3f79b0f4b695f7434aad97f",
   "sources_sha256": {
     "fern-image/benchmarks/memory_probe.fern": "6dc28874e6aa72861427f0144557644b6eb23a2f3b4fad4effcf5da9cf071cc2",
