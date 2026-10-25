@@ -6877,11 +6877,11 @@ function ssa_helper_call(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): a
 
 // A helper name that the module defines itself is an ordinary call.
 function ssa_is_helper(name: string, s: asmcore.EmitState): boolean {
-  return ircore.is_fern_helper(name) && !s.funcs_ix.has(name);
+  return ircore.is_fern_helper(name) && asmcore.top_level_fn(name, s) < 0;
 }
 
 function ssa_inline_back(s: asmcore.EmitState): boolean {
-  return !s.size && !s.funcs_ix.has("__fern_bytes_append_back");
+  return !s.size && asmcore.top_level_fn("__fern_bytes_append_back", s) < 0;
 }
 
 // A compiled Fern helper takes the arguments of its call in reverse order.

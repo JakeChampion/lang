@@ -184,7 +184,7 @@ function main(): i32 {
 
 // A module may define a function with a byte-copy helper's name. Its calls
 // reach that function with their arguments in order, and its copy loops stay
-// loops.
+// loops. A method with that name does not change the helper call.
 func TestSelfHostByteCopyShadowedHelpers(t *testing.T) {
 	programs := map[string]string{
 		"back": `@noinline function __fern_bytes_append_back(own a: i32[], dist: i32, n: i32): i32[] {
@@ -239,6 +239,23 @@ function main(): i32 {
   let src: u8[] = [9, 8, 7];
   u = put(u, 1, src, 0, 2);
   if (u[1] != 9u8 || u[2] != 8u8 || u[3] != 4u8) { return 2; }
+  return 0;
+}`,
+		"method": `struct Box { v: i32 }
+@noinline function (b: Box) __fern_bytes_append_back(dist: i32, n: i32): i32 {
+  return b.v * 100 + dist * 10 + n;
+}
+@noinline function grow(own u: u8[], n: i32, d: i32): u8[] {
+  let i = 0;
+  while (i < n) { u = u.append(u[u.len() - d]); i = i + 1; }
+  return u;
+}
+function main(): i32 {
+  let b = Box { v: 3 };
+  if (b.__fern_bytes_append_back(2, 1) != 321) { return 1; }
+  let u: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  u = grow(u, 20, 8);
+  if (u.len() != 29 || u[28] != u[20] || u[9] != 2) { return 2; }
   return 0;
 }`,
 	}
