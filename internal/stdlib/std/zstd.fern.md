@@ -86,7 +86,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<28 struct __Seqb>>
 
-<<29 function __block_seqs(input: [u8], toks: i64[], t: i32, at: i32, end: i32): __Seqb>>
+<<29 function __block_seqs(input: [u8], m: __Matches, t: i32, at: i32, end: i32): __Seqb>>
 
 <<30 function __huf_head(n: i32, body: u8[]): Option[u8[]]>>
 
@@ -1354,14 +1354,14 @@ function __resolve(ofv: i32, ll: i32, reps: i32[]): (i32, i32[]) {
 <<26 pub function compress(input: [u8]): u8[]>>=
 pub function compress(input: [u8]): u8[] {
   let window: i32 = __window_for(input.len());
-  let toks: i64[] = __ztokens(input, window);
+  let m: __Matches = __ztokens(input, window);
   let out: u8[] = __frame_head(input.len(), window);
   let reps: i32[] = [1, 4, 8];
   let at: i32 = 0;
   let t: i32 = 0;
   while (at < input.len() || at == 0) {
     let end: i32 = cmp.min(at + 131072, input.len());
-    let b: __Seqb = __block_seqs(input, toks, t, at, end);
+    let b: __Seqb = __block_seqs(input, m, t, at, end);
     let seqs: (u8[], i32[]) = __seq_section(b, reps);
     let body: u8[] = __appended(__lits_section(b.lits), seqs.0, 0, seqs.0.len());
     let kind: i32 = __kind(input, at, end, body);
@@ -1421,100 +1421,117 @@ function __frame_head(n: i32, window: i32): u8[] {
   return __put_le(out, size, [1, 2, 4][flag]);
 }
 
-function __ztokens(input: [u8], window: i32): i64[] {
+function __ztokens(input: [u8], window: i32): __Matches {
   let n: i32 = input.len();
   let head: i32[] = __filled_neg(65536);
   let prev: i32[] = __filled_neg(window);
+  let starts: i32[] = [];
   let out: i64[] = [];
   let held: (i32, i32) = (0 - 1, 0);
   let skip: i32 = 0;
   let rep: i32 = 1;
   let pos: i32 = 0;
   while (pos < n) {
-    let cur: (i32, i32) = __zmatch_at(input, pos, skip, head, prev, window, rep);
-    if (pos + 3 < n) {
-      let h: i32 = __hash4(input, pos);
-      prev = prev.with(pos & window - 1, head[h]);
+    let h: i32 = __hash_at(input, pos);
+    let cand: i32 = 0 - 1;
+    if (h >= 0) {
+      cand = head[h];
+      prev = prev.with(pos & window - 1, cand);
       head = head.with(h, pos);
     }
-    if (pos >= skip && held.0 >= 4 && __gain(cur, rep) <= __gain(held, rep) + 4) {
-      out = out.append(held.0 as i64 << 32 | held.1 as i64);
-      skip = pos - 1 + held.0;
-      rep = held.1;
-      held = (0 - 1, 0);
-    } else if (pos >= skip) {
-      if (held.0 >= 0) {
-        out = out.append(0);
+    if (pos >= skip) {
+      let cur: (i32, i32) = __zmatch_at(input, pos, cand, prev, window, rep);
+      if (held.0 >= 4 && __gain(cur.0, cur.1, rep) <= __gain(held.0, held.1, rep) + 4) {
+        starts = starts.append(pos - 1);
+        out = out.append(held.0 as i64 << 32 | held.1 as i64);
+        skip = pos - 1 + held.0;
+        rep = held.1;
+        held = (0 - 1, 0);
+      } else {
+        held = cur;
       }
-      held = cur;
     }
     pos = pos + 1;
   }
   if (held.0 >= 4) {
-    return out.append(held.0 as i64 << 32 | held.1 as i64);
+    return __Matches { at: starts.append(n - 1), tok: out.append(held.0 as i64 << 32 | held.1 as i64) };
   }
-  if (held.0 >= 0) {
-    return out.append(0);
-  }
-  return out;
+  return __Matches { at: starts, tok: out };
 }
 
 function __filled_neg(n: i32): i32[] {
-  let out: i32[] = [];
+  let out: i32[] = __alloc_i32(n);
   let i: i32 = 0;
   while (i < n) {
-    out = out.append(0 - 1);
+    out = out.with(i, 0 - 1);
     i = i + 1;
   }
   return out;
 }
 
-function __hash4(input: [u8], pos: i32): i32 {
-  let v: i64 = __le(input, pos, 4);
-  return (v * 2654435761 >> 16 & 65535) as i32;
+// The hash of the four bytes at `pos`, or -1 when fewer than four are left.
+@inline
+function __hash_at(input: [u8], pos: i32): i32 {
+  if (pos + 3 >= input.len()) {
+    return 0 - 1;
+  }
+  let v: u32 = input[pos] as u32 | input[pos + 1] as u32 << 8 | input[pos + 2] as u32 << 16 | input[pos + 3] as u32 << 24;
+  return (v as i64 * 2654435761 >> 16 & 65535) as i32;
 }
 
-function __zmatch_at(input: [u8], pos: i32, skip: i32, head: i32[], prev: i32[], window: i32, rep: i32): (i32, i32) {
-  if (pos < skip || pos + 3 >= input.len()) {
+// The best match at `pos`: the repeat offset first, then the candidates of
+// the hash chain from `cand`. A match must stay in the block of `pos`.
+function __zmatch_at(input: [u8], pos: i32, cand: i32, prev: i32[], window: i32, rep: i32): (i32, i32) {
+  if (pos + 3 >= input.len()) {
     return (0, 0);
   }
   let limit: i32 = cmp.min(input.len(), (pos / 131072 + 1) * 131072);
-  let best: (i32, i32) = (0, 0);
+  let len: i32 = 0;
   if (rep <= pos) {
-    best = (__match_len(input, pos - rep, pos, limit), rep);
+    len = __mismatch_bytes(input, pos - rep, input, pos, limit - pos);
   }
-  let cand: i32 = head[__hash4(input, pos)];
-  let depth: i32 = 0;
-  while (cand >= 0 && pos - cand < window && depth < 32 && best.0 < 256) {
-    let m: (i32, i32) = (__match_len(input, cand, pos, limit), pos - cand);
-    if (__gain(m, rep) > __gain(best, rep)) {
-      best = m;
-    }
-    cand = prev[cand & window - 1];
-    depth = depth + 1;
-  }
+  let best: (i32, i32) = __chain(input, pos, cand, prev, window, rep, limit, (len, rep));
   if (best.0 < 4) {
     return (0, 0);
   }
   return best;
 }
 
-function __match_len(input: [u8], from: i32, pos: i32, limit: i32): i32 {
-  let len: i32 = 0;
-  while (pos + len < limit && input[from + len] == input[pos + len]) {
-    len = len + 1;
+// A candidate whose byte at the length of the best match differs is not
+// longer. It is also further back, so it cannot have more gain. Thus the walk
+// stops when the best match reaches the end of the block.
+function __chain(input: [u8], pos: i32, cand: i32, prev: i32[], window: i32, rep: i32, limit: i32, best: (i32, i32)): (i32, i32) {
+  let best_len: i32 = best.0;
+  let best_off: i32 = best.1;
+  let best_gain: i32 = __gain(best_len, best_off, rep);
+  let stop: i32 = cmp.max(pos - window, 0 - 1);
+  let mask: i32 = window - 1;
+  let depth: i32 = 32;
+  while (cand > stop && depth > 0 && best_len < 256 && pos + best_len < limit) {
+    if (input[cand + best_len] == input[pos + best_len]) {
+      let len: i32 = __mismatch_bytes(input, cand, input, pos, limit - pos);
+      let gain: i32 = __gain(len, pos - cand, rep);
+      if (gain > best_gain) {
+        best_len = len;
+        best_off = pos - cand;
+        best_gain = gain;
+      }
+    }
+    cand = prev[cand & mask];
+    depth = depth - 1;
   }
-  return len;
+  return (best_len, best_off);
 }
 
-function __gain(m: (i32, i32), rep: i32): i32 {
-  if (m.0 < 4) {
+@inline
+function __gain(len: i32, off: i32, rep: i32): i32 {
+  if (len < 4) {
     return 0;
   }
-  if (m.1 == rep) {
-    return 4 * m.0 - 1;
+  if (off == rep) {
+    return 4 * len - 1;
   }
-  return 4 * m.0 - __highbit(m.1 + 1);
+  return 4 * len - __highbit(off + 1);
 }
 ```
 
@@ -1523,35 +1540,35 @@ function __gain(m: (i32, i32), rep: i32): i32 {
 ```fern
 <<28 struct __Seqb>>=
 struct __Seqb { lits: u8[], ll: i32[], ml: i32[], of: i32[], next: i32 }
+
+// The matches in order: where each starts, and its length and offset as
+// `length << 32 | offset`. The bytes between them are literals.
+struct __Matches { at: i32[], tok: i64[] }
 ```
 
-### `29 function __block_seqs(input: [u8], toks: i64[], t: i32, at: i32, end: i32): __Seqb`
+### `29 function __block_seqs(input: [u8], m: __Matches, t: i32, at: i32, end: i32): __Seqb`
 
 ```fern
-<<29 function __block_seqs(input: [u8], toks: i64[], t: i32, at: i32, end: i32): __Seqb>>=
-function __block_seqs(input: [u8], toks: i64[], t: i32, at: i32, end: i32): __Seqb {
-  let lits: u8[] = [];
+<<29 function __block_seqs(input: [u8], m: __Matches, t: i32, at: i32, end: i32): __Seqb>>=
+// The sequences of the block from `at` to `end`, from match `t` on. No match
+// crosses the end of a block.
+function __block_seqs(input: [u8], m: __Matches, t: i32, at: i32, end: i32): __Seqb {
+  let lits: u8[] = __buffer(end - at);
   let ll: i32[] = [];
   let ml: i32[] = [];
   let of: i32[] = [];
-  let run: i32 = 0;
   let pos: i32 = at;
-  while (pos < end) {
-    let tok: i64 = toks[t];
-    if (tok == 0) {
-      lits = lits.append(input[pos]);
-      run = run + 1;
-      pos = pos + 1;
-    } else {
-      ll = ll.append(run);
-      ml = ml.append((tok >> 32) as i32);
-      of = of.append((tok & 0xFFFFFFFF) as i32);
-      run = 0;
-      pos = pos + (tok >> 32) as i32;
-    }
+  while (t < m.at.len() && m.at[t] < end) {
+    let start: i32 = m.at[t];
+    let tok: i64 = m.tok[t];
+    lits = __copied(lits, input, pos, start);
+    ll = ll.append(start - pos);
+    ml = ml.append((tok >> 32) as i32);
+    of = of.append((tok & 0xFFFFFFFF) as i32);
+    pos = start + (tok >> 32) as i32;
     t = t + 1;
   }
-  return __Seqb { lits: lits, ll: ll, ml: ml, of: of, next: t };
+  return __Seqb { lits: __copied(lits, input, pos, end), ll: ll, ml: ml, of: of, next: t };
 }
 
 function __kind(input: [u8], at: i32, end: i32, body: u8[]): i32 {
@@ -2025,14 +2042,16 @@ function __seq_section(b: __Seqb, reps: i32[]): (u8[], i32[]) {
     return (out, reps);
   }
   let codes: __Codes = __Codes { llb: __ll_base(), llx: __ll_bits(), mlb: __ml_base(), mlx: __ml_bits() };
+  let lt: i32[] = __code_table(codes.llb, 0, 64);
+  let mt: i32[] = __code_table(codes.mlb, 3, 128);
   let lc: i32[] = [];
   let mc: i32[] = [];
   let oc: i32[] = [];
   let ofv: i32[] = [];
   let i: i32 = 0;
   while (i < n) {
-    lc = lc.append(__code_of(codes.llb, b.ll[i]));
-    mc = mc.append(__code_of(codes.mlb, b.ml[i]));
+    lc = lc.append(__ll_code(lt, b.ll[i]));
+    mc = mc.append(__ml_code(mt, b.ml[i]));
     let v: i32 = __rep_value(b.of[i], b.ll[i], reps);
     reps = __resolve(v, b.ll[i], reps).1;
     ofv = ofv.append(v);
@@ -2063,6 +2082,35 @@ function __code_of(bases: i32[], v: i32): i32 {
     c = c - 1;
   }
   return c;
+}
+
+// The code of each value from `low` to `low + n - 1`.
+function __code_table(bases: i32[], low: i32, n: i32): i32[] {
+  let out: i32[] = __alloc_i32(n);
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, __code_of(bases, low + i));
+    i = i + 1;
+  }
+  return out;
+}
+
+// From 64 the literal length codes are powers of two apart, from 128 the
+// match length codes, so the highest set bit gives the code.
+@inline
+function __ll_code(t: i32[], v: i32): i32 {
+  if (v < 64) {
+    return t[v];
+  }
+  return __highbit(v) + 19;
+}
+
+@inline
+function __ml_code(t: i32[], v: i32): i32 {
+  if (v - 3 < 128) {
+    return t[v - 3];
+  }
+  return __highbit(v - 3) + 36;
 }
 
 function __choose(codes: i32[], f: __Field): __Choice {
