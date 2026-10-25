@@ -78,7 +78,7 @@ function test_output_is_valid_utf8_blocks(): test.TestOutcome {
     return test.fail("sparkline is not valid UTF-8");
   }
   let bs: string[] = blocks();
-  for i in 0..utf8.codepoint_count(s) {
+  for i in 0..s.codepoint_count() {
     match (utf8.char_at(s, i)) {
       None => {
         return test.fail("no char at index " + i.to_string());
