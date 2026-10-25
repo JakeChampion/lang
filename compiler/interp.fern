@@ -6088,37 +6088,61 @@ function call_aes_gcm(name: string, args: Value[]): Value {
   return byte_value(aesref.ctr32(bs[0], bs[1], bs[2]));
 }
 
-function call_crc32_cksum_array(args: Value[]): Value {
+function crc32_cksum_byte(crc: i32, b: i32): i32 {
+  crc = crc ^ b << 24;
+  let k: i32 = 0;
+  while (k < 8) {
+    if (crc < 0) {
+      crc = crc << 1 ^ 0x04c11db7;
+    } else {
+      crc = crc << 1;
+    }
+    k = k + 1;
+  }
+  return crc;
+}
+
+function crc32_ieee_byte(crc: i32, b: i32): i32 {
+  let c: u32 = (crc ^ b) as u32;
+  let k: i32 = 0;
+  while (k < 8) {
+    if ((c & 1) != 0) {
+      c = c >> 1 ^ 0xedb88320;
+    } else {
+      c = c >> 1;
+    }
+    k = k + 1;
+  }
+  return c as i32;
+}
+
+function call_crc32_array(name: string, args: Value[]): Value {
   if (args.len() != 2) {
-    return v_err("__crc32_cksum_array: expected 2 args");
+    return v_err(name + ": expected 2 args");
   }
   if (!is_i32_arg(args[0])) {
-    return v_err("__crc32_cksum_array: crc must be an integer");
+    return v_err(name + ": crc must be an integer");
   }
   if let VArr(a) = args[1] {
     let crc: i32 = vint_bits(args[0]);
+    let ieee: boolean = name == "__crc32_ieee_array";
     for element in arr_els(a) {
       if (!is_i32_arg(element)) {
-        return v_err("__crc32_cksum_array: elements must be u8");
+        return v_err(name + ": elements must be u8");
       }
       let b: i32 = vint_bits(element);
       if (b < 0 || b > 255) {
-        return v_err("__crc32_cksum_array: elements must be u8");
+        return v_err(name + ": elements must be u8");
       }
-      crc = crc ^ b << 24;
-      let k: i32 = 0;
-      while (k < 8) {
-        if (crc < 0) {
-          crc = crc << 1 ^ 0x04c11db7;
-        } else {
-          crc = crc << 1;
-        }
-        k = k + 1;
+      if (ieee) {
+        crc = crc32_ieee_byte(crc, b);
+      } else {
+        crc = crc32_cksum_byte(crc, b);
       }
     }
     return v_int(crc);
   }
-  return v_err("__crc32_cksum_array: second arg must be an array");
+  return v_err(name + ": second arg must be an array");
 }
 
 function call_scale_f64(args: Value[]): Value {
@@ -6902,8 +6926,8 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
   if (name == "__sum_bytes_array" || name == "__bsd_sum_bytes") {
     return call_byte_reduction(name, args);
   }
-  if (name == "__crc32_cksum_array") {
-    return call_crc32_cksum_array(args);
+  if (name == "__crc32_cksum_array" || name == "__crc32_ieee_array") {
+    return call_crc32_array(name, args);
   }
   if (name == "__scan_set_bytes" || name == "__count_runs_bytes") {
     return call_byte_set_scan(name, args);
@@ -7157,16 +7181,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
         let crc: i32 = vint_bits(args[0]);
         let ci: i32 = 0;
         while (ci < s.v.len()) {
-          crc = crc ^ s.v[ci] as i32 << 24;
-          let bk: i32 = 0;
-          while (bk < 8) {
-            if (crc < 0) {
-              crc = crc << 1 ^ 0x04c11db7;
-            } else {
-              crc = crc << 1;
-            }
-            bk = bk + 1;
-          }
+          crc = crc32_cksum_byte(crc, s.v[ci] as i32);
           ci = ci + 1;
         }
         return v_int(crc);

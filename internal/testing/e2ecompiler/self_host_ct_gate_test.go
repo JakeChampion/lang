@@ -106,10 +106,13 @@ function main(): i32 {
   let aad: u8[] = filled(17, 4);
   __ct_secret(key);
   __ct_secret(plaintext);
-  match (chacha20poly1305.seal(key, nonce, plaintext, aad)) {
+  let Ok(k) = chacha20poly1305.key(key) else {
+    return 7;
+  };
+  match (k.seal(nonce, plaintext, aad)) {
     Ok(sealed) => {
       __ct_public(sealed);
-      match (chacha20poly1305.open(key, nonce, sealed, aad)) {
+      match (k.open(nonce, sealed, aad)) {
         Ok(opened) => {
           __ct_public(opened);
           __ct_public(plaintext);
@@ -122,7 +125,7 @@ function main(): i32 {
         }
       }
       let forged: u8[] = sealed.with(0, sealed[0] ^ 1 as u8);
-      match (chacha20poly1305.open(key, nonce, forged, aad)) {
+      match (k.open(nonce, forged, aad)) {
         Ok(opened) => {
           return 4;
         },
@@ -171,10 +174,13 @@ function round_trip(klen: i32): i32 {
   let aad: u8[] = filled(17, 4);
   __ct_secret(key);
   __ct_secret(plaintext);
-  match (aes_gcm.seal(key, nonce, plaintext, aad)) {
+  let Ok(k) = aes_gcm.key(key) else {
+    return 7;
+  };
+  match (k.seal(nonce, plaintext, aad)) {
     Ok(sealed) => {
       __ct_public(sealed);
-      match (aes_gcm.open(key, nonce, sealed, aad)) {
+      match (k.open(nonce, sealed, aad)) {
         Ok(opened) => {
           __ct_public(opened);
           __ct_public(plaintext);
@@ -187,7 +193,7 @@ function round_trip(klen: i32): i32 {
         }
       }
       let forged: u8[] = sealed.with(0, sealed[0] ^ 1 as u8);
-      match (aes_gcm.open(key, nonce, forged, aad)) {
+      match (k.open(nonce, forged, aad)) {
         Ok(opened) => {
           return 4;
         },
@@ -421,16 +427,18 @@ function main(): i32 {
   let seed: u8[] = filled(32, 5);
   let msg: u8[] = filled(50, 9);
   __ct_secret(seed);
-  match (ed25519.public_key(seed)) {
-    Ok(public) => {
-      __ct_public(public);
-      match (ed25519.sign(seed, msg)) {
-        Ok(sig) => {
-          __ct_public(sig);
-          if (!ed25519.verify(public, msg, sig)) {
+  match (ed25519.private_key(seed)) {
+    Ok(k) => {
+      let point: u8[] = k.public_point();
+      __ct_public(point);
+      let sig: u8[] = k.sign(msg);
+      __ct_public(sig);
+      match (ed25519.public_key(point)) {
+        Ok(public) => {
+          if (!public.verify(msg, sig)) {
             return 1;
           }
-          if (ed25519.verify(public, msg, sig.with(40, sig[40] ^ 1 as u8))) {
+          if (public.verify(msg, sig.with(40, sig[40] ^ 1 as u8))) {
             return 2;
           }
           return 0;
@@ -468,11 +476,11 @@ function signs(curve: ecdsa.Curve, h: sha2.Hash, size: i32): i32 {
     Ok(k) => {
       let point: u8[] = k.public_point();
       __ct_public(point);
-      match (ecdsa.sign(k, h, msg)) {
+      match (k.sign(h, msg)) {
         Ok(sig) => {
           match (ecdsa.public_key(curve, point)) {
             Ok(public) => {
-              if (!ecdsa.verify(public, h, msg, sig)) {
+              if (!public.verify(h, msg, sig)) {
                 return 1;
               }
               return 0;
@@ -515,9 +523,9 @@ function agreed(ka: ecdsa.PrivateKey, kb: ecdsa.PrivateKey): i32 {
   let pb: u8[] = kb.public_point();
   __ct_public(pa);
   __ct_public(pb);
-  match (ecdsa.ecdh(ka, pb)) {
+  match (ka.ecdh(pb)) {
     Ok(sa) => {
-      match (ecdsa.ecdh(kb, pa)) {
+      match (kb.ecdh(pa)) {
         Ok(sb) => {
           __ct_public(sa);
           __ct_public(sb);
