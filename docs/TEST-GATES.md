@@ -810,16 +810,22 @@ runner gates its own ISA. It proves only what the probes execute: a
 secret-dependent path the inputs do not take is not reported. Every later
 crypto kernel adds its own case.
 
-The AES-GCM kernels (`__aes_expand_key`, `__aes_ctr32`, `__ghash`,
-`__aes_gcm_seal`, `__aes_gcm_open`) are checked on their own against known
-answers on every target by `TestSelfHostAESGCMKernelsX86_64`, `…Arm64`
-(qemu), `…Wasm` and `TestSelfHostInterpAESGCMKernels` (both interpreters).
-The answers are FIPS-197's key schedules and blocks, GCM's test case 2
-GHASH and test case 4 seal, and a counter whose low word wraps. Every
+The AES-GCM kernels (`__aes_expand_key`, `__aes_ctr32`, `__ghash`, and the
+in-place pair `__aes_gcm_seal_into` / `__aes_gcm_open_into`) are checked on
+their own against known answers on every target by
+`TestSelfHostAESGCMKernelsX86_64`, `…Arm64` (qemu), `…Wasm` and
+`TestSelfHostInterpAESGCMKernels` (both interpreters). The answers are
+FIPS-197's key schedules and blocks, GCM's test case 2 GHASH, test cases 4
+and 16 sealed and opened in place, and a counter whose low word wraps. Every
 length to 80 bytes is also covered, which crosses each kernel's unrolled
 stride and partial last block. Seal and open are held to what the separate
-kernels compose to. A wrong kernel on one backend fails that
-backend's leg even when the others agree.
+kernels compose to, under a sequence number folded into the nonce. An open
+must leave its verdict byte 1 for a changed tag, ciphertext or aad byte and
+for the wrong sequence number; a buffer with another holder, or a literal,
+is copied before it is written. `…MisuseX86_64`, `…MisuseArm64`,
+`…MisuseWasm` and the interpreter leg hold each region outside the buffer,
+a short schedule and a wrong-length iv to stopping the program. A wrong
+kernel on one backend fails that backend's leg even when the others agree.
 
 ## Netlify deploys and the standalone smoke script
 
@@ -990,6 +996,7 @@ rather than the IR path.
 | AST traversal exhaustiveness (`internal/syntax/ast/walk_exhaustive_test.go`) | That no pass with a hand-written switch over `ast.Expr` / `ast.Stmt` has fallen behind the unions. `ast.NodeKinds` is the one list of node kinds, checked against the set derived from the ast package's own source (every Node has a `Pos` method), and every kind is driven through `Walk`, the `RewriteProgramExprs` traversal and both cloners — each of which panics on a kind it does not name. It also pins the FIELDS: every Expr-, Stmt- and *Block-typed field must be reached by `Walk` or listed in `walkSkips` with a reason, exact in both directions, and a clone must freshly allocate everything `Walk` reaches. A new node kind fails here rather than being silently ignored by one pass — the shape of #7042, #7149 and the lambda-shadow miscompile | Passes that keep their own switch and do not test against `ast.NodeKinds`: the parser's and the checker's for-in desugars each carry one. Whether a case is CORRECT — it proves the arm exists and descends, never that it does the right thing there |
 | Netlify deploy (`scripts/netlify-build`) | The playground wasm bundle, stdlib reference, and docs site build | Unit tests, conformance, self-host compilation, fixpoints, and differentials. The separate smoke script is not invoked by the deploy |
 | Standalone smoke script (`scripts/netlify-smoke-test`, explicit invocation only) | Only stages marked PASS in its summary: build/vet, unit packages, conformance on interp/x86-64/Wasm, and one self-host driver | ARM64, fixpoints, differentials, and any skipped stage. This is not an automated Netlify gate |
+| Showcase lane (`examples/showcase/tests/ci-browser.sh`, full suite and `ci-full` PRs) | The showcase and the fractal explorer build from the checkout and run in Chromium. Every page passes a WCAG text-contrast audit in the light and the dark theme at three widths, with no horizontal overflow. The theme control keeps its choice. The multiplayer, canvas, audio, labs, and Blockyard suites pass against the live server | Rendering in other browsers. Contrast of text drawn into a canvas, and of text over an image with no background color. Production hosting: the lane serves the bundle from one local process |
 
 **Reach for `scripts/selfhost-emit-hashes` on any mechanical refactor of the
 self-host compiler.** It is the gate that fits the failure mode: whole families

@@ -2,6 +2,7 @@
   position: relative;
 }
 .gather-hud {
+  color-scheme: dark;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1rem;
@@ -18,11 +19,12 @@
   font-variant-numeric: tabular-nums;
 }
 .gather-hud span {
-  font: 500 0.6rem var(--font-mono);
+  font: 500 0.68rem var(--font-mono);
   letter-spacing: 0.12em;
   color: var(--plate-muted);
 }
 .arena-wrap {
+  color-scheme: dark;
   position: relative;
   overflow: hidden;
   border: 1px solid var(--plate-line);

@@ -8,6 +8,9 @@ The kernel uses a procedural flow field. Time determines each orbit, so it needs
 A pointer bends the field. Audio energy changes its radius and speed.
 This model has no integration drift and no frame-rate dependency.
 
+A visitor can edit this kernel on the Swarm page. The Fern compiler, built for the browser, compiles the edit to a new module.
+The page then checks the module's imports and exports and replaces the running kernel. The server receives no source and no module.
+
 ```fern
 <<*>>=
 <<Math and seeds>>

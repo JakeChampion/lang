@@ -1,0 +1,11 @@
+import "./point";
+
+function main(): i32 {
+  for value in [point.Point { x: 23, label: "heap" }] {
+    if (value.x != 23) {
+      return 1;
+    }
+    print(value.label);
+  }
+  return 0;
+}

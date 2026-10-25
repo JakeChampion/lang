@@ -150,6 +150,8 @@ char_cast_receiver                                   0
 char_eq_ord_hash                                     0
 char_ordering                                        0
 checked_int_conversion                               0
+closing_a_socket_two_reactors_watch                  0
+closing_a_watched_socket                             0
 closure_adder                                        0
 closure_capture_rebind_enum_variant                  0
 closure_capture_shared_cell                          0
@@ -336,6 +338,7 @@ generic_view_methods                                 0
 grow_past_capacity                                   0
 hash_struct_enum                                     0
 headers_map                                          0
+header_struct_literals                               0
 hello_world                                          0
 hex_literal                                          0
 hex_literal_width                                    0

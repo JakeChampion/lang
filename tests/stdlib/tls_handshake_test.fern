@@ -1231,7 +1231,7 @@ function test_quic_refusals(): test.TestOutcome {
   let tp: message.Extension = transport_parameters([7 as u8]);
   match (quic_between(quic_client(["h3"], [tp]), quic_server(["h3"], [tp]))) {
     Ok(p) => {
-      let got: string = refused_step(p.client.read([1 as u8])) + "|" + refused_step(p.client.write("x".bytes())) + "|" + refused_step(p.client.read_crypto(0, [1 as u8])) + "|" + refused_server(p.server.read_crypto(1, [1 as u8]));
+      let got: string = refused_step(p.client.read([1 as u8])) + "|" + refused_step(p.client.write("x".bytes())) + "|" + refused_step(p.client.read_crypto(0, [1 as u8])) + "|" + refused_server(p.server.read_crypto(1, [1 as u8])) + "|" + refused_server(p.server.write_framed([1 as u8, 2 as u8]));
       match (p.client.save()) {
         Ok(_) => {
           got = got + "|saved";
@@ -1248,7 +1248,7 @@ function test_quic_refusals(): test.TestOutcome {
           got = got + "|" + e.message();
         }
       }
-      if (got != "tls handshake: read under QUIC called out of turn|tls handshake: application data under QUIC called out of turn|10 tls handshake: handshake bytes at encryption level 0 out of turn|10 tls handshake: handshake bytes at encryption level 1 out of turn|tls handshake: save under QUIC called out of turn|closed 0 0") {
+      if (got != "tls handshake: read under QUIC called out of turn|tls handshake: application data under QUIC called out of turn|10 tls handshake: handshake bytes at encryption level 0 out of turn|10 tls handshake: handshake bytes at encryption level 1 out of turn|10 tls record: a handshake or alert record with no content|tls handshake: save under QUIC called out of turn|closed 0 0") {
         return test.fail(got);
       }
     },
