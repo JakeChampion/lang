@@ -122,6 +122,9 @@ func emitAllWholeCompiler(t *testing.T, runner []string, compilerBin, entry, dir
 				case 137:
 					hint = " — SIGKILLed (exit 137): the HOST ran out of RAM, not the arena; lower the concurrency or the budget knobs"
 				}
+				if len(ee.Stderr) > 0 {
+					hint += "\n" + string(ee.Stderr)
+				}
 			}
 			t.Fatalf("[%s] emit-all batch [%d:%d]: %v%s", label, batch.lo, batch.hi, batch.err, hint)
 		}
