@@ -18,6 +18,7 @@ import "../ircore";
 import "../constfold";
 import "../platforms";
 import "../semlower";
+import "../rtmodule";
 
 function verify_provided_module(merged: parser.Module, target: string): i32 {
   let d: semlower.Driven = semlower.driven(merged, target);
@@ -72,7 +73,7 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
 
 function provided_audit(): i32 {
   let names: string[] = irverifyprovided.provided_names();
-  let task_runtime: parser.Module = parser.parse_module(lexer.tokenize(asmcore.rt_src_task("x86-64-linux")));
+  let task_runtime: parser.Module = rtmodule.load("x86-64-linux", "__fern_task_new __fern_task_enter __fern_task_leave __fern_task_cur __fern_task_free __fern_task_park __fern_task_wait __fern_task_timeout __fern_task_set_ready __fern_task_set_cancelled __fern_task_cancelled");
   let task_names: string[] = [];
   for fd in task_runtime.funcs {
     task_names = task_names.append(fd.name);
@@ -106,7 +107,7 @@ struct View {
   all_funcs: parser.FuncDecl[],
   stab: irtables.StructTab,
   contracts: string[],
-  rt: (string) => physicalbody.Lowered,
+  rt: (parser.Module) => physicalbody.Lowered,
   refused: util.Diag[],
 }
 

@@ -1,0 +1,3 @@
+function __fern_set_extproc(fd: i32, on: boolean): Result[void, IoError] {
+  return Err(__fern_io_error(25, ""));
+}

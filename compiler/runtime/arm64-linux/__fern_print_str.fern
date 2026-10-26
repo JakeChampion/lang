@@ -1,0 +1,3 @@
+function __fern_print_str(s: string): i32 {
+  return __syscall3(64, 1, __raw_data(s) as i64, s.len() as i64) as i32;
+}

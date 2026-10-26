@@ -1,0 +1,9 @@
+function __fern_eprint_str(s: string): i32 {
+  let iov: usize = __raw_scratch(33);
+  __raw_store8(iov, 32, 10);
+  __raw_store_ptr(iov, 0, __raw_data(s));
+  __raw_store_ptr(iov, 1, s.len() as usize);
+  __raw_store_ptr(iov, 2, iov + 32);
+  __raw_store_ptr(iov, 3, 1 as usize);
+  return __syscall3(121, 2, iov as i64, 2) as i32;
+}

@@ -1,0 +1,15 @@
+function __fern_getcwd(): Result[string, IoError] {
+  let buf: usize = __raw_alloc(4096);
+  let rc: i32 = __syscall3(17, buf as i64, 4096, 0) as i32;
+  let buf_own: string = __raw_string(buf, 4096);
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  if (buf_own[0] != 47) {
+    return Err(__fern_io_error(2, ""));
+  }
+  if (__fern_utf8_valid(buf, rc - 1) == 0) {
+    return Err(InvalidUtf8(""));
+  }
+  return Ok(__fern_path_copy(buf_own, rc - 1));
+}

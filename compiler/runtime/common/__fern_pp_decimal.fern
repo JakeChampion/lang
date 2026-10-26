@@ -1,0 +1,13 @@
+function __fern_pp_decimal(buf: usize, at: usize, n: usize): usize {
+  let k: usize = at + 31;
+  let end: usize = k + 1;
+  while (true) {
+    __raw_store8(buf + k, 0, (n % 10 + 48) as i32);
+    n = n / 10;
+    if (n == 0) {
+      break;
+    }
+    k = k - 1;
+  }
+  return __fern_pp_copy(buf, at, buf + k, end - k);
+}

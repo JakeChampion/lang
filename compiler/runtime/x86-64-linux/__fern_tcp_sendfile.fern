@@ -1,0 +1,6 @@
+function __fern_tcp_sendfile(fd: i32, file: i32, max: i32): i32 {
+  if (max <= 0) {
+    return 0;
+  }
+  return __syscall4(40, fd as i64, file as i64, 0, max as i64) as i32;
+}

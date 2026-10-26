@@ -1,0 +1,18 @@
+function __fern_pp_tables(base: usize, out: usize, buf: usize): void {
+  let count: usize = __load_i64(base) as usize;
+  let name: usize = 9;
+  let i: usize = 0;
+  while (i < count) {
+    let row: usize = base + 160 + i * 528;
+    let depth: usize = __load_i64(row) as usize;
+    let k: usize = 0;
+    while (k < depth) {
+      let id: usize = i * 64 + k + 1;
+      __fern_pp_location(out, buf, id, __load_i64(row + 16 + k * 8) as usize);
+      __fern_pp_function(out, buf, id, name);
+      k = k + 1;
+      name = name + 1;
+    }
+    i = i + 1;
+  }
+}

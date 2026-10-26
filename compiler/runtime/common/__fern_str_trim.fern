@@ -1,0 +1,32 @@
+function __fern_str_trim(s: string): string {
+  let n: i32 = s.len();
+  let start: i32 = 0;
+  let go: i32 = 1;
+  while (go == 1) {
+    if (start >= n) {
+      go = 0;
+    } else {
+      let c: i32 = s[start] as i32;
+      if (c == 32 || c >= 9 && c <= 13) {
+        start = start + 1;
+      } else {
+        go = 0;
+      }
+    }
+  }
+  let end: i32 = n;
+  let go2: i32 = 1;
+  while (go2 == 1) {
+    if (end <= start) {
+      go2 = 0;
+    } else {
+      let c2: i32 = s[end - 1] as i32;
+      if (c2 == 32 || c2 >= 9 && c2 <= 13) {
+        end = end - 1;
+      } else {
+        go2 = 0;
+      }
+    }
+  }
+  return slice_unchecked(s, start, end) + "";
+}

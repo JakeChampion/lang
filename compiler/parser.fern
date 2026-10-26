@@ -192,7 +192,7 @@ function concat_enums(a: EnumDecl[], b: EnumDecl[]): EnumDecl[] {
   return out;
 }
 
-function e_number(text: string, suffix: string, is_float: boolean): ast.Expr {
+pub function e_number(text: string, suffix: string, is_float: boolean): ast.Expr {
   return ast.ExprNumber { text: text, suffix: suffix, raw: "", is_float: is_float, bits: literal_bits(text, is_float), line: 0, col: 0 };
 }
 
@@ -253,7 +253,7 @@ pub function is_unit_expr(e: ast.Expr): boolean {
   return false;
 }
 
-function e_ident(name: string): ast.Expr {
+pub function e_ident(name: string): ast.Expr {
   return ast.ExprIdent { name: name, line: 0, col: 0, ty: "", builtin: false };
 }
 
@@ -284,7 +284,7 @@ function e_bool_at(value: boolean, line: i32, col: i32): ast.Expr {
   return ast.ExprBool { value: value, line: line, col: col };
 }
 
-function e_binary(op: string, left: ast.Expr, right: ast.Expr): ast.Expr {
+pub function e_binary(op: string, left: ast.Expr, right: ast.Expr): ast.Expr {
   return ast.ExprBinary { op: op, left: left, right: right, line: 0, col: 0, ty: "" };
 }
 
@@ -292,7 +292,7 @@ function e_binary_at(op: string, left: ast.Expr, right: ast.Expr, line: i32, col
   return ast.ExprBinary { op: op, left: left, right: right, line: line, col: col, ty: "" };
 }
 
-function e_unary(op: string, operand: ast.Expr): ast.Expr {
+pub function e_unary(op: string, operand: ast.Expr): ast.Expr {
   return ast.ExprUnary { op: op, operand: operand, line: 0, col: 0, ty: "" };
 }
 
@@ -300,7 +300,7 @@ function e_unary_at(op: string, operand: ast.Expr, line: i32, col: i32): ast.Exp
   return ast.ExprUnary { op: op, operand: operand, line: line, col: col, ty: "" };
 }
 
-function e_call(callee: ast.Expr, args: ast.Expr[]): ast.Expr {
+pub function e_call(callee: ast.Expr, args: ast.Expr[]): ast.Expr {
   return ast.ExprCall { callee: callee, args: args, line: 0, col: 0, type_args: [], ty: "" };
 }
 
@@ -320,7 +320,7 @@ function e_tuple_at(elements: ast.Expr[], line: i32, col: i32): ast.Expr {
   return ast.ExprTuple { elements: elements, line: line, col: col };
 }
 
-function e_index(array: ast.Expr, index: ast.Expr, line: i32, col: i32): ast.Expr {
+pub function e_index(array: ast.Expr, index: ast.Expr, line: i32, col: i32): ast.Expr {
   return ast.ExprIndex { array: array, index: index, unchecked: false, ty: "", line: line, col: col };
 }
 
@@ -348,7 +348,7 @@ function e_struct_update(type_name: string, field_names: string[], field_lines: 
   return ast.ExprStructLit { type_name: type_name, field_names: field_names, field_lines: field_lines, field_cols: field_cols, field_values: field_values, has_base: true, base: base, line: line, col: col, written: "" };
 }
 
-function e_field_access(obj: ast.Expr, field: string): ast.Expr {
+pub function e_field_access(obj: ast.Expr, field: string): ast.Expr {
   return ast.ExprFieldAccess { obj: obj, field: field, line: 0, col: 0, ty: "", const_read: false };
 }
 
@@ -380,7 +380,7 @@ pub function e_unknown_at(kind: string, line: i32, col: i32): ast.Expr {
   return ast.ExprUnknown { kind: kind, line: line, col: col };
 }
 
-function s_var(name: string, type_name: string, init: ast.Expr): ast.Stmt {
+pub function s_var(name: string, type_name: string, init: ast.Expr): ast.Stmt {
   return ast.StmtVar { name: name, type_name: type_name, init: init, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
 }
 
@@ -495,7 +495,7 @@ function parse_struct_destructure(p: Par, struct_name: string, at: string, line:
   return (s_var_at(bindings, destr_marker(at, fields_rest, "@sd:" + struct_name + ":" + fields), init_expr, line, col), p);
 }
 
-function s_return(value: ast.Expr): ast.Stmt {
+pub function s_return(value: ast.Expr): ast.Stmt {
   return ast.StmtReturn { value: value, line: 0, col: 0 };
 }
 
@@ -507,7 +507,7 @@ function s_expr(value: ast.Expr): ast.Stmt {
   return ast.StmtExpr { value: value, line: 0 };
 }
 
-function s_if(cond: ast.Expr, then_body: ast.Stmt[], else_body: ast.Stmt[]): ast.Stmt {
+pub function s_if(cond: ast.Expr, then_body: ast.Stmt[], else_body: ast.Stmt[]): ast.Stmt {
   return s_if_chained(cond, then_body, else_body, false);
 }
 
@@ -571,7 +571,7 @@ function s_block(body: ast.Stmt[]): ast.Stmt {
   return s_if_tagged(body, "block");
 }
 
-function s_while(cond: ast.Expr, body: ast.Stmt[]): ast.Stmt {
+pub function s_while(cond: ast.Expr, body: ast.Stmt[]): ast.Stmt {
   return ast.StmtWhile { cond: cond, body: body, label: "", line: 0, is_loop: false };
 }
 
@@ -623,7 +623,7 @@ function s_break(): ast.Stmt {
   return ast.StmtBreak { tag: 0, line: 0, col: 0, label: "" };
 }
 
-function s_assign(target: string, value: ast.Expr): ast.Stmt {
+pub function s_assign(target: string, value: ast.Expr): ast.Stmt {
   return ast.StmtAssign { target: target, value: value, line: 0, col: 0, target_line: 0, target_col: 0 };
 }
 

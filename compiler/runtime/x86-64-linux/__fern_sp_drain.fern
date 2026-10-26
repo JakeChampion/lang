@@ -1,0 +1,18 @@
+function __fern_sp_drain(fd: i32, buf: usize): i32 {
+  let got: i32 = 0;
+  let done: i32 = 0;
+  while (done == 0) {
+    if (got >= 65536) {
+      done = 1;
+    } else {
+      let n: i32 = __syscall3(0, fd as i64, (buf + got) as i64, (65536 - got) as i64) as i32;
+      if (n <= 0) {
+        done = 1;
+      } else {
+        got = got + n;
+      }
+    }
+  }
+  __syscall3(3, fd as i64, 0, 0);
+  return got;
+}

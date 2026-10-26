@@ -1,0 +1,36 @@
+function __fern_mounts(): Result[MountEntry[], IoError] {
+  let n: i32 = __syscall3(347, 0, 0, 2) as i32;
+  if (n < 0) {
+    return Err(__fern_io_error(0 - n, ""));
+  }
+  let size: i32 = (n + 8) * 2168;
+  let buf: usize = __raw_alloc(size);
+  let m: i32 = __syscall3(347, buf as i64, size as i64, 2) as i32;
+  let st: usize = __raw_alloc(160);
+  let out: MountEntry[] = [];
+  let k: i32 = 0;
+  while (k < m) {
+    let base: i32 = k * 2168;
+    let dev: i64 = (0 - 1) as i64;
+    let sr: i32 = __syscall4(470, -2, (buf + base + 88) as i64, st as i64, 0) as i32;
+    if (sr >= 0) {
+      dev = __load_i32(st + 0) as i64;
+    }
+    out = out.append(MountEntry { source: __fern_mount_cstr(buf, base + 1112, 1024), target: __fern_mount_cstr(buf, base + 88, 1024), fstype: __fern_mount_cstr(buf, base + 72, 16), dev: dev });
+    k = k + 1;
+  }
+  let st_own: string = __raw_string(st, 160);
+  let buf_own: string = __raw_string(buf, size);
+  if (m < 0) {
+    return Err(__fern_io_error(0 - m, ""));
+  }
+  let vi: i32 = 0;
+  while (vi < out.len()) {
+    let m: MountEntry = out[vi];
+    if (__fern_utf8_valid(__raw_data(m.source), m.source.len()) == 0 || __fern_utf8_valid(__raw_data(m.target), m.target.len()) == 0 || __fern_utf8_valid(__raw_data(m.fstype), m.fstype.len()) == 0) {
+      return Err(InvalidUtf8(""));
+    }
+    vi = vi + 1;
+  }
+  return Ok(out);
+}

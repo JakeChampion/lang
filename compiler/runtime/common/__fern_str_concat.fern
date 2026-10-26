@@ -1,0 +1,8 @@
+function __fern_str_concat(a: string, b: string): string {
+  let la: i32 = a.len();
+  let lb: i32 = b.len();
+  let p: usize = __raw_alloc(la + lb);
+  __memcpy(p, __raw_data(a), la);
+  __memcpy(p + la, __raw_data(b), lb);
+  return __raw_string(p, la + lb);
+}
