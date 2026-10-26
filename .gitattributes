@@ -36,3 +36,4 @@
 # and the duplicate-key test is what catches getting it wrong.
 internal/testing/e2e/testdata/conformance-leak-census.txt merge=union
 compiler/rtbundle.fern linguist-generated=true
+compiler/rttemplates.fern linguist-generated=true

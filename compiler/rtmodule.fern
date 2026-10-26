@@ -5,12 +5,13 @@ import "./lexer";
 import "./parser";
 import "./rtbundle";
 import "./rtprofile";
+import "./rttemplates";
 import "./treeshake";
 import "./util";
 import "std/string";
 
 pub function paths(): string[] {
-  return rtbundle.paths();
+  return util.append_all(rtbundle.paths(), rttemplates.paths());
 }
 
 pub function names(target: string): string[] {
@@ -41,12 +42,22 @@ pub function load_with(target: string, roots: string, mode: i32, path: string, r
 }
 
 pub function load_bound(target: string, roots: string, keys: string[], values: ast.Expr[]): parser.Module {
-  let index = util.name_index(rtbundle.names());
-  let indices = rtbundle.indices(target);
-  let contents = rtbundle.contents();
-  let files = rtbundle.paths();
+  let files = Files { index: util.name_index(rtbundle.names()), indices: rtbundle.indices(target), contents: rtbundle.contents(), paths: rtbundle.paths(), offset: 0, target: target };
+  return load_files(files, roots, keys, values);
+}
+
+pub function template(roots: string, keys: string[], values: ast.Expr[]): parser.Module {
+  let files = Files { index: util.name_index(rttemplates.names()), indices: rttemplates.indices("compiler"), contents: rttemplates.contents(), paths: rttemplates.paths(), offset: rtbundle.paths().len(), target: "compiler" };
+  return load_files(files, roots, keys, values);
+}
+
+struct Files { index: util.NameIndex, indices: i32[], contents: string[], paths: string[], offset: i32, target: string }
+
+function load_files(files: Files, roots: string, keys: string[], values: ast.Expr[]): parser.Module {
+  let index = files.index;
+  let indices = files.indices;
   if (indices.len() == 0) {
-    eprint("internal error: no runtime module for " + target);
+    eprint("internal error: no runtime module for " + files.target);
     exit(3);
   }
   let pending: string[] = [];
@@ -54,7 +65,7 @@ pub function load_bound(target: string, roots: string, keys: string[], values: a
     if (root.len() > 0) {
       let at = index.find(root);
       if (at < 0 || indices[at] < 0) {
-        eprint("internal error: no runtime declaration " + root + " for " + target);
+        eprint("internal error: no runtime declaration " + root + " for " + files.target);
         exit(3);
       }
       pending = pending.append(root);
@@ -76,10 +87,10 @@ pub function load_bound(target: string, roots: string, keys: string[], values: a
       continue;
     }
     let file = indices[at];
-    let tokens = lexer.tokenize_from(contents[file], util.line_base(file) + 1);
+    let tokens = lexer.tokenize_from(files.contents[file], util.line_base(files.offset + file) + 1);
     let parsed = parser.parse_module(tokens);
     if (!declared(parsed, name)) {
-      eprint(files[file] + ": error: the runtime file does not declare " + name);
+      eprint(files.paths[file] + ": error: the runtime file does not declare " + name);
       exit(3);
     }
     mod = parser.Module { ...parser.merge_module(mod, parsed), imports: util.append_all(mod.imports, parsed.imports) };

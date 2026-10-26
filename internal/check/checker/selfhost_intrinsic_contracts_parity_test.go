@@ -269,19 +269,31 @@ func selfHostTypedBuiltins(t *testing.T, section string, members bool) map[strin
 }
 
 func TestSelfHostRawFloorIsTypedWhole(t *testing.T) {
+	compilerDir := filepath.Join("..", "..", "..", "compiler")
 	read := func(name string) string {
-		b, err := os.ReadFile(filepath.Join("..", "..", "..", "compiler", name))
+		b, err := os.ReadFile(filepath.Join(compilerDir, name))
 		if err != nil {
 			t.Fatalf("read %s: %v", name, err)
 		}
 		return string(b)
 	}
 	called := map[string]bool{}
-	for _, m := range regexp.MustCompile(`\b(__raw_[a-z0-9_]+|__syscall[0-9])\(`).FindAllStringSubmatch(read("asmcore.fern"), -1) {
-		called[m[1]] = true
+	sources, err := filepath.Glob(filepath.Join(compilerDir, "runtime", "*", "*.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := regexp.MustCompile(`\b(__raw_[a-z0-9_]+|__syscall[0-9])\(`)
+	for _, source := range sources {
+		body, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range call.FindAllStringSubmatch(string(body), -1) {
+			called[m[1]] = true
+		}
 	}
 	if len(called) == 0 {
-		t.Fatal("asmcore.fern's helper sources call no raw-floor name — the pattern has drifted from its spelling")
+		t.Fatal("runtime helper files call no raw-floor name; check the source paths and call pattern")
 	}
 	typed := rawFloorTableNames(t, read("checker.fern"), `function raw_floor_sigs\(\): RawFloorSig\[\] \{`)
 	arms := rawFloorTableNames(t, read("ssarc.fern"), `function raw_floor_ops\(\): RawOps\[\] \{`)
