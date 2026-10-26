@@ -97,7 +97,7 @@ function member_records(row: ssaprepare.Emitted, e: semrecords.Enum): void {
   check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.Records { ...m.records, names: no_records.names } }), true);
   for name in ["Reader", "__env$first"] {
     let t: typeinfo.Type = typeinfo.TypeStruct { name: name, args: [] };
-    let record = semrecords.Record { ty: t, fields: v.fields, views: false, nests_func: false };
+    let record = semrecords.Record { ty: t, fields: v.fields, views: false, nests_func: false, declared: [] };
     let bad = semrecords.Enum { ...e, variants: [semrecords.Variant { ...v, name: name }] };
     check(metadata(row, physicalbody.Metadata { ...m, enums: [bad], records: semrecords.records_of([record]) }), false);
   }

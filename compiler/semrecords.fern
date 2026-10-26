@@ -4,7 +4,8 @@ import "./util";
 
 pub struct Field { name: string, ty: typeinfo.Type }
 
-pub struct Record { ty: typeinfo.Type, fields: Field[], views: boolean, nests_func: boolean }
+// declared is the fields as written when fields holds some of them in parts, and empty otherwise.
+pub struct Record { ty: typeinfo.Type, fields: Field[], views: boolean, nests_func: boolean, declared: Field[] }
 
 pub struct Records { list: Record[], names: util.NameIndex }
 
