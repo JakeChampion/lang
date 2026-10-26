@@ -1,0 +1,306 @@
+import "./header";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum EntropyError {
+  EntropyHeader(header.JpegError),
+  EntropyTruncated,
+  EntropyMarker,
+  EntropyHuffman,
+  EntropyCoefficient,
+  EntropyRestart,
+  EntropyPadding,
+  EntropyTrailing,
+  EntropyLimit,
+  EntropyCancelled,
+}
+
+pub enum BlockError[E] { BlockDecode(EntropyError), BlockConsumer(E) }
+
+pub struct BlockLimits { headers: header.HeaderLimits, max_mcus: i32, max_blocks: i32 }
+
+pub struct BlockPlan { mcu_columns: i32, mcu_rows: i32, mcus: i32, decoded_blocks: i32, output_blocks: i32 }
+
+// Values use natural 8x8 order and remain quantized.
+pub struct CoefficientBlock { component: i32, x: i32, y: i32, values: i32[] }
+
+pub struct BlockFold[S] { value: S, header: header.JpegHeader, plan: BlockPlan, consumed: i32 }
+
+struct BitCursor { at: i32, byte: i32, remaining: i32 }
+
+struct ScanPart { component: i32, id: i32, horizontal: i32, vertical: i32, columns: i32, rows: i32, dc: header.HuffmanTable, ac: header.HuffmanTable }
+
+struct Prepared { plan: BlockPlan, parts: ScanPart[] }
+
+struct Decoded { values: i32[], dc: i32 }
+
+const ZIGZAG: i32[] = [
+  0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5,
+  12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28,
+  35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
+  58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
+];
+
+pub function default_limits(): BlockLimits {
+  return BlockLimits { headers: header.default_limits(), max_mcus: 1048576, max_blocks: 1048576 };
+}
+
+function prepared(h: header.JpegHeader, limits: BlockLimits): Result[Prepared, EntropyError] {
+  let max_h = 1;
+  let max_v = 1;
+  for c in h.components {
+    if (c.horizontal > max_h) {
+      max_h = c.horizontal;
+    }
+    if (c.vertical > max_v) {
+      max_v = c.vertical;
+    }
+  }
+  let single = h.components.len() == 1;
+  if (single) {
+    max_h = 1;
+    max_v = 1;
+  }
+  let columns = (h.output_layout.width + 8 * max_h - 1) / (8 * max_h);
+  let rows = (h.output_layout.height + 8 * max_v - 1) / (8 * max_v);
+  let mcus = columns as i64 * (rows as i64);
+  let per_mcu = 0;
+  let output = 0i64;
+  let parts: ScanPart[] = [];
+  for s in h.scan {
+    let at = 0;
+    while (at < h.components.len() && h.components[at].id != s.id) {
+      at = at + 1;
+    }
+    if (at == h.components.len()) {
+      return Err(EntropyMarker);
+    }
+    let c = h.components[at];
+    let horizontal = if (single) { 1 } else { c.horizontal };
+    let vertical = if (single) { 1 } else { c.vertical };
+    let block_columns = (h.output_layout.width * horizontal + 8 * max_h - 1) / (8 * max_h);
+    let block_rows = (h.output_layout.height * vertical + 8 * max_v - 1) / (8 * max_v);
+    let dc = match (h.huffman[s.dc_table]) { Some(t) => t, None => { return Err(EntropyHuffman); } };
+    let ac = match (h.huffman[2 + s.ac_table]) { Some(t) => t, None => { return Err(EntropyHuffman); } };
+    per_mcu = per_mcu + horizontal * vertical;
+    output = output + block_columns as i64 * (block_rows as i64);
+    parts = parts.append(ScanPart { component: at, id: c.id, horizontal: horizontal, vertical: vertical, columns: block_columns, rows: block_rows, dc: dc, ac: ac });
+  }
+  let blocks = mcus * (per_mcu as i64);
+  if (mcus > limits.max_mcus as i64 || blocks > limits.max_blocks as i64 || output > blocks) {
+    return Err(EntropyLimit);
+  }
+  return Ok(Prepared { parts: parts, plan: BlockPlan { mcu_columns: columns, mcu_rows: rows, mcus: mcus as i32, decoded_blocks: blocks as i32, output_blocks: output as i32 } });
+}
+
+function bit(input: [u8], cursor: Cell[BitCursor], cancelled: () => boolean): Result[i32, EntropyError] {
+  let c = cursor.get();
+  if (c.remaining == 0) {
+    if (cancelled()) {
+      return Err(EntropyCancelled);
+    }
+    if (c.at >= input.len()) {
+      return Err(EntropyTruncated);
+    }
+    let value = input[c.at] as i32;
+    let at = c.at + 1;
+    if (value == 255) {
+      if (at >= input.len()) {
+        return Err(EntropyTruncated);
+      }
+      if (input[at] != 0 as u8) {
+        return Err(EntropyMarker);
+      }
+      at = at + 1;
+    }
+    c = BitCursor { at: at, byte: value, remaining: 8 };
+  }
+  let remaining = c.remaining - 1;
+  let value = c.byte >> remaining & 1;
+  cursor.set(BitCursor { ...c, remaining: remaining });
+  return Ok(value);
+}
+
+function symbol(input: [u8], cursor: Cell[BitCursor], table: header.HuffmanTable, cancelled: () => boolean): Result[i32, EntropyError] {
+  let code = 0;
+  let first = 0;
+  let offset = 0;
+  for i in 0..16 {
+    code = code * 2 + bit(input, cursor, cancelled)?;
+    let count = table.counts[i] as i32;
+    if (code >= first && code - first < count) {
+      return Ok(table.symbols[offset + code - first] as i32);
+    }
+    offset = offset + count;
+    first = (first + count) * 2;
+  }
+  return Err(EntropyHuffman);
+}
+
+function amplitude(input: [u8], cursor: Cell[BitCursor], size: i32, cancelled: () => boolean): Result[i32, EntropyError] {
+  if (size == 0) {
+    return Ok(0);
+  }
+  let value = 0;
+  for i in 0..size {
+    value = value * 2 + bit(input, cursor, cancelled)?;
+  }
+  if (value < 1 << size - 1) {
+    value = value - ((1 << size) - 1);
+  }
+  return Ok(value);
+}
+
+function decode_block(input: [u8], cursor: Cell[BitCursor], part: ScanPart, previous: i32, cancelled: () => boolean): Result[Decoded, EntropyError] {
+  let size = symbol(input, cursor, part.dc, cancelled)?;
+  if (size > 11) {
+    return Err(EntropyCoefficient);
+  }
+  let delta = amplitude(input, cursor, size, cancelled)?;
+  let dc = match (previous +? delta) { Some(v) => v, None => { return Err(EntropyCoefficient); } };
+  let values: i32[] = [];
+  for i in 0..64 {
+    values = values.append(0);
+  }
+  values = values.with(0, dc);
+  let k = 1;
+  while (k < 64) {
+    let tag = symbol(input, cursor, part.ac, cancelled)?;
+    if (tag == 0) {
+      break;
+    }
+    let run = tag >> 4;
+    let bits = tag & 15;
+    if (bits == 0) {
+      if (tag != 240 || k + 16 > 64) {
+        return Err(EntropyCoefficient);
+      }
+      k = k + 16;
+    } else {
+      k = k + run;
+      if (bits > 10 || k >= 64) {
+        return Err(EntropyCoefficient);
+      }
+      let value = amplitude(input, cursor, bits, cancelled)?;
+      values = values.with(ZIGZAG[k], value);
+      k = k + 1;
+    }
+  }
+  return Ok(Decoded { values: values, dc: dc });
+}
+
+function align(cursor: Cell[BitCursor]): Result[void, EntropyError] {
+  let c = cursor.get();
+  let mask = (1 << c.remaining) - 1;
+  if ((c.byte & mask) != mask) {
+    return Err(EntropyPadding);
+  }
+  cursor.set(BitCursor { ...c, remaining: 0 });
+  return Ok(());
+}
+
+function marker(input: [u8], cursor: Cell[BitCursor], cancelled: () => boolean): Result[i32, EntropyError] {
+  let c = cursor.get();
+  let at = c.at;
+  if (at >= input.len()) {
+    return Err(EntropyTruncated);
+  }
+  if (input[at] != 255 as u8) {
+    return Err(EntropyMarker);
+  }
+  while (at < input.len() && input[at] == 255 as u8) {
+    if (cancelled()) {
+      return Err(EntropyCancelled);
+    }
+    at = at + 1;
+  }
+  if (at >= input.len()) {
+    return Err(EntropyTruncated);
+  }
+  let value = input[at] as i32;
+  if (value == 0) {
+    return Err(EntropyMarker);
+  }
+  cursor.set(BitCursor { at: at + 1, byte: 0, remaining: 0 });
+  return Ok(value);
+}
+
+function scan_header(input: [u8], limits: BlockLimits, cancelled: () => boolean): Result[header.JpegHeader, EntropyError] {
+  if (limits.max_mcus <= 0 || limits.max_blocks <= 0 || limits.max_mcus > 1048576 || limits.max_blocks > 1048576) {
+    return Err(EntropyLimit);
+  }
+  return match (header.parse(input, limits.headers, cancelled)) { Ok(h) => Ok(h), Err(header.Cancelled()) => Err(EntropyCancelled), Err(e) => Err(EntropyHeader(e)) };
+}
+
+function finish(input: [u8], cursor: Cell[BitCursor], cancelled: () => boolean): Result[void, EntropyError] {
+  align(cursor)?;
+  let code = marker(input, cursor, cancelled)?;
+  if (code >= 208 && code <= 215) {
+    return Err(EntropyRestart);
+  }
+  if (code != 217) {
+    return Err(EntropyMarker);
+  }
+  if (cursor.get().at != input.len()) {
+    return Err(EntropyTrailing);
+  }
+  if (cancelled()) {
+    return Err(EntropyCancelled);
+  }
+  return Ok(());
+}
+
+pub function fold_blocks[S, E](input: [u8], limits: BlockLimits, cancelled: () => boolean, value: S, consume: (S, CoefficientBlock) => Result[S, E]): Result[BlockFold[S], BlockError[E]] {
+  let h = match (scan_header(input, limits, cancelled)) { Ok(v) => v, Err(e) => { return Err(BlockDecode(e)); } };
+  let p = match (prepared(h, limits)) { Ok(v) => v, Err(e) => { return Err(BlockDecode(e)); } };
+  let cursor = cell_new(BitCursor { at: h.entropy_offset, byte: 0, remaining: 0 });
+  let predictors: i32[] = [0, 0, 0];
+  let restart = 0;
+  let mcu = 0;
+  while (mcu < p.plan.mcus) {
+    let mx = mcu % p.plan.mcu_columns;
+    let my = mcu / p.plan.mcu_columns;
+    for part in p.parts {
+      for vy in 0..part.vertical {
+        for hx in 0..part.horizontal {
+          if (cancelled()) {
+            return Err(BlockDecode(EntropyCancelled));
+          }
+          let block = match (decode_block(input, cursor, part, predictors[part.component], cancelled)) { Ok(v) => v, Err(e) => { return Err(BlockDecode(e)); } };
+          predictors = predictors.with(part.component, block.dc);
+          let x = mx * part.horizontal + hx;
+          let y = my * part.vertical + vy;
+          if (x < part.columns && y < part.rows) {
+            if (cancelled()) {
+              return Err(BlockDecode(EntropyCancelled));
+            }
+            let output = CoefficientBlock { component: part.id, x: x, y: y, values: block.values };
+            value = match (consume(value, output)) { Ok(v) => v, Err(e) => { return Err(BlockConsumer(e)); } };
+          }
+        }
+      }
+    }
+    mcu = mcu + 1;
+    if (h.restart_interval > 0 && mcu % h.restart_interval == 0 && mcu < p.plan.mcus) {
+      match (align(cursor)) {
+        Ok(_) => {},
+        Err(e) => {
+          return Err(BlockDecode(e));
+        }
+      }
+      let code = match (marker(input, cursor, cancelled)) { Ok(v) => v, Err(e) => { return Err(BlockDecode(e)); } };
+      if (code != 208 + restart % 8) {
+        return Err(BlockDecode(EntropyRestart));
+      }
+      restart = restart + 1;
+      predictors = [0, 0, 0];
+    }
+  }
+  match (finish(input, cursor, cancelled)) {
+    Ok(_) => {},
+    Err(e) => {
+      return Err(BlockDecode(e));
+    }
+  }
+  return Ok(BlockFold[S] { value: value, header: h, plan: p.plan, consumed: cursor.get().at });
+}
