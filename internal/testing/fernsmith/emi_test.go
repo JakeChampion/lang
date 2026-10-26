@@ -1,10 +1,14 @@
 package fernsmith_test
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/check/checker"
+	"github.com/jakechampion/lang/internal/oracle/interp"
+	"github.com/jakechampion/lang/internal/syntax/parser"
 	"github.com/jakechampion/lang/internal/testing/fernsmith"
 )
 
@@ -72,5 +76,52 @@ func TestEMIKeepsOnlyValidSteps(t *testing.T) {
 	taken := "function emi_true(): boolean { return false; }\n" + emiSample
 	if src, kept := fernsmith.EMI(taken, 1, 8, func(string) bool { return true }); kept != 0 || src != taken {
 		t.Fatalf("mutated a program that declares a guard name itself:\n%s", src)
+	}
+}
+
+func TestEMIPreservesDeferredBindings(t *testing.T) {
+	const source = `function observe(enabled: boolean): i32 {
+  let seen: i32 = 0;
+  loop {
+    if (enabled) {
+      let items: i32[] = [1];
+      defer seen = seen * 10 + items[0];
+      items = [3];
+    }
+    if (enabled) {
+      let items: i32[] = [2];
+      defer seen = seen * 10 + items[0];
+      items = [5];
+    }
+    break;
+  }
+  return seen;
+}
+function main(): i32 { return observe(true) + observe(false); }
+`
+	for seed := uint64(0); seed <= 168; seed++ {
+		t.Run(fmt.Sprint(seed), func(t *testing.T) {
+			mutant, _ := fernsmith.EMI(source, seed, 8, func(src string) bool {
+				return checkGenerated(t, src) == nil
+			})
+			program, err := parser.Parse(mutant)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := checker.Check(program); err != nil {
+				t.Fatal(err)
+			}
+			vm := interp.New()
+			for _, fn := range program.Funcs {
+				vm.Register(fn)
+			}
+			value, err := vm.CallByName("main", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if code, ok := interp.ExitStatus(value); !ok || code != 53 {
+				t.Fatalf("mutant changed deferred bindings: exit %v, want 53\n%s", value, mutant)
+			}
+		})
 	}
 }
