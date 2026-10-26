@@ -1,0 +1,27 @@
+function __fern_profile_start(base: usize, hi: usize, act: usize, timer: usize): void {
+  __raw_store_ptr(base + 128, 0, __syscall3(172, 0, 0, 0) as usize);
+  __raw_store_ptr(base + 16, 0, hi);
+  __raw_store_ptr(base + 24, 0, 1);
+  __raw_store_ptr(base + 136, 0, __FERN_PROFILE_MODE);
+  if (__FERN_PROFILE_MODE != 1 && __FERN_PROFILE_MODE != 3) {
+    return;
+  }
+  let a: i64 = __syscall4(134, 27, act as i64, 0, 8);
+  let b: i64 = 0 - 1;
+  if (a >= 0 as i64) {
+    __raw_store_ptr(base + 48, 0, 67108864);
+    let unblocked: i64 = __syscall4(135, 1, (base + 48) as i64, 0, 8);
+    if (unblocked < 0 as i64) {
+      b = unblocked;
+    } else {
+      b = __syscall3(103, 2, timer as i64, 0);
+    }
+  }
+  if (a < 0 as i64 || b < 0 as i64) {
+    __raw_store_ptr(base + 24, 0, 0);
+    __raw_store_ptr(base + 32, 0, 2);
+    let msg: string = "fern profile: cannot install CPU sampler\n";
+    __fern_profile_write(__raw_data(msg), msg.len() as usize);
+    __syscall3(94, 2, 0, 0);
+  }
+}

@@ -1,0 +1,54 @@
+function __fern_profile_finish(base: usize): void {
+  let mask: usize = 4096;
+  if (__FERN_PROFILE_MODE == 1 || __FERN_PROFILE_MODE == 3) {
+    __syscall3(83, 2, (base + 96) as i64, 0);
+    mask = 67112960;
+  }
+  __raw_store_ptr(base + 48, 0, mask);
+  __syscall4(48, 1, (base + 48) as i64, 0, 8);
+  __raw_store_ptr(base + 24, 0, 0);
+  let im: usize = __load_i64(base + 56) as usize;
+  let size: usize = __fern_profile_macho_image_size(im);
+  if (__FERN_PROFILE_MODE > 2) {
+    __fern_profile_pprof(base, im, size);
+  } else {
+    let header: string = "# fern CPU profile samples=";
+    if (__FERN_PROFILE_MODE == 2) {
+      header = "# fern allocation profile samples=";
+    }
+    __fern_profile_write(__raw_data(header), header.len() as usize);
+    let count: usize = __load_i64(base) as usize;
+    __fern_profile_number(base + 64, count);
+    let lost: string = " dropped=";
+    __fern_profile_write(__raw_data(lost), lost.len() as usize);
+    __fern_profile_number(base + 64, __load_i64(base + 8) as usize);
+    if (__FERN_PROFILE_MODE == 2) {
+      let units: string = " interval=64 weight=rounded-bytes";
+      __fern_profile_write(__raw_data(units), units.len() as usize);
+    }
+    let nl: string = "\n";
+    __fern_profile_write(__raw_data(nl), 1);
+    let i: usize = 0;
+    while (i < count) {
+      let row: usize = base + 160 + i * 528;
+      let depth: usize = __load_i64(row) as usize;
+      let k: usize = depth;
+      while (k > 0) {
+        k = k - 1;
+        let pc: usize = __load_i64(row + 16 + k * 8) as usize;
+        if (__fern_profile_symbol(pc, im, size) == 0) {
+          __fern_profile_hex(base + 64, pc);
+        }
+        if (k > 0) {
+          let semi: string = ";";
+          __fern_profile_write(__raw_data(semi), 1);
+        }
+      }
+      let space: string = " ";
+      __fern_profile_write(__raw_data(space), 1);
+      __fern_profile_number(base + 64, __load_i64(row + 8) as usize);
+      __fern_profile_write(__raw_data(nl), 1);
+      i = i + 1;
+    }
+  }
+}

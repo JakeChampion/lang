@@ -1,0 +1,33 @@
+function __fern_random_bytes(n: i32): i32[] {
+  if (n <= 0) {
+    let none: usize = __raw_arr_box(0);
+    return __raw_array(none);
+  }
+  let p: usize = __raw_alloc(n);
+  let off: i32 = 0;
+  while (off < n) {
+    let want: i32 = n - off;
+    if (want > 256) {
+      want = 256;
+    }
+    let r: i32 = __syscall3(278, (p + off) as i64, want as i64, 0) as i32;
+    if (r == 0 - 4) {
+      continue;
+    }
+    if (r <= 0 || r > want) {
+      __fern_rc_dec(p);
+      let msg: string = "fern: entropy unavailable\n";
+      __syscall3(64, 2, __raw_data(msg) as i64, msg.len() as i64);
+      exit(134);
+    }
+    off = off + r;
+  }
+  let b: usize = __raw_arr_box(n);
+  let i: i32 = 0;
+  while (i < n) {
+    __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize);
+    i = i + 1;
+  }
+  let p_own: string = __raw_string(p, n);
+  return __raw_array(b);
+}

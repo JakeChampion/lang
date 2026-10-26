@@ -1,0 +1,69 @@
+function __fern_buf_take_text(h: usize): string {
+  let wide: i64 = __load_i64(h + 8);
+  if (wide < 0 as i64 || wide > 2147483647 as i64) {
+    let failed: usize = __raw_alloc(0 - 1);
+    return __raw_string(failed, 0);
+  }
+  let n: i32 = wide as i32;
+  if (n == 0) {
+    return "";
+  }
+  let data: usize = __raw_load_ptr(h, 0);
+  let total: i64 = wide;
+  let i: i32 = 0;
+  let changed: boolean = false;
+  let mask: u64 = 9259542123273814144 as u64;
+  while (i < n) {
+    if (n - i >= 8) {
+      if ((__load_i64(data + i) as u64 & mask) == 0 as u64) {
+        i = i + 8;
+        continue;
+      }
+    }
+    let part: i32 = __fern_buf_text_part(data, i, n);
+    if (part < 0) {
+      total = total + (3 + part) as i64;
+      changed = true;
+      i = i - part;
+    } else {
+      i = i + part;
+    }
+  }
+  if (total > 2147483647 as i64) {
+    let failed: usize = __raw_alloc(0 - 1);
+    return __raw_string(failed, 0);
+  }
+  let length: i32 = total as i32;
+  let out: usize = __raw_alloc(length);
+  if (!changed) {
+    __memcpy(out, data, n);
+  } else {
+    i = 0;
+    let start: i32 = 0;
+    let written: i32 = 0;
+    while (i < n) {
+      if (n - i >= 8) {
+        if ((__load_i64(data + i) as u64 & mask) == 0 as u64) {
+          i = i + 8;
+          continue;
+        }
+      }
+      let part: i32 = __fern_buf_text_part(data, i, n);
+      if (part < 0) {
+        __memcpy(out + written, data + start, i - start);
+        written = written + (i - start);
+        __raw_store8(out, written, 239);
+        __raw_store8(out, written + 1, 191);
+        __raw_store8(out, written + 2, 189);
+        written = written + 3;
+        i = i - part;
+        start = i;
+      } else {
+        i = i + part;
+      }
+    }
+    __memcpy(out + written, data + start, n - start);
+  }
+  __store_i64(h + 8, 0 as i64);
+  return __raw_string(out, length);
+}

@@ -1,0 +1,4 @@
+function __fern_task_rec(id: i32): usize {
+  let tab: usize = __fern_task_tab();
+  return __raw_load_ptr(tab, id);
+}

@@ -1,0 +1,35 @@
+function __fern_reactor_wait(r_fd: i32, events: i32[], timeout_ms: i32): i32 {
+  let cap: i32 = events.len() / 2;
+  if (cap <= 0) {
+    return 0 - 22;
+  }
+  let b: usize = __raw_arr_ptr(events);
+  let buf: usize = b + 8;
+  let n: i32 = __syscall6(281, r_fd as i64, buf as i64, cap as i64, timeout_ms as i64, 0, 8) as i32;
+  let i: i32 = n - 1;
+  while (i >= 0) {
+    let e: i32 = i * 12;
+    let bits: i32 = __raw_load8(buf, e);
+    let ready: i32 = 0;
+    if ((bits & 1) != 0) {
+      ready = ready | 1;
+    }
+    if ((bits & 4) != 0) {
+      ready = ready | 2;
+    }
+    if ((bits & 24) != 0) {
+      ready = ready | 4;
+    }
+    let fd: i32 = __raw_load8(buf, e + 4) | __raw_load8(buf, e + 4 + 1) << 8 | __raw_load8(buf, e + 4 + 2) << 16 | __raw_load8(buf, e + 4 + 3) << 24;
+    if (fd < 0) {
+      let sfd: i32 = __raw_load8(buf, e + 4 + 4) | __raw_load8(buf, e + 4 + 5) << 8 | __raw_load8(buf, e + 4 + 6) << 16 | __raw_load8(buf, e + 4 + 7) << 24;
+      let drain: usize = __raw_scratch(128);
+      __syscall3(0, sfd as i64, drain as i64, 128);
+      ready = 1;
+    }
+    __raw_store_ptr(b, i * 2 + 1, fd as usize);
+    __raw_store_ptr(b, i * 2 + 2, ready as usize);
+    i = i - 1;
+  }
+  return n;
+}

@@ -1,0 +1,25 @@
+function __fern_ring_resume(blk: usize, ent: usize, fd: i32): i32 {
+  if ((__raw_load8(ent, 0) & 8) == 0 || __raw_load8(ent, 6) != 0 || __fern_ring_u16(ent, 8) != 0) {
+    return 0;
+  }
+  let st: i32 = __raw_load8(ent, 4);
+  if (st == 2 && __load_i32(blk + 180) > 0) {
+    return __fern_ring_recv_arm(blk, ent, fd);
+  }
+  if (st == 2) {
+    return __fern_ring_fall_back(blk, ent, fd);
+  }
+  if (st == 5 && __load_i32(blk + 180) >= 64) {
+    let un: i32 = __fern_ring_unarm(blk, ent, fd);
+    if (un < 0) {
+      return un;
+    }
+    __raw_store8(ent, 13, __raw_load8(ent, 13) & 4);
+    let a: i32 = __fern_ring_arm(blk, ent, fd);
+    if (a < 0) {
+      return a;
+    }
+    return __fern_ring_recv_arm(blk, ent, fd);
+  }
+  return 0;
+}

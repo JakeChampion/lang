@@ -1,0 +1,18 @@
+function __fern_bytes_write_range(own a: i32[], at: i32, src: i32[], from: i32, n: i32): i32[] {
+  if (n <= 0) {
+    return a;
+  }
+  if (from as u32 > src.len() as u32 || n > src.len() - from) {
+    __fern_oob_abort();
+  }
+  if (at as u32 > a.len() as u32 || n > a.len() - at) {
+    __fern_oob_abort();
+  }
+  let reuse = __FERN_RUNTIME_REUSE && __load_i32(__raw_arr_ptr(a) - 8) == 1;
+  let out = a;
+  if (!reuse) {
+    out = __fern_bytes_clone(out, __load_i64(__raw_arr_ptr(out) - 16) as i32);
+  }
+  __memcpy(__raw_arr_ptr(out) + 8 + at, __raw_arr_ptr(src) + 8 + from, n);
+  return out;
+}

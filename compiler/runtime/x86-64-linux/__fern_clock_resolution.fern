@@ -1,0 +1,5 @@
+function __fern_clock_resolution(): i64 {
+  let ts: usize = __raw_scratch(16);
+  __syscall3(229, 0, ts as i64, 0);
+  return __load_i64(ts) * (1000000000 as i64) + __load_i64(ts + 8);
+}

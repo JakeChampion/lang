@@ -1,0 +1,9 @@
+function __fern_cov_hit(k: i32): boolean {
+  let t: usize = __raw_load_ptr(__raw_cover(), 0);
+  if (t == 0 as usize) {
+    t = __fern_cov_table();
+  }
+  let p: usize = t + k * 8;
+  __store_i64(p, __load_i64(p) + 1i64);
+  return true;
+}

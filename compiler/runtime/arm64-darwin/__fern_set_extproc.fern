@@ -1,0 +1,16 @@
+function __fern_set_extproc(fd: i32, on: boolean): Result[void, IoError] {
+  let buf: usize = __raw_scratch(16);
+  let v: i32 = 0;
+  if (on) {
+    v = 1;
+  }
+  __raw_store8(buf, 0, v);
+  __raw_store8(buf, 1, 0);
+  __raw_store8(buf, 2, 0);
+  __raw_store8(buf, 3, 0);
+  let rc: i32 = __syscall3(54, fd as i64, 2147775584 as i64, buf as i64) as i32;
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  return Ok(());
+}

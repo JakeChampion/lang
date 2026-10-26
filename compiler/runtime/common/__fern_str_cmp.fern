@@ -1,0 +1,31 @@
+function __fern_str_cmp(a: string, b: string): i32 {
+  let la: i32 = a.len();
+  let lb: i32 = b.len();
+  let n: i32 = la;
+  if (lb < n) {
+    n = lb;
+  }
+  let dl: i32 = la - lb;
+  let p: usize = __raw_data(a);
+  let q: usize = __raw_data(b);
+  let end: usize = p + n;
+  while (p + 8 <= end) {
+    let x: i64 = __load_i64(p) ^ __load_i64(q);
+    if (x != 0 as i64) {
+      let k: i32 = __ctz64(x as u64) >> 3;
+      return __load_u8(p + k) - __load_u8(q + k);
+    }
+    p = p + 8;
+    q = q + 8;
+  }
+  while (p < end) {
+    let ca: i32 = __load_u8(p);
+    let cb: i32 = __load_u8(q);
+    if (ca != cb) {
+      return ca - cb;
+    }
+    p = p + 1;
+    q = q + 1;
+  }
+  return dl;
+}

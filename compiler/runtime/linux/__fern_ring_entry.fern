@@ -1,0 +1,3 @@
+function __fern_ring_entry(blk: usize, fd: i32): usize {
+  return blk + 4096 + __load_i32(blk + 112) as usize * 8 + fd as usize * 16;
+}

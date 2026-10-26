@@ -1,0 +1,29 @@
+function __fern_bytes_append_range(own a: i32[], src: i32[], from: i32, n: i32): i32[] {
+  if (n <= 0) {
+    return a;
+  }
+  if (from as u32 > src.len() as u32 || n > src.len() - from) {
+    __fern_oob_abort();
+  }
+  let len = a.len();
+  let total64: i64 = len as i64 + n as i64;
+  if (total64 > 2147483647i64) {
+    return __raw_array(__raw_arr_box(0 - 1));
+  }
+  let cap: i64 = __load_i64(__raw_arr_ptr(a) - 16);
+  let reuse = __FERN_RUNTIME_REUSE && __load_i32(__raw_arr_ptr(a) - 8) == 1 && total64 <= cap * 8i64;
+  let out = a;
+  if (!reuse) {
+    let words: i64 = cap;
+    if (words < 4i64) {
+      words = 4i64;
+    }
+    while (words * 8i64 < total64) {
+      words = words * 2i64;
+    }
+    out = __fern_bytes_clone(out, words as i32);
+  }
+  __memcpy(__raw_arr_ptr(out) + 8 + len, __raw_arr_ptr(src) + 8 + from, n);
+  __store_i64(__raw_arr_ptr(out), total64);
+  return out;
+}

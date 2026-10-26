@@ -254,16 +254,16 @@ func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "drivers/asm_run.fern")
-	core := filepath.Join(dir, "asmcore.fern")
+	core := filepath.Join(dir, "rtbundle.fern")
 	src, err := os.ReadFile(core)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const typed = "function __fern_str_concat(a: string, b: string): string { let la: i32 = a.len(); let lb: i32 = b.len(); let p: usize = __raw_alloc(la + lb);"
+	const typed = "let p: usize = __raw_alloc(la + lb);"
 	if strings.Count(string(src), typed) != 1 {
-		t.Fatalf("asmcore.fern no longer spells rt_src_str_concat as %q", typed)
+		t.Fatalf("runtime bundle does not contain the string concatenation allocation")
 	}
-	broken := strings.Replace(string(src), typed, strings.Replace(typed, "let p: usize", "let p: i32", 1), 1)
+	broken := strings.Replace(string(src), typed, "let p: i32 = __raw_alloc(la + lb);", 1)
 	if err := os.WriteFile(core, []byte(broken), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +287,8 @@ func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 
 	stderr, code := emit()
 	if code != 3 || !strings.Contains(stderr, "FERN_SEM_IR: runtime __fern_str_concat: does not type-check") ||
-		!strings.Contains(stderr, "FERN_SEM_IR: the typed lowering refused runtime helper __fern_str_concat") {
+		!strings.Contains(stderr, "FERN_SEM_IR: the typed lowering refused runtime helper __fern_str_concat") ||
+		!strings.Contains(stderr, "compiler/runtime/common/__fern_str_concat.fern:4:") {
 		t.Fatalf("exit %d, want 3 naming the refused helper\n%s", code, stderr)
 	}
 }

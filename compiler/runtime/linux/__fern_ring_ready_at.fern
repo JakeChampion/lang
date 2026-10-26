@@ -1,0 +1,3 @@
+function __fern_ring_ready_at(blk: usize): usize {
+  return blk + 4096 + __load_i32(blk + 112) as usize * 8 + __load_i32(blk + 68) as usize * 16;
+}

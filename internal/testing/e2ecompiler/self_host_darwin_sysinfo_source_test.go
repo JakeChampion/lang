@@ -2,36 +2,18 @@ package e2ecompiler
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestSelfHostDarwinSysinfoSource(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	const driver = `import "./asmcore";
-function main(): i32 {
-  print(asmcore.rt_src_utf8_valid());
-  print(asmcore.rt_src_hostname("arm64-darwin"));
-  print(asmcore.rt_src_uname_field("arm64-darwin"));
-  return 0;
-}`
-	if err := os.WriteFile(filepath.Join(dir, "sysinfo_source.fern"), []byte(driver), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	bin := buildSelfHostBin(t, gcc, dir, "sysinfo_source.fern", "sysinfo_source")
-	generated, err := runX86_64Bin(runner, bin).Output()
-	if err != nil {
-		t.Fatal(err)
-	}
+	generated := internalRuntimeSource(t, "arm64-darwin", "__fern_utf8_valid __fern_hostname __fern_uname_field", 1, true)
 	body := strings.NewReplacer(
 		"__fern_hostname", "probe_hostname",
 		"__fern_uname_field", "probe_uname",
 		"__syscall6", "fake_sysctl",
 		"__raw_scratch(400)", "fixture_scratch()",
-	).Replace(string(generated))
+	).Replace(generated)
 	cli := buildRuntimeCLI(t)
 	for _, tc := range []struct {
 		name, call    string

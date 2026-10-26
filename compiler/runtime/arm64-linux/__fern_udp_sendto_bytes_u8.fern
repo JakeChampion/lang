@@ -1,0 +1,35 @@
+function __fern_udp_sendto_bytes_u8(fd: i32, addr: i32[], port: i32, data: i32[]): i32 {
+  let byte_data: usize = __raw_arr_ptr(data) + 8;
+  if (addr.len() == 0) {
+    return __syscall6(206, fd as i64, byte_data as i64, data.len() as i64, 16384, 0, 0) as i32;
+  }
+  let af: i32 = 2;
+  if (addr.len() == 16) {
+    af = 10;
+  } else if (addr.len() != 4) {
+    return 0 - 97;
+  }
+  let sa: usize = __raw_scratch(28);
+  let salen: i32 = 16;
+  let at: i32 = 4;
+  if (addr.len() == 16) {
+    salen = 28;
+    at = 8;
+  }
+  let z: i32 = 0;
+  while (z < 28) {
+    __raw_store8(sa, z, 0);
+    z = z + 1;
+  }
+  __raw_store8(sa, 0, af);
+  __raw_store8(sa, 1, 0);
+  __raw_store8(sa, 2, port >> 8 & 255);
+  __raw_store8(sa, 3, port & 255);
+  let ap: usize = __raw_arr_ptr(addr);
+  let k: i32 = 0;
+  while (k < addr.len()) {
+    __raw_store8(sa, at + k, __raw_load8(ap, 8 + k));
+    k = k + 1;
+  }
+  return __syscall6(206, fd as i64, byte_data as i64, data.len() as i64, 16384, sa as i64, salen as i64) as i32;
+}

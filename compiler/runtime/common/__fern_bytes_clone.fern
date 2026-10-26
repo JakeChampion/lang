@@ -1,0 +1,7 @@
+@noinline
+function __fern_bytes_clone(a: i32[], words: i32): i32[] {
+  let p: usize = __raw_arr_box(words);
+  __memcpy(p + 8, __raw_arr_ptr(a) + 8, a.len());
+  __store_i64(p, a.len() as i64);
+  return __raw_array(p);
+}

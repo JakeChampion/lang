@@ -13,7 +13,9 @@ The separate seeded PCG32 API retains its reproducible sequence contract.
 
 The old native helpers ignored errors or advanced past short reads.
 They could return zero or incomplete data after an entropy failure.
-The helpers now share a completion loop and process each result explicitly.
+Each target runtime module uses the same completion rules and processes each result explicitly.
+The source files live under `compiler/runtime/<target>/__fern_random*.fern`.
+The generated `compiler/rtbundle.fern` embeds those files for the pinned compiler.
 
 | Platform | Entropy syscall | Successful result |
 |---|---|---|

@@ -1,0 +1,28 @@
+function __fern_cpu_count(): i32 {
+  let buf: usize = __raw_alloc(128);
+  let i: i32 = 0;
+  while (i < 128) {
+    __raw_store8(buf, i, 0);
+    i = i + 1;
+  }
+  let rc: i32 = __syscall3(123, 0, 128, buf as i64) as i32;
+  if (rc <= 0) {
+    let buf_own0: string = __raw_string(buf, 128);
+    return 0;
+  }
+  if (rc > 128) {
+    rc = 128;
+  }
+  let total: i32 = 0;
+  let k: i32 = 0;
+  while (k < rc) {
+    let b: i32 = __raw_load8(buf, k);
+    while (b != 0) {
+      total = total + (b & 1);
+      b = b >> 1;
+    }
+    k = k + 1;
+  }
+  let buf_own: string = __raw_string(buf, 128);
+  return total;
+}

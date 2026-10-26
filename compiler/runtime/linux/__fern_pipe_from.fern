@@ -1,0 +1,6 @@
+function __fern_pipe_from(rc: i32, r: i32, w: i32): Result[Pipe, IoError] {
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  return Ok(Pipe { r: r, w: w });
+}

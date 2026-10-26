@@ -1,0 +1,37 @@
+function __fern_profile_macho_command(im: usize, size: usize, kind: usize, name: string): usize {
+  if (im == 0 || size < 32) {
+    return 0;
+  }
+  if (__fern_profile_macho_u32(im) != 4277009103u64 as usize) {
+    return 0;
+  }
+  let bytes: usize = __fern_profile_macho_u32(im + 20);
+  let count: usize = __fern_profile_macho_u32(im + 16);
+  if (bytes > size - 32 || count > bytes / 8) {
+    return 0;
+  }
+  let at: usize = 32;
+  let end: usize = 32 + bytes;
+  let i: usize = 0;
+  while (i < count) {
+    if (at > end || end - at < 8) {
+      return 0;
+    }
+    let command: usize = im + at;
+    let len: usize = __fern_profile_macho_u32(command + 4);
+    if (len < 8 || len > end - at) {
+      return 0;
+    }
+    if (__fern_profile_macho_u32(command) == kind) {
+      if (name.len() == 0) {
+        return command;
+      }
+      if (len >= 24 && __fern_profile_macho_tag(command + 8, name)) {
+        return command;
+      }
+    }
+    at = at + len;
+    i = i + 1;
+  }
+  return 0;
+}
