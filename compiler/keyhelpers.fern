@@ -1,0 +1,123 @@
+import "./ast";
+import "./parser";
+import "./rtmodule";
+import "./ssasem";
+import "./typeinfo";
+import "./util";
+
+pub function module(keys: typeinfo.Type[]): parser.Module {
+  let templates = rtmodule.template("__fern_key_eq __fern_key_hash", [], []);
+  let funcs: parser.FuncDecl[] = [];
+  for key in keys {
+    for prototype in templates.funcs {
+      let eq = prototype.name == "__fern_key_eq";
+      let params: ast.ParamDecl[] = [];
+      for param in prototype.params {
+        params = params.append(ast.ParamDecl { ...param, type_name: typeinfo.spelling(key), line: 0, col: 0 });
+      }
+      let body = if (eq) { eq_body(key) } else { hash_body(key) };
+      let kind = if (eq) { "eq" } else { "hash" };
+      funcs = funcs.append(parser.FuncDecl { ...prototype, name: ssasem.keyed_map_key_fn(key, kind), params: params, body: body, line: 0, col: 0 });
+    }
+  }
+  return parser.Module { ...templates, funcs: funcs };
+}
+
+function number(n: i32): ast.Expr {
+  return parser.e_number(util.i32_to_string(n), "", false);
+}
+
+function ident(name: string): ast.Expr {
+  return parser.e_ident(name);
+}
+
+function length(value: ast.Expr): ast.Expr {
+  return parser.e_call(parser.e_field_access(value, "len"), []);
+}
+
+function indexed(value: ast.Expr, index: string): ast.Expr {
+  return parser.e_index(value, ident(index), 0, 0);
+}
+
+function increment(name: string): ast.Stmt {
+  return parser.s_assign(name, parser.e_binary("+", ident(name), number(1)));
+}
+
+function eq_element(ty: typeinfo.Type, left: ast.Expr, right: ast.Expr): ast.Expr {
+  if (ssasem.structural_map_key(ty)) {
+    return parser.e_call(ident(ssasem.keyed_map_key_fn(ty, "eq")), [left, right]);
+  }
+  return parser.e_binary("==", left, right);
+}
+
+function eq_body(key: typeinfo.Type): ast.Stmt[] {
+  let a = ident("a");
+  let b = ident("b");
+  if let typeinfo.TypeArray(arr) = key {
+    let unequal = parser.e_binary("!=", length(a), length(b));
+    let compare = eq_element(arr.elem, indexed(a, "i"), indexed(b, "i"));
+    return [
+      parser.s_if(unequal, [parser.s_return(parser.e_bool(false))], []),
+      parser.s_var("i", "i32", number(0)),
+      parser.s_while(parser.e_binary("<", ident("i"), length(a)), [
+        parser.s_if(parser.e_unary("!", compare), [parser.s_return(parser.e_bool(false))], []),
+        increment("i"),
+      ]),
+      parser.s_return(parser.e_bool(true)),
+    ];
+  }
+  let result = parser.e_bool(true);
+  if let typeinfo.TypeTuple(tup) = key {
+    for i in 0..tup.elements.len() {
+      let field = util.i32_to_string(i);
+      let compare = eq_element(tup.elements[i], parser.e_field_access(a, field), parser.e_field_access(b, field));
+      result = parser.e_binary("&&", result, compare);
+    }
+  }
+  return [parser.s_return(result)];
+}
+
+function multiplied_hash(): ast.Expr {
+  return parser.e_binary("*", ident("h"), number(31));
+}
+
+function add_hash(value: ast.Expr): ast.Stmt {
+  return parser.s_assign("h", parser.e_binary("+", multiplied_hash(), value));
+}
+
+function hash_element(ty: typeinfo.Type, value: ast.Expr, suffix: string): ast.Stmt[] {
+  if (ssasem.structural_map_key(ty)) {
+    return [add_hash(parser.e_call(ident(ssasem.keyed_map_key_fn(ty, "hash")), [value]))];
+  }
+  if (ssasem.is_string(ty)) {
+    let index = "j" + suffix;
+    return [
+      parser.s_assign("h", multiplied_hash()),
+      parser.s_var(index, "i32", number(0)),
+      parser.s_while(parser.e_binary("<", ident(index), length(value)), [
+        add_hash(parser.e_unary("as_i32", indexed(value, index))),
+        increment(index),
+      ]),
+    ];
+  }
+  if (ssasem.is_bool(ty)) {
+    return [parser.s_assign("h", multiplied_hash()), parser.s_if(value, [increment("h")], [])];
+  }
+  return [add_hash(parser.e_unary("as_i32", value))];
+}
+
+function hash_body(key: typeinfo.Type): ast.Stmt[] {
+  let body = [parser.s_var("h", "i32", number(17))];
+  if let typeinfo.TypeArray(arr) = key {
+    let step = hash_element(arr.elem, indexed(ident("a"), "i"), "e");
+    body = body.append(parser.s_var("i", "i32", number(0)));
+    body = body.append(parser.s_while(parser.e_binary("<", ident("i"), length(ident("a"))), step.append(increment("i"))));
+  }
+  if let typeinfo.TypeTuple(tup) = key {
+    for i in 0..tup.elements.len() {
+      let field = util.i32_to_string(i);
+      body = util.append_all(body, hash_element(tup.elements[i], parser.e_field_access(ident("a"), field), "e" + field));
+    }
+  }
+  return body.append(parser.s_return(ident("h")));
+}

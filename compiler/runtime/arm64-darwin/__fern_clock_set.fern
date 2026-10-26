@@ -1,0 +1,13 @@
+function __fern_clock_set(sec: i64, nsec: i64): Result[void, IoError] {
+  if (nsec < 0 as i64 || nsec >= 1000000000 as i64) {
+    return Err(__fern_io_error(22, ""));
+  }
+  let tv: usize = __raw_scratch(16);
+  __store_i64(tv, sec);
+  __store_i64(tv + 8, nsec / (1000 as i64));
+  let rc: i32 = __syscall3(122, tv as i64, 0, 0) as i32;
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  return Ok(());
+}

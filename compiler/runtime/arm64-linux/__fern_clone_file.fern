@@ -1,0 +1,44 @@
+function __fern_clone_file(src: string, dest: string): Result[void, IoError] {
+  let slen: i32 = src.len();
+  let srcz: usize = __raw_alloc(slen + 1);
+  let j: i32 = 0;
+  while (j < slen) {
+    __raw_store8(srcz, j, src[j] as i32);
+    j = j + 1;
+  }
+  __raw_store8(srcz, slen, 0);
+  let dlen: i32 = dest.len();
+  let destz: usize = __raw_alloc(dlen + 1);
+  let i: i32 = 0;
+  while (i < dlen) {
+    __raw_store8(destz, i, dest[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(destz, dlen, 0);
+  let srcz_own: string = __raw_string(srcz, slen + 1);
+  let destz_own: string = __raw_string(destz, dlen + 1);
+  let sfd: i32 = __syscall4(56, -100, srcz as i64, 0, 0) as i32;
+  if (sfd < 0) {
+    return Err(__fern_io_error(0 - sfd, __fern_path_copy(srcz_own, slen)));
+  }
+  let made: i32 = 1;
+  let dfd: i32 = __syscall4(56, -100, destz as i64, 193, 438) as i32;
+  if (dfd == 0 - 17) {
+    made = 0;
+    dfd = __syscall4(56, -100, destz as i64, 1, 0) as i32;
+  }
+  if (dfd < 0) {
+    __syscall3(57, sfd as i64, 0, 0);
+    return Err(__fern_io_error(0 - dfd, __fern_path_copy(destz_own, dlen)));
+  }
+  let rc: i32 = __syscall3(29, dfd as i64, 1074041865, sfd as i64) as i32;
+  __syscall3(57, dfd as i64, 0, 0);
+  __syscall3(57, sfd as i64, 0, 0);
+  if (rc < 0 && made == 1) {
+    __syscall3(35, -100, destz as i64, 0);
+  }
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, __fern_path_copy(destz_own, dlen)));
+  }
+  return Ok(());
+}

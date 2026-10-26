@@ -1,0 +1,3 @@
+function __fern_pp_string(out: usize, s: string): void {
+  __fern_pp_message(out, 50, __raw_data(s), s.len() as usize);
+}

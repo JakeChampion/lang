@@ -1,0 +1,6 @@
+function __fern_ring_queued(blk: usize): i32 {
+  let sq: usize = __load_i64(blk + 8) as usize;
+  let head: i64 = __load_i32(sq + __load_i32(blk + 32) as usize) as i64 & 4294967295 as i64;
+  let tail: i64 = __load_i32(sq + __load_i32(blk + 36) as usize) as i64 & 4294967295 as i64;
+  return (tail - head & 4294967295 as i64) as i32;
+}

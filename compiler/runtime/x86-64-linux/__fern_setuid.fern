@@ -1,0 +1,13 @@
+function __fern_setuid(id: i64): Result[void, IoError] {
+  if (id < 0) {
+    return Err(__fern_io_error(22, ""));
+  }
+  if (id > 4294967295) {
+    return Err(__fern_io_error(22, ""));
+  }
+  let rc: i32 = __syscall3(105, (id as i32) as i64, 0, 0) as i32;
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  return Ok(());
+}

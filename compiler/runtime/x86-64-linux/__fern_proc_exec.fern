@@ -1,0 +1,41 @@
+function __fern_proc_exec(path: string, args: string[]): i32 {
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, path[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let n: i32 = args.len();
+  let argv: usize = __raw_alloc((n + 2) * 8);
+  __raw_store_ptr(argv, 0, pathz);
+  let total: i32 = 1;
+  let m: i32 = 0;
+  while (m < n) {
+    total = total + args[m].len() + 1;
+    m = m + 1;
+  }
+  let ab: usize = __raw_alloc(total);
+  let off: i32 = 0;
+  let k: i32 = 0;
+  while (k < n) {
+    let a: string = args[k];
+    let al: i32 = a.len();
+    __raw_store_ptr(argv, k + 1, ab + off);
+    let j: i32 = 0;
+    while (j < al) {
+      __raw_store8(ab, off + j, a[j] as i32);
+      j = j + 1;
+    }
+    __raw_store8(ab, off + al, 0);
+    off = off + al + 1;
+    k = k + 1;
+  }
+  __raw_store_ptr(argv, n + 1, 0);
+  let rc: i32 = __syscall3(59, pathz as i64, argv as i64, __raw_environ() as i64) as i32;
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  let argv_own: string = __raw_string(argv, (n + 2) * 8);
+  let args_own: string = __raw_string(ab, total);
+  return rc;
+}

@@ -1,0 +1,16 @@
+function __fern_proc_waitpid_nohang(pid: i32): i32 {
+  let st: usize = __raw_scratch(16);
+  let rc: i32 = __syscall4(260, pid as i64, st as i64, 1, 0) as i32;
+  if (rc < 0) {
+    return rc;
+  }
+  if (rc == 0) {
+    return 0 - 1;
+  }
+  let w: i32 = __load_i32(st);
+  let sig: i32 = w & 127;
+  if (sig != 0) {
+    return sig + 128;
+  }
+  return w >> 8 & 255;
+}

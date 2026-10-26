@@ -575,14 +575,17 @@
 # inside the tolerance and keep their rows.
 # 2026-10-26 (#13496): measured with stage0-20261025-433d93a.
 # All ten driver builds and the fixed-point compiler use the same source tree.
-fern.fern/stage2 14881456
-fern.fern 14967984
-drivers/asm_load_run.fern 11952000
-drivers/asm_modload_run.fern 10600480
-drivers/asm_ir_run.fern 10196992
-drivers/asm_run.fern 9355664
-drivers/wasm_ir_run.fern 9294816
-drivers/wasm_run.fern 9299072
-drivers/wasm_runio_run.fern 9280448
-drivers/asm_pathprobe_run.fern 6195824
+# 2026-10-26: all 11 rows measured by CI 40398196689 at
+# 153e7c73ce4166978fd662476c0409feaf229efc, with the same pinned stage0.
+# 2026-10-26: Wasm drivers measured after the runtime bundle split.
+fern.fern/stage2 15100176
+fern.fern 15186720
+drivers/asm_load_run.fern 12166512
+drivers/asm_modload_run.fern 10813488
+drivers/asm_ir_run.fern 10439296
+drivers/asm_run.fern 9618560
+drivers/wasm_ir_run.fern 9420016
+drivers/wasm_run.fern 9424272
+drivers/wasm_runio_run.fern 9405648
+drivers/asm_pathprobe_run.fern 6199920
 drivers/checker_modload_run.fern 3291504

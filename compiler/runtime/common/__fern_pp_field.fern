@@ -1,0 +1,4 @@
+function __fern_pp_field(buf: usize, at: usize, tag: usize, n: usize): usize {
+  at = __fern_pp_uint_at(buf, at, tag);
+  return __fern_pp_uint_at(buf, at, n);
+}

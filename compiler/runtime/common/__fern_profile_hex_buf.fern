@@ -1,0 +1,11 @@
+function __fern_profile_hex_buf(buf: usize, pc: usize): void {
+  let digits: string = "0123456789abcdef";
+  let i: i32 = 17;
+  while (i >= 2) {
+    __raw_store8(buf, i, __load_u8(__raw_data(digits) + (pc & 15)));
+    pc = pc >> 4;
+    i = i - 1;
+  }
+  __raw_store8(buf, 0, 48);
+  __raw_store8(buf, 1, 120);
+}

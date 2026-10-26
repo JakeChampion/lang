@@ -1,0 +1,3 @@
+function __fern_priority(): i32 {
+  return __syscall3(100, 0, 0, 0) as i32;
+}

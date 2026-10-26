@@ -1,0 +1,22 @@
+function __fern_u32_to_string(n: i32): string {
+  let v: i64 = n as i64 & 4294967295 as i64;
+  if (v == 0 as i64) {
+    let z: usize = __raw_alloc(1);
+    __raw_store8(z, 0, 48);
+    return __raw_string(z, 1);
+  }
+  let nd: i32 = 0;
+  let t: i64 = v;
+  while (t > 0 as i64) {
+    nd = nd + 1;
+    t = t / (10 as i64);
+  }
+  let p: usize = __raw_alloc(nd);
+  let i: i32 = nd - 1;
+  while (v > 0 as i64) {
+    __raw_store8(p, i, 48 + (v % (10 as i64)) as i32);
+    v = v / (10 as i64);
+    i = i - 1;
+  }
+  return __raw_string(p, nd);
+}

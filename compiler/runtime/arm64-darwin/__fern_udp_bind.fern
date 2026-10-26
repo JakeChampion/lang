@@ -1,0 +1,40 @@
+function __fern_udp_bind(addr: i32[], port: i32): i32 {
+  let af: i32 = 2;
+  if (addr.len() == 16) {
+    af = 30;
+  } else if (addr.len() != 4) {
+    return 0 - 47;
+  }
+  let fd: i32 = __syscall3(97, af as i64, 2, 0) as i32;
+  if (fd < 0) {
+    return fd;
+  }
+  let sa: usize = __raw_scratch(28);
+  let salen: i32 = 16;
+  let at: i32 = 4;
+  if (addr.len() == 16) {
+    salen = 28;
+    at = 8;
+  }
+  let z: i32 = 0;
+  while (z < 28) {
+    __raw_store8(sa, z, 0);
+    z = z + 1;
+  }
+  __raw_store8(sa, 0, salen);
+  __raw_store8(sa, 1, af);
+  __raw_store8(sa, 2, port >> 8 & 255);
+  __raw_store8(sa, 3, port & 255);
+  let ap: usize = __raw_arr_ptr(addr);
+  let k: i32 = 0;
+  while (k < addr.len()) {
+    __raw_store8(sa, at + k, __raw_load_ptr(ap, k + 1) as i32);
+    k = k + 1;
+  }
+  let r: i32 = __syscall3(104, fd as i64, sa as i64, salen as i64) as i32;
+  if (r < 0) {
+    __syscall3(6, fd as i64, 0, 0);
+    return r;
+  }
+  return fd;
+}

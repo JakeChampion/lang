@@ -1,0 +1,67 @@
+function __fern_read_dir_ino_all(path: string): Result[DirEntry[], IoError] {
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, path[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let fd: i32 = __syscall3(257, -100, pathz as i64, 65536) as i32;
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  if (fd < 0) {
+    return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen)));
+  }
+  let basep: usize = __raw_alloc(8);
+  let names: DirEntry[] = [];
+  let bad: i32 = 0;
+  let done: i32 = 0;
+  while (done == 0) {
+    let buf: usize = __raw_alloc(65536);
+    let n: i32 = __syscall4(217, fd as i64, buf as i64, 65536, basep as i64) as i32;
+    if (n <= 0) {
+      done = 1;
+      bad = n;
+    } else {
+      let pos: i32 = 0;
+      while (pos < n) {
+        let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256;
+        let nlen: i32 = 0;
+        let room: i32 = reclen - 19;
+        let scan: i32 = 1;
+        while (scan == 1 && nlen + 8 <= room) {
+          let w: i64 = __load_i64(buf + pos + 19 + nlen);
+          let z: i64 = w - 72340172838076673 as i64 & (w ^ (0 - 1) as i64) & (0 - 9187201950435737472) as i64;
+          if (z != 0 as i64) {
+            nlen = nlen + (__ctz64(z as u64) >> 3);
+            scan = 0;
+          } else {
+            nlen = nlen + 8;
+          }
+        }
+        if (scan == 1) {
+          while (__raw_load8(buf, pos + 19 + nlen) != 0) {
+            nlen = nlen + 1;
+          }
+        }
+        if (__fern_utf8_valid(buf + pos + 19, nlen) == 0) {
+          bad = 0 - 84;
+          done = 1;
+          pos = n;
+        } else {
+          let nbuf: usize = __raw_alloc(nlen);
+          __memcpy(nbuf, buf + pos + 19, nlen);
+          names = names.append(DirEntry { name: __raw_string(nbuf, nlen), ino: __load_i64(buf + pos + 0), kind: __raw_load8(buf, pos + 18) as u32 << 12 });
+          pos = pos + reclen;
+        }
+      }
+    }
+    let buf_own: string = __raw_string(buf, 65536);
+  }
+  let basep_own: string = __raw_string(basep, 8);
+  __syscall3(3, fd as i64, 0, 0);
+  if (bad < 0) {
+    return Err(__fern_io_error(0 - bad, __fern_path_copy(pathz_own, plen)));
+  }
+  return Ok(names);
+}

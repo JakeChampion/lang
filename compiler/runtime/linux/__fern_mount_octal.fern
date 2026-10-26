@@ -1,0 +1,14 @@
+function __fern_mount_octal(buf: usize, i: i32, b: i32): boolean {
+  if (i + 3 >= b || __raw_load8(buf, i) != 92) {
+    return false;
+  }
+  let k: i32 = 1;
+  while (k < 4) {
+    let c: i32 = __raw_load8(buf, i + k);
+    if (c < 48 || c > 55) {
+      return false;
+    }
+    k = k + 1;
+  }
+  return true;
+}

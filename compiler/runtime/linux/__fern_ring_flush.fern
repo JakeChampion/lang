@@ -1,0 +1,7 @@
+function __fern_ring_flush(blk: usize): i32 {
+  let queued: i32 = __fern_ring_queued(blk);
+  if (queued == 0) {
+    return 0;
+  }
+  return __syscall6(426, __load_i32(blk) as i64, queued as i64, 0, 0, 0, 0) as i32;
+}

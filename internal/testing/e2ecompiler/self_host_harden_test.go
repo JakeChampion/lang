@@ -7,10 +7,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 const selfHostHardenSrc = `import "std/i32";
@@ -63,7 +66,11 @@ function main(): i32 {
 `
 
 func TestSelfHostHardenArm64(t *testing.T) {
-	cli := buildSelfHostCLI(t)
+	if runtime.GOOS != "linux" {
+		t.Skip("Linux ELF hardening requires a Linux host")
+	}
+	cli := e2eharness.SelfHostCLI(t)
+	stdlib := e2eharness.SelfHostStdlibRoot(t)
 	armgcc, qemu := arm64Tooling(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.fern")
@@ -72,8 +79,8 @@ func TestSelfHostHardenArm64(t *testing.T) {
 	}
 	compile := func(out string, flags ...string) {
 		t.Helper()
-		args := append(append([]string{}, flags...), "-target", "arm64-linux", "-o", out, src, cli.stdlib)
-		if msg, err := runX86_64Bin(cli.runner, cli.bin, args...).CombinedOutput(); err != nil {
+		args := append(append([]string{}, flags...), "-target", "arm64-linux", "-o", out, src, stdlib)
+		if msg, err := exec.Command(cli, args...).CombinedOutput(); err != nil {
 			t.Fatalf("compile %v: %v\n%s", flags, err, msg)
 		}
 		if err := os.Chmod(out, 0o755); err != nil && !strings.HasSuffix(out, ".s") {
@@ -82,6 +89,16 @@ func TestSelfHostHardenArm64(t *testing.T) {
 	}
 	enforced := cpuEnforces(qemu, " bti")
 	authenticated := cpuEnforces(qemu, " paca")
+	mode := "native"
+	if qemu != "" {
+		mode = "QEMU"
+	}
+	kernel, err := os.ReadFile("/proc/sys/kernel/osrelease")
+	if err != nil {
+		t.Fatalf("read the kernel version: %v", err)
+	}
+	t.Logf("compiler host=%s/%s; kernel=%s", runtime.GOOS, runtime.GOARCH, strings.TrimSpace(string(kernel)))
+	t.Logf("execution=%s; BTI fault control requested=%t; PAC fault control requested=%t", mode, enforced, authenticated)
 
 	t.Run("in-process", func(t *testing.T) {
 		plain := filepath.Join(dir, "plain")
@@ -121,6 +138,7 @@ func TestSelfHostHardenArm64(t *testing.T) {
 			t.Fatal(err)
 		}
 		expectSIGILL(t, qemu, nopad)
+		t.Logf("BTI fault control passed (%s)", mode)
 	})
 
 	t.Run("emit-asm", func(t *testing.T) {
@@ -152,29 +170,40 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		if out := runHardened(t, qemu, linked); out != hardenWant {
 			t.Errorf("printed %q, want %q", out, hardenWant)
 		}
-		if !enforced {
+		if enforced {
+			var kept []string
+			for _, line := range strings.Split(string(text), "\n") {
+				if strings.TrimSpace(line) != "bti c" {
+					kept = append(kept, line)
+				}
+			}
+			expectSIGILL(t, qemu, link("unpadded", []byte(strings.Join(kept, "\n"))))
+			t.Logf("BTI fault control passed (%s)", mode)
+		} else {
+			t.Log("BTI enforcement remains unverified on this host")
+		}
+		if !authenticated {
+			t.Log("PAC enforcement remains unverified on this host")
 			return
 		}
 		var kept []string
 		for _, line := range strings.Split(string(text), "\n") {
-			if strings.TrimSpace(line) != "bti c" {
-				kept = append(kept, line)
+			if strings.TrimSpace(line) == "paciasp" {
+				// PACIASP is also a BTI target. Preserve BTI in the PAC control.
+				line = "    bti c"
+			}
+			kept = append(kept, line)
+		}
+		expectHardenSignal(t, qemu, link("unsigned", []byte(strings.Join(kept, "\n"))), syscall.SIGSEGV, syscall.SIGILL)
+		for i, line := range kept {
+			if strings.TrimSpace(line) == "autiasp" {
+				kept[i] = "    nop"
 			}
 		}
-		expectSIGILL(t, qemu, link("unpadded", []byte(strings.Join(kept, "\n"))))
-		if !authenticated {
-			return
+		if out := runHardened(t, qemu, link("unauthenticated", []byte(strings.Join(kept, "\n")))); out != hardenWant {
+			t.Fatalf("the PAC control without authentication printed %q, want %q", out, hardenWant)
 		}
-		kept = kept[:0]
-		for _, line := range strings.Split(string(text), "\n") {
-			if strings.TrimSpace(line) != "paciasp" {
-				kept = append(kept, line)
-			}
-		}
-		out, err := runArm64Bin(qemu, link("unsigned", []byte(strings.Join(kept, "\n")))).CombinedOutput()
-		if err == nil {
-			t.Fatalf("returning through a frame that never signed its return address succeeded:\n%s", out)
-		}
+		t.Logf("PAC fault control passed (%s)", mode)
 	})
 
 	t.Run("backtrace", func(t *testing.T) {
@@ -183,8 +212,8 @@ func TestSelfHostHardenArm64(t *testing.T) {
 			t.Fatal(err)
 		}
 		bin := filepath.Join(dir, "abort")
-		args := []string{"-harden", "-backtrace", "-target", "arm64-linux", "-o", bin, abort, cli.stdlib}
-		if msg, err := runX86_64Bin(cli.runner, cli.bin, args...).CombinedOutput(); err != nil {
+		args := []string{"-harden", "-backtrace", "-target", "arm64-linux", "-o", bin, abort, stdlib}
+		if msg, err := exec.Command(cli, args...).CombinedOutput(); err != nil {
 			t.Fatalf("compile: %v\n%s", err, msg)
 		}
 		out, _ := runArm64Bin(qemu, bin).CombinedOutput()
@@ -206,10 +235,10 @@ func TestSelfHostHardenArm64(t *testing.T) {
 
 	t.Run("refusals", func(t *testing.T) {
 		for _, args := range [][]string{
-			{"-harden", "-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(dir, "x.s"), src, cli.stdlib},
-			{"-harden", "-shared", "-target", "arm64-linux", "-o", filepath.Join(dir, "x.so"), src, cli.stdlib},
+			{"-harden", "-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(dir, "x.s"), src, stdlib},
+			{"-harden", "-shared", "-target", "arm64-linux", "-o", filepath.Join(dir, "x.so"), src, stdlib},
 		} {
-			msg, err := runX86_64Bin(cli.runner, cli.bin, args...).CombinedOutput()
+			msg, err := exec.Command(cli, args...).CombinedOutput()
 			if err == nil || !strings.Contains(string(msg), "-harden is only supported for -target arm64-linux executables") {
 				t.Errorf("%v: want the -harden refusal, got err=%v\n%s", args, err, msg)
 			}
@@ -260,13 +289,23 @@ func runHardened(t *testing.T, qemu, bin string) string {
 
 func expectSIGILL(t *testing.T, qemu, bin string) {
 	t.Helper()
+	expectHardenSignal(t, qemu, bin, syscall.SIGILL)
+}
+
+func expectHardenSignal(t *testing.T, qemu, bin string, signals ...syscall.Signal) {
+	t.Helper()
 	out, err := runArm64Bin(qemu, bin).CombinedOutput()
 	ee, ok := err.(*exec.ExitError)
 	if !ok {
-		t.Fatalf("%s ran without its landing pads (err=%v):\n%s", filepath.Base(bin), err, out)
+		t.Fatalf("%s: err=%v, want signals %v\n%s", filepath.Base(bin), err, signals, out)
 	}
 	ws, ok := ee.Sys().(syscall.WaitStatus)
-	if !ok || !ws.Signaled() || ws.Signal() != syscall.SIGILL {
-		t.Fatalf("%s without its landing pads: %v, want SIGILL\n%s", filepath.Base(bin), err, out)
+	if ok && ws.Signaled() {
+		for _, signal := range signals {
+			if ws.Signal() == signal {
+				return
+			}
+		}
 	}
+	t.Fatalf("%s: %v, want signals %v\n%s", filepath.Base(bin), err, signals, out)
 }

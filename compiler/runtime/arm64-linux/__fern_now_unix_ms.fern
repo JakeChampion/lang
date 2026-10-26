@@ -1,0 +1,12 @@
+function __fern_now_unix_ms(): i64 {
+  let ts: usize = __raw_scratch(16);
+  let vf: usize = __fern_vdso_clock();
+  if (vf != 1 as usize) {
+    let r: usize = __c_call2(vf, 0 as usize, ts);
+  } else {
+    __syscall3(113, 0, ts as i64, 0);
+  }
+  let sec: i64 = __load_i64(ts);
+  let sub: i64 = __load_i64(ts + 8);
+  return sec * (1000 as i64) + sub / (1000000 as i64);
+}

@@ -26,6 +26,8 @@ pub struct CoefficientBlock { component: i32, x: i32, y: i32, values: i32[] }
 
 pub struct BlockFold[S] { value: S, header: header.JpegHeader, plan: BlockPlan, consumed: i32 }
 
+pub struct BlockInspection { header: header.JpegHeader, plan: BlockPlan }
+
 struct BitCursor { at: i32, byte: i32, remaining: i32 }
 
 struct ScanPart { component: i32, id: i32, horizontal: i32, vertical: i32, columns: i32, rows: i32, dc: header.HuffmanTable, ac: header.HuffmanTable }
@@ -248,6 +250,13 @@ function finish(input: [u8], cursor: Cell[BitCursor], cancelled: () => boolean):
     return Err(EntropyCancelled);
   }
   return Ok(());
+}
+
+// This validates header and count admission, not the entropy payload or EOI.
+pub function inspect_blocks(input: [u8], limits: BlockLimits, cancelled: () => boolean): Result[BlockInspection, EntropyError] {
+  let h = scan_header(input, limits, cancelled)?;
+  let p = prepared(h, limits)?;
+  return Ok(BlockInspection { header: h, plan: p.plan });
 }
 
 pub function fold_blocks[S, E](input: [u8], limits: BlockLimits, cancelled: () => boolean, value: S, consume: (S, CoefficientBlock) => Result[S, E]): Result[BlockFold[S], BlockError[E]] {

@@ -1,0 +1,19 @@
+function __fern_signal_disposition(sig: i32): i32 {
+  let act: usize = __raw_scratch(32);
+  __store_i64(act, 0 as i64);
+  __store_i64(act + 8, 0 as i64);
+  __store_i64(act + 16, 0 as i64);
+  __store_i64(act + 24, 0 as i64);
+  let rc: i32 = __syscall4(134, sig as i64, 0, act as i64, 8) as i32;
+  if (rc < 0) {
+    return rc;
+  }
+  let h: i64 = __load_i64(act);
+  if (h == 0 as i64) {
+    return 0;
+  }
+  if (h == 1 as i64) {
+    return 1;
+  }
+  return 2;
+}

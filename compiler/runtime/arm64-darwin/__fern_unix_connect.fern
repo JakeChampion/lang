@@ -1,0 +1,26 @@
+function __fern_unix_connect(path: string): i32 {
+  if (path.len() > 103) {
+    return 0 - 63;
+  }
+  let fd: i32 = __syscall3(97, 1, 1, 0) as i32;
+  if (fd < 0) {
+    return fd;
+  }
+  let n: i32 = path.len();
+  let sa: usize = __raw_scratch(112);
+  __raw_store8(sa, 0, n + 3);
+  __raw_store8(sa, 1, 1);
+  let p: usize = __raw_data(path);
+  let i: i32 = 0;
+  while (i < n) {
+    __raw_store8(sa, 2 + i, __raw_load8(p, i));
+    i = i + 1;
+  }
+  __raw_store8(sa, 2 + n, 0);
+  let r: i32 = __syscall3(98, fd as i64, sa as i64, (n + 3) as i64) as i32;
+  if (r < 0) {
+    __syscall3(6, fd as i64, 0, 0);
+    return r;
+  }
+  return fd;
+}

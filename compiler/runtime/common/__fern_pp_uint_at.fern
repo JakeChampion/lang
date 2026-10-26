@@ -1,0 +1,9 @@
+function __fern_pp_uint_at(buf: usize, at: usize, n: usize): usize {
+  while (n >= 128) {
+    __raw_store8(buf + at, 0, (n & 127 | 128) as i32);
+    at = at + 1;
+    n = n >> 7;
+  }
+  __raw_store8(buf + at, 0, n as i32);
+  return at + 1;
+}

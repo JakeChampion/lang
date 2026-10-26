@@ -1,0 +1,15 @@
+function __fern_sp_exec_at(pre: usize, plen: i32, cmdz: usize, clen: i32, argv: usize, envp: usize): i32 {
+  let b: usize = __raw_alloc(plen + clen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(b, i, __raw_load8(pre, i));
+    i = i + 1;
+  }
+  let j: i32 = 0;
+  while (j < clen) {
+    __raw_store8(b, plen + j, __raw_load8(cmdz, j));
+    j = j + 1;
+  }
+  __raw_store8(b, plen + clen, 0);
+  return __syscall3(221, b as i64, argv as i64, envp as i64) as i32;
+}

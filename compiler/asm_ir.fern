@@ -4,6 +4,7 @@ import "./parser";
 import "./aborts";
 import "./asmcore";
 import "./rtprofile";
+import "./rtmodule";
 import "./x86_native";
 import "./checker";
 import "./util";
@@ -2770,7 +2771,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   s = s.write(".Lstrvfree_ret:\n");
   s = s.write("    ret\n");
-  s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_arr_free(), s);
+  s = emit_runtime("__fern_str_arr_free", s);
   s = s.write("__fn___fern_rc_is_unique:\n");
   s = s.write("    movq 8(%rsp), %rcx\n");
   s = s.write("    movq $0, %rax\n");
@@ -3381,7 +3382,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ret\n");
     if (s.has_need("buf_text")) {
       s = s.write("__fern_buf_take:\n    pushq %rdi\n    call __fn___fern_buf_take_text\n    addq $8, %rsp\n    ret\n");
-      s = emit_ir_runtime_fern_fn(asmcore.rt_src_buf_text(), s);
+      s = emit_runtime("__fern_buf_text_part __fern_buf_take_text", s);
     }
     s = s.write("__fern_buf_free:\n");
     s = s.write("    pushq %rbp\n");
@@ -10257,41 +10258,44 @@ function ir_i2f_rax(width: i32, unsigned: boolean, lb: string, d: string): strin
 }
 
 function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
-  let byte_copy = s.byte_copy_runtime();
+  let byte_copy = s.byte_copy_roots();
   if (byte_copy != "") {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(byte_copy, s);
+    s = emit_runtime(byte_copy, s);
   }
   if (s.has_need("arr_str_join")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_str_join(), s);
+    s = emit_runtime("__fern_arr_str_join", s);
   }
   if (s.has_need("arr_concat")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_concat(), s);
+    s = emit_runtime("__fern_arr_concat", s);
   }
   if (s.has_need("bytes_owned")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_bytes_owned(), s);
+    s = emit_runtime("__fern_bytes_owned", s);
   }
   if (s.has_need("bytes_range")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_bytes_range(), s);
+    s = emit_runtime("__fern_bytes_range", s);
   }
   if (s.has_need("bytes_into")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_bytes_into(), s);
+    s = emit_runtime("__fern_bytes_into", s);
   }
   return s;
 }
 
-function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.EmitState {
-  let m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
+function emit_runtime(roots: string, s: asmcore.EmitState): asmcore.EmitState {
+  return emit_runtime_module(rtmodule.load("x86-64-linux", roots), s);
+}
+
+function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.EmitState {
   let fns: parser.FuncDecl[] = m.funcs;
   let lit0: i32 = s.string_lits.len();
   let agg0: i32 = s.const_aggs.len();
   let sh0: i32 = s.shape_lits.len();
-  let lowered: physicalbody.Lowered = s.rt_lower(src);
+  let lowered: physicalbody.Lowered = s.rt_lower(m);
   let bodies: irtables.LowerResult[] = lowered.bodies;
   let physical = physicalbody.collection(lowered);
   let previous_regs: irtables.SigReg = s.reg_entries;
@@ -10304,7 +10308,10 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   s = asmcore.export_runtime_fns(s, fns);
   let i: i32 = 0;
   while (i < fns.len()) {
-    s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), s.prelift(unit.pre, i, bodies[i]), fns[i], s, vgate);
+    if (!s.has_named(fns[i].name)) {
+      s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), s.prelift(unit.pre, i, bodies[i]), fns[i], s, vgate);
+      s = s.with_named(fns[i].name);
+    }
     i = i + 1;
   }
   s = emit_named_bodies(bodies, physical, unit.pre, fns.len(), s, vgate);
@@ -10418,11 +10425,11 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub, recs:
   return emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, ircore.inline_tiny_leaves(g.im, g.cache), g.physical, sub.rt_lower, recs, sub.switches);
 }
 
-pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (string) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches): string {
+pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (parser.Module) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches): string {
   return emit_module_ir_unit_prepared(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, physical, rt, recs, sw, false).text;
 }
 
-pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (string) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches, retain: boolean): ssaprepare.Output {
+pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (parser.Module) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches, retain: boolean): ssaprepare.Output {
   let s: asmcore.EmitState = asmcore.new_state();
   s = asmcore.EmitState { ...s, retain_prepared: retain, memo: irverifygate.open_memo("x86-64") };
   s = asmcore.with_funcs(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, recs: recs }, sw), all_funcs);
@@ -10572,7 +10579,7 @@ function emit_stack_switch(own s: asmcore.EmitState): asmcore.EmitState {
   s = emit_stack_map(s, asmcore.stack_size());
   s = s.write("    cmpq $-4096, %rax\n    ja .Lfern_stack_kept\n    movq %rax, %rbx\n    movq %rax, %rdi\n    movq $" + util.i32_to_string(asmcore.stack_guard()) + ", %rsi\n    xorl %edx, %edx\n    movl $10, %eax\n");
   s = s.syscall(10);
-  s = s.write("    leaq " + util.i32_to_string(asmcore.stack_size() - 16) + "(%rbx), %rsp\n.Lfern_stack_kept:\n");
+  s = s.write("    testq %rax, %rax\n    jnz .Lfern_stack_guard_failed\n    leaq " + util.i32_to_string(asmcore.stack_size() - 16) + "(%rbx), %rsp\n.Lfern_stack_kept:\n");
   s = emit_stack_map(s, 65536);
   s = s.write("    cmpq $-4096, %rax\n    ja .Lfern_segv_skip\n    subq $32, %rsp\n    movq %rax, (%rsp)\n    movq $0, 8(%rsp)\n    movq $65536, 16(%rsp)\n    movq %rsp, %rdi\n    xorl %esi, %esi\n    movl $131, %eax\n");
   s = s.syscall(131);
@@ -10598,6 +10605,15 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = emit_segv_install(s);
   s = s.write("    addq $32, %rsp\n    ret\n.Lfern_segv_restorer:\n    movl $15, %eax\n");
   return s.syscall(15);
+}
+
+function emit_stack_guard_failure(own s: asmcore.EmitState): asmcore.EmitState {
+  let msg: string = aborts.stack_guard();
+  s = s.write("    .section .rodata\n.Lmsg_stack_guard:\n    .ascii \"" + msg + "\\n\"\n    .text\n.Lfern_stack_guard_failed:\n");
+  s = s.write("    leaq .Lmsg_stack_guard(%rip), %rsi\n    movq $" + util.i32_to_string(msg.len() + 1) + ", %rdx\n    movl $2, %edi\n    movl $1, %eax\n");
+  s = s.syscall(1);
+  s = s.write("    movl $134, %edi\n    movl $231, %eax\n");
+  return s.syscall(231);
 }
 
 function emit_process_finish(mod: parser.Module, own s: asmcore.EmitState): asmcore.EmitState {
@@ -10668,7 +10684,7 @@ function emit_profile_alloc_runtime(s: asmcore.EmitState): asmcore.EmitState {
 
 function emit_profile_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .bss\n    .balign 8\n.Lprofile_ring: .zero 4337824\n    .data\n    .balign 8\n.Lprofile_action: .quad __fern_profile_signal, 335544324, __fern_profile_restorer, 0\n.Lprofile_timer: .quad 0, 10000, 0, 10000\n    .text\n");
-  s = emit_ir_runtime_fern_fn(rtprofile.source("x86-64-linux", s.profile), s);
+  s = emit_runtime("__fern_profile_start __fern_profile_sample __fern_profile_finish", s);
   s = s.write("__fern_profile_signal:\n    cmpq $0, .Lprofile_ring+24(%rip)\n    je .Lprofile_signal_return\n    movq $39, %rax\n");
   s = s.syscall(39);
   s = s.write("    cmpq .Lprofile_ring+128(%rip), %rax\n    jne .Lprofile_signal_return\n    movq $186, %rax\n");
@@ -10711,12 +10727,12 @@ function emit_rt_clocks(s: asmcore.EmitState): asmcore.EmitState {
   }
   for which in ["monotonic_ns", "now_unix_ms", "now_ns"] {
     if (s.has_need(which)) {
-      s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock(which, "x86-64-linux"), s.write("    .text\n"));
+      s = emit_runtime("__fern_" + which, s.write("    .text\n"));
     }
   }
   if (vdso) {
     s = s.write("    .section .bss\n    .align 8\n__fern_vdso: .quad 0, 0\n    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_vdso("x86-64-linux"), s);
+    s = emit_runtime("__fern_vdso_clock __fern_vdso_find", s);
   }
   return s;
 }
@@ -10727,7 +10743,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("str_cmp")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_cmp(), s);
+    s = emit_runtime("__fern_str_cmp", s);
   }
   if (needs_heap_runtime(s)) {
     s = emit_ir_runtime(s);
@@ -10757,6 +10773,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .text\n");
   if (!s.shared) {
     s = emit_stack_overflow_runtime(s);
+    s = emit_stack_guard_failure(s);
   }
   s = emit_report(s);
   if (s.shared) {
@@ -10777,125 +10794,125 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("str_case")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_upper(), s);
+    s = emit_runtime("__fern_str_to_upper", s);
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_to_lower(), s);
+    s = emit_runtime("__fern_str_to_lower", s);
   }
   if (s.has_need("str_repeat")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_repeat(), s);
+    s = emit_runtime("__fern_str_repeat", s);
   }
   if (s.has_need("str_trim")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_trim(), s);
+    s = emit_runtime("__fern_str_trim", s);
   }
   if (s.has_need("str_replace")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_replace(), s);
+    s = emit_runtime("__fern_str_dup __fern_str_replace", s);
   }
   if (s.has_need("str_from_bytes")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes(), s);
+    s = emit_runtime("__fern_string_from_bytes", s);
   }
   if (s.has_need("str_from_bytes_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes_u8(), s);
+    s = emit_runtime("__fern_string_from_bytes_u8", s);
   }
   if (s.has_need("str_from_bytes_range_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_string_from_bytes_range_u8(), s);
+    s = emit_runtime("__fern_string_from_bytes_range_u8", s);
   }
   if (s.has_need("str_bytes_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_bytes_u8(), s);
+    s = emit_runtime("__fern_str_bytes_u8", s);
   }
   if (s.has_need("arr_slice_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice_u8(), s);
+    s = emit_runtime("__fern_arr_slice_u8", s);
   }
   if (s.has_need("random_bytes_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes_u8("x86-64-linux"), s);
+    s = emit_runtime("__fern_random_bytes_u8", s);
   }
   if (s.has_need("tcp_recv_into_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into_u8("x86-64-linux"), s);
+    s = emit_runtime("__fern_tcp_recv_into_u8", s);
   }
   if (s.has_need("random_bytes")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_bytes("x86-64-linux"), s);
+    s = emit_runtime("__fern_random_bytes", s);
   }
   if (s.has_need("arr_slice")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_arr_slice(), s);
+    s = emit_runtime("__fern_arr_slice", s);
   }
   if (s.has_need("str_split")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_split(), s);
+    s = emit_runtime("__fern_utf8_step __fern_str_split", s);
   }
   if (s.has_need("str_lines")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_lines(), s);
+    s = emit_runtime("__fern_str_lines", s);
   }
   if (s.has_need("str_bytes")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_bytes(), s);
+    s = emit_runtime("__fern_str_bytes", s);
   }
   if (s.has_need("str_concat")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_str_concat(), s);
+    s = emit_runtime("__fern_str_concat", s);
   }
   s = emit_array_helpers(s);
   if (s.has_need("i32_to_string")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_i32_to_string(), s);
+    s = emit_runtime("__fern_i32_to_string", s);
   }
   if (s.has_need("u32_to_string")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_u32_to_string(), s);
+    s = emit_runtime("__fern_u32_to_string", s);
   }
   if (s.has_need("i64_to_string")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_i64_to_string(), s);
+    s = emit_runtime("__fern_i64_to_string", s);
   }
   if (s.has_need("u64_to_string")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_u64_to_string(), s);
+    s = emit_runtime("__fern_u64_to_string", s);
   }
   if (s.has_need("random_i32")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_random_i32("x86-64-linux"), s);
+    s = emit_runtime("__fern_random_i32", s);
   }
   if (s.has_need("map_hash_seed")) {
     s = emit_ir_map_hash_seed(s);
   }
   if (s.has_need("proc_fork")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_fork("x86-64-linux"), s);
+    s = emit_runtime("__fern_proc_fork", s);
   }
   if (s.has_need("proc_waitpid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid("x86-64-linux"), s);
+    s = emit_runtime("__fern_proc_waitpid", s);
   }
   if (s.has_need("proc_waitpid_nohang")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_nohang("x86-64-linux"), s);
+    s = emit_runtime("__fern_proc_waitpid_nohang", s);
   }
   if (s.has_need("proc_waitpid_status")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_status("x86-64-linux"), s);
+    s = emit_runtime("__fern_proc_waitpid_status", s);
   }
   if (s.has_need("proc_exec")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec("x86-64-linux"), s);
+    s = emit_runtime("__fern_proc_exec", s);
   }
   if (s.has_need("proc_exec_as")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec_as("x86-64-linux"), s);
+    s = emit_runtime("__fern_proc_exec_as", s);
   }
   if (s.has_need("subprocess")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_subprocess("x86-64-linux"), s);
+    s = emit_runtime("__fern_sp_drain __fern_sp_exec_at __fern_sp_exec_failed __fern_subprocess", s);
   }
   if (s.any_need([
     "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat", "dir_stat",
@@ -10926,525 +10943,525 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("str_print")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_print_str("x86-64-linux"), s);
+    s = emit_runtime("__fern_print_str", s);
   }
   if (s.has_need("putchar")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_putchar("x86-64-linux"), s);
+    s = emit_runtime("__fern_putchar", s);
   }
   if (s.has_need("eprint")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_eprint_str("x86-64-linux"), s);
+    s = emit_runtime("__fern_eprint_str", s);
   }
   s = emit_rt_clocks(s);
   if (needs_fs_runtime(s)) {
     s = s.write("    .text\n");
-    let fs_src: string = asmcore.rt_src_io_error("x86-64-linux");
+    let fs_roots: string = "__fern_path_copy __fern_io_error";
     if (s.has_need("uname_field")) {
-      fs_src = fs_src + " " + asmcore.rt_src_uname_field("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_uname_field";
     }
     if (s.has_need("hostname")) {
-      fs_src = fs_src + " " + asmcore.rt_src_hostname("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_hostname";
     }
     if (s.has_need("stat")) {
-      fs_src = fs_src + " " + asmcore.rt_src_stat("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_stat";
     }
     if (s.has_need("lstat")) {
-      fs_src = fs_src + " " + asmcore.rt_src_lstat("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_lstat";
     }
     if (s.has_need("statfs")) {
-      fs_src = fs_src + " " + asmcore.rt_src_statfs("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_statfs";
     }
     if (s.has_need("mounts")) {
-      fs_src = fs_src + " " + asmcore.rt_src_mounts("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_mounts";
     }
     if (s.has_need("sysctl")) {
-      fs_src = fs_src + " " + asmcore.rt_src_sysctl("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_sysctl";
     }
     if (s.has_need("window_size")) {
-      fs_src = fs_src + " " + asmcore.rt_src_window_size("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_window_size";
     }
     if (s.has_need("set_window_size")) {
-      fs_src = fs_src + " " + asmcore.rt_src_set_window_size("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_set_window_size";
     }
     if (s.has_need("termios_get")) {
-      fs_src = fs_src + " " + asmcore.rt_src_termios_get("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_termios_get";
     }
     if (s.has_need("termios_set")) {
-      fs_src = fs_src + " " + asmcore.rt_src_termios_set("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_termios_set";
     }
     if (s.has_need("set_extproc")) {
-      fs_src = fs_src + " " + asmcore.rt_src_set_extproc("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_set_extproc";
     }
     if (s.has_need("pipe")) {
-      fs_src = fs_src + " " + asmcore.rt_src_pipe("x86-64-linux");
+      fs_roots = fs_roots + " " + (if ("x86-64-linux" == "arm64-darwin") { "__fern_pipe_from" } else { "__fern_pipe" });
     }
-    fs_src = fs_src + asmcore.rt_src_dir_leaves("x86-64-linux", s);
+    fs_roots = fs_roots + asmcore.runtime_dir_roots(s);
     if (s.has_need("access")) {
-      fs_src = fs_src + " " + asmcore.rt_src_access("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_access";
     }
     if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr") || s.has_need("reader") || s.has_need("read_dir") || s.has_need("read_dir_all") || s.has_need("read_dir_ino") || s.has_need("read_dir_ino_all") || s.has_need("dir_entries") || s.has_need("read_link") || s.has_need("getcwd") || s.has_need("hostname") || s.has_need("uname_field") || s.has_need("mounts")) {
-      fs_src = fs_src + " " + asmcore.rt_src_utf8_valid();
+      fs_roots = fs_roots + " " + "__fern_utf8_valid";
     }
     if (s.has_need("read_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_file("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_read_file";
     }
     if (s.has_need("read_file_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86-64-linux", false);
+      fs_roots = fs_roots + " " + "__fern_read_file_bytes";
     }
     if (s.has_need("read_file_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_file_bytes("x86-64-linux", true);
+      fs_roots = fs_roots + " " + "__fern_read_file_bytes_u8";
     }
     if (s.has_need("remove_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_remove_file("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_remove_file";
     }
     if (s.has_need("create_dir_all")) {
-      fs_src = fs_src + " " + asmcore.rt_src_create_dir_all("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_create_dir_all";
     }
     if (s.has_need("create_dir")) {
-      fs_src = fs_src + " " + asmcore.rt_src_create_dir("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_create_dir";
     }
     if (s.has_need("remove_dir")) {
-      fs_src = fs_src + " " + asmcore.rt_src_remove_dir("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_remove_dir";
     }
     if (s.has_need("getcwd")) {
-      fs_src = fs_src + " " + asmcore.rt_src_getcwd("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_getcwd";
     }
     if (s.has_need("chdir")) {
-      fs_src = fs_src + " " + asmcore.rt_src_chdir("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_chdir";
     }
     if (s.has_need("chroot")) {
-      fs_src = fs_src + " " + asmcore.rt_src_chroot("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_chroot";
     }
     if (s.has_need("setuid")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setuid("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_setuid";
     }
     if (s.has_need("setgid")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setgid("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_setgid";
     }
     if (s.has_need("setgroups")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setgroups("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_setgroups";
     }
     if (s.has_need("create_link")) {
-      fs_src = fs_src + " " + asmcore.rt_src_create_link("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_create_link";
     }
     if (s.has_need("clone_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_clone_file("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_clone_file";
     }
     if (s.has_need("create_symlink")) {
-      fs_src = fs_src + " " + asmcore.rt_src_create_symlink("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_create_symlink";
     }
     if (s.has_need("rename")) {
-      fs_src = fs_src + " " + asmcore.rt_src_rename("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_rename";
     }
     if (s.has_need("getxattr_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86-64-linux", true, false);
+      fs_roots = fs_roots + " " + "__fern_getxattr_bytes";
     }
     if (s.has_need("getxattr_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86-64-linux", true, true);
+      fs_roots = fs_roots + " " + "__fern_getxattr_bytes_u8";
     }
     if (s.has_need("lgetxattr_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86-64-linux", false, false);
+      fs_roots = fs_roots + " " + "__fern_lgetxattr_bytes";
     }
     if (s.has_need("lgetxattr_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_getxattr_bytes("x86-64-linux", false, true);
+      fs_roots = fs_roots + " " + "__fern_lgetxattr_bytes_u8";
     }
     if (s.has_need("setxattr_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86-64-linux", true, false);
+      fs_roots = fs_roots + " " + "__fern_setxattr_bytes";
     }
     if (s.has_need("setxattr_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86-64-linux", true, true);
+      fs_roots = fs_roots + " " + "__fern_setxattr_bytes_u8";
     }
     if (s.has_need("lsetxattr_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86-64-linux", false, false);
+      fs_roots = fs_roots + " " + "__fern_lsetxattr_bytes";
     }
     if (s.has_need("lsetxattr_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setxattr_bytes("x86-64-linux", false, true);
+      fs_roots = fs_roots + " " + "__fern_lsetxattr_bytes_u8";
     }
     if (s.has_need("getxattr")) {
-      fs_src = fs_src + " " + asmcore.rt_src_getxattr("x86-64-linux", true);
+      fs_roots = fs_roots + " " + "__fern_getxattr";
     }
     if (s.has_need("lgetxattr")) {
-      fs_src = fs_src + " " + asmcore.rt_src_getxattr("x86-64-linux", false);
+      fs_roots = fs_roots + " " + "__fern_lgetxattr";
     }
     if (s.has_need("setxattr")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setxattr("x86-64-linux", true);
+      fs_roots = fs_roots + " " + "__fern_setxattr";
     }
     if (s.has_need("lsetxattr")) {
-      fs_src = fs_src + " " + asmcore.rt_src_setxattr("x86-64-linux", false);
+      fs_roots = fs_roots + " " + "__fern_lsetxattr";
     }
     if (s.has_need("rename_noreplace")) {
-      fs_src = fs_src + " " + asmcore.rt_src_rename_noreplace("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_rename_noreplace";
     }
     if (s.has_need("rename_exchange")) {
-      fs_src = fs_src + " " + asmcore.rt_src_rename_exchange("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_rename_exchange";
     }
     if (s.has_need("chmod")) {
-      fs_src = fs_src + " " + asmcore.rt_src_chmod("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_chmod";
     }
     if (s.has_need("chmod_at")) {
-      fs_src = fs_src + " " + asmcore.rt_src_chmod_at("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_chmod_at";
     }
     if (s.has_need("signal_send")) {
-      fs_src = fs_src + " " + asmcore.rt_src_signal_send("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_signal_send";
     }
     if (s.has_need("set_process_group")) {
-      fs_src = fs_src + " " + asmcore.rt_src_set_process_group("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_set_process_group";
     }
     if (s.has_need("set_priority")) {
-      fs_src = fs_src + " " + asmcore.rt_src_set_priority("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_set_priority";
     }
     if (s.has_need("clock_set")) {
-      fs_src = fs_src + " " + asmcore.rt_src_clock_set("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_clock_set";
     }
     if (s.has_need("truncate")) {
-      fs_src = fs_src + " " + asmcore.rt_src_truncate("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_truncate";
     }
-    fs_src = fs_src + asmcore.rt_src_sync_family(s, "x86-64-linux");
+    fs_roots = fs_roots + asmcore.runtime_sync_roots(s);
     if (s.has_need("mknod")) {
-      fs_src = fs_src + " " + asmcore.rt_src_mknod("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_mknod";
     }
     if (s.has_need("chown_at")) {
-      fs_src = fs_src + " " + asmcore.rt_src_chown_at("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_chown_at";
     }
     if (s.has_need("set_file_times")) {
-      fs_src = fs_src + " " + asmcore.rt_src_set_file_times("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_set_file_times";
     }
     if (s.has_need("read_link")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_link("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_read_link";
     }
     if (s.has_need("read_link_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_link_bytes("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_read_link_bytes";
     }
     if (s.has_need("umask")) {
-      fs_src = fs_src + " " + asmcore.rt_src_umask("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_umask";
     }
     if (s.has_need("write_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_write_file("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_write_file";
     }
     if (s.has_need("write_file_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_write_file_bytes("x86-64-linux", false);
+      fs_roots = fs_roots + " " + "__fern_write_file_bytes";
     }
     if (s.has_need("write_file_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_write_file_bytes("x86-64-linux", true);
+      fs_roots = fs_roots + " " + "__fern_write_file_bytes_u8";
     }
     if (s.has_need("write_file_exec")) {
-      fs_src = fs_src + " " + asmcore.rt_src_write_file_exec("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_write_file_exec";
     }
     if (s.has_need("temp_dir")) {
-      fs_src = fs_src + " " + asmcore.rt_src_temp_dir("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_temp_dir";
     }
     if (s.has_need("read_dir")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_dir("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_read_dir";
     }
     if (s.has_need("read_dir_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_dir_bytes("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_read_dir_bytes";
     }
     if (s.has_need("read_dir_all")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_dir_all("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_read_dir_all";
     }
     if (s.has_need("read_dir_ino")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_dir_ino("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_read_dir_ino";
     }
     if (s.has_need("read_dir_ino_all")) {
-      fs_src = fs_src + " " + asmcore.rt_src_read_dir_ino_all("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_read_dir_ino_all";
     }
     if (s.has_need("remove_dir_all")) {
-      fs_src = fs_src + " " + asmcore.rt_src_remove_dir_all("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_remove_dir_all";
     }
     if (s.has_need("open_file")) {
-      fs_src = fs_src + " " + asmcore.rt_src_open_res("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_open_res";
     }
     if (s.has_need("open_with")) {
-      fs_src = fs_src + " " + asmcore.rt_src_open_with("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_open_with";
     }
     if (s.has_need("writer_write")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_write("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_writer_write";
     }
     if (s.has_need("write_some")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_write_some("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_writer_write_some";
     }
     if (s.has_need("splice_forever")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_splice_forever("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_writer_splice_forever";
     }
     if (s.has_need("reader")) {
-      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk("x86-64-linux") + " " + asmcore.rt_src_reader_close("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_reader_read_chunk" + " " + "__fern_reader_close";
     }
     if (s.has_need("write_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86-64-linux", false, true);
+      fs_roots = fs_roots + " " + "__fern_writer_write_bytes";
     }
     if (s.has_need("write_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86-64-linux", true, true);
+      fs_roots = fs_roots + " " + "__fern_writer_write_bytes_u8";
     }
     if (s.has_need("write_some_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86-64-linux", false, false);
+      fs_roots = fs_roots + " " + "__fern_writer_write_some_bytes";
     }
     if (s.has_need("write_some_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_bytes("x86-64-linux", true, false);
+      fs_roots = fs_roots + " " + "__fern_writer_write_some_bytes_u8";
     }
     if (s.has_need("read_chunk_bytes")) {
-      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes("x86-64-linux", false);
+      fs_roots = fs_roots + " " + "__fern_reader_read_chunk_bytes";
     }
     if (s.has_need("read_chunk_bytes_u8")) {
-      fs_src = fs_src + " " + asmcore.rt_src_reader_read_chunk_bytes("x86-64-linux", true);
+      fs_roots = fs_roots + " " + "__fern_reader_short_bytes __fern_reader_read_chunk_bytes_u8";
     }
     if (s.has_need("fd_stat")) {
-      fs_src = fs_src + " " + asmcore.rt_src_fd_stat("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_fd_stat";
     }
     if (s.has_need("reader_seek")) {
-      fs_src = fs_src + " " + asmcore.rt_src_reader_seek("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_reader_seek";
     }
     if (s.has_need("reader_splice")) {
-      fs_src = fs_src + " " + asmcore.rt_src_reader_splice("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_reader_splice";
     }
     if (s.has_need("reader_copy_range")) {
-      fs_src = fs_src + " " + asmcore.rt_src_reader_copy_range("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_reader_copy_range";
     }
     if (s.has_need("fd_flags")) {
-      fs_src = fs_src + " " + asmcore.rt_src_fd_flags("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_fd_flags";
     }
     if (s.has_need("fd_dup_onto")) {
-      fs_src = fs_src + " " + asmcore.rt_src_fd_dup_onto("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_fd_dup_onto";
     }
     if (s.has_need("writer_truncate")) {
-      fs_src = fs_src + " " + asmcore.rt_src_writer_truncate("x86-64-linux");
+      fs_roots = fs_roots + " " + "__fern_writer_truncate";
     }
-    s = emit_ir_runtime_fern_fn(fs_src, s);
+    s = emit_runtime(fs_roots, s);
   }
   if (s.has_need("env")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_env(), s);
+    s = emit_runtime("__fern_env", s);
   }
   if (s.has_need("poll")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_poll("x86-64-linux"), s);
+    s = emit_runtime("__fern_poll", s);
   }
   if (s.has_need("timer_fd")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_timer_fd("x86-64-linux"), s);
+    s = emit_runtime("__fern_timer_fd", s);
   }
   if (s.has_need("isatty")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_isatty("x86-64-linux"), s);
+    s = emit_runtime("__fern_isatty", s);
   }
   if (s.has_need("process_alive")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_process_alive("x86-64-linux"), s);
+    s = emit_runtime("__fern_process_alive", s);
   }
   if (s.has_need("rlimit_nofile")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile("x86-64-linux"), s);
+    s = emit_runtime("__fern_rlimit_nofile", s);
   }
   if (s.has_need("disable_core_dumps")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_disable_core_dumps("x86-64-linux"), s);
+    s = emit_runtime("__fern_disable_core_dumps", s);
   }
   if (s.has_need("ct_mark")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_ct_mark(), s);
+    s = emit_runtime("__fern_ct_mark __fern_ct_secret __fern_ct_public", s);
   }
   if (s.has_need("clock_resolution")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock_resolution("x86-64-linux"), s);
+    s = emit_runtime("__fern_clock_resolution", s);
   }
   if (s.has_need("priority")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_priority("x86-64-linux"), s);
+    s = emit_runtime("__fern_priority", s);
   }
   if (s.has_need("signal_mask")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_mask("x86-64-linux"), s);
+    s = emit_runtime("__fern_signal_mask", s);
   }
   if (s.has_need("signal_disposition")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition_read("x86-64-linux"), s);
+    s = emit_runtime("__fern_signal_disposition", s);
   }
   if (s.has_need("signal_ignore")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition("x86-64-linux", "signal_ignore", "1"), s);
+    s = emit_runtime("__fern_signal_ignore", s);
   }
   if (s.has_need("signal_default")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_disposition("x86-64-linux", "signal_default", "0"), s);
+    s = emit_runtime("__fern_signal_default", s);
   }
   if (s.has_need("signal_catch")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_catch("x86-64-linux"), s);
+    s = emit_runtime("__fern_signal_catch", s);
   }
   s = emit_rt_signal_flags(s);
   if (s.has_need("signal_raise")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_raise("x86-64-linux"), s);
+    s = emit_runtime("__fern_signal_raise", s);
   }
   if (s.has_need("geteuid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86-64-linux", "geteuid"), s);
+    s = emit_runtime("__fern_geteuid", s);
   }
   if (s.has_need("getegid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86-64-linux", "getegid"), s);
+    s = emit_runtime("__fern_getegid", s);
   }
   if (s.has_need("getuid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86-64-linux", "getuid"), s);
+    s = emit_runtime("__fern_getuid", s);
   }
   if (s.has_need("getgid")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getid("x86-64-linux", "getgid"), s);
+    s = emit_runtime("__fern_getgid", s);
   }
   if (s.has_need("getgroups")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getgroups("x86-64-linux"), s);
+    s = emit_runtime("__fern_getgroups", s);
   }
   if (s.has_need("environ")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_environ(), s);
+    s = emit_runtime("__fern_environ", s);
   }
 
   if (s.has_need("cpu_count")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_cpu_count("x86-64-linux"), s);
+    s = emit_runtime("__fern_cpu_count", s);
   }
   if (s.has_need("tcp_listen_with")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86-64-linux", false), s);
+    s = emit_runtime("__fern_tcp_listen_with", s);
   }
   if (s.has_need("tcp_listen_with_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen_with("x86-64-linux", true), s);
+    s = emit_runtime("__fern_tcp_listen_with_u8", s);
   }
   if (s.has_need("tcp_socket_ctl")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_socket_ctl("x86-64-linux"), s);
+    s = emit_runtime("__fern_tcp_socket_ctl", s);
   }
   if (s.has_need("tcp_sendfile")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_sendfile("x86-64-linux"), s);
+    s = emit_runtime("__fern_tcp_sendfile", s);
   }
   if (s.has_need("tcp_send_buf")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_buf("x86-64-linux"), s);
+    s = emit_runtime("__fern_tcp_send_buf", s);
   }
   if (s.has_need("udp_bind")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind("x86-64-linux", false), s);
+    s = emit_runtime("__fern_udp_bind", s);
   }
   if (s.has_need("udp_bind_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind("x86-64-linux", true), s);
+    s = emit_runtime("__fern_udp_bind_u8", s);
   }
   if (s.has_need("udp_bind_with")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind_with("x86-64-linux", false), s);
+    s = emit_runtime("__fern_udp_bind_with", s);
   }
   if (s.has_need("udp_bind_with_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind_with("x86-64-linux", true), s);
+    s = emit_runtime("__fern_udp_bind_with_u8", s);
   }
   if (s.has_need("udp_connect")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect("x86-64-linux", false), s);
+    s = emit_runtime("__fern_udp_connect", s);
   }
   if (s.has_need("udp_connect_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_connect("x86-64-linux", true), s);
+    s = emit_runtime("__fern_udp_connect_u8", s);
   }
   if (s.has_need("udp_sendto")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto("x86-64-linux", false), s);
+    s = emit_runtime("__fern_udp_sendto", s);
   }
   if (s.has_need("udp_sendto_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto("x86-64-linux", true), s);
+    s = emit_runtime("__fern_udp_sendto_u8", s);
   }
   if (s.has_need("udp_recvfrom")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom("x86-64-linux", false), s);
+    s = emit_runtime("__fern_udp_recvfrom", s);
   }
   if (s.has_need("udp_recvfrom_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_recvfrom("x86-64-linux", true), s);
+    s = emit_runtime("__fern_udp_recvfrom_u8", s);
   }
   if (s.has_need("tcp_connect_with")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with("x86-64-linux", false), s);
+    s = emit_runtime("__fern_tcp_connect_with", s);
   }
   if (s.has_need("tcp_connect_with_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_connect_with("x86-64-linux", true), s);
+    s = emit_runtime("__fern_tcp_connect_with_u8", s);
   }
   if (s.has_need("unix_listen")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_unix_listen("x86-64-linux"), s);
+    s = emit_runtime("__fern_unix_listen", s);
   }
   if (s.has_need("unix_connect")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_unix_connect("x86-64-linux"), s);
+    s = emit_runtime("__fern_unix_connect", s);
   }
   if (s.has_need("reactor_new")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_new("x86-64-linux"), s);
+    s = emit_runtime("__fern_reactor_new", s);
   }
   if (s.has_need("reactor_ctl")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_ctl("x86-64-linux"), s);
+    s = emit_runtime("__fern_reactor_ctl", s);
   }
   if (s.has_need("reactor_wait")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_reactor_wait("x86-64-linux"), s);
+    s = emit_runtime("__fern_reactor_wait", s);
   }
   if (s.any_need(["ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8"])) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_ring("x86-64-linux"), s);
+    s = emit_runtime("__fern_ring_queued __fern_ring_flush __fern_ring_push __fern_ring_entry __fern_ring_ready_at __fern_ring_zc_at __fern_ring_send_zc_u8 __fern_ring_zc_done __fern_ring_u16 __fern_ring_set16 __fern_ring_give __fern_ring_list __fern_ring_pend __fern_ring_ud __fern_ring_arm __fern_ring_unarm __fern_ring_rud __fern_ring_recv_arm __fern_ring_recv_stop __fern_ring_drop __fern_ring_enqueue __fern_ring_fall_back __fern_ring_resume __fern_ring_set __fern_ring_set_ctl __fern_ring_watch __fern_ring_new __fern_ring_ctl __fern_ring_wait __fern_ring_reap __fern_ring_recv_done __fern_ring_emit __fern_ring_emit_one __fern_ring_recv_u8 __fern_ring_set_wait", s);
   }
   if (s.has_need("tcp_ktls_u8")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_ktls("x86-64-linux"), s);
+    s = emit_runtime("__fern_tcp_ktls_u8", s);
   }
   if (s.has_need("task")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_task("x86-64-linux"), asmcore.EmitState { ...s, rt_owned_allocs: true });
+    s = emit_runtime("__fern_task_tab __fern_task_rec __fern_task_blank __fern_task_new __fern_task_free __fern_task_cur __fern_task_enter __fern_task_leave __fern_task_mode __fern_task_park __fern_task_wait __fern_task_timeout __fern_task_set_ready __fern_task_set_cancelled __fern_task_cancelled __fern_task_reserve __fern_task_take __fern_task_pop_w", asmcore.EmitState { ...s, rt_owned_allocs: true });
     s = asmcore.EmitState { ...s, rt_owned_allocs: false };
   }
   if (s.has_need("tcp_recv_into")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_recv_into("x86-64-linux"), s);
+    s = emit_runtime("__fern_tcp_recv_into", s);
   }
   if (s.has_need("tcp_close")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_close("x86-64-linux"), s);
+    s = emit_runtime("__fern_tcp_close", s);
   }
   if (s.has_need("tcp_send_bytes")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes("x86-64-linux", false), s);
+    s = emit_runtime("__fern_tcp_send_bytes", s);
   }
   if (s.has_need("tcp_send_bytes_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_bytes("x86-64-linux", true), s);
+    s = emit_runtime("__fern_tcp_send_bytes_u8", s);
   }
   if (s.has_need("udp_sendto_bytes")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto_bytes("x86-64-linux", false), s);
+    s = emit_runtime("__fern_udp_sendto_bytes", s);
   }
   if (s.has_need("udp_sendto_bytes_u8")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_sendto_bytes("x86-64-linux", true), s);
+    s = emit_runtime("__fern_udp_sendto_bytes_u8", s);
   }
   if (s.has_need("tcp_listen")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_listen("x86-64-linux"), s);
+    s = emit_runtime("__fern_tcp_listen", s);
   }
   if (s.has_need("tcp_accept")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_accept("x86-64-linux"), s);
+    s = emit_runtime("__fern_tcp_accept", s);
   }
   if (s.has_need("tcp_local_port")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_local_port("x86-64-linux"), s);
+    s = emit_runtime("__fern_tcp_local_port", s);
   }
   if (s.has_need("sleep_ms")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ms("x86-64-linux"), s);
+    s = emit_runtime("__fern_sleep_ms", s);
   }
   if (s.has_need("sleep_ns")) {
     s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_sleep_ns("x86-64-linux"), s);
+    s = emit_runtime("__fern_sleep_ns", s);
   }
   return s;
 }

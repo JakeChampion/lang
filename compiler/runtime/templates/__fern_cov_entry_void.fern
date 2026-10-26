@@ -1,0 +1,4 @@
+function __fern_cov_entry_void(): void {
+  __fern_cov_main();
+  __fern_cov_report();
+}

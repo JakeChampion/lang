@@ -1,0 +1,8 @@
+function __fern_pp_copy(buf: usize, at: usize, src: usize, n: usize): usize {
+  let i: usize = 0;
+  while (i < n) {
+    __raw_store8(buf + at + i, 0, __load_u8(src + i));
+    i = i + 1;
+  }
+  return at + n;
+}

@@ -1,0 +1,7 @@
+function __fern_pp_flush(out: usize): void {
+  let n: usize = __load_i64(out) as usize;
+  if (n > 0) {
+    __fern_profile_write_fd(__load_i64(out + 8), out + 16, n);
+    __raw_store_ptr(out, 0, 0);
+  }
+}
