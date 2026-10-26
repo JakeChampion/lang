@@ -93,6 +93,8 @@ Current-head CI remains a separate validation result.
 
 The scan-order repair passes all 14 cases on native Linux, Wasmtime, and ARM64/QEMU10 with zero final live bytes.
 That campaign uses compiler `3bebeb4b6fa5`, SHA256 `59e020168d59e830c7eecc6b38abb8ff1c2731d12e0b391a5f1ac0fd11aad8ee`.
+The complete native and Wasm image scripts each pass all 150 TAP cases and their smoke cases with that fixed compiler binary.
+All 61 native and 37 Wasm worker censuses are balanced with zero final live bytes.
 
 The native and Wasm image scripts include these cases.
 Reproduce fixture generation with the existing pinned offline reference environment:
