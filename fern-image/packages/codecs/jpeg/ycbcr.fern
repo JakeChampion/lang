@@ -1,0 +1,57 @@
+import "../../pixels/pixels";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum ConvertError { Shape, Limit, Cancelled }
+
+function channel(value: i64): u8 {
+  if (value <= 0i64) {
+    return 0 as u8;
+  }
+  if (value >= 25500000i64) {
+    return 255 as u8;
+  }
+  return ((value + 50000i64) / 100000i64) as u8;
+}
+
+// JFIF 1.02 page 3 decimal equations, evaluated in exact hundred-thousandths.
+pub function convert(y: u8, cb: u8, cr: u8): pixels.Pixel {
+  let base = y as i64 * 100000i64;
+  let blue = cb as i64 - 128i64;
+  let red = cr as i64 - 128i64;
+  return pixels.Pixel {
+    r: channel(base + 140200i64 * red),
+    g: channel(base - 34414i64 * blue - 71414i64 * red),
+    b: channel(base + 177200i64 * blue),
+    a: 255,
+  };
+}
+
+// Inputs already have equal resolution and explicit Y, Cb, Cr meaning.
+pub function convert_row(y: [u8], cb: [u8], cr: [u8], max_output_bytes: i32, cancelled: () => boolean): Result[u8[], ConvertError] {
+  if (y.len() <= 0 || y.len() != cb.len() || y.len() != cr.len()) {
+    return Err(ConvertError.Shape);
+  }
+  let bytes = match (y.len() *? 3) { Some(v) => v, None => { return Err(ConvertError.Limit); } };
+  if (max_output_bytes <= 0 || bytes > max_output_bytes || bytes > 67108864) {
+    return Err(ConvertError.Limit);
+  }
+  if (cancelled()) {
+    return Err(ConvertError.Cancelled);
+  }
+  let output = __alloc_u8(bytes);
+  if (cancelled()) {
+    return Err(ConvertError.Cancelled);
+  }
+  for x in 0..y.len() {
+    if (x % 64 == 0 && cancelled()) {
+      return Err(ConvertError.Cancelled);
+    }
+    let pixel = convert(y[x], cb[x], cr[x]);
+    output = output.with(x * 3, pixel.r).with(x * 3 + 1, pixel.g).with(x * 3 + 2, pixel.b);
+  }
+  if (cancelled()) {
+    return Err(ConvertError.Cancelled);
+  }
+  return Ok(output);
+}

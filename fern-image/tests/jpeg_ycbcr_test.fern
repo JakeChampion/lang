@@ -1,0 +1,166 @@
+import "../packages/codecs/jpeg/ycbcr";
+import "../packages/pixels/pixels";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function filled(count: i32, value: u8): u8[] {
+  let out: u8[] = [];
+  for i in 0..count {
+    out = out.append(value);
+  }
+  return out;
+}
+
+function same(pixel: pixels.Pixel, r: u8, g: u8, b: u8): boolean {
+  return pixel.r == r && pixel.g == g && pixel.b == b && pixel.a == 255 as u8;
+}
+
+function scalar(): test.TestOutcome {
+  for value in 0..256 {
+    if (!same(ycbcr.convert(value as u8, 128 as u8, 128 as u8), value as u8, value as u8, value as u8)) {
+      return test.fail("neutral full range");
+    }
+  }
+  if (!same(ycbcr.convert(76 as u8, 85 as u8, 255 as u8), 254 as u8, 0 as u8, 0 as u8)
+    || !same(ycbcr.convert(149 as u8, 43 as u8, 21 as u8), 0 as u8, 255 as u8, 0 as u8)
+    || !same(ycbcr.convert(29 as u8, 255 as u8, 107 as u8), 0 as u8, 0 as u8, 254 as u8)
+    || !same(ycbcr.convert(128 as u8, 0 as u8, 0 as u8), 0 as u8, 255 as u8, 0 as u8)
+    || !same(ycbcr.convert(128 as u8, 255 as u8, 255 as u8), 255 as u8, 0 as u8, 255 as u8)) {
+    return test.fail("explicit endpoints and clipping");
+  }
+  if (ycbcr.convert(1 as u8, 253 as u8, 128 as u8).b != 223 as u8
+    || ycbcr.convert(254 as u8, 3 as u8, 128 as u8).b != 33 as u8
+    || ycbcr.convert(128 as u8, 78 as u8, 178 as u8).g != 110 as u8
+    || ycbcr.convert(128 as u8, 178 as u8, 78 as u8).g != 147 as u8) {
+    return test.fail("exact positive and negative half ties");
+  }
+  return test.pass();
+}
+
+function rows(): test.TestOutcome {
+  let y = [0 as u8, 255 as u8, 76 as u8, 149 as u8, 29 as u8];
+  let cb = [128 as u8, 128 as u8, 85 as u8, 43 as u8, 255 as u8];
+  let cr = [128 as u8, 128 as u8, 255 as u8, 21 as u8, 107 as u8];
+  let expected = [0 as u8, 0 as u8, 0 as u8, 255 as u8, 255 as u8, 255 as u8, 254 as u8, 0 as u8, 0 as u8, 0 as u8, 255 as u8, 0 as u8, 0 as u8, 0 as u8, 254 as u8];
+  let out = match (ycbcr.convert_row(y, cb, cr, 15, never)) { Ok(v) => v, Err(_) => { return test.fail("row conversion"); } };
+  if (out.len() != 15) {
+    return test.fail("packed output length");
+  }
+  for i in 0..15 {
+    if (out[i] != expected[i]) {
+      return test.fail("packed channel order");
+    }
+  }
+  return test.pass();
+}
+
+function admission(): test.TestOutcome {
+  let polls = cell_new(0);
+  let cancel = (): boolean => {
+    polls.set(polls.get() + 1);
+    return true;
+  };
+  let one = [128 as u8];
+  let empty: u8[] = [];
+  match (ycbcr.convert_row(empty, empty, empty, 3, cancel)) {
+    Err(ycbcr.Shape()) => {},
+    _ => {
+      return test.fail("empty row");
+    }
+  }
+  match (ycbcr.convert_row(one, empty, one, 3, cancel)) {
+    Err(ycbcr.Shape()) => {},
+    _ => {
+      return test.fail("Cb width");
+    }
+  }
+  match (ycbcr.convert_row(one, one, empty, 3, cancel)) {
+    Err(ycbcr.Shape()) => {},
+    _ => {
+      return test.fail("Cr width");
+    }
+  }
+  for limit in [0 - 1, 0, 1, 2] {
+    match (ycbcr.convert_row(one, one, one, limit, cancel)) {
+      Err(ycbcr.Limit()) => {},
+      _ => {
+        return test.fail("one-less output admission");
+      }
+    }
+  }
+  if (polls.get() != 0) {
+    return test.fail("invalid admission invoked callback");
+  }
+  return test.assert_true(match (ycbcr.convert_row(one, one, one, 3, never)) { Ok(v) => v.len() == 3, Err(_) => false });
+}
+
+function ownership(): test.TestOutcome {
+  let backing = [9 as u8, 10 as u8, 20 as u8, 30 as u8, 8 as u8];
+  let window = backing[1:4];
+  let chroma = filled(3, 128 as u8);
+  let first = match (ycbcr.convert_row(window, chroma, chroma, 9, never)) { Ok(v) => v, Err(_) => { return test.fail("borrowed window"); } };
+  backing = backing.with(1, 99 as u8);
+  chroma = chroma.with(0, 0 as u8);
+  if (window[0] != 10 as u8 || first[0] != 10 as u8 || backing[1] != 99 as u8) {
+    return test.fail("input or output alias");
+  }
+  let retained = first;
+  first = first.with(0, 77 as u8);
+  let again = match (ycbcr.convert_row(window, filled(3, 128 as u8), filled(3, 128 as u8), 9, never)) { Ok(v) => v, Err(_) => { return test.fail("fresh output"); } };
+  return test.assert_true(retained[0] == 10 as u8 && first[0] == 77 as u8 && again[0] == 10 as u8);
+}
+
+function cancellation(): test.TestOutcome {
+  let y = filled(257, 120 as u8);
+  let cb = filled(257, 33 as u8);
+  let cr = filled(257, 222 as u8);
+  let polls = cell_new(0);
+  let count = (): boolean => {
+    polls.set(polls.get() + 1);
+    return false;
+  };
+  match (ycbcr.convert_row(y, cb, cr, 771, count)) {
+    Ok(v) => {
+      if (v.len() != 771) {
+        return test.fail("long row");
+      }
+    },
+    Err(_) => {
+      return test.fail("cancel census");
+    }
+  }
+  let total = polls.get();
+  if (total != 8) {
+    return test.fail("bounded groups and final cancellation poll");
+  }
+  for stop in 1..total + 1 {
+    let observed = cell_new(0);
+    let cancel = (): boolean => {
+      observed.set(observed.get() + 1);
+      return observed.get() == stop;
+    };
+    match (ycbcr.convert_row(y, cb, cr, 771, cancel)) {
+      Err(ycbcr.Cancelled()) => {},
+      _ => {
+        return test.fail("every cancellation offset");
+      }
+    }
+    if (observed.get() != stop) {
+      return test.fail("continued after cancellation");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.test_new("explicit full-range YCbCr conversion");
+  runner = runner.it("neutral endpoints, clipping, and exact half ties", scalar);
+  runner = runner.it("equal-resolution packed RGB rows", rows);
+  runner = runner.it("shape and exact output-byte admission", admission);
+  runner = runner.it("borrowed windows and owned copy-on-write outputs", ownership);
+  runner = runner.it("every cooperative cancellation poll", cancellation);
+  return runner.finish();
+}
