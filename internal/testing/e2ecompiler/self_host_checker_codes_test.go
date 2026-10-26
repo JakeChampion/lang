@@ -96,6 +96,8 @@ const (
 	valueMatchSettledLocal     = "function f(): u8 { let t: (u8, i32) = (5u8, 4); return match (t) { (q, n) => q }; }\nfunction g(): i64 { let t: (i64, i32) = (5000000000i64, 4); let r = match (t) { (q, n) => q }; return r; }\nfunction main(): i32 { return 0; }\n"
 	methodCallableParamBinds   = "struct Box[T] { v: T }\nfunction (b: Box[T]) app[U](d: () => U, f: (T) => U): U { return f(b.v); }\nfunction g(s: Box[i32]): i32 { let a: i32 = s.app((): i32 => 0, (x: i32): i32 => x + 1); return a; }\nfunction main(): i32 { return 0; }\n"
 	genericEnumCallablePayload = "enum Fut[T] { Done(T), Wait(i32, (i32) => Fut[T]) }\nfunction run(start: Fut[i32]): i32 { let f: Fut[i32] = start; while (true) { match (f) { Done(v) => { return v; }, Wait(tok, k) => { f = k(tok); } } } return 0; }\nfunction main(): i32 { return 0; }\n"
+	// P is in no union or trait below; A is a member of U and implements T.
+	elemCheckedDecls = "struct P { x: i32 }\nstruct A { a: i32 }\nstruct B { b: i32 }\ntype U = A | B;\nenum E { X, Y(i32) }\ntrait T { function t(self: Self): i32; }\nimpl T for A { function t(self: A): i32 { return 0; } }\n"
 )
 
 func buildCheckerCodesBin(t *testing.T) (checkerBin string, runner []string, dir string) {
@@ -770,6 +772,35 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"arr-mix-struct-then-prim", "struct P { x: i32 }\nfunction main(): i32 { let a = [P { x: 1 }, 5]; return 0; }\n", []string{"E034"}},
 		{"arr-mix-struct-then-struct", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { let a = [P { x: 1 }, Q { y: 2 }]; return 0; }\n", []string{"E034"}},
 		{"typed-arr-struct-mix-unlike-dest", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { let a: P[] = [Q { y: 2 }, P { x: 1 }]; return 0; }\n", []string{"E003", "E034"}},
+		// #13399: an array literal in a union, enum, str or dyn element slot is
+		// reported element by element, with no whole-value code beside the E034.
+		{"union-elem-return-non-member", elemCheckedDecls + "function f(p: P): U[] { return [p]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-return-non-member-literal", elemCheckedDecls + "function f(): U[] { return [P { x: 1 }]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-return-non-member-first", elemCheckedDecls + "function f(a: A, p: P): U[] { return [p, a]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-return-int", elemCheckedDecls + "function f(): U[] { return [5]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"enum-elem-return-non-member", elemCheckedDecls + "function f(p: P): E[] { return [p]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"option-elem-return-int", elemCheckedDecls + "function f(): Option[i32][] { return [5]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"str-elem-return-int", elemCheckedDecls + "function f(): str[] { return [5]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-let-non-member", elemCheckedDecls + "function main(): i32 { let p: P = P { x: 1 }; let u: U[] = [p]; return 0; }\n", []string{"E034"}},
+		{"union-elem-assign-non-member", elemCheckedDecls + "function main(): i32 { let p: P = P { x: 1 }; let u: U[] = [A { a: 1 }]; u = [p]; return 0; }\n", []string{"E034"}},
+		{"union-elem-place-non-member", elemCheckedDecls + "struct H { us: U[] }\nfunction g(h: H, p: P): i32 { h.us = [p]; return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E034", "E048"}},
+		{"union-elem-arg-non-member", elemCheckedDecls + "function g(us: U[]): i32 { return 0; }\nfunction h(p: P): i32 { return g([p]); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-generic-arg-non-member", elemCheckedDecls + "function take[X](us: U[], x: X): i32 { return 0; }\nfunction g(p: P): i32 { return take([p], 1); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-closure-arg-non-member", elemCheckedDecls + "function g(p: P): i32 { let f = (us: U[]): i32 => 0; return f([p]); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-method-arg-non-member", elemCheckedDecls + "struct S { n: i32 }\nfunction (s: S) take(us: U[]): i32 { return 0; }\nfunction g(p: P): i32 { let s: S = S { n: 1 }; return s.take([p]); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-generic-method-arg-non-member", elemCheckedDecls + "struct S { n: i32 }\nfunction (s: S) take[X](us: U[], x: X): i32 { return 0; }\nfunction g(p: P): i32 { let s: S = S { n: 1 }; return s.take([p], 1); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-append-non-member", elemCheckedDecls + "function g(p: P, xs: U[][]): i32 { return xs.append([p]).len(); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-with-non-member", elemCheckedDecls + "function g(p: P, xs: U[][]): i32 { return xs.with(0, [p]).len(); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-field-non-member", elemCheckedDecls + "struct H { us: U[] }\nfunction h(p: P): H { return H { us: [p] }; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-field-update-non-member", elemCheckedDecls + "struct H { us: U[], n: i32 }\nfunction g(h: H, p: P): H { return H { ...h, us: [p] }; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"option-elem-const-int", elemCheckedDecls + "const C: Option[i32][] = [5];\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"str-elem-const-int", elemCheckedDecls + "const C: str[] = [5];\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		// Below the top of a destination a dyn element is checked as part of the
+		// whole value: P does not implement T.
+		{"dyn-elem-nested-array-non-impl", elemCheckedDecls + "function f(p: P): dyn T[][] { return [[p]]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"dyn-elem-nested-option-non-impl", elemCheckedDecls + "function f(p: P): Option[dyn T[]] { return Some([p]); }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"dyn-elem-nested-tuple-non-impl", elemCheckedDecls + "function f(p: P): (dyn T[], i32) { return ([p], 1); }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"dyn-elem-nested-impl", elemCheckedDecls + "function f(a: A): dyn T[][] { return [[a]]; }\nfunction g(a: A): Option[dyn T[]] { return Some([a]); }\nfunction main(): i32 { let a: A = A { a: 1 }; let d: dyn T[][] = [[a]]; return 0; }\n", nil},
 		{"arr-elem-struct-return-mismatch", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction f(p: P): Q[] { return [p]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"arr-elem-struct-let-mismatch", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { let p = P { x: 1 }; let a: Q[] = [p, p]; return a.len(); }\n", []string{"E003"}},
 		{"arr-elem-struct-field-mismatch", "struct P { x: i32 }\nstruct Q { y: i32 }\nstruct W { qs: Q[] }\nfunction main(): i32 { let p = P { x: 1 }; let w = W { qs: [p] }; return w.qs.len(); }\n", []string{"E043"}},

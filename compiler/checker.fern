@@ -6953,7 +6953,7 @@ function method_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig, recv
         }
       }
     }
-    if (!unresolved_value && !is_unknown(want) && !bound_arg_accepts(c.args[mi], mat, want, s) && !generic_own_callback_accepts(mat, want, rmb.names, param_type_name_at(msig, mi), s)) {
+    if (!unresolved_value && !is_unknown(want) && !elem_checked_literal(c.args[mi], msig.param_types[mi]) && !bound_arg_accepts(c.args[mi], mat, want, s) && !generic_own_callback_accepts(mat, want, rmb.names, param_type_name_at(msig, mi), s)) {
       out = out.append(dg_at("E038", "argument " + util.i32_to_string(mi + 1) + " to \"" + method + "\": expected " + type_label(want) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
     }
     out = util.append_diags(out, array_elem_check(array_elem_type_of(msig.param_types[mi]), c.args[mi], s));
@@ -8004,7 +8004,7 @@ function value_dest_diags(value: ast.Expr, cur: Scope, ty: typeinfo.Type, unions
   out = util.append_diags(out, ctor_payload_diags(value, ty, cur));
   let bound: util.Diag[] = dest_bound_diags(value, ty, cur);
   out = util.append_diags(out, bound);
-  if (!use_untyped_call(value) && bound.len() == 0 && !is_unknown(t) && !settles_to(value, ty, cur) && !(type_assignable(t, ty, unions) && dyn_conforms(t, ty, cur))) {
+  if (!use_untyped_call(value) && bound.len() == 0 && !is_unknown(t) && !settles_to_dest(value, ty, cur) && !(type_assignable(t, ty, unions) && dyn_conforms(t, ty, cur))) {
     out = out.append(dg_at("E002", what + ": expected " + type_label(ty) + ", got " + type_label(t) + str_copy_hint(t, ty), line, col));
   }
   return out;
@@ -11852,11 +11852,8 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
 function array_literal_settles(e: ast.Expr, elem: typeinfo.Type, s: Scope): boolean {
   match (e) {
     ast.ExprArray(arr) => {
-      if (is_dyn_slot(elem)) {
-        return true;
-      }
       for element in arr.elements {
-        if (!array_element_settles(element, elem, s)) {
+        if (!array_element_settles(element, elem, s) || !dyn_conforms(check_expr(element, s), elem, s)) {
           return false;
         }
       }
@@ -12881,7 +12878,7 @@ function cell_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typein
     let pt: typeinfo.Type = cell_elem_type(recv);
     let at: typeinfo.Type = check_expr(c.args[0], s);
     out = util.append_diags(out, int_dest_range_diags(c.args[0], pt));
-    if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[0], pt, s) && !coercible(at, pt, s)) {
+    if (!is_unknown(at) && !is_unknown(pt) && !settles_to_dest(c.args[0], pt, s) && !coercible(at, pt, s)) {
       out = out.append(dg_at("E038", "argument 1 to \"" + mfa.field + "\": expected " + type_label(pt) + ", got " + type_label(at) + str_copy_hint(at, pt), expr_line(c.args[0]), expr_col(c.args[0])));
     }
     out = util.append_diags(out, array_elem_check(array_elem_type_of(pt), c.args[0], s));
@@ -12904,7 +12901,7 @@ function callable_arg_diags(c: ast.ExprCall, ft: typeinfo.Type, s: Scope): util.
         let pt: typeinfo.Type = f.param_types[i];
         let at: typeinfo.Type = check_expr(c.args[i], s);
         out = util.append_diags(out, int_dest_range_diags(c.args[i], pt));
-        if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !view_arg_borrow(at, pt) && !coercible(at, pt, s)) {
+        if (!is_unknown(at) && !is_unknown(pt) && !settles_to_dest(c.args[i], pt, s) && !view_arg_borrow(at, pt) && !coercible(at, pt, s)) {
           out = out.append(dg_at("E038", arg_subject(c, i + 1) + ": expected " + type_label(pt) + ", got " + argument_type_label(c.args[i], at, s), expr_line(c.args[i]), expr_col(c.args[i])));
         }
         out = util.append_diags(out, array_elem_check(array_elem_type_of(pt), c.args[i], s));
@@ -13304,7 +13301,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
               out = util.append_diags(out, bound_type_arg_diags(sig, c, ai, at, s, cbn, cbt));
               out = util.append_diags(out, ctor_payload_diags(c.args[ai], sig.param_types[ai], s));
               let bound_checked: boolean = param_has_bindings(sig, ai, cbn);
-              if (!bound_checked && !(sig.all_type_params.len() > 0 && binds_nothing(c.args[ai], s)) && !is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to(c.args[ai], sig.param_types[ai], s) && !view_arg_borrow(at, sig.param_types[ai]) && !coercible(at, sig.param_types[ai], s)) {
+              if (!bound_checked && !(sig.all_type_params.len() > 0 && binds_nothing(c.args[ai], s)) && !is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to_dest(c.args[ai], sig.param_types[ai], s) && !view_arg_borrow(at, sig.param_types[ai]) && !coercible(at, sig.param_types[ai], s)) {
                 out = out.append(dg_at("E038", arg_subject(c, ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + argument_type_label(c.args[ai], at, s), expr_line(c.args[ai]), expr_col(c.args[ai])));
               }
               out = util.append_diags(out, array_elem_check(array_elem_type_of(sig.param_types[ai]), c.args[ai], s));
@@ -13367,16 +13364,18 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           if (!ar.view && mfa.field == "append" && c.args.len() == 1 && !is_unknown(ar.elem)) {
             let aat: typeinfo.Type = check_expr(c.args[0], s);
             out = util.append_diags(out, int_dest_range_diags(c.args[0], ar.elem));
-            if (!is_unknown(aat) && !settles_to(c.args[0], ar.elem, s) && !coercible(aat, ar.elem, s)) {
+            if (!is_unknown(aat) && !settles_to_dest(c.args[0], ar.elem, s) && !coercible(aat, ar.elem, s)) {
               out = out.append(dg_at("E038", "argument 1 to \"append\": expected " + type_label(ar.elem) + ", got " + type_label(aat) + str_copy_hint(aat, ar.elem), expr_line(c.args[0]), expr_col(c.args[0])));
             }
+            out = util.append_diags(out, array_elem_check(array_elem_type_of(ar.elem), c.args[0], s));
           }
           if (!ar.view && mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
             let wvt: typeinfo.Type = check_expr(c.args[1], s);
             out = util.append_diags(out, int_dest_range_diags(c.args[1], ar.elem));
-            if (!is_unknown(wvt) && !settles_to(c.args[1], ar.elem, s) && !coercible(wvt, ar.elem, s)) {
+            if (!is_unknown(wvt) && !settles_to_dest(c.args[1], ar.elem, s) && !coercible(wvt, ar.elem, s)) {
               out = out.append(dg_at("E038", "argument 2 to \"with\": expected " + type_label(ar.elem) + ", got " + type_label(wvt) + str_copy_hint(wvt, ar.elem), expr_line(c.args[1]), expr_col(c.args[1])));
             }
+            out = util.append_diags(out, array_elem_check(array_elem_type_of(ar.elem), c.args[1], s));
           }
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("Array", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
@@ -14224,7 +14223,7 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
         let vt: typeinfo.Type = check_expr(sl.field_values[fi], s);
         out = util.append_diags(out, int_dest_range_diags(sl.field_values[fi], ft));
         out = util.append_diags(out, ctor_payload_diags(sl.field_values[fi], ft, s));
-        if (!is_unknown(ft) && !is_unknown(vt) && !settles_to(sl.field_values[fi], ft, s) && !coercible(vt, ft, s)) {
+        if (!is_unknown(ft) && !is_unknown(vt) && !settles_to_dest(sl.field_values[fi], ft, s) && !coercible(vt, ft, s)) {
           out = out.append(dg_at("E043", "field \"" + sl.field_names[fi] + "\": expected " + type_label(ft) + ", got " + type_label(vt) + str_copy_hint(vt, ft), expr_line(sl.field_values[fi]), expr_col(sl.field_values[fi])));
         }
         out = util.append_diags(out, array_elem_check(array_elem_type_of(ft), sl.field_values[fi], s));
@@ -14582,6 +14581,20 @@ function checks_array_element(ty: typeinfo.Type): boolean {
     }
   }
   return false;
+}
+
+// An array literal written straight into a destination whose elements
+// array_elem_check compares is reported element by element, not as a whole.
+function elem_checked_literal(e: ast.Expr, dest: typeinfo.Type): boolean {
+  if let ast.ExprArray(_) = e {
+    return checks_array_element(array_elem_type_of(dest));
+  }
+  return false;
+}
+
+// settles_to for a value in a destination slot that array_elem_check also covers.
+function settles_to_dest(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
+  return elem_checked_literal(e, want) || settles_to(e, want, s);
 }
 
 function lit_field_type(ssig: StructSig, fi: i32, args: typeinfo.Type[], s: Scope): typeinfo.Type {
@@ -15887,7 +15900,7 @@ function assign_value_diags(value: ast.Expr, tt: typeinfo.Type, what: string, re
   out = util.append_diags(out, ctor_payload_diags(value, tt, cur));
   let abound: util.Diag[] = dest_bound_diags(value, tt, cur);
   out = util.append_diags(out, abound);
-  let misfit: boolean = !settles_to(value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur));
+  let misfit: boolean = !settles_to_dest(value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur));
   if (report_misfit && abound.len() == 0 && !is_unknown(tt) && !is_unknown(vt) && (misfit || fills_unsettled_argument(vt, tt))) {
     out = out.append(dg_at("E003", what + ": expected " + type_label(tt) + ", got " + type_label(vt) + str_copy_hint(vt, tt), line, col));
   }
@@ -15896,7 +15909,8 @@ function assign_value_diags(value: ast.Expr, tt: typeinfo.Type, what: string, re
 
 // place_assign_diags checks `place = value` for a field or element place, which the parser desugars to __set_field / __set_index.
 function place_assign_diags(place: ast.Expr, value: ast.Expr, line: i32, col: i32, s: Scope): util.Diag[] {
-  let out: util.Diag[] = assign_value_diags(value, check_expr(place, s), "assignment", true, line, col, s, s.unions.unions);
+  let pt: typeinfo.Type = check_expr(place, s);
+  let out: util.Diag[] = util.append_diags(assign_value_diags(value, pt, "assignment", true, line, col, s, s.unions.unions), array_elem_check(array_elem_type_of(pt), value, s));
   match (place) {
     ast.ExprFieldAccess(fa) => {
       return out.append(dg_at("E048", "cannot assign to field \"" + fa.field + "\": fields are immutable after construction; rebuild with `T { ...old, " + fa.field + ": value }`", fa.line, fa.col));
@@ -15932,7 +15946,7 @@ function assign_stmt_own_lambdas(st: ast.Stmt, cur: Scope, unions: UnionSig[]): 
 }
 
 function init_fits(init: ast.Expr, t: typeinfo.Type, declared: typeinfo.Type, s: Scope): boolean {
-  return settles_to(init, declared, s) || semtypes.lends_array(t, declared) || coercible(t, declared, s);
+  return settles_to_dest(init, declared, s) || semtypes.lends_array(t, declared) || coercible(t, declared, s);
 }
 
 function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[] {
