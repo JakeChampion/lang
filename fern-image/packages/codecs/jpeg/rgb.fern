@@ -1,0 +1,87 @@
+import "./jfif";
+import "./planes";
+import "./chroma";
+import "./ycbcr";
+import "../../pixels/pixels";
+import "core/cmp";
+
+@derive(cmp.Eq)
+pub enum RgbError { Profile(jfif.JfifError), Plane(planes.PlaneError), Chroma(chroma.ChromaError), Conversion(ycbcr.ConvertError), Unsupported, Limit, Storage, Cancelled }
+
+pub struct RgbLimits { planes: planes.PlaneLimits, max_output_bytes: i32, max_planned_bytes: i32 }
+
+pub struct RgbPlan { layout: pixels.Layout, planes: planes.PlanePlan, input_bytes: i32, row_bytes: i32, planned_bytes: i32 }
+
+pub function default_limits(): RgbLimits {
+  return RgbLimits { planes: planes.default_limits(), max_output_bytes: 67108864, max_planned_bytes: 67108864 };
+}
+
+function profile_error(error: jfif.JfifError): RgbError {
+  return match (error) { jfif.JfifError.Cancelled => RgbError.Cancelled, _ => RgbError.Profile(error) };
+}
+
+function plane_error(error: planes.PlaneError): RgbError {
+  return match (error) { planes.PlaneError.PlaneCancelled => RgbError.Cancelled, _ => RgbError.Plane(error) };
+}
+
+function component_row(source: planes.SamplePlane, grid: chroma.FrameGrid, row: i32, filter: chroma.Filter, cancelled: () => boolean): Result[u8[], RgbError] {
+  return match (chroma.reconstruct_row(source, grid, row, filter, grid.width, cancelled)) { Ok(value) => Ok(value), Err(chroma.ChromaError.Cancelled()) => Err(RgbError.Cancelled), Err(error) => Err(RgbError.Chroma(error)) };
+}
+
+// The named byte sum excludes tables, block temporaries, capacity, and allocator overhead.
+pub function inspect(input: [u8], limits: RgbLimits, cancelled: () => boolean): Result[RgbPlan, RgbError] {
+  if (limits.max_output_bytes <= 0 || limits.max_planned_bytes <= 0) {
+    return Err(RgbError.Limit);
+  }
+  let profile = match (jfif.inspect(input, limits.planes.blocks.headers, cancelled)) { Ok(v) => v, Err(e) => { return Err(profile_error(e)); } };
+  if (profile.color != jfif.Color.YCbCr) {
+    return Err(RgbError.Unsupported);
+  }
+  let plan = match (planes.inspect(input, limits.planes, cancelled)) { Ok(v) => v, Err(e) => { return Err(plane_error(e)); } };
+  let layout = profile.header.output_layout;
+  let rows = layout.width as i64 * 6i64;
+  let bytes = input.len() as i64 + plan.bytes as i64 + layout.bytes as i64 + rows;
+  if (layout.bytes > limits.max_output_bytes || bytes > limits.max_planned_bytes as i64 || bytes > 67108864i64) {
+    return Err(RgbError.Limit);
+  }
+  if (cancelled()) {
+    return Err(RgbError.Cancelled);
+  }
+  return Ok(RgbPlan { layout: layout, planes: plan, input_bytes: input.len(), row_bytes: rows as i32, planned_bytes: bytes as i32 });
+}
+
+// Complete raw-plane decoding validates the final entropy framing before RGB allocation.
+pub function decode(input: [u8], filter: chroma.Filter, limits: RgbLimits, cancelled: () => boolean): Result[pixels.Image, RgbError] {
+  let plan = inspect(input, limits, cancelled)?;
+  let decoded = match (planes.decode(input, limits.planes, cancelled)) { Ok(v) => v, Err(e) => { return Err(plane_error(e)); } };
+  if (decoded.planes.len() != 3) {
+    return Err(RgbError.Storage);
+  }
+  if (cancelled()) {
+    return Err(RgbError.Cancelled);
+  }
+  let output = __alloc_u8(plan.layout.bytes);
+  if (cancelled()) {
+    return Err(RgbError.Cancelled);
+  }
+  let grid = chroma.FrameGrid { width: plan.layout.width, height: plan.layout.height, max_horizontal: plan.planes.max_horizontal, max_vertical: plan.planes.max_vertical };
+  for row in 0..plan.layout.height {
+    let y = component_row(decoded.planes[0], grid, row, filter, cancelled)?;
+    let cb = component_row(decoded.planes[1], grid, row, filter, cancelled)?;
+    let cr = component_row(decoded.planes[2], grid, row, filter, cancelled)?;
+    let rgb = match (ycbcr.convert_row(y, cb, cr, plan.layout.stride, cancelled)) { Ok(v) => v, Err(ycbcr.ConvertError.Cancelled()) => { return Err(RgbError.Cancelled); }, Err(e) => { return Err(RgbError.Conversion(e)); } };
+    for x in 0..plan.layout.width {
+      if (x % 64 == 0 && cancelled()) {
+        return Err(RgbError.Cancelled);
+      }
+      for channel in 0..3 {
+        let at = x * 3 + channel;
+        output = output.with(row * plan.layout.stride + at, rgb[at]);
+      }
+    }
+  }
+  if (cancelled()) {
+    return Err(RgbError.Cancelled);
+  }
+  return Ok(pixels.Image { layout: plan.layout, data: output });
+}

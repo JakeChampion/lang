@@ -408,6 +408,7 @@ int_saturating_ops                                   0
 int_saturating_shl                                   0
 int_shift_count_masked                               0
 int_wrap                                             0
+integer_conversion_boundaries                        0
 integer_literals_beside_a_float                      0
 integer_literals_beside_an_f32                       0
 io_and_fetch_errors_box_into_dyn_error               0
