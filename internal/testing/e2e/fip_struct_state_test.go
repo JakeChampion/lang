@@ -7,8 +7,10 @@ import (
 
 const fipStructStateSrc = `import "std/i32";
 import "std/i64";
+import "std/string";
 
-struct State { count: i32, total: i64, tag: i32 }
+// The array field keeps the state boxed across scalar-parameter lowering.
+struct State { count: i32, total: i64, tag: i32, payload: u8[] }
 
 // The architecture: owned state in, transformed, handed back.
 fip function bump(own s: State): State {
@@ -25,7 +27,7 @@ fip function step(own s: State, t: i32): State {
 	return retag(s, t);
 }
 
-// Read through a call, so the probe's State is a box rather than its fields.
+// Read the boxed state through a call.
 @noinline function count_of(s: State): i32 { return s.count; }
 
 // A State of constant fields is a static box, which nothing frees or reuses;
@@ -33,14 +35,15 @@ fip function step(own s: State, t: i32): State {
 @noinline function one(): i32 { return 1; }
 
 function main(): i32 {
+	let payload: u8[] = args()[0].bytes();
 	// The observable is not stuck at zero: a fresh box moves it. This runs
 	// first because a dead State later on would donate its box to the probe.
 	let before: i64 = __heap_alloc_count();
-	let fresh: State = State { count: one(), total: 1 as i64, tag: 1 };
+	let fresh: State = State { count: one(), total: 1 as i64, tag: 1, payload: payload };
 	if (count_of(fresh) != 1) { return 94; }
 	if (__heap_alloc_count() - before <= (0 as i64)) { return 95; }
 
-	let s: State = State { count: one() - 1, total: 0 as i64, tag: 0 };
+	let s: State = State { count: one() - 1, total: 0 as i64, tag: 0, payload: args()[0].bytes() };
 	let at: i64 = __heap_alloc_count();
 	let i: i32 = 0;
 	while (i < 10000) {
@@ -52,6 +55,11 @@ function main(): i32 {
 	if (s.count != 10000) { return 91; }
 	if (s.total != (20000 as i64)) { return 92; }
 	if (s.tag != 9999) { return 93; }
+	let expected = args()[0].bytes();
+	if (s.payload.len() != expected.len()) { return 96; }
+	for i in 0..expected.len() {
+		if (s.payload[i] != expected[i]) { return 96; }
+	}
 
 	return 42;
 }
