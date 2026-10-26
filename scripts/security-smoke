@@ -32,14 +32,19 @@ def executable(name):
 def elf_properties(data, machine):
     if len(data) < 64 or data[:7] != b"\x7fELF\x02\x01\x01":
         raise RuntimeError("expected a complete little-endian ELF64 header")
-    if struct.unpack_from("<H", data, 18)[0] != machine:
+    kind, actual_machine, version = struct.unpack_from("<HHI", data, 16)
+    if kind not in (2, 3) or version != 1 or struct.unpack_from("<H", data, 52)[0] != 64:
+        raise RuntimeError("invalid ELF executable header")
+    if actual_machine != machine:
         raise RuntimeError("wrong ELF machine")
+    entry = struct.unpack_from("<Q", data, 24)[0]
     offset = struct.unpack_from("<Q", data, 32)[0]
     size, count = struct.unpack_from("<HH", data, 54)
     if size != 56 or count == 0 or offset < 64 or offset + size * count > len(data):
         raise RuntimeError("invalid ELF program header table")
     loads = []
     nx_stack = False
+    executable_entry = False
     for index in range(count):
         kind, flags, start, vaddr, _, filesz, memsz, align = struct.unpack_from(
             "<IIQQQQQQ", data, offset + index * size
@@ -47,8 +52,14 @@ def elf_properties(data, machine):
         if start + filesz > len(data) or filesz > memsz:
             raise RuntimeError("ELF segment exceeds file or memory range")
         if kind == 1:
+            if memsz > (1 << 64) - 1 - vaddr:
+                raise RuntimeError("ELF load virtual range overflows")
+            if align > 1 and (align & (align - 1) or start % align != vaddr % align):
+                raise RuntimeError("invalid ELF load alignment")
             if flags & 3 == 3:
                 raise RuntimeError("writable executable ELF load segment")
+            if flags & 1 and vaddr <= entry < vaddr + filesz:
+                executable_entry = True
             loads.append((flags, vaddr, memsz))
         if kind == 0x6474E551:
             if flags & 1:
@@ -56,8 +67,12 @@ def elf_properties(data, machine):
             nx_stack = True
     if not nx_stack or not any(f & 1 for f, _, _ in loads):
         raise RuntimeError("missing NX stack or executable load segment")
+    if not executable_entry:
+        raise RuntimeError("ELF entry is outside file-backed executable memory")
     for index, (flags, start, size) in enumerate(loads):
         for other_flags, other_start, other_size in loads[index + 1:]:
+            if size == 0 or other_size == 0:
+                continue
             if (flags | other_flags) & 3 == 3:
                 if max(start // 4096, other_start // 4096) < min(
                     (start + size + 4095) // 4096,
