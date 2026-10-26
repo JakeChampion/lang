@@ -6625,36 +6625,6 @@ pub function str_hash_helper(): string {
   return o;
 }
 
-pub function byte_reduction_helper(bsd: boolean): string {
-  let name = "sum_bytes_array";
-  let params = "";
-  if (bsd) {
-    name = "bsd_sum_bytes";
-    params = " (param $sum i32)";
-  }
-  let o = "  (func $__fern_" + name + " (param $s i32)" + params + " (result i32)\n";
-  o = o + "    (local $len i32) (local $i i32)\n";
-  if (!bsd) {
-    o = o + "    (local $sum i32)\n";
-  }
-  if (bsd) {
-    o = o + "    (local.set $sum (i32.and (local.get $sum) (i32.const 65535)))\n";
-  }
-  o = o + "    (local.set $len (i32.load (local.get $s)))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-  if (bsd) {
-    o = o + "      (local.set $sum (i32.and (i32.or (i32.shr_u (local.get $sum) (i32.const 1)) (i32.shl (local.get $sum) (i32.const 15))) (i32.const 65535)))\n";
-  }
-  o = o + "      (local.set $sum (i32.add (local.get $sum) (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 8)) (local.get $i)))))\n";
-  if (bsd) {
-    o = o + "      (local.set $sum (i32.and (local.get $sum) (i32.const 65535)))\n";
-  }
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
-  return o + "    (local.get $sum))\n";
-}
-
 pub function sum_bytes_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_sum_bytes (param $s i32) (result i32)\n";
@@ -9448,6 +9418,12 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (s
   if (need(needs, "@uses_mulhi_u")) {
     src = src + wasm_runtime.mulhi_source();
   }
+  if (need(needs, "@uses_bsd_sum_bytes")) {
+    src = src + wasm_runtime.byte_reduction_source(true);
+  }
+  if (need(needs, "@uses_sum_bytes_array")) {
+    src = src + wasm_runtime.byte_reduction_source(false);
+  }
   if (need(needs, "@uses_scan_set")) {
     src = src + wasm_runtime.set_scan_source(false, false);
   }
@@ -9555,12 +9531,6 @@ function kernel_helper_parts(needs: string[], parts0: string[]): string[] {
   }
   if (need(needs, "@uses_count_below_u64")) {
     parts = parts.append(count_below_u64_helper());
-  }
-  if (need(needs, "@uses_sum_bytes_array")) {
-    parts = parts.append(byte_reduction_helper(false));
-  }
-  if (need(needs, "@uses_bsd_sum_bytes")) {
-    parts = parts.append(byte_reduction_helper(true));
   }
   if (need(needs, "@uses_mismatch_bytes")) {
     parts = parts.append(mismatch_bytes_helper());

@@ -115,3 +115,25 @@ pub function set_scan_source(array: boolean, runs: boolean): string {
     + "    i = i + 1;\n"
     + "  }\n  return len;\n}\n";
 }
+
+pub function byte_reduction_source(bsd: boolean): string {
+  let name: string = "__fern_sum_bytes_array";
+  let params: string = "";
+  let init: string = "let sum: u32 = 0;";
+  let rotate: string = "";
+  let mask: string = "";
+  if (bsd) {
+    name = "__fern_bsd_sum_bytes";
+    params = ", seed: i32";
+    init = "let sum: u32 = (seed as u32) & 65535;";
+    rotate = "sum = ((sum >> 1) | (sum << 15)) & 65535;";
+    mask = "sum = sum & 65535;";
+  }
+  return "function " + name + "(s: usize" + params + "): i32 {\n"
+    + "  let n: i32 = __load_i32(s); let i: i32 = 0; " + init + "\n"
+    + "  while (i < n) {\n"
+    + "    " + rotate + "\n"
+    + "    sum = sum + (__load_u8(s + 8 + i) as u32); " + mask + "\n"
+    + "    i = i + 1;\n"
+    + "  }\n  return sum as i32;\n}\n";
+}

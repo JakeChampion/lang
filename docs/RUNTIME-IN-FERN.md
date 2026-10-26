@@ -423,6 +423,11 @@ The tests compare both input forms against a reference loop in both module modes
 They cover every byte value, short tables, nonzero membership values, extreme
 start offsets, initial run states, aliases and allocation counts.
 
+`byte_reduction_source` defines the byte-array sum and BSD checksum in Fern.
+The tests use a Go oracle for each byte value and for eight checksum seeds.
+They also check empty inputs, length boundaries, aliases, allocation counts,
+the signed sum boundary and the sum after 32-bit wraparound.
+
 The WebAssembly function emitter also replaces an `if` whose sole effect is
 a branch with `br_if`. It adjusts the branch depth after it removes the
 `if` label. A branch to that removed label only consumes the condition.

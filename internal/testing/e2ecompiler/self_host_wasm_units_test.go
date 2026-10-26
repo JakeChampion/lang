@@ -135,6 +135,11 @@ function main(): i32 {
 			want: 0,
 		},
 		{
+			name: "fern_runtime_byte_reductions",
+			src:  wasmRuntimeByteReductionsProgram(),
+			want: 0,
+		},
+		{
 			name: "conditional_branches",
 			src: `function sum(n: i32): i32 {
     if (n < 0) { return -10; }
@@ -275,6 +280,17 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 			}
 		}
 
+		for _, name := range []string{"sum_bytes_array", "bsd_sum_bytes"} {
+			symbol := "(func $__fern_" + name + " "
+			if strings.HasPrefix(tag, "fern_runtime_byte_reductions") {
+				if strings.Count(string(wat), symbol) != 1 || !strings.Contains(string(wat), symbol+"(param i32)") {
+					t.Fatalf("%s does not use one ordinary Fern function", name)
+				}
+			} else if strings.Contains(string(wat), symbol) {
+				t.Fatalf("an unrelated module contains the %s runtime helper", name)
+			}
+		}
+
 		watPath := filepath.Join(dir, tag+".wat")
 		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
 			t.Fatalf("write wat: %v", err)
@@ -352,4 +368,65 @@ func wasmRuntimeStringSetScansProgram() string {
     if (__heap_alloc_count() != before) { return 11; }
     `
 	return strings.Replace(src, "let set: u8[] = __alloc_u8(256);", probe+"let set: u8[] = __alloc_u8(256);", 1)
+}
+
+func wasmRuntimeByteReductionsProgram() string {
+	var src strings.Builder
+	src.WriteString(`@noinline function sum(a: u8[]): i32 { return __sum_bytes_array(a); }
+@noinline function bsd(a: u8[], seed: i32): i32 { return __bsd_sum_bytes(a, seed); }
+function prefix(a: u8[], n: i32): u8[] {
+    let out: u8[] = []; let i: i32 = 0;
+    while (i < n) { out = out.append(a[i]); i = i + 1; }
+    return out;
+}
+function main(): i32 {
+let all: u8[] = [`)
+	data := make([]byte, 256)
+	for i := range data {
+		data[i] = byte(i * 73)
+		fmt.Fprintf(&src, "%du8,", data[i])
+	}
+	src.WriteString("];\n")
+	for _, n := range []int{0, 1, 2, 7, 15, 16, 17, 31, 32, 33, 63, 64, 65, 127, 128, 129, 255, 256} {
+		fmt.Fprintf(&src, "{ let a: u8[] = prefix(all, %d);\n", n)
+		var sum uint32
+		for _, b := range data[:n] {
+			sum += uint32(b)
+		}
+		fmt.Fprintf(&src, "if (sum(a) != %d) { return 1; }\n", sum)
+		for _, seed := range []int32{0, 1, 65535, 65536, 65537, -1, 2147483647, -2147483648} {
+			total := uint32(seed) & 65535
+			for _, b := range data[:n] {
+				total = (((total >> 1) | (total << 15)) + uint32(b)) & 65535
+			}
+			seedText := fmt.Sprint(seed)
+			if seed < 0 {
+				seedText = fmt.Sprintf("0 - %d - 1", -int64(seed)-1)
+			}
+			fmt.Fprintf(&src, "if (bsd(a, %s) != %d) { return 2; }\n", seedText, total)
+		}
+		src.WriteString("}\n")
+	}
+	src.WriteString(`let before = __heap_alloc_count(); let repeat: i32 = 0;
+while (repeat < 1000) {
+    if (sum(all) != 32640 || bsd(all, 65536) != bsd(all, 0)) { return 3; }
+    repeat = repeat + 1;
+}
+if (__heap_alloc_count() != before) { return 4; }
+let held = all; all = all.with(0, 255u8);
+if (sum(held) != 32640 || sum(all) != 32895) { return 5; }
+let h = buf_new(16843010); let chunk: u8[] = __alloc_u8(65536);
+let i: i32 = 0;
+while (i < chunk.len()) { chunk = chunk.with(i, 255u8); i = i + 1; }
+i = 0;
+while (i < 257) { buf_push_bytes_range(h, chunk, 0, chunk.len()); i = i + 1; }
+buf_push_bytes_range(h, chunk, 0, 258);
+let large = buf_take_bytes(h); buf_free(h);
+if (large.len() != 16843010 || sum(large) != 254) { return 6; }
+let ph = buf_new(8421505); buf_push_bytes_range(ph, large, 0, 8421505);
+let part = buf_take_bytes(ph); buf_free(ph);
+if (sum(part) != 0 - 2147483521) { return 7; }
+return 0;
+}`)
+	return src.String()
 }
