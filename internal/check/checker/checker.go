@@ -7418,6 +7418,21 @@ func (c *checker) argOK(arg *ast.Expr, want, got ast.Type, own bool) bool {
 	return true
 }
 
+// bindViewElem binds the parameters of a view field from an owned array that
+// cannot fill it, so the refusal names the element type, not T.
+func (c *checker) bindViewElem(want, got ast.Type, sub map[string]ast.Type) {
+	if sl, ok := want.(ast.SliceType); ok {
+		if arr, ok := got.(ast.ArrayType); ok && arr.Elem != nil {
+			c.unifyType(sl.Elem, arr.Elem, sub)
+		}
+	}
+}
+
+type lentField struct {
+	field         int
+	expected, got ast.Type
+}
+
 func isArrayViewLend(want, got ast.Type) bool {
 	sl, isView := want.(ast.SliceType)
 	arr, isArray := got.(ast.ArrayType)
@@ -14387,6 +14402,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		clashed := false
+		// An array literal in a generic view field binds the type parameters
+		// the other fields leave open.
+		var lends []lentField
 		for i := range n.Fields {
 			f := n.Fields[i]
 			expected, present := fieldT[f.Name]
@@ -14433,7 +14451,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				c.seededParams = seeded
 				unified := c.unifyType(expected, vt, sub)
 				c.seededParams = nil
+				if _, isLit := f.Value.(*ast.ArrayLit); isLit && !unified && !dynFieldOK {
+					lends = append(lends, lentField{i, expected, vt})
+					continue
+				}
 				if !unified && !dynFieldOK {
+					c.bindViewElem(expected, vt, sub)
 					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, substituteType(expected, sub), vt, assignHint(substituteType(expected, sub), vt))
 					clashed = true
 				}
@@ -14442,6 +14465,16 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				if !c.assignable(expected, vt) {
 					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, expected, vt, assignHint(expected, vt))
 				}
+			}
+		}
+		for _, l := range lends {
+			c.seededParams = seeded
+			lent := c.unifyArrayArg(&n.Fields[l.field].Value, l.expected, l.got, sub, false)
+			c.seededParams = nil
+			if !lent {
+				want := substituteType(l.expected, sub)
+				c.errfCode(n.Fields[l.field].Value.Pos(), "E043", "field %q: expected %s, got %s%s", n.Fields[l.field].Name, want, l.got, assignHint(want, l.got))
+				clashed = true
 			}
 		}
 		if n.Base == nil {
