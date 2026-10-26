@@ -418,9 +418,10 @@ aarch64/call_overhead.text	304
 aarch64/call_overhead.ir	11250819
 aarch64/closure_call.text	1086
 aarch64/closure_call.ir	72624168
-aarch64/deflate_decode.ir	37668078
+# 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
+aarch64/deflate_decode.ir	36402562
 aarch64/deflate_decode.text	14100
-aarch64/deflate_encode.ir	48587342
+aarch64/deflate_encode.ir	44038371
 aarch64/deflate_encode.text	7851
 aarch64/enum_match.text	1206
 aarch64/enum_match.ir	41175097
@@ -429,9 +430,9 @@ aarch64/http_hello.ir	25860660
 aarch64/int_loop.text	246
 aarch64/int_loop.ir	18000078
 aarch64/map_int.text	5921
-aarch64/map_int.ir	35711954
+aarch64/map_int.ir	35263853
 aarch64/map_probe_chain.text	5932
-aarch64/map_probe_chain.ir	340503732
+aarch64/map_probe_chain.ir	334317381
 aarch64/map_string.text	7013
 aarch64/map_string.ir	60356414	2
 aarch64/ordmap_insert.text	5868
@@ -443,9 +444,9 @@ aarch64/pvec_with.ir	59217299
 aarch64/record_update.text	1483
 aarch64/record_update.ir	31217560
 aarch64/sort_inplace.text	1573
-aarch64/sort_inplace.ir	49676530
+aarch64/sort_inplace.ir	49103947
 aarch64/sort_ints.text	2072
-aarch64/sort_ints.ir	33602359
+aarch64/sort_ints.ir	33051852
 aarch64/sort_strings.text	3472
 aarch64/sort_strings.ir	105881681
 aarch64/string_build.text	2242
@@ -485,7 +486,7 @@ aarch64/perceus_cfold.ir	61163127
 aarch64/perceus_deriv.text	2872
 aarch64/perceus_deriv.ir	81963685
 aarch64/perceus_nqueens.text	1702
-aarch64/perceus_nqueens.ir	106188847
+aarch64/perceus_nqueens.ir	104935847
 aarch64/perceus_rbtree.text	3035
 aarch64/perceus_rbtree.ir	61284969
 aarch64/perceus_rbtree_ck.text	3264
