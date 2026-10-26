@@ -49,3 +49,25 @@ pub function utf8_step_source(): string {
     + "  return want;\n"
     + "}\n";
 }
+
+pub function byte_find_source(reverse: boolean): string {
+  let name: string = "__fern_memchr_bytes";
+  let clamp: string = "if (i < 0) { i = 0; }";
+  let condition: string = "i < n";
+  let step: string = "i = i + 1;";
+  if (reverse) {
+    name = "__fern_rmemchr_bytes";
+    clamp = "if (i >= n) { i = n - 1; }";
+    condition = "i >= 0";
+    step = "i = i - 1;";
+  }
+  return "function " + name + "(a: usize, byte: i32, from: i32): i32 {\n"
+    + "  if ((byte as u32) > (255 as u32)) { return -1; }\n"
+    + "  let n: i32 = __load_i32(a); let i: i32 = from; " + clamp + "\n"
+    + "  while (" + condition + ") {\n"
+    + "    if (__load_u8(a + 8 + i) == byte) { return i; }\n"
+    + "    " + step + "\n"
+    + "  }\n"
+    + "  return -1;\n"
+    + "}\n";
+}

@@ -407,6 +407,11 @@ piece contents in whole-program and split-module builds.
 A lines-only case checks the transitive split dependency.
 The existing split scratch tests check allocation reuse and reference counts.
 
+`byte_find_source` defines forward and reverse byte-array search in Fern.
+Both helpers use one source template with direction-specific bounds.
+The shared byte-search fixtures execute in whole-program and split-module builds.
+They cover all byte values, extreme start offsets, aliases and allocation counts.
+
 The WebAssembly function emitter also replaces an `if` whose sole effect is
 a branch with `br_if`. It adjusts the branch depth after it removes the
 `if` label. A branch to that removed label only consumes the condition.

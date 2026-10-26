@@ -6495,36 +6495,6 @@ pub function mismatch_bytes_str_helper(): string {
   return mismatch_kernel("$__fern_mismatch_bytes_str", 8, 4);
 }
 
-pub function memchr_bytes_helper(): string {
-  let o: string = "  (func $__fern_memchr_bytes (param $a i32) (param $byte i32) (param $from i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $i i32)\n";
-  o = o + "    (if (i32.gt_u (local.get $byte) (i32.const 255)) (then (return (i32.const -1))))\n";
-  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
-  o = o + "    (local.set $i (local.get $from))\n";
-  o = o + "    (if (i32.lt_s (local.get $i) (i32.const 0)) (then (local.set $i (i32.const 0))))\n";
-  o = o + "    (block $done (loop $scan\n";
-  o = o + "      (br_if $done (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (if (i32.eq (i32.load8_u (i32.add (local.get $a) (i32.add (i32.const 8) (local.get $i)))) (local.get $byte)) (then (return (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $scan)))\n    (i32.const -1))\n";
-  return o;
-}
-
-pub function rmemchr_bytes_helper(): string {
-  let o: string = "  (func $__fern_rmemchr_bytes (param $a i32) (param $byte i32) (param $from i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $i i32)\n";
-  o = o + "    (if (i32.gt_u (local.get $byte) (i32.const 255)) (then (return (i32.const -1))))\n";
-  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
-  o = o + "    (local.set $i (local.get $from))\n";
-  o = o + "    (if (i32.ge_s (local.get $i) (local.get $len)) (then (local.set $i (i32.sub (local.get $len) (i32.const 1)))))\n";
-  o = o + "    (block $done (loop $scan\n";
-  o = o + "      (br_if $done (i32.lt_s (local.get $i) (i32.const 0)))\n";
-  o = o + "      (if (i32.eq (i32.load8_u (i32.add (local.get $a) (i32.add (i32.const 8) (local.get $i)))) (local.get $byte)) (then (return (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $scan)))\n    (i32.const -1))\n";
-  return o;
-}
-
 pub function memchr_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_memchr (param $s i32) (param $byte i32) (param $from i32) (result i32)\n";
@@ -9562,6 +9532,12 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (s
   if (needs_str_split(needs)) {
     src = src + wasm_runtime.utf8_step_source();
   }
+  if (need(needs, "@uses_memchr_bytes")) {
+    src = src + wasm_runtime.byte_find_source(false);
+  }
+  if (need(needs, "@uses_rmemchr_bytes")) {
+    src = src + wasm_runtime.byte_find_source(true);
+  }
   if (src.len() == 0) {
     return units;
   }
@@ -9663,12 +9639,6 @@ function kernel_helper_parts(needs: string[], parts0: string[]): string[] {
   }
   if (need(needs, "@uses_bsd_sum_bytes")) {
     parts = parts.append(byte_reduction_helper(true));
-  }
-  if (need(needs, "@uses_memchr_bytes")) {
-    parts = parts.append(memchr_bytes_helper());
-  }
-  if (need(needs, "@uses_rmemchr_bytes")) {
-    parts = parts.append(rmemchr_bytes_helper());
   }
   if (need(needs, "@uses_count_runs_bytes")) {
     parts = parts.append(count_runs_bytes_helper());

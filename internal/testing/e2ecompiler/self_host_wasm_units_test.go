@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestSelfHostWasmUnitsN2(t *testing.T) {
@@ -103,6 +105,16 @@ function main(): i32 {
     if (rows("").len() != 0 || rows("x").len() != 1) { return 2; }
     return 0;
 }`,
+			want: 0,
+		},
+		{
+			name: "fern_runtime_memchr_bytes",
+			src:  e2eharness.MemchrBytesSource(true),
+			want: 0,
+		},
+		{
+			name: "fern_runtime_rmemchr_bytes",
+			src:  e2eharness.RmemchrBytesSource(true),
 			want: 0,
 		},
 		{
@@ -210,6 +222,17 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 			}
 		} else if strings.Contains(string(wat), "(func $__fern_utf8_step ") {
 			t.Fatal("a module without split or lines contains its UTF-8 runtime helper")
+		}
+
+		for _, name := range []string{"memchr_bytes", "rmemchr_bytes"} {
+			symbol := "(func $__fern_" + name + " "
+			if strings.HasPrefix(tag, "fern_runtime_"+name) {
+				if strings.Count(string(wat), symbol) != 1 || !strings.Contains(string(wat), symbol+"(param i32)") {
+					t.Fatalf("%s does not use one ordinary Fern function", name)
+				}
+			} else if strings.Contains(string(wat), symbol) {
+				t.Fatalf("an unrelated module contains the %s runtime helper", name)
+			}
 		}
 
 		watPath := filepath.Join(dir, tag+".wat")
