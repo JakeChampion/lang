@@ -252,7 +252,16 @@ struct Quad {a:i64,b:i64,c:i64,d:i64}
 @noinline function make(i:i32):Quad{return Quad {a:i as i64,b:2i64,c:3i64,d:4i64};}
 @noinline function pass(own q:Quad):Quad{return q;}
 @noinline function consume(q:Quad):i64{return q.a+q.b+q.c+q.d;}
-function main():i32{let before=__heap_alloc_count();let i=0;while(i<1000){let q=pass(make(i));let r=Quad {...q,a:q.a+1i64};if(consume(r)!=(i as i64)+10i64){return 32;}i=i+1;}let count=__heap_alloc_count()-before;print(count.to_string());return 0;}
+function main():i32{
+ let held:Quad[]=[make(0)];let before=__heap_alloc_count();let i=0;
+ while(i<1000){
+  let q=pass(make(i));let r=Quad {...q,a:q.a+1i64};held=held.with(0,r);
+  let actual=held[0];
+  if(actual.a!=(i as i64)+1i64||actual.b!=2i64||actual.c!=3i64||actual.d!=4i64||consume(actual)!=(i as i64)+10i64){return 32;}
+  i=i+1;
+ }
+ let count=__heap_alloc_count()-before;print(count.to_string());return 0;
+}
 `
 
 func TestSelfHostRecordUpdateDonorMetadata(t *testing.T) {
@@ -269,7 +278,7 @@ func TestSelfHostRecordUpdateDonorMetadata(t *testing.T) {
 		t.Fatalf("compile: %v: %s", err, dump)
 	}
 	call := regexp.MustCompile(`(?m)^\s+v(\d+) = k-7 \[[0-9,]+\] imm=0 pass$`).FindSubmatch(dump)
-	update := regexp.MustCompile(`(?m)^\s+v\d+ = k-5 \[[0-9,]+\] imm=(\d+) *$`).FindSubmatch(dump)
+	update := regexp.MustCompile(`(?m)^\s+v\d+ = k-5 \[[0-9,]+\] imm=([1-9][0-9]*) *$`).FindSubmatch(dump)
 	if len(call) != 2 || len(update) != 2 {
 		t.Fatalf("missing call/update witnesses: %s", dump)
 	}
