@@ -13,7 +13,7 @@ function never_cancel(): boolean {
   return false;
 }
 
-function row_bytes(data: [u8], first: i32, count: i32, limits: pixels.Limits): Result[u8[], png.RowError[string]] {
+function row_bytes(data: [u8], first: i32, count: i32, limits: pixels.Limits, incremental: boolean): Result[u8[], png.RowError[string]] {
   let seed: u8[] = [];
   let consume = (bytes: u8[], row: pixels.Image): Result[u8[], string] => {
     if (row.layout.height != 1 || row.layout.bytes != row.layout.stride || row.data.len() != row.layout.stride) {
@@ -25,17 +25,20 @@ function row_bytes(data: [u8], first: i32, count: i32, limits: pixels.Limits): R
     }
     return Ok(bytes);
   };
-  let result = png.fold_rows(data, first, count, limits, png.default_row_limits(), never_cancel, seed, consume)?;
-  return Ok(result.value);
+  let result = if (incremental) { png.fold_incremental_rows(data, first, count, limits, png.default_row_limits(), never_cancel, seed, consume) } else { png.fold_rows(data, first, count, limits, png.default_row_limits(), never_cancel, seed, consume) };
+  let value = result?;
+  return Ok(value.value);
 }
 
-function rejected_rows(data: [u8], limits: pixels.Limits): string {
+function rejected_rows(data: [u8], limits: pixels.Limits, incremental: boolean): string {
   let consume = (value: i32, _row: pixels.Image): Result[i32, string] => Ok(value);
-  return match (png.fold_rows(data, 0, 1, limits, png.default_row_limits(), never_cancel, 0, consume)) { Err(png.RowCodec(error)) => error_name(error), _ => "unexpected" };
+  let result = if (incremental) { png.fold_incremental_rows(data, 0, 1, limits, png.default_row_limits(), never_cancel, 0, consume) } else { png.fold_rows(data, 0, 1, limits, png.default_row_limits(), never_cancel, 0, consume) };
+  return match (result) { Err(png.RowCodec(error)) => error_name(error), _ => "unexpected" };
 }
 
-function rejected_provider(data: u8[], limits: pixels.Limits, expected: png.PngError): string {
-  let graph = match (provider.source(data, limits, png.default_row_limits(), pipeline.default_limits())) { Ok(v) => v, Err(pipeline.ProviderFailure(e)) => { return if (e == "PNG " + expected.to_debug()) { error_name(expected) } else { "unexpected" }; }, Err(_) => { return "unexpected"; } };
+function rejected_provider(data: u8[], limits: pixels.Limits, expected: png.PngError, incremental: boolean): string {
+  let source = if (incremental) { provider.incremental_source(data, limits, png.default_row_limits(), pipeline.default_limits()) } else { provider.source(data, limits, png.default_row_limits(), pipeline.default_limits()) };
+  let graph = match (source) { Ok(v) => v, Err(pipeline.ProviderFailure(e)) => { return if (e == "PNG " + expected.to_debug()) { error_name(expected) } else { "unexpected" }; }, Err(_) => { return "unexpected"; } };
   let cache = match (pipeline.required_cache(graph, pipeline.default_limits())) { Ok(v) => v, Err(_) => { return "unexpected"; } };
   let consume = (value: i32, _row: pixels.Image): Result[i32, string] => Ok(value);
   return match (pipeline.fold_rows_fused(graph, 0, 1, pipeline.default_limits(), cache, never_cancel, 0, consume)) { Err(pipeline.GraphFailure(pipeline.ProviderFailure(e))) => if (e == "PNG " + expected.to_debug()) { error_name(expected) } else { "unexpected" }, _ => "unexpected" };
@@ -61,42 +64,52 @@ function inspect(path: string, index: i32): i32 {
   let data = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
   let prefix = "index=" + index.to_string();
   let limits = pixels.Limits { max_pixels: 65536, max_bytes: 262144 };
-  let image = match (png.decode(data, limits)) { Ok(v) => v, Err(e) => { print(prefix + " status=error error=" + error_name(e) + " row_error=" + rejected_rows(data, limits) + " provider_error=" + rejected_provider(data, limits, e)); return 0; } };
-  let rows = match (row_bytes(data, 0, image.layout.height, limits)) { Ok(v) => v, Err(_) => { return 6; } };
+  let image = match (png.decode(data, limits)) { Ok(v) => v, Err(e) => {
+    print(prefix + " status=error error=" + error_name(e) + " row_error=" + rejected_rows(data, limits, false) + " provider_error=" + rejected_provider(data, limits, e, false)
+      + " incremental_error=" + rejected_rows(data, limits, true) + " incremental_provider_error=" + rejected_provider(data, limits, e, true));
+    return 0;
+  } };
+  let rows = match (row_bytes(data, 0, image.layout.height, limits, false)) { Ok(v) => v, Err(_) => { return 6; } };
+  let incremental_rows = match (row_bytes(data, 0, image.layout.height, limits, true)) { Ok(v) => v, Err(_) => { return 17; } };
   let first = image.layout.height / 2;
   let count = image.layout.height - first;
   if (count > 2) {
     count = 2;
   }
-  let selected = match (row_bytes(data, first, count, limits)) { Ok(v) => v, Err(_) => { return 7; } };
-  let graph = match (provider.source(data, limits, png.default_row_limits(), pipeline.default_limits())) { Ok(v) => v, Err(_) => { return 10; } };
-  let depth = 0;
-  while (depth < 2) {
-    graph = match (pipeline.nearest(graph, image.layout.width, image.layout.height, pipeline.default_limits())) { Ok(v) => v, Err(_) => { return 11; } };
-    depth = depth + 1;
-  }
-  let cache = match (pipeline.required_cache(graph, pipeline.default_limits())) { Ok(v) => v, Err(_) => { return 12; } };
-  let crop_x = image.layout.width / 2;
-  let crop_width = image.layout.width - crop_x;
-  if (crop_width > 2) {
-    crop_width = 2;
-  }
-  let region = regions.Region { x: crop_x, y: first, width: crop_width, height: count };
-  for fused in [false, true] {
-    let suffix = if (fused) { ".fused" } else { ".legacy" };
-    let bytes = match (graph_bytes(graph, image.layout.height, cache, fused)) { Ok(v) => v, Err(_) => { return 13; } };
-    let tile_result = if (fused) { regions.render_cached_tile_fused(graph, region, pipeline.default_limits(), cache, never_cancel) } else { regions.render_cached_tile(graph, region, pipeline.default_limits(), cache, never_cancel) };
-    let tile = match (tile_result) { Ok(v) => v.image, Err(_) => { return 14; } };
-    match (write_file_bytes(path + suffix + ".graph.raw", bytes)) {
-      Ok(_) => {},
-      Err(_) => {
-        return 15;
-      }
+  let selected = match (row_bytes(data, first, count, limits, false)) { Ok(v) => v, Err(_) => { return 7; } };
+  let incremental_selected = match (row_bytes(data, first, count, limits, true)) { Ok(v) => v, Err(_) => { return 18; } };
+  for incremental in [false, true] {
+    let source = if (incremental) { provider.incremental_source(data, limits, png.default_row_limits(), pipeline.default_limits()) } else { provider.source(data, limits, png.default_row_limits(), pipeline.default_limits()) };
+    let graph = match (source) { Ok(v) => v, Err(_) => { return 10; } };
+    let depth = 0;
+    while (depth < 2) {
+      graph = match (pipeline.nearest(graph, image.layout.width, image.layout.height, pipeline.default_limits())) { Ok(v) => v, Err(_) => { return 11; } };
+      depth = depth + 1;
     }
-    match (write_file_bytes(path + suffix + ".tile.raw", tile.data)) {
-      Ok(_) => {},
-      Err(_) => {
-        return 16;
+    let cache = match (pipeline.required_cache(graph, pipeline.default_limits())) { Ok(v) => v, Err(_) => { return 12; } };
+    let crop_x = image.layout.width / 2;
+    let crop_width = image.layout.width - crop_x;
+    if (crop_width > 2) {
+      crop_width = 2;
+    }
+    let region = regions.Region { x: crop_x, y: first, width: crop_width, height: count };
+    for fused in [false, true] {
+      let suffix = if (incremental) { ".incremental" } else { "" };
+      suffix = suffix + (if (fused) { ".fused" } else { ".legacy" });
+      let bytes = match (graph_bytes(graph, image.layout.height, cache, fused)) { Ok(v) => v, Err(_) => { return 13; } };
+      let tile_result = if (fused) { regions.render_cached_tile_fused(graph, region, pipeline.default_limits(), cache, never_cancel) } else { regions.render_cached_tile(graph, region, pipeline.default_limits(), cache, never_cancel) };
+      let tile = match (tile_result) { Ok(v) => v.image, Err(_) => { return 14; } };
+      match (write_file_bytes(path + suffix + ".graph.raw", bytes)) {
+        Ok(_) => {},
+        Err(_) => {
+          return 15;
+        }
+      }
+      match (write_file_bytes(path + suffix + ".tile.raw", tile.data)) {
+        Ok(_) => {},
+        Err(_) => {
+          return 16;
+        }
       }
     }
   }
@@ -123,6 +136,18 @@ function inspect(path: string, index: i32): i32 {
     Ok(_) => {},
     Err(_) => {
       return 9;
+    }
+  }
+  match (write_file_bytes(path + ".incremental.rows.raw", incremental_rows)) {
+    Ok(_) => {},
+    Err(_) => {
+      return 19;
+    }
+  }
+  match (write_file_bytes(path + ".incremental.selected.raw", incremental_selected)) {
+    Ok(_) => {},
+    Err(_) => {
+      return 20;
     }
   }
   print(prefix + " status=ok width=" + image.layout.width.to_string() + " height=" + image.layout.height.to_string()

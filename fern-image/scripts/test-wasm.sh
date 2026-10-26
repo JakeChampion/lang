@@ -11,6 +11,9 @@ for source in experiments/essentials.fern experiments/zlib.fern experiments/prov
   "$FERN" -target wasm32-wasi -sanitize -o "$output" "$source"
   wasmtime "$output"
 done
+"$FERN" -check tests/png_incremental_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-png_incremental_test.wasm tests/png_incremental_test.fern
+wasmtime build/wasm-png_incremental_test.wasm
 "$FERN" -check benchmarks/nearest_fusion.fern
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-nearest-fusion.wasm benchmarks/nearest_fusion.fern
 wasmtime build/wasm-nearest-fusion.wasm 8
