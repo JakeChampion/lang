@@ -17,3 +17,22 @@ The selected parser and printer unit suite passed 731 test nodes with no failure
 The focused self-host suite passed 156 test nodes in 58.217 seconds with no failures or skips. It includes formatter parity, malformed inputs, literate sources, divergent match arms, and both unchanged complexity gates. The formatted callback-loop program passed native, ARM64/QEMU10, and Wasm runtime checks with balanced zero-live heap censuses.
 
 No application syntax, baseline, threshold, or validation exemption changed. The unpublished JPEG entropy slice remains separate from this formatter repair. Full current-head CI still requires its own result.
+
+## Clean compiler integration
+
+The clean CLI reports `a7793d0c2a18`.
+Its SHA256 is `d285f45c01ed290bdad354a33731017f790342a4ec510e7c52248b5b7861911e`.
+It formats the preserved full JPEG test through two write-back operations without a second change.
+The primary interpreter also passes the formatted five-argument callback-loop program.
+The unpublished JPEG source files remain unchanged.
+
+Both complete image scripts passed all 150 TAP cases plus their smoke checks.
+All 61 native and 37 Wasm heap censuses were balanced with zero live bytes.
+The executable hash was unchanged after both scripts.
+Wasm supplies the leak census without the native over-release and use-after-free detectors.
+
+The unchanged allocation ceiling passed at 34,729,565 allocations and frees.
+The separate 1% advisory warning remained at +9.82%.
+This runtime has no delegated cgroup, so the report contains no peak RSS value.
+All 1,300 tracked Fern format checks, Go build, Go vet, workflow lint, and selector checks passed.
+These local results do not establish a full current-head CI pass or JPEG entropy acceptance.
