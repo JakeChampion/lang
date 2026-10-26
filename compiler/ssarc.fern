@@ -2269,7 +2269,8 @@ function dbg_type(f: ssasem.Func, t: typeinfo.Type, open: string[]): string {
     if (util.index_of_str(open, name) >= 0) {
       return "*" + name;
     }
-    return "*" + name + "@" + util.i32_to_string((f.records.list[at].fields.len() + 1) * 8) + "{" + dbg_members(f, f.records.list[at].fields, open.append(name)) + "}";
+    let rec: semrecords.Record = f.records.list[at];
+    return "*" + name + "@" + util.i32_to_string((rec.fields.len() + 1) * 8) + "{" + dbg_record_members(f, rec, open.append(name)) + "}";
   }
   if let typeinfo.TypeUnion(_) = t {
     return dbg_enum(f, t, s);
@@ -2295,20 +2296,68 @@ function dbg_enum(f: ssasem.Func, t: typeinfo.Type, s: string): string {
   return "%" + dbg_type_name(s) + "{" + out + "}";
 }
 
-function dbg_members(f: ssasem.Func, fields: semrecords.Field[], open: string[]): string {
+function dbg_record_members(f: ssasem.Func, rec: semrecords.Record, open: string[]): string {
+  if (rec.declared.len() == 0) {
+    return dbg_members(f, rec.fields, open, 1);
+  }
+  // A field laid out in parts reads as its declared record, held in place over its parts' slots.
   let out: string = "";
-  let k: i32 = 0;
-  while (k < fields.len()) {
-    let ft: string = dbg_type(f, fields[k].ty, open);
-    if (ft != "") {
-      if (out != "") {
-        out = out + ",";
+  let at: i32 = 0;
+  for fl in rec.declared {
+    let slot: i32 = at;
+    let ft: string = "";
+    if (at < rec.fields.len() && rec.fields[at].name == fl.name) {
+      ft = dbg_type(f, fl.ty, open);
+      at = at + 1;
+    } else {
+      while (at < rec.fields.len() && rec.fields[at].name.starts_with(fl.name + "$")) {
+        at = at + 1;
       }
-      out = out + fields[k].name + ":" + ft + ":" + util.i32_to_string((k + 1) * 8);
+      ft = dbg_in_place(f, fl.ty, open, at - slot);
     }
-    k = k + 1;
+    out = dbg_member(out, fl.name, ft, slot + 1);
   }
   return out;
+}
+
+// A record or Option held in place over `slots` slots: an Option's flag comes first, then its payload.
+function dbg_in_place(f: ssasem.Func, t: typeinfo.Type, open: string[], slots: i32): string {
+  let members: string = "";
+  let payload: typeinfo.Type[] = semscalarreturn.option_payload(f, t);
+  if (payload.len() == 1) {
+    let value: string = dbg_type(f, payload[0], open);
+    if let typeinfo.TypeStruct(_) = payload[0] {
+      value = dbg_in_place(f, payload[0], open, slots - 1);
+    }
+    members = dbg_member(dbg_member("", "some", "boolean", 0), "value", value, 1);
+  } else if let typeinfo.TypeStruct(_) = t {
+    let at: i32 = semrecords.find(f.records, t);
+    if (at < 0) {
+      return "";
+    }
+    members = dbg_members(f, f.records.list[at].fields, open, 0);
+  } else {
+    return "";
+  }
+  return "&" + dbg_type_name(typeinfo.spelling(t)) + "@" + util.i32_to_string(slots * 8) + "{" + members + "}";
+}
+
+function dbg_members(f: ssasem.Func, fields: semrecords.Field[], open: string[], first: i32): string {
+  let out: string = "";
+  for k in 0..fields.len() {
+    out = dbg_member(out, fields[k].name, dbg_type(f, fields[k].ty, open), k + first);
+  }
+  return out;
+}
+
+function dbg_member(out: string, name: string, ty: string, slot: i32): string {
+  if (ty == "") {
+    return out;
+  }
+  if (out != "") {
+    out = out + ",";
+  }
+  return out + name + ":" + ty + ":" + util.i32_to_string(slot * 8);
 }
 
 function dbg_type_name(s: string): string {

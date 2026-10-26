@@ -1775,7 +1775,7 @@ function laid_relay(r: Relay): Relay {
       fields = fields.append(semrecords.Field { name: fl.name + "$" + util.i32_to_string(k), ty: r.parts[i][k] });
     }
   }
-  return Relay { ...r, laid: semrecords.Record { ...r.old, fields: fields }, at: at };
+  return Relay { ...r, laid: semrecords.Record { ...r.old, fields: fields, declared: r.old.fields }, at: at };
 }
 
 function touches(f: ssasem.Func, lay: Layout): boolean {

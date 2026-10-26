@@ -907,6 +907,9 @@ function dw_type_parse(t: DwTypes, s: string, i: i32): DwParsed {
   if (s[i] == b'%') {
     return dw_enum_parse(t, s, i);
   }
+  if (s[i] == b'&') {
+    return dw_in_place_parse(t, s, i);
+  }
   if (s[i] != b'*') {
     let name: string = dw_token(s, i);
     let bt: i32[] = dw_base_type(name);
@@ -921,6 +924,14 @@ function dw_type_parse(t: DwTypes, s: string, i: i32): DwParsed {
     return DwParsed { ...p, key: "*" + name };
   }
   return DwParsed { t: t, key: "*" + name, next: at };
+}
+
+// `&Name@size{...}` is a record held in place rather than behind a pointer.
+function dw_in_place_parse(t: DwTypes, s: string, i: i32): DwParsed {
+  let name: string = dw_token(s, i + 1);
+  let at: i32 = i + 1 + name.len();
+  let size: string = dw_token(s, at + 1);
+  return dw_members_parse(dw_types_add(t, "&" + name, 4, dw_atoi(size)), "&" + name, s, at + 2 + size.len());
 }
 
 function dw_enum_parse(t: DwTypes, s: string, i: i32): DwParsed {
@@ -989,7 +1000,11 @@ function dw_type_emit(e: DwEmit, t: DwTypes, k: i32): DwEmit {
   if (t.kinds[k] == 3) {
     return dw_enum_emit(e, t, k);
   }
-  e = DwEmit { ...e, die: dw_uleb(elf_str_bytes(dw_uleb(e.die, 8), key), t.sizes[k]) };
+  let name: string = key;
+  if (t.kinds[k] == 4) {
+    name = slice_unchecked(key, 1, key.len()) + "";
+  }
+  e = DwEmit { ...e, die: dw_uleb(elf_str_bytes(dw_uleb(e.die, 8), name), t.sizes[k]) };
   let m: i32 = 0;
   while (m < t.m_owner.len()) {
     if (t.m_owner[m] == k) {
