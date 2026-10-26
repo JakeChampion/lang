@@ -277,6 +277,7 @@ which ones.
 | `LOCAL-DEV-LOOP.md` | [reference] | Machine facts for local work: suite timings and sharding, build memory budgets, `FERN_*` switches, exit codes, and which instrument to measure with. |
 | `LSP-INTEGRATION-PLAN.md` | [reference] | `fern -lsp`: what each request answers, how the VS Code extension and the playground run it, and its gates. |
 | `PROFILING.md` | [reference] | Profiling a native program with `FERN_PROFILE=cpu`: SIGPROF sampling and collapsed stacks for flame graphs. |
+| `SECURITY-TESTING.md` | [reference] | Cross-target security smoke tests, strict prerequisites, JSON evidence, and hardware limits. |
 | `SANITIZER.md` | [reference] | `-sanitize` / `FERN_SANITIZE=1`: rc over-release, use-after-free quarantine and leak census, with output and exit codes. |
 | `TEST-GATES.md` | [reference] | Which suites prove what for which kind of change, which look authoritative and are not, and what nothing gates. |
 | `TRANSLATION-VALIDATION.md` | [reference] | SMT (Z3) translation validation of compiler rewrites, Alive2-style; the first slice validates strength reduction (#5543). |
