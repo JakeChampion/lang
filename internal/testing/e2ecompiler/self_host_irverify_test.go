@@ -120,31 +120,35 @@ func TestSelfHostIRVerifyProvidedAudit(t *testing.T) {
 		t.Errorf("provided-audit stdout = %q, want the agreement line", out)
 	}
 
-	t.Run("missing-symbol-refused", func(t *testing.T) {
-		path := filepath.Join(dir, "drivers", "irverifyprovided.fern")
-		src, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		const anchor = `"__fern_oob_abort",`
-		const missing = "__fern_missing_audit_control"
-		if bytes.Count(src, []byte(anchor)) != 1 {
-			t.Fatal("expected exactly one inventory anchor")
-		}
-		changed := bytes.Replace(src, []byte(anchor), []byte(anchor+` "`+missing+`",`), 1)
-		if err := os.WriteFile(path, changed, 0o644); err != nil {
-			t.Fatal(err)
-		}
-		badBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "provided_audit_missing")
-		bad := exec.Command(badBin, "-provided-audit")
-		out, err := bad.CombinedOutput()
-		if bad.ProcessState == nil || !bad.ProcessState.Exited() {
-			t.Fatalf("audit control did not exit normally: %v\n%s", err, out)
-		}
-		if bad.ProcessState.ExitCode() != 1 || !strings.Contains(string(out), "1 inventory entrie(s) no backend emits:") || !strings.Contains(string(out), missing) {
-			t.Fatalf("audit must reject the missing inventory entry: exit=%d output=%q", bad.ProcessState.ExitCode(), out)
-		}
-	})
+	path := filepath.Join(dir, "drivers", "irverifyprovided.fern")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const anchor = `"__fern_oob_abort",`
+	if bytes.Count(src, []byte(anchor)) != 1 {
+		t.Fatal("expected exactly one inventory anchor")
+	}
+	for _, control := range []struct{ label, symbol string }{
+		{"missing-symbol-refused", "__fern_missing_audit_control"},
+		{"unemitted-symbol-refused", "__fern_profile_finish"},
+	} {
+		t.Run(control.label, func(t *testing.T) {
+			changed := bytes.Replace(src, []byte(anchor), []byte(anchor+` "`+control.symbol+`",`), 1)
+			if err := os.WriteFile(path, changed, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			badBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "provided_audit_missing")
+			bad := exec.Command(badBin, "-provided-audit")
+			out, err := bad.CombinedOutput()
+			if bad.ProcessState == nil || !bad.ProcessState.Exited() {
+				t.Fatalf("audit control did not exit normally: %v\n%s", err, out)
+			}
+			if bad.ProcessState.ExitCode() != 1 || !strings.Contains(string(out), "1 inventory entrie(s) no backend emits:") || !strings.Contains(string(out), control.symbol) {
+				t.Fatalf("audit must reject the unemitted inventory entry: exit=%d output=%q", bad.ProcessState.ExitCode(), out)
+			}
+		})
+	}
 }
 
 func TestSelfHostIRVerifyProvidedCompilerClean(t *testing.T) {
