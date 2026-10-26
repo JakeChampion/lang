@@ -67,7 +67,9 @@ All 617 SSA cases pass, with no skips.
 All 201 source lint cases pass, with no skips.
 Vet and format checks pass.
 The previous source passed all 4666 checker and heap proof cases.
-Fresh whole-compiler checks remain in flight on this source.
+
+All four fresh whole-compiler checks pass on this source.
+They include both native targets, a native fixed point, and the Wasm link.
 
 The final compiler produced worker SHA-256 `33e30c6a6cffbad68db72916788206f72a8aca6433a6fe3f384f5ef8bc2cda78`.
 The local cgroupfs qualification passed all 27 cases, with three kernel OOM kills.
@@ -77,3 +79,16 @@ The earlier record retains the binary identity control for the original systemd 
 These records do not qualify production workers or aggregate memory limits.
 
 Full CI must pass on the final head before merge.
+
+## Main integration
+
+The final tree includes main at `d216c8860c8b038172840a7e48cf6545264cec73`.
+That merge changes three JPEG files outside the compiler and the standard library.
+All 14 JPEG header cases pass on native x86-64 and on Wasm.
+Both leak counts are balanced.
+The compiler and standard library have the same bytes as the measured source.
+
+The fresh worker qualification uses local source `ce9741545ec46fac38a8be99cf79dc28132c0a03`.
+Its worker has the same SHA-256 as the earlier current worker.
+All 27 cases pass, with three kernel OOM kills.
+Every source hash remains constant during the run.
