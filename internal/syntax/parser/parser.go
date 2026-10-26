@@ -203,7 +203,7 @@ func (p *parser) fipModifierAt(i int) (name string, allowance int, next int, ok 
 		return "", 0, 0, false
 	}
 	for j := next; j < len(p.tokens); {
-		if t := p.tokens[j]; t.Kind == lexer.Keyword && t.Text == "function" {
+		if p.functionHeadAt(j) {
 			return name, allowance, next, true
 		}
 		_, _, after, shapeOK := p.fipModifierShapeAt(j)
@@ -213,6 +213,15 @@ func (p *parser) fipModifierAt(i int) (name string, allowance int, next int, ok 
 		j = after
 	}
 	return "", 0, 0, false
+}
+
+func (p *parser) unsafeFunctionAt(i int) bool {
+	return i+1 < len(p.tokens) && p.tokens[i].Kind == lexer.Ident && p.tokens[i].Text == "unsafe" &&
+		p.tokens[i+1].Kind == lexer.Keyword && p.tokens[i+1].Text == "function"
+}
+
+func (p *parser) functionHeadAt(i int) bool {
+	return i < len(p.tokens) && (p.tokens[i].Kind == lexer.Keyword && p.tokens[i].Text == "function" || p.unsafeFunctionAt(i))
 }
 
 func (p *parser) fipModifierShapeAt(i int) (name string, allowance int, next int, ok bool) {
@@ -382,6 +391,7 @@ func (p *parser) parseProgram() *ast.Program {
 				!p.match(lexer.Ident, "opaque") &&
 				!p.match(lexer.Ident, "fip") &&
 				!p.match(lexer.Ident, "fbip") &&
+				!p.unsafeFunctionAt(p.i) &&
 				!p.match(lexer.Ident, "async") {
 				p.errors = append(p.errors, p.errorfCode(pubTok.Pos, "P001",
 					"`pub` must be followed by `function`, `struct`, `enum`, `type`, `trait`, `const`, `opaque`, `fip`, `fbip`, or `async`"))
@@ -421,8 +431,7 @@ func (p *parser) parseProgram() *ast.Program {
 			isFip = false
 		}
 		isAsync := false
-		if p.match(lexer.Ident, "async") && p.i+1 < len(p.tokens) &&
-			p.tokens[p.i+1].Kind == lexer.Keyword && p.tokens[p.i+1].Text == "function" {
+		if p.match(lexer.Ident, "async") && p.functionHeadAt(p.i+1) {
 			p.advance()
 			isAsync = true
 		}
@@ -436,6 +445,8 @@ func (p *parser) parseProgram() *ast.Program {
 		declKind := ""
 		if isResource {
 			declKind = "resource"
+		} else if p.functionHeadAt(p.i) {
+			declKind = "function"
 		} else if p.peek().Kind == lexer.Keyword {
 			declKind = p.peek().Text
 		}
@@ -809,6 +820,10 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 			td.Methods = append(td.Methods, ast.TraitMethod{P: ckw.Pos, Name: cname.Text, Result: ctype, Assoc: true, Const: true, Body: body})
 			continue
 		}
+		isUnsafe := p.unsafeFunctionAt(p.i)
+		if isUnsafe {
+			p.advance()
+		}
 		mkw, err := p.expect(lexer.Keyword, "function")
 		if err != nil {
 			return nil, err
@@ -885,7 +900,7 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 		}
 		td.Methods = append(td.Methods, ast.TraitMethod{
 			P: mkw.Pos, Name: mname.Text, Params: params, Result: ret, Assoc: assoc, Body: body,
-			TypeParams: mtps, Bounds: mbounds, BoundArgs: mbargs,
+			TypeParams: mtps, Bounds: mbounds, BoundArgs: mbargs, Unsafe: isUnsafe,
 		})
 	}
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
@@ -1366,6 +1381,10 @@ func (p *parser) parseOptBoundsWithArgs() ([]string, [][]ast.Type, error) {
 }
 
 func (p *parser) parseFunction() (*ast.FuncDecl, error) {
+	isUnsafe := p.unsafeFunctionAt(p.i)
+	if isUnsafe {
+		p.advance()
+	}
 	kw, err := p.expect(lexer.Keyword, "function")
 	if err != nil {
 		return nil, err
@@ -1518,6 +1537,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		Params:            params,
 		ReturnType:        ret,
 		ReturnUnannotated: !retAnnotated && body != nil,
+		Unsafe:            isUnsafe,
 		Body:              body,
 		Receiver:          receiver,
 	}, nil
@@ -2201,8 +2221,21 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 	}
 	defer p.leave()
 	t := p.peek()
+	if p.unsafeFunctionAt(p.i) {
+		return nil, p.errorf(t.Pos, "unsafe nested functions are not supported")
+	}
 	if t.Kind == lexer.Punct && t.Text == "{" {
 		return p.parseBlock()
+	}
+	if t.Kind == lexer.Ident && t.Text == "unsafe" && p.i+1 < len(p.tokens) &&
+		p.tokens[p.i+1].Kind == lexer.Punct && p.tokens[p.i+1].Text == "{" {
+		p.advance()
+		block, err := p.parseBlock()
+		if block != nil {
+			block.IsUnsafe = true
+			block.P = t.Pos
+		}
+		return block, err
 	}
 	if t.Kind == lexer.Ident && p.i+2 < len(p.tokens) {
 		c, n := p.tokens[p.i+1], p.tokens[p.i+2]

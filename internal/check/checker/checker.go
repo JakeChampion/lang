@@ -3992,6 +3992,7 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 				DefiningModule: td.SourceModule,
 				ImplTrait:      impl.Trait,
 				TraitDefault:   impl.Trait,
+				Unsafe:         m.Unsafe,
 			}
 			if m.Assoc {
 				method.Params = append([]ast.Param(nil), m.Params...)

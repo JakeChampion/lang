@@ -105,6 +105,9 @@ func printFunc(b *strings.Builder, fn *ast.FuncDecl) {
 	if fn.Async {
 		b.WriteString("async ")
 	}
+	if fn.Unsafe {
+		b.WriteString("unsafe ")
+	}
 	b.WriteString("function ")
 	if fn.Receiver != nil {
 		b.WriteByte('(')
@@ -152,6 +155,9 @@ func printBlock(b *strings.Builder, blk *ast.Block) {
 func printStmt(b *strings.Builder, s ast.Stmt) {
 	switch x := s.(type) {
 	case *ast.Block:
+		if x.IsUnsafe {
+			b.WriteString("unsafe ")
+		}
 		printBlock(b, x)
 	case *ast.If:
 		b.WriteString("if (")

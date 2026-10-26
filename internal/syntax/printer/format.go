@@ -617,6 +617,9 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 		f.b.WriteByte('\n')
 		return
 	}
+	if m.Unsafe {
+		f.b.WriteString("unsafe ")
+	}
 	f.b.WriteString("function ")
 	f.b.WriteString(m.Name)
 	f.writeTypeParams(m.TypeParams, m.Bounds, m.BoundArgs, nil)
@@ -722,6 +725,9 @@ func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
 		f.b.WriteString(";\n")
 		return
 	}
+	if fn.Unsafe {
+		f.b.WriteString("unsafe ")
+	}
 	f.b.WriteString("function ")
 	f.b.WriteString(fn.Name)
 	if !parametric {
@@ -821,6 +827,9 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 	if fn.Async {
 		f.b.WriteString("async ")
 	}
+	if fn.Unsafe {
+		f.b.WriteString("unsafe ")
+	}
 	f.b.WriteString("function ")
 	if fn.Receiver != nil {
 		f.b.WriteByte('(')
@@ -887,7 +896,8 @@ func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 		return
 	}
 	f.b.WriteByte('{')
-	if blk.End.Line > 0 {
+	firstBlock, nested := blk.Stmts[0].(*ast.Block)
+	if blk.End.Line > 0 && (!nested || len(firstBlock.Stmts) == 0 || firstBlock.P.Line != blk.P.Line || firstBlock.End.Line <= blk.P.Line) {
 		f.emitTrailing(blk.P.Line)
 	}
 	f.b.WriteByte('\n')
@@ -1169,6 +1179,9 @@ func (f *formatter) formatStmt(s ast.Stmt, depth int) {
 				f.b.WriteString("todo;")
 			}
 			return
+		}
+		if x.IsUnsafe {
+			f.b.WriteString("unsafe ")
 		}
 		f.formatBlock(x, depth)
 	case *ast.ForEach:

@@ -1255,13 +1255,23 @@ function drain_all(f: Fmt, depth: i32, wrote: boolean): (string, Fmt) {
   return (out, g);
 }
 
+function nested_block_owns_trailing(st: ast.Stmt, line: i32, f: Fmt): boolean {
+  if let ast.StmtIf(block) = st {
+    if ((block.origin == "block" || block.origin == "unsafe") && block.then_body.len() > 0
+      && block.line == line && f.si < f.spans.opens.len()) {
+      return f.spans.opens[f.si] == line && f.spans.closes[f.si] > line;
+    }
+  }
+  return false;
+}
+
 function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
   if (body.len() == 0) {
     return ("{}", f);
   }
   let (open_line, close_line, g) = take_span(f, ast.stmt_line(body[0]));
   let out: string = "{";
-  if (open_line > 0) {
+  if (open_line > 0 && !nested_block_owns_trailing(body[0], open_line, g)) {
     let (tc, gt) = emit_trailing(g, open_line);
     out = out + tc;
     g = gt;
@@ -2589,6 +2599,10 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       if (ifs.origin == "block") {
         return print_block(ifs.then_body, depth, f);
       }
+      if (ifs.origin == "unsafe") {
+        let (unsafe_body, unsafe_fmt) = print_block(ifs.then_body, depth, f);
+        return ("unsafe " + unsafe_body, unsafe_fmt);
+      }
       if (ifs.origin == "chain_assign") {
         return (print_chain_assign(ifs.then_body, depth), f);
       }
@@ -2746,6 +2760,9 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
   }
   if (fd.async) {
     out = out + "async ";
+  }
+  if (fd.is_unsafe) {
+    out = out + "unsafe ";
   }
   out = out + "function ";
   let tps: string = print_type_params(fd);
@@ -3102,7 +3119,11 @@ function print_impl_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
   if (m.is_const) {
     return print_const_member(m, f);
   }
-  let out: string = indent_str(1) + "function " + m.name + print_type_params(m) + "(";
+  let out: string = indent_str(1);
+  if (m.is_unsafe) {
+    out = out + "unsafe ";
+  }
+  out = out + "function " + m.name + print_type_params(m) + "(";
   let first: boolean = true;
   let i: i32 = 0;
   while (i < m.params.len()) {
@@ -3190,7 +3211,11 @@ function print_trait_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
   if (m.is_const) {
     return print_const_member(m, f);
   }
-  let out: string = indent_str(1) + "function " + m.name + print_type_params(m) + "(";
+  let out: string = indent_str(1);
+  if (m.is_unsafe) {
+    out = out + "unsafe ";
+  }
+  out = out + "function " + m.name + print_type_params(m) + "(";
   let i: i32 = 0;
   while (i < m.params.len()) {
     if (i > 0) {

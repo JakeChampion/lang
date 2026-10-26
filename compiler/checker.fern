@@ -18522,7 +18522,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return rv;
     },
     ast.StmtIf(f) => {
-      if (f.origin == "block") {
+      if (f.origin == "block" || f.origin == "unsafe") {
         return ow_stmts(f.then_body, moved, ctx);
       }
       let rc: OwnWalk = ru_expr(f.cond, moved, ctx);

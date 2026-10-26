@@ -455,7 +455,7 @@ func CloneBlock(b *Block) *Block {
 	if b == nil {
 		return nil
 	}
-	out := &Block{P: b.P, Stmts: make([]Stmt, len(b.Stmts))}
+	out := &Block{P: b.P, Stmts: make([]Stmt, len(b.Stmts)), IsUnsafe: b.IsUnsafe}
 	for i, s := range b.Stmts {
 		out.Stmts[i] = CloneStmt(s)
 	}
@@ -1385,12 +1385,13 @@ type Stmt interface {
 }
 
 type Block struct {
-	P       Position
-	End     Position
-	Stmts   []Stmt
-	Sugar   *ForEach
-	IsTodo  bool
-	TodoMsg Expr
+	P        Position
+	End      Position
+	Stmts    []Stmt
+	Sugar    *ForEach
+	IsTodo   bool
+	IsUnsafe bool
+	TodoMsg  Expr
 }
 type If struct {
 	P        Position
@@ -1890,6 +1891,7 @@ type FuncDecl struct {
 	Fbip                     bool
 	FipAllowance             int
 	Async                    bool
+	Unsafe                   bool
 	InlineHint               InlineHint
 	IsSynthesisedHandlerMain bool
 	Captures                 []Param
@@ -1989,6 +1991,7 @@ type TraitMethod struct {
 	Result     Type
 	Assoc      bool
 	Const      bool
+	Unsafe     bool
 	Body       *Block
 	TypeParams []string
 	Bounds     map[string][]string
