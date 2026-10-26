@@ -29,3 +29,7 @@ pub function oom(): string {
 pub function map_fail(): string {
   return "fern: could not map the heap arena (errno ";
 }
+
+pub function entropy(): string {
+  return "fern: entropy unavailable";
+}
