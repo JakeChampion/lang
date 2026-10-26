@@ -179,3 +179,14 @@ x86_64/utf8_ingest_unchecked.text	8160
 x86_64/utf8_ingest_unchecked.ir	2202371
 x86_64/utf8_ingest_validated.text	8766
 x86_64/utf8_ingest_validated.ir	5241572
+
+# lane: bootstrap-x86-64-linux
+bootstrap/x86-64-linux/stage1.wall_s	36
+bootstrap/x86-64-linux/stage1.peak_rss_mb	2255
+bootstrap/x86-64-linux/stage1.size_bytes	14967984
+bootstrap/x86-64-linux/stage2.wall_s	34
+bootstrap/x86-64-linux/stage2.peak_rss_mb	2259
+bootstrap/x86-64-linux/stage2.size_bytes	14881456
+bootstrap/x86-64-linux/stage3.wall_s	26
+bootstrap/x86-64-linux/stage3.peak_rss_mb	2255
+bootstrap/x86-64-linux/stage3.size_bytes	14881456
