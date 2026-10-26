@@ -1,0 +1,125 @@
+{
+  "source": "c03b8473e4a1458210d978ca2f4f581c7cba090f",
+  "before_source": "8ca29e5ac5c0a8ca0570594361916a3f9c64e2ed",
+  "compiler_sha256": "13157d85d76cb5ab1790dcc06ad9575db60cd0cc4794ec6e3209e6a1ca9d50e2",
+  "selfhost_sha256": "d5627290343d9bf8d7cdc493377edc9b2fd71ea2543c05f34e89c9f22dcac63a",
+  "report_rows": 117,
+  "native_rows_unchanged": 78,
+  "wasm_rows_changed": 39,
+  "wasm_reductions": 31,
+  "wasm_increases": 8,
+  "before_strict_comparison_findings": 29,
+  "tolerances": "All unchanged",
+  "native_dynamic_instructions": "Not remeasured locally; baseline unchanged",
+  "tools": {
+    "wasmtime": "wasmtime 46.0.1 (823d1b8f2 2026-06-24)",
+    "wasm-tools": "wasm-tools 1.253.0 (c799bb87b 2026-07-07)"
+  },
+  "growth_cases": [
+    {
+      "case": "enum_match",
+      "before": {
+        "module_bytes": 6523,
+        "exit": 76,
+        "stdout": ""
+      },
+      "after": {
+        "module_bytes": 6583,
+        "exit": 76,
+        "stdout": ""
+      }
+    },
+    {
+      "case": "sort_strings",
+      "before": {
+        "module_bytes": 12624,
+        "exit": 23,
+        "stdout": ""
+      },
+      "after": {
+        "module_bytes": 12606,
+        "exit": 23,
+        "stdout": ""
+      }
+    },
+    {
+      "case": "string_build",
+      "before": {
+        "module_bytes": 8310,
+        "exit": 6,
+        "stdout": ""
+      },
+      "after": {
+        "module_bytes": 8358,
+        "exit": 6,
+        "stdout": ""
+      }
+    },
+    {
+      "case": "string_count_byte",
+      "before": {
+        "module_bytes": 4939,
+        "exit": 40,
+        "stdout": ""
+      },
+      "after": {
+        "module_bytes": 5011,
+        "exit": 40,
+        "stdout": ""
+      }
+    },
+    {
+      "case": "string_scan",
+      "before": {
+        "module_bytes": 8899,
+        "exit": 58,
+        "stdout": ""
+      },
+      "after": {
+        "module_bytes": 8947,
+        "exit": 58,
+        "stdout": ""
+      }
+    },
+    {
+      "case": "string_slice",
+      "before": {
+        "module_bytes": 5058,
+        "exit": 68,
+        "stdout": ""
+      },
+      "after": {
+        "module_bytes": 5127,
+        "exit": 68,
+        "stdout": ""
+      }
+    },
+    {
+      "case": "struct_drop",
+      "before": {
+        "module_bytes": 10935,
+        "exit": 13,
+        "stdout": ""
+      },
+      "after": {
+        "module_bytes": 10980,
+        "exit": 13,
+        "stdout": ""
+      }
+    },
+    {
+      "case": "tokenize",
+      "before": {
+        "module_bytes": 5839,
+        "exit": 63,
+        "stdout": ""
+      },
+      "after": {
+        "module_bytes": 5860,
+        "exit": 63,
+        "stdout": ""
+      }
+    }
+  ],
+  "correctness": "All eight growth cases validate and preserve exit status and stdout. Combined main compiler/guard/hardening/provided-audit/Wasm-units suite passed (132.464s), entropy suite passed (42.410s), initialization/conversion suite passed (63.972s). No skipped tests."
+}

@@ -1,3 +1,6 @@
+# 2026-10-26: complete 117-row static snapshot at c03b8473e4a1458210d978ca2f4f581c7cba090f.
+# The Wasm runtime source port changes all 39 Wasm rows; native rows and tolerances are unchanged.
+# Evidence: docs/benchmarks/wasm-runtime-static-2026-10-26/.
 # 2026-10-26: complete static measurements from local combined source
 # e068b9ae43e0ad05bed382d818a0231e203e50a1 (guard, entropy, and runtime bundle split).
 # 2026-10-26: CI run 40382820194 at a615af0e supplies this complete snapshot.
@@ -208,40 +211,40 @@ selfhost/arm64-linux/struct_drop.emit	2571
 selfhost/arm64-linux/tokenize.emit	1291
 selfhost/arm64-linux/utf8_ingest_unchecked.emit	8681
 selfhost/arm64-linux/utf8_ingest_validated.emit	9245
-selfhost/wasm32-wasi/array_append.emit	441
-selfhost/wasm32-wasi/array_index.emit	446
-selfhost/wasm32-wasi/array_scale_f64.emit	499
-selfhost/wasm32-wasi/array_with.emit	491
-selfhost/wasm32-wasi/ascii_scan.emit	1207
-selfhost/wasm32-wasi/byte_copy_append.emit	556
-selfhost/wasm32-wasi/byte_copy_with.emit	571
-selfhost/wasm32-wasi/call_overhead.emit	119
-selfhost/wasm32-wasi/closure_call.emit	480
-selfhost/wasm32-wasi/deflate_decode.emit	20485
-selfhost/wasm32-wasi/deflate_encode.emit	11814
-selfhost/wasm32-wasi/enum_match.emit	638
-selfhost/wasm32-wasi/http_hello.emit	21489
-selfhost/wasm32-wasi/int_loop.emit	71
-selfhost/wasm32-wasi/map_int.emit	7378
-selfhost/wasm32-wasi/map_probe_chain.emit	7403
-selfhost/wasm32-wasi/map_string.emit	8232
-selfhost/wasm32-wasi/ordmap_insert.emit	6914
-selfhost/wasm32-wasi/pmap_insert.emit	3202
-selfhost/wasm32-wasi/pvec_with.emit	2844
-selfhost/wasm32-wasi/record_update.emit	523
-selfhost/wasm32-wasi/sort_inplace.emit	1040
-selfhost/wasm32-wasi/sort_ints.emit	2190
-selfhost/wasm32-wasi/sort_strings.emit	3300
-selfhost/wasm32-wasi/string_build.emit	1234
-selfhost/wasm32-wasi/string_count_byte.emit	452
-selfhost/wasm32-wasi/string_find_byte.emit	1800
-selfhost/wasm32-wasi/string_rfind_byte.emit	1803
-selfhost/wasm32-wasi/string_scan.emit	1372
-selfhost/wasm32-wasi/string_slice.emit	448
-selfhost/wasm32-wasi/struct_drop.emit	1597
-selfhost/wasm32-wasi/tokenize.emit	829
-selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	9028
-selfhost/wasm32-wasi/utf8_ingest_validated.emit	10042
+selfhost/wasm32-wasi/array_append.emit	437
+selfhost/wasm32-wasi/array_index.emit	442
+selfhost/wasm32-wasi/array_scale_f64.emit	497
+selfhost/wasm32-wasi/array_with.emit	487
+selfhost/wasm32-wasi/ascii_scan.emit	1199
+selfhost/wasm32-wasi/byte_copy_append.emit	548
+selfhost/wasm32-wasi/byte_copy_with.emit	563
+selfhost/wasm32-wasi/call_overhead.emit	115
+selfhost/wasm32-wasi/closure_call.emit	476
+selfhost/wasm32-wasi/deflate_decode.emit	19942
+selfhost/wasm32-wasi/deflate_encode.emit	11482
+selfhost/wasm32-wasi/enum_match.emit	704
+selfhost/wasm32-wasi/http_hello.emit	20768
+selfhost/wasm32-wasi/int_loop.emit	69
+selfhost/wasm32-wasi/map_int.emit	7177
+selfhost/wasm32-wasi/map_probe_chain.emit	7202
+selfhost/wasm32-wasi/map_string.emit	7999
+selfhost/wasm32-wasi/ordmap_insert.emit	6736
+selfhost/wasm32-wasi/pmap_insert.emit	3128
+selfhost/wasm32-wasi/pvec_with.emit	2795
+selfhost/wasm32-wasi/record_update.emit	519
+selfhost/wasm32-wasi/sort_inplace.emit	1013
+selfhost/wasm32-wasi/sort_ints.emit	2112
+selfhost/wasm32-wasi/sort_strings.emit	3375
+selfhost/wasm32-wasi/string_build.emit	1275
+selfhost/wasm32-wasi/string_count_byte.emit	526
+selfhost/wasm32-wasi/string_find_byte.emit	1790
+selfhost/wasm32-wasi/string_rfind_byte.emit	1793
+selfhost/wasm32-wasi/string_scan.emit	1413
+selfhost/wasm32-wasi/string_slice.emit	520
+selfhost/wasm32-wasi/struct_drop.emit	1636
+selfhost/wasm32-wasi/tokenize.emit	869
+selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	8874
+selfhost/wasm32-wasi/utf8_ingest_validated.emit	9808
 selfhost/x86-64-linux/array_append.emit	1054
 selfhost/x86-64-linux/array_index.emit	1055
 selfhost/x86-64-linux/array_scale_f64.emit	1181
@@ -280,16 +283,16 @@ selfhost/x86-64-linux/utf8_ingest_validated.emit	8854
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 selfhost/x86-64-linux/perceus_cfold.emit	1807
 selfhost/arm64-linux/perceus_cfold.emit	2055
-selfhost/wasm32-wasi/perceus_cfold.emit	1759
+selfhost/wasm32-wasi/perceus_cfold.emit	1729
 selfhost/x86-64-linux/perceus_deriv.emit	2588
 selfhost/arm64-linux/perceus_deriv.emit	2885
-selfhost/wasm32-wasi/perceus_deriv.emit	2790
+selfhost/wasm32-wasi/perceus_deriv.emit	2784
 selfhost/x86-64-linux/perceus_nqueens.emit	1472
 selfhost/arm64-linux/perceus_nqueens.emit	1708
-selfhost/wasm32-wasi/perceus_nqueens.emit	1282
+selfhost/wasm32-wasi/perceus_nqueens.emit	1261
 selfhost/x86-64-linux/perceus_rbtree.emit	2790
 selfhost/arm64-linux/perceus_rbtree.emit	3061
-selfhost/wasm32-wasi/perceus_rbtree.emit	3619
+selfhost/wasm32-wasi/perceus_rbtree.emit	3562
 selfhost/x86-64-linux/perceus_rbtree_ck.emit	3040
 selfhost/arm64-linux/perceus_rbtree_ck.emit	3298
-selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4052
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3978
