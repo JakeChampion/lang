@@ -1,6 +1,6 @@
 # Safety contract and unsafe boundary proposal
 
-Status: proposal for [SEC-003](https://github.com/JakeChampion/lang/issues/13505).
+Status: [research] proposal for [SEC-003](https://github.com/JakeChampion/lang/issues/13505).
 Parent: [security epic](https://github.com/JakeChampion/lang/issues/13502).
 This document separates current behavior from proposed requirements.
 It changes no compiler behavior.
