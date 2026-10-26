@@ -2,14 +2,14 @@ import "std/test";
 import "std/peg";
 
 function test_lit_match(): test.TestOutcome {
-  let Ok(r) = peg.peg_match_pattern(PLit("hello"), "hello world") else {
+  let Ok(r) = peg.parse_pattern(PLit("hello"), "hello world") else {
     return test.fail("expected match");
   };
   return test.assert_eq(r.pos, 5);
 }
 
 function test_furthest_failure_pos(): test.TestOutcome {
-  match (peg.peg_match_pattern(PSeq([PLit("hel"), PLit("lo")]), "help")) {
+  match (peg.parse_pattern(PSeq([PLit("hel"), PLit("lo")]), "help")) {
     Ok(_) => {
       return test.fail("should not match");
     },
@@ -21,44 +21,44 @@ function test_furthest_failure_pos(): test.TestOutcome {
 
 function test_ordered_choice_first_wins(): test.TestOutcome {
   let p: peg.Pattern = PChoice([PLit("a"), PLit("ab")]);
-  let Ok(r) = peg.peg_match_pattern(p, "ab") else {
+  let Ok(r) = peg.parse_pattern(p, "ab") else {
     return test.fail("expected match");
   };
   return test.assert_eq(r.pos, 1);
 }
 
 function test_star_greedy(): test.TestOutcome {
-  let Ok(r) = peg.peg_match_pattern(PStar(peg.peg_digit()), "1234x") else {
+  let Ok(r) = peg.parse_pattern(PStar(peg.digit()), "1234x") else {
     return test.fail("star should always succeed");
   };
   return test.assert_eq(r.pos, 4);
 }
 
 function test_star_nullable_terminates(): test.TestOutcome {
-  let Ok(r) = peg.peg_match_pattern(PStar(POpt(PLit("x"))), "yyy") else {
+  let Ok(r) = peg.parse_pattern(PStar(POpt(PLit("x"))), "yyy") else {
     return test.fail("nullable star should succeed");
   };
   return test.assert_eq(r.pos, 0);
 }
 
 function test_plus_requires_one(): test.TestOutcome {
-  return test.assert_false(ok(peg.peg_match_pattern(PPlus(peg.peg_digit()), "x1")));
+  return test.assert_false(ok(peg.parse_pattern(PPlus(peg.digit()), "x1")));
 }
 
 function test_not_lookahead(): test.TestOutcome {
-  let kw: peg.Pattern = PSeq([PLit("if"), PNot(peg.peg_alnum())]);
-  if (ok(peg.peg_match_pattern(kw, "iffy"))) {
+  let kw: peg.Pattern = PSeq([PLit("if"), PNot(peg.alnum())]);
+  if (ok(peg.parse_pattern(kw, "iffy"))) {
     return test.fail("`iffy` should not match");
   }
-  let Ok(hit) = peg.peg_match_pattern(kw, "if (x)") else {
+  let Ok(hit) = peg.parse_pattern(kw, "if (x)") else {
     return test.fail("`if (` should match");
   };
   return test.assert_eq(hit.pos, 2);
 }
 
 function test_and_lookahead_zero_width(): test.TestOutcome {
-  let p: peg.Pattern = PSeq([PAnd(PLit("ab")), PCap("all", PPlus(peg.peg_alpha()))]);
-  let Ok(r) = peg.peg_match_pattern(p, "abc") else {
+  let p: peg.Pattern = PSeq([PAnd(PLit("ab")), PCap("all", PPlus(peg.alpha()))]);
+  let Ok(r) = peg.parse_pattern(p, "abc") else {
     return test.fail("expected match");
   };
   match (r.caps.get("all")) {
@@ -72,8 +72,8 @@ function test_and_lookahead_zero_width(): test.TestOutcome {
 }
 
 function test_capture_last_wins(): test.TestOutcome {
-  let word: peg.Pattern = PSeq([PCap("w", PPlus(peg.peg_alpha())), PStar(PSet(" "))]);
-  let Ok(r) = peg.peg_match_pattern(PStar(word), "one two three") else {
+  let word: peg.Pattern = PSeq([PCap("w", PPlus(peg.alpha())), PStar(PSet(" "))]);
+  let Ok(r) = peg.parse_pattern(PStar(word), "one two three") else {
     return test.fail("expected match");
   };
   match (r.caps.get("w")) {
@@ -91,7 +91,7 @@ function test_capture_backtrack_discarded(): test.TestOutcome {
     PSeq([PCap("bad", PLit("ab")), PLit("X")]),
     PCap("good", PLit("abc")),
   ]);
-  let Ok(r) = peg.peg_match_pattern(p, "abc") else {
+  let Ok(r) = peg.parse_pattern(p, "abc") else {
     return test.fail("expected match");
   };
   if (r.caps.contains("bad")) {
@@ -107,13 +107,13 @@ function test_recursive_grammar_balanced(): test.TestOutcome {
     PLit(""),
   ]));
   rules = rules.insert("all", PSeq([PRef("b"), PEof]));
-  let Ok(g) = peg.peg_grammar(rules, "all") else {
+  let Ok(g) = peg.new(rules, "all") else {
     return test.fail("grammar should build");
   };
-  if (!ok(peg.peg_match(g, "(()(()))"))) {
+  if (!ok(peg.parse(g, "(()(()))"))) {
     return test.fail("balanced should match");
   }
-  if (ok(peg.peg_match(g, "(()"))) {
+  if (ok(peg.parse(g, "(()"))) {
     return test.fail("unbalanced should fail");
   }
   return test.pass();
@@ -122,7 +122,7 @@ function test_recursive_grammar_balanced(): test.TestOutcome {
 function test_grammar_validation(): test.TestOutcome {
   let rules: Map[string, peg.Pattern] = map_new(4);
   rules = rules.insert("a", PRef("missing"));
-  match (peg.peg_grammar(rules, "nope")) {
+  match (peg.new(rules, "nope")) {
     Ok(g1) => {
       return test.fail("unknown start should Err");
     },
@@ -132,7 +132,7 @@ function test_grammar_validation(): test.TestOutcome {
       }
     }
   }
-  match (peg.peg_grammar(rules, "a")) {
+  match (peg.new(rules, "a")) {
     Ok(g2) => {
       return test.fail("dangling PRef should Err");
     },
@@ -145,7 +145,7 @@ function test_grammar_validation(): test.TestOutcome {
 function test_empty_rule_name(): test.TestOutcome {
   let rules: Map[string, peg.Pattern] = map_new(2);
   rules = rules.insert("start", PRef(""));
-  match (peg.peg_grammar(rules, "start")) {
+  match (peg.new(rules, "start")) {
     Ok(_) => {
       return test.fail("a missing empty-name rule should Err");
     },
@@ -156,10 +156,10 @@ function test_empty_rule_name(): test.TestOutcome {
     }
   }
   rules = rules.insert("", PLit("x"));
-  let Ok(g) = peg.peg_grammar(rules, "start") else {
+  let Ok(g) = peg.new(rules, "start") else {
     return test.fail("a present empty-name rule should be valid");
   };
-  let Ok(m) = peg.peg_match(g, "x") else {
+  let Ok(m) = peg.parse(g, "x") else {
     return test.fail("expected the empty-name rule to match");
   };
   return test.assert_eq(m.pos, 1);
@@ -168,32 +168,32 @@ function test_empty_rule_name(): test.TestOutcome {
 function test_left_recursion_fails_fast(): test.TestOutcome {
   let rules: Map[string, peg.Pattern] = map_new(2);
   rules = rules.insert("l", PSeq([PRef("l"), PLit("a")]));
-  let Ok(g) = peg.peg_grammar(rules, "l") else {
+  let Ok(g) = peg.new(rules, "l") else {
     return test.fail("grammar should build");
   };
-  return test.assert_false(ok(peg.peg_match(g, "aaa")));
+  return test.assert_false(ok(peg.parse(g, "aaa")));
 }
 
 function test_eof_rejects_trailing(): test.TestOutcome {
   let p: peg.Pattern = PSeq([PLit("ok"), PEof]);
-  if (!ok(peg.peg_match_pattern(p, "ok"))) {
+  if (!ok(peg.parse_pattern(p, "ok"))) {
     return test.fail("exact input should match");
   }
-  return test.assert_false(ok(peg.peg_match_pattern(p, "okay")));
+  return test.assert_false(ok(peg.parse_pattern(p, "okay")));
 }
 
 function test_http_request_line(): test.TestOutcome {
   let sp: peg.Pattern = PLit(" ");
   let p: peg.Pattern = PSeq([
-    PCap("method", PPlus(peg.peg_upper())),
+    PCap("method", PPlus(peg.upper())),
     sp,
     PCap("path", PPlus(PNotSet(" "))),
     sp,
     PLit("HTTP/"),
-    PCap("version", PSeq([peg.peg_digit(), PLit("."), peg.peg_digit()])),
+    PCap("version", PSeq([peg.digit(), PLit("."), peg.digit()])),
     PEof,
   ]);
-  let Ok(r) = peg.peg_match_pattern(p, "GET /users/42?tab=all HTTP/1.1") else {
+  let Ok(r) = peg.parse_pattern(p, "GET /users/42?tab=all HTTP/1.1") else {
     return test.fail("request line should match");
   };
   if (r.caps.get_or("method", "") != "GET") {
@@ -209,12 +209,12 @@ function test_config_line(): test.TestOutcome {
   let ws: peg.Pattern = PStar(PSet(" \t"));
   let p: peg.Pattern = PSeq([
     ws,
-    PCap("key", PPlus(PChoice([peg.peg_alnum(), PSet("_.")]))),
+    PCap("key", PPlus(PChoice([peg.alnum(), PSet("_.")]))),
     ws, PLit("="), ws,
     PCap("value", PStar(PNotSet("\n"))),
     PEof,
   ]);
-  let Ok(r) = peg.peg_match_pattern(p, "  http.port =  8080") else {
+  let Ok(r) = peg.parse_pattern(p, "  http.port =  8080") else {
     return test.fail("config line should match");
   };
   if (r.caps.get_or("key", "") != "http.port") {
@@ -224,32 +224,32 @@ function test_config_line(): test.TestOutcome {
 }
 
 function test_class_helpers(): test.TestOutcome {
-  if (!ok(peg.peg_match_pattern(peg.peg_digit(), "7"))) {
+  if (!ok(peg.parse_pattern(peg.digit(), "7"))) {
     return test.fail("digit");
   }
-  if (ok(peg.peg_match_pattern(peg.peg_digit(), "x"))) {
+  if (ok(peg.parse_pattern(peg.digit(), "x"))) {
     return test.fail("digit x");
   }
-  if (!ok(peg.peg_match_pattern(peg.peg_alpha(), "G"))) {
+  if (!ok(peg.parse_pattern(peg.alpha(), "G"))) {
     return test.fail("alpha");
   }
-  if (!ok(peg.peg_match_pattern(peg.peg_alnum(), "9"))) {
+  if (!ok(peg.parse_pattern(peg.alnum(), "9"))) {
     return test.fail("alnum");
   }
-  if (!ok(peg.peg_match_pattern(peg.peg_space(), "\t"))) {
+  if (!ok(peg.parse_pattern(peg.space(), "\t"))) {
     return test.fail("space");
   }
-  if (!ok(peg.peg_match_pattern(peg.peg_lower(), "q"))) {
+  if (!ok(peg.parse_pattern(peg.lower(), "q"))) {
     return test.fail("lower");
   }
-  if (!ok(peg.peg_match_pattern(peg.peg_upper(), "Q"))) {
+  if (!ok(peg.parse_pattern(peg.upper(), "Q"))) {
     return test.fail("upper");
   }
   return test.pass();
 }
 
 function test_pattern_ref_without_grammar(): test.TestOutcome {
-  return test.assert_false(ok(peg.peg_match_pattern(PRef("nowhere"), "x")));
+  return test.assert_false(ok(peg.parse_pattern(PRef("nowhere"), "x")));
 }
 
 function main(): i32 {

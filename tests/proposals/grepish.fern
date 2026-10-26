@@ -58,7 +58,7 @@ function literal_match(p: Pattern, text: string): boolean {
   return false;
 }
 
-function glob_match(pat: string, text: string): boolean {
+function is_match(pat: string, text: string): boolean {
   let p: i32 = 0;
   let t: i32 = 0;
   let star: i32 = -1;
@@ -96,7 +96,7 @@ function matches(p: Pattern, text: string): boolean {
   if (!p.at_end) {
     eff = eff + "*";
   }
-  return glob_match(eff, text);
+  return is_match(eff, text);
 }
 
 function search(lines: string[], p: Pattern, before: i32, after: i32): Report {
