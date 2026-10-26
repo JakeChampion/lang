@@ -2,7 +2,7 @@ function __fern_random_bytes_u8(n: i32): i32[] {
   if (n < 0) {
     n = 0;
   }
-  let b: usize = __raw_arr_box((n + 7) / 8);
+  let b: usize = __raw_arr_box(((n as i64 + 7) / 8) as i32);
   __store_i64(b, n as i64);
   let off: i32 = 0;
   while (off < n) {

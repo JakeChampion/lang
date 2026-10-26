@@ -139,3 +139,78 @@ func armEntropySyscallStub(mode, label string) string {
 	body += label + "_full:\n    mov x9, #90\n    mov x10, #0\n" + label + "_fill:\n    cmp x10, x1\n    b.hs " + label + "_filled\n    strb w9, [x0, x10]\n    add x10, x10, #1\n    b " + label + "_fill\n" + label + "_filled:\n    mov x0, x1\n" + label + "_done:\n    ldp x9, x10, [sp], #16\n    b " + label + "_resume\n" + label + "_pass:\n    svc #0\n" + label + "_resume:"
 	return body
 }
+
+// Stop at the allocator entry to check the requested capacity without a
+// multi-gigabyte allocation or entropy read. Small counts are positive controls.
+func TestSelfHostEntropyAllocationCapacity(t *testing.T) {
+	cli := e2eharness.SelfHostCLI(t)
+	targets := []string{e2eharness.HostSelfHostTarget()}
+	if runtime.GOARCH == "amd64" {
+		targets = append(targets, "arm64-linux")
+	}
+	for _, target := range targets {
+		t.Run(target, func(t *testing.T) {
+			var gcc string
+			var runner []string
+			if target == "arm64-linux" {
+				var qemu string
+				gcc, qemu = e2eharness.Arm64Tooling(t)
+				if qemu != "" {
+					runner = []string{qemu}
+				}
+			} else {
+				gcc, _ = e2eharness.X86_64Tooling(t)
+			}
+			for _, n := range []int64{-1, 0, 1, 7, 8, 9, 2147483640, 2147483641, 2147483647} {
+				t.Run(fmt.Sprint(n), func(t *testing.T) {
+					dir := t.TempDir()
+					src, asm, bin := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.s"), filepath.Join(dir, "main")
+					program := fmt.Sprintf("function main(): i32 { let bs: u8[] = random_bytes(%d); return bs.len(); }\n", n)
+					if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					if out, err := exec.Command(cli, "-target", target, "-emit", "asm", "-o", asm, src).CombinedOutput(); err != nil {
+						t.Fatalf("compile: %v\n%s", err, out)
+					}
+					text, err := os.ReadFile(asm)
+					if err != nil {
+						t.Fatal(err)
+					}
+					const label = "__fern_arr_box:\n"
+					if strings.Count(string(text), label) != 1 {
+						t.Fatal("expected exactly one array allocator entry")
+					}
+					positive := n
+					if positive < 0 {
+						positive = 0
+					}
+					words := (positive + 7) / 8
+					var hook string
+					if target == "x86-64-linux" {
+						hook = fmt.Sprintf("    cmpq $%d, %%rdi\n    jne .Lentropy_capacity_bad\n    movl $42, %%edi\n    jmp .Lentropy_capacity_exit\n.Lentropy_capacity_bad:\n    movl $13, %%edi\n.Lentropy_capacity_exit:\n    movl $60, %%eax\n    syscall\n", words)
+					} else {
+						hook = fmt.Sprintf("    mov x9, #%d\n    cmp x0, x9\n    b.ne .Lentropy_capacity_bad\n    mov x0, #42\n    b .Lentropy_capacity_exit\n.Lentropy_capacity_bad:\n    mov x0, #13\n.Lentropy_capacity_exit:\n    mov x8, #93\n    svc #0\n", words)
+					}
+					body := strings.Replace(string(text), label, label+hook, 1)
+					if err := os.WriteFile(asm, []byte(body), 0o644); err != nil {
+						t.Fatal(err)
+					}
+					if out, err := exec.Command(gcc, "-nostdlib", "-static", "-no-pie", "-o", bin, asm).CombinedOutput(); err != nil {
+						t.Fatalf("link: %v\n%s", err, out)
+					}
+					ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+					defer cancel()
+					args := append(append([]string{}, runner...), bin)
+					cmd := exec.CommandContext(ctx, args[0], args[1:]...)
+					out, err := cmd.CombinedOutput()
+					if ctx.Err() != nil || cmd.ProcessState == nil {
+						t.Fatalf("run: %v\n%s", err, out)
+					}
+					if cmd.ProcessState.ExitCode() != 42 || len(out) != 0 {
+						t.Errorf("length %d must request %d words: exit=%d output=%q", n, words, cmd.ProcessState.ExitCode(), out)
+					}
+				})
+			}
+		})
+	}
+}
