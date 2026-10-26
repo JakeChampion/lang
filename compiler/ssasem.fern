@@ -29,6 +29,8 @@ pub function finalizer_named(rows: Finalizer[], receiver: string): string {
   return "";
 }
 
+pub struct DebugPieces { name: string, ty: typeinfo.Type, values: i32[], param: boolean }
+
 pub struct Func {
   graph: ssa.SFunc,
   values: typeinfo.Type[],
@@ -45,7 +47,20 @@ pub struct Func {
   map_module: boolean,
   dbg_vals: i32[],
   dbg_names: string[],
+  dbg_pieces: DebugPieces[],
   source_positions: sourcepos.SourceInfo,
+}
+
+pub function renamed_debug_pieces(rows: DebugPieces[], map: i32[]): DebugPieces[] {
+  let out: DebugPieces[] = [];
+  for row in rows {
+    let values: i32[] = [];
+    for v in row.values {
+      values = values.append(if (v >= 0 && v < map.len()) { map[v] } else { v });
+    }
+    out = out.append(DebugPieces { ...row, values: values });
+  }
+  return out;
 }
 
 pub struct Anchor { name: string, params: i32[] }
@@ -5040,4 +5055,22 @@ function phi_over(result: i32, first: i32, rows: i32[][], at: i32): ssa.SInst {
 
 pub function no_source(): sourcepos.SourceInfo {
   return sourcepos.no_source();
+}
+
+pub function debug_construction(f: Func, ins: ssa.SInst): Func {
+  if (ins.kind_tag != record_new() || update_base(ins) >= 0) {
+    return f;
+  }
+  let vals: i32[] = [];
+  let names: string[] = [];
+  let pieces = f.dbg_pieces;
+  for i in 0..f.dbg_vals.len() {
+    if (f.dbg_vals[i] == ins.result) {
+      pieces = pieces.append(DebugPieces { name: f.dbg_names[i], ty: f.values[ins.result], values: ins.args, param: false });
+    } else {
+      vals = vals.append(f.dbg_vals[i]);
+      names = names.append(f.dbg_names[i]);
+    }
+  }
+  return Func { ...f, dbg_vals: vals, dbg_names: names, dbg_pieces: pieces };
 }

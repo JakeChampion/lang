@@ -21,7 +21,7 @@ function body(name: string, params: typeinfo.Type[], types: typeinfo.Type[], ops
   let graph = ssa.SFunc { name: name, nparams: params.len(), nvals: types.len(), entry: 0, takes_env: params.len() > 0,
     blocks: [ssa.SBlock { id: 0, preds: [], insts: ops, term: term }] };
   return ssasem.Func { source_positions: ssasem.no_source(),  graph: graph, values: types, params: params, result: word(), records: semrecords.no_records(),
-    enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [] };
+    enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], dbg_pieces: [] };
 }
 function callback(captured: boolean, reads_env: boolean, size: i32): ssasem.Func {
   let env: typeinfo.Type = typeinfo.TypeArray { elem: word(), view: false };

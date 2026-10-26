@@ -119,6 +119,42 @@ function main(): i32 {
 		}
 	})
 
+	t.Run("split_scalar_params_link_and_run", func(t *testing.T) {
+		proj := t.TempDir()
+		write(t, filepath.Join(proj, "leaf.fern"), `pub struct Quad { a: i32, b: i32, c: i32, d: i32 }
+@noinline pub function total(q: Quad, head: i32, tail: i32): i32 {
+    return q.a + q.b + q.c + q.d + head + tail;
+}
+`)
+		entry := filepath.Join(proj, "entry.fern")
+		write(t, entry, `import "./leaf";
+function main(): i32 { return leaf.total(leaf.Quad { a: 1, b: 2, c: 3, d: 4 }, 30, 2); }
+`)
+		cacheDir := filepath.Join(proj, "cache")
+		if err := os.Mkdir(cacheDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		planPath := filepath.Join(proj, "plan.txt")
+		write(t, planPath, "0 0 1\n1 0 1\n")
+		if _, se, code := drive(t, entry, nil, "-per-module-emit-all", "-plan", planPath, "-cache-dir", cacheDir); code != 0 {
+			t.Fatalf("emit split parameters: exit %d\n%s", code, se)
+		}
+		wat, se, code := drive(t, entry, nil, "-link", "-plan", planPath, "-cache-dir", cacheDir)
+		if code != 0 {
+			t.Fatalf("link split parameters: exit %d\n%s", code, se)
+		}
+		watPath := filepath.Join(proj, "split.wat")
+		wasmPath := filepath.Join(proj, "split.wasm")
+		write(t, watPath, wat)
+		if out, err := exec.Command(wasmtools, "parse", watPath, "-o", wasmPath).CombinedOutput(); err != nil {
+			t.Fatalf("parse split parameters: %v\n%s", err, out)
+		}
+		var ee *exec.ExitError
+		if err := exec.Command(wasmtime, "run", wasmPath).Run(); !errors.As(err, &ee) || ee.ExitCode() != 42 {
+			t.Fatalf("split parameters: %v, want exit 42", err)
+		}
+	})
+
 	t.Run("instance_records_link_and_run", func(t *testing.T) {
 		proj := t.TempDir()
 		write(t, filepath.Join(proj, "leaf.fern"), `pub struct Slot[T] { v: T }

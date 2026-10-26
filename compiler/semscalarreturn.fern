@@ -434,10 +434,13 @@ pub function split_param(f: ssasem.Func, p: i32, types: typeinfo.Type[]): ssasem
   }
   let dbg_vals: i32[] = [];
   let dbg_names: string[] = [];
+  let dbg_pieces = ssasem.renamed_debug_pieces(f.dbg_pieces, map);
   for i in 0..f.dbg_vals.len() {
     if (f.dbg_vals[i] != p) {
       dbg_vals = dbg_vals.append(moved(map, f.dbg_vals[i]));
       dbg_names = dbg_names.append(f.dbg_names[i]);
+    } else {
+      dbg_pieces = dbg_pieces.append(ssasem.DebugPieces { name: f.dbg_names[i], ty: f.params[p], values: consecutive(p, types.len()), param: true });
     }
   }
   let graph: ssa.SFunc = ssa.SFunc { ...f.graph, blocks: blocks, nparams: f.graph.nparams + extra, nvals: f.graph.nvals + extra };
@@ -448,6 +451,7 @@ pub function split_param(f: ssasem.Func, p: i32, types: typeinfo.Type[]): ssasem
     params: spliced_types(f.params, p, types),
     dbg_vals: dbg_vals,
     dbg_names: dbg_names,
+    dbg_pieces: dbg_pieces,
     source_positions: sourcepos.renamed(f.source_positions, map),
   };
 }

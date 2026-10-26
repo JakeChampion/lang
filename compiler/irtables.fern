@@ -846,6 +846,8 @@ pub function f64_math_builtin_kind(name: string): string {
   return "";
 }
 
+pub struct DebugPieces { name: string, ty: string, slots: i32[], param: boolean, known: boolean[], constants: i64[] }
+
 pub struct LowerResult {
   ok: boolean,
   ops: ir.Op[],
@@ -864,6 +866,7 @@ pub struct LowerResult {
   dbg_slots: i32[],
   dbg_names: string[],
   dbg_types: string[],
+  dbg_pieces: DebugPieces[],
   source_positions: sourcepos.SourceInfo,
 }
 

@@ -21,20 +21,24 @@ pub function gate(sigs: irverify.NameIndex, pops: i32[], abis: rccertify.Abis): 
 }
 
 pub function gate_unreported(sigs: irverify.NameIndex, pops: i32[], abis: rccertify.Abis): Gate {
-  let params: i32[] = sigs.params;
-  for i in 0..sigs.names.len() {
-    let abi: rccertify.Abi = abis.lookup(sigs.names[i]);
-    if (abi.known) {
-      params = params.with(i, abi.modes.len());
-    }
-  }
-  sigs = irverify.NameIndex { ...sigs, params: params };
   let certify: i32 = util.certify_mode();
   let census: usize = 0 as usize;
   if (certify == 1) {
     census = buf_new(256);
   }
-  return Gate { sigs: sigs, pops: pops, seen: 0 as usize, modelled: 0 as usize, abis: abis, rc: rcsigs.table(), rcops: rcsigs.op_table(), kinds: ssa_lift.kind_table(), census: census, memo: rcmemo.off(), verify: util.verify_on(), certify: certify };
+  return Gate { sigs: physical_signatures(sigs, abis), pops: pops, seen: 0 as usize, modelled: 0 as usize, abis: abis, rc: rcsigs.table(), rcops: rcsigs.op_table(), kinds: ssa_lift.kind_table(), census: census, memo: rcmemo.off(), verify: util.verify_on(), certify: certify };
+}
+
+// External declarations keep their source arity when a unit has no lowered body.
+function physical_signatures(sigs: irverify.NameIndex, abis: rccertify.Abis): irverify.NameIndex {
+  let params: i32[] = sigs.params;
+  for i in 0..sigs.names.len() {
+    let at: i32 = abis.names.find(sigs.names[i]);
+    if (at >= 0 && params[i] != abis.modes[at].len()) {
+      params = params.with(i, abis.modes[at].len());
+    }
+  }
+  return irverify.NameIndex { ...sigs, params: params };
 }
 
 pub function with_memo(g: Gate, m: rcmemo.Memo): Gate {

@@ -10,6 +10,7 @@ pub function prune(f: ssasem.Func): Pruned {
   while (round > 0) {
     let r: Round = prune_round(f, g, reads(g));
     g = r.g;
+    f = r.f;
     round = r.removed;
     removed = removed + r.removed;
   }
@@ -19,7 +20,7 @@ pub function prune(f: ssasem.Func): Pruned {
   return Pruned { f: ssasem.Func { ...f, graph: g }, removed: removed };
 }
 
-struct Round { g: ssa.SFunc, removed: i32 }
+struct Round { g: ssa.SFunc, f: ssasem.Func, removed: i32 }
 
 function reads(g: ssa.SFunc): i32[] {
   let uses: i32[] = ssa.use_counts(g);
@@ -42,6 +43,7 @@ function prune_round(f: ssasem.Func, g: ssa.SFunc, uses: i32[]): Round {
     let kept: ssa.SInst[] = [];
     for ins in b.insts {
       if (unread_construction(f, uses, ins) || droppable(ins.kind_tag) && in_range(ins.result, dead.len()) && dead[ins.result]) {
+        f = ssasem.debug_construction(f, ins);
         removed = removed + 1;
       } else {
         kept = kept.append(ins);
@@ -50,9 +52,9 @@ function prune_round(f: ssasem.Func, g: ssa.SFunc, uses: i32[]): Round {
     blocks = blocks.append(ssa.SBlock { ...b, insts: kept });
   }
   if (removed == 0) {
-    return Round { g: g, removed: 0 };
+    return Round { g: g, f: f, removed: 0 };
   }
-  return Round { g: ssa.SFunc { ...g, blocks: blocks }, removed: removed };
+  return Round { g: ssa.SFunc { ...g, blocks: blocks }, f: f, removed: removed };
 }
 
 function dead_cycles(f: ssasem.Func, g: ssa.SFunc, uses: i32[]): boolean[] {

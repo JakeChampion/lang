@@ -207,7 +207,7 @@ function typed_unit(t: Typed, idx: i32, lo: i32, hi: i32): TypedUnit {
   }
   let fs: parser.FuncDecl[] = [];
   let cache: irtables.LowerResult[] = [];
-  let physical = t.u.physical[idx];
+  let physical: physicalbody.Collection = t.u.physical[idx];
   let origins: physicalbody.Origin[] = [];
   let i: i32 = lo;
   while (i < end) {
