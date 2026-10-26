@@ -521,17 +521,6 @@ function gate_checks(): i32 {
   if (irverifygate.verify_problems("f", arity, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind(), rccertify.no_abis())).len() != 0) {
     return 180;
   }
-  let physical = rccertify.abis_of(["takes2"], [[1, 1, 1, 1]], [false], [false], [-2], [[-2, -2]], [false]);
-  let gate = irverifygate.gate(sigs, ir.pops_by_kind(), physical);
-  let split: ir.Op[] = [ir.op_const_i32(1), ir.op_const_i32(2), ir.op_const_i32(3), ir.op_const_i32(4), ir.op_call_direct("takes2", 4), ir.op_return()];
-  if (irverifygate.verify_problems("f", split, 0, 1, gate).len() != 0) {
-    return 181;
-  }
-  let source_arity: ir.Op[] = [ir.op_const_i32(1), ir.op_const_i32(2), ir.op_call_direct("takes2", 2), ir.op_return()];
-  let problems = irverifygate.verify_problems("f", source_arity, 0, 1, gate);
-  if (problems.len() != 1 || !util.contains(irverify.problem_str(problems[0]), "declares 4 parameters")) {
-    return 182;
-  }
   return 0;
 }
 

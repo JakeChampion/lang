@@ -454,7 +454,7 @@ function key_of(u: Universe, f: ssasem.Func, ins: ssa.SInst): i32 {
   return 0 - 1;
 }
 
-struct World { reach: boolean[], fields: i64[], built: boolean[], rets: i64[], params: i64[][], inhabited: boolean[], queue: i32[], next: i32, queued: boolean[] }
+struct World { reach: boolean[], fields: i64[], built: boolean[], rets: i64[], inhabited: boolean[], queue: i32[], next: i32, queued: boolean[] }
 
 function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.Type[]): World {
   let built: boolean[] = [];
@@ -462,17 +462,10 @@ function start(ctx: Ctx, roots: boolean[], op: util.NameIndex, zeros: typeinfo.T
     built = built.append(op.has(owner));
   }
   let rets: i64[] = [];
-  let params: i64[][] = [];
   while (rets.len() < ctx.funcs.len()) {
-    let i: i32 = rets.len();
-    let row: i64[] = [];
-    for t in ctx.funcs[i].params {
-      row = row.append(if (roots[i] || !tracked(t)) { any() } else { none() });
-    }
-    params = params.append(row);
     rets = rets.append(none());
   }
-  let w: World = World { reach: __alloc_bool(ctx.funcs.len()), fields: zero_fields(ctx.u, opaque_fields(ctx.u, op), zeros), built: built, rets: rets, params: params, inhabited: inhabited_at_start(ctx.u, op, zeros), queue: [], next: 0, queued: __alloc_bool(ctx.funcs.len()) };
+  let w: World = World { reach: __alloc_bool(ctx.funcs.len()), fields: zero_fields(ctx.u, opaque_fields(ctx.u, op), zeros), built: built, rets: rets, inhabited: inhabited_at_start(ctx.u, op, zeros), queue: [], next: 0, queued: __alloc_bool(ctx.funcs.len()) };
   let i: i32 = 0;
   while (i < roots.len()) {
     if (roots[i]) {
@@ -552,17 +545,6 @@ function reached_name(ctx: Ctx, w: World, name: string): World {
   if (g < 0) {
     return w;
   }
-  let row: i64[] = w.params[g];
-  let changed: boolean = false;
-  for k in 0..row.len() {
-    if (row[k] != any()) {
-      row = row.with(k, any());
-      changed = true;
-    }
-  }
-  if (changed) {
-    w = queued(World { ...w, params: w.params.with(g, row) }, g);
-  }
   return reached(w, g);
 }
 
@@ -572,7 +554,7 @@ function walk(ctx: Ctx, w: World, i: i32): Walk {
   let f: ssasem.Func = ctx.funcs[i];
   let g: ssa.SFunc = f.graph;
   let at: i32[] = ssadeps.position_of(g);
-  let wk: Walk = Walk { vals: entry_values(g, w.params[i]), exec: __alloc_bool(g.blocks.len()).with(at[g.entry], true), edges: no_edges(g), stale: __alloc_bool(g.blocks.len()), keys: ctx.keys[i], changed: true };
+  let wk: Walk = Walk { vals: entry_values(g), exec: __alloc_bool(g.blocks.len()).with(at[g.entry], true), edges: no_edges(g), stale: __alloc_bool(g.blocks.len()), keys: ctx.keys[i], changed: true };
   while (wk.changed) {
     wk = Walk { ...wk, changed: false };
     let pos: i32 = 0;
@@ -586,11 +568,11 @@ function walk(ctx: Ctx, w: World, i: i32): Walk {
   return wk;
 }
 
-function entry_values(g: ssa.SFunc, params: i64[]): i64[] {
+function entry_values(g: ssa.SFunc): i64[] {
   let vals: i64[] = [];
   while (vals.len() < g.nvals) {
     if (vals.len() < g.nparams) {
-      vals = vals.append(if (vals.len() < params.len()) { params[vals.len()] } else { any() });
+      vals = vals.append(any());
     } else {
       vals = vals.append(none());
     }
@@ -673,9 +655,6 @@ function eval(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, pos: i32, ins: ssa.S
 
 function scalar_value(f: ssasem.Func, wk: Walk, pos: i32, ins: ssa.SInst): i64 {
   let k: i32 = ins.kind_tag;
-  if (k == ssasem.param()) {
-    return wk.vals[ins.result];
-  }
   if (k == 1 || k == 2) {
     return konst(ins.imm);
   }
@@ -878,9 +857,6 @@ function returned(ctx: Ctx, w: World, i: i32, wk: Walk, value: i32): World {
 }
 
 function absorb_inst(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SInst): World {
-  if (ins.kind_tag == ssasem.call() && ins.imm == 0 && !ssasem.is_dyn_call(ins.str)) {
-    return called(ctx, w, wk, ins);
-  }
   if (ins.str.len() > 0) {
     w = named(ctx, w, ins.str);
   }
@@ -897,29 +873,6 @@ function absorb_inst(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SIns
     }
   }
   return w;
-}
-
-function called(ctx: Ctx, w: World, wk: Walk, ins: ssa.SInst): World {
-  let g: i32 = ctx.ix.find(ins.str);
-  if (g < 0) {
-    return w;
-  }
-  if (w.params[g].len() != ins.args.len()) {
-    return reached_name(ctx, w, ins.str);
-  }
-  let row: i64[] = w.params[g];
-  let changed: boolean = false;
-  for k in 0..row.len() {
-    let value: i64 = join(row[k], wk.vals[ins.args[k]]);
-    if (value != row[k]) {
-      row = row.with(k, value);
-      changed = true;
-    }
-  }
-  if (changed) {
-    w = queued(World { ...w, params: w.params.with(g, row) }, g);
-  }
-  return reached(w, g);
 }
 
 function named(ctx: Ctx, w: World, name: string): World {

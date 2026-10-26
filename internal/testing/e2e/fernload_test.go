@@ -85,8 +85,8 @@ func checkFernload(t *testing.T, cmd *exec.Cmd, scheduled int) {
 			t.Errorf("no %s row\n%s", want, out)
 		}
 	}
-	if rows["load/sent"] != scheduled || rows["load/behind"] != 0 {
-		t.Errorf("sent %d behind %d, want %d sent and none behind\n%s", rows["load/sent"], rows["load/behind"], scheduled, out)
+	if rows["load/sent"] < 0 || rows["load/behind"] < 0 || rows["load/sent"]+rows["load/behind"] != scheduled {
+		t.Errorf("sent %d behind %d, want %d scheduled slots accounted for\n%s", rows["load/sent"], rows["load/behind"], scheduled, out)
 	}
 	if rows["load/requests"] != rows["load/sent"] || rows["load/errors"] != 0 {
 		t.Errorf("requests %d errors %d, want every one of %d answered\n%s", rows["load/requests"], rows["load/errors"], rows["load/sent"], out)

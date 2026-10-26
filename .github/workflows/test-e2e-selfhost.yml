@@ -20,7 +20,7 @@ name: Test e2e self-host
 # the closure-keyed disk cache (hashSelfHostSources), shared by a shard's two
 # worker processes. The edge costs the dependent jobs the warm job's wall time,
 # about five minutes on a miss, and saves a driver build or more in each of
-# some twenty jobs. This lane runs on main and on a `ci-full` pull request,
+# some twenty jobs. This lane runs on main and on every applicable pull request,
 # where runner minutes count for more than a few minutes of latency. The
 # aarch64 shards build their own drivers; shard 0 saves the Linux ARM64 cache.
 #
@@ -91,7 +91,7 @@ env:
   # under about three minutes belongs in the shards with a weight row, not
   # here: the whole-compiler proofs (fixpoints, stage 2, the semantic and wasm
   # self-builds) measure 50 to 165 seconds each and ride the shards.
-  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm"
+  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only, each with its issue in
   # the comment, and re-run the list when that issue closes: a quarantine with
@@ -311,7 +311,62 @@ jobs:
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
-  # THE FERNSMITH CORPUS THROUGH THE SELF-HOST COMPILER, in two jobs. Per-seed
+  # The checker corpus has parallel subtests. A shard worker limits it to one
+  # CPU, which exceeded 28 minutes on ARM64 in run 40325134038.
+  checker-stdlib:
+    needs: [driver-sizes]
+    name: checker-stdlib-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { host: x86_64, runner: ubuntu-24.04 }
+          - { host: aarch64, runner: ubuntu-24.04-arm }
+    env:
+      GOMAXPROCS: "4"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+      - uses: ./.github/actions/build-e2e-binaries
+      - name: compare every stdlib test with the Go checker
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostCheckAgreesWithGoOnStdlibTests$' -test.parallel 4 -test.v -test.timeout 28m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+
+  # Checker mutations exceeded the 20-minute test budget in run 40368845276.
+  # Keep all 512 seeds and their mutations, partitioned by the shared I/N
+  # selector. Each half retains the original test timeout and all assertions.
+  checker-mutants:
+    needs: [driver-sizes]
+    name: checker-mutants-x86_64-${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    env:
+      FERN_SELFHOST_DIFF: "1"
+      DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
+      GOMAXPROCS: "4"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: compare checker mutations with the Go oracle
+        run: go test ./internal/testing/e2e/ -run '^TestDifferential_CheckerMutants$' -v -timeout 20m
+
+  # THE EXECUTION CORPUS THROUGH THE SELF-HOST COMPILER, in two jobs. Per-seed
   # subtests are parallel, so one job already uses every core. The x86_64 leg
   # is the long one and has a job of its own. The sanitize, arm64 and wasm
   # legs are two to four minutes of work each. They share one job, so the
@@ -344,7 +399,6 @@ jobs:
           set -euo pipefail
           go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostX86_64$' -v -timeout 43m
           go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostEMIX86_64$' -v -timeout 20m
-          go test ./internal/testing/e2e/ -run '^TestDifferential_CheckerMutants$' -v -timeout 20m
           go test ./internal/testing/e2e/ -run '^TestSelfHostDeepNestingMatchesNativeAndDoesNotCrash$' -v -timeout 10m
       - name: x86_64 under -sanitize
         if: matrix.target == 'sanitize-arm64-wasm'

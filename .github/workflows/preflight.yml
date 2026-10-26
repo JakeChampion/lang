@@ -1,17 +1,9 @@
 name: Preflight
 
-# The checks a pull request runs on every push: the fast tier. ci.yml calls
-# this lane outside the ci-suite.yml FIFO, beside Lint, and runs the full
-# suite on main after the merge (and on a pull request labelled ci-full). The
-# tier is what one push can afford against a pool of about 40 runners: the
-# fixture corpus through the self-host compiler on every target, and the
-# x86-64 legs of the unit, e2e, wasm, differential and coreutils lanes, about
-# 110 runner-minutes and ten minutes of wall. reap-preflight cancels the run
-# the moment a job here fails. The aarch64 legs, the self-host shards and the
-# rest of the suite run on main; main-red.yml files an issue when one is red.
+# Optional fast checks for manual diagnosis. Pull requests use the full
+# ci-suite.yml suite, which already includes these tests.
 
 on:
-  workflow_call:
   workflow_dispatch:
 
 permissions:

@@ -96,7 +96,7 @@ function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {
 }
 
 function target_checks(target: string): void {
-  let source = "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\nstruct Parent { child: Leaf }\n@noinline\nfunction replace(own p: Parent, child: Leaf): Parent { return Parent { ...p, child: child }; }\nfunction main(): i32 { let l = Leaf { n: 7, a: 2, b: 3, c: 4, d: 5 }; let p = Parent { child: l }; return replace(p, l).child.n; }\n";
+  let source = "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\nstruct Parent { child: Leaf }\n@noinline\nfunction replace(own p: Parent, child: Leaf): Parent { return Parent { ...p, child: child }; }\nfunction main(): i32 { let l = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = Parent { child: l }; return replace(p, l).child.n; }\n";
   let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
   let subjects: irtables.LowerResult[] = [];
   let drops: irtables.LowerResult[] = [];
@@ -162,7 +162,7 @@ struct Parent { child: Leaf }
 
 @noinline
 function leaf(n: i32): Leaf {
-  return Leaf { n: n, a: 2, b: 3, c: 4, d: 5 };
+  return Leaf { n: n, a: 0, b: 0, c: 0, d: 0 };
 }
 
 @noinline

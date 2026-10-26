@@ -37,17 +37,20 @@ Cancellation stops at callback polls 1, 8, 24, and 64.
 
 ## CI cgroup driver
 
-The CI lane selects Docker's cgroupfs driver for worker qualification.
+CI selects Docker's cgroupfs driver before worker qualification.
 Systemd can remove an empty container scope before the runtime reads its OOM event.
 The runtime issue is [runc #5071](https://github.com/opencontainers/runc/issues/5071).
 The cgroupfs driver keeps cgroup removal under the container runtime.
 
-CI run 40299470015 captured an OOM-mode exit with code 137 and `OOMKilled=false` under the systemd driver.
-The collector rejected that result and preserved the original state.
-The local cgroupfs run passed all 27 worker cases, with three kernel OOM kills.
-The failed CI worker and the local worker have the same binary SHA-256.
-The CI driver change preserves all memory, swap, CPU, PID, leak, deadline, and cleanup assertions.
-Current CI qualification remains separate from the local observations.
+CI run 40337273239 recorded exit 137 with `OOMKilled=false` for an OOM worker under the systemd driver.
+The collector rejected that observation.
+The driver selection preserves every resource limit, deadline, leak, recovery, and cleanup assertion.
+An exit code of 137 alone remains insufficient evidence of a kernel OOM kill.
+
+The local cgroupfs run with Docker 28.4.0 passed all 27 fresh worker cases.
+All three OOM workers reported `OOMKilled=true`.
+The record reports unchanged source hashes and successful cleanup.
+This result does not qualify a production worker pool or aggregate service memory.
 
 ## Failure and recovery contract
 

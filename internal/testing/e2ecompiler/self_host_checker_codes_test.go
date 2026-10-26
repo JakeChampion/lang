@@ -818,9 +818,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"str-elem-const-int", elemCheckedDecls + "const C: str[] = [5];\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
 		// Below the top of a destination a dyn element is checked as part of the
 		// whole value: P does not implement T.
-		{"dyn-elem-nested-array-non-impl", elemCheckedDecls + "function f(p: P): dyn T[][] { return [[p]]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
-		{"dyn-elem-nested-option-non-impl", elemCheckedDecls + "function f(p: P): Option[dyn T[]] { return Some([p]); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
-		{"dyn-elem-nested-tuple-non-impl", elemCheckedDecls + "function f(p: P): (dyn T[], i32) { return ([p], 1); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"dyn-elem-nested-array-non-impl", elemCheckedDecls + "function f(p: P): dyn T[][] { return [[p]]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"dyn-elem-nested-option-non-impl", elemCheckedDecls + "function f(p: P): Option[dyn T[]] { return Some([p]); }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"dyn-elem-nested-tuple-non-impl", elemCheckedDecls + "function f(p: P): (dyn T[], i32) { return ([p], 1); }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"dyn-elem-nested-impl", elemCheckedDecls + "function f(a: A): dyn T[][] { return [[a]]; }\nfunction g(a: A): Option[dyn T[]] { return Some([a]); }\nfunction main(): i32 { let a: A = A { a: 1 }; let d: dyn T[][] = [[a]]; return 0; }\n", nil},
 		{"arr-elem-struct-return-mismatch", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction f(p: P): Q[] { return [p]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"arr-elem-struct-let-mismatch", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { let p = P { x: 1 }; let a: Q[] = [p, p]; return a.len(); }\n", []string{"E003"}},

@@ -9191,7 +9191,7 @@ function ssa_dbg_locs(reg_of: i32[], save: i32, want: boolean): string[] {
   }
   for h in reg_of {
     if (h >= 0) {
-      out = out.append(asmcore.dbg_register(ssa_dwarf(ssa_reg(h))));
+      out = out.append(asmcore.dbg_hex([80 + ssa_dwarf(ssa_reg(h))]));
     } else if (h < 0 - 1) {
       out = out.append(asmcore.dbg_hex(asmcore.dbg_sleb([118], ssa_slot_disp(ssa.spill_slot(h), save))));
     } else {

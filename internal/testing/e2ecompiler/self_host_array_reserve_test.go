@@ -32,7 +32,7 @@ function main(): i32 {
     let graph = ssa.SFunc { name: "reserve", nparams: 0, nvals: 2, entry: 0, takes_env: false, blocks: [block] };
     let f = ssasem.Func { source_positions: ssasem.no_source(),  graph: graph, values: [capacity, result], params: [], result: result,
       records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [],
-      shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], dbg_pieces: [] };
+      shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [] };
     let checked = ssasem.analyze(f);
     if (checked.ok != (row < 2)) { print(checked.why); return row + 1; }
     row = row + 1;

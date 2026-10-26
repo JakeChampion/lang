@@ -21,7 +21,7 @@ function require(ok: boolean, code: i32): void {
 pub function check(rows: ssaprepare.Emitted[], arch: string, ok: boolean): void {
   let p = emitted.check_wrapper_native(rows, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"], arch);
   if (p.ok != ok || p.function_name == "" || p.message == "") {
-    eprint("native wrapper: " + p.function_name + ": " + p.message);
+    print("native wrapper: " + p.function_name + ": " + p.message);
     exit(89);
   }
 }

@@ -1,0 +1,14 @@
+enum Color { Red, Green }
+
+function main(): i32 {
+  let xs: i32[] = [1, 2];
+  match (xs) {
+    Color.Red => {
+      return 1;
+    },
+    _ => {
+      return 0;
+    }
+  }
+  return 0;
+}

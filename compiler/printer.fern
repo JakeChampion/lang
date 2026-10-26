@@ -231,6 +231,10 @@ function drop_prelude(body: ast.Stmt[], n: i32): ast.Stmt[] {
 }
 
 function print_return_only(body: ast.Stmt[], depth: i32): string {
+  return print_return_only_c(body, depth, empty_fmt());
+}
+
+function print_return_only_c(body: ast.Stmt[], depth: i32, f: Fmt): string {
   if (body.len() != 1) {
     return "";
   }
@@ -239,7 +243,8 @@ function print_return_only(body: ast.Stmt[], depth: i32): string {
       if (expr_is_missing(r.value) || as_use(r.value).ok) {
         return "";
       }
-      return print_expr(r.value, depth);
+      let (text, _) = print_expr_c(r.value, prec_lowest(), depth, f);
+      return text;
     },
     _ => {
       return "";
@@ -828,7 +833,7 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
         prefixes = prefixes.append(sl.field_names[i] + ": ");
         i = i + 1;
       }
-      let lns: i32[] = elem_lines(vals, sl.line);
+      let lns: i32[] = list_lines(vals, sl.line, f);
       if (vals.len() > 0 && keep_list_lines(f, sl.line, lns[lns.len() - 1])) {
         let (lines, lf) = print_list_lines(vals, lns, prefixes, depth, f);
         return (sl.type_name + " {" + lines + indent_str(depth) + "}", lf);
@@ -848,13 +853,15 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       }
       out = out + " => ";
       let body: ast.Stmt[] = drop_prelude(lm.body, npre);
-      let av: string = print_return_only(body, depth);
+      let layout: Fmt = Fmt { ...empty_fmt(), spans: f.spans, si: f.si };
+      let av: string = print_return_only_c(body, depth, layout);
       if (av.len() > 0) {
         out = out + av;
       } else if (body.len() == 1 && stmt_is_single_line(body[0])) {
-        out = out + "{ " + print_stmt_inline(body[0], depth) + " }";
+        let (text, _) = print_stmt_body(body[0], depth, layout);
+        out = out + "{ " + text + " }";
       } else {
-        let (lam_body, _) = print_block(body, depth, empty_fmt());
+        let (lam_body, _) = print_block(body, depth, layout);
         out = out + lam_body;
       }
       if (parent_prec > prec_assign()) {
@@ -914,12 +921,40 @@ function elem_lines(elems: ast.Expr[], open_line: i32): i32[] {
   return out;
 }
 
+// An element after a lambda closing brace on the same line stays in its group.
+function list_lines(elems: ast.Expr[], open_line: i32, f: Fmt): i32[] {
+  let lines: i32[] = elem_lines(elems, open_line);
+  let i: i32 = 1;
+  while (i < elems.len()) {
+    if (first_line(elems[i]) == first_line(elems[i - 1])) {
+      lines = lines.with(i, lines[i - 1]);
+    } else if let ast.ExprLambda(lm) = elems[i - 1] {
+      let (_, npre) = param_patterns_for(lm.params, lm.body);
+      if (npre < lm.body.len()) {
+        let first: i32 = ast.stmt_line(lm.body[npre]);
+        let j: i32 = f.si;
+        while (j < f.spans.firsts.len()) {
+          if (f.spans.firsts[j] == first && f.spans.opens[j] >= lm.line) {
+            if (f.spans.closes[j] == first_line(elems[i])) {
+              lines = lines.with(i, lines[i - 1]);
+            }
+            break;
+          }
+          j = j + 1;
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return lines;
+}
+
 function print_list(elems: ast.Expr[], open_line: i32, prefix: string, depth: i32, f: Fmt): (string, Fmt) {
   let prefixes: string[] = [];
   for x in elems {
     prefixes = prefixes.append(prefix);
   }
-  let lns: i32[] = elem_lines(elems, open_line);
+  let lns: i32[] = list_lines(elems, open_line, f);
   if (elems.len() > 0 && keep_list_lines(f, open_line, lns[lns.len() - 1])) {
     let (lines, lf) = print_list_lines(elems, lns, prefixes, depth, f);
     return (lines + indent_str(depth), lf);

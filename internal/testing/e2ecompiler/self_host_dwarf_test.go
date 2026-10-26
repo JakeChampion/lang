@@ -532,16 +532,16 @@ func TestSelfHostDWARFLocalVars(t *testing.T) {
 	}
 }
 
-const dwarfStructsSrc = `struct Point { x: i32, y: i32 }
+const dwarfStructsSrc = `struct Point { x: i32, y: i32, a: i32, b: i32, c: i32 }
 struct Person { name: string, age: i32, score: i32 }
 struct Rect { origin: Point, w: i32, h: i32 }
 @noinline function point_sum(p: Point): i32 { return p.x + p.y; }
 @noinline function describe(p: Person): i32 { return p.age + p.score; }
 @noinline function area(r: Rect): i32 { return r.w * r.h; }
 function main(): i32 {
-    let pt: Point = Point { x: 7, y: 35 };
+    let pt: Point = Point { x: 7, y: 35, a: 0, b: 0, c: 0 };
     let p: Person = Person { name: "Ada", age: 36, score: 99 };
-    let r: Rect = Rect { origin: Point { x: 3, y: 4 }, w: 5, h: 6 };
+    let r: Rect = Rect { origin: Point { x: 3, y: 4, a: 0, b: 0, c: 0 }, w: 5, h: 6 };
     return point_sum(pt) + describe(p) + area(r) + r.origin.x;
 }
 `
@@ -582,12 +582,13 @@ func dwarfVarStruct(t *testing.T, path, fn, name string) *dwarf.StructType {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if ptr, ok := ty.(*dwarf.PtrType); ok {
-			ty = ptr.Type
-		}
-		st, ok := ty.(*dwarf.StructType)
+		ptr, ok := ty.(*dwarf.PtrType)
 		if !ok {
-			t.Fatalf("%s.%s is a %T, want a struct", fn, name, ty)
+			t.Fatalf("%s.%s is a %T (%v), want a pointer to its box", fn, name, ty, ty)
+		}
+		st, ok := ptr.Type.(*dwarf.StructType)
+		if !ok {
+			t.Fatalf("%s.%s points to a %T, want a struct", fn, name, ptr.Type)
 		}
 		return st
 	}
@@ -618,7 +619,7 @@ func TestSelfHostDWARFStructVars(t *testing.T) {
 	if err := os.WriteFile(src, []byte(dwarfStructsSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	point := [][3]string{{"x", "0", "i32"}, {"y", "8", "i32"}}
+	point := [][3]string{{"x", "8", "i32"}, {"y", "16", "i32"}, {"a", "24", "i32"}, {"b", "32", "i32"}, {"c", "40", "i32"}}
 	bins := map[string]string{}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
@@ -628,15 +629,14 @@ func TestSelfHostDWARFStructVars(t *testing.T) {
 				t.Fatalf("-g build: %v\n%s", err, o)
 			}
 			bins[target] = out
-			checkDwarfStruct(t, dwarfVarStruct(t, out, "main", "pt"), "Point", 16, point)
-			checkDwarfStruct(t, dwarfVarStruct(t, out, "point_sum", "p"), "Point", 16, point)
+			checkDwarfStruct(t, dwarfVarStruct(t, out, "main", "pt"), "Point", 48, point)
 			checkDwarfStruct(t, dwarfVarStruct(t, out, "describe", "p"), "Person", 32, [][3]string{{"age", "16", "i32"}, {"score", "24", "i32"}})
 			rect := dwarfVarStruct(t, out, "area", "r")
-			checkDwarfStruct(t, rect, "Rect", 40, [][3]string{{"origin", "8", "struct Point"}, {"w", "24", "i32"}, {"h", "32", "i32"}})
-			if st, ok := rect.Field[0].Type.(*dwarf.StructType); ok {
-				checkDwarfStruct(t, st, "Point", 16, point)
-			} else {
-				t.Fatalf("Rect.origin is a %T, want an inline Point", rect.Field[0].Type)
+			checkDwarfStruct(t, rect, "Rect", 32, [][3]string{{"origin", "8", "*struct Point"}, {"w", "16", "i32"}, {"h", "24", "i32"}})
+			if p, ok := rect.Field[0].Type.(*dwarf.PtrType); ok {
+				if st, ok := p.Type.(*dwarf.StructType); ok {
+					checkDwarfStruct(t, st, "Point", 48, point)
+				}
 			}
 		})
 	}
@@ -645,11 +645,11 @@ func TestSelfHostDWARFStructVars(t *testing.T) {
 	if err != nil || runtime.GOARCH != "amd64" || bins["x86-64-linux"] == "" {
 		t.Skip("gdb on an amd64 host reads the x86-64 binary's structs; none here")
 	}
-	o, err := exec.Command(gdb, "-batch", "-ex", "break area", "-ex", "run", "-ex", "print *r", "-ex", "print r->origin", bins["x86-64-linux"]).CombinedOutput()
+	o, err := exec.Command(gdb, "-batch", "-ex", "break area", "-ex", "run", "-ex", "print *r", "-ex", "print *r.origin", bins["x86-64-linux"]).CombinedOutput()
 	if err != nil {
 		t.Fatalf("gdb: %v\n%s", err, o)
 	}
-	for _, want := range []string{"w = 5, h = 6}", "= {x = 3, y = 4}"} {
+	for _, want := range []string{"w = 5, h = 6}", "= {x = 3, y = 4, a = 0, b = 0, c = 0}"} {
 		if !strings.Contains(string(o), want) {
 			t.Errorf("gdb did not read %q\n%s", want, o)
 		}

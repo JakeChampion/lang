@@ -1951,12 +1951,7 @@ impl error.Error for InflateReadError {}
 impl cmp.Display for InflateReadError {}
 
 pub function (e: InflateReadError) message(): string {
-  match (e) {
-    ReadCodec(cause) => { return cause.message(); },
-    ReadCancelled => { return "the read was cancelled"; },
-    ReadRequest => { return "the read count must be from 1 to 32768"; },
-    ReadBusy => { return "another read is active"; }
-  }
+  return match (e) { ReadCodec(cause) => cause.message(), ReadCancelled => "the decompression request was cancelled", ReadRequest => "the decompression request size is invalid", ReadBusy => "the decompression reader is already active" };
 }
 
 pub function (e: InflateReadError) to_string(): string {

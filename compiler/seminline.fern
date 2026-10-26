@@ -1315,7 +1315,7 @@ function splice(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssasem.Fu
   }
   blocks = blocks.append(ssa.SBlock { id: cont, insts: tail, term: b.term, preds: rets });
   let joined: ssasem.Func = with_tables(f, callee, vmap);
-  return ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: swapped_blocks(blocks, swap), nvals: base + callee.graph.nvals }, values: values, dbg_vals: swapped_all(swap, joined.dbg_vals), dbg_pieces: swapped_debug_pieces(joined.dbg_pieces, swap), source_positions: renamed_source(sourcepos.continued(joined.source_positions, b.id, cont), swap) };
+  return ssasem.Func { ...joined, graph: ssa.SFunc { ...g, blocks: swapped_blocks(blocks, swap), nvals: base + callee.graph.nvals }, values: values, dbg_vals: swapped_all(swap, joined.dbg_vals), source_positions: renamed_source(sourcepos.continued(joined.source_positions, b.id, cont), swap) };
 }
 
 function straight(f: ssasem.Func): boolean {
@@ -1377,7 +1377,7 @@ function splice_in_place(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): 
 }
 
 function renamed(f: ssasem.Func, swap: i32[]): ssasem.Func {
-  return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: swapped_blocks(f.graph.blocks, swap) }, dbg_vals: swapped_all(swap, f.dbg_vals), dbg_pieces: swapped_debug_pieces(f.dbg_pieces, swap), source_positions: renamed_source(f.source_positions, swap) };
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: swapped_blocks(f.graph.blocks, swap) }, dbg_vals: swapped_all(swap, f.dbg_vals), source_positions: renamed_source(f.source_positions, swap) };
 }
 
 function with_tables(f: ssasem.Func, callee: ssasem.Func, vmap: i32[]): ssasem.Func {
@@ -1421,7 +1421,7 @@ function with_tables(f: ssasem.Func, callee: ssasem.Func, vmap: i32[]): ssasem.F
     dbg_names = dbg_names.append(callee.dbg_names[i]);
     i = i + 1;
   }
-  return ssasem.Func { ...f, calls: calls, records: table, enums: enums, envs: with_rows(f.envs, callee.envs), anchors: anchors, dyns: with_rows(f.dyns, callee.dyns), dbg_vals: dbg_vals, dbg_names: dbg_names, dbg_pieces: util.append_all(f.dbg_pieces, ssasem.renamed_debug_pieces(callee.dbg_pieces, vmap)), source_positions: sourcepos.merge(f.source_positions, callee.source_positions, vmap) };
+  return ssasem.Func { ...f, calls: calls, records: table, enums: enums, envs: with_rows(f.envs, callee.envs), anchors: anchors, dyns: with_rows(f.dyns, callee.dyns), dbg_vals: dbg_vals, dbg_names: dbg_names, source_positions: sourcepos.merge(f.source_positions, callee.source_positions, vmap) };
 }
 
 function with_rows(rows: ssasem.EnvRow[], more: ssasem.EnvRow[]): ssasem.EnvRow[] {
@@ -1873,7 +1873,7 @@ function applied(f: ssasem.Func, e: Edits): ssasem.Func {
     bi = bi + 1;
   }
   let values: typeinfo.Type[] = util.append_all(f.values, e.added);
-  return ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks, nvals: values.len() }, values: values, dbg_pieces: swapped_debug_pieces(f.dbg_pieces, e.swap) };
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks, nvals: values.len() }, values: values };
 }
 
 function block_insts(b: ssa.SBlock, entry: ssa.SInst[], swap: i32[]): ssa.SInst[] {
@@ -1978,14 +1978,6 @@ function swapped_all(swap: i32[], args: i32[]): i32[] {
   return out;
 }
 
-function swapped_debug_pieces(rows: ssasem.DebugPieces[], swap: i32[]): ssasem.DebugPieces[] {
-  let out: ssasem.DebugPieces[] = [];
-  for row in rows {
-    out = out.append(ssasem.DebugPieces { ...row, values: swapped_all(swap, row.values) });
-  }
-  return out;
-}
-
 function built_type(f: ssasem.Func, built: typeinfo.Type[], t: typeinfo.Type): boolean {
   for b in built {
     if (semtypes.equal(b, t)) {
@@ -2074,19 +2066,16 @@ function drop_unread(f: ssasem.Func): Rewrite {
     return Rewrite { f: f, changed: false };
   }
   let blocks: ssa.SBlock[] = [];
-  let debug: ssasem.Func = f;
   for b in g.blocks {
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
       if (!unread_build(f, built, reads, ins)) {
         insts = insts.append(ins);
-      } else {
-        debug = ssasem.debug_construction(debug, ins);
       }
     }
     blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
   }
-  return Rewrite { f: ssasem.Func { ...debug, graph: ssa.SFunc { ...g, blocks: blocks } }, changed: true };
+  return Rewrite { f: ssasem.Func { ...f, graph: ssa.SFunc { ...g, blocks: blocks } }, changed: true };
 }
 
 function has_static_closure(g: ssa.SFunc): boolean {

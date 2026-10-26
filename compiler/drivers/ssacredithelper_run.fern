@@ -61,7 +61,7 @@ function duplicate_call(r: irtables.LowerResult, name: string): irtables.LowerRe
 }
 
 function target_checks(target: string): void {
-  let source = "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\nstruct Parent { child: Leaf }\n@noinline\nfunction extract(own p: Parent): Leaf { return p.child; }\nfunction main(): i32 { let p = Parent { child: Leaf { n: 7, a: 2, b: 3, c: 4, d: 5 } }; return extract(p).n; }\n";
+  let source = "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\nstruct Parent { child: Leaf }\n@noinline\nfunction extract(own p: Parent): Leaf { return p.child; }\nfunction main(): i32 { let p = Parent { child: Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 } }; return extract(p).n; }\n";
   let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
   let drops: irtables.LowerResult[] = [];
   let releases: irtables.LowerResult[] = [];
@@ -146,7 +146,7 @@ function many_expect(p: proof.Proof, ok: boolean, name: string, why: string, id:
 }
 
 function many_checks(target: string): void {
-  let source = "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\nstruct Parent { left: Leaf, marker: i32, right: Leaf }\n@noinline\nfunction extract(own p: Parent): Leaf { return p.left; }\nfunction main(): i32 { let p = Parent { left: Leaf { n: 7, a: 2, b: 3, c: 4, d: 5 }, marker: 9, right: Leaf { n: 8, a: 2, b: 3, c: 4, d: 5 } }; return extract(p).n; }\n";
+  let source = "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\nstruct Parent { left: Leaf, marker: i32, right: Leaf }\n@noinline\nfunction extract(own p: Parent): Leaf { return p.left; }\nfunction main(): i32 { let p = Parent { left: Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }, marker: 9, right: Leaf { n: 8, a: 0, b: 0, c: 0, d: 0 } }; return extract(p).n; }\n";
   let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
   let drops: irtables.LowerResult[] = [];
   let releases: irtables.LowerResult[] = [];

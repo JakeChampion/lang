@@ -1,0 +1,374 @@
+import "../packages/codecs/jpeg/entropy";
+import "../packages/codecs/jpeg/header";
+import "./fixtures/jpeg_headers";
+import "./fixtures/jpeg_entropy";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function count_blocks(input: [u8], limits: entropy.BlockLimits): Result[entropy.BlockFold[i32], entropy.BlockError[string]] {
+  return entropy.fold_blocks(input, limits, never, 0, (count: i32, block: entropy.CoefficientBlock): Result[i32, string] => Ok(count + 1));
+}
+
+function fails(input: [u8], wanted: entropy.EntropyError): boolean {
+  return match (count_blocks(input, entropy.default_limits())) { Err(entropy.BlockDecode(e)) => e == wanted, _ => false };
+}
+
+function append_bytes(first: u8[], second: [u8]): u8[] {
+  let result = first;
+  for byte in second {
+    result = result.append(byte);
+  }
+  return result;
+}
+
+function marker_at(input: [u8], code: i32): i32 {
+  for i in 0..input.len() - 1 {
+    if (input[i] == 255 as u8 && input[i + 1] == code as u8) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function signed_values(): test.TestOutcome {
+  let result = entropy.fold_blocks(jpeg_entropy.predictor(), entropy.default_limits(), never, 0, (count: i32, block: entropy.CoefficientBlock): Result[i32, string] => {
+    for i in 0..64 {
+      let wanted = if (count == 0 && i == 0) { -2 } else if (count == 0 && i == 1) { 1 } else if (count == 0 && i == 26) { -1 } else { 0 };
+      if (block.values[i] != wanted) {
+        return Err("signed coefficient or predictor");
+      }
+    }
+    return Ok(count + 1);
+  });
+  return match (result) { Ok(v) => test.assert_true(v.value == 2), Err(_) => test.fail("signed zig-zag or predictor") };
+}
+
+function final_ac(): test.TestOutcome {
+  for input in [jpeg_entropy.last_coefficient(), jpeg_entropy.last_zrl()] {
+    let result = entropy.fold_blocks(input, entropy.default_limits(), never, 0, (count: i32, block: entropy.CoefficientBlock): Result[i32, string] => {
+      if (block.values[0] != 0) {
+        return Err("DC");
+      }
+      let nonzero = 0;
+      for i in 1..64 {
+        if (block.values[i] == 1) {
+          nonzero = nonzero + 1;
+        } else if (block.values[i] != 0) {
+          return Err("AC");
+        }
+      }
+      return Ok(nonzero);
+    });
+    match (result) {
+      Ok(v) => {
+        if (v.value != 63 && v.value != 47) {
+          return test.fail("terminal AC run");
+        }
+      },
+      Err(_) => {
+        return test.fail("terminal coefficient or ZRL");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function restarts(): test.TestOutcome {
+  let result = entropy.fold_blocks(jpeg_entropy.restart_cycle(), entropy.default_limits(), never, 0, (count: i32, block: entropy.CoefficientBlock): Result[i32, string] => {
+    let wanted = if (count % 2 == 0) { -2 } else { 2 };
+    if (block.values[0] != wanted || block.x != 0 || block.y != count) {
+      return Err("restart predictor reset");
+    }
+    return Ok(count + 1);
+  });
+  match (result) {
+    Ok(v) => {
+      if (v.value != 10) {
+        return test.fail("restart cycle length");
+      }
+    },
+    Err(_) => {
+      return test.fail("restart cycle");
+    }
+  }
+  for input in [jpeg_entropy.restart_rgb420(), jpeg_entropy.restart_rgb444(), jpeg_entropy.restart_gray()] {
+    match (count_blocks(input, entropy.default_limits())) {
+      Ok(v) => {
+        if (v.value != v.plan.output_blocks || v.header.restart_interval == 0) {
+          return test.fail("restart fixture plan");
+        }
+      },
+      Err(_) => {
+        return test.fail("restart reference fixture");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function sampling(): test.TestOutcome {
+  let inputs = [jpeg_headers.gray(), jpeg_headers.rgb444(), jpeg_headers.rgb422(), jpeg_headers.rgb420(), jpeg_entropy.fractional_sampling(), jpeg_entropy.single_sampling()];
+  let decoded: i32[] = [6, 18, 16, 12, 12, 6];
+  let output: i32[] = [6, 18, 14, 10, 12, 6];
+  for i in 0..inputs.len() {
+    match (count_blocks(inputs[i], entropy.default_limits())) {
+      Ok(v) => {
+        if (v.plan.decoded_blocks != decoded[i] || v.value != output[i] || v.plan.output_blocks != output[i]) {
+          return test.fail("sampling block extents");
+        }
+      },
+      Err(_) => {
+        return test.fail("sampling fixture");
+      }
+    }
+  }
+  let result = entropy.fold_blocks(jpeg_entropy.arbitrary_identifiers(), entropy.default_limits(), never, 0, (count: i32, block: entropy.CoefficientBlock): Result[i32, string] => {
+    let ids: i32[] = [17, 201, 55];
+    let dc: i32[] = [-2, 2, -1];
+    if (count >= 3 || block.component != ids[count] || block.values[0] != dc[count]) {
+      return Err("component identity");
+    }
+    return Ok(count + 1);
+  });
+  return match (result) { Ok(v) => test.assert_true(v.value == 3), Err(_) => test.fail("component order") };
+}
+
+function prefixes(): test.TestOutcome {
+  let input = jpeg_entropy.signed();
+  for end in 0..input.len() {
+    match (count_blocks(input[:end], entropy.default_limits())) {
+      Ok(_) => {
+        return test.fail("accepted truncated prefix");
+      },
+      Err(entropy.BlockDecode(_)) => {},
+      Err(_) => {
+        return test.fail("prefix consumer error");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function malformed(): test.TestOutcome {
+  let input = jpeg_entropy.signed();
+  let h = match (header.parse(input, header.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("fixture header"); } };
+  let invalid_code = append_bytes(append_bytes([], input[:h.entropy_offset]), [255 as u8, 0 as u8, 255 as u8, 0 as u8, 255 as u8, 217 as u8]);
+  let extra_restart = append_bytes(append_bytes([], input[:input.len() - 2]), [255 as u8, 208 as u8, 255 as u8, 217 as u8]);
+  return test.assert_true(fails(invalid_code, entropy.EntropyHuffman)
+    && fails(input.with(input.len() - 3, input[input.len() - 3] & 254 as u8), entropy.EntropyPadding)
+    && fails(input[:input.len() - 2], entropy.EntropyTruncated)
+    && fails(input.append(0 as u8), entropy.EntropyTrailing)
+    && fails(input.with(input.len() - 1, 216 as u8), entropy.EntropyMarker)
+    && fails(extra_restart, entropy.EntropyRestart));
+}
+
+function restart_errors(): test.TestOutcome {
+  let input = jpeg_entropy.restart_cycle();
+  let at = marker_at(input, 208);
+  let dri = marker_at(input, 221);
+  let missing = append_bytes(append_bytes([], input[:at]), input[at + 2:]);
+  let filled = append_bytes(append_bytes([], input[:at]), [255 as u8]);
+  filled = append_bytes(filled, input[at:]);
+  if (!fails(input.with(at + 1, 209 as u8), entropy.EntropyRestart)
+    || !fails(missing, entropy.EntropyMarker)
+    || !fails(input.with(dri + 4, 0 as u8).with(dri + 5, 0 as u8), entropy.EntropyMarker)) {
+    return test.fail("restart rejection");
+  }
+  return match (count_blocks(filled, entropy.default_limits())) { Ok(v) => test.assert_true(v.value == 10), Err(_) => test.fail("restart marker fill") };
+}
+
+function limits(): test.TestOutcome {
+  let input = jpeg_entropy.predictor();
+  let exact = entropy.BlockLimits { ...entropy.default_limits(), max_mcus: 2, max_blocks: 2 };
+  match (count_blocks(input, exact)) {
+    Ok(v) => {
+      if (v.value != 2) {
+        return test.fail("exact block budget");
+      }
+    },
+    Err(_) => {
+      return test.fail("exact limits");
+    }
+  }
+  for limited in [entropy.BlockLimits { ...exact, max_mcus: 1 }, entropy.BlockLimits { ...exact, max_blocks: 1 }, entropy.BlockLimits { ...exact, max_blocks: 0 }, entropy.BlockLimits { ...exact, max_mcus: 1048577 }] {
+    let calls = cell_new(0);
+    let result = entropy.fold_blocks(input, limited, never, 0, (count: i32, block: entropy.CoefficientBlock): Result[i32, string] => {
+      calls.set(calls.get() + 1);
+      return Ok(count + 1);
+    });
+    match (result) {
+      Err(entropy.BlockDecode(entropy.EntropyLimit())) => {},
+      _ => {
+        return test.fail("block admission");
+      }
+    }
+    if (calls.get() != 0) {
+      return test.fail("callback before admission");
+    }
+  }
+  return test.pass();
+}
+
+function ownership_errors(): test.TestOutcome {
+  let input = jpeg_entropy.predictor();
+  let source = cell_new(input);
+  let keep: entropy.CoefficientBlock[] = [];
+  let result = entropy.fold_blocks(input, entropy.default_limits(), never, keep, (kept: entropy.CoefficientBlock[], block: entropy.CoefficientBlock): Result[entropy.CoefficientBlock[], string] => {
+    source.set(source.get().with(0, 0 as u8));
+    return Ok(kept.append(block));
+  });
+  let done = match (result) { Ok(v) => v, Err(_) => { return test.fail("retained blocks"); } };
+  let changed = done.value[0].values.with(0, 99);
+  if (changed[0] != 99 || done.value[0].values[0] != -2 || done.value[1].values[0] != 0 || input[0] != 255 as u8 || source.get()[0] != 0 as u8) {
+    return test.fail("coefficient or input ownership");
+  }
+  let message = "consumer-" + args()[0];
+  let failed = entropy.fold_blocks(input, entropy.default_limits(), never, keep, (kept: entropy.CoefficientBlock[], block: entropy.CoefficientBlock): Result[entropy.CoefficientBlock[], string] => {
+    if (kept.len() == 1) {
+      return Err(message);
+    }
+    return Ok(kept.append(block));
+  });
+  return match (failed) { Err(entropy.BlockConsumer(e)) => test.assert_true(e == message), _ => test.fail("heap consumer error") };
+}
+
+function cancellation(): test.TestOutcome {
+  for input in [jpeg_entropy.signed(), jpeg_entropy.restart_cycle()] {
+    let observed = cell_new(0);
+    let baseline = entropy.fold_blocks(input, entropy.default_limits(), (): boolean => {
+      observed.set(observed.get() + 1);
+      return false;
+    }, 0, (count: i32, block: entropy.CoefficientBlock): Result[i32, string] => Ok(count + 1));
+    match (baseline) {
+      Ok(_) => {},
+      Err(_) => {
+        return test.fail("cancel baseline");
+      }
+    }
+    for stop in 1..observed.get() + 1 {
+      let polls = cell_new(0);
+      let kept: entropy.CoefficientBlock[] = [];
+      let result = entropy.fold_blocks(input, entropy.default_limits(), (): boolean => {
+        polls.set(polls.get() + 1);
+        return polls.get() == stop;
+      }, kept, (value: entropy.CoefficientBlock[], block: entropy.CoefficientBlock): Result[entropy.CoefficientBlock[], string] => Ok(value.append(block)));
+      match (result) {
+        Err(entropy.BlockDecode(entropy.EntropyCancelled())) => {},
+        _ => {
+          return test.fail("cancellation poll");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function zeros(): test.TestOutcome {
+  let input = jpeg_headers.synthetic_header();
+  input = input.append(0 as u8).append(15 as u8).append(255 as u8).append(217 as u8);
+  let result = entropy.fold_blocks(input, entropy.default_limits(), never, 0, (count: i32, block: entropy.CoefficientBlock): Result[i32, string] => {
+    if (block.component != 1 || block.x != count % 3 || block.y != count / 3 || block.values.len() != 64) {
+      return Err("block metadata");
+    }
+    for value in block.values {
+      if (value != 0) {
+        return Err("zero coefficient");
+      }
+    }
+    return Ok(count + 1);
+  });
+  match (result) {
+    Ok(done) => {
+      return test.assert_true(done.value == 6 && done.plan.mcus == 6 && done.plan.decoded_blocks == 6 && done.plan.output_blocks == 6 && done.consumed == input.len());
+    },
+    Err(_) => {
+      return test.fail("zero-block stream");
+    }
+  }
+}
+
+function initial_fixtures(): test.TestOutcome {
+  for input in [jpeg_headers.gray(), jpeg_headers.rgb444(), jpeg_headers.rgb422(), jpeg_headers.rgb420()] {
+    let result = entropy.fold_blocks(input, entropy.default_limits(), never, 0, (count: i32, block: entropy.CoefficientBlock): Result[i32, string] => {
+      if (block.values.len() != 64) {
+        return Err("block length");
+      }
+      return Ok(count + 1);
+    });
+    match (result) {
+      Ok(done) => {
+        if (done.value != done.plan.output_blocks || done.consumed != input.len()) {
+          return test.fail("fixture count");
+        }
+      },
+      Err(_) => {
+        return test.fail("fixture entropy");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function category_boundaries(): test.TestOutcome {
+  let result = entropy.fold_blocks(jpeg_entropy.category_boundaries(), entropy.default_limits(), never, 0, (count: i32, block: entropy.CoefficientBlock): Result[i32, string] => {
+    let dc: i32[] = [1023, -1024, 1023];
+    if (count >= 3 || block.values[0] != dc[count]) {
+      return Err("DC category boundary");
+    }
+    for i in 1..64 {
+      let wanted = if (count == 0 && i == 1) { 1023 } else if (count == 0 && i == 8) { -1023 } else { 0 };
+      if (block.values[i] != wanted) {
+        return Err("AC category boundary");
+      }
+    }
+    return Ok(count + 1);
+  });
+  return match (result) { Ok(done) => test.assert_true(done.value == 3), Err(_) => test.fail("coefficient categories") };
+}
+
+function coefficient_rejections(): test.TestOutcome {
+  let input = jpeg_entropy.signed();
+  let h = match (header.parse(input, header.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("coefficient fixture header"); } };
+  let dht = marker_at(input, 196);
+  let dc_symbol = dht + 4 + 17;
+  let ac_symbol = dc_symbol + 3 + 17;
+  let prefix = append_bytes([], input[:h.entropy_offset]);
+  let zrl = append_bytes(prefix, [18 as u8, 75 as u8, 255 as u8, 217 as u8]);
+  let run = append_bytes(prefix.with(ac_symbol + 1, 241 as u8), [12 as u8, 204 as u8, 255 as u8, 0 as u8, 255 as u8, 217 as u8]);
+  return test.assert_true(fails(zrl, entropy.EntropyCoefficient)
+    && fails(run, entropy.EntropyCoefficient)
+    && fails(input.with(dc_symbol, 12 as u8), entropy.EntropyHeader(header.Table))
+    && fails(input.with(ac_symbol + 1, 11 as u8), entropy.EntropyHeader(header.Table))
+    && fails(input.with(ac_symbol + 1, 16 as u8), entropy.EntropyHeader(header.Table)));
+}
+
+function input_window(): test.TestOutcome {
+  let input = jpeg_entropy.category_boundaries();
+  let padded = append_bytes([9 as u8, 8 as u8, 7 as u8], input);
+  padded = padded.append(6 as u8).append(5 as u8);
+  let result = count_blocks(padded[3:3 + input.len()], entropy.default_limits());
+  return match (result) { Ok(done) => test.assert_true(done.value == 3 && done.consumed == input.len()), Err(_) => test.fail("borrowed input window") };
+}
+
+function main(): i32 {
+  let t = test.test_new("baseline JPEG quantized blocks");
+  t = t.it("six independent zero blocks validate scheduling and framing", zeros);
+  t = t.it("generated grayscale and three sampling fixtures reach EOI", initial_fixtures);
+  t = t.it("signed amplitudes, natural coefficient positions, and DC prediction", signed_values);
+  t = t.it("terminal AC coefficients and exact ZRL completion", final_ac);
+  t = t.it("restart order cycles and DC resets with real sampling fixtures", restarts);
+  t = t.it("padded blocks, fractional sampling, and component identifiers", sampling);
+  t = t.it("every truncated prefix rejects incomplete entropy or EOI", prefixes);
+  t = t.it("Huffman, padding, final marker, and trailing bytes reject", malformed);
+  t = t.it("restart sequence, missing markers, and marker fill", restart_errors);
+  t = t.it("exact block and MCU admission precedes callbacks", limits);
+  t = t.it("owned input and retained blocks survive consumer heap errors", ownership_errors);
+  t = t.it("every cooperative cancellation poll releases partial state", cancellation);
+  t = t.it("largest baseline categories and signed amplitudes match the oracle", category_boundaries);
+  t = t.it("coefficient runs and invalid table categories reject", coefficient_rejections);
+  t = t.it("borrowed input windows keep framing offsets within the view", input_window);
+  return t.finish();
+}

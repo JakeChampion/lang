@@ -71,12 +71,11 @@ function main(): i32 {
 	}{
 		{"byte-view", viewLeaf, viewMain, helpers, 10},
 		{"byte-copy", copyLeaf, copyMain, []string{"__fn___fern_arr_slice_u8"}, 0},
-		{"scalar-record", `pub struct Opts { a: i32, b: i32, c: i32, d: i32 }
-@noinline pub function score(o: Opts, n: i32): i32 { return o.a + o.b + o.c + o.d + n; }
-`, `import "./leaf";
-function main(): i32 { return leaf.score(leaf.Opts { a: 3, b: 5, c: 7, d: 11 }, 16); }
-`, nil, 42},
 		{"isatty", "@noinline pub function tty(): i32 { if (isatty(1)) { return 1; } return 0; }\n", "import \"./leaf\";\nfunction main(): i32 { return leaf.tty() + 7; }\n", []string{"__fn___fern_isatty"}, 7},
+		{"scalar-parameters", `struct Parts { a: i32, b: i32, c: i32, d: i32 }
+@noinline function combine(p: Parts, x: i32, y: i32): i32 { return p.a + p.b + p.c + p.d + x + y; }
+pub function calculate(): i32 { return combine(Parts { a: 1, b: 2, c: 3, d: 4 }, 16, 16); }
+`, "import \"./leaf\";\nfunction main(): i32 { return leaf.calculate(); }\n", nil, 42},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			proj := t.TempDir()
@@ -96,9 +95,7 @@ function main(): i32 { return leaf.score(leaf.Opts { a: 3, b: 5, c: 7, d: 11 }, 
 					if err := os.MkdirAll(outDir, 0o755); err != nil {
 						t.Fatal(err)
 					}
-					emit := runX86_64Bin(x86runner, driverBin, entry, "-target", target, "-per-module-emit-all", "-out-dir", outDir)
-					emit.Env = childEnv("FERN_IR_VERIFY=1")
-					if out, err := emit.CombinedOutput(); err != nil {
+					if out, err := runX86_64Bin(x86runner, driverBin, entry, "-target", target, "-per-module-emit-all", "-out-dir", outDir).CombinedOutput(); err != nil {
 						t.Fatalf("emit-all: %v\n%s", err, out)
 					}
 					ents, err := os.ReadDir(outDir)

@@ -357,7 +357,7 @@ pub struct UnitLeaves { leaves: ssa.Leaves, pre: Prelift[] }
 pub struct Prelift { lifted: Option[ssa_lift.LResult], formed: Option[ssa.Formed] }
 
 pub function (s: EmitState) prelift(pre: Prelift[], i: i32, r: irtables.LowerResult): Prelift {
-  if (i >= pre.len() || r.source_positions.entry.line > 0 || (r.dbg_slots.len() > 0 || r.dbg_pieces.len() > 0) && s.var_rows) {
+  if (i >= pre.len() || r.source_positions.entry.line > 0 || r.dbg_slots.len() > 0 && s.var_rows) {
     return no_prelift();
   }
   return pre[i];
@@ -371,7 +371,7 @@ pub function (s: EmitState) lift(pre: Prelift, label_name: string, r: irtables.L
   if let Some(l) = pre.lifted {
     return l;
   }
-  return ssa_lift.lift_with_lanes(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.source_positions.entry.line > 0 || (r.dbg_slots.len() > 0 || r.dbg_pieces.len() > 0) && s.var_rows, r.v128_slots);
+  return ssa_lift.lift_with_lanes(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.source_positions.entry.line > 0 || r.dbg_slots.len() > 0 && s.var_rows, r.v128_slots);
 }
 
 pub function (s: EmitState) finish(pre: Prelift, r: irtables.LowerResult, selected: physicalbody.Selected, lifted: ssa_lift.LResult): ssaprepare.Body {
@@ -8222,7 +8222,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
 pub struct DbgVars { at: boolean[], rows: string[] }
 
 pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.LowerResult, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
-  if (seen_vals.len() == 0 && r.dbg_pieces.len() == 0) {
+  if (seen_vals.len() == 0) {
     return DbgVars { at: [], rows: [] };
   }
   let d: DbgVars = DbgVars { at: __alloc_bool(npos + 1), rows: [] };
@@ -8231,74 +8231,7 @@ pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.LowerResult, r
     d = dbg_var(d, fn_label, a, r, i, repl, seen_vals, seen_slots, locs, npos);
     i = i + 1;
   }
-  for pieces in r.dbg_pieces {
-    d = dbg_pieces(d, fn_label, a, pieces, repl, seen_vals, seen_slots, locs, npos);
-  }
   return d;
-}
-
-function dbg_pieces(d: DbgVars, fn_label: string, a: ssa.Alloc, pieces: irtables.DebugPieces, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
-  let points: i32[] = [];
-  for known in pieces.known {
-    if (known) {
-      points = [0, npos];
-    }
-  }
-  for j in 0..seen_slots.len() {
-    if (util.index_of_i32(pieces.slots, seen_slots[j]) >= 0) {
-      let v: i32 = dbg_home(a, repl, locs, npos, seen_vals[j]);
-      if (v >= 0) {
-        points = dbg_point(dbg_point(points, a.def_pos[v] + 1), a.hi[v] + 1);
-      }
-    }
-  }
-  let param: string = if (pieces.param) { "1" } else { "0" };
-  for k in 1..points.len() {
-    let lo: i32 = points[k - 1];
-    let hi: i32 = points[k];
-    let expr: string = "";
-    let available: boolean = false;
-    for p in 0..pieces.slots.len() {
-      let slot = pieces.slots[p];
-      let part: string = if (pieces.known[p]) { dbg_constant(pieces.constants[p]) } else { "" };
-      for j in 0..seen_slots.len() {
-        if (seen_slots[j] == slot) {
-          let v: i32 = dbg_home(a, repl, locs, npos, seen_vals[j]);
-          if (v >= 0 && a.def_pos[v] + 1 <= lo && a.hi[v] + 1 >= hi) {
-            part = locs[v];
-          }
-        }
-      }
-      available = available || part != "";
-      expr = expr + part + "9308";
-    }
-    if (available) {
-      d = DbgVars {
-        at: d.at.with(lo, true).with(hi, true),
-        rows: d.rows.append(fn_label + "|" + pieces.name + "|" + pieces.ty + "|" + param + "|" + dbg_label_name(fn_label, lo) + "|" + dbg_label_name(fn_label, hi) + "|" + expr),
-      };
-    }
-  }
-  return d;
-}
-
-function dbg_point(points: i32[], pos: i32): i32[] {
-  let out: i32[] = [];
-  let added: boolean = false;
-  for p in points {
-    if (p == pos) {
-      return points;
-    }
-    if (!added && pos < p) {
-      out = out.append(pos);
-      added = true;
-    }
-    out = out.append(p);
-  }
-  if (!added) {
-    out = out.append(pos);
-  }
-  return out;
 }
 
 function dbg_shape_type(s: EmitState, t: string): string {
@@ -8395,30 +8328,6 @@ function dbg_home(a: ssa.Alloc, repl: i32[], locs: string[], npos: i32, v: i32):
 
 pub function dbg_label_name(fn_label: string, pos: i32): string {
   return ".Ldbg_" + sanitize_label(fn_label) + "_" + util.i32_to_string(pos);
-}
-
-pub function dbg_constant(value: i64): string {
-  let bytes: i32[] = [158, 8];
-  for k in 0..8 {
-    bytes = bytes.append((value >> k * 8 & 255i64) as i32);
-  }
-  return dbg_hex(bytes);
-}
-
-pub function dbg_register(reg: i32): string {
-  if (reg < 0) {
-    return "";
-  }
-  if (reg < 32) {
-    return dbg_hex([80 + reg]);
-  }
-  let bytes: i32[] = [144];
-  let value = reg;
-  while (value >= 128) {
-    bytes = bytes.append(value & 127 | 128);
-    value = value >> 7;
-  }
-  return dbg_hex(bytes.append(value));
 }
 
 pub function dbg_label(s: EmitState, d: DbgVars, fn_label: string, pos: i32): EmitState {

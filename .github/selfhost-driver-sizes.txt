@@ -575,30 +575,14 @@
 # inside the tolerance and keep their rows.
 # 2026-10-26 (#13496): measured with stage0-20261025-433d93a.
 # All ten driver builds and the fixed-point compiler use the same source tree.
-# 2026-10-26 (#13561): measured with stage0-20261025-433d93a.
-# All 11 rows passed the strict gate on the current source.
-# The compiler driver and Wasm IR driver each grew by 4096 bytes.
-fern.fern/stage2 14946960
-fern.fern 15037776
-drivers/asm_load_run.fern 12021792
-drivers/asm_modload_run.fern 10670288
-drivers/asm_ir_run.fern 10262688
-drivers/asm_run.fern 9421376
-drivers/wasm_ir_run.fern 9360416
-drivers/wasm_run.fern 9360576
-drivers/wasm_runio_run.fern 9341952
-drivers/asm_pathprobe_run.fern 6253248
-drivers/checker_modload_run.fern 3295600
-
-# 2026-10-26 (#13561): all 11 rows from source 3de29207a3.
-# The three-stage bootstrap reached identical final compiler stages.
-# The stage0 pin built each of the ten drivers directly.
-# The complete measurements are in the compiler CI repair record.
-
-# 2026-10-26 (#13561): all 11 rows from source d92821ddb3.
-# The strict gate passed after the ABI and reachability repairs.
-# The compiler CI follow-up record contains every measured change.
-
-# 2026-10-26 (#13561): all 11 rows from source tree c2be2c7384.
-# The strict gate passed after the split-variable DWARF repair.
-# The split debug variable record contains the complete measurements.
+fern.fern/stage2 14881456
+fern.fern 14967984
+drivers/asm_load_run.fern 11952000
+drivers/asm_modload_run.fern 10600480
+drivers/asm_ir_run.fern 10196992
+drivers/asm_run.fern 9355664
+drivers/wasm_ir_run.fern 9294816
+drivers/wasm_run.fern 9299072
+drivers/wasm_runio_run.fern 9280448
+drivers/asm_pathprobe_run.fern 6195824
+drivers/checker_modload_run.fern 3291504

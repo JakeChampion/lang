@@ -23,7 +23,7 @@ function empty(why: string): irtables.LowerResult {
     ok: false, why: why, ops: [], n_locals: 0,
     n_params: 0, erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
     f64_slots: [], v128_slots: [], str_slots: [], name: "", result_kind: irtables.result_i32(),
-    dbg_slots: [], dbg_names: [], dbg_types: [], dbg_pieces: [],
+    dbg_slots: [], dbg_names: [], dbg_types: [],
   };
 }
 
@@ -2231,12 +2231,6 @@ function frame(f: ssasem.Func): irtables.LowerResult {
     }
     di = di + 1;
   }
-  for pieces in f.dbg_pieces {
-    let t: string = dbg_in_place(f, pieces.ty, [], pieces.values.len());
-    if (t != "") {
-      r = irtables.LowerResult { ...r, dbg_pieces: r.dbg_pieces.append(debug_pieces(f, pieces, t)) };
-    }
-  }
   let vi: i32 = 0;
   while (vi < f.values.len()) {
     if let typeinfo.TypeArray(_) = f.values[vi] {
@@ -2257,42 +2251,6 @@ function frame(f: ssasem.Func): irtables.LowerResult {
     vi = vi + 1;
   }
   return r;
-}
-
-function unique_debug_binding(f: ssasem.Func, name: string): boolean {
-  let count: i32 = 0;
-  for pieces in f.dbg_pieces {
-    if (pieces.name == name) {
-      count = count + 1;
-    }
-  }
-  for other in f.dbg_names {
-    if (other == name) {
-      count = count + 1;
-    }
-  }
-  return count == 1;
-}
-
-function debug_pieces(f: ssasem.Func, pieces: ssasem.DebugPieces, ty: string): irtables.DebugPieces {
-  let known: boolean[] = [];
-  let constants: i64[] = [];
-  for slot in pieces.values {
-    let d = defining(f, slot);
-    let steps: i32 = 0;
-    while (d.kind_tag == 7 && d.args.len() == 1 && steps < 64) {
-      d = defining(f, d.args[0]);
-      steps = steps + 1;
-    }
-    let constant: boolean = unique_debug_binding(f, pieces.name) && (d.kind_tag == 1 || d.kind_tag == 2) && !ssasem.is_float(f.values[slot]);
-    let value: i64 = d.imm as i64;
-    if (constant && d.str != "") {
-      value = util.lit_to_i64(d.str);
-    }
-    known = known.append(constant);
-    constants = constants.append(value);
-  }
-  return irtables.DebugPieces { name: pieces.name, ty: ty, slots: pieces.values, param: pieces.param, known: known, constants: constants };
 }
 
 function dbg_type(f: ssasem.Func, t: typeinfo.Type, open: string[]): string {
@@ -2339,12 +2297,8 @@ function dbg_enum(f: ssasem.Func, t: typeinfo.Type, s: string): string {
 }
 
 function dbg_record_members(f: ssasem.Func, rec: semrecords.Record, open: string[]): string {
-  return dbg_record_members_at(f, rec, open, 1);
-}
-
-function dbg_record_members_at(f: ssasem.Func, rec: semrecords.Record, open: string[], first: i32): string {
   if (rec.declared.len() == 0) {
-    return dbg_members(f, rec.fields, open, first);
+    return dbg_members(f, rec.fields, open, 1);
   }
   // A field laid out in parts reads as its declared record, held in place over its parts' slots.
   let out: string = "";
@@ -2361,7 +2315,7 @@ function dbg_record_members_at(f: ssasem.Func, rec: semrecords.Record, open: str
       }
       ft = dbg_in_place(f, fl.ty, open, at - slot);
     }
-    out = dbg_member(out, fl.name, ft, slot + first);
+    out = dbg_member(out, fl.name, ft, slot + 1);
   }
   return out;
 }
@@ -2381,7 +2335,7 @@ function dbg_in_place(f: ssasem.Func, t: typeinfo.Type, open: string[], slots: i
     if (at < 0) {
       return "";
     }
-    members = dbg_record_members_at(f, f.records.list[at], open, 0);
+    members = dbg_members(f, f.records.list[at].fields, open, 0);
   } else {
     return "";
   }

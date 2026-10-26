@@ -31,12 +31,14 @@ func TestSelfHostWasmFuncRangeShard(t *testing.T) {
 	if err := os.Mkdir(cacheDir, 0o755); err != nil {
 		t.Fatalf("mkdir cache: %v", err)
 	}
-	src := `function a(): i32 { return b() + first().len(); }
+	src := `struct Parts { a: i32, b: i32, c: i32, d: i32 }
+function a(): i32 { return b() + first().len(); }
 function b(): i32 { return c() * 2; }
-function c(): i32 { return 4; }
+function c(): i32 { return combine(Parts { a: 1, b: 2, c: 3, d: 4 }, 0, 0); }
 function d(): i32 { return a() + second().len(); }
 function first(): string { return "alpha"; }
 function second(): string { return "bravo-x"; }
+@noinline function combine(p: Parts, x: i32, y: i32): i32 { return p.a + p.b - p.c + p.d + x + y; }
 function main(): i32 { return d(); }`
 	const want = 20
 	entryPath := filepath.Join(proj, "entry.fern")

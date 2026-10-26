@@ -385,7 +385,7 @@ function require(ok: boolean, id: i32): void {
 function expect(sub: ircore.Sub, ok: boolean, reason: string, id: i32): void {
   let p = abi.check(sub, "extract", "__sem_drop_Parent", "__sem_release_Parent");
   if (p.ok != ok || p.function_name != "extract" || !util.contains(p.message, reason)) {
-    eprint(p.function_name + ": " + p.message);
+    print(p.function_name + ": " + p.message);
     exit(id);
   }
 }
@@ -424,8 +424,8 @@ function source(mode: i32): string {
     finalizer = "trait Drop { function drop(self: Self): void; }\nimpl Drop for " + name + " { function drop(self: Self): void {} }\n";
   }
   if (mode == 4) {
-    leaf = "struct Leaf { n: string, a: i32, b: i32, c: i32, d: i32 }\n";
-    value = "Leaf { n: \"seven\", a: 2, b: 3, c: 4, d: 5 }";
+    leaf = "struct Leaf { n: string }\n";
+    value = "Leaf { n: \"seven\" }";
     result = "extract(p).n.len()";
   }
   if (mode == 5) {
@@ -492,7 +492,7 @@ function target_checks(target: string): void {
 function expect_replace(sub: ircore.Sub, ok: boolean, reason: string, id: i32): void {
   let p = abi.check_replace(sub, "replace", "__sem_drop_Parent", "__sem_release_Parent");
   if (p.ok != ok || p.function_name != "replace" || !util.contains(p.message, reason)) {
-    eprint(p.function_name + ": " + p.message);
+    print(p.function_name + ": " + p.message);
     exit(id);
   }
 }
@@ -500,7 +500,7 @@ function expect_replace(sub: ircore.Sub, ok: boolean, reason: string, id: i32): 
 function replacement_source(mode: i32): string {
   let leaf = "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\n";
   let child_type = "Leaf";
-  let value = "Leaf { n: 7, a: 2, b: 3, c: 4, d: 5 }";
+  let value = "Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }";
   let parent = "struct Parent { child: Leaf }\n";
   let init = "Parent { child: l }";
   let result = "replace(p, l).child.n";
@@ -513,8 +513,8 @@ function replacement_source(mode: i32): string {
     finalizer = "trait Drop { function drop(self: Self): void; }\nimpl Drop for " + name + " { function drop(self: Self): void {} }\n";
   }
   if (mode == 3) {
-    leaf = "struct Leaf { n: string, a: i32, b: i32, c: i32, d: i32 }\n";
-    value = "Leaf { n: \"seven\", a: 2, b: 3, c: 4, d: 5 }";
+    leaf = "struct Leaf { n: string }\n";
+    value = "Leaf { n: \"seven\" }";
     result = "replace(p, l).child.n.len()";
   }
   if (mode == 4) {
@@ -586,7 +586,7 @@ function replacement_checks(target: string): void {
 function selected_expect(sub: ircore.Sub, name: string, field: i32, ok: boolean, reason: string, id: i32): void {
   let p = abi.check_selected(sub, name, "__sem_drop_Parent", "__sem_release_Parent", field);
   if (p.ok != ok || p.function_name != name || !util.contains(p.message, reason)) {
-    eprint(p.function_name + ": " + p.message);
+    print(p.function_name + ": " + p.message);
     exit(id);
   }
 }
@@ -646,13 +646,13 @@ function selected_checks(target: string): void {
   }
 }
 
-struct RuntimeLeaf { n: i32, a: i32, b: i32, c: i32, d: i32 }
+struct RuntimeLeaf { n: i32 }
 
 struct RuntimeParent { left: RuntimeLeaf, marker: i32, right: RuntimeLeaf }
 
 @noinline
 function runtime_leaf(n: i32): RuntimeLeaf {
-  return RuntimeLeaf { n: n, a: 2, b: 3, c: 4, d: 5 };
+  return RuntimeLeaf { n: n };
 }
 
 @noinline
@@ -693,7 +693,7 @@ function runtime_checks(): void {
 function partial_expect(sub: ircore.Sub, name: string, field: i32, ok: boolean, reason: string, id: i32): void {
   let p = abi.check_partial(sub, name, "__sem_drop_Parent", "__sem_release_Parent", field);
   if (p.ok != ok || p.function_name != name || !util.contains(p.message, reason)) {
-    eprint(p.function_name + ": " + p.message);
+    print(p.function_name + ": " + p.message);
     exit(id);
   }
 }
@@ -714,7 +714,7 @@ function partial_source(mode: i32): string {
   if (mode >= 2 && mode <= 4) {
     other = "Other";
     declarations = "struct Other { n: i32, a: i32, b: i32, c: i32, d: i32 }\n";
-    value = "Other { n: 8, a: 2, b: 3, c: 4, d: 5 }";
+    value = "Other { n: 8, a: 0, b: 0, c: 0, d: 0 }";
   }
   if (mode == 3) {
     declarations = declarations + "trait Drop { function drop(self: Self): void; }\nimpl Drop for Other { function drop(self: Self): void {} }\n";
@@ -737,7 +737,7 @@ function partial_source(mode: i32): string {
   return leaf + declarations + "struct Parent { left: " + child + ", right: " + other + marker + " }\n"
     + "@noinline\nfunction partial_left(own p: Parent, child: " + child + "): Parent { return Parent { ...p, left: child }; }\n"
     + "@noinline\nfunction partial_right(own p: Parent, child: " + other + "): Parent { return Parent { ...p, right: child }; }\n"
-    + "function main(): i32 { let l: " + child + " = Leaf { n: 7, a: 2, b: 3, c: 4, d: 5 }; let p = Parent { left: l, right: " + value + marker_value + " }; return partial_left(p, l).left.n; }\n";
+    + "function main(): i32 { let l: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = Parent { left: l, right: " + value + marker_value + " }; return partial_left(p, l).left.n; }\n";
 }
 
 function partial_read(sub: ircore.Sub, name: string, field: i32, mode: i32): ircore.Sub {
@@ -756,7 +756,7 @@ function partial_read(sub: ircore.Sub, name: string, field: i32, mode: i32): irc
           }
           let index: i32 = 0;
           if (mode == 2) {
-            index = 5;
+            index = 2147483647;
           }
           ops = ops.append(ir.op_load_local(body.n_locals)).append(ir.op_struct_get(index, 0)).append(ir.op_drop());
           if (mode == 1) {
@@ -806,7 +806,7 @@ function partial_checks(target: string): void {
 function assertion_expect(sub: ircore.Sub, name: string, ok: boolean, reason: string, id: i32): void {
   let p = abi.check_assertion(sub, name);
   if (p.ok != ok || p.function_name != name || !util.contains(p.message, reason)) {
-    eprint(p.function_name + ": " + p.message);
+    print(p.function_name + ": " + p.message);
     exit(id);
   }
 }
@@ -895,7 +895,7 @@ function caller_controls(target: string): void {
       }
       let p = abi.check_partial_calls(ircore.Sub { ...sub, bodies: rows, physical_contracts: contracts }, name, "__sem_drop_Parent", "__sem_release_Parent", field, names);
       if (p.ok != (mode == 0 || mode == 6 || mode == 13) || p.function_name != name || p.message != reasons[mode]) {
-        eprint(p.function_name + ": " + p.message);
+        print(p.function_name + ": " + p.message);
         exit(191 + mode);
       }
       mode = mode + 1;
@@ -908,7 +908,7 @@ function caller_controls(target: string): void {
 function producer_expect(sub: ircore.Sub, name: string, words: i32, why: string, id: i32): void {
   let p = abi.check_producer(sub, name);
   if (p.proof.ok != words > 0 || p.words != words || p.proof.function_name != name || p.proof.message != (if (words > 0) { "proved initialized allocation origin" } else { why })) {
-    eprint(p.proof.function_name + ": " + p.proof.message);
+    print(p.proof.function_name + ": " + p.proof.message);
     exit(id);
   }
 }
@@ -946,14 +946,10 @@ function producer_source(mode: i32): string {
     let subject = if (mode == 3) { "Parent" } else { "Leaf" };
     finalizer = "trait Drop { function drop(self: Self): void; }\nimpl Drop for " + subject + " { function drop(self: Self): void {} }\n";
   }
-  let observed = if (mode == 2) { "p.left" } else { "p.left, p.right" };
-  let read = if (mode == 5) { "xs[0].n.len()" } else { "xs[0].n" };
-  let expected = if (mode == 5) { "3" } else { "1" };
-  return leaf + "struct Parent { left: " + child + ", right: " + right + extra + " }\n" + finalizer
+  return "import \"core/map\";\n" + leaf + "struct Parent { left: " + child + ", right: " + right + extra + " }\n" + finalizer
     + "@noinline\nfunction leaf(n: " + number + "): " + child + " { return Leaf { n: n }; }\n"
     + "@noinline\nfunction parent(own left: " + child + ", " + right_param + "): Parent { return Parent { left: left, right: right" + init_extra + " }; }\n"
-    + "@noinline\nfunction observe(xs: " + child + "[]): i32 { return " + read + "; }\n"
-    + "function main(): i32 { let p = parent(leaf(" + value + "), " + right_value + "); return observe([" + observed + "]) - " + expected + "; }\n";
+    + "function main(): i32 { let ps: Map[i32, Parent] = Map { 0: parent(leaf(" + value + "), " + right_value + ") }; return ps.len() - 1; }\n";
 }
 
 function producer_checks(target: string): void {
@@ -1021,7 +1017,7 @@ function origin_caller_expect(sub: ircore.Sub, name: string, why: string): void 
   let p = abi.check_origin_caller(sub, name);
   let ok = why == "";
   if (p.proof.ok != ok || p.words != (if (ok) { 3 } else { 0 }) || p.proof.function_name != name || p.proof.message != (if (ok) { "proved caller allocation origin" } else { why })) {
-    eprint(p.proof.function_name + ": " + p.proof.message);
+    print(p.proof.function_name + ": " + p.proof.message);
     exit(234);
   }
 }
@@ -1033,7 +1029,7 @@ function origin_caller_checks(target: string): void {
     let source = leaf + "struct Parent { left: " + child + ", right: " + child + " }\n"
       + "@noinline\nfunction parent(a: " + child + ", b: " + child + "): Parent { return Parent { left: a, right: b }; }\n"
       + "@noinline\nfunction select_parent(flag: boolean, a: " + child + ", b: " + child + "): Parent { let p = if (flag) { parent(a,b) } else { parent(b,a) }; return p; }\n"
-      + "function main(): i32 { let l: " + child + " = Leaf { n: 7, a: 2, b: 3, c: 4, d: 5 }; let p = select_parent(true,l,l); return p.left.n; }\n";
+      + "function main(): i32 { let l: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = select_parent(true,l,l); return p.left.n; }\n";
     let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
     origin_caller_expect(sub, "select_parent", "");
     origin_schema_controls(sub);
