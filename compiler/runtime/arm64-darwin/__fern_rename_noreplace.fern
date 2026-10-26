@@ -1,0 +1,25 @@
+function __fern_rename_noreplace(old: string, newp: string): Result[void, IoError] {
+  let olen: i32 = old.len();
+  let oldz: usize = __raw_alloc(olen + 1);
+  let j: i32 = 0;
+  while (j < olen) {
+    __raw_store8(oldz, j, old[j] as i32);
+    j = j + 1;
+  }
+  __raw_store8(oldz, olen, 0);
+  let plen: i32 = newp.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, newp[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let rc: i32 = __syscall5(488, -2, oldz as i64, -2, pathz as i64, 4) as i32;
+  let oldz_own: string = __raw_string(oldz, olen + 1);
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen)));
+  }
+  return Ok(());
+}

@@ -1,0 +1,15 @@
+function __fern_signal_catch(sig: i32, handler: usize, ret: usize, restart: i32): i32 {
+  if (sig < 1 || sig > 64) {
+    return 0 - 22;
+  }
+  let act: usize = __raw_scratch(32);
+  __raw_store_ptr(act, 0, handler);
+  let flags: usize = 67108864 as usize;
+  if (restart != 0) {
+    flags = 335544320 as usize;
+  }
+  __raw_store_ptr(act, 1, flags);
+  __raw_store_ptr(act, 2, ret);
+  __raw_store_ptr(act, 3, 0);
+  return __syscall4(13, sig as i64, act as i64, 0, 8) as i32;
+}

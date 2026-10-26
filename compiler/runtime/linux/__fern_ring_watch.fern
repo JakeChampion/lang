@@ -1,0 +1,81 @@
+function __fern_ring_watch(blk: usize, fd: i32, interest: i32, sig: i32): i32 {
+  if (fd < 0 || fd >= __load_i32(blk + 68)) {
+    return 0 - 9;
+  }
+  let ent: usize = __fern_ring_entry(blk, fd);
+  let old: i32 = __raw_load8(ent, 0);
+  if ((old & 4) != 0 && (interest & 4) == 0) {
+    let del: i32 = __fern_ring_set_ctl(blk, 2, fd, 0);
+    __raw_store8(ent, 0, 0);
+    if (interest == 0) {
+      return del;
+    }
+  }
+  if ((interest & 4) != 0) {
+    if ((old & 4) == 0) {
+      let un3: i32 = __fern_ring_unarm(blk, ent, fd);
+      if (un3 < 0) {
+        return un3;
+      }
+    }
+    let r: i32 = __fern_ring_set_ctl(blk, 1, fd, interest);
+    if (r < 0) {
+      return r;
+    }
+    __raw_store8(ent, 0, interest);
+    __raw_store8(ent, 3, 0);
+    return 0;
+  }
+  if (interest == 0) {
+    let un: i32 = __fern_ring_unarm(blk, ent, fd);
+    let st: i32 = __fern_ring_recv_stop(blk, ent, fd);
+    __fern_ring_drop(blk, ent);
+    __raw_store8(ent, 0, 0);
+    __raw_store8(ent, 3, 0);
+    __raw_store8(ent, 13, 0);
+    if (un < 0) {
+      return un;
+    }
+    return st;
+  }
+  let rmode: i32 = 0;
+  if ((interest & 8) != 0 && (interest & 1) != 0 && sig == 0 && __load_i64(blk + 160) != 0 as i64 && __raw_load8(ent, 6) != 3) {
+    rmode = 1;
+  }
+  if (rmode == 0 && __raw_load8(ent, 4) != 0) {
+    let stopped: i32 = __fern_ring_recv_stop(blk, ent, fd);
+    if (stopped < 0) {
+      return stopped;
+    }
+  }
+  let pm: i32 = 0;
+  if ((interest & 1) != 0 && (rmode == 0 || __raw_load8(ent, 4) == 5)) {
+    pm = pm | 1;
+  }
+  if ((interest & 2) != 0) {
+    pm = pm | 4;
+  }
+  if (__raw_load8(ent, 13) != pm || pm != 0 && __raw_load8(ent, 1) == 0) {
+    let un2: i32 = __fern_ring_unarm(blk, ent, fd);
+    if (un2 < 0) {
+      return un2;
+    }
+    __raw_store8(ent, 13, pm);
+    let armed: i32 = __fern_ring_arm(blk, ent, fd);
+    if (armed < 0) {
+      return armed;
+    }
+  }
+  __raw_store8(ent, 0, interest);
+  __raw_store8(ent, 3, sig);
+  if (rmode != 0 && __raw_load8(ent, 4) == 0 && __raw_load8(ent, 6) == 0) {
+    let ra: i32 = __fern_ring_recv_arm(blk, ent, fd);
+    if (ra < 0) {
+      return ra;
+    }
+  }
+  if ((interest & 1) != 0 && (__fern_ring_u16(ent, 8) != 0 || __raw_load8(ent, 6) == 1 || __raw_load8(ent, 6) == 2)) {
+    __fern_ring_list(blk, ent, fd);
+  }
+  return 0;
+}

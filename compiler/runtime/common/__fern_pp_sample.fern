@@ -1,0 +1,32 @@
+function __fern_pp_sample(base: usize, out: usize, buf: usize, i: usize): void {
+  let row: usize = base + 160 + i * 528;
+  let depth: usize = __load_i64(row) as usize;
+  let locs: usize = buf + 512;
+  let loclen: usize = 0;
+  let k: usize = 0;
+  while (k < depth) {
+    loclen = __fern_pp_uint_at(locs, loclen, i * 64 + k + 1);
+    k = k + 1;
+  }
+  let count: usize = __load_i64(base) as usize;
+  let seen: usize = __load_i64(base + 152) as usize;
+  let units: usize = seen;
+  let weight: usize = 10000000 * seen / count;
+  if (__FERN_PROFILE_MODE == 4) {
+    units = 64 * seen;
+    weight = __load_i64(row + 8) as usize * seen / count;
+  }
+  // Preserve the represented event total when integer sample values round.
+  let objects: usize = units / count;
+  if (i < units % count) {
+    objects = objects + 1;
+  }
+  let vals: usize = buf + 768;
+  let vallen: usize = __fern_pp_uint_at(vals, 0, objects);
+  vallen = __fern_pp_uint_at(vals, vallen, weight);
+  let n: usize = __fern_pp_field(buf, 0, 10, loclen);
+  n = __fern_pp_copy(buf, n, locs, loclen);
+  n = __fern_pp_field(buf, n, 18, vallen);
+  n = __fern_pp_copy(buf, n, vals, vallen);
+  __fern_pp_message(out, 18, buf, n);
+}

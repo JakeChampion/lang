@@ -1,0 +1,12 @@
+function __fern_path_copy(z: string, n: i32): string {
+  if (n == 0) {
+    return "";
+  }
+  let b: usize = __raw_alloc(n);
+  let i: i32 = 0;
+  while (i < n) {
+    __raw_store8(b, i, z[i] as i32);
+    i = i + 1;
+  }
+  return __raw_string(b, n);
+}

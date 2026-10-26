@@ -1,0 +1,86 @@
+function __fern_sp_exec_failed(cmdz: usize, clen: i32, rc: i32): void {
+  let e: i32 = 0 - rc;
+  let ndig: i32 = 1;
+  let tt: i32 = e;
+  while (tt >= 10) {
+    ndig = ndig + 1;
+    tt = tt / 10;
+  }
+  let total: i32 = 14 + ndig;
+  let buf: usize = __raw_alloc(total);
+  __raw_store8(buf, 0, 85);
+  __raw_store8(buf, 1, 110);
+  __raw_store8(buf, 2, 107);
+  __raw_store8(buf, 3, 110);
+  __raw_store8(buf, 4, 111);
+  __raw_store8(buf, 5, 119);
+  __raw_store8(buf, 6, 110);
+  __raw_store8(buf, 7, 32);
+  __raw_store8(buf, 8, 101);
+  __raw_store8(buf, 9, 114);
+  __raw_store8(buf, 10, 114);
+  __raw_store8(buf, 11, 111);
+  __raw_store8(buf, 12, 114);
+  __raw_store8(buf, 13, 32);
+  let pos: i32 = total - 1;
+  let v: i32 = e;
+  while (pos >= 14) {
+    __raw_store8(buf, pos, 48 + v % 10);
+    v = v / 10;
+    pos = pos - 1;
+  }
+  let unknown: string = __raw_string(buf, total);
+  let text: string = unknown;
+  if (e == 1) {
+    text = "Operation not permitted";
+  }
+  if (e == 2) {
+    text = "No such file or directory";
+  }
+  if (e == 5) {
+    text = "Input/output error";
+  }
+  if (e == 7) {
+    text = "Argument list too long";
+  }
+  if (e == 8) {
+    text = "Exec format error";
+  }
+  if (e == 12) {
+    text = "Cannot allocate memory";
+  }
+  if (e == 13) {
+    text = "Permission denied";
+  }
+  if (e == 14) {
+    text = "Bad address";
+  }
+  if (e == 20) {
+    text = "Not a directory";
+  }
+  if (e == 21) {
+    text = "Is a directory";
+  }
+  if (e == 22) {
+    text = "Invalid argument";
+  }
+  if (e == 23) {
+    text = "Too many open files in system";
+  }
+  if (e == 24) {
+    text = "Too many open files";
+  }
+  if (e == 26) {
+    text = "Text file busy";
+  }
+  if (e == 36) {
+    text = "File name too long";
+  }
+  if (e == 40) {
+    text = "Too many levels of symbolic links";
+  }
+  let tail: string = ": " + text + "\n";
+  __syscall3(1, 2, cmdz as i64, clen as i64);
+  __syscall3(1, 2, __raw_data(tail) as i64, tail.len() as i64);
+  __syscall3(60, 127, 0, 0);
+}

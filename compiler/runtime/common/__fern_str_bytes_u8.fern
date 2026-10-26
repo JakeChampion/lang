@@ -1,0 +1,7 @@
+function __fern_str_bytes_u8(s: string): i32[] {
+  let n: i32 = s.len();
+  let b: usize = __raw_arr_box((n + 7) / 8);
+  __store_i64(b, n as i64);
+  __memcpy(b + 8, __raw_data(s), n);
+  return __raw_array(b);
+}

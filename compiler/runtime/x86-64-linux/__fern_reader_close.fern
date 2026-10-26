@@ -1,0 +1,7 @@
+function __fern_reader_close(fd: i32): Result[void, IoError] {
+  let r: i32 = __syscall3(3, fd as i64, 0, 0) as i32;
+  if (r < 0) {
+    return Err(__fern_io_error(0 - r, ""));
+  }
+  return Ok(());
+}

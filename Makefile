@@ -12,17 +12,18 @@ build: bin/fern
 
 HOST_TARGET := $(shell uname -sm | sed -e 's/^Darwin.*/arm64-darwin/' -e 's/^Linux aarch64/arm64-linux/' -e 's/^Linux x86_64/x86-64-linux/')
 STDLIB_SRCS := $(shell find internal/stdlib \( -name '*.fern' -o -name '*.fern.md' \))
+RUNTIME_SRCS := $(wildcard compiler/runtime/*/*.fern)
 
 # bin/fern is the shipped compiler: compiler/fern_main.fern, built by the
 # self-host compiler with the stdlib and the diagnostic explanations embedded
 # (scripts/fern-embed-stage), so it runs from anywhere with nothing beside it.
-bin/fern: bin/fern-selfhost $(wildcard compiler/*.fern) $(STDLIB_SRCS) $(wildcard internal/syntax/diag/explanations/*.md)
+bin/fern: bin/fern-selfhost $(wildcard compiler/*.fern) $(RUNTIME_SRCS) $(STDLIB_SRCS) $(wildcard internal/syntax/diag/explanations/*.md)
 	./scripts/fern-embed-stage build/embed
 	./bin/fern-selfhost -target $(HOST_TARGET) -embed build/embed -o $@ compiler/fern_main.fern internal/stdlib
 
 # The self-host compiler bin/fern is built with, from the pinned stage0 and no
 # Go toolchain (docs/BOOTSTRAP.md).
-bin/fern-selfhost: $(wildcard compiler/*.fern) $(STDLIB_SRCS) bootstrap/stage0.lock
+bin/fern-selfhost: $(wildcard compiler/*.fern) $(RUNTIME_SRCS) $(STDLIB_SRCS) bootstrap/stage0.lock
 	./bootstrap/bootstrap.sh build
 
 # bin/fern-oracle is the Go front end (cmd/fern): the parser, checker and
@@ -172,10 +173,18 @@ freeze:
 # one of them still calls is clean here and red wherever its test builds it
 # (#9969 deleted semsource.modes_differ with semsource_census_run still calling
 # it, and four internal/testing/e2ecompiler tests went red for it in CI).
-check-sources: bin/fern
+check-sources: bin/fern runtime-check
 	./bin/fern -check compiler/fern.fern
 	./scripts/stdlib_check.sh
 	./scripts/selfhost_driver_check.sh
+
+.PHONY: runtime-bundle-check runtime-check
+runtime-bundle-check:
+	python3 scripts/gen-runtime-bundle.py --check
+
+runtime-check: bin/fern runtime-bundle-check
+	./bin/fern -target $(HOST_TARGET) -o build/runtime-check compiler/drivers/runtime_modules_run.fern
+	./build/runtime-check
 	go test ./internal/testing/e2ecompiler/ -run 'TestSelfHostFeatureCensus$$|TestSelfHostFixtureSourcesCheck$$' -count=1
 
 # Build the SELF-HOST compiler to a native binary for THIS host, so self-host
@@ -279,7 +288,7 @@ gofmt-check:
 # (`make -j -k lint-fast`): each is seconds of work and independent of the
 # others. check-sources and fern-test-cache stay apart: the cache probe appends
 # to a source file while it runs, which a concurrent source check would read.
-lint-fast: vet gofmt-check fmt-check deadcode actionlint testnames ci-selftest digest-check log-table-check huffman-table-check net-bench-rows-check deflate-bench-rows-check perf-history-check
+lint-fast: vet gofmt-check fmt-check deadcode actionlint testnames ci-selftest digest-check log-table-check huffman-table-check net-bench-rows-check deflate-bench-rows-check perf-history-check runtime-bundle-check
 
 lint-all:
 	@status=0; \

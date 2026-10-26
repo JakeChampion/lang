@@ -1,0 +1,30 @@
+function __fern_termios_get(fd: i32): Result[i64[], IoError] {
+  let buf: usize = __raw_alloc(72);
+  let rc: i32 = __syscall3(54, fd as i64, 1078490131, buf as i64) as i32;
+  if (rc < 0) {
+    let buf_own0: string = __raw_string(buf, 72);
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  let out: i64[] = [];
+  let i: i32 = 0;
+  while (i < 26) {
+    if (i < 4 || i >= 24) {
+      let off: i32 = i * 8;
+      if (i >= 24) {
+        off = 56 + (i - 24) * 8;
+      }
+      let v: i64 = 0 as i64;
+      let k: i32 = 7;
+      while (k >= 0) {
+        v = v << 8 | __raw_load8(buf, off + k) as i64;
+        k = k - 1;
+      }
+      out = out.append(v);
+    } else {
+      out = out.append(__raw_load8(buf, 28 + i) as i64);
+    }
+    i = i + 1;
+  }
+  let buf_own: string = __raw_string(buf, 72);
+  return Ok(out);
+}

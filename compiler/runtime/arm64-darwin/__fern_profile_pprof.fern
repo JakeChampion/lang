@@ -1,0 +1,61 @@
+function __fern_profile_pprof(base: usize, im: usize, size: usize): void {
+  let out: usize = base + 4325536;
+  let buf: usize = out + 4112;
+  let path: string = __FERN_PROFILE_PATH;
+  let j: i32 = 0;
+  while (j < path.len()) {
+    __raw_store8(buf, j, __load_u8(__raw_data(path) + j));
+    j = j + 1;
+  }
+  __raw_store8(buf, j, 0);
+  let fd: i64 = __syscall4(463, 0 - 2, buf as i64, 16778753, 420);
+  if (fd < 0 as i64) {
+    let msg: string = "fern profile: cannot create pprof output file\n";
+    __fern_profile_write(__raw_data(msg), msg.len() as usize);
+    return;
+  }
+  __raw_store_ptr(out, 0, 0);
+  __raw_store_ptr(out + 8, 0, fd as usize);
+  if (__FERN_PROFILE_MODE == 3) {
+    __fern_pp_type(out, buf, 10, 1, 2);
+    __fern_pp_type(out, buf, 10, 3, 4);
+    __fern_pp_type(out, buf, 90, 3, 4);
+    __fern_pp_uint(out, 96);
+    __fern_pp_uint(out, 10000000);
+    __fern_pp_uint(out, 112);
+    __fern_pp_uint(out, 3);
+  } else {
+    __fern_pp_type(out, buf, 10, 5, 2);
+    __fern_pp_type(out, buf, 10, 6, 7);
+    __fern_pp_type(out, buf, 90, 5, 2);
+    __fern_pp_uint(out, 96);
+    __fern_pp_uint(out, 64);
+    __fern_pp_uint(out, 112);
+    __fern_pp_uint(out, 6);
+  }
+  let count: usize = __load_i64(base) as usize;
+  let i: usize = 0;
+  while (i < count) {
+    __fern_pp_sample(base, out, buf, i);
+    i = i + 1;
+  }
+  __fern_pp_tables(base, out, buf);
+  __fern_pp_string(out, "");
+  __fern_pp_string(out, "samples");
+  __fern_pp_string(out, "count");
+  __fern_pp_string(out, "cpu");
+  __fern_pp_string(out, "nanoseconds");
+  __fern_pp_string(out, "alloc_objects");
+  __fern_pp_string(out, "alloc_space");
+  __fern_pp_string(out, "bytes");
+  let n: usize = __fern_pp_text(buf, 0, "Fern bounded reservoir: retained=");
+  n = __fern_pp_decimal(buf, n, count);
+  n = __fern_pp_text(buf, n, " dropped=");
+  n = __fern_pp_decimal(buf, n, __load_i64(base + 8) as usize);
+  __fern_pp_message(out, 50, buf, n);
+  __fern_pp_uint(out, 104);
+  __fern_pp_uint(out, 8);
+  __fern_pp_names(base, out, buf, im, size);
+  __fern_pp_flush(out);
+  __syscall3(6, fd, 0, 0);
+}

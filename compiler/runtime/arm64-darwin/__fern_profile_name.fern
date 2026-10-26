@@ -1,0 +1,81 @@
+function __fern_profile_name(pc: usize, im: usize, size: usize): usize {
+  let text: usize = __fern_profile_macho_command(im, size, 25, "__TEXT");
+  let link: usize = __fern_profile_macho_command(im, size, 25, "__LINKEDIT");
+  let symbols: usize = __fern_profile_macho_command(im, size, 2, "");
+  if (text == 0 || link == 0 || symbols == 0) {
+    return 0;
+  }
+  if (__fern_profile_macho_u32(text + 4) < 152 || __fern_profile_macho_u32(link + 4) < 72 || __fern_profile_macho_u32(symbols + 4) < 24) {
+    return 0;
+  }
+  if (__fern_profile_macho_u32(text + 64) < 1 || !__fern_profile_macho_tag(text + 72, "__text")) {
+    return 0;
+  }
+  let base: usize = __load_i64(text + 24) as usize;
+  let start: usize = __load_i64(text + 104) as usize;
+  let length: usize = __load_i64(text + 112) as usize;
+  let address: usize = pc - (im - base);
+  if (address < start || address - start >= length) {
+    return 0;
+  }
+  let link_addr: usize = __load_i64(link + 24) as usize;
+  let link_vm: usize = __load_i64(link + 32) as usize;
+  let link_off: usize = __load_i64(link + 40) as usize;
+  let link_size: usize = __load_i64(link + 48) as usize;
+  if (link_addr < base || link_size > link_vm) {
+    return 0;
+  }
+  let link_at: usize = link_addr - base;
+  if (link_at > size || link_size > size - link_at) {
+    return 0;
+  }
+  let sym_off: usize = __fern_profile_macho_u32(symbols + 8);
+  let count: usize = __fern_profile_macho_u32(symbols + 12);
+  let str_off: usize = __fern_profile_macho_u32(symbols + 16);
+  let str_size: usize = __fern_profile_macho_u32(symbols + 20);
+  if (sym_off < link_off || str_off < link_off) {
+    return 0;
+  }
+  let sym_at: usize = sym_off - link_off;
+  let str_at: usize = str_off - link_off;
+  if (sym_at > link_size || count > (link_size - sym_at) / 16) {
+    return 0;
+  }
+  if (str_at > link_size || str_size > link_size - str_at) {
+    return 0;
+  }
+  let table: usize = im + link_at + sym_at;
+  // macho_sym_order sorts native text symbols by address, then by name.
+  let lo: usize = 0;
+  let hi: usize = count;
+  while (lo < hi) {
+    let mid: usize = lo + (hi - lo) / 2;
+    let value: usize = __load_i64(table + mid * 16 + 8) as usize;
+    if (value <= address) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  if (lo == 0) {
+    return 0;
+  }
+  let symbol: usize = table + (lo - 1) * 16;
+  if ((__load_u8(symbol + 4) & 238) != 14 || __load_u8(symbol + 5) != 1) {
+    return 0;
+  }
+  let name: usize = __fern_profile_macho_u32(symbol);
+  if (name == 0 || name >= str_size) {
+    return 0;
+  }
+  let strings: usize = im + link_at + str_at;
+  let p: usize = strings + name;
+  let q: usize = p;
+  while (q < strings + str_size && __load_u8(q) != 0) {
+    q = q + 1;
+  }
+  if (q == strings + str_size || q == p) {
+    return 0;
+  }
+  return p;
+}

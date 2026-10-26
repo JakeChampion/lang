@@ -1,0 +1,9 @@
+function __fern_task_blank(): usize {
+  let rec: usize = __alloc(96);
+  let w: i32 = 0;
+  while (w < 12) {
+    __raw_store_ptr(rec, w, 0 as usize);
+    w = w + 1;
+  }
+  return rec;
+}

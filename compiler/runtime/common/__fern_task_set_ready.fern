@@ -1,0 +1,5 @@
+function __fern_task_set_ready(id: i32, w: i32): i32 {
+  let rec: usize = __fern_task_rec(id);
+  __raw_store_ptr(rec, 2, w as usize);
+  return 0;
+}

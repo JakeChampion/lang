@@ -1,0 +1,71 @@
+function __fern_remove_dir_all(path: string): Result[void, IoError] {
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, path[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let fd: i32 = __syscall3(463, -2, pathz as i64, 1048576) as i32;
+  if (fd < 0) {
+    let e: i32 = 0 - fd;
+    if (e == 20) {
+      __syscall3(472, -2, pathz as i64, 0);
+    }
+    let pathz_own0: string = __raw_string(pathz, plen + 1);
+    if (e == 2) {
+      return Ok(());
+    }
+    if (e == 20) {
+      return Ok(());
+    }
+    return Err(__fern_io_error(e, __fern_path_copy(pathz_own0, plen)));
+  }
+  let basep: usize = __raw_alloc(8);
+  let done: i32 = 0;
+  while (done == 0) {
+    let buf: usize = __raw_alloc(65536);
+    let n: i32 = __syscall4(344, fd as i64, buf as i64, 65536, basep as i64) as i32;
+    if (n <= 0) {
+      done = 1;
+    } else {
+      let pos: i32 = 0;
+      while (pos < n) {
+        let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256;
+        let nlen: i32 = __raw_load8(buf, pos + 18) + __raw_load8(buf, pos + 19) * 256;
+        let skip: i32 = 0;
+        if (nlen == 1) {
+          if (__raw_load8(buf, pos + 21) == 46) {
+            skip = 1;
+          }
+        }
+        if (nlen == 2) {
+          if (__raw_load8(buf, pos + 21) == 46) {
+            if (__raw_load8(buf, pos + 21 + 1) == 46) {
+              skip = 1;
+            }
+          }
+        }
+        if (skip == 0) {
+          let cl: i32 = plen + 1 + nlen;
+          let cb: usize = __raw_alloc(cl);
+          __memcpy(cb, __raw_data(path), plen);
+          __raw_store8(cb, plen, 47);
+          __memcpy(cb + plen + 1, buf + pos + 21, nlen);
+          match (__fern_remove_dir_all(__raw_string(cb, cl))) {
+            Ok(_) => {},
+            Err(_) => {}
+          }
+        }
+        pos = pos + reclen;
+      }
+    }
+    let buf_own: string = __raw_string(buf, 65536);
+  }
+  let basep_own: string = __raw_string(basep, 8);
+  __syscall3(6, fd as i64, 0, 0);
+  __syscall3(472, -2, pathz as i64, 128);
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  return Ok(());
+}
