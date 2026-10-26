@@ -1,0 +1,53 @@
+name: Review when green
+
+# Pullfrog reviews a pull request only once Lint and Preflight are green.
+# The app dispatches pullfrog.yml on the push, about ten minutes before the
+# fast tier reports. The gate in pullfrog.yml defers a review whose CI run
+# has not completed: it saves the dispatch inputs in the Actions cache under
+# a key that names the head.
+#
+# This workflow runs when that CI run completes.
+# On a green pull-request run it restores the inputs and dispatches
+# pullfrog.yml again with them. A red or cancelled run gets no review. The
+# push that fixes it brings a new one. A head with nothing deferred does
+# nothing here.
+#
+# The cache keeps one deferred review per head, the newest one. A whole-PR
+# review and an incremental review of the same head read the same diff.
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    name: Dispatch the deferred review
+    if: github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/cache/restore@v6
+        id: deferred
+        with:
+          path: deferred-review
+          key: pullfrog-deferred-${{ github.event.workflow_run.head_sha }}-
+          restore-keys: |
+            pullfrog-deferred-${{ github.event.workflow_run.head_sha }}-
+      - name: Dispatch pullfrog.yml with the saved inputs
+        if: steps.deferred.outputs.cache-matched-key != ''
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require("fs");
+            const { prompt, name } = JSON.parse(fs.readFileSync("deferred-review/review.json", "utf8"));
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner, repo: context.repo.repo, workflow_id: "pullfrog.yml",
+              ref: context.payload.repository.default_branch, inputs: { prompt, name },
+            });
+            const head = context.payload.workflow_run.head_sha.slice(0, 8);
+            core.notice(`dispatched the deferred review ${JSON.stringify(name)}: the fast tier is green on ${head}`);

@@ -162,6 +162,15 @@ function main(): i32 {
   if (row_caps(caps.analyze(shadow, app_pkgs(true, ["fs"])), "helper") != "-") {
     return 20;
   }
+  let other: parser.Module = parse("struct Pad { n: i32 }\n"
+    + "struct Disk { n: i32 }\n"
+    + "function main(): i32 { return 0; }\n"
+    + "function helper__probe(p: Pad): void { p.save(); }\n"
+    + "function (p: Pad) save(): void { }\n"
+    + "function (d: Disk) save(): void { write_file(\"/tmp/x\", \"y\"); }\n");
+  if (row_caps(caps.analyze(other, app_pkgs(true, ["fs"])), "helper") != "-") {
+    return 21;
+  }
 
   if (caps.enforce(granted, app_pkgs(true, ["fs"])).len() != 0) {
     return 30;

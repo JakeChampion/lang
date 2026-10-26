@@ -417,6 +417,29 @@ function emit_inner_mul_add_f64(s: asmcore.EmitState): asmcore.EmitState {
   return s.need("heap");
 }
 
+// cmhi compares two words at a time as unsigned, and each lane of the mask it
+// gives is -1 or 0, so subtracting the masks counts the words below.
+function emit_count_below_u64_arm64(s: asmcore.EmitState): asmcore.EmitState {
+  let lo1: asmcore.LabelOut = asmcore.fresh_label(s);
+  let c_vec: string = lo1.name;
+  let lo2: asmcore.LabelOut = asmcore.fresh_label(lo1.state);
+  let c_tail: string = lo2.name;
+  let lo3: asmcore.LabelOut = asmcore.fresh_label(lo2.state);
+  let c_done: string = lo3.name;
+  s = lo3.state;
+  s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
+  s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n    mov x2, #0\n");
+  s = s.write("    dup v1.2d, x1\n    eor v3.16b, v3.16b, v3.16b\n");
+  s = s.write(c_vec + ":\n    sub x4, x3, x2\n    cmp x4, #2\n    b.lt " + c_tail + "\n");
+  s = s.write("    add x5, x0, x2, lsl #3\n    ld1 {v0.2d}, [x5]\n");
+  s = s.write("    cmhi v0.2d, v1.2d, v0.2d\n    sub v3.2d, v3.2d, v0.2d\n");
+  s = s.write("    add x2, x2, #2\n    b " + c_vec + "\n");
+  s = s.write(c_tail + ":\n    umov x7, v3.d[0]\n    umov x4, v3.d[1]\n    add x7, x7, x4\n");
+  s = s.write("    cmp x2, x3\n    b.ge " + c_done + "\n");
+  s = s.write("    add x5, x0, x2, lsl #3\n    ldr x4, [x5]\n    cmp x4, x1\n    cinc x7, x7, lo\n");
+  return s.write(c_done + ":\n    str x7, [sp, #-16]!\n");
+}
+
 function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 384 || o.kind_tag == 385) {
     let reg: string = "x" + util.i32_to_string(o.i32_imm + 1);
@@ -625,6 +648,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(c_next + ":\n    add x5, x5, #1\n    b " + c_tail + "\n");
     s = s.write(c_done + ":\n    str x7, [sp, #-16]!\n");
     return s;
+  }
+  if (o.kind_tag == 482) {
+    return emit_count_below_u64_arm64(s);
   }
   if (o.kind_tag == 322) {
     let flo: asmcore.LabelOut = asmcore.fresh_label(s);

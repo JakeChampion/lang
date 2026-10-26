@@ -113,3 +113,23 @@ The native image CI job runs the same script and uploads that record.
 Unavailable cgroup controls cause failure, not a skipped qualification.
 The [committed record](../benchmarks/results/worker-isolation-m4.json) preserves one local observation set.
 Kernel charge and elapsed observations can vary between runs.
+
+## Failed qualification evidence
+
+Issue #13486 preserves worker evidence when a qualification assertion fails.
+The record includes the selected exit state, controls, worker output, completed samples, and the failed sample.
+The collector records cleanup outcomes before it writes the file.
+It also records a later state observation for diagnosis.
+That later observation cannot waive the original assertion failure.
+
+A record with `status: failed` is incomplete evidence, not a passing qualification.
+The script still exits with failure.
+CI uploads an available record after failure, without changes to the test result or subsequent validation steps.
+The OOM, leak, deadline, pressure, source-immutability, and cleanup checks retain their existing conditions.
+Records contain selected state fields rather than Docker environment or credential configuration.
+
+Eight local fault-injection cases check strict OOM signals, missing state, leak rejection, failed-record output, and cleanup.
+A delayed mock OOM flag still produces a failure and preserves both observations.
+These unit cases do not identify the cause of the intermittent CI OOM assertion.
+Actual Docker qualification remains a separate test with the original controls.
+Historical committed records retain their original schema, source hashes, and scope.

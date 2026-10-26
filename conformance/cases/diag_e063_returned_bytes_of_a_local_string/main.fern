@@ -1,0 +1,35 @@
+// `as_bytes` views the string it is called on, so the bytes of a local string may not outlive the function.
+import "std/string";
+struct H { bytes: [u8] }
+
+function local_bytes(): [u8] {
+  let s: string = "a" + args()[0];
+  return s.as_bytes();
+}
+
+function in_struct(): H {
+  let s: string = "a" + args()[0];
+  return H { bytes: s.as_bytes() };
+}
+
+function sliced(): [u8] {
+  let s: string = "ab" + args()[0];
+  return s.as_bytes()[1:];
+}
+
+function of_param(s: string): [u8] {
+  return s.as_bytes();
+}
+
+function through_call(): [u8] {
+  let s: string = "a" + args()[0];
+  return of_param(s);
+}
+
+function of_literal(): [u8] {
+  return "abc".as_bytes();
+}
+
+function main(): i32 {
+  return of_literal().len();
+}

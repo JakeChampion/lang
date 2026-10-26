@@ -23,6 +23,12 @@ def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+class WorkerFailure(RuntimeError):
+    def __init__(self, message, observation):
+        self.observation = observation
+        super().__init__(message)
+
+
 class Docker:
     def __init__(self):
         self.env = os.environ.copy()
@@ -38,7 +44,9 @@ class Docker:
 
 
 def state_fields(info):
-    return {key: info["State"][key] for key in ["Status", "Running", "Pid", "OOMKilled", "ExitCode", "Error"]}
+    state = {key: info["State"][key] for key in ["Status", "Running", "Pid", "OOMKilled", "ExitCode", "Error"]}
+    state.update({key: info["State"].get(key) for key in ["StartedAt", "FinishedAt"]})
+    return state
 
 
 def check_controls(info):
@@ -67,8 +75,10 @@ def run_worker(docker, tag, mode, repeat):
                             "--security-opt=no-new-privileges", "--network=none", "--cgroupns=private",
                             tag, mode).stdout.strip()
     removed = False
+    observation = {"repeat": repeat, "mode": mode, "removed": False}
     try:
         controls = check_controls(docker.inspect(container))
+        observation["controls"] = controls
         start = time.monotonic()
         docker.call("start", container)
         deadline_start = None
@@ -93,6 +103,11 @@ def run_worker(docker, tag, mode, repeat):
         info = docker.inspect(container)
         state = state_fields(info)
         logs = docker.call("logs", container)
+        observation.update({"state": state, "collector_killed": timed_out,
+                            "deadline_seconds_after_ready_observation": DEADLINE if deadline_start else None,
+                            "observed_seconds_ready_to_stopped": stopped - deadline_start if deadline_start else None,
+                            "observed_seconds_start_to_stopped": stopped - start,
+                            "stdout": logs.stdout, "stderr": logs.stderr})
         if state["Running"] or state["Pid"] != 0 or state["Error"]:
             raise RuntimeError("worker did not stop cleanly")
         if mode == "oom":
@@ -114,17 +129,28 @@ def run_worker(docker, tag, mode, repeat):
             if not peaks or min(peaks) < 48 * 1024 * 1024:
                 raise RuntimeError("retained images did not produce the expected cgroup charge")
         docker.call("rm", container)
-        removed = True
         if docker.call("inspect", container, check=False).returncode == 0:
             raise RuntimeError("container remains after removal")
-        return {"repeat": repeat, "mode": mode, "controls": controls, "state": state,
-                "deadline_seconds_after_ready_observation": DEADLINE if deadline_start else None,
-                "observed_seconds_ready_to_stopped": stopped - deadline_start if deadline_start else None,
-                "observed_seconds_start_to_stopped": stopped - start, "collector_killed": timed_out,
-                "removed": True, "stdout": logs.stdout, "stderr": logs.stderr}
+        removed = True
+        observation.update({"status": "passed", "removed": True})
+        return observation
+    except Exception as error:
+        observation.update({"status": "failed", "failure": str(error), "failure_type": type(error).__name__})
+        try:
+            observation["state_after_failure"] = state_fields(docker.inspect(container))
+        except Exception as diagnostic_error:
+            observation["diagnostic_error_type"] = type(diagnostic_error).__name__
+        message = str(error) + " " + json.dumps({key: observation.get(key) for key in ["repeat", "mode", "state", "collector_killed"]})
+        raise WorkerFailure(message, observation) from error
     finally:
         if not removed:
-            docker.call("rm", "-f", container, check=False)
+            try:
+                cleanup = docker.call("rm", "-f", container, check=False)
+                observation["removed"] = cleanup.returncode == 0
+                if cleanup.returncode != 0:
+                    observation["cleanup_error"] = cleanup.stderr
+            except Exception as cleanup_error:
+                observation["cleanup_error_type"] = type(cleanup_error).__name__
 
 
 def main():
@@ -148,31 +174,48 @@ def main():
     tag = "fern-image-worker-qualification:" + uuid.uuid4().hex
     built = False
     samples = []
+    record = {
+        "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
+        "compiler_version": subprocess.check_output([str(compiler), "-version"], text=True).strip(),
+        "host": platform.platform(), "daemon": daemon, "image_id": None, "dockerfile": DOCKERFILE,
+        "docker_cli_sha256": digest(Path(shutil.which("docker"))), "sha256": hashes,
+        "flags": "-target x86-64-linux with FERN_LEAKCHECK=1, no quarantine",
+        "concurrency": 1, "samples": samples, "status": "failed",
+        "limitations": "This record tests a disposable native worker fixture and a local Docker controller. It does not implement a production worker pool. A 64 MiB cgroup memory.max is a kernel control, not an exact RSS or allocator bound. Kernel memory.peak observations differ from RSS. CPU quota limits bandwidth, not elapsed time. The external controller polls after a ready observation and kills a timed worker. It does not promise an exact deadline. Forced kills do not run Fern destructors or a leak census. Later valid workers prove fresh-process recovery, not recovery inside the killed process. Collector, Docker daemon, simultaneous workers, and aggregate service memory remain outside each worker limit. The record does not qualify malicious inputs, production safety, codec compatibility, or performance parity. An incomplete record is not a passing qualification. Later state observations are diagnostic only.",
+    }
     try:
         with tempfile.TemporaryDirectory() as context:
             shutil.copy(binary, Path(context) / "worker")
             (Path(context) / "Dockerfile").write_text(DOCKERFILE)
             image = docker.call("build", "--network=none", "-q", "-t", tag, context, timeout=60).stdout.strip()
+            record["image_id"] = image
             built = True
         for repeat in range(3):
             for mode in ["valid", "oom", "valid", "busy", "valid", "pressure-busy", "valid", "pressure-cancel", "valid"]:
                 samples.append(run_worker(docker, tag, mode, repeat))
                 print("passed repeat=" + str(repeat) + " mode=" + mode, flush=True)
+    except BaseException as error:
+        if isinstance(error, WorkerFailure):
+            samples.append(error.observation)
+        record["failure"] = {"type": type(error).__name__, "message": str(error)}
+        raise
     finally:
-        if built:
-            docker.call("image", "rm", tag)
-    if hashes != {name: digest(path) for name, path in paths.items()}:
-        raise SystemExit("worker sources or tools changed")
-    record = {
-        "source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
-        "compiler_version": subprocess.check_output([str(compiler), "-version"], text=True).strip(),
-        "host": platform.platform(), "daemon": daemon, "image_id": image, "dockerfile": DOCKERFILE,
-        "docker_cli_sha256": digest(Path(shutil.which("docker"))), "sha256": hashes,
-        "flags": "-target x86-64-linux with FERN_LEAKCHECK=1, no quarantine",
-        "concurrency": 1, "samples": samples,
-        "limitations": "This record tests a disposable native worker fixture and a local Docker controller. It does not implement a production worker pool. A 64 MiB cgroup memory.max is a kernel control, not an exact RSS or allocator bound. Kernel memory.peak observations differ from RSS. CPU quota limits bandwidth, not elapsed time. The external controller polls after a ready observation and kills a timed worker. It does not promise an exact deadline. Forced kills do not run Fern destructors or a leak census. Later valid workers prove fresh-process recovery, not recovery inside the killed process. Collector, Docker daemon, simultaneous workers, and aggregate service memory remain outside each worker limit. The record does not qualify malicious inputs, production safety, codec compatibility, or performance parity.",
-    }
-    output.write_text(json.dumps(record, indent=2) + "\n")
+        try:
+            if built:
+                docker.call("image", "rm", tag)
+            record["sources_unchanged"] = hashes == {name: digest(path) for name, path in paths.items()}
+            if not record["sources_unchanged"]:
+                raise RuntimeError("worker sources or tools changed")
+            if "failure" not in record:
+                record["status"] = "complete"
+        except BaseException as finalization_error:
+            record["status"] = "failed"
+            record["finalization_error_type"] = type(finalization_error).__name__
+            if "failure" not in record:
+                record["failure"] = {"type": type(finalization_error).__name__, "message": str(finalization_error)}
+                raise
+        finally:
+            output.write_text(json.dumps(record, indent=2) + "\n")
 
 
 if __name__ == "__main__":

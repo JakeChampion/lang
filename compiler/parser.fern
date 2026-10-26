@@ -9809,14 +9809,29 @@ function method_param_spellings(c: ast.ExprCall, fa: ast.ExprFieldAccess, env: M
 }
 
 function mono_call_args(c: ast.ExprCall, env: MEnv, funcs: MFns, ins: Insts): (ast.Expr[], Insts) {
-  let nargs: ast.Expr[] = [];
-  let cur: Insts = ins;
   let pspell: string[] = [];
   if (call_args_want_expected(c, env, funcs)) {
     pspell = call_param_spellings(c, env, funcs);
   }
-  let i: i32 = 0;
-  while (i < c.args.len()) {
+  return mono_args_spelled(c, pspell, env, funcs, ins);
+}
+
+// The arguments of a call to fd whose instance key is known, so that an argument's
+// expected type can use a type parameter bound by the call's destination.
+function mono_keyed_args(c: ast.ExprCall, fd: FuncDecl, key: string, env: MEnv, funcs: MFns, ins: Insts): (ast.Expr[], Insts) {
+  let pspell: string[] = [];
+  if (call_args_want_expected(c, env, funcs)) {
+    for p in fd.params {
+      pspell = pspell.append(subst_ty(param_spelling(p), fd.type_params, split_inst_key(key)));
+    }
+  }
+  return mono_args_spelled(c, pspell, env, funcs, ins);
+}
+
+function mono_args_spelled(c: ast.ExprCall, pspell: string[], env: MEnv, funcs: MFns, ins: Insts): (ast.Expr[], Insts) {
+  let nargs: ast.Expr[] = [];
+  let cur: Insts = ins;
+  for i in 0..c.args.len() {
     let ra: RExpr = RExpr { rexpr: c.args[i], rins: cur };
     if (i < pspell.len() && arg_wants_expected(c.args[i], env, funcs) && (type_str_vars(pspell[i], []).len() == 0 || generic_fn_value_name(c.args[i], env, funcs).len() > 0)) {
       ra = mono_call_expected(c.args[i], pspell[i], env, funcs, cur);
@@ -9825,7 +9840,6 @@ function mono_call_args(c: ast.ExprCall, env: MEnv, funcs: MFns, ins: Insts): (a
     }
     cur = ra.rins;
     nargs = nargs.append(ra.rexpr);
-    i = i + 1;
   }
   return (nargs, cur);
 }
@@ -10475,7 +10489,7 @@ function mono_named_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: M
     return explicit;
   }
   let result: string = call_ret_type(funcs, name, c.args, env);
-  if (result.len() == 0) {
+  if (result.len() == 0 && !uninferred_generic_ret(funcs, name)) {
     result = func_ret_of(funcs.decls, name);
   }
   if (result.len() == 0) {
@@ -10485,6 +10499,12 @@ function mono_named_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: M
     return stamped_type(c.ty);
   }
   return result;
+}
+
+// A generic function's written result names its own type parameters, which are not this call's types.
+function uninferred_generic_ret(funcs: MFns, name: string): boolean {
+  let at: i32 = bg_find(funcs, name);
+  return at >= 0 && spelling_mentions_tparam(funcs.decls[at].ret_type, funcs.decls[at].type_params);
 }
 
 function explicit_call_ret(c: ast.ExprCall, name: string, funcs: MFns): string {
@@ -10957,17 +10977,7 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
       return RExpr { rexpr: ast.ExprFieldAccess { ...fa, obj: o.rexpr }, rins: o.rins };
     },
     ast.ExprStructLit(s) => {
-      let vals: ast.Expr[] = [];
-      let cur: Insts = ins;
-      let i: i32 = 0;
-      while (i < s.field_values.len()) {
-        let rv: RExpr = mono_call_expected(s.field_values[i], lit_field_spelling(funcs, s.type_name, s.written, s.field_names[i]), env, funcs, cur);
-        cur = rv.rins;
-        vals = vals.append(rv.rexpr);
-        i = i + 1;
-      }
-      let rb: RExpr = mono_expr(s.base, env, funcs, cur);
-      return RExpr { rexpr: ast.ExprStructLit { ...s, field_values: vals, base: rb.rexpr }, rins: rb.rins };
+      return mono_struct_lit(s, s.written, env, funcs, ins);
     },
     ast.ExprLambda(lm) => {
       let bodyr: RStmts = mono_stmts(lm.body, bind_params(env, lm.params), funcs, ins, "");
@@ -10978,6 +10988,21 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
     }
   }
   return RExpr { rexpr: e, rins: ins };
+}
+
+// written is the literal's type with its type arguments, as the program writes it or as its destination gives it.
+function mono_struct_lit(s: ast.ExprStructLit, written: string, env: MEnv, funcs: MFns, ins: Insts): RExpr {
+  let vals: ast.Expr[] = [];
+  let cur: Insts = ins;
+  let i: i32 = 0;
+  while (i < s.field_values.len()) {
+    let rv: RExpr = mono_call_expected(s.field_values[i], lit_field_spelling(funcs, s.type_name, written, s.field_names[i]), env, funcs, cur);
+    cur = rv.rins;
+    vals = vals.append(rv.rexpr);
+    i = i + 1;
+  }
+  let rb: RExpr = mono_expr(s.base, env, funcs, cur);
+  return RExpr { rexpr: ast.ExprStructLit { ...s, field_values: vals, base: rb.rexpr }, rins: rb.rins };
 }
 
 function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFns, ins: Insts): RExpr {
@@ -10996,7 +11021,7 @@ function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFn
                 key = infer_inst_ret(funcs.decls[bi], c.args, expected, env, funcs);
               }
               if (key.len() > 0) {
-                let (nargs, cur) = mono_call_args(c, env, funcs, ins);
+                let (nargs, cur) = mono_keyed_args(c, funcs.decls[bi], key, env, funcs, ins);
                 let mang: string = cid.name + "__" + sanitize_key(key);
                 cur = cur.iadd(cid.name, key);
                 return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { ...cid, name: mang }, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: cur };
@@ -11014,7 +11039,7 @@ function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFn
                     qkey = infer_inst_ret(funcs.decls[bq], c.args, expected, env, funcs);
                   }
                   if (qkey.len() > 0) {
-                    let (qargs, qcur) = mono_call_args(c, env, funcs, ins);
+                    let (qargs, qcur) = mono_keyed_args(c, funcs.decls[bq], qkey, env, funcs, ins);
                     qcur = qcur.iadd(qn, qkey);
                     return RExpr { rexpr: ast.ExprCall { callee: ast.ExprFieldAccess { ...fac, field: fac.field + "__" + sanitize_key(qkey) }, args: qargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: qcur };
                   }
@@ -11024,6 +11049,11 @@ function mono_call_expected(e: ast.Expr, expected: string, env: MEnv, funcs: MFn
             }
           },
           _ => {}
+        }
+      },
+      ast.ExprStructLit(sl) => {
+        if (sl.written.len() == 0 && type_args_of(expected).len() > 0 && strip_struct_base(expected) == strip_struct_base(sl.type_name)) {
+          return mono_struct_lit(sl, expected, env, funcs, ins);
         }
       },
       _ => {}

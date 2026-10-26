@@ -4618,6 +4618,9 @@ function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   if (ins.str == "__count_byte_bytes") {
     return emit(r, ir.packed(ir.op_count_byte_bytes()));
   }
+  if (ins.str == "__count_below_u64") {
+    return emit(r, ir.op_count_below_u64());
+  }
   if (ins.str == "__sum_bytes_array") {
     return emit(r, ir.op_call_direct(ssabytes.sum_name(), 1));
   }

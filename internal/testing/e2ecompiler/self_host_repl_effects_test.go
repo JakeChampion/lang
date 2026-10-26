@@ -203,6 +203,34 @@ function main(): i32 {
 		t.Errorf("a call through a function field is not charged:\n%s", out)
 	}
 
+	sameName := `struct Quiet { n: i32 }
+
+struct Loud { path: string }
+
+function (q: Quiet) log(msg: string): void {
+}
+
+function (l: Loud) log(msg: string): void {
+  match (write_file(l.path, msg)) {
+    Ok(_) => {},
+    Err(_) => {}
+  }
+}
+
+function save(): void {
+  let q: Quiet = Quiet { n: 1 };
+  q.log("x");
+}
+
+function main(): i32 {
+  save();
+  return 0;
+}
+`
+	if out, _ := effectsRun(t, sameName); !strings.Contains(out, "Loud.log  fs") || strings.Contains(out, "save  fs") {
+		t.Errorf("a method call is charged with another type's method of the same name:\n%s", out)
+	}
+
 	if out, code := effectsRun(t, "function main(): i32 { return \"s\"; }\n"); code != 1 || !strings.Contains(out, "error[E002]") {
 		t.Errorf("exit %d\n%s", code, out)
 	}

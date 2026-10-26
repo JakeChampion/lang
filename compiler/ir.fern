@@ -551,6 +551,11 @@ pub function op_count_byte_bytes(): Op {
   return op0(359);
 }
 
+// The number of words of a u64 array below a word, in unsigned order.
+pub function op_count_below_u64(): Op {
+  return op0(482);
+}
+
 pub function op_sum_bytes_array(): Op {
   return op0(368);
 }
@@ -3369,6 +3374,9 @@ function kind_id_len14(name: string): i32 {
 }
 
 function kind_id_len15(name: string): i32 {
+  if (name == "count_below_u64") {
+    return 482;
+  }
   if (name == "lsetxattr_bytes") {
     return 377;
   }
@@ -4708,6 +4716,9 @@ pub function kind_name(id: i32): string {
   if (id == 359) {
     return "count_byte_bytes";
   }
+  if (id == 482) {
+    return "count_below_u64";
+  }
   if (id == 358) {
     return "memchr_bytes";
   }
@@ -4853,7 +4864,7 @@ function pops2_kernel(t: i32): boolean {
 }
 
 function pops2_mem(t: i32): boolean {
-  return t == 359 || t == 72 || t == 73 || t == 199
+  return t == 359 || t == 482 || t == 72 || t == 73 || t == 199
     || t == 78
     || t == 83 || t == 85 || t == 86 || t == 223
     || t == 88
@@ -7076,7 +7087,7 @@ pub function op_allocates(tag: i32): boolean {
 
 // fern-lint: allow cyclomatic-complexity
 pub function is_str_op_kind(tag: i32): boolean {
-  return tag == 385 || tag == 384 || tag == 383 || tag == 382 || tag == 381 || tag == 380 || tag == 373 || tag == 368 || tag == 369 || tag == 361 || tag == 379 || tag == 378 || tag == 360 || tag == 359 || tag == 358 || tag == 97 || tag == 101 || tag == 102
+  return tag == 385 || tag == 384 || tag == 383 || tag == 382 || tag == 381 || tag == 380 || tag == 373 || tag == 368 || tag == 369 || tag == 361 || tag == 379 || tag == 378 || tag == 360 || tag == 359 || tag == 482 || tag == 358 || tag == 97 || tag == 101 || tag == 102
     || tag == 104 || tag == 105 || tag == 106
     || tag == 107 || tag == 108 || tag == 109
     || tag == 111 || tag == 113 || tag == 98

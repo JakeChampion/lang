@@ -51,6 +51,16 @@ jobs:
       # name has no PR number is left alone. A newer run supersedes only one
       # of the same kind, so a whole-PR review is never dropped for an
       # incremental one.
+      #
+      # A REVIEW RUNS ONLY ONCE THE FAST TIER IS GREEN. The app dispatches a
+      # review on the push, ten minutes before Lint and Preflight report. A
+      # red head gets no review: its author pushes a fix, and that push brings
+      # a new review.
+      #
+      # A head whose tier is still running is DEFERRED. The inputs go to the
+      # Actions cache under a key that names the head. When the CI run
+      # completes green, review-when-green.yml restores them and dispatches
+      # this workflow again with them. No runner waits.
       - name: Skip a review nobody will read
         id: gate
         uses: actions/github-script@v9
@@ -75,6 +85,21 @@ jobs:
             if (pr.state === "closed") {
               return skip(`#${number} is ${pr.merged_at ? "merged" : "closed"}, so nobody is waiting on this review`);
             }
+            const ciRuns = (await github.rest.actions.listWorkflowRuns({
+              owner, repo, workflow_id: "ci.yml", event: "pull_request", head_sha: pr.head.sha, per_page: 20,
+            })).data.workflow_runs.sort((a, b) => Date.parse(b.created_at) - Date.parse(a.created_at));
+            const ci = ciRuns[0];
+            if (!ci || ci.status !== "completed") {
+              core.setOutput("skip", "true");
+              core.setOutput("defer", "true");
+              core.setOutput("cache_key", `pullfrog-deferred-${pr.head.sha}-${context.runId}`);
+              core.notice(`review deferred: #${number}'s CI at ${pr.head.sha.slice(0, 8)} is ${ci ? ci.status : "not started"}; review-when-green.yml dispatches it again once the fast tier is green`);
+              await core.summary.addHeading("Review deferred", 3).addRaw(`The fast tier has not reported on ${pr.head.sha.slice(0, 8)} yet.\n`).write();
+              return;
+            }
+            if (ci.conclusion !== "success") {
+              return skip(`#${number}'s CI at ${pr.head.sha.slice(0, 8)} concluded ${ci.conclusion}; the push that fixes it brings a new review`);
+            }
             const kind = name.replace(/\s*\[[^\]]*\]\s*$/, "").replace(/#\d+/, "#N");
             const { data: me } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: context.runId });
             for (const status of ["requested", "waiting", "pending", "queued", "in_progress"]) {
@@ -89,6 +114,19 @@ jobs:
               }
             }
             core.info(`#${number} is open and this is its newest ${JSON.stringify(kind)} run: reviewing`);
+      - name: Save the deferred review's inputs
+        if: steps.gate.outputs.defer == 'true'
+        env:
+          PROMPT: ${{ inputs.prompt }}
+          RUN_NAME: ${{ inputs.name }}
+        run: |
+          mkdir -p deferred-review
+          jq -n --arg prompt "$PROMPT" --arg name "$RUN_NAME" '{prompt: $prompt, name: $name}' > deferred-review/review.json
+      - uses: actions/cache/save@v6
+        if: steps.gate.outputs.defer == 'true'
+        with:
+          path: deferred-review
+          key: ${{ steps.gate.outputs.cache_key }}
       - name: Checkout code
         if: steps.gate.outputs.skip != 'true'
         uses: actions/checkout@v6

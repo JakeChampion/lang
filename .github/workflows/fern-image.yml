@@ -48,6 +48,7 @@ jobs:
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/worker-qualification.json') != ''
         with:
           name: image-worker-qualification
           path: fern-image/build/worker-qualification.json

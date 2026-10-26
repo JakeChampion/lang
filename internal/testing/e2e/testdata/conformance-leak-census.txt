@@ -132,6 +132,7 @@ byte_stream_and_async_channel                       0
 byte_view_of_a_field_after_a_failed_try              0
 byte_views_in_binary_codecs                         0
 byte_views_in_codecs                                0
+bytes_of_a_parameter_string_return                   0
 bytes_writer                                         0
 c2_consuming_reuse                                   0
 call_of_a_call_through_a_function_value              0
@@ -310,6 +311,7 @@ generic_box                                          0
 generic_call_binds_through_closure_array_param       0
 generic_call_in_struct_field                         0
 generic_call_infers_from_variant_argument            0
+generic_call_typed_by_its_destination                0
 generic_call_through_fn_value                        0
 generic_char_ordering                                0
 generic_enum_bound_dispatch                          0

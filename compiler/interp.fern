@@ -6004,6 +6004,23 @@ function call_count_byte_bytes(args: Value[]): Value {
   return v_err("__count_byte_bytes: first arg must be a byte array");
 }
 
+function call_count_below_u64(args: Value[]): Value {
+  if (args.len() != 2 || !is_int_like(args[1])) {
+    return v_err("__count_below_u64: expected 2 args (words, word)");
+  }
+  if let VArr(a) = args[0] {
+    let w: u64 = vint_as_i64(args[1]) as u64;
+    let count: i32 = 0;
+    for at in 0..arr_len(a) {
+      if (vint_as_i64(arr_at(a, at)) as u64 < w) {
+        count = count + 1;
+      }
+    }
+    return v_int(count);
+  }
+  return v_err("__count_below_u64: first arg must be a u64 array");
+}
+
 function byte_args(args: Value[]): u8[][] {
   let out: u8[][] = [];
   for a in args {
@@ -6980,6 +6997,9 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
   }
   if (name == "__count_byte_bytes") {
     return call_count_byte_bytes(args);
+  }
+  if (name == "__count_below_u64") {
+    return call_count_below_u64(args);
   }
   if (name == "__memchr_bytes") {
     return call_memchr_bytes(args);

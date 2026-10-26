@@ -2,6 +2,7 @@ import "./parser";
 import "./astwalk";
 import "./util";
 import "./capvocab";
+import "./treeshake";
 
 pub function capabilities(): string[] {
   return capvocab.capabilities();
@@ -259,23 +260,10 @@ pub function func_index(mod: parser.Module, name: string): i32 {
   return 0 - 1;
 }
 
-function analysis_want(mod: parser.Module): string[] {
+function analysis_want(): string[] {
   let want: string[] = [];
-  let bs: BuiltinCap[] = builtin_caps();
-  let i: i32 = 0;
-  while (i < bs.len()) {
-    want = want.append(bs[i].builtin);
-    i = i + 1;
-  }
-  let fi: i32 = 0;
-  while (fi < mod.funcs.len()) {
-    if (mod.funcs[fi].receiver_type.len() > 0) {
-      let sn: string = util.mangled_name(mod.funcs[fi].name);
-      if (!util.has_str(want, sn)) {
-        want = want.append(sn);
-      }
-    }
-    fi = fi + 1;
+  for b in builtin_caps() {
+    want = want.append(b.builtin);
   }
   return want;
 }
@@ -324,44 +312,23 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
     }
     let ci: i32 = 0;
     while (ci < calls.len()) {
-      if (calls[ci].method) {
-        let mi: i32 = 0;
-        while (mi < mod.funcs.len()) {
-          if (mod.funcs[mi].receiver_type.len() > 0 && util.mangled_name(mod.funcs[mi].name) == calls[ci].name) {
-            if (!has_i32(order, mi)) {
-              order = order.append(mi);
-              parent = parent.append(qi);
-            }
-          }
-          mi = mi + 1;
-        }
-      } else {
-        let cap: string = capability_of(calls[ci].name);
-        if (cap.len() > 0 && !util.has_str(found_cap, cap)) {
-          found_cap = found_cap.append(cap);
-          found_at = found_at.append(qi);
-          found_builtin = found_builtin.append(calls[ci].name);
-        }
+      let cap: string = capability_of(calls[ci].name);
+      if (!calls[ci].method && cap.len() > 0 && !util.has_str(found_cap, cap)) {
+        found_cap = found_cap.append(cap);
+        found_at = found_at.append(qi);
+        found_builtin = found_builtin.append(calls[ci].name);
       }
       ci = ci + 1;
     }
 
-    let bound: string[] = [];
-    if (fd.receiver_name.len() > 0) {
-      bound = bound.append(fd.receiver_name);
-    }
-    for param in fd.params {
-      bound = bound.append(param.name);
-    }
-    let ids: string[] = astwalk.collect_free_idents(bound, fd.body, []);
-    let ii: i32 = 0;
-    while (ii < ids.len()) {
-      let fx: i32 = func_index(mod, ids[ii]);
-      if (fx >= 0 && !has_i32(order, fx)) {
-        order = order.append(fx);
+    let refs: treeshake.BodyRefs = treeshake.body_refs(fd);
+    let fi: i32 = 0;
+    while (fi < mod.funcs.len()) {
+      if (!has_i32(order, fi) && treeshake.refs_name(refs, mod.funcs[fi])) {
+        order = order.append(fi);
         parent = parent.append(qi);
       }
-      ii = ii + 1;
+      fi = fi + 1;
     }
     qi = qi + 1;
   }
@@ -402,7 +369,7 @@ function sort_rows(rows: Row[]): Row[] {
 }
 
 pub function analyze(mod: parser.Module, pkgs: Pkg[]): Row[] {
-  let want: util.NameIndex = util.name_index(analysis_want(mod));
+  let want: util.NameIndex = util.name_index(analysis_want());
   let names: string[] = [];
   let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
