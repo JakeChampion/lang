@@ -444,7 +444,7 @@ pub struct Sub {
   physical_enums: semrecords.Enum[],
   physical_finalizers: ssasem.Finalizer[],
   physical_origins: physicalbody.Origins,
-  rt_lower: (string) => physicalbody.Lowered,
+  rt_lower: (parser.Module) => physicalbody.Lowered,
   lifted: parser.Module,
   has_lifted: boolean,
   records: parser.StructDecl[],

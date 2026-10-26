@@ -1,0 +1,7 @@
+function __fern_set_process_group(pid: i32, pgid: i32): Result[void, IoError] {
+  let rc: i32 = __syscall3(154, pid as i64, pgid as i64, 0) as i32;
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  return Ok(());
+}

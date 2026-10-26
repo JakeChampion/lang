@@ -1,0 +1,3 @@
+function __fern_umask(mask: i32): i32 {
+  return __syscall3(95, mask as i64, 0, 0) as i32;
+}

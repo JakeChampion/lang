@@ -1,0 +1,3 @@
+function __fern_ring_ud(fd: i32, gen: i32): i64 {
+  return gen as i64 << 32 | fd as i64 & 4294967295 as i64;
+}

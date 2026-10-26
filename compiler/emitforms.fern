@@ -1,5 +1,6 @@
 import "./ircore";
 import "./parser";
+import "./rtmodule";
 import "./util";
 import "./wasm_ir";
 import "./watbin";
@@ -8,13 +9,12 @@ import "./wit_decode";
 import "./wit_fern_world";
 import "./wit_proxy_world";
 
-pub const HTTP_ENTRY_STUB: string = "\nimport \"std/wasi_http\";\n@export(\"wasi:http/incoming-handler@0.2.0\", \"handle\")\nfunction __wasi_http_handle(request: i32, response_out: i32): void { wasi_http.serve(request, response_out, handle); }\n";
-
-pub function entry_source(src: string, target: string): string {
+pub function entry_module(entry: parser.Module, target: string): parser.Module {
   if (target != "wasm32-wasi-http") {
-    return src;
+    return entry;
   }
-  return src + HTTP_ENTRY_STUB;
+  let stub = rtmodule.load_bound("compiler", "__wasi_http_handle", [], []);
+  return parser.Module { ...parser.merge_module(entry, stub), imports: util.append_all(entry.imports, stub.imports) };
 }
 
 // http_entry_refused is why a wasm32-wasi-http entry cannot be built, or a

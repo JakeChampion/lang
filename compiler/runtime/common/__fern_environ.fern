@@ -1,0 +1,26 @@
+function __fern_environ(): string[] {
+  let out: string[] = [];
+  let envp: usize = __raw_environ();
+  let idx: i32 = 0;
+  let done: i32 = 0;
+  while (done == 0) {
+    let entry: usize = __raw_load_ptr(envp, idx);
+    if (entry == 0) {
+      done = 1;
+    } else {
+      let n: i32 = 0;
+      while (__raw_load8(entry, n) != 0) {
+        n = n + 1;
+      }
+      let e: string = "";
+      if (n > 0) {
+        let b: usize = __raw_alloc(n);
+        __memcpy(b, entry, n);
+        e = __raw_string(b, n);
+      }
+      out = out.append(e);
+      idx = idx + 1;
+    }
+  }
+  return out;
+}

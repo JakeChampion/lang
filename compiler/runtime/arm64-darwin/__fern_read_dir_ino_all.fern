@@ -1,0 +1,50 @@
+function __fern_read_dir_ino_all(path: string): Result[DirEntry[], IoError] {
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, path[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let fd: i32 = __syscall3(463, -2, pathz as i64, 1048576) as i32;
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  if (fd < 0) {
+    return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen)));
+  }
+  let basep: usize = __raw_alloc(8);
+  let names: DirEntry[] = [];
+  let bad: i32 = 0;
+  let done: i32 = 0;
+  while (done == 0) {
+    let buf: usize = __raw_alloc(65536);
+    let n: i32 = __syscall4(344, fd as i64, buf as i64, 65536, basep as i64) as i32;
+    if (n <= 0) {
+      done = 1;
+      bad = n;
+    } else {
+      let pos: i32 = 0;
+      while (pos < n) {
+        let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256;
+        let nlen: i32 = __raw_load8(buf, pos + 18) + __raw_load8(buf, pos + 19) * 256;
+        if (__fern_utf8_valid(buf + pos + 21, nlen) == 0) {
+          bad = 0 - 92;
+          done = 1;
+          pos = n;
+        } else {
+          let nbuf: usize = __raw_alloc(nlen);
+          __memcpy(nbuf, buf + pos + 21, nlen);
+          names = names.append(DirEntry { name: __raw_string(nbuf, nlen), ino: __load_i64(buf + pos + 0), kind: __raw_load8(buf, pos + 20) as u32 << 12 });
+          pos = pos + reclen;
+        }
+      }
+    }
+    let buf_own: string = __raw_string(buf, 65536);
+  }
+  let basep_own: string = __raw_string(basep, 8);
+  __syscall3(6, fd as i64, 0, 0);
+  if (bad < 0) {
+    return Err(__fern_io_error(0 - bad, __fern_path_copy(pathz_own, plen)));
+  }
+  return Ok(names);
+}

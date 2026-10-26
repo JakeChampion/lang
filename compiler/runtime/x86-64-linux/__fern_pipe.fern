@@ -1,0 +1,5 @@
+function __fern_pipe(): Result[Pipe, IoError] {
+  let fds: usize = __raw_scratch(8);
+  let rc: i32 = __syscall3(293, fds as i64, 524288, 0) as i32;
+  return __fern_pipe_from(rc, __load_i32(fds), __load_i32(fds + 4));
+}

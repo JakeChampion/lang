@@ -8,6 +8,8 @@ import "../ssacreditabi" as abi;
 import "../semrecords";
 import "../ssasem";
 import "../asmcore";
+import "../rtmodule";
+import "../printer";
 import "../util";
 import "../lexer";
 import "../parser";
@@ -66,7 +68,7 @@ function graphs(selected: physicalbody.Lowered): ssa.SFunc[] {
 }
 
 function wrapper(src: string, exiting: boolean, state: asmcore.EmitState): void {
-  let selected = state.rt_lower(src);
+  let selected = state.rt_lower(parser.parse_module(lexer.tokenize(src)));
   parity(src, selected);
   require(selected.declarations.len() == 5 && selected.bodies.len() > selected.declarations.len(), 120);
   let sub = ircore.Sub { ...ircore.no_sub(), physical_contracts: selected.contracts, physical_records: selected.records, physical_enums: selected.enums, physical_finalizers: selected.finalizers };
@@ -83,7 +85,7 @@ function wrapper(src: string, exiting: boolean, state: asmcore.EmitState): void 
   for bad in [missing, records, finalizer] {
     require(!abi.check_wrapper_final(bad, fs, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"]).ok, 123);
   }
-  let unrelated = state.rt_lower("function identity(x: i64): i64 { return x; }");
+  let unrelated = state.rt_lower(parser.parse_module(lexer.tokenize("function identity(x: i64): i64 { return x; }")));
   require(unrelated.declarations.len() == 1 && unrelated.declarations[0] == "identity", 124);
   require(abi.check_wrapper_final(sub, fs, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"]).ok == !exiting, 125);
 }
@@ -92,14 +94,14 @@ pub function run(src: string, exiting: boolean): void {
   let application = semlower.driven(parser.parse_module(lexer.tokenize("")), "x86-64-linux");
   let state = asmcore.EmitState { ...asmcore.new_state(), rt_lower: application.sub.rt_lower };
   wrapper(src, exiting, state);
-  let raw = asmcore.rt_src_str_cmp();
-  let selected = state.rt_lower(raw);
+  let raw = printer.print_module(rtmodule.load("x86-64-linux", "__fern_str_cmp"));
+  let selected = state.rt_lower(parser.parse_module(lexer.tokenize(raw)));
   parity(raw, selected);
   require(selected.declarations.len() == 1 && selected.declarations[0] == "__fern_str_cmp", 126);
-  let empty = state.rt_lower("");
+  let empty = state.rt_lower(parser.parse_module(lexer.tokenize("")));
   require(empty.declarations.len() == 0 && empty.bodies.len() == 0, 127);
   let finalizing = "struct Token { n: i32 }\nstruct Other { n: i64 }\ntrait Drop { function drop(self: Self): void; }\nimpl Drop for Token { function drop(self: Self): void {} }\nimpl Drop for Other { function drop(self: Self): void {} }\nfunction read(own x: Token): i32 { return x.n; }\nfunction read_other(own x: Other): i64 { return x.n; }\n";
-  let owned = state.rt_lower(finalizing);
+  let owned = state.rt_lower(parser.parse_module(lexer.tokenize(finalizing)));
   parity(finalizing, owned);
   require(owned.finalizers.len() == 2 && owned.finalizers[0].receiver == "Token" && owned.finalizers[1].receiver == "Other", 128);
   for f in owned.finalizers {

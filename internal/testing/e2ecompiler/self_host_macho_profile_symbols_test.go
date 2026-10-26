@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
-	"path/filepath"
 	"testing"
 )
 
@@ -18,18 +17,7 @@ function main(): i32 { return probe(args().len()); }`, "arm64-darwin", "", "-g")
 	if err != nil {
 		t.Fatal(err)
 	}
-	dir := copySelfHostTree(t)
-	const driver = `import "./rtprofilemacho";
-function main(): i32 { print(rtprofilemacho.source()); return 0; }`
-	if err := os.WriteFile(filepath.Join(dir, "profile_symbols.fern"), []byte(driver), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gcc, runner := x86_64Tooling(t)
-	bin := buildSelfHostBin(t, gcc, dir, "profile_symbols.fern", "profile_symbols")
-	helpers, err := runX86_64Bin(runner, bin).CombinedOutput()
-	if err != nil {
-		t.Fatalf("template: %v\n%s", err, helpers)
-	}
+	helpers := []byte(internalRuntimeSource(t, "arm64-darwin", "__fern_profile_macho_u32 __fern_profile_macho_tag __fern_profile_macho_command __fern_profile_macho_image_size __fern_profile_name", 1, true))
 	for _, name := range []string{"native-layout", "extra-bss", "invalid-symbol-offset"} {
 		t.Run(name, func(t *testing.T) {
 			raw := bytes.Clone(file)

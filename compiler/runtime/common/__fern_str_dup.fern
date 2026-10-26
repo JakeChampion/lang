@@ -1,0 +1,9 @@
+function __fern_str_dup(h: string): string {
+  let n: i32 = h.len();
+  if (n == 0) {
+    return "";
+  }
+  let p: usize = __raw_alloc(n);
+  __memcpy(p, __raw_data(h), n);
+  return __raw_string(p, n);
+}

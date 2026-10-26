@@ -1,0 +1,13 @@
+function __fern_isatty(fd: i32): i32 {
+  let buf: usize = __raw_scratch(80);
+  if (__syscall3(54, fd as i64, 1074030202, buf as i64) == 0 as i64) {
+    if (__raw_load8(buf, 0) == 3 && __raw_load8(buf, 1) == 0 && __raw_load8(buf, 2) == 0 && __raw_load8(buf, 3) == 0) {
+      return 1;
+    }
+    return 0;
+  }
+  if (__syscall3(54, fd as i64, 1078490131, buf as i64) == 0 as i64) {
+    return 1;
+  }
+  return 0;
+}

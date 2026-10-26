@@ -1,0 +1,25 @@
+function __fern_pp_names(base: usize, out: usize, buf: usize, im: usize, size: usize): void {
+  let count: usize = __load_i64(base) as usize;
+  let i: usize = 0;
+  while (i < count) {
+    let row: usize = base + 160 + i * 528;
+    let depth: usize = __load_i64(row) as usize;
+    let k: usize = 0;
+    while (k < depth) {
+      let pc: usize = __load_i64(row + 16 + k * 8) as usize;
+      let name: usize = __fern_profile_name(pc, im, size);
+      if (name == 0) {
+        __fern_profile_hex_buf(buf, pc);
+        __fern_pp_message(out, 50, buf, 18);
+      } else {
+        let q: usize = name;
+        while (__load_u8(q) != 0) {
+          q = q + 1;
+        }
+        __fern_pp_message(out, 50, name, q - name);
+      }
+      k = k + 1;
+    }
+    i = i + 1;
+  }
+}

@@ -1,0 +1,66 @@
+function __fern_vdso_find(image: usize): usize {
+  if (image == 0 as usize) {
+    return 1 as usize;
+  }
+  if (__raw_load8(image, 0) != 127 || __raw_load8(image, 1) != 69 || __raw_load8(image, 2) != 76 || __raw_load8(image, 3) != 70 || __raw_load8(image, 4) != 2) {
+    return 1 as usize;
+  }
+  let base: i64 = image as i64;
+  let phoff: i64 = __load_i64(image + 32);
+  let phsize: i32 = __raw_load8(image, 54) + __raw_load8(image, 55) * 256;
+  let phnum: i32 = __raw_load8(image, 56) + __raw_load8(image, 57) * 256;
+  let bias: i64 = 0 as i64;
+  let loaded: boolean = false;
+  let dynv: i64 = 0 as i64;
+  let i: i32 = 0;
+  while (i < phnum) {
+    let ph: i64 = base + phoff + (i * phsize) as i64;
+    let kind: i32 = __load_i32(ph as usize);
+    if (kind == 1 && !loaded) {
+      bias = base + __load_i64((ph + 8 as i64) as usize) - __load_i64((ph + 16 as i64) as usize);
+      loaded = true;
+    }
+    if (kind == 2) {
+      dynv = __load_i64((ph + 16 as i64) as usize);
+    }
+    i = i + 1;
+  }
+  if (!loaded || dynv == 0 as i64) {
+    return 1 as usize;
+  }
+  let d: i64 = bias + dynv;
+  let strtab: i64 = 0 as i64;
+  let symtab: i64 = 0 as i64;
+  let hash: i64 = 0 as i64;
+  let tag: i64 = __load_i64(d as usize);
+  while (tag != 0 as i64) {
+    let val: i64 = __load_i64((d + 8 as i64) as usize);
+    if (tag == 4 as i64) {
+      hash = bias + val;
+    }
+    if (tag == 5 as i64) {
+      strtab = bias + val;
+    }
+    if (tag == 6 as i64) {
+      symtab = bias + val;
+    }
+    d = d + 16 as i64;
+    tag = __load_i64(d as usize);
+  }
+  if (hash == 0 as i64 || strtab == 0 as i64 || symtab == 0 as i64) {
+    return 1 as usize;
+  }
+  let nsyms: i32 = __load_i32((hash + 4 as i64) as usize);
+  let k: i32 = 0;
+  while (k < nsyms) {
+    let sym: usize = (symtab + k as i64 * (24 as i64)) as usize;
+    if (__raw_load8(sym, 6) != 0 || __raw_load8(sym, 7) != 0) {
+      let at: usize = (strtab + __load_i32(sym) as i64) as usize;
+      if (__raw_load8(at, 0) == 95 && __raw_load8(at, 1) == 95 && __raw_load8(at, 2) == 118 && __raw_load8(at, 3) == 100 && __raw_load8(at, 4) == 115 && __raw_load8(at, 5) == 111 && __raw_load8(at, 6) == 95 && __raw_load8(at, 7) == 99 && __raw_load8(at, 8) == 108 && __raw_load8(at, 9) == 111 && __raw_load8(at, 10) == 99 && __raw_load8(at, 11) == 107 && __raw_load8(at, 12) == 95 && __raw_load8(at, 13) == 103 && __raw_load8(at, 14) == 101 && __raw_load8(at, 15) == 116 && __raw_load8(at, 16) == 116 && __raw_load8(at, 17) == 105 && __raw_load8(at, 18) == 109 && __raw_load8(at, 19) == 101 && __raw_load8(at, 20) == 0) {
+        return (bias + __load_i64(sym + 8)) as usize;
+      }
+    }
+    k = k + 1;
+  }
+  return 1 as usize;
+}

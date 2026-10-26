@@ -1,0 +1,176 @@
+function __fern_tcp_socket_ctl(fd: i32, op: i32, arg: i32): i32 {
+  if (op == 7) {
+    let ty: usize = __raw_scratch(8);
+    __raw_store8(ty, 0, 0);
+    __raw_store8(ty, 1, 0);
+    __raw_store8(ty, 2, 0);
+    __raw_store8(ty, 3, 0);
+    __raw_store8(ty, 4, 4);
+    __raw_store8(ty, 5, 0);
+    __raw_store8(ty, 6, 0);
+    __raw_store8(ty, 7, 0);
+    if (__syscall5(118, fd as i64, 65535, 4104, ty as i64, (ty + 4) as i64) >= 0 && __raw_load8(ty, 0) == 2) {
+      return 0;
+    }
+    let sa: usize = __raw_scratch(32);
+    let z: i32 = 0;
+    while (z < 32) {
+      __raw_store8(sa, z, 0);
+      z = z + 1;
+    }
+    __raw_store8(sa, 28, 28);
+    if (__syscall3(31, fd as i64, sa as i64, (sa + 28) as i64) < 0) {
+      return 0;
+    }
+    let fam: i32 = __raw_load8(sa, 1);
+    if (fam == 2) {
+      return __raw_load8(sa, 4) | __raw_load8(sa, 4 + 1) << 8 | __raw_load8(sa, 4 + 2) << 16 | __raw_load8(sa, 4 + 3) << 24;
+    }
+    if (fam != 30) {
+      return 0;
+    }
+    if ((__raw_load8(sa, 8) | __raw_load8(sa, 8 + 1) << 8 | __raw_load8(sa, 8 + 2) << 16 | __raw_load8(sa, 8 + 3) << 24) == 0 && (__raw_load8(sa, 12) | __raw_load8(sa, 12 + 1) << 8 | __raw_load8(sa, 12 + 2) << 16 | __raw_load8(sa, 12 + 3) << 24) == 0 && __raw_load8(sa, 16) == 0 && __raw_load8(sa, 17) == 0 && __raw_load8(sa, 18) == 255 && __raw_load8(sa, 19) == 255) {
+      return __raw_load8(sa, 20) | __raw_load8(sa, 20 + 1) << 8 | __raw_load8(sa, 20 + 2) << 16 | __raw_load8(sa, 20 + 3) << 24;
+    }
+    let key: i32 = (__raw_load8(sa, 8) | __raw_load8(sa, 8 + 1) << 8 | __raw_load8(sa, 8 + 2) << 16 | __raw_load8(sa, 8 + 3) << 24) ^ (__raw_load8(sa, 12) | __raw_load8(sa, 12 + 1) << 8 | __raw_load8(sa, 12 + 2) << 16 | __raw_load8(sa, 12 + 3) << 24);
+    if (key == 0) {
+      return 1;
+    }
+    return key;
+  }
+  if (op == 8) {
+    return 0 - 45;
+  }
+  if (op == 9) {
+    if (arg < 0 || arg > 9) {
+      return 0 - 22;
+    }
+    let sa: usize = __raw_scratch(32);
+    let z: i32 = 0;
+    while (z < 32) {
+      __raw_store8(sa, z, 0);
+      z = z + 1;
+    }
+    __raw_store8(sa, 28, 28);
+    let r: i32 = __syscall3(32, fd as i64, sa as i64, (sa + 28) as i64) as i32;
+    if (r < 0) {
+      return r;
+    }
+    if (arg == 9) {
+      return __raw_load8(sa, 2) << 8 | __raw_load8(sa, 3);
+    }
+    let fam: i32 = __raw_load8(sa, 1);
+    if (fam == 2) {
+      if (arg == 8) {
+        return 4;
+      }
+      if (arg > 1) {
+        return 0;
+      }
+      return __raw_load8(sa, 4 + arg * 2) << 8 | __raw_load8(sa, 5 + arg * 2);
+    }
+    if (fam != 30) {
+      return 0 - 47;
+    }
+    if (arg == 8) {
+      return 6;
+    }
+    return __raw_load8(sa, 8 + arg * 2) << 8 | __raw_load8(sa, 9 + arg * 2);
+  }
+  if (op == 10) {
+    if (arg < 0 || arg > 9) {
+      return 0 - 22;
+    }
+    let sa: usize = __raw_scratch(32);
+    let z: i32 = 0;
+    while (z < 32) {
+      __raw_store8(sa, z, 0);
+      z = z + 1;
+    }
+    __raw_store8(sa, 28, 28);
+    let r: i32 = __syscall3(31, fd as i64, sa as i64, (sa + 28) as i64) as i32;
+    if (r < 0) {
+      return r;
+    }
+    if (arg == 9) {
+      return __raw_load8(sa, 2) << 8 | __raw_load8(sa, 3);
+    }
+    let fam: i32 = __raw_load8(sa, 1);
+    if (fam == 2) {
+      if (arg == 8) {
+        return 4;
+      }
+      if (arg > 1) {
+        return 0;
+      }
+      return __raw_load8(sa, 4 + arg * 2) << 8 | __raw_load8(sa, 5 + arg * 2);
+    }
+    if (fam != 30) {
+      return 0 - 47;
+    }
+    if (arg == 8) {
+      return 6;
+    }
+    return __raw_load8(sa, 8 + arg * 2) << 8 | __raw_load8(sa, 9 + arg * 2);
+  }
+  if (op == 6) {
+    let q: usize = __raw_scratch(8);
+    let z: i32 = 0;
+    while (z < 8) {
+      __raw_store8(q, z, 0);
+      z = z + 1;
+    }
+    __raw_store8(q, 4, 4);
+    let r: i32 = __syscall5(118, fd as i64, 65535, 4132, q as i64, (q + 4) as i64) as i32;
+    if (r < 0) {
+      return r;
+    }
+    return __raw_load8(q, 0) | __raw_load8(q, 1) << 8 | __raw_load8(q, 2) << 16 | __raw_load8(q, 3) << 24;
+  }
+  if (op == 5) {
+    let sa: usize = __raw_scratch(20);
+    __raw_store8(sa, 16, 16);
+    __raw_store8(sa, 17, 0);
+    __raw_store8(sa, 18, 0);
+    __raw_store8(sa, 19, 0);
+    if (__syscall3(31, fd as i64, sa as i64, (sa + 16) as i64) >= 0) {
+      return 0;
+    }
+    __raw_store8(sa, 16, 4);
+    let g: i32 = __syscall5(118, fd as i64, 65535, 4103, sa as i64, (sa + 16) as i64) as i32;
+    if (g < 0) {
+      return g;
+    }
+    let pending: i32 = __raw_load8(sa, 0) | __raw_load8(sa, 1) << 8 | __raw_load8(sa, 2) << 16 | __raw_load8(sa, 3) << 24;
+    if (pending != 0) {
+      return 0 - pending;
+    }
+    return 0 - 36;
+  }
+  if (op == 1 || op == 2) {
+    let v: usize = __raw_scratch(4);
+    __raw_store8(v, 0, arg & 255);
+    __raw_store8(v, 1, 0);
+    __raw_store8(v, 2, 0);
+    __raw_store8(v, 3, 0);
+    if (op == 1) {
+      return __syscall5(105, fd as i64, 6, 1, v as i64, 4) as i32;
+    }
+    return __syscall5(105, fd as i64, 65535, 8, v as i64, 4) as i32;
+  }
+  if (op == 3) {
+    let flags: i32 = __syscall3(92, fd as i64, 3, 0) as i32;
+    if (flags < 0) {
+      return flags;
+    }
+    let want: i32 = flags | 4;
+    if (arg == 0) {
+      want = flags & 0 - 1 - 4;
+    }
+    return __syscall3(92, fd as i64, 4, want as i64) as i32;
+  }
+  if (op == 4) {
+    return __syscall3(134, fd as i64, arg as i64, 0) as i32;
+  }
+  return 0 - 22;
+}

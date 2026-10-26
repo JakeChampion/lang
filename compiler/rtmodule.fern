@@ -1,0 +1,118 @@
+import "./ast";
+import "./astwalk";
+import "./constfold";
+import "./lexer";
+import "./parser";
+import "./rtbundle";
+import "./rtprofile";
+import "./treeshake";
+import "./util";
+import "std/string";
+
+pub function paths(): string[] {
+  return rtbundle.paths();
+}
+
+pub function names(target: string): string[] {
+  let all = rtbundle.names();
+  let indices = rtbundle.indices(target);
+  let out: string[] = [];
+  for i in 0..indices.len() {
+    if (indices[i] >= 0) {
+      out = out.append(all[i]);
+    }
+  }
+  return out;
+}
+
+pub function load(target: string, roots: string): parser.Module {
+  return load_with(target, roots, rtprofile.mode(), rtprofile.output(), true);
+}
+
+// The files form one internal module. Each file declares one runtime symbol.
+pub function load_with(target: string, roots: string, mode: i32, path: string, reuse: boolean): parser.Module {
+  let keys = ["__FERN_PROFILE_MODE", "__FERN_PROFILE_PATH", "__FERN_RUNTIME_REUSE"];
+  let values: ast.Expr[] = [
+    ast.ExprNumber { text: util.i32_to_string(mode), raw: "", suffix: "", is_float: false, bits: 0, line: 0, col: 0 },
+    ast.ExprString { value: path, line: 0, col: 0 },
+    ast.ExprBool { value: reuse, line: 0, col: 0 },
+  ];
+  return load_bound(target, roots, keys, values);
+}
+
+pub function load_bound(target: string, roots: string, keys: string[], values: ast.Expr[]): parser.Module {
+  let index = util.name_index(rtbundle.names());
+  let indices = rtbundle.indices(target);
+  let contents = rtbundle.contents();
+  let files = rtbundle.paths();
+  if (indices.len() == 0) {
+    eprint("internal error: no runtime module for " + target);
+    exit(3);
+  }
+  let pending: string[] = [];
+  for root in roots.split(" ") {
+    if (root.len() > 0) {
+      let at = index.find(root);
+      if (at < 0 || indices[at] < 0) {
+        eprint("internal error: no runtime declaration " + root + " for " + target);
+        exit(3);
+      }
+      pending = pending.append(root);
+    }
+  }
+  let requested = pending;
+  let seen = util.name_index([]);
+  let mod = parser.parse_module(lexer.tokenize(""));
+  let i = 0;
+  while (i < pending.len()) {
+    let name = pending[i];
+    i = i + 1;
+    if (seen.has(name)) {
+      continue;
+    }
+    seen = seen.added(name);
+    let at = index.find(name);
+    if (at < 0 || indices[at] < 0) {
+      continue;
+    }
+    let file = indices[at];
+    let tokens = lexer.tokenize_from(contents[file], util.line_base(file) + 1);
+    let parsed = parser.parse_module(tokens);
+    if (!declared(parsed, name)) {
+      eprint(files[file] + ": error: the runtime file does not declare " + name);
+      exit(3);
+    }
+    mod = parser.Module { ...parser.merge_module(mod, parsed), imports: util.append_all(mod.imports, parsed.imports) };
+    for token in tokens {
+      if let lexer.TokIdent(id) = token {
+        if (index.has(id.name) && !seen.has(id.name)) {
+          pending = pending.append(id.name);
+        }
+      }
+    }
+  }
+  let configured = constfold.fold_module(configure(mod, keys, values));
+  return parser.infer_ret_types_module(treeshake.treeshake_roots(configured, requested));
+}
+
+function declared(mod: parser.Module, name: string): boolean {
+  for fd in mod.funcs {
+    if (fd.name == name) {
+      return true;
+    }
+  }
+  for sd in mod.structs {
+    if (sd.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function configure(mod: parser.Module, keys: string[], values: ast.Expr[]): parser.Module {
+  let funcs: parser.FuncDecl[] = [];
+  for fd in mod.funcs {
+    funcs = funcs.append(parser.FuncDecl { ...fd, body: astwalk.substitute_consts(fd.body, [], keys, values) });
+  }
+  return parser.Module { ...mod, funcs: funcs };
+}

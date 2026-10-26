@@ -1,0 +1,10 @@
+function __fern_sleep_ms(ms: i64): i32 {
+  if (ms <= 0 as i64) {
+    return 0;
+  }
+  let tv: usize = __raw_scratch(16);
+  let sec: i64 = ms / (1000 as i64);
+  __store_i64(tv, sec);
+  __store_i64(tv + 8, (ms - sec * (1000 as i64)) * (1000 as i64));
+  return __syscall5(93, 0, 0, 0, 0, tv as i64) as i32;
+}

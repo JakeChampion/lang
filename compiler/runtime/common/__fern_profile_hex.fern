@@ -1,0 +1,4 @@
+function __fern_profile_hex(buf: usize, pc: usize): void {
+  __fern_profile_hex_buf(buf, pc);
+  __fern_profile_write(buf, 18);
+}
