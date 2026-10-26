@@ -9123,17 +9123,16 @@ function bytes_copy_out(len: string, src: string, empty: i32): string {
 
 pub function arr_concat_helper(): string {
   let o: string = "";
-  o = o + "  (func $__fern_arr_concat (param $width i32) (param $b i32) (param $a i32) (result i32)\n";
-  o = o + "    (local $na i32) (local $nb i32) (local $n i32) (local $stride i32) (local $cap i32) (local $rc i32) (local $ncap i32) (local $r i32) (local $sole i32)\n";
+  o = o + "  (func $__fern_arr_concat (param $width i32) (param $nb i32) (param $src i32) (param $a i32) (result i32)\n";
+  o = o + "    (local $na i32) (local $n i32) (local $stride i32) (local $cap i32) (local $rc i32) (local $ncap i32) (local $r i32) (local $sole i32)\n";
   o = o + "    (local.set $stride (i32.shr_u (local.get $width) (i32.const 3)))\n";
   o = o + "    (local.set $na (i32.load (local.get $a)))\n";
-  o = o + "    (local.set $nb (i32.load (local.get $b)))\n";
   o = o + "    (local.set $n (i32.add (local.get $na) (local.get $nb)))\n";
   o = o + "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
   o = o + "    (local.set $rc (i32.load (i32.sub (local.get $a) (i32.const 8))))\n";
   o = o + "    (local.set $sole (i32.eq (local.get $rc) (i32.const 1)))\n";
   o = o + "    (if (i32.and (local.get $sole) (i32.le_s (local.get $n) (local.get $cap))) (then\n";
-  o = o + "      (memory.copy (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (i32.add (local.get $b) (i32.const 8)) (i32.mul (local.get $nb) (local.get $stride)))\n";
+  o = o + "      (memory.copy (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (local.get $src) (i32.mul (local.get $nb) (local.get $stride)))\n";
   o = o + "      (i32.store (local.get $a) (local.get $n))\n";
   o = o + "      (return (local.get $a))))\n";
   o = o + "    (local.set $ncap (local.get $n))\n";
@@ -9143,7 +9142,7 @@ pub function arr_concat_helper(): string {
   o = o + "    (i32.store (local.get $r) (local.get $n))\n";
   o = o + "    (i32.store offset=4 (local.get $r) (local.get $ncap))\n";
   o = o + "    (memory.copy (i32.add (local.get $r) (i32.const 8)) (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride)))\n";
-  o = o + "    (memory.copy (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (i32.add (local.get $b) (i32.const 8)) (i32.mul (local.get $nb) (local.get $stride)))\n";
+  o = o + "    (memory.copy (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (local.get $src) (i32.mul (local.get $nb) (local.get $stride)))\n";
   o = o + "    (local.get $r))\n";
   return o;
 }

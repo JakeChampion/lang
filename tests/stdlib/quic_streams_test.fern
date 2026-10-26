@@ -582,7 +582,7 @@ function test_consumed_fin_replay(): test.TestOutcome {
   };
   let moved: string = outcome(fed(replayed, [data(0 as i64, 0 as i64, 4, true)]));
   let past: string = outcome(fed(replayed, [data(0 as i64, 3 as i64, 1, false)]));
-  return test.assert_eq("[" + events(replayed) + "] " + int.int_to_string(read.1.len()) + " " + read.2.to_string() + " " + int.int_to_string(again.1.len()) + " " + again.2.to_string() + " " + old.recv_taken.to_string() + " " + replayed.recv_taken.to_string() + " " + old.list[0].recv.data.taken.to_string() + " " + moved + " " + past, "[] 3 true 0 true 3 3 3 6/8 6/8");
+  return test.assert_eq("[" + events(replayed) + "] " + int.int_to_string(read.1.len()) + " " + read.2.to_string() + " " + int.int_to_string(again.1.len()) + " " + again.2.to_string() + " " + old.recv_taken.to_string() + " " + replayed.recv_taken.to_string() + " " + old.list[0].data.taken.to_string() + " " + moved + " " + past, "[] 3 true 0 true 3 3 3 6/8 6/8");
 }
 
 function test_late_fin_once(): test.TestOutcome {

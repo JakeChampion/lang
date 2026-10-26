@@ -203,6 +203,38 @@ function test_read_all(): test.TestOutcome {
   return test.assert_eq(got, "PING;CRYPTO 5 aa;PADDING 4; quic frame: error 10 in frame type 0: a packet with no frames");
 }
 
+function read_by(r: frames.Reader, payload: u8[]): string {
+  let got: string = "";
+  r = r.started(payload);
+  while (r.more()) {
+    r = r.next();
+    if let Some(e) = r.failed {
+      return got + e.message();
+    }
+    if (r.is_stream()) {
+      got = got + "STREAM " + r.stream.to_string() + " at " + r.offset.to_string() + flag(r.fin, "FIN") + " " + hex.encode(payload[r.from:r.to]);
+    } else if (r.is_ack()) {
+      got = got + "ACK delay " + r.ack.delay.to_string() + ranges(r.ack);
+    } else {
+      got = got + describe(r.frame);
+    }
+    got = got + flag(r.elicited, "e") + flag(r.permitted(frames.IN_ZERO_RTT), "0rtt") + ";";
+  }
+  return got;
+}
+
+function test_reader(): test.TestOutcome {
+  let three: frames.Ack = frames.Ack { delay: 25 as i64, ranges: [frames.AckRange { low: 95 as i64, high: 100 as i64 }, frames.AckRange { low: 90 as i64, high: 91 as i64 }, frames.AckRange { low: 88 as i64, high: 88 as i64 }], ecn: None };
+  let one: frames.Ack = frames.Ack { delay: 3 as i64, ranges: [frames.AckRange { low: 7 as i64, high: 9 as i64 }], ecn: None };
+  let stream: frames.Frame = frames.StreamFrame(frames.StreamData { stream: 4 as i64, offset: 100 as i64, data: [104u8, 105u8], fin: true });
+  let first: u8[] = frames.encode(frames.AckFrame(three)).concat(frames.encode(stream)).concat(frames.encode(frames.AckFrame(one)));
+  let later: frames.Ack = frames.Ack { delay: 4 as i64, ranges: [frames.AckRange { low: 10 as i64, high: 12 as i64 }], ecn: None };
+  let second: u8[] = frames.encode(frames.AckFrame(one)).concat(frames.encode(frames.Ping)).concat(frames.encode(frames.AckFrame(later)));
+  let r: frames.Reader = frames.reader();
+  let got: string = read_by(r, first) + " | " + read_by(r, second) + " | " + read_by(r, frames.encode(frames.Ping).concat(__codec_bytes(hex.decode("0205"))));
+  return test.assert_eq(got, "ACK delay 25 95-100 90-91 88-88;STREAM 4 at 100 FIN 6869 e 0rtt;ACK delay 3 7-9 e; | ACK delay 3 7-9;PING e 0rtt;ACK delay 4 10-12 e; | PING e 0rtt;quic frame: error 7 in frame type 2: ack delay cut short");
+}
+
 function test_malformed(): test.TestOutcome {
   let got: string = "";
   got = got + shown("1f") + "\n";
@@ -250,6 +282,7 @@ function main(): i32 {
   r = r.it("every frame type round-trips", test_round_trips);
   r = r.it("ACK ranges both ways", test_ack);
   r = r.it("a payload's frames", test_read_all);
+  r = r.it("a payload's frames read in place", test_reader);
   r = r.it("malformed frames", test_malformed);
   r = r.it("which packets carry which frames", test_permitted);
   return r.finish();
