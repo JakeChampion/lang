@@ -2851,7 +2851,7 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
   return o;
 }
 
-pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerResult[], mode: i32, sw: asmcore.Switches, physical: physicalbody.Collection, rt_lower: (string) => physicalbody.Lowered): string {
+pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerResult[], mode: i32, sw: asmcore.Switches, physical: physicalbody.Collection, rt_lower: (parser.Module) => physicalbody.Lowered): string {
   let sv: string[] = str_values(ir_cache);
   let cv: string[] = const_agg_values(ir_cache);
   let ft: string[] = fn_value_table(ir_cache);
@@ -9398,7 +9398,7 @@ function needs_str_split(needs: string[]): boolean {
   return need(needs, "str_split") || need(needs, "@uses_str_lines");
 }
 
-pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (string) => physicalbody.Lowered): WasmUnit[] {
+pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (parser.Module) => physicalbody.Lowered): WasmUnit[] {
   let src: string = "";
   if (need(needs, "@uses_str_cmp")) {
     src = wasm_runtime.strcmp_source();
@@ -9440,7 +9440,7 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (s
     return units;
   }
   let mod: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
-  let lowered: physicalbody.Lowered = rt_lower(src);
+  let lowered: physicalbody.Lowered = rt_lower(mod);
   let bodies: irtables.LowerResult[] = lowered.bodies;
   let text: string = emit_functions_ns("$runtime", mod, bodies, physicalbody.collection(lowered));
   return units.append(WasmUnit { ns: "$runtime", text: text, strs: str_values(bodies), caggs: const_agg_values(bodies), fns: fn_value_table(bodies) });
