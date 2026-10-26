@@ -1,0 +1,50 @@
+// One arm of a value `if` or `match` is a closure parameter. The other arm
+// passes a function name or a lambda to a call.
+
+function seven(y: i32): i32 {
+  return 7;
+}
+
+function by_name(f: i32, p: (i32) => i32): (i32) => i32 {
+  let r: (i32) => i32 = if (f > 0) { p } else { by_name(f + 1, seven) };
+  return r;
+}
+
+function by_lambda(f: i32, p: (i32) => i32): (i32) => i32 {
+  let r: (i32) => i32 = if (f > 0) { p } else { by_lambda(f + 1, (y: i32) => y * 2) };
+  return r;
+}
+
+function by_match(f: i32, p: (i32) => i32): (i32) => i32 {
+  let r: (i32) => i32 = match (f) { 0 => by_match(1, seven), _ => p };
+  return r;
+}
+
+function by_assign(f: i32, p: (i32) => i32): (i32) => i32 {
+  let r: (i32) => i32 = p;
+  r = if (f > 0) { p } else { by_assign(f + 1, seven) };
+  return r;
+}
+
+function main(): i32 {
+  let id: (i32) => i32 = (y: i32) => y;
+  if (by_name(0, id)(3) != 7) {
+    return 1;
+  }
+  if (by_name(1, id)(3) != 3) {
+    return 2;
+  }
+  if (by_lambda(0, id)(3) != 6) {
+    return 3;
+  }
+  if (by_match(0, id)(3) != 7) {
+    return 4;
+  }
+  if (by_match(2, id)(3) != 3) {
+    return 5;
+  }
+  if (by_assign(0, id)(3) != 7) {
+    return 6;
+  }
+  return 0;
+}

@@ -16836,7 +16836,9 @@ struct MovedEntry { mname: string, mline: i32 }
 
 struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], snames: util.NameIndex, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[] }
+struct OwnReturns { synthetic: boolean, moved: MovedEntry[] }
+
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], snames: util.NameIndex, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[], returns: Cell[OwnReturns] }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -16936,7 +16938,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda): OwnCtx {
       bound = bound.append(p.name);
     }
   }
-  let nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, snames: ctx.snames, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use };
+  let nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, snames: ctx.snames, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }) };
   return nested;
 }
 
@@ -17009,9 +17011,18 @@ function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
       }
       return util.has_str(ctx.fresh_scrut, cid.name);
     }
-    return false;
+    return ow_qualified_ctor(c.callee, ctx);
   }
   return ow_is_owned_expr(e, ctx);
+}
+
+function ow_qualified_ctor(callee: ast.Expr, ctx: OwnCtx): boolean {
+  if let ast.ExprFieldAccess(fa) = callee {
+    let owner = ow_ident_name(fa.obj);
+    return owner.len() > 0 && !util.has_str(ctx.bound, owner) && !ctx.scope.is_bound(owner)
+      && ow_variant_known(ctx, fa.field, owner);
+  }
+  return false;
 }
 
 function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
@@ -17064,6 +17075,9 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
           return ctx.ofuncs.ctors.has(cid.name) || util.has_str(ctx.fresh, cid.name);
         },
         ast.ExprFieldAccess(mfa) => {
+          if (ow_qualified_ctor(c.callee, ctx)) {
+            return true;
+          }
           for ns in ow_type_namespaces(check_expr(mfa.obj, ctx.scope)) {
             if (util.has_str(ctx.fresh_methods, ns + "." + mfa.field)) {
               return true;
@@ -18062,7 +18076,7 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       match (c.callee) {
         ast.ExprLambda(lm) => {
           if (lm.params.len() == 0 && c.args.len() == 0) {
-            return ow_stmts(ow_value_block_stmts(lm), moved, ctx);
+            return ow_value_block_walk(lm, moved, ctx);
           }
         },
         _ => {}
@@ -18121,6 +18135,28 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: moved, diags: [] };
     }
   }
+}
+
+function ow_value_block_walk(lm: ast.ExprLambda, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+  let generated = lm.origin == parser.ORIGIN_BLOCK || ow_value_if_origin(lm.origin) || lm.origin == parser.ORIGIN_MATCH_EXPR;
+  let returns = cell_new(OwnReturns { synthetic: generated, moved: [] });
+  let result = ow_stmts(ow_value_block_stmts(lm), moved, OwnCtx { ...ctx, returns: returns });
+  let resumed: MovedEntry[] = [];
+  for entry in returns.get().moved {
+    if (util.has_str(ctx.owned, entry.mname)) {
+      resumed = resumed.append(entry);
+    }
+  }
+  return OwnWalk { ...result, moved: ow_moved_join(result.moved, resumed, false) };
+}
+
+function ow_record_return(result: OwnWalk, line: i32, ctx: OwnCtx): OwnWalk {
+  let returns = ctx.returns.get();
+  // Line zero marks an implicit value result from the parser.
+  if (!returns.synthetic || line == 0) {
+    ctx.returns.set(OwnReturns { ...returns, moved: ow_moved_join(returns.moved, result.moved, false) });
+  }
+  return result;
 }
 
 function ow_value_block_stmts(lm: ast.ExprLambda): ast.Stmt[] {
@@ -18204,7 +18240,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         },
         _ => {}
       }
-      return ru_expr(r.value, moved, rctx);
+      return ow_record_return(ru_expr(r.value, moved, rctx), r.line, ctx);
     },
     ast.StmtExpr(e) => {
       return ru_expr(e.value, moved, ctx);
@@ -19040,7 +19076,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, snames: snames, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs) };
+    let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, snames: snames, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs), returns: cell_new(OwnReturns { synthetic: false, moved: [] }) };
     let nomoved: MovedEntry[] = [];
     let r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, r.diags);
