@@ -8435,6 +8435,10 @@ function slc_call_roots(c: ast.ExprCall, cur: Scope, params: string[], localarr:
 
 function slc_expr_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   match (e) {
+    ast.ExprArray(_) => {
+      let none: string[] = [];
+      return ViewRoots { local: true, params: none };
+    },
     ast.ExprSlice(sl) => {
       match (check_expr(sl.array, cur)) {
         typeinfo.TypeString(_) => {
@@ -8766,10 +8770,6 @@ function slc_escape_diag(fname: string, line: i32, col: i32): util.Diag {
 // The roots of every `[T]` view a value of type `to` carries, directly or inside an aggregate.
 function slc_agg_roots(e: ast.Expr, to: typeinfo.Type, cur: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   if (is_arr_view(to)) {
-    if let ast.ExprArray(_) = e {
-      let none: string[] = [];
-      return ViewRoots { local: true, params: none };
-    }
     return slc_expr_roots(e, cur, params, localarr, tainted, sums, vix);
   }
   if (is_type_variable(to)) {

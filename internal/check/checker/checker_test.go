@@ -6956,6 +6956,10 @@ func TestSliceEscapeRejected(t *testing.T) {
 		`function f(): [i32] { return [1, 2, 3][0:2]; }`,
 		`function f(): [i32] { let xs: i32[] = [1, 2, 3]; let s = xs[0:2]; return s; }`,
 		`function f(): [i32] { let xs: i32[] = [1, 2, 3]; let s = xs[0:3]; return s[0:2]; }`,
+		`function f(): [i32] { return [1, 2, 3]; }`,
+		`function f(): [i32] { return []; }`,
+		`function f(): [string] { return ["a"]; }`,
+		`function f[T](x: T): [T] { return [x]; }`,
 	} {
 		err := checkSource(t, src)
 		if err == nil {
