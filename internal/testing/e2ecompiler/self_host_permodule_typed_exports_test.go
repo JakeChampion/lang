@@ -72,6 +72,10 @@ function main(): i32 {
 		{"byte-view", viewLeaf, viewMain, helpers, 10},
 		{"byte-copy", copyLeaf, copyMain, []string{"__fn___fern_arr_slice_u8"}, 0},
 		{"isatty", "@noinline pub function tty(): i32 { if (isatty(1)) { return 1; } return 0; }\n", "import \"./leaf\";\nfunction main(): i32 { return leaf.tty() + 7; }\n", []string{"__fn___fern_isatty"}, 7},
+		{"scalar-parameters", `struct Parts { a: i32, b: i32, c: i32, d: i32 }
+@noinline function combine(p: Parts, x: i32, y: i32): i32 { return p.a + p.b + p.c + p.d + x + y; }
+pub function calculate(): i32 { return combine(Parts { a: 1, b: 2, c: 3, d: 4 }, 16, 16); }
+`, "import \"./leaf\";\nfunction main(): i32 { return leaf.calculate(); }\n", nil, 42},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			proj := t.TempDir()

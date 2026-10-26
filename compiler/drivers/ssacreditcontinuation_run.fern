@@ -18,12 +18,12 @@ function require(ok: boolean, code: i32): void {
 
 function source(exiting: boolean): string {
   let assertion = if (exiting) { "if (!ok) { exit(code); }" } else { "if (ok) { return; } return;" };
-  return "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\nstruct Other { first: Leaf, second: Leaf }\n"
+  return "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\nstruct Parent { left: Leaf, right: Leaf }\nstruct Other { first: Leaf, second: Leaf }\n"
     + "@noinline\nfunction require(ok: boolean, code: i32): void { " + assertion + " }\n"
     + "@noinline\nfunction parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; }\n"
     + "@noinline\nfunction replace(own p: Parent, child: Leaf): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; }\n"
     + "@noinline\nfunction handoff(flag: boolean, left: Leaf, right: Leaf, incoming: Leaf): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); }\n"
-    + "function main(): i32 { let c = Leaf { n: 7 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
+    + "function main(): i32 { let c = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
 }
 
 function body(sub: ircore.Sub, name: string): ssa.SFunc {

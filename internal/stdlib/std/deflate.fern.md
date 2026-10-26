@@ -1946,6 +1946,18 @@ Earlier chunks can precede a later stream error. Callers must wait for `done` be
 <<34 resumable output>>=
 pub enum InflateReadError { ReadCodec(InflateError), ReadCancelled, ReadRequest, ReadBusy }
 
+impl error.Error for InflateReadError {}
+
+impl cmp.Display for InflateReadError {}
+
+pub function (e: InflateReadError) message(): string {
+  return match (e) { ReadCodec(cause) => cause.message(), ReadCancelled => "the decompression request was cancelled", ReadRequest => "the decompression request size is invalid", ReadBusy => "the decompression reader is already active" };
+}
+
+pub function (e: InflateReadError) to_string(): string {
+  return e.message();
+}
+
 pub struct InflateChunk { bytes: u8[], done: boolean, consumed: i32, total: i32, history_bytes: i32 }
 
 pub struct InflateReader { read: (i32, () => boolean) => Result[InflateChunk, InflateReadError] }

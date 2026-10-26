@@ -1,3 +1,4 @@
+# 2026-10-26: Full CI run 40337273239 at 7cd5b7d81 measured 34,951,426 balanced events. Reachability also runs before scalar transforms.
 # 2026-10-25: Perf run 40200803636 (main at 127eb63c). checker.fern grew with today's merges (#13153, #13242, #13261): +10.2% allocations.
 # 2026-10-23: combined source 160186731f, Perf run 40026009089. The receiver checks and FIP table add compiler source.
 # Allocation baselines for the self-host compiler compiling one real module,
@@ -66,5 +67,5 @@
 # Re-pinned 2026-10-22: main's merges since moved it 3.7% (26,298,117 on main
 # ddc5b110 on the dev container); const_propagate's known table starts on one
 # placeholder op, 0.5% fewer.
-x86_64/checker.allocs	31624467
-x86_64/checker.frees	31624467
+x86_64/checker.allocs	34951426
+x86_64/checker.frees	34951426

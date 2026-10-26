@@ -23,7 +23,7 @@ function require(ok: boolean, code: i32): void {
 
 function emit(arm: boolean, scalar: boolean, single: boolean): ssaprepare.Emitted[] {
   let child = if (scalar) { "i32" } else { "Leaf" };
-  let src = "struct Leaf { n: i32 } struct Parent { left: " + child + ", right: " + child + " } @noinline function parent(left: " + child + ", right: " + child + "): Parent { return Parent { left: left, right: right }; } function main(): i32 { return 0; }";
+  let src = "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 } struct Parent { left: " + child + ", right: " + child + " } @noinline function parent(left: " + child + ", right: " + child + "): Parent { return Parent { left: left, right: right }; } function main(): i32 { return 0; }";
   if (single) {
     src = "struct Parent { left: i32 } @noinline function parent(left: i32): Parent { return Parent { left: left }; } function main(): i32 { return 0; }";
   }

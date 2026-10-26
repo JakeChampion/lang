@@ -16,7 +16,7 @@ func extraCallerReadSource(n int, kind string) string {
 	typeName, value, read := "u64[]", "[33u64, 55u64]", "data[0]"
 	switch kind {
 	case "record":
-		typeName, value, read = "Item", "Item { a: 33u64, b: 55u64 }", "data.a ^ data.b"
+		typeName, value, read = "Item", "Item { a: 33u64, b: 55u64, c: 0u64, d: 0u64, e: 0u64 }", "data.a ^ data.b"
 	case "array-variable":
 		read = "data[(seed & 1u64) as i32]"
 	case "string-constant":
@@ -28,7 +28,7 @@ func extraCallerReadSource(n int, kind string) string {
 	source = strings.Replace(source, "return (", "let loaded = "+read+";\nreturn (", 1)
 	source = strings.Replace(source, ");\n}", ") ^ loaded;\n}", 1)
 	if kind == "record" {
-		source = "struct Item { a: u64, b: u64 }\n" + source
+		source = "struct Item { a: u64, b: u64, c: u64, d: u64, e: u64 }\n" + source
 	}
 	return source + fmt.Sprintf("function main(): i32 { let seed = args().len() as u64; let data = %s; print(combine(seed, data).to_string()); return 0; }\n", value)
 }
