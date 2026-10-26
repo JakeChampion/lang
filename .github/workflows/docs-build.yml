@@ -89,9 +89,9 @@ jobs:
           npm run build
 
       # The browser is a ~170 MB download; caching it keeps most runs off the
-      # network for that half. The apt half of `--with-deps` below is NOT
-      # cached and remains exposed to the mirror stalls in #6038 — it is the
-      # font packages there that were seen crawling at 35 KB/s.
+      # network for that half. The shared apt action routes the uncached
+      # system packages through Ubuntu's official archive. Azure's mirror
+      # served the font packages at 35 KB/s and exhausted this job's budget.
       - name: Cache the Playwright browser
         uses: actions/cache@v6
         with:
