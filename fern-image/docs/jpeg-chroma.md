@@ -109,3 +109,33 @@ The reference uses only offline Python standard-library tools.
 The Fern runtime has no C, Python, or external codec dependency.
 New raw records use `jpeg-chroma-*` names and preserve all earlier datasets.
 M5 and the epic remain open.
+
+## Recorded qualification
+
+The new records are [native](../benchmarks/results/jpeg-chroma-native.json), [Wasm](../benchmarks/results/jpeg-chroma-wasm.json), and [ARM64](../benchmarks/results/jpeg-chroma-arm64.json).
+The source and clean compiler revision is `904079ca1ca361c01015a98358ac03608d931572`.
+This source includes main `153e7c73ce4166978fd662476c0409feaf229efc` and its runtime-module refactor.
+The compiler SHA256 is `4c2b05a23c7540dbe394ef5b0b076dc694a17fe907300a3f055da1e295717459`.
+Its clean standard two-stage build and bootstrap smoke checks pass.
+Earlier `dfa23fa508f9` observations remain separate historical evidence.
+
+Each target completed all 2,030 rows and 148,650 samples across 254 fresh Fern workers.
+All 762 workers reported nonzero balanced heap counts and zero final live bytes.
+Every output byte matches the independent rational reference exactly, and the target sample records match.
+Native qualification locks 1,214 source and tool hashes, while runner targets lock 1,215.
+These include all 163 stdlib sources and all compiler Fern sources, including the new runtime modules.
+Each campaign verifies immutable source and tool hashes.
+
+The reference bundle reproduces byte-identically with SHA256 `440183e70e98d70c6eef1cb70330653ea1e97273a1245cbeab7496a167aca127`.
+These finite mathematical observations do not establish codec parity, encoded color interpretation, perceptual quality, or broad JPEG compatibility.
+The raw records preserve exact inputs, output identities, reference identities, limits, and scope.
+
+All 197 image TAP cases passed on native sanitizer, Wasm leak census, and standalone ARM64/QEMU10.
+Full native and Wasm scripts completed with 67 and 43 balanced heap censuses respectively.
+The portable ARM run completed 28 executables with balanced heaps and zero final live bytes.
+The primary interpreter passed all six new TAP groups.
+Both unchanged current complexity gates passed without skips.
+
+The runtime-module driver checked and lowered all three native target sets, and the feature/fixture source command completed successfully.
+Eight protocol controls, 2,009 Fern format checks, Go build/vet, workflow lint, selectors, runtime-bundle freshness, and CI self-tests passed.
+These local observations are separate from GitHub CI status.
