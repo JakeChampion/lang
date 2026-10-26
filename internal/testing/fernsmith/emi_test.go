@@ -1,10 +1,17 @@
 package fernsmith_test
 
 import (
+	"fmt"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/check/checker"
+	"github.com/jakechampion/lang/internal/check/constfold"
+	"github.com/jakechampion/lang/internal/oracle/interp"
+	"github.com/jakechampion/lang/internal/oracle/monomorph"
+	"github.com/jakechampion/lang/internal/pkg/modload"
 	"github.com/jakechampion/lang/internal/testing/fernsmith"
 )
 
@@ -73,4 +80,60 @@ func TestEMIKeepsOnlyValidSteps(t *testing.T) {
 	if src, kept := fernsmith.EMI(taken, 1, 8, func(string) bool { return true }); kept != 0 || src != taken {
 		t.Fatalf("mutated a program that declares a guard name itself:\n%s", src)
 	}
+}
+
+func TestEMIPreservesDeferredCleanupOrder(t *testing.T) {
+	src, err := os.ReadFile("../../../conformance/cases/defer_binding_siblings/main.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := emiExit(t, string(src)); got != 53 {
+		t.Fatalf("unmodified cleanup order = %d, want 53", got)
+	}
+	for seed := uint64(0); seed < 256; seed++ {
+		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
+			mutant, kept := fernsmith.EMI(string(src), seed, 8, func(s string) bool { return checkGenerated(t, s) == nil })
+			if seed == 168 && kept == 0 {
+				t.Fatal("the regression seed exercised no mutation")
+			}
+			if got := emiExit(t, mutant); got != 53 {
+				t.Fatalf("cleanup order = %d, want 53 after %d mutations:\n%s", got, kept, mutant)
+			}
+		})
+	}
+}
+
+func emiExit(t *testing.T, src string) int {
+	t.Helper()
+	prog, _, err := modload.LoadSource(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := constfold.Fold(prog, nil); err != nil {
+		t.Fatal(err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatal(err)
+	}
+	i := interp.New()
+	i.SetDynCoercions(info.DynCoercions)
+	for _, ed := range prog.Enums {
+		i.RegisterEnum(ed)
+	}
+	for _, fn := range prog.Funcs {
+		i.Register(fn)
+	}
+	v, err := i.CallByName("main", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, ok := interp.ExitStatus(v)
+	if !ok {
+		t.Fatalf("main returned %T instead of an exit status", v)
+	}
+	return code
 }
