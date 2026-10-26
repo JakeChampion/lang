@@ -1,6 +1,6 @@
 # Security validation matrix
 
-Status: implementation for [SEC-002](https://github.com/JakeChampion/lang/issues/13504).
+Status: [reference] implementation for [SEC-002](https://github.com/JakeChampion/lang/issues/13504).
 Parent: [security epic](https://github.com/JakeChampion/lang/issues/13502).
 
 ## Smoke harness
