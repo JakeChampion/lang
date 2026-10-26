@@ -10579,7 +10579,7 @@ function emit_stack_switch(own s: asmcore.EmitState): asmcore.EmitState {
   s = emit_stack_map(s, asmcore.stack_size());
   s = s.write("    cmpq $-4096, %rax\n    ja .Lfern_stack_kept\n    movq %rax, %rbx\n    movq %rax, %rdi\n    movq $" + util.i32_to_string(asmcore.stack_guard()) + ", %rsi\n    xorl %edx, %edx\n    movl $10, %eax\n");
   s = s.syscall(10);
-  s = s.write("    leaq " + util.i32_to_string(asmcore.stack_size() - 16) + "(%rbx), %rsp\n.Lfern_stack_kept:\n");
+  s = s.write("    testq %rax, %rax\n    jnz .Lfern_stack_guard_failed\n    leaq " + util.i32_to_string(asmcore.stack_size() - 16) + "(%rbx), %rsp\n.Lfern_stack_kept:\n");
   s = emit_stack_map(s, 65536);
   s = s.write("    cmpq $-4096, %rax\n    ja .Lfern_segv_skip\n    subq $32, %rsp\n    movq %rax, (%rsp)\n    movq $0, 8(%rsp)\n    movq $65536, 16(%rsp)\n    movq %rsp, %rdi\n    xorl %esi, %esi\n    movl $131, %eax\n");
   s = s.syscall(131);
@@ -10605,6 +10605,15 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = emit_segv_install(s);
   s = s.write("    addq $32, %rsp\n    ret\n.Lfern_segv_restorer:\n    movl $15, %eax\n");
   return s.syscall(15);
+}
+
+function emit_stack_guard_failure(own s: asmcore.EmitState): asmcore.EmitState {
+  let msg: string = aborts.stack_guard();
+  s = s.write("    .section .rodata\n.Lmsg_stack_guard:\n    .ascii \"" + msg + "\\n\"\n    .text\n.Lfern_stack_guard_failed:\n");
+  s = s.write("    leaq .Lmsg_stack_guard(%rip), %rsi\n    movq $" + util.i32_to_string(msg.len() + 1) + ", %rdx\n    movl $2, %edi\n    movl $1, %eax\n");
+  s = s.syscall(1);
+  s = s.write("    movl $134, %edi\n    movl $231, %eax\n");
+  return s.syscall(231);
 }
 
 function emit_process_finish(mod: parser.Module, own s: asmcore.EmitState): asmcore.EmitState {
@@ -10764,6 +10773,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .text\n");
   if (!s.shared) {
     s = emit_stack_overflow_runtime(s);
+    s = emit_stack_guard_failure(s);
   }
   s = emit_report(s);
   if (s.shared) {
