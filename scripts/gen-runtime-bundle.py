@@ -9,7 +9,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 NATIVE_TARGETS = ("x86-64-linux", "arm64-linux", "arm64-darwin")
 WASM_TARGETS = ("wasm32-wasi", "wasm32-wasi-http")
-TARGETS = (*NATIVE_TARGETS, *WASM_TARGETS, "compiler")
 
 
 def literal(value):
@@ -21,20 +20,19 @@ def array_function(name, ty, values):
     return f"pub function {name}(): {ty}[] {{\n  return [\n{rows}\n  ];\n}}\n"
 
 
-def generate():
-    files = sorted((ROOT / "compiler/runtime").glob("*/*.fern"))
+def generate(files, targets):
     if not files:
         raise ValueError("no runtime source files")
     names = sorted({path.stem for path in files})
-    choices = {target: {} for target in TARGETS}
+    choices = {target: {} for target in targets}
     for index, path in enumerate(files):
         group = path.parent.name
-        targets = NATIVE_TARGETS if group == "common" else NATIVE_TARGETS[:2] if group == "linux" else (group,)
+        available = NATIVE_TARGETS if group == "common" else NATIVE_TARGETS[:2] if group == "linux" else (group,)
         if group == "templates":
-            targets = ("compiler",)
+            available = ("compiler",)
         if group == "wasm":
-            targets = WASM_TARGETS
-        for target in targets:
+            available = WASM_TARGETS
+        for target in available:
             if target not in choices:
                 raise ValueError(f"unknown runtime target: {group}")
             if path.stem in choices[target]:
@@ -45,7 +43,7 @@ def generate():
     parts.append(array_function("paths", "string", (literal(path.relative_to(ROOT).as_posix()) for path in files)))
     parts.append(array_function("contents", "string", (literal(path.read_text()) for path in files)))
     parts.append("pub function indices(target: string): i32[] {")
-    for target in TARGETS:
+    for target in targets:
         values = ", ".join(str(choices[target].get(name, -1)) for name in names)
         parts.append(f"  if (target == {literal(target)}) {{\n    return [{values}];\n  }}\n")
     parts.append("  return [];\n}\n")
@@ -56,13 +54,20 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args()
-    path = ROOT / "compiler/rtbundle.fern"
-    generated = generate()
-    if args.check:
-        if not path.exists() or path.read_text() != generated:
-            parser.exit(1, "runtime bundle is stale: run python3 scripts/gen-runtime-bundle.py\n")
-    else:
-        path.write_text(generated)
+    files = sorted((ROOT / "compiler/runtime").glob("*/*.fern"))
+    bundles = {
+        "rtbundle.fern": ([path for path in files if path.parent.name not in ("templates", "wasm")], NATIVE_TARGETS),
+        "rtwasm.fern": ([path for path in files if path.parent.name == "wasm"], WASM_TARGETS),
+        "rttemplates.fern": ([path for path in files if path.parent.name == "templates"], ("compiler",)),
+    }
+    for name, (sources, targets) in bundles.items():
+        path = ROOT / "compiler" / name
+        generated = generate(sources, targets)
+        if args.check:
+            if not path.exists() or path.read_text() != generated:
+                parser.exit(1, "runtime bundle is stale: run python3 scripts/gen-runtime-bundle.py\n")
+        else:
+            path.write_text(generated)
 
 
 if __name__ == "__main__":

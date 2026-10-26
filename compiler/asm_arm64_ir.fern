@@ -6030,7 +6030,7 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
 
 function emit_stack_switch(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #30\n", darwin);
-  s = s.write("    tbnz x0, #63, .Lfern_stack_kept\n    mov x19, x0\n    mov x1, #1\n    lsl x1, x1, #20\n    mov x2, #0\n    mov x8, #226\n    svc #0\n");
+  s = s.write("    tbnz x0, #63, .Lfern_stack_kept\n    mov x19, x0\n    mov x1, #1\n    lsl x1, x1, #20\n    mov x2, #0\n    mov x8, #226\n    svc #0\n    cbnz x0, .Lfern_stack_guard_failed\n");
   s = s.write("    mov x9, #1\n    lsl x9, x9, #30\n    add x9, x19, x9\n    sub sp, x9, #16\n.Lfern_stack_kept:\n");
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #16\n", darwin);
   s = s.write("    tbnz x0, #63, .Lfern_segv_skip\n    mov x9, #1\n    lsl x9, x9, #16\n    sub sp, sp, #32\n");
@@ -6099,6 +6099,13 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asm
     s = s.write("__fern_segv_trampoline:\n" + landing_pad(s) + "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    stp x1, x4, [sp, #-16]!\n    stp x5, xzr, [sp, #-16]!\n    mov x16, x0\n    mov x0, x2\n    mov x1, x3\n    mov x2, x4\n    blr x16\n    ldp x2, xzr, [sp], #16\n    ldp x1, x0, [sp], #16\n    ldp x29, x30, [sp], #16\n    mov x16, #184\n    svc #0x80\n    brk #0\n");
   }
   return s;
+}
+
+function emit_stack_guard_failure(s: asmcore.EmitState): asmcore.EmitState {
+  let msg: string = aborts.stack_guard();
+  s = s.write("    .section .rodata\n.Lmsg_stack_guard:\n    .ascii \"" + msg + "\\n\"\n    .text\n.Lfern_stack_guard_failed:\n");
+  s = s.write("    adrp x1, .Lmsg_stack_guard\n    add x1, x1, :lo12:.Lmsg_stack_guard\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #2\n    mov x8, #64\n    svc #0\n");
+  return s.write("    mov x0, #134\n    mov x8, #94\n    svc #0\n");
 }
 
 pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean, cache: irtables.LowerResult[], physical: physicalbody.Collection): asmcore.EmitState {
@@ -9096,6 +9103,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   s = emit_lc_report(s);
   if (!s.shared) {
     s = emit_stack_overflow_runtime(s, darwin);
+    s = emit_stack_guard_failure(s);
   }
   s = emit_rt_report(s);
   if (s.shared) {

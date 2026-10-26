@@ -431,7 +431,7 @@ They also check empty inputs, length boundaries, aliases, allocation counts,
 the signed sum boundary and the sum after 32-bit wraparound.
 
 The string-reduction source files define the string sum and BSD checksum.
-It decodes owned strings, borrowed descriptors and frame windows before the loop.
+They decode owned strings, borrowed descriptors and frame windows before the loop.
 The tests check all three layouts directly and execute a borrowed string view.
 Empty views use an invalid data pointer to detect an accidental byte read.
 

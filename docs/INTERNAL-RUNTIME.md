@@ -23,10 +23,14 @@ The compiler substitutes configuration values in the AST.
 It does not insert configuration values into source text.
 The map-key helpers also use AST construction for operations that depend on a program's types.
 
-`rtbundle.fern` packages the source files for the compiler binary.
-It is generated data, not an implementation to edit.
-This bundle lets the pinned stage0 build the compiler without a new language builtin or an external runtime directory.
-The compiler source hash also covers the bundle.
+`rtbundle.fern` packages the native source files for the compiler binary.
+`rttemplates.fern` packages the compiler templates separately.
+`rtwasm.fern` packages the WebAssembly source files.
+Wasm drivers load these helpers with `rtmodule.load_wasm`.
+They do not include the native source contents.
+The three bundles contain generated data, not implementations to edit.
+The bundles let the pinned stage0 build the compiler without a new language builtin or an external runtime directory.
+The compiler source hash also covers all three bundles.
 
 To change a helper:
 
