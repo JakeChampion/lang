@@ -1,0 +1,256 @@
+import "../packages/codecs/jpeg/rgb";
+import "../packages/codecs/jpeg/chroma";
+import "../packages/codecs/jpeg/jfif";
+import "../packages/codecs/jpeg/header";
+import "../packages/codecs/jpeg/planes";
+import "../packages/pixels/pixels";
+import "./fixtures/jpeg_rgb" as fixtures;
+import "./fixtures/jpeg_headers" as headers;
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function near(actual: [u8], expected: [u8], tolerance: i32): boolean {
+  if (actual.len() != expected.len()) {
+    return false;
+  }
+  for i in 0..actual.len() {
+    let delta = actual[i] as i32 - expected[i] as i32;
+    if (delta < 0 - tolerance || delta > tolerance) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function marker_at(input: [u8], marker: i32): i32 {
+  let at = 2;
+  while (at + 4 <= input.len()) {
+    if (input[at + 1] as i32 == marker) {
+      return at;
+    }
+    at = at + 2 + (input[at + 2] as i32 << 8 | input[at + 3] as i32);
+  }
+  return 0;
+}
+
+function goldens(): test.TestOutcome {
+  for index in 0..6 {
+    for filter in [chroma.Filter.Nearest, chroma.Filter.Bilinear] {
+      let image = match (rgb.decode(fixtures.input(index), filter, rgb.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("restricted JFIF decode"); } };
+      let expected = match (filter) { chroma.Filter.Nearest => fixtures.nearest(index), chroma.Filter.Bilinear => fixtures.bilinear(index) };
+      let width = if (index == 4) { 1 } else if (index == 5) { 257 } else { 17 };
+      let height = if (index == 4) { 1 } else { 9 };
+      if (image.layout.width != width || image.layout.height != height || image.layout.stride != width * 3
+        || image.layout.bytes != width * height * 3 || pixels.channels(image.layout.format) != 3 || !near(image.data, expected, 3)) {
+        return test.fail("finite C raw-plane and Fraction RGB comparison");
+      }
+      if (index == 3 || index == 5) {
+        for byte in image.data {
+          if (byte != 128 as u8) {
+            return test.fail("fractional neutral planes");
+          }
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function plans(): test.TestOutcome {
+  let totals = [1935, 1719, 1618, 1052];
+  let planes = [459, 315, 243, 315];
+  for index in 0..4 {
+    let input = fixtures.input(index);
+    let plan = match (rgb.inspect(input, rgb.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("checked RGB plan"); } };
+    if (plan.input_bytes != input.len() || plan.row_bytes != 102 || plan.planes.bytes != planes[index] || plan.layout.bytes != 459 || plan.planned_bytes != totals[index]) {
+      return test.fail("independent named logical storage sum");
+    }
+    let exact = rgb.RgbLimits { ...rgb.default_limits(), max_output_bytes: 459, max_planned_bytes: totals[index] };
+    if (match (rgb.decode(input, chroma.Filter.Bilinear, exact, never)) { Ok(_) => false, Err(_) => true }) {
+      return test.fail("exact byte admission");
+    }
+    for limits in [rgb.RgbLimits { ...exact, max_output_bytes: 458 }, rgb.RgbLimits { ...exact, max_planned_bytes: totals[index] - 1 }] {
+      if (match (rgb.decode(input, chroma.Filter.Nearest, limits, never)) { Err(rgb.RgbError.Limit()) => false, _ => true }) {
+        return test.fail("one-less byte admission");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let input = fixtures.input(0);
+  for cap in [rgb.RgbLimits { ...rgb.default_limits(), max_output_bytes: 0 }, rgb.RgbLimits { ...rgb.default_limits(), max_planned_bytes: 0 }] {
+    let polls = cell_new(0);
+    let result = rgb.decode(input, chroma.Filter.Nearest, cap, (): boolean => {
+      polls.set(polls.get() + 1);
+      return true;
+    });
+    if (polls.get() != 0 || match (result) { Err(rgb.RgbError.Limit()) => false, _ => true }) {
+      return test.fail("invalid top-level limits precede callbacks");
+    }
+  }
+  let frame = marker_at(input, 192);
+  let large = input.with(frame + 5, 11 as u8).with(frame + 6, 184 as u8).with(frame + 7, 19 as u8).with(frame + 8, 136 as u8);
+  let unlimited = rgb.RgbLimits { ...rgb.default_limits(), max_output_bytes: 2147483647, max_planned_bytes: 2147483647 };
+  return test.assert_true(match (rgb.inspect(large, unlimited, never)) { Err(rgb.RgbError.Limit()) => true, _ => false });
+}
+
+function profiles(): test.TestOutcome {
+  if (match (rgb.decode(headers.gray(), chroma.Filter.Nearest, rgb.default_limits(), never)) { Err(rgb.RgbError.Unsupported()) => false, _ => true }) {
+    return test.fail("grayscale remains a separate API");
+  }
+  let input = fixtures.input(0);
+  let no_jfif: u8[] = [255, 216];
+  for byte in input[20:] {
+    no_jfif = no_jfif.append(byte);
+  }
+  if (match (rgb.decode(no_jfif, chroma.Filter.Nearest, rgb.default_limits(), never)) { Err(rgb.RgbError.Profile(jfif.JfifError.Missing())) => false, _ => true }) {
+    return test.fail("no color guess without JFIF");
+  }
+  let conflicting: u8[] = [];
+  for byte in input[:20] {
+    conflicting = conflicting.append(byte);
+  }
+  for byte in [255 as u8, 238 as u8, 0 as u8, 7 as u8, 65 as u8, 100 as u8, 111 as u8, 98 as u8, 101 as u8] {
+    conflicting = conflicting.append(byte);
+  }
+  for byte in input[20:] {
+    conflicting = conflicting.append(byte);
+  }
+  return test.assert_true(match (rgb.decode(conflicting, chroma.Filter.Nearest, rgb.default_limits(), never)) { Err(rgb.RgbError.Profile(jfif.JfifError.Metadata())) => true, _ => false });
+}
+
+function framing(): test.TestOutcome {
+  let input = fixtures.input(4);
+  for length in 0..input.len() {
+    if (match (rgb.decode(input[:length], chroma.Filter.Nearest, rgb.default_limits(), never)) { Ok(_) => true, Err(_) => false }) {
+      return test.fail("every truncated stream prefix");
+    }
+  }
+  for bad in [input.append(0 as u8), input.with(input.len() - 1, 216 as u8)] {
+    if (match (rgb.decode(bad, chroma.Filter.Bilinear, rgb.default_limits(), never)) { Err(rgb.RgbError.Plane(_)) => false, _ => true }) {
+      return test.fail("strict final EOI and exact consumption");
+    }
+  }
+  let restart = fixtures.input(0);
+  let last = 0;
+  for at in 0..restart.len() - 1 {
+    if (restart[at] == 255 as u8 && restart[at + 1] >= 208 as u8 && restart[at + 1] <= 215 as u8) {
+      last = at;
+    }
+  }
+  if (last == 0) {
+    return test.fail("late restart fixture");
+  }
+  return test.assert_true(match (rgb.decode(restart.with(last + 1, 0 as u8), chroma.Filter.Nearest, rgb.default_limits(), never)) { Err(rgb.RgbError.Plane(_)) => true, _ => false });
+}
+
+function ownership(): test.TestOutcome {
+  let input = fixtures.input(1);
+  let shared = cell_new(input);
+  let first = match (rgb.decode(input, chroma.Filter.Bilinear, rgb.default_limits(), (): boolean => {
+    shared.set(shared.get().with(0, 0 as u8));
+    return false;
+  })) { Ok(v) => v, Err(_) => { return test.fail("callback source update"); } };
+  let retained = first;
+  first = pixels.Image { layout: first.layout, data: first.data.with(0, (first.data[0] as i32 ^ 255) as u8) };
+  let again = match (rgb.decode(input, chroma.Filter.Bilinear, rgb.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("fresh color decode"); } };
+  return test.assert_true(near(retained.data, again.data, 0) && first.data[0] != retained.data[0] && shared.get()[0] == 0 as u8 && input[0] == 255 as u8);
+}
+
+function reentry(): test.TestOutcome {
+  let nested = cell_new(false);
+  let entered = cell_new(false);
+  let input = fixtures.input(4);
+  let result = rgb.decode(input, chroma.Filter.Nearest, rgb.default_limits(), (): boolean => {
+    if (!entered.get()) {
+      entered.set(true);
+      nested.set(match (rgb.decode(input, chroma.Filter.Bilinear, rgb.default_limits(), never)) { Ok(v) => near(v.data, fixtures.bilinear(4), 3), Err(_) => false });
+    }
+    return false;
+  });
+  return test.assert_true(nested.get() && match (result) { Ok(v) => near(v.data, fixtures.nearest(4), 3), Err(_) => false });
+}
+
+function cancellation(): test.TestOutcome {
+  let input = fixtures.input(4);
+  for filter in [chroma.Filter.Nearest, chroma.Filter.Bilinear] {
+    let count = cell_new(0);
+    let success = rgb.decode(input, filter, rgb.default_limits(), (): boolean => {
+      count.set(count.get() + 1);
+      return false;
+    });
+    if (match (success) { Ok(_) => false, Err(_) => true } || count.get() < 50) {
+      return test.fail("complete decode poll coverage");
+    }
+    for stop in 1..count.get() + 1 {
+      let polls = cell_new(0);
+      let result = rgb.decode(input, filter, rgb.default_limits(), (): boolean => {
+        polls.set(polls.get() + 1);
+        return polls.get() == stop;
+      });
+      if (polls.get() != stop || match (result) { Err(rgb.RgbError.Cancelled()) => false, _ => true }) {
+        return test.fail("every complete decode cancellation poll");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function wide_cancellation(): test.TestOutcome {
+  let input = fixtures.input(5);
+  let planning = cell_new(0);
+  if (match (rgb.inspect(input, rgb.default_limits(), (): boolean => {
+    planning.set(planning.get() + 1);
+    return false;
+  })) { Ok(_) => false, Err(_) => true }) {
+    return test.fail("wide plan");
+  }
+  let raw = cell_new(0);
+  if (match (planes.decode(input, planes.default_limits(), (): boolean => {
+    raw.set(raw.get() + 1);
+    return false;
+  })) { Ok(_) => false, Err(_) => true }) {
+    return test.fail("wide raw planes");
+  }
+  let base = planning.get() + raw.get();
+  for filter in [chroma.Filter.Nearest, chroma.Filter.Bilinear] {
+    let count = cell_new(0);
+    let full = rgb.decode(input, filter, rgb.default_limits(), (): boolean => {
+      count.set(count.get() + 1);
+      return false;
+    });
+    if (match (full) { Ok(_) => false, Err(_) => true } || count.get() <= base + 80) {
+      return test.fail("wide post-plane row coverage");
+    }
+    for stop in [base + 1, base + 2, base + 6, base + 9, base + 14, base + 17, base + 22, base + 25, base + 30, base + 33, base + 36, base + 39, count.get() - 1, count.get()] {
+      let calls = cell_new(0);
+      let result = rgb.decode(input, filter, rgb.default_limits(), (): boolean => {
+        calls.set(calls.get() + 1);
+        return calls.get() == stop;
+      });
+      if (calls.get() != stop || match (result) { Err(rgb.RgbError.Cancelled()) => false, _ => true }) {
+        return test.fail("wide output allocation, sample groups, row copy, and final cancellation");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.test_new("restricted JFIF RGB8 assembly");
+  runner = runner.it("C raw-plane and Fraction goldens across both filters", goldens);
+  runner = runner.it("independent exact logical plans and one-less admission", plans);
+  runner = runner.it("invalid limits and aggregate logical hard ceiling", limits);
+  runner = runner.it("explicit color profile and unsupported metadata", profiles);
+  runner = runner.it("all stream prefixes and late restart or framing errors", framing);
+  runner = runner.it("callback source updates and retained independent images", ownership);
+  runner = runner.it("nested fresh decoder calls keep independent state", reentry);
+  runner = runner.it("every cooperative cancellation poll for both filters", cancellation);
+  runner = runner.it("wide post-plane sample groups, row copies, and final cancellation", wide_cancellation);
+  return runner.finish();
+}
