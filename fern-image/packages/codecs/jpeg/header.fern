@@ -1,0 +1,354 @@
+import "../../pixels/pixels";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum JpegError { Signature, Truncated, Marker, Length, Order, Unsupported, Frame, Table, Scan, Limit, Cancelled }
+
+pub struct HeaderLimits { max_input_bytes: i32, max_header_bytes: i32, max_segments: i32, image: pixels.Limits }
+
+pub struct FrameComponent { id: i32, horizontal: i32, vertical: i32, quant_table: i32 }
+
+pub struct ScanComponent { id: i32, dc_table: i32, ac_table: i32 }
+
+// Quantizers retain their transmitted zig-zag order.
+pub struct QuantTable { values: u8[] }
+
+pub struct HuffmanTable { counts: u8[], symbols: u8[] }
+
+// Huffman slots 0/1 are DC destinations, and slots 2/3 are AC destinations.
+pub struct JpegHeader {
+  output_layout: pixels.Layout,
+  components: FrameComponent[],
+  scan: ScanComponent[],
+  quantization: Option[QuantTable][],
+  huffman: Option[HuffmanTable][],
+  restart_interval: i32,
+  entropy_offset: i32,
+  segment_count: i32,
+  metadata_bytes: i32,
+}
+
+struct FrameInfo { layout: pixels.Layout, components: FrameComponent[] }
+
+pub function default_limits(): HeaderLimits {
+  return HeaderLimits { max_input_bytes: 16777216, max_header_bytes: 1048576, max_segments: 1024, image: pixels.default_limits() };
+}
+
+function be16(input: [u8], at: i32): i32 {
+  return input[at] as i32 << 8 | input[at + 1] as i32;
+}
+
+function extent(input: [u8], end: i32, limits: HeaderLimits): Result[void, JpegError] {
+  if (end > limits.max_header_bytes || end > 1048576) {
+    return Err(JpegError.Limit);
+  }
+  if (end > input.len()) {
+    return Err(JpegError.Truncated);
+  }
+  return Ok();
+}
+
+function frame(input: [u8], at: i32, end: i32, limits: HeaderLimits): Result[FrameInfo, JpegError] {
+  if (end - at < 6) {
+    return Err(JpegError.Frame);
+  }
+  if (input[at] != 8 as u8) {
+    return Err(JpegError.Unsupported);
+  }
+  let height = be16(input, at + 1);
+  let width = be16(input, at + 3);
+  let count = input[at + 5] as i32;
+  if (height == 0) {
+    return Err(JpegError.Unsupported);
+  }
+  if (width == 0) {
+    return Err(JpegError.Frame);
+  }
+  if (count != 1 && count != 3) {
+    return Err(JpegError.Unsupported);
+  }
+  if (end - at != 6 + 3 * count) {
+    return Err(JpegError.Frame);
+  }
+  let stride = width * 3;
+  let layout = match (pixels.checked_layout(width, height, stride, pixels.RGB8, limits.image)) { Ok(value) => value, Err(_) => { return Err(JpegError.Limit); } };
+  let components: FrameComponent[] = [];
+  let blocks = 0;
+  let i = 0;
+  while (i < count) {
+    let offset = at + 6 + i * 3;
+    let id = input[offset] as i32;
+    let horizontal = input[offset + 1] as i32 >> 4;
+    let vertical = input[offset + 1] as i32 & 15;
+    let table = input[offset + 2] as i32;
+    if (horizontal < 1 || horizontal > 4 || vertical < 1 || vertical > 4 || table > 3) {
+      return Err(JpegError.Frame);
+    }
+    for component in components {
+      if (component.id == id) {
+        return Err(JpegError.Frame);
+      }
+    }
+    blocks = blocks + horizontal * vertical;
+    components = components.append(FrameComponent { id: id, horizontal: horizontal, vertical: vertical, quant_table: table });
+    i = i + 1;
+  }
+  if (count > 1 && blocks > 10) {
+    return Err(JpegError.Unsupported);
+  }
+  return Ok(FrameInfo { layout: layout, components: components });
+}
+
+function quantization(input: [u8], start: i32, end: i32, tables: Option[QuantTable][], cancelled: () => boolean): Result[Option[QuantTable][], JpegError] {
+  if (start == end) {
+    return Err(JpegError.Table);
+  }
+  let at = start;
+  while (at < end) {
+    if (cancelled()) {
+      return Err(JpegError.Cancelled);
+    }
+    let precision = input[at] as i32 >> 4;
+    let id = input[at] as i32 & 15;
+    if (precision != 0) {
+      return Err(JpegError.Unsupported);
+    }
+    if (id > 3 || end - at < 65) {
+      return Err(JpegError.Table);
+    }
+    let values: u8[] = [];
+    let i = 0;
+    while (i < 64) {
+      let value = input[at + 1 + i];
+      if (value == 0 as u8) {
+        return Err(JpegError.Table);
+      }
+      values = values.append(value);
+      i = i + 1;
+    }
+    tables = tables.with(id, Some(QuantTable { values: values }));
+    at = at + 65;
+  }
+  return Ok(tables);
+}
+
+function huffman(input: [u8], start: i32, end: i32, tables: Option[HuffmanTable][], cancelled: () => boolean): Result[Option[HuffmanTable][], JpegError] {
+  if (start == end) {
+    return Err(JpegError.Table);
+  }
+  let at = start;
+  while (at < end) {
+    if (cancelled()) {
+      return Err(JpegError.Cancelled);
+    }
+    if (end - at < 17) {
+      return Err(JpegError.Table);
+    }
+    let kind = input[at] as i32 >> 4;
+    let id = input[at] as i32 & 15;
+    if (kind > 1) {
+      return Err(JpegError.Table);
+    }
+    if (id > 1) {
+      return Err(JpegError.Unsupported);
+    }
+    let counts: u8[] = [];
+    let total = 0;
+    let left = 1;
+    let i = 0;
+    while (i < 16) {
+      let count = input[at + 1 + i] as i32;
+      total = total + count;
+      left = left * 2 - count;
+      // JPEG reserves the all-ones code at every length.
+      if (left <= 0 || total > 256) {
+        return Err(JpegError.Table);
+      }
+      counts = counts.append(count as u8);
+      i = i + 1;
+    }
+    at = at + 17;
+    if (total == 0 || total > end - at) {
+      return Err(JpegError.Table);
+    }
+    let symbols: u8[] = [];
+    i = 0;
+    while (i < total) {
+      if (cancelled()) {
+        return Err(JpegError.Cancelled);
+      }
+      let value = input[at + i] as i32;
+      if (kind == 0 && value > 11) {
+        return Err(JpegError.Table);
+      }
+      if (kind == 1 && ((value & 15) > 10 || (value & 15) == 0 && value != 0 && value != 240)) {
+        return Err(JpegError.Table);
+      }
+      symbols = symbols.append(value as u8);
+      i = i + 1;
+    }
+    tables = tables.with(kind * 2 + id, Some(HuffmanTable { counts: counts, symbols: symbols }));
+    at = at + total;
+  }
+  return Ok(tables);
+}
+
+function scan(input: [u8], at: i32, end: i32, info: FrameInfo, quant: Option[QuantTable][], codes: Option[HuffmanTable][]): Result[ScanComponent[], JpegError] {
+  if (end - at < 4) {
+    return Err(JpegError.Scan);
+  }
+  let count = input[at] as i32;
+  if (count == 0 || count > 4) {
+    return Err(JpegError.Scan);
+  }
+  if (count != info.components.len()) {
+    return Err(JpegError.Unsupported);
+  }
+  if (end - at != 4 + count * 2) {
+    return Err(JpegError.Scan);
+  }
+  if (input[end - 3] != 0 as u8 || input[end - 2] != 63 as u8 || input[end - 1] != 0 as u8) {
+    return Err(JpegError.Unsupported);
+  }
+  let output: ScanComponent[] = [];
+  let i = 0;
+  while (i < count) {
+    let id = input[at + 1 + 2 * i] as i32;
+    let dc = input[at + 2 + 2 * i] as i32 >> 4;
+    let ac = input[at + 2 + 2 * i] as i32 & 15;
+    if (dc > 1 || ac > 1) {
+      return Err(JpegError.Unsupported);
+    }
+    for component in output {
+      if (component.id == id) {
+        return Err(JpegError.Scan);
+      }
+    }
+    let found = false;
+    for component in info.components {
+      if (component.id == id) {
+        found = true;
+        match (quant[component.quant_table]) {
+          None => {
+            return Err(JpegError.Table);
+          },
+          Some(_) => {}
+        }
+      }
+    }
+    if (!found) {
+      return Err(JpegError.Scan);
+    }
+    match (codes[dc]) {
+      None => {
+        return Err(JpegError.Table);
+      },
+      Some(_) => {}
+    }
+    match (codes[2 + ac]) {
+      None => {
+        return Err(JpegError.Table);
+      },
+      Some(_) => {}
+    }
+    output = output.append(ScanComponent { id: id, dc_table: dc, ac_table: ac });
+    i = i + 1;
+  }
+  return Ok(output);
+}
+
+// Parse the first baseline scan header. Entropy data and EOI remain unvalidated.
+pub function parse(input: [u8], limits: HeaderLimits, cancelled: () => boolean): Result[JpegHeader, JpegError] {
+  if (limits.max_input_bytes <= 0 || limits.max_header_bytes <= 0 || limits.max_segments <= 0
+    || limits.image.max_pixels <= 0 || limits.image.max_bytes <= 0
+    || input.len() > limits.max_input_bytes || input.len() > 16777216) {
+    return Err(JpegError.Limit);
+  }
+  if (cancelled()) {
+    return Err(JpegError.Cancelled);
+  }
+  extent(input, 2, limits)?;
+  if (input[0] != 255 as u8 || input[1] != 216 as u8) {
+    return Err(JpegError.Signature);
+  }
+  let info: Option[FrameInfo] = None;
+  let quant: Option[QuantTable][] = [None, None, None, None];
+  let codes: Option[HuffmanTable][] = [None, None, None, None];
+  let interval = 0;
+  let metadata = 0;
+  let segments = 0;
+  let at = 2;
+  while (true) {
+    if (cancelled()) {
+      return Err(JpegError.Cancelled);
+    }
+    extent(input, at + 1, limits)?;
+    if (input[at] != 255 as u8) {
+      return Err(JpegError.Marker);
+    }
+    while (input[at] == 255 as u8) {
+      if (cancelled()) {
+        return Err(JpegError.Cancelled);
+      }
+      at = at + 1;
+      extent(input, at + 1, limits)?;
+    }
+    let marker = input[at] as i32;
+    at = at + 1;
+    segments = segments + 1;
+    if (segments > limits.max_segments || segments > 4096) {
+      return Err(JpegError.Limit);
+    }
+    if (marker == 216 || marker == 217) {
+      return Err(JpegError.Order);
+    }
+    if (marker == 0 || marker >= 208 && marker <= 215) {
+      return Err(JpegError.Marker);
+    }
+    if (marker != 192 && marker != 196 && marker != 219 && marker != 221 && marker != 218
+      && marker != 254 && (marker < 224 || marker > 239)) {
+      return Err(JpegError.Unsupported);
+    }
+    extent(input, at + 2, limits)?;
+    let length = be16(input, at);
+    if (length < 2) {
+      return Err(JpegError.Length);
+    }
+    let end = match (at +? length) { Some(value) => value, None => { return Err(JpegError.Length); } };
+    extent(input, end, limits)?;
+    let start = at + 2;
+    if (marker == 192) {
+      match (info) {
+        Some(_) => {
+          return Err(JpegError.Order);
+        },
+        None => {}
+      }
+      info = Some(frame(input, start, end, limits)?);
+    } else if (marker == 219) {
+      quant = quantization(input, start, end, quant, cancelled)?;
+    } else if (marker == 196) {
+      codes = huffman(input, start, end, codes, cancelled)?;
+    } else if (marker == 221) {
+      if (end - start != 2) {
+        return Err(JpegError.Length);
+      }
+      interval = be16(input, start);
+    } else if (marker == 218) {
+      let frame_info = match (info) { Some(value) => value, None => { return Err(JpegError.Order); } };
+      let components = scan(input, start, end, frame_info, quant, codes)?;
+      if (cancelled()) {
+        return Err(JpegError.Cancelled);
+      }
+      return Ok(JpegHeader {
+        output_layout: frame_info.layout, components: frame_info.components, scan: components,
+        quantization: quant, huffman: codes, restart_interval: interval, entropy_offset: end,
+        segment_count: segments, metadata_bytes: metadata,
+      });
+    } else {
+      metadata = metadata + end - start;
+    }
+    at = end;
+  }
+  return Err(JpegError.Truncated);
+}
