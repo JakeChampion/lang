@@ -25202,7 +25202,7 @@ function vb_local_tag(t: typeinfo.Type): string {
   return "";
 }
 
-function vb_annotation_of(t: typeinfo.Type): string {
+function vb_annotation_of(t: typeinfo.Type, s: Scope): string {
   match (t) {
     typeinfo.TypeStruct(_) => {
       return type_label(t);
@@ -25219,8 +25219,8 @@ function vb_annotation_of(t: typeinfo.Type): string {
       }
       return typeinfo.spelling(t);
     },
-    typeinfo.TypeUnion(u) => {
-      if (u.args.len() == 0) {
+    typeinfo.TypeUnion(_) => {
+      if (!names_whole_type(t, s)) {
         return "";
       }
       return type_label(t);
@@ -25316,7 +25316,7 @@ function vb_retype_dest(e: ast.Expr, s: Scope, dest: string): ast.Expr {
           if (tag.len() > 0) {
             nbody = nbody.append(ast.StmtVar { ...v, init: vb_zero_of(tag) });
           } else {
-            tag = vb_annotation_of(want);
+            tag = vb_annotation_of(want, s);
             if (tag.len() == 0 && dest.len() > 0 && !parser.is_destr_marker(dest) && vb_wants_annotation(want)) {
               tag = dest;
             }
