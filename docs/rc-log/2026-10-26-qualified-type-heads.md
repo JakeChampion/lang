@@ -52,3 +52,40 @@ The focused suite requires exact diagnostic code sequences on all three compiled
 All 82 test nodes pass without failures or skips.
 The Exif application source remains frozen during this prerequisite.
 No codec syntax change or name-specific exception substitutes for the compiler fix.
+
+## Qualification
+
+The clean compiler uses source `7c2e5cd50a17cc50c63b4f8f1941429e3046d865`.
+Its CLI SHA-256 is
+`13d459d05529bd7b31f267bc16b720766dde01a87b69cf55d1222acd24fa81fe`.
+The standard build replay and stage1 smoke pass.
+The replay produces the same bytes as the preserved first output.
+The first build session reported exit1, which remains in the record.
+
+The full Go checker passes 2,000 test nodes.
+The direct checker and diagnostic suites pass 4,756 nodes, with native ARM64 execution under QEMU10.
+Both suites report no failures or skips.
+The 15 selected checker and enum roots report another 1,857 passes and zero skips.
+Both unchanged complexity gates pass.
+
+The first combined CLI sweep reaches its 20-minute package limit during examples.
+That invocation remains a failure.
+Five roots complete before the timeout.
+A second run passes every unfinished root with the same inputs, assertions, and 20-minute limit.
+It does not repeat the five completed roots.
+
+The full published image scripts pass all 214 TAP cases on native and Wasm.
+Their 69 native and 45 Wasm heap censuses balance with zero live blocks.
+All 1,280 hashed Fern sources and the compiler binary remain unchanged during each script.
+These results do not claim full ARM repository coverage.
+
+The default allocation workload reports 35,029,113 allocations and frees against the unchanged baseline of 34,951,426.
+The 0.22% drift meets the 1% tolerance and the 10% ceiling.
+These counters do not measure CPU time or physical memory.
+Fern format checks cover 2,032 sources.
+Build, vet, workflow lint, runtime bundle, and test selection checks pass.
+
+The [qualification record](../benchmarks/qualified-type-heads-2026-10-26/qualification.json)
+contains compiler hashes, test totals, and the completed root inventory.
+The [allocation report](../benchmarks/qualified-type-heads-2026-10-26/alloc-report.txt)
+preserves the measured counters.
