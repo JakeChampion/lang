@@ -25,6 +25,33 @@ env:
   GOTESTSUM_JSONFILE: /tmp/gotestsum.jsonl
 
 jobs:
+  security-smoke:
+    name: security-smoke-x86-and-arm64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/apt-cross-toolchain
+        with:
+          qemu-package: qemu-user
+          cross-gcc: "false"
+      - name: Test the security harness
+        run: python3 -B -m unittest discover -s scripts -p test_security_smoke.py
+      - name: Build the current compiler
+        run: make build
+      - name: Run native and emulated security probes
+        run: scripts/security-smoke
+      - name: Preserve security evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: security-smoke
+          path: build/security-smoke.json
+          if-no-files-found: error
+
   # One shard: the ^TestX86_64 set in two workers is about 3 minutes of tests
   # since the one-process modload driver (#13197), so a second shard bought a
   # runner slot and a setup for about 90 seconds of wall-clock. The shard
