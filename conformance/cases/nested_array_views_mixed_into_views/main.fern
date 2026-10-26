@@ -1,0 +1,6 @@
+// An owned element in a literal of views is reported as the mix only.
+function main(): i32 {
+  let data: u8[] = [1u8, 2u8];
+  let all: [u8][] = [data[:1], data];
+  return all.len();
+}

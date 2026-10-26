@@ -77,7 +77,7 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   let rounds: Inlined = done.out;
   sp = grown_leaves(rounds, done.sp);
   let ctors: boolean[] = constructor_leaves(rounds.funcs, sp);
-  let out: Inlined = split_all(paired_all(rounds, names, rewrite, uncalled), rewrite, modes);
+  let out: Inlined = scrutinee_reads_all(split_all(paired_all(rounds, names, rewrite, uncalled), rewrite, modes));
   dump_wanted(out.funcs);
   return Inlined { ...out, spliced: spliced_away(sp, ctors, calls, call_counts(out.funcs, ix)) };
 }
@@ -587,6 +587,66 @@ function leaf_word(f: ssasem.Func, t: typeinfo.Type): boolean {
 function member_read(f: ssasem.Func, ins: ssa.SInst): boolean {
   let e: i32 = semrecords.find_enum(f.enums, f.values[ins.args[0]]);
   return e >= 0 && f.enums[e].layout == semrecords.layout_member();
+}
+
+// A spliced callee reads a field of its parameter, and where the caller
+// passed a struct-union member narrowed out of its union, that is a field
+// read of the narrowed value. It becomes a payload read of the union itself,
+// the shape the source lowering gives a member binding's field read, so the
+// ownership walk sees one reader of the box and can take the field.
+function scrutinee_reads_all(out: Inlined): Inlined {
+  let funcs: ssasem.Func[] = [];
+  let i: i32 = 0;
+  while (i < out.funcs.len()) {
+    let f: ssasem.Func = out.funcs[i];
+    if (out.rewritten[i]) {
+      f = scrutinee_reads(f);
+    }
+    funcs = funcs.append(f);
+    i = i + 1;
+  }
+  return Inlined { ...out, funcs: funcs };
+}
+
+function scrutinee_reads(f: ssasem.Func): ssasem.Func {
+  let narrowed: ssa.SInst[] = narrowings(f);
+  let changed: boolean = false;
+  let blocks: ssa.SBlock[] = [];
+  for b in f.graph.blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.record_get() && ins.args.len() == 1 && ins.args[0] >= 0 && narrowed[ins.args[0]].result >= 0) {
+        let n: ssa.SInst = narrowed[ins.args[0]];
+        insts = insts.append(ssa.SInst { ...ins, kind_tag: ssasem.variant_get(), args: [n.args[0]], str: n.str });
+        changed = true;
+      } else {
+        insts = insts.append(ins);
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+  }
+  if (!changed) {
+    return f;
+  }
+  return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
+}
+
+// For each value that narrows a struct-union to a member, its definition;
+// a definition with no result for every other value.
+function narrowings(f: ssasem.Func): ssa.SInst[] {
+  let none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let out: ssa.SInst[] = [];
+  while (out.len() < f.graph.nvals) {
+    out = out.append(none);
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.variant_as() && ins.args.len() == 1 && ins.args[0] >= 0 && ins.result >= 0 && ins.result < out.len() && member_read(f, ins)) {
+        out = out.with(ins.result, ins);
+      }
+    }
+  }
+  return out;
 }
 
 function leaf_kind(k: i32): boolean {

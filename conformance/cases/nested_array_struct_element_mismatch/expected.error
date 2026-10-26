@@ -1,0 +1,1 @@
+main.fern:6:3: error[E002]: return value: expected T[], got S[]
