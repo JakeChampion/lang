@@ -1,8 +1,8 @@
-# Safety contract and unsafe boundary proposal
+# Safety contract and unsafe boundary design
 
-Status: [research] proposal for [SEC-003](https://github.com/JakeChampion/lang/issues/13505).
+Status: [plan] accepted design for [SEC-003](https://github.com/JakeChampion/lang/issues/13505).
 Parent: [security epic](https://github.com/JakeChampion/lang/issues/13502).
-This document separates current behavior from proposed requirements.
+This document separates current behavior from the accepted target requirements.
 It changes no compiler behavior.
 
 ## Current behavior
@@ -27,7 +27,7 @@ The normative examples live in `conformance/cases/`.
 
 See [the semantic index](../spec/semantics.md) for further rules and examples.
 See [integer semantics](INTEGER-SEMANTICS.md) for division, shifts, and casts.
-This proposal preserves those integer rules.
+The design preserves those integer rules.
 Memory safety does not require every arithmetic overflow to trap.
 Allocation and address calculations require separate range checks.
 
@@ -46,7 +46,7 @@ Async I/O does not imply shared-heap thread safety.
 An interrupt, foreign thread, or raw syscall can violate that assumption.
 SEC-009 and SEC-020 require a separate concurrency design.
 
-## Proposed safe-code requirements
+## Target safe-code requirements
 
 These requirements define the target contract, not a current certification.
 Safe code must not forge references or expose unchecked address arithmetic.
@@ -64,9 +64,9 @@ The same semantic contract must apply to minimal, safe, hardened, and diagnostic
 Unsupported hardware must not disable a semantic check.
 A required optional mitigation must fail explicitly when the platform cannot supply it.
 
-## Proposed unsafe surface
+## Unsafe surface
 
-The proposed syntax uses an `unsafe` function modifier and an `unsafe` block.
+The syntax uses an `unsafe` function modifier and an `unsafe` block.
 The parsers reserve these markers for the bootstrap transition.
 See [the bootstrap syntax scope](security/UNSAFE-BOOTSTRAP.md).
 The checker does not yet enforce unsafe effects.
@@ -96,16 +96,16 @@ It must not imply correct behavior for invalid pointers.
 Documentation must state the obligations for each unsafe operation.
 A safe caller must not acquire raw access through a public re-export or an indirect call.
 
-## Migration proposal
+## Migration plan
 
-The recommended migration uses one coordinated incompatible compiler change.
+The migration uses one coordinated incompatible compiler change.
 The change must annotate the compiler, runtime helpers, and standard library before it enables refusal.
 The Go oracle must apply the same classification for differential tests.
 The bootstrap pin must accept the required syntax before compiler sources use it.
 The implementation must preserve the no-libc native contract.
 
 A compatibility mode that treats unmarked raw code as safe weakens the contract.
-This proposal does not include such a mode.
+The migration does not include such a mode.
 Old source with raw operations must receive a diagnostic that names the operation and its required boundary.
 Current ordinary arithmetic remains unchanged.
 
@@ -113,6 +113,34 @@ This migration affects public raw-memory users and bootstrap order.
 The bootstrap parser reserves the syntax before the coordinated enforcement change.
 This intermediate stage must report the absent safe-code guarantee explicitly.
 The final change must reject unmarked raw operations and preserve ordinary arithmetic.
+
+## Enforcement sequence
+
+1. Inventory each raw builtin and runtime hook from its checker and lowering rules.
+   Record its caller obligations and current source access rules.
+   Compiler-generated private helpers must retain their admission checks.
+
+2. Ship the contextual parser and formatter support in a normal bootstrap release.
+   Update the stage0 pin only after bootstrap verification passes.
+
+3. Retain the unsafe effect in function types, aliases, generic substitutions,
+   trait methods, implementations, and public exports.
+   Refuse a conversion that discards the caller obligations.
+   A safe trait method must not acquire an unsafe implementation.
+
+4. Annotate the trusted runtime, compiler, and standard library callers.
+   Each safe wrapper must validate every input before it uses its unsafe block.
+   The unsafe function modifier alone does not authorize raw operations in its body.
+
+5. Enable the same refusal rules in the native checker and the Go oracle.
+   Run the negative cases and their positive controls on both native targets.
+   Re-run the existing ownership, bounds, initialization, and integer corpus.
+
+6. Publish a safe-code guarantee only after the enforcement and runtime audits
+   establish the required invariants. Until then, report the remaining gaps.
+
+The syntax-only bootstrap does not make old raw code safe.
+This sequence introduces no compatibility flag that labels that code safe.
 
 ## Required conformance additions
 
@@ -135,7 +163,7 @@ Every rejected source must produce a stable diagnostic before executable output.
 
 Current bounds failures print their defined cause and terminate with exit status 134 on native Linux.
 Current checked arithmetic returns a value instead of an exception.
-This proposal preserves both behaviors.
+The design preserves both behaviors.
 It introduces no unwinder and no implicit recovery from corrupted runtime state.
 Signal handlers and crash reports require allocation-free failure paths under SEC-021.
 
@@ -147,6 +175,8 @@ Self-host fixpoints cannot exclude a stable miscompile.
 Sanitizers cannot certify the absence of all memory errors.
 Physical hardware tests cannot certify semantic safety.
 
-SEC-003 remains open until review resolves the unsafe migration policy and the implementation plan.
+The selected design preserves Perceus ownership and total integer arithmetic.
+It adds an explicit unsafe boundary through the coordinated migration above.
+The parser bootstrap is the first implementation stage.
 The later language issues supply enforcement and adversarial evidence.
-No release must describe this proposal as an implemented safe-code guarantee.
+No release must describe this design as an implemented safe-code guarantee.
