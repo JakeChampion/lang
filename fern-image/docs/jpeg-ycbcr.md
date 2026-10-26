@@ -88,3 +88,30 @@ python3 tests/generate_jpeg_ycbcr.py tests/fixtures/jpeg-ycbcr-reference.json.gz
 The reference uses only offline Python standard-library tools.
 The Fern runtime has no C, Python, or external codec dependency.
 New raw records use `jpeg-ycbcr-*` names and preserve all earlier datasets.
+
+## Recorded qualification
+
+The new records are [native](../benchmarks/results/jpeg-ycbcr-native.json), [Wasm](../benchmarks/results/jpeg-ycbcr-wasm.json), and [ARM64](../benchmarks/results/jpeg-ycbcr-arm64.json).
+Their source commit is `8f1ad1e30e9bfabd98839c8140e322c365c44f46`.
+The clean compiler reports `dfa23fa508f9`, with SHA256 `68b47eac8e56bb44944fcde126bb29d80ad2173afb7ac57eaf6c52e7b0f44282`.
+Compiler and stdlib sources match the integrated main revision `3899b879b3dacc9975f0f2d5ac5c900d6a756298`.
+
+Each target completed all 70,844 triples in 139 rows across 18 fresh workers.
+All 54 workers reported nonzero balanced heap counts and zero final live bytes.
+Every RGB byte matched the independent rational reference exactly, and the target sample records match.
+Native qualification locks 523 source and tool hashes, while each runner target locks 524.
+These include all 163 stdlib sources and the compiler's Fern sources.
+Each campaign verified immutable source and tool hashes.
+
+These observations apply to explicit sample conversion only.
+They do not qualify chroma filters, encoded color detection, codec parity, or complete color JPEG decoding.
+
+All 184 image TAP cases passed on native sanitizer, Wasm leak census, and standalone ARM64/QEMU10.
+Full native and Wasm scripts completed with 65 and 41 balanced heap censuses respectively.
+The portable ARM run completed 26 executables with balanced heaps and zero final live bytes.
+The primary interpreter passed all five new TAP groups.
+Both unchanged complexity gates passed without skips.
+
+Eight protocol controls, 1,313 Fern format checks, Go build/vet, workflow lint, selectors, and CI self-tests passed.
+Independent reference regeneration produced the same bundle SHA256, `b853e0ab2aa51e6731a38448301103dac4e74f253ea5bb6ce710653c669b63a5`.
+These local observations are separate from GitHub CI status.
