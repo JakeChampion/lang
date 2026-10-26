@@ -15783,7 +15783,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             }
           }
         }
-        if (is_primitive_type(mst) && ordinary_match_origin(m.origin)) {
+        if ((is_primitive_type(mst) || is_owned_array(mst) || is_arr_view(mst)) && ordinary_match_origin(m.origin)) {
           for arm in m.arms {
             match (arm.pattern) {
               ast.PatVariant(epv) => {

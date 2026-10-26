@@ -56,6 +56,18 @@ func TestSelfHostX86GasMulRuns(t *testing.T) {
 	runX86GasNativeDriver(t, "gasmul42", x86GasMulDriverMain, 42)
 }
 
+func TestSelfHostX86GasImmediateMulRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasimmediate42", `
+function main(): i32 {
+  let src = "movq $6, %r9\nimulw $7, %r9w\ncmpw $42, %r9w\njne failed\nimull $972, %r9d\ncmpl $40824, %r9d\njne failed\nimulq $-3, %r9\ncmpq $-122472, %r9\njne failed\nmovq $42, %rdi\nmovq $60, %rax\nsyscall\nfailed:\nmovq $1, %rdi\nmovq $60, %rax\nsyscall\n";
+  let a = x86_gas_assemble(src);
+  if (a.unknown.len() > 0) { return 2; }
+  write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
+  return 0;
+}
+`, 42)
+}
+
 func TestSelfHostX86GasIncShlRuns(t *testing.T) {
 	runX86GasNativeDriver(t, "gasincshl42", x86GasIncShlDriverMain, 42)
 }

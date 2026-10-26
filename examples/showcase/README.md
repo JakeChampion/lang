@@ -368,3 +368,47 @@ An optimized x86-64 Linux loopback run sustained 10 factory updates per second w
 Acknowledgement latency was 2.58 ms at the median and 3.79 ms at p95. Server RSS was 25.0 MiB.
 The three-second sample transferred 1.07 MiB of factory data across all peers.
 These measurements exclude Internet latency and hosting limits. Use the load command to measure another machine.
+
+## Sustained multiplayer tests
+
+Use a dedicated server with no other visitors. The soak test opens real connections and continuously sends player inputs.
+A separate client process owns one eighth of the seats. The test kills that process during reconnect cycles.
+Other participants disconnect gracefully and reconnect. Every cycle must release and restore the correct number of seats.
+
+```sh
+node examples/showcase/tests/soak.mjs http://localhost:8080 foundry 180
+node examples/showcase/tests/soak.mjs http://localhost:8080 gather 180
+node examples/showcase/tests/soak.mjs http://localhost:8080 blockyard 180
+```
+
+The defaults use 256 Foundry participants and 512 participants in each game. Durations range from 10 to 3600 seconds.
+Each process retains at most 8192 recent latency samples. Each peer has a bounded acknowledgement map.
+The JSON output records samples every five seconds. Its p95 values describe the main client process's recent sample window, not the complete run.
+
+The test checks snapshot progress, server identity, cargo conservation, seat cleanup, and acknowledgement stalls.
+After warmup, it checks RSS growth and its linear trend. RSS growth alone does not prove a memory leak.
+The guards reject growth above 32 MiB, or growth above 8 MiB with a trend above 2 MiB per minute.
+
+Set `FERN_SOAK_PID` to the local server PID to check descriptor counts too.
+The client and server must share the same Linux PID namespace for that check.
+Do not set this variable for a remote server or a server inside another PID namespace.
+
+## Durable production deployment
+
+The [production deployment](deploy/README.md) provides one native owner, TLS, persistent volumes, backup, and restore.
+The existing two-owner development Compose file also retains each owner's studio, database, and archive data separately.
+A public deployment needs an actual host and DNS name. The Netlify demonstration remains temporary.
+
+Build the image before the deployment regression:
+
+```sh
+FERN_SHOWCASE_IMAGE=fern-showcase:latest node examples/showcase/tests/deployment.mjs
+```
+
+The regression creates its own project and volumes. It validates the TLS certificate and all three compression formats.
+It checks shared command sessions, reconnects, a forced app kill, and recovery from a backup into a new volume.
+Cleanup removes only the resources that this test created.
+
+The optional **Showcase endurance** workflow builds the production image and runs these checks through TLS.
+Its duration input permits 10–600 seconds per workload. The workflow retains logs for seven days.
+The [2026-10-26 report](deploy/soak-2026-10-26.md) records the first three-minute run for each workload.
