@@ -15,6 +15,9 @@ A struct literal must supply each required field. An omitted field does not
 acquire an implicit zero value. Composite updates can retain fields from a valid
 base value under the normal struct update rules.
 
+An enum constructor requires each payload argument. Empty variants require no
+payload. A match selects an initialized payload from its declared variant.
+
 Fern has no general null literal. The name `null` follows ordinary identifier
 resolution. Absence uses an optional value such as `Option[T]`. Code must select
 a payload through a checked operation, such as a match on `Some` and `None`.

@@ -392,6 +392,8 @@ indirect_call_owned_param                            0
 indirect_owned_arguments_follow_their_contract        0
 init_branch_control                                  0
 init_option_control                                  0
+init_struct_update_control                           0
+init_variant_control                                 0
 inline_hints                                         0
 insert_dedup                                         0
 int_bit_accessors                                    0

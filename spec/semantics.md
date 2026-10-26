@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**59 of 62** claims are pinned by a conformance case. The remaining
+**62 of 65** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -121,6 +121,9 @@ of them.
 | `DI-08` | `docs/INITIALIZATION.md` | Matching `Some` and `None` permits a checked optional payload read | `init_option_control` |
 | `DI-09` | `docs/INITIALIZATION.md` | Every local array declaration requires an initializer | `init_missing_array` |
 | `DI-10` | `docs/INITIALIZATION.md` | A loop-local binding cannot escape its block (`E001`) | `init_loop_scope_escape` |
+| `DI-11` | `docs/INITIALIZATION.md` | An enum constructor requires every payload argument (`E036`) | `init_variant_payload_missing` |
+| `DI-12` | `docs/INITIALIZATION.md` | Both empty and payload enum variants produce initialized typed values | `init_variant_control` |
+| `DI-13` | `docs/INITIALIZATION.md` | A struct update retains initialized fields from its base | `init_struct_update_control` |
 | `ML-01` | `docs/MODE-LATTICE.md` | A borrowed value cannot be passed to an `own` parameter (`E051`) | `diag_e051` |
 | `ML-02` | `docs/MODE-LATTICE.md` | A `fip` function may not allocate (`E053`) | `diag_e053` |
 | `ML-03` | `docs/MODE-LATTICE.md` | A `[T]` view of function-local storage may not be returned (`E063`), on its own or inside a returned struct, tuple, array or enum | `diag_e063` |
