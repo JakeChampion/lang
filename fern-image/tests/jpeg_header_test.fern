@@ -190,12 +190,48 @@ function scan_fields(): test.TestOutcome {
   let no_codes = append_bytes(append_bytes([], input[:71]), input[111:]);
   let rgb = fixtures.rgb444();
   let start = marker_at(rgb, 218) + 4;
-  let permuted = rgb.with(start + 1, 2 as u8).with(start + 2, 17 as u8).with(start + 3, 1 as u8).with(start + 4, 0 as u8);
-  let ordered = match (header.parse(permuted, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("permuted scan components"); } };
+  let frame = marker_at(rgb, 192) + 4;
+  let renamed = rgb.with(frame + 6, 2 as u8).with(frame + 9, 1 as u8).with(start + 1, 2 as u8).with(start + 3, 1 as u8);
+  let ordered = match (header.parse(renamed, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("renamed frame and scan components"); } };
   return test.assert_true(ordered.scan[0].id == 2 && ordered.scan[1].id == 1
     && rejected(no_quant, header.Table) && rejected(no_codes, header.Table)
     && rejected(rgb.with(start + 3, rgb[start + 1]), header.Scan)
     && rejected(rgb.with(start, 1 as u8), header.Unsupported));
+}
+
+function scan_component_order(): test.TestOutcome {
+  let original = fixtures.rgb444();
+  let frame = marker_at(original, 192) + 4;
+  let scan = marker_at(original, 218) + 4;
+  let ids: u8[] = [201 as u8, 7 as u8, 33 as u8];
+  let input = original;
+  for i in 0..3 {
+    input = input.with(frame + 6 + 3 * i, ids[i]).with(scan + 1 + 2 * i, ids[i]);
+  }
+  let parsed = match (header.parse(input, header.default_limits(), never_cancel)) { Ok(v) => v, Err(_) => { return test.fail("frame-order identifiers"); } };
+  for i in 0..3 {
+    if (parsed.components[i].id != ids[i] as i32 || parsed.scan[i].id != ids[i] as i32) {
+      return test.fail("identifier identity");
+    }
+  }
+  for a in 0..3 {
+    for b in 0..3 {
+      for c in 0..3 {
+        if (a == b || a == c || b == c || a == 0 && b == 1 && c == 2) {
+          continue;
+        }
+        let order: i32[] = [a, b, c];
+        let changed = input;
+        for i in 0..3 {
+          changed = changed.with(scan + 1 + 2 * i, ids[order[i]]).with(scan + 2 + 2 * i, input[scan + 2 + 2 * order[i]]);
+        }
+        if (!rejected(changed, header.Scan)) {
+          return test.fail("scan differs from frame order");
+        }
+      }
+    }
+  }
+  return test.pass();
 }
 
 function metadata_restart_and_fill(): test.TestOutcome {
@@ -321,6 +357,7 @@ function main(): i32 {
   runner = runner.it("quantizer validation, zig-zag order, and replacement", quantization);
   runner = runner.it("Huffman tree, padding code, and symbol restrictions", huffman_tables);
   runner = runner.it("full baseline scan selectors and required tables", scan_fields);
+  runner = runner.it("scan order follows frame positions rather than numeric identifiers", scan_component_order);
   runner = runner.it("bounded metadata, restart interval, and marker fill", metadata_restart_and_fill);
   runner = runner.it("exact input, header, segment, pixel, and byte limits", exact_limits);
   runner = runner.it("hard input, header, and segment caps", hard_caps);
