@@ -1,0 +1,2 @@
+7:19: error[E043]: field "xs": expected [i32], got i32[]
+9:19: error[E043]: field "xs": expected [i32], got f64[]

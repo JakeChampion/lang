@@ -1,0 +1,14 @@
+// An array literal in a generic `[T]` field binds T, or takes the T a later field binds.
+struct G[T] { xs: [T] }
+struct Q[T] { xs: [T], a: T }
+
+function main(): i32 {
+  let g = G { xs: [1, 2] };
+  let x: i32 = 7;
+  let q = Q { xs: [2, 3, 4], a: x };
+  let w: i64 = 4000000000;
+  let r = Q { a: w, xs: [5, 6] };
+  let names = G { xs: ["a", "bc"] };
+  print(f"{g.xs[1]} {q.xs.len()} {q.a} {r.a} {r.xs[0]} {names.xs[1]}");
+  return 0;
+}

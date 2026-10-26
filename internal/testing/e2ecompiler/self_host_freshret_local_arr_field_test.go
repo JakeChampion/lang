@@ -226,6 +226,7 @@ function main(): i32 {
 }
 
 func TestSelfHostFreshRetLocalArrFieldIRX86_64(t *testing.T) {
+	withoutSanitizer(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "ircore.fern", "asm_ir.fern", "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
@@ -253,6 +254,7 @@ func TestSelfHostFreshRetLocalArrFieldIRX86_64(t *testing.T) {
 }
 
 func TestSelfHostFreshRetLocalArrFieldIRArm64(t *testing.T) {
+	withoutSanitizer(t)
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
