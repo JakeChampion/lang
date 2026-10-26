@@ -499,6 +499,9 @@ func (g *Generator) MainPrintableProgram() string {
 		if g.maybeEmitClosureCluster(&b, sc) {
 			continue
 		}
+		if g.maybeEmitLaneCluster(&b, sc) {
+			continue
+		}
 		if g.maybeEmitControlStmt(&b, sc, tI32) {
 			continue
 		}
