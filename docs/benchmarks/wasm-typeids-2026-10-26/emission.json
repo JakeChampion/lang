@@ -1,0 +1,2630 @@
+{
+  "source_commit": "934244ba8480e3dcef934d32e029aad3852c441f",
+  "baseline_source_commit": "0e2176c40c6e61e522cfa3ef204e4a4f0555933b",
+  "stage0_lock_sha256": "a89617e4aeaa859b333bd203598f0eee1872f6648d24c81cefa95a20f1e0c5b3",
+  "tools": {
+    "baseline": {
+      "path": "/workspace/lang-image-wasm-typeids-before/bin/fern-selfhost",
+      "sha256": "eaba52187ec4acac5732447cfb4281c201527bf0eeeded8d87bf87dd9195e19c"
+    },
+    "candidate": {
+      "path": "/workspace/lang-image-wasm-typeids/bin/fern-selfhost",
+      "sha256": "27c2eb3e12ced4d8e7cfb2099ec8de053dc11862e08bd48419618ac4dfd7e1bc"
+    },
+    "wasm_tools": {
+      "path": "/home/agent/.local/share/mise/installs/wasm-tools/1.253.0/wasm-tools-1.253.0-x86_64-linux/wasm-tools",
+      "sha256": "4781d5b7e1d6cedcd8f2384cf6578f4ed7022d305a6e580bde902c32756ca661"
+    }
+  },
+  "wasm_tools_version": "wasm-tools 1.253.0 (c799bb87b 2026-07-07)",
+  "inputs_sha256": {
+    "bench/array_append.fern": "257c084c1605fc967a0d418001b4464320967d5a70be8ee8a107024317a658bf",
+    "bench/array_index.fern": "2282b3224c6db855e5c73f4f09318fdc7fe7f7cead23b6e3d4749b09e67778e9",
+    "bench/array_scale_f64.fern": "18016fdf455a70ccb81e7054474f8adb244f7d8969497ecaee24589685149d93",
+    "bench/array_with.fern": "2a3b5441f075450fa94c4ffb15b3114e7b050884fc684ddfb5a29383e9ed89b5",
+    "bench/ascii_scan.fern": "1973a98726ef2022520d7e250ff7e3bee157c1c9bc158719e218f9cc3788c127",
+    "bench/byte_copy_append.fern": "bb9fb8fa6ade5623ec68ec1f6ad4229f8c405220403fda69f3b9a3bb896d758f",
+    "bench/byte_copy_with.fern": "7d810121ddcef37bf1b88ea3bd1704b696670a75ec80b7e19466f6477a94f635",
+    "bench/call_overhead.fern": "5afb6cd7bf4b03d3f8a72ad2095bc9403184905064becd366062293560cbc1de",
+    "bench/closure_call.fern": "651395c65da5bdddb3380fdc9763f451f9a532f5a2847091bc19624b5db5e9b5",
+    "bench/deflate_decode.fern": "6e269c0727c6a8f332b19a156c274bd26b1b5367e9a36b9934dba95f0f6a3709",
+    "bench/deflate_encode.fern": "8afd42e00de9aa80bf23fa2ff70e31bd661ea2fcb34d2c654edb4985e6e1fca8",
+    "bench/enum_match.fern": "8d680f749427190b3618021d3e4821c1f2944aee9e4c160ddde1051613dbf61f",
+    "bench/http_hello.fern": "d692fc44ce7d174c2afab2de6e3fc0cead2a144e205b64545b4bc054a3faaa21",
+    "bench/int_loop.fern": "2c06a87a38a5bdfb24b7f81dd8f49b5c5b5004d52ca97a55e95d17ee0328dc9c",
+    "bench/map_int.fern": "4541e76a78f507b67a78030c0e94ec68f0f5f8aaacbae4657a81d5e08605face",
+    "bench/map_probe_chain.fern": "835a60896b10a18d5b4a753fc0ada94d2c4771a4f54f63477504386b83cb0962",
+    "bench/map_string.fern": "5ccab6768f163414082cdcfecbd24aa01a0ec502122077df52dc93de150cb1c7",
+    "bench/ordmap_insert.fern": "cee245d551ca75aa979fab6ec6c65d0ff4ae8131dbbfb75fa81280704a174ad6",
+    "bench/perceus_cfold.fern": "eed02000f17776d39a453b98bd86b02d3463023cb027c3ba1e08d31a64ac4f53",
+    "bench/perceus_deriv.fern": "bb5c8c5d3e5d5103ccfd51f1d366d00c8bc523a0b9a998a9b74a09ff2d4c4648",
+    "bench/perceus_nqueens.fern": "c715ae6af581b085bb524b1f86b47fc80e9591734e30c4f93cb2f9ba99f0bf8c",
+    "bench/perceus_rbtree.fern": "ace467c208ca1b22245185fd20660246f09e26495158c6e030d8b70098753e9d",
+    "bench/perceus_rbtree_ck.fern": "e2b352ed5532da669c4f00a74b4dda26cbd4b0bbb76ffd728717daf1f75dddf8",
+    "bench/pmap_insert.fern": "333ddd4bec7f735fab81ba3a565a1c2ef87f13e40402f087eaa3d9aee122d533",
+    "bench/pvec_with.fern": "d5f250c971aae1cbcdb8b8ad34327092434fa106b14a2783253f08278940b89c",
+    "bench/record_update.fern": "844285da5dc5391b447341e2dba8a5c974c2bfd236c16624339d9bfe65b5b15b",
+    "bench/sort_inplace.fern": "92e8aea3c97efaf2dd6c35f4c107a1df4057ed72dce014124a9b42c2404de7c2",
+    "bench/sort_ints.fern": "96f342e2164197727a460973e14da6ae83ea07f6e19756e497267edb2afa03f5",
+    "bench/sort_strings.fern": "15387dd380ae299774b3625ce1bde2067e4284edb00dd0b70daeee3730e37a15",
+    "bench/string_build.fern": "e87dd76cdf59e6c03d609fd57e6368e071ec2761682d4b95644def6e47ae33ec",
+    "bench/string_count_byte.fern": "1fc3be9e836278e587d7d3a6517b991c499ccb1106317bb0670dc1d56e18c510",
+    "bench/string_find_byte.fern": "0b5c5646e57566f824b9f4f2d2d7134194639903f06d8057d143cd4b8f22e3a8",
+    "bench/string_rfind_byte.fern": "b49cd5538741bb8c70f2fbceab981753ef3b57a1ce30c19da0cef2b27c6af9f2",
+    "bench/string_scan.fern": "f649449a38daafdd20df403f4309394a92b5243c202ec59e90bbfde780651c57",
+    "bench/string_slice.fern": "253ee7ee3b42955aa472a0534748f3dee968ba4f81e19c9479658c8ed2754865",
+    "bench/struct_drop.fern": "2b1e95c5b040ca5c5bce8754aa0e4f93c1320bea87e29ac106b650c27e9ff1b5",
+    "bench/tokenize.fern": "07f1daa59bf7adec7f380eb70076efa9cfddc22a72e5351c4f868fd16f48f157",
+    "bench/utf8_ingest_unchecked.fern": "8283cef61b9615de32f53ace8996ecfb37858bfbe389086f7ec8098e1c5026a0",
+    "bench/utf8_ingest_validated.fern": "a3c224e06a7926e4aff2c76dbcf87cf7c870cd68cfc110b3da65b176a92d5ac1",
+    "compiler/aborts.fern": "6cf48a834e3ff0932461bdfc88ab60d8f7b76f74c541028dff52edd106cdc97b",
+    "compiler/aesref.fern": "456b29a0f4c580c5ff426cb4792606de0c7397dbbae2a675d02dd250f4eeb8db",
+    "compiler/ambient.fern": "89426e1ff638cd86d20c7d86645ce1dfce96bdaeb728d839de8ddcf23154cd16",
+    "compiler/arm64_native.fern": "a0ec5e56e35cf73337ee535466ba4f6e4c8f9ce3ffcd180ea3456529bc03de77",
+    "compiler/asm_arm64_ir.fern": "e8eab077e6515549f58d04da8e43661d5e791dce4861f0030c6692f6592510b1",
+    "compiler/asm_ir.fern": "ba11bc37f3ceddbdd4e21235aea7a1f5da2dcdff15d50fa6f4a59e5e90263f1a",
+    "compiler/asmcore.fern": "d3c2d20407878f9bf033da88486e07fa9a61f301fc8a418c507761c85f9f04dc",
+    "compiler/ast.fern": "0f630355389d86581f2409d51a579f6cac919768a47af7d66b37b9e1199d4dc5",
+    "compiler/astwalk.fern": "737947ab09f6e460a552f472f6a6bc59c27381d4187a82f0e318b8991d8e5651",
+    "compiler/builtins.fern": "cef920100fa0d538471b6f47277667f86490d690e868807884bf681a1e92b13a",
+    "compiler/byteconst.fern": "a395976f92f1b0da9131f20f8f8e51c4e9ba6dc95de083f00e59ed75bc55343b",
+    "compiler/callsubst.fern": "ef55a649e02a50d99919d23a6a031296919380242d9f95c13bacd2a1f3599be0",
+    "compiler/caps.fern": "d27d06a1314e06e9370f609344639a264541a45bbce1bdf81258bacd726558ec",
+    "compiler/capturebox.fern": "b9fa7ee4fae149d226af4dac9adb55e3c11d0aef61b826f4081361806ee70de0",
+    "compiler/captureflow.fern": "f7d47dda5ee5ad724d2e6dde8055007b71fcf8092a0924b54bb0ecff378fb789",
+    "compiler/capvocab.fern": "5eb8573abc32a1ba36b1828ece2c1a22f230172d1231163d8f7b4caa74a1357e",
+    "compiler/checker.fern": "828eab80693cca74170e04804ada9bcc25a77b5350ac78047d14197e6ac417a3",
+    "compiler/consteval.fern": "900549a34e967c9aa557b15deaa3965afd4b7e8bb6d88d86f105a8d77a26064b",
+    "compiler/constfold.fern": "571d6d481aa5e3be654fee500b0ebc127a4c63483dc56a88ffe56bbde90e1e3b",
+    "compiler/cover.fern": "54c6288e2b64b226b1f6e82cd76f76003ab0c05a470074c9e169c63d11164089",
+    "compiler/coverreport.fern": "572008777d674cbf9fc9d657355af7abf7d4c24a4d2542194ba28f0246210c04",
+    "compiler/decltypes.fern": "9d4937caba045fdd5ae95b9d0d83428407ef2b73a86b3aef1152869bc489d277",
+    "compiler/docprintable.fern": "25e8a17f09176506d60a12ba4bd83f6d9ec85be9167f3b4111b1ddfb513e5592",
+    "compiler/docsummary.fern": "c601c8b5747f3c0ce295afd1f54022abdedf541c4bfe4a9b82e0798439b77156",
+    "compiler/effects.fern": "dcc645fbcf2b689ac53b2ff3a51ab2d913948fd8573a22d2a6cc8ac30fd40632",
+    "compiler/elf.fern": "a5fdd560ea2e099c4543fe44c5785c971cb79a77784e0d25909a249a53d655ad",
+    "compiler/embed.fern": "3873419d096dffdc013d4dd14bcbd35c4a51b2f252cb5c0d9c764a87e9fff0f9",
+    "compiler/emitforms.fern": "618dff02c24420735e1c4d3910bbc9dbfe01edbc3b6269acf78f17f07ed6a476",
+    "compiler/fern.fern": "70dfc9a93c77bda0d35427ac263fca926fd9c16496f4af5743a5a9b7ca1497d3",
+    "compiler/fern_main.fern": "2e61bd9def2660558dc4f9f877fd035020ff0c20e2026612acc71f3dc1bd6549",
+    "compiler/fern_toml.fern": "5501637a37a165c7d54fcd8ea17d0aac1f4c9b189b6bce4a3ad9ddc244e23ea4",
+    "compiler/ferndoc.fern": "f8c2b4f90a515f66cf3557efba26d5fd77a1a1e64bfc5ff07a6e15409f4156da",
+    "compiler/flatten.fern": "5397b56a8356eac8cc2a909ac9c85765a41e03355c665e6a7edd8d420db09059",
+    "compiler/interp.fern": "7e88e3c4e88916d5bd89503572abe95b58d1f5ed3421f06e29b809f2efde9cff",
+    "compiler/ir.fern": "f19aeb0eca9186014cecf8c5c95d3d3aa0b54afae9b14bbf5b42152975058200",
+    "compiler/ircore.fern": "f191d79487fee951eee3be1ca7e22973c66012b4edcfbd95865f4169254f0cde",
+    "compiler/irfipverify.fern": "7ae8da54ccbbcd707b331322beb43dd60871b1722c9892b1ebc8213ac2bb121a",
+    "compiler/irtables.fern": "82f5086de6c43127c4c26a0314bea380c178de8d49abbf67fd2ba34276c21d13",
+    "compiler/irverify.fern": "a7680740fbb61a76f665d7fd1a7ffda68d11b57b251d152b6248bdf3a3e29aeb",
+    "compiler/irverifygate.fern": "34481694638a37b3d0557c326ac7f92f74c54b7ba02d761e026b499392808282",
+    "compiler/irverifyrc.fern": "e7199bdb625c25223034e34e59a6e6c3138ae338effcc0a628e1cb7b4cc03c14",
+    "compiler/irverifystack.fern": "e64f6d7c687f40e2dc80fe17915a882772870c5a0a99c7c7395d21428b36ab10",
+    "compiler/lexer.fern": "f1d246f2444c861971e1e8c4b575145e91b5e2ede8226e2f6e0c0237f7bef5a4",
+    "compiler/lexical.fern": "592a81394a152e2d2c16cd9fa5d5ff60f72a37439fe2cee108abeb8b3f8f5680",
+    "compiler/lift.fern": "c7e53332e7d19bd6abaa647c2a56e5b14a834de588408897ab02e8599d925d41",
+    "compiler/lint.fern": "b111a596241041bd14d70e127b4052c4a6d790155a6f4d5ad178eeee17cd98dc",
+    "compiler/literate.fern": "6d23f78ff08819d0582b4bbba839c51157b2bc65cc40dfe7c65af5d732783f10",
+    "compiler/lsp.fern": "f640be45f8ceefa86787bb68115654a910bb462dc9ddd3d2466e4e3676b93974",
+    "compiler/lspassist.fern": "0702bf1e6415288f89c6db660bd0c9f90f431f785b414489ccd6e838c44da492",
+    "compiler/lspquery.fern": "1fd0421cde9429fc0dd84b5254e338adfbb3afdbc2594ded7829c2d3610c660e",
+    "compiler/lsprefs.fern": "1f7010ca385d89cb98c0276fc33cff6ef66dbf716b08bc6c5f08d69d916c1ac9",
+    "compiler/lsptokens.fern": "085593321c1fd675f0730796020932e73b7fd03a5696daaabe6fdbdf0682ae2d",
+    "compiler/modloader.fern": "b7d18746475e64983f89b8d8998205d5cc7e942cf56c297afa0ff522c292777b",
+    "compiler/mvs.fern": "d8a4751de012f7df86619a72fac9380e31c85bf8541ea4138e512c7711f005d4",
+    "compiler/optbisect.fern": "32fac81cc3d35f9e600ae039c2f312bb16258e6976407cf218e1b9d6696cb1b1",
+    "compiler/ownership.fern": "60b872bfe56cf962970836389edde091dca9cef215a5cd16b162e2a378ea076d",
+    "compiler/parser.fern": "4450406d6df3e332e3e87bf426797d0671de17762930df70b59e0f5fbe7348ab",
+    "compiler/physicalbody.fern": "9e0056d47ff651f64ab38c3ecb77aa98c7745348139a55f9c651786dbdbe118f",
+    "compiler/pkgfetch.fern": "e6537020c0e92e10c4355a76382547e9697d682cf730e25d47161e32289da7a4",
+    "compiler/pkggrants.fern": "04ee7c7bcf5144505b4d6e7af39ac0a33bccd24d7ec89ae54396eac0531191fd",
+    "compiler/platforms.fern": "42ba6376a3de3d547ea4259c3b3d2d59c6e2fb09f15433c34b546582eefe41f2",
+    "compiler/playground_run.fern": "781abfc45d6c0ddaf1203a578f1fc02dee20e49f7f355c2aad93941165947547",
+    "compiler/printer.fern": "3926dcf055d1a35319dfb4ea9b86304c4075f9d2d5b28031b93553026091ced3",
+    "compiler/rcccompact.fern": "fc7fabb021459b0585f7275e743b46c5338740470bb19b50160b93a100576653",
+    "compiler/rccertify.fern": "562d32aae0f69049b055f3b5b0a74deb86e235c2292c7e0a718a95f1f10b778e",
+    "compiler/rcmemo.fern": "81503af92687e2fad2351877b7b54719f4f0203b4784ed23231ee3f685abf9bf",
+    "compiler/rcsigs.fern": "34513bc0357f9ee4e7f15c3ef79ccb1f581e9df4136b17527a46635fcb27b15b",
+    "compiler/rtbytecopy.fern": "c9b891eee89141128389a14a4856198a00bda7e3004e0a7637f66baaa39b20c8",
+    "compiler/rtprofile.fern": "d0bb5a92e571c1e349575486aa317fe6e02a2fde82a22cbae4071f4b3fb22880",
+    "compiler/rtprofilemacho.fern": "dd9b9fac7ff2bc297abde32238d11491db33a07bd7ae6932edf691aec1c5b348",
+    "compiler/semarrayreport.fern": "86b3644f85558d94e55721a01a98a8075c88d7e699fe452027154f869b89e119",
+    "compiler/sembytecopy.fern": "7154ca1886071a55adddbbb7a2d98a89374076890f45664f3e83252a72433f07",
+    "compiler/semcse.fern": "68ad064e4a46bcd076016c9aa9e1957eefd37cdef31bfa6ae3b866e6c058e8e1",
+    "compiler/semdead.fern": "8e2997e691de4efec717b27ae1808d0098c0f54056e75938ee99507dbf596264",
+    "compiler/semfuse.fern": "feaa6e43e373f50bf3972f43eba44c237e1253bc0fbfe84d196152969663d911",
+    "compiler/semhoist.fern": "c7b19ac5b0da1eac1047b045f882563d29654025a9abbe4f74debc2dc0a927ea",
+    "compiler/seminline.fern": "2d9052dbb07d079aae1dba2ea3fd004b043e5017b48efbf8714223a21dda6f0c",
+    "compiler/semlower.fern": "f37fd5a7040da395d2c8439478bf8c65db59731df93ec133e99b0a98001c532a",
+    "compiler/semndarray.fern": "c536bdb17c81ec1ec7e8ae617c98e1686d392f219dc419a310bbcf4960c47ed8",
+    "compiler/semndlayout.fern": "58ceb635b91dbbd89c42d9c51672a739541d6051eda0851b66ee5882b48b6234",
+    "compiler/semndprune.fern": "c09285ebad8fd65f810ae6fe13914bd6baee867d2fc8f3ced2d57588e2cc8b3e",
+    "compiler/semoption.fern": "290cf5dc2f9ad443ed8173be598fb3a9128d7015ef011e6cddc42de49ec860cd",
+    "compiler/sempair.fern": "0a68b2fb1728a96ed2e09dd8b101d3f0d51c4d23b85f76965c2ca5bc88556ad6",
+    "compiler/semreach.fern": "b86db920ca8a154d052b8c16389eefd631ca97a8b8848b622d34b5eeb6b3a2a3",
+    "compiler/semrecords.fern": "0cf544e37a75a0d3c711f55a1f823883044a8a974facbbf1ef58ab0b164b1a03",
+    "compiler/semscalarreturn.fern": "f50bbd5da9f0ce5f6c2473864a22501df64ba2fbd9f45870a9167542b6554a80",
+    "compiler/semsink.fern": "a1dff8f15761ddc27fdffa2c83d59e367943b141bb345c6bd639890998c04440",
+    "compiler/semsource.fern": "ca600d3a704b15bd9e77f1dcd0adb2006dd5048016ef43b98519dff7c4ac3e33",
+    "compiler/semthread.fern": "75776daba95969f9d9090a6eb117e0f59b2e9ccdd49f1a21346058df5c102506",
+    "compiler/semtypes.fern": "24983423960ba50af11e27f710cd717027503abd2f5b97c7a044785f57bbf897",
+    "compiler/semunique.fern": "2141c89d2084d549ed5bc0af886cc2176694ad5d1effbadb7ffd9d500dcbffa8",
+    "compiler/sourcepos.fern": "abe62f55d517dff0d0826ae1feaca2b296fac5c42c4948668ee4acf471b32020",
+    "compiler/ssa.fern": "2304bcb5473c8c408288ae1c2763b0f8ceb4188de6954955d02972ca0511e20e",
+    "compiler/ssa_lift.fern": "820879f5dd0e62be00f9cf6925a5a00f1ff39d22a76751bfdf6a4d508c6c08d0",
+    "compiler/ssaallocationchain.fern": "f323abd804ab48497b03d751c8c43730ad546efbbe58b8adfe4646a95815957e",
+    "compiler/ssaallocatorfirstmachine.fern": "9bc56e29c6ab7a9a6a838f723e1cfb490dcd74aff341c6f79efa9e9fb507d5be",
+    "compiler/ssaallocatorinitisa.fern": "bc173fb24f08c5362697dff0167664fb1c324bdc537475acdf141f805e4814ac",
+    "compiler/ssaallocatormachine.fern": "f6f4198dec7d9e3f8066b55705cbe60b5435d3d22a704797e43a9ee22e09b8be",
+    "compiler/ssaarrayboxmachine.fern": "2f10ccb6a64312278116eafa5023f35e0d5a68542a26281ac4612c57e4ca4b97",
+    "compiler/ssaarrayrelease.fern": "7ce3a8f45c04d39a048a8713cf3c385e01e2f9f0d4c61d9e973ea537c3726924",
+    "compiler/ssabounds.fern": "f4925ee781b4ba3d6334a091b57ff3d924c5f6d85bae973016f468736668968f",
+    "compiler/ssaboxstringmachine.fern": "b493cbd3a4ca0651dff6943a2c2a0eecd063f1cf81825e6c99b4f0ee3913feee",
+    "compiler/ssabytes.fern": "c090453ef555c8eefdd74ddb6e23136db85abae13db067e55813adbfafb96a56",
+    "compiler/ssacapacityisa.fern": "74226da8c87f88232fe35bb9513c87add6021fe0316e2ef533e7d87b320fd204",
+    "compiler/ssacapacitymachine.fern": "15b2c822ea1ebc263577ca5c83093908e59fd2be59ae68646e1b3cc34d56b525",
+    "compiler/ssacapacityvalue.fern": "28e16aefde526b130020f02b3a9d9811a655f0bc7363426de6042846c1670800",
+    "compiler/ssaconstructorbound.fern": "4f8aab74d7647869a0132517c120e57edada3e3286eb6c3d2480d007702a9c6c",
+    "compiler/ssaconstructormachine.fern": "72569145ee172dead61bbe39cc3ee5d52a5edeeb2bce46f348d8493b5fea7a15",
+    "compiler/ssacredit.fern": "1d53611cce83333a40fa34816dd5481e92f0751c067ac07a4d7ae27a1c381e64",
+    "compiler/ssacreditabi.fern": "8695132e00308813d26c5e1ae41496973348f5eea4a8786f22dd5391c4e29aca",
+    "compiler/ssacreditbound.fern": "97ecb65e5187aeed19383f53429d4a70d8f96a08d0a6f61953196cb7a37c1547",
+    "compiler/ssacreditcontinuation.fern": "44877140175e49356abd508644a8a76c7a253d89dd8825c8e0ecfc73f4ab7026",
+    "compiler/ssacreditemitted.fern": "cefd411148d3b30b010f3c303949f11cd4564fa4019842d5208a1100a6d14085",
+    "compiler/ssacreditextract.fern": "1f8dcd2be8a580660a8b93dd589b8a18d51907a425f1250ed8eced6822236dc7",
+    "compiler/ssacreditflowgraph.fern": "b091759a50eea3a05e0ea972524dfa4d9bc5fffa6d92b5da2a47982e03da7df1",
+    "compiler/ssacreditguard.fern": "6e75d2b059835c9eaf53f91f50e6869266a6b61112de48cdfa656ae60a7f23aa",
+    "compiler/ssacredithelper.fern": "4225cf33b513409e943cc121fbff645352a97acca4ee6dae645b5edac444cad0",
+    "compiler/ssacreditincoming.fern": "a08f9e71e421b7f1add35feac029c9c7d0a6a22bcd7aae6523c380e5da2eaaf4",
+    "compiler/ssacreditorigin.fern": "19e7eead4bc686fcdf58c2ca040978c761990e2cace079b5a668c3aeaffd6a6b",
+    "compiler/ssacreditoriginflow.fern": "6825c6c7ffa62254d3796f44c813e5197c80c68c9c311a4644ae9672a32bac98",
+    "compiler/ssacreditphi.fern": "9449475a76eeb878eb60d339111f856b084573ac0b43eacf4f5b69b0c3c753e3",
+    "compiler/ssacreditreplace.fern": "13294f22c505033a7cd918a82675774bb4c2f4d44a28e1ce6d95d27dcd6fd48e",
+    "compiler/ssacreditreuse.fern": "79480f0c7cfef3d034a82b0226e9fe4c560a640b3bda83dfaae71cbf581f93b7",
+    "compiler/ssacreditscalar.fern": "09dad961600832226e037879dd29bcdb5ebe08df8afdcb06b6b8b02fbed549e1",
+    "compiler/ssacreditselected.fern": "a24ca9ba4839ec68e1829e2de7f1d08736d3c2106ac381b3fb95247305ec0def",
+    "compiler/ssacredittext.fern": "6e5c48b14db9b4dccad6f6e2ad72e3f3de31f76c3dd238df4be93e35b6e16aff",
+    "compiler/ssadecrementcount.fern": "765c64f591db71d5c9a7129c065b7b0a606be1c97b0519520bb6c9f2e401721c",
+    "compiler/ssadecrementguards.fern": "28fa3af594225a01ed435d5c88b517990f0c202fb9b5814a44c589874e9a581a",
+    "compiler/ssadecrementisa.fern": "d75a8a098aac797dc57d39ea7bf3f743096b8f1f517e91b5d243f24198990382",
+    "compiler/ssadecrementmachine.fern": "a7ba96285710b480a8ceb3b2881e8b7d3a3daa9c8e7de3f7b11516c14948b0f5",
+    "compiler/ssadecrementmemory.fern": "f46f64e4c227fdda3ac7b6fee1961ba4c8ae0a1579c8327f588e727cbe8f96db",
+    "compiler/ssadecrementtext.fern": "0010ebb17a0bd9cc8987e4c876b2a978af3edda5ea05809725f2206b71345d6e",
+    "compiler/ssadeps.fern": "6615d3c98b8d4dc4c473c83e945c83641e9b683d5e98882c3bb72473a341a1b0",
+    "compiler/ssafixed.fern": "aa98e41c363ddcd190d11a853aeca28f610d078c8be92791f2d02e2f7ce02f89",
+    "compiler/ssafusedstringmachine.fern": "e76f821aa3790bc5a5e1439dc8bd8a9abe39eefa265322580853eda7f2e25ed6",
+    "compiler/ssainlineunique.fern": "523b6f04bb3937ee47933d9db72dd1f156f24086fd539edd70322d17ce160f9c",
+    "compiler/ssainlineuniqueflow.fern": "a8871117cea44d783fbe5bfee5cc9a5a2331d286ab082e27aeb66aa7932d2e00",
+    "compiler/ssainlineuniqueisa.fern": "0f6c8603b7b91a4193ced5c6a909f8501a7c5590113cc1883cca5ef86948c6ef",
+    "compiler/ssalargearraymachine.fern": "2623c843ed0e018f07ec7b2a5c77c1eea47797d623dd743c7cbf2652e5e5d24d",
+    "compiler/ssalargearrayvalue.fern": "a8fda4ca9ae517cd62c703bdb4bbead61d3c76f90e58a92864d8db1c636d151f",
+    "compiler/ssalargepushmachine.fern": "6347d59cf071c55ab6cd241089bf72bdff58e5be22a7297e1030066cb48bab1c",
+    "compiler/ssalargepushranges.fern": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb",
+    "compiler/ssalargepushvalue.fern": "59b53d3c3a2d1f72cd41583c4625941e53dc394042a86cff5441386b5f1a3890",
+    "compiler/ssalayout.fern": "e547c8656b0899deca8959c3c152184d3aac99f9c4abcf883a4037bfd8afa64c",
+    "compiler/ssalive.fern": "400b0dec02ae6b3e23fecc3beed7b5d0f8dd313237a6389757b87a36844784ca",
+    "compiler/ssaprepare.fern": "1fabb78650e82fcb77dc84abeb193718242045b514063e4b9fc76ff87d78e892",
+    "compiler/ssaproofnames.fern": "4758875d8a629d33351c71c0abe22073e0798fe9eab1498f1fb895386d4f7d7a",
+    "compiler/ssaquotient.fern": "50ac0e4ecdbeafdf370747bde08a0220ef002d11312003fe94429d49aa070c5a",
+    "compiler/ssarc.fern": "f198cee714932b69142f89cd89e086cc99fc06a00056069f86d0b998251b4e09",
+    "compiler/ssaruntimeunique.fern": "692d05ac1de727cbe9c4ecf93255afbc3b8ceed1ae5d81acdbff037d211eb0e1",
+    "compiler/ssaruntimeuniqueflow.fern": "246e4de1484cd4d2c9fcb2110efbf4248c80a7f8f79946707da7841d08e48e0d",
+    "compiler/ssasem.fern": "adbd68b0283246840dd16cf046e25d6db34e1065b4c061d33f18d9d4f2f42e9e",
+    "compiler/ssaseparatestringmachine.fern": "7ba208f4ccae4c901f48dc0dde2967bcb13d3e661005f0991a7939a009b67855",
+    "compiler/ssasmallarraymachine.fern": "e05a894344c26198d492f6992790d504ba0da0d94190d72248b1d7ec4b7ee080",
+    "compiler/ssasmallcallerflow.fern": "fcb92b31e4dd51a3b51168421ff469176c35aa7b1955f8ab64c71c49b80cd368",
+    "compiler/ssasmallcallermachine.fern": "080fb1ce790c7bb1698bd3ee8c722ea64e119a56356960294740c78cbcb07684",
+    "compiler/ssasmallheap.fern": "165ca9e87d48380371e99cb3858e89736e2716677512b418b88168ec5362b08e",
+    "compiler/ssastringrelease.fern": "4be32c329598f6228ede710823a2cbafd0c08e02c71869e45fc5ec4ab5458a3a",
+    "compiler/ssastringvalue.fern": "bb74e0f95963c68a5a9a71fa8e16af1477196b55a5ebb2f06e6914f66be83cc2",
+    "compiler/ssauniquecaller.fern": "0d5f62d4031cbf0114bf8dbf071107da4500ea3c60e5456b23ed1c9c32d1c7c6",
+    "compiler/ssauniquemeaning.fern": "dc4600d45b1c0aa7826b2f6214df28612f62882b7d4eeba7ba2bde6fe6007ad5",
+    "compiler/ssauniqueunit.fern": "f4e2779f3a04e7b180822043ab71c657c9b461f1c1e63332a57e417194e71b1e",
+    "compiler/ssaunits.fern": "f1f0cd92910d987422a5aff78599a929e47afb1b2dc29c7cbd39de96f254ae22",
+    "compiler/stdlib_methods.fern": "680081bea8296bdd2649dde7112524078a169ac350d8c1133564d2c26fff88c1",
+    "compiler/suspend.fern": "33c9f447e625ebb51d342037d4f4c856b085c2b531f3f289ee41b9299899315a",
+    "compiler/treeshake.fern": "30492f21df675204cf1063fbe2c28c35e26f153503f4b9db36810937d37b1465",
+    "compiler/typeinfo.fern": "efb0899a9286435749d274f9a19a367bf117bf5121bdb41094e4bec577973f81",
+    "compiler/util.fern": "27be48ade629ffdc45031d2c640ea083bdf64326e6b0aed4fe3693a89830070c",
+    "compiler/visibility.fern": "a5fb43a2f5d53e663145ec746f3e0fa5790731cdffe1f7664e3931872808caa9",
+    "compiler/wasm_abort.fern": "61f20c632e4067424d813b5083dc135402aa8e39049a96d4c613f396c069307e",
+    "compiler/wasm_aes.fern": "0dc2818fe0d53bc11c2dbbd7015421a87c5aa80787c52b4c1cd1d3069754c620",
+    "compiler/wasm_ir.fern": "044d370cf708bc8fa7c96caddb8b6256ed2227da44f75efd8e9d4c36ab1f3c5a",
+    "compiler/wasmlocals.fern": "e73fedeffcf55f9e8dc427df93a0cb4fb0cf25eb8f0049bb0ee321a361e1b319",
+    "compiler/watbin.fern": "3440fb10d030ddd573bb6b763c484f1b33b702487f8f26c2f05bb06775e8c2eb",
+    "compiler/weave.fern": "89ebe338d9dfa75ddfdce623cc0ea413ce8fd6762151b5ff33f1fd76fbbbbd28",
+    "compiler/wit_compose.fern": "e5221d9fd851bdddf103a16b67270506bc3b270054eee8f4017c53925e913ddb",
+    "compiler/wit_decode.fern": "7410612b272323503790f15e368398d981ebeb54c5683e9b866a249544f8dc66",
+    "compiler/wit_fern_world.fern": "0f79fd468a19c32348944da21cfe348e98914ce7ab510069c36ec4337bcb599b",
+    "compiler/wit_proxy_world.fern": "9670fb1c3674de32c501305a94ea959089ca3d13ed7a5c7de750d26b60ffea4d",
+    "compiler/x86_native.fern": "c2c504bd4e465539b122ed8df5723daf7a4575c2542a4aef3166ffb2b404c5fb",
+    "internal/stdlib/core/_test_empty.fern": "516cc80cf6a235647bf2da7ab78d8cbce5396b036d960fb627229e83d057be9e",
+    "internal/stdlib/core/bigint.fern.md": "3d7812e4570eab290fcbc464f28dc3d32946e434fdd7253b3e8f4d9455e00e89",
+    "internal/stdlib/core/cmp.fern.md": "f13004d02f5d84f3c633998e64f7d8d26698282bed3388b45ff4a4ed543e833b",
+    "internal/stdlib/core/f64_text.fern.md": "f0ca3b74da19152181aadcd38de45d7cdd3d05d475eccec74bca2af9489a2cb3",
+    "internal/stdlib/core/int.fern.md": "e68082103f5c0d70d3039608c9cf7d13e2cef649239740f2b151ac867307be99",
+    "internal/stdlib/core/iter.fern.md": "07f3b7d21c175e9a6b8f400f18773b5b92d32c9b1f318eebaca22a6ce4992a4c",
+    "internal/stdlib/core/map.fern.md": "7491cd6f1f169f8f9786fcb8e27cf9c98d38c5467dc20540c3113759a6a12d97",
+    "internal/stdlib/core/mem.fern.md": "4e78c356440b8aeaf75e14327695a5b2b6d63a9eba10100030d3cf597bcf7fb1",
+    "internal/stdlib/core/primitive_text.fern.md": "3acaca396b6b519db1085c718ab79670bfad5853fb6cd5a4695ba4d934bdbe83",
+    "internal/stdlib/core/utf8_scalar.fern.md": "db25e68573483fbe50e063b3e7fb72bc60e33b46eaa98671cc0221e95f65f68a",
+    "internal/stdlib/std/_test_empty.fern": "ed96a4ccd0a30a9cebe9c1a384074817a4273901524e818e443f6e54d12a3cc3",
+    "internal/stdlib/std/ansi.fern.md": "1068231ac6257a62c888f25a339cd9d5c239218c28d86c329eb6b9b58ed1771c",
+    "internal/stdlib/std/array.fern.md": "10f56dab8fd78ab2476b50ae896ac91f93f2e0939a98b8e3016a03bcfabdd435",
+    "internal/stdlib/std/async.fern.md": "03d36a9bf56cf1c334348d8b12d72e54f147c784c67157ebd1c6d1298430603a",
+    "internal/stdlib/std/base32.fern.md": "a94859b001a84d5b6116795b17e076d5ddcad27ecdecf01d6b7a23d85f0ee16c",
+    "internal/stdlib/std/base64.fern.md": "f0db7732c2eed27f52c35c9427e27a2de1f2fe32c77641e8e580a5f4706c8dcd",
+    "internal/stdlib/std/bench.fern.md": "941724140e74ac40ece0982bd1394bed869bf258df4634e5bb61c52f736b82bf",
+    "internal/stdlib/std/binary.fern.md": "8f3a1ad0df74261525c99d9a25d9f13840b02e6c756c3587c03073df55d82e1a",
+    "internal/stdlib/std/brotli/dictionary.fern": "22f9c518c13fdc330dd8fc1d0317ec20d257797b68a8ce1d017f727168050f65",
+    "internal/stdlib/std/brotli/encoder.fern.md": "3f396cfd2e48a252e64d95fe4f81f08f8b45c4df6bcfeae6caf7c1c953cb8f14",
+    "internal/stdlib/std/brotli.fern.md": "c2aee962637aaf786b020e34cb739361dcb834f66ceab4a6806556d428f35922",
+    "internal/stdlib/std/cli.fern.md": "b318569d107c655fd3baa79fc69f0f6f8d87471134139485d08ae572fe9ff1d9",
+    "internal/stdlib/std/clock.fern.md": "d21da38e4365165c10c645382aadfd6cfb4249c0519d7f625e15dfcfbffb5327",
+    "internal/stdlib/std/codec.fern.md": "0ec13cb6ccc5e751b231009f6d68ec6841f354999dbef9e8b10b0021cd1de8d1",
+    "internal/stdlib/std/constmap.fern.md": "88ef07f38d160b5048a0d9d16c6383cf09707913d854b978ee12e745dddd80d4",
+    "internal/stdlib/std/convert.fern.md": "7b1780a22f3b368cbb529bd00b0870333d81433a26969f3fcf0e14e552dc7b28",
+    "internal/stdlib/std/crypto/aead.fern.md": "99e732c7a846ec8fcd20663ff4ee4a9fab787d03767569e91482edb78602f546",
+    "internal/stdlib/std/crypto/aes_gcm.fern.md": "ffdc64cc81d231a5b4db8a239feabffa5278345807d86e73df8e3b802278d489",
+    "internal/stdlib/std/crypto/chacha20poly1305.fern.md": "6e36479a190a0887166e2857ef1e798fbb042a3fee2479a35b05e7d4c889af15",
+    "internal/stdlib/std/crypto/ecdsa.fern.md": "a2a3bdc33eead13c3be27d6a1043c445935af3ec811c645bfdbf3e9627afe7fa",
+    "internal/stdlib/std/crypto/ed25519.fern.md": "bfc9a74faf0984e1de315138a8a5cd8d2b80efd3ece4af2782d04bad01467be5",
+    "internal/stdlib/std/crypto/field25519.fern.md": "dfbd479b685edc6c9be41d1cf99fa0792965f4d2663e58b3b080f474ec2e4201",
+    "internal/stdlib/std/crypto/mlkem768.fern.md": "716914ff0acfa741a36af12d91403b019807f320619d3b1e35d3cd46d7477dae",
+    "internal/stdlib/std/crypto/montgomery.fern.md": "a604d36036d5ddc81f28f6c9e1f942555fdff164057e5f70ab10cebadf8f223f",
+    "internal/stdlib/std/crypto/p256.fern.md": "a9f1dc44fb359acffd0c6619d73ea12074b43c66624502af124791d8158924f2",
+    "internal/stdlib/std/crypto/rsa.fern.md": "0d7e2f4ace6d7e628eb1fd9eaedec2f137a37641b54f6751b89eb92b98d1e778",
+    "internal/stdlib/std/crypto/sha2.fern.md": "fbca1ce220fa68cc371456ffc1440a0c7e54d524a9ce76f16e3076020f00919d",
+    "internal/stdlib/std/crypto/x25519.fern.md": "c9c149ecf55110297b0446ebbfc64910b5730368e6d97bc17e2f2e46b78952ce",
+    "internal/stdlib/std/crypto.fern.md": "d0e2f8f133acf46f393968e67ee62e0445eb7fe44db5c20531cc594ca6cb38ea",
+    "internal/stdlib/std/csv.fern.md": "efb400d3197d4bb4e2b8fb0bfa7c5dead1f024e811cc2de1936955fbdcdbe0ba",
+    "internal/stdlib/std/deflate.fern.md": "39faf4e2112ce1ea80c6cafb86ac9a6341fe720f94cb58bf4e3061ed7af908fd",
+    "internal/stdlib/std/dns.fern.md": "0e22389a7f60654cef0c7a634634b159add9ea479a639922bf67caf0cf7dd725",
+    "internal/stdlib/std/dotenv.fern.md": "a699d98f8c7ba0f04807d346c682d0c5ef85079c70aa059a06c84d93708a6d28",
+    "internal/stdlib/std/envflag.fern.md": "d02f8cb346f712365df3113ba2695234e1adc9d3fdd5c5e39587d0fe716c6b09",
+    "internal/stdlib/std/errno.fern.md": "aff82b4753057d8558740fd1d9abc209921ce0bf8028137c227554d3d27518c0",
+    "internal/stdlib/std/error.fern.md": "bcb158a6f63f28d12e8338e2a162f3ca39368cb13cbb4ff92294d1af4a382d78",
+    "internal/stdlib/std/f32.fern.md": "68a849e53f3add1b50ce835241e7764f279f0824bf953ffe1eddd73b662821de",
+    "internal/stdlib/std/f64.fern.md": "1d894b0c42ab219775166715289cd22c3a4ff439057cd25d52fc09b4f0f2f3a7",
+    "internal/stdlib/std/fetch.fern.md": "fd5e9965ae47b41825c3af1da7457a542c1fab89c77405063e553bc5f784dbed",
+    "internal/stdlib/std/format.fern.md": "8745fd1f9de4d6ba4ddee84636ec5d9d0a891a49353660dcc7a970fa340d409f",
+    "internal/stdlib/std/fuzz.fern.md": "9e379f91a9a9666b6c6fa0748e10229aa02bdb29482829aa181f1f3e3a1c3699",
+    "internal/stdlib/std/glob.fern.md": "bb38d7acca1969bb12ac612322df8a6ded6eebc9506212609bb764575403ccc9",
+    "internal/stdlib/std/hash.fern.md": "fabea6c62c8777e55fb7a58238e5b7dbcaed6c644eaf9275275d299f74ff0382",
+    "internal/stdlib/std/headers.fern.md": "48b09688a479272b4d3e32928b36d8af2e25dad58b9c8a64287dd2bdea41cd9a",
+    "internal/stdlib/std/hex.fern.md": "911e1e3bf3ddfe1e324fec896f14d7f59e1531ab422be863d43d5778f2e113bd",
+    "internal/stdlib/std/http/accesslog.fern.md": "6c888437664f52acb40efb7ef1faaca4a5fe4b393a8273acedc101d97a2b9a25",
+    "internal/stdlib/std/http/auth.fern.md": "136233389a062bcb388f2cb5da3bf94a7c0a0a4ad396caadad5b7968975b7bbe",
+    "internal/stdlib/std/http/cache.fern.md": "23aab176021c7759104ffaac2a83e88cfeb4d1d7fc4c9f8a1940939907c4acf3",
+    "internal/stdlib/std/http/compress.fern.md": "2de007e1f40b8a93e134060883cebe9a9b342f37e98cef9cda8ca4757de38214",
+    "internal/stdlib/std/http/cookie.fern.md": "68c8b317352a772dfc3ce61f7cf55f08fa9af6e8f2255f1c812a7465eea40998",
+    "internal/stdlib/std/http/cors.fern.md": "120b26ad815e8785286aa2cf71927d4f7e15f4b748bf773e96ef1b389489663a",
+    "internal/stdlib/std/http/form.fern.md": "c8a8a2c3c93f449a07ed58c423a3696a78f43a7d076ae3f58ea3f290896dd459",
+    "internal/stdlib/std/http/forwarded.fern.md": "634d699610aa3ab937a42449527cc4f1084ccbbfd60184849d80d9a59b9a4469",
+    "internal/stdlib/std/http/grpc.fern.md": "8c1727ad30884db1676671e3f34039b0c10b1d1c2e1876bfa4e40b6e1c6284a4",
+    "internal/stdlib/std/http/h2/frame.fern.md": "50f1b8a61a8181a9b06272a39792f333095b6e807ab68b2e8cfeebf7b21f5211",
+    "internal/stdlib/std/http/h2.fern.md": "ca31c48f4f78c1dd4f8b89f8e7bef5a1fbbeb31eca0075329f7b4e1529ec85c0",
+    "internal/stdlib/std/http/h3.fern.md": "86431fafb54e07786c0a5c740135bc9514dcc300ce83de3dbda0a4f7912826ae",
+    "internal/stdlib/std/http/h3q.fern.md": "fb3943f928b89801a06d605c570fd992651a6ecccc29d1a40db940f9a21c8e83",
+    "internal/stdlib/std/http/hpack.fern.md": "54b4b784888addc04eb4b2334e3fcbf5c98cf91399584676ec892ddbcd67f1c0",
+    "internal/stdlib/std/http/huffman.fern.md": "f087ae9551de5bb0fc47a15121e7f47d12761049c811e78dc438b38ca5311fdc",
+    "internal/stdlib/std/http/multipart.fern.md": "d1044717490eaff7d92547596c9287adaec56c41982d6d7f5cbde566a24d1418",
+    "internal/stdlib/std/http/qpack.fern.md": "26ab4a73875371a15a7fe2a0aa453cb52bc7cd260f3b013b3887dae353bbc1e6",
+    "internal/stdlib/std/http/requestid.fern.md": "3743a39452e13106fea345dc1339f227c5ba5b93f83ccc0df66688c28bec56a8",
+    "internal/stdlib/std/http/router.fern.md": "2ba736ed117d477065e3b3ee2d696e27178f45ddf7a0a261e33c355a3b488287",
+    "internal/stdlib/std/http/sse.fern.md": "87c8d8f737f2195b9c1f65e763c7c06959acc43a1d9fe1af68a70d0121ec0d80",
+    "internal/stdlib/std/http/static.fern.md": "f485a4d386db91eb0578b3df3f2ab9bc4c851ba36782cf6fcec371310a08b7dc",
+    "internal/stdlib/std/http/trace.fern.md": "f396061b307993887b483a340ff7041d83a3c91e6ebbaaace8f32fd6e019cc7a",
+    "internal/stdlib/std/http/websocket.fern.md": "49de5605d5464afbe5100b5967a86003ae28411c369e2eebe51105771802387b",
+    "internal/stdlib/std/http.fern.md": "1b7a5f1c03cd58af79516ed1f05385eeb0148c7f624a25ef647cd9f0c3024f7a",
+    "internal/stdlib/std/i32.fern.md": "ce8583bb8efe32826cfa3851541f259e64c1ecee35adb9c31628aec51825a2d1",
+    "internal/stdlib/std/i64.fern.md": "c004287f68ebe32d53d75fcf93d155c84fc908969fa46d59b975f0764b1953ca",
+    "internal/stdlib/std/io.fern.md": "13d52222c46cbd133fcc99413138a9c28e2656a24d6929c8059a8497c589110c",
+    "internal/stdlib/std/io_buffered.fern.md": "f5044b8443e2ad8392cebb769d3f7716ea6d499fa388296448b23f3b8d2b95c8",
+    "internal/stdlib/std/jni.fern.md": "a0806f90f8be0ef7b8453a98c8d0bf4be1680d4a3b985f35661ee56bb6897c7c",
+    "internal/stdlib/std/json.fern.md": "1f7996828c0688d0fae22a58dc16202687d2a48e0c13a923d29a3d4a7500cd19",
+    "internal/stdlib/std/log.fern.md": "0c9229791b4537764d982978b9d4dcb6c5626dec7c088874871814cc868d85b8",
+    "internal/stdlib/std/math.fern.md": "54a3a7baa255bda74bd86d5318f8c1573e780078afa81005a9d3fb532ba50248",
+    "internal/stdlib/std/metrics.fern.md": "e62207057085d94303751e642a579f8f0a574223bce84ffb532047044d929f14",
+    "internal/stdlib/std/mock_platform.fern.md": "c26c957f2ebecd87b66b292c5bece73645c3013b5f74478cfc60bd225e619349",
+    "internal/stdlib/std/ndarray.fern.md": "549590151c6a97b73cd9b500df16c4c409d30702aa1c5eb2252aeb17260b0251",
+    "internal/stdlib/std/net.fern.md": "d3a382c718c9c935dac288ccc7000a63357b2cc6b1cc37c1f18b4bcab0a65f7f",
+    "internal/stdlib/std/num.fern.md": "2c0ffe4970c1162924c4cf06d36602975f60763d909df2b942925ef1c2ac36d9",
+    "internal/stdlib/std/number_parse.fern.md": "16ac21afdc3ca5312623966508ff888f9a117c9842f68e804bcf2a4d66901be0",
+    "internal/stdlib/std/option.fern.md": "2dd007c25356598bf563219de559a21ebb22a56b12c670a277f851d8bdb8d10a",
+    "internal/stdlib/std/ordmap.fern.md": "31a685955ff632ea7bbb74f4956cfd697a9f7e6945c74ef3f1f0476133d77180",
+    "internal/stdlib/std/ordset.fern.md": "086850904511a4eadb5efe28b1e7616127e3c46c9f3798847215a809caf34d42",
+    "internal/stdlib/std/path.fern.md": "2e7b4c009f46fdaddff1f810a707111f5bf6ce0f0a044fe1ad20e91d914a17c7",
+    "internal/stdlib/std/peg.fern.md": "4cf456a1920a8d35c9e891160998bf4f4966a2ee06ad8971f08fbb615f19e1c4",
+    "internal/stdlib/std/platform.fern.md": "60299c9b92da1e65e275ded03a712bb13fdb37b5e8783454368158252238a40f",
+    "internal/stdlib/std/pmap.fern.md": "67af47a4ed55ab65da61a87a87ea38ef503db4da1e58eda84b42235c83c779f7",
+    "internal/stdlib/std/png.fern.md": "fc837f00edc2f924ccf7a76f7c718d9603a798b96c38b4241165dfe7bf68bf8d",
+    "internal/stdlib/std/protobuf.fern.md": "cb914c95afebcc89fe1cded596494a6e58fee5894012aed6365567734ffbf9cb",
+    "internal/stdlib/std/pset.fern.md": "772968a1f7f1feebbbd9c281fb641d26c773928789a33e7e09666dee8dd19e1d",
+    "internal/stdlib/std/publicsuffix.fern": "fad3a36da5f060a4e945ffeaa1a3845a4fc6bbdfcb098388371232c0f5cf1e44",
+    "internal/stdlib/std/pvec.fern.md": "6a71fbecf180a6b7029416534329e9847de41bb5cc75af816a35738b7ab32b36",
+    "internal/stdlib/std/quic/conn.fern.md": "82d7c1c03d1eecd9bd86fd21359bb90cd2cbd06572365025552926cb611cc8b6",
+    "internal/stdlib/std/quic/frames.fern.md": "a627a6d9686d01eea8ee3b4ec23400403dd663414c6fc80143e4c17e2bde1733",
+    "internal/stdlib/std/quic/packet.fern.md": "c6d36b7e6aab8cd8b03ba96a4ab5544e50d1ac3232d4d917662aab944d846a65",
+    "internal/stdlib/std/quic/params.fern.md": "8313df2b95d4dd1179e016f79cabd3c0901e4ec6edce5359cfac31b3d78cecf4",
+    "internal/stdlib/std/quic/recovery.fern.md": "13aa85926206eefd392026e293c306c5d1843c81bbdf149e2847b878ac738fd8",
+    "internal/stdlib/std/quic/streams.fern.md": "72d6a8cd80d8246e8aa305b9b420ccd0dc3765f61b0b1d24414021af59238ee5",
+    "internal/stdlib/std/rand.fern.md": "7ae23728aa422103e0ca8f8c4486e624548703d6c2ab43ebeb8fa2c6de1be634",
+    "internal/stdlib/std/regex.fern.md": "b35b029f65b8323e29b5b2b7a864bfa6b2ec8fdd56d76dbe9978d822e906beec",
+    "internal/stdlib/std/result.fern.md": "8412ef6781e2cc232f3bbe44d78a6783f0932f1073123642dcded4fba527fa37",
+    "internal/stdlib/std/semver.fern.md": "77a0c764465b19358331dd4fee5e31aa773bb41543a1da516981b95255daa1c8",
+    "internal/stdlib/std/serve.fern.md": "8c30726ff210dd9f882807ec62603dd5c913feff68c00eb5effd993ef4c453c5",
+    "internal/stdlib/std/set.fern.md": "263cbf174a921db677076adefec9df6b3969c68e1ad5970d9dc62f9b956b9963",
+    "internal/stdlib/std/signal.fern.md": "9ab00c423f68190ddd4ded30807afb089b4ebc0a1ad8cec209026fc0c0104e71",
+    "internal/stdlib/std/sim.fern.md": "10f169aa2fbc1c30c351419080e37c9e6b4cd482a984d43f734a6e614dbc0bc6",
+    "internal/stdlib/std/sim_fetch.fern.md": "e91a2c98bf88553ee1c2ce5e39f2829f41cb9cd2d5fbb24e326ef00c098d1da0",
+    "internal/stdlib/std/sim_platform.fern.md": "7841b261f55f97de2921c60f74ea3ea764955fe841b0ba9d0fbd704ae2842ea8",
+    "internal/stdlib/std/simd.fern.md": "e6aefc2088c99537a8fe8099231908441848360c77b408013718aed05e378125",
+    "internal/stdlib/std/strdist.fern.md": "cfbb4a5de1953575eaf470e51fef4abba6e3599f26354ed68069434a3d9a4f6d",
+    "internal/stdlib/std/stream.fern.md": "6166648395ded6a02b89f9453855b7dc2f5835fe661500ebfac288e855205862",
+    "internal/stdlib/std/string.fern.md": "56a3dee0bf866a4422e2f1fccf35defe639fe5b38e511c5d70ee793c074702d1",
+    "internal/stdlib/std/table.fern.md": "68525ac1c5fd31679ddbbcde12f7be82a35f687778fa59116e8cf0f589a0a117",
+    "internal/stdlib/std/test.fern.md": "06c5bb770a428c1ded682c46be89fb10b2f93da6fc234d46baef4b6f5b497319",
+    "internal/stdlib/std/textwrap.fern.md": "808482f9e920c36420990f72930c9cf236ef2976c834c41000434c3b86fc9725",
+    "internal/stdlib/std/time.fern.md": "832f99e6c32ce253e56e0025f3f6e2700c36fe7ebc605ca1012e9fe5fbc03d1f",
+    "internal/stdlib/std/tls/client.fern.md": "d31a919feff17256bca718fcad831b21862df42a6f2856693aacdc1ab1401b87",
+    "internal/stdlib/std/tls/der.fern.md": "881210efa3de63705c72d378cdf1677040338c24eb7a4c55b1a27b8fd645920b",
+    "internal/stdlib/std/tls/handshake.fern.md": "9196fdb854bb3f355eafb8723436765ad44042575aa5b40c44ae61b0463ca27b",
+    "internal/stdlib/std/tls/identity.fern.md": "14ee6c6cca9fe8d99a8a534c2a3cf60031d03d3f61820fd55f132bf232e1a2cf",
+    "internal/stdlib/std/tls/keyschedule.fern.md": "0eb0260d83668ce36b6dedda4feb6996f03a411c420d8b2c08f03c8356075104",
+    "internal/stdlib/std/tls/keyshare.fern.md": "a1ee3857389352ae3276f119287d3db24404a4b1b81a63969ada4e51a2f8e238",
+    "internal/stdlib/std/tls/ktls.fern.md": "55396fe7c484f4cdad98802adc2eaa61ddb112422d98a55ec8b0949b59e7b9c7",
+    "internal/stdlib/std/tls/message.fern.md": "5b75c13a141f1763a17b4632f0d7634fd6e52a3b67892fc5f08625d64e8704db",
+    "internal/stdlib/std/tls/mozilla.fern": "e2600dc5588379819f61cf16e70ead1f7aba47154a1d227f8b10b9230f1bc059",
+    "internal/stdlib/std/tls/pem.fern.md": "2089c87167a7ebc4bc6e30e32b029478f687ea4fb0202c9c719b60604a976d57",
+    "internal/stdlib/std/tls/record.fern.md": "0f7f7444961b80d1f384a78c971204fc7eaadb22d70f0bfa63a5d98a8809b9a2",
+    "internal/stdlib/std/tls/server.fern.md": "73e92e81549ebf0514be713afd8543c9aaac513062abf1f8358f12899d1443d5",
+    "internal/stdlib/std/tls/verify.fern.md": "3f7e52332202d2b040c6c586785814dc8f27780ee7a9269f5a0cb1d9815bb069",
+    "internal/stdlib/std/tls/x509.fern.md": "7c1d404852fc969e7e13f3431c47e5ed40538299c7e657090c481e26b4ba56fb",
+    "internal/stdlib/std/tls.fern.md": "5c4fe39f1e10de04319736cd3d7540237035835abd1011f598cedeff7ac5af3c",
+    "internal/stdlib/std/tz.fern.md": "c6e005767aa38007f0dae96fc1a27eaa637d8e7b4c89164cbf5d3fe496ed4d58",
+    "internal/stdlib/std/u32.fern.md": "97c28a8e124c5b29e35e854ef580628f7540ba604e75ae655ef24e99483bcd1f",
+    "internal/stdlib/std/u64.fern.md": "53b728fe48b21be120f5ab517bb336f9aec8ca8c787ec8d22b5d829181db63e1",
+    "internal/stdlib/std/unicode.fern": "ced4ace829eaed7a0236d1451a4ef6687e56bc020fb643e854783ef645bc3711",
+    "internal/stdlib/std/url.fern.md": "11b1b9df44e023a150c9e4f76f8d87d7cdbef4126d055dbf7da7da7dead5ebcd",
+    "internal/stdlib/std/utf8.fern.md": "0ef0ceea1077b13c09ad515c6795abfe49cd92ccadbbd88eebcf0a08b5f1bac2",
+    "internal/stdlib/std/uuid.fern.md": "ce70da357db957b5f99233c2f640ec74c621495bcc4f329866d9d01ad69fb2b5",
+    "internal/stdlib/std/wasi_http.fern.md": "89666e494512c4931663c2f2bf950b53b2fb485d2db0bcc7d30e597f5323cadc",
+    "internal/stdlib/std/wasm/component.fern.md": "0b2103ae5ea0dcdbc0db00e566a9e85f03f25fbdcdf970a13045a4348245eceb",
+    "internal/stdlib/std/wasm/convert.fern.md": "df05781648a338f56cdb82f9e779ee0205a806a251584c65cd9ae65fc15e9acf",
+    "internal/stdlib/std/wasm/encode.fern.md": "2ce419bea961e3b543b233ba54debae4dd180c197b436f667179697adc2df7d0",
+    "internal/stdlib/std/wasm/imports.fern.md": "7461c42392db9a5a7aa825cadcea2c9f754cb12ad17b0188d77392fd1fbcfdec",
+    "internal/stdlib/std/wasm/inst.fern.md": "4e6cb7065a76b7f7c46344409809762839eac9cd2c4ea51df02bc46e816be822",
+    "internal/stdlib/std/wasm/leb128.fern.md": "fa3c2a06215a992c732a8f1772d68daceafae673e718f9c2ea163ac221a53623",
+    "internal/stdlib/std/wasm/memory.fern.md": "a2d4414e683c0b6ab656356f6a8806451736aed49fc657d4941de256fcd29ffa",
+    "internal/stdlib/std/wasm/module.fern.md": "da8d00aeff2713747394a0ae1ba5c105e9ebac5902c2ba716717aceb146933af",
+    "internal/stdlib/std/wasm/numeric.fern.md": "8c995a320c556238a1d67c06cb6cdfe88df5f6f0adff67f3b9e4650a24d67d60",
+    "internal/stdlib/std/wasm/sections.fern.md": "d37981dd74b30b98abb41ef2e25761c80d0b9e548429d325cac306f831333158",
+    "internal/stdlib/std/zstd.fern.md": "d001cfeefb879f4524a26eed09a8085ea46c64bd4e769f6b0858bce9bd4d4926"
+  },
+  "baseline_inputs_sha256": {
+    "compiler/aborts.fern": "6cf48a834e3ff0932461bdfc88ab60d8f7b76f74c541028dff52edd106cdc97b",
+    "compiler/aesref.fern": "456b29a0f4c580c5ff426cb4792606de0c7397dbbae2a675d02dd250f4eeb8db",
+    "compiler/ambient.fern": "89426e1ff638cd86d20c7d86645ce1dfce96bdaeb728d839de8ddcf23154cd16",
+    "compiler/arm64_native.fern": "a0ec5e56e35cf73337ee535466ba4f6e4c8f9ce3ffcd180ea3456529bc03de77",
+    "compiler/asm_arm64_ir.fern": "e8eab077e6515549f58d04da8e43661d5e791dce4861f0030c6692f6592510b1",
+    "compiler/asm_ir.fern": "ba11bc37f3ceddbdd4e21235aea7a1f5da2dcdff15d50fa6f4a59e5e90263f1a",
+    "compiler/asmcore.fern": "d3c2d20407878f9bf033da88486e07fa9a61f301fc8a418c507761c85f9f04dc",
+    "compiler/ast.fern": "0f630355389d86581f2409d51a579f6cac919768a47af7d66b37b9e1199d4dc5",
+    "compiler/astwalk.fern": "737947ab09f6e460a552f472f6a6bc59c27381d4187a82f0e318b8991d8e5651",
+    "compiler/builtins.fern": "cef920100fa0d538471b6f47277667f86490d690e868807884bf681a1e92b13a",
+    "compiler/byteconst.fern": "a395976f92f1b0da9131f20f8f8e51c4e9ba6dc95de083f00e59ed75bc55343b",
+    "compiler/callsubst.fern": "ef55a649e02a50d99919d23a6a031296919380242d9f95c13bacd2a1f3599be0",
+    "compiler/caps.fern": "d27d06a1314e06e9370f609344639a264541a45bbce1bdf81258bacd726558ec",
+    "compiler/capturebox.fern": "b9fa7ee4fae149d226af4dac9adb55e3c11d0aef61b826f4081361806ee70de0",
+    "compiler/captureflow.fern": "f7d47dda5ee5ad724d2e6dde8055007b71fcf8092a0924b54bb0ecff378fb789",
+    "compiler/capvocab.fern": "5eb8573abc32a1ba36b1828ece2c1a22f230172d1231163d8f7b4caa74a1357e",
+    "compiler/checker.fern": "828eab80693cca74170e04804ada9bcc25a77b5350ac78047d14197e6ac417a3",
+    "compiler/consteval.fern": "900549a34e967c9aa557b15deaa3965afd4b7e8bb6d88d86f105a8d77a26064b",
+    "compiler/constfold.fern": "571d6d481aa5e3be654fee500b0ebc127a4c63483dc56a88ffe56bbde90e1e3b",
+    "compiler/cover.fern": "54c6288e2b64b226b1f6e82cd76f76003ab0c05a470074c9e169c63d11164089",
+    "compiler/coverreport.fern": "572008777d674cbf9fc9d657355af7abf7d4c24a4d2542194ba28f0246210c04",
+    "compiler/decltypes.fern": "9d4937caba045fdd5ae95b9d0d83428407ef2b73a86b3aef1152869bc489d277",
+    "compiler/docprintable.fern": "25e8a17f09176506d60a12ba4bd83f6d9ec85be9167f3b4111b1ddfb513e5592",
+    "compiler/docsummary.fern": "c601c8b5747f3c0ce295afd1f54022abdedf541c4bfe4a9b82e0798439b77156",
+    "compiler/effects.fern": "dcc645fbcf2b689ac53b2ff3a51ab2d913948fd8573a22d2a6cc8ac30fd40632",
+    "compiler/elf.fern": "a5fdd560ea2e099c4543fe44c5785c971cb79a77784e0d25909a249a53d655ad",
+    "compiler/embed.fern": "3873419d096dffdc013d4dd14bcbd35c4a51b2f252cb5c0d9c764a87e9fff0f9",
+    "compiler/emitforms.fern": "618dff02c24420735e1c4d3910bbc9dbfe01edbc3b6269acf78f17f07ed6a476",
+    "compiler/fern.fern": "70dfc9a93c77bda0d35427ac263fca926fd9c16496f4af5743a5a9b7ca1497d3",
+    "compiler/fern_main.fern": "2e61bd9def2660558dc4f9f877fd035020ff0c20e2026612acc71f3dc1bd6549",
+    "compiler/fern_toml.fern": "5501637a37a165c7d54fcd8ea17d0aac1f4c9b189b6bce4a3ad9ddc244e23ea4",
+    "compiler/ferndoc.fern": "f8c2b4f90a515f66cf3557efba26d5fd77a1a1e64bfc5ff07a6e15409f4156da",
+    "compiler/flatten.fern": "5397b56a8356eac8cc2a909ac9c85765a41e03355c665e6a7edd8d420db09059",
+    "compiler/interp.fern": "7e88e3c4e88916d5bd89503572abe95b58d1f5ed3421f06e29b809f2efde9cff",
+    "compiler/ir.fern": "f19aeb0eca9186014cecf8c5c95d3d3aa0b54afae9b14bbf5b42152975058200",
+    "compiler/ircore.fern": "f191d79487fee951eee3be1ca7e22973c66012b4edcfbd95865f4169254f0cde",
+    "compiler/irfipverify.fern": "7ae8da54ccbbcd707b331322beb43dd60871b1722c9892b1ebc8213ac2bb121a",
+    "compiler/irtables.fern": "82f5086de6c43127c4c26a0314bea380c178de8d49abbf67fd2ba34276c21d13",
+    "compiler/irverify.fern": "a7680740fbb61a76f665d7fd1a7ffda68d11b57b251d152b6248bdf3a3e29aeb",
+    "compiler/irverifygate.fern": "34481694638a37b3d0557c326ac7f92f74c54b7ba02d761e026b499392808282",
+    "compiler/irverifyrc.fern": "e7199bdb625c25223034e34e59a6e6c3138ae338effcc0a628e1cb7b4cc03c14",
+    "compiler/irverifystack.fern": "e64f6d7c687f40e2dc80fe17915a882772870c5a0a99c7c7395d21428b36ab10",
+    "compiler/lexer.fern": "f1d246f2444c861971e1e8c4b575145e91b5e2ede8226e2f6e0c0237f7bef5a4",
+    "compiler/lexical.fern": "592a81394a152e2d2c16cd9fa5d5ff60f72a37439fe2cee108abeb8b3f8f5680",
+    "compiler/lift.fern": "c7e53332e7d19bd6abaa647c2a56e5b14a834de588408897ab02e8599d925d41",
+    "compiler/lint.fern": "b111a596241041bd14d70e127b4052c4a6d790155a6f4d5ad178eeee17cd98dc",
+    "compiler/literate.fern": "6d23f78ff08819d0582b4bbba839c51157b2bc65cc40dfe7c65af5d732783f10",
+    "compiler/lsp.fern": "f640be45f8ceefa86787bb68115654a910bb462dc9ddd3d2466e4e3676b93974",
+    "compiler/lspassist.fern": "0702bf1e6415288f89c6db660bd0c9f90f431f785b414489ccd6e838c44da492",
+    "compiler/lspquery.fern": "1fd0421cde9429fc0dd84b5254e338adfbb3afdbc2594ded7829c2d3610c660e",
+    "compiler/lsprefs.fern": "1f7010ca385d89cb98c0276fc33cff6ef66dbf716b08bc6c5f08d69d916c1ac9",
+    "compiler/lsptokens.fern": "085593321c1fd675f0730796020932e73b7fd03a5696daaabe6fdbdf0682ae2d",
+    "compiler/modloader.fern": "b7d18746475e64983f89b8d8998205d5cc7e942cf56c297afa0ff522c292777b",
+    "compiler/mvs.fern": "d8a4751de012f7df86619a72fac9380e31c85bf8541ea4138e512c7711f005d4",
+    "compiler/optbisect.fern": "32fac81cc3d35f9e600ae039c2f312bb16258e6976407cf218e1b9d6696cb1b1",
+    "compiler/ownership.fern": "60b872bfe56cf962970836389edde091dca9cef215a5cd16b162e2a378ea076d",
+    "compiler/parser.fern": "4450406d6df3e332e3e87bf426797d0671de17762930df70b59e0f5fbe7348ab",
+    "compiler/physicalbody.fern": "9e0056d47ff651f64ab38c3ecb77aa98c7745348139a55f9c651786dbdbe118f",
+    "compiler/pkgfetch.fern": "e6537020c0e92e10c4355a76382547e9697d682cf730e25d47161e32289da7a4",
+    "compiler/pkggrants.fern": "04ee7c7bcf5144505b4d6e7af39ac0a33bccd24d7ec89ae54396eac0531191fd",
+    "compiler/platforms.fern": "42ba6376a3de3d547ea4259c3b3d2d59c6e2fb09f15433c34b546582eefe41f2",
+    "compiler/playground_run.fern": "781abfc45d6c0ddaf1203a578f1fc02dee20e49f7f355c2aad93941165947547",
+    "compiler/printer.fern": "3926dcf055d1a35319dfb4ea9b86304c4075f9d2d5b28031b93553026091ced3",
+    "compiler/rcccompact.fern": "fc7fabb021459b0585f7275e743b46c5338740470bb19b50160b93a100576653",
+    "compiler/rccertify.fern": "562d32aae0f69049b055f3b5b0a74deb86e235c2292c7e0a718a95f1f10b778e",
+    "compiler/rcmemo.fern": "81503af92687e2fad2351877b7b54719f4f0203b4784ed23231ee3f685abf9bf",
+    "compiler/rcsigs.fern": "34513bc0357f9ee4e7f15c3ef79ccb1f581e9df4136b17527a46635fcb27b15b",
+    "compiler/rtbytecopy.fern": "c9b891eee89141128389a14a4856198a00bda7e3004e0a7637f66baaa39b20c8",
+    "compiler/rtprofile.fern": "d0bb5a92e571c1e349575486aa317fe6e02a2fde82a22cbae4071f4b3fb22880",
+    "compiler/rtprofilemacho.fern": "dd9b9fac7ff2bc297abde32238d11491db33a07bd7ae6932edf691aec1c5b348",
+    "compiler/semarrayreport.fern": "86b3644f85558d94e55721a01a98a8075c88d7e699fe452027154f869b89e119",
+    "compiler/sembytecopy.fern": "7154ca1886071a55adddbbb7a2d98a89374076890f45664f3e83252a72433f07",
+    "compiler/semcse.fern": "68ad064e4a46bcd076016c9aa9e1957eefd37cdef31bfa6ae3b866e6c058e8e1",
+    "compiler/semdead.fern": "8e2997e691de4efec717b27ae1808d0098c0f54056e75938ee99507dbf596264",
+    "compiler/semfuse.fern": "feaa6e43e373f50bf3972f43eba44c237e1253bc0fbfe84d196152969663d911",
+    "compiler/semhoist.fern": "c7b19ac5b0da1eac1047b045f882563d29654025a9abbe4f74debc2dc0a927ea",
+    "compiler/seminline.fern": "2d9052dbb07d079aae1dba2ea3fd004b043e5017b48efbf8714223a21dda6f0c",
+    "compiler/semlower.fern": "f37fd5a7040da395d2c8439478bf8c65db59731df93ec133e99b0a98001c532a",
+    "compiler/semndarray.fern": "c536bdb17c81ec1ec7e8ae617c98e1686d392f219dc419a310bbcf4960c47ed8",
+    "compiler/semndlayout.fern": "58ceb635b91dbbd89c42d9c51672a739541d6051eda0851b66ee5882b48b6234",
+    "compiler/semndprune.fern": "c09285ebad8fd65f810ae6fe13914bd6baee867d2fc8f3ced2d57588e2cc8b3e",
+    "compiler/semoption.fern": "290cf5dc2f9ad443ed8173be598fb3a9128d7015ef011e6cddc42de49ec860cd",
+    "compiler/sempair.fern": "0a68b2fb1728a96ed2e09dd8b101d3f0d51c4d23b85f76965c2ca5bc88556ad6",
+    "compiler/semreach.fern": "b86db920ca8a154d052b8c16389eefd631ca97a8b8848b622d34b5eeb6b3a2a3",
+    "compiler/semrecords.fern": "0cf544e37a75a0d3c711f55a1f823883044a8a974facbbf1ef58ab0b164b1a03",
+    "compiler/semscalarreturn.fern": "f50bbd5da9f0ce5f6c2473864a22501df64ba2fbd9f45870a9167542b6554a80",
+    "compiler/semsink.fern": "a1dff8f15761ddc27fdffa2c83d59e367943b141bb345c6bd639890998c04440",
+    "compiler/semsource.fern": "ca600d3a704b15bd9e77f1dcd0adb2006dd5048016ef43b98519dff7c4ac3e33",
+    "compiler/semthread.fern": "75776daba95969f9d9090a6eb117e0f59b2e9ccdd49f1a21346058df5c102506",
+    "compiler/semtypes.fern": "24983423960ba50af11e27f710cd717027503abd2f5b97c7a044785f57bbf897",
+    "compiler/semunique.fern": "2141c89d2084d549ed5bc0af886cc2176694ad5d1effbadb7ffd9d500dcbffa8",
+    "compiler/sourcepos.fern": "abe62f55d517dff0d0826ae1feaca2b296fac5c42c4948668ee4acf471b32020",
+    "compiler/ssa.fern": "2304bcb5473c8c408288ae1c2763b0f8ceb4188de6954955d02972ca0511e20e",
+    "compiler/ssa_lift.fern": "820879f5dd0e62be00f9cf6925a5a00f1ff39d22a76751bfdf6a4d508c6c08d0",
+    "compiler/ssaallocationchain.fern": "f323abd804ab48497b03d751c8c43730ad546efbbe58b8adfe4646a95815957e",
+    "compiler/ssaallocatorfirstmachine.fern": "9bc56e29c6ab7a9a6a838f723e1cfb490dcd74aff341c6f79efa9e9fb507d5be",
+    "compiler/ssaallocatorinitisa.fern": "bc173fb24f08c5362697dff0167664fb1c324bdc537475acdf141f805e4814ac",
+    "compiler/ssaallocatormachine.fern": "f6f4198dec7d9e3f8066b55705cbe60b5435d3d22a704797e43a9ee22e09b8be",
+    "compiler/ssaarrayboxmachine.fern": "2f10ccb6a64312278116eafa5023f35e0d5a68542a26281ac4612c57e4ca4b97",
+    "compiler/ssaarrayrelease.fern": "7ce3a8f45c04d39a048a8713cf3c385e01e2f9f0d4c61d9e973ea537c3726924",
+    "compiler/ssabounds.fern": "f4925ee781b4ba3d6334a091b57ff3d924c5f6d85bae973016f468736668968f",
+    "compiler/ssaboxstringmachine.fern": "b493cbd3a4ca0651dff6943a2c2a0eecd063f1cf81825e6c99b4f0ee3913feee",
+    "compiler/ssabytes.fern": "c090453ef555c8eefdd74ddb6e23136db85abae13db067e55813adbfafb96a56",
+    "compiler/ssacapacityisa.fern": "74226da8c87f88232fe35bb9513c87add6021fe0316e2ef533e7d87b320fd204",
+    "compiler/ssacapacitymachine.fern": "15b2c822ea1ebc263577ca5c83093908e59fd2be59ae68646e1b3cc34d56b525",
+    "compiler/ssacapacityvalue.fern": "28e16aefde526b130020f02b3a9d9811a655f0bc7363426de6042846c1670800",
+    "compiler/ssaconstructorbound.fern": "4f8aab74d7647869a0132517c120e57edada3e3286eb6c3d2480d007702a9c6c",
+    "compiler/ssaconstructormachine.fern": "72569145ee172dead61bbe39cc3ee5d52a5edeeb2bce46f348d8493b5fea7a15",
+    "compiler/ssacredit.fern": "1d53611cce83333a40fa34816dd5481e92f0751c067ac07a4d7ae27a1c381e64",
+    "compiler/ssacreditabi.fern": "8695132e00308813d26c5e1ae41496973348f5eea4a8786f22dd5391c4e29aca",
+    "compiler/ssacreditbound.fern": "97ecb65e5187aeed19383f53429d4a70d8f96a08d0a6f61953196cb7a37c1547",
+    "compiler/ssacreditcontinuation.fern": "44877140175e49356abd508644a8a76c7a253d89dd8825c8e0ecfc73f4ab7026",
+    "compiler/ssacreditemitted.fern": "cefd411148d3b30b010f3c303949f11cd4564fa4019842d5208a1100a6d14085",
+    "compiler/ssacreditextract.fern": "1f8dcd2be8a580660a8b93dd589b8a18d51907a425f1250ed8eced6822236dc7",
+    "compiler/ssacreditflowgraph.fern": "b091759a50eea3a05e0ea972524dfa4d9bc5fffa6d92b5da2a47982e03da7df1",
+    "compiler/ssacreditguard.fern": "6e75d2b059835c9eaf53f91f50e6869266a6b61112de48cdfa656ae60a7f23aa",
+    "compiler/ssacredithelper.fern": "4225cf33b513409e943cc121fbff645352a97acca4ee6dae645b5edac444cad0",
+    "compiler/ssacreditincoming.fern": "a08f9e71e421b7f1add35feac029c9c7d0a6a22bcd7aae6523c380e5da2eaaf4",
+    "compiler/ssacreditorigin.fern": "19e7eead4bc686fcdf58c2ca040978c761990e2cace079b5a668c3aeaffd6a6b",
+    "compiler/ssacreditoriginflow.fern": "6825c6c7ffa62254d3796f44c813e5197c80c68c9c311a4644ae9672a32bac98",
+    "compiler/ssacreditphi.fern": "9449475a76eeb878eb60d339111f856b084573ac0b43eacf4f5b69b0c3c753e3",
+    "compiler/ssacreditreplace.fern": "13294f22c505033a7cd918a82675774bb4c2f4d44a28e1ce6d95d27dcd6fd48e",
+    "compiler/ssacreditreuse.fern": "79480f0c7cfef3d034a82b0226e9fe4c560a640b3bda83dfaae71cbf581f93b7",
+    "compiler/ssacreditscalar.fern": "09dad961600832226e037879dd29bcdb5ebe08df8afdcb06b6b8b02fbed549e1",
+    "compiler/ssacreditselected.fern": "a24ca9ba4839ec68e1829e2de7f1d08736d3c2106ac381b3fb95247305ec0def",
+    "compiler/ssacredittext.fern": "6e5c48b14db9b4dccad6f6e2ad72e3f3de31f76c3dd238df4be93e35b6e16aff",
+    "compiler/ssadecrementcount.fern": "765c64f591db71d5c9a7129c065b7b0a606be1c97b0519520bb6c9f2e401721c",
+    "compiler/ssadecrementguards.fern": "28fa3af594225a01ed435d5c88b517990f0c202fb9b5814a44c589874e9a581a",
+    "compiler/ssadecrementisa.fern": "d75a8a098aac797dc57d39ea7bf3f743096b8f1f517e91b5d243f24198990382",
+    "compiler/ssadecrementmachine.fern": "a7ba96285710b480a8ceb3b2881e8b7d3a3daa9c8e7de3f7b11516c14948b0f5",
+    "compiler/ssadecrementmemory.fern": "f46f64e4c227fdda3ac7b6fee1961ba4c8ae0a1579c8327f588e727cbe8f96db",
+    "compiler/ssadecrementtext.fern": "0010ebb17a0bd9cc8987e4c876b2a978af3edda5ea05809725f2206b71345d6e",
+    "compiler/ssadeps.fern": "6615d3c98b8d4dc4c473c83e945c83641e9b683d5e98882c3bb72473a341a1b0",
+    "compiler/ssafixed.fern": "aa98e41c363ddcd190d11a853aeca28f610d078c8be92791f2d02e2f7ce02f89",
+    "compiler/ssafusedstringmachine.fern": "e76f821aa3790bc5a5e1439dc8bd8a9abe39eefa265322580853eda7f2e25ed6",
+    "compiler/ssainlineunique.fern": "523b6f04bb3937ee47933d9db72dd1f156f24086fd539edd70322d17ce160f9c",
+    "compiler/ssainlineuniqueflow.fern": "a8871117cea44d783fbe5bfee5cc9a5a2331d286ab082e27aeb66aa7932d2e00",
+    "compiler/ssainlineuniqueisa.fern": "0f6c8603b7b91a4193ced5c6a909f8501a7c5590113cc1883cca5ef86948c6ef",
+    "compiler/ssalargearraymachine.fern": "2623c843ed0e018f07ec7b2a5c77c1eea47797d623dd743c7cbf2652e5e5d24d",
+    "compiler/ssalargearrayvalue.fern": "a8fda4ca9ae517cd62c703bdb4bbead61d3c76f90e58a92864d8db1c636d151f",
+    "compiler/ssalargepushmachine.fern": "6347d59cf071c55ab6cd241089bf72bdff58e5be22a7297e1030066cb48bab1c",
+    "compiler/ssalargepushranges.fern": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb",
+    "compiler/ssalargepushvalue.fern": "59b53d3c3a2d1f72cd41583c4625941e53dc394042a86cff5441386b5f1a3890",
+    "compiler/ssalayout.fern": "e547c8656b0899deca8959c3c152184d3aac99f9c4abcf883a4037bfd8afa64c",
+    "compiler/ssalive.fern": "400b0dec02ae6b3e23fecc3beed7b5d0f8dd313237a6389757b87a36844784ca",
+    "compiler/ssaprepare.fern": "1fabb78650e82fcb77dc84abeb193718242045b514063e4b9fc76ff87d78e892",
+    "compiler/ssaproofnames.fern": "4758875d8a629d33351c71c0abe22073e0798fe9eab1498f1fb895386d4f7d7a",
+    "compiler/ssaquotient.fern": "50ac0e4ecdbeafdf370747bde08a0220ef002d11312003fe94429d49aa070c5a",
+    "compiler/ssarc.fern": "f198cee714932b69142f89cd89e086cc99fc06a00056069f86d0b998251b4e09",
+    "compiler/ssaruntimeunique.fern": "692d05ac1de727cbe9c4ecf93255afbc3b8ceed1ae5d81acdbff037d211eb0e1",
+    "compiler/ssaruntimeuniqueflow.fern": "246e4de1484cd4d2c9fcb2110efbf4248c80a7f8f79946707da7841d08e48e0d",
+    "compiler/ssasem.fern": "adbd68b0283246840dd16cf046e25d6db34e1065b4c061d33f18d9d4f2f42e9e",
+    "compiler/ssaseparatestringmachine.fern": "7ba208f4ccae4c901f48dc0dde2967bcb13d3e661005f0991a7939a009b67855",
+    "compiler/ssasmallarraymachine.fern": "e05a894344c26198d492f6992790d504ba0da0d94190d72248b1d7ec4b7ee080",
+    "compiler/ssasmallcallerflow.fern": "fcb92b31e4dd51a3b51168421ff469176c35aa7b1955f8ab64c71c49b80cd368",
+    "compiler/ssasmallcallermachine.fern": "080fb1ce790c7bb1698bd3ee8c722ea64e119a56356960294740c78cbcb07684",
+    "compiler/ssasmallheap.fern": "165ca9e87d48380371e99cb3858e89736e2716677512b418b88168ec5362b08e",
+    "compiler/ssastringrelease.fern": "4be32c329598f6228ede710823a2cbafd0c08e02c71869e45fc5ec4ab5458a3a",
+    "compiler/ssastringvalue.fern": "bb74e0f95963c68a5a9a71fa8e16af1477196b55a5ebb2f06e6914f66be83cc2",
+    "compiler/ssauniquecaller.fern": "0d5f62d4031cbf0114bf8dbf071107da4500ea3c60e5456b23ed1c9c32d1c7c6",
+    "compiler/ssauniquemeaning.fern": "dc4600d45b1c0aa7826b2f6214df28612f62882b7d4eeba7ba2bde6fe6007ad5",
+    "compiler/ssauniqueunit.fern": "f4e2779f3a04e7b180822043ab71c657c9b461f1c1e63332a57e417194e71b1e",
+    "compiler/ssaunits.fern": "f1f0cd92910d987422a5aff78599a929e47afb1b2dc29c7cbd39de96f254ae22",
+    "compiler/stdlib_methods.fern": "680081bea8296bdd2649dde7112524078a169ac350d8c1133564d2c26fff88c1",
+    "compiler/suspend.fern": "33c9f447e625ebb51d342037d4f4c856b085c2b531f3f289ee41b9299899315a",
+    "compiler/treeshake.fern": "30492f21df675204cf1063fbe2c28c35e26f153503f4b9db36810937d37b1465",
+    "compiler/typeinfo.fern": "efb0899a9286435749d274f9a19a367bf117bf5121bdb41094e4bec577973f81",
+    "compiler/util.fern": "27be48ade629ffdc45031d2c640ea083bdf64326e6b0aed4fe3693a89830070c",
+    "compiler/visibility.fern": "a5fb43a2f5d53e663145ec746f3e0fa5790731cdffe1f7664e3931872808caa9",
+    "compiler/wasm_abort.fern": "61f20c632e4067424d813b5083dc135402aa8e39049a96d4c613f396c069307e",
+    "compiler/wasm_aes.fern": "0dc2818fe0d53bc11c2dbbd7015421a87c5aa80787c52b4c1cd1d3069754c620",
+    "compiler/wasm_ir.fern": "9e78c1f2de1329b96b0928c26a005eedd75709cdfe61153eb7911b22742b023a",
+    "compiler/wasmlocals.fern": "e73fedeffcf55f9e8dc427df93a0cb4fb0cf25eb8f0049bb0ee321a361e1b319",
+    "compiler/watbin.fern": "3440fb10d030ddd573bb6b763c484f1b33b702487f8f26c2f05bb06775e8c2eb",
+    "compiler/weave.fern": "89ebe338d9dfa75ddfdce623cc0ea413ce8fd6762151b5ff33f1fd76fbbbbd28",
+    "compiler/wit_compose.fern": "e5221d9fd851bdddf103a16b67270506bc3b270054eee8f4017c53925e913ddb",
+    "compiler/wit_decode.fern": "7410612b272323503790f15e368398d981ebeb54c5683e9b866a249544f8dc66",
+    "compiler/wit_fern_world.fern": "0f79fd468a19c32348944da21cfe348e98914ce7ab510069c36ec4337bcb599b",
+    "compiler/wit_proxy_world.fern": "9670fb1c3674de32c501305a94ea959089ca3d13ed7a5c7de750d26b60ffea4d",
+    "compiler/x86_native.fern": "c2c504bd4e465539b122ed8df5723daf7a4575c2542a4aef3166ffb2b404c5fb",
+    "internal/stdlib/core/_test_empty.fern": "516cc80cf6a235647bf2da7ab78d8cbce5396b036d960fb627229e83d057be9e",
+    "internal/stdlib/core/bigint.fern.md": "3d7812e4570eab290fcbc464f28dc3d32946e434fdd7253b3e8f4d9455e00e89",
+    "internal/stdlib/core/cmp.fern.md": "f13004d02f5d84f3c633998e64f7d8d26698282bed3388b45ff4a4ed543e833b",
+    "internal/stdlib/core/f64_text.fern.md": "f0ca3b74da19152181aadcd38de45d7cdd3d05d475eccec74bca2af9489a2cb3",
+    "internal/stdlib/core/int.fern.md": "e68082103f5c0d70d3039608c9cf7d13e2cef649239740f2b151ac867307be99",
+    "internal/stdlib/core/iter.fern.md": "07f3b7d21c175e9a6b8f400f18773b5b92d32c9b1f318eebaca22a6ce4992a4c",
+    "internal/stdlib/core/map.fern.md": "7491cd6f1f169f8f9786fcb8e27cf9c98d38c5467dc20540c3113759a6a12d97",
+    "internal/stdlib/core/mem.fern.md": "4e78c356440b8aeaf75e14327695a5b2b6d63a9eba10100030d3cf597bcf7fb1",
+    "internal/stdlib/core/primitive_text.fern.md": "3acaca396b6b519db1085c718ab79670bfad5853fb6cd5a4695ba4d934bdbe83",
+    "internal/stdlib/core/utf8_scalar.fern.md": "db25e68573483fbe50e063b3e7fb72bc60e33b46eaa98671cc0221e95f65f68a",
+    "internal/stdlib/std/_test_empty.fern": "ed96a4ccd0a30a9cebe9c1a384074817a4273901524e818e443f6e54d12a3cc3",
+    "internal/stdlib/std/ansi.fern.md": "1068231ac6257a62c888f25a339cd9d5c239218c28d86c329eb6b9b58ed1771c",
+    "internal/stdlib/std/array.fern.md": "10f56dab8fd78ab2476b50ae896ac91f93f2e0939a98b8e3016a03bcfabdd435",
+    "internal/stdlib/std/async.fern.md": "03d36a9bf56cf1c334348d8b12d72e54f147c784c67157ebd1c6d1298430603a",
+    "internal/stdlib/std/base32.fern.md": "a94859b001a84d5b6116795b17e076d5ddcad27ecdecf01d6b7a23d85f0ee16c",
+    "internal/stdlib/std/base64.fern.md": "f0db7732c2eed27f52c35c9427e27a2de1f2fe32c77641e8e580a5f4706c8dcd",
+    "internal/stdlib/std/bench.fern.md": "941724140e74ac40ece0982bd1394bed869bf258df4634e5bb61c52f736b82bf",
+    "internal/stdlib/std/binary.fern.md": "8f3a1ad0df74261525c99d9a25d9f13840b02e6c756c3587c03073df55d82e1a",
+    "internal/stdlib/std/brotli/dictionary.fern": "22f9c518c13fdc330dd8fc1d0317ec20d257797b68a8ce1d017f727168050f65",
+    "internal/stdlib/std/brotli/encoder.fern.md": "3f396cfd2e48a252e64d95fe4f81f08f8b45c4df6bcfeae6caf7c1c953cb8f14",
+    "internal/stdlib/std/brotli.fern.md": "c2aee962637aaf786b020e34cb739361dcb834f66ceab4a6806556d428f35922",
+    "internal/stdlib/std/cli.fern.md": "b318569d107c655fd3baa79fc69f0f6f8d87471134139485d08ae572fe9ff1d9",
+    "internal/stdlib/std/clock.fern.md": "d21da38e4365165c10c645382aadfd6cfb4249c0519d7f625e15dfcfbffb5327",
+    "internal/stdlib/std/codec.fern.md": "0ec13cb6ccc5e751b231009f6d68ec6841f354999dbef9e8b10b0021cd1de8d1",
+    "internal/stdlib/std/constmap.fern.md": "88ef07f38d160b5048a0d9d16c6383cf09707913d854b978ee12e745dddd80d4",
+    "internal/stdlib/std/convert.fern.md": "7b1780a22f3b368cbb529bd00b0870333d81433a26969f3fcf0e14e552dc7b28",
+    "internal/stdlib/std/crypto/aead.fern.md": "99e732c7a846ec8fcd20663ff4ee4a9fab787d03767569e91482edb78602f546",
+    "internal/stdlib/std/crypto/aes_gcm.fern.md": "ffdc64cc81d231a5b4db8a239feabffa5278345807d86e73df8e3b802278d489",
+    "internal/stdlib/std/crypto/chacha20poly1305.fern.md": "6e36479a190a0887166e2857ef1e798fbb042a3fee2479a35b05e7d4c889af15",
+    "internal/stdlib/std/crypto/ecdsa.fern.md": "a2a3bdc33eead13c3be27d6a1043c445935af3ec811c645bfdbf3e9627afe7fa",
+    "internal/stdlib/std/crypto/ed25519.fern.md": "bfc9a74faf0984e1de315138a8a5cd8d2b80efd3ece4af2782d04bad01467be5",
+    "internal/stdlib/std/crypto/field25519.fern.md": "dfbd479b685edc6c9be41d1cf99fa0792965f4d2663e58b3b080f474ec2e4201",
+    "internal/stdlib/std/crypto/mlkem768.fern.md": "716914ff0acfa741a36af12d91403b019807f320619d3b1e35d3cd46d7477dae",
+    "internal/stdlib/std/crypto/montgomery.fern.md": "a604d36036d5ddc81f28f6c9e1f942555fdff164057e5f70ab10cebadf8f223f",
+    "internal/stdlib/std/crypto/p256.fern.md": "a9f1dc44fb359acffd0c6619d73ea12074b43c66624502af124791d8158924f2",
+    "internal/stdlib/std/crypto/rsa.fern.md": "0d7e2f4ace6d7e628eb1fd9eaedec2f137a37641b54f6751b89eb92b98d1e778",
+    "internal/stdlib/std/crypto/sha2.fern.md": "fbca1ce220fa68cc371456ffc1440a0c7e54d524a9ce76f16e3076020f00919d",
+    "internal/stdlib/std/crypto/x25519.fern.md": "c9c149ecf55110297b0446ebbfc64910b5730368e6d97bc17e2f2e46b78952ce",
+    "internal/stdlib/std/crypto.fern.md": "d0e2f8f133acf46f393968e67ee62e0445eb7fe44db5c20531cc594ca6cb38ea",
+    "internal/stdlib/std/csv.fern.md": "efb400d3197d4bb4e2b8fb0bfa7c5dead1f024e811cc2de1936955fbdcdbe0ba",
+    "internal/stdlib/std/deflate.fern.md": "39faf4e2112ce1ea80c6cafb86ac9a6341fe720f94cb58bf4e3061ed7af908fd",
+    "internal/stdlib/std/dns.fern.md": "0e22389a7f60654cef0c7a634634b159add9ea479a639922bf67caf0cf7dd725",
+    "internal/stdlib/std/dotenv.fern.md": "a699d98f8c7ba0f04807d346c682d0c5ef85079c70aa059a06c84d93708a6d28",
+    "internal/stdlib/std/envflag.fern.md": "d02f8cb346f712365df3113ba2695234e1adc9d3fdd5c5e39587d0fe716c6b09",
+    "internal/stdlib/std/errno.fern.md": "aff82b4753057d8558740fd1d9abc209921ce0bf8028137c227554d3d27518c0",
+    "internal/stdlib/std/error.fern.md": "bcb158a6f63f28d12e8338e2a162f3ca39368cb13cbb4ff92294d1af4a382d78",
+    "internal/stdlib/std/f32.fern.md": "68a849e53f3add1b50ce835241e7764f279f0824bf953ffe1eddd73b662821de",
+    "internal/stdlib/std/f64.fern.md": "1d894b0c42ab219775166715289cd22c3a4ff439057cd25d52fc09b4f0f2f3a7",
+    "internal/stdlib/std/fetch.fern.md": "fd5e9965ae47b41825c3af1da7457a542c1fab89c77405063e553bc5f784dbed",
+    "internal/stdlib/std/format.fern.md": "8745fd1f9de4d6ba4ddee84636ec5d9d0a891a49353660dcc7a970fa340d409f",
+    "internal/stdlib/std/fuzz.fern.md": "9e379f91a9a9666b6c6fa0748e10229aa02bdb29482829aa181f1f3e3a1c3699",
+    "internal/stdlib/std/glob.fern.md": "bb38d7acca1969bb12ac612322df8a6ded6eebc9506212609bb764575403ccc9",
+    "internal/stdlib/std/hash.fern.md": "fabea6c62c8777e55fb7a58238e5b7dbcaed6c644eaf9275275d299f74ff0382",
+    "internal/stdlib/std/headers.fern.md": "48b09688a479272b4d3e32928b36d8af2e25dad58b9c8a64287dd2bdea41cd9a",
+    "internal/stdlib/std/hex.fern.md": "911e1e3bf3ddfe1e324fec896f14d7f59e1531ab422be863d43d5778f2e113bd",
+    "internal/stdlib/std/http/accesslog.fern.md": "6c888437664f52acb40efb7ef1faaca4a5fe4b393a8273acedc101d97a2b9a25",
+    "internal/stdlib/std/http/auth.fern.md": "136233389a062bcb388f2cb5da3bf94a7c0a0a4ad396caadad5b7968975b7bbe",
+    "internal/stdlib/std/http/cache.fern.md": "23aab176021c7759104ffaac2a83e88cfeb4d1d7fc4c9f8a1940939907c4acf3",
+    "internal/stdlib/std/http/compress.fern.md": "2de007e1f40b8a93e134060883cebe9a9b342f37e98cef9cda8ca4757de38214",
+    "internal/stdlib/std/http/cookie.fern.md": "68c8b317352a772dfc3ce61f7cf55f08fa9af6e8f2255f1c812a7465eea40998",
+    "internal/stdlib/std/http/cors.fern.md": "120b26ad815e8785286aa2cf71927d4f7e15f4b748bf773e96ef1b389489663a",
+    "internal/stdlib/std/http/form.fern.md": "c8a8a2c3c93f449a07ed58c423a3696a78f43a7d076ae3f58ea3f290896dd459",
+    "internal/stdlib/std/http/forwarded.fern.md": "634d699610aa3ab937a42449527cc4f1084ccbbfd60184849d80d9a59b9a4469",
+    "internal/stdlib/std/http/grpc.fern.md": "8c1727ad30884db1676671e3f34039b0c10b1d1c2e1876bfa4e40b6e1c6284a4",
+    "internal/stdlib/std/http/h2/frame.fern.md": "50f1b8a61a8181a9b06272a39792f333095b6e807ab68b2e8cfeebf7b21f5211",
+    "internal/stdlib/std/http/h2.fern.md": "ca31c48f4f78c1dd4f8b89f8e7bef5a1fbbeb31eca0075329f7b4e1529ec85c0",
+    "internal/stdlib/std/http/h3.fern.md": "86431fafb54e07786c0a5c740135bc9514dcc300ce83de3dbda0a4f7912826ae",
+    "internal/stdlib/std/http/h3q.fern.md": "fb3943f928b89801a06d605c570fd992651a6ecccc29d1a40db940f9a21c8e83",
+    "internal/stdlib/std/http/hpack.fern.md": "54b4b784888addc04eb4b2334e3fcbf5c98cf91399584676ec892ddbcd67f1c0",
+    "internal/stdlib/std/http/huffman.fern.md": "f087ae9551de5bb0fc47a15121e7f47d12761049c811e78dc438b38ca5311fdc",
+    "internal/stdlib/std/http/multipart.fern.md": "d1044717490eaff7d92547596c9287adaec56c41982d6d7f5cbde566a24d1418",
+    "internal/stdlib/std/http/qpack.fern.md": "26ab4a73875371a15a7fe2a0aa453cb52bc7cd260f3b013b3887dae353bbc1e6",
+    "internal/stdlib/std/http/requestid.fern.md": "3743a39452e13106fea345dc1339f227c5ba5b93f83ccc0df66688c28bec56a8",
+    "internal/stdlib/std/http/router.fern.md": "2ba736ed117d477065e3b3ee2d696e27178f45ddf7a0a261e33c355a3b488287",
+    "internal/stdlib/std/http/sse.fern.md": "87c8d8f737f2195b9c1f65e763c7c06959acc43a1d9fe1af68a70d0121ec0d80",
+    "internal/stdlib/std/http/static.fern.md": "f485a4d386db91eb0578b3df3f2ab9bc4c851ba36782cf6fcec371310a08b7dc",
+    "internal/stdlib/std/http/trace.fern.md": "f396061b307993887b483a340ff7041d83a3c91e6ebbaaace8f32fd6e019cc7a",
+    "internal/stdlib/std/http/websocket.fern.md": "49de5605d5464afbe5100b5967a86003ae28411c369e2eebe51105771802387b",
+    "internal/stdlib/std/http.fern.md": "1b7a5f1c03cd58af79516ed1f05385eeb0148c7f624a25ef647cd9f0c3024f7a",
+    "internal/stdlib/std/i32.fern.md": "ce8583bb8efe32826cfa3851541f259e64c1ecee35adb9c31628aec51825a2d1",
+    "internal/stdlib/std/i64.fern.md": "c004287f68ebe32d53d75fcf93d155c84fc908969fa46d59b975f0764b1953ca",
+    "internal/stdlib/std/io.fern.md": "13d52222c46cbd133fcc99413138a9c28e2656a24d6929c8059a8497c589110c",
+    "internal/stdlib/std/io_buffered.fern.md": "f5044b8443e2ad8392cebb769d3f7716ea6d499fa388296448b23f3b8d2b95c8",
+    "internal/stdlib/std/jni.fern.md": "a0806f90f8be0ef7b8453a98c8d0bf4be1680d4a3b985f35661ee56bb6897c7c",
+    "internal/stdlib/std/json.fern.md": "1f7996828c0688d0fae22a58dc16202687d2a48e0c13a923d29a3d4a7500cd19",
+    "internal/stdlib/std/log.fern.md": "0c9229791b4537764d982978b9d4dcb6c5626dec7c088874871814cc868d85b8",
+    "internal/stdlib/std/math.fern.md": "54a3a7baa255bda74bd86d5318f8c1573e780078afa81005a9d3fb532ba50248",
+    "internal/stdlib/std/metrics.fern.md": "e62207057085d94303751e642a579f8f0a574223bce84ffb532047044d929f14",
+    "internal/stdlib/std/mock_platform.fern.md": "c26c957f2ebecd87b66b292c5bece73645c3013b5f74478cfc60bd225e619349",
+    "internal/stdlib/std/ndarray.fern.md": "549590151c6a97b73cd9b500df16c4c409d30702aa1c5eb2252aeb17260b0251",
+    "internal/stdlib/std/net.fern.md": "d3a382c718c9c935dac288ccc7000a63357b2cc6b1cc37c1f18b4bcab0a65f7f",
+    "internal/stdlib/std/num.fern.md": "2c0ffe4970c1162924c4cf06d36602975f60763d909df2b942925ef1c2ac36d9",
+    "internal/stdlib/std/number_parse.fern.md": "16ac21afdc3ca5312623966508ff888f9a117c9842f68e804bcf2a4d66901be0",
+    "internal/stdlib/std/option.fern.md": "2dd007c25356598bf563219de559a21ebb22a56b12c670a277f851d8bdb8d10a",
+    "internal/stdlib/std/ordmap.fern.md": "31a685955ff632ea7bbb74f4956cfd697a9f7e6945c74ef3f1f0476133d77180",
+    "internal/stdlib/std/ordset.fern.md": "086850904511a4eadb5efe28b1e7616127e3c46c9f3798847215a809caf34d42",
+    "internal/stdlib/std/path.fern.md": "2e7b4c009f46fdaddff1f810a707111f5bf6ce0f0a044fe1ad20e91d914a17c7",
+    "internal/stdlib/std/peg.fern.md": "4cf456a1920a8d35c9e891160998bf4f4966a2ee06ad8971f08fbb615f19e1c4",
+    "internal/stdlib/std/platform.fern.md": "60299c9b92da1e65e275ded03a712bb13fdb37b5e8783454368158252238a40f",
+    "internal/stdlib/std/pmap.fern.md": "67af47a4ed55ab65da61a87a87ea38ef503db4da1e58eda84b42235c83c779f7",
+    "internal/stdlib/std/png.fern.md": "fc837f00edc2f924ccf7a76f7c718d9603a798b96c38b4241165dfe7bf68bf8d",
+    "internal/stdlib/std/protobuf.fern.md": "cb914c95afebcc89fe1cded596494a6e58fee5894012aed6365567734ffbf9cb",
+    "internal/stdlib/std/pset.fern.md": "772968a1f7f1feebbbd9c281fb641d26c773928789a33e7e09666dee8dd19e1d",
+    "internal/stdlib/std/publicsuffix.fern": "fad3a36da5f060a4e945ffeaa1a3845a4fc6bbdfcb098388371232c0f5cf1e44",
+    "internal/stdlib/std/pvec.fern.md": "6a71fbecf180a6b7029416534329e9847de41bb5cc75af816a35738b7ab32b36",
+    "internal/stdlib/std/quic/conn.fern.md": "82d7c1c03d1eecd9bd86fd21359bb90cd2cbd06572365025552926cb611cc8b6",
+    "internal/stdlib/std/quic/frames.fern.md": "a627a6d9686d01eea8ee3b4ec23400403dd663414c6fc80143e4c17e2bde1733",
+    "internal/stdlib/std/quic/packet.fern.md": "c6d36b7e6aab8cd8b03ba96a4ab5544e50d1ac3232d4d917662aab944d846a65",
+    "internal/stdlib/std/quic/params.fern.md": "8313df2b95d4dd1179e016f79cabd3c0901e4ec6edce5359cfac31b3d78cecf4",
+    "internal/stdlib/std/quic/recovery.fern.md": "13aa85926206eefd392026e293c306c5d1843c81bbdf149e2847b878ac738fd8",
+    "internal/stdlib/std/quic/streams.fern.md": "72d6a8cd80d8246e8aa305b9b420ccd0dc3765f61b0b1d24414021af59238ee5",
+    "internal/stdlib/std/rand.fern.md": "7ae23728aa422103e0ca8f8c4486e624548703d6c2ab43ebeb8fa2c6de1be634",
+    "internal/stdlib/std/regex.fern.md": "b35b029f65b8323e29b5b2b7a864bfa6b2ec8fdd56d76dbe9978d822e906beec",
+    "internal/stdlib/std/result.fern.md": "8412ef6781e2cc232f3bbe44d78a6783f0932f1073123642dcded4fba527fa37",
+    "internal/stdlib/std/semver.fern.md": "77a0c764465b19358331dd4fee5e31aa773bb41543a1da516981b95255daa1c8",
+    "internal/stdlib/std/serve.fern.md": "8c30726ff210dd9f882807ec62603dd5c913feff68c00eb5effd993ef4c453c5",
+    "internal/stdlib/std/set.fern.md": "263cbf174a921db677076adefec9df6b3969c68e1ad5970d9dc62f9b956b9963",
+    "internal/stdlib/std/signal.fern.md": "9ab00c423f68190ddd4ded30807afb089b4ebc0a1ad8cec209026fc0c0104e71",
+    "internal/stdlib/std/sim.fern.md": "10f169aa2fbc1c30c351419080e37c9e6b4cd482a984d43f734a6e614dbc0bc6",
+    "internal/stdlib/std/sim_fetch.fern.md": "e91a2c98bf88553ee1c2ce5e39f2829f41cb9cd2d5fbb24e326ef00c098d1da0",
+    "internal/stdlib/std/sim_platform.fern.md": "7841b261f55f97de2921c60f74ea3ea764955fe841b0ba9d0fbd704ae2842ea8",
+    "internal/stdlib/std/simd.fern.md": "e6aefc2088c99537a8fe8099231908441848360c77b408013718aed05e378125",
+    "internal/stdlib/std/strdist.fern.md": "cfbb4a5de1953575eaf470e51fef4abba6e3599f26354ed68069434a3d9a4f6d",
+    "internal/stdlib/std/stream.fern.md": "6166648395ded6a02b89f9453855b7dc2f5835fe661500ebfac288e855205862",
+    "internal/stdlib/std/string.fern.md": "56a3dee0bf866a4422e2f1fccf35defe639fe5b38e511c5d70ee793c074702d1",
+    "internal/stdlib/std/table.fern.md": "68525ac1c5fd31679ddbbcde12f7be82a35f687778fa59116e8cf0f589a0a117",
+    "internal/stdlib/std/test.fern.md": "06c5bb770a428c1ded682c46be89fb10b2f93da6fc234d46baef4b6f5b497319",
+    "internal/stdlib/std/textwrap.fern.md": "808482f9e920c36420990f72930c9cf236ef2976c834c41000434c3b86fc9725",
+    "internal/stdlib/std/time.fern.md": "832f99e6c32ce253e56e0025f3f6e2700c36fe7ebc605ca1012e9fe5fbc03d1f",
+    "internal/stdlib/std/tls/client.fern.md": "d31a919feff17256bca718fcad831b21862df42a6f2856693aacdc1ab1401b87",
+    "internal/stdlib/std/tls/der.fern.md": "881210efa3de63705c72d378cdf1677040338c24eb7a4c55b1a27b8fd645920b",
+    "internal/stdlib/std/tls/handshake.fern.md": "9196fdb854bb3f355eafb8723436765ad44042575aa5b40c44ae61b0463ca27b",
+    "internal/stdlib/std/tls/identity.fern.md": "14ee6c6cca9fe8d99a8a534c2a3cf60031d03d3f61820fd55f132bf232e1a2cf",
+    "internal/stdlib/std/tls/keyschedule.fern.md": "0eb0260d83668ce36b6dedda4feb6996f03a411c420d8b2c08f03c8356075104",
+    "internal/stdlib/std/tls/keyshare.fern.md": "a1ee3857389352ae3276f119287d3db24404a4b1b81a63969ada4e51a2f8e238",
+    "internal/stdlib/std/tls/ktls.fern.md": "55396fe7c484f4cdad98802adc2eaa61ddb112422d98a55ec8b0949b59e7b9c7",
+    "internal/stdlib/std/tls/message.fern.md": "5b75c13a141f1763a17b4632f0d7634fd6e52a3b67892fc5f08625d64e8704db",
+    "internal/stdlib/std/tls/mozilla.fern": "e2600dc5588379819f61cf16e70ead1f7aba47154a1d227f8b10b9230f1bc059",
+    "internal/stdlib/std/tls/pem.fern.md": "2089c87167a7ebc4bc6e30e32b029478f687ea4fb0202c9c719b60604a976d57",
+    "internal/stdlib/std/tls/record.fern.md": "0f7f7444961b80d1f384a78c971204fc7eaadb22d70f0bfa63a5d98a8809b9a2",
+    "internal/stdlib/std/tls/server.fern.md": "73e92e81549ebf0514be713afd8543c9aaac513062abf1f8358f12899d1443d5",
+    "internal/stdlib/std/tls/verify.fern.md": "3f7e52332202d2b040c6c586785814dc8f27780ee7a9269f5a0cb1d9815bb069",
+    "internal/stdlib/std/tls/x509.fern.md": "7c1d404852fc969e7e13f3431c47e5ed40538299c7e657090c481e26b4ba56fb",
+    "internal/stdlib/std/tls.fern.md": "5c4fe39f1e10de04319736cd3d7540237035835abd1011f598cedeff7ac5af3c",
+    "internal/stdlib/std/tz.fern.md": "c6e005767aa38007f0dae96fc1a27eaa637d8e7b4c89164cbf5d3fe496ed4d58",
+    "internal/stdlib/std/u32.fern.md": "97c28a8e124c5b29e35e854ef580628f7540ba604e75ae655ef24e99483bcd1f",
+    "internal/stdlib/std/u64.fern.md": "53b728fe48b21be120f5ab517bb336f9aec8ca8c787ec8d22b5d829181db63e1",
+    "internal/stdlib/std/unicode.fern": "ced4ace829eaed7a0236d1451a4ef6687e56bc020fb643e854783ef645bc3711",
+    "internal/stdlib/std/url.fern.md": "11b1b9df44e023a150c9e4f76f8d87d7cdbef4126d055dbf7da7da7dead5ebcd",
+    "internal/stdlib/std/utf8.fern.md": "0ef0ceea1077b13c09ad515c6795abfe49cd92ccadbbd88eebcf0a08b5f1bac2",
+    "internal/stdlib/std/uuid.fern.md": "ce70da357db957b5f99233c2f640ec74c621495bcc4f329866d9d01ad69fb2b5",
+    "internal/stdlib/std/wasi_http.fern.md": "89666e494512c4931663c2f2bf950b53b2fb485d2db0bcc7d30e597f5323cadc",
+    "internal/stdlib/std/wasm/component.fern.md": "0b2103ae5ea0dcdbc0db00e566a9e85f03f25fbdcdf970a13045a4348245eceb",
+    "internal/stdlib/std/wasm/convert.fern.md": "df05781648a338f56cdb82f9e779ee0205a806a251584c65cd9ae65fc15e9acf",
+    "internal/stdlib/std/wasm/encode.fern.md": "2ce419bea961e3b543b233ba54debae4dd180c197b436f667179697adc2df7d0",
+    "internal/stdlib/std/wasm/imports.fern.md": "7461c42392db9a5a7aa825cadcea2c9f754cb12ad17b0188d77392fd1fbcfdec",
+    "internal/stdlib/std/wasm/inst.fern.md": "4e6cb7065a76b7f7c46344409809762839eac9cd2c4ea51df02bc46e816be822",
+    "internal/stdlib/std/wasm/leb128.fern.md": "fa3c2a06215a992c732a8f1772d68daceafae673e718f9c2ea163ac221a53623",
+    "internal/stdlib/std/wasm/memory.fern.md": "a2d4414e683c0b6ab656356f6a8806451736aed49fc657d4941de256fcd29ffa",
+    "internal/stdlib/std/wasm/module.fern.md": "da8d00aeff2713747394a0ae1ba5c105e9ebac5902c2ba716717aceb146933af",
+    "internal/stdlib/std/wasm/numeric.fern.md": "8c995a320c556238a1d67c06cb6cdfe88df5f6f0adff67f3b9e4650a24d67d60",
+    "internal/stdlib/std/wasm/sections.fern.md": "d37981dd74b30b98abb41ef2e25761c80d0b9e548429d325cac306f831333158",
+    "internal/stdlib/std/zstd.fern.md": "d001cfeefb879f4524a26eed09a8085ea46c64bd4e769f6b0858bce9bd4d4926"
+  },
+  "collector_sha256": "be55537d368af54f5bb24e4af92769850a61e61eeafa21200713f966fd1cb0b4",
+  "samples": [
+    {
+      "benchmark": "array_append",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "4e8bb38d4c42c7554e166a519268694294a13872c0ca67ffd062452cc1344132",
+        "bytes": 25250,
+        "indented_lines": 1041
+      },
+      "candidate": {
+        "sha256": "4e8bb38d4c42c7554e166a519268694294a13872c0ca67ffd062452cc1344132",
+        "bytes": 25250,
+        "indented_lines": 1041
+      }
+    },
+    {
+      "benchmark": "array_append",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "15ab862fbb9fc886f152fddfa41e6fa753f77e43bee5a7450f4af75c4dea7bee",
+        "bytes": 31290,
+        "indented_lines": 1239
+      },
+      "candidate": {
+        "sha256": "15ab862fbb9fc886f152fddfa41e6fa753f77e43bee5a7450f4af75c4dea7bee",
+        "bytes": 31290,
+        "indented_lines": 1239
+      }
+    },
+    {
+      "benchmark": "array_append",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "087f960b5b603ec9548485edc6b8ec0d590ae350881e7fe3299ba583c2f9f481",
+        "bytes": 27443,
+        "indented_lines": 493,
+        "binary_bytes": 6069,
+        "binary_sha256": "c821d755af151c665a4a460846c5a7a2e99bca86475b3f19071d2fa816c7195b",
+        "type_id_definitions": 52
+      },
+      "candidate": {
+        "sha256": "70254111ddca839808b1f794004bcaefc8fb2f024a61911b04a5fbfaeaa5aea9",
+        "bytes": 24877,
+        "indented_lines": 441,
+        "binary_bytes": 4791,
+        "binary_sha256": "131b35a104127f1d577a1658d479a26416b1573a66c6d696ffe194466e5c777c",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "array_index",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "c9b3eb3e9eb7004fb6a82f782ad82e722868239e51a2a40552f7c816c6ad837e",
+        "bytes": 25346,
+        "indented_lines": 1042
+      },
+      "candidate": {
+        "sha256": "c9b3eb3e9eb7004fb6a82f782ad82e722868239e51a2a40552f7c816c6ad837e",
+        "bytes": 25346,
+        "indented_lines": 1042
+      }
+    },
+    {
+      "benchmark": "array_index",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "395dce32f16c6e13952e1ac0f43feb78ff4262c2c9f5a9da8136a50901a61e64",
+        "bytes": 31325,
+        "indented_lines": 1237
+      },
+      "candidate": {
+        "sha256": "395dce32f16c6e13952e1ac0f43feb78ff4262c2c9f5a9da8136a50901a61e64",
+        "bytes": 31325,
+        "indented_lines": 1237
+      }
+    },
+    {
+      "benchmark": "array_index",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "4458416a1ad6bbf2a98c89438cbb7c9452c0e1186344c2d69dd4e61938412c16",
+        "bytes": 27473,
+        "indented_lines": 498,
+        "binary_bytes": 6084,
+        "binary_sha256": "d51f743e056469d71d5628e37c451a8aea6357a229d664074cd52c6b6000b7fa",
+        "type_id_definitions": 52
+      },
+      "candidate": {
+        "sha256": "297b34cfc2f25ffeeef7aa80d8df0bb8ec414b0c6cc512ff40766fa70cb4f9f8",
+        "bytes": 24907,
+        "indented_lines": 446,
+        "binary_bytes": 4806,
+        "binary_sha256": "b5e2e41d9ed84017ded5841ed282248e36d41e646154db511bbef6277fbbd78c",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "array_scale_f64",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "73ac9e19e7b14ddacbc267be6f93a525be21944e7821d25c1e572d1c7df0ef17",
+        "bytes": 28428,
+        "indented_lines": 1168
+      },
+      "candidate": {
+        "sha256": "73ac9e19e7b14ddacbc267be6f93a525be21944e7821d25c1e572d1c7df0ef17",
+        "bytes": 28428,
+        "indented_lines": 1168
+      }
+    },
+    {
+      "benchmark": "array_scale_f64",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "2c018e0f9cb9b928dde79369d1d9465e218f830a3d41c4434922de3ff5bf62e8",
+        "bytes": 33557,
+        "indented_lines": 1331
+      },
+      "candidate": {
+        "sha256": "2c018e0f9cb9b928dde79369d1d9465e218f830a3d41c4434922de3ff5bf62e8",
+        "bytes": 33557,
+        "indented_lines": 1331
+      }
+    },
+    {
+      "benchmark": "array_scale_f64",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "0032b19f2bf7f0ffa5e7ea35ea881fa71db0ac46a54d5993e22171e3e9208edc",
+        "bytes": 30074,
+        "indented_lines": 558,
+        "binary_bytes": 6778,
+        "binary_sha256": "5a084154b6bc9838490388a4bec75b20a5df66186f6fe0c95e856da74904159e",
+        "type_id_definitions": 59
+      },
+      "candidate": {
+        "sha256": "b03273f7b887ae24b753f58353ff6cc42253ff87e4133dff40cdc385b45cdac7",
+        "bytes": 26963,
+        "indented_lines": 499,
+        "binary_bytes": 5130,
+        "binary_sha256": "95626c3f2703223d07586b8cff304d0b285427a65088dd316f177ddae624f831",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "array_with",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "9d8a9a01b66f4a0eb05ab7564699f47b6944201726aef3c2c86075c56ea9e386",
+        "bytes": 28810,
+        "indented_lines": 1197
+      },
+      "candidate": {
+        "sha256": "9d8a9a01b66f4a0eb05ab7564699f47b6944201726aef3c2c86075c56ea9e386",
+        "bytes": 28810,
+        "indented_lines": 1197
+      }
+    },
+    {
+      "benchmark": "array_with",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "d9cf3640936cd4302f5c51073432381ed2df125a5c0ee27ea06af4e977a4aae9",
+        "bytes": 34967,
+        "indented_lines": 1393
+      },
+      "candidate": {
+        "sha256": "d9cf3640936cd4302f5c51073432381ed2df125a5c0ee27ea06af4e977a4aae9",
+        "bytes": 34967,
+        "indented_lines": 1393
+      }
+    },
+    {
+      "benchmark": "array_with",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "fcfc9aef63c49af9c2c5fbff8b34460da21121e4ce1092292a7d7bf57f8c8f49",
+        "bytes": 28193,
+        "indented_lines": 543,
+        "binary_bytes": 6167,
+        "binary_sha256": "144853d1fbae4c6399884e21b305bac18f1687bc872cb9ce6bf636c65d31a15e",
+        "type_id_definitions": 52
+      },
+      "candidate": {
+        "sha256": "bb86762a0d07a39fde704efec99b7b990c27b59842ab4cf4c1e323eab0d04206",
+        "bytes": 25627,
+        "indented_lines": 491,
+        "binary_bytes": 4889,
+        "binary_sha256": "b0eb38288075063d996eb2d51cbef1c9aecb5fb5c75efdd6a714842aefc6cd4e",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "ascii_scan",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "e8c0385a0256aadbd0522f3da438ff9dd60c63b82124427f79d464425b68388b",
+        "bytes": 30446,
+        "indented_lines": 1251
+      },
+      "candidate": {
+        "sha256": "e8c0385a0256aadbd0522f3da438ff9dd60c63b82124427f79d464425b68388b",
+        "bytes": 30446,
+        "indented_lines": 1251
+      }
+    },
+    {
+      "benchmark": "ascii_scan",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "31cc570fe0494af53701a1764bbf963913856151465b29727927aef45262c6a0",
+        "bytes": 38010,
+        "indented_lines": 1535
+      },
+      "candidate": {
+        "sha256": "31cc570fe0494af53701a1764bbf963913856151465b29727927aef45262c6a0",
+        "bytes": 38010,
+        "indented_lines": 1535
+      }
+    },
+    {
+      "benchmark": "ascii_scan",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "90833581866b1ac3ea6e41984d26f9b4d06e092598c0d3b64453f2d1bdf4aa26",
+        "bytes": 38482,
+        "indented_lines": 1266,
+        "binary_bytes": 7832,
+        "binary_sha256": "6cc2422c9a7163d1a452f842e1718ea937433d83089398a5231eab37d7c65074",
+        "type_id_definitions": 59
+      },
+      "candidate": {
+        "sha256": "7e18bdb3b5ef99a3a172590cb8d204c0f6b0243695ce0964836981a7aec5e6f1",
+        "bytes": 35371,
+        "indented_lines": 1207,
+        "binary_bytes": 6184,
+        "binary_sha256": "0be9681a1d278d528cf72d987ce67df0f188c6794f6bd0092da913495ba1e079",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "byte_copy_append",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "720376d48ad1d17d3cec03981268dd6500805c67f369046746ac5028c9e1a70a",
+        "bytes": 29137,
+        "indented_lines": 1149
+      },
+      "candidate": {
+        "sha256": "720376d48ad1d17d3cec03981268dd6500805c67f369046746ac5028c9e1a70a",
+        "bytes": 29137,
+        "indented_lines": 1149
+      }
+    },
+    {
+      "benchmark": "byte_copy_append",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "20b06c2f06af3c767f9f96d86c459ecf31b842c57feb2ffe719668d3d6568823",
+        "bytes": 36176,
+        "indented_lines": 1367
+      },
+      "candidate": {
+        "sha256": "20b06c2f06af3c767f9f96d86c459ecf31b842c57feb2ffe719668d3d6568823",
+        "bytes": 36176,
+        "indented_lines": 1367
+      }
+    },
+    {
+      "benchmark": "byte_copy_append",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "4c3f1587ddef39a43f6131f4b0338063625d8bd304cd8e20aadb008a6235f621",
+        "bytes": 27808,
+        "indented_lines": 608,
+        "binary_bytes": 6069,
+        "binary_sha256": "192bd8460af8805a4970591e93b7f057895949d5280418b40127c713212b2e54",
+        "type_id_definitions": 52
+      },
+      "candidate": {
+        "sha256": "5571e15319e199cc413bf058784b8cb7ccf0fce22b46ad810729b88f1c40fe8c",
+        "bytes": 25242,
+        "indented_lines": 556,
+        "binary_bytes": 4791,
+        "binary_sha256": "ea669731f6effa848bf3c2c31b1f1aa3dca17ecca458b5a78a371e111072e832",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "byte_copy_with",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "5261143e21b093ac9b45bcf017ffa7ebe0636f0b23e8441513b48e314b859601",
+        "bytes": 27599,
+        "indented_lines": 1106
+      },
+      "candidate": {
+        "sha256": "5261143e21b093ac9b45bcf017ffa7ebe0636f0b23e8441513b48e314b859601",
+        "bytes": 27599,
+        "indented_lines": 1106
+      }
+    },
+    {
+      "benchmark": "byte_copy_with",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "4214e993488f0675e1fc07f46c499572706e0d587fe98ccd74b143e66a927e41",
+        "bytes": 34372,
+        "indented_lines": 1313
+      },
+      "candidate": {
+        "sha256": "4214e993488f0675e1fc07f46c499572706e0d587fe98ccd74b143e66a927e41",
+        "bytes": 34372,
+        "indented_lines": 1313
+      }
+    },
+    {
+      "benchmark": "byte_copy_with",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "9a98e840be2f83387b2c1124c3d950bf5e4ff267d27200140d96790564f71cd8",
+        "bytes": 27537,
+        "indented_lines": 623,
+        "binary_bytes": 6026,
+        "binary_sha256": "584ec8557028d1c3fdf9c33f921b13ce1c6a1128af7e5e6e38a61514d9d7734c",
+        "type_id_definitions": 52
+      },
+      "candidate": {
+        "sha256": "b153f69a66e8088a713e93487a8472c82c114c5df004d474eb86cbeed768c568",
+        "bytes": 24971,
+        "indented_lines": 571,
+        "binary_bytes": 4748,
+        "binary_sha256": "718af18b5d4999e0216f713c736e3acb676bc081dd60efe455402794addcb4da",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "call_overhead",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "81b9e55cc0a5b033038e96b12fd764b1b81fdc88e0921796ed3136ad60b2866a",
+        "bytes": 5146,
+        "indented_lines": 233
+      },
+      "candidate": {
+        "sha256": "81b9e55cc0a5b033038e96b12fd764b1b81fdc88e0921796ed3136ad60b2866a",
+        "bytes": 5146,
+        "indented_lines": 233
+      }
+    },
+    {
+      "benchmark": "call_overhead",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "a701db0f1577d1695cf642ed45148170be03ea5969e5be5971b6a1b2f79e2f53",
+        "bytes": 7004,
+        "indented_lines": 304
+      },
+      "candidate": {
+        "sha256": "a701db0f1577d1695cf642ed45148170be03ea5969e5be5971b6a1b2f79e2f53",
+        "bytes": 7004,
+        "indented_lines": 304
+      }
+    },
+    {
+      "benchmark": "call_overhead",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "f482578a76f3c24f481cfba51744756d9564345f6e0866bbe9a394a476ad4021",
+        "bytes": 5898,
+        "indented_lines": 171,
+        "binary_bytes": 2055,
+        "binary_sha256": "0f34a0e3870bbeee40e2d305797384bb48dca42d57e727a9b7e563b2c8b7359b",
+        "type_id_definitions": 52
+      },
+      "candidate": {
+        "sha256": "38cc58d5deb5264140c725e10e65cc52c2b5311c60b866b83840fc1267844180",
+        "bytes": 3332,
+        "indented_lines": 119,
+        "binary_bytes": 771,
+        "binary_sha256": "2f8bf22ccd958070a2fd2b75757898c7ab598eac99e04d214bd2bc45446bcd69",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "closure_call",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "75819d7ce9b4abab128bb270431339094720a728a45951b218673356b1ea3adc",
+        "bytes": 21571,
+        "indented_lines": 877
+      },
+      "candidate": {
+        "sha256": "75819d7ce9b4abab128bb270431339094720a728a45951b218673356b1ea3adc",
+        "bytes": 21571,
+        "indented_lines": 877
+      }
+    },
+    {
+      "benchmark": "closure_call",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "17dbef3ec2c2761288d53e39090eca683436fd3f3eac914d0dfb5457fd011922",
+        "bytes": 27677,
+        "indented_lines": 1086
+      },
+      "candidate": {
+        "sha256": "17dbef3ec2c2761288d53e39090eca683436fd3f3eac914d0dfb5457fd011922",
+        "bytes": 27677,
+        "indented_lines": 1086
+      }
+    },
+    {
+      "benchmark": "closure_call",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "4e7110d820782c4dd7e940cf6e8973077798f29bba581ea1f18377b0183f2257",
+        "bytes": 26546,
+        "indented_lines": 532,
+        "binary_bytes": 5944,
+        "binary_sha256": "274adfcde0b1fbbae5bd487e7ffd21295af8c4b60290cf2e5d897107fa808c87",
+        "type_id_definitions": 52
+      },
+      "candidate": {
+        "sha256": "a7cdfb2316bf2398327fe84403ccf3569dc872b3d63eefb04775fd834026fb06",
+        "bytes": 23980,
+        "indented_lines": 480,
+        "binary_bytes": 4666,
+        "binary_sha256": "f9ce1b9d0f6b6c60886747e274f0bc5f806d2e6082bea6d0573dffe83b35ae9e",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "deflate_decode",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "1f4034935f5d55e8ef8a9a17498d28006f5c220f78449cb26e7a91d747c3db17",
+        "bytes": 412166,
+        "indented_lines": 13222
+      },
+      "candidate": {
+        "sha256": "1f4034935f5d55e8ef8a9a17498d28006f5c220f78449cb26e7a91d747c3db17",
+        "bytes": 412166,
+        "indented_lines": 13222
+      }
+    },
+    {
+      "benchmark": "deflate_decode",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "5cb285cee41cc414b8721acf662f64b6ff9e57ddbb18e31daab92b108592f607",
+        "bytes": 429435,
+        "indented_lines": 14100
+      },
+      "candidate": {
+        "sha256": "5cb285cee41cc414b8721acf662f64b6ff9e57ddbb18e31daab92b108592f607",
+        "bytes": 429435,
+        "indented_lines": 14100
+      }
+    },
+    {
+      "benchmark": "deflate_decode",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "290b9410fca79d34f6aac7b9f9be58b3cc754d0fc68dfa0aaec2337eddab0fde",
+        "bytes": 344828,
+        "indented_lines": 20485,
+        "binary_bytes": 51264,
+        "binary_sha256": "ca05a70af04e2ff9511ac795817e64e8537e42d2381ef57805ce66262b2abe07",
+        "type_id_definitions": 89
+      },
+      "candidate": {
+        "sha256": "290b9410fca79d34f6aac7b9f9be58b3cc754d0fc68dfa0aaec2337eddab0fde",
+        "bytes": 344828,
+        "indented_lines": 20485,
+        "binary_bytes": 51264,
+        "binary_sha256": "ca05a70af04e2ff9511ac795817e64e8537e42d2381ef57805ce66262b2abe07",
+        "type_id_definitions": 89
+      }
+    },
+    {
+      "benchmark": "deflate_encode",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "9823dfaf6d884b1d2af014356fcc5a779d77453e4a4e931b7a7b8ba450c4a265",
+        "bytes": 226415,
+        "indented_lines": 7272
+      },
+      "candidate": {
+        "sha256": "9823dfaf6d884b1d2af014356fcc5a779d77453e4a4e931b7a7b8ba450c4a265",
+        "bytes": 226415,
+        "indented_lines": 7272
+      }
+    },
+    {
+      "benchmark": "deflate_encode",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "505fce3d150b419b8009c7ad083b7d11c5dc4857f36d19fc537ab57fe52ce26a",
+        "bytes": 238718,
+        "indented_lines": 7906
+      },
+      "candidate": {
+        "sha256": "505fce3d150b419b8009c7ad083b7d11c5dc4857f36d19fc537ab57fe52ce26a",
+        "bytes": 238718,
+        "indented_lines": 7906
+      }
+    },
+    {
+      "benchmark": "deflate_encode",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "784e98bbfc455006f16f69f957d7b3e5a76053fcf4d551f241e6bc739aab601d",
+        "bytes": 205389,
+        "indented_lines": 11814,
+        "binary_bytes": 31579,
+        "binary_sha256": "dd1053a6c21ba49b09986dd5d36b66d24b83380c39cdb60f08bcd3daf89ffaab",
+        "type_id_definitions": 89
+      },
+      "candidate": {
+        "sha256": "784e98bbfc455006f16f69f957d7b3e5a76053fcf4d551f241e6bc739aab601d",
+        "bytes": 205389,
+        "indented_lines": 11814,
+        "binary_bytes": 31579,
+        "binary_sha256": "dd1053a6c21ba49b09986dd5d36b66d24b83380c39cdb60f08bcd3daf89ffaab",
+        "type_id_definitions": 89
+      }
+    },
+    {
+      "benchmark": "enum_match",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "938bfa26a1bbc4dcac5c256a11c96a2f64910080d8947101d469726727482d2c",
+        "bytes": 25458,
+        "indented_lines": 1003
+      },
+      "candidate": {
+        "sha256": "938bfa26a1bbc4dcac5c256a11c96a2f64910080d8947101d469726727482d2c",
+        "bytes": 25458,
+        "indented_lines": 1003
+      }
+    },
+    {
+      "benchmark": "enum_match",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "82b893a0c9f01b6a5b8dacb7f70ad1e5f63d3359277c6120ff14fb225f966d7e",
+        "bytes": 31574,
+        "indented_lines": 1206
+      },
+      "candidate": {
+        "sha256": "82b893a0c9f01b6a5b8dacb7f70ad1e5f63d3359277c6120ff14fb225f966d7e",
+        "bytes": 31574,
+        "indented_lines": 1206
+      }
+    },
+    {
+      "benchmark": "enum_match",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "1402cb7d3bfe543eadd6ac452df061dfd53764f965b3ab1f7e91405b14025312",
+        "bytes": 29901,
+        "indented_lines": 638,
+        "binary_bytes": 6523,
+        "binary_sha256": "686882fbaccd06006767ab28407f323f1f513b53dcc337db4756e2c3af13d857",
+        "type_id_definitions": 56
+      },
+      "candidate": {
+        "sha256": "1402cb7d3bfe543eadd6ac452df061dfd53764f965b3ab1f7e91405b14025312",
+        "bytes": 29901,
+        "indented_lines": 638,
+        "binary_bytes": 6523,
+        "binary_sha256": "686882fbaccd06006767ab28407f323f1f513b53dcc337db4756e2c3af13d857",
+        "type_id_definitions": 56
+      }
+    },
+    {
+      "benchmark": "http_hello",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "d5ec20e6bb5022eeedc33f657d8aa8256b0d2de5ffbecc54d2fe031b5fa458c7",
+        "bytes": 542916,
+        "indented_lines": 17390
+      },
+      "candidate": {
+        "sha256": "d5ec20e6bb5022eeedc33f657d8aa8256b0d2de5ffbecc54d2fe031b5fa458c7",
+        "bytes": 542916,
+        "indented_lines": 17390
+      }
+    },
+    {
+      "benchmark": "http_hello",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "68b2ee5536dcccb6565d56c5d9ebf22e60f8eb4d1bf5f3c67e97d354b484f00e",
+        "bytes": 562011,
+        "indented_lines": 18504
+      },
+      "candidate": {
+        "sha256": "68b2ee5536dcccb6565d56c5d9ebf22e60f8eb4d1bf5f3c67e97d354b484f00e",
+        "bytes": 562011,
+        "indented_lines": 18504
+      }
+    },
+    {
+      "benchmark": "http_hello",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "bdaf58e3e5b58af7af270e0eea30cbb59ebb6db44082c17d88ede9a813cb60e7",
+        "bytes": 407176,
+        "indented_lines": 21491,
+        "binary_bytes": 86886,
+        "binary_sha256": "b5160332f0a51641993a7631e7b32ac6cae53b156f940f058c9cbe42dd1d49c5",
+        "type_id_definitions": 706
+      },
+      "candidate": {
+        "sha256": "bdaf58e3e5b58af7af270e0eea30cbb59ebb6db44082c17d88ede9a813cb60e7",
+        "bytes": 407176,
+        "indented_lines": 21491,
+        "binary_bytes": 86886,
+        "binary_sha256": "b5160332f0a51641993a7631e7b32ac6cae53b156f940f058c9cbe42dd1d49c5",
+        "type_id_definitions": 706
+      }
+    },
+    {
+      "benchmark": "int_loop",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "06836917251d82c1f99c6d9a820a4564c6a898ed47d55e3c704af91aa8405593",
+        "bytes": 3924,
+        "indented_lines": 178
+      },
+      "candidate": {
+        "sha256": "06836917251d82c1f99c6d9a820a4564c6a898ed47d55e3c704af91aa8405593",
+        "bytes": 3924,
+        "indented_lines": 178
+      }
+    },
+    {
+      "benchmark": "int_loop",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "78785fd331ff8c5dd80a8a3bd99464650ef57ac863391f7e4fdc3d1d178d4439",
+        "bytes": 5692,
+        "indented_lines": 246
+      },
+      "candidate": {
+        "sha256": "78785fd331ff8c5dd80a8a3bd99464650ef57ac863391f7e4fdc3d1d178d4439",
+        "bytes": 5692,
+        "indented_lines": 246
+      }
+    },
+    {
+      "benchmark": "int_loop",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "d7df0c9a3564886e9ef855f625c3732b46515feb90bbe93f9f7f60f00abd3cfe",
+        "bytes": 5193,
+        "indented_lines": 123,
+        "binary_bytes": 1957,
+        "binary_sha256": "8215028bfb124c2d2ec26f85926cf8fa5f6a1787295ed4f027895e8841650715",
+        "type_id_definitions": 52
+      },
+      "candidate": {
+        "sha256": "a8d4ccd938a293c16d27642c7f63c811977c35da33c71ce6858929ba42bae9de",
+        "bytes": 2627,
+        "indented_lines": 71,
+        "binary_bytes": 673,
+        "binary_sha256": "3529c56ee0d366707ff58f2b7c6c60538dd236feee7b856c45b0c76e26b2f445",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "map_int",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "8da52a184f37b3920de1403d8b186781d2a305f9a8b962548f0d8415d73eaac4",
+        "bytes": 147732,
+        "indented_lines": 5626
+      },
+      "candidate": {
+        "sha256": "8da52a184f37b3920de1403d8b186781d2a305f9a8b962548f0d8415d73eaac4",
+        "bytes": 147732,
+        "indented_lines": 5626
+      }
+    },
+    {
+      "benchmark": "map_int",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "d13fb516396303c4d3e290fbae51c6bbc4186693273cc79e468fd6a1b7afcb2f",
+        "bytes": 157717,
+        "indented_lines": 5897
+      },
+      "candidate": {
+        "sha256": "d13fb516396303c4d3e290fbae51c6bbc4186693273cc79e468fd6a1b7afcb2f",
+        "bytes": 157717,
+        "indented_lines": 5897
+      }
+    },
+    {
+      "benchmark": "map_int",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "05896ec85f422204c52b8cc648e65329ad33f195245560264c943a13426ed89a",
+        "bytes": 140936,
+        "indented_lines": 7438,
+        "binary_bytes": 22437,
+        "binary_sha256": "852a768488a05cc81f02f373c11d1afc57132b1e5c6ca6411a8959bd974148e4",
+        "type_id_definitions": 60
+      },
+      "candidate": {
+        "sha256": "7e5c0a0aed84343eb0d743d4b67e359a57196132d35700b0225170dc08f4ee42",
+        "bytes": 137776,
+        "indented_lines": 7378,
+        "binary_bytes": 20765,
+        "binary_sha256": "7e8e37ecd3e4fada27ea03aca9d205699e7a8a2df527aa2e280be81cfd6454b6",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "map_probe_chain",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "bace4c319e78dd627557ed6efe06be686264b2f268108f8b69a6a0ababef95f9",
+        "bytes": 147773,
+        "indented_lines": 5630
+      },
+      "candidate": {
+        "sha256": "bace4c319e78dd627557ed6efe06be686264b2f268108f8b69a6a0ababef95f9",
+        "bytes": 147773,
+        "indented_lines": 5630
+      }
+    },
+    {
+      "benchmark": "map_probe_chain",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "22ff909e343d9d9fb2cb7f3e58f646ae97cf71b3088fe261f1d66e1801655f8b",
+        "bytes": 157941,
+        "indented_lines": 5907
+      },
+      "candidate": {
+        "sha256": "22ff909e343d9d9fb2cb7f3e58f646ae97cf71b3088fe261f1d66e1801655f8b",
+        "bytes": 157941,
+        "indented_lines": 5907
+      }
+    },
+    {
+      "benchmark": "map_probe_chain",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "9dd11a5f2b1575019952911bfedeee55eddfad68212567cd7bc1dae6b78202c0",
+        "bytes": 141368,
+        "indented_lines": 7463,
+        "binary_bytes": 22480,
+        "binary_sha256": "a7bf9678f8c2ab5f2611e88f36d7f5824e855d54e4969f28f1b880ef4bb5d16b",
+        "type_id_definitions": 60
+      },
+      "candidate": {
+        "sha256": "6383917ad467055c3814cb0eeb1e3fa6668352363612a4ad36ce733f8e8e1e06",
+        "bytes": 138208,
+        "indented_lines": 7403,
+        "binary_bytes": 20808,
+        "binary_sha256": "0d070899d2615b13e0666180ee143fec18074606ba2ee2886ba9934ee59741b3",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "map_string",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "dc9d512d03a9590d6103d5ec00e93e64e481845ca5fa95337b62b3250902e866",
+        "bytes": 171838,
+        "indented_lines": 6571
+      },
+      "candidate": {
+        "sha256": "dc9d512d03a9590d6103d5ec00e93e64e481845ca5fa95337b62b3250902e866",
+        "bytes": 171838,
+        "indented_lines": 6571
+      }
+    },
+    {
+      "benchmark": "map_string",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "f8e2d5c3ea6adecdb4841c1f9e2950f50c9d43aa14a2a7583ca4e38e739002aa",
+        "bytes": 185671,
+        "indented_lines": 7001
+      },
+      "candidate": {
+        "sha256": "f8e2d5c3ea6adecdb4841c1f9e2950f50c9d43aa14a2a7583ca4e38e739002aa",
+        "bytes": 185671,
+        "indented_lines": 7001
+      }
+    },
+    {
+      "benchmark": "map_string",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "e59cea9a6809632234e802e0efac73575c6730793f3cc9a00e35b7791ed407ca",
+        "bytes": 158985,
+        "indented_lines": 8292,
+        "binary_bytes": 26019,
+        "binary_sha256": "a8d310a6b40f7a7f9ffbdc525c79f8fcc02bac8089f3bd20615fcece4a4a97d2",
+        "type_id_definitions": 60
+      },
+      "candidate": {
+        "sha256": "532dab96716e88651c38c5ee70bd560ece00c3e41d6718facb3ee7f3d65da807",
+        "bytes": 155825,
+        "indented_lines": 8232,
+        "binary_bytes": 24347,
+        "binary_sha256": "ef914d66976a1b34e422fd41eb1c7c50962ad4b495d9da85666ca26fcb2548fc",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "ordmap_insert",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "709ee6069c355f48354bd6598112f4729ce334210c1c11f02f9c92e6acf941e2",
+        "bytes": 198162,
+        "indented_lines": 5487
+      },
+      "candidate": {
+        "sha256": "709ee6069c355f48354bd6598112f4729ce334210c1c11f02f9c92e6acf941e2",
+        "bytes": 198162,
+        "indented_lines": 5487
+      }
+    },
+    {
+      "benchmark": "ordmap_insert",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "ed63f162708a53c4cd59816eea3b34cdbee2750bb3687566a2424421e8ed7f79",
+        "bytes": 205574,
+        "indented_lines": 5848
+      },
+      "candidate": {
+        "sha256": "ed63f162708a53c4cd59816eea3b34cdbee2750bb3687566a2424421e8ed7f79",
+        "bytes": 205574,
+        "indented_lines": 5848
+      }
+    },
+    {
+      "benchmark": "ordmap_insert",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "8e9487ecf7e06088681bbb054769e2fdd951123c641a60845b280a58873f3439",
+        "bytes": 130003,
+        "indented_lines": 6966,
+        "binary_bytes": 19941,
+        "binary_sha256": "2c29c769ff4ea0487b2d69bca61fb4f406acb071952dac7fdf829d0a8fbcde40",
+        "type_id_definitions": 66
+      },
+      "candidate": {
+        "sha256": "8e9487ecf7e06088681bbb054769e2fdd951123c641a60845b280a58873f3439",
+        "bytes": 130003,
+        "indented_lines": 6966,
+        "binary_bytes": 19941,
+        "binary_sha256": "2c29c769ff4ea0487b2d69bca61fb4f406acb071952dac7fdf829d0a8fbcde40",
+        "type_id_definitions": 66
+      }
+    },
+    {
+      "benchmark": "perceus_cfold",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "4f55f90555bbe49bfe9ad8172bcff92157ac80d4ee6008d321a81b266a2be4e1",
+        "bytes": 49132,
+        "indented_lines": 1794
+      },
+      "candidate": {
+        "sha256": "4f55f90555bbe49bfe9ad8172bcff92157ac80d4ee6008d321a81b266a2be4e1",
+        "bytes": 49132,
+        "indented_lines": 1794
+      }
+    },
+    {
+      "benchmark": "perceus_cfold",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "b478860872c77df0aa6d622ff9debf0d90308085a33a44d484ae108593b33da7",
+        "bytes": 57017,
+        "indented_lines": 2042
+      },
+      "candidate": {
+        "sha256": "b478860872c77df0aa6d622ff9debf0d90308085a33a44d484ae108593b33da7",
+        "bytes": 57017,
+        "indented_lines": 2042
+      }
+    },
+    {
+      "benchmark": "perceus_cfold",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "cab920fbb69eeeed5a39ab9b9fe58cade81c5b29dc26a0b4439484d6495b332a",
+        "bytes": 45152,
+        "indented_lines": 1759,
+        "binary_bytes": 8418,
+        "binary_sha256": "89d0c89875c378f48f4aefc7f7c74b03e13fce021f9d469057662625d9a55d0d",
+        "type_id_definitions": 56
+      },
+      "candidate": {
+        "sha256": "cab920fbb69eeeed5a39ab9b9fe58cade81c5b29dc26a0b4439484d6495b332a",
+        "bytes": 45152,
+        "indented_lines": 1759,
+        "binary_bytes": 8418,
+        "binary_sha256": "89d0c89875c378f48f4aefc7f7c74b03e13fce021f9d469057662625d9a55d0d",
+        "type_id_definitions": 56
+      }
+    },
+    {
+      "benchmark": "perceus_deriv",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "180bf6b9fbc2c4d008aa4689318d9e607f4ba23afca160af006f86a7027e4ae3",
+        "bytes": 70859,
+        "indented_lines": 2575
+      },
+      "candidate": {
+        "sha256": "180bf6b9fbc2c4d008aa4689318d9e607f4ba23afca160af006f86a7027e4ae3",
+        "bytes": 70859,
+        "indented_lines": 2575
+      }
+    },
+    {
+      "benchmark": "perceus_deriv",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "4e63ed0610c48f2faab24b377f943e1703e89a4ff8cea6e9fc4a019cc951604b",
+        "bytes": 79636,
+        "indented_lines": 2872
+      },
+      "candidate": {
+        "sha256": "4e63ed0610c48f2faab24b377f943e1703e89a4ff8cea6e9fc4a019cc951604b",
+        "bytes": 79636,
+        "indented_lines": 2872
+      }
+    },
+    {
+      "benchmark": "perceus_deriv",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "1fb90948193ec522a7fd817e5047f0f3486e8e26d98f3131f2f52dba36be884a",
+        "bytes": 61771,
+        "indented_lines": 2790,
+        "binary_bytes": 10684,
+        "binary_sha256": "f62197b063b99986305e43d4eb89ab6c9be12a08f4ed9e9802bdb263f7eab1a5",
+        "type_id_definitions": 58
+      },
+      "candidate": {
+        "sha256": "1fb90948193ec522a7fd817e5047f0f3486e8e26d98f3131f2f52dba36be884a",
+        "bytes": 61771,
+        "indented_lines": 2790,
+        "binary_bytes": 10684,
+        "binary_sha256": "f62197b063b99986305e43d4eb89ab6c9be12a08f4ed9e9802bdb263f7eab1a5",
+        "type_id_definitions": 58
+      }
+    },
+    {
+      "benchmark": "perceus_nqueens",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "7c079a1cdbd2be8db12a4d1cd4ba0e1cf78a98bcb2ef025c1e882e02440dc12c",
+        "bytes": 42497,
+        "indented_lines": 1459
+      },
+      "candidate": {
+        "sha256": "7c079a1cdbd2be8db12a4d1cd4ba0e1cf78a98bcb2ef025c1e882e02440dc12c",
+        "bytes": 42497,
+        "indented_lines": 1459
+      }
+    },
+    {
+      "benchmark": "perceus_nqueens",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "66ce4ff46031f9ec389ae8489e47c715b5d0324fde104ef3f9c1437ae5ce8ea7",
+        "bytes": 49442,
+        "indented_lines": 1695
+      },
+      "candidate": {
+        "sha256": "66ce4ff46031f9ec389ae8489e47c715b5d0324fde104ef3f9c1437ae5ce8ea7",
+        "bytes": 49442,
+        "indented_lines": 1695
+      }
+    },
+    {
+      "benchmark": "perceus_nqueens",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "5e75a7d170cb2519efb599c0d06ed23e59aff2b75b2017fa5355ae4107ecd937",
+        "bytes": 38277,
+        "indented_lines": 1282,
+        "binary_bytes": 7684,
+        "binary_sha256": "ce4c5d07a2d881491f226802a5e379f3c4bb9784b354615982137defbe1eb6b1",
+        "type_id_definitions": 56
+      },
+      "candidate": {
+        "sha256": "5e75a7d170cb2519efb599c0d06ed23e59aff2b75b2017fa5355ae4107ecd937",
+        "bytes": 38277,
+        "indented_lines": 1282,
+        "binary_bytes": 7684,
+        "binary_sha256": "ce4c5d07a2d881491f226802a5e379f3c4bb9784b354615982137defbe1eb6b1",
+        "type_id_definitions": 56
+      }
+    },
+    {
+      "benchmark": "perceus_rbtree",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "c2ff6788904d35b47772746c5a5ebd453a3f84aac7d11e59ec7d7337fbf1b4ec",
+        "bytes": 78829,
+        "indented_lines": 2777
+      },
+      "candidate": {
+        "sha256": "c2ff6788904d35b47772746c5a5ebd453a3f84aac7d11e59ec7d7337fbf1b4ec",
+        "bytes": 78829,
+        "indented_lines": 2777
+      }
+    },
+    {
+      "benchmark": "perceus_rbtree",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "70d00f3c2f490437bf4bb3e3729a839c3068653a7af98cdae9e9ba12e369ffbc",
+        "bytes": 86483,
+        "indented_lines": 3048
+      },
+      "candidate": {
+        "sha256": "70d00f3c2f490437bf4bb3e3729a839c3068653a7af98cdae9e9ba12e369ffbc",
+        "bytes": 86483,
+        "indented_lines": 3048
+      }
+    },
+    {
+      "benchmark": "perceus_rbtree",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "0bc1f509eeec5d17e7b1d1190220d1cae3486b79ddbe4e0b57bbe58d68124371",
+        "bytes": 74449,
+        "indented_lines": 3619,
+        "binary_bytes": 11976,
+        "binary_sha256": "c917109fb3f30d9fa0d343831bfed71fe119b545a34935a9b567e8a308b3c6e3",
+        "type_id_definitions": 56
+      },
+      "candidate": {
+        "sha256": "0bc1f509eeec5d17e7b1d1190220d1cae3486b79ddbe4e0b57bbe58d68124371",
+        "bytes": 74449,
+        "indented_lines": 3619,
+        "binary_bytes": 11976,
+        "binary_sha256": "c917109fb3f30d9fa0d343831bfed71fe119b545a34935a9b567e8a308b3c6e3",
+        "type_id_definitions": 56
+      }
+    },
+    {
+      "benchmark": "perceus_rbtree_ck",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "9f922c29c15e2dab7b61c880afbdac542adfa593d67d31f386e01e3f72ff5c33",
+        "bytes": 89867,
+        "indented_lines": 3027
+      },
+      "candidate": {
+        "sha256": "9f922c29c15e2dab7b61c880afbdac542adfa593d67d31f386e01e3f72ff5c33",
+        "bytes": 89867,
+        "indented_lines": 3027
+      }
+    },
+    {
+      "benchmark": "perceus_rbtree_ck",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "f0454df0e94bfdcba90501e722281186004ddaa13897d77f7532967512586f32",
+        "bytes": 97115,
+        "indented_lines": 3285
+      },
+      "candidate": {
+        "sha256": "f0454df0e94bfdcba90501e722281186004ddaa13897d77f7532967512586f32",
+        "bytes": 97115,
+        "indented_lines": 3285
+      }
+    },
+    {
+      "benchmark": "perceus_rbtree_ck",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "7df87669d00b71cc6c69908b624b75b24648e07bc3b72027d09e6b8532ccab14",
+        "bytes": 80885,
+        "indented_lines": 4052,
+        "binary_bytes": 13072,
+        "binary_sha256": "431d2bf188b333b05c92ecb2fecfcad701413deaad4c83858b3d558af4120dec",
+        "type_id_definitions": 58
+      },
+      "candidate": {
+        "sha256": "7df87669d00b71cc6c69908b624b75b24648e07bc3b72027d09e6b8532ccab14",
+        "bytes": 80885,
+        "indented_lines": 4052,
+        "binary_bytes": 13072,
+        "binary_sha256": "431d2bf188b333b05c92ecb2fecfcad701413deaad4c83858b3d558af4120dec",
+        "type_id_definitions": 58
+      }
+    },
+    {
+      "benchmark": "pmap_insert",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "d8eb8918e0902d5c29acf534b25d1074c64debff145f73e50f4eef3311e90f0b",
+        "bytes": 80065,
+        "indented_lines": 2684
+      },
+      "candidate": {
+        "sha256": "d8eb8918e0902d5c29acf534b25d1074c64debff145f73e50f4eef3311e90f0b",
+        "bytes": 80065,
+        "indented_lines": 2684
+      }
+    },
+    {
+      "benchmark": "pmap_insert",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "fc889564560acef94a94b90b253197531b72674e65fe642b1efedae059625c29",
+        "bytes": 87813,
+        "indented_lines": 2948
+      },
+      "candidate": {
+        "sha256": "fc889564560acef94a94b90b253197531b72674e65fe642b1efedae059625c29",
+        "bytes": 87813,
+        "indented_lines": 2948
+      }
+    },
+    {
+      "benchmark": "pmap_insert",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "6946c53e3876e23cf2794b007b462bc003d1b3f5efbdba9f67a159acd34e56bc",
+        "bytes": 71412,
+        "indented_lines": 3202,
+        "binary_bytes": 12203,
+        "binary_sha256": "a12533e77a588989484a27c5e90f3711b440b194737f58adab76a4fb4fc41e45",
+        "type_id_definitions": 68
+      },
+      "candidate": {
+        "sha256": "6946c53e3876e23cf2794b007b462bc003d1b3f5efbdba9f67a159acd34e56bc",
+        "bytes": 71412,
+        "indented_lines": 3202,
+        "binary_bytes": 12203,
+        "binary_sha256": "a12533e77a588989484a27c5e90f3711b440b194737f58adab76a4fb4fc41e45",
+        "type_id_definitions": 68
+      }
+    },
+    {
+      "benchmark": "pvec_with",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "f0b00e45fb7679f3985cc90cc6cb384950a5aadfb8c5489dcf3b47c0f92e7fd2",
+        "bytes": 84161,
+        "indented_lines": 2852
+      },
+      "candidate": {
+        "sha256": "f0b00e45fb7679f3985cc90cc6cb384950a5aadfb8c5489dcf3b47c0f92e7fd2",
+        "bytes": 84161,
+        "indented_lines": 2852
+      }
+    },
+    {
+      "benchmark": "pvec_with",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "43c8559134db5b7fe9e8431c060bf4b2666e15e631760d5b573754c2cf3bd386",
+        "bytes": 91878,
+        "indented_lines": 3090
+      },
+      "candidate": {
+        "sha256": "43c8559134db5b7fe9e8431c060bf4b2666e15e631760d5b573754c2cf3bd386",
+        "bytes": 91878,
+        "indented_lines": 3090
+      }
+    },
+    {
+      "benchmark": "pvec_with",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "efc2835639dfd8cf6e6b90452e264fc86f3dd7f82ef94c8a3ecb535a82b55d72",
+        "bytes": 65874,
+        "indented_lines": 2844,
+        "binary_bytes": 11538,
+        "binary_sha256": "aef1bb3f31203928a3d17f7c821eaffb194bd48dc2f92c9a5f8250552b694e9f",
+        "type_id_definitions": 67
+      },
+      "candidate": {
+        "sha256": "efc2835639dfd8cf6e6b90452e264fc86f3dd7f82ef94c8a3ecb535a82b55d72",
+        "bytes": 65874,
+        "indented_lines": 2844,
+        "binary_bytes": 11538,
+        "binary_sha256": "aef1bb3f31203928a3d17f7c821eaffb194bd48dc2f92c9a5f8250552b694e9f",
+        "type_id_definitions": 67
+      }
+    },
+    {
+      "benchmark": "record_update",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "c512e1dc89f8facb14399958c922e2d8f33ed510490e71586559ac18f8d24c46",
+        "bytes": 31846,
+        "indented_lines": 1288
+      },
+      "candidate": {
+        "sha256": "c512e1dc89f8facb14399958c922e2d8f33ed510490e71586559ac18f8d24c46",
+        "bytes": 31846,
+        "indented_lines": 1288
+      }
+    },
+    {
+      "benchmark": "record_update",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "9baa5e7692d2d41d5ce79ffd5b2c229d8a34c0e84bcf6e19c6af906b020ab34b",
+        "bytes": 38208,
+        "indented_lines": 1493
+      },
+      "candidate": {
+        "sha256": "9baa5e7692d2d41d5ce79ffd5b2c229d8a34c0e84bcf6e19c6af906b020ab34b",
+        "bytes": 38208,
+        "indented_lines": 1493
+      }
+    },
+    {
+      "benchmark": "record_update",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "7bc4dce3e0b7d15fb84332b61da6e09b817c61dd3066c2c99bbc299e21cb1419",
+        "bytes": 28831,
+        "indented_lines": 576,
+        "binary_bytes": 6291,
+        "binary_sha256": "bc8a9694af0bff3c4209e38b0fa5a26c936f17454ee3ca967aa002744dc0b790",
+        "type_id_definitions": 53
+      },
+      "candidate": {
+        "sha256": "5d2e8b558b5eec04fafc6ffc0591926581009db11cec8050bdef775e9121a083",
+        "bytes": 26224,
+        "indented_lines": 523,
+        "binary_bytes": 4997,
+        "binary_sha256": "a06372aa7dc39785ec71cb2c50116e3892469f9b51b8b56b4042c7d54c8260aa",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "sort_inplace",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "099d5b9d0b3848306ffdc798fef209f8db7626077445127a32142e6de22401b0",
+        "bytes": 35323,
+        "indented_lines": 1395
+      },
+      "candidate": {
+        "sha256": "099d5b9d0b3848306ffdc798fef209f8db7626077445127a32142e6de22401b0",
+        "bytes": 35323,
+        "indented_lines": 1395
+      }
+    },
+    {
+      "benchmark": "sort_inplace",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "f1d2f614e2c287124db3c23b15168d82f1d8b055fc6354d173b39e2eec06fbc4",
+        "bytes": 41085,
+        "indented_lines": 1576
+      },
+      "candidate": {
+        "sha256": "f1d2f614e2c287124db3c23b15168d82f1d8b055fc6354d173b39e2eec06fbc4",
+        "bytes": 41085,
+        "indented_lines": 1576
+      }
+    },
+    {
+      "benchmark": "sort_inplace",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "65551ea88b1844b905f8ce26f0912ba5ff7d9e709942d4ffa135ef61553fe34b",
+        "bytes": 37452,
+        "indented_lines": 1099,
+        "binary_bytes": 7685,
+        "binary_sha256": "414c4307cb9c3db5d6daf6ead6740214217ec5ccc6b8d510f3676724ae284773",
+        "type_id_definitions": 59
+      },
+      "candidate": {
+        "sha256": "f877b634f5475d77e6b61839538ecafc79f06a1e6617d2defb0d8e1f083bd2a7",
+        "bytes": 34341,
+        "indented_lines": 1040,
+        "binary_bytes": 6037,
+        "binary_sha256": "5b2781d7d4fdebe24b6fe3daaef937218088586c39b64d2ac38a1965d6fe09ad",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "sort_ints",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "c1074bcce464a9c2842d017503f6c6947e5036ddbb83c9266e5d97cc82484078",
+        "bytes": 49102,
+        "indented_lines": 1873
+      },
+      "candidate": {
+        "sha256": "c1074bcce464a9c2842d017503f6c6947e5036ddbb83c9266e5d97cc82484078",
+        "bytes": 49102,
+        "indented_lines": 1873
+      }
+    },
+    {
+      "benchmark": "sort_ints",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "f2ede1891ed300630bf0d4ee31b22b3360a29b5f6774811f4363c0ca6863e3bf",
+        "bytes": 54064,
+        "indented_lines": 2069
+      },
+      "candidate": {
+        "sha256": "f2ede1891ed300630bf0d4ee31b22b3360a29b5f6774811f4363c0ca6863e3bf",
+        "bytes": 54064,
+        "indented_lines": 2069
+      }
+    },
+    {
+      "benchmark": "sort_ints",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "a09bf7a6db5e14adb5fa4e95ab71128206219d61a13e8666209af668063de4a5",
+        "bytes": 53635,
+        "indented_lines": 2249,
+        "binary_bytes": 9698,
+        "binary_sha256": "bca1716f13247ca35ec784044e2f1ef02090b0971a30eaed9f1b1128e54db957",
+        "type_id_definitions": 59
+      },
+      "candidate": {
+        "sha256": "dc10c8b2bab6a7140c69f36d9e88b2393d93afc0a175dfb4105c29d6e2955e0e",
+        "bytes": 50524,
+        "indented_lines": 2190,
+        "binary_bytes": 8050,
+        "binary_sha256": "82823079e7c2e7ed59bf93ebb51b25ade2ee5061f780909ef4ca8e267ec9aa4b",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "sort_strings",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "70ddb3554a476279094b67c3b95991c90a2bef21ceb09625ea1e185e5dc818c1",
+        "bytes": 82243,
+        "indented_lines": 3138
+      },
+      "candidate": {
+        "sha256": "70ddb3554a476279094b67c3b95991c90a2bef21ceb09625ea1e185e5dc818c1",
+        "bytes": 82243,
+        "indented_lines": 3138
+      }
+    },
+    {
+      "benchmark": "sort_strings",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "f78507e4193f21abddc9d1ea0e60d2a7be1b2ea8749b583e7b44cc3b2bd8a611",
+        "bytes": 91075,
+        "indented_lines": 3480
+      },
+      "candidate": {
+        "sha256": "f78507e4193f21abddc9d1ea0e60d2a7be1b2ea8749b583e7b44cc3b2bd8a611",
+        "bytes": 91075,
+        "indented_lines": 3480
+      }
+    },
+    {
+      "benchmark": "sort_strings",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "96d013949a10472e91df488035e98235a277bf9ee9e7243dd97aa9cc47757920",
+        "bytes": 78709,
+        "indented_lines": 3359,
+        "binary_bytes": 14272,
+        "binary_sha256": "8d5d79799a43d22868d05f26899196a99c4a55956d6c5cc42d54d09eab8d6aa3",
+        "type_id_definitions": 59
+      },
+      "candidate": {
+        "sha256": "1bd190fa4ed44dc6237bd3b9895a96cc283f4e1eb809ad61d25a83141d9ac6ae",
+        "bytes": 75598,
+        "indented_lines": 3300,
+        "binary_bytes": 12624,
+        "binary_sha256": "33811748f8bee471a724d9868e37259e1f5e6d877e11a221cba91ca8b5734d4c",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "string_build",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "61f25511c06945efe2607b8732bdfe7111ab7ee59b747ab01e37d48bcc3f8f79",
+        "bytes": 46949,
+        "indented_lines": 1901
+      },
+      "candidate": {
+        "sha256": "61f25511c06945efe2607b8732bdfe7111ab7ee59b747ab01e37d48bcc3f8f79",
+        "bytes": 46949,
+        "indented_lines": 1901
+      }
+    },
+    {
+      "benchmark": "string_build",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "a8f81bbfc663f2eed2f9b56b9baa28bbeeab33c0b88c043270ed1a7a1007540d",
+        "bytes": 56163,
+        "indented_lines": 2254
+      },
+      "candidate": {
+        "sha256": "a8f81bbfc663f2eed2f9b56b9baa28bbeeab33c0b88c043270ed1a7a1007540d",
+        "bytes": 56163,
+        "indented_lines": 2254
+      }
+    },
+    {
+      "benchmark": "string_build",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "9baab50ee4ba810adbfdbfa4ad1c08f5764286e2d53ab4fed1ac3d5baa507a4e",
+        "bytes": 45418,
+        "indented_lines": 1293,
+        "binary_bytes": 9958,
+        "binary_sha256": "a39534e20e2ee8b0a77361835cbe4207dbe2521e67e3233799e6fca054b185f4",
+        "type_id_definitions": 59
+      },
+      "candidate": {
+        "sha256": "f58bf0e4b3c780ab8c13b1c737906388a1628f9f1fdf53ed172d25c6fd316d90",
+        "bytes": 42307,
+        "indented_lines": 1234,
+        "binary_bytes": 8310,
+        "binary_sha256": "45731f779292333d8b4b7bc5d76acc8f3d0ecf4f43486fb92e7b87194bb918a9",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "string_count_byte",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "6198546c4d041a9921be626926ff776b4ccea2f2c9c5ec589ec48b8e17606739",
+        "bytes": 27323,
+        "indented_lines": 1142
+      },
+      "candidate": {
+        "sha256": "6198546c4d041a9921be626926ff776b4ccea2f2c9c5ec589ec48b8e17606739",
+        "bytes": 27323,
+        "indented_lines": 1142
+      }
+    },
+    {
+      "benchmark": "string_count_byte",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "867f1c091ef1bf3b07f4e678fa9fd13a68b91ddd47c9822c24a79ff8c5f4325d",
+        "bytes": 33788,
+        "indented_lines": 1380
+      },
+      "candidate": {
+        "sha256": "867f1c091ef1bf3b07f4e678fa9fd13a68b91ddd47c9822c24a79ff8c5f4325d",
+        "bytes": 33788,
+        "indented_lines": 1380
+      }
+    },
+    {
+      "benchmark": "string_count_byte",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "3384cb0b40df6292c7c05945fa996f640b860dc8332474a56b37d7feff2c7d43",
+        "bytes": 28766,
+        "indented_lines": 511,
+        "binary_bytes": 6587,
+        "binary_sha256": "7905d71d47e0ebaa863e3261420471b1a15cef53b5ee4223049b423a87ff0cb4",
+        "type_id_definitions": 59
+      },
+      "candidate": {
+        "sha256": "9c23cfc399d64cbf4a338cf521102ed2636df6ca194297b58a6c427c3f0c8b79",
+        "bytes": 25655,
+        "indented_lines": 452,
+        "binary_bytes": 4939,
+        "binary_sha256": "4048bb6d2e9775497ab5f79966bf2be3de1f2cb832f1a7950a4e3967774d9960",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "string_find_byte",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "31680bb70a2f1497060b22ac98747fb2fccb4ce7648427d2c889374b8bf115c9",
+        "bytes": 38709,
+        "indented_lines": 1497
+      },
+      "candidate": {
+        "sha256": "31680bb70a2f1497060b22ac98747fb2fccb4ce7648427d2c889374b8bf115c9",
+        "bytes": 38709,
+        "indented_lines": 1497
+      }
+    },
+    {
+      "benchmark": "string_find_byte",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "4adaba827ff8db9580956dbcf961d87f3fa2b57f5b857e27b8bff3bddaf1e5b2",
+        "bytes": 45869,
+        "indented_lines": 1788
+      },
+      "candidate": {
+        "sha256": "4adaba827ff8db9580956dbcf961d87f3fa2b57f5b857e27b8bff3bddaf1e5b2",
+        "bytes": 45869,
+        "indented_lines": 1788
+      }
+    },
+    {
+      "benchmark": "string_find_byte",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "c3c29297664633126c25499b8739dbdf799f8e730df3076f7f3550bfaf2a01f3",
+        "bytes": 47549,
+        "indented_lines": 1859,
+        "binary_bytes": 9093,
+        "binary_sha256": "33017a3beab616c1de9fdfe98831528ef74b445c8b6dfe600969a186deb559bc",
+        "type_id_definitions": 59
+      },
+      "candidate": {
+        "sha256": "13c1a64778912a0a5e60acbaf5e2e4ad1055fba1f8a86edd44f72328574f1e22",
+        "bytes": 44438,
+        "indented_lines": 1800,
+        "binary_bytes": 7446,
+        "binary_sha256": "ddc39dac59e05bebcb6a25b94e148eef3ce45e12d9795006b56b97ab30abbd62",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "string_rfind_byte",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "8902650aa4c55a7a1dad6f008b81560ec08e766b7d901918f2fcf64c72aaa341",
+        "bytes": 43091,
+        "indented_lines": 1668
+      },
+      "candidate": {
+        "sha256": "8902650aa4c55a7a1dad6f008b81560ec08e766b7d901918f2fcf64c72aaa341",
+        "bytes": 43091,
+        "indented_lines": 1668
+      }
+    },
+    {
+      "benchmark": "string_rfind_byte",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "4c3200225c49426f9a13f24ef5268b01a4312e1fc7e9c624575389e5f27835d1",
+        "bytes": 49481,
+        "indented_lines": 1911
+      },
+      "candidate": {
+        "sha256": "4c3200225c49426f9a13f24ef5268b01a4312e1fc7e9c624575389e5f27835d1",
+        "bytes": 49481,
+        "indented_lines": 1911
+      }
+    },
+    {
+      "benchmark": "string_rfind_byte",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "c831887d41b556a2fb6ef8b0204ef246bdea7754418f630e8fb2b01681277bc3",
+        "bytes": 47951,
+        "indented_lines": 1862,
+        "binary_bytes": 9144,
+        "binary_sha256": "d6e7032968beae569967705787fd87497e1237f7e5a20bc284708e2712985c11",
+        "type_id_definitions": 59
+      },
+      "candidate": {
+        "sha256": "c8b9b117d15cb2b5aa18fcba22cb6806366ca71092b4a8ba7717455e63391ddf",
+        "bytes": 44840,
+        "indented_lines": 1803,
+        "binary_bytes": 7497,
+        "binary_sha256": "43480154f5bbbabafaff8f212637e54b20280c3e841b1e58a8bb1be52b5e63c1",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "string_scan",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "367092296ed9c1f0a653ffa267f6b052ed022bec0b51a554d68cdde04c903de5",
+        "bytes": 53302,
+        "indented_lines": 2147
+      },
+      "candidate": {
+        "sha256": "367092296ed9c1f0a653ffa267f6b052ed022bec0b51a554d68cdde04c903de5",
+        "bytes": 53302,
+        "indented_lines": 2147
+      }
+    },
+    {
+      "benchmark": "string_scan",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "5e3ade509380fe51be1d7f1e92fc419070e28133f909eda1f4f7887b7e3ede09",
+        "bytes": 61895,
+        "indented_lines": 2453
+      },
+      "candidate": {
+        "sha256": "5e3ade509380fe51be1d7f1e92fc419070e28133f909eda1f4f7887b7e3ede09",
+        "bytes": 61895,
+        "indented_lines": 2453
+      }
+    },
+    {
+      "benchmark": "string_scan",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "fbc0da8dc30c82ea8b2ffe7588ff1520e858eb15d5ec44270c64fd5826e933bf",
+        "bytes": 49198,
+        "indented_lines": 1431,
+        "binary_bytes": 10547,
+        "binary_sha256": "f11ebfaa09dba99909de5ad340fb002c4c77827c89b34ff32943703828931e74",
+        "type_id_definitions": 59
+      },
+      "candidate": {
+        "sha256": "1526efeec1687ea194c1f63a8f8c67438ccadc24a03ca92bb8e36f1a1e5dca8b",
+        "bytes": 46087,
+        "indented_lines": 1372,
+        "binary_bytes": 8899,
+        "binary_sha256": "ef9288c2ab3ce5ac54dfda634b6efb45c9cdaaaa77a04fca4a0fdd3dacf7c431",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "string_slice",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "d7b479ba0097a27cb51333c8fb2d528124b57e2551fa1db4f79840242818fa03",
+        "bytes": 19606,
+        "indented_lines": 799
+      },
+      "candidate": {
+        "sha256": "d7b479ba0097a27cb51333c8fb2d528124b57e2551fa1db4f79840242818fa03",
+        "bytes": 19606,
+        "indented_lines": 799
+      }
+    },
+    {
+      "benchmark": "string_slice",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "52e112acf1586f21c7d4a4d246647c3703355afa7e5a542c9207c8207f4b1db9",
+        "bytes": 26054,
+        "indented_lines": 1022
+      },
+      "candidate": {
+        "sha256": "52e112acf1586f21c7d4a4d246647c3703355afa7e5a542c9207c8207f4b1db9",
+        "bytes": 26054,
+        "indented_lines": 1022
+      }
+    },
+    {
+      "benchmark": "string_slice",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "bb4b2d4417e72e351c7cd219096d191a604d261a78baef039948a5285b244d93",
+        "bytes": 28616,
+        "indented_lines": 500,
+        "binary_bytes": 6336,
+        "binary_sha256": "24427948a487c1903f4b4591ca0bc03a4557424c34b4af1929bb1020058a0831",
+        "type_id_definitions": 52
+      },
+      "candidate": {
+        "sha256": "f487f6af369b83ee71ccd25697325e5365be285fd380e242664630cc14bb59cf",
+        "bytes": 26050,
+        "indented_lines": 448,
+        "binary_bytes": 5058,
+        "binary_sha256": "a3d03f6f78474fe91c3cafea621a110a841af9e6705a8d290860a517ab58e475",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "struct_drop",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "cea08baa9b821b4488a5a6175565dccaf3b1449420b9da0fbf4e446bce2725f1",
+        "bytes": 58262,
+        "indented_lines": 2321
+      },
+      "candidate": {
+        "sha256": "cea08baa9b821b4488a5a6175565dccaf3b1449420b9da0fbf4e446bce2725f1",
+        "bytes": 58262,
+        "indented_lines": 2321
+      }
+    },
+    {
+      "benchmark": "struct_drop",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "39aea2489c693db0de65cd14fe3f012d064151feea38de408797ebd6bb621477",
+        "bytes": 65496,
+        "indented_lines": 2558
+      },
+      "candidate": {
+        "sha256": "39aea2489c693db0de65cd14fe3f012d064151feea38de408797ebd6bb621477",
+        "bytes": 65496,
+        "indented_lines": 2558
+      }
+    },
+    {
+      "benchmark": "struct_drop",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "d26d4944ab06e7313ca8e0fbb5be155b9947f6827bfc38d3879700da748572e0",
+        "bytes": 52119,
+        "indented_lines": 1597,
+        "binary_bytes": 10935,
+        "binary_sha256": "98bc6b617a52b2ca28090c568c9ed1d7ef272a0f5b5410c20af550bbb2ede2ac",
+        "type_id_definitions": 60
+      },
+      "candidate": {
+        "sha256": "d26d4944ab06e7313ca8e0fbb5be155b9947f6827bfc38d3879700da748572e0",
+        "bytes": 52119,
+        "indented_lines": 1597,
+        "binary_bytes": 10935,
+        "binary_sha256": "98bc6b617a52b2ca28090c568c9ed1d7ef272a0f5b5410c20af550bbb2ede2ac",
+        "type_id_definitions": 60
+      }
+    },
+    {
+      "benchmark": "tokenize",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "549eca94565731c8a2a7afceab8cf0102686d65f418a6d572f8280752a98ae16",
+        "bytes": 27499,
+        "indented_lines": 1102
+      },
+      "candidate": {
+        "sha256": "549eca94565731c8a2a7afceab8cf0102686d65f418a6d572f8280752a98ae16",
+        "bytes": 27499,
+        "indented_lines": 1102
+      }
+    },
+    {
+      "benchmark": "tokenize",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "4e802c273007ebe2de7b80290b08f6b97d90ebfe9b222eb13808c04d2daa621e",
+        "bytes": 32407,
+        "indented_lines": 1278
+      },
+      "candidate": {
+        "sha256": "4e802c273007ebe2de7b80290b08f6b97d90ebfe9b222eb13808c04d2daa621e",
+        "bytes": 32407,
+        "indented_lines": 1278
+      }
+    },
+    {
+      "benchmark": "tokenize",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "324a1e09dab59714b011631152c3948e8dfd8bd91f2a865a24f9f81f3a88fe4a",
+        "bytes": 33616,
+        "indented_lines": 881,
+        "binary_bytes": 7117,
+        "binary_sha256": "1294458113a6bf80590a1847fe15ce01078b724b9b2652fb5644dd7f672960ac",
+        "type_id_definitions": 52
+      },
+      "candidate": {
+        "sha256": "50d501ced51173e7e6b8221965e58383e528fa494cadabe4381be6a36a6437f1",
+        "bytes": 31050,
+        "indented_lines": 829,
+        "binary_bytes": 5839,
+        "binary_sha256": "97033accdd7da897adbf904854b596c783dfd80a0d40fd186706c514f89a670a",
+        "type_id_definitions": 0
+      }
+    },
+    {
+      "benchmark": "utf8_ingest_unchecked",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "c9075d25cfd7a13ad2a7e324f0204b32e2f66b5f79202101ca2c6ddc095bfcd5",
+        "bytes": 251245,
+        "indented_lines": 8160
+      },
+      "candidate": {
+        "sha256": "c9075d25cfd7a13ad2a7e324f0204b32e2f66b5f79202101ca2c6ddc095bfcd5",
+        "bytes": 251245,
+        "indented_lines": 8160
+      }
+    },
+    {
+      "benchmark": "utf8_ingest_unchecked",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "7339567e04a183d774c9f21ef87b0259b5cb3c99ff29742d471aad4925bcbffc",
+        "bytes": 262061,
+        "indented_lines": 8608
+      },
+      "candidate": {
+        "sha256": "7339567e04a183d774c9f21ef87b0259b5cb3c99ff29742d471aad4925bcbffc",
+        "bytes": 262061,
+        "indented_lines": 8608
+      }
+    },
+    {
+      "benchmark": "utf8_ingest_unchecked",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "082653240cb1d7dd3ca6153e5b26d85632144c1a3f66a613b3cf139722ccc4d9",
+        "bytes": 171214,
+        "indented_lines": 9028,
+        "binary_bytes": 27931,
+        "binary_sha256": "3eb356a5af5be87aa6db6dcd5a358dd23d49e484988e0a45f15d9c76e6204e43",
+        "type_id_definitions": 69
+      },
+      "candidate": {
+        "sha256": "082653240cb1d7dd3ca6153e5b26d85632144c1a3f66a613b3cf139722ccc4d9",
+        "bytes": 171214,
+        "indented_lines": 9028,
+        "binary_bytes": 27931,
+        "binary_sha256": "3eb356a5af5be87aa6db6dcd5a358dd23d49e484988e0a45f15d9c76e6204e43",
+        "type_id_definitions": 69
+      }
+    },
+    {
+      "benchmark": "utf8_ingest_validated",
+      "target": "x86-64-linux",
+      "baseline": {
+        "sha256": "465ab205f68782bee7615c3626ecaaa8324a16693b81aeee7955ebd9ae7ca8a5",
+        "bytes": 268491,
+        "indented_lines": 8766
+      },
+      "candidate": {
+        "sha256": "465ab205f68782bee7615c3626ecaaa8324a16693b81aeee7955ebd9ae7ca8a5",
+        "bytes": 268491,
+        "indented_lines": 8766
+      }
+    },
+    {
+      "benchmark": "utf8_ingest_validated",
+      "target": "arm64-linux",
+      "baseline": {
+        "sha256": "d4aa392908a6a9737b035b681eaeb3380c41b5ce3370d4f5639202aadb1e1601",
+        "bytes": 278087,
+        "indented_lines": 9172
+      },
+      "candidate": {
+        "sha256": "d4aa392908a6a9737b035b681eaeb3380c41b5ce3370d4f5639202aadb1e1601",
+        "bytes": 278087,
+        "indented_lines": 9172
+      }
+    },
+    {
+      "benchmark": "utf8_ingest_validated",
+      "target": "wasm32-wasi",
+      "baseline": {
+        "sha256": "3e762bb11a03848032b035d03974722bf1d281f5afa67f75c0514be8b8bba494",
+        "bytes": 186487,
+        "indented_lines": 10042,
+        "binary_bytes": 30123,
+        "binary_sha256": "f580d8adbfe48a230150533c76c5363ef36b6e61075d5c81f18e17791d7c63c2",
+        "type_id_definitions": 69
+      },
+      "candidate": {
+        "sha256": "3e762bb11a03848032b035d03974722bf1d281f5afa67f75c0514be8b8bba494",
+        "bytes": 186487,
+        "indented_lines": 10042,
+        "binary_bytes": 30123,
+        "binary_sha256": "f580d8adbfe48a230150533c76c5363ef36b6e61075d5c81f18e17791d7c63c2",
+        "type_id_definitions": 69
+      }
+    }
+  ],
+  "limits": [
+    "Counts cover indented output lines, not CPU time or retired instructions.",
+    "WAT counts and parsed binary lengths are size observations.",
+    "These observations do not establish compatibility, throughput parity, or production safety."
+  ],
+  "sources_unchanged": true
+}
