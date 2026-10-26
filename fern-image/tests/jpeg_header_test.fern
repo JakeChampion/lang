@@ -1,0 +1,330 @@
+import "../packages/codecs/jpeg/header";
+import "../packages/pixels/pixels";
+import "./fixtures/jpeg_headers" as fixtures;
+import "std/test";
+import "std/i32";
+
+function never_cancel(): boolean {
+  return false;
+}
+
+function rejected(input: [u8], expected: header.JpegError): boolean {
+  return match (header.parse(input, header.default_limits(), never_cancel)) { Ok(_) => false, Err(error) => error == expected };
+}
+
+function append_bytes(output: u8[], input: [u8]): u8[] {
+  for byte in input {
+    output = output.append(byte);
+  }
+  return output;
+}
+
+function segment(marker: i32, payload: [u8]): u8[] {
+  let length = payload.len() + 2;
+  return append_bytes([255 as u8, marker as u8, (length >> 8) as u8, (length & 255) as u8], payload);
+}
+
+function marker_at(input: [u8], wanted: i32): i32 {
+  let at = 2;
+  while (at + 4 <= input.len()) {
+    if (input[at + 1] as i32 == wanted) {
+      return at;
+    }
+    let length = input[at + 2] as i32 << 8 | input[at + 3] as i32;
+    if (length < 2) {
+      return 0;
+    }
+    at = at + length + 2;
+  }
+  return 0;
+}
+
+function reference_headers(): test.TestOutcome {
+  let samples = [fixtures.gray(), fixtures.rgb444(), fixtures.rgb422(), fixtures.rgb420()];
+  let i = 0;
+  for input in samples {
+    let parsed = match (header.parse(input, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("reference header " + i.to_string()); } };
+    let count = if (i == 0) { 1 } else { 3 };
+    let offset = if (i == 0) { 328 } else { 623 };
+    let horizontal = if (i >= 2) { 2 } else { 1 };
+    let vertical = if (i == 3) { 2 } else { 1 };
+    if (parsed.output_layout.width != 17 || parsed.output_layout.height != 9 || parsed.output_layout.stride != 51
+      || parsed.output_layout.bytes != 459 || pixels.channels(parsed.output_layout.format) != 3
+      || parsed.components.len() != count || parsed.scan.len() != count || parsed.entropy_offset != offset
+      || parsed.components[0].horizontal != horizontal || parsed.components[0].vertical != vertical
+      || parsed.restart_interval != 0 || parsed.metadata_bytes != 14 || parsed.segment_count != (if (i == 0) { 6 } else { 9 })) {
+      return test.fail("reference metadata " + i.to_string());
+    }
+    i = i + 1;
+  }
+  return test.pass();
+}
+
+function optimized_and_unsupported(): test.TestOutcome {
+  let gray = match (header.parse(fixtures.gray_optimized(), header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("optimized grayscale"); } };
+  let rgb = match (header.parse(fixtures.rgb420_optimized(), header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("optimized RGB"); } };
+  let dc = match (gray.huffman[0]) { Some(value) => value, None => { return test.fail("sparse DC"); } };
+  let ac = match (gray.huffman[2]) { Some(value) => value, None => { return test.fail("sparse AC"); } };
+  return test.assert_true(gray.output_layout.width == 1 && gray.output_layout.height == 1 && gray.output_layout.bytes == 3
+    && dc.symbols.len() == 1 && ac.symbols.len() == 1 && rgb.components.len() == 3
+    && rgb.components[0].horizontal == 2 && rgb.components[0].vertical == 2
+    && rejected(fixtures.progressive(), header.Unsupported) && rejected(fixtures.cmyk(), header.Unsupported));
+}
+
+function truncation(): test.TestOutcome {
+  for input in [fixtures.gray(), fixtures.rgb444(), fixtures.synthetic_header()] {
+    let parsed = match (header.parse(input, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("fixture"); } };
+    let end = 0;
+    while (end < parsed.entropy_offset) {
+      if (!rejected(input[:end], header.Truncated)) {
+        return test.fail("truncated prefix " + end.to_string());
+      }
+      end = end + 1;
+    }
+  }
+  return test.pass();
+}
+
+function framing(): test.TestOutcome {
+  let input = fixtures.synthetic_header();
+  if (!rejected(input.with(0, 0 as u8), header.Signature)
+    || !rejected(input.with(1, 0 as u8), header.Signature)
+    || !rejected(input.with(2, 0 as u8), header.Marker)
+    || !rejected(input.with(3, 0 as u8), header.Marker)
+    || !rejected(input.with(3, 208 as u8), header.Marker)
+    || !rejected(input.with(3, 216 as u8), header.Order)
+    || !rejected(input.with(3, 217 as u8), header.Order)
+    || !rejected(input.with(3, 193 as u8), header.Unsupported)
+    || !rejected(input.with(4, 0 as u8).with(5, 1 as u8), header.Length)
+    || !rejected(input.with(4, 255 as u8).with(5, 255 as u8), header.Truncated)) {
+    return test.fail("marker or length rejection");
+  }
+  let frame = marker_at(input, 192);
+  let scan = marker_at(input, 218);
+  let duplicate = append_bytes(append_bytes(append_bytes([], input[:scan]), input[frame:scan]), input[scan:]);
+  let no_frame = append_bytes(append_bytes([], input[:frame]), input[scan:]);
+  return test.assert_true(rejected(duplicate, header.Order) && rejected(no_frame, header.Order));
+}
+
+function frame_fields(): test.TestOutcome {
+  let input = fixtures.synthetic_header();
+  let at = marker_at(input, 192) + 4;
+  if (!rejected(input.with(at, 12 as u8), header.Unsupported)
+    || !rejected(input.with(at + 1, 0 as u8).with(at + 2, 0 as u8), header.Unsupported)
+    || !rejected(input.with(at + 3, 0 as u8).with(at + 4, 0 as u8), header.Frame)
+    || !rejected(input.with(at + 5, 4 as u8), header.Unsupported)
+    || !rejected(input.with(at + 7, 0 as u8), header.Frame)
+    || !rejected(input.with(at + 7, 81 as u8), header.Frame)
+    || !rejected(input.with(at + 8, 4 as u8), header.Frame)
+    || !rejected(input.with(at + 1, 255 as u8).with(at + 2, 255 as u8).with(at + 3, 255 as u8).with(at + 4, 255 as u8), header.Limit)) {
+    return test.fail("frame field rejection");
+  }
+  let rgb = fixtures.rgb444();
+  let start = marker_at(rgb, 192) + 4;
+  if (!rejected(rgb.with(start + 9, rgb[start + 6]), header.Frame)
+    || !rejected(rgb.with(start + 7, 68 as u8).with(start + 10, 68 as u8).with(start + 13, 68 as u8), header.Unsupported)) {
+    return test.fail("component labels or MCU blocks");
+  }
+  return test.pass();
+}
+
+function quantization(): test.TestOutcome {
+  let input = fixtures.synthetic_header();
+  let parsed = match (header.parse(input, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("fixture"); } };
+  let table = match (parsed.quantization[0]) { Some(value) => value, None => { return test.fail("quantizers"); } };
+  let i = 0;
+  while (i < 64) {
+    if (table.values[i] as i32 != i + 1) {
+      return test.fail("zig-zag order");
+    }
+    i = i + 1;
+  }
+  if (!rejected(input.with(6, 16 as u8), header.Unsupported)
+    || !rejected(input.with(6, 4 as u8), header.Table)
+    || !rejected(input.with(7, 0 as u8), header.Table)) {
+    return test.fail("quantization table rejection");
+  }
+  let scan = marker_at(input, 218);
+  let redefined = append_bytes([], input[2:71]).with(5, 99 as u8);
+  let replacement = append_bytes(append_bytes(append_bytes([], input[:scan]), redefined), input[scan:]);
+  let again = match (header.parse(replacement, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("redefinition"); } };
+  let updated = match (again.quantization[0]) { Some(value) => value, None => { return test.fail("updated quantizers"); } };
+  return test.assert_true(updated.values[0] == 99 as u8 && table.values[0] == 1 as u8);
+}
+
+function huffman_tables(): test.TestOutcome {
+  let input = fixtures.synthetic_header();
+  let at = marker_at(input, 196) + 4;
+  if (!rejected(input.with(at, 32 as u8), header.Table)
+    || !rejected(input.with(at, 2 as u8), header.Unsupported)
+    || !rejected(input.with(at + 1, 3 as u8), header.Table)
+    || !rejected(input.with(at + 1, 2 as u8), header.Table)
+    || !rejected(input.with(at + 1, 0 as u8), header.Table)
+    || !rejected(input.with(at + 17, 12 as u8), header.Table)
+    || !rejected(input.with(at + 35, 11 as u8), header.Table)
+    || !rejected(input.with(at + 35, 16 as u8), header.Table)) {
+    return test.fail("Huffman table rejection");
+  }
+  let parsed = match (header.parse(input, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("fixture"); } };
+  let dc = match (parsed.huffman[0]) { Some(value) => value, None => { return test.fail("DC table"); } };
+  let ac = match (parsed.huffman[2]) { Some(value) => value, None => { return test.fail("AC table"); } };
+  return test.assert_true(dc.counts.len() == 16 && dc.counts[0] == 1 as u8 && dc.symbols.len() == 1
+    && dc.symbols[0] == 0 as u8 && ac.symbols[0] == 0 as u8);
+}
+
+function scan_fields(): test.TestOutcome {
+  let input = fixtures.synthetic_header();
+  let scan = marker_at(input, 218);
+  let at = scan + 4;
+  if (!rejected(input.with(at, 0 as u8), header.Scan)
+    || !rejected(input.with(at + 1, 2 as u8), header.Scan)
+    || !rejected(input.with(at + 2, 32 as u8), header.Unsupported)
+    || !rejected(input.with(at + 2, 2 as u8), header.Unsupported)
+    || !rejected(input.with(at + 3, 1 as u8), header.Unsupported)
+    || !rejected(input.with(at + 4, 62 as u8), header.Unsupported)
+    || !rejected(input.with(at + 5, 1 as u8), header.Unsupported)
+    || !rejected(input.with(at + 2, 17 as u8), header.Table)) {
+    return test.fail("scan field rejection");
+  }
+  let no_quant = append_bytes(append_bytes([], input[:2]), input[71:]);
+  let no_codes = append_bytes(append_bytes([], input[:71]), input[111:]);
+  let rgb = fixtures.rgb444();
+  let start = marker_at(rgb, 218) + 4;
+  let permuted = rgb.with(start + 1, 2 as u8).with(start + 2, 17 as u8).with(start + 3, 1 as u8).with(start + 4, 0 as u8);
+  let ordered = match (header.parse(permuted, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("permuted scan components"); } };
+  return test.assert_true(ordered.scan[0].id == 2 && ordered.scan[1].id == 1
+    && rejected(no_quant, header.Table) && rejected(no_codes, header.Table)
+    && rejected(rgb.with(start + 3, rgb[start + 1]), header.Scan)
+    && rejected(rgb.with(start, 1 as u8), header.Unsupported));
+}
+
+function metadata_restart_and_fill(): test.TestOutcome {
+  let input = fixtures.synthetic_header();
+  let extra = append_bytes(append_bytes([], input[:2]), segment(225, [69 as u8, 120 as u8, 105 as u8, 102 as u8, 0 as u8]));
+  extra = append_bytes(extra, segment(254, [17 as u8, 255 as u8, 216 as u8]));
+  extra = append_bytes(extra, segment(221, [18 as u8, 52 as u8]));
+  extra = extra.append(255 as u8);
+  extra = append_bytes(extra, input[2:]);
+  let parsed = match (header.parse(extra, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("APP, COM, DRI, fill"); } };
+  if (parsed.restart_interval != 4660 || parsed.metadata_bytes != 8 || parsed.segment_count != 7
+    || parsed.entropy_offset != input.len() + 23) {
+    return test.fail("segment accounting");
+  }
+  let invalid = append_bytes(append_bytes(append_bytes([], input[:2]), segment(221, [0 as u8])), input[2:]);
+  return test.assert_true(rejected(invalid, header.Length));
+}
+
+function admitted(input: [u8], bytes: i32, header_bytes: i32, segments: i32, pixel_count: i32, decoded_bytes: i32): boolean {
+  let limits = header.HeaderLimits {
+    max_input_bytes: bytes, max_header_bytes: header_bytes, max_segments: segments,
+    image: pixels.Limits { max_pixels: pixel_count, max_bytes: decoded_bytes },
+  };
+  return match (header.parse(input, limits, never_cancel)) { Ok(_) => true, Err(_) => false };
+}
+
+function exact_limits(): test.TestOutcome {
+  let input = fixtures.synthetic_header();
+  let size = input.len();
+  if (!admitted(input, size, size, 4, 153, 459)
+    || admitted(input, size - 1, size, 4, 153, 459) || admitted(input, size, size - 1, 4, 153, 459)
+    || admitted(input, size, size, 3, 153, 459) || admitted(input, size, size, 4, 152, 459)
+    || admitted(input, size, size, 4, 153, 458) || admitted(input, 0, size, 4, 153, 459)
+    || admitted(input, size, 0, 4, 153, 459) || admitted(input, size, size, 0, 153, 459)
+    || admitted(input, size, size, 4, 0, 459) || admitted(input, size, size, 4, 153, 0)) {
+    return test.fail("exact admission");
+  }
+  return test.pass();
+}
+
+function hard_caps(): test.TestOutcome {
+  let limits = header.HeaderLimits {
+    max_input_bytes: 2147483647, max_header_bytes: 2147483647, max_segments: 2147483647,
+    image: pixels.Limits { max_pixels: 2147483647, max_bytes: 2147483647 },
+  };
+  let oversized = __alloc_u8(16777217);
+  let input_limit = match (header.parse(oversized, limits, never_cancel)) { Err(header.Limit()) => true, _ => false };
+  if (!input_limit) {
+    return test.fail("hard input cap");
+  }
+  let fill = __alloc_u8(1048577);
+  let i = 0;
+  while (i < fill.len()) {
+    fill = fill.with(i, 255 as u8);
+    i = i + 1;
+  }
+  fill = fill.with(1, 216 as u8);
+  let header_limit = match (header.parse(fill, limits, never_cancel)) { Err(header.Limit()) => true, _ => false };
+  if (!header_limit) {
+    return test.fail("hard header cap");
+  }
+  let many: u8[] = [255 as u8, 216 as u8];
+  i = 0;
+  while (i < 4097) {
+    many = append_bytes(many, segment(224, []));
+    i = i + 1;
+  }
+  return test.assert_true(match (header.parse(many, limits, never_cancel)) { Err(header.Limit()) => true, _ => false });
+}
+
+function cancellation(): test.TestOutcome {
+  let input = fixtures.rgb420();
+  let observed = cell_new(0);
+  let count = (): boolean => {
+    observed.set(observed.get() + 1);
+    return false;
+  };
+  match (header.parse(input, header.default_limits(), count)) {
+    Err(_) => {
+      return test.fail("cancellation fixture");
+    },
+    Ok(_) => {}
+  }
+  let total = observed.get();
+  let stop = 1;
+  while (stop <= total) {
+    let polls = cell_new(0);
+    let cancelled = (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() >= stop;
+    };
+    let result = match (header.parse(input, header.default_limits(), cancelled)) { Err(header.Cancelled()) => true, _ => false };
+    if (!result || polls.get() != stop) {
+      return test.fail("cancellation poll " + stop.to_string());
+    }
+    stop = stop + 1;
+  }
+  return test.assert_true(total > 300);
+}
+
+function ownership_and_scope(): test.TestOutcome {
+  let input = fixtures.synthetic_header();
+  let padded = append_bytes(append_bytes([77 as u8, 88 as u8], input), [99 as u8]);
+  let parsed = match (header.parse(padded[2:2 + input.len()], header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("lent window"); } };
+  let quant = match (parsed.quantization[0]) { Some(value) => value, None => { return test.fail("quantizers"); } };
+  let changed = quant.values.with(0, 99 as u8);
+  padded = padded.with(9, 87 as u8);
+  if (quant.values[0] != 1 as u8 || changed[0] != 99 as u8 || input[7] != 1 as u8) {
+    return test.fail("owned table isolation");
+  }
+  let incomplete = input.append(255 as u8).append(0 as u8).append(255 as u8).append(216 as u8);
+  let again = match (header.parse(incomplete, header.default_limits(), never_cancel)) { Ok(value) => value, Err(_) => { return test.fail("entropy is outside header scope"); } };
+  return test.assert_true(again.entropy_offset == input.len() && parsed.entropy_offset == input.len());
+}
+
+function main(): i32 {
+  let runner = test.test_new("JPEG baseline headers only");
+  runner = runner.it("independent grayscale and 444/422/420 reference headers", reference_headers);
+  runner = runner.it("optimized sparse tables and genuine unsupported profiles", optimized_and_unsupported);
+  runner = runner.it("every truncated header prefix", truncation);
+  runner = runner.it("marker framing, lengths, and frame order", framing);
+  runner = runner.it("baseline frame fields and projected RGB limits", frame_fields);
+  runner = runner.it("quantizer validation, zig-zag order, and replacement", quantization);
+  runner = runner.it("Huffman tree, padding code, and symbol restrictions", huffman_tables);
+  runner = runner.it("full baseline scan selectors and required tables", scan_fields);
+  runner = runner.it("bounded metadata, restart interval, and marker fill", metadata_restart_and_fill);
+  runner = runner.it("exact input, header, segment, pixel, and byte limits", exact_limits);
+  runner = runner.it("hard input, header, and segment caps", hard_caps);
+  runner = runner.it("every cooperative cancellation poll", cancellation);
+  runner = runner.it("owned tables, offset windows, and explicit entropy exclusion", ownership_and_scope);
+  return runner.finish();
+}
