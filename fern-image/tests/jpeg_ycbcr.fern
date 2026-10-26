@@ -1,0 +1,54 @@
+import "../packages/codecs/jpeg/ycbcr";
+import "std/i32";
+
+function never(): boolean {
+  return false;
+}
+
+function emit(path: string): i32 {
+  let bytes = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  if (bytes.len() <= 0 || bytes.len() % 3 != 0) {
+    return 3;
+  }
+  let y: u8[] = [];
+  let cb: u8[] = [];
+  let cr: u8[] = [];
+  let count = bytes.len() / 3;
+  for i in 0..count {
+    y = y.append(bytes[i * 3]);
+    cb = cb.append(bytes[i * 3 + 1]);
+    cr = cr.append(bytes[i * 3 + 2]);
+  }
+  let rgb = match (ycbcr.convert_row(y, cb, cr, bytes.len(), never)) { Ok(v) => v, Err(_) => { return 4; } };
+  if (rgb.len() != bytes.len()) {
+    return 5;
+  }
+  for i in 0..count {
+    let pixel = ycbcr.convert(y[i], cb[i], cr[i]);
+    if (rgb[i * 3] != pixel.r || rgb[i * 3 + 1] != pixel.g || rgb[i * 3 + 2] != pixel.b || pixel.a != 255 as u8) {
+      return 6;
+    }
+  }
+  match (write_file_bytes(path + ".rgb.raw", rgb)) {
+    Ok(_) => {},
+    Err(_) => {
+      return 7;
+    }
+  }
+  print("converted " + path + " " + count.to_string());
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let code = emit(paths[i]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

@@ -66,7 +66,7 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 179 TAP cases cover compression, pixels, color, resize, PNG, JPEG headers, coefficients, scalar inverse DCT, and grayscale images.
+The 184 TAP cases cover compression, pixels, color, resize, PNG, JPEG headers, coefficients, scalar inverse DCT, and grayscale images.
 They also cover rows, providers, pipelines, regions, caches, RSS parsing, and fusion.
 The file I/O probe and pixel example also exit successfully.
 The native script checks source executables and additional allocator, cache, fusion, and formatter smoke modes with the sanitizer.
@@ -101,3 +101,6 @@ The [region interface](docs/regions.md) plans checked cropped tiles and direct d
 The [row batch interface](docs/row-cache.md) adds per-call caching with payload and entry limits.
 The explicit [cached fusion interface](docs/cached-fusion.md) composes eligible nearest chains without intermediate cached rows.
 The [nearest fusion](docs/nearest-fusion.md) optimization removes eligible intermediate rows and preserves coordinate and admission contracts.
+
+The [explicit YCbCr conversion kernel](docs/jpeg-ycbcr.md) converts full-range component samples after chroma reconstruction.
+It does not infer color meaning from encoded JPEG data or apply color profiles.
