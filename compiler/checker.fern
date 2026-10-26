@@ -1690,6 +1690,27 @@ function is_primitive_type(t: typeinfo.Type): boolean {
   return false;
 }
 
+function literal_match_type(t: typeinfo.Type): boolean {
+  match (t) {
+    typeinfo.TypeUnknown(_) => {
+      return false;
+    },
+    typeinfo.TypeUnion(_) => {
+      return false;
+    },
+    typeinfo.TypeStruct(_) => {
+      return false;
+    },
+    typeinfo.TypeTuple(_) => {
+      return false;
+    },
+    _ => {
+      return true;
+    }
+  }
+  return false;
+}
+
 function as_cast_allowed(src: typeinfo.Type, tgt: typeinfo.Type): boolean {
   if (type_eq(src, tgt)) {
     return true;
@@ -15783,7 +15804,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             }
           }
         }
-        if (is_primitive_type(mst) && ordinary_match_origin(m.origin)) {
+        if (literal_match_type(mst) && ordinary_match_origin(m.origin)) {
           for arm in m.arms {
             match (arm.pattern) {
               ast.PatVariant(epv) => {
@@ -15865,7 +15886,11 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
           typeinfo.TypeFloat(_) => {
             out = scalar_match_exhaustive_diags(m, out, false);
           },
-          _ => {}
+          _ => {
+            if (literal_match_type(mst)) {
+              out = scalar_match_exhaustive_diags(m, out, false);
+            }
+          }
         }
         for elem in m.arms {
           let armScope: Scope = cur;
