@@ -1,0 +1,56 @@
+import "../packages/codecs/jpeg/grayscale";
+import "../packages/pixels/pixels";
+import "std/i32";
+
+function never(): boolean {
+  return false;
+}
+
+function error_class(error: grayscale.DecodeError): string {
+  return match (error) { grayscale.DecodeEntropy(_) => "entropy", grayscale.DecodeTransform(_) => "transform", grayscale.DecodeStorage(_) => "storage", grayscale.DecodeUnsupported => "unsupported", grayscale.DecodeCancelled => "cancelled" };
+}
+
+function emit_case(path: string): i32 {
+  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  match (grayscale.decode(input, grayscale.default_limits(), never)) {
+    Ok(image) => {
+      match (image.layout.format) {
+        pixels.RGB8 => {},
+        _ => {
+          return 3;
+        }
+      }
+      if (image.data.len() != image.layout.bytes || image.layout.stride != image.layout.width * 3) {
+        return 4;
+      }
+      match (write_file_bytes(path + ".rgb.raw", image.data)) {
+        Ok(_) => {},
+        Err(_) => {
+          return 5;
+        }
+      }
+      print("accepted " + path + " " + image.layout.width.to_string() + " " + image.layout.height.to_string() + " " + image.layout.stride.to_string() + " " + image.layout.bytes.to_string());
+    },
+    Err(grayscale.DecodeUnsupported()) => {
+      print("unsupported " + path);
+    },
+    Err(error) => {
+      print("error " + path + " " + error_class(error));
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let code = emit_case(paths[i]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}
