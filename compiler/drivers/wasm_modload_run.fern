@@ -78,14 +78,14 @@ function whole_module_plan(nmods: i32): ShardRef[] {
   return out;
 }
 
-function unit_obj(ns: string, unit: parser.Module, cache: irtables.LowerResult[], all_funcs: parser.FuncDecl[], all_stab: irtables.StructTab): wasm_objfile.UnitObj {
+function unit_obj(ns: string, unit: parser.Module, cache: irtables.LowerResult[], all_funcs: parser.FuncDecl[], all_stab: irtables.StructTab, physical: physicalbody.Collection): wasm_objfile.UnitObj {
   return wasm_objfile.UnitObj {
     strs: wasm_ir.str_values(cache),
     caggs: wasm_ir.const_agg_values(cache),
     fns: wasm_ir.fn_value_table(cache),
     needs: wasm_ir.needs_of(cache),
     fn_sigs: wasm_ir.indirect_fn_sigs(cache),
-    text: wasm_ir.emit_functions_view(ns, unit, cache, all_funcs, all_stab, physicalbody.no_collection()),
+    text: wasm_ir.emit_functions_view(ns, unit, cache, all_funcs, all_stab, physical),
   };
 }
 
@@ -196,7 +196,7 @@ function typed_units(parts: flatten.PerModule[], d: semlower.Driven, cache_dir: 
   return Typed { g: g, u: u, keys: keys };
 }
 
-struct TypedUnit { mod: parser.Module, cache: irtables.LowerResult[] }
+struct TypedUnit { mod: parser.Module, cache: irtables.LowerResult[], physical: physicalbody.Collection }
 
 function typed_unit(t: Typed, idx: i32, lo: i32, hi: i32): TypedUnit {
   let m: parser.Module = t.u.mods[idx];
@@ -207,19 +207,23 @@ function typed_unit(t: Typed, idx: i32, lo: i32, hi: i32): TypedUnit {
   }
   let fs: parser.FuncDecl[] = [];
   let cache: irtables.LowerResult[] = [];
+  let physical: physicalbody.Collection = t.u.physical[idx];
+  let origins: physicalbody.Origin[] = [];
   let i: i32 = lo;
   while (i < end) {
     fs = fs.append(m.funcs[i]);
     cache = cache.append(whole[i]);
+    origins = origins.append(physicalbody.origin_at(physical.rows, i));
     i = i + 1;
   }
   if (end == m.funcs.len()) {
     while (i < whole.len()) {
       cache = cache.append(whole[i]);
+      origins = origins.append(physicalbody.origin_at(physical.rows, i));
       i = i + 1;
     }
   }
-  return TypedUnit { mod: parser.Module { ...m, funcs: fs }, cache: cache };
+  return TypedUnit { mod: parser.Module { ...m, funcs: fs }, cache: cache, physical: physicalbody.Collection { ...physical, rows: origins } };
 }
 
 function typed_file(entry_path: string, parts: flatten.PerModule[], t: Typed, idx: i32, lo: i32, hi: i32, cache_dir: string): string {
@@ -275,7 +279,7 @@ function typed_obj(entry_path: string, parts: flatten.PerModule[], t: Typed, u: 
     return lk.obj;
   }
   let tu: TypedUnit = typed_unit(t, u.idx, u.lo, u.hi);
-  let obj: wasm_objfile.UnitObj = unit_obj(unit_ns(u.idx, u.lo), tu.mod, tu.cache, t.g.im.funcs, t.g.stab);
+  let obj: wasm_objfile.UnitObj = unit_obj(unit_ns(u.idx, u.lo), tu.mod, tu.cache, t.g.im.funcs, t.g.stab, tu.physical);
   write_cached(cf, parts[u.idx].ns, obj);
   return obj;
 }
