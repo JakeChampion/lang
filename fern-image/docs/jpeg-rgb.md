@@ -137,3 +137,33 @@ Every target reports zero final live bytes.
 The tests cover finite color goldens, exact plans, inherited limits, unsupported profiles, all tiny stream prefixes, and late restart errors.
 They also cover retained outputs, caller alias updates, fresh nested calls, every tiny cancellation poll, and selected wide post-plane cancellation points.
 Ten protocol controls and both unchanged complexity gates pass without skips.
+
+## Recorded qualification
+
+The new records are [native](../benchmarks/results/jpeg-rgb-native.json), [Wasm](../benchmarks/results/jpeg-rgb-wasm.json), and [ARM64](../benchmarks/results/jpeg-rgb-arm64.json).
+The source revision is `4b942dbe92473f36585e31daf8944d2b490511b1`.
+All three campaigns use that clean source with the clean compiler above.
+Each campaign completes 119 inputs in 15 fresh workers, for 45 workers in total.
+Every worker reports nonzero balanced allocations and zero final live bytes.
+
+Each target accepts 76 inputs and records 164,382 channel samples across both filters.
+All assembled bytes exactly match rational composition of the worker's raw planes.
+The independent raw-plane RGB reference differs at 5,508 channel positions, with maximum difference two.
+The supplemental C nearest RGB reference differs at 2,745 positions, with maximum difference two.
+Both observations satisfy the predeclared finite criteria without a tolerance change.
+All target sample records match exactly.
+
+Native qualification locks 1,225 source and tool hashes, while runner targets lock 1,226.
+These include every compiler Fern source, all 163 stdlib sources, the worker, collector, references, and selected executables.
+Both C oracles rerun their applicable observations during every campaign.
+Each campaign verifies immutable source and tool hashes.
+Generated patterns and neutral fixtures do not constitute a real-photograph or broad-compatibility campaign.
+
+All 214 image TAP cases pass on native sanitizer, Wasm leak census, and standalone ARM64/QEMU10.
+The complete native and Wasm scripts finish with 69 and 45 balanced heap censuses respectively.
+The portable ARM suite finishes 30 executables with balanced heaps.
+Every census reports zero final live bytes.
+The unchanged native rejection and formatter probes also pass.
+
+All 2,016 Fern format checks, Go build/vet, workflow lint, test selectors, CI self-tests, and runtime-bundle freshness checks pass.
+These local observations remain separate from GitHub CI status.
