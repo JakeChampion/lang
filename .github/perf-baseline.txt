@@ -1,3 +1,4 @@
+# 2026-10-26: record AArch64 instruction counts from main run 40291091519.
 # 2026-10-26, the 32-bit index arithmetic, the decrement below a greater-than test and the
 # x86-64 operation on a spill slot, from a local perf-bench run: x86_64/deflate_encode.ir
 # 47063418 to 43100357 (-8.4%), deflate_decode.ir
@@ -443,9 +444,9 @@ aarch64/pvec_with.ir	59217299
 aarch64/record_update.text	1483
 aarch64/record_update.ir	31217560
 aarch64/sort_inplace.text	1573
-aarch64/sort_inplace.ir	49676530
+aarch64/sort_inplace.ir	49103947
 aarch64/sort_ints.text	2072
-aarch64/sort_ints.ir	33602359
+aarch64/sort_ints.ir	33051852
 aarch64/sort_strings.text	3472
 aarch64/sort_strings.ir	105881681
 aarch64/string_build.text	2242
@@ -485,7 +486,7 @@ aarch64/perceus_cfold.ir	61163127
 aarch64/perceus_deriv.text	2872
 aarch64/perceus_deriv.ir	81963685
 aarch64/perceus_nqueens.text	1702
-aarch64/perceus_nqueens.ir	106188847
+aarch64/perceus_nqueens.ir	104935847
 aarch64/perceus_rbtree.text	3035
 aarch64/perceus_rbtree.ir	61284969
 aarch64/perceus_rbtree_ck.text	3264

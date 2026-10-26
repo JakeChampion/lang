@@ -4602,8 +4602,16 @@ function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: stri
   return a;
 }
 
-function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: string): X86Asm {
+function x86_gas_imul_ops(rest: string): string[] {
   let ops: string[] = x86_gas_split_ops(rest);
+  if (ops.len() == 2 && ops[0].len() > 0 && ops[0][0] == b'$') {
+    return ops.append(ops[1]);
+  }
+  return ops;
+}
+
+function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: string): X86Asm {
+  let ops: string[] = x86_gas_imul_ops(rest);
   if (ops.len() == 1) {
     return x86_gas_unary_family(a, mnem, 246, 5, size, ops[0]);
   }
