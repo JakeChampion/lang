@@ -1,0 +1,26 @@
+// spec: ML-04
+// A struct or `Option` carrying a `str` view of a function-local string
+// cannot be returned.
+
+struct Label { text: str }
+
+function name(): string { return "world"; }
+
+function label(): Label {
+    let s: string = "hello, " + name();
+    return Label { text: slice_unchecked(s, 0, 5) };
+}
+
+function maybe_label(): Option[str] {
+    let s: string = "hello, " + name();
+    let v: str = slice_unchecked(s, 0, 5);
+    return Some(v);
+}
+
+function label_of(s: string): Label {
+    return Label { text: slice_unchecked(s, 0, 5) };
+}
+
+function main(): i32 {
+    return label_of("hello").text.len();
+}

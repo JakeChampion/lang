@@ -4071,33 +4071,41 @@ function payload_spelling(s: Scope, us: UnionSig, vname: string, k: i32): string
 }
 
 function promotes_view(from: typeinfo.Type, to: typeinfo.Type): boolean {
-  if (is_str_view(from) && is_owned_string(to)) {
+  return shifts_view(from, to, true);
+}
+
+function lends_array_view(from: typeinfo.Type, to: typeinfo.Type): boolean {
+  return shifts_view(to, from, false);
+}
+
+function shifts_view(from: typeinfo.Type, to: typeinfo.Type, strings: boolean): boolean {
+  if (strings && is_str_view(from) && is_owned_string(to)) {
     return true;
   }
   match (from) {
     typeinfo.TypeArray(fa) => {
       if let typeinfo.TypeArray(ta) = to {
-        return fa.view && !ta.view || promotes_view(fa.elem, ta.elem);
+        return fa.view && !ta.view || shifts_view(fa.elem, ta.elem, strings);
       }
     },
     typeinfo.TypeTuple(ft) => {
       if let typeinfo.TypeTuple(tt) = to {
-        return any_promotes_view(ft.elements, tt.elements);
+        return any_shifts_view(ft.elements, tt.elements, strings);
       }
     },
     typeinfo.TypeMap(fm) => {
       if let typeinfo.TypeMap(tm) = to {
-        return promotes_view(fm.key, tm.key) || promotes_view(fm.value, tm.value);
+        return shifts_view(fm.key, tm.key, strings) || shifts_view(fm.value, tm.value, strings);
       }
     },
     typeinfo.TypeUnion(fu) => {
       if let typeinfo.TypeUnion(tu) = to {
-        return any_promotes_view(fu.args, tu.args);
+        return any_shifts_view(fu.args, tu.args, strings);
       }
     },
     typeinfo.TypeStruct(fs) => {
       if let typeinfo.TypeStruct(ts) = to {
-        return any_promotes_view(fs.args, ts.args);
+        return any_shifts_view(fs.args, ts.args, strings);
       }
     },
     _ => {}
@@ -4109,13 +4117,13 @@ function same_element_type(a: typeinfo.Type, b: typeinfo.Type): boolean {
   return type_eq(a, b) && !promotes_view(a, b) && !promotes_view(b, a);
 }
 
-function any_promotes_view(from: typeinfo.Type[], to: typeinfo.Type[]): boolean {
+function any_shifts_view(from: typeinfo.Type[], to: typeinfo.Type[], strings: boolean): boolean {
   if (from.len() != to.len()) {
     return false;
   }
   let i: i32 = 0;
   while (i < from.len()) {
-    if (promotes_view(from[i], to[i])) {
+    if (shifts_view(from[i], to[i], strings)) {
       return true;
     }
     i = i + 1;
@@ -4136,16 +4144,14 @@ function type_assignable(from: typeinfo.Type, to: typeinfo.Type, unions: UnionSi
     }
     return false;
   }
-  if (promotes_view(from, to)) {
-    return false;
-  }
-  if (is_arr_view(from) && is_owned_array(to) || is_owned_array(from) && is_arr_view(to)) {
+  if (promotes_view(from, to) || lends_array_view(from, to)) {
     return false;
   }
   if (nominal_args_clash(from, to, unions)) {
     return false;
   }
-  if (type_eq(from, to)) {
+  // type_eq ignores nominal arguments, so an aggregate checks its components below.
+  if (type_eq(from, to) && !is_tuple_or_array(to)) {
     return true;
   }
   match (to) {
@@ -8447,7 +8453,7 @@ function slc_expr_roots(e: ast.Expr, cur: Scope, params: string[], localarr: str
 
 pub struct SlcWalk { diags: util.Diag[], viewed: string[], owns: boolean }
 
-function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex, ret_is_view: boolean): SlcWalk {
+function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex, ret_is_view: boolean): SlcWalk {
   let out: util.Diag[] = [];
   let viewed: string[] = [];
   let owns: boolean = false;
@@ -8460,6 +8466,7 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
             tainted = tainted.append(v.name);
           }
         }
+        held = slc_held_after(v, cur, params, localarr, tainted, held, sums, vix);
         match (v.init) {
           ast.ExprBytes(_) => {
             localarr = localarr.append(v.name);
@@ -8479,7 +8486,7 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
           let roots: ViewRoots = slc_expr_roots(r.value, cur, params, localarr, tainted, sums, vix);
           viewed = merge_view_names(viewed, roots.params);
           if (roots.local) {
-            out = out.append(dg_at("E063", "returning a `[T]` slice that views function-local storage: the backing array is reclaimed when \"" + fname + "\" returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead", r.line, r.col));
+            out = out.append(slc_escape_diag(fname, r.line, r.col));
           }
         } else {
           let sroots: ViewRoots = slc_src_roots(r.value, cur, params, localarr, tainted, sums, vix);
@@ -8487,33 +8494,36 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
           if (sroots.local) {
             owns = true;
           }
+          let aroots: ViewRoots = slc_agg_roots(r.value, cur.ret_type, cur, params, localarr, tainted, held, sums, vix);
+          viewed = merge_view_names(viewed, aroots.params);
+          out = util.append_diags(out, slc_escape_diags_if(aroots.local, fname, r.line, r.col));
         }
       },
       ast.StmtIf(f) => {
-        let wt: SlcWalk = slc_walk(f.then_body, fname, cur, params, localarr, tainted, sums, vix, ret_is_view);
+        let wt: SlcWalk = slc_walk(f.then_body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
         out = util.append_diags(out, wt.diags);
         viewed = merge_view_names(viewed, wt.viewed);
         owns = owns || wt.owns;
-        let we: SlcWalk = slc_walk(f.else_body, fname, cur, params, localarr, tainted, sums, vix, ret_is_view);
+        let we: SlcWalk = slc_walk(f.else_body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
         out = util.append_diags(out, we.diags);
         viewed = merge_view_names(viewed, we.viewed);
         owns = owns || we.owns;
       },
       ast.StmtWhile(w) => {
-        let ww: SlcWalk = slc_walk(w.body, fname, cur, params, localarr, tainted, sums, vix, ret_is_view);
+        let ww: SlcWalk = slc_walk(w.body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
         out = util.append_diags(out, ww.diags);
         viewed = merge_view_names(viewed, ww.viewed);
         owns = owns || ww.owns;
       },
       ast.StmtFor(fr) => {
-        let wf: SlcWalk = slc_walk(fr.body, fname, for_body_scope(fr, cur), params, localarr, tainted, sums, vix, ret_is_view);
+        let wf: SlcWalk = slc_walk(fr.body, fname, for_body_scope(fr, cur), params, localarr, tainted, held, sums, vix, ret_is_view);
         out = util.append_diags(out, wf.diags);
         viewed = merge_view_names(viewed, wf.viewed);
         owns = owns || wf.owns;
       },
       ast.StmtMatch(m) => {
         for arm in m.arms {
-          let wa: SlcWalk = slc_walk(arm.body, fname, cur, params, localarr, tainted, sums, vix, ret_is_view);
+          let wa: SlcWalk = slc_walk(arm.body, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
           out = util.append_diags(out, wa.diags);
           viewed = merge_view_names(viewed, wa.viewed);
           owns = owns || wa.owns;
@@ -8521,7 +8531,7 @@ function slc_walk(stmts: ast.Stmt[], fname: string, s: Scope, params: string[], 
       },
       ast.StmtDefer(d) => {
         let one: ast.Stmt[] = [d.action];
-        let wd: SlcWalk = slc_walk(one, fname, cur, params, localarr, tainted, sums, vix, ret_is_view);
+        let wd: SlcWalk = slc_walk(one, fname, cur, params, localarr, tainted, held, sums, vix, ret_is_view);
         out = util.append_diags(out, wd.diags);
         viewed = merge_view_names(viewed, wd.viewed);
         owns = owns || wd.owns;
@@ -8567,10 +8577,208 @@ function slc_calls_any(calls: util.NameIndex, marked: util.NameIndex): boolean {
   return false;
 }
 
+pub struct ViewPart { value: ast.Expr, to: typeinfo.Type }
+
+// A type that is not itself a view but may carry one: a view inside it, or a type variable that a view can instantiate.
+function holds_view_aggregate(t: typeinfo.Type, s: Scope): boolean {
+  if (is_arr_view(t) || is_str_view(t)) {
+    return false;
+  }
+  let (holds, _) = type_holds_view(t, s, []);
+  return holds || mentions_type_variable(t);
+}
+
+function mentions_type_variable(t: typeinfo.Type): boolean {
+  if (is_type_variable(t)) {
+    return true;
+  }
+  match (t) {
+    typeinfo.TypeArray(a) => {
+      return mentions_type_variable(a.elem);
+    },
+    typeinfo.TypeTuple(tt) => {
+      return any_mentions_type_variable(tt.elements);
+    },
+    typeinfo.TypeStruct(st) => {
+      return any_mentions_type_variable(st.args);
+    },
+    typeinfo.TypeUnion(u) => {
+      return any_mentions_type_variable(u.args);
+    },
+    _ => {}
+  }
+  return false;
+}
+
+function any_mentions_type_variable(ts: typeinfo.Type[]): boolean {
+  for t in ts {
+    if (mentions_type_variable(t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The fields, elements and payloads an aggregate literal of type `to` builds, each with its slot type.
+function view_parts(e: ast.Expr, to: typeinfo.Type, s: Scope): ViewPart[] {
+  let out: ViewPart[] = [];
+  match (e) {
+    ast.ExprStructLit(sl) => {
+      return struct_view_parts(sl, to, s);
+    },
+    ast.ExprTuple(tl) => {
+      return tuple_view_parts(tl, to);
+    },
+    ast.ExprArray(arr) => {
+      if let typeinfo.TypeArray(ta) = to {
+        for el in arr.elements {
+          out = out.append(ViewPart { value: el, to: ta.elem });
+        }
+      }
+    },
+    ast.ExprCall(c) => {
+      for k in 0..c.args.len() {
+        out = out.append(ViewPart { value: c.args[k], to: variant_pattern_payload_type(s, ctor_variant_name(c), to, k) });
+      }
+    },
+    _ => {}
+  }
+  return out;
+}
+
+function tuple_view_parts(tl: ast.ExprTuple, to: typeinfo.Type): ViewPart[] {
+  let out: ViewPart[] = [];
+  if let typeinfo.TypeTuple(tt) = to {
+    if (tl.elements.len() == tt.elements.len()) {
+      for i in 0..tl.elements.len() {
+        out = out.append(ViewPart { value: tl.elements[i], to: tt.elements[i] });
+      }
+    }
+  }
+  return out;
+}
+
+function struct_view_parts(sl: ast.ExprStructLit, to: typeinfo.Type, s: Scope): ViewPart[] {
+  let out: ViewPart[] = [];
+  let ssig: StructSig = s.lookup_struct(sl.type_name);
+  let args: typeinfo.Type[] = nominal_args(to);
+  for i in 0..sl.field_values.len() {
+    let fidx: i32 = field_index(ssig, sl.field_names[i]);
+    if (fidx >= 0) {
+      out = out.append(ViewPart { value: sl.field_values[i], to: lit_field_type(ssig, fidx, args, s) });
+    }
+  }
+  if (sl.has_base) {
+    out = out.append(ViewPart { value: sl.base, to: to });
+  }
+  return out;
+}
+
+// A slot typed by a type variable holds a view only through what the caller passed, never local storage.
+function param_roots_only(r: ViewRoots): ViewRoots {
+  return ViewRoots { local: false, params: r.params };
+}
+
+function held_roots(name: string, params: string[], held: string[]): ViewRoots {
+  if (name_in(name, params)) {
+    return ViewRoots { local: false, params: [name] };
+  }
+  return ViewRoots { local: name_in(name, held), params: [] };
+}
+
+function returns_view_or_holder(fd: parser.FuncDecl, s: Scope): boolean {
+  return parser.spelling_is_view(fd.ret_type) || holds_view_aggregate(s.ret_type, s);
+}
+
+function e065_summarised(fd: parser.FuncDecl, s: Scope): boolean {
+  return fd.ret_type == "string" || e065_checked(fd, s);
+}
+
+function e065_checked(fd: parser.FuncDecl, s: Scope): boolean {
+  return fd.ret_type == "str" || holds_view_aggregate(s.ret_type, s);
+}
+
+function is_view_ctor(e: ast.Expr, to: typeinfo.Type, s: Scope): boolean {
+  if let ast.ExprCall(c) = e {
+    return constructor_destination(c, to, s);
+  }
+  return false;
+}
+
+function bound_type(v: ast.StmtVar, s: Scope): typeinfo.Type {
+  if (v.type_name.len() > 0) {
+    return var_declared_type(v, s);
+  }
+  return check_expr(v.init, s);
+}
+
+function slc_escape_diags_if(local: boolean, fname: string, line: i32, col: i32): util.Diag[] {
+  if (local) {
+    return [slc_escape_diag(fname, line, col)];
+  }
+  return [];
+}
+
+function slc_held_after(v: ast.StmtVar, cur: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex): string[] {
+  let vty: typeinfo.Type = bound_type(v, cur);
+  if (holds_view_aggregate(vty, cur) && slc_agg_roots(v.init, vty, cur, params, localarr, tainted, held, sums, vix).local) {
+    return held.append(v.name);
+  }
+  return held;
+}
+
+function slc_escape_diag(fname: string, line: i32, col: i32): util.Diag {
+  return dg_at("E063", "returning a `[T]` slice that views function-local storage: the backing array is reclaimed when \"" + fname + "\" returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead", line, col);
+}
+
+// The roots of every `[T]` view a value of type `to` carries, directly or inside an aggregate.
+function slc_agg_roots(e: ast.Expr, to: typeinfo.Type, cur: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
+  if (is_arr_view(to)) {
+    return slc_expr_roots(e, cur, params, localarr, tainted, sums, vix);
+  }
+  if (is_type_variable(to)) {
+    return param_roots_only(slc_expr_roots(e, cur, params, localarr, tainted, sums, vix));
+  }
+  if (!holds_view_aggregate(to, cur)) {
+    return no_view_roots();
+  }
+  if let ast.ExprIdent(id) = e {
+    return held_roots(id.name, params, held);
+  }
+  if let ast.ExprCall(c) = e {
+    if (!is_view_ctor(e, to, cur)) {
+      return slc_agg_call_roots(c, cur, params, localarr, tainted, held, sums, vix);
+    }
+  }
+  let out: ViewRoots = no_view_roots();
+  for p in view_parts(e, to, cur) {
+    out = merge_view_roots(out, slc_agg_roots(p.value, p.to, cur, params, localarr, tainted, held, sums, vix));
+  }
+  return out;
+}
+
+function slc_agg_call_roots(c: ast.ExprCall, cur: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
+  let out: ViewRoots = no_view_roots();
+  let callee: ViewCallee = view_callee(c, cur);
+  let flags: boolean[] = view_sum_flags(sums, vix, callee.key);
+  for i in 0..flags.len() {
+    if (flags[i] && i < callee.args.len()) {
+      let at: typeinfo.Type = check_expr(callee.args[i], cur);
+      if (holds_view_aggregate(at, cur)) {
+        out = merge_view_roots(out, slc_agg_roots(callee.args[i], at, cur, params, localarr, tainted, held, sums, vix));
+      } else {
+        out = merge_view_roots(out, slc_src_roots(callee.args[i], cur, params, localarr, tainted, sums, vix));
+      }
+    }
+  }
+  return out;
+}
+
 function slice_escape_diags(fn: parser.FuncDecl, s: Scope, sums: ViewSum[], vix: ViewIndex): SlcWalk {
   let localarr: string[] = [];
   let tainted: string[] = [];
-  return slc_walk(fn.body, fn.name, s, view_positions(fn), localarr, tainted, sums, vix, parser.spelling_is_view(fn.ret_type));
+  let held: string[] = [];
+  return slc_walk(fn.body, fn.name, s, view_positions(fn), localarr, tainted, held, sums, vix, parser.spelling_is_view(fn.ret_type));
 }
 
 function mc_any_marked(structs: parser.StructDecl[], enums: parser.EnumDecl[]): boolean {
@@ -11670,7 +11878,7 @@ function tuple_literal_settles(e: ast.Expr, elements: typeinfo.Type[], s: Scope)
     }
     let i: i32 = 0;
     while (i < elements.len()) {
-      if (!settles_or_nested(tl.elements[i], elements[i], s)) {
+      if (!view_free_settle(tl.elements[i], elements[i], s) || !settles_or_nested(tl.elements[i], elements[i], s)) {
         return false;
       }
       i = i + 1;
@@ -11688,7 +11896,17 @@ function array_element_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): bool
       }
     }
   }
-  return settles_or_assignable(e, want, s);
+  return view_free_settle(e, want, s) && settles_or_assignable(e, want, s);
+}
+
+// Inside a destination, a view slot takes only a value that is already a view:
+// a literal settles into a view only at the top of a destination.
+function view_free_settle(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
+  if (!is_arr_view(want)) {
+    return true;
+  }
+  let t: typeinfo.Type = check_expr(e, s);
+  return is_unknown(t) || type_assignable(t, want, s.unions.unions);
 }
 
 function ctor_boxes_into(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
@@ -11779,7 +11997,7 @@ function ctor_payload_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boole
     if (c.args.len() != 1 || at >= wa.len()) {
       return false;
     }
-    return settles_to(c.args[0], wa[at], s);
+    return view_free_settle(c.args[0], wa[at], s) && settles_to(c.args[0], wa[at], s);
   }
   return false;
 }
@@ -11790,7 +12008,7 @@ function declared_payloads_settle(c: ast.ExprCall, want: typeinfo.Type, s: Scope
   let i: i32 = 0;
   while (i < c.args.len()) {
     let field: typeinfo.Type = generic_variant_payload_type(s, vname, whole, i);
-    if (is_unknown(field) || !settles_or_assignable(c.args[i], field, s)) {
+    if (is_unknown(field) || !view_free_settle(c.args[i], field, s) || !settles_or_assignable(c.args[i], field, s)) {
       return false;
     }
     i = i + 1;
@@ -11900,7 +12118,7 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
     let at: typeinfo.Type = check_expr(c.args[i], s);
     let pt: typeinfo.Type = variant_pattern_payload_type(s, qname, whole, i);
     out = util.append_diags(out, int_dest_range_diags(c.args[i], pt));
-    if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !coercible(at, pt, s)) {
+    if (!is_unknown(at) && !is_unknown(pt) && !(view_free_settle(c.args[i], pt, s) && settles_to(c.args[i], pt, s)) && !coercible(at, pt, s)) {
       out = out.append(dg_at("E036", "variant " + shown_variant(s, qname) + " payload " + util.i32_to_string(i) + " type " + type_label(at) + ", expected " + type_label(pt), expr_line(c.args[i]), expr_col(c.args[i])));
     }
     i = i + 1;
@@ -13686,13 +13904,12 @@ function array_mix_diags(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Dia
     if (type_contains_unknown(anchor)) {
       return out;
     }
-    if let typeinfo.TypeArray(_) = anchor {
-      return nested_array_mix(a, anchor, s, out);
-    }
     if (is_primitive_type(anchor) || is_func_type(anchor) || is_tuple_type(anchor)) {
       out = scalar_array_mix(a, anchor, s, out);
     } else if (concrete_instance(anchor)) {
       out = struct_instance_mix(a, anchor, s, out);
+    } else if (is_owned_array(anchor) || is_arr_view(anchor) || struct_name_of(anchor).len() > 0) {
+      out = element_mix(a, anchor, s, out);
     }
   }
 
@@ -13725,7 +13942,7 @@ function scalar_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out
   return out;
 }
 
-function nested_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
+function element_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
   let first: ast.Expr = a.elements[0];
   let k: i32 = 1;
   while (k < a.elements.len()) {
@@ -14301,12 +14518,6 @@ function checks_array_element(ty: typeinfo.Type): boolean {
     typeinfo.TypeUnion(_) => {
       return true;
     },
-    typeinfo.TypeStruct(_) => {
-      return true;
-    },
-    typeinfo.TypeArray(_) => {
-      return true;
-    },
     _ => {
       return is_dyn_slot(ty) || is_str_view(ty);
     }
@@ -14360,7 +14571,7 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
   if (!is_unknown(elem) && !is_primitive_type(elem)) {
     if let ast.ExprArray(a) = e {
       let out: util.Diag[] = [];
-      if (is_func_type(elem) || is_tuple_or_array(elem)) {
+      if (!checks_array_element(elem)) {
         out = array_mix_diags(a, s, out);
       }
       for element in a.elements {
@@ -20360,6 +20571,69 @@ function e065_call_roots(c: ast.ExprCall, params: string[], sbacked: string[], s
   return out;
 }
 
+function e065_escape_diag(fname: string, line: i32, col: i32): util.Diag {
+  return dg_at("E065", "returning a `str` view of a function-local string: the backing string is reclaimed when \"" + fname + "\" returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead", line, col);
+}
+
+// The roots of every `str` view an aggregate of type `to` carries.
+function e065_agg_roots(e: ast.Expr, to: typeinfo.Type, params: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
+  if (is_str_view(to)) {
+    return e065_return_roots(e, params, sbacked, sums, vix, s);
+  }
+  if (is_type_variable(to)) {
+    return param_roots_only(e065_return_roots(e, params, sbacked, sums, vix, s));
+  }
+  if (!holds_view_aggregate(to, s)) {
+    return no_view_roots();
+  }
+  if let ast.ExprIdent(id) = e {
+    return e065_return_roots(e, params, sbacked, sums, vix, s);
+  }
+  if let ast.ExprCall(c) = e {
+    if (!is_view_ctor(e, to, s)) {
+      return e065_agg_call_roots(c, params, sbacked, sums, vix, s);
+    }
+  }
+  let out: ViewRoots = no_view_roots();
+  for p in view_parts(e, to, s) {
+    out = merge_view_roots(out, e065_agg_roots(p.value, p.to, params, sbacked, sums, vix, s));
+  }
+  return out;
+}
+
+function e065_agg_call_roots(c: ast.ExprCall, params: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): ViewRoots {
+  let out: ViewRoots = no_view_roots();
+  let callee: ViewCallee = view_callee(c, s);
+  let flags: boolean[] = view_sum_flags(sums, vix, callee.key);
+  for i in 0..flags.len() {
+    if (flags[i] && i < callee.args.len()) {
+      let at: typeinfo.Type = check_expr(callee.args[i], s);
+      if (holds_view_aggregate(at, s)) {
+        out = merge_view_roots(out, e065_agg_roots(callee.args[i], at, params, sbacked, sums, vix, s));
+      } else {
+        out = merge_view_roots(out, e065_return_roots(callee.args[i], params, sbacked, sums, vix, s));
+      }
+    }
+  }
+  return out;
+}
+
+// A view-returning function already reports its escape through e065_return_roots.
+function e065_agg_diags(ret_is_view: boolean, roots: ViewRoots, fname: string, line: i32, col: i32): util.Diag[] {
+  if (!ret_is_view && roots.local) {
+    return [e065_escape_diag(fname, line, col)];
+  }
+  return [];
+}
+
+function e065_agg_taint(v: ast.StmtVar, params: string[], sbacked: string[], sums: ViewSum[], vix: ViewIndex, s: Scope): string[] {
+  let vty: typeinfo.Type = bound_type(v, s);
+  if (holds_view_aggregate(vty, s) && e065_agg_roots(v.init, vty, params, sbacked, sums, vix, s).local) {
+    return sbacked.append(v.name);
+  }
+  return sbacked;
+}
+
 function e065_view_source_name(e: ast.Expr): string {
   match (e) {
     ast.ExprSlice(sl) => {
@@ -20485,6 +20759,7 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
             _ => {}
           }
         }
+        sbacked = e065_agg_taint(v, params, sbacked, sums, vix, cur);
       },
       ast.StmtReturn(r) => {
         if (!ret_is_view) {
@@ -20497,8 +20772,11 @@ function e065_stmts(stmts: ast.Stmt[], fname: string, params: string[], str_ret_
         let roots: ViewRoots = e065_return_roots(r.value, params, sbacked, sums, vix, cur);
         viewed = merge_view_names(viewed, roots.params);
         if (ret_is_view && roots.local) {
-          out = out.append(dg_at("E065", "returning a `str` view of a function-local string: the backing string is reclaimed when \"" + fname + "\" returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead", r.line, r.col));
+          out = out.append(e065_escape_diag(fname, r.line, r.col));
         }
+        let aroots: ViewRoots = e065_agg_roots(r.value, cur.ret_type, params, sbacked, sums, vix, cur);
+        viewed = merge_view_names(viewed, aroots.params);
+        out = util.append_diags(out, e065_agg_diags(ret_is_view, aroots, fname, r.line, r.col));
       },
       ast.StmtIf(f) => {
         let wt: E065Walk = e065_stmts(f.then_body, fname, params, str_ret_names, sbacked, sums, vix, cur, ret_is_view);
@@ -22120,7 +22398,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
         function_diags = function_diags.append(dg_at("E052", "missing return: \"" + mod.funcs[i].name + "\" has return type " + type_label(inferred) + " but can fall off the end without returning a value", mod.funcs[i].line, mod.funcs[i].col));
       }
     }
-    if (parser.spelling_is_view(mod.funcs[i].ret_type)) {
+    if (returns_view_or_holder(mod.funcs[i], fsc)) {
       function_diags = util.append_diags(function_diags, slice_escape_diags(mod.funcs[i], fsc, slc_sums, slc_ix).diags);
     }
     if (mc_on) {
@@ -22263,10 +22541,11 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   let e065_fns: parser.FuncDecl[] = [];
   let e065_scopes: Scope[] = [];
   let e065_sums: ViewSum[] = [];
-  for sfn in mod.funcs {
-    if (sfn.ret_type == "str" || sfn.ret_type == "string") {
+  for sfi in 0..mod.funcs.len() {
+    let sfn: parser.FuncDecl = mod.funcs[sfi];
+    if (e065_summarised(sfn, slc_scopes[sfi])) {
       e065_fns = e065_fns.append(sfn);
-      e065_scopes = e065_scopes.append(build_func_scope(sfn, st, stt, ut, methods, imports, call_impls, mod.trait_reqs));
+      e065_scopes = e065_scopes.append(slc_scopes[sfi]);
       e065_sums = e065_sums.append(ViewSum { key: view_sum_key(sfn), flags: __alloc_bool(view_positions(sfn).len()), fresh: false });
     }
   }
@@ -22313,7 +22592,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     if (xfn.fip || xfn.fbip) {
       body_diags = util.append_diags(body_diags, e053_diags(xfn, util.append_all(fip_names, fip_builtin_callees(mod.funcs)), fbip_names, e053_variants, xsc));
     }
-    if (xfn.ret_type == "str") {
+    if (e065_checked(xfn, xsc)) {
       body_diags = util.append_diags(body_diags, e065_diags(xfn, str_ret_names, e065_sums, e065_ix, xsc).diags);
     }
   }

@@ -1,0 +1,20 @@
+// Elements of an array literal are checked against the first element,
+// with or without a destination.
+struct P { x: i32 }
+struct Q { y: i32 }
+
+function bare(): i32 {
+  let a = [P { x: 1 }, 5];
+  let b = [P { x: 1 }, Q { y: 2 }];
+  return a.len() + b.len();
+}
+
+function typed(): i32 {
+  let a: P[] = [P { x: 1 }, Q { y: 2 }];
+  let b: P[] = [Q { y: 2 }, P { x: 1 }];
+  return a.len() + b.len();
+}
+
+function main(): i32 {
+  return bare() + typed();
+}

@@ -1,0 +1,6 @@
+// A mixed literal is reported once for the mix and once against the destination.
+function main(): i32 {
+  let data: u8[] = [1u8, 2u8];
+  let all: u8[][] = [data[:1], data];
+  return all.len();
+}
