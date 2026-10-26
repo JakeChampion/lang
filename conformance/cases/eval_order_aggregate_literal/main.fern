@@ -35,10 +35,11 @@ function order_of(cost: i64, read_at: i64): string {
 @noinline function a_of(m: M): i64 { return m.a; }
 
 function main(): i32 {
+    let read_a: (M) => i64 = a_of;
     let b0: i64 = __heap_alloc_count();
     let m: M = M { a: __heap_alloc_count(), b: 0 as i64 };
     let a0: i64 = __heap_alloc_count();
-    print("struct: " + order_of(a0 - b0, a_of(m) - b0));
+    print("struct: " + order_of(a0 - b0, read_a(m) - b0));
 
     let b1: i64 = __heap_alloc_count();
     let v: i64[] = [__heap_alloc_count(), 0 as i64];
