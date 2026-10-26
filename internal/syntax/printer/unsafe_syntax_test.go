@@ -52,3 +52,24 @@ func TestUnsafeTraitSyntaxRoundTrip(t *testing.T) {
 		t.Fatalf("format lost trait syntax: %s\n%s", FirstShapeDiff(ASTShape(prog), ASTShape(back)), out)
 	}
 }
+
+func TestUnsafeSyntaxComments(t *testing.T) {
+	source := "// Caller obligation.\nunsafe\n// Keep this proof.\nfunction answer(): i32 { unsafe { // Scope proof.\nreturn 42; } }"
+	prog, err := parser.Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := Format(prog)
+	for _, comment := range []string{"// Caller obligation.", "// Keep this proof.", "// Scope proof."} {
+		if strings.Count(out, comment) != 1 {
+			t.Fatalf("lost or duplicated %s\n%s", comment, out)
+		}
+	}
+	back, err := parser.Parse(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if Format(back) != out {
+		t.Fatalf("comment round trip changed:\n%s\n%s", out, Format(back))
+	}
+}

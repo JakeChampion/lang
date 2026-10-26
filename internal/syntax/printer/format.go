@@ -896,7 +896,8 @@ func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 		return
 	}
 	f.b.WriteByte('{')
-	if blk.End.Line > 0 {
+	firstBlock, nested := blk.Stmts[0].(*ast.Block)
+	if blk.End.Line > 0 && (!nested || len(firstBlock.Stmts) == 0 || firstBlock.P.Line != blk.P.Line || firstBlock.End.Line <= blk.P.Line) {
 		f.emitTrailing(blk.P.Line)
 	}
 	f.b.WriteByte('\n')

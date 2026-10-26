@@ -14,7 +14,7 @@ import (
 
 func TestSelfHostUnsafeSyntax(t *testing.T) {
 	cli := e2eharness.SelfHostCLI(t)
-	sources := []string{"struct Item {} trait Read { unsafe function read(self: Self): i32; } impl Read for Item { unsafe function read(self: Self): i32 { unsafe { return 42; } } }", "function unsafe(): i32 { let unsafe: i32 = 42; return unsafe; }"}
+	sources := []string{"// Caller obligation.\nunsafe\n// Keep this proof.\nfunction answer(): i32 { unsafe { // Scope proof.\nreturn 42; } }", "struct Item {} trait Read { unsafe function read(self: Self): i32; } impl Read for Item { unsafe function read(self: Self): i32 { unsafe { return 42; } } }", "function unsafe(): i32 { let unsafe: i32 = 42; return unsafe; }"}
 	for _, prefix := range []string{"", "pub ", "pub(package) ", "fip ", "fbip(2) ", "async ", "@inline\n"} {
 		sources = append(sources, prefix+"unsafe function answer(): i32 { unsafe { return 42; } }")
 	}

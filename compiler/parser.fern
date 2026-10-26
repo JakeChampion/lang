@@ -7624,12 +7624,12 @@ function receiver_clause(p: Par): boolean {
 }
 
 function parse_func_decl(p: Par): (FuncDecl, Par) {
-  let fline: i32 = p.peek_line();
-  let fcol: i32 = p.peek_col();
   let decl_unsafe: boolean = unsafe_function_head(p);
   if (decl_unsafe) {
     p = p.advance();
   }
+  let fline: i32 = p.peek_line();
+  let fcol: i32 = p.peek_col();
   p = p.advance();
   let errs_before: i32 = p.type_errs.len();
   let empty_params: ast.ParamDecl[] = [];
