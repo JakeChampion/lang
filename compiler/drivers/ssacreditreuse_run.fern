@@ -422,7 +422,7 @@ function shallow_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, 
 }
 
 function target_checks(target: string): void {
-  let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction replace(own p: Parent, child: Leaf): Parent { return Parent { ...p, left: child }; }\nfunction main(): i32 { return 0; }\n";
+  let source = "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction replace(own p: Parent, child: Leaf): Parent { return Parent { ...p, left: child }; }\nfunction main(): i32 { return 0; }\n";
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
   let bodies: irtables.LowerResult[] = [];
   let drops: irtables.LowerResult[] = [];
@@ -522,7 +522,7 @@ function target_checks(target: string): void {
 }
 
 function right_checks(target: string): void {
-  let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction replace_right(own p: Parent, child: Leaf): Parent { return Parent { ...p, right: child }; }\nfunction main(): i32 { return 0; }\n";
+  let source = "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction replace_right(own p: Parent, child: Leaf): Parent { return Parent { ...p, right: child }; }\nfunction main(): i32 { return 0; }\n";
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
   let bodies: irtables.LowerResult[] = [];
   let drops: irtables.LowerResult[] = [];
@@ -554,13 +554,13 @@ function right_checks(target: string): void {
   }
 }
 
-struct RuntimeLeaf { n: i32 }
+struct RuntimeLeaf { n: i32, a: i32, b: i32, c: i32, d: i32 }
 
 struct RuntimeParent { left: RuntimeLeaf, right: RuntimeLeaf }
 
 @noinline
 function runtime_leaf(n: i32): RuntimeLeaf {
-  return RuntimeLeaf { n: n };
+  return RuntimeLeaf { n: n, a: 0, b: 0, c: 0, d: 0 };
 }
 
 @noinline
@@ -617,7 +617,7 @@ function named_body(rows: irtables.LowerResult[], name: string): ssa.SFunc {
 }
 
 function caller_controls(target: string): void {
-  let text = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction partial_left(own p: Parent, child: Leaf): Parent { return Parent { ...p, left: child }; }\n@noinline\nfunction partial_right(own p: Parent, child: Leaf): Parent { return Parent { ...p, right: child }; }\nfunction main(): i32 { return 0; }\n" + "\n@noinline\nfunction assertion(ok: boolean, id: i32): void { if (!ok) { exit(id); } }\n";
+  let text = "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction partial_left(own p: Parent, child: Leaf): Parent { return Parent { ...p, left: child }; }\n@noinline\nfunction partial_right(own p: Parent, child: Leaf): Parent { return Parent { ...p, right: child }; }\nfunction main(): i32 { return 0; }\n" + "\n@noinline\nfunction assertion(ok: boolean, id: i32): void { if (!ok) { exit(id); } }\n";
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(text)), target).sub;
   let d = named_body(sub.extra, "__sem_drop_Parent");
   let r = named_body(sub.extra, "__sem_release_Parent");
