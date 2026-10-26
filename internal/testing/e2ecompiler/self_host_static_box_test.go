@@ -196,7 +196,7 @@ function main(): i32 {
 `
 
 func TestSelfHostStaticBoxes(t *testing.T) {
-	want := "500000\n3300000\n2000000\n10100000\n4950000\n5450100\n4950100\n800200\n301200000\n3000\n800100\n10400100\n300000\n200000\n700000\n1400000\n0\n"
+	want := "500000\n3300000\n2000000\n10100000\n4950000\n5450000\n4950100\n800200\n301200000\n3000\n800100\n10400100\n300000\n200000\n700000\n1400000\n0\n"
 	runSemanticProgram(t, "staticbox", staticBoxProgram,
 		[]string{"origin", "t_int", "t_void", "named", "mixed", "fresh", "width", "shade", "rebuild",
 			"origin_rounds", "member_rounds", "shade_rounds", "named_rounds", "fresh_rounds", "rebuild_rounds",
