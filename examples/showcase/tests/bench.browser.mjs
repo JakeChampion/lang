@@ -1,5 +1,5 @@
-// Runs the JSON lab, the compression bench, and the post-quantum handshake
-// against the live server.
+// Runs the JSON lab, the compression bench, the post-quantum handshake, and
+// the image pipeline against the live server.
 import assert from "node:assert/strict";
 const { chromium } = await import(
   process.env.PLAYWRIGHT_MODULE || "playwright"
@@ -67,6 +67,48 @@ const tampered = await page.evaluate(async () => {
   return response.status;
 });
 assert.equal(tampered, 400);
+
+const piped = () =>
+  page.waitForFunction(
+    () => !document.querySelector("#run").disabled && /Done|did not|error|rejected|Choose/i.test(document.querySelector("#connection").textContent),
+    null,
+    { timeout: 120000 },
+  );
+await page.goto(base + "/image/");
+await page.waitForFunction(() => document.querySelector("#connection").textContent.includes("Ready"));
+for (const [source, target, filter, tone] of [["640x480", "320", "0", "0"], ["1280x960", "160", "1", "1"]]) {
+  await page.waitForTimeout(1600);
+  await page.locator("#source").selectOption(source);
+  await page.locator("#target").selectOption(target);
+  await page.locator("#filter").selectOption(filter);
+  await page.locator("#tone").selectOption(tone);
+  await page.locator("#run").click();
+  await piped();
+  assert.equal(await page.locator("#connection").textContent(), "Done");
+  assert.equal(await page.locator("#verdict").getAttribute("data-match"), "true");
+  assert.equal(await page.locator("#results tr").count(), 5);
+  assert.equal(await page.locator("#output").evaluate((img) => img.decode().then(() => img.naturalWidth)), Number(target));
+}
+console.log("image pipeline: Fern Wasm and native Fern write identical PNG files OK");
+
+const png = Buffer.from(
+  await page.evaluate(async () => Array.from(new Uint8Array(await (await fetch(document.querySelector("#output").src)).arrayBuffer()))),
+);
+const sent = [];
+page.on("request", (request) => {
+  if (request.url().includes("/image/")) sent.push(request.url());
+});
+await page.locator("#source").selectOption("file");
+await page.locator("#file").setInputFiles({ name: "own.png", mimeType: "image/png", buffer: png });
+await page.locator("#target").selectOption("640");
+await page.locator("#run").click();
+await piped();
+assert.equal(await page.locator("#connection").textContent(), "Done");
+assert.equal(await page.locator("#verdict").getAttribute("data-match"), "local");
+assert.match(await page.locator("#summary").textContent(), /^160 × 120 to 160 × 120/);
+assert.deepEqual(sent, []);
+console.log("image pipeline: an own image stays in the browser OK");
+
 assert.deepEqual(errors, []);
 await browser.close();
-console.log("labs: JSON, compression, and handshake OK");
+console.log("labs: JSON, compression, handshake, and image pipeline OK");

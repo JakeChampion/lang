@@ -88,6 +88,61 @@ const draw = {
     c.fillStyle = frond;
     c.fillText("→ your browser decodes it", 380, 220);
   },
+  image(c) {
+    const picture = (x, y, w, h, gray) => {
+      const g = c.createLinearGradient(x, y, x + w, y + h);
+      g.addColorStop(0, gray ? "#3b3b3b" : "#20403a");
+      g.addColorStop(1, gray ? "#8a8a8a" : "#5a8f74");
+      c.fillStyle = g;
+      c.fillRect(x, y, w, h);
+      [[0.3, 0.4, 0.18, spore], [0.68, 0.62, 0.22, mint], [0.5, 0.25, 0.1, "#d0876a"]].forEach(
+        ([fx, fy, r, color]) => {
+          c.fillStyle = gray ? ["#b0b0b0", "#cfcfcf", "#909090"][Math.round(fx * 3) % 3] : color;
+          c.beginPath();
+          c.arc(x + fx * w, y + fy * h, r * h, 0, Math.PI * 2);
+          c.fill();
+        },
+      );
+    };
+    picture(34, 50, 200, 150, false);
+    picture(470, 87, 100, 75, true);
+    c.strokeStyle = spore;
+    c.beginPath();
+    c.moveTo(260, 125);
+    c.lineTo(450, 125);
+    c.stroke();
+    c.fillStyle = spore;
+    c.textAlign = "center";
+    c.fillText("Fern Wasm", 355, 113);
+    c.fillStyle = muted;
+    c.fillText("your image", 134, 226);
+    c.fillText("PNG", 520, 188);
+    c.textAlign = "left";
+  },
+  torrent(c) {
+    const nodes = [[110, 140, "you"], [330, 60, "peer"], [550, 140, "peer"], [330, 220, "peer"]];
+    c.strokeStyle = spore;
+    for (const [a, b] of [[0, 1], [0, 2], [0, 3], [1, 2], [2, 3]]) {
+      c.beginPath();
+      c.moveTo(nodes[a][0], nodes[a][1]);
+      c.lineTo(nodes[b][0], nodes[b][1]);
+      c.stroke();
+    }
+    c.textAlign = "center";
+    for (const [x, y, label] of nodes) {
+      c.fillStyle = "#15211b";
+      c.beginPath();
+      c.arc(x, y, 26, 0, Math.PI * 2);
+      c.fill();
+      c.strokeStyle = "#384a3f";
+      c.stroke();
+      c.fillStyle = label === "you" ? frond : muted;
+      c.fillText(label, x, y + 5);
+    }
+    c.fillStyle = muted;
+    c.fillText("tracker introduces · bytes go peer to peer", 330, 268);
+    c.textAlign = "left";
+  },
   handshake(c) {
     const box = (x, label, sub) => {
       c.fillStyle = "#15211b";

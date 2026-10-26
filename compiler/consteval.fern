@@ -431,7 +431,7 @@ function literal_number(n: ast.ExprNumber): Value {
   }
   if (n.is_float) {
     // The oracle retains f64 precision while it evaluates constant expressions.
-    return floating(f64_from_bits(util.parse_f64_bits(n.text)));
+    return floating(f64_from_bits(n.bits));
   }
   // Literal truncation occurs at operators, matching the Go constant folder.
   return number(util.lit_to_i64(n.text), "");

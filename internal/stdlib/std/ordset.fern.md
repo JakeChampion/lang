@@ -115,8 +115,8 @@ pub function (s: OrdSet[T]) index_of[T: cmp.Ord](x: T): Option[i32] {
   return s.root.index_of(x);
 }
 
-pub function (s: OrdSet[T]) iter(): iter.ArrayIter[T] {
-  return iter.of(s.to_array());
+pub function (s: OrdSet[T]) iter(): iter.Mapped[ordmap.OrdIter[T, i32], (T, i32), T] {
+  return s.root.iter().map((e: (T, i32)): T => e.0);
 }
 
 pub function (s: OrdSet[T]) to_array(): T[] {

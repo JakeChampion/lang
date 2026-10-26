@@ -84,6 +84,7 @@ pub function move(subscription: Subscription, room: string): void {
 A publication signals every subscriber in the room, with an optional sender to exclude.
 A producer drains the notification queue before it reads the latest shared state.
 Task cancellation and a close notification end the wait. The producer needs no timer poll.
+`wait_for` takes an optional limit. `None` waits until a notification arrives.
 
 ```fern
 <<Publish and wait>>=

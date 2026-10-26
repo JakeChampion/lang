@@ -870,6 +870,30 @@ func New() *Interp {
 		}
 		return Number(count), nil
 	}}
+	i.Builtins["__count_below_u64"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("__count_below_u64: expected 2 args, got %d", len(args))
+		}
+		words, ok := args[0].(Array)
+		if !ok {
+			return nil, fmt.Errorf("__count_below_u64: expected an array, got %T", args[0])
+		}
+		w, ok := args[1].(Number)
+		if !ok {
+			return nil, fmt.Errorf("__count_below_u64: expected an integer word, got %T", args[1])
+		}
+		count := 0
+		for at, e := range words.Elems() {
+			x, ok := e.(Number)
+			if !ok {
+				return nil, fmt.Errorf("__count_below_u64: element %d is %T, not u64", at, e)
+			}
+			if uint64(int64(x)) < uint64(int64(w)) {
+				count++
+			}
+		}
+		return Number(count), nil
+	}}
 	i.Builtins["__memchr_bytes"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
 		if len(args) != 3 {
 			return nil, fmt.Errorf("__memchr_bytes: expected 3 args, got %d", len(args))
