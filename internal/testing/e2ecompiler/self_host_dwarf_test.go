@@ -532,16 +532,16 @@ func TestSelfHostDWARFLocalVars(t *testing.T) {
 	}
 }
 
-const dwarfStructsSrc = `struct Point { x: i32, y: i32 }
+const dwarfStructsSrc = `struct Point { x: i32, y: i32, a: i32, b: i32, c: i32 }
 struct Person { name: string, age: i32, score: i32 }
 struct Rect { origin: Point, w: i32, h: i32 }
 @noinline function point_sum(p: Point): i32 { return p.x + p.y; }
 @noinline function describe(p: Person): i32 { return p.age + p.score; }
 @noinline function area(r: Rect): i32 { return r.w * r.h; }
 function main(): i32 {
-    let pt: Point = Point { x: 7, y: 35 };
+    let pt: Point = Point { x: 7, y: 35, a: 0, b: 0, c: 0 };
     let p: Person = Person { name: "Ada", age: 36, score: 99 };
-    let r: Rect = Rect { origin: Point { x: 3, y: 4 }, w: 5, h: 6 };
+    let r: Rect = Rect { origin: Point { x: 3, y: 4, a: 0, b: 0, c: 0 }, w: 5, h: 6 };
     return point_sum(pt) + describe(p) + area(r) + r.origin.x;
 }
 `
@@ -619,7 +619,7 @@ func TestSelfHostDWARFStructVars(t *testing.T) {
 	if err := os.WriteFile(src, []byte(dwarfStructsSrc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	point := [][3]string{{"x", "8", "i32"}, {"y", "16", "i32"}}
+	point := [][3]string{{"x", "8", "i32"}, {"y", "16", "i32"}, {"a", "24", "i32"}, {"b", "32", "i32"}, {"c", "40", "i32"}}
 	bins := map[string]string{}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
@@ -629,13 +629,13 @@ func TestSelfHostDWARFStructVars(t *testing.T) {
 				t.Fatalf("-g build: %v\n%s", err, o)
 			}
 			bins[target] = out
-			checkDwarfStruct(t, dwarfVarStruct(t, out, "main", "pt"), "Point", 24, point)
+			checkDwarfStruct(t, dwarfVarStruct(t, out, "main", "pt"), "Point", 48, point)
 			checkDwarfStruct(t, dwarfVarStruct(t, out, "describe", "p"), "Person", 32, [][3]string{{"age", "16", "i32"}, {"score", "24", "i32"}})
 			rect := dwarfVarStruct(t, out, "area", "r")
 			checkDwarfStruct(t, rect, "Rect", 32, [][3]string{{"origin", "8", "*struct Point"}, {"w", "16", "i32"}, {"h", "24", "i32"}})
 			if p, ok := rect.Field[0].Type.(*dwarf.PtrType); ok {
 				if st, ok := p.Type.(*dwarf.StructType); ok {
-					checkDwarfStruct(t, st, "Point", 24, point)
+					checkDwarfStruct(t, st, "Point", 48, point)
 				}
 			}
 		})
@@ -649,7 +649,7 @@ func TestSelfHostDWARFStructVars(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gdb: %v\n%s", err, o)
 	}
-	for _, want := range []string{"w = 5, h = 6}", "= {x = 3, y = 4}"} {
+	for _, want := range []string{"w = 5, h = 6}", "= {x = 3, y = 4, a = 0, b = 0, c = 0}"} {
 		if !strings.Contains(string(o), want) {
 			t.Errorf("gdb did not read %q\n%s", want, o)
 		}
