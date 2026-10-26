@@ -81,8 +81,16 @@ function main():i32 {let before=__heap_alloc_count();let i=0;while(i<1000){let q
 const scalarRecordEscapes = `import "std/i64";
 struct Quad { a:i64,b:i64,c:i64,d:i64 }
 @noinline function record(i:i32):Quad {return Quad {a:i as i64,b:2i64,c:3i64,d:4i64};}
-@noinline function consume(q:Quad):i64 {return q.a+q.b+q.c+q.d;}
-function main():i32 {let before=__heap_alloc_count();let i=0;while(i<1000){if(consume(record(i))!=(i as i64)+9i64){return 17;}i=i+1;}let count=__heap_alloc_count()-before;print(count.to_string());return 0;}
+@noinline function consume(own q:Quad,own held:Quad[]):Quad[] {return held.with(0,q);}
+function main():i32 {
+ let held:Quad[]=[record(0)];let before=__heap_alloc_count();let i=0;
+ while(i<1000){
+  held=consume(record(i),held);let q=held[0];
+  if(q.a!=(i as i64)||q.b!=2i64||q.c!=3i64||q.d!=4i64||q.a+q.b+q.c+q.d!=(i as i64)+9i64){return 17;}
+  i=i+1;
+ }
+ let count=__heap_alloc_count()-before;print(count.to_string());return 0;
+}
 `
 
 const scalarRecordSmallPhis = `import "std/i64";
