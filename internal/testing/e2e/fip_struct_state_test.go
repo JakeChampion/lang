@@ -36,8 +36,6 @@ fip function step(own s: State, t: i32): State {
 
 function main(): i32 {
 	let payload: u8[] = args()[0].bytes();
-	let length = payload.len();
-	let marker = payload[0];
 	// The observable is not stuck at zero: a fresh box moves it. This runs
 	// first because a dead State later on would donate its box to the probe.
 	let before: i64 = __heap_alloc_count();
@@ -57,7 +55,11 @@ function main(): i32 {
 	if (s.count != 10000) { return 91; }
 	if (s.total != (20000 as i64)) { return 92; }
 	if (s.tag != 9999) { return 93; }
-	if (s.payload.len() != length || s.payload[0] != marker) { return 96; }
+	let expected = args()[0].bytes();
+	if (s.payload.len() != expected.len()) { return 96; }
+	for i in 0..expected.len() {
+		if (s.payload[i] != expected[i]) { return 96; }
+	}
 
 	return 42;
 }
