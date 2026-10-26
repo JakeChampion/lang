@@ -5448,19 +5448,6 @@ pub function build_io_error_func(sv: string[]): string {
   return o;
 }
 
-pub function mulhi_u64_func(): string {
-  let o: string = "  (func $__fern_mulhi_u64 (param $a i64) (param $b i64) (result i64)\n";
-  o = o + "    (local $al i64) (local $ah i64) (local $bl i64) (local $bh i64) (local $mid i64)\n";
-  o = o + "    (local.set $al (i64.and (local.get $a) (i64.const 4294967295)))\n";
-  o = o + "    (local.set $ah (i64.shr_u (local.get $a) (i64.const 32)))\n";
-  o = o + "    (local.set $bl (i64.and (local.get $b) (i64.const 4294967295)))\n";
-  o = o + "    (local.set $bh (i64.shr_u (local.get $b) (i64.const 32)))\n";
-  o = o + "    (local.set $mid (i64.add (i64.mul (local.get $ah) (local.get $bl)) (i64.shr_u (i64.mul (local.get $al) (local.get $bl)) (i64.const 32))))\n";
-  o = o + "    (i64.add (i64.add (i64.mul (local.get $ah) (local.get $bh)) (i64.shr_u (local.get $mid) (i64.const 32)))\n";
-  o = o + "      (i64.shr_u (i64.add (i64.and (local.get $mid) (i64.const 4294967295)) (i64.mul (local.get $al) (local.get $bh))) (i64.const 32))))\n";
-  return o;
-}
-
 pub function random_get_import(): string {
   return "  (import \"wasi_snapshot_preview1\" \"random_get\" (func $__fern_random_get (param i32 i32) (result i32)))\n";
 }
@@ -9538,6 +9525,9 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (s
   if (need(needs, "@uses_rmemchr_bytes")) {
     src = src + wasm_runtime.byte_find_source(true);
   }
+  if (need(needs, "@uses_mulhi_u")) {
+    src = src + wasm_runtime.mulhi_source();
+  }
   if (src.len() == 0) {
     return units;
   }
@@ -9889,9 +9879,6 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "@uses_i64_udivrem")) {
     parts = parts.append(udivrem_helpers("i64", "64"));
-  }
-  if (need(needs, "@uses_mulhi_u")) {
-    parts = parts.append(mulhi_u64_func());
   }
   if (need(needs, "@uses_strings")) {
     parts = parts.append(strcat_helper());

@@ -412,6 +412,11 @@ Both helpers use one source template with direction-specific bounds.
 The shared byte-search fixtures execute in whole-program and split-module builds.
 They cover all byte values, extreme start offsets, aliases and allocation counts.
 
+`mulhi_source` computes the high 64 bits of the product of two `u64` values.
+Its test checks 272 products against `math/bits.Mul64` in each module mode.
+The cases include zero, all ones, each individual bit, complements and mixed bits.
+The test also checks the emitted `i64` parameter and result types.
+
 The WebAssembly function emitter also replaces an `if` whose sole effect is
 a branch with `br_if`. It adjusts the branch depth after it removes the
 `if` label. A branch to that removed label only consumes the condition.

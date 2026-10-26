@@ -3,6 +3,8 @@ package e2ecompiler
 import (
 	"bytes"
 	"errors"
+	"fmt"
+	"math/bits"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,6 +117,11 @@ function main(): i32 {
 		{
 			name: "fern_runtime_rmemchr_bytes",
 			src:  e2eharness.RmemchrBytesSource(true),
+			want: 0,
+		},
+		{
+			name: "fern_runtime_mulhi",
+			src:  wasmRuntimeMulhiProgram(),
 			want: 0,
 		},
 		{
@@ -235,6 +242,14 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 			}
 		}
 
+		if strings.HasPrefix(tag, "fern_runtime_mulhi") {
+			if strings.Count(string(wat), "(func $__fern_mulhi_u64 ") != 1 || !strings.Contains(string(wat), "(func $__fern_mulhi_u64 (param i64) (param i64) (result i64)") {
+				t.Fatal("high multiplication does not use one ordinary Fern function with the i64 ABI")
+			}
+		} else if strings.Contains(string(wat), "(func $__fern_mulhi_u64 ") {
+			t.Fatal("an unrelated module contains the high multiplication runtime helper")
+		}
+
 		watPath := filepath.Join(dir, tag+".wat")
 		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
 			t.Fatalf("write wat: %v", err)
@@ -276,4 +291,22 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 			t.Error("split WAT declares no $__str_base$u1 — the probe emitted a single unit, so the multi-unit path was never exercised")
 		}
 	})
+}
+
+func wasmRuntimeMulhiProgram() string {
+	values := []uint64{0, 1, ^uint64(0), 1 << 63, 1 << 32, (1 << 32) - 1, 0xaaaaaaaaaaaaaaaa, 0x5555555555555555}
+	for bit := range 64 {
+		values = append(values, uint64(1)<<bit, ^(uint64(1) << bit))
+	}
+	var src strings.Builder
+	src.WriteString("@noinline function high(a: u64, b: u64): u64 { return __mulhi_u64(a, b); }\nfunction main(): i32 {\n")
+	for i, a := range values {
+		b := values[len(values)-1-i]
+		hi, _ := bits.Mul64(a, b)
+		fmt.Fprintf(&src, "if (high(%du64, %du64) != %du64) { return 1; }\n", a, b, hi)
+		hi, _ = bits.Mul64(a, 0xa2f9836e4e441529)
+		fmt.Fprintf(&src, "if (high(%du64, 11743562013128004905u64) != %du64) { return 2; }\n", a, hi)
+	}
+	src.WriteString("return 0;\n}\n")
+	return src.String()
 }
