@@ -1,0 +1,23 @@
+// spec: ML-03
+// A struct whose `[T]` field views function-local storage cannot be
+// returned: the array is reclaimed when the function returns.
+
+struct Window { xs: [i32] }
+
+function of_local(): Window {
+    let a: i32[] = [1, 2, 3];
+    return Window { xs: a[0:2] };
+}
+
+function of_literal(): Window {
+    return Window { xs: [1, 2, 3][0:2] };
+}
+
+function of_param(a: i32[]): Window {
+    return Window { xs: a[0:2] };
+}
+
+function main(): i32 {
+    let a: i32[] = [1, 2, 3];
+    return of_param(a).xs.len();
+}

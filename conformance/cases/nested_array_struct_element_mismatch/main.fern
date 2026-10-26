@@ -1,0 +1,11 @@
+// A struct element of the wrong type is reported against the return type only.
+struct S { x: i32 }
+struct T { x: i64 }
+
+function f(v: S): T[] {
+  return [v];
+}
+
+function main(): i32 {
+  return 0;
+}

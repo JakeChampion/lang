@@ -1,0 +1,6 @@
+// An owned array and a view cannot share one array literal.
+function main(): i32 {
+  let data: u8[] = [1u8, 2u8];
+  let all = [data, data[:1]];
+  return all.len();
+}
