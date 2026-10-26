@@ -89,3 +89,12 @@ Both unchanged compiler and stdlib complexity gates pass without skips.
 
 These finite checks establish the stated profile behavior only.
 They do not qualify a complete JPEG decode or broad interoperability.
+
+All 205 image TAP cases pass on native sanitizer, Wasm leak census, and standalone ARM64/QEMU10.
+The complete native and Wasm scripts finish with 68 and 44 balanced heap censuses respectively.
+The portable ARM run finishes 29 executables with balanced heaps.
+Every census reports zero final live bytes.
+The native script also passes the unchanged compiler rejection and formatter probes.
+
+All 2,012 Fern format checks, Go build/vet, workflow lint, test selectors, CI self-tests, and runtime-bundle freshness checks pass.
+These local observations remain separate from GitHub CI status.
