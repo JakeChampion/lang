@@ -91,7 +91,7 @@ env:
   # under about three minutes belongs in the shards with a weight row, not
   # here: the whole-compiler proofs (fixpoints, stage 2, the semantic and wasm
   # self-builds) measure 50 to 165 seconds each and ride the shards.
-  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm"
+  OWN_JOB_TESTS: "TestSelfHostStdTestE2E|TestSelfHostStdTestE2ETLS|TestSelfHostStdTestE2EArm64|TestSelfHostStdTestE2EArm64TLS|TestSelfHostCryptoSuitesWasm|TestSelfHostCheckAgreesWithGoOnStdlibTests"
   # QUARANTINED: tests excluded from shard selection (they still run locally)
   # while their root cause is fixed. EXACT names only, each with its issue in
   # the comment, and re-run the list when that issue closes: a quarantine with
@@ -307,6 +307,38 @@ jobs:
           cd internal/testing/e2ecompiler
           gotestsum --format standard-verbose --raw-command -- \
             go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostCryptoSuitesWasm$' -test.v -test.timeout 33m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+
+  # The checker corpus has parallel subtests. A shard worker limits it to one
+  # CPU, which exceeded 28 minutes on ARM64 in run 40325134038.
+  checker-stdlib:
+    needs: [driver-sizes]
+    name: checker-stdlib-${{ matrix.host }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 35
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { host: x86_64, runner: ubuntu-24.04 }
+          - { host: aarch64, runner: ubuntu-24.04-arm }
+    env:
+      GOMAXPROCS: "4"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+      - uses: ./.github/actions/build-e2e-binaries
+      - name: compare every stdlib test with the Go checker
+        run: |
+          set -euo pipefail
+          chmod +x e2ecompiler.test
+          BIN="$PWD/e2ecompiler.test"
+          cd internal/testing/e2ecompiler
+          gotestsum --format standard-verbose --raw-command -- \
+            go tool test2json -t -p e2ecompiler "$BIN" -test.run '^TestSelfHostCheckAgreesWithGoOnStdlibTests$' -test.parallel 4 -test.v -test.timeout 28m
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
