@@ -416,6 +416,12 @@ drops an empty block that holds only a branch, and each edge into it goes
 past it. A phi loses its slot for a dropped predecessor. A branch whose false
 target is the next block falls through into it.
 
+When an x86-64 add, sub, and, or or xor result shares the slot of its first
+operand, the emitter writes the slot in place (`ssa_bin_in_slot`). An example
+is `subq $1, -144(%rbp)`, in place of a load, the operation and a store. A
+32-bit form does not do this, because a write of four bytes keeps the upper
+half of the slot.
+
 `ssa.thread_forwarding` keeps a block whose target has phis, because later
 passes put code on that edge. The emitter skips such a block when it is
 still empty. A branch or a jump into it goes to the end of the chain

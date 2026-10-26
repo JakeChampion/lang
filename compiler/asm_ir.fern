@@ -5927,6 +5927,9 @@ function ssa_bin_sized(ins: ssa.SInst, v: i32, size: i32, reg_of: i32[], fr: Ssa
     a = b;
     b = t;
   }
+  if (size == 64 && ssa_alu_ext(tag) >= 0 && reg_of[a] <= 0 - 2 && reg_of[v] == reg_of[a]) {
+    return ssa_bin_in_slot(ssa_alu_ext(tag), b, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save), reg_of, fr, s);
+  }
   let sfx: string = if (size == 32) { "l " } else { "q " };
   if (tag == 23 && fr.imm.is_imm[b] && reg_of[a] >= 0) {
     s = s.write("    imul" + sfx + "$" + util.i64_to_string(fr.imm.value[b]) + ", " + ssa_wreg(size, ssa_reg(reg_of[a])) + ", " + ssa_wreg(size, dh) + "\n");
@@ -5952,6 +5955,16 @@ function ssa_bin_sized(ins: ssa.SInst, v: i32, size: i32, reg_of: i32[], fr: Ssa
     s = s.write(ir_bin_asm(tag, ins.imm, dh, ssa_rhs(fr, reg_of, b, s)));
   }
   return ssa_store(reg_of, v, dh, s);
+}
+
+// The result takes its operand's spill slot, so the operation writes the slot in place.
+function ssa_bin_in_slot(ext: i32, b: i32, disp: i32, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
+  if (fr.imm.is_imm[b] && ssa.imm_sym(fr.imm, b) == "") {
+    return ssa_alu_im(s, ext, 64, fr.imm.value[b] as i32, "%rbp", disp);
+  }
+  let r: string = ssa_src(reg_of, b, "%rcx");
+  s = ssa_load(reg_of, b, r, s);
+  return ssa_alu_rm(s, ext, 64, false, r, "%rbp", disp);
 }
 
 function ssa_rhs32(r: string): string {
