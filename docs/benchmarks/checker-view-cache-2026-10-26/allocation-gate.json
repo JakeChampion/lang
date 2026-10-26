@@ -1,0 +1,35 @@
+{
+  "before": {
+    "source_commit": "3d523fa00d6cb4342a6d6a9ac03a7c0882d3a501",
+    "allocations": 40849794,
+    "frees": 40849794,
+    "benchmark_exit": 0,
+    "gate_exit": 1,
+    "compiler_sha256": "9bb8d91e068b6aa5906a6686b1fe77d1ef0a203ce50346ebe4573e80a69465bb"
+  },
+  "after": {
+    "source_commit": "33d61509df79cbc1ac9d617a6f22652863bcc886",
+    "compiler_version": "33d61509df79",
+    "compiler_sha256": "8a04d1dca6541bff69fb2811361ddd18e423d07e04957f970f7e2220d865be68",
+    "allocations": 34696726,
+    "frees": 34696726,
+    "benchmark_exit": 0,
+    "gate_exit": 0
+  },
+  "baseline": {
+    "allocations": 31624467,
+    "frees": 31624467,
+    "sha256": "751910d03b1f309df9dc30ab8046f5eff587b97b4a9f691032e05973ada94226"
+  },
+  "commands": [
+    "scripts/selfhost-alloc-bench REPORT",
+    "FERN_CI_PERF_GATE_MAX_DRIFT=10 scripts/ci-check-perf .github/alloc-baseline.txt REPORT"
+  ],
+  "source_sha256": {
+    "scripts/selfhost-alloc-bench": "08c045ef27ee05b13d36986d88d16ac875074ba577d0075821f18f8f341f69a1",
+    "scripts/ci-check-perf": "fa5fce8c5cbe004f996c3cfd879b8115197d0e7c47489fff49c4fb9d9bd094ff",
+    "compiler/checker.fern": "1db60259eb9f131160cabab1eeaf62823c88e4000b5413b78ba35d28c6abee98"
+  },
+  "advisory": "The 1% advisory tolerance still warns. The unchanged 10% ceiling passes after the fix.",
+  "limitations": "The main workload grows between snapshots. Use fixed-input.json for the controlled comparison. No delegated cgroup or peak RSS observation."
+}

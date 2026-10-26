@@ -2307,6 +2307,23 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		{"view-memo-recursive-local", `struct A { bs: B[], xs: [i32] }
+struct B { items: A[] }
+function bad(): B { let xs: i32[] = [1, 2]; let a: A = A { bs: [], xs: xs[:] }; let b: B = B { items: [a] }; return b; }
+function main(): i32 { return 0; }`},
+		{"view-memo-recursive-parameter", `struct A { bs: B[], xs: [i32] }
+struct B { items: A[] }
+function safe(xs: [i32]): B { let a: A = A { bs: [], xs: xs }; let b: B = B { items: [a] }; return b; }
+function main(): i32 { return 0; }`},
+		{"view-memo-generic-instantiations", `struct Holder[T] { value: T }
+function owned(): Holder[i32[]] { return Holder { value: [1, 2] }; }
+function borrowed(xs: [i32]): Holder[[i32]] { return Holder { value: xs }; }
+function bad(): Holder[[i32]] { let xs: i32[] = [1, 2]; let h = borrowed(xs[:]); return h; }
+function main(): i32 { return 0; }`},
+		{"view-memo-owned-recursive", `struct A { bs: B[], xs: i32[] }
+struct B { items: A[] }
+function safe(): B { let a: A = A { bs: [], xs: [1, 2] }; let b: B = B { items: [a] }; return b; }
+function main(): i32 { return 0; }`},
 		{"local-array-view-literal", `function first(b: [u8]): u8 { return b[0]; }
 function main(): i32 { let buf: [u8] = [3 as u8, 250 as u8, 7 as u8]; return first(buf) as i32; }`},
 		{"local-array-view-owner", `function main(): i32 { let xs: u8[] = [3, 250, 7]; let view: [u8] = xs; return view.len(); }`},
