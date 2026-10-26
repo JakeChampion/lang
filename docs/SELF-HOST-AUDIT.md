@@ -160,7 +160,7 @@ These each touch many files; fixing the root removes dozens of individual
 findings. Ranked by leverage.
 
 ### T1 — Shared utility module
-- [~] **SH-020 — `compiler/util.fern`** exists, holds **31
+- [x] **SH-020 — `compiler/util.fern`** exists, holds **31
   definitions**, and is imported by **61 of the 91 modules**. The `i32_to_string`
   strand is finished: one canonical copy at `util.fern:21`.
   Current duplication census across the tree: **5,126 function definitions**
@@ -185,8 +185,12 @@ findings. Ranked by leverage.
     hand-synced **on purpose** and pinned by `TestSelfHostParseF64MirrorsAgree`.
     **Not a dedupe target.**
 
-  Genuinely liftable leftovers: `split_commas` (`irlower`, `printer`). The
-  `block_index` / `pred_slot` strand is closed by SH-025 (`pub` on `ssa.fern`'s
+  The last candidate was `split_commas` (`irlower`, `printer`).
+  The 2026-10 tree no longer contains `irlower.fern`.
+  Only `printer` and `ferndoc` define `split_commas` now.
+  The ownership distinction below excludes that pair from this work.
+  This closes the shared-utility item.
+  The `block_index` / `pred_slot` strand is closed by SH-025 (`pub` on `ssa.fern`'s
   pair, the three backend copies deleted). The `join_path` strand is closed by SH-055
   (`util.module_path_join`; `mvs.join_path` is a different function that stays).
 
@@ -310,15 +314,12 @@ findings. Ranked by leverage.
     collectors (`str_values`, `const_agg_values`, `field_reclaim_types`,
     `struct_drop_types`, `fn_value_table`, `indirect_fn_sigs`) keep their loops:
     they accumulate rather than short-circuit, so a boolean spine does not fit.
-  - **`parser.fern` — 12** rewrite passes (`expr_mentions`, `mono_infer`,
-    `mono_expr`, `mono_call_expected`, `mono_stmt`, `mono_stmts`, `ms_expr`,
-    `ms_stmt`, `ms_stmts`, `ms_func`, `rw_call_expr`, `rw_call_stmts`) — all
-    genuine hand-enumerated walks, and **none of them can use `astwalk`**.
-    `astwalk` imports `parser`, so parser importing `astwalk` is a cycle; the
-    fix this row prescribes does not compile there. Converting them needs the
-    AST types lifted into a base module both can import, or a second traversal
-    spine living inside `parser.fern` — a decision, not a mechanical change.
-    (Same shape as SH-025's proposed `ssabackend.fern`, which also cycles.)
+  - **`parser.fern`** already imports `astwalk` in the 2026-10 tree.
+    `astwalk` imports `ast` and `util`, so this dependency has no parser cycle.
+    Parser passes already use `fold_stmt_nodes`, `map_stmt_acc`, and related helpers.
+    The old twelve-pass census and cycle blocker are obsolete.
+    The remaining `mono_*` and `ms_*` passes carry type, scope, and instantiation state.
+    Separate their semantic decisions from mechanical child traversal before further conversions.
   - **`checker.fern`** — the row said 15; the real surface, measured, is:
 
     | | count | lines |
@@ -818,6 +819,20 @@ findings. Ranked by leverage.
   Still not worth converting: `escape_fstring_lit` and `indent_str`, the two the
   row nominates. They match the mechanical shape but bound their output by one
   literal and one indent depth, so there is no fold to collapse.
+
+  **The 2026-10 `ferndoc` measurements reject a mechanical chunk-join conversion.**
+  The emitted page builder already calls the in-place string-growth helpers.
+  A chunk-join prototype kept identical output but regressed the measured page and table cases.
+  Local measurements cover a 1,000-declaration page and an 80-trait table.
+
+  The actual repeated work was a declaration-table scan for each public declaration.
+  `DocDecl` now retains its source-table index through sort and comment association.
+  The renderer uses that index and no longer repeats the name-and-line search.
+
+  The private sorted insertion also consumes its input array.
+  It appends directly when the new declaration follows the final item.
+  Earlier declarations still use the stable insertion path.
+  The retired `irlower.fern` has no remaining builders to convert.
 
   _Method that worked on `wasm_ir.fern`:_ convert only where the accumulator is
   provably **write-only** — every mention of `out` in the function is its

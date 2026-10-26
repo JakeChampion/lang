@@ -9,6 +9,7 @@ pub struct DocDecl {
   name: string,
   line: i32,
   col: i32,
+  index: i32,
   doc: string,
 }
 
@@ -123,10 +124,10 @@ pub function public_decls(mod: parser.Module): DocDecl[] {
     let fd: parser.FuncDecl = mod.funcs[i];
     if (fd.is_const) {
       if (fd.is_pub) {
-        out = insert_sorted(out, DocDecl { kind: "const", name: fd.name, line: fd.line, col: fd.col, doc: "" });
+        out = insert_sorted(out, DocDecl { kind: "const", name: fd.name, line: fd.line, col: fd.col, index: i, doc: "" });
       }
     } else if (fd.is_pub && !starts_with_dunder(fd.name)) {
-      out = insert_sorted(out, DocDecl { kind: "function", name: fd.name, line: fd.line, col: fd.col, doc: "" });
+      out = insert_sorted(out, DocDecl { kind: "function", name: fd.name, line: fd.line, col: fd.col, index: i, doc: "" });
     }
     i = i + 1;
   }
@@ -134,7 +135,7 @@ pub function public_decls(mod: parser.Module): DocDecl[] {
   while (si < mod.structs.len()) {
     let sd: parser.StructDecl = mod.structs[si];
     if (sd.is_pub && sd.enum_owner.len() == 0) {
-      out = insert_sorted(out, DocDecl { kind: "struct", name: sd.name, line: sd.line, col: sd.col, doc: "" });
+      out = insert_sorted(out, DocDecl { kind: "struct", name: sd.name, line: sd.line, col: sd.col, index: si, doc: "" });
     }
     si = si + 1;
   }
@@ -142,7 +143,7 @@ pub function public_decls(mod: parser.Module): DocDecl[] {
   while (ei < mod.enums.len()) {
     let ed: parser.EnumDecl = mod.enums[ei];
     if (ed.is_pub) {
-      out = insert_sorted(out, DocDecl { kind: "enum", name: ed.name, line: ed.line, col: ed.col, doc: "" });
+      out = insert_sorted(out, DocDecl { kind: "enum", name: ed.name, line: ed.line, col: ed.col, index: ei, doc: "" });
     }
     ei = ei + 1;
   }
@@ -150,7 +151,7 @@ pub function public_decls(mod: parser.Module): DocDecl[] {
   while (di < mod.trait_decls.len()) {
     let td: parser.TraitDecl = mod.trait_decls[di];
     if (td.is_pub) {
-      out = insert_sorted(out, DocDecl { kind: "trait", name: td.name, line: td.line, col: td.col, doc: "" });
+      out = insert_sorted(out, DocDecl { kind: "trait", name: td.name, line: td.line, col: td.col, index: di, doc: "" });
     }
     di = di + 1;
   }
@@ -161,7 +162,10 @@ function starts_with_dunder(name: string): boolean {
   return name.len() >= 2 && name[0] as i32 == 95 && name[1] as i32 == 95;
 }
 
-function insert_sorted(xs: DocDecl[], d: DocDecl): DocDecl[] {
+function insert_sorted(own xs: DocDecl[], d: DocDecl): DocDecl[] {
+  if (xs.len() == 0 || !before(d, xs[xs.len() - 1])) {
+    return xs.append(d);
+  }
   let out: DocDecl[] = [];
   let placed: boolean = false;
   let i: i32 = 0;
@@ -428,17 +432,6 @@ function render_trait(td: parser.TraitDecl, doc: string): string {
   return out + "}\n```\n\n" + doc_block(doc);
 }
 
-function trait_named(mod: parser.Module, name: string, line: i32): parser.TraitDecl {
-  let i: i32 = 0;
-  while (i < mod.trait_decls.len()) {
-    if (mod.trait_decls[i].name == name && mod.trait_decls[i].line == line) {
-      return mod.trait_decls[i];
-    }
-    i = i + 1;
-  }
-  return mod.trait_decls[0];
-}
-
 function trait_label(im: parser.ImplInfo): string {
   if (im.trait_spelling.len() > 0) {
     return im.trait_spelling;
@@ -473,39 +466,6 @@ function render_impls(impls: parser.ImplInfo[]): string {
   return out + "\n";
 }
 
-function func_named(mod: parser.Module, name: string, line: i32): parser.FuncDecl {
-  let i: i32 = 0;
-  while (i < mod.funcs.len()) {
-    if (mod.funcs[i].name == name && mod.funcs[i].line == line) {
-      return mod.funcs[i];
-    }
-    i = i + 1;
-  }
-  return mod.funcs[0];
-}
-
-function struct_named(mod: parser.Module, name: string, line: i32): parser.StructDecl {
-  let i: i32 = 0;
-  while (i < mod.structs.len()) {
-    if (mod.structs[i].name == name && mod.structs[i].line == line) {
-      return mod.structs[i];
-    }
-    i = i + 1;
-  }
-  return mod.structs[0];
-}
-
-function enum_named(mod: parser.Module, name: string, line: i32): parser.EnumDecl {
-  let i: i32 = 0;
-  while (i < mod.enums.len()) {
-    if (mod.enums[i].name == name && mod.enums[i].line == line) {
-      return mod.enums[i];
-    }
-    i = i + 1;
-  }
-  return mod.enums[0];
-}
-
 pub function render_page(src: string, mod_path: string): string {
   let lr: lexer.LexResult = lexer.tokenize_full(src);
   let mod: parser.Module = parser.parse_module_verbatim(lr.tokens).pmod;
@@ -529,15 +489,15 @@ pub function render_page(src: string, mod_path: string): string {
   while (i < decls.len()) {
     let d: DocDecl = decls[i];
     if (d.kind == "function") {
-      out = out + render_func(func_named(mod, d.name, d.line), d.doc);
+      out = out + render_func(mod.funcs[d.index], d.doc);
     } else if (d.kind == "const") {
-      out = out + render_const(func_named(mod, d.name, d.line), d.doc);
+      out = out + render_const(mod.funcs[d.index], d.doc);
     } else if (d.kind == "struct") {
-      out = out + render_struct(struct_named(mod, d.name, d.line), d.doc);
+      out = out + render_struct(mod.structs[d.index], d.doc);
     } else if (d.kind == "enum") {
-      out = out + render_enum(enum_named(mod, d.name, d.line), mod.structs, d.doc);
+      out = out + render_enum(mod.enums[d.index], mod.structs, d.doc);
     } else if (d.kind == "trait") {
-      out = out + render_trait(trait_named(mod, d.name, d.line), d.doc);
+      out = out + render_trait(mod.trait_decls[d.index], d.doc);
     }
     i = i + 1;
   }
