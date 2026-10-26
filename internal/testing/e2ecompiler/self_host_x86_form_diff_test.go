@@ -86,6 +86,8 @@ func miscFormCases() []string {
 			fmt.Sprintf("bswap%s %s", w.sfx, w.a),
 			fmt.Sprintf("imul%s %s, %s", w.sfx, w.a, w.b),
 			fmt.Sprintf("imul%s $9, %s, %s", w.sfx, w.a, w.b),
+			fmt.Sprintf("imul%s $-3, %s", w.sfx, w.a),
+			fmt.Sprintf("imul%s $972, %s", w.sfx, w.b),
 			fmt.Sprintf("mov%s %s, %s", w.sfx, w.a, w.b),
 			fmt.Sprintf("mov%s $9, %s", w.sfx, w.b),
 			fmt.Sprintf("mov%s (%%rbx), %s", w.sfx, w.b),

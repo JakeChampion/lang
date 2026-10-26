@@ -1,0 +1,11 @@
+{$FERN_SITE_ADDRESS} {
+	reverse_proxy app:8080 {
+		health_uri /healthz
+		health_interval 10s
+		health_timeout 3s
+		header_up -Netlify-Original-Accept-Encoding
+		transport http {
+			compression off
+		}
+	}
+}

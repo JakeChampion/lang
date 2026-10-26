@@ -5,22 +5,26 @@ services:
     environment:
       FERN_BLOCKYARD_SERVER: west
       FERN_BLOCKYARD_DATA: /worlds
+      FERN_LABS_DATA: /projects
       FERN_BLOCKYARD_WORLDS: >-
         [{"name":"commons","server":"west","origin":"http://localhost:8080"},
          {"name":"meadow","server":"east","origin":"http://localhost:8081"},
          {"name":"harbor","server":"east","origin":"http://localhost:8081"}]
-    volumes: ["west-worlds:/worlds"]
+    volumes: ["west-worlds:/worlds", "west-projects:/projects"]
   east:
     image: fern-showcase
     ports: ["8081:8080"]
     environment:
       FERN_BLOCKYARD_SERVER: east
       FERN_BLOCKYARD_DATA: /worlds
+      FERN_LABS_DATA: /projects
       FERN_BLOCKYARD_WORLDS: >-
         [{"name":"commons","server":"west","origin":"http://localhost:8080"},
          {"name":"meadow","server":"east","origin":"http://localhost:8081"},
          {"name":"harbor","server":"east","origin":"http://localhost:8081"}]
-    volumes: ["east-worlds:/worlds"]
+    volumes: ["east-worlds:/worlds", "east-projects:/projects"]
 volumes:
   west-worlds:
   east-worlds:
+  west-projects:
+  east-projects:

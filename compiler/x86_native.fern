@@ -4604,6 +4604,9 @@ function x86_gas_cmov_family(own a: X86Asm, mnem: string, src: string, dst: stri
 
 function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: string): X86Asm {
   let ops: string[] = x86_gas_split_ops(rest);
+  if (ops.len() == 2 && x86_str_starts_with(ops[0], "$")) {
+    ops = ops.append(ops[1]);
+  }
   if (ops.len() == 1) {
     return x86_gas_unary_family(a, mnem, 246, 5, size, ops[0]);
   }
