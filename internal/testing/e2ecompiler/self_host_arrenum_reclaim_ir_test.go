@@ -104,7 +104,15 @@ function main(): i32 {
 }`, 3},
 }
 
+// withoutSanitizer runs a test whose programs gate on __heap_bump_bytes without
+// FERN_SANITIZE: its quarantine never reuses a freed block, so the bump grows.
+func withoutSanitizer(t *testing.T) {
+	t.Helper()
+	t.Setenv("FERN_SANITIZE", "")
+}
+
 func TestSelfHostArrEnumReclaimIRX86_64(t *testing.T) {
+	withoutSanitizer(t)
 	gcc, runner := x86_64Tooling(t)
 	t.Setenv("FERN_LEAKCHECK", "1")
 	dir := writeSelfHostAsmProject(t)

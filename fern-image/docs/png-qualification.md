@@ -126,6 +126,26 @@ Wasm and ARM64 records also hash the runner. The collector verifies all hashes a
 The complete 118 image TAP cases pass on native Linux, Wasm, and ARM64/QEMU with this compiler.
 Full current-head CI remains a separate gate.
 
+## Shared inflater regression
+
+Issue #13428 factors Huffman table construction for eager and resumable DEFLATE output.
+The PNG implementation continues to use the eager filtered frame.
+The same 964 inputs qualify the shared change on native Linux, Wasm, and ARM64/QEMU.
+Each target accepts 142 inputs and rejects 822 inputs across 61 fresh processes.
+All 183 processes report balanced allocations and zero final live bytes.
+All three targets produce identical sample records.
+
+The new records use `benchmarks/results/png-inflate-native.json`, `png-inflate-wasm.json`, and `png-inflate-arm64.json`.
+Source `eb2ab979dd9cbbe14a9905bf014ebdfcab5c6bce` uses clean compiler `eb2ab979dd9c`.
+Its SHA-256 is `0639c3d5362211d38bd16f386037770fd91a6f71a64dd2669ea963c5b3e4b8c5`.
+The records hash all 163 stdlib sources, packages, collector, tools, and reference libraries.
+The collector verifies those hashes again after each campaign.
+The ARM64 record identifies QEMU 10.0.13 and its binary hash.
+
+Earlier corpus, row, and provider records preserve their historical hashes and observations.
+The existing corpus limits and qualification exclusions apply to these regressions.
+No incremental PNG API or production claim follows from this shared inflater change.
+
 ## Reproduce
 
 Use CPython 3.12 on Linux x86-64 for the pinned reference wheel.

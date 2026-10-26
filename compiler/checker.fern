@@ -8734,6 +8734,10 @@ function slc_escape_diag(fname: string, line: i32, col: i32): util.Diag {
 // The roots of every `[T]` view a value of type `to` carries, directly or inside an aggregate.
 function slc_agg_roots(e: ast.Expr, to: typeinfo.Type, cur: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   if (is_arr_view(to)) {
+    if let ast.ExprArray(_) = e {
+      let none: string[] = [];
+      return ViewRoots { local: true, params: none };
+    }
     return slc_expr_roots(e, cur, params, localarr, tainted, sums, vix);
   }
   if (is_type_variable(to)) {
@@ -11831,7 +11835,7 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
       return int_literal_tree(e);
     },
     typeinfo.TypeArray(wa) => {
-      return array_literal_settles(e, wa.elem, s);
+      return array_literal_settles(e, wa.elem, s) || mixed_literal_settles(e, wa.elem, s);
     },
     typeinfo.TypeTuple(wt) => {
       return tuple_literal_settles(e, wt.elements, s);
@@ -11869,6 +11873,74 @@ function array_literal_settles(e: ast.Expr, elem: typeinfo.Type, s: Scope): bool
       return false;
     }
   }
+}
+
+// A mixed literal already has its E034, so it takes no destination error when its first element could settle there.
+function mixed_literal_settles(e: ast.Expr, elem: typeinfo.Type, s: Scope): boolean {
+  if let ast.ExprArray(a) = e {
+    let none: util.Diag[] = [];
+    return array_mix_diags(a, s, none).len() > 0 && elem_settleable(check_expr(a.elements[0], s), elem, s);
+  }
+  return false;
+}
+
+function elem_settleable(have: typeinfo.Type, want: typeinfo.Type, s: Scope): boolean {
+  if (type_contains_unknown(have) || type_contains_unknown(want) || poly_numeric_settles(have, want)) {
+    return true;
+  }
+  if (same_settle_shape(have, want)) {
+    return parts_settleable(have, want, s);
+  }
+  return typeinfo.lossless_widen(have, want) || coercible(have, want, s);
+}
+
+function same_settle_shape(have: typeinfo.Type, want: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(ha) = have {
+    if let typeinfo.TypeArray(wa) = want {
+      return ha.view == wa.view;
+    }
+  }
+  if let typeinfo.TypeStruct(hs) = have {
+    if let typeinfo.TypeStruct(ws) = want {
+      return hs.name == ws.name && hs.args.len() == ws.args.len() && hs.args.len() > 0;
+    }
+  }
+  return false;
+}
+
+function parts_settleable(have: typeinfo.Type, want: typeinfo.Type, s: Scope): boolean {
+  if let typeinfo.TypeArray(ha) = have {
+    if let typeinfo.TypeArray(wa) = want {
+      return elem_settleable(ha.elem, wa.elem, s);
+    }
+  }
+  if let typeinfo.TypeStruct(hs) = have {
+    if let typeinfo.TypeStruct(ws) = want {
+      return args_settleable(hs.args, ws.args, s);
+    }
+  }
+  return false;
+}
+
+function args_settleable(have: typeinfo.Type[], want: typeinfo.Type[], s: Scope): boolean {
+  let i: i32 = 0;
+  while (i < have.len()) {
+    if (!elem_settleable(have[i], want[i], s)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function poly_numeric_settles(have: typeinfo.Type, want: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(hi) = have {
+    return hi.polymorphic && (is_integer(want) || is_float(want));
+  }
+  if let typeinfo.TypeFloat(hf) = have {
+    return hf.polymorphic && is_float(want);
+  }
+  return false;
 }
 
 function tuple_literal_settles(e: ast.Expr, elements: typeinfo.Type[], s: Scope): boolean {
@@ -14494,7 +14566,7 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
     ast.ExprArray(arr) => {
       for element in arr.elements {
         let ekt: typeinfo.Type = check_expr(element, s);
-        if (!is_unknown(ekt) && reports_element(ekt, elem_ty) && !settles_to(element, elem_ty, s) && !coercible(ekt, elem_ty, s) && dest_bound_diags(element, elem_ty, s).len() == 0) {
+        if (!is_unknown(ekt) && !settles_to(element, elem_ty, s) && !coercible(ekt, elem_ty, s) && dest_bound_diags(element, elem_ty, s).len() == 0) {
           out = out.append(dg_at("E034", "array element: expected " + type_label(elem_ty) + ", got " + type_label(ekt), expr_line(element), expr_col(element)));
         }
       }
@@ -14502,15 +14574,6 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
     _ => {}
   }
   return out;
-}
-
-// The destination's own check reports an array element of another element
-// type; only a view where an owned array is wanted, or the reverse, escapes it.
-function reports_element(got: typeinfo.Type, want: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(_) = want {
-    return type_eq(got, want) && !same_element_type(got, want);
-  }
-  return true;
 }
 
 function checks_array_element(ty: typeinfo.Type): boolean {
