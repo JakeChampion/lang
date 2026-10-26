@@ -229,7 +229,11 @@ array literal or a locally-declared owned array for a `[T]` (E063), a
 local owned `string` for a `str` (E065). Params and receivers are
 caller-owned and safe; literals are immortal. The chase runs through
 calls: a callee that returns a view of one of its parameters views what
-the caller passed there (`returnViewSummaries`).
+the caller passed there (`returnViewSummaries`). It also runs into
+aggregates: a returned struct, tuple, array or enum (`Option` included)
+that carries a view in a field, element or payload is checked view by
+view, so `return H { xs: local[0:2] }` is E063 just as
+`return local[0:2]` is (`view_parts` / `aggregateViewRoots`).
 
 Guarantee: a borrowed view never outlives the frame that owns
 its backing store — the one place Fern needs a locality-style

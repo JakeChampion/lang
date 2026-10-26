@@ -411,10 +411,20 @@ is defined, nor it where they are (`ssa.path_slot`): the merges of an else-if
 chain inside a loop then keep each local in its loop header phi's slot,
 though that phi's interval covers the whole body. A phi reads its operand
 on the edge, at the predecessor's terminator, not inside the header, and
-a loop-carried operand's interval ends at that edge. Empty blocks holding
-only a branch are skipped by every edge into them and dropped, a phi loses
-its slot for a dropped predecessor (`ssa.thread_forwarding`), and a branch
-whose false target is the next block falls through into it. Division,
+a loop-carried operand's interval ends at that edge. `ssa.thread_forwarding`
+drops an empty block that holds only a branch, and each edge into it goes
+past it. A phi loses its slot for a dropped predecessor. A branch whose false
+target is the next block falls through into it.
+
+`ssa.thread_forwarding` keeps a block whose target has phis, because later
+passes put code on that edge. The emitter skips such a block when it is
+still empty. A branch or a jump into it goes to the end of the chain
+(`ssa_forward`), unless a jump can fall through into the next block.
+A block that holds only phis counts as empty, because each phi move goes on
+the edge into the block. An edge gets a stub only when one of its phis needs
+a move (`ssa_edge_moves`).
+
+Division,
 a shift by a register count and the table shared with the stack machine
 still go through x0/x1 (`%rax`/`%rcx`), as does every call result; a shift
 by a constant works in its result's home, which may be its dying operand's. The phis of one edge are

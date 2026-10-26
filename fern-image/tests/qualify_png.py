@@ -257,13 +257,26 @@ def main():
                     stride = size[0] * len(mode)
                     if decoded != raw or rows != raw or selected != raw[first * stride:(first + count) * stride] or reference(encoded) != expected:
                         raise ValueError("pixel mismatch in " + case["name"])
+                    crop_x = size[0] // 2
+                    crop_width = min(2, size[0] - crop_x)
+                    crop = b"".join(raw[y * stride + crop_x * len(mode):
+                                        y * stride + (crop_x + crop_width) * len(mode)]
+                                    for y in range(first, first + count))
+                    for api in ["legacy", "fused"]:
+                        graph = (directory / (name + "." + api + ".graph.raw")).read_bytes()
+                        tile = (directory / (name + "." + api + ".tile.raw")).read_bytes()
+                        if graph != raw or tile != crop:
+                            raise ValueError("provider pixel mismatch in " + case["name"] + "/" + api)
+                        sample[api + "_graph_pixel_sha256"] = sha(graph)
+                        sample[api + "_tile_pixel_sha256"] = sha(tile)
+                    sample["crop"] = {"x": crop_x, "y": first, "width": crop_width, "height": count}
                     if (int(fields["width"]), int(fields["height"])) != size or int(fields["channels"]) != len(mode):
                         raise ValueError("metadata mismatch in " + case["name"])
                     if (int(fields["first"]), int(fields["count"])) != (first, count):
                         raise ValueError("row selection mismatch in " + case["name"])
                     sample.update({"pixel_sha256": sha(raw), "row_pixel_sha256": sha(rows), "selected_pixel_sha256": sha(selected), "encoded_sha256": sha(encoded), "encoded_bytes": len(encoded)})
-                elif fields.get("row_error") != fields.get("error"):
-                    raise ValueError("row decoder rejection mismatch in " + case["name"])
+                elif fields.get("row_error") != fields.get("error") or fields.get("provider_error") != fields.get("error"):
+                    raise ValueError("row or provider rejection mismatch in " + case["name"])
                 if (directory / name).read_bytes() != case["data"]:
                     raise ValueError("input fixture changed")
                 samples.append(sample)
@@ -279,8 +292,11 @@ def main():
         "compiler_flags": ["-target", "wasm32-wasi" if options.wasmtime else "arm64-linux" if options.qemu else "x86-64-linux", "-sanitize"],
         "warmup_processes": 0, "cache_policy": "No page-cache flush or cold/warm performance comparison.",
         "row_checks": {"accepted": "Full rows and a middle selection match independent reference bytes.",
-                       "rejected": "Eager and row APIs return the same codec error class.",
+                       "rejected": "Eager, row, and graph provider APIs return the same codec error class.",
                        "filtered_frame": "Fully materialized before row callbacks. No incremental inflater qualification."},
+        "provider_checks": {"graph": "Two identity nearest nodes preserve independent reference bytes through legacy and fused row execution.",
+                            "tile": "Middle cropped tiles match independent reference bytes through legacy and fused execution.",
+                            "retention": "The worker retains output bytes for comparison. The graph plan excludes caller retention."},
         "reference": {"Pillow": PIL.__version__, "Pillow_zlib": features.version_codec("zlib"),
                       "Python": platform.python_version(), "Python_zlib": zlib.ZLIB_RUNTIME_VERSION,
                       "Python_zlib_module": zlib.__spec__.origin}, "sha256": hashes,

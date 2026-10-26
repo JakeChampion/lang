@@ -41,6 +41,12 @@ jobs:
       - run: ./fern-image/scripts/test-png-corpus.sh wasm
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-deflate-reader.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-deflate-reader.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - uses: actions/upload-artifact@v7
         with:
           name: image-worker-qualification
@@ -55,4 +61,9 @@ jobs:
         with:
           name: image-png-corpus-wasm
           path: fern-image/build/png-corpus-wasm.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-deflate-reader
+          path: fern-image/build/deflate-reader-*.json
           if-no-files-found: error

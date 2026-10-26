@@ -261,7 +261,6 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 						markSupersededFields(out, sl, bid.Name)
 					}
 				}
-				return true
 			}
 			if st.Value == nil {
 				return true
