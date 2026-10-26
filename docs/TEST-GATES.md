@@ -13,21 +13,16 @@ main launches, every lane is a `workflow_call` it calls, and its lane table is
 the single path filter both events read (`TestGateLanesRunOnMain`,
 `internal/testing/sourcelint`).
 
-A pull request runs the fast tier: `Lint`, the `changes` job that picks the
-lanes, and `Preflight` (`.github/workflows/preflight.yml`). Preflight runs the
-fixture corpus through the self-host compiler, one leg per target plus the
-front-end leg. It also calls the x86-64 e2e, wasm and differential lanes, and
-the unit and coreutils lanes with `hosts: x86_64`, which runs their x86-64 legs
-alone. That is about 110
-runner-minutes and ten minutes of wall against a pool of about 40 runners, so
-it never queues. A red job cancels the run through `reap-preflight`.
+Every pull request runs `Lint`, the `changes` job that picks the lanes, and
+the full suite through `ci-suite.yml`. No `ci-full` label is required.
+The existing path filters still skip lanes unrelated to the change.
+`Preflight` remains available through a manual workflow dispatch for diagnosis;
+it does not replace the full suite on pull requests.
 
-The full suite runs on main after the merge, through the `ci-suite.yml` queue,
-and on a pull request labelled `ci-full`. PRs here are rebase-merged, so each
-commit lands on a main its own CI never saw: main's run has always been the
-gate for the combination, and it is now also the gate for the aarch64 legs,
-the self-host shards and the other heavy lanes. `main-red.yml` opens an issue
-per red lane, and fixing it is the next task.
+Main and merge queue batches use the same full suite. Main can reuse successful
+lanes proven on an identical merged PR tree, and `main-red.yml` opens an issue
+per red lane. The `ci-full` label still disables cancellation of sibling lanes
+after a failure when the complete failure list is needed.
 
 Pull requests take two queues (`pr-ci-even` / `pr-ci-odd`, `queue: max`, first
 in first out, chosen by the parity of the PR number): at most two PRs' suites
@@ -45,8 +40,7 @@ rejects.
 
 `ci.yml` also triggers on `merge_group`: a run on the batch GitHub is about
 to merge, with every lane on, through the suite. `CI verdict` is the one
-check a ruleset requires. It passes when Lint passed and every tier that ran
-passed, and a skipped tier does not fail it.
+check a ruleset requires. It passes only when Lint and the full suite pass.
 
 Enabling the queue is a repository setting, in the ruleset for `main`. Turn
 on "Require merge queue" and set the required check to `CI verdict`. Keep
