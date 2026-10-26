@@ -25,6 +25,22 @@ jobs:
       - run: ./fern-image/scripts/test.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - name: Use cgroupfs for worker OOM events
+        run: |
+          docker info --format 'Before: {{.ServerVersion}} {{.CgroupDriver}} {{.CgroupVersion}}'
+          sudo python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('/etc/docker/daemon.json')
+          config = json.loads(path.read_text()) if path.exists() else {}
+          options = [value for value in config.get('exec-opts', []) if not value.startswith('native.cgroupdriver=')]
+          config['exec-opts'] = options + ['native.cgroupdriver=cgroupfs']
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(json.dumps(config) + '\n')
+          PY
+          sudo systemctl restart docker
+          docker info --format 'After: {{.ServerVersion}} {{.CgroupDriver}} {{.CgroupVersion}}'
+          test "$(docker info --format '{{.CgroupDriver}}')" = cgroupfs
       - run: ./fern-image/scripts/qualify-workers.sh
         env:
           FERN: ${{ github.workspace }}/bin/fern
