@@ -182,7 +182,35 @@ func (g *Generator) foldForm(t gtype) string {
 	if _, ok := g.arrayElemOf(t); ok {
 		return "%s.len()"
 	}
-	return ""
+	var variants []enumVariant
+	switch t {
+	case tColor:
+		variants = []enumVariant{{name: "Red"}, {name: "Green"}, {name: "Blue"}}
+	case tStatus:
+		variants = []enumVariant{{name: "Active"}, {name: "Inactive"}, {name: "Pending"}}
+	default:
+		if sh, ok := g.enumShapes[t]; ok {
+			variants = sh.variants
+		}
+	}
+	if len(variants) == 0 {
+		return ""
+	}
+	// An enum reads as the number of its variant.
+	var b strings.Builder
+	b.WriteString("(match (%s) { ")
+	for i, v := range variants {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		b.WriteString(v.name)
+		if len(v.payload) > 0 {
+			b.WriteString("(" + strings.TrimSuffix(strings.Repeat("_, ", len(v.payload)), ", ") + ")")
+		}
+		fmt.Fprintf(&b, " => %di32", i+1)
+	}
+	b.WriteString(" })")
+	return b.String()
 }
 
 func (g *Generator) maybeEmitClosureCluster(b *strings.Builder, sc *scope) bool {
