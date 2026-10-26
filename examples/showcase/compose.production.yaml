@@ -1,0 +1,39 @@
+# One native owner keeps shared rooms together. Do not scale this service.
+services:
+  app:
+    image: ${FERN_SHOWCASE_IMAGE:-fern-showcase:latest}
+    restart: unless-stopped
+    stop_grace_period: 30s
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      FERN_BLOCKYARD_SERVER: primary
+      FERN_BLOCKYARD_DATA: /data/worlds
+      FERN_LABS_DATA: /data/projects
+      # Caddy preserves Accept-Encoding, so no Netlify header restoration is needed.
+      FERN_ORIGINAL_ACCEPT_ENCODING: ""
+    volumes: [app-data:/data]
+    tmpfs: [/tmp]
+    expose: ["8080"]
+  proxy:
+    image: caddy:2-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+    restart: unless-stopped
+    depends_on: [app]
+    environment:
+      FERN_SITE_ADDRESS: ${FERN_SITE_ADDRESS:?Set FERN_SITE_ADDRESS to the public hostname}
+      # Keep local upstream health requests on the Compose network.
+      NO_PROXY: app,localhost,127.0.0.1,::1
+      no_proxy: app,localhost,127.0.0.1,::1
+    ports:
+      - "${FERN_HTTP_PORT:-80}:80"
+      - "${FERN_HTTPS_PORT:-443}:443"
+      - "${FERN_HTTPS_PORT:-443}:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - proxy-data:/data
+      - proxy-config:/config
+volumes:
+  app-data:
+  proxy-data:
+  proxy-config:

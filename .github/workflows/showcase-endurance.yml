@@ -1,0 +1,80 @@
+name: Showcase endurance
+
+# Optional sustained-load and durable-deployment checks on an isolated runner.
+on:
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per workload (10 through 600)
+        default: "180"
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: showcase-endurance-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  endurance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    defaults:
+      run:
+        shell: bash
+    env:
+      FERN_SOAK_SECONDS: ${{ inputs.seconds }}
+      FERN_SITE_ADDRESS: localhost
+      FERN_HTTP_PORT: "18080"
+      FERN_HTTPS_PORT: "18443"
+      FERN_SHOWCASE_IMAGE: fern-showcase:endurance
+      COMPOSE_PROJECT_NAME: fern-endurance-${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: Check the requested duration
+        run: |
+          node -e 'const n=Number(process.env.FERN_SOAK_SECONDS); if (!Number.isInteger(n)||n<10||n>600) process.exit(1);'
+          mkdir -p build/showcase-endurance
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true"
+      - name: Build the compiler and production image
+        run: |
+          make build
+          FERN="$PWD/bin/fern-selfhost" CONTAINER_TOOL=docker ./examples/fractal/build.sh
+          docker tag fern-server "$FERN_SHOWCASE_IMAGE"
+      - name: Verify TLS, persistence, backup, and restore
+        run: node examples/showcase/tests/deployment.mjs > build/showcase-endurance/deployment.log 2>&1
+      - name: Run the sustained workloads through TLS
+        run: |
+          docker compose -f examples/showcase/compose.production.yaml up -d
+          for attempt in {1..30}; do
+            if docker compose -f examples/showcase/compose.production.yaml cp \
+              proxy:/data/caddy/pki/authorities/local/root.crt build/showcase-endurance/root.crt; then
+              break
+            fi
+            sleep 1
+          done
+          test -s build/showcase-endurance/root.crt
+          export NODE_EXTRA_CA_CERTS="$PWD/build/showcase-endurance/root.crt"
+          for app in foundry gather blockyard; do
+            node examples/showcase/tests/soak.mjs https://localhost:18443 "$app" "$FERN_SOAK_SECONDS" \
+              > "build/showcase-endurance/$app.log" 2>&1
+          done
+      - name: Capture container measurements
+        if: always()
+        run: |
+          docker compose -f examples/showcase/compose.production.yaml logs --no-color \
+            > build/showcase-endurance/containers.log 2>&1
+          docker stats --no-stream > build/showcase-endurance/container-memory.log
+      - name: Remove the test deployment
+        if: always()
+        run: docker compose -f examples/showcase/compose.production.yaml down --volumes --remove-orphans
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: showcase-endurance-${{ github.run_id }}
+          path: build/showcase-endurance/*.log
+          retention-days: 7
