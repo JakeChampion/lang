@@ -7996,6 +7996,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   names = anchored.names;
   let laid: semrecords.Record[] = [];
   if (verify) {
+    all = reached_only(all, names, mod, opts.whole);
     let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs, opts.array_report), names, mod, opts.size);
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;

@@ -578,19 +578,23 @@
 # 2026-10-26 (#13561): measured with stage0-20261025-433d93a.
 # All 11 rows passed the strict gate on the current source.
 # The compiler driver and Wasm IR driver each grew by 4096 bytes.
-fern.fern/stage2 14885376
-fern.fern 14976176
-drivers/asm_load_run.fern 11956096
-drivers/asm_modload_run.fern 10604576
-drivers/asm_ir_run.fern 10201088
-drivers/asm_run.fern 9359760
-drivers/wasm_ir_run.fern 9303008
-drivers/wasm_run.fern 9307264
+fern.fern/stage2 14885344
+fern.fern 14980272
+drivers/asm_load_run.fern 11964288
+drivers/asm_modload_run.fern 10608672
+drivers/asm_ir_run.fern 10205184
+drivers/asm_run.fern 9363856
+drivers/wasm_ir_run.fern 9307104
+drivers/wasm_run.fern 9311360
 drivers/wasm_runio_run.fern 9288640
-drivers/asm_pathprobe_run.fern 6199936
+drivers/asm_pathprobe_run.fern 6204032
 drivers/checker_modload_run.fern 3295600
 
 # 2026-10-26 (#13561): all 11 rows from source 3de29207a3.
 # The three-stage bootstrap reached identical final compiler stages.
 # The stage0 pin built each of the ten drivers directly.
 # The complete measurements are in the compiler CI repair record.
+
+# 2026-10-26 (#13561): all 11 rows from source d92821ddb3.
+# The strict gate passed after the ABI and reachability repairs.
+# The compiler CI follow-up record contains every measured change.

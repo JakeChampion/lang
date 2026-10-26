@@ -21,6 +21,14 @@ pub function gate(sigs: irverify.NameIndex, pops: i32[], abis: rccertify.Abis): 
 }
 
 pub function gate_unreported(sigs: irverify.NameIndex, pops: i32[], abis: rccertify.Abis): Gate {
+  let params: i32[] = sigs.params;
+  for i in 0..sigs.names.len() {
+    let abi: rccertify.Abi = abis.lookup(sigs.names[i]);
+    if (abi.known) {
+      params = params.with(i, abi.modes.len());
+    }
+  }
+  sigs = irverify.NameIndex { ...sigs, params: params };
   let certify: i32 = util.certify_mode();
   let census: usize = 0 as usize;
   if (certify == 1) {
