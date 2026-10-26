@@ -13,6 +13,8 @@ import (
 
 func TestSelfHostServePeerContexts(t *testing.T) {
 	cli := buildSelfHostCLI(t)
+	t.Setenv("FERN_SANITIZE", "1")
+	t.Setenv("FERN_LEAKCHECK", "1")
 	for _, stateful := range []bool{false, true} {
 		for _, proxy := range []bool{false, true} {
 			t.Run(fmt.Sprintf("stateful=%v/proxy=%v", stateful, proxy), func(t *testing.T) {
