@@ -1,0 +1,218 @@
+import "../packages/codecs/jpeg/idct";
+import "std/f64";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function coefficients(dc: i32): i32[] {
+  let out: i32[] = [];
+  for i in 0..64 {
+    out = out.append(if (i == 0) { dc } else { 0 });
+  }
+  return out;
+}
+
+function quantizers(value: u8): u8[] {
+  let out: u8[] = [];
+  for i in 0..64 {
+    out = out.append(value);
+  }
+  return out;
+}
+
+function uniform(value: f64): f64[] {
+  let out: f64[] = [];
+  for i in 0..64 {
+    out = out.append(value);
+  }
+  return out;
+}
+
+function close(a: f64, b: f64): boolean {
+  return (a - b).abs() <= 0.000000000001;
+}
+
+function dc_and_rounding(): test.TestOutcome {
+  let dc = [0, 4, 0 - 4, 1016, 0 - 1024, 32767, 0 - 32768];
+  let expected = [128 as u8, 129 as u8, 128 as u8, 255 as u8, 0 as u8, 255 as u8, 0 as u8];
+  for i in 0..dc.len() {
+    let output = match (idct.reconstruct(coefficients(dc[i]), quantizers(1 as u8), never)) { Ok(v) => v, Err(_) => { return test.fail("DC transform"); } };
+    if (output.len() != 64) {
+      return test.fail("output shape");
+    }
+    for value in output {
+      if (value != expected[i]) {
+        return test.fail("DC level shift and rounding");
+      }
+    }
+  }
+  let exact_dc = match (idct.reconstruct(coefficients(0 - 4), quantizers(255 as u8), never)) { Ok(v) => v, Err(_) => { return test.fail("exact DC dequantization"); } };
+  for value in exact_dc {
+    if (value != 1 as u8) {
+      return test.fail("exact DC dequantization rounding");
+    }
+  }
+  let a = match (idct.samples(uniform(0.499999999), never)) { Ok(v) => v, Err(_) => { return test.fail("below tie"); } };
+  let b = match (idct.samples(uniform(0.5), never)) { Ok(v) => v, Err(_) => { return test.fail("tie"); } };
+  let c = match (idct.samples(uniform(0.0 - 0.5), never)) { Ok(v) => v, Err(_) => { return test.fail("negative tie"); } };
+  let largest = f64_from_bits(0x7fefffffffffffff);
+  let high = match (idct.samples(uniform(largest), never)) { Ok(v) => v, Err(_) => { return test.fail("largest finite sample"); } };
+  let low = match (idct.samples(uniform(0.0 - largest), never)) { Ok(v) => v, Err(_) => { return test.fail("smallest finite sample"); } };
+  for i in 0..64 {
+    if (high[i] != 255 as u8 || low[i] != 0 as u8) {
+      return test.fail("finite clipping before conversion");
+    }
+  }
+  return test.assert_true(a[0] == 128 as u8 && b[0] == 129 as u8 && c[0] == 128 as u8);
+}
+
+function natural_and_zigzag(): test.TestOutcome {
+  let q = quantizers(1 as u8).with(0, 8 as u8).with(1, 7 as u8).with(2, 11 as u8);
+  let dc = match (idct.inverse(coefficients(1), q, never)) { Ok(v) => v, Err(_) => { return test.fail("quantized DC"); } };
+  for value in dc {
+    if (!close(value, 1.0)) {
+      return test.fail("DC quantizer");
+    }
+  }
+  let h = match (idct.inverse(coefficients(0).with(1, 8), q, never)) { Ok(v) => v, Err(_) => { return test.fail("horizontal AC"); } };
+  let v = match (idct.inverse(coefficients(0).with(8, 8), q, never)) { Ok(value) => value, Err(_) => { return test.fail("vertical AC"); } };
+  if (!close(h[0] / 7.0, 1.3870398453221477)) {
+    return test.fail("independent signed basis value");
+  }
+  for y in 0..8 {
+    for x in 0..8 {
+      if (!close(h[y * 8 + x] / 7.0, v[x * 8 + y] / 11.0) || !close(h[y * 8 + x], h[x])) {
+        return test.fail("coefficient and quantizer order");
+      }
+    }
+  }
+  let negative = match (idct.inverse(coefficients(0).with(1, 0 - 8), q, never)) { Ok(value) => value, Err(_) => { return test.fail("negative basis"); } };
+  for i in 0..64 {
+    if (!close(negative[i], 0.0 - h[i])) {
+      return test.fail("signed coefficient");
+    }
+  }
+  return test.pass();
+}
+
+function invalid_inputs(): test.TestOutcome {
+  let c = coefficients(0);
+  let q = quantizers(1 as u8);
+  for size in [0, 63, 65] {
+    let bad: i32[] = [];
+    let bad_q: u8[] = [];
+    for i in 0..size {
+      bad = bad.append(0);
+      bad_q = bad_q.append(1 as u8);
+    }
+    match (idct.inverse(bad, q, never)) {
+      Err(idct.Shape()) => {},
+      _ => {
+        return test.fail("coefficient shape");
+      }
+    }
+    match (idct.inverse(c, bad_q, never)) {
+      Err(idct.Shape()) => {},
+      _ => {
+        return test.fail("quantizer shape");
+      }
+    }
+  }
+  for i in 0..64 {
+    match (idct.inverse(c, q.with(i, 0 as u8), never)) {
+      Err(idct.Quantizer()) => {},
+      _ => {
+        return test.fail("zero quantizer");
+      }
+    }
+    for value in [32768, 0 - 32769] {
+      match (idct.inverse(c.with(i, value), q, never)) {
+        Err(idct.Coefficient()) => {},
+        _ => {
+          return test.fail("coefficient domain");
+        }
+      }
+    }
+  }
+  match (idct.samples([0.0], never)) {
+    Err(idct.Shape()) => {},
+    _ => {
+      return test.fail("sample shape");
+    }
+  }
+  for value in [f64_from_bits(0x7ff8000000000000), f64_from_bits(0x7ff0000000000000), 0.0 - f64_from_bits(0x7ff0000000000000)] {
+    match (idct.samples(uniform(0.0).with(63, value), never)) {
+      Err(idct.NonFinite()) => {},
+      _ => {
+        return test.fail("nonfinite sample");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function ownership_windows(): test.TestOutcome {
+  let c = coefficients(8);
+  let q = quantizers(1 as u8);
+  let padded: i32[] = [77];
+  for value in c {
+    padded = padded.append(value);
+  }
+  padded = padded.append(99);
+  let padded_q: u8[] = [77 as u8];
+  for value in q {
+    padded_q = padded_q.append(value);
+  }
+  padded_q = padded_q.append(99 as u8);
+  let first = match (idct.inverse(padded[1:65], padded_q[1:65], never)) { Ok(v) => v, Err(_) => { return test.fail("borrowed coefficient window"); } };
+  let second = match (idct.inverse(c, q, never)) { Ok(v) => v, Err(_) => { return test.fail("fresh inverse"); } };
+  let changed = first.with(0, 9.0);
+  let changed_c = c.with(0, 16);
+  if (changed[0] != 9.0 || !close(first[0], 1.0) || !close(second[0], 1.0) || c[0] != 8 || changed_c[0] != 16) {
+    return test.fail("owned transform state");
+  }
+  let pixels = match (idct.samples(first, never)) { Ok(v) => v, Err(_) => { return test.fail("owned samples"); } };
+  let changed_pixels = pixels.with(0, 77 as u8);
+  return test.assert_true(pixels[0] == 129 as u8 && changed_pixels[0] == 77 as u8 && close(first[0], 1.0));
+}
+
+function cancellation(): test.TestOutcome {
+  let q = quantizers(255 as u8);
+  for c in [coefficients(8), coefficients(8).with(63, 5)] {
+    let count = cell_new(0);
+    match (idct.reconstruct(c, q, (): boolean => {
+      count.set(count.get() + 1);
+      return false;
+    })) {
+      Ok(_) => {},
+      Err(_) => {
+        return test.fail("cancellation baseline");
+      }
+    }
+    for stop in 1..count.get() + 1 {
+      let polls = cell_new(0);
+      match (idct.reconstruct(c, q, (): boolean => {
+        polls.set(polls.get() + 1);
+        return polls.get() == stop;
+      })) {
+        Err(idct.Cancelled()) => {},
+        _ => {
+          return test.fail("cancellation poll");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let t = test.test_new("scalar JPEG inverse DCT");
+  t = t.it("DC values, level shift, ties, and clipping", dc_and_rounding);
+  t = t.it("natural coefficient order and transmitted quantizers", natural_and_zigzag);
+  t = t.it("shapes, numeric domain, quantizers, and nonfinite samples", invalid_inputs);
+  t = t.it("borrowed windows and owned transform outputs", ownership_windows);
+  t = t.it("every cooperative cancellation poll releases state", cancellation);
+  return t.finish();
+}

@@ -1,0 +1,129 @@
+import "std/f64";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum IdctError { Shape, Quantizer, Coefficient, NonFinite, Cancelled }
+
+// T.81 A.3.3 basis: C(u) cos((2x+1)u*pi/16) / 2.
+const BASIS: f64[] = [
+  0.3535533905932738, 0.4903926402016152, 0.46193976625564337, 0.4157348061512726, 0.3535533905932738, 0.2777851165098011, 0.1913417161825449, 0.09754516100806414,
+  0.3535533905932738, 0.4157348061512726, 0.1913417161825449, -0.09754516100806414, -0.3535533905932738, -0.4903926402016152, -0.46193976625564337, -0.2777851165098011,
+  0.3535533905932738, 0.2777851165098011, -0.1913417161825449, -0.4903926402016152, -0.3535533905932738, 0.09754516100806414, 0.46193976625564337, 0.4157348061512726,
+  0.3535533905932738, 0.09754516100806414, -0.46193976625564337, -0.2777851165098011, 0.3535533905932738, 0.4157348061512726, -0.1913417161825449, -0.4903926402016152,
+  0.3535533905932738, -0.09754516100806414, -0.46193976625564337, 0.2777851165098011, 0.3535533905932738, -0.4157348061512726, -0.1913417161825449, 0.4903926402016152,
+  0.3535533905932738, -0.2777851165098011, -0.1913417161825449, 0.4903926402016152, -0.3535533905932738, -0.09754516100806414, 0.46193976625564337, -0.4157348061512726,
+  0.3535533905932738, -0.4157348061512726, 0.1913417161825449, 0.09754516100806414, -0.3535533905932738, 0.4903926402016152, -0.46193976625564337, 0.2777851165098011,
+  0.3535533905932738, -0.4903926402016152, 0.46193976625564337, -0.4157348061512726, 0.3535533905932738, -0.2777851165098011, 0.1913417161825449, -0.09754516100806414,
+];
+
+const ZIGZAG: i32[] = [
+  0, 1, 8, 16, 9, 2, 3, 10, 17, 24, 32, 25, 18, 11, 4, 5,
+  12, 19, 26, 33, 40, 48, 41, 34, 27, 20, 13, 6, 7, 14, 21, 28,
+  35, 42, 49, 56, 57, 50, 43, 36, 29, 22, 15, 23, 30, 37, 44, 51,
+  58, 59, 52, 45, 38, 31, 39, 46, 53, 60, 61, 54, 47, 55, 62, 63,
+];
+
+// Coefficients use natural order. Quantizers use transmitted zig-zag order.
+pub function inverse(coefficients: [i32], quantizers: [u8], cancelled: () => boolean): Result[f64[], IdctError] {
+  if (coefficients.len() != 64 || quantizers.len() != 64) {
+    return Err(IdctError.Shape);
+  }
+  let values: f64[] = [];
+  for i in 0..64 {
+    values = values.append(0.0);
+  }
+  let dc_only = true;
+  for i in 0..64 {
+    if (i % 8 == 0 && cancelled()) {
+      return Err(IdctError.Cancelled);
+    }
+    let n = ZIGZAG[i];
+    let coefficient = coefficients[n];
+    if (coefficient < 0 - 32768 || coefficient > 32767) {
+      return Err(IdctError.Coefficient);
+    }
+    if (quantizers[i] == 0 as u8) {
+      return Err(IdctError.Quantizer);
+    }
+    if (n != 0 && coefficient != 0) {
+      dc_only = false;
+    }
+    let dequantized = coefficient as i64 * (quantizers[i] as i64);
+    values = values.with(n, dequantized as f64);
+  }
+  if (dc_only) {
+    // The exact DC form preserves half-sample ties after dequantization.
+    let value = values[0] / 8.0;
+    let output: f64[] = [];
+    for y in 0..8 {
+      if (cancelled()) {
+        return Err(IdctError.Cancelled);
+      }
+      for x in 0..8 {
+        output = output.append(value);
+      }
+    }
+    if (cancelled()) {
+      return Err(IdctError.Cancelled);
+    }
+    return Ok(output);
+  }
+  let rows: f64[] = [];
+  for v in 0..8 {
+    if (cancelled()) {
+      return Err(IdctError.Cancelled);
+    }
+    for x in 0..8 {
+      let sum: f64 = 0.0;
+      for u in 0..8 {
+        sum = sum + values[v * 8 + u] * BASIS[x * 8 + u];
+      }
+      rows = rows.append(sum);
+    }
+  }
+  let output: f64[] = [];
+  for y in 0..8 {
+    if (cancelled()) {
+      return Err(IdctError.Cancelled);
+    }
+    for x in 0..8 {
+      let sum: f64 = 0.0;
+      for v in 0..8 {
+        sum = sum + rows[v * 8 + x] * BASIS[y * 8 + v];
+      }
+      output = output.append(sum);
+    }
+  }
+  if (cancelled()) {
+    return Err(IdctError.Cancelled);
+  }
+  return Ok(output);
+}
+
+// Inverse level shift, nearest integer with ties upward, and sample clipping.
+pub function samples(values: [f64], cancelled: () => boolean): Result[u8[], IdctError] {
+  if (values.len() != 64) {
+    return Err(IdctError.Shape);
+  }
+  let output: u8[] = [];
+  for i in 0..64 {
+    if (i % 8 == 0 && cancelled()) {
+      return Err(IdctError.Cancelled);
+    }
+    if (!values[i].is_finite()) {
+      return Err(IdctError.NonFinite);
+    }
+    let shifted = values[i] + 128.0;
+    let sample: i32 = if (shifted <= 0.0) { 0 } else { if (shifted >= 255.0) { 255 } else { (shifted + 0.5).floor() as i32 } };
+    output = output.append(sample as u8);
+  }
+  if (cancelled()) {
+    return Err(IdctError.Cancelled);
+  }
+  return Ok(output);
+}
+
+pub function reconstruct(coefficients: [i32], quantizers: [u8], cancelled: () => boolean): Result[u8[], IdctError] {
+  let values = inverse(coefficients, quantizers, cancelled)?;
+  return samples(values, cancelled);
+}
