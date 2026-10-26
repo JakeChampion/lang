@@ -865,7 +865,32 @@ func (g *Generator) body(b *strings.Builder, sc *scope, retT gtype) {
 		g.bodyStmt(b, sc, retT, i)
 		g.markSpan(stmtsAt, start)
 	}
-	b.WriteString("return ")
+	g.returnWithState(b, sc, retT)
+}
+
+// returnWithState makes the helper's return read its i32 state, so the
+// compiler cannot drop a cluster whose result nothing else reads. An i32
+// return folds the state in. Any other return reads it in a guard.
+func (g *Generator) returnWithState(b *strings.Builder, sc *scope, retT gtype) {
+	if g.ch.exhausted() || len(g.foldTerms(sc)) == 0 {
+		b.WriteString("return ")
+		g.expr(b, sc, retT, 0)
+		b.WriteString("; ")
+		return
+	}
+	if retT == tI32 {
+		b.WriteString("return ((")
+		g.expr(b, sc, retT, 0)
+		b.WriteString(") ^ ")
+		g.emitStateFold(b, sc)
+		b.WriteString("); ")
+		return
+	}
+	b.WriteString("if (")
+	g.emitStateFold(b, sc)
+	b.WriteString(" == 1234567i32) { return ")
+	g.leafMin(b, sc, retT, 1)
+	b.WriteString("; } return ")
 	g.expr(b, sc, retT, 0)
 	b.WriteString("; ")
 }
