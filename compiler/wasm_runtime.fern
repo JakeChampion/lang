@@ -12,3 +12,16 @@ pub function strcmp_source(): string {
     + "  return 0;\n"
     + "}\n";
 }
+
+pub function streq_source(): string {
+  return "function __fern_streq(a: usize, b: usize): boolean {\n"
+    + "  let n: u32 = __load_i32(a) as u32;\n"
+    + "  if (n != __load_i32(b) as u32) { return false; }\n"
+    + "  let i: u32 = 0;\n"
+    + "  while (i < n) {\n"
+    + "    if (__load_u8(a + 4 + i) != __load_u8(b + 4 + i)) { return false; }\n"
+    + "    i = i + 1;\n"
+    + "  }\n"
+    + "  return true;\n"
+    + "}\n";
+}

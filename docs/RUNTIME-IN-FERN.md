@@ -383,21 +383,28 @@ complete #2649.
 
 ### WebAssembly runtime source units
 
-`wasm_runtime.strcmp_source` defines string ordering in Fern.
+`wasm_runtime.strcmp_source` and `streq_source` define string comparisons in Fern.
 The WebAssembly emitter compiles this source through `Sub.rt_lower` and the
-ordinary function emitter. It removes the hand-written `strcmp_helper` WAT.
+ordinary function emitter. They replace the hand-written ordering and equality bodies.
 
 Whole-program and per-module emitters append the runtime unit before final
 literal and heap layout. The runtime unit carries its own literal and function
 tables. Its lowered needs do not enter the user module's needs.
-The string comparator needs no allocation and no additional runtime helper.
-Programs without string ordering omit this unit.
+The string comparators need no allocation and no additional runtime helper.
+Programs without string operations omit this unit.
 
-`TestSelfHostWasmUnitsN2/fern_runtime_string_order` executes all four ordering
+`TestSelfHostWasmUnitsN2/fern_runtime_string_order` executes all six comparison
 operators in whole-program and split-module builds. It covers empty strings,
 prefixes, reversed operands, equal operands, UTF-8 bytes and allocated strings.
-It also checks that one ordinary Fern function replaces the hand-written body.
+It also checks that ordinary Fern functions replace both hand-written bodies.
 The other cases check that unrelated modules omit the comparator.
+
+The WebAssembly function emitter also replaces an `if` whose sole effect is
+a branch with `br_if`. It adjusts the branch depth after it removes the
+`if` label. A branch to that removed label only consumes the condition.
+The same rule applies to every emitted function.
+The split-module tests cover nested conditions, early returns, loop exits
+and loop continuation.
 
 ### Remaining WebAssembly floor work
 

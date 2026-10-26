@@ -45,12 +45,34 @@ function main(): i32 {
             if (greater(values[i], values[j]) != (i > j)) { return 2; }
             if ((values[i] <= values[j]) != (i <= j)) { return 3; }
             if ((values[i] >= values[j]) != (i >= j)) { return 4; }
+            if ((values[i] == values[j]) != (i == j)) { return 6; }
+            if ((values[i] != values[j]) != (i != j)) { return 7; }
             j = j + 1;
         }
         i = i + 1;
     }
     let allocated: string = values[1] + values[3];
     if (!less(allocated, values[4]) || !greater(allocated, values[1])) { return 5; }
+    if (allocated != "aab") { return 8; }
+    return 0;
+}`,
+			want: 0,
+		},
+		{
+			name: "conditional_branches",
+			src: `function sum(n: i32): i32 {
+    if (n < 0) { return -10; }
+    let out: i32 = 0; let i: i32 = 0;
+    while (i < n) {
+        if (i == 2) { i = i + 1; continue; }
+        if (i == 5) { break; }
+        if (i == 3) { out = out + 3; } else { out = out + i; }
+        i = i + 1;
+    }
+    return out;
+}
+function main(): i32 {
+    if (sum(-1) != -10 || sum(0) != 0 || sum(2) != 1 || sum(8) != 8) { return 1; }
     return 0;
 }`,
 			want: 0,
@@ -129,6 +151,10 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 			}
 		} else if strings.Contains(string(wat), "(func $__fern_strcmp ") {
 			t.Fatal("a module without string ordering contains its runtime helper")
+		}
+
+		if strings.Contains(string(wat), "(func $__fern_streq ") && !strings.Contains(string(wat), "(func $__fern_streq (param i32)") {
+			t.Fatal("string equality does not use the Fern function emitter")
 		}
 
 		watPath := filepath.Join(dir, tag+".wat")

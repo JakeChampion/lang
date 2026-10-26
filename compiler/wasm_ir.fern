@@ -5158,6 +5158,29 @@ function view_string_wat(o: ir.Op, tmp: i32): string {
     + "    else\n    local.get " + t + "\n    i32.const 4\n    i32.add\n    end\n    end\n";
 }
 
+function branch_only_if(ops: ir.Op[], i: i32): string {
+  if (i + 3 >= ops.len() || ops[i].kind_tag != 154 || ops[i + 3].kind_tag != 156) {
+    return "";
+  }
+  let branch: ir.Op = ops[i + 1];
+  let invert: boolean = false;
+  if (branch.kind_tag == 155 && ops[i + 2].kind_tag == 157) {
+    branch = ops[i + 2];
+    invert = true;
+  } else if (branch.kind_tag != 157 || ops[i + 2].kind_tag != 155) {
+    return "";
+  }
+  if (branch.i32_imm == 0) {
+    return "    drop\n";
+  }
+  let prefix: string = "";
+  if (invert) {
+    prefix = "    i32.eqz\n";
+  }
+  // The removed if contributes one label to the branch depth.
+  return prefix + "    br_if " + util.i32_to_string(branch.i32_imm - 1) + "\n";
+}
+
 // fern-lint: allow cyclomatic-complexity
 function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
   ircore.lower_failed_refuse(fn_name, r);
@@ -5217,6 +5240,12 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
   parts = parts.append(shadow_frame_push(windows, result_wat));
   let i: i32 = 0;
   while (i < f.ops.len()) {
+    let folded: string = branch_only_if(f.ops, i);
+    if (folded.len() > 0) {
+      parts = parts.append(folded);
+      i = i + 4;
+      continue;
+    }
     let o: ir.Op = f.ops[i];
     let window: i32 = util.index_of_i32(placed, i) * 8;
     if (o.kind_tag == 160) {
@@ -7837,7 +7866,7 @@ pub function string_from_bytes_range_helper(): string {
   return o;
 }
 
-pub function strcat_streq_helpers(): string {
+pub function strcat_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_strcat (param $a i32) (param $b i32) (result i32)\n";
   o = o + "    (local $la i32) (local $lb i32) (local $pa i32) (local $pb i32) (local $p i32) (local $i i32)\n";
@@ -7858,17 +7887,6 @@ pub function strcat_streq_helpers(): string {
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $cb)))\n";
   o = o + "    (local.get $p))\n";
-  o = o + "  (func $__fern_streq (param $a i32) (param $b i32) (result i32)\n";
-  o = o + "    (local $la i32) (local $i i32)\n";
-  o = o + "    (local.set $la (i32.load (local.get $a)))\n";
-  o = o + "    (if (i32.ne (local.get $la) (i32.load (local.get $b))) (then (return (i32.const 0))))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $la)))\n";
-  o = o + "      (if (i32.ne (i32.load8_u (i32.add (i32.add (local.get $a) (i32.const 4)) (local.get $i))) (i32.load8_u (i32.add (i32.add (local.get $b) (i32.const 4)) (local.get $i)))) (then (return (i32.const 0))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
-  o = o + "    (i32.const 1))\n";
   return o;
 }
 
@@ -9562,10 +9580,16 @@ pub struct WasmUnit {
 }
 
 pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (string) => physicalbody.Lowered): WasmUnit[] {
-  if (!need(needs, "@uses_str_cmp")) {
+  let src: string = "";
+  if (need(needs, "@uses_str_cmp")) {
+    src = wasm_runtime.strcmp_source();
+  }
+  if (need(needs, "@uses_strings")) {
+    src = src + wasm_runtime.streq_source();
+  }
+  if (src.len() == 0) {
     return units;
   }
-  let src: string = wasm_runtime.strcmp_source();
   let mod: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
   let lowered: physicalbody.Lowered = rt_lower(src);
   let bodies: irtables.LowerResult[] = lowered.bodies;
@@ -9925,7 +9949,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(mulhi_u64_func());
   }
   if (need(needs, "@uses_strings")) {
-    parts = parts.append(strcat_streq_helpers());
+    parts = parts.append(strcat_helper());
   }
   if (need(needs, "@uses_i32_to_string")) {
     parts = parts.append(i32_to_string_helper());
