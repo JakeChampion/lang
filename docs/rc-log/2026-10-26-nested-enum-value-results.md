@@ -21,3 +21,21 @@ The final focused suite passed in 43.069 seconds without failures or skips. It i
 The direct interpreter control uses an explicit generic argument for the integer specialization. Its `Ok` input has no error payload from which to infer that argument.
 
 Full current-head GitHub CI remains separate from these local results. A queued or incomplete workflow does not establish a pass.
+
+## Clean compiler regression checks
+
+The clean compiler reports `f429c955df5b`.
+Its SHA256 is `e6b5d751d6ad94ef2227dbbe17fcb96f0a02112a583aca1c1bcd0e5bea0a1902`.
+The same executable passed the primary interpreter control and both complete image scripts.
+Each script passed all 150 image and shared-reader TAP cases, plus its smoke checks.
+All 61 native and 37 Wasm heap censuses were balanced with zero live bytes.
+Wasm provides the leak census, without the native over-release and use-after-free detectors.
+
+A separate imported struct-result control passed on native, ARM64/QEMU10, and Wasm.
+The unchanged default allocation gate reported 34,731,162 allocations and frees.
+Its 10% ceiling passed, while the 1% advisory warning remained at +9.82%.
+The report contains no peak RSS measurement because this runtime has no delegated cgroup.
+No baseline, threshold, exemption, or benchmark workload changed.
+
+All 1,300 tracked Fern format checks passed.
+Go build, Go vet, Go format, workflow lint, and test-selector checks also passed.
