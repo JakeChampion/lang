@@ -10,6 +10,9 @@ for source in experiments/essentials.fern experiments/io.fern experiments/zlib.f
   "$FERN" -target x86-64-linux -sanitize -o "$output" "$source"
   "$output"
 done
+"$FERN" -check tests/png_incremental_test.fern
+"$FERN" -target x86-64-linux -sanitize -o build/png_incremental_test tests/png_incremental_test.fern
+./build/png_incremental_test
 "$FERN" -check benchmarks/memory_probe.fern
 "$FERN" -target x86-64-linux -sanitize -o build/memory-probe benchmarks/memory_probe.fern
 for mode in unique shared retained rows rows-retained rows-cancelled eager eager-retained; do

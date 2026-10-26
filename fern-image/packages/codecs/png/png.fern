@@ -32,6 +32,13 @@ pub struct RowDecoder { plan: RowPlan, read: (i32, () => boolean) => Result[pixe
 
 struct RowCursor { next: i32, previous: u8[] }
 
+struct StreamCursor { next: i32, previous: u8[], failure: Option[DecoderError] }
+
+struct StreamRead { cursor: StreamCursor, result: Result[pixels.Image, DecoderError] }
+
+// Logical allowance for bounded DEFLATE tables and their temporary arrays.
+const STREAM_TABLE_BYTES: i64 = 16384i64;
+
 enum UnfilterError { InvalidFilter, Interrupted }
 
 pub function default_row_limits(): RowLimits {
@@ -345,6 +352,194 @@ pub function open_rows(input: [u8], limits: pixels.Limits, row_limits: RowLimits
   return open_prepared(prepared, plan, cancelled);
 }
 
+function incremental_plan(prepared: Prepared, input_bytes: i32, first: i32, count: i32, limits: RowLimits): Result[RowPlan, DecoderError] {
+  let layout = prepared.layout;
+  if (first < 0 || count <= 0 || first >= layout.height || count > layout.height - first) {
+    return Err(DecoderBounds);
+  }
+  let window = prepared.filtered_bytes;
+  if (window > 32768) {
+    window = 32768;
+  }
+  let scratch = 2i64 * (layout.stride as i64) + window as i64 + 1i64;
+  let payload = 3i64 * (input_bytes as i64) + window as i64 + STREAM_TABLE_BYTES + scratch;
+  let work = input_bytes as i64 + prepared.filtered_bytes as i64 + (first as i64 + count as i64) * (2i64 * (layout.stride as i64) + 1i64);
+  if (payload > limits.max_payload_bytes || work > limits.max_row_work) {
+    return Err(DecoderBudget);
+  }
+  return Ok(RowPlan {
+    layout: layout, first: first, count: count, filtered_bytes: prepared.filtered_bytes,
+    row_scratch_bytes: scratch, payload_bytes: payload, row_work: work,
+  });
+}
+
+pub function inspect_incremental_rows(input: [u8], limits: pixels.Limits, row_limits: RowLimits): Result[RowPlan, DecoderError] {
+  let prepared = prepare_rows(input, limits, row_limits)?;
+  return incremental_plan(prepared, input.len(), 0, prepared.layout.height, row_limits);
+}
+
+function stream_error(error: deflate.InflateReadError): DecoderError {
+  return match (error) { deflate.ReadCancelled => DecoderCancelled, _ => DecoderCodec(PngError.Compressed) };
+}
+
+function adler_append(checksum: u32, bytes: [u8]): u32 {
+  let part = deflate.adler32(bytes);
+  let a = (checksum & 65535 as u32) as i64;
+  let b = (checksum >> 16) as i64;
+  let next_a = (a + (part & 65535 as u32) as i64 + 65520i64) % 65521i64;
+  let next_b = (b + (part >> 16) as i64 + bytes.len() as i64 * ((a + 65520i64) % 65521i64)) % 65521i64;
+  return next_b as u32 << 16 | next_a as u32;
+}
+
+function validate_stream(raw: u8[], prepared: Prepared, cancelled: () => boolean): Result[boolean, DecoderError] {
+  let reader = match (deflate.inflate_reader(raw, prepared.filtered_bytes)) { Ok(v) => v, Err(e) => { return Err(stream_error(e)); } };
+  let checksum: u32 = 1;
+  let at = 0;
+  let invalid_filter = false;
+  let done = false;
+  while (!done) {
+    let chunk = match (reader.read(32768, cancelled)) { Ok(v) => v, Err(e) => { return Err(stream_error(e)); } };
+    checksum = adler_append(checksum, chunk.bytes);
+    for byte in chunk.bytes {
+      if (at % (prepared.layout.stride + 1) == 0 && byte > 4 as u8) {
+        invalid_filter = true;
+      }
+      at = at + 1;
+      if (at % 256 == 0 && cancelled()) {
+        return Err(DecoderCancelled);
+      }
+    }
+    if (chunk.done && chunk.consumed != raw.len()) {
+      return Err(DecoderCodec(PngError.Compressed));
+    }
+    done = chunk.done;
+  }
+  if (checksum != be32(prepared.compressed, prepared.compressed.len() - 4)) {
+    return Err(DecoderCodec(PngError.Compressed));
+  }
+  if (at != prepared.filtered_bytes || invalid_filter) {
+    return Err(DecoderCodec(PngError.Scanline));
+  }
+  return Ok(true);
+}
+
+function stream_bytes(reader: deflate.InflateReader, count: i32, cancelled: () => boolean): Result[u8[], DecoderError] {
+  let chunk = match (reader.read(count, cancelled)) { Ok(v) => v, Err(e) => { return Err(stream_error(e)); } };
+  if (chunk.bytes.len() != count) {
+    return Err(DecoderCodec(PngError.Scanline));
+  }
+  return Ok(chunk.bytes);
+}
+
+function unfilter_stream_row(reader: deflate.InflateReader, layout: pixels.Layout, y: i32, previous: [u8], cancelled: () => boolean): Result[u8[], DecoderError] {
+  let tag = stream_bytes(reader, 1, cancelled)?;
+  let filter = tag[0] as i32;
+  if (filter > 4) {
+    return Err(DecoderCodec(PngError.Scanline));
+  }
+  let bytes = __alloc_u8(layout.stride);
+  let channels = pixels.channels(layout.format);
+  let x = 0;
+  while (x < layout.stride) {
+    let count = layout.stride - x;
+    if (count > 32768) {
+      count = 32768;
+    }
+    let chunk = stream_bytes(reader, count, cancelled)?;
+    for byte in chunk {
+      if (x % 256 == 0 && cancelled()) {
+        return Err(DecoderCancelled);
+      }
+      let left = 0;
+      let above = 0;
+      let upper_left = 0;
+      if (x >= channels) {
+        left = bytes[x - channels] as i32;
+      }
+      if (y > 0) {
+        above = previous[x] as i32;
+      }
+      if (y > 0 && x >= channels) {
+        upper_left = previous[x - channels] as i32;
+      }
+      bytes = bytes.with(x, (byte as i32 + predict(filter, left, above, upper_left)) as u8);
+      x = x + 1;
+    }
+  }
+  return Ok(bytes);
+}
+
+function stream_failure(cursor: StreamCursor, error: DecoderError, terminal: boolean): StreamRead {
+  let next = cursor;
+  if (terminal) {
+    next = StreamCursor { ...cursor, failure: Some(error) };
+  }
+  return StreamRead { cursor: next, result: Err(error) };
+}
+
+function stream_read(cursor: StreamCursor, reader: deflate.InflateReader, plan: RowPlan, y: i32, cancelled: () => boolean): StreamRead {
+  if let Some(error) = cursor.failure {
+    return stream_failure(cursor, error, false);
+  }
+  if (cancelled()) {
+    return stream_failure(cursor, DecoderCancelled, true);
+  }
+  if (y < plan.first || y >= plan.first + plan.count) {
+    return stream_failure(cursor, DecoderBounds, false);
+  }
+  if (y < cursor.next - 1) {
+    return stream_failure(cursor, DecoderAccess, false);
+  }
+  let cursor = cursor;
+  while (cursor.next <= y) {
+    let row = match (unfilter_stream_row(reader, plan.layout, cursor.next, cursor.previous, cancelled)) { Ok(v) => v, Err(e) => { return stream_failure(cursor, e, true); } };
+    cursor = StreamCursor { ...cursor, next: cursor.next + 1, previous: row };
+  }
+  if (cancelled()) {
+    return stream_failure(cursor, DecoderCancelled, true);
+  }
+  let image = pixels.Image { layout: pixels.Layout { ...plan.layout, height: 1, bytes: plan.layout.stride }, data: cursor.previous };
+  return StreamRead { cursor: cursor, result: Ok(image) };
+}
+
+function open_incremental_prepared(prepared: Prepared, plan: RowPlan, cancelled: () => boolean): Result[RowDecoder, DecoderError] {
+  if (cancelled()) {
+    return Err(DecoderCancelled);
+  }
+  if let Some(_) = compression.header_error(prepared.compressed, prepared.filtered_bytes) {
+    return Err(DecoderCodec(PngError.Compressed));
+  }
+  let raw: u8[] = [];
+  let i = 2;
+  while (i < prepared.compressed.len() - 4) {
+    if (i % 256 == 0 && cancelled()) {
+      return Err(DecoderCancelled);
+    }
+    raw = raw.append(prepared.compressed[i]);
+    i = i + 1;
+  }
+  validate_stream(raw, prepared, cancelled)?;
+  let reader = match (deflate.inflate_reader(raw, prepared.filtered_bytes)) { Ok(v) => v, Err(e) => { return Err(stream_error(e)); } };
+  let state: Cell[Option[StreamCursor]] = cell_new(Some(StreamCursor { next: 0, previous: [], failure: None }));
+  let read = (y: i32, cancelled: () => boolean): Result[pixels.Image, DecoderError] => {
+    let cursor = match (state.get()) { Some(v) => v, None => { return Err(DecoderAccess); } };
+    state.set(None);
+    let result = stream_read(cursor, reader, plan, y, cancelled);
+    state.set(Some(result.cursor));
+    return result.result;
+  };
+  return Ok(RowDecoder { plan: plan, read: read });
+}
+
+pub function open_incremental_rows(input: [u8], limits: pixels.Limits, row_limits: RowLimits, cancelled: () => boolean): Result[RowDecoder, DecoderError] {
+  if (cancelled()) {
+    return Err(DecoderCancelled);
+  }
+  let prepared = prepare_rows(input, limits, row_limits)?;
+  let plan = incremental_plan(prepared, input.len(), 0, prepared.layout.height, row_limits)?;
+  return open_incremental_prepared(prepared, plan, cancelled);
+}
+
 function fold_error[E](error: DecoderError): RowError[E] {
   return match (error) { DecoderCodec(e) => RowCodec(e), DecoderBounds => RowBounds, DecoderBudget => RowBudget, DecoderCancelled => RowCancelled, DecoderAccess => RowBounds };
 }
@@ -356,9 +551,24 @@ pub function fold_rows[S, E](input: [u8], first: i32, count: i32, limits: pixels
   let prepared = match (prepare_rows(input, limits, row_limits)) { Ok(v) => v, Err(e) => { return Err(fold_error[E](e)); } };
   let plan = match (plan_prepared(prepared, input.len(), first, count, row_limits)) { Ok(v) => v, Err(e) => { return Err(fold_error[E](e)); } };
   let decoder = match (open_prepared(prepared, plan, cancelled)) { Ok(v) => v, Err(e) => { return Err(fold_error[E](e)); } };
+  return fold_decoder[S, E](decoder, cancelled, value, consume);
+}
+
+pub function fold_incremental_rows[S, E](input: [u8], first: i32, count: i32, limits: pixels.Limits, row_limits: RowLimits, cancelled: () => boolean, value: S, consume: (S, pixels.Image) => Result[S, E]): Result[RowFold[S], RowError[E]] {
+  if (cancelled()) {
+    return Err(RowCancelled);
+  }
+  let prepared = match (prepare_rows(input, limits, row_limits)) { Ok(v) => v, Err(e) => { return Err(fold_error[E](e)); } };
+  let plan = match (incremental_plan(prepared, input.len(), first, count, row_limits)) { Ok(v) => v, Err(e) => { return Err(fold_error[E](e)); } };
+  let decoder = match (open_incremental_prepared(prepared, plan, cancelled)) { Ok(v) => v, Err(e) => { return Err(fold_error[E](e)); } };
+  return fold_decoder[S, E](decoder, cancelled, value, consume);
+}
+
+function fold_decoder[S, E](decoder: RowDecoder, cancelled: () => boolean, value: S, consume: (S, pixels.Image) => Result[S, E]): Result[RowFold[S], RowError[E]] {
+  let plan = decoder.plan;
   let value = value;
-  let y = first;
-  while (y < first + count) {
+  let y = plan.first;
+  while (y < plan.first + plan.count) {
     let row = match (decoder.read(y, cancelled)) { Ok(v) => v, Err(e) => { return Err(fold_error[E](e)); } };
     value = match (consume(value, row)) { Ok(v) => v, Err(e) => { return Err(RowConsumer(e)); } };
     if (cancelled()) {
