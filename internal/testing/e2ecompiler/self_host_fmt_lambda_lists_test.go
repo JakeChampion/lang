@@ -13,18 +13,18 @@ func TestSelfHostFmtLambdaListGroups(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	const source = `enum Status { Cancelled, Other }
 enum Fault[E] { Decode(Status), Consumer(E) }
-function produce(cancel: () => boolean, consume: (i32) => Result[i32, string]): Result[i32, Fault[string]] {
+function produce(input: i32, limit: i32, cancel: () => boolean, state: i32, consume: (i32) => Result[i32, string]): Result[i32, Fault[string]] {
  if (cancel()) { return Err(Decode(Cancelled)); }
  return Ok(7);
 }
 function main(): i32 {
  for n in [0, 1] {
   let observed = cell_new(0);
-  let baseline = produce((): boolean => { observed.set(observed.get() + 1); return false; }, (value: i32): Result[i32, string] => Ok(value));
+  let baseline = produce(n, 2, (): boolean => { observed.set(observed.get() + 1); return false; }, 0, (value: i32): Result[i32, string] => Ok(value));
   match (baseline) { Ok(_) => {}, Err(_) => { return 1; } }
   for stop in 1..observed.get() + 1 {
    let polls = cell_new(0);
-   let result = produce((): boolean => { polls.set(polls.get() + 1); return polls.get() == stop; }, (value: i32): Result[i32, string] => Ok(value));
+   let result = produce(n, 2, (): boolean => { polls.set(polls.get() + 1); return polls.get() == stop; }, 0, (value: i32): Result[i32, string] => Ok(value));
    match (result) { Err(Decode(Status.Cancelled())) => {}, _ => { return 2; } }
   }
  }
@@ -78,6 +78,8 @@ function main(): i32 {
 func TestSelfHostFmtLambdaListLayouts(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, source := range []string{
+		`function main(): i32 { return call(1, 2, (): i32 => { let n = 1; return n; }, 3, (): i32 => 4); }`,
+
 		`function main(): i32 { let work = (): i32 => call((): i32 => { let n = 1; return n; }, 2); return work(); }`,
 		`function main(): i32 { let work = (): i32 => { let value = call((): i32 => { let n = 1; return n; }, 2); return value; }; return work(); }`,
 		`function main(): i32 { let work = (): void => { call((): i32 => { let n = 1; return n; }, 2); }; return 0; }`,

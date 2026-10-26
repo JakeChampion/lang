@@ -193,7 +193,9 @@ func listLines(elems []ast.Expr, lines []int) []int {
 		}
 	}
 	for i := 1; i < len(elems); i++ {
-		if lambda, ok := elems[i-1].(*ast.Lambda); ok && lambda.Body != nil && lambda.Body.End.Line > 0 && lambda.Body.End.Line == firstLine(elems[i]) {
+		if firstLine(elems[i]) == firstLine(elems[i-1]) {
+			lines[i] = lines[i-1]
+		} else if lambda, ok := elems[i-1].(*ast.Lambda); ok && lambda.Body != nil && lambda.Body.End.Line > 0 && lambda.Body.End.Line == firstLine(elems[i]) {
 			lines[i] = lines[i-1]
 		}
 	}

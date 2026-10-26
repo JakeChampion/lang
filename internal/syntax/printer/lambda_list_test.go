@@ -8,6 +8,8 @@ import (
 
 func TestFormatLambdaListGroups(t *testing.T) {
 	for _, source := range []string{
+		`function main(): i32 { return call(1, 2, (): i32 => { let n = 1; return n; }, 3, (): i32 => 4); }`,
+
 		`function main(): i32 { let work = (): i32 => call((): i32 => { let n = 1; return n; }, 2); return work(); }`,
 		`function main(): i32 { let work = (): i32 => { let value = call((): i32 => { let n = 1; return n; }, 2); return value; }; return work(); }`,
 		`function main(): i32 { let work = (): void => { call((): i32 => { let n = 1; return n; }, 2); }; return 0; }`,
