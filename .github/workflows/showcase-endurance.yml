@@ -55,6 +55,10 @@ jobs:
               proxy:/data/caddy/pki/authorities/local/root.crt build/showcase-endurance/root.crt; then
               break
             fi
+            if [ "$attempt" -eq 30 ]; then
+              echo "The proxy did not create its TLS root certificate." >&2
+              exit 1
+            fi
             sleep 1
           done
           test -s build/showcase-endurance/root.crt
