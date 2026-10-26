@@ -1136,7 +1136,7 @@ pub struct Scalarized { funcs: ssasem.Func[], modes: i32[][], changed: boolean[]
 pub function scalar_params(funcs: ssasem.Func[], names: string[], rewrite: boolean[], unnamed: boolean[], modes: i32[][]): Scalarized {
   let ix: util.NameIndex = util.name_index(names);
   let split: boolean[][] = param_candidates(funcs, names, ix, rewrite, unnamed, modes);
-  split = params_kept_apart(funcs, ix, split);
+  split = params_kept_apart(funcs, ix, split, modes);
   let sites: Sites = Sites { funcs: funcs, modes: modes, ix: ix, split: split, lay: no_layout() };
   let out: ssasem.Func[] = [];
   let out_modes: i32[][] = [];
@@ -1194,7 +1194,7 @@ function anchored_callees(funcs: ssasem.Func[]): string[] {
 
 // Drops a candidate whose parameter some body uses whole, other than by
 // handing it on to a candidate parameter of the same type.
-function params_kept_apart(funcs: ssasem.Func[], ix: util.NameIndex, split0: boolean[][]): boolean[][] {
+function params_kept_apart(funcs: ssasem.Func[], ix: util.NameIndex, split0: boolean[][], modes: i32[][]): boolean[][] {
   let split: boolean[][] = split0;
   let changed: boolean = true;
   while (changed) {
@@ -1203,6 +1203,12 @@ function params_kept_apart(funcs: ssasem.Func[], ix: util.NameIndex, split0: boo
       let f: ssasem.Func = funcs[j];
       for b in f.graph.blocks {
         for ins in b.insts {
+          // A consumed update donor must retain its box for in-place reuse.
+          let donor: i32 = ssasem.update_base(ins);
+          if (donor >= 0 && donor < split[j].len() && split[j][donor] && modes[j][donor] == ssasem.counted_mode()) {
+            split = split.with(j, split[j].with(donor, false));
+            changed = true;
+          }
           for pos in 0..ins.args.len() {
             let a: i32 = ins.args[pos];
             if (a >= 0 && a < split[j].len() && split[j][a] && !param_read_apart(funcs, ix, split, f, ins, pos)) {

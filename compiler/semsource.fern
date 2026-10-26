@@ -5187,6 +5187,9 @@ function decl_param_mode(fd: parser.FuncDecl, at: i32, t: typeinfo.Type): i32 {
   if (!reference(t)) {
     return ssaunits.value_mode();
   }
+  if (fd.receiver_own) {
+    return ssaunits.counted_mode();
+  }
   return ssaunits.borrow_mode();
 }
 
