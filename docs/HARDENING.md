@@ -87,21 +87,29 @@ checks only where the hardware has them.
 
 ## How it is verified
 
-`TestSelfHostHardenArm64` checks the in-process image and the `-emit asm`
-form linked by gcc:
+`TestSelfHostHardenArm64` checks the in-process image and the assembly form linked by gcc.
+Both images must contain the BTI property note and produce the expected output.
+The test checks PAC and BTI instructions in the in-process image.
+A `-backtrace` abort must print plain code addresses without signature bits.
 
-- each carries the property note;
-- each runs correctly under enforcement;
-- each dies with SIGILL once its pads are turned into NOPs;
-- each faults once its `paciasp`s are removed, because every `autiasp` then
-  authenticates an address that was never signed.
+The test uses a compiler for the native host architecture.
+It runs on the native ARM self-host shards without an x86 compiler.
+It also runs with QEMU on the x86 self-host shards.
+The log identifies native or QEMU execution before any fault test.
+Each native fault test requires its CPU feature flag.
+Unsupported features remain unverified.
 
-A `-backtrace` abort still prints plain code addresses, and the test would see
-a signature's high bits if one leaked through.
+Each enabled BTI test replaces its BTI instructions with NOPs and requires SIGILL.
+The PAC fault test runs independently of BTI support.
+It substitutes `bti c` for `paciasp` to preserve valid BTI targets.
+It requires SIGSEGV or SIGILL during authentication or the subsequent return.
+The same control must run correctly without authentication.
+An arbitrary nonzero exit does not satisfy these fault tests.
 
-qemu-aarch64's linux-user mode emulates both features, and enforces BTI for
-an image that asks for it, which is what makes these checks possible
-off-hardware.
+QEMU Linux user mode emulates PAC and BTI.
+Successful QEMU fault tests establish emulated behavior only.
+Native fault results apply to the tested process and image variants on that host.
+They do not certify handwritten runtime frames or every production host.
 
 Every `tests/stdlib/*_test.fern` program was also built with `-harden` and
 run under qemu: 247 of 247 passed, with no SIGILL.
