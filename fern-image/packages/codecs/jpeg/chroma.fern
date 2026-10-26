@@ -1,0 +1,97 @@
+import "./planes";
+import "core/cmp";
+
+pub enum Filter { Nearest, Bilinear }
+
+@derive(cmp.Eq)
+pub enum ChromaError { Grid, Sampling, Storage, Bounds, Limit, Cancelled }
+
+pub struct FrameGrid { width: i32, height: i32, max_horizontal: i32, max_vertical: i32 }
+
+struct Axis { first: i32, second: i32, weight: i64, scale: i64 }
+
+function validate(source: planes.SamplePlane, grid: FrameGrid, row: i32, max_output_bytes: i32): Result[void, ChromaError] {
+  if (grid.width <= 0 || grid.width > 65535 || grid.height <= 0 || grid.height > 65535) {
+    return Err(ChromaError.Grid);
+  }
+  let p = source.layout;
+  if (grid.max_horizontal < 1 || grid.max_horizontal > 4 || grid.max_vertical < 1 || grid.max_vertical > 4
+    || p.horizontal < 1 || p.horizontal > grid.max_horizontal || p.vertical < 1 || p.vertical > grid.max_vertical) {
+    return Err(ChromaError.Sampling);
+  }
+  let width = (grid.width as i64 * (p.horizontal as i64) + grid.max_horizontal as i64 - 1i64) / (grid.max_horizontal as i64);
+  let height = (grid.height as i64 * (p.vertical as i64) + grid.max_vertical as i64 - 1i64) / (grid.max_vertical as i64);
+  if (p.width as i64 != width || p.height as i64 != height || p.stride < p.width) {
+    return Err(ChromaError.Storage);
+  }
+  let bytes = p.stride as i64 * (p.height as i64);
+  if (bytes > 67108864i64) {
+    return Err(ChromaError.Limit);
+  }
+  if (bytes <= 0i64 || bytes != p.bytes as i64 || bytes != source.data.len() as i64) {
+    return Err(ChromaError.Storage);
+  }
+  if (row < 0 || row >= grid.height) {
+    return Err(ChromaError.Bounds);
+  }
+  if (max_output_bytes <= 0 || grid.width > max_output_bytes || grid.width > 67108864) {
+    return Err(ChromaError.Limit);
+  }
+  return Ok(());
+}
+
+// Nominal factor spacing precedes frame-edge cropping.
+function axis(index: i32, factor: i32, maximum: i32, length: i32): Axis {
+  let scale = maximum as i64 * 2i64;
+  let position = (index as i64 * 2i64 + 1i64) * (factor as i64) - maximum as i64;
+  if (position <= 0i64) {
+    return Axis { first: 0, second: 0, weight: 0i64, scale: scale };
+  }
+  if (position >= (length - 1) as i64 * scale) {
+    return Axis { first: length - 1, second: length - 1, weight: 0i64, scale: scale };
+  }
+  let first = (position / scale) as i32;
+  return Axis { first: first, second: first + 1, weight: position % scale, scale: scale };
+}
+
+function nearest(index: i32, factor: i32, maximum: i32, length: i32): i32 {
+  let at = ((index as i64 * 2i64 + 1i64) * (factor as i64) / (maximum as i64 * 2i64)) as i32;
+  return if (at >= length) { length - 1 } else { at };
+}
+
+function interpolate(source: planes.SamplePlane, x: Axis, y: Axis): u8 {
+  let stride = source.layout.stride;
+  let a = source.data[y.first * stride + x.first] as i64;
+  let b = source.data[y.first * stride + x.second] as i64;
+  let c = source.data[y.second * stride + x.first] as i64;
+  let d = source.data[y.second * stride + x.second] as i64;
+  let total = (a * (x.scale - x.weight) + b * x.weight) * (y.scale - y.weight)
+    + (c * (x.scale - x.weight) + d * x.weight) * y.weight;
+  let scale = x.scale * y.scale;
+  return ((total + scale / 2i64) / scale) as u8;
+}
+
+pub function reconstruct_row(source: planes.SamplePlane, grid: FrameGrid, row: i32, filter: Filter, max_output_bytes: i32, cancelled: () => boolean): Result[u8[], ChromaError] {
+  validate(source, grid, row, max_output_bytes)?;
+  if (cancelled()) {
+    return Err(ChromaError.Cancelled);
+  }
+  let output = __alloc_u8(grid.width);
+  if (cancelled()) {
+    return Err(ChromaError.Cancelled);
+  }
+  let p = source.layout;
+  let vertical = axis(row, p.vertical, grid.max_vertical, p.height);
+  let near_y = nearest(row, p.vertical, grid.max_vertical, p.height);
+  for x in 0..grid.width {
+    if (x % 64 == 0 && cancelled()) {
+      return Err(ChromaError.Cancelled);
+    }
+    let value = match (filter) { Filter.Nearest => source.data[near_y * p.stride + nearest(x, p.horizontal, grid.max_horizontal, p.width)], Filter.Bilinear => interpolate(source, axis(x, p.horizontal, grid.max_horizontal, p.width), vertical) };
+    output = output.with(x, value);
+  }
+  if (cancelled()) {
+    return Err(ChromaError.Cancelled);
+  }
+  return Ok(output);
+}
