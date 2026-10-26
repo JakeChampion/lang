@@ -15,6 +15,8 @@ The opt-in [incremental PNG interface](docs/incremental-png.md) validates the co
 The [JPEG header parser](docs/jpeg-headers.md) checks a restricted baseline header profile and returns owned tables.
 The separate [JPEG coefficient fold](docs/jpeg-coefficients.md) validates a complete restricted baseline entropy scan and emits quantized blocks.
 Neither interface decodes JPEG pixels.
+The separate [scalar inverse DCT](docs/jpeg-idct.md) reconstructs isolated component blocks from quantized coefficients.
+A complete JPEG pixel decoder remains unfinished.
 
 HTTP and CDN services remain unimplemented.
 
@@ -63,7 +65,8 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 166 TAP cases cover essential, compression, pixel, color, resize, PNG, JPEG headers and coefficients, rows, providers, pipeline, region, cache, RSS parser, and fusion behavior.
+The 171 TAP cases cover compression, pixels, color, resize, PNG, JPEG headers, coefficients, and scalar inverse DCT.
+They also cover rows, providers, pipelines, regions, caches, RSS parsing, and fusion.
 The file I/O probe and pixel example also exit successfully.
 The native script checks source executables and additional allocator, cache, fusion, and formatter smoke modes with the sanitizer.
 The separate Wasm script runs the same TAP cases and allocator smoke modes through Wasmtime.
