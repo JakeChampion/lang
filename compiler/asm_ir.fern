@@ -5967,8 +5967,10 @@ function ssa_bin_sized(ins: ssa.SInst, v: i32, size: i32, reg_of: i32[], fr: Ssa
     return ssa_bin_in_slot(ssa_alu_ext(tag), b, ssa_slot_disp(ssa.spill_slot(reg_of[v]), s.ssa_save), reg_of, fr, s);
   }
   let sfx: string = if (size == 32) { "l " } else { "q " };
-  if (tag == 23 && fr.imm.is_imm[b] && reg_of[a] >= 0) {
-    s = s.write("    imul" + sfx + "$" + util.i64_to_string(fr.imm.value[b]) + ", " + ssa_wreg(size, ssa_reg(reg_of[a])) + ", " + ssa_wreg(size, dh) + "\n");
+  if (tag == 23 && fr.imm.is_imm[b]) {
+    let src: string = ssa_src(reg_of, a, dh);
+    s = ssa_read(reg_of, a, src, s);
+    s = s.write("    imul" + sfx + "$" + util.i64_to_string(fr.imm.value[b]) + ", " + ssa_wreg(size, src) + ", " + ssa_wreg(size, dh) + "\n");
     return ssa_store(reg_of, v, dh, s);
   }
   let lea: string = ssa_lea_operand(tag, a, b, dh, reg_of, fr);
