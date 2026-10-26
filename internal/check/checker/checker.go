@@ -8633,10 +8633,11 @@ func (c *checker) checkEscapes(prog *ast.Program) {
 }
 
 type escapeEnv struct {
-	params   map[string]int
-	locals   map[string]*ast.Var
-	armViews map[string]ast.Expr
-	visiting map[string]bool
+	params     map[string]int
+	locals     map[string]*ast.Var
+	armViews   map[string]ast.Expr
+	visiting   map[string]bool
+	reassigned map[string]bool
 }
 
 func (c *checker) escapeEnv(fn *ast.FuncDecl) *escapeEnv {
@@ -8644,10 +8645,11 @@ func (c *checker) escapeEnv(fn *ast.FuncDecl) *escapeEnv {
 		return nil
 	}
 	env := &escapeEnv{
-		params:   map[string]int{},
-		locals:   map[string]*ast.Var{},
-		armViews: map[string]ast.Expr{},
-		visiting: map[string]bool{},
+		params:     map[string]int{},
+		locals:     map[string]*ast.Var{},
+		armViews:   map[string]ast.Expr{},
+		visiting:   map[string]bool{},
+		reassigned: map[string]bool{},
 	}
 	for i, p := range fn.Params {
 		env.params[p.Name] = i
@@ -8657,6 +8659,10 @@ func (c *checker) escapeEnv(fn *ast.FuncDecl) *escapeEnv {
 	}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		switch m := n.(type) {
+		case *ast.Assign:
+			if id, ok := m.Target.(*ast.Ident); ok {
+				env.reassigned[id.Name] = true
+			}
 		case *ast.Match:
 			for _, arm := range m.Arms {
 				bindArmViews(m.Tag, arm.Bindings, arm.BindingTypes, env)
@@ -8975,9 +8981,12 @@ func (c *checker) sliceViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]
 		out.merge(c.sliceSourceRoots(e.Source, env, sums))
 	case *ast.Call:
 		if id, ok := e.Callee.(*ast.Ident); ok {
+			if id.Name == "__method_string_as_bytes" && len(e.Args) == 1 {
+				return c.bytesSourceRoots(e.Args[0], env, sums)
+			}
 			for i := range sums[id.Name].params {
 				if i < len(e.Args) {
-					out.merge(c.sliceSourceRoots(e.Args[i], env, sums))
+					out.merge(c.viewArgRoots(id.Name, i, e.Args[i], env, sums))
 				}
 			}
 		}
@@ -8997,6 +9006,27 @@ func (c *checker) sliceViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]
 	return out
 }
 
+// viewArgRoots is the storage that argument i of callee lends to a view the
+// callee returns: a `string` argument lends its bytes through `as_bytes`.
+func (c *checker) viewArgRoots(callee string, i int, arg ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
+	if sig := c.info.FuncSigs[callee]; sig != nil && i < len(sig.Params) {
+		if _, isString := sig.Params[i].(ast.StringType); isString {
+			return c.bytesSourceRoots(arg, env, sums)
+		}
+	}
+	return c.sliceSourceRoots(arg, env, sums)
+}
+
+// bytesSourceRoots is the storage a `string` lends to a view of its bytes. A
+// reassigned local may hold another string by then, so it is left to the flow
+// analysis in semsource.
+func (c *checker) bytesSourceRoots(str ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
+	if id, ok := str.(*ast.Ident); ok && env.reassigned[id.Name] {
+		return viewRoots{params: map[int]bool{}}
+	}
+	return c.stringSourceRoots(str, env, sums)
+}
+
 func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
 	out := viewRoots{params: map[int]bool{}}
 	switch s := src.(type) {
@@ -9009,11 +9039,14 @@ func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string
 		out.merge(c.sliceSourceRoots(s.Source, env, sums))
 	case *ast.Call:
 		if id, ok := s.Callee.(*ast.Ident); ok {
+			if id.Name == "__method_string_as_bytes" && len(s.Args) == 1 {
+				return c.bytesSourceRoots(s.Args[0], env, sums)
+			}
 			sum := sums[id.Name]
 			out.local = out.local || sum.fresh
 			for i := range sum.params {
 				if i < len(s.Args) {
-					out.merge(c.sliceSourceRoots(s.Args[i], env, sums))
+					out.merge(c.viewArgRoots(id.Name, i, s.Args[i], env, sums))
 				}
 			}
 		}
@@ -10337,6 +10370,10 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		got = c.postSettleType(n.Value, got)
 		got = c.maybeWrapForUnion(want, &n.Value, got, s)
 		c.refineCallTypeArgsFromDest(n.Value, want)
+		if _, isLit := n.Value.(*ast.ArrayLit); isLit && isArrayViewLend(want, got) {
+			c.lendArrayAsView(&n.Value, want, got, false)
+			got = want
+		}
 		if got != nil && !c.assignable(want, got) {
 			c.errfCode(n.P, "E002", "return value: expected %s, got %s%s", want, got, assignHint(want, got))
 		}

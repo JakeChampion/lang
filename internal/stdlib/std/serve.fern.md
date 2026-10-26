@@ -2960,18 +2960,18 @@ function __lent_sealed(c: __Conns, at: i32, payload: u8[]): Option[u8[]] {
 }
 
 function __serve_send_raw[D: async.Driver](drv: D, c: __Conns, at: i32, payload: u8[], opts: Config): (__Conns, __Sent) {
-  let n: i32 = tcp_send_bytes(c.fds[at], payload);
-  if (n >= payload.len()) {
-    return (c, Whole);
+  match (net.write_rest(c.fds[at], payload)) {
+    Ok(rest) => {
+      if (rest.len() == 0) {
+        return (c, Whole);
+      }
+      return (__serve_pend(drv, c, at, rest, opts), Partial);
+    },
+    Err(_) => {
+      return (c, Failed);
+    }
   }
-  if (n < 0 && n != 0 - __eagain()) {
-    return (c, Failed);
-  }
-  let rest: u8[] = payload;
-  if (n > 0) {
-    rest = __bytes_from(payload, n);
-  }
-  return (__serve_pend(drv, c, at, rest, opts), Partial);
+  return (c, Failed);
 }
 
 // The out buffer keeps OUT_HEAD bytes ahead of what is written to it, so a TLS response is sealed as a record in
@@ -4628,7 +4628,7 @@ function __serve_loop(l: __Listen, handler: (HttpRequest, platform.Host) => Http
         continue;
       }
       if (__exporter_owns(ex, fd)) {
-        ex = __scrape_wake(drv, ex, fd, __loop_exposition(conns.metrics, opts), !__serve_stopping(stop));
+        ex = __scrape_wake(drv, ex, fd, __exposition_of(conns.metrics, opts), !__serve_stopping(stop));
         continue;
       }
       if (fd == listener) {
@@ -4829,7 +4829,7 @@ function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, pl
         continue;
       }
       if (__exporter_owns(ex, fd)) {
-        ex = __scrape_wake(drv, ex, fd, __loop_exposition(conns.metrics, opts), !__serve_stopping(stop));
+        ex = __scrape_wake(drv, ex, fd, __exposition_of(conns.metrics, opts), !__serve_stopping(stop));
         continue;
       }
       if (fd == listener) {
@@ -5096,7 +5096,7 @@ function __supervisor_scrapes(drv: async.RealDriver, ex: Option[metrics.Exporter
     let fd: i32 = events[k];
     k = k + 2;
     if (__exporter_owns(ex, fd)) {
-      ex = __scrape_wake(drv, ex, fd, metrics.merge(sup.snaps), !sup.stopping && sup.pids.len() > 0);
+      ex = __scrape_wake(drv, ex, fd, __merged_of(sup.snaps), !sup.stopping && sup.pids.len() > 0);
     }
   }
   return ex;
@@ -5237,6 +5237,15 @@ function __loop_exposition(m: metrics.ServerMetrics, opts: Config): string {
   return m.render() + opts.metrics.render();
 }
 
+// A scrape renders its body once, when it is answered, not on each wake that writes more of it.
+function __exposition_of(m: metrics.ServerMetrics, opts: Config): () => string {
+  return (): string => __loop_exposition(m, opts);
+}
+
+function __merged_of(snaps: string[]): () => string {
+  return (): string => metrics.merge(snaps);
+}
+
 function __exporter(drv: async.RealDriver, opts: Config, snap: Option[Writer]): Result[Option[metrics.Exporter], ListenError] {
   if (opts.metrics_port <= 0 || __snapshot_timeout(snap, 0 - 1) >= 0) {
     return Ok(None);
@@ -5297,10 +5306,10 @@ function __exporter_owns(ex: Option[metrics.Exporter], fd: i32): boolean {
   return false;
 }
 
-function __scrape_wake(drv: async.RealDriver, ex: Option[metrics.Exporter], fd: i32, text: string, ready: boolean): Option[metrics.Exporter] {
+function __scrape_wake(drv: async.RealDriver, ex: Option[metrics.Exporter], fd: i32, text: () => string, ready: boolean): Option[metrics.Exporter] {
   match (ex) {
     Some(e) => {
-      return Some(e.wake(drv, fd, (path: string): HttpResponse => metrics.scrape(path, (): string => text, ready)));
+      return Some(e.wake(drv, fd, (path: string): HttpResponse => metrics.scrape(path, text, ready)));
     },
     None => {
       return None;

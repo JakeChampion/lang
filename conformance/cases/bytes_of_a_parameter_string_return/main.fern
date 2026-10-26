@@ -1,0 +1,21 @@
+// The bytes of a parameter or a literal string may be returned: the caller keeps that string alive.
+struct H { bytes: [u8] }
+
+function of_param(s: string): [u8] {
+  return s.as_bytes();
+}
+
+function held(s: string): H {
+  return H { bytes: s.as_bytes() };
+}
+
+function of_literal(): [u8] {
+  return "hello".as_bytes();
+}
+
+function main(): i32 {
+  let word: string = "fe" + "rn";
+  let h: H = held(word);
+  print(f"{of_param(word).len()} {h.bytes[0]} {of_literal().len()}");
+  return 0;
+}
