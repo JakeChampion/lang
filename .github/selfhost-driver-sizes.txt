@@ -575,13 +575,16 @@
 # inside the tolerance and keep their rows.
 # 2026-10-26 (#13496): measured with stage0-20261025-433d93a.
 # All ten driver builds and the fixed-point compiler use the same source tree.
+# 2026-10-26 (#13561): measured with stage0-20261025-433d93a.
+# All 11 rows passed the strict gate on the current source.
+# The compiler driver and Wasm IR driver each grew by 4096 bytes.
 fern.fern/stage2 14881456
-fern.fern 14967984
+fern.fern 14972080
 drivers/asm_load_run.fern 11952000
 drivers/asm_modload_run.fern 10600480
 drivers/asm_ir_run.fern 10196992
 drivers/asm_run.fern 9355664
-drivers/wasm_ir_run.fern 9294816
+drivers/wasm_ir_run.fern 9298912
 drivers/wasm_run.fern 9299072
 drivers/wasm_runio_run.fern 9280448
 drivers/asm_pathprobe_run.fern 6195824
