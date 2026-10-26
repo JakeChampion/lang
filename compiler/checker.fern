@@ -1695,6 +1695,9 @@ function literal_match_type(t: typeinfo.Type): boolean {
     typeinfo.TypeUnknown(_) => {
       return false;
     },
+    typeinfo.TypeErased(_) => {
+      return false;
+    },
     typeinfo.TypeUnion(_) => {
       return false;
     },
