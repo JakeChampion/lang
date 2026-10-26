@@ -1,0 +1,240 @@
+{
+  "Pillow": "12.3.0",
+  "jpeg_api_version": "6.2",
+  "libjpeg_turbo_version": "3.1.4.1",
+  "generator_sha256": "69a24a792dce05b0e6d918e714bc427c5bb9b8b280770525cb2646fcd297bee0",
+  "reference_use": "Offline header fixtures only. No runtime codec dependency or decoder compatibility claim.",
+  "fixtures": [
+    {
+      "name": "gray",
+      "sha256": "8b16f39d32feb8ca2266d59aa91cc5294c852c142535163c3e0be98a218f3422",
+      "bytes": 445,
+      "width": 17,
+      "height": 9,
+      "components": [
+        [
+          1,
+          1,
+          1,
+          0
+        ]
+      ],
+      "optimized": false,
+      "progressive": false,
+      "accepted_header_profile": true,
+      "entropy_offset": 328
+    },
+    {
+      "name": "rgb444",
+      "sha256": "e3800243fce78224abed5ecc9bab1ea14d1ffb746b04126b044aa90c9c0fb44d",
+      "bytes": 900,
+      "width": 17,
+      "height": 9,
+      "components": [
+        [
+          1,
+          1,
+          1,
+          0
+        ],
+        [
+          2,
+          1,
+          1,
+          1
+        ],
+        [
+          3,
+          1,
+          1,
+          1
+        ]
+      ],
+      "optimized": false,
+      "progressive": false,
+      "accepted_header_profile": true,
+      "entropy_offset": 623
+    },
+    {
+      "name": "rgb422",
+      "sha256": "9c946a0c64e4e5d5cd2d06b6f19d927e531772e9b2628f0486338052d171b910",
+      "bytes": 827,
+      "width": 17,
+      "height": 9,
+      "components": [
+        [
+          1,
+          2,
+          1,
+          0
+        ],
+        [
+          2,
+          1,
+          1,
+          1
+        ],
+        [
+          3,
+          1,
+          1,
+          1
+        ]
+      ],
+      "optimized": false,
+      "progressive": false,
+      "accepted_header_profile": true,
+      "entropy_offset": 623
+    },
+    {
+      "name": "rgb420",
+      "sha256": "118aba8da341f5895326337761bcf0d198be3395634d2f037d878f9ffbe04086",
+      "bytes": 808,
+      "width": 17,
+      "height": 9,
+      "components": [
+        [
+          1,
+          2,
+          2,
+          0
+        ],
+        [
+          2,
+          1,
+          1,
+          1
+        ],
+        [
+          3,
+          1,
+          1,
+          1
+        ]
+      ],
+      "optimized": false,
+      "progressive": false,
+      "accepted_header_profile": true,
+      "entropy_offset": 623
+    },
+    {
+      "name": "gray_optimized",
+      "sha256": "091f6589fe1b747a4af47d16db2045f868ac9b4271a3fe22b35363b18305747f",
+      "bytes": 160,
+      "width": 1,
+      "height": 1,
+      "components": [
+        [
+          1,
+          1,
+          1,
+          0
+        ]
+      ],
+      "optimized": true,
+      "progressive": false,
+      "accepted_header_profile": true,
+      "entropy_offset": 156
+    },
+    {
+      "name": "rgb420_optimized",
+      "sha256": "24362323b7667ffadf904489bc3619798d56b7f00a8fbd18b75873b546adfa57",
+      "bytes": 475,
+      "width": 17,
+      "height": 9,
+      "components": [
+        [
+          1,
+          2,
+          2,
+          0
+        ],
+        [
+          2,
+          1,
+          1,
+          1
+        ],
+        [
+          3,
+          1,
+          1,
+          1
+        ]
+      ],
+      "optimized": true,
+      "progressive": false,
+      "accepted_header_profile": true,
+      "entropy_offset": 324
+    },
+    {
+      "name": "progressive",
+      "sha256": "bb0cc314a1443c129aff8a3f3080c6c8652f8dc8b9860237685dd5cb4663d237",
+      "bytes": 727,
+      "width": 17,
+      "height": 9,
+      "components": [
+        [
+          1,
+          2,
+          2,
+          0
+        ],
+        [
+          2,
+          1,
+          1,
+          1
+        ],
+        [
+          3,
+          1,
+          1,
+          1
+        ]
+      ],
+      "optimized": false,
+      "progressive": true,
+      "accepted_header_profile": false,
+      "entropy_offset": 241
+    },
+    {
+      "name": "cmyk",
+      "sha256": "39a6a124b126a5820a2db83c492b824e15d8bd62bfca4e8fbb18248efeff498b",
+      "bytes": 352,
+      "width": 3,
+      "height": 2,
+      "components": [
+        [
+          67,
+          1,
+          1,
+          0
+        ],
+        [
+          77,
+          1,
+          1,
+          0
+        ],
+        [
+          89,
+          1,
+          1,
+          0
+        ],
+        [
+          75,
+          1,
+          1,
+          0
+        ]
+      ],
+      "optimized": false,
+      "progressive": false,
+      "accepted_header_profile": false,
+      "entropy_offset": 341
+    }
+  ],
+  "synthetic_scope": "Header only, without entropy data or EOI. Not a complete JPEG fixture."
+}

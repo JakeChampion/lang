@@ -185,11 +185,21 @@ function f(o: Result[string, string]): i32 {
 }
 function main(): i32 { return f(Ok("x" + "yz")); }
 `, 3},
-	{"fresh_some_scalar_arg", `@noinline
+	{"fresh_some_scalar_arg", `import "std/string";
+@noinline
 function f(o: Option[i32]): i32 {
     match (o) { Some(v) => { return v; }, None => { return 50; } }
 }
-function main(): i32 { return f(Some(4)) + f(None); }
+function main(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let last = data[n - 1];
+    let value = f(Some(n + 4)) + f(None) - n;
+    if (data.len() != n || data[0] != first || data[n - 1] != last) { return 99; }
+    return value;
+}
 `, 54},
 	{"fresh_arg_loop", `import "std/i32";
 import "std/result";

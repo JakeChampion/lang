@@ -15,6 +15,8 @@ Unsupported palette, depth, and interlace modes require explicit errors.
 A container parser alone does not establish decode support.
 
 JPEG baseline decode requires a separate milestone.
+The [header parser](jpeg-headers.md) checks a restricted baseline header profile through the first scan header.
+It does not validate entropy data or decoded pixels.
 WebP lossy and lossless codecs require separate compatibility plans.
 AVIF requires a feasibility decision for both the container and AV1 compression.
 

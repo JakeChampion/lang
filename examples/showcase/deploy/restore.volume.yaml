@@ -1,0 +1,5 @@
+# Restore into a new volume, then select it without deleting the old volume.
+volumes:
+  app-data:
+    external: true
+    name: ${FERN_RESTORE_VOLUME:?Set FERN_RESTORE_VOLUME to the restored volume}
