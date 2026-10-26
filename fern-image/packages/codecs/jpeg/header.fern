@@ -219,25 +219,14 @@ function scan(input: [u8], at: i32, end: i32, info: FrameInfo, quant: Option[Qua
     if (dc > 1 || ac > 1) {
       return Err(JpegError.Unsupported);
     }
-    for component in output {
-      if (component.id == id) {
-        return Err(JpegError.Scan);
-      }
-    }
-    let found = false;
-    for component in info.components {
-      if (component.id == id) {
-        found = true;
-        match (quant[component.quant_table]) {
-          None => {
-            return Err(JpegError.Table);
-          },
-          Some(_) => {}
-        }
-      }
-    }
-    if (!found) {
+    if (id != info.components[i].id) {
       return Err(JpegError.Scan);
+    }
+    match (quant[info.components[i].quant_table]) {
+      None => {
+        return Err(JpegError.Table);
+      },
+      Some(_) => {}
     }
     match (codes[dc]) {
       None => {
