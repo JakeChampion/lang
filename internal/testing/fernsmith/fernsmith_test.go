@@ -829,12 +829,15 @@ func TestGenPrintableReachesLanes(t *testing.T) {
 		floor float64
 		re    *regexp.Regexp
 	}{
-		{"f32x4 lane cluster (4.5%)", 0.02, regexp.MustCompile(`let __ln_c\d+: f32x4 = `)},
-		{"f64x2 lane cluster (5.3%)", 0.025, regexp.MustCompile(`let __ln_c\d+: f64x2 = `)},
-		{"lane load from an array (4.8%)", 0.02, regexp.MustCompile(`let __ln_xs\d+_v: `)},
-		{"lane store into an array (2.6%)", 0.01, regexp.MustCompile(`let __ln_xs\d+_w: `)},
-		{"lanes through a call (1.8%)", 0.008, regexp.MustCompile(`(\(|= |, )ln_(f64x2|f32x4)\(`)},
-		{"lane select on a compare (2.5%)", 0.01, regexp.MustCompile(`__(f64x2|f32x4)_select\(`)},
+		{"f32x4 lane cluster (6.4%)", 0.03, regexp.MustCompile(`let __ln_c\d+: f32x4 = `)},
+		{"f64x2 lane cluster (6.9%)", 0.03, regexp.MustCompile(`let __ln_c\d+: f64x2 = `)},
+		{"lane load from an array (5.7%)", 0.025, regexp.MustCompile(`let __ln_xs\d+_v: `)},
+		{"lane store into an array (3.4%)", 0.015, regexp.MustCompile(`let __ln_xs\d+_w: `)},
+		{"lanes through a call (3.7%)", 0.015, regexp.MustCompile(`(\(|= |, )ln_(f64x2|f32x4)\(`)},
+		{"lane select on a compare (4.5%)", 0.02, regexp.MustCompile(`__(f64x2|f32x4)_select\(`)},
+		{"lane value joined at an if (3.7%)", 0.015, regexp.MustCompile(`\) & 1i32\) == 0i32\) \{ __ln_c\d+ = `)},
+		{"lane value carried around a loop (3.1%)", 0.015, regexp.MustCompile(`while \(__ln_i\d+ < `)},
+		{"call with a scalar and lane parameters (4.3%)", 0.02, regexp.MustCompile(`__ln_c\d+ = ln_(f64x2|f32x4)_pick\(`)},
 	}
 	hits := make([]int, len(landmarks))
 	for seed := uint64(0); seed < seeds; seed++ {
