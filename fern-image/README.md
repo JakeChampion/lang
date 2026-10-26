@@ -8,6 +8,7 @@ The color module provides sRGB transfer functions, grayscale, channel operations
 The resize module provides scalar nearest-neighbor and bilinear filters.
 A restricted native PNG codec decodes and encodes noninterlaced RGB8/RGBA8.
 Its [sequential row interface](docs/png-rows.md) emits selected rows after a complete filtered-frame decode.
+The [PNG provider adapter](docs/png-providers.md) connects fresh decoder sessions to graph rows and cropped tiles.
 HTTP and CDN services remain unimplemented.
 
 ## Build and test
@@ -55,10 +56,11 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-One hundred TAP cases cover the essential, compression, pixel, color, resize, PNG, sequential PNG rows, row-pipeline, region, cache, RSS parser, and fusion suites.
+The 118 TAP cases cover essential, compression, pixel, color, resize, PNG, sequential rows, providers, pipeline, region, cache, RSS parser, and fusion behavior.
 The file I/O probe and pixel example also exit successfully.
-The native script checks twenty-five executables with the sanitizer.
+The native script checks twenty-eight executables with the sanitizer.
 The separate Wasm script runs the same TAP cases and allocator smoke modes through Wasmtime.
+
 The Linux-only RSS workload records its own procfs observations and runs only in the native script.
 See [RSS observations](docs/rss-observations.md) for the parent-memory control and measurement limits.
 The separate [worker qualification](docs/worker-isolation.md) tests cgroup OOM, deadlines, cancellation, and fresh-process recovery.
@@ -81,7 +83,9 @@ The separate [PNG corpus](docs/png-qualification.md) compares 964 generated case
 PNG requires the static-append compiler fix in PR #13208.
 
 The [row pipeline](docs/pipeline-design.md) renders solid sources and nearest-neighbor or bilinear chains on demand.
+The [provider contract](docs/providers.md) adds fresh execution sessions, access restrictions, and declared source costs.
 It enforces logical row budgets and cooperative cancellation. It is not the complete M4 region engine.
+
 The [region interface](docs/regions.md) plans checked cropped tiles and direct dependency rows.
 The [row batch interface](docs/row-cache.md) adds per-call caching with payload and entry limits.
 The explicit [cached fusion interface](docs/cached-fusion.md) composes eligible nearest chains without intermediate cached rows.

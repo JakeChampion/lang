@@ -8313,6 +8313,9 @@ pub function builtin_enum_of(name: string): string {
   if (name == "BodyText" || name == "BodyBytes" || name == "BodyStream" || name == "BodyFile" || name == "BodyChunks" || name == "BodyFileRanges") {
     return "Body";
   }
+  if (name == "StreamTooLarge" || name == "StreamFramingTooLarge" || name == "StreamTimeout" || name == "StreamMalformed" || name == "StreamCutShort" || name == "StreamCancelled") {
+    return "StreamFault";
+  }
   return "";
 }
 
@@ -8331,6 +8334,12 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
   structs = add_builtin_variant(structs, "BodyChunks", ["ChunkProducer"], "Body");
   structs = add_builtin_variant(structs, "BodyFileRanges", ["string", "i64[]", "u8[][]"], "Body");
   structs = add_builtin_variant(structs, "Other", ["string", "string", "i32"], "IoError");
+  structs = add_builtin_variant(structs, "StreamTooLarge", none, "StreamFault");
+  structs = add_builtin_variant(structs, "StreamFramingTooLarge", none, "StreamFault");
+  structs = add_builtin_variant(structs, "StreamTimeout", none, "StreamFault");
+  structs = add_builtin_variant(structs, "StreamMalformed", none, "StreamFault");
+  structs = add_builtin_variant(structs, "StreamCutShort", none, "StreamFault");
+  structs = add_builtin_variant(structs, "StreamCancelled", none, "StreamFault");
   if (!name_declared(structs, "FileStat")) {
     let fsf: StructFieldDecl[] = [];
     fsf = fsf.append(bare_field("is_file", "boolean"));
@@ -8499,7 +8508,7 @@ function add_builtin_stream(structs: StructDecl[]): StructDecl[] {
   if (!name_declared(structs, "BodySource")) {
     let bsf: StructFieldDecl[] = [];
     bsf = bsf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "", line: 0, col: 0 });
-    bsf = bsf.append(bare_field("fault", "Cell[i32]"));
+    bsf = bsf.append(bare_field("fault", "Cell[Option[StreamFault]]"));
     bsf = bsf.append(StructFieldDecl { name: "send", type_name: "fn", fn_ret: "i32", fn_param_types: "u8[]", line: 0, col: 0 });
     structs = structs.append(StructDecl { name: "BodySource", fields: bsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
@@ -17975,7 +17984,7 @@ function handle_resource_of(type_name: string, resources: ResourceDecl[]): strin
 }
 
 pub function is_reserved_enum_name(name: string): boolean {
-  return name == "Option" || name == "Result" || name == "IoError" || name == "Body";
+  return name == "Option" || name == "Result" || name == "IoError" || name == "Body" || name == "StreamFault";
 }
 
 pub function reserved_enum_tparams(name: string): string[] {

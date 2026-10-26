@@ -63,7 +63,8 @@ The decoder materializes the entire filtered frame before row callbacks.
 It validates every scanline filter byte before the first callback.
 A bad final-row filter therefore rejects an earlier selection without a callback.
 The current bulk inflater and chunk parser remain eager.
-This API is not an incremental inflater or a decoder node in the row graph.
+The [PNG provider adapter](png-providers.md) connects fresh sessions to the row graph.
+The inflater remains eager.
 
 `RowError[E]` distinguishes codec errors, invalid bounds, admission failures, cancellation, and consumer errors.
 A failure returns no partial success state.

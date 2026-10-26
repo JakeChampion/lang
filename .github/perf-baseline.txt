@@ -1,6 +1,8 @@
 # Re-pinned 2026-10-25 (#13396) from Perf run 40242804275, on the merge of main:
 # aarch64/http_hello.text 18384 to 18590 (+1.1%). Main moved this row, not #13396.
 # fern -target arm64-linux reads 18486 at 5a5c96ff with and without the PR's commits.
+# 2026-10-25, the branch forwarding: x86_64/deflate_encode.ir 49965640 to 49355348
+# (-1.2%) from a local perf-bench run. A branch skips a block that only jumps on.
 # 2026-10-25 (#13302), on the merge of main at a4d07da7: x86_64 deflate_decode.text
 # and .ir from a local perf-bench run. The aarch64 deflate_decode.text and
 # utf8_ingest_validated.text rows use the same count. Main alone reads 9202 for the last row.
@@ -126,7 +128,7 @@ x86_64/closure_call.text	877
 x86_64/closure_call.ir	63018154
 x86_64/deflate_decode.ir	36384995
 x86_64/deflate_decode.text	12754
-x86_64/deflate_encode.ir	49965640
+x86_64/deflate_encode.ir	49355348
 x86_64/deflate_encode.text	7250
 x86_64/enum_match.text	994
 x86_64/enum_match.ir	48825085

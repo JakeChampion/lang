@@ -1,0 +1,28 @@
+import "./png";
+import "../../pipeline/pipeline";
+import "../../pixels/pixels";
+
+function source_error(error: png.DecoderError): pipeline.PipelineError {
+  return match (error) { png.DecoderCodec(e) => pipeline.ProviderFailure("PNG " + e.to_debug()), png.DecoderBounds => pipeline.PipelineError.Bounds, png.DecoderBudget => pipeline.Budget, png.DecoderCancelled => pipeline.Cancelled, png.DecoderAccess => pipeline.AccessPattern };
+}
+
+pub function source(input: u8[], image_limits: pixels.Limits, row_limits: png.RowLimits, limits: pipeline.Limits): Result[pipeline.Graph, pipeline.PipelineError] {
+  let plan = match (png.inspect_rows(input, image_limits, row_limits)) { Ok(v) => v, Err(e) => { return Err(source_error(e)); } };
+  let storage = plan.payload_bytes - plan.row_scratch_bytes;
+  if (storage > 2147483647i64 || plan.row_work > 2147483647i64) {
+    return Err(pipeline.Budget);
+  }
+  let open = (cancelled: () => boolean): Result[pipeline.RowProvider, pipeline.PipelineError] => {
+    let decoder = match (png.open_rows(input, image_limits, row_limits, cancelled)) { Ok(v) => v, Err(e) => { return Err(source_error(e)); } };
+    let read = (y: i32, cancelled: () => boolean): Result[pipeline.SourceRow, pipeline.PipelineError] => {
+      let row = match (decoder.read(y, cancelled)) { Ok(v) => v, Err(e) => { return Err(source_error(e)); } };
+      return Ok(pipeline.SourceRow { index: y, image: row });
+    };
+    return Ok(pipeline.RowProvider { read: read });
+  };
+  let spec = pipeline.ProviderSpec {
+    access: pipeline.ForwardRows, storage_bytes: storage as i32, scratch_bytes: 0,
+    samples_per_row: plan.layout.width, setup_samples: plan.row_work as i32, open: open,
+  };
+  return pipeline.from_provider(plan.layout.width, plan.layout.height, plan.layout.format, spec, limits);
+}

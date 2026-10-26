@@ -47,9 +47,54 @@ function main(): i32 {
 `
 
 func TestSelfHostBytesOwned(t *testing.T) {
-	native := "5 8869 18 721642 0 10 6 3\n800 100\n"
+	want := "5 8869 18 721642 0 10 6 3\n800 100\n"
 	runSemanticProgram(t, "bytesowned", bytesOwnedProgram, []string{"owned"},
-		map[string]string{"arm64-linux": native, "x86-64-linux": native, "x86-64-sanitize": native, "wasm32-wasi": "5 8869 18 721642 0 10 6 3\n800 200\n"})
+		map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want})
+}
+
+const bytesOwnedIsolationProgram = `@noinline function materialize(view: [u8]): u8[] {
+  return __bytes_owned(view);
+}
+function main(): i32 {
+  let seed = args()[0].len() % 7;
+  let source: u8[] = __alloc_u8(17);
+  let i = 0;
+  while (i < 17) { source = source.with(i, (i * 13 + seed) as u8); i = i + 1; }
+  let window: [u8] = source[3:12];
+  let nested: [u8] = window[2:7];
+  let copy = materialize(nested);
+  let retained = copy;
+  i = 0;
+  while (i < 5) {
+    if (copy[i] != ((i + 5) * 13 + seed) as u8) { return 1; }
+    i = i + 1;
+  }
+  copy = copy.with(0, 211 as u8);
+  if (nested[0] != (65 + seed) as u8 || source[5] != (65 + seed) as u8
+      || retained[0] != (65 + seed) as u8 || copy[0] != 211 as u8) { return 2; }
+  let empty = materialize(window[0:0]);
+  if (empty.len() != 0) { return 3; }
+  source = source.with(5, 199 as u8);
+  if (retained[0] != (65 + seed) as u8 || copy[1] != (78 + seed) as u8 || source[5] != 199 as u8) { return 4; }
+  let text = args()[0] + ": owned bytes";
+  let text_copy = materialize(text.as_bytes()[1:text.len() - 1]);
+  let text_alias = text_copy;
+  text_copy = text_copy.with(0, (text_copy[0] as i32 ^ 255) as u8);
+  if (text_alias[0] != text[1] || text_copy[0] == text[1] || text_alias.len() != text.len() - 2) { return 5; }
+  return 0;
+}`
+
+func TestSelfHostBytesOwnedIsolation(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOf(t, bytesOwnedIsolationProgram, target, "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
+	}
 }
 
 const bytesRangeProgram = `import "std/i64";
