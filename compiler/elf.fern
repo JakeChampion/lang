@@ -512,7 +512,7 @@ pub function elf_image_wx(text: u8[], data: i32[], machine: i32, entry_off: i32,
 }
 
 pub function elf_image_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, note: boolean): u8[] {
-  return elf_image_two_seg(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr(), 2, true, note, false, elf_page_align());
+  return elf_image_two_seg(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr(), 2, true, note, true, elf_page_align());
 }
 
 pub function elf_x86_wx_text_off(): i32 {
@@ -708,15 +708,15 @@ function elf_property_ph(own buf: i32[], note: boolean, base: i32, off: i32): i3
 }
 
 pub function elf_text_vaddr_pie(): i32 {
-  return elf_eh_size() + 2 * elf_ph_size();
+  return elf_eh_size() + 3 * elf_ph_size();
 }
 
 pub function elf_data_vaddr_pie(text_len: i32): i32 {
-  return elf_page_up(elf_eh_size() + 2 * elf_ph_size() + text_len);
+  return elf_page_up(elf_text_vaddr_pie() + text_len);
 }
 
 pub function elf_image_pie(text: u8[], data: i32[], machine: i32, entry_off: i32, bss: i32): u8[] {
-  return elf_image_two_seg(text, [], [], data, machine, entry_off, bss, 0, 3, false, false, false, elf_page_align());
+  return elf_image_two_seg(text, [], [], data, machine, entry_off, bss, 0, 3, false, false, true, elf_page_align());
 }
 
 function elf_static_executable_data_wx(text: u8[], data: i32[]): u8[] {
@@ -1502,10 +1502,7 @@ function elf_opt_shdr(out: i32[], present: boolean, name: i32, off: i32, size: i
 }
 
 pub function elf_wx_text_off(note: boolean): i32 {
-  if (note) {
-    return elf_eh_size() + 4 * elf_ph_size();
-  }
-  return elf_eh_size() + 3 * elf_ph_size();
+  return elf_eh_size() + elf_image_phnum(true, note, true) * elf_ph_size();
 }
 
 pub function elf_func_sym_names(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32, text_end: i32): string[] {

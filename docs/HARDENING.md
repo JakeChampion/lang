@@ -16,7 +16,8 @@ The in-process x86-64 Linux and arm64 Linux linkers separate executable
 code from writable data by default, independently of `-harden`. The code
 and unwind tables load read-execute; constant boxes, globals and BSS load
 read-write. Neither load segment is both writable and executable.
-The x86 image also declares a non-executable stack with `PT_GNU_STACK`.
+The Linux x86 and arm64 images declare a non-executable stack with `PT_GNU_STACK`.
+The arm64 PIE writer declares the same stack permissions.
 
 The x86-64 assembler relaxes branches before the linker chooses the
 4 KiB-aligned data address, then resolves both RIP-relative references and
