@@ -2359,6 +2359,12 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		{"view-leaf-generic-local", `function identity[T](x: T): T { return x; }
+function bad(): [i32] { let n = identity(2); let xs: i32[] = [n]; return identity(xs[:]); }
+function main(): i32 { return 0; }`},
+		{"view-leaf-generic-parameter", `function identity[T](x: T): T { return x; }
+function safe(xs: [i32]): [i32] { let n = identity(2); return identity(xs); }
+function main(): i32 { return 0; }`},
 		{"view-memo-recursive-local", `struct A { bs: B[], xs: [i32] }
 struct B { items: A[] }
 function bad(): B { let xs: i32[] = [1, 2]; let a: A = A { bs: [], xs: xs[:] }; let b: B = B { items: [a] }; return b; }

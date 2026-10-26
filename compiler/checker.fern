@@ -8652,11 +8652,14 @@ function holds_view_aggregate(t: typeinfo.Type, s: Scope): boolean {
   if (mentions_type_variable(t)) {
     return true;
   }
-  let key = view_memo_key(t);
-  if (key.len() == 0) {
+  let kind = match (t) { typeinfo.TypeStruct(_) => "struct:", typeinfo.TypeUnion(_) => "union:", typeinfo.TypeArray(_) => "array:", typeinfo.TypeTuple(_) => "tuple:", typeinfo.TypeMap(_) => "map:", _ => { return false; } };
+  let spelling = typeinfo.spelling(t);
+  if (spelling.len() == 0) {
     let (holds, _) = type_holds_view(t, s, []);
     return holds;
   }
+  let key = kind + spelling;
+  // Cache only complete root queries. A recursive visit can skip an ancestor that carries a view.
   let memo = s.view_memo.get();
   let at = memo.names.find(key);
   if (at >= 0) {
@@ -8665,13 +8668,6 @@ function holds_view_aggregate(t: typeinfo.Type, s: Scope): boolean {
   let (holds, _) = type_holds_view(t, s, []);
   s.view_memo.set(ViewMemo { names: memo.names.added(key), holds: memo.holds.append(holds) });
   return holds;
-}
-
-// Cache only complete root queries. A recursive visit can skip an ancestor that carries a view.
-function view_memo_key(t: typeinfo.Type): string {
-  let kind = match (t) { typeinfo.TypeStruct(_) => "struct:", typeinfo.TypeUnion(_) => "union:", typeinfo.TypeArray(_) => "array:", typeinfo.TypeTuple(_) => "tuple:", typeinfo.TypeMap(_) => "map:", _ => { return ""; } };
-  let spelling = typeinfo.spelling(t);
-  return if (spelling.len() == 0) { "" } else { kind + spelling };
 }
 
 function mentions_type_variable(t: typeinfo.Type): boolean {
