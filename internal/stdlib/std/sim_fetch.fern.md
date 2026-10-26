@@ -6,9 +6,12 @@ This module provides a scripted HTTP network with virtual time.
 
 An answer combines response bytes with first-byte delay, chunk delay, chunk size, and close policy. A simulated network delivers these answers under virtual time.
 
+Hosts are names or address strings. A name resolves to the addresses that `host` gives it. Each latency is a `Duration` of virtual time.
+
 ## Contracts
 
 Tests can model resets, silence, redirects, and partial responses. Scripted time values replace wall-clock delays and make transport outcomes repeatable.
+`flaky` injects a fault into a share of the requests. The simulation's seeded generator selects the requests, so one seed always selects the same requests.
 
 ## Module assembly
 
@@ -28,7 +31,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<6 pub struct Name>>
 
-<<7 pub function net(drv: sim.Sim): Net>>
+<<7 pub function new(drv: sim.Sim): Net>>
 
 <<8 impl fetch.Transport for Net>>
 
@@ -127,6 +130,18 @@ pub function (a: Answer) in_chunks(size: i32, every: Duration): Answer {
   return Answer { ...a, chunk: size, every: every };
 }
 
+// Only the first `n` bytes of the answer arrive.
+pub function (a: Answer) cut(n: i32): Answer {
+  if (n >= a.bytes.len()) {
+    return a;
+  }
+  let h: usize = buf_new(n);
+  buf_push_bytes_range(h, a.bytes, 0, n);
+  let bytes: u8[] = buf_take_bytes(h);
+  buf_free(h);
+  return Answer { ...a, bytes: bytes };
+}
+
 pub function (a: Answer) held(): Answer {
   return Answer { ...a, close: false };
 }
@@ -159,19 +174,22 @@ pub struct Route { addr: string, port: i32, path: string, answers: Answer[] }
 
 pub struct Server { addr: string, port: i32, handler: (HttpRequest) => HttpResponse }
 
-pub struct Net { drv: sim.Sim, names: Name[], listeners: Listener[], routes: Route[], servers: Server[], conns: Cell[string], hits: Cell[string], sent: Cell[string], made: Cell[string], next: Cell[i32], pool: fetch.Idle }
+pub struct Flake { addr: string, port: i32, path: string, percent: i32, fault: Answer }
+
+pub struct Net { drv: sim.Sim, names: Name[], listeners: Listener[], routes: Route[], servers: Server[], flakes: Flake[], conns: Cell[string], hits: Cell[string], sent: Cell[string], made: Cell[string], next: Cell[i32], pool: fetch.Idle }
 ```
 
-### `7 pub function net(drv: sim.Sim): Net`
+### `7 pub function new(drv: sim.Sim): Net`
 
 ```fern
-<<7 pub function net(drv: sim.Sim): Net>>=
-pub function net(drv: sim.Sim): Net {
+<<7 pub function new(drv: sim.Sim): Net>>=
+pub function new(drv: sim.Sim): Net {
   let names: Name[] = [];
   let listeners: Listener[] = [];
   let routes: Route[] = [];
   let servers: Server[] = [];
-  return Net { drv: drv, names: names, listeners: listeners, routes: routes, servers: servers, conns: cell_new(""), hits: cell_new(""), sent: cell_new(""), made: cell_new(""), next: cell_new(1), pool: fetch.idle() };
+  let flakes: Flake[] = [];
+  return Net { drv: drv, names: names, listeners: listeners, routes: routes, servers: servers, flakes: flakes, conns: cell_new(""), hits: cell_new(""), sent: cell_new(""), made: cell_new(""), next: cell_new(1), pool: fetch.idle() };
 }
 
 pub function (n: Net) pooling(pool: fetch.Idle): Net {
@@ -194,6 +212,11 @@ pub function (n: Net) route(addr: string, port: i32, path: string, answers: Answ
 pub function (n: Net) serve(addr: string, port: i32, handler: (HttpRequest) => HttpResponse): Net {
   let listening: Net = n.listen(addr, port, time.DURATION_ZERO);
   return Net { ...listening, servers: listening.servers.append(Server { addr: __canon(addr), port: port, handler: handler }) };
+}
+
+// A request for `path` at `addr` and `port` gets `fault` instead of its answer, with a probability of `percent` in 100. The path "*" matches each request. A fault does not use a scripted answer of the route.
+pub function (n: Net) flaky(addr: string, port: i32, path: string, percent: i32, fault: Answer): Net {
+  return Net { ...n, flakes: n.flakes.append(Flake { addr: __canon(addr), port: port, path: path, percent: percent, fault: fault }) };
 }
 
 pub function (n: Net) connects(): i32 {
@@ -305,24 +328,16 @@ impl fetch.Transport for Net {
     let port: i32 = __field(row, 2);
     let target: string = __target(bytes);
     let route: i32 = 0 - 2;
-    let answer: i32 = 0;
-    let i: i32 = 0;
-    while (i < self.routes.len()) {
-      let r: Route = self.routes[i];
-      if (r.addr == row[1] && r.port == port && (r.path == target || r.path == "*")) {
-        route = i;
-        answer = __took(self, i);
-        break;
+    let answer: i32 = __flaked(self, row[1], port, target);
+    if (answer >= 0) {
+      route = __routed(self, row[1], port, target);
+      if (route >= 0) {
+        answer = __took(self, route);
+      } else {
+        route = __served(self, row[1], port, bytes);
       }
-      i = i + 1;
     }
-    if (route == 0 - 2) {
-      route = __served(self, row[1], port, bytes);
-    }
-    let first_ms: i64 = 0;
-    if (route >= 0) {
-      first_ms = __answer(self, route, answer).delay.as_millis();
-    }
+    let first_ms: i64 = __answer(self, route, answer).delay.as_millis();
     __set_conn(self, conn, __row(conn, row[1], port, route, answer, 0, self.drv.clock_ns.get() + first_ms * 1000000, 1));
     return bytes.len();
   }
@@ -753,6 +768,33 @@ function __target(data: u8[]): string {
   }
 }
 
+function __routed(n: Net, addr: string, port: i32, target: string): i32 {
+  let i: i32 = 0;
+  while (i < n.routes.len()) {
+    let r: Route = n.routes[i];
+    if (r.addr == addr && r.port == port && (r.path == target || r.path == "*")) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 2;
+}
+
+// Answer index 0, or `-1 - k` when flake `k` matches and the seeded draw selects it.
+function __flaked(n: Net, addr: string, port: i32, target: string): i32 {
+  let k: i32 = 0;
+  while (k < n.flakes.len()) {
+    let f: Flake = n.flakes[k];
+    if (f.addr == addr && f.port == port && (f.path == target || f.path == "*")) {
+      if ((n.drv.random_i32() & 2147483647) % 100 < f.percent) {
+        return 0 - 1 - k;
+      }
+    }
+    k = k + 1;
+  }
+  return 0;
+}
+
 function __took(n: Net, route: i32): i32 {
   let counts: string[] = n.hits.get().split(",");
   let out: string = "";
@@ -814,7 +856,11 @@ function __refused_entry(): string {
   return "c" + hex.encode(http.http_serialize_response_conn_bytes(http.text(400, "bad request"), false));
 }
 
+// A negative `i` is the fault of flake `-1 - i`.
 function __answer(n: Net, route: i32, i: i32): Answer {
+  if (i < 0) {
+    return n.flakes[0 - 1 - i].fault;
+  }
   if (route <= 0 - 3) {
     let entry: string = __journal_all(n.made.get())[0 - 3 - route];
     return Answer { bytes: __journal_bytes(slice_unchecked(entry, 1, entry.len()).to_owned()), delay: time.DURATION_ZERO, every: time.DURATION_ZERO, chunk: 0, close: entry[0] == b'c' };
