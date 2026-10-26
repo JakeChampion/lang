@@ -45,7 +45,7 @@ function extent(input: [u8], end: i32, limits: HeaderLimits): Result[void, JpegE
   if (end > input.len()) {
     return Err(JpegError.Truncated);
   }
-  return Ok();
+  return Ok(());
 }
 
 function frame(input: [u8], at: i32, end: i32, limits: HeaderLimits): Result[FrameInfo, JpegError] {
