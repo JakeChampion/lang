@@ -63,6 +63,16 @@ jobs:
           done
           test -s build/showcase-endurance/root.crt
           export NODE_EXTRA_CA_CERTS="$PWD/build/showcase-endurance/root.crt"
+          node --input-type=module -e '
+            const deadline = Date.now() + 45000;
+            while (Date.now() < deadline) {
+              try {
+                const response = await fetch("https://localhost:18443/healthz", {signal: AbortSignal.timeout(3000)});
+                if (response.ok) process.exit(0);
+              } catch {}
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
+            throw Error("The native server did not become healthy.");'
           for app in foundry gather blockyard; do
             node examples/showcase/tests/soak.mjs https://localhost:18443 "$app" "$FERN_SOAK_SECONDS" \
               > "build/showcase-endurance/$app.log" 2>&1
