@@ -54,7 +54,7 @@ function main(): i32 {
   let view: [u8] = lend(xs);
   let alias: [u8] = view;
   let record: Holder = Holder { bytes: view };
-  let pair: ([u8], i32) = (xs, 3);
+  let pair: ([u8], i32) = (xs[:], 3);
   if (second(xs) != 255 || second(alias) != 255 || second(record.bytes) != 255) { return 1; }
   if (second(pair.0) != 255 || pair.1 != 3) { return 2; }
   if (count(xs) != 3 || count(view) != 3) { return 6; }
