@@ -1,0 +1,16 @@
+// A generic struct's arguments are compared inside an array as well.
+struct Box[T] { v: T }
+
+function wide(xs: Box[i64][]): i32 {
+  return xs.len();
+}
+
+function returned(b: Box[i32]): Box[i64][] {
+  return [b];
+}
+
+function main(): i32 {
+  let b: Box[i32] = Box { v: 1 };
+  let a: Box[i64][] = [b];
+  return wide([b]) + a.len();
+}
