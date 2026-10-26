@@ -15,6 +15,7 @@ import "./lexer";
 import "./parser";
 import "./util";
 import "./wasm_ir";
+import "./semlower";
 
 function unit(o: ir.Op): irtables.LowerResult[] {
     return [irtables.LowerResult { source_positions: irtables.no_source(),  ok: true, why: "", ops: [o], n_locals: 0,
@@ -33,7 +34,7 @@ function main(): i32 {
             needs = needs.append(op);
         }
         print("=== need: " + op);
-        print(wasm_ir.emit_ir_module_units([text], mod, needs, [], 0, asmcore.env_switches()));
+        print(wasm_ir.emit_ir_module_units(wasm_ir.with_runtime_units([text], needs, semlower.runtime_lowering), mod, needs, [], 0, asmcore.env_switches()));
     }
     return 0;
 }

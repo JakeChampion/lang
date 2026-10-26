@@ -1,6 +1,8 @@
 import "core/map";
 import "./ast";
 import "./parser";
+import "./lexer";
+import "./wasm_runtime";
 import "./util";
 import "./ir";
 import "./byteconst";
@@ -2849,7 +2851,7 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
   return o;
 }
 
-pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerResult[], mode: i32, sw: asmcore.Switches, physical: physicalbody.Collection): string {
+pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerResult[], mode: i32, sw: asmcore.Switches, physical: physicalbody.Collection, rt_lower: (string) => physicalbody.Lowered): string {
   let sv: string[] = str_values(ir_cache);
   let cv: string[] = const_agg_values(ir_cache);
   let ft: string[] = fn_value_table(ir_cache);
@@ -2862,7 +2864,7 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerRes
     needs = needs.append("@stdin");
   }
   return emit_ir_module_units(
-    [WasmUnit { ns: "", text: unit, strs: sv, caggs: cv, fns: ft }], mod,
+    with_runtime_units([WasmUnit { ns: "", text: unit, strs: sv, caggs: cv, fns: ft }], needs, rt_lower), mod,
     needs, indirect_fn_sigs(ir_cache), mode, sw,
   );
 }
@@ -2900,7 +2902,7 @@ pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: 
   let g: ircore.Lowered = ircore.gate(lm, sub);
   let cache: irtables.LowerResult[] = g.cache;
   if (g.ok && ir_route_final(cache, component, io, module_is_proxy(lm))) {
-    return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical), needs: runtime_needs(lm, needs_of(cache)) };
+    return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical, sub.rt_lower), needs: runtime_needs(lm, needs_of(cache)) };
   }
   if (g.ok && component && wasm_ir_deferrals_ok(cache)) {
     eprint("error: " + component_refused_need(needs_of(cache), io, module_is_proxy(lm))
@@ -7187,29 +7189,6 @@ pub function str_replace_helper(): string {
   return o;
 }
 
-pub function strcmp_helper(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_strcmp (param $a i32) (param $b i32) (result i32)\n";
-  o = o + "    (local $la i32) (local $lb i32) (local $n i32) (local $i i32) (local $ca i32) (local $cb i32)\n";
-  o = o + "    (local.set $la (i32.load (local.get $a)))\n";
-  o = o + "    (local.set $lb (i32.load (local.get $b)))\n";
-  o = o + "    (local.set $n (local.get $la))\n";
-  o = o + "    (if (i32.lt_u (local.get $lb) (local.get $la)) (then (local.set $n (local.get $lb))))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $d2 (loop $c2\n";
-  o = o + "      (br_if $d2 (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "      (local.set $ca (i32.load8_u (i32.add (i32.add (local.get $a) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (local.set $cb (i32.load8_u (i32.add (i32.add (local.get $b) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (if (i32.lt_u (local.get $ca) (local.get $cb)) (then (return (i32.const -1))))\n";
-  o = o + "      (if (i32.gt_u (local.get $ca) (local.get $cb)) (then (return (i32.const 1))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c2)))\n";
-  o = o + "    (if (i32.lt_u (local.get $la) (local.get $lb)) (then (return (i32.const -1))))\n";
-  o = o + "    (if (i32.gt_u (local.get $la) (local.get $lb)) (then (return (i32.const 1))))\n";
-  o = o + "    (i32.const 0))\n";
-  return o;
-}
-
 pub function arr_push_helper(): string {
   return arr_push_strided("", "i32", "i32.store", 4);
 }
@@ -9582,6 +9561,18 @@ pub struct WasmUnit {
   fns: string[],
 }
 
+pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (string) => physicalbody.Lowered): WasmUnit[] {
+  if (!need(needs, "@uses_str_cmp")) {
+    return units;
+  }
+  let src: string = wasm_runtime.strcmp_source();
+  let mod: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
+  let lowered: physicalbody.Lowered = rt_lower(src);
+  let bodies: irtables.LowerResult[] = lowered.bodies;
+  let text: string = emit_functions_ns("$runtime", mod, bodies, physicalbody.collection(lowered));
+  return units.append(WasmUnit { ns: "$runtime", text: text, strs: str_values(bodies), caggs: const_agg_values(bodies), fns: fn_value_table(bodies) });
+}
+
 function module_needs_type_ids(units: WasmUnit[], needs: string[]): boolean {
   // Runtime IO helpers can read IDs outside the complete unit bodies.
   if (needs_io_error(needs)) {
@@ -10127,9 +10118,6 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "writer_truncate")) {
     parts = parts.append(writer_truncate_func());
-  }
-  if (need(needs, "@uses_str_cmp")) {
-    parts = parts.append(strcmp_helper());
   }
   if (need(needs, "@uses_str_slice") || need(needs, "str_split") || need(needs, "@uses_str_lines")) {
     parts = parts.append(substr_helper());

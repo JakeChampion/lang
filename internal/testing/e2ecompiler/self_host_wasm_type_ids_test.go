@@ -85,11 +85,12 @@ import "./lexer";
 import "./parser";
 import "./util";
 import "./wasm_ir";
+import "./semlower";
 function emit(mode: i32, io: boolean): string {
   let mod = parser.parse_module(lexer.tokenize("function main(): i32 { return 0; }"));
   let text = wasm_ir.WasmUnit { ns: "", text: "  (func $main (result i32) (i32.const 0))\n", strs: [], caggs: [], fns: [] };
   let needs: string[] = if (io) { ["read_file", "@uses_strings", "@allocates"] } else { [] };
-  return wasm_ir.emit_ir_module_units([text], mod, needs, [], mode, asmcore.env_switches());
+  return wasm_ir.emit_ir_module_units(wasm_ir.with_runtime_units([text], needs, semlower.runtime_lowering), mod, needs, [], mode, asmcore.env_switches());
 }
 function main(): i32 {
   for mode in [0, 1, 2] {

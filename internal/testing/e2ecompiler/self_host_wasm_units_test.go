@@ -32,6 +32,30 @@ func TestSelfHostWasmUnitsN2(t *testing.T) {
 		want int
 	}{
 		{
+			name: "fern_runtime_string_order",
+			src: `function less(a: string, b: string): boolean { return a < b; }
+function greater(a: string, b: string): boolean { return a > b; }
+function main(): i32 {
+    let values: string[] = ["", "a", "aa", "ab", "b", "é", "界", "𐐀"];
+    let i: i32 = 0;
+    while (i < values.len()) {
+        let j: i32 = 0;
+        while (j < values.len()) {
+            if (less(values[i], values[j]) != (i < j)) { return 1; }
+            if (greater(values[i], values[j]) != (i > j)) { return 2; }
+            if ((values[i] <= values[j]) != (i <= j)) { return 3; }
+            if ((values[i] >= values[j]) != (i >= j)) { return 4; }
+            j = j + 1;
+        }
+        i = i + 1;
+    }
+    let allocated: string = values[1] + values[3];
+    if (!less(allocated, values[4]) || !greater(allocated, values[1])) { return 5; }
+    return 0;
+}`,
+			want: 0,
+		},
+		{
 			name: "buffer_needs_from_both_units",
 			src: `function create(): usize { return buf_new(1); }
 function text_part(h: usize): void { buf_push(h, "a"); }
@@ -96,6 +120,17 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 		if err != nil || len(wat) == 0 {
 			t.Fatalf("%s: driver failed: %v\n%s", tag, err, stderr.String())
 		}
+		if strings.HasPrefix(tag, "fern_runtime_string_order") {
+			if strings.Count(string(wat), "(func $__fern_strcmp ") != 1 {
+				t.Fatal("the module must define one string comparator")
+			}
+			if !strings.Contains(string(wat), "(func $__fern_strcmp (param i32)") {
+				t.Fatal("the string comparator does not use the Fern function emitter")
+			}
+		} else if strings.Contains(string(wat), "(func $__fern_strcmp ") {
+			t.Fatal("a module without string ordering contains its runtime helper")
+		}
+
 		watPath := filepath.Join(dir, tag+".wat")
 		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
 			t.Fatalf("write wat: %v", err)

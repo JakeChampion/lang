@@ -381,49 +381,38 @@ The table still describes the dependencies of hand-written helpers. Retiring
 it requires the runtime call graph described below; this change does not
 complete #2649.
 
-### What the wasm half is actually blocked on
+### WebAssembly runtime source units
 
-Not the `module_uses_*` coupling — that reads worse than it is. Every helper
-bundle in `emit_ir_module_units` is `need(...)`-gated, and the gates that look
-too narrow are not: the ones missing from the heap disjunction all imply a
-string op, and `module_allocates` folds `module_uses_strings` in. wasm's
-per-helper gating is in better shape than either register backend's was.
+`wasm_runtime.strcmp_source` defines string ordering in Fern.
+The WebAssembly emitter compiles this source through `Sub.rt_lower` and the
+ordinary function emitter. It removes the hand-written `strcmp_helper` WAT.
 
-What blocks it is that **wasm has no instruction selection for the raw-memory
-floor.** `raw_alloc`, `raw_store8`, `raw_load8`, `raw_string`, `raw_addr`,
-`raw_arr_box` and the `syscall*` family have no arm in the selector — they
-reach the terminal `else` and refuse. Since almost every `rt_src_*` body is
-written on that floor, **52 of the 73 sources cannot be compiled for wasm at
-all**, including every one worth having (`i32_to_string`, `str_concat`,
-the case converters, all I/O).
+Whole-program and per-module emitters append the runtime unit before final
+literal and heap layout. The runtime unit carries its own literal and function
+tables. Its lowered needs do not enter the user module's needs.
+The string comparator needs no allocation and no additional runtime helper.
+Programs without string ordering omit this unit.
 
-Intersecting the sources that avoid the floor with the single-parameter ones
-(the #5666 argument order transposes anything wider, since wasm's hand-written
-WAT signatures are reversed to match the register push order) and then with the
-ones contributing no literals leaves exactly three, of which only
-`__fern_str_to_i32` is a clean 1:1 replacement for an existing bundle.
+`TestSelfHostWasmUnitsN2/fern_runtime_string_order` executes all four ordering
+operators in whole-program and split-module builds. It covers empty strings,
+prefixes, reversed operands, equal operands, UTF-8 bytes and allocated strings.
+It also checks that one ordinary Fern function replaces the hand-written body.
+The other cases check that unrelated modules omit the comparator.
 
-So the wasm mechanism is buildable, but its reach is one helper until the floor
-is selected — and selecting it is a semantic change, not wiring: `__raw_string`
-on the register backends builds a box POINTING AT the raw bytes, while a wasm
-string is a single inline rc-headered block, so the same helper source would
-need one more allocation and a different aliasing contract. It also makes
-the `rawmem` gate's justification ("wasm serves these helpers with
-hand-written WAT") false, so the refusal has to move in lockstep. That
-is its own change, and the syscall half is probably permanently out — wasm's
-I/O is WASI imports, not a syscall number.
+### Remaining WebAssembly floor work
 
-Two traps worth recording for whoever builds the mechanism, both found by
-review rather than by a failing test. The runtime unit must be added to `units`
-at the three CALL SITES, before the heap base is taken — injecting it inside
-`emit_ir_module_units` leaves `rc_bodies` carrying a stale, lower base while the
-data section is laid out against the real one, and the gap between them is
-exactly the injected unit's literals. A pointer into it passes
-`$__field_reclaim_<T>`'s admission check and gets dec'd as if it were a heap
-box: silent static-data corruption, not a trap. And the unit's lowered needs
-must NOT be unioned into the module's needs — `@allocates` comes back for
-essentially every candidate, which would drag the heap and RC runtime into
-allocation-free modules.
+The selector supports byte and pointer loads and stores, address addition,
+and frame-form string views. The general `raw_alloc`, `raw_arr_box` and
+owning `raw_string` operations still lack selector arms.
+Most native runtime sources therefore cannot compile for WebAssembly yet.
+
+The string layout also differs. Native `raw_string` creates a box that points
+to raw bytes. A WebAssembly owned string contains its length and bytes in
+one block. A shared implementation must preserve ownership and aliasing across
+this difference. User-facing raw-memory capabilities remain target-gated.
+
+The syscall sources need separate WASI implementations. A Linux syscall number
+does not identify a WASI import. These gaps keep #2649 open.
 
 The principled end-state: **write the helpers as ordinary Fern functions in a
 `runtime` module compiled through the same pipeline.** Then
