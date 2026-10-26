@@ -113,7 +113,7 @@ func emiStep(src string, rng *rand.Rand) (string, bool) {
 			return "", false
 		}
 		at := rng.IntN(len(s.blk.Stmts))
-		if !emiWrappable(s.blk.Stmts[at]) || emiJumps(s.blk.Stmts[at]) {
+		if !emiWrappable(s.blk.Stmts[at]) || emiLoopSensitive(s.blk.Stmts[at]) {
 			return "", false
 		}
 		s.blk.Stmts[at] = &ast.Loop{Body: &ast.Block{Stmts: []ast.Stmt{s.blk.Stmts[at], &ast.Break{}}}}
@@ -188,13 +188,12 @@ func emiWrappable(s ast.Stmt) bool {
 	return true
 }
 
-// emiJumps reports whether a statement holds a break or a continue, which a
-// loop around it would take for its own.
-func emiJumps(s ast.Stmt) bool {
+// An extra loop captures jumps and runs deferred actions at its exit.
+func emiLoopSensitive(s ast.Stmt) bool {
 	found := false
 	ast.Walk(s, func(n ast.Node) bool {
 		switch n.(type) {
-		case *ast.Break, *ast.Continue:
+		case *ast.Break, *ast.Continue, *ast.Defer:
 			found = true
 		}
 		return !found
