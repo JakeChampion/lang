@@ -20,7 +20,7 @@ name: Test e2e self-host
 # the closure-keyed disk cache (hashSelfHostSources), shared by a shard's two
 # worker processes. The edge costs the dependent jobs the warm job's wall time,
 # about five minutes on a miss, and saves a driver build or more in each of
-# some twenty jobs. This lane runs on main and on a `ci-full` pull request,
+# some twenty jobs. This lane runs on main and on every applicable pull request,
 # where runner minutes count for more than a few minutes of latency. The
 # aarch64 shards build their own drivers; shard 0 saves the Linux ARM64 cache.
 #
@@ -343,7 +343,30 @@ jobs:
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
 
-  # THE FERNSMITH CORPUS THROUGH THE SELF-HOST COMPILER, in two jobs. Per-seed
+  # Checker mutations exceeded the 20-minute test budget in run 40368845276.
+  # Keep all 512 seeds and their mutations, partitioned by the shared I/N
+  # selector. Each half retains the original test timeout and all assertions.
+  checker-mutants:
+    needs: [driver-sizes]
+    name: checker-mutants-x86_64-${{ matrix.shard }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    env:
+      FERN_SELFHOST_DIFF: "1"
+      DIFF_ORACLE_SHARD: "${{ matrix.shard }}/2"
+      GOMAXPROCS: "4"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: compare checker mutations with the Go oracle
+        run: go test ./internal/testing/e2e/ -run '^TestDifferential_CheckerMutants$' -v -timeout 20m
+
+  # THE EXECUTION CORPUS THROUGH THE SELF-HOST COMPILER, in two jobs. Per-seed
   # subtests are parallel, so one job already uses every core. The x86_64 leg
   # is the long one and has a job of its own. The sanitize, arm64 and wasm
   # legs are two to four minutes of work each. They share one job, so the
@@ -376,7 +399,6 @@ jobs:
           set -euo pipefail
           go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostX86_64$' -v -timeout 43m
           go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostEMIX86_64$' -v -timeout 20m
-          go test ./internal/testing/e2e/ -run '^TestDifferential_CheckerMutants$' -v -timeout 20m
           go test ./internal/testing/e2e/ -run '^TestSelfHostDeepNestingMatchesNativeAndDoesNotCrash$' -v -timeout 10m
       - name: x86_64 under -sanitize
         if: matrix.target == 'sanitize-arm64-wasm'

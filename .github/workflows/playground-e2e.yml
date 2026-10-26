@@ -80,14 +80,15 @@ jobs:
         run: ./web/build.sh
 
       # The browser is a ~170 MB download; caching it keeps most runs off the
-      # network for that half. The apt half of `--with-deps` below is NOT
-      # cached and remains exposed to the mirror stalls in #6038.
+      # network for that half. The shared apt action routes the uncached
+      # system packages through Ubuntu's official archive.
       - name: Cache the Playwright browser
         uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
           key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('web/test/playwright/package.json') }}
 
+      - uses: ./.github/actions/disable-chrome-apt
       - name: Install Playwright deps
         run: |
           cd web/test/playwright
