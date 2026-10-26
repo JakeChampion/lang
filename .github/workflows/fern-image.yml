@@ -64,6 +64,13 @@ jobs:
       - run: ./fern-image/scripts/test-jpeg-coefficients.sh wasm
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_idct_test.py
+      - run: ./fern-image/scripts/test-jpeg-idct.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-jpeg-idct.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/test-deflate-reader.sh native
         env:
           FERN: ${{ github.workspace }}/bin/fern
@@ -96,4 +103,10 @@ jobs:
         with:
           name: image-jpeg-coefficients
           path: fern-image/build/jpeg-coefficients-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-idct-*.json') != ''
+        with:
+          name: image-jpeg-idct
+          path: fern-image/build/jpeg-idct-*.json
           if-no-files-found: error

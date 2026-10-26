@@ -1,0 +1,50 @@
+import "../packages/codecs/jpeg/idct";
+import "std/f64";
+import "std/i32";
+
+function never(): boolean {
+  return false;
+}
+
+function emit_case(path: string): i32 {
+  let data = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  if (data.len() != 192) {
+    return 3;
+  }
+  let coefficients: i32[] = [];
+  let quantizers: u8[] = [];
+  for i in 0..64 {
+    let value = data[i * 2] as i32 | data[i * 2 + 1] as i32 << 8;
+    if (value >= 32768) {
+      value = value - 65536;
+    }
+    coefficients = coefficients.append(value);
+    quantizers = quantizers.append(data[128 + i]);
+  }
+  let values = match (idct.inverse(coefficients, quantizers, never)) { Ok(v) => v, Err(_) => { return 4; } };
+  let pixels = match (idct.samples(values, never)) { Ok(v) => v, Err(_) => { return 5; } };
+  let samples = "samples";
+  let output = "pixels";
+  for i in 0..64 {
+    samples = samples + " " + values[i].to_string();
+    output = output + " " + (pixels[i] as i32).to_string();
+  }
+  print("begin " + path);
+  print(samples);
+  print(output);
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let code = emit_case(paths[i]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}
