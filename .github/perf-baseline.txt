@@ -22,6 +22,9 @@
 # #13251 pinned on x86_64 only: deflate_encode.ir -17%, deflate_decode.ir -7.8%,
 # http_hello.text -1.2%, string_find_byte.text -1.5%, and utf8_ingest_unchecked.text
 # +12.1% with utf8_ingest_validated.text +1.8% from #13153's utf8 module.
+# Re-pinned 2026-10-26 (#13382) from Perf run 40243098451: aarch64/http_hello.text
+# 18384 to 18590 (+1.12%). The row takes main's drift, which the x86_64 row took
+# on 2026-10-25 (17206 to 17393). The PR changes no compiler source.
 # Re-pinned 2026-10-25 (#13251), x86_64 rows from a local perf-bench run on
 # f2a9fbef. The runtime word copy cuts byte_copy_*.ir by 73-74%, and the
 # register and release changes cut deflate_encode.ir by 18% and enum_match.ir
@@ -403,7 +406,7 @@ aarch64/deflate_encode.ir	48587342
 aarch64/deflate_encode.text	7851
 aarch64/enum_match.text	1206
 aarch64/enum_match.ir	41175097
-aarch64/http_hello.text	18384
+aarch64/http_hello.text	18590
 aarch64/http_hello.ir	25860660
 aarch64/int_loop.text	246
 aarch64/int_loop.ir	18000078
