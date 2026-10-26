@@ -125,6 +125,16 @@ function main(): i32 {
 			want: 0,
 		},
 		{
+			name: "fern_runtime_set_scans_bytes",
+			src:  e2eharness.ByteSetScansSource(true),
+			want: 0,
+		},
+		{
+			name: "fern_runtime_set_scans_string",
+			src:  wasmRuntimeStringSetScansProgram(),
+			want: 0,
+		},
+		{
 			name: "conditional_branches",
 			src: `function sum(n: i32): i32 {
     if (n < 0) { return -10; }
@@ -250,6 +260,21 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 			t.Fatal("an unrelated module contains the high multiplication runtime helper")
 		}
 
+		for _, name := range []string{"scan_set", "count_runs", "scan_set_bytes", "count_runs_bytes"} {
+			symbol := "(func $__fern_" + name + " "
+			kind := "string"
+			if strings.HasSuffix(name, "_bytes") {
+				kind = "bytes"
+			}
+			if strings.HasPrefix(tag, "fern_runtime_set_scans_"+kind) {
+				if strings.Count(string(wat), symbol) != 1 || !strings.Contains(string(wat), symbol+"(param i32)") {
+					t.Fatalf("%s does not use one ordinary Fern function", name)
+				}
+			} else if strings.Contains(string(wat), symbol) {
+				t.Fatalf("an unrelated module contains the %s runtime helper", name)
+			}
+		}
+
 		watPath := filepath.Join(dir, tag+".wat")
 		if err := os.WriteFile(watPath, wat, 0o644); err != nil {
 			t.Fatalf("write wat: %v", err)
@@ -309,4 +334,22 @@ func wasmRuntimeMulhiProgram() string {
 	}
 	src.WriteString("return 0;\n}\n")
 	return src.String()
+}
+
+func wasmRuntimeStringSetScansProgram() string {
+	src := e2eharness.ByteSetScansSource(false)
+	src = strings.Replace(src, "fip function scan(", "function scan(", 1)
+	src = strings.Replace(src, "fip function runs(", "function runs(", 1)
+	src = strings.Replace(src, "return __scan_set_bytes(bytes, from, set);", "return __scan_set(string_from_bytes_unchecked(bytes), from, set);", 1)
+	src = strings.Replace(src, "return __count_runs_bytes(bytes, inside, set);", "return __count_runs(string_from_bytes_unchecked(bytes), inside, set);", 1)
+	probe := `let text = string_from_bytes_unchecked(all);
+    let before = __heap_alloc_count();
+    let repeat = 0;
+    while (repeat < 1000) {
+        if (__scan_set(text, 0, all) != 1 || __count_runs(text, 0, all) != 1) { return 10; }
+        repeat = repeat + 1;
+    }
+    if (__heap_alloc_count() != before) { return 11; }
+    `
+	return strings.Replace(src, "let set: u8[] = __alloc_u8(256);", probe+"let set: u8[] = __alloc_u8(256);", 1)
 }

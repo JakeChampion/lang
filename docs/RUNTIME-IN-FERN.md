@@ -417,6 +417,12 @@ Its test checks 272 products against `math/bits.Mul64` in each module mode.
 The cases include zero, all ones, each individual bit, complements and mixed bits.
 The test also checks the emitted `i64` parameter and result types.
 
+`set_scan_source` defines set scans and run counts for strings and byte arrays.
+The four helpers share one source template with separate data offsets.
+The tests compare both input forms against a reference loop in both module modes.
+They cover every byte value, short tables, nonzero membership values, extreme
+start offsets, initial run states, aliases and allocation counts.
+
 The WebAssembly function emitter also replaces an `if` whose sole effect is
 a branch with `br_if`. It adjusts the branch depth after it removes the
 `if` label. A branch to that removed label only consumes the condition.
