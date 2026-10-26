@@ -1,0 +1,159 @@
+import "./header";
+import "./entropy";
+import "./idct";
+import "core/cmp";
+
+@derive(cmp.Eq)
+pub enum PlaneError { PlaneEntropy(entropy.EntropyError), PlaneTransform(idct.IdctError), PlaneLimit, PlaneStorage, PlaneCancelled }
+
+pub struct PlaneLimits { blocks: entropy.BlockLimits, max_plane_bytes: i32 }
+
+pub struct PlaneLayout { component: i32, horizontal: i32, vertical: i32, width: i32, height: i32, stride: i32, bytes: i32 }
+
+pub struct PlanePlan { width: i32, height: i32, max_horizontal: i32, max_vertical: i32, bytes: i32, planes: PlaneLayout[], blocks: entropy.BlockPlan }
+
+pub struct SamplePlane { layout: PlaneLayout, data: u8[] }
+
+pub struct PlaneImage { plan: PlanePlan, planes: SamplePlane[] }
+
+struct Preparation { header: header.JpegHeader, plan: PlanePlan }
+
+struct PlaneSlot { layout: PlaneLayout, quantizers: u8[], value: Cell[Option[SamplePlane]] }
+
+pub function default_limits(): PlaneLimits {
+  return PlaneLimits { blocks: entropy.default_limits(), max_plane_bytes: 67108864 };
+}
+
+function entropy_error(error: entropy.EntropyError): PlaneError {
+  return match (error) { entropy.EntropyCancelled => PlaneCancelled, _ => PlaneEntropy(error) };
+}
+
+function transform_error(error: idct.IdctError): PlaneError {
+  return match (error) { idct.Cancelled => PlaneCancelled, _ => PlaneTransform(error) };
+}
+
+function prepare(input: [u8], limits: PlaneLimits, cancelled: () => boolean): Result[Preparation, PlaneError] {
+  if (limits.max_plane_bytes <= 0) {
+    return Err(PlaneLimit);
+  }
+  let inspection = match (entropy.inspect_blocks(input, limits.blocks, cancelled)) { Ok(v) => v, Err(e) => { return Err(entropy_error(e)); } };
+  let h = inspection.header;
+  let max_h = 1;
+  let max_v = 1;
+  for component in h.components {
+    if (component.horizontal > max_h) {
+      max_h = component.horizontal;
+    }
+    if (component.vertical > max_v) {
+      max_v = component.vertical;
+    }
+  }
+  let layouts: PlaneLayout[] = [];
+  let total = 0i64;
+  for component in h.components {
+    if (cancelled()) {
+      return Err(PlaneCancelled);
+    }
+    let width = (h.output_layout.width as i64 * (component.horizontal as i64) + max_h as i64 - 1i64) / (max_h as i64);
+    let height = (h.output_layout.height as i64 * (component.vertical as i64) + max_v as i64 - 1i64) / (max_v as i64);
+    let bytes = width * height;
+    total = total + bytes;
+    if (width <= 0i64 || height <= 0i64 || total > limits.max_plane_bytes as i64 || total > 67108864i64) {
+      return Err(PlaneLimit);
+    }
+    layouts = layouts.append(PlaneLayout { component: component.id, horizontal: component.horizontal, vertical: component.vertical, width: width as i32, height: height as i32, stride: width as i32, bytes: bytes as i32 });
+  }
+  return Ok(Preparation { header: h, plan: PlanePlan { width: h.output_layout.width, height: h.output_layout.height, max_horizontal: max_h, max_vertical: max_v, bytes: total as i32, planes: layouts, blocks: inspection.plan } });
+}
+
+// Header and storage planning does not validate entropy data or EOI.
+pub function inspect(input: [u8], limits: PlaneLimits, cancelled: () => boolean): Result[PlanePlan, PlaneError] {
+  return Ok(prepare(input, limits, cancelled)?.plan);
+}
+
+function write_block(own plane: SamplePlane, block: entropy.CoefficientBlock, values: [u8], cancelled: () => boolean): Result[SamplePlane, PlaneError] {
+  if (values.len() != 64 || block.x < 0 || block.y < 0) {
+    return Err(PlaneStorage);
+  }
+  let left = match (block.x *? 8) { Some(v) => v, None => { return Err(PlaneStorage); } };
+  let top = match (block.y *? 8) { Some(v) => v, None => { return Err(PlaneStorage); } };
+  if (left >= plane.layout.width || top >= plane.layout.height) {
+    return Err(PlaneStorage);
+  }
+  let data = plane.data;
+  for by in 0..8 {
+    if (cancelled()) {
+      return Err(PlaneCancelled);
+    }
+    let y = top + by;
+    if (y < plane.layout.height) {
+      for bx in 0..8 {
+        let x = left + bx;
+        if (x < plane.layout.width) {
+          data = data.with(y * plane.layout.stride + x, values[by * 8 + bx]);
+        }
+      }
+    }
+  }
+  return Ok(SamplePlane { layout: plane.layout, data: data });
+}
+
+// Raw component planes retain their frame order and sampling factors.
+pub function decode(input: [u8], limits: PlaneLimits, cancelled: () => boolean): Result[PlaneImage, PlaneError] {
+  let prepared = prepare(input, limits, cancelled)?;
+  let slots: PlaneSlot[] = [];
+  for i in 0..prepared.plan.planes.len() {
+    if (cancelled()) {
+      return Err(PlaneCancelled);
+    }
+    let layout = prepared.plan.planes[i];
+    let table = prepared.header.components[i].quant_table;
+    let quantizers = match (prepared.header.quantization[table]) { Some(v) => v.values, None => { return Err(PlaneStorage); } };
+    let data = __alloc_u8(layout.bytes);
+    if (cancelled()) {
+      return Err(PlaneCancelled);
+    }
+    slots = slots.append(PlaneSlot { layout: layout, quantizers: quantizers, value: cell_new(Some(SamplePlane { layout: layout, data: data })) });
+  }
+  let folded = entropy.fold_blocks(input, limits.blocks, cancelled, 0, (count: i32, block: entropy.CoefficientBlock): Result[i32, PlaneError] => {
+    let at = 0;
+    while (at < slots.len() && slots[at].layout.component != block.component) {
+      at = at + 1;
+    }
+    if (at == slots.len()) {
+      return Err(PlaneStorage);
+    }
+    let slot = slots[at];
+    let plane = match (slot.value.get()) { Some(v) => v, None => { return Err(PlaneStorage); } };
+    slot.value.set(None);
+    let values = match (idct.reconstruct(block.values, slot.quantizers, cancelled)) { Ok(v) => v, Err(e) => { return Err(transform_error(e)); } };
+    let next = write_block(SamplePlane { layout: plane.layout, data: plane.data }, block, values, cancelled)?;
+    slot.value.set(Some(next));
+    return Ok(count + 1);
+  });
+  match (folded) {
+    Ok(done) => {
+      if (done.value != prepared.plan.blocks.output_blocks) {
+        return Err(PlaneStorage);
+      }
+    },
+    Err(entropy.BlockDecode(e)) => {
+      return Err(entropy_error(e));
+    },
+    Err(entropy.BlockConsumer(e)) => {
+      return Err(e);
+    }
+  }
+  let planes: SamplePlane[] = [];
+  for slot in slots {
+    if (cancelled()) {
+      return Err(PlaneCancelled);
+    }
+    let plane = match (slot.value.get()) { Some(v) => v, None => { return Err(PlaneStorage); } };
+    planes = planes.append(SamplePlane { layout: plane.layout, data: plane.data });
+  }
+  if (cancelled()) {
+    return Err(PlaneCancelled);
+  }
+  return Ok(PlaneImage { plan: prepared.plan, planes: planes });
+}
