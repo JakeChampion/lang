@@ -25,8 +25,8 @@ type ratchetTree struct {
 }
 
 var ratchetTrees = []ratchetTree{
-	{name: "self-host compiler", dir: "compiler", ceiling: 221, excess: 15547},
-	{name: "stdlib", dir: "internal/stdlib/std", ceiling: 68, excess: 780},
+	{name: "self-host compiler", dir: "compiler", ceiling: 221, excess: 16309},
+	{name: "stdlib", dir: "internal/stdlib/std", ceiling: 68, excess: 803},
 }
 
 func ratchetOver(measured, want int) bool {

@@ -16716,6 +16716,25 @@ function export_shape_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
+// reserved_name_diags reports each declaration under a built-in type's name.
+// Such a name takes the built-in's place for every module in the bundle, so no
+// later diagnostic can be trusted.
+function reserved_name_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  for ed in mod.enums {
+    if (parser.is_reserved_enum_name(ed.name) || parser.is_reserved_struct_name(ed.name)) {
+      out = out.append(dg_at("E010", "enum \"" + ed.name + "\" is a reserved built-in name and cannot be redeclared", ed.line, ed.col));
+    }
+  }
+  for sd in mod.structs {
+    let user_struct: boolean = sd.enum_owner.len() == 0 && !util.str_has_prefix(sd.name, "__");
+    if (user_struct && sd.line > 0 && (parser.is_reserved_struct_name(sd.name) || parser.is_reserved_enum_name(sd.name))) {
+      out = out.append(dg_at("E010", "struct \"" + sd.name + "\" is a reserved built-in name and cannot be redeclared", sd.line, sd.col));
+    }
+  }
+  return out;
+}
+
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   out = util.append_diags(out, handler_state_diags(mod));
@@ -16789,9 +16808,6 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       if (sdup) {
         out = out.append(dg_at("E006", "struct \"" + s2.name + "\" redeclared", s2.line, s2.col));
       }
-      if (s2.line > 0 && (parser.is_reserved_struct_name(s2.name) || parser.is_reserved_enum_name(s2.name))) {
-        out = out.append(dg_at("E010", "struct \"" + s2.name + "\" is a reserved built-in name and cannot be redeclared", s2.line, s2.col));
-      }
     }
     sn2 = sn2 + 1;
   }
@@ -16807,9 +16823,6 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     }
     if (edup) {
       out = out.append(dg_at("E006", "enum \"" + mod.enums[en].name + "\" redeclared", mod.enums[en].line, mod.enums[en].col));
-    }
-    if (parser.is_reserved_enum_name(mod.enums[en].name) || parser.is_reserved_struct_name(mod.enums[en].name)) {
-      out = out.append(dg_at("E010", "enum \"" + mod.enums[en].name + "\" is a reserved built-in name and cannot be redeclared", mod.enums[en].line, mod.enums[en].col));
     }
     let vn: string[] = mod.enums[en].variant_names;
     let vk: i32 = 0;
@@ -22292,6 +22305,12 @@ function with_mangled(out: string[], name: string, prefix: string): string[] {
 function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: boolean): ModuleTypes {
   let (filled, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
   let mod: parser.Module = prepared_module(filled);
+  let reserved: util.Diag[] = reserved_name_diags(mod);
+  if (reserved.len() > 0) {
+    let no_sigs: FuncSig[] = [];
+    let no_tys: typeinfo.Type[] = [];
+    return ModuleTypes { sigs: no_sigs, top_tys: no_tys, all_well_typed: false, diags: reserved };
+  }
   let env: ModuleEnv = admission_env(mod, entry_file, raw_floor);
   let mt: ModuleTypes = check_module_pass(mod, env, fda_diags, []);
   if (mt.diags.len() > 0) {
