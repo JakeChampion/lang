@@ -99,6 +99,13 @@ jobs:
       - run: ./fern-image/scripts/test-jpeg-chroma.sh wasm
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_rgb_test.py
+      - run: ./fern-image/scripts/test-jpeg-rgb.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-jpeg-rgb.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/test-deflate-reader.sh native
         env:
           FERN: ${{ github.workspace }}/bin/fern
@@ -161,4 +168,10 @@ jobs:
         with:
           name: image-jpeg-chroma
           path: fern-image/build/jpeg-chroma-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-rgb-*.json') != ''
+        with:
+          name: image-jpeg-rgb
+          path: fern-image/build/jpeg-rgb-*.json
           if-no-files-found: error
