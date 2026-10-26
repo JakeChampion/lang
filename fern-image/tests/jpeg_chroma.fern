@@ -1,0 +1,54 @@
+import "../packages/codecs/jpeg/chroma";
+import "../packages/codecs/jpeg/planes";
+import "std/i32";
+
+function never(): boolean {
+  return false;
+}
+
+function field(input: [u8], index: i32): i32 {
+  let at = index * 4;
+  return input[at] as i32 << 24 | input[at + 1] as i32 << 16 | input[at + 2] as i32 << 8 | input[at + 3] as i32;
+}
+
+function emit(path: string): i32 {
+  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  if (input.len() < 52 || field(input, 12) != input.len() - 52) {
+    return 3;
+  }
+  let grid = chroma.FrameGrid { width: field(input, 0), height: field(input, 1), max_horizontal: field(input, 2), max_vertical: field(input, 3) };
+  let row = field(input, 4);
+  let filter = match (field(input, 5)) { 0 => chroma.Filter.Nearest, 1 => chroma.Filter.Bilinear, _ => { return 4; } };
+  let layout = planes.PlaneLayout { component: field(input, 6), horizontal: field(input, 7), vertical: field(input, 8), width: field(input, 9), height: field(input, 10), stride: field(input, 11), bytes: field(input, 12) };
+  let data: u8[] = [];
+  for value in input[52:input.len()] {
+    data = data.append(value);
+  }
+  let source = planes.SamplePlane { layout: layout, data: data };
+  let output = match (chroma.reconstruct_row(source, grid, row, filter, grid.width, never)) { Ok(v) => v, Err(_) => { return 5; } };
+  if (output.len() != grid.width) {
+    return 6;
+  }
+  match (write_file_bytes(path + ".row.raw", output)) {
+    Ok(_) => {},
+    Err(_) => {
+      return 7;
+    }
+  }
+  print("row " + path + " " + grid.width.to_string());
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let result = emit(paths[i]);
+    if (result != 0) {
+      return result;
+    }
+  }
+  return 0;
+}
