@@ -772,7 +772,7 @@ pub function treeshake(mod: parser.Module): parser.Module {
     if (mod.impls[di].trait_name == "Drop") {
       let dm: i32 = 0;
       while (dm < mod.impls[di].method_names.len()) {
-        refs = refs.append(mod.impls[di].method_names[dm]);
+        refs = refs.append(ts_qualified_root(ts_impl_tag("Drop"), mod.impls[di].method_names[dm]));
         dm = dm + 1;
       }
     }
