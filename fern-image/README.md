@@ -19,6 +19,7 @@ The separate [scalar inverse DCT](docs/jpeg-idct.md) reconstructs isolated compo
 The [restricted grayscale decoder](docs/jpeg-grayscale.md) assembles one-component JPEG samples into packed RGB8 storage.
 General color JPEG decoding remains unfinished.
 The [restricted JFIF inspector](docs/jpeg-jfif.md) identifies explicit Y or YCbCr sample meaning before RGB assembly.
+The [restricted JFIF RGB decoder](docs/jpeg-rgb.md) assembles canonical YCbCr planes with an explicit centered filter.
 
 HTTP and CDN services remain unimplemented.
 
@@ -67,7 +68,7 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 205 TAP cases cover compression, pixels, color, resize, PNG, JPEG headers, coefficients, scalar inverse DCT, grayscale images, and JFIF identification.
+The 214 TAP cases cover compression, pixels, color, resize, PNG, JPEG headers, coefficients, scalar inverse DCT, grayscale images, JFIF identification, and restricted RGB assembly.
 They also cover rows, providers, pipelines, regions, caches, RSS parsing, and fusion.
 The file I/O probe and pixel example also exit successfully.
 The native script checks source executables and additional allocator, cache, fusion, and formatter smoke modes with the sanitizer.

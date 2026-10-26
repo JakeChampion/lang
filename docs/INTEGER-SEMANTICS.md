@@ -353,10 +353,15 @@ top of this document holds unconditionally.
 
 ## Conversions
 
-Integer↔integer casts truncate (narrowing) or extend (widening) per
-the destination's signedness; see `docs/FLOAT-SEMANTICS.md` for the
-saturating float↔integer conversion contract. All conversions are
-portable across backends.
+An integer cast to a narrower type retains the low destination-width bits.
+A cast to a wider type extends by the source's signedness: a signed source
+extends its sign bit, and an unsigned source fills the added bits with zero.
+The destination then interprets those bits at its own signedness.
+For example, `-1i32 as u64` is `18446744073709551615u64`, while
+`4294967295u32 as i64` is `4294967295i64`.
+
+See `docs/FLOAT-SEMANTICS.md` for float and integer conversions.
+These rules are portable across backends.
 
 `x as? T` is the checked integer conversion, the `as` member of the
 `?` operator family: `Some(x as T)` when `T` holds the value exactly,
