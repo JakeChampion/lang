@@ -1,3 +1,8 @@
+# 2026-10-26, the 32-bit index arithmetic, from a local perf-bench run: x86_64/deflate_encode.ir
+# 47063418 to 45167215 (-4.0%), deflate_decode.ir 35569469 to 35149355 (-1.2%), map_string.ir
+# 59723383 to 58489631 (-2.1%) and sort_ints.ir 30644556 to 30091829 (-1.8%). The
+# deflate_decode.text rows take the resumable inflate of #13432, which no PR re-pinned:
+# x86_64 12754 to 13246 and aarch64 13592 to 14113. Main alone reads 13273 and 14139.
 # 2026-10-25, the hoisting of pure loop-invariant arithmetic: x86_64/deflate_encode.ir
 # 49355348 to 47063418 (-4.6%), deflate_decode.ir 36384995 to 35569469 (-2.2%),
 # and map_string.text 6520 to 6591 (+1.1%), from a local perf-bench run. aarch64/http_hello.text
@@ -127,9 +132,9 @@ x86_64/call_overhead.text	233
 x86_64/call_overhead.ir	8250807
 x86_64/closure_call.text	877
 x86_64/closure_call.ir	63018154
-x86_64/deflate_decode.ir	35569469
-x86_64/deflate_decode.text	12754
-x86_64/deflate_encode.ir	47063418
+x86_64/deflate_decode.ir	35149355
+x86_64/deflate_decode.text	13246
+x86_64/deflate_encode.ir	45167215
 x86_64/deflate_encode.text	7250
 x86_64/enum_match.text	994
 x86_64/enum_match.ir	48825085
@@ -142,7 +147,7 @@ x86_64/map_int.ir	36645632
 x86_64/map_probe_chain.text	5596
 x86_64/map_probe_chain.ir	342935024
 x86_64/map_string.text	6591
-x86_64/map_string.ir	59723383	2
+x86_64/map_string.ir	58489631	2
 x86_64/ordmap_insert.text	2815
 x86_64/ordmap_insert.ir	103433462
 x86_64/pmap_insert.text	2680
@@ -154,7 +159,7 @@ x86_64/record_update.text	1280
 x86_64/sort_inplace.text	1393
 x86_64/sort_inplace.ir	41788393
 x86_64/sort_ints.text	1879
-x86_64/sort_ints.ir	30644556
+x86_64/sort_ints.ir	30091829
 x86_64/sort_strings.text	3134
 x86_64/sort_strings.ir	105294698
 x86_64/string_build.text	1907
@@ -404,7 +409,7 @@ aarch64/call_overhead.ir	11250819
 aarch64/closure_call.text	1086
 aarch64/closure_call.ir	72624168
 aarch64/deflate_decode.ir	37668078
-aarch64/deflate_decode.text	13592
+aarch64/deflate_decode.text	14113
 aarch64/deflate_encode.ir	48587342
 aarch64/deflate_encode.text	7851
 aarch64/enum_match.text	1206

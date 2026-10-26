@@ -332,6 +332,8 @@ func TestSelfHostByteViewRuntime(t *testing.T) {
 			for _, tc := range []struct{ name, body, args string }{
 				{"negative-index", "return v[i] as i32;", "0 - 1, 0"},
 				{"past-end-index", "return v[i] as i32;", "3, 0"},
+				{"negative-sum-index", "return v[i + j] as i32;", "0 - 5, 3"},
+				{"wrapped-sum-index", "return v[i + j] as i32;", "2147483647, 1"},
 				{"negative-slice", "return v[i:j].len();", "0 - 1, 2"},
 				{"reversed-slice", "return v[i:j].len();", "2, 1"},
 				{"past-end-slice", "return v[i:j].len();", "0, 4"},

@@ -4013,7 +4013,47 @@ pub function register_form(f: SFunc): Formed {
   if (fw.changed) {
     g = prune_dead(g);
   }
+  g = zero_extended_indices(g);
   return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl) };
+}
+
+// An index reads a sign- and a zero-extended i32 the same: no length reaches 2^31, so a negative index fails either way.
+pub function zero_extended_indices(f: SFunc): SFunc {
+  let at_index: i32[] = __alloc_i32(f.nvals);
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag >= 42 && ins.kind_tag <= 44 && ins.args.len() >= 2 && ins.args[1] >= 0 && ins.args[1] < f.nvals) {
+        at_index = at_index.with(ins.args[1], at_index[ins.args[1]] + 1);
+      }
+    }
+  }
+  let uses: i32[] = use_counts(f);
+  let zero: boolean[] = __alloc_bool(f.nvals);
+  let any: boolean = false;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (signed_extension(ins) && ins.result >= 0 && ins.result < f.nvals && uses[ins.result] > 0 && at_index[ins.result] == uses[ins.result]) {
+        zero = zero.with(ins.result, true);
+        any = true;
+      }
+    }
+  }
+  if (!any) {
+    return f;
+  }
+  let blocks: SBlock[] = [];
+  for blk in f.blocks {
+    let insts: SInst[] = [];
+    for ins in blk.insts {
+      if (ins.result >= 0 && ins.result < f.nvals && zero[ins.result]) {
+        insts = insts.append(SInst { ...ins, str: "u32_wrap" });
+      } else {
+        insts = insts.append(ins);
+      }
+    }
+    blocks = blocks.append(SBlock { ...blk, insts: insts });
+  }
+  return SFunc { ...f, blocks: blocks };
 }
 
 pub function double_lanes(f: SFunc): SFunc {
@@ -4699,7 +4739,7 @@ pub function drop_low_wraps(f: SFunc): Formed {
   let wj: i32 = 0;
   while (wj < wraps.len()) {
     let w: i32 = wraps[wj];
-    if (!high[w] || signed_wrap(def_at(f, def_b, def_k, w)) && counter_step(f, at, def_b, def_k, wrap_arg[wj])) {
+    if (!high[w] || signed_extension(def_at(f, def_b, def_k, w)) && counter_step(f, at, def_b, def_k, wrap_arg[wj])) {
       if (!dropped) {
         i = 0;
         while (i < f.nvals) {
@@ -4857,18 +4897,8 @@ function def_at(f: SFunc, def_b: i32[], def_k: i32[], v: i32): SInst {
   return f.blocks[def_b[v]].insts[def_k[v]];
 }
 
-function signed_wrap(ins: SInst): boolean {
-  if (ins.kind_tag != 10 || ins.args.len() != 1 || ins.imm != 0) {
-    return false;
-  }
-  return ins.str == "int_wrap" || ins.str == "int_extend" || ins.str == "int_cast:i32";
-}
-
 function low_wrap(ins: SInst): boolean {
-  if (signed_wrap(ins)) {
-    return true;
-  }
-  return ins.kind_tag == 10 && ins.args.len() == 1 && (ins.str == "u32_wrap" || ins.str == "int_cast:u32");
+  return signed_extension(ins) || ins.kind_tag == 10 && ins.args.len() == 1 && (ins.str == "u32_wrap" || ins.str == "int_cast:u32");
 }
 
 function low_half_binary(op: string): boolean {
@@ -5073,6 +5103,19 @@ function and_not_of(defs: SInst[], ins: SInst): SInst {
     return SInst { ...ins, args: [ins.args[1], v], str: "and_not" };
   }
   return no_inst();
+}
+
+// The add, sub or mul at `ii` feeds only the zero-extension after it, so its 32-bit form makes the extended value.
+pub function low_word_pair(blk: SBlock, ii: i32, uses: i32[]): boolean {
+  if (ii < 0 || ii + 1 >= blk.insts.len()) {
+    return false;
+  }
+  let op: SInst = blk.insts[ii];
+  let w: SInst = blk.insts[ii + 1];
+  if (op.kind_tag != 9 || op.args.len() != 2 || op.str != "add" && op.str != "sub" && op.str != "mul") {
+    return false;
+  }
+  return unsigned_extension(w) && w.args[0] == op.result && op.result >= 0 && op.result < uses.len() && uses[op.result] == 1;
 }
 
 pub function carry_triple(blk: SBlock, ii: i32, uses: i32[]): boolean {

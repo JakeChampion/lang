@@ -5904,10 +5904,15 @@ function ssa_rhs(fr: SsaFrame, reg_of: i32[], v: i32, s: asmcore.EmitState): str
 }
 
 function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
+  return ssa_bin_sized(ins, ins.result, 64, reg_of, fr, s);
+}
+
+// A 32-bit operation writes `v` zero-extended.
+function ssa_bin_sized(ins: ssa.SInst, v: i32, size: i32, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
   let tag: i32 = ir.kind_id(ins.str);
   let a: i32 = ins.args[0];
   let b: i32 = ins.args[1];
-  let dh: string = ssa_dst(reg_of, ins.result);
+  let dh: string = ssa_dst(reg_of, v);
   let swap: boolean = fr.imm.is_imm[a] && !ssa_shift_tag(tag);
   if (!swap && !fr.imm.is_imm[b] && ssa_in_x(reg_of, b) && ssa_reg(reg_of[b]) == dh) {
     if (ssa_commutative(tag) || ircore.flip_int_cmp_kind(tag) != tag) {
@@ -5922,14 +5927,15 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
     a = b;
     b = t;
   }
+  let sfx: string = if (size == 32) { "l " } else { "q " };
   if (tag == 23 && fr.imm.is_imm[b] && reg_of[a] >= 0) {
-    s = s.write("    imulq $" + util.i64_to_string(fr.imm.value[b]) + ", " + ssa_reg(reg_of[a]) + ", " + dh + "\n");
-    return ssa_store(reg_of, ins.result, dh, s);
+    s = s.write("    imul" + sfx + "$" + util.i64_to_string(fr.imm.value[b]) + ", " + ssa_wreg(size, ssa_reg(reg_of[a])) + ", " + ssa_wreg(size, dh) + "\n");
+    return ssa_store(reg_of, v, dh, s);
   }
   let lea: string = ssa_lea_operand(tag, a, b, dh, reg_of, fr);
   if (lea != "") {
-    s = s.write("    leaq " + lea + ", " + dh + "\n");
-    return ssa_store(reg_of, ins.result, dh, s);
+    s = s.write("    lea" + sfx + lea + ", " + ssa_wreg(size, dh) + "\n");
+    return ssa_store(reg_of, v, dh, s);
   }
   if (!ssa_in_x(reg_of, a) && s.ssa_x0 == a && dh != "%r11") {
     s = ssa_mov_rr(s, dh, "%r11");
@@ -5939,11 +5945,20 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
   if (ssa_shift_tag(tag)) {
     s = s.write(shift_imm_asm(tag, ins.imm, fr.imm.value[b], dh));
   } else if (ssa_alu_ext(tag) >= 0) {
-    s = ssa_alu_rhs(s, ssa_alu_ext(tag), 64, fr, reg_of, b, dh);
+    s = ssa_alu_rhs(s, ssa_alu_ext(tag), size, fr, reg_of, b, dh);
+  } else if (size == 32) {
+    s = s.write("    imull " + ssa_rhs32(ssa_rhs(fr, reg_of, b, s)) + ", " + ssa_r32(dh) + "\n");
   } else {
     s = s.write(ir_bin_asm(tag, ins.imm, dh, ssa_rhs(fr, reg_of, b, s)));
   }
-  return ssa_store(reg_of, ins.result, dh, s);
+  return ssa_store(reg_of, v, dh, s);
+}
+
+function ssa_rhs32(r: string): string {
+  if (r[0] == b'%') {
+    return ssa_r32(r);
+  }
+  return r;
 }
 
 function ssa_alu_ext(tag: i32): i32 {
@@ -8063,6 +8078,12 @@ function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr:
   }
   if (ins.kind_tag == 37) {
     return ssa_carry(ins, reg_of, s);
+  }
+  if (ssa.low_word_pair(blk, ii, fr.uses)) {
+    return s;
+  }
+  if (ssa.low_word_pair(blk, ii - 1, fr.uses)) {
+    return ssa_bin_sized(blk.insts[ii - 1], ins.result, 32, reg_of, fr, s);
   }
   if (ins.kind_tag == 6 || ins.kind_tag == 8 || ssa_select_fuse(fr, blk, ii + 1).fu.n > 0) {
     return s;

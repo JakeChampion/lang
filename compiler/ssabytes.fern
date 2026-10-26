@@ -90,7 +90,8 @@ function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
   if (op.str == data_name()) {
     return [ir.op_drop(), ir.op_load_local(base)];
   }
-  let ops: ir.Op[] = [ir.op_store_local(index), ir.op_drop()];
+  // No view length reaches 2^31, so a zero-extended index fails the check whenever the signed one does.
+  let ops: ir.Op[] = [ir.op_u32_wrap(), ir.op_store_local(index), ir.op_drop()];
   if (op.str == get_name(false) || op.str == check_name() || op.str == element_name() && op.i32_imm == 0) {
     ops = joined(ops, [ir.op_load_local(index), ir.op_load_local(base + 1), ir.op_bin("ge_u", 0, false)]);
     ops = abort_if(ops);

@@ -424,6 +424,17 @@ A block that holds only phis counts as empty, because each phi move goes on
 the edge into the block. An edge gets a stub only when one of its phis needs
 a move (`ssa_edge_moves`).
 
+An `add`, `sub` or `mul` whose only use is the zero-extension after it is one
+32-bit instruction (`ssa.low_word_pair`). On x86-64 it is `leal`, `addl`,
+`subl` or `imull`, and on arm64 it is the `w` form. Both write the upper half
+as zero.
+
+`ssa.zero_extended_indices` makes an i32 sign extension a
+zero-extension when only array indices read it. A byte view index is a
+zero-extension too (`ssabytes`). No length reaches 2^31, so a negative index
+still fails the unsigned bounds check. The sum that makes an index is then one
+`leal`.
+
 Division,
 a shift by a register count and the table shared with the stack machine
 still go through x0/x1 (`%rax`/`%rcx`), as does every call result; a shift
