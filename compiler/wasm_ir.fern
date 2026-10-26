@@ -6439,19 +6439,6 @@ pub function str_borrow_helper(): string {
   return o;
 }
 
-pub function count_byte_bytes_helper(): string {
-  let o: string = "  (func $__fern_count_byte_bytes (param $a i32) (param $byte i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $i i32) (local $count i32)\n";
-  o = o + "    (if (i32.gt_u (local.get $byte) (i32.const 255)) (then (return (i32.const 0))))\n";
-  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
-  o = o + "    (block $done (loop $scan\n";
-  o = o + "      (br_if $done (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (if (i32.eq (i32.load8_u (i32.add (local.get $a) (i32.add (i32.const 8) (local.get $i)))) (local.get $byte)) (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $scan)))\n    (local.get $count))\n";
-  return o;
-}
-
 // i64x2.lt_s is a signed compare. Both sides have their top bit flipped, so it gives the unsigned order.
 pub function count_below_u64_helper(): string {
   let o: string = "  (func $__fern_count_below_u64 (param $a i32) (param $w i64) (result i32)\n";
@@ -9387,6 +9374,9 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (p
   if (need(needs, "@uses_mulhi_u")) {
     roots = roots + " __fern_mulhi_u64";
   }
+  if (need(needs, "@uses_count_byte_bytes")) {
+    roots = roots + " __fern_count_byte_bytes";
+  }
   if (need(needs, "@uses_sum_bytes")) {
     roots = roots + " __fern_sum_bytes";
   }
@@ -9500,9 +9490,6 @@ function kernel_helper_parts(needs: string[], parts0: string[]): string[] {
   let parts: string[] = parts0;
   if (need(needs, "@uses_memchr")) {
     parts = parts.append(memchr_helper());
-  }
-  if (need(needs, "@uses_count_byte_bytes")) {
-    parts = parts.append(count_byte_bytes_helper());
   }
   if (need(needs, "@uses_count_below_u64")) {
     parts = parts.append(count_below_u64_helper());

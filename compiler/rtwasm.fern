@@ -4,6 +4,7 @@ pub function names(): string[] {
   return [
     "__fern_bsd_sum",
     "__fern_bsd_sum_bytes",
+    "__fern_count_byte_bytes",
     "__fern_count_runs",
     "__fern_count_runs_bytes",
     "__fern_memchr_bytes",
@@ -23,6 +24,7 @@ pub function paths(): string[] {
   return [
     "compiler/runtime/wasm/__fern_bsd_sum.fern",
     "compiler/runtime/wasm/__fern_bsd_sum_bytes.fern",
+    "compiler/runtime/wasm/__fern_count_byte_bytes.fern",
     "compiler/runtime/wasm/__fern_count_runs.fern",
     "compiler/runtime/wasm/__fern_count_runs_bytes.fern",
     "compiler/runtime/wasm/__fern_memchr_bytes.fern",
@@ -42,6 +44,7 @@ pub function contents(): string[] {
   return [
     "function __fern_bsd_sum(s: usize, seed: i32): i32 {\n  let tag: usize = s & 1;\n  let n: i32 = __load_i32(s + tag * 3);\n  let p: usize = 0;\n  let sum: u32 = seed as u32 & 65535;\n  if (n >= 0) {\n    if (n > 0) {\n      p = if (tag == 0) { s + 4 } else { (__load_i32(s - 1) as u32) as usize };\n    } else {\n      return sum as i32;\n    }\n  } else {\n    n = n & 2147483647;\n    if (n > 0) {\n      p = (__load_i32(s + 4) as u32) as usize;\n    } else {\n      return sum as i32;\n    }\n  }\n  let i: i32 = 0;\n  while (i < n) {\n    sum = sum >> 1 | sum << 15;\n    sum = sum + __load_u8(p + i) as u32;\n    sum = sum & 65535;\n    i = i + 1;\n  }\n  return sum as i32;\n}\n",
     "function __fern_bsd_sum_bytes(s: usize, seed: i32): i32 {\n  let n: i32 = __load_i32(s);\n  let i: i32 = 0;\n  let sum: u32 = seed as u32 & 65535;\n  while (i < n) {\n    sum = sum >> 1 | sum << 15;\n    sum = sum + __load_u8(s + 8 + i) as u32;\n    sum = sum & 65535;\n    i = i + 1;\n  }\n  return sum as i32;\n}\n",
+    "function __fern_count_byte_bytes(a: usize, byte: i32): i32 {\n  if (byte as u32 <= 255u32) {\n    let n: i32 = __load_i32(a);\n    let i: i32 = 0;\n    let count: i32 = 0;\n    while (i < n) {\n      if (__load_u8(a + (8 + i)) as i32 == byte) {\n        count = count + 1;\n      }\n      i = i + 1;\n    }\n    return count;\n  }\n  return 0;\n}\n",
     "function __fern_count_runs(s: usize, state: i32, set: usize): i32 {\n  let len: i32 = __load_i32(s);\n  let n: u32 = __load_i32(set) as u32;\n  let i: i32 = 0;\n  let prev: i32 = if (state != 0) { 1 } else { 0 };\n  let count: i32 = 0;\n  while (i < len) {\n    let b: u32 = __load_u8(s + 4 + i) as u32;\n    let cur: i32 = 0;\n    if (b < n) {\n      cur = __load_u8(set + 8 + b) + 255 >> 8;\n    }\n    count = count + (cur & (prev ^ 1));\n    prev = cur;\n    i = i + 1;\n  }\n  return count;\n}\n",
     "function __fern_count_runs_bytes(s: usize, state: i32, set: usize): i32 {\n  let len: i32 = __load_i32(s);\n  let n: u32 = __load_i32(set) as u32;\n  let i: i32 = 0;\n  let prev: i32 = if (state != 0) { 1 } else { 0 };\n  let count: i32 = 0;\n  while (i < len) {\n    let b: u32 = __load_u8(s + 8 + i) as u32;\n    let cur: i32 = 0;\n    if (b < n) {\n      cur = __load_u8(set + 8 + b) + 255 >> 8;\n    }\n    count = count + (cur & (prev ^ 1));\n    prev = cur;\n    i = i + 1;\n  }\n  return count;\n}\n",
     "function __fern_memchr_bytes(a: usize, byte: i32, from: i32): i32 {\n  if (byte as u32 > 255 as u32) {\n    return -1;\n  }\n  let n: i32 = __load_i32(a);\n  let i: i32 = from;\n  if (i < 0) {\n    i = 0;\n  }\n  while (i < n) {\n    if (__load_u8(a + 8 + i) == byte) {\n      return i;\n    }\n    i = i + 1;\n  }\n  return -1;\n}\n",
@@ -59,11 +62,11 @@ pub function contents(): string[] {
 
 pub function indices(target: string): i32[] {
   if (target == "wasm32-wasi") {
-    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
   }
 
   if (target == "wasm32-wasi-http") {
-    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13];
+    return [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14];
   }
 
   return [];

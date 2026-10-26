@@ -383,7 +383,7 @@ complete #2649.
 
 ### WebAssembly runtime source units
 
-`compiler/runtime/wasm/` contains ordinary Fern source for fourteen WebAssembly helpers.
+`compiler/runtime/wasm/` contains ordinary Fern source for fifteen WebAssembly helpers.
 The source bundle registers them for both WASI targets.
 The emitter selects declarations through `rtmodule` and its normal tree shaker.
 `Sub.rt_lower` consumes that module and the ordinary function emitter writes its bodies.
@@ -393,7 +393,7 @@ Whole-program and per-module emitters append the runtime unit before final
 literal and heap layout. The runtime unit carries its own literal and function
 tables. Its lowered needs do not enter the user module's needs.
 The string comparators need no allocation and no additional runtime helper.
-Programs without string operations omit this unit.
+Programs that need none of these helpers omit this unit.
 
 `TestSelfHostWasmUnitsN2/fern_runtime_string_order` executes all six comparison
 operators in whole-program and split-module builds. It covers empty strings,
@@ -424,6 +424,11 @@ Each function uses its input layout's data offset.
 The tests compare both input forms against a reference loop in both module modes.
 They cover every byte value, short tables, nonzero membership values, extreme
 start offsets, initial run states, aliases and allocation counts.
+
+`__fern_count_byte_bytes.fern` counts occurrences of a byte in an array.
+It rejects values outside 0 through 255 before it reads the array.
+Both module modes check every byte value, invalid search values, allocation
+counts, aliases and lengths around vector and padding boundaries.
 
 The byte-reduction source files define the sum and BSD checksum in Fern.
 The tests use a Go oracle for each byte value and for eight checksum seeds.

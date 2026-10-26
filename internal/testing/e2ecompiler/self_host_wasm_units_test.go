@@ -120,6 +120,11 @@ function main(): i32 {
 			want: 0,
 		},
 		{
+			name: "fern_runtime_count_byte_bytes",
+			src:  e2eharness.CountByteBytesSource(true),
+			want: 0,
+		},
+		{
 			name: "fern_runtime_mulhi",
 			src:  wasmRuntimeMulhiProgram(),
 			want: 0,
@@ -260,6 +265,14 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 			} else if strings.Contains(string(wat), symbol) {
 				t.Fatalf("an unrelated module contains the %s runtime helper", name)
 			}
+		}
+
+		if strings.HasPrefix(tag, "fern_runtime_count_byte_bytes") {
+			if strings.Count(string(wat), "(func $__fern_count_byte_bytes ") != 1 || !strings.Contains(string(wat), "(func $__fern_count_byte_bytes (param i32) (param i32) (result i32)") {
+				t.Fatal("byte-array counting does not use one ordinary Fern function")
+			}
+		} else if strings.Contains(string(wat), "(func $__fern_count_byte_bytes ") {
+			t.Fatal("an unrelated module contains the byte-array counting helper")
 		}
 
 		if strings.HasPrefix(tag, "fern_runtime_mulhi") {
