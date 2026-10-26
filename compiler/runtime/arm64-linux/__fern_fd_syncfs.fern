@@ -1,0 +1,7 @@
+function __fern_fd_syncfs(fd: i32): Result[void, IoError] {
+  let rc: i32 = __syscall3(267, fd as i64, 0, 0) as i32;
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  return Ok(());
+}

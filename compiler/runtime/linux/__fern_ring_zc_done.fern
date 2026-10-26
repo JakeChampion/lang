@@ -1,0 +1,28 @@
+function __fern_ring_zc_done(blk: usize, s: i32, res: i32, flags: i32, nfds: i32): i32 {
+  let z: usize = __fern_ring_zc_at(blk) + s as usize * 16;
+  if (__load_i32(z + 8) == 0) {
+    return 0;
+  }
+  if ((flags & 8) != 0) {
+    __store_i32(z + 8, 3);
+    return 0;
+  }
+  __store_i32(z + 4, res);
+  if (res == 0 - 95 || res == 0 - 22) {
+    __store_i32(blk + 200, 1);
+  }
+  if ((flags & 2) != 0) {
+    __store_i32(z + 8, 2);
+  } else {
+    __store_i32(z + 8, 3);
+  }
+  let fd: i32 = __load_i32(z);
+  if (fd >= 0 && fd < nfds) {
+    let ent: usize = __fern_ring_entry(blk, fd);
+    if (__raw_load8(ent, 0) != 0) {
+      __raw_store8(ent, 14, __raw_load8(ent, 14) | 10);
+      __fern_ring_list(blk, ent, fd);
+    }
+  }
+  return 0;
+}

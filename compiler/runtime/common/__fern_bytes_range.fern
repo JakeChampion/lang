@@ -1,0 +1,23 @@
+function __fern_bytes_range(to: i32, from: i32, bytes: usize): i32[] {
+  let n: i32 = 0;
+  let p: usize = 0;
+  if ((bytes as i32 & 2) != 0) {
+    let base: usize = bytes - 2;
+    n = __load_i32(base + 8);
+    p = __raw_load_ptr(base, 0);
+  } else {
+    n = __load_i32(bytes);
+    p = bytes + 8;
+  }
+  if (from < 0 || to < from || to > n) {
+    __fern_slice_abort();
+  }
+  let m: i32 = to - from;
+  if (m == 0) {
+    return [];
+  }
+  let b: usize = __raw_arr_box((m + 7) / 8);
+  __store_i64(b, m as i64);
+  __memcpy(b + 8, p + from, m);
+  return __raw_array(b);
+}

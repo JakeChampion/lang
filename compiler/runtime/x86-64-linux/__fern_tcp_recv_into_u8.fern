@@ -1,0 +1,7 @@
+function __fern_tcp_recv_into_u8(fd: i32, buf: i32[]): i32 {
+  let max: i32 = buf.len();
+  if (max <= 0) {
+    return 0;
+  }
+  return __syscall3(0, fd as i64, (__raw_arr_ptr(buf) + 8) as i64, max as i64) as i32;
+}

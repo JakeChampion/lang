@@ -1,0 +1,9 @@
+function __fern_vdso_clock(): usize {
+  let slot: usize = __raw_vdso();
+  let f: usize = __raw_load_ptr(slot, 1);
+  if (f == 0 as usize) {
+    f = __fern_vdso_find(__raw_load_ptr(slot, 0));
+    __raw_store_ptr(slot, 1, f);
+  }
+  return f;
+}

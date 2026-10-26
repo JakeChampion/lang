@@ -1,0 +1,24 @@
+function __fern_getgroups(): i64[] {
+  let out: i64[] = [];
+  let n: i32 = __syscall3(115, 0, 0, 0) as i32;
+  if (n <= 0) {
+    return out;
+  }
+  let buf: usize = __raw_alloc(n * 4);
+  let m: i32 = __syscall3(115, n as i64, buf as i64, 0) as i32;
+  if (m <= 0) {
+    let buf_own0: string = __raw_string(buf, n * 4);
+    return out;
+  }
+  let i: i32 = 0;
+  while (i < m) {
+    let b0: i64 = __raw_load8(buf, i * 4) as i64;
+    let b1: i64 = __raw_load8(buf, i * 4 + 1) as i64;
+    let b2: i64 = __raw_load8(buf, i * 4 + 2) as i64;
+    let b3: i64 = __raw_load8(buf, i * 4 + 3) as i64;
+    out = out.append(b0 + b1 * 256 + b2 * 65536 + b3 * 16777216);
+    i = i + 1;
+  }
+  let buf_own: string = __raw_string(buf, n * 4);
+  return out;
+}

@@ -1,0 +1,16 @@
+function __fern_tcp_recv_into(fd: i32, buf: i32[]): i32 {
+  let max: i32 = buf.len();
+  if (max <= 0) {
+    return 0;
+  }
+  let p: usize = __raw_alloc(max);
+  let n: i32 = __syscall3(0, fd as i64, p as i64, max as i64) as i32;
+  let b: usize = __raw_arr_ptr(buf);
+  let i: i32 = 0;
+  while (i < n) {
+    __raw_store_ptr(b, i + 1, __raw_load8(p, i) as usize);
+    i = i + 1;
+  }
+  let p_own: string = __raw_string(p, max);
+  return n;
+}

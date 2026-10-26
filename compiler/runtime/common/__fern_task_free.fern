@@ -1,0 +1,7 @@
+function __fern_task_free(id: i32): i32 {
+  let rec: usize = __fern_task_rec(id);
+  if (rec != 0 as usize) {
+    __raw_store_ptr(rec, 7, 1 as usize);
+  }
+  return 0;
+}

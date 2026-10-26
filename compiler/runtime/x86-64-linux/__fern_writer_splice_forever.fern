@@ -1,0 +1,85 @@
+function __fern_writer_splice_forever(fd: i32, s: string): Result[void, IoError] {
+  let n: i32 = s.len();
+  if (n == 0) {
+    return Err(Unsupported);
+  }
+  let copies: i32 = 131072 / n;
+  if (copies < 1) {
+    copies = 1;
+  }
+  let len: i32 = copies * n;
+  let pages: i32 = (len + 4095) / 4096 * 4096;
+  let span: i32 = pages + 4096;
+  let m: i64 = __syscall6(9, 0, span as i64, 3, 34, (0 - 1) as i64, 0);
+  if (m < 0 as i64) {
+    return Err(Unsupported);
+  }
+  let buf: usize = m as usize;
+  let c: i32 = 0;
+  while (c < copies) {
+    __memcpy(buf + c * n, __raw_data(s), n);
+    c = c + 1;
+  }
+  let iov: usize = buf + pages;
+  let out: i32 = fd;
+  let pr: i32 = 0 - 1;
+  __syscall3(72, fd as i64, 1031, 524288);
+  let off: i32 = 0;
+  let moved: i64 = 0 as i64;
+  let err: i32 = 0;
+  while (err == 0) {
+    __store_i64(iov, (buf + off) as i64);
+    __store_i64(iov + 8, (len - off) as i64);
+    let gift: i32 = 0;
+    if (off % 4096 == 0 && (len - off) % 4096 == 0) {
+      gift = 8;
+    }
+    let w: i32 = __syscall4(278, out as i64, iov as i64, 1, gift as i64) as i32;
+    if ((w == 0 - 9 || w == 0 - 22) && pr < 0 && moved == 0 as i64) {
+      let fds: usize = iov + 16;
+      if (__syscall3(293, fds as i64, 524288, 0) != 0) {
+        err = 0 - 1;
+      } else {
+        pr = __load_i32(fds);
+        out = __load_i32(fds + 4);
+        __syscall3(72, pr as i64, 1031, 524288);
+      }
+    } else if (w < 0) {
+      if (w != 0 - 4) {
+        err = 0 - w;
+      }
+    } else {
+      let left: i32 = w;
+      while (pr >= 0 && left > 0 && err == 0) {
+        let d: i32 = __syscall6(275, pr as i64, 0, fd as i64, 0, left as i64, 1) as i32;
+        if (d > 0) {
+          left = left - d;
+          moved = moved + d as i64;
+        } else if (d == 0 - 22 && moved == 0 as i64) {
+          err = 0 - 1;
+        } else if (d != 0 - 4) {
+          err = 0 - d;
+          if (d == 0) {
+            err = 5;
+          }
+        }
+      }
+      if (pr < 0) {
+        moved = moved + w as i64;
+      }
+      off = off + w;
+      if (off >= len) {
+        off = 0;
+      }
+    }
+  }
+  if (pr >= 0) {
+    __syscall3(3, pr as i64, 0, 0);
+    __syscall3(3, out as i64, 0, 0);
+  }
+  __syscall3(11, m, span as i64, 0);
+  if (err < 0) {
+    return Err(Unsupported);
+  }
+  return Err(__fern_io_error(err, ""));
+}

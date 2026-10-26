@@ -1,0 +1,5 @@
+function __fern_random_i32(): i32 {
+  let p: usize = __raw_scratch(4);
+  __syscall3(278, p as i64, 4, 0);
+  return __load_i32(p);
+}

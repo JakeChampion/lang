@@ -1,0 +1,20 @@
+function __fern_dir_unlink(dirfd: i32, path: string, dir: boolean): Result[void, IoError] {
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, path[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let fl: i32 = 0;
+  if (dir) {
+    fl = 128;
+  }
+  let rc: i32 = __syscall3(472, dirfd as i64, pathz as i64, fl as i64) as i32;
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen)));
+  }
+  return Ok(());
+}

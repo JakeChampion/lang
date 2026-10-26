@@ -1,0 +1,23 @@
+function __fern_ring_set_ctl(blk: usize, op: i32, fd: i32, interest: i32): i32 {
+  let ep: i32 = __fern_ring_set(blk);
+  if (ep < 0) {
+    return ep;
+  }
+  let ev: usize = __raw_scratch(16);
+  let bits: i32 = 268435456;
+  if ((interest & 1) != 0) {
+    bits = bits | 1;
+  }
+  if ((interest & 2) != 0) {
+    bits = bits | 4;
+  }
+  __store_i64(ev, 0);
+  __store_i64(ev + 8, 0);
+  __store_i32(ev, bits);
+  __store_i32(ev + 4, fd);
+  let r: i32 = __syscall4(233, ep as i64, op as i64, fd as i64, ev as i64) as i32;
+  if (r == 0 - 17 && op == 1) {
+    r = __syscall4(233, ep as i64, 3, fd as i64, ev as i64) as i32;
+  }
+  return r;
+}

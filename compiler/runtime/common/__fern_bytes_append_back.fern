@@ -1,0 +1,20 @@
+function __fern_bytes_append_back(own a: i32[], dist: i32, n: i32): i32[] {
+  let len = a.len();
+  if (n > 0 && dist >= 8 && dist <= len && __FERN_RUNTIME_REUSE && __load_i32(__raw_arr_ptr(a) - 8) == 1) {
+    let total: i64 = len as i64 + n as i64;
+    if (total <= 2147483647i64 && total + 8i64 <= __load_i64(__raw_arr_ptr(a) - 16) * 8i64) {
+      let base: usize = __raw_arr_ptr(a) + 8;
+      let p: usize = base + len;
+      let end: usize = base + total as i32;
+      let q: usize = p - dist;
+      while (p < end) {
+        __store_i64(p, __load_i64(q));
+        p = p + 8;
+        q = q + 8;
+      }
+      __store_i64(__raw_arr_ptr(a), total);
+      return a;
+    }
+  }
+  return __fern_bytes_append_back_slow(a, dist, n);
+}

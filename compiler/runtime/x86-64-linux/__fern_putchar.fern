@@ -1,0 +1,5 @@
+function __fern_putchar(c: i32): i32 {
+  let p: usize = __raw_scratch(1);
+  __raw_store8(p, 0, c & 255);
+  return __syscall3(1, 1, p as i64, 1) as i32;
+}

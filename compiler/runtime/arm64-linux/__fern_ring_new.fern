@@ -1,0 +1,110 @@
+function __fern_ring_new(entries: i32): i64 {
+  if (entries <= 0 || entries > 32768) {
+    return 0 - 22;
+  }
+  let p: usize = __raw_scratch(128);
+  let z: i32 = 0;
+  while (z < 16) {
+    __store_i64(p + z as usize * 8, 0);
+    z = z + 1;
+  }
+  __store_i32(p + 4, entries * 16);
+  __store_i32(p + 8, 12296);
+  let rfd: i64 = __syscall3(425, entries as i64, p as i64, 0);
+  if (rfd < 0 as i64) {
+    return rfd;
+  }
+  let sqn: i64 = __load_i32(p) as i64;
+  let cqn: i64 = __load_i32(p + 4) as i64;
+  let sq_head: i32 = __load_i32(p + 40);
+  let sq_tail: i32 = __load_i32(p + 44);
+  let sq_mask: i32 = __load_i32(p + 48);
+  let sq_array: i32 = __load_i32(p + 64);
+  let cq_head: i32 = __load_i32(p + 80);
+  let cq_tail: i32 = __load_i32(p + 84);
+  let cq_mask: i32 = __load_i32(p + 88);
+  let cq_cqes: i32 = __load_i32(p + 100);
+  let sq_len: i64 = sq_array as i64 + sqn * (4 as i64);
+  let cq_len: i64 = cq_cqes as i64 + cqn * (16 as i64);
+  let sqe_len: i64 = sqn * (64 as i64);
+  let sq: i64 = __syscall6(222, 0, sq_len, 3, 32769, rfd, 0);
+  if (sq < 0 as i64) {
+    __syscall3(57, rfd, 0, 0);
+    return sq;
+  }
+  let cq: i64 = __syscall6(222, 0, cq_len, 3, 32769, rfd, 134217728);
+  if (cq < 0 as i64) {
+    __syscall3(215, sq, sq_len, 0);
+    __syscall3(57, rfd, 0, 0);
+    return cq;
+  }
+  let sqes: i64 = __syscall6(222, 0, sqe_len, 3, 32769, rfd, 268435456);
+  if (sqes < 0 as i64) {
+    __syscall3(215, cq, cq_len, 0);
+    __syscall3(215, sq, sq_len, 0);
+    __syscall3(57, rfd, 0, 0);
+    return sqes;
+  }
+  let lim: usize = __raw_scratch(16);
+  let nfds: i64 = 65536 as i64;
+  if (__syscall4(261, 0, 7, 0, lim as i64) == 0 as i64) {
+    nfds = __load_i64(lim + 8);
+  }
+  if (nfds < 1024 as i64) {
+    nfds = 1048576 as i64;
+  }
+  if (nfds > 1048576 as i64) {
+    nfds = 1048576 as i64;
+  }
+  let size: i64 = (4096 as i64 + cqn * (8 as i64) + nfds * (20 as i64) + 8192 as i64 + 4095 as i64) / (4096 as i64) * (4096 as i64);
+  let blk: i64 = __syscall6(222, 0, size, 3, 34, (0 - 1) as i64, 0);
+  if (blk < 0 as i64) {
+    __syscall3(215, sqes, sqe_len, 0);
+    __syscall3(215, cq, cq_len, 0);
+    __syscall3(215, sq, sq_len, 0);
+    __syscall3(57, rfd, 0, 0);
+    return blk;
+  }
+  let b: usize = blk as usize;
+  __store_i32(b, rfd as i32);
+  __store_i64(b + 8, sq);
+  __store_i64(b + 16, cq);
+  __store_i64(b + 24, sqes);
+  __store_i32(b + 32, sq_head);
+  __store_i32(b + 36, sq_tail);
+  __store_i32(b + 40, __load_i32(sq as usize + sq_mask as usize));
+  __store_i32(b + 44, sq_array);
+  __store_i32(b + 48, cq_head);
+  __store_i32(b + 52, cq_tail);
+  __store_i32(b + 56, __load_i32(cq as usize + cq_mask as usize));
+  __store_i32(b + 60, cq_cqes);
+  __store_i32(b + 64, sqn as i32);
+  __store_i32(b + 68, nfds as i32);
+  __store_i64(b + 80, sq_len);
+  __store_i64(b + 88, cq_len);
+  __store_i64(b + 96, sqe_len);
+  __store_i64(b + 104, size);
+  __store_i32(b + 112, cqn as i32);
+  let pb: i64 = __syscall6(222, 0, 1056768, 3, 34, (0 - 1) as i64, 0);
+  if (pb >= 0 as i64) {
+    let reg: usize = __raw_scratch(40);
+    let zr: i32 = 0;
+    while (zr < 5) {
+      __store_i64(reg + zr as usize * 8, 0);
+      zr = zr + 1;
+    }
+    __store_i64(reg, pb);
+    __store_i32(reg + 8, 256);
+    if (__syscall4(427, rfd, 22, reg as i64, 1) == 0 as i64) {
+      __store_i64(b + 160, pb);
+      let g: i32 = 0;
+      while (g < 256) {
+        __fern_ring_give(b, g);
+        g = g + 1;
+      }
+    } else {
+      __syscall3(215, pb, 1056768, 0);
+    }
+  }
+  return blk;
+}

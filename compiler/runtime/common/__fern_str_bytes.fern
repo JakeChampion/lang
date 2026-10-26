@@ -1,0 +1,10 @@
+function __fern_str_bytes(s: string): i32[] {
+  let n: i32 = s.len();
+  let b: usize = __raw_arr_box(n);
+  let i: i32 = 0;
+  while (i < n) {
+    __raw_store_ptr(b, i + 1, s[i] as usize);
+    i = i + 1;
+  }
+  return __raw_array(b);
+}

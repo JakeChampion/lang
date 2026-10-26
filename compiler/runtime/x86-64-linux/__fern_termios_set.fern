@@ -1,0 +1,27 @@
+function __fern_termios_set(fd: i32, act: i32, words: i64[]): Result[void, IoError] {
+  if (words.len() != 24 || act < 0 || act > 2) {
+    return Err(__fern_io_error(22, ""));
+  }
+  let buf: usize = __raw_alloc(36);
+  let i: i32 = 0;
+  while (i < 4) {
+    let v: i64 = words[i];
+    __raw_store8(buf, i * 4, (v % 256) as i32);
+    __raw_store8(buf, i * 4 + 1, (v / 256 % 256) as i32);
+    __raw_store8(buf, i * 4 + 2, (v / 65536 % 256) as i32);
+    __raw_store8(buf, i * 4 + 3, (v / 16777216 % 256) as i32);
+    i = i + 1;
+  }
+  __raw_store8(buf, 16, (words[4] % 256) as i32);
+  let j: i32 = 0;
+  while (j < 19) {
+    __raw_store8(buf, 17 + j, (words[5 + j] % 256) as i32);
+    j = j + 1;
+  }
+  let rc: i32 = __syscall3(16, fd as i64, (21506 + act) as i64, buf as i64) as i32;
+  let buf_own: string = __raw_string(buf, 36);
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  return Ok(());
+}

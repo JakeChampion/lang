@@ -760,7 +760,11 @@ pub function top_level_names(mod: parser.Module, own refs: string[]): string[] {
 }
 
 pub function treeshake(mod: parser.Module): parser.Module {
-  let refs: string[] = top_level_names(mod, ["main"]);
+  return treeshake_roots(mod, ["main"]);
+}
+
+pub function treeshake_roots(mod: parser.Module, own roots: string[]): parser.Module {
+  let refs: string[] = top_level_names(mod, roots);
   let ei: i32 = 0;
   while (ei < mod.exports.len()) {
     refs = refs.append(mod.exports[ei].func_name);

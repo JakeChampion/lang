@@ -1,0 +1,30 @@
+function __fern_getxattr_bytes_u8(path: string, name: string): Result[i32[], IoError] {
+  let nlen: i32 = name.len();
+  let namez: usize = __raw_alloc(nlen + 1);
+  let j: i32 = 0;
+  while (j < nlen) {
+    __raw_store8(namez, j, name[j] as i32);
+    j = j + 1;
+  }
+  __raw_store8(namez, nlen, 0);
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, path[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let buf: usize = __raw_alloc(65536);
+  let n: i32 = __syscall4(191, pathz as i64, namez as i64, buf as i64, 65536) as i32;
+  let namez_own: string = __raw_string(namez, nlen + 1);
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  let buf_own: string = __raw_string(buf, 65536);
+  if (n < 0) {
+    return Err(__fern_io_error(0 - n, __fern_path_copy(pathz_own, plen)));
+  }
+  let b: usize = __raw_arr_box((n + 7) / 8);
+  __store_i64(b, n as i64);
+  __memcpy(b + 8, buf, n);
+  return Ok(__raw_array(b));
+}

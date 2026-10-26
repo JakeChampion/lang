@@ -1,0 +1,9 @@
+function __fern_pp_message(out: usize, tag: usize, buf: usize, n: usize): void {
+  __fern_pp_uint(out, tag);
+  __fern_pp_uint(out, n);
+  let i: usize = 0;
+  while (i < n) {
+    __fern_pp_byte(out, __load_u8(buf + i));
+    i = i + 1;
+  }
+}

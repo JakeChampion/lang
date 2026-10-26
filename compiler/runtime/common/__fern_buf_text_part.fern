@@ -1,0 +1,29 @@
+function __fern_buf_text_part(data: usize, pos: i32, n: i32): i32 {
+  let lead: i32 = __raw_load8(data, pos);
+  if (lead < 128) {
+    return 1;
+  }
+  let width: i32 = 0;
+  if (lead >= 194 && lead <= 223) {
+    width = 2;
+  } else if (lead >= 224 && lead <= 239) {
+    width = 3;
+  } else if (lead >= 240 && lead <= 244) {
+    width = 4;
+  }
+  let used: i32 = 1;
+  while (used < width && used < n - pos) {
+    let next: i32 = __raw_load8(data, pos + used);
+    if (next < 128 || next > 191) {
+      break;
+    }
+    if (used == 1 && (lead == 224 && next < 160 || lead == 237 && next > 159 || lead == 240 && next < 144 || lead == 244 && next > 143)) {
+      break;
+    }
+    used = used + 1;
+  }
+  if (used == width) {
+    return used;
+  }
+  return 0 - used;
+}

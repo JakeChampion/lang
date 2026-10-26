@@ -1,0 +1,5 @@
+function __fern_pp_function(out: usize, buf: usize, id: usize, name: usize): void {
+  let n: usize = __fern_pp_field(buf, 0, 8, id);
+  n = __fern_pp_field(buf, n, 16, name);
+  __fern_pp_message(out, 42, buf, n);
+}

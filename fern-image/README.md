@@ -16,7 +16,9 @@ The [JPEG header parser](docs/jpeg-headers.md) checks a restricted baseline head
 The separate [JPEG coefficient fold](docs/jpeg-coefficients.md) validates a complete restricted baseline entropy scan and emits quantized blocks.
 Neither interface decodes JPEG pixels.
 The separate [scalar inverse DCT](docs/jpeg-idct.md) reconstructs isolated component blocks from quantized coefficients.
-A complete JPEG pixel decoder remains unfinished.
+The [restricted grayscale decoder](docs/jpeg-grayscale.md) assembles one-component JPEG samples into packed RGB8 storage.
+General color JPEG decoding remains unfinished.
+The [restricted JFIF inspector](docs/jpeg-jfif.md) identifies explicit Y or YCbCr sample meaning before RGB assembly.
 
 HTTP and CDN services remain unimplemented.
 
@@ -65,7 +67,7 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 171 TAP cases cover compression, pixels, color, resize, PNG, JPEG headers, coefficients, and scalar inverse DCT.
+The 205 TAP cases cover compression, pixels, color, resize, PNG, JPEG headers, coefficients, scalar inverse DCT, grayscale images, and JFIF identification.
 They also cover rows, providers, pipelines, regions, caches, RSS parsing, and fusion.
 The file I/O probe and pixel example also exit successfully.
 The native script checks source executables and additional allocator, cache, fusion, and formatter smoke modes with the sanitizer.
@@ -100,3 +102,10 @@ The [region interface](docs/regions.md) plans checked cropped tiles and direct d
 The [row batch interface](docs/row-cache.md) adds per-call caching with payload and entry limits.
 The explicit [cached fusion interface](docs/cached-fusion.md) composes eligible nearest chains without intermediate cached rows.
 The [nearest fusion](docs/nearest-fusion.md) optimization removes eligible intermediate rows and preserves coordinate and admission contracts.
+
+The [explicit YCbCr conversion kernel](docs/jpeg-ycbcr.md) converts full-range component samples after chroma reconstruction.
+It does not infer color meaning from encoded JPEG data or apply color profiles.
+
+The [component-plane decoder](docs/jpeg-planes.md) reconstructs owned raw JPEG sample planes before chroma reconstruction or color interpretation.
+
+The [centered component-row sampler](docs/jpeg-chroma.md) offers explicit nearest and bilinear filters before color interpretation.
