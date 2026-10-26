@@ -146,6 +146,24 @@ Earlier corpus, row, and provider records preserve their historical hashes and o
 The existing corpus limits and qualification exclusions apply to these regressions.
 No incremental PNG API or production claim follows from this shared inflater change.
 
+## Incremental PNG campaign
+
+Issue #13459 adds an opt-in two-pass decoder that avoids retention of the complete filtered frame.
+The first pass validates the whole stream before callbacks. The second pass reconstructs forward row prefixes.
+The encoded input remains owned, and the extra pass costs decode work.
+The eager decoder and its existing row/provider budgets remain unchanged.
+
+The same 964 inputs now compare both APIs with the pinned Pillow reference.
+Accepted cases check full rows, a middle selection, and legacy/fused graph rows and cropped tiles for both providers.
+Negative cases require the same codec error class from every API.
+All three targets pass 142 accepted images and 822 negative inputs across 183 fresh batches, with zero final live bytes.
+
+The new records are `benchmarks/results/png-incremental-native.json`, `png-incremental-wasm.json`, and `png-incremental-arm64.json`.
+They use source `a296f8a8fd690a4a10e068a4965a964e210dcf2d` and clean compiler `a296f8a8fd69`.
+Each record checks all 163 workspace stdlib sources before and after execution.
+Older records preserve their historical compiler and scope.
+See [incremental PNG](incremental-png.md) for exact compiler hashes, logical costs, cancellation behavior, and exclusions.
+
 ## Reproduce
 
 Use CPython 3.12 on Linux x86-64 for the pinned reference wheel.

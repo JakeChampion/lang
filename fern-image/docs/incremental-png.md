@@ -87,3 +87,22 @@ Small fixtures cover every observed cancellation poll. Wide fixtures cover cance
 Native, Wasm, and ARM64/QEMU probes provide different validation capabilities.
 Wasm supplies the leak census without native heap fault detectors.
 Finite generated fixtures do not qualify photographs, broad compatibility, security, performance parity, or production safety.
+
+## Reference campaign
+
+The extended corpus compares incremental full rows, a middle selection, legacy/fused graph rows, and cropped tiles with the offline Pillow reference.
+All three targets pass 964 cases: 142 accepted images and 822 explicit codec errors.
+Every accepted byte and negative error class agrees across native, Wasm, and ARM64/QEMU.
+Each target uses 61 fresh processes. All 183 processes report balanced allocations and zero final live bytes.
+
+The worker retains comparison outputs, so these records do not measure decoder retention or peak memory.
+
+The records use source `a296f8a8fd690a4a10e068a4965a964e210dcf2d` after integration of main `4d2bb5262e8a4af6f72b7298520718af4f0dfddc`.
+The clean compiler reports `a296f8a8fd69` with SHA-256 `5e29d4e9a6323191b135a0d0b4199dea216d50e43a3cd86ba1f4132a8d155285`.
+Native records hash 301 tool/source inputs. Wasm and ARM64 records each hash 302 inputs, including their runner.
+Every record includes all 163 workspace stdlib sources and verifies unchanged hashes before and after execution.
+
+New records reside in `benchmarks/results/png-incremental-native.json`, `png-incremental-wasm.json`, and `png-incremental-arm64.json`.
+Earlier PNG records retain their original source, compiler, and qualification scope.
+See [PNG qualification](png-qualification.md) for reference pins, corpus construction, process limits, and reproduction commands.
+Current-head GitHub CI remains a separate gate.
