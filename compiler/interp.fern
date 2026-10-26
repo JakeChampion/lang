@@ -599,6 +599,15 @@ function arr_at(a: VArr, i: i32): Value {
   return coerce_int_width(v_int(st[1 + a.offset + i] as i32), a.elem);
 }
 
+// The elements of an array the caller hands over, moved out when nothing
+// else holds them.
+function arr_take_els(own a: VArr): Value[] {
+  if (a.store.get().len() > 0) {
+    return arr_els(a);
+  }
+  return a.items;
+}
+
 function arr_els(a: VArr): Value[] {
   let st: i64[] = a.store.get();
   if (st.len() == 0) {
@@ -4403,14 +4412,14 @@ function cast_i32_value(v: Value): Value {
   }
 }
 
-function eval_number_literal(is_float: boolean, t: string, suffix: string): Value {
-  return coerce_int_width(eval_unsuffixed_literal(is_float, t), suffix);
+function eval_number_literal(n: ast.ExprNumber): Value {
+  if (n.is_float) {
+    return coerce_int_width(v_float(f64_from_bits(n.bits)), n.suffix);
+  }
+  return coerce_int_width(eval_int_literal(n.text), n.suffix);
 }
 
-function eval_unsuffixed_literal(is_float: boolean, t: string): Value {
-  if (is_float) {
-    return v_float(f64_from_bits(util.parse_f64_bits(t)));
-  }
+function eval_int_literal(t: string): Value {
   let hs: i32 = 0;
   if (t.len() > 0 && t[0] == b'-') {
     hs = 1;
@@ -4574,7 +4583,7 @@ function bit_op_method(op: string): string {
 function eval_expr(e: ast.Expr, env: Env): Value {
   match (e) {
     ast.ExprNumber(n) => {
-      return eval_number_literal(n.is_float, n.text, n.suffix);
+      return eval_number_literal(n);
     },
     ast.ExprBool(b) => {
       return v_bool(b.value);
@@ -5677,7 +5686,7 @@ function string_method(sv: VString, name: string, args: Value[]): Option[Value] 
   return None;
 }
 
-function array_with(av: VArr, args: Value[]): Value {
+function array_with(own av: VArr, args: Value[]): Value {
   if (args.len() != 2) {
     return v_err("array.with: need 2 args");
   }
@@ -5688,21 +5697,13 @@ function array_with(av: VArr, args: Value[]): Value {
   if (wi < 0 || wi >= arr_len(av)) {
     return index_abort(aborts.arr_oob(), util.i32_to_string(wi), arr_len(av));
   }
-  let wout: Value[] = [];
-  let wj: i32 = 0;
-  while (wj < arr_len(av)) {
-    if (wj == wi) {
-      wout = wout.append(args[1]);
-    } else {
-      wout = wout.append(arr_at(av, wj));
-    }
-    wj = wj + 1;
-  }
-  return v_arr(wout);
+  let elem: string = av.elem;
+  let items: Value[] = arr_take_els(av);
+  return v_arr_of(items.with(wi, args[1]), elem);
 }
 
 // .len, .with and .append on an array; None for any other method.
-function array_method(av: VArr, name: string, args: Value[]): Option[Value] {
+function array_method(own av: VArr, name: string, args: Value[]): Option[Value] {
   if (name == "len") {
     if (args.len() != 0) {
       return Some(v_err("array.len: takes no arguments"));
@@ -5716,14 +5717,9 @@ function array_method(av: VArr, name: string, args: Value[]): Option[Value] {
     if (args.len() != 1) {
       return Some(v_err("array.append: need 1 arg"));
     }
-    let out: Value[] = [];
-    let ai: i32 = 0;
-    while (ai < arr_len(av)) {
-      out = out.append(arr_at(av, ai));
-      ai = ai + 1;
-    }
-    out = out.append(args[0]);
-    return Some(v_arr(out));
+    let elem: string = av.elem;
+    let items: Value[] = arr_take_els(av);
+    return Some(v_arr_of(items.append(args[0]), elem));
   }
   return None;
 }
@@ -5750,7 +5746,8 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
       }
     },
     VArr(av) => {
-      if let Some(r) = array_method(av, name, args) {
+      let found: Option[Value] = array_method(VArr { ...av }, name, args);
+      if let Some(r) = found {
         return r;
       }
     },
@@ -7931,26 +7928,7 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
       return eval_while_stmt(w, env);
     },
     ast.StmtAssign(a) => {
-      let av: Value = eval_expr(a.value, env);
-      if (is_err(av)) {
-        return step_stop(env, av);
-      }
-      let i: i32 = env.names.len() - 1;
-      let found: boolean = false;
-      while (i >= 0 && !found) {
-        if (env.names[i] == a.target) {
-          found = true;
-        }
-        i = i - 1;
-      }
-      if (!found) {
-        return step_stop(env, v_err("assign to undefined `" + a.target + "`"));
-      }
-      let tslot: i32 = env.raw_slot(a.target);
-      if (tslot >= 0 && cell_slot_set(env.values[tslot], av)) {
-        return step_none(env);
-      }
-      return step_none(env.update(a.target, av));
+      return eval_assign_stmt(a, env);
     },
     ast.StmtMatch(m) => {
       return eval_match_stmt(m, env);
@@ -7969,6 +7947,119 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
     }
   }
   return step_stop(env, v_err("unhandled Stmt variant"));
+}
+
+function eval_assign_stmt(a: ast.StmtAssign, env: Env): StepResult {
+  if (in_place_array_write(a, env)) {
+    return write_array_in_place(a, env);
+  }
+  let av: Value = eval_expr(a.value, env);
+  if (is_err(av)) {
+    return step_stop(env, av);
+  }
+  let i: i32 = env.names.len() - 1;
+  let found: boolean = false;
+  while (i >= 0 && !found) {
+    if (env.names[i] == a.target) {
+      found = true;
+    }
+    i = i - 1;
+  }
+  if (!found) {
+    return step_stop(env, v_err("assign to undefined `" + a.target + "`"));
+  }
+  let tslot: i32 = env.raw_slot(a.target);
+  if (tslot >= 0 && cell_slot_set(env.values[tslot], av)) {
+    return step_none(env);
+  }
+  return step_none(env.update(a.target, av));
+}
+
+// `x = x.with(i, v)` and `x = x.append(v)`, or a chain of them on x, release
+// x's slot before the writes, so an array that no other value holds is updated
+// in place. The check reads env and the write takes it, so the write holds
+// env's only reference.
+function in_place_array_write(a: ast.StmtAssign, env: Env): boolean {
+  if (array_write_chain(a.value, a.target).len() == 0) {
+    return false;
+  }
+  let slot: i32 = env.raw_slot(a.target);
+  if (slot < 0) {
+    return false;
+  }
+  let VArr(av) = env.values[slot] else {
+    return false;
+  };
+  if (av.view || av.store.get().len() > 0) {
+    return false;
+  }
+  let (fd, known) = call_target("with", true, false, env.values[slot], env);
+  let (fd2, known2) = call_target("append", true, false, env.values[slot], env);
+  return !known && !known2;
+}
+
+// The `.with` and `.append` calls of e, innermost first, when e chains them on
+// the variable `target`. Empty for any other expression.
+function array_write_chain(e: ast.Expr, target: string): ast.ExprCall[] {
+  let ast.ExprCall(c) = e else {
+    return [];
+  };
+  let ast.ExprFieldAccess(fa) = c.callee else {
+    return [];
+  };
+  if (fa.field != "with" && fa.field != "append" || c.type_args.len() > 0) {
+    return [];
+  }
+  if let ast.ExprIdent(id) = fa.obj {
+    if (id.name == target) {
+      return [c];
+    }
+    return [];
+  }
+  let inner: ast.ExprCall[] = array_write_chain(fa.obj, target);
+  if (inner.len() == 0) {
+    return [];
+  }
+  return inner.append(c);
+}
+
+function write_array_in_place(a: ast.StmtAssign, env: Env): StepResult {
+  let calls: ast.ExprCall[] = array_write_chain(a.value, a.target);
+  let names: string[] = [];
+  let args: Value[][] = [];
+  for c in calls {
+    let ast.ExprFieldAccess(fa) = c.callee else {
+      return step_stop(env, v_err("in-place write: not a method call"));
+    };
+    let vs: Value[] = [];
+    for arg in c.args {
+      let v: Value = eval_expr(arg, env);
+      if (is_err(v)) {
+        return step_stop(env, v);
+      }
+      vs = vs.append(v);
+    }
+    names = names.append(fa.field);
+    args = args.append(vs);
+  }
+  let slot: i32 = env.raw_slot(a.target);
+  let cur: Value = env.values[slot];
+  let released: Env = Env { ...env, values: env.values.with(slot, v_int(0)) };
+  let i: i32 = 0;
+  while (i < names.len()) {
+    let VArr(av) = cur else {
+      return step_stop(released, v_err("in-place write: not an array"));
+    };
+    let Some(out) = array_method(VArr { ...av }, names[i], args[i]) else {
+      return step_stop(released, v_err("in-place write: not an array method"));
+    };
+    if (is_err(out)) {
+      return step_stop(released, out);
+    }
+    cur = out;
+    i = i + 1;
+  }
+  return step_none(Env { ...released, values: released.values.with(slot, cur) });
 }
 
 function for_elements(iv: Value): Option[Value[]] {

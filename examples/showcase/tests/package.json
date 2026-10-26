@@ -5,6 +5,7 @@
   "private": true,
   "type": "module",
   "devDependencies": {
-    "playwright": "1.63.0"
+    "playwright": "1.63.0",
+    "webtorrent": "2.5.1"
   }
 }

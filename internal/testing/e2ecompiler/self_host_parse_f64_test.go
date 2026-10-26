@@ -229,7 +229,7 @@ func TestSelfHostF64LitOutOfRangeX86_64(t *testing.T) {
 
 var pf64Mirrors = []string{"util", "watbin", "x86_native", "arm64_native"}
 
-var pf64MirrorFuncs = []string{"parse_f64_bits", "pf64_div2", "pf64_mul2", "pf64_sub", "pf64_all_zero"}
+var pf64MirrorFuncs = []string{"parse_f64_bits", "pf64_halve", "pf64_double", "pf64_top_bit", "pf64_trim"}
 
 func pf64FuncBody(t *testing.T, module, name string) string {
 	t.Helper()
@@ -261,7 +261,30 @@ func pf64FuncBody(t *testing.T, module, name string) string {
 	return strings.Join(kept, "\n")
 }
 
+func pf64Consts(t *testing.T, module string) string {
+	t.Helper()
+	var kept []string
+	for _, line := range strings.Split(string(mustRead(t, "../../../compiler/"+module+".fern")), "\n") {
+		if strings.HasPrefix(line, "const PF64_") {
+			kept = append(kept, line)
+		}
+	}
+	if len(kept) == 0 {
+		t.Fatalf("%s.fern: no PF64_ constants", module)
+	}
+	return strings.Join(kept, "\n")
+}
+
 func TestSelfHostParseF64MirrorsAgree(t *testing.T) {
+	t.Run("constants", func(t *testing.T) {
+		want := pf64Consts(t, pf64Mirrors[0])
+		for _, m := range pf64Mirrors[1:] {
+			if got := pf64Consts(t, m); got != want {
+				t.Errorf("%s.fern's PF64_ constants have drifted from %s.fern's:\n--- %s\n%s\n--- %s\n%s",
+					m, pf64Mirrors[0], m, got, pf64Mirrors[0], want)
+			}
+		}
+	})
 	for _, fn := range pf64MirrorFuncs {
 		t.Run(fn, func(t *testing.T) {
 			want := pf64FuncBody(t, pf64Mirrors[0], fn)

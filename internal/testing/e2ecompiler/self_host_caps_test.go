@@ -69,11 +69,12 @@ function main(): i32 {
 	})
 }
 
-func writeCapsProject(t *testing.T, dir, depEntry, helperBody string) string {
+// appExtra holds more declarations for the app package's main.fern.
+func writeCapsProject(t *testing.T, dir, depEntry, helperBody string, appExtra ...string) string {
 	t.Helper()
 	files := map[string]string{
 		"app/fern.toml":    "[package]\nname = \"app\"\n[dependencies]\n" + depEntry + "\n",
-		"app/main.fern":    "import \"helper\";\nfunction main(): i32 {\n  let r: i32 = helper.save(\"x\");\n  return r;\n}\n",
+		"app/main.fern":    "import \"helper\";\nfunction main(): i32 {\n  let r: i32 = helper.save(\"x\");\n  return r;\n}\n" + strings.Join(appExtra, ""),
 		"helper/fern.toml": "[package]\nname = \"helper\"\n",
 		"helper/lib.fern":  helperBody,
 	}
@@ -123,22 +124,27 @@ func TestSelfHostPackageCapabilityDifferentialX86_64(t *testing.T) {
 
 	const reachesFS = "pub function save(s: string): i32 {\n  write_file(\"/tmp/fern-caps-e2e.txt\", s);\n  return 0;\n}\n"
 	const reachesNothing = "pub function save(s: string): i32 {\n  return s.len();\n}\n"
+	// A parameter that shares its name with an app function is not a reference to it.
+	const shadowsAppFunction = "pub function save(source: string): i32 {\n  return source.len();\n}\n"
+	const appSource = "function source(): i32 {\n  write_file(\"/tmp/fern-caps-e2e.txt\", \"x\");\n  return main();\n}\n"
 
 	for _, c := range []struct {
 		name      string
 		depEntry  string
 		helper    string
 		wantBuild bool
+		appExtra  string
 	}{
-		{"granted", "helper = { path = \"../helper\", capabilities = [\"fs\"] }", reachesFS, true},
-		{"outside-grant", "helper = { path = \"../helper\", capabilities = [\"net\"] }", reachesFS, false},
-		{"empty-grant", "helper = { path = \"../helper\", capabilities = [] }", reachesFS, false},
-		{"ungoverned", "helper = { path = \"../helper\" }", reachesFS, true},
-		{"reaches-nothing", "helper = { path = \"../helper\", capabilities = [] }", reachesNothing, true},
+		{"granted", "helper = { path = \"../helper\", capabilities = [\"fs\"] }", reachesFS, true, ""},
+		{"outside-grant", "helper = { path = \"../helper\", capabilities = [\"net\"] }", reachesFS, false, ""},
+		{"empty-grant", "helper = { path = \"../helper\", capabilities = [] }", reachesFS, false, ""},
+		{"ungoverned", "helper = { path = \"../helper\" }", reachesFS, true, ""},
+		{"reaches-nothing", "helper = { path = \"../helper\", capabilities = [] }", reachesNothing, true, ""},
+		{"parameter-shadows-function", "helper = { path = \"../helper\", capabilities = [] }", shadowsAppFunction, true, appSource},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			proj := t.TempDir()
-			entry := writeCapsProject(t, proj, c.depEntry, c.helper)
+			entry := writeCapsProject(t, proj, c.depEntry, c.helper, c.appExtra)
 
 			nativeCmd := exec.Command(nativeBin, "-o", filepath.Join(proj, "native.bin"), entry)
 			nativeOut, _ := nativeCmd.CombinedOutput()

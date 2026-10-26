@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="description" content="Share a file browser to browser with the BitTorrent protocol over WebRTC. Fern runs the protocol in WebAssembly and the tracker natively." />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>Torrent swarm · Fern, in action</title>
+    <link rel="stylesheet" href="/assets/showcase.css" />
+    <script src="/assets/theme.js"></script>
+    <link rel="stylesheet" href="/bench/style.css" />
+  </head>
+  <body class="app-page torrent-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="app-nav">
+      <a class="brand" href="/" aria-label="Fern, in action home"
+        ><span class="brand-mark" aria-hidden="true"></span
+        ><span class="brand-name">Fern</span
+        ><span class="brand-suffix">in action</span></a
+      >
+      <nav>
+        <a href="/">All examples</a
+        ><a href="/_src/showcase/torrent.fern.md">View source ↗</a>
+      </nav>
+    </header>
+    <main id="main">
+      <div class="app-heading">
+        <section class="app-intro">
+          <div class="eyebrow"><span>20</span>Browser to browser</div>
+          <h1>Torrent <em>swarm.</em></h1>
+          <p>Share a file between browsers with the BitTorrent protocol over WebRTC. Fern builds and checks every protocol message in this page, and a native Fern tracker introduces the peers. The file never goes through the server.</p>
+          <div class="tech-chips"><span>BitTorrent wire</span><span>ut_metadata</span><span>SHA-1 pieces</span><span>WebRTC</span><span>WebTorrent tracker</span></div>
+        </section>
+        <div id="connection" class="status" role="status">Load the Fern kernel</div>
+      </div>
+      <form class="bench-controls" id="seed-form">
+        <div class="bench-fields">
+          <label
+            >File
+            <select id="source">
+              <option value="1048576" selected>Generated text · 1 MiB</option>
+              <option value="8388608">Generated text · 8 MiB</option>
+              <option value="file">Your own file · up to 64 MiB</option>
+            </select></label
+          ><label
+            >Seed <input id="seed" type="number" min="0" max="1000000" value="1" /></label
+          ><label id="file-field" hidden
+            >Choose <input id="file" type="file" /></label
+          >
+        </div>
+        <div class="button-group">
+          <button class="button primary" id="seed-run" type="submit">Start seeding ▶</button>
+        </div>
+      </form>
+      <section class="swarm" id="swarm" hidden>
+        <div class="swarm-file">
+          <div><span>File</span><strong id="file-name">—</strong></div>
+          <div><span>Size</span><strong id="file-size">—</strong></div>
+          <div><span>Pieces</span><strong id="stat-pieces">—</strong></div>
+          <div><span>Peers</span><strong id="stat-peers">0</strong></div>
+          <div><span>Downloaded</span><strong id="stat-down">0</strong></div>
+          <div><span>Uploaded</span><strong id="stat-up">0</strong></div>
+        </div>
+        <div class="pieces" id="pieces" aria-label="Pieces of the file"></div>
+        <div class="swarm-links">
+          <label>Magnet link <span class="magnet-row"><input id="magnet" readonly /><button class="button" id="copy" type="button">Copy</button></span></label>
+          <p>Open <a id="share-link" href="#">this link</a> in another browser or on another device to download the file from this page. <a id="torrent-file" hidden>Download the .torrent file</a></p>
+          <p class="bench-note">Info hash <code id="hash"></code><span id="hashed"> · hashed in <span id="hash-ms">—</span></span></p>
+          <a class="button primary" id="save" hidden>Save the file</a>
+        </div>
+      </section>
+      <details class="how-it-works">
+        <summary>How it works</summary>
+        <p>
+          The page splits the file into pieces and hashes each piece with SHA-1 in Fern WebAssembly. The info dictionary
+          of the pieces gives the info hash, which names the swarm. The page registers the hash with the native Fern
+          tracker and announces itself. A downloader with only the info hash asks a peer for the info dictionary with the
+          metadata extension, checks it against the hash, and then requests the pieces. Each piece must match its SHA-1
+          hash before the page keeps it.
+        </p>
+        <p>
+          The tracker accepts only swarms that this page registered, for one hour, with at most 12 peers and 64 MiB. It
+          sees each peer's network address and the info hash. The file bytes go directly between browsers. A WebTorrent
+          client can open the magnet link while the swarm lives.
+        </p>
+        <a href="/_src/showcase/torrent.fern.md">Read the protocol kernel ↗</a> · <a href="/_src/showcase/tracker.fern.md">Read the tracker ↗</a>
+      </details>
+    </main>
+    <footer class="app-footer">
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
+    </footer>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

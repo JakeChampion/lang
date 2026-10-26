@@ -99,8 +99,8 @@ resolved**: see SH-020 for what is left and what is deliberately kept.
 
 - [x] **SH-004 — `parse_f64` does not round-trip to nearest double.** _Done:_
   every decimal→f64 reader in the self-host is the same correctly-rounding
-  kernel — the classic exact decimal-shift algorithm (digit buffer + movable
-  point, grade-school ÷2/×2 to binary-normalize, bit extraction,
+  kernel — the classic exact decimal-shift algorithm (one digit buffer written
+  in place + movable point, grade-school ÷2/×2 to binary-normalize, bit extraction,
   round-to-nearest ties-to-even, with subnormal/±inf/±0 handling). It exists in
   FOUR copies: `util.fern:382 parse_f64_bits`, which the IR emitters and the
   interpreter's literal reader import, and the three the import-free assembler
@@ -179,8 +179,8 @@ findings. Ranked by leverage.
     `arm64_native.fern`, and `elf.fern` are single self-contained modules by
     design (each header says so), and `lexer.fern` likewise imports nothing.
     Their duplicate helpers must stay.
-  - The **`parse_f64_bits` + `pf64_div2` / `pf64_mul2` / `pf64_sub` /
-    `pf64_all_zero` family** — 5 functions in 4 copies each (`util.fern:382`,
+  - The **`parse_f64_bits` + `pf64_halve` / `pf64_double` / `pf64_top_bit` /
+    `pf64_trim` family and its `PF64_` constants** — 5 functions in 4 copies each (`util.fern:382`,
     `watbin.fern:458`, `x86_native.fern:2141`, `arm64_native.fern:2917`) — is
     hand-synced **on purpose** and pinned by `TestSelfHostParseF64MirrorsAgree`.
     **Not a dedupe target.**

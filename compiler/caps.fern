@@ -346,12 +346,14 @@ function walk(mod: parser.Module, roots: i32[], want: util.NameIndex): Use[] {
       ci = ci + 1;
     }
 
-    let ids: string[] = [];
-    let si: i32 = 0;
-    while (si < fd.body.len()) {
-      ids = astwalk.collect_idents_stmt(fd.body[si], ids);
-      si = si + 1;
+    let bound: string[] = [];
+    if (fd.receiver_name.len() > 0) {
+      bound = bound.append(fd.receiver_name);
     }
+    for param in fd.params {
+      bound = bound.append(param.name);
+    }
+    let ids: string[] = astwalk.collect_free_idents(bound, fd.body, []);
     let ii: i32 = 0;
     while (ii < ids.len()) {
       let fx: i32 = func_index(mod, ids[ii]);
