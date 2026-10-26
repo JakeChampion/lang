@@ -38,23 +38,27 @@ func TestFernsmithMutationScore(t *testing.T) {
 		t.Fatal("no mutation sites in the staged compiler")
 	}
 
-	var progs []string
-	var wants []int
+	var progs []mutationProg
 	sanitize := []string{"-sanitize"}
 	quiet := func(string, ...any) {}
 	for seed := uint64(0); len(progs) < seeds && seed < uint64(4*seeds); seed++ {
-		src := fernsmith.GenMain(seed)
-		want, err := interpRunExit(t, src)
-		if err != nil {
+		p := mutationProgram(t, seed)
+		if p.src == "" {
 			continue
 		}
-		r, gap := runSelfHostSeed(t, good, stdlibRoot, src, sanitize, nil, quiet)
-		if gap != "" || r == nil || !r.exited || r.exit != want || strings.Contains(r.stderr, "fern-sanitizer:") {
+		r, gap := runSelfHostSeed(t, good, stdlibRoot, p.src, sanitize, nil, quiet)
+		if gap != "" || r == nil || p.differs(r) != "" {
 			continue
 		}
-		progs, wants = append(progs, src), append(wants, want)
+		progs = append(progs, p)
 	}
-	t.Logf("%d mutation sites; judging each mutant on %d programs", len(sites), len(progs))
+	printable := 0
+	for _, p := range progs {
+		if p.printable {
+			printable++
+		}
+	}
+	t.Logf("%d mutation sites; judging each mutant on %d programs, %d of them printable", len(sites), len(progs), printable)
 
 	var stillborn, smoke, killed, survived int
 	var report []string
@@ -91,7 +95,7 @@ func TestFernsmithMutationScore(t *testing.T) {
 			flush()
 			continue
 		}
-		verdict := mutantVerdict(t, bin, stdlibRoot, progs, wants)
+		verdict := mutantVerdict(t, bin, stdlibRoot, progs)
 		switch {
 		case verdict == "smoke":
 			smoke++
@@ -106,7 +110,49 @@ func TestFernsmithMutationScore(t *testing.T) {
 	t.Log(summary())
 }
 
-func mutantVerdict(t *testing.T, bin, stdlibRoot string, progs []string, wants []int) string {
+// mutationProg is one program of the corpus and what the interpreter says it
+// does. Even seeds come from GenMain, odd seeds from GenPrintableMain, so the
+// corpus also holds the float and lane shapes only the printable profile
+// writes.
+type mutationProg struct {
+	src       string
+	exit      int
+	stdout    string
+	printable bool
+}
+
+func mutationProgram(t *testing.T, seed uint64) mutationProg {
+	t.Helper()
+	src := fernsmith.GenMain(seed / 2)
+	if seed%2 == 1 {
+		src = fernsmith.GenPrintableMain(seed / 2)
+	}
+	stdout, exit, err := interpRun(t, src)
+	if err != nil {
+		return mutationProg{}
+	}
+	return mutationProg{src: src, exit: exit, stdout: trimOut(stdout), printable: seed%2 == 1}
+}
+
+// differs names how a run of the program disagrees with the interpreter, or
+// returns "" when it agrees.
+func (p mutationProg) differs(r *selfHostRun) string {
+	switch {
+	case r.timedOut:
+		return "hang"
+	case !r.exited:
+		return "crash"
+	case strings.Contains(r.stderr, "fern-sanitizer:"):
+		return "sanitizer"
+	case r.exit != p.exit:
+		return fmt.Sprintf("exit %d, want %d", r.exit, p.exit)
+	case trimOut(r.stdout) != p.stdout:
+		return "stdout"
+	}
+	return ""
+}
+
+func mutantVerdict(t *testing.T, bin, stdlibRoot string, progs []mutationProg) string {
 	t.Helper()
 	sanitize := []string{"-sanitize"}
 	quiet := func(string, ...any) {}
@@ -114,23 +160,18 @@ func mutantVerdict(t *testing.T, bin, stdlibRoot string, progs []string, wants [
 	if gap != "" || r == nil || !r.exited || r.exit != 7 {
 		return "smoke"
 	}
-	for i, src := range progs {
+	for i, p := range progs {
 		failed := ""
 		note := func(format string, args ...any) { failed = fmt.Sprintf(format, args...) }
-		r, gap := runSelfHostSeed(t, bin, stdlibRoot, src, sanitize, nil, note)
+		r, gap := runSelfHostSeed(t, bin, stdlibRoot, p.src, sanitize, nil, note)
 		switch {
 		case r == nil && strings.Contains(failed, "did not finish"):
 			return fmt.Sprintf("killed@%d (compiler hang)", i)
 		case gap != "" || r == nil:
 			return fmt.Sprintf("killed@%d (no binary)", i)
-		case r.timedOut:
-			return fmt.Sprintf("killed@%d (hang)", i)
-		case !r.exited:
-			return fmt.Sprintf("killed@%d (crash)", i)
-		case strings.Contains(r.stderr, "fern-sanitizer:"):
-			return fmt.Sprintf("killed@%d (sanitizer)", i)
-		case r.exit != wants[i]:
-			return fmt.Sprintf("killed@%d (exit %d, want %d)", i, r.exit, wants[i])
+		}
+		if why := p.differs(r); why != "" {
+			return fmt.Sprintf("killed@%d (%s)", i, why)
 		}
 	}
 	return "survived"

@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -174,7 +175,17 @@ func interpByte(t *testing.T, src string, skipGaps bool) int {
 
 func interpRunExit(t *testing.T, src string) (int, error) {
 	t.Helper()
+	_, exit, err := interpRun(t, src)
+	return exit, err
+}
+
+// interpRun runs src on the interpreter and returns what it printed and its
+// exit status.
+func interpRun(t *testing.T, src string) (string, int, error) {
+	t.Helper()
 	i := interpLoaded(t, src)
+	var stdout bytes.Buffer
+	i.Stdout = &stdout
 	type exited struct{ code int }
 	i.Exiter = func(code int) { panic(exited{code}) }
 	var v interp.Value
@@ -193,14 +204,14 @@ func interpRunExit(t *testing.T, src string) (int, error) {
 		v, err = i.CallByName("main", nil)
 	}()
 	if exitCode >= 0 {
-		return exitCode & 0xFF, nil
+		return stdout.String(), exitCode & 0xFF, nil
 	}
 	if err != nil {
-		return 0, err
+		return "", 0, err
 	}
 	status, ok := interp.ExitStatus(v)
 	if !ok {
-		return 0, fmt.Errorf("main returned %T, want a number, a boolean or void", v)
+		return "", 0, fmt.Errorf("main returned %T, want a number, a boolean or void", v)
 	}
-	return status, nil
+	return stdout.String(), status, nil
 }
