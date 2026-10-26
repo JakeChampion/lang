@@ -1238,7 +1238,7 @@ pub function (m: OrdMap[K, V]) filter[K: cmp.Ord, V](pred: (K, V) => boolean): O
 
 // One map is much smaller than the other when it has fewer than a sixteenth of the entries.
 function much_smaller(a: i32, b: i32): boolean {
-  return a * 16 < b;
+  return a < b / 16;
 }
 
 // The entries of both maps; a key in both takes its value from other.
