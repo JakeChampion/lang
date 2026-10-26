@@ -9582,6 +9582,19 @@ pub struct WasmUnit {
   fns: string[],
 }
 
+function module_needs_type_ids(units: WasmUnit[], needs: string[]): boolean {
+  // Runtime IO helpers can read IDs outside the complete unit bodies.
+  if (needs_io_error(needs)) {
+    return true;
+  }
+  for unit in units {
+    if (util.contains(unit.text, "$__tid$")) {
+      return true;
+    }
+  }
+  return false;
+}
+
 pub function unit_strs(units: WasmUnit[]): string[] {
   let out: string[] = [];
   let i: i32 = 0;
@@ -9846,7 +9859,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
       sbi = sbi + 1;
     }
   }
-  parts = parts.append(tid_globals_section(stab));
+  if (module_needs_type_ids(units, needs)) {
+    parts = parts.append(tid_globals_section(stab));
+  }
   let di: i32 = 0;
   while (di < sv.len()) {
     parts = parts.append("  (data (i32.const " + util.i32_to_string(str_offset(sv, di)) + ") \""
