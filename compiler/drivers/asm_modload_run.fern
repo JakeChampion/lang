@@ -73,15 +73,22 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
 
 function provided_audit(): i32 {
   let names: string[] = irverifyprovided.provided_names();
-  let task_runtime: parser.Module = rtmodule.load("x86-64-linux", "__fern_task_new __fern_task_enter __fern_task_leave __fern_task_cur __fern_task_free __fern_task_park __fern_task_wait __fern_task_timeout __fern_task_set_ready __fern_task_set_cancelled __fern_task_cancelled");
-  let task_names: string[] = [];
-  for fd in task_runtime.funcs {
-    task_names = task_names.append(fd.name);
+  let available: string[] = rtmodule.names("x86-64-linux");
+  let roots: string = "";
+  for name in names {
+    if (!ircore.is_fern_helper(name) && util.has_str(available, name)) {
+      roots = roots + " " + name;
+    }
+  }
+  let runtime: parser.Module = rtmodule.load("x86-64-linux", roots);
+  let runtime_names: string[] = [];
+  for fd in runtime.funcs {
+    runtime_names = runtime_names.append(fd.name);
   }
   let bad: string[] = [];
   let i: i32 = 0;
   while (i < names.len()) {
-    if (!ircore.is_fern_helper(names[i]) && !util.has_str(task_names, names[i])) {
+    if (!ircore.is_fern_helper(names[i]) && !util.has_str(runtime_names, names[i])) {
       bad = bad.append(names[i]);
     }
     i = i + 1;

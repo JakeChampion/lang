@@ -1,0 +1,18 @@
+// spec: DI-12
+
+enum Choice { Empty, Filled(i32) }
+
+function pick(value: Choice): i32 {
+  match (value) {
+    Filled(n) => {
+      return n;
+    },
+    Empty => {
+      return 7;
+    }
+  }
+}
+
+function main(): i32 {
+  return pick(Filled(42)) + pick(Empty);
+}

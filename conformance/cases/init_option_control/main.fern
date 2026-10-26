@@ -1,0 +1,18 @@
+// spec: DI-08
+
+struct Box { n: i32 }
+
+function pick(x: Option[Box]): i32 {
+  match (x) {
+    Some(v) => {
+      return v.n;
+    },
+    None => {
+      return 7;
+    }
+  }
+}
+
+function main(): i32 {
+  return pick(Some(Box { n: 42 })) + pick(None);
+}

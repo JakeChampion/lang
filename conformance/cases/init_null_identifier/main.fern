@@ -1,0 +1,7 @@
+// spec: DI-05
+
+function main(): i32 {
+  let x: string = null;
+
+  return x.len();
+}

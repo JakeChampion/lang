@@ -1,0 +1,11 @@
+// spec: DI-13
+
+struct Pair { a: i32, b: i32 }
+
+function main(): i32 {
+  let base: Pair = Pair { a: 42, b: 7 };
+
+  let next: Pair = Pair { ...base, a: 35 };
+
+  return next.a + next.b + base.b;
+}

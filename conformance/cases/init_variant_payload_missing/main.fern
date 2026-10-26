@@ -1,0 +1,9 @@
+// spec: DI-11
+
+enum Choice { Empty, Filled(i32) }
+
+function main(): i32 {
+  let value: Choice = Filled();
+
+  return 0;
+}

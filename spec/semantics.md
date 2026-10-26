@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**52 of 55** claims are pinned by a conformance case. The remaining
+**65 of 68** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -114,6 +114,19 @@ of them.
 | `CC-01` | `docs/CLOSURE-CAPTURE.md` | A mutation of a captured scalar inside a closure is visible outside | `closure_capture_shared_cell` |
 | `CC-02` | `docs/CLOSURE-CAPTURE.md` | A write to the outer variable is visible inside the closure | `closure_capture_shared_cell` |
 | `CC-03` | `docs/CLOSURE-CAPTURE.md` | Assigning a reference-typed capture is rejected, inside the closure and from the enclosing scope when the stored value can reach a closure (`E049`) | `diag_e049` |
+| `DI-01` | `docs/INITIALIZATION.md` | Every local scalar declaration requires an initializer | `init_missing_scalar` |
+| `DI-02` | `docs/INITIALIZATION.md` | A local binding is unavailable in its own initializer (`E001`) | `init_self_reference` |
+| `DI-03` | `docs/INITIALIZATION.md` | A branch-local binding cannot escape its block (`E001`) | `init_branch_scope_escape` |
+| `DI-04` | `docs/INITIALIZATION.md` | A struct literal must provide every required field (`E005`) | `err_missing_field` |
+| `DI-05` | `docs/INITIALIZATION.md` | The name `null` is an ordinary unbound identifier without a declaration (`E001`) | `init_null_identifier` |
+| `DI-06` | `docs/INITIALIZATION.md` | A field cannot be read directly from an `Option` value (`E043`) | `init_option_field_rejected` |
+| `DI-07` | `docs/INITIALIZATION.md` | Assignments in either branch update an initialized outer binding | `init_branch_control` |
+| `DI-08` | `docs/INITIALIZATION.md` | Matching `Some` and `None` permits a checked optional payload read | `init_option_control` |
+| `DI-09` | `docs/INITIALIZATION.md` | Every local array declaration requires an initializer | `init_missing_array` |
+| `DI-10` | `docs/INITIALIZATION.md` | A loop-local binding cannot escape its block (`E001`) | `init_loop_scope_escape` |
+| `DI-11` | `docs/INITIALIZATION.md` | An enum constructor requires every payload argument (`E036`) | `init_variant_payload_missing` |
+| `DI-12` | `docs/INITIALIZATION.md` | Both empty and payload enum variants produce initialized typed values | `init_variant_control` |
+| `DI-13` | `docs/INITIALIZATION.md` | A struct update retains initialized fields from its base | `init_struct_update_control` |
 | `ML-01` | `docs/MODE-LATTICE.md` | A borrowed value cannot be passed to an `own` parameter (`E051`) | `diag_e051` |
 | `ML-02` | `docs/MODE-LATTICE.md` | A `fip` function may not allocate (`E053`) | `diag_e053` |
 | `ML-03` | `docs/MODE-LATTICE.md` | A `[T]` view of function-local storage may not be returned (`E063`), on its own or inside a returned struct, tuple, array or enum | `diag_e063` |
