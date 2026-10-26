@@ -20,7 +20,7 @@ name: Test e2e self-host
 # the closure-keyed disk cache (hashSelfHostSources), shared by a shard's two
 # worker processes. The edge costs the dependent jobs the warm job's wall time,
 # about five minutes on a miss, and saves a driver build or more in each of
-# some twenty jobs. This lane runs on main and on a `ci-full` pull request,
+# some twenty jobs. This lane runs on main and on every applicable pull request,
 # where runner minutes count for more than a few minutes of latency. The
 # aarch64 shards build their own drivers; shard 0 saves the Linux ARM64 cache.
 #

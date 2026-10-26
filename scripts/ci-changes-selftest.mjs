@@ -172,7 +172,7 @@ const names = (src) => [...src.matchAll(/^  ([a-z0-9_-]+):\n    name: (.+)$/gm)]
 const display = Object.fromEntries([...names(suiteYml), ...names(ciYml).filter(([l]) => laneKeys.includes(l))]);
 const rootLanes = names(ciYml).map(([l]) => l).filter((l) => laneKeys.includes(l));
 check("every lane has a job name to prove it by", laneKeys.filter((l) => !display[l]), []);
-check("the Preflight lane runs from ci.yml, outside the suite", rootLanes, ["preflight"]);
+check("all filtered lanes run through the full suite", rootLanes, []);
 const jobPrefix = (l) => (rootLanes.includes(l) ? "" : "Full suite / ") + display[l] + " / ";
 const jobsFor = (keys, conclusion = "success") => keys.map((l) => ({ name: `${jobPrefix(l)}job`, conclusion }));
 const merged = (tree) => ({ number: 7, merged_at: "2026-09-23T00:00:00Z", base: { ref: "main" }, head: { sha: "h".repeat(40) }, tree });
