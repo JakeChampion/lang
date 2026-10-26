@@ -1,0 +1,4 @@
+7:3: error[E063]: returning a `[T]` slice that views function-local storage: the backing array is reclaimed when "local_bytes" returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead
+12:3: error[E063]: returning a `[T]` slice that views function-local storage: the backing array is reclaimed when "in_struct" returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead
+17:3: error[E063]: returning a `[T]` slice that views function-local storage: the backing array is reclaimed when "sliced" returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead
+26:3: error[E063]: returning a `[T]` slice that views function-local storage: the backing array is reclaimed when "through_call" returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead

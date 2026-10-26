@@ -8383,6 +8383,48 @@ function merge_view_names(a: string[], b: string[]): string[] {
   return out;
 }
 
+// slc_views_string holds for `s.as_bytes()` on a `string`: its bytes live as
+// long as that string does.
+function slc_views_string(c: ast.ExprCall, cur: Scope): boolean {
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    return fa.field == "as_bytes" && c.args.len() == 0 && is_owned_string(check_expr(fa.obj, cur));
+  }
+  return false;
+}
+
+function call_receiver(c: ast.ExprCall): ast.Expr {
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    return fa.obj;
+  }
+  return c.callee;
+}
+
+// slc_string_roots is the storage a `string` value lends to a view of its bytes.
+function slc_string_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
+  match (e) {
+    ast.ExprString(_) => {
+      return no_view_roots();
+    },
+    ast.ExprIdent(id) => {
+      if (name_in(id.name, params)) {
+        let one: string[] = [];
+        return ViewRoots { local: false, params: one.append(id.name) };
+      }
+      let none: string[] = [];
+      return ViewRoots { local: name_in(id.name, tainted), params: none };
+    },
+    ast.ExprCall(c) => {
+      let callee: ViewCallee = view_callee(c, cur);
+      if (view_sum_known(sums, vix, callee.key)) {
+        return slc_call_roots(c, cur, params, localarr, tainted, sums, vix);
+      }
+    },
+    _ => {}
+  }
+  let none: string[] = [];
+  return ViewRoots { local: true, params: none };
+}
+
 function slc_src_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   match (e) {
     ast.ExprBytes(_) => {
@@ -8396,6 +8438,9 @@ function slc_src_roots(e: ast.Expr, cur: Scope, params: string[], localarr: stri
       return slc_src_roots(s2.array, cur, params, localarr, tainted, sums, vix);
     },
     ast.ExprCall(c2) => {
+      if (slc_views_string(c2, cur)) {
+        return slc_string_roots(call_receiver(c2), cur, params, localarr, tainted, sums, vix);
+      }
       return slc_call_roots(c2, cur, params, localarr, tainted, sums, vix);
     },
     ast.ExprIdent(id) => {
@@ -8425,7 +8470,9 @@ function slc_call_roots(c: ast.ExprCall, cur: Scope, params: string[], localarr:
   let flags: boolean[] = view_sum_flags(sums, vix, callee.key);
   let i: i32 = 0;
   while (i < flags.len() && i < callee.args.len()) {
-    if (flags[i]) {
+    if (flags[i] && is_owned_string(check_expr(callee.args[i], cur))) {
+      out = merge_view_roots(out, slc_string_roots(callee.args[i], cur, params, localarr, tainted, sums, vix));
+    } else if (flags[i]) {
       out = merge_view_roots(out, slc_src_roots(callee.args[i], cur, params, localarr, tainted, sums, vix));
     }
     i = i + 1;
@@ -8445,6 +8492,9 @@ function slc_expr_roots(e: ast.Expr, cur: Scope, params: string[], localarr: str
       return slc_src_roots(sl.array, cur, params, localarr, tainted, sums, vix);
     },
     ast.ExprCall(c) => {
+      if (slc_views_string(c, cur)) {
+        return slc_string_roots(call_receiver(c), cur, params, localarr, tainted, sums, vix);
+      }
       return slc_call_roots(c, cur, params, localarr, tainted, sums, vix);
     },
     ast.ExprIdent(id) => {
@@ -8812,9 +8862,44 @@ function slc_agg_call_roots(c: ast.ExprCall, cur: Scope, params: string[], local
 
 function slice_escape_diags(fn: parser.FuncDecl, s: Scope, sums: ViewSum[], vix: ViewIndex): SlcWalk {
   let localarr: string[] = [];
-  let tainted: string[] = [];
+  let tainted: string[] = fixed_string_locals(fn.body, s);
   let held: string[] = [];
   return slc_walk(fn.body, fn.name, s, view_positions(fn), localarr, tainted, held, sums, vix, parser.spelling_is_view(fn.ret_type));
+}
+
+// fixed_string_locals is each `string` local that the body never reassigns: its
+// bytes are storage the function owns. A reassigned one may hold another string
+// by the time it is viewed, so it is left to the flow analysis in semsource.
+function fixed_string_locals(body: ast.Stmt[], s: Scope): string[] {
+  let declared: string[] = [];
+  let assigned: string[] = [];
+  for st in body {
+    declared = astwalk.fold_stmt_spine(st, declared, (vs: ast.Stmt, own acc: string[]): string[] => string_local_name(vs, acc, s));
+    assigned = astwalk.fold_stmt_spine(st, assigned, assigned_name);
+  }
+  let out: string[] = [];
+  for name in declared {
+    if (!name_in(name, assigned)) {
+      out = out.append(name);
+    }
+  }
+  return out;
+}
+
+function string_local_name(st: ast.Stmt, own acc: string[], s: Scope): string[] {
+  if let ast.StmtVar(v) = st {
+    if (v.type_name == "string" || v.type_name.len() == 0 && is_owned_string(check_expr(v.init, s))) {
+      return acc.append(v.name);
+    }
+  }
+  return acc;
+}
+
+function assigned_name(st: ast.Stmt, own acc: string[]): string[] {
+  if let ast.StmtAssign(a) = st {
+    return acc.append(a.target);
+  }
+  return acc;
 }
 
 function mc_any_marked(structs: parser.StructDecl[], enums: parser.EnumDecl[]): boolean {
