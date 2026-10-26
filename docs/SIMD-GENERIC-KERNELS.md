@@ -396,8 +396,9 @@ polynomial by `mul_add`, on x86-64. The best of five runs on one machine is
 kernel through a lambda takes 1.0 s.
 
 The fused loop still does four things for each group that a hand-written
-loop does once. It builds each `splat` constant again, because the compiler
-has no loop-invariant hoist. It checks indexes that the loop guard already
+loop does once. It builds each `splat` constant again, because the IR hoist
+(`ir.hoist_loop_invariants`) moves only a string's length and data, and
+integer arithmetic of two invariant operands. It checks indexes that the loop guard already
 proved, because `ssabounds` proves only the first index of a group. It
 spills the result across the slow path of the `with`, and it tests the
 array for a second holder. A hoist in the IR and a bounds proof for the
