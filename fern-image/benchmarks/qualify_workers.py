@@ -94,13 +94,13 @@ def run_worker(docker, tag, mode, repeat):
         state = state_fields(info)
         logs = docker.call("logs", container)
         if state["Running"] or state["Pid"] != 0 or state["Error"]:
-            raise RuntimeError("worker did not stop cleanly")
+            raise RuntimeError("worker did not stop cleanly: " + json.dumps(state))
         if mode == "oom":
             if state["ExitCode"] != 137 or not state["OOMKilled"] or timed_out:
-                raise RuntimeError("retained images did not produce a kernel OOM kill")
+                raise RuntimeError("retained images did not produce a kernel OOM kill: " + json.dumps({**state, "collector_killed": timed_out}) + "\n" + logs.stdout + logs.stderr)
         elif mode in ["busy", "pressure-busy"]:
             if state["ExitCode"] != 137 or state["OOMKilled"] or not timed_out:
-                raise RuntimeError("deadline did not stop the worker")
+                raise RuntimeError("deadline did not stop the worker: " + json.dumps({**state, "collector_killed": timed_out}))
             check_self_controls(logs.stdout)
         else:
             if state["ExitCode"] != 0 or state["OOMKilled"] or "ok mode=" + mode + "\n" not in logs.stdout:
