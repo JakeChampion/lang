@@ -23,13 +23,16 @@ The source classifier checked variant ownership before the declared type.
 Constructor metadata also took precedence over a declared enum in the type classifier.
 The classifier now resolves a declared enum before constructor metadata.
 Local, parameter, and captured values retain precedence over type names.
-Constructor values without a corresponding declared type retain their method behavior.
+Constructor values without a declared type retain their method behavior.
 
 The regression also exposes two checker defects.
 The ambiguity walk treated a declared enum qualifier as an unqualified value.
 The walk now stops at a known type qualifier, but still examines call arguments.
-Nullary enum constructors lack payload metadata, so their argument check returned early.
-The check now uses the existing enum payload count when payload metadata is absent.
+An ambiguous value retains its ambiguity diagnostic without a payload diagnostic from an arbitrary constructor owner.
+
+Qualified nullary constructors lack payload metadata, so their argument check returned early.
+Qualified calls now use the enum payload count when payload metadata is absent.
+Unqualified calls retain their non-function diagnostic without an extra constructor diagnostic.
 The Go checker remains unchanged.
 
 ## Regression controls
@@ -39,12 +42,13 @@ They also cover local, parameter, and captured shadows, plus methods on construc
 Each case runs through the Go interpreter and all three compiled targets.
 The compiled probes require nonzero, balanced heap counts and zero live blocks.
 
-Ten negative cases retain member, argument, payload, shadow, and ambiguity diagnostics.
-The Go oracle supplies the expected diagnostic code for each case.
+Twelve negative cases retain member, argument, payload, shadow, and ambiguity diagnostics.
+The Go oracle supplies the exact diagnostic code sequence for each case.
 Qualified nullary calls with extra arguments require E036.
 Unqualified calls to nullary values require E038.
-Ambiguous values remain errors, including arguments to qualified constructors.
+Ambiguous values remain errors, also as arguments to qualified constructors.
 
-The focused suite passes 74 test nodes without failures or skips.
+The focused suite requires exact diagnostic code sequences on all three compiled targets.
+All 82 test nodes pass without failures or skips.
 The Exif application source remains frozen during this prerequisite.
 No codec syntax change or name-specific exception substitutes for the compiler fix.

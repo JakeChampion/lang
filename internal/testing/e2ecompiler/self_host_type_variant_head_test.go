@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -103,6 +104,7 @@ function main(): i32 {
 func TestSelfHostQualifiedTypeVariantHeadDiagnostics(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	oracle := buildLangBinForInterp(t)
+	codes := regexp.MustCompile(`error\[E[0-9]+\]`)
 	const header = "enum Direction { North, South }\nenum Problem { Direction, Bad }\n"
 	for _, tc := range []struct{ name, source, code string }{
 		{"missing-member", header + `function main(): i32 { let d = Direction.Missing; return 0; }`, "E036"},
@@ -110,6 +112,11 @@ func TestSelfHostQualifiedTypeVariantHeadDiagnostics(t *testing.T) {
 		{"nullary-arity-without-collision", `enum Direction { North, South }
 function main(): i32 { let d = Direction.North(1); return 0; }`, "E036"},
 		{"unqualified-nullary-arity", header + `function main(): i32 { let d = North(1); return 0; }`, "E038"},
+		{"qualified-payload-value", `enum Packet[T] { Item(T), End }
+enum Problem { Packet, Bad }
+function main(): i32 { let value = Packet.Item; return 0; }`, "E036"},
+		{"unqualified-payload-value", `enum Packet { Item(string), End }
+function main(): i32 { let value = Item; return 0; }`, "E036"},
 		{"unqualified-ambiguous-value", `enum Direction { North, South }
 enum Left { Direction(string), Other }
 enum Right { Direction, Different }
@@ -135,14 +142,17 @@ function main(): i32 { return Direction.code() - 7; }`, "E036"},
 			if err := os.WriteFile(path, []byte(tc.source), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if out, err := exec.Command(oracle, "-check", path).CombinedOutput(); err == nil || !strings.Contains(string(out), "error["+tc.code+"]") {
-				t.Fatalf("Go oracle expected %s: %v\n%s", tc.code, err, out)
+			goOut, goErr := exec.Command(oracle, "-check", path).CombinedOutput()
+			if goErr == nil || !strings.Contains(string(goOut), "error["+tc.code+"]") {
+				t.Fatalf("Go oracle expected %s: %v\n%s", tc.code, goErr, goOut)
 			}
+			wantCodes := strings.Join(codes.FindAllString(string(goOut), -1), ",")
 			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 				t.Run(target, func(t *testing.T) {
 					out, err := cli.compileCmd(target, filepath.Join(t.TempDir(), "out"), path).CombinedOutput()
-					if err == nil || !strings.Contains(string(out), "error["+tc.code+"]") {
-						t.Fatalf("expected %s: %v\n%s", tc.code, err, out)
+					gotCodes := strings.Join(codes.FindAllString(string(out), -1), ",")
+					if err == nil || gotCodes != wantCodes {
+						t.Fatalf("expected diagnostic sequence %s, got %s: %v\n%s", wantCodes, gotCodes, err, out)
 					}
 				})
 			}
