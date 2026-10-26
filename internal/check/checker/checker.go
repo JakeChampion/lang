@@ -10370,6 +10370,10 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		got = c.postSettleType(n.Value, got)
 		got = c.maybeWrapForUnion(want, &n.Value, got, s)
 		c.refineCallTypeArgsFromDest(n.Value, want)
+		if _, isLit := n.Value.(*ast.ArrayLit); isLit && isArrayViewLend(want, got) {
+			c.lendArrayAsView(&n.Value, want, got, false)
+			got = want
+		}
 		if got != nil && !c.assignable(want, got) {
 			c.errfCode(n.P, "E002", "return value: expected %s, got %s%s", want, got, assignHint(want, got))
 		}

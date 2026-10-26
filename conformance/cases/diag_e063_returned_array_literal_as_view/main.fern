@@ -1,0 +1,24 @@
+// An array literal returned as a `[T]` is storage the function owns, so the view would dangle.
+function listed(): [i64] {
+  return [1, 2];
+}
+
+function bytes(): [u8] {
+  return [1u8, 2u8];
+}
+
+function empty(): [i32] {
+  return [];
+}
+
+function wrapped[T](x: T): [T] {
+  return [x];
+}
+
+function kept(xs: [i32]): [i32] {
+  return xs;
+}
+
+function main(): i32 {
+  return 0;
+}
