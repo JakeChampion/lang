@@ -1,0 +1,9 @@
+function main(): i32 {
+  let xs: i32[] = [1, 2];
+  match (xs) {
+    _ => {
+      print("ok");
+    }
+  }
+  return 0;
+}
