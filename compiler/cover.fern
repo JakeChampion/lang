@@ -379,7 +379,7 @@ function helper_module(keys: string[], ret: string): parser.Module {
     names = names.append(key + "\n");
   }
   let values: ast.Expr[] = [parser.e_number(util.i32_to_string(keys.len()), "", false), ast.ExprString { value: util.str_join_chunks(names), line: 0, col: 0 }];
-  let mod = rtmodule.load_bound("compiler", roots, ["__FERN_COVER_COUNT", "__FERN_COVER_NAMES"], values);
+  let mod = rtmodule.template(roots, ["__FERN_COVER_COUNT", "__FERN_COVER_NAMES"], values);
   let funcs: parser.FuncDecl[] = [];
   for fd in mod.funcs {
     let name = fd.name;

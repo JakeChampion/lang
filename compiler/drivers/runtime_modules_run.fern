@@ -52,5 +52,11 @@ function main(): i32 {
   for target in ["x86-64-linux", "arm64-linux", "arm64-darwin"] {
     check_target(target);
   }
+  let template = rtmodule.template("__fern_key_eq", [], []);
+  require(template.funcs.len() == 1, 10);
+  let fd = template.funcs[0];
+  require(util.pos_file(rtmodule.paths(), fd.line) == "compiler/runtime/templates/__fern_key_eq.fern", 11);
+  require(util.pos_line(fd.line) == 1, 12);
+  semlower.runtime_module_lowering(template);
   return 0;
 }

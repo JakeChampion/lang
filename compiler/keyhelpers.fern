@@ -6,7 +6,7 @@ import "./typeinfo";
 import "./util";
 
 pub function module(keys: typeinfo.Type[]): parser.Module {
-  let templates = rtmodule.load_bound("compiler", "__fern_key_eq __fern_key_hash", [], []);
+  let templates = rtmodule.template("__fern_key_eq __fern_key_hash", [], []);
   let funcs: parser.FuncDecl[] = [];
   for key in keys {
     for prototype in templates.funcs {
