@@ -1,0 +1,106 @@
+{
+  "Exif_source_frozen": true,
+  "Go_checker_source_unchanged": true,
+  "allocation": {
+    "advisory_tolerance_percent": 1,
+    "allocs": 35029113,
+    "fatal_ceiling_percent": 10,
+    "frees": 35029113,
+    "gate_exit": 0,
+    "measure_exit": 0,
+    "metric_scope": "allocation events for the default current-checkout checker workload, not CPU or physical memory",
+    "recorded_baseline": 34951426
+  },
+  "build_replay_byte_identical": true,
+  "checker_and_enum_roots": {
+    "first_combined_exit": 1,
+    "first_combined_status": "20-minute package timeout during examples; the invocation is not a pass",
+    "first_completed_roots": [
+      "TestSelfHostBuiltinConstructorArity",
+      "TestSelfHostBuiltinUnitPayloads",
+      "TestSelfHostCheckAgreesWithGoOnConformance",
+      "TestSelfHostCheckAgreesWithGoOnStdlibTests",
+      "TestSelfHostCheckAgreesWithGoOnTests"
+    ],
+    "initial_log_sha256": "ab756a4985b67f0863a4920e5ec2a8d9a912c42b53c926000d7925e8ffbe9364",
+    "passed_nodes": 1857,
+    "per_run_timeout_unchanged": "20m",
+    "remaining_completed_roots": [
+      "TestSelfHostCheckAgreesWithGoOnExamples",
+      "TestSelfHostCheckerCodeSequenceX86_64",
+      "TestSelfHostGenericEnumCtorLocalIR",
+      "TestSelfHostRepoComplexityRatchet",
+      "TestSelfHostModuleQualifiedVariant",
+      "TestSelfHostOwnEnumQualifierX86_64",
+      "TestSelfHostOwnEnumQualifierCheckX86_64",
+      "TestSelfHostPartialEnumInference",
+      "TestSelfHostPartialEnumSubstitution",
+      "TestSelfHostPartialEnumModuleContext"
+    ],
+    "remaining_exit": 0,
+    "remaining_log_sha256": "d8b1b92be529fa39bbf33a21d26fc65ec6222df7c2b6e79b844d8af135b9e18f",
+    "selected_roots": [
+      "TestSelfHostBuiltinConstructorArity",
+      "TestSelfHostBuiltinUnitPayloads",
+      "TestSelfHostCheckAgreesWithGoOnConformance",
+      "TestSelfHostCheckAgreesWithGoOnStdlibTests",
+      "TestSelfHostCheckAgreesWithGoOnTests",
+      "TestSelfHostCheckAgreesWithGoOnExamples",
+      "TestSelfHostCheckerCodeSequenceX86_64",
+      "TestSelfHostGenericEnumCtorLocalIR",
+      "TestSelfHostRepoComplexityRatchet",
+      "TestSelfHostModuleQualifiedVariant",
+      "TestSelfHostOwnEnumQualifierX86_64",
+      "TestSelfHostOwnEnumQualifierCheckX86_64",
+      "TestSelfHostPartialEnumInference",
+      "TestSelfHostPartialEnumSubstitution",
+      "TestSelfHostPartialEnumModuleContext"
+    ]
+  },
+  "clean_build_replay_exit": 0,
+  "compiler_sha256": "13d459d05529bd7b31f267bc16b720766dde01a87b69cf55d1222acd24fa81fe",
+  "compiler_version": "fern 7c2e5cd50a17\nbuilt for x86-64-linux",
+  "direct_diagnostics": {
+    "failed_nodes": 0,
+    "log_sha256": "7e5687e6835ef18272d8329a57b5c9cc7c243dca46188a69bc2dc051dbed9624",
+    "passed_nodes": 4756,
+    "skipped_nodes": 0
+  },
+  "focused": {
+    "failed_nodes": 0,
+    "log_sha256": "97bb2d79a404a0e8bf314343266f19a8ecb984551365b38d50d0d90990e93828",
+    "passed_nodes": 82,
+    "skipped_nodes": 0
+  },
+  "formatted_Fern_sources": 2032,
+  "go_checker": {
+    "failed_nodes": 0,
+    "log_sha256": "78ea1e4914cbc8df819e094fd38e1dace839aac997b25530b044c8d9e7f86d65",
+    "passed_nodes": 2000,
+    "skipped_nodes": 0
+  },
+  "images": {
+    "native": {
+      "TAP_cases": 214,
+      "balanced_censuses": 69,
+      "live_bytes": 0,
+      "log_sha256": "d08917a0218ed92350513f2a0369b981e504a0c0b820ee3d1a865da9ca8a89e3",
+      "source_files_hashed": 1280,
+      "source_hash_set_sha256": "4b8163781de199294c1fa3763b9935a7949cbf44b071378c11c43c59f96ff05d",
+      "sources_unchanged": true
+    },
+    "wasm": {
+      "TAP_cases": 214,
+      "balanced_censuses": 45,
+      "live_bytes": 0,
+      "log_sha256": "a94003f72fc7c0c1b8a766b37ca3e62ea83e0dedef7da9500df02c5582742dac",
+      "source_files_hashed": 1280,
+      "source_hash_set_sha256": "4b8163781de199294c1fa3763b9935a7949cbf44b071378c11c43c59f96ff05d",
+      "sources_unchanged": true
+    }
+  },
+  "initial_build_session_exit": 1,
+  "raw_compiler_sha256": "ca8b1a94e8dc8b162fbfbbe3ce305ad0113cda26ac1625f9e86a395e2dc5003e",
+  "source_commit": "7c2e5cd50a17cc50c63b4f8f1941429e3046d865",
+  "thresholds_and_baselines_unchanged": true
+}
