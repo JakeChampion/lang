@@ -79,12 +79,22 @@ Six fixtures cover grayscale, 4:4:4, 4:2:2, 4:2:0, and optimized sparse Huffman 
 Two genuine fixtures exercise explicit progressive and CMYK rejection.
 A separate synthetic header contains no entropy data or EOI and tests the API boundary.
 
-The 13 TAP cases cover every prefix before selected scan headers, malformed fields and tables, table replacement, and component permutation.
+The 14 TAP cases cover every prefix before selected scan headers, malformed fields and tables, table replacement, and component identifiers.
 They also cover exact budgets, hard caps, marker fill, opaque metadata, restart interval, offset views, ownership, and every cancellation poll.
+
+Scan components must follow their positions in the frame header, as T.81 A.2 and B.2.3 require.
+Identifiers can have any distinct byte values and need not increase numerically.
+All five invalid permutations of three components are regression cases.
+
 Native Linux and ARM64/QEMU10 pass with heap sanitization and zero final live bytes.
 Wasmtime passes with balanced leak census and zero final live bytes.
-The initial compiler reports `005505da83fd`, SHA256 `cbdec0dc8539c5b6fa4426102bba7d3721a8edb03ccf85c714de789accc045e1`.
+The original 13-case campaign used compiler `005505da83fd`, SHA256 `cbdec0dc8539c5b6fa4426102bba7d3721a8edb03ccf85c714de789accc045e1`.
 Current-head CI remains a separate validation result.
+
+The scan-order repair passes all 14 cases on native Linux, Wasmtime, and ARM64/QEMU10 with zero final live bytes.
+That campaign uses compiler `3bebeb4b6fa5`, SHA256 `59e020168d59e830c7eecc6b38abb8ff1c2731d12e0b391a5f1ac0fd11aad8ee`.
+The complete native and Wasm image scripts each pass all 150 TAP cases and their smoke cases with that fixed compiler binary.
+All 61 native and 37 Wasm worker censuses are balanced with zero final live bytes.
 
 The native and Wasm image scripts include these cases.
 Reproduce fixture generation with the existing pinned offline reference environment:
