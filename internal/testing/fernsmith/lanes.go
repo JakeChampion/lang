@@ -122,7 +122,7 @@ func (g *Generator) laneScalar(b *strings.Builder, sc *scope, k laneKind) {
 }
 
 func (g *Generator) laneExpr(b *strings.Builder, k laneKind, names []string, depth int, mul *bool) {
-	if depth <= 0 || g.flip(0.3) {
+	if depth <= 0 || g.flip(0.3) || g.ch.exhausted() {
 		if g.flip(0.7) {
 			b.WriteString(names[g.ch.intN(len(names))])
 		} else {
