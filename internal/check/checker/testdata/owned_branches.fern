@@ -1,0 +1,125 @@
+import "std/string";
+
+struct Box { data: u8[] }
+
+struct Wrap { state: Box, tag: i32 }
+
+enum Choice { Wrapped(Box), Empty }
+
+function consume(own box: Box): i32 {
+  return box.data[0] as i32 + box.data[box.data.len() - 1] as i32 + box.data.len();
+}
+
+function keep(own box: Box): Box {
+  return box;
+}
+
+function positive(box: Box): boolean {
+  return box.data.len() > 0;
+}
+
+function expression(own box: Box, tag: i32): i32 {
+  return match (tag) { 0 => consume(box), 1 => consume(box) + 1, _ => consume(box) + 2 };
+}
+
+function statement(own box: Box, tag: i32): i32 {
+  let result = 0;
+  match (tag) {
+    0 => {
+      result = consume(box);
+    },
+    1 => {
+      result = consume(box) + 1;
+    },
+    _ => {
+      result = consume(box) + 2;
+    }
+  }
+  return result;
+}
+
+function guarded(own box: Box, tag: i32): i32 {
+  return match (tag) { 0 when positive(box) => consume(box), _ => consume(box) + tag };
+}
+
+function conditional(own box: Box, flag: boolean): i32 {
+  return if (flag) { consume(box) } else { consume(box) + 1 };
+}
+
+function early(own box: Box, flag: boolean): i32 {
+  let value = if (flag) { return consume(box); } else { 0 };
+  return value + consume(box);
+}
+
+function nested(own box: Box, flag: boolean): i32 {
+  let value = if (flag) { let helper = (own box: Box): i32 => consume(box); helper(Box { data: [7 as u8] }) } else { 0 };
+  return value + consume(box);
+}
+
+function fresh_payloads(data: u8[]): i32 {
+  let result = 0;
+  for tag in [0, 1] {
+    let value = match (Choice.Wrapped(Box { data: data })) { Choice.Wrapped(item) => consume(item), Choice.Empty => 0 };
+    result = result + value;
+  }
+  return result;
+}
+
+function returned(tag: i32, data: u8[]): Wrap {
+  let value = Box { data: data };
+  if (tag == 0) {
+    return Wrap { state: keep(value), tag: 0 };
+  }
+  if (tag == 1) {
+    return Wrap { state: keep(value), tag: 1 };
+  }
+  return Wrap { state: value, tag: 2 };
+}
+
+function take_choice(own choice: Choice): i32 {
+  return match (choice) { Choice.Wrapped(item) => consume(item), Choice.Empty => 0 };
+}
+
+function main(): i32 {
+  let data = args()[0].bytes();
+  if (data.len() == 0) {
+    return 5;
+  }
+  let expected = data[0] as i32 + data[data.len() - 1] as i32 + data.len();
+  for tag in [0, 1, 2] {
+    if (expression(Box { data: data }, tag) != expected + tag) {
+      return 1;
+    }
+    if (statement(Box { data: data }, tag) != expected + tag) {
+      return 2;
+    }
+    if (guarded(Box { data: data }, tag) != expected + tag) {
+      return 3;
+    }
+    let value = returned(tag, data);
+    if (value.state.data[0] != data[0] || value.state.data[value.state.data.len() - 1] != data[data.len() - 1]
+      || value.state.data.len() != data.len() || value.tag != tag) {
+      return 4;
+    }
+  }
+  for flag in [false, true] {
+    let offset = if (flag) { 0 } else { 1 };
+    if (conditional(Box { data: data }, flag) != expected + offset) {
+      return 6;
+    }
+    if (early(Box { data: data }, flag) != expected) {
+      return 7;
+    }
+    let nested_offset = if (flag) { 15 } else { 0 };
+    if (nested(Box { data: data }, flag) != expected + nested_offset) {
+      return 8;
+    }
+  }
+  if (fresh_payloads(data) != 2 * expected) {
+    return 9;
+  }
+  if (take_choice(Choice.Wrapped(Box { data: data })) != expected) {
+    return 10;
+  }
+  return 0;
+}

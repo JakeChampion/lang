@@ -9609,6 +9609,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		return n
 	}
+	joinGuardInto := func(dst, guard movedSet, bindings []string) {
+		guard = cloneMoved(guard)
+		for _, name := range bindings {
+			delete(guard, name)
+		}
+		joinInto(dst, guard, false)
+	}
 
 	bindArm := func(bindings []string, types []ast.Type, scrutOwned bool) (added, lent []string) {
 		for i, bname := range bindings {
@@ -9638,6 +9645,41 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	}
 
 	var recordExprUses func(e ast.Expr, moved movedSet)
+	walkMatchExpr := func(m *ast.MatchExpr, moved movedSet) {
+		scrutOwned := c.isOwnedScrutinee(m.Tag, isOwnedExpr)
+		if id, ok := m.Tag.(*ast.Ident); ok && !ast.MatchExprTakesPointerPayload(m.Arms) {
+			prev, had := moved[id.Name]
+			recordExprUses(m.Tag, moved)
+			if had {
+				moved[id.Name] = prev
+			} else {
+				delete(moved, id.Name)
+			}
+		} else {
+			recordExprUses(m.Tag, moved)
+		}
+		baseline, joined := cloneMoved(moved), cloneMoved(moved)
+		for _, arm := range m.Arms {
+			armMoved := cloneMoved(baseline)
+			added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned)
+			recordExprUses(arm.Guard, armMoved)
+			if arm.Guard != nil {
+				joinGuardInto(baseline, armMoved, arm.Binders())
+			}
+			recordExprUses(arm.Body, armMoved)
+			unbindArm(added, lent, armMoved)
+			joinInto(joined, armMoved, c.ownedExprDiverges(arm.Body))
+		}
+		joinInto(moved, joined, false)
+	}
+	walkIfExpr := func(x *ast.IfExpr, moved movedSet) {
+		recordExprUses(x.Cond, moved)
+		thenMoved, elseMoved := cloneMoved(moved), cloneMoved(moved)
+		recordExprUses(x.Then, thenMoved)
+		recordExprUses(x.Else, elseMoved)
+		joinInto(moved, thenMoved, c.ownedExprDiverges(x.Then))
+		joinInto(moved, elseMoved, c.ownedExprDiverges(x.Else))
+	}
 	recordExprUses = func(e ast.Expr, moved movedSet) {
 		if e == nil {
 			return
@@ -9645,14 +9687,12 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		borrow := map[*ast.Ident]bool{}
 		dynConsumed := map[*ast.Ident]bool{}
 		var lambdas []*ast.Lambda
-		var matches []*ast.MatchExpr
 		ast.Walk(e, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.Lambda:
 				lambdas = append(lambdas, x)
 				return false
-			case *ast.MatchExpr:
-				matches = append(matches, x)
+			case *ast.MatchExpr, *ast.IfExpr, *ast.BlockExpr:
 				return false
 			case *ast.FieldAccess:
 				if id, ok := x.Target.(*ast.Ident); ok {
@@ -9739,8 +9779,18 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			delete(borrow, id)
 		}
 		ast.Walk(e, func(n ast.Node) bool {
-			switch n.(type) {
-			case *ast.Lambda, *ast.MatchExpr:
+			switch x := n.(type) {
+			case *ast.Lambda:
+				return false
+			case *ast.MatchExpr:
+				walkMatchExpr(x, moved)
+				return false
+			case *ast.IfExpr:
+				walkIfExpr(x, moved)
+				return false
+			case *ast.BlockExpr:
+				walkStmts(x.Stmts, moved)
+				recordExprUses(x.Tail, moved)
 				return false
 			}
 			id, ok := n.(*ast.Ident)
@@ -9756,28 +9806,6 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			return true
 		})
-		for _, m := range matches {
-			scrutOwned := c.isOwnedScrutinee(m.Tag, isOwnedExpr)
-			if id, ok := m.Tag.(*ast.Ident); ok && !ast.MatchExprTakesPointerPayload(m.Arms) {
-				prev, had := moved[id.Name]
-				recordExprUses(m.Tag, moved)
-				if had {
-					moved[id.Name] = prev
-				} else {
-					delete(moved, id.Name)
-				}
-			} else {
-				recordExprUses(m.Tag, moved)
-			}
-			for _, arm := range m.Arms {
-				armMoved := cloneMoved(moved)
-				added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned)
-				recordExprUses(arm.Guard, armMoved)
-				recordExprUses(arm.Body, armMoved)
-				unbindArm(added, lent, armMoved)
-				joinInto(moved, armMoved, false)
-			}
-		}
 		for _, lam := range lambdas {
 			walkNested(lam.Params, lam.Body, moved)
 		}
@@ -9872,15 +9900,21 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			} else {
 				recordExprUses(x.Tag, moved)
 			}
+			baseline, joined := cloneMoved(moved), cloneMoved(moved)
 			for _, arm := range x.Arms {
-				armMoved := cloneMoved(moved)
+				armMoved := cloneMoved(baseline)
 				added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned)
+				recordExprUses(arm.Guard, armMoved)
+				if arm.Guard != nil {
+					joinGuardInto(baseline, armMoved, arm.Binders())
+				}
 				if arm.Body != nil {
 					walkStmts(arm.Body.Stmts, armMoved)
 				}
 				unbindArm(added, lent, armMoved)
-				joinInto(moved, armMoved, arm.Body != nil && c.blockDiverges(arm.Body))
+				joinInto(joined, armMoved, arm.Body != nil && c.blockDiverges(arm.Body))
 			}
+			joinInto(moved, joined, false)
 		default:
 			ast.Walk(st, func(n ast.Node) bool {
 				if fd, ok := n.(*ast.FuncDecl); ok {
@@ -9902,6 +9936,26 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	}
 
 	walkStmts(fn.Body.Stmts, movedSet{})
+}
+
+func (c *checker) ownedExprDiverges(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.BlockExpr:
+		return c.blockDiverges(&ast.Block{Stmts: x.Stmts})
+	case *ast.IfExpr:
+		return c.ownedExprDiverges(x.Then) && c.ownedExprDiverges(x.Else)
+	case *ast.MatchExpr:
+		if len(x.Arms) == 0 {
+			return false
+		}
+		for _, arm := range x.Arms {
+			if !c.ownedExprDiverges(arm.Body) {
+				return false
+			}
+		}
+		return true
+	}
+	return c.callsExit(e)
 }
 
 func (c *checker) checkBlock(b *ast.Block, parent *scope) {
