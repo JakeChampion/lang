@@ -1,0 +1,36 @@
+function __fern_setgroups(gids: i64[]): Result[void, IoError] {
+  let n: i32 = gids.len();
+  if (n == 0) {
+    let rc0: i32 = __syscall3(116, 0, 0, 0) as i32;
+    if (rc0 < 0) {
+      return Err(__fern_io_error(0 - rc0, ""));
+    }
+    return Ok(());
+  }
+  let v: i32 = 0;
+  while (v < n) {
+    if (gids[v] < 0) {
+      return Err(__fern_io_error(22, ""));
+    }
+    if (gids[v] > 4294967295) {
+      return Err(__fern_io_error(22, ""));
+    }
+    v = v + 1;
+  }
+  let buf: usize = __raw_alloc(n * 4);
+  let i: i32 = 0;
+  while (i < n) {
+    let g: i64 = gids[i];
+    __raw_store8(buf, i * 4, (g % 256) as i32);
+    __raw_store8(buf, i * 4 + 1, (g / 256 % 256) as i32);
+    __raw_store8(buf, i * 4 + 2, (g / 65536 % 256) as i32);
+    __raw_store8(buf, i * 4 + 3, (g / 16777216 % 256) as i32);
+    i = i + 1;
+  }
+  let rc: i32 = __syscall3(116, n as i64, buf as i64, 0) as i32;
+  let buf_own: string = __raw_string(buf, n * 4);
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  return Ok(());
+}

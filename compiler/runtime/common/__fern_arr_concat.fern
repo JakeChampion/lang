@@ -1,0 +1,68 @@
+function __fern_arr_concat(pa: usize, src: usize, nb: i32, width: i32): i32[] {
+  let na: i32 = __load_i32(pa);
+  let m: i32 = na + nb;
+  let want: i32 = m;
+  if (__fern_rc_is_unique(pa) != 0) {
+    if (nb == 0) {
+      return __raw_array(pa);
+    }
+    let capw: i32 = __load_i32(pa - 16);
+    let need: i32 = m;
+    if (width == 8) {
+      need = (m + 7) / 8;
+    }
+    if (need <= capw) {
+      if (width == 8) {
+        __memcpy(pa + 8 + na, src, nb);
+      } else {
+        let dst: usize = pa + 8 + na * 8;
+        let from: usize = src;
+        let left: i32 = nb;
+        while (left > 0) {
+          let cc: i32 = left;
+          if (cc > 134217728) {
+            cc = 134217728;
+          }
+          __memcpy(dst, from, cc * 8);
+          dst = dst + cc * 8;
+          from = from + cc * 8;
+          left = left - cc;
+        }
+      }
+      __store_i64(pa, m as i64);
+      return __raw_array(pa);
+    }
+    if (na <= 536870912 && na * 2 > want) {
+      want = na * 2;
+    }
+  }
+  if (width == 8) {
+    let p: usize = __raw_arr_box((want + 7) / 8);
+    __store_i64(p, m as i64);
+    __memcpy(p + 8, pa + 8, na);
+    __memcpy(p + 8 + na, src, nb);
+    return __raw_array(p);
+  }
+  let q: usize = __raw_arr_box(want);
+  __store_i64(q, m as i64);
+  let dst2: usize = q + 8;
+  let src2: usize = pa + 8;
+  let left2: i32 = na;
+  let part: i32 = 0;
+  while (part < 2) {
+    while (left2 > 0) {
+      let cc2: i32 = left2;
+      if (cc2 > 134217728) {
+        cc2 = 134217728;
+      }
+      __memcpy(dst2, src2, cc2 * 8);
+      dst2 = dst2 + cc2 * 8;
+      src2 = src2 + cc2 * 8;
+      left2 = left2 - cc2;
+    }
+    src2 = src;
+    left2 = nb;
+    part = part + 1;
+  }
+  return __raw_array(q);
+}

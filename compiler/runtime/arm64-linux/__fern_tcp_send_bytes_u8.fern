@@ -1,0 +1,5 @@
+function __fern_tcp_send_bytes_u8(fd: i32, bytes: i32[]): i32 {
+  let n: i32 = bytes.len();
+  let p: usize = __raw_arr_ptr(bytes) + 8;
+  return __syscall6(206, fd as i64, p as i64, n as i64, 16384, 0, 0) as i32;
+}

@@ -1,0 +1,28 @@
+function __fern_arr_str_join(xs: string[], sep: string): string {
+  let n: i32 = xs.len();
+  if (n == 0) {
+    return "";
+  }
+  let ls: i32 = sep.len();
+  let total: i32 = ls * (n - 1);
+  let i: i32 = 0;
+  while (i < n) {
+    total = total + xs[i].len();
+    i = i + 1;
+  }
+  let p: usize = __raw_alloc(total);
+  let off: i32 = 0;
+  let j: i32 = 0;
+  while (j < n) {
+    if (j > 0) {
+      __memcpy(p + off, __raw_data(sep), ls);
+      off = off + ls;
+    }
+    let e: string = xs[j];
+    let le: i32 = e.len();
+    __memcpy(p + off, __raw_data(e), le);
+    off = off + le;
+    j = j + 1;
+  }
+  return __raw_string(p, total);
+}

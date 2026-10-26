@@ -1,0 +1,36 @@
+function __fern_tcp_listen(port: i32): i32 {
+  let fd: i32 = __syscall3(41, 2, 1, 0) as i32;
+  if (fd < 0) {
+    return fd;
+  }
+  let sa: usize = __raw_scratch(20);
+  __raw_store8(sa, 16, 1);
+  __raw_store8(sa, 17, 0);
+  __raw_store8(sa, 18, 0);
+  __raw_store8(sa, 19, 0);
+  let ro: i32 = __syscall5(54, fd as i64, 1, 2, (sa + 16) as i64, 4) as i32;
+  if (ro < 0) {
+    __syscall3(3, fd as i64, 0, 0);
+    return ro;
+  }
+  __raw_store8(sa, 0, 2);
+  __raw_store8(sa, 1, 0);
+  __raw_store8(sa, 2, port >> 8 & 255);
+  __raw_store8(sa, 3, port & 255);
+  let z: i32 = 4;
+  while (z < 16) {
+    __raw_store8(sa, z, 0);
+    z = z + 1;
+  }
+  let rb: i32 = __syscall3(49, fd as i64, sa as i64, 16) as i32;
+  if (rb < 0) {
+    __syscall3(3, fd as i64, 0, 0);
+    return rb;
+  }
+  let rl: i32 = __syscall3(50, fd as i64, 128, 0) as i32;
+  if (rl < 0) {
+    __syscall3(3, fd as i64, 0, 0);
+    return rl;
+  }
+  return fd;
+}

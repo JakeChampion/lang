@@ -9,11 +9,11 @@ import "../physicalbody";
 import "../semlower";
 import "../ssaprepare";
 
-pub function runtime(src: string): physicalbody.Lowered {
-  if (src == asmcore.rt_src_str_cmp()) {
+pub function runtime(mod: parser.Module): physicalbody.Lowered {
+  if (mod.funcs.len() == 1 && mod.funcs[0].name == "__fern_str_cmp") {
     return semlower.runtime_lowering("function __fern_str_cmp(a: string, b: string): i32 { let p = __raw_alloc(1); let text = __raw_string(p, 1); return text.len(); }");
   }
-  return semlower.runtime_lowering(src);
+  return semlower.runtime_module_lowering(mod);
 }
 
 pub function emit(g: ircore.Gated, cache: irtables.LowerResult[], physical: physicalbody.Collection, arm: boolean, retain: boolean, entry: boolean, lo: i32, hi: i32): ssaprepare.Output {

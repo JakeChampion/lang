@@ -1,0 +1,8 @@
+function __fern_pp_byte(out: usize, b: i32): void {
+  let n: usize = __load_i64(out) as usize;
+  __raw_store8(out + 16, n as i32, b);
+  __raw_store_ptr(out, 0, n + 1);
+  if (n + 1 == 4096) {
+    __fern_pp_flush(out);
+  }
+}

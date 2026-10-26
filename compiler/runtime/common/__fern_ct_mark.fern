@@ -1,0 +1,20 @@
+function __fern_ct_mark(bytes: usize, req: i64): i32 {
+  let n: i32 = 0;
+  let p: usize = 0;
+  if ((bytes as i32 & 2) != 0) {
+    let base: usize = bytes - 2;
+    n = __load_i32(base + 8);
+    p = __raw_load_ptr(base, 0);
+  } else {
+    n = __load_i32(bytes);
+    p = bytes + 8;
+  }
+  let a: usize = __raw_scratch(48);
+  __store_i64(a, req);
+  __store_i64(a + 8, p as i64);
+  __store_i64(a + 16, n as i64);
+  __store_i64(a + 24, 0 as i64);
+  __store_i64(a + 32, 0 as i64);
+  __store_i64(a + 40, 0 as i64);
+  return __raw_vg_request(a) as i32;
+}

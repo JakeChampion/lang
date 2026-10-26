@@ -1,0 +1,12 @@
+function __fern_tcp_local_port(fd: i32): i32 {
+  let sa: usize = __raw_scratch(20);
+  __raw_store8(sa, 16, 16);
+  __raw_store8(sa, 17, 0);
+  __raw_store8(sa, 18, 0);
+  __raw_store8(sa, 19, 0);
+  let r: i32 = __syscall3(204, fd as i64, sa as i64, (sa + 16) as i64) as i32;
+  if (r < 0) {
+    return r;
+  }
+  return __raw_load8(sa, 2) << 8 | __raw_load8(sa, 3);
+}

@@ -1,0 +1,48 @@
+function __fern_ring_reap(blk: usize, nfds: i32): i32 {
+  let cq: usize = __load_i64(blk + 16) as usize;
+  let headp: usize = cq + __load_i32(blk + 48) as usize;
+  let tailp: usize = cq + __load_i32(blk + 52) as usize;
+  let cmask: i64 = __load_i32(blk + 56) as i64;
+  let cqes: usize = cq + __load_i32(blk + 60) as usize;
+  let head: i64 = __load_i32(headp) as i64 & 4294967295 as i64;
+  let tail: i64 = __load_i32(tailp) as i64 & 4294967295 as i64;
+  while (head != tail) {
+    let c: usize = cqes + (head & cmask) as usize * 16;
+    let ud: i64 = __load_i64(c);
+    let res: i32 = __load_i32(c + 8);
+    let flags: i32 = __load_i32(c + 12);
+    head = head + 1 & 4294967295 as i64;
+    let fd: i32 = (ud & 4294967295 as i64) as i32;
+    let gen: i32 = (ud >> 32 & 255 as i64) as i32;
+    if (ud >= 2305843009213693952 as i64 && ud < 4611686018427387904 as i64) {
+      __fern_ring_recv_done(blk, fd, gen, res, flags, nfds);
+    } else if (ud >= 1152921504606846976 as i64 && ud < 2305843009213693952 as i64) {
+      __fern_ring_zc_done(blk, (ud & 511 as i64) as i32, res, flags, nfds);
+    } else if (ud >= 0 as i64 && ud < 1152921504606846976 as i64 && fd >= 0 && fd < nfds) {
+      let ent: usize = __fern_ring_entry(blk, fd);
+      if (__raw_load8(ent, 2) == gen && __raw_load8(ent, 1) != 0) {
+        __raw_store8(ent, 1, 0);
+        if (__raw_load8(ent, 0) != 0) {
+          __fern_ring_pend(blk, fd);
+          let ready: i32 = 4;
+          if (res >= 0) {
+            ready = 0;
+            if ((res & 1) != 0) {
+              ready = ready | 1;
+            }
+            if ((res & 4) != 0) {
+              ready = ready | 2;
+            }
+            if ((res & 24) != 0) {
+              ready = ready | 4;
+            }
+          }
+          __raw_store8(ent, 14, __raw_load8(ent, 14) | ready | 8);
+          __fern_ring_list(blk, ent, fd);
+        }
+      }
+    }
+  }
+  __store_i32(headp, head as i32);
+  return 0;
+}

@@ -1,0 +1,17 @@
+function __fern_statfs(path: string): Result[FsStat, IoError] {
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, path[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let buf: usize = __raw_scratch(128);
+  let rc: i32 = __syscall3(43, pathz as i64, buf as i64, 0) as i32;
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen)));
+  }
+  return Ok(FsStat { block_size: __load_i64(buf + 8), blocks: __load_i64(buf + 16), blocks_free: __load_i64(buf + 24), blocks_avail: __load_i64(buf + 32), files: __load_i64(buf + 40), files_free: __load_i64(buf + 48), fs_type: __load_i64(buf + 0), fsid: (__load_i32(buf + 56) as i64 & 4294967295 as i64) << 32 as i64 | __load_i32(buf + 56 + 4) as i64 & 4294967295 as i64, frag_size: __load_i64(buf + 72), name_max: __load_i64(buf + 64), path_max: 4096 as i64, fs_type_name: "" });
+}

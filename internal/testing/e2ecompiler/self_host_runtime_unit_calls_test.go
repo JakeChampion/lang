@@ -57,18 +57,20 @@ func TestSelfHostRuntimeUnitMetadataScope(t *testing.T) {
 	const src = `import "./asmcore";
 import "./asm_arm64_ir";
 import "./irtables";
+import "./parser";
+import "./lexer";
 import "./semlower";
 import "./ssa";
 function main(): i32 {
   let old: asmcore.EmitState = asmcore.new_state();
   let s: asmcore.EmitState = asmcore.EmitState { ...old,
-    rt_lower: semlower.runtime_lowering,
+    rt_lower: semlower.runtime_module_lowering,
     leaves: ssa.leaves_of([ssa.Leaf { name: "outside", func: ssa.SFunc { name: "outside", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false } }]),
     reg_entries: irtables.sig_reg_of(["outside"]),
     float_abi: irtables.sig_reg_of(["outside"]), float_abi_masks: ["f|f"] };
   let source: string = "@noinline function callee(x: f64): f64 { return x + 1.5; }\n"
     + "@noinline function caller(x: f64): f64 { return callee(x) * 2.0; }\n";
-  let out: asmcore.EmitState = asm_arm64_ir.emit_ir_runtime_fern_fn(source, s);
+  let out: asmcore.EmitState = asm_arm64_ir.emit_runtime_module(parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(source))), s);
   if (irtables.sig_reg_index(out.reg_entries, "outside") < 0) { return 1; }
   if (irtables.sig_reg_index(out.reg_entries, "callee") >= 0) { return 2; }
   if (out.float_mask("outside") != "f|f" || out.float_mask("callee") != "") { return 3; }

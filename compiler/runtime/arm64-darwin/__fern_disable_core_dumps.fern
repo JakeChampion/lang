@@ -1,0 +1,9 @@
+function __fern_disable_core_dumps(): i32 {
+  let lim: usize = __raw_scratch(16);
+  __store_i64(lim, 0 as i64);
+  __store_i64(lim + 8, 0 as i64);
+  if (__syscall3(195, 4, lim as i64, 0) == 0 as i64) {
+    return 1;
+  }
+  return 0;
+}

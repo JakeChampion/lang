@@ -1,0 +1,35 @@
+function __fern_write_file(path: string, contents: string): Result[void, IoError] {
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, path[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  if (plen > 0 && path[plen - 1] == 47) {
+    return Err(__fern_io_error(21, __fern_path_copy(pathz_own, plen)));
+  }
+  let fd: i32 = __syscall4(463, -2, pathz as i64, 1537, 420) as i32;
+  if (fd < 0) {
+    return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen)));
+  }
+  let clen: i32 = contents.len();
+  let cbuf: usize = __str_bytes(contents, 0 as usize);
+  let put: i32 = 0;
+  while (put < clen) {
+    let w: i32 = __syscall3(4, fd as i64, (cbuf + put) as i64, (clen - put) as i64) as i32;
+    if (w < 0) {
+      __syscall3(6, fd as i64, 0, 0);
+      return Err(__fern_io_error(0 - w, __fern_path_copy(pathz_own, plen)));
+    }
+    if (w == 0) {
+      put = clen;
+    } else {
+      put = put + w;
+    }
+  }
+  __syscall3(6, fd as i64, 0, 0);
+  return Ok(());
+}

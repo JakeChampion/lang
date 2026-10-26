@@ -1,0 +1,67 @@
+function __fern_proc_exec_as(path: string, argv: string[], envp: string[]): i32 {
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, path[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let an: i32 = argv.len();
+  let av: usize = __raw_alloc((an + 1) * 8);
+  let atotal: i32 = 1;
+  let am: i32 = 0;
+  while (am < an) {
+    atotal = atotal + argv[am].len() + 1;
+    am = am + 1;
+  }
+  let ab: usize = __raw_alloc(atotal);
+  let aoff: i32 = 0;
+  let ak: i32 = 0;
+  while (ak < an) {
+    let aa: string = argv[ak];
+    let aal: i32 = aa.len();
+    __raw_store_ptr(av, ak, ab + aoff);
+    let aj: i32 = 0;
+    while (aj < aal) {
+      __raw_store8(ab, aoff + aj, aa[aj] as i32);
+      aj = aj + 1;
+    }
+    __raw_store8(ab, aoff + aal, 0);
+    aoff = aoff + aal + 1;
+    ak = ak + 1;
+  }
+  __raw_store_ptr(av, an, 0);
+  let en: i32 = envp.len();
+  let ev: usize = __raw_alloc((en + 1) * 8);
+  let etotal: i32 = 1;
+  let em: i32 = 0;
+  while (em < en) {
+    etotal = etotal + envp[em].len() + 1;
+    em = em + 1;
+  }
+  let eb: usize = __raw_alloc(etotal);
+  let eoff: i32 = 0;
+  let ek: i32 = 0;
+  while (ek < en) {
+    let ea: string = envp[ek];
+    let eal: i32 = ea.len();
+    __raw_store_ptr(ev, ek, eb + eoff);
+    let ej: i32 = 0;
+    while (ej < eal) {
+      __raw_store8(eb, eoff + ej, ea[ej] as i32);
+      ej = ej + 1;
+    }
+    __raw_store8(eb, eoff + eal, 0);
+    eoff = eoff + eal + 1;
+    ek = ek + 1;
+  }
+  __raw_store_ptr(ev, en, 0);
+  let rc: i32 = __syscall3(59, pathz as i64, av as i64, ev as i64) as i32;
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  let av_own: string = __raw_string(av, (an + 1) * 8);
+  let ev_own: string = __raw_string(ev, (en + 1) * 8);
+  let argv_own: string = __raw_string(ab, atotal);
+  let envp_own: string = __raw_string(eb, etotal);
+  return rc;
+}

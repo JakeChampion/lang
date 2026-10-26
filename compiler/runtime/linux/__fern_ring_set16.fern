@@ -1,0 +1,5 @@
+function __fern_ring_set16(p: usize, off: i32, v: i32): i32 {
+  __raw_store8(p, off, v & 255);
+  __raw_store8(p, off + 1, v >> 8 & 255);
+  return 0;
+}

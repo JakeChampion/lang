@@ -1,0 +1,13 @@
+function __fern_ring_give(blk: usize, bid: i32): i32 {
+  let pb: usize = __load_i64(blk + 160) as usize;
+  let tail: i32 = __load_i32(blk + 176);
+  let e: usize = pb + (tail & 255) as usize * 16;
+  __store_i64(e, (pb + 8192 + bid as usize * 4096) as i64);
+  __store_i32(e + 8, 4096);
+  __fern_ring_set16(e, 12, bid);
+  tail = tail + 1 & 65535;
+  __store_i32(blk + 176, tail);
+  __fern_ring_set16(pb, 14, tail);
+  __store_i32(blk + 180, __load_i32(blk + 180) + 1);
+  return 0;
+}

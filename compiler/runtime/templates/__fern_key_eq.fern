@@ -1,0 +1,3 @@
+function __fern_key_eq(a: i32, b: i32): boolean {
+  return a == b;
+}

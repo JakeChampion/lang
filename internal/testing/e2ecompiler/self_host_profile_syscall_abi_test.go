@@ -2,8 +2,6 @@ package e2ecompiler
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -11,13 +9,6 @@ import (
 )
 
 func TestSelfHostProfileSyscallABI(t *testing.T) {
-	dir := copySelfHostTree(t)
-	const driver = "import \"./rtprofile\";\nfunction main(): i32 {\n let av: string[] = args(); let mode: i32 = 1;\n if (av[2] == \"2\") { mode = 2; } else if (av[2] == \"3\") { mode = 3; } else if (av[2] == \"4\") { mode = 4; }\n print(rtprofile.source(av[1], mode)); return 0;\n}\n"
-	if err := os.WriteFile(filepath.Join(dir, "profile_source.fern"), []byte(driver), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	gcc, runner := x86_64Tooling(t)
-	bin := buildSelfHostBin(t, gcc, dir, "profile_source.fern", "profile_source")
 	call := regexp.MustCompile(`__syscall[0-6]\(\s*([0-9]+)`)
 	for _, abi := range []struct {
 		target                          string
@@ -30,10 +21,7 @@ func TestSelfHostProfileSyscallABI(t *testing.T) {
 	} {
 		for mode := 1; mode <= 4; mode++ {
 			t.Run(fmt.Sprintf("%s/%d", abi.target, mode), func(t *testing.T) {
-				out, err := runX86_64Bin(runner, bin, abi.target, strconv.Itoa(mode)).Output()
-				if err != nil {
-					t.Fatal(err)
-				}
+				out := []byte(internalRuntimeSource(t, abi.target, "__fern_profile_start __fern_profile_sample __fern_profile_finish", mode, true))
 				allowed, seen := map[int]bool{}, map[int]bool{}
 				for _, number := range abi.allowed {
 					allowed[number] = true

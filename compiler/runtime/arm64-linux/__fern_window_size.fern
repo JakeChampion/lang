@@ -1,0 +1,10 @@
+function __fern_window_size(fd: i32): Result[WinSize, IoError] {
+  let buf: usize = __raw_scratch(16);
+  let rc: i32 = __syscall3(29, fd as i64, 21523, buf as i64) as i32;
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  let r: i32 = __raw_load8(buf, 0) + __raw_load8(buf, 1) * 256;
+  let c: i32 = __raw_load8(buf, 2) + __raw_load8(buf, 3) * 256;
+  return Ok(WinSize { rows: r as i64, cols: c as i64 });
+}

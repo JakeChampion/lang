@@ -1,0 +1,3 @@
+function __fern_ct_public(bytes: usize): i32 {
+  return __fern_ct_mark(bytes, 1296236546 as i64);
+}
