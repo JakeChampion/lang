@@ -116,3 +116,40 @@ python3 -m unittest discover -s tests -p qualify_jpeg_coefficients_test.py
 
 The script writes a separate JSON record under `build` for each target.
 The new records use `jpeg-coefficients-*` names and preserve all earlier PNG, DEFLATE, worker, and allocator datasets.
+
+## Recorded coefficient campaign
+
+The three new records pin source commit `9ec6fcc938589c3b22ab395e80f18db2106ba970`.
+The clean compiler reports `dfa23fa508f9`, SHA256 `68b47eac8e56bb44944fcde126bb29d80ad2173afb7ac57eaf6c52e7b0f44282`.
+Its compiler and standard-library sources match the campaign source.
+Native Linux, Wasmtime 46.0.1, and ARM64/QEMU10 each pass 105 reference cases in 14 fresh workers.
+Every worker reports nonzero balanced allocations and zero live bytes.
+All three sample records match exactly.
+
+The records include 524 source and tool hashes on native, and 525 on each runner target.
+These include all 163 standard-library Fern sources and the compiler sources.
+All hashes remain unchanged through each campaign.
+Every campaign repeats the offline C oracle and matches its stored output hashes.
+The local process timeout remains an operational collector limit, not a hard decoder guarantee.
+
+The records are [native](../benchmarks/results/jpeg-coefficients-native.json), [Wasm](../benchmarks/results/jpeg-coefficients-wasm.json), and [ARM64/QEMU10](../benchmarks/results/jpeg-coefficients-arm64.json).
+They establish finite coefficient agreement only.
+They do not qualify IDCT, pixels, photographs, broad compatibility, security, performance, physical memory, or production use.
+Full current-head CI remains a separate result.
+
+The offline oracle SHA256 is `45c4ac568b6b1c7ac4e7f55db3a388a3670b87f0a54cce8658011562690074c5`.
+It uses Debian libjpeg-turbo packages `1:2.1.5-4` from the signed snapshot `20260925T181338Z`.
+The development package SHA256 is `e687e3c8b24a3aa74974928b8e0b07f6df2442187492d85cbcea7dacd91e3aba`.
+The runtime package SHA256 is `5504299ad0e3c0a9ca9f962a68a650a040db52f9f416a109e74df48d55601d3f`.
+The packages remain extracted reference tools, outside the Fern runtime.
+
+The source also passes all 166 TAP cases in the native script and the 23-executable standalone ARM64/QEMU10 run.
+All 62 native and 23 ARM heap censuses balance with zero live bytes.
+The native script also passes its allocator, cache, fusion, formatter, and negative compiler probes.
+The Go oracle accepts the entropy tests after the explicit unit corrections.
+The formatter checks 1,304 tracked Fern sources.
+Go build, vet, workflow lint, test-selector checks, and the eight Python protocol controls pass.
+
+The full Wasm image script also passes all 166 TAP cases and its smokes.
+All 38 Wasm heap censuses balance with zero live bytes.
+The compiler SHA256 remains unchanged through the campaigns and full image scripts.
