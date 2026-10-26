@@ -199,7 +199,7 @@ function stmt_forks(st: ast.Stmt): i32 {
         return 1 + stmts_forks(cf.init) + expr_forks(cf.cond) + stmts_forks(cf.step) + stmts_forks(cf.body);
       }
       let own_fork: i32 = 1;
-      if (i.origin == "block" || i.origin == "chain_assign" || i.origin == parser.ORIGIN_ASSERT || i.origin == parser.ORIGIN_TODO) {
+      if (i.origin == "block" || i.origin == "unsafe" || i.origin == "chain_assign" || i.origin == parser.ORIGIN_ASSERT || i.origin == parser.ORIGIN_TODO) {
         own_fork = 0;
       }
       return own_fork + expr_forks(i.cond) + stmts_forks(i.then_body) + stmts_forks(i.else_body);

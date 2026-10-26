@@ -67,7 +67,10 @@ A required optional mitigation must fail explicitly when the platform cannot sup
 ## Proposed unsafe surface
 
 The proposed syntax uses an `unsafe` function modifier and an `unsafe` block.
-The parser and checker do not accept this proposal yet.
+The parsers reserve these markers for the bootstrap transition.
+See [the bootstrap syntax scope](security/UNSAFE-BOOTSTRAP.md).
+The checker does not yet enforce unsafe effects.
+
 An unsafe function declares caller obligations.
 An unsafe block permits the raw operations that its local proof justifies.
 An unsafe function body must still use explicit blocks around raw operations.
@@ -107,9 +110,9 @@ Old source with raw operations must receive a diagnostic that names the operatio
 Current ordinary arithmetic remains unchanged.
 
 This migration affects public raw-memory users and bootstrap order.
-The user must approve its compatibility policy before implementation.
-Alternative: reserve this syntax now, and defer enforced raw-operation refusal to a later language version.
-That alternative must report the absent safe-code guarantee explicitly.
+The bootstrap parser reserves the syntax before the coordinated enforcement change.
+This intermediate stage must report the absent safe-code guarantee explicitly.
+The final change must reject unmarked raw operations and preserve ordinary arithmetic.
 
 ## Required conformance additions
 
