@@ -1780,6 +1780,14 @@ pub struct Scope {
   tparams: string[],
   tbounds: string[],
   lit_locals: string[],
+  view_memo: Cell[ViewMemo],
+}
+
+pub struct ViewMemo { names: util.NameIndex, holds: boolean[] }
+
+function new_view_memo(): Cell[ViewMemo] {
+  let names: string[] = [];
+  return cell_new(ViewMemo { names: util.name_index(names), holds: [] });
 }
 
 pub struct SigTable {
@@ -2149,13 +2157,13 @@ function new_scope(): Scope {
   let ms: MethodSig[] = [];
   let structs: StructTable = struct_table(ss, [], [], no_spellings());
   let unions: UnionTable = union_table(us);
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: method_table(ms), imports: Imports { paths: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: method_table(ms), imports: Imports { paths: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], view_memo: new_view_memo() };
 }
 
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], view_memo: new_view_memo() };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
@@ -8584,8 +8592,29 @@ function holds_view_aggregate(t: typeinfo.Type, s: Scope): boolean {
   if (is_arr_view(t) || is_str_view(t)) {
     return false;
   }
+  if (mentions_type_variable(t)) {
+    return true;
+  }
+  let key = view_memo_key(t);
+  if (key.len() == 0) {
+    let (holds, _) = type_holds_view(t, s, []);
+    return holds;
+  }
+  let memo = s.view_memo.get();
+  let at = memo.names.find(key);
+  if (at >= 0) {
+    return memo.holds[at];
+  }
   let (holds, _) = type_holds_view(t, s, []);
-  return holds || mentions_type_variable(t);
+  s.view_memo.set(ViewMemo { names: memo.names.added(key), holds: memo.holds.append(holds) });
+  return holds;
+}
+
+// Cache only complete root queries. A recursive visit can skip an ancestor that carries a view.
+function view_memo_key(t: typeinfo.Type): string {
+  let kind = match (t) { typeinfo.TypeStruct(_) => "struct:", typeinfo.TypeUnion(_) => "union:", typeinfo.TypeArray(_) => "array:", typeinfo.TypeTuple(_) => "tuple:", typeinfo.TypeMap(_) => "map:", _ => { return ""; } };
+  let spelling = typeinfo.spelling(t);
+  return if (spelling.len() == 0) { "" } else { kind + spelling };
 }
 
 function mentions_type_variable(t: typeinfo.Type): boolean {
