@@ -1,5 +1,5 @@
-# 2026-10-26: complete static size measurements from CI 40401640105 at
-# 9cd47e6a9b252646a94a8f72823d5799cf8dad57 (entropy fix plus prior main changes).
+# 2026-10-26: CI run 40382820194 at a615af0e supplies this complete snapshot.
+# SEC-015 adds the guard result check and its cold failure handler.
 # 2026-10-26 (#13495): pin only the 24 Wasm rows that omit unused type-ID globals.
 # Fixed-input source 934244ba8480, baseline source 0e2176c40, and complete reports:
 # docs/benchmarks/wasm-typeids-2026-10-26/. Native rows and tolerances stay unchanged.
@@ -63,7 +63,7 @@
 # on purpose, update it in the same PR; the job summary prints the corrected
 # lines ready to paste. Keep the reason in the PR, not here.
 #
-# MEASURED AT 9cd47e6a9b25. The file is one snapshot of one
+# MEASURED AT a615af0e (CI run 40382820194). The file is one snapshot of one
 # commit, so regenerate it wholesale (`scripts/perf-bench-selfhost`) and move
 # this line with it — that makes a stale baseline a commit distance anyone can
 # read, rather than something to infer from the size of the drift.
@@ -172,40 +172,40 @@
 # a larger module (x86-64 5507, arm64 5868, wasm 6960), measured by the dev
 # container's perf-bench-selfhost run.
 
-selfhost/arm64-linux/array_append.emit	1239
-selfhost/arm64-linux/array_index.emit	1237
-selfhost/arm64-linux/array_scale_f64.emit	1331
-selfhost/arm64-linux/array_with.emit	1393
-selfhost/arm64-linux/ascii_scan.emit	1535
-selfhost/arm64-linux/byte_copy_append.emit	1368
-selfhost/arm64-linux/byte_copy_with.emit	1314
-selfhost/arm64-linux/call_overhead.emit	304
-selfhost/arm64-linux/closure_call.emit	1086
-selfhost/arm64-linux/deflate_decode.emit	14101
-selfhost/arm64-linux/deflate_encode.emit	7906
-selfhost/arm64-linux/enum_match.emit	1206
-selfhost/arm64-linux/http_hello.emit	18504
-selfhost/arm64-linux/int_loop.emit	246
-selfhost/arm64-linux/map_int.emit	5959
-selfhost/arm64-linux/map_probe_chain.emit	5969
-selfhost/arm64-linux/map_string.emit	7060
-selfhost/arm64-linux/ordmap_insert.emit	5834
-selfhost/arm64-linux/pmap_insert.emit	2948
-selfhost/arm64-linux/pvec_with.emit	3090
-selfhost/arm64-linux/record_update.emit	1493
-selfhost/arm64-linux/sort_inplace.emit	1576
-selfhost/arm64-linux/sort_ints.emit	2069
-selfhost/arm64-linux/sort_strings.emit	3480
-selfhost/arm64-linux/string_build.emit	2254
-selfhost/arm64-linux/string_count_byte.emit	1380
-selfhost/arm64-linux/string_find_byte.emit	1788
-selfhost/arm64-linux/string_rfind_byte.emit	1911
-selfhost/arm64-linux/string_scan.emit	2453
-selfhost/arm64-linux/string_slice.emit	1022
-selfhost/arm64-linux/struct_drop.emit	2558
-selfhost/arm64-linux/tokenize.emit	1278
-selfhost/arm64-linux/utf8_ingest_unchecked.emit	8668
-selfhost/arm64-linux/utf8_ingest_validated.emit	9232
+selfhost/arm64-linux/array_append.emit	1252
+selfhost/arm64-linux/array_index.emit	1250
+selfhost/arm64-linux/array_scale_f64.emit	1344
+selfhost/arm64-linux/array_with.emit	1406
+selfhost/arm64-linux/ascii_scan.emit	1548
+selfhost/arm64-linux/byte_copy_append.emit	1380
+selfhost/arm64-linux/byte_copy_with.emit	1326
+selfhost/arm64-linux/call_overhead.emit	317
+selfhost/arm64-linux/closure_call.emit	1099
+selfhost/arm64-linux/deflate_decode.emit	14113
+selfhost/arm64-linux/deflate_encode.emit	7919
+selfhost/arm64-linux/enum_match.emit	1219
+selfhost/arm64-linux/http_hello.emit	18517
+selfhost/arm64-linux/int_loop.emit	259
+selfhost/arm64-linux/map_int.emit	5910
+selfhost/arm64-linux/map_probe_chain.emit	5920
+selfhost/arm64-linux/map_string.emit	7014
+selfhost/arm64-linux/ordmap_insert.emit	5847
+selfhost/arm64-linux/pmap_insert.emit	2961
+selfhost/arm64-linux/pvec_with.emit	3103
+selfhost/arm64-linux/record_update.emit	1506
+selfhost/arm64-linux/sort_inplace.emit	1589
+selfhost/arm64-linux/sort_ints.emit	2082
+selfhost/arm64-linux/sort_strings.emit	3493
+selfhost/arm64-linux/string_build.emit	2267
+selfhost/arm64-linux/string_count_byte.emit	1393
+selfhost/arm64-linux/string_find_byte.emit	1801
+selfhost/arm64-linux/string_rfind_byte.emit	1924
+selfhost/arm64-linux/string_scan.emit	2466
+selfhost/arm64-linux/string_slice.emit	1035
+selfhost/arm64-linux/struct_drop.emit	2571
+selfhost/arm64-linux/tokenize.emit	1291
+selfhost/arm64-linux/utf8_ingest_unchecked.emit	8621
+selfhost/arm64-linux/utf8_ingest_validated.emit	9185
 selfhost/wasm32-wasi/array_append.emit	441
 selfhost/wasm32-wasi/array_index.emit	446
 selfhost/wasm32-wasi/array_scale_f64.emit	499
@@ -240,54 +240,54 @@ selfhost/wasm32-wasi/struct_drop.emit	1597
 selfhost/wasm32-wasi/tokenize.emit	829
 selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	9028
 selfhost/wasm32-wasi/utf8_ingest_validated.emit	10042
-selfhost/x86-64-linux/array_append.emit	1041
-selfhost/x86-64-linux/array_index.emit	1042
-selfhost/x86-64-linux/array_scale_f64.emit	1168
-selfhost/x86-64-linux/array_with.emit	1197
-selfhost/x86-64-linux/ascii_scan.emit	1251
-selfhost/x86-64-linux/byte_copy_append.emit	1152
-selfhost/x86-64-linux/byte_copy_with.emit	1109
-selfhost/x86-64-linux/call_overhead.emit	233
-selfhost/x86-64-linux/closure_call.emit	877
-selfhost/x86-64-linux/deflate_decode.emit	13225
-selfhost/x86-64-linux/deflate_encode.emit	7272
-selfhost/x86-64-linux/enum_match.emit	1003
-selfhost/x86-64-linux/http_hello.emit	17390
-selfhost/x86-64-linux/int_loop.emit	178
-selfhost/x86-64-linux/map_int.emit	5698
-selfhost/x86-64-linux/map_probe_chain.emit	5702
-selfhost/x86-64-linux/map_string.emit	6643
-selfhost/x86-64-linux/ordmap_insert.emit	5470
-selfhost/x86-64-linux/pmap_insert.emit	2684
-selfhost/x86-64-linux/pvec_with.emit	2852
-selfhost/x86-64-linux/record_update.emit	1288
-selfhost/x86-64-linux/sort_inplace.emit	1395
-selfhost/x86-64-linux/sort_ints.emit	1873
-selfhost/x86-64-linux/sort_strings.emit	3138
-selfhost/x86-64-linux/string_build.emit	1901
-selfhost/x86-64-linux/string_count_byte.emit	1142
-selfhost/x86-64-linux/string_find_byte.emit	1497
-selfhost/x86-64-linux/string_rfind_byte.emit	1668
-selfhost/x86-64-linux/string_scan.emit	2147
-selfhost/x86-64-linux/string_slice.emit	799
-selfhost/x86-64-linux/struct_drop.emit	2321
-selfhost/x86-64-linux/tokenize.emit	1102
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8235
-selfhost/x86-64-linux/utf8_ingest_validated.emit	8841
+selfhost/x86-64-linux/array_append.emit	1054
+selfhost/x86-64-linux/array_index.emit	1055
+selfhost/x86-64-linux/array_scale_f64.emit	1181
+selfhost/x86-64-linux/array_with.emit	1210
+selfhost/x86-64-linux/ascii_scan.emit	1264
+selfhost/x86-64-linux/byte_copy_append.emit	1162
+selfhost/x86-64-linux/byte_copy_with.emit	1119
+selfhost/x86-64-linux/call_overhead.emit	246
+selfhost/x86-64-linux/closure_call.emit	890
+selfhost/x86-64-linux/deflate_decode.emit	13235
+selfhost/x86-64-linux/deflate_encode.emit	7285
+selfhost/x86-64-linux/enum_match.emit	1016
+selfhost/x86-64-linux/http_hello.emit	17403
+selfhost/x86-64-linux/int_loop.emit	191
+selfhost/x86-64-linux/map_int.emit	5639
+selfhost/x86-64-linux/map_probe_chain.emit	5643
+selfhost/x86-64-linux/map_string.emit	6584
+selfhost/x86-64-linux/ordmap_insert.emit	5483
+selfhost/x86-64-linux/pmap_insert.emit	2697
+selfhost/x86-64-linux/pvec_with.emit	2865
+selfhost/x86-64-linux/record_update.emit	1301
+selfhost/x86-64-linux/sort_inplace.emit	1408
+selfhost/x86-64-linux/sort_ints.emit	1886
+selfhost/x86-64-linux/sort_strings.emit	3151
+selfhost/x86-64-linux/string_build.emit	1914
+selfhost/x86-64-linux/string_count_byte.emit	1155
+selfhost/x86-64-linux/string_find_byte.emit	1510
+selfhost/x86-64-linux/string_rfind_byte.emit	1681
+selfhost/x86-64-linux/string_scan.emit	2160
+selfhost/x86-64-linux/string_slice.emit	812
+selfhost/x86-64-linux/struct_drop.emit	2334
+selfhost/x86-64-linux/tokenize.emit	1115
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8173
+selfhost/x86-64-linux/utf8_ingest_validated.emit	8779
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-selfhost/x86-64-linux/perceus_cfold.emit	1794
-selfhost/arm64-linux/perceus_cfold.emit	2042
+selfhost/x86-64-linux/perceus_cfold.emit	1807
+selfhost/arm64-linux/perceus_cfold.emit	2055
 selfhost/wasm32-wasi/perceus_cfold.emit	1759
-selfhost/x86-64-linux/perceus_deriv.emit	2575
-selfhost/arm64-linux/perceus_deriv.emit	2872
+selfhost/x86-64-linux/perceus_deriv.emit	2588
+selfhost/arm64-linux/perceus_deriv.emit	2885
 selfhost/wasm32-wasi/perceus_deriv.emit	2790
-selfhost/x86-64-linux/perceus_nqueens.emit	1459
-selfhost/arm64-linux/perceus_nqueens.emit	1695
+selfhost/x86-64-linux/perceus_nqueens.emit	1472
+selfhost/arm64-linux/perceus_nqueens.emit	1708
 selfhost/wasm32-wasi/perceus_nqueens.emit	1282
-selfhost/x86-64-linux/perceus_rbtree.emit	2777
-selfhost/arm64-linux/perceus_rbtree.emit	3048
+selfhost/x86-64-linux/perceus_rbtree.emit	2790
+selfhost/arm64-linux/perceus_rbtree.emit	3061
 selfhost/wasm32-wasi/perceus_rbtree.emit	3619
-selfhost/x86-64-linux/perceus_rbtree_ck.emit	3027
-selfhost/arm64-linux/perceus_rbtree_ck.emit	3285
+selfhost/x86-64-linux/perceus_rbtree_ck.emit	3040
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3298
 selfhost/wasm32-wasi/perceus_rbtree_ck.emit	4052
