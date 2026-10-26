@@ -136,7 +136,12 @@ function main(): i32 {
 		},
 		{
 			name: "fern_runtime_byte_reductions",
-			src:  wasmRuntimeByteReductionsProgram(),
+			src:  wasmRuntimeByteReductionsProgram(true),
+			want: 0,
+		},
+		{
+			name: "fern_runtime_string_reductions",
+			src:  wasmRuntimeByteReductionsProgram(false),
 			want: 0,
 		},
 		{
@@ -280,15 +285,26 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 			}
 		}
 
-		for _, name := range []string{"sum_bytes_array", "bsd_sum_bytes"} {
+		for _, name := range []string{"sum_bytes_array", "bsd_sum_bytes", "sum_bytes", "bsd_sum"} {
 			symbol := "(func $__fern_" + name + " "
-			if strings.HasPrefix(tag, "fern_runtime_byte_reductions") {
+			kind := "string"
+			if name == "sum_bytes_array" || name == "bsd_sum_bytes" {
+				kind = "byte"
+			}
+			// The byte-view reader retains its string arm.
+			wanted := strings.HasPrefix(tag, "fern_runtime_"+kind+"_reductions") || kind == "string" && strings.HasPrefix(tag, "fern_runtime_byte_reductions")
+			if wanted {
 				if strings.Count(string(wat), symbol) != 1 || !strings.Contains(string(wat), symbol+"(param i32)") {
 					t.Fatalf("%s does not use one ordinary Fern function", name)
 				}
 			} else if strings.Contains(string(wat), symbol) {
 				t.Fatalf("an unrelated module contains the %s runtime helper", name)
 			}
+		}
+
+		if strings.HasPrefix(tag, "fern_runtime_string_reductions") {
+			end := bytes.LastIndexByte(wat, ')')
+			wat = append(append(append([]byte{}, wat[:end]...), []byte(wasmRuntimeStringViewProbe())...), wat[end:]...)
 		}
 
 		watPath := filepath.Join(dir, tag+".wat")
@@ -306,6 +322,15 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 				t.Fatalf("%s: wasmtime run: %v\n%s", tag, err, out)
 			}
 			return ee.ExitCode()
+		}
+		if strings.HasPrefix(tag, "fern_runtime_string_reductions") {
+			invoke := exec.Command(wasmtime, "run", "--invoke", "runtime-view-check", corePath)
+			var diagnostics bytes.Buffer
+			invoke.Stderr = &diagnostics
+			out, err := invoke.Output()
+			if err != nil || strings.TrimSpace(string(out)) != "0" {
+				t.Fatalf("%s: raw view forms: %v\n%s\n%s", tag, err, out, diagnostics.String())
+			}
 		}
 		return 0
 	}
@@ -370,7 +395,7 @@ func wasmRuntimeStringSetScansProgram() string {
 	return strings.Replace(src, "let set: u8[] = __alloc_u8(256);", probe+"let set: u8[] = __alloc_u8(256);", 1)
 }
 
-func wasmRuntimeByteReductionsProgram() string {
+func wasmRuntimeByteReductionsProgram(array bool) string {
 	var src strings.Builder
 	src.WriteString(`@noinline function sum(a: u8[]): i32 { return __sum_bytes_array(a); }
 @noinline function bsd(a: u8[], seed: i32): i32 { return __bsd_sum_bytes(a, seed); }
@@ -428,5 +453,44 @@ let part = buf_take_bytes(ph); buf_free(ph);
 if (sum(part) != 0 - 2147483521) { return 7; }
 return 0;
 }`)
-	return src.String()
+	program := src.String()
+	if !array {
+		program = strings.Replace(program, "__sum_bytes_array(a)", "__sum_bytes(string_from_bytes_unchecked(a))", 1)
+		program = strings.Replace(program, "__bsd_sum_bytes(a, seed)", "__bsd_sum(string_from_bytes_unchecked(a), seed)", 1)
+		program = strings.Replace(program, "let before =", "let text = string_from_bytes_unchecked(all); let before =", 1)
+		program = strings.Replace(program, "sum(all) != 32640 || bsd(all, 65536) != bsd(all, 0)", "__sum_bytes(text) != 32640 || __bsd_sum(text, 65536) != __bsd_sum(text, 0)", 1)
+		program = strings.Replace(program, "let before =", "let view: str = slice_unchecked(text, 1, 255); if (__sum_bytes(view) != __sum_bytes(text) - 183) { return 8; } let before =", 1)
+	}
+	return program
+}
+
+func wasmRuntimeStringViewProbe() string {
+	var wat strings.Builder
+	wat.WriteString(`
+  (func (export "runtime-view-check") (result i32) (local $p i32)
+    (local.set $p (i32.shl (memory.grow (i32.const 1)) (i32.const 16)))
+    (i32.store (local.get $p) (i32.const 3))
+    (i32.store8 offset=4 (local.get $p) (i32.const 0))
+    (i32.store8 offset=5 (local.get $p) (i32.const 128))
+    (i32.store8 offset=6 (local.get $p) (i32.const 255))
+    (i32.store offset=32 (local.get $p) (i32.const -2147483645))
+    (i32.store offset=36 (local.get $p) (i32.add (local.get $p) (i32.const 4)))
+    (i32.store offset=48 (local.get $p) (i32.add (local.get $p) (i32.const 4)))
+    (i32.store offset=52 (local.get $p) (i32.const 3))
+`)
+	for _, offset := range []int{0, 32, 49} {
+		fmt.Fprintf(&wat, "    (if (i32.ne (call $__fern_sum_bytes (i32.add (local.get $p) (i32.const %d))) (i32.const 383)) (then (return (i32.const 1))))\n", offset)
+		fmt.Fprintf(&wat, "    (if (i32.ne (call $__fern_bsd_sum (i32.add (local.get $p) (i32.const %d)) (i32.const 65537)) (i32.const 8511)) (then (return (i32.const 2))))\n", offset)
+	}
+	wat.WriteString(`    (i32.store offset=32 (local.get $p) (i32.const -2147483648))
+    (i32.store offset=36 (local.get $p) (i32.const -1))
+    (i32.store offset=48 (local.get $p) (i32.const -1))
+    (i32.store offset=52 (local.get $p) (i32.const 0))
+`)
+	for _, offset := range []int{32, 49} {
+		fmt.Fprintf(&wat, "    (if (call $__fern_sum_bytes (i32.add (local.get $p) (i32.const %d))) (then (return (i32.const 3))))\n", offset)
+		fmt.Fprintf(&wat, "    (if (i32.ne (call $__fern_bsd_sum (i32.add (local.get $p) (i32.const %d)) (i32.const -1)) (i32.const 65535)) (then (return (i32.const 4))))\n", offset)
+	}
+	wat.WriteString("    (i32.const 0))\n")
+	return wat.String()
 }

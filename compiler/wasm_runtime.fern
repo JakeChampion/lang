@@ -116,24 +116,43 @@ pub function set_scan_source(array: boolean, runs: boolean): string {
     + "  }\n  return len;\n}\n";
 }
 
-pub function byte_reduction_source(bsd: boolean): string {
-  let name: string = "__fern_sum_bytes_array";
+pub function byte_reduction_source(bsd: boolean, array: boolean): string {
+  let name: string = "__fern_sum_bytes";
   let params: string = "";
   let init: string = "let sum: u32 = 0;";
   let rotate: string = "";
   let mask: string = "";
   if (bsd) {
-    name = "__fern_bsd_sum_bytes";
+    name = "__fern_bsd_sum";
     params = ", seed: i32";
     init = "let sum: u32 = (seed as u32) & 65535;";
-    rotate = "sum = ((sum >> 1) | (sum << 15)) & 65535;";
+    rotate = "sum = (sum >> 1) | (sum << 15);";
     mask = "sum = sum & 65535;";
   }
+  let setup: string = "";
+  let load: string = "__load_u8(p + i)";
+  if (array) {
+    name = name + (if (bsd) { "_bytes" } else { "_array" });
+    setup = "let n: i32 = __load_i32(s); let i: i32 = 0; " + init;
+    load = "__load_u8(s + 8 + i)";
+  } else {
+    // An odd address marks a frame window. A negative length marks a borrowed descriptor.
+    let decode: string = "let tag: usize = s & 1; let n: i32 = __load_i32(s + tag * 3); ";
+    setup = decode + "let p: usize = if (tag == 0) { s + 4 } else { (__load_i32(s - 1) as u32) as usize }; "
+      + "if (n < 0) { p = (__load_i32(s + 4) as u32) as usize; n = n & 2147483647; } let i: i32 = 0; " + init;
+    if (bsd) {
+      setup = decode + "let p: usize = 0; " + init + " if (n >= 0) { "
+        + "if (n > 0) { p = if (tag == 0) { s + 4 } else { (__load_i32(s - 1) as u32) as usize }; "
+        + "} else { return sum as i32; } "
+        + "} else { n = n & 2147483647; if (n > 0) { p = (__load_i32(s + 4) as u32) as usize; "
+        + "} else { return sum as i32; } } let i: i32 = 0;";
+    }
+  }
   return "function " + name + "(s: usize" + params + "): i32 {\n"
-    + "  let n: i32 = __load_i32(s); let i: i32 = 0; " + init + "\n"
+    + "  " + setup + "\n"
     + "  while (i < n) {\n"
     + "    " + rotate + "\n"
-    + "    sum = sum + (__load_u8(s + 8 + i) as u32); " + mask + "\n"
+    + "    sum = sum + (" + load + " as u32); " + mask + "\n"
     + "    i = i + 1;\n"
     + "  }\n  return sum as i32;\n}\n";
 }

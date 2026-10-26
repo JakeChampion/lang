@@ -6577,22 +6577,6 @@ pub function rmemchr_helper(): string {
   return o;
 }
 
-pub function bsd_sum_helper(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_bsd_sum (param $s i32) (param $sum i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $p i32) (local $i i32)\n";
-  o = o + view_string_decode("$s", "$p", "$len");
-  o = o + "    (local.set $sum (i32.and (local.get $sum) (i32.const 65535)))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (local.set $sum (i32.and (i32.add (i32.or (i32.shr_u (local.get $sum) (i32.const 1)) (i32.shl (local.get $sum) (i32.const 15)))\n";
-  o = o + "        (i32.load8_u (i32.add (local.get $p) (local.get $i)))) (i32.const 65535)))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
-  o = o + "    (local.get $sum))\n";
-  return o;
-}
-
 pub function str_hash_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_str_hash (param $s i32) (param $seed i32) (result i32)\n";
@@ -6622,20 +6606,6 @@ pub function str_hash_helper(): string {
   o = o + "      (local.set $h (i64.mul (i64.xor (local.get $h) (local.get $w)) (i64.const 1099511628211)))))\n";
   o = o + "    (local.set $h (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 32))))\n";
   o = o + "    (i32.wrap_i64 (local.get $h)))\n";
-  return o;
-}
-
-pub function sum_bytes_helper(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_sum_bytes (param $s i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $p i32) (local $i i32) (local $sum i32)\n";
-  o = o + view_string_decode("$s", "$p", "$len");
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (local.set $sum (i32.add (local.get $sum) (i32.load8_u (i32.add (local.get $p) (local.get $i)))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
-  o = o + "    (local.get $sum))\n";
   return o;
 }
 
@@ -9418,11 +9388,17 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (s
   if (need(needs, "@uses_mulhi_u")) {
     src = src + wasm_runtime.mulhi_source();
   }
+  if (need(needs, "@uses_sum_bytes")) {
+    src = src + wasm_runtime.byte_reduction_source(false, false);
+  }
+  if (need(needs, "@uses_bsd_sum")) {
+    src = src + wasm_runtime.byte_reduction_source(true, false);
+  }
   if (need(needs, "@uses_bsd_sum_bytes")) {
-    src = src + wasm_runtime.byte_reduction_source(true);
+    src = src + wasm_runtime.byte_reduction_source(true, true);
   }
   if (need(needs, "@uses_sum_bytes_array")) {
-    src = src + wasm_runtime.byte_reduction_source(false);
+    src = src + wasm_runtime.byte_reduction_source(false, true);
   }
   if (need(needs, "@uses_scan_set")) {
     src = src + wasm_runtime.set_scan_source(false, false);
@@ -9546,12 +9522,6 @@ function kernel_helper_parts(needs: string[], parts0: string[]): string[] {
   }
   if (need(needs, "@uses_count_byte")) {
     parts = parts.append(count_byte_helper());
-  }
-  if (need(needs, "@uses_sum_bytes")) {
-    parts = parts.append(sum_bytes_helper());
-  }
-  if (need(needs, "@uses_bsd_sum")) {
-    parts = parts.append(bsd_sum_helper());
   }
   if (need(needs, "@uses_str_hash")) {
     parts = parts.append(str_hash_helper());

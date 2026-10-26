@@ -428,6 +428,11 @@ The tests use a Go oracle for each byte value and for eight checksum seeds.
 They also check empty inputs, length boundaries, aliases, allocation counts,
 the signed sum boundary and the sum after 32-bit wraparound.
 
+The same source template defines the string sum and BSD checksum.
+It decodes owned strings, borrowed descriptors and frame windows before the loop.
+The tests check all three layouts directly and execute a borrowed string view.
+Empty views use an invalid data pointer to detect an accidental byte read.
+
 The WebAssembly function emitter also replaces an `if` whose sole effect is
 a branch with `br_if`. It adjusts the branch depth after it removes the
 `if` label. A branch to that removed label only consumes the condition.
