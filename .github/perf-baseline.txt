@@ -386,6 +386,10 @@ x86_64/utf8_ingest_validated.ir	5297772
 # branch merged with main: from 71 fewer to 54 more instructions. The
 # utf8_ingest_validated row was 7828 where main itself measures 7751.
 #
+# Re-pinned 2026-10-26 (#13402) on aarch64/http_hello.text (18384 to
+# 18590, +1.12%). The perf-aarch64 lane measured it on the branch merged
+# with main. The Ord impls gain cmp_prefix and cmp_shared.
+#
 aarch64/array_append.text	1234
 aarch64/array_append.ir	17876579
 aarch64/array_index.text	1231
@@ -410,7 +414,7 @@ aarch64/deflate_encode.ir	48587342
 aarch64/deflate_encode.text	7851
 aarch64/enum_match.text	1206
 aarch64/enum_match.ir	41175097
-aarch64/http_hello.text	18384
+aarch64/http_hello.text	18590
 aarch64/http_hello.ir	25860660
 aarch64/int_loop.text	246
 aarch64/int_loop.ir	18000078
