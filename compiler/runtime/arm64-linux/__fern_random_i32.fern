@@ -1,5 +1,21 @@
 function __fern_random_i32(): i32 {
   let p: usize = __raw_scratch(4);
-  __syscall3(278, p as i64, 4, 0);
+  let off: i32 = 0;
+  while (off < 4) {
+    let want: i32 = 4 - off;
+    if (want > 256) {
+      want = 256;
+    }
+    let r: i32 = __syscall3(278, (p + off) as i64, want as i64, 0) as i32;
+    if (r == 0 - 4) {
+      continue;
+    }
+    if (r <= 0 || r > want) {
+      let msg: string = "fern: entropy unavailable\n";
+      __syscall3(64, 2, __raw_data(msg) as i64, msg.len() as i64);
+      exit(134);
+    }
+    off = off + r;
+  }
   return __load_i32(p);
 }
