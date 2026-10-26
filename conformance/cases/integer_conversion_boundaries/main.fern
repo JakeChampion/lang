@@ -1,0 +1,122 @@
+// spec: IS-17
+// spec: IS-18
+// spec: IS-19
+
+@noinline
+function signed_widen(x: i32): u64 {
+  return x as u64;
+}
+
+@noinline
+function unsigned_widen(x: u32): i64 {
+  return x as i64;
+}
+
+@noinline
+function narrow(x: i64): i32 {
+  return x as i32;
+}
+
+@noinline
+function checked_narrow(x: i64): Option[i32] {
+  return x as? i32;
+}
+
+@noinline
+function checked_byte(x: i32): Option[u8] {
+  return x as? u8;
+}
+
+@noinline
+function checked_signed(x: u64): Option[i64] {
+  return x as? i64;
+}
+
+function main(): i32 {
+  if (signed_widen(-1) != 18446744073709551615u64) {
+    return 1;
+  }
+  if (signed_widen(-2147483647 - 1) != 18446744071562067968u64) {
+    return 2;
+  }
+  if (unsigned_widen(4294967295u32) != 4294967295i64) {
+    return 3;
+  }
+  if (narrow(4294967338i64) != 42) {
+    return 4;
+  }
+  if (narrow(-4294967297i64) != -1) {
+    return 5;
+  }
+  match (checked_narrow(-2147483649i64)) {
+    Some(_) => {
+      return 6;
+    },
+    None => {}
+  }
+  match (checked_narrow(2147483648i64)) {
+    Some(_) => {
+      return 7;
+    },
+    None => {}
+  }
+  match (checked_narrow(-2147483648i64)) {
+    Some(v) => {
+      if (v != -2147483647 - 1) {
+        return 8;
+      }
+    },
+    None => {
+      return 9;
+    }
+  }
+  match (checked_narrow(2147483647i64)) {
+    Some(v) => {
+      if (v != 2147483647) {
+        return 10;
+      }
+    },
+    None => {
+      return 11;
+    }
+  }
+  match (checked_byte(-1)) {
+    Some(_) => {
+      return 12;
+    },
+    None => {}
+  }
+  match (checked_byte(256)) {
+    Some(_) => {
+      return 13;
+    },
+    None => {}
+  }
+  match (checked_byte(255)) {
+    Some(v) => {
+      if (v != 255 as u8) {
+        return 14;
+      }
+    },
+    None => {
+      return 15;
+    }
+  }
+  match (checked_signed(18446744073709551615u64)) {
+    Some(_) => {
+      return 16;
+    },
+    None => {}
+  }
+  match (checked_signed(9223372036854775807u64)) {
+    Some(v) => {
+      if (v != 9223372036854775807i64) {
+        return 17;
+      }
+    },
+    None => {
+      return 18;
+    }
+  }
+  return 0;
+}
