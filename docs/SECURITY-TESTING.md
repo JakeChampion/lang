@@ -38,8 +38,7 @@ Its own tests reject malformed ELF, W+X pages, executable stacks, missing tools,
 The `security-smoke` job in `test-e2e-x86_64.yml` builds the current compiler.
 It installs QEMU through the shared cross-toolchain action.
 It executes both architectures and uploads the JSON evidence.
-The preflight workflow calls this lane for pull requests.
-The full suite calls the same lane on main.
+The full suite calls this lane for pull requests and main.
 
 ## Deeper validation
 
