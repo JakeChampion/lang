@@ -1,0 +1,2 @@
+main.fern:9:5: error[E063]: returning a `[T]` slice that views function-local storage: the backing array is reclaimed when "bound" returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead
+main.fern:15:5: error[E063]: returning a `[T]` slice that views function-local storage: the backing array is reclaimed when "bound_pair" returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead

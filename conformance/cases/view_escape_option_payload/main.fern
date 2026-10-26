@@ -1,0 +1,19 @@
+// spec: ML-03
+// `Some` of a view of function-local storage cannot be returned.
+
+function maybe_head(): Option[[i32]] {
+    let a: i32[] = [1, 2, 3];
+    return Some(a[0:2]);
+}
+
+function head_of(a: i32[]): Option[[i32]] {
+    return Some(a[0:2]);
+}
+
+function main(): i32 {
+    let a: i32[] = [1, 2, 3];
+    match (head_of(a)) {
+        Some(xs) => { return xs.len(); },
+        None => { return 0; }
+    }
+}

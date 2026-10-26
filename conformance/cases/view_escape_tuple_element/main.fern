@@ -1,0 +1,18 @@
+// spec: ML-03
+// A tuple whose `[T]` element views function-local storage cannot be
+// returned.
+
+function split(): ([i32], i32) {
+    let a: i32[] = [1, 2, 3];
+    return (a[0:2], a[2]);
+}
+
+function split_param(a: i32[]): ([i32], i32) {
+    return (a[0:2], a[2]);
+}
+
+function main(): i32 {
+    let a: i32[] = [1, 2, 3];
+    let (xs, n) = split_param(a);
+    return xs.len() + n;
+}

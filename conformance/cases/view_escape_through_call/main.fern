@@ -1,0 +1,28 @@
+// spec: ML-03
+// A callee that wraps a parameter's view in a struct returns a view of
+// what its caller passed, so passing a local escapes it.
+
+struct Window { xs: [i32] }
+
+function wrap(xs: [i32]): Window {
+    return Window { xs: xs };
+}
+
+function window_of(a: i32[]): Window {
+    return Window { xs: a[0:1] };
+}
+
+function wrapped(): Window {
+    let a: i32[] = [1, 2, 3];
+    return wrap(a[0:2]);
+}
+
+function windowed(): Window {
+    let a: i32[] = [1, 2, 3];
+    return window_of(a);
+}
+
+function main(): i32 {
+    let a: i32[] = [1, 2, 3];
+    return wrap(a[0:2]).xs.len() + window_of(a).xs.len();
+}
