@@ -34,17 +34,17 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<9 function __bad(kind: i64, reason: string): FrameError>>
 
-<<10 struct Reading>>
+<<10 pub struct Reader>>
 
-<<11 function __reading(payload: u8[], at: i32): Reading>>
+<<11 pub function reader(): Reader>>
 
 <<12 pub function read(payload: u8[], at: i32): Result[(Frame, i32), FrameError]>>
 
-<<13 function __frame(own r: Reading): Reading>>
+<<13 function __frame(own r: Reader): Reader>>
 
-<<14 function __stream_control(own r: Reading): Reading>>
+<<14 function __stream_control(own r: Reader): Reader>>
 
-<<15 function __close(own r: Reading): Reading>>
+<<15 function __close(own r: Reader): Reader>>
 
 <<16 pub function encode(f: Frame): u8[]>>
 
@@ -339,26 +339,108 @@ function __bad(kind: i64, reason: string): FrameError {
 }
 ```
 
-### `10 struct Reading`
+### `10 pub struct Reader`
 
 ```fern
-<<10 struct Reading>>=
-struct Reading { buf: u8[], at: i32, kind: i64, n: i64, bytes: u8[], frames: Frame[], ok: boolean, failed: Option[FrameError] }
+<<10 pub struct Reader>>=
+// A Reader reads a payload's frames one at a time. A STREAM frame is left
+// in `stream`, `offset`, `from`, `to` and `fin`, its data the payload's
+// bytes from `from` to `to`; an ACK frame in `ack`, whose range list the
+// next ACK reuses; any other frame in `frame`. `elicited` is whether any
+// frame read since `started` elicits an ACK.
+pub struct Reader {
+  buf: u8[],
+  at: i32,
+  kind: i64,
+  n: i64,
+  bytes: u8[],
+  frame: Frame,
+  stream: i64,
+  offset: i64,
+  from: i32,
+  to: i32,
+  fin: boolean,
+  ack: Ack,
+  elicited: boolean,
+  ok: boolean,
+  failed: Option[FrameError],
+}
 ```
 
-### `11 function __reading(payload: u8[], at: i32): Reading`
+### `11 pub function reader(): Reader`
 
 ```fern
-<<11 function __reading(payload: u8[], at: i32): Reading>>=
-function __reading(payload: u8[], at: i32): Reading {
-  return Reading { buf: payload, at: at, kind: 0, n: 0, bytes: [], frames: [], ok: true, failed: None };
+<<11 pub function reader(): Reader>>=
+pub function reader(): Reader {
+  return __reader([], 0);
 }
 
-function __fail(own r: Reading, reason: string): Reading {
-  return Reading { ...r, ok: false, failed: Some(__bad(r.kind, reason)) };
+function __reader(payload: u8[], at: i32): Reader {
+  return Reader { buf: payload, at: at, kind: 0, n: 0, bytes: [], frame: Ping, stream: 0, offset: 0, from: 0, to: 0, fin: false, ack: Ack { delay: 0, ranges: [], ecn: None }, elicited: false, ok: true, failed: None };
 }
 
-function __int(own r: Reading, what: string): Reading {
+pub function (r: Reader) started(payload: u8[]): Reader {
+  return Reader { ...r, buf: payload, at: 0, kind: 0, elicited: false, ok: true, failed: None };
+}
+
+pub function (r: Reader) more(): boolean {
+  return r.ok && r.at < r.buf.len();
+}
+
+pub function (r: Reader) next(): Reader {
+  r = __frame(r);
+  return Reader { ...r, elicited: r.elicited || r.ok && r.eliciting() };
+}
+
+// done lets go of the payload and of the last frame's bytes.
+pub function (r: Reader) done(): Reader {
+  return Reader { ...r, buf: [], bytes: [], frame: Ping };
+}
+
+pub function (r: Reader) is_stream(): boolean {
+  return r.ok && r.kind >= STREAM && r.kind <= 15;
+}
+
+pub function (r: Reader) is_ack(): boolean {
+  return r.ok && (r.kind == ACK || r.kind == ACK_ECN);
+}
+
+// frame_read is the last frame read as a `Frame`.
+pub function (r: Reader) frame_read(): Frame {
+  if (r.is_stream()) {
+    return StreamFrame(StreamData { stream: r.stream, offset: r.offset, data: __slice(r.buf, r.from, r.to), fin: r.fin });
+  }
+  if (r.is_ack()) {
+    return AckFrame(r.ack);
+  }
+  return r.frame;
+}
+
+pub function (r: Reader) eliciting(): boolean {
+  if (r.is_stream()) {
+    return true;
+  }
+  if (r.is_ack()) {
+    return false;
+  }
+  return r.frame.ack_eliciting();
+}
+
+pub function (r: Reader) permitted(space: i32): boolean {
+  if (r.is_stream()) {
+    return space == IN_ONE_RTT || space == IN_ZERO_RTT;
+  }
+  if (r.is_ack()) {
+    return space != IN_ZERO_RTT;
+  }
+  return r.frame.permitted(space);
+}
+
+function __fail(own r: Reader, reason: string): Reader {
+  return Reader { ...r, ok: false, failed: Some(__bad(r.kind, reason)) };
+}
+
+function __int(own r: Reader, what: string): Reader {
   if (!r.ok) {
     return r;
   }
@@ -366,22 +448,30 @@ function __int(own r: Reading, what: string): Reading {
   if (v < 0) {
     return __fail(r, what + " cut short");
   }
-  return Reading { ...r, at: varint_end(r.buf, r.at), n: v };
+  return Reader { ...r, at: varint_end(r.buf, r.at), n: v };
 }
 
-function __take(own r: Reading, n: i64, what: string): Reading {
+function __take(own r: Reader, n: i64, what: string): Reader {
+  r = __span(r, n, what);
+  if (!r.ok) {
+    return r;
+  }
+  let k: i32 = n as i32;
+  return Reader { ...r, at: r.at + k, bytes: __slice(r.buf, r.at, r.at + k) };
+}
+
+function __span(own r: Reader, n: i64, what: string): Reader {
   if (!r.ok) {
     return r;
   }
   if (n < 0 || n > (r.buf.len() - r.at) as i64) {
     return __fail(r, what + " of " + n.to_string() + " bytes past the end of the packet");
   }
-  let k: i32 = n as i32;
-  return Reading { ...r, at: r.at + k, bytes: __slice(r.buf, r.at, r.at + k) };
+  return r;
 }
 
-function __done(own r: Reading, f: Frame): Reading {
-  return Reading { ...r, frames: r.frames.append(f) };
+function __done(own r: Reader, f: Frame): Reader {
+  return Reader { ...r, frame: f };
 }
 ```
 
@@ -390,23 +480,27 @@ function __done(own r: Reading, f: Frame): Reading {
 ```fern
 <<12 pub function read(payload: u8[], at: i32): Result[(Frame, i32), FrameError]>>=
 pub function read(payload: u8[], at: i32): Result[(Frame, i32), FrameError] {
-  let r: Reading = __frame(__reading(payload, at));
+  let r: Reader = __frame(__reader(payload, at));
   match (r.failed) {
     Some(e) => {
       return Err(e);
     },
     None => {}
   }
-  return Ok((r.frames[0], r.at));
+  return Ok((r.frame_read(), r.at));
 }
 
 pub function read_all(payload: u8[]): Result[Frame[], FrameError] {
   if (payload.len() == 0) {
     return Err(FrameError { code: PROTOCOL_VIOLATION, frame_type: 0, reason: "a packet with no frames" });
   }
-  let r: Reading = __reading(payload, 0);
-  while (r.ok && r.at < r.buf.len()) {
+  let r: Reader = __reader(payload, 0);
+  let fs: Frame[] = [];
+  while (r.more()) {
     r = __frame(r);
+    if (r.ok) {
+      fs = fs.append(r.frame_read());
+    }
   }
   match (r.failed) {
     Some(e) => {
@@ -414,21 +508,21 @@ pub function read_all(payload: u8[]): Result[Frame[], FrameError] {
     },
     None => {}
   }
-  return Ok(r.frames);
+  return Ok(fs);
 }
 ```
 
-### `13 function __frame(own r: Reading): Reading`
+### `13 function __frame(own r: Reader): Reader`
 
 ```fern
-<<13 function __frame(own r: Reading): Reading>>=
-function __frame(own r: Reading): Reading {
+<<13 function __frame(own r: Reader): Reader>>=
+function __frame(own r: Reader): Reader {
   let start: i32 = r.at;
-  r = __int(Reading { ...r, kind: 0 }, "frame type");
+  r = __int(Reader { ...r, kind: 0 }, "frame type");
   if (!r.ok) {
     return r;
   }
-  r = Reading { ...r, kind: r.n };
+  r = Reader { ...r, kind: r.n };
   if (r.kind == PADDING) {
     return __padding(r, start);
   }
@@ -444,15 +538,15 @@ function __frame(own r: Reading): Reading {
   return __carrying(r);
 }
 
-function __padding(own r: Reading, start: i32): Reading {
+function __padding(own r: Reader, start: i32): Reader {
   let end: i32 = r.at;
   while (end < r.buf.len() && r.buf[end] == 0) {
     end = end + 1;
   }
-  return __done(Reading { ...r, at: end }, Padding(end - start));
+  return __done(Reader { ...r, at: end }, Padding(end - start));
 }
 
-function __carrying(own r: Reading): Reading {
+function __carrying(own r: Reader): Reader {
   if (r.kind >= STREAM && r.kind <= 15) {
     return __stream(r);
   }
@@ -468,7 +562,7 @@ function __carrying(own r: Reading): Reading {
   return __rest(r);
 }
 
-function __ack(own r: Reading): Reading {
+function __ack(own r: Reader): Reader {
   r = __int(r, "largest acknowledged");
   let largest: i64 = r.n;
   r = __int(r, "ack delay");
@@ -483,17 +577,26 @@ function __ack(own r: Reading): Reading {
   if (first > largest) {
     return __fail(r, "first ack range below packet 0");
   }
-  let (r1, ranges) = __ack_ranges(r, count, [AckRange { low: largest - first, high: largest }]);
-  let (r2, ecn) = __ecn(r1);
-  if (!r2.ok) {
-    return r2;
-  }
-  return __done(r2, AckFrame(Ack { delay: delay, ranges: ranges, ecn: ecn }));
+  r = Reader { ...r, ack: r.ack.__first(delay, largest - first, largest) };
+  return __ecn(__ack_ranges(r, count));
 }
 
-function __ecn(own r: Reading): (Reading, Option[Ecn]) {
+// __first starts the ACK over at one range, kept in the list's one slot
+// when the last ACK had one range.
+function (a: Ack) __first(delay: i64, low: i64, high: i64): Ack {
+  if (a.ranges.len() == 1) {
+    return Ack { ...a, delay: delay, ranges: a.ranges.with(0, __spanned(a.ranges[0], low, high)), ecn: None };
+  }
+  return Ack { ...a, delay: delay, ranges: [AckRange { low: low, high: high }], ecn: None };
+}
+
+function __spanned(r: AckRange, low: i64, high: i64): AckRange {
+  return AckRange { ...r, low: low, high: high };
+}
+
+function __ecn(own r: Reader): Reader {
   if (!r.ok || r.kind == ACK) {
-    return (r, None);
+    return r;
   }
   r = __int(r, "ECT(0) count");
   let e0: i64 = r.n;
@@ -501,33 +604,30 @@ function __ecn(own r: Reading): (Reading, Option[Ecn]) {
   let e1: i64 = r.n;
   r = __int(r, "ECN-CE count");
   if (!r.ok) {
-    return (r, None);
+    return r;
   }
-  let ce: i64 = r.n;
-  return (r, Some(Ecn { ect0: e0, ect1: e1, ce: ce }));
+  return Reader { ...r, ack: Ack { ...r.ack, ecn: Some(Ecn { ect0: e0, ect1: e1, ce: r.n }) } };
 }
 
-function __ack_ranges(own r: Reading, count: i64, own ranges: AckRange[]): (Reading, AckRange[]) {
-  let i: i64 = 0;
-  while (i < count) {
+function __ack_ranges(own r: Reader, count: i64): Reader {
+  for _ in 0..count {
     r = __int(r, "ack gap");
     let gap: i64 = r.n;
     r = __int(r, "ack range length");
     let len: i64 = r.n;
     if (!r.ok) {
-      return (r, ranges);
+      return r;
     }
-    let high: i64 = ranges[ranges.len() - 1].low - gap - 2;
+    let high: i64 = r.ack.ranges[r.ack.ranges.len() - 1].low - gap - 2;
     if (high < 0 || len > high) {
-      return (__fail(r, "ack range below packet 0"), ranges);
+      return __fail(r, "ack range below packet 0");
     }
-    ranges = ranges.append(AckRange { low: high - len, high: high });
-    i = i + 1;
+    r = Reader { ...r, ack: Ack { ...r.ack, ranges: r.ack.ranges.append(AckRange { low: high - len, high: high }) } };
   }
-  return (r, ranges);
+  return r;
 }
 
-function __stream(own r: Reading): Reading {
+function __stream(own r: Reader): Reader {
   let kind: i64 = r.kind;
   r = __int(r, "stream id");
   let id: i64 = r.n;
@@ -547,20 +647,20 @@ function __stream(own r: Reading): Reading {
   if (offset + len > MAX_VARINT) {
     return __fail(r, "stream data past 2^62-1");
   }
-  r = __take(r, len, "stream data");
+  r = __span(r, len, "stream data");
   if (!r.ok) {
     return r;
   }
-  let data: u8[] = r.bytes;
-  return __done(r, StreamFrame(StreamData { stream: id, offset: offset, data: data, fin: (kind & 1) != 0 }));
+  let to: i32 = r.at + len as i32;
+  return Reader { ...r, at: to, stream: id, offset: offset, from: r.at, to: to, fin: (kind & 1) != 0 };
 }
 ```
 
-### `14 function __stream_control(own r: Reading): Reading`
+### `14 function __stream_control(own r: Reader): Reader`
 
 ```fern
-<<14 function __stream_control(own r: Reading): Reading>>=
-function __stream_control(own r: Reading): Reading {
+<<14 function __stream_control(own r: Reader): Reader>>=
+function __stream_control(own r: Reader): Reader {
   r = __int(r, "stream id");
   let id: i64 = r.n;
   r = __int(r, "error code");
@@ -579,7 +679,7 @@ function __stream_control(own r: Reading): Reading {
   return __done(r, ResetStreamFrame(ResetStream { stream: id, code: code, final_size: size }));
 }
 
-function __handshake_data(own r: Reading): Reading {
+function __handshake_data(own r: Reader): Reader {
   if (r.kind == CRYPTO) {
     r = __int(r, "crypto offset");
     let offset: i64 = r.n;
@@ -614,7 +714,7 @@ function __handshake_data(own r: Reading): Reading {
   return __done(r, NewToken(token));
 }
 
-function __limits(own r: Reading): Reading {
+function __limits(own r: Reader): Reader {
   r = __int(r, "value");
   if (!r.ok) {
     return r;
@@ -632,7 +732,7 @@ function __limits(own r: Reading): Reading {
   return __stream_count(r, v);
 }
 
-function __stream_limit(own r: Reading, id: i64): Reading {
+function __stream_limit(own r: Reader, id: i64): Reader {
   r = __int(r, "value");
   if (!r.ok) {
     return r;
@@ -644,7 +744,7 @@ function __stream_limit(own r: Reading, id: i64): Reading {
   return __done(r, StreamDataBlocked(id, w));
 }
 
-function __stream_count(own r: Reading, v: i64): Reading {
+function __stream_count(own r: Reader, v: i64): Reader {
   if (v > 1152921504606846976) {
     return __fail(r, "a stream count over 2^60");
   }
@@ -655,7 +755,7 @@ function __stream_count(own r: Reading, v: i64): Reading {
   return __done(r, StreamsBlocked(bidi, v));
 }
 
-function __rest(own r: Reading): Reading {
+function __rest(own r: Reader): Reader {
   if (r.kind == NEW_CONNECTION_ID) {
     return __new_connection_id(r);
   }
@@ -676,7 +776,7 @@ function __rest(own r: Reading): Reading {
   return __fail(r, "unknown frame type");
 }
 
-function __path(own r: Reading): Reading {
+function __path(own r: Reader): Reader {
   r = __take(r, 8 as i64, "path data");
   if (!r.ok) {
     return r;
@@ -689,11 +789,11 @@ function __path(own r: Reading): Reading {
 }
 ```
 
-### `15 function __close(own r: Reading): Reading`
+### `15 function __close(own r: Reader): Reader`
 
 ```fern
-<<15 function __close(own r: Reading): Reading>>=
-function __close(own r: Reading): Reading {
+<<15 function __close(own r: Reader): Reader>>=
+function __close(own r: Reader): Reader {
   r = __int(r, "error code");
   let code: i64 = r.n;
   let frame_type: i64 = 0;
@@ -715,7 +815,7 @@ function __close(own r: Reading): Reading {
   return __done(r, ConnectionCloseFrame(ConnectionClose { code: code, frame_type: frame_type, reason: reason, app: app }));
 }
 
-function __new_connection_id(own r: Reading): Reading {
+function __new_connection_id(own r: Reader): Reader {
   r = __int(r, "sequence number");
   let seq: i64 = r.n;
   r = __int(r, "retire prior to");
@@ -733,7 +833,7 @@ function __new_connection_id(own r: Reading): Reading {
   if (n < 1 || n > 20) {
     return __fail(r, "a connection id of " + n.to_string() + " bytes");
   }
-  r = __take(Reading { ...r, at: r.at + 1 }, n, "connection id");
+  r = __take(Reader { ...r, at: r.at + 1 }, n, "connection id");
   let id: u8[] = r.bytes;
   r = __take(r, 16 as i64, "stateless reset token");
   if (!r.ok) {

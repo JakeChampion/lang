@@ -17,7 +17,13 @@
   text-transform: uppercase;
   color: var(--gray-3);
 }
+.bench-controls label {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  max-width: 100%;
+}
 .bench-controls label > * {
+  max-width: 100%;
   font: 0.875rem var(--font-body);
   letter-spacing: 0;
   text-transform: none;
@@ -162,7 +168,114 @@
   font: 600 1.15rem/1.4 var(--font-display);
   color: var(--white);
 }
+/* Image pipeline */
+.image-pair {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 0 0 1.25rem;
+}
+.image-pair figure {
+  margin: 0;
+  padding: 0.75rem;
+  border: var(--rule);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--bg-raised) 70%, transparent);
+}
+.image-pair canvas,
+.image-pair img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 4 / 3;
+  object-fit: contain;
+  background: var(--gray-6);
+}
+.image-pair figcaption {
+  margin-top: 0.5rem;
+  font: 0.75rem var(--font-mono);
+  color: var(--gray-3);
+}
+.image-pair figcaption a {
+  margin-left: 0.5rem;
+  color: var(--text-accent);
+}
+/* Torrent swarm */
+.bench-fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1rem 1.5rem;
+}
+.swarm {
+  margin-top: 1.25rem;
+  padding: 1.1rem 1.25rem;
+  border: var(--rule);
+  border-radius: var(--radius);
+  background: color-mix(in oklab, var(--bg-raised) 70%, transparent);
+}
+.swarm-file {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.75rem 1.25rem;
+}
+.swarm-file span {
+  display: block;
+  font: 500 0.68rem var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gray-3);
+}
+.swarm-file strong {
+  font: 600 1rem var(--font-mono);
+  color: var(--white);
+  overflow-wrap: anywhere;
+}
+.pieces {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin: 1rem 0;
+}
+.pieces i {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--gray-5);
+}
+.pieces i.have {
+  background: var(--fern-spore);
+}
+.swarm-links label {
+  display: grid;
+  gap: 0.35rem;
+  font: 500 0.68rem var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--gray-3);
+}
+.magnet-row {
+  display: flex;
+  gap: 0.5rem;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.magnet-row input {
+  flex: 1;
+  min-width: 0;
+  font: 0.8rem var(--font-mono);
+}
+.swarm-links p {
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+}
+.swarm-links code {
+  overflow-wrap: anywhere;
+}
 @media (max-width: 720px) {
+  .image-pair {
+    grid-template-columns: minmax(0, 1fr);
+  }
   .bench-controls .button-group {
     margin-left: 0;
   }

@@ -2372,6 +2372,10 @@ function apply_store(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken
   if (w.held >= 0 && put_back(w, ins, val)) {
     return p;
   }
+  // An address into a box is a word: storing it hands on no unit.
+  if (val >= 0 && val < w.derived.len() && w.derived[val]) {
+    return p;
+  }
   if (zero_at(w, val)) {
     for r in taken {
       let k: i32 = w.idx[r];
