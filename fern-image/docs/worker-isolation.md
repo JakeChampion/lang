@@ -35,6 +35,20 @@ The pressure modes retain 48 frames, then render tiles or test cancellation.
 The worker accesses retained images after cancellation to preserve their ownership during that test.
 Cancellation stops at callback polls 1, 8, 24, and 64.
 
+## CI cgroup driver
+
+The CI lane selects Docker's cgroupfs driver for worker qualification.
+Systemd can remove an empty container scope before the runtime reads its OOM event.
+The runtime issue is [runc #5071](https://github.com/opencontainers/runc/issues/5071).
+The cgroupfs driver keeps cgroup removal under the container runtime.
+
+CI run 40299470015 captured an OOM-mode exit with code 137 and `OOMKilled=false` under the systemd driver.
+The collector rejected that result and preserved the original state.
+The local cgroupfs run passed all 27 worker cases, with three kernel OOM kills.
+The failed CI worker and the local worker have the same binary SHA-256.
+The CI driver change preserves all memory, swap, CPU, PID, leak, deadline, and cleanup assertions.
+Current CI qualification remains separate from the local observations.
+
 ## Failure and recovery contract
 
 The collector runs three sequences of nine fresh containers, with no concurrent workers.
