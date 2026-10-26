@@ -1,11 +1,9 @@
 name: CI
 
-# A pull request runs Lint, lane selection and the Preflight tier, all outside
-# the full-suite queue. The full suite runs on main after the merge (ci-main.yml
-# coalesces pending main tips) and on a merge queue batch. It also runs on a
-# pull request labelled ci-full, through the ci-suite.yml FIFO. The Lint / lint
-# check remains unconditional and keeps its name. `CI verdict` below is the one
-# check a ruleset requires: it fails when any tier that ran failed.
+# Every pull request runs Lint, lane selection and the full suite through
+# ci-suite.yml's FIFO. Main and merge queue batches use the same suite.
+# Existing path filters decide which lanes apply to the change.
+# `CI verdict` is the required check: lint and the suite must both pass.
 #
 # MERGE QUEUE. A merge_group run is a full suite on the batch that GitHub is
 # about to merge. One suite covers every pull request in the batch, and main
@@ -14,10 +12,7 @@ name: CI
 
 on:
   pull_request:
-    # labeled and unlabeled as well as the defaults: the ci-full label picks
-    # the suite over Preflight below, so a label change starts the run it
-    # selects and cancels the one it does not, through the group below.
-    types: [opened, synchronize, reopened, labeled, unlabeled]
+    types: [opened, synchronize, reopened]
   merge_group:
   workflow_dispatch:
   workflow_call:
@@ -88,7 +83,6 @@ jobs:
           # TestWorkflowPathFiltersHaveNoDeadEntries, ...).
           LANES: |
             {
-              "preflight":             { "paths-ignore": ["docs/**", "*.md"] },
               "test-units":            { "paths-ignore": ["docs/**", "*.md"] },
               "test-coreutils":        { "paths-ignore": ["docs/**", "*.md"] },
               "test-e2e-x86_64":       { "paths-ignore": ["docs/**", "*.md"] },
@@ -309,7 +303,7 @@ jobs:
               const suiteStarted = (jobs) => jobs.some((j) => j.name.startsWith("Full suite / "));
               // Lane id to the name its jobs carry, and the prefix before that
               // name: "Full suite / " for a suite lane, nothing for a lane
-              // ci.yml runs itself outside the queue (Preflight).
+              // ci.yml runs itself outside the queue, if any.
               let display = null;
               let prefix = null;
               const jobPrefix = (l) => (prefix[l] ?? "Full suite / ") + display[l] + " / ";
@@ -491,27 +485,10 @@ jobs:
     uses: ./.github/workflows/lint.yml
     secrets: inherit
 
-  # The fail-fast tier: the fixture corpus through the self-host compiler and
-  # the x86-64 legs of the unit, e2e, wasm, differential and coreutils lanes,
-  # run beside Lint and outside the suite queue. It reads the lane table like
-  # a suite lane, so a doc-only change skips it, and reap-preflight below
-  # cancels the whole run when a leg fails. It runs only where the suite does
-  # not: the suite already holds every leg, so the two never run together.
-  preflight:
-    name: Preflight
-    needs: [changes]
-    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci-full') && fromJSON(needs.changes.outputs.lanes)['preflight']
-    uses: ./.github/workflows/preflight.yml
-    secrets: inherit
-
   suite:
     name: Full suite
-    # A pull request runs Preflight alone; the suite runs on main after the
-    # merge, on a dispatch, and on a pull request labelled ci-full. Adding
-    # the label is a pull_request event of its own, so it starts the suite
-    # on the current head.
+    # Every event uses the same suite, without requiring a label.
     needs: [changes]
-    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci-full')
     uses: ./.github/workflows/ci-suite.yml
     with:
       lanes: ${{ needs.changes.outputs.lanes }}
@@ -521,13 +498,11 @@ jobs:
       actions: write
       pull-requests: read
 
-  # THE ONE CHECK A RULESET REQUIRES. Lint must pass, and a tier that ran must
-  # pass. A tier that did not run is fine: Preflight skips a doc-only change,
-  # and the suite runs only under ci-full, on main and on a merge queue batch.
-  # `!cancelled()` so a cancelled run has no verdict rather than a red one.
+  # The required verdict waits for lint and the full suite. A failure in
+  # lane selection skips the suite and must fail the verdict too.
   verdict:
     name: CI verdict
-    needs: [lint, preflight, suite]
+    needs: [lint, suite]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -535,13 +510,11 @@ jobs:
       - name: Every tier that ran passed
         env:
           LINT: ${{ needs.lint.result }}
-          PREFLIGHT: ${{ needs.preflight.result }}
           SUITE: ${{ needs.suite.result }}
         run: |
-          echo "lint=$LINT preflight=$PREFLIGHT suite=$SUITE"
+          echo "lint=$LINT suite=$SUITE"
           test "$LINT" = success
-          case "$PREFLIGHT" in success|skipped) ;; *) exit 1 ;; esac
-          case "$SUITE" in success|skipped) ;; *) exit 1 ;; esac
+          test "$SUITE" = success
 
   reap-lint:
     needs: [lint]
@@ -549,17 +522,6 @@ jobs:
     uses: ./.github/workflows/cancel-on-failure.yml
     with:
       lane: Lint
-    permissions:
-      actions: write
-      contents: read
-      pull-requests: read
-
-  reap-preflight:
-    needs: [preflight]
-    if: ${{ !cancelled() && needs.preflight.result == 'failure' && github.event_name == 'pull_request' }}
-    uses: ./.github/workflows/cancel-on-failure.yml
-    with:
-      lane: Preflight
     permissions:
       actions: write
       contents: read

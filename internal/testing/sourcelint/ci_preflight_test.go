@@ -23,8 +23,8 @@ func TestCILintRunsOutsideTheFullSuiteQueue(t *testing.T) {
 		t.Errorf("root CI must not queue lint behind a full compiler suite; the suite FIFO belongs to %s", ciSuiteFile)
 	}
 	rootJobs := workflowJobs(t, ciFile)
-	allowed := map[string]bool{"changes": true, "lint": true, "preflight": true, "suite": true, "reap-lint": true, "reap-preflight": true, "verdict": true}
-	var suite, preflight, verdict ciJob
+	allowed := map[string]bool{"changes": true, "lint": true, "suite": true, "reap-lint": true, "verdict": true}
+	var suite, verdict ciJob
 	for _, job := range rootJobs {
 		if !allowed[job.id] {
 			t.Errorf("unexpected root job %s bypasses the full-suite queue", job.id)
@@ -33,33 +33,30 @@ func TestCILintRunsOutsideTheFullSuiteQueue(t *testing.T) {
 		switch job.id {
 		case "suite":
 			suite = job
-		case "preflight":
-			preflight = job
 		case "verdict":
 			verdict = job
 		}
 	}
 	if len(allowed) != 0 {
-		t.Fatalf("missing preflight jobs: %v", allowed)
+		t.Fatalf("missing CI jobs: %v", allowed)
 	}
 	// The verdict is the one check a ruleset requires, so it must follow every
-	// tier and still report when a tier was skipped.
-	if verdict.keys["name"] != "CI verdict" || verdict.keys["needs"] != "[lint, preflight, suite]" || verdict.keys["if"] != "${{ !cancelled() }}" {
-		t.Errorf("verdict must be named `CI verdict`, follow lint, preflight and suite, and run unless cancelled: %+v", verdict.keys)
+	// tier and still report when a dependency failed.
+	if verdict.keys["name"] != "CI verdict" || verdict.keys["needs"] != "[lint, suite]" || verdict.keys["if"] != "${{ !cancelled() }}" {
+		t.Errorf("verdict must be named `CI verdict`, follow lint and suite, and run unless cancelled: %+v", verdict.keys)
 	}
 	if on, _ := onBlock(workflowSource(t, ciFile)); !strings.Contains(on, "merge_group:") {
 		t.Errorf("%s does not trigger on merge_group, so a merge queue batch gets no suite and no verdict", ciFile)
 	}
 	if suite.usesFile() != ciSuiteFile || suite.keys["name"] != "Full suite" ||
 		suite.keys["needs"] != "[changes]" || suite.keys["secrets"] != "inherit" ||
-		suite.keys["if"] != "github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'ci-full')" ||
+		suite.keys["if"] != "" ||
 		suite.with["lanes"] != "${{ needs.changes.outputs.lanes }}" {
 		t.Fatalf("full-suite caller must preserve lane selection, independent lint and secrets: %+v", suite)
 	}
-	// The suite holds every Preflight leg, so a run that takes the suite skips
-	// Preflight: the two conditions partition the events.
-	if preflight.keys["if"] != "github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci-full') && fromJSON(needs.changes.outputs.lanes)['preflight']" {
-		t.Errorf("preflight must run exactly where the suite does not: %q", preflight.keys["if"])
+	// No label or event guard may reduce ordinary PRs to a smaller tier.
+	if strings.Contains(workflowSource(t, ciFile), "ci-full") {
+		t.Fatal("full suite must not require the ci-full label")
 	}
 	for scope, level := range permissionRequests(workflowSource(t, ciSuiteFile)) {
 		if suite.perms[scope] != level {
@@ -79,7 +76,7 @@ func TestCILintRunsOutsideTheFullSuiteQueue(t *testing.T) {
 	on, _ := onBlock(workflowSource(t, ciSuiteFile))
 	for _, event := range []string{"pull_request", "push", "workflow_dispatch"} {
 		if _, ok := triggerBlock(on, event); ok {
-			t.Errorf("suite must be reached through preflight, not a %s trigger", event)
+			t.Errorf("suite must be reached through root CI, not a %s trigger", event)
 		}
 	}
 }
