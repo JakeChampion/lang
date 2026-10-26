@@ -2187,9 +2187,11 @@ func (p *parser) parseLambdaBody(statementBranches bool) (*ast.Block, error) {
 	}
 	block := &ast.Block{P: open.Pos}
 	p.parseBlockStmtsMode(block, true, false, statementBranches)
-	if _, err := p.expect(lexer.Punct, "}"); err != nil {
+	closeTok, err := p.expect(lexer.Punct, "}")
+	if err != nil {
 		return block, err
 	}
+	block.End = closeTok.Pos
 	return block, nil
 }
 
