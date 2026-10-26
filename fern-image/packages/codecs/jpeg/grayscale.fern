@@ -1,0 +1,94 @@
+import "./header";
+import "./entropy";
+import "./idct";
+import "../../pixels/pixels";
+import "core/cmp";
+
+@derive(cmp.Eq)
+pub enum DecodeError { DecodeEntropy(entropy.EntropyError), DecodeTransform(idct.IdctError), DecodeStorage(pixels.ImageError), DecodeUnsupported, DecodeCancelled }
+
+pub function default_limits(): entropy.BlockLimits {
+  return entropy.default_limits();
+}
+
+function entropy_error(error: entropy.EntropyError): DecodeError {
+  return match (error) { entropy.EntropyCancelled => DecodeCancelled, entropy.EntropyHeader(header.Unsupported()) => DecodeUnsupported, _ => DecodeEntropy(error) };
+}
+
+function transform_error(error: idct.IdctError): DecodeError {
+  return match (error) { idct.Cancelled => DecodeCancelled, _ => DecodeTransform(error) };
+}
+
+function write_block(own image: pixels.Image, block: entropy.CoefficientBlock, values: [u8], cancelled: () => boolean): Result[pixels.Image, DecodeError] {
+  if (values.len() != 64 || block.x < 0 || block.y < 0) {
+    return Err(DecodeStorage(pixels.Storage));
+  }
+  let left = match (block.x *? 8) { Some(v) => v, None => { return Err(DecodeStorage(pixels.Overflow)); } };
+  let top = match (block.y *? 8) { Some(v) => v, None => { return Err(DecodeStorage(pixels.Overflow)); } };
+  if (left >= image.layout.width || top >= image.layout.height) {
+    return Err(DecodeStorage(pixels.Bounds));
+  }
+  for by in 0..8 {
+    if (cancelled()) {
+      return Err(DecodeCancelled);
+    }
+    let y = top + by;
+    if (y < image.layout.height) {
+      for bx in 0..8 {
+        let x = left + bx;
+        if (x < image.layout.width) {
+          let value = values[by * 8 + bx];
+          image = match (pixels.write_pixel(image, x, y, pixels.Pixel { r: value, g: value, b: value, a: 255 })) { Ok(v) => v, Err(e) => { return Err(DecodeStorage(e)); } };
+        }
+      }
+    }
+  }
+  return Ok(image);
+}
+
+// RGB8 storage repeats the unmanaged component sample in all three channels.
+pub function decode(input: [u8], limits: entropy.BlockLimits, cancelled: () => boolean): Result[pixels.Image, DecodeError] {
+  let inspection = match (entropy.inspect_blocks(input, limits, cancelled)) { Ok(v) => v, Err(e) => { return Err(entropy_error(e)); } };
+  if (inspection.header.components.len() != 1) {
+    return Err(DecodeUnsupported);
+  }
+  let component = inspection.header.components[0];
+  let quantizers = match (inspection.header.quantization[component.quant_table]) { Some(t) => t.values, None => { return Err(DecodeEntropy(entropy.EntropyHeader(header.Table))); } };
+  if (cancelled()) {
+    return Err(DecodeCancelled);
+  }
+  let layout = inspection.header.output_layout;
+  let image = match (pixels.create(layout.width, layout.height, layout.stride, pixels.RGB8, limits.headers.image)) { Ok(v) => v, Err(e) => { return Err(DecodeStorage(e)); } };
+  if (cancelled()) {
+    return Err(DecodeCancelled);
+  }
+  let slot = cell_new(Some(image));
+  let folded = entropy.fold_blocks(input, limits, cancelled, 0, (count: i32, block: entropy.CoefficientBlock): Result[i32, DecodeError] => {
+    if (block.component != component.id) {
+      return Err(DecodeStorage(pixels.Storage));
+    }
+    let frame = match (slot.get()) { Some(v) => v, None => { return Err(DecodeStorage(pixels.Storage)); } };
+    slot.set(None);
+    let values = match (idct.reconstruct(block.values, quantizers, cancelled)) { Ok(v) => v, Err(e) => { return Err(transform_error(e)); } };
+    let next = write_block(pixels.Image { layout: frame.layout, data: frame.data }, block, values, cancelled)?;
+    slot.set(Some(next));
+    return Ok(count + 1);
+  });
+  match (folded) {
+    Ok(done) => {
+      if (done.value != inspection.plan.output_blocks) {
+        return Err(DecodeStorage(pixels.Storage));
+      }
+    },
+    Err(entropy.BlockDecode(e)) => {
+      return Err(entropy_error(e));
+    },
+    Err(entropy.BlockConsumer(e)) => {
+      return Err(e);
+    }
+  }
+  if (cancelled()) {
+    return Err(DecodeCancelled);
+  }
+  return match (slot.get()) { Some(v) => Ok(v), None => Err(DecodeStorage(pixels.Storage)) };
+}

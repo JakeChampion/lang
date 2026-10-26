@@ -1,0 +1,266 @@
+import "../packages/codecs/jpeg/grayscale";
+import "../packages/codecs/jpeg/entropy";
+import "../packages/codecs/jpeg/header";
+import "../packages/codecs/jpeg/idct";
+import "../packages/pixels/pixels";
+import "./fixtures/jpeg_headers" as fixtures;
+import "./fixtures/jpeg_entropy" as streams;
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function append_bytes(value: u8[], input: [u8]): u8[] {
+  for b in input {
+    value = value.append(b);
+  }
+  return value;
+}
+
+function zero_stream(): u8[] {
+  return fixtures.synthetic_header().append(0 as u8).append(15 as u8).append(255 as u8).append(217 as u8);
+}
+
+function marker_at(input: [u8], wanted: i32): i32 {
+  let at = 2;
+  while (at + 4 <= input.len()) {
+    if (input[at] != 255 as u8) {
+      return 0 - 1;
+    }
+    let marker = input[at + 1] as i32;
+    if (marker == wanted) {
+      return at;
+    }
+    if (marker == 218) {
+      return 0 - 1;
+    }
+    let length = input[at + 2] as i32 << 8 | input[at + 3] as i32;
+    if (length < 2) {
+      return 0 - 1;
+    }
+    at = at + length + 2;
+  }
+  return 0 - 1;
+}
+
+function failed(input: [u8], expected: grayscale.DecodeError): boolean {
+  return match (grayscale.decode(input, grayscale.default_limits(), never)) { Err(e) => e == expected, Ok(_) => false };
+}
+
+function zeros_and_plan(): test.TestOutcome {
+  let input = zero_stream();
+  let info = match (entropy.inspect_blocks(input, grayscale.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("block inspection"); } };
+  if (info.plan.mcus != 6 || info.plan.decoded_blocks != 6 || info.plan.output_blocks != 6 || info.header.components.len() != 1) {
+    return test.fail("gray block plan");
+  }
+  let image = match (grayscale.decode(input, grayscale.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("zero stream decode"); } };
+  if (image.layout.width != 17 || image.layout.height != 9 || image.layout.stride != 51 || image.layout.bytes != 459 || image.data.len() != 459) {
+    return test.fail("output layout");
+  }
+  match (image.layout.format) {
+    pixels.RGB8 => {},
+    _ => {
+      return test.fail("output format");
+    }
+  }
+  for b in image.data {
+    if (b != 128 as u8) {
+      return test.fail("independent zero-block samples");
+    }
+  }
+  let sof = marker_at(input, 192);
+  let sos = marker_at(input, 218);
+  if (sof < 0 || sos < 0) {
+    return test.fail("component marker offsets");
+  }
+  let renamed = input.with(sof + 10, 201 as u8).with(sos + 5, 201 as u8);
+  let other = match (grayscale.decode(renamed, grayscale.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("arbitrary component identifier"); } };
+  for value in other.data {
+    if (value != 128 as u8) {
+      return test.fail("renamed component samples");
+    }
+  }
+  let quantizer = marker_at(input, 219);
+  if (quantizer < 0) {
+    return test.fail("quantizer marker");
+  }
+  let remapped = input.with(quantizer + 4, 3 as u8).with(sof + 12, 3 as u8);
+  let q3 = match (grayscale.decode(remapped, grayscale.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("quantizer destination 3"); } };
+  for value in q3.data {
+    if (value != 128 as u8) {
+      return test.fail("selected quantizer samples");
+    }
+  }
+  let header_only = fixtures.synthetic_header();
+  match (entropy.inspect_blocks(header_only, grayscale.default_limits(), never)) {
+    Ok(_) => {},
+    Err(_) => {
+      return test.fail("header-only inspection scope");
+    }
+  }
+  return test.assert_true(failed(header_only, grayscale.DecodeEntropy(entropy.EntropyTruncated)));
+}
+
+function real_gray_and_sampling(): test.TestOutcome {
+  for input in [fixtures.gray(), fixtures.gray_optimized(), streams.restart_gray(), streams.single_sampling()] {
+    let image = match (grayscale.decode(input, grayscale.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("real grayscale fixture"); } };
+    for y in 0..image.layout.height {
+      for x in 0..image.layout.width {
+        let p = match (pixels.read_pixel(image, x, y)) { Ok(v) => v, Err(_) => { return test.fail("image pixel"); } };
+        if (p.r != p.g || p.g != p.b || p.a != 255 as u8) {
+          return test.fail("replicated raw samples");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function unsupported(): test.TestOutcome {
+  for input in [fixtures.rgb444(), fixtures.rgb422(), fixtures.rgb420(), fixtures.progressive(), fixtures.cmyk()] {
+    if (!failed(input, grayscale.DecodeUnsupported)) {
+      return test.fail("unsupported profile");
+    }
+  }
+  return test.pass();
+}
+
+function budgets(): test.TestOutcome {
+  let input = zero_stream();
+  let normal = grayscale.default_limits();
+  let h = match (header.parse(input, normal.headers, never)) { Ok(v) => v, Err(_) => { return test.fail("budget header"); } };
+  let headers = header.HeaderLimits { ...normal.headers, max_input_bytes: input.len(), max_header_bytes: h.entropy_offset, max_segments: h.segment_count, image: pixels.Limits { max_pixels: 153, max_bytes: 459 } };
+  let exact = entropy.BlockLimits { headers: headers, max_mcus: 6, max_blocks: 6 };
+  match (grayscale.decode(input, exact, never)) {
+    Ok(_) => {},
+    Err(_) => {
+      return test.fail("exact admission");
+    }
+  }
+  for limits in [entropy.BlockLimits { ...exact, max_mcus: 5 }, entropy.BlockLimits { ...exact, max_blocks: 5 }] {
+    match (grayscale.decode(input, limits, never)) {
+      Err(grayscale.DecodeEntropy(entropy.EntropyLimit())) => {},
+      _ => {
+        return test.fail("block count admission");
+      }
+    }
+  }
+  for limited in [header.HeaderLimits { ...headers, max_input_bytes: input.len() - 1 }, header.HeaderLimits { ...headers, max_header_bytes: h.entropy_offset - 1 }, header.HeaderLimits { ...headers, max_segments: h.segment_count - 1 }, header.HeaderLimits { ...headers, image: pixels.Limits { max_pixels: 152, max_bytes: 459 } }, header.HeaderLimits { ...headers, image: pixels.Limits { max_pixels: 153, max_bytes: 458 } }] {
+    match (grayscale.decode(input, entropy.BlockLimits { ...exact, headers: limited }, never)) {
+      Err(grayscale.DecodeEntropy(entropy.EntropyHeader(header.Limit()))) => {},
+      _ => {
+        return test.fail("header and output admission");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function framing(): test.TestOutcome {
+  let input = zero_stream();
+  for end in 0..input.len() {
+    match (grayscale.decode(input[0:end], grayscale.default_limits(), never)) {
+      Err(_) => {},
+      Ok(_) => {
+        return test.fail("incomplete prefix accepted");
+      }
+    }
+  }
+  if (!failed(input.append(0 as u8), grayscale.DecodeEntropy(entropy.EntropyTrailing)) || !failed(input.with(input.len() - 1, 216 as u8), grayscale.DecodeEntropy(entropy.EntropyMarker))) {
+    return test.fail("late framing error");
+  }
+  let corrupt = input.with(input.len() - 3, 14 as u8);
+  return test.assert_true(failed(corrupt, grayscale.DecodeEntropy(entropy.EntropyPadding)));
+}
+
+function late_errors(): test.TestOutcome {
+  let input = streams.restart_gray();
+  let h = match (header.parse(input, header.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("restart header"); } };
+  let restart = 0 - 1;
+  for i in h.entropy_offset..input.len() - 1 {
+    if (restart < 0 && input[i] == 255 as u8 && input[i + 1] == 208 as u8) {
+      restart = i;
+    }
+  }
+  if (restart < 0) {
+    return test.fail("restart fixture");
+  }
+  if (!failed(input.with(restart + 1, 209 as u8), grayscale.DecodeEntropy(entropy.EntropyRestart))) {
+    return test.fail("late restart failure");
+  }
+  let filled = append_bytes(append_bytes([], input[0:restart + 1]).append(255 as u8), input[restart + 1:input.len()]);
+  let a = match (grayscale.decode(input, grayscale.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("normal restart"); } };
+  let b = match (grayscale.decode(filled, grayscale.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("restart marker fill"); } };
+  if (a.data.len() != b.data.len()) {
+    return test.fail("restart image length");
+  }
+  for i in 0..a.data.len() {
+    if (a.data[i] != b.data[i]) {
+      return test.fail("restart image samples");
+    }
+  }
+  let base = streams.category_boundaries();
+  let info = match (header.parse(base, header.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("coefficient header"); } };
+  let sof = marker_at(base, 192);
+  let large = append_bytes([], base[0:info.entropy_offset]).with(sof + 5, 0 as u8).with(sof + 6, 136 as u8).with(sof + 7, 0 as u8).with(sof + 8, 8 as u8);
+  for i in 0..17 {
+    large = large.append(191 as u8).append(248 as u8);
+  }
+  large = large.append(255 as u8).append(217 as u8);
+  return test.assert_true(failed(large, grayscale.DecodeTransform(idct.Coefficient)));
+}
+
+function ownership_windows(): test.TestOutcome {
+  let input = zero_stream();
+  let padded = append_bytes([9 as u8, 8 as u8, 7 as u8], input).append(6 as u8);
+  let source = cell_new(padded);
+  let first = match (grayscale.decode(padded[3:3 + input.len()], grayscale.default_limits(), (): boolean => {
+    source.set(source.get().with(3, 0 as u8));
+    return false;
+  })) { Ok(v) => v, Err(_) => { return test.fail("borrowed input window"); } };
+  let second = match (grayscale.decode(input, grayscale.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("fresh image"); } };
+  let changed = match (pixels.write_pixel(first, 0, 0, pixels.Pixel { r: 1, g: 2, b: 3, a: 255 })) { Ok(v) => v, Err(_) => { return test.fail("owned output update"); } };
+  return test.assert_true(first.data[0] == 128 as u8 && second.data[0] == 128 as u8 && changed.data[0] == 1 as u8 && input[0] == 255 as u8 && source.get()[3] == 0 as u8 && padded[3] == 255 as u8);
+}
+
+function cancellation(): test.TestOutcome {
+  for input in [zero_stream(), streams.restart_gray()] {
+    let observed = cell_new(0);
+    match (grayscale.decode(input, grayscale.default_limits(), (): boolean => {
+      observed.set(observed.get() + 1);
+      return false;
+    })) {
+      Ok(_) => {},
+      Err(_) => {
+        return test.fail("cancel baseline");
+      }
+    }
+    for stop in 1..observed.get() + 1 {
+      let polls = cell_new(0);
+      match (grayscale.decode(input, grayscale.default_limits(), (): boolean => {
+        polls.set(polls.get() + 1);
+        return polls.get() == stop;
+      })) {
+        Err(grayscale.DecodeCancelled()) => {},
+        _ => {
+          return test.fail("cancel poll");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let t = test.test_new("restricted JPEG grayscale images");
+  t = t.it("zero blocks, cropped edges, and header-only planning", zeros_and_plan);
+  t = t.it("grayscale references and single-component sampling", real_gray_and_sampling);
+  t = t.it("color, progressive, and CMYK profiles reject", unsupported);
+  t = t.it("exact header, block, pixel, and byte admission", budgets);
+  t = t.it("all prefixes, padding, final markers, and trailing bytes", framing);
+  t = t.it("late restart and transform failures release private images", late_errors);
+  t = t.it("borrowed input and independent owned output images", ownership_windows);
+  t = t.it("every cancellation poll releases partial images", cancellation);
+  return t.finish();
+}

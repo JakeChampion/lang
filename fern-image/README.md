@@ -16,7 +16,8 @@ The [JPEG header parser](docs/jpeg-headers.md) checks a restricted baseline head
 The separate [JPEG coefficient fold](docs/jpeg-coefficients.md) validates a complete restricted baseline entropy scan and emits quantized blocks.
 Neither interface decodes JPEG pixels.
 The separate [scalar inverse DCT](docs/jpeg-idct.md) reconstructs isolated component blocks from quantized coefficients.
-A complete JPEG pixel decoder remains unfinished.
+The [restricted grayscale decoder](docs/jpeg-grayscale.md) assembles one-component JPEG samples into packed RGB8 storage.
+General color JPEG decoding remains unfinished.
 
 HTTP and CDN services remain unimplemented.
 
@@ -65,7 +66,7 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 171 TAP cases cover compression, pixels, color, resize, PNG, JPEG headers, coefficients, and scalar inverse DCT.
+The 179 TAP cases cover compression, pixels, color, resize, PNG, JPEG headers, coefficients, scalar inverse DCT, and grayscale images.
 They also cover rows, providers, pipelines, regions, caches, RSS parsing, and fusion.
 The file I/O probe and pixel example also exit successfully.
 The native script checks source executables and additional allocator, cache, fusion, and formatter smoke modes with the sanitizer.
