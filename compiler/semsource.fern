@@ -40,7 +40,9 @@ pub struct Produced { ok: boolean, why: string, func: ssasem.Func, modes: i32[],
 
 pub struct Request { key: string, name: string, binding: ssasem.Binding }
 
-pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.Contracts, names: string[], dyn_arms: string[], records: semrecords.Records, enums: semrecords.Enum[], finalizers: ssasem.Finalizer[] }
+// `laid` holds the records whose fields of scalar records and Options are laid
+// out as their parts, as `records` now has them.
+pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.Contracts, names: string[], dyn_arms: string[], records: semrecords.Records, enums: semrecords.Enum[], finalizers: ssasem.Finalizer[], laid: semrecords.Record[] }
 
 struct Exit { block: i32, env: i32[] }
 
@@ -7986,9 +7988,11 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   let anchored: Anchored = anchor_module(close_module(util.append_all(decls, instances), util.name_index(names)), names, verify);
   let all: Produced[] = anchored.all;
   names = anchored.names;
+  let laid: semrecords.Record[] = [];
   if (verify) {
     let inlined: Spliced = inline_leaves(fuse_pipelines(all, names, mod.funcs, opts.array_report), names, mod, opts.size);
     table = split_contracts(table, inlined.all, names);
+    laid = inlined.laid;
     all = prune_dead_constructions(reached_only(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole));
   }
   decls = [];
@@ -8009,7 +8013,19 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     }
     i = i + 1;
   }
-  return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(util.append_all(decls, instances)), records: semrecords.Records { list: memo.records, names: memo.record_names }, enums: memo.enums, finalizers: finalizers };
+  let records: semrecords.Records = laid_records(semrecords.Records { list: memo.records, names: memo.record_names }, laid);
+  return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(util.append_all(decls, instances)), records: records, enums: memo.enums, finalizers: finalizers, laid: laid };
+}
+
+function laid_records(records: semrecords.Records, laid: semrecords.Record[]): semrecords.Records {
+  let list: semrecords.Record[] = records.list;
+  for r in laid {
+    let at: i32 = semrecords.find(records, r.ty);
+    if (at >= 0) {
+      list = list.with(at, r);
+    }
+  }
+  return semrecords.Records { ...records, list: list };
 }
 
 pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
@@ -8058,7 +8074,7 @@ pub function view_escape_diags(mod: parser.Module, built: Built): util.Diag[] {
   return out;
 }
 
-struct Spliced { all: Produced[], spliced: boolean[] }
+struct Spliced { all: Produced[], spliced: boolean[], laid: semrecords.Record[] }
 
 // A callee that takes a record parameter as its fields declares the fields.
 function split_contracts(table: ssasem.Contracts, all: Produced[], names: string[]): ssasem.Contracts {
@@ -8122,7 +8138,7 @@ function byte_copy_loops(all: Produced[]): Produced[] {
 
 function inline_leaves(all: Produced[], names: string[], mod: parser.Module, size: boolean): Spliced {
   if (!inline_on()) {
-    return Spliced { all: all, spliced: [] };
+    return Spliced { all: all, spliced: [], laid: [] };
   }
   let funcs: ssasem.Func[] = [];
   let modes: i32[][] = [];
@@ -8157,7 +8173,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
     result = result.append(p);
     i = i + 1;
   }
-  return Spliced { all: result, spliced: out.spliced };
+  return Spliced { all: result, spliced: out.spliced, laid: out.laid };
 }
 
 function without_unnamed(all: Produced[], names: string[], spliced: boolean[], mod: parser.Module): Produced[] {

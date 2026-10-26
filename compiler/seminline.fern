@@ -65,7 +65,7 @@ function max_box_saving_caller_insts(): i32 {
   return 6000;
 }
 
-pub struct Inlined { funcs: ssasem.Func[], rewritten: boolean[], spliced: boolean[], modes: i32[][] }
+pub struct Inlined { funcs: ssasem.Func[], rewritten: boolean[], spliced: boolean[], modes: i32[][], laid: semrecords.Record[] }
 
 struct Rewrite { f: ssasem.Func, changed: boolean }
 
@@ -78,7 +78,8 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   sp = grown_leaves(rounds, done.sp);
   let ctors: boolean[] = constructor_leaves(rounds.funcs, sp);
   let scalars: Scalars = scalar_all(rounds, names, rewrite, uncalled, modes);
-  let out: Inlined = split_all(paired_all(scalars.out, names, rewrite, uncalled), rewrite, scalars.modes);
+  let laid: Inlined = fields_all(scalars.out, names, rewrite);
+  let out: Inlined = split_all(paired_all(laid, names, rewrite, uncalled), rewrite, scalars.modes);
   dump_wanted(out.funcs);
   return Inlined { ...out, modes: scalars.modes, spliced: spliced_away(sp, ctors, calls, call_counts(out.funcs, ix)) };
 }
@@ -262,7 +263,7 @@ struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[], shar
 struct Rounds { out: Inlined, sp: Spliceable }
 
 function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][], sp: Spliceable): Rounds {
-  let out: Inlined = Inlined { funcs: funcs0, rewritten: [], spliced: [], modes: [] };
+  let out: Inlined = Inlined { funcs: funcs0, rewritten: [], spliced: [], modes: [], laid: [] };
   let alone: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs0.len()) {
@@ -379,6 +380,19 @@ function scalar_all(prev: Inlined, names: string[], rewrite: boolean[], uncalled
     }
   }
   return Scalars { out: Inlined { ...prev, funcs: funcs, rewritten: rewritten }, modes: s.modes };
+}
+
+function fields_all(prev: Inlined, names: string[], rewrite: boolean[]): Inlined {
+  let l: sempair.Laid = sempair.laid_fields(prev.funcs, names, rewrite);
+  let funcs: ssasem.Func[] = l.funcs;
+  let rewritten: boolean[] = prev.rewritten;
+  for i in 0..funcs.len() {
+    if (l.changed[i]) {
+      funcs = funcs.with(i, drop_unread(funcs[i]).f);
+      rewritten = rewritten.with(i, true);
+    }
+  }
+  return Inlined { ...prev, funcs: funcs, rewritten: rewritten, laid: l.records };
 }
 
 function paired_all(prev: Inlined, names: string[], rewrite: boolean[], uncalled: boolean[]): Inlined {

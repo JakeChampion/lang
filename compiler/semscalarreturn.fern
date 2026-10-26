@@ -420,7 +420,7 @@ pub function split_param(f: ssasem.Func, p: i32, types: typeinfo.Type[]): ssasem
     let insts: ssa.SInst[] = [];
     for ins in b.insts {
       if (ins.args.len() == 1 && ins.args[0] == p && ins.kind_tag != 7 && ins.kind_tag != 8 && ins.kind_tag != ssasem.call()) {
-        insts = insts.append(read_of_split(ins, moved(map, ins.result), p, types, payload));
+        insts = insts.append(read_of_parts(ins, moved(map, ins.result), consecutive(p, types.len()), payload));
         continue;
       }
       insts = insts.append(moved_inst(ins, map, p, extra));
@@ -452,27 +452,35 @@ pub function split_param(f: ssasem.Func, p: i32, types: typeinfo.Type[]): ssasem
   };
 }
 
-// One read of a split parameter, made of its parts: a field is its part; an
+function consecutive(first: i32, n: i32): i32[] {
+  let out: i32[] = [];
+  for k in 0..n {
+    out = out.append(first + k);
+  }
+  return out;
+}
+
+// One read of a value that travels as `parts`: a field is its part; an
 // Option's test is its Some flag; its payload is the part after the flag, or
 // a record built of the parts after it.
-function read_of_split(ins: ssa.SInst, result: i32, p: i32, types: typeinfo.Type[], payload: typeinfo.Type[]): ssa.SInst {
+pub function read_of_parts(ins: ssa.SInst, result: i32, parts: i32[], payload: typeinfo.Type[]): ssa.SInst {
   if (ins.kind_tag == ssasem.variant_is() && ins.str == "None") {
-    return ssa.SInst { kind_tag: 10, result: result, args: [p], imm: 0, str: "!" };
+    return ssa.SInst { kind_tag: 10, result: result, args: [parts[0]], imm: 0, str: "!" };
   }
   if (ins.kind_tag == ssasem.variant_is()) {
-    return ssa.SInst { kind_tag: 7, result: result, args: [p], imm: 0, str: "" };
+    return ssa.SInst { kind_tag: 7, result: result, args: [parts[0]], imm: 0, str: "" };
   }
   if (ins.kind_tag == ssasem.variant_get() && payload.len() == 1 && scalar(payload[0])) {
-    return ssa.SInst { kind_tag: 7, result: result, args: [p + 1], imm: 0, str: "" };
+    return ssa.SInst { kind_tag: 7, result: result, args: [parts[1]], imm: 0, str: "" };
   }
   if (ins.kind_tag == ssasem.variant_get()) {
     let fields: i32[] = [];
-    for k in 1..types.len() {
-      fields = fields.append(p + k);
+    for k in 1..parts.len() {
+      fields = fields.append(parts[k]);
     }
     return ssa.SInst { kind_tag: ssasem.record_new(), result: result, args: fields, imm: 0, str: "" };
   }
-  return ssa.SInst { kind_tag: 7, result: result, args: [p + ins.imm], imm: 0, str: "" };
+  return ssa.SInst { kind_tag: 7, result: result, args: [parts[ins.imm]], imm: 0, str: "" };
 }
 
 function spliced_types(ts: typeinfo.Type[], at: i32, parts: typeinfo.Type[]): typeinfo.Type[] {
@@ -529,9 +537,26 @@ function moved_term(t: ssa.STerm, map: i32[]): ssa.STerm {
 // call, in `insts`.
 pub struct SplitCall { f: ssasem.Func, insts: ssa.SInst[], call: ssa.SInst }
 
-pub function split_args(f0: ssasem.Func, ins: ssa.SInst, c: ssasem.Contract, split: boolean[], defs: ssa.SInst[], given_at: i32, given: i32[]): SplitCall {
+// Operands already taken apart on a branch: the positions and their parts.
+pub struct Given { at: i32[], parts: i32[][] }
+
+pub function no_given(): Given {
+  return Given { at: [], parts: [] };
+}
+
+pub function split_args(f0: ssasem.Func, ins: ssa.SInst, c: ssasem.Contract, split: boolean[], defs: ssa.SInst[], given: Given): SplitCall {
+  let ops: Operands = split_operands(f0, ins, c, split, defs, given);
+  let at: i32 = ssasem.find_contract_in(ops.f.calls, ins.str);
+  let calls: ssasem.Contract[] = ops.f.calls.with(at, ssasem.Contract { ...ops.f.calls[at], params: ops.params, modes: ops.modes });
+  return SplitCall { f: ssasem.Func { ...ops.f, calls: calls }, insts: ops.insts, call: ssa.SInst { ...ins, args: ops.args } };
+}
+
+// The operands of `ins`, declared as `c`'s parameters, with those marked in
+// `split` as their parts, and the parameters and modes that declares.
+pub struct Operands { f: ssasem.Func, insts: ssa.SInst[], args: i32[], params: typeinfo.Type[], modes: i32[] }
+
+pub function split_operands(f0: ssasem.Func, ins: ssa.SInst, c: ssasem.Contract, split: boolean[], defs: ssa.SInst[], given: Given): Operands {
   let f: ssasem.Func = f0;
-  let at: i32 = ssasem.find_contract_in(f.calls, ins.str);
   let insts: ssa.SInst[] = [];
   let args: i32[] = [];
   let params: typeinfo.Type[] = [];
@@ -553,8 +578,9 @@ pub function split_args(f0: ssasem.Func, ins: ssa.SInst, c: ssasem.Contract, spl
     let types: typeinfo.Type[] = param_parts(f, c.params[pos]);
     let payload: typeinfo.Type[] = option_payload(f, c.params[pos]);
     let words: Words = Words { b: Build { f: f, insts: insts, result: 0 - 1 }, args: args };
-    if (pos == given_at) {
-      words = Words { ...words, args: util.append_all(args, given) };
+    let gi: i32 = util.index_of_i32(given.at, pos);
+    if (gi >= 0) {
+      words = Words { ...words, args: util.append_all(args, given.parts[gi]) };
     } else if (payload.len() == 1) {
       words = option_words(words, a, payload[0], defs);
     } else {
@@ -568,8 +594,7 @@ pub function split_args(f0: ssasem.Func, ins: ssa.SInst, c: ssasem.Contract, spl
       modes = modes.append(ssasem.value_mode());
     }
   }
-  let calls: ssasem.Contract[] = f.calls.with(at, ssasem.Contract { ...f.calls[at], params: params, modes: modes });
-  return SplitCall { f: ssasem.Func { ...f, calls: calls }, insts: insts, call: ssa.SInst { ...ins, args: args } };
+  return Operands { f: f, insts: insts, args: args, params: params, modes: modes };
 }
 
 struct Words { b: Build, args: i32[] }
@@ -580,7 +605,7 @@ function emitted(w: Words, t: typeinfo.Type, ins: ssa.SInst): Words {
   return Words { b: b, args: w.args.append(v) };
 }
 
-// A record's fields: the arguments of a record built for the call, or reads
+// A record's fields: the arguments of a record built for the site, or reads
 // of any other record.
 function record_words(w0: Words, a: i32, ty: typeinfo.Type, defs: ssa.SInst[]): Words {
   let parts: Parts = parts_of(w0.b.f, ty);
@@ -596,8 +621,9 @@ function record_words(w0: Words, a: i32, ty: typeinfo.Type, defs: ssa.SInst[]): 
 }
 
 // An Option's Some flag and payload parts. A Some or a None built for the
-// call hands on its parts; any other Option reaching here is a split
-// parameter of the caller, whose own split turns these reads into its parts.
+// site hands on its parts; any other Option reaching here already travels as
+// parts (a split parameter, or a read of a field laid out in place), and the
+// rewrite of those turns these reads into its parts.
 function option_words(w0: Words, a: i32, payload: typeinfo.Type, defs: ssa.SInst[]): Words {
   let d: ssa.SInst = through_copies(defs, a);
   let w: Words = w0;
@@ -628,8 +654,8 @@ function option_words(w0: Words, a: i32, payload: typeinfo.Type, defs: ssa.SInst
   return record_words(w, inner, payload, defs);
 }
 
-// Whether an Option argument needs a branch to be taken apart: it is neither
-// built for the call nor a split parameter of the caller.
+// Whether an Option operand needs a branch to be taken apart: it is neither
+// built for the site nor among `own`, the values already travelling as parts.
 pub function needs_branch(f: ssasem.Func, defs: ssa.SInst[], ty: typeinfo.Type, a: i32, own: boolean[]): boolean {
   if (option_payload(f, ty).len() == 0) {
     return false;
@@ -641,8 +667,8 @@ pub function needs_branch(f: ssasem.Func, defs: ssa.SInst[], ty: typeinfo.Type, 
 }
 
 // The parts of an Option `a` read on a branch on whether it is Some: `head`
-// ends the block the call was in, `some` reads the payload, `none` makes
-// zeros, and `joins` brings the fields together where the call now is.
+// ends the block the site was in, `some` reads the payload, `none` makes
+// zeros, and `joins` brings the fields together where the site now is.
 pub struct Branch { f: ssasem.Func, head: ssa.SInst[], flag: i32, some: ssa.SInst[], none: ssa.SInst[], joins: ssa.SInst[], parts: i32[] }
 
 pub function branch_parts(f0: ssasem.Func, a: i32, ty: typeinfo.Type): Branch {

@@ -12,7 +12,8 @@ import (
 // and an Option of a scalar travel as their parts, through a free function,
 // a method, a trait impl reached by a generic, and a parameter handed on.
 // A split parameter is also the base of a record update whose result is
-// kept whole: in a free function, a method, and a trait impl's self.
+// kept whole: in a free function, a method, and a trait impl's self. Two
+// Option arguments read out of arrays are each taken apart on a branch.
 const scalarParamsLib = `import "std/time";
 
 pub struct Mix { a: i32, b: i64, c: f64, d: boolean }
@@ -124,6 +125,17 @@ impl Bump for S0 {
 @noinline pub function bump_on[B: Bump](b: B, by: f64): f64 {
   return b.bumped(by);
 }
+
+@noinline pub function both(a: Option[Duration], b: Option[Duration]): i64 {
+  let n: i64 = 0;
+  if let Some(d) = a {
+    n = n + d.as_millis();
+  }
+  if let Some(e) = b {
+    n = n + e.as_millis() * 1000;
+  }
+  return n;
+}
 `
 
 const scalarParamsMain = `import "std/bench";
@@ -132,11 +144,14 @@ import "./lib";
 
 function main(): i32 {
   let mixes: lib.Mix[] = [lib.Mix { a: 1, b: 20000000000, c: 0.5, d: true }, lib.Mix { a: 0 - 3, b: 0 - 4, c: 2.25, d: false }];
+  let xs: Option[Duration][] = [None, Some(time.duration_millis(7))];
+  let ys: Option[Duration][] = [Some(time.duration_millis(3)), None, None];
   let total: f64 = 0.0;
   let n: i64 = 0;
   let a0: i64 = bench.alloc_count();
   let i: i32 = 0;
   while (i < 100) {
+    n = n + lib.both(xs[i % 2], ys[i % 3]);
     total = total + lib.sum_mix(lib.Mix { a: i, b: 7, c: 0.25, d: i % 2 == 0 });
     total = total + lib.hand_on(mixes[i % 2], 2);
     n = n + lib.millis(Some(time.duration_millis(i as i64)));
@@ -154,7 +169,7 @@ function main(): i32 {
   }
   let allocated: i64 = bench.alloc_count() - a0;
   print(total.to_string() + " " + n.to_string() + " " + allocated.to_string());
-  if (total != 2000000005500.0 || n != 15000220050) {
+  if (total != 2000000005500.0 || n != 15000322400) {
     return 1;
   }
   if (allocated != 0) {

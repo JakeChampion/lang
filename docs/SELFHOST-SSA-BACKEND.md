@@ -306,12 +306,37 @@ hands on its arguments and a None hands on a false flag and zeros. Any other
 record is read field by field before the call. Any other Option is taken
 apart on a branch on its flag: the call's block ends in a test, one arm reads
 the payload, the other makes zeros, and the call moves to the join with a
-phi per part. A parameter of the caller's own that is passed in parts is
+phi per part. Each such Option gets its own branch before the call is
+rewritten. A parameter of the caller's own that is passed in parts is
 read apart the same way and the caller's own rewrite turns those reads into
 its parts, so a chain of wrappers passes the parts straight through.
 `TestSelfHostScalarParams` pins a `Duration`, an `Option[Duration]` and an
 `Option[i64]` crossing a module boundary, a method and a trait impl reached
 through a generic at no allocations on the three targets.
+
+## A record's field laid out as its parts
+
+The same shapes as fields: a record field that is a record of one to four
+scalars, or an Option of one or of a scalar, is laid out inside its record's
+own box as its parts (`sempair.laid_fields`, after the parameter split and
+before the return pairing). `Wait { task, set, timeout: Option[Duration] }`
+becomes a box of `task, set, timeout$0, timeout$1, timeout$2`, so building it
+builds no Option and no Duration. A construction takes each such operand apart
+the way a call takes an argument apart, on the same driver
+(`sempair.split_calls`), and a read of the field becomes one read per part.
+
+A field is laid out when every read of it takes it apart: a variant test, a
+payload read, a field read, or handing it to a field laid out the same way.
+That is checked across the whole program, and any read that keeps the field
+whole leaves it boxed. A record is left alone when code outside these bodies
+could see its layout: it reaches a callee with no body here, a map, a dynamic
+value or a construction hole; or it is generic, a closure's environment,
+holds a view, or has a finalizer. The new field list replaces the record's in
+every function's schema and in the module's (`Built.laid`), and its struct
+declaration replaces the module's own for the backends
+(`irtables.replaced_decls`), which is where wasm reads each field's width.
+`TestSelfHostLaidFields` pins the shapes across a module boundary on the
+three targets.
 
 ## What the lift admits, and what declines
 

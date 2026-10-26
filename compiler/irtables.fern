@@ -156,6 +156,33 @@ pub function struct_tab(decls: parser.StructDecl[]): StructTab {
   return StructTab { decls: decls, head: head, next: next, ehead: ehead, enext: enext };
 }
 
+// `decls` with each struct declared again in `extra` taking that declaration,
+// followed by the rest of `extra`.
+pub function replaced_decls(decls: parser.StructDecl[], extra: parser.StructDecl[]): parser.StructDecl[] {
+  let names: string[] = [];
+  for d in extra {
+    names = names.append(d.name);
+  }
+  let ix: util.NameIndex = util.name_index(names);
+  let used: boolean[] = __alloc_bool(extra.len());
+  let out: parser.StructDecl[] = [];
+  for d in decls {
+    let at: i32 = ix.find(d.name);
+    if (at >= 0 && d.enum_owner == "" && extra[at].enum_owner == "") {
+      out = out.append(extra[at]);
+      used = used.with(at, true);
+    } else {
+      out = out.append(d);
+    }
+  }
+  for i in 0..extra.len() {
+    if (!used[i]) {
+      out = out.append(extra[i]);
+    }
+  }
+  return out;
+}
+
 pub function struct_tab_empty(): StructTab {
   return StructTab { decls: [], head: [], next: [], ehead: [], enext: [] };
 }

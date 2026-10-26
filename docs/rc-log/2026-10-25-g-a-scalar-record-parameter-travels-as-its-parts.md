@@ -70,17 +70,6 @@ trait impl reached by a generic, on the three targets: 0 allocations over
 
 ## What is left
 
-The H3 and two-fetch rows are still over their pins. On the two-fetch
-path, comparing the same compiler against the stdlib from before #13369
-gives two causes:
-
-- **`async.Wait` stores its timeout as an `Option[Duration]` field.** A
-  record's Option field is a reference, so each park builds the Option and
-  its payload. That is 8 of the 12 extra allocations a request in that
-  comparison.
-- **`Duration.sub` boxes its result under `Instant.since`.** It is not
-  paired, because a caller elsewhere in the program keeps the result whole.
-
-Both need a record field of scalar-record or Option type laid out in its
-parent's box, or the pairing narrowed per call site. Neither is in this
-change.
+The H3 and two-fetch rows are still over their pins. Their cause is record
+fields of these types, which `2026-10-26-a` lays out in their records' own
+boxes.
