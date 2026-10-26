@@ -3981,7 +3981,7 @@ function package_findings(merged: parser.Module, pkgs: caps.Pkg[]): Finding[] {
   if (!caps.enforceable(merged, pkgs)) {
     return out;
   }
-  let vs: caps.Violation[] = caps.enforce(caps.analyze(merged, pkgs), pkgs);
+  let vs: caps.Violation[] = caps.enforce(caps.analyze(checker.annotate_module(merged), pkgs), pkgs);
   for v in vs {
     if (!v.governed) {
       out = out.append(Finding { diag: util.Diag { ...violation_diag(merged, v), code: "W002" }, warning: true, path: "" });
@@ -5143,7 +5143,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let pkgs: caps.Pkg[] = b.pkgs;
 
   if (mode_caps) {
-    write(caps.format_rows(caps.analyze(merged, pkgs)));
+    write(caps.format_rows(caps.analyze(checker.annotate_module(merged), pkgs)));
     return 0;
   }
 
@@ -5152,7 +5152,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     if (!c.ok) {
       return report_checked(st, c);
     }
-    write(effects.report(merged));
+    write(effects.report(checker.annotate_module(merged)));
     return 0;
   }
 

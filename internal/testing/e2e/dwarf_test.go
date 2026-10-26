@@ -316,12 +316,118 @@ func TestDWARFMixedStructVars(t *testing.T) {
 }
 
 func TestDWARFNestedStructVars(t *testing.T) {
-	src := "struct Point { x: i32, y: i32 }\n" +
+	const point = "struct Point { x: i32, y: i32 }\n" +
 		"struct Rect { origin: Point, w: i32, h: i32 }\n" +
-		"@noinline function area(r: Rect): i32 { return r.w * r.h; }\n" +
+		"@noinline function area(r: Rect): i32 { return r.w * r.h; }\n"
+	cases := []struct {
+		name, main string
+		inPlace    bool
+	}{
+		// Every read of origin takes it apart, so Rect holds its fields in place.
+		{"in-place", "function main(): i32 {\n" +
+			"    let r: Rect = Rect { origin: Point { x: 3, y: 4 }, w: 5, h: 6 };\n" +
+			"    return area(r) + r.origin.x;\n" +
+			"}\n", true},
+		// A function value takes origin whole, so it stays a box.
+		{"boxed", "function px(p: Point): i32 { return p.x; }\n" +
+			"function main(): i32 {\n" +
+			"    let r: Rect = Rect { origin: Point { x: 3, y: 4 }, w: 5, h: 6 };\n" +
+			"    let g: (Point) => i32 = px;\n" +
+			"    return area(r) + g(r.origin);\n" +
+			"}\n", false},
+	}
+	bin := buildFernCLI(t)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			spath := filepath.Join(dir, "prog.fern")
+			if err := os.WriteFile(spath, []byte(point+c.main), 0o644); err != nil {
+				t.Fatalf("write src: %v", err)
+			}
+			for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+				t.Run(target, func(t *testing.T) {
+					st := dwarfParamStruct(t, bin, spath, target, "area", "r")
+					if st.StructName != "Rect" {
+						t.Errorf("struct name = %q, want Rect", st.StructName)
+					}
+					byName := map[string]*dwarf.StructField{}
+					for _, f := range st.Field {
+						byName[f.Name] = f
+					}
+					if len(st.Field) != 3 {
+						t.Fatalf("Rect described %d fields, want 3 (origin, w, h): %v", len(st.Field), st.Field)
+					}
+					origin := byName["origin"]
+					if origin == nil {
+						t.Fatalf("missing nested member `origin` (have %v)", byName)
+					}
+					var pt *dwarf.StructType
+					if c.inPlace {
+						var ok bool
+						if pt, ok = origin.Type.(*dwarf.StructType); !ok {
+							t.Fatalf("origin type = %T, want *dwarf.StructType held in place", origin.Type)
+						}
+						if origin.ByteOffset != 8 {
+							t.Errorf("origin at offset %d, want 8", origin.ByteOffset)
+						}
+					} else {
+						optr, ok := origin.Type.(*dwarf.PtrType)
+						if !ok {
+							t.Fatalf("origin type = %T, want *dwarf.PtrType", origin.Type)
+						}
+						if pt, ok = optr.Type.(*dwarf.StructType); !ok {
+							t.Fatalf("origin points to %T, want *dwarf.StructType", optr.Type)
+						}
+					}
+					if pt.StructName != "Point" {
+						t.Errorf("origin struct = %q, want Point", pt.StructName)
+					}
+					if len(pt.Field) != 2 || pt.Field[0].Name != "x" || pt.Field[1].Name != "y" {
+						t.Fatalf("Point members = %v, want x,y", pt.Field)
+					}
+					if c.inPlace && (pt.Field[0].ByteOffset != 0 || pt.Field[1].ByteOffset != 8) {
+						t.Errorf("in-place Point members at %d and %d, want 0 and 8", pt.Field[0].ByteOffset, pt.Field[1].ByteOffset)
+					}
+					for n, off := range map[string]int64{"w": 24, "h": 32} {
+						f := byName[n]
+						if f == nil {
+							t.Errorf("missing scalar member %q", n)
+							continue
+						}
+						if f.Type.String() != "i32" {
+							t.Errorf("field %s type = %q, want i32", n, f.Type.String())
+						}
+						if want := off - 8; !c.inPlace && f.ByteOffset != want {
+							t.Errorf("field %s at offset %d, want %d", n, f.ByteOffset, want)
+						} else if c.inPlace && f.ByteOffset != off {
+							t.Errorf("field %s at offset %d, want %d", n, f.ByteOffset, off)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
+// An Option field held in place reads as a record of its flag and its payload.
+func TestDWARFInPlaceOptionVars(t *testing.T) {
+	src := "struct Gap { nanos: i64 }\n" +
+		"struct Wait { timeout: Option[i64], since: Option[Gap], n: i32 }\n" +
+		"@noinline function total(w: Wait): i64 {\n" +
+		"    let a: i64 = 0;\n" +
+		"    match (w.timeout) {\n" +
+		"        Some(t) => { a = t; },\n" +
+		"        None => {}\n" +
+		"    }\n" +
+		"    match (w.since) {\n" +
+		"        Some(s) => { a = a + s.nanos; },\n" +
+		"        None => {}\n" +
+		"    }\n" +
+		"    return a + w.n as i64;\n" +
+		"}\n" +
 		"function main(): i32 {\n" +
-		"    let r: Rect = Rect { origin: Point { x: 3, y: 4 }, w: 5, h: 6 };\n" +
-		"    return area(r) + r.origin.x;\n" +
+		"    let w: Wait = Wait { timeout: Some(7 as i64), since: Some(Gap { nanos: 30 }), n: 2 };\n" +
+		"    return total(w) as i32;\n" +
 		"}\n"
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -331,99 +437,93 @@ func TestDWARFNestedStructVars(t *testing.T) {
 	}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
-			out := filepath.Join(dir, "g-"+target+".bin")
-			if o, err := exec.Command(bin, "-g", "-target", target, "-o", out, spath).CombinedOutput(); err != nil {
-				t.Fatalf("-g build: %v\n%s", err, o)
-			}
-			ef, err := goelf.Open(out)
-			if err != nil {
-				t.Fatalf("open ELF: %v", err)
-			}
-			defer ef.Close()
-			d, err := ef.DWARF()
-			if err != nil {
-				t.Fatalf("DWARF(): %v", err)
-			}
-			r := d.Reader()
-			var st *dwarf.StructType
-			for {
-				e, err := r.Next()
-				if err != nil {
-					t.Fatalf("reader: %v", err)
-				}
-				if e == nil {
-					break
-				}
-				if e.Tag != dwarf.TagSubprogram {
-					continue
-				}
-				if name, _ := e.Val(dwarf.AttrName).(string); name != "area" {
-					continue
-				}
-				for {
-					c, err := r.Next()
-					if err != nil {
-						t.Fatalf("reader: %v", err)
-					}
-					if c == nil || c.Tag == 0 {
-						break
-					}
-					if name, _ := c.Val(dwarf.AttrName).(string); name != "r" {
-						continue
-					}
-					if toff, ok := c.Val(dwarf.AttrType).(dwarf.Offset); ok {
-						if typ, _ := d.Type(toff); typ != nil {
-							if ptr, ok := typ.(*dwarf.PtrType); ok {
-								st, _ = ptr.Type.(*dwarf.StructType)
-							}
-						}
-					}
-				}
-				break
-			}
-			if st == nil {
-				t.Fatal("no pointer-to-struct type for param r")
-			}
-			if st.StructName != "Rect" {
-				t.Errorf("struct name = %q, want Rect", st.StructName)
-			}
-			byName := map[string]*dwarf.StructField{}
+			st := dwarfParamStruct(t, bin, spath, target, "total", "w")
+			var got []string
 			for _, f := range st.Field {
-				byName[f.Name] = f
+				got = append(got, fmt.Sprintf("%s@%d:%s", f.Name, f.ByteOffset, dwarfShape(f.Type)))
 			}
-			if len(st.Field) != 3 {
-				t.Fatalf("Rect described %d fields, want 3 (origin, w, h): %v", len(st.Field), st.Field)
+			want := []string{
+				"timeout@8:Option[i64]{some@0:boolean value@8:i64}",
+				"since@24:Option[Gap]{some@0:boolean value@8:Gap{nanos@0:i64}}",
+				"n@40:i32",
 			}
-			origin := byName["origin"]
-			if origin == nil {
-				t.Fatalf("missing nested member `origin` (have %v)", byName)
-			}
-			optr, ok := origin.Type.(*dwarf.PtrType)
-			if !ok {
-				t.Fatalf("origin type = %T, want *dwarf.PtrType", origin.Type)
-			}
-			pt, ok := optr.Type.(*dwarf.StructType)
-			if !ok {
-				t.Fatalf("origin points to %T, want *dwarf.StructType", optr.Type)
-			}
-			if pt.StructName != "Point" {
-				t.Errorf("origin struct = %q, want Point", pt.StructName)
-			}
-			if len(pt.Field) != 2 || pt.Field[0].Name != "x" || pt.Field[1].Name != "y" {
-				t.Errorf("Point members = %v, want x,y", pt.Field)
-			}
-			for _, n := range []string{"w", "h"} {
-				f := byName[n]
-				if f == nil {
-					t.Errorf("missing scalar member %q", n)
-					continue
-				}
-				if f.Type.String() != "i32" {
-					t.Errorf("field %s type = %q, want i32", n, f.Type.String())
-				}
+			if strings.Join(got, " ") != strings.Join(want, " ") {
+				t.Errorf("Wait members\n got %v\nwant %v", got, want)
 			}
 		})
 	}
+}
+
+// dwarfShape spells a member type with the members of any record it holds in place.
+func dwarfShape(t dwarf.Type) string {
+	st, ok := t.(*dwarf.StructType)
+	if !ok {
+		return t.String()
+	}
+	var parts []string
+	for _, f := range st.Field {
+		parts = append(parts, fmt.Sprintf("%s@%d:%s", f.Name, f.ByteOffset, dwarfShape(f.Type)))
+	}
+	return st.StructName + "{" + strings.Join(parts, " ") + "}"
+}
+
+// dwarfParamStruct builds src with -g for target and returns the record its
+// function fn's parameter param points to.
+func dwarfParamStruct(t *testing.T, bin, spath, target, fn, param string) *dwarf.StructType {
+	t.Helper()
+	out := filepath.Join(filepath.Dir(spath), "g-"+target+".bin")
+	if o, err := exec.Command(bin, "-g", "-target", target, "-o", out, spath).CombinedOutput(); err != nil {
+		t.Fatalf("-g build: %v\n%s", err, o)
+	}
+	ef, err := goelf.Open(out)
+	if err != nil {
+		t.Fatalf("open ELF: %v", err)
+	}
+	defer ef.Close()
+	d, err := ef.DWARF()
+	if err != nil {
+		t.Fatalf("DWARF(): %v", err)
+	}
+	r := d.Reader()
+	for {
+		e, err := r.Next()
+		if err != nil {
+			t.Fatalf("reader: %v", err)
+		}
+		if e == nil {
+			break
+		}
+		if e.Tag != dwarf.TagSubprogram {
+			continue
+		}
+		if name, _ := e.Val(dwarf.AttrName).(string); name != fn {
+			continue
+		}
+		for {
+			c, err := r.Next()
+			if err != nil {
+				t.Fatalf("reader: %v", err)
+			}
+			if c == nil || c.Tag == 0 {
+				break
+			}
+			if name, _ := c.Val(dwarf.AttrName).(string); name != param {
+				continue
+			}
+			if toff, ok := c.Val(dwarf.AttrType).(dwarf.Offset); ok {
+				if typ, _ := d.Type(toff); typ != nil {
+					if ptr, ok := typ.(*dwarf.PtrType); ok {
+						if st, ok := ptr.Type.(*dwarf.StructType); ok {
+							return st
+						}
+					}
+				}
+			}
+		}
+		break
+	}
+	t.Fatalf("no pointer-to-struct type for param %s of %s", param, fn)
+	return nil
 }
 
 func TestDWARFMultiFile(t *testing.T) {

@@ -8383,6 +8383,48 @@ function merge_view_names(a: string[], b: string[]): string[] {
   return out;
 }
 
+// slc_views_string holds for `s.as_bytes()` on a `string`: its bytes live as
+// long as that string does.
+function slc_views_string(c: ast.ExprCall, cur: Scope): boolean {
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    return fa.field == "as_bytes" && c.args.len() == 0 && is_owned_string(check_expr(fa.obj, cur));
+  }
+  return false;
+}
+
+function call_receiver(c: ast.ExprCall): ast.Expr {
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    return fa.obj;
+  }
+  return c.callee;
+}
+
+// slc_string_roots is the storage a `string` value lends to a view of its bytes.
+function slc_string_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
+  match (e) {
+    ast.ExprString(_) => {
+      return no_view_roots();
+    },
+    ast.ExprIdent(id) => {
+      if (name_in(id.name, params)) {
+        let one: string[] = [];
+        return ViewRoots { local: false, params: one.append(id.name) };
+      }
+      let none: string[] = [];
+      return ViewRoots { local: name_in(id.name, tainted), params: none };
+    },
+    ast.ExprCall(c) => {
+      let callee: ViewCallee = view_callee(c, cur);
+      if (view_sum_known(sums, vix, callee.key)) {
+        return slc_call_roots(c, cur, params, localarr, tainted, sums, vix);
+      }
+    },
+    _ => {}
+  }
+  let none: string[] = [];
+  return ViewRoots { local: true, params: none };
+}
+
 function slc_src_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   match (e) {
     ast.ExprBytes(_) => {
@@ -8396,6 +8438,9 @@ function slc_src_roots(e: ast.Expr, cur: Scope, params: string[], localarr: stri
       return slc_src_roots(s2.array, cur, params, localarr, tainted, sums, vix);
     },
     ast.ExprCall(c2) => {
+      if (slc_views_string(c2, cur)) {
+        return slc_string_roots(call_receiver(c2), cur, params, localarr, tainted, sums, vix);
+      }
       return slc_call_roots(c2, cur, params, localarr, tainted, sums, vix);
     },
     ast.ExprIdent(id) => {
@@ -8425,7 +8470,9 @@ function slc_call_roots(c: ast.ExprCall, cur: Scope, params: string[], localarr:
   let flags: boolean[] = view_sum_flags(sums, vix, callee.key);
   let i: i32 = 0;
   while (i < flags.len() && i < callee.args.len()) {
-    if (flags[i]) {
+    if (flags[i] && is_owned_string(check_expr(callee.args[i], cur))) {
+      out = merge_view_roots(out, slc_string_roots(callee.args[i], cur, params, localarr, tainted, sums, vix));
+    } else if (flags[i]) {
       out = merge_view_roots(out, slc_src_roots(callee.args[i], cur, params, localarr, tainted, sums, vix));
     }
     i = i + 1;
@@ -8435,6 +8482,10 @@ function slc_call_roots(c: ast.ExprCall, cur: Scope, params: string[], localarr:
 
 function slc_expr_roots(e: ast.Expr, cur: Scope, params: string[], localarr: string[], tainted: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   match (e) {
+    ast.ExprArray(_) => {
+      let none: string[] = [];
+      return ViewRoots { local: true, params: none };
+    },
     ast.ExprSlice(sl) => {
       match (check_expr(sl.array, cur)) {
         typeinfo.TypeString(_) => {
@@ -8445,6 +8496,9 @@ function slc_expr_roots(e: ast.Expr, cur: Scope, params: string[], localarr: str
       return slc_src_roots(sl.array, cur, params, localarr, tainted, sums, vix);
     },
     ast.ExprCall(c) => {
+      if (slc_views_string(c, cur)) {
+        return slc_string_roots(call_receiver(c), cur, params, localarr, tainted, sums, vix);
+      }
       return slc_call_roots(c, cur, params, localarr, tainted, sums, vix);
     },
     ast.ExprIdent(id) => {
@@ -8598,11 +8652,14 @@ function holds_view_aggregate(t: typeinfo.Type, s: Scope): boolean {
   if (mentions_type_variable(t)) {
     return true;
   }
-  let key = view_memo_key(t);
-  if (key.len() == 0) {
+  let kind = match (t) { typeinfo.TypeStruct(_) => "struct:", typeinfo.TypeUnion(_) => "union:", typeinfo.TypeArray(_) => "array:", typeinfo.TypeTuple(_) => "tuple:", typeinfo.TypeMap(_) => "map:", _ => { return false; } };
+  let spelling = typeinfo.spelling(t);
+  if (spelling.len() == 0) {
     let (holds, _) = type_holds_view(t, s, []);
     return holds;
   }
+  let key = kind + spelling;
+  // Cache only complete root queries. A recursive visit can skip an ancestor that carries a view.
   let memo = s.view_memo.get();
   let at = memo.names.find(key);
   if (at >= 0) {
@@ -8611,13 +8668,6 @@ function holds_view_aggregate(t: typeinfo.Type, s: Scope): boolean {
   let (holds, _) = type_holds_view(t, s, []);
   s.view_memo.set(ViewMemo { names: memo.names.added(key), holds: memo.holds.append(holds) });
   return holds;
-}
-
-// Cache only complete root queries. A recursive visit can skip an ancestor that carries a view.
-function view_memo_key(t: typeinfo.Type): string {
-  let kind = match (t) { typeinfo.TypeStruct(_) => "struct:", typeinfo.TypeUnion(_) => "union:", typeinfo.TypeArray(_) => "array:", typeinfo.TypeTuple(_) => "tuple:", typeinfo.TypeMap(_) => "map:", _ => { return ""; } };
-  let spelling = typeinfo.spelling(t);
-  return if (spelling.len() == 0) { "" } else { kind + spelling };
 }
 
 function mentions_type_variable(t: typeinfo.Type): boolean {
@@ -8766,10 +8816,6 @@ function slc_escape_diag(fname: string, line: i32, col: i32): util.Diag {
 // The roots of every `[T]` view a value of type `to` carries, directly or inside an aggregate.
 function slc_agg_roots(e: ast.Expr, to: typeinfo.Type, cur: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   if (is_arr_view(to)) {
-    if let ast.ExprArray(_) = e {
-      let none: string[] = [];
-      return ViewRoots { local: true, params: none };
-    }
     return slc_expr_roots(e, cur, params, localarr, tainted, sums, vix);
   }
   if (is_type_variable(to)) {
@@ -8810,11 +8856,53 @@ function slc_agg_call_roots(c: ast.ExprCall, cur: Scope, params: string[], local
   return out;
 }
 
-function slice_escape_diags(fn: parser.FuncDecl, s: Scope, sums: ViewSum[], vix: ViewIndex): SlcWalk {
+// These facts depend on the function and scope, not the call summaries.
+struct SlcFunction { scope: Scope, params: string[], fixed_strings: string[] }
+
+function slice_escape_diags(fn: parser.FuncDecl, prepared: SlcFunction, sums: ViewSum[], vix: ViewIndex): SlcWalk {
   let localarr: string[] = [];
-  let tainted: string[] = [];
   let held: string[] = [];
-  return slc_walk(fn.body, fn.name, s, view_positions(fn), localarr, tainted, held, sums, vix, parser.spelling_is_view(fn.ret_type));
+  return slc_walk(fn.body, fn.name, prepared.scope, prepared.params, localarr, prepared.fixed_strings, held, sums, vix, parser.spelling_is_view(fn.ret_type));
+}
+
+// fixed_string_locals is each `string` local that the body never reassigns: its
+// bytes are storage the function owns. A reassigned one may hold another string
+// by the time it is viewed, so it is left to the flow analysis in semsource.
+function fixed_string_locals(body: ast.Stmt[], s: Scope): string[] {
+  let declared: string[] = [];
+  for st in body {
+    declared = astwalk.fold_stmt_spine(st, declared, (vs: ast.Stmt, own acc: string[]): string[] => string_local_name(vs, acc, s));
+  }
+  if (declared.len() == 0) {
+    return declared;
+  }
+  let assigned: string[] = [];
+  for st in body {
+    assigned = astwalk.fold_stmt_spine(st, assigned, assigned_name);
+  }
+  let out: string[] = [];
+  for name in declared {
+    if (!name_in(name, assigned)) {
+      out = out.append(name);
+    }
+  }
+  return out;
+}
+
+function string_local_name(st: ast.Stmt, own acc: string[], s: Scope): string[] {
+  if let ast.StmtVar(v) = st {
+    if (v.type_name == "string" || v.type_name.len() == 0 && is_owned_string(check_expr(v.init, s))) {
+      return acc.append(v.name);
+    }
+  }
+  return acc;
+}
+
+function assigned_name(st: ast.Stmt, own acc: string[]): string[] {
+  if let ast.StmtAssign(a) = st {
+    return acc.append(a.target);
+  }
+  return acc;
 }
 
 function mc_any_marked(structs: parser.StructDecl[], enums: parser.EnumDecl[]): boolean {
@@ -22510,13 +22598,13 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   let mc_on: boolean = mc_any_marked(mod.structs, mod.enums);
   let (derive_diags, derive_keys) = e021_derive_field_diags(mod);
   let call_impls: parser.ImplInfo[] = env.impls;
-  let slc_fns: parser.FuncDecl[] = [];
-  let slc_scopes: Scope[] = [];
+  let slc_functions: SlcFunction[] = [];
   let slc_sums: ViewSum[] = [];
   for cfn in mod.funcs {
-    slc_fns = slc_fns.append(cfn);
-    slc_scopes = slc_scopes.append(build_func_scope(cfn, st, stt, ut, methods, imports, call_impls, mod.trait_reqs));
-    slc_sums = slc_sums.append(ViewSum { key: view_sum_key(cfn), flags: __alloc_bool(view_positions(cfn).len()), fresh: false });
+    let cscope: Scope = build_func_scope(cfn, st, stt, ut, methods, imports, call_impls, mod.trait_reqs);
+    let cparams: string[] = view_positions(cfn);
+    slc_functions = slc_functions.append(SlcFunction { scope: cscope, params: cparams, fixed_strings: fixed_string_locals(cfn.body, cscope) });
+    slc_sums = slc_sums.append(ViewSum { key: view_sum_key(cfn), flags: __alloc_bool(cparams.len()), fresh: false });
   }
   let slc_ix: ViewIndex = view_index(slc_sums);
   let slc_calls: util.NameIndex[] = [];
@@ -22529,13 +22617,13 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   while (slc_first || slc_marked.names.len() > 0) {
     let slc_now: string[] = [];
     let sj: i32 = 0;
-    while (sj < slc_fns.len()) {
+    while (sj < mod.funcs.len()) {
       if (!slc_first && !slc_calls_any(slc_calls[sj], slc_marked)) {
         sj = sj + 1;
         continue;
       }
-      let sjw: SlcWalk = slice_escape_diags(slc_fns[sj], slc_scopes[sj], slc_sums, slc_ix);
-      let slc_positions: string[] = view_positions(slc_fns[sj]);
+      let sjw: SlcWalk = slice_escape_diags(mod.funcs[sj], slc_functions[sj], slc_sums, slc_ix);
+      let slc_positions: string[] = slc_functions[sj].params;
       let slc_cur: ViewSum = slc_sums[sj];
       let slc_next: boolean[] = slc_cur.flags;
       let slc_changed: boolean = false;
@@ -22553,7 +22641,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
         slc_changed = true;
       }
       if (slc_changed) {
-        slc_now = slc_now.append(slc_fns[sj].name);
+        slc_now = slc_now.append(mod.funcs[sj].name);
       }
       slc_sums = slc_sums.with(sj, ViewSum { key: slc_cur.key, flags: slc_next, fresh: slc_fresh });
       sj = sj + 1;
@@ -22568,7 +22656,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       i = i + 1;
       continue;
     }
-    let fsc: Scope = slc_scopes[i];
+    let fsc: Scope = slc_functions[i].scope;
     if (!check_func_body(mod.funcs[i], fsc)) {
       well_typed = false;
     }
@@ -22600,7 +22688,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       }
     }
     if (returns_view_or_holder(mod.funcs[i], fsc)) {
-      function_diags = util.append_diags(function_diags, slice_escape_diags(mod.funcs[i], fsc, slc_sums, slc_ix).diags);
+      function_diags = util.append_diags(function_diags, slice_escape_diags(mod.funcs[i], slc_functions[i], slc_sums, slc_ix).diags);
     }
     if (mc_on) {
       function_diags = util.append_diags(function_diags, must_consume_diags(mod.funcs[i], fsc, mod.structs, mod.enums));
@@ -22744,9 +22832,9 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   let e065_sums: ViewSum[] = [];
   for sfi in 0..mod.funcs.len() {
     let sfn: parser.FuncDecl = mod.funcs[sfi];
-    if (e065_summarised(sfn, slc_scopes[sfi])) {
+    if (e065_summarised(sfn, slc_functions[sfi].scope)) {
       e065_fns = e065_fns.append(sfn);
-      e065_scopes = e065_scopes.append(slc_scopes[sfi]);
+      e065_scopes = e065_scopes.append(slc_functions[sfi].scope);
       e065_sums = e065_sums.append(ViewSum { key: view_sum_key(sfn), flags: __alloc_bool(view_positions(sfn).len()), fresh: false });
     }
   }

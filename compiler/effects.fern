@@ -3,6 +3,7 @@ import "./astwalk";
 import "./caps";
 import "./parser";
 import "./platforms";
+import "./treeshake";
 import "./util";
 
 const INDIRECT: string = "(function value)";
@@ -30,7 +31,7 @@ struct Scan {
   esc_builtins: string[],
 }
 
-struct Ctx { names: util.NameIndex, method_names: string[], fn_fields: util.NameIndex, tagged: util.NameIndex }
+struct Ctx { names: util.NameIndex, fn_fields: util.NameIndex, tagged: util.NameIndex }
 
 struct Walk { ctx: Ctx, s: Scan, funcs: parser.FuncDecl[] }
 
@@ -116,18 +117,10 @@ function call_expr(e: ast.Expr, own w: Walk): Walk {
           return Walk { ...w, s: s };
         },
         ast.ExprFieldAccess(fa) => {
-          let s: Scan = w.s;
           if (w.ctx.fn_fields.has(fa.field)) {
-            s = Scan { ...s, indirect: true };
+            return Walk { ...w, s: Scan { ...w.s, indirect: true } };
           }
-          let k: i32 = 0;
-          while (k < w.funcs.len()) {
-            if (w.ctx.method_names[k] == fa.field) {
-              s = add_edge(s, k);
-            }
-            k = k + 1;
-          }
-          return Walk { ...w, s: s };
+          return w;
         },
         ast.ExprLambda(lm) => {
           return Walk { ...w, s: Scan { ...w.s, applied_pos: w.s.applied_pos.append(pos_key(lm.line, lm.col)) } };
@@ -202,7 +195,16 @@ function scan(ctx: Ctx, funcs: parser.FuncDecl[], fd: parser.FuncDecl): Scan {
   for st in fd.body {
     w = astwalk.fold_stmt_nodes(st, w, no_stmt, lambda_expr, astwalk.descend_all);
   }
-  return w.s;
+  let refs: treeshake.BodyRefs = treeshake.body_refs(fd);
+  let s: Scan = w.s;
+  let k: i32 = 0;
+  while (k < funcs.len()) {
+    if (funcs[k].receiver_type.len() > 0 && treeshake.refs_name(refs, funcs[k])) {
+      s = add_edge(s, k);
+    }
+    k = k + 1;
+  }
+  return s;
 }
 
 function func_at(funcs: parser.FuncDecl[], name: string): i32 {
@@ -227,14 +229,11 @@ function has_i32(xs: i32[], v: i32): boolean {
 
 function context(mod: parser.Module, tagged: string[]): Ctx {
   let names: string[] = [];
-  let method_names: string[] = [];
   for fd in mod.funcs {
     if (fd.receiver_type.len() > 0) {
       names = names.append("");
-      method_names = method_names.append(util.mangled_name(fd.name));
     } else {
       names = names.append(fd.name);
-      method_names = method_names.append("");
     }
   }
   let fn_fields: string[] = [];
@@ -245,7 +244,7 @@ function context(mod: parser.Module, tagged: string[]): Ctx {
       }
     }
   }
-  return Ctx { names: util.name_index(names), method_names: method_names, fn_fields: util.name_index(fn_fields), tagged: util.name_index(tagged) };
+  return Ctx { names: util.name_index(names), fn_fields: util.name_index(fn_fields), tagged: util.name_index(tagged) };
 }
 
 function add_scan(g: Graph, k: i32, s: Scan): Graph {

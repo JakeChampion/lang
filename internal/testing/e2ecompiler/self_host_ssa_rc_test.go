@@ -287,9 +287,9 @@ function main(): i32 {
     // A record instance with type arguments is found in the schema table by
     // its whole type, arguments included, so it lowers as a plain record does.
     let wideType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [wide] };
-    let wideSchema = semrecords.Record { views: false, nests_func: false, ty: wideType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
+    let wideSchema = semrecords.Record { declared: [], views: false, nests_func: false, ty: wideType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     let recordType: typeinfo.Type = typeinfo.TypeStruct { name: "Box", args: [] };
-    let schema = semrecords.Record { views: false, nests_func: false, ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
+    let schema = semrecords.Record { declared: [], views: false, nests_func: false, ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result }] };
     let recordGraph = ssa.SFunc { name: "record", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(ssasem.record_new(), 1, [0], 0)], term: ret(1) }] };
     let genericFunc = ssasem.Func { source_positions: ssasem.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: recordGraph, values: [f.result, wideType], params: [f.result], result: wideType, records: semrecords.records_of([wideSchema]), enums: [], calls: [] };
@@ -299,7 +299,7 @@ function main(): i32 {
     // A wide array field is supported. The walk visits only the REFERENCE
     // fields, and an array of scalars has no element to visit, so it needs its
     // own box released and nothing more.
-    let wideField = semrecords.Record { views: false, nests_func: false, ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result },
+    let wideField = semrecords.Record { declared: [], views: false, nests_func: false, ty: recordType, fields: [semrecords.Field { name: "xs", ty: f.result },
         semrecords.Field { name: "ns", ty: wide }] };
     let wideFieldFunc = ssasem.Func { source_positions: ssasem.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: g, values: [recordType], params: [recordType], result: recordType, records: semrecords.records_of([wideField]), enums: [], calls: [] };
     let wideFieldPlan = ssaunits.plan(wideFieldFunc, [2], ssaunits.no_view());
@@ -335,7 +335,7 @@ function main(): i32 {
     // releases the whole value through a second one. The pair calls each other,
     // which is what makes the descent finite.
     let selfType: typeinfo.Type = typeinfo.TypeStruct { name: "Node", args: [] };
-    let selfSchema = semrecords.Record { views: false, nests_func: false, ty: selfType, fields: [semrecords.Field { name: "kid", ty: selfType }] };
+    let selfSchema = semrecords.Record { declared: [], views: false, nests_func: false, ty: selfType, fields: [semrecords.Field { name: "kid", ty: selfType }] };
     let selfGraph = ssa.SFunc { name: "cycle", nparams: 1, nvals: 1, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0)], term: ret(0) }] };
     let selfFunc = ssasem.Func { source_positions: ssasem.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: selfGraph, values: [selfType], params: [selfType], result: selfType, records: semrecords.records_of([selfSchema]), enums: [], calls: [] };
@@ -362,7 +362,7 @@ function main(): i32 {
     // A schema with no reference field needs no helper, so none is emitted:
     // a body exists exactly when a call to it does.
     let flatType: typeinfo.Type = typeinfo.TypeStruct { name: "Flat", args: [] };
-    let flatSchema = semrecords.Record { views: false, nests_func: false, ty: flatType, fields: [semrecords.Field { name: "n", ty: typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false } }] };
+    let flatSchema = semrecords.Record { declared: [], views: false, nests_func: false, ty: flatType, fields: [semrecords.Field { name: "n", ty: typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false } }] };
     let flatFunc = ssasem.Func { source_positions: ssasem.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: selfGraph, values: [flatType], params: [flatType], result: flatType, records: semrecords.records_of([flatSchema]), enums: [], calls: [] };
     if (ssarc.drop_helpers(flatFunc).len() != 0) { return 24; }
     // Two functions that both name one type produce its helpers once: the
@@ -394,7 +394,7 @@ function main(): i32 {
     if (releases != 1) { return 199; }
     let i32ty: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
     let boxOnly: typeinfo.Type = typeinfo.TypeStruct { name: "BoxOnly", args: [] };
-    let boxOnlySchema = semrecords.Record { views: false, nests_func: false, ty: boxOnly, fields: [semrecords.Field { name: "n", ty: i32ty }] };
+    let boxOnlySchema = semrecords.Record { declared: [], views: false, nests_func: false, ty: boxOnly, fields: [semrecords.Field { name: "n", ty: i32ty }] };
     // A length reads its receiver and hands back an i32 that owns nothing: an
     // array selects arr_len, a string str_len, and a receiver that is neither
     // is not a counted container this can read at all.
@@ -478,7 +478,7 @@ function main(): i32 {
     // on the identity arm. The same graph with a second read of the appended
     // field after the push is refused, and takes the retain-then-copy form.
     let growType: typeinfo.Type = typeinfo.TypeStruct { name: "Grow", args: [] };
-    let growSchema = semrecords.Record { views: false, nests_func: false, ty: growType, fields: [semrecords.Field { name: "xs", ty: f.result }, semrecords.Field { name: "n", ty: i32ty }] };
+    let growSchema = semrecords.Record { declared: [], views: false, nests_func: false, ty: growType, fields: [semrecords.Field { name: "xs", ty: f.result }, semrecords.Field { name: "n", ty: i32ty }] };
     let growGraph = ssa.SFunc { name: "grow", nparams: 2, nvals: 6, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
@@ -751,7 +751,7 @@ function main(): i32 {
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(1, 1, [], 0)], term: ret(1) }] };
     let f64ty: typeinfo.Type = typeinfo.TypeFloat { width: 64, polymorphic: false };
     let wideRec: typeinfo.Type = typeinfo.TypeStruct { name: "Wide", args: [] };
-    let wideRecSchema = semrecords.Record { views: false, nests_func: false, ty: wideRec, fields: [semrecords.Field { name: "d", ty: f64ty },
+    let wideRecSchema = semrecords.Record { declared: [], views: false, nests_func: false, ty: wideRec, fields: [semrecords.Field { name: "d", ty: f64ty },
         semrecords.Field { name: "s", ty: strTy }] };
     let wideFunc = ssasem.Func { source_positions: ssasem.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: dropGraph, values: [wideRec, i32ty], params: [wideRec], result: i32ty,
         records: semrecords.records_of([wideRecSchema]), enums: [], calls: [] };
@@ -933,7 +933,7 @@ function main(): i32 {
     // A record's field width comes from its declaration, which construction
     // must resolve even though the drop walk never reads scalar fields.
     let wide64Ty: typeinfo.Type = typeinfo.TypeStruct { name: "Wide64", args: [] };
-    let wide64Schema = semrecords.Record { views: false, nests_func: false, ty: wide64Ty, fields: [semrecords.Field { name: "n", ty: i64ty }] };
+    let wide64Schema = semrecords.Record { declared: [], views: false, nests_func: false, ty: wide64Ty, fields: [semrecords.Field { name: "n", ty: i64ty }] };
     let wide64Graph = ssa.SFunc { name: "mkwide", nparams: 1, nvals: 2, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0),
             inst(ssasem.record_new(), 1, [0], 0)], term: ret(1) }] };
@@ -1320,7 +1320,7 @@ function rec_type(): typeinfo.Type { return typeinfo.TypeStruct { name: "Tok", a
 function token_func(split: boolean): ssasem.Func {
     let i: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
     let t: typeinfo.Type = rec_type();
-    let schema = semrecords.Record { views: false, nests_func: false, ty: t, fields: [semrecords.Field { name: "a", ty: i }] };
+    let schema = semrecords.Record { declared: [], views: false, nests_func: false, ty: t, fields: [semrecords.Field { name: "a", ty: i }] };
     let p0 = inst(6, 0, [], 0);
     let mk1 = inst(ssasem.record_new(), 1, [0], 0);
     let get = ssa.SInst { kind_tag: ssasem.record_get(), result: 2, args: [1], imm: 0, str: "a" };

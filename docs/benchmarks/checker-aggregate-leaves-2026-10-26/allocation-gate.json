@@ -1,0 +1,33 @@
+{
+  "source_commit": "ccef3afdde8a9cbba196e0bdcf2243382f048189",
+  "default_workload": {
+    "allocations": 34717661,
+    "frees": 34717661,
+    "gate_exit": 0
+  },
+  "baseline": 31624467,
+  "ceiling_percent": 10,
+  "advisory_percent": 1,
+  "reference_failure": {
+    "ci_run": 40276431276,
+    "job": 121420078243,
+    "head": "e520b4b90ae0a8defdf3e0e36bb9aa277207c748",
+    "allocations": 34788196,
+    "frees": 34788196,
+    "gate_exit": 1
+  },
+  "compiler_version": "fern ccef3afdde8a-dirty\nbuilt for x86-64-linux",
+  "compiler_sha256": "8d8ae719faa91172c41b8c89260395b8917713b8d29c111700950445a2a41d45",
+  "baseline_sha256": "751910d03b1f309df9dc30ab8046f5eff587b97b4a9f691032e05973ada94226",
+  "command": [
+    "FERN_ALLOC_PEAK_RSS=0",
+    "scripts/selfhost-alloc-bench"
+  ],
+  "gate": [
+    "FERN_CI_PERF_GATE_MAX_DRIFT=10",
+    "scripts/ci-check-perf",
+    ".github/alloc-baseline.txt",
+    "report"
+  ],
+  "limitations": "Default source and build contexts differ from the CI reference failure. The fixed-input record isolates the compiler effect. The 1% advisory warning persists. No RSS observation. Dirty metadata came from untracked qualification files, not compiler or stdlib changes."
+}

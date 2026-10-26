@@ -44,6 +44,8 @@ const map = L.map("map", {
   maxBounds: [[-320, -64], [64, 320]],
   maxBoundsViscosity: 0.6,
   zoomControl: false,
+  // Keep tile text opaque. The image supplies its own fade.
+  fadeAnimation: false,
 });
 
 L.control.zoom({ position: "bottomleft" }).addTo(map);

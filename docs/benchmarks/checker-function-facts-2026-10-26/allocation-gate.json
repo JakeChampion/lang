@@ -1,0 +1,28 @@
+{
+  "baseline": 31624467,
+  "ceiling_percent": 10,
+  "advisory_percent": 1,
+  "before": {
+    "source_commit": "29028eb88d3eb4d06443e1b7495a57b2ec30df1e",
+    "allocations": 34839418,
+    "frees": 34839418,
+    "gate_exit": 1
+  },
+  "after": {
+    "source_commit": "f0dd30477657fe6225478a4e606c6f220a93dcd2",
+    "allocations": 34784792,
+    "frees": 34784792,
+    "gate_exit": 0
+  },
+  "command": [
+    "FERN_ALLOC_PEAK_RSS=0",
+    "scripts/selfhost-alloc-bench"
+  ],
+  "gate": [
+    "FERN_CI_PERF_GATE_MAX_DRIFT=10",
+    "scripts/ci-check-perf",
+    ".github/alloc-baseline.txt",
+    "report"
+  ],
+  "limitation": "Default workloads differ because the checker source changed. Use fixed-input.json to isolate the compiler effect. The 1% advisory warning persists. No RSS observation."
+}

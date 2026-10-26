@@ -116,7 +116,7 @@ func TestSelfHostPackageCapabilityDifferentialX86_64(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	nativeBin := buildFernCLIBin(t)
+	oracleBin := buildFernCLIBin(t)
 	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
 	if err != nil {
 		t.Fatalf("stdlib path: %v", err)
@@ -127,6 +127,10 @@ func TestSelfHostPackageCapabilityDifferentialX86_64(t *testing.T) {
 	// A parameter that shares its name with an app function is not a reference to it.
 	const shadowsAppFunction = "pub function save(source: string): i32 {\n  return source.len();\n}\n"
 	const appSource = "function source(): i32 {\n  write_file(\"/tmp/fern-caps-e2e.txt\", \"x\");\n  return main();\n}\n"
+	// A method call reaches the method of its receiver's type, not each method with that name.
+	const callsOwnMethod = "pub struct Counter { n: i32 }\nfunction (c: Counter) size(): i32 {\n  return c.n;\n}\npub function save(s: string): i32 {\n  let c: Counter = Counter { n: s.len() };\n  return c.size();\n}\n"
+	const appMethod = "struct Disk { path: string }\nfunction (d: Disk) size(): i32 {\n  write_file(d.path, \"x\");\n  return 0;\n}\n"
+	const deniedSave = "error helper fs write_file save → write_file lib.fern:1:5"
 
 	for _, c := range []struct {
 		name      string
@@ -134,41 +138,43 @@ func TestSelfHostPackageCapabilityDifferentialX86_64(t *testing.T) {
 		helper    string
 		wantBuild bool
 		appExtra  string
+		wantE070  string
 	}{
-		{"granted", "helper = { path = \"../helper\", capabilities = [\"fs\"] }", reachesFS, true, ""},
-		{"outside-grant", "helper = { path = \"../helper\", capabilities = [\"net\"] }", reachesFS, false, ""},
-		{"empty-grant", "helper = { path = \"../helper\", capabilities = [] }", reachesFS, false, ""},
-		{"ungoverned", "helper = { path = \"../helper\" }", reachesFS, true, ""},
-		{"reaches-nothing", "helper = { path = \"../helper\", capabilities = [] }", reachesNothing, true, ""},
-		{"parameter-shadows-function", "helper = { path = \"../helper\", capabilities = [] }", shadowsAppFunction, true, appSource},
+		{"granted", "helper = { path = \"../helper\", capabilities = [\"fs\"] }", reachesFS, true, "", ""},
+		{"outside-grant", "helper = { path = \"../helper\", capabilities = [\"net\"] }", reachesFS, false, "", deniedSave},
+		{"empty-grant", "helper = { path = \"../helper\", capabilities = [] }", reachesFS, false, "", deniedSave},
+		{"ungoverned", "helper = { path = \"../helper\" }", reachesFS, true, "", ""},
+		{"reaches-nothing", "helper = { path = \"../helper\", capabilities = [] }", reachesNothing, true, "", ""},
+		{"parameter-shadows-function", "helper = { path = \"../helper\", capabilities = [] }", shadowsAppFunction, true, appSource, ""},
+		{"method-of-another-type", "helper = { path = \"../helper\", capabilities = [] }", callsOwnMethod, true, appMethod, ""},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			proj := t.TempDir()
 			entry := writeCapsProject(t, proj, c.depEntry, c.helper, c.appExtra)
 
-			nativeCmd := exec.Command(nativeBin, "-o", filepath.Join(proj, "native.bin"), entry)
-			nativeOut, _ := nativeCmd.CombinedOutput()
-			nativeBuilt := nativeCmd.ProcessState.ExitCode() == 0
+			oracleCmd := exec.Command(oracleBin, "-check", entry)
+			oracleOut, _ := oracleCmd.CombinedOutput()
+			oracleBuilt := oracleCmd.ProcessState.ExitCode() == 0
 
 			shCmd := exec.Command(driverBin, "-o", filepath.Join(proj, "selfhost.bin"), entry, stdlib)
 			shOut, _ := shCmd.CombinedOutput()
 			shBuilt := shCmd.ProcessState.ExitCode() == 0
 
-			if nativeBuilt != c.wantBuild {
-				t.Fatalf("native built = %v, want %v\n%s", nativeBuilt, c.wantBuild, nativeOut)
+			if oracleBuilt != c.wantBuild {
+				t.Fatalf("Go built = %v, want %v\n%s", oracleBuilt, c.wantBuild, oracleOut)
 			}
-			if shBuilt != nativeBuilt {
-				t.Errorf("native built = %v, self-host built = %v\n--- native ---\n%s\n--- self-host ---\n%s",
-					nativeBuilt, shBuilt, nativeOut, shOut)
+			if shBuilt != oracleBuilt {
+				t.Errorf("Go built = %v, self-host built = %v\n--- Go ---\n%s\n--- self-host ---\n%s",
+					oracleBuilt, shBuilt, oracleOut, shOut)
 			}
-			want := capsDiagnostics(string(nativeOut))
+			want := capsDiagnostics(string(oracleOut))
 			got := capsDiagnostics(string(shOut))
-			if !c.wantBuild && strings.Join(want, "; ") != "error helper fs write_file save → write_file lib.fern:1:5" {
-				t.Errorf("native's E070 = %v\n%s", want, nativeOut)
+			if !c.wantBuild && strings.Join(want, "; ") != c.wantE070 {
+				t.Errorf("Go's E070 = %v\n%s", want, oracleOut)
 			}
 			if strings.Join(want, "; ") != strings.Join(got, "; ") {
-				t.Errorf("capability diagnostics differ:\nnative    %v\nself-host %v\n--- native ---\n%s\n--- self-host ---\n%s",
-					want, got, nativeOut, shOut)
+				t.Errorf("capability diagnostics differ:\nGo        %v\nself-host %v\n--- Go ---\n%s\n--- self-host ---\n%s",
+					want, got, oracleOut, shOut)
 			}
 		})
 	}
@@ -202,11 +208,11 @@ func TestSelfHostCapsTraitDefaultDifferentialX86_64(t *testing.T) {
 		}
 	}
 	entry := filepath.Join(proj, "app", "main.fern")
-	nativeOut, _ := exec.Command(buildFernCLIBin(t), "-o", filepath.Join(proj, "native.bin"), entry).CombinedOutput()
+	oracleOut, _ := exec.Command(buildFernCLIBin(t), "-check", entry).CombinedOutput()
 	shOut, _ := exec.Command(driverBin, "-o", filepath.Join(proj, "selfhost.bin"), entry, stdlib).CombinedOutput()
 	const want = "error b fs read_file grab → read_file lib.fern:3:3"
-	if got := strings.Join(capsDiagnostics(string(nativeOut)), "; "); got != want {
-		t.Errorf("native E070 = %q, want %q\n%s", got, want, nativeOut)
+	if got := strings.Join(capsDiagnostics(string(oracleOut)), "; "); got != want {
+		t.Errorf("Go E070 = %q, want %q\n%s", got, want, oracleOut)
 	}
 	if got := strings.Join(capsDiagnostics(string(shOut)), "; "); got != want {
 		t.Errorf("self-host E070 = %q, want %q\n%s", got, want, shOut)
@@ -221,7 +227,7 @@ func TestSelfHostCapabilitiesReportAgreesWithNative(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	nativeBin := buildFernCLIBin(t)
+	oracleBin := buildFernCLIBin(t)
 	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
 	if err != nil {
 		t.Fatalf("stdlib path: %v", err)
@@ -231,20 +237,20 @@ func TestSelfHostCapabilitiesReportAgreesWithNative(t *testing.T) {
 	entry := writeCapsProject(t, proj, "helper = { path = \"../helper\" }",
 		"pub function save(s: string): i32 {\n  write_file(\"/tmp/fern-caps-e2e.txt\", s);\n  tcp_close(0);\n  return 0;\n}\n")
 
-	nativeOut, err := exec.Command(nativeBin, "-capabilities", entry).CombinedOutput()
+	oracleOut, err := exec.Command(oracleBin, "-capabilities", entry).CombinedOutput()
 	if err != nil {
-		t.Fatalf("native -capabilities: %v\n%s", err, nativeOut)
+		t.Fatalf("Go -capabilities: %v\n%s", err, oracleOut)
 	}
 	shOut, err := exec.Command(driverBin, "-capabilities", entry, stdlib).CombinedOutput()
 	if err != nil {
 		t.Fatalf("self-host -capabilities: %v\n%s", err, shOut)
 	}
-	if want, got := reportRows(string(nativeOut)), reportRows(string(shOut)); want != got {
-		t.Errorf("report rows differ:\nnative    %q\nself-host %q\n--- native ---\n%s\n--- self-host ---\n%s",
-			want, got, nativeOut, shOut)
+	if want, got := reportRows(string(oracleOut)), reportRows(string(shOut)); want != got {
+		t.Errorf("report rows differ:\nGo        %q\nself-host %q\n--- Go ---\n%s\n--- self-host ---\n%s",
+			want, got, oracleOut, shOut)
 	}
-	if !strings.Contains(reportRows(string(nativeOut)), "helper fs,net") {
-		t.Errorf("native report did not attribute fs,net to helper: %q", nativeOut)
+	if !strings.Contains(reportRows(string(oracleOut)), "helper fs,net") {
+		t.Errorf("Go report did not attribute fs,net to helper: %q", oracleOut)
 	}
 }
 
@@ -272,7 +278,7 @@ func TestSelfHostCapsModuleBelowPackageRoot(t *testing.T) {
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	nativeBin := buildFernCLIBin(t)
+	oracleBin := buildFernCLIBin(t)
 	stdlib, err := filepath.Abs(filepath.Join("..", "..", "stdlib"))
 	if err != nil {
 		t.Fatalf("stdlib path: %v", err)
@@ -323,20 +329,20 @@ func TestSelfHostCapsModuleBelowPackageRoot(t *testing.T) {
 				}
 				entry := filepath.Join(proj, filepath.FromSlash(layout.entry))
 
-				nativeOut, err := exec.Command(nativeBin, "-capabilities", entry).CombinedOutput()
+				oracleOut, err := exec.Command(oracleBin, "-capabilities", entry).CombinedOutput()
 				if err != nil {
-					t.Fatalf("native -capabilities: %v\n%s", err, nativeOut)
+					t.Fatalf("Go -capabilities: %v\n%s", err, oracleOut)
 				}
 				shOut, err := exec.Command(driverBin, "-capabilities", entry, stdlib).CombinedOutput()
 				if err != nil {
 					t.Fatalf("self-host -capabilities: %v\n%s", err, shOut)
 				}
-				want, got := reportRows(string(nativeOut)), reportRows(string(shOut))
+				want, got := reportRows(string(oracleOut)), reportRows(string(shOut))
 				if want != got {
-					t.Errorf("report rows differ:\nnative    %q\nself-host %q", want, got)
+					t.Errorf("report rows differ:\nGo        %q\nself-host %q", want, got)
 				}
 				if !strings.Contains(want, "helper fs") {
-					t.Errorf("native report did not attribute fs to helper: %q", nativeOut)
+					t.Errorf("Go report did not attribute fs to helper: %q", oracleOut)
 				}
 
 				build := exec.Command(driverBin, "-o", filepath.Join(proj, "app.bin"), entry, stdlib)
