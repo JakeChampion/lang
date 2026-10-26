@@ -1,0 +1,9 @@
+// spec: DI-06
+
+struct Box { n: i32 }
+
+function main(): i32 {
+  let x: Option[Box] = None;
+
+  return x.n;
+}

@@ -1,0 +1,9 @@
+// spec: DI-03
+
+function main(): i32 {
+  if (true) {
+    let x: i32 = 1;
+  }
+
+  return x;
+}

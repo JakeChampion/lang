@@ -30,6 +30,7 @@ which ones.
 | `ARRAY-BOUNDS.md` | [policy] | Bounds-checking semantics: an out-of-range index or `.with` write aborts the program on every backend. |
 | `CLOSURE-CAPTURE.md` | [policy] | Closures capture enclosing variables by reference through a shared cell, with E049 governing write-back. |
 | `FLOAT-SEMANTICS.md` | [policy] | IEEE 754 for ordinary arithmetic, with NaN bit patterns, the sign of zero and denormals left unspecified across backends. |
+| `INITIALIZATION.md` | [policy] | Required initializers, lexical scope, and checked optional payload access. |
 | `INTEGER-SEMANTICS.md` | [policy] | Wrapping, never-trapping integer operations with identical results on every backend, and the rules for usize. |
 | `STR-VIEW-CONTRACT.md` | [policy] | What enforces the borrowed `str` contract (#8635). |
 | `STRINGS-SOTA.md` | [policy] | String state of the art and Fern's string decisions D1–D11 (UTF-8, byte indices, char, guaranteed validity), and the October 2026 migration audit. |

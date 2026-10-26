@@ -1,0 +1,7 @@
+// spec: DI-02
+
+function main(): i32 {
+  let x: i32 = x;
+
+  return x;
+}

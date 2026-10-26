@@ -1,0 +1,17 @@
+// spec: DI-07
+
+function choose(flag: boolean): i32 {
+  let x: i32 = 0;
+
+  if (flag) {
+    x = 42;
+  } else {
+    x = 7;
+  }
+
+  return x;
+}
+
+function main(): i32 {
+  return choose(true) + choose(false);
+}

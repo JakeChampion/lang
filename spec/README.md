@@ -108,6 +108,7 @@ maintained as living documents and a copy would drift:
 | `docs/INTEGER-SEMANTICS.md` | Integer operations are portable and never trap. `+ - * <<` wrap at the operand's width on every backend. |
 | `docs/FLOAT-SEMANTICS.md` | IEEE 754 for ordinary arithmetic, with the edges **deliberately** under-specified — the NaN bit-pattern in particular. The model for how to write down a freedom. |
 | `docs/ARRAY-BOUNDS.md` | Bounds-checking semantics. |
+| `docs/INITIALIZATION.md` | Required initializers, lexical scope, and optional payload access. |
 | `docs/CLOSURE-CAPTURE.md` | Capture-by-reference, with the shared cell guarded on both sides by `E049`. |
 | `docs/MODE-LATTICE.md` | The `own` / borrow / view mode lattice. |
 | `docs/MUST-CONSUME.md` | `@must_consume` linear obligations, enforced as `E067`. |

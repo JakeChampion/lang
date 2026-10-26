@@ -1,0 +1,9 @@
+// spec: DI-10
+
+function main(): i32 {
+  while (false) {
+    let x: i32 = 1;
+  }
+
+  return x;
+}
