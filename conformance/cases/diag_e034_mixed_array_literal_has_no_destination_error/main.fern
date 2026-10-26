@@ -1,0 +1,12 @@
+// A mixed literal reports its element. The destination error follows only when the first element cannot settle there.
+function f(w: i32[], v: i64[]): i64[][] { return [w, v]; }
+function g(rows: i64[][]): i32 { return rows.len(); }
+function main(): i32 {
+  let w: i32[] = [1];
+  let v: i64[] = [2];
+  let all: i64[][] = [w, v];
+  let n: i32 = g([w, v]);
+  let data: u8[] = [1u8];
+  let bad: u8[][] = [data[:1], data];
+  return all.len() + n + f(w, v).len() + bad.len();
+}

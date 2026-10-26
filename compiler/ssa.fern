@@ -4525,6 +4525,20 @@ function binary_facts(f: SFunc, def_b: i32[], def_k: i32[], facts: i32[], ins: S
   if (ins.str == "shr_u" && ins.imm == 64) {
     return shifted_facts(f, def_b, def_k, ins.args[1]);
   }
+  if (ins.str == "shr_u" && (fact_of(facts, ins.args[0]) & EXT_U32) != 0) {
+    return narrowed_facts(f, def_b, def_k, ins.args[1]);
+  }
+  return 0;
+}
+
+// A u32 shifted right by a constant from 1 to 31 is a non-negative i32.
+function narrowed_facts(f: SFunc, def_b: i32[], def_k: i32[], count: i32): i32 {
+  if (const_in(f, def_b, def_k, count, 24i64, 31i64)) {
+    return EXT_BYTE;
+  }
+  if (const_in(f, def_b, def_k, count, 1i64, 31i64)) {
+    return 3;
+  }
   return 0;
 }
 

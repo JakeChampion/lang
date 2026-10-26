@@ -1,0 +1,13 @@
+### performance (bench)
+| metric | measured | baseline | delta |
+| --- | --- | --- | --- |
+| x86_64/checker.allocs | 40.8M | 31.6M | +29.17% |
+| x86_64/checker.frees | 40.8M | 31.6M | +29.17% |
+SLOWER: x86_64/checker.allocs 31.6M -> 40.8M (+29.17%, tolerance 1%).
+SLOWER: x86_64/checker.frees 31.6M -> 40.8M (+29.17%, tolerance 1%).
+Corrected baseline — paste into the baseline file:
+    x86_64/checker.allocs 40849794
+    x86_64/checker.frees 40849794
+WARNING: x86_64/checker.allocs +29.17%: x86_64/checker.allocs measured 40849794 against a baseline of 31624467 — over its 1% tolerance
+WARNING: x86_64/checker.frees +29.17%: x86_64/checker.frees measured 40849794 against a baseline of 31624467 — over its 1% tolerance
+ci-check-perf: x86_64/checker.allocs drifted 29.1715% against a ceiling of 10% (FERN_CI_PERF_GATE_MAX_DRIFT) — re-bank the baseline in the PR that moved it

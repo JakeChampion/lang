@@ -207,7 +207,7 @@ fetches in virtual time.
 // UP is the upstream's address; fetch_via(plat, path) answers the body of
 // plat.http(fetch.get("http://up.test" + path)).
 let d: sim.Sim = sim.new(1);
-let n: sim_fetch.Net = sim_fetch.net(d).host("up.test", [UP]).listen(UP, 80, time.duration_millis(5))
+let n: sim_fetch.Net = sim_fetch.new(d).host("up.test", [UP]).listen(UP, 80, time.duration_millis(5))
     .route(UP, 80, "/a", [sim_fetch.reply(200, "alpha").after(time.duration_millis(30))])
     .route(UP, 80, "/b", [sim_fetch.reply(200, "beta").after(time.duration_millis(10))]);
 let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
@@ -218,8 +218,10 @@ let got: async.TaskStatus[string][] = sim.run_tasks(d, entries, [None, None]);
 
 Faults are scripted answers: `sim_fetch.reset()` closes the connection with
 nothing sent, `silent()` never answers (the client's timeout or a
-cancellation ends the fetch), and `in_chunks(size, every)` with `held()`
-delivers a prefix and then goes quiet. `sim.sweep_seeds(n, prop)` runs
+cancellation ends the fetch), `cut(n)` delivers only the first `n` bytes,
+and `held()` keeps the connection open and quiet after them.
+`n.flaky(addr, port, path, percent, fault)` answers that share of the
+requests with `fault`, chosen by the sim's seeded generator. `sim.sweep_seeds(n, prop)` runs
 `prop(seed)` over seeds `1..n` and returns the first failing seed (0 if all
 pass), with `Sim.rng_state()` available for lockstep assertions. See
 `tests/stdlib/sim_fetch_test.fern` and `tests/stdlib/sim_platform_test.fern`.

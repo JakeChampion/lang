@@ -26,6 +26,10 @@ function f(): Result[i64, string] { let m: Mark[i32, boolean] = Marked(1); let b
 		{"qualified builtin behind function", `function Ok(n: i32): Result[u8, string] { return Result.Ok(1u8); }
 function f(): Result[u8, string] { return Ok(300); }`,
 			[]string{"Result[u8, string]/Ok(u8)"}},
+		{"qualified builtin beside a user variant", `enum Opt { Some(i32), None } enum Outcome { Ok(i32), Err(i32) }
+function f(): Option[i32[]] { return Option.Some([1]); }
+function g(): Result[i32[], string] { return Result.Err("e"); }`,
+			[]string{"Option[i32[]]/Some(i32[])", "Result[i32[], string]/Err(string)"}},
 		{"qualified variant behind function", `enum Box[T] { Packed(T) }
 function Packed(n: i32): i32 { return n; }
 function f(): Box[string] { let n = Packed(3); return Box.Packed("value"); }`,

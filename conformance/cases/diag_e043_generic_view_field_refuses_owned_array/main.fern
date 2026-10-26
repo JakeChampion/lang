@@ -1,0 +1,11 @@
+// An owned array cannot fill a generic `[T]` field. The refusal names the element type that T takes.
+struct G[T] { xs: [T] }
+struct Q[T] { xs: [T], a: T }
+
+function main(): i32 {
+  let owned: i32[] = [1];
+  let g = G { xs: owned };
+  let x: i32 = 1;
+  let q = Q { xs: [1.5], a: x };
+  return g.xs.len() + q.xs.len();
+}

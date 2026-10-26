@@ -1780,6 +1780,14 @@ pub struct Scope {
   tparams: string[],
   tbounds: string[],
   lit_locals: string[],
+  view_memo: Cell[ViewMemo],
+}
+
+pub struct ViewMemo { names: util.NameIndex, holds: boolean[] }
+
+function new_view_memo(): Cell[ViewMemo] {
+  let names: string[] = [];
+  return cell_new(ViewMemo { names: util.name_index(names), holds: [] });
 }
 
 pub struct SigTable {
@@ -2149,13 +2157,13 @@ function new_scope(): Scope {
   let ms: MethodSig[] = [];
   let structs: StructTable = struct_table(ss, [], [], no_spellings());
   let unions: UnionTable = union_table(us);
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: method_table(ms), imports: Imports { paths: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: method_table(ms), imports: Imports { paths: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], view_memo: new_view_memo() };
 }
 
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], view_memo: new_view_memo() };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
@@ -8584,8 +8592,29 @@ function holds_view_aggregate(t: typeinfo.Type, s: Scope): boolean {
   if (is_arr_view(t) || is_str_view(t)) {
     return false;
   }
+  if (mentions_type_variable(t)) {
+    return true;
+  }
+  let key = view_memo_key(t);
+  if (key.len() == 0) {
+    let (holds, _) = type_holds_view(t, s, []);
+    return holds;
+  }
+  let memo = s.view_memo.get();
+  let at = memo.names.find(key);
+  if (at >= 0) {
+    return memo.holds[at];
+  }
   let (holds, _) = type_holds_view(t, s, []);
-  return holds || mentions_type_variable(t);
+  s.view_memo.set(ViewMemo { names: memo.names.added(key), holds: memo.holds.append(holds) });
+  return holds;
+}
+
+// Cache only complete root queries. A recursive visit can skip an ancestor that carries a view.
+function view_memo_key(t: typeinfo.Type): string {
+  let kind = match (t) { typeinfo.TypeStruct(_) => "struct:", typeinfo.TypeUnion(_) => "union:", typeinfo.TypeArray(_) => "array:", typeinfo.TypeTuple(_) => "tuple:", typeinfo.TypeMap(_) => "map:", _ => { return ""; } };
+  let spelling = typeinfo.spelling(t);
+  return if (spelling.len() == 0) { "" } else { kind + spelling };
 }
 
 function mentions_type_variable(t: typeinfo.Type): boolean {
@@ -8734,6 +8763,10 @@ function slc_escape_diag(fname: string, line: i32, col: i32): util.Diag {
 // The roots of every `[T]` view a value of type `to` carries, directly or inside an aggregate.
 function slc_agg_roots(e: ast.Expr, to: typeinfo.Type, cur: Scope, params: string[], localarr: string[], tainted: string[], held: string[], sums: ViewSum[], vix: ViewIndex): ViewRoots {
   if (is_arr_view(to)) {
+    if let ast.ExprArray(_) = e {
+      let none: string[] = [];
+      return ViewRoots { local: true, params: none };
+    }
     return slc_expr_roots(e, cur, params, localarr, tainted, sums, vix);
   }
   if (is_type_variable(to)) {
@@ -10337,6 +10370,10 @@ function find_struct_sig(structs: StructTable, name: string): StructSig {
   if (first >= 0) {
     return structs.structs[first];
   }
+  return no_struct_sig();
+}
+
+function no_struct_sig(): StructSig {
   let none: string[] = [];
   let nonet: typeinfo.Type[] = [];
   let none_tp: string[] = [];
@@ -10354,6 +10391,10 @@ function find_variant_sig(structs: StructTable, name: string): StructSig {
         return structs.structs[k];
       }
       k = structs.index.next[k];
+    }
+    // Option.Some, Result.Ok and Result.Err are the builtin's even when a user enum declares the same name.
+    if (parser.builtin_enum_of(bare) == owner) {
+      return no_struct_sig();
     }
   }
   let k2: i32 = structs.index.chain(bare);
@@ -11831,7 +11872,7 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
       return int_literal_tree(e);
     },
     typeinfo.TypeArray(wa) => {
-      return array_literal_settles(e, wa.elem, s);
+      return array_literal_settles(e, wa.elem, s) || mixed_literal_settles(e, wa.elem, s);
     },
     typeinfo.TypeTuple(wt) => {
       return tuple_literal_settles(e, wt.elements, s);
@@ -11869,6 +11910,74 @@ function array_literal_settles(e: ast.Expr, elem: typeinfo.Type, s: Scope): bool
       return false;
     }
   }
+}
+
+// A mixed literal already has its E034, so it takes no destination error when its first element could settle there.
+function mixed_literal_settles(e: ast.Expr, elem: typeinfo.Type, s: Scope): boolean {
+  if let ast.ExprArray(a) = e {
+    let none: util.Diag[] = [];
+    return array_mix_diags(a, s, none).len() > 0 && elem_settleable(check_expr(a.elements[0], s), elem, s);
+  }
+  return false;
+}
+
+function elem_settleable(have: typeinfo.Type, want: typeinfo.Type, s: Scope): boolean {
+  if (type_contains_unknown(have) || type_contains_unknown(want) || poly_numeric_settles(have, want)) {
+    return true;
+  }
+  if (same_settle_shape(have, want)) {
+    return parts_settleable(have, want, s);
+  }
+  return typeinfo.lossless_widen(have, want) || coercible(have, want, s);
+}
+
+function same_settle_shape(have: typeinfo.Type, want: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(ha) = have {
+    if let typeinfo.TypeArray(wa) = want {
+      return ha.view == wa.view;
+    }
+  }
+  if let typeinfo.TypeStruct(hs) = have {
+    if let typeinfo.TypeStruct(ws) = want {
+      return hs.name == ws.name && hs.args.len() == ws.args.len() && hs.args.len() > 0;
+    }
+  }
+  return false;
+}
+
+function parts_settleable(have: typeinfo.Type, want: typeinfo.Type, s: Scope): boolean {
+  if let typeinfo.TypeArray(ha) = have {
+    if let typeinfo.TypeArray(wa) = want {
+      return elem_settleable(ha.elem, wa.elem, s);
+    }
+  }
+  if let typeinfo.TypeStruct(hs) = have {
+    if let typeinfo.TypeStruct(ws) = want {
+      return args_settleable(hs.args, ws.args, s);
+    }
+  }
+  return false;
+}
+
+function args_settleable(have: typeinfo.Type[], want: typeinfo.Type[], s: Scope): boolean {
+  let i: i32 = 0;
+  while (i < have.len()) {
+    if (!elem_settleable(have[i], want[i], s)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function poly_numeric_settles(have: typeinfo.Type, want: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(hi) = have {
+    return hi.polymorphic && (is_integer(want) || is_float(want));
+  }
+  if let typeinfo.TypeFloat(hf) = have {
+    return hf.polymorphic && is_float(want);
+  }
+  return false;
 }
 
 function tuple_literal_settles(e: ast.Expr, elements: typeinfo.Type[], s: Scope): boolean {
@@ -14494,7 +14603,7 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
     ast.ExprArray(arr) => {
       for element in arr.elements {
         let ekt: typeinfo.Type = check_expr(element, s);
-        if (!is_unknown(ekt) && reports_element(ekt, elem_ty) && !settles_to(element, elem_ty, s) && !coercible(ekt, elem_ty, s) && dest_bound_diags(element, elem_ty, s).len() == 0) {
+        if (!is_unknown(ekt) && !settles_to(element, elem_ty, s) && !coercible(ekt, elem_ty, s) && dest_bound_diags(element, elem_ty, s).len() == 0) {
           out = out.append(dg_at("E034", "array element: expected " + type_label(elem_ty) + ", got " + type_label(ekt), expr_line(element), expr_col(element)));
         }
       }
@@ -14502,15 +14611,6 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
     _ => {}
   }
   return out;
-}
-
-// The destination's own check reports an array element of another element
-// type; only a view where an owned array is wanted, or the reverse, escapes it.
-function reports_element(got: typeinfo.Type, want: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(_) = want {
-    return type_eq(got, want) && !same_element_type(got, want);
-  }
-  return true;
 }
 
 function checks_array_element(ty: typeinfo.Type): boolean {
@@ -16716,6 +16816,25 @@ function export_shape_diags(mod: parser.Module): util.Diag[] {
   return out;
 }
 
+// reserved_name_diags reports each declaration under a built-in type's name.
+// Such a name takes the built-in's place for every module in the bundle, so no
+// later diagnostic can be trusted.
+function reserved_name_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  for ed in mod.enums {
+    if (parser.is_reserved_enum_name(ed.name) || parser.is_reserved_struct_name(ed.name)) {
+      out = out.append(dg_at("E010", "enum \"" + ed.name + "\" is a reserved built-in name and cannot be redeclared", ed.line, ed.col));
+    }
+  }
+  for sd in mod.structs {
+    let user_struct: boolean = sd.enum_owner.len() == 0 && !util.str_has_prefix(sd.name, "__");
+    if (user_struct && sd.line > 0 && (parser.is_reserved_struct_name(sd.name) || parser.is_reserved_enum_name(sd.name))) {
+      out = out.append(dg_at("E010", "struct \"" + sd.name + "\" is a reserved built-in name and cannot be redeclared", sd.line, sd.col));
+    }
+  }
+  return out;
+}
+
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
   let out: util.Diag[] = [];
   out = util.append_diags(out, handler_state_diags(mod));
@@ -16789,9 +16908,6 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       if (sdup) {
         out = out.append(dg_at("E006", "struct \"" + s2.name + "\" redeclared", s2.line, s2.col));
       }
-      if (s2.line > 0 && (parser.is_reserved_struct_name(s2.name) || parser.is_reserved_enum_name(s2.name))) {
-        out = out.append(dg_at("E010", "struct \"" + s2.name + "\" is a reserved built-in name and cannot be redeclared", s2.line, s2.col));
-      }
     }
     sn2 = sn2 + 1;
   }
@@ -16807,9 +16923,6 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     }
     if (edup) {
       out = out.append(dg_at("E006", "enum \"" + mod.enums[en].name + "\" redeclared", mod.enums[en].line, mod.enums[en].col));
-    }
-    if (parser.is_reserved_enum_name(mod.enums[en].name) || parser.is_reserved_struct_name(mod.enums[en].name)) {
-      out = out.append(dg_at("E010", "enum \"" + mod.enums[en].name + "\" is a reserved built-in name and cannot be redeclared", mod.enums[en].line, mod.enums[en].col));
     }
     let vn: string[] = mod.enums[en].variant_names;
     let vk: i32 = 0;
@@ -16836,7 +16949,9 @@ struct MovedEntry { mname: string, mline: i32 }
 
 struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], snames: util.NameIndex, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[] }
+struct OwnReturns { synthetic: boolean, moved: MovedEntry[] }
+
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], snames: util.NameIndex, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[], returns: Cell[OwnReturns] }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -16936,7 +17051,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda): OwnCtx {
       bound = bound.append(p.name);
     }
   }
-  let nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, snames: ctx.snames, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use };
+  let nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, snames: ctx.snames, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }) };
   return nested;
 }
 
@@ -16983,6 +17098,11 @@ function ow_variant_known(ctx: OwnCtx, name: string, owner: string): boolean {
   return false;
 }
 
+// Option's and Result's variants are not among the module's declarations.
+function ow_builtin_variant(ctx: OwnCtx, name: string): boolean {
+  return is_builtin_variant(name) && !ctx.ofuncs.funcs.has(name) && !util.has_str(ctx.bound, name);
+}
+
 function ow_struct_names(structs: parser.StructDecl[]): string[] {
   let names: string[] = [];
   for sd in structs {
@@ -17004,14 +17124,23 @@ function ow_scalar_literal(e: ast.Expr): boolean {
 function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
   if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(cid) = c.callee {
-      if (ctx.ofuncs.ctors.has(cid.name)) {
+      if (ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name)) {
         return true;
       }
       return util.has_str(ctx.fresh_scrut, cid.name);
     }
-    return false;
+    return ow_qualified_ctor(c.callee, ctx);
   }
   return ow_is_owned_expr(e, ctx);
+}
+
+function ow_qualified_ctor(callee: ast.Expr, ctx: OwnCtx): boolean {
+  if let ast.ExprFieldAccess(fa) = callee {
+    let owner = ow_ident_name(fa.obj);
+    return owner.len() > 0 && !util.has_str(ctx.bound, owner) && !ctx.scope.is_bound(owner)
+      && ow_variant_known(ctx, fa.field, owner);
+  }
+  return false;
 }
 
 function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
@@ -17044,7 +17173,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (util.has_str(ctx.last_use, lu_key(id.line, id.col))) {
         return true;
       }
-      if (ow_variant_known(ctx, id.name, "")) {
+      if (ow_variant_known(ctx, id.name, "") || ow_builtin_variant(ctx, id.name)) {
         return true;
       }
       if (!util.has_str(ctx.bound, id.name) && !ctx.scope.is_bound(id.name) && ctx.scope.lookup_sig(id.name).is_const) {
@@ -17061,9 +17190,12 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprIdent(cid) => {
-          return ctx.ofuncs.ctors.has(cid.name) || util.has_str(ctx.fresh, cid.name);
+          return ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name) || util.has_str(ctx.fresh, cid.name);
         },
         ast.ExprFieldAccess(mfa) => {
+          if (ow_qualified_ctor(c.callee, ctx)) {
+            return true;
+          }
           for ns in ow_type_namespaces(check_expr(mfa.obj, ctx.scope)) {
             if (util.has_str(ctx.fresh_methods, ns + "." + mfa.field)) {
               return true;
@@ -18062,7 +18194,7 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       match (c.callee) {
         ast.ExprLambda(lm) => {
           if (lm.params.len() == 0 && c.args.len() == 0) {
-            return ow_stmts(ow_value_block_stmts(lm), moved, ctx);
+            return ow_value_block_walk(lm, moved, ctx);
           }
         },
         _ => {}
@@ -18075,6 +18207,9 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: r2.moved, diags: util.append_diags(r1.diags, r2.diags) };
     },
     ast.ExprUnary(u) => {
+      if (u.op == "try_") {
+        return ru_expr(u.operand, moved, ctx);
+      }
       return ru_borrow(u.operand, moved, ctx);
     },
     ast.ExprArray(a) => {
@@ -18121,6 +18256,28 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: moved, diags: [] };
     }
   }
+}
+
+function ow_value_block_walk(lm: ast.ExprLambda, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+  let generated = lm.origin == parser.ORIGIN_BLOCK || ow_value_if_origin(lm.origin) || lm.origin == parser.ORIGIN_MATCH_EXPR;
+  let returns = cell_new(OwnReturns { synthetic: generated, moved: [] });
+  let result = ow_stmts(ow_value_block_stmts(lm), moved, OwnCtx { ...ctx, returns: returns });
+  let resumed: MovedEntry[] = [];
+  for entry in returns.get().moved {
+    if (util.has_str(ctx.owned, entry.mname)) {
+      resumed = resumed.append(entry);
+    }
+  }
+  return OwnWalk { ...result, moved: ow_moved_join(result.moved, resumed, false) };
+}
+
+function ow_record_return(result: OwnWalk, line: i32, ctx: OwnCtx): OwnWalk {
+  let returns = ctx.returns.get();
+  // Line zero marks an implicit value result from the parser.
+  if (!returns.synthetic || line == 0) {
+    ctx.returns.set(OwnReturns { ...returns, moved: ow_moved_join(returns.moved, result.moved, false) });
+  }
+  return result;
 }
 
 function ow_value_block_stmts(lm: ast.ExprLambda): ast.Stmt[] {
@@ -18204,7 +18361,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         },
         _ => {}
       }
-      return ru_expr(r.value, moved, rctx);
+      return ow_record_return(ru_expr(r.value, moved, rctx), r.line, ctx);
     },
     ast.StmtExpr(e) => {
       return ru_expr(e.value, moved, ctx);
@@ -18252,7 +18409,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       if let ast.ExprIdent(sid) = m.scrutinee {
         let takes: boolean = false;
         for arm in m.arms {
-          takes = takes || ow_arm_takes_pointer(OwnCtx { ...ctx, scope: annotate_arm_scope(arm, ctx.scope, whole) }, arm.pattern);
+          takes = takes || ow_arm_takes_pointer(OwnCtx { ...ctx, scope: annotate_arm_scope(arm, ctx.scope, whole) }, arm.pattern, whole);
         }
         if (!takes) {
           rs = OwnWalk { ...rs, moved: ow_unmove(rs.moved, moved, sid.name) };
@@ -18264,7 +18421,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         let actx: OwnCtx = ow_arm_bind_ctx(ctx, arm.pattern);
         actx = OwnCtx { ...actx, scope: annotate_arm_scope(arm, ctx.scope, whole) };
         if (scrut_owned) {
-          actx = ow_arm_payload_ctx(actx, arm.pattern);
+          actx = ow_arm_payload_ctx(actx, arm.pattern, whole);
         } else {
           actx = ow_arm_lent_ctx(actx, arm.pattern);
         }
@@ -18392,8 +18549,8 @@ function ow_unmove(after: MovedEntry[], before: MovedEntry[], name: string): Mov
   return out;
 }
 
-function ow_arm_takes_pointer(ctx: OwnCtx, pat: ast.Pattern): boolean {
-  let bound: OwnCtx = ow_arm_payload_ctx(OwnCtx { ...ctx, owned: [] }, pat);
+function ow_arm_takes_pointer(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type): boolean {
+  let bound: OwnCtx = ow_arm_payload_ctx(OwnCtx { ...ctx, owned: [] }, pat, whole);
   for n in bound.owned {
     if (n != "_") {
       return true;
@@ -18402,20 +18559,9 @@ function ow_arm_takes_pointer(ctx: OwnCtx, pat: ast.Pattern): boolean {
   return false;
 }
 
-function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
+function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type): OwnCtx {
   if let ast.PatVariant(pv) = pat {
-    let vname: string = util.base_type_name(pv.type_name);
-    let di: i32 = 0;
-    let dot: i32 = 0 - 1;
-    while (di < vname.len()) {
-      if (vname[di] == b'.') {
-        dot = di;
-      }
-      di = di + 1;
-    }
-    if (dot >= 0) {
-      vname = slice_unchecked(vname, dot + 1, vname.len()) + "";
-    }
+    let vname: string = ow_last_segment(util.base_type_name(pv.type_name));
     let binds: string[] = [];
     if (pv.binding.len() > 0) {
       binds = binds.append(pv.binding);
@@ -18427,14 +18573,18 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
       return ctx;
     }
     let names: string[] = ctx.owned;
+    let owner: string = ow_scrutinee_enum(whole, vname, ctx.structs);
     let declared: boolean = false;
     for sd in ctx.structs {
-      declared = declared || sd.name == vname;
-      if (sd.name == vname && sd.enum_owner.len() == 0) {
+      if (sd.name != vname || owner.len() > 0 && sd.enum_owner != owner) {
+        continue;
+      }
+      declared = true;
+      if (sd.enum_owner.len() == 0) {
         if (binds[0] != "_" && !util.has_str(names, binds[0])) {
           names = names.append(binds[0]);
         }
-      } else if (sd.name == vname && sd.enum_owner.len() > 0) {
+      } else {
         let i: i32 = 0;
         while (i < binds.len() && i < sd.fields.len()) {
           if (binds[i].len() > 0 && binds[i] != "_" && ow_type_is_pointer_name(sd.fields[i].type_name, ctx.ofuncs)
@@ -18452,6 +18602,34 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
     return OwnCtx { ...ctx, owned: names };
   }
   return ctx;
+}
+
+function ow_last_segment(name: string): string {
+  let dot: i32 = 0 - 1;
+  for i in 0..name.len() {
+    if (name[i] == b'.') {
+      dot = i;
+    }
+  }
+  if (dot < 0) {
+    return name;
+  }
+  return slice_unchecked(name, dot + 1, name.len()) + "";
+}
+
+// The enum the scrutinee's type names for the arm's variant, which a same-named variant elsewhere must not stand in for.
+function ow_scrutinee_enum(whole: typeinfo.Type, vname: string, structs: parser.StructDecl[]): string {
+  if let typeinfo.TypeUnion(u) = whole {
+    if (parser.builtin_enum_of(vname) == u.name) {
+      return u.name;
+    }
+    for sd in structs {
+      if (sd.name == vname && sd.enum_owner == u.name) {
+        return u.name;
+      }
+    }
+  }
+  return "";
 }
 
 // Some, Ok and Err have no struct declaration, so the arm scope gives the payload's type.
@@ -19040,7 +19218,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, snames: snames, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs) };
+    let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, snames: snames, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs), returns: cell_new(OwnReturns { synthetic: false, moved: [] }) };
     let nomoved: MovedEntry[] = [];
     let r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, r.diags);
@@ -22256,6 +22434,12 @@ function with_mangled(out: string[], name: string, prefix: string): string[] {
 function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: boolean): ModuleTypes {
   let (filled, fda_diags) = parser.fill_default_args_with_diags(raw_mod);
   let mod: parser.Module = prepared_module(filled);
+  let reserved: util.Diag[] = reserved_name_diags(mod);
+  if (reserved.len() > 0) {
+    let no_sigs: FuncSig[] = [];
+    let no_tys: typeinfo.Type[] = [];
+    return ModuleTypes { sigs: no_sigs, top_tys: no_tys, all_well_typed: false, diags: reserved };
+  }
   let env: ModuleEnv = admission_env(mod, entry_file, raw_floor);
   let mt: ModuleTypes = check_module_pass(mod, env, fda_diags, []);
   if (mt.diags.len() > 0) {

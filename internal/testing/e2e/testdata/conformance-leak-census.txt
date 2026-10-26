@@ -70,6 +70,8 @@ array_first_last_get_module                          0
 array_first_last_get_none_cases                      0
 array_generic_reductions                             0
 array_join                                           0
+array_literal_binds_a_generic_view_field             0
+array_literal_into_a_view_field                      0
 array_literal_takes_its_sibling_float_width          0
 array_methods                                        0
 array_min_max_by_empty_none                          0
@@ -337,8 +339,8 @@ generic_struct_method_at_tuple_type                  0
 generic_view_methods                                 0
 grow_past_capacity                                   0
 hash_struct_enum                                     0
-headers_map                                          0
 header_struct_literals                               0
+headers_map                                          0
 hello_world                                          0
 hex_literal                                          0
 hex_literal_width                                    0
@@ -1067,6 +1069,7 @@ target_os_wasi                                       0
 tasks_agree_without_a_scheduler                      7
 tco_sum                                              0
 tcp_recv_waits_for_data                              0
+tcp_send_nonblocking_partial                         0
 text_api_owners                                      0
 three_arms_bind_p                                    0
 time_leap                                            0
@@ -1128,6 +1131,7 @@ value_block_branch_tail                              0
 value_block_generic_call_arm                         0
 value_block_shadows_module_fn                        0
 value_block_width_call_arm                           0
+value_if_arm_fn_call_arg                             0
 var_inference                                        0
 variant_named_like_an_ioerror_variant                0
 variant_pattern_nested                               0
