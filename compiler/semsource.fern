@@ -7996,10 +7996,10 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   names = anchored.names;
   let laid: semrecords.Record[] = [];
   if (verify) {
-    let inlined: Spliced = inline_leaves(fuse_pipelines(reached_only(all, names, mod, opts.whole), names, mod.funcs, opts.array_report), names, mod, opts.size);
+    let inlined: Spliced = inline_leaves(fuse_pipelines(reach_module(all, names, mod, opts.whole, false), names, mod.funcs, opts.array_report), names, mod, opts.size);
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
-    all = prune_dead_constructions(reached_only(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole));
+    all = prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole, true));
   }
   decls = [];
   instances = [];
@@ -8197,7 +8197,7 @@ function without_unnamed(all: Produced[], names: string[], spliced: boolean[], m
   return out;
 }
 
-function reached_only(all: Produced[], names: string[], mod: parser.Module, whole: boolean): Produced[] {
+function reach_module(all: Produced[], names: string[], mod: parser.Module, whole: boolean, prune: boolean): Produced[] {
   if (!whole || !kernel_switch_on("FERN_NO_SEM_REACH")) {
     return all;
   }
@@ -8218,7 +8218,23 @@ function reached_only(all: Produced[], names: string[], mod: parser.Module, whol
   if (!r.ok) {
     return all;
   }
+  // Kernel selection can introduce calls to definitions not yet referenced.
+  if (!prune) {
+    return with_reach_facts(all, r);
+  }
   return with_reached(all, usable, r);
+}
+
+function with_reach_facts(all: Produced[], r: semreach.Reached): Produced[] {
+  let out: Produced[] = [];
+  for i in 0..all.len() {
+    let p: Produced = all[i];
+    if (r.rewritten[i]) {
+      p = Produced { ...p, func: r.funcs[i], analysis: None };
+    }
+    out = out.append(p);
+  }
+  return out;
 }
 
 function with_reached(all: Produced[], usable: boolean[], r: semreach.Reached): Produced[] {
