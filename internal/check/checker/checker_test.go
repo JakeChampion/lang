@@ -6950,6 +6950,31 @@ func TestArrayLiteralBindsGenericViewField(t *testing.T) {
 	}
 }
 
+func TestBytesOfLocalStringEscapeRejected(t *testing.T) {
+	const decls = "struct H { bytes: [u8] }\nfunction of_param(s: string): [u8] { return s.as_bytes(); }\n"
+	for _, src := range []string{
+		`function f(): [u8] { let s: string = "a" + "b"; return s.as_bytes(); }`,
+		`function f(): H { let s: string = "a" + "b"; return H { bytes: s.as_bytes() }; }`,
+		`function f(): [u8] { let s: string = "ab" + "c"; return s.as_bytes()[1:]; }`,
+		`function f(): [u8] { let s: string = "a" + "b"; return of_param(s); }`,
+		`function f(): [u8] { let s = "a" + "b"; return s.as_bytes(); }`,
+	} {
+		if err := checkSource(t, decls+src); err == nil || !hasCode(err, "E063") {
+			t.Errorf("%q: want E063, got %v", src, err)
+		}
+	}
+	for _, src := range []string{
+		`function f(s: string): H { return H { bytes: s.as_bytes() }; }`,
+		`function f(): [u8] { return "abc".as_bytes(); }`,
+		`function f(s: string): [u8] { return of_param(s); }`,
+		`function f(p: string): [u8] { let s: string = "a" + "b"; s = p; return s.as_bytes(); }`,
+	} {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+}
+
 func TestSliceEscapeRejected(t *testing.T) {
 	for _, src := range []string{
 		`function f(): [i32] { let xs: i32[] = [1, 2, 3]; return xs[0:2]; }`,

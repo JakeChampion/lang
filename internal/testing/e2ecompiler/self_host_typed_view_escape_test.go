@@ -99,7 +99,7 @@ func TestSelfHostCLIByteViewEscape(t *testing.T) {
 			t.Fatalf("imported diagnostics: %v\n%s", err, out)
 		}
 		for _, name := range []string{"left", "right"} {
-			if !strings.Contains(string(out), name+".fern:1:5: error[E063]") {
+			if !strings.Contains(string(out), name+".fern:1:69: error[E063]") {
 				t.Fatalf("missing source location for %s:\n%s", name, out)
 			}
 		}

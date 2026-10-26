@@ -132,6 +132,7 @@ byte_stream_and_async_channel                       0
 byte_view_of_a_field_after_a_failed_try              0
 byte_views_in_binary_codecs                         0
 byte_views_in_codecs                                0
+bytes_of_a_parameter_string_return                   0
 bytes_writer                                         0
 c2_consuming_reuse                                   0
 call_of_a_call_through_a_function_value              0
