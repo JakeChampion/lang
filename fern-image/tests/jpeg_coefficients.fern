@@ -1,0 +1,55 @@
+import "../packages/codecs/jpeg/entropy";
+import "std/i32";
+
+function never(): boolean {
+  return false;
+}
+
+function emit_case(path: string): i32 {
+  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  let blocks: entropy.CoefficientBlock[] = [];
+  let result = entropy.fold_blocks(input, entropy.default_limits(), never, blocks, (kept: entropy.CoefficientBlock[], block: entropy.CoefficientBlock): Result[entropy.CoefficientBlock[], string] => {
+    if (block.values.len() != 64) {
+      return Err("coefficient count");
+    }
+    return Ok(kept.append(block));
+  });
+  print("begin " + path);
+  match (result) {
+    Ok(done) => {
+      if (done.value.len() != done.plan.output_blocks || done.consumed != input.len()) {
+        return 3;
+      }
+      for block in done.value {
+        let line = "block " + block.component.to_string() + " " + block.x.to_string() + " " + block.y.to_string();
+        for value in block.values {
+          line = line + " " + value.to_string();
+        }
+        print(line);
+      }
+      print("ok " + done.header.output_layout.width.to_string() + " " + done.header.output_layout.height.to_string()
+        + " " + done.plan.mcus.to_string() + " " + done.plan.decoded_blocks.to_string() + " " + done.plan.output_blocks.to_string() + " " + done.consumed.to_string());
+    },
+    Err(entropy.BlockDecode(e)) => {
+      print("error " + e.to_debug());
+    },
+    Err(entropy.BlockConsumer(_)) => {
+      return 4;
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let code = emit_case(paths[i]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

@@ -16,7 +16,7 @@ The parser enforces that rule through the available canonical code space at each
 The accepted frame uses SOF0, eight-bit samples, and one or three distinct components.
 Sampling factors range from one through four.
 An interleaved scan contains at most ten data units per MCU.
-The first scan must contain every frame component exactly once, in any order.
+The first scan must contain every frame component exactly once, in frame order.
 Its spectral range is zero through 63, with no successive approximation.
 Zero-height frames with DNL, partial component scans, progressive coding, arithmetic coding, and other frame modes return explicit errors.
 

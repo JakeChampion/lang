@@ -11,8 +11,10 @@ Its [sequential row interface](docs/png-rows.md) emits selected rows after a com
 The [PNG provider adapter](docs/png-providers.md) connects fresh decoder sessions to graph rows and cropped tiles.
 The [resumable DEFLATE reader](docs/deflate-reader.md) provides bounded output chunks.
 The opt-in [incremental PNG interface](docs/incremental-png.md) validates the complete stream, then reconstructs row prefixes without the complete filtered frame.
+
 The [JPEG header parser](docs/jpeg-headers.md) checks a restricted baseline header profile and returns owned tables.
-It does not decode JPEG pixels or validate entropy data and EOI.
+The separate [JPEG coefficient fold](docs/jpeg-coefficients.md) validates a complete restricted baseline entropy scan and emits quantized blocks.
+Neither interface decodes JPEG pixels.
 
 HTTP and CDN services remain unimplemented.
 
@@ -61,9 +63,9 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 149 TAP cases cover essential, compression, pixel, color, resize, PNG, JPEG headers, rows, providers, pipeline, region, cache, RSS parser, and fusion behavior.
+The 166 TAP cases cover essential, compression, pixel, color, resize, PNG, JPEG headers and coefficients, rows, providers, pipeline, region, cache, RSS parser, and fusion behavior.
 The file I/O probe and pixel example also exit successfully.
-The native script checks 31 executables with the sanitizer.
+The native script checks source executables and additional allocator, cache, fusion, and formatter smoke modes with the sanitizer.
 The separate Wasm script runs the same TAP cases and allocator smoke modes through Wasmtime.
 
 The Linux-only RSS workload records its own procfs observations and runs only in the native script.
