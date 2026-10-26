@@ -54,6 +54,16 @@ The API does not roll back external consumer effects.
 A consumer error stops the fold and releases its internal state.
 The caller controls any state that it retains outside the fold.
 
+## Header and block inspection
+
+`inspect_blocks(input, limits, cancelled)` returns an owned `BlockInspection` with its header and logical plan.
+It uses the same header and count validation helpers as the fold.
+It does not decode entropy data or validate EOI.
+It can succeed on a header-only input that the fold rejects as truncated.
+A pixel decoder must validate the complete stream before it returns a successful image.
+
+The existing fold signature, callback behavior, and decode path remain unchanged.
+
 ## Limits and cancellation
 
 `BlockLimits` contains the existing header limits plus positive MCU and decoded-block limits.
