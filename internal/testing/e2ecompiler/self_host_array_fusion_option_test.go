@@ -10,7 +10,7 @@ import (
 
 func scalarOptionSource() string {
 	var source strings.Builder
-	source.WriteString("import \"std/array\";\n")
+	source.WriteString("import \"std/array\";\nimport \"core/map\";\n")
 	for i, ty := range []string{"i32", "i64", "u8", "f32", "f64"} {
 		fmt.Fprintf(&source, `
 @noinline function scalar_%d(xs: i32[]): i64 {
@@ -110,9 +110,13 @@ function check(xs: i32[], count: boolean): i32 {
   let boxes = 0i64;
   if (n > 0) { boxes = 1i64; }
   mark = __heap_alloc_count(); let box = escaping(xs);
-  if (count && __heap_alloc_count() - mark != boxes || take_box(box) != want) { return 40; }
+  let after_box = __heap_alloc_count();
+  let held: Map[i32, Option[i64]] = Map { n: box };
+  let read: Option[i64] = None;
+  match (held.get(n)) { Some(v) => { read = v; }, None => { return 45; } }
+  if (count && after_box - mark != boxes || take_box(read) != want) { return 40; }
   mark = __heap_alloc_count(); got = called(xs);
-  if (count && __heap_alloc_count() - mark != boxes || got != want) { return 41; }
+  if (count && __heap_alloc_count() != mark || got != want) { return 41; }
   let seed = Some(71i64);
   mark = __heap_alloc_count(); got = external(xs, seed, false);
   if (count && __heap_alloc_count() - mark != boxes || got != want) { return 42; }
