@@ -13,7 +13,7 @@ pub function entry_module(entry: parser.Module, target: string): parser.Module {
   if (target != "wasm32-wasi-http") {
     return entry;
   }
-  let stub = rtmodule.load_bound("compiler", "__wasi_http_handle", [], []);
+  let stub = rtmodule.template("__wasi_http_handle", [], []);
   return parser.Module { ...parser.merge_module(entry, stub), imports: util.append_all(entry.imports, stub.imports) };
 }
 
