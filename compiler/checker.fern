@@ -12321,6 +12321,14 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
   out = util.append_diags(out, enum_access_diags(owner, s, c.line, c.col));
 
   if (scope_variant_owner(vname, s).len() == 0 && find_variant_sig(s.structs, qname).enum_owner.len() == 0) {
+    let builtin_owner: string = owner.name;
+    if (dot_index(qname) >= 0) {
+      builtin_owner = variant_pattern_owner(qname);
+    }
+    let builtin_want: i32 = builtin_variant_payloads(s, builtin_owner, vname);
+    if (builtin_want > 0 && c.args.len() != builtin_want) {
+      out = out.append(dg_at("E036", util.arity_message("variant " + shown_variant(s, qname), builtin_want, c.args.len(), "argument"), c.line, c.col));
+    }
     return out;
   }
   if (dot_index(qname) < 0 && s.variant_ambiguous(vname)) {
