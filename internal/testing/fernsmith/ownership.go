@@ -151,7 +151,38 @@ func (g *Generator) foldTerms(sc *scope) []string {
 			return out
 		}
 	}
+	for t := gtype(0); t < g.nextNominal; t++ {
+		form := g.foldForm(t)
+		if form == "" {
+			continue
+		}
+		for _, name := range sc.inScope(t) {
+			if !add(fmt.Sprintf(form, name)) {
+				return out
+			}
+		}
+	}
 	return out
+}
+
+// foldForm is how the state fold reads a local of type t as an i32, or ""
+// when it does not. A float is left out: its conversion of a NaN is not
+// the same on every backend.
+func (g *Generator) foldForm(t gtype) string {
+	switch t {
+	case tI64, tU32, tU64, tU8:
+		return "(%s as i32)"
+	case tString, tMapI32I32:
+		return "%s.len()"
+	case tOptI32:
+		return "(match (%s) { Some(__fv) => __fv, None => 0i32 })"
+	case tResI32I32:
+		return "(match (%s) { Ok(__fv) => __fv, Err(__fv) => __fv })"
+	}
+	if _, ok := g.arrayElemOf(t); ok {
+		return "%s.len()"
+	}
+	return ""
 }
 
 func (g *Generator) maybeEmitClosureCluster(b *strings.Builder, sc *scope) bool {
