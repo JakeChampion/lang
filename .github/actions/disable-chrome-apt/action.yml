@@ -1,8 +1,10 @@
-name: Disable unused Chrome apt source
+name: Prepare browser apt sources
 description: >
   Remove the runner image's Google Chrome apt feed before installing Ubuntu
   packages. Playwright downloads its own Chromium; this feed supplies none of
   the compiler, Valgrind or browser system dependencies used by these jobs.
+  Use the official Ubuntu archive instead of the slow Azure mirror. Preserve
+  apt signature verification, suites, components and signing keys.
 runs:
   using: composite
   steps:
@@ -11,3 +13,6 @@ runs:
       # A Chrome Packages/InRelease hash mismatch must not prevent unrelated
       # Ubuntu packages from being installed. Apt's verification stays enabled.
       run: sudo bash "$GITHUB_ACTION_PATH/disable.sh"
+    - name: Prefer the official Ubuntu archive
+      shell: bash
+      run: sudo bash "$GITHUB_ACTION_PATH/prefer-ubuntu-mirror.sh"
