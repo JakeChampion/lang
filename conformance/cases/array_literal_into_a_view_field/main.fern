@@ -1,0 +1,13 @@
+// An array literal fits a `[T]` struct field as it fits a `[T]` local: the
+// field views the literal's storage for as long as the struct lives.
+struct Holder { xs: [i32] }
+struct Gen[T] { xs: [T] }
+
+function main(): i32 {
+    let a: [i32] = [1, 2, 3];
+    let h: Holder = Holder { xs: [4, 5] };
+    let g: Gen[i32] = Gen { xs: [6, 7, 8, 9] };
+    let e: Holder = Holder { xs: [] };
+    print(f"{a.len()} {h.xs.len()} {h.xs[1]} {g.xs.len()} {g.xs[0]} {e.xs.len()}");
+    return 0;
+}

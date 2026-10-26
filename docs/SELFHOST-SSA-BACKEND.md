@@ -284,6 +284,60 @@ variant from the declared result type (`rccertify.Abi.split_second`,
 `split_third`), and a call that captures two words reads the first word's
 mask from the split form.
 
+## A record or an Option passed as its parts
+
+A parameter that is a record of one to four scalar fields travels as its
+fields, and an Option of such a record, or of a scalar, as a Some flag
+followed by the payload's parts (`sempair.scalar_params`, run before the
+return pairing so the two compose). The rewrite happens on the semantic
+form, before any backend sees the function, so the three targets need
+nothing of their own: the body simply has more parameters, and each
+backend takes its parameter count and float slots from the lowered body.
+The IR verifier does the same (`irtables.fn_sig_index` reads the lowered
+count over the declaration's).
+
+A parameter is passed in parts when every reference to the function is a
+direct call, as for a paired return, and the body only reads it apart: a
+field read, a variant test, a payload read, or handing it on to another
+parameter passed in parts. Inside the body each read becomes a copy of the
+part (a payload record is rebuilt from its fields, which `split_constructions`
+then takes apart again). At a call, a record or a Some built for the call
+hands on its arguments and a None hands on a false flag and zeros. Any other
+record is read field by field before the call. Any other Option is taken
+apart on a branch on its flag: the call's block ends in a test, one arm reads
+the payload, the other makes zeros, and the call moves to the join with a
+phi per part. Each such Option gets its own branch before the call is
+rewritten. A parameter of the caller's own that is passed in parts is
+read apart the same way and the caller's own rewrite turns those reads into
+its parts, so a chain of wrappers passes the parts straight through.
+`TestSelfHostScalarParams` pins a `Duration`, an `Option[Duration]` and an
+`Option[i64]` crossing a module boundary, a method and a trait impl reached
+through a generic at no allocations on the three targets.
+
+## A record's field laid out as its parts
+
+The same shapes as fields: a record field that is a record of one to four
+scalars, or an Option of one or of a scalar, is laid out inside its record's
+own box as its parts (`sempair.laid_fields`, after the parameter split and
+before the return pairing). `Wait { task, set, timeout: Option[Duration] }`
+becomes a box of `task, set, timeout$0, timeout$1, timeout$2`, so building it
+builds no Option and no Duration. A construction takes each such operand apart
+the way a call takes an argument apart, on the same driver
+(`sempair.split_calls`), and a read of the field becomes one read per part.
+
+A field is laid out when every read of it takes it apart: a variant test, a
+payload read, a field read, or handing it to a field laid out the same way.
+That is checked across the whole program, and any read that keeps the field
+whole leaves it boxed. A record is left alone when code outside these bodies
+could see its layout: it reaches a callee with no body here, a map, a dynamic
+value or a construction hole; or it is generic, a closure's environment,
+holds a view, or has a finalizer. The new field list replaces the record's in
+every function's schema and in the module's (`Built.laid`), and its struct
+declaration replaces the module's own for the backends
+(`irtables.replaced_decls`), which is where wasm reads each field's width.
+`TestSelfHostLaidFields` pins the shapes across a module boundary on the
+three targets.
+
 ## What the lift admits, and what declines
 
 Everything the compiler uses. Measured on the compiler compiling itself
@@ -411,10 +465,20 @@ is defined, nor it where they are (`ssa.path_slot`): the merges of an else-if
 chain inside a loop then keep each local in its loop header phi's slot,
 though that phi's interval covers the whole body. A phi reads its operand
 on the edge, at the predecessor's terminator, not inside the header, and
-a loop-carried operand's interval ends at that edge. Empty blocks holding
-only a branch are skipped by every edge into them and dropped, a phi loses
-its slot for a dropped predecessor (`ssa.thread_forwarding`), and a branch
-whose false target is the next block falls through into it. Division,
+a loop-carried operand's interval ends at that edge. `ssa.thread_forwarding`
+drops an empty block that holds only a branch, and each edge into it goes
+past it. A phi loses its slot for a dropped predecessor. A branch whose false
+target is the next block falls through into it.
+
+`ssa.thread_forwarding` keeps a block whose target has phis, because later
+passes put code on that edge. The emitter skips such a block when it is
+still empty. A branch or a jump into it goes to the end of the chain
+(`ssa_forward`), unless a jump can fall through into the next block.
+A block that holds only phis counts as empty, because each phi move goes on
+the edge into the block. An edge gets a stub only when one of its phis needs
+a move (`ssa_edge_moves`).
+
+Division,
 a shift by a register count and the table shared with the stack machine
 still go through x0/x1 (`%rax`/`%rcx`), as does every call result; a shift
 by a constant works in its result's home, which may be its dying operand's. The phis of one edge are

@@ -998,6 +998,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}},
 		Result: ast.NumberType{Width: 32, Signed: true},
 	}
+	c.info.FuncSigs["__count_below_u64"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 64}}, ast.NumberType{Width: 64}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	c.info.FuncSigs["__sum_bytes_array"] = &ast.FuncType{
 		Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8}}},
 		Result: ast.NumberType{Width: 32, Signed: true},
@@ -7418,6 +7422,21 @@ func (c *checker) argOK(arg *ast.Expr, want, got ast.Type, own bool) bool {
 	return true
 }
 
+// bindViewElem binds the parameters of a view field from an owned array that
+// cannot fill it, so the refusal names the element type, not T.
+func (c *checker) bindViewElem(want, got ast.Type, sub map[string]ast.Type) {
+	if sl, ok := want.(ast.SliceType); ok {
+		if arr, ok := got.(ast.ArrayType); ok && arr.Elem != nil {
+			c.unifyType(sl.Elem, arr.Elem, sub)
+		}
+	}
+}
+
+type lentField struct {
+	field         int
+	expected, got ast.Type
+}
+
 func isArrayViewLend(want, got ast.Type) bool {
 	sl, isView := want.(ast.SliceType)
 	arr, isArray := got.(ast.ArrayType)
@@ -7971,7 +7990,7 @@ func (c *checker) checkUnusedCollectionResult(e ast.Expr) {
 var fipNonAllocMethods = map[string]bool{"len": true}
 
 var fipNonAllocBuiltins = map[string]bool{
-	"__memchr": true, "__mismatch_bytes": true, "__mismatch_bytes_str": true, "__count_byte_bytes": true, "__sum_bytes_array": true, "__bsd_sum_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
+	"__memchr": true, "__mismatch_bytes": true, "__mismatch_bytes_str": true, "__count_byte_bytes": true, "__count_below_u64": true, "__sum_bytes_array": true, "__bsd_sum_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
 	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__str_hash": true, "__count_runs": true, "__count_runs_bytes": true,
 	"__crc32_cksum": true, "__crc32_cksum_array": true, "__crc32_ieee_array": true,
 	"__clz32": true, "__ctz32": true, "__popcount32": true,
@@ -9609,6 +9628,13 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		return n
 	}
+	joinGuardInto := func(dst, guard movedSet, bindings []string) {
+		guard = cloneMoved(guard)
+		for _, name := range bindings {
+			delete(guard, name)
+		}
+		joinInto(dst, guard, false)
+	}
 
 	bindArm := func(bindings []string, types []ast.Type, scrutOwned bool) (added, lent []string) {
 		for i, bname := range bindings {
@@ -9638,6 +9664,41 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	}
 
 	var recordExprUses func(e ast.Expr, moved movedSet)
+	walkMatchExpr := func(m *ast.MatchExpr, moved movedSet) {
+		scrutOwned := c.isOwnedScrutinee(m.Tag, isOwnedExpr)
+		if id, ok := m.Tag.(*ast.Ident); ok && !ast.MatchExprTakesPointerPayload(m.Arms) {
+			prev, had := moved[id.Name]
+			recordExprUses(m.Tag, moved)
+			if had {
+				moved[id.Name] = prev
+			} else {
+				delete(moved, id.Name)
+			}
+		} else {
+			recordExprUses(m.Tag, moved)
+		}
+		baseline, joined := cloneMoved(moved), cloneMoved(moved)
+		for _, arm := range m.Arms {
+			armMoved := cloneMoved(baseline)
+			added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned)
+			recordExprUses(arm.Guard, armMoved)
+			if arm.Guard != nil {
+				joinGuardInto(baseline, armMoved, arm.Binders())
+			}
+			recordExprUses(arm.Body, armMoved)
+			unbindArm(added, lent, armMoved)
+			joinInto(joined, armMoved, c.ownedExprDiverges(arm.Body))
+		}
+		joinInto(moved, joined, false)
+	}
+	walkIfExpr := func(x *ast.IfExpr, moved movedSet) {
+		recordExprUses(x.Cond, moved)
+		thenMoved, elseMoved := cloneMoved(moved), cloneMoved(moved)
+		recordExprUses(x.Then, thenMoved)
+		recordExprUses(x.Else, elseMoved)
+		joinInto(moved, thenMoved, c.ownedExprDiverges(x.Then))
+		joinInto(moved, elseMoved, c.ownedExprDiverges(x.Else))
+	}
 	recordExprUses = func(e ast.Expr, moved movedSet) {
 		if e == nil {
 			return
@@ -9645,14 +9706,12 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		borrow := map[*ast.Ident]bool{}
 		dynConsumed := map[*ast.Ident]bool{}
 		var lambdas []*ast.Lambda
-		var matches []*ast.MatchExpr
 		ast.Walk(e, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.Lambda:
 				lambdas = append(lambdas, x)
 				return false
-			case *ast.MatchExpr:
-				matches = append(matches, x)
+			case *ast.MatchExpr, *ast.IfExpr, *ast.BlockExpr:
 				return false
 			case *ast.FieldAccess:
 				if id, ok := x.Target.(*ast.Ident); ok {
@@ -9739,8 +9798,18 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			delete(borrow, id)
 		}
 		ast.Walk(e, func(n ast.Node) bool {
-			switch n.(type) {
-			case *ast.Lambda, *ast.MatchExpr:
+			switch x := n.(type) {
+			case *ast.Lambda:
+				return false
+			case *ast.MatchExpr:
+				walkMatchExpr(x, moved)
+				return false
+			case *ast.IfExpr:
+				walkIfExpr(x, moved)
+				return false
+			case *ast.BlockExpr:
+				walkStmts(x.Stmts, moved)
+				recordExprUses(x.Tail, moved)
 				return false
 			}
 			id, ok := n.(*ast.Ident)
@@ -9756,28 +9825,6 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			}
 			return true
 		})
-		for _, m := range matches {
-			scrutOwned := c.isOwnedScrutinee(m.Tag, isOwnedExpr)
-			if id, ok := m.Tag.(*ast.Ident); ok && !ast.MatchExprTakesPointerPayload(m.Arms) {
-				prev, had := moved[id.Name]
-				recordExprUses(m.Tag, moved)
-				if had {
-					moved[id.Name] = prev
-				} else {
-					delete(moved, id.Name)
-				}
-			} else {
-				recordExprUses(m.Tag, moved)
-			}
-			for _, arm := range m.Arms {
-				armMoved := cloneMoved(moved)
-				added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned)
-				recordExprUses(arm.Guard, armMoved)
-				recordExprUses(arm.Body, armMoved)
-				unbindArm(added, lent, armMoved)
-				joinInto(moved, armMoved, false)
-			}
-		}
 		for _, lam := range lambdas {
 			walkNested(lam.Params, lam.Body, moved)
 		}
@@ -9872,15 +9919,21 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			} else {
 				recordExprUses(x.Tag, moved)
 			}
+			baseline, joined := cloneMoved(moved), cloneMoved(moved)
 			for _, arm := range x.Arms {
-				armMoved := cloneMoved(moved)
+				armMoved := cloneMoved(baseline)
 				added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned)
+				recordExprUses(arm.Guard, armMoved)
+				if arm.Guard != nil {
+					joinGuardInto(baseline, armMoved, arm.Binders())
+				}
 				if arm.Body != nil {
 					walkStmts(arm.Body.Stmts, armMoved)
 				}
 				unbindArm(added, lent, armMoved)
-				joinInto(moved, armMoved, arm.Body != nil && c.blockDiverges(arm.Body))
+				joinInto(joined, armMoved, arm.Body != nil && c.blockDiverges(arm.Body))
 			}
+			joinInto(moved, joined, false)
 		default:
 			ast.Walk(st, func(n ast.Node) bool {
 				if fd, ok := n.(*ast.FuncDecl); ok {
@@ -9902,6 +9955,26 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	}
 
 	walkStmts(fn.Body.Stmts, movedSet{})
+}
+
+func (c *checker) ownedExprDiverges(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.BlockExpr:
+		return c.blockDiverges(&ast.Block{Stmts: x.Stmts})
+	case *ast.IfExpr:
+		return c.ownedExprDiverges(x.Then) && c.ownedExprDiverges(x.Else)
+	case *ast.MatchExpr:
+		if len(x.Arms) == 0 {
+			return false
+		}
+		for _, arm := range x.Arms {
+			if !c.ownedExprDiverges(arm.Body) {
+				return false
+			}
+		}
+		return true
+	}
+	return c.callsExit(e)
 }
 
 func (c *checker) checkBlock(b *ast.Block, parent *scope) {
@@ -14333,6 +14406,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		clashed := false
+		// An array literal in a generic view field binds the type parameters
+		// the other fields leave open.
+		var lends []lentField
 		for i := range n.Fields {
 			f := n.Fields[i]
 			expected, present := fieldT[f.Name]
@@ -14366,6 +14442,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				c.settleNumeric(f.Value, fieldExpected)
 				vt = c.postSettleType(f.Value, vt)
 			}
+			if _, isLit := f.Value.(*ast.ArrayLit); isLit && isArrayViewLend(fieldExpected, vt) {
+				c.lendArrayAsView(&n.Fields[i].Value, fieldExpected, vt, false)
+				vt = fieldExpected
+			}
 			vt = c.maybeWrapForUnion(expected, &n.Fields[i].Value, vt, s)
 			dynFieldOK := false
 			if _, ok := fieldExpected.(ast.DynTraitType); ok {
@@ -14375,7 +14455,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				c.seededParams = seeded
 				unified := c.unifyType(expected, vt, sub)
 				c.seededParams = nil
+				if _, isLit := f.Value.(*ast.ArrayLit); isLit && !unified && !dynFieldOK {
+					lends = append(lends, lentField{i, expected, vt})
+					continue
+				}
 				if !unified && !dynFieldOK {
+					c.bindViewElem(expected, vt, sub)
 					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, substituteType(expected, sub), vt, assignHint(substituteType(expected, sub), vt))
 					clashed = true
 				}
@@ -14384,6 +14469,16 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				if !c.assignable(expected, vt) {
 					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, expected, vt, assignHint(expected, vt))
 				}
+			}
+		}
+		for _, l := range lends {
+			c.seededParams = seeded
+			lent := c.unifyArrayArg(&n.Fields[l.field].Value, l.expected, l.got, sub, false)
+			c.seededParams = nil
+			if !lent {
+				want := substituteType(l.expected, sub)
+				c.errfCode(n.Fields[l.field].Value.Pos(), "E043", "field %q: expected %s, got %s%s", n.Fields[l.field].Name, want, l.got, assignHint(want, l.got))
+				clashed = true
 			}
 		}
 		if n.Base == nil {

@@ -83,15 +83,7 @@ func (g *Generator) literalCost(t gtype, depth int) int {
 		return c
 	}
 	if sh, ok := g.enumShapes[t]; ok {
-		for _, v := range sh.variants {
-			if len(v.payload) == 0 {
-				return 1
-			}
-		}
-		c := 2
-		for _, p := range sh.variants[0].payload {
-			c += g.literalCost(p, depth+1)
-		}
+		_, c := g.cheapestVariant(sh, depth)
 		return c
 	}
 	if elem, ok := g.arrayElemOf(t); ok {
@@ -110,4 +102,23 @@ func (g *Generator) literalCost(t gtype, depth int) int {
 		return 4
 	}
 	return 1
+}
+
+// cheapestVariant is the variant with the smallest literal, which an
+// exhausted corpus writes.
+func (g *Generator) cheapestVariant(sh *enumShape, depth int) (enumVariant, int) {
+	best, cost := sh.variants[0], -1
+	for _, v := range sh.variants {
+		c := 1
+		if len(v.payload) > 0 {
+			c = 2
+			for _, p := range v.payload {
+				c += g.literalCost(p, depth+1)
+			}
+		}
+		if cost < 0 || c < cost {
+			best, cost = v, c
+		}
+	}
+	return best, cost
 }

@@ -130,9 +130,10 @@ jobs:
           qemu-package: qemu-user
       # internal/testing/e2e tests that compare the two REGISTER backends against each
       # other, so they need both toolchains on one host — the same reason this
-      # job exists. TestF64TranscendentalBackendsAgree had never compared
-      # anything: the catch-all `test-e2e-other` lane owns its name, and each of
-      # that lane's two arches is missing one of the two toolchains (#6849).
+      # job exists. TestF64TranscendentalBackendsAgree never compared
+      # anything: the catch-all `test-e2e-other` lane owned its name, and each of
+      # its two arches was missing one of the two toolchains (#6849). Its x86
+      # shards install both now, but only this job REQUIRES them.
       #
       # FERN_REQUIRE_CROSS_BACKENDS makes a missing toolchain FAIL here rather
       # than skip, so this job quietly losing a cross-compiler cannot put the

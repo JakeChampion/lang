@@ -84,6 +84,7 @@ pub function move(subscription: Subscription, room: string): void {
 A publication signals every subscriber in the room, with an optional sender to exclude.
 A producer drains the notification queue before it reads the latest shared state.
 Task cancellation and a close notification end the wait. The producer needs no timer poll.
+`wait_for` takes an optional limit. `None` waits until a notification arrives.
 
 ```fern
 <<Publish and wait>>=
@@ -104,14 +105,14 @@ pub function wake(subscription: Subscription): void {
 }
 
 pub function wait(subscription: Subscription): boolean {
-  return wait_for(subscription, -1);
+  return wait_for(subscription, None);
 }
 
-pub function wait_for(subscription: Subscription, timeout: i32): boolean {
+pub function wait_for(subscription: Subscription, timeout: Option[Duration]): boolean {
   if (!subscription.alive.get() || async.task_cancelled()) {
     return false;
   }
-  let ready: i32 = async.wait_any([subscription.listener.fd, 1], Some(time.duration_millis(timeout)));
+  let ready: i32 = async.wait_any([subscription.listener.fd, 1], timeout);
   if (!subscription.alive.get() || async.task_cancelled()) {
     return false;
   }

@@ -26,7 +26,10 @@ an earlier one.
 
 The seminline pass (`seminline.fern`) rewrites graphs before the plan: it
 inlines leaves, splits reads of known constructions into their parts, and
-runs tail recursion modulo cons. It splices a function declared `@inline` at
+runs tail recursion modulo cons. A spliced callee's field read of a
+parameter the caller passed narrowed out of a struct-union becomes a payload
+read of the union (`scrutinee_reads`), the form the source lowering gives a
+member binding's field read. It splices a function declared `@inline` at
 every call, as it splices a function called once. The function must not be
 recursive, must have at most 400 instructions, and must only read its view
 parameters (`seminline.forced_spliceable`). It is a graph-to-graph pass; the stages
@@ -118,7 +121,11 @@ halves (`docs/rc-log/2026-09-21-owned-by-default-alone-is-a-regression.md`).
 instruction, an edge, the entry, a return), which values are **supplied**
 (moved into a construction, a callee's counted slot, a store, a return),
 which are **dropped** there (their last use), and which supplies were
-acquired by a retain because the value is still used after. The step walk
+acquired by a retain because the value is still used after. A supply that
+is a struct-union member widened to its union or narrowed back
+(`variant_up`, `variant_as`) moves the unit of the value under it when that
+value dies at the step (`identity_roots`, `supplied_unit`); the replay reads
+such a move the same way. The step walk
 runs over the flow with dependencies, so a borrowed projection keeps its
 container alive and a container is dropped where its last anchored read ends.
 
@@ -176,7 +183,8 @@ reads (`units_of`):
   used past the update is held, and only that read: the donor is not a
   source that dies unconsumed there. A hold cuts a chain, so the payload
   takes are then asked again over the cut chains (`takes_past_holds`). A
-  take from that ask goes in only when its source is owned. There
+  take from that ask goes in only when its source is owned or held, and a
+  held struct-union counts as likely the frame's alone for it. There
   the plan can take a second read of a record field. Each read off the first
   read of that field that is still in hand is held for it (`twin_holds`).
   Pinned by `TestSelfHostKeptReadPastUpdate`, `TestSelfHostCrossBlockReuse`'s
@@ -343,7 +351,7 @@ or with type arguments) rather than falling through.
 `rccertify.certify` reads the lowered ops back as SSA (`ssa_lift`) and
 nothing of the plan, and accounts per path the units the frame holds: an
 allocation or owned call result is a fresh unit, a counted parameter a unit
-handed in, a load or a borrowed parameter nothing; a retain adds one; a
+handed in, a load, a borrowed parameter or an address into a box nothing; a retain adds one; a
 release, a move into a callee or container and a return each spend one; at a
 join the counts are met per value, and a disagreement is unproved rather than
 a finding. A load inside the arm a box was proved unique in (the children

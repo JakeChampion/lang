@@ -4103,6 +4103,39 @@ function set_entry_test(o: ir.Op, idx: string): string {
   return "cmpq $0, 8(%rdx," + idx + ",8)";
 }
 
+// AVX2 has only a signed 64-bit compare. Both sides have their top bit flipped,
+// so the signed compare gives the unsigned order. Four words go in each step.
+// Every vector instruction is VEX-encoded: a legacy SSE write after vbroadcastsd
+// pays the SSE/AVX transition on each call.
+function emit_count_below_u64(s: asmcore.EmitState): asmcore.EmitState {
+  let lo1: asmcore.LabelOut = asmcore.fresh_label(s);
+  let c_vec: string = lo1.name;
+  let lo2: asmcore.LabelOut = asmcore.fresh_label(lo1.state);
+  let c_tail: string = lo2.name;
+  let lo3: asmcore.LabelOut = asmcore.fresh_label(lo2.state);
+  let c_next: string = lo3.name;
+  let lo4: asmcore.LabelOut = asmcore.fresh_label(lo3.state);
+  let c_done: string = lo4.name;
+  let lo5: asmcore.LabelOut = asmcore.fresh_label(lo4.state);
+  let c_vec_done: string = lo5.name;
+  s = lo5.state;
+  s = s.write("    popq %rcx\n    popq %rax\n");
+  s = s.write("    movq (%rax), %r8\n    xorq %rdx, %rdx\n    xorq %r10, %r10\n");
+  s = s.write("    movabsq $-9223372036854775808, %r9\n    vmovq %r9, %xmm2\n    vbroadcastsd %xmm2, %ymm2\n");
+  s = s.write("    movq %rcx, %r11\n    xorq %r9, %r11\n    vmovq %r11, %xmm1\n    vbroadcastsd %xmm1, %ymm1\n");
+  s = s.write("    leaq -4(%r8), %r9\n");
+  s = s.write(c_vec + ":\n    cmpq %r9, %rdx\n    jg " + c_vec_done + "\n");
+  s = s.write("    vpxor 8(%rax,%rdx,8), %ymm2, %ymm0\n    vpcmpgtq %ymm0, %ymm1, %ymm0\n");
+  s = s.write("    vmovmskpd %ymm0, %r11d\n    popcntl %r11d, %r11d\n    addq %r11, %r10\n");
+  s = s.write("    addq $4, %rdx\n    jmp " + c_vec + "\n");
+  s = s.write(c_vec_done + ":\n    vzeroupper\n");
+  s = s.write(c_tail + ":\n    cmpq %r8, %rdx\n    jge " + c_done + "\n");
+  s = s.write("    movq 8(%rax,%rdx,8), %r11\n    cmpq %rcx, %r11\n    jae " + c_next + "\n");
+  s = s.write("    addq $1, %r10\n");
+  s = s.write(c_next + ":\n    addq $1, %rdx\n    jmp " + c_tail + "\n");
+  return s.write(c_done + ":\n    pushq %r10\n");
+}
+
 function emit_mismatch_x86(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   let mlo: asmcore.LabelOut = asmcore.fresh_label(s);
   let lb: string = mlo.name;
@@ -4424,6 +4457,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(c_next + ":\n    addq $1, %rdx\n    jmp " + c_tail + "\n");
     s = s.write(c_done + ":\n    pushq %r10\n");
     return s;
+  }
+  if (o.kind_tag == 482) {
+    return emit_count_below_u64(s);
   }
   if (o.kind_tag == 322) {
     let flo: asmcore.LabelOut = asmcore.fresh_label(s);
@@ -6097,6 +6133,57 @@ function ssa_block_at(fr: SsaFrame, id: i32): i32 {
     return 0 - 1;
   }
   return fr.blk_pos[id];
+}
+
+// The block that a branch to id reaches through blocks that emit no code and
+// only jump on. A phi emits no code in its own block.
+function ssa_forward(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], id: i32): i32 {
+  let cur: i32 = id;
+  for step in 0..8 {
+    let bi: i32 = ssa_block_at(fr, cur);
+    if (bi < 0) {
+      return cur;
+    }
+    let b: ssa.SBlock = f.blocks[bi];
+    if (!ssa_only_phis(b) || b.term.kind_tag != 2 || b.term.target == cur || ssa_edge_moves(f, fr, reg_of, cur, b.term.target)) {
+      return cur;
+    }
+    cur = b.term.target;
+  }
+  return cur;
+}
+
+// A jump to the next block falls through, even when that block only jumps on.
+function ssa_jump_on(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], lp: string, to: i32, next: i32, s: asmcore.EmitState): asmcore.EmitState {
+  if (to == next) {
+    return s;
+  }
+  return ssa_jump(fr, lp, ssa_forward(f, fr, reg_of, to), next, s);
+}
+
+function ssa_only_phis(b: ssa.SBlock): boolean {
+  for ins in b.insts {
+    if (ins.kind_tag != 8) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The edge from pred needs a move for some phi of id.
+function ssa_edge_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, id: i32): boolean {
+  let ti: i32 = ssa_block_at(fr, id);
+  if (ti < 0) {
+    return false;
+  }
+  let tb: ssa.SBlock = f.blocks[ti];
+  let sl: i32 = ssa.pred_slot(tb, pred);
+  for ins in tb.insts {
+    if (ins.kind_tag == 8 && reg_of[ins.result] != 0 - 1 && (fr.imm.is_imm[ins.args[sl]] || reg_of[ins.args[sl]] != reg_of[ins.result])) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function ssa_has_phis(f: ssa.SFunc, fr: SsaFrame, id: i32): boolean {
@@ -8553,17 +8640,17 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   let tr: string = ssa_src(reg_of, tv, "%r11");
   if (t.t == t.f) {
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.t, s);
-    return ssa_jump(fr, lp, t.t, next, s);
+    return ssa_jump_on(f, fr, reg_of, lp, t.t, next, s);
   }
-  let fl: asmcore.Lab = ssa_blab(fr, lp, t.f);
-  let stub: boolean = ssa_has_phis(f, fr, t.f);
+  let fl: asmcore.Lab = ssa_blab(fr, lp, ssa_forward(f, fr, reg_of, t.f));
+  let stub: boolean = ssa_edge_moves(f, fr, reg_of, blk.id, t.f);
   if (stub) {
     let sn: asmcore.LabNew = asmcore.lab_new(s, lp + "e" + util.i32_to_string(blk.id) + "_" + util.i32_to_string(t.f));
     s = sn.state;
     fl = sn.lab;
   }
-  if (!stub && t.f == next && !ssa_has_phis(f, fr, t.t)) {
-    let tl: asmcore.Lab = ssa_blab(fr, lp, t.t);
+  if (!stub && t.f == next && !ssa_edge_moves(f, fr, reg_of, blk.id, t.t)) {
+    let tl: asmcore.Lab = ssa_blab(fr, lp, ssa_forward(f, fr, reg_of, t.t));
     if (fu.n > 0 && fu.tag == 0) {
       return ssa_branch(ssa_test_rr(s, 64, tr, tr), J_JZ, tl);
     }
@@ -8585,9 +8672,9 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     s = ssa_x0_forget(s);
     s = s.lab_def(fl);
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.f, s);
-    return ssa_jump(fr, lp, t.f, next, s);
+    return ssa_jump_on(f, fr, reg_of, lp, t.f, next, s);
   }
-  return ssa_jump(fr, lp, t.t, next, s);
+  return ssa_jump_on(f, fr, reg_of, lp, t.t, next, s);
 }
 
 function ssa_cmp_branch(s: asmcore.EmitState, fu: SsaFuse, when_true: boolean, target: asmcore.Lab): asmcore.EmitState {
@@ -8732,7 +8819,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
       let hfu: SsaFuse = ssa_fuse(fr, h);
       return ssa_brif(f, fr, h, reg_of, lp, next, hfu, ssa_fused_test(fr, reg_of, hfu, ssa_join(lp, blk.id), s));
     }
-    return ssa_jump(fr, lp, t.target, next, s);
+    return ssa_jump_on(f, fr, reg_of, lp, t.target, next, s);
   }
   if (t.kind_tag == 3) {
     return ssa_brif(f, fr, blk, reg_of, lp, next, fu, s);
@@ -10177,7 +10264,7 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   let unit: asmcore.UnitLeaves = asmcore.unit_leaves(m, 0, fns.len(), bodies);
   let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(m, 0, fns.len(), bodies);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(m, 0, fns.len(), bodies)), leaves: unit.leaves, float_abi: fabi.names, float_abi_masks: fabi.masks };
-  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops, physicalbody.abis(physical)), s.memo);
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns, m.funcs, bodies), s.kinds.pops, physicalbody.abis(physical)), s.memo);
   s = asmcore.export_runtime_fns(s, fns);
   let i: i32 = 0;
   while (i < fns.len()) {
@@ -10207,7 +10294,7 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
 }
 
 function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection): asmcore.EmitState {
-  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs), s.kinds.pops, physicalbody.abis(physical)), s.memo);
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs, mod.funcs, cache), s.kinds.pops, physicalbody.abis(physical)), s.memo);
   let hh: i32 = hi;
   if (hh < 0 || hh > mod.funcs.len()) {
     hh = mod.funcs.len();

@@ -1,0 +1,45 @@
+// A generic call whose arguments bind none of its type parameters takes them from where its value goes:
+// a struct literal field, the parameter of another generic call, or an annotated binding.
+enum N[K] { L(K[]), B(N[K][]) }
+
+struct W[K] { root: N[K], size: i32 }
+
+function empty[K](): N[K] {
+    let ks: K[] = [];
+    return L(ks);
+}
+
+function wrap[K](n: N[K]): W[K] {
+    return W { root: n, size: 1 };
+}
+
+function width[K](n: N[K]): i32 {
+    match (n) {
+        L(ks) => {
+            return ks.len();
+        },
+        B(kids) => {
+            return kids.len() + 10;
+        }
+    }
+}
+
+function in_field[K](): W[K] {
+    return W { root: empty(), size: 2 };
+}
+
+function in_argument[K](): W[K] {
+    return wrap(empty());
+}
+
+function in_binding[K](): W[K] {
+    let n: N[K] = empty();
+    return W { root: n, size: 4 };
+}
+
+function main(): i32 {
+    let a: W[i32] = in_field();
+    let b: W[string] = in_argument();
+    let c: W[i32] = in_binding();
+    return a.size + b.size + c.size + width(a.root) + width(b.root) + width(c.root);
+}

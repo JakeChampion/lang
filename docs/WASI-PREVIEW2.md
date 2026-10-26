@@ -164,8 +164,11 @@ records leave the two stream slots zero. `tcp_recv_into` /
 `tcp_send_bytes` / `tcp_close` consume that struct: a receive reads the
 input-stream slot (while it is empty, a blocking socket waits on the
 stream's pollable and reads again, and a non-blocking one answers -EAGAIN;
-0 at the end of the stream, -EIO on a stream error), a send chunks through the
-output-stream, and close drops streams
+0 at the end of the stream, -EIO on a stream error), a send on a blocking
+socket chunks through `blocking-write-and-flush` and on a non-blocking one
+writes what `check-write` permits then calls `flush` (-EAGAIN when it permits
+nothing), and close waits on `blocking-flush` for a write still in flight,
+which wasmtime would cancel, then drops streams
 first then the parent socket (the canonical-ABI rejects parent
 drops with live children).
 

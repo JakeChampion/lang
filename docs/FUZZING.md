@@ -107,6 +107,35 @@ var into the value it returns (printed, in the printable profile), the way
 Csmith checksums global state. Without it a wrong value anywhere the return
 expression did not read passes unseen.
 
+**Recursive data**: `featRecData` declares recursive types and helpers that
+build, rebuild and fold them:
+
+- a list, with map, filter, reverse and a nested pattern
+- a binary search tree, with insert and fold
+- a rose tree whose children are an array of itself
+- a list generic in its payload, instantiated at `string`
+- a struct that reaches itself through an `Option` field
+
+A rebuild of a unique value can reuse its boxes. A helper sometimes keeps
+its input alive past a rebuild, so the rebuild must copy instead. A list of
+up to 2047 cells goes only through the loops, which tests a deep drop.
+
+**SIMD lanes**: `featLanes` builds `f64x2` and `f32x4` values from the
+program's i32 state. Each lane is an integer from -32 to 31. An expression
+has at most one multiplication, so every lane operation is exact. The
+operations are these:
+
+- `+`, `-`, `*` and unary minus
+- `min`, `max`, `abs` and `floor`
+- `select` on a lane compare
+- a call that takes and returns lanes
+- a load from an array and a store into an array
+
+Each lane goes back into an i32 local, which the state fold reads. A lane
+is a float type, so only the printable profile writes lanes. The runnable
+profile stays free of floats. `TestDifferential_PrintableStdout` runs these
+programs on every backend.
+
 The other generators are narrower: `genNumProgram` (numeric properties),
 `genSimProgram` (deterministic-simulation properties), and `std/fuzz` inside
 the language.
@@ -199,6 +228,10 @@ deleted assignment — builds the faulty compiler, and checks whether any of
 apart from the interpreter. A mutant compiler that runs past two minutes on
 one program is killed as a hang. A fault the compiler cannot even build is
 "stillborn" and not scored; one that breaks a trivial program is reported apart.
+Half of the programs come from `GenMain` and half from `GenPrintableMain`, so
+the floats and lanes that only the printable profile writes are judged too. A
+program kills a mutant when its exit code or its stdout differs from the
+interpreter's.
 The score is the share of the rest that fernsmith kills, and the list of
 survivors is the generator's to-do list: each is a fault no generated program
 reaches or no oracle sees (or an equivalent mutant, which nothing can kill).

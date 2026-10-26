@@ -821,6 +821,41 @@ func TestGenPrintableFloatsReachAggregates(t *testing.T) {
 	}
 }
 
+// Lanes are floats, so only the printable profile writes them.
+func TestGenPrintableReachesLanes(t *testing.T) {
+	const seeds = 1024
+	landmarks := []struct {
+		name  string
+		floor float64
+		re    *regexp.Regexp
+	}{
+		{"f32x4 lane cluster (18%)", 0.09, regexp.MustCompile(`let __ln_c\d+: f32x4 = `)},
+		{"f64x2 lane cluster (17%)", 0.09, regexp.MustCompile(`let __ln_c\d+: f64x2 = `)},
+		{"lane result in main's printed state (22%)", 0.11, regexp.MustCompile(`\* 31i32 \+ __ln_r\d+\)`)},
+		{"lane load from an array (17%)", 0.08, regexp.MustCompile(`let __ln_xs\d+_v: `)},
+		{"lane store into an array (12%)", 0.06, regexp.MustCompile(`let __ln_xs\d+_w: `)},
+		{"lanes through a call (10%)", 0.05, regexp.MustCompile(`(\(|= |, )ln_(f64x2|f32x4)\(`)},
+		{"lane select on a compare (11%)", 0.05, regexp.MustCompile(`__(f64x2|f32x4)_select\(`)},
+		{"lane value joined at an if (11%)", 0.05, regexp.MustCompile(`\) & 1i32\) == 0i32\) \{ __ln_c\d+ = `)},
+		{"lane value carried around a loop (10%)", 0.05, regexp.MustCompile(`while \(__ln_i\d+ < `)},
+		{"call with a scalar and lane parameters (11%)", 0.05, regexp.MustCompile(`__ln_c\d+ = ln_(f64x2|f32x4)_pick\(`)},
+	}
+	hits := make([]int, len(landmarks))
+	for seed := uint64(0); seed < seeds; seed++ {
+		src := fernsmith.GenPrintableMain(seed)
+		for i, l := range landmarks {
+			if l.re.MatchString(src) {
+				hits[i]++
+			}
+		}
+	}
+	for i, l := range landmarks {
+		if got := float64(hits[i]) / seeds; got < l.floor {
+			t.Errorf("%s: %d/%d seeds (%.1f%%), want at least %.1f%%", l.name, hits[i], seeds, 100*got, 100*l.floor)
+		}
+	}
+}
+
 func mainLocalIs(typeName string) func(src, body string) bool {
 	return func(_, body string) bool {
 		for _, m := range reMainLocalDecl.FindAllStringSubmatch(body, -1) {
@@ -1166,6 +1201,14 @@ func TestGenReachesOwnershipShapes(t *testing.T) {
 		{"as? downcast of a trait object (5%)", 0.02, regexp.MustCompile(` as\? S\d+\) \{ Some\(`)},
 		{"generic struct and enum cluster (12%)", 0.06, regexp.MustCompile(`let __gen_a\d+: G0\[`)},
 		{"generic instance over a boxed type (9%)", 0.04, regexp.MustCompile(`let __gen_a\d+: G0\[(string|i32\[\]|i64\[\]|boolean\[\]|Pair|Xyz|Map|Option|Result|\(|S\d|E\d)`)},
+		{"recursive list enum (54%)", 0.25, regexp.MustCompile(`enum RL0 \{ RNil0, RCons0\(i32, RL0\) \}`)},
+		{"binary tree enum (33%)", 0.14, regexp.MustCompile(`enum RT0 \{`)},
+		{"rose tree holding an array of itself (34%)", 0.14, regexp.MustCompile(`RRose0\(i32, RR0\[\]\)`)},
+		{"generic list of strings (27%)", 0.11, regexp.MustCompile(`enum GL0\[T\] \{`)},
+		{"struct linked through an Option of itself (21%)", 0.09, regexp.MustCompile(`struct RN0 \{ v: i32, next: Option\[RN0\] \}`)},
+		{"nested pattern over a recursive enum (7%)", 0.03, regexp.MustCompile(`c = rl0_pairs\(c\)`)},
+		{"recursive-data helper called (32%)", 0.12, regexp.MustCompile(`(\(|, |\|> |= |return )(rl0|rt0|rr0|gs0|rn0)_go\(`)},
+		{"list rebuilt while an alias holds it (46%)", 0.15, regexp.MustCompile(`let h\d: RL0 = c; c = rl0_(map|keep|rev)\(c`)},
 	}
 	hits := make([]int, len(landmarks))
 	for seed := uint64(0); seed < seeds; seed++ {

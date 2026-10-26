@@ -9,6 +9,7 @@ The resize module provides scalar nearest-neighbor and bilinear filters.
 A restricted native PNG codec decodes and encodes noninterlaced RGB8/RGBA8.
 Its [sequential row interface](docs/png-rows.md) emits selected rows after a complete filtered-frame decode.
 The [PNG provider adapter](docs/png-providers.md) connects fresh decoder sessions to graph rows and cropped tiles.
+The [resumable DEFLATE reader](docs/deflate-reader.md) provides bounded output chunks for future incremental PNG integration.
 HTTP and CDN services remain unimplemented.
 
 ## Build and test
@@ -56,9 +57,9 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 118 TAP cases cover essential, compression, pixel, color, resize, PNG, sequential rows, providers, pipeline, region, cache, RSS parser, and fusion behavior.
+The 126 TAP cases cover essential, compression, pixel, color, resize, PNG, sequential rows, providers, pipeline, region, cache, RSS parser, and fusion behavior.
 The file I/O probe and pixel example also exit successfully.
-The native script checks twenty-eight executables with the sanitizer.
+The native script checks twenty-nine executables with the sanitizer.
 The separate Wasm script runs the same TAP cases and allocator smoke modes through Wasmtime.
 
 The Linux-only RSS workload records its own procfs observations and runs only in the native script.

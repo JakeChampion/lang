@@ -854,7 +854,7 @@ function make_clo_func(lam: ast.ExprLambda, cloname: string, fd: parser.FuncDecl
   let bd: ast.Stmt[] = [];
   let cj: i32 = 0;
   while (cj < caps.len()) {
-    let idx: ast.Expr = ast.ExprIndex { array: ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "", builtin: false }, index: ast.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
+    let idx: ast.Expr = ast.ExprIndex { array: ast.ExprIdent { name: "__env", line: 0, col: 0, ty: "", builtin: false }, index: ast.ExprNumber { text: util.i32_to_string(1 + cj), suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
     bd = bd.append(ast.StmtVar { name: caps[cj], type_name: ctys[cj], init: idx, line: 0, col: 0, fn_ret: "", fn_param_types: "" });
     cj = cj + 1;
   }
@@ -1392,6 +1392,9 @@ function lift_iife_arm_values(stmts: ast.Stmt[], fd: parser.FuncDecl, vars: VarD
           if (array_holds_fn_value(ra, mfuncs)) {
             return (s, a, true);
           }
+        }
+        if (iife_return_holds_fn_value(r.value, fd, structs, mfuncs)) {
+          return (s, a, true);
         }
         let vr: InlineCloRes = lift_inline_closures_expr(r.value, fd, vars, a.funcs, a.counter, gfns, structs, mfuncs);
         return (ast.StmtReturn { value: vr.expr, line: r.line, col: r.col }, InlineCloAcc { funcs: vr.funcs, counter: vr.counter }, true);
@@ -2390,8 +2393,7 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
               ncallee = ast.ExprLambda { ...ielam, body: icrs };
             }
           }
-          if (call.args.len() == 0 && ielam.params.len() == 0
-            && !iife_arms_hold_fn_value(ielam.body, fd, structs, mfuncs)) {
+          if (call.args.len() == 0 && ielam.params.len() == 0) {
             let avbody: ast.Stmt[] = ielam.body;
             if let ast.ExprLambda(nl2) = ncallee {
               avbody = nl2.body;
@@ -3176,7 +3178,7 @@ function wcap_cell_decl(c: string, ty: string): ast.Stmt {
 
 function wcap_cell_read(c: string, ty: string): ast.Stmt {
   let cell: ast.Expr = ast.ExprIdent { name: wcap_cell_name(c), line: 0, col: 0, ty: "", builtin: false };
-  let idx: ast.Expr = ast.ExprIndex { array: cell, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
+  let idx: ast.Expr = ast.ExprIndex { array: cell, index: ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 }, unchecked: false, ty: "", line: 0, col: 0 };
   return ast.StmtVar { name: c, type_name: ty, init: idx, line: 0, col: 0, fn_ret: "", fn_param_types: "" };
 }
 

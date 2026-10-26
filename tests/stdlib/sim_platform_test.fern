@@ -13,13 +13,14 @@ import "std/utf8";
 import "std/string";
 import "std/http/router";
 import "std/http/accesslog";
+import "std/net";
 
 const ORIGIN: string = "93.184.216.34";
 
 const MS: i64 = 1000000;
 
 function __net(d: sim.Sim): sim_fetch.Net {
-  return sim_fetch.net(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, time.duration_millis(5)).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "hi").after(time.duration_millis(20)).kept()]);
+  return sim_fetch.new(d).host("example.test", [ORIGIN]).listen(ORIGIN, 80, time.duration_millis(5)).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "hi").after(time.duration_millis(20)).kept()]);
 }
 
 function __plat(seed: i64): sim_platform.SimPlatform {
@@ -52,21 +53,20 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 
 function test_config_and_secret_answer_what_was_set(): test.TestOutcome {
-  let p: sim_platform.SimPlatform = __plat(1);
-  match (p.config("REGION")) {
+  let bare: sim_platform.SimPlatform = __plat(1);
+  match (bare.config("REGION")) {
     Some(v) => {
       return test.fail("config before setting: " + v);
     },
     None => {}
   }
-  match (p.secret("TOKEN")) {
+  match (bare.secret("TOKEN")) {
     Some(v) => {
       return test.fail("secret before setting: " + v);
     },
     None => {}
   }
-  p.config_set("REGION", "eu-west");
-  p.secret_set("TOKEN", "s3cr3t");
+  let p: sim_platform.SimPlatform = bare.with_config("REGION", "eu-west").with_secret("TOKEN", "s3cr3t");
   match (p.config("REGION")) {
     Some(v) => {
       if (v != "eu-west") {
@@ -91,14 +91,14 @@ function test_config_and_secret_answer_what_was_set(): test.TestOutcome {
 }
 
 function test_env_answers_what_was_set(): test.TestOutcome {
-  let p: sim_platform.SimPlatform = __plat(1);
-  match (p.env("HOME")) {
+  let bare: sim_platform.SimPlatform = __plat(1);
+  let p: sim_platform.SimPlatform = bare.with_env("HOME", "/sim");
+  match (bare.env("HOME")) {
     Some(v) => {
-      return test.fail("env before setting: " + v);
+      return test.fail("env of the platform the builder started from: " + v);
     },
     None => {}
   }
-  p.env_set("HOME", "/sim");
   match (p.env("HOME")) {
     Some(v) => {
       return test.assert_eq(v, "/sim");
@@ -108,6 +108,36 @@ function test_env_answers_what_was_set(): test.TestOutcome {
     }
   }
   return test.pass();
+}
+
+function test_peer_files_and_directories_answer_what_was_set(): test.TestOutcome {
+  let p: sim_platform.SimPlatform = __plat(1).with_peer(net.socket_addr_parse("192.0.2.7:5000")).with_file("www/a.txt", "hello", time.timestamp_from_unix(7)).with_dir("www");
+  let got: string = "";
+  match (p.peer()) {
+    Some(a) => {
+      got = a.to_string();
+    },
+    None => {
+      return test.fail("peer: None");
+    }
+  }
+  match (p.stat("www/a.txt")) {
+    Ok(st) => {
+      got = got + " " + st.size.to_string() + " " + st.mtime.to_string();
+    },
+    Err(e) => {
+      return test.fail("file: " + e.message());
+    }
+  }
+  match (p.stat("www")) {
+    Ok(st) => {
+      got = got + " " + st.is_dir.to_string();
+    },
+    Err(e) => {
+      return test.fail("dir: " + e.message());
+    }
+  }
+  return test.assert_eq(got, "192.0.2.7:5000 5 7 true");
 }
 
 function test_the_clock_is_the_simulations(): test.TestOutcome {
@@ -169,11 +199,9 @@ const PROXY: string = "10.0.0.9";
 function test_http_goes_through_the_proxy_the_env_names(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).listen(PROXY, 3128, time.duration_millis(5)).route(PROXY, 3128, "http://example.test/", [sim_fetch.reply(203, "via proxy")]);
-  let p: sim_platform.SimPlatform = sim_platform.new(d, n);
-  p.env_set("http_proxy", "http://" + PROXY + ":3128");
+  let p: sim_platform.SimPlatform = sim_platform.new(d, n).with_env("http_proxy", "http://" + PROXY + ":3128");
   let proxied: string = __message(p.http(fetch.get("http://example.test/")));
-  p.env_set("no_proxy", "example.test");
-  let direct: string = __message(p.http(fetch.get("http://example.test/")));
+  let direct: string = __message(p.with_env("no_proxy", "example.test").http(fetch.get("http://example.test/")));
   if (proxied + "|" + direct != "status 203|status 200") {
     return test.fail(proxied + "|" + direct);
   }
@@ -193,8 +221,7 @@ function test_http_keeps_the_connection_for_the_next_request(): test.TestOutcome
 }
 
 function test_a_secret_is_logged_by_name_only(): test.TestOutcome {
-  let p: sim_platform.SimPlatform = __plat(1);
-  p.secret_set("TOKEN", "s3cr3t");
+  let p: sim_platform.SimPlatform = __plat(1).with_secret("TOKEN", "s3cr3t");
   p.secret("TOKEN");
   let calls: mock_platform.MockCall[] = p.calls();
   if (calls.len() != 1) {
@@ -270,8 +297,7 @@ function test_http_carries_the_span_upstream(): test.TestOutcome {
 }
 
 function test_a_handler_runs_over_the_simulation(): test.TestOutcome {
-  let p: sim_platform.SimPlatform = __plat(1);
-  p.config_set("REGION", "eu-west");
+  let p: sim_platform.SimPlatform = __plat(1).with_config("REGION", "eu-west");
   let resp: HttpResponse = handle(http.request("GET", "/"), p);
   return test.assert_body(resp, "eu-west 25 status 200");
 }
@@ -283,9 +309,9 @@ function __user(req: HttpRequest, params: router.Params, plat: sim_platform.SimP
 
 function test_router_served_in_memory(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let server_plat: sim_platform.SimPlatform = sim_platform.new(d, sim_fetch.net(d));
+  let server_plat: sim_platform.SimPlatform = sim_platform.new(d, sim_fetch.new(d));
   let h: (HttpRequest, sim_platform.SimPlatform) => HttpResponse = router.new[sim_platform.SimPlatform]().get("/users/{id}", __user).handler();
-  let n: sim_fetch.Net = sim_fetch.net(d).host("api.test", [ORIGIN]).serve(ORIGIN, 80, (req: HttpRequest): HttpResponse => h(req, server_plat));
+  let n: sim_fetch.Net = sim_fetch.new(d).host("api.test", [ORIGIN]).serve(ORIGIN, 80, (req: HttpRequest): HttpResponse => h(req, server_plat));
   let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
   match (plat.http(fetch.get("http://api.test/users/7"))) {
     Ok(resp) => {
@@ -324,6 +350,7 @@ function main(): i32 {
   t = t.it("serves a router in memory", test_router_served_in_memory);
   t = t.it("config and secret answer what was set", test_config_and_secret_answer_what_was_set);
   t = t.it("env answers what was set", test_env_answers_what_was_set);
+  t = t.it("peer, files and directories answer what was set", test_peer_files_and_directories_answer_what_was_set);
   t = t.it("the clock is the simulation's", test_the_clock_is_the_simulations);
   t = t.it("randomness is the seed's", test_randomness_is_the_seeds);
   t = t.it("http reaches global addresses only", test_http_reaches_global_addresses_only);

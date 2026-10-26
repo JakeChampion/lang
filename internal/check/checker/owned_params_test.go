@@ -632,6 +632,192 @@ function f(): Result[i32, string] {
 }`)
 }
 
+const freshResultPrelude = ownConsumer + `
+function make(n: i32): Result[i32[], string] { return Ok([n]); }
+function opt(n: i32): Option[i32[]] { return Some([n]); }
+function keepStr(own s: string): i32 { return s.len(); }
+`
+
+func TestOwnGuardAllowsAFreshResultPayload(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"match", `
+function f(): i32 {
+    match (make(1)) {
+        Ok(xs) => { return consume(xs); },
+        Err(e) => { return keepStr(e); }
+    }
+    return 0;
+}`},
+		{"let-in-arm", `
+function f(): i32 {
+    match (make(1)) {
+        Ok(xs) => {
+            let k: i32 = consume(xs);
+            return k;
+        },
+        Err(_) => { return 0; }
+    }
+    return 0;
+}`},
+		{"let-else", `
+function f(): i32 {
+    let Ok(xs) = make(2) else { return 0; };
+    let k: i32 = consume(xs);
+    return k;
+}`},
+		{"if-let-some-in-loop", `
+function f(): i32 {
+    let t: i32 = 0;
+    for i in 0..3 {
+        if let Some(xs) = opt(i) {
+            t = t + consume(xs);
+        }
+    }
+    return t;
+}`},
+		// The in-place AEAD tests' shape: a fresh buffer handed to a method's own parameter.
+		{"into-an-own-method-param", `
+struct K { n: i32 }
+function (k: K) open(own buf: u8[]): i32 { return buf.len() + k.n; }
+function sealed(seq: u64): Result[u8[], string] { return Ok([seq as u8]); }
+function f(k: K): i32 {
+    let Ok(buf) = sealed(1 as u64) else { return 0; };
+    return k.open(buf);
+}`},
+		{"string-compared-then-used", `
+function rs(n: i64): Result[string, string] { return Ok("x"); }
+function f(): string {
+    match (rs(1 as i64)) {
+        Ok(h) => {
+            if (h != "y") {
+                return "a" + h;
+            }
+        },
+        Err(_) => { return ""; }
+    }
+    return "";
+}`},
+	} {
+		wantOK(t, "fresh-result-payload-"+tc.name, freshResultPrelude+tc.body)
+	}
+}
+
+func TestOwnGuardAllowsABuiltinVariantConstruction(t *testing.T) {
+	const keepers = `
+function keepR(own r: Result[i32[], string]): i32 { return 0; }
+function keepO(own o: Option[i32[]]): i32 { return 0; }
+`
+	for _, tc := range []struct{ name, body string }{
+		{"ok", `function f(): i32 { return keepR(Ok([1])); }`},
+		{"err", `function f(): i32 { return keepR(Err("e")); }`},
+		{"some", `function f(): i32 { return keepO(Some([1])); }`},
+		{"none", `function f(): i32 { return keepO(None); }`},
+		{"scrutinee", `
+function f(): i32 {
+    match (Some([1])) {
+        Some(xs) => { return consume(xs); },
+        None => { return 0; }
+    }
+    return 0;
+}`},
+	} {
+		wantOK(t, "builtin-variant-"+tc.name, freshResultPrelude+keepers+tc.body)
+	}
+}
+
+func TestOwnGuardReadsThePayloadOfTheScrutineesEnum(t *testing.T) {
+	const enums = `
+enum Opt { Some(i32), None }
+enum A { V(i32) }
+enum B { V(i32[]) }
+function opt(n: i32): Option[i32[]] { return Option.Some([n]); }
+`
+	wantOK(t, "builtin-payload-beside-a-user-variant", ownConsumer+enums+`
+function f(): i32 {
+    match (opt(2)) { Some(xs) => { return consume(xs); }, None => { return 0; } }
+    return 0;
+}`)
+	wantOK(t, "scalar-payload-beside-a-pointer-variant", ownConsumer+enums+`
+function f(own a: A): i32 {
+    match (a) { V(n) => { return n; } }
+    let again: A = a;
+    return 0;
+}`)
+	wantE050(t, "own-builtin-matched-beside-a-user-variant", ownConsumer+enums+`
+function f(own o: Option[i32[]]): i32 {
+    match (o) { Some(xs) => { return consume(xs); }, None => { return 0; } }
+    let again: Option[i32[]] = o;
+    return 0;
+}`)
+}
+
+func TestOwnGuardRejectsAResultPayloadThatMayBorrow(t *testing.T) {
+	wantE051(t, "result-payload-through-a-borrowing-callee", freshResultPrelude+`
+function relay(r: Result[i32[], string]): Result[i32[], string] { return r; }
+function f(r: Result[i32[], string]): i32 {
+    let Ok(xs) = relay(r) else { return 0; };
+    return consume(xs);
+}`)
+}
+
+func TestOwnGuardRejectsAFreshResultPayloadMovedTwice(t *testing.T) {
+	wantE050(t, "fresh-result-payload-moved-twice", freshResultPrelude+`
+function f(): i32 {
+    let Ok(xs) = make(2) else { return 0; };
+    let a: i32 = consume(xs);
+    return a + consume(xs);
+}`)
+}
+
+func TestOwnedUseAfterResultPayloadTaken(t *testing.T) {
+	wantE050(t, "own-result-matched-then-used", freshResultPrelude+`
+function f(own r: Result[i32[], string]): i32 {
+    match (r) {
+        Ok(xs) => { return consume(xs); },
+        Err(_) => { return 0; }
+    }
+    let again: Result[i32[], string] = r;
+    return 0;
+}`)
+}
+
+func TestOwnedOperandIsBorrowed(t *testing.T) {
+	const keepStr = "function keepStr(own s: string): i32 { return s.len(); }\n"
+	wantOK(t, "own-compared-then-used", keepStr+`
+function f(own s: string, t: string): string {
+    if (s != t) {
+        return "a" + s;
+    }
+    return "";
+}`)
+	wantOK(t, "own-concatenated-twice", keepStr+`
+function f(own s: string): string {
+    let a: string = s + "x";
+    return a + s;
+}`)
+	wantE050(t, "own-compared-then-moved-twice", keepStr+`
+function f(own s: string): i32 {
+    if (s == "x") {
+        return keepStr(s) + keepStr(s);
+    }
+    return 0;
+}`)
+}
+
+func TestOwnedTryMovesItsOperand(t *testing.T) {
+	wantE050Move(t, "own-result-tried-twice", `
+function f(own r: Result[i32[], string]): Result[i32, string] {
+    let a: i32[] = r?;
+    let b: i32[] = r?;
+    return Ok(a.len() + b.len());
+}`)
+	wantOK(t, "own-result-tried-once", `
+function f(own r: Result[i32[], string]): Result[i32, string] {
+    let a: i32[] = r?;
+    return Ok(a.len());
+}`)
+}
+
 func TestOwnGuardAllowsAFieldUnpackedFromAnOwnParam(t *testing.T) {
 	wantOK(t, "own-param-field-unpack", ownConsumer+`
 function f(own p: Pair): i32 {
