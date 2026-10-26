@@ -6013,13 +6013,11 @@ function call_count_below_u64(args: Value[]): Value {
   }
   if let VArr(a) = args[0] {
     let w: u64 = vint_as_i64(args[1]) as u64;
-    let at: i32 = 0;
     let count: i32 = 0;
-    while (at < arr_len(a)) {
+    for at in 0..arr_len(a) {
       if (vint_as_i64(arr_at(a, at)) as u64 < w) {
         count = count + 1;
       }
-      at = at + 1;
     }
     return v_int(count);
   }

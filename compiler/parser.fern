@@ -9824,8 +9824,7 @@ function mono_keyed_args(c: ast.ExprCall, fd: FuncDecl, key: string, env: MEnv, 
 function mono_args_spelled(c: ast.ExprCall, pspell: string[], env: MEnv, funcs: MFns, ins: Insts): (ast.Expr[], Insts) {
   let nargs: ast.Expr[] = [];
   let cur: Insts = ins;
-  let i: i32 = 0;
-  while (i < c.args.len()) {
+  for i in 0..c.args.len() {
     let ra: RExpr = RExpr { rexpr: c.args[i], rins: cur };
     if (i < pspell.len() && arg_wants_expected(c.args[i], env, funcs) && (type_str_vars(pspell[i], []).len() == 0 || generic_fn_value_name(c.args[i], env, funcs).len() > 0)) {
       ra = mono_call_expected(c.args[i], pspell[i], env, funcs, cur);
@@ -9834,7 +9833,6 @@ function mono_args_spelled(c: ast.ExprCall, pspell: string[], env: MEnv, funcs: 
     }
     cur = ra.rins;
     nargs = nargs.append(ra.rexpr);
-    i = i + 1;
   }
   return (nargs, cur);
 }
