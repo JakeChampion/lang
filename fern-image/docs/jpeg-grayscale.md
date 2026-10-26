@@ -125,3 +125,37 @@ Regenerate this bundle with the existing offline reference executable:
 python3 tests/generate_jpeg_grayscale.py build/jpeg-grayscale-inputs --oracle /path/to/jpeg-idct-reference \
   --bundle tests/fixtures/jpeg-grayscale-reference.json.gz
 ```
+
+## Recorded qualification
+
+The three new raw records are [native](../benchmarks/results/jpeg-grayscale-native.json), [Wasm](../benchmarks/results/jpeg-grayscale-wasm.json), and [ARM64](../benchmarks/results/jpeg-grayscale-arm64.json).
+Their source commit is `c026b58073236208db2ae842b846bcf14d9c8ab1`.
+This source includes main `349e259e7b80bb5df19de440b4a99c71d783785c`.
+The clean compiler reports `dfa23fa508f9`.
+Its SHA256 is `68b47eac8e56bb44944fcde126bb29d80ad2173afb7ac57eaf6c52e7b0f44282`.
+The compiler and stdlib sources match that main revision.
+
+Each target completed 108 inputs in 14 fresh processes.
+Thirty-four inputs produced images, and 74 color inputs returned the explicit unsupported-profile result.
+All 42 workers reported nonzero balanced heap counts and zero final live bytes.
+The three sample records match exactly on this finite input set.
+Native qualification locks 525 source and tool hashes, while each runner target locks 526.
+These include all 163 stdlib sources and the compiler's Fern sources.
+
+The C reference repeated all accepted observations on each target.
+Across 11,004 visible sample positions, 162 differ from the integer decoder, always by one value.
+The C executable SHA256 is `0aa2bcb1dc9e598c9c51b7f188c2375f4f602f14f3fecd913616b7fafb44740b`.
+The raw records retain every output hash, reference hash, difference count, and observed maximum.
+These finite observations do not establish universal precision, codec parity, or standards conformance.
+
+The unchanged 105-input coefficient corpus also passed on all three targets after the shared inspection API addition.
+Its 42 fresh workers reported balanced heap counts and zero final live bytes.
+The published historical coefficient records remain unchanged.
+All 179 image TAP cases passed on native sanitizer, Wasm leak census, and standalone ARM64/QEMU10.
+The full native and Wasm scripts completed with 64 and 40 balanced heap censuses respectively.
+The portable ARM run completed 25 executables with balanced heaps and zero final live bytes.
+
+The primary Go interpreter passed the eight grayscale TAP groups.
+Both unchanged compiler and stdlib complexity gates passed without skips.
+The eight protocol controls, 1,310 Fern format checks, Go build and vet, workflow lint, test-name checks, and CI self-tests passed.
+These local results are separate from GitHub CI status.
