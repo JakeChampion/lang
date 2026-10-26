@@ -10370,6 +10370,10 @@ function find_struct_sig(structs: StructTable, name: string): StructSig {
   if (first >= 0) {
     return structs.structs[first];
   }
+  return no_struct_sig();
+}
+
+function no_struct_sig(): StructSig {
   let none: string[] = [];
   let nonet: typeinfo.Type[] = [];
   let none_tp: string[] = [];
@@ -10387,6 +10391,10 @@ function find_variant_sig(structs: StructTable, name: string): StructSig {
         return structs.structs[k];
       }
       k = structs.index.next[k];
+    }
+    // Option.Some, Result.Ok and Result.Err are the builtin's even when a user enum declares the same name.
+    if (parser.builtin_enum_of(bare) == owner) {
+      return no_struct_sig();
     }
   }
   let k2: i32 = structs.index.chain(bare);
@@ -17090,6 +17098,11 @@ function ow_variant_known(ctx: OwnCtx, name: string, owner: string): boolean {
   return false;
 }
 
+// Option's and Result's variants are not among the module's declarations.
+function ow_builtin_variant(ctx: OwnCtx, name: string): boolean {
+  return is_builtin_variant(name) && !ctx.ofuncs.funcs.has(name) && !util.has_str(ctx.bound, name);
+}
+
 function ow_struct_names(structs: parser.StructDecl[]): string[] {
   let names: string[] = [];
   for sd in structs {
@@ -17111,7 +17124,7 @@ function ow_scalar_literal(e: ast.Expr): boolean {
 function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
   if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(cid) = c.callee {
-      if (ctx.ofuncs.ctors.has(cid.name)) {
+      if (ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name)) {
         return true;
       }
       return util.has_str(ctx.fresh_scrut, cid.name);
@@ -17160,7 +17173,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (util.has_str(ctx.last_use, lu_key(id.line, id.col))) {
         return true;
       }
-      if (ow_variant_known(ctx, id.name, "")) {
+      if (ow_variant_known(ctx, id.name, "") || ow_builtin_variant(ctx, id.name)) {
         return true;
       }
       if (!util.has_str(ctx.bound, id.name) && !ctx.scope.is_bound(id.name) && ctx.scope.lookup_sig(id.name).is_const) {
@@ -17177,7 +17190,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprIdent(cid) => {
-          return ctx.ofuncs.ctors.has(cid.name) || util.has_str(ctx.fresh, cid.name);
+          return ctx.ofuncs.ctors.has(cid.name) || ow_builtin_variant(ctx, cid.name) || util.has_str(ctx.fresh, cid.name);
         },
         ast.ExprFieldAccess(mfa) => {
           if (ow_qualified_ctor(c.callee, ctx)) {
@@ -18194,6 +18207,9 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: r2.moved, diags: util.append_diags(r1.diags, r2.diags) };
     },
     ast.ExprUnary(u) => {
+      if (u.op == "try_") {
+        return ru_expr(u.operand, moved, ctx);
+      }
       return ru_borrow(u.operand, moved, ctx);
     },
     ast.ExprArray(a) => {
@@ -18393,7 +18409,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       if let ast.ExprIdent(sid) = m.scrutinee {
         let takes: boolean = false;
         for arm in m.arms {
-          takes = takes || ow_arm_takes_pointer(OwnCtx { ...ctx, scope: annotate_arm_scope(arm, ctx.scope, whole) }, arm.pattern);
+          takes = takes || ow_arm_takes_pointer(OwnCtx { ...ctx, scope: annotate_arm_scope(arm, ctx.scope, whole) }, arm.pattern, whole);
         }
         if (!takes) {
           rs = OwnWalk { ...rs, moved: ow_unmove(rs.moved, moved, sid.name) };
@@ -18405,7 +18421,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
         let actx: OwnCtx = ow_arm_bind_ctx(ctx, arm.pattern);
         actx = OwnCtx { ...actx, scope: annotate_arm_scope(arm, ctx.scope, whole) };
         if (scrut_owned) {
-          actx = ow_arm_payload_ctx(actx, arm.pattern);
+          actx = ow_arm_payload_ctx(actx, arm.pattern, whole);
         } else {
           actx = ow_arm_lent_ctx(actx, arm.pattern);
         }
@@ -18533,8 +18549,8 @@ function ow_unmove(after: MovedEntry[], before: MovedEntry[], name: string): Mov
   return out;
 }
 
-function ow_arm_takes_pointer(ctx: OwnCtx, pat: ast.Pattern): boolean {
-  let bound: OwnCtx = ow_arm_payload_ctx(OwnCtx { ...ctx, owned: [] }, pat);
+function ow_arm_takes_pointer(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type): boolean {
+  let bound: OwnCtx = ow_arm_payload_ctx(OwnCtx { ...ctx, owned: [] }, pat, whole);
   for n in bound.owned {
     if (n != "_") {
       return true;
@@ -18543,20 +18559,9 @@ function ow_arm_takes_pointer(ctx: OwnCtx, pat: ast.Pattern): boolean {
   return false;
 }
 
-function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
+function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type): OwnCtx {
   if let ast.PatVariant(pv) = pat {
-    let vname: string = util.base_type_name(pv.type_name);
-    let di: i32 = 0;
-    let dot: i32 = 0 - 1;
-    while (di < vname.len()) {
-      if (vname[di] == b'.') {
-        dot = di;
-      }
-      di = di + 1;
-    }
-    if (dot >= 0) {
-      vname = slice_unchecked(vname, dot + 1, vname.len()) + "";
-    }
+    let vname: string = ow_last_segment(util.base_type_name(pv.type_name));
     let binds: string[] = [];
     if (pv.binding.len() > 0) {
       binds = binds.append(pv.binding);
@@ -18568,14 +18573,18 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
       return ctx;
     }
     let names: string[] = ctx.owned;
+    let owner: string = ow_scrutinee_enum(whole, vname, ctx.structs);
     let declared: boolean = false;
     for sd in ctx.structs {
-      declared = declared || sd.name == vname;
-      if (sd.name == vname && sd.enum_owner.len() == 0) {
+      if (sd.name != vname || owner.len() > 0 && sd.enum_owner != owner) {
+        continue;
+      }
+      declared = true;
+      if (sd.enum_owner.len() == 0) {
         if (binds[0] != "_" && !util.has_str(names, binds[0])) {
           names = names.append(binds[0]);
         }
-      } else if (sd.name == vname && sd.enum_owner.len() > 0) {
+      } else {
         let i: i32 = 0;
         while (i < binds.len() && i < sd.fields.len()) {
           if (binds[i].len() > 0 && binds[i] != "_" && ow_type_is_pointer_name(sd.fields[i].type_name, ctx.ofuncs)
@@ -18593,6 +18602,34 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern): OwnCtx {
     return OwnCtx { ...ctx, owned: names };
   }
   return ctx;
+}
+
+function ow_last_segment(name: string): string {
+  let dot: i32 = 0 - 1;
+  for i in 0..name.len() {
+    if (name[i] == b'.') {
+      dot = i;
+    }
+  }
+  if (dot < 0) {
+    return name;
+  }
+  return slice_unchecked(name, dot + 1, name.len()) + "";
+}
+
+// The enum the scrutinee's type names for the arm's variant, which a same-named variant elsewhere must not stand in for.
+function ow_scrutinee_enum(whole: typeinfo.Type, vname: string, structs: parser.StructDecl[]): string {
+  if let typeinfo.TypeUnion(u) = whole {
+    if (parser.builtin_enum_of(vname) == u.name) {
+      return u.name;
+    }
+    for sd in structs {
+      if (sd.name == vname && sd.enum_owner == u.name) {
+        return u.name;
+      }
+    }
+  }
+  return "";
 }
 
 // Some, Ok and Err have no struct declaration, so the arm scope gives the payload's type.

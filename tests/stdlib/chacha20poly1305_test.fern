@@ -237,13 +237,13 @@ function rfc_seq(): u64 {
   return 0x4041424344454647 as u64;
 }
 
-// Seals the laid-out section under seal_seq, flips byte flip of the result when it is not negative, and opens it
-// under open_seq.
 function sealed_in_place(seq: u64): Result[u8[], aead.AeadError] {
   let n: i32 = sunscreen().len();
   return chacha20poly1305.key(key_seq(128))?.seal_in_place(rfc_iv(), seq, laid(), n + 16, 12, 0, n);
 }
 
+// Seals the laid-out section under seal_seq, flips byte flip of the result when it is not negative, and opens it
+// under open_seq.
 function round_trip(seal_seq: u64, flip: i32, open_seq: u64): Result[u8[], aead.AeadError] {
   let n: i32 = sunscreen().len();
   let sealed: u8[] = sealed_in_place(seal_seq)?;
