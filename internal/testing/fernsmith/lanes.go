@@ -26,6 +26,9 @@ func (g *Generator) declareLanes(b *strings.Builder) {
 		fmt.Fprintf(b, "function ln_%s_sum(xs: %s[]): %s { let acc: %s = __%s_splat(0.0); let i: i32 = 0i32; "+
 			"while ((i + %d) <= xs.len()) { acc = (acc + __%s_load(xs, i)); i = i + %d; } return acc; }\n",
 			k.name, k.scalar, k.name, k.name, k.name, k.n, k.name, k.n)
+		// A scalar parameter before the lanes, and two returns that differ.
+		fmt.Fprintf(b, "@noinline function ln_%s_pick(k: i32, a: %s, b: %s): %s { if ((k & 1i32) == 0i32) { return a; } return (b - a); }\n",
+			k.name, k.name, k.name, k.name)
 	}
 }
 
@@ -33,7 +36,7 @@ func (g *Generator) declareLanes(b *strings.Builder) {
 // each lane is a small integer and every operation on it is exact, then
 // folds each lane back into an i32 local.
 func (g *Generator) maybeEmitLaneCluster(b *strings.Builder, sc *scope) bool {
-	if !g.lanes || g.flip(0.75) {
+	if !g.lanes || g.flip(0.6) {
 		return false
 	}
 	k := laneKinds[g.ch.intN(len(laneKinds))]
@@ -75,6 +78,7 @@ func (g *Generator) maybeEmitLaneCluster(b *strings.Builder, sc *scope) bool {
 		fmt.Fprintf(b, "let %s_w: %s[] = __%s_with(%s, %d, %s); ", xs, k.scalar, k.name, xs, g.ch.intN(k.n+1), c)
 		fmt.Fprintf(b, "%s = (%s + ln_%s_sum(%s_w)); ", c, c, k.name, xs)
 	}
+	g.laneJoin(b, sc, k, idx, names, c, &mul)
 	fmt.Fprintf(b, "let %s: i32 = 0i32", r)
 	for i := 0; i < k.n; i++ {
 		fmt.Fprintf(b, " + ((__%s_lane(%s, %d) as i32) * %di32)", k.name, c, i, 2*i+1)
@@ -82,6 +86,31 @@ func (g *Generator) maybeEmitLaneCluster(b *strings.Builder, sc *scope) bool {
 	b.WriteString("; ")
 	sc.declare(tI32, r)
 	return true
+}
+
+// laneJoin carries the cluster's lane value through a phi or a call that
+// mixes a scalar parameter with lanes, or leaves it as it is.
+func (g *Generator) laneJoin(b *strings.Builder, sc *scope, k laneKind, idx int, names []string, c string, mul *bool) {
+	vals := append(append([]string{}, names...), c)
+	switch g.ch.intN(4) {
+	case 1:
+		b.WriteString("if (((")
+		g.expr(b, sc, tI32, 1)
+		fmt.Fprintf(b, ") & 1i32) == 0i32) { %s = ", c)
+		g.laneExpr(b, k, vals, 2, mul)
+		fmt.Fprintf(b, "; } else { %s = ", c)
+		g.laneExpr(b, k, vals, 2, mul)
+		b.WriteString("; } ")
+	case 2:
+		i := fmt.Sprintf("__ln_i%d", idx)
+		fmt.Fprintf(b, "let %s: i32 = 0i32; while (%s < ((", i, i)
+		g.expr(b, sc, tI32, 1)
+		fmt.Fprintf(b, ") & 3i32)) { %s = (%s + %s); %s = %s + 1i32; } ", c, c, names[0], i, i)
+	case 3:
+		fmt.Fprintf(b, "%s = ln_%s_pick(", c, k.name)
+		g.expr(b, sc, tI32, 1)
+		fmt.Fprintf(b, ", %s, %s); ", names[0], c)
+	}
 }
 
 // laneScalar is an i32 of the program's state, masked to a small range and

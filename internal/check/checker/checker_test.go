@@ -6927,6 +6927,29 @@ func TestArrayLiteralFitsViewField(t *testing.T) {
 	}
 }
 
+func TestArrayLiteralBindsGenericViewField(t *testing.T) {
+	const decls = "struct G[T] { xs: [T] }\nstruct Q[T] { xs: [T], a: T }\n"
+	for _, src := range []string{
+		`function f(): i32 { let g = G { xs: [1, 2] }; return g.xs.len() as i32; }`,
+		`function f(): i32 { let x: i32 = 1; let q = Q { xs: [2, 3], a: x }; return q.a; }`,
+		`function f(): i32 { let w: i64 = 4; let q = Q { a: w, xs: [5, 6] }; return q.xs.len() as i32; }`,
+		`function f(): i32 { let g = G { xs: ["a", "b"] }; return g.xs.len() as i32; }`,
+	} {
+		if err := checkSource(t, decls+src); err != nil {
+			t.Errorf("%q: unexpected error %v", src, err)
+		}
+	}
+	for src, msg := range map[string]string{
+		`function f(): i32 { let owned: i32[] = [1]; let g = G { xs: owned }; return 0; }`: `field "xs": expected [i32], got i32[]`,
+		`function f(): i32 { let x: i32 = 1; let q = Q { xs: [1.5], a: x }; return 0; }`:   `field "xs": expected [i32], got f64[]`,
+	} {
+		err := checkSource(t, decls+src)
+		if err == nil || !hasCode(err, "E043") || hasCode(err, "E040") || !strings.Contains(err.Error(), msg) {
+			t.Errorf("%q: want only E043 %q, got %v", src, msg, err)
+		}
+	}
+}
+
 func TestSliceEscapeRejected(t *testing.T) {
 	for _, src := range []string{
 		`function f(): [i32] { let xs: i32[] = [1, 2, 3]; return xs[0:2]; }`,

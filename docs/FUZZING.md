@@ -228,6 +228,10 @@ deleted assignment — builds the faulty compiler, and checks whether any of
 apart from the interpreter. A mutant compiler that runs past two minutes on
 one program is killed as a hang. A fault the compiler cannot even build is
 "stillborn" and not scored; one that breaks a trivial program is reported apart.
+Half of the programs come from `GenMain` and half from `GenPrintableMain`, so
+the floats and lanes that only the printable profile writes are judged too. A
+program kills a mutant when its exit code or its stdout differs from the
+interpreter's.
 The score is the share of the rest that fernsmith kills, and the list of
 survivors is the generator's to-do list: each is a fault no generated program
 reaches or no oracle sees (or an equivalent mutant, which nothing can kill).
