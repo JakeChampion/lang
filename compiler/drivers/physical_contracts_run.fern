@@ -60,7 +60,7 @@ function check(sub: ircore.Sub): void {
 
 function main(): i32 {
   require(ircore.no_sub().physical_contracts.len() == 0, 15);
-  let source = "struct Leaf { n: i32 }\nstruct Parent { child: Leaf }\nstruct Box[T] { value: T }\n@noinline\nfunction extract(own p: Parent): Leaf { return p.child; }\n@noinline\nfunction replace(own p: Parent, child: Leaf): Parent { return Parent { ...p, child: child }; }\n@noinline\nfunction read(p: Parent): i32 { return p.child.n; }\n@noinline\nfunction read_box(p: Box[i64]): i64 { return p.value; }\nfunction main(): i32 { let p = Parent { child: Leaf { n: 7 } }; let b = Box[i64] { value: 9 }; return read(replace(p, extract(p))) + (read_box(b) as i32); }\n";
+  let source = "struct Leaf { n: i32 }\nstruct Parent { child: Leaf }\nstruct Box[T] { value: T, kept: i32[] }\n@noinline\nfunction extract(own p: Parent): Leaf { return p.child; }\n@noinline\nfunction replace(own p: Parent, child: Leaf): Parent { return Parent { ...p, child: child }; }\n@noinline\nfunction read(p: Parent): i32 { return p.child.n; }\n@noinline\nfunction read_box(p: Box[i64]): i64 { return p.value + (p.kept[0] as i64); }\nfunction main(): i32 { let p = Parent { child: Leaf { n: 7 } }; let b = Box[i64] { value: 9, kept: [0] }; return read(replace(p, extract(p))) + (read_box(b) as i32); }\n";
   for target in ["arm64-darwin", "x86-64-linux", "wasm32-wasi"] {
     let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
     check(driven.sub);
