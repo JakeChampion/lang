@@ -49,7 +49,7 @@ The smoke harness does not replace the larger suites in [TEST-GATES.md](TEST-GAT
 |---|---|---|
 | Native W^X faults | `TestSelfHostX86WXExecutable` | Native x86 process behavior |
 | AArch64 ELF and stack faults | `TestSelfHostArm64NativeLinuxElfRuns` | QEMU behavior on an x86 host |
-| PAC and BTI faults | `TestSelfHostHardenArm64` | QEMU does not establish physical enforcement |
+| PAC and BTI faults | `TestSelfHostHardenArm64` | Native ARM or QEMU process behavior on the test host |
 | IR rejection | `TestSelfHostIRVerifyGateRefuses`, `TestSelfHostIRVerifyGateChecks` | Verifier coverage remains subject to SEC-011 |
 | Bounds and sanitizer regression | `internal/testing/e2e` | Diagnostic coverage does not prove complete memory safety |
 | Generated programs | `internal/testing/fernsmith` | Corpus and time budgets bound coverage |
@@ -66,6 +66,26 @@ The smoke report marks CET, PAC, BTI, and MTE as `unverified`.
 Instruction emission and ELF properties cannot change that state.
 Physical verification requires CPU support, kernel support, process activation, and an adversarial fault test.
 The report does not infer any of these facts from QEMU.
+
+`TestSelfHostHardenArm64` uses a compiler for the native host architecture.
+The test runs on the native ARM self-host shards without an x86 compiler.
+It also runs with QEMU on the x86 self-host shards.
+The log identifies native or QEMU execution before any fault test.
+The native test selects each fault test from its CPU feature flag.
+PAC coverage does not require BTI support.
+
+Unsupported features remain unverified.
+
+Each enabled BTI test requires SIGILL after removal of the BTI instructions.
+The PAC test substitutes `bti c` for `paciasp` to preserve valid BTI targets.
+It requires SIGSEGV or SIGILL after authentication of the unsigned return address.
+The architecture can fault during authentication or after the subsequent return.
+The same control must run correctly without authentication.
+
+An arbitrary nonzero exit does not satisfy either fault test.
+Positive controls must execute before the fault tests.
+These observations apply to the tested process and image variants only.
+They do not certify handwritten runtime frames or every production host.
 
 ## Local evidence
 
