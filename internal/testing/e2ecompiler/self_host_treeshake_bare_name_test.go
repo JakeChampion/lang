@@ -56,3 +56,48 @@ function via[T: G](x: T): i32 { return x.get(); }
 		})
 	}
 }
+
+func TestSelfHostTreeshakeDropImplKeepsOnlyDropImpls(t *testing.T) {
+	cli, stdlib := witSelfHostCLI(t)
+	const sock = `struct Sock { fd: i32 }
+function (s: Sock) drop(n: i32): i32 { return subprocess("true", [], "").exit_code + n; }
+`
+	for _, tc := range []struct {
+		name, src string
+		e066      bool
+	}{
+		{"uncalled-method-named-drop", `import "core/mem";
+struct W { n: i32 }
+impl mem.Drop for W { function drop(self: Self): void { print("dropped"); } }
+` + sock + `function main(): i32 { let w: W = W { n: 1 }; return w.n - 1; }
+`, false},
+		{"string-drop-call", `import "std/string";
+` + sock + `function main(): i32 { let s: string = "abcdef"; print(s.drop(2)); return 0; }
+`, false},
+		{"drop-impl-still-kept", `import "core/mem";
+struct W { n: i32 }
+impl mem.Drop for W { function drop(self: Self): void { print(subprocess("true", [], "").stdout); } }
+function main(): i32 { let w: W = W { n: 1 }; return w.n - 1; }
+`, true},
+		{"bounded-call-keeps-drop", `trait Shut { function drop(self: Self, n: i32): i32; }
+struct Sock { fd: i32 }
+impl Shut for Sock { function drop(self: Self, n: i32): i32 { return subprocess("true", [], "").exit_code + n; } }
+function shut[T: Shut](x: T): i32 { return x.drop(1); }
+function main(): i32 { return shut(Sock { fd: 3 }); }
+`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog := filepath.Join(t.TempDir(), "main.fern")
+			if err := os.WriteFile(prog, []byte(tc.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, _ := exec.Command(cli, "-check", "-target", "wasm32-wasi", prog, stdlib).CombinedOutput()
+			if got := strings.Contains(string(out), "E066"); got != tc.e066 {
+				t.Fatalf("E066 reported = %v, want %v\n%s", got, tc.e066, out)
+			}
+			if !tc.e066 && strings.Contains(string(out), "error") {
+				t.Fatalf("the program does not check:\n%s", out)
+			}
+		})
+	}
+}
