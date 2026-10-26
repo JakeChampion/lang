@@ -180,8 +180,7 @@ No task qualifies as fully implemented from this source audit alone.
 | SEC-010 | [#13512](https://github.com/JakeChampion/lang/issues/13512) | partial | `compiler/ir.fern`, `compiler/semsource.fern`, `compiler/ssasem.fern` | Map typed ownership and checked operations to explicit IR invariants. |
 | SEC-011 | [#13513](https://github.com/JakeChampion/lang/issues/13513) | partial | `compiler/irverify.fern`, `compiler/irverifygate.fern`, `compiler/irverifyrc.fern` | Audit verifier coverage and each pass boundary including unmodelled operations. |
 | SEC-012 | [#13514](https://github.com/JakeChampion/lang/issues/13514) | partial | `internal/testing/tv`, `internal/testing/fernsmith`, `compiler/irverifygate.fern` | Extend current translation validation and execution differentials to checks. |
-| SEC-013 | [#13515](https://github.com/JakeChampion/lang/issues/13515) | partial | `compiler/asm_ir.fern`, 
-`compiler/x86_native.fern`, `compiler/ssa.fern` | Audit SysV frames and raw syscall ABI separately. |
+| SEC-013 | [#13515](https://github.com/JakeChampion/lang/issues/13515) | partial | `compiler/asm_ir.fern`, `compiler/x86_native.fern`, `compiler/ssa.fern` | Audit SysV frames and raw syscall ABI separately. |
 | SEC-014 | [#13516](https://github.com/JakeChampion/lang/issues/13516) | partial | `compiler/asm_arm64_ir.fern`, `compiler/arm64_native.fern`, `compiler/ssa.fern` | Audit AAPCS64 frames and baseline instruction requirements. |
 | SEC-015 | [#13517](https://github.com/JakeChampion/lang/issues/13517) | absent | `compiler/asm_ir.fern`, `compiler/asm_arm64_ir.fern`, `docs/HARDENING.md` | Add guarded stack growth and canaries after ABI validation. |
 | SEC-016 | [#13518](https://github.com/JakeChampion/lang/issues/13518) | absent | `compiler/ssa.fern`, `compiler/asm_ir.fern`, `compiler/asm_arm64_ir.fern` | Design immutable allowed-target metadata for indirect calls. |
@@ -194,15 +193,12 @@ No task qualifies as fully implemented from this source audit alone.
 | SEC-023 | [#13525](https://github.com/JakeChampion/lang/issues/13525) | partial | `compiler/asmcore.fern`, `docs/RC-DESIGN.md`, `docs/SANITIZER.md` | Separate current freelist behavior from isolated allocator metadata guarantees. |
 | SEC-024 | [#13526](https://github.com/JakeChampion/lang/issues/13526) | partial | `compiler/asmcore.fern`, `docs/SANITIZER.md` | Replace diagnostic unbounded quarantine only under an approved resource policy. |
 | SEC-025 | [#13527](https://github.com/JakeChampion/lang/issues/13527) | partial | `compiler/asmcore.fern`, `internal/stdlib/std/crypto`, `docs/SANITIZER.md` | Define zero initialization, quotas, and non-elidable erasure. |
-| SEC-026 | [#13528](https://github.com/JakeChampion/lang/issues/13528) | partial | `compiler/elf.fern`, 
-`compiler/x86_native.fern`, `compiler/arm64_native.fern` | Define the actual accepted binary-input surface before adding a parser. |
-| SEC-027 | [#13529](https://github.com/JakeChampion/lang/issues/13529) | partial | `compiler/elf.fern`, 
-`compiler/x86_native.fern`, `compiler/arm64_native.fern` | Extend current image variants to verified Linux PIE on both targets. |
+| SEC-026 | [#13528](https://github.com/JakeChampion/lang/issues/13528) | partial | `compiler/elf.fern`, `compiler/x86_native.fern`, `compiler/arm64_native.fern` | Define the actual accepted binary-input surface before adding a parser. |
+| SEC-027 | [#13529](https://github.com/JakeChampion/lang/issues/13529) | partial | `compiler/elf.fern`, `compiler/x86_native.fern`, `compiler/arm64_native.fern` | Extend current image variants to verified Linux PIE on both targets. |
 | SEC-028 | [#13530](https://github.com/JakeChampion/lang/issues/13530) | partial | `compiler/elf.fern`, `internal/testing/e2ecompiler/self_host_x86_wx_test.go` | Preserve current W^X and NX while verifying all image variants and RELRO applicability. |
 | SEC-029 | [#13531](https://github.com/JakeChampion/lang/issues/13531) | partial | `compiler/elf.fern`, `compiler/asm_arm64_ir.fern`, `docs/HARDENING.md` | Audit current unwind and property emission plus missing TLS and stubs. |
 | SEC-030 | [#13532](https://github.com/JakeChampion/lang/issues/13532) | absent | `compiler/asm_ir.fern`, `compiler/elf.fern`, `docs/HARDENING.md` | Design Linux SHSTK activation and compatibility before enforcement claims. |
-| SEC-031 | [#13533](https://github.com/JakeChampion/lang/issues/13533) | absent | `compiler/asm_ir.fern`, 
-`compiler/x86_native.fern`, `docs/HARDENING.md` | Add compatible entry points and separate emission from OS enforcement. |
+| SEC-031 | [#13533](https://github.com/JakeChampion/lang/issues/13533) | absent | `compiler/asm_ir.fern`, `compiler/x86_native.fern`, `docs/HARDENING.md` | Add compatible entry points and separate emission from OS enforcement. |
 | SEC-032 | [#13534](https://github.com/JakeChampion/lang/issues/13534) | partial | `compiler/asm_arm64_ir.fern`, `internal/testing/e2ecompiler/self_host_harden_test.go` | Audit unsigned handwritten runtime frames and verify physical PAC support. |
 | SEC-033 | [#13535](https://github.com/JakeChampion/lang/issues/13535) | partial | `compiler/asm_arm64_ir.fern`, `compiler/elf.fern`, `internal/testing/e2ecompiler/self_host_harden_test.go` | Audit every entry and image variant and verify physical BTI enforcement. |
 | SEC-034 | [#13536](https://github.com/JakeChampion/lang/issues/13536) | absent | `compiler/asmcore.fern`, `compiler/asm_arm64_ir.fern`, `docs/HARDENING.md` | Design optional MTE mappings and allocator tag ownership. |
