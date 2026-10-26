@@ -7983,7 +7983,7 @@ function appends_to_target(a: ast.StmtAssign, env: Env): boolean {
           return false;
         }
         if let VArr(cur) = env.values[slot] {
-          return !cur.view && cur.store.get().len() == 0;
+          return !cur.view;
         }
       }
     }
@@ -7992,9 +7992,7 @@ function appends_to_target(a: ast.StmtAssign, env: Env): boolean {
 }
 
 // Takes x out of its slot before appending, so the array grows in place
-// when the slot was its only holder, as a compiled binding's does. The read,
-// both writes and the append stay in this one frame: split across a call,
-// the compiled interpreter copies the elements.
+// when the slot was its only holder, as a compiled binding's does.
 function append_in_slot(a: ast.StmtAssign, env: Env): StepResult {
   let x: Value = v_absent();
   if let ast.ExprCall(c) = a.value {
@@ -8007,9 +8005,7 @@ function append_in_slot(a: ast.StmtAssign, env: Env): StepResult {
   let taken: Value = env.values[slot];
   let emptied: Env = Env { ...env, values: env.values.with(slot, v_absent()) };
   if let VArr(cur) = taken {
-    let unwritten: i64[] = [];
-    let grown: Value = VArr { ...cur, items: cur.items.append(x), store: cell_new(unwritten) };
-    return step_none(Env { ...emptied, values: emptied.values.with(slot, grown) });
+    return step_none(Env { ...emptied, values: emptied.values.with(slot, arr_appended(cur, x)) });
   }
   return step_stop(emptied, v_err("array.append: not an array"));
 }
