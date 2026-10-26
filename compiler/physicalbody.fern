@@ -5,7 +5,6 @@ import "./typeinfo";
 import "./rccertify";
 import "./semscalarreturn";
 import "./sempair";
-import "./irverify";
 
 pub struct Metadata { contracts: ssasem.Contract[], records: semrecords.Records, enums: semrecords.Enum[], finalizers: ssasem.Finalizer[] }
 
@@ -86,16 +85,6 @@ pub function lowered_origins(lowered: Lowered, producer: i32): Origin[] {
     i = i + 1;
   }
   return out;
-}
-
-pub function fn_sigs(c: Collection): irverify.FnSig[] {
-  let sigs: irverify.FnSig[] = [];
-  for metadata in c.producers {
-    for contract in metadata.contracts {
-      sigs = sigs.append(irverify.FnSig { name: contract.name, n_params: contract.params.len() });
-    }
-  }
-  return sigs;
 }
 
 pub function abis(c: Collection): rccertify.Abis {

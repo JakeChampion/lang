@@ -1076,10 +1076,6 @@ function declares_typevars(fn: parser.FuncDecl): boolean {
 // record parameter can travel as its parts, so the body may take more than
 // the declaration names. `bodies` runs beside `decls`, then the instances.
 pub function fn_sig_index(funcs: parser.FuncDecl[], decls: parser.FuncDecl[], bodies: LowerResult[]): irverify.NameIndex {
-  return fn_sig_index_with(funcs, decls, bodies, []);
-}
-
-pub function fn_sig_index_with(funcs: parser.FuncDecl[], decls: parser.FuncDecl[], bodies: LowerResult[], outside: irverify.FnSig[]): irverify.NameIndex {
   let lowered: string[] = [];
   let counts: i32[] = [];
   for i in 0..bodies.len() {
@@ -1094,7 +1090,6 @@ pub function fn_sig_index_with(funcs: parser.FuncDecl[], decls: parser.FuncDecl[
     }
   }
   let by_name: util.NameIndex = util.name_index(lowered);
-  let imported: irverify.NameIndex = irverify.sig_index(outside);
   let sigs: irverify.FnSig[] = [];
   for fn in funcs {
     let nm: string = sig_name(fn);
@@ -1105,11 +1100,6 @@ pub function fn_sig_index_with(funcs: parser.FuncDecl[], decls: parser.FuncDecl[
     let at: i32 = by_name.find(nm);
     if (at >= 0) {
       np = counts[at];
-    } else {
-      let physical: i32 = irverify.index_params(imported, nm);
-      if (physical >= 0) {
-        np = physical;
-      }
     }
     sigs = sigs.append(irverify.FnSig { name: nm, n_params: np });
   }
