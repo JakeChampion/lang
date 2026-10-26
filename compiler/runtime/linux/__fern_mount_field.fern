@@ -1,0 +1,26 @@
+function __fern_mount_field(buf: usize, a: i32, b: i32): string {
+  let n: i32 = 0;
+  let i: i32 = a;
+  while (i < b) {
+    if (__fern_mount_octal(buf, i, b)) {
+      i = i + 4;
+    } else {
+      i = i + 1;
+    }
+    n = n + 1;
+  }
+  let p: usize = __raw_alloc(n);
+  let o: i32 = 0;
+  i = a;
+  while (i < b) {
+    if (__fern_mount_octal(buf, i, b)) {
+      __raw_store8(p, o, (__raw_load8(buf, i + 1) - 48) * 64 + (__raw_load8(buf, i + 2) - 48) * 8 + (__raw_load8(buf, i + 3) - 48));
+      i = i + 4;
+    } else {
+      __raw_store8(p, o, __raw_load8(buf, i));
+      i = i + 1;
+    }
+    o = o + 1;
+  }
+  return __raw_string(p, n);
+}

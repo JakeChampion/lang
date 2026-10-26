@@ -1,0 +1,54 @@
+function __fern_ring_wait(ring: i64, events: i32[], timeout_ms: i32): i32 {
+  let cap: i32 = events.len() / 2;
+  if (cap <= 0 || ring < 0 as i64) {
+    return 0 - 22;
+  }
+  let blk: usize = ring as usize;
+  let nfds: i32 = __load_i32(blk + 68);
+  let pend: usize = blk + 4096;
+  let np: i32 = __load_i32(blk + 72);
+  __store_i32(blk + 72, 0);
+  let k: i32 = 0;
+  while (k < np) {
+    let pfd: i32 = __load_i32(pend + k as usize * 4);
+    let pent: usize = __fern_ring_entry(blk, pfd);
+    if (__raw_load8(pent, 0) != 0 && __raw_load8(pent, 1) == 0) {
+      let armed: i32 = __fern_ring_arm(blk, pent, pfd);
+      if (armed < 0) {
+        return armed;
+      }
+    }
+    if (__raw_load8(pent, 0) != 0 && (__raw_load8(pent, 4) == 2 || __raw_load8(pent, 4) == 5)) {
+      let resumed: i32 = __fern_ring_resume(blk, pent, pfd);
+      if (resumed < 0) {
+        return resumed;
+      }
+      if (__raw_load8(pent, 4) != 1 && __raw_load8(pent, 6) == 0) {
+        __fern_ring_pend(blk, pfd);
+      }
+    }
+    k = k + 1;
+  }
+  let min: i64 = 1 as i64;
+  if (timeout_ms == 0 || __load_i32(blk + 184) > 0) {
+    min = 0 as i64;
+  }
+  let ts: usize = blk + 120;
+  let arg: usize = blk + 136;
+  __store_i64(arg, 0);
+  __store_i64(arg + 8, 0);
+  __store_i64(arg + 16, 0);
+  if (timeout_ms > 0 && min != 0 as i64) {
+    __store_i64(ts, (timeout_ms / 1000) as i64);
+    __store_i64(ts + 8, (timeout_ms % 1000) as i64 * (1000000 as i64));
+    __store_i64(arg + 16, ts as i64);
+  }
+  let queued: i32 = __fern_ring_queued(blk);
+  let r: i32 = __syscall6(426, __load_i32(blk) as i64, queued as i64, min, 9, arg as i64, 24) as i32;
+  __fern_ring_reap(blk, nfds);
+  let n: i32 = __fern_ring_emit(blk, __raw_arr_ptr(events), cap);
+  if (n == 0 && r < 0 && r != 0 - 62) {
+    return r;
+  }
+  return n;
+}

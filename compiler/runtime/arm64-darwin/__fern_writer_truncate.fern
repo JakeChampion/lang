@@ -1,0 +1,7 @@
+function __fern_writer_truncate(fd: i32, length: i64): Result[void, IoError] {
+  let rc: i32 = __syscall3(201, fd as i64, length as i64, 0) as i32;
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  return Ok(());
+}

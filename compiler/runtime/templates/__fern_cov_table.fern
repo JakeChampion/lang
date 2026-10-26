@@ -1,0 +1,10 @@
+function __fern_cov_table(): usize {
+  let t: usize = __raw_alloc(__FERN_COVER_COUNT * 8 + 8);
+  let i: i32 = 0;
+  while (i <= __FERN_COVER_COUNT) {
+    __raw_store_ptr(t, i, 0 as usize);
+    i = i + 1;
+  }
+  __raw_store_ptr(__raw_cover(), 0, t);
+  return t;
+}

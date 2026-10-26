@@ -1,0 +1,3 @@
+function __fern_writer_splice_forever(fd: i32, s: string): Result[void, IoError] {
+  return Err(Unsupported);
+}

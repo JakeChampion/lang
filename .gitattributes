@@ -35,3 +35,4 @@
 # a judgement — "is a colliding row here two appends, or one disagreement?" —
 # and the duplicate-key test is what catches getting it wrong.
 internal/testing/e2e/testdata/conformance-leak-census.txt merge=union
+compiler/rtbundle.fern linguist-generated=true

@@ -20,43 +20,52 @@ func TestRawStringPointerComesFromRawAlloc(t *testing.T) {
 	if err != nil {
 		t.Fatalf("locate repo root: %v", err)
 	}
-	path := filepath.Join(root, "compiler", "asmcore.fern")
-	raw, err := os.ReadFile(path)
+	paths, err := filepath.Glob(filepath.Join(root, "compiler", "runtime", "*", "*.fern"))
 	if err != nil {
-		t.Fatalf("read asmcore.fern: %v", err)
+		t.Fatal(err)
 	}
-	src := blankFullLineComments(string(raw))
-
-	for _, chunk := range splitGeneratorFns(src) {
-		allocated := map[string]bool{}
-		for _, m := range rawAllocBindRe.FindAllStringSubmatch(chunk.text, -1) {
-			allocated[m[1]] = true
+	calls := 0
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
 		}
-		for _, loc := range rawStringCallRe.FindAllStringIndex(chunk.text, -1) {
-			open := loc[1] - 1
-			arg, ok := firstArg(chunk.text, open)
-			if !ok {
-				t.Errorf("asmcore.fern:%d: unbalanced parentheses after __raw_string(",
-					lineOf(src, chunk.off+open))
-				continue
+		src := blankFullLineComments(string(raw))
+		for _, chunk := range splitGeneratorFns(src) {
+			allocated := map[string]bool{}
+			for _, m := range rawAllocBindRe.FindAllStringSubmatch(chunk.text, -1) {
+				allocated[m[1]] = true
 			}
-			name := strings.TrimSpace(arg)
-			if !bareAddrArgRe.MatchString(name) {
-				t.Errorf("asmcore.fern:%d: __raw_string's pointer is `%s` — it has to be "+
-					"the bare name of a __raw_alloc result, whose reserved 24-byte header "+
-					"the box is stamped into (#7351)", lineOf(src, chunk.off+open), name)
-				continue
-			}
-			bare := strings.Trim(strings.TrimSpace(strings.Trim(name, `"`)), "+ ")
-			if !allocated[bare] {
-				t.Errorf("asmcore.fern:%d: __raw_string boxes %q, which %s does not bind "+
-					"with __raw_alloc. __raw_alloc is the ONLY producer that reserves the "+
-					"24-byte string-box header ahead of its pointer; boxing a scratch "+
-					"buffer, an argv entry or a borrowed address writes the box over 24 "+
-					"bytes that belong to something else, and nothing reports it at run "+
-					"time (#7351)", lineOf(src, chunk.off+open), bare, chunk.name)
+			for _, loc := range rawStringCallRe.FindAllStringIndex(chunk.text, -1) {
+				calls++
+				open := loc[1] - 1
+				arg, ok := firstArg(chunk.text, open)
+				if !ok {
+					t.Errorf("%s:%d: unbalanced parentheses after __raw_string(",
+						path, lineOf(src, chunk.off+open))
+					continue
+				}
+				name := strings.TrimSpace(arg)
+				if !bareAddrArgRe.MatchString(name) {
+					t.Errorf("%s:%d: __raw_string's pointer is `%s` — it has to be "+
+						"the bare name of a __raw_alloc result, whose reserved 24-byte header "+
+						"the box is stamped into (#7351)", path, lineOf(src, chunk.off+open), name)
+					continue
+				}
+				bare := strings.Trim(strings.TrimSpace(strings.Trim(name, `"`)), "+ ")
+				if !allocated[bare] {
+					t.Errorf("%s:%d: __raw_string boxes %q, which %s does not bind "+
+						"with __raw_alloc. __raw_alloc is the ONLY producer that reserves the "+
+						"24-byte string-box header ahead of its pointer; boxing a scratch "+
+						"buffer, an argv entry or a borrowed address writes the box over 24 "+
+						"bytes that belong to something else, and nothing reports it at run "+
+						"time (#7351)", path, lineOf(src, chunk.off+open), bare, chunk.name)
+				}
 			}
 		}
+	}
+	if calls == 0 {
+		t.Fatal("no raw string constructors in the runtime modules")
 	}
 }
 

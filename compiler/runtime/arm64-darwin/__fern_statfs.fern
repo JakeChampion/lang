@@ -1,0 +1,34 @@
+function __fern_statfs(path: string): Result[FsStat, IoError] {
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, path[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let buf: usize = __raw_scratch(2176);
+  let rc: i32 = __syscall3(345, pathz as i64, buf as i64, 0) as i32;
+  let nmax: i32 = 0;
+  let pmax: i32 = 0;
+  if (rc >= 0) {
+    nmax = __syscall3(191, pathz as i64, 4, 0) as i32;
+    rc = nmax;
+  }
+  if (rc >= 0) {
+    pmax = __syscall3(191, pathz as i64, 5, 0) as i32;
+    rc = pmax;
+  }
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen)));
+  }
+  let n: i32 = 0;
+  while (n < 16 && __raw_load8(buf, 72 + n) != 0) {
+    n = n + 1;
+  }
+  let p: usize = __raw_alloc(n);
+  __memcpy(p, buf + 72, n);
+  let type_name: string = __raw_string(p, n);
+  return Ok(FsStat { block_size: __load_i32(buf + 0) as i64 & 4294967295 as i64, blocks: __load_i64(buf + 8), blocks_free: __load_i64(buf + 16), blocks_avail: __load_i64(buf + 24), files: __load_i64(buf + 32), files_free: __load_i64(buf + 40), fs_type: __load_i32(buf + 60) as i64 & 4294967295 as i64, fsid: (__load_i32(buf + 48) as i64 & 4294967295 as i64) << 32 as i64 | __load_i32(buf + 48 + 4) as i64 & 4294967295 as i64, frag_size: __load_i32(buf + 0) as i64 & 4294967295 as i64, name_max: nmax as i64, path_max: pmax as i64, fs_type_name: type_name });
+}

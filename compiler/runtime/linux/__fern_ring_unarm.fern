@@ -1,0 +1,11 @@
+function __fern_ring_unarm(blk: usize, ent: usize, fd: i32): i32 {
+  if (__raw_load8(ent, 1) != 0) {
+    let r: i32 = __fern_ring_push(blk, 7, 0 - 1, 0, 4611686018427387904 as i64, __fern_ring_ud(fd, __raw_load8(ent, 2)));
+    if (r < 0) {
+      return r;
+    }
+  }
+  __raw_store8(ent, 1, 0);
+  __raw_store8(ent, 2, __raw_load8(ent, 2) + 1 & 255);
+  return 0;
+}

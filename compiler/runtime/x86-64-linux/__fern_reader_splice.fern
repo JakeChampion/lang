@@ -1,0 +1,49 @@
+function __fern_reader_splice(fd: i32, out: i32, max: i32): Result[i64, IoError] {
+  let n: i32 = __syscall6(275, fd as i64, 0, out as i64, 0, max as i64, 0) as i32;
+  let p: usize = __raw_splice_pipe();
+  if (n >= 0) {
+    if (__load_i32(p + 8) != out + 1) {
+      __store_i32(p + 8, out + 1);
+      let cap: i32 = __syscall3(72, out as i64, 1032, 0) as i32;
+      if (cap >= 0 && cap < max) {
+        __syscall3(72, out as i64, 1031, max as i64);
+      }
+    }
+    return Ok(n as i64);
+  }
+  if (n != 0 - 22) {
+    return Err(Unsupported);
+  }
+  if (__load_i64(p) == 0 as i64) {
+    if (__syscall3(293, p as i64, 524288, 0) != 0) {
+      return Err(Unsupported);
+    }
+    __syscall3(72, __load_i32(p + 4) as i64, 1031, max as i64);
+  }
+  let pr: i32 = __load_i32(p);
+  let pw: i32 = __load_i32(p + 4);
+  if (__syscall6(275, pr as i64, 0, out as i64, 0, 1, 2) != 0 - 11) {
+    return Err(Unsupported);
+  }
+  let got: i32 = __syscall6(275, fd as i64, 0, pw as i64, 0, max as i64, 0) as i32;
+  if (got < 0) {
+    return Err(Unsupported);
+  }
+  let left: i32 = got;
+  while (left > 0) {
+    let m: i32 = __syscall6(275, pr as i64, 0, out as i64, 0, left as i64, 0) as i32;
+    if (m > 0) {
+      left = left - m;
+    } else if (m != 0 - 4) {
+      __syscall3(3, pr as i64, 0, 0);
+      __syscall3(3, pw as i64, 0, 0);
+      __store_i64(p, 0 as i64);
+      let e: i32 = 0 - m;
+      if (m == 0) {
+        e = 5;
+      }
+      return Err(__fern_io_error(e, ""));
+    }
+  }
+  return Ok(got as i64);
+}

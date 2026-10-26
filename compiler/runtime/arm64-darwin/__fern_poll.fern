@@ -1,0 +1,77 @@
+function __fern_poll(fds: i32[], timeout_ms: i32): i32 {
+  let n: i32 = fds.len();
+  if (n <= 0 || n > 33554431) {
+    return 0 - 1;
+  }
+  let count: i32 = 0;
+  for fd in fds {
+    if (fd >= 0) {
+      count = count + 1;
+    }
+  }
+  if (count == 0) {
+    return 0 - 1;
+  }
+  let kq: i32 = __syscall3(362, 0, 0, 0) as i32;
+  if (kq < 0) {
+    return 0 - 1;
+  }
+  let buf: usize = __raw_alloc(count * 64);
+  let events: usize = buf + count * 32;
+  let i: i32 = n - 1;
+  let c: i32 = 0;
+  while (i >= 0) {
+    if (fds[i] >= 0) {
+      __raw_store_ptr(buf, c * 4, fds[i] as usize);
+      __raw_store_ptr(buf, c * 4 + 1, 4325375);
+      __raw_store_ptr(buf, c * 4 + 2, 0);
+      __raw_store_ptr(buf, c * 4 + 3, i as usize);
+      c = c + 1;
+    }
+    i = i - 1;
+  }
+  let ts: usize = __raw_scratch(16);
+  __raw_store_ptr(ts, 0, 0);
+  __raw_store_ptr(ts, 1, 0);
+  let receipts: i32 = __syscall6(363, kq as i64, buf as i64, count as i64, events as i64, count as i64, ts as i64) as i32;
+  let valid: i32 = 0;
+  let bad: i32 = 0 - 1;
+  let r: i32 = 0;
+  let wait_ms: i32 = timeout_ms;
+  while (r < receipts) {
+    if (__raw_load_ptr(events, r * 4 + 2) == 0) {
+      valid = valid + 1;
+    } else {
+      wait_ms = 0;
+      let at: i32 = __raw_load_ptr(events, r * 4 + 3) as i32;
+      if (bad < 0 || at < bad) {
+        bad = at;
+      }
+    }
+    r = r + 1;
+  }
+  let got: i32 = 0;
+  if (valid > 0) {
+    let tmo: usize = 0 as usize;
+    if (wait_ms >= 0) {
+      __raw_store_ptr(ts, 0, (wait_ms / 1000) as usize);
+      __raw_store_ptr(ts, 1, (wait_ms % 1000 * 1000000) as usize);
+      tmo = ts;
+    }
+    got = __syscall6(363, kq as i64, 0, 0, events as i64, count as i64, tmo as i64) as i32;
+  }
+  __syscall3(6, kq as i64, 0, 0);
+  let hit: i32 = bad;
+  let j: i32 = 0;
+  while (j < got) {
+    if ((__raw_load8(events, j * 32 + 11) & 64) == 0) {
+      let idx: i32 = __raw_load_ptr(events, j * 4 + 3) as i32;
+      if (hit < 0 || idx < hit) {
+        hit = idx;
+      }
+    }
+    j = j + 1;
+  }
+  let buf_own: string = __raw_string(buf, count * 64);
+  return hit;
+}

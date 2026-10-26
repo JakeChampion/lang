@@ -1,0 +1,31 @@
+function __fern_ring_send_zc_u8(ring: i64, fd: i32, data: i32[], from: i32): i32 {
+  if (ring < 0 as i64) {
+    return 0 - 9;
+  }
+  let blk: usize = ring as usize;
+  if (__load_i32(blk + 200) != 0) {
+    return 0 - 95;
+  }
+  let n: i32 = data.len();
+  if (fd < 0 || fd >= __load_i32(blk + 68) || from < 0 || from >= n) {
+    return 0 - 22;
+  }
+  let zt: usize = __fern_ring_zc_at(blk);
+  let s: i32 = 0;
+  while (s < 512 && __load_i32(zt + s as usize * 16 + 8) != 0) {
+    s = s + 1;
+  }
+  if (s >= 512) {
+    return 0 - 11;
+  }
+  let r: i32 = __fern_ring_push(blk, 47, fd, 16384, 1152921504606846976 as i64 | s as i64, (__raw_arr_ptr(data) + 8 + from as usize) as i64);
+  if (r < 0) {
+    return r;
+  }
+  __store_i32(__load_i64(blk + 192) as usize + 24, n - from);
+  let z: usize = zt + s as usize * 16;
+  __store_i32(z, fd);
+  __store_i32(z + 4, 0 - 115);
+  __store_i32(z + 8, 1);
+  return s;
+}

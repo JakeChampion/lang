@@ -1,0 +1,35 @@
+function __fern_uname_field(idx: i32): string {
+  let buf: usize = __raw_scratch(400);
+  let domain: i32 = 1;
+  let field: i32 = 1;
+  let valid: boolean = idx >= 0 && idx < 5;
+  if (idx == 1) {
+    field = 10;
+  }
+  if (idx == 2) {
+    field = 2;
+  }
+  if (idx == 3) {
+    field = 4;
+  }
+  if (idx == 4) {
+    domain = 6;
+  }
+  let n: i32 = 0;
+  if (valid) {
+    __store_i32(buf, domain);
+    __store_i32(buf + 4, field);
+    __store_i64(buf + 8, 384i64);
+    if (__syscall6(202, buf as i64, 2, (buf + 16) as i64, (buf + 8) as i64, 0, 0) >= 0i64) {
+      while (n < 384 && __raw_load8(buf, 16 + n) != 0) {
+        n = n + 1;
+      }
+    }
+  }
+  if (__fern_utf8_valid(buf + 16, n) == 0) {
+    n = 0;
+  }
+  let p: usize = __raw_alloc(n);
+  __memcpy(p, buf + 16, n);
+  return __raw_string(p, n);
+}

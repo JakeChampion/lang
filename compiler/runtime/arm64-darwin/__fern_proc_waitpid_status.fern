@@ -1,0 +1,8 @@
+function __fern_proc_waitpid_status(pid: i32): i32 {
+  let st: usize = __raw_scratch(16);
+  let rc: i32 = __syscall4(7, pid as i64, st as i64, 0, 0) as i32;
+  if (rc < 0) {
+    return rc;
+  }
+  return __load_i32(st);
+}

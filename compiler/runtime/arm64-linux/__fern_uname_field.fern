@@ -1,0 +1,20 @@
+function __fern_uname_field(idx: i32): string {
+  let buf: usize = __raw_alloc(390);
+  let n: i32 = 0;
+  let off: i32 = 0;
+  if (idx >= 0 && idx < 5) {
+    off = idx * 65;
+    if (__syscall3(160, buf as i64, 0, 0) == 0) {
+      while (n < 65 && __raw_load8(buf, off + n) != 0) {
+        n = n + 1;
+      }
+    }
+  }
+  if (__fern_utf8_valid(buf + off, n) == 0) {
+    n = 0;
+  }
+  let p: usize = __raw_alloc(n);
+  __memcpy(p, buf + off, n);
+  let buf_own: string = __raw_string(buf, 390);
+  return __raw_string(p, n);
+}

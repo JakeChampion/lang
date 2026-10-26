@@ -1,0 +1,47 @@
+function __fern_profile_sample(pc: usize, fp: usize, sp: usize, base: usize, weight: usize): i32 {
+  if (__load_i64(base + 24) == 0 as i64) {
+    return 0;
+  }
+  let n: usize = __load_i64(base) as usize;
+  let seen: usize = __load_i64(base + 152) as usize + 1;
+  __raw_store_ptr(base + 152, 0, seen);
+  let slot: usize = n;
+  let replaced: i32 = 0;
+  if (n >= 8192) {
+    // Algorithm R reservoir selection. SplitMix64 mixes the event ordinal;
+    // storage remains bounded while late execution can replace earlier stacks.
+    let x: usize = seen + 11400714819323198485u64 as usize;
+    x = (x ^ x >> 30) * (13787848793156543929u64 as usize);
+    x = (x ^ x >> 27) * (10723151780598845931u64 as usize);
+    x = x ^ x >> 31;
+    slot = x % seen;
+    if (slot >= 8192) {
+      return 1;
+    }
+    replaced = 1;
+  }
+  let row: usize = base + 160 + slot * 528;
+  __raw_store_ptr(row + 8, 0, weight);
+  __raw_store_ptr(row + 16, 0, pc & 281474976710655u64 as usize);
+  let depth: usize = 1;
+  let hi: usize = __load_i64(base + 16) as usize;
+  while (depth < 64 && fp >= sp && fp <= hi && (fp & 7) == 0) {
+    // The static native image lies below 2^48; PAC/top-byte tags are not code-address bits.
+    let ret: usize = __load_i64(fp + 8) as usize & 281474976710655u64 as usize;
+    if (ret < 65536) {
+      break;
+    }
+    __raw_store_ptr(row + 16 + depth * 8, 0, ret - 1);
+    depth = depth + 1;
+    let next: usize = __load_i64(fp) as usize;
+    if (next <= fp) {
+      break;
+    }
+    fp = next;
+  }
+  __raw_store_ptr(row, 0, depth);
+  if (replaced == 0) {
+    __raw_store_ptr(base, 0, n + 1);
+  }
+  return replaced;
+}

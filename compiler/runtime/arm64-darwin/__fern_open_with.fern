@@ -1,0 +1,34 @@
+function __fern_open_with(path: string, flags: i32, write: i32): Result[i32, IoError] {
+  if ((flags & 136) != 0) {
+    return Err(Unsupported);
+  }
+  let f: i32 = 0;
+  if (write != 0) {
+    f = 1;
+  }
+  if ((flags & 1) != 0) {
+    f = f | 512;
+  }
+  if ((flags & 2) != 0) {
+    f = f | 4;
+  }
+  if ((flags & 4) != 0) {
+    f = f | 2048;
+  }
+  if ((flags & 16) != 0) {
+    f = f | 1048576;
+  }
+  if ((flags & 32) != 0) {
+    f = f | 4194304;
+  }
+  if ((flags & 64) != 0) {
+    f = f | 128;
+  }
+  if ((flags & 256) != 0) {
+    f = f | 131072;
+  }
+  if ((flags & 512) != 0) {
+    f = f | 256;
+  }
+  return __fern_open_res(path, f, 438);
+}

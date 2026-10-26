@@ -1,0 +1,13 @@
+function __fern_rlimit_nofile(): i64 {
+  let imax: i64 = 9223372036854775807 as i64;
+  let buf: usize = __raw_scratch(16);
+  let rc: i32 = __syscall3(194, 8, buf as i64, 0) as i32;
+  if (rc != 0) {
+    return imax;
+  }
+  let cur: i64 = __load_i64(buf);
+  if (cur < 0 as i64) {
+    return imax;
+  }
+  return cur;
+}

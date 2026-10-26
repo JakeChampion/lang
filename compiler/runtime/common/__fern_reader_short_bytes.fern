@@ -1,0 +1,6 @@
+function __fern_reader_short_bytes(scratch: i32[], got: i32): i32[] {
+  let short: usize = __raw_arr_box(got / 8 + 1);
+  __memcpy(short + 8, __raw_arr_ptr(scratch) + 8, got);
+  __store_i64(short, got as i64);
+  return __raw_array(short);
+}

@@ -1,0 +1,8 @@
+function __fern_signal_ignore(sig: i32): i32 {
+  let act: usize = __raw_scratch(32);
+  __raw_store_ptr(act, 0, 1);
+  __raw_store_ptr(act, 1, 0);
+  __raw_store_ptr(act, 2, 0);
+  __raw_store_ptr(act, 3, 0);
+  return __syscall4(134, sig as i64, act as i64, 0, 8) as i32;
+}
