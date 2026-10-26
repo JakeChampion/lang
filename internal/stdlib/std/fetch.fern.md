@@ -1001,14 +1001,15 @@ pub function (sh: Shared) flush(): (i32[], i32[]) {
   while (i < rows.len()) {
     let d: Driven = __sealed(rows[i]);
     if (d.wire.len() > 0) {
-      let n: i32 = tcp_send_bytes(d.fd, d.wire);
-      if (n < 0 && 0 - n != 11) {
-        sh.rows.set(rows);
-        __driven_failed(sh, d.fd, Io(net.error_from_host(0 - n)));
-        return sh.flush();
-      }
-      if (n > 0) {
-        d = Driven { ...d, wire: __from(d.wire, n) };
+      match (net.write_rest(d.fd, d.wire)) {
+        Ok(rest) => {
+          d = Driven { ...d, wire: rest };
+        },
+        Err(e) => {
+          sh.rows.set(rows);
+          __driven_failed(sh, d.fd, Io(e));
+          return sh.flush();
+        }
       }
     }
     let waits: boolean = d.wire.len() > 0;
@@ -1282,14 +1283,6 @@ function __mail_without(mail: Mail[], skip: i32): Mail[] {
     }
     i = i + 1;
   }
-  return out;
-}
-
-function __from(bytes: u8[], at: i32): u8[] {
-  let b: usize = buf_new(bytes.len() - at);
-  buf_push_bytes_range(b, bytes, at, bytes.len());
-  let out: u8[] = buf_take_bytes(b);
-  buf_free(b);
   return out;
 }
 ```
