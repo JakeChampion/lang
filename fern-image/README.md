@@ -66,7 +66,7 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 184 TAP cases cover compression, pixels, color, resize, PNG, JPEG headers, coefficients, scalar inverse DCT, and grayscale images.
+The 191 TAP cases cover compression, pixels, color, resize, PNG, JPEG headers, coefficients, scalar inverse DCT, and grayscale images.
 They also cover rows, providers, pipelines, regions, caches, RSS parsing, and fusion.
 The file I/O probe and pixel example also exit successfully.
 The native script checks source executables and additional allocator, cache, fusion, and formatter smoke modes with the sanitizer.
@@ -104,3 +104,5 @@ The [nearest fusion](docs/nearest-fusion.md) optimization removes eligible inter
 
 The [explicit YCbCr conversion kernel](docs/jpeg-ycbcr.md) converts full-range component samples after chroma reconstruction.
 It does not infer color meaning from encoded JPEG data or apply color profiles.
+
+The [component-plane decoder](docs/jpeg-planes.md) reconstructs owned raw JPEG sample planes before chroma reconstruction or color interpretation.

@@ -85,6 +85,13 @@ jobs:
       - run: ./fern-image/scripts/test-jpeg-ycbcr.sh wasm
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_planes_test.py
+      - run: ./fern-image/scripts/test-jpeg-planes.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-jpeg-planes.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/test-deflate-reader.sh native
         env:
           FERN: ${{ github.workspace }}/bin/fern
@@ -135,4 +142,10 @@ jobs:
         with:
           name: image-jpeg-ycbcr
           path: fern-image/build/jpeg-ycbcr-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-planes-*.json') != ''
+        with:
+          name: image-jpeg-planes
+          path: fern-image/build/jpeg-planes-*.json
           if-no-files-found: error
