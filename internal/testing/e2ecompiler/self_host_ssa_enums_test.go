@@ -53,7 +53,7 @@ func semanticEnumCases() []struct{ name, change, want string } {
 		{"enum-nonunion-identity", `enums = [semrecords.Enum { ...shapeEnum, ty: ia }];`, "non-union enum identity"},
 		{"enum-unresolved-identity", `enums = [semrecords.Enum { ...shapeEnum, ty: typeinfo.unchecked() }];`, "unresolved enum identity"},
 		{"enum-variant-field-missing-schema", `enums = [semrecords.Enum { ...shapeEnum, variants: [semrecords.Variant { name: "Boxed", fields: [semrecords.Field { name: "__ev", ty: typeinfo.TypeStruct { name: "Box", args: [] } }] }] }];`, "missing nested record schema"},
-		{"enum-record-field-missing-enum", `records = [semrecords.Record { views: false, nests_func: false, ty: typeinfo.TypeStruct { name: "Holder", args: [] }, fields: [semrecords.Field { name: "s", ty: shape }] }]; enums = [];`, "missing nested record schema"},
+		{"enum-record-field-missing-enum", `records = [semrecords.Record { declared: [], views: false, nests_func: false, ty: typeinfo.TypeStruct { name: "Holder", args: [] }, fields: [semrecords.Field { name: "s", ty: shape }] }]; enums = [];`, "missing nested record schema"},
 	}
 	for i := range cases {
 		cases[i].change = semanticEnum + cases[i].change
