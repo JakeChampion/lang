@@ -128,7 +128,7 @@ CI uploads an available record after failure, without changes to the test result
 The OOM, leak, deadline, pressure, source-immutability, and cleanup checks retain their existing conditions.
 Records contain selected state fields rather than Docker environment or credential configuration.
 
-Seven local fault-injection cases check strict OOM signals, missing state, leak rejection, failed-record output, and cleanup.
+Eight local fault-injection cases check strict OOM signals, missing state, leak rejection, failed-record output, and cleanup.
 A delayed mock OOM flag still produces a failure and preserves both observations.
 These unit cases do not identify the cause of the intermittent CI OOM assertion.
 Actual Docker qualification remains a separate test with the original controls.

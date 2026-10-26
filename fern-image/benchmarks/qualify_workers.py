@@ -129,9 +129,9 @@ def run_worker(docker, tag, mode, repeat):
             if not peaks or min(peaks) < 48 * 1024 * 1024:
                 raise RuntimeError("retained images did not produce the expected cgroup charge")
         docker.call("rm", container)
-        removed = True
         if docker.call("inspect", container, check=False).returncode == 0:
             raise RuntimeError("container remains after removal")
+        removed = True
         observation.update({"status": "passed", "removed": True})
         return observation
     except Exception as error:

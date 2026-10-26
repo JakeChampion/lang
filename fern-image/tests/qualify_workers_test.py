@@ -101,6 +101,25 @@ class WorkerEvidenceTests(unittest.TestCase):
         self.assertEqual(sample["status"], "passed")
         self.assertTrue(sample["removed"])
 
+    def test_failed_removal_check_still_forces_cleanup(self):
+        class UnremovedDocker(FakeDocker):
+            forced = False
+
+            def call(self, *args, **kwargs):
+                if args[:2] == ("rm", "-f"):
+                    self.forced = True
+                if args[0] == "inspect" and self.removed and not self.forced:
+                    return subprocess.CompletedProcess(args, 0, "exists", "")
+                return super().call(*args, **kwargs)
+
+        docker = UnremovedDocker(oom=True)
+        with self.assertRaises(qualification.WorkerFailure) as caught:
+            qualification.run_worker(docker, "image", "oom", 0)
+        self.assertIn("container remains after removal", str(caught.exception))
+        self.assertTrue(docker.forced)
+        self.assertEqual(caught.exception.observation["status"], "failed")
+        self.assertTrue(caught.exception.observation["removed"])
+
     def test_unbalanced_leaks_still_reject(self):
         controls = "cgroup memory.max\n67108864\ncgroup memory.swap.max\n0\ncgroup cpu.max\n50000 100000\ncgroup pids.max\n16\nok mode=valid\n"
         docker = FakeDocker(code=0, stdout=controls,
