@@ -1,0 +1,76 @@
+import "../packages/codecs/jpeg/rgb";
+import "../packages/codecs/jpeg/chroma";
+import "../packages/codecs/jpeg/planes";
+import "std/i32";
+
+function never(): boolean {
+  return false;
+}
+
+function emit(path: string): i32 {
+  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  let accepted = false;
+  for index in 0..2 {
+    let filter = if (index == 0) { chroma.Filter.Nearest } else { chroma.Filter.Bilinear };
+    match (rgb.decode(input, filter, rgb.default_limits(), never)) {
+      Err(error) => {
+        let kind = match (error) { rgb.RgbError.Unsupported => "unsupported", rgb.RgbError.Profile(_) => "profile", _ => "unexpected" };
+        if (kind == "unexpected") {
+          return 3;
+        }
+        print("reject " + path + " " + index.to_string() + " " + kind);
+      },
+      Ok(image) => {
+        let plan = match (rgb.inspect(input, rgb.default_limits(), never)) { Ok(v) => v, Err(_) => { return 4; } };
+        let layout = image.layout;
+        if (layout.width <= 0 || layout.height <= 0 || layout.stride != layout.width * 3 || image.data.len() != layout.bytes
+          || layout.bytes != layout.stride * layout.height || plan.layout.bytes != layout.bytes || plan.input_bytes != input.len()
+          || plan.row_bytes != layout.width * 6 || plan.planned_bytes != input.len() + plan.planes.bytes + layout.bytes + plan.row_bytes) {
+          return 5;
+        }
+        match (write_file_bytes(path + ".rgb-" + index.to_string() + ".raw", image.data)) {
+          Ok(_) => {},
+          Err(_) => {
+            return 6;
+          }
+        }
+        print("rgb " + path + " " + index.to_string() + " " + layout.width.to_string() + " " + layout.height.to_string()
+          + " " + layout.stride.to_string() + " " + layout.bytes.to_string() + " " + plan.input_bytes.to_string()
+          + " " + plan.planes.bytes.to_string() + " " + plan.row_bytes.to_string() + " " + plan.planned_bytes.to_string());
+        accepted = true;
+      }
+    }
+  }
+  if (accepted) {
+    let raw = match (planes.decode(input, planes.default_limits(), never)) { Ok(v) => v, Err(_) => { return 7; } };
+    print("planes " + path + " " + raw.planes.len().to_string());
+    for index in 0..raw.planes.len() {
+      let plane = raw.planes[index];
+      let l = plane.layout;
+      print("plane " + index.to_string() + " " + l.component.to_string() + " " + l.horizontal.to_string() + " " + l.vertical.to_string()
+        + " " + l.width.to_string() + " " + l.height.to_string() + " " + l.stride.to_string() + " " + l.bytes.to_string());
+      match (write_file_bytes(path + ".plane-" + index.to_string() + ".raw", plane.data)) {
+        Ok(_) => {},
+        Err(_) => {
+          return 8;
+        }
+      }
+    }
+  }
+  print("end " + path);
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for index in 1..paths.len() {
+    let result = emit(paths[index]);
+    if (result != 0) {
+      return result;
+    }
+  }
+  return 0;
+}
