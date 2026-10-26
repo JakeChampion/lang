@@ -1,0 +1,21 @@
+function __fern_mknod(path: string, mode: i32, major: i32, minor: i32): Result[void, IoError] {
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, path[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let dev: i64 = (minor & 255) as i64 + (major & 4095) as i64 * (256 as i64) + (minor & 1048320) as i64 * (4096 as i64);
+  let m: i32 = mode;
+  if (major < 0 || major > 4095 || minor < 0 || minor > 1048575) {
+    m = 61440;
+  }
+  let rc: i32 = __syscall4(259, -100, pathz as i64, m as i64, dev as i64) as i32;
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen)));
+  }
+  return Ok(());
+}

@@ -1,0 +1,16 @@
+function __fern_sum_bytes(s: usize): i32 {
+  let tag: usize = s & 1;
+  let n: i32 = __load_i32(s + tag * 3);
+  let p: usize = if (tag == 0) { s + 4 } else { (__load_i32(s - 1) as u32) as usize };
+  if (n < 0) {
+    p = (__load_i32(s + 4) as u32) as usize;
+    n = n & 2147483647;
+  }
+  let i: i32 = 0;
+  let sum: u32 = 0;
+  while (i < n) {
+    sum = sum + __load_u8(p + i) as u32;
+    i = i + 1;
+  }
+  return sum as i32;
+}

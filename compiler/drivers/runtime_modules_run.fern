@@ -1,0 +1,72 @@
+import "../ast";
+import "../lexer";
+import "../parser";
+import "../rtmodule";
+import "../semlower";
+import "../util";
+import "std/string";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function has(mod: parser.Module, name: string): boolean {
+  for fd in mod.funcs {
+    if (fd.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function check_target(target: string): void {
+  let names = rtmodule.names(target);
+  require(names.len() > 200, 1);
+  let all = rtmodule.load_with(target, names.join(" "), 1, "", true);
+  let lowered = semlower.runtime_module_lowering(all);
+  require(lowered.declarations.len() == all.funcs.len(), 2);
+
+  let selected = rtmodule.load(target, "__fern_str_replace __fern_str_replace");
+  require(selected.funcs.len() == 2, 3);
+  require(has(selected, "__fern_str_replace") && has(selected, "__fern_str_dup"), 4);
+  require(!has(selected, "__fern_read_file"), 5);
+  for fd in selected.funcs {
+    let file = util.pos_file(rtmodule.paths(), fd.line);
+    require(file.len() > 0 && util.pos_line(fd.line) == 1, 6);
+  }
+
+  let bytes = rtmodule.load_with(target, "__fern_bytes_append_range", 0, "", false);
+  require(has(bytes, "__fern_bytes_clone"), 7);
+  require(!has(bytes, "__fern_bytes_append_back"), 8);
+  semlower.runtime_module_lowering(bytes);
+
+  let profile = rtmodule.load_with(target, "__fern_profile_finish", 4, "a\"b\n", true);
+  require(has(profile, "__fern_profile_pprof"), 9);
+  semlower.runtime_module_lowering(profile);
+  print(target + " runtime modules ok");
+}
+
+function check_wasm(target: string): void {
+  let names = rtmodule.names(target);
+  require(names.len() > 0, 10);
+  let all = rtmodule.load(target, names.join(" "));
+  let lowered = semlower.runtime_module_lowering(all);
+  require(lowered.declarations.len() == all.funcs.len(), 11);
+  let selected = rtmodule.load(target, "__fern_sum_bytes __fern_sum_bytes");
+  require(selected.funcs.len() == 1 && has(selected, "__fern_sum_bytes"), 12);
+  let file = util.pos_file(rtmodule.paths(), selected.funcs[0].line);
+  require(file == "compiler/runtime/wasm/__fern_sum_bytes.fern", 13);
+  print(target + " runtime modules ok");
+}
+
+function main(): i32 {
+  for target in ["x86-64-linux", "arm64-linux", "arm64-darwin"] {
+    check_target(target);
+  }
+  for target in ["wasm32-wasi", "wasm32-wasi-http"] {
+    check_wasm(target);
+  }
+  return 0;
+}

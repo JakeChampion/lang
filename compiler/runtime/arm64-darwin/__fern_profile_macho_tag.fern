@@ -1,0 +1,16 @@
+function __fern_profile_macho_tag(p: usize, text: string): boolean {
+  if (text.len() > 16) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < text.len()) {
+    if (__load_u8(p + i as usize) != __load_u8(__raw_data(text) + i as usize)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  if (text.len() == 16) {
+    return true;
+  }
+  return __load_u8(p + text.len() as usize) == 0;
+}

@@ -1,0 +1,11 @@
+function __fern_cpu_count(): i32 {
+  let buf: usize = __raw_scratch(32);
+  __store_i32(buf, 6);
+  __store_i32(buf + 4, 25);
+  __store_i64(buf + 8, 4i64);
+  let rc: i64 = __syscall6(202, buf as i64, 2, (buf + 16) as i64, (buf + 8) as i64, 0, 0);
+  if (rc < 0i64) {
+    return 0;
+  }
+  return __load_i32(buf + 16);
+}

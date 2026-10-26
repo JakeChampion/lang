@@ -1,0 +1,3 @@
+function __fern_clock_resolution(): i64 {
+  return 1000 as i64;
+}

@@ -1,0 +1,76 @@
+function __fern_profile_finish(base: usize): void {
+  let mask: usize = 4096;
+  if (__FERN_PROFILE_MODE == 1 || __FERN_PROFILE_MODE == 3) {
+    __syscall3(38, 2, (base + 96) as i64, 0);
+    mask = 67112960;
+  }
+  __raw_store_ptr(base + 48, 0, mask);
+  __syscall4(14, 0, (base + 48) as i64, 0, 8);
+  __raw_store_ptr(base + 24, 0, 0);
+  let path: string = "/proc/self/exe";
+  let j: i32 = 0;
+  while (j < path.len()) {
+    __raw_store8(base + 48, j, __load_u8(__raw_data(path) + j));
+    j = j + 1;
+  }
+  __raw_store8(base + 48, j, 0);
+  let fd: i64 = __syscall4(257, 0 - 100, (base + 48) as i64, 0, 0);
+  let size: usize = 0;
+  let im: usize = 0;
+  if (fd >= 0 as i64) {
+    let len: i64 = __syscall3(8, fd, 0, 2);
+    if (len > 0 as i64) {
+      let mapped: i64 = __syscall6(9, 0, len, 1, 2, fd, 0);
+      if (mapped > 0 as i64) {
+        im = mapped as usize;
+        size = len as usize;
+      }
+    }
+    __syscall3(3, fd, 0, 0);
+  }
+  if (__FERN_PROFILE_MODE > 2) {
+    __fern_profile_pprof(base, im, size);
+  } else {
+    let header: string = "# fern CPU profile samples=";
+    if (__FERN_PROFILE_MODE == 2) {
+      header = "# fern allocation profile samples=";
+    }
+    __fern_profile_write(__raw_data(header), header.len() as usize);
+    let count: usize = __load_i64(base) as usize;
+    __fern_profile_number(base + 64, count);
+    let lost: string = " dropped=";
+    __fern_profile_write(__raw_data(lost), lost.len() as usize);
+    __fern_profile_number(base + 64, __load_i64(base + 8) as usize);
+    if (__FERN_PROFILE_MODE == 2) {
+      let units: string = " interval=64 weight=rounded-bytes";
+      __fern_profile_write(__raw_data(units), units.len() as usize);
+    }
+    let nl: string = "\n";
+    __fern_profile_write(__raw_data(nl), 1);
+    let i: usize = 0;
+    while (i < count) {
+      let row: usize = base + 160 + i * 528;
+      let depth: usize = __load_i64(row) as usize;
+      let k: usize = depth;
+      while (k > 0) {
+        k = k - 1;
+        let pc: usize = __load_i64(row + 16 + k * 8) as usize;
+        if (__fern_profile_symbol(pc, im, size) == 0) {
+          __fern_profile_hex(base + 64, pc);
+        }
+        if (k > 0) {
+          let semi: string = ";";
+          __fern_profile_write(__raw_data(semi), 1);
+        }
+      }
+      let space: string = " ";
+      __fern_profile_write(__raw_data(space), 1);
+      __fern_profile_number(base + 64, __load_i64(row + 8) as usize);
+      __fern_profile_write(__raw_data(nl), 1);
+      i = i + 1;
+    }
+  }
+  if (im != 0) {
+    __syscall3(11, im as i64, size as i64, 0);
+  }
+}

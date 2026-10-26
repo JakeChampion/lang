@@ -1,0 +1,10 @@
+function __fern_clock_set(sec: i64, nsec: i64): Result[void, IoError] {
+  let ts: usize = __raw_scratch(16);
+  __store_i64(ts, sec);
+  __store_i64(ts + 8, nsec);
+  let rc: i32 = __syscall3(227, 0, ts as i64, 0) as i32;
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  return Ok(());
+}

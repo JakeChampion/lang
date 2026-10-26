@@ -1,0 +1,58 @@
+function __fern_utf8_step(s: string, i: i32, n: i32): i32 {
+  let b0: i32 = s[i] as i32;
+  let want: i32 = 0;
+  if (b0 < 128) {
+    want = 1;
+  }
+  if (b0 >= 194 && b0 < 224) {
+    want = 2;
+  }
+  if (b0 >= 224 && b0 < 240) {
+    want = 3;
+  }
+  if (b0 >= 240 && b0 < 245) {
+    want = 4;
+  }
+  if (want <= 1) {
+    return 1;
+  }
+  if (i + 1 >= n) {
+    return 1;
+  }
+  let lo: i32 = 128;
+  if (b0 == 224) {
+    lo = 160;
+  }
+  if (b0 == 240) {
+    lo = 144;
+  }
+  let hi: i32 = 191;
+  if (b0 == 237) {
+    hi = 159;
+  }
+  if (b0 == 244) {
+    hi = 143;
+  }
+  let c1: i32 = s[i + 1] as i32;
+  if (c1 < lo) {
+    return 1;
+  }
+  if (c1 > hi) {
+    return 1;
+  }
+  let k2: i32 = 2;
+  while (k2 < want) {
+    if (i + k2 >= n) {
+      return k2;
+    }
+    let ck: i32 = s[i + k2] as i32;
+    if (ck < 128) {
+      return k2;
+    }
+    if (ck > 191) {
+      return k2;
+    }
+    k2 = k2 + 1;
+  }
+  return want;
+}

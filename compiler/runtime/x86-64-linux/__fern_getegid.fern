@@ -1,0 +1,3 @@
+function __fern_getegid(): i32 {
+  return __syscall3(108, 0, 0, 0) as i32;
+}

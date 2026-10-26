@@ -1,0 +1,32 @@
+function __fern_i32_to_string(n: i32): string {
+  let neg: i32 = 0;
+  let m: i32 = n;
+  if (n < 0) {
+    neg = 1;
+    m = 0 - n;
+  }
+  let v: u32 = m as u32;
+  if (v == 0 as u32) {
+    let z: usize = __raw_alloc(1);
+    __raw_store8(z, 0, 48);
+    return __raw_string(z, 1);
+  }
+  let nd: i32 = 0;
+  let t: u32 = v;
+  while (t != 0 as u32) {
+    nd = nd + 1;
+    t = t / (10 as u32);
+  }
+  let total: i32 = nd + neg;
+  let p: usize = __raw_alloc(total);
+  if (neg == 1) {
+    __raw_store8(p, 0, 45);
+  }
+  let i: i32 = total - 1;
+  while (v != 0 as u32) {
+    __raw_store8(p, i, 48 + (v % (10 as u32)) as i32);
+    v = v / (10 as u32);
+    i = i - 1;
+  }
+  return __raw_string(p, total);
+}

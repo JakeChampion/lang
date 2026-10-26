@@ -1,0 +1,7 @@
+function __fern_monotonic_ns(): i64 {
+  let ts: usize = __raw_scratch(16);
+  __syscall3(116, ts as i64, 0, 0);
+  let sec: i64 = __load_i64(ts);
+  let sub: i64 = __load_i32(ts + 8) as i64;
+  return sec * (1000000000 as i64) + sub * (1000 as i64);
+}

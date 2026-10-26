@@ -21,6 +21,8 @@ import "./typeinfo";
 import "./util";
 import "./semarrayreport";
 import "./semndprune";
+import "./rtmodule";
+import "./keyhelpers";
 import "std/envflag";
 
 struct Rows {
@@ -629,7 +631,7 @@ function selected_helpers(built: semsource.Built, helpers: ssarc.Helpers): Selec
   let producers: physicalbody.Metadata[] = [app];
   let origins = helper_origins(helpers);
   if (keys.len() > 0) {
-    let lowered: physicalbody.Lowered = runtime_lowering(key_helper_source(keys));
+    let lowered: physicalbody.Lowered = runtime_module_lowering(keyhelpers.module(keys));
     origins = util.append_all(origins, physicalbody.lowered_origins(lowered, producers.len()));
     producers = producers.append(physicalbody.metadata(lowered));
     rows = util.append_all(rows, lowered.bodies);
@@ -728,70 +730,6 @@ function with_structural(seen: typeinfo.Type[], k: typeinfo.Type): typeinfo.Type
   return out.append(k);
 }
 
-function key_helper_source(keys: typeinfo.Type[]): string {
-  let src: string = "";
-  for k in keys {
-    let ty: string = typeinfo.spelling(k);
-    src = src + "function " + ssasem.keyed_map_key_fn(k, "eq") + "(a: " + ty + ", b: " + ty + "): boolean { " + key_eq_body(k) + " }\n";
-    src = src + "function " + ssasem.keyed_map_key_fn(k, "hash") + "(a: " + ty + "): i32 { let h: i32 = 17; " + key_hash_body(k) + " return h; }\n";
-  }
-  return src;
-}
-
-function key_eq_body(k: typeinfo.Type): string {
-  if let typeinfo.TypeArray(arr) = k {
-    return "if (a.len() != b.len()) { return false; } let i: i32 = 0; while (i < a.len()) { if (!("
-      + element_eq(arr.elem, "a[i]", "b[i]") + ")) { return false; } i = i + 1; } return true;";
-  }
-  let out: string = "return true";
-  if let typeinfo.TypeTuple(tup) = k {
-    let i: i32 = 0;
-    while (i < tup.elements.len()) {
-      let at: string = "." + util.i32_to_string(i);
-      out = out + " && " + element_eq(tup.elements[i], "a" + at, "b" + at);
-      i = i + 1;
-    }
-  }
-  return out + ";";
-}
-
-function element_eq(t: typeinfo.Type, x: string, y: string): string {
-  if (ssasem.structural_map_key(t)) {
-    return ssasem.keyed_map_key_fn(t, "eq") + "(" + x + ", " + y + ")";
-  }
-  return x + " == " + y;
-}
-
-function key_hash_body(k: typeinfo.Type): string {
-  if let typeinfo.TypeArray(arr) = k {
-    return "let i: i32 = 0; while (i < a.len()) { " + element_hash(arr.elem, "a[i]", "e") + " i = i + 1; }";
-  }
-  let out: string = "";
-  if let typeinfo.TypeTuple(tup) = k {
-    let i: i32 = 0;
-    while (i < tup.elements.len()) {
-      out = out + element_hash(tup.elements[i], "a." + util.i32_to_string(i), "e" + util.i32_to_string(i)) + " ";
-      i = i + 1;
-    }
-  }
-  return out;
-}
-
-function element_hash(t: typeinfo.Type, x: string, sfx: string): string {
-  if (ssasem.structural_map_key(t)) {
-    return "h = h * 31 + " + ssasem.keyed_map_key_fn(t, "hash") + "(" + x + ");";
-  }
-  if (ssasem.is_string(t)) {
-    let j: string = "j" + sfx;
-    return "h = h * 31; let " + j + ": i32 = 0; while (" + j + " < " + x + ".len()) { h = h * 31 + ("
-      + x + "[" + j + "] as i32); " + j + " = " + j + " + 1; }";
-  }
-  if (ssasem.is_bool(t)) {
-    return "h = h * 31; if (" + x + ") { h = h + 1; }";
-  }
-  return "h = h * 31 + (" + x + " as i32);";
-}
-
 pub function runtime_bodies(src: string): irtables.LowerResult[] {
   return runtime_lowering(src).bodies;
 }
@@ -807,10 +745,15 @@ function unpositioned(structs: parser.StructDecl[]): parser.StructDecl[] {
 }
 
 pub function runtime_lowering(src: string): physicalbody.Lowered {
-  let parsed: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
+  return runtime_module_lowering(parser.parse_module(lexer.tokenize(src)));
+}
+
+pub function runtime_module_lowering(source: parser.Module): physicalbody.Lowered {
+  let parsed: parser.Module = parser.infer_ret_types_module(source);
   let mod: parser.Module = parser.Module { ...parsed, structs: parser.inject_builtin_enums(unpositioned(parsed.structs)) };
   let diags: util.Diag[] = checker.build_runtime_gate_diags(mod);
   if (diags.len() > 0) {
+    eprint(util.pos_str("(runtime)", rtmodule.paths(), diags[0].line, diags[0].col) + ": " + diags[0].code + ": " + diags[0].message);
     return runtime_refused(first_name(mod), "does not type-check: " + diags[0].message);
   }
   let im: parser.Module = gated_module(checker.annotate_module(mod));
@@ -901,7 +844,7 @@ function substitution_of(im: parser.Module, opts: semsource.BuildOpts): ircore.S
   let stab: irtables.StructTab = irtables.struct_tab(parser.erase_view_structs(im.structs));
   util.arr_push_cliff_report("sem:gated", 0);
   let sub: ircore.Sub = substitution(im, stab, opts);
-  return ircore.Sub { ...sub, rt_lower: runtime_lowering };
+  return ircore.Sub { ...sub, rt_lower: runtime_module_lowering };
 }
 
 pub struct Driven { full: parser.Module, sub: ircore.Sub }

@@ -34,7 +34,7 @@ function main(): i32 {
             needs = needs.append(op);
         }
         print("=== need: " + op);
-        print(wasm_ir.emit_ir_module_units(wasm_ir.with_runtime_units([text], needs, semlower.runtime_lowering), mod, needs, [], 0, asmcore.env_switches()));
+        print(wasm_ir.emit_ir_module_units(wasm_ir.with_runtime_units([text], needs, semlower.runtime_module_lowering), mod, needs, [], 0, asmcore.env_switches()));
     }
     return 0;
 }

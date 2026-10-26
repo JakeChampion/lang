@@ -1,0 +1,25 @@
+function __fern_writer_write_bytes(fd: i32, bytes: i32[]): Result[void, IoError] {
+  let n: i32 = bytes.len();
+  let raw: usize = __raw_arr_box(n / 8 + 1);
+  let scratch: i32[] = __raw_array(raw);
+  let p: usize = __raw_arr_ptr(scratch) + 8;
+  let j: i32 = 0;
+  while (j < n) {
+    __raw_store8(p, j, bytes[j]);
+    j = j + 1;
+  }
+  let at: i32 = 0;
+  while (true) {
+    let w: i32 = __syscall3(64, fd as i64, (p + at) as i64, (n - at) as i64) as i32;
+    if (w < 0) {
+      return Err(__fern_io_error(0 - w, ""));
+    }
+    at = at + w;
+    if (at == n) {
+      return Ok(());
+    }
+    if (w == 0) {
+      return Err(__fern_io_error(5, ""));
+    }
+  }
+}

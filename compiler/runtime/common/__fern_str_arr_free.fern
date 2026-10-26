@@ -1,0 +1,11 @@
+function __fern_str_arr_free(p: usize): void {
+  if (p >= 65536 as usize && __load_i32(p - 8) == 1) {
+    let n: i32 = __load_i32(p);
+    let i: i32 = 0;
+    while (i < n) {
+      __fern_str_free(__raw_load_ptr(p, i + 1));
+      i = i + 1;
+    }
+  }
+  __fern_rc_dec(p);
+}

@@ -2645,7 +2645,7 @@ function unloaded_error(rm: modloader.Resolved, ipath: string): string {
 struct Loaded { b: Bundle, refused: Finding[] }
 
 function load_checked(s: Sources, root: string, target: string, embed_dir: string): Loaded {
-  let entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(s.srcs[0], target)));
+  let entry_mod: parser.Module = emitforms.entry_module(parser.parse_module(lexer.tokenize(s.srcs[0])), target);
   let b: Bundle = load_bundle(s, entry_mod, root, target);
   if (b.errs.len() > 0) {
     return Loaded { b: b, refused: errors_of(b.errs) };

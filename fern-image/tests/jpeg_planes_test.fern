@@ -1,0 +1,266 @@
+import "../packages/codecs/jpeg/planes";
+import "../packages/codecs/jpeg/entropy";
+import "../packages/codecs/jpeg/header";
+import "../packages/codecs/jpeg/idct";
+import "./fixtures/jpeg_headers" as headers;
+import "./fixtures/jpeg_entropy" as streams;
+import "./fixtures/jpeg_planes" as expected;
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function zero_stream(): u8[] {
+  return headers.synthetic_header().append(0 as u8).append(15 as u8).append(255 as u8).append(217 as u8);
+}
+
+function marker_at(input: [u8], wanted: i32): i32 {
+  for i in 2..input.len() - 1 {
+    if (input[i] == 255 as u8 && input[i + 1] as i32 == wanted) {
+      return i;
+    }
+  }
+  return 0 - 1;
+}
+
+function rejected(input: [u8], limits: planes.PlaneLimits, error: planes.PlaneError): boolean {
+  return match (planes.decode(input, limits, never)) { Err(e) => e == error, Ok(_) => false };
+}
+
+function reference(input: [u8], values: (i32) => u8[]): boolean {
+  let image = match (planes.decode(input, planes.default_limits(), never)) { Ok(v) => v, Err(_) => { return false; } };
+  let bytes = 0;
+  for i in 0..image.planes.len() {
+    let plane = image.planes[i];
+    let wanted = values(i);
+    let layout = plane.layout;
+    if (layout.width <= 0 || layout.height <= 0 || layout.stride != layout.width || plane.data.len() != layout.width * layout.height || wanted.len() != plane.data.len()) {
+      return false;
+    }
+    for at in 0..wanted.len() {
+      let delta = plane.data[at] as i32 - wanted[at] as i32;
+      if (delta < 0 - 1 || delta > 1) {
+        return false;
+      }
+    }
+    bytes = bytes + plane.data.len();
+  }
+  return bytes == image.plan.bytes;
+}
+
+function zero_and_layout(): test.TestOutcome {
+  let input = zero_stream();
+  let plan = match (planes.inspect(input, planes.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("zero plan"); } };
+  if (plan.width != 17 || plan.height != 9 || plan.bytes != 153 || plan.planes.len() != 1 || plan.blocks.output_blocks != 6) {
+    return test.fail("logical component layout");
+  }
+  let image = match (planes.decode(input, planes.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("zero plane"); } };
+  for value in image.planes[0].data {
+    if (value != 128 as u8) {
+      return test.fail("independent zero coefficients");
+    }
+  }
+  match (planes.inspect(headers.synthetic_header(), planes.default_limits(), never)) {
+    Ok(_) => {},
+    _ => {
+      return test.fail("inspection scope");
+    }
+  }
+  return test.assert_true(rejected(headers.synthetic_header(), planes.default_limits(), planes.PlaneEntropy(entropy.EntropyTruncated)));
+}
+
+function reference_images(): test.TestOutcome {
+  if (!reference(streams.restart_gray(), expected.restart_gray)
+    || !reference(streams.restart_rgb444(), expected.restart_rgb444)
+    || !reference(streams.restart_rgb420(), expected.restart_rgb420)) {
+    return test.fail("independent component sample observations");
+  }
+  let image = match (planes.decode(streams.restart_rgb420(), planes.default_limits(), never)) { Ok(v) => v, _ => { return test.fail("subsampled image"); } };
+  if (image.plan.width != 35 || image.plan.height != 33 || image.plan.max_horizontal != 2 || image.plan.max_vertical != 2 || image.plan.bytes != 1767 || image.planes.len() != 3) {
+    return test.fail("4:2:0 layout");
+  }
+  for i in 0..3 {
+    let p = image.planes[i].layout;
+    let width = if (i == 0) { 35 } else { 18 };
+    let height = if (i == 0) { 33 } else { 17 };
+    if (p.component != i + 1 || p.width != width || p.height != height) {
+      return test.fail("cropped subsampled component");
+    }
+  }
+  return test.pass();
+}
+
+function sampling_ids_and_tables(): test.TestOutcome {
+  if (!reference(streams.arbitrary_identifiers(), expected.arbitrary_identifiers)
+    || !reference(streams.fractional_sampling(), expected.fractional_sampling)
+    || !reference(streams.single_sampling(), expected.single_sampling)) {
+    return test.fail("sampling and identifier references");
+  }
+  let fractional = match (planes.decode(streams.fractional_sampling(), planes.default_limits(), never)) { Ok(v) => v, _ => { return test.fail("fractional sampling"); } };
+  let widths = [17, 12, 6];
+  let ids = [7, 2, 9];
+  for i in 0..3 {
+    let layout = fractional.planes[i].layout;
+    if (layout.width != widths[i] || layout.height != 9 || layout.component != ids[i] || layout.horizontal != 3 - i) {
+      return test.fail("fractional ceiling and frame order");
+    }
+  }
+  let input = zero_stream();
+  let quantizer = marker_at(input, 219);
+  let frame = marker_at(input, 192);
+  if (quantizer < 0 || frame < 0) {
+    return test.fail("table control offsets");
+  }
+  let changed = input.with(quantizer + 4, 3 as u8).with(frame + 12, 3 as u8);
+  let image = match (planes.decode(changed, planes.default_limits(), never)) { Ok(v) => v, _ => { return test.fail("quantizer destination 3"); } };
+  for value in image.planes[0].data {
+    if (value != 128 as u8) {
+      return test.fail("quantizer selection");
+    }
+  }
+  return test.pass();
+}
+
+function limits(): test.TestOutcome {
+  let input = zero_stream();
+  let base = planes.default_limits();
+  let exact = planes.PlaneLimits { ...base, max_plane_bytes: 153 };
+  match (planes.decode(input, exact, never)) {
+    Ok(_) => {},
+    _ => {
+      return test.fail("exact plane budget");
+    }
+  }
+  if (!rejected(input, planes.PlaneLimits { ...base, max_plane_bytes: 152 }, planes.PlaneLimit)
+    || !rejected(input, planes.PlaneLimits { ...base, max_plane_bytes: 0 }, planes.PlaneLimit)) {
+    return test.fail("plane admission");
+  }
+  let short_blocks = planes.PlaneLimits { ...base, blocks: entropy.BlockLimits { ...base.blocks, max_blocks: 5 } };
+  let short_mcus = planes.PlaneLimits { ...base, blocks: entropy.BlockLimits { ...base.blocks, max_mcus: 5 } };
+  if (!rejected(input, short_blocks, planes.PlaneEntropy(entropy.EntropyLimit)) || !rejected(input, short_mcus, planes.PlaneEntropy(entropy.EntropyLimit))) {
+    return test.fail("decoded block admission");
+  }
+  let too_short = header.HeaderLimits { ...base.blocks.headers, max_input_bytes: input.len() - 1 };
+  let short_headers = planes.PlaneLimits { ...base, blocks: entropy.BlockLimits { ...base.blocks, headers: too_short } };
+  if (!rejected(input, short_headers, planes.PlaneEntropy(entropy.EntropyHeader(header.Limit)))) {
+    return test.fail("encoded input admission");
+  }
+  let rgb = streams.restart_rgb420();
+  match (planes.decode(rgb, planes.PlaneLimits { ...base, max_plane_bytes: 1767 }, never)) {
+    Ok(_) => {},
+    _ => {
+      return test.fail("exact total of three planes");
+    }
+  }
+  return test.assert_true(rejected(rgb, planes.PlaneLimits { ...base, max_plane_bytes: 1766 }, planes.PlaneLimit));
+}
+
+function late_errors(): test.TestOutcome {
+  let input = zero_stream();
+  for n in 0..input.len() {
+    match (planes.decode(input[:n], planes.default_limits(), never)) {
+      Err(_) => {},
+      _ => {
+        return test.fail("truncated prefix");
+      }
+    }
+  }
+  if (!rejected(input.with(input.len() - 3, 14 as u8), planes.default_limits(), planes.PlaneEntropy(entropy.EntropyPadding))
+    || !rejected(input.append(0 as u8), planes.default_limits(), planes.PlaneEntropy(entropy.EntropyTrailing))) {
+    return test.fail("padding and exact final consumption");
+  }
+  let rgb = streams.restart_rgb420();
+  let restart = marker_at(rgb, 208);
+  if (restart < 0) {
+    return test.fail("restart offset");
+  }
+  if (!rejected(rgb.with(restart + 1, 213 as u8), planes.default_limits(), planes.PlaneEntropy(entropy.EntropyRestart))) {
+    return test.fail("late restart failure");
+  }
+  let base = streams.category_boundaries();
+  let info = match (header.parse(base, header.default_limits(), never)) { Ok(v) => v, _ => { return test.fail("coefficient control header"); } };
+  let frame = marker_at(base, 192);
+  let large: u8[] = [];
+  for value in base[:info.entropy_offset] {
+    large = large.append(value);
+  }
+  large = large.with(frame + 5, 0 as u8).with(frame + 6, 136 as u8).with(frame + 7, 0 as u8).with(frame + 8, 8 as u8);
+  for i in 0..17 {
+    large = large.append(191 as u8).append(248 as u8);
+  }
+  large = large.append(255 as u8).append(217 as u8);
+  return test.assert_true(rejected(large, planes.default_limits(), planes.PlaneTransform(idct.Coefficient)));
+}
+
+function ownership(): test.TestOutcome {
+  let source = zero_stream();
+  let backing = [9 as u8];
+  for value in source {
+    backing = backing.append(value);
+  }
+  backing = backing.append(8 as u8);
+  let view = backing[1:backing.len() - 1];
+  let shared = cell_new(backing);
+  let first = match (planes.decode(view, planes.default_limits(), (): boolean => {
+    shared.set(shared.get().with(1, 0 as u8));
+    return false;
+  })) { Ok(v) => v, _ => { return test.fail("input window"); } };
+  backing = backing.with(1, 0 as u8);
+  if (view[0] != 255 as u8 || backing[1] != 0 as u8 || shared.get()[1] != 0 as u8) {
+    return test.fail("borrowed encoded view");
+  }
+  let retained = first.planes[0].data;
+  let changed = retained.with(0, 7 as u8);
+  let fresh = match (planes.decode(view, planes.default_limits(), never)) { Ok(v) => v, _ => { return test.fail("fresh planes"); } };
+  return test.assert_true(retained[0] == 128 as u8 && changed[0] == 7 as u8 && fresh.planes[0].data[0] == 128 as u8);
+}
+
+function cancellation(): test.TestOutcome {
+  for input in [zero_stream(), streams.fractional_sampling()] {
+    let polls = cell_new(0);
+    let count = (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    };
+    match (planes.decode(input, planes.default_limits(), count)) {
+      Ok(_) => {},
+      _ => {
+        return test.fail("cancellation census");
+      }
+    }
+    let total = polls.get();
+    if (total < 20) {
+      return test.fail("missing cancellation polls");
+    }
+    for stop in 1..total + 1 {
+      let seen = cell_new(0);
+      let cancel = (): boolean => {
+        seen.set(seen.get() + 1);
+        return seen.get() == stop;
+      };
+      match (planes.decode(input, planes.default_limits(), cancel)) {
+        Err(planes.PlaneCancelled()) => {},
+        _ => {
+          return test.fail("every cancellation offset");
+        }
+      }
+      if (seen.get() != stop) {
+        return test.fail("work after cancellation");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.test_new("restricted baseline JPEG component planes");
+  runner = runner.it("independent zero samples and header-only planning", zero_and_layout);
+  runner = runner.it("raw component references and cropped 4:2:0 planes", reference_images);
+  runner = runner.it("fractional sampling, frame identifiers, and quantizer selection", sampling_ids_and_tables);
+  runner = runner.it("exact total plane and existing header/block budgets", limits);
+  runner = runner.it("all prefixes, padding, trailing data, and late restart failure", late_errors);
+  runner = runner.it("borrowed input, owned planes, and fresh calls", ownership);
+  runner = runner.it("every cancellation poll across one and three components", cancellation);
+  return runner.finish();
+}

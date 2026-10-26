@@ -1,0 +1,5 @@
+function __fern_task_set_cancelled(id: i32): i32 {
+  let rec: usize = __fern_task_rec(id);
+  __raw_store_ptr(rec, 3, 1 as usize);
+  return 0;
+}

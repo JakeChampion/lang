@@ -383,9 +383,11 @@ complete #2649.
 
 ### WebAssembly runtime source units
 
-`wasm_runtime.strcmp_source` and `streq_source` define string comparisons in Fern.
-The WebAssembly emitter compiles this source through `Sub.rt_lower` and the
-ordinary function emitter. They replace the hand-written ordering and equality bodies.
+`compiler/runtime/wasm/` contains ordinary Fern source for fourteen WebAssembly helpers.
+The source bundle registers them for both WASI targets.
+The emitter selects declarations through `rtmodule` and its normal tree shaker.
+`Sub.rt_lower` consumes that module and the ordinary function emitter writes its bodies.
+The source files replace the source generators and their hand-written WAT bodies.
 
 Whole-program and per-module emitters append the runtime unit before final
 literal and heap layout. The runtime unit carries its own literal and function
@@ -399,7 +401,7 @@ prefixes, reversed operands, equal operands, UTF-8 bytes and allocated strings.
 It also checks that ordinary Fern functions replace both hand-written bodies.
 The other cases check that unrelated modules omit the comparator.
 
-`utf8_step_source` replaces the WAT helper for empty-separator split.
+`__fern_utf8_step.fern` replaces the WAT helper for empty-separator split.
 It preserves the existing maximal-subpart behavior for malformed and truncated
 UTF-8 sequences. The runtime unit includes it for split and lines.
 `TestSelfHostWasmUnitsN2/utf8_runtime_step` checks byte boundaries and exact
@@ -407,28 +409,28 @@ piece contents in whole-program and split-module builds.
 A lines-only case checks the transitive split dependency.
 The existing split scratch tests check allocation reuse and reference counts.
 
-`byte_find_source` defines forward and reverse byte-array search in Fern.
-Both helpers use one source template with direction-specific bounds.
+The byte-search source files define forward and reverse search.
+Each function has direction-specific bounds.
 The shared byte-search fixtures execute in whole-program and split-module builds.
 They cover all byte values, extreme start offsets, aliases and allocation counts.
 
-`mulhi_source` computes the high 64 bits of the product of two `u64` values.
+`__fern_mulhi_u64.fern` computes the high 64 bits of the product of two `u64` values.
 Its test checks 272 products against `math/bits.Mul64` in each module mode.
 The cases include zero, all ones, each individual bit, complements and mixed bits.
 The test also checks the emitted `i64` parameter and result types.
 
-`set_scan_source` defines set scans and run counts for strings and byte arrays.
-The four helpers share one source template with separate data offsets.
+Four source files define set scans and run counts for strings and byte arrays.
+Each function uses its input layout's data offset.
 The tests compare both input forms against a reference loop in both module modes.
 They cover every byte value, short tables, nonzero membership values, extreme
 start offsets, initial run states, aliases and allocation counts.
 
-`byte_reduction_source` defines the byte-array sum and BSD checksum in Fern.
+The byte-reduction source files define the sum and BSD checksum in Fern.
 The tests use a Go oracle for each byte value and for eight checksum seeds.
 They also check empty inputs, length boundaries, aliases, allocation counts,
 the signed sum boundary and the sum after 32-bit wraparound.
 
-The same source template defines the string sum and BSD checksum.
+The string-reduction source files define the string sum and BSD checksum.
 It decodes owned strings, borrowed descriptors and frame windows before the loop.
 The tests check all three layouts directly and execute a borrowed string view.
 Empty views use an invalid data pointer to detect an accidental byte read.

@@ -1,0 +1,20 @@
+function __fern_writer_write_some_bytes_u8(fd: i32, bytes: usize): Result[i64, IoError] {
+  let n: i32 = 0;
+  let p: usize = 0;
+  if ((bytes as i32 & 2) != 0) {
+    let base: usize = bytes - 2;
+    n = __load_i32(base + 8);
+    p = __raw_load_ptr(base, 0);
+  } else {
+    n = __load_i32(bytes);
+    p = bytes + 8;
+  }
+  let at: i32 = 0;
+  while (true) {
+    let w: i32 = __syscall3(4, fd as i64, (p + at) as i64, (n - at) as i64) as i32;
+    if (w < 0) {
+      return Err(__fern_io_error(0 - w, ""));
+    }
+    return Ok(w as i64);
+  }
+}

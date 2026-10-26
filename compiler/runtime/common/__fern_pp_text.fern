@@ -1,0 +1,3 @@
+function __fern_pp_text(buf: usize, at: usize, s: string): usize {
+  return __fern_pp_copy(buf, at, __raw_data(s), s.len() as usize);
+}

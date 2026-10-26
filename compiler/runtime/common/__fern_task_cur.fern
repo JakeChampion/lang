@@ -1,0 +1,4 @@
+function __fern_task_cur(): i32 {
+  let st: usize = __raw_task_state();
+  return __raw_load_ptr(st, 0) as i32;
+}

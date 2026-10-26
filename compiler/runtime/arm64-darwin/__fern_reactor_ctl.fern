@@ -1,0 +1,118 @@
+function __fern_reactor_ctl(r_fd: i32, op: i32, fd: i32, arg: i32): i32 {
+  if (op == 3) {
+    return __syscall3(6, r_fd as i64, 0, 0) as i32;
+  }
+  if (op == 4) {
+    let act: usize = __raw_scratch(32);
+    let z: i32 = 0;
+    while (z < 32) {
+      __raw_store8(act, z, 0);
+      z = z + 1;
+    }
+    __raw_store8(act, 0, 1);
+    __syscall4(46, fd as i64, act as i64, 0, 8);
+    let ch: usize = __raw_scratch(32);
+    let sig_fd: i32 = fd;
+    let sig_filter: i32 = 0 - 6;
+    let sig_flags: i32 = 5;
+    __raw_store_ptr(ch, 0, sig_fd as usize);
+    __raw_store8(ch, 8, sig_filter & 255);
+    __raw_store8(ch, 9, sig_filter >> 8 & 255);
+    __raw_store8(ch, 10, sig_flags);
+    __raw_store8(ch, 11, 0);
+    __raw_store_ptr(ch, 2, 0);
+    __raw_store_ptr(ch, 3, 0);
+    __raw_store8(ch, 12, 0);
+    __raw_store8(ch, 13, 0);
+    __raw_store8(ch, 14, 0);
+    __raw_store8(ch, 15, 0);
+    return __syscall6(363, r_fd as i64, ch as i64, 1, 0, 0, 0) as i32;
+  }
+  if (op == 5) {
+    let ch2: usize = __raw_scratch(32);
+    let del_fd: i32 = fd;
+    let del_filter: i32 = 0 - 6;
+    let del_flags: i32 = 2;
+    __raw_store_ptr(ch2, 0, del_fd as usize);
+    __raw_store8(ch2, 8, del_filter & 255);
+    __raw_store8(ch2, 9, del_filter >> 8 & 255);
+    __raw_store8(ch2, 10, del_flags);
+    __raw_store8(ch2, 11, 0);
+    __raw_store_ptr(ch2, 2, 0);
+    __raw_store_ptr(ch2, 3, 0);
+    __raw_store8(ch2, 12, 0);
+    __raw_store8(ch2, 13, 0);
+    __raw_store8(ch2, 14, 0);
+    __raw_store8(ch2, 15, 0);
+    __syscall6(363, r_fd as i64, ch2 as i64, 1, 0, 0, 0);
+    let act2: usize = __raw_scratch(32);
+    let z2: i32 = 0;
+    while (z2 < 32) {
+      __raw_store8(act2, z2, 0);
+      z2 = z2 + 1;
+    }
+    return __syscall4(46, fd as i64, act2 as i64, 0, 8) as i32;
+  }
+  if (op == 6) {
+    let ppid: i32 = __syscall3(39, 0, 0, 0) as i32;
+    if (ppid == 1) {
+      return 0 - 3;
+    }
+    let pch: usize = __raw_scratch(32);
+    let proc_filter: i32 = 0 - 5;
+    let proc_flags: i32 = 17;
+    __raw_store_ptr(pch, 0, ppid as usize);
+    __raw_store8(pch, 8, proc_filter & 255);
+    __raw_store8(pch, 9, proc_filter >> 8 & 255);
+    __raw_store8(pch, 10, proc_flags);
+    __raw_store8(pch, 11, 0);
+    __raw_store_ptr(pch, 2, 0);
+    __raw_store_ptr(pch, 3, 0);
+    __raw_store8(pch, 12, 0);
+    __raw_store8(pch, 13, 0);
+    __raw_store8(pch, 14, 0);
+    __raw_store8(pch, 15, 0);
+    __raw_store8(pch, 15, 128);
+    return __syscall6(363, r_fd as i64, pch as i64, 1, 0, 0, 0) as i32;
+  }
+  if (op != 1 && op != 2) {
+    return 0 - 22;
+  }
+  let interest: i32 = arg & 23;
+  if (op == 2) {
+    interest = 0;
+  }
+  let ch: usize = __raw_scratch(32);
+  let r: i32 = 0;
+  let filter: i32 = 0 - 1;
+  let bit: i32 = 1;
+  while (bit <= 2 && r >= 0) {
+    let flags: i32 = 2;
+    if ((interest & bit) != 0) {
+      flags = 5;
+      if ((interest & 16) != 0) {
+        flags = 21;
+      }
+    }
+    if ((interest & bit) != 0 || (interest & 16) == 0) {
+      __raw_store_ptr(ch, 0, fd as usize);
+      __raw_store8(ch, 8, filter & 255);
+      __raw_store8(ch, 9, filter >> 8 & 255);
+      __raw_store8(ch, 10, flags);
+      __raw_store8(ch, 11, 0);
+      __raw_store_ptr(ch, 2, 0);
+      __raw_store_ptr(ch, 3, 0);
+      __raw_store8(ch, 12, 0);
+      __raw_store8(ch, 13, 0);
+      __raw_store8(ch, 14, 0);
+      __raw_store8(ch, 15, 0);
+      let e: i32 = __syscall6(363, r_fd as i64, ch as i64, 1, 0, 0, 0) as i32;
+      if (e < 0 && !(flags == 2 && e == 0 - 2)) {
+        r = e;
+      }
+    }
+    filter = filter - 1;
+    bit = bit + bit;
+  }
+  return r;
+}

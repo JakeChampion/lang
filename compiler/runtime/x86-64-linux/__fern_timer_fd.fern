@@ -1,0 +1,13 @@
+function __fern_timer_fd(ms: i32): i32 {
+  let fd: i32 = __syscall3(283, 1, 0, 0) as i32;
+  if (fd < 0) {
+    return fd;
+  }
+  let its: usize = __raw_scratch(32);
+  __raw_store_ptr(its, 0, 0);
+  __raw_store_ptr(its, 1, 0);
+  __raw_store_ptr(its, 2, (ms / 1000) as usize);
+  __raw_store_ptr(its, 3, (ms % 1000 * 1000000) as usize);
+  __syscall4(286, fd as i64, 0, its as i64, 0);
+  return fd;
+}

@@ -1,0 +1,12 @@
+function __fern_task_wait(id: i32): i32[] {
+  let rec: usize = __fern_task_rec(id);
+  let n: i32 = __raw_load_ptr(rec, 9) as i32;
+  let buf: usize = __raw_load_ptr(rec, 8);
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(__raw_load_ptr(buf, i) as i32);
+    i = i + 1;
+  }
+  return out;
+}

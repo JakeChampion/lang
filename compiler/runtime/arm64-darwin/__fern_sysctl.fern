@@ -1,0 +1,33 @@
+function __fern_sysctl(mib: i32[]): Result[i32[], IoError] {
+  let n: i32 = mib.len();
+  let m: usize = __raw_alloc(n * 4 + 4);
+  let i: i32 = 0;
+  while (i < n) {
+    let v: i32 = mib[i];
+    __raw_store8(m, i * 4, v & 255);
+    __raw_store8(m, i * 4 + 1, v >> 8 & 255);
+    __raw_store8(m, i * 4 + 2, v >> 16 & 255);
+    __raw_store8(m, i * 4 + 3, v >> 24 & 255);
+    i = i + 1;
+  }
+  let lenp: usize = __raw_alloc(8);
+  __store_i64(lenp, 0 as i64);
+  let r: i32 = __syscall6(202, m as i64, n as i64, 0, lenp as i64, 0, 0) as i32;
+  let size: i32 = __load_i64(lenp) as i32;
+  let buf: usize = __raw_alloc(size + 1);
+  if (r >= 0) {
+    r = __syscall6(202, m as i64, n as i64, buf as i64, lenp as i64, 0, 0) as i32;
+  }
+  let got: i32 = __load_i64(lenp) as i32;
+  let m_own: string = __raw_string(m, n * 4 + 4);
+  let lenp_own: string = __raw_string(lenp, 8);
+  if (r < 0) {
+    let buf_own0: string = __raw_string(buf, size + 1);
+    return Err(__fern_io_error(0 - r, ""));
+  }
+  let b: usize = __raw_arr_box((got + 7) / 8);
+  __store_i64(b, got as i64);
+  __memcpy(b + 8, buf, got);
+  let buf_own: string = __raw_string(buf, size + 1);
+  return Ok(__raw_array(b));
+}

@@ -1,0 +1,3 @@
+function __fern_ring_u16(p: usize, off: i32): i32 {
+  return __raw_load8(p, off) | __raw_load8(p, off + 1) << 8;
+}

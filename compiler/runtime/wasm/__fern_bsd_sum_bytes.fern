@@ -1,0 +1,12 @@
+function __fern_bsd_sum_bytes(s: usize, seed: i32): i32 {
+  let n: i32 = __load_i32(s);
+  let i: i32 = 0;
+  let sum: u32 = seed as u32 & 65535;
+  while (i < n) {
+    sum = sum >> 1 | sum << 15;
+    sum = sum + __load_u8(s + 8 + i) as u32;
+    sum = sum & 65535;
+    i = i + 1;
+  }
+  return sum as i32;
+}

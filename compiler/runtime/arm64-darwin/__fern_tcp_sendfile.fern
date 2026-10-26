@@ -1,0 +1,21 @@
+function __fern_tcp_sendfile(fd: i32, file: i32, max: i32): i32 {
+  if (max <= 0) {
+    return 0;
+  }
+  let pos: i64 = __syscall3(199, file as i64, 0, 1);
+  if (pos < 0 as i64) {
+    return pos as i32;
+  }
+  let lenp: usize = __raw_scratch(8);
+  __store_i64(lenp, max as i64);
+  let r: i64 = __syscall6(337, file as i64, fd as i64, pos, lenp as i64, 0, 0);
+  let sent: i64 = __load_i64(lenp);
+  if (sent > 0 as i64) {
+    __syscall3(199, file as i64, pos + sent, 0);
+    return sent as i32;
+  }
+  if (r < 0 as i64) {
+    return r as i32;
+  }
+  return 0;
+}
