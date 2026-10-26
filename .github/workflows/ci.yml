@@ -2,9 +2,15 @@ name: CI
 
 # A pull request runs Lint, lane selection and the Preflight tier, all outside
 # the full-suite queue. The full suite runs on main after the merge (ci-main.yml
-# coalesces pending main tips) and on a pull request labelled ci-full, through
-# the ci-suite.yml FIFO. The Lint / lint check remains unconditional and keeps
-# its name.
+# coalesces pending main tips) and on a merge queue batch. It also runs on a
+# pull request labelled ci-full, through the ci-suite.yml FIFO. The Lint / lint
+# check remains unconditional and keeps its name. `CI verdict` below is the one
+# check a ruleset requires: it fails when any tier that ran failed.
+#
+# MERGE QUEUE. A merge_group run is a full suite on the batch that GitHub is
+# about to merge. One suite covers every pull request in the batch, and main
+# stays green. The ruleset change is a repository setting, not a workflow
+# one: docs/TEST-GATES.md, "The merge queue", has the steps.
 
 on:
   pull_request:
@@ -12,6 +18,7 @@ on:
     # the suite over Preflight below, so a label change starts the run it
     # selects and cancels the one it does not, through the group below.
     types: [opened, synchronize, reopened, labeled, unlabeled]
+  merge_group:
   workflow_dispatch:
   workflow_call:
 
@@ -513,6 +520,28 @@ jobs:
       contents: write
       actions: write
       pull-requests: read
+
+  # THE ONE CHECK A RULESET REQUIRES. Lint must pass, and a tier that ran must
+  # pass. A tier that did not run is fine: Preflight skips a doc-only change,
+  # and the suite runs only under ci-full, on main and on a merge queue batch.
+  # `!cancelled()` so a cancelled run has no verdict rather than a red one.
+  verdict:
+    name: CI verdict
+    needs: [lint, preflight, suite]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every tier that ran passed
+        env:
+          LINT: ${{ needs.lint.result }}
+          PREFLIGHT: ${{ needs.preflight.result }}
+          SUITE: ${{ needs.suite.result }}
+        run: |
+          echo "lint=$LINT preflight=$PREFLIGHT suite=$SUITE"
+          test "$LINT" = success
+          case "$PREFLIGHT" in success|skipped) ;; *) exit 1 ;; esac
+          case "$SUITE" in success|skipped) ;; *) exit 1 ;; esac
 
   reap-lint:
     needs: [lint]
