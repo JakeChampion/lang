@@ -1,3 +1,6 @@
+# 2026-10-26 (#13495): pin only the 24 Wasm rows that omit unused type-ID globals.
+# Fixed-input source 934244ba8480, baseline source 0e2176c40, and complete reports:
+# docs/benchmarks/wasm-typeids-2026-10-26/. Native rows and tolerances stay unchanged.
 # 2026-10-26, from a local perf-bench-selfhost run on main at aa27853f plus the 32-bit index
 # arithmetic, which cuts every native row 0.1 to 0.8% and moves no wasm row. The rows past
 # tolerance moved on main, and no PR re-pinned them: deflate_decode grows about 4% on each
@@ -201,38 +204,38 @@ selfhost/arm64-linux/struct_drop.emit	2563
 selfhost/arm64-linux/tokenize.emit	1278
 selfhost/arm64-linux/utf8_ingest_unchecked.emit	8615
 selfhost/arm64-linux/utf8_ingest_validated.emit	9179
-selfhost/wasm32-wasi/array_append.emit	493
-selfhost/wasm32-wasi/array_index.emit	498
-selfhost/wasm32-wasi/array_scale_f64.emit	558
-selfhost/wasm32-wasi/array_with.emit	538
-selfhost/wasm32-wasi/ascii_scan.emit	1258
-selfhost/wasm32-wasi/byte_copy_append.emit	603
-selfhost/wasm32-wasi/byte_copy_with.emit	618
-selfhost/wasm32-wasi/call_overhead.emit	171
-selfhost/wasm32-wasi/closure_call.emit	527
+selfhost/wasm32-wasi/array_append.emit	441
+selfhost/wasm32-wasi/array_index.emit	446
+selfhost/wasm32-wasi/array_scale_f64.emit	499
+selfhost/wasm32-wasi/array_with.emit	491
+selfhost/wasm32-wasi/ascii_scan.emit	1207
+selfhost/wasm32-wasi/byte_copy_append.emit	556
+selfhost/wasm32-wasi/byte_copy_with.emit	571
+selfhost/wasm32-wasi/call_overhead.emit	119
+selfhost/wasm32-wasi/closure_call.emit	480
 selfhost/wasm32-wasi/deflate_decode.emit	20482
 selfhost/wasm32-wasi/deflate_encode.emit	11811
 selfhost/wasm32-wasi/enum_match.emit	638
 selfhost/wasm32-wasi/http_hello.emit	21650
-selfhost/wasm32-wasi/int_loop.emit	123
-selfhost/wasm32-wasi/map_int.emit	7430
-selfhost/wasm32-wasi/map_probe_chain.emit	7455
-selfhost/wasm32-wasi/map_string.emit	8284
+selfhost/wasm32-wasi/int_loop.emit	71
+selfhost/wasm32-wasi/map_int.emit	7378
+selfhost/wasm32-wasi/map_probe_chain.emit	7403
+selfhost/wasm32-wasi/map_string.emit	8232
 selfhost/wasm32-wasi/ordmap_insert.emit	6960
 selfhost/wasm32-wasi/pmap_insert.emit	3196
 selfhost/wasm32-wasi/pvec_with.emit	2838
-selfhost/wasm32-wasi/record_update.emit	571
-selfhost/wasm32-wasi/sort_inplace.emit	1093
-selfhost/wasm32-wasi/sort_ints.emit	2243
-selfhost/wasm32-wasi/sort_strings.emit	3351
-selfhost/wasm32-wasi/string_build.emit	1285
-selfhost/wasm32-wasi/string_count_byte.emit	511
-selfhost/wasm32-wasi/string_find_byte.emit	1851
-selfhost/wasm32-wasi/string_rfind_byte.emit	1854
-selfhost/wasm32-wasi/string_scan.emit	1423
-selfhost/wasm32-wasi/string_slice.emit	500
+selfhost/wasm32-wasi/record_update.emit	523
+selfhost/wasm32-wasi/sort_inplace.emit	1040
+selfhost/wasm32-wasi/sort_ints.emit	2190
+selfhost/wasm32-wasi/sort_strings.emit	3300
+selfhost/wasm32-wasi/string_build.emit	1234
+selfhost/wasm32-wasi/string_count_byte.emit	452
+selfhost/wasm32-wasi/string_find_byte.emit	1800
+selfhost/wasm32-wasi/string_rfind_byte.emit	1803
+selfhost/wasm32-wasi/string_scan.emit	1372
+selfhost/wasm32-wasi/string_slice.emit	448
 selfhost/wasm32-wasi/struct_drop.emit	1589
-selfhost/wasm32-wasi/tokenize.emit	874
+selfhost/wasm32-wasi/tokenize.emit	829
 selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	9045
 selfhost/wasm32-wasi/utf8_ingest_validated.emit	9965
 selfhost/x86-64-linux/array_append.emit	1042
