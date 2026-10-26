@@ -106,6 +106,10 @@ pub function need(needs: string[], name: string): boolean {
   return util.index_of_str(needs, name) >= 0;
 }
 
+function need_tcp_send(needs: string[]): boolean {
+  return need_any(needs, ["tcp_send_bytes", "tcp_send_buf"]);
+}
+
 function need_udp_socket(needs: string[]): boolean {
   return need_any(needs, ["udp_bind", "udp_connect"]);
 }
@@ -264,6 +268,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   }
   if (module_emits_op_cached(cache, "count_byte_bytes")) {
     out = out.append("@uses_count_byte_bytes");
+  }
+  if (module_emits_op_cached(cache, "count_below_u64")) {
+    out = out.append("@uses_count_below_u64");
   }
   if (module_emits_op_cached(cache, "sum_bytes_array")) {
     out = out.append("@uses_sum_bytes_array");
@@ -3776,58 +3783,97 @@ pub function udp_recvfrom_func(): string {
   return o;
 }
 
-pub function wasi_stream_io_imports(): string {
+// The stream imports a socket's reads and sends call.
+function wasi_stream_io_imports(needs: string[]): string {
   let o: string = "";
-  o = o + "  (import \"wasi:io/error@0.2.0\" \"[resource-drop]error\" (func $__fern_wasi_io_error_drop (param i32)))\n";
+  if (need_any(needs, ["tcp_send_bytes", "tcp_send_buf", "tcp_recv_into"])) {
+    o = o + "  (import \"wasi:io/error@0.2.0\" \"[resource-drop]error\" (func $__fern_wasi_io_error_drop (param i32)))\n";
+  }
+  if (!need_tcp_send(needs)) {
+    return o;
+  }
   o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-write-and-flush\" (func $__fern_wasi_stream_write (param i32 i32 i32 i32)))\n";
+  o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.check-write\" (func $__fern_wasi_stream_check_write (param i32 i32)))\n";
+  o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.write\" (func $__fern_wasi_stream_write_nb (param i32 i32 i32 i32)))\n";
+  o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.flush\" (func $__fern_wasi_stream_flush (param i32 i32)))\n";
+  o = o + "  (import \"wasi:io/streams@0.2.0\" \"[method]output-stream.blocking-flush\" (func $__fern_wasi_stream_blocking_flush (param i32 i32)))\n";
   return o;
 }
 
-pub function tcp_send_bytes_func(): string {
-  let o: string = "  (func $__fern_tcp_send_bytes (param $c i32) (param $a i32) (result i32)\n";
-  o = o + "    (local $st i32) (local $ret i32) (local $len i32) (local $off i32) (local $n i32)\n";
-  o = o + "    (local.set $st (i32.load offset=8 (local.get $c)))\n";
-  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
-  o = o + "    (if (i32.eqz (local.get $len)) (then (return (i32.const 0))))\n";
-  o = o + "    (local.set $ret (i32.const " + util.i32_to_string(io_ret_addr()) + "))\n";
-  o = o + "    (block $done (loop $more\n";
-  o = o + "      (br_if $done (i32.ge_u (local.get $off) (local.get $len)))\n";
-  o = o + "      (local.set $n (i32.sub (local.get $len) (local.get $off)))\n";
-  o = o + "      (if (i32.gt_u (local.get $n) (i32.const 4096)) (then (local.set $n (i32.const 4096))))\n";
-  o = o + "      (call $__fern_wasi_stream_write (local.get $st) (i32.add (i32.add (local.get $a) (i32.const 8)) (local.get $off)) (local.get $n) (local.get $ret))\n";
-  o = o + "      (if (i32.load8_u (local.get $ret)) (then\n";
-  o = o + "        (if (i32.eqz (i32.load8_u offset=4 (local.get $ret))) (then (call $__fern_wasi_io_error_drop (i32.load offset=8 (local.get $ret)))))\n";
-  o = o + "        (if (i32.gt_u (local.get $off) (i32.const 0)) (then (return (local.get $off))))\n";
-  o = o + "        (return (i32.const -1))))\n";
-  o = o + "      (local.set $off (i32.add (local.get $off) (local.get $n))) (br $more)))\n";
-  o = o + "    (local.get $len))\n";
+// The stream-error at $err: a failed operation (its error dropped) is -EIO,
+// a closed stream -EPIPE, in the WASI numbering.
+function tcp_stream_failed_func(): string {
+  let o: string = "  (func $__fern_tcp_stream_failed (param $err i32) (result i32)\n";
+  o = o + "    (if (i32.load8_u (local.get $err)) (then (return (i32.const -64))))\n";
+  o = o + "    (call $__fern_wasi_io_error_drop (i32.load offset=4 (local.get $err)))\n";
+  o = o + "    (i32.const -29))\n";
   return o;
 }
 
-pub function tcp_send_buf_func(): string {
-  let o: string = "  (func $__fern_tcp_send_buf (param $c i32) (param $h i32) (param $from i32) (result i32)\n";
-  o = o + "    (local $st i32) (local $ret i32) (local $len i32) (local $off i32) (local $n i32) (local $p i32)\n";
+// A non-blocking socket writes what check-write permits now and starts its
+// flush, -EAGAIN when it permits nothing; a blocking one writes it all.
+function tcp_write_func(): string {
+  let o: string = "  (func $__fern_tcp_write (param $c i32) (param $p i32) (param $len i32) (result i32)\n";
+  o = o + "    (local $st i32) (local $ret i32) (local $off i32) (local $n i32)\n";
   o = o + "    (local.set $st (i32.load offset=8 (local.get $c)))\n";
-  o = o + "    (if (i32.lt_s (local.get $from) (i32.const 0)) (then (return (i32.const 0))))\n";
-  o = o + "    (local.set $len (i32.sub (i32.load offset=4 (local.get $h)) (local.get $from)))\n";
-  o = o + "    (if (i32.le_s (local.get $len) (i32.const 0)) (then (return (i32.const 0))))\n";
-  o = o + "    (local.set $p (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $from)))\n";
   o = o + "    (local.set $ret (i32.const " + util.i32_to_string(io_ret_addr()) + "))\n";
+  o = o + "    (if (i32.load offset=16 (local.get $c)) (then\n";
+  o = o + "      (call $__fern_wasi_stream_check_write (local.get $st) (local.get $ret))\n";
+  o = o + "      (if (i32.load8_u (local.get $ret)) (then (return (call $__fern_tcp_stream_failed (i32.add (local.get $ret) (i32.const 8))))))\n";
+  o = o + "      (if (i64.lt_u (i64.load offset=8 (local.get $ret)) (i64.extend_i32_u (local.get $len))) (then (local.set $len (i32.wrap_i64 (i64.load offset=8 (local.get $ret))))))\n";
+  o = o + "      (if (i32.eqz (local.get $len)) (then (return (i32.const -6))))\n";
+  o = o + "      (call $__fern_wasi_stream_write_nb (local.get $st) (local.get $p) (local.get $len) (local.get $ret))\n";
+  o = o + "      (if (i32.eqz (i32.load8_u (local.get $ret))) (then (call $__fern_wasi_stream_flush (local.get $st) (local.get $ret))))\n";
+  o = o + "      (if (i32.load8_u (local.get $ret)) (then (return (call $__fern_tcp_stream_failed (i32.add (local.get $ret) (i32.const 4))))))\n";
+  o = o + "      (return (local.get $len))))\n";
   o = o + "    (block $done (loop $more\n";
   o = o + "      (br_if $done (i32.ge_u (local.get $off) (local.get $len)))\n";
   o = o + "      (local.set $n (i32.sub (local.get $len) (local.get $off)))\n";
   o = o + "      (if (i32.gt_u (local.get $n) (i32.const 4096)) (then (local.set $n (i32.const 4096))))\n";
   o = o + "      (call $__fern_wasi_stream_write (local.get $st) (i32.add (local.get $p) (local.get $off)) (local.get $n) (local.get $ret))\n";
   o = o + "      (if (i32.load8_u (local.get $ret)) (then\n";
-  o = o + "        (if (i32.eqz (i32.load8_u offset=4 (local.get $ret))) (then (call $__fern_wasi_io_error_drop (i32.load offset=8 (local.get $ret)))))\n";
+  o = o + "        (local.set $n (call $__fern_tcp_stream_failed (i32.add (local.get $ret) (i32.const 4))))\n";
   o = o + "        (if (i32.gt_u (local.get $off) (i32.const 0)) (then (return (local.get $off))))\n";
-  o = o + "        (return (i32.const -1))))\n";
+  o = o + "        (return (local.get $n))))\n";
   o = o + "      (local.set $off (i32.add (local.get $off) (local.get $n))) (br $more)))\n";
   o = o + "    (local.get $len))\n";
   return o;
 }
 
-pub function tcp_close_func(udp: boolean, watched: boolean): string {
+function tcp_send_funcs(needs: string[]): string {
+  if (!need_tcp_send(needs)) {
+    return "";
+  }
+  let o: string = tcp_stream_failed_func() + tcp_write_func();
+  if (need(needs, "tcp_send_bytes")) {
+    o = o + tcp_send_bytes_func();
+  }
+  if (need(needs, "tcp_send_buf")) {
+    o = o + tcp_send_buf_func();
+  }
+  return o;
+}
+
+pub function tcp_send_bytes_func(): string {
+  let o: string = "  (func $__fern_tcp_send_bytes (param $c i32) (param $a i32) (result i32)\n";
+  o = o + "    (if (i32.eqz (i32.load (local.get $a))) (then (return (i32.const 0))))\n";
+  o = o + "    (call $__fern_tcp_write (local.get $c) (i32.add (local.get $a) (i32.const 8)) (i32.load (local.get $a))))\n";
+  return o;
+}
+
+pub function tcp_send_buf_func(): string {
+  let o: string = "  (func $__fern_tcp_send_buf (param $c i32) (param $h i32) (param $from i32) (result i32)\n";
+  o = o + "    (local $len i32)\n";
+  o = o + "    (if (i32.lt_s (local.get $from) (i32.const 0)) (then (return (i32.const 0))))\n";
+  o = o + "    (local.set $len (i32.sub (i32.load offset=4 (local.get $h)) (local.get $from)))\n";
+  o = o + "    (if (i32.le_s (local.get $len) (i32.const 0)) (then (return (i32.const 0))))\n";
+  o = o + "    (call $__fern_tcp_write (local.get $c) (i32.add (i32.add (i32.load (local.get $h)) (i32.const 4)) (local.get $from)) (local.get $len)))\n";
+  return o;
+}
+
+// With sends linked, a connection's output stream is flushed before it is
+// dropped: wasmtime cancels a write still in flight when its stream drops.
+pub function tcp_close_func(udp: boolean, watched: boolean, sends: boolean): string {
   let o: string = "";
   o = o + "  (func $__fern_tcp_close (param $c i32) (result i32)\n";
   if (watched) {
@@ -3837,6 +3883,10 @@ pub function tcp_close_func(udp: boolean, watched: boolean): string {
     o = o + "    (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (call $__fern_udp_close (local.get $c)))))\n";
   }
   o = o + "    (if (i32.eq (i32.load offset=12 (local.get $c)) (i32.const 1)) (then\n";
+  if (sends) {
+    o = o + "      (call $__fern_wasi_stream_blocking_flush (i32.load offset=8 (local.get $c)) (i32.const " + util.i32_to_string(io_ret_addr()) + "))\n";
+    o = o + "      (if (i32.load8_u (i32.const " + util.i32_to_string(io_ret_addr()) + ")) (then (drop (call $__fern_tcp_stream_failed (i32.const " + util.i32_to_string(io_ret_addr() + 4) + ")))))\n";
+  }
   o = o + "      (call $__fern_wasi_input_stream_drop (i32.load offset=4 (local.get $c)))\n";
   o = o + "      (call $__fern_wasi_output_stream_drop (i32.load offset=8 (local.get $c)))))\n";
   o = o + "    (call $__fern_wasi_tcp_socket_drop (i32.load (local.get $c)))\n";
@@ -4851,6 +4901,9 @@ function emit_str_op_wat(o: ir.Op): string {
   if (o.kind_tag == 359) {
     return "    call $__fern_count_byte_bytes\n";
   }
+  if (o.kind_tag == 482) {
+    return "    call $__fern_count_below_u64\n";
+  }
   if (o.kind_tag == 368) {
     return "    call $__fern_sum_bytes_array\n";
   }
@@ -5179,7 +5232,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   let str_vals: string[] = str_values(cache);
   let cagg_vals: string[] = const_agg_values(cache);
   let ft: string[] = fn_value_table(cache);
-  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs), ir.pops_by_kind(), physicalbody.abis(physical)), irverifygate.open_memo("wasm32"));
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs, mod.funcs, cache), ir.pops_by_kind(), physicalbody.abis(physical)), irverifygate.open_memo("wasm32"));
   let parts: string[] = [];
   let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
@@ -6379,6 +6432,27 @@ pub function count_byte_bytes_helper(): string {
   o = o + "      (if (i32.eq (i32.load8_u (i32.add (local.get $a) (i32.add (i32.const 8) (local.get $i)))) (local.get $byte)) (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))\n";
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $scan)))\n    (local.get $count))\n";
+  return o;
+}
+
+// i64x2.lt_s is a signed compare. Both sides have their top bit flipped, so it gives the unsigned order.
+pub function count_below_u64_helper(): string {
+  let o: string = "  (func $__fern_count_below_u64 (param $a i32) (param $w i64) (result i32)\n";
+  o = o + "    (local $len i32) (local $i i32) (local $count i32) (local $bias v128) (local $t v128)\n";
+  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
+  o = o + "    (local.set $bias (i64x2.splat (i64.shl (i64.const 1) (i64.const 63))))\n";
+  o = o + "    (local.set $t (v128.xor (i64x2.splat (local.get $w)) (local.get $bias)))\n";
+  o = o + "    (block $vd (loop $vc\n";
+  o = o + "      (br_if $vd (i32.gt_s (i32.add (local.get $i) (i32.const 2)) (local.get $len)))\n";
+  o = o + "      (local.set $count (i32.add (local.get $count) (i32.popcnt (i64x2.bitmask (i64x2.lt_s\n";
+  o = o + "        (v128.xor (v128.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.shl (local.get $i) (i32.const 3)))) (local.get $bias))\n";
+  o = o + "        (local.get $t))))))\n";
+  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 2)))\n";
+  o = o + "      (br $vc)))\n";
+  o = o + "    (if (i32.lt_s (local.get $i) (local.get $len)) (then\n";
+  o = o + "      (if (i64.lt_u (i64.load (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.shl (local.get $i) (i32.const 3)))) (local.get $w))\n";
+  o = o + "        (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))))\n";
+  o = o + "    (local.get $count))\n";
   return o;
 }
 
@@ -9076,17 +9150,16 @@ function bytes_copy_out(len: string, src: string, empty: i32): string {
 
 pub function arr_concat_helper(): string {
   let o: string = "";
-  o = o + "  (func $__fern_arr_concat (param $width i32) (param $b i32) (param $a i32) (result i32)\n";
-  o = o + "    (local $na i32) (local $nb i32) (local $n i32) (local $stride i32) (local $cap i32) (local $rc i32) (local $ncap i32) (local $r i32) (local $sole i32)\n";
+  o = o + "  (func $__fern_arr_concat (param $width i32) (param $nb i32) (param $src i32) (param $a i32) (result i32)\n";
+  o = o + "    (local $na i32) (local $n i32) (local $stride i32) (local $cap i32) (local $rc i32) (local $ncap i32) (local $r i32) (local $sole i32)\n";
   o = o + "    (local.set $stride (i32.shr_u (local.get $width) (i32.const 3)))\n";
   o = o + "    (local.set $na (i32.load (local.get $a)))\n";
-  o = o + "    (local.set $nb (i32.load (local.get $b)))\n";
   o = o + "    (local.set $n (i32.add (local.get $na) (local.get $nb)))\n";
   o = o + "    (local.set $cap (i32.load (i32.add (local.get $a) (i32.const 4))))\n";
   o = o + "    (local.set $rc (i32.load (i32.sub (local.get $a) (i32.const 8))))\n";
   o = o + "    (local.set $sole (i32.eq (local.get $rc) (i32.const 1)))\n";
   o = o + "    (if (i32.and (local.get $sole) (i32.le_s (local.get $n) (local.get $cap))) (then\n";
-  o = o + "      (memory.copy (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (i32.add (local.get $b) (i32.const 8)) (i32.mul (local.get $nb) (local.get $stride)))\n";
+  o = o + "      (memory.copy (i32.add (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (local.get $src) (i32.mul (local.get $nb) (local.get $stride)))\n";
   o = o + "      (i32.store (local.get $a) (local.get $n))\n";
   o = o + "      (return (local.get $a))))\n";
   o = o + "    (local.set $ncap (local.get $n))\n";
@@ -9096,7 +9169,7 @@ pub function arr_concat_helper(): string {
   o = o + "    (i32.store (local.get $r) (local.get $n))\n";
   o = o + "    (i32.store offset=4 (local.get $r) (local.get $ncap))\n";
   o = o + "    (memory.copy (i32.add (local.get $r) (i32.const 8)) (i32.add (local.get $a) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride)))\n";
-  o = o + "    (memory.copy (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (i32.add (local.get $b) (i32.const 8)) (i32.mul (local.get $nb) (local.get $stride)))\n";
+  o = o + "    (memory.copy (i32.add (i32.add (local.get $r) (i32.const 8)) (i32.mul (local.get $na) (local.get $stride))) (local.get $src) (i32.mul (local.get $nb) (local.get $stride)))\n";
   o = o + "    (local.get $r))\n";
   return o;
 }
@@ -9441,9 +9514,7 @@ function preview2_wasi_imports(needs: string[], sleep_p2: boolean): string {
   if (need_any(needs, ["tcp_connect_with", "tcp_close", "tcp_listen", "tcp_listen_with", "tcp_accept", "tcp_pollable", "tcp_socket_ctl", "reactor_ctl"])) {
     parts = parts.append(wasi_sockets_imports());
   }
-  if (need_any(needs, ["tcp_send_bytes", "tcp_send_buf", "tcp_recv_into"])) {
-    parts = parts.append(wasi_stream_io_imports());
-  }
+  parts = parts.append(wasi_stream_io_imports(needs));
   if (need(needs, "reactor_ctl")) {
     parts = parts.append(wasi_stream_subscribe_imports());
   } else if (need_any(needs, ["tcp_pollable", "tcp_recv_into"])) {
@@ -9580,6 +9651,9 @@ function kernel_helper_parts(needs: string[], parts0: string[]): string[] {
   }
   if (need(needs, "@uses_count_byte_bytes")) {
     parts = parts.append(count_byte_bytes_helper());
+  }
+  if (need(needs, "@uses_count_below_u64")) {
+    parts = parts.append(count_below_u64_helper());
   }
   if (need(needs, "@uses_sum_bytes_array")) {
     parts = parts.append(byte_reduction_helper(false));
@@ -9914,14 +9988,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(pollable_drop_func());
   }
   if (need(needs, "tcp_close")) {
-    parts = parts.append(tcp_close_func(need_udp_socket(needs), need(needs, "reactor_ctl")));
+    parts = parts.append(tcp_close_func(need_udp_socket(needs), need(needs, "reactor_ctl"), need_tcp_send(needs)));
   }
-  if (need(needs, "tcp_send_bytes")) {
-    parts = parts.append(tcp_send_bytes_func());
-  }
-  if (need(needs, "tcp_send_buf")) {
-    parts = parts.append(tcp_send_buf_func());
-  }
+  parts = parts.append(tcp_send_funcs(needs));
   if (need(needs, "tcp_listen")) {
     parts = parts.append(tcp_listen_func());
   }

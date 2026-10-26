@@ -151,8 +151,16 @@ into the same words). wasi:sockets has no blocking mode either, so op 3 is
 a flag in the socket's record: a receive on a blocking socket waits on its
 input stream and reads again, and an accept on a blocking listener waits on
 the listener before it accepts, while a non-blocking socket answers -EAGAIN
-at once. A send on wasm writes and flushes all its bytes before it returns
-whichever mode the socket is in; and
+at once. A send on a blocking socket writes and flushes all its bytes before
+it returns; on a non-blocking one it writes what the output stream's
+`check-write` permits now and starts a flush, answering that count, or
+-EAGAIN when the stream permits nothing, as a native send answers what the
+kernel took. `tcp_close` waits for that flush before it drops the stream,
+since wasmtime cancels a write still in flight when its stream is dropped,
+so closing a connection whose peer has stopped reading blocks on wasm where
+a native close returns and the kernel keeps sending; a program that reads
+its own connection drains it before it closes the sender. A send's stream
+error is -EIO and a closed stream -EPIPE; and
 `reuse_port` is ignored: a port is one socket's there. Every other op and the backlog behave the same on every
 target. A wasi:sockets `result<_, error-code>` puts the error-code at byte
 1 (a handle, tuple or address payload puts it at 4, a u64 count at 8);
@@ -295,7 +303,7 @@ of these at check time there.
 | `tcp_recv_into` | Fern body, `read(2)`, -errno on failure | Fern body | non-blocking read on the input stream; while it is empty, a wait on the stream and another read, or `-EAGAIN` on a non-blocking socket; `-EIO` on a stream error | E066 | a read through the descriptor |
 | `tcp_ktls` | Fern body: `setsockopt` for the `tls` upper-layer protocol and each direction's keys, `sendmsg` and `recvmsg` with the record type as a control message | E066: no `ktls` | E066: no `ktls` | E066 | `-ENOSYS` |
 | `tcp_sendfile` | Fern body, `sendfile(2)`, the file advanced by what the socket took | Fern body, the position read and moved around Darwin's offset-and-length form | `-ENOTSUP`: the serve loop reads the file and sends the piece | E066 | a read of the open file then one socket write, the file moved back over what the socket did not take |
-| `tcp_send_buf` | Fern body, one `sendto(2)` of the builder's bytes from `from` | Fern body | the builder's bytes written to the output stream in place, as `tcp_send_bytes` writes an array | E066 | one socket write of the builder's bytes |
+| `tcp_send_buf` | Fern body, one `sendto(2)` of the builder's bytes from `from` | Fern body | the builder's bytes written to the output stream in place, as `tcp_send_bytes` writes an array: all of them on a blocking socket, what `check-write` permits on a non-blocking one | E066 | one socket write of the builder's bytes |
 | `udp_bind`, `udp_connect`, `udp_sendto`, `udp_recvfrom` (byte address) | Fern body | Fern body; `EISCONN` for a named address on a connected socket | wasi:sockets/udp bodies (`wasm_ir.fern`); `recvfrom` blocks on the incoming pollable | E066 | raw descriptors, the kernel's errnos |
 | `udp_bind_with` | Fern body | Fern body, Darwin's option numbers | `udp_bind`; `reuse_port` not read | E066 | raw descriptor, the options set before the bind |
 | `unix_listen`, `unix_connect` | Fern body | Fern body, `sun_len` head | E066: no `unix` | E066 | net package |

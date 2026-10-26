@@ -6,18 +6,17 @@ name: Test e2e wasm
 # workflow — each test shells out to wasmtime so subprocess
 # overhead dominates.
 #
-# Matrix per host arch because wasmtime + wasm-tools ship distinct
-# binaries per arch; running both lanes guarantees the same .wat
-# emission validates byte-for-byte under both wasmtime ABIs.
+# x86_64 only. The .wat the compiler emits does not depend on the host, and
+# an aarch64 job ran the same tests under the aarch64 wasmtime build for five
+# runner-minutes a run. The compiler built for aarch64 is tested by the
+# self-host lane's aarch64 shards and by bootstrap.yml's verify-arm64-linux.
 #
 # The test binary is compiled in the test job itself. It used to come from a
 # separate `build` job (#4577, when runner preemption was killing long jobs
 # mid-compile), but a `needs:` edge defers the test jobs' creation until the
 # build job has been queued, run and uploaded, and under the account-wide
 # concurrent-job ceiling that wait ran 5-10 minutes for ~30 s of compile.
-# Preemption has not been observed since the shards were shortened. This lane
-# is NOT `continue-on-error`: the aarch64 job runs the same tests with its own
-# toolchain rather than as a strict twin, so the redness stays load-bearing.
+# Preemption has not been observed since the shards were shortened.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
 # request or a push to main launches. It holds one of the PR queue's two slots
@@ -27,29 +26,12 @@ name: Test e2e wasm
 # stays so the lane can be run on its own, outside that queue.
 on:
   workflow_call:
-    inputs:
-      hosts:
-        description: >
-          The hosts whose matrix legs run, as a space-separated list of
-          x86_64 and aarch64. The suite runs both; the Preflight tier runs
-          x86_64 alone.
-        required: false
-        type: string
-        default: x86_64 aarch64
   workflow_dispatch:
 
 jobs:
   test:
-    strategy:
-      fail-fast: false
-      matrix:
-        host: [x86_64, aarch64]
-        # The Preflight tier calls this lane with `hosts: x86_64`; the suite
-        # calls it with both hosts and this excludes nothing.
-        exclude:
-          - host: ${{ inputs.hosts == 'x86_64' && 'aarch64' || 'no-such-host' }}
-    name: test-e2e-wasm-${{ matrix.host }}
-    runs-on: ${{ matrix.host == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    name: test-e2e-wasm-x86_64
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7

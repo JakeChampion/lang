@@ -1,6 +1,6 @@
 # Benchmark and handshake endpoints
 
-These routes run the native half of three labs: the JSON lab, the compression bench, and the post-quantum handshake.
+These routes run the native half of four labs: the JSON lab, the compression bench, the post-quantum handshake, and the image pipeline.
 The browser runs the other half from the same Fern modules compiled to WebAssembly.
 
 ```fern
@@ -9,6 +9,7 @@ The browser runs the other half from the same Fern modules compiled to WebAssemb
 <<JSON benchmark>>
 <<Compression benchmark>>
 <<Handshake exchange>>
+<<Image pipeline>>
 ```
 
 ## Imports and budget
@@ -28,6 +29,8 @@ import "std/result";
 import "./common";
 import "./measure";
 import "./handshake";
+import "./imaging";
+import "std/crypto";
 
 pub struct State { last: Cell[i64] }
 
@@ -149,6 +152,54 @@ pub function exchange(req: HttpRequest): Result[HttpResponse, http.HttpError] {
     nonce: hex.encode(answer.nonce),
     sealed: hex.encode(answer.sealed),
     server_us: (monotonic_ns() - started) / 1000,
+  }).with_header("Cache-Control", "no-store"));
+}
+```
+
+## Image pipeline
+
+`GET /image/bench?seed=S&width=W&height=H&target=T&filter=F&tone=N` draws the test image, then resizes it, sets its tone, and encodes it as PNG.
+The response reports the time of each stage and the SHA-256 digest of the PNG. The browser runs the same stages in WebAssembly and compares the digests.
+The server takes at most 1280 × 960 pixels and an output at most 640 pixels wide. Thus one request holds the event loop for less than a second.
+
+```fern
+<<Image pipeline>>=
+@derive(json.Json)
+struct ImageResult { width: i32, height: i32, png_bytes: i32, sha256: string, sample_ns: i64, resize_ns: i64, tone_ns: i64, encode_ns: i64 }
+
+pub function image_bench(state: State, req: HttpRequest): Result[HttpResponse, http.HttpError] {
+  let seed = common.integer(req, "seed", 1, 0, 1000000)?;
+  let width = common.integer(req, "width", 640, 64, 1280)?;
+  let height = common.integer(req, "height", 480, 64, 960)?;
+  let target = common.integer(req, "target", 320, 16, 640)?;
+  let filter = common.integer(req, "filter", 0, 0, 1)?;
+  let tone = common.integer(req, "tone", 0, 0, 1)?;
+  if (target > width) {
+    return Err(http.fail(400, "The output must not be wider than the image."));
+  }
+  admit(state)?;
+  let started = monotonic_ns();
+  let source = imaging.sample(seed, width, height);
+  let sampled = monotonic_ns();
+  let out_height = imaging.fit(width, height, target);
+  let small = imaging.scale(source, width, height, target, filter);
+  let resized = monotonic_ns();
+  let toned = imaging.tone(small, target, out_height, tone);
+  let colored = monotonic_ns();
+  let png = imaging.encode(toned, target, out_height);
+  let encoded = monotonic_ns();
+  if (png.len() == 0) {
+    return Err(http.fail(500, "The image pipeline rejected its input."));
+  }
+  return Ok(http.json_of(ImageResult {
+    width: target,
+    height: out_height,
+    png_bytes: png.len(),
+    sha256: hex.encode(crypto.sha256(png)),
+    sample_ns: sampled - started,
+    resize_ns: resized - sampled,
+    tone_ns: colored - resized,
+    encode_ns: encoded - colored,
   }).with_header("Cache-Control", "no-store"));
 }
 ```

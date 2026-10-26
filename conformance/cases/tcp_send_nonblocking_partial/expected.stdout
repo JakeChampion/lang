@@ -1,0 +1,9 @@
+non-blocking: 0 0
+stalled before the end: true failed 0
+watch: 0 0
+sent: 8388608 failed 0
+received: 8388608 crc32 agrees true
+close sender: 0 0
+blocking: 0
+end of stream: 0
+close: 0 0

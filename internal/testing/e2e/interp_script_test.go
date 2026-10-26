@@ -1616,7 +1616,7 @@ func TestInterpScriptMockPlatform(t *testing.T) {
 import "std/i32";
 import "std/mock_platform";
 function main(): i32 {
-    let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+    let m: mock_platform.MockPlatform = mock_platform.new();
     m.record("fetch", "GET /users/42");
     m.record("kv_set", "user:42=Alice");
     print(m.call_count().to_string());
@@ -1630,7 +1630,7 @@ function main(): i32 {
 			name: "has_call distinguishes present / absent",
 			source: `import "std/mock_platform";
 function main(): i32 {
-    let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+    let m: mock_platform.MockPlatform = mock_platform.new();
     m.record("fetch", "x");
     if (m.has_call("fetch")) { print("yes-fetch"); } else { print("no-fetch"); }
     if (m.has_call("write_file")) { print("yes-wf"); } else { print("no-wf"); }
@@ -1642,7 +1642,7 @@ function main(): i32 {
 			name: "find_call returns Some/None correctly",
 			source: `import "std/mock_platform";
 function main(): i32 {
-    let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+    let m: mock_platform.MockPlatform = mock_platform.new();
     m.record("fetch", "first");
     m.record("kv_set", "second");
     m.record("fetch", "third");
@@ -1663,7 +1663,7 @@ function main(): i32 {
 			name: "reset clears the log",
 			source: `import "std/mock_platform";
 function main(): i32 {
-    let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+    let m: mock_platform.MockPlatform = mock_platform.new();
     m.record("a", "1");
     m.record("b", "2");
     if (m.call_count() != 2) { return 1; }
@@ -1691,7 +1691,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+    let m: mock_platform.MockPlatform = mock_platform.new();
     let req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.stream_empty(), headers: headers.header_map_new(), trailers: headers.header_map_new() };
     let resp: HttpResponse = handle(req, m);
     print(resp.body_string());

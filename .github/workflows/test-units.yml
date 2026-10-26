@@ -11,8 +11,11 @@ name: Test units
 #   internal/testing/fernsmith — its own workflow (fuzz corpus + generator
 #                        machinery; ~60s).
 #
-# Matrix per host arch so host-dependent unit tests get exercised under both
-# ABIs.
+# The rest group runs on both host arches, so the host-dependent unit tests
+# (the arm64 execution tests, the native-link parity gate) run under both
+# ABIs. The heavy group, the printer corpus, is pure Go that reads nothing
+# from the host, so it runs on x86_64 only: its two aarch64 shards were 24
+# runner-minutes a run for a result the x86_64 shards already gave.
 #
 # THE RUNTIMES ARE INSTALLED HERE, not assumed absent. Every wasm test in
 # these packages opens with an `exec.LookPath("wasmtime")` and every arm64
@@ -52,15 +55,16 @@ jobs:
       # Real dimensions, not an include list: `exclude` does not reach
       # include-only combinations. The heavy group (the printer corpus) runs
       # two shards in separate processes because printer checks share AST
-      # globals; rest runs one. The Preflight tier calls this lane with
-      # `hosts: x86_64`, and the suite with both hosts, where the host exclude
-      # matches nothing.
+      # globals, on x86_64 only; rest runs one shard per host. The Preflight
+      # tier calls this lane with `hosts: x86_64`, and the suite with both
+      # hosts, where the host exclude matches nothing.
       matrix:
         host: [x86_64, aarch64]
         group: [heavy, rest]
         shard: [0, 1]
         exclude:
           - { group: rest, shard: 1 }
+          - { group: heavy, host: aarch64 }
           - host: ${{ inputs.hosts == 'x86_64' && 'aarch64' || 'no-such-host' }}
     name: test-units-${{ matrix.host }}-${{ matrix.group }}${{ matrix.group == 'heavy' && format('-shard{0}', matrix.shard) || '' }}
     runs-on: ${{ matrix.host == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
@@ -214,12 +218,9 @@ jobs:
           key: gobuild-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock') }}-${{ steps.day.outputs.stamp }}
 
   verify-heavy:
-    name: test-units-${{ matrix.host }}-heavy
+    name: test-units-x86_64-heavy
     if: ${{ !cancelled() }}
     needs: test
-    strategy:
-      matrix:
-        host: [x86_64, aarch64]
     runs-on: ubuntu-24.04
     steps:
       - name: Require every unit worker

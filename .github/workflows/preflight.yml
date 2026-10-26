@@ -63,15 +63,11 @@ jobs:
   test-e2e-wasm:
     name: Test e2e wasm
     uses: ./.github/workflows/test-e2e-wasm.yml
-    with:
-      hosts: x86_64
     secrets: inherit
 
   test-e2e-differential:
     name: Test e2e differential
     uses: ./.github/workflows/test-e2e-differential.yml
-    with:
-      hosts: x86_64
     secrets: inherit
 
   test-coreutils:

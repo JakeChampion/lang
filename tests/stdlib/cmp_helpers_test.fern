@@ -95,6 +95,41 @@ function test_string_debug_multibyte(): test.TestOutcome {
   return test.assert_eq(s.to_debug(), "\"a\\\"é\\nb\"");
 }
 
+// The contract of cmp_prefix: a below b gives a word no higher, and equal values give equal words.
+function prefix_ordered[T: cmp.Ord](xs: T[], offset: i32): boolean {
+  for a in xs {
+    for b in xs {
+      let c: i32 = a.cmp(b);
+      let wa: u64 = a.cmp_prefix(offset);
+      let wb: u64 = b.cmp_prefix(offset);
+      if (c < 0 && wa > wb || c == 0 && wa != wb) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+function test_integer_prefixes(): test.TestOutcome {
+  let i32s: i32[] = [-2147483647 - 1, -65536, -1, 0, 1, 255, 256, 2147483647];
+  let i64s: i64[] = [-9223372036854775807i64 - 1i64, -4294967296i64, -1i64, 0i64, 1i64, 9223372036854775807i64];
+  let u64s: u64[] = [0u64, 1u64, 9223372036854775807u64, 9223372036854775808u64, 18446744073709551615u64];
+  let ok: boolean = prefix_ordered(i32s, 0) && prefix_ordered(i64s, 0) && prefix_ordered(u64s, 0) && prefix_ordered([false, true], 0);
+  return test.assert_true(ok && 5.cmp_shared(6) == 0);
+}
+
+function test_string_prefixes(): test.TestOutcome {
+  let xs: string[] = ["", "a", "a\x00", "ab", "abcdefgh", "abcdefghi", "abcdefgz", "b", "é", "https://a/1", "https://a/10", "https://a/2"];
+  if (!prefix_ordered(xs, 0)) {
+    return test.fail("offset 0");
+  }
+  let shared: string[] = ["https://a/1", "https://a/10", "https://a/2", "https://a/"];
+  if (!prefix_ordered(shared, 10)) {
+    return test.fail("offset 10");
+  }
+  return test.assert_true("https://a/1".cmp_shared("https://a/2") == 10 && "ab".cmp_shared("abc") == 2 && "x".cmp_shared("y") == 0);
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("core/cmp helpers");
   r = r.it("min", test_min);
@@ -116,5 +151,7 @@ function main(): i32 {
   r = r.it("eq_arrays false", test_eq_arrays_false);
   r = r.it("string sort", test_string_sort);
   r = r.it("string debug multibyte", test_string_debug_multibyte);
+  r = r.it("integer prefixes", test_integer_prefixes);
+  r = r.it("string prefixes", test_string_prefixes);
   return r.finish();
 }

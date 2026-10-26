@@ -12,7 +12,7 @@ import (
 
 const simPlatformSuite = "tests/stdlib/sim_platform_test.fern"
 
-var simPlatformWant = []string{"# Suite: std/sim_platform", "# pass 13", "# fail 0", "1..13"}
+var simPlatformWant = []string{"# Suite: std/sim_platform", "# pass 14", "# fail 0", "1..14"}
 
 var hostProxyEnv = []string{"http_proxy=http://192.0.2.1:9", "https_proxy=http://192.0.2.1:9", "HTTPS_PROXY=http://192.0.2.1:9"}
 

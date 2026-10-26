@@ -2,9 +2,13 @@ import "std/test";
 import "std/http";
 import "std/fetch";
 import "std/mock_platform";
-import "std/i64";
 import "std/platform";
 import "std/time";
+import "std/net";
+import "std/dns";
+import "std/tls";
+import "std/http/trace";
+import "std/option";
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   let region: string = "nowhere";
@@ -14,64 +18,114 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     },
     None => {}
   }
-  let upstream: string = "unreachable";
-  match (plat.http(fetch.get("http://10.0.0.1:8080/health"))) {
-    Ok(resp) => {
-      upstream = resp.status.to_string() + " " + resp.body_string();
-    },
-    Err(e) => {
-      upstream = e.message();
-    }
-  }
+  let upstream: string = __fetched(plat, "http://10.0.0.1:8080/health");
   return http.ok(region + " " + plat.now().unix_millis().to_string() + " " + plat.random_i32().to_string() + " " + upstream);
 }
 
+function __fetched(plat: platform.Platform, url: string): string {
+  match (plat.http(fetch.get(url))) {
+    Ok(resp) => {
+      return resp.status.to_string() + " " + resp.body_string();
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
 function test_defaults_without_canned_answers(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  let resp: HttpResponse = handle(http.request("GET", "/"), m);
+  let resp: HttpResponse = handle(http.request("GET", "/"), mock_platform.new());
   return test.assert_body(resp, "nowhere 0 0 connect: Connection refused");
 }
 
 function test_canned_answers_reach_the_handler(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  m.env_set("REGION", "eu-west");
-  m.now_set(time.timestamp_from_unix_millis(1700000000123));
-  m.random_set(42);
-  m.http_set("GET", "http://10.0.0.1:8080/health", 204, "fine");
+  let m: mock_platform.MockPlatform = mock_platform.new().with_env("REGION", "eu-west").with_now(time.timestamp_from_unix_millis(1700000000123)).with_random(42).with_http("GET", "http://10.0.0.1:8080/health", Ok(http.text(204, "fine")));
   let resp: HttpResponse = handle(http.request("GET", "/"), m);
   return test.assert_body(resp, "eu-west 1700000000123 42 204 fine");
 }
 
 function test_a_request_of_another_url_still_fails(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  m.http_set("GET", "http://10.0.0.1:8080/other", 200, "");
+  let m: mock_platform.MockPlatform = mock_platform.new().with_http("GET", "http://10.0.0.1:8080/other", Ok(http.ok("")));
   let resp: HttpResponse = handle(http.request("GET", "/"), m);
   return test.assert_body(resp, "nowhere 0 0 connect: Connection refused");
 }
 
-function test_the_last_answer_wins(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  m.env_set("REGION", "one");
-  m.env_set("REGION", "two");
-  match (m.env("REGION")) {
-    Some(r) => {
-      if (r != "two") {
-        return test.fail("env: " + r);
-      }
+function test_a_full_response_arrives_whole(): test.TestOutcome {
+  let canned: HttpResponse = http.text(201, "{\"id\":7}").with_header("Content-Type", "application/json").with_header("X-Id", "7");
+  let m: mock_platform.MockPlatform = mock_platform.new().with_http("POST", "http://api.test/users", Ok(canned));
+  match (m.http(fetch.request("POST", "http://api.test/users").with_text("{}"))) {
+    Ok(resp) => {
+      let ct: string = resp.headers.get("content-type").unwrap_or("-");
+      let id: string = resp.headers.get("x-id").unwrap_or("-");
+      return test.assert_eq(resp.status.to_string() + " " + ct + " " + id + " " + resp.body_string(), "201 application/json 7 {\"id\":7}");
     },
-    None => {
-      return test.fail("env: None");
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function __failure(e: fetch.FetchError): string {
+  let m: mock_platform.MockPlatform = mock_platform.new().with_http("GET", "https://up.test/", Err(e));
+  match (m.http(fetch.get("https://up.test/"))) {
+    Ok(resp) => {
+      return "status " + resp.status.to_string();
+    },
+    Err(got) => {
+      return got.message();
+    }
+  }
+  return "";
+}
+
+function test_every_fetch_error_can_be_canned(): test.TestOutcome {
+  let errors: fetch.FetchError[] = [fetch.InvalidUrl("x"), fetch.InvalidRequest("y"), fetch.Dns(dns.NoSuchName), fetch.Connect(net.TimedOut), fetch.Blocked("10.0.0.1"), fetch.Tls(tls.CertificateMissing), fetch.Timeout(fetch.Connecting), fetch.Timeout(fetch.Inactivity), fetch.Timeout(fetch.Total), fetch.Protocol("bad status line"), fetch.Io(net.ConnectionReset), fetch.Redirect("too many"), fetch.BodyLimit, fetch.Decode("gzip"), fetch.Cancelled];
+  for e in errors {
+    let got: string = __failure(e);
+    if (got != e.message()) {
+      return test.fail("canned " + e.message() + ", got " + got);
     }
   }
   return test.pass();
 }
 
-function test_canned_rows_are_not_calls_and_survive_reset(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  m.env_set("REGION", "eu-west");
-  m.instant_set(Instant { sec: 0, nsec: 5 });
-  let plat: mock_platform.MockPlatform = m;
-  plat.env("REGION");
+function test_a_timeout_and_a_tls_failure_are_told_apart(): test.TestOutcome {
+  let timeout: string = __failure(fetch.Timeout(fetch.Total));
+  let tls_failure: string = __failure(fetch.Tls(tls.CertificateMissing));
+  if (timeout == tls_failure) {
+    return test.fail("both read " + timeout);
+  }
+  return test.pass();
+}
+
+function test_the_last_answer_wins(): test.TestOutcome {
+  let m: mock_platform.MockPlatform = mock_platform.new().with_env("REGION", "one").with_env("REGION", "two");
+  return test.assert_eq(m.env("REGION").unwrap_or("None"), "two");
+}
+
+function test_a_builder_leaves_its_receiver_unchanged(): test.TestOutcome {
+  let base: mock_platform.MockPlatform = mock_platform.new().with_env("REGION", "one");
+  let other: mock_platform.MockPlatform = base.with_env("REGION", "two").with_random(9);
+  let got: string = base.env("REGION").unwrap_or("None") + " " + base.random_i32().to_string() + " | " + other.env("REGION").unwrap_or("None") + " " + other.random_i32().to_string();
+  return test.assert_eq(got, "one 0 | two 9");
+}
+
+function test_derived_mocks_share_one_call_log(): test.TestOutcome {
+  let base: mock_platform.MockPlatform = mock_platform.new();
+  let derived: mock_platform.MockPlatform = base.with_env("REGION", "eu-west");
+  derived.env("REGION");
+  base.log("from the base");
+  if (base.call_count() != 2 || derived.call_count() != 2) {
+    return test.fail("calls: " + base.call_count().to_string() + " and " + derived.call_count().to_string());
+  }
+  return test.pass();
+}
+
+function test_configuration_is_not_a_call_and_survives_reset(): test.TestOutcome {
+  let m: mock_platform.MockPlatform = mock_platform.new().with_env("REGION", "eu-west").with_instant(Instant { sec: 0, nsec: 5 });
+  m.env("REGION");
   if (m.call_count() != 1) {
     return test.fail("calls: " + m.call_count().to_string());
   }
@@ -82,90 +136,72 @@ function test_canned_rows_are_not_calls_and_survive_reset(): test.TestOutcome {
   if (m.call_count() != 0) {
     return test.fail("calls after reset: " + m.call_count().to_string());
   }
-  if (!plat.instant().eq(Instant { sec: 0, nsec: 5 })) {
+  if (!m.instant().eq(Instant { sec: 0, nsec: 5 })) {
     return test.fail("the canned clock did not survive reset");
   }
   return test.pass();
 }
 
 function test_a_value_with_tabs_and_newlines_round_trips(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  m.env_set("MOTD", "a\tb\nc\\d");
-  match (m.env("MOTD")) {
-    Some(v) => {
-      if (v != "a\tb\nc\\d") {
-        return test.fail("env: " + v);
-      }
-    },
-    None => {
-      return test.fail("env: None");
-    }
+  let m: mock_platform.MockPlatform = mock_platform.new().with_env("MOTD", "a\tb\nc\\d");
+  if (m.env("MOTD").unwrap_or("None") != "a\tb\nc\\d") {
+    return test.fail("env: " + m.env("MOTD").unwrap_or("None"));
   }
-  if (m.call_count() != 1) {
-    return test.fail("calls: " + m.call_count().to_string());
-  }
-  return test.pass();
+  return test.assert_eq(m.call_count(), 1);
 }
 
 function test_an_empty_value_round_trips(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  m.env_set("EMPTY", "");
+  let m: mock_platform.MockPlatform = mock_platform.new().with_env("EMPTY", "");
   match (m.env("EMPTY")) {
     Some(v) => {
-      if (v != "") {
-        return test.fail("env: " + v);
-      }
+      return test.assert_eq(v, "");
     },
     None => {
       return test.fail("env: None");
     }
   }
-  return test.pass();
+  return test.fail("unreachable");
+}
+
+function __log_two(plat: platform.Platform): void {
+  plat.log("first line\nsecond line\twith a tab\n");
+  plat.log("");
+}
+
+function test_a_log_message_is_recorded_verbatim(): test.TestOutcome {
+  let m: mock_platform.MockPlatform = mock_platform.new();
+  __log_two(m);
+  let calls: mock_platform.MockCall[] = m.calls();
+  if (calls.len() != 2) {
+    return test.fail("calls: " + calls.len().to_string());
+  }
+  if (calls[0].name != "log" || calls[0].args != "first line\nsecond line\twith a tab\n") {
+    return test.fail("call: " + calls[0].name + " " + calls[0].args);
+  }
+  return test.assert_eq(calls[1].name + "=" + calls[1].args, "log=");
+}
+
+function test_a_recorded_argument_with_a_tab_is_not_split(): test.TestOutcome {
+  let m: mock_platform.MockPlatform = mock_platform.new();
+  m.record("kv\tset", "k\tv");
+  let calls: mock_platform.MockCall[] = m.calls();
+  if (calls.len() != 1) {
+    return test.fail("calls: " + calls.len().to_string());
+  }
+  return test.assert_eq(calls[0].name + "|" + calls[0].args, "kv\tset|k\tv");
 }
 
 function test_config_and_secret_answer_what_was_canned(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  let plat: mock_platform.MockPlatform = m;
-  match (plat.config("REGION")) {
-    Some(v) => {
-      return test.fail("config before canning: " + v);
-    },
-    None => {}
+  let bare: mock_platform.MockPlatform = mock_platform.new();
+  if (bare.config("REGION").unwrap_or("None") != "None" || bare.secret("TOKEN").unwrap_or("None") != "None") {
+    return test.fail("an answer before canning");
   }
-  match (plat.secret("TOKEN")) {
-    Some(v) => {
-      return test.fail("secret before canning: " + v);
-    },
-    None => {}
-  }
-  m.config_set("REGION", "eu-west");
-  m.secret_set("TOKEN", "s3cr3t");
-  match (plat.config("REGION")) {
-    Some(v) => {
-      if (v != "eu-west") {
-        return test.fail("config: " + v);
-      }
-    },
-    None => {
-      return test.fail("config: None");
-    }
-  }
-  match (plat.secret("TOKEN")) {
-    Some(v) => {
-      if (v != "s3cr3t") {
-        return test.fail("secret: " + v);
-      }
-    },
-    None => {
-      return test.fail("secret: None");
-    }
-  }
-  return test.pass();
+  let m: mock_platform.MockPlatform = bare.with_config("REGION", "eu-west").with_secret("TOKEN", "s3cr3t");
+  return test.assert_eq(m.config("REGION").unwrap_or("None") + " " + m.secret("TOKEN").unwrap_or("None"), "eu-west s3cr3t");
 }
 
 function test_a_secret_is_logged_by_name_only(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  m.secret_set("TOKEN", "s3cr3t");
+  let m: mock_platform.MockPlatform = mock_platform.new().with_secret("TOKEN", "s3cr3t");
   m.secret("TOKEN");
   let calls: mock_platform.MockCall[] = m.calls();
   if (calls.len() != 1) {
@@ -174,12 +210,57 @@ function test_a_secret_is_logged_by_name_only(): test.TestOutcome {
   if (calls[0].name != "secret" || calls[0].args != "TOKEN") {
     return test.fail("call: " + calls[0].name + " " + calls[0].args);
   }
-  for c in calls {
-    if (c.args.contains("s3cr3t")) {
-      return test.fail("the secret's value is in the call log");
+  return test.pass();
+}
+
+function test_the_peer_answers_what_was_canned(): test.TestOutcome {
+  let none: string = "none";
+  match (mock_platform.new().peer()) {
+    Some(a) => {
+      none = a.to_string();
+    },
+    None => {}
+  }
+  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse("192.0.2.7:5000"));
+  match (m.peer()) {
+    Some(a) => {
+      return test.assert_eq(none + " " + a.to_string(), "none 192.0.2.7:5000");
+    },
+    None => {
+      return test.fail("peer: None");
     }
   }
-  return test.pass();
+  return test.fail("unreachable");
+}
+
+function test_files_and_directories_answer_stat(): test.TestOutcome {
+  let m: mock_platform.MockPlatform = mock_platform.new().with_file("www/a.txt", "hello", time.timestamp_from_unix(7)).with_dir("www");
+  let got: string = "";
+  match (m.stat("www/a.txt")) {
+    Ok(st) => {
+      got = st.is_file.to_string() + " " + st.size.to_string() + " " + st.mtime.to_string();
+    },
+    Err(e) => {
+      return test.fail("file: " + e.message());
+    }
+  }
+  match (m.stat("www")) {
+    Ok(st) => {
+      got = got + " | " + st.is_dir.to_string();
+    },
+    Err(e) => {
+      return test.fail("dir: " + e.message());
+    }
+  }
+  match (m.stat("www/b.txt")) {
+    Ok(st) => {
+      return test.fail("an uncanned path has a stat");
+    },
+    Err(e) => {
+      got = got + " | missing";
+    }
+  }
+  return test.assert_eq(got, "true 5 7 | true | missing");
 }
 
 function __bound(plat: platform.Platform): string {
@@ -198,16 +279,6 @@ function __bound(plat: platform.Platform): string {
   return "";
 }
 
-function test_the_trace_answers_what_was_canned(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  let before: boolean = __traced(m);
-  m.trace_set("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
-  if (before || !__traced(m)) {
-    return test.fail("trace before and after trace_set");
-  }
-  return test.pass();
-}
-
 function __traced(plat: platform.Platform): boolean {
   match (plat.trace()) {
     Some(c) => {
@@ -220,14 +291,22 @@ function __traced(plat: platform.Platform): boolean {
   return false;
 }
 
+function test_the_trace_answers_what_was_canned(): test.TestOutcome {
+  let bare: mock_platform.MockPlatform = mock_platform.new();
+  let span: trace.Context = trace.Context { trace_id: "4bf92f3577b34da6a3ce929d0e0e4736", span_id: "00f067aa0ba902b7", flags: 1, state: "" };
+  if (__traced(bare) || !__traced(bare.with_trace(span))) {
+    return test.fail("trace before and after with_trace");
+  }
+  return test.pass();
+}
+
 function test_the_deadline_and_cancellation_answer_what_was_canned(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  let before: string = __bound(m);
-  m.deadline_set(Instant { sec: 5, nsec: 0 });
-  m.cancel();
-  let after: string = __bound(m);
-  if (m.call_count() != 4) {
-    return test.fail("calls: " + m.call_count().to_string());
+  let bare: mock_platform.MockPlatform = mock_platform.new();
+  let before: string = __bound(bare);
+  let bounded: mock_platform.MockPlatform = bare.with_deadline(Instant { sec: 5, nsec: 0 }).with_cancelled(true);
+  let after: string = __bound(bounded);
+  if (bare.call_count() != 4) {
+    return test.fail("calls: " + bare.call_count().to_string());
   }
   return test.assert_eq(before + "|" + after, "live unbounded|cancelled due 5s");
 }
@@ -237,12 +316,21 @@ function main(): i32 {
   t = t.it("without canned answers the fixed values apply", test_defaults_without_canned_answers);
   t = t.it("canned answers reach the handler", test_canned_answers_reach_the_handler);
   t = t.it("a request of another URL still fails", test_a_request_of_another_url_still_fails);
+  t = t.it("a full response arrives whole", test_a_full_response_arrives_whole);
+  t = t.it("every fetch error can be canned", test_every_fetch_error_can_be_canned);
+  t = t.it("a timeout and a TLS failure are told apart", test_a_timeout_and_a_tls_failure_are_told_apart);
   t = t.it("the last answer canned wins", test_the_last_answer_wins);
-  t = t.it("canned rows are not calls and survive reset", test_canned_rows_are_not_calls_and_survive_reset);
+  t = t.it("a builder leaves its receiver unchanged", test_a_builder_leaves_its_receiver_unchanged);
+  t = t.it("derived mocks share one call log", test_derived_mocks_share_one_call_log);
+  t = t.it("configuration is not a call and survives reset", test_configuration_is_not_a_call_and_survives_reset);
   t = t.it("a value with tabs and newlines round-trips", test_a_value_with_tabs_and_newlines_round_trips);
   t = t.it("an empty value round-trips", test_an_empty_value_round_trips);
+  t = t.it("a log message is recorded verbatim", test_a_log_message_is_recorded_verbatim);
+  t = t.it("a recorded argument with a tab is not split", test_a_recorded_argument_with_a_tab_is_not_split);
   t = t.it("config and secret answer what was canned", test_config_and_secret_answer_what_was_canned);
   t = t.it("a secret is logged by name only", test_a_secret_is_logged_by_name_only);
+  t = t.it("the peer answers what was canned", test_the_peer_answers_what_was_canned);
+  t = t.it("files and directories answer stat", test_files_and_directories_answer_stat);
   t = t.it("the deadline and cancellation answer what was canned", test_the_deadline_and_cancellation_answer_what_was_canned);
   t = t.it("the trace answers what was canned", test_the_trace_answers_what_was_canned);
   return t.finish();

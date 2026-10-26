@@ -32,6 +32,14 @@ function builtin_res(r: Result[i32, i32]): i32 {
     match (r) { Ok(v) => { return v; }, Err(e) => { return e * 1000; } }
 }
 
+function builtin_arr(o: Option[i32[]]): i32 {
+    match (o) { Some(v) => { return v.len(); }, None => { return 9; } }
+}
+
+function builtin_text(r: Result[i32[], string]): i32 {
+    match (r) { Ok(v) => { return v.len(); }, Err(e) => { return e.len(); } }
+}
+
 function main(): i32 {
     let total: i32 = 0;
     total = total + opt_of(Opt.Some(1));
@@ -40,5 +48,7 @@ function main(): i32 {
     total = total + builtin_opt(Option.Some(3));
     total = total + builtin_opt(Option.None);
     total = total + builtin_res(Result.Ok(4));
+    total = total + builtin_arr(Option.Some([1, 2]));
+    total = total + builtin_text(Result.Err("abc"));
     return total;
 }
