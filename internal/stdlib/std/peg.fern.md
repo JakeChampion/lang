@@ -36,11 +36,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<10 function __peg_check_refs(p: Pattern, rules: Map[string, Pattern]): Option[string]>>
 
-<<11 pub function new(rules: Map[string, Pattern], start: string): Result[Grammar, GrammarError]>>
+<<11 pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, GrammarError]>>
 
 <<12 function __peg_result(r: i32, st: PegState, input: string): Result[PegMatch, PegError]>>
 
-<<13 pub function parse(g: Grammar, input: string): Result[PegMatch, PegError]>>
+<<13 pub function peg_match(g: Grammar, input: string): Result[PegMatch, PegError]>>
 ```
 
 ### `module introduction`
@@ -390,11 +390,11 @@ function __peg_check_all(ps: Pattern[], rules: Map[string, Pattern]): Option[str
 }
 ```
 
-### `11 pub function new(rules: Map[string, Pattern], start: string): Result[Grammar, GrammarError]`
+### `11 pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, GrammarError]`
 
 ```fern
-<<11 pub function new(rules: Map[string, Pattern], start: string): Result[Grammar, GrammarError]>>=
-pub function new(rules: Map[string, Pattern], start: string): Result[Grammar, GrammarError] {
+<<11 pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, GrammarError]>>=
+pub function peg_grammar(rules: Map[string, Pattern], start: string): Result[Grammar, GrammarError] {
   if (!rules.contains(start)) {
     return Err(GrammarError { rule: start });
   }
@@ -440,11 +440,11 @@ function __peg_result(r: i32, st: PegState, input: string): Result[PegMatch, Peg
 }
 ```
 
-### `13 pub function parse(g: Grammar, input: string): Result[PegMatch, PegError]`
+### `13 pub function peg_match(g: Grammar, input: string): Result[PegMatch, PegError]`
 
 ```fern
-<<13 pub function parse(g: Grammar, input: string): Result[PegMatch, PegError]>>=
-pub function parse(g: Grammar, input: string): Result[PegMatch, PegError] {
+<<13 pub function peg_match(g: Grammar, input: string): Result[PegMatch, PegError]>>=
+pub function peg_match(g: Grammar, input: string): Result[PegMatch, PegError] {
   let tn: string[] = [];
   let ts: i32[] = [];
   let te: i32[] = [];
@@ -453,34 +453,34 @@ pub function parse(g: Grammar, input: string): Result[PegMatch, PegError] {
   return __peg_result(r, s2, input);
 }
 
-pub function parse_pattern(p: Pattern, input: string): Result[PegMatch, PegError] {
+pub function peg_match_pattern(p: Pattern, input: string): Result[PegMatch, PegError] {
   let rules: Map[string, Pattern] = map_new(2);
   rules = rules.insert("__start", p);
   let g: Grammar = Grammar { rules: rules, start: "__start" };
-  return parse(g, input);
+  return peg_match(g, input);
 }
 
-pub function digit(): Pattern {
+pub function peg_digit(): Pattern {
   return PRange(48, 57);
 }
 
-pub function lower(): Pattern {
+pub function peg_lower(): Pattern {
   return PRange(97, 122);
 }
 
-pub function upper(): Pattern {
+pub function peg_upper(): Pattern {
   return PRange(65, 90);
 }
 
-pub function alpha(): Pattern {
+pub function peg_alpha(): Pattern {
   return PChoice([PRange(65, 90), PRange(97, 122)]);
 }
 
-pub function alnum(): Pattern {
+pub function peg_alnum(): Pattern {
   return PChoice([PRange(48, 57), PRange(65, 90), PRange(97, 122)]);
 }
 
-pub function space(): Pattern {
+pub function peg_space(): Pattern {
   return PSet(" \t\r\n");
 }
 ```

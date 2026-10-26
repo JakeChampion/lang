@@ -81,7 +81,7 @@ Regex patterns are checked by `regex.compile`, which returns
 receiver. Text outputs return `Result` for invalid UTF-8; capture accessors
 also use `Option` to distinguish absence from a matched empty string.
 `peg.new` validates grammar references with `GrammarError`; `peg.parse` and
-`peg.parse_pattern` report input failures with `PegError`.
+`peg.parse_pattern` report input failures with `ParseError`.
 
 
 ## Text and bytes
