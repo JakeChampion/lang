@@ -109,3 +109,39 @@ QEMU_AARCH64=/path/to/qemu-aarch64 FERN="$PWD/bin/fern" ./fern-image/scripts/tes
 Use the pinned Wasmtime toolchain. ARM64 records use QEMU and do not qualify hardware performance.
 Native and ARM64 builds use heap sanitization. Wasm provides the leak census only.
 The campaign is finite. It does not establish broad compatibility, unbounded fuzz coverage, security, or performance parity.
+
+## Recorded qualification
+
+The records use source `eb2ab979dd9cbbe14a9905bf014ebdfcab5c6bce` after integration of main `57dfc7233201` and checker fix #13443.
+The clean compiler reports `eb2ab979dd9c`.
+Its SHA-256 is `0639c3d5362211d38bd16f386037770fd91a6f71a64dd2669ea963c5b3e4b8c5`.
+
+Each target passes 1641 raw streams across 206 fresh processes.
+Each target accepts 829 streams and rejects 812 streams.
+All 618 processes report balanced allocations and zero final live bytes.
+All three targets produce identical sample records.
+The records hash 163 stdlib sources and all compiler Fern sources.
+
+The raw records reside in `benchmarks/results/deflate-reader-native.json`, `deflate-reader-wasm.json`, and `deflate-reader-arm64.json`.
+The PNG regressions use separate `png-inflate` records and preserve earlier observations.
+Each PNG target passes 964 cases across 61 fresh processes with zero final live bytes.
+These regressions still use the eager PNG provider.
+
+The native and Wasm image scripts pass all 126 image and shared-reader TAP cases.
+The native script checks 29 executables, compiler refusal probes, and formatter behavior.
+The Go harness passes four reader/eager target subcases and both complexity gates without skips.
+The gates use the current upstream baselines without changes from this PR.
+The direct Go checker accepts the reader without an overlay.
+The primary interpreter also returns the expected literal-only output.
+
+ARM64 records use QEMU 10.0.13 from the Debian package `qemu-user` version `1:10.0.13+ds-0+deb13u1`.
+The package SHA-256 is `ca6ede739327a20ae5a3498230c8a3a9a072c586e131bc6bcc1201eb1725e336`.
+The runner SHA-256 is `73cc2584f119f9e74c85c0a8549dbb6fd104ae3897a06a7500797f9e5b4d0943`.
+Signed Debian package metadata supplies the expected package checksum.
+This runner also passes 200 repeated executions of a preserved failure fixture.
+
+Two earlier campaigns with QEMU 7.2 stopped with intermittent `SIGSEGV` at different batches.
+The preserved batches pass individually, and repeated runs also reproduce the failure with the earlier compiler output.
+These failed campaigns are not successful validation.
+The cause remains unconfirmed. The completed records identify the newer runner explicitly.
+These local results do not establish full GitHub CI success.
