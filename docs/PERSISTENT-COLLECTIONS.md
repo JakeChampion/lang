@@ -31,7 +31,7 @@ one language where the pure API *is* the fast API.
 
 | module | structure | why this one |
 |---|---|---|
-| `std/ordmap` / `std/ordset` | weight-balanced tree, delta 3 / ratio 2 (Adams; Hirai & Yamamoto 2011), size in every node | the shape behind Haskell `Data.Map`: join-based `union` / `intersection` / `difference` in O(m log(n/m + 1)) (Blelloch et al., "Just Join"), rank access from the cached sizes, and every rebalance case is a same-size rebuild the reuse pass pairs |
+| `std/ordmap` / `std/ordset` | B+ tree, 64 entries a leaf and 64 children a branch, child sizes in every branch, an 8-byte key prefix beside each key after the bytes the node's keys share | the shape behind bbtree and Rust `im`: a search touches a few wide nodes, `__count_below_u64` compares the prefixes with SIMD, `cmp` runs only on a tie, iteration walks the leaves without a copy, and rank access reads the child sizes. Splits and joins make `split_lt` / `split_gt` O(log n) |
 | `std/pmap` / `std/pset` | 32-way HAMT (Bagwell 2001): `Leaf(hash, k, v)`, `Branch(bitmap, size, children)`, `Coll(hash, leaves)` | the shape behind Clojure / Scala / MoonBit; full hash cached in every leaf (Scala's `originalHashes` lesson — never re-hash on split or collision), murmur3 finaliser over the user hash (Clojure's 1.5 → 1.6 lesson), canonical collapse on remove (the `// TODO: collapse` Clojure never did), size cached per branch so `len()` is O(1) |
 | `std/pvec` | 32-way bit-partitioned trie + tail (Clojure / Lean `PersistentArray`) | amortised O(1) append / pop through the tail, O(log32 n) `get` / `with`; the small case is tail-only, so a vector under 32 elements is one array |
 
@@ -64,7 +64,7 @@ described at the end of this section.
 |---|---|---|
 | `core/map` (mutable-looking, open addressing) | 0.063 s | 25.2 MB |
 | `std/pmap` | 0.34 s | 11.9 MB |
-| `std/ordmap` | 0.29 s | 15.4 MB |
+| `std/ordmap` | 0.093 s | 7.6 MB |
 
 **Sparse sharing** — the same 200,000 inserts, keeping a snapshot every
 1,000th version alive (200 snapshots):
@@ -72,7 +72,7 @@ described at the end of this section.
 | | time | fresh bytes |
 |---|---|---|
 | `std/pmap` | 0.40 s | 73.8 MB |
-| `std/ordmap` | 0.34 s | 86.4 MB |
+| `std/ordmap` | 0.33 s | 310 MB |
 
 **Dense sharing** — a 200,000-entry value with a snapshot kept after EVERY one
 of 2,000 further updates (an undo history, a versioned environment):
@@ -83,7 +83,17 @@ of 2,000 further updates (an undo history, a versioned environment):
 | `std/pvec` with `.with` | 0.013 s | 4.2 MB |
 | `core/map` with `.insert` | killed (OOM) after 52 s | — |
 | `std/pmap` with `.insert` | 0.27 s | 14.8 MB |
-| `std/ordmap` with `.insert` | 0.26 s | 16.9 MB |
+| `std/ordmap` with `.insert` | 0.038 s | 4.4 MB |
+
+The `std/ordmap` rows were measured again on 2026-10-25, when the map became a B+ tree. In the same run, the weight-balanced tree that it replaced gave these results:
+
+| | time | fresh bytes |
+|---|---|---|
+| unique path | 0.145 s | 14.4 MB |
+| sparse sharing | 0.30 s | 121 MB |
+| dense sharing | 0.098 s | 2.4 MB |
+
+An update of a shared map copies each wide node on its path. Thus the B+ tree uses more memory than the binary tree when many versions stay alive.
 
 **Random writes, unique** — 200,000 `.with` over 200,000 elements:
 

@@ -1069,6 +1069,12 @@ function simd_opcode(op: string): i32 {
   if (op == "i64x2.bitmask") {
     return 196;
   }
+  if (op == "i64x2.splat") {
+    return 18;
+  }
+  if (op == "i64x2.lt_s") {
+    return 216;
+  }
   if (op == "f64x2.extract_lane") {
     return 33;
   }
@@ -1280,7 +1286,7 @@ function simd_arity(op: string): i32 {
 function simd_binary_verb(op: string): boolean {
   return str_ends_with(op, ".add") || str_ends_with(op, ".sub") || str_ends_with(op, ".mul") || str_ends_with(op, ".div")
     || str_ends_with(op, ".min") || str_ends_with(op, ".max") || str_ends_with(op, ".pmin") || str_ends_with(op, ".pmax")
-    || str_ends_with(op, ".eq") || str_ends_with(op, ".ne") || str_ends_with(op, ".lt") || str_ends_with(op, ".gt")
+    || str_ends_with(op, ".eq") || str_ends_with(op, ".ne") || str_ends_with(op, ".lt") || str_ends_with(op, ".gt") || str_ends_with(op, ".lt_s")
     || str_ends_with(op, ".le") || str_ends_with(op, ".ge")
     || str_ends_with(op, ".and") || str_ends_with(op, ".andnot") || str_ends_with(op, ".or") || str_ends_with(op, ".xor");
 }

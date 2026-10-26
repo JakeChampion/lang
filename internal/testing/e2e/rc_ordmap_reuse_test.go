@@ -54,8 +54,9 @@ func checkOrdmapReuse(t *testing.T, target string, run censusRun) {
 	if lo, hi := census(2, false), census(8, false); lo != hi {
 		t.Errorf("%s unique: %d allocations at 2 rounds and %d at 8, want the same: a re-insert allocated", target, lo, hi)
 	}
-	if lo, hi := census(2, true), census(8, true); hi-lo < 6*500 {
-		t.Errorf("%s shared: %d allocations at 2 rounds and %d at 8, want at least %d more: a kept map must be copied", target, lo, hi, 6*500)
+	// Each round rewrites every leaf, and 500 entries need at least 500/64 leaves.
+	if lo, hi := census(2, true), census(8, true); hi-lo < 6*(500/64) {
+		t.Errorf("%s shared: %d allocations at 2 rounds and %d at 8, want at least %d more: a kept map must be copied", target, lo, hi, 6*(500/64))
 	}
 }
 

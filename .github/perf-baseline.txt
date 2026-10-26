@@ -143,8 +143,8 @@ x86_64/map_probe_chain.text	5596
 x86_64/map_probe_chain.ir	342935024
 x86_64/map_string.text	6591
 x86_64/map_string.ir	59723383	2
-x86_64/ordmap_insert.text	2815
-x86_64/ordmap_insert.ir	103433462
+x86_64/ordmap_insert.text	5507
+x86_64/ordmap_insert.ir	83184689
 x86_64/pmap_insert.text	2680
 x86_64/pmap_insert.ir	53347199
 x86_64/pvec_with.text	2850
@@ -312,6 +312,13 @@ x86_64/utf8_ingest_validated.ir	5297772
 # perf-bench run; the aarch64 rows (ordmap_insert.ir -2.48%, pmap_insert.ir
 # -2.81%, pvec_with.text -3.26%, pvec_with.ir -3.80%) are the perf lane's.
 #
+# Re-pinned 2026-10-25 (#13402) on ordmap_insert: std/ordmap is a B+ tree that
+# searches its nodes with __count_below_u64. ordmap_insert.ir falls 19.58% on
+# x86_64 and 13.52% on aarch64, and the .text rows grow with the larger module
+# (x86_64 +95.63%, aarch64 +84.30%). The x86_64 figures and the aarch64 .text
+# row are the dev container's perf-bench run and arm64 emit; aarch64
+# ordmap_insert.ir is the perf lane's.
+#
 # Re-pinned 2026-10-22 (#12926) on http_hello.text (x86_64 +0.90%, aarch64
 # +0.93%, inside the tolerance but moved on purpose): the scalar concat's
 # runtime body grows a sole receiver's block in place and doubles on a sole
@@ -419,8 +426,8 @@ aarch64/map_probe_chain.text	5932
 aarch64/map_probe_chain.ir	340503732
 aarch64/map_string.text	7013
 aarch64/map_string.ir	60356414	2
-aarch64/ordmap_insert.text	3184
-aarch64/ordmap_insert.ir	114034987
+aarch64/ordmap_insert.text	5868
+aarch64/ordmap_insert.ir	98616062
 aarch64/pmap_insert.text	2936
 aarch64/pmap_insert.ir	64018618
 aarch64/pvec_with.text	3086

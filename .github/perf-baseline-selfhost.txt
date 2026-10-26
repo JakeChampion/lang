@@ -157,6 +157,10 @@
 # produced trailers, std/fetch over HTTP/2, and the shared splices the inliner
 # no longer holds to the caller's budget, as perf-baseline.txt's note says.
 # Only these three rows; the others' drift against this file is main's.
+#
+# Re-pinned 2026-10-25 (#13402) on ordmap_insert.emit: std/ordmap is a B+ tree,
+# a larger module (x86-64 5507, arm64 5868, wasm 6960), measured by the dev
+# container's perf-bench-selfhost run.
 
 selfhost/arm64-linux/array_append.emit	1240
 selfhost/arm64-linux/array_index.emit	1237
@@ -175,7 +179,7 @@ selfhost/arm64-linux/int_loop.emit	246
 selfhost/arm64-linux/map_int.emit	5907
 selfhost/arm64-linux/map_probe_chain.emit	5917
 selfhost/arm64-linux/map_string.emit	7016
-selfhost/arm64-linux/ordmap_insert.emit	3180
+selfhost/arm64-linux/ordmap_insert.emit	5868
 selfhost/arm64-linux/pmap_insert.emit	2949
 selfhost/arm64-linux/pvec_with.emit	3092
 selfhost/arm64-linux/record_update.emit	1493
@@ -209,7 +213,7 @@ selfhost/wasm32-wasi/int_loop.emit	119
 selfhost/wasm32-wasi/map_int.emit	7430
 selfhost/wasm32-wasi/map_probe_chain.emit	7455
 selfhost/wasm32-wasi/map_string.emit	8284
-selfhost/wasm32-wasi/ordmap_insert.emit	7264
+selfhost/wasm32-wasi/ordmap_insert.emit	6960
 selfhost/wasm32-wasi/pmap_insert.emit	3196
 selfhost/wasm32-wasi/pvec_with.emit	2838
 selfhost/wasm32-wasi/record_update.emit	571
@@ -243,7 +247,7 @@ selfhost/x86-64-linux/int_loop.emit	178
 selfhost/x86-64-linux/map_int.emit	5623
 selfhost/x86-64-linux/map_probe_chain.emit	5629
 selfhost/x86-64-linux/map_string.emit	6575
-selfhost/x86-64-linux/ordmap_insert.emit	2815
+selfhost/x86-64-linux/ordmap_insert.emit	5507
 selfhost/x86-64-linux/pmap_insert.emit	2686
 selfhost/x86-64-linux/pvec_with.emit	2856
 selfhost/x86-64-linux/record_update.emit	1288
