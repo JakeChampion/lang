@@ -322,9 +322,10 @@ import "std/http/static";
 import "std/http/cache";
 import "std/serve";
 import "std/platform";
+import "std/time";
 
 function assets(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
-    let cc: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), public: true, max_age: Some(3600 as i64) };
+    let cc: cache.CacheControl = cache.CacheControl { ...cache.cache_control(), public: true, max_age: Some(time.duration_seconds(3600)) };
     let d: static.Dir = static.Dir {
         ...static.dir("public"),
         options: static.Options { ...static.options(), cache_control: Some(cc) },
