@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
 )
 
@@ -132,7 +133,11 @@ function main(): i32 {
 				t.Fatalf("got machine=%v type=%v, want AARCH64/EXEC", f.Machine, f.Type)
 			}
 			loads := 0
+			nxStack := false
 			for _, prog := range f.Progs {
+				if prog.Type == elf.PT_GNU_STACK {
+					nxStack = prog.Flags == elf.PF_R|elf.PF_W
+				}
 				if prog.Type != elf.PT_LOAD {
 					continue
 				}
@@ -144,6 +149,9 @@ function main(): i32 {
 			if loads != 2 {
 				t.Errorf("%s: got %d PT_LOAD segments, want 2 (W^X code + data)", c.name, loads)
 			}
+			if !nxStack {
+				t.Fatal("missing read-write non-executable stack declaration")
+			}
 			binPath := filepath.Join(rdir, c.name)
 			if err := os.WriteFile(binPath, out, 0o755); err != nil {
 				t.Fatalf("write bin: %v", err)
@@ -152,6 +160,30 @@ function main(): i32 {
 			_ = run.Run()
 			if code := run.ProcessState.ExitCode(); code != c.want {
 				t.Errorf("%s: qemu exit = %d, want %d", c.name, code, c.want)
+			}
+			if c.name == "exit42" {
+				for _, prog := range f.Progs {
+					if prog.Type != elf.PT_LOAD || f.Entry < prog.Vaddr || f.Entry+8 > prog.Vaddr+prog.Filesz {
+						continue
+					}
+					probe := append([]byte(nil), out...)
+					entry := prog.Off + f.Entry - prog.Vaddr
+					// mov x16, sp; br x16 attempts execution from the initial stack.
+					copy(probe[entry:], []byte{0xf0, 0x03, 0x00, 0x91, 0x00, 0x02, 0x1f, 0xd6})
+					path := filepath.Join(rdir, "execute-stack")
+					if err := os.WriteFile(path, probe, 0o755); err != nil {
+						t.Fatal(err)
+					}
+					cmd := exec.Command("qemu-aarch64", path)
+					message, err := cmd.CombinedOutput()
+					if err == nil || cmd.ProcessState == nil {
+						t.Fatalf("stack execution did not fault: %v\n%s", err, message)
+					}
+					status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus)
+					if !ok || !status.Signaled() || status.Signal() != syscall.SIGSEGV {
+						t.Fatalf("stack execution: want SIGSEGV, got %v\n%s", err, message)
+					}
+				}
 			}
 
 			pcmd := exec.Command(drvPieBin)
@@ -171,7 +203,11 @@ function main(): i32 {
 				t.Fatalf("pie: got machine=%v type=%v, want AARCH64/DYN", pf.Machine, pf.Type)
 			}
 			ploads := 0
+			pieNXStack := false
 			for _, prog := range pf.Progs {
+				if prog.Type == elf.PT_GNU_STACK {
+					pieNXStack = prog.Flags == elf.PF_R|elf.PF_W
+				}
 				if prog.Type != elf.PT_LOAD {
 					continue
 				}
@@ -182,6 +218,9 @@ function main(): i32 {
 			}
 			if ploads != 2 {
 				t.Errorf("%s pie: got %d PT_LOAD segments, want 2", c.name, ploads)
+			}
+			if !pieNXStack {
+				t.Fatal("PIE: missing read-write non-executable stack declaration")
 			}
 			pbinPath := filepath.Join(rdir, c.name+"-pie")
 			if err := os.WriteFile(pbinPath, pout, 0o755); err != nil {
