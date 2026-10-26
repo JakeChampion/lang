@@ -113,7 +113,7 @@ func emiStep(src string, rng *rand.Rand) (string, bool) {
 			return "", false
 		}
 		at := rng.IntN(len(s.blk.Stmts))
-		if !emiWrappable(s.blk.Stmts[at]) || emiNeedsOuterScope(s.blk.Stmts[at]) {
+		if !emiWrappable(s.blk.Stmts[at]) || emiLoopSensitive(s.blk.Stmts[at]) {
 			return "", false
 		}
 		s.blk.Stmts[at] = &ast.Loop{Body: &ast.Block{Stmts: []ast.Stmt{s.blk.Stmts[at], &ast.Break{}}}}
@@ -188,8 +188,8 @@ func emiWrappable(s ast.Stmt) bool {
 	return true
 }
 
-// A new loop takes ownership of jumps and deferred actions in its body.
-func emiNeedsOuterScope(s ast.Stmt) bool {
+// An extra loop captures jumps and runs deferred actions at its exit.
+func emiLoopSensitive(s ast.Stmt) bool {
 	found := false
 	ast.Walk(s, func(n ast.Node) bool {
 		switch n.(type) {
