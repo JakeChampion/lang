@@ -67,7 +67,7 @@ Fixed loops between checks do not establish a hard deadline or CPU bound.
 ## Independent finite references
 
 The bundle contains 579 block inputs.
-It includes DC endpoints and ties, signed impulses at all 64 basis positions, dense blocks, and four complete-domain edge patterns.
+It includes DC endpoints and ties, signed impulses at all 64 basis positions, dense blocks, and four arrays at the declared coefficient endpoints.
 Quantizers vary independently and cover the transmitted-to-natural-order mapping.
 The mathematical reference uses 90-digit Decimal arithmetic, a convergent cosine series, and the direct two-dimensional equation.
 It does not evaluate the Fern separable binary64 table.
@@ -127,3 +127,35 @@ python3 tests/generate_jpeg_idct.py build/jpeg-idct-inputs --oracle /path/to/jpe
 The generator records the Python, Decimal, source, oracle, and coefficient-bundle identities.
 The target collector also hashes all compiler and standard-library Fern sources and its selected runner.
 New raw records use `jpeg-idct-*` names and preserve all earlier image measurements.
+
+## Recorded campaign
+
+The records pin source `d983a9f1e760d484690cc569c75a289ca82c7594`.
+The clean compiler reports `dfa23fa508f9`, SHA256 `68b47eac8e56bb44944fcde126bb29d80ad2173afb7ac57eaf6c52e7b0f44282`.
+Its compiler and standard-library sources match the campaign source.
+Native Linux, Wasmtime 46.0.1, and ARM64/QEMU10 each pass 579 blocks across 73 fresh workers.
+All 219 workers report nonzero balanced heap counts and zero final live bytes.
+The three target sample records match exactly on these inputs.
+
+The largest observed unshifted-sample error is approximately `1.742e-8`, below the declared finite criterion of `1e-6`.
+Every rounded sample matches the ideal mathematical result on this corpus.
+The 139 visible differences from the integer reference remain at most one sample value.
+These are observed finite results, not universal error bounds or codec parity.
+Each campaign repeats all 31 C observations and verifies its coefficient, quantizer, coordinate, and pixel data.
+
+The records contain 525 source and tool hashes on native and 526 on each runner target.
+They include all 163 standard-library Fern sources and all compiler Fern sources.
+Every hash remains unchanged through its campaign.
+The raw records are [native](../benchmarks/results/jpeg-idct-native.json), [Wasm](../benchmarks/results/jpeg-idct-wasm.json), and [ARM64/QEMU10](../benchmarks/results/jpeg-idct-arm64.json).
+Historical coefficient, PNG, DEFLATE, worker, and allocator records remain unchanged.
+
+The complete image scripts pass 171 TAP cases on native and Wasm, plus their smokes and negative compiler probes.
+The 24-executable standalone ARM64/QEMU10 run also passes all 171 cases.
+All 63 native, 39 Wasm, and 24 ARM heap censuses balance with zero live bytes.
+The five kernel groups also pass the primary interpreter and Go source check.
+Both unchanged complexity gates, 1,307 Fern format checks, Go build/vet, workflow lint, test selectors, and eight Python protocol controls pass.
+
+Full current-head CI remains a separate result.
+Main76fb currently has stage0 acquisition failures that report HTTP504, tracked in #13604.
+A later normal-path probe retrieves the exact pinned compiler, but it does not qualify those failed CI jobs.
+No pin, proxy, threshold, baseline, or validation result changes for this kernel.
