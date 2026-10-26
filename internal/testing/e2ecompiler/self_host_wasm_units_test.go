@@ -59,6 +59,53 @@ function main(): i32 {
 			want: 0,
 		},
 		{
+			name: "utf8_runtime_step",
+			src: `function widths(s: string, want: i32[]): boolean {
+    let parts: string[] = s.split("");
+    if (parts.len() != want.len()) { return false; }
+    let i: i32 = 0; let at: i32 = 0;
+    while (i < parts.len()) {
+        if (parts[i].len() != want[i]) { return false; }
+        let j: i32 = 0;
+        while (j < parts[i].len()) {
+            if (parts[i][j] != s[at]) { return false; }
+            at = at + 1; j = j + 1;
+        }
+        i = i + 1;
+    }
+    return at == s.len();
+}
+function main(): i32 {
+    if (!widths("", []) || !widths("aé界😀", [1, 2, 3, 4])) { return 1; }
+    if (!widths(string_from_bytes_unchecked([0 as u8, 128 as u8, 192 as u8, 193 as u8, 245 as u8, 255 as u8]), [1, 1, 1, 1, 1, 1])) { return 2; }
+    if (!widths(string_from_bytes_unchecked([194 as u8, 128 as u8, 223 as u8, 191 as u8]), [2, 2])) { return 3; }
+    if (!widths(string_from_bytes_unchecked([224 as u8, 160 as u8, 128 as u8, 237 as u8, 159 as u8, 191 as u8]), [3, 3])) { return 4; }
+    if (!widths(string_from_bytes_unchecked([240 as u8, 144 as u8, 128 as u8, 128 as u8, 244 as u8, 143 as u8, 191 as u8, 191 as u8]), [4, 4])) { return 5; }
+    if (!widths(string_from_bytes_unchecked([224 as u8, 159 as u8, 128 as u8]), [1, 1, 1])) { return 6; }
+    if (!widths(string_from_bytes_unchecked([237 as u8, 160 as u8, 128 as u8]), [1, 1, 1])) { return 7; }
+    if (!widths(string_from_bytes_unchecked([240 as u8, 143 as u8, 128 as u8, 128 as u8]), [1, 1, 1, 1])) { return 8; }
+    if (!widths(string_from_bytes_unchecked([244 as u8, 144 as u8, 128 as u8, 128 as u8]), [1, 1, 1, 1])) { return 9; }
+    if (!widths(string_from_bytes_unchecked([194 as u8]), [1])) { return 10; }
+    if (!widths(string_from_bytes_unchecked([225 as u8, 128 as u8]), [2])) { return 11; }
+    if (!widths(string_from_bytes_unchecked([241 as u8, 128 as u8, 128 as u8]), [3])) { return 12; }
+    if (!widths(string_from_bytes_unchecked([225 as u8, 128 as u8, 32 as u8]), [2, 1])) { return 13; }
+    if (!widths(string_from_bytes_unchecked([241 as u8, 128 as u8, 32 as u8]), [2, 1])) { return 14; }
+    return 0;
+}`,
+			want: 0,
+		},
+		{
+			name: "utf8_runtime_lines",
+			src: `function rows(s: string): string[] { return s.lines(); }
+function main(): i32 {
+    let a: string[] = rows("a\r\nbb\n");
+    if (a.len() != 2 || a[0] != "a" || a[1] != "bb") { return 1; }
+    if (rows("").len() != 0 || rows("x").len() != 1) { return 2; }
+    return 0;
+}`,
+			want: 0,
+		},
+		{
 			name: "conditional_branches",
 			src: `function sum(n: i32): i32 {
     if (n < 0) { return -10; }
@@ -155,6 +202,14 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 
 		if strings.Contains(string(wat), "(func $__fern_streq ") && !strings.Contains(string(wat), "(func $__fern_streq (param i32)") {
 			t.Fatal("string equality does not use the Fern function emitter")
+		}
+
+		if strings.HasPrefix(tag, "utf8_runtime_") {
+			if strings.Count(string(wat), "(func $__fern_utf8_step ") != 1 || !strings.Contains(string(wat), "(func $__fern_utf8_step (param i32)") {
+				t.Fatal("UTF-8 stepping does not use one ordinary Fern function")
+			}
+		} else if strings.Contains(string(wat), "(func $__fern_utf8_step ") {
+			t.Fatal("a module without split or lines contains its UTF-8 runtime helper")
 		}
 
 		watPath := filepath.Join(dir, tag+".wat")

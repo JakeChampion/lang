@@ -399,6 +399,14 @@ prefixes, reversed operands, equal operands, UTF-8 bytes and allocated strings.
 It also checks that ordinary Fern functions replace both hand-written bodies.
 The other cases check that unrelated modules omit the comparator.
 
+`utf8_step_source` replaces the WAT helper for empty-separator split.
+It preserves the existing maximal-subpart behavior for malformed and truncated
+UTF-8 sequences. The runtime unit includes it for split and lines.
+`TestSelfHostWasmUnitsN2/utf8_runtime_step` checks byte boundaries and exact
+piece contents in whole-program and split-module builds.
+A lines-only case checks the transitive split dependency.
+The existing split scratch tests check allocation reuse and reference counts.
+
 The WebAssembly function emitter also replaces an `if` whose sole effect is
 a branch with `br_if`. It adjusts the branch depth after it removes the
 `if` label. A branch to that removed label only consumes the condition.

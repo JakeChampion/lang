@@ -25,3 +25,27 @@ pub function streq_source(): string {
     + "  return true;\n"
     + "}\n";
 }
+
+pub function utf8_step_source(): string {
+  return "function __fern_utf8_step(s: usize, i: i32, n: i32): i32 {\n"
+    + "  let b0: i32 = __load_u8(s + 4 + i);\n"
+    + "  if (b0 < 194 || b0 > 244 || i + 1 >= n) { return 1; }\n"
+    + "  let c: i32 = __load_u8(s + 4 + i + 1);\n"
+    + "  if (c < 128 || c > 191) { return 1; }\n"
+    + "  if (b0 < 224) { return 2; }\n"
+    + "  if (b0 == 224 && c < 160 || b0 == 237 && c > 159) { return 1; }\n"
+    + "  let want: i32 = 3;\n"
+    + "  if (b0 >= 240) {\n"
+    + "    if (b0 == 240 && c < 144 || b0 == 244 && c > 143) { return 1; }\n"
+    + "    want = 4;\n"
+    + "  }\n"
+    + "  let k: i32 = 2;\n"
+    + "  while (k < want) {\n"
+    + "    if (i + k >= n) { return k; }\n"
+    + "    c = __load_u8(s + 4 + i + k);\n"
+    + "    if (c < 128 || c > 191) { return k; }\n"
+    + "    k = k + 1;\n"
+    + "  }\n"
+    + "  return want;\n"
+    + "}\n";
+}
