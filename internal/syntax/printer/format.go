@@ -184,6 +184,22 @@ func (f *formatter) keepListLines(open, last int) bool {
 	return open > 0 && last > open || f.innerCommentPending(open, last)
 }
 
+// An element after a lambda closing brace on the same line stays in its group.
+func listLines(elems []ast.Expr, lines []int) []int {
+	if lines == nil {
+		lines = make([]int, len(elems))
+		for i, elem := range elems {
+			lines[i] = firstLine(elem)
+		}
+	}
+	for i := 1; i < len(elems); i++ {
+		if lambda, ok := elems[i-1].(*ast.Lambda); ok && lambda.Body != nil && lambda.Body.End.Line > 0 && lambda.Body.End.Line == firstLine(elems[i]) {
+			lines[i] = lines[i-1]
+		}
+	}
+	return lines
+}
+
 func writtenBreak(b *ast.Binary) bool {
 	op := b.P.Line
 	if op == 0 {
@@ -1773,8 +1789,9 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.formatExpr(x.Callee, precPrimary)
 		f.writeCallTypeArgs(x)
 		f.b.WriteByte('(')
-		if n := len(x.Args); n > 0 && f.keepListLines(x.P.Line, firstLine(x.Args[n-1])) {
-			f.writeListLines(n, func(i int) int { return firstLine(x.Args[i]) },
+		lines := listLines(x.Args, nil)
+		if n := len(x.Args); n > 0 && f.keepListLines(x.P.Line, lines[n-1]) {
+			f.writeListLines(n, func(i int) int { return lines[i] },
 				func(i int) { f.writeCallArg(x, i, x.Args[i]) }, ")")
 			break
 		}
@@ -1803,8 +1820,9 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		f.b.WriteByte(']')
 	case *ast.ArrayLit:
 		f.b.WriteByte('[')
-		if n := len(x.Elems); n > 0 && f.keepListLines(x.P.Line, firstLine(x.Elems[n-1])) {
-			f.writeListLines(n, func(i int) int { return firstLine(x.Elems[i]) },
+		lines := listLines(x.Elems, nil)
+		if n := len(x.Elems); n > 0 && f.keepListLines(x.P.Line, lines[n-1]) {
+			f.writeListLines(n, func(i int) int { return lines[i] },
 				func(i int) { f.formatExpr(x.Elems[i], precLowest) }, "]")
 			break
 		}
@@ -1890,12 +1908,18 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 		if x.Base != nil {
 			nb = 1
 		}
-		elemLine := func(i int) int {
-			if i < nb {
-				return firstLine(x.Base)
-			}
-			return x.Fields[i-nb].NamePos.Line
+		elems := make([]ast.Expr, 0, nb+len(x.Fields))
+		lines := make([]int, 0, nb+len(x.Fields))
+		if x.Base != nil {
+			elems = append(elems, x.Base)
+			lines = append(lines, firstLine(x.Base))
 		}
+		for _, field := range x.Fields {
+			elems = append(elems, field.Value)
+			lines = append(lines, field.NamePos.Line)
+		}
+		lines = listLines(elems, lines)
+		elemLine := func(i int) int { return lines[i] }
 		if n := nb + len(x.Fields); n > 0 && f.keepListLines(x.P.Line, elemLine(n-1)) {
 			f.b.WriteString(" {")
 			f.writeListLines(n, elemLine, func(i int) {
