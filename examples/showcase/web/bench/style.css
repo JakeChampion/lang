@@ -17,7 +17,13 @@
   text-transform: uppercase;
   color: var(--gray-3);
 }
+.bench-controls label {
+  grid-template-columns: minmax(0, 1fr);
+  min-width: 0;
+  max-width: 100%;
+}
 .bench-controls label > * {
+  max-width: 100%;
   font: 0.875rem var(--font-body);
   letter-spacing: 0;
   text-transform: none;
