@@ -14,9 +14,7 @@ function echo(req: HttpRequest, plat: mock_platform.MockPlatform): Result[HttpRe
 }
 
 function plat(): mock_platform.MockPlatform {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  m.random_set(169552957);
-  return m;
+  return mock_platform.new().with_random(169552957);
 }
 
 function test_a_fresh_id(): test.TestOutcome {

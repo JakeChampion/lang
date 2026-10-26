@@ -5,10 +5,12 @@ This module provides platform capabilities for deterministic simulations.
 ## Model
 
 The simulated platform combines a virtual driver, a scripted network, and a recorded mock platform. Request policy can add cookies, access limits, deadlines, and trace context.
+The configuration is immutable. Each `with_*` builder returns a new platform, and the builders take the same argument types as the `platform.Host` builders.
 
 ## Contracts
 
-Environment and configuration changes affect simulated state. Handler tests can share the same capability interface as host execution without real network effects.
+The clock, randomness, and network come from the simulation. Environment, configuration, secret, file, and peer values come from the mock platform.
+Handler tests can share the same capability interface as host execution without real network effects.
 
 ## Module assembly
 
@@ -26,7 +28,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<5 impl platform.Platform for SimPlatform>>
 
-<<6 pub function (p: SimPlatform) env_set(name: string, value: string): void>>
+<<6 pub function (p: SimPlatform) materialize(resp: HttpResponse): HttpResponse>>
 ```
 
 ### `module introduction`
@@ -64,7 +66,31 @@ pub struct SimPlatform { drv: sim.Sim, net: sim_fetch.Net, mock: mock_platform.M
 ```fern
 <<4 pub function new(drv: sim.Sim, net: sim_fetch.Net): SimPlatform>>=
 pub function new(drv: sim.Sim, net: sim_fetch.Net): SimPlatform {
-  return SimPlatform { drv: drv, net: net, mock: mock_platform.mock_platform_new(), jar: None, allow: None, deadline: None, trace: None };
+  return SimPlatform { drv: drv, net: net, mock: mock_platform.new(), jar: None, allow: None, deadline: None, trace: None };
+}
+
+pub function (p: SimPlatform) with_env(name: string, value: string): SimPlatform {
+  return SimPlatform { ...p, mock: p.mock.with_env(name, value) };
+}
+
+pub function (p: SimPlatform) with_config(name: string, value: string): SimPlatform {
+  return SimPlatform { ...p, mock: p.mock.with_config(name, value) };
+}
+
+pub function (p: SimPlatform) with_secret(name: string, value: string): SimPlatform {
+  return SimPlatform { ...p, mock: p.mock.with_secret(name, value) };
+}
+
+pub function (p: SimPlatform) with_file(path: string, content: string, mtime: time.Timestamp): SimPlatform {
+  return SimPlatform { ...p, mock: p.mock.with_file(path, content, mtime) };
+}
+
+pub function (p: SimPlatform) with_dir(path: string): SimPlatform {
+  return SimPlatform { ...p, mock: p.mock.with_dir(path) };
+}
+
+pub function (p: SimPlatform) with_peer(addr: Option[net.SocketAddr]): SimPlatform {
+  return SimPlatform { ...p, mock: p.mock.with_peer(addr) };
 }
 
 pub function (p: SimPlatform) with_jar(jar: cookie.Jar): SimPlatform {
@@ -106,17 +132,17 @@ impl platform.Platform for SimPlatform {
 
   function env(self: SimPlatform, name: string): Option[string] {
     self.mock.record("env", name);
-    return self.mock.canned("env " + name);
+    return self.mock.envs.get(name);
   }
 
   function config(self: SimPlatform, name: string): Option[string] {
     self.mock.record("config", name);
-    return self.mock.canned("config " + name);
+    return self.mock.configs.get(name);
   }
 
   function secret(self: SimPlatform, name: string): Option[string] {
     self.mock.record("secret", name);
-    return self.mock.canned("secret " + name);
+    return self.mock.secrets.get(name);
   }
 
   function random_i32(self: SimPlatform): i32 {
@@ -132,8 +158,8 @@ impl platform.Platform for SimPlatform {
   function http(self: SimPlatform, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
     self.mock.record("http", req.method + " " + req.url);
     let drv: sim.Sim = self.drv;
-    let m: mock_platform.MockPlatform = self.mock;
-    let proxies: fetch.ProxyEnv = fetch.proxy_env_from(m.canned("env http_proxy"), m.canned("env https_proxy"), m.canned("env HTTPS_PROXY"), m.canned("env no_proxy"), m.canned("env NO_PROXY"), m.canned("env REQUEST_METHOD"));
+    let e: Map[string, string] = self.mock.envs;
+    let proxies: fetch.ProxyEnv = fetch.proxy_env_from(e.get("http_proxy"), e.get("https_proxy"), e.get("HTTPS_PROXY"), e.get("no_proxy"), e.get("NO_PROXY"), e.get("REQUEST_METHOD"));
     return fetch.send_on(self.net, platform.traced(req, self.trace, (): i32 => drv.random_i32()), fetch.Policy { ...fetch.public_policy_via(proxies), jar: self.jar, allow: self.allow });
   }
 
@@ -162,34 +188,10 @@ impl platform.Platform for SimPlatform {
 }
 ```
 
-### `6 pub function (p: SimPlatform) env_set(name: string, value: string): void`
+### `6 pub function (p: SimPlatform) materialize(resp: HttpResponse): HttpResponse`
 
 ```fern
-<<6 pub function (p: SimPlatform) env_set(name: string, value: string): void>>=
-pub function (p: SimPlatform) env_set(name: string, value: string): void {
-  p.mock.env_set(name, value);
-}
-
-pub function (p: SimPlatform) config_set(name: string, value: string): void {
-  p.mock.config_set(name, value);
-}
-
-pub function (p: SimPlatform) secret_set(name: string, value: string): void {
-  p.mock.secret_set(name, value);
-}
-
-pub function (p: SimPlatform) file_set(path: string, content: string, mtime: time.Timestamp): void {
-  p.mock.file_set(path, content, mtime);
-}
-
-pub function (p: SimPlatform) peer_set(addr: string): void {
-  p.mock.peer_set(addr);
-}
-
-pub function (p: SimPlatform) dir_set(path: string): void {
-  p.mock.dir_set(path);
-}
-
+<<6 pub function (p: SimPlatform) materialize(resp: HttpResponse): HttpResponse>>=
 pub function (p: SimPlatform) materialize(resp: HttpResponse): HttpResponse {
   return p.mock.materialize(resp);
 }

@@ -41,7 +41,8 @@ func TestWorldInterfaces(t *testing.T) {
 			"[method]input-stream.read", "[method]input-stream.blocking-read",
 			"[method]input-stream.subscribe",
 			"[method]output-stream.check-write", "[method]output-stream.write",
-			"[method]output-stream.blocking-write-and-flush", "[method]output-stream.blocking-flush",
+			"[method]output-stream.blocking-write-and-flush", "[method]output-stream.flush",
+			"[method]output-stream.blocking-flush",
 			"[method]output-stream.subscribe",
 		},
 		[]string{"input-stream", "output-stream"})

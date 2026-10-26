@@ -26,7 +26,7 @@ function fetch_via(plat: platform.Platform, path: string, log: Cell[string]): st
 
 function main(): i32 {
     let d: sim.Sim = sim.new(1);
-    let n: sim_fetch.Net = sim_fetch.net(d).host("up.test", [UP]).listen(UP, 80, time.duration_millis(5))
+    let n: sim_fetch.Net = sim_fetch.new(d).host("up.test", [UP]).listen(UP, 80, time.duration_millis(5))
         .route(UP, 80, "/a", [sim_fetch.reply(200, "alpha").after(time.duration_millis(30))])
         .route(UP, 80, "/b", [sim_fetch.reply(200, "beta").after(time.duration_millis(10))])
         .route(UP, 80, "/c", [sim_fetch.reply(200, "gamma").after(time.duration_millis(50))]);

@@ -411,8 +411,8 @@ timeout, the protocol. Bodies are bytes, not text: an upstream can serve
 a PNG or a truncated UTF-8 sequence, so `body_text()` is a decode that
 can fail. Inside an HTTP handler, send through the platform value
 instead, `plat.http(req)`, so a test can pass a
-`mock_platform.MockPlatform` whose `http_set` records the response to
-return. To overlap several requests on one thread, run each `fetch.send`
+`mock_platform.MockPlatform` whose `with_http` sets the response or
+`FetchError` to return. To overlap several requests on one thread, run each `fetch.send`
 as an entry of `async.gather_tasks` (or `race_tasks`, `with_deadline_tasks`):
 `async.gather_tasks([() => fetch.send(a), () => fetch.send(b)], fallback)`
 answers every result in order.

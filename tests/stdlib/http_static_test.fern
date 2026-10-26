@@ -14,21 +14,7 @@ function changed(): time.Timestamp {
 }
 
 function site(): mock_platform.MockPlatform {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  m.now_set(time.timestamp_from_unix(1791768000));
-  m.dir_set("www");
-  m.file_set("www/a.txt", "hello world", changed());
-  m.file_set("www/a.txt.gz", "GZ-BYTES", changed());
-  m.file_set("www/a.txt.br", "BR-BYTES!", changed());
-  m.file_set("www/logo.png", "PNG", changed());
-  m.file_set("www/.env", "SECRET=1", changed());
-  m.file_set("www/100%.txt", "percent", changed());
-  m.dir_set("www/docs");
-  m.file_set("www/docs/index.html", "<h1>docs</h1>", changed());
-  m.dir_set("www/empty");
-  m.dir_set("www/My Docs");
-  m.dir_set("www/a\rb:c");
-  return m;
+  return mock_platform.new().with_now(time.timestamp_from_unix(1791768000)).with_dir("www").with_file("www/a.txt", "hello world", changed()).with_file("www/a.txt.gz", "GZ-BYTES", changed()).with_file("www/a.txt.br", "BR-BYTES!", changed()).with_file("www/logo.png", "PNG", changed()).with_file("www/.env", "SECRET=1", changed()).with_file("www/100%.txt", "percent", changed()).with_dir("www/docs").with_file("www/docs/index.html", "<h1>docs</h1>", changed()).with_dir("www/empty").with_dir("www/My Docs").with_dir("www/a\rb:c");
 }
 
 function req(method: string, path: string, fields: string[]): HttpRequest {
@@ -224,8 +210,7 @@ function test_content_type(): test.TestOutcome {
 
 function test_sim_platform(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
-  let plat: sim_platform.SimPlatform = sim_platform.new(d, sim_fetch.net(d));
-  plat.file_set("www/a.txt", "hello world", changed());
+  let plat: sim_platform.SimPlatform = sim_platform.new(d, sim_fetch.new(d)).with_file("www/a.txt", "hello world", changed());
   let r: HttpResponse = plat.materialize(static.serve(req("GET", "/a.txt", ["Range", "bytes=6-"]), static.dir("www"), plat));
   return test.assert_eq(shown(r, ["Content-Range"]), "206 | bytes 6-10/11 | world");
 }

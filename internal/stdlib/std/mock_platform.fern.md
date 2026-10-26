@@ -4,11 +4,44 @@ This module provides a platform that records operations for tests.
 
 ## Model
 
-The mock platform records operation names and arguments in shared state. Tests can supply canned results and inspect the recorded calls.
+A mock platform has two parts. Its configuration holds the canned answers, and its call log records each operation with its arguments.
+The configuration is immutable. Each `with_*` builder returns a new mock, and the builders take the same argument types as the `platform.Host` builders.
+Mocks that a builder derives from one `new()` share one call log.
 
 ## Contracts
 
-Environment and configuration values belong to the mock. A test controls these values without a change to the host process environment.
+A test controls environment, configuration, secret, clock, file, and network values without a change to the host process.
+An operation without a canned answer returns a fixed value: no environment value, a zero clock, and a refused connection for `http`.
+`with_http` takes the complete `Result` of the request, so a test can return any status, headers, and body, or any `fetch.FetchError`.
+The call log records each argument verbatim. A secret is recorded by its name, and not by its value.
+
+## Executable example
+
+```fern test name=std-mock-platform-example
+import "std/mock_platform";
+import "std/platform";
+import "std/fetch";
+import "std/net";
+import "std/option";
+
+function region(plat: platform.Platform): string {
+  return plat.env("REGION").unwrap_or("nowhere");
+}
+
+function main(): i32 {
+  let m: mock_platform.MockPlatform = mock_platform.new().with_env("REGION", "eu-west").with_http("GET", "http://up.test/", Err(fetch.Timeout(fetch.Connecting)));
+  if (region(m) != "eu-west") { return 1; }
+  match (m.http(fetch.get("http://up.test/"))) {
+    Ok(_) => { return 2; },
+    Err(e) => {
+      if (e.message() != fetch.Timeout(fetch.Connecting).message()) { return 3; }
+    }
+  }
+  m.log("two\nlines");
+  if (m.call_count() != 3 || m.calls()[2].args != "two\nlines") { return 4; }
+  return 0;
+}
+```
 
 ## Module assembly
 
@@ -22,17 +55,15 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 pub struct MockPlatform>>
 
-<<4 pub function mock_platform_new(): MockPlatform>>
+<<4 pub function new(): MockPlatform>>
 
 <<5 impl platform.Platform for MockPlatform>>
 
 <<6 pub function (m: MockPlatform) record(name: string, args: string): void>>
 
-<<7 function __canned_escape(v: string): string>>
+<<7 pub function (m: MockPlatform) materialize(resp: HttpResponse): HttpResponse>>
 
-<<8 pub function (m: MockPlatform) materialize(resp: HttpResponse): HttpResponse>>
-
-<<9 function __materialized(m: MockPlatform, resp: HttpResponse, path: string, ranges: i64[], seams: u8[][]): H...>>
+<<8 function __materialized(m: MockPlatform, resp: HttpResponse, path: string, ranges: i64[], seams: u8[][]): H...>>
 ```
 
 ### `module introduction`
@@ -46,34 +77,85 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "std/i32";
-import "std/i64";
-import "std/result";
-import "std/string";
 import "std/platform";
 import "std/fetch";
 import "std/time";
 import "std/net";
 import "std/http/trace";
 import "std/http";
-import "core/int";
 ```
 
 ### `3 pub struct MockPlatform`
 
 ```fern
 <<3 pub struct MockPlatform>>=
-pub struct MockPlatform { sink: Cell[string] }
+pub struct MockPlatform { sink: Cell[MockCall[]], envs: Map[string, string], configs: Map[string, string], secrets: Map[string, string], wall: time.Timestamp, mono: Instant, random: i32, answers: Map[string, Result[HttpResponse, fetch.FetchError]], files: Map[string, MockFile], dirs: Map[string, boolean], peer: Option[net.SocketAddr], deadline: Option[Instant], trace: Option[trace.Context], cancelled: boolean }
 
 pub struct MockCall { name: string, args: string }
+
+pub struct MockFile { content: string, mtime: time.Timestamp }
 ```
 
-### `4 pub function mock_platform_new(): MockPlatform`
+### `4 pub function new(): MockPlatform`
 
 ```fern
-<<4 pub function mock_platform_new(): MockPlatform>>=
-pub function mock_platform_new(): MockPlatform {
-  return MockPlatform { sink: cell_new("") };
+<<4 pub function new(): MockPlatform>>=
+pub function new(): MockPlatform {
+  let none: MockCall[] = [];
+  return MockPlatform { sink: cell_new(none), envs: map_new(1), configs: map_new(1), secrets: map_new(1), wall: time.Timestamp { sec: 0, nsec: 0 }, mono: time.instant_from_nanos(0), random: 0, answers: map_new(1), files: map_new(1), dirs: map_new(1), peer: None, deadline: None, trace: None, cancelled: false };
+}
+
+pub function (m: MockPlatform) with_env(name: string, value: string): MockPlatform {
+  return MockPlatform { ...m, envs: m.envs.insert(name, value) };
+}
+
+pub function (m: MockPlatform) with_config(name: string, value: string): MockPlatform {
+  return MockPlatform { ...m, configs: m.configs.insert(name, value) };
+}
+
+pub function (m: MockPlatform) with_secret(name: string, value: string): MockPlatform {
+  return MockPlatform { ...m, secrets: m.secrets.insert(name, value) };
+}
+
+pub function (m: MockPlatform) with_now(t: time.Timestamp): MockPlatform {
+  return MockPlatform { ...m, wall: t };
+}
+
+pub function (m: MockPlatform) with_instant(at: Instant): MockPlatform {
+  return MockPlatform { ...m, mono: at };
+}
+
+pub function (m: MockPlatform) with_random(v: i32): MockPlatform {
+  return MockPlatform { ...m, random: v };
+}
+
+// `outcome` answers each request with this method and URL.
+pub function (m: MockPlatform) with_http(method: string, url: string, outcome: Result[HttpResponse, fetch.FetchError]): MockPlatform {
+  return MockPlatform { ...m, answers: m.answers.insert(method + " " + url, outcome) };
+}
+
+pub function (m: MockPlatform) with_file(path: string, content: string, mtime: time.Timestamp): MockPlatform {
+  return MockPlatform { ...m, files: m.files.insert(path, MockFile { content: content, mtime: mtime }) };
+}
+
+pub function (m: MockPlatform) with_dir(path: string): MockPlatform {
+  return MockPlatform { ...m, dirs: m.dirs.insert(path, true) };
+}
+
+pub function (m: MockPlatform) with_peer(addr: Option[net.SocketAddr]): MockPlatform {
+  return MockPlatform { ...m, peer: addr };
+}
+
+pub function (m: MockPlatform) with_deadline(at: Instant): MockPlatform {
+  return MockPlatform { ...m, deadline: Some(at) };
+}
+
+pub function (m: MockPlatform) with_trace(span: trace.Context): MockPlatform {
+  return MockPlatform { ...m, trace: Some(span) };
+}
+
+pub function (m: MockPlatform) with_cancelled(cancelled: boolean): MockPlatform {
+  return MockPlatform { ...m, cancelled: cancelled };
 }
 ```
 
@@ -88,33 +170,32 @@ impl platform.Platform for MockPlatform {
 
   function now(self: MockPlatform): time.Timestamp {
     self.record("now", "");
-    let d: Duration = time.duration_nanos(__canned_i64(self, "now", 0i64));
-    return time.Timestamp { sec: d.sec, nsec: d.nsec };
+    return self.wall;
   }
 
   function instant(self: MockPlatform): Instant {
     self.record("instant", "");
-    return time.instant_from_nanos(__canned_i64(self, "instant", 0i64));
+    return self.mono;
   }
 
   function env(self: MockPlatform, name: string): Option[string] {
     self.record("env", name);
-    return self.canned("env " + name);
+    return self.envs.get(name);
   }
 
   function config(self: MockPlatform, name: string): Option[string] {
     self.record("config", name);
-    return self.canned("config " + name);
+    return self.configs.get(name);
   }
 
   function secret(self: MockPlatform, name: string): Option[string] {
     self.record("secret", name);
-    return self.canned("secret " + name);
+    return self.secrets.get(name);
   }
 
   function random_i32(self: MockPlatform): i32 {
     self.record("random_i32", "");
-    return __canned_i64(self, "random_i32", 0 as i64) as i32;
+    return self.random;
   }
 
   function sleep(self: MockPlatform, d: Duration): void {
@@ -124,9 +205,9 @@ impl platform.Platform for MockPlatform {
   function http(self: MockPlatform, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
     let summary: string = req.method + " " + req.url;
     self.record("http", summary);
-    match (self.canned("http " + summary)) {
-      Some(v) => {
-        return Ok(__canned_response(v));
+    match (self.answers.get(summary)) {
+      Some(outcome) => {
+        return outcome;
       },
       None => {
         return Err(fetch.Connect(net.ConnectionRefused));
@@ -137,71 +218,36 @@ impl platform.Platform for MockPlatform {
 
   function stat(self: MockPlatform, path: string): Result[FileStat, IoError] {
     self.record("stat", path);
-    match (self.canned("file " + path)) {
-      Some(content) => {
-        return Ok(__file_stat(false, content.len() as i64, __canned_i64(self, "mtime " + path, 0 as i64), __canned_i64(self, "mtime_nsec " + path, 0 as i64)));
+    match (self.files.get(path)) {
+      Some(f) => {
+        return Ok(__file_stat(false, f.content.len() as i64, f.mtime));
       },
       None => {}
     }
-    match (self.canned("dir " + path)) {
-      Some(d) => {
-        return Ok(__file_stat(true, 0 as i64, 0 as i64, 0 as i64));
-      },
-      None => {}
+    if (self.dirs.contains(path)) {
+      return Ok(__file_stat(true, 0 as i64, time.Timestamp { sec: 0, nsec: 0 }));
     }
     return Err(NotFound(path));
   }
 
   function deadline(self: MockPlatform): Option[Instant] {
     self.record("deadline", "");
-    match (self.canned("deadline")) {
-      Some(at) => {
-        return Some(time.instant_from_nanos(__canned_i64(self, "deadline", 0 as i64)));
-      },
-      None => {
-        return None;
-      }
-    }
-    return None;
+    return self.deadline;
   }
 
   function trace(self: MockPlatform): Option[trace.Context] {
     self.record("trace", "");
-    match (self.canned("trace")) {
-      Some(v) => {
-        return trace.parse(v);
-      },
-      None => {
-        return None;
-      }
-    }
-    return None;
+    return self.trace;
   }
 
   function cancelled(self: MockPlatform): boolean {
     self.record("cancelled", "");
-    match (self.canned("cancelled")) {
-      Some(c) => {
-        return true;
-      },
-      None => {
-        return false;
-      }
-    }
-    return false;
+    return self.cancelled;
   }
 
   function peer(self: MockPlatform): Option[net.SocketAddr] {
     self.record("peer", "");
-    match (self.canned("peer")) {
-      Some(addr) => {
-        return net.socket_addr_parse(addr);
-      },
-      None => {
-        return None;
-      }
-    }
-    return None;
+    return self.peer;
   }
 }
 ```
@@ -211,212 +257,55 @@ impl platform.Platform for MockPlatform {
 ```fern
 <<6 pub function (m: MockPlatform) record(name: string, args: string): void>>=
 pub function (m: MockPlatform) record(name: string, args: string): void {
-  m.sink.set(m.sink.get() + name + "\t" + args + "\n");
-}
-
-pub function (m: MockPlatform) can(key: string, value: string): void {
-  m.sink.set(m.sink.get() + "canned\t" + key + "\t" + __canned_escape(value) + "\n");
-}
-
-pub function (m: MockPlatform) canned(key: string): Option[string] {
-  let found: Option[string] = None;
-  let prefix: string = "canned\t" + key + "\t";
-  for line in m.sink.get().split("\n") {
-    if (line.len() >= prefix.len() && slice_unchecked(line, 0, prefix.len()) + "" == prefix) {
-      found = Some(__canned_unescape(slice_unchecked(line, prefix.len(), line.len()) + ""));
-    }
-  }
-  return found;
-}
-
-pub function (m: MockPlatform) env_set(name: string, value: string): void {
-  m.can("env " + name, value);
-}
-
-pub function (m: MockPlatform) config_set(name: string, value: string): void {
-  m.can("config " + name, value);
-}
-
-pub function (m: MockPlatform) secret_set(name: string, value: string): void {
-  m.can("secret " + name, value);
-}
-
-pub function (m: MockPlatform) now_set(t: time.Timestamp): void {
-  m.can("now", Duration { sec: t.sec, nsec: t.nsec }.as_nanos().to_string());
-}
-
-pub function (m: MockPlatform) instant_set(i: Instant): void {
-  m.can("instant", time.instant_nanos(i).to_string());
-}
-
-pub function (m: MockPlatform) random_set(v: i32): void {
-  m.can("random_i32", v.to_string());
-}
-
-pub function (m: MockPlatform) http_set(method: string, url: string, status: i32, body: string): void {
-  m.can("http " + method + " " + url, status.to_string() + " " + body);
-}
-
-pub function (m: MockPlatform) file_set(path: string, content: string, mtime: time.Timestamp): void {
-  m.can("file " + path, content);
-  m.can("mtime " + path, mtime.sec.to_string());
-  m.can("mtime_nsec " + path, mtime.nsec.to_string());
-}
-
-pub function (m: MockPlatform) peer_set(addr: string): void {
-  m.can("peer", addr);
-}
-
-pub function (m: MockPlatform) deadline_set(at: Instant): void {
-  m.can("deadline", time.instant_nanos(at).to_string());
-}
-
-pub function (m: MockPlatform) trace_set(traceparent: string): void {
-  m.can("trace", traceparent);
-}
-
-pub function (m: MockPlatform) cancel(): void {
-  m.can("cancelled", "");
-}
-
-pub function (m: MockPlatform) dir_set(path: string): void {
-  m.can("dir " + path, "");
+  m.sink.set(m.sink.get().append(MockCall { name: name, args: args }));
 }
 
 pub function (m: MockPlatform) calls(): MockCall[] {
-  let out: MockCall[] = [];
-  let log: string = m.sink.get();
-  let lines: string[] = log.split("\n");
-  let i: i32 = 0;
-  while (i < lines.len()) {
-    let line: string = lines[i];
-    i = i + 1;
-    if (line.len() == 0) {
-      continue;
-    }
-    let Some(tab) = line.index_of("\t") else {
-      out = out.append(MockCall { name: line, args: "" });
-      continue;
-    };
-    if (slice_unchecked(line, 0, tab) + "" == "canned") {
-      continue;
-    }
-    out = out.append(MockCall {
-      name: slice_unchecked(line, 0, tab) + "",
-      args: slice_unchecked(line, tab + 1, line.len()) + "",
-    });
-  }
-  return out;
+  return m.sink.get();
 }
 
 pub function (m: MockPlatform) call_count(): i32 {
-  return m.calls().len();
+  return m.sink.get().len();
 }
 
+// The configuration stays. Only the call log is cleared.
 pub function (m: MockPlatform) reset(): void {
-  let kept: string = "";
-  for line in m.sink.get().split("\n") {
-    if (line.len() > 7 && slice_unchecked(line, 0, 7) + "" == "canned\t") {
-      kept = kept + line + "\n";
-    }
-  }
-  m.sink.set(kept);
+  let none: MockCall[] = [];
+  m.sink.set(none);
 }
 
 pub function (m: MockPlatform) has_call(name: string): boolean {
-  let cs: MockCall[] = m.calls();
-  let i: i32 = 0;
-  while (i < cs.len()) {
-    if (cs[i].name == name) {
+  match (m.find_call(name)) {
+    Some(c) => {
       return true;
+    },
+    None => {
+      return false;
     }
-    i = i + 1;
   }
   return false;
 }
 
 pub function (m: MockPlatform) find_call(name: string): Option[MockCall] {
-  let cs: MockCall[] = m.calls();
-  let i: i32 = 0;
-  while (i < cs.len()) {
-    if (cs[i].name == name) {
-      return Some(cs[i]);
+  for c in m.sink.get() {
+    if (c.name == name) {
+      return Some(c);
     }
-    i = i + 1;
   }
   return None;
 }
 ```
 
-### `7 function __canned_escape(v: string): string`
+### `7 pub function (m: MockPlatform) materialize(resp: HttpResponse): HttpResponse`
 
 ```fern
-<<7 function __canned_escape(v: string): string>>=
-function __canned_escape(v: string): string {
-  let out: string = "";
-  let i: i32 = 0;
-  while (i < v.len()) {
-    let b: u8 = v[i];
-    if (b == 92 as u8) {
-      out = out + "\\\\";
-    } else if (b == 9 as u8) {
-      out = out + "\\t";
-    } else if (b == 10 as u8) {
-      out = out + "\\n";
-    } else {
-      out = out + slice_unchecked(v, i, i + 1);
-    }
-    i = i + 1;
-  }
-  return out;
-}
-
-function __canned_unescape(v: string): string {
-  let out: string = "";
-  let i: i32 = 0;
-  while (i < v.len()) {
-    let b: u8 = v[i];
-    if (b == 92 as u8 && i + 1 < v.len()) {
-      let n: u8 = v[i + 1];
-      if (n == 116 as u8) {
-        out = out + "\t";
-      } else if (n == 110 as u8) {
-        out = out + "\n";
-      } else {
-        out = out + slice_unchecked(v, i + 1, i + 2);
-      }
-      i = i + 2;
-      continue;
-    }
-    out = out + slice_unchecked(v, i, i + 1);
-    i = i + 1;
-  }
-  return out;
-}
-
-function __canned_i64(m: MockPlatform, key: string, fallback: i64): i64 {
-  match (m.canned(key)) {
-    Some(v) => {
-      return i64.parse_i64(v).unwrap_or(fallback);
-    },
-    None => {
-      return fallback;
-    }
-  }
-  return fallback;
-}
-```
-
-### `8 pub function (m: MockPlatform) materialize(resp: HttpResponse): HttpResponse`
-
-```fern
-<<8 pub function (m: MockPlatform) materialize(resp: HttpResponse): HttpResponse>>=
+<<7 pub function (m: MockPlatform) materialize(resp: HttpResponse): HttpResponse>>=
 pub function (m: MockPlatform) materialize(resp: HttpResponse): HttpResponse {
   match (resp.body) {
     BodyFile(path) => {
-      match (m.canned("file " + path)) {
-        Some(content) => {
-          return HttpResponse { ...resp, body: BodyBytes(content.bytes()) };
+      match (m.files.get(path)) {
+        Some(f) => {
+          return HttpResponse { ...resp, body: BodyBytes(f.content.bytes()) };
         },
         None => {
           return http.not_found();
@@ -435,15 +324,15 @@ pub function (m: MockPlatform) materialize(resp: HttpResponse): HttpResponse {
 }
 ```
 
-### `9 function __materialized(m: MockPlatform, resp: HttpResponse, path: string, ranges: i64[], seams: u8[][]): H...`
+### `8 function __materialized(m: MockPlatform, resp: HttpResponse, path: string, ranges: i64[], seams: u8[][]): H...`
 
 ```fern
-<<9 function __materialized(m: MockPlatform, resp: HttpResponse, path: string, ranges: i64[], seams: u8[][]): H...>>=
+<<8 function __materialized(m: MockPlatform, resp: HttpResponse, path: string, ranges: i64[], seams: u8[][]): H...>>=
 function __materialized(m: MockPlatform, resp: HttpResponse, path: string, ranges: i64[], seams: u8[][]): HttpResponse {
   let content: string = "";
-  match (m.canned("file " + path)) {
-    Some(c) => {
-      content = c;
+  match (m.files.get(path)) {
+    Some(f) => {
+      content = f.content;
     },
     None => {
       return http.not_found();
@@ -467,26 +356,11 @@ function __canned_range(content: string, offset: i64, len: i64): Option[u8[]] {
   return Some((slice_unchecked(content, offset as i32, (offset + len) as i32) + "").bytes());
 }
 
-function __file_stat(is_dir: boolean, size: i64, mtime: i64, mtime_nsec: i64): FileStat {
+function __file_stat(is_dir: boolean, size: i64, mtime: time.Timestamp): FileStat {
   let z: i64 = 0 as i64;
   let u: u32 = 0 as u32;
-  return FileStat { is_file: !is_dir, is_dir: is_dir, size: size, mode: u, nlink: 1 as u32, uid: u, gid: u, dev: z, rdev: z, ino: z, blksize: z, blocks: z, atime: mtime, atime_nsec: mtime_nsec, mtime: mtime, mtime_nsec: mtime_nsec, ctime: mtime, ctime_nsec: mtime_nsec, btime: mtime, btime_nsec: mtime_nsec };
-}
-
-function __canned_response(v: string): HttpResponse {
-  let code: string = v;
-  let body: string = "";
-  if let Some(sp) = v.index_of(" ") {
-    code = slice_unchecked(v, 0, sp).to_owned();
-    body = slice_unchecked(v, sp + 1, v.len()).to_owned();
-  }
-  let status: i32 = 200;
-  match (i32.parse_i32_radix(code, 10)) {
-    Ok(n) => {
-      status = n;
-    },
-    Err(_) => {}
-  }
-  return http.text(status, body);
+  let sec: i64 = mtime.sec;
+  let nsec: i64 = mtime.nsec as i64;
+  return FileStat { is_file: !is_dir, is_dir: is_dir, size: size, mode: u, nlink: 1 as u32, uid: u, gid: u, dev: z, rdev: z, ino: z, blksize: z, blocks: z, atime: sec, atime_nsec: nsec, mtime: sec, mtime_nsec: nsec, ctime: sec, ctime_nsec: nsec, btime: sec, btime_nsec: nsec };
 }
 ```

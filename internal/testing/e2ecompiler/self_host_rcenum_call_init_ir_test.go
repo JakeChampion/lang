@@ -8,6 +8,7 @@ import (
 )
 
 func TestSelfHostRcEnumCallInitIRX86_64(t *testing.T) {
+	withoutSanitizer(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile("../../../compiler/drivers/asm_run.fern")

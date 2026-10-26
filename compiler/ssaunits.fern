@@ -1488,6 +1488,9 @@ function reads_view(f: ssasem.Func, ins: ssa.SInst, at: i32, lent: boolean, arra
     if (k == ssasem.array_get() || k == ssasem.arr_slice()) {
       return at == 0;
     }
+    if (k == ssasem.arr_concat()) {
+      return at == 1;
+    }
     if (k == ssasem.call()) {
       let modes: i32[] = callee_modes(f, ins);
       return at < modes.len() && modes[at] == borrow_mode();
