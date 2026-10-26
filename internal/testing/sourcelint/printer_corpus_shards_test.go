@@ -15,15 +15,15 @@ func TestPrinterCorpusMatrixCoversEveryShard(t *testing.T) {
 		t.Fatal(err)
 	}
 	gate := jobBlocks(string(data))["verify-heavy"]
-	for _, required := range []string{"name: test-units-${{ matrix.host }}-heavy", "needs: test", "if: ${{ !cancelled() }}", "${{ needs.test.result }}", `test "$WORKER_RESULT" = success`} {
+	for _, required := range []string{"name: test-units-x86_64-heavy", "needs: test", "if: ${{ !cancelled() }}", "${{ needs.test.result }}", `test "$WORKER_RESULT" = success`} {
 		if !strings.Contains(gate, required) {
 			t.Errorf("aggregate unit check omits %q", required)
 		}
 	}
 	// The matrix is host x group x shard, with the rest group's extra shards
-	// excluded and the heavy denominator derived from the group. Every host
-	// must schedule every heavy shard, and the denominator must be the shard
-	// count.
+	// and the aarch64 heavy shards excluded and the heavy denominator derived
+	// from the group. The x86_64 host must schedule every heavy shard, and
+	// the denominator must be the shard count.
 	test := jobBlocks(string(data))["test"]
 	list := func(key string) []string {
 		m := regexp.MustCompile(`(?m)^\s*` + key + `:\s*\[([^\]]*)\]`).FindStringSubmatch(test)
@@ -47,6 +47,9 @@ func TestPrinterCorpusMatrixCoversEveryShard(t *testing.T) {
 	}
 	if strings.Contains(test, "group: heavy, shard") {
 		t.Errorf("test-units.yml excludes a heavy shard; the printer corpus would run short")
+	}
+	if !strings.Contains(test, "{ group: heavy, host: aarch64 }") {
+		t.Errorf("test-units.yml schedules the heavy group on aarch64; the printer corpus is pure Go and runs on x86_64 alone")
 	}
 	denominator := regexp.MustCompile(`FERN_PRINTER_CORPUS_SHARD:\s*"\$\{\{ matrix\.shard \}\}/\$\{\{ matrix\.group == 'heavy' && (\d+) \|\| 1 \}\}"`).FindStringSubmatch(test)
 	if denominator == nil {
