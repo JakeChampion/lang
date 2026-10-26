@@ -74,7 +74,10 @@ natives and both SSA emitters now size the request in 64 bits and refuse
 one past 2^31 - 1 with this cause (the SSA emitters exit 134 without a
 message, their bounds-trap shape); wasm32 checks the doubled total in i64
 and traps. The ceiling is the same one `__alloc_u8` enforces: an array's
-byte size is an i32. The copy-on-write helpers read their capacity from a
+byte size is an i32.
+
+The native emitters rely on this ceiling. They can zero-extend an i32 index,
+and a negative index is then at least 2^31. So it still fails the check. The copy-on-write helpers read their capacity from a
 header that already passed this guard, so they widen the arithmetic and
 need no check of their own.
 

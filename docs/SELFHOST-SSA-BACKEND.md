@@ -470,6 +470,12 @@ drops an empty block that holds only a branch, and each edge into it goes
 past it. A phi loses its slot for a dropped predecessor. A branch whose false
 target is the next block falls through into it.
 
+When an x86-64 add, sub, and, or or xor result shares the slot of its first
+operand, the emitter writes the slot in place (`ssa_bin_in_slot`). An example
+is `subq $1, -144(%rbp)`, in place of a load, the operation and a store. A
+32-bit form does not do this, because a write of four bytes keeps the upper
+half of the slot.
+
 `ssa.thread_forwarding` keeps a block whose target has phis, because later
 passes put code on that edge. The emitter skips such a block when it is
 still empty. A branch or a jump into it goes to the end of the chain
@@ -477,6 +483,17 @@ still empty. A branch or a jump into it goes to the end of the chain
 A block that holds only phis counts as empty, because each phi move goes on
 the edge into the block. An edge gets a stub only when one of its phis needs
 a move (`ssa_edge_moves`).
+
+An `add`, `sub` or `mul` whose only use is the zero-extension after it is one
+32-bit instruction (`ssa.low_word_pair`). On x86-64 it is `leal`, `addl`,
+`subl` or `imull`, and on arm64 it is the `w` form. Both write the upper half
+as zero.
+
+`ssa.zero_extended_indices` makes an i32 sign extension a
+zero-extension when only array indices read it. A byte view index is a
+zero-extension too (`ssabytes`). No length reaches 2^31, so a negative index
+still fails the unsigned bounds check. The sum that makes an index is then one
+`leal`.
 
 Division,
 a shift by a register count and the table shared with the stack machine
