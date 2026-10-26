@@ -96,6 +96,8 @@ const (
 	valueMatchSettledLocal     = "function f(): u8 { let t: (u8, i32) = (5u8, 4); return match (t) { (q, n) => q }; }\nfunction g(): i64 { let t: (i64, i32) = (5000000000i64, 4); let r = match (t) { (q, n) => q }; return r; }\nfunction main(): i32 { return 0; }\n"
 	methodCallableParamBinds   = "struct Box[T] { v: T }\nfunction (b: Box[T]) app[U](d: () => U, f: (T) => U): U { return f(b.v); }\nfunction g(s: Box[i32]): i32 { let a: i32 = s.app((): i32 => 0, (x: i32): i32 => x + 1); return a; }\nfunction main(): i32 { return 0; }\n"
 	genericEnumCallablePayload = "enum Fut[T] { Done(T), Wait(i32, (i32) => Fut[T]) }\nfunction run(start: Fut[i32]): i32 { let f: Fut[i32] = start; while (true) { match (f) { Done(v) => { return v; }, Wait(tok, k) => { f = k(tok); } } } return 0; }\nfunction main(): i32 { return 0; }\n"
+	// P is in no union or trait below; A is a member of U and implements T.
+	elemCheckedDecls = "struct P { x: i32 }\nstruct A { a: i32 }\nstruct B { b: i32 }\ntype U = A | B;\nenum E { X, Y(i32) }\ntrait T { function t(self: Self): i32; }\nimpl T for A { function t(self: A): i32 { return 0; } }\n"
 )
 
 func buildCheckerCodesBin(t *testing.T) (checkerBin string, runner []string, dir string) {
@@ -397,6 +399,27 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e050-try-payload-bound-in-a-loop", "enum Next { Part(i32[]), Done }\nfunction step(n: i32): Result[Next, string] { return Ok(Part([n])); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): Result[i32, string] {\n    let n: i32 = 0;\n    while (n < 3) {\n        match (step(n)?) {\n            Part(r1) => {\n                n = n + keep(r1);\n            },\n            Done => {\n                return Ok(n);\n            }\n        }\n    }\n    return Ok(n);\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"e050-payload-bound-in-a-loop", "enum Next { Part(i32[]), Done }\nfunction step(n: i32): Next { return Part([n]); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction main(): i32 {\n    let n: i32 = 0;\n    while (n < 3) {\n        match (step(n)) {\n            Part(r1) => {\n                n = n + keep(r1);\n            },\n            Done => {\n                return n;\n            }\n        }\n    }\n    return n;\n}\n", nil},
 		{"e050-try-payload-bound-before-a-loop", "enum Next { Part(i32[]), Done }\nfunction step(n: i32): Result[Next, string] { return Ok(Part([n])); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): Result[i32, string] {\n    match (step(1)?) {\n        Part(r1) => {\n            let n: i32 = 0;\n            while (n < 3) {\n                n = n + keep(r1);\n            }\n            return Ok(n);\n        },\n        Done => {\n            return Ok(0);\n        }\n    }\n    return Ok(0);\n}\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"e051-fresh-result-payload-by-match", "function make(n: i32): Result[i32[], string] { return Ok([n]); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction keep_s(own s: string): i32 { return s.len(); }\nfunction f(): i32 {\n    match (make(1)) {\n        Ok(xs) => { return keep(xs); },\n        Err(e) => { return keep_s(e); }\n    }\n    return 0;\n}\nfunction main(): i32 { return f(); }\n", nil},
+		{"e051-fresh-result-payload-let-in-arm", "function make(n: i32): Result[i32[], string] { return Ok([n]); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): i32 {\n    match (make(1)) {\n        Ok(xs) => {\n            let k: i32 = keep(xs);\n            return k;\n        },\n        Err(_) => { return 0; }\n    }\n    return 0;\n}\nfunction main(): i32 { return f(); }\n", nil},
+		{"e051-fresh-result-payload-by-let-else", "function make(n: i32): Result[i32[], string] { return Ok([n]); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): i32 {\n    let Ok(xs) = make(2) else { return 0; };\n    let k: i32 = keep(xs);\n    return k;\n}\nfunction main(): i32 { return f(); }\n", nil},
+		{"e051-fresh-option-payload-by-if-let-in-a-loop", "function opt(n: i32): Option[i32[]] { return Some([n]); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): i32 {\n    let t: i32 = 0;\n    for i in 0..3 {\n        if let Some(xs) = opt(i) {\n            t = t + keep(xs);\n        }\n    }\n    return t;\n}\nfunction main(): i32 { return f(); }\n", nil},
+		{"e051-fresh-result-payload-into-an-own-method-param", "struct K { n: i32 }\nfunction (k: K) open(own buf: u8[]): i32 { return buf.len() + k.n; }\nfunction sealed(seq: u64): Result[u8[], string] { return Ok([seq as u8]); }\nfunction f(k: K): i32 {\n    let Ok(buf) = sealed(1 as u64) else { return 0; };\n    return k.open(buf);\n}\nfunction main(): i32 { return f(K { n: 1 }); }\n", nil},
+		{"e051-result-payload-through-a-borrowing-callee", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction relay(r: Result[i32[], string]): Result[i32[], string] { return r; }\nfunction f(r: Result[i32[], string]): i32 {\n    let Ok(xs) = relay(r) else { return 0; };\n    return keep(xs);\n}\nfunction main(): i32 { return f(Ok([1])); }\n", []string{"E051"}},
+		{"e050-fresh-result-payload-moved-twice", "function make(n: i32): Result[i32[], string] { return Ok([n]); }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): i32 {\n    let Ok(xs) = make(2) else { return 0; };\n    let a: i32 = keep(xs);\n    return a + keep(xs);\n}\nfunction main(): i32 { return f(); }\n", []string{"E050"}},
+		{"e050-own-result-matched-then-used", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(own r: Result[i32[], string]): i32 {\n    match (r) {\n        Ok(xs) => { return keep(xs); },\n        Err(_) => { return 0; }\n    }\n    let again: Result[i32[], string] = r;\n    return 0;\n}\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"e050-own-operand-is-borrowed", "function f(own s: string, t: string): string {\n    if (s != t) {\n        return \"a\" + s;\n    }\n    return \"\";\n}\nfunction g(own s: string): string {\n    let a: string = s + \"x\";\n    return a + s;\n}\nfunction main(): i32 { return 0; }\n", nil},
+		{"e050-string-payload-compared-then-used", "function rs(n: i64): Result[string, string] { return Ok(\"x\"); }\nfunction f(): string {\n    match (rs(1 as i64)) {\n        Ok(h) => {\n            if (h != \"y\") {\n                return \"a\" + h;\n            }\n        },\n        Err(_) => { return \"\"; }\n    }\n    return \"\";\n}\nfunction main(): i32 { return f().len(); }\n", nil},
+		{"e051-builtin-variant-construction-is-owned", "function keep_r(own r: Result[i32[], string]): i32 { return 0; }\nfunction keep_o(own o: Option[i32[]]): i32 { return 0; }\nfunction f(): i32 { return keep_r(Ok([1])) + keep_r(Err(\"e\")) + keep_o(Some([1])) + keep_o(None); }\nfunction main(): i32 { return f(); }\n", nil},
+		{"e051-builtin-variant-scrutinee-is-owned", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(): i32 {\n    match (Some([1])) {\n        Some(xs) => { return keep(xs); },\n        None => { return 0; }\n    }\n    return 0;\n}\nfunction main(): i32 { return f(); }\n", nil},
+		{"e036-qualified-builtin-beside-a-user-variant", "enum Opt { Some(i32), None }\nenum Outcome { Ok(i32), Err(i32) }\nfunction opt(n: i32): Option[i32[]] { return Option.Some([n]); }\nfunction res(n: i32): Result[i32[], string] {\n    if (n > 0) {\n        return Result.Ok([n]);\n    }\n    return Result.Err(\"neg\");\n}\nfunction user(): Opt { return Opt.Some(3); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"e002-qualified-builtin-payload-still-checked", "enum Opt { Some(i32), None }\nfunction opt(): Option[i32[]] { return Option.Some(\"s\"); }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"e036-qualified-user-variant-still-checked", "enum Opt { Some(i32), None }\nfunction user(): Opt { return Opt.Some([1]); }\nfunction main(): i32 { return 0; }\n", []string{"E036"}},
+		{"e051-builtin-payload-beside-a-user-variant", "enum Opt { Some(i32), None }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction opt(n: i32): Option[i32[]] { return Option.Some([n]); }\nfunction f(): i32 {\n    match (opt(2)) { Some(xs) => { return keep(xs); }, None => { return 0; } }\n    return 0;\n}\nfunction g(o: Opt): i32 { match (o) { Some(v) => { return v; }, None => { return 5; } } return 0; }\nfunction main(): i32 { return f() + g(Opt.None); }\n", nil},
+		{"e050-scalar-payload-beside-a-pointer-variant", "enum A { V(i32) }\nenum B { V(i32[]) }\nfunction f(own a: A): i32 {\n    match (a) { V(n) => { return n; } }\n    let again: A = a;\n    return 0;\n}\nfunction main(): i32 { return 0; }\n", nil},
+		{"e050-own-builtin-matched-beside-a-user-variant", "enum Opt { Some(i32), None }\nfunction keep(own ys: i32[]): i32 { return ys.len(); }\nfunction f(own o: Option[i32[]]): i32 {\n    match (o) { Some(xs) => { return keep(xs); }, None => { return 0; } }\n    let again: Option[i32[]] = o;\n    return 0;\n}\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"e050-own-compared-then-moved-twice", "function keep(own s: string): i32 { return s.len(); }\nfunction f(own s: string): i32 {\n    if (s == \"x\") {\n        return keep(s) + keep(s);\n    }\n    return 0;\n}\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"e050-own-result-tried-twice", "function f(own r: Result[i32[], string]): Result[i32, string] {\n    let a: i32[] = r?;\n    let b: i32[] = r?;\n    return Ok(a.len() + b.len());\n}\nfunction main(): i32 { return 0; }\n", []string{"E050"}},
+		{"e050-own-result-tried-once", "function f(own r: Result[i32[], string]): Result[i32, string] {\n    let a: i32[] = r?;\n    return Ok(a.len());\n}\nfunction main(): i32 { return 0; }\n", nil},
 		{"e051-field-of-a-borrowed-param", "struct P { items: i32[], n: i32 }\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction f(p: P): i32 {\n    let xs: i32[] = p.items;\n    let k: i32 = keep(xs);\n    return k;\n}\nfunction main(): i32 { return f(P { items: [1], n: 2 }); }\n", []string{"E051"}},
 		{"own-accepts-a-generic-factory-result", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction make[T](t: T): i32[] { let out: i32[] = [2]; return out; }\nfunction main(): i32 { let xs: i32[] = [1]; return keep(make(xs)); }\n", nil},
 		{"e051-result-borrowed-through-a-value-if", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction pick(c: boolean, xs: i32[], ys: i32[]): i32[] { return if (c) { xs } else { ys }; }\nfunction main(): i32 { let xs: i32[] = [1]; let ys: i32[] = []; return keep(pick(true, xs, ys)); }\n", []string{"E051"}},
@@ -770,6 +793,35 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"arr-mix-struct-then-prim", "struct P { x: i32 }\nfunction main(): i32 { let a = [P { x: 1 }, 5]; return 0; }\n", []string{"E034"}},
 		{"arr-mix-struct-then-struct", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { let a = [P { x: 1 }, Q { y: 2 }]; return 0; }\n", []string{"E034"}},
 		{"typed-arr-struct-mix-unlike-dest", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { let a: P[] = [Q { y: 2 }, P { x: 1 }]; return 0; }\n", []string{"E003", "E034"}},
+		// #13399: an array literal in a union, enum, str or dyn element slot is
+		// reported element by element, with no whole-value code beside the E034.
+		{"union-elem-return-non-member", elemCheckedDecls + "function f(p: P): U[] { return [p]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-return-non-member-literal", elemCheckedDecls + "function f(): U[] { return [P { x: 1 }]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-return-non-member-first", elemCheckedDecls + "function f(a: A, p: P): U[] { return [p, a]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-return-int", elemCheckedDecls + "function f(): U[] { return [5]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"enum-elem-return-non-member", elemCheckedDecls + "function f(p: P): E[] { return [p]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"option-elem-return-int", elemCheckedDecls + "function f(): Option[i32][] { return [5]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"str-elem-return-int", elemCheckedDecls + "function f(): str[] { return [5]; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-let-non-member", elemCheckedDecls + "function main(): i32 { let p: P = P { x: 1 }; let u: U[] = [p]; return 0; }\n", []string{"E034"}},
+		{"union-elem-assign-non-member", elemCheckedDecls + "function main(): i32 { let p: P = P { x: 1 }; let u: U[] = [A { a: 1 }]; u = [p]; return 0; }\n", []string{"E034"}},
+		{"union-elem-place-non-member", elemCheckedDecls + "struct H { us: U[] }\nfunction g(h: H, p: P): i32 { h.us = [p]; return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E034", "E048"}},
+		{"union-elem-arg-non-member", elemCheckedDecls + "function g(us: U[]): i32 { return 0; }\nfunction h(p: P): i32 { return g([p]); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-generic-arg-non-member", elemCheckedDecls + "function take[X](us: U[], x: X): i32 { return 0; }\nfunction g(p: P): i32 { return take([p], 1); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-closure-arg-non-member", elemCheckedDecls + "function g(p: P): i32 { let f = (us: U[]): i32 => 0; return f([p]); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-method-arg-non-member", elemCheckedDecls + "struct S { n: i32 }\nfunction (s: S) take(us: U[]): i32 { return 0; }\nfunction g(p: P): i32 { let s: S = S { n: 1 }; return s.take([p]); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-generic-method-arg-non-member", elemCheckedDecls + "struct S { n: i32 }\nfunction (s: S) take[X](us: U[], x: X): i32 { return 0; }\nfunction g(p: P): i32 { let s: S = S { n: 1 }; return s.take([p], 1); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-append-non-member", elemCheckedDecls + "function g(p: P, xs: U[][]): i32 { return xs.append([p]).len(); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-with-non-member", elemCheckedDecls + "function g(p: P, xs: U[][]): i32 { return xs.with(0, [p]).len(); }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-field-non-member", elemCheckedDecls + "struct H { us: U[] }\nfunction h(p: P): H { return H { us: [p] }; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"union-elem-field-update-non-member", elemCheckedDecls + "struct H { us: U[], n: i32 }\nfunction g(h: H, p: P): H { return H { ...h, us: [p] }; }\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"option-elem-const-int", elemCheckedDecls + "const C: Option[i32][] = [5];\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		{"str-elem-const-int", elemCheckedDecls + "const C: str[] = [5];\nfunction main(): i32 { return 0; }\n", []string{"E034"}},
+		// Below the top of a destination a dyn element is checked as part of the
+		// whole value: P does not implement T.
+		{"dyn-elem-nested-array-non-impl", elemCheckedDecls + "function f(p: P): dyn T[][] { return [[p]]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"dyn-elem-nested-option-non-impl", elemCheckedDecls + "function f(p: P): Option[dyn T[]] { return Some([p]); }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"dyn-elem-nested-tuple-non-impl", elemCheckedDecls + "function f(p: P): (dyn T[], i32) { return ([p], 1); }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
+		{"dyn-elem-nested-impl", elemCheckedDecls + "function f(a: A): dyn T[][] { return [[a]]; }\nfunction g(a: A): Option[dyn T[]] { return Some([a]); }\nfunction main(): i32 { let a: A = A { a: 1 }; let d: dyn T[][] = [[a]]; return 0; }\n", nil},
 		{"arr-elem-struct-return-mismatch", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction f(p: P): Q[] { return [p]; }\nfunction main(): i32 { return 0; }\n", []string{"E002"}},
 		{"arr-elem-struct-let-mismatch", "struct P { x: i32 }\nstruct Q { y: i32 }\nfunction main(): i32 { let p = P { x: 1 }; let a: Q[] = [p, p]; return a.len(); }\n", []string{"E003"}},
 		{"arr-elem-struct-field-mismatch", "struct P { x: i32 }\nstruct Q { y: i32 }\nstruct W { qs: Q[] }\nfunction main(): i32 { let p = P { x: 1 }; let w = W { qs: [p] }; return w.qs.len(); }\n", []string{"E043"}},
@@ -2307,6 +2359,23 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		{"view-memo-recursive-local", `struct A { bs: B[], xs: [i32] }
+struct B { items: A[] }
+function bad(): B { let xs: i32[] = [1, 2]; let a: A = A { bs: [], xs: xs[:] }; let b: B = B { items: [a] }; return b; }
+function main(): i32 { return 0; }`},
+		{"view-memo-recursive-parameter", `struct A { bs: B[], xs: [i32] }
+struct B { items: A[] }
+function safe(xs: [i32]): B { let a: A = A { bs: [], xs: xs }; let b: B = B { items: [a] }; return b; }
+function main(): i32 { return 0; }`},
+		{"view-memo-generic-instantiations", `struct Holder[T] { value: T }
+function owned(): Holder[i32[]] { return Holder { value: [1, 2] }; }
+function borrowed(xs: [i32]): Holder[[i32]] { return Holder { value: xs }; }
+function bad(): Holder[[i32]] { let xs: i32[] = [1, 2]; let h = borrowed(xs[:]); return h; }
+function main(): i32 { return 0; }`},
+		{"view-memo-owned-recursive", `struct A { bs: B[], xs: i32[] }
+struct B { items: A[] }
+function safe(): B { let a: A = A { bs: [], xs: [1, 2] }; let b: B = B { items: [a] }; return b; }
+function main(): i32 { return 0; }`},
 		{"local-array-view-literal", `function first(b: [u8]): u8 { return b[0]; }
 function main(): i32 { let buf: [u8] = [3 as u8, 250 as u8, 7 as u8]; return first(buf) as i32; }`},
 		{"local-array-view-owner", `function main(): i32 { let xs: u8[] = [3, 250, 7]; let view: [u8] = xs; return view.len(); }`},

@@ -33,7 +33,7 @@ function show[P: platform.Platform](req: HttpRequest, params: router.Params, pla
 }
 
 function send(method: string, path: string): HttpResponse {
-    let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+    let m: mock_platform.MockPlatform = mock_platform.new();
     return routes[mock_platform.MockPlatform]().handle(http.request(method, path), m);
 }
 
@@ -61,9 +61,10 @@ with the mock while `main` in production uses `platform.Host`.
 ## Script the platform: `MockPlatform`
 
 `std/mock_platform`'s `MockPlatform` implements `Platform` with canned
-answers and a record of every call. Can the configuration, the clock,
-randomness and upstream responses; then assert on the response and on
-what the handler did.
+answers and a record of every call. It configures like `platform.Host`:
+`mock_platform.new()` and then immutable `with_*` builders. Can the
+configuration, the clock, randomness and upstream responses; then assert
+on the response and on what the handler did.
 
 ```fern
 import "std/test";
@@ -85,9 +86,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 
 function test_upstream_up(): test.TestOutcome {
-    let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-    m.config_set("REGION", "eu-west");
-    m.http_set("GET", "https://status.example.com/health", 200, "fine");
+    let m: mock_platform.MockPlatform = mock_platform.new()
+        .with_config("REGION", "eu-west")
+        .with_http("GET", "https://status.example.com/health", Ok(http.ok("fine")));
     let resp: HttpResponse = handle(http.request("GET", "/"), m);
     if (!m.has_call("log")) {
         return test.fail("expected a log line");
@@ -96,8 +97,8 @@ function test_upstream_up(): test.TestOutcome {
 }
 
 function test_upstream_down(): test.TestOutcome {
-    // An uncanned request fails as a refused connection.
-    let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+    let m: mock_platform.MockPlatform = mock_platform.new()
+        .with_http("GET", "https://status.example.com/health", Err(fetch.Timeout(fetch.Total)));
     return test.assert_status(handle(http.request("GET", "/"), m), 502);
 }
 
@@ -109,10 +110,18 @@ function main(): i32 {
 }
 ```
 
-`m.calls()` lists every call in order as `MockCall { name, args }` —
-an HTTP call's args are `"METHOD url"` — and `find_call`, `call_count`
-and `reset` query it. `now_set`, `instant_set`, `random_set`, `peer_set`,
-`deadline_set`, `trace_set`, `file_set` and `cancel()` can the rest.
+`with_http` takes the whole `Result` the request answers: a response
+with any status, headers and body, or any `fetch.FetchError`, so a test
+can drive a timeout or a TLS failure. A request with no canned answer
+fails as a refused connection.
+
+`m.calls()` lists every call in order as `MockCall { name, args }`, with
+each argument verbatim — an HTTP call's args are `"METHOD url"` — and
+`find_call`, `call_count` and `reset` query it. Mocks a builder derives
+from one `new()` share that log. `with_env`, `with_secret`, `with_now`,
+`with_instant`, `with_random`, `with_peer`, `with_deadline`, `with_trace`,
+`with_file`, `with_dir` and `with_cancelled` can the rest; `with_peer`,
+`with_deadline` and `with_trace` take the same types as `Host`'s.
 `m.materialize(resp)` reads a file body into bytes so a test can look
 at what `http.file` or `std/http/static` would have sent.
 
@@ -145,7 +154,7 @@ const API: string = "93.184.216.34";
 
 function run(answers: sim_fetch.Answer[]): (HttpResponse, i64) {
     let d: sim.Sim = sim.new(1);
-    let n: sim_fetch.Net = sim_fetch.net(d)
+    let n: sim_fetch.Net = sim_fetch.new(d)
         .host("api.test", [API])
         .listen(API, 80, time.duration_millis(5))
         .route(API, 80, "/price", answers);
@@ -200,9 +209,12 @@ What a script can say:
 | `.after(d)` | Wait a `Duration` before the first byte |
 | `.in_chunks(size, every)` | Dribble the response out, a chunk each `every` |
 | `.kept()` / `.held()` | Keep the connection open for reuse, or open but idle |
+| `.cut(n)` | Only the first `n` bytes arrive |
 
 A route's answers are used in order, the last repeating; an unrouted
-path is a 404. `n.connects()`, `n.open()`, `n.sent_count()` and
+path is a 404. `n.flaky(addr, port, path, percent, fault)` answers that
+share of the requests with `fault` instead, chosen by the simulation's
+seeded generator, so a seed replays the same failures. `n.connects()`, `n.open()`, `n.sent_count()` and
 `n.sent(i)` report what the client did — how many connections it
 opened, and the exact bytes of each request.
 
@@ -213,7 +225,7 @@ so a client — or a service under test that calls another service — talks
 to it over HTTP with no socket:
 
 ```fern
-let n: sim_fetch.Net = sim_fetch.net(d)
+let n: sim_fetch.Net = sim_fetch.new(d)
     .host("users.test", [USERS])
     .serve(USERS, 80, (req: HttpRequest): HttpResponse => users.handle(req, plat));
 ```
@@ -239,7 +251,7 @@ JSON object per line:
 {"method":"GET","url":"http://api.test/users/7","status":200,"headers":[["content-type","application/json"]],"body":"{\"id\":7}"}
 ```
 
-`sim_fetch.net(sim.new(1)).replay(cassette)` builds a network that
+`sim_fetch.new(sim.new(1)).replay(cassette)` builds a network that
 answers those requests with those responses. Bodies that are not UTF-8
 are stored as `body_hex`. The simulated network has no TLS, so an
 `https` exchange replays as plain HTTP.

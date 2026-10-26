@@ -134,6 +134,36 @@ function main(): i32 {
   let open: ir.Op[] = [ir.op_block(0), ir.op_loop(0), load(1), load(0), slen(), lt(), ir.op_bin("not", 0, false), ir.op_brif(1)];
   out = out + "licm_unclosed_refused: " + show(ir.hoist_loop_invariants(open, 3)) + "\n";
 
+  let mask: ir.Op[] = [load(2), ir.op_const_i32(1), ir.op_bin("sub", 0, false), ir.op_int_cast("i32"), store(4)];
+  let use_mask: ir.Op[] = [load(1), load(4), ir.op_bin("and", 0, false), store(3)];
+  let pure_cond: ir.Op[] = [load(1), ir.op_const_i32(40), lt()];
+  let pure: ir.Op[] = while_loop(pure_cond, cat(cat(mask, use_mask), inc(1)));
+  let pure_h: ir.OptimizedOps = ir.hoist_loop_invariants(pure, 5);
+  out = out + "licm_pure: " + show(pure_h) + "\n";
+  out = out + "licm_pure_stack_neutral=" + util.i32_to_string(stack_neutral(pure_h.ops)) + "\n";
+
+  let moving: ir.Op[] = while_loop(pure_cond, cat(cat(cat(mask, use_mask), [load(1), store(2)]), inc(1)));
+  out = out + "licm_pure_operand_stored_refused: " + show(ir.hoist_loop_invariants(moving, 5)) + "\n";
+
+  let twice_set: ir.Op[] = cat([ir.op_const_i32(0), store(4)], pure);
+  out = out + "licm_pure_target_twice_refused: " + show(ir.hoist_loop_invariants(twice_set, 5)) + "\n";
+
+  let early: ir.Op[] = while_loop(pure_cond, cat(cat(cat([load(4), store(3)], mask), use_mask), inc(1)));
+  out = out + "licm_pure_read_before_refused: " + show(ir.hoist_loop_invariants(early, 5)) + "\n";
+
+  let shift: ir.Op[] = [load(4), ir.op_const_i32(3), ir.op_bin("shl", 0, false), store(5), load(5), store(3)];
+  let chain: ir.Op[] = while_loop(pure_cond, cat(cat(mask, shift), inc(1)));
+  let chain_h: ir.OptimizedOps = ir.hoist_loop_invariants(chain, 6);
+  out = out + "licm_pure_chain: " + show(chain_h) + "\n";
+  out = out + "licm_pure_chain_stack_neutral=" + util.i32_to_string(stack_neutral(chain_h.ops)) + "\n";
+
+  let divide: ir.Op[] = while_loop(pure_cond, cat([load(2), ir.op_const_i32(3), ir.op_bin("div_s", 0, false), store(4), load(4), store(3)], inc(1)));
+  out = out + "licm_pure_divide_refused: " + show(ir.hoist_loop_invariants(divide, 5)) + "\n";
+
+  let inner_pure: ir.Op[] = while_loop([load(5), ir.op_const_i32(8), lt()], cat(cat(mask, use_mask), inc(5)));
+  let outer_pure: ir.Op[] = while_loop(pure_cond, cat(inner_pure, inc(1)));
+  out = out + "licm_pure_nested: " + show(ir.hoist_loop_invariants(outer_pure, 6)) + "\n";
+
   out = out + "licm_frame_grown: new=" + util.i32_to_string(problems(once.ops, 1, once.n_locals))
     + " old=" + util.i32_to_string(problems(once.ops, 1, 3)) + "\n";
 

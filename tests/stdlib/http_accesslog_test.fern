@@ -3,11 +3,11 @@ import "std/http";
 import "std/http/accesslog";
 import "std/mock_platform";
 import "std/time";
+import "std/net";
+import "std/http/trace";
 
 function plat(): mock_platform.MockPlatform {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
-  m.now_set(time.timestamp_from_unix_millis(1700000000123));
-  return m;
+  return mock_platform.new().with_now(time.timestamp_from_unix_millis(1700000000123));
 }
 
 function get(path: string): HttpRequest {
@@ -15,9 +15,8 @@ function get(path: string): HttpRequest {
 }
 
 function test_a_record_carries_every_field(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = plat();
-  m.peer_set("192.0.2.7:5000");
-  m.trace_set("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01");
+  let span: trace.Context = trace.Context { trace_id: "4bf92f3577b34da6a3ce929d0e0e4736", span_id: "00f067aa0ba902b7", flags: 1, state: "" };
+  let m: mock_platform.MockPlatform = plat().with_peer(net.socket_addr_parse("192.0.2.7:5000")).with_trace(span);
   let req: HttpRequest = HttpRequest { ...get("/users/7"), headers: get("/").headers.set("User-Agent", "curl/8.9 \"x\"") };
   let line: string = accesslog.record(req, http.ok("hello"), m, time.duration_nanos(412345));
   return test.assert_eq(line, "{\"timeUnixNano\":\"1700000000123000000\",\"severityNumber\":9,\"severityText\":\"INFO\",\"body\":\"GET /users/7 200\",\"traceId\":\"4bf92f3577b34da6a3ce929d0e0e4736\",\"spanId\":\"00f067aa0ba902b7\",\"attributes\":{\"http.request.method\":\"GET\",\"url.path\":\"/users/7\",\"http.response.status_code\":200,\"http.server.request.duration\":0.000412,\"client.address\":\"192.0.2.7\",\"user_agent.original\":\"curl/8.9 \\\"x\\\"\",\"http.response.body.size\":5}}");

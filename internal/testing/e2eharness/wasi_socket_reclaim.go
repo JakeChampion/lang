@@ -193,7 +193,7 @@ func CheckWasiSocketReclaim(t *testing.T, modulePath, operation string) {
 	if operation == "send" {
 		socket, streams = 0, 0
 		successFailure = "(i32.ne (local.get $result) (i32.const 1))"
-		errorResult = "(i32.const -1)"
+		errorResult = "(select (i32.const -64) (select (i32.const -29) (i32.const -1) (i32.eq (local.get $step) (i32.const 2))) (i32.eq (local.get $step) (i32.const 1)))"
 		if emptySend {
 			steps = 0
 		}

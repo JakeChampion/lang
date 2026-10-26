@@ -1,0 +1,123 @@
+import "std/deflate";
+import "std/i32";
+
+struct Drained { bytes: u8[], consumed: i32 }
+
+function never_cancel(): boolean {
+  return false;
+}
+
+function error_name(error: deflate.InflateError): string {
+  return match (error) { deflate.Truncated => "truncated", deflate.Malformed(_) => "malformed", deflate.OutputLimit => "limit", deflate.BadChecksum => "checksum", deflate.BadHeader(_) => "header" };
+}
+
+function same(a: [u8], b: [u8]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function drain(input: u8[], chunk_size: i32): Result[Drained, deflate.InflateReadError] {
+  let reader = deflate.inflate_reader(input, 131072)?;
+  let bytes: u8[] = [];
+  let consumed = 0;
+  let done = false;
+  while (!done) {
+    let chunk = reader.read(chunk_size, never_cancel)?;
+    let history = if (chunk.total < 32768) { chunk.total } else { 32768 };
+    if (chunk.bytes.len() > chunk_size || chunk.total != bytes.len() + chunk.bytes.len() || chunk.history_bytes != history
+      || chunk.consumed < consumed || chunk.consumed > input.len() || chunk.bytes.len() == 0 && !chunk.done) {
+      return Err(deflate.ReadRequest);
+    }
+    for byte in chunk.bytes {
+      bytes = bytes.append(byte);
+    }
+    consumed = chunk.consumed;
+    done = chunk.done;
+  }
+  return Ok(Drained { bytes: bytes, consumed: consumed });
+}
+
+function inspect(path: string, index: i32): i32 {
+  let data = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  let eager = deflate.inflate(data, 131072);
+  let prefix = "index=" + index.to_string();
+  let expected_error = "";
+  let expected: u8[] = [];
+  let consumed = 0;
+  for size in [1, 7, 257, 4096, 32768] {
+    match (drain(data, size)) {
+      Ok(v) => {
+        match (eager) {
+          Ok(reference) => {
+            if (!same(v.bytes, reference.out) || v.consumed != reference.consumed) {
+              return 3;
+            }
+          },
+          Err(_) => {
+            return 4;
+          }
+        }
+        if (size == 1) {
+          expected = v.bytes;
+          consumed = v.consumed;
+        } else if (expected_error != "" || !same(v.bytes, expected) || consumed != v.consumed) {
+          return 5;
+        }
+      },
+      Err(deflate.ReadCodec(e)) => {
+        match (eager) {
+          Ok(_) => {
+            return 6;
+          },
+          Err(_) => {}
+        }
+        if (size == 1) {
+          expected_error = error_name(e);
+        } else if (expected_error != error_name(e)) {
+          return 7;
+        }
+      },
+      _ => {
+        return 8;
+      }
+    }
+  }
+  if (expected_error != "") {
+    let eager_error = match (eager) { Err(e) => error_name(e), _ => "unexpected" };
+    print(prefix + " status=error error=" + expected_error + " eager_error=" + eager_error);
+  } else {
+    match (write_file_bytes(path + ".raw", expected)) {
+      Ok(_) => {},
+      Err(_) => {
+        return 9;
+      }
+    }
+    print(prefix + " status=ok bytes=" + expected.len().to_string() + " consumed=" + consumed.to_string());
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let av = args();
+  if (av.len() < 2 || av.len() > 9) {
+    return 1;
+  }
+  let i = 1;
+  while (i < av.len()) {
+    let code = inspect(av[i], i - 1);
+    if (code != 0) {
+      return code;
+    }
+    i = i + 1;
+  }
+  return 0;
+}

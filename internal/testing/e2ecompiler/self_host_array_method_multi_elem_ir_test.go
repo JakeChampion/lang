@@ -46,6 +46,7 @@ function main(): i32 {
     return a.len() * 10 + b.len();
 }`, []string{"__fern_arr_concat", "__arrm_concat__string"}},
 
+	// The i32 clone is a reader leaf, spliced into main, so only the string one is emitted.
 	{"is_sorted-bounded", `import "std/array";
 function main(): i32 {
     let xs: i32[] = [1, 2, 3];
@@ -54,7 +55,7 @@ function main(): i32 {
     let b: boolean = ss.is_sorted();
     if (a && !b) { return 7; }
     return 9;
-}`, []string{"__arrm_is_sorted__i32", "__arrm_is_sorted__string"}},
+}`, []string{"__arrm_is_sorted__string"}},
 
 	{"dedup-bounded", `import "std/array";
 function main(): i32 {

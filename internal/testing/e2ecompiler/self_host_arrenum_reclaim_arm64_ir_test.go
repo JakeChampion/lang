@@ -5,6 +5,7 @@ import (
 )
 
 func TestSelfHostArrEnumReclaimIRArm64(t *testing.T) {
+	withoutSanitizer(t)
 	cli := buildSelfHostCLI(t)
 	for _, tc := range arrEnumReclaimCases {
 		t.Run(tc.name, func(t *testing.T) {

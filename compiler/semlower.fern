@@ -397,9 +397,9 @@ function inferred_rows(mod: parser.Module, built: semsource.Built, declared: Pla
 function produced_rows(mod: parser.Module, structs: irtables.StructTab, opts: semsource.BuildOpts): Inference {
   let built: semsource.Built = semsource.with_analyses(semsource.build_module_with(mod, opts));
   util.arr_push_cliff_report("sem:built", 0);
-  let records: parser.StructDecl[] = instance_records(built);
+  let records: parser.StructDecl[] = util.append_all(instance_records(built), laid_decls(structs, built));
   if (records.len() > 0) {
-    structs = irtables.struct_tab(util.append_all(structs.decls, records));
+    structs = irtables.struct_tab(irtables.replaced_decls(structs.decls, records));
   }
   let declared: Planned = rows_planned(mod, built, no_reuse(), []);
   let inf: Inference = Inference { built: built, rows: no_reuse(), records: records };
@@ -431,6 +431,23 @@ function instance_records(built: semsource.Built): parser.StructDecl[] {
     }
   }
   return util.append_all(out, instance_variants(built));
+}
+
+// The declarations of the records whose fields are laid out as their parts,
+// to stand in for the module's own.
+function laid_decls(structs: irtables.StructTab, built: semsource.Built): parser.StructDecl[] {
+  let out: parser.StructDecl[] = [];
+  for rec in built.laid {
+    let fields: parser.StructFieldDecl[] = [];
+    for fl in rec.fields {
+      fields = fields.append(parser.bare_field(fl.name, field_spelling(fl.ty)));
+    }
+    let at: i32 = irtables.decl_index_of(structs, ssasem.type_key(rec.ty));
+    if (at >= 0) {
+      out = out.append(parser.StructDecl { ...structs.decls[at], fields: fields });
+    }
+  }
+  return out;
 }
 
 function instance_variants(built: semsource.Built): parser.StructDecl[] {
