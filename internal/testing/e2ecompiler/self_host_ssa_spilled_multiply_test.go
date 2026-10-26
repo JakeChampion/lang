@@ -3,7 +3,6 @@ package e2ecompiler
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -44,9 +43,9 @@ func TestSelfHostSSASpilledImmediateMultiply(t *testing.T) {
 				if out, err := cli.compileCmd(target, bin, src).CombinedOutput(); err != nil {
 					t.Fatalf("%s native assembly: %v\n%s", target, err, out)
 				}
-				cmd := exec.Command(bin)
+				cmd := runX86_64Bin(cli.runner, bin)
 				if target == "arm64-linux" {
-					cmd = exec.Command("qemu-aarch64", bin)
+					cmd = runArm64Bin(arm64Runner(t), bin)
 				}
 				out, err := cmd.CombinedOutput()
 				if cmd.ProcessState == nil || !cmd.ProcessState.Exited() || cmd.ProcessState.ExitCode() != int(want%251) {

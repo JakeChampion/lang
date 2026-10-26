@@ -2,6 +2,24 @@ import "std/deflate";
 import "std/hex";
 import "std/codec";
 import "std/test";
+import "std/error";
+
+function error_message(value: dyn error.Error): string {
+  return value.message();
+}
+
+function error_contracts(): test.TestOutcome {
+  let values: deflate.InflateReadError[] = [deflate.ReadCodec(deflate.Truncated), deflate.ReadCancelled, deflate.ReadRequest, deflate.ReadBusy];
+  let expected: string[] = [deflate.Truncated.message(), "the decompression request was cancelled", "the decompression request size is invalid", "the decompression reader is already active"];
+  let i = 0;
+  for value in values {
+    if (value.message() != expected[i] || value.to_string() != expected[i] || error_message(value) != expected[i]) {
+      return test.fail("reader error message or display contract");
+    }
+    i = i + 1;
+  }
+  return test.pass();
+}
 
 function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
   return match (value) { Ok(bytes) => bytes, Err(_) => [] };
@@ -261,6 +279,7 @@ function reentrancy(): test.TestOutcome {
 
 function main(): i32 {
   let r = test.test_new("resumable DEFLATE output");
+  r = r.it("reader errors expose messages and display through the common interface", error_contracts);
   r = r.it("independent stored, fixed, and dynamic fixtures at six chunk sizes", goldens);
   r = r.it("history wrap and distance 32768 across chunk boundaries", history_wrap);
   r = r.it("literal-only blocks accept empty distance trees and reject malformed tables", literal_only);
