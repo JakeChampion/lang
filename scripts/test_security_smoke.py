@@ -67,6 +67,26 @@ class BinaryInspection(unittest.TestCase):
 
 
 class PrerequisiteFailure(unittest.TestCase):
+    def test_missing_qemu_fails_before_any_case(self):
+        with tempfile.TemporaryDirectory() as temp:
+            report = Path(temp) / "report.json"
+            result = subprocess.run(
+                [sys.executable, SCRIPT, "--compiler", sys.executable,
+                 "--qemu", str(Path(temp) / "missing-qemu"), "--report", report],
+                capture_output=True, timeout=10,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            evidence = json.loads(report.read_text())
+            self.assertEqual(evidence["cases"], [])
+            self.assertIn("missing-qemu", evidence["error"])
+
+    def test_compile_fail_case_refuses_success_and_unrelated_errors(self):
+        with tempfile.TemporaryDirectory() as temp:
+            for compiler in ("/bin/true", "/bin/false"):
+                with self.subTest(compiler=compiler), self.assertRaisesRegex(RuntimeError, "wrong compile-fail"):
+                    SMOKE.run_case(compiler, "unused", "unused", "x86-64-linux",
+                                   "diag_e051", Path(temp), 5, [])
+
     def test_missing_compiler_fails_and_writes_evidence(self):
         with tempfile.TemporaryDirectory() as temp:
             report = Path(temp) / "report.json"
