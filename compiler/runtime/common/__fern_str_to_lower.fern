@@ -1,0 +1,16 @@
+function __fern_str_to_lower(s: string): string {
+  let n: i32 = s.len();
+  let p: usize = __raw_alloc(n);
+  let i: i32 = 0;
+  while (i < n) {
+    let c: i32 = s[i] as i32;
+    if (c >= 65) {
+      if (c <= 90) {
+        c = c + 32;
+      }
+    }
+    __raw_store8(p, i, c);
+    i = i + 1;
+  }
+  return __raw_string(p, n);
+}

@@ -1,0 +1,49 @@
+function __fern_profile_name(pc: usize, im: usize, size: usize): usize {
+  if (im == 0 || size < 64) {
+    return 0;
+  }
+  let tab: usize = __load_i64(im + 40) as usize;
+  let ents: usize = __load_u8(im + 58) as usize;
+  ents = ents + (__load_u8(im + 59) as usize << 8);
+  let n: usize = __load_u8(im + 60) as usize;
+  n = n + (__load_u8(im + 61) as usize << 8);
+  if (ents < 64 || tab > size || n > (size - tab) / ents) {
+    return 0;
+  }
+  let k: usize = 0;
+  while (k < n) {
+    let sh: usize = im + tab + k * ents;
+    if (__load_i32(sh + 4) == 2) {
+      let off: usize = __load_i64(sh + 24) as usize;
+      let bytes: usize = __load_i64(sh + 32) as usize;
+      let link: usize = (__load_i32(sh + 40) as u32) as usize;
+      let step: usize = __load_i64(sh + 56) as usize;
+      if (off <= size && bytes <= size - off && step >= 24 && link < n) {
+        let st: usize = im + tab + link * ents;
+        let names: usize = __load_i64(st + 24) as usize;
+        let names_size: usize = __load_i64(st + 32) as usize;
+        let i: usize = 0;
+        while (i + step <= bytes && names <= size && names_size <= size - names) {
+          let sym: usize = im + off + i;
+          let addr: usize = __load_i64(sym + 8) as usize;
+          let len: usize = __load_i64(sym + 16) as usize;
+          let name: usize = (__load_i32(sym) as u32) as usize;
+          if ((__load_u8(sym + 4) & 15) == 2 && pc >= addr && pc - addr < len && name < names_size) {
+            let p: usize = im + names + name;
+            let end: usize = im + names + names_size;
+            let q: usize = p;
+            while (q < end && __load_u8(q) != 0) {
+              q = q + 1;
+            }
+            if (q < end) {
+              return p;
+            }
+          }
+          i = i + step;
+        }
+      }
+    }
+    k = k + 1;
+  }
+  return 0;
+}

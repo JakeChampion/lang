@@ -2,35 +2,21 @@ package e2ecompiler
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestSelfHostByteCopyNativeRuntime(t *testing.T) {
 	cli := buildRuntimeCLI(t)
-	module, err := os.ReadFile(langSrcAbs(t, "compiler/rtbytecopy.fern"))
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, reuse := range []bool{true, false} {
-		generator := filepath.Join(t.TempDir(), "generator.fern")
-		src := string(module) + fmt.Sprintf("\nfunction main(): i32 { write(native_source(%t)); return 0; }\n", reuse)
-		if err := os.WriteFile(generator, []byte(src), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		generated, err := runX86_64Bin(cli.runner, cli.x86Binary(t, generator)).Output()
-		if err != nil {
-			t.Fatalf("generate runtime: %v", err)
-		}
+		generated := internalRuntimeSource(t, "x86-64-linux", "__fern_bytes_append_range __fern_bytes_write_range __fern_bytes_append_back", 1, reuse)
 		success := byteCopyRuntimeSuccess
 		if !reuse {
 			success = strings.Replace(success, "__heap_alloc_count() - before != 0i64", "__heap_alloc_count() - before != 1i64", 1)
 		}
 		for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 			t.Run(fmt.Sprintf("%s/reuse=%t", target, reuse), func(t *testing.T) {
-				program := byteCopyStandalone(string(generated) + byteCopyRuntimeData + success)
+				program := byteCopyStandalone(generated + byteCopyRuntimeData + success)
 				stderr, code := cli.exitOf(t, program, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 				if code != 0 {
 					t.Fatalf("bulk byte runtime: exit %d, want 0\n%s", code, stderr)
@@ -44,7 +30,7 @@ func TestSelfHostByteCopyNativeRuntime(t *testing.T) {
 				"back-zero":    "__fern_bytes_append_back(a, 0, 2)",
 			} {
 				t.Run(fmt.Sprintf("%s/reuse=%t/%s", target, reuse, name), func(t *testing.T) {
-					program := byteCopyStandalone(string(generated) + byteCopyRuntimeData + "function main(): i32 { let a = packed_bytes(3); let src = bytes(3); let out = " + call + "; return out.len(); }")
+					program := byteCopyStandalone(generated + byteCopyRuntimeData + "function main(): i32 { let a = packed_bytes(3); let src = bytes(3); let out = " + call + "; return out.len(); }")
 					stderr, code := cli.exitOf(t, program, target)
 					if code != 134 || !strings.Contains(stderr, "fern: array index out of range") {
 						t.Fatalf("bulk byte bounds: exit %d, want array abort 134\n%s", code, stderr)

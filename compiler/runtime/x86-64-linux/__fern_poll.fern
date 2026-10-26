@@ -1,0 +1,29 @@
+function __fern_poll(fds: i32[], timeout_ms: i32): i32 {
+  let n: i32 = fds.len();
+  if (n <= 0) {
+    return 0 - 1;
+  }
+  let buf: usize = __raw_alloc(n * 8);
+  let i: i32 = 0;
+  while (i < n) {
+    __raw_store_ptr(buf, i, fds[i] as usize);
+    __raw_store8(buf, i * 8 + 4, 1);
+    __raw_store8(buf, i * 8 + 5, 0);
+    __raw_store8(buf, i * 8 + 6, 0);
+    __raw_store8(buf, i * 8 + 7, 0);
+    i = i + 1;
+  }
+  __syscall3(7, buf as i64, n as i64, timeout_ms as i64);
+  let hit: i32 = 0 - 1;
+  let j: i32 = 0;
+  while (j < n) {
+    if (hit < 0) {
+      if ((__raw_load8(buf, j * 8 + 6) & 57) != 0) {
+        hit = j;
+      }
+    }
+    j = j + 1;
+  }
+  let buf_own: string = __raw_string(buf, n * 8);
+  return hit;
+}

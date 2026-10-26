@@ -1,0 +1,20 @@
+function __fern_ring_set(blk: usize): i32 {
+  let ep: i32 = __load_i32(blk + 116);
+  if (ep > 0) {
+    return ep;
+  }
+  ep = __syscall3(20, 524288, 0, 0) as i32;
+  if (ep < 0) {
+    return ep;
+  }
+  if (ep >= __load_i32(blk + 68)) {
+    __syscall3(57, ep as i64, 0, 0);
+    return 0 - 24;
+  }
+  __store_i32(blk + 116, ep);
+  let w: i32 = __fern_ring_watch(blk, ep, 1, 255);
+  if (w < 0) {
+    return w;
+  }
+  return ep;
+}

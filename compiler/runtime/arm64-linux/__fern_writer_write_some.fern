@@ -1,0 +1,9 @@
+function __fern_writer_write_some(fd: i32, s: string): Result[i64, IoError] {
+  let n: i32 = s.len();
+  let data: usize = __raw_data(s);
+  let w: i32 = __syscall3(64, fd as i64, (data + 0) as i64, n as i64) as i32;
+  if (w < 0) {
+    return Err(__fern_io_error(0 - w, ""));
+  }
+  return Ok(w as i64);
+}

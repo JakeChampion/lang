@@ -1,0 +1,32 @@
+function __fern_ring_set_wait(blk: usize, ep: i32, b: usize, from: i32, cap: i32): i32 {
+  let room: i32 = cap - from;
+  if (room > 64) {
+    room = 64;
+  }
+  if (room <= 0) {
+    return from;
+  }
+  let evs: usize = blk + 2048;
+  let m: i32 = __syscall6(281, ep as i64, evs as i64, room as i64, 0, 0, 8) as i32;
+  let n: i32 = from;
+  let j: i32 = 0;
+  while (j < m) {
+    let e: usize = evs + j as usize * 12;
+    let bits: i32 = __raw_load8(e, 0);
+    let ready: i32 = 0;
+    if ((bits & 1) != 0) {
+      ready = ready | 1;
+    }
+    if ((bits & 4) != 0) {
+      ready = ready | 2;
+    }
+    if ((bits & 24) != 0) {
+      ready = ready | 4;
+    }
+    __raw_store_ptr(b, n * 2 + 1, __load_i32(e + 4) as usize);
+    __raw_store_ptr(b, n * 2 + 2, ready as usize);
+    n = n + 1;
+    j = j + 1;
+  }
+  return n;
+}

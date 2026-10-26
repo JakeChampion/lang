@@ -1,0 +1,3 @@
+function __fern_sysctl(mib: i32[]): Result[i32[], IoError] {
+  return Err(__fern_io_error(38, ""));
+}

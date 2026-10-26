@@ -1,0 +1,64 @@
+function __fern_set_file_times(path: string, asec: i64, ansec: i64, msec: i64, mnsec: i64, flags: i32): Result[void, IoError] {
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, path[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let a0: i64 = asec;
+  let a1: i64 = ansec;
+  let m0: i64 = msec;
+  let m1: i64 = mnsec;
+  if ((flags & 24) != 0) {
+    let ts: usize = __raw_scratch(16);
+    __syscall3(116, ts as i64, 0, 0);
+    let sec: i64 = __load_i64(ts);
+    let sub: i64 = __load_i32(ts + 8) as i64;
+    if ((flags & 8) != 0) {
+      a0 = sec;
+      a1 = sub * (1000 as i64);
+    }
+    if ((flags & 16) != 0) {
+      m0 = sec;
+      m1 = sub * (1000 as i64);
+    }
+  }
+  let al: usize = __raw_scratch(64);
+  let z: i32 = 0;
+  while (z < 24) {
+    __raw_store8(al, z, 0);
+    z = z + 1;
+  }
+  __raw_store8(al, 0, 5);
+  let buf: usize = al + 32;
+  let n: i32 = 0;
+  let hi: i32 = 0;
+  if ((flags & 4) == 0) {
+    hi = hi + 4;
+    __store_i64(buf + n, m0);
+    __store_i64(buf + n + 8, m1);
+    n = n + 16;
+  }
+  if ((flags & 2) == 0) {
+    hi = hi + 16;
+    __store_i64(buf + n, a0);
+    __store_i64(buf + n + 8, a1);
+    n = n + 16;
+  }
+  __raw_store8(al, 5, hi);
+  let opt: i32 = 0;
+  if ((flags & 1) != 0) {
+    opt = 1;
+  }
+  if ((flags & 30) == 24) {
+    opt = opt | 64;
+  }
+  let rc: i32 = __syscall5(221, pathz as i64, al as i64, buf as i64, n as i64, opt as i64) as i32;
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen)));
+  }
+  return Ok(());
+}

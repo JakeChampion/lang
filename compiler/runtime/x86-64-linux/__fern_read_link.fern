@@ -1,0 +1,24 @@
+function __fern_read_link(path: string): Result[string, IoError] {
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, path[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let buf: usize = __raw_alloc(4096);
+  let n: i32 = __syscall4(267, -100, pathz as i64, buf as i64, 4096) as i32;
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  let buf_own: string = __raw_string(buf, 4096);
+  if (n < 0) {
+    return Err(__fern_io_error(0 - n, __fern_path_copy(pathz_own, plen)));
+  }
+  if (n >= 4096) {
+    return Err(__fern_io_error(36, __fern_path_copy(pathz_own, plen)));
+  }
+  if (__fern_utf8_valid(buf, n) == 0) {
+    return Err(InvalidUtf8(__fern_path_copy(pathz_own, plen)));
+  }
+  return Ok(__fern_path_copy(buf_own, n));
+}

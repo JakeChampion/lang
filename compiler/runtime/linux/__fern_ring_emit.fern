@@ -1,0 +1,21 @@
+function __fern_ring_emit(blk: usize, b: usize, cap: i32): i32 {
+  let rl: usize = __fern_ring_ready_at(blk);
+  let rc: i32 = __load_i32(blk + 184);
+  let n: i32 = 0;
+  let kept: i32 = 0;
+  let j: i32 = 0;
+  while (j < rc) {
+    let fd: i32 = __load_i32(rl + j as usize * 4);
+    let ent: usize = __fern_ring_entry(blk, fd);
+    j = j + 1;
+    if (n >= cap) {
+      __store_i32(rl + kept as usize * 4, fd);
+      kept = kept + 1;
+    } else {
+      kept = __fern_ring_emit_one(blk, ent, fd, b, cap, n, rl, kept);
+      n = __load_i32(blk + 188);
+    }
+  }
+  __store_i32(blk + 184, kept);
+  return n;
+}

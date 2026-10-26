@@ -2,25 +2,13 @@ package e2ecompiler
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func TestSelfHostDarwinCPUCountSource(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	dir := writeSelfHostAsmProject(t)
-	driver := filepath.Join(dir, "cpu_source.fern")
-	if err := os.WriteFile(driver, []byte("import \"./asmcore\"; function main(): i32 { print(asmcore.rt_src_cpu_count(\"arm64-darwin\")); return 0; }"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	bin := buildSelfHostBin(t, gcc, dir, "cpu_source.fern", "cpu_source")
-	generated, err := runX86_64Bin(runner, bin).Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := strings.ReplaceAll(string(generated), "__fern_cpu_count", "probe_cpu")
+	generated := internalRuntimeSource(t, "arm64-darwin", "__fern_cpu_count", 1, true)
+	body := strings.ReplaceAll(generated, "__fern_cpu_count", "probe_cpu")
 	body = strings.ReplaceAll(body, "__syscall6", "fake_sysctl")
 	cli := buildRuntimeCLI(t)
 	for _, tc := range []struct {

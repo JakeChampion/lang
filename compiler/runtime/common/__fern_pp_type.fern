@@ -1,0 +1,5 @@
+function __fern_pp_type(out: usize, buf: usize, tag: usize, kind: usize, unit: usize): void {
+  let n: usize = __fern_pp_field(buf, 0, 8, kind);
+  n = __fern_pp_field(buf, n, 16, unit);
+  __fern_pp_message(out, tag, buf, n);
+}

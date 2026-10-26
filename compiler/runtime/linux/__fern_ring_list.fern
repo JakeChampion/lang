@@ -1,0 +1,10 @@
+function __fern_ring_list(blk: usize, ent: usize, fd: i32): i32 {
+  if (__raw_load8(ent, 12) != 0) {
+    return 0;
+  }
+  let rc: i32 = __load_i32(blk + 184);
+  __store_i32(__fern_ring_ready_at(blk) + rc as usize * 4, fd);
+  __store_i32(blk + 184, rc + 1);
+  __raw_store8(ent, 12, 1);
+  return 0;
+}

@@ -1,0 +1,55 @@
+function __fern_dir_entries(fd: i32): Result[string[], IoError] {
+  let rw: i32 = __syscall3(199, fd as i64, 0, 0) as i32;
+  if (rw < 0) {
+    return Err(__fern_io_error(0 - rw, ""));
+  }
+  let basep: usize = __raw_alloc(8);
+  let names: string[] = [];
+  let bad: i32 = 0;
+  let done: i32 = 0;
+  while (done == 0) {
+    let buf: usize = __raw_alloc(65536);
+    let n: i32 = __syscall4(344, fd as i64, buf as i64, 65536, basep as i64) as i32;
+    if (n <= 0) {
+      done = 1;
+      bad = n;
+    } else {
+      let pos: i32 = 0;
+      while (pos < n) {
+        let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256;
+        let nlen: i32 = __raw_load8(buf, pos + 18) + __raw_load8(buf, pos + 19) * 256;
+        if (__fern_utf8_valid(buf + pos + 21, nlen) == 0) {
+          bad = 0 - 92;
+          done = 1;
+          pos = n;
+        } else {
+          let skip: i32 = 0;
+          if (nlen == 1) {
+            if (__raw_load8(buf, pos + 21) == 46) {
+              skip = 1;
+            }
+          }
+          if (nlen == 2) {
+            if (__raw_load8(buf, pos + 21) == 46) {
+              if (__raw_load8(buf, pos + 21 + 1) == 46) {
+                skip = 1;
+              }
+            }
+          }
+          if (skip == 0) {
+            let nbuf: usize = __raw_alloc(nlen);
+            __memcpy(nbuf, buf + pos + 21, nlen);
+            names = names.append(__raw_string(nbuf, nlen));
+          }
+          pos = pos + reclen;
+        }
+      }
+    }
+    let buf_own: string = __raw_string(buf, 65536);
+  }
+  let basep_own: string = __raw_string(basep, 8);
+  if (bad < 0) {
+    return Err(__fern_io_error(0 - bad, ""));
+  }
+  return Ok(names);
+}

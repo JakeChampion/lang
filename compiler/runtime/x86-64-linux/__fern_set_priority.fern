@@ -1,0 +1,7 @@
+function __fern_set_priority(nice: i32): Result[void, IoError] {
+  let rc: i32 = __syscall3(141, 0, 0, nice as i64) as i32;
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  return Ok(());
+}

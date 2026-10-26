@@ -1,0 +1,3 @@
+function __fern_ring_zc_at(blk: usize): usize {
+  return __fern_ring_ready_at(blk) + __load_i32(blk + 68) as usize * 4;
+}

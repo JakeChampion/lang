@@ -4,6 +4,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/tools/literate"
@@ -173,11 +174,34 @@ func TestSelfHostUnknownPrefixMatches(t *testing.T) {
 		t.Errorf("the self-host says %q off darwin, Go says %q", m[2], UnknownPrefix)
 	}
 
-	if !regexp.MustCompile(`let pfx: string = strerror_unknown_prefix\(t\);`).MatchString(src) {
-		t.Error("strerror_unknown_src does not take its prefix from strerror_unknown_prefix(t) — the per-target prefix is not reaching the emitted runtime")
-	}
-	if !regexp.MustCompile(`strerror_unknown_src\(t\)`).MatchString(src) {
-		t.Error("rt_src_io_error does not thread its target into strerror_unknown_src — every target would get one prefix")
+	for group, prefix := range map[string]string{"linux": UnknownPrefix, "arm64-darwin": DarwinUnknownPrefix} {
+		path := "../../../compiler/runtime/" + group + "/__fern_io_error.fern"
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for index, value := range []byte(prefix) {
+			store := regexp.MustCompile(`__raw_store8\(buf,\s*` + strconv.Itoa(index) + `,\s*` + strconv.Itoa(int(value)) + `\)`)
+			if !store.Match(body) {
+				t.Errorf("%s does not store byte %d of %q", path, index, prefix)
+			}
+		}
+		for _, entry := range Table {
+			number := entry.Number(Linux)
+			if group == "arm64-darwin" {
+				number = entry.Number(Darwin)
+			}
+			if number == 0 || number == 2 || number == 4 || number == 13 || number == 17 || entry.Name == "EILSEQ" {
+				continue
+			}
+			text := entry.Text
+			if group == "arm64-darwin" {
+				text = entry.TextFor(Darwin)
+			}
+			if !strings.Contains(string(body), "return Other(path, "+strconv.Quote(text)+", "+strconv.Itoa(entry.Carried())+");") {
+				t.Errorf("%s does not contain the error text and portable number for %s", path, entry.Name)
+			}
+		}
 	}
 }
 

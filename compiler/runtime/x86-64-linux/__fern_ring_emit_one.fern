@@ -1,0 +1,39 @@
+function __fern_ring_emit_one(blk: usize, ent: usize, fd: i32, b: usize, cap: i32, from: i32, rl: usize, kept: i32): i32 {
+  let n: i32 = from;
+  let interest: i32 = __raw_load8(ent, 0);
+  let polled: i32 = __raw_load8(ent, 14);
+  __raw_store8(ent, 14, 0);
+  let ended: i32 = __raw_load8(ent, 6);
+  let level: i32 = 0;
+  if ((interest & 1) != 0 && (__fern_ring_u16(ent, 8) != 0 || ended == 1 || ended == 2)) {
+    level = 1;
+  }
+  let ready: i32 = polled & 7;
+  if (level != 0) {
+    ready = ready | 1;
+  }
+  if ((interest & 1) != 0 && ended == 2) {
+    ready = ready | 4;
+  }
+  let sig: i32 = __raw_load8(ent, 3);
+  if (interest != 0 && sig == 255 && polled != 0) {
+    n = __fern_ring_set_wait(blk, fd, b, n, cap);
+  } else if (interest != 0 && sig != 0 && sig != 255 && polled != 0) {
+    let drain: usize = __raw_scratch(128);
+    __syscall3(0, fd as i64, drain as i64, 128);
+    __raw_store_ptr(b, n * 2 + 1, (0 - sig) as usize);
+    __raw_store_ptr(b, n * 2 + 2, 1 as usize);
+    n = n + 1;
+  } else if (interest != 0 && (ready != 0 || (polled & 8) != 0)) {
+    __raw_store_ptr(b, n * 2 + 1, fd as usize);
+    __raw_store_ptr(b, n * 2 + 2, ready as usize);
+    n = n + 1;
+  }
+  __store_i32(blk + 188, n);
+  if (interest != 0 && level != 0) {
+    __store_i32(rl + kept as usize * 4, fd);
+    return kept + 1;
+  }
+  __raw_store8(ent, 12, 0);
+  return kept;
+}

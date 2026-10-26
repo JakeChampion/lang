@@ -1,0 +1,18 @@
+function __fern_set_window_size(fd: i32, rows: i32, cols: i32): Result[void, IoError] {
+  let buf: usize = __raw_scratch(16);
+  let rc: i32 = __syscall3(16, fd as i64, 21523, buf as i64) as i32;
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  let r: i32 = rows & 65535;
+  let c: i32 = cols & 65535;
+  __raw_store8(buf, 0, r % 256);
+  __raw_store8(buf, 1, r / 256);
+  __raw_store8(buf, 2, c % 256);
+  __raw_store8(buf, 3, c / 256);
+  rc = __syscall3(16, fd as i64, 21524, buf as i64) as i32;
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, ""));
+  }
+  return Ok(());
+}

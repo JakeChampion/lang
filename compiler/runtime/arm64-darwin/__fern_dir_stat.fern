@@ -1,0 +1,33 @@
+function __fern_dir_stat(dirfd: i32, path: string, follow: boolean): Result[FileStat, IoError] {
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let i: i32 = 0;
+  while (i < plen) {
+    __raw_store8(pathz, i, path[i] as i32);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let fl: i32 = 32;
+  if (follow) {
+    fl = 0;
+  }
+  let buf: usize = __raw_scratch(160);
+  let rc: i32 = __syscall4(470, dirfd as i64, pathz as i64, buf as i64, fl as i64) as i32;
+  if (rc >= 0 && plen > 0 && path[plen - 1] == 47) {
+    if ((__raw_load8(buf, 4 + 1) & 240) == 160) {
+      rc = __syscall4(470, dirfd as i64, pathz as i64, buf as i64, 0) as i32;
+    }
+    if (rc >= 0 && (__raw_load8(buf, 4 + 1) & 240) != 64) {
+      rc = 0 - 20;
+    }
+  }
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  if (rc < 0) {
+    return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen)));
+  }
+  let mode: i32 = __load_i32(buf + 4) & 65535;
+  let mfmt: i32 = mode & 61440;
+  let isf: boolean = mfmt == 32768;
+  let isd: boolean = mfmt == 16384;
+  return Ok(FileStat { is_file: isf, is_dir: isd, size: __load_i64(buf + 96), mode: mode as u32, nlink: (__load_i32(buf + 6) & 65535) as u32, uid: __load_i32(buf + 16) as u32, gid: __load_i32(buf + 20) as u32, dev: __load_i32(buf + 0) as i64, rdev: __load_i32(buf + 24) as i64, ino: __load_i64(buf + 8), blksize: __load_i32(buf + 112) as i64, blocks: __load_i64(buf + 104), atime: __load_i64(buf + 32), atime_nsec: __load_i64(buf + 40), mtime: __load_i64(buf + 48), mtime_nsec: __load_i64(buf + 56), ctime: __load_i64(buf + 64), ctime_nsec: __load_i64(buf + 72), btime: __load_i64(buf + 80), btime_nsec: __load_i64(buf + 88) });
+}

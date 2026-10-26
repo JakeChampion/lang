@@ -158,7 +158,7 @@ function run(): i32 {
       return 1;
     }
   }
-  let entry: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(src, target)));
+  let entry: parser.Module = emitforms.entry_module(parser.parse_module(lexer.tokenize(src)), target);
   let handle: util.Diag = emitforms.http_entry_refused(entry, target);
   if (handle.message.len() > 0) {
     if (handle.line > 0) {

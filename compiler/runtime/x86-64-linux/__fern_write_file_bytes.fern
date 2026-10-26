@@ -1,0 +1,56 @@
+function __fern_write_file_bytes(path: string, bytes: i32[]): Result[void, IoError] {
+  let plen: i32 = path.len();
+  let pathz: usize = __raw_alloc(plen + 1);
+  let invalid: boolean = false;
+  let i: i32 = 0;
+  while (i < plen) {
+    let c: i32 = path[i] as i32;
+    if (c == 0) {
+      invalid = true;
+    }
+    __raw_store8(pathz, i, c);
+    i = i + 1;
+  }
+  __raw_store8(pathz, plen, 0);
+  let pathz_own: string = __raw_string(pathz, plen + 1);
+  if (invalid) {
+    return Err(__fern_io_error(22, __fern_path_copy(pathz_own, plen)));
+  }
+  let fd: i32 = __syscall4(257, -100, pathz as i64, 577, 420) as i32;
+  if (fd < 0) {
+    return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen)));
+  }
+  let n: i32 = bytes.len();
+  let raw: usize = __raw_arr_box(n / 8 + 1);
+  let scratch: i32[] = __raw_array(raw);
+  let p: usize = __raw_arr_ptr(scratch) + 8;
+  let j: i32 = 0;
+  while (j < n) {
+    __raw_store8(p, j, bytes[j]);
+    j = j + 1;
+  }
+  let at: i32 = 0;
+  let bad: i32 = 0;
+  while (at < n && bad == 0) {
+    let w: i32 = __syscall3(1, fd as i64, (p + at) as i64, (n - at) as i64) as i32;
+    if (w == 0) {
+      bad = 5;
+    } else {
+      if (w < 0) {
+        if (w != -4) {
+          bad = 0 - w;
+        }
+      } else {
+        at = at + w;
+      }
+    }
+  }
+  let closed: i32 = __syscall3(3, fd as i64, 0, 0) as i32;
+  if (bad != 0) {
+    return Err(__fern_io_error(bad, __fern_path_copy(pathz_own, plen)));
+  }
+  if (closed < 0) {
+    return Err(__fern_io_error(0 - closed, __fern_path_copy(pathz_own, plen)));
+  }
+  return Ok(());
+}
