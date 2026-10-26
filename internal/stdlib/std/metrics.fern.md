@@ -698,7 +698,7 @@ pub function (e: Exporter) wake[D: async.Driver](drv: D, fd: i32, answer: (strin
     return e;
   }
   if (e.unsent[at].len() > 0) {
-    return e.send(drv, at, e.unsent[at]);
+    return e.send_answer(drv, at, e.unsent[at]);
   }
   let got: u8[] = [];
   match (net.read_up_to(fd, 4096)) {
@@ -709,18 +709,18 @@ pub function (e: Exporter) wake[D: async.Driver](drv: D, fd: i32, answer: (strin
       if (err.eq(net.WouldBlock)) {
         return e;
       }
-      return e.drop(drv, at);
+      return e.end_scrape(drv, at);
     }
   }
   let head: string = e.heads[at] + string_from_bytes_unchecked(got);
   if (got.len() > 0 && !head.contains("\r\n\r\n") && head.len() < 8192) {
     return Exporter { ...e, heads: e.heads.with(at, head) };
   }
-  return e.send(drv, at, __answer(head, answer));
+  return e.send_answer(drv, at, __answer(head, answer));
 }
 
-// send writes what the scrape's socket takes now and keeps the rest for the wake that finds it writable.
-function (e: Exporter) send[D: async.Driver](drv: D, at: i32, out: u8[]): Exporter {
+// send_answer writes what the scrape's socket takes now and keeps the rest for the wake that finds it writable.
+function (e: Exporter) send_answer[D: async.Driver](drv: D, at: i32, out: u8[]): Exporter {
   match (net.write_rest(e.scrapes[at], out)) {
     Ok(rest) => {
       if (rest.len() > 0) {
@@ -732,10 +732,10 @@ function (e: Exporter) send[D: async.Driver](drv: D, at: i32, out: u8[]): Export
     },
     Err(_) => {}
   }
-  return e.drop(drv, at);
+  return e.end_scrape(drv, at);
 }
 
-function (e: Exporter) drop[D: async.Driver](drv: D, at: i32): Exporter {
+function (e: Exporter) end_scrape[D: async.Driver](drv: D, at: i32): Exporter {
   drv.unwatch(e.scrapes[at]);
   tcp_close(e.scrapes[at]);
   return Exporter { ...e, scrapes: __without(e.scrapes, at), heads: __without(e.heads, at), unsent: __without(e.unsent, at) };
