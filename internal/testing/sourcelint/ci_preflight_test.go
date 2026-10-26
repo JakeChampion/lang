@@ -23,8 +23,8 @@ func TestCILintRunsOutsideTheFullSuiteQueue(t *testing.T) {
 		t.Errorf("root CI must not queue lint behind a full compiler suite; the suite FIFO belongs to %s", ciSuiteFile)
 	}
 	rootJobs := workflowJobs(t, ciFile)
-	allowed := map[string]bool{"changes": true, "lint": true, "preflight": true, "suite": true, "reap-lint": true, "reap-preflight": true}
-	var suite, preflight ciJob
+	allowed := map[string]bool{"changes": true, "lint": true, "preflight": true, "suite": true, "reap-lint": true, "reap-preflight": true, "verdict": true}
+	var suite, preflight, verdict ciJob
 	for _, job := range rootJobs {
 		if !allowed[job.id] {
 			t.Errorf("unexpected root job %s bypasses the full-suite queue", job.id)
@@ -35,10 +35,20 @@ func TestCILintRunsOutsideTheFullSuiteQueue(t *testing.T) {
 			suite = job
 		case "preflight":
 			preflight = job
+		case "verdict":
+			verdict = job
 		}
 	}
 	if len(allowed) != 0 {
 		t.Fatalf("missing preflight jobs: %v", allowed)
+	}
+	// The verdict is the one check a ruleset requires, so it must follow every
+	// tier and still report when a tier was skipped.
+	if verdict.keys["name"] != "CI verdict" || verdict.keys["needs"] != "[lint, preflight, suite]" || verdict.keys["if"] != "${{ !cancelled() }}" {
+		t.Errorf("verdict must be named `CI verdict`, follow lint, preflight and suite, and run unless cancelled: %+v", verdict.keys)
+	}
+	if on, _ := onBlock(workflowSource(t, ciFile)); !strings.Contains(on, "merge_group:") {
+		t.Errorf("%s does not trigger on merge_group, so a merge queue batch gets no suite and no verdict", ciFile)
 	}
 	if suite.usesFile() != ciSuiteFile || suite.keys["name"] != "Full suite" ||
 		suite.keys["needs"] != "[changes]" || suite.keys["secrets"] != "inherit" ||

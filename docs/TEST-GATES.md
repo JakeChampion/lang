@@ -41,6 +41,19 @@ own group and an uncancellable run ahead of every open PR (#8124), which
 `TestGateLanesRunOnMain` (`internal/testing/sourcelint/pr_workflow_filters_test.go`)
 rejects.
 
+## The merge queue
+
+`ci.yml` also triggers on `merge_group`: a run on the batch GitHub is about
+to merge, with every lane on, through the suite. `CI verdict` is the one
+check a ruleset requires. It passes when Lint passed and every tier that ran
+passed, and a skipped tier does not fail it.
+
+Enabling the queue is a repository setting, in the ruleset for `main`. Turn
+on "Require merge queue" and set the required check to `CI verdict`. Keep
+the merge method the repository uses for pull requests. Set the maximum
+batch size to about ten, with a short minimum wait. The queue then runs one
+suite per batch, and a red batch leaves main green.
+
 Two meta-gates keep the lane set honest, and they are inverses. `make testnames`
 (`scripts/testname_gate.sh`) fails when a lane's `-run` names a test that does not
 exist — a selector that matches nothing selects nothing, with exit 0.
