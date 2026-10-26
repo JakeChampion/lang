@@ -232,7 +232,7 @@ answers**, which makes them the ones to start with.
 | 33 | HashMap | `core/map` | **SwissTable-style ctrl bytes + SWAR group probe**, home-bucket fast path | SwissTable | **SHIPPED (SWAR)** — 1.45x miss-heavy / 1.15x hit-heavy near the load ceiling; the 16-wide vector probe is a further KERNEL, wanting a workload | 5 |
 | 34 | Large hash map | `core/map` | Same path at every size | F14-style grouped probing | Folds into #33 | 1 |
 | 35 | Small hash map | `core/map` | **Linear scan at ≤ 8 entries** | Inline scan | **SHIPPED** | — |
-| 36 | Ordered map | `std/ordmap` | Weight-balanced tree, join-based algebra, rank access (#6794) | B-tree | SHIPPED | — |
+| 36 | Ordered map | `std/ordmap` | B+ tree with key prefixes and a SIMD prefix count, rank access | B-tree (bbtree) | SHIPPED | — |
 | 37 | Identity map | `core/map` | Wang mix on scalars | Integer hashing | **SHIPPED** | — |
 | 38 | General hash | `core/map` | FNV-1a over 4-byte blocks + fmix32 | XXH3 / wyhash | BLOCKED:raw-load (#6200) | 2 |
 | 39 | Adversarial hash | `core/map` | Per-process seeded FNV (#6194) | SipHash-1-3 | GAP — closes the online-oracle case | 1 |

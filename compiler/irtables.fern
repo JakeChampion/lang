@@ -156,6 +156,33 @@ pub function struct_tab(decls: parser.StructDecl[]): StructTab {
   return StructTab { decls: decls, head: head, next: next, ehead: ehead, enext: enext };
 }
 
+// `decls` with each struct declared again in `extra` taking that declaration,
+// followed by the rest of `extra`.
+pub function replaced_decls(decls: parser.StructDecl[], extra: parser.StructDecl[]): parser.StructDecl[] {
+  let names: string[] = [];
+  for d in extra {
+    names = names.append(d.name);
+  }
+  let ix: util.NameIndex = util.name_index(names);
+  let used: boolean[] = __alloc_bool(extra.len());
+  let out: parser.StructDecl[] = [];
+  for d in decls {
+    let at: i32 = ix.find(d.name);
+    if (at >= 0 && d.enum_owner == "" && extra[at].enum_owner == "") {
+      out = out.append(extra[at]);
+      used = used.with(at, true);
+    } else {
+      out = out.append(d);
+    }
+  }
+  for i in 0..extra.len() {
+    if (!used[i]) {
+      out = out.append(extra[i]);
+    }
+  }
+  return out;
+}
+
 pub function struct_tab_empty(): StructTab {
   return StructTab { decls: [], head: [], next: [], ehead: [], enext: [] };
 }
@@ -1045,20 +1072,45 @@ function declares_typevars(fn: parser.FuncDecl): boolean {
   return fn.type_params.len() > 0 || fn.all_type_params.len() > 0;
 }
 
-pub function fn_sig_index(funcs: parser.FuncDecl[]): irverify.NameIndex {
+// A function's parameter count is its lowered body's where there is one: a
+// record parameter can travel as its parts, so the body may take more than
+// the declaration names. `bodies` runs beside `decls`, then the instances.
+pub function fn_sig_index(funcs: parser.FuncDecl[], decls: parser.FuncDecl[], bodies: LowerResult[]): irverify.NameIndex {
+  let lowered: string[] = [];
+  let counts: i32[] = [];
+  for i in 0..bodies.len() {
+    let r: LowerResult = bodies[i];
+    if (r.ok && !r.superseded) {
+      let nm: string = r.name;
+      if (i < decls.len()) {
+        nm = sig_name(decls[i]);
+      }
+      lowered = lowered.append(nm);
+      counts = counts.append(r.n_params);
+    }
+  }
+  let by_name: util.NameIndex = util.name_index(lowered);
   let sigs: irverify.FnSig[] = [];
   for fn in funcs {
-    let nm: string = fn.name;
-    if (fn.receiver_type.len() > 0) {
-      nm = util.base_type_name(fn.receiver_type) + "." + fn.name;
-    }
+    let nm: string = sig_name(fn);
     let np: i32 = fn.params.len();
     if (fn.receiver_name.len() > 0) {
       np = np + 1;
     }
+    let at: i32 = by_name.find(nm);
+    if (at >= 0) {
+      np = counts[at];
+    }
     sigs = sigs.append(irverify.FnSig { name: nm, n_params: np });
   }
   return irverify.sig_index(sigs);
+}
+
+function sig_name(fn: parser.FuncDecl): string {
+  if (fn.receiver_type.len() > 0) {
+    return util.base_type_name(fn.receiver_type) + "." + fn.name;
+  }
+  return fn.name;
 }
 
 pub function gfns_visible_in(fd: parser.FuncDecl, gfns: string[], gset: SigReg): string[] {

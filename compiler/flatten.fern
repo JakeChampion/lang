@@ -499,7 +499,7 @@ pub function with_handler_main(entry: parser.Module, target: string): parser.Mod
   if (si >= 0 && entry.funcs[si].params.len() != 1 + bool_i32(takes_state)) {
     return entry;
   }
-  let port: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "__port_from_env"), args: [ast.ExprString { value: "PORT", line: 0, col: 0 }, ast.ExprNumber { text: "8080", suffix: "", raw: "", is_float: false, line: 0, col: 0 }], line: 0, col: 0, type_args: [], ty: "" };
+  let port: ast.Expr = ast.ExprCall { callee: serve_ref(qual, "__port_from_env"), args: [ast.ExprString { value: "PORT", line: 0, col: 0 }, ast.ExprNumber { text: "8080", suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 }], line: 0, col: 0, type_args: [], ty: "" };
   let handle: ast.Expr = ast.ExprIdent { name: "handle", line: 0, col: 0, ty: "", builtin: false };
   let init_call: ast.Expr = ast.ExprCall { callee: ast.ExprIdent { name: "init", line: 0, col: 0, ty: "", builtin: false }, args: init_args, line: 0, col: 0, type_args: [], ty: "" };
   let hook: ast.Expr = ast.ExprIdent { name: "shutdown", line: 0, col: 0, ty: "", builtin: false };

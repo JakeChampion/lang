@@ -1109,7 +1109,7 @@ pub function windows[T](xs: T[], size: i32): T[][] {
   return out;
 }
 
-pub function concat[T](a: T[], b: T[]): T[] {
+pub function concat[T](a: T[], b: [T]): T[] {
   let out: T[] = [];
   for x in a {
     out = out.append(x);
@@ -1422,7 +1422,7 @@ pub function (xs: T[]) enumerate(): (i32, T)[] {
   return enumerate(xs);
 }
 
-pub function (xs: T[]) concat(other: T[]): T[] {
+pub function (xs: T[]) concat(other: [T]): T[] {
   return concat(xs, other);
 }
 

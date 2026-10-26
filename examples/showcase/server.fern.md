@@ -1,4 +1,4 @@
-# One native server, eighteen web applications
+# One native server, twenty web applications
 
 This is the entry point for the Fern web showcase. It mounts each application under a separate URL prefix.
 The homepage and browser modules are static files. Fern owns the live state, protocols, images, audio, and HTML forms.
@@ -52,8 +52,10 @@ import "./encoding";
 import "./studio";
 import "./labs";
 import "./bench";
+import "./live";
+import "./tracker";
 
-pub struct State { studios: studio.State, labs: labs.State, voxels: blockyard.State, arena: gather.State, games: rally.State, canvases: mosaic.State, guestbook: notes.State, metrics: metrics.State, fractal: fractal.Stats, bench: bench.State }
+pub struct State { studios: studio.State, labs: labs.State, voxels: blockyard.State, arena: gather.State, games: rally.State, canvases: mosaic.State, guestbook: notes.State, metrics: metrics.State, fractal: fractal.Stats, bench: bench.State, tracker: tracker.State }
 
 @derive(json.Json)
 struct Meta { apps: i32, instance: string, binary_bytes: i64, uptime_ms: i64, requests: i64 }
@@ -69,7 +71,7 @@ pub function state(binary_bytes: i64, version: string): State {
   let telemetry: metrics.State = metrics.state(canvases, games, renderer, arena, voxels, studios, lab_state);
   return State {
     studios: studios, labs: lab_state, voxels: voxels, arena: arena, games: games, canvases: canvases, guestbook: notes.state(), metrics: telemetry, bench: bench.state(),
-    fractal: renderer,
+    fractal: renderer, tracker: tracker.state(live.state()),
   };
 }
 ```
@@ -86,14 +88,14 @@ pub function files(): string[] {
     "fractal/server.fern.md", "fractal/fractal.fern", "fractal/kernel.fern", "fractal/linear.fern", "fractal/series.fern", "fractal/source.fern",
     "fractal/web/app.js", "fractal/web/delivery.mjs", "fractal/web/fullscreen.mjs", "fractal/web/style.css", "fractal/web/index.html",
     "showcase/server.fern.md", "showcase/common.fern.md", "showcase/rally.fern.md", "showcase/mosaic.fern.md", "showcase/wave.fern.md", "showcase/notes.fern.md", "showcase/metrics.fern.md", "showcase/encoding.fern.md", "showcase/live.fern.md", "showcase/swarm.fern.md", "showcase/gather.fern.md", "showcase/voxel.fern.md", "showcase/blockyard.fern.md", "showcase/blockyard_world.fern.md", "showcase/blockyard_store.fern.md",
-    "showcase/foundry.fern.md", "showcase/patchbay.fern.md", "showcase/prism.fern.md", "showcase/fernbase.fern.md", "showcase/circuit.fern.md", "showcase/lantern.fern.md", "showcase/studio.fern.md", "showcase/labs.fern.md", "showcase/labs_store.fern.md", "showcase/measure.fern.md", "showcase/handshake.fern.md", "showcase/bench.fern.md",
+    "showcase/foundry.fern.md", "showcase/patchbay.fern.md", "showcase/prism.fern.md", "showcase/fernbase.fern.md", "showcase/circuit.fern.md", "showcase/lantern.fern.md", "showcase/studio.fern.md", "showcase/labs.fern.md", "showcase/labs_store.fern.md", "showcase/measure.fern.md", "showcase/handshake.fern.md", "showcase/imaging.fern.md", "showcase/torrent.fern.md", "showcase/tracker.fern.md", "showcase/bench.fern.md",
     "showcase/web/foundry/index.html", "showcase/web/patchbay/index.html", "showcase/web/prism/index.html", "showcase/web/fernbase/index.html", "showcase/web/circuit/index.html", "showcase/web/lantern/index.html", "showcase/web/labs/lantern.mjs", "showcase/web/labs/patchbay.mjs", "showcase/web/labs/prism-worker.mjs", "showcase/web/labs/simulation-worker.mjs", "showcase/web/labs/circuit.mjs", "showcase/web/labs/prism.mjs", "showcase/web/labs/session.mjs", "showcase/web/labs/rpc.mjs", "showcase/web/labs/foundry.mjs", "showcase/web/labs/patchbay-worklet.mjs", "showcase/web/labs/style.css", "showcase/web/labs/previews.mjs", "showcase/web/labs/shell.mjs", "showcase/web/labs/fernbase.mjs",
     "showcase/web/index.html", "showcase/web/home.mjs", "showcase/web/shared/showcase.css", "showcase/web/shared/ui.mjs", "showcase/web/shared/theme.js", "showcase/web/shared/wasm.mjs",
     "showcase/web/blockyard/index.html", "showcase/web/blockyard/style.css", "showcase/web/blockyard/app.mjs", "showcase/web/blockyard/protocol.mjs", "showcase/web/blockyard/mesh.mjs", "showcase/web/blockyard/mesh-worker.mjs", "showcase/web/blockyard/renderer.mjs",
     "showcase/web/rally/index.html", "showcase/web/rally/app.mjs", "showcase/web/rally/prediction.mjs", "showcase/web/mosaic/index.html", "showcase/web/mosaic/app.mjs",
     "showcase/web/gather/index.html", "showcase/web/gather/app.mjs", "showcase/web/gather/protocol.mjs", "showcase/web/gather/style.css",
     "showcase/web/swarm/index.html", "showcase/web/swarm/app.mjs", "showcase/web/swarm/kernel.mjs", "showcase/web/swarm/audio-worker.mjs", "showcase/web/swarm/editor.mjs", "showcase/web/swarm/style.css",
-    "showcase/web/wave/index.html", "showcase/web/wave/app.mjs", "showcase/web/bench/kernel.mjs", "showcase/web/json/app.mjs", "showcase/web/compress/app.mjs", "showcase/web/handshake/app.mjs", "showcase/web/pulse/index.html", "showcase/web/pulse/app.mjs",
+    "showcase/web/wave/index.html", "showcase/web/wave/app.mjs", "showcase/web/bench/kernel.mjs", "showcase/web/json/app.mjs", "showcase/web/compress/app.mjs", "showcase/web/handshake/app.mjs", "showcase/web/image/app.mjs", "showcase/web/torrent/app.mjs", "showcase/web/torrent/peer.mjs", "showcase/web/pulse/index.html", "showcase/web/pulse/app.mjs",
   ];
 }
 ```
@@ -126,7 +128,7 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
     return Ok(response);
   });
   app = app.get("/api/meta", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => {
-    let meta: Meta = Meta { apps: 18, instance: state.metrics.instance, binary_bytes: state.fractal.binary_bytes, uptime_ms: (now_ns() - state.metrics.started) / 1000000, requests: state.metrics.requests.get() };
+    let meta: Meta = Meta { apps: 20, instance: state.metrics.instance, binary_bytes: state.fractal.binary_bytes, uptime_ms: (now_ns() - state.metrics.started) / 1000000, requests: state.metrics.requests.get() };
     return Ok(http.json_of(meta).with_header("Cache-Control", "no-store"));
   });
   app = app.get("/healthz", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("ok")));
@@ -176,6 +178,9 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
   app = app.get("/gather/ws", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => gather.socket(state.arena, req));
   app = app.get("/json/bench", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(bench.json_bench(state.bench, req)?));
   app = app.get("/compress/bench", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(bench.compress_bench(state.bench, req)?));
+  app = app.post("/torrent/register", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(tracker.register(state.tracker, req)?));
+  app = app.get("/torrent/announce", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => tracker.socket(state.tracker, req));
+  app = app.get("/image/bench", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(bench.image_bench(state.bench, req)?));
   app = app.post("/handshake/exchange", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(bench.exchange(req)?));
   app = app.get("/gather/snapshot", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(gather.spectate(state.arena)));
   app = app.get("/gather/status", (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(gather.status(state.arena)));
@@ -222,7 +227,7 @@ pub function routes[P: platform.Platform](state: State, root: string, pages: sou
     }
     return Ok(source.serve(pages, name));
   });
-  for name in ["rally", "mosaic", "wave", "notes", "pulse", "swarm", "gather", "foundry", "patchbay", "prism", "fernbase", "circuit", "lantern", "json", "compress", "handshake"] {
+  for name in ["rally", "mosaic", "wave", "notes", "pulse", "swarm", "gather", "foundry", "patchbay", "prism", "fernbase", "circuit", "lantern", "json", "compress", "handshake", "image", "torrent"] {
     let destination: string = "/" + name + "/";
     app = app.get("/" + name, (req: HttpRequest, params: router.Params, plat: P): Result[HttpResponse, dyn http.ToResponse] => Ok(http.redirect(destination)));
   }

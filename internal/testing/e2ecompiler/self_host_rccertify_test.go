@@ -115,6 +115,15 @@ function pick(name: string): Case {
         let insts: ssa.SInst[] = [param(0), fresh_box(1), store(1, 8, 0), call(2, "__fern_rc_dec", [1]), const_int(3, 0)];
         return Case { f: one_block(1, 4, insts, ret(3)), modes: [borrow], returns_unit: false };
     }
+    if (name == "address-into-a-borrow-stored") {
+        let insts: ssa.SInst[] = [param(0), const_int(1, 8), inst(9, 2, [0, 1], 0, "add"), fresh_box(3), store(3, 8, 2), call(4, "__fern_rc_dec", [3]), const_int(5, 0)];
+        return Case { f: one_block(1, 6, insts, ret(5)), modes: [borrow], returns_unit: false };
+    }
+    if (name == "address-into-a-released-box-stored") {
+        // The address outlives its box; the box's unit is still released once.
+        let insts: ssa.SInst[] = [fresh_box(0), const_int(1, 8), inst(9, 2, [0, 1], 0, "add"), call(3, "__fern_rc_dec", [0]), fresh_box(4), store(4, 8, 2), call(5, "__fern_rc_dec", [4]), const_int(6, 0)];
+        return Case { f: one_block(0, 7, insts, ret(6)), modes: [], returns_unit: false };
+    }
     if (name == "unique-child-released") {
         // The child read off a box its frame proved unique is the frame's to
         // release; the same read without the proof is a borrow.
@@ -486,6 +495,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"counted-param-kept", []string{"leaked at return of v0"}, 0, ""},
 		{"retained-into-box", nil, 0, ""},
 		{"stored-without-retain", []string{"spent without a unit of v0"}, 0, ""},
+		{"address-into-a-borrow-stored", nil, 0, ""},
+		{"address-into-a-released-box-stored", nil, 0, ""},
 		{"unique-child-released", nil, 0, ""},
 		{"shared-child-released", []string{"spent without a unit of v1"}, 0, ""},
 		{"shell-slot-read-twice", nil, 0, ""},

@@ -12,21 +12,22 @@ name: Test e2e differential
 #
 # Split via the `DIFF_ORACLE_SHARD=I/N` env var the tests honour: each
 # shard claims `seed % N == I`, so at N=1 one job sweeps the whole
-# corpus. Crossed with the per-arch matrix.
+# corpus.
 #
-# ONE SHARD per arch. Splitting a fixed corpus costs no coverage at any N:
+# ONE SHARD. Splitting a fixed corpus costs no coverage at any N:
 # every seed is claimed by exactly one bucket, and at N=1 that bucket is
 # the sweep. So the count trades wall-clock for runner slots and nothing
-# else. The sweep is about 6 minutes of tests per arch after setup, and two
-# shards each ran about 3 minutes after the same setup while the pool queued
+# else. The sweep was about 6 minutes of tests per host after setup. Two
+# shards each ran about 3 minutes after the same setup, while the pool queued
 # jobs for 20 minutes or more (docs/ci-log/2026-10-25-pr-ci-queue.md).
 # Raise it if the sweep grows toward the suite's longest jobs; nshard rides
 # the matrix, so the denominator moves with the job count.
 #
-# Needs wasmtime for the wasm32-wasi legs. arm64 legs skip on x86 (no
-# qemu / cross-gcc); x86 legs skip on arm64 (no qemu-x86_64). Matrix per
-# arch so each runner natively exercises its own target + wasm, instead
-# of paying skip overhead on one and toolchain overhead on the other.
+# Needs wasmtime for the wasm32-wasi legs and the aarch64 cross toolchain
+# plus qemu for the arm64 legs, which run under qemu on the x86_64 runner.
+# FERN_REQUIRE_ARM64_TOOLING=1 turns a missing toolchain into a failure,
+# not a skip. An aarch64 job used to run the sweep natively for its own
+# target, five runner-minutes a run, while the arm64 legs skipped here.
 
 # Called from ci.yml rather than triggered: that is the one workflow a pull
 # request or a push to main launches. It holds one of the PR queue's two slots
@@ -36,15 +37,6 @@ name: Test e2e differential
 # stays so the lane can be run on its own, outside that queue.
 on:
   workflow_call:
-    inputs:
-      hosts:
-        description: >
-          The hosts whose matrix legs run, as a space-separated list of
-          x86_64 and aarch64. The suite runs both; the Preflight tier runs
-          x86_64 alone.
-        required: false
-        type: string
-        default: x86_64 aarch64
   workflow_dispatch:
 
 env:
@@ -57,48 +49,46 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Per-arch: each runner runs its own register target natively plus
-        # wasm, and skips the other target (see the header note).
-        host:
-          - { runner: ubuntu-24.04,     name: x86_64  }
-          - { runner: ubuntu-24.04-arm, name: aarch64 }
-        # One shard per arch, the whole 2048-seed sweep. See the shard-count
-        # note above before changing this; nshard rides along so the partition
-        # denominator cannot drift from the number of jobs scheduled, which
-        # is pinned by TestShardDenominatorMatchesMatrix.
+        # One shard, the whole 2048-seed sweep over every target. See the
+        # shard-count note above before changing this; nshard rides along so
+        # the partition denominator cannot drift from the number of jobs
+        # scheduled, which is pinned by TestShardDenominatorMatchesMatrix.
         shard:
           - { index: 0, nshard: 1 }
-        exclude:
-          - host:
-              runner: ubuntu-24.04-arm
-              name: ${{ inputs.hosts == 'x86_64' && 'aarch64' || 'no-such-host' }}
-    name: test-e2e-differential-${{ matrix.host.name }}-shard${{ matrix.shard.index }}
-    runs-on: ${{ matrix.host.runner }}
-    # About 6 minutes of sweep in the one shard; 25 leaves room for a slow
+    name: test-e2e-differential-x86_64-shard${{ matrix.shard.index }}
+    runs-on: ubuntu-24.04
+    # About 6 minutes of sweep for the native and wasm targets in the one
+    # shard, plus the arm64 target under qemu; 35 leaves room for a slow
     # runner.
-    timeout-minutes: 25
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
         with:
           wasmtime: "true"
       - uses: ./.github/actions/selfhost-driver-cache
+      - name: aarch64 cross toolchain + qemu (the arm64 legs)
+        uses: ./.github/actions/apt-cross-toolchain
+        with:
+          qemu-package: qemu-user
       - name: go test (differential shard ${{ matrix.shard.index }}/${{ matrix.shard.nshard }})
         env:
           DIFF_ORACLE_SHARD: "${{ matrix.shard.index }}/${{ matrix.shard.nshard }}"
+          FERN_REQUIRE_ARM64_TOOLING: "1"
           # TestDifferential_TranslationValidationStrength proves with z3,
           # which setup-fern installs from mise.toml.
           FERN_REQUIRE_Z3: "1"
         # -timeout is EXPLICIT because Go's default is 10 minutes, which
         # sits inside this lane's own headroom: the sweep is ~9.5 min at
-        # one shard against a 25-minute job budget, so a slightly slow
-        # runner panics at Go's default long before the budget is spent.
+        # one shard before the arm64 legs under qemu, against a 35-minute
+        # job budget, so a slightly slow runner panics at Go's default long
+        # before the budget is spent.
         # That does not read as a timeout — the panic dumps every in-flight
         # subtest as a failure with no reason, so one slow run reported 391
         # phantom seed failures next to 638 genuine passes at exactly
-        # 600.035s. 20m keeps the timeout inside timeout-minutes, so the
+        # 600.035s. 30m keeps the timeout inside timeout-minutes, so the
         # lane fails as a timeout rather than as a wall of miscompiles.
-        run: gotestsum --format pkgname-and-test-fails -- -timeout 20m -run '^TestDifferential' ./internal/testing/e2e/
+        run: gotestsum --format pkgname-and-test-fails -- -timeout 30m -run '^TestDifferential' ./internal/testing/e2e/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

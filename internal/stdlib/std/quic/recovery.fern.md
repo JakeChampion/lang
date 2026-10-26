@@ -221,6 +221,9 @@ function (s: Space) __after_ack(ack: frames.Ack, largest: i64, any: boolean): Sp
 ```fern
 <<7 function __acked_of(sent: Sent[], ack: frames.Ack): Sent[]>>=
 function __acked_of(sent: Sent[], ack: frames.Ack): Sent[] {
+  if (__covers_all(sent, ack)) {
+    return sent;
+  }
   let acked: Sent[] = [];
   for p in sent {
     if (__covers(ack, p.pn)) {
@@ -231,6 +234,9 @@ function __acked_of(sent: Sent[], ack: frames.Ack): Sent[] {
 }
 
 function __unacked(sent: Sent[], ack: frames.Ack): Sent[] {
+  if (__covers_all(sent, ack)) {
+    return [];
+  }
   let kept: Sent[] = [];
   for p in sent {
     if (!__covers(ack, p.pn)) {
@@ -238,6 +244,15 @@ function __unacked(sent: Sent[], ack: frames.Ack): Sent[] {
     }
   }
   return kept;
+}
+
+function __covers_all(sent: Sent[], ack: frames.Ack): boolean {
+  for p in sent {
+    if (!__covers(ack, p.pn)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function __covers(ack: frames.Ack, pn: i64): boolean {

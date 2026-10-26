@@ -310,6 +310,7 @@ generic_box                                          0
 generic_call_binds_through_closure_array_param       0
 generic_call_in_struct_field                         0
 generic_call_infers_from_variant_argument            0
+generic_call_typed_by_its_destination                0
 generic_call_through_fn_value                        0
 generic_char_ordering                                0
 generic_enum_bound_dispatch                          0
@@ -1069,6 +1070,7 @@ target_os_wasi                                       0
 tasks_agree_without_a_scheduler                      7
 tco_sum                                              0
 tcp_recv_waits_for_data                              0
+tcp_send_nonblocking_partial                         0
 text_api_owners                                      0
 three_arms_bind_p                                    0
 time_leap                                            0

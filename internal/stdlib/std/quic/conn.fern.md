@@ -46,7 +46,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<16 function (c: Conn) __checked(): Result[Conn, string]>>
 
-<<17 pub function (c: Conn) written(id: i64, data: [u8], fin: boolean): Conn>>
+<<17 pub function (c: Conn) written(id: i64, data: u8[], fin: boolean): Conn>>
 
 <<18 function (c: Conn) __fail(code: i64, frame_type: i64, reason: string, now: i64): Conn>>
 
@@ -80,7 +80,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<33 function (c: Conn) __crypto_out(space: i32, room: i32): Conn>>
 
-<<34 function (c: Conn) __seal(plans: Plan[], now: i64): Conn>>
+<<34 function (c: Conn) __seal(planned: i32, now: i64): Conn>>
 
 <<35 function __add_range(ranges: frames.AckRange[], pn: i64): frames.AckRange[]>>
 ```
@@ -211,12 +211,13 @@ pub struct Conn {
   close_until: i64,
   idle_until: i64,
   validated: boolean,
-  plan: Plan,
+  plans: Plan[],
   received_bytes: i64,
   sent_bytes: i64,
   handshake_done_pending: boolean,
   probes: i32[],
   pending: frames.Frame[],
+  reader: frames.Reader,
   held: u8[][],
   streams: streams.Streams,
   events: Event[],
@@ -277,7 +278,7 @@ function __tls_server_config(c: Config, chain: u8[][], schemes: i32[], params_by
 
 function __base(c: Config, server: boolean, scid: u8[], dcid: u8[], odcid: u8[], now: i64): Conn {
   let r: recovery.Recovery = recovery.new(c.max_datagram, server).with_max_ack_delay(time.duration_millis(25));
-  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plan: __no_plan(0), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: 0 - 1 as i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64 };
+  return Conn { config: c, server: server, tls: TlsNone, spaces: [__space(), __space(), __space()], recovery: r, scid: scid, dcid: dcid, odcid: odcid, retry_scid: None, token: [], peer_seen: false, peer_params: None, reset_token: [], state: HANDSHAKING, close: None, close_pending: false, close_until: 0 as i64, idle_until: now + c.params.max_idle_timeout * 1000000, validated: !server, plans: [__no_plan(0), __no_plan(1), __no_plan(2)], reader: frames.reader(), received_bytes: 0 as i64, sent_bytes: 0 as i64, handshake_done_pending: false, probes: [], pending: [], held: [], streams: streams.table(server, c.params), events: [], out: [], key_phase: false, key_next_send: None, key_next_recv: None, key_previous_recv: None, key_first_recv: 0 as i64, key_previous_max: 0 - 1 as i64, key_first_sent: 0 as i64, key_unacked: false, key_awaiting_peer: false, key_generate_at: 0 as i64, key_discard_at: 0 as i64, key_sent: 0 as i64, failed_auth: 0 as i64, wall_offset: 0 as i64 };
 }
 ```
 
@@ -463,7 +464,7 @@ pub function (c: Conn) blocked_open(uni: boolean): Conn {
   return Conn { ...c, streams: c.streams.blocked_open(uni) };
 }
 
-pub function (c: Conn) write(id: i64, data: [u8], fin: boolean): Result[Conn, string] {
+pub function (c: Conn) write(id: i64, data: u8[], fin: boolean): Result[Conn, string] {
   return c.written(id, data, fin).__checked();
 }
 
@@ -498,11 +499,11 @@ function (c: Conn) __checked(): Result[Conn, string] {
 }
 ```
 
-### `17 pub function (c: Conn) written(id: i64, data: [u8], fin: boolean): Conn`
+### `17 pub function (c: Conn) written(id: i64, data: u8[], fin: boolean): Conn`
 
 ```fern
-<<17 pub function (c: Conn) written(id: i64, data: [u8], fin: boolean): Conn>>=
-pub function (c: Conn) written(id: i64, data: [u8], fin: boolean): Conn {
+<<17 pub function (c: Conn) written(id: i64, data: u8[], fin: boolean): Conn>>=
+pub function (c: Conn) written(id: i64, data: u8[], fin: boolean): Conn {
   return Conn { ...c, streams: c.streams.write(id, data, fin) };
 }
 
@@ -940,18 +941,16 @@ function (c: Conn) __opened(h: packet.Header, o: packet.Opened, space: i32, kind
   if (cur.server && space == recovery.HANDSHAKE && !cur.spaces[recovery.INITIAL].discarded) {
     cur = Conn { ...cur, validated: true }.__discard(recovery.INITIAL);
   }
-  match (frames.read_all(o.payload)) {
-    Ok(fs) => {
-      cur = cur.__frames(fs, space, kind, now);
-      if (cur.state < CLOSING) {
-        cur = Conn { ...cur, idle_until: __idle(cur, now) }.__received(space, o.pn, __eliciting(fs), now);
-      }
-      return cur;
-    },
-    Err(e) => {
-      return cur.__fail(e.code, e.frame_type, e.reason, now);
-    }
+  if (o.payload.len() == 0) {
+    return cur.__fail(frames.PROTOCOL_VIOLATION, 0 as i64, "a packet with no frames", now);
   }
+  cur = Conn { ...cur, reader: cur.reader.started(o.payload) }.__frames(o.payload, space, kind, now);
+  let eliciting: boolean = cur.reader.elicited;
+  cur = Conn { ...cur, reader: cur.reader.done() };
+  if (cur.state < CLOSING) {
+    cur = Conn { ...cur, idle_until: __idle(cur, now) }.__received(space, o.pn, eliciting, now);
+  }
+  return cur;
 }
 
 function (c: Conn) __peer_cid(h: packet.Header): Conn {
@@ -986,39 +985,51 @@ function __idle(c: Conn, now: i64): i64 {
   return now + d;
 }
 
-function __eliciting(fs: frames.Frame[]): boolean {
-  for f in fs {
-    if (f.ack_eliciting()) {
-      return true;
-    }
-  }
-  return false;
+function (c: Conn) __received(space: i32, pn: i64, eliciting: boolean, now: i64): Conn {
+  return Conn { ...c, spaces: c.spaces.with(space, c.spaces[space].__received(pn, eliciting, now)) };
 }
 
-function (c: Conn) __received(space: i32, pn: i64, eliciting: boolean, now: i64): Conn {
-  let s: Space = c.spaces[space];
+function (s: Space) __received(pn: i64, eliciting: boolean, now: i64): Space {
   let largest: i64 = s.largest_recv;
   let at: i64 = s.largest_recv_at;
   if (pn > largest) {
     largest = pn;
     at = now;
   }
-  s = Space { ...s, ranges: __add_range(s.ranges, pn), largest_recv: largest, largest_recv_at: at, ack_wanted: s.ack_wanted || eliciting };
-  return Conn { ...c, spaces: c.spaces.with(space, s) };
+  return Space { ...s, ranges: __add_range(s.ranges, pn), largest_recv: largest, largest_recv_at: at, ack_wanted: s.ack_wanted || eliciting };
 }
 
-function (c: Conn) __frames(fs: frames.Frame[], space: i32, kind: i32, now: i64): Conn {
+// __frames acts on each frame of the payload as the reader reads it.
+function (c: Conn) __frames(payload: u8[], space: i32, kind: i32, now: i64): Conn {
   let cur: Conn = c;
-  for f in fs {
-    if (cur.state >= CLOSING) {
-      return cur;
+  while (cur.state < CLOSING && cur.reader.more()) {
+    cur = Conn { ...cur, reader: cur.reader.next() };
+    if let Some(e) = cur.reader.failed {
+      return cur.__fail(e.code, e.frame_type, e.reason, now);
     }
-    if (!f.permitted(kind)) {
+    if (!cur.reader.permitted(kind)) {
       return cur.__fail(frames.PROTOCOL_VIOLATION, 0 as i64, "a frame not allowed in this packet type", now);
     }
-    cur = cur.__frame(f, space, now);
+    cur = cur.__frame_read(payload, space, now);
   }
   return cur;
+}
+
+function (c: Conn) __frame_read(payload: u8[], space: i32, now: i64): Conn {
+  if (c.reader.is_stream()) {
+    return Conn { ...c, streams: c.streams.on_stream(c.reader.stream, c.reader.offset, payload[c.reader.from:c.reader.to], c.reader.fin) }.__streams_checked(now);
+  }
+  if (c.reader.is_ack()) {
+    return c.__ack(c.reader.ack, space, now);
+  }
+  return c.__frame(c.reader.frame, space, now);
+}
+
+function (c: Conn) __streams_checked(now: i64): Conn {
+  if let Some(e) = c.streams.failed {
+    return c.__fail(e.code, e.frame_type, e.reason, now);
+  }
+  return c;
 }
 ```
 
@@ -1028,9 +1039,6 @@ function (c: Conn) __frames(fs: frames.Frame[], space: i32, kind: i32, now: i64)
 <<26 function (c: Conn) __frame(f: frames.Frame, space: i32, now: i64): Conn>>=
 function (c: Conn) __frame(f: frames.Frame, space: i32, now: i64): Conn {
   match (f) {
-    frames.AckFrame(a) => {
-      return c.__ack(a, space, now);
-    },
     frames.Crypto(offset, data) => {
       return c.__crypto(space, offset, data, now);
     },
@@ -1051,11 +1059,7 @@ function (c: Conn) __frame(f: frames.Frame, space: i32, now: i64): Conn {
 
 function (c: Conn) __frame_rest(f: frames.Frame, now: i64): Conn {
   if (streams.owns(f)) {
-    let cur: Conn = Conn { ...c, streams: c.streams.on_frame(f) };
-    if let Some(e) = cur.streams.failed {
-      return cur.__fail(e.code, e.frame_type, e.reason, now);
-    }
-    return cur;
+    return Conn { ...c, streams: c.streams.on_frame(f) }.__streams_checked(now);
   }
   match (f) {
     frames.NewToken(_) => {
@@ -1442,7 +1446,10 @@ function (c: Conn) __datagram_sent(now: i64): Conn {
 
 ```fern
 <<31 struct Plan>>=
-struct Plan { space: i32, payload: u8[], eliciting: boolean, resend: recovery.Resend[] }
+// A plan is one space's part of the next datagram, built in the space's
+// slot in `plans`. `sized` is whether its payload's buffer has the
+// datagram's room; the slot keeps that buffer for the next datagram.
+struct Plan { space: i32, payload: u8[], eliciting: boolean, resend: recovery.Resend[], sized: boolean }
 ```
 
 ### `32 function __no_plan(space: i32): Plan`
@@ -1450,7 +1457,13 @@ struct Plan { space: i32, payload: u8[], eliciting: boolean, resend: recovery.Re
 ```fern
 <<32 function __no_plan(space: i32): Plan>>=
 function __no_plan(space: i32): Plan {
-  return Plan { space: space, payload: [], eliciting: false, resend: [] };
+  return Plan { space: space, payload: [], eliciting: false, resend: [], sized: false };
+}
+
+// __emptied is a sealed plan made ready for the next datagram, its buffer kept.
+function __emptied(p: Plan): Plan {
+  __arr_set_len(p.payload, 0);
+  return Plan { ...p, eliciting: false, resend: [] };
 }
 
 function (c: Conn) __datagram_out(now: i64): Conn {
@@ -1505,22 +1518,20 @@ function (c: Conn) __datagram_guarded(now: i64): Conn {
     return c.__close_datagram();
   }
   let cur: Conn = c;
-  let plans: Plan[] = [];
+  let planned: i32 = 0;
   let room: i32 = c.config.max_datagram;
-  let space: i32 = 0;
-  while (space < 3) {
+  for space in 0..3 {
     cur = cur.__plan(space, room - 64, now);
-    if (cur.plan.payload.len() > 0) {
-      plans = plans.append(cur.plan);
-      room = room - cur.plan.payload.len() - 64;
-      cur = Conn { ...cur, plan: __no_plan(space) };
+    let n: i32 = cur.plans[space].payload.len();
+    if (n > 0) {
+      room = room - n - 64;
+      planned = planned | 1 << space;
     }
-    space = space + 1;
   }
-  if (plans.len() == 0) {
+  if (planned == 0) {
     return cur;
   }
-  return cur.__seal(plans, now);
+  return cur.__seal(planned, now);
 }
 
 function (c: Conn) __plan(space: i32, room: i32, now: i64): Conn {
@@ -1528,7 +1539,7 @@ function (c: Conn) __plan(space: i32, room: i32, now: i64): Conn {
   if (s.discarded || s.send.is_none() || room < 40) {
     return c;
   }
-  let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, space: space } };
+  let cur: Conn = c;
   if (s.ack_wanted) {
     cur = cur.__ack_planned(space, now);
   }
@@ -1539,43 +1550,59 @@ function (c: Conn) __plan(space: i32, room: i32, now: i64): Conn {
   return cur.__crypto_out(space, room).__control_out(space, room).__streams_out(space, room).__probe_out(space).__acked_out(space);
 }
 
-function (c: Conn) __planned(f: frames.Frame, again: boolean): Conn {
-  let cur: Conn = c.__pushed(f);
+function (c: Conn) __planned(space: i32, f: frames.Frame, again: boolean): Conn {
+  let cur: Conn = c.__pushed(space, f);
   if (!again) {
     return cur;
   }
-  return Conn { ...cur, plan: Plan { ...cur.plan, eliciting: true, resend: cur.plan.resend.append(recovery.Again(f)) } };
+  return Conn { ...cur, plans: cur.plans.with(space, cur.plans[space].__eliciting(recovery.Again(f))) };
 }
 
-function (c: Conn) __pushed(f: frames.Frame): Conn {
-  let payload: u8[] = c.plan.payload;
-  let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, payload: [] } };
-  payload = frames.put(__started(payload, cur.config.max_datagram), f);
-  return Conn { ...cur, plan: Plan { ...cur.plan, payload: payload } };
+function (p: Plan) __elicits(): Plan {
+  return Plan { ...p, eliciting: true };
+}
+
+function (p: Plan) __eliciting(item: recovery.Resend): Plan {
+  return Plan { ...p, eliciting: true, resend: p.resend.append(item) };
+}
+
+function (c: Conn) __pushed(space: i32, f: frames.Frame): Conn {
+  return Conn { ...c, plans: c.plans.with(space, c.plans[space].__put(f, c.config.max_datagram)) };
+}
+
+function (p: Plan) __put(f: frames.Frame, room: i32): Plan {
+  let q: Plan = p.__started(room);
+  let payload: u8[] = q.payload;
+  q = Plan { ...q, payload: [] };
+  payload = frames.put(payload, f);
+  return Plan { ...q, payload: payload };
 }
 
 function (c: Conn) __ack_planned(space: i32, now: i64): Conn {
   let delay: i64 = __ack_delay(c.spaces[space], space, now);
-  let ranges: frames.AckRange[] = c.spaces[space].ranges;
-  let room: i32 = c.config.max_datagram;
-  let payload: u8[] = c.plan.payload;
-  let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, payload: [] } };
-  payload = frames.put_ack(__started(payload, room), delay, ranges);
-  return Conn { ...cur, plan: Plan { ...cur.plan, payload: payload } };
+  return Conn { ...c, plans: c.plans.with(space, c.plans[space].__ack_put(delay, c.spaces[space].ranges, c.config.max_datagram)) };
+}
+
+function (p: Plan) __ack_put(delay: i64, ranges: frames.AckRange[], room: i32): Plan {
+  let q: Plan = p.__started(room);
+  let payload: u8[] = q.payload;
+  q = Plan { ...q, payload: [] };
+  payload = frames.put_ack(payload, delay, ranges);
+  return Plan { ...q, payload: payload };
 }
 
 // __started gives a plan's first frame a buffer the whole datagram fits in.
-function __started(own payload: u8[], room: i32): u8[] {
-  if (payload.len() > 0) {
-    return payload;
+function (p: Plan) __started(room: i32): Plan {
+  if (p.payload.len() > 0 || p.sized) {
+    return p;
   }
   let out: u8[] = __alloc_u8(room);
   __arr_set_len(out, 0);
-  return out;
+  return Plan { ...p, payload: out, sized: true };
 }
 
 function (c: Conn) __acked_out(space: i32): Conn {
-  if (c.plan.payload.len() == 0) {
+  if (c.plans[space].payload.len() == 0) {
     return c;
   }
   let unacked: boolean = c.key_unacked;
@@ -1607,7 +1634,7 @@ function (c: Conn) __crypto_out(space: i32, room: i32): Conn {
   let kept: i64[] = [];
   let i: i32 = 0;
   while (i + 1 < lost.len()) {
-    let n: i32 = __crypto_fit(cur.plan.payload.len(), lost[i], lost[i + 1] as i32, room);
+    let n: i32 = __crypto_fit(cur.plans[space].payload.len(), lost[i], lost[i + 1] as i32, room);
     cur = cur.__crypto_planned(space, lost[i], n);
     let rest: i32 = lost[i + 1] as i32 - n;
     if (rest > 0) {
@@ -1618,7 +1645,7 @@ function (c: Conn) __crypto_out(space: i32, room: i32): Conn {
   let unsent: i32 = (s.crypto_out.len() as i64 - s.crypto_sent) as i32;
   let sent: i64 = s.crypto_sent;
   if (unsent > 0) {
-    let n: i32 = __crypto_fit(cur.plan.payload.len(), s.crypto_sent, unsent, room);
+    let n: i32 = __crypto_fit(cur.plans[space].payload.len(), s.crypto_sent, unsent, room);
     cur = cur.__crypto_planned(space, s.crypto_sent, n);
     sent = s.crypto_sent + n as i64;
   }
@@ -1641,8 +1668,8 @@ function (c: Conn) __crypto_planned(space: i32, offset: i64, n: i32): Conn {
     return c;
   }
   let at: i32 = offset as i32;
-  let cur: Conn = c.__pushed(frames.Crypto(offset, __copy(c.spaces[space].crypto_out[at:at + n])));
-  return Conn { ...cur, plan: Plan { ...cur.plan, eliciting: true, resend: cur.plan.resend.append(recovery.CryptoRange(offset, n)) } };
+  let cur: Conn = c.__pushed(space, frames.Crypto(offset, __copy(c.spaces[space].crypto_out[at:at + n])));
+  return Conn { ...cur, plans: cur.plans.with(space, cur.plans[space].__eliciting(recovery.CryptoRange(offset, n))) };
 }
 
 function (c: Conn) __control_out(space: i32, room: i32): Conn {
@@ -1651,7 +1678,7 @@ function (c: Conn) __control_out(space: i32, room: i32): Conn {
   }
   let cur: Conn = c;
   if (cur.handshake_done_pending) {
-    cur = Conn { ...cur, handshake_done_pending: false }.__planned(frames.HandshakeDone, true);
+    cur = Conn { ...cur, handshake_done_pending: false }.__planned(space, frames.HandshakeDone, true);
   }
   if (cur.pending.len() == 0) {
     return cur;
@@ -1660,8 +1687,8 @@ function (c: Conn) __control_out(space: i32, room: i32): Conn {
   cur = Conn { ...cur, pending: [] };
   let kept: frames.Frame[] = [];
   for f in pending {
-    if (cur.plan.payload.len() + frames.encode(f).len() <= room) {
-      cur = cur.__planned(f, true);
+    if (cur.plans[space].payload.len() + frames.encode(f).len() <= room) {
+      cur = cur.__planned(space, f, true);
     } else {
       kept = kept.append(f);
     }
@@ -1673,11 +1700,15 @@ function (c: Conn) __streams_out(space: i32, room: i32): Conn {
   if (space != recovery.APPLICATION || c.state != ESTABLISHED) {
     return c;
   }
-  let before: i32 = c.plan.payload.len();
-  let payload: u8[] = c.plan.payload;
-  let cur: Conn = Conn { ...c, plan: Plan { ...c.plan, payload: [] } };
+  let before: i32 = c.plans[space].payload.len();
+  let payload: u8[] = c.plans[space].payload;
+  let cur: Conn = Conn { ...c, plans: c.plans.with(space, c.plans[space].__unfilled()) };
   cur = Conn { ...cur, streams: cur.streams.fill(payload, room) };
-  return Conn { ...cur, plan: cur.plan.__filled(cur.streams.filled, cur.streams.resend, before), streams: cur.streams.fill_taken() };
+  return Conn { ...cur, plans: cur.plans.with(space, cur.plans[space].__filled(cur.streams.filled, cur.streams.resend, before)), streams: cur.streams.fill_taken() };
+}
+
+function (p: Plan) __unfilled(): Plan {
+  return Plan { ...p, payload: [] };
 }
 
 function (p: Plan) __filled(payload: u8[], resend: recovery.Resend[], before: i32): Plan {
@@ -1692,52 +1723,54 @@ function (c: Conn) __probe_out(space: i32): Conn {
     return c;
   }
   let cur: Conn = Conn { ...c, probes: __without(c.probes, space) };
-  if (cur.plan.eliciting) {
+  if (cur.plans[space].eliciting) {
     return cur;
   }
   for sent in cur.recovery.unacked(space) {
     for item in sent.resend {
       if let recovery.CryptoRange(offset, len) = item {
-        let n: i32 = __crypto_fit(cur.plan.payload.len(), offset, len, cur.config.max_datagram - 64);
+        let n: i32 = __crypto_fit(cur.plans[space].payload.len(), offset, len, cur.config.max_datagram - 64);
         if (n > 0) {
           return cur.__crypto_planned(space, offset, n);
         }
       }
     }
   }
-  cur = cur.__pushed(frames.Ping);
-  return Conn { ...cur, plan: Plan { ...cur.plan, eliciting: true } };
+  cur = cur.__pushed(space, frames.Ping);
+  return Conn { ...cur, plans: cur.plans.with(space, cur.plans[space].__elicits()) };
 }
 ```
 
-### `34 function (c: Conn) __seal(plans: Plan[], now: i64): Conn`
+### `34 function (c: Conn) __seal(planned: i32, now: i64): Conn`
 
 ```fern
-<<34 function (c: Conn) __seal(plans: Plan[], now: i64): Conn>>=
-function (c: Conn) __seal(plans: Plan[], now: i64): Conn {
-  let pad: boolean = __needs_padding(plans, c.server);
+<<34 function (c: Conn) __seal(planned: i32, now: i64): Conn>>=
+// __seal seals the plans of the spaces set in `planned` into one datagram.
+function (c: Conn) __seal(planned: i32, now: i64): Conn {
+  let pad: boolean = __planned_in(planned, recovery.INITIAL) && (!c.server || c.plans[recovery.INITIAL].eliciting);
   let cur: Conn = c;
   let out: u8[] = [];
-  let i: i32 = 0;
-  while (i < plans.len()) {
-    let plan: Plan = plans[i];
-    let extra: i32 = 0;
-    let bytes: u8[] = cur.__sealed(plan, 0);
-    if (pad && i == plans.len() - 1 && out.len() + bytes.len() < packet.MIN_INITIAL_DATAGRAM) {
-      extra = packet.MIN_INITIAL_DATAGRAM - out.len() - bytes.len();
-      bytes = cur.__sealed(plan, extra);
+  for space in 0..3 {
+    if (__planned_in(planned, space)) {
+      let plan: Plan = cur.plans[space];
+      let extra: i32 = 0;
+      let bytes: u8[] = cur.__sealed(plan, 0);
+      if (pad && planned >> space + 1 == 0 && out.len() + bytes.len() < packet.MIN_INITIAL_DATAGRAM) {
+        extra = packet.MIN_INITIAL_DATAGRAM - out.len() - bytes.len();
+        bytes = cur.__sealed(plan, extra);
+      }
+      if (bytes.len() > 0) {
+        cur = cur.__recorded(plan, now, bytes.len(), extra > 0);
+      }
+      if (out.len() == 0) {
+        out = bytes;
+      } else {
+        out = out.concat(bytes);
+      }
+      cur = Conn { ...cur, plans: cur.plans.with(space, __emptied(cur.plans[space])) };
     }
-    if (bytes.len() > 0) {
-      cur = cur.__recorded(plan, now, bytes.len(), extra > 0);
-    }
-    if (out.len() == 0) {
-      out = bytes;
-    } else {
-      out = out.concat(bytes);
-    }
-    i = i + 1;
   }
-  if (!cur.server && __has_space(plans, recovery.HANDSHAKE)) {
+  if (!cur.server && __planned_in(planned, recovery.HANDSHAKE)) {
     cur = cur.__discard(recovery.INITIAL);
   }
   if (out.len() == 0) {
@@ -1746,22 +1779,8 @@ function (c: Conn) __seal(plans: Plan[], now: i64): Conn {
   return Conn { ...cur, out: cur.out.append(out), sent_bytes: cur.sent_bytes + out.len() as i64 };
 }
 
-function __needs_padding(plans: Plan[], server: boolean): boolean {
-  for p in plans {
-    if (p.space == recovery.INITIAL && (!server || p.eliciting)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function __has_space(plans: Plan[], space: i32): boolean {
-  for p in plans {
-    if (p.space == space) {
-      return true;
-    }
-  }
-  return false;
+function __planned_in(planned: i32, space: i32): boolean {
+  return (planned >> space & 1) != 0;
 }
 
 function (c: Conn) __sealed(p: Plan, extra: i32): u8[] {
@@ -1813,16 +1832,16 @@ function (c: Conn) __close_datagram(): Conn {
   let Some(why) = c.close else {
     return c;
   };
-  let plans: Plan[] = [];
-  let space: i32 = 0;
-  while (space < 3) {
+  let cur: Conn = Conn { ...c, close_pending: false };
+  let planned: i32 = 0;
+  for space in 0..3 {
     let s: Space = c.spaces[space];
     if (!s.discarded && s.send.is_some()) {
-      plans = plans.append(Plan { space: space, payload: frames.encode(frames.ConnectionCloseFrame(__close_frame(why, space))), eliciting: false, resend: [] });
+      planned = planned | 1 << space;
+      cur = Conn { ...cur, plans: cur.plans.with(space, Plan { space: space, payload: frames.encode(frames.ConnectionCloseFrame(__close_frame(why, space))), eliciting: false, resend: [], sized: false }) };
     }
-    space = space + 1;
   }
-  return Conn { ...c, close_pending: false }.__seal(plans, 0 as i64);
+  return cur.__seal(planned, 0 as i64);
 }
 
 function __close_frame(why: Close, space: i32): frames.ConnectionClose {
@@ -1838,6 +1857,9 @@ function __close_frame(why: Close, space: i32): frames.ConnectionClose {
 ```fern
 <<35 function __add_range(ranges: frames.AckRange[], pn: i64): frames.AckRange[]>>=
 function __add_range(ranges: frames.AckRange[], pn: i64): frames.AckRange[] {
+  if (ranges.len() > 0 && pn == ranges[0].high + 1) {
+    return ranges.with(0, __raised(ranges[0], pn));
+  }
   let out: frames.AckRange[] = [];
   let placed: boolean = false;
   for r in ranges {
@@ -1865,6 +1887,10 @@ function __add_range(ranges: frames.AckRange[], pn: i64): frames.AckRange[] {
     i = i + 1;
   }
   return kept;
+}
+
+function __raised(r: frames.AckRange, pn: i64): frames.AckRange {
+  return frames.AckRange { ...r, high: pn };
 }
 
 function __push_range(out: frames.AckRange[], r: frames.AckRange): frames.AckRange[] {

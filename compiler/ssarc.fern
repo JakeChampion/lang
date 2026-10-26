@@ -3582,11 +3582,24 @@ function join_call(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerR
   return emit(r, ir.op_call_direct("__fern_arr_str_join", 2));
 }
 
+// The helper takes the second operand as its length and data, so a view is
+// read where it points.
 function concat_call(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, counted: boolean): irtables.LowerResult {
+  let b: i32 = ins.args[1];
   r = emit(r, ir.op_const_i32(elem_width(elem_type(f.values[ins.result]))));
-  r = emit(r, ir.op_load_local(ins.args[1]));
+  r = emit(r, ir.op_load_local(b));
+  if (array_view(f.values[b])) {
+    r = emit(r, ssabytes.read(b, false, false));
+    r = emit(r, ir.op_load_local(b));
+    r = emit(r, ssabytes.read_data(b));
+  } else {
+    r = emit(r, ir.op_arr_len());
+    r = emit(r, ir.op_load_local(b));
+    r = emit(r, ir.op_const_i32(8));
+    r = emit(r, ir.op_raw_addr());
+  }
   r = emit(r, ir.op_load_local(ins.args[0]));
-  let call: ir.Op = ir.op_call_direct("__fern_arr_concat", 3);
+  let call: ir.Op = ir.op_call_direct("__fern_arr_concat", 4);
   if (counted) {
     call = ir.counted(call);
   }
@@ -4555,6 +4568,9 @@ function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   }
   if (ins.str == "__count_byte_bytes") {
     return emit(r, ir.packed(ir.op_count_byte_bytes()));
+  }
+  if (ins.str == "__count_below_u64") {
+    return emit(r, ir.op_count_below_u64());
   }
   if (ins.str == "__sum_bytes_array") {
     return emit(r, ir.op_call_direct(ssabytes.sum_name(), 1));

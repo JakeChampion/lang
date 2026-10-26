@@ -127,7 +127,7 @@ function number_site(e: ast.Expr, t: Tab): ast.Expr {
   if (key == "") {
     return e;
   }
-  let n: ast.Expr = ast.ExprNumber { text: util.i32_to_string(find(t, key)), suffix: "", raw: "", is_float: false, line: 0, col: 0 };
+  let n: ast.Expr = ast.ExprNumber { text: util.i32_to_string(find(t, key)), suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 };
   return ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_hit", line: 0, col: 0, ty: "", builtin: false }, args: [n], line: 0, col: 0, type_args: [], ty: "" };
 }
 

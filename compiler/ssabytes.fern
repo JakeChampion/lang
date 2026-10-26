@@ -67,7 +67,7 @@ function read_value(op: ir.Op, call_direct: i32): i32 {
   return 0 - 1;
 }
 
-function data_read(value: i32): ir.Op {
+pub function read_data(value: i32): ir.Op {
   return ir.Op { ...ir.op_call_direct(data_name(), 1), i64_imm: value as i64 + 1 };
 }
 
@@ -276,7 +276,7 @@ pub function slice_frame(src: i32, lo: i32, hi: i32, width: i32): ir.Op[] {
   ops = range_abort_if(ops);
   ops = joined(ops, [ir.op_load_local(hi), ir.op_load_local(src), read(src, false, false), ir.op_bin("gt_s", 0, false)]);
   ops = range_abort_if(ops);
-  ops = joined(ops, [ir.op_load_local(src), data_read(src), ir.op_load_local(lo)]);
+  ops = joined(ops, [ir.op_load_local(src), read_data(src), ir.op_load_local(lo)]);
   ops = joined(ops, scaled(width));
   return joined(ops, [
     ir.op_raw_addr(), ir.op_load_local(hi), ir.op_load_local(lo), ir.op_bin("sub", 0, false),

@@ -1,0 +1,109 @@
+// A send on a non-blocking socket takes what the socket accepts now and
+// answers that count, or -EAGAIN when it accepts nothing, on every target
+// (#13329). tcp_send_bytes fills a socket whose peer is not reading until it
+// stalls before the end of an 8 MiB payload. tcp_send_buf sends the rest from
+// where the count left off, waiting on the reactor between attempts while the
+// peer drains, and every byte arrives in order.
+import "std/errno";
+import "std/hash";
+import "std/string";
+
+function block(): u8[] {
+  let out: usize = buf_new(65521);
+  let i: i32 = 0;
+  while (i < 65521) {
+    buf_push_byte(out, i * 31 + (i >> 9) & 255);
+    i = i + 1;
+  }
+  let bytes: u8[] = buf_take_bytes(out);
+  buf_free(out);
+  return bytes;
+}
+
+struct Sender { sock: i32, sent: i32, stalled: boolean, failed: i32 }
+
+function sent(s: Sender, n: i32): Sender {
+  if (n >= 0) {
+    return Sender { ...s, sent: s.sent + n, stalled: false };
+  }
+  if (errno.from_host(n) == errno.EAGAIN) {
+    return Sender { ...s, stalled: true };
+  }
+  return Sender { ...s, failed: n };
+}
+
+struct Receiver { sock: i32, got: i32, crc: hash.Crc32 }
+
+// Reads until the socket has nothing queued.
+function drain(r: Receiver, buf: u8[]): Receiver {
+  let got: i32 = r.got;
+  let crc: hash.Crc32 = r.crc;
+  while (true) {
+    let n: i32 = tcp_recv_into(r.sock, buf);
+    if (n <= 0) {
+      break;
+    }
+    crc = crc.update(buf[0:n]);
+    got = got + n;
+  }
+  return Receiver { ...r, got: got, crc: crc };
+}
+
+function main(): i32 {
+  let lo: u8[] = [127u8, 0u8, 0u8, 1u8];
+  let ls: i32 = tcp_listen_with(lo, 0, 16, false);
+  let c: i32 = tcp_connect_with(lo, tcp_local_port(ls), false);
+  let s: i32 = tcp_accept(ls);
+  print(f"non-blocking: {tcp_socket_ctl(c, 3, 1)} {tcp_socket_ctl(s, 3, 1)}");
+
+  let total: i32 = 8388608;
+  let b: u8[] = block();
+  let payload: usize = buf_new(total);
+  let want: hash.Crc32 = hash.crc32_new();
+  while (buf_len(payload) < total) {
+    let n: i32 = total - buf_len(payload);
+    if (n > b.len()) {
+      n = b.len();
+    }
+    buf_push_bytes_range(payload, b, 0, n);
+    want = want.update(b[0:n]);
+  }
+
+  let tx: Sender = Sender { sock: c, sent: 0, stalled: false, failed: 0 };
+  let whole: boolean = true;
+  while (whole && tx.sent < total && !tx.stalled && tx.failed == 0) {
+    let n: i32 = tcp_send_bytes(c, b);
+    tx = sent(tx, n);
+    whole = n == b.len();
+  }
+  print(f"stalled before the end: {tx.sent < total} failed {tx.failed}");
+
+  let r: i32 = reactor_new();
+  print(f"watch: {reactor_ctl(r, 1, c, 2)} {reactor_ctl(r, 1, s, 1)}");
+  let events: i32[] = [0, 0, 0, 0];
+  let buf: u8[] = __alloc_u8(65536);
+  let rx: Receiver = Receiver { sock: s, got: 0, crc: hash.crc32_new() };
+  let watching: boolean = true;
+  while (rx.got < total && tx.failed == 0) {
+    if (tx.sent < total) {
+      tx = sent(tx, tcp_send_buf(c, payload, tx.sent));
+    } else if (watching) {
+      reactor_ctl(r, 2, c, 0);
+      watching = false;
+    }
+    let before: i32 = rx.got;
+    rx = drain(rx, buf);
+    if ((tx.stalled || tx.sent == total) && rx.got == before) {
+      reactor_wait(r, events, 1000);
+    }
+  }
+  buf_free(payload);
+  print(f"sent: {tx.sent} failed {tx.failed}");
+  print(f"received: {rx.got} crc32 agrees {rx.crc.finish() == want.finish()}");
+
+  print(f"close sender: {reactor_ctl(r, 3, 0, 0)} {tcp_close(c)}");
+  print(f"blocking: {tcp_socket_ctl(s, 3, 0)}");
+  print(f"end of stream: {tcp_recv_into(s, buf)}");
+  print(f"close: {tcp_close(s)} {tcp_close(ls)}");
+  return 0;
+}

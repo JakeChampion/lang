@@ -29,7 +29,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 
 function test_ok_passes_through(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.new();
   let resp: HttpResponse = handle(http.request("GET", "/items/1"), m);
   match (test.assert_status(resp, 200)) {
     Fail(msg) => {
@@ -41,7 +41,7 @@ function test_ok_passes_through(): test.TestOutcome {
 }
 
 function test_fail_answers_a_problem(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.new();
   let resp: HttpResponse = handle(http.request("GET", "/items/9"), m);
   match (test.assert_status(resp, 404)) {
     Fail(msg) => {
@@ -59,7 +59,7 @@ function test_fail_answers_a_problem(): test.TestOutcome {
 }
 
 function test_error_keeps_its_own_title_and_escapes(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.new();
   let resp: HttpResponse = handle(http.request("GET", "/items/locked"), m);
   match (test.assert_status(resp, 403)) {
     Fail(msg) => {
@@ -168,7 +168,7 @@ function exploding(): Result[HttpResponse, dyn error.Error] {
 }
 
 function test_dyn_error_answers_500_and_logs_the_message(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.new();
   let resp: HttpResponse = http.respond_error(exploding(), m);
   match (test.assert_status(resp, 500)) {
     Fail(msg) => {
@@ -200,7 +200,7 @@ function counted_dyn(n: i32, ok: boolean): (i32, Result[HttpResponse, dyn error.
 }
 
 function test_respond_error_with_keeps_the_state(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.mock_platform_new();
+  let m: mock_platform.MockPlatform = mock_platform.new();
   let good: (i32, HttpResponse) = http.respond_error_with(counted_dyn(1, true), m);
   if (good.0 != 2) {
     return test.fail("state after Ok: " + good.0.to_string());
