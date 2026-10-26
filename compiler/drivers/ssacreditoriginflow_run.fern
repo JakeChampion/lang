@@ -238,7 +238,7 @@ function controls(f: ssa.SFunc, producer: ssa.SFunc): void {
 }
 
 function target_checks(target: string): void {
-  let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; }\n@noinline\nfunction select_parent(flag: boolean, a: Leaf, b: Leaf): Parent { let chosen = if (flag) { parent(a, b) } else { parent(b, a) }; return chosen; }\nfunction main(): i32 { let p = select_parent(true, Leaf { n: 1 }, Leaf { n: 2 }); return p.left.n + p.right.n - 3; }\n";
+  let source = "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; }\n@noinline\nfunction select_parent(flag: boolean, a: Leaf, b: Leaf): Parent { let chosen = if (flag) { parent(a, b) } else { parent(b, a) }; return chosen; }\nfunction main(): i32 { let p = select_parent(true, Leaf { n: 1, a: 2, b: 3, c: 4, d: 5 }, Leaf { n: 2, a: 2, b: 3, c: 4, d: 5 }); return p.left.n + p.right.n - 3; }\n";
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
   let producers: ssa.SFunc[] = [];
   let callers: ssa.SFunc[] = [];

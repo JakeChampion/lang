@@ -207,12 +207,12 @@ pub function donors(f: ssasem.Func, defs: ssa.SInst[], whole0: boolean[]): boole
       continue;
     }
     seen = seen.with(v, true);
-    let ref: boolean = ssasem.reference(f.values[v]);
-    if (ref) {
-      whole = whole.with(v, true);
+    if (!ssasem.reference(f.values[v])) {
+      continue;
     }
+    whole = whole.with(v, true);
     let d: ssa.SInst = defs[v];
-    if (donation_edges(ref, d.kind_tag)) {
+    if (donation_edges(d.kind_tag)) {
       for a in d.args {
         pending = pending.append(a);
       }
@@ -235,8 +235,8 @@ function kept_fields(g: ssa.SFunc, whole: boolean[]): i32[] {
   return out;
 }
 
-function donation_edges(reference: boolean, kind: i32): boolean {
-  return !reference || kind == 7 || kind == 8 || kind == ssasem.record_new() || kind == ssasem.tuple_new();
+function donation_edges(kind: i32): boolean {
+  return kind == 7 || kind == 8 || kind == ssasem.record_new() || kind == ssasem.tuple_new();
 }
 
 pub function lanes_of(t: typeinfo.Type): typeinfo.Type[] {

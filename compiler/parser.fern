@@ -10717,6 +10717,10 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           return stamped_type(c.ty);
         },
         ast.ExprLambda(lm) => {
+          let checked: string = stamped_type(c.ty);
+          if (checked.len() > 0) {
+            return checked;
+          }
           if (!mono_ty_mentions_var(lm.ret_type)) {
             return lm.ret_type;
           }

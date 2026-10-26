@@ -110,9 +110,9 @@ function check(xs: i32[], count: boolean): i32 {
   let boxes = 0i64;
   if (n > 0) { boxes = 1i64; }
   mark = __heap_alloc_count(); let box = escaping(xs);
-  if (count && __heap_alloc_count() - mark != boxes || take_box(box) != want) { return 40; }
+  if (count && __heap_alloc_count() != mark || take_box(box) != want) { return 40; }
   mark = __heap_alloc_count(); got = called(xs);
-  if (count && __heap_alloc_count() - mark != boxes || got != want) { return 41; }
+  if (count && __heap_alloc_count() != mark || got != want) { return 41; }
   let seed = Some(71i64);
   mark = __heap_alloc_count(); got = external(xs, seed, false);
   if (count && __heap_alloc_count() - mark != boxes || got != want) { return 42; }

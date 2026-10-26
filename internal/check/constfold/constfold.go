@@ -62,6 +62,9 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 			continue
 		case err == errDeferredOperand:
 			deferred = append(deferred, cd)
+		case err == errDeferredNominal:
+			values[cd.Name] = val
+			deferred = append(deferred, cd)
 		case err != nil:
 			cd.FoldErr = "const " + cd.Name + ": " + err.Error()
 			deferred = append(deferred, cd)
@@ -120,6 +123,8 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 // errDeferredOperand marks an initializer that reads a const which was itself
 // deferred to the checker; that const's own diagnostic covers both.
 var errDeferredOperand = errors.New("reads a const that did not fold")
+
+var errDeferredNominal = errors.New("nominal array element type requires checking")
 
 const notConstant = "expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)"
 
@@ -668,12 +673,17 @@ func settleConstLit(want ast.Type, val ast.Expr) error {
 		if !ok {
 			break
 		}
+		lit.ElemType = w.Elem
 		for _, el := range lit.Elems {
 			if err := settleConstLit(w.Elem, el); err != nil {
+				_, nominal := w.Elem.(ast.StructType)
+				_, record := el.(*ast.StructLit)
+				if nominal && record {
+					return errDeferredNominal
+				}
 				return err
 			}
 		}
-		lit.ElemType = w.Elem
 		return nil
 	case ast.TupleType:
 		lit, ok := val.(*ast.TupleLit)

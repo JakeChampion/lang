@@ -52,6 +52,7 @@ which ones.
 | `PATTERN-MATRIX-PROPOSAL.md` | [research] | A proposal to replace the nested-pattern desugar with Maranget decision trees, lifting the three P001 limits; not implemented. |
 | `PLT-LANDSCAPE-2026.md` | [research] | 2026-07 survey of programming-language theory and practice: where Fern is at the frontier, its gaps, and ranked actions. |
 | `SELFHOST-LANGUAGE-FRICTION.md` | [research] | Which Fern features make writing the self-host compiler harder, with a census, probes and ranked fixes. |
+| `SAFETY-CONTRACT.md` | [research] | Current safety rules and a proposed explicit unsafe boundary, with migration and evidence requirements. |
 | `SPECIFICATION-RESEARCH.md` | [research] | Would a language spec pay for itself? Prior art, and a small mechanically checked executable spec. |
 | `ARRAY-BUILDER-PLAN.md` | [record] | The `Array.build` / `Map.build` scoped linear builder, a parse-time desugar; shipped in both parsers, followed by the E056 subscript-assignment ban. |
 | `EFFECT-ROWS-BRIEF.md` | [record] | The effect-rows prototype (#5320): the `uses` clause was built, measured and dropped; `fern -effects` shipped. |
@@ -277,6 +278,7 @@ which ones.
 | `LOCAL-DEV-LOOP.md` | [reference] | Machine facts for local work: suite timings and sharding, build memory budgets, `FERN_*` switches, exit codes, and which instrument to measure with. |
 | `LSP-INTEGRATION-PLAN.md` | [reference] | `fern -lsp`: what each request answers, how the VS Code extension and the playground run it, and its gates. |
 | `PROFILING.md` | [reference] | Profiling a native program with `FERN_PROFILE=cpu`: SIGPROF sampling and collapsed stacks for flame graphs. |
+| `SECURITY-TESTING.md` | [reference] | Cross-target security smoke tests, strict prerequisites, JSON evidence, and hardware limits. |
 | `SANITIZER.md` | [reference] | `-sanitize` / `FERN_SANITIZE=1`: rc over-release, use-after-free quarantine and leak census, with output and exit codes. |
 | `TEST-GATES.md` | [reference] | Which suites prove what for which kind of change, which look authoritative and are not, and what nothing gates. |
 | `TRANSLATION-VALIDATION.md` | [reference] | SMT (Z3) translation validation of compiler rewrites, Alive2-style; the first slice validates strength reduction (#5543). |

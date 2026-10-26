@@ -6964,10 +6964,10 @@ function method_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig, recv
         }
       }
     }
-    if (!unresolved_value && !is_unknown(want) && !elem_checked_literal(c.args[mi], msig.param_types[mi]) && !bound_arg_accepts(c.args[mi], mat, want, s) && !generic_own_callback_accepts(mat, want, rmb.names, param_type_name_at(msig, mi), s)) {
+    if (!unresolved_value && !is_unknown(want) && !elem_checked_literal(c.args[mi], msig.param_types[mi], s) && !bound_arg_accepts(c.args[mi], mat, want, s) && !generic_own_callback_accepts(mat, want, rmb.names, param_type_name_at(msig, mi), s)) {
       out = out.append(dg_at("E038", "argument " + util.i32_to_string(mi + 1) + " to \"" + method + "\": expected " + type_label(want) + ", got " + type_label(mat), expr_line(c.args[mi]), expr_col(c.args[mi])));
     }
-    out = util.append_diags(out, array_elem_check(array_elem_type_of(msig.param_types[mi]), c.args[mi], s));
+    out = util.append_diags(out, array_slot_diags(msig.param_types[mi], c.args[mi], s));
     mi = mi + 1;
   }
   let (bn, bt) = bounds_bindings(msig.type_params, msig.type_bounds, msig.module, s, rmb.names, rmb.types);
@@ -13013,7 +13013,7 @@ function cell_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typein
     if (!is_unknown(at) && !is_unknown(pt) && !settles_to_dest(c.args[0], pt, s) && !coercible(at, pt, s)) {
       out = out.append(dg_at("E038", "argument 1 to \"" + mfa.field + "\": expected " + type_label(pt) + ", got " + type_label(at) + str_copy_hint(at, pt), expr_line(c.args[0]), expr_col(c.args[0])));
     }
-    out = util.append_diags(out, array_elem_check(array_elem_type_of(pt), c.args[0], s));
+    out = util.append_diags(out, array_slot_diags(pt, c.args[0], s));
   }
   return out;
 }
@@ -13036,7 +13036,7 @@ function callable_arg_diags(c: ast.ExprCall, ft: typeinfo.Type, s: Scope): util.
         if (!is_unknown(at) && !is_unknown(pt) && !settles_to_dest(c.args[i], pt, s) && !view_arg_borrow(at, pt) && !coercible(at, pt, s)) {
           out = out.append(dg_at("E038", arg_subject(c, i + 1) + ": expected " + type_label(pt) + ", got " + argument_type_label(c.args[i], at, s), expr_line(c.args[i]), expr_col(c.args[i])));
         }
-        out = util.append_diags(out, array_elem_check(array_elem_type_of(pt), c.args[i], s));
+        out = util.append_diags(out, array_slot_diags(pt, c.args[i], s));
         i = i + 1;
       }
     },
@@ -13436,7 +13436,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
               if (!bound_checked && !(sig.all_type_params.len() > 0 && binds_nothing(c.args[ai], s)) && !is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to_dest(c.args[ai], sig.param_types[ai], s) && !view_arg_borrow(at, sig.param_types[ai]) && !coercible(at, sig.param_types[ai], s)) {
                 out = out.append(dg_at("E038", arg_subject(c, ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + argument_type_label(c.args[ai], at, s), expr_line(c.args[ai]), expr_col(c.args[ai])));
               }
-              out = util.append_diags(out, array_elem_check(array_elem_type_of(sig.param_types[ai]), c.args[ai], s));
+              out = util.append_diags(out, array_slot_diags(sig.param_types[ai], c.args[ai], s));
               ai = ai + 1;
             }
             if (sig.all_type_params.len() > 0) {
@@ -13499,7 +13499,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
             if (!is_unknown(aat) && !settles_to_dest(c.args[0], ar.elem, s) && !coercible(aat, ar.elem, s)) {
               out = out.append(dg_at("E038", "argument 1 to \"append\": expected " + type_label(ar.elem) + ", got " + type_label(aat) + str_copy_hint(aat, ar.elem), expr_line(c.args[0]), expr_col(c.args[0])));
             }
-            out = util.append_diags(out, array_elem_check(array_elem_type_of(ar.elem), c.args[0], s));
+            out = util.append_diags(out, array_slot_diags(ar.elem, c.args[0], s));
           }
           if (!ar.view && mfa.field == "with" && c.args.len() == 2 && !is_unknown(ar.elem)) {
             let wvt: typeinfo.Type = check_expr(c.args[1], s);
@@ -13507,7 +13507,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
             if (!is_unknown(wvt) && !settles_to_dest(c.args[1], ar.elem, s) && !coercible(wvt, ar.elem, s)) {
               out = out.append(dg_at("E038", "argument 2 to \"with\": expected " + type_label(ar.elem) + ", got " + type_label(wvt) + str_copy_hint(wvt, ar.elem), expr_line(c.args[1]), expr_col(c.args[1])));
             }
-            out = util.append_diags(out, array_elem_check(array_elem_type_of(ar.elem), c.args[1], s));
+            out = util.append_diags(out, array_slot_diags(ar.elem, c.args[1], s));
           }
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("Array", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
@@ -14358,7 +14358,7 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
         if (!is_unknown(ft) && !is_unknown(vt) && !settles_to_dest(sl.field_values[fi], ft, s) && !coercible(vt, ft, s)) {
           out = out.append(dg_at("E043", "field \"" + sl.field_names[fi] + "\": expected " + type_label(ft) + ", got " + type_label(vt) + str_copy_hint(vt, ft), expr_line(sl.field_values[fi]), expr_col(sl.field_values[fi])));
         }
-        out = util.append_diags(out, array_elem_check(array_elem_type_of(ft), sl.field_values[fi], s));
+        out = util.append_diags(out, array_slot_diags(ft, sl.field_values[fi], s));
       }
       fi = fi + 1;
     }
@@ -14684,18 +14684,81 @@ function array_elem_type_of(t: typeinfo.Type): typeinfo.Type {
   return t_unknown("not an array");
 }
 
+function array_slot_diags(dest: typeinfo.Type, init: ast.Expr, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  if let ast.ExprCall(c) = init {
+    if (parser.is_value_block(c)) {
+      return vb_array_elem_check(dest, parser.vb_body(c), s);
+    }
+  }
+  if let typeinfo.TypeArray(a) = dest {
+    return array_elem_check(a.elem, init, s);
+  }
+  for part in array_literal_parts(init, dest, s) {
+    out = util.append_diags(out, array_slot_diags(part.to, part.value, s));
+  }
+  return out;
+}
+
+function array_literal_parts(e: ast.Expr, dest: typeinfo.Type, s: Scope): ViewPart[] {
+  if let ast.ExprTuple(_) = e {
+    return view_parts(e, dest, s);
+  }
+  if let ast.ExprCall(c) = e {
+    if (constructor_destination(c, dest, s)) {
+      return view_parts(e, dest, s);
+    }
+  }
+  return [];
+}
+
 function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
-  if (!checks_array_element(elem_ty)) {
-    return out;
-  }
   match (init) {
     ast.ExprArray(arr) => {
+      if let typeinfo.TypeArray(inner) = elem_ty {
+        for element in arr.elements {
+          out = util.append_diags(out, array_slot_diags(elem_ty, element, s));
+        }
+        return out;
+      }
+      if (!checks_array_element(elem_ty)) {
+        return out;
+      }
       for element in arr.elements {
         let ekt: typeinfo.Type = check_expr(element, s);
         if (!is_unknown(ekt) && !settles_to(element, elem_ty, s) && !coercible(ekt, elem_ty, s) && dest_bound_diags(element, elem_ty, s).len() == 0) {
           out = out.append(dg_at("E034", "array element: expected " + type_label(elem_ty) + ", got " + type_label(ekt), expr_line(element), expr_col(element)));
         }
+      }
+    },
+    _ => {}
+  }
+  return out;
+}
+
+function vb_array_elem_check(dest: typeinfo.Type, body: ast.Stmt[], s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (body.len() == 0) {
+    return out;
+  }
+  let cur: Scope = s;
+  let i: i32 = 0;
+  while (i + 1 < body.len()) {
+    cur = bind_stmt(body[i], cur);
+    i = i + 1;
+  }
+  match (body[i]) {
+    ast.StmtReturn(r) => {
+      return array_slot_diags(dest, r.value, cur);
+    },
+    ast.StmtIf(f) => {
+      out = vb_array_elem_check(dest, f.then_body, cur);
+      return util.append_diags(out, vb_array_elem_check(dest, f.else_body, cur));
+    },
+    ast.StmtMatch(m) => {
+      for arm in m.arms {
+        out = util.append_diags(out, vb_array_elem_check(dest, arm.body, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur))));
       }
     },
     _ => {}
@@ -14715,18 +14778,76 @@ function checks_array_element(ty: typeinfo.Type): boolean {
   return false;
 }
 
-// An array literal written straight into a destination whose elements
-// array_elem_check compares is reported element by element, not as a whole.
-function elem_checked_literal(e: ast.Expr, dest: typeinfo.Type): boolean {
-  if let ast.ExprArray(_) = e {
-    return checks_array_element(array_elem_type_of(dest));
+// Element checks supply the diagnostics for these literal destinations.
+function elem_checked_literal(e: ast.Expr, dest: typeinfo.Type, s: Scope): boolean {
+  if let ast.ExprCall(c) = e {
+    if (parser.is_value_block(c)) {
+      return vb_elem_checked_literal(parser.vb_body(c), dest, s);
+    }
+  }
+  if let ast.ExprArray(arr) = e {
+    let elem: typeinfo.Type = array_elem_type_of(dest);
+    if (checks_array_element(elem)) {
+      return true;
+    }
+    if let typeinfo.TypeArray(inner) = elem {
+      if (inner.view) {
+        return false;
+      }
+      for element in arr.elements {
+        if (!elem_checked_literal(element, elem, s)) {
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+  let covered: boolean = false;
+  for part in array_literal_parts(e, dest, s) {
+    if (elem_checked_literal(part.value, part.to, s)) {
+      covered = true;
+    } else if (!settles_to(part.value, part.to, s) && !coercible(check_expr(part.value, s), part.to, s)) {
+      return false;
+    }
+  }
+  return covered;
+}
+
+function vb_elem_checked_literal(body: ast.Stmt[], dest: typeinfo.Type, s: Scope): boolean {
+  if (body.len() == 0) {
+    return false;
+  }
+  let cur: Scope = s;
+  let i: i32 = 0;
+  while (i + 1 < body.len()) {
+    cur = bind_stmt(body[i], cur);
+    i = i + 1;
+  }
+  match (body[i]) {
+    ast.StmtReturn(r) => {
+      return elem_checked_literal(r.value, dest, cur);
+    },
+    ast.StmtIf(f) => {
+      return vb_elem_checked_literal(f.then_body, dest, cur) && vb_elem_checked_literal(f.else_body, dest, cur);
+    },
+    ast.StmtMatch(m) => {
+      for arm in m.arms {
+        if (!vb_elem_checked_literal(arm.body, dest, annotate_arm_scope(arm, cur, check_expr(m.scrutinee, cur)))) {
+          return false;
+        }
+      }
+      return m.arms.len() > 0;
+    },
+    _ => {
+      return false;
+    }
   }
   return false;
 }
 
 // settles_to for a value in a destination slot that array_elem_check also covers.
 function settles_to_dest(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
-  return elem_checked_literal(e, want) || settles_to(e, want, s);
+  return elem_checked_literal(e, want, s) || settles_to(e, want, s);
 }
 
 function lit_field_type(ssig: StructSig, fi: i32, args: typeinfo.Type[], s: Scope): typeinfo.Type {
@@ -14764,10 +14885,6 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
       let out: util.Diag[] = [];
       for element in sa.elements {
         out = util.append_diags(out, call_diags(element, s));
-        let et: typeinfo.Type = check_expr(element, s);
-        if (!is_unknown(et) && !coercible(et, elem, s)) {
-          out = out.append(dg_at("E034", "array element: expected " + type_label(elem) + ", got " + type_label(et), expr_line(element), expr_col(element)));
-        }
       }
       return out;
     }
@@ -15704,11 +15821,11 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
           vdest = var_declared_type(v, vsc);
         }
         out = util.append_diags(out, dest_call_diags(v.init, vdest, vsc));
-        out = util.append_diags(out, array_elem_check(array_elem_type_of(vdest), v.init, vsc));
+        out = util.append_diags(out, array_slot_diags(vdest, v.init, vsc));
       },
       ast.StmtReturn(r) => {
         out = util.append_diags(out, dest_call_diags(r.value, cur.ret_type, cur));
-        out = util.append_diags(out, array_elem_check(array_elem_type_of(cur.ret_type), r.value, cur));
+        out = util.append_diags(out, array_slot_diags(cur.ret_type, r.value, cur));
       },
       ast.StmtExpr(x) => {
         out = util.append_diags(out, call_diags(x.value, cur));
@@ -15716,7 +15833,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
       },
       ast.StmtAssign(a) => {
         out = util.append_diags(out, dest_call_diags(a.value, cur.lookup(a.target), cur));
-        out = util.append_diags(out, array_elem_check(array_elem_type_of(cur.lookup(a.target)), a.value, cur));
+        out = util.append_diags(out, array_slot_diags(cur.lookup(a.target), a.value, cur));
       },
       ast.StmtIf(f) => {
         out = util.append_diags(out, sugar_exhaustive_diags(f.sugar, cur));
@@ -16042,7 +16159,7 @@ function assign_value_diags(value: ast.Expr, tt: typeinfo.Type, what: string, re
 // place_assign_diags checks `place = value` for a field or element place, which the parser desugars to __set_field / __set_index.
 function place_assign_diags(place: ast.Expr, value: ast.Expr, line: i32, col: i32, s: Scope): util.Diag[] {
   let pt: typeinfo.Type = check_expr(place, s);
-  let out: util.Diag[] = util.append_diags(assign_value_diags(value, pt, "assignment", true, line, col, s, s.unions.unions), array_elem_check(array_elem_type_of(pt), value, s));
+  let out: util.Diag[] = util.append_diags(assign_value_diags(value, pt, "assignment", true, line, col, s, s.unions.unions), array_slot_diags(pt, value, s));
   match (place) {
     ast.ExprFieldAccess(fa) => {
       return out.append(dg_at("E048", "cannot assign to field \"" + fa.field + "\": fields are immutable after construction; rebuild with `T { ...old, " + fa.field + ": value }`", fa.line, fa.col));

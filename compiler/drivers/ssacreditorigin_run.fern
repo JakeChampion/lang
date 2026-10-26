@@ -160,7 +160,7 @@ function sparse_controls(f: ssa.SFunc, shape: string, refs: boolean[]): void {
 }
 
 function target_checks(target: string): void {
-  let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction leaf(n: i32): Leaf { return Leaf { n: n }; }\n@noinline\nfunction parent(own left: Leaf, own right: Leaf): Parent { return Parent { left: left, right: right }; }\nfunction main(): i32 { let p = parent(leaf(1), leaf(2)); return p.left.n + p.right.n - 3; }\n";
+  let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction leaf(n: i32): Leaf { return Leaf { n: n }; }\n@noinline\nfunction parent(own left: Leaf, own right: Leaf): Parent { return Parent { left: left, right: right }; }\n@noinline\nfunction observe(xs: Leaf[]): i32 { return xs[0].n + xs[1].n; }\nfunction main(): i32 { let p = parent(leaf(1), leaf(2)); return observe([p.left, p.right]) - 3; }\n";
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
   let count: i32 = 0;
   for body in sub.bodies {

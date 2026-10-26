@@ -5338,6 +5338,9 @@ func (c *checker) typeParamDecl(name string) *ast.FuncDecl {
 }
 
 func (c *checker) resolveTypeNames(prog *ast.Program) {
+	for _, cd := range prog.Consts {
+		c.resolveType(&cd.Type, nil, cd.P)
+	}
 	for _, td := range prog.Traits {
 		var params map[string]bool
 		if len(td.TypeParams) > 0 {
@@ -10038,6 +10041,8 @@ func (c *checker) checkBlock(b *ast.Block, parent *scope) {
 }
 
 func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
+	expected := c.expectedType
+	c.expectedType = nil
 	s := newScope(parent)
 	prevMutualRec := c.mutualRecSiblings
 	c.mutualRecSiblings = nil
@@ -10052,6 +10057,7 @@ func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
 		c.errfCode(n.P, "E061", "block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here — drop the trailing `;` to make the final expression the block's value")
 		return nil
 	}
+	c.expectedType = expected
 	return c.checkExpr(n.Tail, s)
 }
 
@@ -12968,6 +12974,14 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		if at, ok := c.expectedType.(ast.ArrayType); ok {
 			elemExpected = at.Elem
 		}
+		if n.Const && n.ElemType != nil {
+			c.resolveType(&n.ElemType, nil, n.P)
+			elemExpected = n.ElemType
+			hint = elemExpected
+		}
+		if hint == nil {
+			hint = elemExpected
+		}
 		c.expectedType = nil
 		checkElem := func(el ast.Expr) ast.Type {
 			c.expectedType = elemExpected
@@ -13286,6 +13300,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				id.EnumName = vr.enumName
 				ed := c.info.Enums[vr.enumName]
 				sub := map[string]ast.Type{}
+				expectedSub := map[string]ast.Type{}
+				if ed != nil {
+					for i, arg := range destEnumArgs(callExpected, vr.enumName, len(ed.TypeParams)) {
+						expectedSub[ed.TypeParams[i]] = arg
+					}
+				}
 				for i, a := range n.Args {
 					if i >= len(vr.payloads) {
 						break
@@ -13295,8 +13315,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					}
 				}
 				for i, a := range n.Args {
-					if i < len(vr.payloads) && c.monomorphCloneEnumName(substituteType(vr.payloads[i], sub)) != "" {
-						c.expectedType = substituteType(vr.payloads[i], sub)
+					if i < len(vr.payloads) {
+						c.expectedType = substituteType(substituteType(vr.payloads[i], sub), expectedSub)
 					}
 					at := c.checkExpr(a, s)
 					c.expectedType = nil
@@ -14294,12 +14314,17 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 	case *ast.BlockExpr:
 		return c.checkBlockExpr(n, s)
 	case *ast.IfExpr:
+		expected := c.expectedType
+		c.expectedType = nil
 		ct := c.checkExpr(n.Cond, s)
 		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {
 			c.errfCode(n.Cond.Pos(), "E008", "if-expression condition must be boolean, got %s", ct)
 		}
+		c.expectedType = expected
 		tt := c.checkExpr(n.Then, s)
+		c.expectedType = expected
 		et := c.checkExpr(n.Else, s)
+		c.expectedType = nil
 		result := unifyIfArms(tt, et)
 		if result == nil {
 			result = scalarNumericJoin(tt, et)

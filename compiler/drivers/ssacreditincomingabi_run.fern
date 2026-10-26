@@ -58,14 +58,14 @@ function expect(sub: ircore.Sub, name: string, consumer: string, why: string): v
 }
 
 function source(generic: boolean): string {
-  let leaf = if (generic) { "struct Leaf[T] { n: T }\n" } else { "struct Leaf { n: i32 }\n" };
+  let leaf = if (generic) { "struct Leaf[T] { n: T, a: i32, b: i32, c: i32, d: i32 }\n" } else { "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\n" };
   let child = if (generic) { "Leaf[i32]" } else { "Leaf" };
   return leaf + "struct Parent { left: " + child + ", right: " + child + " }\nstruct Other { first: " + child + ", second: " + child + " }\n"
     + "function require(ok: boolean, code: i32): void { if (!ok) { exit(code); } }\n"
     + "@noinline\nfunction parent(left: " + child + ", right: " + child + "): Parent { return Parent { left: left, right: right }; }\n"
     + "@noinline\nfunction replace(own p: Parent, child: " + child + "): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; }\n"
     + "@noinline\nfunction handoff(flag: boolean, left: " + child + ", right: " + child + ", incoming: " + child + "): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); }\n"
-    + "function main(): i32 { let c: " + child + " = Leaf { n: 7 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
+    + "function main(): i32 { let c: " + child + " = Leaf { n: 7, a: 2, b: 3, c: 4, d: 5 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
 }
 
 function other_contracts(sub: ircore.Sub, subject: string): ssasem.Contract[] {
