@@ -120,3 +120,33 @@ python3 tests/generate_jpeg_planes.py build/jpeg-planes-inputs --oracle /path/to
 ```
 
 M5 and the epic remain open.
+
+## Recorded qualification
+
+The new records are [native](../benchmarks/results/jpeg-planes-native.json), [Wasm](../benchmarks/results/jpeg-planes-wasm.json), and [ARM64](../benchmarks/results/jpeg-planes-arm64.json).
+Their source commit is `901c77da549494fab0edf7671e48c1ad71521af5`.
+The clean compiler reports `dfa23fa508f9`, with SHA256 `68b47eac8e56bb44944fcde126bb29d80ad2173afb7ac57eaf6c52e7b0f44282`.
+Compiler and stdlib sources match the integrated main revision `974346bb9d9d1dc8082842b832c477d9ceed5a6b`.
+
+Each target completed 108 inputs and 256 component planes across 14 fresh Fern workers.
+All 42 workers reported nonzero balanced heap counts and zero final live bytes.
+Component metadata and storage lengths matched the independent reference exactly.
+The three target sample records match on these finite inputs.
+Native qualification locks 529 source and tool hashes, while runner targets lock 530.
+These include all 163 stdlib sources and the compiler's Fern sources.
+
+Across 65,613 component sample positions, 1,158 differ from the integer reference, always by one value.
+The collector retains these differences explicitly.
+The local campaigns repeat all independent C observations and verify immutable source and tool hashes.
+Reference regeneration reproduces the bundle and formatted golden fixtures exactly.
+The bundle SHA256 is `c06ba56602c497d76a5a8040535df4ccbfc83e2d8c8842e25c39ff0029a0ac62`.
+These observations do not establish universal precision, codec parity, chroma quality, or encoded color compatibility.
+
+All 191 image TAP cases passed on native sanitizer, Wasm leak census, and standalone ARM64/QEMU10.
+Full native and Wasm scripts completed with 66 and 42 balanced heap censuses respectively.
+The portable ARM run completed 27 executables with balanced heaps and zero final live bytes.
+The primary interpreter passed all seven new TAP groups.
+
+Both unchanged complexity gates passed without skips.
+Eight protocol controls, 1,317 Fern format checks, Go build/vet, workflow lint, selectors, and CI self-tests passed.
+These local observations are separate from GitHub CI status.
