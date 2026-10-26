@@ -1,0 +1,235 @@
+import "../packages/codecs/jpeg/jfif";
+import "../packages/codecs/jpeg/header";
+import "./fixtures/jpeg_headers" as fixtures;
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function append(output: u8[], input: [u8]): u8[] {
+  for byte in input {
+    output = output.append(byte);
+  }
+  return output;
+}
+
+function segment(marker: i32, data: [u8]): u8[] {
+  let length = data.len() + 2;
+  return append([255 as u8, marker as u8, (length >> 8) as u8, (length & 255) as u8], data);
+}
+
+function declaration(minor: i32, units: i32, x: i32, y: i32, width: i32, height: i32): u8[] {
+  let data: u8[] = [74, 70, 73, 70, 0, 1, minor as u8, units as u8, (x >> 8) as u8, (x & 255) as u8, (y >> 8) as u8, (y & 255) as u8, width as u8, height as u8];
+  for i in 0..width * height * 3 {
+    data = data.append((i % 256) as u8);
+  }
+  return data;
+}
+
+function replace_app(input: [u8], data: [u8]): u8[] {
+  return append(append([255 as u8, 216 as u8], segment(224, data)), input[20:]);
+}
+
+function insert(input: [u8], at: i32, data: [u8]): u8[] {
+  return append(append(append([], input[:at]), data), input[at:]);
+}
+
+function rejected(input: [u8], wanted: jfif.JfifError): boolean {
+  return match (jfif.inspect(input, header.default_limits(), never)) { Err(e) => e == wanted, Ok(_) => false };
+}
+
+function marker_at(input: [u8], wanted: i32): i32 {
+  let at = 2;
+  while (at + 4 <= input.len()) {
+    if (input[at + 1] as i32 == wanted) {
+      return at;
+    }
+    at = at + 2 + (input[at + 2] as i32 << 8 | input[at + 3] as i32);
+  }
+  return 0;
+}
+
+function profiles(): test.TestOutcome {
+  for source in [fixtures.gray(), fixtures.rgb444(), fixtures.rgb422(), fixtures.rgb420()] {
+    for minor in 0..3 {
+      for units in 0..3 {
+        let input = replace_app(source, declaration(minor, units, 65535, 257, 1, 2));
+        let info = match (jfif.inspect(input, header.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("independent JFIF field fixture"); } };
+        let expected = if (info.header.components.len() == 1) { jfif.Color.Gray } else { jfif.Color.YCbCr };
+        if (info.color != expected || info.minor_version != minor || info.units != units || info.x_density != 65535
+          || info.y_density != 257 || info.thumbnail_width != 1 || info.thumbnail_height != 2 || info.header.output_layout.width != 17) {
+          return test.fail("JFIF field interpretation");
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function declarations(): test.TestOutcome {
+  let source = fixtures.rgb444();
+  let payload = declaration(2, 0, 1, 1, 0, 0);
+  for at in [0, 1, 2, 3, 4, 7, 9, 11, 12, 13] {
+    let value = if (at == 7) { 3 as u8 } else if (at < 5) { 88 as u8 } else if (at >= 12) { 1 as u8 } else { 0 as u8 };
+    let changed = payload.with(at, value);
+    if (!rejected(replace_app(source, changed), jfif.JfifError.Declaration)) {
+      return test.fail("invalid declaration field");
+    }
+  }
+  for data in [append([], payload[:13]), payload.append(0 as u8), append([], declaration(2, 0, 1, 1, 1, 1)[:14])] {
+    if (!rejected(replace_app(source, data), jfif.JfifError.Declaration)) {
+      return test.fail("exact thumbnail length");
+    }
+  }
+  for pair in [[0, 0], [2, 0], [1, 3], [255, 255]] {
+    let changed = payload.with(5, pair[0] as u8).with(6, pair[1] as u8);
+    if (!rejected(replace_app(source, changed), jfif.JfifError.Version)) {
+      return test.fail("unsupported version");
+    }
+  }
+  return test.pass();
+}
+
+function metadata_policy(): test.TestOutcome {
+  let source = fixtures.rgb420();
+  let comment = segment(254, [69 as u8, 120 as u8, 105 as u8, 102 as u8]);
+  let commented = insert(insert(source, 20, comment), marker_at(source, 218) + comment.len(), comment);
+  if (match (jfif.inspect(commented, header.default_limits(), never)) { Ok(_) => false, Err(_) => true }) {
+    return test.fail("comments carry no sample interpretation");
+  }
+  let filled = insert(source, 2, [255 as u8, 255 as u8]);
+  if (match (jfif.inspect(filled, header.default_limits(), never)) { Ok(_) => false, Err(_) => true }) {
+    return test.fail("JPEG marker fill");
+  }
+  if (!rejected(insert(source, 2, comment), jfif.JfifError.Missing)
+    || !rejected(append([255 as u8, 216 as u8], source[20:]), jfif.JfifError.Missing)) {
+    return test.fail("JFIF must be first");
+  }
+  for marker in 224..240 {
+    for data in [declaration(2, 0, 1, 1, 0, 0), [69 as u8, 120 as u8, 105 as u8, 102 as u8, 0 as u8, 0 as u8], [73 as u8, 67 as u8, 67 as u8, 95 as u8, 80 as u8, 82 as u8, 79 as u8, 70 as u8, 73 as u8, 76 as u8, 69 as u8, 0 as u8]] {
+      let changed = insert(source, 20, segment(marker, data));
+      if (!rejected(changed, jfif.JfifError.Metadata)) {
+        return test.fail("extra application metadata is unsupported");
+      }
+      if (match (header.parse(changed, header.default_limits(), never)) { Ok(_) => false, Err(_) => true }) {
+        return test.fail("raw header policy remains independent");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function components(): test.TestOutcome {
+  let source = fixtures.rgb444();
+  let frame = marker_at(source, 192);
+  let scan = marker_at(source, 218);
+  for ids in [[17, 201, 55], [2, 1, 3], [3, 2, 1], [0, 2, 3]] {
+    let changed = source;
+    for i in 0..3 {
+      changed = changed.with(frame + 10 + i * 3, ids[i] as u8).with(scan + 5 + i * 2, ids[i] as u8);
+    }
+    if (!rejected(changed, jfif.JfifError.Components)) {
+      return test.fail("JFIF frame identifiers and order");
+    }
+    if (match (header.parse(changed, header.default_limits(), never)) { Ok(_) => false, Err(_) => true }) {
+      return test.fail("raw arbitrary identifiers remain valid");
+    }
+  }
+  let gray = fixtures.gray();
+  let changed_gray = gray.with(marker_at(gray, 192) + 10, 7 as u8).with(marker_at(gray, 218) + 5, 7 as u8);
+  return test.assert_true(rejected(changed_gray, jfif.JfifError.Components));
+}
+
+function framing(): test.TestOutcome {
+  let source = fixtures.rgb444();
+  let info = match (jfif.inspect(source, header.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("fixture header"); } };
+  for length in 0..info.header.entropy_offset {
+    if (match (jfif.inspect(source[:length], header.default_limits(), never)) { Ok(_) => true, Err(_) => false }) {
+      return test.fail("truncated first scan header");
+    }
+  }
+  let header_only = source[:info.header.entropy_offset];
+  if (match (jfif.inspect(header_only, header.default_limits(), never)) { Ok(v) => v.color != jfif.Color.YCbCr, Err(_) => true }) {
+    return test.fail("header-only scope");
+  }
+  let malformed_entropy = append(append([], header_only), [0 as u8, 255 as u8, 0 as u8]);
+  if (match (jfif.inspect(malformed_entropy, header.default_limits(), never)) { Ok(_) => false, Err(_) => true }) {
+    return test.fail("no false complete-stream claim");
+  }
+  let bad_length = source.with(4, 255 as u8).with(5, 255 as u8);
+  return test.assert_true(rejected(bad_length, jfif.JfifError.Header(header.JpegError.Truncated)));
+}
+
+function limits(): test.TestOutcome {
+  let source = fixtures.rgb444();
+  let defaults = header.default_limits();
+  let info = match (jfif.inspect(source, defaults, never)) { Ok(v) => v, Err(_) => { return test.fail("fixture planning"); } };
+  let exact = header.HeaderLimits { ...defaults, max_input_bytes: source.len(), max_header_bytes: info.header.entropy_offset, max_segments: info.header.segment_count };
+  if (match (jfif.inspect(source, exact, never)) { Ok(_) => false, Err(_) => true }) {
+    return test.fail("exact header limits");
+  }
+  for cap in [header.HeaderLimits { ...exact, max_input_bytes: source.len() - 1 }, header.HeaderLimits { ...exact, max_header_bytes: info.header.entropy_offset - 1 }, header.HeaderLimits { ...exact, max_segments: info.header.segment_count - 1 }] {
+    if (match (jfif.inspect(source, cap, never)) { Err(jfif.JfifError.Header(header.JpegError.Limit())) => false, _ => true }) {
+      return test.fail("one-less admission");
+    }
+  }
+  let polls = cell_new(0);
+  let result = jfif.inspect(source, header.HeaderLimits { ...defaults, max_input_bytes: 0 }, (): boolean => {
+    polls.set(polls.get() + 1);
+    return true;
+  });
+  return test.assert_true(polls.get() == 0 && match (result) { Err(jfif.JfifError.Header(header.JpegError.Limit())) => true, _ => false });
+}
+
+function ownership(): test.TestOutcome {
+  let input = fixtures.rgb444();
+  let shared = cell_new(input);
+  let info = match (jfif.inspect(input, header.default_limits(), (): boolean => {
+    shared.set(shared.get().with(0, 0 as u8));
+    return false;
+  })) { Ok(v) => v, Err(_) => { return test.fail("input COW during callback"); } };
+  let quant = match (info.header.quantization[0]) { Some(v) => v.values, None => { return test.fail("owned quantization"); } };
+  let saved = quant[0];
+  input = input.with(25, 99 as u8);
+  let retained = info;
+  quant = quant.with(0, 77 as u8);
+  let stable = match (retained.header.quantization[0]) { Some(v) => v.values[0] == saved, None => false };
+  return test.assert_true(stable && shared.get()[0] == 0 as u8 && input[0] == 255 as u8 && quant[0] == 77 as u8);
+}
+
+function cancellation(): test.TestOutcome {
+  let source = insert(fixtures.rgb444(), 2, [255 as u8, 255 as u8, 255 as u8]);
+  let count = cell_new(0);
+  let success = jfif.inspect(source, header.default_limits(), (): boolean => {
+    count.set(count.get() + 1);
+    return false;
+  });
+  if (match (success) { Ok(_) => false, Err(_) => true } || count.get() < 20) {
+    return test.fail("poll coverage");
+  }
+  for stop in 1..count.get() + 1 {
+    let polls = cell_new(0);
+    let result = jfif.inspect(source, header.default_limits(), (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() == stop;
+    });
+    if (polls.get() != stop || match (result) { Err(jfif.JfifError.Cancelled()) => false, _ => true }) {
+      return test.fail("every cancellation poll");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.test_new("JPEG JFIF profile");
+  runner = runner.it("JFIF explicit version density thumbnail and component profiles", profiles);
+  runner = runner.it("JFIF declaration lengths fields and versions", declarations);
+  runner = runner.it("JFIF first marker and conflicting metadata policy", metadata_policy);
+  runner = runner.it("JFIF frame identifiers retain explicit sample meaning", components);
+  runner = runner.it("JFIF header framing and entropy scope", framing);
+  runner = runner.it("JFIF exact inherited resource limits", limits);
+  runner = runner.it("JFIF borrowed input and owned result isolation", ownership);
+  runner = runner.it("JFIF every cooperative cancellation poll", cancellation);
+  return runner.finish();
+}

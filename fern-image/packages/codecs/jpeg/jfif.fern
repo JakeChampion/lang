@@ -1,0 +1,104 @@
+import "./header";
+import "core/cmp";
+
+@derive(cmp.Eq)
+pub enum Color { Gray, YCbCr }
+
+@derive(cmp.Eq)
+pub enum JfifError { Header(header.JpegError), Missing, Declaration, Version, Components, Metadata, Cancelled }
+
+pub struct JfifInfo { header: header.JpegHeader, color: Color, minor_version: i32, units: i32, x_density: i32, y_density: i32, thumbnail_width: i32, thumbnail_height: i32 }
+
+struct AppFields { minor: i32, units: i32, x: i32, y: i32, width: i32, height: i32 }
+
+function be16(input: [u8], at: i32): i32 {
+  return input[at] as i32 << 8 | input[at + 1] as i32;
+}
+
+function declaration(input: [u8], start: i32, end: i32): Result[AppFields, JfifError] {
+  if (end - start < 14) {
+    return Err(JfifError.Declaration);
+  }
+  if (input[start] != 74 as u8 || input[start + 1] != 70 as u8 || input[start + 2] != 73 as u8
+    || input[start + 3] != 70 as u8 || input[start + 4] != 0 as u8) {
+    return Err(JfifError.Declaration);
+  }
+  if (input[start + 5] != 1 as u8 || input[start + 6] > 2 as u8) {
+    return Err(JfifError.Version);
+  }
+  let units = input[start + 7] as i32;
+  let x = be16(input, start + 8);
+  let y = be16(input, start + 10);
+  let width = input[start + 12] as i32;
+  let height = input[start + 13] as i32;
+  if (units > 2 || x == 0 || y == 0 || width == 0 != (height == 0)
+    || end - start != 14 + 3 * width * height) {
+    return Err(JfifError.Declaration);
+  }
+  return Ok(AppFields { minor: input[start + 6] as i32, units: units, x: x, y: y, width: width, height: height });
+}
+
+function component_color(parsed: header.JpegHeader): Result[Color, JfifError] {
+  if (parsed.components.len() == 1 && parsed.components[0].id == 1) {
+    return Ok(Color.Gray);
+  }
+  if (parsed.components.len() == 3 && parsed.components[0].id == 1 && parsed.components[1].id == 2 && parsed.components[2].id == 3) {
+    return Ok(Color.YCbCr);
+  }
+  return Err(JfifError.Components);
+}
+
+function metadata(input: [u8], stop: i32, cancelled: () => boolean): Result[AppFields, JfifError] {
+  let found: Option[AppFields] = None;
+  let at = 2;
+  while (at < stop) {
+    if (cancelled()) {
+      return Err(JfifError.Cancelled);
+    }
+    if (input[at] != 255 as u8) {
+      return Err(JfifError.Header(header.JpegError.Marker));
+    }
+    while (at < stop && input[at] == 255 as u8) {
+      if (cancelled()) {
+        return Err(JfifError.Cancelled);
+      }
+      at = at + 1;
+    }
+    if (at + 3 > stop) {
+      return Err(JfifError.Header(header.JpegError.Truncated));
+    }
+    let marker = input[at] as i32;
+    at = at + 1;
+    let length = be16(input, at);
+    if (length < 2 || length > stop - at) {
+      return Err(JfifError.Header(header.JpegError.Length));
+    }
+    let end = at + length;
+    match (found) {
+      None => {
+        if (marker != 224) {
+          return Err(JfifError.Missing);
+        }
+        found = Some(declaration(input, at + 2, end)?);
+      },
+      Some(_) => {
+        if (marker >= 224 && marker <= 239) {
+          return Err(JfifError.Metadata);
+        }
+      }
+    }
+    at = end;
+  }
+  return match (found) { Some(value) => Ok(value), None => Err(JfifError.Missing) };
+}
+
+// This profile identifies sample meaning without entropy or EOI validation.
+pub function inspect(input: [u8], limits: header.HeaderLimits, cancelled: () => boolean): Result[JfifInfo, JfifError] {
+  let parsed = match (header.parse(input, limits, cancelled)) { Ok(value) => value, Err(header.JpegError.Cancelled()) => { return Err(JfifError.Cancelled); }, Err(error) => { return Err(JfifError.Header(error)); } };
+  let fields = metadata(input, parsed.entropy_offset, cancelled)?;
+  let color = component_color(parsed)?;
+  if (cancelled()) {
+    return Err(JfifError.Cancelled);
+  }
+  return Ok(JfifInfo { header: parsed, color: color, minor_version: fields.minor, units: fields.units, x_density: fields.x, y_density: fields.y, thumbnail_width: fields.width, thumbnail_height: fields.height });
+}

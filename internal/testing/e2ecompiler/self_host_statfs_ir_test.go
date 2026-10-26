@@ -220,12 +220,94 @@ int main(void){
 	if w := host["word"]; w != 8 {
 		t.Fatalf("the host's __statfs_word is %d bytes, not 8 — the projection assumes a 64-bit word", w)
 	}
-	darwinArm, linuxArm := splitDarwinFork(fernFunctionBody(t, "statfs_field_i64"))
-	if strings.Contains(linuxArm, "__load_i32") || strings.Contains(linuxArm, "statfs_u32(") {
-		t.Error("statfs_field_i64 loads a Linux field 32 bits wide; every member of that record is a 64-bit word")
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			source, fields := runtimeStatfsFields(t, target)
+			for field, offset := range got {
+				if field == "fsid" {
+					checkStatfsLoads(t, fields, field, 32, offset, offset+4)
+				} else {
+					checkStatfsLoads(t, fields, field, 64, offset)
+				}
+			}
+			// fs_type is the table's zero-offset fallthrough.
+			checkStatfsLoads(t, fields, "fs_type", 64, host["type"])
+			buf := regexp.MustCompile(`let buf: usize = __raw_scratch\((\d+)\);`).FindStringSubmatch(source)
+			if buf == nil {
+				t.Fatal("runtime statfs helper has no scratch buffer declaration")
+			}
+			n, err := strconv.ParseInt(buf[1], 10, 64)
+			if err != nil || n < host["size"] {
+				t.Errorf("runtime buffer is %q bytes; the host struct needs %d", buf[1], host["size"])
+			}
+		})
 	}
-	if !strings.Contains(darwinArm, "statfs_u32(") || !strings.Contains(fernFunctionBody(t, "statfs_u32"), "__load_i32") {
-		t.Error("statfs_field_i64 loads Darwin's u32 f_bsize 64 bits wide; f_iosize shares that word")
+	t.Run("arm64-darwin", func(t *testing.T) {
+		_, fields := runtimeStatfsFields(t, "arm64-darwin")
+		for field, offset := range map[string]int64{"block_size": 0, "frag_size": 0, "fs_type": 60} {
+			checkStatfsLoads(t, fields, field, 32, offset)
+			if !strings.Contains(fields[field], "4294967295") {
+				t.Errorf("Darwin %s must zero-extend its unsigned 32-bit field", field)
+			}
+		}
+	})
+}
+
+// Inspect the target runtime sources used by the generated bundle, rather than
+// the removed asmcore string-construction helpers.
+func runtimeStatfsFields(t *testing.T, target string) (string, map[string]string) {
+	t.Helper()
+	path := filepath.Join("..", "..", "..", "compiler", "runtime", target, "__fern_statfs.fern")
+	src, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	literal := regexp.MustCompile(`(?s)return Ok\(FsStat\s*\{(.*?)\}\);`).FindSubmatch(src)
+	if literal == nil {
+		t.Fatalf("%s has no FsStat projection", path)
+	}
+	fields := map[string]string{}
+	for _, row := range strings.Split(string(literal[1]), ",") {
+		name, value, ok := strings.Cut(row, ":")
+		if !ok {
+			t.Fatalf("invalid FsStat field %q", row)
+		}
+		name = strings.TrimSpace(name)
+		if _, exists := fields[name]; exists {
+			t.Fatalf("duplicate FsStat field %s", name)
+		}
+		fields[name] = strings.TrimSpace(value)
+	}
+	return string(src), fields
+}
+
+func checkStatfsLoads(t *testing.T, fields map[string]string, field string, bits int, offsets ...int64) {
+	t.Helper()
+	value, ok := fields[field]
+	if !ok {
+		t.Errorf("runtime statfs projection has no field %s", field)
+		return
+	}
+	loads := regexp.MustCompile(`__load_i(32|64)\(\s*buf\s*\+\s*(\d+)(?:\s*\+\s*(\d+))?\s*\)`).FindAllStringSubmatch(value, -1)
+	if len(loads) != len(offsets) {
+		t.Errorf("%s has %d buffer loads, want %d: %s", field, len(loads), len(offsets), value)
+		return
+	}
+	for i, load := range loads {
+		n, err := strconv.ParseInt(load[2], 10, 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if load[3] != "" {
+			add, err := strconv.ParseInt(load[3], 10, 64)
+			if err != nil {
+				t.Fatal(err)
+			}
+			n += add
+		}
+		if load[1] != strconv.Itoa(bits) || n != offsets[i] {
+			t.Errorf("%s load %d is %s at offset %d, want i%d at offset %d", field, i, load[1], n, bits, offsets[i])
+		}
 	}
 }
 
