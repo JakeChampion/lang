@@ -1,0 +1,9 @@
+function __fern_mulhi_u64(a: u64, b: u64): u64 {
+  let mask: u64 = 4294967295 as u64;
+  let al: u64 = a & mask;
+  let ah: u64 = a >> 32;
+  let bl: u64 = b & mask;
+  let bh: u64 = b >> 32;
+  let mid: u64 = ah * bl + (al * bl >> 32);
+  return ah * bh + (mid >> 32) + ((mid & mask) + al * bh >> 32);
+}

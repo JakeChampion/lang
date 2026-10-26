@@ -381,49 +381,86 @@ The table still describes the dependencies of hand-written helpers. Retiring
 it requires the runtime call graph described below; this change does not
 complete #2649.
 
-### What the wasm half is actually blocked on
+### WebAssembly runtime source units
 
-Not the `module_uses_*` coupling — that reads worse than it is. Every helper
-bundle in `emit_ir_module_units` is `need(...)`-gated, and the gates that look
-too narrow are not: the ones missing from the heap disjunction all imply a
-string op, and `module_allocates` folds `module_uses_strings` in. wasm's
-per-helper gating is in better shape than either register backend's was.
+`compiler/runtime/wasm/` contains ordinary Fern source for fifteen WebAssembly helpers.
+The source bundle registers them for both WASI targets.
+The emitter selects declarations through `rtmodule` and its normal tree shaker.
+`Sub.rt_lower` consumes that module and the ordinary function emitter writes its bodies.
+The source files replace the source generators and their hand-written WAT bodies.
 
-What blocks it is that **wasm has no instruction selection for the raw-memory
-floor.** `raw_alloc`, `raw_store8`, `raw_load8`, `raw_string`, `raw_addr`,
-`raw_arr_box` and the `syscall*` family have no arm in the selector — they
-reach the terminal `else` and refuse. Since almost every `rt_src_*` body is
-written on that floor, **52 of the 73 sources cannot be compiled for wasm at
-all**, including every one worth having (`i32_to_string`, `str_concat`,
-the case converters, all I/O).
+Whole-program and per-module emitters append the runtime unit before final
+literal and heap layout. The runtime unit carries its own literal and function
+tables. Its lowered needs do not enter the user module's needs.
+The string comparators need no allocation and no additional runtime helper.
+Programs that need none of these helpers omit this unit.
 
-Intersecting the sources that avoid the floor with the single-parameter ones
-(the #5666 argument order transposes anything wider, since wasm's hand-written
-WAT signatures are reversed to match the register push order) and then with the
-ones contributing no literals leaves exactly three, of which only
-`__fern_str_to_i32` is a clean 1:1 replacement for an existing bundle.
+`TestSelfHostWasmUnitsN2/fern_runtime_string_order` executes all six comparison
+operators in whole-program and split-module builds. It covers empty strings,
+prefixes, reversed operands, equal operands, UTF-8 bytes and allocated strings.
+It also checks that ordinary Fern functions replace both hand-written bodies.
+The other cases check that unrelated modules omit the comparator.
 
-So the wasm mechanism is buildable, but its reach is one helper until the floor
-is selected — and selecting it is a semantic change, not wiring: `__raw_string`
-on the register backends builds a box POINTING AT the raw bytes, while a wasm
-string is a single inline rc-headered block, so the same helper source would
-need one more allocation and a different aliasing contract. It also makes
-the `rawmem` gate's justification ("wasm serves these helpers with
-hand-written WAT") false, so the refusal has to move in lockstep. That
-is its own change, and the syscall half is probably permanently out — wasm's
-I/O is WASI imports, not a syscall number.
+`__fern_utf8_step.fern` replaces the WAT helper for empty-separator split.
+It preserves the existing maximal-subpart behavior for malformed and truncated
+UTF-8 sequences. The runtime unit includes it for split and lines.
+`TestSelfHostWasmUnitsN2/utf8_runtime_step` checks byte boundaries and exact
+piece contents in whole-program and split-module builds.
+A lines-only case checks the transitive split dependency.
+The existing split scratch tests check allocation reuse and reference counts.
 
-Two traps worth recording for whoever builds the mechanism, both found by
-review rather than by a failing test. The runtime unit must be added to `units`
-at the three CALL SITES, before the heap base is taken — injecting it inside
-`emit_ir_module_units` leaves `rc_bodies` carrying a stale, lower base while the
-data section is laid out against the real one, and the gap between them is
-exactly the injected unit's literals. A pointer into it passes
-`$__field_reclaim_<T>`'s admission check and gets dec'd as if it were a heap
-box: silent static-data corruption, not a trap. And the unit's lowered needs
-must NOT be unioned into the module's needs — `@allocates` comes back for
-essentially every candidate, which would drag the heap and RC runtime into
-allocation-free modules.
+The byte-search source files define forward and reverse search.
+Each function has direction-specific bounds.
+The shared byte-search fixtures execute in whole-program and split-module builds.
+They cover all byte values, extreme start offsets, aliases and allocation counts.
+
+`__fern_mulhi_u64.fern` computes the high 64 bits of the product of two `u64` values.
+Its test checks 272 products against `math/bits.Mul64` in each module mode.
+The cases include zero, all ones, each individual bit, complements and mixed bits.
+The test also checks the emitted `i64` parameter and result types.
+
+Four source files define set scans and run counts for strings and byte arrays.
+Each function uses its input layout's data offset.
+The tests compare both input forms against a reference loop in both module modes.
+They cover every byte value, short tables, nonzero membership values, extreme
+start offsets, initial run states, aliases and allocation counts.
+
+`__fern_count_byte_bytes.fern` counts occurrences of a byte in an array.
+It rejects values outside 0 through 255 before it reads the array.
+Both module modes check every byte value, invalid search values, allocation
+counts, aliases and lengths around vector and padding boundaries.
+
+The byte-reduction source files define the sum and BSD checksum in Fern.
+The tests use a Go oracle for each byte value and for eight checksum seeds.
+They also check empty inputs, length boundaries, aliases, allocation counts,
+the signed sum boundary and the sum after 32-bit wraparound.
+
+The string-reduction source files define the string sum and BSD checksum.
+They decode owned strings, borrowed descriptors and frame windows before the loop.
+The tests check all three layouts directly and execute a borrowed string view.
+Empty views use an invalid data pointer to detect an accidental byte read.
+
+The WebAssembly function emitter also replaces an `if` whose sole effect is
+a branch with `br_if`. It adjusts the branch depth after it removes the
+`if` label. A branch to that removed label only consumes the condition.
+The same rule applies to every emitted function.
+The split-module tests cover nested conditions, early returns, loop exits
+and loop continuation.
+
+### Remaining WebAssembly floor work
+
+The selector supports byte and pointer loads and stores, address addition,
+and frame-form string views. The general `raw_alloc`, `raw_arr_box` and
+owning `raw_string` operations still lack selector arms.
+Most native runtime sources therefore cannot compile for WebAssembly yet.
+
+The string layout also differs. Native `raw_string` creates a box that points
+to raw bytes. A WebAssembly owned string contains its length and bytes in
+one block. A shared implementation must preserve ownership and aliasing across
+this difference. User-facing raw-memory capabilities remain target-gated.
+
+The syscall sources need separate WASI implementations. A Linux syscall number
+does not identify a WASI import. These gaps keep #2649 open.
 
 The principled end-state: **write the helpers as ordinary Fern functions in a
 `runtime` module compiled through the same pipeline.** Then

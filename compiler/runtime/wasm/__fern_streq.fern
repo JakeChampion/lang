@@ -1,0 +1,14 @@
+function __fern_streq(a: usize, b: usize): boolean {
+  let n: u32 = __load_i32(a) as u32;
+  if (n != __load_i32(b) as u32) {
+    return false;
+  }
+  let i: u32 = 0;
+  while (i < n) {
+    if (__load_u8(a + 4 + i) != __load_u8(b + 4 + i)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}

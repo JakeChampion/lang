@@ -43,7 +43,7 @@ func TestSelfHostInternalRuntimeModules(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runtime modules: %v\n%s", err, out)
 	}
-	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin", "wasm32-wasi", "wasm32-wasi-http"} {
 		if !strings.Contains(string(out), target+" runtime modules ok") {
 			t.Errorf("no runtime module check for %s:\n%s", target, out)
 		}

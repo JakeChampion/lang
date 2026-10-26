@@ -6,17 +6,22 @@ import "./parser";
 import "./rtbundle";
 import "./rtprofile";
 import "./rttemplates";
+import "./rtwasm";
 import "./treeshake";
 import "./util";
 import "std/string";
 
 pub function paths(): string[] {
-  return util.append_all(rtbundle.paths(), rttemplates.paths());
+  return util.append_all(util.append_all(rtbundle.paths(), rttemplates.paths()), rtwasm.paths());
 }
 
 pub function names(target: string): string[] {
   let all = rtbundle.names();
   let indices = rtbundle.indices(target);
+  if (target == "wasm32-wasi" || target == "wasm32-wasi-http") {
+    all = rtwasm.names();
+    indices = rtwasm.indices(target);
+  }
   let out: string[] = [];
   for i in 0..indices.len() {
     if (indices[i] >= 0) {
@@ -49,6 +54,12 @@ pub function load_bound(target: string, roots: string, keys: string[], values: a
 pub function template(roots: string, keys: string[], values: ast.Expr[]): parser.Module {
   let files = Files { index: util.name_index(rttemplates.names()), indices: rttemplates.indices("compiler"), contents: rttemplates.contents(), paths: rttemplates.paths(), offset: rtbundle.paths().len(), target: "compiler" };
   return load_files(files, roots, keys, values);
+}
+
+// Keep native source contents outside the Wasm driver's dependency closure.
+pub function load_wasm(target: string, roots: string): parser.Module {
+  let files = Files { index: util.name_index(rtwasm.names()), indices: rtwasm.indices(target), contents: rtwasm.contents(), paths: rtwasm.paths(), offset: rtbundle.paths().len() + rttemplates.paths().len(), target: target };
+  return load_files(files, roots, [], []);
 }
 
 struct Files { index: util.NameIndex, indices: i32[], contents: string[], paths: string[], offset: i32, target: string }

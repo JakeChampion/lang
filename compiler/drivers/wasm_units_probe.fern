@@ -97,6 +97,6 @@ function main(): i32 {
     wasm_ir.WasmUnit { ns: "$u1", text: unit_b, strs: strs_b, caggs: caggs_b, fns: fns_b },
   ];
 
-  write(wasm_ir.emit_ir_module_units(units, im, needs, fn_sigs, 0, asmcore.env_switches()));
+  write(wasm_ir.emit_ir_module_units(wasm_ir.with_runtime_units(units, needs, d.sub.rt_lower), im, needs, fn_sigs, 0, asmcore.env_switches()));
   return 0;
 }

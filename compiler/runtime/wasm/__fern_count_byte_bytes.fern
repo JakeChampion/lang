@@ -1,0 +1,15 @@
+function __fern_count_byte_bytes(a: usize, byte: i32): i32 {
+  if (byte as u32 <= 255u32) {
+    let n: i32 = __load_i32(a);
+    let i: i32 = 0;
+    let count: i32 = 0;
+    while (i < n) {
+      if (__load_u8(a + (8 + i)) as i32 == byte) {
+        count = count + 1;
+      }
+      i = i + 1;
+    }
+    return count;
+  }
+  return 0;
+}

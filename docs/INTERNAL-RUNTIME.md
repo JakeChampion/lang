@@ -8,6 +8,7 @@ The `common/` directory holds implementations that all native targets share.
 The `linux/` directory holds implementations that both Linux targets share.
 Each target directory holds its other implementations.
 The `templates/` directory holds the coverage, HTTP entry, and map-key declarations that the compiler adapts.
+The `wasm/` directory holds helpers for both WebAssembly targets.
 
 `rtmodule.fern` loads the requested declarations with the normal lexer and parser.
 It follows references to other runtime declarations.
@@ -24,10 +25,12 @@ The map-key helpers also use AST construction for operations that depend on a pr
 
 `rtbundle.fern` packages the native source files for the compiler binary.
 `rttemplates.fern` packages the compiler templates separately.
-Wasm drivers need the templates and do not include the native source contents.
-Both bundles contain generated data, not implementations to edit.
+`rtwasm.fern` packages the WebAssembly source files.
+Wasm drivers load these helpers with `rtmodule.load_wasm`.
+They do not include the native source contents.
+The three bundles contain generated data, not implementations to edit.
 The bundles let the pinned stage0 build the compiler without a new language builtin or an external runtime directory.
-The compiler source hash also covers both bundles.
+The compiler source hash also covers all three bundles.
 
 To change a helper:
 

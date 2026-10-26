@@ -1,0 +1,28 @@
+function __fern_bsd_sum(s: usize, seed: i32): i32 {
+  let tag: usize = s & 1;
+  let n: i32 = __load_i32(s + tag * 3);
+  let p: usize = 0;
+  let sum: u32 = seed as u32 & 65535;
+  if (n >= 0) {
+    if (n > 0) {
+      p = if (tag == 0) { s + 4 } else { (__load_i32(s - 1) as u32) as usize };
+    } else {
+      return sum as i32;
+    }
+  } else {
+    n = n & 2147483647;
+    if (n > 0) {
+      p = (__load_i32(s + 4) as u32) as usize;
+    } else {
+      return sum as i32;
+    }
+  }
+  let i: i32 = 0;
+  while (i < n) {
+    sum = sum >> 1 | sum << 15;
+    sum = sum + __load_u8(p + i) as u32;
+    sum = sum & 65535;
+    i = i + 1;
+  }
+  return sum as i32;
+}

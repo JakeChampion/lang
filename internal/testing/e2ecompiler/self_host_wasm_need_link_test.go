@@ -15,6 +15,7 @@ import "./lexer";
 import "./parser";
 import "./util";
 import "./wasm_ir";
+import "./semlower";
 
 function unit(o: ir.Op): irtables.LowerResult[] {
     return [irtables.LowerResult { source_positions: irtables.no_source(),  ok: true, why: "", ops: [o], n_locals: 0,
@@ -33,7 +34,7 @@ function main(): i32 {
             needs = needs.append(op);
         }
         print("=== need: " + op);
-        print(wasm_ir.emit_ir_module_units([text], mod, needs, [], 0, asmcore.env_switches()));
+        print(wasm_ir.emit_ir_module_units(wasm_ir.with_runtime_units([text], needs, semlower.runtime_module_lowering), mod, needs, [], 0, asmcore.env_switches()));
     }
     return 0;
 }
@@ -46,7 +47,7 @@ func TestSelfHostWasmEveryNeedLinksAlone(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "semlower.fern")
 	if err := os.WriteFile(filepath.Join(dir, "need_link.fern"), []byte(wasmNeedLinkDriver), 0o644); err != nil {
 		t.Fatal(err)
 	}

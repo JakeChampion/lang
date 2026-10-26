@@ -8,6 +8,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 NATIVE_TARGETS = ("x86-64-linux", "arm64-linux", "arm64-darwin")
+WASM_TARGETS = ("wasm32-wasi", "wasm32-wasi-http")
 
 
 def literal(value):
@@ -29,6 +30,8 @@ def generate(files, targets):
         available = NATIVE_TARGETS if group == "common" else NATIVE_TARGETS[:2] if group == "linux" else (group,)
         if group == "templates":
             available = ("compiler",)
+        if group == "wasm":
+            available = WASM_TARGETS
         for target in available:
             if target not in choices:
                 raise ValueError(f"unknown runtime target: {group}")
@@ -53,7 +56,8 @@ def main():
     args = parser.parse_args()
     files = sorted((ROOT / "compiler/runtime").glob("*/*.fern"))
     bundles = {
-        "rtbundle.fern": ([path for path in files if path.parent.name != "templates"], NATIVE_TARGETS),
+        "rtbundle.fern": ([path for path in files if path.parent.name not in ("templates", "wasm")], NATIVE_TARGETS),
+        "rtwasm.fern": ([path for path in files if path.parent.name == "wasm"], WASM_TARGETS),
         "rttemplates.fern": ([path for path in files if path.parent.name == "templates"], ("compiler",)),
     }
     for name, (sources, targets) in bundles.items():

@@ -1,6 +1,7 @@
 import "core/map";
 import "./ast";
 import "./parser";
+import "./rtmodule";
 import "./util";
 import "./ir";
 import "./byteconst";
@@ -2849,7 +2850,7 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
   return o;
 }
 
-pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerResult[], mode: i32, sw: asmcore.Switches, physical: physicalbody.Collection): string {
+pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerResult[], mode: i32, sw: asmcore.Switches, physical: physicalbody.Collection, rt_lower: (parser.Module) => physicalbody.Lowered): string {
   let sv: string[] = str_values(ir_cache);
   let cv: string[] = const_agg_values(ir_cache);
   let ft: string[] = fn_value_table(ir_cache);
@@ -2862,7 +2863,7 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerRes
     needs = needs.append("@stdin");
   }
   return emit_ir_module_units(
-    [WasmUnit { ns: "", text: unit, strs: sv, caggs: cv, fns: ft }], mod,
+    with_runtime_units([WasmUnit { ns: "", text: unit, strs: sv, caggs: cv, fns: ft }], needs, rt_lower), mod,
     needs, indirect_fn_sigs(ir_cache), mode, sw,
   );
 }
@@ -2900,7 +2901,7 @@ pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: 
   let g: ircore.Lowered = ircore.gate(lm, sub);
   let cache: irtables.LowerResult[] = g.cache;
   if (g.ok && ir_route_final(cache, component, io, module_is_proxy(lm))) {
-    return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical), needs: runtime_needs(lm, needs_of(cache)) };
+    return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical, sub.rt_lower), needs: runtime_needs(lm, needs_of(cache)) };
   }
   if (g.ok && component && wasm_ir_deferrals_ok(cache)) {
     eprint("error: " + component_refused_need(needs_of(cache), io, module_is_proxy(lm))
@@ -5156,6 +5157,29 @@ function view_string_wat(o: ir.Op, tmp: i32): string {
     + "    else\n    local.get " + t + "\n    i32.const 4\n    i32.add\n    end\n    end\n";
 }
 
+function branch_only_if(ops: ir.Op[], i: i32): string {
+  if (i + 3 >= ops.len() || ops[i].kind_tag != 154 || ops[i + 3].kind_tag != 156) {
+    return "";
+  }
+  let branch: ir.Op = ops[i + 1];
+  let invert: boolean = false;
+  if (branch.kind_tag == 155 && ops[i + 2].kind_tag == 157) {
+    branch = ops[i + 2];
+    invert = true;
+  } else if (branch.kind_tag != 157 || ops[i + 2].kind_tag != 155) {
+    return "";
+  }
+  if (branch.i32_imm == 0) {
+    return "    drop\n";
+  }
+  let prefix: string = "";
+  if (invert) {
+    prefix = "    i32.eqz\n";
+  }
+  // The removed if contributes one label to the branch depth.
+  return prefix + "    br_if " + util.i32_to_string(branch.i32_imm - 1) + "\n";
+}
+
 // fern-lint: allow cyclomatic-complexity
 function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
   ircore.lower_failed_refuse(fn_name, r);
@@ -5215,6 +5239,12 @@ function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: st
   parts = parts.append(shadow_frame_push(windows, result_wat));
   let i: i32 = 0;
   while (i < f.ops.len()) {
+    let folded: string = branch_only_if(f.ops, i);
+    if (folded.len() > 0) {
+      parts = parts.append(folded);
+      i = i + 4;
+      continue;
+    }
     let o: ir.Op = f.ops[i];
     let window: i32 = util.index_of_i32(placed, i) * 8;
     if (o.kind_tag == 160) {
@@ -5414,19 +5444,6 @@ pub function build_io_error_func(sv: string[]): string {
   o = o + "    (i32.store (i32.add (local.get $r) (i32.const " + io_err_field_off(1) + ")) (local.get $e))\n";
   o = o + "    (i64.store (i32.add (local.get $r) (i32.const " + io_err_field_off(2) + ")) (i64.extend_i32_u (local.get $l)))\n";
   o = o + "    (local.get $r))\n";
-  return o;
-}
-
-pub function mulhi_u64_func(): string {
-  let o: string = "  (func $__fern_mulhi_u64 (param $a i64) (param $b i64) (result i64)\n";
-  o = o + "    (local $al i64) (local $ah i64) (local $bl i64) (local $bh i64) (local $mid i64)\n";
-  o = o + "    (local.set $al (i64.and (local.get $a) (i64.const 4294967295)))\n";
-  o = o + "    (local.set $ah (i64.shr_u (local.get $a) (i64.const 32)))\n";
-  o = o + "    (local.set $bl (i64.and (local.get $b) (i64.const 4294967295)))\n";
-  o = o + "    (local.set $bh (i64.shr_u (local.get $b) (i64.const 32)))\n";
-  o = o + "    (local.set $mid (i64.add (i64.mul (local.get $ah) (local.get $bl)) (i64.shr_u (i64.mul (local.get $al) (local.get $bl)) (i64.const 32))))\n";
-  o = o + "    (i64.add (i64.add (i64.mul (local.get $ah) (local.get $bh)) (i64.shr_u (local.get $mid) (i64.const 32)))\n";
-  o = o + "      (i64.shr_u (i64.add (i64.and (local.get $mid) (i64.const 4294967295)) (i64.mul (local.get $al) (local.get $bh))) (i64.const 32))))\n";
   return o;
 }
 
@@ -6422,19 +6439,6 @@ pub function str_borrow_helper(): string {
   return o;
 }
 
-pub function count_byte_bytes_helper(): string {
-  let o: string = "  (func $__fern_count_byte_bytes (param $a i32) (param $byte i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $i i32) (local $count i32)\n";
-  o = o + "    (if (i32.gt_u (local.get $byte) (i32.const 255)) (then (return (i32.const 0))))\n";
-  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
-  o = o + "    (block $done (loop $scan\n";
-  o = o + "      (br_if $done (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (if (i32.eq (i32.load8_u (i32.add (local.get $a) (i32.add (i32.const 8) (local.get $i)))) (local.get $byte)) (then (local.set $count (i32.add (local.get $count) (i32.const 1)))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $scan)))\n    (local.get $count))\n";
-  return o;
-}
-
 // i64x2.lt_s is a signed compare. Both sides have their top bit flipped, so it gives the unsigned order.
 pub function count_below_u64_helper(): string {
   let o: string = "  (func $__fern_count_below_u64 (param $a i32) (param $w i64) (result i32)\n";
@@ -6462,36 +6466,6 @@ pub function mismatch_bytes_helper(): string {
 
 pub function mismatch_bytes_str_helper(): string {
   return mismatch_kernel("$__fern_mismatch_bytes_str", 8, 4);
-}
-
-pub function memchr_bytes_helper(): string {
-  let o: string = "  (func $__fern_memchr_bytes (param $a i32) (param $byte i32) (param $from i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $i i32)\n";
-  o = o + "    (if (i32.gt_u (local.get $byte) (i32.const 255)) (then (return (i32.const -1))))\n";
-  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
-  o = o + "    (local.set $i (local.get $from))\n";
-  o = o + "    (if (i32.lt_s (local.get $i) (i32.const 0)) (then (local.set $i (i32.const 0))))\n";
-  o = o + "    (block $done (loop $scan\n";
-  o = o + "      (br_if $done (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (if (i32.eq (i32.load8_u (i32.add (local.get $a) (i32.add (i32.const 8) (local.get $i)))) (local.get $byte)) (then (return (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $scan)))\n    (i32.const -1))\n";
-  return o;
-}
-
-pub function rmemchr_bytes_helper(): string {
-  let o: string = "  (func $__fern_rmemchr_bytes (param $a i32) (param $byte i32) (param $from i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $i i32)\n";
-  o = o + "    (if (i32.gt_u (local.get $byte) (i32.const 255)) (then (return (i32.const -1))))\n";
-  o = o + "    (local.set $len (i32.load (local.get $a)))\n";
-  o = o + "    (local.set $i (local.get $from))\n";
-  o = o + "    (if (i32.ge_s (local.get $i) (local.get $len)) (then (local.set $i (i32.sub (local.get $len) (i32.const 1)))))\n";
-  o = o + "    (block $done (loop $scan\n";
-  o = o + "      (br_if $done (i32.lt_s (local.get $i) (i32.const 0)))\n";
-  o = o + "      (if (i32.eq (i32.load8_u (i32.add (local.get $a) (i32.add (i32.const 8) (local.get $i)))) (local.get $byte)) (then (return (local.get $i))))\n";
-  o = o + "      (local.set $i (i32.sub (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $scan)))\n    (i32.const -1))\n";
-  return o;
 }
 
 pub function memchr_helper(): string {
@@ -6589,22 +6563,6 @@ pub function rmemchr_helper(): string {
   return o;
 }
 
-pub function bsd_sum_helper(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_bsd_sum (param $s i32) (param $sum i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $p i32) (local $i i32)\n";
-  o = o + view_string_decode("$s", "$p", "$len");
-  o = o + "    (local.set $sum (i32.and (local.get $sum) (i32.const 65535)))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (local.set $sum (i32.and (i32.add (i32.or (i32.shr_u (local.get $sum) (i32.const 1)) (i32.shl (local.get $sum) (i32.const 15)))\n";
-  o = o + "        (i32.load8_u (i32.add (local.get $p) (local.get $i)))) (i32.const 65535)))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
-  o = o + "    (local.get $sum))\n";
-  return o;
-}
-
 pub function str_hash_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_str_hash (param $s i32) (param $seed i32) (result i32)\n";
@@ -6634,130 +6592,6 @@ pub function str_hash_helper(): string {
   o = o + "      (local.set $h (i64.mul (i64.xor (local.get $h) (local.get $w)) (i64.const 1099511628211)))))\n";
   o = o + "    (local.set $h (i64.xor (local.get $h) (i64.shr_u (local.get $h) (i64.const 32))))\n";
   o = o + "    (i32.wrap_i64 (local.get $h)))\n";
-  return o;
-}
-
-pub function count_runs_helper(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_count_runs (param $s i32) (param $inside i32) (param $set i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $i i32) (local $n i32) (local $b i32) (local $prev i32) (local $cur i32) (local $runs i32)\n";
-  o = o + "    (local.set $len (i32.load (local.get $s)))\n";
-  o = o + "    (local.set $n (i32.load (local.get $set)))\n";
-  o = o + "    (local.set $prev (i32.ne (local.get $inside) (i32.const 0)))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (local.set $b (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (local.set $cur (i32.const 0))\n";
-  o = o + "      (if (i32.lt_u (local.get $b) (local.get $n)) (then\n";
-  o = o + "        (local.set $cur (i32.ne (i32.load8_u (i32.add (i32.add (local.get $set) (i32.const 8)) (local.get $b))) (i32.const 0)))))\n";
-  o = o + "      (local.set $runs (i32.add (local.get $runs) (i32.gt_u (local.get $cur) (local.get $prev))))\n";
-  o = o + "      (local.set $prev (local.get $cur))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
-  o = o + "    (local.get $runs))\n";
-  return o;
-}
-
-pub function count_runs_bytes_helper(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_count_runs_bytes (param $s i32) (param $inside i32) (param $set i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $i i32) (local $n i32) (local $b i32) (local $prev i32) (local $cur i32) (local $runs i32)\n";
-  o = o + "    (local.set $len (i32.load (local.get $s)))\n";
-  o = o + "    (local.set $n (i32.load (local.get $set)))\n";
-  o = o + "    (local.set $prev (i32.ne (local.get $inside) (i32.const 0)))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (local.set $b (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 8)) (local.get $i))))\n";
-  o = o + "      (local.set $cur (i32.const 0))\n";
-  o = o + "      (if (i32.lt_u (local.get $b) (local.get $n)) (then\n";
-  o = o + "        (local.set $cur (i32.ne (i32.load8_u (i32.add (i32.add (local.get $set) (i32.const 8)) (local.get $b))) (i32.const 0)))))\n";
-  o = o + "      (local.set $runs (i32.add (local.get $runs) (i32.gt_u (local.get $cur) (local.get $prev))))\n";
-  o = o + "      (local.set $prev (local.get $cur))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
-  o = o + "    (local.get $runs))\n";
-  return o;
-}
-
-pub function scan_set_helper(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_scan_set (param $s i32) (param $from i32) (param $set i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $i i32) (local $n i32) (local $b i32)\n";
-  o = o + "    (local.set $len (i32.load (local.get $s)))\n";
-  o = o + "    (local.set $n (i32.load (local.get $set)))\n";
-  o = o + "    (local.set $i (local.get $from))\n";
-  o = o + "    (if (i32.lt_s (local.get $i) (i32.const 0)) (then (local.set $i (i32.const 0))))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (local.set $b (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (if (i32.lt_u (local.get $b) (local.get $n)) (then\n";
-  o = o + "        (if (i32.load8_u (i32.add (i32.add (local.get $set) (i32.const 8)) (local.get $b))) (then (return (local.get $i))))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
-  o = o + "    (local.get $len))\n";
-  return o;
-}
-
-pub function scan_set_bytes_helper(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_scan_set_bytes (param $s i32) (param $from i32) (param $set i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $i i32) (local $n i32) (local $b i32)\n";
-  o = o + "    (local.set $len (i32.load (local.get $s)))\n";
-  o = o + "    (local.set $n (i32.load (local.get $set)))\n";
-  o = o + "    (local.set $i (local.get $from))\n";
-  o = o + "    (if (i32.lt_s (local.get $i) (i32.const 0)) (then (local.set $i (i32.const 0))))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (local.set $b (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 8)) (local.get $i))))\n";
-  o = o + "      (if (i32.lt_u (local.get $b) (local.get $n)) (then\n";
-  o = o + "        (if (i32.load8_u (i32.add (i32.add (local.get $set) (i32.const 8)) (local.get $b))) (then (return (local.get $i))))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
-  o = o + "    (local.get $len))\n";
-  return o;
-}
-
-pub function byte_reduction_helper(bsd: boolean): string {
-  let name = "sum_bytes_array";
-  let params = "";
-  if (bsd) {
-    name = "bsd_sum_bytes";
-    params = " (param $sum i32)";
-  }
-  let o = "  (func $__fern_" + name + " (param $s i32)" + params + " (result i32)\n";
-  o = o + "    (local $len i32) (local $i i32)\n";
-  if (!bsd) {
-    o = o + "    (local $sum i32)\n";
-  }
-  if (bsd) {
-    o = o + "    (local.set $sum (i32.and (local.get $sum) (i32.const 65535)))\n";
-  }
-  o = o + "    (local.set $len (i32.load (local.get $s)))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-  if (bsd) {
-    o = o + "      (local.set $sum (i32.and (i32.or (i32.shr_u (local.get $sum) (i32.const 1)) (i32.shl (local.get $sum) (i32.const 15))) (i32.const 65535)))\n";
-  }
-  o = o + "      (local.set $sum (i32.add (local.get $sum) (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 8)) (local.get $i)))))\n";
-  if (bsd) {
-    o = o + "      (local.set $sum (i32.and (local.get $sum) (i32.const 65535)))\n";
-  }
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
-  return o + "    (local.get $sum))\n";
-}
-
-pub function sum_bytes_helper(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_sum_bytes (param $s i32) (result i32)\n";
-  o = o + "    (local $len i32) (local $p i32) (local $i i32) (local $sum i32)\n";
-  o = o + view_string_decode("$s", "$p", "$len");
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_s (local.get $i) (local.get $len)))\n";
-  o = o + "      (local.set $sum (i32.add (local.get $sum) (i32.load8_u (i32.add (local.get $p) (local.get $i)))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
-  o = o + "    (local.get $sum))\n";
   return o;
 }
 
@@ -7187,35 +7021,12 @@ pub function str_replace_helper(): string {
   return o;
 }
 
-pub function strcmp_helper(): string {
-  let o: string = "";
-  o = o + "  (func $__fern_strcmp (param $a i32) (param $b i32) (result i32)\n";
-  o = o + "    (local $la i32) (local $lb i32) (local $n i32) (local $i i32) (local $ca i32) (local $cb i32)\n";
-  o = o + "    (local.set $la (i32.load (local.get $a)))\n";
-  o = o + "    (local.set $lb (i32.load (local.get $b)))\n";
-  o = o + "    (local.set $n (local.get $la))\n";
-  o = o + "    (if (i32.lt_u (local.get $lb) (local.get $la)) (then (local.set $n (local.get $lb))))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $d2 (loop $c2\n";
-  o = o + "      (br_if $d2 (i32.ge_u (local.get $i) (local.get $n)))\n";
-  o = o + "      (local.set $ca (i32.load8_u (i32.add (i32.add (local.get $a) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (local.set $cb (i32.load8_u (i32.add (i32.add (local.get $b) (i32.const 4)) (local.get $i))))\n";
-  o = o + "      (if (i32.lt_u (local.get $ca) (local.get $cb)) (then (return (i32.const -1))))\n";
-  o = o + "      (if (i32.gt_u (local.get $ca) (local.get $cb)) (then (return (i32.const 1))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c2)))\n";
-  o = o + "    (if (i32.lt_u (local.get $la) (local.get $lb)) (then (return (i32.const -1))))\n";
-  o = o + "    (if (i32.gt_u (local.get $la) (local.get $lb)) (then (return (i32.const 1))))\n";
-  o = o + "    (i32.const 0))\n";
-  return o;
-}
-
 pub function arr_push_helper(): string {
   return arr_push_strided("", "i32", "i32.store", 4);
 }
 
 pub function str_split_helper(): string {
-  let o: string = arr_push_helper() + utf8_step_helper();
+  let o: string = arr_push_helper();
   o = o + "  (func $__fern_str_split (param $s i32) (param $sep i32) (result i32)\n";
   o = o + "    (local $sl i32) (local $sepl i32) (local $i i32) (local $start i32) (local $arr i32) (local $piece i32) (local $j i32) (local $match i32)\n";
   o = o + "    (local.set $sl (i32.load (local.get $s)))\n";
@@ -7254,38 +7065,6 @@ pub function str_split_helper(): string {
   o = o + "    (local.set $piece (call $__fern_substr (local.get $s) (local.get $start) (local.get $sl)))\n";
   o = o + "    (local.set $arr (call $__fern_arr_push_owned (local.get $arr) (local.get $piece)))\n";
   o = o + "    (local.get $arr))\n";
-  return o;
-}
-
-function utf8_step_helper(): string {
-  let o: string = "  (func $__fern_utf8_step (param $s i32) (param $i i32) (param $n i32) (result i32)\n";
-  o = o + "    (local $b0 i32) (local $want i32) (local $lo i32) (local $hi i32) (local $c i32) (local $k i32)\n";
-  o = o + "    (local.set $b0 (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (local.get $i))))\n";
-  o = o + "    (local.set $want (i32.const 1))\n";
-  o = o + "    (if (i32.and (i32.ge_u (local.get $b0) (i32.const 194)) (i32.lt_u (local.get $b0) (i32.const 224))) (then (local.set $want (i32.const 2))))\n";
-  o = o + "    (if (i32.and (i32.ge_u (local.get $b0) (i32.const 224)) (i32.lt_u (local.get $b0) (i32.const 240))) (then (local.set $want (i32.const 3))))\n";
-  o = o + "    (if (i32.and (i32.ge_u (local.get $b0) (i32.const 240)) (i32.lt_u (local.get $b0) (i32.const 245))) (then (local.set $want (i32.const 4))))\n";
-  o = o + "    (if (i32.le_s (local.get $want) (i32.const 1)) (then (return (i32.const 1))))\n";
-  o = o + "    (if (i32.ge_s (i32.add (local.get $i) (i32.const 1)) (local.get $n)) (then (return (i32.const 1))))\n";
-  o = o + "    (local.set $lo (i32.const 128))\n";
-  o = o + "    (if (i32.eq (local.get $b0) (i32.const 224)) (then (local.set $lo (i32.const 160))))\n";
-  o = o + "    (if (i32.eq (local.get $b0) (i32.const 240)) (then (local.set $lo (i32.const 144))))\n";
-  o = o + "    (local.set $hi (i32.const 191))\n";
-  o = o + "    (if (i32.eq (local.get $b0) (i32.const 237)) (then (local.set $hi (i32.const 159))))\n";
-  o = o + "    (if (i32.eq (local.get $b0) (i32.const 244)) (then (local.set $hi (i32.const 143))))\n";
-  o = o + "    (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (i32.add (local.get $i) (i32.const 1)))))\n";
-  o = o + "    (if (i32.lt_u (local.get $c) (local.get $lo)) (then (return (i32.const 1))))\n";
-  o = o + "    (if (i32.gt_u (local.get $c) (local.get $hi)) (then (return (i32.const 1))))\n";
-  o = o + "    (local.set $k (i32.const 2))\n";
-  o = o + "    (block $d (loop $c2\n";
-  o = o + "      (br_if $d (i32.ge_s (local.get $k) (local.get $want)))\n";
-  o = o + "      (if (i32.ge_s (i32.add (local.get $i) (local.get $k)) (local.get $n)) (then (return (local.get $k))))\n";
-  o = o + "      (local.set $c (i32.load8_u (i32.add (i32.add (local.get $s) (i32.const 4)) (i32.add (local.get $i) (local.get $k)))))\n";
-  o = o + "      (if (i32.lt_u (local.get $c) (i32.const 128)) (then (return (local.get $k))))\n";
-  o = o + "      (if (i32.gt_u (local.get $c) (i32.const 191)) (then (return (local.get $k))))\n";
-  o = o + "      (local.set $k (i32.add (local.get $k) (i32.const 1)))\n";
-  o = o + "      (br $c2)))\n";
-  o = o + "    (local.get $want))\n";
   return o;
 }
 
@@ -7858,7 +7637,7 @@ pub function string_from_bytes_range_helper(): string {
   return o;
 }
 
-pub function strcat_streq_helpers(): string {
+pub function strcat_helper(): string {
   let o: string = "";
   o = o + "  (func $__fern_strcat (param $a i32) (param $b i32) (result i32)\n";
   o = o + "    (local $la i32) (local $lb i32) (local $pa i32) (local $pb i32) (local $p i32) (local $i i32)\n";
@@ -7879,17 +7658,6 @@ pub function strcat_streq_helpers(): string {
   o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
   o = o + "      (br $cb)))\n";
   o = o + "    (local.get $p))\n";
-  o = o + "  (func $__fern_streq (param $a i32) (param $b i32) (result i32)\n";
-  o = o + "    (local $la i32) (local $i i32)\n";
-  o = o + "    (local.set $la (i32.load (local.get $a)))\n";
-  o = o + "    (if (i32.ne (local.get $la) (i32.load (local.get $b))) (then (return (i32.const 0))))\n";
-  o = o + "    (local.set $i (i32.const 0))\n";
-  o = o + "    (block $d (loop $c\n";
-  o = o + "      (br_if $d (i32.ge_u (local.get $i) (local.get $la)))\n";
-  o = o + "      (if (i32.ne (i32.load8_u (i32.add (i32.add (local.get $a) (i32.const 4)) (local.get $i))) (i32.load8_u (i32.add (i32.add (local.get $b) (i32.const 4)) (local.get $i)))) (then (return (i32.const 0))))\n";
-  o = o + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n";
-  o = o + "      (br $c)))\n";
-  o = o + "    (i32.const 1))\n";
   return o;
 }
 
@@ -9582,6 +9350,67 @@ pub struct WasmUnit {
   fns: string[],
 }
 
+function needs_str_split(needs: string[]): boolean {
+  return need(needs, "str_split") || need(needs, "@uses_str_lines");
+}
+
+pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (parser.Module) => physicalbody.Lowered): WasmUnit[] {
+  let roots: string = "";
+  if (need(needs, "@uses_str_cmp")) {
+    roots = roots + " __fern_strcmp";
+  }
+  if (need(needs, "@uses_strings")) {
+    roots = roots + " __fern_streq";
+  }
+  if (needs_str_split(needs)) {
+    roots = roots + " __fern_utf8_step";
+  }
+  if (need(needs, "@uses_memchr_bytes")) {
+    roots = roots + " __fern_memchr_bytes";
+  }
+  if (need(needs, "@uses_rmemchr_bytes")) {
+    roots = roots + " __fern_rmemchr_bytes";
+  }
+  if (need(needs, "@uses_mulhi_u")) {
+    roots = roots + " __fern_mulhi_u64";
+  }
+  if (need(needs, "@uses_count_byte_bytes")) {
+    roots = roots + " __fern_count_byte_bytes";
+  }
+  if (need(needs, "@uses_sum_bytes")) {
+    roots = roots + " __fern_sum_bytes";
+  }
+  if (need(needs, "@uses_bsd_sum")) {
+    roots = roots + " __fern_bsd_sum";
+  }
+  if (need(needs, "@uses_bsd_sum_bytes")) {
+    roots = roots + " __fern_bsd_sum_bytes";
+  }
+  if (need(needs, "@uses_sum_bytes_array")) {
+    roots = roots + " __fern_sum_bytes_array";
+  }
+  if (need(needs, "@uses_scan_set")) {
+    roots = roots + " __fern_scan_set";
+  }
+  if (need(needs, "@uses_scan_set_bytes")) {
+    roots = roots + " __fern_scan_set_bytes";
+  }
+  if (need(needs, "@uses_count_runs")) {
+    roots = roots + " __fern_count_runs";
+  }
+  if (need(needs, "@uses_count_runs_bytes")) {
+    roots = roots + " __fern_count_runs_bytes";
+  }
+  if (roots.len() == 0) {
+    return units;
+  }
+  let mod: parser.Module = rtmodule.load_wasm("wasm32-wasi", roots);
+  let lowered: physicalbody.Lowered = rt_lower(mod);
+  let bodies: irtables.LowerResult[] = lowered.bodies;
+  let text: string = emit_functions_ns("$runtime", mod, bodies, physicalbody.collection(lowered));
+  return units.append(WasmUnit { ns: "$runtime", text: text, strs: str_values(bodies), caggs: const_agg_values(bodies), fns: fn_value_table(bodies) });
+}
+
 function module_needs_type_ids(units: WasmUnit[], needs: string[]): boolean {
   // Runtime IO helpers can read IDs outside the complete unit bodies.
   if (needs_io_error(needs)) {
@@ -9662,29 +9491,8 @@ function kernel_helper_parts(needs: string[], parts0: string[]): string[] {
   if (need(needs, "@uses_memchr")) {
     parts = parts.append(memchr_helper());
   }
-  if (need(needs, "@uses_count_byte_bytes")) {
-    parts = parts.append(count_byte_bytes_helper());
-  }
   if (need(needs, "@uses_count_below_u64")) {
     parts = parts.append(count_below_u64_helper());
-  }
-  if (need(needs, "@uses_sum_bytes_array")) {
-    parts = parts.append(byte_reduction_helper(false));
-  }
-  if (need(needs, "@uses_bsd_sum_bytes")) {
-    parts = parts.append(byte_reduction_helper(true));
-  }
-  if (need(needs, "@uses_memchr_bytes")) {
-    parts = parts.append(memchr_bytes_helper());
-  }
-  if (need(needs, "@uses_rmemchr_bytes")) {
-    parts = parts.append(rmemchr_bytes_helper());
-  }
-  if (need(needs, "@uses_count_runs_bytes")) {
-    parts = parts.append(count_runs_bytes_helper());
-  }
-  if (need(needs, "@uses_scan_set_bytes")) {
-    parts = parts.append(scan_set_bytes_helper());
   }
   if (need(needs, "@uses_mismatch_bytes")) {
     parts = parts.append(mismatch_bytes_helper());
@@ -9700,18 +9508,6 @@ function kernel_helper_parts(needs: string[], parts0: string[]): string[] {
   }
   if (need(needs, "@uses_count_byte")) {
     parts = parts.append(count_byte_helper());
-  }
-  if (need(needs, "@uses_sum_bytes")) {
-    parts = parts.append(sum_bytes_helper());
-  }
-  if (need(needs, "@uses_scan_set")) {
-    parts = parts.append(scan_set_helper());
-  }
-  if (need(needs, "@uses_count_runs")) {
-    parts = parts.append(count_runs_helper());
-  }
-  if (need(needs, "@uses_bsd_sum")) {
-    parts = parts.append(bsd_sum_helper());
   }
   if (need(needs, "@uses_str_hash")) {
     parts = parts.append(str_hash_helper());
@@ -9930,11 +9726,8 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "@uses_i64_udivrem")) {
     parts = parts.append(udivrem_helpers("i64", "64"));
   }
-  if (need(needs, "@uses_mulhi_u")) {
-    parts = parts.append(mulhi_u64_func());
-  }
   if (need(needs, "@uses_strings")) {
-    parts = parts.append(strcat_streq_helpers());
+    parts = parts.append(strcat_helper());
   }
   if (need(needs, "@uses_i32_to_string")) {
     parts = parts.append(i32_to_string_helper());
@@ -10128,9 +9921,6 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "writer_truncate")) {
     parts = parts.append(writer_truncate_func());
   }
-  if (need(needs, "@uses_str_cmp")) {
-    parts = parts.append(strcmp_helper());
-  }
   if (need(needs, "@uses_str_slice") || need(needs, "str_split") || need(needs, "@uses_str_lines")) {
     parts = parts.append(substr_helper());
   }
@@ -10162,7 +9952,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "@uses_ascii_run")) {
     parts = parts.append(ascii_run_helper());
   }
-  if (need(needs, "str_split") || need(needs, "@uses_str_lines")) {
+  if (needs_str_split(needs)) {
     parts = parts.append(str_split_helper());
   }
   let ei: i32 = util.index_of_str(cv, empty_bytes_const());

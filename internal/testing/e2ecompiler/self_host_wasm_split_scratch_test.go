@@ -128,12 +128,12 @@ func TestSelfHostWasmSplitScratchWasmIR(t *testing.T) {
 				t.Fatalf("write wat: %v", err)
 			}
 			rcmd := exec.Command("wasmtime", "run", watFile)
-			_ = rcmd.Run()
+			out, err := rcmd.CombinedOutput()
 			if rcmd.ProcessState == nil || !rcmd.ProcessState.Exited() {
-				t.Fatalf("wasmtime did not exit normally for %s", tc.name)
+				t.Fatalf("wasmtime did not exit normally for %s: %v\n%s", tc.name, err, out)
 			}
 			if got := rcmd.ProcessState.ExitCode(); got != 0 {
-				t.Errorf("%s = %d, want 0 (%s)", tc.name, got, wasmSplitScratchExitHint)
+				t.Errorf("%s = %d, want 0 (%s)\n%s", tc.name, got, wasmSplitScratchExitHint, out)
 			}
 		})
 	}

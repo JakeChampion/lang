@@ -1,0 +1,35 @@
+function __fern_utf8_step(s: usize, i: i32, n: i32): i32 {
+  let b0: i32 = __load_u8(s + 4 + i);
+  if (b0 < 194 || b0 > 244 || i + 1 >= n) {
+    return 1;
+  }
+  let c: i32 = __load_u8(s + 4 + i + 1);
+  if (c < 128 || c > 191) {
+    return 1;
+  }
+  if (b0 < 224) {
+    return 2;
+  }
+  if (b0 == 224 && c < 160 || b0 == 237 && c > 159) {
+    return 1;
+  }
+  let want: i32 = 3;
+  if (b0 >= 240) {
+    if (b0 == 240 && c < 144 || b0 == 244 && c > 143) {
+      return 1;
+    }
+    want = 4;
+  }
+  let k: i32 = 2;
+  while (k < want) {
+    if (i + k >= n) {
+      return k;
+    }
+    c = __load_u8(s + 4 + i + k);
+    if (c < 128 || c > 191) {
+      return k;
+    }
+    k = k + 1;
+  }
+  return want;
+}

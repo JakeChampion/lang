@@ -1,0 +1,17 @@
+function __fern_rmemchr_bytes(a: usize, byte: i32, from: i32): i32 {
+  if (byte as u32 > 255 as u32) {
+    return -1;
+  }
+  let n: i32 = __load_i32(a);
+  let i: i32 = from;
+  if (i >= n) {
+    i = n - 1;
+  }
+  while (i >= 0) {
+    if (__load_u8(a + 8 + i) == byte) {
+      return i;
+    }
+    i = i - 1;
+  }
+  return -1;
+}

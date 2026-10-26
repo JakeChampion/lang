@@ -164,7 +164,7 @@ function link_missing(l: Linked): boolean {
 }
 
 function link_text(l: Linked, merged: parser.Module): string {
-  return wasm_ir.emit_ir_module_units(l.units, merged, l.needs, l.fn_sigs, 0, asmcore.env_switches());
+  return wasm_ir.emit_ir_module_units(wasm_ir.with_runtime_units(l.units, l.needs, semlower.runtime_module_lowering), merged, l.needs, l.fn_sigs, 0, asmcore.env_switches());
 }
 
 struct Typed { g: ircore.Gated, u: ircore.Units, keys: ircore.UnitKeys }

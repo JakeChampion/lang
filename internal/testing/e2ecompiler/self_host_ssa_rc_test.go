@@ -147,7 +147,7 @@ function main(): i32 {
         state = asm_arm64_ir.emit_body(g.im, state, false, cache, g.physical);
         state = asm_arm64_ir.emit_ir_runtime(state, false);
         print(state.take_text());
-    } else { print(wasm_ir.emit_ir_module_mode(g.im, cache, 0, asmcore.env_switches(), g.physical)); }
+    } else { print(wasm_ir.emit_ir_module_mode(g.im, cache, 0, asmcore.env_switches(), g.physical, d.sub.rt_lower)); }
     return 0;
 }
 `
