@@ -1,0 +1,48 @@
+import "../packages/codecs/jpeg/planes";
+import "std/i32";
+
+function never(): boolean {
+  return false;
+}
+
+function emit(path: string): i32 {
+  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  let image = match (planes.decode(input, planes.default_limits(), never)) { Ok(v) => v, Err(_) => { return 3; } };
+  print("begin " + path + " " + image.plan.width.to_string() + " " + image.plan.height.to_string() + " " + image.plan.max_horizontal.to_string() + " " + image.plan.max_vertical.to_string() + " " + image.planes.len().to_string() + " " + image.plan.bytes.to_string());
+  let total = 0;
+  for i in 0..image.planes.len() {
+    let plane = image.planes[i];
+    let layout = plane.layout;
+    if (layout.width <= 0 || layout.height <= 0 || layout.stride != layout.width || layout.bytes != layout.width * layout.height || plane.data.len() != layout.bytes) {
+      return 4;
+    }
+    let output = path + ".plane-" + i.to_string() + ".raw";
+    match (write_file_bytes(output, plane.data)) {
+      Ok(_) => {},
+      Err(_) => {
+        return 5;
+      }
+    }
+    print("plane " + i.to_string() + " " + layout.component.to_string() + " " + layout.horizontal.to_string() + " " + layout.vertical.to_string() + " " + layout.width.to_string() + " " + layout.height.to_string() + " " + layout.stride.to_string() + " " + layout.bytes.to_string());
+    total = total + layout.bytes;
+  }
+  if (total != image.plan.bytes) {
+    return 6;
+  }
+  print("end " + path);
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let result = emit(paths[i]);
+    if (result != 0) {
+      return result;
+    }
+  }
+  return 0;
+}
