@@ -32,3 +32,28 @@ The positive control exercises unit propagation, an optional unit value, a heap 
 Native, ARM64/QEMU10, and Wasm executions require nonzero balanced heap counts and zero live bytes.
 Both unchanged complexity gates and the broader checker diagnostics remain part of validation.
 Full current-head CI remains a separate result.
+
+The final selected suite passed 4,190 test nodes without failures or skips in 113.087 seconds.
+The full Go checker suite passed 2,000 nodes without failures or skips in 24.614 seconds.
+The positive control also passed the primary interpreter.
+
+The clean compiler reports `dfa23fa508f9`.
+Its SHA256 is `68b47eac8e56bb44944fcde126bb29d80ad2173afb7ac57eaf6c52e7b0f44282`.
+The raw compiler SHA256 is `2269e46e3780e06c735ee7d55375125081962514478152426a487109951bb76e`.
+The standard two-stage build and bootstrap smoke checks passed.
+An earlier build stopped at a full workspace disk after its bootstrap smoke check.
+A retry passed after removal of the disposable Go build cache.
+
+The unchanged allocation gate measured 34,967,167 balanced events against the upstream baseline of 34,951,426.
+The drift was 0.05 percent, within the existing tolerance.
+This environment has no delegated cgroup, so the report contains no peak RSS measurement.
+No baseline, threshold, diagnostic exemption, or Go checker changed.
+
+The full native image script passed 151 TAP cases, its smokes, and its negative compiler probes.
+All 61 native heap censuses balanced with zero live bytes.
+The formatter checked all 1,300 tracked Fern sources.
+Go build, vet, Go format, workflow lint, and test-selector checks also passed.
+
+The full Wasm image script also passed 151 TAP cases and its smokes.
+All 37 Wasm heap censuses balanced with zero live bytes.
+The compiler hash remained unchanged through both image scripts.
