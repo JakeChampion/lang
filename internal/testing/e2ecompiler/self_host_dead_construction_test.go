@@ -42,7 +42,8 @@ function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f
 function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; }`, 12, 4, ""},
 		{"update-read-base-overridden", `struct P { x: i32, y: i32 }
 @noinline function get(p: P): i32 { return p.x + p.y; }
-@noinline function f(i: i32): i32 { let a: P = P { x: i, y: 1 }; let b: P = P { ...a, x: 2, y: 1 }; return get(b) + i; }
+@noinline function via(read: (P)=>i32, p: P): i32 { return read(p); }
+@noinline function f(i: i32): i32 { let a: P = P { x: i, y: 1 }; let b: P = P { ...a, x: 2, y: 1 }; return via(get, b) + i; }
 function main(): i32 { let s: i32 = 0; let i: i32 = 0; while (i < 4) { s = s + f(i); i = i + 1; } return s; }`, 18, 4, ""},
 		{"finalizer-kept", `import "core/mem";
 struct G { n: i32 }
