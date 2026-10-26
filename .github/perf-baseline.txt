@@ -1,4 +1,3 @@
-# 2026-10-26: record AArch64 instruction counts from main run 40291091519.
 # 2026-10-26, the 32-bit index arithmetic, the decrement below a greater-than test and the
 # x86-64 operation on a spill slot, from a local perf-bench run: x86_64/deflate_encode.ir
 # 47063418 to 43100357 (-8.4%), deflate_decode.ir
@@ -419,9 +418,10 @@ aarch64/call_overhead.text	304
 aarch64/call_overhead.ir	11250819
 aarch64/closure_call.text	1086
 aarch64/closure_call.ir	72624168
-aarch64/deflate_decode.ir	37668078
+# 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
+aarch64/deflate_decode.ir	36402562
 aarch64/deflate_decode.text	14100
-aarch64/deflate_encode.ir	48587342
+aarch64/deflate_encode.ir	44038371
 aarch64/deflate_encode.text	7851
 aarch64/enum_match.text	1206
 aarch64/enum_match.ir	41175097
@@ -430,11 +430,12 @@ aarch64/http_hello.ir	25860660
 aarch64/int_loop.text	246
 aarch64/int_loop.ir	18000078
 aarch64/map_int.text	5921
-aarch64/map_int.ir	35711954
+aarch64/map_int.ir	35263853
 aarch64/map_probe_chain.text	5932
-aarch64/map_probe_chain.ir	340503732
+aarch64/map_probe_chain.ir	334317381
 aarch64/map_string.text	7013
-aarch64/map_string.ir	60356414	2
+# 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
+aarch64/map_string.ir	58932247	2
 aarch64/ordmap_insert.text	5868
 aarch64/ordmap_insert.ir	98616062
 aarch64/pmap_insert.text	2936
