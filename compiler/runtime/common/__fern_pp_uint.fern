@@ -1,0 +1,7 @@
+function __fern_pp_uint(out: usize, n: usize): void {
+  while (n >= 128) {
+    __fern_pp_byte(out, (n & 127 | 128) as i32);
+    n = n >> 7;
+  }
+  __fern_pp_byte(out, n as i32);
+}

@@ -1,0 +1,10 @@
+function __fern_task_enter(id: i32, mode: i32): i32 {
+  let st: usize = __raw_task_state();
+  let prev: usize = __raw_load_ptr(st, 0);
+  __raw_store_ptr(st, 0, id as usize);
+  let rec: usize = __fern_task_rec(id);
+  __raw_store_ptr(rec, 0, mode as usize);
+  __raw_store_ptr(rec, 11, prev);
+  __raw_store_ptr(st, 3, rec);
+  return 0;
+}

@@ -1,0 +1,37 @@
+function __fern_udp_recvfrom_u8(fd: i32, buf: i32[], from: i32[]): i32 {
+  let max: i32 = buf.len();
+  let p: usize = __raw_arr_ptr(buf) + 8;
+  let sa: usize = __raw_scratch(32);
+  __raw_store8(sa, 28, 28);
+  __raw_store8(sa, 29, 0);
+  __raw_store8(sa, 30, 0);
+  __raw_store8(sa, 31, 0);
+  let n: i32 = __syscall6(29, fd as i64, p as i64, max as i64, 0, sa as i64, (sa + 28) as i64) as i32;
+  if (n >= 0 && from.len() >= 19) {
+    let f: usize = __raw_arr_ptr(from);
+    let z: i32 = 1;
+    while (z <= 19) {
+      __raw_store8(f, 8 + (z - 1), 0);
+      z = z + 1;
+    }
+    let fam: i32 = __raw_load8(sa, 1);
+    let n_addr: i32 = 0;
+    let at: i32 = 4;
+    if (fam == 2) {
+      __raw_store8(f, 8 + 0, 4);
+      n_addr = 4;
+    } else if (fam == 30) {
+      __raw_store8(f, 8 + 0, 6);
+      n_addr = 16;
+      at = 8;
+    }
+    let k: i32 = 0;
+    while (k < n_addr) {
+      __raw_store8(f, 8 + (1 + k), __raw_load8(sa, at + k));
+      k = k + 1;
+    }
+    __raw_store8(f, 8 + 17, __raw_load8(sa, 2));
+    __raw_store8(f, 8 + 18, __raw_load8(sa, 3));
+  }
+  return n;
+}

@@ -1,0 +1,12 @@
+function __fern_profile_symbol(pc: usize, im: usize, size: usize): usize {
+  let name: usize = __fern_profile_name(pc, im, size);
+  if (name == 0) {
+    return 0;
+  }
+  let q: usize = name;
+  while (__load_u8(q) != 0) {
+    q = q + 1;
+  }
+  __fern_profile_write(name, q - name);
+  return 1;
+}

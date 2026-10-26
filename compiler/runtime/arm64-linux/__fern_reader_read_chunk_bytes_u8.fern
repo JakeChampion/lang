@@ -1,0 +1,20 @@
+function __fern_reader_read_chunk_bytes_u8(fd: i32, n: i32): Result[i32[], IoError] {
+  if (n < 0) {
+    return Err(__fern_io_error(22, ""));
+  }
+  let raw: usize = __raw_arr_box(n / 8 + 1);
+  let scratch: i32[] = __raw_array(raw);
+  let p: usize = raw + 8;
+  let got: i32 = __syscall3(63, fd as i64, p as i64, n as i64) as i32;
+  if (got < 0) {
+    return Err(__fern_io_error(0 - got, ""));
+  }
+  if (got == n) {
+    __store_i64(raw, got as i64);
+    return Ok(scratch);
+  }
+  if (got == 0) {
+    return Ok([]);
+  }
+  return Ok(__fern_reader_short_bytes(scratch, got));
+}

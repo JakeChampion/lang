@@ -1,0 +1,9 @@
+function __fern_mount_cstr(buf: usize, off: i32, max: i32): string {
+  let n: i32 = 0;
+  while (n < max && __raw_load8(buf, off + n) != 0) {
+    n = n + 1;
+  }
+  let p: usize = __raw_alloc(n);
+  __memcpy(p, buf + off, n);
+  return __raw_string(p, n);
+}

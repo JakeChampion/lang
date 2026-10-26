@@ -1,0 +1,10 @@
+function __fern_ring_recv_stop(blk: usize, ent: usize, fd: i32): i32 {
+  if (__raw_load8(ent, 4) == 1) {
+    let r: i32 = __fern_ring_push(blk, 14, 0 - 1, 0, 4611686018427387904 as i64, __fern_ring_rud(fd, __raw_load8(ent, 5)));
+    if (r < 0) {
+      return r;
+    }
+  }
+  __raw_store8(ent, 4, 0);
+  return 0;
+}

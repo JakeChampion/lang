@@ -1,0 +1,9 @@
+function __fern_pp_location(out: usize, buf: usize, id: usize, pc: usize): void {
+  let line: usize = buf + 512;
+  let len: usize = __fern_pp_field(line, 0, 8, id);
+  let n: usize = __fern_pp_field(buf, 0, 8, id);
+  n = __fern_pp_field(buf, n, 24, pc);
+  n = __fern_pp_field(buf, n, 34, len);
+  n = __fern_pp_copy(buf, n, line, len);
+  __fern_pp_message(out, 34, buf, n);
+}

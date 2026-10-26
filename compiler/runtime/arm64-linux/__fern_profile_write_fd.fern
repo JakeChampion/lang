@@ -1,0 +1,13 @@
+function __fern_profile_write_fd(fd: i64, p: usize, n: usize): void {
+  while (n > 0) {
+    let w: i64 = __syscall3(64, fd, p as i64, n as i64);
+    if (w == (0 - 4) as i64) {
+      continue;
+    }
+    if (w <= 0 as i64) {
+      return;
+    }
+    p = p + w as usize;
+    n = n - w as usize;
+  }
+}

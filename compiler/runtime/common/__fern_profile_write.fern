@@ -1,0 +1,3 @@
+function __fern_profile_write(p: usize, n: usize): void {
+  __fern_profile_write_fd(2, p, n);
+}

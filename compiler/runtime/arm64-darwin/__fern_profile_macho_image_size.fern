@@ -1,0 +1,40 @@
+function __fern_profile_macho_image_size(im: usize): usize {
+  // The native writer maps at least one 16 KiB __TEXT page containing its
+  // load commands. This bootstrap read is only for our running executable.
+  let text: usize = __fern_profile_macho_command(im, 16384, 25, "__TEXT");
+  if (text == 0 || __fern_profile_macho_u32(text + 4) < 72) {
+    return 0;
+  }
+  let base: usize = __load_i64(text + 24) as usize;
+  let extent: usize = base;
+  let count: usize = __fern_profile_macho_u32(im + 16);
+  let end: usize = 32 + __fern_profile_macho_u32(im + 20);
+  let at: usize = 32;
+  let i: usize = 0;
+  while (i < count) {
+    if (at > end || end - at < 8) {
+      return 0;
+    }
+    let command: usize = im + at;
+    let len: usize = __fern_profile_macho_u32(command + 4);
+    if (len < 8 || len > end - at) {
+      return 0;
+    }
+    if (__fern_profile_macho_u32(command) == 25 && len >= 72) {
+      let addr: usize = __load_i64(command + 24) as usize;
+      let bytes: usize = __load_i64(command + 32) as usize;
+      if (addr >= base && bytes > 0) {
+        let limit: usize = addr + bytes;
+        if (limit < addr) {
+          return 0;
+        }
+        if (limit > extent) {
+          extent = limit;
+        }
+      }
+    }
+    at = at + len;
+    i = i + 1;
+  }
+  return extent - base;
+}

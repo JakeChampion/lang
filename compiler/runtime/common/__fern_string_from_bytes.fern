@@ -1,0 +1,10 @@
+function __fern_string_from_bytes(a: i32[]): string {
+  let n: i32 = a.len();
+  let p: usize = __raw_alloc(n);
+  let i: i32 = 0;
+  while (i < n) {
+    __raw_store8(p, i, a[i]);
+    i = i + 1;
+  }
+  return __raw_string(p, n);
+}

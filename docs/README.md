@@ -122,6 +122,7 @@ which ones.
 | Doc | Status | What it is |
 | --- | --- | --- |
 | `BOOTSTRAP.md` | [reference] | How `make bootstrap` builds the compiler from a pinned stage0 without Go, and how `make distcheck` proves byte-identical self-reproduction. |
+| `INTERNAL-RUNTIME.md` | [reference] | Runtime source modules, declaration selection, source diagnostics, and checks. |
 | `SELFHOST-SEMANTIC-SOURCE.md` | [reference] | The typed lowering (`semsource.fern`) from checked source to semantic SSA, which produces every function body. |
 | `SELFHOST-SSA-BACKEND.md` | [reference] | The register-allocating SSA backend, the only emitter on arm64 and x86-64: lift, allocation, emission and measurements. |
 | `SELF-HOST-AUDIT.md` | [tracker] | Code-quality audit of `compiler/` with SH-NNN findings, mirrored as the open checklist in #2849. |

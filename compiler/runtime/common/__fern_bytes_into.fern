@@ -1,0 +1,29 @@
+function __fern_bytes_into(n: i32, from: i32, src: usize, at: i32, dst: usize): i32[] {
+  let sn: i32 = 0;
+  let sp: usize = 0;
+  if ((src as i32 & 2) != 0) {
+    let base: usize = src - 2;
+    sn = __load_i32(base + 8);
+    sp = __raw_load_ptr(base, 0);
+  } else {
+    sn = __load_i32(src);
+    sp = src + 8;
+  }
+  let dn: i32 = __load_i32(dst);
+  if (n < 0 || at < 0 || from < 0 || at > dn - n || from > sn - n) {
+    __fern_slice_abort();
+  }
+  if (n == 0) {
+    return __raw_array(dst);
+  }
+  let d: usize = dst;
+  if (__fern_rc_is_unique(d) == 0) {
+    let b: usize = __raw_arr_box((dn + 7) / 8);
+    __store_i64(b, dn as i64);
+    __memcpy(b + 8, d + 8, dn);
+    __fern_rc_dec(d);
+    d = b;
+  }
+  __memcpy(d + 8 + at, sp + from, n);
+  return __raw_array(d);
+}

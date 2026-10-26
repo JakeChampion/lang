@@ -1,0 +1,66 @@
+function __fern_ring_recv_u8(ring: i64, fd: i32, buf: i32[]): i32 {
+  let max: i32 = buf.len();
+  let dst: usize = __raw_arr_ptr(buf) + 8;
+  if (ring < 0 as i64 || fd < 0) {
+    return 0 - 9;
+  }
+  let blk: usize = ring as usize;
+  if (fd >= __load_i32(blk + 68)) {
+    return 0 - 9;
+  }
+  let ent: usize = __fern_ring_entry(blk, fd);
+  let pb: usize = __load_i64(blk + 160) as usize;
+  let got: i32 = 0;
+  while (got < max && __fern_ring_u16(ent, 8) != 0) {
+    let bid: i32 = __fern_ring_u16(ent, 8) - 1;
+    let meta: usize = pb + 4096 + bid as usize * 8;
+    let len: i32 = __fern_ring_u16(meta, 2);
+    let off: i32 = __fern_ring_u16(meta, 4);
+    let k: i32 = len - off;
+    if (k > max - got) {
+      k = max - got;
+    }
+    let src: usize = pb + 8192 + bid as usize * 4096 + off as usize;
+    let to: usize = dst + got as usize;
+    __memcpy(to, src, k);
+    got = got + k;
+    if (off + k >= len) {
+      let nxt: i32 = __fern_ring_u16(meta, 0);
+      __fern_ring_set16(ent, 8, nxt);
+      if (nxt == 0) {
+        __fern_ring_set16(ent, 10, 0);
+      }
+      __raw_store8(ent, 15, __raw_load8(ent, 15) - 1);
+      __fern_ring_give(blk, bid);
+      if (nxt == 0 && (__raw_load8(ent, 4) == 2 || __raw_load8(ent, 4) == 5) && __raw_load8(ent, 6) == 0) {
+        __fern_ring_pend(blk, fd);
+      }
+    } else {
+      __fern_ring_set16(meta, 4, off + k);
+    }
+  }
+  let ended: i32 = __raw_load8(ent, 6);
+  if (got > 0 && (ended != 0 || __raw_load8(ent, 4) == 1 || __raw_load8(ent, 4) == 2 || got >= max)) {
+    return got;
+  }
+  if (got > 0) {
+    let more: i32 = __syscall6(45, fd as i64, (dst + got as usize) as i64, (max - got) as i64, 64, 0, 0) as i32;
+    if (more > 0) {
+      return got + more;
+    }
+    return got;
+  }
+  if (ended == 1) {
+    return 0;
+  }
+  if (ended == 2) {
+    return 0 - __raw_load8(ent, 7);
+  }
+  if (__raw_load8(ent, 4) == 1 || __raw_load8(ent, 4) == 2) {
+    return 0 - 11;
+  }
+  if (max <= 0) {
+    return 0;
+  }
+  return __syscall3(0, fd as i64, dst as i64, max as i64) as i32;
+}

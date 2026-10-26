@@ -1,0 +1,28 @@
+function __fern_str_repeat(s: string, n: i32): string {
+  let slen: i32 = s.len();
+  let count: i32 = n;
+  if (count < 0) {
+    count = 0;
+  }
+  let total64: i64 = slen as i64 * (count as i64);
+  let total: i32 = total64 as i32;
+  if (total64 > 2147483647) {
+    total = 0 - 1;
+  }
+  if (total == 0) {
+    return "";
+  }
+  let p: usize = __raw_alloc(total);
+  let w: i32 = 0;
+  let k: i32 = 0;
+  while (k < count) {
+    let j: i32 = 0;
+    while (j < slen) {
+      __raw_store8(p, w, s[j] as i32);
+      w = w + 1;
+      j = j + 1;
+    }
+    k = k + 1;
+  }
+  return __raw_string(p, total);
+}

@@ -1,0 +1,47 @@
+function __fern_ring_recv_done(blk: usize, fd: i32, gen: i32, res: i32, flags: i32, nfds: i32): i32 {
+  let bid: i32 = flags >> 16 & 65535;
+  if (fd < 0 || fd >= nfds) {
+    if ((flags & 1) != 0) {
+      __fern_ring_give(blk, bid);
+    }
+    return 0;
+  }
+  let ent: usize = __fern_ring_entry(blk, fd);
+  if (__raw_load8(ent, 5) != gen || __raw_load8(ent, 0) == 0) {
+    if ((flags & 1) != 0) {
+      __fern_ring_give(blk, bid);
+    }
+    return 0;
+  }
+  if ((flags & 1) != 0 && res > 0) {
+    __fern_ring_enqueue(blk, ent, bid, res);
+  } else if ((flags & 1) != 0) {
+    __fern_ring_give(blk, bid);
+  }
+  let st: i32 = __raw_load8(ent, 4);
+  if (res == 0) {
+    __raw_store8(ent, 6, 1);
+    __raw_store8(ent, 4, 0);
+  } else if (res == 0 - 105) {
+    if (st == 1) {
+      __fern_ring_fall_back(blk, ent, fd);
+    }
+  } else if (res == 0 - 88 || res == 0 - 95) {
+    __raw_store8(ent, 6, 3);
+    __fern_ring_fall_back(blk, ent, fd);
+  } else if (res < 0 && res != 0 - 125) {
+    __raw_store8(ent, 6, 2);
+    __raw_store8(ent, 7, 0 - res & 255);
+    __raw_store8(ent, 4, 0);
+  } else if (res > 0 && st == 1 && __raw_load8(ent, 15) >= 16) {
+    __fern_ring_fall_back(blk, ent, fd);
+    __fern_ring_pend(blk, fd);
+  } else if (res > 0 && st == 1 && (flags & 2) == 0) {
+    __raw_store8(ent, 4, 2);
+    __fern_ring_pend(blk, fd);
+  }
+  if ((__raw_load8(ent, 0) & 1) != 0 && (__fern_ring_u16(ent, 8) != 0 || __raw_load8(ent, 6) == 1 || __raw_load8(ent, 6) == 2)) {
+    __fern_ring_list(blk, ent, fd);
+  }
+  return 0;
+}
