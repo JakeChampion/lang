@@ -434,7 +434,8 @@ aarch64/map_int.ir	35263853
 aarch64/map_probe_chain.text	5932
 aarch64/map_probe_chain.ir	334317381
 aarch64/map_string.text	7013
-aarch64/map_string.ir	60356414	2
+# 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
+aarch64/map_string.ir	58932247	2
 aarch64/ordmap_insert.text	5868
 aarch64/ordmap_insert.ir	98616062
 aarch64/pmap_insert.text	2936
