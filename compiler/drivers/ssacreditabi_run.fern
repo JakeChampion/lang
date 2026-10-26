@@ -946,7 +946,7 @@ function producer_source(mode: i32): string {
     let subject = if (mode == 3) { "Parent" } else { "Leaf" };
     finalizer = "trait Drop { function drop(self: Self): void; }\nimpl Drop for " + subject + " { function drop(self: Self): void {} }\n";
   }
-  return leaf + "struct Parent { left: " + child + ", right: " + right + extra + " }\n" + finalizer
+  return "import \"core/map\";\n" + leaf + "struct Parent { left: " + child + ", right: " + right + extra + " }\n" + finalizer
     + "@noinline\nfunction leaf(n: " + number + "): " + child + " { return Leaf { n: n }; }\n"
     + "@noinline\nfunction parent(own left: " + child + ", " + right_param + "): Parent { return Parent { left: left, right: right" + init_extra + " }; }\n"
     + "function main(): i32 { let ps: Map[i32, Parent] = Map { 0: parent(leaf(" + value + "), " + right_value + ") }; return ps.len() - 1; }\n";
