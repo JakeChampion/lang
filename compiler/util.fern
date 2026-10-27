@@ -889,7 +889,14 @@ pub function rc_underflow_guard(who: string, code: i32): i32 {
 }
 
 pub function verify_on(): boolean {
-  return envflag.on("FERN_IR_VERIFY");
+  match (env("FERN_IR_VERIFY")) {
+    Some(v) => {
+      return envflag.value_on(v);
+    },
+    None => {
+      return true;
+    }
+  }
 }
 
 pub function certify_mode(): i32 {
