@@ -37,6 +37,9 @@ done
 "$FERN" -check tests/icc_matrix_model_test.fern
 "$FERN" -target x86-64-linux -sanitize -o build/icc_matrix_model_test tests/icc_matrix_model_test.fern
 ./build/icc_matrix_model_test
+"$FERN" -check tests/icc_matrix_trc_eval_test.fern
+"$FERN" -target x86-64-linux -sanitize -o build/icc_matrix_trc_eval_test tests/icc_matrix_trc_eval_test.fern
+./build/icc_matrix_trc_eval_test
 "$FERN" -check tests/png_incremental_test.fern
 "$FERN" -target x86-64-linux -sanitize -o build/png_incremental_test tests/png_incremental_test.fern
 ./build/png_incremental_test
