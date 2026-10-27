@@ -111,7 +111,9 @@ function struct_item(sd: parser.StructDecl, prefix: string): Item {
 }
 
 function func_item(s: checker.Scope, name: string, shown: string): Item {
-  let sig: checker.FuncSig = checker.func_sig(s, name);
+  let Some(sig) = checker.func_sig(s, name) else {
+    return Item { label: shown, kind: CI_FUNCTION, detail: "function " + shown + "(): unknown" };
+  };
   if (sig.is_const) {
     return Item { label: shown, kind: CI_CONSTANT, detail: "(const) " + lspquery.label(sig.ret_type, sig.ret_type_name) };
   }
@@ -447,15 +449,19 @@ function callee_parts(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten
   }
   let s: checker.Scope = checker.module_scope(v);
   if (site.qual.len() > 0) {
-    return (t.text, lspquery.func_parts(checker.func_sig(s, site.target)));
+    let Some(sig) = checker.func_sig(s, site.target) else {
+      return (t.text, lspquery.no_parts());
+    };
+    return (t.text, lspquery.func_parts(sig));
   }
   if (site.dot_col > 0) {
     return (t.text, lspquery.no_parts());
   }
   for c in own_first(quals.own, t.text) {
-    let sig: checker.FuncSig = checker.func_sig(s, c);
-    if (sig.name.len() > 0 && !sig.is_const) {
-      return (t.text, lspquery.func_parts(sig));
+    if let Some(sig) = checker.func_sig(s, c) {
+      if (!sig.is_const) {
+        return (t.text, lspquery.func_parts(sig));
+      }
     }
   }
   return (t.text, lspquery.no_parts());
@@ -674,7 +680,10 @@ function const_type(p: lspquery.Program, m: i32, fd: parser.FuncDecl): string {
   if (own.len() > 0) {
     bundled = own + "__" + fd.name;
   }
-  return type_text(checker.func_sig(checker.module_scope(v.types), bundled).ret_type);
+  let Some(sig) = checker.func_sig(checker.module_scope(v.types), bundled) else {
+    return "unknown";
+  };
+  return type_text(sig.ret_type);
 }
 
 pub struct Hint { line: i32, col: i32, label: string }

@@ -246,11 +246,13 @@ function global_kind(s: checker.Scope, name: string): i32 {
   if (checker.variant_enum(s, name).len() > 0) {
     return T_ENUM_MEMBER;
   }
-  let sig: checker.FuncSig = checker.func_sig(s, name);
-  if (sig.name.len() > 0 && sig.is_const) {
-    return T_VARIABLE;
+  if let Some(sig) = checker.func_sig(s, name) {
+    if (sig.is_const) {
+      return T_VARIABLE;
+    }
+    return T_FUNCTION;
   }
-  if (sig.name.len() > 0 || parser.is_builtin_function(name)) {
+  if (parser.is_builtin_function(name)) {
     return T_FUNCTION;
   }
   return type_kind(s, name);

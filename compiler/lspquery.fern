@@ -357,7 +357,9 @@ pub function call_parts(v: checker.QueryView, site: Site): (Parts, boolean) {
   match (f.expr) {
     ast.ExprIdent(id) => {
       let (_, local) = binding_of(fd, site);
-      let sig: checker.FuncSig = checker.func_sig(s, id.name);
+      let Some(sig) = checker.func_sig(s, id.name) else {
+        return (no_parts(), true);
+      };
       if (local && f.kind == K_IDENT || sig.is_const) {
         return (no_parts(), true);
       }
@@ -572,8 +574,7 @@ function global_text(s: checker.Scope, name: string, shown: string): string {
   if (owner.len() > 0) {
     return variant_text(s, name, owner);
   }
-  let sig: checker.FuncSig = checker.func_sig(s, name);
-  if (sig.name.len() > 0) {
+  if let Some(sig) = checker.func_sig(s, name) {
     if (sig.is_const) {
       return "(const) " + shown + ": " + label(sig.ret_type, sig.ret_type_name);
     }
@@ -583,9 +584,10 @@ function global_text(s: checker.Scope, name: string, shown: string): string {
 }
 
 function qualified_text(s: checker.Scope, name: string, site: Site): string {
-  let sig: checker.FuncSig = checker.func_sig(s, name);
-  if (sig.name.len() > 0 && !sig.is_const) {
-    return "(from " + site.qual + ") " + func_text(site.name, sig);
+  if let Some(sig) = checker.func_sig(s, name) {
+    if (!sig.is_const) {
+      return "(from " + site.qual + ") " + func_text(site.name, sig);
+    }
   }
   return global_text(s, name, site.name);
 }

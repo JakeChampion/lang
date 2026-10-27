@@ -735,7 +735,7 @@ findings. Ranked by leverage.
   Any change to that failure contract still needs a separate invariant analysis and regression test.
 
 ### T6 — Errors & signals smuggled through value types / sentinels
-- [~] **SH-026 — Missing signature placeholders remain in two lookup families.**
+- [~] **SH-026 — Missing signature placeholders remain in struct lookup.**
   The original row mixed absent values, missing signatures and failure results.
 
   _Done — and the row's premise on this part was wrong._ The four surviving
@@ -753,8 +753,8 @@ findings. Ranked by leverage.
   only "unknown" was ever load-bearing. A `VAbsent` variant was considered and
   rejected: it would add a dead arm to every exhaustive match over `Value`.
 
-  _Still open:_ `lookup_sig` and `lookup_struct` return `name: ""` when a lookup fails.
-  These families need standard options and explicit caller contracts.
+  _Still open:_ `lookup_struct` returns `name: ""` when a lookup fails.
+  This family needs standard options and explicit caller contracts.
 
   Union signature lookup now returns `Option[UnionSig]`.
   Variant-owner lookup, built-in fallback and the public union and enum queries share this absence contract.
@@ -774,6 +774,13 @@ findings. Ranked by leverage.
   Map iteration retains its provider alias, and array lookup retains visibility and view filters.
   Contract checks execute on x86-64, ARM64 and Wasm.
   Twenty-one before/after cases retain the well-typed flag, diagnostic text, positions and order.
+
+  Function, associated-function and generic-call signature lookup now return `Option[FuncSig]`.
+  Missing callees skip generic inference without a placeholder signature.
+  The checker, typed front end and LSP queries match the option before they use a signature.
+  Present signatures retain constant flags, ownership flags, generic metadata and cached type references.
+  Public lookup contracts execute on x86-64, ARM64 and Wasm.
+  Twenty-seven before/after cases retain the well-typed flag, diagnostic text, positions and order.
 
   _Also open:_ custom success and failure carriers under T8, such as `irtables.LowerResult`.
   Review their partial-state contracts before a result migration.

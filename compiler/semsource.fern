@@ -2311,7 +2311,10 @@ function builtin_concat(c: ast.ExprCall, s: State): Value {
 }
 
 function join_kernel(name: string, c: ast.ExprCall, s: State): boolean {
-  return c.args.len() == 2 && name == parser.concrete_array_method_name("string[]", "join") && is_string_array(checked(c.args[0], s)) && s.scope.lookup_sig(name).module == util.mangle_prefix("array");
+  if (c.args.len() != 2 || name != parser.concrete_array_method_name("string[]", "join") || !is_string_array(checked(c.args[0], s))) {
+    return false;
+  }
+  return match (s.scope.lookup_sig(name)) { Some(sig) => sig.module == util.mangle_prefix("array"), None => false };
 }
 
 function folded_join(c: ast.ExprCall, s: State): Value {
@@ -3414,7 +3417,9 @@ function qualified_call(e: ast.Expr, head: string, name: string, c: ast.ExprCall
 
 function qualified_binding(c: ast.ExprCall, contract: ssasem.Contract, head: string, name: string, s: State): ssasem.Binding {
   let binding = written_binding(c, contract, s);
-  let sig = s.scope.lookup_assoc_sig(head, name);
+  let Some(sig) = s.scope.lookup_assoc_sig(head, name) else {
+    return binding;
+  };
   if (sig.receiver.len() > 0) {
     if let ast.ExprFieldAccess(field) = c.callee {
       if let ast.ExprIdent(receiver) = field.obj {
