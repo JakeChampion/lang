@@ -597,9 +597,10 @@ function type_text(s: checker.Scope, name: string): string {
   if (owner.len() > 0) {
     return variant_text(s, name, owner);
   }
-  let st: checker.StructSig = checker.struct_sig(s, name);
-  if (st.name.len() > 0 && st.enum_owner.len() == 0) {
-    return struct_text(st);
+  if let Some(st) = checker.struct_sig(s, name) {
+    if (st.enum_owner.len() == 0) {
+      return struct_text(st);
+    }
   }
   if let Some(u) = checker.enum_sig(s, name) {
     if (u.is_enum) {
@@ -632,7 +633,9 @@ function member_text(s: checker.Scope, fa: ast.ExprFieldAccess, called: boolean)
 
 function field_text(s: checker.Scope, fa: ast.ExprFieldAccess): string {
   if let typeinfo.TypeStruct(t) = checker.expr_type(fa.obj, s) {
-    let st: checker.StructSig = checker.struct_sig(s, t.name);
+    let Some(st) = checker.struct_sig(s, t.name) else {
+      return "";
+    };
     let i: i32 = util.index_of_str(st.field_names, fa.field);
     if (i >= 0) {
       return "(field) " + fa.field + ": " + label(st.field_types[i], st.field_type_names[i]);
@@ -713,12 +716,14 @@ pub function variant_text(s: checker.Scope, name: string, owner: string): string
 }
 
 function payload(s: checker.Scope, name: string, u: checker.UnionSig): string {
-  let v: checker.StructSig = checker.variant_sig(s, name, u.name);
-  if (v.field_types.len() > 0) {
-    return "(" + labels(v.field_types, v.field_type_names) + ")";
+  if let Some(v) = checker.variant_sig(s, name, u.name) {
+    if (v.field_types.len() > 0) {
+      return "(" + labels(v.field_types, v.field_type_names) + ")";
+    }
+    return "";
   }
   let slot: i32 = checker.payload_slot(s, u.name, name, 0);
-  if (v.name.len() == 0 && slot >= 0 && slot < u.type_params.len()) {
+  if (slot >= 0 && slot < u.type_params.len()) {
     return "(" + u.type_params[slot] + ")";
   }
   return "";
@@ -976,7 +981,7 @@ function member_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.
 pub function field_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess): Answer {
   if let typeinfo.TypeStruct(t) = checker.expr_type(fa.obj, s) {
     let at: Answer = type_decl_def(p, v, t.name);
-    if (at.found && util.has_str(checker.struct_sig(s, t.name).field_names, fa.field)) {
+    if (at.found && util.has_str(checker.struct_field_names(s, t.name), fa.field)) {
       let toks: Tok[] = module_toks(p, util.pos_file_index(at.line));
       return tok_answer(toks, field_tok(toks, after(toks, at.line, at.col + at.len), fa.field), at.line, at.col, fa.field);
     }

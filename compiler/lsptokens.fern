@@ -265,7 +265,7 @@ function type_kind(s: checker.Scope, name: string): i32 {
     }
     return T_TYPE;
   }
-  if (checker.struct_sig(s, name).name.len() > 0) {
+  if (s.has_struct(name)) {
     return T_STRUCT;
   }
   return 0 - 1;

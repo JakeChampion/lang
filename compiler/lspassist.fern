@@ -257,11 +257,12 @@ function skip_stmt(st: ast.Stmt, own acc: ast.ExprFieldAccess[]): ast.ExprFieldA
 function type_members(s: checker.Scope, t: typeinfo.Type): Item[] {
   let out: Item[] = [];
   if let typeinfo.TypeStruct(st) = t {
-    let sig: checker.StructSig = checker.struct_sig(s, st.name);
-    let i: i32 = 0;
-    while (i < sig.field_names.len()) {
-      out = out.append(Item { label: sig.field_names[i], kind: CI_FIELD, detail: lspquery.label(sig.field_types[i], sig.field_type_names[i]) });
-      i = i + 1;
+    if let Some(sig) = checker.struct_sig(s, st.name) {
+      let i: i32 = 0;
+      while (i < sig.field_names.len()) {
+        out = out.append(Item { label: sig.field_names[i], kind: CI_FIELD, detail: lspquery.label(sig.field_types[i], sig.field_type_names[i]) });
+        i = i + 1;
+      }
     }
   }
   if let typeinfo.TypeArray(a) = t {

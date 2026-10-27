@@ -735,7 +735,7 @@ findings. Ranked by leverage.
   Any change to that failure contract still needs a separate invariant analysis and regression test.
 
 ### T6 — Errors & signals smuggled through value types / sentinels
-- [~] **SH-026 — Missing signature placeholders remain in struct lookup.**
+- [x] **SH-026 — Missing signature lookups use standard options.**
   The original row mixed absent values, missing signatures and failure results.
 
   _Done — and the row's premise on this part was wrong._ The four surviving
@@ -753,8 +753,8 @@ findings. Ranked by leverage.
   only "unknown" was ever load-bearing. A `VAbsent` variant was considered and
   rejected: it would add a dead arm to every exhaustive match over `Value`.
 
-  _Still open:_ `lookup_struct` returns `name: ""` when a lookup fails.
-  This family needs standard options and explicit caller contracts.
+  _Done:_ The function, struct, method and union lookup families return standard options.
+  Missing signatures no longer use empty signature records.
 
   Union signature lookup now returns `Option[UnionSig]`.
   Variant-owner lookup, built-in fallback and the public union and enum queries share this absence contract.
@@ -782,7 +782,17 @@ findings. Ranked by leverage.
   Public lookup contracts execute on x86-64, ARM64 and Wasm.
   Twenty-seven before/after cases retain the well-typed flag, diagnostic text, positions and order.
 
-  _Also open:_ custom success and failure carriers under T8, such as `irtables.LowerResult`.
+  Struct and variant-signature lookup now return `Option[StructSig]`.
+  Ordinary lookup shares one table search with `find_struct_sig`.
+  The typed front end uses options for record schemas, instantiated records and record types.
+  Empty structs remain present, and built-in payload and legacy variant-shape fallbacks retain their behavior.
+  Field and type parameter queries preserve empty defaults for absent signatures.
+  Public lookup contracts execute on x86-64, ARM64 and Wasm.
+
+  Thirty-three before/after cases retain the well-typed flag, diagnostic text, positions and order.
+  LSP queries and generic record, dynamic trait, destructure and struct-update runtime checks pass.
+
+  _T8 remains open:_ custom success and failure carriers, such as `irtables.LowerResult`, still need a contract review.
   Review their partial-state contracts before a result migration.
   A `Result` suffix alone does not identify an error wrapper.
   `LexResult` carries tokens and comments, and the checker's `CheckResult` carries a scope and a type.

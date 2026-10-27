@@ -601,8 +601,10 @@ function record_variables(name: string, scope: checker.Scope, seen: string[]): s
   if (!util.contains(name, "__")) {
     return [];
   }
-  let sig: checker.StructSig = checker.struct_sig(scope, name);
-  if (sig.name.len() == 0 || sig.type_params.len() > 0 || sig.enum_owner.len() > 0 || util.index_of_str(seen, name) >= 0) {
+  let Some(sig) = checker.struct_sig(scope, name) else {
+    return [];
+  };
+  if (sig.type_params.len() > 0 || sig.enum_owner.len() > 0 || util.index_of_str(seen, name) >= 0) {
     return [];
   }
   let out: string[] = [];
@@ -900,10 +902,9 @@ function union_layout(s: State, name: string): i32 {
   let owned: i32 = 0;
   let plain: i32 = 0;
   for v in variants {
-    let vs: checker.StructSig = checker.variant_shape_sig(s.scope, v, name);
-    if (vs.name.len() == 0) {
+    let Some(vs) = checker.variant_shape_sig(s.scope, v, name) else {
       return 0;
-    }
+    };
     if (vs.enum_owner == name) {
       owned = owned + 1;
     } else {
@@ -964,16 +965,22 @@ function arm_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32)
   if (layout == semrecords.layout_option()) {
     return builtin_payloads(whole, name);
   }
-  let sig: checker.StructSig = checker.instantiated_variant(checker.variant_shape_sig(s.scope, name, union_name(whole)), s.scope, whole);
-  return Payloads { found: sig.name.len() > 0, types: resolved_types(sig.field_types, s.scope), unit: false };
+  let Some(shape) = checker.variant_shape_sig(s.scope, name, union_name(whole)) else {
+    return Payloads { found: false, types: [], unit: false };
+  };
+  let sig: checker.StructSig = checker.instantiated_variant(shape, s.scope, whole);
+  return Payloads { found: true, types: resolved_types(sig.field_types, s.scope), unit: false };
 }
 
 function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Payloads {
   if (layout == semrecords.layout_option()) {
     return builtin_payloads(whole, name);
   }
-  let sig: checker.StructSig = checker.instantiated_variant(checker.variant_sig(s.scope, literal_variant_name(s, whole, name), union_name(whole)), s.scope, whole);
-  return Payloads { found: sig.name.len() > 0, types: resolved_types(sig.field_types, s.scope), unit: false };
+  let Some(shape) = checker.variant_sig(s.scope, literal_variant_name(s, whole, name), union_name(whole)) else {
+    return Payloads { found: false, types: [], unit: false };
+  };
+  let sig: checker.StructSig = checker.instantiated_variant(shape, s.scope, whole);
+  return Payloads { found: true, types: resolved_types(sig.field_types, s.scope), unit: false };
 }
 
 function literal_variant_name(s: State, whole: typeinfo.Type, name: string): string {
@@ -1378,32 +1385,40 @@ function field(e: ast.Expr, fa: ast.ExprFieldAccess, s: State, expected: typeinf
   return define(s, ssasem.tuple_get(), [container.id], at, "", elem);
 }
 
-function record_schema(name: string, s: State): checker.StructSig {
-  let sig: checker.StructSig = checker.struct_sig(s.scope, name);
+function record_schema(name: string, s: State): Option[checker.StructSig] {
+  let Some(sig) = checker.struct_sig(s.scope, name) else {
+    return None;
+  };
   if (sig.type_params.len() > 0 || sig.enum_owner.len() > 0) {
-    return checker.struct_sig(s.scope, "");
+    return None;
   }
-  return checker.StructSig { ...sig, field_types: resolved_types(sig.field_types, s.scope) };
+  return Some(checker.StructSig { ...sig, field_types: resolved_types(sig.field_types, s.scope) });
 }
 
-function record_sig(t: typeinfo.Type, s: State): checker.StructSig {
+function has_record_schema(name: string, s: State): boolean {
+  return match (record_schema(name, s)) { Some(_) => true, None => false };
+}
+
+function record_sig(t: typeinfo.Type, s: State): Option[checker.StructSig] {
   if let typeinfo.TypeStruct(r) = t {
-    let sig: checker.StructSig = record_schema(r.name, s);
-    if (sig.name.len() == 0 || r.args.len() == 0) {
-      return sig;
+    let Some(sig) = record_schema(r.name, s) else {
+      return None;
+    };
+    if (r.args.len() == 0) {
+      return Some(sig);
     }
     let vars: string[] = record_variables(r.name, s.scope, []);
     if (vars.len() != r.args.len()) {
-      return checker.struct_sig(s.scope, "");
+      return None;
     }
     let b: ssasem.Binding = ssasem.Binding { ok: true, why: "", names: vars, types: r.args };
     let fts: typeinfo.Type[] = [];
     for ft in sig.field_types {
       fts = fts.append(resolved(ft, true, b, s.scope));
     }
-    return checker.StructSig { ...sig, field_types: fts };
+    return Some(checker.StructSig { ...sig, field_types: fts });
   }
-  return checker.struct_sig(s.scope, "");
+  return None;
 }
 
 function record_field_index(sig: checker.StructSig, name: string): i32 {
@@ -1426,10 +1441,9 @@ function record_field(fa: ast.ExprFieldAccess, s: State): Value {
   if (fa.field == "fd" && semtypes.is_fd_handle(s.values[container.id])) {
     return define(s, ssasem.cast(), [container.id], 0, "", t_i32());
   }
-  let sig: checker.StructSig = record_sig(s.values[container.id], s);
-  if (sig.name.len() == 0) {
+  let Some(sig) = record_sig(s.values[container.id], s) else {
     return refused(s, "unsupported projection");
-  }
+  };
   let at: i32 = record_field_index(sig, fa.field);
   if (at < 0 || !semtypes.concrete(sig.field_types[at], false)) {
     return refused(s, "record projection contract");
@@ -1497,11 +1511,12 @@ function built_record(w: Written, ty: typeinfo.Type, base: i32): Value {
 }
 
 function record_update(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
-  let ty: typeinfo.Type = record_type(sl.type_name, s);
-  let sig: checker.StructSig = record_sig(ty, s);
-  if (sig.name.len() == 0) {
+  let Some(ty) = record_type(sl.type_name, s) else {
     return refused(s, "unsupported record literal");
-  }
+  };
+  let Some(sig) = record_sig(ty, s) else {
+    return refused(s, "unsupported record literal");
+  };
   let base: Value = expr(sl.base, s, ty);
   s = base.s;
   if (!s.ok) {
@@ -1539,16 +1554,23 @@ function record(e: ast.Expr, sl: ast.ExprStructLit, s: State): Value {
   if (sl.has_base) {
     return record_update(e, sl, s);
   }
-  let ty: typeinfo.Type = record_type(sl.type_name, s);
-  let sig: checker.StructSig = record_sig(ty, s);
-  if (sig.name.len() == 0 || sl.field_values.len() != sig.field_types.len()) {
+  let Some(ty) = record_type(sl.type_name, s) else {
+    return refused(s, "unsupported record literal");
+  };
+  let Some(sig) = record_sig(ty, s) else {
+    return refused(s, "unsupported record literal");
+  };
+  if (sl.field_values.len() != sig.field_types.len()) {
     return refused(s, "unsupported record literal");
   }
   return built_record(place_fields(written_fields(sl, sig, s), sig, 0 - 1), ty, 0);
 }
 
-function record_type(name: string, s: State): typeinfo.Type {
-  return resolved(typeinfo.TypeStruct { name: record_schema(name, s).name, args: [] }, s.template, s.binding, s.scope);
+function record_type(name: string, s: State): Option[typeinfo.Type] {
+  let Some(sig) = record_schema(name, s) else {
+    return None;
+  };
+  return Some(resolved(typeinfo.TypeStruct { name: sig.name, args: [] }, s.template, s.binding, s.scope));
 }
 
 function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: State): Value {
@@ -2650,8 +2672,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   if (owner == "") {
     owner = union_name(s.values[recv]);
   }
-  let fsig: checker.StructSig = record_sig(s.values[recv], s);
-  if (fsig.name.len() > 0) {
+  if let Some(fsig) = record_sig(s.values[recv], s) {
     let fat: i32 = record_field_index(fsig, fa.field);
     if (fat >= 0 && ssasem.is_func(fsig.field_types[fat])) {
       let fv: Value = field_read(s, recv, fat, fa.field, fsig.field_types[fat]);
@@ -3228,7 +3249,7 @@ function names_member(s: State, whole: typeinfo.Type, name: string): boolean {
   if (owner == "" || union_layout(s, owner) != semrecords.layout_member()) {
     return false;
   }
-  return checker.variant_shape_sig(s.scope, name, owner).name.len() > 0;
+  return match (checker.variant_shape_sig(s.scope, name, owner)) { Some(_) => true, None => false };
 }
 
 function member_literal(name: string, whole: typeinfo.Type, written: ast.Expr, s: State): Value {
@@ -3361,7 +3382,7 @@ function type_head(obj: ast.Expr, s: State): string {
 
 function declared_type_head(name: string, s: State): string {
   let base = util.base_type_name(name);
-  if (base != name && (checker.struct_sig(s.scope, base).name.len() > 0 || union_variants(s, base).len() > 0 || builtin_union_layout(base) != 0)) {
+  if (base != name && (s.scope.has_struct(base) || union_variants(s, base).len() > 0 || builtin_union_layout(base) != 0)) {
     return base;
   }
   if (s.scope.has_union(name) || builtin_union_layout(name) != 0) {
@@ -3370,8 +3391,7 @@ function declared_type_head(name: string, s: State): string {
   if (checker.variant_owner_of(s.scope, name).len() > 0) {
     return "";
   }
-  let sig = checker.struct_sig(s.scope, name);
-  if (sig.name.len() > 0) {
+  if let Some(sig) = checker.struct_sig(s.scope, name) {
     if (sig.enum_owner.len() > 0) {
       return "";
     }
@@ -3738,7 +3758,7 @@ function widen(v: Value, expected: typeinfo.Type): Value {
   }
   let layout: i32 = union_layout(s, owner);
   if (layout == semrecords.layout_member()) {
-    if (checker.variant_shape_sig(s.scope, member, owner).name.len() == 0) {
+    if let None = checker.variant_shape_sig(s.scope, member, owner) {
       return v;
     }
     return define(s, ssasem.variant_up(), [v.id], 0, member, expected);
@@ -3934,8 +3954,10 @@ function destructure_record(encoded: string, tag: string, whole: i32, s: State, 
   }
   let names: string[] = pattern_names(encoded);
   let fields: string[] = pattern_names(slice_unchecked(rest, colon + 1, rest.len()) + "");
-  let sig: checker.StructSig = record_sig(s.values[whole], s);
-  if (sig.name.len() == 0 || sig.name != slice_unchecked(rest, 0, colon) || fields.len() != names.len()) {
+  let Some(sig) = record_sig(s.values[whole], s) else {
+    return fail(s, "unsupported destructuring declaration");
+  };
+  if (sig.name != slice_unchecked(rest, 0, colon) || fields.len() != names.len()) {
     return fail(s, "unsupported destructuring declaration");
   }
   let i: i32 = 0;
@@ -5990,10 +6012,9 @@ function env_entry(t: typeinfo.Type, views: string[], impls: parser.ImplInfo[], 
 }
 
 function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: Schemas): Schemas {
-  let sig: checker.StructSig = record_sig(t, s);
-  if (sig.name.len() == 0) {
+  let Some(sig) = record_sig(t, s) else {
     return Schemas { ...out, ok: false, why: "unsupported record type " + typeinfo.spelling(t) };
-  }
+  };
   if (!fields_resolved(sig)) {
     return Schemas { ...out, ok: false, why: "unresolved record field type" };
   }
@@ -6032,8 +6053,11 @@ function laid_variants(s: State, whole: typeinfo.Type, layout: i32): semrecords.
   }
   let variants: semrecords.Variant[] = [];
   for name in union_variants(s, union_name(whole)) {
-    let sig: checker.StructSig = checker.instantiated_variant(checker.variant_shape_sig(s.scope, name, union_name(whole)), s.scope, whole);
-    variants = variants.append(semrecords.Variant { name: name, fields: fields_of(sig, s.scope) });
+    let fields: semrecords.Field[] = [];
+    if let Some(shape) = checker.variant_shape_sig(s.scope, name, union_name(whole)) {
+      fields = fields_of(checker.instantiated_variant(shape, s.scope, whole), s.scope);
+    }
+    variants = variants.append(semrecords.Variant { name: name, fields: fields });
   }
   return variants;
 }
@@ -6192,11 +6216,11 @@ function dyn_concretes(t: typeinfo.Type, s: State): typeinfo.Type[] {
   for n in dyn_impl_names(t, s.impls) {
     if (n == "string") {
       out = out.append(t_string());
-    } else if (checker.union_type_params(s.scope, n).len() > 0 || checker.struct_sig(s.scope, n).type_params.len() > 0) {
+    } else if (checker.union_type_params(s.scope, n).len() > 0 || checker.struct_type_params(s.scope, n).len() > 0) {
       for c in generic_clones(n, s) {
         out = out.append(c);
       }
-    } else if (record_schema(n, s).name.len() > 0) {
+    } else if (has_record_schema(n, s)) {
       out = out.append(typeinfo.TypeStruct { name: n, args: [] });
     } else if (union_layout(s, n) == semrecords.layout_variant()) {
       out = out.append(typeinfo.TypeUnion { name: n, args: [] });
@@ -6228,7 +6252,7 @@ function dyn_impl_names(t: typeinfo.Type, impls: parser.ImplInfo[]): string[] {
 }
 
 function erased_generic(n: string, s: State): boolean {
-  return checker.struct_sig(s.scope, n).name.len() == 0 && union_layout(s, n) == 0 && union_variants(s, n).len() == 0;
+  return !s.scope.has_struct(n) && union_layout(s, n) == 0 && union_variants(s, n).len() == 0;
 }
 
 function generic_clones(base: string, s: State): typeinfo.Type[] {
@@ -6236,7 +6260,7 @@ function generic_clones(base: string, s: State): typeinfo.Type[] {
   let prefix: string = base + "__";
   for sig in s.scope.structs.structs {
     let t: typeinfo.Type = typeinfo.TypeStruct { name: sig.name, args: [] };
-    if (util.str_has_prefix(sig.name, prefix) && record_schema(sig.name, s).name.len() > 0 && !has_type(out, t)) {
+    if (util.str_has_prefix(sig.name, prefix) && has_record_schema(sig.name, s) && !has_type(out, t)) {
       out = out.append(t);
     }
   }

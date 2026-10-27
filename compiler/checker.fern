@@ -2353,14 +2353,16 @@ function struct_destr_diags(v: ast.StmtVar, s: Scope): util.Diag[] {
       if (named.len() > 0 && named != st.name) {
         return out.append(dg_at("E024", "struct destructure pattern names " + named + ", but the expression is " + st.name, v.line, v.col));
       }
-      let sig: StructSig = s.lookup_struct(st.name);
+      let Some(sig) = s.lookup_struct(st.name) else {
+        return out;
+      };
       let access: string = "destructure a field of";
       if (parser.destr_marker_split(v.type_name).struct_match) {
         access = "destructure";
       }
       out = util.append_diags(out, opaque_access_diags(sig, s, access, v.line, v.col));
       for f in fields {
-        if (sig.name.len() > 0 && !util.has_str(sig.field_names, f)) {
+        if (!util.has_str(sig.field_names, f)) {
           let d: util.Diag = dg_at("E043", "struct " + util.demangle(st.name) + " has no field \"" + f + "\"", v.line, v.col);
           out = out.append(with_fix(d, f, v.line, v.col, util.suggest(f, sig.field_names), ""));
         }
@@ -2512,13 +2514,14 @@ function variant_value_payloads(s: Scope, en: string, name: string): i32 {
   }
   if let Some(owner) = found {
     if (owner.is_enum) {
-      let vs: StructSig = s.lookup_owned_struct(name, owner.name);
-      if (vs.enum_owner == owner.name) {
-        return vs.field_names.len();
+      if let Some(vs) = s.lookup_owned_struct(name, owner.name) {
+        if (vs.enum_owner == owner.name) {
+          return vs.field_names.len();
+        }
       }
       return 0;
     }
-    if (s.lookup_struct(name).field_names.len() > 0) {
+    if (struct_field_names(s, name).len() > 0) {
       return 1;
     }
     return 0;
@@ -2537,9 +2540,10 @@ function builtin_variant_payloads(s: Scope, en: string, name: string): i32 {
     }
     return 1;
   }
-  let injected: StructSig = s.lookup_owned_struct(name, builtin);
-  if (injected.enum_owner == builtin) {
-    return injected.field_names.len();
+  if let Some(injected) = s.lookup_owned_struct(name, builtin) {
+    if (injected.enum_owner == builtin) {
+      return injected.field_names.len();
+    }
   }
   return 0;
 }
@@ -2563,7 +2567,8 @@ function shown_variant(s: Scope, name: string): string {
 }
 
 function shown_variant_in(structs: StructTable, name: string): string {
-  return unprefixed_variant(variant_pattern_name(name), find_variant_sig(structs, name).module);
+  let module: string = match (find_variant_sig(structs, name)) { Some(sig) => sig.module, None => "" };
+  return unprefixed_variant(variant_pattern_name(name), module);
 }
 
 function shown_enum(s: Scope, name: string): string {
@@ -3218,7 +3223,7 @@ pub function array_method_sig(s: Scope, field: string, view: boolean): Option[Me
   return s.array_recv_method(field, view);
 }
 
-function (s: Scope) has_struct(name: string): boolean {
+pub function (s: Scope) has_struct(name: string): boolean {
   let i: i32 = s.structs.index.chain(name);
   while (i >= 0) {
     if (s.structs.structs[i].name == name) {
@@ -3229,35 +3234,15 @@ function (s: Scope) has_struct(name: string): boolean {
   return false;
 }
 
-function (s: Scope) lookup_struct(name: string): StructSig {
-  let first: i32 = 0 - 1;
-  let i: i32 = s.structs.index.chain(name);
-  while (i >= 0) {
-    if (s.structs.structs[i].name == name) {
-      if (s.structs.structs[i].enum_owner.len() == 0) {
-        return s.structs.structs[i];
-      }
-      if (first < 0) {
-        first = i;
-      }
-    }
-    i = s.structs.index.next[i];
-  }
-  if (first >= 0) {
-    return s.structs.structs[first];
-  }
-  let empty_n: string[] = [];
-  let empty_t: typeinfo.Type[] = [];
-  let empty_tp: string[] = [];
-  let empty_ftn: string[] = [];
-  return StructSig { name: "", field_names: empty_n, field_types: empty_t, type_params: empty_tp, field_type_names: empty_ftn, variant_field_names: empty_n, derives: [], enum_owner: "", opaque: false, module: "" };
+function (s: Scope) lookup_struct(name: string): Option[StructSig] {
+  return find_struct_sig(s.structs, name);
 }
 
-function (s: Scope) lookup_variant(name: string): StructSig {
+function (s: Scope) lookup_variant(name: string): Option[StructSig] {
   let i: i32 = s.structs.index.chain(name);
   while (i >= 0) {
     if (s.structs.structs[i].name == name && s.structs.structs[i].enum_owner.len() > 0 && !s.variant_hidden(s.structs.structs[i])) {
-      return s.structs.structs[i];
+      return Some(s.structs.structs[i]);
     }
     i = s.structs.index.next[i];
   }
@@ -3306,18 +3291,18 @@ function (s: Scope) variant_ambiguous(name: string): boolean {
   return n >= 2;
 }
 
-function (s: Scope) lookup_owned_struct(name: string, owner: string): StructSig {
+function (s: Scope) lookup_owned_struct(name: string, owner: string): Option[StructSig] {
   let i: i32 = s.structs.index.chain(name);
   while (i >= 0) {
     if (s.structs.structs[i].name == name && s.structs.structs[i].enum_owner == owner) {
-      return s.structs.structs[i];
+      return Some(s.structs.structs[i]);
     }
     i = s.structs.index.next[i];
   }
   return s.lookup_struct(name);
 }
 
-function variant_payload_struct(s: Scope, type_name: string): StructSig {
+function variant_payload_struct(s: Scope, type_name: string): Option[StructSig] {
   if (dot_index(type_name) < 0) {
     return s.lookup_variant(type_name);
   }
@@ -3336,10 +3321,9 @@ function field_index(ssig: StructSig, name: string): i32 {
 }
 
 function variant_payload_type_at(s: Scope, type_name: string, idx: i32): typeinfo.Type {
-  let ss: StructSig = variant_payload_struct(s, type_name);
-  if (ss.name.len() == 0) {
+  let Some(ss) = variant_payload_struct(s, type_name) else {
     return t_unknown("built-in variant payload `" + type_name + "`");
-  }
+  };
   let want: string = "__ev";
   if (idx > 0) {
     want = "__ev" + util.i32_to_string(idx);
@@ -3406,11 +3390,13 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
   if (us.type_params.len() == 0 || us.type_params.len() != args.len()) {
     return t_unknown("not a generic enum instance");
   }
-  let ss: StructSig = s.lookup_owned_struct(variant_pattern_name(name), u.name);
   let want: string = "__ev";
   if (index > 0) {
     want = "__ev" + util.i32_to_string(index);
   }
+  let Some(ss) = s.lookup_owned_struct(variant_pattern_name(name), u.name) else {
+    return t_unknown("no payload " + want);
+  };
   let i: i32 = 0;
   while (i < ss.field_names.len() && i < ss.field_type_names.len()) {
     if (ss.field_names[i] == want) {
@@ -3482,9 +3468,10 @@ function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, w
   }
   let pv: ast.PatVariant = pvin;
   if (parser.is_record_pattern(pv)) {
-    let rss: StructSig = variant_payload_struct(look, pv.type_name);
-    if (rss.variant_field_names.len() > 0) {
-      pv = parser.rebind_record_positional(pv, rss.variant_field_names);
+    if let Some(rss) = variant_payload_struct(look, pv.type_name) {
+      if (rss.variant_field_names.len() > 0) {
+        pv = parser.rebind_record_positional(pv, rss.variant_field_names);
+      }
     }
   }
   let sc: Scope = arm;
@@ -4103,7 +4090,9 @@ function payload_type_param(s: Scope, us: UnionSig, vname: string, k: i32): i32 
 }
 
 function payload_spelling(s: Scope, us: UnionSig, vname: string, k: i32): string {
-  let ss: StructSig = s.lookup_owned_struct(variant_pattern_name(vname), us.name);
+  let Some(ss) = s.lookup_owned_struct(variant_pattern_name(vname), us.name) else {
+    return "";
+  };
   let want: string = "__ev";
   if (k > 0) {
     want = "__ev" + util.i32_to_string(k);
@@ -5932,8 +5921,10 @@ function param_exprs(tr: parser.TypeRef, tp: string, es: ast.Expr[], s: Scope): 
     }
     return out;
   }
-  let inner: StructSig = s.lookup_struct(tr.base);
-  if (inner.name.len() == 0 || inner.type_params.len() != tr.args.len()) {
+  let Some(inner) = s.lookup_struct(tr.base) else {
+    return out;
+  };
+  if (inner.type_params.len() != tr.args.len()) {
     return out;
   }
   let k: i32 = 0;
@@ -6395,7 +6386,9 @@ function struct_lit_yields(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, 
   if let ast.ExprStructLit(sl) = e {
     if let typeinfo.TypeStruct(fs) = from {
       if let typeinfo.TypeStruct(ts) = to {
-        let sig: StructSig = s.lookup_struct(sl.type_name);
+        let Some(sig) = s.lookup_struct(sl.type_name) else {
+          return false;
+        };
         if (sl.written.len() > 0 || fs.name != ts.name || fs.args.len() != ts.args.len() || sig.type_params.len() != fs.args.len()) {
           return false;
         }
@@ -6472,10 +6465,9 @@ function check_slice_expr(sl: ast.ExprSlice, s: Scope): typeinfo.Type {
 }
 
 function check_struct_lit_expr(sl: ast.ExprStructLit, s: Scope): typeinfo.Type {
-  let ssig: StructSig = s.lookup_struct(sl.type_name);
-  if (ssig.name.len() == 0) {
+  let Some(ssig) = s.lookup_struct(sl.type_name) else {
     return t_unknown("undefined struct: " + sl.type_name);
-  }
+  };
   if (sl.has_base) {
     let bt: typeinfo.Type = check_expr(sl.base, s);
     if (!type_eq(bt, t_struct(sl.type_name))) {
@@ -6571,10 +6563,9 @@ function field_access_result_type(fa: ast.ExprFieldAccess, ot: typeinfo.Type, s:
 }
 
 function struct_field_type(sn: typeinfo.TypeStruct, field: string, s: Scope): typeinfo.Type {
-  let fsig: StructSig = s.lookup_struct(sn.name);
-  if (fsig.name.len() == 0) {
+  let Some(fsig) = s.lookup_struct(sn.name) else {
     return t_unknown("undefined struct: " + sn.name);
-  }
+  };
   let fai: i32 = field_index(fsig, field);
   if (fai < 0) {
     return t_unknown("struct " + sn.name + " has no field `" + field + "`");
@@ -6734,9 +6725,9 @@ pub function check_stmt(st: ast.Stmt, s: Scope): CheckResult {
           ast.PatWildcard(_) => {},
           ast.PatVariant(pv) => {
             let pvn: string = variant_pattern_name(pv.type_name);
-            let ss: StructSig = s.lookup_variant(pvn);
+            let found: boolean = match (s.lookup_variant(pvn)) { Some(_) => true, None => false };
             let builtin_arm: boolean = union_name.len() > 0 && parser.builtin_enum_of(pvn) == union_name;
-            if (ss.name.len() == 0 && !builtin_arm) {
+            if (!found && !builtin_arm) {
               ok = false;
             } else {
               if (union_name.len() > 0) {
@@ -7781,7 +7772,7 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
   let declared_from: i32 = tps.len();
   if (fd.receiver_type.len() > 0) {
     let rbase: string = util.base_type_name(fd.receiver_type);
-    let rtvs: string[] = s.lookup_struct(rbase).type_params;
+    let rtvs: string[] = struct_type_params(s, rbase);
     if (rtvs.len() == 0) {
       rtvs = union_type_params(s, rbase);
     }
@@ -8782,12 +8773,13 @@ function tuple_view_parts(tl: ast.ExprTuple, to: typeinfo.Type): ViewPart[] {
 
 function struct_view_parts(sl: ast.ExprStructLit, to: typeinfo.Type, s: Scope): ViewPart[] {
   let out: ViewPart[] = [];
-  let ssig: StructSig = s.lookup_struct(sl.type_name);
-  let args: typeinfo.Type[] = nominal_args(to);
-  for i in 0..sl.field_values.len() {
-    let fidx: i32 = field_index(ssig, sl.field_names[i]);
-    if (fidx >= 0) {
-      out = out.append(ViewPart { value: sl.field_values[i], to: lit_field_type(ssig, fidx, args, s) });
+  if let Some(ssig) = s.lookup_struct(sl.type_name) {
+    let args: typeinfo.Type[] = nominal_args(to);
+    for i in 0..sl.field_values.len() {
+      let fidx: i32 = field_index(ssig, sl.field_names[i]);
+      if (fidx >= 0) {
+        out = out.append(ViewPart { value: sl.field_values[i], to: lit_field_type(ssig, fidx, args, s) });
+      }
     }
   }
   if (sl.has_base) {
@@ -10484,13 +10476,13 @@ function mx_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], enums: parser
   return out;
 }
 
-function find_struct_sig(structs: StructTable, name: string): StructSig {
+function find_struct_sig(structs: StructTable, name: string): Option[StructSig] {
   let first: i32 = 0 - 1;
   let k: i32 = structs.index.chain(name);
   while (k >= 0) {
     if (structs.structs[k].name == name) {
       if (structs.structs[k].enum_owner.len() == 0) {
-        return structs.structs[k];
+        return Some(structs.structs[k]);
       }
       if (first < 0) {
         first = k;
@@ -10499,39 +10491,31 @@ function find_struct_sig(structs: StructTable, name: string): StructSig {
     k = structs.index.next[k];
   }
   if (first >= 0) {
-    return structs.structs[first];
+    return Some(structs.structs[first]);
   }
-  return no_struct_sig();
+  return None;
 }
 
-function no_struct_sig(): StructSig {
-  let none: string[] = [];
-  let nonet: typeinfo.Type[] = [];
-  let none_tp: string[] = [];
-  let none_ftn: string[] = [];
-  return StructSig { name: "", field_names: none, field_types: nonet, type_params: none_tp, field_type_names: none_ftn, variant_field_names: none, derives: [], enum_owner: "", opaque: false, module: "" };
-}
-
-function find_variant_sig(structs: StructTable, name: string): StructSig {
+function find_variant_sig(structs: StructTable, name: string): Option[StructSig] {
   let bare: string = variant_pattern_name(name);
   let owner: string = variant_pattern_owner(name);
   if (owner.len() > 0) {
     let k: i32 = structs.index.chain(bare);
     while (k >= 0) {
       if (structs.structs[k].name == bare && structs.structs[k].enum_owner == owner) {
-        return structs.structs[k];
+        return Some(structs.structs[k]);
       }
       k = structs.index.next[k];
     }
     // Option.Some, Result.Ok and Result.Err are the builtin's even when a user enum declares the same name.
     if (parser.builtin_enum_of(bare) == owner) {
-      return no_struct_sig();
+      return None;
     }
   }
   let k2: i32 = structs.index.chain(bare);
   while (k2 >= 0) {
     if (structs.structs[k2].name == bare && structs.structs[k2].enum_owner.len() > 0) {
-      return structs.structs[k2];
+      return Some(structs.structs[k2]);
     }
     k2 = structs.index.next[k2];
   }
@@ -10540,7 +10524,10 @@ function find_variant_sig(structs: StructTable, name: string): StructSig {
 
 function slit_names_no_struct(structs: StructTable, type_name: string): boolean {
   let base: string = util.base_type_name(type_name);
-  return find_struct_sig(structs, base).name.len() == 0 && !parser.is_reserved_struct_name(base);
+  if let Some(_) = find_struct_sig(structs, base) {
+    return false;
+  }
+  return !parser.is_reserved_struct_name(base);
 }
 
 function slit_diags(e: ast.Expr, structs: StructTable): util.Diag[] {
@@ -10584,8 +10571,7 @@ function slit_literal_diags(sl: ast.ExprStructLit, structs: StructTable): util.D
   if (lit_names_no_struct(sl.type_name, structs)) {
     out = out.append(dg_at("E043", "cannot find struct \"" + util.demangle(sl.type_name) + "\" in this scope", sl.line, sl.col));
   }
-  let usig: StructSig = find_struct_sig(structs, sl.type_name);
-  if (usig.name.len() > 0) {
+  if let Some(usig) = find_struct_sig(structs, sl.type_name) {
     let fi: i32 = 0;
     while (fi < sl.field_names.len()) {
       if (!util.has_str(usig.field_names, sl.field_names[fi])) {
@@ -10600,8 +10586,7 @@ function slit_literal_diags(sl: ast.ExprStructLit, structs: StructTable): util.D
   if (sl.has_base) {
     out = util.append_diags(out, slit_diags(sl.base, structs));
   } else {
-    let ssig: StructSig = find_struct_sig(structs, sl.type_name);
-    if (ssig.name.len() > 0) {
+    if let Some(ssig) = find_struct_sig(structs, sl.type_name) {
       for field_name in ssig.field_names {
         if (!util.has_str(sl.field_names, field_name)) {
           out = out.append(dg_at("E005", "missing field \"" + field_name + "\" in this " + util.demangle(sl.type_name) + " literal", sl.line, sl.col));
@@ -10616,7 +10601,7 @@ function lit_names_no_struct(name: string, structs: StructTable): boolean {
   if (name == "Self" || parser.is_reserved_struct_name(name) || !plain_ident(name)) {
     return false;
   }
-  return find_variant_sig(structs, name).name.len() == 0;
+  return match (find_variant_sig(structs, name)) { Some(_) => false, None => true };
 }
 
 function stmts_slit_diags(stmts: ast.Stmt[], structs: StructTable): util.Diag[] {
@@ -11102,8 +11087,10 @@ function type_arity_diag(t: string, structs: parser.StructDecl[], enums: parser.
 }
 
 function variant_payload_count(name: string, structs: StructTable): i32 {
-  let sd: StructSig = find_variant_sig(structs, name);
-  if (sd.name.len() == 0 || !util.has_str(sd.field_names, "__ev")) {
+  let Some(sd) = find_variant_sig(structs, name) else {
+    return -1;
+  };
+  if (!util.has_str(sd.field_names, "__ev")) {
     return 0 - 1;
   }
   let c: i32 = 0;
@@ -11154,10 +11141,9 @@ function variant_owner_count(name: string, structs: StructTable): i32 {
 function record_pattern_diags(pvin: ast.PatVariant, structs: StructTable, line: i32, col: i32): util.Diag[] {
   let pv: ast.PatVariant = ast.PatVariant { ...pvin, type_name: shown_variant_in(structs, pvin.type_name) };
   let out: util.Diag[] = [];
-  let ss: StructSig = find_variant_sig(structs, pvin.type_name);
-  if (ss.name.len() == 0) {
+  let Some(ss) = find_variant_sig(structs, pvin.type_name) else {
     return out;
-  }
+  };
   let decl: string[] = ss.variant_field_names;
   if (decl.len() == 0) {
     return out.append(dg_at("E015", "variant " + pv.type_name + " has positional payloads; match it as " + pv.type_name + "(...), not " + pv.type_name + " { ... }", line, col));
@@ -11211,8 +11197,10 @@ function struct_arms_cover_diags(arms: ast.StructArm[], structs: StructTable): u
 }
 
 function struct_pattern_covers_diags(name: string, fields: string[], rest: boolean, structs: StructTable, line: i32, col: i32): util.Diag[] {
-  let sig: StructSig = find_struct_sig(structs, name);
-  if (rest || sig.name.len() == 0) {
+  let Some(sig) = find_struct_sig(structs, name) else {
+    return [];
+  };
+  if (rest) {
     return [];
   }
   for f in fields {
@@ -11245,10 +11233,9 @@ function payload_slot_type_name(ss: StructSig, idx: i32): string {
 
 function payloadless_binder_diags(pv: ast.PatVariant, structs: StructTable, unions: UnionTable, line: i32, col: i32): util.Diag[] {
   let out: util.Diag[] = [];
-  let ss: StructSig = find_variant_sig(structs, pv.type_name);
-  if (ss.name.len() == 0) {
+  let Some(ss) = find_variant_sig(structs, pv.type_name) else {
     return out;
-  }
+  };
   let slot: i32 = 0;
   while (slot < pv.extra_bindings.len() + 1) {
     let nm: string = pv.binding;
@@ -11268,7 +11255,7 @@ function payloadless_binder_diags(pv: ast.PatVariant, structs: StructTable, unio
 
 function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type, line: i32, col: i32): util.Diag[] {
   let out: util.Diag[] = [];
-  let ss: StructSig = find_variant_sig(s.structs, pv.type_name);
+  let found: Option[StructSig] = find_variant_sig(s.structs, pv.type_name);
   let slot: i32 = 0;
   while (slot < pv.extra_bindings.len() + 1) {
     let nm: string = pv.binding;
@@ -11277,7 +11264,7 @@ function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type
     }
     if let typeinfo.TypeUnion(u) = variant_pattern_payload_type(s, pv.type_name, whole, slot) {
       let declared: string = "";
-      if (ss.name.len() > 0) {
+      if let Some(ss) = found {
         declared = payload_slot_type_name(ss, slot);
       }
       let owner: string = scope_variant_owner(nm, s);
@@ -12295,7 +12282,7 @@ function struct_lit_settles(e: ast.Expr, want: typeinfo.TypeStruct, s: Scope): b
     if (sl.has_base || sl.type_name != want.name) {
       return false;
     }
-    return s.lookup_struct(sl.type_name).type_params.len() == want.args.len();
+    return struct_type_params(s, sl.type_name).len() == want.args.len();
   }
   return false;
 }
@@ -12339,7 +12326,8 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
   }
   out = util.append_diags(out, enum_access_diags(owner, s, c.line, c.col));
 
-  if (scope_variant_owner(vname, s).len() == 0 && find_variant_sig(s.structs, qname).enum_owner.len() == 0) {
+  let declared_owner: string = match (find_variant_sig(s.structs, qname)) { Some(sig) => sig.enum_owner, None => "" };
+  if (scope_variant_owner(vname, s).len() == 0 && declared_owner.len() == 0) {
     let builtin_owner: string = match (owner) { Some(u) => u.name, None => "" };
     if (dot_index(qname) >= 0) {
       builtin_owner = variant_pattern_owner(qname);
@@ -12367,7 +12355,8 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
   if (c.args.len() != want) {
     out = out.append(dg_at("E036", util.arity_message("variant " + shown_variant(s, qname), want, c.args.len(), "argument"), c.line, c.col));
   }
-  let whole: typeinfo.Type = variant_ctor_type(s, variant_payload_struct(s, qname).enum_owner, qname, c);
+  let payload_owner: string = match (variant_payload_struct(s, qname)) { Some(sig) => sig.enum_owner, None => "" };
+  let whole: typeinfo.Type = variant_ctor_type(s, payload_owner, qname, c);
   let i: i32 = 0;
   while (i < c.args.len() && i < want) {
     let at: typeinfo.Type = check_expr(c.args[i], s);
@@ -13617,10 +13606,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
               }
             } else {
               let bms: typeinfo.Type = builtin_method_sig(sn.name, mfa.field);
-              let fsig: StructSig = s.lookup_struct(sn.name);
               if (!is_unknown(bms)) {
                 out = util.append_diags(out, callable_arg_diags(c, bms, s));
-              } else if (fsig.name.len() > 0) {
+              } else if let Some(fsig) = s.lookup_struct(sn.name) {
                 let fldi: i32 = field_index(fsig, mfa.field);
                 if (fldi < 0) {
                   out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col), mfa, fsig));
@@ -14319,10 +14307,11 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
   let ot: typeinfo.Type = check_expr(fa.obj, s);
   match (ot) {
     typeinfo.TypeStruct(sn) => {
-      let fsig: StructSig = s.lookup_struct(sn.name);
-      out = util.append_diags(out, opaque_access_diags(fsig, s, "access a field of", fa.line, fa.col));
-      if (fsig.name.len() > 0 && !util.has_str(fsig.field_names, fa.field)) {
-        out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + fa.field + "\"", fa.line, fa.col), fa, fsig));
+      if let Some(fsig) = s.lookup_struct(sn.name) {
+        out = util.append_diags(out, opaque_access_diags(fsig, s, "access a field of", fa.line, fa.col));
+        if (!util.has_str(fsig.field_names, fa.field)) {
+          out = out.append(s.member_fix(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + fa.field + "\"", fa.line, fa.col), fa, fsig));
+        }
       }
     },
     typeinfo.TypeTuple(tt) => {
@@ -14350,36 +14339,40 @@ function tuple_field_diags(field: string, tt: typeinfo.TypeTuple, line: i32, col
 }
 
 function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[], s: Scope, out: util.Diag[]): util.Diag[] {
-  let fsig: StructSig = s.lookup_struct(sl.type_name);
-  out = util.append_diags(out, opaque_access_diags(fsig, s, "construct", sl.line, sl.col));
+  let found: Option[StructSig] = s.lookup_struct(sl.type_name);
   let args: typeinfo.Type[] = dest_args;
-  if (sl.written.len() > 0 && fsig.name.len() > 0) {
-    let wn: i32 = parser.parse_type_ref(sl.written).args.len();
-    if (wn != fsig.type_params.len()) {
-      out = out.append(dg_at("E040", util.arity_message(fsig.name, fsig.type_params.len(), wn, "type argument"), sl.line, sl.col));
-    } else {
-      args = written_struct_args(sl, fsig, s);
-    }
-  }
-  if (sl.has_base && fsig.type_params.len() > 0) {
-    if let typeinfo.TypeStruct(bst) = check_expr(sl.base, s) {
-      if (bst.args.len() == fsig.type_params.len()) {
-        args = bst.args;
+  if let Some(fsig) = found {
+    out = util.append_diags(out, opaque_access_diags(fsig, s, "construct", sl.line, sl.col));
+    if (sl.written.len() > 0) {
+      let wn: i32 = parser.parse_type_ref(sl.written).args.len();
+      if (wn != fsig.type_params.len()) {
+        out = out.append(dg_at("E040", util.arity_message(fsig.name, fsig.type_params.len(), wn, "type argument"), sl.line, sl.col));
+      } else {
+        args = written_struct_args(sl, fsig, s);
       }
     }
-  }
-  if (args.len() == 0 && fsig.type_params.len() > 0) {
-    args = struct_lit_args(sl, fsig, s);
-    let utp: string = lit_uninferable_param(sl, fsig, args, s);
-    if (utp.len() > 0) {
-      out = out.append(dg_at("E040", "could not infer type parameter " + utp + " for struct " + sl.type_name + " — supply it explicitly at the construction site (e.g. " + sl.type_name + "[i32] { ... }) or annotate the binding (e.g. let x: " + sl.type_name + "[i32] = ...)", sl.line, sl.col));
+    if (sl.has_base && fsig.type_params.len() > 0) {
+      if let typeinfo.TypeStruct(bst) = check_expr(sl.base, s) {
+        if (bst.args.len() == fsig.type_params.len()) {
+          args = bst.args;
+        }
+      }
+    }
+    if (args.len() == 0 && fsig.type_params.len() > 0) {
+      args = struct_lit_args(sl, fsig, s);
+      let utp: string = lit_uninferable_param(sl, fsig, args, s);
+      if (utp.len() > 0) {
+        out = out.append(dg_at("E040", "could not infer type parameter " + utp + " for struct " + sl.type_name + " — supply it explicitly at the construction site (e.g. " + sl.type_name + "[i32] { ... }) or annotate the binding (e.g. let x: " + sl.type_name + "[i32] = ...)", sl.line, sl.col));
+      }
     }
   }
   let vi: i32 = 0;
   while (vi < sl.field_values.len()) {
     let fdest: typeinfo.Type = t_unknown("no declared field");
-    if (fsig.name.len() > 0 && vi < sl.field_names.len() && field_index(fsig, sl.field_names[vi]) >= 0) {
-      fdest = lit_field_type(fsig, field_index(fsig, sl.field_names[vi]), args, s);
+    if let Some(fsig) = found {
+      if (vi < sl.field_names.len() && field_index(fsig, sl.field_names[vi]) >= 0) {
+        fdest = lit_field_type(fsig, field_index(fsig, sl.field_names[vi]), args, s);
+      }
     }
     out = util.append_diags(out, dest_call_diags(sl.field_values[vi], fdest, s));
     vi = vi + 1;
@@ -14399,8 +14392,7 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
       seen_fields = seen_fields.append(fname);
     }
   }
-  let ssig: StructSig = s.lookup_struct(sl.type_name);
-  if (ssig.name.len() > 0) {
+  if let Some(ssig) = found {
     let fi: i32 = 0;
     while (fi < sl.field_names.len()) {
       let fidx: i32 = field_index(ssig, sl.field_names[fi]);
@@ -14495,7 +14487,8 @@ function type_holds_view(t: typeinfo.Type, s: Scope, seen: string[]): (boolean, 
     if (in_args) {
       return (true, after);
     }
-    return any_holds_view(s.lookup_struct(st.name).field_types, s, after);
+    let fields: typeinfo.Type[] = match (s.lookup_struct(st.name)) { Some(sig) => sig.field_types, None => [] };
+    return any_holds_view(fields, s, after);
   }
   if let typeinfo.TypeUnion(u) = t {
     if (util.has_str(seen, u.name)) {
@@ -14507,7 +14500,8 @@ function type_holds_view(t: typeinfo.Type, s: Scope, seen: string[]): (boolean, 
     }
     if let Some(us) = s.lookup_union(u.name) {
       for v in us.variants {
-        let (in_payload, next) = any_holds_view(variant_shape_sig(s, v, u.name).field_types, s, after);
+        let fields: typeinfo.Type[] = match (variant_shape_sig(s, v, u.name)) { Some(sig) => sig.field_types, None => [] };
+        let (in_payload, next) = any_holds_view(fields, s, after);
         if (in_payload) {
           return (true, next);
         }
@@ -14879,10 +14873,9 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
       if (is_cell_type(recv) || s.has_visible_method(field, sn.name) || !is_unknown(builtin_method_sig(sn.name, field))) {
         return false;
       }
-      let fsig: StructSig = s.lookup_struct(sn.name);
-      if (fsig.name.len() == 0) {
+      let Some(fsig) = s.lookup_struct(sn.name) else {
         return false;
-      }
+      };
       let fi: i32 = field_index(fsig, field);
       if (fi < 0) {
         return true;
@@ -15353,7 +15346,7 @@ function tuple_cover(kinds: i32[], lits: ast.Expr[], pats: ast.Pattern[]): Cover
 function struct_cover(a: ast.StructArm, t: typeinfo.Type, s: Scope): CoverPat {
   let args: CoverPat[] = [];
   if let typeinfo.TypeStruct(st) = t {
-    for name in s.lookup_struct(st.name).field_names {
+    for name in struct_field_names(s, st.name) {
       let p: CoverPat = cover_any();
       let j: i32 = util.index_of_str(a.fields, name);
       if (j >= 0 && j < a.field_kinds.len() && a.field_kinds[j] == 2) {
@@ -15437,7 +15430,7 @@ function typed_pattern_cover(p: ast.Pattern, t: typeinfo.Type, s: Scope): CoverP
 
 function record_pattern_cover(pv: ast.PatVariant, st: typeinfo.TypeStruct, s: Scope): CoverPat {
   let args: CoverPat[] = [];
-  for field in s.lookup_struct(st.name).field_names {
+  for field in struct_field_names(s, st.name) {
     let p: CoverPat = cover_any();
     let i: i32 = util.index_of_str(pv.field_names, field);
     if (i >= 0) {
@@ -15523,7 +15516,7 @@ function cover_arg_types(t: typeinfo.Type, ctor: string, arity: i32, s: Scope): 
       return tt.elements;
     },
     typeinfo.TypeStruct(st) => {
-      for field in s.lookup_struct(st.name).field_names {
+      for field in struct_field_names(s, st.name) {
         out = out.append(struct_field_type(st, field, s));
       }
     },
@@ -15844,12 +15837,13 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
           }
         }
         if let typeinfo.TypeStruct(msts) = mst {
-          let msig: StructSig = cur.lookup_struct(msts.name);
-          if (ordinary_match_origin(m.origin) && msig.name == msts.name && msig.enum_owner.len() == 0) {
-            for sarm in m.arms {
-              if let ast.PatVariant(spv) = sarm.pattern {
-                if (spv.type_name.len() > 0) {
-                  out = out.append(dg_at("E035", "match on struct `" + msts.name + "` only accepts struct patterns `" + msts.name + " { … }` or `_`", sarm.line, sarm.col));
+          if let Some(msig) = cur.lookup_struct(msts.name) {
+            if (ordinary_match_origin(m.origin) && msig.name == msts.name && msig.enum_owner.len() == 0) {
+              for sarm in m.arms {
+                if let ast.PatVariant(spv) = sarm.pattern {
+                  if (spv.type_name.len() > 0) {
+                    out = out.append(dg_at("E035", "match on struct `" + msts.name + "` only accepts struct patterns `" + msts.name + " { … }` or `_`", sarm.line, sarm.col));
+                  }
                 }
               }
             }
@@ -20246,7 +20240,9 @@ function cell_payload_risk(t: typeinfo.Type, s: Scope, own: string[], seen: stri
       if (ar.len() > 0 || util.has_str(seen, st.name)) {
         return ar;
       }
-      let sig: StructSig = s.lookup_struct(st.name);
+      let Some(sig) = s.lookup_struct(st.name) else {
+        return "";
+      };
       return cell_payload_risks(sig.field_types, s, sig.type_params, seen.append(st.name));
     },
     typeinfo.TypeUnion(u) => {
@@ -20299,7 +20295,9 @@ function union_payload_risk(u: UnionSig, s: Scope, seen: string[]): string {
   for v in u.variants {
     let r: string = "";
     if (u.is_enum) {
-      r = cell_payload_risks(s.lookup_owned_struct(v, u.name).field_types, s, u.type_params, seen);
+      if let Some(sig) = s.lookup_owned_struct(v, u.name) {
+        r = cell_payload_risks(sig.field_types, s, u.type_params, seen);
+      }
     } else {
       r = cell_payload_risk(type_from_spelling(v, s.type_names()), s, u.type_params, seen);
     }
@@ -23118,20 +23116,30 @@ pub function signature_receiver(s: Scope, sig: FuncSig): typeinfo.Type {
   return type_from_name_erasing_tparams(sig.receiver, sig.all_type_params, s.type_names());
 }
 
-pub function struct_sig(s: Scope, name: string): StructSig {
+pub function struct_sig(s: Scope, name: string): Option[StructSig] {
   return s.lookup_struct(name);
+}
+
+pub function struct_type_params(s: Scope, name: string): string[] {
+  return match (s.lookup_struct(name)) { Some(sig) => sig.type_params, None => [] };
+}
+
+pub function struct_field_names(s: Scope, name: string): string[] {
+  return match (s.lookup_struct(name)) { Some(sig) => sig.field_names, None => [] };
 }
 
 pub function variant_owner_of(s: Scope, name: string): string {
   return scope_variant_owner(name, s);
 }
 
-pub function variant_sig(s: Scope, name: string, owner: string): StructSig {
-  let sig: StructSig = s.lookup_owned_struct(name, owner);
+pub function variant_sig(s: Scope, name: string, owner: string): Option[StructSig] {
+  let Some(sig) = s.lookup_owned_struct(name, owner) else {
+    return None;
+  };
   if (sig.enum_owner != owner) {
-    return s.lookup_struct("");
+    return None;
   }
-  return sig;
+  return Some(sig);
 }
 
 pub function instantiated_variant(sig: StructSig, s: Scope, whole: typeinfo.Type): StructSig {
@@ -23179,16 +23187,18 @@ pub function owned_variant_names(s: Scope, owner: string): string[] {
   return out;
 }
 
-pub function variant_shape_sig(s: Scope, name: string, owner: string): StructSig {
-  let owned: StructSig = s.lookup_owned_struct(name, owner);
-  if (owned.enum_owner == owner) {
-    return owned;
+pub function variant_shape_sig(s: Scope, name: string, owner: string): Option[StructSig] {
+  if let Some(owned) = s.lookup_owned_struct(name, owner) {
+    if (owned.enum_owner == owner) {
+      return Some(owned);
+    }
   }
-  let plain: StructSig = s.lookup_struct(name);
-  if (plain.name.len() > 0 && plain.enum_owner.len() == 0 && is_variant_of(name, owner, s.unions.unions)) {
-    return plain;
+  if let Some(plain) = s.lookup_struct(name) {
+    if (plain.enum_owner.len() == 0 && is_variant_of(name, owner, s.unions.unions)) {
+      return Some(plain);
+    }
   }
-  return s.lookup_struct("");
+  return None;
 }
 
 // An earlier return exits the function and does not determine the block type.
@@ -24134,7 +24144,9 @@ function import_paths_of(mod: parser.Module): string[] {
 }
 
 function settle_generic_lit_fields(sl: ast.ExprStructLit, fields: ast.Expr[], s: Scope): ast.Expr[] {
-  let sig: StructSig = s.lookup_struct(sl.type_name);
+  let Some(sig) = s.lookup_struct(sl.type_name) else {
+    return fields;
+  };
   if (sig.type_params.len() == 0) {
     return fields;
   }
@@ -24283,7 +24295,9 @@ function settle_array_struct_literals(a: ast.ExprArray, s: Scope): ast.Expr {
 function settle_struct_lit_wide(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Expr {
   if let ast.ExprStructLit(sl) = e {
     if let typeinfo.TypeStruct(ts) = t {
-      let sig: StructSig = s.lookup_struct(sl.type_name);
+      let Some(sig) = s.lookup_struct(sl.type_name) else {
+        return e;
+      };
       if (ts.name != sl.type_name || sig.type_params.len() != ts.args.len() || sig.type_params.len() == 0) {
         return e;
       }
@@ -25744,7 +25758,9 @@ function struct_record_match(m: ast.StmtMatch, s: Scope): boolean {
     return false;
   }
   if let typeinfo.TypeStruct(st) = check_expr(m.scrutinee, s) {
-    let sig: StructSig = s.lookup_struct(st.name);
+    let Some(sig) = s.lookup_struct(st.name) else {
+      return false;
+    };
     return sig.name == st.name && sig.enum_owner.len() == 0 && head == st.name;
   }
   return false;
@@ -26064,7 +26080,9 @@ function lit_struct_field_class(fa: ast.ExprFieldAccess, s: Scope): i32 {
     if (name.len() == 0) {
       return 0 - 1;
     }
-    let sig: StructSig = s.lookup_struct(name);
+    let Some(sig) = s.lookup_struct(name) else {
+      return -1;
+    };
     let fi: i32 = field_index(sig, fa.field);
     if (fi < 0 || fi >= sig.field_type_names.len()) {
       return 0 - 1;
@@ -26442,7 +26460,9 @@ function field_want_lift(ot: typeinfo.Type, field: string, want: typeinfo.Type, 
     return (t_tuple(unknown_slots(tt.elements.len()).with(idx, want)), true);
   }
   if let typeinfo.TypeStruct(sn) = ot {
-    let sig: StructSig = s.lookup_struct(sn.name);
+    let Some(sig) = s.lookup_struct(sn.name) else {
+      return (ot, false);
+    };
     let fi: i32 = field_index(sig, field);
     if (fi < 0 || fi >= sig.field_type_names.len()) {
       return (ot, false);
@@ -26921,24 +26941,28 @@ function lit_array(arr: ast.ExprArray, s: Scope, st: LitInfer): LitInfer {
 
 function lit_struct_lit(sl: ast.ExprStructLit, s: Scope, st: LitInfer): LitInfer {
   let out: LitInfer = st;
-  let sig: StructSig = s.lookup_struct(sl.type_name);
+  let found: Option[StructSig] = s.lookup_struct(sl.type_name);
   let largs: typeinfo.Type[] = [];
-  if (sig.type_params.len() > 0) {
-    largs = struct_lit_args(sl, sig, s);
+  if let Some(sig) = found {
+    if (sig.type_params.len() > 0) {
+      largs = struct_lit_args(sl, sig, s);
+    }
   }
   let i: i32 = 0;
   while (i < sl.field_values.len()) {
     let want: typeinfo.Type = t_unknown("no field");
-    if (i < sl.field_names.len()) {
-      let j: i32 = 0;
-      while (j < sig.field_names.len()) {
-        if (sig.field_names[j] == sl.field_names[i] && j < sig.field_types.len()) {
-          want = sig.field_types[j];
-          if (sig.type_params.len() > 0 && j < sig.field_type_names.len()) {
-            want = widened_field_type(sig, j, largs, s);
+    if let Some(sig) = found {
+      if (i < sl.field_names.len()) {
+        let j: i32 = 0;
+        while (j < sig.field_names.len()) {
+          if (sig.field_names[j] == sl.field_names[i] && j < sig.field_types.len()) {
+            want = sig.field_types[j];
+            if (sig.type_params.len() > 0 && j < sig.field_type_names.len()) {
+              want = widened_field_type(sig, j, largs, s);
+            }
           }
+          j = j + 1;
         }
-        j = j + 1;
       }
     }
     out = lit_demand(sl.field_values[i], want, s, out);
@@ -27351,7 +27375,9 @@ function lit_payload_shape(c: ast.ExprCall, p: i32, owner: string, s: Scope, st:
 }
 
 function lit_struct_local(v: ast.StmtVar, sl: ast.ExprStructLit, s: Scope, st: LitInfer): (string, LitInfer) {
-  let sig: StructSig = s.lookup_struct(sl.type_name);
+  let Some(sig) = s.lookup_struct(sl.type_name) else {
+    return ("", st);
+  };
   if (sig.type_params.len() == 0 || sl.has_base || util.index_of_sub(sl.type_name, "[") >= 0) {
     return ("", st);
   }
