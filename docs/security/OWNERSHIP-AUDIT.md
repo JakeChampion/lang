@@ -35,6 +35,23 @@ The self-host checker discarded the closure's moves and accepted the use.
 The ownership walk now propagates the closure body's moves and restores only the closure's own parameters.
 The normative case is `diag_e050_closure_consumes_captured_owned`.
 
+## Divergence left for a language decision
+
+A `for` loop over an owned parameter, followed by a later use of that parameter, splits the checkers.
+The Go oracle counts the iteration as a consuming move and refuses the later use with `E050`.
+The self-host walk borrows the iteration source and accepts the later use.
+[MODE-LATTICE.md](../MODE-LATTICE.md) does not state which rule holds.
+
+Three probes show the split.
+One appends to a scalar array after the loop.
+One reads a scalar array after the loop.
+One appends to a struct array after the loop, inside a nested loop and a match.
+The lowering keeps the value alive through the loop, so the permissive side is sound at run time.
+The strict side rejects a natural pattern that `compiler/semlower.fern` on #13646 writes.
+
+The owner must pick one rule.
+Then one checker changes and a normative case pins the rule.
+
 ## Accepted by both checkers, sound at run time
 
 | Pattern | Observation |
