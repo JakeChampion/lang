@@ -1,0 +1,9 @@
+{
+  "source": "32d563abbc3e50fb190d503716870568eb5abf0f",
+  "make_exit": 0,
+  "seconds": 96.2342249880021,
+  "version_exit": 0,
+  "version": "fern 32d563abbc3e\nbuilt for x86-64-linux\n",
+  "compiler_sha256": "80b99029923914bfe7b9738c06852fe9aed63bd33f1dbc0f544ce85bef167443",
+  "raw_sha256": "7af0660ead21fbb97d3feebe87fb698c314b9607f34c0549934c3475bc715732"
+}

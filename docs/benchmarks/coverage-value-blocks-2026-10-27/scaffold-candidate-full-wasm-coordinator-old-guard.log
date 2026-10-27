@@ -1,0 +1,5 @@
+Traceback (most recent call last):
+  File "/workspace/image-run-coverage-full.py", line 16, in <module>
+    assert not subprocess.check_output(['git','diff','35b5bd31bb01a6d373aaad83beb6883537c328a3','HEAD','--','compiler','internal/stdlib'],cwd=root)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError

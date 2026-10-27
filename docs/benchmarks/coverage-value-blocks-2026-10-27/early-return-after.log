@@ -1,0 +1,8 @@
+=== RUN   TestSelfHostCoverValueBlockEarlyReturn
+=== RUN   TestSelfHostCoverValueBlockEarlyReturn/x86-64-linux
+=== RUN   TestSelfHostCoverValueBlockEarlyReturn/arm64-linux
+--- PASS: TestSelfHostCoverValueBlockEarlyReturn (35.46s)
+    --- PASS: TestSelfHostCoverValueBlockEarlyReturn/x86-64-linux (0.06s)
+    --- PASS: TestSelfHostCoverValueBlockEarlyReturn/arm64-linux (0.05s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	35.480s

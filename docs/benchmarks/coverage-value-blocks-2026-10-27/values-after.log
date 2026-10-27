@@ -1,0 +1,65 @@
+=== RUN   TestSelfHostCoverFeedsChangeRisk
+--- PASS: TestSelfHostCoverFeedsChangeRisk (74.38s)
+=== RUN   TestSelfHostCoverEdgesAndLambdas
+--- PASS: TestSelfHostCoverEdgesAndLambdas (0.03s)
+=== RUN   TestSelfHostCoverFromEnvironment
+--- PASS: TestSelfHostCoverFromEnvironment (0.03s)
+=== RUN   TestSelfHostCoverRefusals
+=== RUN   TestSelfHostCoverRefusals/wasm
+=== RUN   TestSelfHostCoverRefusals/interp
+--- PASS: TestSelfHostCoverRefusals (0.00s)
+    --- PASS: TestSelfHostCoverRefusals/wasm (0.00s)
+    --- PASS: TestSelfHostCoverRefusals/interp (0.00s)
+=== RUN   TestSelfHostCoverInferredValueBlocks
+=== RUN   TestSelfHostCoverInferredValueBlocks/string-match
+=== RUN   TestSelfHostCoverInferredValueBlocks/string-match/x86-64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=14 frees=13 live_bytes=72 — want a balanced census
+=== RUN   TestSelfHostCoverInferredValueBlocks/string-match/arm64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=15 frees=14 live_bytes=72 — want a balanced census
+=== RUN   TestSelfHostCoverInferredValueBlocks/early-return
+=== RUN   TestSelfHostCoverInferredValueBlocks/early-return/x86-64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=14 frees=13 live_bytes=72 — want a balanced census
+=== RUN   TestSelfHostCoverInferredValueBlocks/early-return/arm64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=15 frees=14 live_bytes=72 — want a balanced census
+=== RUN   TestSelfHostCoverInferredValueBlocks/owned-array
+=== RUN   TestSelfHostCoverInferredValueBlocks/owned-array/x86-64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=18 frees=17 live_bytes=88 — want a balanced census
+=== RUN   TestSelfHostCoverInferredValueBlocks/owned-array/arm64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=18 frees=17 live_bytes=88 — want a balanced census
+=== RUN   TestSelfHostCoverInferredValueBlocks/if-expression
+=== RUN   TestSelfHostCoverInferredValueBlocks/if-expression/x86-64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=15 frees=14 live_bytes=72 — want a balanced census
+=== RUN   TestSelfHostCoverInferredValueBlocks/if-expression/arm64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=14 frees=13 live_bytes=72 — want a balanced census
+=== RUN   TestSelfHostCoverInferredValueBlocks/tuple-match
+=== RUN   TestSelfHostCoverInferredValueBlocks/tuple-match/x86-64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=18 frees=17 live_bytes=88 — want a balanced census
+=== RUN   TestSelfHostCoverInferredValueBlocks/tuple-match/arm64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=18 frees=17 live_bytes=88 — want a balanced census
+=== RUN   TestSelfHostCoverInferredValueBlocks/explicit-control
+=== RUN   TestSelfHostCoverInferredValueBlocks/explicit-control/x86-64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=15 frees=14 live_bytes=72 — want a balanced census
+=== RUN   TestSelfHostCoverInferredValueBlocks/explicit-control/arm64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=15 frees=14 live_bytes=72 — want a balanced census
+--- FAIL: TestSelfHostCoverInferredValueBlocks (31.79s)
+    --- FAIL: TestSelfHostCoverInferredValueBlocks/string-match (0.17s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/string-match/x86-64-linux (0.08s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/string-match/arm64-linux (0.09s)
+    --- FAIL: TestSelfHostCoverInferredValueBlocks/early-return (0.09s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/early-return/x86-64-linux (0.04s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/early-return/arm64-linux (0.05s)
+    --- FAIL: TestSelfHostCoverInferredValueBlocks/owned-array (0.11s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/owned-array/x86-64-linux (0.04s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/owned-array/arm64-linux (0.07s)
+    --- FAIL: TestSelfHostCoverInferredValueBlocks/if-expression (0.11s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/if-expression/x86-64-linux (0.05s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/if-expression/arm64-linux (0.06s)
+    --- FAIL: TestSelfHostCoverInferredValueBlocks/tuple-match (0.10s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/tuple-match/x86-64-linux (0.04s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/tuple-match/arm64-linux (0.06s)
+    --- FAIL: TestSelfHostCoverInferredValueBlocks/explicit-control (0.11s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/explicit-control/x86-64-linux (0.04s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/explicit-control/arm64-linux (0.06s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	106.262s
+FAIL
