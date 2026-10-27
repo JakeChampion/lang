@@ -1,0 +1,3 @@
+/workspace/image-icc-model-repros/local.fern:6:1: error: internal: the checker could not type this statement in "main" (if cond not bool) and has no diagnostic for it; this is a compiler bug, please report it
+      if (xs[0] != 1 || changed[0] != 7) { return 1; }
+    ^

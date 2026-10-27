@@ -1,0 +1,19 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-v",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^TestSelfHostMatchEmptyArrayResult/(selected-empty|nested-selected-empty)$",
+    "-count=1",
+    "-timeout=10m"
+  ],
+  "source_commit": "c0c826ed8d893365038ff9df78201a9934713929",
+  "exit_code": 0,
+  "elapsed_seconds": 61.14455376099795,
+  "PASS_nodes": 9,
+  "FAIL_nodes": 0,
+  "SKIP_nodes": 0,
+  "compiler_implementation_unchanged_since_clean_build": true
+}

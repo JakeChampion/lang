@@ -1,0 +1,9 @@
+{
+  "command": [
+    "/workspace/image-match-empty-array-current-fern-35b5bd31b",
+    "-check",
+    "/workspace/lang-image-icc-model/fern-image/tests/icc_matrix_model_test.fern"
+  ],
+  "exit": 0,
+  "note": "Read-only check of frozen application source. No application runtime qualification or source edit."
+}
