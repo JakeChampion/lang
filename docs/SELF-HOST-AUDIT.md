@@ -924,6 +924,18 @@ findings. Ranked by leverage.
   Separate pass-repetition probes show 6% more time for width folds, 8% more for binary folds, and 20% less for strength rewrites.
   These measurements establish no general compiler speed change.
 
+  `word_of` and `word_byte` now return standard options.
+  A declined word-load rewrite retains the original instruction without a placeholder word or byte record.
+  Successful payloads retain the source array, index convention, offset, shift, width, and byte order.
+  Duplicate bytes, gaps, mixed arrays, mixed indices, and invalid shift layouts retain their refusal paths.
+
+  Twenty runtime cases cover owned byte arrays and views against the Go oracle on x86-64, ARM64, and Wasm.
+  Twenty-three programs retain all body fields in both inline modes before and after the change.
+  Their candidate outputs on ARM64 and Wasm match the native baseline.
+  Three native sanitizer probes retain exact outputs and release all allocations.
+  Forty paired probes per input use 201 functions with matched or declined word loads.
+  Candidate/baseline time ratios range from 0.997 to 1.026, without a general compiler speed claim.
+
   The closure lifter also uses `Option[FuncDecl]` for function construction.
   Both captured closures and named-function wrappers share that result type.
   A declined transformation returns `None` without a placeholder declaration.
