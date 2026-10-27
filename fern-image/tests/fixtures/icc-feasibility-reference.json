@@ -1,0 +1,71 @@
+{
+  "Pillow": "12.3.0",
+  "LittleCMS": "2.19",
+  "size": 588,
+  "version": "04400000",
+  "device_class": "mntr",
+  "color_space": "RGB ",
+  "PCS": "XYZ ",
+  "signature": "acsp",
+  "name": "sRGB built-in",
+  "copyright": "No copyright, use freely",
+  "sha256": "3bccbfedf06978c3035b255167afcf462a50b27805096cee038ff4dd69c650a6",
+  "tags": [
+    {
+      "signature": "desc",
+      "offset": 264,
+      "size": 54
+    },
+    {
+      "signature": "cprt",
+      "offset": 320,
+      "size": 76
+    },
+    {
+      "signature": "wtpt",
+      "offset": 396,
+      "size": 20
+    },
+    {
+      "signature": "chad",
+      "offset": 416,
+      "size": 44
+    },
+    {
+      "signature": "rXYZ",
+      "offset": 460,
+      "size": 20
+    },
+    {
+      "signature": "bXYZ",
+      "offset": 480,
+      "size": 20
+    },
+    {
+      "signature": "gXYZ",
+      "offset": 500,
+      "size": 20
+    },
+    {
+      "signature": "rTRC",
+      "offset": 520,
+      "size": 32
+    },
+    {
+      "signature": "gTRC",
+      "offset": 520,
+      "size": 32
+    },
+    {
+      "signature": "bTRC",
+      "offset": 520,
+      "size": 32
+    },
+    {
+      "signature": "chrm",
+      "offset": 552,
+      "size": 36
+    }
+  ],
+  "creation_method": "Pillow ImageCms.ImageCmsProfile(ImageCms.createProfile(\"sRGB\")).tobytes(); frozen original bytes, creation time retained"
+}

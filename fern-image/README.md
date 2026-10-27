@@ -117,3 +117,6 @@ The JFIF and RGB entry points retain their strict metadata policy.
 
 The [explicit orientation operation](docs/jpeg-orientation.md) copies decoded RGB8/RGBA8 pixels through the eight Exif mappings.
 It does not change encoded JPEG admission or infer a color profile.
+
+The [ICC feasibility decision](docs/icc-feasibility.md) defines a staged native profile path and the qualification gates before color integration.
+ICC transforms and metadata-bearing JPEG admission remain unimplemented.

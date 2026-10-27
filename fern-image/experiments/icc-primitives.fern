@@ -1,0 +1,54 @@
+import "std/f64";
+
+function be32(input: [u8], at: i32): i64 {
+  return input[at] as i64 << 24i64 | input[at + 1] as i64 << 16i64 | input[at + 2] as i64 << 8i64 | input[at + 3] as i64;
+}
+
+function fixed(input: [u8], at: i32): f64 {
+  let bits = be32(input, at);
+  return (if (bits >= 2147483648i64) { bits - 4294967296i64 } else { bits }) as f64 / 65536.0;
+}
+
+// This probe checks primitives on one frozen profile. It is not an ICC parser.
+function main(): i32 {
+  let input = match (read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc")) { Ok(v) => v, Err(_) => { return 1; } };
+  if (input.len() != 588 || be32(input, 0) != input.len() as i64 || be32(input, 36) != 1633907568i64) {
+    return 2;
+  }
+  if (be32(input, 8) != 71303168i64 || be32(input, 16) != 1380401696i64 || be32(input, 20) != 1482250784i64 || be32(input, 128) != 11i64) {
+    return 3;
+  }
+  let aliases = 0;
+  for i in 0..11 {
+    let at = 132 + i * 12;
+    let offset = be32(input, at + 4);
+    let bytes = be32(input, at + 8);
+    if (offset < 264i64 || offset % 4i64 != 0i64 || bytes < 8i64 || offset + bytes > input.len() as i64) {
+      return 4;
+    }
+    if (offset == 520i64 && bytes == 32i64) {
+      aliases = aliases + 1;
+    }
+  }
+  if (aliases != 3 || be32(input, 520) != 1885434465i64) {
+    return 5;
+  }
+  if (be32([255 as u8, 255 as u8, 255 as u8, 255 as u8], 0) != 4294967295i64
+    || fixed([128 as u8, 0 as u8, 0 as u8, 0 as u8], 0) != -32768.0
+    || fixed([127 as u8, 255 as u8, 255 as u8, 255 as u8], 0) != 32767.9999847412109375) {
+    return 6;
+  }
+  let power = 0.5.pow(fixed(input, 532));
+  let error = power - 0.1894653723708729652629160060737903242761;
+  if (error != error || error < -0.000000000001 || error > 0.000000000001) {
+    return 7;
+  }
+  let x = fixed(input, 468) * 0.25 + fixed(input, 508) * 0.5 + fixed(input, 488) * 0.75;
+  let y = fixed(input, 472) * 0.25 + fixed(input, 512) * 0.5 + fixed(input, 492) * 0.75;
+  let z = fixed(input, 476) * 0.25 + fixed(input, 516) * 0.5 + fixed(input, 496) * 0.75;
+  if (x != 0.408855438232421875 || y != 0.459529876708984375 || z != 0.587444305419921875) {
+    return 8;
+  }
+  print("ICC primitive probe: 588 bytes, 11 tags, 3 curve aliases");
+  return 0;
+}
