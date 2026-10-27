@@ -1,0 +1,5 @@
+{
+  "Replace": {
+    "/tmp/image-engine-worktrees/lang-image-bare-frame-health/internal/testing/e2ecompiler/self_host_abort_report_test.go": "/tmp/image-bare-frame-control-duplicate.go"
+  }
+}

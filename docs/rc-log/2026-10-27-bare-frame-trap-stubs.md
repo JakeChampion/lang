@@ -13,7 +13,9 @@ The production emitters, runtime, standard library, helper guard, workload, base
 The focused candidate passed with zero skips before the source commit.
 Three diagnostic overlays require missing, renamed, and duplicate stubs to fail the exact stub assertion.
 These overlays change only the inspected assembly view, not the linked assembly file or runtime code.
-The complete existing abort-test prefix requires final qualification after the source commit.
+The complete existing abort-test prefix passed 71 nodes with zero skips after the source commit.
+
+The [evidence record](../benchmarks/bare-frame-stubs-2026-10-27/README.md) preserves the original failure and all three required control failures.
 
 Issue #13723 tracks this fixture repair under #13687.
 Actual CI recovery and the wider retained-machine proof remain open.

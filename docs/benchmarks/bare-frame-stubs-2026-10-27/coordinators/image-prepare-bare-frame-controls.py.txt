@@ -1,0 +1,11 @@
+from pathlib import Path
+import json,hashlib,subprocess
+root=Path('/tmp/image-engine-worktrees/lang-image-bare-frame-health');source=root/'internal/testing/e2ecompiler/self_host_abort_report_test.go';s=source.read_text();needle='\tif stubs := trapStubRe.FindAllString(string(asm), -1);';assert s.count(needle)==1
+injections={
+ 'missing':'\tasm = bytes.Replace(asm, []byte("__fern_alloc_size_abort.c:"), nil, 1)\n',
+ 'renamed':'\tasm = bytes.Replace(asm, []byte("__fern_alloc_size_abort.c:"), []byte("__fern_unrelated_abort.c:"), 1)\n',
+ 'duplicate':'\tasm = append(asm, []byte("\\n__fern_alloc_size_abort.c:\\n")...)\n'
+};manifest={}
+for name,line in injections.items():
+ p=Path('/tmp/image-bare-frame-control-'+name+'.go');assert not p.exists();p.write_text(s.replace(needle,line+needle));overlay=p.with_suffix('.overlay.json');assert not overlay.exists();overlay.write_text(json.dumps({'Replace':{str(source):str(p)}},indent=2)+'\n');manifest[name]=dict(source_file=str(p),overlay=str(overlay),candidate_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),overlay_source_sha256=hashlib.sha256(p.read_bytes()).hexdigest(),only_test_assembly_view_modified=True,linked_assembly_file_unchanged=True)
+record=dict(creation_source=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),feature_uncommitted=True,controls=manifest);p=Path('/tmp/image-bare-frame-controls-creation.json');assert not p.exists();p.write_text(json.dumps(record,indent=2)+'\n');print('three exact-stub controls prepared')
