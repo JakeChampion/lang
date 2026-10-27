@@ -1204,34 +1204,35 @@ appendix §6.)
   (`Option`/`Result`/`IoError`/`JsonValue`) that should read from the same table.
 
 ### Interp / SSA
-- [~] **SH-047 — the O(n²) claim was wrong; `update` was the real cost.**
-  The row said `Env`'s parallel arrays are "rebuilt per binding (O(n²))". They
-  are not. `bind` / `bind_decl` use `.append` plus a struct-update spread, and
-  `.append` is in-place on a uniquely-owned array.
+- [x] **SH-047 — Scope frames replace copies of outer bindings.**
+  The original claim about quadratic declaration cost was incorrect.
+  Array append retains amortized constant cost when the arrays have one owner.
+  The earlier assignment fix searches from the last declaration and updates only
+  the value array.
 
-  **Measured with the compiler's own instrument, not reasoned.**
-  `__arr_push_shared_count()` counts appends that copied the whole buffer
-  despite spare capacity — i.e. appends made O(n) by a stray reference, "zero
-  on a healthy run". A probe mirroring `bind_decl`'s exact shape (parallel
-  arrays in a struct, rebound through a spread with one appended element)
-  reports **0 over 2000 binds**. Binding is amortised O(1).
+  `Env` now links each scope to its parent.
+  Each frame contains its local names, values, and declared types.
+  Lookup and assignment search the local frame before the parent frames.
+  Scope exit follows parent links and preserves updates to outer variables.
+  Blocks without local declarations reuse their current frame.
 
-  _Done:_ `Env.update`, which runs on EVERY assignment in an interpreted
-  program, was the actual O(n): it rebuilt BOTH `names` and `values` element by
-  element to change one slot, and its backward scan never stopped on the hit —
-  it always walked to index 0. It is now a backward scan that returns at the
-  first (innermost) match with `values.with(i, v)`; `names` is untouched, so no
-  array is rebuilt. 29 lines to 11.
+  Closures and sessions retain their flat capture format.
+  `flattened_env` collects frame data at these boundaries and reuses root
+  arrays when the environment has no parent.
+  Tests on x86-64, ARM64, and Wasm cover typed shadows, shared cells, escaped
+  captures, loop exits, and session errors.
+  A counter probe removes two frames above 2,000 outer bindings without an
+  allocation, and a positive control confirms that the counter works.
+  The native sanitizer test reports equal allocation and release counts.
 
-  _Still open, and this is the row's real remainder:_ `trim_env` rebuilds three
-  arrays on every scope exit, and the "outer-scope updates live below `base`"
-  invariant is enforced only by comment. That one is NOT fixable with COW — the
-  function keeps a PREFIX, and a slice copies the prefix just as a loop does, so
-  there is no asymptotic win without changing the representation. It wants the
-  row's frame-stack `Env` (popping a frame rather than recomputing a prefix),
-  which is a redesign of the interpreter's scoping rather than a local fix.
-  Note the interpreter is not on the compile path — it serves `interp_run` and
-  the `-interp` oracle — so weigh that redesign against what it actually buys.
+  Five valid programs passed the Go checker and interpreter before native
+  measurements with 40 process pairs on CPU 2.
+  Two loop cases with 500 outer bindings and 3,000 iterations took 30–32% of
+  the baseline time.
+  The small loop took 7% more time, the closure case took 3% more time, and
+  the block case without declarations stayed near the baseline.
+  These measurements include parser execution and interpretation, which do not form
+  part of the compiler path.
 
 - [x] **SH-048 — `eval_expr` / `compile_expr` giants.** _Done:_ `eval_binary` and
   `eval_unary` extracted from interp's `eval_expr`; the VM's six near-identical
