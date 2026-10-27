@@ -1,0 +1,116 @@
+{
+  "source_commit": "45148d4a5feb8cd0a305dbec134fa50c3ea825a0",
+  "base_commit": "ced67ee81f8c6cac337a214480c7ccb3be51be87",
+  "scope": "Static emitted line counts only. Native retired instructions were not remeasured locally. No runtime speed claim.",
+  "checks": {
+    "native": {
+      "measured_rows": 78,
+      "changed": [
+        {
+          "key": "x86_64/http_hello.text",
+          "before": 17403,
+          "after": 17410
+        },
+        {
+          "key": "x86_64/utf8_ingest_unchecked.text",
+          "before": 8248,
+          "after": 8255
+        },
+        {
+          "key": "x86_64/utf8_ingest_validated.text",
+          "before": 8854,
+          "after": 8861
+        },
+        {
+          "key": "aarch64/http_hello.text",
+          "before": 18517,
+          "after": 18516
+        },
+        {
+          "key": "aarch64/utf8_ingest_unchecked.text",
+          "before": 8681,
+          "after": 8680
+        },
+        {
+          "key": "aarch64/utf8_ingest_validated.text",
+          "before": 9245,
+          "after": 9244
+        }
+      ],
+      "strict_static_gate_exit": 0,
+      "tolerances_preserved": true,
+      "unmeasured_values_preserved": true
+    },
+    "selfhost": {
+      "measured_rows": 117,
+      "changed": [
+        {
+          "key": "selfhost/arm64-linux/http_hello.emit",
+          "before": 18517,
+          "after": 18516
+        },
+        {
+          "key": "selfhost/arm64-linux/utf8_ingest_unchecked.emit",
+          "before": 8681,
+          "after": 8680
+        },
+        {
+          "key": "selfhost/arm64-linux/utf8_ingest_validated.emit",
+          "before": 9245,
+          "after": 9244
+        },
+        {
+          "key": "selfhost/x86-64-linux/http_hello.emit",
+          "before": 17403,
+          "after": 17410
+        },
+        {
+          "key": "selfhost/x86-64-linux/utf8_ingest_unchecked.emit",
+          "before": 8248,
+          "after": 8255
+        },
+        {
+          "key": "selfhost/x86-64-linux/utf8_ingest_validated.emit",
+          "before": 8854,
+          "after": 8861
+        }
+      ],
+      "strict_static_gate_exit": 0,
+      "tolerances_preserved": true,
+      "unmeasured_values_preserved": true
+    }
+  },
+  "compiler_sha256": "22fb90a2e015bc63f5a60db55313694f21ba7603c51f703e6f5c1ae73d25242b",
+  "selfhost_sha256": "e84e9211acac837e2b8f88ea5d3dfedbf9b80ec8049259eccf9508734c221dba",
+  "capacity_regression": {
+    "before_correct": 12,
+    "before_wrong": 4,
+    "after_correct": 16,
+    "lengths": [
+      0,
+      1,
+      7,
+      8,
+      9,
+      2147483640,
+      2147483641,
+      2147483647
+    ],
+    "targets": [
+      "x86-64-linux",
+      "arm64-linux"
+    ],
+    "limits": "Synthetic descriptor and allocator-entry control. No large allocation or memory copy. No real large-string memory corruption claim."
+  },
+  "initial_native_comparison": "Comparing the static-only report with the full native baseline failed for 78 absent retired-instruction rows. The later static comparator uses all 78 measured static rows only. All retired-instruction baseline values remain unchanged.",
+  "existing_copy_controls": {
+    "cases": [
+      "alloc_flat_bytes_roundtrip",
+      "byte_views_in_binary_codecs",
+      "rc_corpus_slice_header_churn_free"
+    ],
+    "result": "PASS75.551s across applicable fixture engines. No SKIP or FAIL nodes. Go oracle has fixture-specific execution eligibility.",
+    "log": "/workspace/sec005-existing-byte-copy-controls.log"
+  },
+  "final_source_lint": "PASS8.177s"
+}

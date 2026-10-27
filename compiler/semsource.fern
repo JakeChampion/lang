@@ -3361,6 +3361,9 @@ function declared_type_head(name: string, s: State): string {
   if (checker.union_sig(s.scope, name).name.len() > 0 || builtin_union_layout(name) != 0) {
     return name;
   }
+  if (checker.variant_owner_of(s.scope, name).len() > 0) {
+    return "";
+  }
   let sig = checker.struct_sig(s.scope, name);
   if (sig.name.len() > 0) {
     if (sig.enum_owner.len() > 0) {
