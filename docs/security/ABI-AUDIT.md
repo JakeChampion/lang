@@ -14,7 +14,7 @@ Fern code does not call Fern code on the platform convention.
 
 | Rule | x86-64 | arm64 |
 |---|---|---|
-| Frame record | `pushq %rbp; movq %rsp, %rbp`; a leaf builds no frame | `stp x29, x30, [sp, #-16]!; mov x29, sp` |
+| Frame record | `pushq %rbp; movq %rsp, %rbp` only in a function that needs a frame pointer; the rest keep `%rsp` fixed and save registers with `pushq` | `stp x29, x30, [sp, #-16]!; mov x29, sp` |
 | Stack-entry parameters | `16 + 8*i(%rbp)` | `[x29, #16 + 16*i]`, 16 bytes per slot |
 | Register-entry pool | `%rax, %rsi, %rdi, %r8, %r9, %r10` | `x0, x9` to `x15` |
 | Callee-saved pool | `%rbx, %r12` to `%r15`, saved per function when used | `x19` to `x28`, saved per function when used |
@@ -67,7 +67,7 @@ An `f32` or `f64` result moves from `%xmm0` or `d0` into that register after a w
 | A foreign call takes at most four integer arguments and no float argument | A C function with a float parameter or a fifth parameter has no safe call; the checker refuses nothing, because the shim count is the whole surface |
 | A variadic C callee on arm64-darwin | Apple's convention passes variadic arguments on the stack; the shim passes them in registers, so such a call is wrong on that target |
 | No runtime foreign-call test on arm64 | The arm64 shim is pinned on its assembly text only; the shared-object writer exists for x86-64 only, so the native arm64 shards run no `dlopen` test |
-| Tail calls | The backends emit none, so no rule is needed and none is tested |
+| Tail calls | A call in tail position to a register entry is a jump (`jmp __fn_f.r`, `b __fn_f.r`), so the caller's frame is gone and a backtrace omits it; `TestSelfHostAbortBacktraceCorruptFrame` keeps work after its call for that reason |
 | The register entry `.r` is not exported | A C caller reaches only the stack entry, which is the exported symbol, so this is a limit on size and not on safety |
 | A signal handler's frame | The alternate signal stack is 64 KiB (`docs/security/STACK-GUARD.md`); a handler that allocates is outside this record |
 

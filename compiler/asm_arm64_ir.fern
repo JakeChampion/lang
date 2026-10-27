@@ -6028,7 +6028,7 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
 function emit_stack_switch(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #30\n", darwin);
   s = s.write("    tbnz x0, #63, .Lfern_stack_kept\n    mov x19, x0\n    mov x1, #1\n    lsl x1, x1, #20\n    mov x2, #0\n    mov x8, #226\n    svc #0\n    cbnz x0, .Lfern_stack_guard_failed\n");
-  s = s.write("    mov x9, #1\n    lsl x9, x9, #30\n    add x9, x19, x9\n    sub sp, x9, #16\n.Lfern_stack_kept:\n");
+  s = s.write("    mov x9, #1\n    lsl x9, x9, #30\n    add x9, x19, x9\n    sub sp, x9, #16\n    mov x10, sp\n    adrp x11, __fern_stack_top\n    add x11, x11, :lo12:__fern_stack_top\n    str x10, [x11]\n.Lfern_stack_kept:\n");
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #16\n", darwin);
   s = s.write("    tbnz x0, #63, .Lfern_segv_skip\n    mov x9, #1\n    lsl x9, x9, #16\n    sub sp, sp, #32\n");
   if (darwin) {
@@ -6082,7 +6082,7 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asm
   }
   s = s.write("    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n    .text\n");
   s = s.write("__fern_segv:\n" + landing_pad(s) + addr + ctx + "    sub x9, x9, x10\n    mov x10, #1\n    lsl x10, x10, #20\n    add x9, x9, x10\n    lsl x10, x10, #1\n    cmp x9, x10\n    b.hs .Lfern_segv_other\n" + frame);
-  s = s.write("    stp x12, x11, [sp, #-16]!\n    mov x29, sp\n    adrp x1, .Lmsg_stack_overflow\n    add x1, x1, :lo12:.Lmsg_stack_overflow\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #134\n    b __fern_report\n");
+  s = s.write("    stp x12, x11, [sp, #-16]!\n    mov x29, sp\n    adrp x10, __fern_stack_top\n    add x10, x10, :lo12:__fern_stack_top\n    str xzr, [x10]\n    adrp x1, .Lmsg_stack_overflow\n    add x1, x1, :lo12:.Lmsg_stack_overflow\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #134\n    b __fern_report\n");
   let tramp: string = "xzr";
   if (darwin) {
     s = s.write(".Lfern_segv_other:\n    adrp x10, __fern_segv_trampoline\n    add x10, x10, :lo12:__fern_segv_trampoline\n");
@@ -6914,6 +6914,13 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    b.lo .Lbt_done\n");
   s = s.write("    and x23, x20, #7\n");
   s = s.write("    cbnz x23, .Lbt_done\n");
+  s = s.write("    adrp x24, __fern_stack_top\n");
+  s = s.write("    add x24, x24, :lo12:__fern_stack_top\n");
+  s = s.write("    ldr x24, [x24]\n");
+  s = s.write("    cbz x24, .Lbt_top_ok\n");
+  s = s.write("    cmp x20, x24\n");
+  s = s.write("    b.hs .Lbt_done\n");
+  s = s.write(".Lbt_top_ok:\n");
   s = s.write("    ldr x1, [x20, #8]\n");
   s = bt_strip_signature(s);
   s = s.write("    cmp x1, #16, lsl #12\n");
@@ -7440,6 +7447,10 @@ function abort_trap(s: asmcore.EmitState, label: string, msg: string, text: stri
 }
 
 function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .bss\n");
+  s = s.write("    .align 3\n");
+  s = s.write("    .globl __fern_stack_top\n");
+  s = s.write("__fern_stack_top: .quad 0\n");
   s = s.write("    .text\n");
   s = s.write(".globl __fern_report\n");
   s = s.write(".type __fern_report, %function\n");
