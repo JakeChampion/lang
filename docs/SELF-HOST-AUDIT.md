@@ -38,11 +38,9 @@ themes:
    `asmcore.fern:2704 infer_expr_type` is **497**; `parser.fern:6033
    parse_type_name` is **341**. `wasm_ir.fern`'s `emit_function_ir` led this
    list at 1,257 and is now **84** (SH-058).
-2. **Left-fold string accumulation.** `out = out + …`, the O(n²) shape whose
-   cost the tree's own comments document. `wasm_ir.fern` led at **701 sites**
-   and is now down to **1** (SH-027); **278 in `ssa_arm64` and 259 in
-   `ssa_x86`** remain, though most of those are a fixed prologue rather than a
-   per-op path — see SH-027 for the breakdown.
+2. **String accumulation.** Module emitters use local chunk arrays.
+   Local string builders use the owned runtime growth path.
+   SH-027 records the current source inventory and generated-code evidence.
 3. **Parallel-maintained twins.** `asm_ir.fern` ↔ `asm_arm64_ir.fern` keep
    two `emit_runtime` surfaces whose `has_need` key sets have **drifted apart
    by 7 keys**.
@@ -807,75 +805,79 @@ findings. Ranked by leverage.
   Go-oracle CLI cases cover these contracts, and shared-loader probes execute on x86-64, ARM64 and Wasm.
 
 
-### T7 — O(n²) string accumulation in emitters
-- [ ] **SH-027 — Use a `strbuf`/chunk-join accumulator in the string emitters.**
-  `wasm_ir.fern` is **done**: `emit_ir_op` (#7320) and the other 19 accumulating
-  functions (420 sites) now collect into a `string[]` and
-  `util.str_join_chunks` once. One fold remains there, in `fn_type_decl`, which
-  returns `out + suffix` rather than `out` — the accumulator is read, so the
-  shape does not apply.
+### T7 — String accumulation in emitters
+- [x] **SH-027 — Use efficient accumulators in the string emitters.**
+  The module emitters and `printer.format_module` use local chunk arrays.
+  The remaining string builders use the runtime growth path or emit bounded fragments.
+  The 2026-10 review covers the current IR backends, printer, and documentation generator.
 
-  Remaining `out = out +` sites:
+  Current `out = out +` source sites:
 
-  | file | sites | where |
+  | file | sites | review |
   |---|---|---|
-  | `printer.fern` | 214 | does not take this rewrite, see below |
-  | `ferndoc.fern` | 30 | unexamined |
-  | `irlower.fern` | 25 | unexamined |
-  | `asm_ir.fern` | 2 | — |
-  | `asm_arm64_ir.fern` | 1 | — |
-  | `wasm_ir.fern` | 1 | `fn_type_decl`, above |
+  | `printer.fern` | 233 | 41 builders, with local accumulators |
+  | `ferndoc.fern` | 34 | 13 builders, with local accumulators |
+  | `irlower.fern` | 0 | module retired |
+  | `asm_ir.fern` | 16 | fixed table, register fragments, and two text transforms |
+  | `asm_arm64_ir.fern` | 2 | `darwin_retarget_locals` |
+  | `wasm_ir.fern` | 6 | one signature loop and two fixed lane fragments |
 
-  (`printer.fern` was missing from this table entirely; the `*_run.fern` test
-  drivers also fold, and are not worth converting.)
+  These counts describe source syntax, not repeated copies of the accumulated prefix.
+  The local accumulators do not escape into a retained alias during their loops.
+  Length tests and final suffixes do not prevent the runtime growth path.
+  The unused private `print_type_params_except` helper is absent.
 
-  **`printer.fern`'s per-node builders do not take the same rewrite, but its
-  whole-FILE accumulator did — and that is the one that mattered.** The
-  per-node observation above is right: most of printer's accumulators end
-  `return out + ")"`, so the partial string is read and the write-only
-  precondition fails; and converting a builder for a few dozen characters buys
-  nothing anyway. That framing missed `format_module`, the `-fmt` entry point,
-  which folds `out = out + decl` across **every declaration in the module** —
-  copying the whole document once per declaration.
+  **The growth path preserves the owned prefix.**
+  `ssaunits.string_append` recognizes string concatenation and slice append operations.
+  `ssarc.grow_or_concat` first calls `__fern_str_grow` or its range variant.
+  The runtime checks for a unique owner and sufficient capacity.
+  It then copies only the appended bytes.
 
-  _Done:_ `format_module` is chunk-join (`util.str_join_chunks`, the helper the
-  three SSA emitters already use). Chunk-join rather than the global `strbuf`
-  is required here, not a preference: `format_module` calls `print_import` /
-  `print_stmt` / `print_type_alias`, any of which could want a buffer of its
-  own, and a local array nests where a global buffer would corrupt.
+  When capacity is insufficient, the fresh helper allocates at least twice the previous size.
+  It copies the old prefix once and releases the old accumulator.
+  Thus a unique accumulator does not copy its complete prefix on every append.
+  This applies to a final `return out + suffix` as well as a loop assignment.
 
-  Its two failures of the write-only precondition were both `out.len() > 0`,
-  asking "has anything been emitted yet" — a boolean, not a string read. A
-  `wrote` flag replaces them and the precondition holds.
+  Generated x86 code confirms the growth calls in the live printer builders.
+  A separate diagnostic build sets `FERN_SEM_INLINE=0` to retain the private function names.
+  The normal build also retains growth calls with the default compiler options.
+  The two diff builders receive a separate diagnostic build.
+  Source inspection distinguishes initial fragments and independent operands from the loop accumulator.
 
-  Verified by the row's own method: **14 appended expressions before, 14 after,
-  identical sequence**, then the byte gates — `internal/syntax/printer` full corpus
-  (114s) and the self-host `Fmt|Print` parity suites (291s), both green.
+  **Large helper probes retain their exact output.**
+  The probes call unchanged private helpers through exports in separate module copies.
+  They cover replacement, tail resolution, Darwin local names, Wasm signature declarations, indentation, and literal escapes.
+  Forty-eight cases include empty inputs and 10,000 repetitions.
+  Actual x86, ARM64, and Wasm execution matches the independent expected bytes.
+  The 48 native sanitizer runs report 34,668 allocations, 34,668 frees, and zero live bytes.
 
-  Still not worth converting: `escape_fstring_lit` and `indent_str`, the two the
-  row nominates. They match the mechanical shape but bound their output by one
-  literal and one indent depth, so there is no fold to collapse.
+  The x86 register builders receive the bounded saved-register list.
+  The CRC table emits 256 rows.
+  Address operands and the two Wasm lane helpers emit fixed fragments.
+  The unbounded text transforms retain local accumulators and use the growth path.
+  SH-052 still tracks the separate Darwin dialect design.
 
-  **The 2026-10 `ferndoc` measurements reject a mechanical chunk-join conversion.**
-  The emitted page builder already calls the in-place string-growth helpers.
-  A chunk-join prototype kept identical output but regressed the measured page and table cases.
+  **`format_module` already uses chunk joins.**
+  Its 14 appended expressions retain their original order.
+  A local array permits nested printers to keep their own accumulators.
+  A global buffer cannot provide that isolation.
+  The earlier formatter corpus and byte-parity gates cover this conversion.
+
+  `escape_fstring_lit` calls `escape_lit_body`, which appends bytes to an owned `u8[]`.
+  It does not concatenate a string for each character.
+  `indent_str` uses the string growth path.
+  Neither helper requires a chunk array.
+
+  **The `ferndoc` measurements reject a mechanical chunk-join conversion.**
+  A chunk-join prototype retained exact output but regressed the measured page and table cases.
   Local measurements cover a 1,000-declaration page and an 80-trait table.
+  The retained page builder uses the string growth path.
 
-  The actual repeated work was a declaration-table scan for each public declaration.
-  `DocDecl` now retains its source-table index through sort and comment association.
-  The renderer uses that index and no longer repeats the name-and-line search.
-
-  The private sorted insertion also consumes its input array.
-  It appends directly when the new declaration follows the final item.
-  Earlier declarations still use the stable insertion path.
-  The retired `irlower.fern` has no remaining builders to convert.
-
-  _Method that worked on `wasm_ir.fern`:_ convert only where the accumulator is
-  provably **write-only** — every mention of `out` in the function is its
-  declaration, an `out = out + …` fold, or `return out;`. That is the
-  precondition: no arm inspects the partial string, so the concatenation can be
-  defer to the join. Then assert every appended expression survives **verbatim**
-  and the site count is unchanged, and gate on emitted bytes.
+  The repeated work was a declaration-table scan for each public declaration.
+  `DocDecl` retains its source-table index through sort and comment association.
+  The renderer uses that index instead of another name-and-line search.
+  Private sorted insertion consumes its array and appends directly after the final item.
+  Earlier declarations and ties retain stable insertion order.
 
 ### T8 — Hand-rolled options/containers that generics would replace
 - [x] **SH-028 (slice 1) — the `append_*` concat family is now one generic.**
@@ -1733,10 +1735,9 @@ appendix §6.)
 ## 5. Suggested sequencing
 
 1. **Correctness first** — SH-001…SH-010 are all closed; keep that bar.
-2. **The giant splits are done** — SH-050, SH-042, SH-044's split half, SH-054
-   and SH-058 have all landed. What is left of SH-027 is `printer.fern` (a
-   different shape) and the SSA per-instruction chain (deliberately not worth
-   it) — see the row.
+2. **The giant splits and string-builder review are complete.**
+   SH-050, SH-042, SH-044's split half, SH-054, SH-058, and SH-027 are complete.
+   The remaining semantic walks and type representation still require changes.
 3. **T3 visitor** (SH-022) — `parser`'s 12 rewrite passes and `checker`'s 15
    scope-threading passes are what is left; `wasm_ir`'s cluster was never an AST
    walk and is done.

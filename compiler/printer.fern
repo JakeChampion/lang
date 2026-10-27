@@ -3035,36 +3035,6 @@ function print_enum_variant(ed: parser.EnumDecl, structs: parser.StructDecl[], v
   return out;
 }
 
-function print_type_params_except(fd: parser.FuncDecl, skip: string[]): string {
-  let names: string[] = [];
-  let bounds: string[] = [];
-  let i: i32 = 0;
-  while (i < fd.type_params.len()) {
-    if (!util.has_str(skip, fd.type_params[i])) {
-      names = names.append(fd.type_params[i]);
-      if (i < fd.bound_traits.len()) {
-        bounds = bounds.append(fd.bound_traits[i]);
-      } else {
-        bounds = bounds.append("");
-      }
-    }
-    i = i + 1;
-  }
-  if (names.len() == 0) {
-    return "";
-  }
-  let out: string = "[";
-  let j: i32 = 0;
-  while (j < names.len()) {
-    if (j > 0) {
-      out = out + ", ";
-    }
-    out = out + print_tparam(names[j], bounds[j]);
-    j = j + 1;
-  }
-  return out + "]";
-}
-
 function print_impl_decl(id: parser.ImplDecl, f: Fmt): (string, Fmt) {
   let out: string = "impl";
   if (id.type_params.len() > 0) {
