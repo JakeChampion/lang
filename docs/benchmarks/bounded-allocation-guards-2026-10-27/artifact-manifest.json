@@ -676,5 +676,11 @@
     "sha256": "7744413c320c0398156006c0c83219943d33a6d430e0c26205b3979160d1dfb2",
     "bytes": 8574,
     "original": "/tmp/image-finalize-retained-bounded-evidence.py"
+  },
+  {
+    "path": "records/image-retained-bounded-evidence-whitespace-correction.json",
+    "sha256": "981b9d7b336703b5b90cb1da975b8e49a2a3edc392c8165b71ed5b92c1d8f055",
+    "bytes": 663,
+    "original": "/tmp/image-retained-bounded-evidence-whitespace-final.json"
   }
 ]
