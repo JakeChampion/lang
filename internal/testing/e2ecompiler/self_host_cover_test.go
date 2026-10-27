@@ -129,3 +129,40 @@ func TestSelfHostCoverRefusals(t *testing.T) {
 		})
 	}
 }
+
+func TestSelfHostCoverInferredValueBlocks(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, tc := range []struct{ name, declarations, body string }{
+		{"string-match", `enum Kind { A, B }`, `let kind = match (A) { A => seed, B => "other" }; let key = kind + "-suffix"; if (key != seed+"-suffix") { return 1; }`},
+		{"early-return", `enum Kind { A, B }`, `let kind = match (A) { A => seed, B => { return 7; } }; let key = kind + "-suffix"; if (key != seed+"-suffix") { return 1; }`},
+		{"owned-array", `enum Kind { A, B }`, `let xs = match (A) { A => [seed], B => [] }; let changed=xs.with(0,"other"); if (xs[0]!=seed || changed[0]!="other") { return 1; }`},
+		{"if-expression", ``, `let value = if (seed.len()>0) { seed } else { "other" }; let key=value+"-suffix"; if (key!=seed+"-suffix") { return 1; }`},
+		{"tuple-match", `enum Kind { A, B }`, `let (value,n)=match(A) { A => (seed,3), B => ("other",4) }; if (value+"-suffix"!=seed+"-suffix" || n!=3) { return 1; }`},
+		{"explicit-control", `enum Kind { A, B }`, `let value: string=match(A) { A => seed, B => "other" }; if (value+"-suffix"!=seed+"-suffix") { return 1; }`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "main.fern")
+			source := tc.declarations + "\nfunction main(): i32 {\n let seed=args()[0]+\"-owned-coverage-value\";\n " + tc.body + "\n return 0;\n}\n"
+			if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+				t.Run(target, func(t *testing.T) {
+					stderr, code := cli.exitOfFile(t, path, target, nil, "FERN_COVER=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+					if code != 0 {
+						t.Fatalf("covered value block exit %d\n%s", code, stderr)
+					}
+					assertBalancedCensus(t, stderr)
+					if strings.Contains(stderr, "allocs=0 ") {
+						t.Fatalf("expected owned payload allocation\n%s", stderr)
+					}
+					for _, line := range []string{":3 1\n", ":4 1\n", ":5 1\n"} {
+						if !strings.Contains(stderr, "fern-cover: "+path+line) {
+							t.Errorf("missing executed counter %q\n%s", line, stderr)
+						}
+					}
+				})
+			}
+		})
+	}
+}

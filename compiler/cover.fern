@@ -359,6 +359,15 @@ function cover_node(e: ast.Expr, c: Ctx): ast.Expr {
       return ast.ExprBinary { ...b, left: and(and(ev, b.left), tk) };
     },
     ast.ExprLambda(lm) => {
+      if (lm.origin == parser.ORIGIN_MATCH_EXPR || lm.origin == parser.ORIGIN_IF_EXPR) {
+        // Keep the parser's result scaffold intact for type inference.
+        // The enclosing expression has a line counter. Branch bodies get their own counters.
+        let body: ast.Stmt[] = [];
+        for st in lm.body {
+          body = body.append(cover_stmt(st, c, false));
+        }
+        return ast.ExprLambda { ...lm, body: body };
+      }
       return ast.ExprLambda { ...lm, body: cover_stmts(lm.body, c, false) };
     },
     _ => {
