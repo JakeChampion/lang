@@ -58,8 +58,7 @@ function node_target(p: lspquery.Program, q: lspquery.Query, f: lspquery.Found):
   match (f.expr) {
     ast.ExprIdent(id) => {
       if (f.kind == lspquery.K_IDENT) {
-        let (b, local) = lspquery.binding_of(fd, q.site);
-        if (local) {
+        if let Some(b) = lspquery.binding_of(fd, q.site) {
           return Target { ...no_target(), kind: R_LOCAL, name: b.symbol, fd: f.fd, decl: lspquery.local_def(p, b, lspquery.is_param(b, fd), q.site.name) };
         }
       }

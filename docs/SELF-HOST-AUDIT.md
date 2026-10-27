@@ -1006,6 +1006,21 @@ findings. Ranked by leverage.
   Candidate/baseline time ratios range from 0.989 to 1.012 across six inputs.
   These probes establish no general compiler speed change.
 
+  `binding_of` returns `Option[lexical.Binding]` without an empty result on a miss.
+  All five consumers match the option before they use the result.
+  Global fallback, parameter checks, and local-shadow refusal retain their priority.
+  Real results retain their IDs, names, symbols, coordinates, and parameter status.
+  A loop variable with column zero remains present.
+
+  Thirty-nine query records match the native baseline on x86-64, ARM64, and Wasm.
+  The records cover blocks, loops, lambdas, captures, match bindings, shadows, and global names.
+  Twenty-five complete records retain hover, definition, documentation, reference, and token output.
+  Across 64 native sanitizer probes, 398,410 allocations match 398,410 releases, with zero live bytes in each process.
+
+  Forty process pairs per input repeat complete cached queries 50 times.
+  Candidate/baseline time ratios range from 0.964 to 1.099 across six inputs.
+  These probes establish no general compiler speed change.
+
   Printer recognition uses `Option[UseSugar]` and `Option[ForCSugar]`.
   Absent forms no longer contain placeholder calls, bodies, or loop conditions.
   Layout, statement output, and lint scores match the option before they use a payload.

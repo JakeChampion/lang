@@ -65,8 +65,7 @@ function names_a_parameter(p: Program, line: i32, col: i32): boolean {
   }
   if let ast.ExprIdent(_) = f.expr {
     let fd: parser.FuncDecl = q.v.mod.funcs[f.fd];
-    let (b, local) = binding_of(fd, q.site);
-    return local && is_param(b, fd);
+    return match (binding_of(fd, q.site)) { Some(b) => is_param(b, fd), None => false };
   }
   return false;
 }
@@ -346,7 +345,7 @@ pub function call_parts(v: checker.QueryView, site: Site): Option[Option[Parts]]
   let s: checker.Scope = scope_at(v, fd, site);
   match (f.expr) {
     ast.ExprIdent(id) => {
-      let (_, local) = binding_of(fd, site);
+      let local: boolean = match (binding_of(fd, site)) { Some(_) => true, None => false };
       let Some(sig) = checker.func_sig(s, id.name) else {
         return Some(None);
       };
@@ -496,19 +495,19 @@ function scope_in_expr(e: ast.Expr, s: checker.Scope, site: Site): checker.Scope
   return s;
 }
 
-pub function binding_of(fd: parser.FuncDecl, site: Site): (lexical.Binding, boolean) {
+pub function binding_of(fd: parser.FuncDecl, site: Site): Option[lexical.Binding] {
   let r: lexical.ResolvedFunction = lexical.resolve_func(fd);
   let p: Probe = probe_all(r.func.body, site);
   if let Some(node) = p.node {
     if let ast.ExprIdent(id) = node.expr {
       for b in r.bindings {
         if (b.symbol == id.name) {
-          return (b, true);
+          return Some(b);
         }
       }
     }
   }
-  return (lexical.Binding { id: 0 - 1, name: "", symbol: "", line: 0, col: 0 }, false);
+  return None;
 }
 
 pub function is_param(b: lexical.Binding, fd: parser.FuncDecl): boolean {
@@ -550,10 +549,7 @@ function node_text(s: checker.Scope, fd: parser.FuncDecl, f: Found, site: Site):
 }
 
 function ident_text(s: checker.Scope, fd: parser.FuncDecl, name: string, site: Site): string {
-  let (b, local) = binding_of(fd, site);
-  if (!local) {
-    return global_text(s, name, site.name);
-  }
+  let b: lexical.Binding = match (binding_of(fd, site)) { Some(value) => value, None => { return global_text(s, name, site.name); } };
   let kind: string = "(var) ";
   if (is_param(b, fd)) {
     kind = "(parameter) ";
@@ -883,8 +879,7 @@ function node_def(p: Program, v: checker.QueryView, s: checker.Scope, fd: parser
   match (f.expr) {
     ast.ExprIdent(id) => {
       if (f.kind == K_IDENT) {
-        let (b, local) = binding_of(fd, site);
-        if (local) {
+        if let Some(b) = binding_of(fd, site) {
           return local_def(p, b, is_param(b, fd), site.name);
         }
       }
