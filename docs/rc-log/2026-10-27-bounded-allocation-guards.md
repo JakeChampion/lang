@@ -28,12 +28,12 @@ The correction restored that model and its driver exactly, then tested the combi
 Other setup corrections fixed an instruction pattern, a helper argument, and an unsupported fixture instruction.
 These failures do not establish compiler defects or persistent leaks.
 
-The selected original driver and focused driver require final qualification on all three targets.
-The final run must use the original Go harness with strict IR, sanitizer, and balanced zero-live checks.
+The selected original driver and focused driver passed on all three targets.
+The final run used the original Go harness with strict IR, sanitizer, and nonzero balanced zero-live checks.
 The wider retained-machine group still requires separate review of its large-free model.
 Issues #13717 and #13687 retain the broader recovery criteria.
 All actual image-engine milestone and epic gates remain open.
 
 This change preserves every production emitter, runtime instruction, baseline, threshold, and model domain.
 It does not establish a general allocator proof or actual CI recovery.
-The final evidence record will contain the clean build and selected target results.
+The [evidence record](../benchmarks/bounded-allocation-guards-2026-10-27/README.md) contains the build, selected target results, and preserved failures.

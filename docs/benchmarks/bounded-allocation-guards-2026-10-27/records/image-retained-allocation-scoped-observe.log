@@ -1,0 +1,10 @@
+=== RUN   TestSelfHostRetainedNativeBodies
+=== RUN   TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux
+    self_host_ssa_retained_test.go:19: ssaretained_run exited 180: allocator initialization instruction controls failed: other unknown remains visible: movabs $17179869184, %rax
+        leakcheck: allocs=12956175 frees=12951527 live_bytes=328440 from=exit
+        fern-sanitizer: leak 328440 bytes in 4648 blocks
+--- FAIL: TestSelfHostRetainedNativeBodies (27.07s)
+    --- FAIL: TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux (25.71s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	27.092s
+FAIL

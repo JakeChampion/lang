@@ -1,0 +1,88 @@
+from pathlib import Path
+import json,hashlib,subprocess,shutil
+root=Path('/tmp/image-engine-worktrees/lang-image-retained-constructor-health');source='3a70b650d36331d2febe0f88d207bf0702e09ef4';base='231becae0394b07f7bdbc5cf24922b6e9db67aed'
+git=lambda *a:subprocess.check_output(['git',*a],cwd=root,text=True).strip()
+assert git('rev-parse','HEAD')==source and not git('status','--porcelain')
+records={mode:json.loads(Path('/tmp/image-retained-bounded-final-'+mode+'.json').read_text())for mode in ['targets','aux','complexity','runtime']}
+for mode,j in records.items():
+ assert j['source']==source and j['worktree_clean'] and j['worktree_still_clean'] and j['sources_unchanged'] and j['binaries_unchanged'] and not j['diagnostic_overlay']
+ assert all(c['exit']==0 for c in j['checks']) and j['FAIL']==j['SKIP']==0
+assert records['targets']['PASS']==7 and records['complexity']['PASS']==3 and records['aux']['PASS']==219
+build=json.loads(Path('/tmp/image-retained-bounded-current-build-resume.json').read_text());assert build['make_exit']==build['version_exit']==0 and build['sources_unchanged'] and build['worktree_clean'] and build['source']==source
+sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+for n,h in build['binaries'].items():assert sha(root/n)==h
+for n,h in records['targets']['source_hashes'].items():assert sha(root/n)==h
+for n in ['compiler/runtime','internal/stdlib','.github','internal/testing/e2ecompiler/self_host_cli_harness_test.go','compiler/ssaallocatormachine.fern','compiler/drivers/ssaallocatormachines.fern']:
+ assert subprocess.run(['git','diff','--quiet',base,'HEAD','--',n],cwd=root).returncode==0
+out=root/'docs/benchmarks/bounded-allocation-guards-2026-10-27';assert not out.exists();out.mkdir(parents=True)
+manifest=[]
+def copy(p,rel):
+ q=out/rel;assert not q.exists();q.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(p,q);manifest.append(dict(path=str(q.relative_to(out)),sha256=sha(q),bytes=q.stat().st_size,original=str(p)))
+for p in sorted(Path('/tmp').glob('image-retained-*')):
+ if p.is_file() and p.suffix in ['.json','.log','.fern','.go'] and not any(s in p.name for s in ['.checkpoint.','.before.json','issue-','parent-']):
+  if p.suffix in ['.fern','.go']:copy(p,Path('diagnostic-source')/(p.name+'.txt'))
+  else:copy(p,Path('records')/p.name)
+ if p.is_dir() and p.name.endswith('-source'):
+  for f in sorted(p.rglob('*')):
+   if f.is_file():copy(f,Path('candidate-source')/p.name/Path(str(f.relative_to(p))+('.txt' if f.suffix in ['.fern','.go']else'')))
+for n in ['image-run-retained-bounded-final.py','image-build-retained-bounded-current.py','image-build-retained-bounded-current-resume.py','image-run-retained-bounded-corrected.py','image-run-retained-bounded-explicit-flags.py','image-run-retained-bounded-flags-test.py','image-finalize-retained-bounded-evidence.py']:
+ p=Path('/tmp')/n;copy(p,Path('coordinators')/(n+'.txt'))
+summary=dict(source=source,base=base,selected_drivers=['ssaretained_run','ssaallocationguards_run'],execution_targets=['arm64-linux','x86-64-linux','wasm32-wasi'],driver_target_cases=6,Go_PASS_nodes=7,FAIL=0,SKIP=0,original_harness=True,existing_nonzero_balanced_zero_live_assertions=True,production_emitter_runtime_std_and_baselines_unchanged=True,full_retained_group_qualified=False,actual_CI_recovery_qualified=False,compiler=build['binaries'],checks={m:dict(seconds=j['seconds'],PASS=j['PASS'],FAIL=j['FAIL'],SKIP=j['SKIP'],exits=[c['exit']for c in j['checks']])for m,j in records.items()})
+(out/'summary.json').write_text(json.dumps(summary,indent=2)+'\n');(out/'artifact-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+(out/'README.md').write_text('''# Bounded allocation guard evidence
+
+The source commit is `3a70b650d36331d2febe0f88d207bf0702e09ef4`.
+The base is `231becae0394b07f7bdbc5cf24922b6e9db67aed`.
+The summary records the exact compiler hashes and actual check results.
+The manifest binds each preserved artifact to its original path and SHA-256.
+
+The original retained driver and focused guard driver passed on native, ARM64, and Wasm with the original Go harness.
+All six processes met its existing nonzero-allocation, balanced-census, and zero-live assertions.
+The Go run reported seven passing nodes, zero failures, and zero skips.
+These are driver execution targets, not a general proof of every backend helper.
+The wider retained-machine driver and actual CI recovery remain open under #13717 and #13687.
+
+The array-box model keeps capacities two and three.
+The first-mapping model keeps requests 40 and 48 bytes.
+The decoder retains the exact external abort target and condition.
+The model permits that transfer only when its existing symbolic state proves it untaken.
+The first-mapping carry premise requires a valid mapped region and a checked nonnegative 64-bit sum inside that region.
+The initialized model and its original driver remain byte-identical to the base.
+
+The focused controls include eleven size-guard mutations and five carry-guard mutations.
+Taken guards, unknown flags, unrelated targets, malformed frames, wrong stores, and wrong widths must fail.
+The combined control rejects a wrong mapping guard while the initialized path retains its separate valid premise.
+All original array-box mutation assertions remain in order.
+Their missing-comparison fixture now establishes unknown flags explicitly before the old comparison.
+The complete current body requires a separate successful assertion.
+
+The original main failure, emitted diagnostic, and failed candidates remain in this record.
+An incorrect new initialized-path control expected an unreachable guard to invalidate that path.
+The correction restored the initialized model exactly and tested the combined dependency instead.
+Other setup failures came from an instruction pattern, a helper argument, and an unsupported fixture comparison.
+The canonical self-test instruction corrected that last fixture without decoder expansion.
+Failure-exit allocation censuses do not establish a persistent compiler leak.
+
+The clean standard build completed stage one and its smoke tests before an environment transition interrupted the CLI process.
+The missing CLI output required a separate resumed make target.
+The resumed target returned make and version exit zero with immutable sources.
+Its raw compiler is byte-identical to the prior qualified compiler.
+The initial coordinator has no recovered outer exit status and does not count as a complete build pass.
+
+The checks passed all 2,084 format inputs, Go build and vet, SourceLint, workflow checks, and runtime checks.
+SourceLint reported 219 passing nodes with zero skips.
+Both unchanged complexity gates passed with three passing nodes and zero skips.
+The runtime module driver checked its five target sets and the stock feature and fixture checks completed.
+The recorded runtime command uses nonverbose Go output, so its record does not claim a verbose node count.
+
+Every production emitter, runtime source, standard-library source, baseline, threshold, and model domain remains unchanged.
+The local CLI import-closure record contains no changed proof module.
+The final runs used clean committed source and retained all source and binary hashes.
+All actual main-recovery, image-engine milestone, and epic acceptance gates remain open.
+''')
+p=root/'docs/rc-log/2026-10-27-bounded-allocation-guards.md';s=p.read_text();s=s.replace('The selected original driver and focused driver require final qualification on all three targets.\nThe final run must use the original Go harness with strict IR, sanitizer, and balanced zero-live checks.','The selected original driver and focused driver passed on all three targets.\nThe final run used the original Go harness with strict IR, sanitizer, and nonzero balanced zero-live checks.')
+s=s.replace('The final evidence record will contain the clean build and selected target results.','The [evidence record](../benchmarks/bounded-allocation-guards-2026-10-27/README.md) contains the build, selected target results, and preserved failures.');p.write_text(s)
+for p in [out/'README.md',root/'docs/rc-log/2026-10-27-bounded-allocation-guards.md']:
+ c=['python3','.claude/skills/simplified-technical-english/scripts/ste_check.py','--no-vocab','--mode','descriptive',str(p)];z=subprocess.run(c,cwd=root,capture_output=True,text=True);log=z.stdout+z.stderr;(out/(p.parent.name+'-STE.log')).write_text(log);assert z.returncode==0 and 'ERROR' not in log,log
+assert subprocess.run(['git','diff','--check'],cwd=root).returncode==0
+print(dict(files=len(manifest),summary=summary,evidence=str(out)))

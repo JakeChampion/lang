@@ -1,0 +1,16 @@
+=== RUN   TestSelfHostRetainedNativeBodies
+=== RUN   TestSelfHostRetainedNativeBodies/ssaretained_run/arm64-linux
+=== RUN   TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux
+=== RUN   TestSelfHostRetainedNativeBodies/ssaretained_run/wasm32-wasi
+=== RUN   TestSelfHostRetainedNativeBodies/ssaallocationguards_run/arm64-linux
+=== RUN   TestSelfHostRetainedNativeBodies/ssaallocationguards_run/x86-64-linux
+=== RUN   TestSelfHostRetainedNativeBodies/ssaallocationguards_run/wasm32-wasi
+--- PASS: TestSelfHostRetainedNativeBodies (309.67s)
+    --- PASS: TestSelfHostRetainedNativeBodies/ssaretained_run/arm64-linux (98.79s)
+    --- PASS: TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux (34.62s)
+    --- PASS: TestSelfHostRetainedNativeBodies/ssaretained_run/wasm32-wasi (64.43s)
+    --- PASS: TestSelfHostRetainedNativeBodies/ssaallocationguards_run/arm64-linux (36.02s)
+    --- PASS: TestSelfHostRetainedNativeBodies/ssaallocationguards_run/x86-64-linux (23.74s)
+    --- PASS: TestSelfHostRetainedNativeBodies/ssaallocationguards_run/wasm32-wasi (49.64s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	309.704s

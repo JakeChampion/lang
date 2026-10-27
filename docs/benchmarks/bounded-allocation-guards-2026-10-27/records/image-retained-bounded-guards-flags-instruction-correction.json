@@ -1,0 +1,6 @@
+{
+  "previous_actual_exit": 1,
+  "sources_unchanged": true,
+  "archive": "/tmp/image-retained-bounded-guards-explicit-flags-source",
+  "reason": "The register comparison is outside this model. Use its existing supported self-test instruction to give the fixture unknown flags. No decoder expansion or assertion changes."
+}

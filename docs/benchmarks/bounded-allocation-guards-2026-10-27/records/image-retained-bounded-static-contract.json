@@ -1,0 +1,20 @@
+{
+  "source": "3a70b650d36331d2febe0f88d207bf0702e09ef4",
+  "base": "231becae0394b07f7bdbc5cf24922b6e9db67aed",
+  "original_array_box_driver_lines_retained_in_order": true,
+  "initialized_model_and_driver_exact_base": true,
+  "original_harness_exact_base": true,
+  "production_runtime_std_and_baselines_exact_base": true,
+  "new_box_guard_mutations": 11,
+  "new_mapping_guard_mutations": 5,
+  "model_capacity_cases": [
+    2,
+    3
+  ],
+  "model_allocator_requests": [
+    40,
+    48
+  ],
+  "original_harness_requires_nonzero_allocation_and_zero_live": true,
+  "notes": "The new comparison fixture adds a supported unknown self-test before the original comparator. Every original mutation assertion remains in order."
+}

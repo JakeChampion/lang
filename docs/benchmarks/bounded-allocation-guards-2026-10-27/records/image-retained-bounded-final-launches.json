@@ -1,0 +1,9 @@
+{
+  "source": "3a70b650d36331d2febe0f88d207bf0702e09ef4",
+  "targets": 10470,
+  "aux": 49995,
+  "complexity": 48351,
+  "runtime": 14456,
+  "source_frozen": true,
+  "runner": "/tmp/image-run-retained-bounded-final.py"
+}
