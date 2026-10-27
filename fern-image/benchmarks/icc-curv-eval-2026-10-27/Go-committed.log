@@ -1,0 +1,12 @@
+TAP version 13
+# Suite: scalar ICC curv evaluation
+ok 1 - exact identities, endpoints, and Decimal gamma probes
+ok 2 - independent sampled interpolation values
+ok 3 - large-table boundary retains the low product
+ok 4 - public variant, input, value, shape, and limit admission
+ok 5 - callback COW, typed wire input, and fresh calls
+ok 6 - every cooperative cancellation poll
+1..6
+# tests 6
+# pass 6
+# fail 0

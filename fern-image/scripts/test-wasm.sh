@@ -23,6 +23,9 @@ wasmtime run --dir=. build/wasm-icc_envelope_test.wasm
 "$FERN" -check tests/icc_tag_data_test.fern
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_tag_data_test.wasm tests/icc_tag_data_test.fern
 wasmtime run --dir=. build/wasm-icc_tag_data_test.wasm
+"$FERN" -check tests/icc_curv_eval_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_curv_eval_test.wasm tests/icc_curv_eval_test.fern
+wasmtime run --dir=. build/wasm-icc_curv_eval_test.wasm
 "$FERN" -check tests/png_incremental_test.fern
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-png_incremental_test.wasm tests/png_incremental_test.fern
 wasmtime build/wasm-png_incremental_test.wasm

@@ -1,0 +1,7 @@
+{
+  "committed_record": "image-icc-curv-committed-go.json",
+  "source_commit": "7508059b2dfc41da27717c6a0d6ef415579bba96",
+  "feature_uncommitted_field": "The generic initial wrapper hardcoded true. Current HEAD and file hashes match the clean committed source.",
+  "earlier_log_path_reuse": "The post-format repeat reused the initial local Go output paths. The initial metadata is recovered explicitly from its tool response; the initial stdout file is not recoverable. No published record or source changed.",
+  "final_record_paths": "The completed repeat now has distinct committed-go log/JSON names."
+}
