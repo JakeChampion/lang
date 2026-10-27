@@ -138,7 +138,10 @@ Native fault results apply to the tested process and image variants on that host
 They do not certify handwritten runtime frames or every production host.
 
 Every `tests/stdlib/*_test.fern` program was also built with `-harden` and
-run under qemu: 247 of 247 passed, with no SIGILL.
+run, on x86-64-linux natively and on arm64-linux under QEMU: 532 of 538
+runs passed, with no SIGILL and no canary mismatch. The six other runs are
+the two runner self-tests that print `not ok` lines by design and the
+Darwin-only time zone test, which fail the same way without the flag.
 
 ## Not covered yet
 
