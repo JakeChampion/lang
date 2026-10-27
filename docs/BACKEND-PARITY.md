@@ -516,6 +516,14 @@ other target, and `-shared`, refuses the flag with exit 2.
 What is left (x86-64 CET, the shared and Android images, the runtime's
 hand-written frames) is listed in `docs/HARDENING.md`.
 
+### Build profiles (`-profile`) follow their flags
+
+`-profile hardened` is `-harden -pie`, so the two Linux native targets accept
+it and every other target refuses it with exit 2. `safe`, `diagnostic` and
+`minimal` build wherever their flags build. The support table and the
+measured cost of each profile per target are in
+`docs/security/PROFILE-COSTS.md`.
+
 ### Position-independent executables (`-pie`) are x86-64-linux and arm64-linux
 
 `-pie` writes an `ET_DYN` image at base 0 with no interpreter, which the
