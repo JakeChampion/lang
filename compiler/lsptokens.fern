@@ -257,11 +257,10 @@ function global_kind(s: checker.Scope, name: string): i32 {
 }
 
 function type_kind(s: checker.Scope, name: string): i32 {
-  let u: checker.UnionSig = checker.enum_sig(s, name);
-  if (u.name.len() > 0 && u.is_enum) {
-    return T_ENUM;
-  }
-  if (u.name.len() > 0) {
+  if let Some(u) = checker.enum_sig(s, name) {
+    if (u.is_enum) {
+      return T_ENUM;
+    }
     return T_TYPE;
   }
   if (checker.struct_sig(s, name).name.len() > 0) {

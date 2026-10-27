@@ -545,7 +545,7 @@ function union_arguments(u: typeinfo.TypeUnion, scope: checker.Scope): typeinfo.
     return argued_list(u.args, scope);
   }
   let args: typeinfo.Type[] = [];
-  for _ in checker.union_sig(scope, u.name).type_params {
+  for _ in checker.union_type_params(scope, u.name) {
     args = args.append(typeinfo.TypeNever { tag: 0 });
   }
   return args;
@@ -563,7 +563,7 @@ function names_argless_enum(t: typeinfo.Type, scope: checker.Scope): boolean {
   match (t) {
     typeinfo.TypeUnion(u) => {
       if (u.args.len() == 0) {
-        return checker.union_sig(scope, u.name).type_params.len() > 0;
+        return checker.union_type_params(scope, u.name).len() > 0;
       }
       return any_names_argless_enum(u.args, scope);
     },
@@ -884,9 +884,10 @@ function union_name(t: typeinfo.Type): string {
 }
 
 function union_variants(s: State, name: string): string[] {
-  let sig: checker.UnionSig = checker.union_sig(s.scope, name);
-  if (sig.name.len() > 0 && sig.variants.len() > 0) {
-    return sig.variants;
+  if let Some(sig) = checker.union_sig(s.scope, name) {
+    if (sig.variants.len() > 0) {
+      return sig.variants;
+    }
   }
   return checker.owned_variant_names(s.scope, name);
 }
@@ -976,12 +977,12 @@ function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: 
 }
 
 function literal_variant_name(s: State, whole: typeinfo.Type, name: string): string {
-  let sig: checker.UnionSig = checker.union_sig(s.scope, union_name(whole));
+  let sig: checker.UnionSig = match (checker.union_sig(s.scope, union_name(whole))) { Some(u) => u, None => { return name; } };
   if (sig.instance == "" || util.index_of_str(sig.variants, name) >= 0) {
     return name;
   }
   // Enum instances preserve the declaration order of their variants.
-  let origin: checker.UnionSig = checker.union_sig(s.scope, union_name(enum_origin(whole, s)));
+  let origin: checker.UnionSig = match (checker.union_sig(s.scope, union_name(enum_origin(whole, s)))) { Some(u) => u, None => { return name; } };
   let at: i32 = util.index_of_str(origin.variants, name);
   if (at >= 0 && origin.variants.len() == sig.variants.len()) {
     return sig.variants[at];
@@ -3358,7 +3359,7 @@ function declared_type_head(name: string, s: State): string {
   if (base != name && (checker.struct_sig(s.scope, base).name.len() > 0 || union_variants(s, base).len() > 0 || builtin_union_layout(base) != 0)) {
     return base;
   }
-  if (checker.union_sig(s.scope, name).name.len() > 0 || builtin_union_layout(name) != 0) {
+  if (s.scope.has_union(name) || builtin_union_layout(name) != 0) {
     return name;
   }
   if (checker.variant_owner_of(s.scope, name).len() > 0) {
@@ -3607,9 +3608,10 @@ function request(s: State, key: string, name: string, b: ssasem.Binding): State 
 }
 
 function enum_origin(t: typeinfo.Type, s: State): typeinfo.Type {
-  let sig: checker.UnionSig = checker.union_sig(s.scope, union_name(t));
-  if (sig.instance != "") {
-    return settled(resolved(checker.spelled_type(s.scope, sig.instance), s.template, s.binding, s.scope));
+  if let Some(sig) = checker.union_sig(s.scope, union_name(t)) {
+    if (sig.instance != "") {
+      return settled(resolved(checker.spelled_type(s.scope, sig.instance), s.template, s.binding, s.scope));
+    }
   }
   return t;
 }
@@ -5998,7 +6000,7 @@ function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Sche
     return builtin_enum_entry(t, s, out);
   }
   let names: string[] = union_variants(s, u.name);
-  if (names.len() == 0 || u.args.len() != checker.union_sig(s.scope, u.name).type_params.len() || layout == 0) {
+  if (names.len() == 0 || u.args.len() != checker.union_type_params(s.scope, u.name).len() || layout == 0) {
     return Schemas { ...out, ok: false, why: "unsupported enum type" };
   }
   let variants: semrecords.Variant[] = typed_variants(s, t);
@@ -6183,7 +6185,7 @@ function dyn_concretes(t: typeinfo.Type, s: State): typeinfo.Type[] {
   for n in dyn_impl_names(t, s.impls) {
     if (n == "string") {
       out = out.append(t_string());
-    } else if (checker.union_sig(s.scope, n).type_params.len() > 0 || checker.struct_sig(s.scope, n).type_params.len() > 0) {
+    } else if (checker.union_type_params(s.scope, n).len() > 0 || checker.struct_sig(s.scope, n).type_params.len() > 0) {
       for c in generic_clones(n, s) {
         out = out.append(c);
       }

@@ -105,8 +105,7 @@ function type_named(p: lspquery.Program, v: checker.QueryView, name: string): Ta
 }
 
 function variant_target(p: lspquery.Program, v: checker.QueryView, s: checker.Scope, owner: string, name: string): Target {
-  let u: checker.UnionSig = checker.enum_sig(s, owner);
-  return Target { ...no_target(), kind: R_VARIANT, name: lspquery.unprefixed(name, u.module), owner: owner, decl: lspquery.variant_def(p, v, owner, name) };
+  return Target { ...no_target(), kind: R_VARIANT, name: lspquery.unprefixed(name, checker.union_module(s, owner)), owner: owner, decl: lspquery.variant_def(p, v, owner, name) };
 }
 
 function member_target(p: lspquery.Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess, called: boolean): Target {
@@ -334,7 +333,7 @@ struct VariantFind { s: checker.Scope, owner: string, name: string, prefix: stri
 
 function variant_uses(v: checker.QueryView, t: Target): Anchor[] {
   let s: checker.Scope = checker.module_scope(v);
-  let f: VariantFind = VariantFind { s: s, owner: t.owner, name: t.name, prefix: checker.enum_sig(s, t.owner).module, out: [] };
+  let f: VariantFind = VariantFind { s: s, owner: t.owner, name: t.name, prefix: checker.union_module(s, t.owner), out: [] };
   for fd in v.mod.funcs {
     if (fd.line > 0) {
       for st in lexical.resolve_func(fd).func.body {

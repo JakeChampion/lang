@@ -2030,9 +2030,11 @@ function enum_visible_from(u: UnionSig, from: string): boolean {
   return u.module == from || util.has_str(u.visible_from, from);
 }
 
-function enum_access_diags(u: UnionSig, s: Scope, line: i32, col: i32): util.Diag[] {
-  if (u.is_enum && !parser.is_reserved_enum_name(u.name) && !enum_visible_from(u, s.fn_module)) {
-    return [dg_at("E087", "enum " + util.demangle(u.name) + " is not visible from this package", line, col)];
+function enum_access_diags(found: Option[UnionSig], s: Scope, line: i32, col: i32): util.Diag[] {
+  if let Some(u) = found {
+    if (u.is_enum && !parser.is_reserved_enum_name(u.name) && !enum_visible_from(u, s.fn_module)) {
+      return [dg_at("E087", "enum " + util.demangle(u.name) + " is not visible from this package", line, col)];
+    }
   }
   return [];
 }
@@ -2458,32 +2460,34 @@ function is_nopayload_builtin_variant(name: string): boolean {
   return parser.builtin_enum_of(name) == "StreamFault";
 }
 
-function union_sig_of_variant(name: string, unions: UnionTable): UnionSig {
+function union_sig_of_variant(name: string, unions: UnionTable): Option[UnionSig] {
   let e: i32 = unions.variant_chain_head(name);
   while (e >= 0) {
     if (unions.vnames[e] == name) {
-      return unions.unions[unions.vowner[e]];
+      return Some(unions.unions[unions.vowner[e]]);
     }
     e = unions.variant_chain_next(e);
   }
-  let empty_v: string[] = [];
-  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "", type_params: [], instance: "", visible_from: [] };
+  return None;
 }
 
 function union_of_variant(name: string, unions: UnionTable): string {
-  return union_sig_of_variant(name, unions).name;
+  if let Some(u) = union_sig_of_variant(name, unions) {
+    return u.name;
+  }
+  return "";
 }
 
 // Prefer visible variants when hidden enums share a constructor name.
 // Retain a hidden candidate so the diagnostic can identify its enum.
-function scope_variant_sig(name: string, s: Scope): UnionSig {
-  let first: UnionSig = union_sig_of_variant(name, s.unions);
+function scope_variant_sig(name: string, s: Scope): Option[UnionSig] {
+  let first: Option[UnionSig] = union_sig_of_variant(name, s.unions);
   let e: i32 = s.unions.variant_chain_head(name);
   while (e >= 0) {
     if (s.unions.vnames[e] == name) {
       let u: UnionSig = s.unions.unions[s.unions.vowner[e]];
       if (!u.is_enum || parser.is_reserved_enum_name(u.name) || enum_visible_from(u, s.fn_module)) {
-        return u;
+        return Some(u);
       }
     }
     e = s.unions.variant_chain_next(e);
@@ -2495,22 +2499,25 @@ function scope_variant_sig(name: string, s: Scope): UnionSig {
 }
 
 function scope_variant_owner(name: string, s: Scope): string {
-  return scope_variant_sig(name, s).name;
+  if let Some(u) = scope_variant_sig(name, s) {
+    return u.name;
+  }
+  return "";
 }
 
 function variant_value_payloads(s: Scope, en: string, name: string): i32 {
-  let owner: UnionSig = scope_variant_sig(name, s);
+  let found: Option[UnionSig] = scope_variant_sig(name, s);
   if (en.len() > 0) {
-    owner = s.lookup_union(en);
+    found = s.lookup_union(en);
   }
-  if (owner.is_enum) {
-    let vs: StructSig = s.lookup_owned_struct(name, owner.name);
-    if (vs.enum_owner == owner.name) {
-      return vs.field_names.len();
+  if let Some(owner) = found {
+    if (owner.is_enum) {
+      let vs: StructSig = s.lookup_owned_struct(name, owner.name);
+      if (vs.enum_owner == owner.name) {
+        return vs.field_names.len();
+      }
+      return 0;
     }
-    return 0;
-  }
-  if (owner.name.len() > 0) {
     if (s.lookup_struct(name).field_names.len() > 0) {
       return 1;
     }
@@ -2542,16 +2549,17 @@ function payload_variant_value_diag(shown: string, payloads: i32, line: i32, col
 }
 
 function no_variant_diag(s: Scope, en: string, field: string, line: i32, col: i32): util.Diag {
-  return dg_at("E036", "enum " + shown_enum(s, en) + " has no variant \"" + unprefixed_variant(field, s.lookup_union(en).module) + "\"", line, col);
+  return dg_at("E036", "enum " + shown_enum(s, en) + " has no variant \"" + unprefixed_variant(field, union_module(s, en)) + "\"", line, col);
 }
 
 function shown_variant(s: Scope, name: string): string {
   let bare: string = variant_pattern_name(name);
-  let owner: UnionSig = union_sig_of_variant(bare, s.unions);
+  let owner: Option[UnionSig] = union_sig_of_variant(bare, s.unions);
   if (variant_pattern_owner(name).len() > 0) {
     owner = s.lookup_union(variant_pattern_owner(name));
   }
-  return unprefixed_variant(bare, owner.module);
+  let module: string = match (owner) { Some(u) => u.module, None => "" };
+  return unprefixed_variant(bare, module);
 }
 
 function shown_variant_in(structs: StructTable, name: string): string {
@@ -2559,7 +2567,7 @@ function shown_variant_in(structs: StructTable, name: string): string {
 }
 
 function shown_enum(s: Scope, name: string): string {
-  let m: string = s.lookup_union(name).module;
+  let m: string = union_module(s, name);
   let bare: string = unprefixed_variant(name, m);
   if (bare == name || m == s.fn_module) {
     return bare;
@@ -3395,7 +3403,7 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
   } else {
     return t_unknown("not a union");
   }
-  let us: UnionSig = s.lookup_union(u.name);
+  let us: UnionSig = match (s.lookup_union(u.name)) { Some(sig) => sig, None => { return t_unknown("not a generic enum instance"); } };
   let args: typeinfo.Type[] = u.args;
   if (args.len() == 0) {
     for tp in us.type_params {
@@ -3421,10 +3429,12 @@ function generic_variant_payload_type(s: Scope, name: string, whole: typeinfo.Ty
 }
 
 function variant_ctor_type(s: Scope, union_name: string, name: string, c: ast.ExprCall): typeinfo.Type {
-  let us: UnionSig = s.lookup_union(union_name);
-  if (us.name.len() == 0 && (union_name == "Result" || union_name == "Option")) {
-    return builtin_ctor_type(union_name, name, c, s);
-  }
+  let us: UnionSig = match (s.lookup_union(union_name)) { Some(sig) => sig, None => {
+    if (union_name == "Result" || union_name == "Option") {
+      return builtin_ctor_type(union_name, name, c, s);
+    }
+    return t_union(union_name);
+  } };
   if (us.type_params.len() == 0) {
     return t_union(union_name);
   }
@@ -3918,21 +3928,26 @@ function (s: Scope) has_array_recv_method(field: string, view: boolean): boolean
   return s.array_recv_method(field, view).name.len() > 0;
 }
 
-function (s: Scope) lookup_union(name: string): UnionSig {
+pub function (s: Scope) has_union(name: string): boolean {
+  return s.unions.index.find(name) >= 0;
+}
+
+function (s: Scope) lookup_union(name: string): Option[UnionSig] {
   let at: i32 = s.unions.index.find(name);
   if (at >= 0) {
-    return s.unions.unions[at];
+    return Some(s.unions.unions[at]);
   }
-  let empty_v: string[] = [];
-  return UnionSig { name: "", variants: empty_v, is_try: false, is_enum: false, module: "", type_params: [], instance: "", visible_from: [] };
+  return None;
 }
 
 function try_able_union(s: Scope, name: string): boolean {
   if (name == "Option" || name == "Result") {
     return true;
   }
-  let us: UnionSig = s.lookup_union(name);
-  return us.name.len() != 0 && us.is_try;
+  if let Some(us) = s.lookup_union(name) {
+    return us.is_try;
+  }
+  return false;
 }
 
 function try_success_type(s: Scope, ot: typeinfo.Type): typeinfo.Type {
@@ -3950,9 +3965,10 @@ function try_success_type(s: Scope, ot: typeinfo.Type): typeinfo.Type {
     if ((tu.name == "Option" || tu.name == "Result") && tu.args.len() > 0) {
       return tu.args[0];
     }
-    let us: UnionSig = s.lookup_union(tu.name);
-    if (us.is_try && us.variants.len() == 2) {
-      return variant_pattern_payload_type(s, tu.name + "." + us.variants[0], ot, 0);
+    if let Some(us) = s.lookup_union(tu.name) {
+      if (us.is_try && us.variants.len() == 2) {
+        return variant_pattern_payload_type(s, tu.name + "." + us.variants[0], ot, 0);
+      }
     }
   }
   return t_unknown("`?` operand is not a resolved `?`-able enum");
@@ -4085,7 +4101,10 @@ function ctor_payload_slot(s: Scope, owner: string, vname: string, k: i32): i32 
   if (scope_variant_owner(vname, s) != owner) {
     return 0 - 1;
   }
-  return payload_type_param(s, s.lookup_union(owner), vname, k);
+  if let Some(us) = s.lookup_union(owner) {
+    return payload_type_param(s, us, vname, k);
+  }
+  return 0 - 1;
 }
 
 function payload_type_param(s: Scope, us: UnionSig, vname: string, k: i32): i32 {
@@ -5508,8 +5527,10 @@ function use_untyped_call(e: ast.Expr): boolean {
 }
 
 function generic_unit_variant(name: string, s: Scope): boolean {
-  let owner: UnionSig = union_sig_of_variant(name, s.unions);
-  return owner.is_enum && owner.type_params.len() > 0 && variant_value_payloads(s, "", name) == 0;
+  if let Some(owner) = union_sig_of_variant(name, s.unions) {
+    return owner.is_enum && owner.type_params.len() > 0 && variant_value_payloads(s, "", name) == 0;
+  }
+  return false;
 }
 
 function bound_names_tp(bounds: string[], tp: string): boolean {
@@ -7767,7 +7788,7 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
     let rbase: string = util.base_type_name(fd.receiver_type);
     let rtvs: string[] = s.lookup_struct(rbase).type_params;
     if (rtvs.len() == 0) {
-      rtvs = s.lookup_union(rbase).type_params;
+      rtvs = union_type_params(s, rbase);
     }
     for rtv in rtvs {
       if (util.index_of_str(tps, rtv) < 0) {
@@ -9761,14 +9782,14 @@ function drop_lit_locals(lits: string[], names: string[]): string[] {
   return out;
 }
 
-function builtin_union_sig(name: string): UnionSig {
+function builtin_union_sig(name: string): Option[UnionSig] {
   if (name == "Option") {
-    return UnionSig { name: name, variants: ["Some", "None"], is_try: false, is_enum: true, module: "", type_params: ["T"], instance: "", visible_from: [] };
+    return Some(UnionSig { name: name, variants: ["Some", "None"], is_try: false, is_enum: true, module: "", type_params: ["T"], instance: "", visible_from: [] });
   }
   if (name == "Result") {
-    return UnionSig { name: name, variants: ["Ok", "Err"], is_try: false, is_enum: true, module: "", type_params: ["T", "E"], instance: "", visible_from: [] };
+    return Some(UnionSig { name: name, variants: ["Ok", "Err"], is_try: false, is_enum: true, module: "", type_params: ["T", "E"], instance: "", visible_from: [] });
   }
-  return UnionSig { name: "", variants: [], is_try: false, is_enum: false, module: "", type_params: [], instance: "", visible_from: [] };
+  return None;
 }
 
 function mx_enum_of(name: string, enums: parser.EnumDecl[]): string {
@@ -11103,9 +11124,12 @@ function variant_payload_count(name: string, structs: StructTable): i32 {
 function payload_arity_diags(pv: ast.PatVariant, variant: string, structs: StructTable, unions: UnionTable, line: i32, col: i32): util.Diag[] {
   let out: util.Diag[] = [];
   let pc: i32 = variant_payload_count(variant, structs);
-  let owner: UnionSig = union_sig_of_variant(variant_pattern_name(variant), unions);
-  if (pc < 0 && owner.name.len() > 0 && !owner.is_enum) {
-    pc = 1;
+  if (pc < 0) {
+    if let Some(owner) = union_sig_of_variant(variant_pattern_name(variant), unions) {
+      if (!owner.is_enum) {
+        pc = 1;
+      }
+    }
   }
   if (pc >= 0) {
     let nb: i32 = pv.extra_bindings.len();
@@ -12285,7 +12309,8 @@ function bare_at_never(t: typeinfo.Type, s: Scope): typeinfo.Type {
   if let typeinfo.TypeUnion(u) = t {
     if (u.args.len() == 0) {
       let args: typeinfo.Type[] = [];
-      while (args.len() < s.lookup_union(u.name).type_params.len()) {
+      let arity: i32 = union_type_params(s, u.name).len();
+      while (args.len() < arity) {
         args = args.append(typeinfo.TypeNever { tag: 0 });
       }
       return typeinfo.TypeUnion { name: u.name, args: args };
@@ -12313,14 +12338,14 @@ function settles_or_nested(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean 
 function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag[] {
   let vname: string = variant_pattern_name(qname);
   let out: util.Diag[] = [];
-  let owner: UnionSig = scope_variant_sig(vname, s);
+  let owner: Option[UnionSig] = scope_variant_sig(vname, s);
   if (dot_index(qname) >= 0) {
     owner = s.lookup_union(variant_pattern_owner(qname));
   }
   out = util.append_diags(out, enum_access_diags(owner, s, c.line, c.col));
 
   if (scope_variant_owner(vname, s).len() == 0 && find_variant_sig(s.structs, qname).enum_owner.len() == 0) {
-    let builtin_owner: string = owner.name;
+    let builtin_owner: string = match (owner) { Some(u) => u.name, None => "" };
     if (dot_index(qname) >= 0) {
       builtin_owner = variant_pattern_owner(qname);
     }
@@ -12334,8 +12359,12 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
     return out;
   }
   let want: i32 = variant_payload_count(qname, s.structs);
-  if (want < 0 && dot_index(qname) >= 0 && owner.is_enum && util.has_str(owner.variants, vname)) {
-    want = variant_value_payloads(s, owner.name, vname);
+  if (want < 0 && dot_index(qname) >= 0) {
+    if let Some(u) = owner {
+      if (u.is_enum && util.has_str(u.variants, vname)) {
+        want = variant_value_payloads(s, u.name, vname);
+      }
+    }
   }
   if (want < 0) {
     return out;
@@ -12363,7 +12392,7 @@ function qual_enum_name(obj: ast.Expr, s: Scope): string {
       if (s.known(oid.name)) {
         return "";
       }
-      if (s.lookup_union(oid.name).name.len() > 0) {
+      if (s.has_union(oid.name)) {
         return oid.name;
       }
       if (parser.is_reserved_enum_name(oid.name)) {
@@ -12379,8 +12408,7 @@ function qual_enum_name(obj: ast.Expr, s: Scope): string {
 }
 
 function qual_variant_exists(en: string, field: string, s: Scope): boolean {
-  let ou: UnionSig = s.lookup_union(en);
-  if (ou.name.len() > 0) {
+  if let Some(ou) = s.lookup_union(en) {
     return util.has_str(ou.variants, field);
   }
   return parser.builtin_enum_of(field) == en;
@@ -13971,8 +13999,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
               out = util.append_diags(out, try_residual_diags(s, trt, u));
             }
           } else {
-            let us: UnionSig = s.lookup_union(tu.name);
-            if (us.name.len() != 0) {
+            if (s.has_union(tu.name)) {
               out = out.append(dg_at("E042", "`?` operator requires an Option, a Result, or an `@try` enum, got " + tu.name + " — mark it `@try` to make it one", u.line, u.col));
             }
           }
@@ -14485,12 +14512,14 @@ function type_holds_view(t: typeinfo.Type, s: Scope, seen: string[]): (boolean, 
     if (in_args) {
       return (true, after);
     }
-    for v in s.lookup_union(u.name).variants {
-      let (in_payload, next) = any_holds_view(variant_shape_sig(s, v, u.name).field_types, s, after);
-      if (in_payload) {
-        return (true, next);
+    if let Some(us) = s.lookup_union(u.name) {
+      for v in us.variants {
+        let (in_payload, next) = any_holds_view(variant_shape_sig(s, v, u.name).field_types, s, after);
+        if (in_payload) {
+          return (true, next);
+        }
+        after = next;
       }
-      after = next;
     }
     return (false, after);
   }
@@ -14852,7 +14881,7 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
       return true;
     },
     typeinfo.TypeUnion(un) => {
-      let declared: boolean = un.name == "Option" || un.name == "Result" || un.name == "IoError" || un.name == "Body" || un.name == "StreamFault" || s.lookup_union(un.name).name.len() > 0;
+      let declared: boolean = un.name == "Option" || un.name == "Result" || un.name == "IoError" || un.name == "Body" || un.name == "StreamFault" || s.has_union(un.name);
       return declared && s.visible_method(field, un.name).name.len() == 0 && is_unknown(builtin_method_sig(un.name, field));
     },
     _ => {
@@ -15216,7 +15245,7 @@ function variant_cover_diags(rows: CoverPat[][], t: typeinfo.Type, sg: ast.Match
     for v in cover_ctor_names(t, s) {
       let arity: i32 = cover_arity(rows, v);
       if (cover_useful(cover_split(rows, v, arity), cover_arg_types(t, v, arity, s), s)) {
-        out = out.append(dg_at("E030", "match does not cover variant " + unprefixed_variant(v, s.lookup_union(u.name).module) + " of enum " + shown_enum(s, u.name) + " — add an arm for it, or a `_` arm", sg.line, sg.col));
+        out = out.append(dg_at("E030", "match does not cover variant " + unprefixed_variant(v, union_module(s, u.name)) + " of enum " + shown_enum(s, u.name) + " — add an arm for it, or a `_` arm", sg.line, sg.col));
       }
     }
   }
@@ -15456,11 +15485,10 @@ function expr_mentions(e: ast.Expr, name: string): boolean {
 function cover_ctor_names(t: typeinfo.Type, s: Scope): string[] {
   match (t) {
     typeinfo.TypeUnion(u) => {
-      let us: UnionSig = s.lookup_union(u.name);
-      if (us.name.len() == 0) {
-        us = builtin_union_sig(u.name);
+      if let Some(us) = enum_sig(s, u.name) {
+        return us.variants;
       }
-      return us.variants;
+      return [];
     },
     typeinfo.TypeTuple(_) => {
       return ["()"];
@@ -15785,7 +15813,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
           match (mst) {
             typeinfo.TypeUnion(su) => {
               src_is_enum = true;
-              if (cur.lookup_union(su.name).name.len() == 0 && !parser.is_reserved_enum_name(su.name)) {
+              if (!cur.has_union(su.name) && !parser.is_reserved_enum_name(su.name)) {
                 src_unknown_enum = true;
                 out = out.append(dg_at("E023", "unknown enum \"" + su.name + "\"", expr_line(m.scrutinee), expr_col(m.scrutinee)));
               }
@@ -15831,14 +15859,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
         }
         match (mst) {
           typeinfo.TypeUnion(mun) => {
-            let usig: UnionSig = cur.lookup_union(mun.name);
-            if (usig.name.len() == 0) {
-              usig = builtin_union_sig(mun.name);
-            }
-            if (usig.name.len() == 0 && !parser.is_reserved_enum_name(mun.name) && ordinary_match_origin(m.origin)) {
-              out = out.append(dg_at("E023", "unknown enum \"" + mun.name + "\"", expr_line(m.scrutinee), expr_col(m.scrutinee)));
-            }
-            if (usig.name.len() > 0) {
+            if let Some(usig) = enum_sig(cur, mun.name) {
               let saw_wild: boolean = false;
               let covered: string[] = [];
               for elem in m.arms {
@@ -15848,7 +15869,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                   },
                   ast.PatVariant(cpv) => {
                     if (cpv.type_name.len() > 0) {
-                      out = util.append_diags(out, enum_access_diags(usig, cur, elem.line, elem.col));
+                      out = util.append_diags(out, enum_access_diags(Some(usig), cur, elem.line, elem.col));
                       let cdp: i32 = dot_index(cpv.type_name);
                       if (cdp >= 0) {
                         let cqual: str = slice_unchecked(cpv.type_name, 0, cdp);
@@ -15860,7 +15881,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                           if (!util.has_str(usig.variants, cbare)) {
                             out = out.append(unknown_variant_diag(cur, cbare, usig, elem.line, elem.col));
                           }
-                        } else if (cur.lookup_union(cqual).name.len() > 0) {
+                        } else if (cur.has_union(cqual)) {
                           out = out.append(dg_at("E029", "variant pattern qualifier \"" + shown_enum(cur, cqual) + "\" does not match scrutinee enum " + shown_enum(cur, mun.name), elem.line, elem.col));
                         }
                       } else {
@@ -15885,6 +15906,8 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
                   }
                 }
               }
+            } else if (!parser.is_reserved_enum_name(mun.name) && ordinary_match_origin(m.origin)) {
+              out = out.append(dg_at("E023", "unknown enum \"" + mun.name + "\"", expr_line(m.scrutinee), expr_col(m.scrutinee)));
             }
           },
           typeinfo.TypeBool(_) => {
@@ -15912,9 +15935,10 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
               let foreign: boolean = false;
               match (mst) {
                 typeinfo.TypeUnion(amu) => {
-                  let ausig: UnionSig = cur.lookup_union(amu.name);
-                  if (ausig.name.len() > 0 && !util.has_str(ausig.variants, variant_pattern_name(apv.type_name))) {
-                    foreign = true;
+                  if let Some(ausig) = cur.lookup_union(amu.name) {
+                    if (!util.has_str(ausig.variants, variant_pattern_name(apv.type_name))) {
+                      foreign = true;
+                    }
                   }
                 },
                 _ => {}
@@ -23095,11 +23119,11 @@ pub function variant_sig(s: Scope, name: string, owner: string): StructSig {
 
 pub function instantiated_variant(sig: StructSig, s: Scope, whole: typeinfo.Type): StructSig {
   if let typeinfo.TypeUnion(u) = whole {
-    let us: UnionSig = s.lookup_union(u.name);
-    if (sig.enum_owner == u.name && us.type_params.len() > 0 && us.type_params.len() == u.args.len()) {
+    let params: string[] = union_type_params(s, u.name);
+    if (sig.enum_owner == u.name && params.len() > 0 && params.len() == u.args.len()) {
       let types: typeinfo.Type[] = [];
       for spelling in sig.field_type_names {
-        types = types.append(type_from_ref_subst(parser.parse_type_ref(spelling), us.type_params, u.args, s.type_names()));
+        types = types.append(type_from_ref_subst(parser.parse_type_ref(spelling), params, u.args, s.type_names()));
       }
       return StructSig { ...sig, field_types: types };
     }
@@ -23107,8 +23131,22 @@ pub function instantiated_variant(sig: StructSig, s: Scope, whole: typeinfo.Type
   return sig;
 }
 
-pub function union_sig(s: Scope, name: string): UnionSig {
+pub function union_sig(s: Scope, name: string): Option[UnionSig] {
   return s.lookup_union(name);
+}
+
+pub function union_module(s: Scope, name: string): string {
+  if let Some(u) = s.lookup_union(name) {
+    return u.module;
+  }
+  return "";
+}
+
+pub function union_type_params(s: Scope, name: string): string[] {
+  if let Some(u) = s.lookup_union(name) {
+    return u.type_params;
+  }
+  return [];
 }
 
 pub function owned_variant_names(s: Scope, owner: string): string[] {
@@ -23288,10 +23326,9 @@ pub function array_method_names(s: Scope, view: boolean): string[] {
   return out;
 }
 
-pub function enum_sig(s: Scope, name: string): UnionSig {
-  let u: UnionSig = s.lookup_union(name);
-  if (u.name.len() > 0) {
-    return u;
+pub function enum_sig(s: Scope, name: string): Option[UnionSig] {
+  if let Some(u) = s.lookup_union(name) {
+    return Some(u);
   }
   return builtin_union_sig(name);
 }
@@ -24577,7 +24614,7 @@ function union_arity(s: Scope, name: string): i32 {
   if (name == "Result") {
     return 2;
   }
-  return s.lookup_union(name).type_params.len();
+  return union_type_params(s, name).len();
 }
 
 function inferred_lambda_result(lm: ast.ExprLambda, body_scope: Scope, need_whole: boolean, block: typeinfo.Type): ast.ExprLambda {
@@ -25632,8 +25669,7 @@ function rescope_pattern(p: ast.Pattern, whole: typeinfo.Type, s: Scope): ast.Pa
 }
 
 function enum_members(s: Scope, name: string, variant: string): string[] {
-  let us: UnionSig = s.lookup_union(name);
-  if (us.name.len() > 0) {
+  if let Some(us) = s.lookup_union(name) {
     return us.variants;
   }
   let out: string[] = [];
@@ -26159,9 +26195,10 @@ function lit_other_demand(e: ast.Expr, want: typeinfo.Type, s: Scope, st: LitInf
 }
 
 function lit_union_demand(e: ast.Expr, wu: typeinfo.TypeUnion, s: Scope, st: LitInfer): LitInfer {
-  let sig: UnionSig = s.lookup_union(wu.name);
-  if (sig.instance != "") {
-    return lit_demand(e, s.resolve_type(sig.instance), s, st);
+  if let Some(sig) = s.lookup_union(wu.name) {
+    if (sig.instance != "") {
+      return lit_demand(e, s.resolve_type(sig.instance), s, st);
+    }
   }
   if let typeinfo.TypeUnion(have) = check_expr(e, s) {
     if (have.name == wu.name && have.args.len() == wu.args.len()) {
@@ -27219,7 +27256,10 @@ function lit_enum_local(c: ast.ExprCall, s: Scope, st: LitInfer): (typeinfo.Type
     while (p < c.args.len()) {
       let slot: i32 = ctor_payload_slot(s, u.name, ctor_variant_name(c), p);
       if (qualified && u.name != "Option" && u.name != "Result") {
-        slot = payload_type_param(s, s.lookup_union(u.name), ctor_variant_name(c), p);
+        slot = 0 - 1;
+        if let Some(us) = s.lookup_union(u.name) {
+          slot = payload_type_param(s, us, ctor_variant_name(c), p);
+        }
       }
       let (seed, ids) = lit_tree(c.args[p], s, []);
       if (!seed && lit_composite(c.args[p])) {
@@ -27272,7 +27312,7 @@ function lit_payload_shape(c: ast.ExprCall, p: i32, owner: string, s: Scope, st:
   if (owner == "Option" || owner == "Result" || scope_variant_owner(vname, s) != owner) {
     return (none, st);
   }
-  let us: UnionSig = s.lookup_union(owner);
+  let us: UnionSig = match (s.lookup_union(owner)) { Some(sig) => sig, None => { return (none, st); } };
   let spelled: string = payload_spelling(s, us, vname, p);
   if let typeinfo.TypeArray(a) = arg {
     if (spelled.ends_with("[]")) {

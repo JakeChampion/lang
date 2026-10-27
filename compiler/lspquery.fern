@@ -599,17 +599,20 @@ function type_text(s: checker.Scope, name: string): string {
   if (st.name.len() > 0 && st.enum_owner.len() == 0) {
     return struct_text(st);
   }
-  let u: checker.UnionSig = checker.enum_sig(s, name);
-  if (u.is_enum) {
-    return enum_text(s, u);
+  if let Some(u) = checker.enum_sig(s, name) {
+    if (u.is_enum) {
+      return enum_text(s, u);
+    }
   }
   return "";
 }
 
 pub function enum_qualifier(s: checker.Scope, fa: ast.ExprFieldAccess): string {
   if let ast.ExprIdent(q) = fa.obj {
-    if (checker.enum_sig(s, q.name).is_enum) {
-      return q.name;
+    if let Some(u) = checker.enum_sig(s, q.name) {
+      if (u.is_enum) {
+        return q.name;
+      }
     }
   }
   return "";
@@ -705,7 +708,7 @@ pub function func_text(name: string, sig: checker.FuncSig): string {
 }
 
 pub function variant_text(s: checker.Scope, name: string, owner: string): string {
-  let u: checker.UnionSig = checker.enum_sig(s, owner);
+  let u: checker.UnionSig = match (checker.enum_sig(s, owner)) { Some(sig) => sig, None => { return "(variant of " + owner + ") " + name; } };
   return "(variant of " + owner + ") " + unprefixed(name, u.module) + payload(s, name, u);
 }
 

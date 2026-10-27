@@ -90,7 +90,9 @@ function global_items(s: checker.Scope, mod: parser.Module, m: i32, own: string,
     }
   }
   for name in ["Option", "Result"] {
-    acc = enum_items(s, name, checker.enum_sig(s, name).variants, "", acc);
+    if let Some(u) = checker.enum_sig(s, name) {
+      acc = enum_items(s, name, u.variants, "", acc);
+    }
   }
   return acc;
 }
@@ -118,7 +120,7 @@ function func_item(s: checker.Scope, name: string, shown: string): Item {
 
 function enum_items(s: checker.Scope, name: string, variants: string[], own: string, own acc: Item[]): Item[] {
   let shown: string = lspquery.unprefixed(name, own);
-  let module: string = checker.enum_sig(s, name).module;
+  let module: string = checker.union_module(s, name);
   acc = acc.append(Item { label: shown, kind: CI_ENUM, detail: "enum " + shown });
   for vn in variants {
     acc = acc.append(Item { label: lspquery.unprefixed(vn, module), kind: CI_ENUM_MEMBER, detail: lspquery.variant_text(s, vn, name) });
@@ -154,9 +156,10 @@ function members(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten.Qual
       return export_items(s, v.mod, quals.prefixes[a]);
     }
     for c in own_first(quals.own, recv.text) {
-      let u: checker.UnionSig = checker.enum_sig(s, c);
-      if (u.is_enum) {
-        return variant_items(s, u);
+      if let Some(u) = checker.enum_sig(s, c) {
+        if (u.is_enum) {
+          return variant_items(s, u);
+        }
       }
     }
   }
