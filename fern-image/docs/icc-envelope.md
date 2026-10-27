@@ -84,6 +84,34 @@ This finite evidence does not qualify tag semantics, color transforms, JPEG admi
 Curve/model work remains #13659, while APP2 assembly remains #13660.
 The broader [ICC decision](icc-feasibility.md) defines the separate future acceptance gates.
 
+### Recorded finite observations
+
+Final records use committed source `d0ced552cc685a375a61f2ad8e55697aa6d5c09f`.
+Each target checks 857 vectors: 147 accepted envelopes and 710 expected errors.
+Each target also repeats eight applicable offline LittleCMS metadata observations.
+All metadata fields, error classes, and poll counts match exactly, and all three target sample records are equal.
+The reference bundle reproduces byte-for-byte with SHA-256 `a9f57f4a7842781e5b47352352cea972ead4c8862897ec9aefd3b444619a55a0`.
+
+The campaigns use 108 fresh workers per target, for 324 total workers.
+Every worker reports nonzero balanced allocations and frees, with zero live blocks.
+The native record preserves 1,247 selected source/tool hashes, while each runner record preserves 1,248.
+These include all compiler and 163 stdlib sources, worker binaries, fixture/generator/collector sources, Python/Pillow, and the offline LittleCMS library.
+All selected hashes remain unchanged throughout each campaign.
+
+The clean compiler source is `933843468f0bf6ef3d782c85b9e4d348ca312182`.
+Its SHA-256 is `6602687e6c7ed8e67633bbc3b627b4ab61a9a461359d31bb090f248782b08610`.
+Compiler and stdlib sources match the campaign checkout.
+The full native and Wasm scripts pass, and standalone ARM64 execution covers 33 executables.
+All three targets pass 235 TAP cases with 72/48/33 balanced censuses and zero live blocks.
+Standalone ARM execution does not establish completion of the whole Go ARM harness.
+
+Both unchanged compiler/stdlib complexity checks pass without skips.
+All 2,042 eligible Fern format checks, build, vet, lint, CI self-tests, runtime bundle, protocol controls, and STE checks pass.
+The raw records are [native](../benchmarks/results/icc-envelope-native.json),
+[Wasm](../benchmarks/results/icc-envelope-wasm.json), and
+[ARM64](../benchmarks/results/icc-envelope-arm64.json).
+Historical records remain unchanged.
+
 ## References
 
 The layout derives from [ICC.1:2022](https://www.color.org/specifications/ICC.1-2022-05.pdf), sections 4.2, 7.1–7.4, and the common tag prefix rules.
