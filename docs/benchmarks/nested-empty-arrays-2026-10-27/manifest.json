@@ -1,0 +1,19 @@
+{
+  "source_commit": "b38cca91520de044f7ebf81f7ea6523d1af38a12",
+  "files": {
+    "alloc-gate.log": "597221ebd30db032163a5424ebbbb77f6b84ad5c94bba2467ec03cfeb02d3db3",
+    "alloc-report.txt": "77c2f176ef6013bfa854108a02890d63662db6cd38ccc67494eb2eb01febe009",
+    "allocation.json": "365a43f002edcf23e26630691cba2548123ba2238046898f7edb3665d90cfbc5",
+    "auxiliary.json": "078a1157d64805e6669b0b1022c2bb3ae9f7ca4295a5e32def1a5488ecbec9c4",
+    "before-regression.log": "41b896b3036684f6fcb98daad7c2315cf2afe639f1670fae50515e9315be0adc",
+    "build.json": "df44fac860a0d8f64d2f2ee8baeb8fbfb0659eb4830d442ced9057eb226fe4d6",
+    "development-observations.json": "705d4b93a5952944c6e66f55c7a6e10a26cf3b0839f0cf897a7e553c2a79178b",
+    "expanded-before.json": "5085da51252d056c4bc3288a361205113fd7d208f6dfefea1b308bd89f035476",
+    "final-diagnostics.json": "83c29a07487197a4710d1b1c8330e5246f977044c4c16cc678f5bdf31ab58cd6",
+    "images-arm64.json": "b7c46aed9eec53b350f5c9cd0a7f676baba453f44f85ee3af95a1d756132b072",
+    "images-native.json": "82d0b3516224a039fecd6c6720a4b59493178703ef416aff1dd1099c4a21fed0",
+    "images-wasm.json": "e3904f3be06a2f4a98d4e5a01288d3650fdcc981ae144bb0b8d895788c7f2e8f",
+    "minimal-before.json": "181b2ebc0530012738a2a89d941778a0f64d840efb7fe3ac30ab3b4bc58490d4"
+  },
+  "scope": "Compiler correctness and unchanged gates; no app syntax workaround, runtime performance, physical bound, or whole Go ARM claim."
+}

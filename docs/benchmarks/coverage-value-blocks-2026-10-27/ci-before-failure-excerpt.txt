@@ -1,0 +1,13 @@
+Source: https://github.com/JakeChampion/lang/actions/runs/40477547285/job/122099388868
+Head: 3a6d11796dc2fc07a35c8191bf8d79ed7383b885
+This is a bounded decoded-log excerpt, not the entire job log.
+2026-10-27T09:01:30.2844972Z [36;1m  -run '^TestSelfHostCoverageGuidedFuzz$' ./internal/testing/e2e/[0m
+2026-10-27T09:02:05.4951076Z ##[group][31mFAIL[0m internal/testing/e2e.TestSelfHostCoverageGuidedFuzz (28.49s)
+2026-10-27T09:02:05.4952841Z         FERN_SEM_IR: checker__slc_walk: call target was refused: call target was refused: unresolved type of binding $binding$6$key: `+` operands type mismatch
+2026-10-27T09:02:05.4953997Z         FERN_SEM_IR: checker__holds_view_aggregate: unresolved type of binding $binding$6$key: `+` operands type mismatch
+2026-10-27T09:02:05.4955016Z         FERN_SEM_IR: checker__returns_view_or_holder: call target was refused: unresolved type of binding $binding$6$key: `+` operands type mismatch
+2026-10-27T09:02:05.4956185Z         FERN_SEM_IR: checker__e065_summarised: call target was refused: call target was refused: unresolved type of binding $binding$6$key: `+` operands type mismatch
+2026-10-27T09:02:05.4957270Z         FERN_SEM_IR: checker__e065_checked: call target was refused: unresolved type of binding $binding$6$key: `+` operands type mismatch
+2026-10-27T09:02:05.4958329Z         FERN_SEM_IR: checker__slc_held_after: call target was refused: unresolved type of binding $binding$6$key: `+` operands type mismatch
+2026-10-27T09:02:05.4959296Z         FERN_SEM_IR: checker__slc_agg_roots: call target was refused: unresolved type of binding $binding$6$key: `+` operands type mismatch
+2026-10-27T09:02:05.4960337Z         FERN_SEM_IR: checker__slc_agg_call_roots: call target was refused: unresolved type of binding $binding$6$key: `+` operands type mismatch

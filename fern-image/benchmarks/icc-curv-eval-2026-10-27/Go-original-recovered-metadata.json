@@ -1,0 +1,36 @@
+{
+  "recovered_from": "previous durable tool response, not original file bytes",
+  "original_metadata": {
+    "base": "76bff44f2533a37493807bfa5cad324042ea8d67",
+    "feature_uncommitted": true,
+    "commands": [
+      {
+        "command": [
+          "/workspace/image-orientation-go-oracle",
+          "-check",
+          "tests/icc_curv_eval_test.fern"
+        ],
+        "exit_code": 0
+      },
+      {
+        "command": [
+          "/workspace/image-orientation-go-oracle",
+          "-interp",
+          "tests/icc_curv_eval_test.fern"
+        ],
+        "exit_code": 0
+      }
+    ],
+    "hashes": {
+      "/workspace/lang-image-icc-curv-eval/fern-image/packages/codecs/icc/curv_eval.fern": "8ef7f2033811f1b086b64888f42215361d487cf98f661f93d9c59dbc0f8542f6",
+      "/workspace/lang-image-icc-curv-eval/fern-image/tests/icc_curv_eval_test.fern": "e00d34908f8d9cd946ce2debb7de3d1357c93c16c2193cdc56f3e62a20207958",
+      "/workspace/image-nested-array-current-fern-b38cca915": "d12b97d792d5d66d6bd312cd6723100ecb85ec2609d9430705032e504e5c090b"
+    },
+    "exit_code": 0,
+    "TAP_ok": 6,
+    "TAP_not_ok": 0,
+    "heaps": [],
+    "sources_unchanged": true
+  },
+  "original_stdout_log": "overwritten by a later local repeat; not recoverable"
+}

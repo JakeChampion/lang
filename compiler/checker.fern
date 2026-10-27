@@ -14380,6 +14380,21 @@ function array_mix_diags(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Dia
   if (a.elements.len() >= 2) {
     let anchor: typeinfo.Type = check_expr(a.elements[0], s);
     if (type_contains_unknown(anchor)) {
+      for index in 1..a.elements.len() {
+        let candidate: typeinfo.Type = check_expr(a.elements[index], s);
+        if (!type_contains_unknown(candidate)) {
+          if (!array_mix_settles(a.elements[0], anchor, candidate, s)) {
+            return out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(candidate), expr_line(a.elements[index]), expr_col(a.elements[index])));
+          }
+          let anchored: ast.Expr[] = [a.elements[index]];
+          for other in 0..a.elements.len() {
+            if (other != index) {
+              anchored = anchored.append(a.elements[other]);
+            }
+          }
+          return array_mix_diags(ast.ExprArray { ...a, elements: anchored }, s, out);
+        }
+      }
       return out;
     }
     if (is_primitive_type(anchor) || is_func_type(anchor) || is_tuple_type(anchor)) {
@@ -14426,8 +14441,8 @@ function element_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: uti
   while (k < a.elements.len()) {
     let element: ast.Expr = a.elements[k];
     let ty: typeinfo.Type = check_expr(element, s);
-    if (!type_contains_unknown(ty) && !same_element_type(ty, anchor) && !settles_to(element, anchor, s)) {
-      if (!settles_to(first, ty, s)) {
+    if (!type_contains_unknown(ty) && (!same_element_type(ty, anchor) || !type_assignable(ty, anchor, s.unions.unions)) && !array_mix_settles(element, ty, anchor, s)) {
+      if (!array_mix_settles(first, check_expr(first, s), ty, s)) {
         return out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(ty), expr_line(element), expr_col(element)));
       }
       anchor = ty;
@@ -14436,6 +14451,26 @@ function element_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out: uti
     k = k + 1;
   }
   return out;
+}
+
+function array_mix_settles(e: ast.Expr, have: typeinfo.Type, want: typeinfo.Type, s: Scope): boolean {
+  if (!view_free_settle(e, want, s)) {
+    return false;
+  }
+  if let ast.ExprArray(a) = e {
+    if let typeinfo.TypeArray(w) = want {
+      for child in a.elements {
+        if (!array_mix_settles(child, check_expr(child, s), w.elem, s)) {
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+  if (nominal_args_clash(have, want, s.unions.unions)) {
+    return struct_lit_yields(e, have, want, s, true);
+  }
+  return array_element_settles(e, want, s);
 }
 
 function struct_instance_mix(a: ast.ExprArray, first: typeinfo.Type, s: Scope, out: util.Diag[]): util.Diag[] {
@@ -24547,6 +24582,15 @@ function settle_array_struct_literals(a: ast.ExprArray, s: Scope): ast.Expr {
 }
 
 function settle_struct_lit_wide(e: ast.Expr, t: typeinfo.Type, s: Scope): ast.Expr {
+  if let ast.ExprArray(a) = e {
+    if let typeinfo.TypeArray(at) = t {
+      let elements: ast.Expr[] = [];
+      for child in a.elements {
+        elements = elements.append(settle_struct_lit_wide(child, at.elem, s));
+      }
+      return ast.ExprArray { ...a, elements: elements };
+    }
+  }
   if let ast.ExprStructLit(sl) = e {
     if let typeinfo.TypeStruct(ts) = t {
       let Some(sig) = s.lookup_struct(sl.type_name) else {
@@ -25425,6 +25469,23 @@ function vb_pinned_ranges(ts: typeinfo.Type[], es: ast.Expr[]): util.Diag[] {
   return out;
 }
 
+function vb_empty_arrays_fit(e: ast.Expr, want: typeinfo.Type): boolean {
+  if let ast.ExprArray(array) = e {
+    if let typeinfo.TypeArray(target) = want {
+      if (target.view) {
+        return false;
+      }
+      for item in array.elements {
+        if (!vb_empty_arrays_fit(item, target.elem)) {
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 function vb_join(a: VbStore, b: VbStore): VbStore {
   let scalar: typeinfo.Type = scalar_numeric_join(a.t, b.t);
   if (scalar_vb_joinable(a, b, scalar)) {
@@ -25456,6 +25517,12 @@ function vb_join(a: VbStore, b: VbStore): VbStore {
   if let typeinfo.TypeArray(aa) = a.t {
     if let typeinfo.TypeArray(ba) = b.t {
       if (aa.view == ba.view) {
+        if (vb_empty_arrays_fit(a.e, b.t)) {
+          return b;
+        }
+        if (vb_empty_arrays_fit(b.e, a.t)) {
+          return a;
+        }
         let j: VbStore = vb_join(mx_elem_store(a.e, aa.elem), mx_elem_store(b.e, ba.elem));
         let t: typeinfo.Type = typeinfo.TypeArray { ...aa, elem: j.t };
         if let ast.ExprUnknown(_) = j.e {
@@ -28147,7 +28214,14 @@ function lit_kind_settled(e: ast.Expr): boolean {
 function array_element_preferred(e: ast.Expr, t: typeinfo.Type, lit: i32, first_expr: ast.Expr, first: typeinfo.Type, first_lit: i32, s: Scope): boolean {
   return !vaguer_than(t, first) && !literal_gives_way(lit, first) && !struct_lit_gives_way(e, t, first, s)
     && (same_element_type(t, first) || literal_gives_way(first_lit, t))
-    || struct_lit_gives_way(first_expr, first, t, s);
+    || struct_lit_gives_way(first_expr, first, t, s) || nested_array_gives_way(first_expr, first, t, s);
+}
+
+function nested_array_gives_way(e: ast.Expr, from: typeinfo.Type, to: typeinfo.Type, s: Scope): boolean {
+  if let ast.ExprArray(_) = e {
+    return vaguer_than(from, to) && array_mix_settles(e, from, to, s);
+  }
+  return false;
 }
 
 function binary_numeric_join(b: ast.ExprBinary, lt: typeinfo.Type, rt: typeinfo.Type): typeinfo.Type {

@@ -62,7 +62,7 @@ function shortcut(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, arch: str
   }
   let rest = without(rows, row.label_name);
   let other = "__sem_drop_Different";
-  let lower = irtables.LowerResult { ...row.body.lowered, ops: row.body.lowered.ops.with(4, ir.op_call_direct(other, 1)) };
+  let lower = irtables.Lowered { ...row.body.lowered, ops: row.body.lowered.ops.with(4, ir.op_call_direct(other, 1)) };
   let context = ssaprepare.Context { ...row.context, reg_entries: irtables.sig_reg_of([asmcore.sanitize_label(other)]) };
   let entry = ircore.release_entry(lower, arch, context.rc_free_debug, context.reg_entries);
   require(entry.counted && entry.unique_drop == other, 84);

@@ -1,0 +1,23 @@
+{
+  "source_base": "5b275901e871a308b29bceec604e69200416bdc2",
+  "feature_uncommitted": true,
+  "exit": 0,
+  "seconds": 111.31724644100177,
+  "script_sha256": "2c9db19933119ef0076f00cbc44661814b4ddca0845473998a3950b96184e1a2",
+  "script_unchanged": true,
+  "log_sha256": "6d3cb49abbd6e15d63a2ab96947a616bb1ff87cdf84e9a72ba9f4b514b5dd0d9",
+  "pass_nodes": 1,
+  "fail_nodes": 0,
+  "skip_nodes": 0,
+  "compiler_sha256": "6e95755acdba854fc94ec32aaa37d09dd8264bf4438b9952e37cc198bac5d9ab",
+  "caught": {
+    "corpus": 2,
+    "original_corpus_bytes": 8192,
+    "shrunk_corpus_bytes": 64,
+    "tries": 41,
+    "original_program_bytes": 2010,
+    "shrunk_program_bytes": 271,
+    "interpreter": "exit 239",
+    "mutant": "exit 209"
+  }
+}

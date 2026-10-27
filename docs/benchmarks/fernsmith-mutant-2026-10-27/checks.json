@@ -1,0 +1,9 @@
+{
+  "bash_syntax": 0,
+  "embedded_python_syntax": 0,
+  "only_change": "Add bits: 0 to one injected integer ExprNumber literal.",
+  "default_seeds": 1024,
+  "seed_override": null,
+  "compiler_stdlib_test_assertions_unchanged": true,
+  "script_sha256": "2c9db19933119ef0076f00cbc44661814b4ddca0845473998a3950b96184e1a2"
+}

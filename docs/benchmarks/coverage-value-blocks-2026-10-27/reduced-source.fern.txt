@@ -1,0 +1,8 @@
+enum Kind { A, B }
+function name(t: Kind): string {
+ let kind = match(t) { A => "struct:", B => "union:" };
+ let spelling = "hello";
+ let key = kind + spelling;
+ return key;
+}
+function main(): i32 { return if(name(A) == "struct:hello") {0} else {1}; }

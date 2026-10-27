@@ -1,0 +1,778 @@
+=== RUN   TestSelfHostEnumValueBlockBorrowX86_64
+=== RUN   TestSelfHostEnumValueBlockBorrowX86_64/match_expr_read
+=== RUN   TestSelfHostEnumValueBlockBorrowX86_64/match_stmt_read
+=== RUN   TestSelfHostEnumValueBlockBorrowX86_64/helper_reads_param_by_match_expr
+=== RUN   TestSelfHostEnumValueBlockBorrowX86_64/helper_reads_param_by_match_stmt
+=== RUN   TestSelfHostEnumValueBlockBorrowX86_64/helper_wraps_match_expr_in_binary
+=== RUN   TestSelfHostEnumValueBlockBorrowX86_64/match_expr_then_if_expr
+=== RUN   TestSelfHostEnumValueBlockBorrowX86_64/value_block_yields_the_enum_refused
+--- PASS: TestSelfHostEnumValueBlockBorrowX86_64 (153.03s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowX86_64/match_expr_read (0.16s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowX86_64/match_stmt_read (0.08s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowX86_64/helper_reads_param_by_match_expr (0.07s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowX86_64/helper_reads_param_by_match_stmt (0.35s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowX86_64/helper_wraps_match_expr_in_binary (0.18s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowX86_64/match_expr_then_if_expr (0.03s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowX86_64/value_block_yields_the_enum_refused (0.13s)
+=== RUN   TestSelfHostEnumValueBlockBorrowWasmIR
+=== RUN   TestSelfHostEnumValueBlockBorrowWasmIR/match_expr_read
+=== RUN   TestSelfHostEnumValueBlockBorrowWasmIR/match_stmt_read
+=== RUN   TestSelfHostEnumValueBlockBorrowWasmIR/helper_reads_param_by_match_expr
+=== RUN   TestSelfHostEnumValueBlockBorrowWasmIR/helper_reads_param_by_match_stmt
+=== RUN   TestSelfHostEnumValueBlockBorrowWasmIR/helper_wraps_match_expr_in_binary
+=== RUN   TestSelfHostEnumValueBlockBorrowWasmIR/match_expr_then_if_expr
+=== RUN   TestSelfHostEnumValueBlockBorrowWasmIR/value_block_yields_the_enum_refused
+--- PASS: TestSelfHostEnumValueBlockBorrowWasmIR (66.17s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowWasmIR/match_expr_read (0.06s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowWasmIR/match_stmt_read (0.03s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowWasmIR/helper_reads_param_by_match_expr (0.04s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowWasmIR/helper_reads_param_by_match_stmt (0.04s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowWasmIR/helper_wraps_match_expr_in_binary (0.06s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowWasmIR/match_expr_then_if_expr (0.03s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowWasmIR/value_block_yields_the_enum_refused (0.05s)
+=== RUN   TestSelfHostEnumValueBlockBorrowIRArm64
+=== RUN   TestSelfHostEnumValueBlockBorrowIRArm64/match_expr_read
+=== RUN   TestSelfHostEnumValueBlockBorrowIRArm64/match_stmt_read
+=== RUN   TestSelfHostEnumValueBlockBorrowIRArm64/helper_reads_param_by_match_expr
+=== RUN   TestSelfHostEnumValueBlockBorrowIRArm64/helper_reads_param_by_match_stmt
+=== RUN   TestSelfHostEnumValueBlockBorrowIRArm64/helper_wraps_match_expr_in_binary
+=== RUN   TestSelfHostEnumValueBlockBorrowIRArm64/match_expr_then_if_expr
+=== RUN   TestSelfHostEnumValueBlockBorrowIRArm64/value_block_yields_the_enum_refused
+--- PASS: TestSelfHostEnumValueBlockBorrowIRArm64 (2.31s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowIRArm64/match_expr_read (0.10s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowIRArm64/match_stmt_read (0.05s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowIRArm64/helper_reads_param_by_match_expr (0.03s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowIRArm64/helper_reads_param_by_match_stmt (0.05s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowIRArm64/helper_wraps_match_expr_in_binary (0.04s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowIRArm64/match_expr_then_if_expr (0.05s)
+    --- PASS: TestSelfHostEnumValueBlockBorrowIRArm64/value_block_yields_the_enum_refused (0.03s)
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (8.97s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+=== RUN   TestSelfHostMatchEmptyArrayResult
+=== RUN   TestSelfHostMatchEmptyArrayResult/payload-first
+=== RUN   TestSelfHostMatchEmptyArrayResult/payload-first/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/payload-first/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/payload-first/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayResult/empty-first
+=== RUN   TestSelfHostMatchEmptyArrayResult/empty-first/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/empty-first/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/empty-first/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested-empty-tree
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested-empty-tree/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested-empty-tree/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested-empty-tree/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayResult/if-expression
+=== RUN   TestSelfHostMatchEmptyArrayResult/if-expression/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/if-expression/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/if-expression/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayResult/imported-generic
+=== RUN   TestSelfHostMatchEmptyArrayResult/imported-generic/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/imported-generic/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/imported-generic/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayResult/tuple
+=== RUN   TestSelfHostMatchEmptyArrayResult/tuple/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/tuple/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/tuple/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayResult/generic-owned
+=== RUN   TestSelfHostMatchEmptyArrayResult/generic-owned/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/generic-owned/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/generic-owned/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayResult/nominal-owned
+=== RUN   TestSelfHostMatchEmptyArrayResult/nominal-owned/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/nominal-owned/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/nominal-owned/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayResult/early-return
+=== RUN   TestSelfHostMatchEmptyArrayResult/early-return/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/early-return/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/early-return/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayResult/explicit-control
+=== RUN   TestSelfHostMatchEmptyArrayResult/explicit-control/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/explicit-control/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/explicit-control/wasm32-wasi
+--- PASS: TestSelfHostMatchEmptyArrayResult (57.20s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/payload-first (0.16s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/payload-first/x86-64-linux (0.06s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/payload-first/arm64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/payload-first/wasm32-wasi (0.05s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/empty-first (0.14s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/empty-first/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/empty-first/arm64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/empty-first/wasm32-wasi (0.03s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/nested (0.12s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/nested/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/nested/arm64-linux (0.05s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/nested/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/nested-empty-tree (0.10s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/nested-empty-tree/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/nested-empty-tree/arm64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/nested-empty-tree/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/if-expression (0.12s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/if-expression/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/if-expression/arm64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/if-expression/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/imported-generic (0.13s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/imported-generic/x86-64-linux (0.02s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/imported-generic/arm64-linux (0.06s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/imported-generic/wasm32-wasi (0.03s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/tuple (0.11s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/tuple/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/tuple/arm64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/tuple/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/generic-owned (0.10s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/generic-owned/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/generic-owned/arm64-linux (0.03s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/generic-owned/wasm32-wasi (0.03s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/nominal-owned (0.15s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/nominal-owned/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/nominal-owned/arm64-linux (0.06s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/nominal-owned/wasm32-wasi (0.04s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/early-return (0.11s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/early-return/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/early-return/arm64-linux (0.05s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/early-return/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/explicit-control (0.11s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/explicit-control/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/explicit-control/arm64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/explicit-control/wasm32-wasi (0.02s)
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/literal-depth
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/literal-depth/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/literal-depth/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/literal-depth/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call/wasm32-wasi
+--- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms (1.87s)
+    --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload (0.01s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload/arm64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth (0.01s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth/arm64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view (0.01s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view/arm64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/literal-depth (0.01s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/literal-depth/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/literal-depth/arm64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/literal-depth/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call (0.01s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call/arm64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call/wasm32-wasi (0.00s)
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/computed_scrutinee_if_let
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/computed_scrutinee_unannotated
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/computed_scrutinee_wide_payload
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/computed_scrutinee_single_evaluation
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/tuple_string_binder
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/tuple_i64_binder
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/payload_sub_binder
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/tuple_subpattern_binder
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/struct_pattern_binder
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/tuple_binder_unannotated
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/tuple_binder_guarded
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/unannotated_literal_arm
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/tuple_f64_binder
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/tuple_bool_binder
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/tuple_u32_binder
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/tuple_u64_binder
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/tuple_u8_binder
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/tuple_char_binder
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/control_literal_arm
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/control_i32_binder
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/nested_match_string_payload
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/if_expr_over_wide_payload
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/option_nested_match_i64_result
+=== RUN   TestSelfHostMatchExprBinderBodyX86_64/dead_string_payload_literal_arm
+--- PASS: TestSelfHostMatchExprBinderBodyX86_64 (2.82s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/computed_scrutinee_if_let (0.05s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/computed_scrutinee_unannotated (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/computed_scrutinee_wide_payload (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/computed_scrutinee_single_evaluation (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/tuple_string_binder (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/tuple_i64_binder (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/payload_sub_binder (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/tuple_subpattern_binder (0.02s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/struct_pattern_binder (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/tuple_binder_unannotated (0.02s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/tuple_binder_guarded (0.02s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/unannotated_literal_arm (0.02s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/tuple_f64_binder (0.02s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/tuple_bool_binder (0.02s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/tuple_u32_binder (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/tuple_u64_binder (0.02s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/tuple_u8_binder (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/tuple_char_binder (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/control_literal_arm (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/control_i32_binder (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/nested_match_string_payload (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/if_expr_over_wide_payload (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/option_nested_match_i64_result (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyX86_64/dead_string_payload_literal_arm (0.04s)
+=== RUN   TestSelfHostMatchExprBinderBodyWasm
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/computed_scrutinee_if_let
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/computed_scrutinee_unannotated
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/computed_scrutinee_wide_payload
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/computed_scrutinee_single_evaluation
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/tuple_string_binder
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/tuple_i64_binder
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/payload_sub_binder
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/tuple_subpattern_binder
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/struct_pattern_binder
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/tuple_binder_unannotated
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/tuple_binder_guarded
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/unannotated_literal_arm
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/tuple_f64_binder
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/tuple_bool_binder
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/tuple_u32_binder
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/tuple_u64_binder
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/tuple_u8_binder
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/tuple_char_binder
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/control_literal_arm
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/control_i32_binder
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/nested_match_string_payload
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/if_expr_over_wide_payload
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/option_nested_match_i64_result
+=== RUN   TestSelfHostMatchExprBinderBodyWasm/dead_string_payload_literal_arm
+--- PASS: TestSelfHostMatchExprBinderBodyWasm (2.99s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/computed_scrutinee_if_let (0.05s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/computed_scrutinee_unannotated (0.05s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/computed_scrutinee_wide_payload (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/computed_scrutinee_single_evaluation (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/tuple_string_binder (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/tuple_i64_binder (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/payload_sub_binder (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/tuple_subpattern_binder (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/struct_pattern_binder (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/tuple_binder_unannotated (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/tuple_binder_guarded (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/unannotated_literal_arm (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/tuple_f64_binder (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/tuple_bool_binder (0.02s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/tuple_u32_binder (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/tuple_u64_binder (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/tuple_u8_binder (0.02s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/tuple_char_binder (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/control_literal_arm (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/control_i32_binder (0.02s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/nested_match_string_payload (0.05s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/if_expr_over_wide_payload (0.04s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/option_nested_match_i64_result (0.03s)
+    --- PASS: TestSelfHostMatchExprBinderBodyWasm/dead_string_payload_literal_arm (0.05s)
+=== RUN   TestSelfHostMatchExprBorrowX86_64
+=== RUN   TestSelfHostMatchExprBorrowX86_64/match_expr_field_read_aliased
+=== RUN   TestSelfHostMatchExprBorrowX86_64/plain_field_read_aliased
+=== RUN   TestSelfHostMatchExprBorrowX86_64/match_expr_no_alias
+=== RUN   TestSelfHostMatchExprBorrowX86_64/if_expr_field_read_aliased
+=== RUN   TestSelfHostMatchExprBorrowX86_64/block_expr_field_read_aliased
+=== RUN   TestSelfHostMatchExprBorrowX86_64/match_expr_strarr_read
+=== RUN   TestSelfHostMatchExprBorrowX86_64/plain_strarr_read
+=== RUN   TestSelfHostMatchExprBorrowX86_64/real_lambda_capture_refused
+--- PASS: TestSelfHostMatchExprBorrowX86_64 (1.62s)
+    --- PASS: TestSelfHostMatchExprBorrowX86_64/match_expr_field_read_aliased (0.04s)
+    --- PASS: TestSelfHostMatchExprBorrowX86_64/plain_field_read_aliased (0.03s)
+    --- PASS: TestSelfHostMatchExprBorrowX86_64/match_expr_no_alias (0.01s)
+    --- PASS: TestSelfHostMatchExprBorrowX86_64/if_expr_field_read_aliased (0.03s)
+    --- PASS: TestSelfHostMatchExprBorrowX86_64/block_expr_field_read_aliased (0.02s)
+    --- PASS: TestSelfHostMatchExprBorrowX86_64/match_expr_strarr_read (0.03s)
+    --- PASS: TestSelfHostMatchExprBorrowX86_64/plain_strarr_read (0.03s)
+    --- PASS: TestSelfHostMatchExprBorrowX86_64/real_lambda_capture_refused (0.02s)
+=== RUN   TestSelfHostMatchExprBorrowWasmIR
+=== RUN   TestSelfHostMatchExprBorrowWasmIR/match_expr_field_read_aliased
+=== RUN   TestSelfHostMatchExprBorrowWasmIR/plain_field_read_aliased
+=== RUN   TestSelfHostMatchExprBorrowWasmIR/match_expr_no_alias
+=== RUN   TestSelfHostMatchExprBorrowWasmIR/if_expr_field_read_aliased
+=== RUN   TestSelfHostMatchExprBorrowWasmIR/block_expr_field_read_aliased
+=== RUN   TestSelfHostMatchExprBorrowWasmIR/match_expr_strarr_read
+=== RUN   TestSelfHostMatchExprBorrowWasmIR/plain_strarr_read
+=== RUN   TestSelfHostMatchExprBorrowWasmIR/real_lambda_capture_refused
+--- PASS: TestSelfHostMatchExprBorrowWasmIR (1.41s)
+    --- PASS: TestSelfHostMatchExprBorrowWasmIR/match_expr_field_read_aliased (0.06s)
+    --- PASS: TestSelfHostMatchExprBorrowWasmIR/plain_field_read_aliased (0.03s)
+    --- PASS: TestSelfHostMatchExprBorrowWasmIR/match_expr_no_alias (0.02s)
+    --- PASS: TestSelfHostMatchExprBorrowWasmIR/if_expr_field_read_aliased (0.03s)
+    --- PASS: TestSelfHostMatchExprBorrowWasmIR/block_expr_field_read_aliased (0.03s)
+    --- PASS: TestSelfHostMatchExprBorrowWasmIR/match_expr_strarr_read (0.03s)
+    --- PASS: TestSelfHostMatchExprBorrowWasmIR/plain_strarr_read (0.04s)
+    --- PASS: TestSelfHostMatchExprBorrowWasmIR/real_lambda_capture_refused (0.03s)
+=== RUN   TestSelfHostMatchExprBorrowIRArm64
+=== RUN   TestSelfHostMatchExprBorrowIRArm64/match_expr_field_read_aliased
+=== RUN   TestSelfHostMatchExprBorrowIRArm64/plain_field_read_aliased
+=== RUN   TestSelfHostMatchExprBorrowIRArm64/match_expr_no_alias
+=== RUN   TestSelfHostMatchExprBorrowIRArm64/if_expr_field_read_aliased
+=== RUN   TestSelfHostMatchExprBorrowIRArm64/block_expr_field_read_aliased
+=== RUN   TestSelfHostMatchExprBorrowIRArm64/match_expr_strarr_read
+=== RUN   TestSelfHostMatchExprBorrowIRArm64/plain_strarr_read
+=== RUN   TestSelfHostMatchExprBorrowIRArm64/real_lambda_capture_refused
+--- PASS: TestSelfHostMatchExprBorrowIRArm64 (1.62s)
+    --- PASS: TestSelfHostMatchExprBorrowIRArm64/match_expr_field_read_aliased (0.05s)
+    --- PASS: TestSelfHostMatchExprBorrowIRArm64/plain_field_read_aliased (0.03s)
+    --- PASS: TestSelfHostMatchExprBorrowIRArm64/match_expr_no_alias (0.03s)
+    --- PASS: TestSelfHostMatchExprBorrowIRArm64/if_expr_field_read_aliased (0.03s)
+    --- PASS: TestSelfHostMatchExprBorrowIRArm64/block_expr_field_read_aliased (0.04s)
+    --- PASS: TestSelfHostMatchExprBorrowIRArm64/match_expr_strarr_read (0.04s)
+    --- PASS: TestSelfHostMatchExprBorrowIRArm64/plain_strarr_read (0.05s)
+    --- PASS: TestSelfHostMatchExprBorrowIRArm64/real_lambda_capture_refused (0.04s)
+=== RUN   TestSelfHostMatchExprValueLocalX86_64
+=== RUN   TestSelfHostMatchExprValueLocalX86_64/struct_arm
+=== RUN   TestSelfHostMatchExprValueLocalX86_64/struct_nested_if_arms
+=== RUN   TestSelfHostMatchExprValueLocalX86_64/option_via_destination
+=== RUN   TestSelfHostMatchExprValueLocalX86_64/result_struct_payload
+=== RUN   TestSelfHostMatchExprValueLocalX86_64/array_arm
+=== RUN   TestSelfHostMatchExprValueLocalX86_64/tuple_arm
+=== RUN   TestSelfHostMatchExprValueLocalX86_64/diverging_arm_struct
+=== RUN   TestSelfHostMatchExprValueLocalX86_64/diverging_arm_array
+=== RUN   TestSelfHostMatchExprValueLocalX86_64/diverging_if_tail
+=== RUN   TestSelfHostMatchExprValueLocalX86_64/loop_then_value_arm
+--- PASS: TestSelfHostMatchExprValueLocalX86_64 (2.43s)
+    --- PASS: TestSelfHostMatchExprValueLocalX86_64/struct_arm (0.03s)
+    --- PASS: TestSelfHostMatchExprValueLocalX86_64/struct_nested_if_arms (0.03s)
+    --- PASS: TestSelfHostMatchExprValueLocalX86_64/option_via_destination (0.03s)
+    --- PASS: TestSelfHostMatchExprValueLocalX86_64/result_struct_payload (0.04s)
+    --- PASS: TestSelfHostMatchExprValueLocalX86_64/array_arm (0.05s)
+    --- PASS: TestSelfHostMatchExprValueLocalX86_64/tuple_arm (0.03s)
+    --- PASS: TestSelfHostMatchExprValueLocalX86_64/diverging_arm_struct (0.04s)
+    --- PASS: TestSelfHostMatchExprValueLocalX86_64/diverging_arm_array (0.04s)
+    --- PASS: TestSelfHostMatchExprValueLocalX86_64/diverging_if_tail (0.04s)
+    --- PASS: TestSelfHostMatchExprValueLocalX86_64/loop_then_value_arm (0.03s)
+=== RUN   TestSelfHostMatchExprValueLocalWasm
+=== RUN   TestSelfHostMatchExprValueLocalWasm/struct_arm
+=== RUN   TestSelfHostMatchExprValueLocalWasm/struct_nested_if_arms
+=== RUN   TestSelfHostMatchExprValueLocalWasm/option_via_destination
+=== RUN   TestSelfHostMatchExprValueLocalWasm/result_struct_payload
+=== RUN   TestSelfHostMatchExprValueLocalWasm/array_arm
+=== RUN   TestSelfHostMatchExprValueLocalWasm/tuple_arm
+=== RUN   TestSelfHostMatchExprValueLocalWasm/diverging_arm_struct
+=== RUN   TestSelfHostMatchExprValueLocalWasm/diverging_arm_array
+=== RUN   TestSelfHostMatchExprValueLocalWasm/diverging_if_tail
+=== RUN   TestSelfHostMatchExprValueLocalWasm/loop_then_value_arm
+--- PASS: TestSelfHostMatchExprValueLocalWasm (2.20s)
+    --- PASS: TestSelfHostMatchExprValueLocalWasm/struct_arm (0.03s)
+    --- PASS: TestSelfHostMatchExprValueLocalWasm/struct_nested_if_arms (0.06s)
+    --- PASS: TestSelfHostMatchExprValueLocalWasm/option_via_destination (0.02s)
+    --- PASS: TestSelfHostMatchExprValueLocalWasm/result_struct_payload (0.03s)
+    --- PASS: TestSelfHostMatchExprValueLocalWasm/array_arm (0.03s)
+    --- PASS: TestSelfHostMatchExprValueLocalWasm/tuple_arm (0.02s)
+    --- PASS: TestSelfHostMatchExprValueLocalWasm/diverging_arm_struct (0.03s)
+    --- PASS: TestSelfHostMatchExprValueLocalWasm/diverging_arm_array (0.03s)
+    --- PASS: TestSelfHostMatchExprValueLocalWasm/diverging_if_tail (0.05s)
+    --- PASS: TestSelfHostMatchExprValueLocalWasm/loop_then_value_arm (0.03s)
+=== RUN   TestSelfHostNestedEmptyArrayInference
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-first
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-first/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-first/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-first/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-last-control
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-last-control/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-last-control/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-last-control/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayInference/two-level
+=== RUN   TestSelfHostNestedEmptyArrayInference/two-level/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/two-level/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/two-level/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayInference/three-level
+=== RUN   TestSelfHostNestedEmptyArrayInference/three-level/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/three-level/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/three-level/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayInference/owned-string
+=== RUN   TestSelfHostNestedEmptyArrayInference/owned-string/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/owned-string/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/owned-string/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayInference/generic-record
+=== RUN   TestSelfHostNestedEmptyArrayInference/generic-record/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/generic-record/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/generic-record/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayInference/generic-numeric-literal
+=== RUN   TestSelfHostNestedEmptyArrayInference/generic-numeric-literal/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/generic-numeric-literal/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/generic-numeric-literal/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayInference/typed-tail
+=== RUN   TestSelfHostNestedEmptyArrayInference/typed-tail/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/typed-tail/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/typed-tail/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayInference/explicit-control
+=== RUN   TestSelfHostNestedEmptyArrayInference/explicit-control/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/explicit-control/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/explicit-control/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayInference/argument-control
+=== RUN   TestSelfHostNestedEmptyArrayInference/argument-control/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/argument-control/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/argument-control/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayInference/side-effect-order
+=== RUN   TestSelfHostNestedEmptyArrayInference/side-effect-order/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/side-effect-order/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/side-effect-order/wasm32-wasi
+--- PASS: TestSelfHostNestedEmptyArrayInference (3.17s)
+    --- PASS: TestSelfHostNestedEmptyArrayInference/empty-first (0.13s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/empty-first/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/empty-first/arm64-linux (0.05s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/empty-first/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostNestedEmptyArrayInference/empty-last-control (0.09s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/empty-last-control/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/empty-last-control/arm64-linux (0.04s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/empty-last-control/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostNestedEmptyArrayInference/two-level (0.08s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/two-level/x86-64-linux (0.02s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/two-level/arm64-linux (0.03s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/two-level/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostNestedEmptyArrayInference/three-level (0.12s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/three-level/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/three-level/arm64-linux (0.04s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/three-level/wasm32-wasi (0.03s)
+    --- PASS: TestSelfHostNestedEmptyArrayInference/owned-string (0.13s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/owned-string/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/owned-string/arm64-linux (0.05s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/owned-string/wasm32-wasi (0.03s)
+    --- PASS: TestSelfHostNestedEmptyArrayInference/generic-record (0.08s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/generic-record/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/generic-record/arm64-linux (0.03s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/generic-record/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostNestedEmptyArrayInference/generic-numeric-literal (0.09s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/generic-numeric-literal/x86-64-linux (0.02s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/generic-numeric-literal/arm64-linux (0.03s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/generic-numeric-literal/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostNestedEmptyArrayInference/typed-tail (0.13s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/typed-tail/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/typed-tail/arm64-linux (0.05s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/typed-tail/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostNestedEmptyArrayInference/explicit-control (0.12s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/explicit-control/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/explicit-control/arm64-linux (0.05s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/explicit-control/wasm32-wasi (0.04s)
+    --- PASS: TestSelfHostNestedEmptyArrayInference/argument-control (0.16s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/argument-control/x86-64-linux (0.06s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/argument-control/arm64-linux (0.05s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/argument-control/wasm32-wasi (0.03s)
+    --- PASS: TestSelfHostNestedEmptyArrayInference/side-effect-order (0.12s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/side-effect-order/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/side-effect-order/arm64-linux (0.05s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/side-effect-order/wasm32-wasi (0.02s)
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/generic-records
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/generic-records/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/generic-records/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/generic-records/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/array-depth
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/array-depth/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/array-depth/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/array-depth/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/owned-view
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/owned-view/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/owned-view/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/owned-view/wasm32-wasi
+--- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements (2.56s)
+    --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string (0.02s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string/arm64-linux (0.00s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer (0.01s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer/arm64-linux (0.00s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth (0.01s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth/arm64-linux (0.00s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records (0.01s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records/arm64-linux (0.00s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/generic-records (0.01s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/generic-records/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/generic-records/arm64-linux (0.00s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/generic-records/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/array-depth (0.01s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/array-depth/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/array-depth/arm64-linux (0.00s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/array-depth/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/owned-view (0.03s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/owned-view/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/owned-view/arm64-linux (0.00s)
+        --- PASS: TestSelfHostNestedEmptyArrayRejectsMixedElements/owned-view/wasm32-wasi (0.00s)
+=== RUN   TestSelfHostValueBlockEarlyReturn
+--- PASS: TestSelfHostValueBlockEarlyReturn (2.18s)
+=== RUN   TestSelfHostValueBlockFloatArmX86_64
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/block-arm
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/block-arm-leading-statement
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/nested-block-arm
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/block-arm-after-float
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/match-block-arm
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/block-arm-f32
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/block-arm-return
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/block-return
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/block-arm-argument
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/tuple-elem
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/tuple-elem-after-float
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/tuple-elem-typed-sibling
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/nested-tuple-elem
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/match-tuple-elem
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/block-tuple-arm
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/nested-if-tuple-elem
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/tuple-elem-f32
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/some-payload
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/some-payload-after-float
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/some-tuple-payload
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/ok-payload
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/err-payload
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/match-some-payload
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-payload
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-payload-after-float
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/match-generic-enum-payload
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-same-arms
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/two-param-enum-payload
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/nested-generic-enum-payload
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-some-payload
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-tuple-payload
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-payload-return-argument
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-payload-at-destination
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-at-i64
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-at-u8
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-at-f64
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-return
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-argument
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-assign
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-match-block-at-i64
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-if-in-match-block-at-u8
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/two-param-enum-block-at-destination
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/some-generic-enum-block-at-destination
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-in-some-at-destination
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-field-and-element
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/array-arm-literal-at-u64
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/array-arm-literal-match-at-i64
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/array-arm-literal-at-float
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/array-arm-enum-payload-at-float
+=== RUN   TestSelfHostValueBlockFloatArmX86_64/view-arms-stay-views
+--- PASS: TestSelfHostValueBlockFloatArmX86_64 (3.17s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/block-arm (0.03s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/block-arm-leading-statement (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/nested-block-arm (0.03s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/block-arm-after-float (0.03s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/match-block-arm (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/block-arm-f32 (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/block-arm-return (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/block-return (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/block-arm-argument (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/tuple-elem (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/tuple-elem-after-float (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/tuple-elem-typed-sibling (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/nested-tuple-elem (0.03s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/match-tuple-elem (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/block-tuple-arm (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/nested-if-tuple-elem (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/tuple-elem-f32 (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/some-payload (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/some-payload-after-float (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/some-tuple-payload (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/ok-payload (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/err-payload (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/match-some-payload (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-payload (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-payload-after-float (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/match-generic-enum-payload (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-same-arms (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/two-param-enum-payload (0.03s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/nested-generic-enum-payload (0.03s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-some-payload (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-tuple-payload (0.03s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-payload-return-argument (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-payload-at-destination (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-at-i64 (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-at-u8 (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-at-f64 (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-return (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-argument (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-assign (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-match-block-at-i64 (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-if-in-match-block-at-u8 (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/two-param-enum-block-at-destination (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/some-generic-enum-block-at-destination (0.03s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-in-some-at-destination (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/generic-enum-block-field-and-element (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/array-arm-literal-at-u64 (0.03s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/array-arm-literal-match-at-i64 (0.02s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/array-arm-literal-at-float (0.03s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/array-arm-enum-payload-at-float (0.04s)
+    --- PASS: TestSelfHostValueBlockFloatArmX86_64/view-arms-stay-views (0.05s)
+=== RUN   TestSelfHostValueBlockGenericWidthIRX86_64
+=== RUN   TestSelfHostValueBlockGenericWidthIRX86_64/struct-field-position
+=== RUN   TestSelfHostValueBlockGenericWidthIRX86_64/call-argument-position
+=== RUN   TestSelfHostValueBlockGenericWidthIRX86_64/array-element-position
+=== RUN   TestSelfHostValueBlockGenericWidthIRX86_64/u32-suffix-past-i32max-control
+=== RUN   TestSelfHostValueBlockGenericWidthIRX86_64/wide-literal-arm-control
+--- PASS: TestSelfHostValueBlockGenericWidthIRX86_64 (1.01s)
+    --- PASS: TestSelfHostValueBlockGenericWidthIRX86_64/struct-field-position (0.03s)
+    --- PASS: TestSelfHostValueBlockGenericWidthIRX86_64/call-argument-position (0.03s)
+    --- PASS: TestSelfHostValueBlockGenericWidthIRX86_64/array-element-position (0.03s)
+    --- PASS: TestSelfHostValueBlockGenericWidthIRX86_64/u32-suffix-past-i32max-control (0.02s)
+    --- PASS: TestSelfHostValueBlockGenericWidthIRX86_64/wide-literal-arm-control (0.02s)
+=== RUN   TestSelfHostValueBlockGenericWidthIRArm64
+=== RUN   TestSelfHostValueBlockGenericWidthIRArm64/struct-field-position
+=== RUN   TestSelfHostValueBlockGenericWidthIRArm64/call-argument-position
+=== RUN   TestSelfHostValueBlockGenericWidthIRArm64/array-element-position
+=== RUN   TestSelfHostValueBlockGenericWidthIRArm64/u32-suffix-past-i32max-control
+=== RUN   TestSelfHostValueBlockGenericWidthIRArm64/wide-literal-arm-control
+--- PASS: TestSelfHostValueBlockGenericWidthIRArm64 (0.91s)
+    --- PASS: TestSelfHostValueBlockGenericWidthIRArm64/struct-field-position (0.05s)
+    --- PASS: TestSelfHostValueBlockGenericWidthIRArm64/call-argument-position (0.04s)
+    --- PASS: TestSelfHostValueBlockGenericWidthIRArm64/array-element-position (0.02s)
+    --- PASS: TestSelfHostValueBlockGenericWidthIRArm64/u32-suffix-past-i32max-control (0.02s)
+    --- PASS: TestSelfHostValueBlockGenericWidthIRArm64/wide-literal-arm-control (0.02s)
+=== RUN   TestSelfHostValueBlockResultTypesIR
+=== RUN   TestSelfHostValueBlockResultTypesIR/x86-64
+=== RUN   TestSelfHostValueBlockResultTypesIR/x86-64/option-string
+=== RUN   TestSelfHostValueBlockResultTypesIR/x86-64/option-none
+=== RUN   TestSelfHostValueBlockResultTypesIR/x86-64/result-string
+=== RUN   TestSelfHostValueBlockResultTypesIR/x86-64/result-error
+=== RUN   TestSelfHostValueBlockResultTypesIR/x86-64/shadowed-payload
+=== RUN   TestSelfHostValueBlockResultTypesIR/x86-64/sibling-payloads
+=== RUN   TestSelfHostValueBlockResultTypesIR/x86-64/numeric-control
+=== RUN   TestSelfHostValueBlockResultTypesIR/arm64
+=== RUN   TestSelfHostValueBlockResultTypesIR/arm64/option-string
+=== RUN   TestSelfHostValueBlockResultTypesIR/arm64/option-none
+=== RUN   TestSelfHostValueBlockResultTypesIR/arm64/result-string
+=== RUN   TestSelfHostValueBlockResultTypesIR/arm64/result-error
+=== RUN   TestSelfHostValueBlockResultTypesIR/arm64/shadowed-payload
+=== RUN   TestSelfHostValueBlockResultTypesIR/arm64/sibling-payloads
+=== RUN   TestSelfHostValueBlockResultTypesIR/arm64/numeric-control
+=== RUN   TestSelfHostValueBlockResultTypesIR/wasm
+=== RUN   TestSelfHostValueBlockResultTypesIR/wasm/option-string
+=== RUN   TestSelfHostValueBlockResultTypesIR/wasm/option-none
+=== RUN   TestSelfHostValueBlockResultTypesIR/wasm/result-string
+=== RUN   TestSelfHostValueBlockResultTypesIR/wasm/result-error
+=== RUN   TestSelfHostValueBlockResultTypesIR/wasm/shadowed-payload
+=== RUN   TestSelfHostValueBlockResultTypesIR/wasm/sibling-payloads
+=== RUN   TestSelfHostValueBlockResultTypesIR/wasm/numeric-control
+--- PASS: TestSelfHostValueBlockResultTypesIR (4.02s)
+    --- PASS: TestSelfHostValueBlockResultTypesIR/x86-64 (1.30s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/x86-64/option-string (0.04s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/x86-64/option-none (0.03s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/x86-64/result-string (0.02s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/x86-64/result-error (0.03s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/x86-64/shadowed-payload (0.03s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/x86-64/sibling-payloads (0.03s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/x86-64/numeric-control (0.03s)
+    --- PASS: TestSelfHostValueBlockResultTypesIR/arm64 (1.45s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/arm64/option-string (0.04s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/arm64/option-none (0.04s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/arm64/result-string (0.04s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/arm64/result-error (0.04s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/arm64/shadowed-payload (0.04s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/arm64/sibling-payloads (0.06s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/arm64/numeric-control (0.03s)
+    --- PASS: TestSelfHostValueBlockResultTypesIR/wasm (1.26s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/wasm/option-string (0.05s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/wasm/option-none (0.03s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/wasm/result-string (0.03s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/wasm/result-error (0.04s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/wasm/shadowed-payload (0.03s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/wasm/sibling-payloads (0.04s)
+        --- PASS: TestSelfHostValueBlockResultTypesIR/wasm/numeric-control (0.01s)
+=== RUN   TestSelfHostValueBlockReturnLeavesFunction
+=== RUN   TestSelfHostValueBlockReturnLeavesFunction/x86-64-linux
+=== RUN   TestSelfHostValueBlockReturnLeavesFunction/arm64-linux
+=== RUN   TestSelfHostValueBlockReturnLeavesFunction/wasm32-wasi
+--- PASS: TestSelfHostValueBlockReturnLeavesFunction (1.95s)
+    --- PASS: TestSelfHostValueBlockReturnLeavesFunction/x86-64-linux (0.03s)
+    --- PASS: TestSelfHostValueBlockReturnLeavesFunction/arm64-linux (0.03s)
+    --- PASS: TestSelfHostValueBlockReturnLeavesFunction/wasm32-wasi (0.02s)
+=== RUN   TestSelfHostValueBlockStrRelease
+--- PASS: TestSelfHostValueBlockStrRelease (2.14s)
+=== RUN   TestSelfHostValueBlockWidthIRX86_64
+=== RUN   TestSelfHostValueBlockWidthIRX86_64/i64-call-arm
+=== RUN   TestSelfHostValueBlockWidthIRX86_64/i64-payload-arm
+=== RUN   TestSelfHostValueBlockWidthIRX86_64/u64-call-arm
+=== RUN   TestSelfHostValueBlockWidthIRX86_64/wide-literal-arm-control
+--- PASS: TestSelfHostValueBlockWidthIRX86_64 (0.86s)
+    --- PASS: TestSelfHostValueBlockWidthIRX86_64/i64-call-arm (0.03s)
+    --- PASS: TestSelfHostValueBlockWidthIRX86_64/i64-payload-arm (0.02s)
+    --- PASS: TestSelfHostValueBlockWidthIRX86_64/u64-call-arm (0.02s)
+    --- PASS: TestSelfHostValueBlockWidthIRX86_64/wide-literal-arm-control (0.02s)
+=== RUN   TestSelfHostValueBlockWidthIRArm64
+=== RUN   TestSelfHostValueBlockWidthIRArm64/i64-call-arm
+=== RUN   TestSelfHostValueBlockWidthIRArm64/i64-payload-arm
+=== RUN   TestSelfHostValueBlockWidthIRArm64/u64-call-arm
+=== RUN   TestSelfHostValueBlockWidthIRArm64/wide-literal-arm-control
+--- PASS: TestSelfHostValueBlockWidthIRArm64 (0.86s)
+    --- PASS: TestSelfHostValueBlockWidthIRArm64/i64-call-arm (0.04s)
+    --- PASS: TestSelfHostValueBlockWidthIRArm64/i64-payload-arm (0.03s)
+    --- PASS: TestSelfHostValueBlockWidthIRArm64/u64-call-arm (0.03s)
+    --- PASS: TestSelfHostValueBlockWidthIRArm64/wide-literal-arm-control (0.02s)
+=== RUN   TestSelfHostValueBlockLiteralLocalWidth
+=== RUN   TestSelfHostValueBlockLiteralLocalWidth/x86-64-linux
+=== RUN   TestSelfHostValueBlockLiteralLocalWidth/arm64-linux
+=== RUN   TestSelfHostValueBlockLiteralLocalWidth/wasm32-wasi
+--- PASS: TestSelfHostValueBlockLiteralLocalWidth (1.75s)
+    --- PASS: TestSelfHostValueBlockLiteralLocalWidth/x86-64-linux (0.03s)
+    --- PASS: TestSelfHostValueBlockLiteralLocalWidth/arm64-linux (0.02s)
+    --- PASS: TestSelfHostValueBlockLiteralLocalWidth/wasm32-wasi (0.03s)
+=== RUN   TestSelfHostValueBlockElemWidthIRX86_64
+=== RUN   TestSelfHostValueBlockElemWidthIRX86_64/call-arm-in-i64-array-elem
+=== RUN   TestSelfHostValueBlockElemWidthIRX86_64/call-arm-ifexpr-i64-array-elem
+=== RUN   TestSelfHostValueBlockElemWidthIRX86_64/literal-arm-unchanged
+=== RUN   TestSelfHostValueBlockElemWidthIRX86_64/scalar-binding-unchanged
+=== RUN   TestSelfHostValueBlockElemWidthIRX86_64/i32-array-elem-unchanged
+=== RUN   TestSelfHostValueBlockElemWidthIRX86_64/none-arm-option-binding
+--- PASS: TestSelfHostValueBlockElemWidthIRX86_64 (1.16s)
+    --- PASS: TestSelfHostValueBlockElemWidthIRX86_64/call-arm-in-i64-array-elem (0.03s)
+    --- PASS: TestSelfHostValueBlockElemWidthIRX86_64/call-arm-ifexpr-i64-array-elem (0.02s)
+    --- PASS: TestSelfHostValueBlockElemWidthIRX86_64/literal-arm-unchanged (0.02s)
+    --- PASS: TestSelfHostValueBlockElemWidthIRX86_64/scalar-binding-unchanged (0.02s)
+    --- PASS: TestSelfHostValueBlockElemWidthIRX86_64/i32-array-elem-unchanged (0.02s)
+    --- PASS: TestSelfHostValueBlockElemWidthIRX86_64/none-arm-option-binding (0.02s)
+=== RUN   TestSelfHostValueBlockElemWidthIRArm64
+=== RUN   TestSelfHostValueBlockElemWidthIRArm64/call-arm-in-i64-array-elem
+=== RUN   TestSelfHostValueBlockElemWidthIRArm64/call-arm-ifexpr-i64-array-elem
+=== RUN   TestSelfHostValueBlockElemWidthIRArm64/literal-arm-unchanged
+=== RUN   TestSelfHostValueBlockElemWidthIRArm64/scalar-binding-unchanged
+=== RUN   TestSelfHostValueBlockElemWidthIRArm64/i32-array-elem-unchanged
+=== RUN   TestSelfHostValueBlockElemWidthIRArm64/none-arm-option-binding
+--- PASS: TestSelfHostValueBlockElemWidthIRArm64 (1.21s)
+    --- PASS: TestSelfHostValueBlockElemWidthIRArm64/call-arm-in-i64-array-elem (0.05s)
+    --- PASS: TestSelfHostValueBlockElemWidthIRArm64/call-arm-ifexpr-i64-array-elem (0.03s)
+    --- PASS: TestSelfHostValueBlockElemWidthIRArm64/literal-arm-unchanged (0.04s)
+    --- PASS: TestSelfHostValueBlockElemWidthIRArm64/scalar-binding-unchanged (0.05s)
+    --- PASS: TestSelfHostValueBlockElemWidthIRArm64/i32-array-elem-unchanged (0.05s)
+    --- PASS: TestSelfHostValueBlockElemWidthIRArm64/none-arm-option-binding (0.05s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	331.884s

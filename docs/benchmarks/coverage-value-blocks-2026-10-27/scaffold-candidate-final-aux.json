@@ -1,0 +1,18 @@
+{
+  "source_commit": "32d563abbc3e50fb190d503716870568eb5abf0f",
+  "format_files": 2060,
+  "checks": [
+    {
+      "tool": "bin/fern",
+      "exit": 0
+    },
+    {
+      "tool": "go",
+      "exit": 0
+    },
+    {
+      "tool": "make",
+      "exit": 0
+    }
+  ]
+}

@@ -189,8 +189,7 @@ function credit(f: ssa.SFunc): ssa.SFunc {
 
 pub function run(source: string, target: string): void {
   let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
-  let g = ircore.gate_program(ircore.sub_lifted(driven.sub, driven.full), driven.sub);
-  require(g.ok, 97);
+  let g = match (ircore.gate_program(ircore.sub_lifted(driven.sub, driven.full), driven.sub)) { Some(g) => g, None => { exit(97); } };
   let cache = ircore.inline_tiny_leaves(g.im, g.cache);
   let leaves = asmcore.unit_leaves(g.im, 0, g.im.funcs.len(), cache).leaves;
   let fs: ssa.SFunc[] = [];

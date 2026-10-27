@@ -77,7 +77,7 @@ function run_target(target: string): void {
   let source = "struct Token { n: i32 } trait Drop { function drop(self: Self): void; } impl Drop for Token { function drop(self: Self): void {} } @noinline function first(): i32 { return loose(); } @noinline function loose(): i32 { return 7; } @noinline function keyed(m: Map[(i32, i32), i32]): Map[(i32, i32), i32] { return m; } function main(): i32 { let t = Token { n: 3 }; return first() + t.n; }";
   let d = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
   let g = semlower.program(d);
-  require(g.ok && g.physical.rows.len() == g.cache.len() && g.physical.producers.len() == 2, 169);
+  require(g.physical.rows.len() == g.cache.len() && g.physical.producers.len() == 2, 169);
   let i = 0;
   for row in d.sub.physical_origins.declarations {
     require(same(row, g.physical.rows[i]), 170);
@@ -91,8 +91,8 @@ function run_target(target: string): void {
   let tiny = ircore.Gated { ...g, cache: ircore.inline_tiny_leaves(g.im, g.cache) };
   require(tiny.cache.len() == g.physical.rows.len(), 183);
   selected(tiny, ircore.split_units(tiny, parts(g), 1));
-  let bare = ircore.gate(g.im, ircore.Sub { ...d.sub, physical_origins: physicalbody.no_origins() });
-  require(bare.ok && bare.cache.len() == g.cache.len() && bare.physical.producers.len() == 0, 184);
+  let bare = match (ircore.gate(g.im, ircore.Sub { ...d.sub, physical_origins: physicalbody.no_origins() })) { Some(g) => g, None => { exit(184); } };
+  require(bare.cache.len() == g.cache.len() && bare.physical.producers.len() == 0, 184);
   for row in bare.physical.rows {
     require(row.producer == -1 && row.symbol == "", 185);
   }
@@ -104,6 +104,6 @@ pub function run(): void {
     let d = semlower.driven(parser.parse_module(lexer.tokenize("")), target);
     let g = semlower.program(d);
     let u = ircore.split_units(g, [g.im, g.im], 1);
-    require(g.ok && g.physical.rows.len() == 0 && u.physical[0].rows.len() == 0 && u.physical[1].rows.len() == 0, 186);
+    require(g.physical.rows.len() == 0 && u.physical[0].rows.len() == 0 && u.physical[1].rows.len() == 0, 186);
   }
 }

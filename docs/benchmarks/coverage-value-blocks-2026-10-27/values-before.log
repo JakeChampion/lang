@@ -1,0 +1,107 @@
+=== RUN   TestSelfHostCoverInferredValueBlocks
+=== RUN   TestSelfHostCoverInferredValueBlocks/string-match
+=== RUN   TestSelfHostCoverInferredValueBlocks/string-match/x86-64-linux
+    self_host_cover_test.go:151: self-host CLI -target x86-64-linux /tmp/TestSelfHostCoverInferredValueBlocksstring-match3967889691/001/main.fern: exit status 3
+        FERN_SEM_IR: __fern_cov_main: unresolved type of binding $binding$2$key: `+` operands type mismatch
+        FERN_SEM_IR: main: call target was refused: unresolved type of binding $binding$2$key: `+` operands type mismatch
+        FERN_SEM_IR: the typed lowering refused 2 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostCoverInferredValueBlocks/string-match/arm64-linux
+    self_host_cover_test.go:151: self-host CLI -target arm64-linux /tmp/TestSelfHostCoverInferredValueBlocksstring-match3967889691/001/main.fern: exit status 3
+        FERN_SEM_IR: __fern_cov_main: unresolved type of binding $binding$2$key: `+` operands type mismatch
+        FERN_SEM_IR: main: call target was refused: unresolved type of binding $binding$2$key: `+` operands type mismatch
+        FERN_SEM_IR: the typed lowering refused 2 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostCoverInferredValueBlocks/early-return
+=== RUN   TestSelfHostCoverInferredValueBlocks/early-return/x86-64-linux
+    self_host_cover_test.go:151: self-host CLI -target x86-64-linux /tmp/TestSelfHostCoverInferredValueBlocksearly-return2658807762/001/main.fern: exit status 3
+        FERN_SEM_IR: __fern_cov_main: unresolved type of binding $binding$2$key: `+` operands type mismatch
+        FERN_SEM_IR: main: call target was refused: unresolved type of binding $binding$2$key: `+` operands type mismatch
+        FERN_SEM_IR: the typed lowering refused 2 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostCoverInferredValueBlocks/early-return/arm64-linux
+    self_host_cover_test.go:151: self-host CLI -target arm64-linux /tmp/TestSelfHostCoverInferredValueBlocksearly-return2658807762/001/main.fern: exit status 3
+        FERN_SEM_IR: __fern_cov_main: unresolved type of binding $binding$2$key: `+` operands type mismatch
+        FERN_SEM_IR: main: call target was refused: unresolved type of binding $binding$2$key: `+` operands type mismatch
+        FERN_SEM_IR: the typed lowering refused 2 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostCoverInferredValueBlocks/owned-array
+=== RUN   TestSelfHostCoverInferredValueBlocks/owned-array/x86-64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=18 frees=17 live_bytes=88 — want a balanced census
+    self_host_cover_test.go:161: missing executed counter ":4 1\n"
+        fern-cover: /tmp/TestSelfHostCoverInferredValueBlocksowned-array3116745672/001/main.fern:3 1
+        fern-cover: /tmp/TestSelfHostCoverInferredValueBlocksowned-array3116745672/001/main.fern:4 2
+        fern-branch: /tmp/TestSelfHostCoverInferredValueBlocksowned-array3116745672/001/main.fern:4:83 E 1
+        fern-branch: /tmp/TestSelfHostCoverInferredValueBlocksowned-array3116745672/001/main.fern:4:95 E 1
+        fern-branch: /tmp/TestSelfHostCoverInferredValueBlocksowned-array3116745672/001/main.fern:4:95 T 0
+        fern-branch: /tmp/TestSelfHostCoverInferredValueBlocksowned-array3116745672/001/main.fern:4:83 T 0
+        fern-cover: /tmp/TestSelfHostCoverInferredValueBlocksowned-array3116745672/001/main.fern:5 1
+        leakcheck: allocs=18 frees=17 live_bytes=88
+        fern-sanitizer: leak 88 bytes in 1 blocks
+=== RUN   TestSelfHostCoverInferredValueBlocks/owned-array/arm64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=18 frees=17 live_bytes=88 — want a balanced census
+    self_host_cover_test.go:161: missing executed counter ":4 1\n"
+        fern-cover: /tmp/TestSelfHostCoverInferredValueBlocksowned-array3116745672/001/main.fern:3 1
+        fern-cover: /tmp/TestSelfHostCoverInferredValueBlocksowned-array3116745672/001/main.fern:4 2
+        fern-branch: /tmp/TestSelfHostCoverInferredValueBlocksowned-array3116745672/001/main.fern:4:83 E 1
+        fern-branch: /tmp/TestSelfHostCoverInferredValueBlocksowned-array3116745672/001/main.fern:4:95 E 1
+        fern-branch: /tmp/TestSelfHostCoverInferredValueBlocksowned-array3116745672/001/main.fern:4:95 T 0
+        fern-branch: /tmp/TestSelfHostCoverInferredValueBlocksowned-array3116745672/001/main.fern:4:83 T 0
+        fern-cover: /tmp/TestSelfHostCoverInferredValueBlocksowned-array3116745672/001/main.fern:5 1
+        leakcheck: allocs=18 frees=17 live_bytes=88
+        fern-sanitizer: leak 88 bytes in 1 blocks
+=== RUN   TestSelfHostCoverInferredValueBlocks/if-expression
+=== RUN   TestSelfHostCoverInferredValueBlocks/if-expression/x86-64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=15 frees=14 live_bytes=72 — want a balanced census
+=== RUN   TestSelfHostCoverInferredValueBlocks/if-expression/arm64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=15 frees=14 live_bytes=72 — want a balanced census
+=== RUN   TestSelfHostCoverInferredValueBlocks/tuple-match
+=== RUN   TestSelfHostCoverInferredValueBlocks/tuple-match/x86-64-linux
+    self_host_cover_test.go:151: self-host CLI -target x86-64-linux /tmp/TestSelfHostCoverInferredValueBlockstuple-match2473723569/001/main.fern: exit status 3
+        FERN_SEM_IR: __fern_cov_main: binding $binding$1$value,$binding$2$n declared  holds a semantic value of (string, i32)
+        FERN_SEM_IR: main: call target was refused: binding $binding$1$value,$binding$2$n declared  holds a semantic value of (string, i32)
+        FERN_SEM_IR: the typed lowering refused 2 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostCoverInferredValueBlocks/tuple-match/arm64-linux
+    self_host_cover_test.go:151: self-host CLI -target arm64-linux /tmp/TestSelfHostCoverInferredValueBlockstuple-match2473723569/001/main.fern: exit status 3
+        FERN_SEM_IR: __fern_cov_main: binding $binding$1$value,$binding$2$n declared  holds a semantic value of (string, i32)
+        FERN_SEM_IR: main: call target was refused: binding $binding$1$value,$binding$2$n declared  holds a semantic value of (string, i32)
+        FERN_SEM_IR: the typed lowering refused 2 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostCoverInferredValueBlocks/explicit-control
+=== RUN   TestSelfHostCoverInferredValueBlocks/explicit-control/x86-64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=15 frees=14 live_bytes=72 — want a balanced census
+    self_host_cover_test.go:161: missing executed counter ":4 1\n"
+        fern-cover: /tmp/TestSelfHostCoverInferredValueBlocksexplicit-control3233428627/001/main.fern:3 1
+        fern-cover: /tmp/TestSelfHostCoverInferredValueBlocksexplicit-control3233428627/001/main.fern:4 2
+        fern-branch: /tmp/TestSelfHostCoverInferredValueBlocksexplicit-control3233428627/001/main.fern:4:62 E 1
+        fern-branch: /tmp/TestSelfHostCoverInferredValueBlocksexplicit-control3233428627/001/main.fern:4:62 T 0
+        fern-cover: /tmp/TestSelfHostCoverInferredValueBlocksexplicit-control3233428627/001/main.fern:5 1
+        leakcheck: allocs=15 frees=14 live_bytes=72
+        fern-sanitizer: leak 72 bytes in 1 blocks
+=== RUN   TestSelfHostCoverInferredValueBlocks/explicit-control/arm64-linux
+    self_host_cover_test.go:155: leakcheck: allocs=15 frees=14 live_bytes=72 — want a balanced census
+    self_host_cover_test.go:161: missing executed counter ":4 1\n"
+        fern-cover: /tmp/TestSelfHostCoverInferredValueBlocksexplicit-control3233428627/001/main.fern:3 1
+        fern-cover: /tmp/TestSelfHostCoverInferredValueBlocksexplicit-control3233428627/001/main.fern:4 2
+        fern-branch: /tmp/TestSelfHostCoverInferredValueBlocksexplicit-control3233428627/001/main.fern:4:62 E 1
+        fern-branch: /tmp/TestSelfHostCoverInferredValueBlocksexplicit-control3233428627/001/main.fern:4:62 T 0
+        fern-cover: /tmp/TestSelfHostCoverInferredValueBlocksexplicit-control3233428627/001/main.fern:5 1
+        leakcheck: allocs=15 frees=14 live_bytes=72
+        fern-sanitizer: leak 72 bytes in 1 blocks
+--- FAIL: TestSelfHostCoverInferredValueBlocks (37.50s)
+    --- FAIL: TestSelfHostCoverInferredValueBlocks/string-match (0.01s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/string-match/x86-64-linux (0.01s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/string-match/arm64-linux (0.01s)
+    --- FAIL: TestSelfHostCoverInferredValueBlocks/early-return (0.01s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/early-return/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/early-return/arm64-linux (0.00s)
+    --- FAIL: TestSelfHostCoverInferredValueBlocks/owned-array (0.17s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/owned-array/x86-64-linux (0.05s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/owned-array/arm64-linux (0.11s)
+    --- FAIL: TestSelfHostCoverInferredValueBlocks/if-expression (0.08s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/if-expression/x86-64-linux (0.04s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/if-expression/arm64-linux (0.04s)
+    --- FAIL: TestSelfHostCoverInferredValueBlocks/tuple-match (0.01s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/tuple-match/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/tuple-match/arm64-linux (0.00s)
+    --- FAIL: TestSelfHostCoverInferredValueBlocks/explicit-control (0.08s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/explicit-control/x86-64-linux (0.03s)
+        --- FAIL: TestSelfHostCoverInferredValueBlocks/explicit-control/arm64-linux (0.04s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	37.518s
+FAIL

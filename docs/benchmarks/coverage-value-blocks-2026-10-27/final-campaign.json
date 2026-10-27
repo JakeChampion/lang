@@ -1,0 +1,11 @@
+{
+  "exit": 0,
+  "source_commit": "82ba47cad60c55a2c0649147afd0ff40802e1c4d",
+  "feature_uncommitted": false,
+  "pass_nodes": 3,
+  "fail_nodes": 0,
+  "skip_nodes": 0,
+  "log_sha256": "0dbc92922f00e86fd2a11c6f809787e4727e0131de160f8300ba77f09633a1c5",
+  "budget": "30s",
+  "scope": "Existing local default budget. This does not qualify the 25-minute nightly campaign."
+}

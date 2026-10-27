@@ -1,0 +1,201 @@
+=== RUN   TestSelfHostNestedEmptyArrayInference
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-first
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-first/x86-64-linux
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target x86-64-linux /tmp/TestSelfHostNestedEmptyArrayInferenceempty-first2378761840/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-first/arm64-linux
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target arm64-linux /tmp/TestSelfHostNestedEmptyArrayInferenceempty-first2378761840/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-first/wasm32-wasi
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target wasm32-wasi /tmp/TestSelfHostNestedEmptyArrayInferenceempty-first2378761840/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-last-control
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-last-control/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-last-control/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/empty-last-control/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayInference/two-level
+=== RUN   TestSelfHostNestedEmptyArrayInference/two-level/x86-64-linux
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target x86-64-linux /tmp/TestSelfHostNestedEmptyArrayInferencetwo-level3479999334/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/two-level/arm64-linux
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target arm64-linux /tmp/TestSelfHostNestedEmptyArrayInferencetwo-level3479999334/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/two-level/wasm32-wasi
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target wasm32-wasi /tmp/TestSelfHostNestedEmptyArrayInferencetwo-level3479999334/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/three-level
+=== RUN   TestSelfHostNestedEmptyArrayInference/three-level/x86-64-linux
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target x86-64-linux /tmp/TestSelfHostNestedEmptyArrayInferencethree-level3204603208/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/three-level/arm64-linux
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target arm64-linux /tmp/TestSelfHostNestedEmptyArrayInferencethree-level3204603208/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/three-level/wasm32-wasi
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target wasm32-wasi /tmp/TestSelfHostNestedEmptyArrayInferencethree-level3204603208/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/owned-string
+=== RUN   TestSelfHostNestedEmptyArrayInference/owned-string/x86-64-linux
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target x86-64-linux /tmp/TestSelfHostNestedEmptyArrayInferenceowned-string2236327230/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/owned-string/arm64-linux
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target arm64-linux /tmp/TestSelfHostNestedEmptyArrayInferenceowned-string2236327230/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/owned-string/wasm32-wasi
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target wasm32-wasi /tmp/TestSelfHostNestedEmptyArrayInferenceowned-string2236327230/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/generic-record
+=== RUN   TestSelfHostNestedEmptyArrayInference/generic-record/x86-64-linux
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target x86-64-linux /tmp/TestSelfHostNestedEmptyArrayInferencegeneric-record2510240952/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/generic-record/arm64-linux
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target arm64-linux /tmp/TestSelfHostNestedEmptyArrayInferencegeneric-record2510240952/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/generic-record/wasm32-wasi
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target wasm32-wasi /tmp/TestSelfHostNestedEmptyArrayInferencegeneric-record2510240952/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/typed-tail
+=== RUN   TestSelfHostNestedEmptyArrayInference/typed-tail/x86-64-linux
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target x86-64-linux /tmp/TestSelfHostNestedEmptyArrayInferencetyped-tail2759826446/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/typed-tail/arm64-linux
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target arm64-linux /tmp/TestSelfHostNestedEmptyArrayInferencetyped-tail2759826446/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/typed-tail/wasm32-wasi
+    self_host_nested_empty_array_inference_test.go:38: self-host CLI -target wasm32-wasi /tmp/TestSelfHostNestedEmptyArrayInferencetyped-tail2759826446/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayInference/explicit-control
+=== RUN   TestSelfHostNestedEmptyArrayInference/explicit-control/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/explicit-control/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/explicit-control/wasm32-wasi
+=== RUN   TestSelfHostNestedEmptyArrayInference/argument-control
+=== RUN   TestSelfHostNestedEmptyArrayInference/argument-control/x86-64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/argument-control/arm64-linux
+=== RUN   TestSelfHostNestedEmptyArrayInference/argument-control/wasm32-wasi
+--- FAIL: TestSelfHostNestedEmptyArrayInference (35.27s)
+    --- FAIL: TestSelfHostNestedEmptyArrayInference/empty-first (0.02s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/empty-first/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/empty-first/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/empty-first/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostNestedEmptyArrayInference/empty-last-control (0.16s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/empty-last-control/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/empty-last-control/arm64-linux (0.06s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/empty-last-control/wasm32-wasi (0.06s)
+    --- FAIL: TestSelfHostNestedEmptyArrayInference/two-level (0.01s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/two-level/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/two-level/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/two-level/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostNestedEmptyArrayInference/three-level (0.02s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/three-level/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/three-level/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/three-level/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostNestedEmptyArrayInference/owned-string (0.01s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/owned-string/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/owned-string/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/owned-string/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostNestedEmptyArrayInference/generic-record (0.02s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/generic-record/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/generic-record/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/generic-record/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostNestedEmptyArrayInference/typed-tail (0.01s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/typed-tail/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/typed-tail/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayInference/typed-tail/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostNestedEmptyArrayInference/explicit-control (0.09s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/explicit-control/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/explicit-control/arm64-linux (0.03s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/explicit-control/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostNestedEmptyArrayInference/argument-control (0.09s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/argument-control/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/argument-control/arm64-linux (0.03s)
+        --- PASS: TestSelfHostNestedEmptyArrayInference/argument-control/wasm32-wasi (0.02s)
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string/x86-64-linux
+    self_host_nested_empty_array_inference_test.go:71: expected E034: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string/arm64-linux
+    self_host_nested_empty_array_inference_test.go:71: expected E034: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string/wasm32-wasi
+    self_host_nested_empty_array_inference_test.go:71: expected E034: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer/x86-64-linux
+    self_host_nested_empty_array_inference_test.go:71: expected E034: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer/arm64-linux
+    self_host_nested_empty_array_inference_test.go:71: expected E034: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer/wasm32-wasi
+    self_host_nested_empty_array_inference_test.go:71: expected E034: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth/x86-64-linux
+    self_host_nested_empty_array_inference_test.go:71: expected E034: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth/arm64-linux
+    self_host_nested_empty_array_inference_test.go:71: expected E034: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth/wasm32-wasi
+    self_host_nested_empty_array_inference_test.go:71: expected E034: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records/x86-64-linux
+    self_host_nested_empty_array_inference_test.go:71: expected E034: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records/arm64-linux
+    self_host_nested_empty_array_inference_test.go:71: expected E034: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records/wasm32-wasi
+    self_host_nested_empty_array_inference_test.go:71: expected E034: exit status 3
+        FERN_SEM_IR: main: unresolved array literal type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+--- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements (1.39s)
+    --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string (0.01s)
+        --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/integer-string/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer (0.01s)
+        --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/string-integer/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth (0.01s)
+        --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/nested-depth/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records (0.01s)
+        --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostNestedEmptyArrayRejectsMixedElements/nominal-records/wasm32-wasi (0.00s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	36.676s
+FAIL

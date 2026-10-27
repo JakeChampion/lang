@@ -1,0 +1,8 @@
+{
+  "committed_source": "2812e664628b853ab77ae80e0a6ca31533c9b8eb",
+  "original_execution_base": "578a2a37506f705e8955b3a99c8e5b92a25c2ebc",
+  "original_feature_uncommitted": true,
+  "original_unit_and_tool_hashes_match": true,
+  "Go_source_changes_since_oracle_build_103": [],
+  "interpretation": "The original unit execution predates the source commit. Its recorded unit inputs and executed tool bytes match the committed source; this link does not relabel that execution as a clean committed-source run. Compiled full regressions separately execute all unit groups after the source commit."
+}

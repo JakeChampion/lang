@@ -1,0 +1,134 @@
+[
+  {
+    "log": "image-nested-array-go-before.log",
+    "sha256": "41b896b3036684f6fcb98daad7c2315cf2afe639f1670fae50515e9315be0adc",
+    "pass_nodes": 12,
+    "fail_nodes": 42,
+    "skip_nodes": 0,
+    "terminal": [
+      "FAIL\tgithub.com/jakechampion/lang/internal/testing/e2ecompiler\t36.676s",
+      "FAIL"
+    ],
+    "scope": "Intermediate observations use the stated development source. Only final-diagnostics has committed source b38cca91520de044f7ebf81f7ea6523d1af38a12."
+  },
+  {
+    "log": "image-nested-array-go-after.log",
+    "sha256": "048239aa82b5d7408edf5f04002f1560883fcf1db2068600fc35f83697da8bd4",
+    "pass_nodes": 54,
+    "fail_nodes": 0,
+    "skip_nodes": 0,
+    "terminal": [
+      "PASS",
+      "ok  \tgithub.com/jakechampion/lang/internal/testing/e2ecompiler\t33.292s"
+    ],
+    "scope": "Intermediate observations use the stated development source. Only final-diagnostics has committed source b38cca91520de044f7ebf81f7ea6523d1af38a12."
+  },
+  {
+    "log": "image-nested-array-expanded-after.log",
+    "sha256": "120e15e4fb6a0f31c7806328ec7d2b83e1a1b13b9f604ca0a2c8db7ed9685058",
+    "pass_nodes": 61,
+    "fail_nodes": 5,
+    "skip_nodes": 0,
+    "terminal": [
+      "FAIL\tgithub.com/jakechampion/lang/internal/testing/e2ecompiler\t37.152s",
+      "FAIL"
+    ],
+    "scope": "Intermediate observations use the stated development source. Only final-diagnostics has committed source b38cca91520de044f7ebf81f7ea6523d1af38a12."
+  },
+  {
+    "log": "image-nested-array-nominal-after.log",
+    "sha256": "9b5553b5178635c313adc83d3908e8c599a1cd456c1a953eb9a9d03913758f4c",
+    "pass_nodes": 61,
+    "fail_nodes": 5,
+    "skip_nodes": 0,
+    "terminal": [
+      "FAIL\tgithub.com/jakechampion/lang/internal/testing/e2ecompiler\t33.427s",
+      "FAIL"
+    ],
+    "scope": "Intermediate observations use the stated development source. Only final-diagnostics has committed source b38cca91520de044f7ebf81f7ea6523d1af38a12."
+  },
+  {
+    "log": "image-nested-array-aggregate-after.log",
+    "sha256": "a0f21da4cb053b8bf00a720175d627ebc3db78939ad8f4114bca408a0dedb9ad",
+    "pass_nodes": 61,
+    "fail_nodes": 5,
+    "skip_nodes": 0,
+    "terminal": [
+      "FAIL\tgithub.com/jakechampion/lang/internal/testing/e2ecompiler\t36.291s",
+      "FAIL"
+    ],
+    "scope": "Intermediate observations use the stated development source. Only final-diagnostics has committed source b38cca91520de044f7ebf81f7ea6523d1af38a12."
+  },
+  {
+    "log": "image-nested-array-literal-shape-after.log",
+    "sha256": "e66684d16506283e2d361331398ea66417f084888c73a643d7ef2a13f1bf0c53",
+    "pass_nodes": 66,
+    "fail_nodes": 0,
+    "skip_nodes": 0,
+    "terminal": [
+      "PASS",
+      "ok  \tgithub.com/jakechampion/lang/internal/testing/e2ecompiler\t59.770s"
+    ],
+    "scope": "Intermediate observations use the stated development source. Only final-diagnostics has committed source b38cca91520de044f7ebf81f7ea6523d1af38a12."
+  },
+  {
+    "log": "image-nested-array-broad-diagnostics.log",
+    "sha256": "f88dc5b82fd92be94f31871d668f47e5f79e4f8bb8727ee7a579f1f5a3ab94f7",
+    "pass_nodes": 4824,
+    "fail_nodes": 5,
+    "skip_nodes": 0,
+    "terminal": [
+      "FAIL\tgithub.com/jakechampion/lang/internal/testing/e2ecompiler\t190.551s",
+      "FAIL"
+    ],
+    "scope": "Intermediate observations use the stated development source. Only final-diagnostics has committed source b38cca91520de044f7ebf81f7ea6523d1af38a12."
+  },
+  {
+    "log": "image-nested-array-wide-literal-after.log",
+    "sha256": "ce9336f41d4d3b1d3645bff0bcfa0e232fb0a9d896bb508471d976cfb2306545",
+    "pass_nodes": 70,
+    "fail_nodes": 0,
+    "skip_nodes": 0,
+    "terminal": [
+      "PASS",
+      "ok  \tgithub.com/jakechampion/lang/internal/testing/e2ecompiler\t34.934s"
+    ],
+    "scope": "Intermediate observations use the stated development source. Only final-diagnostics has committed source b38cca91520de044f7ebf81f7ea6523d1af38a12."
+  },
+  {
+    "log": "image-nested-array-order-after.log",
+    "sha256": "b567fa79f797ea2bfad666a78cdbb3703b017e6d5c4f8e3e4293e8035daa6196",
+    "pass_nodes": 5,
+    "fail_nodes": 0,
+    "skip_nodes": 0,
+    "terminal": [
+      "PASS",
+      "ok  \tgithub.com/jakechampion/lang/internal/testing/e2ecompiler\t32.638s"
+    ],
+    "scope": "Intermediate observations use the stated development source. Only final-diagnostics has committed source b38cca91520de044f7ebf81f7ea6523d1af38a12."
+  },
+  {
+    "log": "image-nested-array-final-diagnostics.log",
+    "sha256": "7eb2b389e45f368d01491ce15a4cf73271d27012838701781f7758bffeefdb32",
+    "pass_nodes": 5002,
+    "fail_nodes": 0,
+    "skip_nodes": 0,
+    "terminal": [
+      "PASS",
+      "ok  \tgithub.com/jakechampion/lang/internal/testing/e2ecompiler\t181.913s"
+    ],
+    "scope": "Intermediate observations use the stated development source. Only final-diagnostics has committed source b38cca91520de044f7ebf81f7ea6523d1af38a12."
+  },
+  {
+    "log": "image-nested-array-go-checker.log",
+    "sha256": "8a534aeafe3edcf13bfc36dfefef5cc5ec87fa1c9e359a868031adef2a22907c",
+    "pass_nodes": 2000,
+    "fail_nodes": 0,
+    "skip_nodes": 0,
+    "terminal": [
+      "PASS",
+      "ok  \tgithub.com/jakechampion/lang/internal/check/checker\t27.257s"
+    ],
+    "scope": "Intermediate observations use the stated development source. Only final-diagnostics has committed source b38cca91520de044f7ebf81f7ea6523d1af38a12."
+  }
+]

@@ -1,0 +1,7 @@
+{
+  "source": "5b275901e871a308b29bceec604e69200416bdc2",
+  "exit": 1,
+  "seconds": 3.7480640430003405,
+  "expected_failure": "E005 missing ast.ExprNumber.bits",
+  "log_sha256": "21e4f527ba9ae3bd82b99d33fed9811783fbb19c8a4763ade219d3ced3028c04"
+}

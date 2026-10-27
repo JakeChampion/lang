@@ -173,7 +173,7 @@ function main(): i32 {
     return 1;
   }
   let g = retained.program(mod);
-  require(g.ok && g.im.funcs.len() == 3 && g.cache.len() == 3, 1);
+  require(g.im.funcs.len() == 3 && g.cache.len() == 3, 1);
   let fresh = asmcore.new_state();
   require(!fresh.retain_prepared, 2);
   fresh.release();

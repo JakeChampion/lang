@@ -1,0 +1,48 @@
+{
+  "base": "6b159fd6a2de4fa7a10564a40ce8c9ea2c7e240a",
+  "feature_uncommitted": true,
+  "commands": [
+    {
+      "command": [
+        "/workspace/image-nested-array-current-fern-b38cca915",
+        "-check",
+        "tests/icc_parametric_eval_test.fern"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/workspace/image-nested-array-current-fern-b38cca915",
+        "-target",
+        "x86-64-linux",
+        "-sanitize",
+        "-o",
+        "/workspace/lang-image-icc-parametric/fern-image/build/icc-parametric-initial-native",
+        "tests/icc_parametric_eval_test.fern"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/workspace/lang-image-icc-parametric/fern-image/build/icc-parametric-initial-native"
+      ],
+      "exit_code": 1
+    }
+  ],
+  "hashes": {
+    "/workspace/lang-image-icc-parametric/fern-image/packages/codecs/icc/parametric_eval.fern": "93639eebff397f824d50168060126b41edb2136a1b617dfae95b1d7549f2505f",
+    "/workspace/lang-image-icc-parametric/fern-image/tests/icc_parametric_eval_test.fern": "3212e23d0e688b88c4bd661d744afeb0c6ebb8396e10e230d4bc255d44f5b574",
+    "/workspace/image-nested-array-current-fern-b38cca915": "d12b97d792d5d66d6bd312cd6723100ecb85ec2609d9430705032e504e5c090b"
+  },
+  "exit_code": 1,
+  "TAP_ok": 5,
+  "TAP_not_ok": 1,
+  "heaps": [
+    [
+      187,
+      187,
+      0
+    ]
+  ],
+  "sources_unchanged": true
+}

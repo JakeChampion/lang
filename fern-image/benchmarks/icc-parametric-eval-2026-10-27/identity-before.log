@@ -1,0 +1,18 @@
+TAP version 13
+# Suite: bounded scalar ICC parametric evaluation
+ok 1 - all five corrected formulas and branch selection
+ok 2 - clipping, public domains, and explicit unsupported subset
+not ok 3 - fixed-point gamma extremes and exact identity
+  ---
+  message: exact identities across all five forms including negative zero
+  ---
+ok 4 - large-slope compensation retains the low product
+ok 5 - callback COW, cancellation, and fresh calls
+ok 6 - frozen offline sRGB wire curve and independent Decimal value
+1..6
+# tests 6
+# pass 5
+# fail 1
+# failures:
+#   fixed-point gamma extremes and exact identity: exact identities across all five forms including negative zero
+leakcheck: allocs=187 frees=187 live_bytes=0

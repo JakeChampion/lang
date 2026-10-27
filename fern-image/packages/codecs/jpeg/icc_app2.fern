@@ -1,0 +1,105 @@
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum App2Error { Limit, Length, Identifier, Sequence, Count, Duplicate, Missing, Cancelled }
+
+pub struct Payload { bytes: u8[] }
+
+pub struct AssemblyLimits { max_profile_bytes: i32, max_chunks: i32 }
+
+pub function default_limits(): AssemblyLimits {
+  return AssemblyLimits { max_profile_bytes: 1048576, max_chunks: 32 };
+}
+
+function identified(bytes: [u8]): boolean {
+  return bytes[0] == 73 as u8 && bytes[1] == 67 as u8 && bytes[2] == 67 as u8 && bytes[3] == 95 as u8
+    && bytes[4] == 80 as u8 && bytes[5] == 82 as u8 && bytes[6] == 79 as u8 && bytes[7] == 70 as u8
+    && bytes[8] == 73 as u8 && bytes[9] == 76 as u8 && bytes[10] == 69 as u8 && bytes[11] == 0 as u8;
+}
+
+// Complete admission precedes output allocation and callbacks.
+function admit(payloads: [Payload], limits: AssemblyLimits): Result[i32, App2Error] {
+  if (limits.max_profile_bytes <= 0 || limits.max_chunks <= 0 || payloads.len() > limits.max_chunks || payloads.len() > 255) {
+    return Err(App2Error.Limit);
+  }
+  let total = 0;
+  let bytes = 0i64;
+  for index in 0..payloads.len() {
+    let input = payloads[index].bytes;
+    if (input.len() < 14 || input.len() > 65533) {
+      return Err(App2Error.Length);
+    }
+    if (!identified(input[:])) {
+      return Err(App2Error.Identifier);
+    }
+    let sequence = input[12] as i32;
+    let count = input[13] as i32;
+    if (sequence == 0 || count == 0 || sequence > count) {
+      return Err(App2Error.Sequence);
+    }
+    if (count > limits.max_chunks) {
+      return Err(App2Error.Limit);
+    }
+    if (total == 0) {
+      total = count;
+    } else if (count != total) {
+      return Err(App2Error.Count);
+    }
+    for previous in 0..index {
+      if (payloads[previous].bytes[12] as i32 == sequence) {
+        return Err(App2Error.Duplicate);
+      }
+    }
+    bytes = bytes + input.len() as i64 - 14i64;
+    if (bytes > limits.max_profile_bytes as i64 || bytes > 16707345i64) {
+      return Err(App2Error.Limit);
+    }
+  }
+  if (payloads.len() != total) {
+    return Err(App2Error.Missing);
+  }
+  return Ok(bytes as i32);
+}
+
+// Payloads exclude the marker and its two-byte length. Profile bytes remain uninterpreted.
+pub function assemble(payloads: [Payload], limits: AssemblyLimits, cancelled: () => boolean): Result[Option[u8[]], App2Error] {
+  let bytes = admit(payloads, limits)?;
+  if (cancelled()) {
+    return Err(App2Error.Cancelled);
+  }
+  if (payloads.len() == 0) {
+    if (cancelled()) {
+      return Err(App2Error.Cancelled);
+    }
+    return Ok(None);
+  }
+  let output = __alloc_u8(bytes);
+  if (cancelled()) {
+    return Err(App2Error.Cancelled);
+  }
+  let written = 0;
+  for sequence in 1..payloads.len() + 1 {
+    let at = 0;
+    while (at < payloads.len() && payloads[at].bytes[12] as i32 != sequence) {
+      at = at + 1;
+    }
+    if (at == payloads.len()) {
+      return Err(App2Error.Missing);
+    }
+    let input = payloads[at].bytes;
+    for index in 14..input.len() {
+      if (written % 64 == 0 && cancelled()) {
+        return Err(App2Error.Cancelled);
+      }
+      output = output.with(written, input[index]);
+      written = written + 1;
+    }
+  }
+  if (written != bytes) {
+    return Err(App2Error.Length);
+  }
+  if (cancelled()) {
+    return Err(App2Error.Cancelled);
+  }
+  return Ok(Some(output));
+}

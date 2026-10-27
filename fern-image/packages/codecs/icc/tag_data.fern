@@ -1,0 +1,127 @@
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum TagError { Limit, Length, Signature, Reserved, Function, Cancelled }
+
+pub struct CurveLimits { max_bytes: i32, max_samples: i32 }
+
+pub struct XyzNumerators { x: i32, y: i32, z: i32 }
+
+pub struct ParametricData { function_type: i32, coefficients: i32[] }
+
+pub enum CurveData { Identity, Gamma(i32), Samples(i32[]), Parametric(ParametricData) }
+
+pub function default_curve_limits(): CurveLimits {
+  return CurveLimits { max_bytes: 1048576, max_samples: 4096 };
+}
+
+function get16(input: [u8], at: i32): i32 {
+  return input[at] as i32 << 8 | input[at + 1] as i32;
+}
+
+function get32(input: [u8], at: i32): i64 {
+  return input[at] as i64 << 24i64 | input[at + 1] as i64 << 16i64 | input[at + 2] as i64 << 8i64 | input[at + 3] as i64;
+}
+
+function signed(input: [u8], at: i32): i32 {
+  let value = get32(input, at);
+  return (if (value >= 2147483648i64) { value - 4294967296i64 } else { value }) as i32;
+}
+
+function prefix(input: [u8], signature: i64): Result[void, TagError] {
+  if (get32(input, 0) != signature) {
+    return Err(TagError.Signature);
+  }
+  if (get32(input, 4) != 0i64) {
+    return Err(TagError.Reserved);
+  }
+  return Ok(());
+}
+
+// Values remain signed integer numerators with denominator 65,536.
+pub function read_xyz_triplet(input: [u8], cancelled: () => boolean): Result[XyzNumerators, TagError] {
+  if (input.len() != 20) {
+    return Err(TagError.Length);
+  }
+  prefix(input, 1482250784i64)?;
+  if (cancelled()) {
+    return Err(TagError.Cancelled);
+  }
+  let result = XyzNumerators { x: signed(input, 8), y: signed(input, 12), z: signed(input, 16) };
+  if (cancelled()) {
+    return Err(TagError.Cancelled);
+  }
+  return Ok(result);
+}
+
+function parameters(function_type: i32): Result[i32, TagError] {
+  return match (function_type) { 0 => Ok(1), 1 => Ok(3), 2 => Ok(4), 3 => Ok(5), 4 => Ok(7), _ => Err(TagError.Function) };
+}
+
+// This reader preserves wire values. It does not authorize curve evaluation.
+pub function read_curve(input: [u8], limits: CurveLimits, cancelled: () => boolean): Result[CurveData, TagError] {
+  if (limits.max_bytes <= 0 || limits.max_samples <= 0 || input.len() > limits.max_bytes || input.len() > 1048576) {
+    return Err(TagError.Limit);
+  }
+  if (input.len() < 12) {
+    return Err(TagError.Length);
+  }
+  let kind = get32(input, 0);
+  if (kind == 1668641398i64) {
+    let count = get32(input, 8);
+    if (count > limits.max_samples as i64 || count > 65536i64) {
+      return Err(TagError.Limit);
+    }
+    if (12i64 + count * 2i64 != input.len() as i64) {
+      return Err(TagError.Length);
+    }
+    prefix(input, kind)?;
+    if (cancelled()) {
+      return Err(TagError.Cancelled);
+    }
+    if (count < 2i64) {
+      let result = if (count == 0i64) { CurveData.Identity } else { CurveData.Gamma(get16(input, 12)) };
+      if (cancelled()) {
+        return Err(TagError.Cancelled);
+      }
+      return Ok(result);
+    }
+    let values: i32[] = [];
+    for index in 0..count as i32 {
+      if (index % 64 == 0 && cancelled()) {
+        return Err(TagError.Cancelled);
+      }
+      values = values.append(get16(input, 12 + index * 2));
+    }
+    if (cancelled()) {
+      return Err(TagError.Cancelled);
+    }
+    return Ok(CurveData.Samples(values));
+  }
+  if (kind != 1885434465i64) {
+    return Err(TagError.Signature);
+  }
+  prefix(input, kind)?;
+  if (get16(input, 10) != 0) {
+    return Err(TagError.Reserved);
+  }
+  let function_type = get16(input, 8);
+  let count = parameters(function_type)?;
+  if (input.len() != 12 + count * 4) {
+    return Err(TagError.Length);
+  }
+  if (cancelled()) {
+    return Err(TagError.Cancelled);
+  }
+  let coefficients: i32[] = [];
+  for index in 0..count {
+    if (cancelled()) {
+      return Err(TagError.Cancelled);
+    }
+    coefficients = coefficients.append(signed(input, 12 + index * 4));
+  }
+  if (cancelled()) {
+    return Err(TagError.Cancelled);
+  }
+  return Ok(CurveData.Parametric(ParametricData { function_type: function_type, coefficients: coefficients }));
+}

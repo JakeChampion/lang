@@ -1,0 +1,260 @@
+import "../packages/codecs/icc/matrix_model";
+import "../packages/codecs/icc/envelope";
+import "../packages/codecs/icc/tag_data";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function get32(input: [u8], at: i32): i64 {
+  return input[at] as i64 << 24i64 | input[at + 1] as i64 << 16i64 | input[at + 2] as i64 << 8i64 | input[at + 3] as i64;
+}
+
+function put32(input: u8[], at: i32, value: i64): u8[] {
+  for index in 0..4 {
+    input = input.with(at + index, (value >> ((3 - index) * 8) as i64 & 255i64) as u8);
+  }
+  return input;
+}
+
+function number(output: u8[], value: i64, bytes: i32): u8[] {
+  for index in 0..bytes {
+    output = output.append((value >> ((bytes - 1 - index) * 8) as i64 & 255i64) as u8);
+  }
+  return output;
+}
+
+function frozen(): u8[] {
+  return match (read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc")) { Ok(value) => value, Err(_) => [] };
+}
+
+function entry(input: [u8], signature: i64): i32 {
+  for index in 0..get32(input, 128) as i32 {
+    let at = 132 + index * 12;
+    if (get32(input, at) == signature) {
+      return at;
+    }
+  }
+  return -1;
+}
+
+function offset(input: [u8], signature: i64): i32 {
+  return get32(input, entry(input, signature) + 4) as i32;
+}
+
+function read(input: [u8]): Result[matrix_model.ForwardData, matrix_model.ModelError] {
+  return matrix_model.read(input, envelope.Intent.Relative, matrix_model.default_limits(), never);
+}
+
+function rejects(input: [u8], error: matrix_model.ModelError): boolean {
+  return match (read(input)) { Err(actual) => actual == error, _ => false };
+}
+
+// Rebuild disjoint extents from construction data without profile parsing semantics.
+function replace(input: [u8], signature: i64, data: u8[]): u8[] {
+  let start = 132 + get32(input, 128) as i32 * 12;
+  let output: u8[] = [];
+  for index in 0..start {
+    output = output.append(input[index]);
+  }
+  for index in 0..get32(input, 128) as i32 {
+    let at = 132 + index * 12;
+    let bytes: u8[] = [];
+    if (get32(input, at) == signature) {
+      bytes = data;
+    } else {
+      let from = get32(input, at + 4) as i32;
+      for j in 0..get32(input, at + 8) as i32 {
+        bytes = bytes.append(input[from + j]);
+      }
+    }
+    output = put32(put32(output, at + 4, output.len() as i64), at + 8, bytes.len() as i64);
+    for b in bytes {
+      output = output.append(b);
+    }
+    while (output.len() % 4 != 0) {
+      output = output.append(0 as u8);
+    }
+  }
+  return put32(output, 0, output.len() as i64);
+}
+
+function curv(values: [i32]): u8[] {
+  let data = number(number(number([], 0x63757276i64, 4), 0i64, 4), values.len() as i64, 4);
+  for value in values {
+    data = number(data, value as i64, 2);
+  }
+  return data;
+}
+
+function para(kind: i32, values: [i32]): u8[] {
+  let data = number(number(number(number([], 0x70617261i64, 4), 0i64, 4), kind as i64, 2), 0i64, 2);
+  for value in values {
+    data = number(data, value as i64, 4);
+  }
+  return data;
+}
+
+function same(a: [i32], b: [i32]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  for index in 0..a.len() {
+    if (a[index] != b[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function profiles(): test.TestOutcome {
+  let data = match (read(frozen())) { Ok(value) => value, _ => { return test.fail("frozen profile selection"); } };
+  let expected = [28576, 25239, 9375, 14581, 46983, 3972, 912, 6361, 46787];
+  if (!same(data.matrix[:], expected[:]) || data.info.device_class != envelope.DeviceClass.Display || data.info.preferred_intent != envelope.Intent.Perceptual || data.requested_intent != envelope.Intent.Relative || data.info.unique_elements != 9) {
+    return test.fail("exact columns and explicit request independent of header preference");
+  }
+  for curve in [data.red, data.green, data.blue] {
+    if (match (curve) { tag_data.Parametric(p) => p.function_type != 3 || !same(p.coefficients[:], [157286, 62119, 3417, 5072, 2651]), _ => true }) {
+      return test.fail("shared wire tag produces exact owned channel curves");
+    }
+  }
+  return test.assert_true(data.media_white.x == 63190 && data.media_white.y == 65536 && data.media_white.z == 54061);
+}
+
+function admission(): test.TestOutcome {
+  for intent in [envelope.Intent.Perceptual, envelope.Intent.Saturation, envelope.Intent.Absolute] {
+    let polls = cell_new(0);
+    let result = matrix_model.read([], intent, matrix_model.default_limits(), (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    });
+    if (polls.get() != 0 || match (result) { Err(matrix_model.ModelError.Intent()) => false, _ => true }) {
+      return test.fail("explicit relative request precedes callbacks");
+    }
+  }
+  let limits = matrix_model.ModelLimits { profile: envelope.default_limits(), curve: tag_data.CurveLimits { max_bytes: 0, max_samples: 4096 } };
+  if (match (matrix_model.read(frozen(), envelope.Intent.Relative, limits, never)) { Err(matrix_model.ModelError.Limit()) => false, _ => true }) {
+    return test.fail("caller curve limit admission");
+  }
+  return test.assert_true(rejects([], matrix_model.ModelError.Envelope(envelope.IccError.Truncated)) && rejects(put32(frozen(), 36, 0i64), matrix_model.ModelError.Envelope(envelope.IccError.Signature)));
+}
+
+function precedence(): test.TestOutcome {
+  let input = frozen();
+  for signature in [0x41324230i64, 0x41324231i64, 0x41324232i64, 0x44324230i64, 0x44324231i64, 0x44324232i64, 0x44324233i64] {
+    if (!rejects(put32(input, entry(input, 0x63686164i64), signature), matrix_model.ModelError.UnsupportedTag)) {
+      return test.fail("no forward LUT fallback for any intent slot");
+    }
+  }
+  for signature in [0x42324130i64, 0x42324131i64, 0x42324430i64, 0x42324433i64] {
+    if (match (read(put32(input, entry(input, 0x63686164i64), signature))) { Ok(_) => false, _ => true }) {
+      return test.fail("reverse metadata does not select the forward path");
+    }
+  }
+  return test.pass();
+}
+
+function required_tags(): test.TestOutcome {
+  let input = frozen();
+  for signature in [0x64657363i64, 0x63707274i64, 0x77747074i64, 0x7258595ai64, 0x6758595ai64, 0x6258595ai64, 0x72545243i64, 0x67545243i64, 0x62545243i64] {
+    if (!rejects(put32(input, entry(input, signature), 0x7a7a7a7ai64), matrix_model.ModelError.MissingTag)) {
+      return test.fail("every required tag without guessed defaults");
+    }
+  }
+  return test.assert_true(rejects(put32(input, offset(input, 0x64657363i64), 0x74657874i64), matrix_model.ModelError.MetadataType)
+    && rejects(put32(input, offset(input, 0x7258595ai64), 0x73663332i64), matrix_model.ModelError.Tag(tag_data.TagError.Signature)));
+}
+
+function curves(): test.TestOutcome {
+  let input = frozen();
+  for values in [[], [512], [0, 65535], [65535, 0, 32768]] {
+    let result = match (read(replace(input, 0x72545243i64, curv(values[:])))) { Ok(value) => value, _ => { return test.fail("all qualified curv forms"); } };
+    if (values.len() == 0 && match (result.red) { tag_data.Identity => false, _ => true }) {
+      return test.fail("identity wire data");
+    }
+    if (values.len() > 1 && match (result.red) { tag_data.Samples(actual) => !same(actual[:], values[:]), _ => true }) {
+      return test.fail("sample values without invented monotonicity");
+    }
+  }
+  for (kind, values) in [(0, [32768]), (1, [65536, 65536, 0]), (2, [65536, 65536, 0, 0]), (3, [65536, 65536, 0, 65536, 32768]), (4, [65536, 65536, 0, 65536, 32768, 0, 0])] {
+    if (match (read(replace(input, 0x72545243i64, para(kind, values[:])))) { Ok(value) => match (value.red) { tag_data.Parametric(p) => p.function_type != kind || !same(p.coefficients[:], values[:]), _ => true }, _ => true }) {
+      return test.fail("all five already-qualified parametric subsets");
+    }
+  }
+  return test.assert_true(rejects(replace(input, 0x72545243i64, curv([0])), matrix_model.ModelError.CurveDomain)
+    && rejects(replace(input, 0x72545243i64, para(0, [0])), matrix_model.ModelError.CurveDomain)
+    && rejects(replace(input, 0x72545243i64, para(1, [32768, 65536, 0])), matrix_model.ModelError.UnsupportedCurve));
+}
+
+function every_cancel(): test.TestOutcome {
+  let input = frozen();
+  let polls = cell_new(0);
+  if (match (matrix_model.read(input[:], envelope.Intent.Relative, matrix_model.default_limits(), (): boolean => {
+    polls.set(polls.get() + 1);
+    return false;
+  })) { Ok(_) => false, _ => true }) {
+    return test.fail("baseline poll campaign");
+  }
+  let total = polls.get();
+  if (total < 30) {
+    return test.fail("nonvacuous layered cancellation coverage");
+  }
+  for stop in 1..total + 1 {
+    let count = cell_new(0);
+    let result = matrix_model.read(input[:], envelope.Intent.Relative, matrix_model.default_limits(), (): boolean => {
+      count.set(count.get() + 1);
+      return count.get() == stop;
+    });
+    if (count.get() != stop || match (result) { Err(matrix_model.ModelError.Cancelled()) => false, _ => true }) {
+      return test.fail("every layered cancellation point and partial result cleanup");
+    }
+  }
+  return test.pass();
+}
+
+function ownership(): test.TestOutcome {
+  let input = frozen();
+  let shared = cell_new(input);
+  let data = match (matrix_model.read(input[:], envelope.Intent.Relative, matrix_model.default_limits(), (): boolean => {
+    shared.set(shared.get().with(36, 0 as u8));
+    return false;
+  })) { Ok(value) => value, _ => { return test.fail("input alias COW during callbacks"); } };
+  let alias = data.matrix.with(0, -1);
+  let red = match (data.red) { tag_data.Parametric(p) => p.coefficients, _ => [] };
+  let changed = red.with(0, 65536);
+  if (input[36] != 97 as u8 || shared.get()[36] != 0 as u8 || data.matrix[0] != 28576 || alias[0] != -1 || red[0] != 157286 || changed[0] != 65536) {
+    return test.fail("owned coefficient and matrix snapshots");
+  }
+  return test.assert_true(rejects(shared.get()[:], matrix_model.ModelError.Envelope(envelope.IccError.Signature)) && match (read(input[:])) { Ok(value) => same(value.matrix[:], data.matrix[:]), _ => false });
+}
+
+function order_and_sign(): test.TestOutcome {
+  let input = frozen();
+  let swapped = input;
+  for index in 0..12 {
+    swapped = swapped.with(132 + index, input[252 + index]).with(252 + index, input[132 + index]);
+  }
+  let at = offset(input, 0x7258595ai64);
+  let signed = put32(put32(put32(swapped, at + 8, 2147483648i64), at + 12, 2147483647i64), at + 16, 4294967295i64);
+  for intent in 0..4 {
+    let value = match (read(put32(put32(signed, 12, 1935896178i64), 64, intent as i64))) { Ok(value) => value, _ => { return test.fail("unordered entries and all header preferences"); } };
+    if (value.matrix[0] != -2147483648 || value.matrix[3] != 2147483647 || value.matrix[6] != -1 || value.requested_intent != envelope.Intent.Relative || value.info.device_class != envelope.DeviceClass.Input) {
+      return test.fail("signed raw columns without adaptation or clipping");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.test_new("restricted ICC matrix data selection");
+  runner = runner.it("frozen exact columns and owned shared curves", profiles);
+  runner = runner.it("explicit intent and layered limits", admission);
+  runner = runner.it("no forward LUT fallback", precedence);
+  runner = runner.it("required data and exact wire types", required_tags);
+  runner = runner.it("existing qualified curve forms and domains", curves);
+  runner = runner.it("every cancellation poll and cleanup", every_cancel);
+  runner = runner.it("input and output COW with fresh calls", ownership);
+  runner = runner.it("unordered aliases signed columns and preferences", order_and_sign);
+  return runner.finish();
+}

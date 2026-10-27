@@ -1,0 +1,89 @@
+import "../packages/codecs/jpeg/icc_app2";
+import "std/i32";
+
+function signed(input: [u8], at: i32): i32 {
+  let value = input[at] as i64 | input[at + 1] as i64 << 8i64 | input[at + 2] as i64 << 16i64 | input[at + 3] as i64 << 24i64;
+  return (if (value >= 2147483648i64) { value - 4294967296i64 } else { value }) as i32;
+}
+
+function error_name(error: icc_app2.App2Error): string {
+  return match (error) { icc_app2.App2Error.Limit => "Limit", icc_app2.App2Error.Length => "Length", icc_app2.App2Error.Identifier => "Identifier", icc_app2.App2Error.Sequence => "Sequence", icc_app2.App2Error.Count => "Count", icc_app2.App2Error.Duplicate => "Duplicate", icc_app2.App2Error.Missing => "Missing", icc_app2.App2Error.Cancelled => "Cancelled" };
+}
+
+function emit(path: string): i32 {
+  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  if (input.len() < 24 || input.len() > 34000000 || input[0] != 70 as u8 || input[1] != 73 as u8 || input[2] != 65 as u8 || input[3] != 49 as u8) {
+    return 3;
+  }
+  let count = signed(input, 16);
+  let expected = signed(input, 20);
+  let stop = signed(input, 12);
+  if (count < 0 || count > 256 || expected < -2 || expected > 16707345 || stop < 0) {
+    return 3;
+  }
+  let payloads: icc_app2.Payload[] = [];
+  let at = 24;
+  for _ in 0..count {
+    if (at as i64 + 4i64 > input.len() as i64) {
+      return 3;
+    }
+    let length = signed(input, at);
+    at = at + 4;
+    if (length < 0 || length > 65536 || at as i64 + length as i64 > input.len() as i64) {
+      return 3;
+    }
+    let bytes = __alloc_u8(length);
+    for index in 0..length {
+      bytes = bytes.with(index, input[at + index]);
+    }
+    payloads = payloads.append(icc_app2.Payload { bytes: bytes });
+    at = at + length;
+  }
+  let reference_length = if (expected < 0) { 0 } else { expected };
+  if (at as i64 + reference_length as i64 != input.len() as i64) {
+    return 3;
+  }
+  let polls = cell_new(0);
+  let result = icc_app2.assemble(payloads[:], icc_app2.AssemblyLimits { max_profile_bytes: signed(input, 4), max_chunks: signed(input, 8) }, (): boolean => {
+    polls.set(polls.get() + 1);
+    return stop != 0 && polls.get() == stop;
+  });
+  match (result) {
+    Err(error) => {
+      print("app2 " + path + " error " + error_name(error) + " " + polls.get().to_string());
+    },
+    Ok(None()) => {
+      print("app2 " + path + " none " + polls.get().to_string());
+    },
+    Ok(Some(output)) => {
+      if (expected < 0 || output.len() != expected) {
+        print("app2 " + path + " mismatch length " + output.len().to_string() + " " + expected.to_string());
+        return 3;
+      }
+      let checked = 0;
+      for index in 0..output.len() {
+        if (output[index] != input[at + index]) {
+          print("app2 " + path + " mismatch byte " + index.to_string() + " " + (output[index] as i32).to_string() + " " + (input[at + index] as i32).to_string());
+          return 3;
+        }
+        checked = checked + 1;
+      }
+      print("app2 " + path + " some " + polls.get().to_string() + " " + output.len().to_string() + " " + checked.to_string());
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for index in 1..paths.len() {
+    let code = emit(paths[index]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

@@ -1,0 +1,103 @@
+import "./exif";
+import "../../pixels/pixels";
+import "core/cmp";
+
+@derive(cmp.Eq)
+pub enum OrientError { Image(pixels.ImageError), Limit, Cancelled }
+
+pub struct OrientLimits { output: pixels.Limits, max_planned_bytes: i32 }
+
+pub struct OrientPlan { layout: pixels.Layout, input_bytes: i32, output_bytes: i32, planned_bytes: i32 }
+
+pub function default_limits(): OrientLimits {
+  return OrientLimits { output: pixels.default_limits(), max_planned_bytes: 67108864 };
+}
+
+function swaps_axes(value: exif.Orientation): boolean {
+  return match (value) { exif.LeftTop => true, exif.RightTop => true, exif.RightBottom => true, exif.LeftBottom => true, _ => false };
+}
+
+// Validate public records before callbacks, output allocation, or pixel access.
+pub function inspect(source: pixels.Image, value: exif.Orientation, limits: OrientLimits): Result[OrientPlan, OrientError] {
+  if (limits.max_planned_bytes <= 0) {
+    return Err(OrientError.Limit);
+  }
+  let l = source.layout;
+  let input = match (pixels.checked_layout(l.width, l.height, l.stride, l.format, pixels.Limits { max_pixels: 2147483647, max_bytes: 67108864 })) { Ok(v) => v, Err(e) => { return Err(OrientError.Image(e)); } };
+  if (l.bytes != input.bytes || source.data.len() != input.bytes) {
+    return Err(OrientError.Image(pixels.Storage));
+  }
+  let width = if (swaps_axes(value)) { input.height } else { input.width };
+  let height = if (swaps_axes(value)) { input.width } else { input.height };
+  let stride = match (width *? pixels.channels(input.format)) { Some(v) => v, None => { return Err(OrientError.Image(pixels.Overflow)); } };
+  let output = match (pixels.checked_layout(width, height, stride, input.format, limits.output)) { Ok(v) => v, Err(e) => { return Err(OrientError.Image(e)); } };
+  let bytes = input.bytes as i64 + output.bytes as i64;
+  if (bytes > limits.max_planned_bytes as i64 || bytes > 67108864i64) {
+    return Err(OrientError.Limit);
+  }
+  return Ok(OrientPlan { layout: output, input_bytes: input.bytes, output_bytes: output.bytes, planned_bytes: bytes as i32 });
+}
+
+function source_offset(value: exif.Orientation, x: i32, y: i32, l: pixels.Layout, channels: i32): i32 {
+  let sx = x;
+  let sy = y;
+  match (value) {
+    exif.TopLeft => {},
+    exif.TopRight => {
+      sx = l.width - 1 - x;
+    },
+    exif.BottomRight => {
+      sx = l.width - 1 - x;
+      sy = l.height - 1 - y;
+    },
+    exif.BottomLeft => {
+      sy = l.height - 1 - y;
+    },
+    exif.LeftTop => {
+      sx = y;
+      sy = x;
+    },
+    exif.RightTop => {
+      sx = y;
+      sy = l.height - 1 - x;
+    },
+    exif.RightBottom => {
+      sx = l.width - 1 - y;
+      sy = l.height - 1 - x;
+    },
+    exif.LeftBottom => {
+      sx = l.width - 1 - y;
+      sy = x;
+    }
+  }
+  return sy * l.stride + sx * channels;
+}
+
+// Copy channel bytes without resampling, color conversion, or alpha arithmetic.
+pub function apply(source: pixels.Image, value: exif.Orientation, limits: OrientLimits, cancelled: () => boolean): Result[pixels.Image, OrientError] {
+  let plan = inspect(source, value, limits)?;
+  if (cancelled()) {
+    return Err(OrientError.Cancelled);
+  }
+  let output = __alloc_u8(plan.output_bytes);
+  if (cancelled()) {
+    return Err(OrientError.Cancelled);
+  }
+  let channels = pixels.channels(source.layout.format);
+  for y in 0..plan.layout.height {
+    for x in 0..plan.layout.width {
+      if (x % 64 == 0 && cancelled()) {
+        return Err(OrientError.Cancelled);
+      }
+      let from = source_offset(value, x, y, source.layout, channels);
+      let to = y * plan.layout.stride + x * channels;
+      for channel in 0..channels {
+        output = output.with(to + channel, source.data[from + channel]);
+      }
+    }
+  }
+  if (cancelled()) {
+    return Err(OrientError.Cancelled);
+  }
+  return Ok(pixels.Image { layout: plan.layout, data: output });
+}

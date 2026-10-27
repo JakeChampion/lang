@@ -20,7 +20,7 @@ import "./physicalbody";
 import "./ssaprepare";
 import "std/envflag";
 
-pub function release_entry(r: irtables.LowerResult, architecture: string, debug: boolean, entries: irtables.SigReg): ssaprepare.ReleaseEntry {
+pub function release_entry(r: irtables.Lowered, architecture: string, debug: boolean, entries: irtables.SigReg): ssaprepare.ReleaseEntry {
   if (debug || !counted_release_body(r)) {
     return ssaprepare.ReleaseEntry { counted: false, unique_drop: "" };
   }
@@ -34,7 +34,7 @@ pub function release_entry(r: irtables.LowerResult, architecture: string, debug:
   return ssaprepare.ReleaseEntry { counted: true, unique_drop: drop };
 }
 
-pub function counted_release_body(r: irtables.LowerResult): boolean {
+pub function counted_release_body(r: irtables.Lowered): boolean {
   let n: i32 = r.ops.len();
   if (r.n_params != 1 || n < 5 || !util.str_has_prefix(r.name, "__sem_release_")) {
     return false;
@@ -47,7 +47,7 @@ pub function counted_release_body(r: irtables.LowerResult): boolean {
     && r.ops[n - 1].kind_tag == ir.op_return().kind_tag;
 }
 
-pub function nominal_release_drop(r: irtables.LowerResult): string {
+pub function nominal_release_drop(r: irtables.Lowered): string {
   if (!counted_release_body(r) || r.ops.len() != 12) {
     return "";
   }
@@ -480,12 +480,11 @@ pub function produced(bodies: irtables.LowerResult[], i: i32, fd: parser.FuncDec
 }
 
 pub struct Lowered {
-  ok: boolean,
   cache: irtables.LowerResult[],
   physical: physicalbody.Collection,
 }
 
-pub function gate(mod: parser.Module, sub: Sub): Lowered {
+pub function gate(mod: parser.Module, sub: Sub): Option[Lowered] {
   let cache: irtables.LowerResult[] = [];
   let origins: physicalbody.Origin[] = [];
   let freg: irtables.SigReg = defined_reg(mod, sub.extra);
@@ -500,14 +499,14 @@ pub function gate(mod: parser.Module, sub: Sub): Lowered {
           if (strict_ir_on()) {
             strict_ir_refuse(mod.funcs[i].name + " (call to unknown symbol " + o.str + ")");
           }
-          return Lowered { ok: false, cache: [], physical: physicalbody.no_collection() };
+          return None;
         }
       } else if (o.kind_tag == 6) {
         if (!irtables.sig_reg_has_exact(freg, o.str)) {
           if (strict_ir_on()) {
             strict_ir_refuse(mod.funcs[i].name + " (function value " + o.str + " not defined)");
           }
-          return Lowered { ok: false, cache: [], physical: physicalbody.no_collection() };
+          return None;
         }
       }
       j = j + 1;
@@ -522,22 +521,21 @@ pub function gate(mod: parser.Module, sub: Sub): Lowered {
     origins = origins.append(physicalbody.origin_at(sub.physical_origins.extra, i));
     i = i + 1;
   }
-  return Lowered { ok: true, cache: cache, physical: physicalbody.Collection { producers: sub.physical_origins.producers, rows: origins } };
+  return Some(Lowered { cache: cache, physical: physicalbody.Collection { producers: sub.physical_origins.producers, rows: origins } });
 }
 
 pub struct Gated {
-  ok: boolean,
   im: parser.Module,
   stab: irtables.StructTab,
   cache: irtables.LowerResult[],
   physical: physicalbody.Collection,
 }
 
-pub function gate_program(lifted: parser.Module, sub: Sub): Gated {
+pub function gate_program(lifted: parser.Module, sub: Sub): Option[Gated] {
   let im: parser.Module = with_records(parser.infer_ret_types_module(script_normalized(lifted)), sub);
   let stab: irtables.StructTab = irtables.struct_tab(im.structs);
-  let g: Lowered = gate(im, sub);
-  return Gated { ok: g.ok, im: im, stab: stab, cache: g.cache, physical: g.physical };
+  let g = match (gate(im, sub)) { Some(g) => g, None => { return None; } };
+  return Some(Gated { im: im, stab: stab, cache: g.cache, physical: g.physical });
 }
 
 pub struct Units { mods: parser.Module[], caches: irtables.LowerResult[][], loose: parser.FuncDecl[], physical: physicalbody.Collection[] }
@@ -850,6 +848,11 @@ function cull_spliced_leaves(mod: parser.Module, cache: irtables.LowerResult[], 
     k = k + 1;
   }
   return out;
+}
+
+pub function body_for_emit(name: string, r: irtables.LowerResult): irtables.Lowered {
+  lower_failed_refuse(name, r);
+  return match (irtables.body_payload(r)) { Some(body) => body, None => { eprint("error: internal: superseded body reached emission: " + name); exit(3); } };
 }
 
 function inline_label(fd: parser.FuncDecl): string {

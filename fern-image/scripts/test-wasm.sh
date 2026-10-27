@@ -14,6 +14,33 @@ done
 "$FERN" -check tests/jpeg_exif_test.fern
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_exif_test.wasm tests/jpeg_exif_test.fern
 wasmtime build/wasm-jpeg_exif_test.wasm
+"$FERN" -check tests/jpeg_orientation_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_orientation_test.wasm tests/jpeg_orientation_test.fern
+wasmtime build/wasm-jpeg_orientation_test.wasm
+"$FERN" -check tests/icc_envelope_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_envelope_test.wasm tests/icc_envelope_test.fern
+wasmtime run --dir=. build/wasm-icc_envelope_test.wasm
+"$FERN" -check tests/icc_tag_data_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_tag_data_test.wasm tests/icc_tag_data_test.fern
+wasmtime run --dir=. build/wasm-icc_tag_data_test.wasm
+"$FERN" -check tests/icc_curv_eval_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_curv_eval_test.wasm tests/icc_curv_eval_test.fern
+wasmtime run --dir=. build/wasm-icc_curv_eval_test.wasm
+"$FERN" -check tests/icc_parametric_eval_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_parametric_eval_test.wasm tests/icc_parametric_eval_test.fern
+wasmtime run --dir=. build/wasm-icc_parametric_eval_test.wasm
+"$FERN" -check tests/icc_app2_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_app2_test.wasm tests/icc_app2_test.fern
+wasmtime run --dir=. build/wasm-icc_app2_test.wasm
+"$FERN" -check tests/icc_matrix_eval_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_matrix_eval_test.wasm tests/icc_matrix_eval_test.fern
+wasmtime run --dir=. build/wasm-icc_matrix_eval_test.wasm
+"$FERN" -check tests/icc_matrix_model_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_matrix_model_test.wasm tests/icc_matrix_model_test.fern
+wasmtime run --dir=. build/wasm-icc_matrix_model_test.wasm
+"$FERN" -check tests/icc_matrix_trc_eval_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_matrix_trc_eval_test.wasm tests/icc_matrix_trc_eval_test.fern
+wasmtime run --dir=. build/wasm-icc_matrix_trc_eval_test.wasm
 "$FERN" -check tests/png_incremental_test.fern
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-png_incremental_test.wasm tests/png_incremental_test.fern
 wasmtime build/wasm-png_incremental_test.wasm

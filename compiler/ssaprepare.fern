@@ -6,7 +6,7 @@ import "./ssa";
 import "./ssa_lift";
 
 pub struct Body {
-  lowered: irtables.LowerResult,
+  lowered: irtables.Lowered,
   selected: physicalbody.Selected,
   formed: ssa.Formed,
   seen_vals: i32[],
@@ -83,11 +83,11 @@ pub struct Output {
   bodies: Emitted[],
 }
 
-pub function finish(lowered: irtables.LowerResult, selected: physicalbody.Selected, lifted: ssa_lift.Lifted, leaves: ssa.Leaves): Body {
+pub function finish(lowered: irtables.Lowered, selected: physicalbody.Selected, lifted: ssa_lift.Lifted, leaves: ssa.Leaves): Body {
   return finish_formed(lowered, selected, lifted, ssa.register_form(ssa.inline_leaves(lifted.func, leaves)));
 }
 
-pub function finish_formed(lowered: irtables.LowerResult, selected: physicalbody.Selected, lifted: ssa_lift.Lifted, formed: ssa.Formed): Body {
+pub function finish_formed(lowered: irtables.Lowered, selected: physicalbody.Selected, lifted: ssa_lift.Lifted, formed: ssa.Formed): Body {
   return Body { lowered: lowered, selected: selected, formed: formed, seen_vals: lifted.seen_vals, seen_slots: lifted.seen_slots, source: source_lines(lowered, lifted, formed) };
 }
 
@@ -107,7 +107,7 @@ function blank_positions(n: i32): sourcepos.SourcePos[] {
   return out;
 }
 
-function source_lines(r: irtables.LowerResult, lifted: ssa_lift.Lifted, formed: ssa.Formed): SourceLines {
+function source_lines(r: irtables.Lowered, lifted: ssa_lift.Lifted, formed: ssa.Formed): SourceLines {
   if (r.source_positions.entry.line == 0) {
     return SourceLines { values: [], terms: [] };
   }

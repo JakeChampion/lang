@@ -764,9 +764,9 @@ findings. Ranked by leverage.
   Contract checks execute on x86-64, ARM64 and Wasm, and Go-oracle checks retain exact diagnostics.
 
   Fourteen before/after cases retain the well-typed flag, diagnostic text, positions and order.
-  Twenty process pairs per input used one CPU.
-  Candidate/baseline ratios range from 0.966 to 1.032 across flat functions, closures, void locals, structs and enums.
-  These local measurements do not establish a general compiler speed change.
+  Earlier large-input probes used the reserved function names `f32` and `f64`.
+  Those inputs are invalid Fern programs and provide no evidence for valid compiler performance.
+  The workspace preserves their raw measurements as invalid-input probes.
 
   Method, array-method and visible-method lookup now return `Option[MethodSig]`.
   The checker, typed front end and LSP queries match the option before they use a signature.
@@ -982,6 +982,73 @@ findings. Ranked by leverage.
   Twenty-one unchanged cases retain complete SSA functions and metadata before and after the fix.
   The candidate also matches those native baseline outputs on ARM64 and Wasm.
   A refused constructor retains its lift state.
+
+  IR construction uses a separate `LowerState` record.
+  The public `LowerResult` shape remains unchanged in this preparatory step.
+  State conversion retains operation buffers, slot classes, debug names, source positions and refusal status.
+  Declaration alignment and parameter counts pass contract checks on three targets.
+  Inline and `no_inline` modes each retain all body fields across twelve before/after comparisons.
+  The native baseline outputs match candidate outputs on ARM64 and Wasm.
+
+  Four physical proof suites pass on x86-64 and Wasm with balanced allocations.
+
+  The public `ssarc.lower` boundary returns `Result[Option[Lowered], LowerState]`.
+  `Ok(Some(body))` carries only complete body data.
+  `Ok(None)` identifies a superseded slot without a placeholder body.
+  `Err(state)` retains partial operations, diagnostic identity and source metadata.
+
+  A refusal takes precedence over the superseded flag.
+  The semantic front end and census driver match these outcomes.
+  Application caches and merge interfaces still use `LowerResult` and need the remaining migration.
+
+  The semantic planner stores standard outcomes in its private body rows.
+  Refusals retain their partial state until the planner reports them.
+  Declaration and instance collectors retain standard outcomes.
+  Valid templates, external declarations and dropped declarations retain their slots as `Ok(None)`.
+  Declaration counts and instance origins remain aligned.
+  Accepted collections convert once for the remaining legacy prune and cache interfaces.
+
+  Runtime callback collections now contain only complete `Lowered` payloads.
+  The callback refuses failed declarations and helpers before it returns.
+  Helper selection preserves cached names and the first helper for each name.
+  Declaration order, metadata and helper provenance remain aligned.
+  A temporary adapter serves the remaining legacy query and merge interfaces.
+
+  Drop helpers and byte helpers return `Result[Lowered, LowerState]`.
+  Helper collections retain complete data on success and partial state on refusal.
+  Failed helpers retain their names for duplicate selection and diagnostics.
+  Runtime helper selection matches the result before it publishes a body.
+  Helper selection and merge inputs also retain standard results.
+  The merge converts only selected helpers for the remaining legacy application cache.
+  Cached names and the first helper for each name retain priority, even for failed helpers.
+  Merge indices, refusal state and metadata remain aligned.
+
+  Module eligibility gates return `Option[Lowered]` and `Option[Gated]`.
+  An unknown call or function value returns `None` without a placeholder cache.
+  Successful payloads retain declaration order, body metadata and physical origins.
+  Strict mode retains the original refusal diagnostics.
+  Native and Wasm callers match the option before they read the cache.
+
+  Prepared bodies store only the complete `Lowered` payload.
+  Native instruction emission, source maps and debug variables use that payload.
+  Wasm function emission also requires complete body data.
+  The emission boundary refuses declined and superseded entries before it constructs a prepared body.
+
+  Seventy-two before/after comparisons retain identical assembly and Wasm text.
+  Twelve programs each use inline and `no_inline` modes across three output targets.
+  Valid emission probes use ordinary function names and pass compilation before measurement.
+  Twenty process pairs per input give candidate/baseline ratios from 0.994 to 1.015.
+  These probes include the parser, code emission and output, without a general compiler speed claim.
+
+  Builtin recognition retains its owned-state carrier.
+  A generic result prototype preserves all fields across 698 states and 349 dispatch inputs.
+  Both branches retain the construction state, and copy counters remain zero.
+  The prototype reduces allocations but regresses the repeated `__clz32` dispatch probe by 10.5%.
+  A repeated raw no-op probe regresses by 2.9%, while unknown-call dispatch improves by 4.3%.
+
+  These synthetic probes use 300,000 calls and twenty process pairs on one CPU.
+  The workspace preserves the rejected prototype, raw timings, outputs and source hashes.
+  The prototype remains outside production, and external body collections still need their result migration.
 
   _Rest of this row:_ the bespoke `*Result` structs remain.
   Generic functions no longer block these migrations.

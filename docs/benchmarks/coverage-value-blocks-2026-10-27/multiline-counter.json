@@ -1,0 +1,14 @@
+{
+  "before": {
+    "compile_exit": 0,
+    "compile_output": "",
+    "exit": 0,
+    "report": "fern-cover: /workspace/image-coverage-repros/multiline-counter.fern:2 1\nfern-cover: /workspace/image-coverage-repros/multiline-counter.fern:3 1\nfern-cover: /workspace/image-coverage-repros/multiline-counter.fern:7 1\n"
+  },
+  "after": {
+    "compile_exit": 0,
+    "compile_output": "",
+    "exit": 0,
+    "report": "fern-cover: /workspace/image-coverage-repros/multiline-counter.fern:2 1\nfern-cover: /workspace/image-coverage-repros/multiline-counter.fern:7 1\n"
+  }
+}

@@ -3,6 +3,7 @@ import "../parser";
 import "../semlower";
 import "../physicalbody";
 import "../ircore";
+import "../irtables";
 import "../asmcore";
 import "../semrecords";
 import "../semtypes";
@@ -89,7 +90,7 @@ function runtime(target: string): void {
   let at = semrecords.find_enum(m.enums, typeinfo.TypeUnion { name: "Box", args: [] });
   require(at >= 0 && m.enums[at].layout == semrecords.layout_variant(), 218);
   require(semtypes.equal(m.enums[at].variants[0].fields[0].ty, i32_type()), 219);
-  require(ircore.lowered_digest(lowered.bodies) == ircore.lowered_digest(semlower.runtime_bodies(source)), 220);
+  require(ircore.lowered_digest(irtables.lowered_results(lowered.bodies)) == ircore.lowered_digest(irtables.lowered_results(semlower.runtime_bodies(source))), 220);
   let unrelated = state.rt_lower(parser.parse_module(lexer.tokenize("function scalar(x: i64): i64 { return x; }")));
   require(count(unrelated.enums, "Box") == 0 && count(lowered.enums, "Box") == 1, 221);
   require(semrecords.verify(m.records, m.enums) == "", 222);

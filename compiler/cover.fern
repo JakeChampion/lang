@@ -359,12 +359,35 @@ function cover_node(e: ast.Expr, c: Ctx): ast.Expr {
       return ast.ExprBinary { ...b, left: and(and(ev, b.left), tk) };
     },
     ast.ExprLambda(lm) => {
+      if (lm.origin == parser.ORIGIN_MATCH_EXPR || lm.origin == parser.ORIGIN_IF_EXPR) {
+        return cover_value_lambda(lm, c);
+      }
       return ast.ExprLambda { ...lm, body: cover_stmts(lm.body, c, false) };
     },
     _ => {
       return e;
     }
   }
+}
+
+// Put entry counters outside the parser scaffold. Keep all original source counters.
+function cover_value_lambda(lm: ast.ExprLambda, c: Ctx): ast.Expr {
+  let body: ast.Stmt[] = [];
+  let prefix: ast.Stmt[] = [];
+  let last: i32 = 0;
+  for st in lm.body {
+    let line: i32 = ast.stmt_line(st);
+    if (line > 0 && line != last) {
+      prefix = prefix.append(hit_stmt(line_key(c, line)));
+      last = line;
+    }
+    body = body.append(cover_stmt(st, c, false));
+    if (transfers(st)) {
+      last = 0;
+    }
+  }
+  let inner: ast.Expr = ast.ExprCall { callee: ast.ExprLambda { ...lm, body: body }, args: [], line: 0, col: 0, type_args: [], ty: "" };
+  return ast.ExprLambda { ...lm, origin: parser.ORIGIN_BLOCK, body: prefix.append(parser.s_return(inner)) };
 }
 
 function helper_module(keys: string[], ret: string): parser.Module {

@@ -1,0 +1,52 @@
+=== RUN   TestSelfHostCoverFeedsChangeRisk
+--- PASS: TestSelfHostCoverFeedsChangeRisk (83.18s)
+=== RUN   TestSelfHostCoverEdgesAndLambdas
+--- PASS: TestSelfHostCoverEdgesAndLambdas (0.03s)
+=== RUN   TestSelfHostCoverFromEnvironment
+--- PASS: TestSelfHostCoverFromEnvironment (0.03s)
+=== RUN   TestSelfHostCoverRefusals
+=== RUN   TestSelfHostCoverRefusals/wasm
+=== RUN   TestSelfHostCoverRefusals/interp
+--- PASS: TestSelfHostCoverRefusals (0.00s)
+    --- PASS: TestSelfHostCoverRefusals/wasm (0.00s)
+    --- PASS: TestSelfHostCoverRefusals/interp (0.00s)
+=== RUN   TestSelfHostCoverInferredValueBlocks
+=== RUN   TestSelfHostCoverInferredValueBlocks/string-match
+=== RUN   TestSelfHostCoverInferredValueBlocks/string-match/x86-64-linux
+=== RUN   TestSelfHostCoverInferredValueBlocks/string-match/arm64-linux
+=== RUN   TestSelfHostCoverInferredValueBlocks/early-return
+=== RUN   TestSelfHostCoverInferredValueBlocks/early-return/x86-64-linux
+=== RUN   TestSelfHostCoverInferredValueBlocks/early-return/arm64-linux
+=== RUN   TestSelfHostCoverInferredValueBlocks/owned-array
+=== RUN   TestSelfHostCoverInferredValueBlocks/owned-array/x86-64-linux
+=== RUN   TestSelfHostCoverInferredValueBlocks/owned-array/arm64-linux
+=== RUN   TestSelfHostCoverInferredValueBlocks/if-expression
+=== RUN   TestSelfHostCoverInferredValueBlocks/if-expression/x86-64-linux
+=== RUN   TestSelfHostCoverInferredValueBlocks/if-expression/arm64-linux
+=== RUN   TestSelfHostCoverInferredValueBlocks/tuple-match
+=== RUN   TestSelfHostCoverInferredValueBlocks/tuple-match/x86-64-linux
+=== RUN   TestSelfHostCoverInferredValueBlocks/tuple-match/arm64-linux
+=== RUN   TestSelfHostCoverInferredValueBlocks/explicit-control
+=== RUN   TestSelfHostCoverInferredValueBlocks/explicit-control/x86-64-linux
+=== RUN   TestSelfHostCoverInferredValueBlocks/explicit-control/arm64-linux
+--- PASS: TestSelfHostCoverInferredValueBlocks (30.49s)
+    --- PASS: TestSelfHostCoverInferredValueBlocks/string-match (0.13s)
+        --- PASS: TestSelfHostCoverInferredValueBlocks/string-match/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostCoverInferredValueBlocks/string-match/arm64-linux (0.08s)
+    --- PASS: TestSelfHostCoverInferredValueBlocks/early-return (0.08s)
+        --- PASS: TestSelfHostCoverInferredValueBlocks/early-return/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostCoverInferredValueBlocks/early-return/arm64-linux (0.04s)
+    --- PASS: TestSelfHostCoverInferredValueBlocks/owned-array (0.09s)
+        --- PASS: TestSelfHostCoverInferredValueBlocks/owned-array/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostCoverInferredValueBlocks/owned-array/arm64-linux (0.06s)
+    --- PASS: TestSelfHostCoverInferredValueBlocks/if-expression (0.10s)
+        --- PASS: TestSelfHostCoverInferredValueBlocks/if-expression/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostCoverInferredValueBlocks/if-expression/arm64-linux (0.05s)
+    --- PASS: TestSelfHostCoverInferredValueBlocks/tuple-match (0.09s)
+        --- PASS: TestSelfHostCoverInferredValueBlocks/tuple-match/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostCoverInferredValueBlocks/tuple-match/arm64-linux (0.05s)
+    --- PASS: TestSelfHostCoverInferredValueBlocks/explicit-control (0.09s)
+        --- PASS: TestSelfHostCoverInferredValueBlocks/explicit-control/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostCoverInferredValueBlocks/explicit-control/arm64-linux (0.04s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	113.748s
