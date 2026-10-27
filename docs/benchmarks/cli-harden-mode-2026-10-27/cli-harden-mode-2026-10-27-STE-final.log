@@ -1,0 +1,13 @@
+WARNING /tmp/image-engine-worktrees/lang-image-cli-harden-health/docs/benchmarks/cli-harden-mode-2026-10-27/README.md:par3 [rule 3.5] "failing": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-cli-harden-health/docs/benchmarks/cli-harden-mode-2026-10-27/README.md:par3 [rule 3.5] "hardening": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-cli-harden-health/docs/benchmarks/cli-harden-mode-2026-10-27/README.md:par3 [rule 3.5] "hardening": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-cli-harden-health/docs/benchmarks/cli-harden-mode-2026-10-27/README.md:par4 [rule 3.5] "hardening": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-cli-harden-health/docs/benchmarks/cli-harden-mode-2026-10-27/README.md:par4 [rule 3.5] "hardening": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-cli-harden-health/docs/benchmarks/cli-harden-mode-2026-10-27/README.md:par5 [rule 3.5] "passing": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-cli-harden-health/docs/benchmarks/cli-harden-mode-2026-10-27/README.md:par6 [rule 3.5] "existing": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-cli-harden-health/docs/benchmarks/cli-harden-mode-2026-10-27/README.md:par6 [rule 3.5] "including": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-cli-harden-health/docs/benchmarks/cli-harden-mode-2026-10-27/README.md:par7 [rule 3.5] "passing": an "-ing" form is permitted only in a technical name.
+
+Result: 0 errors, 9 warnings.
+The text obeys the STE structural rules that this tool can check.
+This tool cannot make sure that each word has its approved meaning.
