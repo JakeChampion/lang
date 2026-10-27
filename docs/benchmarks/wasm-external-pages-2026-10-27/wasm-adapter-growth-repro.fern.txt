@@ -1,0 +1,12 @@
+import "std/i32";
+function main(): i32 {
+  print("before growth");
+  let data: i32[] = [];
+  let i: i32 = 0;
+  while (i < 100000) {
+    data = data.append(i);
+    i = i + 1;
+  }
+  print("after growth " + data[99999].to_string());
+  return 0;
+}

@@ -1,0 +1,7 @@
+{
+  "exit": 1,
+  "PASS": 1,
+  "FAIL": 2,
+  "SKIP": 0,
+  "log_sha256": "45d870ab62f7bbe465c56a3f54b92afb0e0de913f7cf9b2762c6c8ee71ccadc2"
+}

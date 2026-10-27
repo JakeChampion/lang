@@ -1,0 +1,705 @@
+=== RUN   TestWasmHTTPKeepAlive
+    http_keep_alive_test.go:31: allocs=4970 frees=4970 live_bytes=0
+--- PASS: TestWasmHTTPKeepAlive (53.48s)
+=== RUN   TestWASMCLIComponentHeapGrowth
+=== RUN   TestWASMCLIComponentHeapGrowth/elements32
+    wasm_cli_heap_growth_test.go:40: allocs=5 frees=5 live_bytes=0
+=== RUN   TestWASMCLIComponentHeapGrowth/elements100000
+    wasm_cli_heap_growth_test.go:40: allocs=19 frees=19 live_bytes=0
+--- PASS: TestWASMCLIComponentHeapGrowth (0.76s)
+    --- PASS: TestWASMCLIComponentHeapGrowth/elements32 (0.47s)
+    --- PASS: TestWASMCLIComponentHeapGrowth/elements100000 (0.29s)
+=== RUN   TestWasmClockCensus
+=== RUN   TestWasmClockCensus/now_unix_ms
+=== RUN   TestWasmClockCensus/now_ns
+=== RUN   TestWasmClockCensus/monotonic_ns
+=== RUN   TestWasmClockCensus/clock_now_formatted
+--- PASS: TestWasmClockCensus (1.10s)
+    --- PASS: TestWasmClockCensus/now_unix_ms (0.24s)
+    --- PASS: TestWasmClockCensus/now_ns (0.30s)
+    --- PASS: TestWasmClockCensus/monotonic_ns (0.28s)
+    --- PASS: TestWasmClockCensus/clock_now_formatted (0.27s)
+=== RUN   TestWasmHTTPHandlerCensus
+    wasm_http_handler_census_test.go:13: allocs=1696 frees=1696 live_bytes=0
+--- PASS: TestWasmHTTPHandlerCensus (8.24s)
+=== RUN   TestWASMLeakCheckBalancedCensus
+--- PASS: TestWASMLeakCheckBalancedCensus (0.04s)
+=== RUN   TestWASMLeakCheckReportsLeakedBytes
+--- PASS: TestWASMLeakCheckReportsLeakedBytes (0.05s)
+=== RUN   TestWASMLeakCheckRcDropBalances
+--- PASS: TestWASMLeakCheckRcDropBalances (0.02s)
+=== RUN   TestWASMSanitizeLeakVerdict
+--- PASS: TestWASMSanitizeLeakVerdict (0.02s)
+=== RUN   TestWASMSanitizeCleanRunIsSilent
+--- PASS: TestWASMSanitizeCleanRunIsSilent (0.03s)
+=== RUN   TestWASMLeakCheckReportsOnce
+--- PASS: TestWASMLeakCheckReportsOnce (0.04s)
+=== RUN   TestWASMLeakCheckOffEmitsNoCensus
+--- PASS: TestWASMLeakCheckOffEmitsNoCensus (0.03s)
+=== RUN   TestWasmPollGuestStorage
+=== RUN   TestWasmPollGuestStorage/wasm_poll(ps)
+=== RUN   TestWasmPollGuestStorage/wasm_poll(ps)/handle0/mode0
+=== RUN   TestWasmPollGuestStorage/wasm_poll(ps)/handle0/mode1
+=== RUN   TestWasmPollGuestStorage/wasm_poll(ps)/handle0/mode2
+=== RUN   TestWasmPollGuestStorage/wasm_poll(ps)/handle0/mode3
+=== RUN   TestWasmPollGuestStorage/wasm_poll(ps)/handle0/mode4
+=== RUN   TestWasmPollGuestStorage/wasm_poll(ps)/handle7/mode0
+=== RUN   TestWasmPollGuestStorage/wasm_poll(ps)/handle7/mode1
+=== RUN   TestWasmPollGuestStorage/wasm_poll(ps)/handle7/mode2
+=== RUN   TestWasmPollGuestStorage/wasm_poll(ps)/handle7/mode3
+=== RUN   TestWasmPollGuestStorage/wasm_poll(ps)/handle7/mode4
+=== RUN   TestWasmPollGuestStorage/poll(ps,_-1)
+=== RUN   TestWasmPollGuestStorage/poll(ps,_-1)/handle0/mode0
+=== RUN   TestWasmPollGuestStorage/poll(ps,_-1)/handle0/mode1
+=== RUN   TestWasmPollGuestStorage/poll(ps,_-1)/handle0/mode2
+=== RUN   TestWasmPollGuestStorage/poll(ps,_-1)/handle0/mode3
+=== RUN   TestWasmPollGuestStorage/poll(ps,_-1)/handle0/mode4
+=== RUN   TestWasmPollGuestStorage/poll(ps,_-1)/handle7/mode0
+=== RUN   TestWasmPollGuestStorage/poll(ps,_-1)/handle7/mode1
+=== RUN   TestWasmPollGuestStorage/poll(ps,_-1)/handle7/mode2
+=== RUN   TestWasmPollGuestStorage/poll(ps,_-1)/handle7/mode3
+=== RUN   TestWasmPollGuestStorage/poll(ps,_-1)/handle7/mode4
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0)
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0)/handle0/mode0
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0)/handle0/mode1
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0)/handle0/mode2
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0)/handle0/mode3
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0)/handle0/mode4
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0)/handle7/mode0
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0)/handle7/mode1
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0)/handle7/mode2
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0)/handle7/mode3
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0)/handle7/mode4
+=== RUN   TestWasmPollGuestStorage/poll(ps,_5)
+=== RUN   TestWasmPollGuestStorage/poll(ps,_5)/handle0/mode0
+=== RUN   TestWasmPollGuestStorage/poll(ps,_5)/handle0/mode1
+=== RUN   TestWasmPollGuestStorage/poll(ps,_5)/handle0/mode2
+=== RUN   TestWasmPollGuestStorage/poll(ps,_5)/handle0/mode3
+=== RUN   TestWasmPollGuestStorage/poll(ps,_5)/handle0/mode4
+=== RUN   TestWasmPollGuestStorage/poll(ps,_5)/handle7/mode0
+=== RUN   TestWasmPollGuestStorage/poll(ps,_5)/handle7/mode1
+=== RUN   TestWasmPollGuestStorage/poll(ps,_5)/handle7/mode2
+=== RUN   TestWasmPollGuestStorage/poll(ps,_5)/handle7/mode3
+=== RUN   TestWasmPollGuestStorage/poll(ps,_5)/handle7/mode4
+=== RUN   TestWasmPollGuestStorage/poll(ps,_2147483647)
+=== RUN   TestWasmPollGuestStorage/poll(ps,_2147483647)/handle0/mode0
+=== RUN   TestWasmPollGuestStorage/poll(ps,_2147483647)/handle0/mode1
+=== RUN   TestWasmPollGuestStorage/poll(ps,_2147483647)/handle0/mode2
+=== RUN   TestWasmPollGuestStorage/poll(ps,_2147483647)/handle0/mode3
+=== RUN   TestWasmPollGuestStorage/poll(ps,_2147483647)/handle0/mode4
+=== RUN   TestWasmPollGuestStorage/poll(ps,_2147483647)/handle7/mode0
+=== RUN   TestWasmPollGuestStorage/poll(ps,_2147483647)/handle7/mode1
+=== RUN   TestWasmPollGuestStorage/poll(ps,_2147483647)/handle7/mode2
+=== RUN   TestWasmPollGuestStorage/poll(ps,_2147483647)/handle7/mode3
+=== RUN   TestWasmPollGuestStorage/poll(ps,_2147483647)/handle7/mode4
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle0/mode0
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle0/mode1
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle0/mode2
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle0/mode3
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle0/mode4
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle7/mode0
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle7/mode1
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle7/mode2
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle7/mode3
+=== RUN   TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle7/mode4
+--- PASS: TestWasmPollGuestStorage (36.17s)
+    --- PASS: TestWasmPollGuestStorage/wasm_poll(ps) (33.60s)
+        --- PASS: TestWasmPollGuestStorage/wasm_poll(ps)/handle0/mode0 (0.04s)
+        --- PASS: TestWasmPollGuestStorage/wasm_poll(ps)/handle0/mode1 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/wasm_poll(ps)/handle0/mode2 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/wasm_poll(ps)/handle0/mode3 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/wasm_poll(ps)/handle0/mode4 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/wasm_poll(ps)/handle7/mode0 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/wasm_poll(ps)/handle7/mode1 (0.02s)
+        --- PASS: TestWasmPollGuestStorage/wasm_poll(ps)/handle7/mode2 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/wasm_poll(ps)/handle7/mode3 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/wasm_poll(ps)/handle7/mode4 (0.01s)
+    --- PASS: TestWasmPollGuestStorage/poll(ps,_-1) (0.16s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_-1)/handle0/mode0 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_-1)/handle0/mode1 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_-1)/handle0/mode2 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_-1)/handle0/mode3 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_-1)/handle0/mode4 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_-1)/handle7/mode0 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_-1)/handle7/mode1 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_-1)/handle7/mode2 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_-1)/handle7/mode3 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_-1)/handle7/mode4 (0.01s)
+    --- PASS: TestWasmPollGuestStorage/poll(ps,_0) (0.15s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0)/handle0/mode0 (0.02s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0)/handle0/mode1 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0)/handle0/mode2 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0)/handle0/mode3 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0)/handle0/mode4 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0)/handle7/mode0 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0)/handle7/mode1 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0)/handle7/mode2 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0)/handle7/mode3 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0)/handle7/mode4 (0.01s)
+    --- PASS: TestWasmPollGuestStorage/poll(ps,_5) (0.21s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_5)/handle0/mode0 (0.03s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_5)/handle0/mode1 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_5)/handle0/mode2 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_5)/handle0/mode3 (0.02s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_5)/handle0/mode4 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_5)/handle7/mode0 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_5)/handle7/mode1 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_5)/handle7/mode2 (0.02s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_5)/handle7/mode3 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_5)/handle7/mode4 (0.02s)
+    --- PASS: TestWasmPollGuestStorage/poll(ps,_2147483647) (0.20s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_2147483647)/handle0/mode0 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_2147483647)/handle0/mode1 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_2147483647)/handle0/mode2 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_2147483647)/handle0/mode3 (0.02s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_2147483647)/handle0/mode4 (0.02s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_2147483647)/handle7/mode0 (0.02s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_2147483647)/handle7/mode1 (0.02s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_2147483647)/handle7/mode2 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_2147483647)/handle7/mode3 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_2147483647)/handle7/mode4 (0.01s)
+    --- PASS: TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1) (0.23s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle0/mode0 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle0/mode1 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle0/mode2 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle0/mode3 (0.02s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle0/mode4 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle7/mode0 (0.02s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle7/mode1 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle7/mode2 (0.01s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle7/mode3 (0.03s)
+        --- PASS: TestWasmPollGuestStorage/poll(ps,_0_-_2147483647_-_1)/handle7/mode4 (0.01s)
+=== RUN   TestWasmPollLifecycleCensus
+=== RUN   TestWasmPollLifecycleCensus/wasm_poll(ps)
+    wasm_poll_storage_test.go:37: leakcheck: allocs=96 frees=96 live_bytes=0
+=== RUN   TestWasmPollLifecycleCensus/poll(ps,_-1)
+    wasm_poll_storage_test.go:37: leakcheck: allocs=96 frees=96 live_bytes=0
+=== RUN   TestWasmPollLifecycleCensus/poll(ps,_0)
+    wasm_poll_storage_test.go:37: leakcheck: allocs=128 frees=128 live_bytes=0
+=== RUN   TestWasmPollLifecycleCensus/poll(ps,_5)
+    wasm_poll_storage_test.go:37: leakcheck: allocs=128 frees=128 live_bytes=0
+--- PASS: TestWasmPollLifecycleCensus (0.24s)
+    --- PASS: TestWasmPollLifecycleCensus/wasm_poll(ps) (0.07s)
+    --- PASS: TestWasmPollLifecycleCensus/poll(ps,_-1) (0.07s)
+    --- PASS: TestWasmPollLifecycleCensus/poll(ps,_0) (0.06s)
+    --- PASS: TestWasmPollLifecycleCensus/poll(ps,_5) (0.05s)
+=== RUN   TestWasmPollDeadlines
+=== RUN   TestWasmPollDeadlines/zero
+    wasm_poll_storage_test.go:46: leakcheck: allocs=128 frees=128 live_bytes=0
+=== RUN   TestWasmPollDeadlines/finite
+    wasm_poll_storage_test.go:46: leakcheck: allocs=128 frees=128 live_bytes=0
+=== RUN   TestWasmPollDeadlines/empty-finite
+    wasm_poll_storage_test.go:46: leakcheck: allocs=96 frees=96 live_bytes=0
+=== RUN   TestWasmPollDeadlines/ready
+    wasm_poll_storage_test.go:46: leakcheck: allocs=128 frees=128 live_bytes=0
+=== RUN   TestWasmPollDeadlines/indefinite
+    wasm_poll_storage_test.go:46: leakcheck: allocs=96 frees=96 live_bytes=0
+--- PASS: TestWasmPollDeadlines (0.75s)
+    --- PASS: TestWasmPollDeadlines/zero (0.05s)
+    --- PASS: TestWasmPollDeadlines/finite (0.24s)
+    --- PASS: TestWasmPollDeadlines/empty-finite (0.24s)
+    --- PASS: TestWasmPollDeadlines/ready (0.12s)
+    --- PASS: TestWasmPollDeadlines/indefinite (0.11s)
+=== RUN   TestWasmTcpLifecycleCensus
+    wasm_socket_reclaim_test.go:14: leakcheck: allocs=128 frees=128 live_bytes=0
+--- PASS: TestWasmTcpLifecycleCensus (0.05s)
+=== RUN   TestWasmSocketSetupReclaimsOnError
+=== RUN   TestWasmSocketSetupReclaimsOnError/listen
+=== RUN   TestWasmSocketSetupReclaimsOnError/listen/handle0/step0
+=== RUN   TestWasmSocketSetupReclaimsOnError/listen/handle0/step1
+=== RUN   TestWasmSocketSetupReclaimsOnError/listen/handle0/step2
+=== RUN   TestWasmSocketSetupReclaimsOnError/listen/handle0/step3
+=== RUN   TestWasmSocketSetupReclaimsOnError/listen/handle0/step4
+=== RUN   TestWasmSocketSetupReclaimsOnError/listen/handle0/step5
+=== RUN   TestWasmSocketSetupReclaimsOnError/listen/handle7/step0
+=== RUN   TestWasmSocketSetupReclaimsOnError/listen/handle7/step1
+=== RUN   TestWasmSocketSetupReclaimsOnError/listen/handle7/step2
+=== RUN   TestWasmSocketSetupReclaimsOnError/listen/handle7/step3
+=== RUN   TestWasmSocketSetupReclaimsOnError/listen/handle7/step4
+=== RUN   TestWasmSocketSetupReclaimsOnError/listen/handle7/step5
+=== RUN   TestWasmSocketSetupReclaimsOnError/connect
+=== RUN   TestWasmSocketSetupReclaimsOnError/connect/handle0/step0
+=== RUN   TestWasmSocketSetupReclaimsOnError/connect/handle0/step1
+=== RUN   TestWasmSocketSetupReclaimsOnError/connect/handle0/step2
+=== RUN   TestWasmSocketSetupReclaimsOnError/connect/handle0/step3
+=== RUN   TestWasmSocketSetupReclaimsOnError/connect/handle7/step0
+=== RUN   TestWasmSocketSetupReclaimsOnError/connect/handle7/step1
+=== RUN   TestWasmSocketSetupReclaimsOnError/connect/handle7/step2
+=== RUN   TestWasmSocketSetupReclaimsOnError/connect/handle7/step3
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp/handle0/step0
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp/handle0/step1
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp/handle0/step2
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp/handle0/step3
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp/handle0/step4
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp/handle0/step5
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp/handle0/step6
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp/handle7/step0
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp/handle7/step1
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp/handle7/step2
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp/handle7/step3
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp/handle7/step4
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp/handle7/step5
+=== RUN   TestWasmSocketSetupReclaimsOnError/udp/handle7/step6
+--- PASS: TestWasmSocketSetupReclaimsOnError (0.37s)
+    --- PASS: TestWasmSocketSetupReclaimsOnError/listen (0.12s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/listen/handle0/step0 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/listen/handle0/step1 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/listen/handle0/step2 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/listen/handle0/step3 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/listen/handle0/step4 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/listen/handle0/step5 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/listen/handle7/step0 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/listen/handle7/step1 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/listen/handle7/step2 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/listen/handle7/step3 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/listen/handle7/step4 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/listen/handle7/step5 (0.01s)
+    --- PASS: TestWasmSocketSetupReclaimsOnError/connect (0.09s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/connect/handle0/step0 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/connect/handle0/step1 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/connect/handle0/step2 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/connect/handle0/step3 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/connect/handle7/step0 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/connect/handle7/step1 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/connect/handle7/step2 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/connect/handle7/step3 (0.01s)
+    --- PASS: TestWasmSocketSetupReclaimsOnError/udp (0.15s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/udp/handle0/step0 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/udp/handle0/step1 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/udp/handle0/step2 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/udp/handle0/step3 (0.00s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/udp/handle0/step4 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/udp/handle0/step5 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/udp/handle0/step6 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/udp/handle7/step0 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/udp/handle7/step1 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/udp/handle7/step2 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/udp/handle7/step3 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/udp/handle7/step4 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/udp/handle7/step5 (0.01s)
+        --- PASS: TestWasmSocketSetupReclaimsOnError/udp/handle7/step6 (0.01s)
+=== RUN   TestWasmSocketCloseZeroHandles
+=== RUN   TestWasmSocketCloseZeroHandles/listen
+=== RUN   TestWasmSocketCloseZeroHandles/listen/handle0/step0
+=== RUN   TestWasmSocketCloseZeroHandles/listen/handle0/step1
+=== RUN   TestWasmSocketCloseZeroHandles/listen/handle0/step2
+=== RUN   TestWasmSocketCloseZeroHandles/listen/handle0/step3
+=== RUN   TestWasmSocketCloseZeroHandles/listen/handle0/step4
+=== RUN   TestWasmSocketCloseZeroHandles/listen/handle0/step5
+=== RUN   TestWasmSocketCloseZeroHandles/listen/handle7/step0
+=== RUN   TestWasmSocketCloseZeroHandles/listen/handle7/step1
+=== RUN   TestWasmSocketCloseZeroHandles/listen/handle7/step2
+=== RUN   TestWasmSocketCloseZeroHandles/listen/handle7/step3
+=== RUN   TestWasmSocketCloseZeroHandles/listen/handle7/step4
+=== RUN   TestWasmSocketCloseZeroHandles/listen/handle7/step5
+=== RUN   TestWasmSocketCloseZeroHandles/connect
+=== RUN   TestWasmSocketCloseZeroHandles/connect/handle0/step0
+=== RUN   TestWasmSocketCloseZeroHandles/connect/handle0/step1
+=== RUN   TestWasmSocketCloseZeroHandles/connect/handle0/step2
+=== RUN   TestWasmSocketCloseZeroHandles/connect/handle0/step3
+=== RUN   TestWasmSocketCloseZeroHandles/connect/handle7/step0
+=== RUN   TestWasmSocketCloseZeroHandles/connect/handle7/step1
+=== RUN   TestWasmSocketCloseZeroHandles/connect/handle7/step2
+=== RUN   TestWasmSocketCloseZeroHandles/connect/handle7/step3
+=== RUN   TestWasmSocketCloseZeroHandles/accept
+=== RUN   TestWasmSocketCloseZeroHandles/accept/handle0/step0
+=== RUN   TestWasmSocketCloseZeroHandles/accept/handle0/step1
+=== RUN   TestWasmSocketCloseZeroHandles/accept/handle7/step0
+=== RUN   TestWasmSocketCloseZeroHandles/accept/handle7/step1
+--- PASS: TestWasmSocketCloseZeroHandles (0.28s)
+    --- PASS: TestWasmSocketCloseZeroHandles/listen (0.12s)
+        --- PASS: TestWasmSocketCloseZeroHandles/listen/handle0/step0 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/listen/handle0/step1 (0.00s)
+        --- PASS: TestWasmSocketCloseZeroHandles/listen/handle0/step2 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/listen/handle0/step3 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/listen/handle0/step4 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/listen/handle0/step5 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/listen/handle7/step0 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/listen/handle7/step1 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/listen/handle7/step2 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/listen/handle7/step3 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/listen/handle7/step4 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/listen/handle7/step5 (0.01s)
+    --- PASS: TestWasmSocketCloseZeroHandles/connect (0.09s)
+        --- PASS: TestWasmSocketCloseZeroHandles/connect/handle0/step0 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/connect/handle0/step1 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/connect/handle0/step2 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/connect/handle0/step3 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/connect/handle7/step0 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/connect/handle7/step1 (0.00s)
+        --- PASS: TestWasmSocketCloseZeroHandles/connect/handle7/step2 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/connect/handle7/step3 (0.01s)
+    --- PASS: TestWasmSocketCloseZeroHandles/accept (0.07s)
+        --- PASS: TestWasmSocketCloseZeroHandles/accept/handle0/step0 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/accept/handle0/step1 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/accept/handle7/step0 (0.01s)
+        --- PASS: TestWasmSocketCloseZeroHandles/accept/handle7/step1 (0.01s)
+=== RUN   TestWasmSocketGuestStorage
+=== RUN   TestWasmSocketGuestStorage/listen
+=== RUN   TestWasmSocketGuestStorage/listen/handle0/step0
+=== RUN   TestWasmSocketGuestStorage/listen/handle0/step1
+=== RUN   TestWasmSocketGuestStorage/listen/handle0/step2
+=== RUN   TestWasmSocketGuestStorage/listen/handle0/step3
+=== RUN   TestWasmSocketGuestStorage/listen/handle0/step4
+=== RUN   TestWasmSocketGuestStorage/listen/handle0/step5
+=== RUN   TestWasmSocketGuestStorage/listen/handle7/step0
+=== RUN   TestWasmSocketGuestStorage/listen/handle7/step1
+=== RUN   TestWasmSocketGuestStorage/listen/handle7/step2
+=== RUN   TestWasmSocketGuestStorage/listen/handle7/step3
+=== RUN   TestWasmSocketGuestStorage/listen/handle7/step4
+=== RUN   TestWasmSocketGuestStorage/listen/handle7/step5
+=== RUN   TestWasmSocketGuestStorage/connect
+=== RUN   TestWasmSocketGuestStorage/connect/handle0/step0
+=== RUN   TestWasmSocketGuestStorage/connect/handle0/step1
+=== RUN   TestWasmSocketGuestStorage/connect/handle0/step2
+=== RUN   TestWasmSocketGuestStorage/connect/handle0/step3
+=== RUN   TestWasmSocketGuestStorage/connect/handle7/step0
+=== RUN   TestWasmSocketGuestStorage/connect/handle7/step1
+=== RUN   TestWasmSocketGuestStorage/connect/handle7/step2
+=== RUN   TestWasmSocketGuestStorage/connect/handle7/step3
+=== RUN   TestWasmSocketGuestStorage/accept
+=== RUN   TestWasmSocketGuestStorage/accept/handle0/step0
+=== RUN   TestWasmSocketGuestStorage/accept/handle0/step1
+=== RUN   TestWasmSocketGuestStorage/accept/handle7/step0
+=== RUN   TestWasmSocketGuestStorage/accept/handle7/step1
+=== RUN   TestWasmSocketGuestStorage/port
+=== RUN   TestWasmSocketGuestStorage/port/handle0/step0
+=== RUN   TestWasmSocketGuestStorage/port/handle0/step1
+=== RUN   TestWasmSocketGuestStorage/port/handle7/step0
+=== RUN   TestWasmSocketGuestStorage/port/handle7/step1
+--- PASS: TestWasmSocketGuestStorage (0.70s)
+    --- PASS: TestWasmSocketGuestStorage/listen (0.23s)
+        --- PASS: TestWasmSocketGuestStorage/listen/handle0/step0 (0.03s)
+        --- PASS: TestWasmSocketGuestStorage/listen/handle0/step1 (0.02s)
+        --- PASS: TestWasmSocketGuestStorage/listen/handle0/step2 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/listen/handle0/step3 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/listen/handle0/step4 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/listen/handle0/step5 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/listen/handle7/step0 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/listen/handle7/step1 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/listen/handle7/step2 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/listen/handle7/step3 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/listen/handle7/step4 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/listen/handle7/step5 (0.01s)
+    --- PASS: TestWasmSocketGuestStorage/connect (0.17s)
+        --- PASS: TestWasmSocketGuestStorage/connect/handle0/step0 (0.03s)
+        --- PASS: TestWasmSocketGuestStorage/connect/handle0/step1 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/connect/handle0/step2 (0.02s)
+        --- PASS: TestWasmSocketGuestStorage/connect/handle0/step3 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/connect/handle7/step0 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/connect/handle7/step1 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/connect/handle7/step2 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/connect/handle7/step3 (0.02s)
+    --- PASS: TestWasmSocketGuestStorage/accept (0.12s)
+        --- PASS: TestWasmSocketGuestStorage/accept/handle0/step0 (0.02s)
+        --- PASS: TestWasmSocketGuestStorage/accept/handle0/step1 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/accept/handle7/step0 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/accept/handle7/step1 (0.01s)
+    --- PASS: TestWasmSocketGuestStorage/port (0.18s)
+        --- PASS: TestWasmSocketGuestStorage/port/handle0/step0 (0.03s)
+        --- PASS: TestWasmSocketGuestStorage/port/handle0/step1 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/port/handle7/step0 (0.01s)
+        --- PASS: TestWasmSocketGuestStorage/port/handle7/step1 (0.03s)
+=== RUN   TestWasmTCPRecvLifecycleCensus
+=== RUN   TestWasmTCPRecvLifecycleCensus/empty
+    wasm_tcp_stream_storage_test.go:18: leakcheck: allocs=64 frees=64 live_bytes=0
+=== RUN   TestWasmTCPRecvLifecycleCensus/short
+    wasm_tcp_stream_storage_test.go:18: leakcheck: allocs=64 frees=64 live_bytes=0
+=== RUN   TestWasmTCPRecvLifecycleCensus/chunked
+    wasm_tcp_stream_storage_test.go:18: leakcheck: allocs=64 frees=64 live_bytes=0
+--- PASS: TestWasmTCPRecvLifecycleCensus (0.36s)
+    --- PASS: TestWasmTCPRecvLifecycleCensus/empty (0.12s)
+    --- PASS: TestWasmTCPRecvLifecycleCensus/short (0.14s)
+    --- PASS: TestWasmTCPRecvLifecycleCensus/chunked (0.10s)
+=== RUN   TestWasmTCPRecvGuestStorage
+=== RUN   TestWasmTCPRecvGuestStorage/recv
+=== RUN   TestWasmTCPRecvGuestStorage/recv/handle0/step0
+=== RUN   TestWasmTCPRecvGuestStorage/recv/handle0/step1
+=== RUN   TestWasmTCPRecvGuestStorage/recv/handle0/step2
+=== RUN   TestWasmTCPRecvGuestStorage/recv/handle0/step3
+=== RUN   TestWasmTCPRecvGuestStorage/recv/handle7/step0
+=== RUN   TestWasmTCPRecvGuestStorage/recv/handle7/step1
+=== RUN   TestWasmTCPRecvGuestStorage/recv/handle7/step2
+=== RUN   TestWasmTCPRecvGuestStorage/recv/handle7/step3
+=== RUN   TestWasmTCPRecvGuestStorage/recv-zero
+=== RUN   TestWasmTCPRecvGuestStorage/recv-zero/handle0/step0
+=== RUN   TestWasmTCPRecvGuestStorage/recv-zero/handle7/step0
+--- PASS: TestWasmTCPRecvGuestStorage (0.25s)
+    --- PASS: TestWasmTCPRecvGuestStorage/recv (0.15s)
+        --- PASS: TestWasmTCPRecvGuestStorage/recv/handle0/step0 (0.03s)
+        --- PASS: TestWasmTCPRecvGuestStorage/recv/handle0/step1 (0.01s)
+        --- PASS: TestWasmTCPRecvGuestStorage/recv/handle0/step2 (0.01s)
+        --- PASS: TestWasmTCPRecvGuestStorage/recv/handle0/step3 (0.01s)
+        --- PASS: TestWasmTCPRecvGuestStorage/recv/handle7/step0 (0.01s)
+        --- PASS: TestWasmTCPRecvGuestStorage/recv/handle7/step1 (0.01s)
+        --- PASS: TestWasmTCPRecvGuestStorage/recv/handle7/step2 (0.01s)
+        --- PASS: TestWasmTCPRecvGuestStorage/recv/handle7/step3 (0.01s)
+    --- PASS: TestWasmTCPRecvGuestStorage/recv-zero (0.10s)
+        --- PASS: TestWasmTCPRecvGuestStorage/recv-zero/handle0/step0 (0.02s)
+        --- PASS: TestWasmTCPRecvGuestStorage/recv-zero/handle7/step0 (0.01s)
+=== RUN   TestWasmTCPSendLifecycleCensus
+=== RUN   TestWasmTCPSendLifecycleCensus/empty
+    wasm_tcp_stream_storage_test.go:50: leakcheck: allocs=32 frees=32 live_bytes=0
+=== RUN   TestWasmTCPSendLifecycleCensus/inline
+    wasm_tcp_stream_storage_test.go:50: leakcheck: allocs=64 frees=64 live_bytes=0
+=== RUN   TestWasmTCPSendLifecycleCensus/chunked
+    wasm_tcp_stream_storage_test.go:50: leakcheck: allocs=64 frees=64 live_bytes=0
+--- PASS: TestWasmTCPSendLifecycleCensus (0.29s)
+    --- PASS: TestWasmTCPSendLifecycleCensus/empty (0.09s)
+    --- PASS: TestWasmTCPSendLifecycleCensus/inline (0.11s)
+    --- PASS: TestWasmTCPSendLifecycleCensus/chunked (0.09s)
+=== RUN   TestWasmTCPSendGuestStorage
+=== RUN   TestWasmTCPSendGuestStorage/empty
+=== RUN   TestWasmTCPSendGuestStorage/empty/handle0/step0
+=== RUN   TestWasmTCPSendGuestStorage/empty/handle7/step0
+=== RUN   TestWasmTCPSendGuestStorage/inline
+=== RUN   TestWasmTCPSendGuestStorage/inline/handle0/step0
+=== RUN   TestWasmTCPSendGuestStorage/inline/handle0/step1
+=== RUN   TestWasmTCPSendGuestStorage/inline/handle0/step2
+=== RUN   TestWasmTCPSendGuestStorage/inline/handle7/step0
+=== RUN   TestWasmTCPSendGuestStorage/inline/handle7/step1
+=== RUN   TestWasmTCPSendGuestStorage/inline/handle7/step2
+=== RUN   TestWasmTCPSendGuestStorage/heap
+=== RUN   TestWasmTCPSendGuestStorage/heap/handle0/step0
+=== RUN   TestWasmTCPSendGuestStorage/heap/handle0/step1
+=== RUN   TestWasmTCPSendGuestStorage/heap/handle0/step2
+=== RUN   TestWasmTCPSendGuestStorage/heap/handle7/step0
+=== RUN   TestWasmTCPSendGuestStorage/heap/handle7/step1
+=== RUN   TestWasmTCPSendGuestStorage/heap/handle7/step2
+=== RUN   TestWasmTCPSendGuestStorage/chunked
+=== RUN   TestWasmTCPSendGuestStorage/chunked/handle0/step0
+=== RUN   TestWasmTCPSendGuestStorage/chunked/handle0/step1
+=== RUN   TestWasmTCPSendGuestStorage/chunked/handle0/step2
+=== RUN   TestWasmTCPSendGuestStorage/chunked/handle0/step3
+=== RUN   TestWasmTCPSendGuestStorage/chunked/handle0/step4
+=== RUN   TestWasmTCPSendGuestStorage/chunked/handle7/step0
+=== RUN   TestWasmTCPSendGuestStorage/chunked/handle7/step1
+=== RUN   TestWasmTCPSendGuestStorage/chunked/handle7/step2
+=== RUN   TestWasmTCPSendGuestStorage/chunked/handle7/step3
+=== RUN   TestWasmTCPSendGuestStorage/chunked/handle7/step4
+--- PASS: TestWasmTCPSendGuestStorage (0.66s)
+    --- PASS: TestWasmTCPSendGuestStorage/empty (0.12s)
+        --- PASS: TestWasmTCPSendGuestStorage/empty/handle0/step0 (0.03s)
+        --- PASS: TestWasmTCPSendGuestStorage/empty/handle7/step0 (0.01s)
+    --- PASS: TestWasmTCPSendGuestStorage/inline (0.13s)
+        --- PASS: TestWasmTCPSendGuestStorage/inline/handle0/step0 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/inline/handle0/step1 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/inline/handle0/step2 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/inline/handle7/step0 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/inline/handle7/step1 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/inline/handle7/step2 (0.01s)
+    --- PASS: TestWasmTCPSendGuestStorage/heap (0.27s)
+        --- PASS: TestWasmTCPSendGuestStorage/heap/handle0/step0 (0.17s)
+        --- PASS: TestWasmTCPSendGuestStorage/heap/handle0/step1 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/heap/handle0/step2 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/heap/handle7/step0 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/heap/handle7/step1 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/heap/handle7/step2 (0.01s)
+    --- PASS: TestWasmTCPSendGuestStorage/chunked (0.14s)
+        --- PASS: TestWasmTCPSendGuestStorage/chunked/handle0/step0 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/chunked/handle0/step1 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/chunked/handle0/step2 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/chunked/handle0/step3 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/chunked/handle0/step4 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/chunked/handle7/step0 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/chunked/handle7/step1 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/chunked/handle7/step2 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/chunked/handle7/step3 (0.01s)
+        --- PASS: TestWasmTCPSendGuestStorage/chunked/handle7/step4 (0.01s)
+=== RUN   TestWasmUDPLifecycleCensus
+=== RUN   TestWasmUDPLifecycleCensus/#00
+    wasm_udp_storage_test.go:17: leakcheck: allocs=96 frees=96 live_bytes=0
+=== RUN   TestWasmUDPLifecycleCensus/x
+    wasm_udp_storage_test.go:17: leakcheck: allocs=96 frees=96 live_bytes=0
+=== RUN   TestWasmUDPLifecycleCensus/abcdefgh
+    wasm_udp_storage_test.go:17: leakcheck: allocs=96 frees=96 live_bytes=0
+--- PASS: TestWasmUDPLifecycleCensus (0.17s)
+    --- PASS: TestWasmUDPLifecycleCensus/#00 (0.06s)
+    --- PASS: TestWasmUDPLifecycleCensus/x (0.05s)
+    --- PASS: TestWasmUDPLifecycleCensus/abcdefgh (0.06s)
+=== RUN   TestWasmUDPGuestStorage
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0//handle0/step0
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0//handle0/step1
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0//handle0/step2
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0//handle0/step3
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0//handle0/step4
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0//handle0/step5
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0//handle0/step6
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0//handle7/step0
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0//handle7/step1
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0//handle7/step2
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0//handle7/step3
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0//handle7/step4
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0//handle7/step5
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0//handle7/step6
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x/handle0/step0
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x/handle0/step1
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x/handle0/step2
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x/handle0/step3
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x/handle0/step4
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x/handle0/step5
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x/handle0/step6
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x/handle7/step0
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x/handle7/step1
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x/handle7/step2
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x/handle7/step3
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x/handle7/step4
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x/handle7/step5
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/x/handle7/step6
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle0/step0
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle0/step1
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle0/step2
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle0/step3
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle0/step4
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle0/step5
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle0/step6
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle7/step0
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle7/step1
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle7/step2
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle7/step3
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle7/step4
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle7/step5
+=== RUN   TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle7/step6
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1//handle0/step0
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1//handle0/step1
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1//handle0/step2
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1//handle0/step3
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1//handle0/step4
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1//handle0/step5
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1//handle0/step6
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1//handle7/step0
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1//handle7/step1
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1//handle7/step2
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1//handle7/step3
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1//handle7/step4
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1//handle7/step5
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1//handle7/step6
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x/handle0/step0
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x/handle0/step1
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x/handle0/step2
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x/handle0/step3
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x/handle0/step4
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x/handle0/step5
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x/handle0/step6
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x/handle7/step0
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x/handle7/step1
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x/handle7/step2
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x/handle7/step3
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x/handle7/step4
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x/handle7/step5
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/x/handle7/step6
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle0/step0
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle0/step1
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle0/step2
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle0/step3
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle0/step4
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle0/step5
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle0/step6
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle7/step0
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle7/step1
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle7/step2
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle7/step3
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle7/step4
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle7/step5
+=== RUN   TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle7/step6
+--- PASS: TestWasmUDPGuestStorage (0.85s)
+    --- PASS: TestWasmUDPGuestStorage/0.0.0.0/ (0.14s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0//handle0/step0 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0//handle0/step1 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0//handle0/step2 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0//handle0/step3 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0//handle0/step4 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0//handle0/step5 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0//handle0/step6 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0//handle7/step0 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0//handle7/step1 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0//handle7/step2 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0//handle7/step3 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0//handle7/step4 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0//handle7/step5 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0//handle7/step6 (0.01s)
+    --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x (0.15s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x/handle0/step0 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x/handle0/step1 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x/handle0/step2 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x/handle0/step3 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x/handle0/step4 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x/handle0/step5 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x/handle0/step6 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x/handle7/step0 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x/handle7/step1 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x/handle7/step2 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x/handle7/step3 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x/handle7/step4 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x/handle7/step5 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/x/handle7/step6 (0.01s)
+    --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh (0.14s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle0/step0 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle0/step1 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle0/step2 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle0/step3 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle0/step4 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle0/step5 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle0/step6 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle7/step0 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle7/step1 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle7/step2 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle7/step3 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle7/step4 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle7/step5 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/0.0.0.0/abcdefgh/handle7/step6 (0.01s)
+    --- PASS: TestWasmUDPGuestStorage/127.0.0.1/ (0.14s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1//handle0/step0 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1//handle0/step1 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1//handle0/step2 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1//handle0/step3 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1//handle0/step4 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1//handle0/step5 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1//handle0/step6 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1//handle7/step0 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1//handle7/step1 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1//handle7/step2 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1//handle7/step3 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1//handle7/step4 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1//handle7/step5 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1//handle7/step6 (0.01s)
+    --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x (0.14s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x/handle0/step0 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x/handle0/step1 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x/handle0/step2 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x/handle0/step3 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x/handle0/step4 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x/handle0/step5 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x/handle0/step6 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x/handle7/step0 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x/handle7/step1 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x/handle7/step2 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x/handle7/step3 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x/handle7/step4 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x/handle7/step5 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/x/handle7/step6 (0.01s)
+    --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh (0.14s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle0/step0 (0.02s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle0/step1 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle0/step2 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle0/step3 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle0/step4 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle0/step5 (0.00s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle0/step6 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle7/step0 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle7/step1 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle7/step2 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle7/step3 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle7/step4 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle7/step5 (0.01s)
+        --- PASS: TestWasmUDPGuestStorage/127.0.0.1/abcdefgh/handle7/step6 (0.01s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	104.953s

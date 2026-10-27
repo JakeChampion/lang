@@ -1,0 +1,44 @@
+package e2eharness
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+)
+
+func AdaptPreview1Component(t testing.TB, modulePath string) string {
+	t.Helper()
+	wasmtools, err := exec.LookPath("wasm-tools")
+	if err != nil {
+		t.Skip("wasm-tools not on PATH")
+	}
+	adapter := os.Getenv("FERN_WASI_ADAPTER")
+	if adapter == "" {
+		t.Skip("FERN_WASI_ADAPTER unset")
+	}
+	wit := RepoPath("cmd", "fern", "wit")
+	dir := t.TempDir()
+	core, embedded, component := filepath.Join(dir, "core.wasm"), filepath.Join(dir, "embedded.wasm"), filepath.Join(dir, "component.wasm")
+	if out, err := exec.Command(wasmtools, "parse", modulePath, "-o", core).CombinedOutput(); err != nil {
+		t.Fatalf("wasm-tools parse: %v\n%s", err, out)
+	}
+	printed, err := exec.Command(wasmtools, "print", core).CombinedOutput()
+	if err != nil {
+		t.Fatalf("wasm-tools print: %v\n%s", err, printed)
+	}
+	if !bytes.Contains(printed, []byte(`(export "cabi_realloc" (func `)) {
+		t.Fatal("Preview 1 adaptation requires an exported cabi_realloc that uses the guest allocator")
+	}
+	for _, args := range [][]string{
+		{"component", "embed", wit, "-w", "fern", core, "-o", embedded},
+		{"component", "new", embedded, "--adapt", "wasi_snapshot_preview1=" + adapter, "-o", component},
+		{"validate", component},
+	} {
+		if out, err := exec.Command(wasmtools, args...).CombinedOutput(); err != nil {
+			t.Fatalf("wasm-tools %v: %v\n%s", args, err, out)
+		}
+	}
+	return component
+}

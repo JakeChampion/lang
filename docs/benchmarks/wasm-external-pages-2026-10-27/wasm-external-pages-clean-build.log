@@ -1,0 +1,7 @@
+./bootstrap/bootstrap.sh build
+stage0: stage0-20261025-433d93a for x86-64-linux (sha256 efafedd32a9223a2c87b385e8425d155d5f59c10fab7e3bf9e09509254fce748)
+stage1: 37 s, 2176 MB peak RSS, 15188480 bytes
+smoke: /workspace/lang-image-wasm-adapter-health/build/bootstrap/stage1 compiles a program and coreutils/tr, and both run
+installed bin/fern-selfhost (x86-64-linux, sha256 387823a4c57bd0e560e343beec203868b892ababca7acc9252cfbfa4e061c7b5)
+./scripts/fern-embed-stage build/embed
+./bin/fern-selfhost -target x86-64-linux -embed build/embed -o bin/fern compiler/fern_main.fern internal/stdlib

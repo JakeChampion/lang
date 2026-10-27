@@ -1,0 +1,80 @@
+=== RUN   TestWASMMatrixAllocationOverflowCause
+=== RUN   TestWASMMatrixAllocationOverflowCause/inner
+=== RUN   TestWASMMatrixAllocationOverflowCause/outer
+--- PASS: TestWASMMatrixAllocationOverflowCause (70.97s)
+    --- PASS: TestWASMMatrixAllocationOverflowCause/inner (70.88s)
+    --- PASS: TestWASMMatrixAllocationOverflowCause/outer (0.09s)
+=== RUN   TestWASMAliasedArraySetCoW
+=== RUN   TestWASMAliasedArraySetCoW/array_set
+=== RUN   TestWASMAliasedArraySetCoW/array_index_assign
+=== RUN   TestWASMAliasedArraySetCoW/map_set
+--- PASS: TestWASMAliasedArraySetCoW (0.81s)
+    --- PASS: TestWASMAliasedArraySetCoW/array_set (0.06s)
+    --- PASS: TestWASMAliasedArraySetCoW/array_index_assign (0.04s)
+    --- PASS: TestWASMAliasedArraySetCoW/map_set (0.70s)
+=== RUN   TestWASMRcDecReclaim
+=== RUN   TestWASMRcDecReclaim/drop_dec_fires
+=== RUN   TestWASMRcDecReclaim/drop_no_over_release
+=== RUN   TestWASMRcDecReclaim/dec_on_overwrite
+=== RUN   TestWASMRcDecReclaim/churn_freelist_reuse
+--- PASS: TestWASMRcDecReclaim (1.48s)
+    --- PASS: TestWASMRcDecReclaim/drop_dec_fires (0.14s)
+    --- PASS: TestWASMRcDecReclaim/drop_no_over_release (0.06s)
+    --- PASS: TestWASMRcDecReclaim/dec_on_overwrite (1.23s)
+    --- PASS: TestWASMRcDecReclaim/churn_freelist_reuse (0.06s)
+=== RUN   TestWASMHeapExhaustionTrapsInTheAllocator
+--- PASS: TestWASMHeapExhaustionTrapsInTheAllocator (0.06s)
+=== RUN   TestWASMLongPrintWriteEprint
+--- PASS: TestWASMLongPrintWriteEprint (0.40s)
+=== RUN   TestWriterBytesCensus
+=== RUN   TestWriterBytesCensus/x86_64
+=== RUN   TestWriterBytesCensus/x86_64/array
+=== RUN   TestWriterBytesCensus/x86_64/array_literal
+=== RUN   TestWriterBytesCensus/x86_64/array_call
+=== RUN   TestWriterBytesCensus/x86_64/array_subview
+=== RUN   TestWriterBytesCensus/x86_64/view
+=== RUN   TestWriterBytesCensus/x86_64/string_view
+=== RUN   TestWriterBytesCensus/x86_64/string_call
+=== RUN   TestWriterBytesCensus/arm64
+=== RUN   TestWriterBytesCensus/arm64/array
+=== RUN   TestWriterBytesCensus/arm64/array_literal
+=== RUN   TestWriterBytesCensus/arm64/array_call
+=== RUN   TestWriterBytesCensus/arm64/array_subview
+=== RUN   TestWriterBytesCensus/arm64/view
+=== RUN   TestWriterBytesCensus/arm64/string_view
+=== RUN   TestWriterBytesCensus/arm64/string_call
+=== RUN   TestWriterBytesCensus/wasm
+=== RUN   TestWriterBytesCensus/wasm/array
+=== RUN   TestWriterBytesCensus/wasm/array_literal
+=== RUN   TestWriterBytesCensus/wasm/array_call
+=== RUN   TestWriterBytesCensus/wasm/array_subview
+=== RUN   TestWriterBytesCensus/wasm/view
+=== RUN   TestWriterBytesCensus/wasm/string_view
+=== RUN   TestWriterBytesCensus/wasm/string_call
+--- PASS: TestWriterBytesCensus (8.16s)
+    --- PASS: TestWriterBytesCensus/x86_64 (4.84s)
+        --- PASS: TestWriterBytesCensus/x86_64/array (3.16s)
+        --- PASS: TestWriterBytesCensus/x86_64/array_literal (0.29s)
+        --- PASS: TestWriterBytesCensus/x86_64/array_call (0.31s)
+        --- PASS: TestWriterBytesCensus/x86_64/array_subview (0.24s)
+        --- PASS: TestWriterBytesCensus/x86_64/view (0.31s)
+        --- PASS: TestWriterBytesCensus/x86_64/string_view (0.28s)
+        --- PASS: TestWriterBytesCensus/x86_64/string_call (0.25s)
+    --- PASS: TestWriterBytesCensus/arm64 (2.01s)
+        --- PASS: TestWriterBytesCensus/arm64/array (0.30s)
+        --- PASS: TestWriterBytesCensus/arm64/array_literal (0.27s)
+        --- PASS: TestWriterBytesCensus/arm64/array_call (0.29s)
+        --- PASS: TestWriterBytesCensus/arm64/array_subview (0.28s)
+        --- PASS: TestWriterBytesCensus/arm64/view (0.31s)
+        --- PASS: TestWriterBytesCensus/arm64/string_view (0.27s)
+        --- PASS: TestWriterBytesCensus/arm64/string_call (0.29s)
+    --- PASS: TestWriterBytesCensus/wasm (1.31s)
+        --- PASS: TestWriterBytesCensus/wasm/array (0.24s)
+        --- PASS: TestWriterBytesCensus/wasm/array_literal (0.18s)
+        --- PASS: TestWriterBytesCensus/wasm/array_call (0.18s)
+        --- PASS: TestWriterBytesCensus/wasm/array_subview (0.16s)
+        --- PASS: TestWriterBytesCensus/wasm/view (0.20s)
+        --- PASS: TestWriterBytesCensus/wasm/string_view (0.18s)
+        --- PASS: TestWriterBytesCensus/wasm/string_call (0.18s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	81.902s

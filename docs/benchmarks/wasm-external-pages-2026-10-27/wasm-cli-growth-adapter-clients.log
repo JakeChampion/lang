@@ -1,0 +1,20 @@
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (6.47s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+=== RUN   TestSelfHostWasmHTTPHandlerCensus
+    self_host_wasm_http_handler_census_test.go:14: allocs=1770 frees=1768 live_bytes=131072
+    self_host_wasm_http_handler_census_test.go:14: bounded WASI HTTP handler leaked
+--- FAIL: TestSelfHostWasmHTTPHandlerCensus (56.21s)
+=== RUN   TestSelfHostWasmHTTPKeepAlive
+    self_host_wasm_http_handler_census_test.go:18: allocs=4966 frees=4964 live_bytes=131072
+    self_host_wasm_http_handler_census_test.go:18: bounded WASI HTTP handler leaked
+--- FAIL: TestSelfHostWasmHTTPKeepAlive (46.72s)
+=== RUN   TestSelfHostWasmTcpLifecycleCensus
+    self_host_wasm_socket_reclaim_test.go:14: Preview 1 adaptation requires an exported cabi_realloc that uses the guest allocator
+--- FAIL: TestSelfHostWasmTcpLifecycleCensus (18.88s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	128.305s
+FAIL

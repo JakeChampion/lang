@@ -1,0 +1,20 @@
+=== RUN   TestWriterBytesCensus
+=== RUN   TestWriterBytesCensus/arm64
+=== RUN   TestWriterBytesCensus/arm64/array
+=== RUN   TestWriterBytesCensus/arm64/array_literal
+=== RUN   TestWriterBytesCensus/arm64/array_call
+=== RUN   TestWriterBytesCensus/arm64/array_subview
+=== RUN   TestWriterBytesCensus/arm64/view
+=== RUN   TestWriterBytesCensus/arm64/string_view
+=== RUN   TestWriterBytesCensus/arm64/string_call
+--- PASS: TestWriterBytesCensus (3.71s)
+    --- PASS: TestWriterBytesCensus/arm64 (3.71s)
+        --- PASS: TestWriterBytesCensus/arm64/array (1.96s)
+        --- PASS: TestWriterBytesCensus/arm64/array_literal (0.19s)
+        --- PASS: TestWriterBytesCensus/arm64/array_call (0.14s)
+        --- PASS: TestWriterBytesCensus/arm64/array_subview (0.20s)
+        --- PASS: TestWriterBytesCensus/arm64/view (0.69s)
+        --- PASS: TestWriterBytesCensus/arm64/string_view (0.29s)
+        --- PASS: TestWriterBytesCensus/arm64/string_call (0.24s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	3.730s

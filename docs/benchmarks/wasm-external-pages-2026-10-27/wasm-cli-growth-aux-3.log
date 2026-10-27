@@ -1,0 +1,573 @@
+=== RUN   TestArm64ToolingMissingVerdict
+=== RUN   TestArm64ToolingMissingVerdict/skips_by_default
+=== RUN   TestArm64ToolingMissingVerdict/fails_when_required
+=== RUN   TestArm64ToolingMissingVerdict/runner_skips_by_default
+=== RUN   TestArm64ToolingMissingVerdict/runner_fails_when_required
+=== RUN   TestArm64ToolingMissingVerdict/assembler_goes_on_by_default
+=== RUN   TestArm64ToolingMissingVerdict/assembler_fails_when_required
+--- PASS: TestArm64ToolingMissingVerdict (0.03s)
+    --- PASS: TestArm64ToolingMissingVerdict/skips_by_default (0.01s)
+    --- PASS: TestArm64ToolingMissingVerdict/fails_when_required (0.00s)
+    --- PASS: TestArm64ToolingMissingVerdict/runner_skips_by_default (0.00s)
+    --- PASS: TestArm64ToolingMissingVerdict/runner_fails_when_required (0.01s)
+    --- PASS: TestArm64ToolingMissingVerdict/assembler_goes_on_by_default (0.00s)
+    --- PASS: TestArm64ToolingMissingVerdict/assembler_fails_when_required (0.01s)
+=== RUN   TestBoxedProbesReachProgramsNotDriverBuilds
+--- PASS: TestBoxedProbesReachProgramsNotDriverBuilds (0.00s)
+=== RUN   TestListenLoopbackPairSkipsATakenTCPPort
+--- PASS: TestListenLoopbackPairSkipsATakenTCPPort (0.00s)
+=== RUN   TestHTTPHandlerCensusThreadsBoundAcrossBurst
+=== RUN   TestHTTPHandlerCensusThreadsBoundAcrossBurst/wasi=false/rounds=32
+=== RUN   TestHTTPHandlerCensusThreadsBoundAcrossBurst/wasi=false/rounds=315
+=== RUN   TestHTTPHandlerCensusThreadsBoundAcrossBurst/wasi=true/rounds=32
+=== RUN   TestHTTPHandlerCensusThreadsBoundAcrossBurst/wasi=true/rounds=315
+--- PASS: TestHTTPHandlerCensusThreadsBoundAcrossBurst (0.03s)
+    --- PASS: TestHTTPHandlerCensusThreadsBoundAcrossBurst/wasi=false/rounds=32 (0.01s)
+    --- PASS: TestHTTPHandlerCensusThreadsBoundAcrossBurst/wasi=false/rounds=315 (0.01s)
+    --- PASS: TestHTTPHandlerCensusThreadsBoundAcrossBurst/wasi=true/rounds=32 (0.01s)
+    --- PASS: TestHTTPHandlerCensusThreadsBoundAcrossBurst/wasi=true/rounds=315 (0.01s)
+=== RUN   TestParseOptTrace
+--- PASS: TestParseOptTrace (0.00s)
+=== RUN   TestBisectOptDecisions
+--- PASS: TestBisectOptDecisions (0.00s)
+=== RUN   TestChildrenByPPid
+--- PASS: TestChildrenByPPid (0.00s)
+=== RUN   TestChildrenByPPidRefusesBadRecords
+--- PASS: TestChildrenByPPidRefusesBadRecords (0.00s)
+=== RUN   TestChildPIDsOnTheKernel
+--- PASS: TestChildPIDsOnTheKernel (0.03s)
+=== RUN   TestProcessScratchDirNamesItsPid
+--- PASS: TestProcessScratchDirNamesItsPid (0.00s)
+=== RUN   TestProcessScratchDirReclaimsOnlyDeadSiblings
+--- PASS: TestProcessScratchDirReclaimsOnlyDeadSiblings (0.00s)
+=== RUN   TestRemoveDeadScratchDirsStaysWithinItsPrefix
+--- PASS: TestRemoveDeadScratchDirsStaysWithinItsPrefix (0.00s)
+=== RUN   TestScratchDirPid
+=== RUN   TestScratchDirPid/well_formed
+=== RUN   TestScratchDirPid/a_different_prefix
+=== RUN   TestScratchDirPid/the_bare_prefix
+=== RUN   TestScratchDirPid/the_old_unpidded_shape
+=== RUN   TestScratchDirPid/no_random_segment
+=== RUN   TestScratchDirPid/an_empty_pid
+=== RUN   TestScratchDirPid/a_non-numeric_pid
+=== RUN   TestScratchDirPid/a_negative_pid
+=== RUN   TestScratchDirPid/a_longer_prefix_that_merely_starts_the_same
+--- PASS: TestScratchDirPid (0.00s)
+    --- PASS: TestScratchDirPid/well_formed (0.00s)
+    --- PASS: TestScratchDirPid/a_different_prefix (0.00s)
+    --- PASS: TestScratchDirPid/the_bare_prefix (0.00s)
+    --- PASS: TestScratchDirPid/the_old_unpidded_shape (0.00s)
+    --- PASS: TestScratchDirPid/no_random_segment (0.00s)
+    --- PASS: TestScratchDirPid/an_empty_pid (0.00s)
+    --- PASS: TestScratchDirPid/a_non-numeric_pid (0.00s)
+    --- PASS: TestScratchDirPid/a_negative_pid (0.00s)
+    --- PASS: TestScratchDirPid/a_longer_prefix_that_merely_starts_the_same (0.00s)
+=== RUN   TestProcessAlive
+--- PASS: TestProcessAlive (0.00s)
+=== RUN   TestImportClosureCoversTransitiveLocalImports
+--- PASS: TestImportClosureCoversTransitiveLocalImports (0.00s)
+=== RUN   TestImportClosureFollowsParentImports
+--- PASS: TestImportClosureFollowsParentImports (0.00s)
+=== RUN   TestImportClosureKeyChangesWhenAnyClosureFileChanges
+--- PASS: TestImportClosureKeyChangesWhenAnyClosureFileChanges (0.00s)
+=== RUN   TestImportClosureIgnoresUnrelatedFileChanges
+--- PASS: TestImportClosureIgnoresUnrelatedFileChanges (0.00s)
+=== RUN   TestImportClosureExternalImportClassification
+--- PASS: TestImportClosureExternalImportClassification (0.00s)
+=== RUN   TestImportClosureFailsOnMissingLocalImport
+--- PASS: TestImportClosureFailsOnMissingLocalImport (0.00s)
+=== RUN   TestImportClosureAllowsMissingExternalImport
+--- PASS: TestImportClosureAllowsMissingExternalImport (0.00s)
+=== RUN   TestImportClosureTracksSameLineImports
+--- PASS: TestImportClosureTracksSameLineImports (0.00s)
+=== RUN   TestImportClosureIgnoresCommentAndLiteralImports
+--- PASS: TestImportClosureIgnoresCommentAndLiteralImports (0.00s)
+=== RUN   TestImportClosureTracksReexportsAndDecodedPaths
+--- PASS: TestImportClosureTracksReexportsAndDecodedPaths (0.00s)
+=== RUN   TestImportClosureFailsOnMissingSameLineLocalImport
+--- PASS: TestImportClosureFailsOnMissingSameLineLocalImport (0.00s)
+=== RUN   TestImportClosureFailsOnUnlexableSource
+--- PASS: TestImportClosureFailsOnUnlexableSource (0.00s)
+=== RUN   TestHostBuildSlotsBoundConcurrentBuilds
+--- PASS: TestHostBuildSlotsBoundConcurrentBuilds (0.61s)
+=== RUN   TestHostBuildSlotsWithoutSharedCacheDoNotWait
+--- PASS: TestHostBuildSlotsWithoutSharedCacheDoNotWait (0.00s)
+=== RUN   TestDriverCompilerKeyCoversTheCompilerAndTheStdlib
+--- PASS: TestDriverCompilerKeyCoversTheCompilerAndTheStdlib (0.00s)
+=== RUN   TestCompileWithSelfHostDropsFernKnobs
+--- PASS: TestCompileWithSelfHostDropsFernKnobs (0.01s)
+=== RUN   TestTreeHashSeesEveryKindOfEdit
+--- PASS: TestTreeHashSeesEveryKindOfEdit (0.00s)
+=== RUN   TestStdlibHashCoversTheStdlibTree
+--- PASS: TestStdlibHashCoversTheStdlibTree (0.03s)
+=== RUN   TestDriverBuildWeightIsPerDriver
+--- PASS: TestDriverBuildWeightIsPerDriver (0.00s)
+=== RUN   TestBootstrapStage0PrintsThePathAlone
+--- PASS: TestBootstrapStage0PrintsThePathAlone (0.03s)
+=== RUN   TestBuildMemLimiterLoneOverBudgetProceeds
+--- PASS: TestBuildMemLimiterLoneOverBudgetProceeds (0.00s)
+=== RUN   TestBuildMemLimiterSerialisesOverBudgetPair
+--- PASS: TestBuildMemLimiterSerialisesOverBudgetPair (0.04s)
+=== RUN   TestBuildMemLimiterAllowsFittingPair
+--- PASS: TestBuildMemLimiterAllowsFittingPair (0.03s)
+=== RUN   TestBuildMemLimiterReleaseIdempotent
+--- PASS: TestBuildMemLimiterReleaseIdempotent (0.00s)
+=== RUN   TestBuildMemBudgetEnvOverride
+--- PASS: TestBuildMemBudgetEnvOverride (0.00s)
+=== RUN   TestGccBigLinkWeightScales
+--- PASS: TestGccBigLinkWeightScales (0.00s)
+=== RUN   TestImportClosuresShareDependencies
+=== RUN   TestImportClosuresShareDependencies/overlap_and_repeated_roots
+=== RUN   TestImportClosuresShareDependencies/cycle
+=== RUN   TestImportClosuresShareDependencies/missing_later_root
+=== RUN   TestImportClosuresShareDependencies/missing_later_dependency
+--- PASS: TestImportClosuresShareDependencies (0.00s)
+    --- PASS: TestImportClosuresShareDependencies/overlap_and_repeated_roots (0.00s)
+    --- PASS: TestImportClosuresShareDependencies/cycle (0.00s)
+    --- PASS: TestImportClosuresShareDependencies/missing_later_root (0.00s)
+    --- PASS: TestImportClosuresShareDependencies/missing_later_dependency (0.00s)
+=== RUN   TestCopySelfHostFilesPreservesSourceClosure
+--- PASS: TestCopySelfHostFilesPreservesSourceClosure (0.94s)
+=== RUN   TestStartInheritedServerHandsOverItsListener
+--- PASS: TestStartInheritedServerHandsOverItsListener (0.01s)
+=== RUN   TestWaitServerReadyWaitsForTheInheritingServer
+--- PASS: TestWaitServerReadyWaitsForTheInheritingServer (1.52s)
+=== RUN   TestReservedPortHoldsThePortForReusePortBinders
+--- PASS: TestReservedPortHoldsThePortForReusePortBinders (0.01s)
+=== RUN   TestServerEndedSaysHowTheServerEnded
+--- PASS: TestServerEndedSaysHowTheServerEnded (0.03s)
+=== RUN   TestFileTailKeepsTheEnd
+--- PASS: TestFileTailKeepsTheEnd (0.00s)
+=== RUN   TestValgrindMissingVerdict
+=== RUN   TestValgrindMissingVerdict/skips_by_default
+=== RUN   TestValgrindMissingVerdict/fails_when_required
+--- PASS: TestValgrindMissingVerdict (0.01s)
+    --- PASS: TestValgrindMissingVerdict/skips_by_default (0.01s)
+    --- PASS: TestValgrindMissingVerdict/fails_when_required (0.01s)
+=== RUN   TestWasmtimeMissingVerdict
+=== RUN   TestWasmtimeMissingVerdict/skips_by_default
+=== RUN   TestWasmtimeMissingVerdict/fails_when_required
+--- PASS: TestWasmtimeMissingVerdict (0.02s)
+    --- PASS: TestWasmtimeMissingVerdict/skips_by_default (0.01s)
+    --- PASS: TestWasmtimeMissingVerdict/fails_when_required (0.00s)
+=== RUN   TestX86_64ToolingMissingVerdict
+=== RUN   TestX86_64ToolingMissingVerdict/skips_by_default
+=== RUN   TestX86_64ToolingMissingVerdict/fails_when_required
+--- PASS: TestX86_64ToolingMissingVerdict (0.05s)
+    --- PASS: TestX86_64ToolingMissingVerdict/skips_by_default (0.04s)
+    --- PASS: TestX86_64ToolingMissingVerdict/fails_when_required (0.00s)
+=== RUN   TestLookupX86_64RunnerFollowsTheHost
+--- PASS: TestLookupX86_64RunnerFollowsTheHost (0.00s)
+=== RUN   TestX86_64ToolingTargetsX86_64
+--- PASS: TestX86_64ToolingTargetsX86_64 (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2eharness	3.481s
+=== RUN   TestSourcelintChildEnvIsFiltered
+--- PASS: TestSourcelintChildEnvIsFiltered (0.00s)
+=== RUN   TestAnnotateFailuresNamesTheTestAndItsOutput
+--- PASS: TestAnnotateFailuresNamesTheTestAndItsOutput (0.02s)
+=== RUN   TestTestRunningJobsAnnotateTheirFailures
+--- PASS: TestTestRunningJobsAnnotateTheirFailures (0.01s)
+=== RUN   TestCrossToolchainRequiresRequestedEmulator
+=== RUN   TestCrossToolchainRequiresRequestedEmulator/regular-not-static
+=== RUN   TestCrossToolchainRequiresRequestedEmulator/static-not-regular
+=== RUN   TestCrossToolchainRequiresRequestedEmulator/regular-ready
+=== RUN   TestCrossToolchainRequiresRequestedEmulator/static-ready
+=== RUN   TestCrossToolchainRequiresRequestedEmulator/assembler-missing
+=== RUN   TestCrossToolchainRequiresRequestedEmulator/compiler-missing
+=== RUN   TestCrossToolchainRequiresRequestedEmulator/emulator-only
+=== RUN   TestCrossToolchainRequiresRequestedEmulator/static-only
+=== RUN   TestCrossToolchainRequiresRequestedEmulator/nothing-installed
+=== RUN   TestCrossToolchainRequiresRequestedEmulator/unknown-package
+--- PASS: TestCrossToolchainRequiresRequestedEmulator (0.03s)
+    --- PASS: TestCrossToolchainRequiresRequestedEmulator/regular-not-static (0.00s)
+    --- PASS: TestCrossToolchainRequiresRequestedEmulator/static-not-regular (0.00s)
+    --- PASS: TestCrossToolchainRequiresRequestedEmulator/regular-ready (0.00s)
+    --- PASS: TestCrossToolchainRequiresRequestedEmulator/static-ready (0.00s)
+    --- PASS: TestCrossToolchainRequiresRequestedEmulator/assembler-missing (0.00s)
+    --- PASS: TestCrossToolchainRequiresRequestedEmulator/compiler-missing (0.00s)
+    --- PASS: TestCrossToolchainRequiresRequestedEmulator/emulator-only (0.00s)
+    --- PASS: TestCrossToolchainRequiresRequestedEmulator/static-only (0.00s)
+    --- PASS: TestCrossToolchainRequiresRequestedEmulator/nothing-installed (0.00s)
+    --- PASS: TestCrossToolchainRequiresRequestedEmulator/unknown-package (0.00s)
+=== RUN   TestAutoRebasePushesSafely
+--- PASS: TestAutoRebasePushesSafely (0.00s)
+=== RUN   TestAutoRebaseKeepsThePushGate
+--- PASS: TestAutoRebaseKeepsThePushGate (0.00s)
+=== RUN   TestAutoRebaseCommentsOnceEachHead
+--- PASS: TestAutoRebaseCommentsOnceEachHead (0.00s)
+=== RUN   TestAutoRebaseAsksForARebaseWhenItCannotPush
+--- PASS: TestAutoRebaseAsksForARebaseWhenItCannotPush (0.00s)
+=== RUN   TestAutoRebaseSurvivesTheNextMerge
+--- PASS: TestAutoRebaseSurvivesTheNextMerge (0.00s)
+=== RUN   TestAutoRebaseUsesTheLiveBase
+--- PASS: TestAutoRebaseUsesTheLiveBase (0.00s)
+=== RUN   TestAutoRebaseRunsOnlyOnTheDefaultBranch
+--- PASS: TestAutoRebaseRunsOnlyOnTheDefaultBranch (0.00s)
+=== RUN   TestCheckStmtAndBindStmtBindTheSameStatementForms
+--- PASS: TestCheckStmtAndBindStmtBindTheSameStatementForms (0.09s)
+=== RUN   TestNoScopeOnlyCheckStmtCalls
+--- PASS: TestNoScopeOnlyCheckStmtCalls (0.08s)
+=== RUN   TestCancelOnConflictReapsSafely
+--- PASS: TestCancelOnConflictReapsSafely (0.00s)
+=== RUN   TestCancelOnFailureWatchesEveryPRLane
+--- PASS: TestCancelOnFailureWatchesEveryPRLane (0.00s)
+=== RUN   TestCancelOnFailureReapsSafely
+--- PASS: TestCancelOnFailureReapsSafely (0.00s)
+=== RUN   TestCancelOnMergeReapsSafely
+--- PASS: TestCancelOnMergeReapsSafely (0.00s)
+=== RUN   TestDisableChromeAptSources
+=== RUN   TestDisableChromeAptSources/legacy-main
+=== RUN   TestDisableChromeAptSources/arbitrary-list-name
+=== RUN   TestDisableChromeAptSources/dedicated-deb822
+=== RUN   TestDisableChromeAptSources/mixed-stanzas
+=== RUN   TestDisableChromeAptSources/mixed-uris
+=== RUN   TestDisableChromeAptSources/continued-uris
+=== RUN   TestDisableChromeAptSources/chrome-continuation
+=== RUN   TestDisableChromeAptSources/unrelated-host
+=== RUN   TestDisableChromeAptSources/comment-only
+=== RUN   TestDisableChromeAptSources/unrelated-deb822
+=== RUN   TestDisableChromeAptSources/ignored-extension
+--- PASS: TestDisableChromeAptSources (0.29s)
+    --- PASS: TestDisableChromeAptSources/legacy-main (0.02s)
+    --- PASS: TestDisableChromeAptSources/arbitrary-list-name (0.02s)
+    --- PASS: TestDisableChromeAptSources/dedicated-deb822 (0.02s)
+    --- PASS: TestDisableChromeAptSources/mixed-stanzas (0.02s)
+    --- PASS: TestDisableChromeAptSources/mixed-uris (0.02s)
+    --- PASS: TestDisableChromeAptSources/continued-uris (0.02s)
+    --- PASS: TestDisableChromeAptSources/chrome-continuation (0.03s)
+    --- PASS: TestDisableChromeAptSources/unrelated-host (0.02s)
+    --- PASS: TestDisableChromeAptSources/comment-only (0.04s)
+    --- PASS: TestDisableChromeAptSources/unrelated-deb822 (0.05s)
+    --- PASS: TestDisableChromeAptSources/ignored-extension (0.06s)
+=== RUN   TestDisableChromeAptKeepsUbuntuTargets
+--- PASS: TestDisableChromeAptKeepsUbuntuTargets (0.20s)
+=== RUN   TestNoSilentlyCIDarkEnvGates
+--- PASS: TestNoSilentlyCIDarkEnvGates (1.10s)
+=== RUN   TestEveryGoTestIsSelectedByALane
+--- PASS: TestEveryGoTestIsSelectedByALane (2.63s)
+=== RUN   TestCoreutilsShardCountMatchesTheMatrix
+--- PASS: TestCoreutilsShardCountMatchesTheMatrix (0.00s)
+=== RUN   TestMacOSLaneFilterCoversWhatTheLaneBuilds
+--- PASS: TestMacOSLaneFilterCoversWhatTheLaneBuilds (2.42s)
+=== RUN   TestGlobMatchesFollowsGitHubGrammar
+--- PASS: TestGlobMatchesFollowsGitHubGrammar (0.00s)
+=== RUN   TestCIIsTheOnlyPullRequestLane
+--- PASS: TestCIIsTheOnlyPullRequestLane (0.01s)
+=== RUN   TestCICallsEveryLane
+--- PASS: TestCICallsEveryLane (0.03s)
+=== RUN   TestCIQueuesPullRequests
+--- PASS: TestCIQueuesPullRequests (0.00s)
+=== RUN   TestMainCICoalescesPendingRuns
+--- PASS: TestMainCICoalescesPendingRuns (0.00s)
+=== RUN   TestCILaneFiltersMatchTheirJobs
+--- PASS: TestCILaneFiltersMatchTheirJobs (0.00s)
+=== RUN   TestBootstrapLaneWatchesTheSmokeSources
+--- PASS: TestBootstrapLaneWatchesTheSmokeSources (0.17s)
+=== RUN   TestCILanesAreGrantedWhatTheyRequest
+--- PASS: TestCILanesAreGrantedWhatTheyRequest (0.00s)
+=== RUN   TestChangesScriptIsSelfTested
+--- PASS: TestChangesScriptIsSelfTested (0.00s)
+=== RUN   TestCILintRunsOutsideTheFullSuiteQueue
+--- PASS: TestCILintRunsOutsideTheFullSuiteQueue (0.00s)
+=== RUN   TestConformanceCensusHasARowPerFixture
+--- PASS: TestConformanceCensusHasARowPerFixture (0.03s)
+=== RUN   TestCoreutilsBenchHyperfineSchemas
+=== RUN   TestCoreutilsBenchHyperfineSchemas/0
+=== RUN   TestCoreutilsBenchHyperfineSchemas/2
+=== RUN   TestCoreutilsBenchHyperfineSchemas/3
+--- PASS: TestCoreutilsBenchHyperfineSchemas (0.13s)
+    --- PASS: TestCoreutilsBenchHyperfineSchemas/0 (0.05s)
+    --- PASS: TestCoreutilsBenchHyperfineSchemas/2 (0.06s)
+    --- PASS: TestCoreutilsBenchHyperfineSchemas/3 (0.03s)
+=== RUN   TestCoreutilsShardEscaperHandlesEveryMetacharacter
+--- PASS: TestCoreutilsShardEscaperHandlesEveryMetacharacter (0.01s)
+=== RUN   TestDiagnosticSuggestionsNameAQualifiedTrait
+--- PASS: TestDiagnosticSuggestionsNameAQualifiedTrait (0.48s)
+=== RUN   TestUnqualifiedTraitNamesDiscriminates
+--- PASS: TestUnqualifiedTraitNamesDiscriminates (0.00s)
+=== RUN   TestDeriveHintCallArgsJudgesTheSpelling
+--- PASS: TestDeriveHintCallArgsJudgesTheSpelling (0.00s)
+=== RUN   TestFernStringLiteralsSkipsComments
+--- PASS: TestFernStringLiteralsSkipsComments (0.00s)
+=== RUN   TestEmitsDiagnosticsSeparatesCopyFromFixtures
+--- PASS: TestEmitsDiagnosticsSeparatesCopyFromFixtures (0.00s)
+=== RUN   TestLivingDocPathsExist
+--- PASS: TestLivingDocPathsExist (0.13s)
+=== RUN   TestDocSourcePathSyntax
+--- PASS: TestDocSourcePathSyntax (0.00s)
+=== RUN   TestDocsIndexCoversEveryTopLevelDoc
+--- PASS: TestDocsIndexCoversEveryTopLevelDoc (0.02s)
+=== RUN   TestDriverBuildingJobsRestoreTheDriverCache
+--- PASS: TestDriverBuildingJobsRestoreTheDriverCache (0.03s)
+=== RUN   TestCheckDriverSizesQuietOnBaseline
+--- PASS: TestCheckDriverSizesQuietOnBaseline (0.02s)
+=== RUN   TestCheckDriverSizesWritesJobSummary
+--- PASS: TestCheckDriverSizesWritesJobSummary (0.01s)
+=== RUN   TestCheckDriverSizesFlagsTheHistoricalGrowth
+--- PASS: TestCheckDriverSizesFlagsTheHistoricalGrowth (0.01s)
+=== RUN   TestCheckDriverSizesFlagsShrink
+--- PASS: TestCheckDriverSizesFlagsShrink (0.01s)
+=== RUN   TestCheckDriverSizesToleratesSmallDrift
+--- PASS: TestCheckDriverSizesToleratesSmallDrift (0.01s)
+=== RUN   TestCheckDriverSizesReportsUnbaselinedOnce
+--- PASS: TestCheckDriverSizesReportsUnbaselinedOnce (0.01s)
+=== RUN   TestCheckDriverSizesReportsWhenItRanBlind
+=== RUN   TestCheckDriverSizesReportsWhenItRanBlind/on_a_runner
+=== RUN   TestCheckDriverSizesReportsWhenItRanBlind/off_a_runner
+--- PASS: TestCheckDriverSizesReportsWhenItRanBlind (0.01s)
+    --- PASS: TestCheckDriverSizesReportsWhenItRanBlind/on_a_runner (0.00s)
+    --- PASS: TestCheckDriverSizesReportsWhenItRanBlind/off_a_runner (0.01s)
+=== RUN   TestCheckDriverSizesStrictModeIsFatal
+--- PASS: TestCheckDriverSizesStrictModeIsFatal (0.01s)
+=== RUN   TestCheckDriverSizesPartialReportSaysItIsPartial
+--- PASS: TestCheckDriverSizesPartialReportSaysItIsPartial (0.01s)
+=== RUN   TestCheckDriverSizesCompleteModeFlagsUnmeasured
+--- PASS: TestCheckDriverSizesCompleteModeFlagsUnmeasured (0.02s)
+=== RUN   TestCheckDriverSizesCompleteModeStrictFailsOnUnmeasured
+--- PASS: TestCheckDriverSizesCompleteModeStrictFailsOnUnmeasured (0.02s)
+=== RUN   TestCheckDriverSizesCompleteModeQuietWhenWhole
+--- PASS: TestCheckDriverSizesCompleteModeQuietWhenWhole (0.02s)
+=== RUN   TestCheckDriverSizesBlindIsFatalUnderStrict
+--- PASS: TestCheckDriverSizesBlindIsFatalUnderStrict (0.01s)
+=== RUN   TestCheckDriverSizesBadUsage
+--- PASS: TestCheckDriverSizesBadUsage (0.01s)
+=== RUN   TestSelfHostDriverSizeBaselineIsWellFormed
+--- PASS: TestSelfHostDriverSizeBaselineIsWellFormed (0.00s)
+=== RUN   TestSelfHostWorkflowExportsDriverSizeReport
+--- PASS: TestSelfHostWorkflowExportsDriverSizeReport (0.00s)
+=== RUN   TestUnitLaneCoversEveryNonSlowPackage
+--- PASS: TestUnitLaneCoversEveryNonSlowPackage (0.00s)
+=== RUN   TestSelfHostShardsSelectEveryTest
+--- PASS: TestSelfHostShardsSelectEveryTest (0.00s)
+=== RUN   TestEveryExampleHasAnExpectedExit
+--- PASS: TestEveryExampleHasAnExpectedExit (0.00s)
+=== RUN   TestExampleLanesUseTheRunner
+--- PASS: TestExampleLanesUseTheRunner (0.00s)
+=== RUN   TestRunnerRejectsACrash
+=== RUN   TestRunnerRejectsACrash/expected_status_passes
+=== RUN   TestRunnerRejectsACrash/signal-range_crash_fails
+=== RUN   TestRunnerRejectsACrash/wrong_answer_fails
+=== RUN   TestRunnerRejectsACrash/unlisted_example_fails
+--- PASS: TestRunnerRejectsACrash (0.04s)
+    --- PASS: TestRunnerRejectsACrash/expected_status_passes (0.01s)
+    --- PASS: TestRunnerRejectsACrash/signal-range_crash_fails (0.01s)
+    --- PASS: TestRunnerRejectsACrash/wrong_answer_fails (0.01s)
+    --- PASS: TestRunnerRejectsACrash/unlisted_example_fails (0.01s)
+=== RUN   TestFlagLibAgreesWithEnvflag
+--- PASS: TestFlagLibAgreesWithEnvflag (0.08s)
+=== RUN   TestGofmtGateReadsGitsFileSetNotTheDirectory
+=== RUN   TestGofmtGateReadsGitsFileSetNotTheDirectory/an_ignored_path_is_not_the_repository's_to_format
+=== RUN   TestGofmtGateReadsGitsFileSetNotTheDirectory/a_tracked_path_still_is
+=== RUN   TestGofmtGateReadsGitsFileSetNotTheDirectory/so_is_a_new_file_git_does_not_track_yet
+=== RUN   TestGofmtGateReadsGitsFileSetNotTheDirectory/a_tracked_file_deleted_from_the_worktree_is_skipped,_not_an_error
+--- PASS: TestGofmtGateReadsGitsFileSetNotTheDirectory (0.12s)
+    --- PASS: TestGofmtGateReadsGitsFileSetNotTheDirectory/an_ignored_path_is_not_the_repository's_to_format (0.03s)
+    --- PASS: TestGofmtGateReadsGitsFileSetNotTheDirectory/a_tracked_path_still_is (0.03s)
+    --- PASS: TestGofmtGateReadsGitsFileSetNotTheDirectory/so_is_a_new_file_git_does_not_track_yet (0.03s)
+    --- PASS: TestGofmtGateReadsGitsFileSetNotTheDirectory/a_tracked_file_deleted_from_the_worktree_is_skipped,_not_an_error (0.03s)
+=== RUN   TestMainLanesCancelOnlyWhenTheyCanFinish
+--- PASS: TestMainLanesCancelOnlyWhenTheyCanFinish (0.01s)
+=== RUN   TestMainRedWatchesCI
+--- PASS: TestMainRedWatchesCI (0.00s)
+=== RUN   TestMainRedFiresOnMainPushesOnly
+--- PASS: TestMainRedFiresOnMainPushesOnly (0.00s)
+=== RUN   TestMiseActionPinsTheMiseRelease
+--- PASS: TestMiseActionPinsTheMiseRelease (0.00s)
+=== RUN   TestEveryBackendEmitIsMonomorphised
+--- PASS: TestEveryBackendEmitIsMonomorphised (1.06s)
+=== RUN   TestIsNestedCheckoutFindsAWorktree
+--- PASS: TestIsNestedCheckoutFindsAWorktree (0.00s)
+=== RUN   TestNetlifyGoPin
+--- PASS: TestNetlifyGoPin (0.00s)
+=== RUN   TestNoTrackedExecutables
+--- PASS: TestNoTrackedExecutables (0.23s)
+=== RUN   TestPerfHistoryRecordsLanesOnceAndShowsThem
+--- PASS: TestPerfHistoryRecordsLanesOnceAndShowsThem (0.26s)
+=== RUN   TestPerfHistorySurvivesAConcurrentLane
+--- PASS: TestPerfHistorySurvivesAConcurrentLane (0.21s)
+=== RUN   TestPerfHistoryIgnoresAnInheritedGitDir
+--- PASS: TestPerfHistoryIgnoresAnInheritedGitDir (0.11s)
+=== RUN   TestPerfLaneLabelsAreStable
+--- PASS: TestPerfLaneLabelsAreStable (0.00s)
+=== RUN   TestNoPlatformSuffixOnTestFiles
+--- PASS: TestNoPlatformSuffixOnTestFiles (0.10s)
+=== RUN   TestPRLanesShareOneDocOnlyFilter
+--- PASS: TestPRLanesShareOneDocOnlyFilter (0.00s)
+=== RUN   TestGateLanesRunOnMain
+--- PASS: TestGateLanesRunOnMain (0.00s)
+=== RUN   TestPrinterCorpusMatrixCoversEveryShard
+--- PASS: TestPrinterCorpusMatrixCoversEveryShard (0.00s)
+=== RUN   TestPullfrogSkipsReviewsNobodyReads
+--- PASS: TestPullfrogSkipsReviewsNobodyReads (0.00s)
+=== RUN   TestRawStringPointerComesFromRawAlloc
+    raw_string_header_test.go:57: /workspace/lang-image-wasm-adapter-health/compiler/runtime/templates/__fern_cov_report.fern:22: __raw_string boxes "t", which __fern_cov_report does not bind with __raw_alloc. __raw_alloc is the ONLY producer that reserves the 24-byte string-box header ahead of its pointer; boxing a scratch buffer, an argv entry or a borrowed address writes the box over 24 bytes that belong to something else, and nothing reports it at run time (#7351)
+--- FAIL: TestRawStringPointerComesFromRawAlloc (0.03s)
+=== RUN   TestSelfHostDriversRunTheRcUnderflowGuard
+--- PASS: TestSelfHostDriversRunTheRcUnderflowGuard (0.00s)
+=== RUN   TestReapStaleRunsCancelsSafely
+--- PASS: TestReapStaleRunsCancelsSafely (0.00s)
+=== RUN   TestPullfrogReviewWaitsForTheFastTier
+--- PASS: TestPullfrogReviewWaitsForTheFastTier (0.00s)
+=== RUN   TestSelfHostSemanticTypeBoundary
+--- PASS: TestSelfHostSemanticTypeBoundary (0.11s)
+=== RUN   TestShardDenominatorMatchesMatrix
+=== RUN   TestShardDenominatorMatchesMatrix/DIFF_ORACLE_SHARD
+=== RUN   TestShardDenominatorMatchesMatrix/FERNSMITH_SHRINK_SHARD
+=== RUN   TestShardDenominatorMatchesMatrix/FERN_PRINTER_CORPUS_SHARD
+--- PASS: TestShardDenominatorMatchesMatrix (0.01s)
+    --- PASS: TestShardDenominatorMatchesMatrix/DIFF_ORACLE_SHARD (0.01s)
+    --- PASS: TestShardDenominatorMatchesMatrix/FERNSMITH_SHRINK_SHARD (0.00s)
+    --- PASS: TestShardDenominatorMatchesMatrix/FERN_PRINTER_CORPUS_SHARD (0.00s)
+=== RUN   TestVerifyShardOutcomesAllSuccess
+--- PASS: TestVerifyShardOutcomesAllSuccess (0.03s)
+=== RUN   TestVerifyShardOutcomesFailureIsFatal
+--- PASS: TestVerifyShardOutcomesFailureIsFatal (0.02s)
+=== RUN   TestVerifyShardOutcomesFailureFatalEvenWhenTolerating
+--- PASS: TestVerifyShardOutcomesFailureFatalEvenWhenTolerating (0.01s)
+=== RUN   TestVerifyShardOutcomesVanishedIsFatalByDefault
+--- PASS: TestVerifyShardOutcomesVanishedIsFatalByDefault (0.01s)
+=== RUN   TestVerifyShardOutcomesVanishedTolerated
+--- PASS: TestVerifyShardOutcomesVanishedTolerated (0.02s)
+=== RUN   TestVerifyShardOutcomesSkippedIsNotATestFailure
+--- PASS: TestVerifyShardOutcomesSkippedIsNotATestFailure (0.03s)
+=== RUN   TestVerifyShardOutcomesSkippedTolerated
+--- PASS: TestVerifyShardOutcomesSkippedTolerated (0.02s)
+=== RUN   TestVerifyShardOutcomesSkippedAndFailureAreDistinct
+--- PASS: TestVerifyShardOutcomesSkippedAndFailureAreDistinct (0.02s)
+=== RUN   TestVerifyShardOutcomesMultiHost
+--- PASS: TestVerifyShardOutcomesMultiHost (0.02s)
+=== RUN   TestVerifyShardOutcomesEmptyMarkerIsFailure
+--- PASS: TestVerifyShardOutcomesEmptyMarkerIsFailure (0.01s)
+=== RUN   TestVerifyShardOutcomesTrimsWhitespace
+--- PASS: TestVerifyShardOutcomesTrimsWhitespace (0.01s)
+=== RUN   TestVerifyShardOutcomesBadUsage
+--- PASS: TestVerifyShardOutcomesBadUsage (0.01s)
+=== RUN   TestSelfHostWorkflowShardCountsMatchVerifyExpectations
+--- PASS: TestSelfHostWorkflowShardCountsMatchVerifyExpectations (0.00s)
+=== RUN   TestSelfHostWorkflowOwnJobTestsEachHaveAJob
+--- PASS: TestSelfHostWorkflowOwnJobTestsEachHaveAJob (0.01s)
+=== RUN   TestSelfHostWorkflowVanishedShardBudgetMatchesTimeout
+--- PASS: TestSelfHostWorkflowVanishedShardBudgetMatchesTimeout (0.00s)
+=== RUN   TestClassifyVanishedShardsIsAdvisory
+--- PASS: TestClassifyVanishedShardsIsAdvisory (0.11s)
+=== RUN   TestClassifyVanishedShardsVerdicts
+--- PASS: TestClassifyVanishedShardsVerdicts (0.02s)
+=== RUN   TestClassifyVanishedShardsNestedNames
+=== RUN   TestClassifyVanishedShardsNestedNames/direct
+=== RUN   TestClassifyVanishedShardsNestedNames/called
+=== RUN   TestClassifyVanishedShardsNestedNames/nested
+=== RUN   TestClassifyVanishedShardsNestedNames/custom
+--- PASS: TestClassifyVanishedShardsNestedNames (0.05s)
+    --- PASS: TestClassifyVanishedShardsNestedNames/direct (0.01s)
+    --- PASS: TestClassifyVanishedShardsNestedNames/called (0.01s)
+    --- PASS: TestClassifyVanishedShardsNestedNames/nested (0.01s)
+    --- PASS: TestClassifyVanishedShardsNestedNames/custom (0.01s)
+=== RUN   TestClassifierTestStepPrefixMatchesWorkflow
+--- PASS: TestClassifierTestStepPrefixMatchesWorkflow (0.00s)
+=== RUN   TestShardTestsCoversTheListWithAndWithoutWeights
+--- PASS: TestShardTestsCoversTheListWithAndWithoutWeights (0.14s)
+=== RUN   TestShowcaseThemeMatchesDocs
+--- PASS: TestShowcaseThemeMatchesDocs (0.00s)
+=== RUN   TestEveryStdlibModuleHasAModuleIntroduction
+    stdlib_module_docs_test.go:59: checked 161 module introductions
+--- PASS: TestEveryStdlibModuleHasAModuleIntroduction (0.13s)
+=== RUN   TestEveryStdlibModuleHasASidebarGroup
+--- PASS: TestEveryStdlibModuleHasASidebarGroup (0.00s)
+=== RUN   TestEveryTestFileIsInSomeBuild
+--- PASS: TestEveryTestFileIsInSomeBuild (0.44s)
+=== RUN   TestCITestWeightsRefreshUsesIndependentRuns
+--- PASS: TestCITestWeightsRefreshUsesIndependentRuns (0.03s)
+=== RUN   TestCITestWeightsRefreshDropsTestsTheTreeNoLongerHas
+--- PASS: TestCITestWeightsRefreshDropsTestsTheTreeNoLongerHas (0.03s)
+=== RUN   TestCITestWeightsRefreshRejectsBadEvidence
+=== RUN   TestCITestWeightsRefreshRejectsBadEvidence/negative_duration
+=== RUN   TestCITestWeightsRefreshRejectsBadEvidence/non-numeric_duration
+=== RUN   TestCITestWeightsRefreshRejectsBadEvidence/subtest_duration
+=== RUN   TestCITestWeightsRefreshRejectsBadEvidence/missing_duration
+=== RUN   TestCITestWeightsRefreshRejectsBadEvidence/empty_run
+=== RUN   TestCITestWeightsRefreshRejectsBadEvidence/blank_run
+=== RUN   TestCITestWeightsRefreshRejectsBadEvidence/negative_weight
+=== RUN   TestCITestWeightsRefreshRejectsBadEvidence/duplicate_weight
+--- PASS: TestCITestWeightsRefreshRejectsBadEvidence (0.10s)
+    --- PASS: TestCITestWeightsRefreshRejectsBadEvidence/negative_duration (0.01s)
+    --- PASS: TestCITestWeightsRefreshRejectsBadEvidence/non-numeric_duration (0.01s)
+    --- PASS: TestCITestWeightsRefreshRejectsBadEvidence/subtest_duration (0.01s)
+    --- PASS: TestCITestWeightsRefreshRejectsBadEvidence/missing_duration (0.01s)
+    --- PASS: TestCITestWeightsRefreshRejectsBadEvidence/empty_run (0.01s)
+    --- PASS: TestCITestWeightsRefreshRejectsBadEvidence/blank_run (0.01s)
+    --- PASS: TestCITestWeightsRefreshRejectsBadEvidence/negative_weight (0.01s)
+    --- PASS: TestCITestWeightsRefreshRejectsBadEvidence/duplicate_weight (0.01s)
+=== RUN   TestCITestWeightsRefreshRequiresDistinctRunDirectories
+--- PASS: TestCITestWeightsRefreshRequiresDistinctRunDirectories (0.03s)
+=== RUN   TestCITestWeightsMergeKeepsTheSlowestObservation
+--- PASS: TestCITestWeightsMergeKeepsTheSlowestObservation (0.05s)
+=== RUN   TestSelfHostVerifyJobPrintsTheMergedDurations
+--- PASS: TestSelfHostVerifyJobPrintsTheMergedDurations (0.00s)
+=== RUN   TestCITestWeightsExtractPicksTopLevelDurations
+--- PASS: TestCITestWeightsExtractPicksTopLevelDurations (0.21s)
+=== RUN   TestCITestWeightsQuietOnAccurateWeights
+--- PASS: TestCITestWeightsQuietOnAccurateWeights (0.02s)
+=== RUN   TestCITestWeightsFlagsUnweightedHeavyTest
+--- PASS: TestCITestWeightsFlagsUnweightedHeavyTest (0.01s)
+=== RUN   TestCITestWeightsFlagsUnderWeightedTest
+--- PASS: TestCITestWeightsFlagsUnderWeightedTest (0.01s)
+=== RUN   TestCITestWeightsIgnoresCheapTests
+--- PASS: TestCITestWeightsIgnoresCheapTests (0.01s)
+=== RUN   TestCITestWeightsSuggestionsOnlyRaise
+--- PASS: TestCITestWeightsSuggestionsOnlyRaise (0.01s)
+=== RUN   TestCITestWeightsFlagsShardNearBudget
+--- PASS: TestCITestWeightsFlagsShardNearBudget (0.01s)
+=== RUN   TestCITestWeightsReportsWhenItRanBlind
+=== RUN   TestCITestWeightsReportsWhenItRanBlind/on_a_runner
+=== RUN   TestCITestWeightsReportsWhenItRanBlind/off_a_runner
+--- PASS: TestCITestWeightsReportsWhenItRanBlind (0.01s)
+    --- PASS: TestCITestWeightsReportsWhenItRanBlind/on_a_runner (0.01s)
+    --- PASS: TestCITestWeightsReportsWhenItRanBlind/off_a_runner (0.01s)
+=== RUN   TestCITestWeightsReportsEmptyTimingFiles
+--- PASS: TestCITestWeightsReportsEmptyTimingFiles (0.01s)
+=== RUN   TestCITestWeightsStrictModeIsFatal
+--- PASS: TestCITestWeightsStrictModeIsFatal (0.01s)
+=== RUN   TestCITestWeightsWritesJobSummary
+=== RUN   TestCITestWeightsWritesJobSummary/summary_file_set
+=== RUN   TestCITestWeightsWritesJobSummary/summary_file_unset
+--- PASS: TestCITestWeightsWritesJobSummary (0.02s)
+    --- PASS: TestCITestWeightsWritesJobSummary/summary_file_set (0.01s)
+    --- PASS: TestCITestWeightsWritesJobSummary/summary_file_unset (0.01s)
+=== RUN   TestCITestWeightsBadUsage
+--- PASS: TestCITestWeightsBadUsage (0.03s)
+=== RUN   TestSelfHostWeightGateBudgetMatchesShardTimeout
+--- PASS: TestSelfHostWeightGateBudgetMatchesShardTimeout (0.00s)
+=== RUN   TestPreferOfficialUbuntuAptMirror
+--- PASS: TestPreferOfficialUbuntuAptMirror (0.05s)
+=== RUN   TestUnionMergedRegistriesHaveNoDuplicateKeys
+=== RUN   TestUnionMergedRegistriesHaveNoDuplicateKeys/internal/testing/e2e/testdata/conformance-leak-census.txt
+--- PASS: TestUnionMergedRegistriesHaveNoDuplicateKeys (0.00s)
+    --- PASS: TestUnionMergedRegistriesHaveNoDuplicateKeys/internal/testing/e2e/testdata/conformance-leak-census.txt (0.00s)
+=== RUN   TestUnionMergedPathsExist
+--- PASS: TestUnionMergedPathsExist (0.00s)
+=== RUN   TestUnitLaneRequestsWasmtime
+--- PASS: TestUnitLaneRequestsWasmtime (0.00s)
+=== RUN   TestArm64RunTestsFallBackToNative
+--- PASS: TestArm64RunTestsFallBackToNative (0.02s)
+=== RUN   TestUnitLaneSetsAnExplicitTestTimeout
+--- PASS: TestUnitLaneSetsAnExplicitTestTimeout (0.00s)
+=== RUN   TestCoreutilsLaneRequestsWasmtime
+--- PASS: TestCoreutilsLaneRequestsWasmtime (0.00s)
+=== RUN   TestCoreutilsLaneHasTheGNUOracle
+--- PASS: TestCoreutilsLaneHasTheGNUOracle (0.00s)
+=== RUN   TestWorkflowPathFiltersHaveNoDeadEntries
+--- PASS: TestWorkflowPathFiltersHaveNoDeadEntries (0.01s)
+=== RUN   TestWorkflowPathFiltersCoverEveryDependency
+=== RUN   TestWorkflowPathFiltersCoverEveryDependency/macos.yml_./cmd/fern
+=== RUN   TestWorkflowPathFiltersCoverEveryDependency/docs-build.yml_./cmd/fern
+=== RUN   TestWorkflowPathFiltersCoverEveryDependency/pages.yml_./cmd/fern
+=== RUN   TestWorkflowPathFiltersCoverEveryDependency/playground-e2e.yml_./cmd/fern
+--- PASS: TestWorkflowPathFiltersCoverEveryDependency (1.67s)
+    --- PASS: TestWorkflowPathFiltersCoverEveryDependency/macos.yml_./cmd/fern (0.43s)
+    --- PASS: TestWorkflowPathFiltersCoverEveryDependency/docs-build.yml_./cmd/fern (0.42s)
+    --- PASS: TestWorkflowPathFiltersCoverEveryDependency/pages.yml_./cmd/fern (0.41s)
+    --- PASS: TestWorkflowPathFiltersCoverEveryDependency/playground-e2e.yml_./cmd/fern (0.41s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/sourcelint	13.903s
+FAIL
