@@ -1,0 +1,8 @@
+=== RUN   TestSelfHostCLIX86_64
+=== RUN   TestSelfHostCLIX86_64/flag-refusals-exit-2
+    self_host_cli_test.go:2399: fern -target x86-64-linux -harden -o /tmp/TestSelfHostCLIX86_64flag-refusals-exit-2265027453/001/x.so /tmp/TestSelfHostCLIX86_64flag-refusals-exit-2265027453/001/main.fern exited 0, want 2
+--- FAIL: TestSelfHostCLIX86_64 (2.19s)
+    --- FAIL: TestSelfHostCLIX86_64/flag-refusals-exit-2 (0.01s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	2.204s
+FAIL
