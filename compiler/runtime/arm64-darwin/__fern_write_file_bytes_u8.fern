@@ -33,7 +33,7 @@ function __fern_write_file_bytes_u8(path: string, bytes: i32[]): Result[void, Io
       bad = 5;
     } else {
       if (w < 0) {
-        if (w != -4) {
+        if (w != -4 || at == 0) {
           bad = 0 - w;
         }
       } else {
