@@ -1016,6 +1016,16 @@ findings. Ranked by leverage.
   Twenty process pairs per input give candidate/baseline ratios from 0.994 to 1.015.
   These probes include the parser, code emission and output, without a general compiler speed claim.
 
+  Builtin recognition retains its owned-state carrier.
+  A generic result prototype preserves all fields across 698 states and 349 dispatch inputs.
+  Both branches retain the construction state, and copy counters remain zero.
+  The prototype reduces allocations but regresses the repeated `__clz32` dispatch probe by 10.5%.
+  A repeated raw no-op probe regresses by 2.9%, while unknown-call dispatch improves by 4.3%.
+
+  These synthetic probes use 300,000 calls and twenty process pairs on one CPU.
+  The workspace preserves the rejected prototype, raw timings, outputs and source hashes.
+  The prototype remains outside production, and external body collections still need their result migration.
+
   _Rest of this row:_ the bespoke `*Result` structs remain.
   Generic functions no longer block these migrations.
   T6/SH-026 is complete, and its four signature lookup families use standard options.
