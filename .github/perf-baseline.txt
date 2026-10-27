@@ -1,3 +1,5 @@
+# 2026-10-27: complete static snapshot at 45148d4a5feb8cd0a305dbec134fa50c3ea825a0.
+# Native string-byte capacity uses wide arithmetic. See docs/benchmarks/packed-string-bytes-2026-10-27/.
 # 2026-10-26: complete static measurements from local combined source
 # e068b9ae43e0ad05bed382d818a0231e203e50a1 (guard, entropy, and runtime bundle split).
 # 2026-10-26: SEC-015 checks guard protection before the stack switch.
@@ -145,7 +147,7 @@ x86_64/deflate_encode.ir	43100357
 x86_64/deflate_encode.text	7285
 x86_64/enum_match.text	1016
 x86_64/enum_match.ir	48825085
-x86_64/http_hello.text	17403
+x86_64/http_hello.text	17410
 x86_64/http_hello.ir	23788438
 x86_64/int_loop.text	191
 x86_64/int_loop.ir	12000070
@@ -185,9 +187,9 @@ x86_64/struct_drop.text	2334
 x86_64/struct_drop.ir	205020574
 x86_64/tokenize.text	1115
 x86_64/tokenize.ir	37880086
-x86_64/utf8_ingest_unchecked.text	8248
+x86_64/utf8_ingest_unchecked.text	8255
 x86_64/utf8_ingest_unchecked.ir	2205771
-x86_64/utf8_ingest_validated.text	8854
+x86_64/utf8_ingest_validated.text	8861
 x86_64/utf8_ingest_validated.ir	5242372
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -429,7 +431,7 @@ aarch64/deflate_encode.ir	44038371
 aarch64/deflate_encode.text	7919
 aarch64/enum_match.text	1219
 aarch64/enum_match.ir	41175097
-aarch64/http_hello.text	18517
+aarch64/http_hello.text	18516
 aarch64/http_hello.ir	25860660
 aarch64/int_loop.text	259
 aarch64/int_loop.ir	18000078
@@ -470,9 +472,9 @@ aarch64/struct_drop.text	2571
 aarch64/struct_drop.ir	221660842
 aarch64/tokenize.text	1291
 aarch64/tokenize.ir	38350102
-aarch64/utf8_ingest_unchecked.text	8681
+aarch64/utf8_ingest_unchecked.text	8680
 aarch64/utf8_ingest_unchecked.ir	2683450
-aarch64/utf8_ingest_validated.text	9245
+aarch64/utf8_ingest_validated.text	9244
 aarch64/utf8_ingest_validated.ir	6269853
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.

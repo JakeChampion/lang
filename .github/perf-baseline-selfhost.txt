@@ -1,3 +1,5 @@
+# 2026-10-27: complete static snapshot at 45148d4a5feb8cd0a305dbec134fa50c3ea825a0.
+# Native string-byte capacity uses wide arithmetic. See docs/benchmarks/packed-string-bytes-2026-10-27/.
 # 2026-10-26: complete 117-row static snapshot at c03b8473e4a1458210d978ca2f4f581c7cba090f.
 # The Wasm runtime source port changes all 39 Wasm rows; native rows and tolerances are unchanged.
 # Evidence: docs/benchmarks/wasm-runtime-static-2026-10-26/.
@@ -189,7 +191,7 @@ selfhost/arm64-linux/closure_call.emit	1099
 selfhost/arm64-linux/deflate_decode.emit	14114
 selfhost/arm64-linux/deflate_encode.emit	7919
 selfhost/arm64-linux/enum_match.emit	1219
-selfhost/arm64-linux/http_hello.emit	18517
+selfhost/arm64-linux/http_hello.emit	18516
 selfhost/arm64-linux/int_loop.emit	259
 selfhost/arm64-linux/map_int.emit	5972
 selfhost/arm64-linux/map_probe_chain.emit	5982
@@ -209,8 +211,8 @@ selfhost/arm64-linux/string_scan.emit	2466
 selfhost/arm64-linux/string_slice.emit	1035
 selfhost/arm64-linux/struct_drop.emit	2571
 selfhost/arm64-linux/tokenize.emit	1291
-selfhost/arm64-linux/utf8_ingest_unchecked.emit	8681
-selfhost/arm64-linux/utf8_ingest_validated.emit	9245
+selfhost/arm64-linux/utf8_ingest_unchecked.emit	8680
+selfhost/arm64-linux/utf8_ingest_validated.emit	9244
 selfhost/wasm32-wasi/array_append.emit	437
 selfhost/wasm32-wasi/array_index.emit	442
 selfhost/wasm32-wasi/array_scale_f64.emit	497
@@ -257,7 +259,7 @@ selfhost/x86-64-linux/closure_call.emit	890
 selfhost/x86-64-linux/deflate_decode.emit	13238
 selfhost/x86-64-linux/deflate_encode.emit	7285
 selfhost/x86-64-linux/enum_match.emit	1016
-selfhost/x86-64-linux/http_hello.emit	17403
+selfhost/x86-64-linux/http_hello.emit	17410
 selfhost/x86-64-linux/int_loop.emit	191
 selfhost/x86-64-linux/map_int.emit	5711
 selfhost/x86-64-linux/map_probe_chain.emit	5715
@@ -277,8 +279,8 @@ selfhost/x86-64-linux/string_scan.emit	2160
 selfhost/x86-64-linux/string_slice.emit	812
 selfhost/x86-64-linux/struct_drop.emit	2334
 selfhost/x86-64-linux/tokenize.emit	1115
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8248
-selfhost/x86-64-linux/utf8_ingest_validated.emit	8854
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8255
+selfhost/x86-64-linux/utf8_ingest_validated.emit	8861
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 selfhost/x86-64-linux/perceus_cfold.emit	1807
