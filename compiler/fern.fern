@@ -1727,7 +1727,7 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
 
   let st: mvs.State = mvs.begin(roots, bans, ix);
   while (st.err.len() == 0 && !mvs.done(st)) {
-    let src: mvs.Source = mvs.index_source(ix, st.need_pkg, st.need_ver);
+    let src: mvs.Source = match (mvs.index_source(ix, st.need_pkg, st.need_ver)) { Some(value) => value, None => { st = mvs.fail(st, "registry has no source for " + st.need_pkg + "@" + st.need_ver); continue; } };
     if (src.path.len() == 0) {
       let got: Fetched = fetch_into_store(fetcher, src.url, src.hash);
       src = mvs.Source { ...src, path: got.dir };
@@ -1760,7 +1760,7 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
     return 1;
   }
 
-  let sel: mvs.Sel[] = mvs.selected(st);
+  let sel: mvs.Sel[] = match (mvs.selected(st)) { Ok(value) => value, Err(message) => { eprint(message); return 1; } };
   let lock: string = mdir + "/fern.lock";
   match (write_file(lock, mvs.lock_text(sel))) {
     Ok(u) => {},

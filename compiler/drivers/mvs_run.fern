@@ -24,7 +24,7 @@ function resolve_with(roots: mvs.Req[], bans: mvs.Ban[], ix: mvs.Index, dpkg: st
     return Outcome { text: "", err: st.err };
   }
   let out: string = "";
-  let sel: mvs.Sel[] = mvs.selected(st);
+  let sel: mvs.Sel[] = match (mvs.selected(st)) { Ok(value) => value, Err(message) => { return Outcome { text: "", err: message }; } };
   let k: i32 = 0;
   while (k < sel.len()) {
     if (k > 0) {
@@ -52,6 +52,10 @@ function req(pkg: string, min: string): mvs.Req {
 
 function hex64(): string {
   return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+}
+
+function source(ix: mvs.Index, pkg: string, version: string): mvs.Source {
+  return match (mvs.index_source(ix, pkg, version)) { Some(value) => value, None => { print("missing registry source"); exit(98); } };
 }
 
 function index(text: string): mvs.Index {
@@ -148,16 +152,16 @@ function main(): i32 {
     return rc;
   }
   ix1 = mvs.with_dir(ix1, "/pkgs/reg");
-  let s120: mvs.Source = mvs.index_source(ix1, "foo", "1.2.0");
+  let s120: mvs.Source = source(ix1, "foo", "1.2.0");
   rc = check(9, "foo 1.2.0 source", s120.url + " " + s120.hash, "https://x/foo.tar.gz sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   if (rc != 0) {
     return rc;
   }
-  rc = check(10, "foo 1.0.0 path", mvs.index_source(ix1, "foo", "1.0.0").path, "/pkgs/foo-1.0.0");
+  rc = check(10, "foo 1.0.0 path", source(ix1, "foo", "1.0.0").path, "/pkgs/foo-1.0.0");
   if (rc != 0) {
     return rc;
   }
-  rc = check(11, "bar 2.1.0 path", mvs.index_source(ix1, "bar", "2.1.0").path, "/pkgs/reg/bar");
+  rc = check(11, "bar 2.1.0 path", source(ix1, "bar", "2.1.0").path, "/pkgs/reg/bar");
   if (rc != 0) {
     return rc;
   }
@@ -310,7 +314,7 @@ function main(): i32 {
   if (!mvs.index_has(okix, "evil", "1.0.0")) {
     return 29;
   }
-  let oksrc: mvs.Source = mvs.index_source(okix, "evil", "1.0.0");
+  let oksrc: mvs.Source = source(okix, "evil", "1.0.0");
   rc = check(
     30, "valid index hash reaches the source", oksrc.url + " " + oksrc.hash,
     "https://example.invalid/x.tar.gz sha256:" + hex64(),

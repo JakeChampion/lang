@@ -55,8 +55,11 @@ function record(text: string, pkg: string): string {
         versions = versions + version;
       }
       let present: string = if (mvs.index_has(ix,pkg,"1.0.0")) { "true" } else { "false" };
-      let src = mvs.index_source(ix,pkg,"1.0.0");
-      return "OK|"+util.i32_to_string(ix.entries.len())+"|"+versions+"|"+present+"|"+src.path+"|"+src.url+"|"+src.hash;
+      let fields = match (mvs.index_source(ix,pkg,"1.0.0")) {
+        Some(src) => src.path+"|"+src.url+"|"+src.hash,
+        None => "||"
+      };
+      return "OK|"+util.i32_to_string(ix.entries.len())+"|"+versions+"|"+present+"|"+fields;
     }
   }
 }

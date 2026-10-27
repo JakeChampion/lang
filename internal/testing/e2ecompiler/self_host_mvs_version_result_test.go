@@ -65,7 +65,8 @@ function resolved(ix:mvs.Index,min:string,bans:mvs.Ban[]):string {
  let st=mvs.begin([mvs.Req{pkg:"foo",min:min}],bans,ix);
  while(st.err.len()==0 && !mvs.done(st)){st=mvs.supply(st,[]);}
  if(st.err.len()>0){return "ERR|"+st.err;}
- let out="OK|";for item in mvs.selected(st){out=out+item.name+"@"+item.ver+"|"+item.src.path;}return out;
+ let all=match(mvs.selected(st)){Ok(items)=>items,Err(message)=>{return "ERR|"+message;}};
+ let out="OK|";for item in all {out=out+item.name+"@"+item.ver+"|"+item.src.path;}return out;
 }
 function parsed_index(text:string):mvs.Index {return match(mvs.parse_index(text)){Ok(value)=>value,Err(message)=>{print(message);exit(99);}};}
 function index_error(text:string):string {return match(mvs.parse_index(text)){Ok(_)=>"",Err(message)=>message};}

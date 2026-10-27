@@ -220,19 +220,19 @@ pub function index_has(ix: Index, pkg: string, ver: string): boolean {
   return false;
 }
 
-pub function index_source(ix: Index, pkg: string, ver: string): Source {
+pub function index_source(ix: Index, pkg: string, ver: string): Option[Source] {
   let i: i32 = 0;
   while (i < ix.entries.len()) {
     if (ix.entries[i].pkg == pkg && ix.entries[i].ver == ver) {
       let s: Source = ix.entries[i].src;
       if (s.path.len() > 0 && !is_abs(s.path)) {
-        return Source { path: join_path(ix.dir, s.path), url: s.url, hash: s.hash };
+        return Some(Source { path: join_path(ix.dir, s.path), url: s.url, hash: s.hash });
       }
-      return Source { path: s.path + "", url: s.url + "", hash: s.hash + "" };
+      return Some(Source { path: s.path + "", url: s.url + "", hash: s.hash + "" });
     }
     i = i + 1;
   }
-  return Source { path: "", url: "", hash: "" };
+  return None;
 }
 
 function vers_list(vs: string[]): string {
@@ -300,7 +300,16 @@ pub function done(st: State): boolean {
   return st.err.len() == 0 && st.need_pkg.len() == 0;
 }
 
-pub function selected(st: State): Sel[] {
+pub function selected(st: State): Result[Sel[], string] {
+  if (st.err.len() > 0) {
+    return Err(st.err);
+  }
+  if (st.names.len() != st.vers.len()) {
+    return Err("resolution has unequal package and version counts");
+  }
+  if (!done(st)) {
+    return Err("resolution needs dependencies of " + st.need_pkg + "@" + st.need_ver);
+  }
   let taken: i32[] = [];
   let t: i32 = 0;
   while (t < st.names.len()) {
@@ -328,10 +337,17 @@ pub function selected(st: State): Sel[] {
   let k: i32 = 0;
   while (k < names.len()) {
     let v: string = selected_version(st, names[k]);
-    out = out.append(Sel { name: names[k], ver: v, src: index_source(st.ix, names[k], v) });
+    match (index_source(st.ix, names[k], v)) {
+      Some(src) => {
+        out = out.append(Sel { name: names[k], ver: v, src: src });
+      },
+      None => {
+        return Err("registry has no source for " + names[k] + "@" + v);
+      }
+    }
     k = k + 1;
   }
-  return out;
+  return Ok(out);
 }
 
 function raise(st: State, pkg: string, min: string, via: string): State {

@@ -981,7 +981,7 @@ findings. Ranked by leverage.
   Malformed section headers now use the shared quote function for exact Go diagnostics.
   Twenty-seven index records match Go on x86-64, ARM64, and Wasm.
   The baseline differs on ten records, with duplicate entries and malformed-header escapes.
-  The native sanitizer reports 1,798 allocations and releases, with zero live bytes.
+  The native sanitizer reports 1,802 allocations and releases, with zero live bytes.
 
   Forty process triples per input compare valid registries with 40 or 400 entries.
   Each process repeats index parse, numeric sort, and complete output 200 times.
@@ -989,6 +989,22 @@ findings. Ranked by leverage.
   Candidate/baseline time ratios are 1.068 and 1.029.
   A separate `get_or` prototype is no faster than the standard-option lookup in these probes.
   These measurements accompany correct duplicate-key selection and establish no general compiler speed change.
+
+  Registry source lookup returns `Option[Source]` without an empty source on a miss.
+  A defined entry with empty source fields remains `Some`, as the Go map lookup does.
+  Final selection returns `Result[Sel[], string]` with complete source data.
+  It retains the first resolver error and refuses unfinished states, unequal columns, and missing sources.
+  The CLI matches both results before a fetch or lock-file write.
+
+  Source and selection contracts check absence, empty success, refusal priority, partial results, repeated reads, and name order.
+  These contracts execute on x86-64, ARM64, and Wasm.
+  The native sanitizer reports 293 allocations and releases, with zero live bytes.
+  All 27 index records and 55 version records still match Go across the three targets.
+
+  Forty process pairs per input repeat registry parse, resolution, selection, and complete output 100 times.
+  Inputs contain zero, four, or forty packages, with Go as the independent oracle.
+  Candidate/baseline time ratios are 1.088, 1.016, and 1.015.
+  These measurements include the cost of the explicit outcomes and establish no general compiler speed change.
 
   Hash validation also uses `Result[string, string]` instead of `HashResult`.
   Success carries the hexadecimal digest without its prefix, and failure carries the diagnostic.
@@ -1026,7 +1042,7 @@ findings. Ranked by leverage.
   Invalid entries in manually constructed indexes no longer act as version zero.
   Version diagnostics retain Go quote escapes for control characters.
   Fifty-five Go-oracle checks cover the parser, comparisons, indexes, and resolution on native, ARM64, and Wasm.
-  The native sanitizer reports 2,243 allocations and releases, with zero live bytes.
+  The native sanitizer reports 2,262 allocations and releases, with zero live bytes.
 
   Forty paired probes per input give candidate/baseline ratios of 0.773 for 40 index entries and 0.106 for 400 entries.
   A lock file with 1,000 entries gives a ratio of 0.934.
