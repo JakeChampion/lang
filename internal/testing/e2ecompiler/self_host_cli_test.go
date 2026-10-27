@@ -2391,7 +2391,7 @@ function main(): i32 {
 			{"-target", "wasm32-wasi", "-shared", "-o", so, src},
 			{"-target", "x86-64-linux", "-shared", src},
 			{"-target", "x86-64-linux", "-shared", "-export", "nope", "-o", so, src},
-			{"-target", "x86-64-linux", "-harden", "-o", so, src},
+			{"-target", "x86-64-linux", "-harden", "-shared", "-o", so, src},
 			{"-target", "wasm32-wasi-http", "-run", src},
 			{"-target", "wasm32-wasi", "-cover", src},
 		} {
