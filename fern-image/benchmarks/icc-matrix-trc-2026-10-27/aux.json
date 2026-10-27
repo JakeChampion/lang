@@ -1,0 +1,34 @@
+{
+  "source_commit": "581469fb562de3c41890722a986b65e49726f644",
+  "format_files": 2063,
+  "checks": [
+    {
+      "tool": "/workspace/image-coverage-current-fern-82ba47cad",
+      "exit_code": 0
+    },
+    {
+      "tool": "go",
+      "exit_code": 0
+    },
+    {
+      "tool": "go",
+      "exit_code": 0
+    },
+    {
+      "tool": "make",
+      "exit_code": 0
+    },
+    {
+      "tool": "/workspace/image-png-reference-venv/bin/python",
+      "exit_code": 0
+    },
+    {
+      "tool": "python3",
+      "exit_code": 0
+    },
+    {
+      "tool": "git",
+      "exit_code": 0
+    }
+  ]
+}

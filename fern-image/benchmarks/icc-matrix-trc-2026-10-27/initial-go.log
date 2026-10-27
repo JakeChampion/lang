@@ -1,0 +1,12 @@
+TAP version 13
+# Suite: ICC matrix/TRC numerical composition
+ok 1 - ICC composition identity and projection bits
+ok 2 - ICC composition mixed curves and unclipped XYZ
+ok 3 - ICC composition fresh public admission
+ok 4 - ICC composition every cancellation point
+ok 5 - ICC composition COW and fresh calls
+ok 6 - ICC composition explicit relative coordinate policy
+1..6
+# tests 6
+# pass 6
+# fail 0

@@ -98,3 +98,37 @@ The official web reader supplied the document, and this record makes no local PD
 [LittleCMS 2.19 public header](https://github.com/mm2/Little-CMS/blob/lcms2.19/include/lcms2.h) defines the reference formats, flags, and public functions.
 The test reference uses the existing offline wheel library only.
 The API restrictions and finite criteria above are project policies.
+
+## Completed finite campaign
+
+Source `581469fb562de3c41890722a986b65e49726f644` precedes all final campaigns.
+Each target checks 2,824 cases: 2,709 numeric results and 115 expected errors.
+The three targets have exactly equal sample records.
+All 1,059 fresh Fern workers exit successfully with nonzero balanced heaps and zero live bytes.
+Each campaign reruns all 1,264 applicable offline CMM observations on the host.
+
+The largest observed linear-channel error is approximately `1.1102230246251565e-16`.
+Every matrix result has zero representable-step distance from the correctly rounded exact dot of its actual linear trace.
+The largest observed difference from full ideal XYZ is approximately `3.735297468793823e-12`.
+Every full comparison satisfies its unchanged derived criterion.
+
+The largest observed CMM difference is approximately `6.090074364810578e-7`, within the predeclared `1e-6` secondary criterion.
+This observation does not establish exact CMM parity or a universal error bound.
+All 1,279 native and 1,280 runner hashes remain unchanged during their campaigns, including all 163 stdlib files.
+The reference bundle reproduces exactly with SHA256 `86bc90068249b58c6ce76e1f109fcbec93031993068d96e7ec020ea14662243a`.
+
+All 282 TAP cases pass on native, Wasm, and standalone ARM64/QEMU10.
+The complete runs report 79 native, 55 Wasm, and 40 ARM balanced zero-live heap censuses.
+The 40 standalone ARM executables do not qualify the whole Go ARM harness.
+All 1,334 selected full-run source hashes and the compiler hash remain unchanged.
+
+The committed Go source check and interpreter pass all six groups.
+Both unchanged complexity gates pass without skips in 8.956 seconds.
+All 2,063 selected Fern files pass the format check.
+Go build/vet, workflow lint, test names, CI selftests, runtime bundles, Go formatting, nine protocol tests, and prose checks pass.
+
+The new records are `benchmarks/results/icc-matrix-trc-{native,wasm,arm64}.json`.
+Development failures and qualification evidence remain in `benchmarks/icc-matrix-trc-2026-10-27/`.
+The initial Wasm unit run failed because its runner omitted the fixture preopen.
+The corrected runner passes with the same compiled module, and both records remain available.
+No numerical tolerance, domain, baseline, validation, or runtime dependency changed after a failure.

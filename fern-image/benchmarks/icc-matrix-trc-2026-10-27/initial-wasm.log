@@ -1,0 +1,39 @@
+fern: warning: -sanitize on -target wasm32-wasi carries the leak census only, not the rc over-release or use-after-free detectors
+TAP version 13
+# Suite: ICC matrix/TRC numerical composition
+not ok 1 - ICC composition identity and projection bits
+  ---
+  message: frozen profile fixture
+  ---
+not ok 2 - ICC composition mixed curves and unclipped XYZ
+  ---
+  message: frozen profile fixture
+  ---
+not ok 3 - ICC composition fresh public admission
+  ---
+  message: frozen profile fixture
+  ---
+not ok 4 - ICC composition every cancellation point
+  ---
+  message: frozen profile fixture
+  ---
+not ok 5 - ICC composition COW and fresh calls
+  ---
+  message: frozen profile fixture
+  ---
+not ok 6 - ICC composition explicit relative coordinate policy
+  ---
+  message: frozen profile fixture
+  ---
+1..6
+# tests 6
+# pass 0
+# fail 6
+# failures:
+#   ICC composition identity and projection bits: frozen profile fixture
+#   ICC composition mixed curves and unclipped XYZ: frozen profile fixture
+#   ICC composition fresh public admission: frozen profile fixture
+#   ICC composition every cancellation point: frozen profile fixture
+#   ICC composition COW and fresh calls: frozen profile fixture
+#   ICC composition explicit relative coordinate policy: frozen profile fixture
+leakcheck: allocs=64 frees=64 live_bytes=0
