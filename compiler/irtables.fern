@@ -892,7 +892,18 @@ pub function lower_outcome(r: LowerState): Result[Option[Lowered], LowerState] {
   if (r.superseded) {
     return Ok(None);
   }
-  return Ok(Some(Lowered {
+  return Ok(Some(lowered_state(r)));
+}
+
+pub function helper_outcome(r: LowerState): Result[Lowered, LowerState] {
+  if (!r.ok || r.superseded) {
+    return Err(r);
+  }
+  return Ok(lowered_state(r));
+}
+
+function lowered_state(r: LowerState): Lowered {
+  return Lowered {
     ops: r.ops,
     n_locals: r.n_locals,
     n_params: r.n_params,
@@ -908,7 +919,7 @@ pub function lower_outcome(r: LowerState): Result[Option[Lowered], LowerState] {
     dbg_names: r.dbg_names,
     dbg_types: r.dbg_types,
     source_positions: r.source_positions,
-  }));
+  };
 }
 
 pub function lowered_result(r: Lowered): LowerResult {
@@ -1360,4 +1371,16 @@ pub function lowered_results(bodies: Lowered[]): LowerResult[] {
     rows = rows.append(lowered_result(body));
   }
   return rows;
+}
+
+pub function helper_name(body: Result[Lowered, LowerState]): string {
+  return match (body) { Ok(r) => r.name, Err(r) => r.name };
+}
+
+pub function helper_results(bodies: Result[Lowered, LowerState][]): LowerResult[] {
+  let out: LowerResult[] = [];
+  for body in bodies {
+    out = out.append(match (body) { Ok(r) => lowered_result(r), Err(r) => lower_result(r) });
+  }
+  return out;
 }

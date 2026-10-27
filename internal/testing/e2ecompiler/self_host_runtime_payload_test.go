@@ -15,16 +15,16 @@ pub function contract_runtime_payload(): i32 {
   let lowered = runtime_lowering("function dup(x: i64): i64 { return x; }");
   if (lowered.bodies.len() != 1 || lowered.declarations.len() != 1 || lowered.declarations[0] != "dup") { return 1; }
   let proto = lowered.bodies[0];
-  let cached_failure = irtables.lower_result(irtables.LowerState { ...declined_state("ignored cached refusal"), name: "dup" });
-  let first = irtables.LowerResult { ...irtables.lowered_result(proto), name: "fresh" };
-  let duplicate = irtables.lower_result(irtables.LowerState { ...declined_state("ignored duplicate refusal"), name: "fresh" });
-  let last = irtables.LowerResult {
-    ...irtables.lowered_result(proto), name: "tail", n_params: 5, n_locals: 5, erased_wide: true,
+  let cached_failure = Err(irtables.LowerState { ...declined_state("ignored cached refusal"), name: "dup" });
+  let first = Ok(irtables.Lowered { ...proto, name: "fresh" });
+  let duplicate = Err(irtables.LowerState { ...declined_state("ignored duplicate refusal"), name: "fresh" });
+  let last = Ok(irtables.Lowered {
+    ...proto, name: "tail", n_params: 5, n_locals: 5, erased_wide: true,
     ops: [ir.Op { ...ir.op_const_i64(17i64), source: 123i64, decl: 19 }, ir.op_return()],
     arr_slots: [0], i64_slots: [1], f64_slots: [2], v128_slots: [3], str_slots: [4],
     dbg_slots: [1], dbg_names: ["value"], dbg_types: ["i64"],
     source_positions: sourcepos.SourceInfo { entry: sourcepos.SourcePos { line: 40, col: "1" }, values: [sourcepos.SourcePos { line: 41, col: "2" }], terms: [sourcepos.SourcePos { line: 42, col: "3" }] },
-  };
+  });
   match (complete_runtime_helpers([proto], [cached_failure, first, duplicate, last])) {
     Ok(done) => {
       if (done.bodies.len() != 3 || done.helper_indices.len() != 2 || done.helper_indices[0] != 1 || done.helper_indices[1] != 3) { return 2; }
@@ -36,12 +36,12 @@ pub function contract_runtime_payload(): i32 {
     },
     Err(_) => { return 7; }
   }
-  let bad = irtables.lower_result(irtables.LowerState { ...declined_state("selected refusal"), name: "broken" });
+  let bad = Err(irtables.LowerState { ...declined_state("selected refusal"), name: "broken" });
   match (complete_runtime_helpers([], [bad])) {
     Ok(_) => { return 8; },
     Err(refusal) => { if (refusal.name != "broken" || refusal.why != "selected refusal") { return 9; } }
   }
-  let omitted = irtables.LowerResult { ...first, name: "omitted", superseded: true };
+  let omitted = Err(irtables.LowerState { ...declined_state(""), name: "omitted", ok: true, superseded: true });
   match (complete_runtime_helpers([], [omitted])) {
     Ok(_) => { return 10; },
     Err(refusal) => { if (refusal.name != "omitted" || refusal.why != "body superseded") { return 11; } }

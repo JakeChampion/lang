@@ -353,7 +353,11 @@ function main(): i32 {
     if (!selfPlan.ok) { eprint(selfPlan.why); return 17; }
     let selfLowered = legacy_lower(ssarc.lower(selfFunc, [2], selfPlan, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none()));
     if (!selfLowered.ok) { eprint(selfLowered.why); return 18; }
-    let selfHelpers = ssarc.drop_helpers(selfFunc);
+    let selfHelpers: irtables.Lowered[] = [];
+    for outcome in ssarc.drop_helpers(selfFunc) {
+        let helper = match (outcome) { Ok(r) => r, Err(r) => { eprint(r.why); return 19; } };
+        selfHelpers = selfHelpers.append(helper);
+    }
     if (selfHelpers.len() != 2) { return 19; }
     if (selfHelpers[0].name != "__sem_drop_Node") { eprint(selfHelpers[0].name); return 20; }
     if (selfHelpers[1].name != "__sem_release_Node") { eprint(selfHelpers[1].name); return 200; }
@@ -771,7 +775,8 @@ function main(): i32 {
     if (!wideLowered.ok) { eprint(wideLowered.why); return 55; }
     let sawField1: boolean = false;
     let sawField0: boolean = false;
-    for h in ssarc.drop_helpers(wideFunc) {
+    for outcome in ssarc.drop_helpers(wideFunc) {
+        let h = match (outcome) { Ok(r) => r, Err(r) => { eprint(r.why); return 56; } };
         for o in h.ops {
             if (ir.render_op(o) == "struct_get 1") { sawField1 = true; }
             if (ir.render_op(o) == "struct_get 0") { sawField0 = true; }
@@ -1087,7 +1092,8 @@ function main(): i32 {
     if (!sawArrFree || !sawArrRelease) { return 188; }
     let sawHelper: boolean = false;
     let sawEnvHelper: boolean = false;
-    for h in ssarc.drop_helpers(dropArrMap) {
+    for outcome in ssarc.drop_helpers(dropArrMap) {
+        let h = match (outcome) { Ok(r) => r, Err(r) => { eprint(r.why); return 189; } };
         if (h.name == releaseName && h.n_params == 1) { sawHelper = true; }
         if (h.name == releaseName + "$env" && h.n_params == 2) { sawEnvHelper = true; }
     }

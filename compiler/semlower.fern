@@ -622,14 +622,14 @@ function helper_origins(helpers: ssarc.Helpers): physicalbody.Origin[] {
       helper = Some(physicalbody.Helper { ty: entry.ty, children_only: entry.children_only });
       at = at + 1;
     }
-    out = out.append(physicalbody.Origin { producer: 0, symbol: body.name, helper: helper });
+    out = out.append(physicalbody.Origin { producer: 0, symbol: irtables.helper_name(body), helper: helper });
     row = row + 1;
   }
   return out;
 }
 
 function selected_helpers(built: semsource.Built, helpers: ssarc.Helpers): SelectedHelpers {
-  let rows = helpers.rows;
+  let rows = irtables.helper_results(helpers.rows);
   let keys: typeinfo.Type[] = [];
   for d in built.decls {
     keys = structural_keys(keys, d.func);
@@ -1005,32 +1005,31 @@ struct RuntimeBodies { bodies: irtables.Lowered[], helper_indices: i32[] }
 
 struct RuntimeRefusal { name: string, why: string }
 
-function complete_runtime_helpers(own bodies: irtables.Lowered[], helpers: irtables.LowerResult[]): Result[RuntimeBodies, RuntimeRefusal] {
+function complete_runtime_helpers(own bodies: irtables.Lowered[], helpers: Result[irtables.Lowered, irtables.LowerState][]): Result[RuntimeBodies, RuntimeRefusal] {
   let cached_names: string[] = [];
   for body in bodies {
     cached_names = cached_names.append(body.name);
   }
   let helper_names: string[] = [];
   for helper in helpers {
-    helper_names = helper_names.append(helper.name);
+    helper_names = helper_names.append(irtables.helper_name(helper));
   }
   let cached = util.name_index(cached_names);
   let names = util.name_index(helper_names);
   let selected: i32[] = [];
   for i in 0..helpers.len() {
     let h = helpers[i];
-    if (names.find(h.name) == i && !cached.has(h.name)) {
-      if (!h.ok) {
-        return Err(RuntimeRefusal { name: h.name, why: h.why });
-      }
-      match (irtables.body_payload(h)) {
-        Some(body) => {
+    let name = irtables.helper_name(h);
+    if (names.find(name) == i && !cached.has(name)) {
+      match (h) {
+        Ok(body) => {
           let optimized = ir.optimize_ops(body.ops, body.n_params, body.n_locals);
           bodies = bodies.append(irtables.Lowered { ...body, ops: optimized.ops, n_locals: optimized.n_locals });
           selected = selected.append(i);
         },
-        None => {
-          return Err(RuntimeRefusal { name: h.name, why: "body superseded" });
+        Err(state) => {
+          let why = if (state.ok && state.superseded) { "body superseded" } else { state.why };
+          return Err(RuntimeRefusal { name: name, why: why });
         }
       }
     }

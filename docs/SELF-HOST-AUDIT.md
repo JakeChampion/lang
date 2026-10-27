@@ -999,7 +999,7 @@ findings. Ranked by leverage.
 
   A refusal takes precedence over the superseded flag.
   The semantic front end and census driver match these outcomes.
-  Application and helper collections still use `LowerResult` and need the remaining migration.
+  Application caches and merge interfaces still use `LowerResult` and need the remaining migration.
 
   The semantic planner stores standard outcomes in its private body rows.
   Refusals retain their partial state until the planner reports them.
@@ -1013,6 +1013,12 @@ findings. Ranked by leverage.
   Helper selection preserves cached names and the first helper for each name.
   Declaration order, metadata and helper provenance remain aligned.
   A temporary adapter serves the remaining legacy query and merge interfaces.
+
+  Drop helpers and byte helpers return `Result[Lowered, LowerState]`.
+  Helper collections retain complete data on success and partial state on refusal.
+  Failed helpers retain their names for duplicate selection and diagnostics.
+  Runtime helper selection matches the result before it publishes a body.
+  A legacy adapter remains at the application helper cache boundary.
 
   Module eligibility gates return `Option[Lowered]` and `Option[Gated]`.
   An unknown call or function value returns `None` without a placeholder cache.

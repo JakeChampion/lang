@@ -1940,18 +1940,18 @@ function optimized_helper(h: irtables.LowerResult): irtables.LowerResult {
   return irtables.LowerResult { ...h, ops: optimized.ops, n_locals: optimized.n_locals };
 }
 
-pub function drop_helpers(f: ssasem.Func): irtables.LowerResult[] {
+pub function drop_helpers(f: ssasem.Func): Result[irtables.Lowered, irtables.LowerState][] {
   let none: string[] = [];
-  let out: irtables.LowerResult[] = [];
+  let out: Result[irtables.Lowered, irtables.LowerState][] = [];
   for row in helpers_not_in(f, util.name_index(none), util.name_index(none)).rows {
-    out = out.append(irtables.lower_result(row));
+    out = out.append(irtables.helper_outcome(row));
   }
   return out;
 }
 
 pub struct HelperType { row: i32, ty: typeinfo.Type, children_only: boolean }
 
-pub struct Helpers { rows: irtables.LowerResult[], types: HelperType[], done: util.NameIndex, seen: util.NameIndex }
+pub struct Helpers { rows: Result[irtables.Lowered, irtables.LowerState][], types: HelperType[], done: util.NameIndex, seen: util.NameIndex }
 
 pub function no_helpers(): Helpers {
   let none: string[] = [];
@@ -1962,7 +1962,7 @@ pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
   let fresh: Fresh = helpers_not_in(f, h.done, h.seen);
   let out: Helpers = Helpers { ...h, seen: fresh.seen };
   for row in fresh.rows {
-    out = Helpers { ...out, rows: out.rows.append(irtables.lower_result(row)), done: out.done.added(row.name) };
+    out = Helpers { ...out, rows: out.rows.append(irtables.helper_outcome(row)), done: out.done.added(row.name) };
   }
   for entry in fresh.types {
     out = Helpers { ...out, types: out.types.append(HelperType { ...entry, row: h.rows.len() + entry.row }) };

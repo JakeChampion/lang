@@ -71,6 +71,14 @@ function main(): i32 {
   if (after.source_positions.entry.line != 40 || after.source_positions.entry.col != "1" || after.source_positions.values[0].line != 41 || after.source_positions.values[0].col != "2" || after.source_positions.terms[0].line != 42 || after.source_positions.terms[0].col != "3") { return 11; }
   for kind in 0..4 {
     let state = irtables.LowerState { ...before, ok: kind == 1 || kind == 2, superseded: kind == 1 || kind == 3, why: if (kind == 0 || kind == 3) { "partial refusal" } else { "" } };
+    let helper = irtables.helper_outcome(state);
+    if (irtables.helper_name(helper) != "metadata") { return 20; }
+    let helper_view = irtables.helper_results([helper])[0];
+    if (helper_view.ok != state.ok || helper_view.superseded != state.superseded || helper_view.why != state.why || helper_view.ops.len() != state.ops.len() || helper_view.dbg_names[0] != "value") { return 21; }
+    match (helper) {
+      Ok(r) => { if (kind != 2 || r.source_positions.entry.line != 40 || r.n_params != 3) { return 22; } },
+      Err(r) => { if (kind == 2 || r.ok != state.ok || r.superseded != state.superseded || r.why != state.why || r.name != "metadata" || r.ops[0].i32_imm != 11 || r.dbg_names[0] != "value") { return 23; } }
+    }
     match (irtables.lower_outcome(state)) {
       Ok(body) => {
         match (body) {

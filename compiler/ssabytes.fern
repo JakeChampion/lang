@@ -388,10 +388,10 @@ pub function state_helpers(): irtables.LowerState[] {
   return [length(), data(), slice(8), slice(32), slice(64), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd(), string_copy()];
 }
 
-pub function helpers(): irtables.LowerResult[] {
-  let out: irtables.LowerResult[] = [];
+pub function helpers(): Result[irtables.Lowered, irtables.LowerState][] {
+  let out: Result[irtables.Lowered, irtables.LowerState][] = [];
   for row in state_helpers() {
-    out = out.append(irtables.lower_result(row));
+    out = out.append(irtables.helper_outcome(row));
   }
   return out;
 }
