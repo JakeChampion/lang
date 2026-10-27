@@ -1,6 +1,8 @@
 package e2ecompiler
 
 import (
+	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
@@ -42,6 +44,10 @@ function main(): i32 {
     let before = body(kind, "status", 3);
     let after = irtables.lower_result(before);
     if (after.ok != before.ok || after.superseded != before.superseded || after.why != before.why) { return 6; }
+    match (irtables.body_payload(after)) {
+      Some(_) => { if (kind != 2) { return 17; } },
+      None => { if (kind == 2) { return 18; } }
+    }
   }
   let before = irtables.LowerState {
     ...body(2, "metadata", 3), ops: [ir.op_const_i32(11), ir.op_return()], n_locals: 7, erased_wide: true,
@@ -53,7 +59,11 @@ function main(): i32 {
     Ok(body) => match (body) { Some(r) => r, None => { exit(12); } },
     Err(_) => { exit(13); }
   };
-  let after = irtables.lowered_result(complete);
+  let selected = match (irtables.body_payload(irtables.lowered_result(complete))) {
+    Some(r) => r,
+    None => { exit(19); }
+  };
+  let after = irtables.lowered_result(selected);
   if (!after.ok || after.superseded || after.name != "metadata" || after.n_params != 3 || after.n_locals != 7 || !after.erased_wide || after.result_kind != irtables.result_i32()) { return 7; }
   if (after.ops.len() != 2 || after.ops[0].i32_imm != 11 || after.ops[1].kind_tag != ir.K_RETURN) { return 8; }
   if (after.arr_slots.len() != 1 || after.arr_slots[0] != 0 || after.i64_slots[0] != 1 || after.f64_slots[0] != 2 || after.v128_slots[0] != 3 || after.str_slots[0] != 4) { return 9; }
@@ -87,6 +97,53 @@ func TestSelfHostLowerResultAlignmentContracts(t *testing.T) {
 			out, err := mvsDriverCommand(t, target, bin).CombinedOutput()
 			if err != nil {
 				t.Fatalf("lowered signature alignment: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
+func TestSelfHostEmitBodyBoundary(t *testing.T) {
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "ircore.fern")
+	source := `import "./ircore";` + "\n" + strings.Split(lowerResultAlignmentProg, "function main(): i32 {")[0] + `
+function main(): i32 {
+  let av = args();
+  let state = body(util.digits_to_i32(av[1]), "stored_name", 3);
+  let selected = ircore.body_for_emit("authoritative_name", irtables.lower_result(state));
+  return selected.n_params - 3;
+}
+`
+	writeResolveProject(t, dir, map[string]string{"emit_body_boundary.fern": source})
+	cases := []struct {
+		name    string
+		kind    string
+		code    int
+		message string
+	}{
+		{"produced", "2", 0, ""},
+		{"declined", "0", 3, "error: authoritative_name did not lower: declined"},
+		{"superseded", "1", 3, "error: internal: superseded body reached emission: authoritative_name"},
+	}
+	for _, target := range []string{e2eharness.TargetX86_64Linux, e2eharness.TargetWasm32Wasi} {
+		t.Run(target, func(t *testing.T) {
+			bin := buildSelfHostBinFor(t, dir, "emit_body_boundary.fern", "emit_body_boundary", target)
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					cmd := mvsDriverCommand(t, target, bin)
+					cmd.Args = append(cmd.Args, tc.kind)
+					out, err := cmd.CombinedOutput()
+					code := 0
+					if err != nil {
+						exit, ok := err.(*exec.ExitError)
+						if !ok {
+							t.Fatalf("body boundary command: %v\n%s", err, out)
+						}
+						code = exit.ExitCode()
+					}
+					if code != tc.code || !strings.Contains(string(out), tc.message) || tc.message == "" && len(out) != 0 {
+						t.Fatalf("body boundary: exit %d, want %d, message %q\n%s", code, tc.code, tc.message, out)
+					}
+				})
 			}
 		})
 	}

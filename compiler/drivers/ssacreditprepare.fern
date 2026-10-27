@@ -51,13 +51,13 @@ function prepared(base: irtables.LowerResult, selected: physicalbody.Selected, l
   let r = irtables.LowerResult { ...base, n_params: 0, n_locals: 1, ops: [ir.op_const_i32(value), ir.op_store_local(0), ir.op_load_local(0), ir.op_call_direct("leaf", 1), ir.op_return()], dbg_slots: [0], dbg_names: ["actual"], dbg_types: ["i32"] };
   let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "actual", r.n_params, r.n_locals, r.ops, debug)) { Ok(l) => l, Err(message) => { eprint(message); exit(187); } };
   require(calls(lifted.func) == 1, 187);
-  let p = ssaprepare.finish(r, selected, lifted, leaves);
-  require(ircore.lowered_digest([p.lowered]) == ircore.lowered_digest([r]) && p.lowered.dbg_names[0] == "actual", 188);
+  let p = ssaprepare.finish(ircore.body_for_emit(r.name, r), selected, lifted, leaves);
+  require(ircore.lowered_digest([irtables.lowered_result(p.lowered)]) == ircore.lowered_digest([r]) && p.lowered.dbg_names[0] == "actual", 188);
   require(p.selected.origin.producer == selected.origin.producer && p.selected.origin.symbol == selected.origin.symbol && p.selected.producers.len() == selected.producers.len(), 189);
   let has_seen = p.seen_vals.len() > 0;
   require(same(p.seen_vals, lifted.seen_vals) && same(p.seen_slots, lifted.seen_slots) && has_seen == debug, 190);
   returned(p, value);
-  let no_leaves = ssaprepare.finish(r, selected, lifted, ssa.leaves_of([]));
+  let no_leaves = ssaprepare.finish(ircore.body_for_emit(r.name, r), selected, lifted, ssa.leaves_of([]));
   require(calls(no_leaves.formed.f) == 1, 193);
 }
 

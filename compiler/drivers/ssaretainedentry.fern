@@ -50,12 +50,12 @@ function contexts(row: ssaprepare.Emitted): void {
   }
 }
 
-function select(r: irtables.LowerResult, arch: string, debug: boolean, names: string[], counted: boolean, drop: string): void {
+function select(r: irtables.Lowered, arch: string, debug: boolean, names: string[], counted: boolean, drop: string): void {
   let p = ircore.release_entry(r, arch, debug, irtables.sig_reg_of(names));
   require(p.counted == counted && p.unique_drop == drop, 72);
 }
 
-function selectors(r: irtables.LowerResult): void {
+function selectors(r: irtables.Lowered): void {
   let drop = ircore.nominal_release_drop(r);
   require(drop != "", 73);
   select(r, "arm64", false, [drop], true, "");
@@ -64,14 +64,14 @@ function selectors(r: irtables.LowerResult): void {
   select(r, "x86-64", false, [drop + "_other"], true, "");
   for arch in ["arm64", "x86-64"] {
     select(r, arch, true, [drop], false, "");
-    select(irtables.LowerResult { ...r, n_params: 2 }, arch, false, [drop], false, "");
-    select(irtables.LowerResult { ...r, name: "ordinary" }, arch, false, [drop], false, "");
+    select(irtables.Lowered { ...r, n_params: 2 }, arch, false, [drop], false, "");
+    select(irtables.Lowered { ...r, name: "ordinary" }, arch, false, [drop], false, "");
     let n = r.ops.len();
-    select(irtables.LowerResult { ...r, ops: r.ops.with(n - 4, ir.op_call_direct("different", 1)) }, arch, false, [drop], false, "");
-    select(irtables.LowerResult { ...r, ops: util.append_all([ir.op_const_i32(0), ir.op_drop()], r.ops) }, arch, false, [drop], true, "");
+    select(irtables.Lowered { ...r, ops: r.ops.with(n - 4, ir.op_call_direct("different", 1)) }, arch, false, [drop], false, "");
+    select(irtables.Lowered { ...r, ops: util.append_all([ir.op_const_i32(0), ir.op_drop()], r.ops) }, arch, false, [drop], true, "");
   }
   let dotted = "__sem_drop_Token.value";
-  let renamed = irtables.LowerResult { ...r, ops: r.ops.with(4, ir.op_call_direct(dotted, 1)) };
+  let renamed = irtables.Lowered { ...r, ops: r.ops.with(4, ir.op_call_direct(dotted, 1)) };
   select(renamed, "x86-64", false, [asmcore.sanitize_label(dotted)], true, dotted);
   select(renamed, "x86-64", false, [dotted], true, "");
 }

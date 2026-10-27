@@ -764,9 +764,9 @@ findings. Ranked by leverage.
   Contract checks execute on x86-64, ARM64 and Wasm, and Go-oracle checks retain exact diagnostics.
 
   Fourteen before/after cases retain the well-typed flag, diagnostic text, positions and order.
-  Twenty process pairs per input used one CPU.
-  Candidate/baseline ratios range from 0.966 to 1.032 across flat functions, closures, void locals, structs and enums.
-  These local measurements do not establish a general compiler speed change.
+  Earlier large-input probes used the reserved function names `f32` and `f64`.
+  Those inputs are invalid Fern programs and provide no evidence for valid compiler performance.
+  The workspace preserves their raw measurements as invalid-input probes.
 
   Method, array-method and visible-method lookup now return `Option[MethodSig]`.
   The checker, typed front end and LSP queries match the option before they use a signature.
@@ -1000,6 +1000,17 @@ findings. Ranked by leverage.
   A refusal takes precedence over the superseded flag.
   The semantic front end and census driver match these outcomes.
   Body collections still use `LowerResult` and need the remaining migration.
+
+  Prepared bodies store only the complete `Lowered` payload.
+  Native instruction emission, source maps and debug variables use that payload.
+  Wasm function emission also requires complete body data.
+  The emission boundary refuses declined and superseded entries before it constructs a prepared body.
+
+  Seventy-two before/after comparisons retain identical assembly and Wasm text.
+  Twelve programs each use inline and `no_inline` modes across three output targets.
+  Valid emission probes use ordinary function names and pass compilation before measurement.
+  Twenty process pairs per input give candidate/baseline ratios from 0.994 to 1.015.
+  These probes include the parser, code emission and output, without a general compiler speed claim.
 
   _Rest of this row:_ the bespoke `*Result` structs remain.
   Generic functions no longer block these migrations.

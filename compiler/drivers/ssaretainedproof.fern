@@ -95,7 +95,7 @@ function origins(row: ssaprepare.Emitted, architecture: string): void {
 }
 
 function entry(row: ssaprepare.Emitted, architecture: string): void {
-  let r = irtables.LowerResult { ...row.body.lowered, name: "__sem_release_Parent", n_params: 1, ops: [ir.op_load_local(0), ir.op_call_direct("__fern_rc_dec", 1), ir.op_drop(), ir.op_const_i32(0), ir.op_return()] };
+  let r = irtables.Lowered { ...row.body.lowered, name: "__sem_release_Parent", n_params: 1, ops: [ir.op_load_local(0), ir.op_call_direct("__fern_rc_dec", 1), ir.op_drop(), ir.op_const_i32(0), ir.op_return()] };
   let f = ssa.SFunc { ...row.body.formed.f, nparams: 1 };
   let body = ssaprepare.Body { ...row.body, lowered: r, formed: ssa.Formed { ...row.body.formed, f: f } };
   let release = ssaprepare.Emitted { ...row, body: body, context: ssaprepare.Context { ...row.context, rc_free_debug: false } };

@@ -370,14 +370,14 @@ pub function no_prelift(): Prelift {
   return Prelift { lifted: None, formed: None };
 }
 
-pub function (s: EmitState) lift(pre: Prelift, label_name: string, r: irtables.LowerResult): Result[ssa_lift.Lifted, string] {
+pub function (s: EmitState) lift(pre: Prelift, label_name: string, r: irtables.Lowered): Result[ssa_lift.Lifted, string] {
   if let Some(l) = pre.lifted {
     return Ok(l);
   }
   return ssa_lift.lift_with_lanes(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.source_positions.entry.line > 0 || r.dbg_slots.len() > 0 && s.var_rows, r.v128_slots);
 }
 
-pub function (s: EmitState) finish(pre: Prelift, r: irtables.LowerResult, selected: physicalbody.Selected, lifted: ssa_lift.Lifted): ssaprepare.Body {
+pub function (s: EmitState) finish(pre: Prelift, r: irtables.Lowered, selected: physicalbody.Selected, lifted: ssa_lift.Lifted): ssaprepare.Body {
   if let Some(f) = pre.formed {
     return ssaprepare.finish_formed(r, selected, lifted, f);
   }
@@ -6097,7 +6097,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
 
 pub struct DbgVars { at: boolean[], rows: string[] }
 
-pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.LowerResult, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
+pub function dbg_vars(fn_label: string, a: ssa.Alloc, r: irtables.Lowered, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
   if (seen_vals.len() == 0) {
     return DbgVars { at: [], rows: [] };
   }
@@ -6166,7 +6166,7 @@ function dbg_shape_label(s: EmitState, name: string): string {
   return "";
 }
 
-function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.LowerResult, i: i32, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
+function dbg_var(d: DbgVars, fn_label: string, a: ssa.Alloc, r: irtables.Lowered, i: i32, repl: i32[], seen_vals: i32[], seen_slots: i32[], locs: string[], npos: i32): DbgVars {
   let param: string = "0";
   if (r.dbg_slots[i] < r.n_params) {
     param = "1";

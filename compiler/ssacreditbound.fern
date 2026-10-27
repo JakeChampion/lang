@@ -112,7 +112,7 @@ function boundary_error(row: ssaprepare.Emitted): string {
   if (selected.origin.producer < 0 || selected.origin.producer >= selected.producers.len() || selected.origin.symbol == "") {
     return "missing selected producer metadata";
   }
-  if (!row.body.lowered.ok || row.body.lowered.n_params != row.body.formed.f.nparams || row.body.formed.f.takes_env) {
+  if (row.body.lowered.n_params != row.body.formed.f.nparams || row.body.formed.f.takes_env) {
     return "mismatched emitted body boundary";
   }
   return "";

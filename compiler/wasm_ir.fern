@@ -5027,10 +5027,11 @@ function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDe
   if (fd.receiver_type.len() > 0) {
     fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
   }
-  return emit_function_ir_named(ns, r, fn_name, result_wat(r, fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vgate);
+  let body = ircore.body_for_emit(fn_name, r);
+  return emit_function_ir_named(ns, body, fn_name, result_wat(body, fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vgate);
 }
 
-function result_wat(r: irtables.LowerResult, fd: parser.FuncDecl, structs: irtables.StructTab): string {
+function result_wat(r: irtables.Lowered, fd: parser.FuncDecl, structs: irtables.StructTab): string {
   if (r.result_kind == irtables.result_from_decl() || irtables.erased_passthrough_safe(fd)) {
     return decl_result_wat(fd, structs);
   }
@@ -5053,7 +5054,7 @@ function decl_result_wat(fd: parser.FuncDecl, structs: irtables.StructTab): stri
   return " (result i32)\n";
 }
 
-function produced_result_wat(r: irtables.LowerResult): string {
+function produced_result_wat(r: irtables.Lowered): string {
   if (r.result_kind == irtables.result_i32()) {
     return " (result i32)\n";
   }
@@ -5181,8 +5182,7 @@ function branch_only_if(ops: ir.Op[], i: i32): string {
 }
 
 // fern-lint: allow cyclomatic-complexity
-function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
-  ircore.lower_failed_refuse(fn_name, r);
+function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
   irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
   irverifygate.certify_ops_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
   let f: wasmlocals.Frame = wasmlocals.coalesce(r.ops, r.n_params, r.n_locals, r.i64_slots, r.f64_slots, r.v128_slots);
@@ -5273,7 +5273,8 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   }
   let xi: i32 = mod.funcs.len();
   while (xi < cache.len()) {
-    parts = parts.append(emit_function_ir_named(ns, cache[xi], cache[xi].name, produced_result_wat(cache[xi]), str_vals, cagg_vals, all_structs, ft, all_funcs, vgate));
+    let body = ircore.body_for_emit(cache[xi].name, cache[xi]);
+    parts = parts.append(emit_function_ir_named(ns, body, cache[xi].name, produced_result_wat(body), str_vals, cagg_vals, all_structs, ft, all_funcs, vgate));
     xi = xi + 1;
   }
   irverifygate.report(vgate);

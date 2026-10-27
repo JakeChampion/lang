@@ -20,7 +20,7 @@ import "./physicalbody";
 import "./ssaprepare";
 import "std/envflag";
 
-pub function release_entry(r: irtables.LowerResult, architecture: string, debug: boolean, entries: irtables.SigReg): ssaprepare.ReleaseEntry {
+pub function release_entry(r: irtables.Lowered, architecture: string, debug: boolean, entries: irtables.SigReg): ssaprepare.ReleaseEntry {
   if (debug || !counted_release_body(r)) {
     return ssaprepare.ReleaseEntry { counted: false, unique_drop: "" };
   }
@@ -34,7 +34,7 @@ pub function release_entry(r: irtables.LowerResult, architecture: string, debug:
   return ssaprepare.ReleaseEntry { counted: true, unique_drop: drop };
 }
 
-pub function counted_release_body(r: irtables.LowerResult): boolean {
+pub function counted_release_body(r: irtables.Lowered): boolean {
   let n: i32 = r.ops.len();
   if (r.n_params != 1 || n < 5 || !util.str_has_prefix(r.name, "__sem_release_")) {
     return false;
@@ -47,7 +47,7 @@ pub function counted_release_body(r: irtables.LowerResult): boolean {
     && r.ops[n - 1].kind_tag == ir.op_return().kind_tag;
 }
 
-pub function nominal_release_drop(r: irtables.LowerResult): string {
+pub function nominal_release_drop(r: irtables.Lowered): string {
   if (!counted_release_body(r) || r.ops.len() != 12) {
     return "";
   }
@@ -850,6 +850,11 @@ function cull_spliced_leaves(mod: parser.Module, cache: irtables.LowerResult[], 
     k = k + 1;
   }
   return out;
+}
+
+pub function body_for_emit(name: string, r: irtables.LowerResult): irtables.Lowered {
+  lower_failed_refuse(name, r);
+  return match (irtables.body_payload(r)) { Some(body) => body, None => { eprint("error: internal: superseded body reached emission: " + name); exit(3); } };
 }
 
 function inline_label(fd: parser.FuncDecl): string {
