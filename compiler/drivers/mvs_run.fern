@@ -313,6 +313,15 @@ function main(): i32 {
     return rc;
   }
 
+  let hex: string = "";
+  if let Ok(value) = fern_toml.validate_hash("sha256:" + hex64()) {
+    hex = value;
+  }
+  rc = check(33, "validated hash payload", hex, hex64());
+  if (rc != 0) {
+    return rc;
+  }
+
   write("mvs: every resolution rule agrees with native\n");
   return 0;
 }

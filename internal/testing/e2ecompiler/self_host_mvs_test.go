@@ -65,20 +65,7 @@ func TestSelfHostMvsIndexSources(t *testing.T) {
 	for _, target := range []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux, e2eharness.TargetWasm32Wasi} {
 		t.Run(target, func(t *testing.T) {
 			bin := buildSelfHostBinFor(t, dir, "index_sources.fern", "index_sources", target)
-			var cmd *exec.Cmd
-			switch target {
-			case e2eharness.TargetX86_64Linux:
-				cmd = runX86_64Bin(x86_64Runner(t), bin)
-			case e2eharness.TargetArm64Linux:
-				cmd = runArm64Bin(arm64Runner(t), bin)
-			default:
-				wasmtime, err := exec.LookPath("wasmtime")
-				if err != nil {
-					t.Skip("wasmtime not on PATH")
-				}
-				cmd = exec.Command(wasmtime, "run", bin)
-			}
-			out, err := cmd.CombinedOutput()
+			out, err := mvsDriverCommand(t, target, bin).CombinedOutput()
 			if err != nil {
 				t.Fatalf("index sources: %v\n%s", err, out)
 			}
@@ -97,25 +84,36 @@ func TestSelfHostMvsIndexSources(t *testing.T) {
 	}
 }
 
-func TestSelfHostMvsRules(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("mvs_run driver runs natively; skipping under an exec runner")
+func mvsDriverCommand(t *testing.T, target, bin string) *exec.Cmd {
+	t.Helper()
+	switch target {
+	case e2eharness.TargetX86_64Linux:
+		return runX86_64Bin(x86_64Runner(t), bin)
+	case e2eharness.TargetArm64Linux:
+		return runArm64Bin(arm64Runner(t), bin)
+	default:
+		wasmtime, err := exec.LookPath("wasmtime")
+		if err != nil {
+			t.Skip("wasmtime not on PATH")
+		}
+		return exec.Command(wasmtime, "run", bin)
 	}
+}
+
+func TestSelfHostMvsRules(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/mvs_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "drivers/mvs_run.fern", "mvs_run")
-
-	cmd := exec.Command(bin)
-	out, _ := cmd.Output()
-	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-		t.Fatalf("mvs_run did not exit normally")
-	}
-	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Fatalf("mvs_run exit code = %d, want 0 — that code is the failing assertion's id in mvs_run.fern", code)
-	}
-	if want := "mvs: every resolution rule agrees with native"; !strings.Contains(string(out), want) {
-		t.Errorf("mvs_run stdout = %q, want it to contain %q", out, want)
+	for _, target := range []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux, e2eharness.TargetWasm32Wasi} {
+		t.Run(target, func(t *testing.T) {
+			bin := buildSelfHostBinFor(t, dir, "drivers/mvs_run.fern", "mvs_run", target)
+			out, err := mvsDriverCommand(t, target, bin).CombinedOutput()
+			if err != nil {
+				t.Fatalf("mvs_run: %v\n%s", err, out)
+			}
+			if want := "mvs: every resolution rule agrees with native"; !strings.Contains(string(out), want) {
+				t.Errorf("mvs_run stdout = %q, want it to contain %q", out, want)
+			}
+		})
 	}
 }
 
@@ -129,6 +127,28 @@ func writeResolveProject(t *testing.T, dir string, files map[string]string) {
 		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestSelfHostMvsCachedURLDependency(t *testing.T) {
+	root := t.TempDir()
+	cache := filepath.Join(root, "cache")
+	hex := strings.Repeat("ab", 32)
+	writeResolveProject(t, root, map[string]string{
+		"app/fern.toml":                    "[package]\nname = \"app\"\n[dependencies]\nhelper = { url = \"https://example.invalid/helper.tar.gz\", hash = \"sha256:" + hex + "\" }\n",
+		"app/main.fern":                    "import \"helper\";\nfunction main(): i32 { return helper.answer(); }\n",
+		"cache/pkgs/" + hex + "/fern.toml": "[package]\nname = \"helper\"\n",
+		"cache/pkgs/" + hex + "/lib.fern":  "pub function answer(): i32 { return 42; }\n",
+	})
+	for _, target := range []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux, e2eharness.TargetWasm32Wasi} {
+		t.Run(target, func(t *testing.T) {
+			bin := e2eharness.CompileSelfHostFile(t, target, filepath.Join(root, "app/main.fern"), []string{"FERN_CACHE_DIR=" + cache})
+			cmd := mvsDriverCommand(t, target, bin)
+			out, _ := cmd.CombinedOutput()
+			if cmd.ProcessState == nil || !cmd.ProcessState.Exited() || cmd.ProcessState.ExitCode() != 42 {
+				t.Fatalf("cached dependency: state=%v, want exit 42\n%s", cmd.ProcessState, out)
+			}
+		})
 	}
 }
 

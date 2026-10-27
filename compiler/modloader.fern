@@ -486,12 +486,15 @@ pub function store_root(): string {
 }
 
 pub function store_dir(hash: string): Option[string] {
-  let hr: fern_toml.HashResult = fern_toml.validate_hash(hash);
+  let checked: Result[string, string] = fern_toml.validate_hash(hash);
   let root: string = store_root();
-  if (hr.err.len() > 0 || root.len() == 0) {
+  if (root.len() == 0) {
     return None;
   }
-  return Some(root + "/" + hr.hex + "/");
+  if let Ok(hex) = checked {
+    return Some(root + "/" + hex + "/");
+  }
+  return None;
 }
 
 pub function unresolved_import(path: string, tried: string, reason: string): string {

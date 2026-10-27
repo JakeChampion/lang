@@ -344,20 +344,15 @@ function is_letter(c: u8): boolean {
   return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z';
 }
 
-pub struct HashResult {
-  hex: string,
-  err: string,
-}
-
-pub function validate_hash(hash: string): HashResult {
+pub function validate_hash(hash: string): Result[string, string] {
   let bad: string = "must be `sha256:` + 64 lowercase hex digits of the archive bytes, got "
     + docsummary.quote(hash);
   if (hash.len() < 7 || slice_unchecked(hash, 0, 7) != "sha256:") {
-    return HashResult { hex: "", err: bad };
+    return Err(bad);
   }
   let hex: string = slice_unchecked(hash, 7, hash.len()) + "";
   if (hex.len() != 64) {
-    return HashResult { hex: "", err: bad };
+    return Err(bad);
   }
   let i: i32 = 0;
   while (i < hex.len()) {
@@ -365,11 +360,11 @@ pub function validate_hash(hash: string): HashResult {
     let digit: boolean = c >= b'0' && c <= b'9';
     let lower: boolean = c >= b'a' && c <= b'f';
     if (!digit && !lower) {
-      return HashResult { hex: "", err: bad };
+      return Err(bad);
     }
     i = i + 1;
   }
-  return HashResult { hex: hex, err: "" };
+  return Ok(hex);
 }
 
 struct DepResult { dep: Dep, err: string }
@@ -448,9 +443,8 @@ function with_dep_string(d: Dep, k: string, s: string): DepResult {
     return DepResult { dep: Dep { ...d, url: s }, err: "" };
   }
   if (k == "hash") {
-    let hr: HashResult = validate_hash(s);
-    if (hr.err.len() > 0) {
-      return dep_failed(d, "hash " + hr.err);
+    if let Err(message) = validate_hash(s) {
+      return dep_failed(d, "hash " + message);
     }
     return DepResult { dep: Dep { ...d, hash: s }, err: "" };
   }
@@ -668,11 +662,12 @@ pub function parse_lock(src: string): LockResult {
     let key: string = util.trim(slice_unchecked(line, 0, eq));
     match (quoted_value(util.trim(slice_unchecked(line, eq + 1, line.len())), 0)) {
       Some(v) => {
-        let hr: HashResult = validate_hash(v);
-        if (key == "hash" && hr.err.len() > 0) {
-          let none: LockEntry[] = [];
-          return LockResult { entries: none, err: "fern.lock line "
-            + util.i32_to_string(li) + ": hash " + hr.err };
+        if (key == "hash") {
+          if let Err(message) = validate_hash(v) {
+            let none: LockEntry[] = [];
+            return LockResult { entries: none, err: "fern.lock line "
+              + util.i32_to_string(li) + ": hash " + message };
+          }
         }
         cur = with_lock_field(cur, key, v);
       },

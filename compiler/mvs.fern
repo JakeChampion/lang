@@ -192,9 +192,8 @@ function parse_source(val: string): Result[Source, string] {
     } else if (k == "url") {
       url = v;
     } else if (k == "hash") {
-      let hr: fern_toml.HashResult = fern_toml.validate_hash(v);
-      if (hr.err.len() > 0) {
-        return Err(k + " " + hr.err);
+      if let Err(message) = fern_toml.validate_hash(v) {
+        return Err(k + " " + message);
       }
       hash = v;
     } else {

@@ -874,6 +874,9 @@ findings. Ranked by leverage.
   `Ok` carries the source and `Err` carries the diagnostic, without an empty source placeholder.
   Its error paths use the shared quote function for malformed source fields.
   Differential cases check both source data and diagnostic text against the Go parser on x86-64, ARM64 and Wasm.
+  Hash validation also uses `Result[string, string]` instead of `HashResult`.
+  Success carries the hexadecimal digest without its prefix, and failure carries the diagnostic.
+  Manifest, lock-file, registry and package-store callers match that result.
 
   _Rest of this row:_ the bespoke `*Result` structs remain.
   The generic-function migration is no longer blocked, and neither is
