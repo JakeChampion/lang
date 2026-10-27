@@ -8405,8 +8405,12 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     a = a + 1;
   }
   s = ssa_parallel_moves(srcs, dsts, s);
-  if (ssa.slot_call(ins)) {
+  if (ssa.slot_call(ins) && s.harden) {
+    s = s.write("    movq 8(%rax), %r11\n" + cfi_check_x86("%r11") + "    call *%r11\n");
+  } else if (ssa.slot_call(ins)) {
     s = s.write("    call *8(%rax)\n");
+  } else if (s.harden) {
+    s = s.write(cfi_check_x86("%rdx") + "    call *%rdx\n");
   } else {
     s = s.write("    call *%rdx\n");
   }
@@ -8414,6 +8418,25 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     s = ssa_alu_ir(s, 0, 64, (argc * 8) as i64, "%rsp");
   }
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
+// The word at a valid target is endbr64 (f3 0f 1e fa), read little-endian.
+function cfi_check_x86(reg: string): string {
+  return "    cmpl $-98693133, (" + reg + ")\n    jne __fern_cfi_fail\n";
+}
+
+function emit_cfi_stubs_from(s: asmcore.EmitState, first: i32): asmcore.EmitState {
+  if (s.cfi_stubs.len() <= first) {
+    return s;
+  }
+  s = s.write("    .text\n");
+  let i: i32 = first;
+  while (i < s.cfi_stubs.len()) {
+    let target: string = s.cfi_stubs[i];
+    s = s.write(asmcore.cfi_stub_label(s, target) + ":\n    endbr64\n    jmp " + target + "\n");
+    i = i + 1;
+  }
+  return s;
 }
 
 function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): asmcore.EmitState {
@@ -8432,6 +8455,10 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   let label: string = "";
   if (k == 45) {
     label = "__fn_" + asmcore.sanitize_label(ins.str) + ".r";
+    if (s.harden) {
+      s = asmcore.with_cfi_stub(s, label);
+      label = asmcore.cfi_stub_label(s, label);
+    }
   } else if (k == 46) {
     let sh: asmcore.ShapeRefOut = asmcore.shape_ref(s, ins.str);
     s = sh.state;
@@ -10405,6 +10432,7 @@ function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.Em
   let agg0: i32 = s.const_aggs.len();
   let sh0: i32 = s.shape_lits.len();
   let sa0: i32 = s.sym_addrs.len();
+  let cf0: i32 = s.cfi_stubs.len();
   let lowered: physicalbody.Lowered = s.rt_lower(m);
   let bodies: irtables.LowerResult[] = irtables.lowered_results(lowered.bodies);
   let physical = physicalbody.collection(lowered);
@@ -10425,6 +10453,7 @@ function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.Em
     i = i + 1;
   }
   s = emit_named_bodies(bodies, physical, unit.pre, fns.len(), s, vgate);
+  s = emit_cfi_stubs_from(s, cf0);
   if (s.shape_lits.len() > sh0) {
     s = asmcore.emit_shape_lits_from(s, sh0);
     s = s.write("    .text\n");
@@ -10475,6 +10504,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
     fi = fi + 1;
   }
   s = emit_named_bodies(cache, physical, unit.pre, mod.funcs.len(), s, vgate);
+  s = emit_cfi_stubs_from(s, 0);
   irverifygate.report(vgate);
   return s;
 }
@@ -10756,6 +10786,7 @@ function emit_startup_failures(own s: asmcore.EmitState): asmcore.EmitState {
   if (s.harden) {
     s = emit_startup_failure(s, ".Lfern_canary_read_failed", aborts.canary_read());
     s = emit_startup_failure(s, "__fern_canary_fail", aborts.canary());
+    s = emit_startup_failure(s, "__fern_cfi_fail", aborts.cfi());
   }
   return s;
 }

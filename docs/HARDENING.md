@@ -45,10 +45,10 @@ The arm64 backend emits only these indirect branches:
 Dyn dispatch is a compare chain ending in a direct `bl`, and every tail call
 is a direct `b`. Nothing emits `br`.
 
-So `-harden` puts a `bti c` landing pad at:
-
-- each function's `.k` entry, which is the address a function value holds;
-- `__fern_sig_catcher`.
+So `-harden` puts a `bti c` landing pad at each stub a function value holds,
+and `bti jc` at `__fern_sig_catcher`, which the kernel enters. A function's
+own `.k` entry carries no pad: a function value points at the stub, and the
+stub branches to the entry directly (`docs/security/CFI.md`).
 
 The FFI shim's target is C code that `-harden` does not emit. In the
 in-process image no C code is linked in, so the target lies outside the pages
@@ -98,6 +98,16 @@ segment by the load delta before the first function runs. `-harden` and
 pins the headers, the output, and on x86-64 a different base across two
 runs. The record is `docs/security/PIE.md`.
 
+## Forward-edge control-flow integrity
+
+Under `-harden` a function value points at a stub. The stub is `endbr64`
+and a jump on x86-64, or `bti c` and a branch on arm64. Every indirect call
+compares the word at its target with that pad before the call. A target without the
+pad, which is any address that is not an address-taken function, prints
+`fern: indirect call to an address that is not a function` and exits with
+status 134. The stubs sit in the read-only text segment. The design and its
+limits are in `docs/security/CFI.md`.
+
 ## Stack canaries
 
 Both native backends store a canary in every function that owns a frame with
@@ -120,6 +130,12 @@ so they carry no canary. The hand-written runtime frames carry none either.
 Both images must contain the BTI property note and produce the expected output.
 The test checks PAC and BTI instructions in the in-process image.
 A `-backtrace` abort must print plain code addresses without signature bits.
+
+`TestSelfHostForwardEdgeCFI` builds the control under `-harden` and under
+`-harden -pie` on both targets and counts the pads. It then runs three
+forged builds. They point a function value at the real entry, at a function
+with the same signature whose address is never taken, and at a data address.
+Each must print the cause and exit 134.
 
 `TestSelfHostStackCanary` builds a function with saved registers and spill
 slots under `-harden` on both targets. It checks the prologue store and the
@@ -172,7 +188,9 @@ with it active. It reads the kernel's own records and infers nothing from the em
 - **arm64-darwin**: Apple's arm64e ABI, not BTI, is the mechanism there.
 - **x86-64 CET**: the kernel enables user-space IBT for no static binary,
   and the shadow stack is enabled through `arch_prctl` at startup. Both are
-  their own design. On x86-64 `-harden` is the canary alone.
+  their own design. On x86-64 `-harden` is the canary and the software
+  check on every indirect call. The `endbr64` each stub carries is the
+  entry IBT requires, but the image carries no IBT property note.
 - **RELRO**: a static image with no relocations has no GOT for RELRO to
   protect. A `-pie` image relocates its data words at startup and leaves
   them in the writable segment, so a read-only segment after relocation is

@@ -507,9 +507,10 @@ host. Android, wasm and `-shared` builds refuse it with exit 2.
 ### Binary hardening (`-harden`) is arm64-linux and x86-64-linux executables only
 
 On arm64-linux `-harden` adds BTI landing pads, the GNU property note that
-enforces them, return-address signing, and a stack canary in every framed
-function. On x86-64-linux it adds the stack canary. Every other target, and
-`-shared`, refuses the flag with exit 2.
+enforces them, and return-address signing. On both Linux targets it adds a
+stack canary in every framed function and a check on every indirect call
+(`docs/security/CFI.md`). Every
+other target, and `-shared`, refuses the flag with exit 2.
 What is left (x86-64 CET, the shared and Android images, the runtime's
 hand-written frames) is listed in `docs/HARDENING.md`.
 

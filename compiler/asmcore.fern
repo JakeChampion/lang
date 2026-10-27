@@ -65,6 +65,7 @@ pub struct EmitState {
   str_ns: string,
   shape_lits: string[],
   sym_addrs: string[],
+  cfi_stubs: string[],
   const_aggs: string[],
   const_agg_ix: util.NameIndex,
   ssa_frame: i32,
@@ -411,6 +412,7 @@ pub function new_state(): EmitState {
     str_ns: "",
     shape_lits: [],
     sym_addrs: [],
+    cfi_stubs: [],
     const_aggs: [],
     const_agg_ix: util.name_index([]),
     ssa_frame: 0,
@@ -4109,6 +4111,23 @@ pub function (s: EmitState) has_local(name: string): boolean {
 
 pub struct LabelOut { state: EmitState, name: string }
 
+// Under -harden a function value points at a stub that starts with the
+// landing pad an indirect call checks for, so only an address-taken
+// function is a valid indirect target.
+pub function cfi_stub_label(s: EmitState, target: string): string {
+  if (s.str_ns.len() > 0) {
+    return ".Lfern_cfi_" + s.str_ns + "_" + sanitize_label(target);
+  }
+  return ".Lfern_cfi_" + sanitize_label(target);
+}
+
+pub function with_cfi_stub(s: EmitState, target: string): EmitState {
+  if (util.index_of_str(s.cfi_stubs, target) >= 0) {
+    return s;
+  }
+  return EmitState { ...s, cfi_stubs: s.cfi_stubs.append(target) };
+}
+
 pub function fresh_label(s: EmitState): LabelOut {
   let name: string = ".L" + util.i32_to_string(s.label_n);
   if (s.str_ns.len() > 0) {
@@ -4206,7 +4225,13 @@ pub function const_agg_pack(own s: EmitState, packed: string, entry: string): Co
   }
   let body: string = ir.const_struct_fn_body(packed);
   if (body.len() > 0) {
-    return ConstAggPack { state: s, text: "1|__fn_" + sanitize_label(body) + entry };
+    let target: string = "__fn_" + sanitize_label(body) + entry;
+    if (s.harden) {
+      s = with_cfi_stub(s, target);
+      let stub: string = cfi_stub_label(s, target);
+      return ConstAggPack { state: s, text: "1|" + stub };
+    }
+    return ConstAggPack { state: s, text: "1|" + target };
   }
   let shp: ShapeRefOut = const_agg_shape(s, packed);
   s = shp.state;
