@@ -70,6 +70,43 @@ Final records require committed source and immutable selected source/tool hashes
 The initial native smoke record uses uncommitted source and does not qualify the final campaign.
 Parametric curves, profile models, rendering intents, full transforms, encoded integration, color accuracy, and production acceptance remain open under #13659.
 
+## Recorded finite observations
+
+Final records use committed source `7508059b2dfc41da27717c6a0d6ef415579bba96`.
+Each target checks 1,049 cases: 977 successful evaluations and 72 expected errors.
+
+The largest observed absolute error is `1.327041356519031e-16`, within the predeclared `1e-12` finite criterion.
+All required identity and endpoint bits, errors, and poll counts match exactly.
+The three target sample records are equal.
+The bundle reproduces byte-for-byte with SHA-256 `b42ce9c4de12f4a17b13c7b48d406a474aec71cd55d4fef3bd9b94388e98ae14`.
+
+The campaigns use 132 fresh workers per target, for 396 total workers.
+Every worker reports nonzero balanced allocations and frees with zero live blocks.
+The native record preserves 1,246 selected source/tool hashes, while each runner record preserves 1,247.
+These include all compiler and 163 stdlib sources, worker binaries, the reference bundle, and generator/collector sources.
+All selected hashes remain unchanged throughout the campaigns.
+
+The clean compiler source is `b38cca91520de044f7ebf81f7ea6523d1af38a12`.
+Its SHA-256 is `d12b97d792d5d66d6bd312cd6723100ecb85ec2609d9430705032e504e5c090b`.
+Compiler and stdlib sources match the campaign checkout.
+Full native/Wasm scripts and 35 standalone ARM64 executables pass 248 TAP cases per target.
+Their 74/50/35 heap censuses are balanced with zero live blocks.
+Standalone ARM execution does not establish completion of the whole Go ARM harness.
+
+Both unchanged compiler/stdlib complexity checks pass without skips.
+All 2,048 eligible Fern format checks, build, vet, lint, test names, CI self-tests, runtime bundle, protocol controls, and STE checks pass.
+The committed-source Go checker and interpreter runs also pass all six unit groups after format changes.
+
+Their recorder retained a hardcoded uncommitted flag, which the separate provenance correction explains.
+That repeat accidentally reused an earlier local Go log path.
+The evidence preserves the earlier metadata recovered from its tool response and identifies the unavailable original stdout log.
+
+The raw records are [native](../benchmarks/results/icc-curv-eval-native.json),
+[Wasm](../benchmarks/results/icc-curv-eval-wasm.json), and
+[ARM64](../benchmarks/results/icc-curv-eval-arm64.json).
+[The evidence directory](../benchmarks/icc-curv-eval-2026-10-27/) preserves regressions, auxiliary checks, and the explicit recorder correction.
+Published historical datasets remain unchanged.
+
 ## References
 
 The `curv` layout and semantics derive from [ICC.1:2022](https://www.color.org/specifications/ICC.1-2022-05.pdf), section 10.6.
