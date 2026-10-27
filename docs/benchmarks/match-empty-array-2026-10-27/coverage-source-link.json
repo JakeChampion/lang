@@ -1,0 +1,9 @@
+{
+  "compiler_source_commit": "35b5bd31bb01a6d373aaad83beb6883537c328a3",
+  "coverage_source_commit": "c0c826ed8d893365038ff9df78201a9934713929",
+  "production_source_unchanged": true,
+  "only_coverage_change": "Two additional test rows select the empty branch at runtime. All previous test bodies are unchanged.",
+  "compiler_sha256": "fd43d45fdd54cd7883425e6259dc838997d3eb413fb78792dc65656b9d185c46",
+  "checker_sha256": "5290770ae98f8166bf50d5f90e06e869ad468bc62c735928002d16beecd783a2",
+  "test_sha256": "1cdf7e97806f78bfa94b0af62189d0d3c5eafa3b557d8c3bc07dafe6783ac3e9"
+}
