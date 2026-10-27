@@ -1,0 +1,15 @@
+{
+  "source_commit": "5670d814e3a2f394f87bb74ad87753f91d2df285",
+  "jobs": {
+    "corpus_native": 32746,
+    "corpus_wasm": 32653,
+    "corpus_arm64": 29809,
+    "full_native": 35036,
+    "full_wasm": 6665,
+    "full_arm64": 14981,
+    "aux": 43414,
+    "Go": 56165,
+    "complexity": 17148
+  },
+  "GOCACHE": "/tmp/image-curv-inverse-go-build-cache"
+}

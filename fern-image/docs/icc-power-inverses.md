@@ -49,3 +49,12 @@ The current forward evaluators, sampled inverses, model selection, and encoded a
 No external runtime CMM accompanies this standalone kernel.
 Affine and piecewise inverses, destination composition, adaptation, intents, and encoded integration require separate qualification.
 The [official ICC specification](https://www.color.org/specifications/ICC.1-2022-05.pdf) gives the current pure-power formula in Table 68 and inverse-curve context in Annex F.1.
+
+## Final observations
+
+Each target passed 640 committed-source cases through 80 fresh workers.
+All 240 workers exited normally with nonzero balanced zero-live heaps.
+Target sample records match exactly.
+The largest observed absolute error is `5.551115123125783e-17`, within the unchanged finite criterion.
+All three full regression runs passed 302 TAP tests.
+The [qualification record](../../docs/benchmarks/icc-power-inverse-2026-10-27/README.md) retains exact source identities, raw evidence, and limitations.

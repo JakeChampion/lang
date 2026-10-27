@@ -1,0 +1,12 @@
+TAP version 13
+# Suite: ICC function-zero inverse
+ok 1 - ICC power inverse exact identity and endpoints
+ok 2 - ICC power inverse arithmetic controls
+ok 3 - ICC power inverse exponent and IEEE domain
+ok 4 - ICC power inverse fresh admission
+ok 5 - ICC power inverse cooperative cancellation
+ok 6 - ICC power inverse COW and fresh calls
+1..6
+# tests 6
+# pass 6
+# fail 0

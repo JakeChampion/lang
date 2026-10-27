@@ -1,0 +1,8 @@
+{
+  "command_exit": 0,
+  "stdout": "{\"cases\": 640, \"sha256\": \"1aff420c99821b12d161bcefef1d8a43908c951a9096913f80bbc8991647744d\"}\n",
+  "original_sha256": "1aff420c99821b12d161bcefef1d8a43908c951a9096913f80bbc8991647744d",
+  "reproduced_sha256": "1aff420c99821b12d161bcefef1d8a43908c951a9096913f80bbc8991647744d",
+  "generator_sha256": "74b3725a75d5bf064c429fc33b3c74dad25a9edf2a099bd620623dcc6fc24188",
+  "exact": true
+}
