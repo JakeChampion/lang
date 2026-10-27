@@ -88,6 +88,44 @@ Final qualification requires committed source, all three compiled targets, full 
 Profile models, transforms, encoded integration, photographs, performance, security, compatibility, and production acceptance remain open.
 No external runtime codec or CMM dependency forms part of this API.
 
+## Recorded finite observations
+
+Final records use committed source `2812e664628b853ab77ae80e0a6ca31533c9b8eb`.
+Each target checks 368 cases: 295 present results, one absent result, and 72 expected errors.
+Every successful assembled byte matches its independent expected file, for 36,079,605 byte comparisons per target.
+The regular case sample records are exactly equal across targets.
+The bundle reproduces byte-for-byte with SHA-256 `cfa848e197b46c0308a4084eaf7fefce3ed3c76cd9a08a9f362e28da7f531380`.
+
+The campaigns use 46 positive workers per target, for 138 total exit-zero workers.
+Nine additional reference-control workers reject the three deliberately corrupted expected files on each target.
+Those controls require exit three on native/ARM and exit one under the Wasm main contract, with the exact mismatch reason.
+Every positive and reference-control worker reports a nonzero balanced heap census with zero live blocks.
+The record keeps these expected nonzero rejections separate from positive worker results.
+
+Each campaign repeats seven host-side offline Pillow metadata observations, including unordered fragments and an empty fragment.
+The native record preserves 1,254 selected source/tool hashes, while each runner record preserves 1,255.
+These include all compiler and 163 stdlib sources, worker binaries, expected-file recipes, frozen profile inputs, selected Pillow code/libraries, and generator/collector sources.
+All selected hashes remain unchanged throughout the campaigns.
+
+The clean compiler source is `b38cca91520de044f7ebf81f7ea6523d1af38a12`.
+Its SHA-256 is `d12b97d792d5d66d6bd312cd6723100ecb85ec2609d9430705032e504e5c090b`.
+Compiler and stdlib sources match the campaign checkout.
+Full native/Wasm scripts and 37 standalone ARM64 executables pass 262 TAP cases per target.
+Their 76/52/37 heap censuses are balanced with zero live blocks.
+Standalone ARM execution does not establish completion of the whole Go ARM harness.
+
+Both unchanged compiler/stdlib complexity checks pass without skips.
+All 2,054 eligible Fern format checks, build, vet, lint, test names, CI self-tests, runtime bundle, protocol controls, and STE checks pass.
+The evidence preserves the original Go unit execution with its actual uncommitted-source label.
+Its recorded input and tool hashes match the committed unit source, and Go implementation files remain unchanged since that oracle build.
+This source link does not relabel the earlier execution as a later clean-source run.
+
+The raw records are [native](../benchmarks/results/icc-app2-native.json),
+[Wasm](../benchmarks/results/icc-app2-wasm.json), and
+[ARM64](../benchmarks/results/icc-app2-arm64.json).
+[The evidence directory](../benchmarks/icc-app2-2026-10-27/) preserves regressions, source links, and explicit observation scope.
+Published historical datasets remain unchanged.
+
 ## Reference
 
 The framing derives from the JPEG/JFIF section of the [ICC profile embedding technical note](https://archive.color.org/files/technotes/ICC-Technote-ProfileEmbedding.pdf).
