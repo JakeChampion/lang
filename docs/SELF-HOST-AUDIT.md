@@ -965,6 +965,13 @@ findings. Ranked by leverage.
   A helper-call assertion checks the fast path for a known variant with no fields.
   Runtime checks cover unique and shared values on x86-64, ARM64 and Wasm, with balanced allocation counts.
 
+  Generic instantiation discovery uses `Option[Inst]` for direct calls and function arguments.
+  `Inst` contains only the name, specialization types and discovery depth.
+  Missing or unbound instances return `None` without an empty-name record.
+  Argument instances enter the worklist before their parent call instance.
+  The worklist retains its specialization keys and depth limit of 64.
+  Seven before/after cases retain rendered clone bodies, declaration metadata, counts and order.
+
   _Rest of this row:_ the bespoke `*Result` structs remain.
   Generic functions no longer block these migrations.
   T6/SH-026 is complete, and its four signature lookup families use standard options.

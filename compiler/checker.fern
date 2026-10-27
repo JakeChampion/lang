@@ -22312,61 +22312,59 @@ function template_index(gens: parser.FuncDecl[], name: string): i32 {
   return 0 - 1;
 }
 
-function call_inst(c: ast.ExprCall, s: Scope, gens: parser.FuncDecl[], depth: i32): Inst {
-  let none: Inst = Inst { name: "", cts: [], depth: depth };
+function call_inst(c: ast.ExprCall, s: Scope, gens: parser.FuncDecl[], depth: i32): Option[Inst] {
   if let ast.ExprIdent(id) = c.callee {
     if (s.defines(id.name)) {
-      return none;
+      return None;
     }
     let Some(sig) = s.lookup_sig(id.name) else {
-      return none;
+      return None;
     };
     if (sig.all_type_params.len() == 0) {
-      return none;
+      return None;
     }
     let gi: i32 = template_index(gens, id.name);
     if (gi < 0) {
-      return none;
+      return None;
     }
     let (bn, bt) = call_type_bindings(sig, c, s);
     let cts: string[] = [];
     for tp in gens[gi].all_type_params {
       let k: i32 = util.index_of_str(bn, tp);
       if (k < 0 || !spellable(bt[k])) {
-        return none;
+        return None;
       }
       cts = cts.append(type_label(bt[k]));
     }
-    return Inst { name: id.name, cts: cts, depth: depth };
+    return Some(Inst { name: id.name, cts: cts, depth: depth });
   }
-  return none;
+  return None;
 }
 
-function fn_value_inst(e: ast.Expr, dest: typeinfo.Type, s: Scope, gens: parser.FuncDecl[], depth: i32): Inst {
-  let none: Inst = Inst { name: "", cts: [], depth: depth };
+function fn_value_inst(e: ast.Expr, dest: typeinfo.Type, s: Scope, gens: parser.FuncDecl[], depth: i32): Option[Inst] {
   let ast.ExprIdent(id) = e else {
-    return none;
+    return None;
   };
   let typeinfo.TypeFunc(df) = dest else {
-    return none;
+    return None;
   };
   let gi: i32 = template_index(gens, id.name);
   if (gi < 0 || !generic_fn_value_arg(e, s)) {
-    return none;
+    return None;
   }
   let Some(sig) = s.lookup_sig(id.name) else {
-    return none;
+    return None;
   };
   let (bn, bt) = fn_value_binds(sig, df, s);
   let cts: string[] = [];
   for tp in gens[gi].all_type_params {
     let k: i32 = util.index_of_str(bn, tp);
     if (k < 0 || !spellable(bt[k])) {
-      return none;
+      return None;
     }
     cts = cts.append(type_label(bt[k]));
   }
-  return Inst { name: id.name, cts: cts, depth: depth };
+  return Some(Inst { name: id.name, cts: cts, depth: depth });
 }
 
 function arg_value_insts(c: ast.ExprCall, s: Scope, gens: parser.FuncDecl[], depth: i32, own acc: Inst[]): Inst[] {
@@ -22389,8 +22387,7 @@ function arg_value_insts(c: ast.ExprCall, s: Scope, gens: parser.FuncDecl[], dep
   let i: i32 = 0;
   while (i < c.args.len() && i < dests.len()) {
     if (generic_fn_value_arg(c.args[i], s)) {
-      let inst: Inst = fn_value_inst(c.args[i], bound_param_dest(c, i, dests[i], s), s, gens, depth);
-      if (inst.name.len() > 0) {
+      if let Some(inst) = fn_value_inst(c.args[i], bound_param_dest(c, i, dests[i], s), s, gens, depth) {
         out = out.append(inst);
       }
     }
@@ -22441,9 +22438,9 @@ function inst_stmt(st: ast.Stmt, cur: Scope, gens: parser.FuncDecl[], depth: i32
   function at_node(n: ast.Expr, own a: Inst[]): Inst[] {
     match (n) {
       ast.ExprCall(c) => {
-        let inst: Inst = call_inst(c, cur, gens, depth);
+        let found: Option[Inst] = call_inst(c, cur, gens, depth);
         let out: Inst[] = arg_value_insts(c, cur, gens, depth, a);
-        if (inst.name.len() > 0) {
+        if let Some(inst) = found {
           return out.append(inst);
         }
         return out;
