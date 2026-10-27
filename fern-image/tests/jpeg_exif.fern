@@ -1,0 +1,56 @@
+import "../packages/codecs/jpeg/exif";
+import "std/i32";
+
+function signed_word(input: [u8], at: i32): i32 {
+  let value = input[at] as i64 | input[at + 1] as i64 << 8i64 | input[at + 2] as i64 << 16i64 | input[at + 3] as i64 << 24i64;
+  return (if (value >= 2147483648i64) { value - 4294967296i64 } else { value }) as i32;
+}
+
+function orientation(value: Option[exif.Orientation]): i32 {
+  return match (value) { None => 0, Some(v) => match (v) { exif.TopLeft => 1, exif.TopRight => 2, exif.BottomRight => 3, exif.BottomLeft => 4, exif.LeftTop => 5, exif.RightTop => 6, exif.RightBottom => 7, exif.LeftBottom => 8 } };
+}
+
+function error_name(value: exif.ExifError): string {
+  return match (value) { exif.ExifError.Signature => "Signature", exif.ExifError.Truncated => "Truncated", exif.ExifError.ByteOrder => "ByteOrder", exif.ExifError.Version => "Version", exif.ExifError.Limit => "Limit", exif.ExifError.Directory => "Directory", exif.ExifError.Duplicate => "Duplicate", exif.ExifError.Type => "Type", exif.ExifError.Value => "Value", exif.ExifError.Cancelled => "Cancelled" };
+}
+
+function emit(path: string): i32 {
+  let bytes = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  if (bytes.len() < 16 || bytes[0] != 70 as u8 || bytes[1] != 69 as u8 || bytes[2] != 88 as u8 || bytes[3] != 49 as u8) {
+    return 3;
+  }
+  let limits = exif.ExifLimits { max_bytes: signed_word(bytes, 4), max_entries: signed_word(bytes, 8) };
+  let stop = signed_word(bytes, 12);
+  if (stop < 0) {
+    return 4;
+  }
+  let polls = cell_new(0);
+  let result = exif.inspect(bytes[16:], limits, (): boolean => {
+    polls.set(polls.get() + 1);
+    return stop != 0 && polls.get() == stop;
+  });
+  match (result) {
+    Ok(info) => {
+      let order = if (info.order == exif.ByteOrder.Little) { "II" } else { "MM" };
+      print("exif " + path + " ok " + orientation(info.orientation).to_string() + " " + order + " " + info.directories.to_string() + " " + info.entries.to_string() + " " + polls.get().to_string());
+    },
+    Err(error) => {
+      print("exif " + path + " error " + error_name(error) + " " + polls.get().to_string());
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let code = emit(paths[i]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

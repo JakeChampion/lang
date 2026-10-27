@@ -10,6 +10,9 @@ for source in experiments/essentials.fern experiments/io.fern experiments/zlib.f
   "$FERN" -target x86-64-linux -sanitize -o "$output" "$source"
   "$output"
 done
+"$FERN" -check tests/jpeg_exif_test.fern
+"$FERN" -target x86-64-linux -sanitize -o build/jpeg_exif_test tests/jpeg_exif_test.fern
+./build/jpeg_exif_test
 "$FERN" -check tests/png_incremental_test.fern
 "$FERN" -target x86-64-linux -sanitize -o build/png_incremental_test tests/png_incremental_test.fern
 ./build/png_incremental_test
