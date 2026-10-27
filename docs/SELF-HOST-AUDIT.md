@@ -908,6 +908,22 @@ findings. Ranked by leverage.
   Arithmetic helpers return `Option[i64]` in both the folder and constant evaluator.
   The numeric width and negative-zero checks retain their behavior.
 
+  IR width folds now return `Option[i32]`.
+  The 64-bit binary folder returns `Option[Op]` with the complete replacement instruction.
+  Strength rewrites return `Option[Op[]]`.
+  `None` preserves the input, while `Some([])` removes an identity operation.
+  This removes `WidthFold`, `Fold64`, and `StrengthRewrite` without placeholder data.
+
+  Three array-payload constructors remain out of line because the pinned bootstrap compiler refuses their inlined ownership transfers.
+  Tests preserve trap guards, unsigned exclusions, shift masks, operation metadata, and input aliases.
+  The Go oracle and native, ARM64, and Wasm drivers retain all nine operation fields across 10,242 cases.
+
+  Forty paired probes run the full IR pipeline for each input and retain identical outputs.
+  Each input defines 501 functions over scalars, records, or arrays.
+  Candidate/baseline time ratios range from 0.993 to 1.000.
+  Separate pass-repetition probes show 6% more time for width folds, 8% more for binary folds, and 20% less for strength rewrites.
+  These measurements establish no general compiler speed change.
+
   The closure lifter also uses `Option[FuncDecl]` for function construction.
   Both captured closures and named-function wrappers share that result type.
   A declined transformation returns `None` without a placeholder declaration.
