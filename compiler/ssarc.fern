@@ -2051,29 +2051,35 @@ function row_names(rows: irtables.LowerResult[]): string[] {
   return out;
 }
 
-pub function merge_helpers(cache: irtables.LowerResult[], helpers: irtables.LowerResult[]): irtables.LowerResult[] {
+pub function merge_helpers(cache: irtables.LowerResult[], helpers: Result[irtables.Lowered, irtables.LowerState][]): irtables.LowerResult[] {
   return merged_helpers(cache, helpers, false).bodies;
 }
 
 pub struct MergedHelpers { bodies: irtables.LowerResult[], cache_len: i32, helper_indices: i32[] }
 
-pub function merge_helpers_mapped(cache: irtables.LowerResult[], helpers: irtables.LowerResult[]): MergedHelpers {
+pub function merge_helpers_mapped(cache: irtables.LowerResult[], helpers: Result[irtables.Lowered, irtables.LowerState][]): MergedHelpers {
   return merged_helpers(cache, helpers, true);
 }
 
-function merged_helpers(cache: irtables.LowerResult[], helpers: irtables.LowerResult[], mapped: boolean): MergedHelpers {
+function merged_helpers(cache: irtables.LowerResult[], helpers: Result[irtables.Lowered, irtables.LowerState][], mapped: boolean): MergedHelpers {
   let out: irtables.LowerResult[] = cache;
   let selected: i32[] = [];
   let cached: util.NameIndex = util.name_index(row_names(cache));
-  let names: util.NameIndex = util.name_index(row_names(helpers));
+  let helper_names: string[] = [];
+  for helper in helpers {
+    helper_names = helper_names.append(irtables.helper_name(helper));
+  }
+  let names = util.name_index(helper_names);
   let k: i32 = 0;
   while (k < helpers.len()) {
-    let h: irtables.LowerResult = helpers[k];
-    if (names.find(h.name) == k && !cached.has(h.name)) {
-      if (h.ok) {
-        out = out.append(optimized_helper(h));
+    let helper = helpers[k];
+    let name = irtables.helper_name(helper);
+    if (names.find(name) == k && !cached.has(name)) {
+      let body = match (helper) { Ok(r) => irtables.lowered_result(r), Err(r) => irtables.lower_result(r) };
+      if (body.ok) {
+        out = out.append(optimized_helper(body));
       } else {
-        out = out.append(h);
+        out = out.append(body);
       }
       if (mapped) {
         selected = selected.append(k);

@@ -1018,7 +1018,10 @@ findings. Ranked by leverage.
   Helper collections retain complete data on success and partial state on refusal.
   Failed helpers retain their names for duplicate selection and diagnostics.
   Runtime helper selection matches the result before it publishes a body.
-  A legacy adapter remains at the application helper cache boundary.
+  Helper selection and merge inputs also retain standard results.
+  The merge converts only selected helpers for the remaining legacy application cache.
+  Cached names and the first helper for each name retain priority, even for failed helpers.
+  Merge indices, refusal state and metadata remain aligned.
 
   Module eligibility gates return `Option[Lowered]` and `Option[Gated]`.
   An unknown call or function value returns `None` without a placeholder cache.

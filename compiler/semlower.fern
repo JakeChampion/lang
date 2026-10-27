@@ -609,7 +609,7 @@ function physical_contracts(built: semsource.Built): ssasem.Contract[] {
   return out;
 }
 
-struct SelectedHelpers { rows: irtables.LowerResult[], origins: physicalbody.Origin[], producers: physicalbody.Metadata[] }
+struct SelectedHelpers { rows: Result[irtables.Lowered, irtables.LowerState][], origins: physicalbody.Origin[], producers: physicalbody.Metadata[] }
 
 function helper_origins(helpers: ssarc.Helpers): physicalbody.Origin[] {
   let out: physicalbody.Origin[] = [];
@@ -629,7 +629,7 @@ function helper_origins(helpers: ssarc.Helpers): physicalbody.Origin[] {
 }
 
 function selected_helpers(built: semsource.Built, helpers: ssarc.Helpers): SelectedHelpers {
-  let rows = irtables.helper_results(helpers.rows);
+  let rows = helpers.rows;
   let keys: typeinfo.Type[] = [];
   for d in built.decls {
     keys = structural_keys(keys, d.func);
@@ -644,7 +644,9 @@ function selected_helpers(built: semsource.Built, helpers: ssarc.Helpers): Selec
     let lowered: physicalbody.Lowered = runtime_module_lowering(keyhelpers.module(keys));
     origins = util.append_all(origins, physicalbody.lowered_origins(lowered, producers.len()));
     producers = producers.append(physicalbody.metadata(lowered));
-    rows = util.append_all(rows, irtables.lowered_results(lowered.bodies));
+    for body in lowered.bodies {
+      rows = rows.append(Ok(body));
+    }
   }
   return SelectedHelpers { rows: rows, origins: origins, producers: producers };
 }
