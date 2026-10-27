@@ -1418,6 +1418,7 @@ func New() *Interp {
 	i.Builtins["set_process_group"] = &Builtin{Fn: builtinSetProcessGroup}
 	i.Builtins["rlimit_nofile"] = &Builtin{Fn: builtinRlimitNofile}
 	i.Builtins["disable_core_dumps"] = &Builtin{Fn: builtinDisableCoreDumps}
+	i.Builtins["prctl_query"] = &Builtin{Fn: builtinPrctlQuery}
 	i.Builtins["statfs"] = &Builtin{Fn: builtinStatfs}
 	i.Builtins["mounts"] = &Builtin{Fn: builtinMounts}
 	i.Builtins["sysctl"] = &Builtin{Fn: builtinSysctl}
@@ -3685,6 +3686,17 @@ func builtinRlimitNofile(_ *Interp, args []Value) (Value, error) {
 		return Number(math.MaxInt64), nil
 	}
 	return Number(int64(cur)), nil
+}
+
+func builtinPrctlQuery(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("prctl_query: expected 1 arg, got %d", len(args))
+	}
+	n, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("prctl_query: expected a number, got %T", args[0])
+	}
+	return Number(prctlQuery(int(n))), nil
 }
 
 func builtinDisableCoreDumps(_ *Interp, args []Value) (Value, error) {

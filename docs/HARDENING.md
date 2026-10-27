@@ -143,6 +143,12 @@ runs passed, with no SIGILL and no canary mismatch. The six other runs are
 the two runner self-tests that print `not ok` lines by design and the
 Darwin-only time zone test, which fail the same way without the flag.
 
+`std/mitigations` reports, for a running process, whether the processor lists
+PAC, BTI and MTE (or the CET features on x86-64), whether the kernel enables
+them, and whether the process runs with them active. It reads the kernel's
+own records and infers nothing from the emitted code
+(`docs/security/MITIGATION-REPORT.md`).
+
 ## Not covered yet
 
 - **The runtime's hand-written frames** (the `__fern_*` helpers written as

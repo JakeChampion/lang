@@ -132,6 +132,7 @@ They are outside the public library inventory below.
 | `std/log` | [Structured log entries](../internal/stdlib/std/log.fern.md) |
 | `std/math` | [Ranges, numeric constants, and RGB values](../internal/stdlib/std/math.fern.md) |
 | `std/metrics` | [Prometheus metric values](../internal/stdlib/std/metrics.fern.md) |
+| `std/mitigations` | [Hardware mitigation report](../internal/stdlib/std/mitigations.fern.md) |
 | `std/mock_platform` | [Recorded platform operations](../internal/stdlib/std/mock_platform.fern.md) |
 | `std/ndarray` | [Multidimensional array views](../internal/stdlib/std/ndarray.fern.md) |
 | `std/net` | [Network address values](../internal/stdlib/std/net.fern.md) |

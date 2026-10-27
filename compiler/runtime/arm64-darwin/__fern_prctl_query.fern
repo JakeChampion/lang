@@ -1,0 +1,3 @@
+function __fern_prctl_query(option: i32): i64 {
+  return 0i64 - 38i64;
+}

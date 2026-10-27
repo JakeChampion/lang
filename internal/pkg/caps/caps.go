@@ -90,6 +90,7 @@ var BuiltinCaps = map[string]string{
 	"hostname":    "env",
 	"uname_field": "env",
 	"cpu_count":   "env",
+	"prctl_query": "env",
 	"sysctl":      "env",
 
 	"subprocess":          "subprocess",

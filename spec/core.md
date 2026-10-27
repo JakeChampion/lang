@@ -499,6 +499,7 @@ is the number of slots it leaves.
 | `crc32_ieee` | 480 | 2 | 1 |
 | `crc32_ieee_array` | 481 | 2 | 1 |
 | `count_below_u64` | 482 | 2 | 1 |
+| `prctl_query` | 483 | 1 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

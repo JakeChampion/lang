@@ -3492,6 +3492,7 @@ function builtin_i32_names(): string[] {
     "process_alive",
     "rlimit_nofile",
     "disable_core_dumps",
+    "prctl_query",
     "clock_resolution",
     "priority",
     "geteuid",
