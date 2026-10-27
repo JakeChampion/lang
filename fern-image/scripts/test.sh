@@ -31,6 +31,9 @@ done
 "$FERN" -check tests/icc_power_inverse_test.fern
 "$FERN" -target x86-64-linux -sanitize -o build/icc_power_inverse_test tests/icc_power_inverse_test.fern
 ./build/icc_power_inverse_test
+"$FERN" -check tests/icc_affine_inverse_test.fern
+"$FERN" -target x86-64-linux -sanitize -o build/icc_affine_inverse_test tests/icc_affine_inverse_test.fern
+./build/icc_affine_inverse_test
 "$FERN" -check tests/icc_parametric_eval_test.fern
 "$FERN" -target x86-64-linux -sanitize -o build/icc_parametric_eval_test tests/icc_parametric_eval_test.fern
 ./build/icc_parametric_eval_test

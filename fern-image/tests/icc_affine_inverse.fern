@@ -1,0 +1,65 @@
+import "../packages/codecs/icc/affine_inverse";
+import "../packages/codecs/icc/tag_data";
+import "std/i32";
+import "std/i64";
+
+function signed(input: [u8], at: i32): i32 {
+  let value = input[at] as i64 | input[at + 1] as i64 << 8i64 | input[at + 2] as i64 << 16i64 | input[at + 3] as i64 << 24i64;
+  return (if (value >= 2147483648i64) { value - 4294967296i64 } else { value }) as i32;
+}
+
+function bits(input: [u8], at: i32): i64 {
+  let result = 0i64;
+  for index in 0..8 {
+    result = result | input[at + index] as i64 << (index * 8) as i64;
+  }
+  return result;
+}
+
+function error_name(error: affine_inverse.InvertError): string {
+  return match (error) { affine_inverse.InvertError.Function => "Function", affine_inverse.InvertError.Shape => "Shape", affine_inverse.InvertError.Input => "Input", affine_inverse.InvertError.Domain => "Domain", affine_inverse.InvertError.Unsupported => "Unsupported", affine_inverse.InvertError.NonInvertible => "NonInvertible", affine_inverse.InvertError.Numeric => "Numeric", affine_inverse.InvertError.Cancelled => "Cancelled" };
+}
+
+function emit(path: string): i32 {
+  let input = match (read_file_bytes(path)) { Ok(value) => value, _ => { return 2; } };
+  if (input.len() < 24 || input[0] != 70 as u8 || input[1] != 65 as u8 || input[2] != 73 as u8 || input[3] != 49 as u8) {
+    return 3;
+  }
+  let count = signed(input, 12);
+  let stop = signed(input, 8);
+  if (count < 0 || count > 8 || stop < 0 || input.len() as i64 != 24i64 + count as i64 * 4i64) {
+    return 4;
+  }
+  let coefficients: i32[] = [];
+  for index in 0..count {
+    coefficients = coefficients.append(signed(input, 24 + index * 4));
+  }
+  let polls = cell_new(0);
+  let result = affine_inverse.invert(tag_data.ParametricData { function_type: signed(input, 4), coefficients: coefficients }, f64_from_bits(bits(input, 16)), (): boolean => {
+    polls.set(polls.get() + 1);
+    return stop != 0 && polls.get() == stop;
+  });
+  match (result) {
+    Ok(value) => {
+      print("aiv " + path + " ok " + polls.get().to_string() + " " + f64_bits(value).to_string());
+    },
+    Err(error) => {
+      print("aiv " + path + " error " + error_name(error) + " " + polls.get().to_string());
+    }
+  }
+  return 0;
+}
+
+pub function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for index in 1..paths.len() {
+    let code = emit(paths[index]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

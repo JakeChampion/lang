@@ -1,0 +1,23 @@
+{
+  "scope": "Independent pre-code mathematical capability for a future bounded affine inverse, not Fern qualification",
+  "function_type": 2,
+  "coefficients": [
+    262144,
+    16384,
+    -16383,
+    32768
+  ],
+  "input_bits": 4602678819172646913,
+  "exact_maximum": [
+    "9223372036854775809",
+    "18446744073709551616"
+  ],
+  "rounded_maximum": 0.5,
+  "correct_inverse": 1.0,
+  "correct_inverse_bits": 4607182418800017408,
+  "naive_rounded_range_result": 0.99993896484375,
+  "naive_absolute_error": 6.103515625e-05,
+  "finite_criterion_proposed_before_Fern_implementation": "1e-12 absolute, exact declared identities/endpoints/dyadics",
+  "naive_must_fail": true,
+  "required_general_rule": "Compare the offset-free requested value with the positive power range before inverse root selection. Retain exact-admission phase and flat interval policies."
+}

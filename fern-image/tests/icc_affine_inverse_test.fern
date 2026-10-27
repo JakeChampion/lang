@@ -1,0 +1,176 @@
+import "../packages/codecs/icc/affine_inverse";
+import "../packages/codecs/icc/tag_data";
+import "std/test";
+import "std/f64";
+
+function never(): boolean {
+  return false;
+}
+
+function evaluate(kind: i32, values: i32[], input: f64): Result[f64, affine_inverse.InvertError] {
+  return affine_inverse.invert(tag_data.ParametricData { function_type: kind, coefficients: values }, input, never);
+}
+
+function exact(result: Result[f64, affine_inverse.InvertError], expected: f64): boolean {
+  return match (result) { Ok(value) => f64_bits(value) == f64_bits(expected), _ => false };
+}
+
+function close(result: Result[f64, affine_inverse.InvertError], expected: f64): boolean {
+  return match (result) { Ok(value) => (value - expected).abs() <= 1e-12, _ => false };
+}
+
+function identities(): test.TestOutcome {
+  for input in [-0.0, 0.0, f64_from_bits(1), 0.25, 0.5, f64_from_bits(0x3fefffffffffffff), 1.0] {
+    if (!exact(evaluate(1, [65536, 65536, 0], input), input) || !exact(evaluate(2, [65536, 65536, 0, 0], input), input)) {
+      return test.fail("affine inverse identity bits");
+    }
+  }
+  for raw_offset in [0, 16384, 32768] {
+    let offset = raw_offset as f64 / 65536.0;
+    for input in [offset, 0.5, f64_from_bits(0x3fefffffffffffff), 1.0] {
+      if (!exact(evaluate(2, [65536, 65536, -raw_offset, raw_offset], input), input)) {
+        return test.fail("selected algebraic identity bits");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function arithmetic(): test.TestOutcome {
+  return test.assert_true(exact(evaluate(1, [131072, 65536, 0], 0.25), 0.5)
+    && exact(evaluate(1, [131072, 65536, -16384], 0.25), 0.75)
+    && exact(evaluate(2, [131072, 65536, -16384, 16384], 0.5), 0.75)
+    && exact(evaluate(1, [131072, 131072, -65536], 0.25), 0.75));
+}
+
+function flats_and_range(): test.TestOutcome {
+  for (kind, values, input, expected) in [
+    (1, [65536, 65536, -16384], 0.0, 0.25),
+    (1, [65536, 65536, -16384], 1.0, 1.0),
+    (2, [65536, 65536, -16384, 16384], 0.0, 0.25),
+    (2, [65536, 65536, -16384, 16384], 0.25, 0.25),
+    (2, [65536, 65536, 0, 32768], 1.0, 0.5),
+    (2, [65536, 131072, -65536, 32768], 0.0, 0.5),
+    (2, [65536, 131072, -65536, 32768], 0.75, 0.625),
+    (2, [65536, 131072, -65536, 32768], 1.0, 0.75),
+  ] {
+    if (!exact(evaluate(kind, values, input), expected)) {
+      return test.fail("initial and terminal flats and nearest range values");
+    }
+  }
+  return test.assert_true(close(evaluate(2, [131072, 65536, 0, 32768], 1.0), 0.7071067811865475));
+}
+
+function admission(): test.TestOutcome {
+  for (kind, values, error) in [
+    (-1, [65536], affine_inverse.InvertError.Function),
+    (5, [65536], affine_inverse.InvertError.Function),
+    (0, [65536], affine_inverse.InvertError.Unsupported),
+    (3, [], affine_inverse.InvertError.Unsupported),
+    (4, [], affine_inverse.InvertError.Unsupported),
+    (1, [], affine_inverse.InvertError.Shape),
+    (2, [65536, 65536, 0], affine_inverse.InvertError.Shape),
+    (1, [0, 65536, 0], affine_inverse.InvertError.Domain),
+    (1, [65536, 0, 0], affine_inverse.InvertError.Domain),
+    (1, [65535, 65536, 0], affine_inverse.InvertError.Unsupported),
+    (1, [262145, 65536, 0], affine_inverse.InvertError.Unsupported),
+    (1, [65536, 16383, 0], affine_inverse.InvertError.Unsupported),
+    (1, [65536, 262145, -196609], affine_inverse.InvertError.Unsupported),
+    (1, [65536, 65536, 1], affine_inverse.InvertError.Unsupported),
+    (1, [65536, 131072, 0], affine_inverse.InvertError.Unsupported),
+    (2, [65536, 65536, 0, -1], affine_inverse.InvertError.Unsupported),
+    (2, [65536, 65536, 0, 32769], affine_inverse.InvertError.Unsupported),
+    (1, [65536, 65536, -65536], affine_inverse.InvertError.NonInvertible),
+    (2, [65536, 65536, -65537, 32768], affine_inverse.InvertError.NonInvertible),
+  ] {
+    let polls = cell_new(0);
+    let result = affine_inverse.invert(tag_data.ParametricData { function_type: kind, coefficients: values }, 0.5, (): boolean => {
+      polls.set(polls.get() + 1);
+      return true;
+    });
+    if (polls.get() != 0 || match (result) { Err(actual) => actual != error, _ => true }) {
+      return test.fail("affine inverse admission before callbacks");
+    }
+  }
+  for input in [-0.1, 1.1, f64_from_bits(0x7ff0000000000000), -f64_from_bits(0x7ff0000000000000), f64_from_bits(0x7ff8000000000000)] {
+    if (match (evaluate(1, [65536, 65536, 0], input)) { Err(affine_inverse.InvertError.Input()) => false, _ => true }) {
+      return test.fail("finite normalized inverse input");
+    }
+  }
+  return test.pass();
+}
+
+function cancellation(): test.TestOutcome {
+  for values in [[131072, 65536, 0, 32768], [262144, 16384, -16383, 32768]] {
+    for stop in [1, 2, 3] {
+      let polls = cell_new(0);
+      let result = affine_inverse.invert(tag_data.ParametricData { function_type: 2, coefficients: values }, 1.0, (): boolean => {
+        polls.set(polls.get() + 1);
+        return polls.get() == stop;
+      });
+      if (stop < 3) {
+        if (polls.get() != stop || match (result) { Err(affine_inverse.InvertError.Cancelled()) => false, _ => true }) {
+          return test.fail("every affine inverse cancellation poll");
+        }
+      } else if (polls.get() != 2 || match (result) { Ok(_) => false, _ => true }) {
+        return test.fail("affine inverse success final poll");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function ownership(): test.TestOutcome {
+  let values = [131072, 65536, 0];
+  let shared = cell_new(values);
+  let result = affine_inverse.invert(tag_data.ParametricData { function_type: 1, coefficients: values }, 0.25, (): boolean => {
+    shared.set(shared.get().with(0, 65536));
+    return false;
+  });
+  return test.assert_true(exact(result, 0.5) && values[0] == 131072 && shared.get()[0] == 65536 && exact(evaluate(1, shared.get(), 0.25), 0.25) && exact(evaluate(1, values, 0.25), 0.5));
+}
+
+@noinline
+function ordinary_range(input: f64): f64 {
+  let white = 1.0 / 65536.0;
+  let maximum = 0.5 + white.pow(4.0);
+  let target = if (input > maximum) { maximum } else { input };
+  return ((target - 0.5).pow(0.25) + 16383.0 / 65536.0) / 0.25;
+}
+
+function range_phase(): test.TestOutcome {
+  let next = f64_from_bits(0x3fe0000000000001);
+  let values = [262144, 16384, -16383, 32768];
+  return test.assert_true((ordinary_range(next) - 1.0).abs() > 1e-12 && exact(evaluate(2, values, next), 1.0)
+    && exact(evaluate(2, values, 0.5), 0.99993896484375)
+    && exact(evaluate(2, values, f64_from_bits(0x3fdfffffffffffff)), 0.99993896484375));
+}
+
+function boundaries(): test.TestOutcome {
+  for gamma in [65536, 65537, 131072, 262143, 262144] {
+    for a in [16384, 65536, 262144] {
+      let white = if (a < 65536) { a } else { 65536 };
+      for offset in [0, 32768] {
+        for input in [f64_from_bits(1), 0.5, f64_from_bits(0x3fefffffffffffff), 1.0] {
+          if (match (evaluate(2, [gamma, a, white - a, offset], input)) { Ok(value) => !value.is_finite() || value < 0.0 || value > 1.0, _ => true }) {
+            return test.fail("admitted coefficient and IEEE boundaries");
+          }
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+pub function main(): i32 {
+  let runner = test.test_new("ICC bounded affine inverses");
+  runner = runner.it("ICC affine inverse identity bits", identities);
+  runner = runner.it("ICC affine inverse arithmetic controls", arithmetic);
+  runner = runner.it("ICC affine inverse flat and range policy", flats_and_range);
+  runner = runner.it("ICC affine inverse fresh admission", admission);
+  runner = runner.it("ICC affine inverse cooperative cancellation", cancellation);
+  runner = runner.it("ICC affine inverse COW and fresh calls", ownership);
+  runner = runner.it("ICC affine inverse exact range phase", range_phase);
+  runner = runner.it("ICC affine inverse domain boundaries", boundaries);
+  return runner.finish();
+}

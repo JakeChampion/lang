@@ -1,0 +1,48 @@
+{
+  "source_commit": "6546743d24a1fe9c7d3de0e7c5c8a01699c275f3",
+  "records_equal": true,
+  "cases_per_target": 1581,
+  "numeric_per_target": 1496,
+  "errors_per_target": 85,
+  "workers_per_target": 198,
+  "total_workers": 594,
+  "max_absolute_error": 1.7056711454934297e-16,
+  "hash_counts": [
+    1256,
+    1257,
+    1257
+  ],
+  "full_TAP_per_target": 310,
+  "censuses": [
+    83,
+    59,
+    44
+  ],
+  "full_source_hash_counts": [
+    1351,
+    1351,
+    1351
+  ],
+  "standalone_ARM_executables": 44,
+  "format_files": 2076,
+  "complexity": {
+    "command": [
+      "go",
+      "test",
+      "-v",
+      "./internal/testing/e2ecompiler",
+      "-run",
+      "^TestSelfHostRepoComplexityRatchet$",
+      "-count=1",
+      "-timeout=10m"
+    ],
+    "exit": 0,
+    "seconds": 87.30877923965454,
+    "PASS": 3,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "Go_oracle_build_source": "8cb3ccf00e945ffda49c889e6cb5b037ebc2976b",
+  "Go_loaded_source": "6546743d24a1fe9c7d3de0e7c5c8a01699c275f3",
+  "scope": "Finite standalone bounded ICC function-one/two inverses. No wider affine/piecewise domain, profile transform, or encoded integration claim."
+}

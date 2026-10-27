@@ -32,6 +32,9 @@ wasmtime run --dir=. build/wasm-icc_curv_inverse_test.wasm
 "$FERN" -check tests/icc_power_inverse_test.fern
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_power_inverse_test.wasm tests/icc_power_inverse_test.fern
 wasmtime run --dir=. build/wasm-icc_power_inverse_test.wasm
+"$FERN" -check tests/icc_affine_inverse_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_affine_inverse_test.wasm tests/icc_affine_inverse_test.fern
+wasmtime run --dir=. build/wasm-icc_affine_inverse_test.wasm
 "$FERN" -check tests/icc_parametric_eval_test.fern
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_parametric_eval_test.wasm tests/icc_parametric_eval_test.fern
 wasmtime run --dir=. build/wasm-icc_parametric_eval_test.wasm
