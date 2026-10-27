@@ -28,6 +28,9 @@ done
 "$FERN" -check tests/icc_parametric_eval_test.fern
 "$FERN" -target x86-64-linux -sanitize -o build/icc_parametric_eval_test tests/icc_parametric_eval_test.fern
 ./build/icc_parametric_eval_test
+"$FERN" -check tests/icc_app2_test.fern
+"$FERN" -target x86-64-linux -sanitize -o build/icc_app2_test tests/icc_app2_test.fern
+./build/icc_app2_test
 "$FERN" -check tests/png_incremental_test.fern
 "$FERN" -target x86-64-linux -sanitize -o build/png_incremental_test tests/png_incremental_test.fern
 ./build/png_incremental_test
