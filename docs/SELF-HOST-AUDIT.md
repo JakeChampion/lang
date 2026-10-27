@@ -902,6 +902,11 @@ findings. Ranked by leverage.
   The Go reader now retains the file path in parse diagnostics, as the self-host CLI already does.
   The Go reader also tracks version presence separately from the parsed number.
   Version `0.0.0` now survives a lock-file round trip, and missing versions still fail.
+  The lock parser also rejects incomplete entries, unknown fields, malformed quoted values and invalid versions.
+  Versions retain the Go reader's 64-bit component range and canonical decimal form.
+  A map resolves duplicate package names, so the last entry wins as it does in Go.
+  The registry and lock parsers share quoted-value validation.
+  A 37-case differential checks exact data and diagnostics on x86-64, ARM64 and Wasm.
 
   _Rest of this row:_ the bespoke `*Result` structs remain.
   The generic-function migration is no longer blocked, and neither is

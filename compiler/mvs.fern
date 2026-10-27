@@ -142,10 +142,7 @@ pub function parse_index(src: string): Index {
       return index_err(entries, "line " + util.i32_to_string(ln) + ": expected `\"VERSION\" = { … }`");
     }
     let key: string = util.trim(slice_unchecked(line, 0, eq) + "");
-    if (!is_quoted(key)) {
-      return index_err(entries, "line " + util.i32_to_string(ln) + ": version key: " + unquote_error(key));
-    }
-    let ver: string = slice_unchecked(key, 1, key.len() - 1) + "";
+    let ver: string = match (fern_toml.parse_quoted(key)) { Ok(value) => value, Err(message) => { return index_err(entries, "line " + util.i32_to_string(ln) + ": version key: " + message); } };
     if (!parse_version(ver).ok) {
       return index_err(entries, "line " + util.i32_to_string(ln) + ": " + version_error(ver));
     }
@@ -183,10 +180,7 @@ function parse_source(val: string): Result[Source, string] {
     }
     let k: string = util.trim(slice_unchecked(part, 0, eq) + "");
     let raw: string = util.trim(slice_unchecked(part, eq + 1, part.len()) + "");
-    if (!is_quoted(raw)) {
-      return Err(k + ": " + unquote_error(raw));
-    }
-    let v: string = slice_unchecked(raw, 1, raw.len() - 1) + "";
+    let v: string = match (fern_toml.parse_quoted(raw)) { Ok(value) => value, Err(message) => { return Err(k + ": " + message); } };
     if (k == "path") {
       path = v;
     } else if (k == "url") {
@@ -554,28 +548,6 @@ function index_of_char(s: string, c: u8, from: i32): i32 {
 
 pub function quoted(s: string): string {
   return "\"" + s + "\"";
-}
-
-function is_quoted(s: string): boolean {
-  if (s.len() < 2 || s[0] != b'"' || s[s.len() - 1] != b'"') {
-    return false;
-  }
-  let inner: string = slice_unchecked(s, 1, s.len() - 1) + "";
-  let i: i32 = 0;
-  while (i < inner.len()) {
-    if (inner[i] == b'"' || inner[i] == b'\\') {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
-}
-
-function unquote_error(s: string): string {
-  if (s.len() < 2 || s[0] != b'"' || s[s.len() - 1] != b'"') {
-    return "expected a quoted string, got " + docsummary.quote(s);
-  }
-  return "escapes unsupported in " + docsummary.quote(s);
 }
 
 pub function is_abs(p: string): boolean {

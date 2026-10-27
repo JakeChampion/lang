@@ -144,6 +144,30 @@ func TestSelfHostVendorDifferentialX86_64(t *testing.T) {
 			"fern.lock": "[[package]]\nname = \"good\"\nversion = \"1.0.0\"\n\n" +
 				"[[package]]\nname = \"libv\"\nversion = \"1.0.0\"\nhash = \"sha256:bad\"\n",
 		}, ".", "", false, true},
+		{"versioned-with-incomplete-lock", map[string]string{
+			"fern.toml":         "[package]\nname = \"app\"\n[dependencies]\nlibv = \"1.0.0\"\n",
+			"main.fern":         "function main(): i32 { return 0; }\n",
+			"fern.lock":         "[[package]]\nname = \"libv\"\npath = \"@ROOT@/../libv\"\n",
+			"../libv/fern.toml": "[package]\nname = \"libv\"\n",
+			"../libv/lib.fern":  lib,
+		}, ".", "", false, true},
+		{"versioned-with-unknown-lock-field", map[string]string{
+			"fern.toml":         "[package]\nname = \"app\"\n[dependencies]\nlibv = \"1.0.0\"\n",
+			"main.fern":         "function main(): i32 { return 0; }\n",
+			"fern.lock":         "[[package]]\nname = \"libv\"\nversion = \"1.0.0\"\npath = \"@ROOT@/../libv\"\nother = \"x\"\n",
+			"../libv/fern.toml": "[package]\nname = \"libv\"\n",
+			"../libv/lib.fern":  lib,
+		}, ".", "", false, true},
+		{"versioned-with-duplicate-lock-entry", map[string]string{
+			"fern.toml": "[package]\nname = \"app\"\n[dependencies]\nlibv = \"1.0.0\"\n",
+			"main.fern": "function main(): i32 { return 0; }\n",
+			"fern.lock": "[[package]]\nname = \"libv\"\nversion = \"1.0.0\"\npath = \"@ROOT@/../old\"\n" +
+				"[[package]]\nname = \"libv\"\nversion = \"2.0.0\"\npath = \"@ROOT@/../new\"\n",
+			"../old/fern.toml": "[package]\nname = \"libv\"\n",
+			"../old/lib.fern":  "pub function twelve(): i32 { return 11; }\n",
+			"../new/fern.toml": "[package]\nname = \"libv\"\n",
+			"../new/lib.fern":  lib,
+		}, ".", "", true, true},
 		{"url-from-store", map[string]string{
 			"fern.toml": "[package]\nname = \"app\"\n[dependencies]\n" +
 				"remote = { url = \"https://example.invalid/remote.tar.gz\", hash = \"sha256:" + storeHex + "\" }\n",

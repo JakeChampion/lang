@@ -1,6 +1,7 @@
 import "./util";
 import "./capvocab";
 import "./docsummary";
+import "core/map";
 
 pub struct Dep {
   name: string,
@@ -39,16 +40,15 @@ function index_of(s: string, c: u8, from: i32): i32 {
   return 0 - 1;
 }
 
-function quoted_value(s: string, from: i32): Option[string] {
-  let q1: i32 = index_of(s, b'"', from);
-  if (q1 < 0) {
-    return None;
+pub function parse_quoted(s: string): Result[string, string] {
+  if (s.len() < 2 || s[0] != b'"' || s[s.len() - 1] != b'"') {
+    return Err("expected a quoted string, got " + docsummary.quote(s));
   }
-  let q2: i32 = index_of(s, b'"', q1 + 1);
-  if (q2 < 0) {
-    return None;
+  let inner: string = slice_unchecked(s, 1, s.len() - 1) + "";
+  if (index_of(inner, b'"', 0) >= 0 || index_of(inner, b'\\', 0) >= 0) {
+    return Err("escapes unsupported in " + docsummary.quote(s));
   }
-  return Some(slice_unchecked(s, q1 + 1, q2) + "");
+  return Ok(inner);
 }
 
 function split_char(src: string, c: u8): string[] {
@@ -660,62 +660,120 @@ pub struct LockEntry {
 
 pub function parse_lock(src: string): Result[LockEntry[], string] {
   let out: LockEntry[] = [];
-  let blank: LockEntry = LockEntry { name: "", version: "", path: "", url: "", hash: "" };
-  let cur: LockEntry = blank;
-  let have: boolean = false;
+  let cur: Option[LockEntry] = None;
   let lines: string[] = split_char(src, b'\n');
   let li: i32 = 0;
   while (li < lines.len()) {
     let line: string = line_content(lines[li]);
     li = li + 1;
-    if (line == "[[package]]") {
-      if (have) {
-        out = out.append(cur);
-      }
-      cur = blank;
-      have = true;
+    if (line.len() == 0) {
       continue;
     }
+    if (line == "[[package]]") {
+      if let Some(entry) = cur {
+        let complete: LockEntry = match (complete_lock_entry(entry)) { Ok(e) => e, Err(message) => { return Err(message); } };
+        out = out.append(complete);
+      }
+      cur = Some(LockEntry { name: "", version: "", path: "", url: "", hash: "" });
+      continue;
+    }
+    let entry: LockEntry = match (cur) { Some(e) => e, None => { return Err(lock_line(li, docsummary.quote(line) + " outside a [[package]] entry")); } };
     let eq: i32 = index_of(line, b'=', 0);
     if (eq < 0) {
-      continue;
+      return Err(lock_line(li, "expected `key = value`"));
     }
     let key: string = util.trim(slice_unchecked(line, 0, eq));
-    match (quoted_value(util.trim(slice_unchecked(line, eq + 1, line.len())), 0)) {
-      Some(v) => {
-        if (key == "hash") {
-          if let Err(message) = validate_hash(v) {
-            return Err("fern.lock line " + util.i32_to_string(li) + ": hash " + message);
-          }
-        }
-        cur = with_lock_field(cur, key, v);
-      },
-      None => {}
-    }
+    let v: string = match (parse_quoted(util.trim(slice_unchecked(line, eq + 1, line.len())))) { Ok(value) => value, Err(message) => { return Err(lock_line(li, key + ": " + message)); } };
+    let updated: LockEntry = match (with_lock_field(entry, key, v)) { Ok(e) => e, Err(message) => { return Err(lock_line(li, message)); } };
+    cur = Some(updated);
   }
-  if (have) {
-    out = out.append(cur);
+  if let Some(entry) = cur {
+    let complete: LockEntry = match (complete_lock_entry(entry)) { Ok(e) => e, Err(message) => { return Err(message); } };
+    out = out.append(complete);
   }
-  return Ok(out);
+  return Ok(unique_lock_entries(out));
 }
 
-function with_lock_field(e: LockEntry, key: string, v: string): LockEntry {
+function lock_line(line: i32, message: string): string {
+  return "fern.lock line " + util.i32_to_string(line) + ": " + message;
+}
+
+function complete_lock_entry(entry: LockEntry): Result[LockEntry, string] {
+  if (entry.name.len() == 0 || entry.version.len() == 0) {
+    return Err("fern.lock: incomplete [[package]] entry");
+  }
+  return Ok(entry);
+}
+
+function unique_lock_entries(entries: LockEntry[]): LockEntry[] {
+  if (entries.len() < 2) {
+    return entries;
+  }
+  let positions: Map[string, i32] = map_new(entries.len());
+  let out: LockEntry[] = [];
+  for entry in entries {
+    let at: i32 = positions.get_or(entry.name, 0 - 1);
+    if (at >= 0) {
+      out = out.with(at, entry);
+    } else {
+      positions = positions.insert(entry.name, out.len());
+      out = out.append(entry);
+    }
+  }
+  return out;
+}
+
+function lock_version(v: string): Result[string, string] {
+  let bad: string = "invalid version " + docsummary.quote(v);
+  let parts: string[] = split_char(v, b'.');
+  if (parts.len() != 3) {
+    return Err(bad + " (want MAJOR.MINOR.PATCH)");
+  }
+  let out: string[] = [];
+  for part in parts {
+    if (!util.is_all_digits(part)) {
+      return Err(bad);
+    }
+    let at: i32 = 0;
+    while (at + 1 < part.len() && part[at] == b'0') {
+      at = at + 1;
+    }
+    let digits: string = slice_unchecked(part, at, part.len()) + "";
+    if (!util.is_decimal_i64(digits)) {
+      return Err(bad);
+    }
+    out = out.append(digits);
+  }
+  return Ok(out[0] + "." + out[1] + "." + out[2]);
+}
+
+function with_lock_field(e: LockEntry, key: string, v: string): Result[LockEntry, string] {
   if (key == "name") {
-    return LockEntry { ...e, name: v };
+    return Ok(LockEntry { ...e, name: v });
   }
   if (key == "version") {
-    return LockEntry { ...e, version: v };
+    match (lock_version(v)) {
+      Ok(version) => {
+        return Ok(LockEntry { ...e, version: version });
+      },
+      Err(message) => {
+        return Err(message);
+      }
+    }
   }
   if (key == "path") {
-    return LockEntry { ...e, path: v };
+    return Ok(LockEntry { ...e, path: v });
   }
   if (key == "url") {
-    return LockEntry { ...e, url: v };
+    return Ok(LockEntry { ...e, url: v });
   }
   if (key == "hash") {
-    return LockEntry { ...e, hash: v };
+    if let Err(message) = validate_hash(v) {
+      return Err("hash " + message);
+    }
+    return Ok(LockEntry { ...e, hash: v });
   }
-  return e;
+  return Err("unknown key " + docsummary.quote(key));
 }
 
 pub function lock_has(entries: LockEntry[], name: string): boolean {
