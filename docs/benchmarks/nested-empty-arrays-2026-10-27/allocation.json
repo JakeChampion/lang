@@ -1,0 +1,14 @@
+{
+  "source_commit": "b38cca91520de044f7ebf81f7ea6523d1af38a12",
+  "measure_exit": 0,
+  "gate_exit": 0,
+  "builder_sha256": "d12b97d792d5d66d6bd312cd6723100ecb85ec2609d9430705032e504e5c090b",
+  "report_sha256": "77c2f176ef6013bfa854108a02890d63662db6cd38ccc67494eb2eb01febe009",
+  "baseline_sha256": "2dcb9ea3731e35e21911e374a919aa2d9fecc49d0e876c8a86b49d575d7f6865",
+  "script_sha256": {
+    "scripts/selfhost-alloc-bench": "08c045ef27ee05b13d36986d88d16ac875074ba577d0075821f18f8f341f69a1",
+    "scripts/ci-check-perf": "fa5fce8c5cbe004f996c3cfd879b8115197d0e7c47489fff49c4fb9d9bd094ff"
+  },
+  "reported_metrics": "# scripts/selfhost-alloc-bench report \u2014 arch x86_64, subject compiler/checker.fern\nx86_64/checker.allocs\t35051784\nx86_64/checker.frees\t35051784\n",
+  "scope": "Default allocation events and unchanged gate; no RSS row or physical/process bound."
+}
