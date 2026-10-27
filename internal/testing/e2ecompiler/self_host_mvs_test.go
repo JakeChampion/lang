@@ -1,12 +1,101 @@
 package e2ecompiler
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/pkg/mvs"
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
+
+func TestSelfHostMvsIndexSources(t *testing.T) {
+	hash := "sha256:" + strings.Repeat("a", 64)
+	cases := []struct{ name, value string }{
+		{"path", `{ path = "../foo" }`},
+		{"archive", `{ url = "https://example.invalid/foo", hash = "` + hash + `" }`},
+		{"trailing-comma", `{ path = "foo", }`},
+		{"duplicate-key", `{ path = "first", path = "last" }`},
+		{"empty-table", `{}`},
+		{"empty-value", ``},
+		{"missing-braces", `path = "foo"`},
+		{"missing-equals", `{ path }`},
+		{"quoted-part-without-equals", `{ "path" }`},
+		{"unquoted-value", `{ path = foo }`},
+		{"unterminated-value", `{ path = "foo }`},
+		{"unsupported-escape", `{ path = "a\b" }`},
+		{"embedded-quote", `{ path = "a"b" }`},
+		{"invalid-hash", `{ url = "https://example.invalid/foo", hash = "sha256:bad" }`},
+		{"unknown-key", `{ other = "foo" }`},
+		{"quoted-key", `{ "path" = "foo" }`},
+		{"path-and-url", `{ path = "foo", url = "https://example.invalid/foo" }`},
+		{"path-and-hash", `{ path = "foo", hash = "` + hash + `" }`},
+		{"url-only", `{ url = "https://example.invalid/foo" }`},
+		{"hash-only", `{ hash = "` + hash + `" }`},
+		{"empty-path", `{ path = "" }`},
+		{"comment-and-crlf", "{ path = \"foo\" } # source\r"},
+	}
+	var src strings.Builder
+	src.WriteString("import \"./mvs\";\nfunction main(): i32 {\n")
+	want := make([]string, len(cases))
+	for i, tc := range cases {
+		input := "[foo]\n\"1.0.0\" = " + tc.value + "\n"
+		ix, err := mvs.ParseIndex(input)
+		if err != nil {
+			want[i] = "ERR|" + err.Error()
+		} else {
+			s := ix.Packages["foo"]["1.0.0"]
+			want[i] = "OK|" + s.Path + "|" + s.URL + "|" + s.Hash
+		}
+		fmt.Fprintf(&src, "let ix%d = mvs.parse_index(%s);\n", i, strconv.Quote(input))
+		fmt.Fprintf(&src, "if (ix%d.err.len() > 0) { print(\"ERR|\" + ix%d.err); } else {\n", i, i)
+		fmt.Fprintf(&src, "if (ix%d.entries.len() != 1) { return %d; }\n", i, i+1)
+		fmt.Fprintf(&src, "let s = ix%d.entries[0].src; print(\"OK|\" + s.path + \"|\" + s.url + \"|\" + s.hash); }\n", i)
+	}
+	src.WriteString("return 0;\n}\n")
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "mvs.fern")
+	if err := os.WriteFile(filepath.Join(dir, "index_sources.fern"), []byte(src.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux, e2eharness.TargetWasm32Wasi} {
+		t.Run(target, func(t *testing.T) {
+			bin := buildSelfHostBinFor(t, dir, "index_sources.fern", "index_sources", target)
+			var cmd *exec.Cmd
+			switch target {
+			case e2eharness.TargetX86_64Linux:
+				cmd = runX86_64Bin(x86_64Runner(t), bin)
+			case e2eharness.TargetArm64Linux:
+				cmd = runArm64Bin(arm64Runner(t), bin)
+			default:
+				wasmtime, err := exec.LookPath("wasmtime")
+				if err != nil {
+					t.Skip("wasmtime not on PATH")
+				}
+				cmd = exec.Command(wasmtime, "run", bin)
+			}
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("index sources: %v\n%s", err, out)
+			}
+			lines := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+			if len(lines) != len(cases) {
+				t.Fatalf("got %d rows, want %d: %q", len(lines), len(cases), out)
+			}
+			for i, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					if lines[i] != want[i] {
+						t.Errorf("index source = %q, Go parser = %q", lines[i], want[i])
+					}
+				})
+			}
+		})
+	}
+}
 
 func TestSelfHostMvsRules(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

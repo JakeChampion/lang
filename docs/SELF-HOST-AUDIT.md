@@ -870,6 +870,11 @@ findings. Ranked by leverage.
   A declined transformation returns `None` without a placeholder declaration.
   The callers preserve the original expression on that path.
 
+  The registry source parser now returns `Result[Source, string]`.
+  `Ok` carries the source and `Err` carries the diagnostic, without an empty source placeholder.
+  Its error paths use the shared quote function for malformed source fields.
+  Differential cases check both source data and diagnostic text against the Go parser on x86-64, ARM64 and Wasm.
+
   _Rest of this row:_ the bespoke `*Result` structs remain.
   The generic-function migration is no longer blocked, and neither is
   T6/SH-026's real remainder (`lookup_*` returning `name: ""`), which depends

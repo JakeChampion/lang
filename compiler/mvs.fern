@@ -1,5 +1,6 @@
 import "./util";
 import "./fern_toml";
+import "./docsummary";
 
 pub struct Version {
   major: i32,
@@ -149,24 +150,21 @@ pub function parse_index(src: string): Index {
       return index_err(entries, "line " + util.i32_to_string(ln) + ": " + version_error(ver));
     }
     let val: string = util.trim(slice_unchecked(line, eq + 1, line.len()) + "");
-    let src_res: SourceResult = parse_source(val);
-    if (src_res.err.len() > 0) {
-      return index_err(entries, "line " + util.i32_to_string(ln) + ": " + ver + ": " + src_res.err);
+    match (parse_source(val)) {
+      Ok(src) => {
+        entries = entries.append(Entry { pkg: pkg, ver: ver, src: src });
+      },
+      Err(err) => {
+        return index_err(entries, "line " + util.i32_to_string(ln) + ": " + ver + ": " + err);
+      }
     }
-    entries = entries.append(Entry { pkg: pkg, ver: ver, src: src_res.src });
   }
   return Index { dir: "", entries: entries, err: "" };
 }
 
-struct SourceResult {
-  src: Source,
-  err: string,
-}
-
-function parse_source(val: string): SourceResult {
-  let none: Source = Source { path: "", url: "", hash: "" };
+function parse_source(val: string): Result[Source, string] {
   if (val.len() < 2 || val[0] != b'{' || val[val.len() - 1] != b'}') {
-    return SourceResult { src: none, err: "expected an inline table { path = … } or { url = …, hash = … }" };
+    return Err("expected an inline table { path = … } or { url = …, hash = … }");
   }
   let path: string = "";
   let url: string = "";
@@ -181,12 +179,12 @@ function parse_source(val: string): SourceResult {
     }
     let eq: i32 = index_of_char(part, b'=', 0);
     if (eq < 0) {
-      return SourceResult { src: none, err: "expected `key = value`, got " + quoted(part) };
+      return Err("expected `key = value`, got " + docsummary.quote(part));
     }
     let k: string = util.trim(slice_unchecked(part, 0, eq) + "");
     let raw: string = util.trim(slice_unchecked(part, eq + 1, part.len()) + "");
     if (!is_quoted(raw)) {
-      return SourceResult { src: none, err: k + ": " + unquote_error(raw) };
+      return Err(k + ": " + unquote_error(raw));
     }
     let v: string = slice_unchecked(raw, 1, raw.len() - 1) + "";
     if (k == "path") {
@@ -196,23 +194,23 @@ function parse_source(val: string): SourceResult {
     } else if (k == "hash") {
       let hr: fern_toml.HashResult = fern_toml.validate_hash(v);
       if (hr.err.len() > 0) {
-        return SourceResult { src: none, err: k + " " + hr.err };
+        return Err(k + " " + hr.err);
       }
       hash = v;
     } else {
-      return SourceResult { src: none, err: "unknown key " + quoted(k) + " (supported: path, url, hash)" };
+      return Err("unknown key " + docsummary.quote(k) + " (supported: path, url, hash)");
     }
   }
   if (path.len() > 0 && (url.len() > 0 || hash.len() > 0)) {
-    return SourceResult { src: none, err: "a version is either `path` or `url`+`hash`" };
+    return Err("a version is either `path` or `url`+`hash`");
   }
   if (path.len() > 0) {
-    return SourceResult { src: Source { path: path, url: "", hash: "" }, err: "" };
+    return Ok(Source { path: path, url: "", hash: "" });
   }
   if (url.len() > 0 && hash.len() > 0) {
-    return SourceResult { src: Source { path: "", url: url, hash: hash }, err: "" };
+    return Ok(Source { path: "", url: url, hash: hash });
   }
-  return SourceResult { src: none, err: "a version needs `path` or `url`+`hash`" };
+  return Err("a version needs `path` or `url`+`hash`");
 }
 
 function index_err(entries: Entry[], msg: string): Index {
@@ -576,9 +574,9 @@ function is_quoted(s: string): boolean {
 
 function unquote_error(s: string): string {
   if (s.len() < 2 || s[0] != b'"' || s[s.len() - 1] != b'"') {
-    return "expected a quoted string, got " + quoted(s);
+    return "expected a quoted string, got " + docsummary.quote(s);
   }
-  return "escapes unsupported in " + quoted(s);
+  return "escapes unsupported in " + docsummary.quote(s);
 }
 
 pub function is_abs(p: string): boolean {
