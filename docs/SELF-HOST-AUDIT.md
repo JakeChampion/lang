@@ -609,6 +609,12 @@ findings. Ranked by leverage.
       `dupvar_diags` now applies that rule to declarations with `ORIGIN_NESTED_FN`.
       Ordinary variable declarations still get the duplicate-name check.
       The regression gate tests both declaration orders and repeated function declarations.
+
+      `slit_diags` also uses the shared expression fold now.
+      Struct literals retain their field, diagnostic, and base order through a separate handler.
+      Lambda bodies retain their statement checks.
+      Match guards now receive the struct-literal checks that the previous statement walk omitted.
+      The regression gate compares seven scope cases against Go and runs them in Wasm.
     - `slit_diags` **over-reports**: for `Out { bad2: In { bad1: 1 } }` the self-host reports
     four diagnostics (the inner literal's unknown and missing fields as well as
     the outer's) where the Go checker reports two, having stopped descending

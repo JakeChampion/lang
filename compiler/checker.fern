@@ -10528,76 +10528,70 @@ function slit_names_no_struct(structs: StructTable, type_name: string): boolean 
 }
 
 function slit_diags(e: ast.Expr, structs: StructTable): util.Diag[] {
-  let out: util.Diag[] = [];
+  function visit(node: ast.Expr, own out: util.Diag[]): util.Diag[] {
+    match (node) {
+      ast.ExprStructLit(sl) => {
+        return util.append_diags(out, slit_literal_diags(sl, structs));
+      },
+      ast.ExprLambda(lm) => {
+        return util.append_diags(out, stmts_slit_diags(lm.body, structs));
+      },
+      _ => {
+        return out;
+      }
+    }
+    return out;
+  }
+  return astwalk.fold_expr_pruned(e, no_diags(), visit, slit_descend);
+}
+
+function slit_descend(e: ast.Expr): boolean {
   match (e) {
-    ast.ExprStructLit(sl) => {
-      for field_value in sl.field_values {
-        out = util.append_diags(out, slit_diags(field_value, structs));
+    ast.ExprStructLit(_) => {
+      return false;
+    },
+    ast.ExprLambda(_) => {
+      return false;
+    },
+    _ => {
+      return true;
+    }
+  }
+  return true;
+}
+
+function slit_literal_diags(sl: ast.ExprStructLit, structs: StructTable): util.Diag[] {
+  let out: util.Diag[] = [];
+  for field_value in sl.field_values {
+    out = util.append_diags(out, slit_diags(field_value, structs));
+  }
+  if (lit_names_no_struct(sl.type_name, structs)) {
+    out = out.append(dg_at("E043", "cannot find struct \"" + util.demangle(sl.type_name) + "\" in this scope", sl.line, sl.col));
+  }
+  let usig: StructSig = find_struct_sig(structs, sl.type_name);
+  if (usig.name.len() > 0) {
+    let fi: i32 = 0;
+    while (fi < sl.field_names.len()) {
+      if (!util.has_str(usig.field_names, sl.field_names[fi])) {
+        let d: util.Diag = dg_at("E043", "struct " + util.demangle(sl.type_name) + " has no field \"" + sl.field_names[fi] + "\"", sl.line, sl.col);
+        out = out.append(literal_field_fix(d, sl, fi, usig.field_names));
       }
-      if (lit_names_no_struct(sl.type_name, structs)) {
-        out = out.append(dg_at("E043", "cannot find struct \"" + util.demangle(sl.type_name) + "\" in this scope", sl.line, sl.col));
-      }
-      let usig: StructSig = find_struct_sig(structs, sl.type_name);
-      if (usig.name.len() > 0) {
-        let fi: i32 = 0;
-        while (fi < sl.field_names.len()) {
-          if (!util.has_str(usig.field_names, sl.field_names[fi])) {
-            let d: util.Diag = dg_at("E043", "struct " + util.demangle(sl.type_name) + " has no field \"" + sl.field_names[fi] + "\"", sl.line, sl.col);
-            out = out.append(literal_field_fix(d, sl, fi, usig.field_names));
-          }
-          fi = fi + 1;
+      fi = fi + 1;
+    }
+  } else if (slit_names_no_struct(structs, sl.type_name)) {
+    out = out.append(dg_at("E043", "cannot find struct \"" + util.demangle(sl.type_name) + "\" in this scope", sl.line, sl.col));
+  }
+  if (sl.has_base) {
+    out = util.append_diags(out, slit_diags(sl.base, structs));
+  } else {
+    let ssig: StructSig = find_struct_sig(structs, sl.type_name);
+    if (ssig.name.len() > 0) {
+      for field_name in ssig.field_names {
+        if (!util.has_str(sl.field_names, field_name)) {
+          out = out.append(dg_at("E005", "missing field \"" + field_name + "\" in this " + util.demangle(sl.type_name) + " literal", sl.line, sl.col));
         }
-      } else if (slit_names_no_struct(structs, sl.type_name)) {
-        out = out.append(dg_at("E043", "cannot find struct \"" + util.demangle(sl.type_name) + "\" in this scope", sl.line, sl.col));
       }
-      if (sl.has_base) {
-        out = util.append_diags(out, slit_diags(sl.base, structs));
-      } else {
-        let ssig: StructSig = find_struct_sig(structs, sl.type_name);
-        if (ssig.name.len() > 0) {
-          for field_name in ssig.field_names {
-            if (!util.has_str(sl.field_names, field_name)) {
-              out = out.append(dg_at("E005", "missing field \"" + field_name + "\" in this " + util.demangle(sl.type_name) + " literal", sl.line, sl.col));
-            }
-          }
-        }
-      }
-    },
-    ast.ExprBinary(b) => {
-      out = util.append_diags(slit_diags(b.left, structs), slit_diags(b.right, structs));
-    },
-    ast.ExprUnary(u) => {
-      out = slit_diags(u.operand, structs);
-    },
-    ast.ExprCall(c) => {
-      out = slit_diags(c.callee, structs);
-      for arg in c.args {
-        out = util.append_diags(out, slit_diags(arg, structs));
-      }
-    },
-    ast.ExprArray(a) => {
-      for element in a.elements {
-        out = util.append_diags(out, slit_diags(element, structs));
-      }
-    },
-    ast.ExprTuple(t) => {
-      for element in t.elements {
-        out = util.append_diags(out, slit_diags(element, structs));
-      }
-    },
-    ast.ExprIndex(ix) => {
-      out = util.append_diags(slit_diags(ix.array, structs), slit_diags(ix.index, structs));
-    },
-    ast.ExprSlice(s2) => {
-      out = util.append_diags(slit_diags(s2.array, structs), util.append_diags(slit_diags(s2.start, structs), slit_diags(s2.end, structs)));
-    },
-    ast.ExprFieldAccess(fa) => {
-      out = slit_diags(fa.obj, structs);
-    },
-    ast.ExprLambda(lm) => {
-      out = stmts_slit_diags(lm.body, structs);
-    },
-    _ => {}
+    }
   }
   return out;
 }
@@ -10643,6 +10637,9 @@ function stmts_slit_diags(stmts: ast.Stmt[], structs: StructTable): util.Diag[] 
       ast.StmtMatch(m) => {
         out = util.append_diags(out, slit_diags(m.scrutinee, structs));
         for arm in m.arms {
+          if (arm.has_guard) {
+            out = util.append_diags(out, slit_diags(arm.guard, structs));
+          }
           out = util.append_diags(out, stmts_slit_diags(arm.body, structs));
         }
       },
