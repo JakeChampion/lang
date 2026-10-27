@@ -579,8 +579,7 @@ function lift_prod_mem(kt: KindTable, tag: i32, k: string, op: ir.Op, nvals: i32
   if (kt.argc[tag] > 0) {
     return lift_pop_push(lv, kt.argc[tag], prod_call_kind(k), unique_push(k, op) + counted_bit(op), k + packed_suffix(op));
   }
-  let made: LiftVals = lift_prod_make(k, op, lv);
-  if (made.ok || made.stack.len() != lv.stack.len()) {
+  if let Some(made) = lift_prod_make(k, op, lv) {
     return made;
   }
   return lift_prod_read(k, op, lv);
@@ -628,26 +627,26 @@ function lift_prod_store(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   return lift_store_keep(lv, 55);
 }
 
-function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): LiftVals {
+function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): Option[LiftVals] {
   if (k == "struct_make") {
-    return lift_box_make(op.i32_imm + 1, op.i32_imm, 8, op.str, lv);
+    return Some(lift_box_make(op.i32_imm + 1, op.i32_imm, 8, op.str, lv));
   }
   if (k == "arr_make" && op.i32_imm == 0) {
-    return lift_empty_arr(lv);
+    return Some(lift_empty_arr(lv));
   }
   if (k == "arr_make" && ir.is_packed(op)) {
-    return lift_packed_make(op.i32_imm, lv);
+    return Some(lift_packed_make(op.i32_imm, lv));
   }
   if (k == "arr_make") {
-    return lift_box_make(op.i32_imm, op.i32_imm, 8, "", lv);
+    return Some(lift_box_make(op.i32_imm, op.i32_imm, 8, "", lv));
   }
   if (k == "tuple_make") {
-    return lift_box_make(op.i32_imm, op.i32_imm, 0, "", lv);
+    return Some(lift_box_make(op.i32_imm, op.i32_imm, 0, "", lv));
   }
   if (k == "opt_make") {
-    return lift_opt_make_prod(op.i32_imm, lv);
+    return Some(lift_opt_make_prod(op.i32_imm, lv));
   }
-  return LiftVals { ...lv, ok: false };
+  return None;
 }
 
 function view_in_frame(op: ir.Op): i32 {

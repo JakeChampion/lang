@@ -972,6 +972,17 @@ findings. Ranked by leverage.
   The worklist retains its specialization keys and depth limit of 64.
   Seven before/after cases retain rendered clone bodies, declaration metadata, counts and order.
 
+  SSA constructor dispatch uses `Option[LiftVals]` to distinguish an unrecognized operation from a recognized constructor.
+  A recognized constructor retains its state and refusal status.
+  Only an unrecognized operation reaches the read fallback.
+  Previously, constructors with too few operands fell through as string constants.
+  Six refusal checks reproduce that bug on x86-64, ARM64 and Wasm.
+  Positive checks retain string reads and empty-array construction.
+
+  Twenty-one unchanged cases retain complete SSA functions and metadata before and after the fix.
+  The candidate also matches those native baseline outputs on ARM64 and Wasm.
+  A refused constructor retains its lift state.
+
   _Rest of this row:_ the bespoke `*Result` structs remain.
   Generic functions no longer block these migrations.
   T6/SH-026 is complete, and its four signature lookup families use standard options.

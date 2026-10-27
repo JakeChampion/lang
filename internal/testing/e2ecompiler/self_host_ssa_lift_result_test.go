@@ -12,8 +12,11 @@ import "./ssa_lift";
 
 function refused(ops: ir.Op[], why: string): boolean {
   match (ssa_lift.lift_with_lanes(ssa_lift.kind_table(), "refused", 0, 0, ops, true, [0])) {
-    Ok(_) => { return false; },
-    Err(message) => { return message == why; }
+    Ok(_) => { print("accepted invalid " + why); return false; },
+    Err(message) => {
+      if (message != why) { print("refused " + why + " as " + message); }
+      return message == why;
+    }
   }
 }
 
@@ -36,6 +39,16 @@ function main(): i32 {
   if (located.seen_vals.len() != 2 || located.seen_vals[0] != 1 || located.seen_vals[1] != 1 || located.seen_slots[0] != 0 || located.seen_slots[1] != 0) { return 9; }
   if (located.source_values.len() != 2 || located.source_values[1] != value_pos) { return 10; }
   if (located.source_returns.len() != 1 || located.source_returns[0].block != 0 || located.source_returns[0].line != 42 || located.source_returns[0].col != "7") { return 11; }
+  let fallback = match (ssa_lift.lift_from_ir_prod(kt, "fallback", 0, 0, [ir.op_const_str("text"), ir.op_drop(), ir.op_arr_make(0, 8)], false)) { Ok(l) => l, Err(_) => { return 17; } };
+  if (fallback.func.blocks[0].insts[0].kind_tag != 47 || fallback.func.blocks[0].insts[0].str != "text") { return 18; }
+  let failures: i32 = 0;
+  if (!refused([ir.op_struct_make("Pair", 2, 0)], "struct_make")) { failures = failures + 1; }
+  if (!refused([ir.op_const_i32(1), ir.op_struct_make("Pair", 2, 0)], "struct_make")) { failures = failures + 1; }
+  if (!refused([ir.op_arr_make(2, 8)], "arr_make")) { failures = failures + 1; }
+  if (!refused([ir.op_arr_make(2, 1)], "arr_make")) { failures = failures + 1; }
+  if (!refused([ir.op_tuple_make(2)], "tuple_make")) { failures = failures + 1; }
+  if (!refused([ir.op_opt_make(1)], "opt_make")) { failures = failures + 1; }
+  if (failures != 0) { return 19; }
   return 0;
 }
 `
