@@ -176,6 +176,7 @@ func TestLockRoundTrip(t *testing.T) {
 	sel := []Selected{
 		{Name: "foo", Version: Version{1, 2, 0}, Source: Source{URL: "https://x/foo.tar.gz", Hash: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
 		{Name: "bar", Version: Version{2, 0, 0}, Source: Source{Path: filepath.FromSlash("/pkgs/bar")}},
+		{Name: "zero", Version: Version{}, Source: Source{Path: filepath.FromSlash("/pkgs/zero")}},
 	}
 	if err := WriteLock(dir, sel); err != nil {
 		t.Fatal(err)
@@ -184,11 +185,32 @@ func TestLockRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got["foo"].Version.String() != "1.2.0" || got["foo"].Source.Hash != "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
+	if len(got) != 3 || got["foo"].Version.String() != "1.2.0" || got["foo"].Source.Hash != "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
 		t.Errorf("foo round-trip wrong: %+v", got["foo"])
 	}
 	if got["bar"].Source.Path != filepath.FromSlash("/pkgs/bar") {
 		t.Errorf("bar round-trip wrong: %+v", got["bar"])
+	}
+	if got["zero"] != sel[2] {
+		t.Errorf("zero version round-trip = %+v, want %+v", got["zero"], sel[2])
+	}
+}
+
+func TestReadLockMissingVersion(t *testing.T) {
+	for name, prefix := range map[string]string{
+		"first entry":       "",
+		"after valid entry": "[[package]]\nname = \"first\"\nversion = \"1.0.0\"\npath = \"/first\"\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := prefix + "[[package]]\nname = \"missing\"\npath = \"/missing\"\n"
+			if err := os.WriteFile(filepath.Join(dir, LockFileName), []byte(src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if got, err := ReadLock(dir); err == nil || got != nil {
+				t.Fatalf("missing version: got %v, error %v", got, err)
+			}
+		})
 	}
 }
 

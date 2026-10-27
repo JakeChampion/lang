@@ -42,11 +42,12 @@ func ReadLock(dir string) (map[string]Selected, error) {
 	}
 	out := map[string]Selected{}
 	var cur *Selected
+	haveVersion := false
 	flush := func() error {
 		if cur == nil {
 			return nil
 		}
-		if cur.Name == "" || (cur.Version == Version{}) {
+		if cur.Name == "" || !haveVersion {
 			return fmt.Errorf("%s: incomplete [[package]] entry", file)
 		}
 		out[cur.Name] = *cur
@@ -63,6 +64,7 @@ func ReadLock(dir string) (map[string]Selected, error) {
 				return nil, err
 			}
 			cur = &Selected{}
+			haveVersion = false
 			continue
 		}
 		if cur == nil {
@@ -86,6 +88,7 @@ func ReadLock(dir string) (map[string]Selected, error) {
 				return nil, fmt.Errorf("%s line %d: %w", file, ln+1, err)
 			}
 			cur.Version = ver
+			haveVersion = true
 		case "path":
 			cur.Source.Path = filepath.FromSlash(v)
 		case "url":

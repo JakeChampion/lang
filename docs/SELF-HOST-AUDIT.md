@@ -900,6 +900,8 @@ findings. Ranked by leverage.
   LF and CRLF lock-file checks execute on x86-64, ARM64 and Wasm.
   The vendor differential also exposed a Go reader diagnostic that omitted the lock-file directory.
   The Go reader now retains the file path in parse diagnostics, as the self-host CLI already does.
+  The Go reader also tracks version presence separately from the parsed number.
+  Version `0.0.0` now survives a lock-file round trip, and missing versions still fail.
 
   _Rest of this row:_ the bespoke `*Result` structs remain.
   The generic-function migration is no longer blocked, and neither is

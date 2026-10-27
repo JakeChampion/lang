@@ -126,6 +126,13 @@ func TestSelfHostVendorDifferentialX86_64(t *testing.T) {
 			"../libv-1.0.0/fern.toml": "[package]\nname = \"libv\"\n",
 			"../libv-1.0.0/lib.fern":  lib,
 		}, ".", "", true, true},
+		{"versioned-zero-through-lock", map[string]string{
+			"fern.toml":              "[package]\nname = \"app\"\n[dependencies]\nlibv = \"0.0.0\"\n",
+			"main.fern":              "function main(): i32 { return 0; }\n",
+			"fern.lock":              "[[package]]\nname = \"libv\"\nversion = \"0.0.0\"\npath = \"@ROOT@/../libv-zero\"\n",
+			"../libv-zero/fern.toml": "[package]\nname = \"libv\"\n",
+			"../libv-zero/lib.fern":  lib,
+		}, ".", "", true, true},
 		{"versioned-without-lock", map[string]string{
 			"fern.toml": "[package]\nname = \"app\"\nindex = \"../index.toml\"\n" +
 				"[dependencies]\nlibv = \"1.0.0\"\n",

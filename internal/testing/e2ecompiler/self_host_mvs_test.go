@@ -135,6 +135,7 @@ func TestSelfHostMvsCachedURLDependency(t *testing.T) {
 	for _, tc := range []struct{ name, dependency, lock string }{
 		{"manifest-url", `{ url = "https://example.invalid/helper.tar.gz", hash = "sha256:` + hex + `" }`, ""},
 		{"lock-url", `"1.0.0"`, "[[package]]\nname = \"helper\"\nversion = \"1.0.0\"\nurl = \"https://example.invalid/helper.tar.gz\"\nhash = \"sha256:" + hex + "\"\n"},
+		{"lock-url-zero-version", `"0.0.0"`, "[[package]]\nname = \"helper\"\nversion = \"0.0.0\"\nurl = \"https://example.invalid/helper.tar.gz\"\nhash = \"sha256:" + hex + "\"\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
