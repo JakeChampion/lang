@@ -168,6 +168,13 @@ jobs:
       - run: ./fern-image/scripts/test-icc-matrix-eval.sh wasm
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_matrix_model_test.py
+      - run: ./fern-image/scripts/test-icc-matrix-model.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-matrix-model.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/test-deflate-reader.sh native
         env:
           FERN: ${{ github.workspace }}/bin/fern
@@ -290,4 +297,10 @@ jobs:
         with:
           name: image-icc-matrix-eval
           path: fern-image/build/icc-matrix-eval-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-matrix-model-*.json') != ''
+        with:
+          name: image-icc-matrix-model
+          path: fern-image/build/icc-matrix-model-*.json
           if-no-files-found: error

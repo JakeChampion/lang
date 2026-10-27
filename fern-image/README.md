@@ -68,7 +68,7 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 268 TAP cases cover compression, pixels, color, resize, PNG, the restricted JPEG slices, and standalone ICC primitives.
+The 276 TAP cases cover compression, pixels, color, resize, PNG, the restricted JPEG slices, and standalone ICC primitives.
 JPEG cases cover headers, coefficients, scalar inverse DCT, grayscale, JFIF identification, restricted RGB assembly, and standalone Exif orientation.
 They also cover rows, providers, pipelines, regions, caches, RSS parsing, and fusion.
 The file I/O probe and pixel example also exit successfully.
@@ -127,4 +127,5 @@ The [scalar ICC curv evaluator](docs/icc-curv-evaluation.md) evaluates identity,
 The [bounded parametric evaluator](docs/icc-parametric-evaluation.md) evaluates all five current ICC functions within an explicit coefficient subset.
 The [ICC APP2 assembler](docs/jpeg-icc-app2.md) joins caller-supplied fragment payloads with separate framing, ownership, and logical admission checks.
 The [ICC matrix kernel](docs/icc-matrix-evaluation.md) applies signed fixed-point columns to explicit linear RGB with separate exact-rational observations.
+The [restricted forward model selector](docs/icc-matrix-model.md) returns owned columns and qualified curve data without LUT fallback or transform eligibility.
 Typed wire data does not authorize curve evaluation or color transforms.

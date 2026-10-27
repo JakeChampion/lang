@@ -1,0 +1,106 @@
+import "envelope";
+import "tag_data";
+import "curv_eval";
+import "parametric_eval";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum ModelError { Limit, Intent, Envelope(envelope.IccError), MissingTag, UnsupportedTag, MetadataType, Tag(tag_data.TagError), CurveDomain, UnsupportedCurve, Cancelled }
+
+pub struct ModelLimits { profile: envelope.IccLimits, curve: tag_data.CurveLimits }
+
+pub struct ForwardData { info: envelope.ProfileInfo, requested_intent: envelope.Intent, matrix: i32[], red: tag_data.CurveData, green: tag_data.CurveData, blue: tag_data.CurveData, media_white: tag_data.XyzNumerators }
+
+pub function default_limits(): ModelLimits {
+  return ModelLimits { profile: envelope.default_limits(), curve: tag_data.default_curve_limits() };
+}
+
+function required(tags: [envelope.Tag], signature: i64): Result[envelope.Tag, ModelError] {
+  for tag in tags {
+    if (tag.signature == signature) {
+      return Ok(tag);
+    }
+  }
+  return Err(ModelError.MissingTag);
+}
+
+function xyz(input: [u8], tags: [envelope.Tag], signature: i64, cancelled: () => boolean): Result[tag_data.XyzNumerators, ModelError] {
+  let tag = required(tags, signature)?;
+  return match (tag_data.read_xyz_triplet(input[tag.offset:tag.offset + tag.size], cancelled)) { Ok(value) => Ok(value), Err(tag_data.TagError.Cancelled()) => Err(ModelError.Cancelled), Err(error) => Err(ModelError.Tag(error)) };
+}
+
+function curve(input: [u8], tags: [envelope.Tag], signature: i64, limits: tag_data.CurveLimits, cancelled: () => boolean): Result[tag_data.CurveData, ModelError] {
+  let tag = required(tags, signature)?;
+  let value = match (tag_data.read_curve(input[tag.offset:tag.offset + tag.size], limits, cancelled)) { Ok(value) => value, Err(tag_data.TagError.Cancelled()) => { return Err(ModelError.Cancelled); }, Err(error) => { return Err(ModelError.Tag(error)); } };
+  // Existing evaluators check their entire declared coefficient domain before a result.
+  match (value) {
+    tag_data.Parametric(data) => {
+      match (parametric_eval.evaluate(data, 0.0, cancelled)) {
+        Ok(_) => {},
+        Err(parametric_eval.EvalError.Cancelled()) => {
+          return Err(ModelError.Cancelled);
+        },
+        Err(parametric_eval.EvalError.Unsupported()) => {
+          return Err(ModelError.UnsupportedCurve);
+        },
+        Err(_) => {
+          return Err(ModelError.CurveDomain);
+        }
+      }
+    },
+    _ => {
+      match (curv_eval.evaluate(value, 0.0, curv_eval.EvalLimits { max_samples: limits.max_samples }, cancelled)) {
+        Ok(_) => {},
+        Err(curv_eval.EvalError.Cancelled()) => {
+          return Err(ModelError.Cancelled);
+        },
+        Err(_) => {
+          return Err(ModelError.CurveDomain);
+        }
+      }
+    }
+  }
+  return Ok(value);
+}
+
+function forward_lut(signature: i64): boolean {
+  return signature == 0x41324230i64 || signature == 0x41324231i64 || signature == 0x41324232i64
+    || signature == 0x44324230i64 || signature == 0x44324231i64 || signature == 0x44324232i64 || signature == 0x44324233i64;
+}
+
+// This selects bounded forward data, not complete profile conformance or transform eligibility.
+pub function read(input: [u8], requested: envelope.Intent, limits: ModelLimits, cancelled: () => boolean): Result[ForwardData, ModelError] {
+  if (limits.profile.max_bytes <= 0 || limits.profile.max_tags <= 0 || limits.curve.max_bytes <= 0 || limits.curve.max_samples <= 0) {
+    return Err(ModelError.Limit);
+  }
+  if (requested != envelope.Intent.Relative) {
+    return Err(ModelError.Intent);
+  }
+  let info = match (envelope.inspect(input, limits.profile, cancelled)) { Ok(value) => value, Err(envelope.IccError.Cancelled()) => { return Err(ModelError.Cancelled); }, Err(error) => { return Err(ModelError.Envelope(error)); } };
+  // Reject mixed forward models instead of a silent matrix fallback.
+  for index in 0..info.tags.len() {
+    if (index % 64 == 0 && cancelled()) {
+      return Err(ModelError.Cancelled);
+    }
+    if (forward_lut(info.tags[index].signature)) {
+      return Err(ModelError.UnsupportedTag);
+    }
+  }
+  for signature in [0x64657363i64, 0x63707274i64] {
+    let tag = required(info.tags[:], signature)?;
+    if (tag.type_signature != 0x6d6c7563i64) {
+      return Err(ModelError.MetadataType);
+    }
+  }
+  let red = xyz(input, info.tags[:], 0x7258595ai64, cancelled)?;
+  let green = xyz(input, info.tags[:], 0x6758595ai64, cancelled)?;
+  let blue = xyz(input, info.tags[:], 0x6258595ai64, cancelled)?;
+  let white = xyz(input, info.tags[:], 0x77747074i64, cancelled)?;
+  let r = curve(input, info.tags[:], 0x72545243i64, limits.curve, cancelled)?;
+  let g = curve(input, info.tags[:], 0x67545243i64, limits.curve, cancelled)?;
+  let b = curve(input, info.tags[:], 0x62545243i64, limits.curve, cancelled)?;
+  if (cancelled()) {
+    return Err(ModelError.Cancelled);
+  }
+  return Ok(ForwardData { info: info, requested_intent: requested, matrix: [red.x, green.x, blue.x, red.y, green.y, blue.y, red.z, green.z, blue.z], red: r, green: g, blue: b, media_white: white });
+}
