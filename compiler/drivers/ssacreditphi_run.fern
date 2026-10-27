@@ -179,7 +179,7 @@ function unit_checks(): void {
   let extremes = must(both(max.arena, block, [phi.Edge { ...yes, values: unique_values.with(0, value(0, min.id, u.id)) }, phi.Edge { ...no, values: shared_values.with(1, value(0, max.id, shared.id)) }], 3), 37);
   let low = guard.evaluate(extremes.arena, extremes.bindings[0].value.identity, [2147483647], [true]);
   let high = guard.evaluate(extremes.arena, extremes.bindings[0].value.identity, [2147483647], [false]);
-  require(low.ok && low.value == -2147483648 && high.ok && high.value == 2147483647, 38);
+  require(match (low) { Some(value) => value == -2147483648, None => false } && match (high) { Some(value) => value == 2147483647, None => false }, 38);
 }
 
 function actual_checks(target: string): void {
@@ -233,7 +233,7 @@ function actual_checks(target: string): void {
   require(result_null.error == "" && guard.is_constant(result_null.arena, result_null.id, 0), 48);
   for unique in [false, true] {
     let got = guard.evaluate(result_null.arena, result.bindings[0].value.identity, [71], [unique]);
-    require(got.ok && (unique && got.value == 17 || !unique && got.value == 29), 49);
+    require(match (got) { Some(value) => unique && value == 17 || !unique && value == 29, None => false }, 49);
   }
   let wrong = ssa.SBlock { ...result_block, preds: [result_block.preds[1], result_block.preds[0]] };
   reject(both(result_null.arena, wrong, [reused, allocated], graph.nvals), "unreadable phi operand", 50);

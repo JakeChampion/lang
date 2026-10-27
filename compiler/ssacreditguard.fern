@@ -131,8 +131,6 @@ pub function combine(a: Arena, op: i32, left: i32, right: i32): Built {
   return Built { ...out, arena: Arena { ...out.arena, memo: memo } };
 }
 
-pub struct Value { ok: boolean, value: i32 }
-
 pub function select(a: Arena, condition: i32, when_true: i32, when_false: i32): Built {
   let yes = combine(a, 4, condition, when_true);
   if (yes.error != "") {
@@ -150,14 +148,14 @@ pub function select(a: Arena, condition: i32, when_true: i32, when_false: i32): 
   return combine(no.arena, 0, yes.id, no.id);
 }
 
-pub function evaluate(a: Arena, id: i32, variables: i32[], values: boolean[]): Value {
+pub function evaluate(a: Arena, id: i32, variables: i32[], values: boolean[]): Option[i32] {
   if (!valid(a, id) || variables.len() != values.len()) {
-    return Value { ok: false, value: 0 };
+    return None;
   }
   let i: i32 = 0;
   for v in variables {
     if (v < 0 || util.index_of_i32(variables, v) != i) {
-      return Value { ok: false, value: 0 };
+      return None;
     }
     i = i + 1;
   }
@@ -166,14 +164,14 @@ pub function evaluate(a: Arena, id: i32, variables: i32[], values: boolean[]): V
     let n = a.nodes[at];
     let p: i32 = util.index_of_i32(variables, n.variable);
     if (p < 0) {
-      return Value { ok: false, value: 0 };
+      return None;
     }
     at = n.low;
     if (values[p]) {
       at = n.high;
     }
   }
-  return Value { ok: true, value: a.nodes[at].value };
+  return Some(a.nodes[at].value);
 }
 
 pub function is_constant(a: Arena, id: i32, value: i32): boolean {

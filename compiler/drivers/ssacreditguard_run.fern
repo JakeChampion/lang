@@ -14,6 +14,14 @@ function require(ok: boolean, id: i32): void {
   }
 }
 
+function is_value(r: Option[i32], expected: i32): boolean {
+  return match (r) { Some(value) => value == expected, None => false };
+}
+
+function is_absent(r: Option[i32]): boolean {
+  return match (r) { Some(_) => false, None => true };
+}
+
 function main(): i32 {
   let p = must(guard.predicate(guard.empty(), 17));
   let q = must(guard.predicate(p.arena, 3));
@@ -38,10 +46,10 @@ function main(): i32 {
     let delta = guard.evaluate(less.arena, diff.id, [17, 3, 2147483647], values);
     let equal = guard.evaluate(less.arena, eq.id, [17, 3, 2147483647], values);
     let lt = guard.evaluate(less.arena, less.id, [17, 3, 2147483647], values);
-    require(total.ok && total.value == pv + qv + rv, 3);
-    require(delta.ok && delta.value == pv - qv, 4);
-    require(equal.ok && equal.value == 1 == (pv == qv), 5);
-    require(lt.ok && lt.value == 1 == pv < qv, 6);
+    require(is_value(total, pv + qv + rv), 3);
+    require(is_value(delta, pv - qv), 4);
+    require(match (equal) { Some(value) => value == 1 == (pv == qv), None => false }, 5);
+    require(match (lt) { Some(value) => value == 1 == pv < qv, None => false }, 6);
     mask = mask + 1;
   }
   let shared = must(guard.combine(less.arena, 1, one.id, p.id));
@@ -61,10 +69,10 @@ function main(): i32 {
   let repeated = must(guard.combine(negative.arena, 0, p.id, shared.id));
   require(repeated.id == acquired.id && guard.node_count(repeated.arena) == guard.node_count(negative.arena), 14);
   let original = guard.evaluate(p.arena, p.id, [17], [true]);
-  require(original.ok && original.value == 1 && guard.node_count(p.arena) == 3, 15);
-  require(!guard.evaluate(p.arena, p.id, [], []).ok, 16);
-  require(!guard.evaluate(p.arena, p.id, [17, 17], [true, false]).ok, 17);
-  require(!guard.evaluate(p.arena, 99, [17], [true]).ok, 18);
+  require(is_value(original, 1) && guard.node_count(p.arena) == 3, 15);
+  require(is_absent(guard.evaluate(p.arena, p.id, [], [])), 16);
+  require(is_absent(guard.evaluate(p.arena, p.id, [17, 17], [true, false])), 17);
+  require(is_absent(guard.evaluate(p.arena, 99, [17], [true])), 18);
   require(guard.predicate(p.arena, -1).error != "", 19);
   require(guard.combine(p.arena, 5, 0, 1).error != "", 20);
   require(guard.combine(p.arena, 0, -1, 1).error != "", 21);
@@ -105,16 +113,24 @@ function main(): i32 {
       expected = 2147483647;
     }
     let extreme_value = guard.evaluate(negative_mask.arena, extremes.id, [17, 3, 2147483647], values);
-    require(extreme_value.ok && extreme_value.value == expected, 34);
+    require(is_value(extreme_value, expected), 34);
     if (qv == 0) {
       expected = pv - qv;
     }
     let nested_value = guard.evaluate(negative_mask.arena, nested.id, [17, 3, 2147483647], values);
     let feasible_value = guard.evaluate(negative_mask.arena, feasible.id, [17, 3, 2147483647], values);
-    require(nested_value.ok && nested_value.value == expected, 35);
-    require(feasible_value.ok && feasible_value.value == pv * qv, 36);
+    require(is_value(nested_value, expected), 35);
+    require(is_value(feasible_value, pv * qv), 36);
     mask = mask + 1;
   }
+  require(is_absent(guard.evaluate(guard.empty(), 0, [], [])), 37);
+  require(is_absent(guard.evaluate(negative_mask.arena, -1, [], [])), 38);
+  require(is_absent(guard.evaluate(negative_mask.arena, p.id, [17], [true, false])), 39);
+  require(is_absent(guard.evaluate(negative_mask.arena, zero.id, [-1], [false])), 40);
+  require(is_value(guard.evaluate(negative_mask.arena, zero.id, [], []), 0), 41);
+  require(is_value(guard.evaluate(negative_mask.arena, min.id, [], []), -2147483648), 42);
+  require(is_value(guard.evaluate(negative_mask.arena, max.id, [], []), 2147483647), 43);
+  require(is_value(guard.evaluate(negative_mask.arena, zero.id, [99], [true]), 0), 44);
   print("guarded credit algebra: all controls agree");
   return 0;
 }

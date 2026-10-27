@@ -1036,6 +1036,20 @@ findings. Ranked by leverage.
   Candidate/baseline time ratios range from 0.894 to 1.027 across six inputs.
   These probes establish no general compiler speed change.
 
+  Guarded-credit evaluation returns `Option[i32]` without a numeric payload on failure.
+  Zero and both signed 32-bit limits remain present values.
+  Invalid node IDs, invalid assignments, and missing predicates return `None`.
+  Graph construction retains its partial arena and error state.
+
+  Thirty-eight records match an independent arithmetic model on x86-64, ARM64, and Wasm.
+  The algebra driver adds eight controls for absent inputs, zero, signed limits, and unused assignments.
+  A native sanitizer probe reports 318 allocations and releases, with zero live bytes.
+
+  Forty process pairs per mode perform 20,000 evaluations.
+  Present, absent, and zero cases have candidate/baseline time ratios of 1.039, 1.008, and 0.967.
+  Both benchmark variants use the same current compiler.
+  These probes establish no general compiler speed change.
+
   Printer recognition uses `Option[UseSugar]` and `Option[ForCSugar]`.
   Absent forms no longer contain placeholder calls, bodies, or loop conditions.
   Layout, statement output, and lint scores match the option before they use a payload.
