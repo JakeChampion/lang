@@ -1,0 +1,174 @@
+import "../packages/codecs/icc/inverse";
+import "../packages/codecs/icc/tag_data";
+import "../packages/codecs/icc/curv_eval";
+import "../packages/codecs/icc/curv_inverse";
+import "../packages/codecs/icc/power_inverse";
+import "../packages/codecs/icc/parametric_eval";
+import "../packages/codecs/icc/affine_inverse";
+import "std/test";
+import "std/f64";
+
+function never(): boolean {
+  return false;
+}
+
+function para(kind: i32, values: i32[]): tag_data.CurveData {
+  return tag_data.Parametric(tag_data.ParametricData { function_type: kind, coefficients: values });
+}
+
+function evaluate(curve: tag_data.CurveData, input: f64): Result[f64, inverse.InvertError] {
+  return inverse.invert(curve, input, curv_eval.default_limits(), never);
+}
+
+function exact(result: Result[f64, inverse.InvertError], expected: f64): boolean {
+  return match (result) { Ok(value) => f64_bits(value) == f64_bits(expected), _ => false };
+}
+
+function routing(): test.TestOutcome {
+  for (curve, input, output) in [
+    (tag_data.Identity, 0.25, 0.25),
+    (tag_data.Gamma(512), 0.25, 0.5),
+    (tag_data.Samples([0, 65535]), 0.25, 0.25),
+    (para(0, [131072]), 0.25, 0.5),
+    (para(1, [131072, 65536, 0]), 0.25, 0.5),
+    (para(2, [131072, 65536, 0, 32768]), 0.75, 0.5),
+    (para(3, [131072, 65536, 0, 16384, 16384]), 0.0625, 0.25),
+    (para(4, [131072, 65536, 0, 32768, 32768, 32768, 32768]), 0.75, 0.5),
+  ] {
+    if (!exact(evaluate(curve, input), output)) {
+      return test.fail("every inverse route");
+    }
+  }
+  return test.pass();
+}
+
+function identities(): test.TestOutcome {
+  for curve in [
+    tag_data.Identity, tag_data.Gamma(256), tag_data.Samples([0, 65535]), para(0, [65536]),
+    para(1, [65536, 65536, 0]), para(2, [65536, 65536, 0, 0]),
+    para(3, [131072, 262144, -196608, 65536, 65536]), para(4, [131072, 262144, -196608, 65536, 65536, 0, 0]),
+  ] {
+    for input in [-0.0, 0.0, f64_from_bits(1), 0.5, f64_from_bits(0x3fefffffffffffff), 1.0] {
+      if (!exact(evaluate(curve, input), input)) {
+        return test.fail("selected identity bits across all routes");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function precedence(): test.TestOutcome {
+  for curve in [tag_data.Identity, tag_data.Gamma(0), tag_data.Samples([]), para(-1, []), para(0, [-1]), para(3, [])] {
+    for limit in [-1, 0, 4096] {
+      let polls = cell_new(0);
+      let result = inverse.invert(curve, f64_from_bits(0x7ff8000000000000), curv_eval.EvalLimits { max_samples: limit }, (): boolean => {
+        polls.set(polls.get() + 1);
+        return true;
+      });
+      let expected = if (limit <= 0) { inverse.InvertError.Limit } else { inverse.InvertError.Input };
+      if (polls.get() != 0 || match (result) { Err(actual) => actual != expected, _ => true }) {
+        return test.fail("common limit and input admission priority");
+      }
+    }
+  }
+  for input in [-0.01, 1.01, f64_from_bits(0x7ff0000000000000), -f64_from_bits(0x7ff0000000000000)] {
+    if (match (evaluate(para(-1, []), input)) { Err(inverse.InvertError.Input()) => false, _ => true }) {
+      return test.fail("finite normalized input before route selection");
+    }
+  }
+  return test.pass();
+}
+
+function errors(): test.TestOutcome {
+  for (curve, error) in [
+    (tag_data.Gamma(0), inverse.InvertError.Value),
+    (tag_data.Samples([]), inverse.InvertError.Shape),
+    (tag_data.Samples([4, 4]), inverse.InvertError.NonInvertible),
+    (tag_data.Samples([0, 65536]), inverse.InvertError.Value),
+    (para(-1, []), inverse.InvertError.Function),
+    (para(5, []), inverse.InvertError.Function),
+    (para(0, []), inverse.InvertError.Shape),
+    (para(0, [0]), inverse.InvertError.Domain),
+    (para(1, [65536, 65536, -65536]), inverse.InvertError.NonInvertible),
+    (para(1, [32768, 65536, 0]), inverse.InvertError.Unsupported),
+    (para(2, [131072, 65536, 0]), inverse.InvertError.Shape),
+    (para(3, [157286, 62119, 3417, 5072, 2651]), inverse.InvertError.Unsupported),
+    (para(4, [131072, 65536, 0, 32768, 32768, 0, 1]), inverse.InvertError.Unsupported),
+  ] {
+    if (match (evaluate(curve, 0.5)) { Err(actual) => actual != error, _ => true }) {
+      return test.fail("typed error normalization without fallback");
+    }
+  }
+  return test.pass();
+}
+
+function cancellation(): test.TestOutcome {
+  for curve in [
+    tag_data.Identity, tag_data.Gamma(512), tag_data.Samples([0, 21845, 65535]), para(0, [131072]),
+    para(1, [131072, 65536, 0]), para(2, [131072, 65536, 0, 32768]),
+    para(3, [131072, 65536, 0, 16384, 16384]), para(4, [131072, 65536, 0, 32768, 32768, 32768, 32768]),
+  ] {
+    let expected_polls = match (curve) { tag_data.Samples(_) => 3, _ => 2 };
+    for stop in 1..expected_polls + 2 {
+      let polls = cell_new(0);
+      let result = inverse.invert(curve, 0.5, curv_eval.default_limits(), (): boolean => {
+        polls.set(polls.get() + 1);
+        return polls.get() == stop;
+      });
+      if (stop <= expected_polls) {
+        if (polls.get() != stop || match (result) { Err(inverse.InvertError.Cancelled()) => false, _ => true }) {
+          return test.fail("every delegated cancellation poll");
+        }
+      } else if (polls.get() != expected_polls || match (result) { Ok(_) => false, _ => true }) {
+        return test.fail("no extra dispatcher callbacks");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function ownership(): test.TestOutcome {
+  let samples = [0, 65535];
+  let shared = cell_new(samples);
+  let result = inverse.invert(tag_data.Samples(samples), 0.5, curv_eval.default_limits(), (): boolean => {
+    shared.set(shared.get().with(0, -1));
+    return false;
+  });
+  if (!exact(result, 0.5) || samples[0] != 0 || shared.get()[0] != -1 || !exact(evaluate(tag_data.Samples(samples), 0.5), 0.5)
+    || match (evaluate(tag_data.Samples(shared.get()), 0.5)) { Err(inverse.InvertError.Value()) => false, _ => true }) {
+    return test.fail("sample COW and fresh admission");
+  }
+  let values = [131072];
+  let alias = cell_new(values);
+  let power = inverse.invert(para(0, values), 0.25, curv_eval.default_limits(), (): boolean => {
+    alias.set(alias.get().with(0, 65536));
+    return false;
+  });
+  return test.assert_true(exact(power, 0.5) && values[0] == 131072 && exact(evaluate(para(0, alias.get()), 0.25), 0.25));
+}
+
+function selected_policies(): test.TestOutcome {
+  return test.assert_true(exact(evaluate(tag_data.Samples([0, 21845, 21845, 65535]), f64_from_bits(4599676419421066581)), f64_from_bits(4599676419421066581))
+    && exact(evaluate(para(2, [262144, 16384, -16383, 32768]), f64_from_bits(0x3fe0000000000001)), 1.0)
+    && exact(evaluate(para(4, [131072, 65536, 0, 32768, 32768, 32768, 32768]), 0.75), 0.5));
+}
+
+function unchanged_components(): test.TestOutcome {
+  let data = tag_data.ParametricData { function_type: 1, coefficients: [131072, 65536, 0] };
+  return test.assert_true(match (curv_inverse.invert(tag_data.Parametric(data), 0.25, curv_eval.default_limits(), never)) { Err(curv_inverse.InvertError.Unsupported()) => true, _ => false }
+    && match (power_inverse.invert(data, 0.25, never)) { Err(parametric_eval.EvalError.Unsupported()) => true, _ => false }
+    && match (affine_inverse.invert(tag_data.ParametricData { function_type: 3, coefficients: [] }, 0.25, never)) { Err(affine_inverse.InvertError.Unsupported()) => true, _ => false });
+}
+
+pub function main(): i32 {
+  let runner = test.test_new("ICC standalone inverse selection");
+  runner = runner.it("ICC inverse all routes", routing);
+  runner = runner.it("ICC inverse selected identity bits", identities);
+  runner = runner.it("ICC inverse common admission priority", precedence);
+  runner = runner.it("ICC inverse normalized errors", errors);
+  runner = runner.it("ICC inverse delegated cancellation", cancellation);
+  runner = runner.it("ICC inverse COW and fresh calls", ownership);
+  runner = runner.it("ICC inverse retained mathematical controls", selected_policies);
+  runner = runner.it("ICC inverse unchanged component admission", unchanged_components);
+  return runner.finish();
+}

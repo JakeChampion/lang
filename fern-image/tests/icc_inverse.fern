@@ -1,0 +1,106 @@
+import "../packages/codecs/icc/inverse";
+import "../packages/codecs/icc/curv_eval";
+import "../packages/codecs/icc/curv_inverse";
+import "../packages/codecs/icc/power_inverse";
+import "../packages/codecs/icc/parametric_eval";
+import "../packages/codecs/icc/affine_inverse";
+import "../packages/codecs/icc/quadratic_inverse";
+import "../packages/codecs/icc/tag_data";
+import "std/i32";
+import "std/i64";
+
+function mapped_curv_inverse(error: curv_inverse.InvertError): inverse.InvertError {
+  return match (error) { curv_inverse.InvertError.Limit => inverse.InvertError.Limit, curv_inverse.InvertError.Input => inverse.InvertError.Input, curv_inverse.InvertError.Shape => inverse.InvertError.Shape, curv_inverse.InvertError.Value => inverse.InvertError.Value, curv_inverse.InvertError.Unsupported => inverse.InvertError.Unsupported, curv_inverse.InvertError.NonInvertible => inverse.InvertError.NonInvertible, curv_inverse.InvertError.Numeric => inverse.InvertError.Numeric, curv_inverse.InvertError.Cancelled => inverse.InvertError.Cancelled };
+}
+
+function mapped_parametric_eval(error: parametric_eval.EvalError): inverse.InvertError {
+  return match (error) { parametric_eval.EvalError.Function => inverse.InvertError.Function, parametric_eval.EvalError.Shape => inverse.InvertError.Shape, parametric_eval.EvalError.Input => inverse.InvertError.Input, parametric_eval.EvalError.Domain => inverse.InvertError.Domain, parametric_eval.EvalError.Unsupported => inverse.InvertError.Unsupported, parametric_eval.EvalError.Numeric => inverse.InvertError.Numeric, parametric_eval.EvalError.Cancelled => inverse.InvertError.Cancelled };
+}
+
+function mapped_affine_inverse(error: affine_inverse.InvertError): inverse.InvertError {
+  return match (error) { affine_inverse.InvertError.Input => inverse.InvertError.Input, affine_inverse.InvertError.Function => inverse.InvertError.Function, affine_inverse.InvertError.Shape => inverse.InvertError.Shape, affine_inverse.InvertError.Domain => inverse.InvertError.Domain, affine_inverse.InvertError.Unsupported => inverse.InvertError.Unsupported, affine_inverse.InvertError.NonInvertible => inverse.InvertError.NonInvertible, affine_inverse.InvertError.Numeric => inverse.InvertError.Numeric, affine_inverse.InvertError.Cancelled => inverse.InvertError.Cancelled };
+}
+
+function mapped_quadratic_inverse(error: quadratic_inverse.InvertError): inverse.InvertError {
+  return match (error) { quadratic_inverse.InvertError.Input => inverse.InvertError.Input, quadratic_inverse.InvertError.Function => inverse.InvertError.Function, quadratic_inverse.InvertError.Shape => inverse.InvertError.Shape, quadratic_inverse.InvertError.Domain => inverse.InvertError.Domain, quadratic_inverse.InvertError.Unsupported => inverse.InvertError.Unsupported, quadratic_inverse.InvertError.Numeric => inverse.InvertError.Numeric, quadratic_inverse.InvertError.Cancelled => inverse.InvertError.Cancelled };
+}
+
+function standalone(curve: tag_data.CurveData, input: f64, limits: curv_eval.EvalLimits, cancelled: () => boolean): Result[f64, inverse.InvertError] {
+  return match (curve) { tag_data.Parametric(data) => match (data.function_type) { 1 | 2 => match (affine_inverse.invert(data, input, cancelled)) { Ok(v) => Ok(v), Err(e) => Err(mapped_affine_inverse(e)) }, 3 | 4 => match (quadratic_inverse.invert(data, input, cancelled)) { Ok(v) => Ok(v), Err(e) => Err(mapped_quadratic_inverse(e)) }, _ => match (power_inverse.invert(data, input, cancelled)) { Ok(v) => Ok(v), Err(e) => Err(mapped_parametric_eval(e)) } }, _ => match (curv_inverse.invert(curve, input, limits, cancelled)) { Ok(v) => Ok(v), Err(e) => Err(mapped_curv_inverse(e)) } };
+}
+
+function signed(input: [u8], at: i32): i32 {
+  let value = input[at] as i64 | input[at + 1] as i64 << 8i64 | input[at + 2] as i64 << 16i64 | input[at + 3] as i64 << 24i64;
+  return (if (value >= 2147483648i64) { value - 4294967296i64 } else { value }) as i32;
+}
+
+function bits(input: [u8], at: i32): i64 {
+  let result = 0i64;
+  for index in 0..8 {
+    result = result | input[at + index] as i64 << (index * 8) as i64;
+  }
+  return result;
+}
+
+function error_name(error: inverse.InvertError): string {
+  return match (error) { inverse.InvertError.Limit => "Limit", inverse.InvertError.Input => "Input", inverse.InvertError.Function => "Function", inverse.InvertError.Shape => "Shape", inverse.InvertError.Value => "Value", inverse.InvertError.Domain => "Domain", inverse.InvertError.Unsupported => "Unsupported", inverse.InvertError.NonInvertible => "NonInvertible", inverse.InvertError.Numeric => "Numeric", inverse.InvertError.Cancelled => "Cancelled" };
+}
+
+function emit(path: string): i32 {
+  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  if (input.len() < 32 || input[0] != 70 as u8 || input[1] != 68 as u8 || input[2] != 73 as u8 || input[3] != 49 as u8) {
+    return 3;
+  }
+  let kind = signed(input, 4);
+  let stop = signed(input, 12);
+  let count = signed(input, 20);
+  if (kind < 0 || kind > 3 || stop < 0 || count < 0 || count > 65537 || input.len() as i64 != 32i64 + count as i64 * 4i64) {
+    return 4;
+  }
+  let values: i32[] = [];
+  for index in 0..count {
+    values = values.append(signed(input, 32 + index * 4));
+  }
+  let curve = match (kind) { 0 => tag_data.Identity, 1 => tag_data.Gamma(signed(input, 16)), 2 => tag_data.Samples(values), _ => tag_data.Parametric(tag_data.ParametricData { function_type: signed(input, 16), coefficients: values }) };
+  let polls = cell_new(0);
+  let result = inverse.invert(curve, f64_from_bits(bits(input, 24)), curv_eval.EvalLimits { max_samples: signed(input, 8) }, (): boolean => {
+    polls.set(polls.get() + 1);
+    return stop != 0 && polls.get() == stop;
+  });
+  match (result) {
+    Ok(value) => {
+      print("iid " + path + " dispatch ok " + polls.get().to_string() + " " + f64_bits(value).to_string());
+    },
+    Err(error) => {
+      print("iid " + path + " dispatch error " + error_name(error) + " " + polls.get().to_string());
+    }
+  }
+  let direct_polls = cell_new(0);
+  let direct = standalone(curve, f64_from_bits(bits(input, 24)), curv_eval.EvalLimits { max_samples: signed(input, 8) }, (): boolean => {
+    direct_polls.set(direct_polls.get() + 1);
+    return stop != 0 && direct_polls.get() == stop;
+  });
+  match (direct) {
+    Ok(value) => {
+      print("iid " + path + " direct ok " + direct_polls.get().to_string() + " " + f64_bits(value).to_string());
+    },
+    Err(error) => {
+      print("iid " + path + " direct error " + error_name(error) + " " + direct_polls.get().to_string());
+    }
+  }
+  return 0;
+}
+
+pub function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for index in 1..paths.len() {
+    let code = emit(paths[index]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

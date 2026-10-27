@@ -1,0 +1,43 @@
+import "tag_data";
+import "curv_eval";
+import "curv_inverse";
+import "power_inverse";
+import "parametric_eval";
+import "affine_inverse";
+import "quadratic_inverse";
+import "std/f64";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum InvertError { Limit, Input, Function, Shape, Value, Domain, Unsupported, NonInvertible, Numeric, Cancelled }
+
+function from_curv_inverse(error: curv_inverse.InvertError): InvertError {
+  return match (error) { curv_inverse.InvertError.Limit => InvertError.Limit, curv_inverse.InvertError.Input => InvertError.Input, curv_inverse.InvertError.Shape => InvertError.Shape, curv_inverse.InvertError.Value => InvertError.Value, curv_inverse.InvertError.Unsupported => InvertError.Unsupported, curv_inverse.InvertError.NonInvertible => InvertError.NonInvertible, curv_inverse.InvertError.Numeric => InvertError.Numeric, curv_inverse.InvertError.Cancelled => InvertError.Cancelled };
+}
+
+function from_parametric_eval(error: parametric_eval.EvalError): InvertError {
+  return match (error) { parametric_eval.EvalError.Function => InvertError.Function, parametric_eval.EvalError.Shape => InvertError.Shape, parametric_eval.EvalError.Input => InvertError.Input, parametric_eval.EvalError.Domain => InvertError.Domain, parametric_eval.EvalError.Unsupported => InvertError.Unsupported, parametric_eval.EvalError.Numeric => InvertError.Numeric, parametric_eval.EvalError.Cancelled => InvertError.Cancelled };
+}
+
+function from_affine_inverse(error: affine_inverse.InvertError): InvertError {
+  return match (error) { affine_inverse.InvertError.Input => InvertError.Input, affine_inverse.InvertError.Function => InvertError.Function, affine_inverse.InvertError.Shape => InvertError.Shape, affine_inverse.InvertError.Domain => InvertError.Domain, affine_inverse.InvertError.Unsupported => InvertError.Unsupported, affine_inverse.InvertError.NonInvertible => InvertError.NonInvertible, affine_inverse.InvertError.Numeric => InvertError.Numeric, affine_inverse.InvertError.Cancelled => InvertError.Cancelled };
+}
+
+function from_quadratic_inverse(error: quadratic_inverse.InvertError): InvertError {
+  return match (error) { quadratic_inverse.InvertError.Input => InvertError.Input, quadratic_inverse.InvertError.Function => InvertError.Function, quadratic_inverse.InvertError.Shape => InvertError.Shape, quadratic_inverse.InvertError.Domain => InvertError.Domain, quadratic_inverse.InvertError.Unsupported => InvertError.Unsupported, quadratic_inverse.InvertError.Numeric => InvertError.Numeric, quadratic_inverse.InvertError.Cancelled => InvertError.Cancelled };
+}
+
+function parametric(data: tag_data.ParametricData, input: f64, cancelled: () => boolean): Result[f64, InvertError] {
+  return match (data.function_type) { 0 => match (power_inverse.invert(data, input, cancelled)) { Ok(value) => Ok(value), Err(error) => Err(from_parametric_eval(error)) }, 1 | 2 => match (affine_inverse.invert(data, input, cancelled)) { Ok(value) => Ok(value), Err(error) => Err(from_affine_inverse(error)) }, 3 | 4 => match (quadratic_inverse.invert(data, input, cancelled)) { Ok(value) => Ok(value), Err(error) => Err(from_quadratic_inverse(error)) }, _ => Err(InvertError.Function) };
+}
+
+// Selection preserves the current kernels' domains and adds no callbacks or arithmetic.
+pub function invert(curve: tag_data.CurveData, input: f64, limits: curv_eval.EvalLimits, cancelled: () => boolean): Result[f64, InvertError] {
+  if (limits.max_samples <= 0) {
+    return Err(InvertError.Limit);
+  }
+  if (!input.is_finite() || input < 0.0 || input > 1.0) {
+    return Err(InvertError.Input);
+  }
+  return match (curve) { tag_data.Parametric(data) => parametric(data, input, cancelled), _ => match (curv_inverse.invert(curve, input, limits, cancelled)) { Ok(value) => Ok(value), Err(error) => Err(from_curv_inverse(error)) } };
+}

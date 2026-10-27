@@ -68,7 +68,7 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 318 TAP cases cover compression, pixels, color, resize, PNG, the restricted JPEG slices, and standalone ICC primitives.
+The 326 TAP cases cover compression, pixels, color, resize, PNG, the restricted JPEG slices, and standalone ICC primitives.
 JPEG cases cover headers, coefficients, scalar inverse DCT, grayscale, JFIF identification, restricted RGB assembly, and standalone Exif orientation.
 They also cover rows, providers, pipelines, regions, caches, RSS parsing, and fusion.
 The file I/O probe and pixel example also exit successfully.
@@ -136,3 +136,5 @@ The [bounded affine inverses](docs/icc-affine-inverses.md) preserve continuous c
 Typed wire data does not authorize curve evaluation or color transforms.
 
 The [bounded quadratic inverses](docs/icc-quadratic-inverses.md) require exact continuous joins within their declared function 3/4 subset.
+
+The [standalone inverse entry point](docs/icc-inverse.md) selects existing qualified curve kernels with explicit domains and fresh admission.
