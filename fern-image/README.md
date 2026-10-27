@@ -68,7 +68,7 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 222 TAP cases cover compression, pixels, color, resize, and PNG.
+The 227 TAP cases cover compression, pixels, color, resize, PNG, and the restricted JPEG slices.
 JPEG cases cover headers, coefficients, scalar inverse DCT, grayscale, JFIF identification, restricted RGB assembly, and standalone Exif orientation.
 They also cover rows, providers, pipelines, regions, caches, RSS parsing, and fusion.
 The file I/O probe and pixel example also exit successfully.
@@ -114,3 +114,6 @@ The [centered component-row sampler](docs/jpeg-chroma.md) offers explicit neares
 
 The [Exif metadata reader](docs/jpeg-exif.md) reports primary orientation from a standalone APP1 payload.
 The JFIF and RGB entry points retain their strict metadata policy.
+
+The [explicit orientation operation](docs/jpeg-orientation.md) copies decoded RGB8/RGBA8 pixels through the eight Exif mappings.
+It does not change encoded JPEG admission or infer a color profile.
