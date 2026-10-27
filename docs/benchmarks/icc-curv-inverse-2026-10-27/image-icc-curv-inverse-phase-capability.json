@@ -1,0 +1,23 @@
+{
+  "criterion_before_Fern_implementation": "absolute error <=1e-12, exact declared identity and endpoint bits",
+  "input_bits": 4599676419421066581,
+  "table": [
+    0,
+    21845,
+    21845,
+    65535
+  ],
+  "exact_scaled_input": [
+    "393524535439633918635",
+    "18014398509481984"
+  ],
+  "rounded_scaled_input": 21845.0,
+  "correct_inverse_fraction": [
+    "6004799503160661",
+    "18014398509481984"
+  ],
+  "correct_inverse_bits": 4599676419421066581,
+  "naive_branch_result": 0.6666666666666666,
+  "naive_must_fail": true,
+  "scope": "Independent pre-code mathematical capability, not Fern qualification"
+}

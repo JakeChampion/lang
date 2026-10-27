@@ -1,0 +1,10 @@
+{
+  "source_commit": "9d3c237aadfa3bd1f79f9ba83f8f24d348f5d34c",
+  "samples_equal": true,
+  "cases": 1974,
+  "records": [
+    "/workspace/lang-image-icc-curv-inverse/fern-image/build/icc-curv-inverse-native.json",
+    "/workspace/lang-image-icc-curv-inverse/fern-image/build/icc-curv-inverse-wasm.json",
+    "/workspace/lang-image-icc-curv-inverse/fern-image/build/icc-curv-inverse-arm64.json"
+  ]
+}

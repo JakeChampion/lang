@@ -1,0 +1,14 @@
+TAP version 13
+# Suite: ICC inverse curves
+ok 1 - ICC inverse curve exact identity forms
+ok 2 - ICC inverse gamma controls
+ok 3 - ICC inverse sampled directions
+ok 4 - ICC inverse flat and nearest range policy
+ok 5 - ICC inverse curve fresh admission
+ok 6 - ICC inverse curve cooperative cancellation
+ok 7 - ICC inverse curve phase control
+ok 8 - ICC inverse curve COW and sample limits
+1..8
+# tests 8
+# pass 8
+# fail 0

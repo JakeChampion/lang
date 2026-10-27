@@ -1,0 +1,30 @@
+{
+  "source_commit": "9d3c237aadfa3bd1f79f9ba83f8f24d348f5d34c",
+  "format_files": 2070,
+  "checks": [
+    {
+      "tool": "/workspace/image-tuple-array-current-fern-9c4085d83",
+      "exit_code": 0
+    },
+    {
+      "tool": "go",
+      "exit_code": 0
+    },
+    {
+      "tool": "go",
+      "exit_code": 0
+    },
+    {
+      "tool": "make",
+      "exit_code": 0
+    },
+    {
+      "tool": "/workspace/image-png-reference-venv/bin/python",
+      "exit_code": 0
+    },
+    {
+      "tool": "git",
+      "exit_code": 0
+    }
+  ]
+}

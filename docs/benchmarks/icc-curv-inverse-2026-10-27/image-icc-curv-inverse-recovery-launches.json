@@ -1,0 +1,16 @@
+{
+  "source": "9d3c237aadfa3bd1f79f9ba83f8f24d348f5d34c",
+  "execution_recovered": true,
+  "no_previous_final_processes_or_checkpoints": true,
+  "jobs": {
+    "corpus_native": 27689,
+    "corpus_wasm": 25115,
+    "corpus_arm64": 2602,
+    "full_native": 25522,
+    "full_wasm": 93983,
+    "full_arm64": 59301,
+    "aux": 23943
+  },
+  "GOCACHE": "/tmp/image-curv-inverse-go-build-cache",
+  "reason": "Separate tmp filesystem avoids limited workspace disk without deleting evidence."
+}

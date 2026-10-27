@@ -1,0 +1,584 @@
+TAP version 13
+# Suite: image essentials
+ok 1 - checked arithmetic, zero bytes, copy-on-write and slices
+1..1
+# tests 1
+# pass 1
+# fail 0
+leakcheck: allocs=13 frees=13 live_bytes=0
+TAP version 13
+# Suite: native PNG compression audit
+ok 1 - stored, fixed and dynamic zlib goldens
+ok 2 - exact decompression limit
+ok 3 - checksum, truncation and header rejection
+1..3
+# tests 3
+# pass 3
+# fail 0
+leakcheck: allocs=432 frees=432 live_bytes=0
+leakcheck: allocs=60 frees=60 live_bytes=0
+TAP version 13
+# Suite: pixels M0
+ok 1 - invalid dimensions and strides
+ok 2 - row, pixel count and allocation overflow
+ok 3 - pixel, byte and hard allocation limits
+ok 4 - RGB8/RGBA8 layout, padding and alias isolation
+ok 5 - read and write bounds
+ok 6 - untrusted public representation
+ok 7 - RGB rejects nonopaque alpha
+1..7
+# tests 7
+# pass 7
+# fail 0
+leakcheck: allocs=177 frees=177 live_bytes=0
+TAP version 13
+# Suite: color M1
+ok 1 - sRGB thresholds and exhaustive byte round trips
+ok 2 - premultiply, unpremultiply, zero alpha and saturation
+ok 3 - linear source over and transparent pixels
+ok 4 - linear luminance and channel operations
+ok 5 - whole-image conversion, padding, and alpha preservation
+ok 6 - image conversion rejects unsafe storage, budgets, and background
+1..6
+# tests 6
+# pass 6
+# fail 0
+leakcheck: allocs=416 frees=416 live_bytes=0
+TAP version 13
+# Suite: resize M2
+ok 1 - solid images, odd dimensions, single rows and columns
+ok 2 - linear-light golden interpolation
+ok 3 - transparent color does not bleed
+ok 4 - two-dimensional mixed-alpha golden
+ok 5 - nearest center map
+ok 6 - aspect ratio and extreme dimensions
+ok 7 - unsafe output and source rejection
+ok 8 - RGB8 two-dimensional bilinear grid
+ok 9 - independent linear-light gradient golden
+ok 10 - checkerboard downscale follows the scalar sampling contract
+1..10
+# tests 10
+# pass 10
+# fail 0
+leakcheck: allocs=11206 frees=11206 live_bytes=0
+TAP version 13
+# Suite: PNG RGB8/RGBA8
+ok 1 - independent goldens for all five scanline filters
+ok 2 - native codec round trips and encoder output limit
+ok 3 - malformed chunks and unsupported modes
+ok 4 - pixel and filtered output budgets
+ok 5 - every truncated prefix fails
+ok 6 - transparency, profiles, animation and short scanlines
+ok 7 - chunk count CPU-work guard
+1..7
+# tests 7
+# pass 7
+# fail 0
+leakcheck: allocs=2480 frees=2480 live_bytes=0
+TAP version 13
+# Suite: JPEG baseline headers only
+ok 1 - independent grayscale and 444/422/420 reference headers
+ok 2 - optimized sparse tables and genuine unsupported profiles
+ok 3 - every truncated header prefix
+ok 4 - marker framing, lengths, and frame order
+ok 5 - baseline frame fields and projected RGB limits
+ok 6 - quantizer validation, zig-zag order, and replacement
+ok 7 - Huffman tree, padding code, and symbol restrictions
+ok 8 - full baseline scan selectors and required tables
+ok 9 - scan order follows frame positions rather than numeric identifiers
+ok 10 - bounded metadata, restart interval, and marker fill
+ok 11 - exact input, header, segment, pixel, and byte limits
+ok 12 - hard input, header, and segment caps
+ok 13 - every cooperative cancellation poll
+ok 14 - owned tables, offset windows, and explicit entropy exclusion
+1..14
+# tests 14
+# pass 14
+# fail 0
+leakcheck: allocs=51286 frees=51286 live_bytes=0
+TAP version 13
+# Suite: baseline JPEG quantized blocks
+ok 1 - six independent zero blocks validate scheduling and framing
+ok 2 - generated grayscale and three sampling fixtures reach EOI
+ok 3 - signed amplitudes, natural coefficient positions, and DC prediction
+ok 4 - terminal AC coefficients and exact ZRL completion
+ok 5 - restart order cycles and DC resets with real sampling fixtures
+ok 6 - padded blocks, fractional sampling, and component identifiers
+ok 7 - every truncated prefix rejects incomplete entropy or EOI
+ok 8 - Huffman, padding, final marker, and trailing bytes reject
+ok 9 - restart sequence, missing markers, and marker fill
+ok 10 - exact block and MCU admission precedes callbacks
+ok 11 - owned input and retained blocks survive consumer heap errors
+ok 12 - every cooperative cancellation poll releases partial state
+ok 13 - largest baseline categories and signed amplitudes match the oracle
+ok 14 - coefficient runs and invalid table categories reject
+ok 15 - borrowed input windows keep framing offsets within the view
+1..15
+# tests 15
+# pass 15
+# fail 0
+leakcheck: allocs=35369 frees=35369 live_bytes=0
+TAP version 13
+# Suite: scalar JPEG inverse DCT
+ok 1 - DC values, level shift, ties, and clipping
+ok 2 - natural coefficient order and transmitted quantizers
+ok 3 - shapes, numeric domain, quantizers, and nonfinite samples
+ok 4 - borrowed windows and owned transform outputs
+ok 5 - every cooperative cancellation poll releases state
+1..5
+# tests 5
+# pass 5
+# fail 0
+leakcheck: allocs=2291 frees=2291 live_bytes=0
+TAP version 13
+# Suite: restricted JPEG grayscale images
+ok 1 - zero blocks, cropped edges, and header-only planning
+ok 2 - grayscale references and single-component sampling
+ok 3 - color, progressive, and CMYK profiles reject
+ok 4 - exact header, block, pixel, and byte admission
+ok 5 - all prefixes, padding, final markers, and trailing bytes
+ok 6 - late restart and transform failures release private images
+ok 7 - borrowed input and independent owned output images
+ok 8 - every cancellation poll releases partial images
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=889680 frees=889680 live_bytes=0
+TAP version 13
+# Suite: explicit full-range YCbCr conversion
+ok 1 - neutral endpoints, clipping, and exact half ties
+ok 2 - equal-resolution packed RGB rows
+ok 3 - shape and exact output-byte admission
+ok 4 - borrowed windows and owned copy-on-write outputs
+ok 5 - every cooperative cancellation poll
+1..5
+# tests 5
+# pass 5
+# fail 0
+leakcheck: allocs=93 frees=93 live_bytes=0
+TAP version 13
+# Suite: restricted baseline JPEG component planes
+ok 1 - independent zero samples and header-only planning
+ok 2 - raw component references and cropped 4:2:0 planes
+ok 3 - fractional sampling, frame identifiers, and quantizer selection
+ok 4 - exact total plane and existing header/block budgets
+ok 5 - all prefixes, padding, trailing data, and late restart failure
+ok 6 - borrowed input, owned planes, and fresh calls
+ok 7 - every cancellation poll across one and three components
+1..7
+# tests 7
+# pass 7
+# fail 0
+leakcheck: allocs=207128 frees=207128 live_bytes=0
+TAP version 13
+# Suite: centered JPEG component rows
+ok 1 - independent centered filters and one final half-tie rounding
+ok 2 - identity phase and padded source rows
+ok 3 - fractional factors and odd-frame cropping
+ok 4 - forged layouts, grids, bounds, and exact byte admission
+ok 5 - callback input updates and independent owned output rows
+ok 6 - every cancellation poll for both filters
+1..6
+# tests 6
+# pass 6
+# fail 0
+leakcheck: allocs=166 frees=166 live_bytes=0
+TAP version 13
+# Suite: JPEG JFIF profile
+ok 1 - JFIF explicit version density thumbnail and component profiles
+ok 2 - JFIF declaration lengths fields and versions
+ok 3 - JFIF first marker and conflicting metadata policy
+ok 4 - JFIF frame identifiers retain explicit sample meaning
+ok 5 - JFIF header framing and entropy scope
+ok 6 - JFIF exact inherited resource limits
+ok 7 - JFIF borrowed input and owned result isolation
+ok 8 - JFIF every cooperative cancellation poll
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=48542 frees=48542 live_bytes=0
+TAP version 13
+# Suite: restricted JFIF RGB8 assembly
+ok 1 - C raw-plane and Fraction goldens across both filters
+ok 2 - independent exact logical plans and one-less admission
+ok 3 - invalid limits and aggregate logical hard ceiling
+ok 4 - explicit color profile and unsupported metadata
+ok 5 - all stream prefixes and late restart or framing errors
+ok 6 - callback source updates and retained independent images
+ok 7 - nested fresh decoder calls keep independent state
+ok 8 - every cooperative cancellation poll for both filters
+ok 9 - wide post-plane sample groups, row copies, and final cancellation
+1..9
+# tests 9
+# pass 9
+# fail 0
+leakcheck: allocs=713169 frees=713169 live_bytes=0
+TAP version 13
+# Suite: sequential PNG rows
+ok 1 - independent RGB/RGBA goldens for every filter
+ok 2 - selected rows preserve prefix dependencies through lent windows
+ok 3 - consumer mutation preserves predecessor rows and input
+ok 4 - exact payload and work admission with checked row bounds
+ok 5 - consumer errors release retained rows and owned state
+ok 6 - cancellation before decode and across partial row output
+ok 7 - malformed and unsupported data never reaches the consumer
+ok 8 - a bad final filter rejects an earlier row selection before callbacks
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=4148 frees=4148 live_bytes=0
+TAP version 13
+# Suite: PNG graph providers
+ok 1 - fresh sessions preserve all filters, prefixes, repeated rows, and bounds
+ok 2 - 32 format, scale, and fusion schedules match eager rows and cropped tiles
+ok 3 - exact source payload, work, and cache admission
+ok 4 - codec errors and bad final filters precede selected output
+ok 5 - graph input and retained output preserve copy-on-write ownership
+ok 6 - every cancellation poll releases private decoder state
+ok 7 - consumer heap errors permit a fresh decoder execution
+1..7
+# tests 7
+# pass 7
+# fail 0
+leakcheck: allocs=161134 frees=161134 live_bytes=0
+TAP version 13
+# Suite: resumable DEFLATE output
+ok 1 - reader errors expose messages and display through the common interface
+ok 2 - independent stored, fixed, and dynamic fixtures at six chunk sizes
+ok 3 - history wrap and distance 32768 across chunk boundaries
+ok 4 - literal-only blocks accept empty distance trees and reject malformed tables
+ok 5 - empty block chains retain cancellation polls and exact consumption
+ok 6 - invalid requests, output limits, truncation, and sticky codec errors
+ok 7 - input mutation, output retention, and shared session aliases
+ok 8 - every cancellation poll terminates and releases state
+ok 9 - recursive callbacks reject reentry without corrupting the session
+1..9
+# tests 9
+# pass 9
+# fail 0
+leakcheck: allocs=156520 frees=156520 live_bytes=0
+TAP version 13
+# Suite: on-demand row pipeline
+ok 1 - virtual ten-million-pixel graph renders one row
+ok 2 - RGB/RGBA row chains agree with eager nearest
+ok 3 - empty graphs, cycles, and dimensions fail safely
+ok 4 - scratch, row, sample, pixel, and node limits
+ok 5 - cooperative cancellation releases partial rows
+ok 6 - untrusted storage, formats, and alpha
+ok 7 - exact nearest mapping at i32 limits
+ok 8 - maximum depth, row bounds, and retained row isolation
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=38566 frees=38566 live_bytes=0
+TAP version 13
+# Suite: bilinear row pipeline
+ok 1 - padded RGB/RGBA mixed-filter chains agree with eager output
+ok 2 - two-dimensional mixed-alpha golden
+ok 3 - two-row scratch and recursive sample budgets
+ok 4 - cancellation releases retained and partial rows
+ok 5 - coordinate boundaries, weights, topology, and formats
+1..5
+# tests 5
+# pass 5
+# fail 0
+leakcheck: allocs=86923 frees=86923 live_bytes=0
+TAP version 13
+# Suite: execution row providers
+ok 1 - factory sessions are private across graph copies and executions
+ok 2 - provider RGB/RGBA coordinates preserve every nearest step
+ok 3 - forward providers retain repeated bilinear dependencies in rows and tiles
+ok 4 - source storage, setup work, and forward cache admit before factories
+ok 5 - row index, metadata, stride, and exact storage validate before reads
+ok 6 - factory, provider, and consumer heap errors release sessions
+ok 7 - every cancellation poll releases factories, rows, and private state
+ok 8 - captured source bytes and returned rows preserve owned values
+ok 9 - 64-node provider graphs retain bounds and conservative admission
+ok 10 - unreachable provider factories remain unopened
+ok 11 - 64 mixed-filter format and fusion combinations preserve forward access
+1..11
+# tests 11
+# pass 11
+# fail 0
+leakcheck: allocs=721629 frees=721629 live_bytes=0
+TAP version 13
+# Suite: checked region requests
+ok 1 - virtual ten-million-pixel graph returns a cropped tile
+ok 2 - padded RGB/RGBA mixed-filter crops agree with eager output
+ok 3 - direct nearest and bilinear dependency rows
+ok 4 - exact tile storage and aggregate sample budgets
+ok 5 - invalid regions, storage, and limits fail before execution
+ok 6 - cancellation releases input rows and partial tiles
+ok 7 - retained tile and source values remain isolated
+ok 8 - large output arithmetic and recursive work fail before allocation
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=301562 frees=301562 live_bytes=0
+TAP version 13
+# Suite: bounded row cache
+ok 1 - cache reuses parent rows without changes to output
+ok 2 - row ranges, total work, and logical scratch reject before callbacks
+ok 3 - FIFO eviction obeys byte and entry limits
+ok 4 - generic consumer errors preserve retained rows and release the cache
+ok 5 - cancellation releases a populated cache
+ok 6 - padded RGB/RGBA chains preserve retained rows
+1..6
+# tests 6
+# pass 6
+# fail 0
+leakcheck: allocs=94264 frees=94264 live_bytes=0
+TAP version 13
+# Suite: cached tile requests
+ok 1 - cropped tiles reuse parent rows and report exact budgets
+ok 2 - invalid requests and aggregate budgets reject before execution
+ok 3 - padded RGB/RGBA crops agree with eager output across cache sizes
+ok 4 - cancellation releases cache rows and partial tile storage
+ok 5 - retained and modified tiles remain isolated across calls
+ok 6 - generic folds transfer accumulator state and preserve heap errors
+1..6
+# tests 6
+# pass 6
+# fail 0
+leakcheck: allocs=257025 frees=257025 live_bytes=0
+TAP version 13
+# Suite: cached tile fusion
+ok 1 - independent padded RGB/RGBA cropped coordinates across cache limits
+ok 2 - equal tile admission with actual fused and legacy work statistics
+ok 3 - mixed-filter cropped tiles agree with eager output
+ok 4 - invalid plans and skipped nodes reject before allocation
+ok 5 - every cancellation phase releases rows, cache, and partial tiles
+ok 6 - retained, modified, and later tiles preserve source values
+ok 7 - expanding nearest chains retain the admitted fallback
+ok 8 - 64-node tiles preserve metadata validation and byte ownership
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=653136 frees=653136 live_bytes=0
+TAP version 13
+# Suite: Linux RSS observation parser
+ok 1 - kernel fields convert KiB to checked byte counts
+ok 2 - missing, duplicate, malformed, and inconsistent fields fail
+ok 3 - byte conversion rejects i64 overflow
+1..3
+# tests 3
+# pass 3
+# fail 0
+leakcheck: allocs=312 frees=312 live_bytes=0
+TAP version 13
+# Suite: uncached nearest fusion
+ok 1 - sequential 4-to-3-to-2 coordinates preserve padded RGB/RGBA bytes
+ok 2 - nearest chains preserve eager output across bilinear boundaries
+ok 3 - existing work and scratch admission covers upsample fallback
+ok 4 - cancellation releases source and partially rendered rows
+ok 5 - 64-node chains preserve retained rows and source ownership
+ok 6 - cached execution keeps per-node statistics and exact budgets
+1..6
+# tests 6
+# pass 6
+# fail 0
+leakcheck: allocs=44074 frees=44074 live_bytes=0
+TAP version 13
+# Suite: cached nearest fusion
+ok 1 - independent RGB/RGBA sequential coordinates with and without cache
+ok 2 - root reuse and actual lookup statistics preserve legacy batches
+ok 3 - mixed filters preserve eager output across bilinear barriers
+ok 4 - exact conservative budgets and upsample fallback
+ok 5 - consumer failure releases retained state and private cache
+ok 6 - consumer mutation preserves cached rows and later batches
+ok 7 - every cancellation poll releases partial fused work
+ok 8 - 64-node fused batches preserve validation and source ownership
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=89621 frees=89621 live_bytes=0
+TAP version 13
+# Suite: bounded Exif primary orientation
+ok 1 - little and big endian eight-value orientation mapping
+ok 2 - absence and primary versus thumbnail orientation
+ok 3 - truncated directories and unsigned offset bounds
+ok 4 - sorted unique tags and field shape or count checks
+ok 5 - out-of-line extents and bounded linked directories
+ok 6 - exact byte and total entry admission
+ok 7 - borrowed input updates preserve observed metadata
+ok 8 - every cooperative metadata cancellation poll
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=17413 frees=17413 live_bytes=0
+TAP version 13
+# Suite: explicit Exif orientation
+ok 1 - all eight exact RGB and RGBA mappings
+ok 2 - single axes and inverse mappings
+ok 3 - public layout and exact admission
+ok 4 - every cooperative cancellation poll
+ok 5 - input callback and output ownership
+1..5
+# tests 5
+# pass 5
+# fail 0
+leakcheck: allocs=9234 frees=9234 live_bytes=0
+TAP version 13
+# Suite: restricted ICC v4.4 envelope
+ok 1 - constructed and offline shared-curve profile metadata
+ok 2 - explicit version, class, color space, and PCS scope
+ok 3 - header fields, reserved bits, and opaque vendor bits
+ok 4 - all prefixes, unsigned bounds, duplicates, and overlap
+ok 5 - unordered entries, exact aliases, padding, and no gaps
+ok 6 - exact positive limits before callbacks
+ok 7 - owned output, borrowed input COW, and fresh sessions
+ok 8 - every cooperative cancellation poll
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=332 frees=332 live_bytes=0
+TAP version 13
+# Suite: exact ICC XYZ and curve wire values
+ok 1 - signed XYZ extremes and frozen profile coefficients
+ok 2 - identity, gamma, and sampled curve wire forms
+ok 3 - all parametric functions and signed coefficient order
+ok 4 - prefixes, exact lengths, reserved fields, and function scope
+ok 5 - exact positive byte and sample admission
+ok 6 - owned arrays, callback COW isolation, and fresh calls
+ok 7 - every XYZ and curve cancellation poll
+1..7
+# tests 7
+# pass 7
+# fail 0
+leakcheck: allocs=336 frees=336 live_bytes=0
+TAP version 13
+# Suite: incremental PNG sessions
+ok 1 - all filter and channel goldens with forward sessions
+ok 2 - exact logical limits preserve the eager plan
+ok 3 - entire stream validation precedes selected output
+ok 4 - legacy and fused graph rows and crops match eager resize
+ok 5 - wide rows cross chunks and history with a zero Adler A
+ok 6 - owned snapshots, fresh sessions, and callback reentry
+ok 7 - every cancellation poll terminates the session
+ok 8 - consumer heap errors release the decoder
+ok 9 - cancellation during chunked wide row output
+ok 10 - graph admission includes codec storage, scratch, setup, and cache
+1..10
+# tests 10
+# pass 10
+# fail 0
+leakcheck: allocs=158509 frees=158509 live_bytes=0
+TAP version 13
+# Suite: scalar ICC curv evaluation
+ok 1 - exact identities, endpoints, and Decimal gamma probes
+ok 2 - independent sampled interpolation values
+ok 3 - large-table boundary retains the low product
+ok 4 - public variant, input, value, shape, and limit admission
+ok 5 - callback COW, typed wire input, and fresh calls
+ok 6 - every cooperative cancellation poll
+1..6
+# tests 6
+# pass 6
+# fail 0
+leakcheck: allocs=193 frees=193 live_bytes=0
+TAP version 13
+# Suite: bounded scalar ICC parametric evaluation
+ok 1 - all five corrected formulas and branch selection
+ok 2 - clipping, public domains, and explicit unsupported subset
+ok 3 - fixed-point gamma extremes and exact identity
+ok 4 - large-slope compensation retains the low product
+ok 5 - callback COW, cancellation, and fresh calls
+ok 6 - frozen offline sRGB wire curve and independent Decimal value
+1..6
+# tests 6
+# pass 6
+# fail 0
+leakcheck: allocs=300 frees=300 live_bytes=0
+TAP version 13
+# Suite: checked ICC APP2 payload assembly
+ok 1 - absence and complete empty sequences are distinct
+ok 2 - sequence order controls every concatenated byte
+ok 3 - framing prefixes and every identifier byte
+ok 4 - strict sequence/count/duplicate/completeness admission
+ok 5 - caller limits and wire boundaries
+ok 6 - every cooperative allocation/copy/success poll
+ok 7 - input COW, retained output, and fresh calls
+ok 8 - profile assembly does not imply structural validity
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=1185 frees=1185 live_bytes=0
+TAP version 13
+# Suite: ICC matrix evaluation
+ok 1 - ICC matrix exact projections
+ok 2 - ICC matrix columns and unclipped output
+ok 3 - ICC matrix cancellation
+ok 4 - ICC matrix admission
+ok 5 - ICC matrix extremes and cancellation
+ok 6 - ICC matrix COW and fresh calls
+1..6
+# tests 6
+# pass 6
+# fail 0
+leakcheck: allocs=113 frees=113 live_bytes=0
+TAP version 13
+# Suite: restricted ICC matrix data selection
+ok 1 - frozen exact columns and owned shared curves
+ok 2 - explicit intent and layered limits
+ok 3 - no forward LUT fallback
+ok 4 - required data and exact wire types
+ok 5 - existing qualified curve forms and domains
+ok 6 - every cancellation poll and cleanup
+ok 7 - input and output COW with fresh calls
+ok 8 - unordered aliases signed columns and preferences
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=2885 frees=2885 live_bytes=0
+TAP version 13
+# Suite: ICC matrix/TRC numerical composition
+ok 1 - ICC composition identity and projection bits
+ok 2 - ICC composition mixed curves and unclipped XYZ
+ok 3 - ICC composition fresh public admission
+ok 4 - ICC composition every cancellation point
+ok 5 - ICC composition COW and fresh calls
+ok 6 - ICC composition explicit relative coordinate policy
+1..6
+# tests 6
+# pass 6
+# fail 0
+leakcheck: allocs=776 frees=776 live_bytes=0
+TAP version 13
+# Suite: ICC inverse matrix
+ok 1 - ICC inverse exact signed projections
+ok 2 - ICC inverse dyadic and small determinants
+ok 3 - ICC inverse admission before callbacks
+ok 4 - ICC inverse cooperative cancellation
+ok 5 - ICC inverse numerical cancellation control
+ok 6 - ICC inverse COW and fresh calls
+1..6
+# tests 6
+# pass 6
+# fail 0
+leakcheck: allocs=255 frees=255 live_bytes=0
+TAP version 13
+# Suite: ICC inverse curves
+ok 1 - ICC inverse curve exact identity forms
+ok 2 - ICC inverse gamma controls
+ok 3 - ICC inverse sampled directions
+ok 4 - ICC inverse flat and nearest range policy
+ok 5 - ICC inverse curve fresh admission
+ok 6 - ICC inverse curve cooperative cancellation
+ok 7 - ICC inverse curve phase control
+ok 8 - ICC inverse curve COW and sample limits
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=339 frees=339 live_bytes=0
