@@ -83,39 +83,49 @@ function check(code: i32, what: string, got: string, want: string): i32 {
   return code;
 }
 
+function compare_versions(a: string, b: string): string {
+  let av = match (mvs.parse_version(a)) { Ok(value) => value, Err(message) => { return message; } };
+  let bv = match (mvs.parse_version(b)) { Ok(value) => value, Err(message) => { return message; } };
+  return util.i32_to_string(mvs.version_cmp(av, bv));
+}
+
+function version_error(text: string): string {
+  return match (mvs.parse_version(text)) { Ok(_) => "", Err(message) => message };
+}
+
 function main(): i32 {
   let rc: i32 = check(
     1, "1.2.0 vs 1.10.0",
-    util.i32_to_string(mvs.version_cmp(mvs.parse_version("1.2.0"), mvs.parse_version("1.10.0"))), "-1",
+    compare_versions("1.2.0", "1.10.0"), "-1",
   );
   if (rc != 0) {
     return rc;
   }
   rc = check(
     2, "2.0.0 vs 1.9.9",
-    util.i32_to_string(mvs.version_cmp(mvs.parse_version("2.0.0"), mvs.parse_version("1.9.9"))), "1",
+    compare_versions("2.0.0", "1.9.9"), "1",
   );
   if (rc != 0) {
     return rc;
   }
   rc = check(
     3, "1.0.0 vs 1.0.0",
-    util.i32_to_string(mvs.version_cmp(mvs.parse_version("1.0.0"), mvs.parse_version("1.0.0"))), "0",
+    compare_versions("1.0.0", "1.0.0"), "0",
   );
   if (rc != 0) {
     return rc;
   }
-  if (mvs.parse_version("1.2").ok) {
+  if (version_error("1.2").len() == 0) {
     return 4;
   }
   rc = check(
-    5, "two-part version error", mvs.version_error("1.2"),
+    5, "two-part version error", version_error("1.2"),
     "invalid version \"1.2\" (want MAJOR.MINOR.PATCH)",
   );
   if (rc != 0) {
     return rc;
   }
-  rc = check(6, "non-numeric version error", mvs.version_error("1.x.0"), "invalid version \"1.x.0\"");
+  rc = check(6, "non-numeric version error", version_error("1.x.0"), "invalid version \"1.x.0\"");
   if (rc != 0) {
     return rc;
   }

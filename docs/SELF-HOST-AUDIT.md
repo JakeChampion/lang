@@ -980,6 +980,24 @@ findings. Ranked by leverage.
   The Go reader now retains the file path in parse diagnostics, as the self-host CLI already does.
   The Go reader also tracks version presence separately from the parsed number.
   Version `0.0.0` now survives a lock-file round trip, and missing versions still fail.
+
+  `mvs.parse_version` now returns `Result[pkgversion.Version, string]`.
+  Successful versions contain three 64-bit components, and failed parses carry only their diagnostic.
+  The old 32-bit fields changed `2147483648.0.0` into a negative version and accepted components above the 64-bit limit.
+  Registry and lock readers now share numeric validation and canonical output.
+  Their identical byte-split loops also share `util.split_char`.
+
+  The registry sorts numeric data after it parses each accepted version once.
+  Invalid entries in manually constructed indexes no longer act as version zero.
+  Version diagnostics retain Go quote escapes for control characters.
+  Fifty-five Go-oracle checks cover the parser, comparisons, indexes, and resolution on native, ARM64, and Wasm.
+  The native sanitizer reports 2,243 allocations and releases, with zero live bytes.
+
+  Forty paired probes per input give candidate/baseline ratios of 0.773 for 40 index entries and 0.106 for 400 entries.
+  A lock file with 1,000 entries gives a ratio of 0.934.
+  These probes validate their inputs with Go and measure input parse, numeric sort, and output.
+  They establish no general compiler speed change.
+
   The lock parser also rejects incomplete entries, unknown fields, malformed quoted values and invalid versions.
   Versions retain the Go reader's 64-bit component range and canonical decimal form.
   A map resolves duplicate package names, so the last entry wins as it does in Go.

@@ -1,4 +1,5 @@
 import "./util";
+import "./pkgversion";
 import "./capvocab";
 import "./docsummary";
 import "core/map";
@@ -51,21 +52,6 @@ pub function parse_quoted(s: string): Result[string, string] {
   return Ok(inner);
 }
 
-function split_char(src: string, c: u8): string[] {
-  let out: string[] = [];
-  let start: i32 = 0;
-  let i: i32 = 0;
-  while (i < src.len()) {
-    if (src[i] == c) {
-      out = out.append(slice_unchecked(src, start, i) + "");
-      start = i + 1;
-    }
-    i = i + 1;
-  }
-  out = out.append(slice_unchecked(src, start, src.len()) + "");
-  return out;
-}
-
 pub function line_content(raw: string): string {
   let quoted: boolean = false;
   let i: i32 = 0;
@@ -103,7 +89,7 @@ pub function parse(src: string): Manifest {
   let workspace: boolean = false;
   let section: string = "";
   let seen: string[] = [];
-  let lines: string[] = split_char(src, b'\n');
+  let lines: string[] = util.split_char(src, b'\n');
   let li: i32 = 0;
   while (li < lines.len() && m.err.len() == 0) {
     let line: string = line_content(lines[li]);
@@ -309,7 +295,7 @@ function parse_str_array(val: string): Result[string[], string] {
     return Err("expected an array like [\"a\", \"b\"], got " + docsummary.quote(val));
   }
   let out: string[] = [];
-  for raw in split_char(slice_unchecked(val, 1, val.len() - 1) + "", b',') {
+  for raw in util.split_char(slice_unchecked(val, 1, val.len() - 1) + "", b',') {
     let part: string = util.trim(raw);
     if (part.len() > 0) {
       match (parse_string(part)) {
@@ -326,7 +312,7 @@ function parse_str_array(val: string): Result[string[], string] {
 }
 
 pub function is_version(s: string): boolean {
-  let parts: string[] = split_char(s, b'.');
+  let parts: string[] = util.split_char(s, b'.');
   if (parts.len() != 3) {
     return false;
   }
@@ -661,7 +647,7 @@ pub struct LockEntry {
 pub function parse_lock(src: string): Result[LockEntry[], string] {
   let out: LockEntry[] = [];
   let cur: Option[LockEntry] = None;
-  let lines: string[] = split_char(src, b'\n');
+  let lines: string[] = util.split_char(src, b'\n');
   let li: i32 = 0;
   while (li < lines.len()) {
     let line: string = line_content(lines[li]);
@@ -723,28 +709,8 @@ function unique_lock_entries(entries: LockEntry[]): LockEntry[] {
   return out;
 }
 
-function lock_version(v: string): Result[string, string] {
-  let bad: string = "invalid version " + docsummary.quote(v);
-  let parts: string[] = split_char(v, b'.');
-  if (parts.len() != 3) {
-    return Err(bad + " (want MAJOR.MINOR.PATCH)");
-  }
-  let out: string[] = [];
-  for part in parts {
-    if (!util.is_all_digits(part)) {
-      return Err(bad);
-    }
-    let at: i32 = 0;
-    while (at + 1 < part.len() && part[at] == b'0') {
-      at = at + 1;
-    }
-    let digits: string = slice_unchecked(part, at, part.len()) + "";
-    if (!util.is_decimal_i64(digits)) {
-      return Err(bad);
-    }
-    out = out.append(digits);
-  }
-  return Ok(out[0] + "." + out[1] + "." + out[2]);
+function lock_version(text: string): Result[string, string] {
+  return match (pkgversion.parse(text)) { Ok(value) => Ok(pkgversion.format(value)), Err(message) => Err(message) };
 }
 
 function with_lock_field(e: LockEntry, key: string, v: string): Result[LockEntry, string] {
