@@ -735,7 +735,7 @@ findings. Ranked by leverage.
   Any change to that failure contract still needs a separate invariant analysis and regression test.
 
 ### T6 — Errors & signals smuggled through value types / sentinels
-- [~] **SH-026 — Missing signature placeholders remain in three lookup families.**
+- [~] **SH-026 — Missing signature placeholders remain in two lookup families.**
   The original row mixed absent values, missing signatures and failure results.
 
   _Done — and the row's premise on this part was wrong._ The four surviving
@@ -753,7 +753,7 @@ findings. Ranked by leverage.
   only "unknown" was ever load-bearing. A `VAbsent` variant was considered and
   rejected: it would add a dead arm to every exhaustive match over `Value`.
 
-  _Still open:_ `lookup_sig`, `lookup_struct` and `lookup_method` return `name: ""` when a lookup fails.
+  _Still open:_ `lookup_sig` and `lookup_struct` return `name: ""` when a lookup fails.
   These families need standard options and explicit caller contracts.
 
   Union signature lookup now returns `Option[UnionSig]`.
@@ -767,6 +767,13 @@ findings. Ranked by leverage.
   Twenty process pairs per input used one CPU.
   Candidate/baseline ratios range from 0.966 to 1.032 across flat functions, closures, void locals, structs and enums.
   These local measurements do not establish a general compiler speed change.
+
+  Method, array-method and visible-method lookup now return `Option[MethodSig]`.
+  The checker, typed front end and LSP queries match the option before they use a signature.
+  Missing methods retain their built-in and callable-field fallbacks.
+  Map iteration retains its provider alias, and array lookup retains visibility and view filters.
+  Contract checks execute on x86-64, ARM64 and Wasm.
+  Twenty-one before/after cases retain the well-typed flag, diagnostic text, positions and order.
 
   _Also open:_ custom success and failure carriers under T8, such as `irtables.LowerResult`.
   Review their partial-state contracts before a result migration.

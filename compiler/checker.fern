@@ -1627,7 +1627,7 @@ function cmp_method_receiver(t: typeinfo.Type): string {
 
 function (s: Scope) has_ord_cmp(t: typeinfo.Type): boolean {
   let recv: string = cmp_method_receiver(t);
-  return recv != "" && s.lookup_method("cmp", recv).name.len() > 0;
+  return recv != "" && s.has_method("cmp", recv);
 }
 
 function (s: Scope) binop_overload_ret(op: string, lt: typeinfo.Type): typeinfo.Type {
@@ -1649,7 +1649,7 @@ function (s: Scope) overload_ret(method: string, t: typeinfo.Type): typeinfo.Typ
   if (recv == "") {
     return t_unknown("operand is not a nominal type");
   }
-  return s.lookup_method(method, recv).ret_type;
+  return match (s.lookup_method(method, recv)) { Some(ms) => ms.ret_type, None => t_unknown("no such method") };
 }
 
 function downcast_operand_ok(t: typeinfo.Type): boolean {
@@ -3176,18 +3176,17 @@ function array_receiver_matches(rt: string, view: boolean): boolean {
   return rt.len() > 2 && slice_unchecked(rt, 0, 1) != "[" && slice_unchecked(rt, rt.len() - 2, rt.len()) == "[]";
 }
 
-function (s: Scope) array_recv_method(field: string, view: boolean): MethodSig {
+function (s: Scope) array_recv_method(field: string, view: boolean): Option[MethodSig] {
   let i: i32 = s.methods.head[sig_name_bucket(field)];
   while (i >= 0) {
     let method: MethodSig = s.methods.methods[i];
     let rt: string = method.receiver_type;
     if (method.name == field && array_receiver_matches(rt, view) && s.method_visible(method)) {
-      return method;
+      return Some(method);
     }
     i = s.methods.next[i];
   }
-  let empty_pt: typeinfo.Type[] = [];
-  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such array method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_params: [], type_bounds: [], module: "", impl_trait: "", line: 0, col: 0, file: "" };
+  return None;
 }
 
 function (s: Scope) array_method_ret_type(c: ast.ExprCall, recv_ty: typeinfo.Type, field: string): typeinfo.Type {
@@ -3199,12 +3198,11 @@ function (s: Scope) array_method_ret_type(c: ast.ExprCall, recv_ty: typeinfo.Typ
       if (field == "len") {
         return t_i32();
       }
-      if (array.view) {
-        return s.arr_recv_ret_type(c, recv_ty, s.array_recv_method(field, true));
+      if let Some(arm) = s.array_recv_method(field, array.view) {
+        return generic_method_ret(c, arm, method_binding(c, arm, recv_ty, s), s);
       }
-      let arm: MethodSig = s.array_recv_method(field, false);
-      if (arm.name.len() > 0) {
-        return s.arr_recv_ret_type(c, recv_ty, arm);
+      if (array.view) {
+        return t_unknown("no such array method");
       }
       return t_unknown("no array method `" + field + "`");
     },
@@ -3214,15 +3212,8 @@ function (s: Scope) array_method_ret_type(c: ast.ExprCall, recv_ty: typeinfo.Typ
   }
 }
 
-pub function array_method_sig(s: Scope, field: string, view: boolean): MethodSig {
+pub function array_method_sig(s: Scope, field: string, view: boolean): Option[MethodSig] {
   return s.array_recv_method(field, view);
-}
-
-function (s: Scope) arr_recv_ret_type(c: ast.ExprCall, recv_ty: typeinfo.Type, arm: MethodSig): typeinfo.Type {
-  if (arm.name.len() == 0) {
-    return arm.ret_type;
-  }
-  return generic_method_ret(c, arm, method_binding(c, arm, recv_ty, s), s);
 }
 
 function (s: Scope) has_struct(name: string): boolean {
@@ -3516,11 +3507,10 @@ function (s: Scope) receives(ms: MethodSig, recv_type: string): boolean {
   return ms.receiver_type == recv_type || parser.parse_type_ref(ms.receiver_type).base == recv_type || is_variant_of(recv_type, ms.receiver_type, s.unions.unions);
 }
 
-function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
+function (s: Scope) lookup_method(name: string, recv_type: string): Option[MethodSig] {
   if (name == "iter" && recv_type == "Map") {
-    let provider: MethodSig = s.lookup_method("__iterator", recv_type);
-    if (provider.name.len() > 0) {
-      return provider;
+    if let Some(provider) = s.lookup_method("__iterator", recv_type) {
+      return Some(provider);
     }
   }
   let i: i32 = s.methods.head[sig_name_bucket(name)];
@@ -3530,20 +3520,15 @@ function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
       continue;
     }
     if (s.receives(s.methods.methods[i], recv_type)) {
-      return s.methods.methods[i];
+      return Some(s.methods.methods[i]);
     }
     i = s.methods.next[i];
   }
   let at: i32 = s.trait_spelled_method(name, recv_type);
   if (at >= 0) {
-    return s.methods.methods[at];
+    return Some(s.methods.methods[at]);
   }
-  return no_method_sig();
-}
-
-function no_method_sig(): MethodSig {
-  let empty_pt: typeinfo.Type[] = [];
-  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_params: [], type_bounds: [], module: "", impl_trait: "", line: 0, col: 0, file: "" };
+  return None;
 }
 
 function (s: Scope) trait_spelled_method(name: string, recv_type: string): i32 {
@@ -3698,12 +3683,13 @@ function (s: Scope) method_visible(m: MethodSig): boolean {
   return m.impl_trait.len() > 0 || s.imports.sees(s.fn_module, m.module);
 }
 
-function (s: Scope) visible_method(name: string, recv_type: string): MethodSig {
-  let m: MethodSig = s.lookup_method(name, recv_type);
-  if (m.name.len() > 0 && !s.method_visible(m)) {
-    return no_method_sig();
+function (s: Scope) visible_method(name: string, recv_type: string): Option[MethodSig] {
+  if let Some(m) = s.lookup_method(name, recv_type) {
+    if (s.method_visible(m)) {
+      return Some(m);
+    }
   }
-  return m;
+  return None;
 }
 
 function (s: Scope) methods_in_namespace(ns: string): string[] {
@@ -3925,7 +3911,10 @@ function method_namespace_of(t: typeinfo.Type): string {
 }
 
 function (s: Scope) has_array_recv_method(field: string, view: boolean): boolean {
-  return s.array_recv_method(field, view).name.len() > 0;
+  if let Some(_) = s.array_recv_method(field, view) {
+    return true;
+  }
+  return false;
 }
 
 pub function (s: Scope) has_union(name: string): boolean {
@@ -5125,11 +5114,15 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       },
       _ => {}
     }
-    let msig: MethodSig = s.lookup_method(name, recv_type_name);
-    if (map_source_receiver_missing(source_recv_ty, msig)) {
-      return t_unknown("method receiver lacks map columns");
-    }
-    if (msig.name.len() == 0) {
+    if let Some(msig) = s.lookup_method(name, recv_type_name) {
+      if (map_source_receiver_missing(source_recv_ty, msig)) {
+        return t_unknown("method receiver lacks map columns");
+      }
+      if (c.args.len() != msig.param_types.len()) {
+        return t_unknown("arity mismatch calling method `" + name + "`");
+      }
+      return generic_method_ret(c, msig, method_binding(c, msig, recv_ty, s), s);
+    } else {
       if let typeinfo.TypeFunc(bm) = builtin_method_sig(recv_type_name, name) {
         if (bm.param_types.len() == c.args.len()) {
           return bm.ret_type;
@@ -5142,10 +5135,6 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
       }
       return t_unknown("undefined method `" + name + "` on `" + recv_type_name + "`");
     }
-    if (c.args.len() != msig.param_types.len()) {
-      return t_unknown("arity mismatch calling method `" + name + "`");
-    }
-    return generic_method_ret(c, msig, method_binding(c, msig, recv_ty, s), s);
   }
   let bound_at: i32 = s.binding_index(name);
   if let ast.ExprIdent(cid) = c.callee {
@@ -5397,7 +5386,7 @@ function uninferred_call_diags(sig: FuncSig, c: ast.ExprCall, bn: string[], name
 
 function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
-  if (c.type_args.len() > 0 || msig.name.len() == 0 || c.args.len() != msig.param_type_names.len()) {
+  if (c.type_args.len() > 0 || c.args.len() != msig.param_type_names.len()) {
     return out;
   }
   let rref: parser.TypeRef = parser.parse_type_ref(msig.receiver_type);
@@ -5412,8 +5401,14 @@ function uninferred_method_diags(c: ast.ExprCall, recv: string, method: string, 
 }
 
 function declared_method_diags(c: ast.ExprCall, recv_ty: typeinfo.Type, recv: string, method: string, s: Scope): util.Diag[] {
-  let msig: MethodSig = s.lookup_method(method, recv);
-  if (msig.name.len() == 0) {
+  if let Some(msig) = s.lookup_method(method, recv) {
+    if (c.args.len() != msig.param_types.len()) {
+      return [dg_at("E004", util.arity_message("method \"" + method + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col)];
+    }
+    let out: util.Diag[] = method_arg_diags(c, method, msig, recv_ty, s);
+    out = util.append_diags(out, method_type_arg_diags(c, method, msig, recv_ty, s));
+    return util.append_diags(out, uninferred_method_diags(c, recv, method, msig, s));
+  } else {
     let builtin: typeinfo.Type = builtin_method_sig(recv, method);
     if let typeinfo.TypeFunc(f) = builtin {
       if (c.args.len() != f.param_types.len()) {
@@ -5421,31 +5416,24 @@ function declared_method_diags(c: ast.ExprCall, recv_ty: typeinfo.Type, recv: st
       }
       return callable_arg_diags(c, builtin, s);
     }
-    return uninferred_method_diags(c, recv, method, msig, s);
+    return [];
   }
-  if (c.args.len() != msig.param_types.len()) {
-    return [dg_at("E004", util.arity_message("method \"" + method + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col)];
-  }
-  let out: util.Diag[] = method_arg_diags(c, method, msig, recv_ty, s);
-  out = util.append_diags(out, method_type_arg_diags(c, method, msig, recv_ty, s));
-  return util.append_diags(out, uninferred_method_diags(c, recv, method, msig, s));
 }
 
 function map_method_arg_diags(c: ast.ExprCall, recv_ty: typeinfo.Type, method: string, s: Scope): util.Diag[] {
-  let msig: MethodSig = s.lookup_method(method, "Map");
-  if (msig.name.len() == 0) {
-    return [];
+  if let Some(msig) = s.lookup_method(method, "Map") {
+    if (c.args.len() != msig.param_types.len()) {
+      return [dg_at("E004", util.arity_message("method \"" + method + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col)];
+    }
+    let out: util.Diag[] = method_arg_diags(c, method, msig, recv_ty, s);
+    return util.append_diags(out, method_type_arg_diags(c, method, msig, recv_ty, s));
   }
-  if (c.args.len() != msig.param_types.len()) {
-    return [dg_at("E004", util.arity_message("method \"" + method + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col)];
-  }
-  let out: util.Diag[] = method_arg_diags(c, method, msig, recv_ty, s);
-  return util.append_diags(out, method_type_arg_diags(c, method, msig, recv_ty, s));
+  return [];
 }
 
 function uninferred_recv_diags(c: ast.ExprCall, recv: string, method: string, msig: MethodSig, args: typeinfo.Type[], s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
-  if (c.type_args.len() > 0 || msig.name.len() == 0 || c.args.len() != msig.param_type_names.len()) {
+  if (c.type_args.len() > 0 || c.args.len() != msig.param_type_names.len()) {
     return out;
   }
   let rref: parser.TypeRef = parser.parse_type_ref(msig.receiver_type);
@@ -12776,7 +12764,7 @@ function type_assoc_req(s: Scope, tyname: string, field: string): AssocHit {
   let base: string = util.base_type_name(tyname);
   for imp in s.impls {
     if (imp.impl_type == base && util.has_str(imp.method_names, field)) {
-      if (s.lookup_method(field, base).name.len() == 0) {
+      if let None = s.lookup_method(field, base) {
         let spelling: string = imp.trait_ref;
         if (spelling.len() == 0) {
           spelling = imp.trait_name;
@@ -13285,20 +13273,19 @@ function unbound_map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.Typ
 function map_arg_diags(c: ast.ExprCall, method: string, mt: typeinfo.TypeMap, s: Scope, out: util.Diag[]): util.Diag[] {
   let want: i32 = map_builtin_arity(method);
   if (want < 0) {
-    let msig: MethodSig = s.lookup_method(method, "Map");
-    if (msig.name.len() == 0) {
-      return out;
+    if let Some(msig) = s.lookup_method(method, "Map") {
+      let recv: typeinfo.Type = mt;
+      if (map_source_receiver_missing(recv, msig)) {
+        return out.append(dg_at("E043", "no method \"" + method + "\" on Map — \"" + method + "\" is declared for " + msig.receiver_type, c.line, c.col));
+      }
+      if (c.args.len() != msig.param_types.len()) {
+        return out.append(dg_at("E004", util.arity_message("method \"" + method + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
+      }
+      out = util.append_diags(out, method_arg_diags(c, method, msig, recv, s));
+      out = util.append_diags(out, method_type_arg_diags(c, method, msig, recv, s));
+      return util.append_diags(out, uninferred_method_diags(c, "Map", method, msig, s));
     }
-    let recv: typeinfo.Type = mt;
-    if (map_source_receiver_missing(recv, msig)) {
-      return out.append(dg_at("E043", "no method \"" + method + "\" on Map — \"" + method + "\" is declared for " + msig.receiver_type, c.line, c.col));
-    }
-    if (c.args.len() != msig.param_types.len()) {
-      return out.append(dg_at("E004", util.arity_message("method \"" + method + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
-    }
-    out = util.append_diags(out, method_arg_diags(c, method, msig, recv, s));
-    out = util.append_diags(out, method_type_arg_diags(c, method, msig, recv, s));
-    return util.append_diags(out, uninferred_method_diags(c, "Map", method, msig, s));
+    return out;
   }
   if (want >= 0 && c.args.len() != want) {
     return out.append(dg_at("E004", util.arity_message("method \"" + method + "\"", want, c.args.len(), "argument"), c.line, c.col));
@@ -13578,11 +13565,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           if (ar.view) {
             arr_label = "slice";
           }
-          let asig: MethodSig = s.array_recv_method(mfa.field, ar.view);
-          out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, asig, s));
-          if (asig.name.len() > 0 && c.args.len() == asig.param_types.len()) {
-            out = util.append_diags(out, method_arg_diags(c, mfa.field, asig, recv, s));
-            out = util.append_diags(out, method_type_arg_diags(c, mfa.field, asig, recv, s));
+          if let Some(asig) = s.array_recv_method(mfa.field, ar.view) {
+            out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, asig, s));
+            if (c.args.len() == asig.param_types.len()) {
+              out = util.append_diags(out, method_arg_diags(c, mfa.field, asig, recv, s));
+              out = util.append_diags(out, method_type_arg_diags(c, mfa.field, asig, recv, s));
+            }
           }
           let abw: i32 = 0 - 1;
           if (mfa.field == "len") {
@@ -13615,8 +13603,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           } else {
             out = util.append_diags(out, ambiguous_call_diags(mfa, sn.name, s));
             out = util.append_diags(out, finalizer_call_diags(mfa, sn.name, s));
-            let msig: MethodSig = s.lookup_method(mfa.field, sn.name);
-            if (msig.name.len() > 0) {
+            if let Some(msig) = s.lookup_method(mfa.field, sn.name) {
               if (c.args.len() != msig.param_types.len()) {
                 out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
               } else {
@@ -13656,12 +13643,13 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
         typeinfo.TypeUnion(un) => {
           out = util.append_diags(out, ambiguous_call_diags(mfa, un.name, s));
           out = util.append_diags(out, finalizer_call_diags(mfa, un.name, s));
-          let umsig: MethodSig = s.lookup_method(mfa.field, un.name);
-          if (umsig.name.len() > 0 && c.args.len() == umsig.param_types.len()) {
-            out = util.append_diags(out, method_arg_diags(c, mfa.field, umsig, recv, s));
-            out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, recv, s));
-            out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig, s));
-            out = util.append_diags(out, uninferred_recv_diags(c, un.name, mfa.field, umsig, un.args, s));
+          if let Some(umsig) = s.lookup_method(mfa.field, un.name) {
+            if (c.args.len() == umsig.param_types.len()) {
+              out = util.append_diags(out, method_arg_diags(c, mfa.field, umsig, recv, s));
+              out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, recv, s));
+              out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig, s));
+              out = util.append_diags(out, uninferred_recv_diags(c, un.name, mfa.field, umsig, un.args, s));
+            }
           }
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
@@ -13843,7 +13831,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
       let eqrecv: string = cmp_method_receiver(blt);
       if (eqrecv == "") {
         out = out.append(dg_at("E041", "cannot compare values of type " + type_label(blt) + " with \"" + b.op + "\": structural equality for arrays / slices / tuples is not supported — compare elements individually", b.line, b.col));
-      } else if (s.lookup_method("eq", eqrecv).name.len() == 0) {
+      } else if (!s.has_method("eq", eqrecv)) {
         out = out.append(dg_at("E041", "cannot compare values of type " + util.demangle(type_label(blt)) + " with \"" + b.op + "\": type does not implement `Eq` — " + util.derive_hint(eqrecv, "cmp.Eq", "cmp.Eq") + ", so `==` can use structural equality", b.line, b.col));
       }
     }
@@ -14850,10 +14838,17 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
   return call_diags(e, s);
 }
 
+function (s: Scope) has_visible_method(field: string, recv: string): boolean {
+  if let Some(_) = s.visible_method(field, recv) {
+    return true;
+  }
+  return false;
+}
+
 function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean {
   let scalar: string = scalar_receiver_name(recv);
   if (scalar.len() > 0) {
-    return s.visible_method(field, scalar).name.len() == 0 && is_unknown(builtin_method_sig(scalar, field));
+    return !s.has_visible_method(field, scalar) && is_unknown(builtin_method_sig(scalar, field));
   }
   match (recv) {
     typeinfo.TypeArray(array) => {
@@ -14861,10 +14856,10 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
       return !builtin && !s.has_array_recv_method(field, array.view);
     },
     typeinfo.TypeMap(_) => {
-      return !util.has_str(preregistered_methods("Map"), field) && s.visible_method(field, "Map").name.len() == 0;
+      return !util.has_str(preregistered_methods("Map"), field) && !s.has_visible_method(field, "Map");
     },
     typeinfo.TypeStruct(sn) => {
-      if (is_cell_type(recv) || s.visible_method(field, sn.name).name.len() > 0 || !is_unknown(builtin_method_sig(sn.name, field))) {
+      if (is_cell_type(recv) || s.has_visible_method(field, sn.name) || !is_unknown(builtin_method_sig(sn.name, field))) {
         return false;
       }
       let fsig: StructSig = s.lookup_struct(sn.name);
@@ -14882,7 +14877,7 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
     },
     typeinfo.TypeUnion(un) => {
       let declared: boolean = un.name == "Option" || un.name == "Result" || un.name == "IoError" || un.name == "Body" || un.name == "StreamFault" || s.has_union(un.name);
-      return declared && s.visible_method(field, un.name).name.len() == 0 && is_unknown(builtin_method_sig(un.name, field));
+      return declared && !s.has_visible_method(field, un.name) && is_unknown(builtin_method_sig(un.name, field));
     },
     _ => {
       return false;
@@ -14916,8 +14911,7 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
     ast.ExprFieldAccess(mfa) => {
       let rt: typeinfo.Type = check_expr(mfa.obj, s);
       if let typeinfo.TypeStruct(sn) = rt {
-        let msig: MethodSig = s.lookup_method(mfa.field, sn.name);
-        if (msig.name.len() > 0) {
+        if let Some(msig) = s.lookup_method(mfa.field, sn.name) {
           return s.bound_method_param_types(c, msig, rt);
         }
         if let typeinfo.TypeFunc(ff) = check_expr(c.callee, s) {
@@ -14927,8 +14921,7 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
         }
       }
       if let typeinfo.TypeUnion(un) = rt {
-        let msig: MethodSig = s.lookup_method(mfa.field, un.name);
-        if (msig.name.len() > 0) {
+        if let Some(msig) = s.lookup_method(mfa.field, un.name) {
           return s.bound_method_param_types(c, msig, rt);
         }
       }
@@ -14953,14 +14946,14 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
 }
 
 function (s: Scope) array_method_param_types(c: ast.ExprCall, recv: typeinfo.Type, field: string, view: boolean): typeinfo.Type[] {
-  return s.bound_method_param_types(c, s.array_recv_method(field, view), recv);
+  if let Some(asig) = s.array_recv_method(field, view) {
+    return s.bound_method_param_types(c, asig, recv);
+  }
+  return [];
 }
 
 function (s: Scope) bound_method_param_types(c: ast.ExprCall, asig: MethodSig, recv: typeinfo.Type): typeinfo.Type[] {
   let out: typeinfo.Type[] = [];
-  if (asig.name.len() == 0) {
-    return out;
-  }
   let mb: MethodBinding = method_binding(c, asig, recv, s);
   let i: i32 = 0;
   while (i < asig.param_types.len()) {
@@ -23090,7 +23083,10 @@ pub function func_type_params(s: Scope, name: string): string[] {
   if (dot <= 0) {
     return sig.all_type_params;
   }
-  return s.lookup_method(slice_unchecked(name, dot + 1, name.len()) + "", slice_unchecked(name, 0, dot) + "").all_type_params;
+  if let Some(msig) = s.lookup_method(slice_unchecked(name, dot + 1, name.len()) + "", slice_unchecked(name, 0, dot) + "") {
+    return msig.all_type_params;
+  }
+  return [];
 }
 
 pub function spelled_type(s: Scope, spelling: string): typeinfo.Type {
@@ -23290,7 +23286,7 @@ pub function func_sig(s: Scope, name: string): FuncSig {
   return s.lookup_sig(name);
 }
 
-pub function method_sig(s: Scope, name: string, recv: string): MethodSig {
+pub function method_sig(s: Scope, name: string, recv: string): Option[MethodSig] {
   return s.lookup_method(name, recv);
 }
 
@@ -24206,10 +24202,7 @@ function call_param_types(c: ast.ExprCall, s: Scope): typeinfo.Type[] {
     let key: string = receiver_key(recv);
     let found: Option[MethodSig] = None;
     if (key.len() > 0) {
-      let msig: MethodSig = s.lookup_method(fa.field, key);
-      if (msig.name.len() > 0) {
-        found = Some(msig);
-      }
+      found = s.lookup_method(fa.field, key);
     } else {
       found = bound_method(s, tp_receiver(recv, s), fa.field);
     }
@@ -24361,7 +24354,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
         ft = field_access_result_type(fa, typed_type(oa, fa.obj, s), s);
       }
       let member: string = fa.field;
-      if (member == "iter" && s.lookup_method("__iterator", "Map").name.len() > 0) {
+      if (member == "iter" && s.has_method("__iterator", "Map")) {
         if let typeinfo.TypeMap(_) = typed_type(oa, fa.obj, s) {
           member = "__iterator";
         }

@@ -114,11 +114,13 @@ function member_target(p: lspquery.Program, v: checker.QueryView, s: checker.Sco
     return variant_target(p, v, s, owner, fa.field);
   }
   if (called) {
-    let ms: checker.MethodSig = method_of(s, fa);
-    if (ms.name.len() == 0 || ms.line == 0) {
-      return no_target();
+    if let Some(ms) = method_of(s, fa) {
+      if (ms.line == 0) {
+        return no_target();
+      }
+      return Target { ...no_target(), kind: R_METHOD, name: fa.field, at_line: ms.line, at_col: ms.col, decl: lspquery.decl_def(p, ms.line, ms.col, fa.field) };
     }
-    return Target { ...no_target(), kind: R_METHOD, name: fa.field, at_line: ms.line, at_col: ms.col, decl: lspquery.decl_def(p, ms.line, ms.col, fa.field) };
+    return no_target();
   }
   let decl: lspquery.Answer = lspquery.field_def(p, v, s, fa);
   if let typeinfo.TypeStruct(st) = checker.expr_type(fa.obj, s) {
@@ -129,7 +131,7 @@ function member_target(p: lspquery.Program, v: checker.QueryView, s: checker.Sco
   return no_target();
 }
 
-function method_of(s: checker.Scope, fa: ast.ExprFieldAccess): checker.MethodSig {
+function method_of(s: checker.Scope, fa: ast.ExprFieldAccess): Option[checker.MethodSig] {
   let t: typeinfo.Type = checker.expr_type(fa.obj, s);
   if let typeinfo.TypeArray(a) = t {
     return checker.array_method_sig(s, fa.field, a.view);
@@ -451,8 +453,10 @@ function member_is(v: checker.QueryView, fd: parser.FuncDecl, site: MemberSite, 
   let at: lspquery.Site = lspquery.access_site(site.fa);
   let s: checker.Scope = lspquery.scope_at(v, fd, at);
   if (site.called) {
-    let ms: checker.MethodSig = method_of(s, site.fa);
-    return ms.line == t.at_line && ms.col == t.at_col;
+    if let Some(ms) = method_of(s, site.fa) {
+      return ms.line == t.at_line && ms.col == t.at_col;
+    }
+    return false;
   }
   if let typeinfo.TypeStruct(st) = checker.expr_type(site.fa.obj, s) {
     return st.name == t.owner;

@@ -2513,8 +2513,10 @@ function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: S
 
 function primitive_contract(c: ast.ExprCall, fa: ast.ExprFieldAccess, owner: string, contracts: ssasem.Contracts, scope: checker.Scope): i32 {
   let at: i32 = ssasem.find_contract(contracts, owner + "." + fa.field);
-  if (at >= 0 && scope.visible_method(fa.field, owner).name.len() == 0) {
-    at = -1;
+  if (at >= 0) {
+    if let None = scope.visible_method(fa.field, owner) {
+      at = -1;
+    }
   }
   if (at < 0 && fa.field == "to_string" && c.args.len() == 0) {
     at = ssasem.find_contract(contracts, "__primitive_" + owner + "_to_string");

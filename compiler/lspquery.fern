@@ -678,8 +678,7 @@ function member_parts(s: checker.Scope, t: typeinfo.Type, field: string): Parts 
   if (recv.len() == 0) {
     return no_parts();
   }
-  let ms: checker.MethodSig = checker.method_sig(s, field, recv);
-  if (ms.name.len() > 0) {
+  if let Some(ms) = checker.method_sig(s, field, recv) {
     return method_parts(ms);
   }
   return builtin_parts(recv, field);
@@ -693,8 +692,7 @@ pub function builtin_parts(recv: string, name: string): Parts {
 }
 
 pub function array_parts(s: checker.Scope, a: typeinfo.TypeArray, field: string): Parts {
-  let ms: checker.MethodSig = checker.array_method_sig(s, field, a.view);
-  if (ms.name.len() > 0) {
+  if let Some(ms) = checker.array_method_sig(s, field, a.view) {
     return method_parts(ms);
   }
   if (field == "len") {
@@ -992,11 +990,14 @@ function method_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.
   return method_decl_def(p, checker.method_sig(s, fa.field, checker.receiver_key(t)), fa.field);
 }
 
-function method_decl_def(p: Program, ms: checker.MethodSig, name: string): Answer {
-  if (ms.name.len() == 0 || ms.line == 0) {
-    return no_answer();
+function method_decl_def(p: Program, found: Option[checker.MethodSig], name: string): Answer {
+  if let Some(ms) = found {
+    if (ms.line == 0) {
+      return no_answer();
+    }
+    return decl_def(p, ms.line, ms.col, name);
   }
-  return decl_def(p, ms.line, ms.col, name);
+  return no_answer();
 }
 
 function type_def(p: Program, v: checker.QueryView, s: checker.Scope, candidates: string[]): Answer {
