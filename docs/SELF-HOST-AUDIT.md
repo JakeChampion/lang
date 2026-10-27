@@ -760,7 +760,7 @@ findings. Ranked by leverage.
   conflation and it wants `Option[T]` — which is T8, so sequence the two
   together rather than hand-rolling a fifth result shape here.
 
-  _Also open:_ custom success and failure carriers under T8, such as `ssa_lift.LResult` and `irtables.LowerResult`.
+  _Also open:_ custom success and failure carriers under T8, such as `irtables.LowerResult`.
   Review their partial-state contracts before a result migration.
   A `Result` suffix alone does not identify an error wrapper.
   `LexResult` carries tokens and comments, and the checker's `CheckResult` carries a scope and a type.
@@ -915,6 +915,13 @@ findings. Ranked by leverage.
   A map resolves duplicate package names, so the last entry wins as it does in Go.
   The registry and lock parsers share quoted-value validation.
   A 37-case differential checks exact data and diagnostics on x86-64, ARM64 and Wasm.
+
+  The SSA lifter returns `Result[Lifted, string]` instead of `LResult`.
+  `Lifted` contains only a complete function and its debug and source metadata.
+  Refused operations return their reason without a partial function.
+  Lane annotation applies only to successful lifts, and the preparation cache stores only successful payloads.
+  Both native backends, the certifier and the physical-credit proofs match the result before they use a function.
+  Contract checks execute on x86-64, ARM64 and Wasm.
 
   _Rest of this row:_ the bespoke `*Result` structs remain.
   The generic-function migration is no longer blocked, and neither is

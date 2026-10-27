@@ -4,7 +4,7 @@ import "./util";
 
 pub struct ReturnPos { block: i32, line: i32, col: string }
 
-pub struct LResult { func: ssa.SFunc, ok: boolean, bail: string, seen_vals: i32[], seen_slots: i32[], source_returns: ReturnPos[], source_values: i64[] }
+pub struct Lifted { func: ssa.SFunc, seen_vals: i32[], seen_slots: i32[], source_returns: ReturnPos[], source_values: i64[] }
 
 function splice(insts: ssa.SInst[], more: ssa.SInst[]): ssa.SInst[] {
   for x in more {
@@ -65,8 +65,6 @@ function put_at_s(own xs: string[], d: i32, v: string): string[] {
 }
 
 struct LiftVals { nvals: i32, stack: i32[], insts: ssa.SInst[], ok: boolean }
-
-struct LitWord { ok: boolean, value: i32 }
 
 function bin_sym(k: string): string {
   if (k == "add") {
@@ -313,14 +311,14 @@ function listed(own f: KindFacts, names: string[], bit: i32, argc: i32, host: bo
   return f;
 }
 
-pub function lift_from_ir_prod(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean): LResult {
+pub function lift_from_ir_prod(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean): Result[Lifted, string] {
   return lift_impl(kt, name, nparams, nslots, ops, track_slots);
 }
 
-pub function lift_with_lanes(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean, lane_slots: i32[]): LResult {
-  let l: LResult = lift_impl(kt, name, nparams, nslots, ops, track_slots);
+pub function lift_with_lanes(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean, lane_slots: i32[]): Result[Lifted, string] {
+  let l: Lifted = match (lift_impl(kt, name, nparams, nslots, ops, track_slots)) { Ok(lifted) => lifted, Err(message) => { return Err(message); } };
   if (lane_slots.len() == 0 || l.func.blocks.len() == 0) {
-    return l;
+    return Ok(l);
   }
   let entry: ssa.SBlock = l.func.blocks[0];
   let insts: ssa.SInst[] = [];
@@ -331,7 +329,7 @@ pub function lift_with_lanes(kt: KindTable, name: string, nparams: i32, nslots: 
     insts = insts.append(ins);
   }
   let blocks: ssa.SBlock[] = l.func.blocks.with(0, ssa.SBlock { ...entry, insts: insts });
-  return LResult { ...l, func: ssa.SFunc { ...l.func, blocks: blocks } };
+  return Ok(Lifted { ...l, func: ssa.SFunc { ...l.func, blocks: blocks } });
 }
 
 function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: ssa.SInst[]): LiftVals {
@@ -913,7 +911,7 @@ function tracked(xs: i32[], on: boolean, x: i32): i32[] {
   return xs.append(x);
 }
 
-function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean): LResult {
+function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean): Result[Lifted, string] {
   let nvals: i32 = 0;
   let seen_vals: i32[] = [];
   let seen_slots: i32[] = [];
@@ -1859,8 +1857,11 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
     }
   }
 
+  if (!ok) {
+    return Err(bail);
+  }
   let f: ssa.SFunc = ssa.SFunc { name: name, nparams: nparams, nvals: nvals, blocks: blocks, entry: 0, takes_env: false };
-  return LResult { func: f, ok: ok, bail: bail, seen_vals: seen_vals, seen_slots: seen_slots, source_returns: source_returns, source_values: source_values };
+  return Ok(Lifted { func: f, seen_vals: seen_vals, seen_slots: seen_slots, source_returns: source_returns, source_values: source_values });
 }
 
 function filled(n: i32, v: i32): i32[] {

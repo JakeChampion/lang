@@ -196,8 +196,7 @@ pub function run(source: string, target: string): void {
   let fs: ssa.SFunc[] = [];
   for r in cache {
     if (r.ok && !r.superseded) {
-      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), r.name, r.n_params, r.n_locals, r.ops, false);
-      require(lifted.ok, 98);
+      let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), r.name, r.n_params, r.n_locals, r.ops, false)) { Ok(l) => l, Err(message) => { eprint(message); exit(98); } };
       fs = fs.append(ssa.register_form(ssa.inline_leaves(lifted.func, leaves)).f);
     }
   }

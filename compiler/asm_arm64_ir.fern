@@ -4830,15 +4830,12 @@ function ssa_dbg_locs(reg_of: i32[], save: i32, want: boolean): string[] {
 
 function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let t_lift: i64 = monotonic_ns();
-  let lifted: ssa_lift.LResult = s.lift(pre, label_name, r);
-  let why: string = lifted.bail;
-  if (lifted.ok) {
-    let collision: i32 = ssa.repeated_block_id(lifted.func);
-    if (collision >= 0) {
-      ircore.ssa_block_id_collision(label_name, collision);
-    }
-    why = ssa_unsupported(lifted.func);
+  let lifted: ssa_lift.Lifted = match (s.lift(pre, label_name, r)) { Ok(l) => l, Err(message) => { ircore.ssa_refuse(label_name, message); return s; } };
+  let collision: i32 = ssa.repeated_block_id(lifted.func);
+  if (collision >= 0) {
+    ircore.ssa_block_id_collision(label_name, collision);
   }
+  let why: string = ssa_unsupported(lifted.func);
   if (why != "") {
     ircore.ssa_refuse(label_name, why);
   }

@@ -60,8 +60,7 @@ function graphs(selected: physicalbody.Lowered): ssa.SFunc[] {
   let out: ssa.SFunc[] = [];
   let kt = ssa_lift.kind_table();
   for b in selected.bodies {
-    let lifted = ssa_lift.lift_from_ir_prod(kt, b.name, b.n_params, b.n_locals, b.ops, false);
-    require(lifted.ok, 119);
+    let lifted = match (ssa_lift.lift_from_ir_prod(kt, b.name, b.n_params, b.n_locals, b.ops, false)) { Ok(l) => l, Err(message) => { eprint(message); exit(119); } };
     out = out.append(lifted.func);
   }
   return out;

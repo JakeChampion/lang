@@ -245,8 +245,7 @@ function target_checks(target: string): void {
   for body in sub.bodies {
     if (body.name == "parent" || body.name == "select_parent") {
       require(body.ok, 2);
-      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), body.name, body.n_params, body.n_locals, body.ops, false);
-      require(lifted.ok, 3);
+      let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), body.name, body.n_params, body.n_locals, body.ops, false)) { Ok(l) => l, Err(message) => { eprint(message); exit(3); } };
       if (body.name == "parent") {
         producers = producers.append(lifted.func);
       } else {

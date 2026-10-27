@@ -189,8 +189,7 @@ function actual_checks(target: string): void {
   for body in lowered.sub.bodies {
     if (body.name == "replace") {
       require(body.ok, 40);
-      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), body.name, body.n_params, body.n_locals, body.ops, false);
-      require(lifted.ok, 41);
+      let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), body.name, body.n_params, body.n_locals, body.ops, false)) { Ok(l) => l, Err(message) => { eprint(message); exit(41); } };
       graphs = graphs.append(lifted.func);
     }
   }
