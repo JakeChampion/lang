@@ -162,10 +162,17 @@ jobs:
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_affine_inverse_test.py
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_quadratic_inverse_test.py
       - run: ./fern-image/scripts/test-icc-affine-inverse.sh native
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/test-icc-affine-inverse.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-quadratic-inverse.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-quadratic-inverse.sh wasm
         env:
           FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_parametric_eval_test.py
@@ -368,4 +375,11 @@ jobs:
         with:
           name: image-icc-affine-inverse
           path: fern-image/build/icc-affine-inverse-*.json
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-quadratic-inverse-*.json') != ''
+        with:
+          name: image-icc-quadratic-inverse
+          path: fern-image/build/icc-quadratic-inverse-*.json
           if-no-files-found: error

@@ -76,3 +76,7 @@ for mode in legacy fused; do
     wasmtime build/wasm-cached-fusion.wasm "$mode" "$cache_bytes" 8
   done
 done
+
+"$FERN" -check tests/icc_quadratic_inverse_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_quadratic_inverse_test.wasm tests/icc_quadratic_inverse_test.fern
+wasmtime run --dir=. build/wasm-icc_quadratic_inverse_test.wasm

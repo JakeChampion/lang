@@ -1,0 +1,160 @@
+import "../packages/codecs/icc/quadratic_inverse";
+import "../packages/codecs/icc/tag_data";
+import "std/test";
+import "std/f64";
+
+function never(): boolean {
+  return false;
+}
+
+function evaluate(kind: i32, values: i32[], input: f64): Result[f64, quadratic_inverse.InvertError] {
+  return quadratic_inverse.invert(tag_data.ParametricData { function_type: kind, coefficients: values }, input, never);
+}
+
+function exact(result: Result[f64, quadratic_inverse.InvertError], expected: f64): boolean {
+  return match (result) { Ok(value) => f64_bits(value) == f64_bits(expected), _ => false };
+}
+
+function close(result: Result[f64, quadratic_inverse.InvertError], expected: f64): boolean {
+  return match (result) { Ok(value) => (value - expected).abs() <= 1e-12, _ => false };
+}
+
+function identities(): test.TestOutcome {
+  for input in [-0.0, 0.0, f64_from_bits(1), 0.25, 0.5, f64_from_bits(0x3fefffffffffffff), 1.0] {
+    if (!exact(evaluate(3, [131072, 262144, -196608, 65536, 65536], input), input)
+      || !exact(evaluate(4, [131072, 262144, -196608, 65536, 65536, 0, 0], input), input)) {
+      return test.fail("selected lower identity bits");
+    }
+  }
+  return test.pass();
+}
+
+function arithmetic(): test.TestOutcome {
+  for (kind, values, input, expected) in [
+    (3, [131072, 65536, 0, 16384, 16384], 0.03125, 0.125),
+    (3, [131072, 65536, 0, 16384, 16384], 0.0625, 0.25),
+    (3, [131072, 65536, 0, 16384, 16384], 0.25, 0.5),
+    (4, [131072, 65536, 0, 32768, 32768, 32768, 32768], 0.625, 0.25),
+    (4, [131072, 65536, 0, 32768, 32768, 32768, 32768], 0.75, 0.5),
+    (4, [131072, 65536, -32768, 32768, 32768, 16384, 0], 0.3125, 0.75),
+    (4, [131072, 65536, -32768, 32768, 32768, 16384, 0], 0.25, 0.5),
+  ] {
+    if (!exact(evaluate(kind, values, input), expected)) {
+      return test.fail("both branches and exact join");
+    }
+  }
+  return test.pass();
+}
+
+function range_policy(): test.TestOutcome {
+  return test.assert_true(exact(evaluate(4, [131072, 65536, 0, 32768, 32768, 32768, 32768], 0.0), 0.0)
+    && exact(evaluate(4, [131072, 65536, -32768, 32768, 32768, 16384, 0], 1.0), 1.0)
+    && close(evaluate(4, [131072, 65536, 0, 32768, 32768, 32768, 32768], 1.0), 0.7071067811865476)
+    && exact(evaluate(3, [131072, 16384, 0, 16384, 0], 1.0), 1.0)
+    && exact(evaluate(3, [131072, 16384, 0, 16384, 0], 0.015625), 0.5));
+}
+
+function admission(): test.TestOutcome {
+  for (kind, values, error) in [
+    (-1, [], quadratic_inverse.InvertError.Function),
+    (5, [], quadratic_inverse.InvertError.Function),
+    (0, [], quadratic_inverse.InvertError.Unsupported),
+    (1, [], quadratic_inverse.InvertError.Unsupported),
+    (2, [], quadratic_inverse.InvertError.Unsupported),
+    (3, [], quadratic_inverse.InvertError.Shape),
+    (4, [131072, 65536, 0, 16384, 16384], quadratic_inverse.InvertError.Shape),
+    (3, [0, 65536, 0, 16384, 16384], quadratic_inverse.InvertError.Domain),
+    (3, [131072, 0, 0, 16384, 16384], quadratic_inverse.InvertError.Domain),
+    (3, [131072, 65536, -32768, 16384, 16384], quadratic_inverse.InvertError.Domain),
+    (3, [131071, 65536, 0, 16384, 16384], quadratic_inverse.InvertError.Unsupported),
+    (3, [131072, 65537, 0, 16384, 16384], quadratic_inverse.InvertError.Unsupported),
+    (3, [131072, 65536, 0, 16384, 16385], quadratic_inverse.InvertError.Unsupported),
+    (3, [131072, 65536, 0, 16385, 16384], quadratic_inverse.InvertError.Unsupported),
+    (3, [131072, 65536, 0, 0, 16384], quadratic_inverse.InvertError.Unsupported),
+    (3, [131072, 65536, 1, 16384, 16384], quadratic_inverse.InvertError.Unsupported),
+    (3, [131072, 131072, 0, 16384, 16384], quadratic_inverse.InvertError.Unsupported),
+    (3, [131072, 65536, 0, 16384, -256], quadratic_inverse.InvertError.Unsupported),
+    (4, [131072, 65536, 0, 16384, 16384, -1, 0], quadratic_inverse.InvertError.Unsupported),
+    (4, [131072, 65536, 0, 16384, 16384, 0, 32769], quadratic_inverse.InvertError.Unsupported),
+    (3, [157286, 62119, 3417, 5072, 2651], quadratic_inverse.InvertError.Unsupported),
+  ] {
+    let polls = cell_new(0);
+    let result = quadratic_inverse.invert(tag_data.ParametricData { function_type: kind, coefficients: values }, 0.5, (): boolean => {
+      polls.set(polls.get() + 1);
+      return true;
+    });
+    if (polls.get() != 0 || match (result) { Err(actual) => actual != error, _ => true }) {
+      return test.fail("full admission before callbacks");
+    }
+  }
+  for input in [-0.01, 1.01, f64_from_bits(0x7ff0000000000000), -f64_from_bits(0x7ff0000000000000), f64_from_bits(0x7ff8000000000000)] {
+    if (match (evaluate(-1, [], input)) { Err(quadratic_inverse.InvertError.Input()) => false, _ => true }) {
+      return test.fail("input admission priority");
+    }
+  }
+  return test.pass();
+}
+
+function cancellation(): test.TestOutcome {
+  for input in [0.0, 0.03125, 0.0625, 0.5, 1.0] {
+    for stop in [1, 2, 3] {
+      let polls = cell_new(0);
+      let result = quadratic_inverse.invert(tag_data.ParametricData { function_type: 3, coefficients: [131072, 65536, 0, 16384, 16384] }, input, (): boolean => {
+        polls.set(polls.get() + 1);
+        return polls.get() == stop;
+      });
+      if (stop < 3) {
+        if (polls.get() != stop || match (result) { Err(quadratic_inverse.InvertError.Cancelled()) => false, _ => true }) {
+          return test.fail("both cancellation polls");
+        }
+      } else if (polls.get() != 2 || match (result) { Ok(_) => false, _ => true }) {
+        return test.fail("two success polls");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function ownership(): test.TestOutcome {
+  let values = [131072, 65536, 0, 16384, 16384];
+  let shared = cell_new(values);
+  let result = quadratic_inverse.invert(tag_data.ParametricData { function_type: 3, coefficients: values }, 0.25, (): boolean => {
+    shared.set(shared.get().with(0, 65536));
+    return false;
+  });
+  return test.assert_true(exact(result, 0.5) && values[0] == 131072 && shared.get()[0] == 65536 && exact(evaluate(3, values, 0.25), 0.5)
+    && match (evaluate(3, shared.get(), 0.25)) { Err(quadratic_inverse.InvertError.Unsupported()) => true, _ => false });
+}
+
+function joins(): test.TestOutcome {
+  let values = [131072, 65536, 0, 16384, 16384];
+  let below = f64_from_bits(0x3fafffffffffffff);
+  let above = f64_from_bits(0x3fb0000000000001);
+  return test.assert_true(exact(evaluate(3, values, below), below * 4.0) && exact(evaluate(3, values, 0.0625), 0.25)
+    && close(evaluate(3, values, above), above.sqrt())
+    && match (evaluate(3, [131072, 65536, 0, 16385, 16384], 0.0625)) { Err(quadratic_inverse.InvertError.Unsupported()) => true, _ => false });
+}
+
+function boundaries(): test.TestOutcome {
+  for values in [[131072, 16384, 0, 16384, 0], [131072, 262144, -196608, 65536, 65536], [131072, 65536, 0, 262144, 0]] {
+    for input in [-0.0, f64_from_bits(1), 0.25, 0.5, f64_from_bits(0x3fefffffffffffff), 1.0] {
+      if (match (evaluate(3, values, input)) { Ok(value) => !value.is_finite() || value < 0.0 || value > 1.0, _ => true }) {
+        return test.fail("admitted IEEE and coefficient boundaries");
+      }
+    }
+  }
+  return test.pass();
+}
+
+pub function main(): i32 {
+  let runner = test.test_new("ICC bounded quadratic inverses");
+  runner = runner.it("ICC quadratic inverse identity bits", identities);
+  runner = runner.it("ICC quadratic inverse arithmetic", arithmetic);
+  runner = runner.it("ICC quadratic inverse range policy", range_policy);
+  runner = runner.it("ICC quadratic inverse admission", admission);
+  runner = runner.it("ICC quadratic inverse cancellation", cancellation);
+  runner = runner.it("ICC quadratic inverse COW and fresh calls", ownership);
+  runner = runner.it("ICC quadratic inverse exact joins", joins);
+  runner = runner.it("ICC quadratic inverse boundaries", boundaries);
+  return runner.finish();
+}
