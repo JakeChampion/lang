@@ -240,7 +240,7 @@ function print_return_only_c(body: ast.Stmt[], depth: i32, f: Fmt): string {
   }
   match (body[0]) {
     ast.StmtReturn(r) => {
-      if (expr_is_missing(r.value) || as_use(r.value).ok) {
+      if (expr_is_missing(r.value) || match (as_use(r.value)) { Some(_) => true, None => false }) {
         return "";
       }
       let (text, _) = print_expr_c(r.value, prec_lowest(), depth, f);
@@ -617,33 +617,32 @@ function arm_expr_value(body: ast.Stmt[], v: string, depth: i32): string {
     return "";
   }
   let last: ast.Stmt = body[body.len() - 1];
-  let tail: string = "";
-  if (v.len() == 0) {
-    if (body.len() > 1 && parser.branch_stmts_diverge([body[body.len() - 2]])) {
-      return print_value_block(body, tail_expr(last), false, depth);
+  if (v.len() > 0) {
+    match (assign_parts(last)) {
+      Some(set) => {
+        if (print_expr(set.place, depth) == v) {
+          let tail: string = print_expr(set.value, depth);
+          if (tail.len() == 0 || body.len() == 1) {
+            return tail;
+          }
+          return print_value_block(body, set.value, true, depth);
+        }
+      },
+      None => {}
     }
-    tail = print_return_only([last], depth);
-  } else {
-    let set: AssignParts = assign_parts(last);
-    if (!set.ok || print_expr(set.place, depth) != v) {
-      if (parser.branch_stmts_diverge(body)) {
-        return print_value_block(body.append(last), tail_expr(last), false, depth);
-      }
-      return "";
+    if (parser.branch_stmts_diverge(body)) {
+      return print_value_block(body.append(last), tail_expr(last), false, depth);
     }
-    tail = print_expr(set.value, depth);
-  }
-  if (tail.len() == 0) {
     return "";
   }
-  if (body.len() == 1) {
+  if (body.len() > 1 && parser.branch_stmts_diverge([body[body.len() - 2]])) {
+    return print_value_block(body, tail_expr(last), false, depth);
+  }
+  let tail: string = print_return_only([last], depth);
+  if (tail.len() == 0 || body.len() == 1) {
     return tail;
   }
-  let value: ast.Expr = tail_expr(last);
-  if (v.len() > 0) {
-    value = assign_parts(last).value;
-  }
-  return print_value_block(body, value, true, depth);
+  return print_value_block(body, tail_expr(last), true, depth);
 }
 
 function print_value_block(body: ast.Stmt[], tail: ast.Expr, show_tail: boolean, depth: i32): string {
@@ -1847,17 +1846,16 @@ function print_let_else(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
   return (out, g);
 }
 
-struct UseSugar { ok: boolean, name: string, type_name: string, call: ast.Expr, body: ast.Stmt[] }
+struct UseSugar { name: string, type_name: string, call: ast.Expr, body: ast.Stmt[] }
 
-function as_use(e: ast.Expr): UseSugar {
-  let none: UseSugar = UseSugar { ok: false, name: "", type_name: "", call: e, body: [] };
+function as_use(e: ast.Expr): Option[UseSugar] {
   if let ast.ExprCall(c) = e {
     if (c.args.len() == 0) {
-      return none;
+      return None;
     }
     if let ast.ExprLambda(lm) = c.args[c.args.len() - 1] {
       if (lm.origin != parser.ORIGIN_USE || lm.params.len() != 1) {
-        return none;
+        return None;
       }
       let written: ast.Expr[] = [];
       let i: i32 = 0;
@@ -1866,10 +1864,10 @@ function as_use(e: ast.Expr): UseSugar {
         i = i + 1;
       }
       let call: ast.Expr = ast.ExprCall { ...c, args: written };
-      return UseSugar { ok: true, name: lm.params[0].name, type_name: lm.params[0].type_name, call: call, body: lm.body };
+      return Some(UseSugar { name: lm.params[0].name, type_name: lm.params[0].type_name, call: call, body: lm.body });
     }
   }
-  return none;
+  return None;
 }
 
 function print_use(us: UseSugar, line: i32, depth: i32, f: Fmt): (string, Fmt) {
@@ -1919,7 +1917,7 @@ function expr_is_missing(e: ast.Expr): boolean {
 function stmt_is_single_line(st: ast.Stmt): boolean {
   match (st) {
     ast.StmtReturn(r) => {
-      return !as_use(r.value).ok;
+      return match (as_use(r.value)) { Some(_) => false, None => true };
     },
     ast.StmtVar(_) => {
       return true;
@@ -1986,36 +1984,46 @@ function print_todo(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
   return ("todo;", f);
 }
 
-function print_chain_assign(stmts: ast.Stmt[], depth: i32): string {
+function print_chain_assign(stmts: ast.Stmt[], depth: i32): Option[string] {
+  if (stmts.len() == 0) {
+    return None;
+  }
+  let first: AssignParts = match (assign_parts(stmts[0])) { Some(parts) => parts, None => { return None; } };
   let out: string = "";
   let i: i32 = stmts.len() - 1;
-  while (i >= 0) {
-    out = out + print_expr(assign_parts(stmts[i]).place, depth) + " = ";
+  while (i > 0) {
+    match (assign_parts(stmts[i])) {
+      Some(parts) => {
+        out = out + print_expr(parts.place, depth) + " = ";
+      },
+      None => {
+        return None;
+      }
+    }
     i = i - 1;
   }
-  return out + print_expr(assign_parts(stmts[0]).value, depth) + ";";
+  return Some(out + print_expr(first.place, depth) + " = " + print_expr(first.value, depth) + ";");
 }
 
-struct AssignParts { place: ast.Expr, value: ast.Expr, ok: boolean }
+struct AssignParts { place: ast.Expr, value: ast.Expr }
 
-function assign_parts(st: ast.Stmt): AssignParts {
-  let none: AssignParts = AssignParts { place: parser.e_bool(true), value: parser.e_bool(true), ok: false };
+function assign_parts(st: ast.Stmt): Option[AssignParts] {
   match (st) {
     ast.StmtAssign(a) => {
-      return AssignParts { place: ast.ExprIdent { name: a.target, line: 0, col: 0, ty: "", builtin: false }, value: a.value, ok: true };
+      return Some(AssignParts { place: ast.ExprIdent { name: a.target, line: 0, col: 0, ty: "", builtin: false }, value: a.value });
     },
     ast.StmtExpr(x) => {
       if let ast.ExprCall(c) = x.value {
         if let ast.ExprIdent(callee) = c.callee {
           if (c.args.len() == 2 && (callee.name == "__set_index" || callee.name == "__set_field")) {
-            return AssignParts { place: c.args[0], value: c.args[1], ok: true };
+            return Some(AssignParts { place: c.args[0], value: c.args[1] });
           }
         }
       }
-      return none;
+      return None;
     },
     _ => {
-      return none;
+      return None;
     }
   }
 }
@@ -2048,20 +2056,15 @@ function print_stmt_inline(st: ast.Stmt, depth: i32): string {
   return text;
 }
 
-pub struct ForCSugar { init: ast.Stmt[], cond: ast.Expr, step: ast.Stmt[], body: ast.Stmt[], label: string, ok: boolean }
+pub struct ForCSugar { init: ast.Stmt[], cond: ast.Expr, step: ast.Stmt[], body: ast.Stmt[], label: string }
 
-function no_c_for(): ForCSugar {
-  let none: ast.Stmt[] = [];
-  return ForCSugar { init: none, cond: ast.ExprBool { value: true, line: 0, col: 0 }, step: none, body: none, label: "", ok: false };
-}
-
-pub function as_c_for(ifs: ast.StmtIf): ForCSugar {
+pub function as_c_for(ifs: ast.StmtIf): Option[ForCSugar] {
   if (!expr_is_true(ifs.cond) || ifs.else_body.len() != 0) {
-    return no_c_for();
+    return None;
   }
   let outer: ast.Stmt[] = ifs.then_body;
   if (outer.len() < 2) {
-    return no_c_for();
+    return None;
   }
   let flag: string = "";
   match (outer[outer.len() - 2]) {
@@ -2073,7 +2076,7 @@ pub function as_c_for(ifs: ast.StmtIf): ForCSugar {
     _ => {}
   }
   if (flag.len() == 0) {
-    return no_c_for();
+    return None;
   }
   let wbody: ast.Stmt[] = [];
   let label: string = "";
@@ -2089,7 +2092,7 @@ pub function as_c_for(ifs: ast.StmtIf): ForCSugar {
     _ => {}
   }
   if (!have_while || wbody.len() < 3) {
-    return no_c_for();
+    return None;
   }
 
   let step: ast.Stmt[] = [];
@@ -2104,7 +2107,7 @@ pub function as_c_for(ifs: ast.StmtIf): ForCSugar {
     _ => {}
   }
   if (!step_ok) {
-    return no_c_for();
+    return None;
   }
 
   let assign_ok: boolean = false;
@@ -2117,7 +2120,7 @@ pub function as_c_for(ifs: ast.StmtIf): ForCSugar {
     _ => {}
   }
   if (!assign_ok) {
-    return no_c_for();
+    return None;
   }
 
   let cond: ast.Expr = ast.ExprBool { value: true, line: 0, col: 0 };
@@ -2146,7 +2149,7 @@ pub function as_c_for(ifs: ast.StmtIf): ForCSugar {
     _ => {}
   }
   if (!cond_ok) {
-    return no_c_for();
+    return None;
   }
 
   let init: ast.Stmt[] = [];
@@ -2161,7 +2164,7 @@ pub function as_c_for(ifs: ast.StmtIf): ForCSugar {
     body = body.append(wbody[bi]);
     bi = bi + 1;
   }
-  return ForCSugar { init: init, cond: cond, step: step, body: body, label: label, ok: true };
+  return Some(ForCSugar { init: init, cond: cond, step: step, body: body, label: label });
 }
 
 function is_forc_name(name: string): boolean {
@@ -2565,27 +2568,33 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
       if (expr_is_missing(r.value)) {
         return ("return;", f);
       }
-      let us: UseSugar = as_use(r.value);
-      if (us.ok) {
-        return print_use(us, r.line, depth, f);
+      match (as_use(r.value)) {
+        Some(us) => {
+          return print_use(us, r.line, depth, f);
+        },
+        None => {}
       }
       let (rv, rf) = print_expr_c(r.value, prec_lowest(), depth, f);
       return ("return " + rv + ";", rf);
     },
     ast.StmtExpr(x) => {
-      let set: AssignParts = assign_parts(st);
-      if (set.ok) {
-        let (pv, pf) = print_expr_c(set.place, prec_lowest(), depth, f);
-        let (sv, sf) = print_expr_c(set.value, prec_lowest(), depth, pf);
-        return (pv + " = " + sv + ";", sf);
+      match (assign_parts(st)) {
+        Some(set) => {
+          let (pv, pf) = print_expr_c(set.place, prec_lowest(), depth, f);
+          let (sv, sf) = print_expr_c(set.value, prec_lowest(), depth, pf);
+          return (pv + " = " + sv + ";", sf);
+        },
+        None => {}
       }
       let (xv, xf) = print_expr_c(x.value, prec_lowest(), depth, f);
       return (xv + ";", xf);
     },
     ast.StmtIf(ifs) => {
-      let fc: ForCSugar = as_c_for(ifs);
-      if (fc.ok) {
-        return print_c_for(fc, depth, f);
+      match (as_c_for(ifs)) {
+        Some(fc) => {
+          return print_c_for(fc, depth, f);
+        },
+        None => {}
       }
       if (ifs.sugar.tup.len() > 0 || ifs.sugar.strct.len() > 0 || ifs.sugar.lits.len() > 0 || ifs.sugar.arms.len() > 0) {
         if (ifs.sugar.origin == "if_let") {
@@ -2604,7 +2613,14 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
         return ("unsafe " + unsafe_body, unsafe_fmt);
       }
       if (ifs.origin == "chain_assign") {
-        return (print_chain_assign(ifs.then_body, depth), f);
+        match (print_chain_assign(ifs.then_body, depth)) {
+          Some(text) => {
+            return (text, f);
+          },
+          None => {
+            return print_block(ifs.then_body, depth, f);
+          }
+        }
       }
       if (ifs.origin == parser.ORIGIN_ASSERT) {
         return print_assert(ifs, depth, f);
@@ -4486,8 +4502,11 @@ function check_const_and_for_sugar(): i32 {
   }
   match (rtCFor.funcs[0].body[1]) {
     ast.StmtIf(cf) => {
-      if (!as_c_for(cf).ok) {
-        return 263;
+      match (as_c_for(cf)) {
+        Some(_) => {},
+        None => {
+          return 263;
+        }
       }
     },
     _ => {

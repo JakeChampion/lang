@@ -908,6 +908,60 @@ findings. Ranked by leverage.
   Arithmetic helpers return `Option[i64]` in both the folder and constant evaluator.
   The numeric width and negative-zero checks retain their behavior.
 
+  IR width folds now return `Option[i32]`.
+  The 64-bit binary folder returns `Option[Op]` with the complete replacement instruction.
+  Strength rewrites return `Option[Op[]]`.
+  `None` preserves the input, while `Some([])` removes an identity operation.
+  This removes `WidthFold`, `Fold64`, and `StrengthRewrite` without placeholder data.
+
+  Three array-payload constructors remain out of line because the pinned bootstrap compiler refuses their inlined ownership transfers.
+  Tests preserve trap guards, unsigned exclusions, shift masks, operation metadata, and input aliases.
+  The Go oracle and native, ARM64, and Wasm drivers retain all nine operation fields across 10,242 cases.
+
+  Forty paired probes run the full IR pipeline for each input and retain identical outputs.
+  Each input defines 501 functions over scalars, records, or arrays.
+  Candidate/baseline time ratios range from 0.993 to 1.000.
+  Separate pass-repetition probes show 6% more time for width folds, 8% more for binary folds, and 20% less for strength rewrites.
+  These measurements establish no general compiler speed change.
+
+  `word_of` and `word_byte` now return standard options.
+  A declined word-load rewrite retains the original instruction without a placeholder word or byte record.
+  Successful payloads retain the source array, index convention, offset, shift, width, and byte order.
+  Duplicate bytes, gaps, mixed arrays, mixed indices, and invalid shift layouts retain their refusal paths.
+
+  Twenty runtime cases cover owned byte arrays and views against the Go oracle on x86-64, ARM64, and Wasm.
+  Twenty-three programs retain all body fields in both inline modes before and after the change.
+  Their candidate outputs on ARM64 and Wasm match the native baseline.
+  Three native sanitizer probes retain exact outputs and release all allocations.
+  Forty paired probes per input use 201 functions with matched or declined word loads.
+  Candidate/baseline time ratios range from 0.997 to 1.026, without a general compiler speed claim.
+
+  Printer recognition uses `Option[UseSugar]` and `Option[ForCSugar]`.
+  Absent forms no longer contain placeholder calls, bodies, or loop conditions.
+  Layout, statement output, and lint scores match the option before they use a payload.
+  All 113 format cases retain exact output and lint scores, and their output matches the Go formatter.
+
+  Printer self-checks pass on native, ARM64, and Wasm.
+  The native sanitizer reports 41,116 allocations and releases, with zero live bytes.
+  Forty paired probes per input cover valid programs with ordinary returns, `use` forms, and C-style loops.
+  Their candidate/baseline time ratios range from 1.001 to 1.009, without a general compiler speed claim.
+
+  Assignment recognition now returns `Option[AssignParts]` without placeholder expressions.
+  Match-arm output retains the recognized value instead of a second lookup.
+  Chain output matches every assignment before it reads its payload.
+  An empty or malformed chain retains its statements as a block.
+  This prevents the empty-chain bounds failure and placeholder output for invalid chain metadata.
+
+  All 113 format cases retain exact output and lint scores, and their output matches the Go formatter.
+  Seven malformed-chain cases compare the chain fallback with the same statements in a block.
+  These contracts execute on x86-64, ARM64, and Wasm.
+  The native sanitizer reports 1,758 allocations and releases, with zero live bytes.
+
+  Forty paired probes per input use valid programs with ordinary returns, assignment chains, or match values.
+  Candidate/baseline time ratios range from 0.961 to 0.995.
+  These probes include the parser, formatter, and complete output.
+  They establish no general compiler speed change.
+
   The closure lifter also uses `Option[FuncDecl]` for function construction.
   Both captured closures and named-function wrappers share that result type.
   A declined transformation returns `None` without a placeholder declaration.
@@ -942,6 +996,24 @@ findings. Ranked by leverage.
   The Go reader now retains the file path in parse diagnostics, as the self-host CLI already does.
   The Go reader also tracks version presence separately from the parsed number.
   Version `0.0.0` now survives a lock-file round trip, and missing versions still fail.
+
+  `mvs.parse_version` now returns `Result[pkgversion.Version, string]`.
+  Successful versions contain three 64-bit components, and failed parses carry only their diagnostic.
+  The old 32-bit fields changed `2147483648.0.0` into a negative version and accepted components above the 64-bit limit.
+  Registry and lock readers now share numeric validation and canonical output.
+  Their identical byte-split loops also share `util.split_char`.
+
+  The registry sorts numeric data after it parses each accepted version once.
+  Invalid entries in manually constructed indexes no longer act as version zero.
+  Version diagnostics retain Go quote escapes for control characters.
+  Fifty-five Go-oracle checks cover the parser, comparisons, indexes, and resolution on native, ARM64, and Wasm.
+  The native sanitizer reports 2,243 allocations and releases, with zero live bytes.
+
+  Forty paired probes per input give candidate/baseline ratios of 0.773 for 40 index entries and 0.106 for 400 entries.
+  A lock file with 1,000 entries gives a ratio of 0.934.
+  These probes validate their inputs with Go and measure input parse, numeric sort, and output.
+  They establish no general compiler speed change.
+
   The lock parser also rejects incomplete entries, unknown fields, malformed quoted values and invalid versions.
   Versions retain the Go reader's 64-bit component range and canonical decimal form.
   A map resolves duplicate package names, so the last entry wins as it does in Go.
