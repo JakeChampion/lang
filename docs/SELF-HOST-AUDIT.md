@@ -886,6 +886,11 @@ findings. Ranked by leverage.
   The manifest differential also checks workspace members and excluded versions.
   All 56 cases execute on x86-64, ARM64 and Wasm.
 
+  The asset loader returns `Result[Assets, string]` instead of `LoadResult`.
+  An empty directory succeeds with a present, empty bundle.
+  A load failure carries only its diagnostic, without an absent-assets placeholder.
+  The bundle and substitution assertions execute on x86-64, ARM64 and Wasm.
+
   _Rest of this row:_ the bespoke `*Result` structs remain.
   The generic-function migration is no longer blocked, and neither is
   T6/SH-026's real remainder (`lookup_*` returning `name: ""`), which depends

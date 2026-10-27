@@ -2680,11 +2680,14 @@ function parse_findings(mod: parser.Module): Finding[] {
 function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, Finding[]) {
   let assets: embed.Assets = embed.no_assets();
   if (embed_dir.len() > 0) {
-    let lr: embed.LoadResult = embed.load(embed_dir);
-    if (lr.err.len() > 0) {
-      return (b, [refusal("fern: " + lr.err)]);
+    match (embed.load(embed_dir)) {
+      Ok(loaded) => {
+        assets = loaded;
+      },
+      Err(message) => {
+        return (b, [refusal("fern: " + message)]);
+      }
     }
-    assets = lr.assets;
   }
   let folded: embed.Folded = embed.fold_assets(b.merged, assets);
   let errs: Finding[] = errors_of(folded.errs);
