@@ -1,0 +1,25 @@
+{
+  "source_commit": "103243525a4987f48607dd0e7406c02370d6b1c3",
+  "sha256": {
+    "Go-final.json": "b265b9814293ca55cff1aad6f2d64a9aaa07f8220344f58f322145661fe508b2",
+    "Go-final.log": "6c0c64e3ecf260fa1610fdedc5b259acea8c5ebfdf80a6f360a7a904dc2379d0",
+    "auxiliary.json": "a78edd3e0bcfb39561812c9dffc36a87025e40b67154feda7bfb86f05585024a",
+    "before-branch-images-arm64.json": "bd519cd61c18ba2d704af2b3f31d4cacd269b5ef2090799ee6913fd2764839fc",
+    "before-branch-images-native.json": "44ec18bd43bbedc48d345596755ad4649f32e65305857bf423a485ceaafe60f0",
+    "before-branch-images-wasm.json": "e0cbd7b4f534403dcc015ac31413049d202906d8d966cfbd9f12979a7355db85",
+    "branch-identity-after.json": "35c19d543e4443cbfb4ae9438c0634f15b631fe252dbf32e7db2164ef9a33f12",
+    "branch-identity-after.log": "f6d8c796c20110a35eaf1528a0730c10170399f3fdc84fb834034988047cd0e5",
+    "branch-identity-before.json": "ecdd36269c6377e97e8b327eadc2cd30145c0ce4d19a877bbed6fb5992eda3e0",
+    "branch-identity-before.log": "66c8f18cc36a0227531cb0a371dd40e9e26d4f3b447c3f1d5b6e19623abe255f",
+    "branch-identity-probe.txt": "064bf65d03fb9caf79b0c76e65f16931661e205e608dd2df45212e2bb3d4a8f5",
+    "complexity.log": "e7b6d845790a604ae8d0029afdc6a77eb8996aaf3e49563deb6a54f84b61c29c",
+    "development-observations.json": "7cade9a0a183c12b9511841eb7c0ab1efeb9bdb6d88e26bf61f4257a69cee073",
+    "generator-label-failure.json": "1787ec7c2aae290c64dc8c11af227c5e6d12371515550721d6f74916a8e6e997",
+    "identity-before.json": "0d489e48234d067976a12822fadfa8962b5bc5a79db93a4b5f8a94a6555c3793",
+    "identity-before.log": "72e3ea8296ee9eb873e0d583be5668aea5f335acb308512c59213863cd9ad147",
+    "images-arm64.json": "0c020d9880ea0142e0352d49919d614d8cdd16ab20ba021c8d5bb8c58dc0b879",
+    "images-native.json": "fcf93c2cd4d5e25b3e87b6e06d9d057843b94a20e2746d6538f2b5bf51b1a26c",
+    "images-wasm.json": "25d58edcb4c0e49c84745bc60cfb407d7b7e549557a23e55c15327508141678a",
+    "numerical-summary.json": "a0d08a53614b142ba63ca6ada93dfd7b9e0e5fa6d48ab985462eff7319c77702"
+  }
+}

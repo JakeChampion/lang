@@ -147,6 +147,13 @@ jobs:
       - run: ./fern-image/scripts/test-icc-curv-eval.sh wasm
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_parametric_eval_test.py
+      - run: ./fern-image/scripts/test-icc-parametric-eval.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-parametric-eval.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/test-deflate-reader.sh native
         env:
           FERN: ${{ github.workspace }}/bin/fern
@@ -251,4 +258,10 @@ jobs:
         with:
           name: image-icc-curv-eval
           path: fern-image/build/icc-curv-eval-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-parametric-eval-*.json') != ''
+        with:
+          name: image-icc-parametric-eval
+          path: fern-image/build/icc-parametric-eval-*.json
           if-no-files-found: error

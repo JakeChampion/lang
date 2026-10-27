@@ -1,0 +1,15 @@
+import "../packages/codecs/icc/parametric_eval";
+import "../packages/codecs/icc/tag_data";
+import "std/i64";
+
+function never(): boolean { return false; }
+function main(): i32 {
+  let failures = 0;
+  for (kind, values) in [(3, [131072, 65536, 0, 65536, 65536]), (3, [65536, 65536, 0, 0, 0]), (4, [131072, 65536, 0, 65536, 65536, 0, 0]), (4, [65536, 65536, 0, 131072, 0, 0, 65536])] {
+    match (parametric_eval.evaluate(tag_data.ParametricData { function_type: kind, coefficients: values }, -0.0, never)) {
+      Ok(value) => { print(f64_bits(value).to_string()); if (f64_bits(value) != f64_bits(-0.0)) { failures = failures + 1; } },
+      Err(_) => { return 2; }
+    }
+  }
+  return failures;
+}
