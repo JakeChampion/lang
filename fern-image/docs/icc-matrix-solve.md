@@ -81,3 +81,41 @@ There is no compatibility, performance, physical/process bound, hard-deadline, o
 The mathematical context is [ICC.1:2022](https://www.color.org/specifications/ICC.1-2022-05.pdf), Annex F.3, equation F.7.
 That specification separately describes clipping and inverse-curve behavior after the matrix inverse.
 This package implements only the explicit standalone matrix solve.
+
+## Recorded finite campaign
+
+Source `8cb3ccf00e945ffda49c889e6cb5b037ebc2976b` precedes all three immutable campaigns.
+The clean compiler source is `9c4085d83796cb46356a42ea51aa4ad7df69c2db`.
+Its implementation and embedded standard library match the integrated main before this application commit.
+The compiler SHA-256 is `d1721835de31a7cc774df13ec7322a2d981066c442fcefe8611a19fc4ec4417b`.
+The reference bundle SHA-256 is `1dbf902377d28409e6135a63df7b2ffe030d543e593c7aa58ed97fe5e517216e`.
+The generator reproduces that bundle exactly.
+
+Each target completes 2,224 vectors, with 2,095 numerical results and 129 expected errors.
+Each target uses 278 fresh workers.
+All 834 workers exit normally with nonzero balanced heaps and zero live bytes.
+All three target sample records are exactly equal.
+The 1,254 native and 1,255 runner source and tool hashes remain unchanged.
+Those hashes include every compiler source and all 163 standard-library sources.
+
+The maximum distance from correctly rounded exact solutions is zero under the declared signed-zero distance rule.
+The largest absolute error against the exact rational solution is approximately 1.430496923e-6.
+That error occurs at large output magnitudes from the admitted near-singular matrices.
+It does not change the curve criterion, the two-step matrix criterion, or any other tolerance.
+These finite observations do not establish a universal error bound.
+
+All 288 TAP tests pass on native, Wasm, and standalone ARM64/QEMU10.
+Their 80, 56, and 41 heap censuses are balanced with zero live bytes.
+The 41 standalone ARM executables do not qualify the whole Go ARM harness.
+All selected source hashes and the compiler hash remain unchanged through the full scripts.
+The clean source-bound Go oracle passes its source check and all six interpreter groups.
+
+Both unchanged complexity gates pass with no skips.
+All 2,067 selected Fern files pass the format check.
+Go build, vet, workflow lint, test-name checks, CI self-tests, runtime-bundle checks, Go formatting, and all nine protocol tests pass.
+The prose check reports zero errors.
+
+The new records are `benchmarks/results/icc-matrix-solve-{native,wasm,arm64}.json`.
+The source and protocol evidence remains in `benchmarks/icc-matrix-solve-2026-10-27/`.
+The compiler prerequisite preserves the original tuple-array refusal and keeps both application files unchanged through its merge.
+The earlier uncommitted native smoke record remains provisional and separate from this campaign.
