@@ -851,8 +851,13 @@ findings. Ranked by leverage.
   the ninth failed the pin, and the pin is why the change got the fixpoint
   scrutiny that found the segfault instead of shipping as a tidy-up.
 
-  _Rest of this row:_ `OptInt` / `OptBool` / `OptString` and the 22 `*Result`
-  structs all want generics too. They are no longer blocked, and neither is
+  _2026-10 constant-fold cleanup:_ the private `OptBool` and `OptString` wrappers are gone.
+  Their callers now match the `ExprBool` and `ExprString` variants directly.
+  The AST already carries the success tag and payload, so these paths need no new option container.
+  The numeric `OptInt` still carries a parsed value and suffix.
+
+  _Rest of this row:_ `OptInt` and the bespoke `*Result` structs remain.
+  The generic-function migration is no longer blocked, and neither is
   T6/SH-026's real remainder (`lookup_*` returning `name: ""`), which depends
   on `Option[T]`.
 

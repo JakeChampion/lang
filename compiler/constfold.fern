@@ -66,34 +66,6 @@ function as_int_lit(e: ast.Expr): OptInt {
   return OptInt { ok: false, v: 0, suffix: "" };
 }
 
-struct OptBool { ok: boolean, v: boolean }
-
-function as_bool_lit(e: ast.Expr): OptBool {
-  match (e) {
-    ast.ExprBool(b) => {
-      return OptBool { ok: true, v: b.value };
-    },
-    _ => {
-      return OptBool { ok: false, v: false };
-    }
-  }
-  return OptBool { ok: false, v: false };
-}
-
-struct OptString { ok: boolean, v: string }
-
-function as_string_lit(e: ast.Expr): OptString {
-  match (e) {
-    ast.ExprString(s) => {
-      return OptString { ok: true, v: s.value };
-    },
-    _ => {
-      return OptString { ok: false, v: "" };
-    }
-  }
-  return OptString { ok: false, v: "" };
-}
-
 pub function fold_expr(e: ast.Expr): ast.Expr {
   return astwalk.map_expr(e, fold_node);
 }
@@ -157,33 +129,33 @@ function fold_binary(op: string, lhs: ast.Expr, rhs: ast.Expr, unfolded: ast.Exp
       return lit_bool(li.v != ri.v);
     }
   }
-  let lb: OptBool = as_bool_lit(lhs);
-  let rb: OptBool = as_bool_lit(rhs);
-  if (lb.ok && rb.ok) {
-    if (op == "&&") {
-      return lit_bool(lb.v && rb.v);
-    }
-    if (op == "||") {
-      return lit_bool(lb.v || rb.v);
-    }
-    if (op == "==") {
-      return lit_bool(lb.v == rb.v);
-    }
-    if (op == "!=") {
-      return lit_bool(lb.v != rb.v);
+  if let ast.ExprBool(lb) = lhs {
+    if let ast.ExprBool(rb) = rhs {
+      if (op == "&&") {
+        return lit_bool(lb.value && rb.value);
+      }
+      if (op == "||") {
+        return lit_bool(lb.value || rb.value);
+      }
+      if (op == "==") {
+        return lit_bool(lb.value == rb.value);
+      }
+      if (op == "!=") {
+        return lit_bool(lb.value != rb.value);
+      }
     }
   }
-  let ls: OptString = as_string_lit(lhs);
-  let rs: OptString = as_string_lit(rhs);
-  if (ls.ok && rs.ok) {
-    if (op == "+") {
-      return lit_string(ls.v + rs.v);
-    }
-    if (op == "==") {
-      return lit_bool(ls.v == rs.v);
-    }
-    if (op == "!=") {
-      return lit_bool(ls.v != rs.v);
+  if let ast.ExprString(ls) = lhs {
+    if let ast.ExprString(rs) = rhs {
+      if (op == "+") {
+        return lit_string(ls.value + rs.value);
+      }
+      if (op == "==") {
+        return lit_bool(ls.value == rs.value);
+      }
+      if (op == "!=") {
+        return lit_bool(ls.value != rs.value);
+      }
     }
   }
   return unfolded;
@@ -236,9 +208,8 @@ function fold_unary(op: string, operand: ast.Expr, unfolded: ast.Expr): ast.Expr
     }
   }
   if (op == "!") {
-    let ob: OptBool = as_bool_lit(operand);
-    if (ob.ok) {
-      return lit_bool(!ob.v);
+    if let ast.ExprBool(ob) = operand {
+      return lit_bool(!ob.value);
     }
   }
   return unfolded;
@@ -577,15 +548,14 @@ function prune_stmt(s: ast.Stmt, a: i32): (ast.Stmt, i32, boolean) {
 
 function pruned_if(f: ast.StmtIf): ast.Stmt {
   let cond: ast.Expr = fold_expr(f.cond);
-  let lit: OptBool = as_bool_lit(cond);
   let none: ast.Stmt[] = [];
-  if (!lit.ok) {
-    return ast.StmtIf { ...f, cond: cond, then_body: prune_block(f.then_body), else_body: prune_block(f.else_body) };
+  if let ast.ExprBool(lit) = cond {
+    if (lit.value) {
+      return ast.StmtIf { ...f, cond: cond, then_body: prune_block(f.then_body), else_body: none, else_chained: false };
+    }
+    return ast.StmtIf { ...f, cond: lit_bool(true), then_body: prune_block(f.else_body), else_body: none, else_chained: false };
   }
-  if (lit.v) {
-    return ast.StmtIf { ...f, cond: cond, then_body: prune_block(f.then_body), else_body: none, else_chained: false };
-  }
-  return ast.StmtIf { ...f, cond: lit_bool(true), then_body: prune_block(f.else_body), else_body: none, else_chained: false };
+  return ast.StmtIf { ...f, cond: cond, then_body: prune_block(f.then_body), else_body: prune_block(f.else_body) };
 }
 
 const TARGET_OS_BUILTIN: string = "target_os";
