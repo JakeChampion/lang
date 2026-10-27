@@ -85,6 +85,34 @@ Final records require committed source, repeatable input identity, and immutable
 This finite evidence does not establish curve-domain validity, numerical accuracy, profile conformance, color accuracy, compatibility, or production acceptance.
 Numerical evaluation and a restricted RGB matrix/TRC model remain open under #13659.
 
+### Recorded finite observations
+
+Final records use committed source `9d5a4447ef6db31b963d9da135cc6ce28ebf4b11`.
+Each target checks 742 cases: 383 accepted payloads and 359 expected errors.
+The successful cases contain 146,383 wire values per target, all exact without tolerance.
+All variants, function types, values, errors, and poll counts match, and the three target sample records are equal.
+The bundle reproduces byte-for-byte with SHA-256 `08fa6d6039dd86b68a0d81326b39885c561b874b4d92d9e2602236aa5981e3b8`.
+
+The campaigns use 93 fresh workers per target, for 279 total workers.
+Every worker reports nonzero balanced allocations and frees with zero live blocks.
+The native record preserves 1,245 selected source/tool hashes, while each runner record preserves 1,246.
+These include all compiler and 163 stdlib sources, worker binaries, the reference bundle, generator/collector sources, selected Python modules, and frozen profile inputs.
+All selected hashes remain unchanged throughout the campaigns.
+
+The clean compiler source is `933843468f0bf6ef3d782c85b9e4d348ca312182`.
+Its SHA-256 is `6602687e6c7ed8e67633bbc3b627b4ab61a9a461359d31bb090f248782b08610`.
+Compiler and stdlib sources match the campaign checkout.
+Full native/Wasm scripts and 34 standalone ARM64 executables pass 242 TAP cases per target.
+Their 73/49/34 heap censuses are balanced with zero live blocks.
+Standalone ARM execution does not establish completion of the whole Go ARM harness.
+
+Both unchanged compiler/stdlib complexity checks pass without skips.
+All 2,045 eligible Fern format checks, build, vet, lint, CI self-tests, runtime bundle, protocol controls, and STE checks pass.
+The records are [native](../benchmarks/results/icc-tag-data-native.json),
+[Wasm](../benchmarks/results/icc-tag-data-wasm.json), and
+[ARM64](../benchmarks/results/icc-tag-data-arm64.json).
+Historical datasets remain unchanged.
+
 ## References
 
 The wire layouts derive from [ICC.1:2022](https://www.color.org/specifications/ICC.1-2022-05.pdf), sections 4.6, 4.8, 10.6, 10.18, and 10.31.
