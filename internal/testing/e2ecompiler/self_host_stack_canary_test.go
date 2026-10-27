@@ -39,7 +39,7 @@ var (
 	x86CanaryStoreRe   = regexp.MustCompile(`(?m)^    movq __fern_canary\(%rip\), %r11\n    movq %r11, -(\d+)\(%rbp\)\n`)
 	x86CanaryCheckRe   = regexp.MustCompile(`(?m)^    movq -(\d+)\(%rbp\), %rsi\n    cmpq __fern_canary\(%rip\), %rsi\n    jne __fern_canary_fail\n`)
 	arm64CanaryStoreRe = regexp.MustCompile(`(?m)^    adrp x17, __fern_canary\n    ldr x17, \[x17, :lo12:__fern_canary\]\n    str x17, \[x29, #-(\d+)\]\n`)
-	arm64CanaryCheckRe = regexp.MustCompile(`(?m)^    ldr x17, \[x29, #-(\d+)\]\n    adrp x16, __fern_canary\n    ldr x16, \[x16, :lo12:__fern_canary\]\n    cmp x16, x17\n    b\.ne __fern_canary_fail\n`)
+	arm64CanaryCheckRe = regexp.MustCompile(`(?m)^    ldr x17, \[x29, #-(\d+)\]\n    adrp x16, __fern_canary\n    ldr x16, \[x16, :lo12:__fern_canary\]\n    cmp x16, x17\n    b\.eq \.L\w+\n    b __fern_canary_fail\n`)
 )
 
 // smashCanary overwrites keep's canary slot right after the prologue stores

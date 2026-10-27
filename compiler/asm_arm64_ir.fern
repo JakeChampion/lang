@@ -1307,7 +1307,9 @@ function ssa_dwarf(reg: string): i32 {
 function ssa_emit_unwind(saved: i32[], canary: i32, s: asmcore.EmitState, tail: string): asmcore.EmitState {
   if (canary > 0) {
     s = fr_ldr(s, "x17", 0 - canary);
-    s = s.write("    adrp x16, __fern_canary\n    ldr x16, [x16, :lo12:__fern_canary]\n    cmp x16, x17\n    b.ne __fern_canary_fail\n");
+    let ok: asmcore.LabelOut = asmcore.fresh_label(s);
+    s = ok.state;
+    s = s.write("    adrp x16, __fern_canary\n    ldr x16, [x16, :lo12:__fern_canary]\n    cmp x16, x17\n    b.eq " + ok.name + "\n    b __fern_canary_fail\n" + ok.name + ":\n");
   }
   s = ssa_cfi(s, 7, "", 0);
   if (saved.len() == 0) {
