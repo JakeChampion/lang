@@ -6335,6 +6335,6 @@ function located_return(r: irtables.LowerState, block: i32): ir.Op {
   return ir.Op { ...ir.op_return(), source: pos.line as i64 << 32 | util.digits_to_i32(pos.col) as i64 };
 }
 
-pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex, view: ssaunits.SchemaView, susp: suspend.Set): irtables.LowerResult {
-  return irtables.lower_result(build_lower(f, modes, p, structs, grows, pure, view, susp));
+pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex, view: ssaunits.SchemaView, susp: suspend.Set): Result[Option[irtables.Lowered], irtables.LowerState] {
+  return irtables.lower_outcome(build_lower(f, modes, p, structs, grows, pure, view, susp));
 }

@@ -47,12 +47,30 @@ function main(): i32 {
     dbg_slots: [6], dbg_names: ["value"], dbg_types: ["i64"],
     source_positions: sourcepos.SourceInfo { values: [sourcepos.SourcePos { line: 41, col: "2" }], terms: [sourcepos.SourcePos { line: 42, col: "3" }], entry: sourcepos.SourcePos { line: 40, col: "1" } },
   };
-  let after = irtables.lower_result(irtables.lower_state(before));
+  let complete = match (irtables.lower_outcome(irtables.lower_state(before))) {
+    Ok(body) => match (body) { Some(r) => r, None => { exit(12); } },
+    Err(_) => { exit(13); }
+  };
+  let after = irtables.lowered_result(complete);
   if (!after.ok || after.superseded || after.name != "metadata" || after.n_params != 3 || after.n_locals != 7 || !after.erased_wide || after.result_kind != irtables.result_i32()) { return 7; }
   if (after.ops.len() != 2 || after.ops[0].i32_imm != 11 || after.ops[1].kind_tag != ir.K_RETURN) { return 8; }
   if (after.arr_slots.len() != 1 || after.arr_slots[0] != 0 || after.i64_slots[0] != 1 || after.f64_slots[0] != 2 || after.v128_slots[0] != 3 || after.str_slots[0] != 4) { return 9; }
   if (after.dbg_slots[0] != 6 || after.dbg_names[0] != "value" || after.dbg_types[0] != "i64") { return 10; }
   if (after.source_positions.entry.line != 40 || after.source_positions.entry.col != "1" || after.source_positions.values[0].line != 41 || after.source_positions.values[0].col != "2" || after.source_positions.terms[0].line != 42 || after.source_positions.terms[0].col != "3") { return 11; }
+  for kind in 0..4 {
+    let state = irtables.LowerState { ...irtables.lower_state(before), ok: kind == 1 || kind == 2, superseded: kind == 1 || kind == 3, why: if (kind == 0 || kind == 3) { "partial refusal" } else { "" } };
+    match (irtables.lower_outcome(state)) {
+      Ok(body) => {
+        match (body) {
+          Some(r) => { if (kind != 2 || r.name != "metadata" || r.ops.len() != 2 || r.n_params != 3 || r.source_positions.entry.line != 40) { return 14; } },
+          None => { if (kind != 1) { return 15; } }
+        }
+      },
+      Err(r) => {
+        if (kind != 0 && kind != 3 || r.ok || r.superseded != (kind == 3) || r.why != "partial refusal" || r.name != "metadata" || r.ops.len() != 2 || r.ops[0].i32_imm != 11 || r.n_params != 3 || r.dbg_names[0] != "value" || r.source_positions.entry.line != 40) { return 16; }
+      }
+    }
+  }
   return 0;
 }
 `

@@ -867,6 +867,71 @@ pub struct LowerResult {
   source_positions: sourcepos.SourceInfo,
 }
 
+pub struct Lowered {
+  ops: ir.Op[],
+  n_locals: i32,
+  n_params: i32,
+  erased_wide: boolean,
+  arr_slots: i32[],
+  i64_slots: i32[],
+  f64_slots: i32[],
+  v128_slots: i32[],
+  str_slots: i32[],
+  name: string,
+  result_kind: i32,
+  dbg_slots: i32[],
+  dbg_names: string[],
+  dbg_types: string[],
+  source_positions: sourcepos.SourceInfo,
+}
+
+pub function lower_outcome(r: LowerState): Result[Option[Lowered], LowerState] {
+  if (!r.ok) {
+    return Err(r);
+  }
+  if (r.superseded) {
+    return Ok(None);
+  }
+  return Ok(Some(Lowered {
+    ops: r.ops,
+    n_locals: r.n_locals,
+    n_params: r.n_params,
+    erased_wide: r.erased_wide,
+    arr_slots: r.arr_slots,
+    i64_slots: r.i64_slots,
+    f64_slots: r.f64_slots,
+    v128_slots: r.v128_slots,
+    str_slots: r.str_slots,
+    name: r.name,
+    result_kind: r.result_kind,
+    dbg_slots: r.dbg_slots,
+    dbg_names: r.dbg_names,
+    dbg_types: r.dbg_types,
+    source_positions: r.source_positions,
+  }));
+}
+
+pub function lowered_result(r: Lowered): LowerResult {
+  return LowerResult {
+    ok: true, why: "", superseded: false,
+    ops: r.ops,
+    n_locals: r.n_locals,
+    n_params: r.n_params,
+    erased_wide: r.erased_wide,
+    arr_slots: r.arr_slots,
+    i64_slots: r.i64_slots,
+    f64_slots: r.f64_slots,
+    v128_slots: r.v128_slots,
+    str_slots: r.str_slots,
+    name: r.name,
+    result_kind: r.result_kind,
+    dbg_slots: r.dbg_slots,
+    dbg_names: r.dbg_names,
+    dbg_types: r.dbg_types,
+    source_positions: r.source_positions,
+  };
+}
+
 pub struct LowerState {
   ok: boolean,
   ops: ir.Op[],

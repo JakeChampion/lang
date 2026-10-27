@@ -141,11 +141,21 @@ function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irta
   if (!plan.ok) {
     return declined(plan.why);
   }
-  let r: irtables.LowerResult = ssarc.lower(p.func, p.modes, plan, structs, grows, pure, view, susp);
-  if (!r.ok) {
-    return declined(r.why);
+  match (ssarc.lower(p.func, p.modes, plan, structs, grows, pure, view, susp)) {
+    Ok(body) => {
+      match (body) {
+        Some(r) => {
+          return irtables.lowered_result(r);
+        },
+        None => {
+          return superseded();
+        }
+      }
+    },
+    Err(state) => {
+      return declined(state.why);
+    }
   }
-  return r;
 }
 
 function report_rows(r: Rows, prefix: string): i32 {

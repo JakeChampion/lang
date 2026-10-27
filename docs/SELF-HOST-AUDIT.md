@@ -991,7 +991,15 @@ findings. Ranked by leverage.
   The native baseline outputs match candidate outputs on ARM64 and Wasm.
 
   Four physical proof suites pass on x86-64 and Wasm with balanced allocations.
-  The final result migration still needs distinct declined, superseded and produced outcomes.
+
+  The public `ssarc.lower` boundary returns `Result[Option[Lowered], LowerState]`.
+  `Ok(Some(body))` carries only complete body data.
+  `Ok(None)` identifies a superseded slot without a placeholder body.
+  `Err(state)` retains partial operations, diagnostic identity and source metadata.
+
+  A refusal takes precedence over the superseded flag.
+  The semantic front end and census driver match these outcomes.
+  Body collections still use `LowerResult` and need the remaining migration.
 
   _Rest of this row:_ the bespoke `*Result` structs remain.
   Generic functions no longer block these migrations.
