@@ -67,6 +67,8 @@ def main():
         module = importlib.import_module(name)
         if getattr(module, "__file__", None):
             paths[name] = Path(module.__file__).resolve()
+    for path in sorted((Path(PIL.__file__).resolve().parent.parent / "pillow.libs").glob("*lcms*")):
+        paths["reference_library/" + path.name] = path
     command = []
     if options.mode != "native":
         if options.runner is None:
