@@ -927,6 +927,12 @@ findings. Ranked by leverage.
   A declined rewrite retains the original call.
   A matched rewrite receives the original factor expression as its success payload.
 
+  Known enum fields use `Option[Field[]]` instead of `KnownFields`.
+  `Some([])` identifies a known variant with no fields, while `None` retains the general destruction path.
+  Destruction and token reuse match the option without an empty placeholder array.
+  A helper-call assertion checks the fast path for a known variant with no fields.
+  Runtime checks cover unique and shared values on x86-64, ARM64 and Wasm, with balanced allocation counts.
+
   _Rest of this row:_ the bespoke `*Result` structs remain.
   The generic-function migration is no longer blocked, and neither is
   T6/SH-026's real remainder (`lookup_*` returning `name: ""`), which depends

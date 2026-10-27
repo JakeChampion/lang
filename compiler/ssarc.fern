@@ -1103,42 +1103,40 @@ function drops_less(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.
   return r;
 }
 
-struct KnownFields { ok: boolean, fields: semrecords.Field[] }
-
-function known_fields(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, d: i32): KnownFields {
-  let none: KnownFields = KnownFields { ok: false, fields: [] };
+function known_fields(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, d: i32): Option[semrecords.Field[]] {
   let name: string = ssaunits.known_variant(p.reuse.reads, b, d);
   if (name == "" || ssasem.finalizer_of(f, f.values[d]) != "") {
-    return none;
+    return None;
   }
   let e: i32 = semrecords.find_enum(f.enums, f.values[d]);
   if (e < 0 || f.enums[e].layout == semrecords.layout_option()) {
-    return none;
+    return None;
   }
   let v: i32 = semrecords.find_variant(f.enums[e], name);
   if (v < 0 || walked_rest(f.enums[e].variants[v].fields, []) > max_inline_rest()) {
-    return none;
+    return None;
   }
-  return KnownFields { ok: true, fields: f.enums[e].variants[v].fields };
+  return Some(f.enums[e].variants[v].fields);
 }
 
-function drop_known(own r: irtables.LowerResult, value: i32, links: i32[], f: ssasem.Func, k: KnownFields): irtables.LowerResult {
-  if (!k.ok || value < links.len() && links[value] >= 0) {
+function drop_known(own r: irtables.LowerResult, value: i32, links: i32[], f: ssasem.Func, k: Option[semrecords.Field[]]): irtables.LowerResult {
+  let fields: semrecords.Field[] = match (k) { Some(fs) => fs, None => { return drop_linked(r, value, links, f); } };
+  if (value < links.len() && links[value] >= 0) {
     return drop_linked(r, value, links, f);
   }
-  if (walked_rest(k.fields, []) > 0) {
+  if (walked_rest(fields, []) > 0) {
     r = emit(r, ir.op_load_local(value));
     r = emit(r, aligned_unique());
     r = emit(r, ir.op_if(0));
-    r = drop_fields_except(r, value, k.fields, [], scratch_base(f), f);
+    r = drop_fields_except(r, value, fields, [], scratch_base(f), f);
     r = emit(r, ir.op_end());
   }
   return release(r, value, f.values[value], f);
 }
 
-function token_children(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, k: KnownFields): irtables.LowerResult {
-  if (k.ok) {
-    return drop_fields_except(r, donor, k.fields, [], scratch_base(f), f);
+function token_children(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, k: Option[semrecords.Field[]]): irtables.LowerResult {
+  if let Some(fields) = k {
+    return drop_fields_except(r, donor, fields, [], scratch_base(f), f);
   }
   if (has_children(f.values[donor], f)) {
     r = drop_children(r, donor, f.values[donor], scratch_base(f), f);
@@ -1157,7 +1155,7 @@ function slot_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): ir
   return zero_local(r, donor);
 }
 
-function hold_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, k: KnownFields): irtables.LowerResult {
+function hold_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, k: Option[semrecords.Field[]]): irtables.LowerResult {
   r = reserve(r, scratch_base(f));
   r = emit(r, ir.op_load_local(donor));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
@@ -1178,7 +1176,7 @@ function free_token(own r: irtables.LowerResult, slot: i32): irtables.LowerResul
   return emit(r, ir.op_end());
 }
 
-function reuse_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, k: KnownFields): irtables.LowerResult {
+function reuse_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32, k: Option[semrecords.Field[]]): irtables.LowerResult {
   let token: i32 = token_slot(f);
   r = reserve(r, scratch_base(f));
   r = emit(r, ir.op_load_local(donor));
