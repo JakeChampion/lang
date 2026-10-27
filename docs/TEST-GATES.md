@@ -101,11 +101,16 @@ builtins, on every backend.
 The per-request gates of #9853's exit criterion A: `TestBumpPerRequest`
 (built through the `fern` launcher, x86-64 and arm64) and
 `TestSelfHostBumpPerRequest` (the self-host CLI under `FERN_STRICT_IR=1`,
-x86-64) send 100k requests on one keep-alive connection
-to a handler that answers `__heap_bump_bytes()`, and the figure a tenth of
-the way in must be the figure at the last request (under qemu the arm64 leg
-sends 10k). They hold the bump high-water mark still; they do not count
-allocations. Two gates count those. `TestSelfHostFramingAllocs` counts the
+x86-64) send requests on one keep-alive connection to a handler that answers `__heap_bump_bytes()`.
+The native gates use 100k requests, and the ARM64 gate uses 10k under qemu.
+The heap baseline requires at least one tenth of those requests and a Date header change.
+A ten-second deadline bounds the wait for that clock tick.
+
+The remaining nine tenths of the requests must retain the same heap high-water mark.
+`TestBumpPerRequestWaitsForDateChange` covers fast requests that exceed the old count limit before the Date change.
+These gates do not count allocations.
+
+Two gates count those. `TestSelfHostFramingAllocs` counts the
 framing path: what parsing a hello request from two call sites, as
 `std/serve` does from six, with the one parsed before it as the parse's
 `prev`, and serializing its reply into one builder kept across requests,
