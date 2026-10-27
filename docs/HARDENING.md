@@ -222,5 +222,3 @@ with it active. It reads the kernel's own records and infers nothing from the em
   protect. A `-pie` image relocates its data words at startup and leaves
   them in the writable segment, so a read-only segment after relocation is
   still open.
-- **Stack canaries**: not started. #5549 scopes them to frames with buffers,
-  since they cost on every call.
