@@ -16,6 +16,9 @@ done
 "$FERN" -check tests/jpeg_orientation_test.fern
 "$FERN" -target x86-64-linux -sanitize -o build/jpeg_orientation_test tests/jpeg_orientation_test.fern
 ./build/jpeg_orientation_test
+"$FERN" -check tests/icc_envelope_test.fern
+"$FERN" -target x86-64-linux -sanitize -o build/icc_envelope_test tests/icc_envelope_test.fern
+./build/icc_envelope_test
 "$FERN" -check tests/png_incremental_test.fern
 "$FERN" -target x86-64-linux -sanitize -o build/png_incremental_test tests/png_incremental_test.fern
 ./build/png_incremental_test

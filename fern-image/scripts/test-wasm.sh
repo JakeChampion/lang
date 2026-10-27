@@ -17,6 +17,9 @@ wasmtime build/wasm-jpeg_exif_test.wasm
 "$FERN" -check tests/jpeg_orientation_test.fern
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-jpeg_orientation_test.wasm tests/jpeg_orientation_test.fern
 wasmtime build/wasm-jpeg_orientation_test.wasm
+"$FERN" -check tests/icc_envelope_test.fern
+"$FERN" -target wasm32-wasi -sanitize -o build/wasm-icc_envelope_test.wasm tests/icc_envelope_test.fern
+wasmtime run --dir=. build/wasm-icc_envelope_test.wasm
 "$FERN" -check tests/png_incremental_test.fern
 "$FERN" -target wasm32-wasi -sanitize -o build/wasm-png_incremental_test.wasm tests/png_incremental_test.fern
 wasmtime build/wasm-png_incremental_test.wasm

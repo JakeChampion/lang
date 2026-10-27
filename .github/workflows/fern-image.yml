@@ -126,6 +126,13 @@ jobs:
       - run: ./fern-image/scripts/check-icc-primitives.sh wasm
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_envelope_test.py
+      - run: ./fern-image/scripts/test-icc-envelope.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-envelope.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/test-deflate-reader.sh native
         env:
           FERN: ${{ github.workspace }}/bin/fern
@@ -212,4 +219,10 @@ jobs:
         with:
           name: image-icc-primitives
           path: fern-image/build/icc-primitives-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-envelope-*.json') != ''
+        with:
+          name: image-icc-envelope
+          path: fern-image/build/icc-envelope-*.json
           if-no-files-found: error

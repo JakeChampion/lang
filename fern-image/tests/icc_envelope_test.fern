@@ -1,0 +1,202 @@
+import "../packages/codecs/icc/envelope";
+import "std/test";
+import "std/i32";
+
+function never(): boolean {
+  return false;
+}
+
+function put32(input: u8[], at: i32, value: i64): u8[] {
+  for index in 0..4 {
+    input = input.with(at + index, (value >> ((3 - index) * 8) as i64 & 255i64) as u8);
+  }
+  return input;
+}
+
+function blank(count: i32): u8[] {
+  let input: u8[] = [];
+  for _ in 0..count {
+    input = input.append(0 as u8);
+  }
+  return input;
+}
+
+function make(sizes: [i32]): u8[] {
+  let bytes = 132 + sizes.len() * 12;
+  for size in sizes {
+    bytes = bytes + (size + 3) / 4 * 4;
+  }
+  let input = blank(bytes);
+  input = put32(put32(put32(put32(put32(input, 0, bytes as i64), 8, 71303168i64), 12, 1835955314i64), 16, 1380401696i64), 20, 1482250784i64);
+  input = input.with(24, 7 as u8).with(25, 234 as u8).with(27, 10 as u8).with(29, 27 as u8);
+  input = put32(put32(put32(put32(input, 36, 1633907568i64), 68, 63190i64), 72, 65536i64), 76, 54061i64);
+  input = put32(input, 128, sizes.len() as i64);
+  let offset = 132 + sizes.len() * 12;
+  for index in 0..sizes.len() {
+    let at = 132 + index * 12;
+    input = put32(put32(put32(input, at, 1949315120i64 + index as i64), at + 4, offset as i64), at + 8, sizes[index] as i64);
+    input = put32(input, offset, 2054847098i64);
+    offset = offset + (sizes[index] + 3) / 4 * 4;
+  }
+  return input;
+}
+
+function rejects(input: [u8], error: envelope.IccError): boolean {
+  return match (envelope.inspect(input, envelope.default_limits(), never)) { Err(e) => e == error, Ok(_) => false };
+}
+
+function profiles(): test.TestOutcome {
+  let real = match (read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc")) { Ok(v) => v, Err(_) => { return test.fail("frozen offline profile"); } };
+  let info = match (envelope.inspect(real, envelope.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("real shared curve elements"); } };
+  if (info.bytes != 588 || info.tags.len() != 11 || info.unique_elements != 9 || info.device_class != envelope.DeviceClass.Display || info.preferred_intent != envelope.Intent.Perceptual) {
+    return test.fail("independent profile envelope metadata");
+  }
+  for intent in 0..4 {
+    let input = put32(put32(make([8, 9, 10, 11]), 12, 1935896178i64), 64, intent as i64);
+    let value = match (envelope.inspect(input, envelope.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("input profile and all preferred intents"); } };
+    if (value.device_class != envelope.DeviceClass.Input || value.tags.len() != 4 || value.unique_elements != 4 || value.created.year != 2026) {
+      return test.fail("constructed metadata");
+    }
+  }
+  return test.assert_true(match (envelope.inspect(make([]), envelope.default_limits(), never)) { Ok(v) => v.tags.len() == 0 && v.unique_elements == 0, Err(_) => false });
+}
+
+function scope(): test.TestOutcome {
+  let input = make([8]);
+  return test.assert_true(rejects(put32(input, 36, 0i64), envelope.IccError.Signature)
+    && rejects(put32(input, 8, 33554432i64), envelope.IccError.Version)
+    && rejects(put32(input, 8, 71434240i64), envelope.IccError.Version)
+    && rejects(put32(input, 12, 1886549106i64), envelope.IccError.DeviceClass)
+    && rejects(put32(input, 16, 1196573017i64), envelope.IccError.ColorSpace)
+    && rejects(put32(input, 20, 1281450528i64), envelope.IccError.Pcs));
+}
+
+function header(): test.TestOutcome {
+  let input = make([8]);
+  for at in [0, 26, 28, 30, 32, 44, 60, 64, 68, 72, 76, 100, 124] {
+    let value = if (at == 0) { 4294967295i64 } else if (at == 26 || at == 28) { 0i64 } else { 4294967295i64 };
+    if (!rejects(put32(input, at, value), envelope.IccError.Header)) {
+      return test.fail("header ranges, reserved fields, and D50 at " + at.to_string());
+    }
+  }
+  let vendor = put32(put32(put32(input, 44, 4294901763i64), 56, 4294967295i64), 60, 15i64);
+  if (!rejects(input.with(35, 60 as u8), envelope.IccError.Header)) {
+    return test.fail("seconds range");
+  }
+  return test.assert_true(match (envelope.inspect(vendor, envelope.default_limits(), never)) { Ok(v) => v.flags == 4294901763i64 && v.attributes_high == 4294967295i64 && v.attributes_low == 15i64, Err(_) => false });
+}
+
+function directory(): test.TestOutcome {
+  let input = make([8, 8]);
+  for length in 0..input.len() {
+    if (match (envelope.inspect(input[:length], envelope.default_limits(), never)) { Ok(_) => true, Err(_) => false }) {
+      return test.fail("every incomplete prefix rejects");
+    }
+  }
+  for field in [136, 140] {
+    for value in [0i64, 7i64, 155i64, 4294967295i64] {
+      if (!rejects(put32(input, field, value), envelope.IccError.Directory)) {
+        return test.fail("unsigned extent arithmetic");
+      }
+    }
+  }
+  return test.assert_true(rejects(put32(input, 144, 1949315120i64), envelope.IccError.Duplicate)
+    && rejects(put32(put32(input, 148, 156i64), 152, 12i64), envelope.IccError.Overlap)
+    && rejects(put32(input, 128, 3i64), envelope.IccError.Directory));
+}
+
+function layout(): test.TestOutcome {
+  let input = make([8, 9]);
+  let swapped = input;
+  for index in 0..12 {
+    swapped = swapped.with(132 + index, input[144 + index]).with(144 + index, input[132 + index]);
+  }
+  if (match (envelope.inspect(swapped, envelope.default_limits(), never)) { Ok(v) => v.tags[0].signature != 1949315121i64, Err(_) => true }) {
+    return test.fail("tag order is unrestricted and preserved");
+  }
+  let same = make([8, 8]);
+  let alias = blank(164);
+  for index in 0..164 {
+    alias = alias.with(index, same[index]);
+  }
+  alias = put32(put32(alias, 0, 164i64), 148, 156i64);
+  if (match (envelope.inspect(alias, envelope.default_limits(), never)) { Ok(v) => v.unique_elements != 1 || v.tags.len() != 2 || v.tags[0].offset != v.tags[1].offset, Err(_) => true }) {
+    return test.fail("exact offset and size aliases are legal");
+  }
+  let gap = blank(180);
+  for index in 0..same.len() {
+    gap = gap.with(index, same[index]);
+  }
+  gap = put32(gap, 0, 180i64);
+  return test.assert_true(rejects(gap, envelope.IccError.Layout)
+    && rejects(input.with(173, 1 as u8), envelope.IccError.Layout)
+    && rejects(put32(same, 148, 156i64), envelope.IccError.Layout)
+    && rejects(put32(input, 160, 1i64), envelope.IccError.Header));
+}
+
+function limits(): test.TestOutcome {
+  let input = make([8, 8]);
+  for allowed in [envelope.IccLimits { max_bytes: 0, max_tags: 2 }, envelope.IccLimits { max_bytes: 172, max_tags: 0 }, envelope.IccLimits { max_bytes: 171, max_tags: 2 }, envelope.IccLimits { max_bytes: 172, max_tags: 1 }] {
+    let count = cell_new(0);
+    let result = envelope.inspect(input, allowed, (): boolean => {
+      count.set(count.get() + 1);
+      return false;
+    });
+    if (count.get() != 0 || match (result) { Err(envelope.IccError.Limit()) => false, _ => true }) {
+      return test.fail("limits reject before a callback");
+    }
+  }
+  return test.assert_true(match (envelope.inspect(input, envelope.IccLimits { max_bytes: 172, max_tags: 2 }, never)) { Ok(_) => true, Err(_) => false }
+    && rejects(put32(input, 128, 4294967295i64), envelope.IccError.Limit));
+}
+
+function ownership(): test.TestOutcome {
+  let input = put32(make([8]), 84, 4294967295i64);
+  let shared = cell_new(input);
+  let first = match (envelope.inspect(input, envelope.default_limits(), (): boolean => {
+    shared.set(shared.get().with(132, 0 as u8));
+    return false;
+  })) { Ok(v) => v, Err(_) => { return test.fail("input COW during callbacks"); } };
+  let changed = first.tags.with(0, envelope.Tag { signature: 0i64, offset: 0, size: 0, type_signature: 0i64 });
+  let id = first.unverified_id.with(0, 0 as u8);
+  let second = match (envelope.inspect(input, envelope.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("fresh inspector session"); } };
+  return test.assert_true(first.tags[0].signature == 1949315120i64 && second.tags[0].signature == 1949315120i64 && changed[0].signature == 0i64
+    && first.unverified_id[0] == 255 as u8 && second.unverified_id[0] == 255 as u8 && id[0] == 0 as u8 && input[132] != shared.get()[132]);
+}
+
+function cancellation(): test.TestOutcome {
+  for input in [make([]), make([8, 9, 10])] {
+    let count = cell_new(0);
+    let success = envelope.inspect(input, envelope.default_limits(), (): boolean => {
+      count.set(count.get() + 1);
+      return false;
+    });
+    if (match (success) { Ok(_) => false, Err(_) => true } || count.get() < 3) {
+      return test.fail("poll coverage");
+    }
+    for stop in 1..count.get() + 1 {
+      let polls = cell_new(0);
+      let result = envelope.inspect(input, envelope.default_limits(), (): boolean => {
+        polls.set(polls.get() + 1);
+        return polls.get() == stop;
+      });
+      if (polls.get() != stop || match (result) { Err(envelope.IccError.Cancelled()) => false, _ => true }) {
+        return test.fail("every validation, partial output, and final cancellation poll");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.test_new("restricted ICC v4.4 envelope");
+  runner = runner.it("constructed and offline shared-curve profile metadata", profiles);
+  runner = runner.it("explicit version, class, color space, and PCS scope", scope);
+  runner = runner.it("header fields, reserved bits, and opaque vendor bits", header);
+  runner = runner.it("all prefixes, unsigned bounds, duplicates, and overlap", directory);
+  runner = runner.it("unordered entries, exact aliases, padding, and no gaps", layout);
+  runner = runner.it("exact positive limits before callbacks", limits);
+  runner = runner.it("owned output, borrowed input COW, and fresh sessions", ownership);
+  runner = runner.it("every cooperative cancellation poll", cancellation);
+  return runner.finish();
+}
