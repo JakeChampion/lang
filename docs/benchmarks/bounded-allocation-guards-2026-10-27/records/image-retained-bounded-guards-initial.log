@@ -1,0 +1,17 @@
+=== RUN   TestSelfHostRetainedNativeBodies
+=== RUN   TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux
+    self_host_ssa_retained_test.go:19: ssaretained_run exited 180: allocator first mapping controls failed: mutation present: addq %rax, %rdi
+        jc __fern_alloc_size_abort
+        leakcheck: allocs=13081209 frees=13077106 live_bytes=267784 from=exit
+        fern-sanitizer: leak 267784 bytes in 4103 blocks
+=== RUN   TestSelfHostRetainedNativeBodies/ssaallocationguards_run/x86-64-linux
+    self_host_ssa_retained_test.go:17: self-host CLI -target x86-64-linux /tmp/image-engine-worktrees/lang-image-retained-constructor-health/compiler/drivers/ssaallocationguards_run.fern: exit status 1
+        /tmp/image-engine-worktrees/lang-image-retained-constructor-health/compiler/drivers/ssaallocationguards_run.fern:13:17: error[E004]: function "ssaallocatorisas.run" takes 0 arguments but was given 1
+              allocators.run(text);
+                            ^
+--- FAIL: TestSelfHostRetainedNativeBodies (29.37s)
+    --- FAIL: TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux (25.49s)
+    --- FAIL: TestSelfHostRetainedNativeBodies/ssaallocationguards_run/x86-64-linux (2.56s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	29.391s
+FAIL

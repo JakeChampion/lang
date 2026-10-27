@@ -1,0 +1,14 @@
+{
+  "initial_record": "/tmp/image-retained-bounded-guards-initial.json",
+  "source_preserved": "/tmp/image-retained-bounded-guards-initial-source",
+  "failures": [
+    "Own two-instruction mutation literal omitted actual indentation",
+    "Own new focused driver passed one argument to an existing zero-argument helper"
+  ],
+  "corrections": [
+    "Mutate the actual single add instruction and retain the same required wrong-width failure",
+    "Call the existing helper without arguments"
+  ],
+  "proof_conditions_unchanged": true,
+  "compiler_defect_claim": false
+}

@@ -1,0 +1,12 @@
+WARNING /tmp/image-engine-worktrees/lang-image-retained-constructor-health/docs/benchmarks/bounded-allocation-guards-2026-10-27/README.md:par3 [rule 3.5] "existing": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-retained-constructor-health/docs/benchmarks/bounded-allocation-guards-2026-10-27/README.md:par3 [rule 3.5] "passing": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-retained-constructor-health/docs/benchmarks/bounded-allocation-guards-2026-10-27/README.md:par4 [rule 3.5] "first-mapping": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-retained-constructor-health/docs/benchmarks/bounded-allocation-guards-2026-10-27/README.md:par4 [rule 3.5] "existing": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-retained-constructor-health/docs/benchmarks/bounded-allocation-guards-2026-10-27/README.md:par4 [rule 3.5] "first-mapping": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-retained-constructor-health/docs/benchmarks/bounded-allocation-guards-2026-10-27/README.md:par5 [rule 3.5] "mapping": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-retained-constructor-health/docs/benchmarks/bounded-allocation-guards-2026-10-27/README.md:par8 [rule 3.5] "passing": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-retained-constructor-health/docs/benchmarks/bounded-allocation-guards-2026-10-27/README.md:par8 [rule 3.5] "passing": an "-ing" form is permitted only in a technical name.
+
+Result: 0 errors, 8 warnings.
+The text obeys the STE structural rules that this tool can check.
+This tool cannot make sure that each word has its approved meaning.

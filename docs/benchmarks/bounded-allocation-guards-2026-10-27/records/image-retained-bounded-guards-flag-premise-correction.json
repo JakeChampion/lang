@@ -1,0 +1,7 @@
+{
+  "prior_actual_exit": 1,
+  "prior_sources_unchanged": true,
+  "prior_original_driver_pass": true,
+  "reason": "The new size comparison supplies known flags when the old freelist comparison is deleted. Add an explicit unknown-register comparison before the original control site. Preserve all original mutation assertions and separately require the actual complete body.",
+  "archive": "/tmp/image-retained-bounded-guards-corrected-source"
+}

@@ -1,0 +1,6 @@
+{
+  "first_launch_exit": 1,
+  "test_or_build_started": false,
+  "reason": "Own assertion assumed one stderr capture in the entire harness. The corrected producer selects only exitOfFileArgs and preserves the existing byte-exact candidate backup.",
+  "corrected_producer": "/tmp/image-run-retained-carry-observability-context.py"
+}

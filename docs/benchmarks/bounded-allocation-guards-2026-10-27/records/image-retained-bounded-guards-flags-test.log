@@ -1,0 +1,6 @@
+=== RUN   TestSelfHostRetainedNativeBodies
+=== RUN   TestSelfHostRetainedNativeBodies/ssaallocationguards_run/x86-64-linux
+--- PASS: TestSelfHostRetainedNativeBodies (27.31s)
+    --- PASS: TestSelfHostRetainedNativeBodies/ssaallocationguards_run/x86-64-linux (25.97s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	27.330s

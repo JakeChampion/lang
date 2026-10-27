@@ -1,0 +1,11 @@
+{
+  "compiler/drivers/ssaallocationchains.fern": "6418dd8c0f111a7a9bee66ecdd8f2288341ece9eca90dad6de6b641a31c1d113",
+  "compiler/drivers/ssaallocatorfirstmachines.fern": "1a43384bbaba9804907483baf06d9c15e1803d19013e4e90d4b9e4747db04e5a",
+  "compiler/drivers/ssaallocatorinitisas.fern": "fa586fdfb315ab2035d8f1e630d403d01e936837217c0e6b9b259a1f78885de8",
+  "compiler/drivers/ssaarrayboxmachines.fern": "a6bec8748889bb7272282ae0c8b40b7af78d75ae13f12c94cb15b6f608a0b2bf",
+  "compiler/ssaallocatorfirstmachine.fern": "613e6f13b7c9d96dca23fe93bfcdb181d75ce919b357d0bbe657e4d150d47f1b",
+  "compiler/ssaarrayboxmachine.fern": "f2781319f216a900420445a2747fd068ae6486c3ab0d27e54431daebdd69ec19",
+  "compiler/ssacapacityisa.fern": "7f1ae6fc7b6f041037a6b852c93eb80c78bdf11645a2c32b0f4a5219a0c10da1",
+  "internal/testing/e2ecompiler/self_host_ssa_retained_test.go": "065d4cfe565999404d4240be7ca3094d9a4d094007d09dcea5705b4d0e85e715",
+  "compiler/drivers/ssaallocationguards_run.fern": "a9de5e323427e5e37513d9231355773445209c4eee72c595a9a415af7f09fa5e"
+}

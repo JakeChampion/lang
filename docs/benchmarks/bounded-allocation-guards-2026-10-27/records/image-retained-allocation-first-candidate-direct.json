@@ -1,0 +1,27 @@
+{
+  "command": [
+    "/tmp/image-icc-inverse-current-fern-b42a82ae9",
+    "-target",
+    "x86-64-linux",
+    "-sanitize",
+    "-o",
+    "/tmp/image-retained-allocation-first-candidate.elf",
+    "compiler/drivers/ssaretained_run.fern"
+  ],
+  "compile_exit": 0,
+  "seconds": 23.415681838989258,
+  "feature_uncommitted": true,
+  "source_hashes": {
+    "compiler/ssacapacityisa.fern": "7f1ae6fc7b6f041037a6b852c93eb80c78bdf11645a2c32b0f4a5219a0c10da1",
+    "compiler/ssaarrayboxmachine.fern": "f2781319f216a900420445a2747fd068ae6486c3ab0d27e54431daebdd69ec19",
+    "compiler/drivers/ssaarrayboxmachines.fern": "a6bec8748889bb7272282ae0c8b40b7af78d75ae13f12c94cb15b6f608a0b2bf"
+  },
+  "compiler_build_source": "b42a82ae934be20d4b370ff8f0cc1b278b8804bc",
+  "compiler_sha256": "954350d3c637968434e5335efb4317437197618af0497ccd39598b95bb693cd2",
+  "reason": "The unchanged Go harness returns stderr only. This distinct diagnostic preserves stdout to identify the next actual failing control, without another completed Go root run.",
+  "runtime_exit": 180,
+  "stdout": "allocation chain controls failed: actual complete output\n",
+  "stderr": "leakcheck: allocs=355471 frees=351510 live_bytes=249296 from=exit\nfern-sanitizer: leak 249296 bytes in 3961 blocks\n",
+  "binary_sha256": "85971d7ef546e1d2efc655ab8eb7f0ce046f10e6fc331dcedcc784aba4d9b5c8",
+  "sources_unchanged": true
+}

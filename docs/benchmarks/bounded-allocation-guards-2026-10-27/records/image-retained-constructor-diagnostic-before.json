@@ -1,0 +1,18 @@
+{
+  "command": [
+    "/tmp/image-icc-inverse-current-fern-b42a82ae9",
+    "-target",
+    "x86-64-linux",
+    "-o",
+    "/tmp/image-retained-constructor-diagnostic-before.elf",
+    "build/retained-constructor-diagnostic.fern"
+  ],
+  "compile_exit": 0,
+  "seconds": 27.776681423187256,
+  "compiler_sha256": "954350d3c637968434e5335efb4317437197618af0497ccd39598b95bb693cd2",
+  "source_sha256": "c393cc17ab46e246e4701643f3da8199da0d8ba833994445220ce3fd6ebf9cee",
+  "binary_sha256": "ff39915dcdd54a09f4da49c1bb18aee0f39530a14e1c50e9eb8265ba708a3185",
+  "runtime_exit": 0,
+  "stdout": "parser-error=capacity branch target outside selected body\nhelper=false\nconstructor=false\nsize-guard=true\n",
+  "stderr": ""
+}
