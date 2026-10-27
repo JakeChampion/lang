@@ -47,7 +47,7 @@ These take typed values, but they change ownership, layout, or control flow outs
 | Intrinsic | Obligation |
 |---|---|
 | `__rc_inc(a)`, `__rc_dec(a)`, `__rc_get(a)`, `__fern_rc_dec(p)` | The count must match the real number of references after the call. |
-| `__arr_set_len(a, n)` | `n` must not exceed the capacity, and the new elements must be initialized before a read. |
+| `__arr_set_len(a, n)` | `n` must not exceed the capacity, and the new elements must be initialized before a read. [The bounds audit](BOUNDS-AUDIT.md) shows a safe `main` that reads past a three-element array through it. |
 | `__arr_push_shared_bytes()`, `__arr_push_shared_count()` | Read-only counters. No obligation. |
 | `__alloc_bool(n)`, `__alloc_i32(n)`, `__alloc_i64(n)`, `__alloc_u8(n)` | The array is typed, but its elements are not initialized by the language. The initialization audit is SEC-006. |
 | `__heap_mark()`, `__heap_release_to(m)` | Every value allocated after the mark must be dead before the release. |

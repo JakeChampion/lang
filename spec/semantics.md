@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**66 of 69** claims are pinned by a conformance case. The remaining
+**70 of 73** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -85,6 +85,10 @@ of them.
 | `AB-03` | `docs/ARRAY-BOUNDS.md` | Writing past the end (`xs.with(i, v)`) aborts | `oob_index_write` |
 | `AB-04` | `docs/ARRAY-BOUNDS.md` | Array slice construction outside `0 <= lo <= hi <= len` aborts (a string slice answers `None` — `ST-01`) | `oob_slice_range` |
 | `AB-05` | `docs/ARRAY-BOUNDS.md` | `lo == hi == len` is a legal empty array slice | `slice_at_length` |
+| `AB-06` | `docs/ARRAY-BOUNDS.md` | An index that wrapping arithmetic makes negative aborts; the check reads the value, not the expression | `oob_index_wrapped` |
+| `AB-07` | `docs/ARRAY-BOUNDS.md` | A loop guard past the length does not elide the check; the first out-of-range index aborts | `oob_loop_guard_past_length` |
+| `AB-08` | `docs/ARRAY-BOUNDS.md` | A view's bound is its own length, not its storage's | `oob_view_index_past_view` |
+| `AB-09` | `docs/ARRAY-BOUNDS.md` | An array slice with a negative low bound aborts | `oob_slice_negative_start` |
 | `IS-01` | `docs/INTEGER-SEMANTICS.md` | `+ - * <<` wrap at the operand's width | `int_wrap` |
 | `IS-02` | `docs/INTEGER-SEMANTICS.md` | Shift counts are masked (`& 31` / `& 63`) | `int_shift_count_masked` |
 | `IS-03` | `docs/INTEGER-SEMANTICS.md` | `>>` is arithmetic for signed operands, logical for unsigned | `int_shift_count_masked` |

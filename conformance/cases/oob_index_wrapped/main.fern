@@ -1,0 +1,20 @@
+// spec: AB-06
+// An index computed by wrapping arithmetic lands negative. The bounds
+// check reads the value, not the expression, so the read aborts.
+
+import "std/i32";
+
+function past_max(base: i32, step: i32): i32 {
+    return base + step;
+}
+
+function at(xs: i32[], i: i32): i32 {
+    return xs[i];
+}
+
+function main(): i32 {
+    let xs: i32[] = [10, 20, 30];
+    let j: i32 = past_max(2147483647, 2);
+    print(at(xs, j).to_string());
+    return 0;
+}

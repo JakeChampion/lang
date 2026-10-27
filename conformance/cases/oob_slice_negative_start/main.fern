@@ -1,0 +1,17 @@
+// spec: AB-09
+// A slice whose low bound is negative aborts. A zero low bound is the
+// control.
+
+import "std/i32";
+
+function tail(xs: u8[], lo: i32): i32 {
+    let v: [u8] = xs[lo:2];
+    return v.len();
+}
+
+function main(): i32 {
+    let xs: u8[] = [1, 2, 3];
+    print(tail(xs, 0).to_string());
+    print(tail(xs, 0 - 1).to_string());
+    return 0;
+}

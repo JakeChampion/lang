@@ -548,8 +548,12 @@ numeric_lossless_widening 0
 oob_index_negative                                   0
 oob_index_read                                       0
 oob_index_wide_integer                               0
+oob_index_wrapped                                    0
 oob_index_write                                      1
+oob_loop_guard_past_length                           0
+oob_slice_negative_start                             0
 oob_slice_range                                      0
+oob_view_index_past_view                             0
 op_overload_nested                                   0
 op_trait_generic                                     0
 open_slice_evaluates_base_once                       0
