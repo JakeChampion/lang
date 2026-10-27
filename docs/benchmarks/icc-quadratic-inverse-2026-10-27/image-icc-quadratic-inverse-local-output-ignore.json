@@ -1,0 +1,1 @@
+{"path": "/workspace/lang/.git/info/exclude", "added_pattern": "fern-image/build", "purpose": "Ignore the untracked disposable build-output symlink; no tracked source change"}

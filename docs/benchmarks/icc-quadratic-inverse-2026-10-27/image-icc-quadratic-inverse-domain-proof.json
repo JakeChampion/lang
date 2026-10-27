@@ -1,0 +1,73 @@
+{
+  "pre_implementation": true,
+  "scale": 65536,
+  "integer_safety": "abs(a*d)<=2^34; admitted base<=65536; squared base plus offset<=3*2^31; exact join and white use denominators 2^32 with numerator <2^53",
+  "monotonicity": "c>=1/4 makes the lower interval strictly increasing; a>0 and nonnegative active base make the nonempty quadratic interval strictly increasing; exact continuity joins them; output clipping only permits a terminal flat",
+  "examples": [
+    {
+      "raw": [
+        131072,
+        65536,
+        0,
+        16384,
+        16384
+      ],
+      "base_at_join": [
+        "16384",
+        "65536"
+      ],
+      "join": "1/16",
+      "unclipped_white": "1"
+    },
+    {
+      "raw": [
+        131072,
+        65536,
+        0,
+        32768,
+        32768,
+        32768,
+        32768
+      ],
+      "base_at_join": [
+        "32768",
+        "65536"
+      ],
+      "join": "3/4",
+      "unclipped_white": "3/2"
+    },
+    {
+      "raw": [
+        131072,
+        65536,
+        -32768,
+        32768,
+        32768,
+        16384,
+        0
+      ],
+      "base_at_join": [
+        "0",
+        "65536"
+      ],
+      "join": "1/4",
+      "unclipped_white": "1/2"
+    },
+    {
+      "raw": [
+        131072,
+        262144,
+        -196608,
+        65536,
+        65536
+      ],
+      "base_at_join": [
+        "65536",
+        "65536"
+      ],
+      "join": "1",
+      "unclipped_white": "1"
+    }
+  ],
+  "criterion": "Finite independent 90-digit Decimal forward-bisection absolute error <=1e-12; exact declared bits; not a universal bound"
+}

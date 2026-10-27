@@ -1,0 +1,21 @@
+{
+  "scope": "Independent offline next-scope capability only. Not Fern inverse qualification, profile validity, compatibility, or CMM parity evidence.",
+  "profile_sha256": "3bccbfedf06978c3035b255167afcf462a50b27805096cee038ff4dd69c650a6",
+  "function_type": 3,
+  "raw_coefficients": [
+    157286,
+    62119,
+    3417,
+    5072,
+    2651
+  ],
+  "decimal_precision": 90,
+  "threshold_bits": 4585990431686262784,
+  "previous_input_bits": 4585990431686262783,
+  "forward_at_previous_input": "0.003130611032247542797942048940773585030683534569106996059417724609375",
+  "left_limit": "0.0031306110322475433349609375",
+  "forward_at_threshold": "0.00313146031315641719430764157248574428758319970867048714611234534850761226436444418327690124",
+  "junction_delta": "8.4928090887385934670407248574428758319970867048714611234534850761226436444418327690124E-7",
+  "observed_downward_step": false,
+  "interpretation": "Fresh inverse admission must not treat selected forward metadata as an invertibility or complete-conformance token. General piecewise policy remains undecided."
+}

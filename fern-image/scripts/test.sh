@@ -102,3 +102,7 @@ done
 "$FERN" -fmt build/format-match.fern > build/format-match-again.fern
 cmp build/format-match.fern build/format-match-again.fern
 echo "Formatter match regression passed"
+
+"$FERN" -check tests/icc_quadratic_inverse_test.fern
+"$FERN" -target x86-64-linux -sanitize -o build/icc_quadratic_inverse_test tests/icc_quadratic_inverse_test.fern
+./build/icc_quadratic_inverse_test

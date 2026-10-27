@@ -1,0 +1,106 @@
+import "tag_data";
+import "std/f64";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum InvertError { Input, Function, Shape, Domain, Unsupported, Numeric, Cancelled }
+
+struct Parameters { a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, join: f64, white: f64 }
+
+struct Difference { high: f64, low: f64 }
+
+function admit(data: tag_data.ParametricData): Result[Parameters, InvertError] {
+  if (data.function_type < 0 || data.function_type > 4) {
+    return Err(InvertError.Function);
+  }
+  if (data.function_type != 3 && data.function_type != 4) {
+    return Err(InvertError.Unsupported);
+  }
+  let values = data.coefficients;
+  let count = if (data.function_type == 3) { 5 } else { 7 };
+  if (values.len() != count) {
+    return Err(InvertError.Shape);
+  }
+  if (values[0] <= 0 || values[1] <= 0) {
+    return Err(InvertError.Domain);
+  }
+  let e = if (data.function_type == 4) { values[5] } else { 0 };
+  let f = if (data.function_type == 4) { values[6] } else { 0 };
+  if (values[0] != 131072 || values[1] < 16384 || values[1] > 262144 || values[3] < 16384 || values[3] > 262144
+    || values[2] > 0 || values[4] < 0 || values[4] > 65536 || e < 0 || e > 32768 || f < 0 || f > 32768
+    || values[1] % 256 != 0 || values[4] % 256 != 0) {
+    return Err(InvertError.Unsupported);
+  }
+  let a = values[1] as i64;
+  let b = values[2] as i64;
+  let c = values[3] as i64;
+  let d = values[4] as i64;
+  let base = a * d / 65536i64 + b;
+  if (base < 0i64) {
+    return Err(InvertError.Domain);
+  }
+  let white = a + b;
+  if (white <= 0i64 || white > 65536i64) {
+    return Err(InvertError.Unsupported);
+  }
+  let join = c * d + f as i64 * 65536i64;
+  if (base * base + e as i64 * 65536i64 != join) {
+    return Err(InvertError.Unsupported);
+  }
+  return Ok(Parameters {
+    a: a as f64 / 65536.0, b: b as f64 / 65536.0, c: c as f64 / 65536.0,
+    d: d as f64 / 65536.0, e: e as f64 / 65536.0, f: f as f64 / 65536.0,
+    join: join as f64 / 4294967296.0,
+    white: (white * white + e as i64 * 65536i64) as f64 / 4294967296.0,
+  });
+}
+
+function difference(input: f64, offset: f64): Difference {
+  let high = input - offset;
+  let virtual = high - input;
+  return Difference { high: high, low: input - (high - virtual) + (-offset - virtual) };
+}
+
+function coordinate(p: Parameters, input: f64): f64 {
+  if (input <= p.f) {
+    return 0.0;
+  }
+  if (input >= p.white && p.white < 1.0) {
+    return 1.0;
+  }
+  if (input == p.join) {
+    return p.d;
+  }
+  if (input < p.join) {
+    return (input - p.f) / p.c;
+  }
+  let target = difference(input, p.e);
+  let root = target.high.sqrt();
+  if (target.high > 0.0) {
+    root = root + root * (0.5 * (target.low / target.high));
+  }
+  return (root - p.b) / p.a;
+}
+
+// Exact continuity keeps the unsupported open-gap policy outside this kernel.
+pub function invert(data: tag_data.ParametricData, input: f64, cancelled: () => boolean): Result[f64, InvertError] {
+  if (!input.is_finite() || input < 0.0 || input > 1.0) {
+    return Err(InvertError.Input);
+  }
+  let p = admit(data)?;
+  if (cancelled()) {
+    return Err(InvertError.Cancelled);
+  }
+  let identity = p.c == 1.0 && p.f == 0.0 && input <= p.join;
+  let value = if (identity) { input } else { coordinate(p, input) };
+  if (!value.is_finite()) {
+    return Err(InvertError.Numeric);
+  }
+  if (!identity) {
+    value = if (value <= 0.0) { 0.0 } else if (value > 1.0) { 1.0 } else { value };
+  }
+  if (cancelled()) {
+    return Err(InvertError.Cancelled);
+  }
+  return Ok(value);
+}
