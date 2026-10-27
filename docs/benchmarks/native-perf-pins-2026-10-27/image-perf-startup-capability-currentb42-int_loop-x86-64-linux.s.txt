@@ -1,0 +1,271 @@
+    .globl _start
+    .text
+__fn_main:
+    .cfi_startproc
+__fn_main.r:
+.Lssa_main_0:
+.Lssa_main_2:
+    xorl %esi, %esi
+    xorl %edi, %edi
+.Lssa_main_3:
+    cmpq $3000000, %rdi
+    jge .Lssa_main_1
+.Lssa_main_4:
+    addq %rdi, %rsi
+    addq $1, %rdi
+    cmpq $3000000, %rdi
+    jl .Lssa_main_4
+.Lssa_main_1:
+    movq %rsi, %rax
+    movq %rax, %rcx
+    movabsq $-6275696437447579415, %rax
+    imulq %rcx
+    addq %rcx, %rdx
+    sarq $6, %rdx
+    movq %rdx, %rax
+    shrq $63, %rdx
+    addq %rdx, %rax
+    imulq $97, %rax, %rax
+    subq %rax, %rcx
+    movq %rcx, %rax
+    movq %rax, %rdi
+    movslq %edi, %rax
+    ret
+    .cfi_endproc
+_start:
+    xorl %edi, %edi
+    movq $1073741824, %rsi
+    movl $3, %edx
+    movl $0x24022, %r10d
+    movq $-1, %r8
+    xorl %r9d, %r9d
+    movl $9, %eax
+    syscall
+    cmpq $-4096, %rax
+    ja .Lfern_stack_kept
+    movq %rax, %rbx
+    movq %rax, %rdi
+    movq $1048576, %rsi
+    xorl %edx, %edx
+    movl $10, %eax
+    syscall
+    testq %rax, %rax
+    jnz .Lfern_stack_guard_failed
+    leaq 1073741808(%rbx), %rsp
+    movq %rsp, __fern_stack_top(%rip)
+.Lfern_stack_kept:
+    xorl %edi, %edi
+    movq $65536, %rsi
+    movl $3, %edx
+    movl $0x24022, %r10d
+    movq $-1, %r8
+    xorl %r9d, %r9d
+    movl $9, %eax
+    syscall
+    cmpq $-4096, %rax
+    ja .Lfern_signal_stack_map_failed
+    subq $32, %rsp
+    movq %rax, (%rsp)
+    movq $0, 8(%rsp)
+    movq $65536, 16(%rsp)
+    movq %rsp, %rdi
+    xorl %esi, %esi
+    movl $131, %eax
+    syscall
+    testq %rax, %rax
+    jnz .Lfern_signal_stack_failed
+    leaq __fern_segv(%rip), %rax
+    movq %rax, (%rsp)
+    movq $0x0c000004, 8(%rsp)
+    leaq .Lfern_segv_restorer(%rip), %rax
+    movq %rax, 16(%rsp)
+    movq $0, 24(%rsp)
+    movl $11, %edi
+    movq %rsp, %rsi
+    xorl %edx, %edx
+    movl $8, %r10d
+    movl $13, %eax
+    syscall
+    testq %rax, %rax
+    jnz .Lfern_fault_handler_failed
+    addq $32, %rsp
+    pushq %rbp
+    movq %rsp, %rbp
+    call __fn_main
+    movq %rax, %rdi
+    movq $231, %rax
+    syscall
+    .text
+    .section .rodata
+.Lmsg_stack_overflow:
+    .ascii "fern: stack overflow\n"
+    .text
+__fern_segv:
+    movq 16(%rsi), %rax
+    subq 160(%rdx), %rax
+    addq $1048576, %rax
+    cmpq $2097152, %rax
+    jae .Lfern_segv_other
+    movq 168(%rdx), %rax
+    movq 120(%rdx), %rcx
+    subq $16, %rsp
+    movq %rcx, (%rsp)
+    movq %rax, 8(%rsp)
+    movq %rsp, %rbp
+    movq $0, __fern_stack_top(%rip)
+    leaq .Lmsg_stack_overflow(%rip), %rsi
+    movq $21, %rdx
+    movq $134, %rdi
+    jmp __fern_report
+.Lfern_segv_other:
+    subq $32, %rsp
+    movq $0, (%rsp)
+    movq $0x04000000, 8(%rsp)
+    leaq .Lfern_segv_restorer(%rip), %rax
+    movq %rax, 16(%rsp)
+    movq $0, 24(%rsp)
+    movl $11, %edi
+    movq %rsp, %rsi
+    xorl %edx, %edx
+    movl $8, %r10d
+    movl $13, %eax
+    syscall
+    addq $32, %rsp
+    ret
+.Lfern_segv_restorer:
+    movl $15, %eax
+    syscall
+    .section .rodata
+.Lfern_stack_guard_failed_msg:
+    .ascii "fern: could not protect the stack guard\n"
+    .text
+.Lfern_stack_guard_failed:
+    leaq .Lfern_stack_guard_failed_msg(%rip), %rsi
+    movq $40, %rdx
+    movl $2, %edi
+    movl $1, %eax
+    syscall
+    movl $134, %edi
+    movl $231, %eax
+    syscall
+    .section .rodata
+.Lfern_signal_stack_map_failed_msg:
+    .ascii "fern: could not map the signal stack\n"
+    .text
+.Lfern_signal_stack_map_failed:
+    leaq .Lfern_signal_stack_map_failed_msg(%rip), %rsi
+    movq $37, %rdx
+    movl $2, %edi
+    movl $1, %eax
+    syscall
+    movl $134, %edi
+    movl $231, %eax
+    syscall
+    .section .rodata
+.Lfern_signal_stack_failed_msg:
+    .ascii "fern: could not install the signal stack\n"
+    .text
+.Lfern_signal_stack_failed:
+    leaq .Lfern_signal_stack_failed_msg(%rip), %rsi
+    movq $41, %rdx
+    movl $2, %edi
+    movl $1, %eax
+    syscall
+    movl $134, %edi
+    movl $231, %eax
+    syscall
+    .section .rodata
+.Lfern_fault_handler_failed_msg:
+    .ascii "fern: could not install the fault handler\n"
+    .text
+.Lfern_fault_handler_failed:
+    leaq .Lfern_fault_handler_failed_msg(%rip), %rsi
+    movq $42, %rdx
+    movl $2, %edi
+    movl $1, %eax
+    syscall
+    movl $134, %edi
+    movl $231, %eax
+    syscall
+    .section .bss
+    .align 8
+    .globl __fern_stack_top
+__fern_stack_top: .quad 0
+    .section .text
+__fern_report:
+    movq %rdi, %r15
+    movq $2, %rdi
+    movq $1, %rax
+    syscall
+    jmp __fern_bt_exit
+    .section .rodata
+.Lmsg_bt:
+    .ascii "backtrace:\n"
+    .section .text
+    .globl __fern_bt_exit
+__fern_bt_exit:
+    andq $-16, %rsp
+    movq %rsp, %r13
+    leaq .Lmsg_bt(%rip), %rsi
+    movq $11, %rdx
+    movq $2, %rdi
+    movq $1, %rax
+    syscall
+    movq %rbp, %rbx
+    movl $64, %r14d
+.Lbt_loop:
+    testl %r14d, %r14d
+    jz .Lbt_done
+    cmpq %r13, %rbx
+    jb .Lbt_done
+    testq $7, %rbx
+    jnz .Lbt_done
+    movq __fern_stack_top(%rip), %rax
+    testq %rax, %rax
+    jz .Lbt_top_ok
+    cmpq %rax, %rbx
+    jae .Lbt_done
+.Lbt_top_ok:
+    movq 8(%rbx), %rsi
+    cmpq $0x10000, %rsi
+    jb .Lbt_done
+    call .Lbt_hex
+    movq %rbx, %r13
+    movq (%rbx), %rbx
+    decl %r14d
+    jmp .Lbt_loop
+.Lbt_done:
+    movq %r15, %rdi
+    movq $231, %rax
+    syscall
+.Lbt_hex:
+    subq $32, %rsp
+    movb $32, (%rsp)
+    movb $32, 1(%rsp)
+    movb $48, 2(%rsp)
+    movb $120, 3(%rsp)
+    movb $10, 20(%rsp)
+    movl $16, %ecx
+    leaq 19(%rsp), %rdi
+.Lbt_hloop:
+    movq %rsi, %rax
+    andl $15, %eax
+    cmpb $10, %al
+    jb .Lbt_hdec
+    addb $87, %al
+    jmp .Lbt_hput
+.Lbt_hdec:
+    addb $48, %al
+.Lbt_hput:
+    movb %al, (%rdi)
+    decq %rdi
+    shrq $4, %rsi
+    decl %ecx
+    jnz .Lbt_hloop
+    movq $1, %rax
+    movq $2, %rdi
+    movq %rsp, %rsi
+    movq $21, %rdx
+    syscall
+    addq $32, %rsp
+    ret

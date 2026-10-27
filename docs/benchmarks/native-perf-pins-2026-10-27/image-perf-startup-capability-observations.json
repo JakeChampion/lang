@@ -1,0 +1,74 @@
+[
+  {
+    "compiler": "/workspace/image-tuple-array-current-fern-9c4085d83",
+    "compiler_sha256": "d1721835de31a7cc774df13ec7322a2d981066c442fcefe8611a19fc4ec4417b",
+    "name": "int_loop",
+    "target": "x86-64-linux",
+    "exit": 0,
+    "instruction_lines": 191,
+    "assembly_sha256": "8cb3a4b05a19de5fc5ea98df91097bed9ff89177422338a4e728f5d05fa3569f"
+  },
+  {
+    "compiler": "/workspace/image-tuple-array-current-fern-9c4085d83",
+    "compiler_sha256": "d1721835de31a7cc774df13ec7322a2d981066c442fcefe8611a19fc4ec4417b",
+    "name": "int_loop",
+    "target": "arm64-linux",
+    "exit": 0,
+    "instruction_lines": 259,
+    "assembly_sha256": "ec0890084227461c4b5bf22ef319ba51db9da1752deb4fe87f60b08f74158ea9"
+  },
+  {
+    "compiler": "/workspace/image-tuple-array-current-fern-9c4085d83",
+    "compiler_sha256": "d1721835de31a7cc774df13ec7322a2d981066c442fcefe8611a19fc4ec4417b",
+    "name": "call_overhead",
+    "target": "x86-64-linux",
+    "exit": 0,
+    "instruction_lines": 246,
+    "assembly_sha256": "a37da7ab72a0344537e925ec9720606099de5e9e1d74f2ca04d38b69908a7af7"
+  },
+  {
+    "compiler": "/workspace/image-tuple-array-current-fern-9c4085d83",
+    "compiler_sha256": "d1721835de31a7cc774df13ec7322a2d981066c442fcefe8611a19fc4ec4417b",
+    "name": "call_overhead",
+    "target": "arm64-linux",
+    "exit": 0,
+    "instruction_lines": 317,
+    "assembly_sha256": "782ceff31de5dbcfdf87300ef0f614db2f33538d5d77b0cc36c9dfbe309d3a7d"
+  },
+  {
+    "compiler": "/tmp/image-icc-inverse-current-fern-b42a82ae9",
+    "compiler_sha256": "954350d3c637968434e5335efb4317437197618af0497ccd39598b95bb693cd2",
+    "name": "int_loop",
+    "target": "x86-64-linux",
+    "exit": 0,
+    "instruction_lines": 239,
+    "assembly_sha256": "0fa566412e648babb5954061882c95265f10620905e97cab46eb7d5d62d2b979"
+  },
+  {
+    "compiler": "/tmp/image-icc-inverse-current-fern-b42a82ae9",
+    "compiler_sha256": "954350d3c637968434e5335efb4317437197618af0497ccd39598b95bb693cd2",
+    "name": "int_loop",
+    "target": "arm64-linux",
+    "exit": 0,
+    "instruction_lines": 313,
+    "assembly_sha256": "1270a5d13d616497ff939c904078d8cf442fbbdeaba9e5b88d074ad6ccace618"
+  },
+  {
+    "compiler": "/tmp/image-icc-inverse-current-fern-b42a82ae9",
+    "compiler_sha256": "954350d3c637968434e5335efb4317437197618af0497ccd39598b95bb693cd2",
+    "name": "call_overhead",
+    "target": "x86-64-linux",
+    "exit": 0,
+    "instruction_lines": 294,
+    "assembly_sha256": "7c4f911a724472ed8cd8e01bed67cec1ecd20985297e1418b539e9d9e0e5cdf5"
+  },
+  {
+    "compiler": "/tmp/image-icc-inverse-current-fern-b42a82ae9",
+    "compiler_sha256": "954350d3c637968434e5335efb4317437197618af0497ccd39598b95bb693cd2",
+    "name": "call_overhead",
+    "target": "arm64-linux",
+    "exit": 0,
+    "instruction_lines": 371,
+    "assembly_sha256": "8426a7ab112014da07a22bd3453fb433525c1d65e4a305d1c27094ac73ddf1d2"
+  }
+]

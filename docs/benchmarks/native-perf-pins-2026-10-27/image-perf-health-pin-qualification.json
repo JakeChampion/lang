@@ -1,0 +1,62 @@
+{
+  "source_commit": "25dc7ab983b955821432e3d2d67501df3a9a2ba5",
+  "feature_uncommitted": true,
+  "keys": 156,
+  "report_completeness": true,
+  "all_keys_retained": true,
+  "all_per_row_tolerance_tokens_unchanged": true,
+  "strict": true,
+  "default_tolerance_percent": 1,
+  "checks": [
+    {
+      "phase": "before",
+      "target": "x86_64",
+      "exit": 1,
+      "log": "/tmp/image-perf-health-strict-before-x86_64.log"
+    },
+    {
+      "phase": "before",
+      "target": "aarch64",
+      "exit": 1,
+      "log": "/tmp/image-perf-health-strict-before-aarch64.log"
+    },
+    {
+      "phase": "after",
+      "target": "x86_64",
+      "exit": 0,
+      "log": "/tmp/image-perf-health-strict-after-x86_64.log"
+    },
+    {
+      "phase": "after",
+      "target": "aarch64",
+      "exit": 0,
+      "log": "/tmp/image-perf-health-strict-after-aarch64.log"
+    }
+  ],
+  "controls": [
+    {
+      "name": "missing-row",
+      "rejected": true,
+      "reason": "missing required key x86_64/int_loop.text",
+      "missing": [
+        "x86_64/int_loop.text"
+      ]
+    },
+    {
+      "name": "drift",
+      "key": "x86_64/int_loop.text",
+      "factor": 1.03,
+      "exit": 1,
+      "expected_exit": 1
+    },
+    {
+      "name": "map-tolerance",
+      "key": "x86_64/map_string.ir",
+      "factor": 1.015,
+      "exit": 0,
+      "expected_exit": 0
+    }
+  ],
+  "baseline_before_sha256": "120b7b75753ae5ad9b834089879f202fe9762d11a59c03b9f54db2eefbe2b41a",
+  "baseline_after_sha256": "17c50a68e462baa7ece384754d9751c0c90c06484878b34613a9a6004fa07919"
+}

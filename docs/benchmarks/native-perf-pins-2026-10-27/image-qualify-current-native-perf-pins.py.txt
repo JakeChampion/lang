@@ -1,0 +1,45 @@
+from pathlib import Path
+import subprocess,json,hashlib,os,math
+root=Path.cwd();base=root/'.github/perf-baseline.txt';old=base.read_bytes();out=Path('/tmp');sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();env=dict(os.environ,FERN_CI_PERF_GATE_STRICT='1',FERN_PERF_TOLERANCE_PERCENT='1')
+reports={}
+for arch in ['x86_64','aarch64']:
+ p=out/f'image-perf-health-perf-report-{arch}.txt';rows={}
+ for line in p.read_text().splitlines():
+  if line.strip()and not line.startswith('#'):
+   k,v=line.split();assert k not in rows;rows[k]=int(v)
+ assert len(rows)==78;reports[arch]=rows
+original={}
+for line in old.decode().splitlines():
+ if line.strip()and not line.startswith('#'):
+  k,v,*tol=line.split();assert k not in original;original[k]=(int(v),tol)
+combined={k:v for rows in reports.values()for k,v in rows.items()};assert len(combined)==156 and set(combined)==set(original)
+for arch,rows in reports.items():assert set(rows)=={k for k in original if k.startswith(arch+'/')}
+check=[]
+for phase in ['before','after']:
+ if phase=='after':
+  changed=[]
+  for line in old.decode().splitlines(keepends=True):
+   if line.strip()and not line.startswith('#'):
+    parts=line.split();parts[1]=str(combined[parts[0]]);line='\t'.join(parts)+'\n'
+   changed.append(line)
+  base.write_text('# 2026-10-27: verified complete native reports at b42a82ae934be20d4b370ff8f0cc1b278b8804bc.\n# Mandatory startup, backtrace, and allocation checks remain active.\n# Evidence: docs/benchmarks/native-perf-pins-2026-10-27/. Tolerances and workloads are unchanged.\n'+''.join(changed))
+ for arch in reports:
+  log=out/f'image-perf-health-strict-{phase}-{arch}.log';cmd=['scripts/ci-check-perf',str(base),str(out/f'image-perf-health-perf-report-{arch}.txt')]
+  with log.open('w')as f:r=subprocess.run(cmd,env=env,stdout=f,stderr=subprocess.STDOUT)
+  assert r.returncode==(1 if phase=='before'else 0),(phase,arch,log.read_text());check.append(dict(phase=phase,target=arch,exit=r.returncode,log=str(log)))
+current={}
+for line in base.read_text().splitlines():
+ if line.strip()and not line.startswith('#'):
+  k,v,*tol=line.split();current[k]=(int(v),tol)
+assert set(current)==set(original) and all(current[k][0]==combined[k]and current[k][1]==original[k][1]for k in original)
+(out/'image-perf-health-baseline-before.txt').write_bytes(old)
+# Check completeness before the comparator sees a report.
+bad=dict(reports['x86_64']);del bad['x86_64/int_loop.text'];missing=sorted(set(reports['x86_64'])-set(bad));assert missing==['x86_64/int_loop.text']
+controls=[dict(name='missing-row',rejected=True,reason='missing required key x86_64/int_loop.text',missing=missing)]
+for name,key,factor,want in [('drift','x86_64/int_loop.text',1.03,1),('map-tolerance','x86_64/map_string.ir',1.015,0)]:
+ rows=dict(reports['x86_64']);rows[key]=math.ceil(rows[key]*factor);p=out/f'image-perf-health-control-{name}.txt';assert not p.exists();p.write_text(''.join(k+'\t'+str(v)+'\n'for k,v in rows.items()))
+ log=out/f'image-perf-health-control-{name}.log'
+ with log.open('w')as f:r=subprocess.run(['scripts/ci-check-perf',str(base),str(p)],env=env,stdout=f,stderr=subprocess.STDOUT)
+ assert r.returncode==want,(name,log.read_text());controls.append(dict(name=name,key=key,factor=factor,exit=r.returncode,expected_exit=want))
+record=dict(source_commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),feature_uncommitted=True,keys=156,report_completeness=True,all_keys_retained=True,all_per_row_tolerance_tokens_unchanged=True,strict=True,default_tolerance_percent=1,checks=check,controls=controls,baseline_before_sha256=hashlib.sha256(old).hexdigest(),baseline_after_sha256=sha(base))
+(out/'image-perf-health-pin-qualification.json').write_text(json.dumps(record,indent=2)+'\n');print(record)

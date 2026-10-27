@@ -1,0 +1,197 @@
+### performance (bench)
+| metric | measured | baseline | delta |
+| --- | --- | --- | --- |
+| aarch64/array_append.text | 1.3k | 1.3k | +6.71% |
+| aarch64/array_append.ir | 17.9M | 17.9M | +0.02% |
+| aarch64/array_index.text | 1.3k | 1.2k | +6.72% |
+| aarch64/array_index.ir | 18.4M | 18.4M | +0.00% |
+| aarch64/array_scale_f64.text | 1.4k | 1.3k | +6.25% |
+| aarch64/array_scale_f64.ir | 25.3M | 25.3M | +0.06% |
+| aarch64/array_with.text | 1.5k | 1.4k | +5.97% |
+| aarch64/array_with.ir | 31.2M | 31.2M | +0.00% |
+| aarch64/ascii_scan.text | 1.6k | 1.5k | +5.10% |
+| aarch64/ascii_scan.ir | 68.6M | 68.7M | -0.14% |
+| aarch64/byte_copy_append.text | 1.5k | 1.4k | +5.72% |
+| aarch64/byte_copy_append.ir | 31.9M | 31.9M | -0.06% |
+| aarch64/byte_copy_with.text | 1.4k | 1.3k | +5.95% |
+| aarch64/byte_copy_with.ir | 31.3M | 31.3M | -0.10% |
+| aarch64/call_overhead.text | 371 | 317 | +17.03% |
+| aarch64/call_overhead.ir | 11.3M | 11.3M | +0.00% |
+| aarch64/closure_call.text | 1.2k | 1.1k | +7.19% |
+| aarch64/closure_call.ir | 72.6M | 72.6M | +0.03% |
+| aarch64/deflate_decode.text | 14.2k | 14.1k | +0.62% |
+| aarch64/deflate_decode.ir | 36.4M | 36.4M | +0.07% |
+| aarch64/deflate_encode.text | 8.0k | 7.9k | +1.11% |
+| aarch64/deflate_encode.ir | 44.1M | 44.0M | +0.15% |
+| aarch64/enum_match.text | 1.3k | 1.2k | +6.48% |
+| aarch64/enum_match.ir | 41.2M | 41.2M | +0.00% |
+| aarch64/http_hello.text | 18.6k | 18.5k | +0.45% |
+| aarch64/http_hello.ir | 25.7M | 25.9M | -0.57% |
+| aarch64/int_loop.text | 313 | 259 | +20.85% |
+| aarch64/int_loop.ir | 18.0M | 18.0M | +0.00% |
+| aarch64/map_int.text | 6.1k | 6.0k | +1.41% |
+| aarch64/map_int.ir | 35.3M | 35.3M | +0.00% |
+| aarch64/map_probe_chain.text | 6.1k | 6.0k | +1.40% |
+| aarch64/map_probe_chain.ir | 334.3M | 334.3M | +0.00% |
+| aarch64/map_string.text | 7.2k | 7.1k | +1.19% |
+| aarch64/map_string.ir | 59.4M | 58.9M | +0.72% |
+| aarch64/ordmap_insert.text | 5.9k | 5.8k | +1.44% |
+| aarch64/ordmap_insert.ir | 98.4M | 98.6M | -0.25% |
+| aarch64/perceus_cfold.text | 2.1k | 2.1k | +3.84% |
+| aarch64/perceus_cfold.ir | 62.3M | 61.2M | +1.86% |
+| aarch64/perceus_deriv.text | 3.0k | 2.9k | +2.74% |
+| aarch64/perceus_deriv.ir | 83.1M | 82.0M | +1.37% |
+| aarch64/perceus_nqueens.text | 1.8k | 1.7k | +4.63% |
+| aarch64/perceus_nqueens.ir | 106.6M | 104.9M | +1.62% |
+| aarch64/perceus_rbtree.text | 3.1k | 3.1k | +2.58% |
+| aarch64/perceus_rbtree.ir | 61.2M | 61.3M | -0.11% |
+| aarch64/perceus_rbtree_ck.text | 3.4k | 3.3k | +2.40% |
+| aarch64/perceus_rbtree_ck.ir | 60.5M | 60.5M | +0.08% |
+| aarch64/pmap_insert.text | 3.0k | 3.0k | +2.84% |
+| aarch64/pmap_insert.ir | 64.0M | 64.0M | -0.03% |
+| aarch64/pvec_with.text | 3.2k | 3.1k | +2.71% |
+| aarch64/pvec_with.ir | 59.2M | 59.2M | +0.01% |
+| aarch64/record_update.text | 1.6k | 1.5k | +5.58% |
+| aarch64/record_update.ir | 31.2M | 31.2M | +0.00% |
+| aarch64/sort_inplace.text | 1.7k | 1.6k | +5.29% |
+| aarch64/sort_inplace.ir | 49.1M | 49.1M | +0.08% |
+| aarch64/sort_ints.text | 2.2k | 2.1k | +4.03% |
+| aarch64/sort_ints.ir | 33.1M | 33.1M | +0.03% |
+| aarch64/sort_strings.text | 3.6k | 3.5k | +2.40% |
+| aarch64/sort_strings.ir | 105.5M | 105.9M | -0.37% |
+| aarch64/string_build.text | 2.3k | 2.3k | +3.48% |
+| aarch64/string_build.ir | 47.2M | 47.1M | +0.19% |
+| aarch64/string_count_byte.text | 1.5k | 1.4k | +5.67% |
+| aarch64/string_count_byte.ir | 295.2M | 295.2M | +0.00% |
+| aarch64/string_find_byte.text | 1.9k | 1.8k | +4.39% |
+| aarch64/string_find_byte.ir | 55.9M | 55.9M | -0.04% |
+| aarch64/string_rfind_byte.text | 2.0k | 1.9k | +4.11% |
+| aarch64/string_rfind_byte.ir | 55.9M | 56.0M | -0.03% |
+| aarch64/string_scan.text | 2.5k | 2.5k | +3.41% |
+| aarch64/string_scan.ir | 59.8M | 59.8M | +0.02% |
+| aarch64/string_slice.text | 1.1k | 1.0k | +7.63% |
+| aarch64/string_slice.ir | 43.6M | 43.6M | +0.00% |
+| aarch64/struct_drop.text | 2.7k | 2.6k | +3.27% |
+| aarch64/struct_drop.ir | 222.4M | 221.7M | +0.32% |
+| aarch64/tokenize.text | 1.4k | 1.3k | +6.12% |
+| aarch64/tokenize.ir | 38.4M | 38.4M | +0.00% |
+| aarch64/utf8_ingest_unchecked.text | 8.8k | 8.7k | +0.97% |
+| aarch64/utf8_ingest_unchecked.ir | 2.7M | 2.7M | +0.23% |
+| aarch64/utf8_ingest_validated.text | 9.3k | 9.2k | +0.91% |
+| aarch64/utf8_ingest_validated.ir | 6.2M | 6.3M | -0.65% |
+SLOWER: aarch64/array_append.text 1.3k -> 1.3k (+6.71%, tolerance 1%).
+SLOWER: aarch64/array_index.text 1.2k -> 1.3k (+6.72%, tolerance 1%).
+SLOWER: aarch64/array_scale_f64.text 1.3k -> 1.4k (+6.25%, tolerance 1%).
+SLOWER: aarch64/array_with.text 1.4k -> 1.5k (+5.97%, tolerance 1%).
+SLOWER: aarch64/ascii_scan.text 1.5k -> 1.6k (+5.10%, tolerance 1%).
+SLOWER: aarch64/byte_copy_append.text 1.4k -> 1.5k (+5.72%, tolerance 1%).
+SLOWER: aarch64/byte_copy_with.text 1.3k -> 1.4k (+5.95%, tolerance 1%).
+SLOWER: aarch64/call_overhead.text 317 -> 371 (+17.03%, tolerance 1%).
+SLOWER: aarch64/closure_call.text 1.1k -> 1.2k (+7.19%, tolerance 1%).
+SLOWER: aarch64/deflate_encode.text 7.9k -> 8.0k (+1.11%, tolerance 1%).
+SLOWER: aarch64/enum_match.text 1.2k -> 1.3k (+6.48%, tolerance 1%).
+SLOWER: aarch64/int_loop.text 259 -> 313 (+20.85%, tolerance 1%).
+SLOWER: aarch64/map_int.text 6.0k -> 6.1k (+1.41%, tolerance 1%).
+SLOWER: aarch64/map_probe_chain.text 6.0k -> 6.1k (+1.40%, tolerance 1%).
+SLOWER: aarch64/map_string.text 7.1k -> 7.2k (+1.19%, tolerance 1%).
+SLOWER: aarch64/ordmap_insert.text 5.8k -> 5.9k (+1.44%, tolerance 1%).
+SLOWER: aarch64/perceus_cfold.text 2.1k -> 2.1k (+3.84%, tolerance 1%).
+SLOWER: aarch64/perceus_cfold.ir 61.2M -> 62.3M (+1.86%, tolerance 1%).
+SLOWER: aarch64/perceus_deriv.text 2.9k -> 3.0k (+2.74%, tolerance 1%).
+SLOWER: aarch64/perceus_deriv.ir 82.0M -> 83.1M (+1.37%, tolerance 1%).
+SLOWER: aarch64/perceus_nqueens.text 1.7k -> 1.8k (+4.63%, tolerance 1%).
+SLOWER: aarch64/perceus_nqueens.ir 104.9M -> 106.6M (+1.62%, tolerance 1%).
+SLOWER: aarch64/perceus_rbtree.text 3.1k -> 3.1k (+2.58%, tolerance 1%).
+SLOWER: aarch64/perceus_rbtree_ck.text 3.3k -> 3.4k (+2.40%, tolerance 1%).
+SLOWER: aarch64/pmap_insert.text 3.0k -> 3.0k (+2.84%, tolerance 1%).
+SLOWER: aarch64/pvec_with.text 3.1k -> 3.2k (+2.71%, tolerance 1%).
+SLOWER: aarch64/record_update.text 1.5k -> 1.6k (+5.58%, tolerance 1%).
+SLOWER: aarch64/sort_inplace.text 1.6k -> 1.7k (+5.29%, tolerance 1%).
+SLOWER: aarch64/sort_ints.text 2.1k -> 2.2k (+4.03%, tolerance 1%).
+SLOWER: aarch64/sort_strings.text 3.5k -> 3.6k (+2.40%, tolerance 1%).
+SLOWER: aarch64/string_build.text 2.3k -> 2.3k (+3.48%, tolerance 1%).
+SLOWER: aarch64/string_count_byte.text 1.4k -> 1.5k (+5.67%, tolerance 1%).
+SLOWER: aarch64/string_find_byte.text 1.8k -> 1.9k (+4.39%, tolerance 1%).
+SLOWER: aarch64/string_rfind_byte.text 1.9k -> 2.0k (+4.11%, tolerance 1%).
+SLOWER: aarch64/string_scan.text 2.5k -> 2.5k (+3.41%, tolerance 1%).
+SLOWER: aarch64/string_slice.text 1.0k -> 1.1k (+7.63%, tolerance 1%).
+SLOWER: aarch64/struct_drop.text 2.6k -> 2.7k (+3.27%, tolerance 1%).
+SLOWER: aarch64/tokenize.text 1.3k -> 1.4k (+6.12%, tolerance 1%).
+Corrected baseline — paste into the baseline file:
+    aarch64/array_append.text 1336
+    aarch64/array_index.text 1334
+    aarch64/array_scale_f64.text 1428
+    aarch64/array_with.text 1490
+    aarch64/ascii_scan.text 1627
+    aarch64/byte_copy_append.text 1460
+    aarch64/byte_copy_with.text 1406
+    aarch64/call_overhead.text 371
+    aarch64/closure_call.text 1178
+    aarch64/deflate_encode.text 8007
+    aarch64/enum_match.text 1298
+    aarch64/int_loop.text 313
+    aarch64/map_int.text 6056
+    aarch64/map_probe_chain.text 6066
+    aarch64/map_string.text 7157
+    aarch64/ordmap_insert.text 5931
+    aarch64/perceus_cfold.text 2134
+    aarch64/perceus_cfold.ir 62299589
+    aarch64/perceus_deriv.text 2964
+    aarch64/perceus_deriv.ir 83086981
+    aarch64/perceus_nqueens.text 1787
+    aarch64/perceus_nqueens.ir 106638432
+    aarch64/perceus_rbtree.text 3140
+    aarch64/perceus_rbtree_ck.text 3377
+    aarch64/pmap_insert.text 3045
+    aarch64/pvec_with.text 3187
+    aarch64/record_update.text 1590
+    aarch64/sort_inplace.text 1673
+    aarch64/sort_ints.text 2166
+    aarch64/sort_strings.text 3577
+    aarch64/string_build.text 2346
+    aarch64/string_count_byte.text 1472
+    aarch64/string_find_byte.text 1880
+    aarch64/string_rfind_byte.text 2003
+    aarch64/string_scan.text 2550
+    aarch64/string_slice.text 1114
+    aarch64/struct_drop.text 2655
+    aarch64/tokenize.text 1370
+WARNING: aarch64/array_append.text +6.71%: aarch64/array_append.text measured 1336 against a baseline of 1252 — over its 1% tolerance
+WARNING: aarch64/array_index.text +6.72%: aarch64/array_index.text measured 1334 against a baseline of 1250 — over its 1% tolerance
+WARNING: aarch64/array_scale_f64.text +6.25%: aarch64/array_scale_f64.text measured 1428 against a baseline of 1344 — over its 1% tolerance
+WARNING: aarch64/array_with.text +5.97%: aarch64/array_with.text measured 1490 against a baseline of 1406 — over its 1% tolerance
+WARNING: aarch64/ascii_scan.text +5.10%: aarch64/ascii_scan.text measured 1627 against a baseline of 1548 — over its 1% tolerance
+WARNING: aarch64/byte_copy_append.text +5.72%: aarch64/byte_copy_append.text measured 1460 against a baseline of 1381 — over its 1% tolerance
+WARNING: aarch64/byte_copy_with.text +5.95%: aarch64/byte_copy_with.text measured 1406 against a baseline of 1327 — over its 1% tolerance
+WARNING: aarch64/call_overhead.text +17.03%: aarch64/call_overhead.text measured 371 against a baseline of 317 — over its 1% tolerance
+WARNING: aarch64/closure_call.text +7.19%: aarch64/closure_call.text measured 1178 against a baseline of 1099 — over its 1% tolerance
+WARNING: aarch64/deflate_encode.text +1.11%: aarch64/deflate_encode.text measured 8007 against a baseline of 7919 — over its 1% tolerance
+WARNING: aarch64/enum_match.text +6.48%: aarch64/enum_match.text measured 1298 against a baseline of 1219 — over its 1% tolerance
+WARNING: aarch64/int_loop.text +20.85%: aarch64/int_loop.text measured 313 against a baseline of 259 — over its 1% tolerance
+WARNING: aarch64/map_int.text +1.41%: aarch64/map_int.text measured 6056 against a baseline of 5972 — over its 1% tolerance
+WARNING: aarch64/map_probe_chain.text +1.40%: aarch64/map_probe_chain.text measured 6066 against a baseline of 5982 — over its 1% tolerance
+WARNING: aarch64/map_string.text +1.19%: aarch64/map_string.text measured 7157 against a baseline of 7073 — over its 1% tolerance
+WARNING: aarch64/ordmap_insert.text +1.44%: aarch64/ordmap_insert.text measured 5931 against a baseline of 5847 — over its 1% tolerance
+WARNING: aarch64/perceus_cfold.text +3.84%: aarch64/perceus_cfold.text measured 2134 against a baseline of 2055 — over its 1% tolerance
+WARNING: aarch64/perceus_cfold.ir +1.86%: aarch64/perceus_cfold.ir measured 62299589 against a baseline of 61163127 — over its 1% tolerance
+WARNING: aarch64/perceus_deriv.text +2.74%: aarch64/perceus_deriv.text measured 2964 against a baseline of 2885 — over its 1% tolerance
+WARNING: aarch64/perceus_deriv.ir +1.37%: aarch64/perceus_deriv.ir measured 83086981 against a baseline of 81963685 — over its 1% tolerance
+WARNING: aarch64/perceus_nqueens.text +4.63%: aarch64/perceus_nqueens.text measured 1787 against a baseline of 1708 — over its 1% tolerance
+WARNING: aarch64/perceus_nqueens.ir +1.62%: aarch64/perceus_nqueens.ir measured 106638432 against a baseline of 104935847 — over its 1% tolerance
+WARNING: aarch64/perceus_rbtree.text +2.58%: aarch64/perceus_rbtree.text measured 3140 against a baseline of 3061 — over its 1% tolerance
+WARNING: aarch64/perceus_rbtree_ck.text +2.40%: aarch64/perceus_rbtree_ck.text measured 3377 against a baseline of 3298 — over its 1% tolerance
+WARNING: aarch64/pmap_insert.text +2.84%: aarch64/pmap_insert.text measured 3045 against a baseline of 2961 — over its 1% tolerance
+WARNING: aarch64/pvec_with.text +2.71%: aarch64/pvec_with.text measured 3187 against a baseline of 3103 — over its 1% tolerance
+WARNING: aarch64/record_update.text +5.58%: aarch64/record_update.text measured 1590 against a baseline of 1506 — over its 1% tolerance
+WARNING: aarch64/sort_inplace.text +5.29%: aarch64/sort_inplace.text measured 1673 against a baseline of 1589 — over its 1% tolerance
+WARNING: aarch64/sort_ints.text +4.03%: aarch64/sort_ints.text measured 2166 against a baseline of 2082 — over its 1% tolerance
+WARNING: aarch64/sort_strings.text +2.40%: aarch64/sort_strings.text measured 3577 against a baseline of 3493 — over its 1% tolerance
+WARNING: aarch64/string_build.text +3.48%: aarch64/string_build.text measured 2346 against a baseline of 2267 — over its 1% tolerance
+WARNING: aarch64/string_count_byte.text +5.67%: aarch64/string_count_byte.text measured 1472 against a baseline of 1393 — over its 1% tolerance
+WARNING: aarch64/string_find_byte.text +4.39%: aarch64/string_find_byte.text measured 1880 against a baseline of 1801 — over its 1% tolerance
+WARNING: aarch64/string_rfind_byte.text +4.11%: aarch64/string_rfind_byte.text measured 2003 against a baseline of 1924 — over its 1% tolerance
+WARNING: aarch64/string_scan.text +3.41%: aarch64/string_scan.text measured 2550 against a baseline of 2466 — over its 1% tolerance
+WARNING: aarch64/string_slice.text +7.63%: aarch64/string_slice.text measured 1114 against a baseline of 1035 — over its 1% tolerance
+WARNING: aarch64/struct_drop.text +3.27%: aarch64/struct_drop.text measured 2655 against a baseline of 2571 — over its 1% tolerance
+WARNING: aarch64/tokenize.text +6.12%: aarch64/tokenize.text measured 1370 against a baseline of 1291 — over its 1% tolerance
+ci-check-perf: 38 finding(s) and FERN_CI_PERF_GATE_STRICT=1

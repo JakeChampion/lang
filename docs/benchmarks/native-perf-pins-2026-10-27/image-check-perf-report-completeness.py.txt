@@ -1,0 +1,19 @@
+from pathlib import Path
+import sys
+baseline,report,arch=sys.argv[1:]
+def rows(path):
+ data={}
+ for line in Path(path).read_text().splitlines():
+  if not line.strip()or line.startswith('#'):continue
+  key,value,*_=line.split()
+  if key in data:raise ValueError('duplicate metric '+key)
+  data[key]=int(value)
+ return data
+expected={k:v for k,v in rows(baseline).items()if k.startswith(arch+'/')};actual=rows(report)
+missing=sorted(set(expected)-set(actual));extra=sorted(set(actual)-set(expected))
+if missing:raise ValueError('missing required metric '+missing[0])
+if extra:raise ValueError('unexpected metric '+extra[0])
+if len(actual)!=78:raise ValueError('expected 78 metrics')
+for suffix in ['.text','.ir']:
+ if sum(k.endswith(suffix)for k in actual)!=39:raise ValueError('expected 39 '+suffix+' metrics')
+print('complete:',arch,'78 metrics')

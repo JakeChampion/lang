@@ -1,0 +1,1 @@
+perf-gate-selftest: 22 cases pass against scripts/ci-check-perf

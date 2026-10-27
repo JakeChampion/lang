@@ -1,0 +1,2 @@
+2026-10-27T21:11:53.6789737Z ci-check-perf: 36 finding(s) and FERN_CI_PERF_GATE_STRICT=1
+2026-10-27T21:11:53.6792136Z ##[error]Process completed with exit code 1.
