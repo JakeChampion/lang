@@ -6334,6 +6334,8 @@ function vaguer_than(a: typeinfo.Type, b: typeinfo.Type): boolean {
   return false;
 }
 
+const ARRAY_TUPLE_UNRESOLVED: string = "array tuple elements disagree";
+
 function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
   if (a.elements.len() == 0) {
     if (a.elem_ty.len() > 0) {
@@ -6353,6 +6355,16 @@ function check_array_expr(a: ast.ExprArray, s: Scope): typeinfo.Type {
       first = et;
       first_lit = numeric_literal_kind(a.elements[i]);
       first_expr = a.elements[i];
+      continue;
+    }
+    if (is_tuple_type(first) && is_tuple_type(et) && (type_contains_unknown(first) || type_contains_unknown(et))) {
+      let joined = vb_join(VbStore { t: first, e: first_expr }, VbStore { t: et, e: a.elements[i] });
+      if (is_unknown(joined.t) || !array_mix_settles(first_expr, first, joined.t, s) || !array_mix_settles(a.elements[i], et, joined.t, s)) {
+        return t_unknown(ARRAY_TUPLE_UNRESOLVED);
+      }
+      first = joined.t;
+      first_lit = 0;
+      first_expr = joined.e;
       continue;
     }
     let scalar: typeinfo.Type = scalar_numeric_join(first, et);
@@ -13641,6 +13653,10 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           }
         },
         _ => {
+          // A rejected initializer does not retain an array receiver for later calls.
+          if (unbound_column(recv, ARRAY_TUPLE_UNRESOLVED)) {
+            out = out.append(dg_at("E043", "no method \"" + mfa.field + "\" on unresolved array", mfa.line, mfa.col));
+          }
           out = util.append_diags(out, type_param_method_diags(c, mfa, recv, s));
         }
       }
@@ -14179,7 +14195,7 @@ function scalar_array_mix(a: ast.ExprArray, anchor: typeinfo.Type, s: Scope, out
     }
     let lit: i32 = numeric_literal_kind(a.elements[k]);
     if (!type_contains_unknown(etk) && !literal_gives_way(lit, anchor)) {
-      if (same_element_type(etk, anchor) || literal_gives_way(anchor_lit, etk)) {
+      if (same_element_type(etk, anchor) && (!is_tuple_type(anchor) || type_assignable(etk, anchor, s.unions.unions)) || literal_gives_way(anchor_lit, etk)) {
         anchor = etk;
         anchor_lit = lit;
       } else {
