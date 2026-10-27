@@ -1003,7 +1003,10 @@ findings. Ranked by leverage.
 
   The semantic planner stores standard outcomes in its private body rows.
   Refusals retain their partial state until the planner reports them.
-  Declaration and instance collection boundaries still convert to the legacy record.
+  Declaration and instance collectors retain standard outcomes.
+  Valid templates, external declarations and dropped declarations retain their slots as `Ok(None)`.
+  Declaration counts and instance origins remain aligned.
+  Accepted collections convert once for the remaining legacy prune and cache interfaces.
 
   Runtime callback collections now contain only complete `Lowered` payloads.
   The callback refuses failed declarations and helpers before it returns.

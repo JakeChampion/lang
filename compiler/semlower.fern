@@ -66,10 +66,6 @@ function tally(what: string, why: string): i32 {
   return 0;
 }
 
-function declined(why: string): irtables.LowerResult {
-  return irtables.lower_result(declined_state(why));
-}
-
 function declined_state(why: string): irtables.LowerState {
   return irtables.LowerState {
     source_positions: irtables.no_source(),
@@ -158,6 +154,14 @@ function produced_body(p: semsource.Produced, plan: ssaunits.Plan, structs: irta
 
 function collected_body(body: Result[Option[irtables.Lowered], irtables.LowerState]): irtables.LowerResult {
   return match (body) { Ok(maybe) => match (maybe) { Some(r) => irtables.lowered_result(r), None => superseded() }, Err(state) => irtables.lower_result(state) };
+}
+
+function collected_bodies(bodies: Result[Option[irtables.Lowered], irtables.LowerState][]): irtables.LowerResult[] {
+  let out: irtables.LowerResult[] = [];
+  for body in bodies {
+    out = out.append(collected_body(body));
+  }
+  return out;
 }
 
 function report_rows(r: Rows, prefix: string): i32 {
@@ -503,39 +507,39 @@ function field_spelling(t: typeinfo.Type): string {
   return typeinfo.spelling(t);
 }
 
-struct DeclarationBodies { helpers: ssarc.Helpers, bodies: irtables.LowerResult[], count: i32 }
+struct DeclarationBodies { helpers: ssarc.Helpers, bodies: Result[Option[irtables.Lowered], irtables.LowerState][], count: i32 }
 
 function declaration_bodies(built: semsource.Built, r: Rows): DeclarationBodies {
   let helpers: ssarc.Helpers = ssarc.no_helpers();
-  let bodies: irtables.LowerResult[] = [];
+  let bodies: Result[Option[irtables.Lowered], irtables.LowerState][] = [];
   let n: i32 = 0;
   let i: i32 = 0;
   while (i < built.decls.len()) {
     if (built.decls[i].dropped) {
-      bodies = bodies.append(superseded());
+      bodies = bodies.append(Ok(None));
       n = n + 1;
     } else if (r.keep[i]) {
       helpers = ssarc.with_drop_helpers(helpers, built.decls[i].func);
-      bodies = bodies.append(collected_body(r.body[i]));
+      bodies = bodies.append(r.body[i]);
       n = n + 1;
     } else if (built.decls[i].template && (built.decls[i].ok || built.decls[i].bodyless)) {
-      bodies = bodies.append(declined("generic template"));
+      bodies = bodies.append(Ok(None));
       n = n + 1;
     } else if (built.decls[i].bodyless) {
-      bodies = bodies.append(superseded());
+      bodies = bodies.append(Ok(None));
       n = n + 1;
     } else {
-      bodies = bodies.append(declined(r.why[i]));
+      bodies = bodies.append(Err(declined_state(r.why[i])));
     }
     i = i + 1;
   }
   return DeclarationBodies { helpers: helpers, bodies: bodies, count: n };
 }
 
-struct InstanceBodies { helpers: ssarc.Helpers, bodies: irtables.LowerResult[], origins: physicalbody.Origin[], unspliced: i32 }
+struct InstanceBodies { helpers: ssarc.Helpers, bodies: Result[Option[irtables.Lowered], irtables.LowerState][], origins: physicalbody.Origin[], unspliced: i32 }
 
 function instance_bodies(built: semsource.Built, r: Rows, helpers: ssarc.Helpers): InstanceBodies {
-  let instances: irtables.LowerResult[] = [];
+  let instances: Result[Option[irtables.Lowered], irtables.LowerState][] = [];
   let instance_origins: physicalbody.Origin[] = [];
   let unspliced: i32 = 0;
   let at: i32 = 0;
@@ -544,7 +548,7 @@ function instance_bodies(built: semsource.Built, r: Rows, helpers: ssarc.Helpers
       unspliced = unspliced + 1;
     } else if (r.keep[built.decls.len() + at]) {
       helpers = ssarc.with_drop_helpers(helpers, built.instances[at].func);
-      instances = instances.append(collected_body(r.body[built.decls.len() + at]));
+      instances = instances.append(r.body[built.decls.len() + at]);
       instance_origins = instance_origins.append(physicalbody.Origin { producer: 0, symbol: built.names[built.decls.len() + at], helper: None });
     }
     at = at + 1;
@@ -560,7 +564,6 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
   let decl = declaration_bodies(built, r);
   let inst = instance_bodies(built, r, decl.helpers);
   let helpers = inst.helpers;
-  let bodies = decl.bodies;
   let n = decl.count;
   let instances = inst.bodies;
   let instance_origins = inst.origins;
@@ -576,15 +579,9 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
     + util.i32_to_string(mod.funcs.len()) + " declarations and "
     + util.i32_to_string(instances.len()) + " of "
     + util.i32_to_string(built.instances.len()) + " instances");
-  let i2: i32 = 0;
-  while (i2 < mod.funcs.len()) {
-    if (!bodies[i2].ok && built.decls[i2].template) {
-      bodies = bodies.with(i2, superseded());
-    }
-    i2 = i2 + 1;
-  }
+  let bodies = collected_bodies(decl.bodies);
   let selected: SelectedHelpers = selected_helpers(built, helpers);
-  let merged = ssarc.merge_helpers_mapped(instances, selected.rows);
+  let merged = ssarc.merge_helpers_mapped(collected_bodies(instances), selected.rows);
   let extra_origins = util.append_all(instance_origins, physicalbody.select_origins(selected.origins, merged.helper_indices));
   let kept = semndprune.unused_adapter_mapped(mod, bodies, merged.bodies);
   let declarations: string[] = [];
