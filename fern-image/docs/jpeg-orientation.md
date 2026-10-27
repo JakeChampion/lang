@@ -86,7 +86,33 @@ Run `scripts/test-jpeg-orientation.sh native`, `wasm`, or `arm64` with an absolu
 Set `PYTHON` to the pinned Pillow reference environment.
 Each fresh worker must report one nonzero balanced heap census with zero live blocks.
 Failures retain inputs, output, completed prefixes, and a failed record, and exit nonzero.
-Final source-pinned campaign records and full regression evidence remain pending for this source commit.
+
+The final campaign uses source `ad1101eb2d7efe4cdda85c86d7e6dc296417bbfd`.
+The clean compiler source is `933843468f0bf6ef3d782c85b9e4d348ca312182`, with identical compiler and stdlib files in the campaign checkout.
+Compiler SHA-256 is `6602687e6c7ed8e67633bbc3b627b4ab61a9a461359d31bb090f248782b08610`.
+The standard two-stage build and smoke checks pass.
+Both unchanged complexity gates pass with no skipped cases.
+
+Native, Wasm, and ARM64/QEMU10 each complete all 832 cases in 104 fresh workers.
+All 312 workers report nonzero balanced heap counts and zero live blocks.
+Every target produces the same sample records.
+Pillow repeats all 704 applicable observations per target.
+All 1,246 native and 1,247 runner source/tool hashes remain unchanged, including all compiler and 163 stdlib sources.
+
+The generated bundle reproduces byte-for-byte with SHA-256 `070f7e3713de3b5bea4ad12f70769fb441aad92ade44ec2ba1d81ca505900115`.
+Full image regressions pass 227 TAP cases per target.
+The native/Wasm full scripts pass all smoke, negative, and formatter checks.
+Their 71 native and 47 Wasm heap censuses balance with zero live blocks.
+All 32 standalone ARM executables also report balanced zero-live censuses.
+These ARM checks do not cover the complete Go ARM harness.
+
+The compiler and all regression source hashes remain unchanged.
+All 2,038 Fern format checks, eight protocol controls, build/vet, workflow lint, bundle checks, CI self-tests, and test selectors pass.
+Scope and error contracts remain unchanged after the campaign.
+
+Raw records are [native](../benchmarks/results/jpeg-orientation-native.json),
+[Wasm](../benchmarks/results/jpeg-orientation-wasm.json), and
+[ARM64](../benchmarks/results/jpeg-orientation-arm64.json).
 
 These finite observations do not establish encoded JPEG compatibility, codec parity, color management, universal memory/time bounds, or production acceptance.
 M5 and epic acceptance remain open.
