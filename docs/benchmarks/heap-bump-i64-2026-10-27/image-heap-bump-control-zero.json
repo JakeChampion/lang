@@ -1,0 +1,23 @@
+{
+  "name": "zero",
+  "command": [
+    "go",
+    "test",
+    "-overlay",
+    "/tmp/image-heap-bump-control-zero.overlay.json",
+    "-v",
+    "./internal/testing/e2e",
+    "-run",
+    "^TestX86_64HeapBumpAbove2GiB$",
+    "-count=1",
+    "-timeout=10m"
+  ],
+  "exit": 1,
+  "seconds": 9.472461223602295,
+  "expected_probe_exit": 1,
+  "required_failure": "mark above 2 GiB read back as <= 2^31-1",
+  "mutant_sha256": "aec0b5842fb71d3a5528ccfd747d266a20c1744051ddf538d1b74cbe786effce",
+  "original_source_sha256": "4905c59c30d760e5459df1193c370a07d8d349bdd79e662090479e6e12bda565",
+  "production_source_unchanged": true,
+  "feature_uncommitted": true
+}

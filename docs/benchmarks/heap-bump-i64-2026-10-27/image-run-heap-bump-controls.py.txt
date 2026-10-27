@@ -1,0 +1,15 @@
+from pathlib import Path
+import subprocess,json,time,hashlib,os
+root=Path('/tmp/image-engine-worktrees/lang-image-heap-bump-health');src=root/'internal/testing/e2e/rc_heap_bump_i64_test.go';original=src.read_bytes();text=original.decode();sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+assert not Path('/tmp/image-heap-bump-controls.json').exists()
+records=[]
+for name,expression,want in [('signed-i32','(__heap_bump_bytes() as i32) as i64',1),('zero','0 as i64',1),('one-byte-wrong','__heap_bump_bytes() + (1 as i64)',3)]:
+ prefix=Path('/tmp/image-heap-bump-control-'+name);mutant=prefix.with_suffix('.go');assert not mutant.exists()
+ altered=text.replace('let mark: i64 = __heap_bump_bytes();','let mark: i64 = '+expression+';');assert altered!=text and altered.count('__alloc_u8(1200000000)')==2
+ mutant.write_text(altered);overlay=prefix.with_suffix('.overlay.json');overlay.write_text(json.dumps({'Replace':{str(src):str(mutant)}}))
+ command=['go','test','-overlay',str(overlay),'-v','./internal/testing/e2e','-run','^TestX86_64HeapBumpAbove2GiB$','-count=1','-timeout=10m'];start=time.time()
+ with prefix.with_suffix('.log').open('w')as log:r=subprocess.run(command,cwd=root,stdout=log,stderr=subprocess.STDOUT)
+ output=prefix.with_suffix('.log').read_text();d=dict(name=name,command=command,exit=r.returncode,seconds=time.time()-start,expected_probe_exit=want,required_failure=f'2.4 GB bump probe returned {want}, want 2',mutant_sha256=sha(mutant),original_source_sha256=hashlib.sha256(original).hexdigest(),production_source_unchanged=src.read_bytes()==original,feature_uncommitted=True)
+ prefix.with_suffix('.json').write_text(json.dumps(d,indent=2)+'\n');records.append(d);print(name,r.returncode,flush=True)
+ assert r.returncode==1 and d['required_failure']in output and '--- FAIL: TestX86_64HeapBumpAbove2GiB' in output and '--- SKIP:'not in output and d['production_source_unchanged']
+Path('/tmp/image-heap-bump-controls.json').write_text(json.dumps(records,indent=2)+'\n')

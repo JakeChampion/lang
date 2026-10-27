@@ -1,0 +1,6 @@
+=== RUN   TestX86_64HeapBumpAbove2GiB
+    rc_heap_bump_i64_test.go:57: 2.4 GB bump probe returned 3, want 2
+--- FAIL: TestX86_64HeapBumpAbove2GiB (2.57s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2e	2.579s
+FAIL

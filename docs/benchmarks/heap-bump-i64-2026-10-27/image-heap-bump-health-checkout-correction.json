@@ -1,0 +1,5 @@
+{
+  "before": "sparse info directory absent before checkout; no test or code edit started",
+  "correction": "Create new worktree info directory and materialize tracked files",
+  "source": "23c5bc2e4a5993ffe092d04b5ad1dcf771af0269"
+}

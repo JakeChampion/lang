@@ -1,0 +1,6 @@
+=== RUN   TestX86_64HeapBumpAbove2GiB
+    rc_heap_bump_i64_test.go:55: mark above 2 GiB read back as <= 2^31-1 — the i32 truncation is back
+--- FAIL: TestX86_64HeapBumpAbove2GiB (2.81s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2e	2.813s
+FAIL

@@ -1,0 +1,11 @@
+{
+  "source_commit": "23c5bc2e4a5993ffe092d04b5ad1dcf771af0269",
+  "feature_uncommitted": true,
+  "only_modified_path": "internal/testing/e2e/rc_heap_bump_i64_test.go",
+  "before_sha256": "7109753665074810a9edca4a3ec66cef2241b8118e1df91ada3a45849de29ad7",
+  "candidate_sha256": "4905c59c30d760e5459df1193c370a07d8d349bdd79e662090479e6e12bda565",
+  "original_workload_occurrences": 2,
+  "lower_bounds_unchanged": true,
+  "exact_reservation_bytes": 2684354560,
+  "compiler_std_unchanged": true
+}
