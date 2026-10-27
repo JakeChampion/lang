@@ -1223,7 +1223,7 @@ appendix §6.)
   it, #6756) has no counterpart in `asm_load_run`'s flat `add_imports`. Folding
   those together is a behaviour change to the asm loader, so it is its own
   change.
-- [~] **SH-056 — the shared preamble landed; the shims themselves are pinned.**
+- [x] **SH-056 — the shared preamble and dead-shim cleanup are complete.**
   _Done:_ one dead file deleted (`tmp_wprobe_run.fern` — a leftover probe no
   test, script, workflow or doc referenced), and the 17 stdin-driven drivers
   now share `rundriver.parse_stdin(driver)` instead of copying its three lines
@@ -1248,12 +1248,12 @@ appendix §6.)
   green because the warning goes to stderr and those tests assert on
   diagnostics and exit codes.
 
-  _Still open:_ retiring shims. Every remaining `*_run.fern` is referenced by a
-  Go test, script or workflow — checked by name across the tree — so the count
-  is not reducible by deletion. The two keeper groups this row already names
-  (golden-test drivers pinned by a Go test; a `main()` inside a library module
-  as the in-file test idiom) account for the rest. **The `main()` count is not
-  a debt number** and chasing it down is not an improvement.
+  _2026-10 verification:_ all 77 current `*_run.fern` entry points have a Go test, script or workflow reference.
+  The inventory includes filenames that tests construct from a driver name and the `.fern` extension.
+  For example, `TestSelfHostRetainedNativeBodies` constructs the paths for both retained-body drivers.
+  No unreferenced shim remains under this row.
+  Keep the golden-test drivers and in-file test entry points that this row exempts.
+  Their count does not identify redundant code.
 
 - [x] **SH-058 — `wasm_ir.fern` `emit_function_ir`**, the largest function named
   anywhere in this audit. **1254 → 84 lines (−93%)**: four slices each lifting
