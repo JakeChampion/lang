@@ -983,6 +983,16 @@ findings. Ranked by leverage.
   The candidate also matches those native baseline outputs on ARM64 and Wasm.
   A refused constructor retains its lift state.
 
+  IR construction uses a separate `LowerState` record.
+  The public `LowerResult` shape remains unchanged in this preparatory step.
+  State conversion retains operation buffers, slot classes, debug names, source positions and refusal status.
+  Declaration alignment and parameter counts pass contract checks on three targets.
+  Inline and `no_inline` modes each retain all body fields across twelve before/after comparisons.
+  The native baseline outputs match candidate outputs on ARM64 and Wasm.
+
+  Four physical proof suites pass on x86-64 and Wasm with balanced allocations.
+  The final result migration still needs distinct declined, superseded and produced outcomes.
+
   _Rest of this row:_ the bespoke `*Result` structs remain.
   Generic functions no longer block these migrations.
   T6/SH-026 is complete, and its four signature lookup families use standard options.

@@ -112,7 +112,7 @@ function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
   return joined(ops, [ir.op_load_local(base), ir.op_load_local(index), ir.op_raw_load8()]);
 }
 
-pub function lower_reads(own r: irtables.LowerResult): irtables.LowerResult {
+pub function lower_state_reads(own r: irtables.LowerState): irtables.LowerState {
   let call_direct: i32 = ir.K_CALL_DIRECT;
   let reads: boolean = false;
   for op in r.ops {
@@ -162,7 +162,7 @@ pub function lower_reads(own r: irtables.LowerResult): irtables.LowerResult {
       }
     }
   }
-  return irtables.LowerResult { ...r, ops: ops, n_locals: next + 1 };
+  return irtables.LowerState { ...r, ops: ops, n_locals: next + 1 };
 }
 
 // `width` is the element width the array lowering uses: 8 for bytes, 64 for
@@ -197,8 +197,8 @@ function data_name(): string {
   return "__sem_view_data";
 }
 
-function body(name: string, params: i32, locals: i32, ops: ir.Op[]): irtables.LowerResult {
-  return irtables.LowerResult {
+function body(name: string, params: i32, locals: i32, ops: ir.Op[]): irtables.LowerState {
+  return irtables.LowerState {
     source_positions: irtables.no_source(),
     ok: true, why: "", ops: ops, n_locals: locals, n_params: params,
     erased_wide: false, superseded: false, arr_slots: [], i64_slots: [],
@@ -222,7 +222,7 @@ function joined(own left: ir.Op[], right: ir.Op[]): ir.Op[] {
   return left;
 }
 
-function reader(name: string, string_ops: ir.Op[], array_ops: ir.Op[], params: i32): irtables.LowerResult {
+function reader(name: string, string_ops: ir.Op[], array_ops: ir.Op[], params: i32): irtables.LowerState {
   let ops: ir.Op[] = joined(tagged(), string_base());
   ops = joined(ops, string_ops);
   ops = joined(ops, [ir.op_return(), ir.op_end(), ir.op_load_local(0)]);
@@ -230,15 +230,15 @@ function reader(name: string, string_ops: ir.Op[], array_ops: ir.Op[], params: i
   return body(name, params, params, ops.append(ir.op_return()));
 }
 
-function length(): irtables.LowerResult {
+function length(): irtables.LowerState {
   return reader(length_name(), [ir.view_string(ir.op_str_len())], [ir.op_arr_len()], 1);
 }
 
-function data(): irtables.LowerResult {
+function data(): irtables.LowerState {
   return reader(data_name(), [ir.view_string(ir.op_str_data())], [ir.op_const_i32(8), ir.op_raw_addr()], 1);
 }
 
-function release(): irtables.LowerResult {
+function release(): irtables.LowerState {
   return reader(release_name(), [ir.op_call_direct("__fern_str_view_free", 1)], [ir.op_call_direct("__fern_rc_dec", 1)], 1);
 }
 
@@ -250,7 +250,7 @@ function range_abort_if(own ops: ir.Op[]): ir.Op[] {
   return joined(ops, [ir.op_if(0), ir.op_call_direct("__fern_slice_abort", 0), ir.op_drop(), ir.op_end()]);
 }
 
-function slice(width: i32): irtables.LowerResult {
+function slice(width: i32): irtables.LowerState {
   let ops: ir.Op[] = [ir.op_load_local(1), ir.op_const_i32(0), ir.op_bin("lt_s", 0, false)];
   ops = range_abort_if(ops);
   ops = joined(ops, [ir.op_load_local(2), ir.op_load_local(1), ir.op_bin("lt_s", 0, false)]);
@@ -295,7 +295,7 @@ pub function crc32_ieee_name(): string {
   return "__sem_byte_view_crc32_ieee";
 }
 
-function crc32_view(name: string, string_op: ir.Op, array_op: ir.Op): irtables.LowerResult {
+function crc32_view(name: string, string_op: ir.Op, array_op: ir.Op): irtables.LowerState {
   return body(name, 2, 2, [
     ir.op_load_local(1), ir.op_const_i32(0), ir.op_bin("eq", ir.width_ptr(), false), ir.op_if(0),
     ir.op_load_local(0), ir.op_return(), ir.op_end(),
@@ -306,11 +306,11 @@ function crc32_view(name: string, string_op: ir.Op, array_op: ir.Op): irtables.L
   ]);
 }
 
-function crc32(): irtables.LowerResult {
+function crc32(): irtables.LowerState {
   return crc32_view(crc32_name(), ir.op_crc32_cksum(), ir.op_crc32_cksum_array());
 }
 
-function crc32_ieee(): irtables.LowerResult {
+function crc32_ieee(): irtables.LowerState {
   return crc32_view(crc32_ieee_name(), ir.op_crc32_ieee(), ir.op_crc32_ieee_array());
 }
 
@@ -319,7 +319,7 @@ pub function mismatch_name(): string {
   return "__sem_byte_view_mismatch";
 }
 
-function mismatch(): irtables.LowerResult {
+function mismatch(): irtables.LowerState {
   let a: ir.Op[] = [ir.op_load_local(0), ir.op_const_i32(0 - 2), ir.op_raw_addr()];
   let b: ir.Op[] = [ir.op_load_local(2), ir.op_const_i32(0 - 2), ir.op_raw_addr()];
   let ops: ir.Op[] = [ir.op_load_local(0), ir.op_const_i32(2), ir.op_bin("and", 0, false), ir.op_if(0)];
@@ -346,11 +346,11 @@ pub function bsd_name(): string {
   return "__sem_byte_view_bsd";
 }
 
-function sum(): irtables.LowerResult {
+function sum(): irtables.LowerState {
   return reader(sum_name(), [ir.op_sum_bytes()], [ir.packed(ir.op_sum_bytes_array())], 1);
 }
 
-function bsd(): irtables.LowerResult {
+function bsd(): irtables.LowerState {
   return reader(bsd_name(), [ir.op_load_local(1), ir.op_bsd_sum()], [ir.op_load_local(1), ir.packed(ir.op_bsd_sum_bytes())], 2);
 }
 
@@ -360,7 +360,7 @@ pub function string_name(): string {
   return "__sem_byte_view_string";
 }
 
-function string_copy(): irtables.LowerResult {
+function string_copy(): irtables.LowerState {
   return reader(string_name(), [ir.op_const_str(""), ir.op_str_concat()], [ir.packed(ir.op_str_from_bytes())], 1);
 }
 
@@ -384,6 +384,18 @@ pub function served_builtin(helper: string): string {
   return "";
 }
 
-pub function helpers(): irtables.LowerResult[] {
+pub function state_helpers(): irtables.LowerState[] {
   return [length(), data(), slice(8), slice(32), slice(64), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd(), string_copy()];
+}
+
+pub function lower_reads(own r: irtables.LowerResult): irtables.LowerResult {
+  return irtables.lower_result(lower_state_reads(irtables.lower_state(r)));
+}
+
+pub function helpers(): irtables.LowerResult[] {
+  let out: irtables.LowerResult[] = [];
+  for row in state_helpers() {
+    out = out.append(irtables.lower_result(row));
+  }
+  return out;
 }
