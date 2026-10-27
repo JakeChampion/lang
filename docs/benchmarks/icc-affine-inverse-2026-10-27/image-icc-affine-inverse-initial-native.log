@@ -1,0 +1,15 @@
+TAP version 13
+# Suite: ICC bounded affine inverses
+ok 1 - ICC affine inverse identity bits
+ok 2 - ICC affine inverse arithmetic controls
+ok 3 - ICC affine inverse flat and range policy
+ok 4 - ICC affine inverse fresh admission
+ok 5 - ICC affine inverse cooperative cancellation
+ok 6 - ICC affine inverse COW and fresh calls
+ok 7 - ICC affine inverse exact range phase
+ok 8 - ICC affine inverse domain boundaries
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=671 frees=671 live_bytes=0

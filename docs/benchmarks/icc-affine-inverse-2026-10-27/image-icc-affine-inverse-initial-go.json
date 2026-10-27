@@ -1,0 +1,23 @@
+{
+  "source_commit": "655a9ba0d49fde65c6182de6996097918ca10ec2",
+  "feature_uncommitted": true,
+  "oracle_source_commit": "8cb3ccf00e945ffda49c889e6cb5b037ebc2976b",
+  "Go_compiler_std_implementation_identical": true,
+  "hashes": {
+    "/workspace/image-icc-matrix-solve-final-go-oracle": "c551828318828afd1f74c82a1963f2f59d4fcddad49299467c31d7d5628a6f28",
+    "/workspace/lang-image-icc-affine-inverse/fern-image/packages/codecs/icc/affine_inverse.fern": "5f0fd77fd34f78a159384743739f2e80614879d7cb99a16595410d5b3f106388",
+    "/workspace/lang-image-icc-affine-inverse/fern-image/tests/icc_affine_inverse_test.fern": "abc5f83eec8a81cc0466ed9f1d8f8b015ea69196024f7b1c741c2dc25e715b48"
+  },
+  "commands": [
+    {
+      "mode": "check",
+      "exit": 0
+    },
+    {
+      "mode": "interp",
+      "exit": 0
+    }
+  ],
+  "seconds": 6.328864574432373,
+  "sources_unchanged": true
+}

@@ -1,0 +1,37 @@
+{
+  "source_commit": "655a9ba0d49fde65c6182de6996097918ca10ec2",
+  "feature_uncommitted": true,
+  "commands": [
+    {
+      "command": [
+        "/workspace/image-tuple-array-current-fern-9c4085d83",
+        "-check",
+        "tests/icc_affine_inverse.fern"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "/workspace/image-tuple-array-current-fern-9c4085d83",
+        "-target",
+        "x86-64-linux",
+        "-sanitize",
+        "-o",
+        "build/icc-affine-inverse-smoke-native",
+        "tests/icc_affine_inverse.fern"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "python3",
+        "tests/qualify_icc_affine_inverse.py",
+        "build/icc-affine-inverse-smoke-native",
+        "/workspace/image-tuple-array-current-fern-9c4085d83",
+        "build/icc-affine-inverse-smoke-native.json"
+      ],
+      "exit": 0
+    }
+  ],
+  "seconds": 3.3628413677215576
+}

@@ -74,3 +74,13 @@ Wider affine domains, piecewise inverse forms, destination composition, adaptati
 No external runtime CMM accompanies this standalone kernel.
 Finite observations do not establish universal precision, compatibility, performance, physical/process bounds, hard deadlines, or production readiness.
 The [official ICC specification](https://www.color.org/specifications/ICC.1-2022-05.pdf) gives the current formulas in Table 68 and inverse-curve policies in Annex F.1.
+
+## Final observations
+
+Each target passed 1,581 committed-source cases through 198 fresh workers.
+All 594 workers exited normally with nonzero balanced zero-live heaps.
+Target sample records match exactly.
+
+The largest observed absolute error is `1.7056711454934297e-16`, within the unchanged finite criterion.
+All three full regression runs passed 310 TAP tests.
+The [qualification record](../../docs/benchmarks/icc-affine-inverse-2026-10-27/README.md) retains source identities, raw evidence, and limitations.

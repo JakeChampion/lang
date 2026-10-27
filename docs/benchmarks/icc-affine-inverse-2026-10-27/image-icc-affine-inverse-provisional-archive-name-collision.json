@@ -1,0 +1,7 @@
+{
+  "rejected_destination": "image-icc-affine-inverse-provisional-native.json",
+  "reason": "Existing wrapper coordinator metadata. The no-overwrite assertion stopped the copy.",
+  "existing_file_preserved": true,
+  "raw_record_copied_to": "image-icc-affine-inverse-expanded-provisional-native.json",
+  "worker_copied_to": "image-icc-affine-inverse-expanded-provisional-native.worker"
+}

@@ -1,0 +1,14 @@
+{
+  "source_commit": "655a9ba0d49fde65c6182de6996097918ca10ec2",
+  "feature_uncommitted": true,
+  "command": [
+    "python3",
+    "tests/qualify_icc_affine_inverse.py",
+    "build/icc-affine-inverse-smoke-native",
+    "/workspace/image-tuple-array-current-fern-9c4085d83",
+    "build/icc-affine-inverse-expanded-smoke-native.json"
+  ],
+  "exit": 0,
+  "seconds": 2.9031736850738525,
+  "worker_reused_after_source_compiler_binary_hash_identity_guard": true
+}
