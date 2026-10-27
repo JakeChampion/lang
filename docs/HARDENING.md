@@ -21,6 +21,7 @@ and unwind tables load read-execute; constant boxes, globals and BSS load
 read-write. Neither load segment is both writable and executable.
 The Linux x86 and arm64 images declare a non-executable stack with `PT_GNU_STACK`.
 The arm64 PIE writer declares the same stack permissions.
+A shared object keeps the same split and marks its dynamic tables with `PT_GNU_RELRO`, which the loader maps read-only after relocation (`docs/security/IMAGE-PERMISSIONS.md`).
 
 The x86-64 assembler relaxes branches before the linker chooses the
 4 KiB-aligned data address, then resolves both RIP-relative references and

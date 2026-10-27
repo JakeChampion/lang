@@ -1058,13 +1058,13 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
     return arm64_refusals(target, "assembler", p.unknown);
   }
   let text_len: i32 = p.asm.text.len();
-  let tv: i32 = elf.elf_text_off_so(true);
+  let tv: i32 = elf.elf_text_off_so();
   let hdr_len: i32 = arm64_native.arm64_eh_frame_hdr_len(p);
-  let hv: i32 = elf.elf_eh_hdr_off_so(true, text_len);
-  let ev: i32 = elf.elf_eh_frame_off_so(true, text_len, hdr_len);
+  let hv: i32 = elf.elf_eh_hdr_off_so(text_len);
+  let ev: i32 = elf.elf_eh_frame_off_so(text_len, hdr_len);
   let eh: i32[] = arm64_native.arm64_eh_frame(p, tv as i64, ev as i64);
   let hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, tv as i64, ev as i64, hv as i64);
-  let dv: i32 = elf.elf_data_off_so_wx(text_len, hdr.len(), eh.len());
+  let dv: i32 = elf.elf_data_off_so(text_len, hdr.len(), eh.len());
   p = arm64_native.arm64_gas_link(p, tv as i64, dv as i64);
   if (p.unknown.len() > 0) {
     return arm64_refusals(target, "linker", p.unknown);
@@ -1087,14 +1087,20 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
     vals = vals.append(tv + sym_offs[k]);
     sizes = sizes.append(sym_sizes[k]);
   }
-  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), true, elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
 function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string): string {
-  let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words(asm, words);
-  let tv: i32 = elf.elf_text_off_so(false);
-  a = x86_native.x86_resolve_data(a, tv);
+  let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words_unlinked(asm, words);
+  let tv: i32 = elf.elf_text_off_so();
+  let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
+  let hv: i32 = elf.elf_eh_hdr_off_so(a.text.len());
+  let ev: i32 = elf.elf_eh_frame_off_so(a.text.len(), hdr_len);
+  let eh: i32[] = x86_native.x86_eh_frame(a, tv as i64, ev as i64);
+  let hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv as i64, ev as i64, hv as i64);
+  let data_at: i32 = elf.elf_data_off_so(a.text.len(), hdr.len(), eh.len());
+  a = x86_native.x86_link(a, tv, data_at);
   if (a.afix_offs.len() > 0 && a.unknown.len() == 0) {
     a = x86_native.X86Asm { ...a, unknown: ["an absolute code address in a shared object: " + a.afix_names[0]] };
   }
@@ -1102,12 +1108,6 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     eprint("fern: -target x86-64-linux: in-process assembler could not encode: " + a.unknown[0]);
     return "";
   }
-  let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
-  let hv: i32 = elf.elf_eh_hdr_off_so(false, a.text.len());
-  let ev: i32 = elf.elf_eh_frame_off_so(false, a.text.len(), hdr_len);
-  let eh: i32[] = x86_native.x86_eh_frame(a, tv as i64, ev as i64);
-  let hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv as i64, ev as i64, hv as i64);
-  let data_at: i32 = tv + x86_native.x86_data_base(a, a.text.len());
   let rel_offs: i32[] = [];
   let rel_adds: i64[] = [];
   for off in a.dfix_offs {
@@ -1125,7 +1125,7 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     vals = vals.append(tv + sym_offs[k]);
     sizes = sizes.append(sym_sizes[k]);
   }
-  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), false, elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
