@@ -1,0 +1,9 @@
+{
+  "observed_process": 591466,
+  "parent_process": 591249,
+  "script_base": "5b275901e871a308b29bceec604e69200416bdc2",
+  "files": {
+    "compiler": "b542b3649fa853b336d2afbe2f0bfbd441a55b685efb418f3e26bb005dc054ef",
+    "lift.fern": "97489681ba4b09ad0ab750732f054fb0c5c797320aa4b3d04e8a36ca0238bb9b"
+  }
+}

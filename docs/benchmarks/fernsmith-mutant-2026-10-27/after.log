@@ -1,0 +1,35 @@
+make: 'bin/fern' is up to date.
+fernsmith-mutant: building the mutant compiler
+=== RUN   TestFernsmithShrinksAPlantedMiscompile
+    fernsmith_mutant_test.go:85: caught at corpus 2; 8192 corpus bytes shrank to 64 in 41 tries; program 2010 bytes to 271; interpreter exit 239, mutant exit 209
+        import "std/i32";
+        import "std/i64";
+        import "std/u32";
+        import "std/u64";
+        import "std/string";
+        import "std/array";
+        import "core/int";
+        import "core/map";
+        struct Pair { fst: i32, snd: i32 }
+        struct Xyz { n: i32, valid: boolean }
+        enum Color { Red, Green, Blue }
+        enum Status { Active, Inactive, Pending }
+        function (p: Pair) sum(): i32 { return (p.fst + p.snd); }
+        function (p: Pair) swap(): Pair { return (Pair { fst: p.snd, snd: p.fst }); }
+        function id[T](x: T): T { return x; }
+        function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
+        struct S0 { f0: string, f1: string, f2: string }
+        struct S1 { f0: i32, f1: string, f2: string }
+        enum E0 { __E0_V0, __E0_V1, __E0_V2, __E0_V3 }
+        enum E1 { __E1_V0(i64, string), __E1_V1, __E1_V2, __E1_V3 }
+        struct G0[T] { v: T, n: i32 }
+        function (g: G0[T]) get(): T { return g.v; }
+        function (g: G0[T]) bump(k: i32): G0[T] { return G0 { ...g, n: ((g.n * 3i32) + k) }; }
+        enum GO0[T] { __G0_Nil, __G0_Has(T, i32) }
+        function (o: GO0[T]) or(d: T): T { match (o) { __G0_Has(x, _) => { return x; }, __G0_Nil => { return d; } } }
+        function (o: GO0[T]) count(): i32 { match (o) { __G0_Has(_, k) => { return k; }, __G0_Nil => { return 0i32; } } }
+        function gmk0[T](v: T, n: i32): G0[T] { return G0 { v: v, n: n }; }
+        function main(): i32 { let __clo_c0: i32 = 107i32; let __clo_f0: (i32) => i32 = ((__lam_x0: i32) => ((__lam_x0 - __clo_c0) ^ 476i32)); let __clo_r0: i32 = [__clo_f0][0i32](((702u32) as i32)); return (__clo_c0 + ((0i32 * 31i32 + __clo_c0) * 31i32 + __clo_r0) & 255i32); }
+--- PASS: TestFernsmithShrinksAPlantedMiscompile (60.91s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	60.919s
