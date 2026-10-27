@@ -1414,7 +1414,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-O", "", "release build: elide every assert() check"),
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
       cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export (default main)"),
-      cli_flag("-harden", "", "arm64-linux and x86-64-linux executables: stack canaries and a check on every indirect call; on arm64 also BTI landing pads and signed return addresses"),
+      cli_flag("-harden", "", "arm64-linux and x86-64-linux executables: stack canaries and a check on every indirect call; on arm64 also BTI landing pads and signed return addresses, on x86-64 the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
       cli_flag("-heap-limit", "SIZE", "native executables: the heap arena size, 1M to 16G with a K, M or G suffix (default 16G); a full arena exits 125"),
     ] },

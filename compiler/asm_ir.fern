@@ -10713,6 +10713,7 @@ function emit_process_entry(mod: parser.Module, own s: asmcore.EmitState): asmco
     s = emit_stack_switch(s);
     if (s.harden) {
       s = emit_canary_init(s);
+      s = emit_shadow_stack_enable(s);
     }
   }
   if (s.profile > 0) {
@@ -10798,6 +10799,18 @@ function emit_canary_init(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    leaq __fern_canary(%rip), %rdi\n    movl $8, %esi\n    xorl %edx, %edx\n    movl $318, %eax\n");
   s = s.syscall(318);
   return s.write("    cmpq $8, %rax\n    jne .Lfern_canary_read_failed\n");
+}
+
+// arch_prctl(ARCH_SHSTK_ENABLE, ARCH_SHSTK_SHSTK) turns the shadow stack on
+// where the processor and the kernel have it, and ARCH_SHSTK_LOCK then keeps
+// it on. A kernel without the feature answers an error, which leaves the
+// process as it was. std/mitigations reports the outcome.
+function emit_shadow_stack_enable(own s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    movl $20481, %edi\n    movl $1, %esi\n    movl $158, %eax\n");
+  s = s.syscall(158);
+  s = s.write("    testq %rax, %rax\n    jnz .Lfern_shstk_off\n    movl $20483, %edi\n    movl $1, %esi\n    movl $158, %eax\n");
+  s = s.syscall(158);
+  return s.write(".Lfern_shstk_off:\n");
 }
 
 function emit_startup_failure(own s: asmcore.EmitState, label: string, msg: string): asmcore.EmitState {

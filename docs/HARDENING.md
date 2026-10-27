@@ -109,6 +109,15 @@ pad, which is any address that is not an address-taken function, prints
 status 134. The stubs sit in the read-only text segment. The design and its
 limits are in `docs/security/CFI.md`.
 
+## The x86-64 shadow stack
+
+After the stack switch and the canary read, a hardened x86-64-linux
+program asks the kernel for the shadow stack with `arch_prctl` and locks
+it on. A kernel or a processor without the feature answers `EINVAL`, and
+the program continues as before. Every call and return the backend emits
+is balanced, so an active shadow stack changes nothing but the fault on an
+overwritten return address. The record is `docs/security/SHADOW-STACK.md`.
+
 ## Stack canaries
 
 Both native backends store a canary in every function that owns a frame with
@@ -137,6 +146,12 @@ A `-backtrace` abort must print plain code addresses without signature bits.
 forged builds. They point a function value at the real entry, at a function
 with the same signature whose address is never taken, and at a data address.
 Each must print the cause and exit 134.
+
+`TestSelfHostShadowStack` requires the `arch_prctl` request in the
+hardened x86-64 image and not in the plain one, prints the process's
+thread features, and hijacks a return address through the emitted
+assembly. The hijack must fault where the shadow stack is active and exit
+7 where it is not.
 
 `TestSelfHostStackCanary` builds a function with saved registers and spill
 slots under `-harden` on both targets. It checks the prologue store and the
@@ -187,11 +202,13 @@ with it active. It reads the kernel's own records and infers nothing from the em
   export entry a `bti c`.
 - **arm64-android**: the PIE image writer has no fourth program header yet.
 - **arm64-darwin**: Apple's arm64e ABI, not BTI, is the mechanism there.
-- **x86-64 CET**: the kernel enables user-space IBT for no static binary,
-  and the shadow stack is enabled through `arch_prctl` at startup. Both are
-  their own design. On x86-64 `-harden` is the canary and the software
-  check on every indirect call. The `endbr64` each stub carries is the
-  entry IBT requires, but the image carries no IBT property note.
+- **x86-64 IBT**: the kernel enforces no user-space IBT. The `endbr64`
+  each stub carries is the entry it requires, the image carries no IBT
+  property note, and `std/mitigations` reports the state from the
+  kernel's records (`docs/security/SHADOW-STACK.md`).
+- **x86-64 shadow stack fault test**: a hardened program asks the kernel
+  for the shadow stack at startup, and the request is verified only on a
+  host whose kernel and processor have it.
 - **RELRO**: a static image with no relocations has no GOT for RELRO to
   protect. A `-pie` image relocates its data words at startup and leaves
   them in the writable segment, so a read-only segment after relocation is

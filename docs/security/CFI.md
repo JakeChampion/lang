@@ -53,5 +53,5 @@ go test ./internal/testing/e2ecompiler -run 'TestSelfHostForwardEdgeCFI|TestSelf
 - The check is on the target, not on the signature. A forged pointer to another address-taken function with a different signature passes the check and misreads its arguments.
 - The backward edge is the stack canary and, on arm64, the signed return address. The x86-64 shadow stack is SEC-030.
 - The runtime's own indirect branches, the signal trampolines and the C shim, do not check their targets. Their targets are stubs or C code.
-- The x86-64 image carries no IBT property note. Emitting it, and the honest report of whether the kernel enforces it, is SEC-031.
+- The x86-64 image carries no IBT property note, and Linux enforces no user-space IBT ([SHADOW-STACK.md](SHADOW-STACK.md)).
 - A `-shared` object refuses `-harden`, so an export reached through the dynamic loader has no stub.
