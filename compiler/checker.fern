@@ -11605,7 +11605,9 @@ function dupvar_diags(stmts: ast.Stmt[]): util.Diag[] {
     match (stmt) {
       ast.StmtVar(v) => {
         if (util.has_str(declared, v.name)) {
-          out = out.append(duplicate_var_diag(stmts, v));
+          if (!ast.var_binds_itself(v)) {
+            out = out.append(duplicate_var_diag(stmts, v));
+          }
         } else {
           declared = declared.append(v.name);
         }

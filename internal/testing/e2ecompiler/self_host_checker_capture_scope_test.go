@@ -34,7 +34,11 @@ func TestSelfHostCheckerCaptureScopeSequenceX86_64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			src := "function v(): void { return; }\nfunction main(): i32 { " + tc.body + " return 0; }"
 			want := strings.TrimSuffix(strings.Repeat("E044,", tc.want), ",")
-			if got := strings.Join(goCheckerDiagCodes(t, dir, src), ","); got != want {
+			var goCodes []string
+			for _, d := range goCheckerDiags(t, dir, src) {
+				goCodes = append(goCodes, d.code)
+			}
+			if got := strings.Join(goCodes, ","); got != want {
 				t.Fatalf("Go checker diagnostics = %q, want %q", got, want)
 			}
 			cmd := exec.Command(bin)
@@ -49,6 +53,46 @@ func TestSelfHostCheckerCaptureScopeSequenceX86_64(t *testing.T) {
 			}
 			if got := strings.Join(codes, ","); got != want {
 				t.Errorf("self-host diagnostic sequence = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestSelfHostCheckerDeclarationScopeSequenceX86_64(t *testing.T) {
+	bin, runner, dir := buildCheckerCodesBin(t)
+	cases := []struct {
+		name string
+		body string
+		want string
+	}{
+		{"variable-then-function", `let x = v(); function x(): i32 { let inner = (): i32 => x(); return 0; }`, ""},
+		{"function-then-function", `function x(): i32 { return 1; } function x(): i32 { return 2; }`, ""},
+		{"function-then-variable", `function x(): i32 { return 1; } let x = 2;`, "E013"},
+		{"variable-then-variable", `let x = 1; let x = 2;`, "E013"},
+		{"variable-then-arrow", `let x = 1; let x = (): i32 => 2;`, "E013"},
+		{"inner-variable-shadow", `let x = 1; if (true) { let x = 2; }`, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "function v(): void { return; }\nfunction main(): i32 { " + tc.body + " return 0; }"
+			var goCodes []string
+			for _, d := range goCheckerDiags(t, dir, src) {
+				goCodes = append(goCodes, d.code)
+			}
+			if got := strings.Join(goCodes, ","); got != tc.want {
+				t.Fatalf("Go checker diagnostic sequence = %q, want %q", got, tc.want)
+			}
+			cmd := exec.Command(bin)
+			if len(runner) > 0 {
+				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), bin)...)
+			}
+			cmd.Stdin = strings.NewReader(src)
+			var codes []string
+			for _, d := range driverDiags(runCheckerDriver(t, cmd, tc.name)) {
+				codes = append(codes, d.code)
+			}
+			if got := strings.Join(codes, ","); got != tc.want {
+				t.Errorf("self-host diagnostic sequence = %q, want %q", got, tc.want)
 			}
 		})
 	}
@@ -73,6 +117,8 @@ func TestSelfHostCheckerCaptureScopeWasm(t *testing.T) {
 		{"match-shadow", `let x = v(); match (Some(42)) { Some(x) => { let inner = () => x; }, None => {} }`, 0},
 		{"match-guard-capture", `let x = v(); match (Some(42)) { Some(n) when (((): boolean => { let ignored = x; return true; })()) => {}, Some(_) => {}, None => {} }`, 1},
 		{"value-block", `let x = v(); let n: i32 = if (true) { let inner = () => x; 0 } else { 0 };`, 1},
+		{"variable-then-function", `let x = v(); function x(): i32 { let inner = (): i32 => x(); return 0; }`, 0},
+		{"function-then-function", `function x(): i32 { return 1; } function x(): i32 { return 2; }`, 0},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
