@@ -946,6 +946,22 @@ findings. Ranked by leverage.
   Forty paired probes per input cover valid programs with ordinary returns, `use` forms, and C-style loops.
   Their candidate/baseline time ratios range from 1.001 to 1.009, without a general compiler speed claim.
 
+  Assignment recognition now returns `Option[AssignParts]` without placeholder expressions.
+  Match-arm output retains the recognized value instead of a second lookup.
+  Chain output matches every assignment before it reads its payload.
+  An empty or malformed chain retains its statements as a block.
+  This prevents the empty-chain bounds failure and placeholder output for invalid chain metadata.
+
+  All 113 format cases retain exact output and lint scores, and their output matches the Go formatter.
+  Seven malformed-chain cases compare the chain fallback with the same statements in a block.
+  These contracts execute on x86-64, ARM64, and Wasm.
+  The native sanitizer reports 1,758 allocations and releases, with zero live bytes.
+
+  Forty paired probes per input use valid programs with ordinary returns, assignment chains, or match values.
+  Candidate/baseline time ratios range from 0.961 to 0.995.
+  These probes include the parser, formatter, and complete output.
+  They establish no general compiler speed change.
+
   The closure lifter also uses `Option[FuncDecl]` for function construction.
   Both captured closures and named-function wrappers share that result type.
   A declined transformation returns `None` without a placeholder declaration.
