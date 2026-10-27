@@ -347,10 +347,13 @@ pub function access_site(fa: ast.ExprFieldAccess): Site {
   return Site { name: name, qual: "", target: "", line: fa.line, col: fa.col + 1, len: name.len(), name_col: fa.col + 1, dot_col: fa.col, prev: "." };
 }
 
-pub function call_parts(v: checker.QueryView, site: Site): (Parts, boolean) {
+// None permits a module fallback.
+// Some(None) identifies a located expression without a signature.
+// Some(Some(parts)) contains a located signature.
+pub function call_parts(v: checker.QueryView, site: Site): Option[Option[Parts]] {
   let f: Found = locate(v, site);
   if (f.kind == K_NONE) {
-    return (no_parts(), false);
+    return None;
   }
   let fd: parser.FuncDecl = v.mod.funcs[f.fd];
   let s: checker.Scope = scope_at(v, fd, site);
@@ -358,23 +361,23 @@ pub function call_parts(v: checker.QueryView, site: Site): (Parts, boolean) {
     ast.ExprIdent(id) => {
       let (_, local) = binding_of(fd, site);
       let Some(sig) = checker.func_sig(s, id.name) else {
-        return (no_parts(), true);
+        return Some(None);
       };
-      if (local && f.kind == K_IDENT || sig.is_const) {
-        return (no_parts(), true);
+      if (local && f.kind == K_IDENT || sig.is_const || sig.name.len() == 0) {
+        return Some(None);
       }
-      return (func_parts(sig), true);
+      return Some(Some(func_parts(sig)));
     },
     ast.ExprCall(c) => {
       if let ast.ExprFieldAccess(fa) = c.callee {
         if (enum_qualifier(s, fa).len() == 0) {
-          return (member_parts(s, checker.expr_type(fa.obj, s), fa.field), true);
+          return Some(member_parts(s, checker.expr_type(fa.obj, s), fa.field));
         }
       }
     },
     _ => {}
   }
-  return (no_parts(), true);
+  return Some(None);
 }
 
 pub function enclosing(mod: parser.Module, toks: Tok[], m: i32, line: i32, col: i32): i32 {
@@ -650,60 +653,59 @@ function method_text(s: checker.Scope, fa: ast.ExprFieldAccess): string {
   if let typeinfo.TypeArray(_) = t {
     owner = "Array";
   }
-  let parts: Parts = member_parts(s, t, fa.field);
-  if (!parts.found) {
-    return "";
-  }
+  let parts: Parts = match (member_parts(s, t, fa.field)) { Some(value) => value, None => { return ""; } };
   return "(method on " + owner + ") " + parts_text(fa.field, parts);
 }
 
-pub struct Parts { found: boolean, params: string[], ret: string }
-
-pub function no_parts(): Parts {
-  return Parts { found: false, params: [], ret: "" };
-}
+pub struct Parts { params: string[], ret: string }
 
 pub function parts_text(name: string, parts: Parts): string {
   return "function " + name + "(" + joined(parts.params) + "): " + parts.ret;
 }
 
 pub function func_parts(sig: checker.FuncSig): Parts {
-  return Parts { found: sig.name.len() > 0, params: label_list(sig.param_types, sig.param_type_names, 0), ret: label(sig.ret_type, sig.ret_type_name) };
+  return Parts { params: label_list(sig.param_types, sig.param_type_names, 0), ret: label(sig.ret_type, sig.ret_type_name) };
 }
 
 pub function method_parts(ms: checker.MethodSig): Parts {
-  return Parts { found: ms.name.len() > 0, params: label_list(ms.param_types, ms.param_type_names, 0), ret: label(ms.ret_type, ms.ret_type_name) };
+  return Parts { params: label_list(ms.param_types, ms.param_type_names, 0), ret: label(ms.ret_type, ms.ret_type_name) };
 }
 
-function member_parts(s: checker.Scope, t: typeinfo.Type, field: string): Parts {
+function member_parts(s: checker.Scope, t: typeinfo.Type, field: string): Option[Parts] {
   if let typeinfo.TypeArray(a) = t {
     return array_parts(s, a, field);
   }
   let recv: string = checker.receiver_key(t);
   if (recv.len() == 0) {
-    return no_parts();
+    return None;
   }
   if let Some(ms) = checker.method_sig(s, field, recv) {
-    return method_parts(ms);
+    if (ms.name.len() == 0) {
+      return None;
+    }
+    return Some(method_parts(ms));
   }
   return builtin_parts(recv, field);
 }
 
-pub function builtin_parts(recv: string, name: string): Parts {
+pub function builtin_parts(recv: string, name: string): Option[Parts] {
   if let typeinfo.TypeFunc(f) = checker.builtin_method_sig(recv, name) {
-    return Parts { found: true, params: label_list(f.param_types, [], 0), ret: checker.type_label(f.ret_type) };
+    return Some(Parts { params: label_list(f.param_types, [], 0), ret: checker.type_label(f.ret_type) });
   }
-  return no_parts();
+  return None;
 }
 
-pub function array_parts(s: checker.Scope, a: typeinfo.TypeArray, field: string): Parts {
+pub function array_parts(s: checker.Scope, a: typeinfo.TypeArray, field: string): Option[Parts] {
   if let Some(ms) = checker.array_method_sig(s, field, a.view) {
-    return method_parts(ms);
+    if (ms.name.len() == 0) {
+      return None;
+    }
+    return Some(method_parts(ms));
   }
   if (field == "len") {
-    return Parts { found: true, params: [], ret: "i32" };
+    return Some(Parts { params: [], ret: "i32" });
   }
-  return no_parts();
+  return None;
 }
 
 pub function func_text(name: string, sig: checker.FuncSig): string {

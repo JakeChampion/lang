@@ -936,6 +936,27 @@ findings. Ranked by leverage.
   Forty paired probes per input use 201 functions with matched or declined word loads.
   Candidate/baseline time ratios range from 0.997 to 1.026, without a general compiler speed claim.
 
+  LSP part queries return `Option[Parts]`, and `Parts` contains only parameter labels and the return label.
+  `call_parts` uses `Option[Option[Parts]]` to retain three outcomes.
+  `None` permits a module fallback.
+  `Some(None)` marks a located expression without a signature.
+  `Some(Some(parts))` supplies a located signature.
+
+  Signature help returns `Option[Signature]` without an empty signature record.
+  The CLI converts `None` to JSON `null` before it reads signature fields.
+  Completion labels and details retain their prior output without a synthetic `Parts` record.
+  Named-signature checks and module fallback retain their priority.
+
+  Seventeen before/after cases retain signature labels, parameter ranges, active parameters, and all three call-query outcomes.
+  Candidate ARM64 and Wasm outputs match the native baseline.
+  Across seventeen native sanitizer probes, 45,293 allocations match 45,293 releases, with zero live bytes in each process.
+  Eight integration suites pass, with signature-help, completion, hover, and inlay-hint protocol goldens.
+
+  Forty process pairs per input repeat cached signature and call queries 200 times, with complete output.
+  Inputs cover ordinary calls, zero arguments, local shadows, module fallback, and methods.
+  Candidate/baseline time ratios range from 0.926 to 1.015.
+  These probes establish no general compiler speed change.
+
   Printer recognition uses `Option[UseSugar]` and `Option[ForCSugar]`.
   Absent forms no longer contain placeholder calls, bodies, or loop conditions.
   Layout, statement output, and lint scores match the option before they use a payload.

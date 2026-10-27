@@ -3638,10 +3638,7 @@ function lsp_answer_at(s: Server, q: Asked, m: lsp.Message, line: i32, col: i32)
     return lsp_completion(lspassist.completion(q.d.prog, line, col));
   }
   if (method == "textDocument/signatureHelp") {
-    let sh: lspassist.Signature = lspassist.signature_help(q.d.prog, line, col);
-    if (!sh.found) {
-      return "null";
-    }
+    let sh: lspassist.Signature = match (lspassist.signature_help(q.d.prog, line, col)) { Some(value) => value, None => { return "null"; } };
     return lsp.signature_help(sh.label, sh.starts, sh.ends, sh.active);
   }
   if (method == "textDocument/hover") {
