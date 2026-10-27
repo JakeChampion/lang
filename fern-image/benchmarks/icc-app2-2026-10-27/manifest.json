@@ -1,0 +1,19 @@
+{
+  "source_commit": "2812e664628b853ab77ae80e0a6ca31533c9b8eb",
+  "sha256": {
+    "Go-unit.json": "e4b943bf07aa72c7dcd175553bc6e919b017bc1cad69b4dfe8da604c37387bea",
+    "Go-unit.log": "4eab30f7f69725dc54cc6e7788dbdcc84149c9c8c62d808b22b5523a1233497d",
+    "auxiliary.json": "2b65b896d1408bed8c1948b6bd8fb4ddf87d2298d7f2a50ef1623c51316e3796",
+    "byte-summary.json": "8d806b692c6e00652d7a501583541197bcd16f5245b8f1adbb78a2ffeaf729a1",
+    "complexity.log": "f8eb1d4c3ed728f6fa3d7289cf7b0ce20c1c2bee48367fc44f226940f97a6207",
+    "development-observations.json": "197eb0e4c2c06f537156648132e1da9fd248a8f953b5bbf31124690721e996e7",
+    "images-arm64.json": "8a96b006802298d6ddad94b7232f85a9121b0c857a065f77cd106d78265f0a10",
+    "images-native.json": "05e2e8c9e96c3a68de5c4fc2b4f4052acacc6cf8ce5ade177cf87c5c719f24a1",
+    "images-wasm.json": "e3319b095a376b87b66196f6862406ffc1b56d7ae932e86769d04b73ee20b08e",
+    "initial-nullary-check.log": "e3decb79e1d6b5b46bfd138979ef1a4e3faf4acbc3b56f126dc490969251552d",
+    "native-initial-check-failure.json": "fff201d9d44bc0e5d086083d4eecaacfbcac3745bf5763021d73fa5a30908401",
+    "native-initial-check-failure.log": "0be1f34892dcc29deaf795325b0763689272904e84eacafb55846419a6938fe2",
+    "nullary-pattern-before.txt": "7425763dd70e23003321e57def2b4fd330400a5c1cc219a8a4871a7b5af3bb7a",
+    "unit-source-link.json": "a13365b7912693851f7874ef87baac86f58af818e502fd8b1caead59fc85c069"
+  }
+}

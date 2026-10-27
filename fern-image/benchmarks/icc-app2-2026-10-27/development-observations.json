@@ -1,0 +1,6 @@
+{
+  "initial_check_failure": "Both checkers correctly rejected Ok(None) as a bare binder inside a payload pattern (E015). The unit test now uses canonical Ok(None()). No API assertion or compiler code changed for this syntax correction.",
+  "provisional_native": "A complete 366-case native run with three required reference rejections passed before source commit. Its record and source snapshots remain under /workspace/image-icc-app2-provisional-* and do not qualify the final 368-case campaign.",
+  "version_labels": "An initial reference draft recorded JPEG API 6.2 as encoder. The final generator records API 6.2 separately from implementation 3.1.4.1. Prior draft snapshots remain preserved.",
+  "final_scope": "Every positive output byte is checked by the worker against an independent expected file. profile_sha256 identifies that expected file, not an independently calculated observed-output hash. Deliberate reference corruptions require exact mismatch reasons and nonzero exits; they remain separate from exit-zero positive workers."
+}
