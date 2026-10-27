@@ -1,0 +1,14 @@
+=== RUN   TestSelfHostServeSyscallsPerRequest
+    self_host_vdso_clock_ptrace_test.go:81: 15000 syscalls over 5000 requests, rounded 3 per request:
+          syscall 0: 5000
+          syscall 44: 5000
+          syscall 281: 5000
+--- PASS: TestSelfHostServeSyscallsPerRequest (45.00s)
+=== RUN   TestSelfHostServeSyscallsPerRequestTwoFetch
+    self_host_vdso_clock_ptrace_test.go:134: 45000 syscalls over 5000 requests, rounded 9 per request:
+          syscall 0: 15000
+          syscall 44: 15000
+          syscall 281: 15000
+--- PASS: TestSelfHostServeSyscallsPerRequestTwoFetch (16.91s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	61.930s

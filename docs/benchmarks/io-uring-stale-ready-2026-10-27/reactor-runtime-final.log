@@ -1,0 +1,34 @@
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (19.31s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+=== RUN   TestSelfHostReactorFloor
+=== RUN   TestSelfHostReactorFloor/x86-64-linux
+=== RUN   TestSelfHostReactorFloor/arm64-linux
+=== RUN   TestSelfHostReactorFloor/wasm32-wasi
+--- PASS: TestSelfHostReactorFloor (227.73s)
+    --- PASS: TestSelfHostReactorFloor/x86-64-linux (0.41s)
+    --- PASS: TestSelfHostReactorFloor/arm64-linux (0.49s)
+    --- PASS: TestSelfHostReactorFloor/wasm32-wasi (0.44s)
+=== RUN   TestSelfHostReactorSignal
+=== RUN   TestSelfHostReactorSignal/x86-64-linux
+=== RUN   TestSelfHostReactorSignal/arm64-linux
+=== RUN   TestSelfHostReactorSignal/wasm32-wasi
+--- PASS: TestSelfHostReactorSignal (75.07s)
+    --- PASS: TestSelfHostReactorSignal/x86-64-linux (1.59s)
+    --- PASS: TestSelfHostReactorSignal/arm64-linux (1.88s)
+    --- PASS: TestSelfHostReactorSignal/wasm32-wasi (0.82s)
+=== RUN   TestSelfHostRuntimeNeedRegistration
+--- PASS: TestSelfHostRuntimeNeedRegistration (3.32s)
+=== RUN   TestSelfHostRuntimeUnitRegisterCalls
+=== RUN   TestSelfHostRuntimeUnitRegisterCalls/x86-64-linux
+=== RUN   TestSelfHostRuntimeUnitRegisterCalls/arm64-linux
+=== RUN   TestSelfHostRuntimeUnitRegisterCalls/arm64-darwin
+--- PASS: TestSelfHostRuntimeUnitRegisterCalls (50.78s)
+    --- PASS: TestSelfHostRuntimeUnitRegisterCalls/x86-64-linux (0.10s)
+    --- PASS: TestSelfHostRuntimeUnitRegisterCalls/arm64-linux (0.14s)
+    --- PASS: TestSelfHostRuntimeUnitRegisterCalls/arm64-darwin (0.06s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	376.278s

@@ -18,6 +18,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jakechampion/lang/internal/envflag"
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
@@ -37,6 +38,7 @@ func TestSelfHostVdsoClockNoSyscall(t *testing.T) {
 }
 
 const serveSyscallsPerRequest = 3
+const serveRingSyscallsPerRequest = 2
 
 const serveSyscallsRounds = 5000
 const serveSyscallsWarm = 1000
@@ -76,16 +78,22 @@ func TestSelfHostServeSyscallsPerRequest(t *testing.T) {
 		total += int64(n - before[nr])
 	}
 	got := (total + serveSyscallsRounds/2) / serveSyscallsRounds
+	t.Logf("%d syscalls over %d requests, rounded %d per request:\n%s", total, serveSyscallsRounds, got, syscallBreakdown(before, after))
 	if d := total - got*serveSyscallsRounds; d < -serveSyscallsSlackPerSecond*seconds || d > serveSyscallsSlackPerSecond*seconds {
 		t.Fatalf("%d syscalls over %d requests is %d from a whole number per request:\n%s", total, serveSyscallsRounds, d, syscallBreakdown(before, after))
 	}
-	if got != serveSyscallsPerRequest {
+	want := int64(serveSyscallsPerRequest)
+	if envflag.On("FERN_IO_URING") {
+		want = serveRingSyscallsPerRequest
+	}
+	if got != want {
 		t.Errorf("the serve loop makes %d syscalls per hello request; pinned %d.\n"+
-			"Above the pin is a regression. Below it, lower the pin in the same change.\n%s", got, serveSyscallsPerRequest, syscallBreakdown(before, after))
+			"Above the pin is a regression. Below it, lower the pin in the same change.\n%s", got, want, syscallBreakdown(before, after))
 	}
 }
 
 const serveFetchSyscallsPerRequest = 9
+const serveFetchRingSyscallsPerRequest = 8
 
 func TestSelfHostServeSyscallsPerRequestTwoFetch(t *testing.T) {
 	cli := buildNativeSelfHostCLI(t)
@@ -123,12 +131,17 @@ func TestSelfHostServeSyscallsPerRequestTwoFetch(t *testing.T) {
 		total += int64(n - before[nr])
 	}
 	got := (total + serveSyscallsRounds/2) / serveSyscallsRounds
+	t.Logf("%d syscalls over %d requests, rounded %d per request:\n%s", total, serveSyscallsRounds, got, syscallBreakdown(before, after))
 	if d := total - got*serveSyscallsRounds; d < -serveSyscallsSlackPerSecond*seconds || d > serveSyscallsSlackPerSecond*seconds {
 		t.Fatalf("%d syscalls over %d requests is %d from a whole number per request:\n%s", total, serveSyscallsRounds, d, syscallBreakdown(before, after))
 	}
-	if got != serveFetchSyscallsPerRequest {
+	want := int64(serveFetchSyscallsPerRequest)
+	if envflag.On("FERN_IO_URING") {
+		want = serveFetchRingSyscallsPerRequest
+	}
+	if got != want {
 		t.Errorf("the two-fetch server makes %d syscalls per request; pinned %d.\n"+
-			"Above the pin is a regression. Below it, lower the pin in the same change.\n%s", got, serveFetchSyscallsPerRequest, syscallBreakdown(before, after))
+			"Above the pin is a regression. Below it, lower the pin in the same change.\n%s", got, want, syscallBreakdown(before, after))
 	}
 }
 

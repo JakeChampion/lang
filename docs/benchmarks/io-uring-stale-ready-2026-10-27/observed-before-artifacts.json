@@ -1,0 +1,18 @@
+{
+  "002-main.fern": {
+    "original": "/tmp/TestSelfHostServeRingIdleGap3370948595/002/main.fern",
+    "sha256": "0568eb83fd5e1002c517454df16cbaea61f7d0d50cff1702282a1748ccf36631"
+  },
+  "003-prog": {
+    "original": "/tmp/TestSelfHostServeRingIdleGap3370948595/003/prog",
+    "sha256": "d6dd4b6dd046ce080f7ac97d656dcc36b2169db37a93abd0d0ae9bf632c7420e"
+  },
+  "003-out.s": {
+    "original": "/tmp/TestSelfHostServeRingIdleGap3370948595/003/out.s",
+    "sha256": "deae2eca711e2140a852f4c10575e93d5f82bb9eac274d846517bda442baa807"
+  },
+  "001-fern": {
+    "original": "/tmp/TestSelfHostServeRingIdleGap3370948595/001/fern",
+    "sha256": "0420aab7a54babe46370d43b7bed849f5301cba48032ee90337db5b699f6dc41"
+  }
+}

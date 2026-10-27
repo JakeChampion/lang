@@ -1,0 +1,12 @@
+=== RUN   TestSelfHostServeSyscallsPerRequest
+    self_host_vdso_clock_ptrace_test.go:67: ring diagnostics:
+        submit=0 min=0 flags=9 cq_before=0 ready_before=1 actual_ready=0 return=0: 5000
+        submit=0 min=1 flags=9 cq_before=0 ready_before=0 actual_ready=0 return=0: 60
+    self_host_vdso_clock_ptrace_test.go:83: 10059 syscalls over 5000 requests is 59 from a whole number per request:
+          syscall 44: 5000
+          syscall 426: 5059
+    self_host_vdso_clock_ptrace_test.go:191: traced program's stderr:
+--- FAIL: TestSelfHostServeSyscallsPerRequest (44.43s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	44.450s
+FAIL

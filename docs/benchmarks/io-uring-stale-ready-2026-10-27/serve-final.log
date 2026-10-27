@@ -1,0 +1,41 @@
+=== RUN   TestSelfHostServeRingIdleGap
+    self_host_ring_idle_gap_test.go:57: 129 syscalls over 64 delayed requests, including 65 ring entries:
+          syscall 44: 64
+          syscall 426: 65
+--- PASS: TestSelfHostServeRingIdleGap (172.79s)
+=== RUN   TestSelfHostServeAllocsPerRequestRing
+    self_host_serve_allocs_test.go:41: counts 208, 212, 308: 92 allocations over 100000 requests in 12 s
+--- PASS: TestSelfHostServeAllocsPerRequestRing (47.02s)
+=== RUN   TestSelfHostServePeerContexts
+=== RUN   TestSelfHostServePeerContexts/stateful=false/proxy=false
+=== RUN   TestSelfHostServePeerContexts/stateful=false/proxy=true
+=== RUN   TestSelfHostServePeerContexts/stateful=true/proxy=false
+=== RUN   TestSelfHostServePeerContexts/stateful=true/proxy=true
+--- PASS: TestSelfHostServePeerContexts (67.01s)
+    --- PASS: TestSelfHostServePeerContexts/stateful=false/proxy=false (16.65s)
+    --- PASS: TestSelfHostServePeerContexts/stateful=false/proxy=true (14.00s)
+    --- PASS: TestSelfHostServePeerContexts/stateful=true/proxy=false (14.45s)
+    --- PASS: TestSelfHostServePeerContexts/stateful=true/proxy=true (16.99s)
+=== RUN   TestSelfHostServePipelinedBurstRing
+--- PASS: TestSelfHostServePipelinedBurstRing (13.60s)
+=== RUN   TestSelfHostServeShutdownDrainsAndExitsClean
+--- PASS: TestSelfHostServeShutdownDrainsAndExitsClean (39.40s)
+=== RUN   TestSelfHostServeShutdownAbortsAtDrainDeadline
+--- PASS: TestSelfHostServeShutdownAbortsAtDrainDeadline (7.95s)
+=== RUN   TestSelfHostServeRecvDeadline
+--- PASS: TestSelfHostServeRecvDeadline (12.42s)
+=== RUN   TestSelfHostServeZeroCopyRing
+--- PASS: TestSelfHostServeZeroCopyRing (13.65s)
+=== RUN   TestSelfHostServeSyscallsPerRequest
+    self_host_vdso_clock_ptrace_test.go:81: 10001 syscalls over 5000 requests, rounded 2 per request:
+          syscall 44: 5000
+          syscall 426: 5001
+--- PASS: TestSelfHostServeSyscallsPerRequest (16.81s)
+=== RUN   TestSelfHostServeSyscallsPerRequestTwoFetch
+    self_host_vdso_clock_ptrace_test.go:134: 40000 syscalls over 5000 requests, rounded 8 per request:
+          syscall 0: 10000
+          syscall 44: 15000
+          syscall 426: 15000
+--- PASS: TestSelfHostServeSyscallsPerRequestTwoFetch (22.01s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	412.689s

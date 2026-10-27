@@ -1,0 +1,1 @@
+These hashes identify temporary artifacts observed during the original test. They do not independently certify the bytes at ptrace exec. The files remain in the external preserved directory. No executed-binary hash claim relies on this inventory.

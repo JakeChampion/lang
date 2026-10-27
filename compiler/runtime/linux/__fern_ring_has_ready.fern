@@ -1,0 +1,21 @@
+function __fern_ring_has_ready(blk: usize): boolean {
+  let ready: usize = __fern_ring_ready_at(blk);
+  let count: i32 = __load_i32(blk + 184);
+  let i: i32 = 0;
+  while (i < count) {
+    let fd: i32 = __load_i32(ready + i as usize * 4);
+    let ent: usize = __fern_ring_entry(blk, fd);
+    let interest: i32 = __raw_load8(ent, 0);
+    if (interest != 0) {
+      if (__raw_load8(ent, 14) != 0) {
+        return true;
+      }
+      let ended: i32 = __raw_load8(ent, 6);
+      if ((interest & 1) != 0 && (__fern_ring_u16(ent, 8) != 0 || ended == 1 || ended == 2)) {
+        return true;
+      }
+    }
+    i = i + 1;
+  }
+  return false;
+}
