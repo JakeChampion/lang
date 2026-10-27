@@ -111,7 +111,7 @@ function producers(): void {
   let a = semlower.runtime_lowering("struct A { n: i32 } function identity(x: A): i32 { return x.n; }");
   let b = semlower.runtime_lowering("struct B { n: i64 } function identity(x: B): i64 { return x.n + 1; }");
   let origins: physicalbody.Lowered[] = [a, b];
-  let rows = [a.bodies[0], b.bodies[0]];
+  let rows = irtables.lowered_results([a.bodies[0], b.bodies[0]]);
   let m = ssarc.merge_helpers_mapped([], rows);
   require(m.helper_indices.len() == 1 && m.helper_indices[0] == 0, 143);
   let selected = origins[m.helper_indices[0]];

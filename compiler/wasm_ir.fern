@@ -9407,7 +9407,7 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (p
   }
   let mod: parser.Module = rtmodule.load_wasm("wasm32-wasi", roots);
   let lowered: physicalbody.Lowered = rt_lower(mod);
-  let bodies: irtables.LowerResult[] = lowered.bodies;
+  let bodies: irtables.LowerResult[] = irtables.lowered_results(lowered.bodies);
   let text: string = emit_functions_ns("$runtime", mod, bodies, physicalbody.collection(lowered));
   return units.append(WasmUnit { ns: "$runtime", text: text, strs: str_values(bodies), caggs: const_agg_values(bodies), fns: fn_value_table(bodies) });
 }

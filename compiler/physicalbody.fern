@@ -58,7 +58,7 @@ pub function select_origins(rows: Origin[], indices: i32[]): Origin[] {
 }
 
 pub struct Lowered {
-  bodies: irtables.LowerResult[],
+  bodies: irtables.Lowered[],
   declarations: string[],
   helper_types: Option[Helper][],
   contracts: ssasem.Contract[],

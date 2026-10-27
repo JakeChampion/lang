@@ -1353,3 +1353,11 @@ pub function body_payload(r: LowerResult): Option[Lowered] {
     source_positions: r.source_positions,
   });
 }
+
+pub function lowered_results(bodies: Lowered[]): LowerResult[] {
+  let rows: LowerResult[] = [];
+  for body in bodies {
+    rows = rows.append(lowered_result(body));
+  }
+  return rows;
+}

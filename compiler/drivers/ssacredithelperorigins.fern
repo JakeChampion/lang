@@ -69,7 +69,7 @@ function runtime(source: string): void {
     i = i + 1;
   }
   nominal(rows, typeinfo.TypeUnion { name: "List", args: [] });
-  require(ircore.lowered_digest(lowered.bodies) == ircore.lowered_digest(semlower.runtime_bodies(source)), 241);
+  require(ircore.lowered_digest(irtables.lowered_results(lowered.bodies)) == ircore.lowered_digest(irtables.lowered_results(semlower.runtime_bodies(source))), 241);
   let other = semlower.runtime_lowering("enum List { Last(i32), Empty } function read(x: List): List { return x; }");
   require(other.enums.len() > 0 && lowered.enums[0].variants[0].name == "Cons", 242);
   nominal(physicalbody.collection(lowered).rows, typeinfo.TypeUnion { name: "List", args: [] });
@@ -80,7 +80,7 @@ function mapping(source: string): void {
   let rows = physicalbody.collection(lowered).rows;
   let at = lowered.declarations.len();
   require(at < rows.len(), 243);
-  let body = lowered.bodies[at];
+  let body = irtables.lowered_result(lowered.bodies[at]);
   let first = rows[at];
   let loser = physicalbody.Origin { ...first, producer: 9, helper: None };
   let renamed = physicalbody.Origin { ...first, symbol: "different" };

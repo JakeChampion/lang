@@ -47,17 +47,17 @@ function returned(p: ssaprepare.Body, value: i32): void {
   require(b.insts[1].kind_tag == 7 && b.insts[1].args.len() == 1 && b.insts[1].args[0] == b.insts[0].result && b.term.value == b.insts[1].result, 199);
 }
 
-function prepared(base: irtables.LowerResult, selected: physicalbody.Selected, leaves: ssa.Leaves, value: i32, debug: boolean): void {
-  let r = irtables.LowerResult { ...base, n_params: 0, n_locals: 1, ops: [ir.op_const_i32(value), ir.op_store_local(0), ir.op_load_local(0), ir.op_call_direct("leaf", 1), ir.op_return()], dbg_slots: [0], dbg_names: ["actual"], dbg_types: ["i32"] };
+function prepared(base: irtables.Lowered, selected: physicalbody.Selected, leaves: ssa.Leaves, value: i32, debug: boolean): void {
+  let r = irtables.Lowered { ...base, n_params: 0, n_locals: 1, ops: [ir.op_const_i32(value), ir.op_store_local(0), ir.op_load_local(0), ir.op_call_direct("leaf", 1), ir.op_return()], dbg_slots: [0], dbg_names: ["actual"], dbg_types: ["i32"] };
   let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "actual", r.n_params, r.n_locals, r.ops, debug)) { Ok(l) => l, Err(message) => { eprint(message); exit(187); } };
   require(calls(lifted.func) == 1, 187);
-  let p = ssaprepare.finish(ircore.body_for_emit(r.name, r), selected, lifted, leaves);
-  require(ircore.lowered_digest([irtables.lowered_result(p.lowered)]) == ircore.lowered_digest([r]) && p.lowered.dbg_names[0] == "actual", 188);
+  let p = ssaprepare.finish(r, selected, lifted, leaves);
+  require(ircore.lowered_digest([irtables.lowered_result(p.lowered)]) == ircore.lowered_digest(irtables.lowered_results([r])) && p.lowered.dbg_names[0] == "actual", 188);
   require(p.selected.origin.producer == selected.origin.producer && p.selected.origin.symbol == selected.origin.symbol && p.selected.producers.len() == selected.producers.len(), 189);
   let has_seen = p.seen_vals.len() > 0;
   require(same(p.seen_vals, lifted.seen_vals) && same(p.seen_slots, lifted.seen_slots) && has_seen == debug, 190);
   returned(p, value);
-  let no_leaves = ssaprepare.finish(ircore.body_for_emit(r.name, r), selected, lifted, ssa.leaves_of([]));
+  let no_leaves = ssaprepare.finish(r, selected, lifted, ssa.leaves_of([]));
   require(calls(no_leaves.formed.f) == 1, 193);
 }
 
@@ -68,10 +68,10 @@ pub function run(): void {
   require(selected.origin.symbol == "leaf" && selected.origin.producer == 0 && selected.producers.len() == 1, 194);
   let leaf = lowered.bodies[0];
   let entry = sourcepos.SourcePos { line: 43, col: "2" };
-  let located = irtables.LowerResult { ...leaf, source_positions: sourcepos.SourceInfo { entry: entry, values: [entry], terms: [] } };
-  let shifted = irtables.LowerResult { ...located, source_positions: sourcepos.SourceInfo { ...located.source_positions, values: [sourcepos.SourcePos { line: 44, col: "2" }] } };
-  require(ircore.lowered_digest([located]) != ircore.lowered_digest([leaf]), 200);
-  require(ircore.lowered_digest([located]) != ircore.lowered_digest([shifted]), 201);
+  let located = irtables.Lowered { ...leaf, source_positions: sourcepos.SourceInfo { entry: entry, values: [entry], terms: [] } };
+  let shifted = irtables.Lowered { ...located, source_positions: sourcepos.SourceInfo { ...located.source_positions, values: [sourcepos.SourcePos { line: 44, col: "2" }] } };
+  require(ircore.lowered_digest(irtables.lowered_results([located])) != ircore.lowered_digest(irtables.lowered_results([leaf])), 200);
+  require(ircore.lowered_digest(irtables.lowered_results([located])) != ircore.lowered_digest(irtables.lowered_results([shifted])), 201);
   let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "leaf", leaf.n_params, leaf.n_locals, leaf.ops, false)) { Ok(l) => l, Err(message) => { eprint(message); exit(195); } };
   let leaves = ssa.leaves_of(ssa.leaf_of("leaf", lifted.func));
   require(leaves.list.len() == 1, 196);

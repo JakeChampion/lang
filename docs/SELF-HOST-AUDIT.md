@@ -999,11 +999,17 @@ findings. Ranked by leverage.
 
   A refusal takes precedence over the superseded flag.
   The semantic front end and census driver match these outcomes.
-  Body collections still use `LowerResult` and need the remaining migration.
+  Application and helper collections still use `LowerResult` and need the remaining migration.
 
   The semantic planner stores standard outcomes in its private body rows.
   Refusals retain their partial state until the planner reports them.
-  Declaration, instance and runtime collection boundaries still convert to the legacy record.
+  Declaration and instance collection boundaries still convert to the legacy record.
+
+  Runtime callback collections now contain only complete `Lowered` payloads.
+  The callback refuses failed declarations and helpers before it returns.
+  Helper selection preserves cached names and the first helper for each name.
+  Declaration order, metadata and helper provenance remain aligned.
+  A temporary adapter serves the remaining legacy query and merge interfaces.
 
   Prepared bodies store only the complete `Lowered` payload.
   Native instruction emission, source maps and debug variables use that payload.
