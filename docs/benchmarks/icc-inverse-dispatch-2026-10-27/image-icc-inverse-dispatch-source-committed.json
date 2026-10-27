@@ -1,0 +1,11 @@
+{
+  "source_commit": "715f63eb033811a4b159c4846df9ae14d8bc0967",
+  "physical_root": "/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch",
+  "workspace_alias": "/workspace/lang-image-icc-inverse-dispatch",
+  "reference_sha256": "46cbe777a49f0a748a7e23d5874e246f772e9b532fdee8cef7db2f449e04321c",
+  "feature_source_clean": true,
+  "compiler_std_identical_9c": true,
+  "Go_implementation_identical_8cb": true,
+  "FERN_CACHE_DIR": "/tmp/image-engine-fern-cache",
+  "GOCACHE": "/tmp/image-curv-inverse-go-build-cache"
+}

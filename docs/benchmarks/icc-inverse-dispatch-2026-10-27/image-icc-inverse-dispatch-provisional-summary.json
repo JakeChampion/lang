@@ -1,0 +1,12 @@
+{
+  "source_commit": "11c2727bc736eae98723095e2b603343202b264e",
+  "uncommitted": true,
+  "cases": 10087,
+  "workers": 1261,
+  "all_nonzero_balanced_zero_live": true,
+  "sources_unchanged": true,
+  "max_absolute_error": 1.7056711454934297e-16,
+  "raw": "/tmp/image-icc-inverse-dispatch-provisional-native.raw.json",
+  "worker": "/tmp/image-icc-inverse-dispatch-provisional-native.worker",
+  "checkpoint_sha256": "3b3e3245945e80e5cf90b1dc1ca515e4d71c9d140e868c464156b09cb06989e5"
+}

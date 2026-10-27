@@ -1,0 +1,52 @@
+{
+  "source_commit": "11c2727bc736eae98723095e2b603343202b264e",
+  "feature_uncommitted": true,
+  "hashes": {
+    "/workspace/image-tuple-array-current-fern-9c4085d83": "d1721835de31a7cc774df13ec7322a2d981066c442fcefe8611a19fc4ec4417b",
+    "/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch/fern-image/packages/codecs/icc/inverse.fern": "0f324c2ad2ace05d90850873b613261e27025538229163e1dbb21eeeb9b3a141",
+    "/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch/fern-image/tests/icc_inverse_test.fern": "02f0018ceadac5535ad7c732a2e9e4d9dbbfd89b14f18650a22bebdd47cd2714"
+  },
+  "commands": [
+    {
+      "command": [
+        "/workspace/image-tuple-array-current-fern-9c4085d83",
+        "-target",
+        "arm64-linux",
+        "-check",
+        "tests/icc_inverse_test.fern"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "/workspace/image-tuple-array-current-fern-9c4085d83",
+        "-target",
+        "arm64-linux",
+        "-sanitize",
+        "-o",
+        "/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch/fern-image/build/inverse-dispatch-initial-arm64.elf",
+        "tests/icc_inverse_test.fern"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "/workspace/image-test-tools/qemu10/usr/bin/qemu-aarch64",
+        "/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch/fern-image/build/inverse-dispatch-initial-arm64.elf"
+      ],
+      "exit": 0
+    }
+  ],
+  "seconds": 5.8766560554504395,
+  "exit": 0,
+  "TAP_ok": 8,
+  "TAP_fail": 0,
+  "heaps": [
+    [
+      442,
+      442,
+      0
+    ]
+  ],
+  "sources_unchanged": true
+}

@@ -1,0 +1,46 @@
+{
+  "source_commit": "0e37398927d607f86359cbdbb21ecea34a1496f3",
+  "compiler_build_source": "b42a82ae934be20d4b370ff8f0cc1b278b8804bc",
+  "compiler_sha256": "954350d3c637968434e5335efb4317437197618af0497ccd39598b95bb693cd2",
+  "Go_build_source": "b42a82ae934be20d4b370ff8f0cc1b278b8804bc",
+  "Go_sha256": "bae2b7185e084a6f083935f4faf8174639b7b71469a31e0974739a44d32d0a03",
+  "feature_files_byte_exact": true,
+  "cases_per_target": 10087,
+  "dispatcher_numeric": 9630,
+  "dispatcher_errors": 457,
+  "direct_numeric": 9640,
+  "direct_errors": 447,
+  "paired_successes_exact": 9630,
+  "workers_per_target": 1261,
+  "total_workers": 3783,
+  "max_absolute_error": 1.7056711454934297e-16,
+  "record_hash_counts": [
+    1267,
+    1268,
+    1268
+  ],
+  "full_TAP_per_target": 326,
+  "censuses": [
+    85,
+    61,
+    46
+  ],
+  "full_source_hash_counts": [
+    1360,
+    1360,
+    1360
+  ],
+  "format_files": 2083,
+  "SourceLint_PASS": 219,
+  "runtime_Go_PASS": 25,
+  "runtime_Go_SKIP": 0,
+  "allocation_count": 36898766,
+  "allocation_frees": 36898766,
+  "allocation_baseline_unchanged": 34951426,
+  "allocation_change_percent": 5.571560942892573,
+  "allocation_advisory_percent": 1,
+  "allocation_failure_ceiling_percent": 10,
+  "allocation_gate_exit": 0,
+  "allocation_RSS_row": false,
+  "scope": "Finite standalone inverse selection. All actual M5 and epic gates remain open."
+}

@@ -1,0 +1,14 @@
+TAP version 13
+# Suite: ICC standalone inverse selection
+ok 1 - ICC inverse all routes
+ok 2 - ICC inverse selected identity bits
+ok 3 - ICC inverse common admission priority
+ok 4 - ICC inverse normalized errors
+ok 5 - ICC inverse delegated cancellation
+ok 6 - ICC inverse COW and fresh calls
+ok 7 - ICC inverse retained mathematical controls
+ok 8 - ICC inverse unchanged component admission
+1..8
+# tests 8
+# pass 8
+# fail 0

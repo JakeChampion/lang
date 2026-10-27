@@ -1,0 +1,101 @@
+[
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "corpus-native",
+      "chunk_id": "33ea59",
+      "wall_time_seconds": 1.001285975,
+      "session_id": 23884,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "corpus-wasm",
+      "chunk_id": "50a4a2",
+      "wall_time_seconds": 1.001392785,
+      "session_id": 19787,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "corpus-arm64",
+      "chunk_id": "bf45b6",
+      "wall_time_seconds": 1.001575429,
+      "session_id": 57282,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "full-native",
+      "chunk_id": "f9f780",
+      "wall_time_seconds": 1.001505194,
+      "session_id": 92760,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "full-wasm",
+      "chunk_id": "e3afe4",
+      "wall_time_seconds": 1.000993615,
+      "session_id": 90132,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "full-arm64",
+      "chunk_id": "d442b0",
+      "wall_time_seconds": 1.001294583,
+      "session_id": 17942,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "aux",
+      "chunk_id": "84f153",
+      "wall_time_seconds": 1.00201413,
+      "session_id": 41286,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "Go",
+      "chunk_id": "7f3769",
+      "wall_time_seconds": 1.001144552,
+      "session_id": 2378,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "complexity",
+      "chunk_id": "df4c55",
+      "wall_time_seconds": 1.00060493,
+      "session_id": 4895,
+      "original_token_count": 0,
+      "output": ""
+    }
+  }
+]

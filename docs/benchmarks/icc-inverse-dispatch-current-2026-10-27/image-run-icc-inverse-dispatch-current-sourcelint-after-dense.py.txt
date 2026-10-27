@@ -1,0 +1,17 @@
+from pathlib import Path
+import subprocess,json,hashlib,os,sys,time,re
+mode=sys.argv[1];root=Path('/tmp/image-engine-worktrees/lang-image-inverse-current-compiler-b42');prefix=Path('/tmp/image-icc-inverse-dispatch-current-'+mode+'-after-dense');assert not prefix.with_suffix('.json').exists()
+source=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip();assert source=='b42a82ae934be20d4b370ff8f0cc1b278b8804bc'and not subprocess.check_output(['git','status','--porcelain'],cwd=root)
+sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();paths=subprocess.check_output(['git','ls-files','compiler','internal/stdlib','scripts','internal/testing/sourcelint','.github/alloc-baseline.txt'],cwd=root,text=True).splitlines();before={p:sha(root/p)for p in paths if(root/p).is_file()};start=time.time();record=dict(source_commit=source,source_hashes=before,checks=[])
+if mode=='runtime':commands=[['make','runtime-check']]
+elif mode=='sourcelint':commands=[['go','test','-v','./internal/testing/sourcelint','-count=1','-timeout=10m']]
+elif mode=='allocation':commands=[['scripts/selfhost-alloc-bench','/tmp/image-icc-inverse-dispatch-current-allocation.txt'],['scripts/ci-check-perf','.github/alloc-baseline.txt','/tmp/image-icc-inverse-dispatch-current-allocation.txt']]
+else:raise ValueError(mode)
+with prefix.with_suffix('.log').open('w')as log:
+ for cmd in commands:
+  env=dict(os.environ)
+  if mode=='allocation':env.update(FERN_ALLOC_PEAK_RSS='0',FERN_CI_PERF_GATE_MAX_DRIFT='10')
+  r=subprocess.run(cmd,cwd=root,env=env,stdout=log,stderr=subprocess.STDOUT);record['checks'].append(dict(command=cmd,exit=r.returncode))
+  if r.returncode:break
+text=prefix.with_suffix('.log').read_text();record.update(exit=r.returncode,seconds=time.time()-start,sources_unchanged=before=={p:sha(root/p)for p in before},PASS=len(re.findall(r'^\s*--- PASS:',text,re.M)),FAIL=len(re.findall(r'^\s*--- FAIL:',text,re.M)),SKIP=len(re.findall(r'^\s*--- SKIP:',text,re.M)))
+prefix.with_suffix('.json').write_text(json.dumps(record,indent=2));print({k:v for k,v in record.items()if k!='source_hashes'});assert r.returncode==0 and len(record['checks'])==len(commands)and record['sources_unchanged']and record['FAIL']==record['SKIP']==0

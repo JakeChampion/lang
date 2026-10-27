@@ -1,0 +1,10 @@
+{
+  "source_commit": "0e37398927d607f86359cbdbb21ecea34a1496f3",
+  "format_files": 2083,
+  "checks": [
+    {
+      "tool": "/tmp/image-icc-inverse-current-fern-b42a82ae9",
+      "exit_code": 1
+    }
+  ]
+}

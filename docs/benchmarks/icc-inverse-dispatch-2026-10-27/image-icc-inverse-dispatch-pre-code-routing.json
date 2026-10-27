@@ -1,0 +1,58 @@
+{
+  "predeclared_issue": 13706,
+  "common_order": [
+    "Limit",
+    "Input",
+    "CurveSelection",
+    "ExistingKernelAdmission"
+  ],
+  "routing": {
+    "Identity/Gamma/Samples": "curv_inverse",
+    "Parametric0": "power_inverse",
+    "Parametric1/2": "affine_inverse",
+    "Parametric3/4": "quadratic_inverse",
+    "UnknownParametric": "Function"
+  },
+  "arithmetic_added": false,
+  "callbacks_added": false,
+  "error_mappings": {
+    "curv_inverse": [
+      "Limit",
+      "Input",
+      "Shape",
+      "Value",
+      "Unsupported",
+      "NonInvertible",
+      "Numeric",
+      "Cancelled"
+    ],
+    "parametric_eval": [
+      "Function",
+      "Shape",
+      "Input",
+      "Domain",
+      "Unsupported",
+      "Numeric",
+      "Cancelled"
+    ],
+    "affine_inverse": [
+      "Input",
+      "Function",
+      "Shape",
+      "Domain",
+      "Unsupported",
+      "NonInvertible",
+      "Numeric",
+      "Cancelled"
+    ],
+    "quadratic_inverse": [
+      "Input",
+      "Function",
+      "Shape",
+      "Domain",
+      "Unsupported",
+      "Numeric",
+      "Cancelled"
+    ]
+  }
+}
