@@ -1,0 +1,34 @@
+{
+  "source_commit": "103243525a4987f48607dd0e7406c02370d6b1c3",
+  "format_files": 2051,
+  "checks": [
+    {
+      "tool": "/workspace/lang-image-nested-array-compiler/bin/fern",
+      "exit_code": 0
+    },
+    {
+      "tool": "go",
+      "exit_code": 0
+    },
+    {
+      "tool": "go",
+      "exit_code": 0
+    },
+    {
+      "tool": "make",
+      "exit_code": 0
+    },
+    {
+      "tool": "/workspace/image-png-reference-venv/bin/python",
+      "exit_code": 0
+    },
+    {
+      "tool": "python3",
+      "exit_code": 0
+    },
+    {
+      "tool": "git",
+      "exit_code": 0
+    }
+  ]
+}

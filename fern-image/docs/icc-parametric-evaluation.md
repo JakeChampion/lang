@@ -90,6 +90,42 @@ Eight fault-control groups preserve numerical, exact-bit, error/poll, row, proce
 Failures preserve the complete prefix and failed output, then return nonzero.
 The initial native smoke uses uncommitted source and does not qualify the final immutable campaign.
 
+## Recorded finite observations
+
+Final records use committed source `103243525a4987f48607dd0e7406c02370d6b1c3`.
+Each target checks 1,497 cases: 1,369 successful evaluations and 128 expected errors.
+All required identity bits, errors, and poll counts match exactly.
+The three target sample records are equal.
+
+The largest observed absolute error is `1.1102145542946743e-16`, within the predeclared `1e-12` finite criterion.
+The bundle reproduces byte-for-byte with SHA-256 `0cdc457b127704084d974587500658f423c154026b64ae356569120d41135104`.
+Admission restrictions, the finite criterion, and existing assertions remain unchanged through the identity corrections.
+
+The campaigns use 188 fresh workers per target, for 564 total workers.
+Every worker reports nonzero balanced allocations and frees with zero live blocks.
+The native record preserves 1,249 selected source/tool hashes, while each runner record preserves 1,250.
+These include all compiler and 163 stdlib sources, worker binaries, the reference bundle, frozen profile inputs, and generator/collector sources.
+All selected hashes remain unchanged throughout the campaigns.
+
+The clean compiler source is `b38cca91520de044f7ebf81f7ea6523d1af38a12`.
+Its SHA-256 is `d12b97d792d5d66d6bd312cd6723100ecb85ec2609d9430705032e504e5c090b`.
+Compiler and stdlib sources match the campaign checkout.
+Full native/Wasm scripts and 36 standalone ARM64 executables pass 254 TAP cases per target.
+Their 75/51/36 heap censuses are balanced with zero live blocks.
+Standalone ARM execution does not establish completion of the whole Go ARM harness.
+
+Both unchanged compiler/stdlib complexity checks pass without skips.
+All 2,051 eligible Fern format checks, build, vet, lint, test names, CI self-tests, runtime bundle, protocol controls, and STE checks pass.
+A fresh Go oracle built from the same clean source passes checker and interpreter checks for all six unit groups.
+Its binary and selected source hashes remain unchanged through those checks.
+
+The raw records are [native](../benchmarks/results/icc-parametric-eval-native.json),
+[Wasm](../benchmarks/results/icc-parametric-eval-wasm.json), and
+[ARM64](../benchmarks/results/icc-parametric-eval-arm64.json).
+[The evidence directory](../benchmarks/icc-parametric-eval-2026-10-27/) preserves current qualification and earlier failed observations.
+Earlier passes do not waive either failed identity probe or qualify source after the later correction.
+Published historical datasets remain unchanged.
+
 ## References and open work
 
 The functions and clipping rule derive from [ICC.1:2022](https://www.color.org/specifications/ICC.1-2022-05.pdf), section 10.18 and corrected Table 68.

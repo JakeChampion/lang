@@ -1,0 +1,20 @@
+{
+  "first_identity_failure": {
+    "source": "uncommitted original draft",
+    "result": "One native TAP failure, 187 balanced allocation/free events and zero live bytes. The expanded matrix exposed negative-zero loss across equivalent forms."
+  },
+  "selected_branch_failure": {
+    "source_commit": "3464a258e0439d4a3ac42ac4ab18eeac6e167b7a",
+    "probe_exit": 4,
+    "balanced_events": 17,
+    "live_bytes": 0,
+    "qualification": "The old 1453-case campaigns and full 254 TAP scripts passed, but they did not qualify the later selected-branch identity cases."
+  },
+  "correction": {
+    "source_commit": "103243525a4987f48607dd0e7406c02370d6b1c3",
+    "change": "Preserve the original bits for the selected algebraic power or linear identity after complete admission; no new domain, input, seed, or tolerance exception.",
+    "extended_cases": 1497
+  },
+  "draft_syntax_error": "The first local draft used Result[()] instead of canonical Result[void]. This was an application syntax error, not a compiler defect.",
+  "reference_label_error": "The first generator omitted b from branch case labels. Its unique-name assertion failed before any bundle/campaign. Labels now include b; the assertion remains unchanged."
+}
