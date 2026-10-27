@@ -24,7 +24,7 @@ function resolve_with(roots: mvs.Req[], bans: mvs.Ban[], ix: mvs.Index, dpkg: st
     return Outcome { text: "", err: st.err };
   }
   let out: string = "";
-  let sel: mvs.Sel[] = mvs.selected(st);
+  let sel: mvs.Sel[] = match (mvs.selected(st)) { Ok(value) => value, Err(message) => { return Outcome { text: "", err: message }; } };
   let k: i32 = 0;
   while (k < sel.len()) {
     if (k > 0) {
@@ -54,14 +54,33 @@ function hex64(): string {
   return "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 }
 
+function source(ix: mvs.Index, pkg: string, version: string): mvs.Source {
+  return match (mvs.index_source(ix, pkg, version)) { Some(value) => value, None => { print("missing registry source"); exit(98); } };
+}
+
+function index(text: string): mvs.Index {
+  return match (mvs.parse_index(text)) { Ok(value) => value, Err(message) => { print(message); exit(99); } };
+}
+
+function index_error(text: string): string {
+  return match (mvs.parse_index(text)) { Ok(_) => "", Err(message) => message };
+}
+
 function index_hash_err(hash: string): string {
-  return mvs.parse_index("[evil]\n\"1.0.0\" = { url = \"https://example.invalid/x.tar.gz\", hash = \""
-    + hash + "\" }\n").err;
+  return index_error("[evil]\n\"1.0.0\" = { url = \"https://example.invalid/x.tar.gz\", hash = \""
+    + hash + "\" }\n");
 }
 
 function lock_hash_err(hash: string): string {
-  return fern_toml.parse_lock("[[package]]\nname = \"evil\"\nversion = \"1.0.0\"\n"
-    + "url = \"https://example.invalid/x.tar.gz\"\nhash = \"" + hash + "\"\n").err;
+  match (fern_toml.parse_lock("[[package]]\nname = \"evil\"\nversion = \"1.0.0\"\n"
+    + "url = \"https://example.invalid/x.tar.gz\"\nhash = \"" + hash + "\"\n")) {
+    Ok(_) => {
+      return "";
+    },
+    Err(message) => {
+      return message;
+    }
+  }
 }
 
 function bad_hash(hash: string): string {
@@ -76,47 +95,56 @@ function check(code: i32, what: string, got: string, want: string): i32 {
   return code;
 }
 
+function compare_versions(a: string, b: string): string {
+  let av = match (mvs.parse_version(a)) { Ok(value) => value, Err(message) => { return message; } };
+  let bv = match (mvs.parse_version(b)) { Ok(value) => value, Err(message) => { return message; } };
+  return util.i32_to_string(mvs.version_cmp(av, bv));
+}
+
+function version_error(text: string): string {
+  return match (mvs.parse_version(text)) { Ok(_) => "", Err(message) => message };
+}
+
 function main(): i32 {
   let rc: i32 = check(
     1, "1.2.0 vs 1.10.0",
-    util.i32_to_string(mvs.version_cmp(mvs.parse_version("1.2.0"), mvs.parse_version("1.10.0"))), "-1",
+    compare_versions("1.2.0", "1.10.0"), "-1",
   );
   if (rc != 0) {
     return rc;
   }
   rc = check(
     2, "2.0.0 vs 1.9.9",
-    util.i32_to_string(mvs.version_cmp(mvs.parse_version("2.0.0"), mvs.parse_version("1.9.9"))), "1",
+    compare_versions("2.0.0", "1.9.9"), "1",
   );
   if (rc != 0) {
     return rc;
   }
   rc = check(
     3, "1.0.0 vs 1.0.0",
-    util.i32_to_string(mvs.version_cmp(mvs.parse_version("1.0.0"), mvs.parse_version("1.0.0"))), "0",
+    compare_versions("1.0.0", "1.0.0"), "0",
   );
   if (rc != 0) {
     return rc;
   }
-  if (mvs.parse_version("1.2").ok) {
+  if (version_error("1.2").len() == 0) {
     return 4;
   }
   rc = check(
-    5, "two-part version error", mvs.version_error("1.2"),
+    5, "two-part version error", version_error("1.2"),
     "invalid version \"1.2\" (want MAJOR.MINOR.PATCH)",
   );
   if (rc != 0) {
     return rc;
   }
-  rc = check(6, "non-numeric version error", mvs.version_error("1.x.0"), "invalid version \"1.x.0\"");
+  rc = check(6, "non-numeric version error", version_error("1.x.0"), "invalid version \"1.x.0\"");
   if (rc != 0) {
     return rc;
   }
 
-  let ix1: mvs.Index = mvs.parse_index("# registry\n[foo]\n\"1.0.0\" = { path = \"../foo-1.0.0\" }\n\"1.2.0\" = { url = \"https://x/foo.tar.gz\", hash = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" }  # newest\n[bar]  # a second package\n\"2.1.0\" = { path = \"bar\" }\n");
-  rc = check(7, "index parse", ix1.err, "");
-  if (rc != 0) {
-    return rc;
+  let ix1: mvs.Index = index("# registry\n[foo]\n\"1.0.0\" = { path = \"../foo-1.0.0\" }\n\"1.2.0\" = { url = \"https://x/foo.tar.gz\", hash = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" }  # newest\n[bar]  # a second package\n\"2.1.0\" = { path = \"bar\" }\n");
+  if (ix1.entries.len() != 3) {
+    return 7;
   }
   let foovers: string[] = mvs.index_versions(ix1, "foo");
   rc = check(8, "foo versions", util.i32_to_string(foovers.len()) + " " + foovers[0] + " " + foovers[1], "2 1.0.0 1.2.0");
@@ -124,35 +152,35 @@ function main(): i32 {
     return rc;
   }
   ix1 = mvs.with_dir(ix1, "/pkgs/reg");
-  let s120: mvs.Source = mvs.index_source(ix1, "foo", "1.2.0");
+  let s120: mvs.Source = source(ix1, "foo", "1.2.0");
   rc = check(9, "foo 1.2.0 source", s120.url + " " + s120.hash, "https://x/foo.tar.gz sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
   if (rc != 0) {
     return rc;
   }
-  rc = check(10, "foo 1.0.0 path", mvs.index_source(ix1, "foo", "1.0.0").path, "/pkgs/foo-1.0.0");
+  rc = check(10, "foo 1.0.0 path", source(ix1, "foo", "1.0.0").path, "/pkgs/foo-1.0.0");
   if (rc != 0) {
     return rc;
   }
-  rc = check(11, "bar 2.1.0 path", mvs.index_source(ix1, "bar", "2.1.0").path, "/pkgs/reg/bar");
+  rc = check(11, "bar 2.1.0 path", source(ix1, "bar", "2.1.0").path, "/pkgs/reg/bar");
   if (rc != 0) {
     return rc;
   }
   rc = check(
-    12, "malformed source", mvs.parse_index("[foo]\n\"1.0.0\" = { }\n").err,
+    12, "malformed source", index_error("[foo]\n\"1.0.0\" = { }\n"),
     "line 2: 1.0.0: a version needs `path` or `url`+`hash`",
   );
   if (rc != 0) {
     return rc;
   }
   rc = check(
-    13, "entry outside a section", mvs.parse_index("\"1.0.0\" = { path = \"x\" }\n").err,
+    13, "entry outside a section", index_error("\"1.0.0\" = { path = \"x\" }\n"),
     "line 1: version entry outside a [package] section",
   );
   if (rc != 0) {
     return rc;
   }
 
-  let ix2: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo1\" }\n\"1.1.0\" = { path = \"foo11\" }\n[bar]\n\"1.0.0\" = { path = \"bar1\" }\n\"2.0.0\" = { path = \"bar2\" }\n");
+  let ix2: mvs.Index = index("[foo]\n\"1.0.0\" = { path = \"foo1\" }\n\"1.1.0\" = { path = \"foo11\" }\n[bar]\n\"1.0.0\" = { path = \"bar1\" }\n\"2.0.0\" = { path = \"bar2\" }\n");
   let roots2: mvs.Req[] = [req("foo", "1.1.0"), req("bar", "1.0.0")];
   let o2: Outcome = resolve_with(roots2, no_bans(), ix2, ["foo"], ["1.1.0"], ["bar"], ["2.0.0"]);
   rc = check(14, "max of mins", o2.err + o2.text, "bar 2.0.0; foo 1.1.0");
@@ -160,7 +188,7 @@ function main(): i32 {
     return rc;
   }
 
-  let ix3: mvs.Index = mvs.parse_index("[a]\n\"1.0.0\" = { path = \"a\" }\n[b]\n\"1.0.0\" = { path = \"b\" }\n[c]\n\"1.0.0\" = { path = \"c1\" }\n\"1.5.0\" = { path = \"c15\" }\n\"2.0.0\" = { path = \"c2\" }\n");
+  let ix3: mvs.Index = index("[a]\n\"1.0.0\" = { path = \"a\" }\n[b]\n\"1.0.0\" = { path = \"b\" }\n[c]\n\"1.0.0\" = { path = \"c1\" }\n\"1.5.0\" = { path = \"c15\" }\n\"2.0.0\" = { path = \"c2\" }\n");
   let roots3: mvs.Req[] = [req("a", "1.0.0"), req("b", "1.0.0")];
   let o3: Outcome = resolve_with(roots3, no_bans(), ix3, ["a", "b"], ["1.0.0", "1.0.0"], ["c", "c"], ["1.5.0", "2.0.0"]);
   rc = check(15, "diamond", o3.err + o3.text, "a 1.0.0; b 1.0.0; c 2.0.0");
@@ -168,7 +196,7 @@ function main(): i32 {
     return rc;
   }
 
-  let ix4: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo\" }\n");
+  let ix4: mvs.Index = index("[foo]\n\"1.0.0\" = { path = \"foo\" }\n");
   let roots4: mvs.Req[] = [req("foo", "1.2.0")];
   let o4: Outcome = resolve_with(roots4, no_bans(), ix4, no_edges(), no_edges(), no_edges(), no_edges());
   rc = check(
@@ -178,7 +206,7 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
-  let ix5: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo\" }\n");
+  let ix5: mvs.Index = index("[foo]\n\"1.0.0\" = { path = \"foo\" }\n");
   let roots5: mvs.Req[] = [req("foo", "1.0.0")];
   let o5: Outcome = resolve_with(roots5, no_bans(), ix5, ["foo"], ["1.0.0"], ["ghost"], ["1.0.0"]);
   rc = check(
@@ -189,7 +217,7 @@ function main(): i32 {
     return rc;
   }
 
-  let ix6: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo1\" }\n[bar]\n\"1.9.0\" = { path = \"bar19\" }\n\"1.9.1\" = { path = \"bar191\" }\n\"2.0.0\" = { path = \"bar2\" }\n");
+  let ix6: mvs.Index = index("[foo]\n\"1.0.0\" = { path = \"foo1\" }\n[bar]\n\"1.9.0\" = { path = \"bar19\" }\n\"1.9.1\" = { path = \"bar191\" }\n\"2.0.0\" = { path = \"bar2\" }\n");
   let bans6: mvs.Ban[] = [mvs.Ban { pkg: "bar", ver: "1.9.0" }, mvs.Ban { pkg: "bar", ver: "1.9.1" }];
   let roots6: mvs.Req[] = [req("foo", "1.0.0")];
   let o6: Outcome = resolve_with(roots6, bans6, ix6, ["foo"], ["1.0.0"], ["bar"], ["1.9.0"]);
@@ -206,7 +234,7 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
-  let ix8: mvs.Index = mvs.parse_index("[foo]\n\"1.0.0\" = { path = \"foo1\" }\n\"1.1.0\" = { path = \"foo11\" }\n");
+  let ix8: mvs.Index = index("[foo]\n\"1.0.0\" = { path = \"foo1\" }\n\"1.1.0\" = { path = \"foo11\" }\n");
   let bans8: mvs.Ban[] = [mvs.Ban { pkg: "foo", ver: "1.0.0" }];
   let roots8: mvs.Req[] = [req("foo", "1.1.0")];
   let o8: Outcome = resolve_with(roots8, bans8, ix8, no_edges(), no_edges(), no_edges(), no_edges());
@@ -281,13 +309,12 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
-  let okix: mvs.Index = mvs.parse_index("[evil]\n\"1.0.0\" = { url = \"https://example.invalid/x.tar.gz\", hash = \"sha256:"
+  let okix: mvs.Index = index("[evil]\n\"1.0.0\" = { url = \"https://example.invalid/x.tar.gz\", hash = \"sha256:"
     + hex64() + "\" }\n");
-  rc = check(29, "index accepts a valid hash", okix.err, "");
-  if (rc != 0) {
-    return rc;
+  if (!mvs.index_has(okix, "evil", "1.0.0")) {
+    return 29;
   }
-  let oksrc: mvs.Source = mvs.index_source(okix, "evil", "1.0.0");
+  let oksrc: mvs.Source = source(okix, "evil", "1.0.0");
   rc = check(
     30, "valid index hash reaches the source", oksrc.url + " " + oksrc.hash,
     "https://example.invalid/x.tar.gz sha256:" + hex64(),
@@ -295,14 +322,10 @@ function main(): i32 {
   if (rc != 0) {
     return rc;
   }
-  let oklock: fern_toml.LockResult = fern_toml.parse_lock("[[package]]\nname = \"evil\"\nversion = \"1.0.0\"\n"
-    + "url = \"https://example.invalid/x.tar.gz\"\nhash = \"sha256:" + hex64() + "\"\n");
-  rc = check(31, "lock accepts a valid hash", oklock.err, "");
-  if (rc != 0) {
-    return rc;
-  }
+  let oklock: fern_toml.LockEntry[] = match (fern_toml.parse_lock("[[package]]\nname = \"evil\"\nversion = \"1.0.0\"\n"
+    + "url = \"https://example.invalid/x.tar.gz\"\nhash = \"sha256:" + hex64() + "\"\n")) { Ok(entries) => entries, Err(_) => { return 31; } };
   let lockhash: string = "none";
-  match (fern_toml.lock_hash_of(oklock.entries, "evil")) {
+  match (fern_toml.lock_hash_of(oklock, "evil")) {
     Some(h) => {
       lockhash = h;
     },
@@ -311,6 +334,38 @@ function main(): i32 {
   rc = check(32, "valid lock hash reaches the entry", lockhash, "sha256:" + hex64());
   if (rc != 0) {
     return rc;
+  }
+
+  let hex: string = "";
+  if let Ok(value) = fern_toml.validate_hash("sha256:" + hex64()) {
+    hex = value;
+  }
+  rc = check(33, "validated hash payload", hex, hex64());
+  if (rc != 0) {
+    return rc;
+  }
+
+  match (fern_toml.parse_lock("")) {
+    Ok(entries) => {
+      if (entries.len() != 0) {
+        return 34;
+      }
+    },
+    Err(_) => {
+      return 34;
+    }
+  }
+  match (fern_toml.parse_lock("[[package]]\nname = \"good\"\nversion = \"1.0.0\"\n\n"
+    + "[[package]]\nname = \"bad\"\nversion = \"1.0.0\"\nhash = \"sha256:bad\"\n")) {
+    Ok(_) => {
+      return 35;
+    },
+    Err(message) => {
+      rc = check(35, "invalid hash after a valid entry", message, "fern.lock line 8: hash " + bad_hash("sha256:bad"));
+      if (rc != 0) {
+        return rc;
+      }
+    }
   }
 
   write("mvs: every resolution rule agrees with native\n");

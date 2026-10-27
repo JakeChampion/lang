@@ -1139,11 +1139,7 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
     let insts: ssa.SInst[] = [];
     let fused: boolean = false;
     for ins in blk.insts {
-      let w: Word = word_of(f, defs, ins);
-      if (w.bytes == 0) {
-        insts = insts.append(ins);
-        continue;
-      }
+      let w: Word = match (word_of(f, defs, ins)) { Some(word) => word, None => { insts = insts.append(ins); continue; } };
       parts = word_parts(defs, ins.args, w, parts);
       let v: i32 = values.len();
       let i32_t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
@@ -1336,34 +1332,36 @@ function has_contract(calls: ssasem.Contract[], name: string): boolean {
 
 struct Word { bytes: i32, arr: i32, x: i32, off: i32, big: boolean }
 
-struct WordByte { ok: boolean, arr: i32, x: i32, off: i32, shift: i32 }
+struct WordByte { arr: i32, x: i32, off: i32, shift: i32 }
 
-function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Word {
-  let none: Word = Word { bytes: 0, arr: 0, x: 0, off: 0, big: false };
+function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Option[Word] {
   if (ins.kind_tag != 9 || ins.str != "|" || ins.result < 0) {
-    return none;
+    return None;
   }
   let t: typeinfo.Type = f.values[ins.result];
   let n: i32 = word_width(t);
   if (n == 0) {
-    return none;
+    return None;
   }
   let terms: i32[] = or_terms(defs, f.values, ins.result, t, []);
   if (terms.len() != n) {
-    return none;
+    return None;
   }
   let parts: WordByte[] = [];
   for v in terms {
-    let p: WordByte = word_byte(f, defs, v, t);
-    if (!p.ok) {
-      return none;
+    match (word_byte(f, defs, v, t)) {
+      Some(part) => {
+        parts = parts.append(part);
+      },
+      None => {
+        return None;
+      }
     }
-    parts = parts.append(p);
   }
   let lo: i32 = parts[0].off;
   for p in parts {
     if (p.arr != parts[0].arr || p.x != parts[0].x) {
-      return none;
+      return None;
     }
     if (p.off < lo) {
       lo = p.off;
@@ -1375,16 +1373,16 @@ function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Word {
   for p in parts {
     let at: i32 = p.off - lo;
     if (at >= n || seen[at]) {
-      return none;
+      return None;
     }
     le = le && p.shift == at * 8;
     be = be && p.shift == (n - 1 - at) * 8;
     seen = seen.with(at, true);
   }
   if (!le && !be) {
-    return none;
+    return None;
   }
-  return Word { bytes: n, arr: parts[0].arr, x: parts[0].x, off: lo, big: !le };
+  return Some(Word { bytes: n, arr: parts[0].arr, x: parts[0].x, off: lo, big: !le });
 }
 
 // The bytes in a word an OR of byte reads can build, or 0.
@@ -1406,29 +1404,28 @@ function or_terms(defs: ssa.SInst[], values: typeinfo.Type[], v: i32, t: typeinf
   return acc.append(v);
 }
 
-function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): WordByte {
-  let no: WordByte = WordByte { ok: false, arr: 0, x: 0, off: 0, shift: 0 };
+function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): Option[WordByte] {
   let d: ssa.SInst = defs[v];
   let shift: i32 = 0;
   if (d.kind_tag == 9 && d.str == "<<") {
     shift = const_through_cast(defs, d.args[1]);
     if (shift <= 0) {
-      return no;
+      return None;
     }
     d = defs[d.args[0]];
   }
   if (d.kind_tag != ssasem.cast() || d.args.len() != 1 || typeinfo.spelling(f.values[d.result]) != typeinfo.spelling(t)) {
-    return no;
+    return None;
   }
   let g: ssa.SInst = defs[d.args[0]];
   if (!index_read(g) || !ssasem.is_u8(f.values[g.result])) {
-    return no;
+    return None;
   }
   let x: i32 = g.args[1];
   let off: i32 = 0;
   let a: ssa.SInst = defs[x];
   if (a.kind_tag == 1) {
-    return WordByte { ok: true, arr: g.args[0], x: 0 - 1, off: a.imm, shift: shift };
+    return Some(WordByte { arr: g.args[0], x: 0 - 1, off: a.imm, shift: shift });
   }
   if (a.kind_tag == 9 && a.str == "+") {
     let c: ssa.SInst = defs[a.args[1]];
@@ -1437,7 +1434,7 @@ function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type):
       off = c.imm;
     }
   }
-  return WordByte { ok: true, arr: g.args[0], x: x, off: off, shift: shift };
+  return Some(WordByte { arr: g.args[0], x: x, off: off, shift: shift });
 }
 
 function const_through_cast(defs: ssa.SInst[], v: i32): i32 {

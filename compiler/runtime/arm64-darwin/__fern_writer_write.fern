@@ -4,14 +4,16 @@ function __fern_writer_write(fd: i32, s: string): Result[void, IoError] {
   let off: i32 = 0;
   while (off < n) {
     let w: i32 = __syscall3(4, fd as i64, (data + off) as i64, (n - off) as i64) as i32;
+    if (w == 0 - 4 && off > 0) {
+      continue;
+    }
     if (w < 0) {
       return Err(__fern_io_error(0 - w, ""));
     }
     if (w == 0) {
-      off = n;
-    } else {
-      off = off + w;
+      return Err(__fern_io_error(5, ""));
     }
+    off = off + w;
   }
   return Ok(());
 }

@@ -183,14 +183,17 @@ pub function certify_ops_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32,
   if (g.certify == 0) {
     return 0;
   }
-  let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(g.kinds, fn_name, n_params, n_locals, ops, false);
-  if (!lifted.ok) {
-    if (g.census != 0 as usize) {
-      buf_push(g.census, "FERN_RC_CERTIFY: census " + fn_name + " skipped=lift:" + lifted.bail + "\n");
+  match (ssa_lift.lift_from_ir_prod(g.kinds, fn_name, n_params, n_locals, ops, false)) {
+    Ok(lifted) => {
+      return certify_or_refuse(fn_name, ssa.register_form(lifted.func).f, ops, g);
+    },
+    Err(message) => {
+      if (g.census != 0 as usize) {
+        buf_push(g.census, "FERN_RC_CERTIFY: census " + fn_name + " skipped=lift:" + message + "\n");
+      }
+      return 0;
     }
-    return 0;
   }
-  return certify_or_refuse(fn_name, ssa.register_form(lifted.func).f, ops, g);
 }
 
 function census_line(fn_name: string, r: rccertify.Report, g: Gate): void {

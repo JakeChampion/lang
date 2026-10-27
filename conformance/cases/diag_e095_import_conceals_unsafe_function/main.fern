@@ -1,0 +1,15 @@
+// The unsafe obligation travels with a public declaration across modules.
+// The importer accepts it in an unsafe block; a bare qualified call is refused.
+import "./helper";
+
+function accepted(): i32 {
+    let v: i32 = 0;
+    unsafe {
+        v = helper.raw();
+    }
+    return v;
+}
+
+function main(): i32 {
+    return accepted() + helper.raw();
+}

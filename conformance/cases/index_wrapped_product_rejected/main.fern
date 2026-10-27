@@ -1,0 +1,21 @@
+// spec: AB-14
+// A scaled index that wraps negative fails its own guard, so the read is
+// skipped; the same guard admits a small index.
+
+import "std/i32";
+
+@noinline
+function scaled(xs: i32[], i: i32): i32 {
+    let j: i32 = i * 2;
+    if (j < xs.len() && j >= 0) {
+        return xs[j];
+    }
+    return -1;
+}
+
+function main(): i32 {
+    let xs: i32[] = [10, 20, 30];
+    print(scaled(xs, 1073741825).to_string());
+    print(scaled(xs, 1).to_string());
+    return 0;
+}

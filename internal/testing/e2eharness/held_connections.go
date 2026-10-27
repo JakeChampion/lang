@@ -271,6 +271,7 @@ func CheckBumpPerRequest(t *testing.T, addr string, rounds int) {
 	warm := rounds / 10
 	var atWarm, last, firstDate string
 	warmed, end := 0, rounds
+	var dateDeadline time.Time
 	for i := 1; i <= end; i++ {
 		if _, err := io.WriteString(conn, "GET / HTTP/1.1\r\nHost: x\r\n\r\n"); err != nil {
 			t.Fatalf("request %d: %v", i, err)
@@ -279,8 +280,11 @@ func CheckBumpPerRequest(t *testing.T, addr string, rounds int) {
 		if err != nil {
 			t.Fatalf("response %d: %v", i, err)
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			t.Fatalf("response %d body: %v", i, err)
+		}
 		last = string(body)
 		date := resp.Header.Get("Date")
 		if date == "" {
@@ -293,10 +297,17 @@ func CheckBumpPerRequest(t *testing.T, addr string, rounds int) {
 			warmed, atWarm = i, last
 			end = i + rounds - warm
 		}
-		if warmed == 0 && i == end {
-			if end == 2*rounds {
-				t.Fatalf("no Date change in %d requests", end)
+		if warmed == 0 && i >= warm {
+			// The Date cache needs a clock tick before the heap measurement.
+			if dateDeadline.IsZero() {
+				dateDeadline = time.Now().Add(10 * time.Second)
 			}
+			if !time.Now().Before(dateDeadline) {
+				t.Fatalf("no Date change within 10 seconds after request %d", warm)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if warmed == 0 && i == end {
 			end++
 		}
 	}

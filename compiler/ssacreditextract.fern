@@ -22,8 +22,7 @@ function calc(c: Context, op: i32, a: i32, b: i32): Context {
   if (c.error != "") {
     return c;
   }
-  let out = guard.combine(c.arena, op, a, b);
-  return Context { ...c, arena: out.arena, temp: out.id, error: out.error };
+  return match (guard.combine(c.arena, op, a, b)) { Ok(out) => Context { ...c, arena: out.arena, temp: out.id, error: "" }, Err(error) => Context { ...c, arena: error.arena, temp: -1, error: error.message } };
 }
 
 function equal(c: Context, path: i32, a: i32, b: i32, why: string): Context {
@@ -394,7 +393,7 @@ pub function check_selected(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, l
   }
   let zero = guard.constant(guard.empty(), 0);
   let one = guard.constant(zero.arena, 1);
-  let unique = guard.predicate(one.arena, 0);
+  let unique: guard.Built = match (guard.predicate(one.arena, 0)) { Ok(value) => value, Err(error) => { return helper.Proof { ok: false, function_name: f.name, message: error.message }; } };
   let values: Value[] = [];
   let i: i32 = 0;
   while (i < f.nvals) {

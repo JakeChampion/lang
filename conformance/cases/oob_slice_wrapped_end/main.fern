@@ -1,0 +1,18 @@
+// spec: AB-12
+// A slice end that wrapping arithmetic makes negative aborts; the check
+// reads the value, not the expression.
+
+import "std/i32";
+
+@noinline
+function window(xs: i32[], lo: i32, n: i32): i32 {
+    let v: [i32] = xs[lo:lo + n];
+    return v.len();
+}
+
+function main(): i32 {
+    let xs: i32[] = [10, 20, 30];
+    print(window(xs, 1, 2).to_string());
+    print(window(xs, 2147483647, 2).to_string());
+    return 0;
+}

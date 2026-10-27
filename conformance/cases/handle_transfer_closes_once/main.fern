@@ -1,0 +1,51 @@
+// spec: RH-04
+// A handle type with a consuming close is closed exactly once on every path:
+// at a local's last use, through an `own` parameter, and in a branch that
+// either closes the handle or stores it in a result the caller then closes.
+
+import "std/i32";
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+enum Tail { NoTail, Kept(Handle, i32) }
+
+function finish(own h: Handle, n: i32): Tail {
+  if (n < 2) {
+    let closed: i32 = h.close();
+    print("closed " + closed.to_string());
+    return NoTail;
+  }
+  return Kept(h, n);
+}
+
+function sink(own h: Handle): i32 {
+  return h.close() + 100;
+}
+
+function main(): i32 {
+  let h: Handle = Handle { fd: 3 };
+  print(h.fd.to_string());
+  print(h.close().to_string());
+  print(sink(Handle { fd: 4 }).to_string());
+  match (finish(Handle { fd: 5 }, 1)) {
+    NoTail => {
+      print("no tail");
+    },
+    Kept(k, n) => {
+      print("kept " + k.close().to_string());
+    }
+  }
+  match (finish(Handle { fd: 6 }, 2)) {
+    NoTail => {
+      print("no tail");
+    },
+    Kept(k, n) => {
+      print("kept " + k.close().to_string() + " for " + n.to_string());
+    }
+  }
+  return 0;
+}

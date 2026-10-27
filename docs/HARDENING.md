@@ -1,14 +1,17 @@
 # Binary hardening (`-harden`)
 
-Status: [reference] shipped; `-harden` is opt-in on arm64-linux executables.
+Status: [reference] shipped. `-harden` is opt-in on arm64-linux and
+x86-64-linux executables.
 
 `fern -harden -target arm64-linux -o OUT FILE.fern` builds an executable that
-turns on two arm64 protections:
+turns on three protections:
 
-- Branch Target Identification (BTI);
-- return-address signing with pointer authentication (PAC).
+- Branch Target Identification (BTI).
+- Return-address signing with pointer authentication (PAC).
+- A stack canary in every framed function.
 
-The flag is opt-in, and off by default.
+`fern -harden -target x86-64-linux -o OUT FILE.fern` turns on the stack
+canary. The flag is opt-in, and off by default.
 
 ## Executable memory mappings
 
@@ -85,12 +88,35 @@ is a NOP on a core without the feature. The ARMv8.2-A baseline does not
 change: a hardened binary runs everywhere an unhardened one does, with the
 checks only where the hardware has them.
 
+## Stack canaries
+
+Both native backends store a canary in every function that owns a frame with
+spill slots, frame boxes or saved registers. The word sits between the slots
+and the saved registers. A write that runs past a frame box therefore reaches
+the canary before it reaches a saved register or the return address. Each exit
+reloads the word and compares it with the process canary before it restores
+the saved registers. A mismatch branches to `__fern_canary_fail`, which
+prints `fern: stack canary mismatch` and exits with status 134. The check
+uses no allocation and no backtrace.
+
+Startup reads the process canary from `getrandom` after the stack switch. A
+short or failed read prints `fern: could not read the stack canary` and exits
+with status 134 before `main`. Leaf functions and bare frames hold no slots,
+so they carry no canary. The hand-written runtime frames carry none either.
+
 ## How it is verified
 
 `TestSelfHostHardenArm64` checks the in-process image and the assembly form linked by gcc.
 Both images must contain the BTI property note and produce the expected output.
 The test checks PAC and BTI instructions in the in-process image.
 A `-backtrace` abort must print plain code addresses without signature bits.
+
+`TestSelfHostStackCanary` builds a function with saved registers and spill
+slots under `-harden` on both targets. It checks the prologue store and the
+exit check in the emitted text. It runs the in-process image, and it runs a
+build whose prologue overwrites the canary slot. The overwritten build must
+print the mismatch cause and exit 134. The controls print their sum. A build
+without `-harden` must not reference the canary.
 
 The test uses a compiler for the native host architecture.
 It runs on the native ARM self-host shards without an x86 compiler.
@@ -112,7 +138,10 @@ Native fault results apply to the tested process and image variants on that host
 They do not certify handwritten runtime frames or every production host.
 
 Every `tests/stdlib/*_test.fern` program was also built with `-harden` and
-run under qemu: 247 of 247 passed, with no SIGILL.
+run, on x86-64-linux natively and on arm64-linux under QEMU: 532 of 538
+runs passed, with no SIGILL and no canary mismatch. The six other runs are
+the two runner self-tests that print `not ok` lines by design and the
+Darwin-only time zone test, which fail the same way without the flag.
 
 ## Not covered yet
 
@@ -127,7 +156,7 @@ run under qemu: 247 of 247 passed, with no SIGILL.
 - **arm64-darwin**: Apple's arm64e ABI, not BTI, is the mechanism there.
 - **x86-64 CET**: the kernel enables user-space IBT for no static binary,
   and the shadow stack is enabled through `arch_prctl` at startup. Both are
-  their own design.
+  their own design. On x86-64 `-harden` is the canary alone.
 - **RELRO**: a static image with no relocations has no GOT for RELRO to
   protect.
 - **Stack canaries**: not started. #5549 scopes them to frames with buffers,

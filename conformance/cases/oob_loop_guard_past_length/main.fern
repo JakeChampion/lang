@@ -1,0 +1,22 @@
+// spec: AB-07
+// A loop guard that runs one past the length does not elide the bounds
+// check. The first out-of-range index aborts after the in-range sum.
+
+import "std/i32";
+
+function sum(xs: i32[], n: i32): i32 {
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < n) {
+        t = t + xs[i];
+        i = i + 1;
+    }
+    return t;
+}
+
+function main(): i32 {
+    let xs: i32[] = [1, 2, 3];
+    print(sum(xs, 3).to_string());
+    print(sum(xs, 4).to_string());
+    return 0;
+}

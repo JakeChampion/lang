@@ -157,11 +157,7 @@ function main(): i32 {
     ir.op_load_local(0), ir.op_call_direct("__fern_rc_dec", 1), ir.op_drop(),
     ir.op_load_local(0), ir.op_return(),
   ];
-  let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "emitted_valid", 1, 1, ops, false);
-  if (!lifted.ok) {
-    print(lifted.bail + "\n");
-    return 26;
-  }
+  let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "emitted_valid", 1, 1, ops, false)) { Ok(l) => l, Err(message) => { print(message); return 26; } };
   expect(lifted.func, [2], true, 0, "certified", 27);
   let bad: ir.Op[] = [];
   let i: i32 = 0;
@@ -171,11 +167,7 @@ function main(): i32 {
   }
   bad = bad.append(ir.op_load_local(0)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
   bad = bad.append(ir.op_load_local(0)).append(ir.op_return());
-  let mutated = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "emitted_extra_release", 1, 1, bad, false);
-  if (!mutated.ok) {
-    print(mutated.bail + "\n");
-    return 28;
-  }
+  let mutated = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "emitted_extra_release", 1, 1, bad, false)) { Ok(l) => l, Err(message) => { print(message); return 28; } };
   expect(mutated.func, [2], true, 1, "emitted_extra_release", 29);
   flow_checks();
   loop_checks();

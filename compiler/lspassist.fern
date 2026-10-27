@@ -90,7 +90,9 @@ function global_items(s: checker.Scope, mod: parser.Module, m: i32, own: string,
     }
   }
   for name in ["Option", "Result"] {
-    acc = enum_items(s, name, checker.enum_sig(s, name).variants, "", acc);
+    if let Some(u) = checker.enum_sig(s, name) {
+      acc = enum_items(s, name, u.variants, "", acc);
+    }
   }
   return acc;
 }
@@ -109,7 +111,9 @@ function struct_item(sd: parser.StructDecl, prefix: string): Item {
 }
 
 function func_item(s: checker.Scope, name: string, shown: string): Item {
-  let sig: checker.FuncSig = checker.func_sig(s, name);
+  let Some(sig) = checker.func_sig(s, name) else {
+    return Item { label: shown, kind: CI_FUNCTION, detail: "function " + shown + "(): unknown" };
+  };
   if (sig.is_const) {
     return Item { label: shown, kind: CI_CONSTANT, detail: "(const) " + lspquery.label(sig.ret_type, sig.ret_type_name) };
   }
@@ -118,7 +122,7 @@ function func_item(s: checker.Scope, name: string, shown: string): Item {
 
 function enum_items(s: checker.Scope, name: string, variants: string[], own: string, own acc: Item[]): Item[] {
   let shown: string = lspquery.unprefixed(name, own);
-  let module: string = checker.enum_sig(s, name).module;
+  let module: string = checker.union_module(s, name);
   acc = acc.append(Item { label: shown, kind: CI_ENUM, detail: "enum " + shown });
   for vn in variants {
     acc = acc.append(Item { label: lspquery.unprefixed(vn, module), kind: CI_ENUM_MEMBER, detail: lspquery.variant_text(s, vn, name) });
@@ -154,9 +158,10 @@ function members(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten.Qual
       return export_items(s, v.mod, quals.prefixes[a]);
     }
     for c in own_first(quals.own, recv.text) {
-      let u: checker.UnionSig = checker.enum_sig(s, c);
-      if (u.is_enum) {
-        return variant_items(s, u);
+      if let Some(u) = checker.enum_sig(s, c) {
+        if (u.is_enum) {
+          return variant_items(s, u);
+        }
       }
     }
   }
@@ -252,11 +257,12 @@ function skip_stmt(st: ast.Stmt, own acc: ast.ExprFieldAccess[]): ast.ExprFieldA
 function type_members(s: checker.Scope, t: typeinfo.Type): Item[] {
   let out: Item[] = [];
   if let typeinfo.TypeStruct(st) = t {
-    let sig: checker.StructSig = checker.struct_sig(s, st.name);
-    let i: i32 = 0;
-    while (i < sig.field_names.len()) {
-      out = out.append(Item { label: sig.field_names[i], kind: CI_FIELD, detail: lspquery.label(sig.field_types[i], sig.field_type_names[i]) });
-      i = i + 1;
+    if let Some(sig) = checker.struct_sig(s, st.name) {
+      let i: i32 = 0;
+      while (i < sig.field_names.len()) {
+        out = out.append(Item { label: sig.field_names[i], kind: CI_FIELD, detail: lspquery.label(sig.field_types[i], sig.field_type_names[i]) });
+        i = i + 1;
+      }
     }
   }
   if let typeinfo.TypeArray(a) = t {
@@ -267,7 +273,7 @@ function type_members(s: checker.Scope, t: typeinfo.Type): Item[] {
     return out;
   }
   for ms in checker.methods_on(s, recv) {
-    out = out.append(method_item(ms.name, lspquery.method_parts(ms)));
+    out = out.append(method_item(ms.name, Some(lspquery.method_parts(ms))));
   }
   for name in checker.builtin_method_names(recv) {
     out = out.append(method_item(name, lspquery.builtin_parts(recv, name)));
@@ -282,8 +288,9 @@ function array_members(s: checker.Scope, a: typeinfo.TypeArray, own out: Item[])
   return out.append(method_item("len", lspquery.array_parts(s, a, "len")));
 }
 
-function method_item(name: string, parts: lspquery.Parts): Item {
-  return Item { label: name, kind: CI_METHOD, detail: util.show_type_vars(lspquery.parts_text(name, parts)) };
+function method_item(name: string, parts: Option[lspquery.Parts]): Item {
+  let detail: string = match (parts) { Some(value) => lspquery.parts_text(name, value), None => "function " + name + "(): " };
+  return Item { label: name, kind: CI_METHOD, detail: util.show_type_vars(detail) };
 }
 
 struct Bound { name: string, t: typeinfo.Type, param: boolean, let_line: i32, let_col: i32, annotated: boolean }
@@ -374,23 +381,20 @@ function bound_in_expr(e: ast.Expr, s: checker.Scope, own acc: Bound[]): Bound[]
   return acc;
 }
 
-pub struct Signature { found: boolean, label: string, starts: i32[], ends: i32[], active: i32 }
+pub struct Signature { label: string, starts: i32[], ends: i32[], active: i32 }
 
-pub function signature_help(p: lspquery.Program, line: i32, col: i32): Signature {
-  let none: Signature = Signature { found: false, label: "", starts: [], ends: [], active: 0 };
+pub function signature_help(p: lspquery.Program, line: i32, col: i32): Option[Signature] {
   let v: lspquery.View = lspquery.view_of(p);
   let m: i32 = util.pos_file_index(line);
   let toks: lspquery.Tok[] = lspquery.module_toks(p, m);
   let quals: flatten.Qualifiers = lspquery.quals_of(v, m);
   let (callee, commas) = call_at(toks, line, col);
   if (callee < 0 || !lspquery.names_something(toks[callee], quals)) {
-    return none;
+    return None;
   }
-  let (name, parts) = callee_parts(v.types, toks, quals, callee);
-  if (!parts.found) {
-    return none;
-  }
-  return signature(name, lspquery.Parts { ...parts, params: written_list(quals, parts.params), ret: lspquery.written(quals, parts.ret) }, commas);
+  let target: CalleeParts = match (callee_parts(v.types, toks, quals, callee)) { Some(value) => value, None => { return None; } };
+  let parts: lspquery.Parts = target.parts;
+  return Some(signature(target.name, lspquery.Parts { ...parts, params: written_list(quals, parts.params), ret: lspquery.written(quals, parts.ret) }, commas));
 }
 
 function call_at(toks: lspquery.Tok[], line: i32, col: i32): (i32, i32) {
@@ -432,30 +436,38 @@ function punct(t: lspquery.Tok): string {
   return t.text;
 }
 
-function callee_parts(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten.Qualifiers, i: i32): (string, lspquery.Parts) {
+struct CalleeParts { name: string, parts: lspquery.Parts }
+
+function callee_parts(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten.Qualifiers, i: i32): Option[CalleeParts] {
   let t: lspquery.Tok = toks[i];
-  let (site, ok) = lspquery.site_at(toks, quals, t.line, t.col);
-  if (!ok) {
-    return (t.text, lspquery.no_parts());
-  }
-  let (parts, located) = lspquery.call_parts(v, site);
-  if (located) {
-    return (t.text, parts);
+  let site: lspquery.Site = match (lspquery.site_at(toks, quals, t.line, t.col)) { Some(value) => value, None => { return None; } };
+  match (lspquery.call_parts(v, site)) {
+    Some(parts) => {
+      return match (parts) { Some(value) => Some(CalleeParts { name: t.text, parts: value }), None => None };
+    },
+    None => {}
   }
   let s: checker.Scope = checker.module_scope(v);
   if (site.qual.len() > 0) {
-    return (t.text, lspquery.func_parts(checker.func_sig(s, site.target)));
+    let Some(sig) = checker.func_sig(s, site.target) else {
+      return None;
+    };
+    if (sig.name.len() == 0) {
+      return None;
+    }
+    return Some(CalleeParts { name: t.text, parts: lspquery.func_parts(sig) });
   }
   if (site.dot_col > 0) {
-    return (t.text, lspquery.no_parts());
+    return None;
   }
   for c in own_first(quals.own, t.text) {
-    let sig: checker.FuncSig = checker.func_sig(s, c);
-    if (sig.name.len() > 0 && !sig.is_const) {
-      return (t.text, lspquery.func_parts(sig));
+    if let Some(sig) = checker.func_sig(s, c) {
+      if (!sig.is_const && sig.name.len() > 0) {
+        return Some(CalleeParts { name: t.text, parts: lspquery.func_parts(sig) });
+      }
     }
   }
-  return (t.text, lspquery.no_parts());
+  return None;
 }
 
 function written_list(quals: flatten.Qualifiers, labels: string[]): string[] {
@@ -488,7 +500,7 @@ function signature(name: string, parts: lspquery.Parts, commas: i32): Signature 
   if (active < 0) {
     active = 0;
   }
-  return Signature { found: true, label: label + "): " + util.show_type_vars(parts.ret), starts: starts, ends: ends, active: active };
+  return Signature { label: label + "): " + util.show_type_vars(parts.ret), starts: starts, ends: ends, active: active };
 }
 
 pub struct Symbol { name: string, detail: string, kind: i32, line: i32, col: i32, end_line: i32, end_col: i32, name_line: i32, name_col: i32, children: Symbol[] }
@@ -658,7 +670,7 @@ function decl_sig(fd: parser.FuncDecl): string {
   if (ret.len() == 0) {
     ret = "void";
   }
-  return util.show_type_vars(lspquery.parts_text(fd.name, lspquery.Parts { found: true, params: ps, ret: ret }));
+  return util.show_type_vars(lspquery.parts_text(fd.name, lspquery.Parts { params: ps, ret: ret }));
 }
 
 function const_type(p: lspquery.Program, m: i32, fd: parser.FuncDecl): string {
@@ -671,7 +683,10 @@ function const_type(p: lspquery.Program, m: i32, fd: parser.FuncDecl): string {
   if (own.len() > 0) {
     bundled = own + "__" + fd.name;
   }
-  return type_text(checker.func_sig(checker.module_scope(v.types), bundled).ret_type);
+  let Some(sig) = checker.func_sig(checker.module_scope(v.types), bundled) else {
+    return "unknown";
+  };
+  return type_text(sig.ret_type);
 }
 
 pub struct Hint { line: i32, col: i32, label: string }

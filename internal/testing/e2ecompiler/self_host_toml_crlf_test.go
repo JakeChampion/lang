@@ -1,18 +1,14 @@
 package e2ecompiler
 
 import (
-	"os/exec"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestSelfHostTomlCRLF(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("toml_crlf_run driver runs natively; skipping under an exec runner")
-	}
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/toml_crlf_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "drivers/toml_crlf_run.fern", "toml_crlf_run")
 
 	const want = "LF   name=acme\n" +
 		"LF   deps=2\n" +
@@ -33,12 +29,16 @@ func TestSelfHostTomlCRLF(t *testing.T) {
 		"CRLF entry dbl version=1.0.0 path=../dbl hash=\n" +
 		"CRLF entry shout version=1.2.3 path= hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n"
 
-	cmd := exec.Command(bin)
-	out, _ := cmd.Output()
-	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-		t.Fatalf("toml_crlf_run did not exit normally")
-	}
-	if got := string(out); got != want {
-		t.Errorf("CRLF manifest/lock parse mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	for _, target := range []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux, e2eharness.TargetWasm32Wasi} {
+		t.Run(target, func(t *testing.T) {
+			bin := buildSelfHostBinFor(t, dir, "drivers/toml_crlf_run.fern", "toml_crlf_run", target)
+			out, err := mvsDriverCommand(t, target, bin).CombinedOutput()
+			if err != nil {
+				t.Fatalf("toml_crlf_run: %v\n%s", err, out)
+			}
+			if got := string(out); got != want {
+				t.Errorf("CRLF manifest/lock parse mismatch:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+			}
+		})
 	}
 }

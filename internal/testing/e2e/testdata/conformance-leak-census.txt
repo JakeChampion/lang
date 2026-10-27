@@ -341,6 +341,7 @@ generic_struct_literal_in_append                     0
 generic_struct_method_at_tuple_type                  0
 generic_view_methods                                 0
 grow_past_capacity                                   0
+handle_transfer_closes_once                          0
 hash_struct_enum                                     0
 header_struct_literals                               0
 headers_map                                          0
@@ -388,6 +389,7 @@ imported_enum_qualifies_its_variants                  0
 inclusive_range                                      0
 inclusive_range_type_max                             0
 index_takes_any_integer_type                         0
+index_wrapped_product_rejected                       0
 indirect_call_owned_param                            0
 indirect_owned_arguments_follow_their_contract        0
 init_branch_control                                  0
@@ -413,6 +415,7 @@ integer_literals_beside_a_float                      0
 integer_literals_beside_an_f32                       0
 io_and_fetch_errors_box_into_dyn_error               0
 io_error_other_closed_stdout                         0
+io_error_other_double_close_reader                   0
 io_error_other_is_a_directory                        0
 io_error_other_not_a_directory                       0
 io_error_variant_beside_a_struct_of_its_name         0
@@ -545,11 +548,19 @@ none_branch                                          0
 none_equal_none                                      0
 number_parsing                                     0
 numeric_lossless_widening 0
+oob_index_below_guard                                0
 oob_index_negative                                   0
 oob_index_read                                       0
 oob_index_wide_integer                               0
+oob_index_wrapped                                    0
+oob_index_wrapped_guard                              0
 oob_index_write                                      1
+oob_loop_guard_past_length                           0
+oob_slice_negative_start                             0
 oob_slice_range                                      0
+oob_slice_wrapped_end                                0
+oob_view_index_past_view                             0
+oob_write_wrapped_index                              1
 op_overload_nested                                   0
 op_trait_generic                                     0
 open_slice_evaluates_base_once                       0
@@ -1123,6 +1134,7 @@ unicode_linear_transforms                            0
 union_eval                                           0
 union_lambda_param                                   0
 union_member_widens_in_variant_payload               0
+unsafe_block_accepts_obligations                     0
 url_codec                                            0
 url_roundtrip                                        0
 use_callback_bind                                    0
@@ -1147,6 +1159,7 @@ variant_pattern_rename                               0
 variant_pattern_rename_rest                          0
 variant_pattern_rest                                 0
 variant_payload_from_array_field                     0
+view_of_branch_value                                 0
 views_in_aggregates_stay_local                       0
 wasi_http_error_code_names                           0
 while_sum                                            0

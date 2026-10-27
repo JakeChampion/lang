@@ -77,8 +77,11 @@ function check(n: i32): i32 {
   let plan = ssaunits.plan(p.func, p.modes, ssaunits.no_view());
   if (!plan.ok) { print(plan.why); return 10; }
   let no_names: string[] = [];
-  let lowered = ssarc.lower(p.func, p.modes, plan, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index(no_names), ssaunits.no_view(), suspend.none());
-  if (!lowered.ok) { print(lowered.why); return 11; }
+  let lowered = match (ssarc.lower(p.func, p.modes, plan, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index(no_names), ssaunits.no_view(), suspend.none())) {
+    Ok(Some(body)) => body,
+    Ok(None()) => { print("missing packed byte body"); return 11; },
+    Err(state) => { print(state.why); return 11; }
+  };
   if (lowered.ops.len() > 32) { return 12; }
   return 0;
 }

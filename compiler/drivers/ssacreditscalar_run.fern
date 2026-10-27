@@ -274,8 +274,7 @@ function target_checks(target: string): void {
   for body in sub.bodies {
     if (body.name == "require") {
       require(body.ok, 3);
-      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), body.name, body.n_params, body.n_locals, body.ops, false);
-      require(lifted.ok, 4);
+      let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), body.name, body.n_params, body.n_locals, body.ops, false)) { Ok(l) => l, Err(message) => { eprint(message); exit(4); } };
       funcs = funcs.append(lifted.func);
     }
   }

@@ -2869,8 +2869,7 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerRes
 }
 
 pub function ir_route_ok(lm: parser.Module, component: boolean, io: boolean, sub: ircore.Sub): boolean {
-  let g: ircore.Lowered = ircore.gate(ircore.with_records(lm, sub), sub);
-  return g.ok && ir_route_final(g.cache, component, io, module_is_proxy(lm));
+  return match (ircore.gate(ircore.with_records(lm, sub), sub)) { Some(g) => ir_route_final(g.cache, component, io, module_is_proxy(lm)), None => false };
 }
 
 pub function ir_route_final(cache: irtables.LowerResult[], component: boolean, io: boolean, proxy: boolean): boolean {
@@ -2898,12 +2897,12 @@ pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: 
       mode = 2;
     }
   }
-  let g: ircore.Lowered = ircore.gate(lm, sub);
+  let g = match (ircore.gate(lm, sub)) { Some(g) => g, None => { ircore.eprint_ir_ineligible(); exit(1); } };
   let cache: irtables.LowerResult[] = g.cache;
-  if (g.ok && ir_route_final(cache, component, io, module_is_proxy(lm))) {
+  if (ir_route_final(cache, component, io, module_is_proxy(lm))) {
     return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical, sub.rt_lower), needs: runtime_needs(lm, needs_of(cache)) };
   }
-  if (g.ok && component && wasm_ir_deferrals_ok(cache)) {
+  if (component && wasm_ir_deferrals_ok(cache)) {
     eprint("error: " + component_refused_need(needs_of(cache), io, module_is_proxy(lm))
       + " is not supported in a wasm component: the component framing has no import for it (build with -emit core-module for a preview1 module)");
     exit(1);
@@ -5027,10 +5026,11 @@ function emit_function_ir(ns: string, r: irtables.LowerResult, fd: parser.FuncDe
   if (fd.receiver_type.len() > 0) {
     fn_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
   }
-  return emit_function_ir_named(ns, r, fn_name, result_wat(r, fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vgate);
+  let body = ircore.body_for_emit(fn_name, r);
+  return emit_function_ir_named(ns, body, fn_name, result_wat(body, fd, structs), str_vals, cagg_vals, structs, fn_table, funcs, vgate);
 }
 
-function result_wat(r: irtables.LowerResult, fd: parser.FuncDecl, structs: irtables.StructTab): string {
+function result_wat(r: irtables.Lowered, fd: parser.FuncDecl, structs: irtables.StructTab): string {
   if (r.result_kind == irtables.result_from_decl() || irtables.erased_passthrough_safe(fd)) {
     return decl_result_wat(fd, structs);
   }
@@ -5053,7 +5053,7 @@ function decl_result_wat(fd: parser.FuncDecl, structs: irtables.StructTab): stri
   return " (result i32)\n";
 }
 
-function produced_result_wat(r: irtables.LowerResult): string {
+function produced_result_wat(r: irtables.Lowered): string {
   if (r.result_kind == irtables.result_i32()) {
     return " (result i32)\n";
   }
@@ -5181,8 +5181,7 @@ function branch_only_if(ops: ir.Op[], i: i32): string {
 }
 
 // fern-lint: allow cyclomatic-complexity
-function emit_function_ir_named(ns: string, r: irtables.LowerResult, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
-  ircore.lower_failed_refuse(fn_name, r);
+function emit_function_ir_named(ns: string, r: irtables.Lowered, fn_name: string, result_wat: string, str_vals: string[], cagg_vals: string[], structs: irtables.StructTab, fn_table: string[], funcs: parser.FuncDecl[], vgate: irverifygate.Gate): string {
   irverifygate.verify_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
   irverifygate.certify_ops_or_refuse(fn_name, r.ops, r.n_params, r.n_locals, vgate);
   let f: wasmlocals.Frame = wasmlocals.coalesce(r.ops, r.n_params, r.n_locals, r.i64_slots, r.f64_slots, r.v128_slots);
@@ -5273,7 +5272,8 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   }
   let xi: i32 = mod.funcs.len();
   while (xi < cache.len()) {
-    parts = parts.append(emit_function_ir_named(ns, cache[xi], cache[xi].name, produced_result_wat(cache[xi]), str_vals, cagg_vals, all_structs, ft, all_funcs, vgate));
+    let body = ircore.body_for_emit(cache[xi].name, cache[xi]);
+    parts = parts.append(emit_function_ir_named(ns, body, cache[xi].name, produced_result_wat(body), str_vals, cagg_vals, all_structs, ft, all_funcs, vgate));
     xi = xi + 1;
   }
   irverifygate.report(vgate);
@@ -9417,7 +9417,7 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (p
   }
   let mod: parser.Module = rtmodule.load_wasm("wasm32-wasi", roots);
   let lowered: physicalbody.Lowered = rt_lower(mod);
-  let bodies: irtables.LowerResult[] = lowered.bodies;
+  let bodies: irtables.LowerResult[] = irtables.lowered_results(lowered.bodies);
   let text: string = emit_functions_ns("$runtime", mod, bodies, physicalbody.collection(lowered));
   return units.append(WasmUnit { ns: "$runtime", text: text, strs: str_values(bodies), caggs: const_agg_values(bodies), fns: fn_value_table(bodies) });
 }

@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**65 of 68** claims are pinned by a conformance case. The remaining
+**81 of 84** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -85,6 +85,15 @@ of them.
 | `AB-03` | `docs/ARRAY-BOUNDS.md` | Writing past the end (`xs.with(i, v)`) aborts | `oob_index_write` |
 | `AB-04` | `docs/ARRAY-BOUNDS.md` | Array slice construction outside `0 <= lo <= hi <= len` aborts (a string slice answers `None` — `ST-01`) | `oob_slice_range` |
 | `AB-05` | `docs/ARRAY-BOUNDS.md` | `lo == hi == len` is a legal empty array slice | `slice_at_length` |
+| `AB-06` | `docs/ARRAY-BOUNDS.md` | An index that wrapping arithmetic makes negative aborts; the check reads the value, not the expression | `oob_index_wrapped` |
+| `AB-07` | `docs/ARRAY-BOUNDS.md` | A loop guard past the length does not elide the check; the first out-of-range index aborts | `oob_loop_guard_past_length` |
+| `AB-08` | `docs/ARRAY-BOUNDS.md` | A view's bound is its own length, not its storage's | `oob_view_index_past_view` |
+| `AB-09` | `docs/ARRAY-BOUNDS.md` | An array slice with a negative low bound aborts | `oob_slice_negative_start` |
+| `AB-10` | `docs/ARRAY-BOUNDS.md` | A guard on a wrapping sum (`i + 1 < len`) proves nothing about `i`; the read at the largest `i32` aborts | `oob_index_wrapped_guard` |
+| `AB-11` | `docs/ARRAY-BOUNDS.md` | A guard on `i` proves nothing about `i - 1`; the read at -1 aborts | `oob_index_below_guard` |
+| `AB-12` | `docs/ARRAY-BOUNDS.md` | A slice end that wrapping arithmetic makes negative aborts | `oob_slice_wrapped_end` |
+| `AB-13` | `docs/ARRAY-BOUNDS.md` | A write at the largest `i32` index aborts like a read | `oob_write_wrapped_index` |
+| `AB-14` | `docs/ARRAY-BOUNDS.md` | A scaled index that wraps negative fails its own guard, so the read is skipped | `index_wrapped_product_rejected` |
 | `IS-01` | `docs/INTEGER-SEMANTICS.md` | `+ - * <<` wrap at the operand's width | `int_wrap` |
 | `IS-02` | `docs/INTEGER-SEMANTICS.md` | Shift counts are masked (`& 31` / `& 63`) | `int_shift_count_masked` |
 | `IS-03` | `docs/INTEGER-SEMANTICS.md` | `>>` is arithmetic for signed operands, logical for unsigned | `int_shift_count_masked` |
@@ -134,6 +143,7 @@ of them.
 | `ML-05` | `docs/MODE-LATTICE.md` | Using an owned parameter after it is consumed is rejected (`E050`) | `diag_e050` |
 | `ML-06` | `docs/MODE-LATTICE.md` | A `fbip` function that allocates without a donor to reuse is rejected (`E068`) | `diag_e068` |
 | `ML-07` | `docs/MODE-LATTICE.md` | A closure may not capture a value holding a borrowed view (`E082`) | `diag_e082` |
+| `ML-08` | `docs/MODE-LATTICE.md` | An `if` or `match` expression whose arms build fresh arrays can be lent as a view, and the chosen arm's storage lives until the view's last use | `view_of_branch_value` |
 | `MC-01` | `docs/MUST-CONSUME.md` | A `@must_consume` value unconsumed on some path is rejected (`E067`) | `diag_e067` |
 | `MC-02` | `docs/MUST-CONSUME.md` | An `own` parameter is the declared sink, exempt from `E067` | `must_consume_own_sink` |
 | `AL-01` | `docs/ALLOCATION-OBSERVABLE.md` | A loop that reclaims what it allocates does not grow the fresh-allocation high-water mark with the round count | `alloc_flat_under_reclaim` |
@@ -146,6 +156,12 @@ of them.
 | `ST-02` | `docs/STRINGS-SOTA.md` | `s[a:b]` on a string yields `None` when an endpoint splits a UTF-8 code point | `string_slice_option` |
 | `ST-03` | `docs/STRINGS-SOTA.md` | `slice_unchecked(s, a, b)` indexes bytes and checks no code-point boundary | `slice_unchecked_bytes` |
 | `ST-04` | `docs/STRINGS-SOTA.md` | `slice_unchecked(s, a, b)` aborts when its bounds are out of range | `slice_unchecked_oob` |
+| `SC-01` | `docs/SAFETY-CONTRACT.md` | A call to an unsafe function is accepted only inside an `unsafe` block, through a direct call, a method, a trait object, a bound type parameter, an import, or a closure that holds its own block (`E095` otherwise) | `unsafe_block_accepts_obligations` |
+| `RH-01` | `docs/security/HANDLE-AUDIT.md` | A handle whose `close` consumes its receiver cannot be closed twice; the first close is not the local's last use (`E051`) | `diag_e051_handle_closed_twice` |
+| `RH-02` | `docs/security/HANDLE-AUDIT.md` | A handle is not read after a consuming close (`E051`) | `diag_e051_handle_read_after_close` |
+| `RH-03` | `docs/security/HANDLE-AUDIT.md` | A handle passed to an `own` parameter is not used after the transfer (`E051`) | `diag_e051_handle_used_after_transfer` |
+| `RH-04` | `docs/security/HANDLE-AUDIT.md` | A handle with a consuming close is closed exactly once at a local's last use, through an `own` parameter, and on each branch that closes or stores it | `handle_transfer_closes_once` |
+| `RH-05` | `docs/security/HANDLE-AUDIT.md` | A second close of a built-in handle, with no open between the closes, answers `Other` with "Bad file descriptor" and errno 9 | `io_error_other_double_close_reader` |
 
 ## Every gap this index opened with is now closed
 

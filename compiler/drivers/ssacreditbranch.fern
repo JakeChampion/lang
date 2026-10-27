@@ -189,15 +189,13 @@ function credit(f: ssa.SFunc): ssa.SFunc {
 
 pub function run(source: string, target: string): void {
   let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
-  let g = ircore.gate_program(ircore.sub_lifted(driven.sub, driven.full), driven.sub);
-  require(g.ok, 97);
+  let g = match (ircore.gate_program(ircore.sub_lifted(driven.sub, driven.full), driven.sub)) { Some(g) => g, None => { exit(97); } };
   let cache = ircore.inline_tiny_leaves(g.im, g.cache);
   let leaves = asmcore.unit_leaves(g.im, 0, g.im.funcs.len(), cache).leaves;
   let fs: ssa.SFunc[] = [];
   for r in cache {
     if (r.ok && !r.superseded) {
-      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), r.name, r.n_params, r.n_locals, r.ops, false);
-      require(lifted.ok, 98);
+      let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), r.name, r.n_params, r.n_locals, r.ops, false)) { Ok(l) => l, Err(message) => { eprint(message); exit(98); } };
       fs = fs.append(ssa.register_form(ssa.inline_leaves(lifted.func, leaves)).f);
     }
   }

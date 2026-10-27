@@ -239,6 +239,12 @@ Guarantee: a borrowed view never outlives the frame that owns
 its backing store — the one place Fern needs a locality-style
 rule (§1).
 
+Code: an `if` or `match` expression whose arms build fresh arrays
+can be lent as a view. The typed lowering merges the owned arrays at the
+join and lends the merged value once (`merge_arms` in
+`compiler/semsource.fern`). The chosen arm's storage then lives until
+the view's last use.
+
 Capture (E082): a closure may not capture a value holding a view,
 whatever its root. A function value's type does not record what
 its environment holds, so a captured view would leave every rule

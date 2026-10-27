@@ -70,11 +70,7 @@ function main(): i32 {
   let mod_b: parser.Module = with_funcs(im, slice_funcs(im.funcs, half, n));
 
   let stab: irtables.StructTab = irtables.struct_tab(im.structs);
-  let g: ircore.Lowered = ircore.gate(im, d.sub);
-  if (!g.ok) {
-    ircore.eprint_ir_ineligible();
-    return 1;
-  }
+  let g = match (ircore.gate(im, d.sub)) { Some(g) => g, None => { ircore.eprint_ir_ineligible(); return 1; } };
   let whole: irtables.LowerResult[] = g.cache;
   let cache_a: irtables.LowerResult[] = slice_cache(whole, 0, half);
   let cache_b: irtables.LowerResult[] = slice_cache(whole, half, whole.len());

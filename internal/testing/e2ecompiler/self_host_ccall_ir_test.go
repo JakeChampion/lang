@@ -38,7 +38,7 @@ function main(): i32 { return run0(0 as usize) + run1(0 as usize, 1 as usize) + 
 		for i := 0; i < n; i++ {
 			want = append(want, "movq "+itoa(24+8*i)+"(%rbp), "+regs[i])
 		}
-		want = append(want, "andq $-16, %rsp", "call *%r11")
+		want = append(want, "andq $-16, %rsp", "xorl %eax, %eax", "call *%r11")
 		return want
 	}
 	for n := 0; n <= 4; n++ {
