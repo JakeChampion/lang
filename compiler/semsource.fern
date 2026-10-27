@@ -3348,9 +3348,6 @@ function type_head(obj: ast.Expr, s: State): string {
         return parser.receiver_base(typeinfo.spelling(actual));
       }
     }
-    if (checker.variant_owner_of(s.scope, id.name).len() > 0) {
-      return "";
-    }
     return declared_type_head(id.name, s);
   }
   return "";
@@ -3360,6 +3357,9 @@ function declared_type_head(name: string, s: State): string {
   let base = util.base_type_name(name);
   if (base != name && (checker.struct_sig(s.scope, base).name.len() > 0 || union_variants(s, base).len() > 0 || builtin_union_layout(base) != 0)) {
     return base;
+  }
+  if (checker.union_sig(s.scope, name).name.len() > 0 || builtin_union_layout(name) != 0) {
+    return name;
   }
   let sig = checker.struct_sig(s.scope, name);
   if (sig.name.len() > 0) {

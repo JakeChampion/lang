@@ -73,14 +73,7 @@ function verify_provided_module(merged: parser.Module, target: string): i32 {
 
 function provided_audit(): i32 {
   let names: string[] = irverifyprovided.provided_names();
-  let available: string[] = rtmodule.names("x86-64-linux");
-  let roots: string = "";
-  for name in names {
-    if (!ircore.is_fern_helper(name) && util.has_str(available, name)) {
-      roots = roots + " " + name;
-    }
-  }
-  let runtime: parser.Module = rtmodule.load("x86-64-linux", roots);
+  let runtime: parser.Module = rtmodule.load("x86-64-linux", asmcore.task_runtime_roots());
   let runtime_names: string[] = [];
   for fd in runtime.funcs {
     runtime_names = runtime_names.append(fd.name);

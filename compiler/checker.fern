@@ -12335,6 +12335,9 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
     return out;
   }
   let want: i32 = variant_payload_count(qname, s.structs);
+  if (want < 0 && dot_index(qname) >= 0 && owner.is_enum && util.has_str(owner.variants, vname)) {
+    want = variant_value_payloads(s, owner.name, vname);
+  }
   if (want < 0) {
     return out;
   }
@@ -14513,7 +14516,7 @@ function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.D
   }
 
   let payloads: i32 = 0;
-  if (!s.known(id.name) && !s.has_sig(id.name)) {
+  if (!s.known(id.name) && !s.has_sig(id.name) && !s.variant_ambiguous(id.name)) {
     payloads = variant_value_payloads(s, "", id.name);
   }
   if (payloads > 0) {
@@ -15987,17 +15990,20 @@ function vref_expr(e: ast.Expr, s: Scope, ambig: string[]): util.Diag[] {
       }
     }
   }
-  function not_into_lambda(n: ast.Expr): boolean {
+  function not_into_type_or_lambda(n: ast.Expr): boolean {
     match (n) {
       ast.ExprLambda(_) => {
         return false;
+      },
+      ast.ExprFieldAccess(fa) => {
+        return qual_enum_name(fa.obj, s).len() == 0;
       },
       _ => {
         return true;
       }
     }
   }
-  return astwalk.fold_expr_pruned(e, no_diags(), at, not_into_lambda);
+  return astwalk.fold_expr_pruned(e, no_diags(), at, not_into_type_or_lambda);
 }
 
 function vref_stmts(stmts: ast.Stmt[], s: Scope, ambig: string[]): util.Diag[] {
