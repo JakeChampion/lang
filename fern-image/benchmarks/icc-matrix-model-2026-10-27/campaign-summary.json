@@ -1,0 +1,18 @@
+{
+  "source_commit": "309dec19100f3ac5ccee69fbccb72cd4ffb8b074",
+  "cases_per_target": 401,
+  "accepted_per_target": 107,
+  "expected_errors_per_target": 294,
+  "checked_integers_per_target": 435297,
+  "workers_per_target": 51,
+  "total_workers": 153,
+  "all_workers_exit_zero_nonzero_balanced_zero_live": true,
+  "all_target_sample_records_equal": true,
+  "source_tool_hash_counts": [
+    1274,
+    1275,
+    1275
+  ],
+  "sources_unchanged": true,
+  "offline_metadata_scope": "One host-side frozen profile metadata observation per campaign, not a transform or target-side CMM execution."
+}

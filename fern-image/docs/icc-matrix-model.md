@@ -101,3 +101,22 @@ An external runtime CMM still requires explicit user approval.
 [ICC.1:2022, profile version 4.4](https://www.color.org/specifications/ICC.1-2022-05.pdf), sections 8.2, 8.3.3, 8.4.3, 8.10, 9.1, and Annex F.3.
 The explicit rejection policy and current numerical subset are project decisions.
 The public web reader supplied the document, without a local PDF digest claim.
+
+## Completed finite campaign
+
+Source `309dec19100f3ac5ccee69fbccb72cd4ffb8b074` precedes all final records.
+Each target checks 401 cases, with 107 accepted data results and 294 expected errors.
+Every one of 435,297 returned integers per target agrees exactly with the construction reference.
+All three target sample records agree exactly.
+All 153 fresh workers have nonzero balanced allocation counts and zero live bytes.
+
+The bundle reproduces exactly with SHA256 `eef63d7b07cd7de8e81bd363d3c1983e97592ca41ed05c81aa7515341bfcc896`.
+All 1,274 native and 1,275 runner selected source/tool hashes remain unchanged.
+The records are `benchmarks/results/icc-matrix-model-{native,wasm,arm64}.json`.
+The phase, source, tool, and cleanup evidence is in `benchmarks/icc-matrix-model-2026-10-27/`.
+
+All 276 TAP cases pass on native, Wasm, and standalone ARM64/QEMU10.
+Complete scripts report 78 native, 54 Wasm, and 39 ARM balanced zero-live heap censuses.
+Go check and interpreter pass all eight model groups after the source commit.
+Both unchanged complexity gates pass without skips, and format/build/vet/lint/protocol/prose checks pass.
+These finite observations do not close the separate future gates above.
