@@ -1,0 +1,20 @@
+from pathlib import Path
+import subprocess,json,hashlib,os,sys,re,time
+root=Path('/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch');mode=sys.argv[1];prefix=Path('/tmp/image-icc-inverse-dispatch-current-unit-'+mode);assert not prefix.with_suffix('.json').exists()
+compiler=Path('/tmp/image-icc-inverse-current-fern-b42a82ae9');target={'native':'x86-64-linux','wasm':'wasm32-wasi','arm64':'arm64-linux'}[mode];source='0e37398927d607f86359cbdbb21ecea34a1496f3'
+assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()==source and not subprocess.check_output(['git','status','--porcelain'],cwd=root)
+subprocess.run(['git','diff','--exit-code','b42a82ae934be20d4b370ff8f0cc1b278b8804bc','HEAD','--','compiler','internal/stdlib'],cwd=root,check=True,stdout=subprocess.DEVNULL)
+sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();before={str(p):sha(p)for p in [compiler,root/'fern-image/packages/codecs/icc/inverse.fern',root/'fern-image/tests/icc_inverse_test.fern']};assert sha(compiler)=='954350d3c637968434e5335efb4317437197618af0497ccd39598b95bb693cd2'
+binary=root/('fern-image/build/inverse-current-unit-'+mode+('.wasm'if mode=='wasm'else'.elf'));record=dict(source_commit=source,worktree_dirty=False,compiler_build_source='b42a82ae934be20d4b370ff8f0cc1b278b8804bc',hashes=before,commands=[]);start=time.time()
+cmds=[[str(compiler),'-target',target,'-check','tests/icc_inverse_test.fern'],[str(compiler),'-target',target,'-sanitize','-o',str(binary),'tests/icc_inverse_test.fern']]
+run=['wasmtime','run','--dir=.',str(binary)]if mode=='wasm'else['/workspace/image-test-tools/qemu10/usr/bin/qemu-aarch64',str(binary)]if mode=='arm64'else[str(binary)]
+for index,command in enumerate(cmds+[run]):
+ path=Path(str(prefix)+['-check.log','-compile.log','.log'][index]);env=dict(os.environ)
+ if index==2:env.update(FERN_SANITIZE='1',FERN_LEAKCHECK='1')
+ with path.open('w')as log:result=subprocess.run(command,cwd=root/'fern-image',env=env,stdout=log,stderr=subprocess.STDOUT)
+ record['commands'].append(dict(command=command,exit=result.returncode))
+ if result.returncode:break
+text=prefix.with_suffix('.log').read_text()if prefix.with_suffix('.log').exists()else'';heaps=[tuple(map(int,v))for v in re.findall(r'leakcheck: allocs=(\d+) frees=(\d+) live_bytes=(\d+)',text)]
+record.update(exit=result.returncode,seconds=time.time()-start,TAP_ok=sum(l.startswith('ok ')for l in text.splitlines()),TAP_fail=sum(l.startswith('not ok ')for l in text.splitlines()),heaps=heaps,sources_unchanged=before=={p:sha(Path(p))for p in before})
+prefix.with_suffix('.json').write_text(json.dumps(record,indent=2));print(record)
+assert len(record['commands'])==3 and result.returncode==0 and record['TAP_ok']==8 and record['TAP_fail']==0 and heaps and all(a>0 and a==f and live==0 for a,f,live in heaps)and record['sources_unchanged']

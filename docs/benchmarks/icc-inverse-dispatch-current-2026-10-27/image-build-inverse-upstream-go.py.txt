@@ -1,0 +1,11 @@
+from pathlib import Path
+import subprocess,json,hashlib,time
+root=Path('/tmp/image-engine-worktrees/lang-image-inverse-current-compiler-b42');binary=Path('/tmp/image-icc-inverse-current-go-oracle-b42a82ae9');prefix=Path('/tmp/image-icc-inverse-dispatch-upstream-go-build');assert not binary.exists()
+def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+paths=subprocess.check_output(['git','ls-files','*.go','compiler','internal/stdlib'],cwd=root,text=True).splitlines()
+def hashes():return {p:sha(root/p)for p in paths if(root/p).is_file()}
+source=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip();assert source=='b42a82ae934be20d4b370ff8f0cc1b278b8804bc'and not subprocess.check_output(['git','status','--porcelain'],cwd=root)
+before=hashes();start=time.time();command=['go','build','-o',str(binary),'./cmd/fern']
+with prefix.with_suffix('.log').open('w')as log:result=subprocess.run(command,cwd=root,stdout=log,stderr=subprocess.STDOUT)
+record=dict(source_commit=source,command=command,exit=result.returncode,seconds=time.time()-start,Go_version=subprocess.check_output(['go','version'],text=True).strip(),source_hashes=before,sources_unchanged=before==hashes(),binary=str(binary),binary_sha256=sha(binary)if binary.exists()else None)
+prefix.with_suffix('.json').write_text(json.dumps(record,indent=2));print({k:v for k,v in record.items()if k!='source_hashes'});assert result.returncode==0 and record['sources_unchanged']

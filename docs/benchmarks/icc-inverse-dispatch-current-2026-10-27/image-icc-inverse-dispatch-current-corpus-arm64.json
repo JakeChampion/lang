@@ -1,0 +1,41 @@
+{
+  "source_commit": "0e37398927d607f86359cbdbb21ecea34a1496f3",
+  "compiler_build_source": "b42a82ae934be20d4b370ff8f0cc1b278b8804bc",
+  "commands": [
+    {
+      "command": [
+        "/tmp/image-icc-inverse-current-fern-b42a82ae9",
+        "-check",
+        "tests/icc_inverse.fern"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "/tmp/image-icc-inverse-current-fern-b42a82ae9",
+        "-target",
+        "arm64-linux",
+        "-sanitize",
+        "-o",
+        "/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch/fern-image/build/icc-inverse-current-arm64",
+        "tests/icc_inverse.fern"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "python3",
+        "tests/qualify_icc_inverse.py",
+        "/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch/fern-image/build/icc-inverse-current-arm64",
+        "/tmp/image-icc-inverse-current-fern-b42a82ae9",
+        "/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch/fern-image/build/icc-inverse-current-arm64.json",
+        "--qemu",
+        "/workspace/image-test-tools/qemu10/usr/bin/qemu-aarch64"
+      ],
+      "exit": 0
+    }
+  ],
+  "record": "/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch/fern-image/build/icc-inverse-current-arm64.json",
+  "exit": 0,
+  "seconds": 404.9135763645172
+}

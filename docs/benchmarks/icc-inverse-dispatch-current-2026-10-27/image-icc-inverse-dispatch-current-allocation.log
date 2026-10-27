@@ -1,0 +1,14 @@
+make: 'bin/fern' is up to date.
+selfhost-alloc-bench: building the instrumented self-host compiler
+### performance (bench)
+| metric | measured | baseline | delta |
+| --- | --- | --- | --- |
+| x86_64/checker.allocs | 36.9M | 35.0M | +5.57% |
+| x86_64/checker.frees | 36.9M | 35.0M | +5.57% |
+SLOWER: x86_64/checker.allocs 35.0M -> 36.9M (+5.57%, tolerance 1%).
+SLOWER: x86_64/checker.frees 35.0M -> 36.9M (+5.57%, tolerance 1%).
+Corrected baseline — paste into the baseline file:
+    x86_64/checker.allocs 36898766
+    x86_64/checker.frees 36898766
+WARNING: x86_64/checker.allocs +5.57%: x86_64/checker.allocs measured 36898766 against a baseline of 34951426 — over its 1% tolerance
+WARNING: x86_64/checker.frees +5.57%: x86_64/checker.frees measured 36898766 against a baseline of 34951426 — over its 1% tolerance

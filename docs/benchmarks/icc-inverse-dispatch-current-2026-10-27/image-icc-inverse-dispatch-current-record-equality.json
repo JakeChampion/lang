@@ -1,0 +1,13 @@
+{
+  "source_commit": "0e37398927d607f86359cbdbb21ecea34a1496f3",
+  "records_equal": true,
+  "cases": 10087,
+  "workers_per_target": 1261,
+  "total_workers": 3783,
+  "hash_counts": [
+    1267,
+    1268,
+    1268
+  ],
+  "max_absolute_error": 1.7056711454934297e-16
+}

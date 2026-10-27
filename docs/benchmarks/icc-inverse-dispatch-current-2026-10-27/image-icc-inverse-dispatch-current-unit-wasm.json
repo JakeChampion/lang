@@ -1,0 +1,55 @@
+{
+  "source_commit": "0e37398927d607f86359cbdbb21ecea34a1496f3",
+  "worktree_dirty": false,
+  "compiler_build_source": "b42a82ae934be20d4b370ff8f0cc1b278b8804bc",
+  "hashes": {
+    "/tmp/image-icc-inverse-current-fern-b42a82ae9": "954350d3c637968434e5335efb4317437197618af0497ccd39598b95bb693cd2",
+    "/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch/fern-image/packages/codecs/icc/inverse.fern": "0f324c2ad2ace05d90850873b613261e27025538229163e1dbb21eeeb9b3a141",
+    "/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch/fern-image/tests/icc_inverse_test.fern": "02f0018ceadac5535ad7c732a2e9e4d9dbbfd89b14f18650a22bebdd47cd2714"
+  },
+  "commands": [
+    {
+      "command": [
+        "/tmp/image-icc-inverse-current-fern-b42a82ae9",
+        "-target",
+        "wasm32-wasi",
+        "-check",
+        "tests/icc_inverse_test.fern"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "/tmp/image-icc-inverse-current-fern-b42a82ae9",
+        "-target",
+        "wasm32-wasi",
+        "-sanitize",
+        "-o",
+        "/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch/fern-image/build/inverse-current-unit-wasm.wasm",
+        "tests/icc_inverse_test.fern"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "wasmtime",
+        "run",
+        "--dir=.",
+        "/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch/fern-image/build/inverse-current-unit-wasm.wasm"
+      ],
+      "exit": 0
+    }
+  ],
+  "exit": 0,
+  "seconds": 8.891700029373169,
+  "TAP_ok": 8,
+  "TAP_fail": 0,
+  "heaps": [
+    [
+      478,
+      478,
+      0
+    ]
+  ],
+  "sources_unchanged": true
+}

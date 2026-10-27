@@ -1,0 +1,9 @@
+from pathlib import Path
+import subprocess,hashlib,json,re,time
+root=Path('/tmp/image-engine-worktrees/lang-image-inverse-current-compiler-b42');prefix=Path('/tmp/image-icc-inverse-dispatch-current-runtime-go-events');assert not prefix.with_suffix('.json').exists()
+paths=subprocess.check_output(['git','ls-files','compiler','internal/stdlib','internal/testing/e2ecompiler'],cwd=root,text=True).splitlines();sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();before={p:sha(root/p)for p in paths if(root/p).is_file()};start=time.time()
+cmd=['go','test','-v','./internal/testing/e2ecompiler','-run','^TestSelfHost(FeatureCensus|FixtureSourcesCheck)$','-count=1','-timeout=10m']
+with prefix.with_suffix('.log').open('w')as log:r=subprocess.run(cmd,cwd=root,stdout=log,stderr=subprocess.STDOUT)
+s=prefix.with_suffix('.log').read_text();record=dict(source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),command=cmd,exit=r.returncode,seconds=time.time()-start,source_hashes=before,sources_unchanged=before=={p:sha(root/p)for p in before},PASS=len(re.findall(r'^\s*--- PASS:',s,re.M)),FAIL=len(re.findall(r'^\s*--- FAIL:',s,re.M)),SKIP=len(re.findall(r'^\s*--- SKIP:',s,re.M)),reason='The stock runtime-check command returned zero but used nonverbose Go output. Repeat only its two Go roots for actual terminal-event and no-skip evidence. The completed five-target runtime program did not repeat.')
+prefix.with_suffix('.json').write_text(json.dumps(record,indent=2));print({k:v for k,v in record.items()if k!='source_hashes'});assert r.returncode==0 and record['sources_unchanged']and record['FAIL']==record['SKIP']==0
+for name in ['TestSelfHostFeatureCensus','TestSelfHostFixtureSourcesCheck']:assert re.search(r'^--- PASS: '+name+r' \(',s,re.M),name

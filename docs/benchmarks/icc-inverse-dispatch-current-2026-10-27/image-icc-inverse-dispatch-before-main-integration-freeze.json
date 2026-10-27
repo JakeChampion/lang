@@ -1,0 +1,21 @@
+{
+  "source": "715f63eb033811a4b159c4846df9ae14d8bc0967",
+  "historical_proof_head": "db3f94c2672cc5dc32534d461433caf5d01cc59a",
+  "remote_head": "0c543673c04814590b9fb79e27e459284a1a3431",
+  "new_main": "b42a82ae934be20d4b370ff8f0cc1b278b8804bc",
+  "sha256": {
+    ".github/workflows/fern-image.yml": "b772465b455f1749fae3491554b4163c148c8b1de55cdc12f396f92fcf739dfe",
+    "fern-image/README.md": "d03cb82971c0a3254c5acf9f07b4e327af452c5b44343dc9b9b8b4fea26e0cb9",
+    "fern-image/docs/icc-inverse.md": "04d512e48d6bcc4523fad0a583acc6c7a2125093b2a5ed701c7c6c109e9fa1fa",
+    "fern-image/packages/codecs/icc/inverse.fern": "0f324c2ad2ace05d90850873b613261e27025538229163e1dbb21eeeb9b3a141",
+    "fern-image/scripts/test-icc-inverse.sh": "4ffc95e3a4d15f8d3f87e4869450e90bcfd731834f9cbe7b8bca44fc127e7ff9",
+    "fern-image/scripts/test-wasm.sh": "75a1b5b58df9b5bd5c6a43c221cd606734ee9cfe0ebec2ab1a3ce3abc6bdc8ec",
+    "fern-image/scripts/test.sh": "0cc06854a4f29c1c9460b805b013d3f73fd0f7b10a3100006002e7eb0f378ac9",
+    "fern-image/tests/fixtures/icc-inverse-reference.json.gz": "46cbe777a49f0a748a7e23d5874e246f772e9b532fdee8cef7db2f449e04321c",
+    "fern-image/tests/generate_icc_inverse.py": "917cd70a624e318e7a39a6aec66b2d89e939a7ddd34b7bdcce158fd76e9802b7",
+    "fern-image/tests/icc_inverse.fern": "eb87feaa9ea51ec38d717920746c51026b3c02de11227a67ac59a537da4d91ba",
+    "fern-image/tests/icc_inverse_test.fern": "02f0018ceadac5535ad7c732a2e9e4d9dbbfd89b14f18650a22bebdd47cd2714",
+    "fern-image/tests/qualify_icc_inverse.py": "f9181112db35c54112a4320bf40628e14d289d641ba9e6f6fc1d4642a578534e",
+    "fern-image/tests/qualify_icc_inverse_test.py": "54830d6502a52e9a751687e34d912805ca80014742170dcb697d63268f475e1f"
+  }
+}

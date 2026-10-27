@@ -1,0 +1,17 @@
+from pathlib import Path
+import subprocess,json,sys,time,os,hashlib
+root=Path('/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch');mode=sys.argv[1];prefix=Path('/tmp/image-icc-inverse-dispatch-current-corpus-'+mode);assert not prefix.with_suffix('.json').exists();source='0e37398927d607f86359cbdbb21ecea34a1496f3';compiler=Path('/tmp/image-icc-inverse-current-fern-b42a82ae9')
+assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()==source and not subprocess.check_output(['git','status','--porcelain'],cwd=root)
+assert hashlib.sha256(compiler.read_bytes()).hexdigest()=='954350d3c637968434e5335efb4317437197618af0497ccd39598b95bb693cd2'
+subprocess.run(['git','diff','--exit-code','b42a82ae934be20d4b370ff8f0cc1b278b8804bc','HEAD','--','compiler','internal/stdlib'],cwd=root,check=True,stdout=subprocess.DEVNULL)
+target={'native':'x86-64-linux','wasm':'wasm32-wasi','arm64':'arm64-linux'}[mode];binary=root/f'fern-image/build/icc-inverse-current-{mode}';output=binary.with_suffix('.json');assert not output.exists()
+commands=[[str(compiler),'-check','tests/icc_inverse.fern'],[str(compiler),'-target',target,'-sanitize','-o',str(binary),'tests/icc_inverse.fern'],['python3','tests/qualify_icc_inverse.py',str(binary),str(compiler),str(output)]]
+if mode=='wasm':commands[-1]+=['--wasmtime',__import__('shutil').which('wasmtime')]
+if mode=='arm64':commands[-1]+=['--qemu','/workspace/image-test-tools/qemu10/usr/bin/qemu-aarch64']
+record=dict(source_commit=source,compiler_build_source='b42a82ae934be20d4b370ff8f0cc1b278b8804bc',commands=[],record=str(output));start=time.time()
+with prefix.with_suffix('.log').open('w')as log:
+ for cmd in commands:
+  r=subprocess.run(cmd,cwd=root/'fern-image',env=dict(os.environ,FERN_SANITIZE='1',FERN_LEAKCHECK='1'),stdout=log,stderr=subprocess.STDOUT)
+  record['commands'].append(dict(command=cmd,exit=r.returncode))
+  if r.returncode:break
+record.update(exit=r.returncode,seconds=time.time()-start);prefix.with_suffix('.json').write_text(json.dumps(record,indent=2));print(mode,r.returncode);assert len(record['commands'])==3 and r.returncode==0

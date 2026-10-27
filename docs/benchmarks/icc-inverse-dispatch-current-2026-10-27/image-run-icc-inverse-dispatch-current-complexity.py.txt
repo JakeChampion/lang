@@ -1,0 +1,7 @@
+from pathlib import Path
+import subprocess,json,time,re
+root=Path('/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch');prefix=Path('/tmp/image-icc-inverse-dispatch-current-complexity');assert not prefix.with_suffix('.json').exists();t=time.time()
+cmd=['go','test','-v','./internal/testing/e2ecompiler','-run','^TestSelfHostRepoComplexityRatchet$','-count=1','-timeout=10m']
+with prefix.with_suffix('.log').open('w') as log:r=subprocess.run(cmd,cwd=root,stdout=log,stderr=subprocess.STDOUT)
+s=prefix.with_suffix('.log').read_text();record=dict(command=cmd,exit=r.returncode,seconds=time.time()-t,PASS=len(re.findall(r'^\s*--- PASS:',s,re.M)),FAIL=len(re.findall(r'^\s*--- FAIL:',s,re.M)),SKIP=len(re.findall(r'^\s*--- SKIP:',s,re.M)))
+prefix.with_suffix('.json').write_text(json.dumps(record,indent=2));print(record);assert r.returncode==0 and record['PASS']==3 and record['FAIL']==record['SKIP']==0

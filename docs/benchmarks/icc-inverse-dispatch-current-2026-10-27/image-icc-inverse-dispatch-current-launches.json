@@ -1,0 +1,90 @@
+[
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "corpus-native",
+      "chunk_id": "c73961",
+      "wall_time_seconds": 1.028606669,
+      "session_id": 3481,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "corpus-wasm",
+      "chunk_id": "798084",
+      "wall_time_seconds": 1.07767903,
+      "session_id": 52353,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "corpus-arm64",
+      "chunk_id": "e161f6",
+      "wall_time_seconds": 1.040688084,
+      "session_id": 24583,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "full-native",
+      "chunk_id": "fb1f0a",
+      "wall_time_seconds": 1.000405844,
+      "session_id": 21900,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "full-wasm",
+      "chunk_id": "53fb9c",
+      "wall_time_seconds": 1.011427492,
+      "session_id": 52640,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "full-arm64",
+      "chunk_id": "16e42d",
+      "wall_time_seconds": 1.058992042,
+      "session_id": 31725,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "aux",
+      "chunk_id": "1a1e0a",
+      "wall_time_seconds": 1.000970018,
+      "session_id": 30687,
+      "original_token_count": 0,
+      "output": ""
+    }
+  },
+  {
+    "status": "fulfilled",
+    "value": {
+      "name": "complexity",
+      "chunk_id": "ccc4a4",
+      "wall_time_seconds": 1.000543508,
+      "session_id": 80618,
+      "original_token_count": 0,
+      "output": ""
+    }
+  }
+]

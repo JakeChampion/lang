@@ -77,7 +77,7 @@ No profile selection, matrix composition, adaptation, BPC, encoded admission, or
 Finite observations do not establish universal precision, compatibility, physical/process bounds, hard deadlines, or production readiness.
 All actual M5 and epic acceptance gates remain open.
 
-## Final observations
+## Historical observations at source 715f
 
 Each target passed 10,087 committed-source cases through 1,261 fresh workers.
 All 3,783 workers exited normally with nonzero balanced zero-live heaps.
@@ -86,3 +86,15 @@ All 9,630 paired successes per target agree bit for bit, and the complete target
 The maximum observed absolute error across both routes is `1.7056711454934297e-16`, within the unchanged finite criterion.
 All three full regression runs passed 326 TAP tests.
 The [qualification record](../../docs/benchmarks/icc-inverse-dispatch-2026-10-27/README.md) retains source identities, provenance, raw evidence, and limitations.
+
+## Current observations after main integration
+
+The new compiler build at b42 qualifies application source 0e37 with unchanged feature code.
+Each target passes 10,087 cases and 326 TAP tests.
+All 3,783 fresh workers have nonzero balanced zero-live heaps, and all 9,630 paired successes per target agree bit for bit.
+The maximum observed absolute error remains `1.7056711454934297e-16` within the unchanged finite criterion.
+
+The [current qualification record](../../docs/benchmarks/icc-inverse-dispatch-current-2026-10-27/README.md) retains the new identities and distinct raw results.
+It also preserves sparse-checkout failures and their exact-file corrections.
+The default allocation count exceeds the unchanged advisory level and remains below the unchanged failure ceiling.
+All actual M5 and epic acceptance gates remain open.
