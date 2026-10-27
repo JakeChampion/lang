@@ -1,0 +1,12 @@
+{
+  "baseline_C_stage2_instructions": 25261399930,
+  "candidate_D_stage2_instructions": 25239904272,
+  "instruction_delta": -21495658,
+  "instruction_reduction_percent": 0.0850929008668011,
+  "baseline_C_box_calls": 20526860,
+  "candidate_D_box_calls": 20516468,
+  "box_call_delta": -10392,
+  "box_call_reduction_percent": 0.05062635006035654,
+  "same_stage1_producer_sha256": "238621600593496f4c333c3661bc09464155c13d0796cec03939166b16cad4db",
+  "candidate_source_sempair_sha256": "21e058f548d595997d5b67c24f477bc52c5eb1af05dbabba17507f75b6fb3358"
+}

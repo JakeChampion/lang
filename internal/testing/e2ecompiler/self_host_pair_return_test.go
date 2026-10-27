@@ -1040,9 +1040,43 @@ function main(): i32 {
 }
 `
 
+const pairTailPhiProg = `import "std/bench";
+
+@noinline function leaf_pair(xs: string[]): (boolean, string[]) {
+  return (xs.len() > 0, xs);
+}
+
+@noinline function tail_pair(n: i32, xs: string[]): (boolean, string[]) {
+  if (n > 0) { return tail_pair(n - 1, xs); }
+  return leaf_pair(xs);
+}
+
+@noinline function kept_tail_pair(n: i32, xs: string[]): (boolean, string[]) {
+  if (n > 0) { return kept_tail_pair(n - 1, xs); }
+  return (xs.len() > 0, xs);
+}
+
+function main(): i32 {
+  let xs: string[] = ["held"];
+  let f: (i32, string[]) => (boolean, string[]) = kept_tail_pair;
+  let before: i64 = bench.alloc_count();
+  for i in 0..50 {
+    let (yes, next) = tail_pair(i % 7, xs);
+    let (kept_yes, kept_next) = f(i % 5, xs);
+    if (!yes || !kept_yes || next.len() != 1 || kept_next.len() != 1
+      || next[0] != "held" || kept_next[0] != "held") { return 1; }
+  }
+  let allocated: i64 = bench.alloc_count() - before;
+  print(allocated.to_string());
+  if (allocated != 50i64) { return 2; }
+  if (__rc_underflow_count() != 0) { return 99; }
+  return 0;
+}
+`
+
 func TestSelfHostPairReturn(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}, {"forward", pairForwardProg}, {"wide", pairWideProg}}
+	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}, {"forward", pairForwardProg}, {"wide", pairWideProg}, {"tail-phi", pairTailPhiProg}}
 	for _, prog := range progs {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 			t.Run(prog.name+"/"+target, func(t *testing.T) {

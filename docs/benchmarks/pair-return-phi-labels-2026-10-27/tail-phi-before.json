@@ -1,0 +1,5 @@
+{
+  "exit": 2,
+  "stdout": "100\n",
+  "stderr": "leakcheck: allocs=102 frees=102 live_bytes=0\n"
+}

@@ -1,0 +1,23 @@
+from pathlib import Path
+import subprocess, os, time, hashlib, json
+
+p = Path(__file__).parent
+records = []
+for producer, output in [('stage2', 'stage3'), ('stage3', 'stage4')]:
+    cmd = [str(p / producer), '-O', '-target', 'x86-64-linux', '-o', str(p / output), str(p / 'compiler/fern.fern'), str(p.parent / 'fixed-source/internal/stdlib')]
+    env = dict(os.environ)
+    env['FERN_RC_CERTIFY_MEMO'] = str(p / ('certifier-memo-' + output))
+    start = time.perf_counter()
+    with (p / (output + '-build.log')).open('wb') as f:
+        r = subprocess.run(cmd, env=env, stdout=f, stderr=subprocess.STDOUT)
+    record = {'producer': producer, 'producer_sha256': hashlib.sha256((p / producer).read_bytes()).hexdigest(), 'command': cmd, 'output': output, 'exit': r.returncode, 'elapsed_seconds': time.perf_counter() - start}
+    if r.returncode == 0:
+        record['output_sha256'] = hashlib.sha256((p / output).read_bytes()).hexdigest()
+        record['output_bytes'] = (p / output).stat().st_size
+    records.append(record)
+    (p / 'fixpoint-builds.json').write_text(json.dumps(records, indent=2) + '\n')
+    print(record, flush=True)
+    assert r.returncode == 0
+equal = (p / 'stage3').read_bytes() == (p / 'stage4').read_bytes()
+(p / 'fixpoint-result.json').write_text(json.dumps({'stage3_equals_stage4': equal, 'source': str(p / 'compiler'), 'note': 'Private stage2 came from the earlier common Stage1. It implements the new pass but its own code came from the old pass. Stage3 is the first compiler artifact with the new ABI. Stage4 proves its fixed point.'}, indent=2) + '\n')
+assert equal, 'compiler does not reproduce itself'

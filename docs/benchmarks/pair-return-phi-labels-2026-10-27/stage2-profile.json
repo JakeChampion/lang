@@ -1,0 +1,29 @@
+{
+  "artifact_generation": "stage2",
+  "command": [
+    "/workspace/lang-issue-work/perf-4412/tools/usr/bin/time",
+    "-v",
+    "/workspace/lang-issue-work/perf-4412/tools/usr/bin/valgrind",
+    "--tool=callgrind",
+    "--callgrind-out-file=/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage2.callgrind",
+    "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage2",
+    "-O",
+    "-target",
+    "x86-64-linux",
+    "-emit",
+    "asm",
+    "-o",
+    "/dev/null",
+    "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+    "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+  ],
+  "exit": 0,
+  "valid_full_run": true,
+  "elapsed_seconds_under_callgrind": 235.4175038810008,
+  "compiler_sha256": "4a961c82f8a05f230020b2b3dbeb1938f50fd9ca88c6f1bed556f210711156a7",
+  "subject_output_sha256": "7929fef58c94e62deda9337b1435ef7982549f03df6f84f4726da8f1e2adca94",
+  "subject_output_bytes": 26675438,
+  "subject_output_identical_to_C": false,
+  "note": "This is a lowering change. The pair-return e2e suite is the primary correctness gate. The compiler fixed point is secondary. Stage2 and C stage2 share one producer. Stage3 is a separate bootstrap observation with a different producer.",
+  "instructions": 25239904272
+}
