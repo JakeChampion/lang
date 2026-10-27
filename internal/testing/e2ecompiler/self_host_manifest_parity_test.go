@@ -5,11 +5,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/pkg/manifest"
 	"github.com/jakechampion/lang/internal/pkg/modload"
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 const parityHash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -75,13 +78,8 @@ var manifestParityCases = []struct{ name, src string }{
 }
 
 func TestSelfHostManifestParseParity(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("manifest_parse_run reads host paths, which an emulated run does not see")
-	}
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/manifest_parse_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "drivers/manifest_parse_run.fern", "manifest_parse_run")
 	var paths, want []string
 	for i, c := range manifestParityCases {
 		p := filepath.Join(dir, fmt.Sprintf("case%02d.toml", i))
@@ -89,24 +87,69 @@ func TestSelfHostManifestParseParity(t *testing.T) {
 			t.Fatal(err)
 		}
 		paths = append(paths, p)
-		if _, err := manifest.Parse(c.src); err != nil {
+		if m, err := manifest.Parse(c.src); err != nil {
 			want = append(want, "err "+err.Error())
 		} else {
-			want = append(want, "ok")
+			row := "ok " + strconv.Quote(m.Name) + "|" + strconv.Quote(m.Lib) + "|" + strconv.Quote(m.Index)
+			var names []string
+			for name := range m.Deps {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			for _, name := range names {
+				d := m.Deps[name]
+				kind := "url"
+				switch {
+				case d.Workspace:
+					kind = "workspace"
+				case d.Version != "":
+					kind = "version"
+				case d.Path != "":
+					kind = "path"
+				}
+				row += "|dep " + strconv.Quote(name) + "|" + kind + "|" + strconv.Quote(d.Path) + "|" + strconv.Quote(d.URL) +
+					"|" + strconv.Quote(d.Hash) + "|" + strconv.Quote(d.Version) + "|" + strconv.FormatBool(d.Capabilities != nil) + "|" + strconv.Itoa(d.Line)
+				for _, cap := range d.Capabilities {
+					row += "|cap " + strconv.Quote(cap)
+				}
+			}
+			want = append(want, row)
 		}
 	}
-	out, err := exec.Command(bin, paths...).Output()
-	if err != nil {
-		t.Fatalf("manifest_parse_run: %v\n%s", err, out)
-	}
-	got := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
-	if len(got) != len(want) {
-		t.Fatalf("manifest_parse_run printed %d verdicts for %d manifests:\n%s", len(got), len(want), out)
-	}
-	for i, c := range manifestParityCases {
-		if got[i] != want[i] {
-			t.Errorf("%s:\n  self-host: %s\n  native:    %s", c.name, got[i], want[i])
-		}
+	for _, target := range []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux, e2eharness.TargetWasm32Wasi} {
+		t.Run(target, func(t *testing.T) {
+			bin := buildSelfHostBinFor(t, dir, "drivers/manifest_parse_run.fern", "manifest_parse_run", target)
+			var cmd *exec.Cmd
+			switch target {
+			case e2eharness.TargetX86_64Linux:
+				cmd = runX86_64Bin(x86_64Runner(t), bin, paths...)
+			case e2eharness.TargetArm64Linux:
+				cmd = runArm64Bin(arm64Runner(t), bin, paths...)
+			default:
+				wasmtime, err := exec.LookPath("wasmtime")
+				if err != nil {
+					t.Skip("wasmtime not on PATH")
+				}
+				var relative []string
+				for _, path := range paths {
+					relative = append(relative, filepath.Base(path))
+				}
+				cmd = exec.Command(wasmtime, append([]string{"run", "--dir", dir, bin}, relative...)...)
+			}
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("manifest_parse_run: %v\n%s", err, out)
+			}
+			got := strings.Split(strings.TrimSuffix(string(out), "\n"), "\n")
+			if len(got) != len(want) {
+				t.Fatalf("manifest_parse_run printed %d verdicts for %d manifests:\n%s", len(got), len(want), out)
+			}
+			for i, c := range manifestParityCases {
+				if got[i] != want[i] {
+					t.Errorf("%s:\n  self-host: %s\n  Go parser: %s", c.name, got[i], want[i])
+				}
+			}
+		})
 	}
 }
 

@@ -1,4 +1,27 @@
 import "../fern_toml";
+import "../docsummary";
+import "../util";
+
+function dep_after(a: fern_toml.Dep, b: fern_toml.Dep): boolean {
+  return util.str_less(b.name, a.name);
+}
+
+function data(m: fern_toml.Manifest): string {
+  let out: string = "ok " + docsummary.quote(m.name) + "|" + docsummary.quote(m.lib) + "|" + docsummary.quote(m.index);
+  for d in util.sorted_by(m.deps, dep_after) {
+    let governed: string = "false";
+    if (d.governed) {
+      governed = "true";
+    }
+    out = out + "|dep " + docsummary.quote(d.name) + "|" + d.kind + "|" + docsummary.quote(d.path)
+      + "|" + docsummary.quote(d.url) + "|" + docsummary.quote(d.hash) + "|" + docsummary.quote(d.version)
+      + "|" + governed + "|" + util.i32_to_string(d.line);
+    for cap in d.caps {
+      out = out + "|cap " + docsummary.quote(cap);
+    }
+  }
+  return out;
+}
 
 function verdict(path: string): string {
   match (read_file(path)) {
@@ -7,7 +30,7 @@ function verdict(path: string): string {
       if (m.err.len() > 0) {
         return "err " + fern_toml.diagnostic("", m);
       }
-      return "ok";
+      return data(m);
     },
     Err(e) => {
       return "unreadable " + path;

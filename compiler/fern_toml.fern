@@ -213,14 +213,17 @@ function with_package_key(m: Manifest, key: string, val: string): Manifest {
 }
 
 function with_dep(m: Manifest, key: string, val: string, at: i32): Manifest {
-  let d: DepResult = parse_dep(key, val);
-  if (d.err.len() > 0) {
-    return failed(m, "dependency " + docsummary.quote(key) + ": " + d.err);
+  match (parse_dep(key, val)) {
+    Ok(d) => {
+      if (!valid_dep_name(key)) {
+        return failed(m, "invalid dependency name " + docsummary.quote(key) + " (letters, digits, `_`, `-`; must not start with a digit)");
+      }
+      return Manifest { ...m, deps: m.deps.append(Dep { ...d, line: at }) };
+    },
+    Err(message) => {
+      return failed(m, "dependency " + docsummary.quote(key) + ": " + message);
+    }
   }
-  if (!valid_dep_name(key)) {
-    return failed(m, "invalid dependency name " + docsummary.quote(key) + " (letters, digits, `_`, `-`; must not start with a digit)");
-  }
-  return Manifest { ...m, deps: m.deps.append(Dep { ...d.dep, line: at }) };
 }
 
 function with_members(m: Manifest, key: string, val: string): Manifest {
@@ -367,127 +370,127 @@ pub function validate_hash(hash: string): Result[string, string] {
   return Ok(hex);
 }
 
-struct DepResult { dep: Dep, err: string }
-
-function dep_failed(d: Dep, err: string): DepResult {
-  return DepResult { dep: d, err: err };
-}
-
-function parse_dep(name: string, val: string): DepResult {
+function parse_dep(name: string, val: string): Result[Dep, string] {
   let d: Dep = Dep { name: name, kind: "", path: "", url: "", hash: "", version: "", governed: false, caps: [], line: 0 };
   if (val.len() == 0 || val[0] != b'{') {
     let s: Parsed = parse_string(val);
     if (s.err.len() > 0) {
-      return dep_failed(d, "a bare dependency value must be a version string like \"1.2.0\" (or use an inline table): " + s.err);
+      return Err("a bare dependency value must be a version string like \"1.2.0\" (or use an inline table): " + s.err);
     }
-    let r: DepResult = with_dep_string(d, "version", s.value);
-    if (r.err.len() > 0) {
-      return r;
+    match (with_dep_string(d, "version", s.value)) {
+      Ok(dep) => {
+        return classified(dep);
+      },
+      Err(message) => {
+        return Err(message);
+      }
     }
-    return classified(r.dep);
   }
   if (val[val.len() - 1] != b'}') {
-    return dep_failed(d, "malformed inline table " + docsummary.quote(val));
+    return Err("malformed inline table " + docsummary.quote(val));
   }
   for raw in inline_parts(util.trim(slice_unchecked(val, 1, val.len() - 1))) {
     let part: string = util.trim(raw);
     if (part.len() > 0) {
-      let r: DepResult = with_dep_field(d, part);
-      if (r.err.len() > 0) {
-        return r;
+      match (with_dep_field(d, part)) {
+        Ok(dep) => {
+          d = dep;
+        },
+        Err(message) => {
+          return Err(message);
+        }
       }
-      d = r.dep;
     }
   }
   return classified(d);
 }
 
-function with_dep_field(d: Dep, part: string): DepResult {
+function with_dep_field(d: Dep, part: string): Result[Dep, string] {
   let eq: i32 = index_of(part, b'=', 0);
   if (eq < 0) {
-    return dep_failed(d, "expected `key = value` in inline table, got " + docsummary.quote(part));
+    return Err("expected `key = value` in inline table, got " + docsummary.quote(part));
   }
   let k: string = util.trim(slice_unchecked(part, 0, eq));
   let v: string = util.trim(slice_unchecked(part, eq + 1, part.len()));
   if (k == "workspace") {
     if (v != "true") {
-      return dep_failed(d, "workspace must be `true` (the only supported value), got " + docsummary.quote(v));
+      return Err("workspace must be `true` (the only supported value), got " + docsummary.quote(v));
     }
-    return DepResult { dep: Dep { ...d, kind: "workspace" }, err: "" };
+    return Ok(Dep { ...d, kind: "workspace" });
   }
   if (k == "capabilities") {
     let cs: ParsedList = parse_capabilities(v);
     if (cs.err.len() > 0) {
-      return dep_failed(d, "capabilities: " + cs.err);
+      return Err("capabilities: " + cs.err);
     }
-    return DepResult { dep: Dep { ...d, governed: true, caps: cs.values }, err: "" };
+    return Ok(Dep { ...d, governed: true, caps: cs.values });
   }
   let s: Parsed = parse_string(v);
   if (s.err.len() > 0) {
-    return dep_failed(d, k + ": " + s.err);
+    return Err(k + ": " + s.err);
   }
   return with_dep_string(d, k, s.value);
 }
 
-function with_dep_string(d: Dep, k: string, s: string): DepResult {
+function with_dep_string(d: Dep, k: string, s: string): Result[Dep, string] {
   if (k == "path") {
     if (s.len() == 0) {
-      return dep_failed(d, "path must not be empty");
+      return Err("path must not be empty");
     }
-    return DepResult { dep: Dep { ...d, path: s }, err: "" };
+    return Ok(Dep { ...d, path: s });
   }
   if (k == "url") {
     if (!util.str_has_prefix(s, "https://") && !util.str_has_prefix(s, "http://")) {
-      return dep_failed(d, "url must be http(s), got " + docsummary.quote(s));
+      return Err("url must be http(s), got " + docsummary.quote(s));
     }
-    return DepResult { dep: Dep { ...d, url: s }, err: "" };
+    return Ok(Dep { ...d, url: s });
   }
   if (k == "hash") {
     if let Err(message) = validate_hash(s) {
-      return dep_failed(d, "hash " + message);
+      return Err("hash " + message);
     }
-    return DepResult { dep: Dep { ...d, hash: s }, err: "" };
+    return Ok(Dep { ...d, hash: s });
   }
   if (k == "version") {
     if (!is_version(s)) {
-      return dep_failed(d, "version must be MAJOR.MINOR.PATCH digits, got " + docsummary.quote(s));
+      return Err("version must be MAJOR.MINOR.PATCH digits, got " + docsummary.quote(s));
     }
-    return DepResult { dep: Dep { ...d, version: s }, err: "" };
+    return Ok(Dep { ...d, version: s });
   }
-  return dep_failed(d, "unknown dependency key " + docsummary.quote(k) + " (supported: path, url, hash, workspace, version, capabilities)");
+  return Err("unknown dependency key " + docsummary.quote(k) + " (supported: path, url, hash, workspace, version, capabilities)");
 }
 
-function classified(d: Dep): DepResult {
+function classified(d: Dep): Result[Dep, string] {
   let remote: boolean = d.url.len() > 0 || d.hash.len() > 0;
   if (d.kind == "workspace") {
     if (d.path.len() > 0 || remote || d.version.len() > 0) {
-      return dep_failed(d, "a `workspace` dependency takes no path/url/hash/version");
+      return Err("a `workspace` dependency takes no path/url/hash/version");
     }
-    return DepResult { dep: d, err: "" };
+    return Ok(d);
   }
   if (d.version.len() > 0) {
     if (d.path.len() > 0 || remote) {
-      return dep_failed(d, "a `version` dependency takes no path/url/hash (the version resolves through the index)");
+      return Err("a `version` dependency takes no path/url/hash (the version resolves through the index)");
     }
-    return DepResult { dep: Dep { ...d, kind: "version" }, err: "" };
+    return Ok(Dep { ...d, kind: "version" });
   }
   return source_classified(d, remote);
 }
 
-function source_classified(d: Dep, remote: boolean): DepResult {
+function source_classified(d: Dep, remote: boolean): Result[Dep, string] {
   if (d.path.len() > 0) {
     if (remote) {
-      return dep_failed(d, "a dependency is either `path` or `url`+`hash`, not both");
+      return Err("a dependency is either `path` or `url`+`hash`, not both");
     }
-    return DepResult { dep: Dep { ...d, kind: "path" }, err: "" };
+    return Ok(Dep { ...d, kind: "path" });
   }
   if (d.url.len() > 0 && d.hash.len() > 0) {
-    return DepResult { dep: Dep { ...d, kind: "url" }, err: "" };
+    return Ok(Dep { ...d, kind: "url" });
   }
   if (remote) {
-    return dep_failed(d, "url dependencies need BOTH `url` and `hash` — the hash is the identity, the url just a mirror hint");
+    return Err("url dependencies need BOTH `url` and `hash` — the hash is the identity, the url just a mirror hint");
   }
-  return dep_failed(d, "missing `path` (or `url` + `hash`, `workspace = true`, or a version)");
+  return Err("missing `path` (or `url` + `hash`, `workspace = true`, or a version)");
 }
 
 function inline_parts(body: string): string[] {

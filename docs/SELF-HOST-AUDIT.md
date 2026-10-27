@@ -877,6 +877,11 @@ findings. Ranked by leverage.
   Hash validation also uses `Result[string, string]` instead of `HashResult`.
   Success carries the hexadecimal digest without its prefix, and failure carries the diagnostic.
   Manifest, lock-file, registry and package-store callers match that result.
+  Dependency fields and classification use `Result[Dep, string]` instead of `DepResult`.
+  Failed dependency parses carry no partial dependency that the caller can mistake for success.
+  The manifest still retains its earlier entries and diagnostic location on failure.
+  The manifest differential checks all dependency fields, capability grants and source lines, as well as exact diagnostics.
+  All 49 cases execute on x86-64, ARM64 and Wasm.
 
   _Rest of this row:_ the bespoke `*Result` structs remain.
   The generic-function migration is no longer blocked, and neither is
