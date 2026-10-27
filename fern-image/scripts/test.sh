@@ -22,6 +22,9 @@ done
 "$FERN" -check tests/icc_tag_data_test.fern
 "$FERN" -target x86-64-linux -sanitize -o build/icc_tag_data_test tests/icc_tag_data_test.fern
 ./build/icc_tag_data_test
+"$FERN" -check tests/icc_curv_eval_test.fern
+"$FERN" -target x86-64-linux -sanitize -o build/icc_curv_eval_test tests/icc_curv_eval_test.fern
+./build/icc_curv_eval_test
 "$FERN" -check tests/png_incremental_test.fern
 "$FERN" -target x86-64-linux -sanitize -o build/png_incremental_test tests/png_incremental_test.fern
 ./build/png_incremental_test

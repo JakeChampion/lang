@@ -1,0 +1,100 @@
+import "tag_data";
+import "std/f64";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum EvalError { Limit, Input, Shape, Value, Unsupported, Numeric, Cancelled }
+
+pub struct EvalLimits { max_samples: i32 }
+
+pub function default_limits(): EvalLimits {
+  return EvalLimits { max_samples: 4096 };
+}
+
+function finish(value: f64, cancelled: () => boolean): Result[f64, EvalError] {
+  if (!value.is_finite() || value < 0.0 || value > 1.0) {
+    return Err(EvalError.Numeric);
+  }
+  if (cancelled()) {
+    return Err(EvalError.Cancelled);
+  }
+  return Ok(value);
+}
+
+function sampled(values: [i32], input: f64): Result[f64, EvalError] {
+  if (input == 0.0) {
+    return Ok(values[0] as f64 / 65535.0);
+  }
+  if (input == 1.0) {
+    return Ok(values[values.len() - 1] as f64 / 65535.0);
+  }
+  let steps = (values.len() - 1) as f64;
+  let position = input * steps;
+  // Split the input so the integer multiplier retains the product's low part.
+  let split = input * 134217729.0;
+  let high = split - (split - input);
+  let low = input - high;
+  let error = steps * high - position + steps * low;
+  let index = position.floor() as i32;
+  if (position == index as f64 && error < 0.0) {
+    index = index - 1;
+  }
+  let fraction = position - index as f64 + error;
+  if (index < 0 || index >= values.len() - 1 || !fraction.is_finite() || fraction < 0.0 || fraction > 1.0) {
+    return Err(EvalError.Numeric);
+  }
+  return Ok((values[index] as f64 + (values[index + 1] - values[index]) as f64 * fraction) / 65535.0);
+}
+
+// Public curve values receive fresh admission. Parametric evaluation remains unsupported.
+pub function evaluate(curve: tag_data.CurveData, input: f64, limits: EvalLimits, cancelled: () => boolean): Result[f64, EvalError] {
+  if (limits.max_samples <= 0) {
+    return Err(EvalError.Limit);
+  }
+  if (!input.is_finite() || input < 0.0 || input > 1.0) {
+    return Err(EvalError.Input);
+  }
+  match (curve) {
+    tag_data.Parametric(_) => {
+      return Err(EvalError.Unsupported);
+    },
+    tag_data.Identity => {
+      if (cancelled()) {
+        return Err(EvalError.Cancelled);
+      }
+      return finish(input, cancelled);
+    },
+    tag_data.Gamma(numerator) => {
+      if (numerator <= 0 || numerator > 65535) {
+        return Err(EvalError.Value);
+      }
+      if (cancelled()) {
+        return Err(EvalError.Cancelled);
+      }
+      if (input == 0.0 || input == 1.0 || numerator == 256) {
+        return finish(input, cancelled);
+      }
+      return finish(input.pow(numerator as f64 / 256.0), cancelled);
+    },
+    tag_data.Samples(values) => {
+      if (values.len() > limits.max_samples || values.len() > 65536) {
+        return Err(EvalError.Limit);
+      }
+      if (values.len() < 2) {
+        return Err(EvalError.Shape);
+      }
+      if (cancelled()) {
+        return Err(EvalError.Cancelled);
+      }
+      for index in 0..values.len() {
+        if (index % 64 == 0 && cancelled()) {
+          return Err(EvalError.Cancelled);
+        }
+        if (values[index] < 0 || values[index] > 65535) {
+          return Err(EvalError.Value);
+        }
+      }
+      return finish(sampled(values, input)?, cancelled);
+    }
+  }
+}

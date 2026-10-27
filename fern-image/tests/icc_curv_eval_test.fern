@@ -1,0 +1,155 @@
+import "../packages/codecs/icc/curv_eval";
+import "../packages/codecs/icc/tag_data";
+import "std/test";
+import "std/f64";
+
+function never(): boolean {
+  return false;
+}
+
+function close(actual: f64, expected: f64, tolerance: f64): boolean {
+  let delta = actual - expected;
+  return actual.is_finite() && delta >= -tolerance && delta <= tolerance;
+}
+
+function value(curve: tag_data.CurveData, input: f64): Result[f64, curv_eval.EvalError] {
+  return curv_eval.evaluate(curve, input, curv_eval.default_limits(), never);
+}
+
+function identities_and_gamma(): test.TestOutcome {
+  for input in [0.0, -0.0, 0.125, 0.5, 1.0] {
+    for curve in [tag_data.Identity, tag_data.Gamma(256)] {
+      if (match (value(curve, input)) { Ok(v) => f64_bits(v) != f64_bits(input), Err(_) => true }) {
+        return test.fail("identity and exponent one preserve input exactly");
+      }
+    }
+  }
+  for (curve, input, expected) in [(tag_data.Gamma(512), 0.5, 0.25), (tag_data.Gamma(563), 0.5, 0.21775552814439456), (tag_data.Gamma(1), 0.5, 0.9972960560854701), (tag_data.Gamma(1), f64_from_bits(1), 0.05458648081872403)] {
+    if (match (value(curve, input)) { Ok(v) => !close(v, expected, 0.000000000001), Err(_) => true }) {
+      return test.fail("independent Decimal gamma samples, including a subnormal input");
+    }
+  }
+  for gamma in [1, 563, 65535] {
+    for input in [0.0, 1.0] {
+      if (match (value(tag_data.Gamma(gamma), input)) { Ok(v) => v != input, Err(_) => true }) {
+        return test.fail("positive-gamma exact endpoints");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function sampled_values(): test.TestOutcome {
+  for input in [0.0, 0.125, 0.5, 0.875, 1.0] {
+    if (match (value(tag_data.Samples([0, 65535]), input)) { Ok(v) => !close(v, input, 0.000000000001), Err(_) => true }) {
+      return test.fail("linear sample interpolation");
+    }
+    if (match (value(tag_data.Samples([65535, 0]), input)) { Ok(v) => !close(v, 1.0 - input, 0.000000000001), Err(_) => true }) {
+      return test.fail("declared nonmonotone forward samples");
+    }
+  }
+  return test.assert_true(match (value(tag_data.Samples([0, 65535, 0]), 0.25)) { Ok(v) => close(v, 0.5, 0.000000000001), Err(_) => false });
+}
+
+function position_low_part(): test.TestOutcome {
+  let samples: i32[] = [];
+  for index in 0..65536 {
+    samples = samples.append(if (index % 2 == 0) { 0 } else { 65535 });
+  }
+  let input = 0.3333333333333333;
+  let expected = 0.9999999999987874;
+  let position = input * 65535.0;
+  let naive = if (position.floor() as i32 % 2 == 0) { position - position.floor() } else { 1.0 - (position - position.floor()) };
+  if (close(naive, expected, 0.000000000001)) {
+    return test.fail("the independent rounding control must expose the lost low product");
+  }
+  let result = curv_eval.evaluate(tag_data.Samples(samples), input, curv_eval.EvalLimits { max_samples: 65536 }, never);
+  return test.assert_true(match (result) { Ok(v) => close(v, expected, 0.000000000000001), Err(_) => false });
+}
+
+function rejection(): test.TestOutcome {
+  for input in [-0.01, 1.01, f64_from_bits(0x7ff0000000000000), f64_from_bits(-4503599627370496i64), f64_from_bits(0x7ff8000000000000)] {
+    let polls = cell_new(0);
+    let result = curv_eval.evaluate(tag_data.Identity, input, curv_eval.default_limits(), (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    });
+    if (polls.get() != 0 || match (result) { Err(curv_eval.EvalError.Input()) => false, _ => true }) {
+      return test.fail("finite unit-interval admission precedes callbacks");
+    }
+  }
+  for gamma in [-1, 0, 65536] {
+    if (match (value(tag_data.Gamma(gamma), 0.5)) { Err(curv_eval.EvalError.Value()) => false, _ => true }) {
+      return test.fail("public gamma wire range");
+    }
+  }
+  for samples in [[], [1]] {
+    if (match (value(tag_data.Samples(samples), 0.5)) { Err(curv_eval.EvalError.Shape()) => false, _ => true }) {
+      return test.fail("public sampled shape");
+    }
+  }
+  for samples in [[-1, 65535], [0, 65536], [0, 65535, -1]] {
+    if (match (value(tag_data.Samples(samples), 0.0)) { Err(curv_eval.EvalError.Value()) => false, _ => true }) {
+      return test.fail("all samples need admission even at an endpoint");
+    }
+  }
+  if (match (curv_eval.evaluate(tag_data.Samples([0, 65535]), 0.5, curv_eval.EvalLimits { max_samples: 1 }, never)) { Err(curv_eval.EvalError.Limit()) => false, _ => true }) {
+    return test.fail("sample caller allowance");
+  }
+  return test.assert_true(match (value(tag_data.Parametric(tag_data.ParametricData { function_type: 0, coefficients: [65536] }), 0.5)) { Err(curv_eval.EvalError.Unsupported()) => true, _ => false }
+    && match (curv_eval.evaluate(tag_data.Identity, 0.5, curv_eval.EvalLimits { max_samples: 0 }, never)) { Err(curv_eval.EvalError.Limit()) => true, _ => false });
+}
+
+function ownership_and_wire(): test.TestOutcome {
+  let samples = [0, 65535, 0];
+  let shared = cell_new(samples);
+  let result = curv_eval.evaluate(tag_data.Samples(samples), 0.25, curv_eval.default_limits(), (): boolean => {
+    shared.set(shared.get().with(1, 0));
+    return false;
+  });
+  if (match (result) { Ok(v) => v != 0.5, Err(_) => true } || samples[1] != 65535 || shared.get()[1] != 0) {
+    return test.fail("input COW during validation callbacks");
+  }
+  let decoded = match (tag_data.read_curve([99 as u8, 117 as u8, 114 as u8, 118 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 1 as u8, 2 as u8, 0 as u8], tag_data.default_curve_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("typed gamma wire input"); } };
+  return test.assert_true(match (value(decoded, 0.5)) { Ok(v) => close(v, 0.25, 0.000000000001), Err(_) => false }
+    && match (value(tag_data.Samples(samples), 0.25)) { Ok(v) => v == 0.5, Err(_) => false });
+}
+
+function cancellation(): test.TestOutcome {
+  let samples: i32[] = [];
+  for index in 0..130 {
+    samples = samples.append(index * 100);
+  }
+  for curve in [tag_data.Identity, tag_data.Gamma(563), tag_data.Samples(samples)] {
+    let total = cell_new(0);
+    let success = curv_eval.evaluate(curve, 0.375, curv_eval.default_limits(), (): boolean => {
+      total.set(total.get() + 1);
+      return false;
+    });
+    if (match (success) { Ok(_) => false, Err(_) => true } || total.get() < 2) {
+      return test.fail("successful poll coverage");
+    }
+    for stop in 1..total.get() + 1 {
+      let polls = cell_new(0);
+      let result = curv_eval.evaluate(curve, 0.375, curv_eval.default_limits(), (): boolean => {
+        polls.set(polls.get() + 1);
+        return polls.get() == stop;
+      });
+      if (polls.get() != stop || match (result) { Err(curv_eval.EvalError.Cancelled()) => false, _ => true }) {
+        return test.fail("every cooperative validation and result poll");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.test_new("scalar ICC curv evaluation");
+  runner = runner.it("exact identities, endpoints, and Decimal gamma probes", identities_and_gamma);
+  runner = runner.it("independent sampled interpolation values", sampled_values);
+  runner = runner.it("large-table boundary retains the low product", position_low_part);
+  runner = runner.it("public variant, input, value, shape, and limit admission", rejection);
+  runner = runner.it("callback COW, typed wire input, and fresh calls", ownership_and_wire);
+  runner = runner.it("every cooperative cancellation poll", cancellation);
+  return runner.finish();
+}
