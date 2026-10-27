@@ -1,0 +1,204 @@
+=== RUN   TestDeflateSmallWindowX86_64Sanitized
+    deflate_window_test.go:163: worker census: 5681 balanced allocations, zero live bytes
+    deflate_window_test.go:163: streaming reference zlib 1.3.2
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/reference-window-control
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window8/distance255
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window8/distance256
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window8/distance257
+    deflate_window_test.go:155: streaming result {Bits:8 Distance:257 Size:257 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1ac90018004e00000000ffff
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window9/distance511
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window9/distance512
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window9/distance513
+    deflate_window_test.go:155: streaming result {Bits:9 Distance:513 Size:513 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1a05231700138013000000ffff
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window10/distance1023
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window10/distance1024
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window10/distance1025
+    deflate_window_test.go:155: streaming result {Bits:10 Distance:1025 Size:1025 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1a05a360148c4c002c009c00000000ffff
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window11/distance2047
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window11/distance2048
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window11/distance2049
+    deflate_window_test.go:155: streaming result {Bits:11 Distance:2049 Size:2049 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1a05a360148c8251300a46c1c802c0068013000000ffff
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window12/distance4095
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window12/distance4096
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window12/distance4097
+    deflate_window_test.go:155: streaming result {Bits:12 Distance:4097 Size:4097 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded ecd8411100000400b06c34f273d293c36d3156d331000000c06f1700b9000000ffff
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window13/distance8191
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window13/distance8192
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window13/distance8193
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window14/distance16383
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window14/distance16384
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window14/distance16385
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window15/distance32767
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window15/distance32768
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window15/distance32769
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window9/distance600
+    deflate_window_test.go:155: streaming result {Bits:9 Distance:600 Size:600 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1a05a380ca0098ae9c00000000ffff
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window9/distance8192
+    deflate_window_test.go:155: streaming result {Bits:9 Distance:8192 Size:8192 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded ecd9411100000400b06c34f273d253c3dd5663351d0300000000000000bc76ff9f0b0000ffff
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window9/distance8193
+--- FAIL: TestDeflateSmallWindowX86_64Sanitized (38.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/reference-window-control (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window8/distance255 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window8/distance256 (0.00s)
+    --- FAIL: TestDeflateSmallWindowX86_64Sanitized/window8/distance257 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window9/distance511 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window9/distance512 (0.00s)
+    --- FAIL: TestDeflateSmallWindowX86_64Sanitized/window9/distance513 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window10/distance1023 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window10/distance1024 (0.00s)
+    --- FAIL: TestDeflateSmallWindowX86_64Sanitized/window10/distance1025 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window11/distance2047 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window11/distance2048 (0.00s)
+    --- FAIL: TestDeflateSmallWindowX86_64Sanitized/window11/distance2049 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window12/distance4095 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window12/distance4096 (0.00s)
+    --- FAIL: TestDeflateSmallWindowX86_64Sanitized/window12/distance4097 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window13/distance8191 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window13/distance8192 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window13/distance8193 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window14/distance16383 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window14/distance16384 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window14/distance16385 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window15/distance32767 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window15/distance32768 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window15/distance32769 (0.00s)
+    --- FAIL: TestDeflateSmallWindowX86_64Sanitized/window9/distance600 (0.00s)
+    --- FAIL: TestDeflateSmallWindowX86_64Sanitized/window9/distance8192 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window9/distance8193 (0.00s)
+=== RUN   TestDeflateSmallWindowArm64Sanitized
+    deflate_window_test.go:168: worker census: 5681 balanced allocations, zero live bytes
+    deflate_window_test.go:168: streaming reference zlib 1.3.2
+=== RUN   TestDeflateSmallWindowArm64Sanitized/reference-window-control
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window8/distance255
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window8/distance256
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window8/distance257
+    deflate_window_test.go:155: streaming result {Bits:8 Distance:257 Size:257 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1ac90018004e00000000ffff
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window9/distance511
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window9/distance512
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window9/distance513
+    deflate_window_test.go:155: streaming result {Bits:9 Distance:513 Size:513 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1a05231700138013000000ffff
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window10/distance1023
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window10/distance1024
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window10/distance1025
+    deflate_window_test.go:155: streaming result {Bits:10 Distance:1025 Size:1025 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1a05a360148c4c002c009c00000000ffff
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window11/distance2047
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window11/distance2048
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window11/distance2049
+    deflate_window_test.go:155: streaming result {Bits:11 Distance:2049 Size:2049 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1a05a360148c8251300a46c1c802c0068013000000ffff
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window12/distance4095
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window12/distance4096
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window12/distance4097
+    deflate_window_test.go:155: streaming result {Bits:12 Distance:4097 Size:4097 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded ecd8411100000400b06c34f273d293c36d3156d331000000c06f1700b9000000ffff
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window13/distance8191
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window13/distance8192
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window13/distance8193
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window14/distance16383
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window14/distance16384
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window14/distance16385
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window15/distance32767
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window15/distance32768
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window15/distance32769
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window9/distance600
+    deflate_window_test.go:155: streaming result {Bits:9 Distance:600 Size:600 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1a05a380ca0098ae9c00000000ffff
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window9/distance8192
+    deflate_window_test.go:155: streaming result {Bits:9 Distance:8192 Size:8192 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded ecd9411100000400b06c34f273d253c3dd5663351d0300000000000000bc76ff9f0b0000ffff
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window9/distance8193
+--- FAIL: TestDeflateSmallWindowArm64Sanitized (0.66s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/reference-window-control (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window8/distance255 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window8/distance256 (0.00s)
+    --- FAIL: TestDeflateSmallWindowArm64Sanitized/window8/distance257 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window9/distance511 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window9/distance512 (0.00s)
+    --- FAIL: TestDeflateSmallWindowArm64Sanitized/window9/distance513 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window10/distance1023 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window10/distance1024 (0.00s)
+    --- FAIL: TestDeflateSmallWindowArm64Sanitized/window10/distance1025 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window11/distance2047 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window11/distance2048 (0.00s)
+    --- FAIL: TestDeflateSmallWindowArm64Sanitized/window11/distance2049 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window12/distance4095 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window12/distance4096 (0.00s)
+    --- FAIL: TestDeflateSmallWindowArm64Sanitized/window12/distance4097 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window13/distance8191 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window13/distance8192 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window13/distance8193 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window14/distance16383 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window14/distance16384 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window14/distance16385 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window15/distance32767 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window15/distance32768 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window15/distance32769 (0.00s)
+    --- FAIL: TestDeflateSmallWindowArm64Sanitized/window9/distance600 (0.00s)
+    --- FAIL: TestDeflateSmallWindowArm64Sanitized/window9/distance8192 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window9/distance8193 (0.00s)
+=== RUN   TestDeflateSmallWindowWasm
+    deflate_window_test.go:173: worker census: 5816 balanced allocations, zero live bytes
+    deflate_window_test.go:173: streaming reference zlib 1.3.2
+=== RUN   TestDeflateSmallWindowWasm/reference-window-control
+=== RUN   TestDeflateSmallWindowWasm/window8/distance255
+=== RUN   TestDeflateSmallWindowWasm/window8/distance256
+=== RUN   TestDeflateSmallWindowWasm/window8/distance257
+    deflate_window_test.go:155: streaming result {Bits:8 Distance:257 Size:257 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1ac90018004e00000000ffff
+=== RUN   TestDeflateSmallWindowWasm/window9/distance511
+=== RUN   TestDeflateSmallWindowWasm/window9/distance512
+=== RUN   TestDeflateSmallWindowWasm/window9/distance513
+    deflate_window_test.go:155: streaming result {Bits:9 Distance:513 Size:513 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1a05231700138013000000ffff
+=== RUN   TestDeflateSmallWindowWasm/window10/distance1023
+=== RUN   TestDeflateSmallWindowWasm/window10/distance1024
+=== RUN   TestDeflateSmallWindowWasm/window10/distance1025
+    deflate_window_test.go:155: streaming result {Bits:10 Distance:1025 Size:1025 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1a05a360148c4c002c009c00000000ffff
+=== RUN   TestDeflateSmallWindowWasm/window11/distance2047
+=== RUN   TestDeflateSmallWindowWasm/window11/distance2048
+=== RUN   TestDeflateSmallWindowWasm/window11/distance2049
+    deflate_window_test.go:155: streaming result {Bits:11 Distance:2049 Size:2049 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1a05a360148c8251300a46c1c802c0068013000000ffff
+=== RUN   TestDeflateSmallWindowWasm/window12/distance4095
+=== RUN   TestDeflateSmallWindowWasm/window12/distance4096
+=== RUN   TestDeflateSmallWindowWasm/window12/distance4097
+    deflate_window_test.go:155: streaming result {Bits:12 Distance:4097 Size:4097 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded ecd8411100000400b06c34f273d293c36d3156d331000000c06f1700b9000000ffff
+=== RUN   TestDeflateSmallWindowWasm/window13/distance8191
+=== RUN   TestDeflateSmallWindowWasm/window13/distance8192
+=== RUN   TestDeflateSmallWindowWasm/window13/distance8193
+=== RUN   TestDeflateSmallWindowWasm/window14/distance16383
+=== RUN   TestDeflateSmallWindowWasm/window14/distance16384
+=== RUN   TestDeflateSmallWindowWasm/window14/distance16385
+=== RUN   TestDeflateSmallWindowWasm/window15/distance32767
+=== RUN   TestDeflateSmallWindowWasm/window15/distance32768
+=== RUN   TestDeflateSmallWindowWasm/window15/distance32769
+=== RUN   TestDeflateSmallWindowWasm/window9/distance600
+    deflate_window_test.go:155: streaming result {Bits:9 Distance:600 Size:600 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded 2aacaa70ac1a05a380ca0098ae9c00000000ffff
+=== RUN   TestDeflateSmallWindowWasm/window9/distance8192
+    deflate_window_test.go:155: streaming result {Bits:9 Distance:8192 Size:8192 Exact:false EOF:false Unused:0 Error:Error -3 while decompressing data: invalid distance too far back}, encoded ecd9411100000400b06c34f273d253c3dd5663351d0300000000000000bc76ff9f0b0000ffff
+=== RUN   TestDeflateSmallWindowWasm/window9/distance8193
+--- FAIL: TestDeflateSmallWindowWasm (0.50s)
+    --- PASS: TestDeflateSmallWindowWasm/reference-window-control (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window8/distance255 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window8/distance256 (0.00s)
+    --- FAIL: TestDeflateSmallWindowWasm/window8/distance257 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window9/distance511 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window9/distance512 (0.00s)
+    --- FAIL: TestDeflateSmallWindowWasm/window9/distance513 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window10/distance1023 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window10/distance1024 (0.00s)
+    --- FAIL: TestDeflateSmallWindowWasm/window10/distance1025 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window11/distance2047 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window11/distance2048 (0.00s)
+    --- FAIL: TestDeflateSmallWindowWasm/window11/distance2049 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window12/distance4095 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window12/distance4096 (0.00s)
+    --- FAIL: TestDeflateSmallWindowWasm/window12/distance4097 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window13/distance8191 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window13/distance8192 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window13/distance8193 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window14/distance16383 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window14/distance16384 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window14/distance16385 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window15/distance32767 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window15/distance32768 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window15/distance32769 (0.00s)
+    --- FAIL: TestDeflateSmallWindowWasm/window9/distance600 (0.00s)
+    --- FAIL: TestDeflateSmallWindowWasm/window9/distance8192 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window9/distance8193 (0.00s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2e	39.169s
+FAIL

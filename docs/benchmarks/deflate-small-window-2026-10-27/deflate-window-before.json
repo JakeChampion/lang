@@ -1,0 +1,22 @@
+{
+  "source_commit": "bdc739e433eab226dc25c87c1a0524fb25dff3aa",
+  "worktree_dirty": true,
+  "test_file_sha256": "834ee52b11b029de6f2cbdce03fefd0541f1b1cf13b85df438dc4243553f3644",
+  "stdlib_sha256": "f9f0001d69058434c1cdbe4792221ff50392ec012cc543baa3542d48b31665e9",
+  "tool_exit": 1,
+  "counts": {
+    "PASS": 63,
+    "FAIL": 24,
+    "SKIP": 0
+  },
+  "censuses": [
+    "5681",
+    "5681",
+    "5816"
+  ],
+  "reference_versions": [
+    "1.3.2",
+    "1.3.2",
+    "1.3.2"
+  ]
+}

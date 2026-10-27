@@ -1,0 +1,6 @@
+{
+  "measure_exit": 0,
+  "gate_exit": 0,
+  "report": "# scripts/selfhost-alloc-bench report \u2014 arch x86_64, subject compiler/checker.fern\nx86_64/checker.allocs\t35059803\nx86_64/checker.frees\t35059803\n",
+  "seconds": 78.96107459068298
+}

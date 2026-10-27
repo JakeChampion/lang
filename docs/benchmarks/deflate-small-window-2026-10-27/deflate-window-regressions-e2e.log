@@ -1,0 +1,10 @@
+=== RUN   TestDeflateGunzipNative
+=== RUN   TestDeflateGunzipNative/x86-64-linux
+=== RUN   TestDeflateGunzipNative/arm64-linux
+--- PASS: TestDeflateGunzipNative (63.28s)
+    --- PASS: TestDeflateGunzipNative/x86-64-linux (0.48s)
+    --- PASS: TestDeflateGunzipNative/arm64-linux (0.47s)
+=== RUN   TestServeWebSocketSequentialInterp
+--- PASS: TestServeWebSocketSequentialInterp (9.26s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	72.546s

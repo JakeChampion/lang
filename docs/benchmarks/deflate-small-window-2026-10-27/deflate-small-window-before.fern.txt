@@ -1,0 +1,16 @@
+import "std/deflate";
+import "std/i32";
+function main(): i32 {
+  let data: u8[] = [113u8, 122u8, 120u8, 65u8];
+  let i: i32 = 4;
+  while (i < 600) {
+    data = data.append(122u8);
+    i = i + 1;
+  }
+  data = data.concat([113u8, 122u8, 120u8, 66u8]);
+  let encoded: u8[] = deflate.deflate_flushed(data[:], 9);
+  for b in encoded {
+    print((b as i32).to_string());
+  }
+  return 0;
+}

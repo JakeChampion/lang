@@ -1,0 +1,17 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-v",
+    "./internal/testing/e2e",
+    "-run",
+    "^(TestDeflateGunzipNative|TestServeWebSocketSequentialInterp)$",
+    "-count=1",
+    "-timeout=10m"
+  ],
+  "exit": 0,
+  "seconds": 75.44911098480225,
+  "PASS": 4,
+  "FAIL": 0,
+  "SKIP": 0
+}
