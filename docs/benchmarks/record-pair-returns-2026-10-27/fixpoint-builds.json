@@ -1,0 +1,40 @@
+[
+  {
+    "producer": "stage2",
+    "producer_sha256": "b0bd2c4a0f9c03d39c9558a97b0fda8108b94de6feaec44618d07abdbd062308",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/record-pair-candidate/stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/record-pair-candidate/stage3",
+      "/workspace/lang-issue-work/perf-4412/record-pair-candidate/compiler/fern.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "output": "stage3",
+    "exit": 0,
+    "elapsed_seconds": 45.16625485000077,
+    "output_sha256": "64f876ff80e4db91d1eb614605a7fe567bbad13ecb061dce204defb5c0b975a0",
+    "output_bytes": 15174672
+  },
+  {
+    "producer": "stage3",
+    "producer_sha256": "64f876ff80e4db91d1eb614605a7fe567bbad13ecb061dce204defb5c0b975a0",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/record-pair-candidate/stage3",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/record-pair-candidate/stage4",
+      "/workspace/lang-issue-work/perf-4412/record-pair-candidate/compiler/fern.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "output": "stage4",
+    "exit": 0,
+    "elapsed_seconds": 41.59300278500086,
+    "output_sha256": "64f876ff80e4db91d1eb614605a7fe567bbad13ecb061dce204defb5c0b975a0",
+    "output_bytes": 15174672
+  }
+]

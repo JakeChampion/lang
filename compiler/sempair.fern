@@ -10,7 +10,7 @@ pub struct Paired { funcs: ssasem.Func[], changed: boolean[] }
 
 // split: a variant whose payload is two words (parts) returns them in the two
 // pair words beside its position, so the payload is never built.
-struct Shape { ty: typeinfo.Type, names: string[], payloads: typeinfo.Type[], has: boolean[], tuple: boolean, lanes: boolean, split: boolean, parts: typeinfo.Type[][] }
+struct Shape { ty: typeinfo.Type, names: string[], payloads: typeinfo.Type[], has: boolean[], pair: boolean, lanes: boolean, split: boolean, parts: typeinfo.Type[][] }
 
 struct Pairing { ok: boolean[], split: boolean[] }
 
@@ -306,10 +306,15 @@ function shaped(f: ssasem.Func): boolean {
 }
 
 function pair_type(f: ssasem.Func, t: typeinfo.Type): boolean {
+  let parts: typeinfo.Type[] = pair_types(f, t);
+  return parts.len() == 2 && carried(f, parts[0]) && word(f, parts[1]);
+}
+
+function pair_types(f: ssasem.Func, t: typeinfo.Type): typeinfo.Type[] {
   if let typeinfo.TypeTuple(tup) = t {
-    return tup.elements.len() == 2 && carried(f, tup.elements[0]) && word(f, tup.elements[1]);
+    return tup.elements;
   }
-  return false;
+  return split_parts(f.records, f.finalizers, t);
 }
 
 function payloads_fit(f: ssasem.Func, e: semrecords.Enum): boolean {
@@ -396,8 +401,9 @@ function carried(f: ssasem.Func, t: typeinfo.Type): boolean {
 }
 
 function shape_of(f: ssasem.Func, ty: typeinfo.Type, split: boolean): Shape {
-  if let typeinfo.TypeTuple(tup) = ty {
-    return Shape { ty: ty, names: [], payloads: tup.elements, has: [true, true], tuple: true, lanes: false, split: false, parts: [] };
+  let pair: typeinfo.Type[] = pair_types(f, ty);
+  if (pair.len() == 2) {
+    return Shape { ty: ty, names: [], payloads: pair, has: [true, true], pair: true, lanes: false, split: false, parts: [] };
   }
   let e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, ty)];
   let names: string[] = [];
@@ -419,7 +425,7 @@ function shape_of(f: ssasem.Func, ty: typeinfo.Type, split: boolean): Shape {
     }
     parts = parts.append(two);
   }
-  return Shape { ty: ty, names: names, payloads: payloads, has: has, tuple: false, lanes: semscalarreturn.variant_in_lanes(e), split: split, parts: parts };
+  return Shape { ty: ty, names: names, payloads: payloads, has: has, pair: false, lanes: semscalarreturn.variant_in_lanes(e), split: split, parts: parts };
 }
 
 // The types a variant's payload goes back in, one per pair word.
@@ -439,8 +445,8 @@ function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
     let b: ssa.SBlock = f.graph.blocks[bi];
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
       let d: ssa.SInst = semscalarreturn.through_copies(defs, b.term.value);
-      if (sh.tuple) {
-        f = pair_return(f, bi, sh, d);
+      if (sh.pair) {
+        f = pair_return(f, bi, sh, defs);
       } else if (d.kind_tag == ssasem.variant_new() && semtypes.equal(f.values[d.result], sh.ty)) {
         let at: i32 = util.index_of_str(sh.names, d.str);
         let arm: Arm = arm_return(Arm { f: f, insts: b.insts, tag: 0 - 1 }, sh, at, d.args, defs);
@@ -452,7 +458,7 @@ function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
     bi = bi + 1;
   }
   let calls: ssasem.Contract[] = f.calls;
-  if (sh.tuple) {
+  if (sh.pair) {
     calls = with_contract(calls, pair_set_contract(sh.payloads[1], 0));
   } else if (!sh.lanes) {
     for i in 0..sh.payloads.len() {
@@ -468,7 +474,7 @@ function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
 }
 
 function pair_result(sh: Shape): typeinfo.Type {
-  if (sh.tuple) {
+  if (sh.pair) {
     return sh.payloads[0];
   }
   if (sh.lanes) {
@@ -477,26 +483,14 @@ function pair_result(sh: Shape): typeinfo.Type {
   return t_i32();
 }
 
-function pair_return(f0: ssasem.Func, bi: i32, sh: Shape, d: ssa.SInst): ssasem.Func {
-  let f: ssasem.Func = f0;
-  let b: ssa.SBlock = f.graph.blocks[bi];
-  let insts: ssa.SInst[] = b.insts;
-  let first: i32 = 0 - 1;
-  let second: i32 = 0 - 1;
-  if (d.kind_tag == ssasem.tuple_new() && d.args.len() == 2 && semtypes.equal(f.values[d.result], sh.ty)) {
-    first = d.args[0];
-    second = d.args[1];
-  } else {
-    first = f.values.len();
-    second = first + 1;
-    f = with_value(with_value(f, sh.payloads[0]), sh.payloads[1]);
-    insts = insts.append(ssa.SInst { kind_tag: ssasem.tuple_get(), result: first, args: [b.term.value], imm: 0, str: "" });
-    insts = insts.append(ssa.SInst { kind_tag: ssasem.tuple_get(), result: second, args: [b.term.value], imm: 1, str: "" });
-  }
+function pair_return(f0: ssasem.Func, bi: i32, sh: Shape, defs: ssa.SInst[]): ssasem.Func {
+  let b: ssa.SBlock = f0.graph.blocks[bi];
+  let a: Parts = parts_of(Arm { f: f0, insts: b.insts, tag: 0 - 1 }, b.term.value, sh.ty, sh.payloads, defs);
+  let f: ssasem.Func = a.a.f;
   let set: i32 = f.values.len();
   f = with_value(f, t_i32());
-  insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: set, args: [second], imm: 0, str: pair_set_name(sh.payloads[1], 0) });
-  return with_block(f, bi, ssa.SBlock { ...b, insts: insts, term: ret(first) });
+  let insts: ssa.SInst[] = a.a.insts.append(ssa.SInst { kind_tag: ssasem.call(), result: set, args: [a.words[1]], imm: 0, str: pair_set_name(sh.payloads[1], 0) });
+  return with_block(f, bi, ssa.SBlock { ...b, insts: insts, term: ret(a.words[0]) });
 }
 
 struct Arm { f: ssasem.Func, insts: ssa.SInst[], tag: i32 }
@@ -638,7 +632,7 @@ function rebuild_at(f0: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func, split
   let b: ssa.SBlock = f.graph.blocks[bi];
   let call: ssa.SInst = b.insts[k];
   let sh: Shape = shape_of(callee, callee.result, split);
-  if (sh.tuple) {
+  if (sh.pair) {
     return rebuild_pair(f, bi, k, sh);
   }
   return dispatched(bi, k, sh, captured(f, call, sh), callee);
@@ -854,6 +848,10 @@ function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func 
   let zero: i32 = first + 1;
   let w: i32 = zero + 1;
   let second: i32 = w + 1;
+  let kind: i32 = ssasem.tuple_new();
+  if let typeinfo.TypeStruct(_) = sh.ty {
+    kind = ssasem.record_new();
+  }
   f = with_value(with_value(with_value(with_value(f, sh.payloads[0]), t_i32()), t_usize()), sh.payloads[1]);
   let insts: ssa.SInst[] = [];
   let p: i32 = 0;
@@ -863,7 +861,7 @@ function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func 
       insts = insts.append(ssa.SInst { kind_tag: 1, result: zero, args: [], imm: 0, str: "" });
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: w, args: [zero], imm: 0, str: pair_word_name(0) });
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: second, args: [w], imm: 0, str: word_as_name(sh.payloads[1]) });
-      insts = insts.append(ssa.SInst { kind_tag: ssasem.tuple_new(), result: call.result, args: [first, second], imm: 0, str: "" });
+      insts = insts.append(ssa.SInst { kind_tag: kind, result: call.result, args: [first, second], imm: 0, str: "" });
     } else {
       insts = insts.append(b.insts[p]);
     }

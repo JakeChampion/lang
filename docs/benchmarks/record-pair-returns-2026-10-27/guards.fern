@@ -1,0 +1,38 @@
+import "core/mem";
+import "std/bench";
+
+struct Watched { p: usize, s: string }
+struct View { v: [u8], n: i32 }
+
+impl mem.Drop for Watched {
+  function drop(self: Self): void {
+    __store_i64(self.p, __load_i64(self.p) + 1i64);
+  }
+}
+
+@noinline function watched(p: usize, s: string): Watched {
+  return Watched { p: p, s: s };
+}
+
+@noinline function view(v: [u8], n: i32): View {
+  return View { v: v, n: n };
+}
+
+function main(): i32 {
+  let counter: i64[] = __alloc_i64(1);
+  let p: usize = (counter as usize) + 8;
+  __store_i64(p, 0i64);
+  let xs: u8[] = [7u8, 8u8];
+  let before: i64 = bench.alloc_count();
+  for i in 0..50 {
+    let w: Watched = watched(p, "held");
+    let v: View = view(xs, i);
+    if (w.s != "held" || v.n != i || v.v[0] != 7u8 || v.v[1] != 8u8) { return 1; }
+  }
+  let allocated: i64 = bench.alloc_count() - before;
+  print(allocated.to_string());
+  if (allocated != 100i64) { return 2; }
+  if (__load_i64(p) != 50i64 || counter.len() != 1) { return 3; }
+  if (__rc_underflow_count() != 0) { return 99; }
+  return 0;
+}

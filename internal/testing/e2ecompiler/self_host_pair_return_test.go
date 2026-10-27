@@ -1074,9 +1074,168 @@ function main(): i32 {
 }
 `
 
+const pairRecordProg = `import "std/bench";
+
+struct Box { n: i32, s: string }
+struct First { b: Box, yes: boolean }
+struct Last { n: i32, s: string }
+struct Both { xs: string[], s: string }
+struct Wide { n: i64, s: string }
+
+@noinline function make(n: i32, b: Box): First {
+  return First { b: b, yes: n % 2 == 0 };
+}
+
+@noinline function forward(n: i32, b: Box): First {
+  return make(n + 1, b);
+}
+
+@noinline function picked(n: i32, b: Box): First {
+  let r: First = First { b: b, yes: false };
+  if (n % 2 == 0) { r = First { b: b, yes: true }; }
+  return r;
+}
+
+@noinline function tail(n: i32, b: Box): First {
+  if (n > 0) { return tail(n - 1, b); }
+  return make(0, b);
+}
+
+@noinline function borrowed(r: First): First { return r; }
+
+@noinline function last(n: i32, s: string): Last {
+  return Last { n: n * 3, s: s };
+}
+
+@noinline function both(xs: string[], s: string): Both {
+  return Both { xs: xs, s: s };
+}
+
+@noinline function wide(n: i32, s: string): Wide {
+  return Wide { n: n as i64 * 4000000000i64, s: s };
+}
+
+@noinline function kept(n: i32, b: Box): First {
+  return First { b: b, yes: n % 2 == 0 };
+}
+
+@noinline function whole(n: i32, b: Box): First {
+  return First { b: b, yes: n % 2 == 0 };
+}
+
+@noinline function consume(r: First): i32 {
+  if (r.yes) { return r.b.n + 1; }
+  return r.b.n;
+}
+
+function main(): i32 {
+  let s: string = "held";
+  let xs: string[] = [s];
+  let b: Box = Box { n: 7, s: s };
+  let r: First = First { b: b, yes: true };
+  let f: (i32, Box) => First = kept;
+  let before: i64 = bench.alloc_count();
+  for i in 0..50 {
+    let a: First = forward(i, b);
+    let p: First = picked(i, b);
+    let t: First = tail(i % 7, b);
+    let q: First = borrowed(r);
+    let l: Last = last(i, s);
+    let refs: Both = both(xs, s);
+    let w: Wide = wide(i, s);
+    let k: First = f(i, b);
+    if (a.b.n != 7 || a.b.s != s || a.yes != (i % 2 != 0)
+      || p.yes != (i % 2 == 0) || !t.yes || !q.yes || q.b.n != 7
+      || l.n != i * 3 || l.s != s || refs.xs[0] != s || refs.s != s
+      || w.n != i as i64 * 4000000000i64 || w.s != s
+      || k.b.s != s || k.yes != (i % 2 == 0)) { return 1; }
+    let expected: i32 = 7;
+    if (i % 2 == 0) { expected = 8; }
+    if (consume(whole(i, b)) != expected) { return 1; }
+  }
+  let allocated: i64 = bench.alloc_count() - before;
+  print(allocated.to_string());
+  if (allocated != 100i64) { return 2; }
+  if (b.n != 7 || b.s != s || xs[0] != s || r.b.s != s) { return 3; }
+  if (__rc_underflow_count() != 0) { return 99; }
+  return 0;
+}
+`
+
+const pairRecordGuardsProg = `import "core/mem";
+import "std/bench";
+
+struct Watched { p: usize, s: string }
+struct View { v: [u8], n: i32 }
+
+impl mem.Drop for Watched {
+  function drop(self: Self): void {
+    __store_i64(self.p, __load_i64(self.p) + 1i64);
+  }
+}
+
+@noinline function watched(p: usize, s: string): Watched {
+  return Watched { p: p, s: s };
+}
+
+@noinline function view(v: [u8], n: i32): View {
+  return View { v: v, n: n };
+}
+
+function main(): i32 {
+  let counter: i64[] = __alloc_i64(1);
+  let p: usize = (counter as usize) + 8;
+  __store_i64(p, 0i64);
+  let xs: u8[] = [7u8, 8u8];
+  let before: i64 = bench.alloc_count();
+  for i in 0..50 {
+    let w: Watched = watched(p, "held");
+    let v: View = view(xs, i);
+    if (w.s != "held" || v.n != i || v.v[0] != 7u8 || v.v[1] != 8u8) { return 1; }
+  }
+  let allocated: i64 = bench.alloc_count() - before;
+  print(allocated.to_string());
+  if (allocated != 100i64) { return 2; }
+  if (__load_i64(p) != 50i64 || counter.len() != 1) { return 3; }
+  if (__rc_underflow_count() != 0) { return 99; }
+  return 0;
+}
+`
+
+const pairRecordHeapAliasProg = `import "std/bench";
+
+struct Last { n: i32, s: string }
+struct Both { a: string[], b: string[] }
+
+@noinline function last(n: i32, s: string): Last {
+  return Last { n: n, s: s };
+}
+
+@noinline function both(xs: string[]): Both {
+  return Both { a: xs, b: xs };
+}
+
+function main(): i32 {
+  let s: string = "held" + args()[0];
+  let xs: string[] = [s];
+  let before: i64 = bench.alloc_count();
+  for i in 0..50 {
+    let l: Last = last(i, s);
+    let refs: Both = both(xs);
+    if (l.n != i || l.s != s || refs.a[0] != s || refs.b[0] != s) { return 1; }
+  }
+  let allocated: i64 = bench.alloc_count() - before;
+  print(allocated.to_string());
+  if (allocated != 0i64) { return 2; }
+  if (xs[0] != s || s.len() <= 4) { return 3; }
+  if (__rc_underflow_count() != 0) { return 99; }
+  return 0;
+}
+`
+
 func TestSelfHostPairReturn(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}, {"forward", pairForwardProg}, {"wide", pairWideProg}, {"tail-phi", pairTailPhiProg}}
+	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}, {"forward", pairForwardProg}, {"wide", pairWideProg}, {"tail-phi", pairTailPhiProg}, {"record", pairRecordProg}, {"record-guards", pairRecordGuardsProg}, {"record-heap-alias", pairRecordHeapAliasProg}}
 	for _, prog := range progs {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 			t.Run(prog.name+"/"+target, func(t *testing.T) {

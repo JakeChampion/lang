@@ -1,0 +1,16 @@
+[
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage3.callgrind",
+    "archive": "baseline-stage3.callgrind.gz",
+    "raw_bytes": 2259075,
+    "raw_sha256": "c998ef94c1de4d6a0d98b9fb13061018dd4fab429aa137b2beb967dcbdad8baa",
+    "gzip_sha256": "3c4edb3b3802f6153a754f14007d5cad864002455fc431ed22c86f2d5e3edf24"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage3-g.nm",
+    "archive": "baseline-stage3-g.nm.gz",
+    "raw_bytes": 436160,
+    "raw_sha256": "7b1ea83f45d3dfc1f71af49ebcdb1a99640b49044117b0a9979b42ed9804639f",
+    "gzip_sha256": "bbd883f8ccb4889cd9717f6c482de37a344d059d465fe126bb820425aac56188"
+  }
+]
