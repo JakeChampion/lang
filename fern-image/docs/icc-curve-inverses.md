@@ -86,3 +86,12 @@ These finite observations do not establish a universal precision, compatibility,
 No external runtime CMM accompanies this kernel.
 Clipping before inverse curves and complete profile transforms require separate qualification.
 The [official specification](https://www.color.org/specifications/ICC.1-2022-05.pdf) describes the inverse-curve policies in Annex F.1 and subsequent matrix/TRC composition in Annex F.3.
+
+## Final observations
+
+The committed source campaign completed 1,974 cases on each of three targets.
+All 741 fresh workers exited normally with nonzero balanced zero-live heaps.
+The target sample records match exactly.
+The largest observed absolute error is `1.1102230246251565e-16`, within the unchanged finite criterion.
+All three full regression runs passed 296 TAP tests.
+The [qualification record](../../docs/benchmarks/icc-curv-inverse-2026-10-27/README.md) retains source identities, raw records, and limitations.

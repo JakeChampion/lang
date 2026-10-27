@@ -1,0 +1,10 @@
+{
+  "command_exit": 0,
+  "seconds": 7.97773551940918,
+  "stdout": "{\"cases\": 1974, \"sha256\": \"5494f1c5fc0c85244e1a1fa975a1e1f01ccee7268a91b817311ae980cb0e7228\"}\n",
+  "source_commit": "9d3c237aadfa3bd1f79f9ba83f8f24d348f5d34c",
+  "generator_sha256": "0d5c9947cc24dda8d0f6502d53adf2dff68561e151218931d6d988e88a80efac",
+  "original_sha256": "5494f1c5fc0c85244e1a1fa975a1e1f01ccee7268a91b817311ae980cb0e7228",
+  "reproduced_sha256": "5494f1c5fc0c85244e1a1fa975a1e1f01ccee7268a91b817311ae980cb0e7228",
+  "exact": true
+}

@@ -1,0 +1,18 @@
+import json, subprocess
+from pathlib import Path
+root=Path('/workspace/lang-image-icc-curv-inverse');compiler='/workspace/image-tuple-array-current-fern-9c4085d83'
+files=subprocess.check_output(['git','ls-files','*.fern','*.fern.md'],cwd=root,text=True).splitlines()
+files=[p for p in files if not p.startswith('conformance/')and '/testdata/'not in p]
+checks=[[compiler,'-fmt','-d',*files],['go','build','./cmd/...'],['go','vet','./...'],
+        ['make','actionlint','testnames','ci-selftest','runtime-bundle-check','gofmt-check'],
+        ['/workspace/image-png-reference-venv/bin/python','-m','unittest','discover','-s','fern-image/tests','-p','qualify_icc_curv_inverse_test.py'],
+        ['git','diff','--check']]
+record=dict(source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),format_files=len(files),checks=[])
+with Path('/workspace/image-icc-curv-inverse-aux.log').open('w')as log:
+    for cmd in checks:
+        r=subprocess.run(cmd,cwd=root,stdout=log,stderr=subprocess.STDOUT)
+        record['checks'].append(dict(tool=cmd[0],exit_code=r.returncode))
+        if r.returncode:break
+Path('/workspace/image-icc-curv-inverse-aux.json').write_text(json.dumps(record,indent=2)+'\n');print(json.dumps(record))
+assert len(record['checks'])==len(checks)and all(c['exit_code']==0 for c in record['checks'])
+assert 'ERROR 'not in Path('/workspace/image-icc-curv-inverse-aux.log').read_text()

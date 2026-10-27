@@ -1,0 +1,43 @@
+{
+  "source_commit": "9d3c237aadfa3bd1f79f9ba83f8f24d348f5d34c",
+  "records_equal": true,
+  "cases_per_target": 1974,
+  "numeric_per_target": 1836,
+  "errors_per_target": 138,
+  "workers_per_target": 247,
+  "total_workers": 741,
+  "max_absolute_error": 1.1102230246251565e-16,
+  "hash_counts": [
+    1254,
+    1255,
+    1255
+  ],
+  "full_TAP_per_target": 296,
+  "censuses": [
+    81,
+    57,
+    42
+  ],
+  "standalone_ARM_executables": 42,
+  "format_files": 2070,
+  "complexity": {
+    "command": [
+      "go",
+      "test",
+      "-v",
+      "./internal/testing/e2ecompiler",
+      "-run",
+      "^TestSelfHostRepoComplexityRatchet$",
+      "-count=1",
+      "-timeout=10m"
+    ],
+    "exit": 0,
+    "seconds": 79.22904062271118,
+    "PASS": 3,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "Go_oracle_build_source": "8cb3ccf00e945ffda49c889e6cb5b037ebc2976b",
+  "Go_loaded_source": "9d3c237aadfa3bd1f79f9ba83f8f24d348f5d34c",
+  "scope": "Finite standalone identity/gamma/sampled inverse kernel. No transform or encoded admission claim."
+}
