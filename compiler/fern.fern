@@ -1234,14 +1234,14 @@ function dw_file_table(entry: string, files: string[]): string {
 }
 
 function harden_refused(harden: boolean, target: string, shared: boolean): boolean {
-  if (!harden || target == "arm64-linux" && !shared) {
+  if (!harden || (target == "arm64-linux" || target == "x86-64-linux") && !shared) {
     return false;
   }
   let with: string = "";
   if (shared) {
     with = " with -shared";
   }
-  eprint("fern: -harden is only supported for -target arm64-linux executables (got \"" + target + "\"" + with + ")");
+  eprint("fern: -harden is only supported for -target arm64-linux and x86-64-linux executables (got \"" + target + "\"" + with + ")");
   return true;
 }
 
@@ -1286,7 +1286,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-O", "", "release build: elide every assert() check"),
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
       cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export (default main)"),
-      cli_flag("-harden", "", "arm64-linux executables: BTI landing pads and signed return addresses"),
+      cli_flag("-harden", "", "arm64-linux and x86-64-linux executables: stack canaries; on arm64 also BTI landing pads and signed return addresses"),
     ] },
     FlagGroup { title: "run", flags: [
       cli_flag("-run", "", "build to a temporary binary (or -o) and run it with the program's arguments"),
