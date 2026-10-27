@@ -440,10 +440,7 @@ struct CalleeParts { name: string, parts: lspquery.Parts }
 
 function callee_parts(v: checker.QueryView, toks: lspquery.Tok[], quals: flatten.Qualifiers, i: i32): Option[CalleeParts] {
   let t: lspquery.Tok = toks[i];
-  let (site, ok) = lspquery.site_at(toks, quals, t.line, t.col);
-  if (!ok) {
-    return None;
-  }
+  let site: lspquery.Site = match (lspquery.site_at(toks, quals, t.line, t.col)) { Some(value) => value, None => { return None; } };
   match (lspquery.call_parts(v, site)) {
     Some(parts) => {
       return match (parts) { Some(value) => Some(CalleeParts { name: t.text, parts: value }), None => None };

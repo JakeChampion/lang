@@ -978,6 +978,21 @@ findings. Ranked by leverage.
   Candidate/baseline time ratios range from 0.939 to 0.988 across six inputs.
   These probes establish no general compiler speed change.
 
+  Lexical site queries return `Option[Site]`, and combined queries return `Option[Query]`.
+  Absent sites no longer contain placeholder coordinates or a dummy expression query.
+  A dot without a receiver returns `None` before the query reads a negative token index.
+  A real lexical site retains its type context when expression discovery returns `K_NONE`.
+
+  Three inputs with an initial dot crash the native baseline and return `None` after the fix.
+  Twenty-one other lexical records retain all site fields.
+  All 24 records and a separate type-context contract pass on x86-64, ARM64, and Wasm.
+  Native sanitizer probes report 6,882 allocations and releases, with zero live bytes in each process.
+  All 22 LSP suites pass, with five protocol requests for a missing receiver.
+
+  Forty process pairs per input repeat complete cached queries 50 times.
+  Candidate/baseline time ratios range from 0.987 to 1.102 across six inputs.
+  These probes establish no general compiler speed change.
+
   Printer recognition uses `Option[UseSugar]` and `Option[ForCSugar]`.
   Absent forms no longer contain placeholder calls, bodies, or loop conditions.
   Layout, statement output, and lint scores match the option before they use a payload.

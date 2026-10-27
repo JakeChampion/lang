@@ -36,10 +36,7 @@ pub struct Hover { text: string, line: i32, col: i32, len: i32 }
 pub struct SourceSpan { line: i32, col: i32, len: i32 }
 
 pub function hover(p: Program, line: i32, col: i32): Option[Hover] {
-  let (q, ok) = query(p, line, col);
-  if (!ok) {
-    return None;
-  }
+  let q: Query = match (query(p, line, col)) { Some(value) => value, None => { return None; } };
   let text: string = "";
   if (q.f.kind == K_NONE) {
     text = type_ref_text(checker.module_scope(q.v), type_candidates(q));
@@ -67,8 +64,8 @@ pub function hover_doc(p: Program, line: i32, col: i32): string {
 }
 
 function names_a_parameter(p: Program, line: i32, col: i32): boolean {
-  let (q, ok) = query(p, line, col);
-  if (!ok || q.f.kind == K_NONE || q.f.kind == K_QUALIFIED) {
+  let q: Query = match (query(p, line, col)) { Some(value) => value, None => { return false; } };
+  if (q.f.kind == K_NONE || q.f.kind == K_QUALIFIED) {
     return false;
   }
   if let ast.ExprIdent(_) = q.f.expr {
@@ -80,10 +77,7 @@ function names_a_parameter(p: Program, line: i32, col: i32): boolean {
 }
 
 pub function definition(p: Program, line: i32, col: i32): Option[SourceSpan] {
-  let (q, ok) = query(p, line, col);
-  if (!ok) {
-    return None;
-  }
+  let q: Query = match (query(p, line, col)) { Some(value) => value, None => { return None; } };
   if (q.f.kind == K_NONE) {
     return type_def(p, q.v, checker.module_scope(q.v), type_candidates(q));
   }
@@ -93,12 +87,12 @@ pub function definition(p: Program, line: i32, col: i32): Option[SourceSpan] {
 
 pub struct Query { v: checker.QueryView, site: Site, quals: flatten.Qualifiers, f: Found }
 
-pub function query(p: Program, line: i32, col: i32): (Query, boolean) {
+pub function query(p: Program, line: i32, col: i32): Option[Query] {
   let view: View = view_of(p);
   let m: i32 = util.pos_file_index(line);
   let quals: flatten.Qualifiers = quals_of(view, m);
-  let (site, ok) = site_at(module_toks(p, m), quals, line, col);
-  return (Query { v: view.types, site: site, quals: quals, f: locate(view.types, site) }, ok);
+  let site: Site = match (site_at(module_toks(p, m), quals, line, col)) { Some(value) => value, None => { return None; } };
+  return Some(Query { v: view.types, site: site, quals: quals, f: locate(view.types, site) });
 }
 
 pub struct Tok { text: string, ident: boolean, line: i32, col: i32 }
@@ -167,30 +161,32 @@ pub function quals_of(v: View, m: i32): flatten.Qualifiers {
 
 pub struct Site { name: string, qual: string, target: string, line: i32, col: i32, len: i32, name_col: i32, dot_col: i32, prev: string }
 
-pub function site_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): (Site, boolean) {
-  let none: Site = Site { name: "", qual: "", target: "", line: 0, col: 0, len: 0, name_col: 0, dot_col: 0, prev: "" };
+pub function site_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): Option[Site] {
   let i: i32 = ident_at(toks, q, line, col);
   if (i < 0) {
-    return (none, false);
+    return None;
   }
   if (!punct_before(toks, i, ".") && util.has_str(q.aliases, toks[i].text) && dot_ident_after(toks, i)) {
     i = i + 2;
   }
   let t: Tok = toks[i];
-  let site: Site = Site { ...none, name: t.text, line: t.line, col: t.col, len: t.text.len(), name_col: t.col, prev: text_at(toks, i - 1) };
+  let site: Site = Site { name: t.text, qual: "", target: "", line: t.line, col: t.col, len: t.text.len(), name_col: t.col, dot_col: 0, prev: text_at(toks, i - 1) };
   if (!punct_before(toks, i, ".")) {
-    return (site, true);
+    return Some(site);
+  }
+  if (i < 2) {
+    return None;
   }
   site = Site { ...site, dot_col: toks[i - 1].col };
   let qt: Tok = toks[i - 2];
   if (!names_something(qt, q) || qt.line != t.line || punct_before(toks, i - 2, ".")) {
-    return (site, true);
+    return Some(site);
   }
   let target: string = flatten.qualified_name(q, qt.text, t.text);
   if (target.len() == 0) {
-    return (site, true);
+    return Some(site);
   }
-  return (Site { ...site, qual: qt.text, target: target, col: qt.col, len: t.col + t.text.len() - qt.col, prev: text_at(toks, i - 3) }, true);
+  return Some(Site { ...site, qual: qt.text, target: target, col: qt.col, len: t.col + t.text.len() - qt.col, prev: text_at(toks, i - 3) });
 }
 
 function ident_at(toks: Tok[], q: flatten.Qualifiers, line: i32, col: i32): i32 {

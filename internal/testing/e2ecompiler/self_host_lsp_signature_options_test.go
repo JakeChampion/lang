@@ -30,8 +30,7 @@ function main():i32 {
  let av=args();let line=util.digits_to_i32(av[1]);let col=util.digits_to_i32(av[2]);
 match(lspassist.signature_help(p,line,col)){Some(sh)=>{emit_signature(sh);},None=>{print("NONE");}}
  let v=lspquery.view_of(p);let toks=lspquery.module_toks(p,0);let quals=lspquery.quals_of(v,0);
- let (site,ok)=lspquery.site_at(toks,quals,util.digits_to_i32(av[3]),util.digits_to_i32(av[4]));
- if(!ok){print("NO_SITE");return 0;}
+ let site:lspquery.Site=match(lspquery.site_at(toks,quals,util.digits_to_i32(av[3]),util.digits_to_i32(av[4]))){Some(value)=>value,None=>{print("NO_SITE");return 0;}};
  match(lspquery.call_parts(v.types,site)){Some(parts)=>{match(parts){Some(value)=>{emit_parts(value);},None=>{print("REFUSED");}}},None=>{print("UNLOCATED");}}
 return 0;
 }

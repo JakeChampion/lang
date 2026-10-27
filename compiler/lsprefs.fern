@@ -39,10 +39,7 @@ function no_target(): Target {
 }
 
 function target_at(p: lspquery.Program, line: i32, col: i32): Target {
-  let (q, ok) = lspquery.query(p, line, col);
-  if (!ok) {
-    return no_target();
-  }
+  let q: lspquery.Query = match (lspquery.query(p, line, col)) { Some(value) => value, None => { return no_target(); } };
   let t: Target = no_target();
   if (q.f.kind != lspquery.K_NONE) {
     let fd: parser.FuncDecl = q.v.mod.funcs[q.f.fd];
