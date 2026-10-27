@@ -1,0 +1,20 @@
+{
+  "command": [
+    "git",
+    "diff",
+    "--quiet",
+    "103243525a4987f48607dd0e7406c02370d6b1c3",
+    "039bf0c92e747740c0808456543d2aa3ca268687",
+    "--",
+    "*.go",
+    "go.mod",
+    "go.sum",
+    "internal/stdlib"
+  ],
+  "exit_code": 0,
+  "oracle": "/workspace/image-icc-parametric-final-go-oracle",
+  "oracle_sha256": "7f82247e64bc635e6261d4d2b79ec0a4476b8858358e905cf64d98b106d3cd6b",
+  "clean_oracle_source": "103243525a4987f48607dd0e7406c02370d6b1c3",
+  "feature_source": "039bf0c92e747740c0808456543d2aa3ca268687",
+  "note": "Go implementation and embedded stdlib source are identical. The final Go check and interpreter run occurred after the feature source commit."
+}

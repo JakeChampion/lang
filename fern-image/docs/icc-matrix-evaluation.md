@@ -44,7 +44,7 @@ The bundle covers projections, signed coefficient extremes, adjacent inputs, sub
 The frozen profile supplies column values only, without profile selection or transform qualification.
 The generator uses no Fern arithmetic and no runtime CMM.
 Its rational reference includes every admitted coefficient and every actual input bit.
-The native provisional campaign is a development observation, not a final source-pinned record.
+The earlier native provisional campaign remains a separate development observation.
 
 The test includes a cancellation vector whose ordinary three-product sum loses 74 representable steps.
 Its exact rational value fixes the expected result before the Fern comparison.
@@ -75,3 +75,31 @@ The official document defines the column convention after the channel curves.
 The numerical criterion and isolated API restrictions here are project policies.
 The public web reader supplied the document.
 This record makes no local PDF digest claim.
+
+## Completed campaign
+
+Source `039bf0c92e747740c0808456543d2aa3ca268687` precedes every final campaign.
+Each target checks 2,015 cases: 1,990 numeric results and 25 expected errors.
+The three targets have exactly equal sample records.
+Every one of the 756 fresh workers has a nonzero balanced allocation count and zero live bytes.
+All 1,250 native and 1,251 runner source/tool hashes remain unchanged during their respective campaigns.
+
+The largest observed difference is one representable step, within the unchanged two-step finite criterion.
+The maximum observed absolute difference is approximately `7.275846595269095e-12`.
+The step criterion reflects the different magnitudes of these XYZ outputs.
+Neither this observation nor the finite criterion establishes a universal bound or changes the existing curve criteria.
+
+The bundle reproduces exactly with SHA256 `78b48df3bb075c022e31eb2e2be082dc66e27cc9c5030c6aedb22be667867a89`.
+The three new records are `benchmarks/results/icc-matrix-eval-{native,wasm,arm64}.json`.
+The source, protocol, cancellation, and ownership evidence remains in `benchmarks/icc-matrix-eval-2026-10-27/`.
+
+All 268 TAP cases pass on native, Wasm, and standalone ARM64/QEMU10.
+The complete scripts report 77 native, 53 Wasm, and 38 ARM balanced zero-live heap censuses.
+The 38 standalone ARM executables do not qualify the whole Go ARM harness.
+The Go source check and interpreter pass all six matrix groups after the source commit.
+
+Both unchanged compiler and stdlib complexity gates pass without skips in 7.738 seconds.
+All 2,057 selected Fern files pass the format check.
+Go build/vet, workflow lint, test names, CI selftests, runtime bundles, Go formatting, eight protocol tests, and prose checks pass.
+The full scripts preserve all 1,305 selected source hashes and the compiler hash.
+No baseline, tolerance, exemption, or runtime dependency changes accompany this evidence.
