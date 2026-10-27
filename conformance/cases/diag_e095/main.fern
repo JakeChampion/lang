@@ -1,0 +1,30 @@
+// An unsafe function states caller obligations. Only an unsafe block accepts
+// them, so a call from any other position is refused, also from the body of
+// another unsafe function.
+
+unsafe function danger(x: i32): i32 {
+    unsafe {
+        return x + 1;
+    }
+}
+
+function accepted(): i32 {
+    let v: i32 = 0;
+    unsafe {
+        v = danger(1);
+    }
+    return v;
+}
+
+unsafe function body_is_not_a_block(): i32 {
+    return danger(2);
+}
+
+function main(): i32 {
+    let direct: i32 = danger(3);
+    let nested: i32 = 0;
+    unsafe {
+        nested = body_is_not_a_block();
+    }
+    return accepted() + direct + nested;
+}

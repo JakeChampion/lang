@@ -1754,7 +1754,7 @@ function cast_pointer_shaped(t: typeinfo.Type, source: boolean): boolean {
   return false;
 }
 
-pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[], module: string, refs: parser.TypeRef[] }
+pub struct FuncSig { name: string, param_types: typeinfo.Type[], param_own: boolean[], ret_type: typeinfo.Type, all_type_params: string[], type_params: string[], type_bounds: string[], ret_type_name: string, param_type_names: string[], param_names: string[], is_const: boolean, receiver: string, typevars: string[], module: string, refs: parser.TypeRef[], is_unsafe: boolean }
 
 function sig_param_ref(sig: FuncSig, i: i32): parser.TypeRef {
   if (sig.refs.len() > 0) {
@@ -1783,7 +1783,7 @@ function generic_sig_refs(all_type_params: string[], param_type_names: string[],
 
 pub struct StructSig { name: string, field_names: string[], field_types: typeinfo.Type[], type_params: string[], field_type_names: string[], variant_field_names: string[], derives: string[], enum_owner: string, opaque: boolean, module: string }
 
-pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_params: string[], type_bounds: string[], module: string, impl_trait: string, line: i32, col: i32, file: string }
+pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_params: string[], type_bounds: string[], module: string, impl_trait: string, line: i32, col: i32, file: string, is_unsafe: boolean }
 
 pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string, type_params: string[], instance: string, visible_from: string[] }
 
@@ -6915,7 +6915,7 @@ function collect_func_sigs(funcs: parser.FuncDecl[], tn: TypeNames): FuncSig[] {
       }
     }
     let rtn: string = parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
-    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: callable_own_flags(powns, pts.len()), ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, ret_type_name: rtn, param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs, module: fd.module, refs: generic_sig_refs(fd.all_type_params, ptn, rtn) });
+    out = out.append(FuncSig { receiver: fd.receiver_type, name: fd.name, param_types: pts, param_own: callable_own_flags(powns, pts.len()), ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, ret_type_name: rtn, param_type_names: ptn, param_names: param_decl_names(fd.params), is_const: fd.is_const, typevars: tvs, module: fd.module, refs: generic_sig_refs(fd.all_type_params, ptn, rtn), is_unsafe: fd.is_unsafe });
     i = i + 1;
   }
   return out;
@@ -7174,7 +7174,7 @@ function collect_method_sigs(funcs: parser.FuncDecl[], tn: TypeNames): MethodSig
         ptn = ptn.append(parser.fn_tag_spelling(param.type_name, param.fn_ret, param.fn_param_types));
       }
       let rtn: string = parser.fn_tag_spelling(fd.ret_type, fd.ret_fn_ret, fd.ret_fn_param_types);
-      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), ret_type_name: rtn, param_type_names: ptn, all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, module: fd.module, impl_trait: fd.impl_trait, line: fd.line, col: fd.col, file: decl_file_label(fd) });
+      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, fd.type_params, erased_tparams(fd.type_params), tn), ret_type_name: rtn, param_type_names: ptn, all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, module: fd.module, impl_trait: fd.impl_trait, line: fd.line, col: fd.col, file: decl_file_label(fd), is_unsafe: fd.is_unsafe });
     }
   }
   return out;
@@ -9602,6 +9602,243 @@ function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: strin
       }
     },
     _ => {}
+  }
+  return out;
+}
+
+// The unsafe boundary: an unsafe declaration states caller obligations, and only an
+// unsafe block accepts them. A function value cannot carry the obligation, so an
+// unsafe function never becomes a value. docs/SAFETY-CONTRACT.md has the contract.
+struct UnsafeWalk { scope: Scope, inside: boolean, diags: util.Diag[] }
+
+function module_declares_unsafe(mod: parser.Module): boolean {
+  for fd in mod.funcs {
+    if (fd.is_unsafe) {
+      return true;
+    }
+  }
+  for req in mod.trait_reqs {
+    for m in util.append_all(util.append_all(req.req_sigs, req.default_sigs), req.assoc_sigs) {
+      if (m.is_unsafe) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function unsafe_call_diag(name: string, line: i32, col: i32): util.Diag {
+  return dg_at("E095", "unsafe function \"" + name + "\" is called outside an unsafe block", line, col);
+}
+
+function unsafe_value_diag(name: string, line: i32, col: i32): util.Diag {
+  return dg_at("E095", "unsafe function \"" + name + "\" cannot be used as a value; a function value carries no unsafe obligation", line, col);
+}
+
+function unsafe_impl_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  for fd in mod.funcs {
+    if (!fd.is_unsafe || fd.impl_trait.len() == 0) {
+      continue;
+    }
+    let idx: i32 = trait_req_idx(fd.impl_trait, mod.trait_reqs);
+    if (idx < 0) {
+      continue;
+    }
+    let req: parser.TraitReq = mod.trait_reqs[idx];
+    for m in util.append_all(util.append_all(req.req_sigs, req.default_sigs), req.assoc_sigs) {
+      if (m.name == fd.name && !m.is_unsafe) {
+        out = out.append(dg_at("E095", "method \"" + fd.name + "\" of trait \"" + req.trait_name + "\" is declared safe, so its implementation cannot be unsafe", fd.line, fd.col));
+      }
+    }
+  }
+  return out;
+}
+
+function unsafe_sig_named(name: string, s: Scope): boolean {
+  if (s.is_bound(name)) {
+    return false;
+  }
+  if let Some(sig) = s.lookup_sig(name) {
+    return sig.is_unsafe;
+  }
+  return false;
+}
+
+function qualified_sig_name(fa: ast.ExprFieldAccess, s: Scope): string {
+  if let ast.ExprIdent(ns) = fa.obj {
+    let qname: string = ns.name + "." + fa.field;
+    if (!s.is_bound(ns.name) && s.has_sig(qname)) {
+      return qname;
+    }
+  }
+  return "";
+}
+
+function dyn_method_unsafe(traits: string, name: string, s: Scope): boolean {
+  for tr in parser.dyn_trait_set("dyn " + traits) {
+    let idx: i32 = trait_req_idx(util.base_type_name(tr), s.trait_reqs);
+    if (idx >= 0) {
+      if let Some(m) = trait_req_sig(s.trait_reqs[idx], name) {
+        return m.is_unsafe;
+      }
+    }
+  }
+  return false;
+}
+
+function unsafe_method_named(fa: ast.ExprFieldAccess, s: Scope): boolean {
+  if let ast.ExprIdent(ns) = fa.obj {
+    if (!s.is_bound(ns.name)) {
+      if let Some(asig) = s.lookup_assoc_sig(ns.name, fa.field) {
+        return asig.is_unsafe;
+      }
+    }
+  }
+  let recv: typeinfo.Type = check_expr(fa.obj, s);
+  let key: string = receiver_key(recv);
+  if (key.len() > 0) {
+    if let Some(m) = s.lookup_method(fa.field, key) {
+      return m.is_unsafe;
+    }
+    return false;
+  }
+  if let typeinfo.TypeDyn(d) = recv {
+    return dyn_method_unsafe(d.traits, fa.field, s);
+  }
+  if let Some(bm) = bound_method(s, tp_receiver(recv, s), fa.field) {
+    return bm.is_unsafe;
+  }
+  return false;
+}
+
+function unsafe_note(acc: UnsafeWalk, d: util.Diag): UnsafeWalk {
+  return UnsafeWalk { scope: acc.scope, inside: acc.inside, diags: acc.diags.append(d) };
+}
+
+function unsafe_descend(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprCall(_) => {
+      return false;
+    },
+    ast.ExprLambda(_) => {
+      return false;
+    },
+    _ => {
+      return true;
+    }
+  }
+  return true;
+}
+
+function unsafe_call(c: ast.ExprCall, own acc: UnsafeWalk): UnsafeWalk {
+  match (c.callee) {
+    ast.ExprIdent(id) => {
+      if (!acc.inside && unsafe_sig_named(id.name, acc.scope)) {
+        acc = unsafe_note(acc, unsafe_call_diag(id.name, c.line, c.col));
+      }
+    },
+    ast.ExprFieldAccess(fa) => {
+      let qname: string = qualified_sig_name(fa, acc.scope);
+      if (qname.len() > 0) {
+        if (!acc.inside && unsafe_sig_named(qname, acc.scope)) {
+          acc = unsafe_note(acc, unsafe_call_diag(qname, c.line, c.col));
+        }
+      } else {
+        if (!acc.inside && unsafe_method_named(fa, acc.scope)) {
+          acc = unsafe_note(acc, unsafe_call_diag(fa.field, c.line, c.col));
+        }
+        acc = astwalk.fold_expr_pruned(fa.obj, acc, unsafe_visit, unsafe_descend);
+      }
+    },
+    _ => {
+      acc = astwalk.fold_expr_pruned(c.callee, acc, unsafe_visit, unsafe_descend);
+    }
+  }
+  for arg in c.args {
+    acc = astwalk.fold_expr_pruned(arg, acc, unsafe_visit, unsafe_descend);
+  }
+  return acc;
+}
+
+function unsafe_visit(e: ast.Expr, own acc: UnsafeWalk): UnsafeWalk {
+  match (e) {
+    ast.ExprCall(c) => {
+      return unsafe_call(c, acc);
+    },
+    ast.ExprLambda(lm) => {
+      let body: util.Diag[] = unsafe_stmts(lm.body, lambda_body_scope(lm, acc.scope), acc.inside);
+      return UnsafeWalk { scope: acc.scope, inside: acc.inside, diags: util.append_diags(acc.diags, body) };
+    },
+    ast.ExprIdent(id) => {
+      if (unsafe_sig_named(id.name, acc.scope)) {
+        return unsafe_note(acc, unsafe_value_diag(id.name, id.line, id.col));
+      }
+    },
+    ast.ExprFieldAccess(fa) => {
+      let qname: string = qualified_sig_name(fa, acc.scope);
+      if (qname.len() > 0 && unsafe_sig_named(qname, acc.scope)) {
+        return unsafe_note(acc, unsafe_value_diag(qname, fa.line, fa.col));
+      }
+    },
+    _ => {}
+  }
+  return acc;
+}
+
+function unsafe_expr(e: ast.Expr, s: Scope, inside: boolean): util.Diag[] {
+  let start: UnsafeWalk = UnsafeWalk { scope: s, inside: inside, diags: [] };
+  return astwalk.fold_expr_pruned(e, start, unsafe_visit, unsafe_descend).diags;
+}
+
+function unsafe_stmts(stmts: ast.Stmt[], s: Scope, inside: boolean): util.Diag[] {
+  let out: util.Diag[] = [];
+  let cur: Scope = bind_mutual_siblings(stmts, s);
+  for st in stmts {
+    match (st) {
+      ast.StmtVar(v) => {
+        out = util.append_diags(out, unsafe_expr(v.init, rec_local_scope(v, cur), inside));
+      },
+      ast.StmtReturn(r) => {
+        out = util.append_diags(out, unsafe_expr(r.value, cur, inside));
+      },
+      ast.StmtExpr(x) => {
+        out = util.append_diags(out, unsafe_expr(x.value, cur, inside));
+      },
+      ast.StmtAssign(a) => {
+        out = util.append_diags(out, unsafe_expr(a.value, cur, inside));
+      },
+      ast.StmtIf(f) => {
+        out = util.append_diags(out, unsafe_expr(f.cond, cur, inside));
+        out = util.append_diags(out, unsafe_stmts(f.then_body, cur, inside || f.origin == "unsafe"));
+        out = util.append_diags(out, unsafe_stmts(f.else_body, cur, inside));
+      },
+      ast.StmtWhile(w) => {
+        out = util.append_diags(out, unsafe_expr(w.cond, cur, inside));
+        out = util.append_diags(out, unsafe_stmts(w.body, cur, inside));
+      },
+      ast.StmtFor(fr) => {
+        out = util.append_diags(out, unsafe_expr(fr.iter, cur, inside));
+        out = util.append_diags(out, unsafe_stmts(fr.body, for_body_scope(fr, cur), inside));
+      },
+      ast.StmtMatch(m) => {
+        out = util.append_diags(out, unsafe_expr(m.scrutinee, cur, inside));
+        let whole: typeinfo.Type = check_expr(m.scrutinee, cur);
+        for arm in m.arms {
+          let asc: Scope = annotate_arm_scope(arm, cur, whole);
+          if (arm.has_guard) {
+            out = util.append_diags(out, unsafe_expr(arm.guard, asc, inside));
+          }
+          out = util.append_diags(out, unsafe_stmts(arm.body, asc, inside));
+        }
+      },
+      ast.StmtDefer(d) => {
+        let one: ast.Stmt[] = [d.action];
+        out = util.append_diags(out, unsafe_stmts(one, cur, inside));
+      },
+      _ => {}
+    }
+    cur = bind_stmt(st, cur);
   }
   return out;
 }
@@ -12712,7 +12949,7 @@ function trait_bound_method(s: Scope, bound: string, self: string, field: string
         i = i + 1;
       }
       let rt: string = parser.subst_ty(parser.subst_self(parser.fn_tag_spelling(m.ret_type, m.ret_fn_ret, m.ret_fn_param_types), self), req.type_params, args);
-      return Some(MethodSig { name: m.name, receiver_type: self, param_types: pts, ret_type: type_from_name_subst(rt, tps, subst, s.type_names()), ret_type_name: rt, param_type_names: ptn, all_type_params: m.all_type_params, type_params: m.type_params, type_bounds: m.bound_traits, module: m.module, impl_trait: req.trait_name, line: m.line, col: m.col, file: decl_file_label(m) });
+      return Some(MethodSig { name: m.name, receiver_type: self, param_types: pts, ret_type: type_from_name_subst(rt, tps, subst, s.type_names()), ret_type_name: rt, param_type_names: ptn, all_type_params: m.all_type_params, type_params: m.type_params, type_bounds: m.bound_traits, module: m.module, impl_trait: req.trait_name, line: m.line, col: m.col, file: decl_file_label(m), is_unsafe: m.is_unsafe });
     }
   }
   for parent in req.supertraits {
@@ -22739,6 +22976,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     slc_marked = util.name_index(slc_now);
   }
   let const_inits: ConstInit = const_init(mod);
+  let unsafe_on: boolean = module_declares_unsafe(mod);
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (!in_focus(focus, mod.funcs[i]) || derive_body_suppressed(mod.funcs[i], derive_keys)) {
@@ -22786,6 +23024,9 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     function_diags = util.append_diags(function_diags, mx_stmts(dbody, fsc, unions, mod.enums));
     function_diags = util.append_diags(function_diags, stmts_slit_diags(dbody, stt));
     function_diags = util.append_diags(function_diags, stmts_call_diags(dbody, fsc));
+    if (unsafe_on) {
+      function_diags = util.append_diags(function_diags, unsafe_stmts(dbody, fsc, false));
+    }
     function_diags = util.append_diags(function_diags, stmts_assign_diags(dbody, fsc, unions));
     function_diags = util.append_diags(function_diags, loop_diags(dbody, false, []));
     function_diags = util.append_diags(function_diags, dupvar_diags(dbody));
@@ -22830,6 +23071,10 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   body_diags = util.append_diags(body_diags, mx_stmts(dtop, tsc, unions, mod.enums));
   body_diags = util.append_diags(body_diags, stmts_slit_diags(dtop, stt));
   body_diags = util.append_diags(body_diags, stmts_call_diags(dtop, tsc));
+  if (unsafe_on) {
+    body_diags = util.append_diags(body_diags, unsafe_stmts(dtop, tsc, false));
+    body_diags = util.append_diags(body_diags, unsafe_impl_diags(mod));
+  }
   body_diags = util.append_diags(body_diags, stmts_assign_diags(dtop, tsc, unions));
   if (ambig.len() > 0) {
     body_diags = util.append_diags(body_diags, vref_stmts(dtop, tsc, ambig));

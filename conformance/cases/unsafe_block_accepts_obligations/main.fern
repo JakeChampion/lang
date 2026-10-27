@@ -1,0 +1,77 @@
+// spec: SC-01
+// Every call shape reaches an unsafe declaration only through an unsafe block:
+// a direct call, a struct method, a trait object, a bound type parameter, an
+// imported function, and a closure that accepts the obligation itself.
+import "./helper";
+
+struct Item { v: i32 }
+
+trait Read {
+    unsafe function read(self: Self): i32;
+}
+
+impl Read for Item {
+    unsafe function read(self: Self): i32 {
+        unsafe {
+            return self.v;
+        }
+    }
+}
+
+unsafe function (self: Item) raw(): i32 {
+    unsafe {
+        return self.v * 10;
+    }
+}
+
+unsafe function danger(x: i32): i32 {
+    unsafe {
+        return x + 1;
+    }
+}
+
+function via_dyn(r: dyn Read): i32 {
+    let v: i32 = 0;
+    unsafe {
+        v = r.read();
+    }
+    return v;
+}
+
+function via_bound[T: Read](r: T): i32 {
+    let v: i32 = 0;
+    unsafe {
+        v = r.read();
+    }
+    return v;
+}
+
+function wrapped(): (i32) => i32 {
+    return (x: i32): i32 => {
+        let v: i32 = 0;
+        unsafe {
+            v = danger(x);
+        }
+        return v;
+    };
+}
+
+function main(): i32 {
+    let it: Item = Item { v: 2 };
+    let direct: i32 = 0;
+    let method: i32 = 0;
+    let imported: i32 = 0;
+    unsafe {
+        direct = danger(1);
+        method = it.raw();
+        imported = helper.raw();
+    }
+    let f: (i32) => i32 = wrapped();
+    print(direct);
+    print(method);
+    print(via_dyn(it));
+    print(via_bound(it));
+    print(imported);
+    print(f(99));
+    return 0;
+}

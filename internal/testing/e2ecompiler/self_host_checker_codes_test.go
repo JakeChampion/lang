@@ -149,6 +149,18 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		src  string
 		want []string
 	}{
+		{"unsafe-call-outside-block", "unsafe function danger(x: i32): i32 { unsafe { return x + 1; } } function main(): i32 { return danger(1); }", []string{"E095"}},
+		{"unsafe-call-inside-block", "unsafe function danger(x: i32): i32 { unsafe { return x + 1; } } function main(): i32 { let v: i32 = 0; unsafe { v = danger(1); } return v; }", nil},
+		{"unsafe-body-is-not-a-block", "unsafe function danger(x: i32): i32 { unsafe { return x + 1; } } unsafe function outer(): i32 { return danger(1); } function main(): i32 { let v: i32 = 0; unsafe { v = outer(); } return v; }", []string{"E095"}},
+		{"unsafe-function-as-value", "unsafe function danger(): i32 { unsafe { return 1; } } function main(): i32 { let f: () => i32 = danger; return f(); }", []string{"E095"}},
+		{"unsafe-closure-holds-its-own-block", "unsafe function danger(): i32 { unsafe { return 1; } } function main(): i32 { let f: () => i32 = (): i32 => { let v: i32 = 0; unsafe { v = danger(); } return v; }; return f(); }", nil},
+		{"unsafe-local-function-inside-block", "unsafe function danger(): i32 { unsafe { return 1; } } function main(): i32 { let total: i32 = 0; unsafe { function inner(): i32 { return danger(); } total = inner(); } return total; }", nil},
+		{"unsafe-struct-method-outside-block", "struct Item { v: i32 } unsafe function (self: Item) raw(): i32 { unsafe { return self.v; } } function main(): i32 { let it: Item = Item { v: 1 }; return it.raw(); }", []string{"E095"}},
+		{"unsafe-dyn-method-outside-block", "struct Item { v: i32 } trait Read { unsafe function read(self: Self): i32; } impl Read for Item { unsafe function read(self: Self): i32 { unsafe { return self.v; } } } function via(r: dyn Read): i32 { return r.read(); } function main(): i32 { return via(Item { v: 1 }); }", []string{"E095"}},
+		{"unsafe-bound-method-outside-block", "struct Item { v: i32 } trait Read { unsafe function read(self: Self): i32; } impl Read for Item { unsafe function read(self: Self): i32 { unsafe { return self.v; } } } function via[T: Read](r: T): i32 { return r.read(); } function main(): i32 { return via(Item { v: 1 }); }", []string{"E095"}},
+		{"unsafe-trait-method-inside-block", "struct Item { v: i32 } trait Read { unsafe function read(self: Self): i32; } impl Read for Item { unsafe function read(self: Self): i32 { unsafe { return self.v; } } } function via(r: dyn Read): i32 { let v: i32 = 0; unsafe { v = r.read(); } return v; } function main(): i32 { return via(Item { v: 1 }); }", nil},
+		{"unsafe-impl-of-safe-trait-method", "struct Item { v: i32 } trait Read { function peek(self: Self): i32; } impl Read for Item { unsafe function peek(self: Self): i32 { unsafe { return self.v; } } } function main(): i32 { return 0; }", []string{"E095"}},
+		{"safe-impl-of-unsafe-trait-method", "struct Item { v: i32 } trait Read { unsafe function read(self: Self): i32; } impl Read for Item { function read(self: Self): i32 { return self.v; } } function main(): i32 { let it: Item = Item { v: 1 }; let v: i32 = 0; unsafe { v = it.read(); } return v; }", nil},
 		{"enum-fresh-branch-widen-0", "function f(c: boolean, n: i32): Option[i64] { return if (c) { Some(1) } else { Some(n) }; } function main(): i32 { return 0; }", nil},
 		{"enum-fresh-branch-widen-1", "function f(c: boolean, n: i32): Option[i64] { return if (c) { Some(n) } else { Some(1) }; } function main(): i32 { return 0; }", nil},
 		{"enum-fresh-branch-widen-2", "function f(c: boolean, n: i32): Option[i64] { return if (c) { Some(1 + 2) } else { Some(n) }; } function main(): i32 { return 0; }", nil},

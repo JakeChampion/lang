@@ -69,7 +69,9 @@ A required optional mitigation must fail explicitly when the platform cannot sup
 The syntax uses an `unsafe` function modifier and an `unsafe` block.
 The parsers reserve these markers for the bootstrap transition.
 See [the bootstrap syntax scope](security/UNSAFE-BOOTSTRAP.md).
-The checker does not yet enforce unsafe effects.
+Both checkers enforce the obligation of an `unsafe function` as `E095`.
+The raw builtins do not carry the obligation yet.
+See [the raw builtin inventory](security/UNSAFE-INVENTORY.md).
 
 An unsafe function declares caller obligations.
 An unsafe block permits the raw operations that its local proof justifies.
@@ -116,17 +118,18 @@ The final change must reject unmarked raw operations and preserve ordinary arith
 
 ## Enforcement sequence
 
-1. Inventory each raw builtin and runtime hook from its checker and lowering rules.
-   Record its caller obligations and current source access rules.
+1. Done: [the raw builtin inventory](security/UNSAFE-INVENTORY.md) records each raw builtin and runtime hook,
+   its caller obligations, and its current source access rules.
    Compiler-generated private helpers must retain their admission checks.
 
 2. Ship the contextual parser and formatter support in a normal bootstrap release.
    Update the stage0 pin only after bootstrap verification passes.
 
-3. Retain the unsafe effect in function types, aliases, generic substitutions,
-   trait methods, implementations, and public exports.
-   Refuse a conversion that discards the caller obligations.
+3. Done: `E095` retains the unsafe effect through direct calls, methods,
+   trait objects, bound type parameters, imports, and public exports.
+   A function value carries no obligation, so an unsafe function never becomes one.
    A safe trait method must not acquire an unsafe implementation.
+   The normative cases are `diag_e095` and its siblings, with the control `unsafe_block_accepts_obligations`.
 
 4. Annotate the trusted runtime, compiler, and standard library callers.
    Each safe wrapper must validate every input before it uses its unsafe block.
