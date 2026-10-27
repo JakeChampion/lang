@@ -97,6 +97,8 @@ It now aborts with the out-of-heap cause before it touches the address, on both 
 A freed block above one gigabyte was dropped at the free: both the lookup and the free push stopped at that bound, so the block was lost for the life of the process.
 A program that allocated a 1.1 GB buffer twice advanced the bump by 2.2 GB on both targets.
 Twenty such allocations exhausted the host before the arena.
+With the lists in reach, a block above one gigabyte rounds up to its size class like every large block.
+A 1.2 GB request therefore bumps 1342177280 bytes, and `TestX86_64HeapBumpAbove2GiB` pins that.
 The bound is now the arena size, so the class math, which already covered that range, reaches every block the arena can hold.
 
 The bump added the request to the heap pointer and compared the sum with the arena end.
