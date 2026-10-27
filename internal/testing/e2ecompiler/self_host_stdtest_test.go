@@ -411,6 +411,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"tls_x509", langSrcAbs(t, "tests/stdlib/tls_x509_test.fern"), ""},
 		{"hash_checksums", langSrcAbs(t, "tests/stdlib/hash_checksums_test.fern"), ""},
 		{"mitigations", langSrcAbs(t, "tests/stdlib/mitigations_test.fern"), ""},
+		{"parse_limits", langSrcAbs(t, "tests/stdlib/parse_limits_test.fern"), ""},
 		{"synthetic_fail", failing, ""},
 	}
 	var cases []selfHostStdTestCase
