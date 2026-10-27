@@ -51,10 +51,10 @@ func TestSelfHostMvsIndexSources(t *testing.T) {
 			s := ix.Packages["foo"]["1.0.0"]
 			want[i] = "OK|" + s.Path + "|" + s.URL + "|" + s.Hash
 		}
-		fmt.Fprintf(&src, "let ix%d = mvs.parse_index(%s);\n", i, strconv.Quote(input))
-		fmt.Fprintf(&src, "if (ix%d.err.len() > 0) { print(\"ERR|\" + ix%d.err); } else {\n", i, i)
+		fmt.Fprintf(&src, "match (mvs.parse_index(%s)) {\n", strconv.Quote(input))
+		fmt.Fprintf(&src, "Err(message) => { print(\"ERR|\" + message); }, Ok(ix%d) => {\n", i)
 		fmt.Fprintf(&src, "if (ix%d.entries.len() != 1) { return %d; }\n", i, i+1)
-		fmt.Fprintf(&src, "let s = ix%d.entries[0].src; print(\"OK|\" + s.path + \"|\" + s.url + \"|\" + s.hash); }\n", i)
+		fmt.Fprintf(&src, "let s = ix%d.entries[0].src; print(\"OK|\" + s.path + \"|\" + s.url + \"|\" + s.hash); } }\n", i)
 	}
 	src.WriteString("return 0;\n}\n")
 	dir := t.TempDir()

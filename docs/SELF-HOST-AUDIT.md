@@ -971,6 +971,25 @@ findings. Ranked by leverage.
   `Ok` carries the source and `Err` carries the diagnostic, without an empty source placeholder.
   Its error paths use the shared quote function for malformed source fields.
   Differential cases check both source data and diagnostic text against the Go parser on x86-64, ARM64 and Wasm.
+
+  Registry indexes now use `Result[Index, string]` instead of an error field beside partial entries.
+  The CLI and test drivers match the result before they read the index.
+  A position map makes the last source for each raw package/version key replace the earlier source.
+  Duplicate keys no longer appear twice in the version list.
+  Distinct raw keys retain their identity, with the same leading-zero behavior as Go.
+
+  Malformed section headers now use the shared quote function for exact Go diagnostics.
+  Twenty-seven index records match Go on x86-64, ARM64, and Wasm.
+  The baseline differs on ten records, with duplicate entries and malformed-header escapes.
+  The native sanitizer reports 1,798 allocations and releases, with zero live bytes.
+
+  Forty process triples per input compare valid registries with 40 or 400 entries.
+  Each process repeats index parse, numeric sort, and complete output 200 times.
+  The position map reserves space from the line count to avoid repeated growth.
+  Candidate/baseline time ratios are 1.068 and 1.029.
+  A separate `get_or` prototype is no faster than the standard-option lookup in these probes.
+  These measurements accompany correct duplicate-key selection and establish no general compiler speed change.
+
   Hash validation also uses `Result[string, string]` instead of `HashResult`.
   Success carries the hexadecimal digest without its prefix, and failure carries the diagnostic.
   Manifest, lock-file, registry and package-store callers match that result.

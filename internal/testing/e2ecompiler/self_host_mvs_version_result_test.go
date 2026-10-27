@@ -67,6 +67,8 @@ function resolved(ix:mvs.Index,min:string,bans:mvs.Ban[]):string {
  if(st.err.len()>0){return "ERR|"+st.err;}
  let out="OK|";for item in mvs.selected(st){out=out+item.name+"@"+item.ver+"|"+item.src.path;}return out;
 }
+function parsed_index(text:string):mvs.Index {return match(mvs.parse_index(text)){Ok(value)=>value,Err(message)=>{print(message);exit(99);}};}
+function index_error(text:string):string {return match(mvs.parse_index(text)){Ok(_)=>"",Err(message)=>message};}
 function main():i32 {
 `)
 	for i, text := range cases {
@@ -90,7 +92,7 @@ function main():i32 {
 		fmt.Fprintf(&source, "print(\"CMP|%d|\"+compared(%s,%s));\n", i, strconv.Quote(pair[0]), strconv.Quote(pair[1]))
 		fmt.Fprintf(&want, "CMP|%d|%d\n", i, a.Compare(b))
 	}
-	fmt.Fprintf(&source, "let ix=mvs.parse_index(%s);\nprint(\"INDEX|\"+joined(mvs.index_versions(ix,\"foo\")));\n", strconv.Quote(registry))
+	fmt.Fprintf(&source, "let ix=parsed_index(%s);\nprint(\"INDEX|\"+joined(mvs.index_versions(ix,\"foo\")));\n", strconv.Quote(registry))
 	var versions []string
 	for _, v := range ix.Versions("foo") {
 		versions = append(versions, v.String())
@@ -101,9 +103,9 @@ function main():i32 {
 	if err == nil {
 		panic("overflow registry accepted")
 	}
-	fmt.Fprintf(&source, "print(\"INDEXERR|\"+mvs.parse_index(%s).err);\n", strconv.Quote(bad))
+	fmt.Fprintf(&source, "print(\"INDEXERR|\"+index_error(%s));\n", strconv.Quote(bad))
 	fmt.Fprintf(&want, "INDEXERR|%s\n", err)
-	source.WriteString(`let manual=mvs.Index{dir:"",err:"",entries:[mvs.Entry{pkg:"foo",ver:"broken",src:mvs.Source{path:"/bad",url:"",hash:""}},mvs.Entry{pkg:"foo",ver:"1.0.0",src:mvs.Source{path:"/pkg",url:"",hash:""}}]};print("MANUAL|"+joined(mvs.index_versions(manual,"foo")));
+	source.WriteString(`let manual=mvs.Index{dir:"",entries:[mvs.Entry{pkg:"foo",ver:"broken",src:mvs.Source{path:"/bad",url:"",hash:""}},mvs.Entry{pkg:"foo",ver:"1.0.0",src:mvs.Source{path:"/pkg",url:"",hash:""}}]};print("MANUAL|"+joined(mvs.index_versions(manual,"foo")));
 `)
 	want.WriteString("MANUAL|1.0.0\n")
 	requests := []struct {

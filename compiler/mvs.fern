@@ -2,6 +2,7 @@ import "./util";
 import "./pkgversion";
 import "./fern_toml";
 import "./docsummary";
+import "core/map";
 
 pub struct Source {
   path: string,
@@ -18,7 +19,6 @@ pub struct Entry {
 pub struct Index {
   dir: string,
   entries: Entry[],
-  err: string,
 }
 
 pub struct Req {
@@ -68,10 +68,11 @@ function ver_cmp_s(a: string, b: string): Result[i32, string] {
   return Ok(version_cmp(av, bv));
 }
 
-pub function parse_index(src: string): Index {
+pub function parse_index(src: string): Result[Index, string] {
   let entries: Entry[] = [];
   let pkg: string = "";
   let lines: string[] = split_char(src, b'\n');
+  let positions: Map[string, i32] = map_new(lines.len());
   let ln: i32 = 0;
   while (ln < lines.len()) {
     let line: string = fern_toml.line_content(lines[ln]);
@@ -81,40 +82,50 @@ pub function parse_index(src: string): Index {
     }
     if (line[0] == b'[') {
       if (line[line.len() - 1] != b']') {
-        return index_err(entries, "line " + util.i32_to_string(ln) + ": malformed section header " + quoted(line));
+        return Err("line " + util.i32_to_string(ln) + ": malformed section header " + docsummary.quote(line));
       }
       pkg = util.trim(slice_unchecked(line, 1, line.len() - 1) + "");
       if (pkg.len() == 0) {
-        return index_err(entries, "line " + util.i32_to_string(ln) + ": empty package name");
+        return Err("line " + util.i32_to_string(ln) + ": empty package name");
       }
       continue;
     }
     if (pkg.len() == 0) {
-      return index_err(entries, "line " + util.i32_to_string(ln) + ": version entry outside a [package] section");
+      return Err("line " + util.i32_to_string(ln) + ": version entry outside a [package] section");
     }
     let eq: i32 = index_of_char(line, b'=', 0);
     if (eq < 0) {
-      return index_err(entries, "line " + util.i32_to_string(ln) + ": expected `\"VERSION\" = { … }`");
+      return Err("line " + util.i32_to_string(ln) + ": expected `\"VERSION\" = { … }`");
     }
     let key: string = util.trim(slice_unchecked(line, 0, eq) + "");
-    let ver: string = match (fern_toml.parse_quoted(key)) { Ok(value) => value, Err(message) => { return index_err(entries, "line " + util.i32_to_string(ln) + ": version key: " + message); } };
+    let ver: string = match (fern_toml.parse_quoted(key)) { Ok(value) => value, Err(message) => { return Err("line " + util.i32_to_string(ln) + ": version key: " + message); } };
     match (parse_version(ver)) {
       Ok(_) => {},
       Err(message) => {
-        return index_err(entries, "line " + util.i32_to_string(ln) + ": " + message);
+        return Err("line " + util.i32_to_string(ln) + ": " + message);
       }
     }
     let val: string = util.trim(slice_unchecked(line, eq + 1, line.len()) + "");
     match (parse_source(val)) {
       Ok(src) => {
-        entries = entries.append(Entry { pkg: pkg, ver: ver, src: src });
+        let entry: Entry = Entry { pkg: pkg, ver: ver, src: src };
+        let key: string = pkg + "\n" + ver;
+        match (positions.get(key)) {
+          Some(at) => {
+            entries = entries.with(at, entry);
+          },
+          None => {
+            positions = positions.insert(key, entries.len());
+            entries = entries.append(entry);
+          }
+        }
       },
       Err(err) => {
-        return index_err(entries, "line " + util.i32_to_string(ln) + ": " + ver + ": " + err);
+        return Err("line " + util.i32_to_string(ln) + ": " + ver + ": " + err);
       }
     }
   }
-  return Index { dir: "", entries: entries, err: "" };
+  return Ok(Index { dir: "", entries: entries });
 }
 
 function parse_source(val: string): Result[Source, string] {
@@ -164,12 +175,8 @@ function parse_source(val: string): Result[Source, string] {
   return Err("a version needs `path` or `url`+`hash`");
 }
 
-function index_err(entries: Entry[], msg: string): Index {
-  return Index { dir: "", entries: entries, err: msg };
-}
-
 pub function with_dir(ix: Index, dir: string): Index {
-  return Index { dir: dir, entries: ix.entries, err: ix.err };
+  return Index { dir: dir, entries: ix.entries };
 }
 
 pub function index_versions(ix: Index, pkg: string): string[] {

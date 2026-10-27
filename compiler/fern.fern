@@ -1715,11 +1715,7 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
     eprint("index " + ipath + ": cannot read");
     return 1;
   }
-  let ix: mvs.Index = mvs.parse_index(isrc);
-  if (ix.err.len() > 0) {
-    eprint("index " + ipath + ": " + ix.err);
-    return 1;
-  }
+  let ix: mvs.Index = match (mvs.parse_index(isrc)) { Ok(index) => index, Err(message) => { eprint("index " + ipath + ": " + message); return 1; } };
   ix = mvs.with_dir(ix, mvs.join_path(util.dir_of(ipath), "."));
 
   let bans: mvs.Ban[] = [];
