@@ -70,6 +70,7 @@ The hardening reference in `docs/HARDENING.md` describes the layout, the startup
 `TestSelfHostStackGuardDenial`, `TestSelfHostSignalStackMapDenial`, `TestSelfHostSignalStackDenial` and `TestSelfHostFaultHandlerDenial` use a test-only seccomp launcher.
 The launcher takes a mode and denies one startup call: the guard `mprotect`, the 64 KiB `mmap`, `sigaltstack`, or `rt_sigaction` for signal 11.
 It verifies its own errno injection before it executes the program.
+
 The positive control must print its marker and return 42 without the launcher.
 The denied program must print only the diagnostic and return 134.
 The test requires an empty stdout stream on the denied path.

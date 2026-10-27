@@ -5217,11 +5217,11 @@ function ssa_save_asm(saved: i32[]): string {
   return out;
 }
 
-function ssa_epilogue_for(saved: i32[], canary: i32): string {
+function ssa_epilogue_for(saved: i32[]): string {
   if (saved.len() == 0) {
-    return ssa_canary_check(canary) + ssa_epilogue();
+    return ssa_epilogue();
   }
-  let out: string = ssa_canary_check(canary) + "    .cfi_remember_state\n    leaq -" + util.i32_to_string(8 * saved.len()) + "(%rbp), %rsp\n";
+  let out: string = "    .cfi_remember_state\n    leaq -" + util.i32_to_string(8 * saved.len()) + "(%rbp), %rsp\n";
   let i: i32 = saved.len() - 1;
   while (i >= 0) {
     out = out + "    popq " + ssa_reg(saved[i]) + "\n";
@@ -5250,13 +5250,13 @@ function ssa_emit_exit(fr: SsaFrame, s: asmcore.EmitState, tail: string): asmcor
   if (fr.leaf && tail != "") {
     return s.write(ssa_tail_mark(tail));
   }
+  if (fr.canary > 0) {
+    s = s.write(ssa_canary_check(fr.canary, tail));
+  }
   if (fr.leaf || !s.records()) {
     return s.write(ssa_tail_epilogue(fr.epilogue, tail));
   }
   s = ssa_cfi(s, 7, "", 0);
-  if (fr.canary > 0) {
-    s = s.write(ssa_canary_check(fr.canary));
-  }
   if (fr.bare) {
     s = ssa_restore_bare(fr, s);
   } else if (fr.saved.len() == 0) {
@@ -9108,7 +9108,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   if (saved.len() % 2 == 0) {
     pad = 8;
   }
-  let epilogue: string = ssa_epilogue_for(saved, canary);
+  let epilogue: string = ssa_epilogue_for(saved);
   if (leaf) {
     epilogue = ssa_epilogue_mark();
   } else if (bare) {
@@ -9185,7 +9185,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
     if (ssa_needs_frame(text)) {
       framed = true;
       s = ssa_frame(s, saved, frame, 0);
-      s = s.write(ssa_resolve_tails(ssa_replace_all(text, ssa_epilogue_mark(), ssa_epilogue_for(saved, 0)), ssa_epilogue_for(saved, 0)));
+      s = s.write(ssa_resolve_tails(ssa_replace_all(text, ssa_epilogue_mark(), ssa_epilogue_for(saved)), ssa_epilogue_for(saved)));
     } else {
       s = ssa_leaf_save(s, saved);
       let leaf_text: string = text;
@@ -9250,13 +9250,19 @@ function ssa_frame(s: asmcore.EmitState, saved: i32[], frame: i32, canary: i32):
 }
 
 // The canary sits between the spill slots and the saved registers, so a
-// write past a frame box reaches it before the return address. %r11 is
-// the one register that carries no argument and no result at an exit.
-function ssa_canary_check(canary: i32): string {
+// write past a frame box reaches it before the return address. A return
+// carries its words in rax, rcx, rdx and r11, so the check before a ret
+// uses rsi; a tail jump carries its arguments in rax, rsi, rdi and r8 to
+// r10, so the check before it uses rcx.
+function ssa_canary_check(canary: i32, tail: string): string {
   if (canary == 0) {
     return "";
   }
-  return "    movq -" + util.i32_to_string(canary) + "(%rbp), %r11\n    cmpq __fern_canary(%rip), %r11\n    jne __fern_canary_fail\n";
+  let r: string = "%rsi";
+  if (tail != "") {
+    r = "%rcx";
+  }
+  return "    movq -" + util.i32_to_string(canary) + "(%rbp), " + r + "\n    cmpq __fern_canary(%rip), " + r + "\n    jne __fern_canary_fail\n";
 }
 
 // A frame above one page touches every page it crosses, so it cannot step
