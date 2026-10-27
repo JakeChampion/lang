@@ -1,0 +1,19 @@
+{
+  "source_commit": "039bf0c92e747740c0808456543d2aa3ca268687",
+  "cases_per_target": 2015,
+  "accepted_per_target": 1990,
+  "errors_per_target": 25,
+  "workers_per_target": 252,
+  "total_workers": 756,
+  "all_nonzero_balanced_zero_live": true,
+  "maximum_representable_steps": 1,
+  "predeclared_maximum_steps": 2,
+  "maximum_absolute_error": 7.275846595269095e-12,
+  "all_target_samples_equal": true,
+  "sha256_counts": [
+    1250,
+    1251,
+    1251
+  ],
+  "source_and_tool_hashes_unchanged": true
+}
