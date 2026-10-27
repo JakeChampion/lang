@@ -1,0 +1,64 @@
+import "../packages/codecs/icc/envelope";
+import "std/i32";
+import "std/i64";
+
+function signed(input: [u8], at: i32): i32 {
+  let bits = input[at] as i64 | input[at + 1] as i64 << 8i64 | input[at + 2] as i64 << 16i64 | input[at + 3] as i64 << 24i64;
+  return (if (bits >= 2147483648i64) { bits - 4294967296i64 } else { bits }) as i32;
+}
+
+function error_name(error: envelope.IccError): string {
+  return match (error) { envelope.IccError.Limit => "Limit", envelope.IccError.Truncated => "Truncated", envelope.IccError.Signature => "Signature", envelope.IccError.Version => "Version", envelope.IccError.DeviceClass => "DeviceClass", envelope.IccError.ColorSpace => "ColorSpace", envelope.IccError.Pcs => "Pcs", envelope.IccError.Header => "Header", envelope.IccError.Directory => "Directory", envelope.IccError.Duplicate => "Duplicate", envelope.IccError.Overlap => "Overlap", envelope.IccError.Layout => "Layout", envelope.IccError.Cancelled => "Cancelled" };
+}
+
+function emit(path: string): i32 {
+  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  if (input.len() < 16 || input[0] != 70 as u8 || input[1] != 73 as u8 || input[2] != 67 as u8 || input[3] != 49 as u8) {
+    return 3;
+  }
+  let stop = signed(input, 12);
+  if (stop < 0) {
+    return 4;
+  }
+  let polls = cell_new(0);
+  let result = envelope.inspect(input[16:], envelope.IccLimits { max_bytes: signed(input, 4), max_tags: signed(input, 8) }, (): boolean => {
+    polls.set(polls.get() + 1);
+    return stop != 0 && polls.get() == stop;
+  });
+  match (result) {
+    Err(error) => {
+      print("icc " + path + " error " + error_name(error) + " " + polls.get().to_string());
+    },
+    Ok(info) => {
+      let kind = match (info.device_class) { envelope.DeviceClass.Input => 0, envelope.DeviceClass.Display => 1 };
+      let intent = match (info.preferred_intent) { envelope.Intent.Perceptual => 0, envelope.Intent.Relative => 1, envelope.Intent.Saturation => 2, envelope.Intent.Absolute => 3 };
+      let fields: i64[] = [info.bytes as i64, kind as i64, intent as i64, info.flags, info.attributes_high, info.attributes_low, info.created.year as i64, info.created.month as i64, info.created.day as i64, info.created.hour as i64, info.created.minute as i64, info.created.second as i64, info.unique_elements as i64, info.tags.len() as i64];
+      for byte in info.unverified_id {
+        fields = fields.append(byte as i64);
+      }
+      for tag in info.tags {
+        fields = fields.append(tag.signature).append(tag.offset as i64).append(tag.size as i64).append(tag.type_signature);
+      }
+      let text = "icc " + path + " ok " + polls.get().to_string();
+      for field in fields {
+        text = text + " " + field.to_string();
+      }
+      print(text);
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for index in 1..paths.len() {
+    let result = emit(paths[index]);
+    if (result != 0) {
+      return result;
+    }
+  }
+  return 0;
+}

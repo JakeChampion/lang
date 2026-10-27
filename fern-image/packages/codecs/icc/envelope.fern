@@ -1,0 +1,160 @@
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum IccError { Limit, Truncated, Signature, Version, DeviceClass, ColorSpace, Pcs, Header, Directory, Duplicate, Overlap, Layout, Cancelled }
+
+@derive(cmp.Eq)
+pub enum DeviceClass { Input, Display }
+
+@derive(cmp.Eq)
+pub enum Intent { Perceptual, Relative, Saturation, Absolute }
+
+pub struct IccLimits { max_bytes: i32, max_tags: i32 }
+
+pub struct ProfileDate { year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32 }
+
+pub struct Tag { signature: i64, offset: i32, size: i32, type_signature: i64 }
+
+pub struct ProfileInfo { bytes: i32, device_class: DeviceClass, preferred_intent: Intent, flags: i64, attributes_high: i64, attributes_low: i64, created: ProfileDate, unverified_id: u8[], tags: Tag[], unique_elements: i32 }
+
+pub function default_limits(): IccLimits {
+  return IccLimits { max_bytes: 1048576, max_tags: 128 };
+}
+
+function get16(input: [u8], at: i32): i32 {
+  return input[at] as i32 << 8 | input[at + 1] as i32;
+}
+
+function get32(input: [u8], at: i32): i64 {
+  return input[at] as i64 << 24i64 | input[at + 1] as i64 << 16i64 | input[at + 2] as i64 << 8i64 | input[at + 3] as i64;
+}
+
+function d50(value: i64, decimal: i64): boolean {
+  return value * 20000i64 >= (decimal * 2i64 - 1i64) * 65536i64 && value * 20000i64 < (decimal * 2i64 + 1i64) * 65536i64;
+}
+
+function date(input: [u8]): Result[ProfileDate, IccError] {
+  let result = ProfileDate { year: get16(input, 24), month: get16(input, 26), day: get16(input, 28), hour: get16(input, 30), minute: get16(input, 32), second: get16(input, 34) };
+  if (result.year == 0 || result.month < 1 || result.month > 12 || result.day < 1 || result.day > 31 || result.hour > 23 || result.minute > 59 || result.second > 59) {
+    return Err(IccError.Header);
+  }
+  return Ok(result);
+}
+
+// Success describes an envelope, not required-tag semantics or transform eligibility.
+pub function inspect(input: [u8], limits: IccLimits, cancelled: () => boolean): Result[ProfileInfo, IccError] {
+  if (limits.max_bytes <= 0 || limits.max_tags <= 0 || input.len() > limits.max_bytes || input.len() > 16777216) {
+    return Err(IccError.Limit);
+  }
+  if (input.len() < 132) {
+    return Err(IccError.Truncated);
+  }
+  let count = get32(input, 128);
+  if (count > limits.max_tags as i64 || count > 1024i64) {
+    return Err(IccError.Limit);
+  }
+  if (cancelled()) {
+    return Err(IccError.Cancelled);
+  }
+  if (get32(input, 0) != input.len() as i64 || input.len() % 4 != 0) {
+    return Err(IccError.Header);
+  }
+  if (get32(input, 36) != 1633907568i64) {
+    return Err(IccError.Signature);
+  }
+  if (get32(input, 8) != 71303168i64) {
+    return Err(IccError.Version);
+  }
+  let device_class = match (get32(input, 12)) { 1935896178i64 => DeviceClass.Input, 1835955314i64 => DeviceClass.Display, _ => { return Err(IccError.DeviceClass); } };
+  if (get32(input, 16) != 1380401696i64) {
+    return Err(IccError.ColorSpace);
+  }
+  if (get32(input, 20) != 1482250784i64) {
+    return Err(IccError.Pcs);
+  }
+  let created = date(input)?;
+  let preferred_intent = match (get32(input, 64)) { 0i64 => Intent.Perceptual, 1i64 => Intent.Relative, 2i64 => Intent.Saturation, 3i64 => Intent.Absolute, _ => { return Err(IccError.Header); } };
+  let flags = get32(input, 44);
+  let attributes_low = get32(input, 60);
+  if ((flags & 65532i64) != 0i64 || (attributes_low & 4294967280i64) != 0i64 || !d50(get32(input, 68), 9642i64) || !d50(get32(input, 72), 10000i64) || !d50(get32(input, 76), 8249i64)) {
+    return Err(IccError.Header);
+  }
+  for index in 100..128 {
+    if (input[index] != 0 as u8) {
+      return Err(IccError.Header);
+    }
+  }
+  let start = 132i64 + count * 12i64;
+  if (start > input.len() as i64) {
+    return Err(IccError.Truncated);
+  }
+  let covered = 0i64;
+  let unique = 0;
+  for index in 0..count as i32 {
+    if (cancelled()) {
+      return Err(IccError.Cancelled);
+    }
+    let at = 132 + index * 12;
+    let signature = get32(input, at);
+    let offset = get32(input, at + 4);
+    let size = get32(input, at + 8);
+    let end = offset + size;
+    let padded = (end + 3i64) / 4i64 * 4i64;
+    if (offset < start || offset % 4i64 != 0i64 || size < 8i64 || end > input.len() as i64 || padded > input.len() as i64) {
+      return Err(IccError.Directory);
+    }
+    if (get32(input, offset as i32 + 4) != 0i64) {
+      return Err(IccError.Header);
+    }
+    for position in end as i32..padded as i32 {
+      if (input[position] != 0 as u8) {
+        return Err(IccError.Layout);
+      }
+    }
+    let alias = false;
+    for previous in 0..index {
+      if (previous % 64 == 0 && cancelled()) {
+        return Err(IccError.Cancelled);
+      }
+      let other = 132 + previous * 12;
+      if (get32(input, other) == signature) {
+        return Err(IccError.Duplicate);
+      }
+      let other_offset = get32(input, other + 4);
+      let other_size = get32(input, other + 8);
+      if (offset == other_offset && size == other_size) {
+        alias = true;
+      } else if (offset < other_offset + other_size && end > other_offset) {
+        return Err(IccError.Overlap);
+      }
+    }
+    if (!alias) {
+      covered = covered + padded - offset;
+      unique = unique + 1;
+    }
+  }
+  // Disjoint aligned extents cover the entire data region exactly once.
+  if (covered != input.len() as i64 - start) {
+    return Err(IccError.Layout);
+  }
+  if (cancelled()) {
+    return Err(IccError.Cancelled);
+  }
+  let tags: Tag[] = [];
+  let id: u8[] = [];
+  for index in 84..100 {
+    id = id.append(input[index]);
+  }
+  for index in 0..count as i32 {
+    if (cancelled()) {
+      return Err(IccError.Cancelled);
+    }
+    let at = 132 + index * 12;
+    let offset = get32(input, at + 4) as i32;
+    tags = tags.append(Tag { signature: get32(input, at), offset: offset, size: get32(input, at + 8) as i32, type_signature: get32(input, offset) });
+  }
+  if (cancelled()) {
+    return Err(IccError.Cancelled);
+  }
+  return Ok(ProfileInfo { bytes: input.len(), device_class: device_class, preferred_intent: preferred_intent, flags: flags, attributes_high: get32(input, 56), attributes_low: attributes_low, created: created, unverified_id: id, tags: tags, unique_elements: unique });
+}

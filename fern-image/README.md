@@ -68,7 +68,7 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 227 TAP cases cover compression, pixels, color, resize, PNG, and the restricted JPEG slices.
+The 235 TAP cases cover compression, pixels, color, resize, PNG, the restricted JPEG slices, and standalone ICC envelopes.
 JPEG cases cover headers, coefficients, scalar inverse DCT, grayscale, JFIF identification, restricted RGB assembly, and standalone Exif orientation.
 They also cover rows, providers, pipelines, regions, caches, RSS parsing, and fusion.
 The file I/O probe and pixel example also exit successfully.
@@ -120,3 +120,5 @@ It does not change encoded JPEG admission or infer a color profile.
 
 The [ICC feasibility decision](docs/icc-feasibility.md) defines a staged native profile path and the qualification gates before color integration.
 ICC transforms and metadata-bearing JPEG admission remain unimplemented.
+The [restricted ICC inspector](docs/icc-envelope.md) checks standalone v4.4 RGB input/display envelopes with an XYZ PCS.
+Its owned metadata does not establish required-tag semantics or transform eligibility.
