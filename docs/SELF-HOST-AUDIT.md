@@ -966,9 +966,9 @@ findings. Ranked by leverage.
   Runtime checks cover unique and shared values on x86-64, ARM64 and Wasm, with balanced allocation counts.
 
   _Rest of this row:_ the bespoke `*Result` structs remain.
-  The generic-function migration is no longer blocked, and neither is
-  T6/SH-026's real remainder (`lookup_*` returning `name: ""`), which depends
-  on `Option[T]`.
+  Generic functions no longer block these migrations.
+  T6/SH-026 is complete, and its four signature lookup families use standard options.
+  The remaining result families need a contract review before migration.
 
 ---
 
