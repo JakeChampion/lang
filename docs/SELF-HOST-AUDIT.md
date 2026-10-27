@@ -860,9 +860,12 @@ findings. Ranked by leverage.
   _2026-10 constant-fold cleanup:_ the private `OptBool` and `OptString` wrappers are gone.
   Their callers now match the `ExprBool` and `ExprString` variants directly.
   The AST already carries the success tag and payload, so these paths need no new option container.
-  The numeric `OptInt` still carries a parsed value and suffix.
+  The numeric path now uses `Option[IntLiteral]` for a parsed value and suffix.
+  `IntLiteral` carries only the successful parse data.
+  Arithmetic helpers return `Option[i64]` in both the folder and constant evaluator.
+  The numeric width and negative-zero checks retain their behavior.
 
-  _Rest of this row:_ `OptInt` and the bespoke `*Result` structs remain.
+  _Rest of this row:_ the bespoke `*Result` structs remain.
   The generic-function migration is no longer blocked, and neither is
   T6/SH-026's real remainder (`lookup_*` returning `name: ""`), which depends
   on `Option[T]`.

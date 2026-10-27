@@ -40,30 +40,31 @@ function lit_string(s: string): ast.Expr {
   return ast.ExprString { value: s, line: 0, col: 0 };
 }
 
-struct OptInt { ok: boolean, v: i64, suffix: string }
+struct IntLiteral { v: i64, suffix: string }
 
-function as_int_lit(e: ast.Expr): OptInt {
+function as_int_lit(e: ast.Expr): Option[IntLiteral] {
   match (e) {
     ast.ExprNumber(n) => {
       if (n.is_float) {
-        return OptInt { ok: false, v: 0, suffix: "" };
+        return None;
       }
-      return OptInt { ok: true, v: util.lit_to_i64(n.text), suffix: n.suffix };
+      return Some(IntLiteral { v: util.lit_to_i64(n.text), suffix: n.suffix });
     },
     ast.ExprUnary(u) => {
       if (u.op == "-") {
-        let inner: OptInt = as_int_lit(u.operand);
-        if (inner.ok && !float_negative_zero(inner.v, inner.suffix)) {
-          return OptInt { ok: true, v: 0 - inner.v, suffix: inner.suffix };
+        if let Some(inner) = as_int_lit(u.operand) {
+          if (!float_negative_zero(inner.v, inner.suffix)) {
+            return Some(IntLiteral { v: 0 - inner.v, suffix: inner.suffix });
+          }
         }
       }
-      return OptInt { ok: false, v: 0, suffix: "" };
+      return None;
     },
     _ => {
-      return OptInt { ok: false, v: 0, suffix: "" };
+      return None;
     }
   }
-  return OptInt { ok: false, v: 0, suffix: "" };
+  return None;
 }
 
 pub function fold_expr(e: ast.Expr): ast.Expr {
@@ -86,47 +87,48 @@ function fold_node(e: ast.Expr): ast.Expr {
 }
 
 function fold_binary(op: string, lhs: ast.Expr, rhs: ast.Expr, unfolded: ast.Expr): ast.Expr {
-  let li: OptInt = as_int_lit(lhs);
-  let ri: OptInt = as_int_lit(rhs);
-  if (li.ok && ri.ok && li.suffix == ri.suffix && fits(li.v, li.suffix, li.v) && fits(ri.v, ri.suffix, ri.v) && !float_differs(op, li.v, ri.v, li.suffix)) {
-    let sfx: string = li.suffix;
-    let peak: i64 = li.v;
-    if (ri.v > peak) {
-      peak = ri.v;
-    }
-    let ar: OptInt = int_arith(op, li.v, ri.v);
-    if (ar.ok) {
-      return fold_arith(ar.v, sfx, peak, unfolded);
-    }
-    if (op == "/") {
-      if (ri.v == 0) {
-        return unfolded;
+  if let Some(li) = as_int_lit(lhs) {
+    if let Some(ri) = as_int_lit(rhs) {
+      if (li.suffix == ri.suffix && fits(li.v, li.suffix, li.v) && fits(ri.v, ri.suffix, ri.v) && !float_differs(op, li.v, ri.v, li.suffix)) {
+        let sfx: string = li.suffix;
+        let peak: i64 = li.v;
+        if (ri.v > peak) {
+          peak = ri.v;
+        }
+        if let Some(ar) = int_arith(op, li.v, ri.v) {
+          return fold_arith(ar, sfx, peak, unfolded);
+        }
+        if (op == "/") {
+          if (ri.v == 0) {
+            return unfolded;
+          }
+          return fold_arith(li.v / ri.v, sfx, peak, unfolded);
+        }
+        if (op == "%") {
+          if (ri.v == 0) {
+            return unfolded;
+          }
+          return fold_arith(li.v % ri.v, sfx, peak, unfolded);
+        }
+        if (op == "<") {
+          return lit_bool(li.v < ri.v);
+        }
+        if (op == "<=") {
+          return lit_bool(li.v <= ri.v);
+        }
+        if (op == ">") {
+          return lit_bool(li.v > ri.v);
+        }
+        if (op == ">=") {
+          return lit_bool(li.v >= ri.v);
+        }
+        if (op == "==") {
+          return lit_bool(li.v == ri.v);
+        }
+        if (op == "!=") {
+          return lit_bool(li.v != ri.v);
+        }
       }
-      return fold_arith(li.v / ri.v, sfx, peak, unfolded);
-    }
-    if (op == "%") {
-      if (ri.v == 0) {
-        return unfolded;
-      }
-      return fold_arith(li.v % ri.v, sfx, peak, unfolded);
-    }
-    if (op == "<") {
-      return lit_bool(li.v < ri.v);
-    }
-    if (op == "<=") {
-      return lit_bool(li.v <= ri.v);
-    }
-    if (op == ">") {
-      return lit_bool(li.v > ri.v);
-    }
-    if (op == ">=") {
-      return lit_bool(li.v >= ri.v);
-    }
-    if (op == "==") {
-      return lit_bool(li.v == ri.v);
-    }
-    if (op == "!=") {
-      return lit_bool(li.v != ri.v);
     }
   }
   if let ast.ExprBool(lb) = lhs {
@@ -180,17 +182,17 @@ function float_negative_zero(v: i64, suffix: string): boolean {
   return v == 0 && suffix.len() == 0;
 }
 
-function int_arith(op: string, l: i64, r: i64): OptInt {
+function int_arith(op: string, l: i64, r: i64): Option[i64] {
   if (op == "+") {
-    return OptInt { ok: true, v: l + r, suffix: "" };
+    return Some(l + r);
   }
   if (op == "-") {
-    return OptInt { ok: true, v: l - r, suffix: "" };
+    return Some(l - r);
   }
   if (op == "*") {
-    return OptInt { ok: true, v: l * r, suffix: "" };
+    return Some(l * r);
   }
-  return OptInt { ok: false, v: 0, suffix: "" };
+  return None;
 }
 
 function fold_arith(v: i64, suffix: string, peak: i64, unfolded: ast.Expr): ast.Expr {
@@ -202,9 +204,10 @@ function fold_arith(v: i64, suffix: string, peak: i64, unfolded: ast.Expr): ast.
 
 function fold_unary(op: string, operand: ast.Expr, unfolded: ast.Expr): ast.Expr {
   if (op == "-") {
-    let oi: OptInt = as_int_lit(operand);
-    if (oi.ok && !float_negative_zero(oi.v, oi.suffix) && fits(0 - oi.v, oi.suffix, oi.v)) {
-      return lit_int(0 - oi.v, oi.suffix);
+    if let Some(oi) = as_int_lit(operand) {
+      if (!float_negative_zero(oi.v, oi.suffix) && fits(0 - oi.v, oi.suffix, oi.v)) {
+        return lit_int(0 - oi.v, oi.suffix);
+      }
     }
   }
   if (op == "!") {
@@ -310,9 +313,8 @@ function int_binary(op: string, l: i64, r: i64, w: IntWidth): ConstNum {
   if (op == "/" || op == "%") {
     return int_divide(op, l, r, w);
   }
-  let ar: OptInt = int_arith(op, l, r);
-  if (ar.ok) {
-    return int_num(wrap(ar.v, w));
+  if let Some(ar) = int_arith(op, l, r) {
+    return int_num(wrap(ar, w));
   }
   if (op == "&") {
     return int_num(wrap(l & r, w));
