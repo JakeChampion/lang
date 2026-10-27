@@ -909,11 +909,3 @@ pub function dump_state_if_asked(r: irtables.LowerState, stage: string): void {
     None => {}
   }
 }
-
-pub function transform(r: irtables.LowerResult, set: Set): irtables.LowerResult {
-  return irtables.lower_result(transform_state(irtables.lower_state(r), set));
-}
-
-pub function dump_if_asked(r: irtables.LowerResult, stage: string): void {
-  dump_state_if_asked(irtables.lower_state(r), stage);
-}

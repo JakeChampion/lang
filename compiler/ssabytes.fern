@@ -388,10 +388,6 @@ pub function state_helpers(): irtables.LowerState[] {
   return [length(), data(), slice(8), slice(32), slice(64), release(), crc32(), crc32_ieee(), mismatch(), sum(), bsd(), string_copy()];
 }
 
-pub function lower_reads(own r: irtables.LowerResult): irtables.LowerResult {
-  return irtables.lower_result(lower_state_reads(irtables.lower_state(r)));
-}
-
 pub function helpers(): irtables.LowerResult[] {
   let out: irtables.LowerResult[] = [];
   for row in state_helpers() {

@@ -953,29 +953,6 @@ pub struct LowerState {
   source_positions: sourcepos.SourceInfo,
 }
 
-pub function lower_state(r: LowerResult): LowerState {
-  return LowerState {
-    ok: r.ok,
-    ops: r.ops,
-    n_locals: r.n_locals,
-    n_params: r.n_params,
-    erased_wide: r.erased_wide,
-    superseded: r.superseded,
-    arr_slots: r.arr_slots,
-    i64_slots: r.i64_slots,
-    f64_slots: r.f64_slots,
-    v128_slots: r.v128_slots,
-    str_slots: r.str_slots,
-    why: r.why,
-    name: r.name,
-    result_kind: r.result_kind,
-    dbg_slots: r.dbg_slots,
-    dbg_names: r.dbg_names,
-    dbg_types: r.dbg_types,
-    source_positions: r.source_positions,
-  };
-}
-
 pub function lower_result(r: LowerState): LowerResult {
   return LowerResult {
     ok: r.ok,

@@ -13,8 +13,8 @@ import "./util";
 import "./ir";
 import "./sourcepos";
 
-function body(kind: i32, name: string, params: i32): irtables.LowerResult {
-  return irtables.LowerResult {
+function body(kind: i32, name: string, params: i32): irtables.LowerState {
+  return irtables.LowerState {
     ok: kind != 0, superseded: kind == 1, why: if (kind == 0) { "declined" } else { "" },
     ops: [], n_locals: params, n_params: params, erased_wide: false,
     arr_slots: [], i64_slots: [], f64_slots: [], v128_slots: [], str_slots: [],
@@ -27,7 +27,9 @@ function main(): i32 {
   let source = "struct Point { x: i32 }\nfunction failed(x: i32): i32 { return x; }\nfunction (p: Point) omitted(x: i32): i32 { return p.x + x; }\nfunction produced(x: i32): i32 { return x; }\nfunction helper(x: i32): i32 { return x; }\n";
   let mod = parser.parse_module(lexer.tokenize(source));
   let decls = [mod.funcs[0], mod.funcs[1], mod.funcs[2]];
-  let rows = [body(0, "unused_failure", 99), body(1, "unused_superseded", 98), body(2, "declaration_name_wins", 7), body(2, "helper", 9)];
+  let states = [body(0, "unused_failure", 99), body(1, "unused_superseded", 98), body(2, "declaration_name_wins", 7), body(2, "helper", 9)];
+  let rows: irtables.LowerResult[] = [];
+  for state in states { rows = rows.append(irtables.lower_result(state)); }
   let index = irtables.fn_sig_index(mod.funcs, decls, rows);
   let names = ["failed", "Point.omitted", "produced", "helper"];
   let expected = [1, 2, 7, 9];
@@ -38,16 +40,16 @@ function main(): i32 {
   if (util.index_of_str(index.names, "unused_failure") >= 0 || util.index_of_str(index.names, "unused_superseded") >= 0 || util.index_of_str(index.names, "declaration_name_wins") >= 0) { return 5; }
   for kind in 0..3 {
     let before = body(kind, "status", 3);
-    let after = irtables.lower_result(irtables.lower_state(before));
+    let after = irtables.lower_result(before);
     if (after.ok != before.ok || after.superseded != before.superseded || after.why != before.why) { return 6; }
   }
-  let before = irtables.LowerResult {
+  let before = irtables.LowerState {
     ...body(2, "metadata", 3), ops: [ir.op_const_i32(11), ir.op_return()], n_locals: 7, erased_wide: true,
     arr_slots: [0], i64_slots: [1], f64_slots: [2], v128_slots: [3], str_slots: [4],
     dbg_slots: [6], dbg_names: ["value"], dbg_types: ["i64"],
     source_positions: sourcepos.SourceInfo { values: [sourcepos.SourcePos { line: 41, col: "2" }], terms: [sourcepos.SourcePos { line: 42, col: "3" }], entry: sourcepos.SourcePos { line: 40, col: "1" } },
   };
-  let complete = match (irtables.lower_outcome(irtables.lower_state(before))) {
+  let complete = match (irtables.lower_outcome(before)) {
     Ok(body) => match (body) { Some(r) => r, None => { exit(12); } },
     Err(_) => { exit(13); }
   };
@@ -58,7 +60,7 @@ function main(): i32 {
   if (after.dbg_slots[0] != 6 || after.dbg_names[0] != "value" || after.dbg_types[0] != "i64") { return 10; }
   if (after.source_positions.entry.line != 40 || after.source_positions.entry.col != "1" || after.source_positions.values[0].line != 41 || after.source_positions.values[0].col != "2" || after.source_positions.terms[0].line != 42 || after.source_positions.terms[0].col != "3") { return 11; }
   for kind in 0..4 {
-    let state = irtables.LowerState { ...irtables.lower_state(before), ok: kind == 1 || kind == 2, superseded: kind == 1 || kind == 3, why: if (kind == 0 || kind == 3) { "partial refusal" } else { "" } };
+    let state = irtables.LowerState { ...before, ok: kind == 1 || kind == 2, superseded: kind == 1 || kind == 3, why: if (kind == 0 || kind == 3) { "partial refusal" } else { "" } };
     match (irtables.lower_outcome(state)) {
       Ok(body) => {
         match (body) {
