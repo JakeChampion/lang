@@ -55,7 +55,7 @@ to compile with E066 instead of failing at run time.
 | `-O` | off | Release build: drop every `assert()` after type-checking, without evaluating its condition. `-check` and `-interp` always keep asserts. |
 | `-g` | off | Emit a symbol table and DWARF so debuggers, `nm`, backtraces and profilers can name functions and source lines. |
 | `-size` | off | Build for size over speed, and leave the backtrace walk out unless `-backtrace` asks for it. `FERN_SIZE=1` makes it the default. |
-| `-harden` | off | `arm64-linux` executables only: BTI landing pads at every indirect-call target, and return addresses signed with pointer authentication. |
+| `-harden` | off | `arm64-linux` and `x86-64-linux` executables: stack canaries. ARM64 also uses BTI landing pads and signed return addresses. |
 | `-backtrace` | on | Print a frame-pointer backtrace under a fatal abort's cause line. `-backtrace=false` leaves the walk out of the binary. |
 | `-sanitize` | off | Debug build with the heap checks on; see [Debugging](#debugging). |
 | `-cover` | off | Instrument for line and branch coverage; see [Coverage](#coverage). |

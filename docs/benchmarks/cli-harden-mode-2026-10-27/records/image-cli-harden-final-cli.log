@@ -1,0 +1,258 @@
+=== RUN   TestSelfHostCLIX86_64
+=== RUN   TestSelfHostCLIX86_64/interp-runs-the-build-gate
+=== RUN   TestSelfHostCLIX86_64/async-function-through-the-driver
+=== RUN   TestSelfHostCLIX86_64/stdlib-import-without-root
+=== RUN   TestSelfHostCLIX86_64/imported-match-guard
+=== RUN   TestSelfHostCLIX86_64/nested-relative-import
+=== RUN   TestSelfHostCLIX86_64/wasm-u32-to-string-is-defined
+=== RUN   TestSelfHostCLIX86_64/wasm-semantic-capture-write
+=== RUN   TestSelfHostCLIX86_64/two-traits-one-method-emits-one-symbol
+=== RUN   TestSelfHostCLIX86_64/cross-module-method-collision-emits-one-symbol
+=== RUN   TestSelfHostCLIX86_64/dyn-picks-the-named-trait-provider
+=== RUN   TestSelfHostCLIX86_64/dyn-picks-the-named-trait-provider/dyn-b
+=== RUN   TestSelfHostCLIX86_64/dyn-picks-the-named-trait-provider/dyn-a
+=== RUN   TestSelfHostCLIX86_64/dyn-picks-the-named-trait-provider/multi-trait-distinct-names
+=== RUN   TestSelfHostCLIX86_64/emit-stdout
+=== RUN   TestSelfHostCLIX86_64/emit-to-file
+=== RUN   TestSelfHostCLIX86_64/fold-constants
+=== RUN   TestSelfHostCLIX86_64/fold-literal-concat
+=== RUN   TestSelfHostCLIX86_64/fold-guard-concat
+=== RUN   TestSelfHostCLIX86_64/fold-i32-min
+=== RUN   TestSelfHostCLIX86_64/fold-hex-constants
+=== RUN   TestSelfHostCLIX86_64/opt-elides-assert
+=== RUN   TestSelfHostCLIX86_64/opt-elides-nested-asserts
+=== RUN   TestSelfHostCLIX86_64/opt-elides-assert-in-generic
+=== RUN   TestSelfHostCLIX86_64/opt-elides-after-the-gates
+=== RUN   TestSelfHostCLIX86_64/opt-does-not-widen-what-compiles
+=== RUN   TestSelfHostCLIX86_64/opt-does-not-widen-what-compiles/undefined-name
+=== RUN   TestSelfHostCLIX86_64/opt-does-not-widen-what-compiles/unknown-field
+=== RUN   TestSelfHostCLIX86_64/opt-still-elides-a-well-typed-assert
+=== RUN   TestSelfHostCLIX86_64/check-ok
+=== RUN   TestSelfHostCLIX86_64/check-accepts-typed-field
+=== RUN   TestSelfHostCLIX86_64/check-accepts-typed-field/untyped-literal-at-i64-field
+=== RUN   TestSelfHostCLIX86_64/check-accepts-typed-field/member-widens-to-union-field
+=== RUN   TestSelfHostCLIX86_64/check-accepts-typed-field/member-widens-in-struct-update
+=== RUN   TestSelfHostCLIX86_64/check-accepts-typed-field/same-value-via-local
+=== RUN   TestSelfHostCLIX86_64/check-accepts-derived-assoc-call
+=== RUN   TestSelfHostCLIX86_64/check-refuses-use-with-unbound-callback-parameter
+=== RUN   TestSelfHostCLIX86_64/check-warns-about-todo-stubs
+=== RUN   TestSelfHostCLIX86_64/check-parse-unknown-gate
+=== RUN   TestSelfHostCLIX86_64/check-parse-unknown-gate/body-sentinel
+=== RUN   TestSelfHostCLIX86_64/check-parse-unknown-gate/param-default-sentinel
+=== RUN   TestSelfHostCLIX86_64/check-parse-unknown-gate/param-default-at
+=== RUN   TestSelfHostCLIX86_64/check-parse-unknown-gate/param-default-float-range
+=== RUN   TestSelfHostCLIX86_64/check-top-level-stmt-gate
+=== RUN   TestSelfHostCLIX86_64/check-top-level-stmt-gate/let
+=== RUN   TestSelfHostCLIX86_64/check-top-level-stmt-gate/call
+=== RUN   TestSelfHostCLIX86_64/check-top-level-stmt-gate/if
+=== RUN   TestSelfHostCLIX86_64/check-top-level-stmt-gate/lambda
+=== RUN   TestSelfHostCLIX86_64/check-str-view-arg-is-a-borrow
+=== RUN   TestSelfHostCLIX86_64/check-bad
+=== RUN   TestSelfHostCLIX86_64/payloadless-variant-as-payload-binder
+=== RUN   TestSelfHostCLIX86_64/float-literal-out-of-range
+=== RUN   TestSelfHostCLIX86_64/check-enum-value-ok
+=== RUN   TestSelfHostCLIX86_64/check-option-result-value-ok
+=== RUN   TestSelfHostCLIX86_64/check-generic-body-ok
+=== RUN   TestSelfHostCLIX86_64/check-generic-call-ok
+=== RUN   TestSelfHostCLIX86_64/check-generic-struct-ok
+=== RUN   TestSelfHostCLIX86_64/check-generic-struct-field-ok
+=== RUN   TestSelfHostCLIX86_64/check-generic-nested-field-ok
+=== RUN   TestSelfHostCLIX86_64/check-generic-method-ret-ok
+=== RUN   TestSelfHostCLIX86_64/check-dyn-bind-ok
+=== RUN   TestSelfHostCLIX86_64/check-dyn-dispatch-ok
+=== RUN   TestSelfHostCLIX86_64/check-selfhost-no-e001
+=== RUN   TestSelfHostCLIX86_64/check-position-undefined-assign
+=== RUN   TestSelfHostCLIX86_64/check-position
+=== RUN   TestSelfHostCLIX86_64/check-position-array-literal
+=== RUN   TestSelfHostCLIX86_64/check-position-struct
+=== RUN   TestSelfHostCLIX86_64/check-position-func
+=== RUN   TestSelfHostCLIX86_64/check-position-var
+=== RUN   TestSelfHostCLIX86_64/check-position-return
+=== RUN   TestSelfHostCLIX86_64/check-position-tuple-destructure
+=== RUN   TestSelfHostCLIX86_64/check-position-bad-receiver
+=== RUN   TestSelfHostCLIX86_64/check-position-missing-return
+=== RUN   TestSelfHostCLIX86_64/check-position-union-collision
+=== RUN   TestSelfHostCLIX86_64/check-position-qualifier-mismatch
+=== RUN   TestSelfHostCLIX86_64/check-position-foreign-variant
+=== RUN   TestSelfHostCLIX86_64/check-position-exhaustiveness
+=== RUN   TestSelfHostCLIX86_64/check-position-struct-field-type
+=== RUN   TestSelfHostCLIX86_64/check-position-method-argtype
+=== RUN   TestSelfHostCLIX86_64/check-position-method-arity
+=== RUN   TestSelfHostCLIX86_64/check-position-match-nonenum
+=== RUN   TestSelfHostCLIX86_64/check-position-array-elem
+=== RUN   TestSelfHostCLIX86_64/check-position-type-arity
+=== RUN   TestSelfHostCLIX86_64/check-position-match-arm
+=== RUN   TestSelfHostCLIX86_64/check-position-break-continue
+=== RUN   TestSelfHostCLIX86_64/check-position-cond-slice
+=== RUN   TestSelfHostCLIX86_64/check-position-cast
+=== RUN   TestSelfHostCLIX86_64/check-position-field-assign
+=== RUN   TestSelfHostCLIX86_64/compile-rejects-immutable-mutation
+=== RUN   TestSelfHostCLIX86_64/check-position-field
+=== RUN   TestSelfHostCLIX86_64/check-position-operator
+=== RUN   TestSelfHostCLIX86_64/check-position-ident
+=== RUN   TestSelfHostCLIX86_64/check-position-number
+=== RUN   TestSelfHostCLIX86_64/check-position-call
+=== RUN   TestSelfHostCLIX86_64/check-position-structlit
+=== RUN   TestSelfHostCLIX86_64/interp
+=== RUN   TestSelfHostCLIX86_64/fmt
+=== RUN   TestSelfHostCLIX86_64/fmt-enum
+=== RUN   TestSelfHostCLIX86_64/fmt-const
+=== RUN   TestSelfHostCLIX86_64/fmt-else-if-let
+=== RUN   TestSelfHostCLIX86_64/fmt-value-else-if
+=== RUN   TestSelfHostCLIX86_64/emit-target-arm64
+    self_host_cli_test.go:1758: aarch64 cross toolchain not available (gcc="" qemu="")
+=== RUN   TestSelfHostCLIX86_64/emit-target-arm64-android
+    self_host_cli_test.go:1790: aarch64 cross toolchain not available (gcc="" qemu="")
+=== RUN   TestSelfHostCLIX86_64/emit-target-wasm
+=== RUN   TestSelfHostCLIX86_64/emit-wasm-core-module
+=== RUN   TestSelfHostCLIX86_64/core-module-opcode-families
+=== RUN   TestSelfHostCLIX86_64/core-module-opcode-families/reinterpret-bits
+=== RUN   TestSelfHostCLIX86_64/core-module-opcode-families/to-string-prints
+=== RUN   TestSelfHostCLIX86_64/core-module-opcode-families/bit-counts
+=== RUN   TestSelfHostCLIX86_64/core-module-opcode-families/bulk-memory-copy
+=== RUN   TestSelfHostCLIX86_64/core-module-opcode-families/bulk-memory-fill
+=== RUN   TestSelfHostCLIX86_64/emit-wasm-component
+=== RUN   TestSelfHostCLIX86_64/emit-wasm-component-fs
+=== RUN   TestSelfHostCLIX86_64/emit-wasm-component-wasi
+=== RUN   TestSelfHostCLIX86_64/emit-wasm-component-combos
+=== RUN   TestSelfHostCLIX86_64/wasm-component-multi-wasi-composes
+=== RUN   TestSelfHostCLIX86_64/wasm-component-refuses-extern-outside-world
+=== RUN   TestSelfHostCLIX86_64/wasm-unsupported-builtin-names-the-builtin
+=== RUN   TestSelfHostCLIX86_64/wasm-unsupported-builtin-names-the-builtin/syscall-floor
+=== RUN   TestSelfHostCLIX86_64/wasm-unsupported-builtin-names-the-builtin/raw-memory-floor
+=== RUN   TestSelfHostCLIX86_64/wasm-unsupported-builtin-names-the-builtin/timer-fd
+=== RUN   TestSelfHostCLIX86_64/unknown-target-exits-2
+=== RUN   TestSelfHostCLIX86_64/no-arg-exits-2
+=== RUN   TestSelfHostCLIX86_64/unknown-flag-exits-2
+=== RUN   TestSelfHostCLIX86_64/flag-refusals-exit-2
+=== RUN   TestSelfHostCLIX86_64/harden-executable-so-suffix
+=== RUN   TestSelfHostCLIX86_64/missing-file-exits-1
+--- PASS: TestSelfHostCLIX86_64 (64.76s)
+    --- PASS: TestSelfHostCLIX86_64/interp-runs-the-build-gate (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/async-function-through-the-driver (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/stdlib-import-without-root (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/imported-match-guard (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/nested-relative-import (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/wasm-u32-to-string-is-defined (0.22s)
+    --- PASS: TestSelfHostCLIX86_64/wasm-semantic-capture-write (0.23s)
+    --- PASS: TestSelfHostCLIX86_64/two-traits-one-method-emits-one-symbol (0.22s)
+    --- PASS: TestSelfHostCLIX86_64/cross-module-method-collision-emits-one-symbol (0.02s)
+    --- PASS: TestSelfHostCLIX86_64/dyn-picks-the-named-trait-provider (0.05s)
+        --- PASS: TestSelfHostCLIX86_64/dyn-picks-the-named-trait-provider/dyn-b (0.02s)
+        --- PASS: TestSelfHostCLIX86_64/dyn-picks-the-named-trait-provider/dyn-a (0.02s)
+        --- PASS: TestSelfHostCLIX86_64/dyn-picks-the-named-trait-provider/multi-trait-distinct-names (0.02s)
+    --- PASS: TestSelfHostCLIX86_64/emit-stdout (0.02s)
+    --- PASS: TestSelfHostCLIX86_64/emit-to-file (0.02s)
+    --- PASS: TestSelfHostCLIX86_64/fold-constants (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/fold-literal-concat (0.03s)
+    --- PASS: TestSelfHostCLIX86_64/fold-guard-concat (0.04s)
+    --- PASS: TestSelfHostCLIX86_64/fold-i32-min (0.02s)
+    --- PASS: TestSelfHostCLIX86_64/fold-hex-constants (0.02s)
+    --- PASS: TestSelfHostCLIX86_64/opt-elides-assert (0.04s)
+    --- PASS: TestSelfHostCLIX86_64/opt-elides-nested-asserts (0.07s)
+    --- PASS: TestSelfHostCLIX86_64/opt-elides-assert-in-generic (0.10s)
+    --- PASS: TestSelfHostCLIX86_64/opt-elides-after-the-gates (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/opt-does-not-widen-what-compiles (0.02s)
+        --- PASS: TestSelfHostCLIX86_64/opt-does-not-widen-what-compiles/undefined-name (0.01s)
+        --- PASS: TestSelfHostCLIX86_64/opt-does-not-widen-what-compiles/unknown-field (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/opt-still-elides-a-well-typed-assert (0.11s)
+    --- PASS: TestSelfHostCLIX86_64/check-ok (0.02s)
+    --- PASS: TestSelfHostCLIX86_64/check-accepts-typed-field (0.01s)
+        --- PASS: TestSelfHostCLIX86_64/check-accepts-typed-field/untyped-literal-at-i64-field (0.00s)
+        --- PASS: TestSelfHostCLIX86_64/check-accepts-typed-field/member-widens-to-union-field (0.01s)
+        --- PASS: TestSelfHostCLIX86_64/check-accepts-typed-field/member-widens-in-struct-update (0.00s)
+        --- PASS: TestSelfHostCLIX86_64/check-accepts-typed-field/same-value-via-local (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-accepts-derived-assoc-call (0.86s)
+    --- PASS: TestSelfHostCLIX86_64/check-refuses-use-with-unbound-callback-parameter (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-warns-about-todo-stubs (0.02s)
+    --- PASS: TestSelfHostCLIX86_64/check-parse-unknown-gate (0.03s)
+        --- PASS: TestSelfHostCLIX86_64/check-parse-unknown-gate/body-sentinel (0.00s)
+        --- PASS: TestSelfHostCLIX86_64/check-parse-unknown-gate/param-default-sentinel (0.01s)
+        --- PASS: TestSelfHostCLIX86_64/check-parse-unknown-gate/param-default-at (0.00s)
+        --- PASS: TestSelfHostCLIX86_64/check-parse-unknown-gate/param-default-float-range (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/check-top-level-stmt-gate (0.02s)
+        --- PASS: TestSelfHostCLIX86_64/check-top-level-stmt-gate/let (0.01s)
+        --- PASS: TestSelfHostCLIX86_64/check-top-level-stmt-gate/call (0.00s)
+        --- PASS: TestSelfHostCLIX86_64/check-top-level-stmt-gate/if (0.00s)
+        --- PASS: TestSelfHostCLIX86_64/check-top-level-stmt-gate/lambda (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-str-view-arg-is-a-borrow (0.02s)
+    --- PASS: TestSelfHostCLIX86_64/check-bad (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/payloadless-variant-as-payload-binder (0.02s)
+    --- PASS: TestSelfHostCLIX86_64/float-literal-out-of-range (0.12s)
+    --- PASS: TestSelfHostCLIX86_64/check-enum-value-ok (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/check-option-result-value-ok (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-generic-body-ok (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-generic-call-ok (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/check-generic-struct-ok (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-generic-struct-field-ok (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-generic-nested-field-ok (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/check-generic-method-ret-ok (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/check-dyn-bind-ok (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-dyn-dispatch-ok (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-selfhost-no-e001 (13.48s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-undefined-assign (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-array-literal (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-struct (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-func (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-var (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-return (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-tuple-destructure (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-bad-receiver (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-missing-return (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-union-collision (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-qualifier-mismatch (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-foreign-variant (0.02s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-exhaustiveness (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-struct-field-type (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-method-argtype (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-method-arity (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-match-nonenum (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-array-elem (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-type-arity (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-match-arm (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-break-continue (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-cond-slice (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-cast (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-field-assign (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/compile-rejects-immutable-mutation (0.03s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-field (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-operator (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-ident (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-number (0.02s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-call (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/check-position-structlit (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/interp (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/fmt (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/fmt-enum (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/fmt-const (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/fmt-else-if-let (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/fmt-value-else-if (0.00s)
+    --- SKIP: TestSelfHostCLIX86_64/emit-target-arm64 (0.00s)
+    --- SKIP: TestSelfHostCLIX86_64/emit-target-arm64-android (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/emit-target-wasm (0.04s)
+    --- PASS: TestSelfHostCLIX86_64/emit-wasm-core-module (0.09s)
+    --- PASS: TestSelfHostCLIX86_64/core-module-opcode-families (0.69s)
+        --- PASS: TestSelfHostCLIX86_64/core-module-opcode-families/reinterpret-bits (0.03s)
+        --- PASS: TestSelfHostCLIX86_64/core-module-opcode-families/to-string-prints (0.25s)
+        --- PASS: TestSelfHostCLIX86_64/core-module-opcode-families/bit-counts (0.19s)
+        --- PASS: TestSelfHostCLIX86_64/core-module-opcode-families/bulk-memory-copy (0.21s)
+        --- PASS: TestSelfHostCLIX86_64/core-module-opcode-families/bulk-memory-fill (0.02s)
+    --- PASS: TestSelfHostCLIX86_64/emit-wasm-component (0.64s)
+    --- PASS: TestSelfHostCLIX86_64/emit-wasm-component-fs (0.22s)
+    --- PASS: TestSelfHostCLIX86_64/emit-wasm-component-wasi (0.19s)
+    --- PASS: TestSelfHostCLIX86_64/emit-wasm-component-combos (0.17s)
+    --- PASS: TestSelfHostCLIX86_64/wasm-component-multi-wasi-composes (0.03s)
+    --- PASS: TestSelfHostCLIX86_64/wasm-component-refuses-extern-outside-world (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/wasm-unsupported-builtin-names-the-builtin (45.11s)
+        --- PASS: TestSelfHostCLIX86_64/wasm-unsupported-builtin-names-the-builtin/syscall-floor (0.00s)
+        --- PASS: TestSelfHostCLIX86_64/wasm-unsupported-builtin-names-the-builtin/raw-memory-floor (0.00s)
+        --- PASS: TestSelfHostCLIX86_64/wasm-unsupported-builtin-names-the-builtin/timer-fd (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/unknown-target-exits-2 (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/no-arg-exits-2 (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/unknown-flag-exits-2 (0.00s)
+    --- PASS: TestSelfHostCLIX86_64/flag-refusals-exit-2 (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/harden-executable-so-suffix (0.02s)
+    --- PASS: TestSelfHostCLIX86_64/missing-file-exits-1 (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	64.775s
