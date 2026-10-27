@@ -1,6 +1,6 @@
 # Allocation core audit
 
-Status: [reference] audit record for [SEC-022](https://github.com/JakeChampion/lang/issues/13524), with the facts [SEC-023](https://github.com/JakeChampion/lang/issues/13525) and [SEC-025](https://github.com/JakeChampion/lang/issues/13527) start from.
+Status: [reference] audit record for [SEC-022](https://github.com/JakeChampion/lang/issues/13524) and the metadata part of [SEC-023](https://github.com/JakeChampion/lang/issues/13525), with the facts [SEC-025](https://github.com/JakeChampion/lang/issues/13527) starts from.
 Parent: [security epic](https://github.com/JakeChampion/lang/issues/13502).
 
 The record reads the native allocator as it stands: the arena, the size classes, the free lists, the size checks at each entry, and the failure paths.
@@ -23,9 +23,37 @@ A block of at most 512 KiB takes a class rounded by `__fern_capw`, from the same
 A larger block takes one of four sub-classes per power of two from the large free list.
 The class math derives the index from the two leading bits of the rounded size.
 
-The free list link is the first word of the freed block, so the list's metadata lives inside the payload.
+The free list link is the first word of the freed block.
+For a typed box that word is the capacity field of the header, 16 bytes before the payload.
+For a raw block from `__alloc` it is the first payload word.
 A byte array is zero-filled on allocation (`rep stosq`), so a fresh block never carries a previous owner's bytes.
 A freed block is not zeroed, and only its first word changes.
+
+## Metadata and misuse
+
+A typed box carries its capacity, its reference count and its length in the 24 bytes before and at the payload start.
+Safe code reaches the payload through checked indexing, so it cannot write the header of its own box or the header of the next block.
+The raw floor, `__store_*` and `__free`, can.
+
+A second release of a typed box reads a reference count of zero.
+The release helper then counts an underflow and returns without a second free, so the block is not linked to itself.
+`__rc_underflow_count()` reports the count, and `TestX86_64MapHandleOverReleaseCounted` pins it.
+A dangling release after the block was recycled reads the new owner's count and frees the new owner's block.
+Only `-sanitize` detects that, through its quarantine, and `docs/SANITIZER.md` records the two reports.
+
+A raw free of an address outside the arena linked that address into a free list, so a later allocation of that class returned it.
+An unmapped address ended the program by signal, and a mapped one gave the caller a block on the stack or in the data segment.
+`__free` now compares the address with the arena bounds and aborts with `fern: release of memory outside the heap`, status 134.
+`TestSelfHostRawFreeOutsideHeap` pins the abort and the control on both targets.
+
+A write through a dangling raw pointer to the header word of a freed box forges the free list link.
+The next allocation of that class takes the freed box, and the one after it returns the forged address.
+A probe that wrote a non-address there ended by signal at that allocation.
+A forged address inside a mapping comes back without a report.
+
+A safe-linking encoding of the link, keyed by the process canary and checked for alignment and arena bounds on every pop, closes that path.
+That encoding touches every free list push and pop on both backends.
+It is a `-harden` design of its own and is not in this record.
 
 ## Size checks at each entry
 
@@ -54,14 +82,17 @@ A freed block is not zeroed, and only its first word changes.
 
 | Gap | Consequence |
 |---|---|
-| Free list metadata inside the payload | A write through a dangling reference corrupts the next link, and the next allocation of that class returns an attacker-chosen address; `-sanitize` quarantines freed blocks and detects the touch, the release build does not (SEC-023) |
-| No double-free detection in the release build | A second release of the same block links it to itself; the sanitizer reports the over-release (SEC-023) |
+| Free list link inside the freed block | A raw write through a dangling pointer to that word forges the next link, and the allocation after the next returns the forged address; `-sanitize` quarantines freed blocks and detects the touch, the release build does not (SEC-023) |
+| A raw double free | `__free` twice on one block links it to itself, because a raw block has no count to read; the typed release helpers count the second release instead (SEC-023) |
 | No zeroing on free | A secret stays in the arena until the block is reused and zero-filled; SEC-025 owns erasure |
 | A runtime helper that computes a size | The helper is responsible for its arithmetic; the bump's wrap check is the last line, and a wrapped positive size below the arena end is not caught there |
 | Alignment above 8 bytes | No entry takes an alignment; lane values and SIMD kernels use unaligned loads and stores by design |
 | `munmap` | The arena is never unmapped; a freed block returns to a list, never to the kernel |
 
 ## Changes in this record
+
+`__free` of an address outside the arena linked that address into a free list.
+It now aborts with the out-of-heap cause before it touches the address, on both backends.
 
 A freed block above one gigabyte was dropped at the free: both the lookup and the free push stopped at that bound, so the block was lost for the life of the process.
 A program that allocated a 1.1 GB buffer twice advanced the bump by 2.2 GB on both targets.

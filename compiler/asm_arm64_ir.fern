@@ -7761,6 +7761,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", aborts.str_oob(), 134);
   s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", aborts.slice_range(), 134);
   s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", aborts.alloc_size(), 134);
+  s = abort_trap(s, "__fern_free_range_abort", ".Lmsg_free_range", aborts.free_range(), 134);
   for name in leaf_aborts() {
     s = s.write(name + "_leaf:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    b " + name + "\n");
   }
@@ -8619,6 +8620,8 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
   s = s.write("    mov x29, sp\n");
   s = s.write("    cbz x0, .Lrawfree_done\n");
+  s = s.write("    adrp x9, __fern_heap_base\n    add x9, x9, :lo12:__fern_heap_base\n    ldr x9, [x9]\n    cmp x0, x9\n    b.lo .Lrawfree_bad\n");
+  s = s.write("    adrp x9, __fern_heap_end\n    add x9, x9, :lo12:__fern_heap_end\n    ldr x9, [x9]\n    cmp x0, x9\n    b.hs .Lrawfree_bad\n");
   s = s.write("    add x1, x1, #7\n");
   s = s.write("    lsr x5, x1, #3\n");
   s = s.write("    cbz x5, .Lrawfree_done\n");
@@ -8629,6 +8632,8 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lrawfree_done:\n");
   s = s.write("    ldp x29, x30, [sp], #16\n");
   s = s.write("    ret\n");
+  s = s.write(".Lrawfree_bad:\n");
+  s = s.write("    b __fern_free_range_abort\n");
   s = s.write("__fn___fern_arr_dec:\n");
   s = s.write("    ldr x0, [sp]\n");
   s = s.write("__fn___fern_arr_dec.r:\n");

@@ -38,6 +38,10 @@ pub function canary(): string {
   return "fern: stack canary mismatch";
 }
 
+pub function free_range(): string {
+  return "fern: release of memory outside the heap";
+}
+
 pub function busy(): string {
   return "fern: two threads entered this shared object at once";
 }
