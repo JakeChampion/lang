@@ -1,0 +1,34 @@
+import "tag_data";
+import "parametric_eval";
+import "std/f64";
+
+// This standalone inverse admits only the pure power in ICC.1:2022 Table 68.
+pub function invert(data: tag_data.ParametricData, input: f64, cancelled: () => boolean): Result[f64, parametric_eval.EvalError] {
+  if (!input.is_finite() || input < 0.0 || input > 1.0) {
+    return Err(parametric_eval.EvalError.Input);
+  }
+  if (data.function_type < 0 || data.function_type > 4) {
+    return Err(parametric_eval.EvalError.Function);
+  }
+  if (data.function_type != 0) {
+    return Err(parametric_eval.EvalError.Unsupported);
+  }
+  if (data.coefficients.len() != 1) {
+    return Err(parametric_eval.EvalError.Shape);
+  }
+  let numerator = data.coefficients[0];
+  if (numerator <= 0) {
+    return Err(parametric_eval.EvalError.Domain);
+  }
+  if (cancelled()) {
+    return Err(parametric_eval.EvalError.Cancelled);
+  }
+  let value = if (input == 0.0 || input == 1.0 || numerator == 65536) { input } else { input.pow(65536.0 / (numerator as f64)) };
+  if (!value.is_finite() || value < 0.0 || value > 1.0) {
+    return Err(parametric_eval.EvalError.Numeric);
+  }
+  if (cancelled()) {
+    return Err(parametric_eval.EvalError.Cancelled);
+  }
+  return Ok(value);
+}

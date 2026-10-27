@@ -154,6 +154,13 @@ jobs:
       - run: ./fern-image/scripts/test-icc-curv-inverse.sh wasm
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_power_inverse_test.py
+      - run: ./fern-image/scripts/test-icc-power-inverse.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-power-inverse.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_parametric_eval_test.py
       - run: ./fern-image/scripts/test-icc-parametric-eval.sh native
         env:
@@ -342,4 +349,10 @@ jobs:
         with:
           name: image-icc-curv-inverse
           path: fern-image/build/icc-curv-inverse-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-power-inverse-*.json') != ''
+        with:
+          name: image-icc-power-inverse
+          path: fern-image/build/icc-power-inverse-*.json
           if-no-files-found: error

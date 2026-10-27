@@ -68,7 +68,7 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 296 TAP cases cover compression, pixels, color, resize, PNG, the restricted JPEG slices, and standalone ICC primitives.
+The 302 TAP cases cover compression, pixels, color, resize, PNG, the restricted JPEG slices, and standalone ICC primitives.
 JPEG cases cover headers, coefficients, scalar inverse DCT, grayscale, JFIF identification, restricted RGB assembly, and standalone Exif orientation.
 They also cover rows, providers, pipelines, regions, caches, RSS parsing, and fusion.
 The file I/O probe and pixel example also exit successfully.
@@ -131,4 +131,5 @@ The [restricted forward model selector](docs/icc-matrix-model.md) returns owned 
 The [scalar matrix/TRC composition](docs/icc-matrix-trc.md) returns a linear RGB trace and explicit unclipped relative D50 XYZ.
 The [bounded inverse matrix kernel](docs/icc-matrix-solve.md) returns explicit unclipped linear RGB with independent Gaussian reference observations.
 The [standalone curve inverses](docs/icc-curve-inverses.md) apply explicit monotonic curve policies with independent mathematical observations.
+The [function-zero power inverses](docs/icc-power-inverses.md) qualify the full positive fixed-point exponent domain separately from affine and piecewise inverses.
 Typed wire data does not authorize curve evaluation or color transforms.
