@@ -1,0 +1,28 @@
+{
+  "native": {
+    "script_exit": 0,
+    "all_commands_exit0": true,
+    "TAP_ok": 282,
+    "censuses": 79,
+    "current_source_recheck": true
+  },
+  "wasm": {
+    "script_exit": 0,
+    "all_commands_exit0": true,
+    "TAP_ok": 282,
+    "censuses": 55,
+    "current_source_recheck": true
+  },
+  "arm64": {
+    "script_exit": 0,
+    "all_commands_exit0": true,
+    "TAP_ok": 282,
+    "censuses": 40,
+    "current_source_recheck": true
+  },
+  "outer_completion_handles": {
+    "native75573": "not recovered after exec-server transport disconnect",
+    "wasm3799": "not resumed after the native handle failure; no outer exit claimed",
+    "arm39830": 0
+  }
+}

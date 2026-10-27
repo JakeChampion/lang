@@ -1,0 +1,7 @@
+{
+  "actual_session": 34297,
+  "actual_tool_exit": 1,
+  "incorrect_draft": "/workspace/image-deflate-window-after-metadata-before-exit-correction.json",
+  "corrected_record": "/workspace/image-deflate-window-after.json",
+  "reason": "Corrected a hard-coded exit field. Actual tool session34297 returned1 and the log reports failure. Original draft metadata remains preserved."
+}

@@ -1,0 +1,30 @@
+{
+  "source_commit": "1682af4ce80d3d5fb54d7814ec5a9767d6902699",
+  "format_files": 2064,
+  "checks": [
+    {
+      "tool": "/workspace/image-deflate-window-current-fern-1682af4ce8",
+      "exit_code": 0
+    },
+    {
+      "tool": "go",
+      "exit_code": 0
+    },
+    {
+      "tool": "go",
+      "exit_code": 0
+    },
+    {
+      "tool": "make",
+      "exit_code": 0
+    },
+    {
+      "tool": "/workspace/image-png-reference-venv/bin/python",
+      "exit_code": 0
+    },
+    {
+      "tool": "git",
+      "exit_code": 0
+    }
+  ]
+}

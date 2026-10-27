@@ -1882,6 +1882,7 @@ function __common(input: [u8], from: i32, pos: i32): i32 {
 // search visits at most 35 candidates and stops at a match of 65 bytes. The
 // search for the lazy step visits half as many. A match of 3 bytes further
 // back than 8192 costs more than its literals.
+// The three-byte shortcut also stays inside the requested window.
 @inline
 function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i32[], window: i32, held: i32): (i32, i32) {
   let max: i32 = cmp.min(258, input.len() - pos);
@@ -1896,7 +1897,7 @@ function __longest(input: [u8], pos: i32, c3: i32, cand: i32, prev: i32[], windo
   if (held >= 3) {
     best_len = held;
     depth = 17;
-  } else if (c3 >= 0 && pos - c3 <= 8192 && (__le32(input, c3) ^ first) << 8 == 0u32) {
+  } else if (c3 >= 0 && pos - c3 <= 8192 && pos - c3 <= window && (__le32(input, c3) ^ first) << 8 == 0u32) {
     best_len = 3;
     best_dist = pos - c3;
   }

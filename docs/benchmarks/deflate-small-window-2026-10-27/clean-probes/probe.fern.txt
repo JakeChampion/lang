@@ -1,0 +1,28 @@
+import "std/deflate";
+import "std/hex";
+import "std/i32";
+function emit(bits: i32, distance: i32): void {
+  let data: u8[] = [113u8, 122u8, 120u8, 65u8];
+  let i: i32 = 4;
+  while (i < distance) {
+    data = data.append(122u8);
+    i = i + 1;
+  }
+  data = data.concat([113u8, 122u8, 120u8, 66u8]);
+  let encoded = deflate.deflate_flushed(data[:], bits);
+  print(bits.to_string() + " " + distance.to_string() + " " + hex.encode(encoded[:]));
+}
+function main(): i32 {
+  let bits: i32 = 8;
+  while (bits <= 15) {
+    let window: i32 = 1 << bits;
+    emit(bits, window - 1);
+    emit(bits, window);
+    emit(bits, window + 1);
+    bits = bits + 1;
+  }
+  emit(9, 600);
+  emit(9, 8192);
+  emit(9, 8193);
+  return 0;
+}

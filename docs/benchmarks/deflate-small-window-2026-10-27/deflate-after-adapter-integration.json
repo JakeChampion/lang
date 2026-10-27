@@ -1,0 +1,8 @@
+{
+  "head": "c5b23b958268b81f0236836818d480e824c341cc",
+  "files_unchanged": {
+    "internal/stdlib/std/deflate.fern.md": "f1da65c34a1059bd5a103fef3f0f086bea609d395a27c60f575e56e409afc346",
+    "internal/testing/e2e/deflate_window_test.go": "834ee52b11b029de6f2cbdce03fefd0541f1b1cf13b85df438dc4243553f3644"
+  },
+  "status": " M internal/stdlib/std/deflate.fern.md\n?? internal/testing/e2e/deflate_window_test.go\n"
+}

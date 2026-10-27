@@ -1,0 +1,40 @@
+=== RUN   TestSelfHostInflateReader
+=== RUN   TestSelfHostInflateReader/deflate_reader_test.fern
+=== RUN   TestSelfHostInflateReader/deflate_reader_test.fern/x86-64-linux
+=== RUN   TestSelfHostInflateReader/deflate_reader_test.fern/wasm32-wasi
+=== RUN   TestSelfHostInflateReader/deflate_test.fern
+=== RUN   TestSelfHostInflateReader/deflate_test.fern/x86-64-linux
+=== RUN   TestSelfHostInflateReader/deflate_test.fern/wasm32-wasi
+--- PASS: TestSelfHostInflateReader (59.07s)
+    --- PASS: TestSelfHostInflateReader/deflate_reader_test.fern (6.40s)
+        --- PASS: TestSelfHostInflateReader/deflate_reader_test.fern/x86-64-linux (2.96s)
+        --- PASS: TestSelfHostInflateReader/deflate_reader_test.fern/wasm32-wasi (3.45s)
+    --- PASS: TestSelfHostInflateReader/deflate_test.fern (6.82s)
+        --- PASS: TestSelfHostInflateReader/deflate_test.fern/x86-64-linux (4.10s)
+        --- PASS: TestSelfHostInflateReader/deflate_test.fern/wasm32-wasi (2.72s)
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (7.02s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+=== RUN   TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression
+=== RUN   TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/real_main_churn:_+22_excess
+=== RUN   TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/real_main_churn:_+9_excess
+=== RUN   TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/real_main_churn:_ceiling_468_->_477
+=== RUN   TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/a_2000-fork_regression
+=== RUN   TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/ceiling_doubles
+=== RUN   TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/exactly_at_the_edge_is_not_over
+--- PASS: TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression (0.00s)
+    --- PASS: TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/real_main_churn:_+22_excess (0.00s)
+    --- PASS: TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/real_main_churn:_+9_excess (0.00s)
+    --- PASS: TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/real_main_churn:_ceiling_468_->_477 (0.00s)
+    --- PASS: TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/a_2000-fork_regression (0.00s)
+    --- PASS: TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/ceiling_doubles (0.00s)
+    --- PASS: TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/exactly_at_the_edge_is_not_over (0.00s)
+=== RUN   TestSelfHostServeWebSocket
+--- PASS: TestSelfHostServeWebSocket (33.96s)
+=== RUN   TestSelfHostServeWebSocketArm64
+--- PASS: TestSelfHostServeWebSocketArm64 (15.53s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	115.625s

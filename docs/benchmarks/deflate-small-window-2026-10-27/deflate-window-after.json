@@ -1,0 +1,20 @@
+{
+  "source_base": "bdc739e433eab226dc25c87c1a0524fb25dff3aa",
+  "worktree_dirty": true,
+  "scope": "Development pass with a post-run inventory. No invented pre-run hash map.",
+  "post_run_sha256": {
+    "internal/testing/e2e/deflate_window_test.go": "834ee52b11b029de6f2cbdce03fefd0541f1b1cf13b85df438dc4243553f3644",
+    "internal/stdlib/std/deflate.fern.md": "f1da65c34a1059bd5a103fef3f0f086bea609d395a27c60f575e56e409afc346"
+  },
+  "tool_exit": 1,
+  "counts": {
+    "PASS": 58,
+    "FAIL": 1,
+    "SKIP": 0
+  },
+  "censuses": [
+    "5646",
+    "5646"
+  ],
+  "metadata_correction": "Corrected a hard-coded exit field. Actual tool session34297 returned1 and the log reports failure. Original draft metadata remains preserved."
+}

@@ -1,0 +1,17 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-v",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^(TestSelfHostInflateReader|TestSelfHostServeWebSocket|TestSelfHostServeWebSocketArm64|TestSelfHostRepoComplexityRatchet|TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression)$",
+    "-count=1",
+    "-timeout=15m"
+  ],
+  "exit": 0,
+  "seconds": 151.93630814552307,
+  "PASS": 19,
+  "FAIL": 0,
+  "SKIP": 0
+}

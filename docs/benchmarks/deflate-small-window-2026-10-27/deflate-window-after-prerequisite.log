@@ -1,0 +1,182 @@
+=== RUN   TestDeflateSmallWindowX86_64Sanitized
+    deflate_window_test.go:163: worker census: 5646 balanced allocations, zero live bytes
+    deflate_window_test.go:163: streaming reference zlib 1.3.2
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/reference-window-control
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window8/distance255
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window8/distance256
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window8/distance257
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window9/distance511
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window9/distance512
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window9/distance513
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window10/distance1023
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window10/distance1024
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window10/distance1025
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window11/distance2047
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window11/distance2048
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window11/distance2049
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window12/distance4095
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window12/distance4096
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window12/distance4097
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window13/distance8191
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window13/distance8192
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window13/distance8193
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window14/distance16383
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window14/distance16384
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window14/distance16385
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window15/distance32767
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window15/distance32768
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window15/distance32769
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window9/distance600
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window9/distance8192
+=== RUN   TestDeflateSmallWindowX86_64Sanitized/window9/distance8193
+--- PASS: TestDeflateSmallWindowX86_64Sanitized (33.67s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/reference-window-control (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window8/distance255 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window8/distance256 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window8/distance257 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window9/distance511 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window9/distance512 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window9/distance513 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window10/distance1023 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window10/distance1024 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window10/distance1025 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window11/distance2047 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window11/distance2048 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window11/distance2049 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window12/distance4095 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window12/distance4096 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window12/distance4097 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window13/distance8191 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window13/distance8192 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window13/distance8193 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window14/distance16383 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window14/distance16384 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window14/distance16385 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window15/distance32767 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window15/distance32768 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window15/distance32769 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window9/distance600 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window9/distance8192 (0.00s)
+    --- PASS: TestDeflateSmallWindowX86_64Sanitized/window9/distance8193 (0.00s)
+=== RUN   TestDeflateSmallWindowArm64Sanitized
+    deflate_window_test.go:168: worker census: 5646 balanced allocations, zero live bytes
+    deflate_window_test.go:168: streaming reference zlib 1.3.2
+=== RUN   TestDeflateSmallWindowArm64Sanitized/reference-window-control
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window8/distance255
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window8/distance256
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window8/distance257
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window9/distance511
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window9/distance512
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window9/distance513
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window10/distance1023
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window10/distance1024
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window10/distance1025
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window11/distance2047
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window11/distance2048
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window11/distance2049
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window12/distance4095
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window12/distance4096
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window12/distance4097
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window13/distance8191
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window13/distance8192
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window13/distance8193
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window14/distance16383
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window14/distance16384
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window14/distance16385
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window15/distance32767
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window15/distance32768
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window15/distance32769
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window9/distance600
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window9/distance8192
+=== RUN   TestDeflateSmallWindowArm64Sanitized/window9/distance8193
+--- PASS: TestDeflateSmallWindowArm64Sanitized (0.53s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/reference-window-control (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window8/distance255 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window8/distance256 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window8/distance257 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window9/distance511 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window9/distance512 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window9/distance513 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window10/distance1023 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window10/distance1024 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window10/distance1025 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window11/distance2047 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window11/distance2048 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window11/distance2049 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window12/distance4095 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window12/distance4096 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window12/distance4097 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window13/distance8191 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window13/distance8192 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window13/distance8193 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window14/distance16383 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window14/distance16384 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window14/distance16385 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window15/distance32767 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window15/distance32768 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window15/distance32769 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window9/distance600 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window9/distance8192 (0.00s)
+    --- PASS: TestDeflateSmallWindowArm64Sanitized/window9/distance8193 (0.00s)
+=== RUN   TestDeflateSmallWindowWasm
+    deflate_window_test.go:173: worker census: 5781 balanced allocations, zero live bytes
+    deflate_window_test.go:173: streaming reference zlib 1.3.2
+=== RUN   TestDeflateSmallWindowWasm/reference-window-control
+=== RUN   TestDeflateSmallWindowWasm/window8/distance255
+=== RUN   TestDeflateSmallWindowWasm/window8/distance256
+=== RUN   TestDeflateSmallWindowWasm/window8/distance257
+=== RUN   TestDeflateSmallWindowWasm/window9/distance511
+=== RUN   TestDeflateSmallWindowWasm/window9/distance512
+=== RUN   TestDeflateSmallWindowWasm/window9/distance513
+=== RUN   TestDeflateSmallWindowWasm/window10/distance1023
+=== RUN   TestDeflateSmallWindowWasm/window10/distance1024
+=== RUN   TestDeflateSmallWindowWasm/window10/distance1025
+=== RUN   TestDeflateSmallWindowWasm/window11/distance2047
+=== RUN   TestDeflateSmallWindowWasm/window11/distance2048
+=== RUN   TestDeflateSmallWindowWasm/window11/distance2049
+=== RUN   TestDeflateSmallWindowWasm/window12/distance4095
+=== RUN   TestDeflateSmallWindowWasm/window12/distance4096
+=== RUN   TestDeflateSmallWindowWasm/window12/distance4097
+=== RUN   TestDeflateSmallWindowWasm/window13/distance8191
+=== RUN   TestDeflateSmallWindowWasm/window13/distance8192
+=== RUN   TestDeflateSmallWindowWasm/window13/distance8193
+=== RUN   TestDeflateSmallWindowWasm/window14/distance16383
+=== RUN   TestDeflateSmallWindowWasm/window14/distance16384
+=== RUN   TestDeflateSmallWindowWasm/window14/distance16385
+=== RUN   TestDeflateSmallWindowWasm/window15/distance32767
+=== RUN   TestDeflateSmallWindowWasm/window15/distance32768
+=== RUN   TestDeflateSmallWindowWasm/window15/distance32769
+=== RUN   TestDeflateSmallWindowWasm/window9/distance600
+=== RUN   TestDeflateSmallWindowWasm/window9/distance8192
+=== RUN   TestDeflateSmallWindowWasm/window9/distance8193
+--- PASS: TestDeflateSmallWindowWasm (0.47s)
+    --- PASS: TestDeflateSmallWindowWasm/reference-window-control (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window8/distance255 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window8/distance256 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window8/distance257 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window9/distance511 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window9/distance512 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window9/distance513 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window10/distance1023 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window10/distance1024 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window10/distance1025 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window11/distance2047 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window11/distance2048 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window11/distance2049 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window12/distance4095 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window12/distance4096 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window12/distance4097 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window13/distance8191 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window13/distance8192 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window13/distance8193 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window14/distance16383 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window14/distance16384 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window14/distance16385 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window15/distance32767 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window15/distance32768 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window15/distance32769 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window9/distance600 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window9/distance8192 (0.00s)
+    --- PASS: TestDeflateSmallWindowWasm/window9/distance8193 (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	34.681s
