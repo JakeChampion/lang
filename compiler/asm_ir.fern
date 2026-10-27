@@ -2372,7 +2372,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    popq %rbp\n");
   s = s.write("    ret\n");
   s = s.write(".Lalloc_large:\n");
-  s = s.write("    cmpq $0x40000000, %rdi\n");
+  s = s.write("    movabs $17179869184, %rax\n");
+  s = s.write("    cmpq %rax, %rdi\n");
   s = s.write("    ja .Lalloc_nofl\n");
   s = s.write("    movq %rdi, %rax\n");
   s = large_class(s);
@@ -2429,6 +2430,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lalloc_inited:\n");
   s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
   s = s.write("    addq %rax, %rdi\n");
+  s = s.write("    jc __fern_alloc_size_abort\n");
   s = s.write("    cmpq __fern_heap_end(%rip), %rdi\n");
   s = s.write("    ja .Lalloc_oom\n");
   s = s.write("    movq %rdi, __fern_heap_ptr(%rip)\n");
@@ -2529,7 +2531,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movl __fern_rc_underflow(%rip), %eax\n");
   s = s.write("    ret\n");
   s = s.write("__fern_large_push:\n");
-  s = s.write("    cmpq $0x40000000, %rsi\n");
+  s = s.write("    movabs $17179869184, %rax\n");
+  s = s.write("    cmpq %rax, %rsi\n");
   s = s.write("    ja .Llpush_ret\n");
   if (hev_on(s)) {
     s = s.write("    movq %rsi, %rax\n");

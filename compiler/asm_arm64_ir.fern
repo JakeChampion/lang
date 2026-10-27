@@ -7606,7 +7606,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    ret\n");
   s = s.write(".Lalloc_large:\n");
   s = s.write("    mov x1, #1\n");
-  s = s.write("    lsl x1, x1, #30\n");
+  s = s.write("    lsl x1, x1, #34\n");
   s = s.write("    cmp x0, x1\n");
   s = s.write("    b.hi .Lalloc_nofl\n");
   s = arm64_large_class(s, "x0", "x3", "x1");
@@ -7667,7 +7667,8 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
   s = s.write(".Lalloc_inited:\n");
   s = s.write("    ldr x2, [x1]\n");
-  s = s.write("    add x3, x2, x0\n");
+  s = s.write("    adds x3, x2, x0\n");
+  s = s.write("    b.cs __fern_alloc_size_abort\n");
   s = s.write("    str x4, [sp, #-16]!\n");
   s = s.write("    adrp x4, __fern_heap_end\n");
   s = s.write("    add x4, x4, :lo12:__fern_heap_end\n");
@@ -8525,7 +8526,7 @@ function arm64_large_class(s: asmcore.EmitState, n: string, cls: string, t: stri
 function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_large_push:\n");
   s = s.write("    mov x3, #1\n");
-  s = s.write("    lsl x3, x3, #30\n");
+  s = s.write("    lsl x3, x3, #34\n");
   s = s.write("    cmp x2, x3\n");
   s = s.write("    b.hi .Llpush_ret\n");
   s = lc_bump_free_add(s, "x2", "x3", "x4");
