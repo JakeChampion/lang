@@ -1,0 +1,166 @@
+=== RUN   TestSelfHostTupleArrayEmptyInference
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-first
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-first/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-first/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-first/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-last-control
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-last-control/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-last-control/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-last-control/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/complementary-components
+=== RUN   TestSelfHostTupleArrayEmptyInference/complementary-components/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/complementary-components/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/complementary-components/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-tuple
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-tuple/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-tuple/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-tuple/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-empty-tree
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-empty-tree/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-empty-tree/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-empty-tree/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/array-of-tuples
+=== RUN   TestSelfHostTupleArrayEmptyInference/array-of-tuples/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/array-of-tuples/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/array-of-tuples/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/generic-record
+=== RUN   TestSelfHostTupleArrayEmptyInference/generic-record/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/generic-record/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/generic-record/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/imported-record
+=== RUN   TestSelfHostTupleArrayEmptyInference/imported-record/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/imported-record/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/imported-record/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/record-and-enum-columns
+=== RUN   TestSelfHostTupleArrayEmptyInference/record-and-enum-columns/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/record-and-enum-columns/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/record-and-enum-columns/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/cow-owned-payload
+=== RUN   TestSelfHostTupleArrayEmptyInference/cow-owned-payload/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/cow-owned-payload/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/cow-owned-payload/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/explicit-control
+=== RUN   TestSelfHostTupleArrayEmptyInference/explicit-control/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/explicit-control/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/explicit-control/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/call-peer-and-order
+=== RUN   TestSelfHostTupleArrayEmptyInference/call-peer-and-order/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/call-peer-and-order/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/call-peer-and-order/wasm32-wasi
+--- PASS: TestSelfHostTupleArrayEmptyInference (46.78s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/empty-first (0.15s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-first/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-first/arm64-linux (0.07s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-first/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/empty-last-control (0.10s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-last-control/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-last-control/arm64-linux (0.04s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-last-control/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/complementary-components (0.10s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/complementary-components/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/complementary-components/arm64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/complementary-components/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/nested-tuple (0.10s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/nested-tuple/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/nested-tuple/arm64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/nested-tuple/wasm32-wasi (0.03s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/nested-empty-tree (0.09s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/nested-empty-tree/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/nested-empty-tree/arm64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/nested-empty-tree/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/array-of-tuples (0.08s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/array-of-tuples/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/array-of-tuples/arm64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/array-of-tuples/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/generic-record (0.09s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/generic-record/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/generic-record/arm64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/generic-record/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/imported-record (0.10s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/imported-record/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/imported-record/arm64-linux (0.04s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/imported-record/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/record-and-enum-columns (1.27s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/record-and-enum-columns/x86-64-linux (0.21s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/record-and-enum-columns/arm64-linux (0.30s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/record-and-enum-columns/wasm32-wasi (0.20s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/cow-owned-payload (0.10s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/cow-owned-payload/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/cow-owned-payload/arm64-linux (0.04s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/cow-owned-payload/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/explicit-control (0.10s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/explicit-control/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/explicit-control/arm64-linux (0.04s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/explicit-control/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/call-peer-and-order (0.09s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/call-peer-and-order/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/call-peer-and-order/arm64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/call-peer-and-order/wasm32-wasi (0.02s)
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/wasm32-wasi
+--- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements (3.30s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types (0.02s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/wasm32-wasi (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	50.099s

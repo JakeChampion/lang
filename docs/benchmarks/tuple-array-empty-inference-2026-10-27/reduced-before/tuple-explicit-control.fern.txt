@@ -1,0 +1,6 @@
+function main(): i32 {
+  let cases: (i32[], i32)[] = [([], 0), ([1], 1)];
+  let total: i32 = 0;
+  for (values, n) in cases { total = total + values.len() + n; }
+  return if (total == 2) { 0 } else { 1 };
+}

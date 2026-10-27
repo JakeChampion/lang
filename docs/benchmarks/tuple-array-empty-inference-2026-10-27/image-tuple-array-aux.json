@@ -1,0 +1,30 @@
+{
+  "source_commit": "9c4085d83796cb46356a42ea51aa4ad7df69c2db",
+  "format_files": 2064,
+  "checks": [
+    {
+      "tool": "/workspace/lang-image-tuple-array-inference/bin/fern",
+      "exit_code": 0
+    },
+    {
+      "tool": "go",
+      "exit_code": 0
+    },
+    {
+      "tool": "go",
+      "exit_code": 0
+    },
+    {
+      "tool": "make",
+      "exit_code": 0
+    },
+    {
+      "tool": "/workspace/image-png-reference-venv/bin/python",
+      "exit_code": 0
+    },
+    {
+      "tool": "git",
+      "exit_code": 0
+    }
+  ]
+}

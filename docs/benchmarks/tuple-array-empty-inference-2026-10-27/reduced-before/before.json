@@ -1,0 +1,117 @@
+[
+  {
+    "source": "/workspace/image-tuple-array-repros/nested-array-control.fern",
+    "runs": [
+      {
+        "label": "go-check",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "go-interp",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "self-check",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "native",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "native-run",
+        "exit": 0,
+        "output": ""
+      }
+    ]
+  },
+  {
+    "source": "/workspace/image-tuple-array-repros/tuple-concrete-first.fern",
+    "runs": [
+      {
+        "label": "go-check",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "go-interp",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "self-check",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "native",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "native-run",
+        "exit": 0,
+        "output": ""
+      }
+    ]
+  },
+  {
+    "source": "/workspace/image-tuple-array-repros/tuple-empty-first.fern",
+    "runs": [
+      {
+        "label": "go-check",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "go-interp",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "self-check",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "native",
+        "exit": 3,
+        "output": "FERN_SEM_IR: main: unresolved type of binding $binding$0$cases: \nFERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each\n"
+      }
+    ]
+  },
+  {
+    "source": "/workspace/image-tuple-array-repros/tuple-explicit-control.fern",
+    "runs": [
+      {
+        "label": "go-check",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "go-interp",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "self-check",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "native",
+        "exit": 0,
+        "output": ""
+      },
+      {
+        "label": "native-run",
+        "exit": 0,
+        "output": ""
+      }
+    ]
+  }
+]

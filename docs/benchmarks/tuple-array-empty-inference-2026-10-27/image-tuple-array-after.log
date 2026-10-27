@@ -1,0 +1,203 @@
+=== RUN   TestSelfHostTupleArrayEmptyInference
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-first
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-first/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-first/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-first/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-last-control
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-last-control/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-last-control/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-last-control/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/complementary-components
+=== RUN   TestSelfHostTupleArrayEmptyInference/complementary-components/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/complementary-components/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/complementary-components/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-tuple
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-tuple/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-tuple/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-tuple/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-empty-tree
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-empty-tree/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-empty-tree/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-empty-tree/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/array-of-tuples
+=== RUN   TestSelfHostTupleArrayEmptyInference/array-of-tuples/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/array-of-tuples/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/array-of-tuples/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/generic-record
+=== RUN   TestSelfHostTupleArrayEmptyInference/generic-record/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/generic-record/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/generic-record/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/imported-record
+=== RUN   TestSelfHostTupleArrayEmptyInference/imported-record/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/imported-record/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/imported-record/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/record-and-enum-columns
+=== RUN   TestSelfHostTupleArrayEmptyInference/record-and-enum-columns/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/record-and-enum-columns/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/record-and-enum-columns/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/cow-owned-payload
+=== RUN   TestSelfHostTupleArrayEmptyInference/cow-owned-payload/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/cow-owned-payload/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/cow-owned-payload/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/explicit-control
+=== RUN   TestSelfHostTupleArrayEmptyInference/explicit-control/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/explicit-control/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/explicit-control/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/call-peer-and-order
+=== RUN   TestSelfHostTupleArrayEmptyInference/call-peer-and-order/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/call-peer-and-order/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/call-peer-and-order/wasm32-wasi
+--- PASS: TestSelfHostTupleArrayEmptyInference (42.64s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/empty-first (0.23s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-first/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-first/arm64-linux (0.07s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-first/wasm32-wasi (0.09s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/empty-last-control (0.18s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-last-control/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-last-control/arm64-linux (0.11s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-last-control/wasm32-wasi (0.03s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/complementary-components (0.14s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/complementary-components/x86-64-linux (0.07s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/complementary-components/arm64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/complementary-components/wasm32-wasi (0.03s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/nested-tuple (0.09s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/nested-tuple/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/nested-tuple/arm64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/nested-tuple/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/nested-empty-tree (0.15s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/nested-empty-tree/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/nested-empty-tree/arm64-linux (0.04s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/nested-empty-tree/wasm32-wasi (0.06s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/array-of-tuples (0.11s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/array-of-tuples/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/array-of-tuples/arm64-linux (0.05s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/array-of-tuples/wasm32-wasi (0.03s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/generic-record (0.18s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/generic-record/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/generic-record/arm64-linux (0.07s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/generic-record/wasm32-wasi (0.05s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/imported-record (0.26s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/imported-record/x86-64-linux (0.09s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/imported-record/arm64-linux (0.11s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/imported-record/wasm32-wasi (0.04s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/record-and-enum-columns (1.47s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/record-and-enum-columns/x86-64-linux (0.29s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/record-and-enum-columns/arm64-linux (0.22s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/record-and-enum-columns/wasm32-wasi (0.20s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/cow-owned-payload (0.14s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/cow-owned-payload/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/cow-owned-payload/arm64-linux (0.05s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/cow-owned-payload/wasm32-wasi (0.04s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/explicit-control (0.08s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/explicit-control/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/explicit-control/arm64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/explicit-control/wasm32-wasi (0.01s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/call-peer-and-order (0.11s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/call-peer-and-order/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/call-peer-and-order/arm64-linux (0.03s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/call-peer-and-order/wasm32-wasi (0.02s)
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034],error[E043], got error[E034]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementstuple-arity3051936873/001/main.fern:2:41: error[E034]: array element: expected (unknown[], i32), got (i32[], i32, i32)
+            function main():i32 {  let rows=[([],0),([1],1,2)]; return rows.len(); }
+                                                    ^
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034],error[E043], got error[E034]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementstuple-arity3051936873/001/main.fern:2:41: error[E034]: array element: expected (unknown[], i32), got (i32[], i32, i32)
+            function main():i32 {  let rows=[([],0),([1],1,2)]; return rows.len(); }
+                                                    ^
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034],error[E043], got error[E034]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementstuple-arity3051936873/001/main.fern:2:41: error[E034]: array element: expected (unknown[], i32), got (i32[], i32, i32)
+            function main():i32 {  let rows=[([],0),([1],1,2)]; return rows.len(); }
+                                                    ^
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034],error[E043], got error[E034]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementsowned-view2783224525/001/main.fern:2:84: error[E034]: array element: expected (unknown[], i32), got ([i32], i32)
+            function main():i32 { let owned=[1]; let borrowed:[i32]=owned[:]; let rows=[([],0),(borrowed,1)]; return rows.len(); }
+                                                                                               ^
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034],error[E043], got error[E034]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementsowned-view2783224525/001/main.fern:2:84: error[E034]: array element: expected (unknown[], i32), got ([i32], i32)
+            function main():i32 { let owned=[1]; let borrowed:[i32]=owned[:]; let rows=[([],0),(borrowed,1)]; return rows.len(); }
+                                                                                               ^
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034],error[E043], got error[E034]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementsowned-view2783224525/001/main.fern:2:84: error[E034]: array element: expected (unknown[], i32), got ([i32], i32)
+            function main():i32 { let owned=[1]; let borrowed:[i32]=owned[:]; let rows=[([],0),(borrowed,1)]; return rows.len(); }
+                                                                                               ^
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E001],error[E043], got error[E001]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementsunknown-call2804772511/001/main.fern:2:42: error[E001]: cannot find "missing" in this scope
+            function main():i32 {  let rows=[([],0),(missing(),1)]; return rows.len(); }
+                                                     ^~~~~~~
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E001],error[E043], got error[E001]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementsunknown-call2804772511/001/main.fern:2:42: error[E001]: cannot find "missing" in this scope
+            function main():i32 {  let rows=[([],0),(missing(),1)]; return rows.len(); }
+                                                     ^~~~~~~
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E001],error[E043], got error[E001]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementsunknown-call2804772511/001/main.fern:2:42: error[E001]: cannot find "missing" in this scope
+            function main():i32 {  let rows=[([],0),(missing(),1)]; return rows.len(); }
+                                                     ^~~~~~~
+--- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements (1.54s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity (0.01s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view (0.01s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call (0.01s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/wasm32-wasi (0.00s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	44.204s
+FAIL

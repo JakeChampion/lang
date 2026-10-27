@@ -1,0 +1,24 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-v",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^TestSelfHost(CheckerX86_64|CheckerArm64|CheckerCodesX86_64|CheckerDifferentialX86_64|CheckerBundleDifferentialX86_64|DiagnosticTextParity)$",
+    "-count=1",
+    "-timeout=15m"
+  ],
+  "source_commit": "9c4085d83796cb46356a42ea51aa4ad7df69c2db",
+  "exit_code": 0,
+  "elapsed_seconds": 320.8598843679938,
+  "PASS_nodes": 4756,
+  "FAIL_nodes": 0,
+  "SKIP_nodes": 0,
+  "sha256": {
+    "/workspace/lang-image-tuple-array-inference/compiler/checker.fern": "47ed3de6170b4f0ca2f79f1a6dea0e6c108adb82bb2d756e85d5a432a14b9088",
+    "/workspace/lang-image-tuple-array-inference/internal/testing/e2ecompiler/self_host_tuple_array_empty_inference_test.go": "5da019d1b107e1004acb45c95712eab24d4ee4ed3641aae7cfacdab826a2d37c",
+    "/workspace/lang-image-tuple-array-inference/bin/fern": "d1721835de31a7cc774df13ec7322a2d981066c442fcefe8611a19fc4ec4417b"
+  },
+  "sources_unchanged": true
+}
