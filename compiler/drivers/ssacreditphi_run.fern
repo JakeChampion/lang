@@ -24,18 +24,21 @@ function require(ok: boolean, id: i32): void {
   }
 }
 
-function must(j: phi.Joined, id: i32): phi.Joined {
-  if (j.error != "") {
-    print(j.error);
-    exit(id);
-  }
-  return j;
+function must(j: Result[phi.Joined, guard.BuildError], id: i32): phi.Joined {
+  return match (j) { Ok(value) => value, Err(error) => { print(error.message); exit(id); } };
 }
 
-function reject(j: phi.Joined, why: string, id: i32): void {
-  if (j.error != why || j.bindings.len() != 0) {
-    print(j.error);
-    exit(id);
+function reject(j: Result[phi.Joined, guard.BuildError], why: string, id: i32): void {
+  match (j) {
+    Ok(_) => {
+      exit(id);
+    },
+    Err(error) => {
+      if (error.message != why) {
+        print(error.message);
+        exit(id);
+      }
+    }
   }
 }
 
@@ -70,7 +73,7 @@ function sparse_id(id: i32, nvals: i32): i32 {
   return id * 17;
 }
 
-function both(a: guard.Arena, block: ssa.SBlock, edges: phi.Edge[], nvals: i32): phi.Joined {
+function both(a: guard.Arena, block: ssa.SBlock, edges: phi.Edge[], nvals: i32): Result[phi.Joined, guard.BuildError] {
   let dense = phi.merge(a, block, edges, nvals);
   let ids: i32[] = [];
   let i = nvals - 1;
@@ -97,15 +100,31 @@ function both(a: guard.Arena, block: ssa.SBlock, edges: phi.Edge[], nvals: i32):
     mapped = mapped.append(phi.Edge { ...e, values: values });
   }
   let sparse = phi.merge_mapped(a, ssa.SBlock { ...block, insts: insts }, mapped, 2147483647, ids);
-  require(sparse.error == dense.error && sparse.bindings.len() == dense.bindings.len(), 60);
-  require(sparse.path == dense.path, 61);
-  i = 0;
-  for binding in dense.bindings {
-    let other = sparse.bindings[i];
-    require(other.result == sparse_id(binding.result, nvals) && other.value.kind == binding.value.kind && other.value.identity == binding.value.identity && other.value.available == binding.value.available, 62);
-    i = i + 1;
+  match (dense) {
+    Ok(value) => {
+      let other: phi.Joined = match (sparse) { Ok(found) => found, Err(_) => { exit(60); } };
+      require(other.bindings.len() == value.bindings.len(), 60);
+      require(other.path == value.path, 61);
+      i = 0;
+      for binding in value.bindings {
+        let mapped_binding = other.bindings[i];
+        require(mapped_binding.result == sparse_id(binding.result, nvals) && mapped_binding.value.kind == binding.value.kind && mapped_binding.value.identity == binding.value.identity && mapped_binding.value.available == binding.value.available, 62);
+        i = i + 1;
+      }
+      return Ok(value);
+    },
+    Err(error) => {
+      match (sparse) {
+        Ok(_) => {
+          exit(60);
+        },
+        Err(other) => {
+          require(other.message == error.message, 60);
+        }
+      }
+      return Err(error);
+    }
   }
-  return dense;
 }
 
 function mapping_checks(): void {
@@ -125,6 +144,11 @@ function mapping_checks(): void {
   reject(phi.merge_mapped(got.arena, block, [edge], 2147483647, [17, 18]), "invalid phi block definition", 68);
   reject(phi.merge_mapped(got.arena, block, [edge], 2147483647, [18, 2147483646]), "invalid acyclic phi operand", 69);
   reject(phi.merge_mapped(got.arena, block, [phi.Edge { ...edge, path: zero.id }], 2147483647, [18, 2147483646]), "invalid acyclic phi operand", 70);
+  let no_phis = ssa.SBlock { ...block, insts: [] };
+  let empty = must(phi.merge_mapped(got.arena, no_phis, [edge], 2147483647, ids), 71);
+  require(empty.bindings.len() == 0 && guard.is_constant(empty.arena, empty.path, 1), 72);
+  let unreachable = must(phi.merge_mapped(got.arena, no_phis, [phi.Edge { ...edge, path: zero.id }], 2147483647, ids), 73);
+  require(unreachable.bindings.len() == 0 && guard.is_constant(unreachable.arena, unreachable.path, 0), 74);
 }
 
 function unit_checks(): void {

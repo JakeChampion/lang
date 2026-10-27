@@ -798,11 +798,17 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
       let b = f.blocks[chosen];
       c = Context { ...c, state: incoming[chosen].state };
       if (b.id != f.entry) {
-        let phis = phi.merge_mapped(c.arena, b, incoming[chosen].edges, f.nvals, c.ids);
-        c = Context { ...c, arena: phis.arena, error: phis.error };
-        c = equal(c, 1, phis.path, c.state.path, "phi edge coverage mismatch");
-        for binding in phis.bindings {
-          c = Context { ...c, values: c.values.with(util.index_of_i32(c.ids, binding.result), binding.value) };
+        match (phi.merge_mapped(c.arena, b, incoming[chosen].edges, f.nvals, c.ids)) {
+          Ok(phis) => {
+            c = Context { ...c, arena: phis.arena, error: "" };
+            c = equal(c, 1, phis.path, c.state.path, "phi edge coverage mismatch");
+            for binding in phis.bindings {
+              c = Context { ...c, values: c.values.with(util.index_of_i32(c.ids, binding.result), binding.value) };
+            }
+          },
+          Err(error) => {
+            c = Context { ...c, arena: error.arena, error: error.message };
+          }
         }
       }
       for op in b.insts {

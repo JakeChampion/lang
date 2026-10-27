@@ -1074,6 +1074,23 @@ findings. Ranked by leverage.
   Extraction, phi, and reuse time ratios are 0.978, 1.023, and 1.024.
   These probes establish no general compiler speed change.
 
+  Phi joins return `Result[Joined, guard.BuildError]`.
+  A successful join contains the arena, bindings, and path.
+  A failed join carries its partial arena and diagnostic through the shared error type.
+  Empty bindings and a zero path remain valid success data.
+  The consumer applies bindings and path checks after `Ok`.
+
+  Nineteen direct records retain complete arena and outcome data on x86-64, ARM64, and Wasm.
+  Four new controls pin successful empty joins with true and false paths.
+  All 865 solver snapshots remain exact on all three targets through separate probe copies.
+  A native sanitizer probe releases all 2,515 allocations, with zero live bytes.
+  The phi and reuse suites pass all six target cases with balanced sanitizer checks.
+
+  Twenty paired runs per complete proof workload retain exact output.
+  Phi and reuse time ratios are 1.009 and 1.021.
+  Both benchmark variants include the same four new controls.
+  These measurements cover the two proof drivers, without compilation.
+
   Printer recognition uses `Option[UseSugar]` and `Option[ForCSugar]`.
   Absent forms no longer contain placeholder calls, bodies, or loop conditions.
   Layout, statement output, and lint scores match the option before they use a payload.

@@ -8,10 +8,10 @@ pub struct Edge { predecessor: i32, path: i32, values: Value[] }
 
 pub struct Binding { result: i32, value: Value }
 
-pub struct Joined { arena: guard.Arena, bindings: Binding[], path: i32, error: string }
+pub struct Joined { arena: guard.Arena, bindings: Binding[], path: i32 }
 
-function failed(a: guard.Arena, why: string): Joined {
-  return Joined { arena: a, bindings: [], path: -1, error: why };
+function failed(a: guard.Arena, why: string): Result[Joined, guard.BuildError] {
+  return Err(guard.BuildError { arena: a, message: why });
 }
 
 function implies(a: guard.Arena, path: i32, condition: i32): Result[guard.Built, guard.BuildError] {
@@ -21,11 +21,11 @@ function implies(a: guard.Arena, path: i32, condition: i32): Result[guard.Built,
   return guard.combine(inverse.arena, 4, path, inverse.id);
 }
 
-pub function merge(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32): Joined {
+pub function merge(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32): Result[Joined, guard.BuildError] {
   return merge_values(a, block, edges, nvals, [], nvals);
 }
 
-pub function merge_mapped(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32, ids: i32[]): Joined {
+pub function merge_mapped(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32, ids: i32[]): Result[Joined, guard.BuildError] {
   if (nvals < 1 || ids.len() == 0) {
     return failed(a, "invalid phi value mapping");
   }
@@ -49,7 +49,7 @@ function value_slot(ids: i32[], id: i32, nvals: i32): i32 {
   return util.index_of_i32(ids, id);
 }
 
-function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32, ids: i32[], count: i32): Joined {
+function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32, ids: i32[], count: i32): Result[Joined, guard.BuildError] {
   if (nvals < 1 || block.preds.len() == 0 || edges.len() != block.preds.len()) {
     return failed(a, "phi predecessor count");
   }
@@ -141,7 +141,7 @@ function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i
       bindings = bindings.append(Binding { result: op.result, value: Value { kind: kind, identity: identity, available: path } });
     }
   }
-  return Joined { arena: arena, bindings: bindings, path: path, error: "" };
+  return Ok(Joined { arena: arena, bindings: bindings, path: path });
 }
 
 pub function is_null(a: guard.Arena, value: Value, path: i32): Result[guard.Built, guard.BuildError] {
