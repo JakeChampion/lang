@@ -74,7 +74,7 @@ function clipping_and_domains(): test.TestOutcome {
 
 function gamma_extremes(): test.TestOutcome {
   for input in [0.0, -0.0, f64_from_bits(1), 0.5, 1.0] {
-    for (kind, coefficients) in [(0, [65536]), (1, [65536, 65536, 0]), (2, [65536, 65536, 0, 0]), (3, [65536, 65536, 0, 65536, 32768]), (4, [65536, 65536, 0, 65536, 32768, 0, 0])] {
+    for (kind, coefficients) in [(0, [65536]), (1, [65536, 65536, 0]), (2, [65536, 65536, 0, 0]), (3, [65536, 65536, 0, 65536, 32768]), (4, [65536, 65536, 0, 65536, 32768, 0, 0]), (3, [131072, 65536, 0, 65536, 65536]), (3, [65536, 65536, 0, 0, 0]), (4, [131072, 65536, 0, 65536, 65536, 0, 0]), (4, [65536, 65536, 0, 131072, 0, 0, 65536])] {
       if (match (evaluate(kind, coefficients, input)) { Ok(v) => f64_bits(v) != f64_bits(input), Err(_) => true }) {
         return test.fail("exact identities across all five forms including negative zero");
       }

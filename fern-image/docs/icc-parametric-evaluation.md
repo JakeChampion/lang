@@ -53,13 +53,16 @@ It does not establish correct rounding or a universal accuracy bound.
 A declared large-slope control has an ideal result near `0.999999880792536599`.
 An ordinary rounded-base power differs by approximately `1.81899e-12` and fails the predeclared `1e-12` criterion.
 The dedicated corrected regression requires error at most `1e-15`.
-General algebraic identity forms preserve the original input bits across all five functions.
+Selected power or linear formulas that are algebraic identities preserve input bits, independent of unused branch coefficients.
 That identity check follows full shape and domain admission.
 It does not bypass invalid public values.
 
 The expanded identity control first exposed a negative-zero sign loss in the new implementation.
 Its failed native observation and source remain separate from later passes.
 The general identity path corrects that behavior without an input-specific exception.
+An additional four-case probe then exposed selected-branch identities with different unused coefficients.
+Its exit four remains a failure despite the earlier corpus pass.
+Branch-specific algebraic checks correct those paths after full public admission.
 
 ## Ownership, cancellation, and scope
 
@@ -78,7 +81,7 @@ All compiled unit heaps are nonzero and balanced with zero live blocks.
 Issue #13669 declares the initial domain and absolute error criterion of `1e-12` before implementation.
 The independent generator uses Fraction expressions for exact branches and affine terms from the original IEEE input.
 It then uses 90-digit Decimal powers with an explicit wide exponent range and standard clipping.
-The 1,453 vectors include 1,325 successful evaluations and 128 expected errors.
+The 1,497 vectors include 1,369 successful evaluations and 128 expected errors.
 They cover adjacent branches, subnormals, wire extremes, large slopes, output clipping, identities, frozen curve values, unsupported domains, and cancellation.
 
 The collector requires exact errors, poll counts, row identities, finite output, exact identity bits, and the declared finite numerical criterion.

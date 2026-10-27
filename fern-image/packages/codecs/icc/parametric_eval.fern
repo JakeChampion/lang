@@ -83,7 +83,7 @@ function finish(value: f64, cancelled: () => boolean): Result[f64, EvalError] {
   return Ok(if (value < 0.0) { 0.0 } else if (value > 1.0) { 1.0 } else { value });
 }
 
-function identity(data: tag_data.ParametricData): boolean {
+function power_identity(data: tag_data.ParametricData): boolean {
   let values = data.coefficients;
   if (values[0] != 65536) {
     return false;
@@ -94,7 +94,7 @@ function identity(data: tag_data.ParametricData): boolean {
   if (values[1] != 65536 || values[2] != 0) {
     return false;
   }
-  return match (data.function_type) { 1 => true, 2 => values[3] == 0, 3 => values[3] == 65536, _ => values[3] == 65536 && values[5] == 0 && values[6] == 0 };
+  return match (data.function_type) { 1 => true, 2 => values[3] == 0, 3 => true, _ => values[5] == 0 };
 }
 
 pub function evaluate(data: tag_data.ParametricData, input: f64, cancelled: () => boolean): Result[f64, EvalError] {
@@ -105,7 +105,7 @@ pub function evaluate(data: tag_data.ParametricData, input: f64, cancelled: () =
   if (cancelled()) {
     return Err(EvalError.Cancelled);
   }
-  if (identity(data)) {
+  if (data.function_type <= 2 && power_identity(data)) {
     return finish(input, cancelled);
   }
   let values = data.coefficients;
@@ -119,8 +119,14 @@ pub function evaluate(data: tag_data.ParametricData, input: f64, cancelled: () =
     return finish(if (data.function_type == 2) { value + values[3] as f64 / 65536.0 } else { value }, cancelled);
   }
   if (input >= values[4] as f64 / 65536.0) {
+    if (power_identity(data)) {
+      return finish(input, cancelled);
+    }
     let value = powered(base, gamma);
     return finish(if (data.function_type == 4) { value + values[5] as f64 / 65536.0 } else { value }, cancelled);
+  }
+  if (values[3] == 65536 && (data.function_type == 3 || values[6] == 0)) {
+    return finish(input, cancelled);
   }
   let linear = affine(values[3] as f64 / 65536.0, input, if (data.function_type == 4) { values[6] as f64 / 65536.0 } else { 0.0 });
   return finish(linear.high + linear.low, cancelled);

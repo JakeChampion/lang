@@ -27,13 +27,15 @@ def packet(case):
 
 def reference(function, raw, x):
     v = [Fraction(n, 65536) for n in raw]
-    identity = raw[0] == 65536 and (function == 0 or raw[1:3] == [65536, 0]
-                and (function == 1 or function == 2 and raw[3] == 0 or function == 3 and raw[3] == 65536
-                     or function == 4 and raw[3] == 65536 and raw[5:] == [0, 0]))
+    t = Fraction(x)
+    if function >= 3 and t < v[4]:
+        identity = raw[3] == 65536 and (function == 3 or raw[6] == 0)
+    else:
+        identity = raw[0] == 65536 and (function == 0 or raw[1:3] == [65536, 0]
+                    and (function in (1, 3) or function == 2 and raw[3] == 0 or function == 4 and raw[5] == 0))
     if identity:
         f = Fraction(x)
         return dict(fraction=[str(f.numerator), str(f.denominator)], exact_bits=bits(x))
-    t = Fraction(x)
     if function >= 3 and t < v[4]:
         f = v[3] * t + (v[6] if function == 4 else 0)
         f = max(Fraction(0), min(Fraction(1), f))
@@ -85,6 +87,10 @@ def generate():
                 for i, x in enumerate(points):
                     if 0 <= x <= 1:
                         add(f"branches-{function}-{gamma}-{a}-{b}-{i}", function, values, x)
+    for j, (function, values) in enumerate([(3, [131072, 65536, 0, 65536, 65536]), (3, [65536, 65536, 0, 0, 0]),
+                                          (4, [131072, 65536, 0, 65536, 65536, 0, 0]), (4, [65536, 65536, 0, 131072, 0, 0, 65536])]):
+        for i, x in enumerate(inputs):
+            add(f"selected-identity-{j}-{i}", function, values, x)
     for i in range(160):
         function = rng.randrange(1, 5)
         gamma = rng.randrange(65536, 2147483648)
