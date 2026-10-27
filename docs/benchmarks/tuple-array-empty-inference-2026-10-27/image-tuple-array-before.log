@@ -1,0 +1,294 @@
+=== RUN   TestSelfHostTupleArrayEmptyInference
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-first
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-first/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target x86-64-linux /tmp/TestSelfHostTupleArrayEmptyInferenceempty-first3268004711/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-first/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target arm64-linux /tmp/TestSelfHostTupleArrayEmptyInferenceempty-first3268004711/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-first/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target wasm32-wasi /tmp/TestSelfHostTupleArrayEmptyInferenceempty-first3268004711/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-last-control
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-last-control/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-last-control/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/empty-last-control/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/complementary-components
+=== RUN   TestSelfHostTupleArrayEmptyInference/complementary-components/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target x86-64-linux /tmp/TestSelfHostTupleArrayEmptyInferencecomplementary-components2814874793/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/complementary-components/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target arm64-linux /tmp/TestSelfHostTupleArrayEmptyInferencecomplementary-components2814874793/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/complementary-components/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target wasm32-wasi /tmp/TestSelfHostTupleArrayEmptyInferencecomplementary-components2814874793/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-tuple
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-tuple/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target x86-64-linux /tmp/TestSelfHostTupleArrayEmptyInferencenested-tuple390761735/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-tuple/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target arm64-linux /tmp/TestSelfHostTupleArrayEmptyInferencenested-tuple390761735/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-tuple/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target wasm32-wasi /tmp/TestSelfHostTupleArrayEmptyInferencenested-tuple390761735/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-empty-tree
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-empty-tree/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target x86-64-linux /tmp/TestSelfHostTupleArrayEmptyInferencenested-empty-tree2102439786/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-empty-tree/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target arm64-linux /tmp/TestSelfHostTupleArrayEmptyInferencenested-empty-tree2102439786/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/nested-empty-tree/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target wasm32-wasi /tmp/TestSelfHostTupleArrayEmptyInferencenested-empty-tree2102439786/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/array-of-tuples
+=== RUN   TestSelfHostTupleArrayEmptyInference/array-of-tuples/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target x86-64-linux /tmp/TestSelfHostTupleArrayEmptyInferencearray-of-tuples1460301918/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/array-of-tuples/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target arm64-linux /tmp/TestSelfHostTupleArrayEmptyInferencearray-of-tuples1460301918/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/array-of-tuples/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target wasm32-wasi /tmp/TestSelfHostTupleArrayEmptyInferencearray-of-tuples1460301918/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/generic-record
+=== RUN   TestSelfHostTupleArrayEmptyInference/generic-record/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target x86-64-linux /tmp/TestSelfHostTupleArrayEmptyInferencegeneric-record1094575980/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/generic-record/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target arm64-linux /tmp/TestSelfHostTupleArrayEmptyInferencegeneric-record1094575980/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/generic-record/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target wasm32-wasi /tmp/TestSelfHostTupleArrayEmptyInferencegeneric-record1094575980/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/imported-record
+=== RUN   TestSelfHostTupleArrayEmptyInference/imported-record/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target x86-64-linux /tmp/TestSelfHostTupleArrayEmptyInferenceimported-record3393482935/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/imported-record/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target arm64-linux /tmp/TestSelfHostTupleArrayEmptyInferenceimported-record3393482935/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/imported-record/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target wasm32-wasi /tmp/TestSelfHostTupleArrayEmptyInferenceimported-record3393482935/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/record-and-enum-columns
+    self_host_tuple_array_empty_inference_test.go:42: Go -check: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyInferencerecord-and-enum-columns832088912/001/main.fern:2:227: error[E041]: cannot compare values of type Kind with "!=": type does not implement `Eq` — add `@derive(cmp.Eq)` (or `impl cmp.Eq for Kind`), which requires `import "core/cmp";`, so `==` can use structural equality
+            function main():i32 { let seed=args()[0]+"-tuple-array-owned-payload"; if (seed.len()<24) { return 90; } let rows=[([],Point {n:0},Kind.Empty),([seed],Point {n:1},Kind.Present)]; let n=0; for (xs,p,k) in rows { if (p.n==0 && k!=Kind.Empty || p.n==1 && k!=Kind.Present) { return 2; } n=n+xs.len()+p.n; } return n-2; }
+                                                                                                                                                                                                                                              ^
+        /tmp/TestSelfHostTupleArrayEmptyInferencerecord-and-enum-columns832088912/001/main.fern:2:254: error[E041]: cannot compare values of type Kind with "!=": type does not implement `Eq` — add `@derive(cmp.Eq)` (or `impl cmp.Eq for Kind`), which requires `import "core/cmp";`, so `==` can use structural equality
+            function main():i32 { let seed=args()[0]+"-tuple-array-owned-payload"; if (seed.len()<24) { return 90; } let rows=[([],Point {n:0},Kind.Empty),([seed],Point {n:1},Kind.Present)]; let n=0; for (xs,p,k) in rows { if (p.n==0 && k!=Kind.Empty || p.n==1 && k!=Kind.Present) { return 2; } n=n+xs.len()+p.n; } return n-2; }
+                                                                                                                                                                                                                                                                         ^
+=== RUN   TestSelfHostTupleArrayEmptyInference/cow-owned-payload
+=== RUN   TestSelfHostTupleArrayEmptyInference/cow-owned-payload/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target x86-64-linux /tmp/TestSelfHostTupleArrayEmptyInferencecow-owned-payload2735672646/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/cow-owned-payload/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target arm64-linux /tmp/TestSelfHostTupleArrayEmptyInferencecow-owned-payload2735672646/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/cow-owned-payload/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target wasm32-wasi /tmp/TestSelfHostTupleArrayEmptyInferencecow-owned-payload2735672646/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$1$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/explicit-control
+=== RUN   TestSelfHostTupleArrayEmptyInference/explicit-control/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/explicit-control/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyInference/explicit-control/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyInference/call-peer-and-order
+=== RUN   TestSelfHostTupleArrayEmptyInference/call-peer-and-order/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target x86-64-linux /tmp/TestSelfHostTupleArrayEmptyInferencecall-peer-and-order884240891/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$2$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/call-peer-and-order/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target arm64-linux /tmp/TestSelfHostTupleArrayEmptyInferencecall-peer-and-order884240891/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$2$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyInference/call-peer-and-order/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:47: self-host CLI -target wasm32-wasi /tmp/TestSelfHostTupleArrayEmptyInferencecall-peer-and-order884240891/001/main.fern: exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$2$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+--- FAIL: TestSelfHostTupleArrayEmptyInference (36.26s)
+    --- FAIL: TestSelfHostTupleArrayEmptyInference/empty-first (0.03s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/empty-first/x86-64-linux (0.01s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/empty-first/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/empty-first/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/empty-last-control (0.16s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-last-control/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-last-control/arm64-linux (0.07s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/empty-last-control/wasm32-wasi (0.05s)
+    --- FAIL: TestSelfHostTupleArrayEmptyInference/complementary-components (0.02s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/complementary-components/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/complementary-components/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/complementary-components/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostTupleArrayEmptyInference/nested-tuple (0.02s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/nested-tuple/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/nested-tuple/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/nested-tuple/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostTupleArrayEmptyInference/nested-empty-tree (0.02s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/nested-empty-tree/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/nested-empty-tree/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/nested-empty-tree/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostTupleArrayEmptyInference/array-of-tuples (0.01s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/array-of-tuples/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/array-of-tuples/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/array-of-tuples/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostTupleArrayEmptyInference/generic-record (0.02s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/generic-record/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/generic-record/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/generic-record/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostTupleArrayEmptyInference/imported-record (0.02s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/imported-record/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/imported-record/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/imported-record/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostTupleArrayEmptyInference/record-and-enum-columns (0.00s)
+    --- FAIL: TestSelfHostTupleArrayEmptyInference/cow-owned-payload (0.02s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/cow-owned-payload/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/cow-owned-payload/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/cow-owned-payload/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyInference/explicit-control (0.17s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/explicit-control/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/explicit-control/arm64-linux (0.05s)
+        --- PASS: TestSelfHostTupleArrayEmptyInference/explicit-control/wasm32-wasi (0.04s)
+    --- FAIL: TestSelfHostTupleArrayEmptyInference/call-peer-and-order (0.02s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/call-peer-and-order/x86-64-linux (0.01s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/call-peer-and-order/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyInference/call-peer-and-order/wasm32-wasi (0.00s)
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034],error[E043], got error[E034]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementstuple-arity3893295741/001/main.fern:2:41: error[E034]: array element: expected (unknown[], i32), got (i32[], i32, i32)
+            function main():i32 {  let rows=[([],0),([1],1,2)]; return rows.len(); }
+                                                    ^
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034],error[E043], got error[E034]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementstuple-arity3893295741/001/main.fern:2:41: error[E034]: array element: expected (unknown[], i32), got (i32[], i32, i32)
+            function main():i32 {  let rows=[([],0),([1],1,2)]; return rows.len(); }
+                                                    ^
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034],error[E043], got error[E034]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementstuple-arity3893295741/001/main.fern:2:41: error[E034]: array element: expected (unknown[], i32), got (i32[], i32, i32)
+            function main():i32 {  let rows=[([],0),([1],1,2)]; return rows.len(); }
+                                                    ^
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/x86-64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/arm64-linux
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/wasm32-wasi
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034], got : exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$0$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034], got : exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$0$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034], got : exit status 3
+        FERN_SEM_IR: main: unresolved type of binding $binding$0$rows: 
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034],error[E043], got error[E034]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementsowned-view3008964422/001/main.fern:2:84: error[E034]: array element: expected (unknown[], i32), got ([i32], i32)
+            function main():i32 { let owned=[1]; let borrowed:[i32]=owned[:]; let rows=[([],0),(borrowed,1)]; return rows.len(); }
+                                                                                               ^
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034],error[E043], got error[E034]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementsowned-view3008964422/001/main.fern:2:84: error[E034]: array element: expected (unknown[], i32), got ([i32], i32)
+            function main():i32 { let owned=[1]; let borrowed:[i32]=owned[:]; let rows=[([],0),(borrowed,1)]; return rows.len(); }
+                                                                                               ^
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E034],error[E043], got error[E034]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementsowned-view3008964422/001/main.fern:2:84: error[E034]: array element: expected (unknown[], i32), got ([i32], i32)
+            function main():i32 { let owned=[1]; let borrowed:[i32]=owned[:]; let rows=[([],0),(borrowed,1)]; return rows.len(); }
+                                                                                               ^
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/x86-64-linux
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E001],error[E043], got error[E001]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementsunknown-call747534204/001/main.fern:2:42: error[E001]: cannot find "missing" in this scope
+            function main():i32 {  let rows=[([],0),(missing(),1)]; return rows.len(); }
+                                                     ^~~~~~~
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/arm64-linux
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E001],error[E043], got error[E001]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementsunknown-call747534204/001/main.fern:2:42: error[E001]: cannot find "missing" in this scope
+            function main():i32 {  let rows=[([],0),(missing(),1)]; return rows.len(); }
+                                                     ^~~~~~~
+=== RUN   TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/wasm32-wasi
+    self_host_tuple_array_empty_inference_test.go:91: diagnostic sequence error[E001],error[E043], got error[E001]: exit status 1
+        /tmp/TestSelfHostTupleArrayEmptyRejectsMixedElementsunknown-call747534204/001/main.fern:2:42: error[E001]: cannot find "missing" in this scope
+            function main():i32 {  let rows=[([],0),(missing(),1)]; return rows.len(); }
+                                                     ^~~~~~~
+--- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements (1.52s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/material-types/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity (0.01s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/tuple-arity/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/array-depth/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nested-depth/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records (0.01s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/arm64-linux (0.00s)
+        --- PASS: TestSelfHostTupleArrayEmptyRejectsMixedElements/nominal-records/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records (0.01s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/generic-records/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view (0.01s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/owned-view/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call (0.01s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostTupleArrayEmptyRejectsMixedElements/unknown-call/wasm32-wasi (0.00s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	37.803s
+FAIL

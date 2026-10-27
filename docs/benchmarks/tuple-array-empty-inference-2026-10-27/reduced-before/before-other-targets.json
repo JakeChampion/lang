@@ -1,0 +1,12 @@
+[
+  {
+    "target": "arm64-linux",
+    "exit": 3,
+    "output": "FERN_SEM_IR: main: unresolved type of binding $binding$0$cases: \nFERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each\n"
+  },
+  {
+    "target": "wasm32-wasi",
+    "exit": 3,
+    "output": "FERN_SEM_IR: main: unresolved type of binding $binding$0$cases: \nFERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each\n"
+  }
+]

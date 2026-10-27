@@ -1,0 +1,6 @@
+function main(): i32 {
+  let cases = [[], [1]];
+  let total: i32 = 0;
+  for values in cases { total = total + values.len(); }
+  return if (total == 1) { 0 } else { 1 };
+}

@@ -1,0 +1,30 @@
+{
+  "inventory_timing": "after focused and ARM image runs; before other image and diagnostic runs finish",
+  "tools": {
+    "go": {
+      "path": "/home/agent/.local/share/mise/installs/go/1.27.3/bin/go",
+      "sha256": "5f5eb6d0b2fb6aa0bb5d5f8c5f1c944e0de955c925f0111af92a9d8f79680b5b",
+      "exit": 0,
+      "version": "go version go1.27.3 linux/amd64",
+      "stderr": ""
+    },
+    "wasmtime": {
+      "path": "/home/agent/.local/share/mise/installs/wasmtime/46.0.1/wasmtime-v46.0.1-x86_64-linux/wasmtime",
+      "sha256": "2b95a43218597466c7e56208af292d410c6d6b002a98d10d76d7273199bcd1ff",
+      "exit": 0,
+      "version": "wasmtime 46.0.1 (823d1b8f2 2026-06-24)",
+      "stderr": ""
+    },
+    "wasm-tools": {
+      "path": "/home/agent/.local/share/mise/installs/wasm-tools/1.253.0/wasm-tools-1.253.0-x86_64-linux/wasm-tools",
+      "sha256": "4781d5b7e1d6cedcd8f2384cf6578f4ed7022d305a6e580bde902c32756ca661",
+      "exit": 0,
+      "version": "wasm-tools 1.253.0 (c799bb87b 2026-07-07)",
+      "stderr": ""
+    },
+    "qemu-aarch64": {
+      "path": "/workspace/image-test-tools/qemu10/usr/bin/qemu-aarch64",
+      "sha256": "73cc2584f119f9e74c85c0a8549dbb6fd104ae3897a06a7500797f9e5b4d0943"
+    }
+  }
+}

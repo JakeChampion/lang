@@ -1,0 +1,97 @@
+package e2ecompiler
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"testing"
+)
+
+func TestSelfHostTupleArrayEmptyInference(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	oracle := buildLangBinForInterp(t)
+	for _, tc := range []struct{ name, declarations, body string }{
+		{"empty-first", "", `let rows=[([],0),([seed],1)]; let n=0; for (xs,id) in rows { for text in xs { if (text!=seed) { return 2; } } n=n+xs.len()+id; } return n-2;`},
+		{"empty-last-control", "", `let rows=[([seed],1),([],0)]; let n=0; for (xs,id) in rows { for text in xs { if (text!=seed) { return 2; } } n=n+xs.len()+id; } return n-2;`},
+		{"complementary-components", "", `let rows=[([],[]),([seed],[]),([],[seed])]; let n=0; for (left,right) in rows { for text in left { if (text!=seed) { return 2; } } for text in right { if (text!=seed) { return 3; } } n=n+left.len()+right.len(); } return n-2;`},
+		{"nested-tuple", "", `let rows=[(([],0),seed),(([seed],1),seed)]; let n=0; for (pair,label) in rows { if (label!=seed) { return 2; } n=n+pair.0.len()+pair.1; } return n-2;`},
+		{"nested-empty-tree", "", `let rows=[([[]],0),([[seed]],1)]; let n=0; for (arrays,id) in rows { for xs in arrays { for text in xs { if (text!=seed) { return 2; } n=n+1; } } n=n+id; } return n-2;`},
+		{"array-of-tuples", "", `let rows=[([],0),([(seed,1)],1)]; let n=0; for (xs,id) in rows { for (text,value) in xs { if (text!=seed) { return 2; } n=n+value; } n=n+xs.len()+id; } return n-3;`},
+		{"generic-record", `struct Box[T] { value: T }`, `let rows=[([],0),([Box {value:seed}],1)]; let n=0; for (xs,id) in rows { for item in xs { if (item.value!=seed) { return 2; } } n=n+xs.len()+id; } return n-2;`},
+		{"imported-record", `import "payload";`, `let rows=[([],0),([payload.pack(seed)],1)]; let n=0; for (xs,id) in rows { for item in xs { if (item.value!=seed) { return 2; } } n=n+xs.len()+id; } return n-2;`},
+		{"record-and-enum-columns", `import "core/cmp"; struct Point { n:i32 } @derive(cmp.Eq) enum Kind { Empty, Present }`, `let rows=[([],Point {n:0},Kind.Empty),([seed],Point {n:1},Kind.Present)]; let n=0; for (xs,p,k) in rows { if (p.n==0 && k!=Kind.Empty || p.n==1 && k!=Kind.Present) { return 2; } n=n+xs.len()+p.n; } return n-2;`},
+		{"cow-owned-payload", "", `let rows=[([],0),([seed],1)]; let changed=rows.with(1,([seed+"-changed"],2)); let inner=rows[1].0.with(0,seed+"-inner"); if (rows[0].0.len()!=0 || rows[0].1!=0 || rows[1].0[0]!=seed || rows[1].1!=1 || changed[1].0[0]!=seed+"-changed" || changed[1].1!=2 || inner[0]!=seed+"-inner") { return 2; } return 0;`},
+		{"explicit-control", "", `let rows:(string[],i32)[]=[([],0),([seed],1)]; let n=0; for (xs,id) in rows { n=n+xs.len()+id; } return n-2;`},
+		{"call-peer-and-order", `function make(state:Cell[i32],value:string,id:i32):(string[],i32) { state.set(state.get()*10+id); return ([value],id); }`, `let state=cell_new(0); let rows=[([],0),make(state,seed,1),make(state,seed,2)]; let n=0; for (xs,id) in rows { for text in xs { if (text!=seed) { return 2; } } n=n+xs.len()+id; } return if (n==5 && state.get()==12) { 0 } else { 3 };`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			module := `pub struct Box[T] { value:T } pub function pack(value:string):Box[string] { return Box {value:value}; }`
+			if err := os.WriteFile(filepath.Join(dir, "payload.fern"), []byte(module), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "main.fern")
+			source := tc.declarations + "\nfunction main():i32 { let seed=args()[0]+\"-tuple-array-owned-payload\"; if (seed.len()<24) { return 90; } " + tc.body + " }\n"
+			if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for _, mode := range []string{"-check", "-interp"} {
+				if out, err := exec.Command(oracle, mode, path).CombinedOutput(); err != nil {
+					t.Fatalf("Go %s: %v\n%s", mode, err, out)
+				}
+			}
+			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+				t.Run(target, func(t *testing.T) {
+					stderr, code := cli.exitOfFile(t, path, target, nil, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+					if code != 0 {
+						t.Fatalf("tuple array exit %d\n%s", code, stderr)
+					}
+					assertBalancedCensus(t, stderr)
+					if strings.Contains(stderr, "allocs=0 ") {
+						t.Fatalf("expected a nonzero owned-payload census\n%s", stderr)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestSelfHostTupleArrayEmptyRejectsMixedElements(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	oracle := buildLangBinForInterp(t)
+	codes := regexp.MustCompile(`error\[E[0-9]+\]`)
+	for _, tc := range []struct{ name, declarations, setup, elements string }{
+		{"material-types", "", "", `[([],0),([1],1),(["wrong"],2)]`},
+		{"tuple-arity", "", "", `[([],0),([1],1,2)]`},
+		{"array-depth", "", "", `[([],0),([1],1),([[1]],2)]`},
+		{"nested-depth", "", "", `[([[]],0),([[1]],1),([1],2)]`},
+		{"nominal-records", `struct A { n:i32 } struct B { n:i32 }`, "", `[([],0),([A {n:1}],1),([B {n:1}],2)]`},
+		{"generic-records", `struct Box[T] { value:T }`, "", `[([],0),([Box {value:1}],1),([Box {value:"wrong"}],2)]`},
+		{"owned-view", "", `let owned=[1]; let borrowed:[i32]=owned[:];`, `[([],0),(borrowed,1)]`},
+		{"unknown-call", "", "", `[([],0),(missing(),1)]`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "main.fern")
+			source := tc.declarations + "\nfunction main():i32 { " + tc.setup + " let rows=" + tc.elements + "; return rows.len(); }\n"
+			if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, err := exec.Command(oracle, "-check", path).CombinedOutput()
+			want := strings.Join(codes.FindAllString(string(out), -1), ",")
+			if err == nil || want == "" {
+				t.Fatalf("expected Go rejection: %v\n%s", err, out)
+			}
+			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+				t.Run(target, func(t *testing.T) {
+					out, err := cli.compileCmd(target, filepath.Join(t.TempDir(), "out"), path).CombinedOutput()
+					got := strings.Join(codes.FindAllString(string(out), -1), ",")
+					if err == nil || got != want {
+						t.Fatalf("diagnostic sequence %s, got %s: %v\n%s", want, got, err, out)
+					}
+				})
+			}
+		})
+	}
+}
