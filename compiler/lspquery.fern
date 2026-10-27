@@ -37,13 +37,7 @@ pub struct SourceSpan { line: i32, col: i32, len: i32 }
 
 pub function hover(p: Program, line: i32, col: i32): Option[Hover] {
   let q: Query = match (query(p, line, col)) { Some(value) => value, None => { return None; } };
-  let text: string = "";
-  if (q.f.kind == K_NONE) {
-    text = type_ref_text(checker.module_scope(q.v), type_candidates(q));
-  } else {
-    let fd: parser.FuncDecl = q.v.mod.funcs[q.f.fd];
-    text = node_text(scope_at(q.v, fd, q.site), fd, q.f, q.site);
-  }
+  let text: string = match (q.f) { Some(f) => { let fd: parser.FuncDecl = q.v.mod.funcs[f.fd]; node_text(scope_at(q.v, fd, q.site), fd, f, q.site) }, None => type_ref_text(checker.module_scope(q.v), type_candidates(q)) };
   if (text.len() == 0) {
     return None;
   }
@@ -65,11 +59,12 @@ pub function hover_doc(p: Program, line: i32, col: i32): string {
 
 function names_a_parameter(p: Program, line: i32, col: i32): boolean {
   let q: Query = match (query(p, line, col)) { Some(value) => value, None => { return false; } };
-  if (q.f.kind == K_NONE || q.f.kind == K_QUALIFIED) {
+  let f: Found = match (q.f) { Some(value) => value, None => { return false; } };
+  if (f.kind == K_QUALIFIED) {
     return false;
   }
-  if let ast.ExprIdent(_) = q.f.expr {
-    let fd: parser.FuncDecl = q.v.mod.funcs[q.f.fd];
+  if let ast.ExprIdent(_) = f.expr {
+    let fd: parser.FuncDecl = q.v.mod.funcs[f.fd];
     let (b, local) = binding_of(fd, q.site);
     return local && is_param(b, fd);
   }
@@ -78,14 +73,12 @@ function names_a_parameter(p: Program, line: i32, col: i32): boolean {
 
 pub function definition(p: Program, line: i32, col: i32): Option[SourceSpan] {
   let q: Query = match (query(p, line, col)) { Some(value) => value, None => { return None; } };
-  if (q.f.kind == K_NONE) {
-    return type_def(p, q.v, checker.module_scope(q.v), type_candidates(q));
-  }
-  let fd: parser.FuncDecl = q.v.mod.funcs[q.f.fd];
-  return node_def(p, q.v, scope_at(q.v, fd, q.site), fd, q.f, q.site);
+  let f: Found = match (q.f) { Some(value) => value, None => { return type_def(p, q.v, checker.module_scope(q.v), type_candidates(q)); } };
+  let fd: parser.FuncDecl = q.v.mod.funcs[f.fd];
+  return node_def(p, q.v, scope_at(q.v, fd, q.site), fd, f, q.site);
 }
 
-pub struct Query { v: checker.QueryView, site: Site, quals: flatten.Qualifiers, f: Found }
+pub struct Query { v: checker.QueryView, site: Site, quals: flatten.Qualifiers, f: Option[Found] }
 
 pub function query(p: Program, line: i32, col: i32): Option[Query] {
   let view: View = view_of(p);
@@ -220,7 +213,7 @@ function dot_ident_after(toks: Tok[], i: i32): boolean {
   return i + 2 < toks.len() && toks[i + 2].ident && punct_before(toks, i + 2, ".") && toks[i + 1].line == toks[i].line;
 }
 
-pub const K_NONE: i32 = 0;
+const K_NONE: i32 = 0;
 
 pub const K_IDENT: i32 = 1;
 
@@ -232,16 +225,19 @@ const K_METHOD: i32 = 4;
 
 const K_STRUCT_LIT: i32 = 5;
 
-struct Probe { site: Site, kind: i32, expr: ast.Expr }
+struct Node { kind: i32, expr: ast.Expr }
+
+struct Probe { site: Site, node: Option[Node] }
 
 function probe(site: Site): Probe {
-  return Probe { site: site, kind: K_NONE, expr: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+  return Probe { site: site, node: None };
 }
 
 function probe_expr(e: ast.Expr, own p: Probe): Probe {
   let k: i32 = node_kind(e, p.site);
-  if (k > p.kind) {
-    return Probe { ...p, kind: k, expr: e };
+  let prior: i32 = match (p.node) { Some(node) => node.kind, None => K_NONE };
+  if (k > prior) {
+    return Probe { ...p, node: Some(Node { kind: k, expr: e }) };
   }
   return p;
 }
@@ -304,20 +300,20 @@ function names(n: string, name: string): boolean {
 
 pub struct Found { kind: i32, expr: ast.Expr, fd: i32 }
 
-function locate(v: checker.QueryView, site: Site): Found {
+function locate(v: checker.QueryView, site: Site): Option[Found] {
   let m: i32 = util.pos_file_index(site.line);
   let i: i32 = 0;
   while (i < v.mod.funcs.len()) {
     let fd: parser.FuncDecl = v.mod.funcs[i];
     if (util.pos_file_index(fd.line) == m) {
       let p: Probe = probe_all(fd.body, site);
-      if (p.kind != K_NONE) {
-        return Found { kind: p.kind, expr: p.expr, fd: i };
+      if let Some(node) = p.node {
+        return Some(Found { kind: node.kind, expr: node.expr, fd: i });
       }
     }
     i = i + 1;
   }
-  return Found { kind: K_NONE, expr: probe(site).expr, fd: 0 - 1 };
+  return None;
 }
 
 function probe_all(stmts: ast.Stmt[], site: Site): Probe {
@@ -329,11 +325,11 @@ function probe_all(stmts: ast.Stmt[], site: Site): Probe {
 }
 
 function holds(stmts: ast.Stmt[], site: Site): boolean {
-  return probe_all(stmts, site).kind != K_NONE;
+  return match (probe_all(stmts, site).node) { Some(_) => true, None => false };
 }
 
 function holds_expr(e: ast.Expr, site: Site): boolean {
-  return astwalk.fold_expr_nodes(e, probe(site), probe_stmt, probe_expr, astwalk.descend_all).kind != K_NONE;
+  return match (astwalk.fold_expr_nodes(e, probe(site), probe_stmt, probe_expr, astwalk.descend_all).node) { Some(_) => true, None => false };
 }
 
 pub function access_site(fa: ast.ExprFieldAccess): Site {
@@ -345,10 +341,7 @@ pub function access_site(fa: ast.ExprFieldAccess): Site {
 // Some(None) identifies a located expression without a signature.
 // Some(Some(parts)) contains a located signature.
 pub function call_parts(v: checker.QueryView, site: Site): Option[Option[Parts]] {
-  let f: Found = locate(v, site);
-  if (f.kind == K_NONE) {
-    return None;
-  }
+  let f: Found = match (locate(v, site)) { Some(value) => value, None => { return None; } };
   let fd: parser.FuncDecl = v.mod.funcs[f.fd];
   let s: checker.Scope = scope_at(v, fd, site);
   match (f.expr) {
@@ -506,10 +499,12 @@ function scope_in_expr(e: ast.Expr, s: checker.Scope, site: Site): checker.Scope
 pub function binding_of(fd: parser.FuncDecl, site: Site): (lexical.Binding, boolean) {
   let r: lexical.ResolvedFunction = lexical.resolve_func(fd);
   let p: Probe = probe_all(r.func.body, site);
-  if let ast.ExprIdent(id) = p.expr {
-    for b in r.bindings {
-      if (b.symbol == id.name) {
-        return (b, true);
+  if let Some(node) = p.node {
+    if let ast.ExprIdent(id) = node.expr {
+      for b in r.bindings {
+        if (b.symbol == id.name) {
+          return (b, true);
+        }
       }
     }
   }

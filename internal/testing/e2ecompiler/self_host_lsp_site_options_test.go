@@ -65,10 +65,12 @@ function main():i32 {
  let mod=parser.parse_module(lexer.tokenize(source));
  let p=lspquery.viewed(lspquery.program(mod,mod,[],[source]));
  let type_q:lspquery.Query=match(lspquery.query(p,2,17)){Some(q)=>q,None=>{return 1;}};
- if(type_q.site.name!="P" || type_q.f.kind!=lspquery.K_NONE || type_q.v.mod.structs.len()==0){return 2;}
+ if(type_q.site.name!="P" || type_q.v.mod.structs.len()==0){return 2;}
+ match(type_q.f){Some(_)=>{return 12;},None=>{}}
  match(lspquery.definition(p,2,17)){Some(d)=>{if(d.line!=1 || d.col!=8 || d.len!=1){return 3;}},None=>{return 4;}}
  let call_q:lspquery.Query=match(lspquery.query(p,3,28)){Some(q)=>q,None=>{return 5;}};
- if(call_q.site.name!="take" || call_q.f.kind!=lspquery.K_IDENT){return 6;}
+ if(call_q.site.name!="take"){return 6;}
+ match(call_q.f){Some(f)=>{if(f.kind!=lspquery.K_IDENT){return 13;}},None=>{return 14;}};
  match(lspquery.query(p,99,1)){Some(_)=>{return 7;},None=>{}}
  match(lspquery.query(p,3,1)){Some(_)=>{return 8;},None=>{}}
  let broken=".foo";let broken_mod=parser.parse_module(lexer.tokenize(broken));

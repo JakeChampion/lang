@@ -41,9 +41,8 @@ function no_target(): Target {
 function target_at(p: lspquery.Program, line: i32, col: i32): Target {
   let q: lspquery.Query = match (lspquery.query(p, line, col)) { Some(value) => value, None => { return no_target(); } };
   let t: Target = no_target();
-  if (q.f.kind != lspquery.K_NONE) {
-    let fd: parser.FuncDecl = q.v.mod.funcs[q.f.fd];
-    t = node_target(p, q, lspquery.scope_at(q.v, fd, q.site), fd);
+  if let Some(f) = q.f {
+    t = node_target(p, q, f);
   } else {
     t = type_target(p, q.v, lspquery.type_candidates(q));
     if (t.kind == R_NONE) {
@@ -53,13 +52,15 @@ function target_at(p: lspquery.Program, line: i32, col: i32): Target {
   return Target { ...t, spelled: q.site.name };
 }
 
-function node_target(p: lspquery.Program, q: lspquery.Query, s: checker.Scope, fd: parser.FuncDecl): Target {
-  match (q.f.expr) {
+function node_target(p: lspquery.Program, q: lspquery.Query, f: lspquery.Found): Target {
+  let fd: parser.FuncDecl = q.v.mod.funcs[f.fd];
+  let s: checker.Scope = lspquery.scope_at(q.v, fd, q.site);
+  match (f.expr) {
     ast.ExprIdent(id) => {
-      if (q.f.kind == lspquery.K_IDENT) {
+      if (f.kind == lspquery.K_IDENT) {
         let (b, local) = lspquery.binding_of(fd, q.site);
         if (local) {
-          return Target { ...no_target(), kind: R_LOCAL, name: b.symbol, fd: q.f.fd, decl: lspquery.local_def(p, b, lspquery.is_param(b, fd), q.site.name) };
+          return Target { ...no_target(), kind: R_LOCAL, name: b.symbol, fd: f.fd, decl: lspquery.local_def(p, b, lspquery.is_param(b, fd), q.site.name) };
         }
       }
       return global_target(p, q.v, s, id.name);

@@ -981,7 +981,7 @@ findings. Ranked by leverage.
   Lexical site queries return `Option[Site]`, and combined queries return `Option[Query]`.
   Absent sites no longer contain placeholder coordinates or a dummy expression query.
   A dot without a receiver returns `None` before the query reads a negative token index.
-  A real lexical site retains its type context when expression discovery returns `K_NONE`.
+  A real lexical site retains its type context without an expression match.
 
   Three inputs with an initial dot crash the native baseline and return `None` after the fix.
   Twenty-one other lexical records retain all site fields.
@@ -991,6 +991,19 @@ findings. Ranked by leverage.
 
   Forty process pairs per input repeat complete cached queries 50 times.
   Candidate/baseline time ratios range from 0.987 to 1.102 across six inputs.
+  These probes establish no general compiler speed change.
+
+  Expression discovery returns `Option[Found]`, and traversal probes hold `Option[Node]`.
+  Absent matches contain no placeholder expression or function index.
+  Successful matches retain their kind, original expression, and function index.
+  Match priority, local scopes, type fallback, and declaration fallback retain their prior behavior.
+
+  Twenty-seven discovery records match the native baseline on x86-64, ARM64, and Wasm.
+  Twenty-five complete records retain hover, definition, documentation, reference, and token output.
+  Across 52 native sanitizer probes, 376,468 allocations match 376,468 releases, with zero live bytes in each process.
+
+  Forty process pairs per input repeat complete cached queries 50 times.
+  Candidate/baseline time ratios range from 0.989 to 1.012 across six inputs.
   These probes establish no general compiler speed change.
 
   Printer recognition uses `Option[UseSugar]` and `Option[ForCSugar]`.
