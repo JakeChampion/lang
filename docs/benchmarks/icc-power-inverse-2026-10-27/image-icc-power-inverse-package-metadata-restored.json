@@ -1,0 +1,6 @@
+{
+  "path": "docs/benchmarks/http-baseline-2026-09-20/loadgen/go.mod",
+  "sha256": "4b761fe36f8301a178e0205e0cb1c943547701af3e64846d6d7c7ba864b8d3b3",
+  "restored_byte_identical_Git": true,
+  "total_historical_code_and_metadata_files_restored": 99
+}

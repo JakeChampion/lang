@@ -1,0 +1,43 @@
+{
+  "source_commit": "5670d814e3a2f394f87bb74ad87753f91d2df285",
+  "records_equal": true,
+  "cases_per_target": 640,
+  "numeric_per_target": 567,
+  "errors_per_target": 73,
+  "workers_per_target": 80,
+  "total_workers": 240,
+  "max_absolute_error": 5.551115123125783e-17,
+  "hash_counts": [
+    1255,
+    1256,
+    1256
+  ],
+  "full_TAP_per_target": 302,
+  "censuses": [
+    82,
+    58,
+    43
+  ],
+  "standalone_ARM_executables": 43,
+  "format_files": 2073,
+  "complexity": {
+    "command": [
+      "go",
+      "test",
+      "-v",
+      "./internal/testing/e2ecompiler",
+      "-run",
+      "^TestSelfHostRepoComplexityRatchet$",
+      "-count=1",
+      "-timeout=10m"
+    ],
+    "exit": 0,
+    "seconds": 93.64003658294678,
+    "PASS": 3,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "Go_oracle_build_source": "8cb3ccf00e945ffda49c889e6cb5b037ebc2976b",
+  "Go_loaded_source": "5670d814e3a2f394f87bb74ad87753f91d2df285",
+  "scope": "Finite standalone ICC function-zero inverse powers. Affine/piecewise inverses and model/transform/encoded integration remain separate."
+}

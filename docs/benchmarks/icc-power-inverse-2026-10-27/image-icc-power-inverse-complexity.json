@@ -1,0 +1,17 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-v",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^TestSelfHostRepoComplexityRatchet$",
+    "-count=1",
+    "-timeout=10m"
+  ],
+  "exit": 0,
+  "seconds": 93.64003658294678,
+  "PASS": 3,
+  "FAIL": 0,
+  "SKIP": 0
+}

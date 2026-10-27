@@ -1,0 +1,23 @@
+from pathlib import Path
+import subprocess,hashlib,json,time
+root=Path('/workspace/lang-image-icc-power-inverse'); oracle=Path('/workspace/image-icc-matrix-solve-final-go-oracle'); prefix=Path('/workspace/image-icc-power-inverse-final-go'); expected='5670d814e3a2f394f87bb74ad87753f91d2df285'
+def sha(p):return hashlib.sha256(p.read_bytes()).hexdigest()
+def inventory():
+ paths=subprocess.check_output(['git','ls-files','*.go','compiler','internal/stdlib','fern-image/packages','fern-image/tests/icc_power_inverse_test.fern'],cwd=root,text=True).splitlines()
+ return {str(p):sha(root/p) for p in paths if (root/p).is_file()}
+assert not prefix.with_suffix('.json').exists()
+assert subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()==expected
+assert not subprocess.check_output(['git','status','--porcelain'],cwd=root)
+subprocess.run(['git','diff','--exit-code','8cb3ccf00e945ffda49c889e6cb5b037ebc2976b','HEAD','--','*.go','compiler','internal/stdlib'],cwd=root,check=True,stdout=subprocess.DEVNULL)
+assert sha(oracle)=='c551828318828afd1f74c82a1963f2f59d4fcddad49299467c31d7d5628a6f28'
+before=inventory(); record=dict(source_commit=expected,worktree_dirty=False,oracle_source_commit='8cb3ccf00e945ffda49c889e6cb5b037ebc2976b',Go_compiler_std_implementation_identical=True,binary_sha256=sha(oracle),source_hashes=before,commands=[]);start=time.time()
+for mode in ['check','interp']:
+ with Path(str(prefix)+'-'+mode+'.log').open('w') as log:
+  r=subprocess.run([str(oracle),'-'+mode,'fern-image/tests/icc_power_inverse_test.fern'],cwd=root,stdout=log,stderr=subprocess.STDOUT)
+ record['commands'].append(dict(mode=mode,exit=r.returncode))
+ if r.returncode:break
+record.update(seconds=time.time()-start,sources_unchanged=before==inventory()and sha(oracle)==record['binary_sha256'])
+prefix.with_suffix('.json').write_text(json.dumps(record,indent=2))
+print({k:v for k,v in record.items() if k!='source_hashes'})
+assert len(record['commands'])==2 and all(c['exit']==0 for c in record['commands']) and record['sources_unchanged']
+assert sum(l.startswith('ok ')for l in Path(str(prefix)+'-interp.log').read_text().splitlines())==6

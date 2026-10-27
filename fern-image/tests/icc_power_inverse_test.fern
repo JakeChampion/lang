@@ -1,0 +1,124 @@
+import "../packages/codecs/icc/power_inverse";
+import "../packages/codecs/icc/parametric_eval";
+import "../packages/codecs/icc/tag_data";
+import "std/test";
+import "std/f64";
+
+function never(): boolean {
+  return false;
+}
+
+function evaluate(numerator: i32, input: f64): Result[f64, parametric_eval.EvalError] {
+  return power_inverse.invert(tag_data.ParametricData { function_type: 0, coefficients: [numerator] }, input, never);
+}
+
+function exact(result: Result[f64, parametric_eval.EvalError], expected: f64): boolean {
+  return match (result) { Ok(value) => f64_bits(value) == f64_bits(expected), _ => false };
+}
+
+function close(result: Result[f64, parametric_eval.EvalError], expected: f64): boolean {
+  return match (result) { Ok(value) => (value - expected).abs() <= 1e-12, _ => false };
+}
+
+function identities(): test.TestOutcome {
+  for input in [-0.0, 0.0, f64_from_bits(1), f64_from_bits(0x0010000000000000), 0.25, 0.5, f64_from_bits(0x3fefffffffffffff), 1.0] {
+    if (!exact(evaluate(65536, input), input)) {
+      return test.fail("power inverse identity bits");
+    }
+  }
+  for numerator in [1, 2, 65535, 65536, 65537, 131072, 2147483647] {
+    for endpoint in [-0.0, 0.0, 1.0] {
+      if (!exact(evaluate(numerator, endpoint), endpoint)) {
+        return test.fail("power inverse endpoint bits");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function powers(): test.TestOutcome {
+  return test.assert_true(close(evaluate(131072, 0.25), 0.5) && close(evaluate(32768, 0.5), 0.25) && close(evaluate(16384, 0.5), 0.0625) && exact(evaluate(1, 0.5), 0.0));
+}
+
+function exponent_domain(): test.TestOutcome {
+  let smallest = f64_from_bits(1);
+  for numerator in [1, 2, 3, 65535, 65536, 65537, 2147483646, 2147483647] {
+    for input in [smallest, f64_from_bits(0x0010000000000000), 0.5, f64_from_bits(0x3fefffffffffffff)] {
+      if (match (evaluate(numerator, input)) { Ok(value) => !value.is_finite() || value < 0.0 || value > 1.0, _ => true }) {
+        return test.fail("full positive raw exponent domain");
+      }
+    }
+  }
+  return test.assert_true(close(evaluate(2147483647, 0.5), 0.9999788470504821));
+}
+
+function admission(): test.TestOutcome {
+  for (kind, coefficients, error) in [
+    (-1, [65536], parametric_eval.EvalError.Function),
+    (5, [65536], parametric_eval.EvalError.Function),
+    (0, [], parametric_eval.EvalError.Shape),
+    (0, [65536, 65536], parametric_eval.EvalError.Shape),
+    (0, [0], parametric_eval.EvalError.Domain),
+    (0, [-1], parametric_eval.EvalError.Domain),
+    (0, [-2147483647 - 1], parametric_eval.EvalError.Domain),
+    (1, [], parametric_eval.EvalError.Unsupported),
+    (2, [0], parametric_eval.EvalError.Unsupported),
+    (3, [0], parametric_eval.EvalError.Unsupported),
+    (4, [0], parametric_eval.EvalError.Unsupported),
+  ] {
+    let polls = cell_new(0);
+    let result = power_inverse.invert(tag_data.ParametricData { function_type: kind, coefficients: coefficients }, 0.5, (): boolean => {
+      polls.set(polls.get() + 1);
+      return true;
+    });
+    if (polls.get() != 0 || match (result) { Err(actual) => actual != error, _ => true }) {
+      return test.fail("power inverse admission before callbacks");
+    }
+  }
+  for input in [-0.1, 1.1, f64_from_bits(0x7ff0000000000000), -f64_from_bits(0x7ff0000000000000), f64_from_bits(0x7ff8000000000000)] {
+    if (match (evaluate(65536, input)) { Err(parametric_eval.EvalError.Input()) => false, _ => true }) {
+      return test.fail("power inverse finite input");
+    }
+  }
+  return test.pass();
+}
+
+function cancellation(): test.TestOutcome {
+  for stop in [1, 2, 3] {
+    let polls = cell_new(0);
+    let result = power_inverse.invert(tag_data.ParametricData { function_type: 0, coefficients: [131072] }, 0.25, (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() == stop;
+    });
+    if (stop < 3) {
+      if (polls.get() != stop || match (result) { Err(parametric_eval.EvalError.Cancelled()) => false, _ => true }) {
+        return test.fail("power inverse every cancellation poll");
+      }
+    } else if (polls.get() != 2 || !exact(result, 0.5)) {
+      return test.fail("power inverse final poll");
+    }
+  }
+  return test.pass();
+}
+
+function ownership(): test.TestOutcome {
+  let values = [65536];
+  let shared = cell_new(values);
+  let result = power_inverse.invert(tag_data.ParametricData { function_type: 0, coefficients: values }, 0.25, (): boolean => {
+    shared.set(shared.get().with(0, 131072));
+    return false;
+  });
+  let fresh = power_inverse.invert(tag_data.ParametricData { function_type: 0, coefficients: shared.get() }, 0.25, never);
+  return test.assert_true(exact(result, 0.25) && values[0] == 65536 && shared.get()[0] == 131072 && exact(fresh, 0.5) && exact(evaluate(65536, 0.25), 0.25));
+}
+
+pub function main(): i32 {
+  let runner = test.test_new("ICC function-zero inverse");
+  runner = runner.it("ICC power inverse exact identity and endpoints", identities);
+  runner = runner.it("ICC power inverse arithmetic controls", powers);
+  runner = runner.it("ICC power inverse exponent and IEEE domain", exponent_domain);
+  runner = runner.it("ICC power inverse fresh admission", admission);
+  runner = runner.it("ICC power inverse cooperative cancellation", cancellation);
+  runner = runner.it("ICC power inverse COW and fresh calls", ownership);
+  return runner.finish();
+}

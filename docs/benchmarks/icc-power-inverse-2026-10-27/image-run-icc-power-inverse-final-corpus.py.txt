@@ -1,0 +1,6 @@
+from pathlib import Path
+import os,subprocess,json,sys,time
+root=Path('/workspace/lang-image-icc-power-inverse');mode=sys.argv[1];prefix=Path('/workspace/image-icc-power-inverse-corpus-'+mode);assert not prefix.with_suffix('.json').exists();assert not subprocess.check_output(['git','status','--porcelain'],cwd=root)
+start=time.time()
+with prefix.with_suffix('.log').open('w')as log:r=subprocess.run(['bash','fern-image/scripts/test-icc-power-inverse.sh',mode],cwd=root,env=dict(os.environ,FERN='/workspace/image-tuple-array-current-fern-9c4085d83',FERN_SANITIZE='1',FERN_LEAKCHECK='1'),stdout=log,stderr=subprocess.STDOUT)
+prefix.with_suffix('.json').write_text(json.dumps({'exit':r.returncode,'seconds':time.time()-start,'record':str(root/f'fern-image/build/icc-power-inverse-{mode}.json')},indent=2));print(mode,r.returncode);raise SystemExit(r.returncode)
