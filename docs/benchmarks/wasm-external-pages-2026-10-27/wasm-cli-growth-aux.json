@@ -1,0 +1,53 @@
+[
+  {
+    "command": [
+      "go",
+      "build",
+      "./..."
+    ],
+    "exit": 0,
+    "seconds": 4.201316833496094,
+    "log": "/workspace/image-wasm-cli-growth-aux-0.log",
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "command": [
+      "go",
+      "vet",
+      "./..."
+    ],
+    "exit": 0,
+    "seconds": 15.988006353378296,
+    "log": "/workspace/image-wasm-cli-growth-aux-1.log",
+    "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  {
+    "command": [
+      "make",
+      "gofmt-check",
+      "actionlint",
+      "testnames",
+      "ci-selftest",
+      "runtime-bundle-check"
+    ],
+    "exit": 0,
+    "seconds": 12.023264646530151,
+    "log": "/workspace/image-wasm-cli-growth-aux-2.log",
+    "log_sha256": "ba239e7c31e8012f7743e04757b27eba2d8c6b2ea119d2952c0321a094c90824"
+  },
+  {
+    "command": [
+      "go",
+      "test",
+      "-v",
+      "./internal/testing/e2eharness",
+      "./internal/testing/sourcelint",
+      "-count=1",
+      "-timeout=10m"
+    ],
+    "exit": 1,
+    "seconds": 16.45721125602722,
+    "log": "/workspace/image-wasm-cli-growth-aux-3.log",
+    "log_sha256": "b18545562e5b484d5115395603929c4817742811e43acd66445694d43b5d8df1"
+  }
+]

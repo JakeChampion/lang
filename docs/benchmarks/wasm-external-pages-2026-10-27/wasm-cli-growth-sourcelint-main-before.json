@@ -1,0 +1,6 @@
+{
+  "exit": 1,
+  "head": "b61c9b4ae39d3d1104e9f9fdb09af049d19710d4",
+  "status": "",
+  "log": "=== RUN   TestRawStringPointerComesFromRawAlloc\n    raw_string_header_test.go:57: /workspace/lang-image-io-uring-syscalls/compiler/runtime/templates/__fern_cov_report.fern:22: __raw_string boxes \"t\", which __fern_cov_report does not bind with __raw_alloc. __raw_alloc is the ONLY producer that reserves the 24-byte string-box header ahead of its pointer; boxing a scratch buffer, an argv entry or a borrowed address writes the box over 24 bytes that belong to something else, and nothing reports it at run time (#7351)\n--- FAIL: TestRawStringPointerComesFromRawAlloc (0.04s)\nFAIL\nFAIL\tgithub.com/jakechampion/lang/internal/testing/sourcelint\t0.046s\nFAIL\n"
+}

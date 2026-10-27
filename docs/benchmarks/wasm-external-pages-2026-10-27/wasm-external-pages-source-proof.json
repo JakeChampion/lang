@@ -1,0 +1,27 @@
+{
+  "source_commit": "7a2d10c3a9a8f2844838c95b153a846ba376311e",
+  "files": {
+    "compiler/wasm_ir.fern": "37b1b31519d58527c1f9115a73947a732e3e5ca1a69400686427e6aa65f9e7a6",
+    "internal/testing/e2e/wasm_cli_heap_growth_test.go": "31a63b93ece5e954a1f01d6cf0836e70cad9fd4df44b223d421e28bece3f532d"
+  },
+  "original_test_paths_unchanged": {
+    "internal/testing/e2e/wasm_leakcheck_test.go": true,
+    "internal/testing/e2eharness/self_host_compiler.go": true,
+    "internal/testing/e2eharness/wasi_adapter.go": true
+  },
+  "old_compiler_sha256": "9af36cebc7575f5228485eb4386865f1bfd9a1e5e6093b9f3cc645170603d7a4",
+  "adapter_sha256": "6a13fa0ed7af65de3468fd6172abcfe6bb74e0b7f3bd0ef06e72f51ee32bc2a2",
+  "zlib_window_test_frozen": {
+    "head": "bdc739e433eab226dc25c87c1a0524fb25dff3aa",
+    "files": {
+      "internal/stdlib/std/deflate.fern.md": "f1da65c34a1059bd5a103fef3f0f086bea609d395a27c60f575e56e409afc346",
+      "internal/testing/e2e/deflate_window_test.go": "834ee52b11b029de6f2cbdce03fefd0541f1b1cf13b85df438dc4243553f3644"
+    }
+  },
+  "preserved_reduction_hashes": {
+    "image-wasm-adapter-growth-repro.fern": "e17faa449025c09a1208dd8db19d9b2c279646b62b3e9bb535d5ed739cf95ef4",
+    "image-wasm-adapter-growth-repro.core.wasm": "1ac8aa94b64a55c116ba35f8c68ff54dff168681dac86d1a39c7159fe9e9da21",
+    "image-wasm-adapter-growth-repro.component.wasm": "2c90eca95e09df07160dae5a3eaa515dab0e8150445fd094d968c1b2b4213c5b",
+    "image-wasi-adapter-46.0.1-lib.rs": "851c4e85177f01facd51a72c386e85bb350c8cd8d758106154d083d19e320a84"
+  }
+}

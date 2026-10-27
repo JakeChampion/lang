@@ -1,0 +1,18 @@
+{
+  "internal/testing/e2eharness/self_host_compiler.go": {
+    "sha256": "4b5ead4b66b39c5a38020d4b61a25b81ef9b10bef4344ba2e935a9df78ff685d",
+    "preserved": "/workspace/image-wasm-adapter-first-candidate-self_host_compiler.go.txt"
+  },
+  "internal/testing/e2eharness/wasi_adapter.go": {
+    "sha256": "0c317f68a1c57172a02ea07e696eff7b542276a624345d702ce262d094e6935a",
+    "preserved": "/workspace/image-wasm-adapter-first-candidate-wasi_adapter.go.txt"
+  },
+  "internal/testing/e2e/wasm_leakcheck_test.go": {
+    "sha256": "d2cd1607262a41111296d0fbf336e3538e71fc714d90922f0151358e14362ba8",
+    "preserved": "/workspace/image-wasm-adapter-first-candidate-wasm_leakcheck_test.go.txt"
+  },
+  "internal/testing/e2e/wasm_cli_heap_growth_test.go": {
+    "sha256": "31a63b93ece5e954a1f01d6cf0836e70cad9fd4df44b223d421e28bece3f532d",
+    "preserved": "/workspace/image-wasm-adapter-first-candidate-wasm_cli_heap_growth_test.go.txt"
+  }
+}

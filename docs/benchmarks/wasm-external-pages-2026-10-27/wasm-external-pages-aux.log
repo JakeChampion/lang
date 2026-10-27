@@ -1,0 +1,18 @@
+actionlint
+./scripts/testname_gate.sh
+testname gate: 1815 exact + 14 prefix test selectors resolve
+node scripts/ci-changes-selftest.mjs
+ci-changes-selftest: 66 cases pass against the changes script in ci.yml
+node scripts/main-red-selftest.mjs
+main-red-selftest: 33 cases pass against the reporter script
+node scripts/perf-gate-selftest.mjs
+perf-gate-selftest: 22 cases pass against scripts/ci-check-perf
+node scripts/nightly-findings-selftest.mjs
+nightly-findings selftest: ok
+python3 scripts/gen-runtime-bundle.py --check
+./scripts/gofmt_gate.sh
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 0.013s
+
+OK

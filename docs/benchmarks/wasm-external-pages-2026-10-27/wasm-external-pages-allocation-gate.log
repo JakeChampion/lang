@@ -1,0 +1,6 @@
+### performance (self-host allocation)
+| metric | measured | baseline | delta |
+| --- | --- | --- | --- |
+| x86_64/checker.allocs | 35.1M | 35.0M | +0.31% |
+| x86_64/checker.frees | 35.1M | 35.0M | +0.31% |
+Every metric is within tolerance of its baseline.

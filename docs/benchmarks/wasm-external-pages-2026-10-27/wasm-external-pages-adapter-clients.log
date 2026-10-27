@@ -1,0 +1,33 @@
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (6.21s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+=== RUN   TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression
+=== RUN   TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/real_main_churn:_+22_excess
+=== RUN   TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/real_main_churn:_+9_excess
+=== RUN   TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/real_main_churn:_ceiling_468_->_477
+=== RUN   TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/a_2000-fork_regression
+=== RUN   TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/ceiling_doubles
+=== RUN   TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/exactly_at_the_edge_is_not_over
+--- PASS: TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression (0.00s)
+    --- PASS: TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/real_main_churn:_+22_excess (0.00s)
+    --- PASS: TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/real_main_churn:_+9_excess (0.00s)
+    --- PASS: TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/real_main_churn:_ceiling_468_->_477 (0.00s)
+    --- PASS: TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/a_2000-fork_regression (0.00s)
+    --- PASS: TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/ceiling_doubles (0.00s)
+    --- PASS: TestSelfHostRatchetToleranceAbsorbsChurnButNotARegression/exactly_at_the_edge_is_not_over (0.00s)
+=== RUN   TestSelfHostRatchetIncludesLiterateSources
+--- PASS: TestSelfHostRatchetIncludesLiterateSources (0.56s)
+=== RUN   TestSelfHostWasmHTTPHandlerCensus
+    self_host_wasm_http_handler_census_test.go:14: allocs=1775 frees=1775 live_bytes=0
+--- PASS: TestSelfHostWasmHTTPHandlerCensus (91.14s)
+=== RUN   TestSelfHostWasmHTTPKeepAlive
+    self_host_wasm_http_handler_census_test.go:18: allocs=4979 frees=4979 live_bytes=0
+--- PASS: TestSelfHostWasmHTTPKeepAlive (56.64s)
+=== RUN   TestSelfHostWasmTcpLifecycleCensus
+    self_host_wasm_socket_reclaim_test.go:15: leakcheck: allocs=128 frees=128 live_bytes=0
+--- PASS: TestSelfHostWasmTcpLifecycleCensus (25.31s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	179.879s
