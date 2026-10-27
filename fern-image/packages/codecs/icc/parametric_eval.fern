@@ -1,0 +1,127 @@
+import "tag_data";
+import "std/f64";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum EvalError { Function, Shape, Input, Domain, Unsupported, Numeric, Cancelled }
+
+struct Affine { high: f64, low: f64 }
+
+// Retain cancellation and the low product before a power can amplify its error.
+function affine(a: f64, x: f64, b: f64): Affine {
+  let product = a * x;
+  let sa = a * 134217729.0;
+  let ax = sa - (sa - a);
+  let al = a - ax;
+  let sx = x * 134217729.0;
+  let xh = sx - (sx - x);
+  let xl = x - xh;
+  let product_error = ax * xh - product + ax * xl + al * xh + al * xl;
+  let sum = product + b;
+  let virtual_b = sum - product;
+  let sum_error = product - (sum - virtual_b) + (b - virtual_b);
+  let error = product_error + sum_error;
+  let high = sum + error;
+  let virtual_error = high - sum;
+  let low = sum - (high - virtual_error) + (error - virtual_error);
+  return Affine { high: high, low: low };
+}
+
+function powered(base: Affine, gamma: f64): f64 {
+  if (base.high <= 0.0) {
+    return 0.0;
+  }
+  let high = base.high.pow(gamma);
+  return high + high * (gamma * (base.low / base.high));
+}
+
+function admit(data: tag_data.ParametricData): Result[void, EvalError] {
+  let count = match (data.function_type) { 0 => 1, 1 => 3, 2 => 4, 3 => 5, 4 => 7, _ => { return Err(EvalError.Function); } };
+  let values = data.coefficients;
+  if (values.len() != count) {
+    return Err(EvalError.Shape);
+  }
+  if (values[0] <= 0) {
+    return Err(EvalError.Domain);
+  }
+  if (data.function_type == 0) {
+    return Ok(());
+  }
+  if (values[1] <= 0) {
+    return Err(EvalError.Domain);
+  }
+  if (values[0] < 65536) {
+    return Err(EvalError.Unsupported);
+  }
+  let white = values[1] as i64 + values[2] as i64;
+  if (data.function_type <= 2) {
+    if (white < 0i64 || white > 65536i64) {
+      return Err(EvalError.Unsupported);
+    }
+  } else {
+    if (values[4] < 0 || values[4] > 65536) {
+      return Err(EvalError.Unsupported);
+    }
+    let lower = values[1] as i64 * (values[4] as i64) + values[2] as i64 * 65536i64;
+    if (lower < 0i64) {
+      return Err(EvalError.Domain);
+    }
+    if (white > 65536i64) {
+      return Err(EvalError.Unsupported);
+    }
+  }
+  return Ok(());
+}
+
+function finish(value: f64, cancelled: () => boolean): Result[f64, EvalError] {
+  if (!value.is_finite()) {
+    return Err(EvalError.Numeric);
+  }
+  if (cancelled()) {
+    return Err(EvalError.Cancelled);
+  }
+  return Ok(if (value < 0.0) { 0.0 } else if (value > 1.0) { 1.0 } else { value });
+}
+
+function identity(data: tag_data.ParametricData): boolean {
+  let values = data.coefficients;
+  if (values[0] != 65536) {
+    return false;
+  }
+  if (data.function_type == 0) {
+    return true;
+  }
+  if (values[1] != 65536 || values[2] != 0) {
+    return false;
+  }
+  return match (data.function_type) { 1 => true, 2 => values[3] == 0, 3 => values[3] == 65536, _ => values[3] == 65536 && values[5] == 0 && values[6] == 0 };
+}
+
+pub function evaluate(data: tag_data.ParametricData, input: f64, cancelled: () => boolean): Result[f64, EvalError] {
+  if (!input.is_finite() || input < 0.0 || input > 1.0) {
+    return Err(EvalError.Input);
+  }
+  admit(data)?;
+  if (cancelled()) {
+    return Err(EvalError.Cancelled);
+  }
+  if (identity(data)) {
+    return finish(input, cancelled);
+  }
+  let values = data.coefficients;
+  let gamma = values[0] as f64 / 65536.0;
+  if (data.function_type == 0) {
+    return finish(if (input == 0.0 || input == 1.0 || values[0] == 65536) { input } else { input.pow(gamma) }, cancelled);
+  }
+  let base = affine(values[1] as f64 / 65536.0, input, values[2] as f64 / 65536.0);
+  if (data.function_type <= 2) {
+    let value = powered(base, gamma);
+    return finish(if (data.function_type == 2) { value + values[3] as f64 / 65536.0 } else { value }, cancelled);
+  }
+  if (input >= values[4] as f64 / 65536.0) {
+    let value = powered(base, gamma);
+    return finish(if (data.function_type == 4) { value + values[5] as f64 / 65536.0 } else { value }, cancelled);
+  }
+  let linear = affine(values[3] as f64 / 65536.0, input, if (data.function_type == 4) { values[6] as f64 / 65536.0 } else { 0.0 });
+  return finish(linear.high + linear.low, cancelled);
+}
