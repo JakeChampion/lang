@@ -1417,6 +1417,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-harden", "", "arm64-linux and x86-64-linux executables: stack canaries and a check on every indirect call; on arm64 also BTI landing pads and signed return addresses, on x86-64 the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
       cli_flag("-heap-limit", "SIZE", "native executables: the heap arena size, 1M to 16G with a K, M or G suffix (default 16G); a full arena exits 125"),
+      cli_flag("-profile", "NAME", "a flag set: safe (the defaults), hardened (-harden -pie), diagnostic (-sanitize -backtrace -g) or minimal (-size)"),
     ] },
     FlagGroup { title: "run", flags: [
       cli_flag("-run", "", "build to a temporary binary (or -o) and run it with the program's arguments"),
@@ -1430,6 +1431,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-effects", "", "the effect row of every function"),
       cli_flag("-array-report", "", "the array decisions compiling FILE makes, on stdout, writing no output (also FERN_ARRAY_REPORT=1 on stderr)"),
       cli_flag("-targets", "", "list the supported targets and what each provides"),
+      cli_flag("-manifest", "", "print the build manifest stamped into the native image FILE: its target, profile and flags"),
     ] },
     FlagGroup { title: "fmt", flags: [
       cli_flag("-fmt", "", "print each FILE formatted: - for stdin, a DIR for every source beneath it (-o OUT takes one FILE)"),
@@ -1595,6 +1597,109 @@ function help(embedded: boolean): i32 {
     write(l + "\n");
   }
   return 0;
+}
+
+// Prints the build manifest a native image carries, one field per line.
+function run_manifest(path: string): i32 {
+  let image: u8[] = [];
+  match (read_file_bytes(path)) {
+    Ok(b) => {
+      image = b;
+    },
+    Err(e) => {
+      eprint("fern: cannot read " + path + ": " + e.message());
+      return 1;
+    }
+  }
+  let line: string = image_manifest_line(image);
+  if (line.len() == 0) {
+    eprint("fern: no build manifest in " + path + ": not a native Fern executable, or one built before the manifest");
+    return 1;
+  }
+  let field: string = "";
+  let i: i32 = 0;
+  while (i < line.len()) {
+    if (line[i] == b' ') {
+      print(manifest_field(field));
+      field = "";
+    } else {
+      field = field + string_from_bytes_unchecked([line[i]]);
+    }
+    i = i + 1;
+  }
+  if (field.len() > 0) {
+    print(manifest_field(field));
+  }
+  return 0;
+}
+
+// The manifest line of an image, or "" without one. The magic is built from
+// bytes so that this compiler's own literal pool never holds it, and a
+// candidate must name its target and end in a newline within 512 bytes.
+function image_manifest_line(image: u8[]): string {
+  let magic: string = string_from_bytes_unchecked([70, 69, 82, 78, 66, 85, 73, 76, 68, 49, 32, 116, 97, 114, 103, 101, 116, 61]);
+  let from: i32 = 0;
+  while (true) {
+    let at: i32 = find_bytes_from(image, magic, from);
+    if (at < 0) {
+      return "";
+    }
+    let start: i32 = at + magic.len() - 7;
+    let end: i32 = start;
+    while (end < image.len() && end - start < 512 && image[end] != b'\n') {
+      end = end + 1;
+    }
+    if (end < image.len() && image[end] == b'\n' && image[start + 7] != b' ') {
+      let bytes: u8[] = [];
+      let k: i32 = start;
+      while (k < end) {
+        bytes = bytes.append(image[k]);
+        k = k + 1;
+      }
+      let line: string = string_from_bytes_unchecked(bytes);
+      if (find_bytes(bytes, " profile=") >= 0 && find_bytes(bytes, " heap_limit=") >= 0) {
+        return line;
+      }
+    }
+    from = at + 1;
+  }
+  return "";
+}
+
+// "harden=1" prints as "harden: yes"; a value that is not a flag prints as it is.
+function manifest_field(field: string): string {
+  let eq: i32 = __memchr(field, 61, 0);
+  if (eq < 0) {
+    return field;
+  }
+  let key: string = slice_unchecked(field, 0, eq) + "";
+  let value: string = slice_unchecked(field, eq + 1, field.len()) + "";
+  if (value == "1") {
+    value = "yes";
+  } else if (value == "0") {
+    value = "no";
+  }
+  return key + ": " + value;
+}
+
+function find_bytes(hay: u8[], needle: string): i32 {
+  return find_bytes_from(hay, needle, 0);
+}
+
+function find_bytes_from(hay: u8[], needle: string, from: i32): i32 {
+  let n: i32 = needle.len();
+  let i: i32 = from;
+  while (i + n <= hay.len()) {
+    let j: i32 = 0;
+    while (j < n && hay[i + j] == needle[j]) {
+      j = j + 1;
+    }
+    if (j == n) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 function list_targets(): i32 {
@@ -4902,6 +5007,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let fmt_write: boolean = false;
   let fmt_diff: boolean = false;
   let mode_caps: boolean = false;
+  let mode_manifest: boolean = false;
+  let profile_name: string = "";
   let mode_effects: boolean = false;
   let mode_targets: boolean = false;
   let mode_resolve: boolean = false;
@@ -5007,6 +5114,10 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       heap_limit_text = f.value;
     } else if (f.name == "-pie") {
       pie = f.on;
+    } else if (f.name == "-profile") {
+      profile_name = f.value;
+    } else if (f.name == "-manifest") {
+      mode_manifest = f.on;
     } else if (f.name == "-shared") {
       shared = f.on;
     } else if (f.name == "-export") {
@@ -5056,8 +5167,25 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
 
   let st: DiagStyle = diag_style(tf.color_mode, tf.ascii, tf.terse);
 
+  if (profile_name == "hardened") {
+    harden = true;
+    pie = true;
+  } else if (profile_name == "diagnostic") {
+    sanitize_flag = true;
+    backtrace = true;
+    backtrace_set = true;
+    emit_syms = true;
+  } else if (profile_name == "minimal") {
+    size = true;
+  } else if (profile_name != "" && profile_name != "safe") {
+    eprint("fern: -profile takes safe, hardened, diagnostic or minimal (got \"" + profile_name + "\")");
+    return 2;
+  }
   if (mode_targets) {
     return list_targets();
+  }
+  if (mode_manifest) {
+    return run_manifest(entry_path);
   }
   if (tf.version) {
     return print_version(root);
@@ -5383,7 +5511,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let typed: parser.Module = parser.module_with_builtins_typed(merged);
   let full: parser.Module = parser.erase_view_module(typed);
   let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, pie: pie } };
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, pie: pie, profile: profile_name, target: target } };
   if (array_report == semarrayreport.to_stdout()) {
     return 0;
   }

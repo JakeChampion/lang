@@ -10,6 +10,8 @@ A `State` is `Yes`, `No`, or `Unknown`. `Unknown` means that the source for the 
 
 The rows on x86-64 Linux are `shstk`, the CET shadow stack, and `ibt`, indirect branch tracking. The rows on arm64 Linux are `pac`, pointer authentication, `bti`, branch target identification, and `mte`, memory tagging. Other targets return no rows.
 
+`manifest` returns one `Status` row per mitigation with five cells. `compiled` says whether the image was built with the feature, from the build manifest the compiler stamps into every native executable. `supported` says whether the processor and the kernel have it. `requested` says whether the image asks for it at startup. `enabled` says whether this process runs with it. `verified` names the evidence that the feature holds, which is a test name and the host kind it ran on.
+
 ## Contracts
 
 Each cell comes from one source, and the module reads nothing else.
@@ -25,6 +27,8 @@ Each cell comes from one source, and the module reads nothing else.
 A cell is `Unknown` when its file cannot be read or has no line of the expected shape. A cell is also `Unknown` when the kernel refuses the query. A token must match a flag exactly, so `bti` does not match `btix`. The `x86_Thread_features_locked` line is not the `x86_Thread_features` line.
 
 The kernel has no interface that enables indirect branch tracking for user space. The `ibt` row therefore reads `kernel` and `process` from the same line. Both stay `No` on a current kernel.
+
+The build manifest is the line that starts with `FERNBUILD1 ` in the image at `/proc/self/exe`. `build_line` finds it in any byte array, and `parse_build` reads its `key=value` fields. Without the line, which an interpreted or a wasm program has, every `compiled` cell is `unknown`. A software feature counts as `enabled` when it is compiled, because nothing can turn it off. A hardware feature takes `enabled` from the `process` cell of `report`.
 
 ## Executable example
 
@@ -77,6 +81,18 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<11 function __tokens(line: string): string[]>>
 
 <<12 function __text(path: string): string>>
+
+<<13 pub struct Build>>
+
+<<14 pub function build_line(image: [u8]): Option[string]>>
+
+<<15 pub function parse_build(line: string): Option[Build]>>
+
+<<16 pub struct Status>>
+
+<<17 pub function manifest(): Status[]>>
+
+<<18 function __status_rows(build: Option[Build], support: Support[]): Status[]>>
 ```
 
 ### `module introduction`
@@ -85,6 +101,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<module introduction>>=
 // This module reports which hardware mitigations the processor offers, the kernel enables, and this process uses.
 import "std/string";
+import "std/utf8";
 ```
 
 ### `2 pub enum State`
@@ -376,5 +393,195 @@ function __bytes(path: string): u8[] {
     Err(_) => {}
   }
   return out;
+}
+```
+
+### `13 pub struct Build`
+
+```fern
+<<13 pub struct Build>>=
+pub struct Build { target: string, profile: string, harden: boolean, pie: boolean, sanitize: boolean, backtrace: boolean, size: boolean, shared: boolean, heap_limit: i64 }
+```
+
+### `14 pub function build_line(image: [u8]): Option[string]`
+
+The line ends at the first newline after the magic. The magic is built from bytes at run time, so no literal pool holds it. A candidate must name its target and carry every field, which a stray copy of the magic does not.
+
+```fern
+<<14 pub function build_line(image: [u8]): Option[string]>>=
+pub function build_line(image: [u8]): Option[string] {
+  let magic: string = string_from_bytes_unchecked([70, 69, 82, 78, 66, 85, 73, 76, 68, 49, 32, 116, 97, 114, 103, 101, 116, 61]);
+  let i: i32 = 0;
+  while (i + magic.len() <= image.len()) {
+    let j: i32 = 0;
+    while (j < magic.len() && image[i + j] == magic[j]) {
+      j = j + 1;
+    }
+    if (j == magic.len()) {
+      let start: i32 = i + magic.len() - 7;
+      let end: i32 = start;
+      while (end < image.len() && end - start < 512 && image[end] != b'\n') {
+        end = end + 1;
+      }
+      if (end < image.len() && image[end] == b'\n') {
+        match (utf8.from_bytes(image[start:end])) {
+          Some(line) => {
+            if (__manifest_shape(line)) {
+              return Some(line);
+            }
+          },
+          None => {}
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+// A real manifest names its target and carries every field; a copy of the
+// magic in a literal pool is followed by other text.
+function __manifest_shape(line: string): boolean {
+  return line.len() > 7 && line[7] != b' ' && line.contains(" profile=") && line.contains(" harden=") && line.contains(" heap_limit=");
+}
+```
+
+### `15 pub function parse_build(line: string): Option[Build]`
+
+A field without `=` or an unknown key is ignored, so a later manifest with more fields still parses.
+
+```fern
+<<15 pub function parse_build(line: string): Option[Build]>>=
+pub function parse_build(line: string): Option[Build] {
+  let b: Build = Build { target: "", profile: "", harden: false, pie: false, sanitize: false, backtrace: false, size: false, shared: false, heap_limit: 0i64 };
+  let seen: boolean = false;
+  for field in line.trim().split(" ") {
+    let eq: i32 = __memchr(field, 61, 0);
+    if (eq < 0) {
+      eq = field.len();
+    } else {
+      seen = true;
+    }
+    let key: string = slice_unchecked(field, 0, eq) + "";
+    let value: string = "";
+    if (eq < field.len()) {
+      value = slice_unchecked(field, eq + 1, field.len()) + "";
+    }
+    let on: boolean = value == "1";
+    if (key == "target") {
+      b = Build { ...b, target: value };
+    } else if (key == "profile") {
+      b = Build { ...b, profile: value };
+    } else if (key == "harden") {
+      b = Build { ...b, harden: on };
+    } else if (key == "pie") {
+      b = Build { ...b, pie: on };
+    } else if (key == "sanitize") {
+      b = Build { ...b, sanitize: on };
+    } else if (key == "backtrace") {
+      b = Build { ...b, backtrace: on };
+    } else if (key == "size") {
+      b = Build { ...b, size: on };
+    } else if (key == "shared") {
+      b = Build { ...b, shared: on };
+    } else if (key == "heap_limit") {
+      b = Build { ...b, heap_limit: __digits(value) };
+    }
+  }
+  if (!seen) {
+    return None;
+  }
+  return Some(b);
+}
+```
+
+### `16 pub struct Status`
+
+```fern
+<<16 pub struct Status>>=
+pub struct Status { name: string, compiled: string, supported: string, requested: string, enabled: string, verified: string }
+
+pub function (s: Status) line(): string {
+  return s.name + " compiled=" + s.compiled + " supported=" + s.supported + " requested=" + s.requested + " enabled=" + s.enabled + " verified=" + s.verified;
+}
+```
+
+### `17 pub function manifest(): Status[]`
+
+```fern
+<<17 pub function manifest(): Status[]>>=
+pub function manifest(): Status[] {
+  let build: Option[Build] = None;
+  if (target_os() == "linux" || target_os() == "android") {
+    match (build_line(__bytes("/proc/self/exe"))) {
+      Some(line) => { build = parse_build(line); },
+      None => {}
+    }
+  }
+  return __status_rows(build, report());
+}
+```
+
+### `18 function __status_rows(build: Option[Build], support: Support[]): Status[]`
+
+A software feature is `enabled` when it is compiled. A hardware feature takes `supported` from the `cpu` and `kernel` cells and `enabled` from the `process` cell.
+
+```fern
+<<18 function __status_rows(build: Option[Build], support: Support[]): Status[]>>=
+function __status_rows(build: Option[Build], support: Support[]): Status[] {
+  let harden: string = "unknown";
+  let pie: string = "unknown";
+  let sanitize: string = "unknown";
+  let compiled: string = "unknown";
+  match (build) {
+    Some(b) => {
+      harden = __flag(b.harden);
+      pie = __flag(b.pie);
+      sanitize = __flag(b.sanitize);
+      compiled = "yes";
+    },
+    None => {}
+  }
+  let rows: Status[] = [
+    Status { name: "nx-stack", compiled: compiled, supported: "yes", requested: compiled, enabled: compiled, verified: "native (TestSelfHostImagePermissions)" },
+    Status { name: "canary", compiled: harden, supported: "yes", requested: harden, enabled: harden, verified: "native (TestSelfHostStackCanary)" },
+    Status { name: "cfi", compiled: harden, supported: "yes", requested: harden, enabled: harden, verified: "native (TestSelfHostForwardEdgeCFI)" },
+    Status { name: "pie", compiled: pie, supported: "yes", requested: pie, enabled: pie, verified: "native (TestSelfHostPIE)" },
+    Status { name: "sanitizer", compiled: sanitize, supported: "yes", requested: sanitize, enabled: sanitize, verified: "native (the sanitizer suites)" }
+  ];
+  for row in support {
+    let have: string = __both(row.cpu, row.kernel).to_string();
+    let process: string = row.process.to_string();
+    if (row.name == "shstk") {
+      rows = rows.append(Status { name: "shadow-stack", compiled: harden, supported: have, requested: harden, enabled: process, verified: "unverified (no host with the feature yet)" });
+    } else if (row.name == "ibt") {
+      rows = rows.append(Status { name: "ibt", compiled: harden, supported: have, requested: "no", enabled: process, verified: "unavailable (Linux enforces no user-space IBT)" });
+    } else if (row.name == "pac") {
+      rows = rows.append(Status { name: "pac", compiled: harden, supported: have, requested: harden, enabled: process, verified: "native, one host (TestSelfHostHardenArm64)" });
+    } else if (row.name == "bti") {
+      rows = rows.append(Status { name: "bti", compiled: harden, supported: have, requested: harden, enabled: process, verified: "emulated (TestSelfHostHardenArm64 under QEMU)" });
+    } else if (row.name == "mte") {
+      rows = rows.append(Status { name: "mte", compiled: "no", supported: have, requested: "no", enabled: process, verified: "design (MTE-DESIGN.md)" });
+    }
+  }
+  return rows;
+}
+
+function __flag(on: boolean): string {
+  if (on) {
+    return "yes";
+  }
+  return "no";
+}
+
+function __digits(text: string): i64 {
+  let n: i64 = 0i64;
+  for c in text.bytes() {
+    if (c < b'0' || c > b'9') {
+      return 0i64;
+    }
+    n = n * 10i64 + (c - b'0') as i64;
+  }
+  return n;
 }
 ```

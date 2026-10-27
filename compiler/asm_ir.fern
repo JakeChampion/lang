@@ -10979,6 +10979,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (!s.shared) {
     s = emit_stack_overflow_runtime(s);
     s = emit_startup_failures(s);
+    s = asmcore.emit_build_manifest(s);
   }
   s = emit_report(s);
   if (s.shared) {

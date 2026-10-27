@@ -10,7 +10,7 @@ function main(): i32 {
   if (!env.leak_check || !env.rc_free_debug) {
     return 1;
   }
-  let off = asmcore.Switches { backtrace: false, sanitize: false, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, pie: false };
+  let off = asmcore.Switches { backtrace: false, sanitize: false, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, pie: false, profile: "", target: "" };
   let s = asmcore.with_switches(asmcore.new_state(), off);
   if (s.leak_check || s.rc_free_debug || wasm_ir.census_on(off)) {
     return 2;

@@ -89,6 +89,15 @@ is a NOP on a core without the feature. The ARMv8.2-A baseline does not
 change: a hardened binary runs everywhere an unhardened one does, with the
 checks only where the hardware has them.
 
+## Profiles and the build manifest
+
+`-profile hardened` is `-harden -pie`, `-profile diagnostic` is `-sanitize
+-backtrace -g`, `-profile minimal` is `-size`, and `-profile safe` is the
+defaults. Every native executable carries a build manifest, which
+`fern -manifest IMAGE` prints. `mitigations.manifest()` reads it at run
+time and reports the compiled, supported, requested, enabled and verified
+state of each mitigation (`docs/security/PROFILES.md`).
+
 ## Position-independent executables
 
 `-pie` builds an `ET_DYN` image at base 0 for x86-64-linux and arm64-linux,

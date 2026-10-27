@@ -9244,6 +9244,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   if (!s.shared) {
     s = emit_stack_overflow_runtime(s, darwin);
     s = emit_startup_failures(s);
+    s = asmcore.emit_build_manifest(s);
   }
   s = emit_rt_report(s);
   if (s.shared) {
