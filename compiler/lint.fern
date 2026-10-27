@@ -194,9 +194,11 @@ function stmt_forks(st: ast.Stmt): i32 {
       if (has_sugar(i.sugar)) {
         return sugar_forks(i.sugar);
       }
-      let cf: printer.ForCSugar = printer.as_c_for(i);
-      if (cf.ok) {
-        return 1 + stmts_forks(cf.init) + expr_forks(cf.cond) + stmts_forks(cf.step) + stmts_forks(cf.body);
+      match (printer.as_c_for(i)) {
+        Some(cf) => {
+          return 1 + stmts_forks(cf.init) + expr_forks(cf.cond) + stmts_forks(cf.step) + stmts_forks(cf.body);
+        },
+        None => {}
       }
       let own_fork: i32 = 1;
       if (i.origin == "block" || i.origin == "unsafe" || i.origin == "chain_assign" || i.origin == parser.ORIGIN_ASSERT || i.origin == parser.ORIGIN_TODO) {

@@ -936,6 +936,16 @@ findings. Ranked by leverage.
   Forty paired probes per input use 201 functions with matched or declined word loads.
   Candidate/baseline time ratios range from 0.997 to 1.026, without a general compiler speed claim.
 
+  Printer recognition uses `Option[UseSugar]` and `Option[ForCSugar]`.
+  Absent forms no longer contain placeholder calls, bodies, or loop conditions.
+  Layout, statement output, and lint scores match the option before they use a payload.
+  All 113 format cases retain exact output and lint scores, and their output matches the Go formatter.
+
+  Printer self-checks pass on native, ARM64, and Wasm.
+  The native sanitizer reports 41,116 allocations and releases, with zero live bytes.
+  Forty paired probes per input cover valid programs with ordinary returns, `use` forms, and C-style loops.
+  Their candidate/baseline time ratios range from 1.001 to 1.009, without a general compiler speed claim.
+
   The closure lifter also uses `Option[FuncDecl]` for function construction.
   Both captured closures and named-function wrappers share that result type.
   A declined transformation returns `None` without a placeholder declaration.
