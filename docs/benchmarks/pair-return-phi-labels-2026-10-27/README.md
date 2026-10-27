@@ -56,6 +56,20 @@ Its correctness gates are the pair-return suite and the compiler self-reproducti
 The earlier LICM slice has its separate byte-identity proof.
 This slice does not complete the architecture roadmap in issue #4412.
 
+## Main integration
+
+The publication branch merges main at `50e121fbab40c3ffe7f0172cf0ac2f51723e04e4`.
+That merge preserves another Fern automation's allocator-guard proof corrections.
+The combined source passes the pair-return, scalar-record return, CLI refusal and source suites.
+The merged source produces the same stage-2 compiler bytes as the measured candidate D.
+
+That compiler emits byte-identical checker output to candidate D.
+It also produces byte-identical stage-3 and stage-4 compilers.
+`post-merge/qualification.json` records these results and their exact source and binary identities.
+
+The A/B instruction and allocation counts remain measurements of the pre-merge snapshots.
+The main integration does not establish new performance counts for the combined compiler.
+
 ## Repeat the primary comparison
 
 The script needs Valgrind 3.24.0 and the repository toolchain.
@@ -67,7 +81,9 @@ bash docs/benchmarks/pair-return-phi-labels-2026-10-27/reproduce.sh "$stage0_bin
 go test ./internal/testing/e2ecompiler -run '^TestSelfHostPairReturn$' -count=1 -v
 ```
 
-The script builds both stage-2 compilers with one stage-1 producer and retains their complete profiles.
+The script reconstructs the frozen candidate with `source-change.patch` in a separate worktree.
+It builds both stage-2 compilers with one stage-1 producer and retains their complete profiles.
+Later main commits therefore do not change this comparison.
 The generated output can differ because the private ABI changes.
 The e2e test checks behavior, allocation counts and release of all memory.
 
