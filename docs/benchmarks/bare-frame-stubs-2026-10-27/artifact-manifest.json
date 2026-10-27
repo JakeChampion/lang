@@ -1,0 +1,206 @@
+[
+  {
+    "path": "records/image-bare-frame-control-duplicate.go.txt",
+    "original": "/tmp/image-bare-frame-control-duplicate.go",
+    "sha256": "43bbe9f01503458a631cf4d00b6c1dd5ce7b88267ee68253db58bd856db74e61",
+    "bytes": 14514
+  },
+  {
+    "path": "records/image-bare-frame-control-duplicate.overlay.json",
+    "original": "/tmp/image-bare-frame-control-duplicate.overlay.json",
+    "sha256": "481d29f0f7de37ae91f2dac3bee0ba87d48335adcccfea27514b37b21c707faf",
+    "bytes": 192
+  },
+  {
+    "path": "records/image-bare-frame-control-missing.go.txt",
+    "original": "/tmp/image-bare-frame-control-missing.go",
+    "sha256": "818145bb09caa5565522e0fd3f31ee40d50cd50155bb3f83c4e993cfb390aa3c",
+    "bytes": 14522
+  },
+  {
+    "path": "records/image-bare-frame-control-missing.overlay.json",
+    "original": "/tmp/image-bare-frame-control-missing.overlay.json",
+    "sha256": "28c851c68564f3a824ca238230099f71df6ff10168b43a9bb8ebf5a5b1da94c5",
+    "bytes": 190
+  },
+  {
+    "path": "records/image-bare-frame-control-renamed.go.txt",
+    "original": "/tmp/image-bare-frame-control-renamed.go",
+    "sha256": "afd0eff2b83f87f0d177be6f73ef551e7aface7e584dcff4ac956382136a9add",
+    "bytes": 14554
+  },
+  {
+    "path": "records/image-bare-frame-control-renamed.overlay.json",
+    "original": "/tmp/image-bare-frame-control-renamed.overlay.json",
+    "sha256": "2b942a9279ce03ddd5eb70d15d5d1793286a9fb6ab33fa565b4930214fbf0db7",
+    "bytes": 190
+  },
+  {
+    "path": "records/image-bare-frame-controls-creation.json",
+    "original": "/tmp/image-bare-frame-controls-creation.json",
+    "sha256": "2cfa34149c6acab17c4cfe87fd340edadae2c3001fd3919d1323d048fc0bff7c",
+    "bytes": 1463
+  },
+  {
+    "path": "records/image-bare-frame-current-before.json",
+    "original": "/tmp/image-bare-frame-current-before.json",
+    "sha256": "5e656a73c5ad45f990fd5cda8dfb06f01e2c4ee32988ae05b0a9a7707cb29b6d",
+    "bytes": 668287
+  },
+  {
+    "path": "records/image-bare-frame-current-before.log",
+    "original": "/tmp/image-bare-frame-current-before.log",
+    "sha256": "bec24318dd0932f4b53f991876ef9b61fac8ab3ac87fef513037e47a8b89389d",
+    "bytes": 314
+  },
+  {
+    "path": "records/image-bare-frame-final-abort.json",
+    "original": "/tmp/image-bare-frame-final-abort.json",
+    "sha256": "8292840428d43bec697ef6a68ed7e90a1cbe0412bfd7c9c2a2e1f2a951ccdd59",
+    "bytes": 668602
+  },
+  {
+    "path": "records/image-bare-frame-final-abort.log",
+    "original": "/tmp/image-bare-frame-final-abort.log",
+    "sha256": "e10f383fb14d977162772ff8ebde396f6d26e42f06eef94699fd3081ab6f618d",
+    "bytes": 9139
+  },
+  {
+    "path": "records/image-bare-frame-final-aux.json",
+    "original": "/tmp/image-bare-frame-final-aux.json",
+    "sha256": "7452d1ca476cf18f3960a0af6e97028944aa8a90e9d975ef0ede618483a55d79",
+    "bytes": 776173
+  },
+  {
+    "path": "records/image-bare-frame-final-aux.log",
+    "original": "/tmp/image-bare-frame-final-aux.log",
+    "sha256": "81abbc8715e15b5e0f86393d56c69665f0aad61e157d9dbaecc672938b52a8e9",
+    "bytes": 26008
+  },
+  {
+    "path": "records/image-bare-frame-final-control-duplicate.log",
+    "original": "/tmp/image-bare-frame-final-control-duplicate.log",
+    "sha256": "5fcada775b865f4f921fd4bb2c818dccf1caa5ce1817645c8796029c34a5b6bc",
+    "bytes": 374
+  },
+  {
+    "path": "records/image-bare-frame-final-control-missing.log",
+    "original": "/tmp/image-bare-frame-final-control-missing.log",
+    "sha256": "909a72fab396da6a7d23f88d67c7906dce564a36c9e80a4392b0bd905f16cf81",
+    "bytes": 320
+  },
+  {
+    "path": "records/image-bare-frame-final-control-renamed.log",
+    "original": "/tmp/image-bare-frame-final-control-renamed.log",
+    "sha256": "8f14ca6dcbb0151e897638985214f0a91fd238ee022259e23ebac7e7b152cc6c",
+    "bytes": 346
+  },
+  {
+    "path": "records/image-bare-frame-final-controls.json",
+    "original": "/tmp/image-bare-frame-final-controls.json",
+    "sha256": "e7396b80827162cb35898c2e1838ab3555eae7b8247eecb5f48d23705d0f7ab0",
+    "bytes": 670092
+  },
+  {
+    "path": "records/image-bare-frame-final-controls.log",
+    "original": "/tmp/image-bare-frame-final-controls.log",
+    "sha256": "4486fb7766ee75bd5bf48c2b42634e37798005d47b9411e56dda588eb2d08ac6",
+    "bytes": 1040
+  },
+  {
+    "path": "records/image-bare-frame-final-launches.json",
+    "original": "/tmp/image-bare-frame-final-launches.json",
+    "sha256": "3970b9bbe44af6a35cb7c0dd74b21adb4ef9d98843c549c24f8cf890c93a72a8",
+    "bytes": 188
+  },
+  {
+    "path": "records/image-bare-frame-focused-after.json",
+    "original": "/tmp/image-bare-frame-focused-after.json",
+    "sha256": "ed6c3f03351e1e46e8cee790843cbe57f450032e772377c66ae57a654955e142",
+    "bytes": 668319
+  },
+  {
+    "path": "records/image-bare-frame-focused-after.log",
+    "original": "/tmp/image-bare-frame-focused-after.log",
+    "sha256": "c2d81fe8db86b1c16e5f41be7af31067444cc0f177a003e6644dab83671d15bc",
+    "bytes": 169
+  },
+  {
+    "path": "records/image-bare-frame-health-issue-STE.log",
+    "original": "/tmp/image-bare-frame-health-issue-STE.log",
+    "sha256": "39bb7b083ccfc9bba7f418ef728059e7437a423cbe1eeca6799298261c35f975",
+    "bytes": 421
+  },
+  {
+    "path": "records/image-bare-frame-health-issue.md",
+    "original": "/tmp/image-bare-frame-health-issue.md",
+    "sha256": "795f75615f1a4f8f882d52ad106c983e89e344519d2e45796ec1ab2bdb3e5412",
+    "bytes": 1939
+  },
+  {
+    "path": "records/image-bare-frame-parent-error.log",
+    "original": "/tmp/image-bare-frame-parent-error.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "path": "records/image-bare-frame-parent-response.json",
+    "original": "/tmp/image-bare-frame-parent-response.json",
+    "sha256": "dacfb43366516663ac3dd86b9934e19a45e47041e65edf495c4e93d897532880",
+    "bytes": 8288
+  },
+  {
+    "path": "records/image-bare-frame-pr-body-STE.log",
+    "original": "/tmp/image-bare-frame-pr-body-STE.log",
+    "sha256": "3db8f3fcc8662bc1b8bc1635f42d75b82603ff57db662bc3aec091022af1b16e",
+    "bytes": 413
+  },
+  {
+    "path": "records/image-bare-frame-pr-body.md",
+    "original": "/tmp/image-bare-frame-pr-body.md",
+    "sha256": "5a87a18bcd78f1f12c880a378ccba416b25466f90f395ba84d8b712256c03040",
+    "bytes": 1194
+  },
+  {
+    "path": "records/image-bare-frame-source-STE.log",
+    "original": "/tmp/image-bare-frame-source-STE.log",
+    "sha256": "b8f8dd034ee6e4b942279d9215b4a3f15b938985381dab28602477c0eb1bdfa1",
+    "bytes": 303
+  },
+  {
+    "path": "records/image-bare-frame-worktree-create.log",
+    "original": "/tmp/image-bare-frame-worktree-create.log",
+    "sha256": "56a8c2f578d9d3f96309faba2c53fd893a1db852fb3a2f4546faf688739b8a1a",
+    "bytes": 1840
+  },
+  {
+    "path": "coordinators/image-run-bare-frame-before.py.txt",
+    "original": "/tmp/image-run-bare-frame-before.py",
+    "sha256": "cd1648f480d2911cff749a90c7034736fdfa9b8137a59d33ac0ce82f4021e54c",
+    "bytes": 1524
+  },
+  {
+    "path": "coordinators/image-run-bare-frame-focused-after.py.txt",
+    "original": "/tmp/image-run-bare-frame-focused-after.py",
+    "sha256": "54aefe99e14e5359b301e132c2139e13d9b6d2bcef957e9c779731601585262e",
+    "bytes": 1551
+  },
+  {
+    "path": "coordinators/image-prepare-bare-frame-controls.py.txt",
+    "original": "/tmp/image-prepare-bare-frame-controls.py",
+    "sha256": "88298c6604213425e3fc3e01091f0341d84b0bab5ce0f92c09d5dc21ac876ba2",
+    "bytes": 1520
+  },
+  {
+    "path": "coordinators/image-run-bare-frame-final.py.txt",
+    "original": "/tmp/image-run-bare-frame-final.py",
+    "sha256": "260aad93d4c7a7dd6493a9651bfce936fde897b6f4b3d0f510dc16b188951aea",
+    "bytes": 4763
+  },
+  {
+    "path": "coordinators/image-finalize-bare-frame-evidence.py.txt",
+    "original": "/tmp/image-finalize-bare-frame-evidence.py",
+    "sha256": "438820b54cb7f13d195a1e179849fc3d8d462c6fba95c90f29b09455dd7c3ea2",
+    "bytes": 6003
+  }
+]

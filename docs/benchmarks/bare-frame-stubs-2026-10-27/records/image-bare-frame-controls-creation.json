@@ -1,0 +1,30 @@
+{
+  "creation_source": "8d336a2e66912b20a0ed1d6174b6402d0ceb9e41",
+  "feature_uncommitted": true,
+  "controls": {
+    "missing": {
+      "source_file": "/tmp/image-bare-frame-control-missing.go",
+      "overlay": "/tmp/image-bare-frame-control-missing.overlay.json",
+      "candidate_sha256": "1841ebdd7bb8d3f1814e57cfc255a351f7bc62fe04bfdf765f1dd20808748509",
+      "overlay_source_sha256": "818145bb09caa5565522e0fd3f31ee40d50cd50155bb3f83c4e993cfb390aa3c",
+      "only_test_assembly_view_modified": true,
+      "linked_assembly_file_unchanged": true
+    },
+    "renamed": {
+      "source_file": "/tmp/image-bare-frame-control-renamed.go",
+      "overlay": "/tmp/image-bare-frame-control-renamed.overlay.json",
+      "candidate_sha256": "1841ebdd7bb8d3f1814e57cfc255a351f7bc62fe04bfdf765f1dd20808748509",
+      "overlay_source_sha256": "afd0eff2b83f87f0d177be6f73ef551e7aface7e584dcff4ac956382136a9add",
+      "only_test_assembly_view_modified": true,
+      "linked_assembly_file_unchanged": true
+    },
+    "duplicate": {
+      "source_file": "/tmp/image-bare-frame-control-duplicate.go",
+      "overlay": "/tmp/image-bare-frame-control-duplicate.overlay.json",
+      "candidate_sha256": "1841ebdd7bb8d3f1814e57cfc255a351f7bc62fe04bfdf765f1dd20808748509",
+      "overlay_source_sha256": "43bbe9f01503458a631cf4d00b6c1dd5ce7b88267ee68253db58bd856db74e61",
+      "only_test_assembly_view_modified": true,
+      "linked_assembly_file_unchanged": true
+    }
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "source": "6c462549052932a976a7d4d146422add772a6f4c",
+  "base": "8d336a2e66912b20a0ed1d6174b6402d0ceb9e41",
+  "full_abort_PASS": 71,
+  "full_abort_FAIL": 0,
+  "full_abort_SKIP": 0,
+  "source_audit_PASS": 219,
+  "source_audit_SKIP": 0,
+  "format_inputs": 2084,
+  "controls": [
+    {
+      "exit": 1,
+      "expected_failure_qualified": true
+    },
+    {
+      "exit": 1,
+      "expected_failure_qualified": true
+    },
+    {
+      "exit": 1,
+      "expected_failure_qualified": true
+    }
+  ],
+  "production_sources_and_gate_values_unchanged": true,
+  "actual_CI_recovery_qualified": false,
+  "checks": {
+    "abort": {
+      "seconds": 39.69175744056702,
+      "PASS": 71,
+      "FAIL": 0,
+      "SKIP": 0,
+      "exits": [
+        0
+      ]
+    },
+    "aux": {
+      "seconds": 53.59667992591858,
+      "PASS": 219,
+      "FAIL": 0,
+      "SKIP": 0,
+      "exits": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "controls": {
+      "seconds": 76.47456455230713,
+      "PASS": 0,
+      "FAIL": 3,
+      "SKIP": 0,
+      "exits": [
+        1,
+        1,
+        1
+      ]
+    }
+  }
+}

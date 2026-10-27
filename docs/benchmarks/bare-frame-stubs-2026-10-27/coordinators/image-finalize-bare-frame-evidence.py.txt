@@ -1,0 +1,61 @@
+from pathlib import Path
+import subprocess,json,hashlib,shutil
+root=Path('/tmp/image-engine-worktrees/lang-image-bare-frame-health');source='6c462549052932a976a7d4d146422add772a6f4c';base='8d336a2e66912b20a0ed1d6174b6402d0ceb9e41';g=lambda *a:subprocess.check_output(['git',*a],cwd=root,text=True).strip();assert g('rev-parse','HEAD')==source and not g('status','--porcelain');sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+records={n:json.loads(Path('/tmp/image-bare-frame-final-'+n+'.json').read_text())for n in ['abort','aux','controls']}
+for n,j in records.items():
+ assert j['source']==source and j['worktree_clean']and j['worktree_still_clean']and j['sources_unchanged']and j['format_probe_compiler_unchanged']and j['SKIP']==0
+ if n=='controls':assert j['FAIL']==3 and j['PASS']==0 and all(c['exit']==1 and c['expected_failure_qualified']for c in j['checks'])
+ else:assert j['FAIL']==0 and all(c['exit']==0 for c in j['checks'])
+assert records['abort']['PASS']==71 and records['aux']['PASS']==219
+for p,h in records['abort']['source_hashes'].items():assert sha(root/p)==h
+for p in ['compiler','internal/stdlib','.github','scripts','internal/testing/e2ecompiler/self_host_cli_harness_test.go']:
+ assert subprocess.run(['git','diff','--quiet',base,'HEAD','--',p],cwd=root).returncode==0
+out=root/'docs/benchmarks/bare-frame-stubs-2026-10-27';assert not out.exists();out.mkdir(parents=True);manifest=[]
+def copy(p,rel):
+ q=out/rel;assert not q.exists();q.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(p,q);manifest.append(dict(path=str(q.relative_to(out)),original=str(p),sha256=sha(q),bytes=q.stat().st_size))
+for p in sorted(Path('/tmp').glob('image-bare-frame-*')):
+ if p.is_file()and p.suffix in ['.json','.log','.md','.go']and not any(x in p.name for x in ['.before.json','.checkpoint.json']):copy(p,Path('records')/(p.name+'.txt'if p.suffix=='.go'else p.name))
+for n in ['image-run-bare-frame-before.py','image-run-bare-frame-focused-after.py','image-prepare-bare-frame-controls.py','image-run-bare-frame-final.py','image-finalize-bare-frame-evidence.py']:
+ p=Path('/tmp')/n;copy(p,Path('coordinators')/(n+'.txt'))
+(out/'artifact-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n');(out/'summary.json').write_text(json.dumps(dict(source=source,base=base,full_abort_PASS=71,full_abort_FAIL=0,full_abort_SKIP=0,source_audit_PASS=219,source_audit_SKIP=0,format_inputs=len(records['aux']['checks'][0]['command'])-3,controls=[dict(exit=c['exit'],expected_failure_qualified=c['expected_failure_qualified'])for c in records['controls']['checks']],production_sources_and_gate_values_unchanged=True,actual_CI_recovery_qualified=False,checks={k:dict(seconds=v['seconds'],PASS=v['PASS'],FAIL=v['FAIL'],SKIP=v['SKIP'],exits=[x['exit']for x in v['checks']])for k,v in records.items()}),indent=2)+'\n')
+(out/'README.md').write_text('''# Bare-frame trap-stub evidence
+
+The source commit is `6c462549052932a976a7d4d146422add772a6f4c`.
+The clean base is `8d336a2e66912b20a0ed1d6174b6402d0ceb9e41`.
+The manifest binds each copied raw artifact to its original path and exact hash.
+
+Clean main reported one failed bare-frame test and zero skips.
+Its old assertion expected only `__fern_str_oob_abort.l1:`.
+The current array-box size guard also requires `__fern_alloc_size_abort.c:`.
+The old stub assertion was the only reported failure.
+
+The fixture now requires exactly both named stubs in their emitted order.
+It preserves every frameless-function, link, exit-134, and backtrace assertion.
+The focused candidate passed with zero skips before the source commit.
+The committed complete abort-test prefix passed 71 nodes with zero failures and zero skips.
+
+Three diagnostic overlays change only the inspected assembly view.
+They preserve the linked assembly file and runtime code.
+Missing, renamed, and duplicate stubs each produced Go exit one and only the exact expected stub assertion.
+The coordinator returned zero after it verified all three required failures and unchanged source hashes.
+These are controlled failures, not three ordinary passing Go tests.
+
+The supporting checks passed all 2,084 format inputs, Go build and vet, workflow checks, and SourceLint.
+SourceLint reported 219 passing nodes and zero skips.
+All guarded sources and the recorded formatter compiler remained unchanged.
+The stock Go harness compiled the runtime fixtures through its normal source cache.
+
+The formatter came from clean build `3a70b650d36331d2febe0f88d207bf0702e09ef4`.
+Its compiler and standard-library sources match this candidate exactly.
+This Go fixture and documentation change did not require a compiler rebuild.
+The record does not claim a separate hash for every private harness executable.
+
+Every production emitter, runtime source, standard-library source, helper guard, workload, baseline, and threshold remains unchanged.
+Actual CI recovery and the wider retained-machine proof remain open under #13687 and #13717.
+All actual M5 and epic acceptance gates remain open.
+''')
+p=root/'docs/rc-log/2026-10-27-bare-frame-trap-stubs.md';s=p.read_text().replace('The complete existing abort-test prefix requires final qualification after the source commit.','The complete existing abort-test prefix passed 71 nodes with zero skips after the source commit.\n\nThe [evidence record](../benchmarks/bare-frame-stubs-2026-10-27/README.md) preserves the original failure and all three required control failures.');p.write_text(s)
+for p in [out/'README.md',root/'docs/rc-log/2026-10-27-bare-frame-trap-stubs.md']:
+ r=subprocess.run(['python3','.claude/skills/simplified-technical-english/scripts/ste_check.py','--no-vocab','--mode','descriptive',str(p)],cwd=root,capture_output=True,text=True);s=r.stdout+r.stderr;(out/(p.parent.name+'-STE.log')).write_text(s);assert r.returncode==0 and 'ERROR'not in s,s
+assert subprocess.run(['git','diff','--check'],cwd=root).returncode==0
+print(dict(raw_artifacts=len(manifest),abort_PASS=71,controls_required_FAIL=3,source_audit_PASS=219,evidence=str(out)))

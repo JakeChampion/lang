@@ -1,0 +1,144 @@
+=== RUN   TestSelfHostAbortReportsX86_64
+=== RUN   TestSelfHostAbortReportsX86_64/array_oob
+=== RUN   TestSelfHostAbortReportsX86_64/string_slice_oob
+=== RUN   TestSelfHostAbortReportsX86_64/string_index_oob
+=== RUN   TestSelfHostAbortReportsX86_64/string_index_oob_runtime
+=== RUN   TestSelfHostAbortReportsX86_64/alloc_size_negative
+=== RUN   TestSelfHostAbortReportsX86_64/slice_range_oob
+=== RUN   TestSelfHostAbortReportsX86_64/byte_slice_range_oob
+=== RUN   TestSelfHostAbortReportsX86_64/wide_slice_range_oob
+=== RUN   TestSelfHostAbortReportsX86_64/byte_view_negative_oob
+=== RUN   TestSelfHostAbortReportsX86_64/byte_view_past_end_oob
+=== RUN   TestSelfHostAbortReportsX86_64/buf_push_range_past_end
+=== RUN   TestSelfHostAbortReportsX86_64/buf_push_range_negative
+=== RUN   TestSelfHostAbortReportsX86_64/buf_push_range_inverted
+=== RUN   TestSelfHostAbortReportsX86_64/map_snapshot_key_past_end
+=== RUN   TestSelfHostAbortReportsX86_64/map_snapshot_value_past_end
+=== RUN   TestSelfHostAbortReportsX86_64/in_bounds
+=== RUN   TestSelfHostAbortReportsX86_64/byte_view_last_in_bounds
+--- PASS: TestSelfHostAbortReportsX86_64 (4.23s)
+    --- PASS: TestSelfHostAbortReportsX86_64/array_oob (0.03s)
+    --- PASS: TestSelfHostAbortReportsX86_64/string_slice_oob (0.03s)
+    --- PASS: TestSelfHostAbortReportsX86_64/string_index_oob (0.03s)
+    --- PASS: TestSelfHostAbortReportsX86_64/string_index_oob_runtime (0.04s)
+    --- PASS: TestSelfHostAbortReportsX86_64/alloc_size_negative (0.03s)
+    --- PASS: TestSelfHostAbortReportsX86_64/slice_range_oob (0.03s)
+    --- PASS: TestSelfHostAbortReportsX86_64/byte_slice_range_oob (0.03s)
+    --- PASS: TestSelfHostAbortReportsX86_64/wide_slice_range_oob (0.04s)
+    --- PASS: TestSelfHostAbortReportsX86_64/byte_view_negative_oob (0.04s)
+    --- PASS: TestSelfHostAbortReportsX86_64/byte_view_past_end_oob (0.03s)
+    --- PASS: TestSelfHostAbortReportsX86_64/buf_push_range_past_end (0.06s)
+    --- PASS: TestSelfHostAbortReportsX86_64/buf_push_range_negative (0.04s)
+    --- PASS: TestSelfHostAbortReportsX86_64/buf_push_range_inverted (0.03s)
+    --- PASS: TestSelfHostAbortReportsX86_64/map_snapshot_key_past_end (0.86s)
+    --- PASS: TestSelfHostAbortReportsX86_64/map_snapshot_value_past_end (0.82s)
+    --- PASS: TestSelfHostAbortReportsX86_64/in_bounds (0.09s)
+    --- PASS: TestSelfHostAbortReportsX86_64/byte_view_last_in_bounds (0.15s)
+=== RUN   TestSelfHostAbortsTrapWasm
+=== RUN   TestSelfHostAbortsTrapWasm/array_oob
+=== RUN   TestSelfHostAbortsTrapWasm/string_slice_oob
+=== RUN   TestSelfHostAbortsTrapWasm/string_index_oob
+=== RUN   TestSelfHostAbortsTrapWasm/string_index_oob_runtime
+=== RUN   TestSelfHostAbortsTrapWasm/alloc_size_negative
+=== RUN   TestSelfHostAbortsTrapWasm/slice_range_oob
+=== RUN   TestSelfHostAbortsTrapWasm/byte_slice_range_oob
+=== RUN   TestSelfHostAbortsTrapWasm/wide_slice_range_oob
+=== RUN   TestSelfHostAbortsTrapWasm/byte_view_negative_oob
+=== RUN   TestSelfHostAbortsTrapWasm/byte_view_past_end_oob
+=== RUN   TestSelfHostAbortsTrapWasm/buf_push_range_past_end
+=== RUN   TestSelfHostAbortsTrapWasm/buf_push_range_negative
+=== RUN   TestSelfHostAbortsTrapWasm/buf_push_range_inverted
+=== RUN   TestSelfHostAbortsTrapWasm/map_snapshot_key_past_end
+=== RUN   TestSelfHostAbortsTrapWasm/map_snapshot_value_past_end
+--- PASS: TestSelfHostAbortsTrapWasm (5.19s)
+    --- PASS: TestSelfHostAbortsTrapWasm/array_oob (0.12s)
+    --- PASS: TestSelfHostAbortsTrapWasm/string_slice_oob (0.12s)
+    --- PASS: TestSelfHostAbortsTrapWasm/string_index_oob (0.10s)
+    --- PASS: TestSelfHostAbortsTrapWasm/string_index_oob_runtime (0.07s)
+    --- PASS: TestSelfHostAbortsTrapWasm/alloc_size_negative (0.05s)
+    --- PASS: TestSelfHostAbortsTrapWasm/slice_range_oob (0.07s)
+    --- PASS: TestSelfHostAbortsTrapWasm/byte_slice_range_oob (0.09s)
+    --- PASS: TestSelfHostAbortsTrapWasm/wide_slice_range_oob (0.09s)
+    --- PASS: TestSelfHostAbortsTrapWasm/byte_view_negative_oob (0.04s)
+    --- PASS: TestSelfHostAbortsTrapWasm/byte_view_past_end_oob (0.08s)
+    --- PASS: TestSelfHostAbortsTrapWasm/buf_push_range_past_end (0.07s)
+    --- PASS: TestSelfHostAbortsTrapWasm/buf_push_range_negative (0.05s)
+    --- PASS: TestSelfHostAbortsTrapWasm/buf_push_range_inverted (0.05s)
+    --- PASS: TestSelfHostAbortsTrapWasm/map_snapshot_key_past_end (1.09s)
+    --- PASS: TestSelfHostAbortsTrapWasm/map_snapshot_value_past_end (0.81s)
+=== RUN   TestSelfHostAbortReportsArm64
+=== RUN   TestSelfHostAbortReportsArm64/array_oob
+=== RUN   TestSelfHostAbortReportsArm64/string_slice_oob
+=== RUN   TestSelfHostAbortReportsArm64/string_index_oob
+=== RUN   TestSelfHostAbortReportsArm64/string_index_oob_runtime
+=== RUN   TestSelfHostAbortReportsArm64/alloc_size_negative
+=== RUN   TestSelfHostAbortReportsArm64/slice_range_oob
+=== RUN   TestSelfHostAbortReportsArm64/byte_slice_range_oob
+=== RUN   TestSelfHostAbortReportsArm64/wide_slice_range_oob
+=== RUN   TestSelfHostAbortReportsArm64/byte_view_negative_oob
+=== RUN   TestSelfHostAbortReportsArm64/byte_view_past_end_oob
+=== RUN   TestSelfHostAbortReportsArm64/buf_push_range_past_end
+=== RUN   TestSelfHostAbortReportsArm64/buf_push_range_negative
+=== RUN   TestSelfHostAbortReportsArm64/buf_push_range_inverted
+=== RUN   TestSelfHostAbortReportsArm64/map_snapshot_key_past_end
+=== RUN   TestSelfHostAbortReportsArm64/map_snapshot_value_past_end
+=== RUN   TestSelfHostAbortReportsArm64/in_bounds
+=== RUN   TestSelfHostAbortReportsArm64/byte_view_last_in_bounds
+--- PASS: TestSelfHostAbortReportsArm64 (11.82s)
+    --- PASS: TestSelfHostAbortReportsArm64/array_oob (0.17s)
+    --- PASS: TestSelfHostAbortReportsArm64/string_slice_oob (0.04s)
+    --- PASS: TestSelfHostAbortReportsArm64/string_index_oob (0.08s)
+    --- PASS: TestSelfHostAbortReportsArm64/string_index_oob_runtime (0.08s)
+    --- PASS: TestSelfHostAbortReportsArm64/alloc_size_negative (0.09s)
+    --- PASS: TestSelfHostAbortReportsArm64/slice_range_oob (0.09s)
+    --- PASS: TestSelfHostAbortReportsArm64/byte_slice_range_oob (0.03s)
+    --- PASS: TestSelfHostAbortReportsArm64/wide_slice_range_oob (0.06s)
+    --- PASS: TestSelfHostAbortReportsArm64/byte_view_negative_oob (0.06s)
+    --- PASS: TestSelfHostAbortReportsArm64/byte_view_past_end_oob (0.14s)
+    --- PASS: TestSelfHostAbortReportsArm64/buf_push_range_past_end (0.10s)
+    --- PASS: TestSelfHostAbortReportsArm64/buf_push_range_negative (0.11s)
+    --- PASS: TestSelfHostAbortReportsArm64/buf_push_range_inverted (0.10s)
+    --- PASS: TestSelfHostAbortReportsArm64/map_snapshot_key_past_end (1.09s)
+    --- PASS: TestSelfHostAbortReportsArm64/map_snapshot_value_past_end (1.05s)
+    --- PASS: TestSelfHostAbortReportsArm64/in_bounds (0.08s)
+    --- PASS: TestSelfHostAbortReportsArm64/byte_view_last_in_bounds (0.10s)
+=== RUN   TestSelfHostAbortBacktraceX86_64
+--- PASS: TestSelfHostAbortBacktraceX86_64 (5.14s)
+=== RUN   TestSelfHostAbortBacktraceArm64
+--- PASS: TestSelfHostAbortBacktraceArm64 (2.10s)
+=== RUN   TestSelfHostAbortHelperFrameAgrees
+=== RUN   TestSelfHostAbortHelperFrameAgrees/alloc_u8
+=== RUN   TestSelfHostAbortHelperFrameAgrees/buf_push_range
+--- PASS: TestSelfHostAbortHelperFrameAgrees (2.03s)
+    --- PASS: TestSelfHostAbortHelperFrameAgrees/alloc_u8 (0.05s)
+    --- PASS: TestSelfHostAbortHelperFrameAgrees/buf_push_range (0.07s)
+=== RUN   TestSelfHostAbortBareFrameX86_64
+--- PASS: TestSelfHostAbortBareFrameX86_64 (1.87s)
+=== RUN   TestSelfHostAbortBacktraceOffX86_64
+=== RUN   TestSelfHostAbortBacktraceOffX86_64/env
+=== RUN   TestSelfHostAbortBacktraceOffX86_64/flag
+--- PASS: TestSelfHostAbortBacktraceOffX86_64 (2.09s)
+    --- PASS: TestSelfHostAbortBacktraceOffX86_64/env (0.03s)
+    --- PASS: TestSelfHostAbortBacktraceOffX86_64/flag (0.02s)
+=== RUN   TestSelfHostAbortBacktraceOffArm64
+=== RUN   TestSelfHostAbortBacktraceOffArm64/env
+=== RUN   TestSelfHostAbortBacktraceOffArm64/flag
+--- PASS: TestSelfHostAbortBacktraceOffArm64 (1.86s)
+    --- PASS: TestSelfHostAbortBacktraceOffArm64/env (0.02s)
+    --- PASS: TestSelfHostAbortBacktraceOffArm64/flag (0.01s)
+=== RUN   TestSelfHostAbortBacktraceCorruptFrame
+=== RUN   TestSelfHostAbortBacktraceCorruptFrame/x86-64-linux
+=== RUN   TestSelfHostAbortBacktraceCorruptFrame/x86-64-linux/control
+=== RUN   TestSelfHostAbortBacktraceCorruptFrame/x86-64-linux/corrupt-frame
+=== RUN   TestSelfHostAbortBacktraceCorruptFrame/arm64-linux
+=== RUN   TestSelfHostAbortBacktraceCorruptFrame/arm64-linux/control
+=== RUN   TestSelfHostAbortBacktraceCorruptFrame/arm64-linux/corrupt-frame
+--- PASS: TestSelfHostAbortBacktraceCorruptFrame (1.83s)
+    --- PASS: TestSelfHostAbortBacktraceCorruptFrame/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostAbortBacktraceCorruptFrame/x86-64-linux/control (0.01s)
+        --- PASS: TestSelfHostAbortBacktraceCorruptFrame/x86-64-linux/corrupt-frame (0.01s)
+    --- PASS: TestSelfHostAbortBacktraceCorruptFrame/arm64-linux (0.08s)
+        --- PASS: TestSelfHostAbortBacktraceCorruptFrame/arm64-linux/control (0.04s)
+        --- PASS: TestSelfHostAbortBacktraceCorruptFrame/arm64-linux/corrupt-frame (0.02s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	38.207s
