@@ -1,0 +1,105 @@
+import "std/f64";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum MatrixError { Shape, Input, Numeric, Cancelled }
+
+pub struct LinearRGB { r: f64, g: f64, b: f64 }
+
+pub struct XYZ { x: f64, y: f64, z: f64 }
+
+struct Pair { high: f64, low: f64 }
+
+function sum(a: f64, b: f64): Pair {
+  let high = a + b;
+  let virtual_b = high - a;
+  return Pair { high: high, low: a - (high - virtual_b) + (b - virtual_b) };
+}
+
+// Keep the low product before large terms cancel.
+function product(raw: i32, input: f64): Pair {
+  let a = raw as f64;
+  let high = a * input;
+  let sa = a * 134217729.0;
+  let ah = sa - (sa - a);
+  let al = a - ah;
+  let sx = input * 134217729.0;
+  let xh = sx - (sx - input);
+  let xl = input - xh;
+  return Pair { high: high, low: ah * xh - high + ah * xl + al * xh + al * xl };
+}
+
+function add(a: Pair, b: Pair): Pair {
+  let high = sum(a.high, b.high);
+  let low = sum(a.low, b.low);
+  let middle = sum(high.low, low.high);
+  let top = sum(high.high, middle.high);
+  return sum(top.high, top.low + middle.low + low.low);
+}
+
+function magnitude(value: f64): f64 {
+  return if (value < 0.0) { -value } else { value };
+}
+
+function dot(a: i32, b: i32, c: i32, input: LinearRGB): f64 {
+  if (a == 65536 && b == 0 && c == 0) {
+    return input.r;
+  }
+  if (a == 0 && b == 65536 && c == 0) {
+    return input.g;
+  }
+  if (a == 0 && b == 0 && c == 65536) {
+    return input.b;
+  }
+  let p = product(a, input.r);
+  let q = product(b, input.g);
+  let r = product(c, input.b);
+  // Combine large magnitudes first so cancellation exposes small terms.
+  if (magnitude(p.high) < magnitude(q.high)) {
+    let swap = p;
+    p = q;
+    q = swap;
+  }
+  if (magnitude(q.high) < magnitude(r.high)) {
+    let swap = q;
+    q = r;
+    r = swap;
+  }
+  if (magnitude(p.high) < magnitude(q.high)) {
+    let swap = p;
+    p = q;
+    q = swap;
+  }
+  let total = add(add(p, q), r);
+  let value = total.high / 65536.0 + total.low / 65536.0;
+  return if (value == 0.0) { 0.0 } else { value };
+}
+
+function admitted(value: f64): boolean {
+  return value.is_finite() && value >= 0.0 && value <= 1.0;
+}
+
+// Coefficients are raw signed s15Fixed16 values in row order.
+pub function evaluate(coefficients: [i32], input: LinearRGB, cancelled: () => boolean): Result[XYZ, MatrixError] {
+  if (coefficients.len() != 9) {
+    return Err(MatrixError.Shape);
+  }
+  if (!admitted(input.r) || !admitted(input.g) || !admitted(input.b)) {
+    return Err(MatrixError.Input);
+  }
+  if (cancelled()) {
+    return Err(MatrixError.Cancelled);
+  }
+  let output = XYZ {
+    x: dot(coefficients[0], coefficients[1], coefficients[2], input),
+    y: dot(coefficients[3], coefficients[4], coefficients[5], input),
+    z: dot(coefficients[6], coefficients[7], coefficients[8], input),
+  };
+  if (!output.x.is_finite() || !output.y.is_finite() || !output.z.is_finite()) {
+    return Err(MatrixError.Numeric);
+  }
+  if (cancelled()) {
+    return Err(MatrixError.Cancelled);
+  }
+  return Ok(output);
+}

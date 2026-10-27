@@ -1,0 +1,16 @@
+{
+  "source_commit": "103243525a4987f48607dd0e7406c02370d6b1c3",
+  "cases_per_target": 1497,
+  "accepted": 1369,
+  "errors": 128,
+  "workers_per_target": 188,
+  "total_workers": 564,
+  "all_samples_equal": true,
+  "all_sources_unchanged": true,
+  "max_absolute_error": 1.1102145542946743e-16,
+  "hash_counts": [
+    1249,
+    1250,
+    1250
+  ]
+}

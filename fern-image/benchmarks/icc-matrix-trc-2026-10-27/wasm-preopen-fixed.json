@@ -1,0 +1,27 @@
+{
+  "source_base": "eb79b4673246b4f0d2d0f5a1aa9e7b45c9bf7826",
+  "feature_uncommitted": true,
+  "command": [
+    "/home/agent/.local/share/mise/installs/wasmtime/46.0.1/wasmtime-v46.0.1-x86_64-linux/wasmtime",
+    "run",
+    "--dir=.",
+    "/workspace/lang-image-icc-matrix-trc/fern-image/build/icc-composition-initial-wasm.wasm"
+  ],
+  "exit": 0,
+  "TAP_ok": 6,
+  "TAP_not_ok": 0,
+  "heaps": [
+    [
+      782,
+      782,
+      0
+    ]
+  ],
+  "before_hashes": {
+    "binary": "c40c0f2fd561756c40c4365680ce6ab7b614ad729d6829c3129bae2c6a216f05",
+    "runner": "2b95a43218597466c7e56208af292d410c6d6b002a98d10d76d7273199bcd1ff",
+    "compiler": "6e95755acdba854fc94ec32aaa37d09dd8264bf4438b9952e37cc198bac5d9ab"
+  },
+  "unchanged": true,
+  "correction": "Reuse the original successfully compiled module with the required fixture preopen. Initial fixture failures remain preserved."
+}

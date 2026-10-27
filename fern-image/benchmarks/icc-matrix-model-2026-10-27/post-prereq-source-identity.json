@@ -1,0 +1,17 @@
+{
+  "application_base": "166b45b8af4d3b1ed84cd8b4b03fa54db77ac058",
+  "compiler_source": "35b5bd31bb01a6d373aaad83beb6883537c328a3",
+  "compiler_stdlib_identical": true,
+  "Go_implementation_identical_since_clean_103": true,
+  "changed_Go_paths": [
+    "internal/testing/e2ecompiler/self_host_match_empty_array_result_test.go"
+  ],
+  "feature_files_preserved_sha256": {
+    "fern-image/packages/codecs/icc/matrix_model.fern": "82852ff01092a21c258fe8c6b39374a6acf167f618aa37d3945c82fa08660ed8",
+    "fern-image/tests/icc_matrix_model_test.fern": "64e33d756c29edeab97bf97b6077209f0c945b35379f1a82266bf66e03d4c25e"
+  },
+  "compiler_sha256": {
+    "fern": "fd43d45fdd54cd7883425e6259dc838997d3eb413fb78792dc65656b9d185c46",
+    "fern-selfhost": "79710ddc04e621b8f74503a5fd84b37fa709a918caaabf2108cc2195cf732a64"
+  }
+}

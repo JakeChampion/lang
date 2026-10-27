@@ -1,0 +1,51 @@
+{
+  "base": "ef4c76e002613e975c36f536479a0417ae3e09a6",
+  "feature_uncommitted": true,
+  "commands": [
+    {
+      "command": [
+        "/workspace/image-nested-array-current-fern-b38cca915",
+        "-check",
+        "tests/icc_matrix_eval_test.fern"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/workspace/image-nested-array-current-fern-b38cca915",
+        "-target",
+        "wasm32-wasi",
+        "-sanitize",
+        "-o",
+        "/workspace/lang-image-icc-matrix/fern-image/build/icc-matrix-checked-wasm",
+        "tests/icc_matrix_eval_test.fern"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "wasmtime",
+        "run",
+        "--dir=.",
+        "/workspace/lang-image-icc-matrix/fern-image/build/icc-matrix-checked-wasm"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "hashes": {
+    "/workspace/lang-image-icc-matrix/fern-image/packages/codecs/icc/matrix_eval.fern": "ef8d618aea4527e40b9f985c7552027091b123ff8fc7b443339ad3f9b6d179de",
+    "/workspace/lang-image-icc-matrix/fern-image/tests/icc_matrix_eval_test.fern": "e78f5ffd3f68f0ccefff9c6ac8c60bff494b6a4f4289bc79a30ba2aa860011cd",
+    "/workspace/image-nested-array-current-fern-b38cca915": "d12b97d792d5d66d6bd312cd6723100ecb85ec2609d9430705032e504e5c090b"
+  },
+  "exit_code": 0,
+  "TAP_ok": 6,
+  "TAP_not_ok": 0,
+  "heaps": [
+    [
+      143,
+      143,
+      0
+    ]
+  ],
+  "sources_unchanged": true
+}

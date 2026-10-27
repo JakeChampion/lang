@@ -1,0 +1,70 @@
+{
+  "source_commit": "b38cca91520de044f7ebf81f7ea6523d1af38a12",
+  "exit_code": 0,
+  "pass_nodes": 5002,
+  "fail_nodes": 0,
+  "skip_nodes": 0,
+  "roots": [
+    [
+      "PASS",
+      "TestSelfHostCheckerCodeSequenceX86_64",
+      "26.69s"
+    ],
+    [
+      "PASS",
+      "TestSelfHostCheckerCodesX86_64",
+      "30.68s"
+    ],
+    [
+      "PASS",
+      "TestSelfHostCheckerDifferentialX86_64",
+      "8.14s"
+    ],
+    [
+      "PASS",
+      "TestSelfHostCheckerBundleDifferentialX86_64",
+      "56.35s"
+    ],
+    [
+      "PASS",
+      "TestSelfHostCheckerX86_64",
+      "4.38s"
+    ],
+    [
+      "PASS",
+      "TestSelfHostCheckerArm64",
+      "4.75s"
+    ],
+    [
+      "PASS",
+      "TestSelfHostDiagnosticTextParity",
+      "29.93s"
+    ],
+    [
+      "PASS",
+      "TestSelfHostGenericEnumCtorLocalIR",
+      "1.79s"
+    ],
+    [
+      "PASS",
+      "TestSelfHostRepoComplexityRatchet",
+      "4.18s"
+    ],
+    [
+      "PASS",
+      "TestSelfHostNestedEmptyArrayInference",
+      "3.70s"
+    ],
+    [
+      "PASS",
+      "TestSelfHostNestedEmptyArrayRejectsMixedElements",
+      "1.43s"
+    ],
+    [
+      "PASS",
+      "TestSelfHostPartialEnumInference",
+      "9.86s"
+    ]
+  ],
+  "log_sha256": "7eb2b389e45f368d01491ce15a4cf73271d27012838701781f7758bffeefdb32"
+}

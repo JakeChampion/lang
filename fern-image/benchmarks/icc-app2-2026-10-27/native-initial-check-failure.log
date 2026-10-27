@@ -1,0 +1,3 @@
+tests/icc_app2_test.fern:60:78: error[E015]: None is a payload-less variant of enum Option, but a bare name in a payload slot is a binder that matches every value — write `None()` to match the variant, or rename the binder
+      if (match (icc_app2.assemble(none[:], icc_app2.default_limits(), never)) { Ok(None) => false, _ => true }) {
+                                                                                 ^

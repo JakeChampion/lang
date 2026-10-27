@@ -1,0 +1,24 @@
+{
+  "note": "The original units preceded the source commit. This exact-byte link does not relabel their execution as clean-source runs.",
+  "source_commit": "309dec19100f3ac5ccee69fbccb72cd4ffb8b074",
+  "links": [
+    {
+      "mode": "native",
+      "original_base": "166b45b8af4d3b1ed84cd8b4b03fa54db77ac058",
+      "original_feature_uncommitted": true,
+      "identical_committed_feature_bytes": true
+    },
+    {
+      "mode": "wasm",
+      "original_base": "166b45b8af4d3b1ed84cd8b4b03fa54db77ac058",
+      "original_feature_uncommitted": true,
+      "identical_committed_feature_bytes": true
+    },
+    {
+      "mode": "arm64",
+      "original_base": "166b45b8af4d3b1ed84cd8b4b03fa54db77ac058",
+      "original_feature_uncommitted": true,
+      "identical_committed_feature_bytes": true
+    }
+  ]
+}

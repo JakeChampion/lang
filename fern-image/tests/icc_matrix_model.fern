@@ -1,0 +1,113 @@
+import "../packages/codecs/icc/matrix_model";
+import "../packages/codecs/icc/envelope";
+import "../packages/codecs/icc/tag_data";
+import "std/i32";
+import "std/i64";
+
+function signed(input: [u8], at: i32): i32 {
+  let value = input[at] as i64 | input[at + 1] as i64 << 8i64 | input[at + 2] as i64 << 16i64 | input[at + 3] as i64 << 24i64;
+  return (if (value >= 2147483648i64) { value - 4294967296i64 } else { value }) as i32;
+}
+
+function intent(value: envelope.Intent): i32 {
+  return match (value) { envelope.Intent.Perceptual => 0, envelope.Intent.Relative => 1, envelope.Intent.Saturation => 2, envelope.Intent.Absolute => 3 };
+}
+
+function envelope_error(error: envelope.IccError): string {
+  return match (error) { envelope.IccError.Limit => "Limit", envelope.IccError.Truncated => "Truncated", envelope.IccError.Signature => "Signature", envelope.IccError.Version => "Version", envelope.IccError.DeviceClass => "DeviceClass", envelope.IccError.ColorSpace => "ColorSpace", envelope.IccError.Pcs => "Pcs", envelope.IccError.Header => "Header", envelope.IccError.Directory => "Directory", envelope.IccError.Duplicate => "Duplicate", envelope.IccError.Overlap => "Overlap", envelope.IccError.Layout => "Layout", envelope.IccError.Cancelled => "Cancelled" };
+}
+
+function tag_error(error: tag_data.TagError): string {
+  return match (error) { tag_data.TagError.Limit => "Limit", tag_data.TagError.Length => "Length", tag_data.TagError.Signature => "Signature", tag_data.TagError.Reserved => "Reserved", tag_data.TagError.Function => "Function", tag_data.TagError.Cancelled => "Cancelled" };
+}
+
+function error_name(error: matrix_model.ModelError): string {
+  return match (error) { matrix_model.ModelError.Limit => "Limit", matrix_model.ModelError.Intent => "Intent", matrix_model.ModelError.Envelope(e) => "Envelope." + envelope_error(e), matrix_model.ModelError.MissingTag => "MissingTag", matrix_model.ModelError.UnsupportedTag => "UnsupportedTag", matrix_model.ModelError.MetadataType => "MetadataType", matrix_model.ModelError.Tag(e) => "Tag." + tag_error(e), matrix_model.ModelError.CurveDomain => "CurveDomain", matrix_model.ModelError.UnsupportedCurve => "UnsupportedCurve", matrix_model.ModelError.Cancelled => "Cancelled" };
+}
+
+function curve_values(own values: i64[], curve: tag_data.CurveData): i64[] {
+  match (curve) {
+    tag_data.Identity => {
+      return values.append(0i64).append(0i64).append(0i64);
+    },
+    tag_data.Gamma(gamma) => {
+      return values.append(1i64).append(0i64).append(1i64).append(gamma as i64);
+    },
+    tag_data.Samples(samples) => {
+      values = values.append(2i64).append(0i64).append(samples.len() as i64);
+      for value in samples {
+        values = values.append(value as i64);
+      }
+    },
+    tag_data.Parametric(data) => {
+      values = values.append(3i64).append(data.function_type as i64).append(data.coefficients.len() as i64);
+      for value in data.coefficients {
+        values = values.append(value as i64);
+      }
+    }
+  }
+  return values;
+}
+
+function report(path: string, polls: i32, data: matrix_model.ForwardData): void {
+  let info = data.info;
+  let values: i64[] = [info.bytes as i64, if (info.device_class == envelope.DeviceClass.Input) { 0i64 } else { 1i64 }, intent(info.preferred_intent) as i64, intent(data.requested_intent) as i64, info.unique_elements as i64, info.created.year as i64, info.created.month as i64, info.created.day as i64, info.created.hour as i64, info.created.minute as i64, info.created.second as i64, info.flags, info.attributes_high, info.attributes_low];
+  for value in info.unverified_id {
+    values = values.append(value as i64);
+  }
+  values = values.append(info.tags.len() as i64);
+  for tag in info.tags {
+    values = values.append(tag.signature).append(tag.offset as i64).append(tag.size as i64).append(tag.type_signature);
+  }
+  for value in data.matrix {
+    values = values.append(value as i64);
+  }
+  values = values.append(data.media_white.x as i64).append(data.media_white.y as i64).append(data.media_white.z as i64);
+  values = curve_values(curve_values(curve_values(values, data.red), data.green), data.blue);
+  let text = "model " + path + " ok " + polls.to_string();
+  for value in values {
+    text = text + " " + value.to_string();
+  }
+  print(text);
+}
+
+function emit(path: string): i32 {
+  let input = match (read_file_bytes(path)) { Ok(value) => value, Err(_) => { return 2; } };
+  if (input.len() < 28 || input.len() > 16777244 || input[0] != 70 as u8 || input[1] != 77 as u8 || input[2] != 68 as u8 || input[3] != 49 as u8) {
+    return 3;
+  }
+  let requested = match (signed(input, 4)) { 0 => envelope.Intent.Perceptual, 1 => envelope.Intent.Relative, 2 => envelope.Intent.Saturation, 3 => envelope.Intent.Absolute, _ => { return 4; } };
+  let stop = signed(input, 24);
+  if (stop < 0) {
+    return 4;
+  }
+  let limits = matrix_model.ModelLimits { profile: envelope.IccLimits { max_bytes: signed(input, 8), max_tags: signed(input, 12) }, curve: tag_data.CurveLimits { max_bytes: signed(input, 16), max_samples: signed(input, 20) } };
+  let polls = cell_new(0);
+  let result = matrix_model.read(input[28:], requested, limits, (): boolean => {
+    polls.set(polls.get() + 1);
+    return stop != 0 && polls.get() == stop;
+  });
+  match (result) {
+    Ok(data) => {
+      report(path, polls.get(), data);
+    },
+    Err(error) => {
+      print("model " + path + " error " + error_name(error) + " " + polls.get().to_string());
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for index in 1..paths.len() {
+    let code = emit(paths[index]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}

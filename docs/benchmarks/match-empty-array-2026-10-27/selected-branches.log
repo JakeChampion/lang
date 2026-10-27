@@ -1,0 +1,20 @@
+=== RUN   TestSelfHostMatchEmptyArrayResult
+=== RUN   TestSelfHostMatchEmptyArrayResult/selected-empty
+=== RUN   TestSelfHostMatchEmptyArrayResult/selected-empty/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/selected-empty/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/selected-empty/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested-selected-empty
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested-selected-empty/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested-selected-empty/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested-selected-empty/wasm32-wasi
+--- PASS: TestSelfHostMatchEmptyArrayResult (39.68s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/selected-empty (0.19s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/selected-empty/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/selected-empty/arm64-linux (0.08s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/selected-empty/wasm32-wasi (0.05s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/nested-selected-empty (0.11s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/nested-selected-empty/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/nested-selected-empty/arm64-linux (0.05s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/nested-selected-empty/wasm32-wasi (0.02s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	39.696s

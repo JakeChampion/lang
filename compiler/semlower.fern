@@ -1009,8 +1009,8 @@ struct RuntimeRefusal { name: string, why: string }
 
 function complete_runtime_helpers(own bodies: irtables.Lowered[], helpers: Result[irtables.Lowered, irtables.LowerState][]): Result[RuntimeBodies, RuntimeRefusal] {
   let cached_names: string[] = [];
-  for body in bodies {
-    cached_names = cached_names.append(body.name);
+  for i in 0..bodies.len() {
+    cached_names = cached_names.append(bodies[i].name);
   }
   let helper_names: string[] = [];
   for helper in helpers {

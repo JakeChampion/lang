@@ -1,0 +1,19 @@
+{
+  "source_commit": "2812e664628b853ab77ae80e0a6ca31533c9b8eb",
+  "cases_per_target": 368,
+  "some": 295,
+  "none": 1,
+  "errors": 72,
+  "checked_bytes_per_target": 36079605,
+  "positive_workers_per_target": 46,
+  "total_positive_workers": 138,
+  "reference_rejection_workers_per_target": 3,
+  "total_reference_rejection_workers": 9,
+  "Pillow_metadata_observations_per_target": 7,
+  "all_samples_equal": true,
+  "hash_counts": [
+    1254,
+    1255,
+    1255
+  ]
+}

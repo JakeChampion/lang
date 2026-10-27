@@ -1,0 +1,110 @@
+import "../packages/codecs/icc/matrix_eval";
+import "std/test";
+import "std/f64";
+
+function never(): boolean {
+  return false;
+}
+
+function rgb(r: f64, g: f64, b: f64): matrix_eval.LinearRGB {
+  return matrix_eval.LinearRGB { r: r, g: g, b: b };
+}
+
+function eval(coefficients: i32[], input: matrix_eval.LinearRGB): Result[matrix_eval.XYZ, matrix_eval.MatrixError] {
+  return matrix_eval.evaluate(coefficients[:], input, never);
+}
+
+function same(value: matrix_eval.XYZ, x: f64, y: f64, z: f64): boolean {
+  return f64_bits(value.x) == f64_bits(x) && f64_bits(value.y) == f64_bits(y) && f64_bits(value.z) == f64_bits(z);
+}
+
+function identity(): test.TestOutcome {
+  for v in [0.0, -0.0, f64_from_bits(1), f64_from_bits(0x0010000000000000), 0.5, f64_from_bits(0x3fefffffffffffff), 1.0] {
+    if (match (eval([65536, 0, 0, 0, 65536, 0, 0, 0, 65536], rgb(v, v, v))) { Ok(out) => !same(out, v, v, v), _ => true }) {
+      return test.fail("exact projections include negative zero");
+    }
+  }
+  return test.assert_true(match (eval([0, 0, 65536, 65536, 0, 0, 0, 65536, 0], rgb(-0.0, 0.5, 1.0))) { Ok(out) => same(out, 1.0, -0.0, 0.5), _ => false });
+}
+
+function columns(): test.TestOutcome {
+  let profile = [28576, 25239, 9375, 14581, 46983, 3972, 912, 6361, 46787];
+  if (match (eval(profile, rgb(0.25, 0.5, 0.75))) { Ok(out) => !same(out, 0.408855438232421875, 0.459529876708984375, 0.587444305419921875), _ => true }) {
+    return test.fail("profile column convention");
+  }
+  return test.assert_true(match (eval([131072, 0, 0, 0, -65536, 0, 0, 0, 196608], rgb(1.0, 0.5, 1.0))) { Ok(out) => same(out, 2.0, -0.5, 3.0), _ => false });
+}
+
+function cancellation(): test.TestOutcome {
+  for stop in 1..3 {
+    let polls = cell_new(0);
+    let result = matrix_eval.evaluate([65536, 0, 0, 0, 65536, 0, 0, 0, 65536], rgb(0.25, 0.5, 0.75), (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() == stop;
+    });
+    if (polls.get() != stop || match (result) { Err(matrix_eval.MatrixError.Cancelled()) => false, _ => true }) {
+      return test.fail("both scalar cancellation polls");
+    }
+  }
+  return test.pass();
+}
+
+function admission(): test.TestOutcome {
+  for coefficients in [[], [1], [0, 0, 0, 0, 0, 0, 0, 0], [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]] {
+    let polls = cell_new(0);
+    let result = matrix_eval.evaluate(coefficients[:], rgb(0.0, 0.0, 0.0), (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    });
+    if (polls.get() != 0 || match (result) { Err(matrix_eval.MatrixError.Shape()) => false, _ => true }) {
+      return test.fail("shape before callback");
+    }
+  }
+  for v in [-0.1, 1.1, f64_from_bits(0x7ff0000000000000), -f64_from_bits(0x7ff0000000000000), f64_from_bits(0x7ff8000000000000)] {
+    for input in [rgb(v, 0.0, 0.0), rgb(0.0, v, 0.0), rgb(0.0, 0.0, v)] {
+      let polls = cell_new(0);
+      let result = matrix_eval.evaluate([0, 0, 0, 0, 0, 0, 0, 0, 0], input, (): boolean => {
+        polls.set(polls.get() + 1);
+        return false;
+      });
+      if (polls.get() != 0 || match (result) { Err(matrix_eval.MatrixError.Input()) => false, _ => true }) {
+        return test.fail("each channel before callback");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function exact_cancellation(): test.TestOutcome {
+  let coefficients = [2147483647, -2147483647, 65536, -2147483648, -2147483648, -2147483648, 0, 0, 0];
+  if (match (eval(coefficients, rgb(1.0, 1.0, f64_from_bits(1)))) { Ok(out) => f64_bits(out.x) != 1 || f64_bits(out.z) != 0, _ => true }) {
+    return test.fail("large cancellation retains the smallest input");
+  }
+  return test.assert_true(match (eval(coefficients, rgb(1.0, 1.0, 1.0))) { Ok(out) => same(out, 1.0, -98304.0, 0.0), _ => false });
+}
+
+function ownership(): test.TestOutcome {
+  let coefficients = [65536, 0, 0, 0, 65536, 0, 0, 0, 65536];
+  let shared = cell_new(coefficients);
+  let polls = cell_new(0);
+  let result = matrix_eval.evaluate(coefficients[:], rgb(-0.0, 0.5, 1.0), (): boolean => {
+    polls.set(polls.get() + 1);
+    shared.set(shared.get().with(4, -65536));
+    return false;
+  });
+  if (polls.get() != 2 || coefficients[4] != 65536 || shared.get()[4] != -65536 || match (result) { Ok(out) => !same(out, -0.0, 0.5, 1.0), _ => true }) {
+    return test.fail("coefficient COW and retained result");
+  }
+  return test.assert_true(match (eval(shared.get(), rgb(0.25, 0.5, 0.75))) { Ok(out) => same(out, 0.25, -0.5, 0.75), _ => false });
+}
+
+pub function main(): i32 {
+  let runner = test.test_new("ICC matrix evaluation");
+  runner.test("ICC matrix exact projections", identity);
+  runner.test("ICC matrix columns and unclipped output", columns);
+  runner.test("ICC matrix cancellation", cancellation);
+  runner.test("ICC matrix admission", admission);
+  runner.test("ICC matrix extremes and cancellation", exact_cancellation);
+  runner.test("ICC matrix COW and fresh calls", ownership);
+  return runner.finish();
+}

@@ -1,0 +1,65 @@
+[
+  {
+    "case": "negative-mixed-after-empty",
+    "action": "go-check",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "/workspace/image-nested-array-repros/negative-mixed-after-empty.fern:1:44: error[E034]: array element: expected i32[], got string[]\n    function main(): i32 { for xs in [[], [1], [\"text\"]] { let n = xs.len(); } return 0; }\n                                               ^\n"
+  },
+  {
+    "case": "negative-mixed-after-empty",
+    "action": "selfhost-check",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "negative-mixed-after-empty",
+    "action": "native-emit",
+    "exit_code": 3,
+    "stdout": "",
+    "stderr": "FERN_SEM_IR: main: unresolved array literal type\nFERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each\n"
+  },
+  {
+    "case": "negative-scalar-after-empty",
+    "action": "go-check",
+    "exit_code": 1,
+    "stdout": "",
+    "stderr": "/workspace/image-nested-array-repros/negative-scalar-after-empty.fern:1:24: error[E043]: no method \"len\" on [][] \u2014 \"len\" is declared for [][]\n    function main(): i32 { for xs in [[], 1] { let n = xs; } return 0; }\n                           ^\n/workspace/image-nested-array-repros/negative-scalar-after-empty.fern:1:28: error[E020]: empty array literal needs a type annotation\n    function main(): i32 { for xs in [[], 1] { let n = xs; } return 0; }\n                               ^\n/workspace/image-nested-array-repros/negative-scalar-after-empty.fern:1:39: error[E034]: array element: expected [], got i32\n    function main(): i32 { for xs in [[], 1] { let n = xs; } return 0; }\n                                          ^\n"
+  },
+  {
+    "case": "negative-scalar-after-empty",
+    "action": "selfhost-check",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "negative-scalar-after-empty",
+    "action": "native-emit",
+    "exit_code": 3,
+    "stdout": "",
+    "stderr": "FERN_SEM_IR: main: unresolved array literal type\nFERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each\n"
+  },
+  {
+    "case": "nested-two-level",
+    "action": "go-check",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "nested-two-level",
+    "action": "selfhost-check",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "nested-two-level",
+    "action": "native-emit",
+    "exit_code": 3,
+    "stdout": "",
+    "stderr": "FERN_SEM_IR: main: unresolved array literal type\nFERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each\n"
+  }
+]

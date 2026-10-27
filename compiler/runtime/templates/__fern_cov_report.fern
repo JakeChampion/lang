@@ -16,4 +16,9 @@ function __fern_cov_report(): void {
     }
     i = i + 1;
   }
+  if (t != 0 as usize) {
+    __raw_store_ptr(__raw_cover(), 0, 0 as usize);
+    // Transfer the table to an owned value so normal scope cleanup releases it.
+    let table_own: string = __raw_string(t, __FERN_COVER_COUNT * 8 + 8);
+  }
 }

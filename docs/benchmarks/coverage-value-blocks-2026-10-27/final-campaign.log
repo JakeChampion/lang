@@ -1,0 +1,10 @@
+=== RUN   TestSelfHostCoverageGuidedFuzz
+=== RUN   TestSelfHostCoverageGuidedFuzz/discovery=1
+=== RUN   TestSelfHostCoverageGuidedFuzz/discovery=2
+=== NAME  TestSelfHostCoverageGuidedFuzz
+    selfhost_coverage_fuzz_test.go:254: coverage-guided self-host fuzz: 66 iterations in 30s, 8 corpus entries (+2 found), 4624/253314 counters (1.8%)
+--- PASS: TestSelfHostCoverageGuidedFuzz (158.94s)
+    --- PASS: TestSelfHostCoverageGuidedFuzz/discovery=1 (0.50s)
+    --- PASS: TestSelfHostCoverageGuidedFuzz/discovery=2 (1.81s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	158.960s

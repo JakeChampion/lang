@@ -1,0 +1,14 @@
+TAP version 13
+# Suite: checked ICC APP2 payload assembly
+ok 1 - absence and complete empty sequences are distinct
+ok 2 - sequence order controls every concatenated byte
+ok 3 - framing prefixes and every identifier byte
+ok 4 - strict sequence/count/duplicate/completeness admission
+ok 5 - caller limits and wire boundaries
+ok 6 - every cooperative allocation/copy/success poll
+ok 7 - input COW, retained output, and fresh calls
+ok 8 - profile assembly does not imply structural validity
+1..8
+# tests 8
+# pass 8
+# fail 0

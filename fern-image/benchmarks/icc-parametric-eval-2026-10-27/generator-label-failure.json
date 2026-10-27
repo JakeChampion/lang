@@ -1,0 +1,8 @@
+{
+  "source_sha256": "a735c289f1f6c4920e2a9c1ae922a58be7c8a5a2f560b7557f0115e5d44b42d8",
+  "command": "python3 fern-image/tests/generate_icc_parametric_eval.py fern-image/tests/fixtures/icc-parametric-eval-reference.json.gz",
+  "exit_code": 1,
+  "failure": "AssertionError: len({c[name] for c in cases}) == len(cases)",
+  "cause": "Case labels omitted b while the same a appeared with distinct b values. No bundle or campaign completed.",
+  "fix": "Include b in each branch case label; preserve the unique-name assertion."
+}

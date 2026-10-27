@@ -1,0 +1,22 @@
+./scripts/gofmt_gate.sh
+./scripts/testname_gate.sh
+testname gate: 1815 exact + 14 prefix test selectors resolve
+actionlint
+node scripts/ci-changes-selftest.mjs
+ci-changes-selftest: 66 cases pass against the changes script in ci.yml
+node scripts/main-red-selftest.mjs
+main-red-selftest: 33 cases pass against the reporter script
+node scripts/perf-gate-selftest.mjs
+perf-gate-selftest: 22 cases pass against scripts/ci-check-perf
+node scripts/nightly-findings-selftest.mjs
+nightly-findings selftest: ok
+python3 scripts/gen-runtime-bundle.py --check
+./bin/fern -target x86-64-linux -o build/runtime-check compiler/drivers/runtime_modules_run.fern
+./build/runtime-check
+x86-64-linux runtime modules ok
+arm64-linux runtime modules ok
+arm64-darwin runtime modules ok
+wasm32-wasi runtime modules ok
+wasm32-wasi-http runtime modules ok
+go test ./internal/testing/e2ecompiler/ -run 'TestSelfHostFeatureCensus$|TestSelfHostFixtureSourcesCheck$' -count=1
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	63.216s

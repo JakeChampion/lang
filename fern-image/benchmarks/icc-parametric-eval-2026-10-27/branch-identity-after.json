@@ -1,0 +1,8 @@
+{
+  "source_commit": "3464a258e0439d4a3ac42ac4ab18eeac6e167b7a",
+  "feature_uncommitted": true,
+  "core_sha256": "63b8604672e7102a91de515c3007434171fc270302e27bd818e4079b84f95cf4",
+  "probe_sha256": "064bf65d03fb9caf79b0c76e65f16931661e205e608dd2df45212e2bb3d4a8f5",
+  "compile_exit": 0,
+  "runtime_exit": 0
+}

@@ -1,0 +1,12 @@
+TAP version 13
+# Suite: ICC matrix evaluation
+ok 1 - ICC matrix exact projections
+ok 2 - ICC matrix columns and unclipped output
+ok 3 - ICC matrix cancellation
+ok 4 - ICC matrix admission
+ok 5 - ICC matrix extremes and cancellation
+ok 6 - ICC matrix COW and fresh calls
+1..6
+# tests 6
+# pass 6
+# fail 0

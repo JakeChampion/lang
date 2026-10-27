@@ -1,0 +1,140 @@
+import "../packages/codecs/icc/parametric_eval";
+import "../packages/codecs/icc/tag_data";
+import "std/test";
+import "std/f64";
+
+function never(): boolean {
+  return false;
+}
+
+function near(actual: f64, expected: f64, tolerance: f64): boolean {
+  let delta = actual - expected;
+  return actual.is_finite() && delta >= -tolerance && delta <= tolerance;
+}
+
+function evaluate(kind: i32, coefficients: i32[], input: f64): Result[f64, parametric_eval.EvalError] {
+  return parametric_eval.evaluate(tag_data.ParametricData { function_type: kind, coefficients: coefficients }, input, never);
+}
+
+function formulas(): test.TestOutcome {
+  for (kind, coefficients, input, expected) in [
+    (0, [131072], 0.5, 0.25),
+    (1, [131072, 65536, -16384], 0.5, 0.0625),
+    (1, [131072, 65536, -16384], 0.125, 0.0),
+    (2, [131072, 65536, -16384, 16384], 0.5, 0.3125),
+    (2, [131072, 65536, -16384, 16384], 0.125, 0.25),
+    (3, [131072, 65536, 0, 32768, 32768], 0.25, 0.125),
+    (3, [131072, 65536, 0, 32768, 32768], 0.5, 0.25),
+    (4, [65536, 65536, 0, 65536, 32768, -16384, 16384], 0.25, 0.5),
+    (4, [65536, 65536, 0, 65536, 32768, -16384, 16384], 0.5, 0.25),
+    (4, [65536, 65536, 0, 65536, 32768, -16384, 16384], 0.75, 0.5),
+  ] {
+    if (match (evaluate(kind, coefficients, input)) { Ok(v) => !near(v, expected, 0.000000000001), Err(_) => true }) {
+      return test.fail("all five formulas and distinct corrected type-4 offsets");
+    }
+  }
+  return test.pass();
+}
+
+function clipping_and_domains(): test.TestOutcome {
+  for (coefficients, expected) in [([65536, 65536, 0, 131072], 1.0), ([65536, 65536, 0, -131072], 0.0)] {
+    if (match (evaluate(2, coefficients, 0.5)) { Ok(v) => v != expected, Err(_) => true }) {
+      return test.fail("ICC output clipping follows the formula");
+    }
+  }
+  for (kind, coefficients, expected) in [
+    (-1, [65536], parametric_eval.EvalError.Function),
+    (5, [65536], parametric_eval.EvalError.Function),
+    (0, [], parametric_eval.EvalError.Shape),
+    (4, [65536], parametric_eval.EvalError.Shape),
+    (0, [0], parametric_eval.EvalError.Domain),
+    (1, [65536, 0, 0], parametric_eval.EvalError.Domain),
+    (1, [32768, 65536, 0], parametric_eval.EvalError.Unsupported),
+    (1, [65536, 65536, 1], parametric_eval.EvalError.Unsupported),
+    (2, [65536, 1, -2, 0], parametric_eval.EvalError.Unsupported),
+    (3, [65536, 65536, 0, 0, -1], parametric_eval.EvalError.Unsupported),
+    (3, [65536, 65536, -32768, 0, 16384], parametric_eval.EvalError.Domain),
+  ] {
+    let polls = cell_new(0);
+    let result = parametric_eval.evaluate(tag_data.ParametricData { function_type: kind, coefficients: coefficients }, 0.5, (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    });
+    if (polls.get() != 0 || match (result) { Err(error) => error != expected, _ => true }) {
+      return test.fail("public shape/domain admission and explicit unsupported subset precede callbacks");
+    }
+  }
+  for input in [-0.1, 1.1, f64_from_bits(0x7ff0000000000000), f64_from_bits(0x7ff8000000000000)] {
+    if (match (evaluate(0, [65536], input)) { Err(parametric_eval.EvalError.Input()) => false, _ => true }) {
+      return test.fail("finite unit-interval input admission");
+    }
+  }
+  return test.pass();
+}
+
+function gamma_extremes(): test.TestOutcome {
+  for input in [0.0, -0.0, f64_from_bits(1), 0.5, 1.0] {
+    for (kind, coefficients) in [(0, [65536]), (1, [65536, 65536, 0]), (2, [65536, 65536, 0, 0]), (3, [65536, 65536, 0, 65536, 32768]), (4, [65536, 65536, 0, 65536, 32768, 0, 0]), (3, [131072, 65536, 0, 65536, 65536]), (3, [65536, 65536, 0, 0, 0]), (4, [131072, 65536, 0, 65536, 65536, 0, 0]), (4, [65536, 65536, 0, 131072, 0, 0, 65536])] {
+      if (match (evaluate(kind, coefficients, input)) { Ok(v) => f64_bits(v) != f64_bits(input), Err(_) => true }) {
+        return test.fail("exact identities across all five forms including negative zero");
+      }
+    }
+  }
+  return test.assert_true(match (evaluate(0, [1], f64_from_bits(1))) { Ok(v) => near(v, 0.9887050187052799, 0.000000000001), Err(_) => false }
+    && match (evaluate(0, [2147483647], 0.5)) { Ok(v) => v == 0.0, Err(_) => false });
+}
+
+function low_product(): test.TestOutcome {
+  let input = f64_from_bits(0x3fefffffffffffff);
+  let expected = 0.9999998807925366;
+  let a = 2147450880.0 / 65536.0;
+  let b = -2147385344.0 / 65536.0;
+  let gamma = 2147483647.0 / 65536.0;
+  let naive = (a * input + b).pow(gamma);
+  if (near(naive, expected, 0.000000000001)) {
+    return test.fail("the naive control must expose the amplified low product");
+  }
+  return test.assert_true(match (evaluate(1, [2147483647, 2147450880, -2147385344], input)) { Ok(v) => near(v, expected, 0.000000000000001), Err(_) => false });
+}
+
+function ownership_and_cancellation(): test.TestOutcome {
+  let coefficients = [65536, 65536, 0, 65536, 32768, -16384, 16384];
+  let shared = cell_new(coefficients);
+  let polls = cell_new(0);
+  let result = parametric_eval.evaluate(tag_data.ParametricData { function_type: 4, coefficients: coefficients }, 0.25, (): boolean => {
+    polls.set(polls.get() + 1);
+    shared.set(shared.get().with(6, 0));
+    return false;
+  });
+  if (polls.get() != 2 || coefficients[6] != 16384 || shared.get()[6] != 0 || match (result) { Ok(v) => v != 0.5, Err(_) => true }) {
+    return test.fail("borrowed coefficient COW isolation across both polls");
+  }
+  for stop in 1..3 {
+    let count = cell_new(0);
+    let result = parametric_eval.evaluate(tag_data.ParametricData { function_type: 4, coefficients: coefficients }, 0.75, (): boolean => {
+      count.set(count.get() + 1);
+      return count.get() == stop;
+    });
+    if (count.get() != stop || match (result) { Err(parametric_eval.EvalError.Cancelled()) => false, _ => true }) {
+      return test.fail("every bounded scalar cancellation poll");
+    }
+  }
+  return test.assert_true(match (evaluate(4, coefficients, 0.25)) { Ok(v) => v == 0.5, Err(_) => false });
+}
+
+function frozen_wire(): test.TestOutcome {
+  let profile = match (read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc")) { Ok(v) => v, Err(_) => { return test.fail("frozen offline profile"); } };
+  let curve = match (tag_data.read_curve(profile[520:552], tag_data.default_curve_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("exact frozen curve reader"); } };
+  return test.assert_true(match (curve) { tag_data.Parametric(data) => match (parametric_eval.evaluate(data, 0.5, never)) { Ok(v) => near(v, 0.21404519268810552, 0.000000000001), Err(_) => false }, _ => false });
+}
+
+function main(): i32 {
+  let runner = test.test_new("bounded scalar ICC parametric evaluation");
+  runner = runner.it("all five corrected formulas and branch selection", formulas);
+  runner = runner.it("clipping, public domains, and explicit unsupported subset", clipping_and_domains);
+  runner = runner.it("fixed-point gamma extremes and exact identity", gamma_extremes);
+  runner = runner.it("large-slope compensation retains the low product", low_product);
+  runner = runner.it("callback COW, cancellation, and fresh calls", ownership_and_cancellation);
+  runner = runner.it("frozen offline sRGB wire curve and independent Decimal value", frozen_wire);
+  return runner.finish();
+}

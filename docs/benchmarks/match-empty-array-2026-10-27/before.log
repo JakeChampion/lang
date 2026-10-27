@@ -1,0 +1,157 @@
+=== RUN   TestSelfHostMatchEmptyArrayResult
+=== RUN   TestSelfHostMatchEmptyArrayResult/payload-first
+=== RUN   TestSelfHostMatchEmptyArrayResult/payload-first/x86-64-linux
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target x86-64-linux /tmp/TestSelfHostMatchEmptyArrayResultpayload-first3115722849/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/payload-first/arm64-linux
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target arm64-linux /tmp/TestSelfHostMatchEmptyArrayResultpayload-first3115722849/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/payload-first/wasm32-wasi
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target wasm32-wasi /tmp/TestSelfHostMatchEmptyArrayResultpayload-first3115722849/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/empty-first
+=== RUN   TestSelfHostMatchEmptyArrayResult/empty-first/x86-64-linux
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target x86-64-linux /tmp/TestSelfHostMatchEmptyArrayResultempty-first3414496561/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/empty-first/arm64-linux
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target arm64-linux /tmp/TestSelfHostMatchEmptyArrayResultempty-first3414496561/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/empty-first/wasm32-wasi
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target wasm32-wasi /tmp/TestSelfHostMatchEmptyArrayResultempty-first3414496561/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested/x86-64-linux
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target x86-64-linux /tmp/TestSelfHostMatchEmptyArrayResultnested3590802399/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested/arm64-linux
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target arm64-linux /tmp/TestSelfHostMatchEmptyArrayResultnested3590802399/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/nested/wasm32-wasi
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target wasm32-wasi /tmp/TestSelfHostMatchEmptyArrayResultnested3590802399/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/tuple
+=== RUN   TestSelfHostMatchEmptyArrayResult/tuple/x86-64-linux
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target x86-64-linux /tmp/TestSelfHostMatchEmptyArrayResulttuple1974120247/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/tuple/arm64-linux
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target arm64-linux /tmp/TestSelfHostMatchEmptyArrayResulttuple1974120247/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/tuple/wasm32-wasi
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target wasm32-wasi /tmp/TestSelfHostMatchEmptyArrayResulttuple1974120247/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/generic-owned
+=== RUN   TestSelfHostMatchEmptyArrayResult/generic-owned/x86-64-linux
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target x86-64-linux /tmp/TestSelfHostMatchEmptyArrayResultgeneric-owned513620585/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/generic-owned/arm64-linux
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target arm64-linux /tmp/TestSelfHostMatchEmptyArrayResultgeneric-owned513620585/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/generic-owned/wasm32-wasi
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target wasm32-wasi /tmp/TestSelfHostMatchEmptyArrayResultgeneric-owned513620585/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/nominal-owned
+=== RUN   TestSelfHostMatchEmptyArrayResult/nominal-owned/x86-64-linux
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target x86-64-linux /tmp/TestSelfHostMatchEmptyArrayResultnominal-owned3198626291/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/nominal-owned/arm64-linux
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target arm64-linux /tmp/TestSelfHostMatchEmptyArrayResultnominal-owned3198626291/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/nominal-owned/wasm32-wasi
+    self_host_match_empty_array_result_test.go:39: self-host CLI -target wasm32-wasi /tmp/TestSelfHostMatchEmptyArrayResultnominal-owned3198626291/001/main.fern: exit status 3
+        FERN_SEM_IR: main: value block arm type
+        FERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each
+=== RUN   TestSelfHostMatchEmptyArrayResult/early-return
+=== RUN   TestSelfHostMatchEmptyArrayResult/early-return/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/early-return/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/early-return/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayResult/explicit-control
+=== RUN   TestSelfHostMatchEmptyArrayResult/explicit-control/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/explicit-control/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayResult/explicit-control/wasm32-wasi
+--- FAIL: TestSelfHostMatchEmptyArrayResult (32.02s)
+    --- FAIL: TestSelfHostMatchEmptyArrayResult/payload-first (0.02s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/payload-first/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/payload-first/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/payload-first/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostMatchEmptyArrayResult/empty-first (0.02s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/empty-first/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/empty-first/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/empty-first/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostMatchEmptyArrayResult/nested (0.02s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/nested/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/nested/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/nested/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostMatchEmptyArrayResult/tuple (0.02s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/tuple/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/tuple/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/tuple/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostMatchEmptyArrayResult/generic-owned (0.02s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/generic-owned/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/generic-owned/arm64-linux (0.00s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/generic-owned/wasm32-wasi (0.00s)
+    --- FAIL: TestSelfHostMatchEmptyArrayResult/nominal-owned (0.02s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/nominal-owned/x86-64-linux (0.00s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/nominal-owned/arm64-linux (0.01s)
+        --- FAIL: TestSelfHostMatchEmptyArrayResult/nominal-owned/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/early-return (0.18s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/early-return/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/early-return/arm64-linux (0.07s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/early-return/wasm32-wasi (0.07s)
+    --- PASS: TestSelfHostMatchEmptyArrayResult/explicit-control (0.12s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/explicit-control/x86-64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/explicit-control/arm64-linux (0.04s)
+        --- PASS: TestSelfHostMatchEmptyArrayResult/explicit-control/wasm32-wasi (0.03s)
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view/wasm32-wasi
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call/x86-64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call/arm64-linux
+=== RUN   TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call/wasm32-wasi
+--- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms (1.35s)
+    --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload (0.01s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload/arm64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/string-payload/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth (0.01s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth/arm64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/nested-depth/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view (0.01s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view/arm64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/owned-view/wasm32-wasi (0.00s)
+    --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call (0.01s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call/x86-64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call/arm64-linux (0.00s)
+        --- PASS: TestSelfHostMatchEmptyArrayRejectsMixedArms/unknown-call/wasm32-wasi (0.00s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	33.383s
+FAIL

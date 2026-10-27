@@ -1,0 +1,12 @@
+{
+  "source_base": "5b275901e871a308b29bceec604e69200416bdc2",
+  "feature_uncommitted_during_test": true,
+  "files": {
+    "after.json": "cbeb7af48c33efd508d4a4abb5ddb8309ccda0bb5b5c12cb02de91ae8bc855b9",
+    "after.log": "6d3cb49abbd6e15d63a2ab96947a616bb1ff87cdf84e9a72ba9f4b514b5dd0d9",
+    "before.json": "39422a0e24317e3d20d1ae5ab4041c1c4a49329ac1a2f9b23f550ace1d0cbf9a",
+    "before.log": "21e4f527ba9ae3bd82b99d33fed9811783fbb19c8a4763ade219d3ced3028c04",
+    "checks.json": "982c1922f40182fc56a614569d792723bc7bfa7f9db51ad5e1db78c187cbb67d",
+    "preserved-mutant-manifest.json": "9208aad19bbcd9e491cb511ff2198c2b60f1725bade7d6a906c79097a7a40c01"
+  }
+}

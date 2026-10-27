@@ -68,7 +68,7 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 222 TAP cases cover compression, pixels, color, resize, and PNG.
+The 282 TAP cases cover compression, pixels, color, resize, PNG, the restricted JPEG slices, and standalone ICC primitives.
 JPEG cases cover headers, coefficients, scalar inverse DCT, grayscale, JFIF identification, restricted RGB assembly, and standalone Exif orientation.
 They also cover rows, providers, pipelines, regions, caches, RSS parsing, and fusion.
 The file I/O probe and pixel example also exit successfully.
@@ -114,3 +114,19 @@ The [centered component-row sampler](docs/jpeg-chroma.md) offers explicit neares
 
 The [Exif metadata reader](docs/jpeg-exif.md) reports primary orientation from a standalone APP1 payload.
 The JFIF and RGB entry points retain their strict metadata policy.
+
+The [explicit orientation operation](docs/jpeg-orientation.md) copies decoded RGB8/RGBA8 pixels through the eight Exif mappings.
+It does not change encoded JPEG admission or infer a color profile.
+
+The [ICC feasibility decision](docs/icc-feasibility.md) defines a staged native profile path and the qualification gates before color integration.
+Complete ICC transforms and metadata-bearing JPEG admission remain unimplemented.
+The [restricted ICC inspector](docs/icc-envelope.md) checks standalone v4.4 RGB input/display envelopes with an XYZ PCS.
+Its owned metadata does not establish required-tag semantics or transform eligibility.
+The [ICC tag readers](docs/icc-tag-data.md) preserve exact XYZ and curve wire values in owned results.
+The [scalar ICC curv evaluator](docs/icc-curv-evaluation.md) evaluates identity, positive gamma, and sampled curves with separate numerical qualification.
+The [bounded parametric evaluator](docs/icc-parametric-evaluation.md) evaluates all five current ICC functions within an explicit coefficient subset.
+The [ICC APP2 assembler](docs/jpeg-icc-app2.md) joins caller-supplied fragment payloads with separate framing, ownership, and logical admission checks.
+The [ICC matrix kernel](docs/icc-matrix-evaluation.md) applies signed fixed-point columns to explicit linear RGB with separate exact-rational observations.
+The [restricted forward model selector](docs/icc-matrix-model.md) returns owned columns and qualified curve data without LUT fallback or transform eligibility.
+The [scalar matrix/TRC composition](docs/icc-matrix-trc.md) returns a linear RGB trace and explicit unclipped relative D50 XYZ.
+Typed wire data does not authorize curve evaluation or color transforms.

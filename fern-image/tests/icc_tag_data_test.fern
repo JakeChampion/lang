@@ -1,0 +1,206 @@
+import "../packages/codecs/icc/tag_data";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function number(output: u8[], value: i64, bytes: i32): u8[] {
+  for index in 0..bytes {
+    output = output.append((value >> ((bytes - 1 - index) * 8) as i64 & 255i64) as u8);
+  }
+  return output;
+}
+
+function prefix(signature: i64): u8[] {
+  return number(number([], signature, 4), 0i64, 4);
+}
+
+function curve(values: [i32]): u8[] {
+  let output = number(prefix(1668641398i64), values.len() as i64, 4);
+  for value in values {
+    output = number(output, value as i64, 2);
+  }
+  return output;
+}
+
+function parametric(kind: i32, values: [i32]): u8[] {
+  let output = number(number(prefix(1885434465i64), kind as i64, 2), 0i64, 2);
+  for value in values {
+    output = number(output, value as i64, 4);
+  }
+  return output;
+}
+
+function xyz(values: [i32]): u8[] {
+  let output = prefix(1482250784i64);
+  for value in values {
+    output = number(output, value as i64, 4);
+  }
+  return output;
+}
+
+function rejects(input: [u8], error: tag_data.TagError): boolean {
+  return match (tag_data.read_curve(input, tag_data.default_curve_limits(), never)) { Err(e) => e == error, Ok(_) => false };
+}
+
+function xyz_values(): test.TestOutcome {
+  for value in [-2147483648, -65536, -1, 0, 1, 65536, 2147483647] {
+    let result = match (tag_data.read_xyz_triplet(xyz([value, 2147483647, -2147483648]), never)) { Ok(v) => v, Err(_) => { return test.fail("exact XYZ signed wire values"); } };
+    if (result.x != value || result.y != 2147483647 || result.z != -2147483648) {
+      return test.fail("signed fixed-point extremes remain integer numerators");
+    }
+  }
+  let real = match (read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc")) { Ok(v) => v, Err(_) => { return test.fail("frozen profile"); } };
+  return test.assert_true(match (tag_data.read_xyz_triplet(real[460:480], never)) { Ok(v) => v.x == 28576 && v.y == 14581 && v.z == 912, Err(_) => false });
+}
+
+function curve_forms(): test.TestOutcome {
+  if (match (tag_data.read_curve(curve([]), tag_data.default_curve_limits(), never)) { Ok(tag_data.Identity()) => false, _ => true }) {
+    return test.fail("identity payload");
+  }
+  for value in [0, 1, 255, 256, 65535] {
+    if (match (tag_data.read_curve(curve([value]), tag_data.default_curve_limits(), never)) { Ok(tag_data.Gamma(v)) => v != value, _ => true }) {
+      return test.fail("gamma u8Fixed8 wire numerator, including zero without evaluation");
+    }
+  }
+  for count in [2, 63, 64, 65, 130] {
+    let values: i32[] = [];
+    for index in 0..count {
+      values = values.append(if (index % 2 == 0) { 65535 } else { index });
+    }
+    let output = match (tag_data.read_curve(curve(values), tag_data.default_curve_limits(), never)) { Ok(tag_data.Samples(v)) => v, _ => { return test.fail("sampled curve exact count"); } };
+    if (output.len() != count) {
+      return test.fail("owned sample count");
+    }
+    for index in 0..count {
+      if (output[index] != values[index]) {
+        return test.fail("u16 values without monotonicity or numerical inference");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function parametric_forms(): test.TestOutcome {
+  let counts = [1, 3, 4, 5, 7];
+  let values = [-2147483648, 2147483647, -1, 0, 65536, -65536, 1];
+  for kind in 0..5 {
+    let output = match (tag_data.read_curve(parametric(kind, values[:counts[kind]]), tag_data.default_curve_limits(), never)) { Ok(tag_data.Parametric(v)) => v, _ => { return test.fail("all five parametric wire shapes"); } };
+    if (output.function_type != kind || output.coefficients.len() != counts[kind]) {
+      return test.fail("parametric type and exact count");
+    }
+    for index in 0..counts[kind] {
+      if (output.coefficients[index] != values[index]) {
+        return test.fail("signed parameters retain exact numerator and order");
+      }
+    }
+  }
+  let real = match (read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc")) { Ok(v) => v, Err(_) => { return test.fail("frozen profile"); } };
+  return test.assert_true(match (tag_data.read_curve(real[520:552], tag_data.default_curve_limits(), never)) { Ok(tag_data.Parametric(v)) => v.function_type == 3 && v.coefficients.len() == 5 && v.coefficients[0] == 157286, _ => false });
+}
+
+function framing(): test.TestOutcome {
+  for input in [curve([]), curve([256]), curve([1, 65535]), parametric(4, [1, 2, 3, 4, 5, 6, 7])] {
+    for length in 0..input.len() {
+      if (!rejects(input[:length], tag_data.TagError.Length)) {
+        return test.fail("every incomplete payload rejects");
+      }
+    }
+    if (!rejects(input.append(0 as u8), tag_data.TagError.Length) || !rejects(input.with(4, 1 as u8), tag_data.TagError.Reserved)) {
+      return test.fail("exact bytes and common reserved fields");
+    }
+  }
+  let input = xyz([1, 2, 3]);
+  for length in 0..input.len() {
+    if (match (tag_data.read_xyz_triplet(input[:length], never)) { Err(tag_data.TagError.Length()) => false, _ => true }) {
+      return test.fail("XYZ exact triplet shape");
+    }
+  }
+  return test.assert_true(rejects(parametric(5, []), tag_data.TagError.Function)
+    && rejects(parametric(0, [1]).with(11, 1 as u8), tag_data.TagError.Reserved)
+    && rejects(curve([]).with(0, 0 as u8), tag_data.TagError.Signature)
+    && match (tag_data.read_xyz_triplet(input.with(4, 1 as u8), never)) { Err(tag_data.TagError.Reserved()) => true, _ => false });
+}
+
+function limits(): test.TestOutcome {
+  let input = curve([0, 65535]);
+  for limits in [tag_data.CurveLimits { max_bytes: 0, max_samples: 2 }, tag_data.CurveLimits { max_bytes: 15, max_samples: 2 }, tag_data.CurveLimits { max_bytes: 16, max_samples: 0 }, tag_data.CurveLimits { max_bytes: 16, max_samples: 1 }] {
+    let polls = cell_new(0);
+    let result = tag_data.read_curve(input, limits, (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    });
+    if (polls.get() != 0 || match (result) { Err(tag_data.TagError.Limit()) => false, _ => true }) {
+      return test.fail("positive byte/sample admission precedes callbacks");
+    }
+  }
+  let large = number(prefix(1668641398i64), 4294967295i64, 4);
+  return test.assert_true(rejects(large, tag_data.TagError.Limit)
+    && match (tag_data.read_curve(input, tag_data.CurveLimits { max_bytes: 16, max_samples: 2 }, never)) { Ok(_) => true, Err(_) => false });
+}
+
+function ownership(): test.TestOutcome {
+  let input = curve([1, 65535]);
+  let shared = cell_new(input);
+  let output = match (tag_data.read_curve(input, tag_data.default_curve_limits(), (): boolean => {
+    shared.set(shared.get().with(12, 255 as u8));
+    return false;
+  })) { Ok(tag_data.Samples(v)) => v, _ => { return test.fail("borrowed input COW"); } };
+  let changed = output.with(0, 19);
+  let fresh = match (tag_data.read_curve(input, tag_data.default_curve_limits(), never)) { Ok(tag_data.Samples(v)) => v, _ => { return test.fail("fresh calls"); } };
+  let parameters = match (tag_data.read_curve(parametric(1, [1, -1, 3]), tag_data.default_curve_limits(), never)) { Ok(tag_data.Parametric(v)) => v, _ => { return test.fail("owned parameter data"); } };
+  let changed_parameters = parameters.coefficients.with(0, 9);
+  return test.assert_true(output[0] == 1 && output[1] == 65535 && fresh[0] == 1 && changed[0] == 19
+    && input[12] == 0 as u8 && shared.get()[12] == 255 as u8 && parameters.coefficients[0] == 1 && changed_parameters[0] == 9);
+}
+
+function cancellation(): test.TestOutcome {
+  let many: i32[] = [];
+  for index in 0..130 {
+    many = many.append(index);
+  }
+  for input in [curve([]), curve([256]), curve(many), parametric(4, [1, 2, 3, 4, 5, 6, 7])] {
+    let total = cell_new(0);
+    let success = tag_data.read_curve(input, tag_data.default_curve_limits(), (): boolean => {
+      total.set(total.get() + 1);
+      return false;
+    });
+    if (match (success) { Ok(_) => false, Err(_) => true } || total.get() < 2) {
+      return test.fail("curve poll coverage");
+    }
+    for stop in 1..total.get() + 1 {
+      let polls = cell_new(0);
+      let result = tag_data.read_curve(input, tag_data.default_curve_limits(), (): boolean => {
+        polls.set(polls.get() + 1);
+        return polls.get() == stop;
+      });
+      if (polls.get() != stop || match (result) { Err(tag_data.TagError.Cancelled()) => false, _ => true }) {
+        return test.fail("every curve poll, including partial owned arrays");
+      }
+    }
+  }
+  for stop in 1..3 {
+    let polls = cell_new(0);
+    let result = tag_data.read_xyz_triplet(xyz([1, 2, 3]), (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() == stop;
+    });
+    if (polls.get() != stop || match (result) { Err(tag_data.TagError.Cancelled()) => false, _ => true }) {
+      return test.fail("both XYZ polls");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.test_new("exact ICC XYZ and curve wire values");
+  runner = runner.it("signed XYZ extremes and frozen profile coefficients", xyz_values);
+  runner = runner.it("identity, gamma, and sampled curve wire forms", curve_forms);
+  runner = runner.it("all parametric functions and signed coefficient order", parametric_forms);
+  runner = runner.it("prefixes, exact lengths, reserved fields, and function scope", framing);
+  runner = runner.it("exact positive byte and sample admission", limits);
+  runner = runner.it("owned arrays, callback COW isolation, and fresh calls", ownership);
+  runner = runner.it("every XYZ and curve cancellation poll", cancellation);
+  return runner.finish();
+}

@@ -1,0 +1,203 @@
+import "../packages/codecs/jpeg/icc_app2";
+import "../packages/codecs/icc/envelope";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function copy(input: [u8]): u8[] {
+  let output: u8[] = [];
+  for value in input {
+    output = output.append(value);
+  }
+  return output;
+}
+
+function blank(count: i32): u8[] {
+  let output = __alloc_u8(count);
+  for index in 0..count {
+    output = output.with(index, 0 as u8);
+  }
+  return output;
+}
+
+function payload(sequence: i32, total: i32, data: [u8]): icc_app2.Payload {
+  let bytes = [73 as u8, 67 as u8, 67 as u8, 95 as u8, 80 as u8, 82 as u8, 79 as u8, 70 as u8, 73 as u8, 76 as u8, 69 as u8, 0 as u8, sequence as u8, total as u8];
+  for value in data {
+    bytes = bytes.append(value);
+  }
+  return icc_app2.Payload { bytes: bytes };
+}
+
+function equal(actual: [u8], expected: [u8]): boolean {
+  if (actual.len() != expected.len()) {
+    return false;
+  }
+  for index in 0..actual.len() {
+    if (actual[index] != expected[index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function assembled(input: icc_app2.Payload[], expected: [u8], limits: icc_app2.AssemblyLimits): boolean {
+  return match (icc_app2.assemble(input[:], limits, never)) { Ok(Some(bytes)) => equal(bytes[:], expected), _ => false };
+}
+
+function error(input: icc_app2.Payload[], expected: icc_app2.App2Error, limits: icc_app2.AssemblyLimits): boolean {
+  let polls = cell_new(0);
+  let result = icc_app2.assemble(input[:], limits, (): boolean => {
+    polls.set(polls.get() + 1);
+    return false;
+  });
+  return polls.get() == 0 && match (result) { Err(value) => value == expected, _ => false };
+}
+
+function absence_and_empty(): test.TestOutcome {
+  let none: icc_app2.Payload[] = [];
+  if (match (icc_app2.assemble(none[:], icc_app2.default_limits(), never)) { Ok(None) => false, _ => true }) {
+    return test.fail("absence remains distinct from empty profile bytes");
+  }
+  return test.assert_true(assembled([payload(1, 1, [])], [], icc_app2.default_limits())
+    && assembled([payload(2, 3, []), payload(3, 3, []), payload(1, 3, [])], [], icc_app2.default_limits()));
+}
+
+function sequence_order(): test.TestOutcome {
+  let first = payload(1, 3, [1 as u8, 2 as u8]);
+  let second = payload(2, 3, []);
+  let third = payload(3, 3, [3 as u8, 4 as u8, 5 as u8]);
+  for parts in [[first, second, third], [third, first, second], [second, third, first]] {
+    if (!assembled(parts, [1 as u8, 2 as u8, 3 as u8, 4 as u8, 5 as u8], icc_app2.default_limits())) {
+      return test.fail("sequence order, empty fragments, and every concatenated byte");
+    }
+  }
+  return test.pass();
+}
+
+function framing(): test.TestOutcome {
+  let good = payload(1, 1, [8 as u8]);
+  for length in 0..14 {
+    if (!error([icc_app2.Payload { bytes: copy(good.bytes[:length]) }], icc_app2.App2Error.Length, icc_app2.default_limits())) {
+      return test.fail("every incomplete framing prefix precedes callbacks");
+    }
+  }
+  for index in 0..12 {
+    if (!error([icc_app2.Payload { bytes: good.bytes.with(index, 1 as u8) }], icc_app2.App2Error.Identifier, icc_app2.default_limits())) {
+      return test.fail("every identifier byte including its terminator");
+    }
+  }
+  return test.assert_true(error([icc_app2.Payload { bytes: __alloc_u8(65534) }], icc_app2.App2Error.Length, icc_app2.default_limits()));
+}
+
+function coherence(): test.TestOutcome {
+  for (parts, expected) in [
+    ([payload(0, 1, [])], icc_app2.App2Error.Sequence),
+    ([payload(1, 0, [])], icc_app2.App2Error.Sequence),
+    ([payload(2, 1, [])], icc_app2.App2Error.Sequence),
+    ([payload(1, 2, []), payload(2, 3, [])], icc_app2.App2Error.Count),
+    ([payload(1, 2, []), payload(1, 2, [])], icc_app2.App2Error.Duplicate),
+    ([payload(2, 2, [])], icc_app2.App2Error.Missing),
+  ] {
+    if (!error(parts, expected, icc_app2.default_limits())) {
+      return test.fail("strict sequence/count/duplicate/completeness policy before callbacks");
+    }
+  }
+  let bad = payload(2, 2, [7 as u8]);
+  return test.assert_true(error([payload(1, 2, [1 as u8]), icc_app2.Payload { bytes: bad.bytes.with(11, 1 as u8) }], icc_app2.App2Error.Identifier, icc_app2.default_limits()));
+}
+
+function limits(): test.TestOutcome {
+  let parts: icc_app2.Payload[] = [];
+  let expected = __alloc_u8(255);
+  for index in 0..255 {
+    parts = parts.append(payload(255 - index, 255, [(255 - index) as u8]));
+    expected = expected.with(index, (index + 1) as u8);
+  }
+  let exact = icc_app2.AssemblyLimits { max_profile_bytes: 255, max_chunks: 255 };
+  if (!assembled(parts, expected[:], exact)
+    || !error(parts, icc_app2.App2Error.Limit, icc_app2.AssemblyLimits { max_profile_bytes: 254, max_chunks: 255 })
+    || !error(parts, icc_app2.App2Error.Limit, icc_app2.AssemblyLimits { max_profile_bytes: 255, max_chunks: 254 })) {
+    return test.fail("exact caller allowances and the complete 255-chunk boundary");
+  }
+  if (!error(parts.append(payload(1, 255, [])), icc_app2.App2Error.Limit, icc_app2.AssemblyLimits { max_profile_bytes: 2147483647, max_chunks: 2147483647 })) {
+    return test.fail("caller allowances cannot raise the wire chunk ceiling");
+  }
+  let full = blank(65519);
+  if (!assembled([payload(1, 1, full[:])], full[:], icc_app2.AssemblyLimits { max_profile_bytes: 65519, max_chunks: 1 })) {
+    return test.fail("maximum individual marker payload");
+  }
+  let empty: icc_app2.Payload[] = [];
+  return test.assert_true(error(empty, icc_app2.App2Error.Limit, icc_app2.AssemblyLimits { max_profile_bytes: 0, max_chunks: 1 })
+    && error(empty, icc_app2.App2Error.Limit, icc_app2.AssemblyLimits { max_profile_bytes: 1, max_chunks: -1 })
+    && error([payload(1, 33, [])], icc_app2.App2Error.Limit, icc_app2.default_limits()));
+}
+
+function cancellation(): test.TestOutcome {
+  let bytes = blank(130);
+  let parts = [payload(2, 3, bytes[30:100]), payload(3, 3, bytes[100:]), payload(1, 3, bytes[:30])];
+  let absent: icc_app2.Payload[] = [];
+  for (input, total) in [(absent, 2), ([payload(1, 1, [])], 3), (parts, 6)] {
+    let polls = cell_new(0);
+    let result = icc_app2.assemble(input[:], icc_app2.default_limits(), (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    });
+    if (polls.get() != total || match (result) { Err(_) => true, _ => false }) {
+      return test.fail("exact absent/empty/copied-byte poll counts");
+    }
+    for stop in 1..total + 1 {
+      let count = cell_new(0);
+      let result = icc_app2.assemble(input[:], icc_app2.default_limits(), (): boolean => {
+        count.set(count.get() + 1);
+        return count.get() == stop;
+      });
+      if (count.get() != stop || match (result) { Err(icc_app2.App2Error.Cancelled()) => false, _ => true }) {
+        return test.fail("every unit poll including partial private output cleanup");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function ownership(): test.TestOutcome {
+  let parts = [payload(2, 2, [3 as u8, 4 as u8]), payload(1, 2, [1 as u8, 2 as u8])];
+  let shared = cell_new(parts);
+  let output = match (icc_app2.assemble(parts[:], icc_app2.default_limits(), (): boolean => {
+    let values = shared.get();
+    shared.set(values.with(0, icc_app2.Payload { bytes: values[0].bytes.with(12, 1 as u8).with(14, 99 as u8) }));
+    return false;
+  })) { Ok(Some(v)) => v, _ => { return test.fail("COW across outer and inner payload aliases"); } };
+  if (!equal(output[:], [1 as u8, 2 as u8, 3 as u8, 4 as u8]) || parts[0].bytes[12] != 2 as u8 || shared.get()[0].bytes[14] != 99 as u8) {
+    return test.fail("callbacks cannot change borrowed sequence or data bytes");
+  }
+  let retained = cell_new(output);
+  retained.set(retained.get().with(0, 99 as u8));
+  return test.assert_true(output[0] == 1 as u8 && retained.get()[0] == 99 as u8
+    && assembled(parts, [1 as u8, 2 as u8, 3 as u8, 4 as u8], icc_app2.default_limits()));
+}
+
+function profile_separation(): test.TestOutcome {
+  let profile = match (read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc")) { Ok(v) => v, Err(_) => { return test.fail("frozen offline profile"); } };
+  let parts = [payload(3, 3, profile[300:]), payload(1, 3, profile[:1]), payload(2, 3, profile[1:300])];
+  let joined = match (icc_app2.assemble(parts[:], icc_app2.default_limits(), never)) { Ok(Some(v)) => v, _ => { return test.fail("complete raw profile bytes"); } };
+  if (!equal(joined[:], profile[:]) || match (envelope.inspect(joined[:], envelope.default_limits(), never)) { Err(_) => true, _ => false }) {
+    return test.fail("assembly and explicit structural inspection remain separate");
+  }
+  let empty = match (icc_app2.assemble([payload(1, 1, [])], icc_app2.default_limits(), never)) { Ok(Some(v)) => v, _ => { return test.fail("complete empty assembly"); } };
+  return test.assert_true(match (envelope.inspect(empty[:], envelope.default_limits(), never)) { Err(envelope.IccError.Truncated()) => true, _ => false });
+}
+
+function main(): i32 {
+  let runner = test.test_new("checked ICC APP2 payload assembly");
+  runner = runner.it("absence and complete empty sequences are distinct", absence_and_empty);
+  runner = runner.it("sequence order controls every concatenated byte", sequence_order);
+  runner = runner.it("framing prefixes and every identifier byte", framing);
+  runner = runner.it("strict sequence/count/duplicate/completeness admission", coherence);
+  runner = runner.it("caller limits and wire boundaries", limits);
+  runner = runner.it("every cooperative allocation/copy/success poll", cancellation);
+  runner = runner.it("input COW, retained output, and fresh calls", ownership);
+  runner = runner.it("profile assembly does not imply structural validity", profile_separation);
+  return runner.finish();
+}

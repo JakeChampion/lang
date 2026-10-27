@@ -1,0 +1,37 @@
+actionlint
+./scripts/testname_gate.sh
+testname gate: 1815 exact + 14 prefix test selectors resolve
+node scripts/ci-changes-selftest.mjs
+ci-changes-selftest: 66 cases pass against the changes script in ci.yml
+node scripts/main-red-selftest.mjs
+main-red-selftest: 33 cases pass against the reporter script
+node scripts/perf-gate-selftest.mjs
+perf-gate-selftest: 22 cases pass against scripts/ci-check-perf
+node scripts/nightly-findings-selftest.mjs
+nightly-findings selftest: ok
+python3 scripts/gen-runtime-bundle.py --check
+./scripts/gofmt_gate.sh
+.........
+----------------------------------------------------------------------
+Ran 9 tests in 0.015s
+
+OK
+WARNING fern-image/docs/icc-matrix-trc.md:par2 [rule 3.5] "existing": an "-ing" form is permitted only in a technical name.
+WARNING fern-image/docs/icc-matrix-trc.md:par4 [rule 3.5] "existing": an "-ing" form is permitted only in a technical name.
+WARNING fern-image/docs/icc-matrix-trc.md:par4 [rule 3.5] "existing": an "-ing" form is permitted only in a technical name.
+WARNING fern-image/docs/icc-matrix-trc.md:par5 [rule 3.5] "scaling": an "-ing" form is permitted only in a technical name.
+WARNING fern-image/docs/icc-matrix-trc.md:par5 [rule 3.5] "clipping": an "-ing" form is permitted only in a technical name.
+WARNING fern-image/docs/icc-matrix-trc.md:par5 [rule 3.5] "encoding": an "-ing" form is permitted only in a technical name.
+WARNING fern-image/docs/icc-matrix-trc.md:par7 [rule 3.5] "including": an "-ing" form is permitted only in a technical name.
+WARNING fern-image/docs/icc-matrix-trc.md:par10 [rule 3.5] "rounding": an "-ing" form is permitted only in a technical name.
+WARNING fern-image/docs/icc-matrix-trc.md:par10 [rule 3.5] "spacing": an "-ing" form is permitted only in a technical name.
+WARNING fern-image/docs/icc-matrix-trc.md:par11 [rule 3.5] "existing": an "-ing" form is permitted only in a technical name.
+WARNING fern-image/docs/icc-matrix-trc.md:par13 [rule 3.5] "existing": an "-ing" form is permitted only in a technical name.
+WARNING fern-image/docs/icc-matrix-trc.md:par13 [rule 3.5] "caching": an "-ing" form is permitted only in a technical name.
+WARNING fern-image/docs/icc-matrix-trc.md:par19 [rule 3.5] "resampling": an "-ing" form is permitted only in a technical name.
+WARNING fern-image/docs/icc-matrix-trc.md:par19 [rule 3.5] "Existing": an "-ing" form is permitted only in a technical name.
+WARNING fern-image/docs/icc-matrix-trc.md:par22 [rule 3.5] "existing": an "-ing" form is permitted only in a technical name.
+
+Result: 0 errors, 15 warnings.
+The text obeys the STE structural rules that this tool can check.
+This tool cannot make sure that each word has its approved meaning.

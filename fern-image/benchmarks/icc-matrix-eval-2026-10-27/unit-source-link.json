@@ -1,0 +1,26 @@
+{
+  "note": "The original unit executions preceded the source commit. Their two feature file hashes exactly match the committed bytes. This link does not relabel those executions as clean-source runs.",
+  "links": [
+    {
+      "mode": "native",
+      "original_base": "ef4c76e002613e975c36f536479a0417ae3e09a6",
+      "original_feature_uncommitted": true,
+      "identical_committed_source": true,
+      "source_commit": "039bf0c92e747740c0808456543d2aa3ca268687"
+    },
+    {
+      "mode": "wasm",
+      "original_base": "ef4c76e002613e975c36f536479a0417ae3e09a6",
+      "original_feature_uncommitted": true,
+      "identical_committed_source": true,
+      "source_commit": "039bf0c92e747740c0808456543d2aa3ca268687"
+    },
+    {
+      "mode": "arm64",
+      "original_base": "ef4c76e002613e975c36f536479a0417ae3e09a6",
+      "original_feature_uncommitted": true,
+      "identical_committed_source": true,
+      "source_commit": "039bf0c92e747740c0808456543d2aa3ca268687"
+    }
+  ]
+}

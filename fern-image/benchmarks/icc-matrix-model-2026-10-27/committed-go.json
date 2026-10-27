@@ -1,0 +1,33 @@
+{
+  "base": "309dec19100f3ac5ccee69fbccb72cd4ffb8b074",
+  "feature_uncommitted": false,
+  "commands": [
+    {
+      "command": [
+        "/workspace/image-icc-parametric-final-go-oracle",
+        "-check",
+        "tests/icc_matrix_model_test.fern"
+      ],
+      "exit_code": 0
+    },
+    {
+      "command": [
+        "/workspace/image-icc-parametric-final-go-oracle",
+        "-interp",
+        "tests/icc_matrix_model_test.fern"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "hashes": {
+    "/workspace/lang-image-icc-model/fern-image/packages/codecs/icc/matrix_model.fern": "82852ff01092a21c258fe8c6b39374a6acf167f618aa37d3945c82fa08660ed8",
+    "/workspace/lang-image-icc-model/fern-image/tests/icc_matrix_model_test.fern": "64e33d756c29edeab97bf97b6077209f0c945b35379f1a82266bf66e03d4c25e",
+    "/workspace/image-match-empty-array-current-fern-35b5bd31b": "fd43d45fdd54cd7883425e6259dc838997d3eb413fb78792dc65656b9d185c46",
+    "/workspace/image-icc-parametric-final-go-oracle": "7f82247e64bc635e6261d4d2b79ec0a4476b8858358e905cf64d98b106d3cd6b"
+  },
+  "exit_code": 0,
+  "TAP_ok": 8,
+  "TAP_not_ok": 0,
+  "heaps": [],
+  "sources_unchanged": true
+}

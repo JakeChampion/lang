@@ -24,6 +24,10 @@ func TestRawStringPointerComesFromRawAlloc(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	coverageAllocator, err := os.ReadFile(filepath.Join(root, "compiler", "runtime", "templates", "__fern_cov_table.fern"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	calls := 0
 	for _, path := range paths {
 		raw, err := os.ReadFile(path)
@@ -53,7 +57,7 @@ func TestRawStringPointerComesFromRawAlloc(t *testing.T) {
 					continue
 				}
 				bare := strings.Trim(strings.TrimSpace(strings.Trim(name, `"`)), "+ ")
-				if !allocated[bare] {
+				if !allocated[bare] && !coverageStringTransfer(chunk, bare, loc[0], string(coverageAllocator)) {
 					t.Errorf("%s:%d: __raw_string boxes %q, which %s does not bind "+
 						"with __raw_alloc. __raw_alloc is the ONLY producer that reserves the "+
 						"24-byte string-box header ahead of its pointer; boxing a scratch "+
@@ -66,6 +70,98 @@ func TestRawStringPointerComesFromRawAlloc(t *testing.T) {
 	}
 	if calls == 0 {
 		t.Fatal("no raw string constructors in the runtime modules")
+	}
+}
+
+var coverageLoadRe = regexp.MustCompile(`let\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*usize\s*=\s*__raw_load_ptr\(\s*__raw_cover\(\)\s*,\s*0\s*\)\s*;`)
+
+// The coverage slot owns a pointer from __fern_cov_table.
+// The report clears that slot before it transfers the allocation to a string.
+func coverageStringTransfer(chunk genFnChunk, name string, call int, allocator string) bool {
+	if chunk.name != "__fern_cov_report" || call < 0 || call > len(chunk.text) {
+		return false
+	}
+	before := blankFullLineComments(chunk.text[:call])
+	loads := coverageLoadRe.FindAllStringSubmatchIndex(before, -1)
+	if len(loads) != 1 || before[loads[0][2]:loads[0][3]] != name {
+		return false
+	}
+	identifier := regexp.QuoteMeta(name)
+	rebound := regexp.MustCompile(`(?m)(?:^\s*|\blet\s+)` + identifier + `\s*(?::[^;=\n]+)?(?:(?:[+\-*/%&|^]|<<|>>)?=|\+\+|--)`)
+	if rebound.MatchString(before[loads[0][1]:]) {
+		return false
+	}
+	handoff := regexp.MustCompile(`(?s)if\s*\(\s*` + identifier + `\s*!=\s*0\s+as\s+usize\s*\)\s*\{\s*__raw_store_ptr\(\s*__raw_cover\(\)\s*,\s*0\s*,\s*0\s+as\s+usize\s*\)\s*;\s*let\s+[A-Za-z_][A-Za-z0-9_]*\s*:\s*string\s*=\s*$`)
+	if !handoff.MatchString(before) {
+		return false
+	}
+	for _, producer := range splitGeneratorFns(blankFullLineComments(allocator)) {
+		if producer.name != "__fern_cov_table" {
+			continue
+		}
+		for _, allocation := range rawAllocBindRe.FindAllStringSubmatchIndex(producer.text, -1) {
+			pointer := regexp.QuoteMeta(producer.text[allocation[2]:allocation[3]])
+			allocationEnd := strings.IndexByte(producer.text[allocation[1]:], ';')
+			if allocationEnd < 0 {
+				continue
+			}
+			tail := producer.text[allocation[1]+allocationEnd+1:]
+			store := regexp.MustCompile(`__raw_store_ptr\(\s*__raw_cover\(\)\s*,\s*0\s*,\s*` + pointer + `\s*\)\s*;`).FindStringIndex(tail)
+			returned := regexp.MustCompile(`\breturn\s+` + pointer + `\s*;`).FindStringIndex(tail)
+			assigned := regexp.MustCompile(`(?m)(?:^\s*|\blet\s+)` + pointer + `\s*(?::[^;=\n]+)?(?:(?:[+\-*/%&|^]|<<|>>)?=|\+\+|--)`)
+			if store != nil && returned != nil && returned[0] > store[1] && !assigned.MatchString(tail) && len(regexp.MustCompile(`\breturn\b`).FindAllStringIndex(tail, -1)) == 1 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func TestCoverageStringTransfer(t *testing.T) {
+	const producer = `function __fern_cov_table(): usize {
+  let t: usize = __raw_alloc(__FERN_COVER_COUNT * 8 + 8);
+  __raw_store_ptr(__raw_cover(), 0, t);
+  return t;
+}`
+	const report = `function __fern_cov_report(): void {
+  let t: usize = __raw_load_ptr(__raw_cover(), 0);
+  if (t != 0 as usize) {
+    __raw_store_ptr(__raw_cover(), 0, 0 as usize);
+    let table_own: string = __raw_string(t, __FERN_COVER_COUNT * 8 + 8);
+  }
+}`
+	cases := []struct {
+		name, allocator, source, pointer string
+		want                             bool
+	}{
+		{"owned-table-transfer", producer, report, "t", true},
+		{"borrowed-allocation", strings.Replace(producer, "__raw_alloc(", "__raw_scratch(", 1), report, "t", false},
+		{"unpublished-allocation", strings.Replace(producer, "__raw_store_ptr(__raw_cover(), 0, t);", "", 1), report, "t", false},
+		{"wrong-producer-slot", strings.Replace(producer, "__raw_cover(), 0, t", "__raw_cover(), 1, t", 1), report, "t", false},
+		{"offset-allocation", strings.Replace(producer, "  __raw_store_ptr", "  t = t + 8;\n  __raw_store_ptr", 1), report, "t", false},
+		{"compound-offset", strings.Replace(producer, "  __raw_store_ptr", "  t += 8;\n  __raw_store_ptr", 1), report, "t", false},
+		{"incremented-allocation", strings.Replace(producer, "  __raw_store_ptr", "  t++;\n  __raw_store_ptr", 1), report, "t", false},
+		{"uncleared-slot", producer, strings.Replace(report, "__raw_store_ptr(__raw_cover(), 0, 0 as usize);", "", 1), "t", false},
+		{"wrong-clear-slot", producer, strings.Replace(report, "__raw_cover(), 0, 0 as usize", "__raw_cover(), 1, 0 as usize", 1), "t", false},
+		{"missing-null-guard", producer, strings.Replace(report, "if (t != 0 as usize)", "if (true)", 1), "t", false},
+		{"reassigned-pointer", producer, strings.Replace(report, "  if (t", "  t = __raw_cover();\n  if (t", 1), "t", false},
+		{"compound-reassignment", producer, strings.Replace(report, "  if (t", "  t += 8;\n  if (t", 1), "t", false},
+		{"offset-load", producer, strings.Replace(report, "__raw_load_ptr(__raw_cover(), 0);", "__raw_load_ptr(__raw_cover(), 0) + 8;", 1), "t", false},
+		{"shadowed-pointer", producer, strings.Replace(report, "  if (t", "  let t: usize = __raw_cover();\n  if (t", 1), "t", false},
+		{"foreign-pointer", producer, report, "foreign", false},
+		{"different-consumer", producer, strings.Replace(report, "__fern_cov_report", "different", 1), "t", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			chunks := splitGeneratorFns(tc.source)
+			if len(chunks) != 1 {
+				t.Fatal("expected one report function")
+			}
+			got := coverageStringTransfer(chunks[0], tc.pointer, strings.Index(tc.source, "__raw_string("), tc.allocator)
+			if got != tc.want {
+				t.Fatalf("coverage transfer = %t, want %t", got, tc.want)
+			}
+		})
 	}
 }
 

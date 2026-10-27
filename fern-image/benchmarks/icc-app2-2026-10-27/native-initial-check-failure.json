@@ -1,0 +1,24 @@
+{
+  "base": "578a2a37506f705e8955b3a99c8e5b92a25c2ebc",
+  "feature_uncommitted": true,
+  "commands": [
+    {
+      "command": [
+        "/workspace/image-nested-array-current-fern-b38cca915",
+        "-check",
+        "tests/icc_app2_test.fern"
+      ],
+      "exit_code": 1
+    }
+  ],
+  "hashes": {
+    "/workspace/lang-image-icc-app2/fern-image/packages/codecs/jpeg/icc_app2.fern": "956fcbd9f1820b75048f08bd849400d6d97729feec673c509e8499524d896fbb",
+    "/workspace/lang-image-icc-app2/fern-image/tests/icc_app2_test.fern": "7425763dd70e23003321e57def2b4fd330400a5c1cc219a8a4871a7b5af3bb7a",
+    "/workspace/image-nested-array-current-fern-b38cca915": "d12b97d792d5d66d6bd312cd6723100ecb85ec2609d9430705032e504e5c090b"
+  },
+  "exit_code": 1,
+  "TAP_ok": 0,
+  "TAP_not_ok": 0,
+  "heaps": [],
+  "sources_unchanged": true
+}

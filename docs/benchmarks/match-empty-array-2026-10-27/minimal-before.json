@@ -1,0 +1,23 @@
+{
+  "source_sha256": "c0d80ecc1abc9658a26a72a3e707370149ceabbbc2d290bf8851fe2cfcf8ef8d",
+  "observations": [
+    {
+      "name": "local",
+      "mode": "selfhost",
+      "exit": 1,
+      "output": "/workspace/image-icc-model-repros/local.fern:6:1: error: internal: the checker could not type this statement in \"main\" (if cond not bool) and has no diagnostic for it; this is a compiler bug, please report it\n      if (xs[0] != 1 || changed[0] != 7) { return 1; }\n    ^\n"
+    },
+    {
+      "name": "local",
+      "mode": "go",
+      "exit": 0,
+      "output": ""
+    },
+    {
+      "name": "local",
+      "mode": "interp",
+      "exit": 0,
+      "output": ""
+    }
+  ]
+}

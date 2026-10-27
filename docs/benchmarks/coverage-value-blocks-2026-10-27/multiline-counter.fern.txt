@@ -1,0 +1,8 @@
+function main(): i32 {
+ let value: string =
+   match(true) {
+     true => "yes",
+     false => "no"
+   };
+ return if(value == "yes") {0} else {1};
+}

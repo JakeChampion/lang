@@ -1,0 +1,7 @@
+./bootstrap/bootstrap.sh build
+stage0: stage0-20261025-433d93a for x86-64-linux (sha256 efafedd32a9223a2c87b385e8425d155d5f59c10fab7e3bf9e09509254fce748)
+stage1: 32 s, 2175 MB peak RSS, 15184128 bytes
+smoke: /workspace/lang-image-match-empty-array/build/bootstrap/stage1 compiles a program and coreutils/tr, and both run
+installed bin/fern-selfhost (x86-64-linux, sha256 79710ddc04e621b8f74503a5fd84b37fa709a918caaabf2108cc2195cf732a64)
+./scripts/fern-embed-stage build/embed
+./bin/fern-selfhost -target x86-64-linux -embed build/embed -o bin/fern compiler/fern_main.fern internal/stdlib

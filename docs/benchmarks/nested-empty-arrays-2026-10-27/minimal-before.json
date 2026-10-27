@@ -1,0 +1,114 @@
+[
+  {
+    "case": "call-expected",
+    "action": "go-check",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "call-expected",
+    "action": "go-interp",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "call-expected",
+    "action": "selfhost-check",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "call-expected",
+    "action": "native-emit",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "loop-empty-first",
+    "action": "go-check",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "loop-empty-first",
+    "action": "go-interp",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "loop-empty-first",
+    "action": "selfhost-check",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "loop-empty-first",
+    "action": "native-emit",
+    "exit_code": 3,
+    "stdout": "",
+    "stderr": "FERN_SEM_IR: main: unresolved array literal type\nFERN_SEM_IR: the typed lowering refused 1 declarations and instances; the FERN_SEM_IR lines above name each\n"
+  },
+  {
+    "case": "loop-empty-last",
+    "action": "go-check",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "loop-empty-last",
+    "action": "go-interp",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "loop-empty-last",
+    "action": "selfhost-check",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "loop-empty-last",
+    "action": "native-emit",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "loop-explicit",
+    "action": "go-check",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "loop-explicit",
+    "action": "go-interp",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "loop-explicit",
+    "action": "selfhost-check",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  },
+  {
+    "case": "loop-explicit",
+    "action": "native-emit",
+    "exit_code": 0,
+    "stdout": "",
+    "stderr": ""
+  }
+]

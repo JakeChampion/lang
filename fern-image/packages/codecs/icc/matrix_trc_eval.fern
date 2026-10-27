@@ -1,0 +1,64 @@
+import "matrix_model";
+import "envelope";
+import "tag_data";
+import "curv_eval";
+import "parametric_eval";
+import "matrix_eval";
+import "std/f64";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum EvalError { Limit, Intent, Shape, Input, Curve(curv_eval.EvalError), Parametric(parametric_eval.EvalError), Matrix(matrix_eval.MatrixError), Cancelled }
+
+pub struct EvalLimits { max_samples: i32 }
+
+pub struct DeviceRGB { r: f64, g: f64, b: f64 }
+
+pub struct Evaluation { linear: matrix_eval.LinearRGB, xyz: matrix_eval.XYZ }
+
+pub function default_limits(): EvalLimits {
+  return EvalLimits { max_samples: 4096 };
+}
+
+function admitted(value: f64): boolean {
+  return value.is_finite() && value >= 0.0 && value <= 1.0;
+}
+
+function curve(data: tag_data.CurveData, input: f64, limits: EvalLimits, cancelled: () => boolean): Result[f64, EvalError] {
+  match (data) {
+    tag_data.Parametric(value) => {
+      return match (parametric_eval.evaluate(value, input, cancelled)) { Ok(out) => Ok(out), Err(parametric_eval.EvalError.Cancelled()) => Err(EvalError.Cancelled), Err(error) => Err(EvalError.Parametric(error)) };
+    },
+    _ => {
+      return match (curv_eval.evaluate(data, input, curv_eval.EvalLimits { max_samples: limits.max_samples }, cancelled)) { Ok(out) => Ok(out), Err(curv_eval.EvalError.Cancelled()) => Err(EvalError.Cancelled), Err(error) => Err(EvalError.Curve(error)) };
+    }
+  }
+}
+
+// The supplied columns describe relative D50 XYZ. Model metadata does not certify profile conformance.
+pub function evaluate(data: matrix_model.ForwardData, input: DeviceRGB, limits: EvalLimits, cancelled: () => boolean): Result[Evaluation, EvalError] {
+  if (limits.max_samples <= 0) {
+    return Err(EvalError.Limit);
+  }
+  if (data.requested_intent != envelope.Intent.Relative) {
+    return Err(EvalError.Intent);
+  }
+  if (data.matrix.len() != 9) {
+    return Err(EvalError.Shape);
+  }
+  if (!admitted(input.r) || !admitted(input.g) || !admitted(input.b)) {
+    return Err(EvalError.Input);
+  }
+  if (cancelled()) {
+    return Err(EvalError.Cancelled);
+  }
+  let red = curve(data.red, input.r, limits, cancelled)?;
+  let green = curve(data.green, input.g, limits, cancelled)?;
+  let blue = curve(data.blue, input.b, limits, cancelled)?;
+  let linear = matrix_eval.LinearRGB { r: red, g: green, b: blue };
+  let xyz = match (matrix_eval.evaluate(data.matrix[:], linear, cancelled)) { Ok(out) => out, Err(matrix_eval.MatrixError.Cancelled()) => { return Err(EvalError.Cancelled); }, Err(error) => { return Err(EvalError.Matrix(error)); } };
+  if (cancelled()) {
+    return Err(EvalError.Cancelled);
+  }
+  return Ok(Evaluation { linear: linear, xyz: xyz });
+}

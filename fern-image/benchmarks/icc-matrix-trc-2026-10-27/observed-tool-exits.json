@@ -1,0 +1,14 @@
+{
+  "corpus_native": 0,
+  "corpus_wasm": 0,
+  "corpus_arm64": 0,
+  "full_native": 0,
+  "full_wasm": 0,
+  "full_arm64": 0,
+  "aux": 0,
+  "committed_go": 0,
+  "complexity": 0,
+  "reference_reproduction": 0,
+  "initial_wasm": 1,
+  "corrected_same_wasm_module": 0
+}

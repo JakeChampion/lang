@@ -385,7 +385,7 @@ function main(): i32 {
     let cycle2 = ssasem.Func { ...selfFunc, graph: ssa.SFunc { ...selfGraph, name: "cycle2" } };
     let collected = ssarc.with_drop_helpers(ssarc.with_drop_helpers(ssarc.no_helpers(), selfFunc), cycle2);
     if (collected.rows.len() != 2) { return 25; }
-    if (collected.rows[0].name != "__sem_drop_Node" || collected.rows[1].name != "__sem_release_Node") { eprint(collected.rows[0].name); return 26; }
+    if (irtables.helper_name(collected.rows[0]) != "__sem_drop_Node" || irtables.helper_name(collected.rows[1]) != "__sem_release_Node") { eprint(irtables.helper_name(collected.rows[0])); return 26; }
     if (ssarc.with_drop_helpers(collected, flatFunc).rows.len() != 2) { return 27; }
     let merged = ssarc.merge_helpers([], collected.rows.append(collected.rows[0]));
     if (merged.len() != 2) { return 28; }

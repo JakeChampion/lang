@@ -1,0 +1,24 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-v",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^TestSelfHost(CheckerX86_64|CheckerArm64|CheckerCodesX86_64|CheckerDifferentialX86_64|CheckerBundleDifferentialX86_64|DiagnosticTextParity)$",
+    "-count=1",
+    "-timeout=15m"
+  ],
+  "source_commit": "35b5bd31bb01a6d373aaad83beb6883537c328a3",
+  "exit_code": 0,
+  "elapsed_seconds": 384.27968462498393,
+  "PASS_nodes": 4756,
+  "FAIL_nodes": 0,
+  "SKIP_nodes": 0,
+  "sha256": {
+    "/workspace/lang-image-match-empty-array/compiler/checker.fern": "5290770ae98f8166bf50d5f90e06e869ad468bc62c735928002d16beecd783a2",
+    "/workspace/lang-image-match-empty-array/internal/testing/e2ecompiler/self_host_match_empty_array_result_test.go": "88437be8dfb248b1258872a579f4c31dae9ac3d604490378ac1b5f5c83c35da2",
+    "/workspace/image-match-empty-array-current-fern-35b5bd31b": "fd43d45fdd54cd7883425e6259dc838997d3eb413fb78792dc65656b9d185c46"
+  },
+  "sources_unchanged": true
+}

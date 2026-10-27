@@ -1,0 +1,78 @@
+import "../packages/codecs/jpeg/orientation";
+import "../packages/codecs/jpeg/exif";
+import "../packages/pixels/pixels";
+import "std/i32";
+
+function signed_word(input: [u8], at: i32): i32 {
+  let v = input[at] as i64 | input[at + 1] as i64 << 8i64 | input[at + 2] as i64 << 16i64 | input[at + 3] as i64 << 24i64;
+  return (if (v >= 2147483648i64) { v - 4294967296i64 } else { v }) as i32;
+}
+
+function direction(value: i32): exif.Orientation {
+  return match (value) { 1 => exif.TopLeft, 2 => exif.TopRight, 3 => exif.BottomRight, 4 => exif.BottomLeft, 5 => exif.LeftTop, 6 => exif.RightTop, 7 => exif.RightBottom, _ => exif.LeftBottom };
+}
+
+function image_error(value: pixels.ImageError): string {
+  return match (value) { pixels.Dimensions => "Dimensions", pixels.Overflow => "Overflow", pixels.Stride => "Stride", pixels.Limit => "Limit", pixels.Storage => "Storage", pixels.Bounds => "Bounds", pixels.Alpha => "Alpha" };
+}
+
+function error_name(value: orientation.OrientError): string {
+  return match (value) { orientation.OrientError.Image(e) => "Image." + image_error(e), orientation.OrientError.Limit => "Limit", orientation.OrientError.Cancelled => "Cancelled" };
+}
+
+function emit(path: string): i32 {
+  let bytes = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  if (bytes.len() < 44 || bytes[0] != 70 as u8 || bytes[1] != 79 as u8 || bytes[2] != 82 as u8 || bytes[3] != 49 as u8) {
+    return 3;
+  }
+  let channels = signed_word(bytes, 20);
+  let value = signed_word(bytes, 24);
+  let stop = signed_word(bytes, 40);
+  if (channels != 3 && channels != 4 || value < 1 || value > 8 || stop < 0) {
+    return 4;
+  }
+  let format = if (channels == 3) { pixels.RGB8 } else { pixels.RGBA8 };
+  let layout = pixels.Layout { width: signed_word(bytes, 4), height: signed_word(bytes, 8), stride: signed_word(bytes, 12), bytes: signed_word(bytes, 16), format: format };
+  let data = __alloc_u8(bytes.len() - 44);
+  for i in 0..data.len() {
+    data = data.with(i, bytes[i + 44]);
+  }
+  let source = pixels.Image { layout: layout, data: data };
+  let limits = orientation.OrientLimits { output: pixels.Limits { max_pixels: signed_word(bytes, 28), max_bytes: signed_word(bytes, 32) }, max_planned_bytes: signed_word(bytes, 36) };
+  let plan = orientation.inspect(source, direction(value), limits);
+  let polls = cell_new(0);
+  let result = orientation.apply(source, direction(value), limits, (): boolean => {
+    polls.set(polls.get() + 1);
+    return stop != 0 && polls.get() == stop;
+  });
+  match (result) {
+    Ok(image) => {
+      let admitted = match (plan) { Ok(v) => v, Err(_) => { return 5; } };
+      match (write_file_bytes(path + ".pixels.raw", image.data)) {
+        Ok(_) => {},
+        Err(_) => {
+          return 6;
+        }
+      }
+      print("orientation " + path + " ok " + image.layout.width.to_string() + " " + image.layout.height.to_string() + " " + image.layout.stride.to_string() + " " + channels.to_string() + " " + image.layout.bytes.to_string() + " " + admitted.input_bytes.to_string() + " " + admitted.planned_bytes.to_string() + " " + polls.get().to_string());
+    },
+    Err(error) => {
+      print("orientation " + path + " error " + error_name(error) + " " + polls.get().to_string());
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for i in 1..paths.len() {
+    let code = emit(paths[i]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}
