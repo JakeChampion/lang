@@ -1925,19 +1925,22 @@ function grant_list(grant: string): string {
     }
     quoted = quoted + mvs.quoted(name);
   }
-  let named: fern_toml.ParsedList = fern_toml.parse_capabilities("[" + quoted + "]");
-  if (named.err.len() > 0) {
-    eprint("fern: -add: -grant: " + named.err);
-    return "";
-  }
-  let out: string = "";
-  for cap in named.values {
-    if (out.len() > 0) {
-      out = out + ", ";
+  match (fern_toml.parse_capabilities("[" + quoted + "]")) {
+    Ok(caps) => {
+      let out: string = "";
+      for cap in caps {
+        if (out.len() > 0) {
+          out = out + ", ";
+        }
+        out = out + mvs.quoted(cap);
+      }
+      return "[" + out + "]";
+    },
+    Err(message) => {
+      eprint("fern: -add: -grant: " + message);
+      return "";
     }
-    out = out + mvs.quoted(cap);
   }
-  return "[" + out + "]";
 }
 
 function insert_dependency(src: string, line: string): string {

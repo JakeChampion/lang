@@ -6,6 +6,10 @@ function dep_after(a: fern_toml.Dep, b: fern_toml.Dep): boolean {
   return util.str_less(b.name, a.name);
 }
 
+function str_after(a: string, b: string): boolean {
+  return util.str_less(b, a);
+}
+
 function data(m: fern_toml.Manifest): string {
   let out: string = "ok " + docsummary.quote(m.name) + "|" + docsummary.quote(m.lib) + "|" + docsummary.quote(m.index);
   for d in util.sorted_by(m.deps, dep_after) {
@@ -19,6 +23,18 @@ function data(m: fern_toml.Manifest): string {
     for cap in d.caps {
       out = out + "|cap " + docsummary.quote(cap);
     }
+  }
+  for member in m.members {
+    out = out + "|member " + docsummary.quote(member);
+  }
+  let excludes: string[] = [];
+  let i: i32 = 0;
+  while (i < m.excl_pkg.len()) {
+    excludes = excludes.append(docsummary.quote(m.excl_pkg[i]) + "=" + docsummary.quote(m.excl_ver[i]));
+    i = i + 1;
+  }
+  for row in util.sorted_by(excludes, str_after) {
+    out = out + "|exclude " + row;
   }
   return out;
 }

@@ -27,6 +27,13 @@ var manifestParityCases = []struct{ name, src string }{
 	{"empty workspace", "[workspace]\n"},
 	{"crlf", "[package]\r\nname = \"app\"\r\n[dependencies]\r\nh = { path = \"h\" }\r\n"},
 	{"path with comma and bracket", "[package]\nname = \"app\"\n[dependencies]\nh = { path = \"a,b[c\", capabilities = [\"fs\"] }\n"},
+	{"empty optional strings", "[package]\nname = \"app\"\nlib = \"\"\nindex = \"\"\n"},
+	{"workspace member values", "[workspace]\nmembers = [\"\", \"a\", \"b#c\"]\n"},
+	{"empty arrays", "[package]\nname = \"app\"\n[dependencies]\nh = { path = \"h\", capabilities = [] }\n[exclude]\nh = []\n[workspace]\nmembers = []\n"},
+	{"multiple excluded packages", "[package]\nname = \"app\"\n[exclude]\nz = [\"2.0.0\", \"1.0.0\"]\na = [\"3.0.0\"]\n"},
+	{"mixed members", "[workspace]\nmembers = [\"a\", 1]\n"},
+	{"mixed capabilities", "[package]\nname = \"app\"\n[dependencies]\nh = { path = \"h\", capabilities = [\"net\", 1] }\n"},
+	{"mixed excludes", "[package]\nname = \"app\"\n[exclude]\nh = [\"1.0.0\", 1]\n"},
 	{"empty", ""},
 
 	{"malformed section header", "[package\nname = \"app\"\n"},
@@ -112,6 +119,19 @@ func TestSelfHostManifestParseParity(t *testing.T) {
 				for _, cap := range d.Capabilities {
 					row += "|cap " + strconv.Quote(cap)
 				}
+			}
+			for _, member := range m.Members {
+				row += "|member " + strconv.Quote(member)
+			}
+			var excludes []string
+			for name, versions := range m.Excludes {
+				for _, version := range versions {
+					excludes = append(excludes, strconv.Quote(name)+"="+strconv.Quote(version))
+				}
+			}
+			sort.Strings(excludes)
+			for _, excluded := range excludes {
+				row += "|exclude " + excluded
 			}
 			want = append(want, row)
 		}

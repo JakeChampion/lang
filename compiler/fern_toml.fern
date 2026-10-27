@@ -193,23 +193,26 @@ function with_entry(m: Manifest, section: string, line: string, at: i32, seen: s
 }
 
 function with_package_key(m: Manifest, key: string, val: string): Manifest {
-  let s: Parsed = parse_string(val);
-  if (s.err.len() > 0) {
-    return failed(m, key + ": " + s.err);
+  match (parse_string(val)) {
+    Ok(value) => {
+      if (key == "name") {
+        return Manifest { ...m, name: value };
+      }
+      if (key == "lib") {
+        return Manifest { ...m, lib: value };
+      }
+      if (key == "index") {
+        return Manifest { ...m, index: value };
+      }
+      if (key == "version") {
+        return m;
+      }
+      return failed(m, "unknown [package] key " + docsummary.quote(key) + " (supported: name, version, lib, index)");
+    },
+    Err(message) => {
+      return failed(m, key + ": " + message);
+    }
   }
-  if (key == "name") {
-    return Manifest { ...m, name: s.value };
-  }
-  if (key == "lib") {
-    return Manifest { ...m, lib: s.value };
-  }
-  if (key == "index") {
-    return Manifest { ...m, index: s.value };
-  }
-  if (key == "version") {
-    return m;
-  }
-  return failed(m, "unknown [package] key " + docsummary.quote(key) + " (supported: name, version, lib, index)");
 }
 
 function with_dep(m: Manifest, key: string, val: string, at: i32): Manifest {
@@ -230,88 +233,96 @@ function with_members(m: Manifest, key: string, val: string): Manifest {
   if (key != "members") {
     return failed(m, "unknown [workspace] key " + docsummary.quote(key) + " (supported: members)");
   }
-  let ms: ParsedList = parse_str_array(val);
-  if (ms.err.len() > 0) {
-    return failed(m, "members: " + ms.err);
+  match (parse_str_array(val)) {
+    Ok(members) => {
+      return Manifest { ...m, members: members };
+    },
+    Err(message) => {
+      return failed(m, "members: " + message);
+    }
   }
-  return Manifest { ...m, members: ms.values };
 }
 
 function with_lint(m: Manifest, section: string, key: string, val: string): Manifest {
-  let v: Parsed = parse_scalar(val);
-  if (v.err.len() > 0) {
-    return failed(m, "[" + section + "] " + key + ": " + v.err);
+  match (parse_scalar(val)) {
+    Ok(value) => {
+      if (section == "lint.options" && index_of(key, b'.', 0) < 0) {
+        return failed(m, "[lint.options] key " + docsummary.quote(key) + " must be spelled <rule>.<option>");
+      }
+      return Manifest { ...m, lint_keys: m.lint_keys.append(key), lint_vals: m.lint_vals.append(value) };
+    },
+    Err(message) => {
+      return failed(m, "[" + section + "] " + key + ": " + message);
+    }
   }
-  if (section == "lint.options" && index_of(key, b'.', 0) < 0) {
-    return failed(m, "[lint.options] key " + docsummary.quote(key) + " must be spelled <rule>.<option>");
-  }
-  return Manifest { ...m, lint_keys: m.lint_keys.append(key), lint_vals: m.lint_vals.append(v.value) };
 }
 
 function with_exclude(m: Manifest, key: string, val: string): Manifest {
   if (!valid_dep_name(key)) {
     return failed(m, "invalid [exclude] package name " + docsummary.quote(key) + " (letters, digits, `_`, `-`; must not start with a digit)");
   }
-  let vs: ParsedList = parse_str_array(val);
-  if (vs.err.len() > 0) {
-    return failed(m, "exclude " + key + ": " + vs.err);
-  }
-  let excl_pkg: string[] = m.excl_pkg;
-  let excl_ver: string[] = m.excl_ver;
-  for v in vs.values {
-    if (!is_version(v)) {
-      return failed(m, "exclude " + key + ": version must be MAJOR.MINOR.PATCH digits, got " + docsummary.quote(v));
+  match (parse_str_array(val)) {
+    Ok(versions) => {
+      let excl_pkg: string[] = m.excl_pkg;
+      let excl_ver: string[] = m.excl_ver;
+      for v in versions {
+        if (!is_version(v)) {
+          return failed(m, "exclude " + key + ": version must be MAJOR.MINOR.PATCH digits, got " + docsummary.quote(v));
+        }
+        excl_pkg = excl_pkg.append(key);
+        excl_ver = excl_ver.append(v);
+      }
+      return Manifest { ...m, excl_pkg: excl_pkg, excl_ver: excl_ver };
+    },
+    Err(message) => {
+      return failed(m, "exclude " + key + ": " + message);
     }
-    excl_pkg = excl_pkg.append(key);
-    excl_ver = excl_ver.append(v);
   }
-  return Manifest { ...m, excl_pkg: excl_pkg, excl_ver: excl_ver };
 }
 
-struct Parsed { value: string, err: string }
-
-pub struct ParsedList { values: string[], err: string }
-
-function parse_string(val: string): Parsed {
+function parse_string(val: string): Result[string, string] {
   if (val.len() < 2 || val[0] != b'"' || val[val.len() - 1] != b'"') {
-    return Parsed { value: "", err: "expected a double-quoted string, got " + docsummary.quote(val) };
+    return Err("expected a double-quoted string, got " + docsummary.quote(val));
   }
   let s: string = slice_unchecked(val, 1, val.len() - 1) + "";
   if (index_of(s, b'"', 0) >= 0 || index_of(s, b'\\', 0) >= 0) {
-    return Parsed { value: "", err: "escapes are not supported in " + docsummary.quote(val) + " (use forward slashes in paths)" };
+    return Err("escapes are not supported in " + docsummary.quote(val) + " (use forward slashes in paths)");
   }
-  return Parsed { value: s, err: "" };
+  return Ok(s);
 }
 
-function parse_scalar(val: string): Parsed {
+function parse_scalar(val: string): Result[string, string] {
   if (val.len() > 0 && val[0] == b'"') {
     return parse_string(val);
   }
   if (val.len() == 0) {
-    return Parsed { value: "", err: "expected a quoted string or a number, got an empty value" };
+    return Err("expected a quoted string or a number, got an empty value");
   }
   if (!is_integer_text(val)) {
-    return Parsed { value: "", err: "expected a quoted string or a number, got " + docsummary.quote(val) };
+    return Err("expected a quoted string or a number, got " + docsummary.quote(val));
   }
-  return Parsed { value: val, err: "" };
+  return Ok(val);
 }
 
-function parse_str_array(val: string): ParsedList {
+function parse_str_array(val: string): Result[string[], string] {
   if (val.len() < 2 || val[0] != b'[' || val[val.len() - 1] != b']') {
-    return ParsedList { values: [], err: "expected an array like [\"a\", \"b\"], got " + docsummary.quote(val) };
+    return Err("expected an array like [\"a\", \"b\"], got " + docsummary.quote(val));
   }
   let out: string[] = [];
   for raw in split_char(slice_unchecked(val, 1, val.len() - 1) + "", b',') {
     let part: string = util.trim(raw);
     if (part.len() > 0) {
-      let s: Parsed = parse_string(part);
-      if (s.err.len() > 0) {
-        return ParsedList { values: [], err: s.err };
+      match (parse_string(part)) {
+        Ok(value) => {
+          out = out.append(value);
+        },
+        Err(message) => {
+          return Err(message);
+        }
       }
-      out = out.append(s.value);
     }
   }
-  return ParsedList { values: out, err: "" };
+  return Ok(out);
 }
 
 pub function is_version(s: string): boolean {
@@ -373,16 +384,19 @@ pub function validate_hash(hash: string): Result[string, string] {
 function parse_dep(name: string, val: string): Result[Dep, string] {
   let d: Dep = Dep { name: name, kind: "", path: "", url: "", hash: "", version: "", governed: false, caps: [], line: 0 };
   if (val.len() == 0 || val[0] != b'{') {
-    let s: Parsed = parse_string(val);
-    if (s.err.len() > 0) {
-      return Err("a bare dependency value must be a version string like \"1.2.0\" (or use an inline table): " + s.err);
-    }
-    match (with_dep_string(d, "version", s.value)) {
-      Ok(dep) => {
-        return classified(dep);
+    match (parse_string(val)) {
+      Ok(value) => {
+        match (with_dep_string(d, "version", value)) {
+          Ok(dep) => {
+            return classified(dep);
+          },
+          Err(message) => {
+            return Err(message);
+          }
+        }
       },
       Err(message) => {
-        return Err(message);
+        return Err("a bare dependency value must be a version string like \"1.2.0\" (or use an inline table): " + message);
       }
     }
   }
@@ -419,17 +433,23 @@ function with_dep_field(d: Dep, part: string): Result[Dep, string] {
     return Ok(Dep { ...d, kind: "workspace" });
   }
   if (k == "capabilities") {
-    let cs: ParsedList = parse_capabilities(v);
-    if (cs.err.len() > 0) {
-      return Err("capabilities: " + cs.err);
+    match (parse_capabilities(v)) {
+      Ok(caps) => {
+        return Ok(Dep { ...d, governed: true, caps: caps });
+      },
+      Err(message) => {
+        return Err("capabilities: " + message);
+      }
     }
-    return Ok(Dep { ...d, governed: true, caps: cs.values });
   }
-  let s: Parsed = parse_string(v);
-  if (s.err.len() > 0) {
-    return Err(k + ": " + s.err);
+  match (parse_string(v)) {
+    Ok(value) => {
+      return with_dep_string(d, k, value);
+    },
+    Err(message) => {
+      return Err(k + ": " + message);
+    }
   }
-  return with_dep_string(d, k, s.value);
 }
 
 function with_dep_string(d: Dep, k: string, s: string): Result[Dep, string] {
@@ -516,17 +536,20 @@ function inline_parts(body: string): string[] {
   return out.append(slice_unchecked(body, start, body.len()) + "");
 }
 
-pub function parse_capabilities(val: string): ParsedList {
-  let names: ParsedList = parse_str_array(val);
-  if (names.err.len() > 0) {
-    return names;
-  }
-  for name in names.values {
-    if (!util.has_str(capvocab.capabilities(), name)) {
-      return ParsedList { values: [], err: "unknown capability " + docsummary.quote(name) + " (valid capabilities: " + capability_choices() + ")" };
+pub function parse_capabilities(val: string): Result[string[], string] {
+  match (parse_str_array(val)) {
+    Ok(names) => {
+      for name in names {
+        if (!util.has_str(capvocab.capabilities(), name)) {
+          return Err("unknown capability " + docsummary.quote(name) + " (valid capabilities: " + capability_choices() + ")");
+        }
+      }
+      return Ok(ordered_caps(names));
+    },
+    Err(message) => {
+      return Err(message);
     }
   }
-  return ParsedList { values: ordered_caps(names.values), err: "" };
 }
 
 function capability_choices(): string {

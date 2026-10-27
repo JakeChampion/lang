@@ -881,7 +881,10 @@ findings. Ranked by leverage.
   Failed dependency parses carry no partial dependency that the caller can mistake for success.
   The manifest still retains its earlier entries and diagnostic location on failure.
   The manifest differential checks all dependency fields, capability grants and source lines, as well as exact diagnostics.
-  All 49 cases execute on x86-64, ARM64 and Wasm.
+  The string, scalar, string-array and capability parsers also use standard results.
+  `Parsed` and `ParsedList` are gone, and the CLI grant parser matches the capability result.
+  The manifest differential also checks workspace members and excluded versions.
+  All 56 cases execute on x86-64, ARM64 and Wasm.
 
   _Rest of this row:_ the bespoke `*Result` structs remain.
   The generic-function migration is no longer blocked, and neither is
