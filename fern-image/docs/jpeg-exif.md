@@ -98,4 +98,35 @@ The worker checks every metadata field, error class, and declared cancellation p
 Every fresh worker must have a nonzero balanced heap census with zero live blocks.
 The collector preserves failed inputs, output, and completed batches, and exits nonzero on failure.
 
-Final committed-source campaigns and full image regression results remain incomplete at this source stage.
+The final campaign uses source `0d29d0af1531c69ba1f317be3808a50d257bb058`.
+The clean compiler source is `ced67ee81f8c6cac337a214480c7ccb3be51be87`.
+Its SHA-256 is `b8e32ee9becc7f4411929db85eb7d04221d4cb9e753a79246d22b4288f44e17f`.
+Compiler and stdlib sources match the campaign checkout.
+The standard two-stage build, bootstrap smoke, runtime audit, and both unchanged complexity gates pass.
+
+The finite corpus has 532 cases with 481 distinct payloads.
+These cases form 525 distinct combinations of payload, limits, and cancellation point.
+Each target reports 295 successful results and 237 expected errors.
+Pillow independently checks 262 applicable primary-orientation observations per target.
+The generated bundle reproduces byte-for-byte with SHA-256 `15abe791171f4f143c9545482a27ccac87dff1223bcf8cbc66b78f59a72dcdea`.
+
+Native, Wasm, and ARM64/QEMU10 each complete 67 fresh workers.
+All 201 workers report nonzero balanced heap counts and zero live blocks.
+Every target produces the same sample records.
+All 1,244 native and 1,245 runner source/tool hashes remain unchanged during each campaign.
+These include all 163 stdlib sources and all compiler Fern sources.
+
+The expanded eight TAP groups and Go interpreter checks pass.
+Native and ARM report 17,413 balanced allocations and frees, and Wasm reports 25,960, all with zero live blocks.
+All 222 published TAP cases pass on the three targets.
+The native and Wasm full scripts also pass their smoke, negative, and formatter probes.
+Their 70 native and 46 Wasm heap censuses balance with zero live blocks.
+The 31 standalone ARM executables also report balanced zero-live censuses.
+
+All 1,283 regression source hashes and the compiler binary remain unchanged.
+All 2,035 Fern format checks, build/vet, workflow lint, runtime bundle checks, test selectors, and eight protocol fault controls pass.
+The ARM checks cover these standalone image programs, not the complete Go ARM harness.
+
+Raw records are [native](../benchmarks/results/jpeg-exif-native.json),
+[Wasm](../benchmarks/results/jpeg-exif-wasm.json), and
+[ARM64](../benchmarks/results/jpeg-exif-arm64.json).
