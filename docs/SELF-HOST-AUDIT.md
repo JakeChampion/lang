@@ -1219,6 +1219,32 @@ findings. Ranked by leverage.
   Both native backends, the certifier and the physical-credit proofs match the result before they use a function.
   Contract checks execute on x86-64, ARM64 and Wasm.
 
+  Variant payload lookup uses `Option[Payloads]` for builtin, match-arm, and literal queries.
+  `Payloads` contains only resolved field types and the unit marker.
+  A known empty variant returns `Some`, while an unknown variant returns `None`.
+  The `None` variant of an `Option` retains an empty payload without the unit marker.
+
+  Pattern validation returns `Result[Payloads, string]`.
+  Error priority remains `alt_cont`, pattern shape, unknown variant, then arity.
+  Success carries the validated payload directly into the arm builder.
+  Try conversion, variant construction, slice construction, and downcast paths match their lookup results.
+  Escape analysis retains its member-type fact even when the payload lookup is absent.
+
+  One hundred private probes retain shape data, unit markers, diagnostic priority, and escape facts on x86, ARM64, and Wasm.
+  Fifty-seven complete lowered modules retain all 18 body fields in both inline modes on those targets.
+  Another module retains its prior refusal output and status for each target.
+  That isolated metadata driver does not load the numeric extension that this fixture requires.
+
+  The 100 private sanitizer runs report 338,678 allocations and frees.
+  The 57 complete-module sanitizer runs report 2,332,018 allocations and frees.
+  Every normal run ends with zero live bytes.
+  The refusal exits before normal cleanup and does not count as a successful sanitizer run.
+
+  Forty process pairs per input measure the complete typed pipeline and output in both inline modes.
+  All inputs pass the Go checker.
+  Candidate/baseline time ratios are 0.999 for enum variants, 0.993 for option propagation, and 1.019 for member escape analysis.
+  These measurements establish no general compiler speed change.
+
   Last-use initializer lookup returns `Option[ast.Expr]` instead of `LuInit`.
   Missing names and duplicate declarations return `None`.
   A unique declaration retains its original expression.

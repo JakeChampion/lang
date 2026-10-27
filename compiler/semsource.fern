@@ -946,41 +946,41 @@ function payload_variant(name: string, ty: typeinfo.Type): semrecords.Variant {
   return semrecords.Variant { name: name, fields: [semrecords.Field { name: "__ev", ty: ty }] };
 }
 
-struct Payloads { found: boolean, types: typeinfo.Type[], unit: boolean }
+struct Payloads { types: typeinfo.Type[], unit: boolean }
 
-function builtin_payloads(whole: typeinfo.Type, name: string): Payloads {
+function builtin_payloads(whole: typeinfo.Type, name: string): Option[Payloads] {
   for v in builtin_variants(whole) {
     if (v.name == name) {
       let types: typeinfo.Type[] = [];
       for field in v.fields {
         types = types.append(field.ty);
       }
-      return Payloads { found: true, types: types, unit: v.fields.len() == 0 && name != "None" };
+      return Some(Payloads { types: types, unit: v.fields.len() == 0 && name != "None" });
     }
   }
-  return Payloads { found: false, types: [], unit: false };
+  return None;
 }
 
-function arm_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Payloads {
+function arm_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Option[Payloads] {
   if (layout == semrecords.layout_option()) {
     return builtin_payloads(whole, name);
   }
   let Some(shape) = checker.variant_shape_sig(s.scope, name, union_name(whole)) else {
-    return Payloads { found: false, types: [], unit: false };
+    return None;
   };
   let sig: checker.StructSig = checker.instantiated_variant(shape, s.scope, whole);
-  return Payloads { found: true, types: resolved_types(sig.field_types, s.scope), unit: false };
+  return Some(Payloads { types: resolved_types(sig.field_types, s.scope), unit: false });
 }
 
-function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Payloads {
+function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: i32): Option[Payloads] {
   if (layout == semrecords.layout_option()) {
     return builtin_payloads(whole, name);
   }
   let Some(shape) = checker.variant_sig(s.scope, literal_variant_name(s, whole, name), union_name(whole)) else {
-    return Payloads { found: false, types: [], unit: false };
+    return None;
   };
   let sig: checker.StructSig = checker.instantiated_variant(shape, s.scope, whole);
-  return Payloads { found: true, types: resolved_types(sig.field_types, s.scope), unit: false };
+  return Some(Payloads { types: resolved_types(sig.field_types, s.scope), unit: false });
 }
 
 function literal_variant_name(s: State, whole: typeinfo.Type, name: string): string {
@@ -1030,7 +1030,7 @@ function names_variant(s: State, whole: typeinfo.Type, name: string): boolean {
   if (owner == "") {
     return false;
   }
-  return literal_payloads(s, whole, name, union_layout(s, owner)).found;
+  return match (literal_payloads(s, whole, name, union_layout(s, owner))) { Some(_) => true, None => false };
 }
 
 function struct_name(t: typeinfo.Type): string {
@@ -1314,8 +1314,10 @@ function slice_expr(e: ast.Expr, sl: ast.ExprSlice, s: State): Value {
   if (layout != semrecords.layout_option()) {
     return refused(s, "unsupported slice result");
   }
-  let shape: Payloads = literal_payloads(s, whole, "Some", layout);
-  if (!shape.found || shape.types.len() != 1 || !semtypes.equal(shape.types[0], t_str())) {
+  let Some(shape) = literal_payloads(s, whole, "Some", layout) else {
+    return refused(s, "unsupported slice result");
+  };
+  if (shape.types.len() != 1 || !semtypes.equal(shape.types[0], t_str())) {
     return refused(s, "unsupported slice result");
   }
   let len: Value = define(s, ssasem.length(), [src.id], 0, "", t_i32());
@@ -1579,7 +1581,9 @@ function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: Sta
   if (layout != semrecords.layout_variant() && layout != semrecords.layout_option()) {
     return refused(s, "unsupported variant literal");
   }
-  let shape: Payloads = literal_payloads(s, whole, name, layout);
+  let Some(shape) = literal_payloads(s, whole, name, layout) else {
+    return refused(s, "unsupported variant literal");
+  };
   let args: ast.Expr[] = written;
   if (shape.unit && written.len() == 1 && is_void(checked(written[0], s))) {
     let unit: Value = expr(written[0], s, t_void());
@@ -1589,7 +1593,7 @@ function variant(name: string, whole: typeinfo.Type, written: ast.Expr[], s: Sta
     }
     args = [];
   }
-  if (!shape.found || !semtypes.concrete(whole, false) || args.len() != shape.types.len()) {
+  if (!semtypes.concrete(whole, false) || args.len() != shape.types.len()) {
     return refused(s, "unsupported variant literal");
   }
   let ids: i32[] = [];
@@ -1914,24 +1918,31 @@ function try_expr(u: ast.ExprUnary, s: State, expected: typeinfo.Type): Value {
   let fnames: string[] = variant_names(s, from, flayout);
   let rnames: string[] = variant_names(s, s.result, rlayout);
   if (fnames.len() == 1 && rnames.len() == 2 && fnames[0] == rnames[0]) {
-    let only: Payloads = arm_payloads(s, from, fnames[0], flayout);
-    if (only.found && only.types.len() == 1) {
-      return define(s, ssasem.variant_get(), [v.id], 0, fnames[0], only.types[0]);
+    if let Some(only) = arm_payloads(s, from, fnames[0], flayout) {
+      if (only.types.len() == 1) {
+        return define(s, ssasem.variant_get(), [v.id], 0, fnames[0], only.types[0]);
+      }
     }
   }
   if (fnames.len() != 2 || rnames.len() != 2) {
     return refused(s, "try of a union that is not two variants");
   }
-  let good_shape: Payloads = arm_payloads(s, from, fnames[0], flayout);
-  let gone_shape: Payloads = arm_payloads(s, from, fnames[1], flayout);
-  let out_shape: Payloads = literal_payloads(s, s.result, rnames[1], rlayout);
+  let good_match = arm_payloads(s, from, fnames[0], flayout);
+  let gone_match = arm_payloads(s, from, fnames[1], flayout);
+  let out_match = literal_payloads(s, s.result, rnames[1], rlayout);
+  let Some(good_shape) = good_match else {
+    return refused(s, "try of a success variant that is not one payload");
+  };
   let unit_good: boolean = good_shape.unit && good_shape.types.len() == 0;
-  if (!good_shape.found || good_shape.types.len() != 1 && !unit_good) {
+  if (good_shape.types.len() != 1 && !unit_good) {
     return refused(s, "try of a success variant that is not one payload");
   }
-  if (!gone_shape.found || !out_shape.found) {
+  let Some(gone_shape) = gone_match else {
     return refused(s, "try failure is not a variant");
-  }
+  };
+  let Some(out_shape) = out_match else {
+    return refused(s, "try failure is not a variant");
+  };
   if (gone_shape.types.len() > 1 || gone_shape.types.len() != out_shape.types.len()) {
     return refused(s, "try failure does not match the body's result");
   }
@@ -2036,7 +2047,9 @@ function downcast(e: ast.Expr, u: ast.ExprUnary, s: State): Value {
   let whole: typeinfo.Type = ssasem.option_of(concrete);
   let layout: i32 = semrecords.layout_option();
   let names: string[] = variant_names(s, whole, layout);
-  let some: Payloads = literal_payloads(s, whole, names[0], layout);
+  let Some(some) = literal_payloads(s, whole, names[0], layout) else {
+    return refused(s, "downcast target: " + target);
+  };
 
   let pred: i32 = s.cur.id;
   let hit: i32 = s.next_block;
@@ -3271,8 +3284,10 @@ function settled_union(whole: typeinfo.Type, name: string, args: ast.Expr[], s: 
   if (name == "Some" && !names_variant(s, whole, name)) {
     pattern = typeinfo.TypeUnion { name: "Option", args: [typeinfo.TypeErased { name: "$payload" }] };
   }
-  let shape: Payloads = builtin_payloads(pattern, name);
-  if (!shape.found || shape.types.len() != args.len()) {
+  let Some(shape) = builtin_payloads(pattern, name) else {
+    return whole;
+  };
+  if (shape.types.len() != args.len()) {
     return whole;
   }
   let b: ssasem.Binding = ssasem.unbound();
@@ -3768,10 +3783,11 @@ function widen(v: Value, expected: typeinfo.Type): Value {
       if (clone_base(vn) != clone_base(member)) {
         continue;
       }
-      let shape: Payloads = literal_payloads(s, expected, vn, layout);
-      if (shape.found && shape.types.len() == 1 && semtypes.equal(shape.types[0], s.values[v.id])) {
-        let payload: Value = kept_view(unaliased_view(v));
-        return define(payload.s, ssasem.variant_new(), [payload.id], 0, vn, expected);
+      if let Some(shape) = literal_payloads(s, expected, vn, layout) {
+        if (shape.types.len() == 1 && semtypes.equal(shape.types[0], s.values[v.id])) {
+          let payload: Value = kept_view(unaliased_view(v));
+          return define(payload.s, ssasem.variant_new(), [payload.id], 0, vn, expected);
+        }
       }
     }
   }
@@ -4301,27 +4317,27 @@ function pattern_shape_error(pv: ast.PatVariant): string {
   return "";
 }
 
-function pattern_error(a: ast.MatchArm, pv: ast.PatVariant, shape: Payloads, layout: i32): string {
+function pattern_payloads(a: ast.MatchArm, pv: ast.PatVariant, candidate: Option[Payloads], layout: i32): Result[Payloads, string] {
   if (a.alt_cont) {
-    return "unsupported match guard";
+    return Err("unsupported match guard");
   }
   let why: string = pattern_shape_error(pv);
   if (why != "") {
-    return why;
+    return Err(why);
   }
-  if (!shape.found) {
-    return "unknown variant";
-  }
+  let Some(shape) = candidate else {
+    return Err("unknown variant");
+  };
   if (layout == semrecords.layout_member() || shape.unit) {
     if (pv.extra_bindings.len() > 0) {
-      return "pattern arity";
+      return Err("pattern arity");
     }
-    return "";
+    return Ok(shape);
   }
   if (pv.binding != "" && 1 + pv.extra_bindings.len() != shape.types.len()) {
-    return "pattern arity";
+    return Err("pattern arity");
   }
-  return "";
+  return Ok(shape);
 }
 
 function narrowed(pv: ast.PatVariant, scrut: i32, s: State): State {
@@ -4433,11 +4449,7 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
   let g: Gathered = parts(arms);
   let s: State = arms.s;
   pv = unqualified(pv, owner);
-  let shape: Payloads = arm_payloads(s, s.values[scrut], pv.type_name, layout);
-  let why: string = pattern_error(a, pv, shape, layout);
-  if (why != "") {
-    return gathered(fail(s, why), g);
-  }
+  let shape: Payloads = match (pattern_payloads(a, pv, arm_payloads(s, s.values[scrut], pv.type_name, layout), layout)) { Ok(value) => value, Err(why) => { return gathered(fail(s, why), g); } };
   if (closing) {
     return closing_arm(a, pv, scrut, shape, s, g, entry, join, count, scope, layout, ty);
   }
@@ -4573,18 +4585,15 @@ function learn_escaping(m: ast.StmtMatch, s: State, whole: typeinfo.Type, owner:
   for a in m.arms {
     if let ast.PatVariant(raw) = a.pattern {
       let pv: ast.PatVariant = unqualified(raw, owner);
-      let shape: Payloads = arm_payloads(s, whole, pv.type_name, layout);
-      if (layout == semrecords.layout_member()) {
-        shape = Payloads { ...shape, types: [member_type(pv)] };
-      }
+      let types: typeinfo.Type[] = if (layout == semrecords.layout_member()) { [member_type(pv)] } else { match (arm_payloads(s, whole, pv.type_name, layout)) { Some(shape) => shape.types, None => [] } };
       let names: string[] = [pv.binding];
       for n in pv.extra_bindings {
         names = names.append(n);
       }
       let k: i32 = 0;
-      while (k < names.len() && k < shape.types.len()) {
-        if (util.index_of_str(s.escaping, names[k]) >= 0 && util.index_of_str(s.learned, names[k]) < 0 && semtypes.concrete(shape.types[k], false)) {
-          s = State { ...s, learned: s.learned.append(names[k]), learned_types: s.learned_types.append(shape.types[k]) };
+      while (k < names.len() && k < types.len()) {
+        if (util.index_of_str(s.escaping, names[k]) >= 0 && util.index_of_str(s.learned, names[k]) < 0 && semtypes.concrete(types[k], false)) {
+          s = State { ...s, learned: s.learned.append(names[k]), learned_types: s.learned_types.append(types[k]) };
         }
         k = k + 1;
       }
