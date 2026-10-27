@@ -2499,6 +2499,10 @@ function display_path(mpath: string, root: string): string {
 }
 
 function read_bundle_module(s: Sources, mpath: string, from: string, ipath: string): modloader.Resolved {
+  let ov: modloader.Overlay = modloader.Overlay { ...modloader.no_overlay(), files: s.open };
+  if let Some(declared) = modloader.declared_module(ov, from, ipath) {
+    return declared;
+  }
   let gi: i32 = util.index_of_str(s.paths, mpath);
   if (gi >= 0) {
     return modloader.Resolved { src: s.srcs[gi], ok: true, err: "", err_path: "", shown: mpath, map: s.maps[gi] };
@@ -2507,7 +2511,7 @@ function read_bundle_module(s: Sources, mpath: string, from: string, ipath: stri
   if (r.ok || r.err.len() > 0) {
     return r;
   }
-  return modloader.try_manifest(modloader.Overlay { ...modloader.no_overlay(), files: s.open }, from, ipath);
+  return modloader.try_manifest(ov, from, ipath);
 }
 
 function module_package_at(mdir: string, module_gov: Governed, root_gov_dir: string, root_package: caps.Pkg, is_stdlib: boolean): pkggrants.ModuleAt {

@@ -766,6 +766,14 @@ findings. Ranked by leverage.
   `LexResult` carries tokens and comments, and the checker's `CheckResult` carries a scope and a type.
   These records carry simultaneous outputs and remain structs.
 
+  Versioned dependency lookup now returns a standard result and preserves lock-file diagnostics through import resolution.
+  Missing locks, missing entries and absent cached packages retain their specific errors.
+  A declared dependency takes priority over an adjacent file with the same name or its subpaths.
+
+  Explicit local imports and imports of undeclared adjacent files retain their behavior.
+  Capability grants still omit unresolved, unused dependencies, as the Go loader does.
+  Go-oracle CLI cases cover these contracts, and shared-loader probes execute on x86-64, ARM64 and Wasm.
+
 
 ### T7 — O(n²) string accumulation in emitters
 - [ ] **SH-027 — Use a `strbuf`/chunk-join accumulator in the string emitters.**
