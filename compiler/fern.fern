@@ -1245,6 +1245,51 @@ function harden_refused(harden: boolean, target: string, shared: boolean): boole
   return true;
 }
 
+// The -heap-limit value in bytes: zero without the flag, below zero after a refusal.
+function heap_limit_bytes(text: string, target: string): i64 {
+  if (text.len() == 0) {
+    return 0i64;
+  }
+  if (!(target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-android" || target == "arm64-darwin")) {
+    eprint("fern: -heap-limit is only supported for the native targets (got \"" + target + "\")");
+    return 0i64 - 1i64;
+  }
+  let value: i64 = size_bytes(text);
+  if (value < 1048576i64 || value > 17179869184i64) {
+    eprint("fern: -heap-limit takes a size from 1M to 16G, as digits with an optional K, M or G suffix (got \"" + text + "\")");
+    return 0i64 - 1i64;
+  }
+  return value;
+}
+
+// Digits with an optional K, M or G suffix, as bytes. Malformed text is zero.
+function size_bytes(text: string): i64 {
+  let n: i32 = text.len();
+  let scale: i64 = 1i64;
+  let last: u8 = text[n - 1];
+  if (last == b'K') {
+    scale = 1024i64;
+    n = n - 1;
+  } else if (last == b'M') {
+    scale = 1048576i64;
+    n = n - 1;
+  } else if (last == b'G') {
+    scale = 1073741824i64;
+    n = n - 1;
+  }
+  let value: i64 = 0i64;
+  let i: i32 = 0;
+  while (i < n) {
+    let d: i32 = text[i] as i32 - 48;
+    if (d < 0 || d > 9 || value > 17179869184i64) {
+      return 0i64;
+    }
+    value = value * 10i64 + d as i64;
+    i = i + 1;
+  }
+  return value * scale;
+}
+
 function bti_property_text(on: boolean): string {
   if (!on) {
     return "";
@@ -1287,6 +1332,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
       cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export (default main)"),
       cli_flag("-harden", "", "arm64-linux and x86-64-linux executables: stack canaries; on arm64 also BTI landing pads and signed return addresses"),
+      cli_flag("-heap-limit", "SIZE", "native executables: the heap arena size, 1M to 16G with a K, M or G suffix (default 16G); a full arena exits 125"),
     ] },
     FlagGroup { title: "run", flags: [
       cli_flag("-run", "", "build to a temporary binary (or -o) and run it with the program's arguments"),
@@ -4796,6 +4842,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let shared: boolean = false;
   let export_list: string = "";
   let harden: boolean = false;
+  let heap_limit_text: string = "";
   let cover_on: boolean = envflag.on("FERN_COVER");
   let array_report: i32 = semarrayreport.from_env();
   let have_entry: boolean = false;
@@ -4871,6 +4918,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       sanitize_flag = f.on;
     } else if (f.name == "-harden") {
       harden = f.on;
+    } else if (f.name == "-heap-limit") {
+      heap_limit_text = f.value;
     } else if (f.name == "-shared") {
       shared = f.on;
     } else if (f.name == "-export") {
@@ -5061,6 +5110,10 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   if (harden_refused(harden, target, shared)) {
     return 2;
   }
+  let heap_limit: i64 = heap_limit_bytes(heap_limit_text, target);
+  if (heap_limit < 0i64) {
+    return 2;
+  }
   if (backend != "" && backend != "ssa" && backend != "flat") {
     eprint("fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)");
     return 2;
@@ -5240,7 +5293,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let typed: parser.Module = parser.module_with_builtins_typed(merged);
   let full: parser.Module = parser.erase_view_module(typed);
   let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden } };
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit } };
   if (array_report == semarrayreport.to_stdout()) {
     return 0;
   }

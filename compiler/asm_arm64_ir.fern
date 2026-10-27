@@ -5689,13 +5689,25 @@ function arm64_copy_bytes(s: asmcore.EmitState, r: CopyRegs, words: string, tail
   return s.write(done + ":\n");
 }
 
+// A 64-bit immediate as one movz and a movk per nonzero upper half-word.
+function mov_imm64(reg: string, value: i64): string {
+  let out: string = "    movz " + reg + ", #" + (value & 65535i64).to_string() + "\n";
+  let shift: i32 = 16;
+  while (shift < 64) {
+    let part: i64 = value >> shift & 65535i64;
+    if (part != 0i64) {
+      out = out + "    movk " + reg + ", #" + part.to_string() + ", lsl #" + shift.to_string() + "\n";
+    }
+    shift = shift + 16;
+  }
+  return out;
+}
+
 function emit_arm64_op_heap_bump_bytes(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   s = s.need("heap");
   s = s.write("    adrp x0, __fern_heap_ptr\n    add x0, x0, :lo12:__fern_heap_ptr\n    ldr x0, [x0]\n");
-  s = s.write("    adrp x1, __fern_heap_end\n    add x1, x1, :lo12:__fern_heap_end\n    ldr x1, [x1]\n");
+  s = s.write("    adrp x1, __fern_heap_base\n    add x1, x1, :lo12:__fern_heap_base\n    ldr x1, [x1]\n");
   s = s.write("    sub x2, x0, x1\n");
-  s = s.write("    mov x3, #1\n    lsl x3, x3, #34\n");
-  s = s.write("    add x2, x2, x3\n");
   s = s.write("    cmp x0, #0\n");
   s = s.write("    csel x2, x2, xzr, ne\n");
   s = s.write("    str x2, [sp, #-16]!\n");
@@ -7709,8 +7721,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x0, #1\n");
   }
   s = s.write("    lsl x0, x0, #28\n");
-  s = s.write("    mov x1, #1\n");
-  s = s.write("    lsl x1, x1, #34\n");
+  s = s.write(mov_imm64("x1", s.heap_limit));
   s = s.write("    mov x2, #3\n");
   if (darwin) {
     s = s.write("    mov x3, #0x1002\n");
@@ -7730,8 +7741,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    adrp x1, __fern_heap_base\n");
   s = s.write("    add x1, x1, :lo12:__fern_heap_base\n");
   s = s.write("    str x0, [x1]\n");
-  s = s.write("    mov x2, #1\n");
-  s = s.write("    lsl x2, x2, #34\n");
+  s = s.write(mov_imm64("x2", s.heap_limit));
   s = s.write("    add x2, x0, x2\n");
   s = s.write("    adrp x3, __fern_heap_end\n");
   s = s.write("    add x3, x3, :lo12:__fern_heap_end\n");
