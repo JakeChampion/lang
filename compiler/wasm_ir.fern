@@ -8553,6 +8553,10 @@ function lc_report_funcs(sanitize: boolean, set_args: boolean, tables: string): 
 
 pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl_base: i32, count: boolean, lc: boolean): string {
   let hb: string = util.i32_to_string(heap_base);
+  let pages: i32 = (heap_base + 65535) / 65536;
+  if (pages < 16) {
+    pages = 16;
+  }
   let flb: string = util.i32_to_string(fl_base);
   let flc: string = util.i32_to_string(fl_cells);
   let lflb: string = util.i32_to_string(lfl_base);
@@ -8560,6 +8564,7 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o = o + "  (global $__fern_rc_underflow (mut i32) (i32.const 0))\n";
   o = o + "  (global $__fern_heap_base i32 (i32.const " + hb + "))\n";
   o = o + "  (global $heap (mut i32) (i32.const " + hb + "))\n";
+  o = o + "  (global $__fern_heap_pages (mut i32) (i32.const " + util.i32_to_string(pages) + "))\n";
   if (count) {
     o = o + "  (global $__fern_alloc_count (mut i64) (i64.const 0))\n";
   }
@@ -8593,11 +8598,17 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o = o + "      (if (local.get $head) (then\n";
   o = o + "        (i32.store (i32.add (i32.const " + lflb + ") (i32.mul (local.get $cls) (i32.const 4))) (i32.load (i32.add (local.get $head) (i32.const 4))))\n";
   o = o + "        (return (local.get $head))))))))\n";
+  // Adapter allocations can grow memory without advancing the guest heap.
+  o = o + "    (if (i32.gt_u (memory.size) (global.get $__fern_heap_pages)) (then\n";
+  o = o + "      (if (i32.ge_u (memory.size) (i32.const 65536)) (then (call $__fern_abort_oom) (unreachable)))\n";
+  o = o + "      (global.set $heap (i32.shl (memory.size) (i32.const 16)))\n";
+  o = o + "      (global.set $__fern_heap_pages (memory.size))))\n";
   o = o + "    (local.set $p (global.get $heap))\n";
   o = o + "    (global.set $heap (i32.add (global.get $heap) (local.get $n)))\n";
   o = o + "    (if (i32.lt_u (global.get $heap) (local.get $p)) (then (call $__fern_abort_oom) (unreachable)))\n";
   o = o + "    (if (i32.gt_u (global.get $heap) (i32.mul (memory.size) (i32.const 65536)))\n";
   o = o + "      (then (if (i32.eq (memory.grow (i32.div_u (i32.add (i32.sub (global.get $heap) (i32.mul (memory.size) (i32.const 65536))) (i32.const 65535)) (i32.const 65536))) (i32.const -1)) (then (call $__fern_abort_oom) (unreachable)))))\n";
+  o = o + "    (global.set $__fern_heap_pages (memory.size))\n";
   o = o + "    (local.get $p))\n";
   o = o + "  (func $__fern_large_cap (param $n i32) (result i32)\n";
   o = o + "    (local $g i32)\n";
