@@ -589,27 +589,20 @@ findings. Ranked by leverage.
     decision, not a mechanical change. Its order is pinned in the sequence gate
     either way.
 
-    Probing collectors for that gate has turned up **six divergences nothing
-    else can see**, every one of them same-code-set. Four were real bugs and
-    are fixed: the nested-lambda E049 gap (#7363), and the three E060/E062 ones
-    above — a downcast inside a lambda body, a `dyn` local declared inside one,
-    and the struct-literal base/field order. The remaining two are pinned and
-    open:
+    The sequence gate exposed **six divergences with the same diagnostic code sets**.
+    The earlier fixes covered the E049 gap and the three E060/E062 cases above.
+    The E044 capture-scope gap is also fixed now.
 
-    - `e044_expr` **under-reports**. For a lambda nested in a lambda where the
-      inner one captures an unsupported-typed variable, the Go checker reports
-      E044 twice (inner directly, outer transitively) and the self-host reports
-      once. Same root cause family as the E049 gap: `e044_stmts` walks only the
-      enclosing function's statements and `e044_expr` prunes at the outer
-      lambda, so the inner is never reached. The prune's comment worries about
-      double-reporting the SAME lambda; reaching the inner one yields two
-      DIFFERENT lambdas, which is what Go does. NOT a mechanical fix, which is
-      why it is recorded rather than done: `e044_lambda_check` reports at the
-      STATEMENT position against a suspects/labels list computed by
-      `e044_stmts` for the enclosing scope, so reaching a nested lambda needs a
-      decision about reusing those suspects minus accumulated param shadowing
-      versus recomputing them for the inner scope, and that choice changes
-      which diagnostics appear.
+    - `e044_expr` uses the shared expression fold and handles each lambda body once.
+      A written lambda gets its capture check before the body traversal.
+      The body inherits the outer unsupported bindings.
+      Parameters, local declarations, loop variables, and pattern bindings mask names that they shadow.
+      Synthetic value blocks get body traversal without a closure diagnostic.
+
+      The regression gate compares diagnostic multiplicity against the Go checker.
+      It covers nested captures, three closure levels, shadow scopes, and value blocks.
+      The previous code missed inner captures and reported false positives after shadow declarations.
+      The broader semantic traversal work remains open.
     - `slit_diags` **over-reports**: for `Out { bad2: In { bad1: 1 } }` the self-host reports
     four diagnostics (the inner literal's unknown and missing fields as well as
     the outer's) where the Go checker reports two, having stopped descending
@@ -714,32 +707,20 @@ findings. Ranked by leverage.
   (`push`/`pop`/`load_local`/`branch_if_zero`/`call`/`syscall`) driven from
   shared code, with the need-key table as shared data; each backend implements
   only the leaves.
-- [~] **SH-025 — lift what the three SSA backends hand-mirror.**
-  _Helper half done:_ `block_index` and `pred_slot` were byte-identical across
-  all four SSA modules; `ssa.fern`'s two are now `pub` and the three backend
-  copies are gone (−48 lines, no new import — the backends already import
-  `./ssa` for `SFunc`/`SBlock`, and `ssa.fern` imports none of them).
+- [x] **SH-025 — the legacy SSA backend duplication is retired.**
+  The earlier helper cleanup shared `block_index` and `pred_slot`.
+  The 2026-10 tree no longer contains `ssa_x86.fern`, `ssa_arm64.fern`, or `ssa_wasm.fern`.
+  Their separate `emit_inst`, `emit_term`, `emit_func`, and `emit_program` interfaces are gone.
+  Do not create a new interface for those retired modules.
 
-  **This entry used to ask for a new `ssabackend.fern` (the SSA analogue of
-  `asmcore`). That module cannot exist**: it would have to import `ssa` for
-  `SFunc`/`SBlock`, and `ssa` would have to import it back for its own six
-  `block_index` call sites — a cycle. `asmcore` is not a precedent, because it
-  declares the types it shares rather than borrowing them. Lift to the module
-  that already declares the types.
+  The native emitters now share `ssaprepare` and consume physical-body metadata.
+  Their remaining runtime duplication belongs to SH-024.
+  The shared SSA representation still uses `SInst` and `STerm` under SH-049.
+  Those two items remain open.
 
-  _Still open:_ the three backends hand-mirror `emit_inst` / `emit_term` /
-  `emit_func` / `emit_program` / `emit_phi_moves` dispatch ladders. Align the
-  gratuitously-divergent `emit_term` signatures first — `ssa_x86` takes a `name`
-  param, `ssa_arm64` reads `f.name`, `ssa_wasm` takes neither — then lift a
-  parameterised `emit_func`/`emit_program` driver. Note the trap recorded under
-  T1: `regn` is byte-identical TEXT across `ssa_x86` and `ssa_arm64` with
-  per-ISA behaviour, so it is not liftable and a byte-diff will say otherwise.
-
-  _Noted, not changed:_ `pred_slot` returns 0 rather than −1 on a miss — the
-  shape SH-007 closed for `index_of_str`. It is consistent across all four
-  copies (so not drift), and whether a miss is reachable depends on the
-  phi-predecessor invariant. Changing it is a behaviour change wanting its own
-  analysis and test.
+  The current `ssa.pred_slot` returns zero on a miss.
+  Its callers depend on valid predecessor edges and phi arity.
+  Any change to that failure contract still needs a separate invariant analysis and regression test.
 
 ### T6 — Errors & signals smuggled through value types / sentinels
 - [~] **SH-026 — the surviving "sentinels" were not errors; the real half is
@@ -926,7 +907,7 @@ appendix §6.)
   than native's "expected X, got Y". Positions are the half that gated
   usability; the message half wants the parser to carry errors and is its own
   change.
-- [~] **SH-042 — `parse_type_name` split; the structured-type half is T2.**
+- [x] **SH-042 — `parse_type_name` is split. The structured-type work belongs to T2.**
   _Done:_ 350 lines covering five unrelated grammars became an 8-line dispatch
   on the leading token, plus `parse_type_dyn` (18), `parse_type_handle` (11),
   `parse_type_punct_led` (27) -> `parse_type_paren` (167), and
@@ -952,7 +933,7 @@ appendix §6.)
   `\u` escape is a one-site change.
 
 ### Checker / asmcore
-- [~] **SH-044 — the giant-function half is done; the table-drive half moved.**
+- [x] **SH-044 — the resolver split and named-builtin tables are complete.**
   _Done:_ `infer_expr_type` (`asmcore.fern:3224`) is **76 lines**, a flat match
   that dispatches to `infer_expr_binary_type` / `infer_expr_unary_type` /
   `infer_expr_call_type`, and the latter splits again into the per-receiver
@@ -981,9 +962,10 @@ appendix §6.)
   here needs a (receiver-kind, name) key, which is more machinery than the chain
   it would replace.
 
-  _Noted:_ the table pattern re-allocates its array per call, as
-  `is_builtin_function` has since SH-046. Nothing gates the self-host compiler's
-  own compile time (`docs/TEST-GATES.md`), so that cost is unmeasured on both.
+  The 2026-10 `EmitState` stores `builtin_i32` and `builtin_string` name indices.
+  `new_state` builds each index once.
+  The named resolver uses their `has` methods and reuses the membership arrays.
+  The receiver-dependent method dispatch above remains intentional.
 - [x] **SH-045 — `check_module` rebuilt one function's scope 10-13 times.**
   _Done:_ the count was worse than this entry recorded — 9 rebuilds across the
   body diagnostic passes, a 10th inside `check_func_body` (which the same loop
