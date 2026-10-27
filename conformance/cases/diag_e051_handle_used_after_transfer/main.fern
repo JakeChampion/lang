@@ -1,0 +1,20 @@
+// spec: RH-03
+// Passing a handle to an `own` parameter transfers it. The caller reads the
+// handle after the transfer, so the transfer is not the local's last use and
+// the checker refuses it.
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function take(own h: Handle): i32 {
+  return h.close();
+}
+
+function main(): i32 {
+  let h: Handle = Handle { fd: 3 };
+  let taken: i32 = take(h);
+  return h.fd + taken;
+}

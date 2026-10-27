@@ -227,10 +227,10 @@ struct Tx {
   why: string,
 }
 
-pub function transform(r: irtables.LowerResult, set: Set): irtables.LowerResult {
+pub function transform_state(r: irtables.LowerState, set: Set): irtables.LowerState {
   let t: Tx = run(r, set);
   if (t.why != "") {
-    return irtables.LowerResult { ...r, ok: false, why: t.why };
+    return irtables.LowerState { ...r, ok: false, why: t.why };
   }
   let i64s: i32[] = r.i64_slots;
   let f64s: i32[] = r.f64_slots;
@@ -244,10 +244,10 @@ pub function transform(r: irtables.LowerResult, set: Set): irtables.LowerResult 
     }
     j = j + 1;
   }
-  return irtables.LowerResult { ...r, ops: t.out, n_locals: r.n_locals + 2 + t.tmps.len(), i64_slots: i64s, f64_slots: f64s };
+  return irtables.LowerState { ...r, ops: t.out, n_locals: r.n_locals + 2 + t.tmps.len(), i64_slots: i64s, f64_slots: f64s };
 }
 
-function run(r: irtables.LowerResult, set: Set): Tx {
+function run(r: irtables.LowerState, set: Set): Tx {
   let (ops, tmps) = stored_results(r, set);
   let n: i32 = ops.len();
   let before: i32[] = [];
@@ -325,7 +325,7 @@ function run(r: irtables.LowerResult, set: Set): Tx {
   return Tx { ...t, out: util.append_all(prologue(t, r), t.out) };
 }
 
-function stored_results(r: irtables.LowerResult, set: Set): (ir.Op[], string[]) {
+function stored_results(r: irtables.LowerState, set: Set): (ir.Op[], string[]) {
   let none: Tx = Tx { out: [], seg: [], ci: r.n_locals, tc: r.n_locals + 1, before: [], else_of: [], end_of: [], carry: [], tmps: [], live: [], saves: [], why: "" };
   let out: ir.Op[] = [];
   let tmps: string[] = [];
@@ -387,7 +387,7 @@ function ends_control(seg: ir.Op[]): boolean {
   return false;
 }
 
-function prologue(t: Tx, r: irtables.LowerResult): ir.Op[] {
+function prologue(t: Tx, r: irtables.LowerState): ir.Op[] {
   let out: ir.Op[] = [ir.op_call_direct("__fern_task_mode", 0), ir.op_const_i32(2), ir.op_bin("eq", 0, false), ir.op_if(0)];
   out = out.append(ir.op_call_direct("__fern_task_pop_w", 0));
   out = out.append(ir.op_store_local(t.ci));
@@ -416,7 +416,7 @@ function prologue(t: Tx, r: irtables.LowerResult): ir.Op[] {
   return out;
 }
 
-function slot_class(t: Tx, r: irtables.LowerResult, s: i32): string {
+function slot_class(t: Tx, r: irtables.LowerState, s: i32): string {
   if (s >= r.n_locals + 2) {
     return t.tmps[s - r.n_locals - 2];
   }
@@ -429,7 +429,7 @@ function slot_class(t: Tx, r: irtables.LowerResult, s: i32): string {
   return "w";
 }
 
-function site(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32, k: i32): Tx {
+function site(t: Tx, r: irtables.LowerState, set: Set, ops: ir.Op[], at: i32, k: i32): Tx {
   let call: ir.Op = ops[at];
   let start: i32 = arg_start(t.seg, ir.op_pops(call));
   if (start < 0) {
@@ -468,7 +468,7 @@ function site(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32, k
   return Tx { ...t2, out: out, seg: c.carried, saves: t2.saves.append(saved) };
 }
 
-function save_ops(t: Tx, r: irtables.LowerResult, saved: i32[], k: i32): ir.Op[] {
+function save_ops(t: Tx, r: irtables.LowerState, saved: i32[], k: i32): ir.Op[] {
   let out: ir.Op[] = [ir.op_const_i32(saved.len() + 1), ir.op_call_direct("__fern_task_reserve", 1), ir.op_store_local(t.tc)];
   let i: i32 = 0;
   while (i < saved.len()) {
@@ -520,7 +520,7 @@ function group_end(ops: ir.Op[], at: i32): i32 {
   return end;
 }
 
-function site_saves(t: Tx, r: irtables.LowerResult, at: i32, call: ir.Op, again: ir.Op[]): i32[] {
+function site_saves(t: Tx, r: irtables.LowerState, at: i32, call: ir.Op, again: ir.Op[]): i32[] {
   let n: i32 = r.n_locals + 2 + t.tmps.len();
   let keep: boolean[] = [];
   let s: i32 = 0;
@@ -692,7 +692,7 @@ function branch_target(ops: ir.Op[], open: i32[], end_of: i32[], depth: i32, n: 
 
 struct Carried { t: Tx, prefix: ir.Op[], carried: ir.Op[] }
 
-function carry_out(t: Tx, r: irtables.LowerResult, set: Set, hi: i32, body: ir.Op[]): Carried {
+function carry_out(t: Tx, r: irtables.LowerState, set: Set, hi: i32, body: ir.Op[]): Carried {
   let held: i32 = height(t.seg, 0, hi);
   let lo: i32 = arg_start(sub_ops(t.seg, 0, hi), held);
   if (lo < 0) {
@@ -749,7 +749,7 @@ function producer_of(chain: ir.Op[]): i32 {
   return stack[stack.len() - 1];
 }
 
-function value_class(t: Tx, r: irtables.LowerResult, set: Set, o: ir.Op): string {
+function value_class(t: Tx, r: irtables.LowerState, set: Set, o: ir.Op): string {
   if (o.kind_tag == 18) {
     return slot_class(t, r, o.i32_imm);
   }
@@ -831,7 +831,7 @@ function stores_slot(ops: ir.Op[], slot: i32): boolean {
   return false;
 }
 
-function dummy(r: irtables.LowerResult): ir.Op {
+function dummy(r: irtables.LowerState): ir.Op {
   if (r.result_kind == irtables.result_i64()) {
     return ir.op_const_i64(0 as i64);
   }
@@ -841,18 +841,18 @@ function dummy(r: irtables.LowerResult): ir.Op {
   return ir.op_const_i32(0);
 }
 
-function routed_if(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32): Tx {
+function routed_if(t: Tx, r: irtables.LowerState, set: Set, ops: ir.Op[], at: i32): Tx {
   let t2: Tx = routed_cond(t, r, set, t.before[at + 1], t.before[arm_end(t, at)], sub_ops(ops, at + 1, t.end_of[at]));
   return Tx { ...t2, out: util.append_all(t2.out, [ir.op_load_local(t2.tc), ir.op_if(0)]), seg: [], carry: t2.carry.append(t2.seg) };
 }
 
-function routed_brif(t: Tx, r: irtables.LowerResult, set: Set, o: ir.Op): Tx {
+function routed_brif(t: Tx, r: irtables.LowerState, set: Set, o: ir.Op): Tx {
   let no: ir.Op[] = [];
   let t2: Tx = routed_cond(t, r, set, 0, 0, no);
   return Tx { ...t2, out: util.append_all(t2.out, [ir.op_load_local(t2.tc), o]) };
 }
 
-function routed_cond(t: Tx, r: irtables.LowerResult, set: Set, lo: i32, hi: i32, body: ir.Op[]): Tx {
+function routed_cond(t: Tx, r: irtables.LowerState, set: Set, lo: i32, hi: i32, body: ir.Op[]): Tx {
   let cstart: i32 = arg_start(t.seg, 1);
   if (cstart < 0) {
     return Tx { ...t, why: "suspend: " + r.name + ": a condition is not produced by its own segment" };
@@ -883,7 +883,7 @@ function routed_cond(t: Tx, r: irtables.LowerResult, set: Set, lo: i32, hi: i32,
   return Tx { ...c.t, out: out, seg: c.carried };
 }
 
-function open_scope(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32): Tx {
+function open_scope(t: Tx, r: irtables.LowerState, set: Set, ops: ir.Op[], at: i32): Tx {
   let c: Carried = carry_out(t, r, set, t.seg.len(), sub_ops(ops, at + 1, t.end_of[at]));
   if (c.t.why != "") {
     return c.t;
@@ -892,7 +892,7 @@ function open_scope(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: 
   return Tx { ...t2, carry: t2.carry.append(c.carried) };
 }
 
-pub function dump_if_asked(r: irtables.LowerResult, stage: string): void {
+pub function dump_state_if_asked(r: irtables.LowerState, stage: string): void {
   match (env("FERN_SUSPEND_DUMP")) {
     Some(name) => {
       if (name != r.name) {

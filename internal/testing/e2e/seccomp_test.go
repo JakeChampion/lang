@@ -316,8 +316,8 @@ func TestSeccompFixtureCorpus(t *testing.T) {
 		if f.rejectionCase() {
 			continue
 		}
-		ran++
 		t.Run(name, func(t *testing.T) {
+			ran++
 			plainBin := buildSandboxedPath(t, f.mainPath, false, nil)
 			sandboxBin := buildSandboxedPath(t, f.mainPath, true, nil)
 
@@ -334,7 +334,7 @@ func TestSeccompFixtureCorpus(t *testing.T) {
 		})
 	}
 	if ran == 0 {
-		t.Fatal("every fixture was a compile-error case — nothing was actually run under the filter")
+		t.Fatal("no runnable fixture matched the test filter")
 	}
 	t.Logf("%d runnable fixtures exercised under the seccomp filter", ran)
 }

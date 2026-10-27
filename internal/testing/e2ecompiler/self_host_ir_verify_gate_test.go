@@ -148,12 +148,12 @@ func TestSelfHostIRVerifyGateRefuses(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/irverify_run.fern")
 	bin := buildSelfHostBin(t, gcc, dir, "drivers/irverify_run.fern", "irverify_run")
 
-	out, _, code := runGate(t, bin, []string{"-refuse"}, "")
-	if code != 0 || !strings.Contains(out, "irverifygate: inert") {
-		t.Errorf("-refuse with FERN_IR_VERIFY unset exited %d and printed %q, want 0 and the inert marker", code, out)
+	_, unsetErr, code := runGate(t, bin, []string{"-refuse"}, "")
+	if code != 4 {
+		t.Errorf("-refuse with FERN_IR_VERIFY unset exited %d, want 4 — the gate is on unless the flag turns it off\nstderr: %s", code, unsetErr)
 	}
 
-	out, _, code = runGate(t, bin, []string{"-refuse"}, "FERN_IR_VERIFY=0")
+	out, _, code := runGate(t, bin, []string{"-refuse"}, "FERN_IR_VERIFY=0")
 	if code != 0 {
 		t.Errorf("-refuse under FERN_IR_VERIFY=0 exited %d, want 0 — the opt-out must make the gate inert", code)
 	}

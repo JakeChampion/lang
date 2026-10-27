@@ -30,10 +30,11 @@ read. A later bootstrap release must contain this parser before repository
 sources can use the markers. Use the normal bootstrap workflow for that release.
 This change does not publish a release or update the stage0 pin.
 
-The next stage must enforce unsafe effects through calls, function values,
-generics, and traits. It must classify raw builtins and annotate their callers.
-It must add compile-fail tests for each prohibited access path. Until those
-checks are complete, a program without unsafe markers has no new safety promise.
+The checkers now enforce the unsafe effect of a declaration through calls,
+function values, generics, and traits as `E095`. The raw builtins are
+classified in [the inventory](UNSAFE-INVENTORY.md), and their callers are not
+annotated yet. Until that change is complete, a program without unsafe markers
+has no new safety promise.
 
 Ordinary integer arithmetic keeps its current wrapping and non-trapping rules.
 The proposed boundary does not change integer arithmetic.

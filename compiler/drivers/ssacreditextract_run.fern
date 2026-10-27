@@ -17,11 +17,7 @@ function require(ok: boolean, id: i32): void {
 
 function lift(r: irtables.LowerResult): ssa.SFunc {
   require(r.ok, 1);
-  let out = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), r.name, r.n_params, r.n_locals, r.ops, false);
-  if (!out.ok) {
-    print(out.bail);
-    exit(2);
-  }
+  let out = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), r.name, r.n_params, r.n_locals, r.ops, false)) { Ok(l) => l, Err(message) => { print(message); exit(2); } };
   return out.func;
 }
 

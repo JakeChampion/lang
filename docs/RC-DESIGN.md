@@ -277,9 +277,8 @@ construction's token, a classified donor holds the slot only where no pairing
 does, and a carried token is held on every path into a block
 or on none, spent where the carry says, freed where its way leaves, and held
 at no return. It is independent of the walk that planned: a disagreement
-names the step. It runs under `FERN_IR_VERIFY=1` (the
-test harness sets `quiet` for every self-host compile), not in a plain
-compile.
+names the step. It runs in every compile unless `FERN_IR_VERIFY=0`
+leaves it out (the test harness sets `quiet` for every self-host compile).
 
 ### 1.5 The physical lowering
 

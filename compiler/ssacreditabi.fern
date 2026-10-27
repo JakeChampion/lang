@@ -36,12 +36,9 @@ function physical_bindings(sub: ircore.Sub, name: string, drop_name: string, rel
     return PhysicalBindings { functions: [], error: "unproduced physical binding" };
   }
   let kt = ssa_lift.kind_table();
-  let f = ssa_lift.lift_from_ir_prod(kt, name, subjects[0].n_params, subjects[0].n_locals, subjects[0].ops, false);
-  let d = ssa_lift.lift_from_ir_prod(kt, drop_name, drops[0].n_params, drops[0].n_locals, drops[0].ops, false);
-  let r = ssa_lift.lift_from_ir_prod(kt, release_name, releases[0].n_params, releases[0].n_locals, releases[0].ops, false);
-  if (!f.ok || !d.ok || !r.ok) {
-    return PhysicalBindings { functions: [], error: "unsupported physical lift" };
-  }
+  let f = match (ssa_lift.lift_from_ir_prod(kt, name, subjects[0].n_params, subjects[0].n_locals, subjects[0].ops, false)) { Ok(l) => l, Err(_) => { return PhysicalBindings { functions: [], error: "unsupported physical lift" }; } };
+  let d = match (ssa_lift.lift_from_ir_prod(kt, drop_name, drops[0].n_params, drops[0].n_locals, drops[0].ops, false)) { Ok(l) => l, Err(_) => { return PhysicalBindings { functions: [], error: "unsupported physical lift" }; } };
+  let r = match (ssa_lift.lift_from_ir_prod(kt, release_name, releases[0].n_params, releases[0].n_locals, releases[0].ops, false)) { Ok(l) => l, Err(_) => { return PhysicalBindings { functions: [], error: "unsupported physical lift" }; } };
   return PhysicalBindings { functions: [f.func, d.func, r.func], error: "" };
 }
 
@@ -377,10 +374,7 @@ function incoming_body(sub: ircore.Sub, name: string, parameters: i32): Physical
     return PhysicalBindings { functions: [], error: "missing, ambiguous or mismatched incoming body" };
   }
   let b = found[0];
-  let actual = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, b.n_params, b.n_locals, b.ops, false);
-  if (!actual.ok) {
-    return PhysicalBindings { functions: [], error: "unsupported incoming body lift" };
-  }
+  let actual = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, b.n_params, b.n_locals, b.ops, false)) { Ok(l) => l, Err(_) => { return PhysicalBindings { functions: [], error: "unsupported incoming body lift" }; } };
   return PhysicalBindings { functions: [actual.func], error: "" };
 }
 
@@ -621,10 +615,7 @@ pub function check_producer(sub: ircore.Sub, name: string): origin.Origin {
   if (!body.ok) {
     return no_origin(name, "unproduced producer body");
   }
-  let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, body.n_params, body.n_locals, body.ops, false);
-  if (!lifted.ok) {
-    return no_origin(name, "unsupported producer lift");
-  }
+  let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, body.n_params, body.n_locals, body.ops, false)) { Ok(l) => l, Err(_) => { return no_origin(name, "unsupported producer lift"); } };
   return origin.producer(lifted.func, layout.shape, layout.references);
 }
 
@@ -727,10 +718,7 @@ pub function check_origin_caller(sub: ircore.Sub, name: string): origin.Origin {
     return no_origin(name, "missing or ambiguous origin caller body");
   }
   let body = found[0];
-  let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, body.n_params, body.n_locals, body.ops, false);
-  if (!lifted.ok) {
-    return no_origin(name, "unsupported origin caller lift");
-  }
+  let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, body.n_params, body.n_locals, body.ops, false)) { Ok(l) => l, Err(_) => { return no_origin(name, "unsupported origin caller lift"); } };
   let names: string[] = [];
   let producers: ssa.SFunc[] = [];
   for block in lifted.func.blocks {
@@ -743,10 +731,7 @@ pub function check_origin_caller(sub: ircore.Sub, name: string): origin.Origin {
         }
         let produced = bodies(sub, op.str);
         let b = produced[0];
-        let actual = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), op.str, b.n_params, b.n_locals, b.ops, false);
-        if (!actual.ok) {
-          return no_origin(name, "unsupported origin callee lift");
-        }
+        let actual = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), op.str, b.n_params, b.n_locals, b.ops, false)) { Ok(l) => l, Err(_) => { return no_origin(name, "unsupported origin callee lift"); } };
         producers = producers.append(actual.func);
       }
     }
@@ -769,10 +754,7 @@ pub function check_assertion(sub: ircore.Sub, name: string): helper.Proof {
     return refused(name, "missing or ambiguous assertion body");
   }
   let body = found[0];
-  let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, body.n_params, body.n_locals, body.ops, false);
-  if (!lifted.ok) {
-    return refused(name, "assertion production lift refused");
-  }
+  let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, body.n_params, body.n_locals, body.ops, false)) { Ok(l) => l, Err(_) => { return refused(name, "assertion production lift refused"); } };
   return scalar_effect.zero_or_exit(lifted.func);
 }
 
@@ -892,10 +874,7 @@ function replacement(sub: ircore.Sub, name: string, drop_name: string, release_n
         return proof;
       }
       let body = bodies(sub, assertion)[0];
-      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), assertion, body.n_params, body.n_locals, body.ops, false);
-      if (!lifted.ok) {
-        return refused(assertion, "assertion production lift refused");
-      }
+      let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), assertion, body.n_params, body.n_locals, body.ops, false)) { Ok(l) => l, Err(_) => { return refused(assertion, "assertion production lift refused"); } };
       checked_bodies = checked_bodies.append(lifted.func);
     }
     return reuse.check_calls(f, d, r, semrecords.name_of(parent.ty), fields, checked_bodies);

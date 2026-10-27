@@ -6,12 +6,17 @@ import "../util";
 
 function tree(): string {
   let dir: string = "";
-  match (temp_dir("fern-embed-run")) {
-    Ok(d) => {
-      dir = d;
-    },
-    Err(e) => {
-      return "";
+  let av: string[] = args();
+  if (av.len() > 1) {
+    dir = av[1];
+  } else {
+    match (temp_dir("fern-embed-run")) {
+      Ok(d) => {
+        dir = d;
+      },
+      Err(e) => {
+        return "";
+      }
     }
   }
   match (create_dir_all(dir + "/sub")) {
@@ -125,11 +130,7 @@ function main(): i32 {
   if (dir.len() == 0) {
     return 10;
   }
-  let lr: embed.LoadResult = embed.load(dir);
-  if (lr.err.len() != 0) {
-    return 11;
-  }
-  let a: embed.Assets = lr.assets;
+  let a: embed.Assets = match (embed.load(dir)) { Ok(assets) => assets, Err(_) => { return 11; } };
   if (!a.present) {
     return 12;
   }
@@ -173,8 +174,15 @@ function main(): i32 {
     return 26;
   }
 
-  if (embed.load(dir + "/not-here").err.len() == 0) {
-    return 27;
+  match (embed.load(dir + "/not-here")) {
+    Ok(_) => {
+      return 27;
+    },
+    Err(message) => {
+      if (message != "-embed " + dir + "/not-here: not a directory") {
+        return 27;
+      }
+    }
   }
 
   let empty_dir: string = dir + "/empty";
@@ -184,17 +192,14 @@ function main(): i32 {
       return 28;
     }
   }
-  let er: embed.LoadResult = embed.load(empty_dir);
-  if (er.err.len() != 0) {
-    return 29;
-  }
-  if (!er.assets.present) {
+  let empty: embed.Assets = match (embed.load(empty_dir)) { Ok(assets) => assets, Err(_) => { return 29; } };
+  if (!empty.present) {
     return 30;
   }
-  if (er.assets.names.len() != 0) {
+  if (empty.names.len() != 0) {
     return 31;
   }
-  if (embed.format_available(er.assets) != "no assets were embedded") {
+  if (embed.format_available(empty) != "no assets were embedded") {
     return 32;
   }
 
@@ -369,9 +374,9 @@ function main(): i32 {
     }
   }
 
-  let text_lr: embed.LoadResult = embed.load(dir + "/sub");
-  let (e19, err19) = folded_init(all, text_lr.assets);
-  if (text_lr.err.len() != 0 || err19.len() != 0) {
+  let text_assets: embed.Assets = match (embed.load(dir + "/sub")) { Ok(assets) => assets, Err(_) => { return 87; } };
+  let (e19, err19) = folded_init(all, text_assets);
+  if (err19.len() != 0) {
     return 87;
   }
   match (e19) {
@@ -385,7 +390,7 @@ function main(): i32 {
     }
   }
 
-  let (e10, err10) = folded_init(all, er.assets);
+  let (e10, err10) = folded_init(all, empty);
   if (err10.len() != 0) {
     return 78;
   }

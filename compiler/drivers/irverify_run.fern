@@ -1035,9 +1035,13 @@ function main(): i32 {
     return 40;
   }
 
-  let call_env: ir.Op[] = [ir.op_call_direct("takes2", 1)];
-  if (irverify.verify_fn("f", call_env, 0, 1, sigs).len() != 0) {
+  let call_short: ir.Op[] = [ir.op_call_direct("takes2", 1)];
+  let short_ps: irverify.Problem[] = irverify.verify_fn("f", call_short, 0, 1, sigs);
+  if (short_ps.len() != 1) {
     return 41;
+  }
+  if (!util.contains(irverify.problem_str(short_ps[0]), "calls takes2 with 1 args, but it declares 2")) {
+    return 39;
   }
 
   let call_bad: ir.Op[] = [ir.op_call_direct("takes2", 0)];

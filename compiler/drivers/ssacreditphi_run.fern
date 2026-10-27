@@ -6,24 +6,39 @@ import "../semlower";
 import "../ssacreditguard" as guard;
 import "../ssacreditphi" as phi;
 
+function built(r: Result[guard.Built, guard.BuildError]): guard.Built {
+  return match (r) { Ok(value) => value, Err(error) => { print(error.message); exit(1); } };
+}
+
+function build_failed(r: Result[guard.Built, guard.BuildError], expected: string): boolean {
+  return match (r) { Ok(_) => false, Err(error) => error.message == expected };
+}
+
+function is_failed(r: Result[guard.Built, guard.BuildError]): boolean {
+  return match (r) { Ok(_) => false, Err(_) => true };
+}
+
 function require(ok: boolean, id: i32): void {
   if (!ok) {
     exit(id);
   }
 }
 
-function must(j: phi.Joined, id: i32): phi.Joined {
-  if (j.error != "") {
-    print(j.error);
-    exit(id);
-  }
-  return j;
+function must(j: Result[phi.Joined, guard.BuildError], id: i32): phi.Joined {
+  return match (j) { Ok(value) => value, Err(error) => { print(error.message); exit(id); } };
 }
 
-function reject(j: phi.Joined, why: string, id: i32): void {
-  if (j.error != why || j.bindings.len() != 0) {
-    print(j.error);
-    exit(id);
+function reject(j: Result[phi.Joined, guard.BuildError], why: string, id: i32): void {
+  match (j) {
+    Ok(_) => {
+      exit(id);
+    },
+    Err(error) => {
+      if (error.message != why) {
+        print(error.message);
+        exit(id);
+      }
+    }
   }
 }
 
@@ -58,7 +73,7 @@ function sparse_id(id: i32, nvals: i32): i32 {
   return id * 17;
 }
 
-function both(a: guard.Arena, block: ssa.SBlock, edges: phi.Edge[], nvals: i32): phi.Joined {
+function both(a: guard.Arena, block: ssa.SBlock, edges: phi.Edge[], nvals: i32): Result[phi.Joined, guard.BuildError] {
   let dense = phi.merge(a, block, edges, nvals);
   let ids: i32[] = [];
   let i = nvals - 1;
@@ -85,15 +100,31 @@ function both(a: guard.Arena, block: ssa.SBlock, edges: phi.Edge[], nvals: i32):
     mapped = mapped.append(phi.Edge { ...e, values: values });
   }
   let sparse = phi.merge_mapped(a, ssa.SBlock { ...block, insts: insts }, mapped, 2147483647, ids);
-  require(sparse.error == dense.error && sparse.bindings.len() == dense.bindings.len(), 60);
-  require(sparse.path == dense.path, 61);
-  i = 0;
-  for binding in dense.bindings {
-    let other = sparse.bindings[i];
-    require(other.result == sparse_id(binding.result, nvals) && other.value.kind == binding.value.kind && other.value.identity == binding.value.identity && other.value.available == binding.value.available, 62);
-    i = i + 1;
+  match (dense) {
+    Ok(value) => {
+      let other: phi.Joined = match (sparse) { Ok(found) => found, Err(_) => { exit(60); } };
+      require(other.bindings.len() == value.bindings.len(), 60);
+      require(other.path == value.path, 61);
+      i = 0;
+      for binding in value.bindings {
+        let mapped_binding = other.bindings[i];
+        require(mapped_binding.result == sparse_id(binding.result, nvals) && mapped_binding.value.kind == binding.value.kind && mapped_binding.value.identity == binding.value.identity && mapped_binding.value.available == binding.value.available, 62);
+        i = i + 1;
+      }
+      return Ok(value);
+    },
+    Err(error) => {
+      match (sparse) {
+        Ok(_) => {
+          exit(60);
+        },
+        Err(other) => {
+          require(other.message == error.message, 60);
+        }
+      }
+      return Err(error);
+    }
   }
-  return dense;
 }
 
 function mapping_checks(): void {
@@ -113,13 +144,18 @@ function mapping_checks(): void {
   reject(phi.merge_mapped(got.arena, block, [edge], 2147483647, [17, 18]), "invalid phi block definition", 68);
   reject(phi.merge_mapped(got.arena, block, [edge], 2147483647, [18, 2147483646]), "invalid acyclic phi operand", 69);
   reject(phi.merge_mapped(got.arena, block, [phi.Edge { ...edge, path: zero.id }], 2147483647, [18, 2147483646]), "invalid acyclic phi operand", 70);
+  let no_phis = ssa.SBlock { ...block, insts: [] };
+  let empty = must(phi.merge_mapped(got.arena, no_phis, [edge], 2147483647, ids), 71);
+  require(empty.bindings.len() == 0 && guard.is_constant(empty.arena, empty.path, 1), 72);
+  let unreachable = must(phi.merge_mapped(got.arena, no_phis, [phi.Edge { ...edge, path: zero.id }], 2147483647, ids), 73);
+  require(unreachable.bindings.len() == 0 && guard.is_constant(unreachable.arena, unreachable.path, 0), 74);
 }
 
 function unit_checks(): void {
   let zero = guard.constant(guard.empty(), 0);
   let one = guard.constant(zero.arena, 1);
-  let u = guard.predicate(one.arena, 2147483647);
-  let shared = guard.combine(u.arena, 1, one.id, u.id);
+  let u = built(guard.predicate(one.arena, 2147483647));
+  let shared = built(guard.combine(u.arena, 1, one.id, u.id));
   let old = guard.constant(shared.arena, 17);
   let fresh = guard.constant(old.arena, 29);
   let block = ssa.SBlock { id: 2147483647, preds: [7, 19], insts: [inst(2, [0, 1])], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 2 } };
@@ -130,9 +166,9 @@ function unit_checks(): void {
   let joined = must(both(fresh.arena, block, [no, yes], 3), 1);
   require(joined.bindings.len() == 1 && joined.bindings[0].result == 2 && joined.bindings[0].value.kind == 1, 2);
   let donor = joined.bindings[0].value;
-  let null = phi.is_null(joined.arena, donor, one.id);
-  require(null.error == "" && null.id == shared.id, 3);
-  let unique = guard.combine(null.arena, 1, one.id, null.id);
+  let null = built(phi.is_null(joined.arena, donor, one.id));
+  require(null.id == shared.id, 3);
+  let unique = built(guard.combine(null.arena, 1, one.id, null.id));
   require(unique.id == u.id, 4);
   let original = must(both(unique.arena, block, [yes, no], 3), 5);
   require(original.bindings[0].value.identity == donor.identity, 6);
@@ -154,11 +190,11 @@ function unit_checks(): void {
   let unreadable = phi.Edge { ...no, path: zero.id, values: blank(3) };
   let partial = must(both(negative.arena, block, [yes, unreadable], 3), 20);
   require(partial.path == u.id && partial.bindings[0].value.available == u.id, 21);
-  require(phi.is_null(partial.arena, partial.bindings[0].value, one.id).error == "unavailable null-test operand", 22);
+  require(build_failed(phi.is_null(partial.arena, partial.bindings[0].value, one.id), "unavailable null-test operand"), 22);
   let scalar_yes = phi.Edge { ...yes, values: unique_values.with(0, value(0, old.id, u.id)) };
   let scalars = must(both(partial.arena, block, [scalar_yes, scalar], 3), 23);
   require(scalars.bindings[0].value.kind == 0 && scalars.bindings[0].value.identity == old.id, 24);
-  require(phi.is_null(scalars.arena, scalars.bindings[0].value, one.id).error == "reference null test required", 25);
+  require(build_failed(phi.is_null(scalars.arena, scalars.bindings[0].value, one.id), "reference null test required"), 25);
   let pair = ssa.SBlock { ...block, insts: [inst(2, [0, 1]), inst(3, [1, 0])] };
   let pair_yes = phi.Edge { ...yes, values: blank(4).with(0, value(1, old.id, u.id)).with(1, value(1, fresh.id, u.id)) };
   let pair_no = phi.Edge { ...no, values: blank(4).with(0, value(1, old.id, shared.id)).with(1, value(1, fresh.id, shared.id)) };
@@ -172,14 +208,14 @@ function unit_checks(): void {
   let nonphi = ssa.SInst { kind_tag: 1, result: 3, args: [], imm: 0, str: "" };
   reject(both(swapped.arena, ssa.SBlock { ...pair, insts: [nonphi, pair.insts[0]] }, [pair_yes, pair_no], 4), "phi predecessor arity or position", 33);
   reject(both(swapped.arena, block, [phi.Edge { ...yes, values: unique_values.with(0, value(1, old.id, old.id)) }, no], 3), "non-Boolean guarded mask", 34);
-  require(phi.is_null(swapped.arena, value(1, -1, one.id), one.id).error != "", 35);
-  require(phi.is_null(swapped.arena, value(1, negative.id, one.id), one.id).error == "invalid reference identity", 36);
+  require(is_failed(phi.is_null(swapped.arena, value(1, -1, one.id), one.id)), 35);
+  require(build_failed(phi.is_null(swapped.arena, value(1, negative.id, one.id), one.id), "invalid reference identity"), 36);
   let min = guard.constant(swapped.arena, -2147483648);
   let max = guard.constant(min.arena, 2147483647);
   let extremes = must(both(max.arena, block, [phi.Edge { ...yes, values: unique_values.with(0, value(0, min.id, u.id)) }, phi.Edge { ...no, values: shared_values.with(1, value(0, max.id, shared.id)) }], 3), 37);
   let low = guard.evaluate(extremes.arena, extremes.bindings[0].value.identity, [2147483647], [true]);
   let high = guard.evaluate(extremes.arena, extremes.bindings[0].value.identity, [2147483647], [false]);
-  require(low.ok && low.value == -2147483648 && high.ok && high.value == 2147483647, 38);
+  require(match (low) { Some(value) => value == -2147483648, None => false } && match (high) { Some(value) => value == 2147483647, None => false }, 38);
 }
 
 function actual_checks(target: string): void {
@@ -189,8 +225,7 @@ function actual_checks(target: string): void {
   for body in lowered.sub.bodies {
     if (body.name == "replace") {
       require(body.ok, 40);
-      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), body.name, body.n_params, body.n_locals, body.ops, false);
-      require(lifted.ok, 41);
+      let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), body.name, body.n_params, body.n_locals, body.ops, false)) { Ok(l) => l, Err(message) => { eprint(message); exit(41); } };
       graphs = graphs.append(lifted.func);
     }
   }
@@ -216,8 +251,8 @@ function actual_checks(target: string): void {
   require(donor_op.args.len() == 2 && donor_op.args[0] == 0 && result_op.args.len() == 2 && result_op.args[0] == fresh_value && result_op.args[1] == donor_op.result, 44);
   let zero = guard.constant(guard.empty(), 0);
   let one = guard.constant(zero.arena, 1);
-  let u = guard.predicate(one.arena, 71);
-  let shared = guard.combine(u.arena, 1, one.id, u.id);
+  let u = built(guard.predicate(one.arena, 71));
+  let shared = built(guard.combine(u.arena, 1, one.id, u.id));
   let old = guard.constant(shared.arena, 17);
   let fresh = guard.constant(old.arena, 29);
   let yes_values = blank(graph.nvals).with(0, value(1, old.id, u.id));
@@ -225,16 +260,16 @@ function actual_checks(target: string): void {
   let yes = phi.Edge { predecessor: donor_block.preds[0], path: u.id, values: yes_values };
   let no = phi.Edge { predecessor: donor_block.preds[1], path: shared.id, values: no_values };
   let donor = must(both(fresh.arena, donor_block, [yes, no], graph.nvals), 45);
-  let null = phi.is_null(donor.arena, donor.bindings[0].value, one.id);
-  require(null.error == "" && null.id == shared.id, 46);
+  let null = built(phi.is_null(donor.arena, donor.bindings[0].value, one.id));
+  require(null.id == shared.id, 46);
   let reused = phi.Edge { predecessor: result_block.preds[1], path: u.id, values: blank(graph.nvals).with(donor_op.result, donor.bindings[0].value) };
   let allocated = phi.Edge { predecessor: result_block.preds[0], path: shared.id, values: blank(graph.nvals).with(fresh_value, value(1, fresh.id, shared.id)) };
   let result = must(both(null.arena, result_block, [reused, allocated], graph.nvals), 47);
-  let result_null = phi.is_null(result.arena, result.bindings[0].value, one.id);
-  require(result_null.error == "" && guard.is_constant(result_null.arena, result_null.id, 0), 48);
+  let result_null = built(phi.is_null(result.arena, result.bindings[0].value, one.id));
+  require(guard.is_constant(result_null.arena, result_null.id, 0), 48);
   for unique in [false, true] {
     let got = guard.evaluate(result_null.arena, result.bindings[0].value.identity, [71], [unique]);
-    require(got.ok && (unique && got.value == 17 || !unique && got.value == 29), 49);
+    require(match (got) { Some(value) => unique && value == 17 || !unique && value == 29, None => false }, 49);
   }
   let wrong = ssa.SBlock { ...result_block, preds: [result_block.preds[1], result_block.preds[0]] };
   reject(both(result_null.arena, wrong, [reused, allocated], graph.nvals), "unreadable phi operand", 50);

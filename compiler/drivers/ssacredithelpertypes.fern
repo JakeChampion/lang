@@ -8,6 +8,7 @@ import "../ssabytes";
 import "../semtypes";
 import "../typeinfo";
 import "../ircore";
+import "../irtables";
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -20,13 +21,14 @@ function validate(h: ssarc.Helpers): void {
   for entry in h.types {
     require(entry.row > previous && entry.row < h.rows.len(), 224);
     let name = if (entry.children_only) { ssarc.drop_helper_name(entry.ty) } else { ssarc.release_helper_name(entry.ty) };
-    require(h.rows[entry.row].name == name && h.rows[entry.row].n_params == 1, 225);
+    let body = match (h.rows[entry.row]) { Ok(r) => r, Err(_) => { exit(225); } };
+    require(body.name == name && body.n_params == 1, 225);
     previous = entry.row;
   }
 }
 
 function same(a: ssarc.Helpers, b: ssarc.Helpers): boolean {
-  if (a.types.len() != b.types.len() || ircore.lowered_digest(a.rows) != ircore.lowered_digest(b.rows)) {
+  if (a.types.len() != b.types.len() || ircore.lowered_digest(irtables.helper_results(a.rows)) != ircore.lowered_digest(irtables.helper_results(b.rows))) {
     return false;
   }
   let i = 0;
@@ -58,14 +60,14 @@ function pair(h: ssarc.Helpers, ty: typeinfo.Type): void {
 function collect(h: ssarc.Helpers, f: ssasem.Func): ssarc.Helpers {
   let fresh = ssarc.with_drop_helpers(ssarc.no_helpers(), f);
   validate(fresh);
-  require(ircore.lowered_digest(fresh.rows) == ircore.lowered_digest(ssarc.drop_helpers(f)), 227);
+  require(ircore.lowered_digest(irtables.helper_results(fresh.rows)) == ircore.lowered_digest(irtables.helper_results(ssarc.drop_helpers(f))), 227);
   let next = ssarc.with_drop_helpers(h, f);
   validate(next);
   require(same(next, ssarc.with_drop_helpers(next, f)), 228);
   if (fresh.types.len() > 0) {
     let first = fresh.types[0];
     let empty = ssarc.no_helpers();
-    let partial = ssarc.with_drop_helpers(ssarc.Helpers { ...empty, done: empty.done.added(fresh.rows[first.row].name) }, f);
+    let partial = ssarc.with_drop_helpers(ssarc.Helpers { ...empty, done: empty.done.added(irtables.helper_name(fresh.rows[first.row])) }, f);
     validate(partial);
     require(partial.rows.len() == fresh.rows.len() - 1 && partial.types.len() == fresh.types.len() - 1, 229);
   }
@@ -75,7 +77,7 @@ function collect(h: ssarc.Helpers, f: ssasem.Func): ssarc.Helpers {
 function byte_prefix(): ssarc.Helpers {
   let h = ssarc.no_helpers();
   for row in ssabytes.helpers() {
-    h = ssarc.Helpers { ...h, rows: h.rows.append(row), done: h.done.added(row.name) };
+    h = ssarc.Helpers { ...h, rows: h.rows.append(row), done: h.done.added(irtables.helper_name(row)) };
   }
   require(h.rows.len() > 0 && h.types.len() == 0, 234);
   return h;

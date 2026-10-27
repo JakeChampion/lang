@@ -361,8 +361,9 @@ func TestSharedLibX86CCallFFI(t *testing.T) {
 	src := `function run0(env: usize, cls: usize, cb: usize): i32 { return __c_call0(cb) as i32; }
 function run1(env: usize, cls: usize, cb: usize, x: usize): i32 { return __c_call1(cb, x) as i32; }
 function run4(env: usize, cls: usize, cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { return __c_call4(cb, a, b, c, d) as i32; }
+function run_live(env: usize, cls: usize, cb: usize): i32 { let a: i32 = 35; let b: i32 = __c_call0(cb) as i32; return a + b; }
 function main(): i32 { return 0; }`
-	exps := []string{"run0", "run1", "run4"}
+	exps := []string{"run0", "run1", "run4", "run_live"}
 	so := selfHostSharedX86(t, src, exps...)
 	dir := t.TempDir()
 	soPath := filepath.Join(dir, "libfern.so")
@@ -370,21 +371,37 @@ function main(): i32 { return 0; }`
 		t.Fatal(err)
 	}
 	loader := `#include <dlfcn.h>
+#include <stdint.h>
 #include <stdio.h>
 static long forty_two(void){ return 42; }
 static long dbl(long x){ return x*2; }
 static long sum4(long a, long b, long c, long d){ return a+b+c+d; }
+/* The frame address is the entry stack pointer less the return address
+   and the saved frame pointer, so it is 16-byte aligned exactly when the
+   caller entered with the System V alignment. */
+static long aligned(void){ return (((uintptr_t)__builtin_frame_address(0)) & 15) == 0; }
+/* Every caller-saved register the ABI lets a callee clobber. */
+static long clobber(void){
+  __asm__ volatile("" ::: "rax","rcx","rdx","rsi","rdi","r8","r9","r10","r11",
+    "xmm0","xmm1","xmm2","xmm3","xmm4","xmm5","xmm6","xmm7","xmm8","xmm9","xmm10","xmm11","xmm12","xmm13","xmm14","xmm15","memory");
+  return 7;
+}
 int main(int c, char**v){
   void*h=dlopen(v[1],RTLD_NOW); if(!h){fprintf(stderr,"%s\n",dlerror());return 100;}
   int(*r0)(long,long,long)=(int(*)(long,long,long))dlsym(h,"run0"); if(!r0)return 101;
   int(*r1)(long,long,long,long)=(int(*)(long,long,long,long))dlsym(h,"run1"); if(!r1)return 102;
   int(*r4)(long,long,long,long,long,long,long)=(int(*)(long,long,long,long,long,long,long))dlsym(h,"run4"); if(!r4)return 103;
+  int(*rl)(long,long,long)=(int(*)(long,long,long))dlsym(h,"run_live"); if(!rl)return 104;
   int a=r0(0,0,(long)&forty_two);
   int b=r1(0,0,(long)&dbl,21);
   int d=r4(0,0,(long)&sum4,10,11,9,12);
+  int e=r0(0,0,(long)&aligned);
+  int f=rl(0,0,(long)&clobber);
   if(a!=42){fprintf(stderr,"run0=%d\n",a);return 1;}
   if(b!=42){fprintf(stderr,"run1=%d\n",b);return 2;}
   if(d!=42){fprintf(stderr,"run4=%d\n",d);return 3;}
+  if(e!=1){fprintf(stderr,"stack misaligned at the C callee\n");return 4;}
+  if(f!=42){fprintf(stderr,"run_live=%d after a clobbering callee\n",f);return 5;}
   return 42;
 }`
 	cPath := filepath.Join(dir, "loader.c")

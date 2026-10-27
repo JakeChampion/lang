@@ -163,22 +163,19 @@ pub function run(source: string, target: string, exiting: boolean): void {
   let initial: ssa.SFunc[] = [];
   for b in util.append_all(sub.bodies, sub.extra) {
     if (b.ok) {
-      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), b.name, b.n_params, b.n_locals, b.ops, false);
-      require(lifted.ok, 104);
+      let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), b.name, b.n_params, b.n_locals, b.ops, false)) { Ok(l) => l, Err(message) => { eprint(message); exit(104); } };
       initial = initial.append(lifted.func);
     }
   }
-  let g = ircore.gate_program(ircore.sub_lifted(sub, driven.full), sub);
-  require(g.ok, 105);
+  let g = match (ircore.gate_program(ircore.sub_lifted(sub, driven.full), sub)) { Some(g) => g, None => { exit(105); } };
   let cache = ircore.inline_tiny_leaves(g.im, g.cache);
   let leaves = asmcore.unit_leaves(g.im, 0, g.im.funcs.len(), cache).leaves;
   let final: ssa.SFunc[] = [];
   let position: i32 = 0;
   for r in cache {
     if (r.ok && !r.superseded) {
-      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), r.name, r.n_params, r.n_locals, r.ops, false);
-      require(lifted.ok, 106);
-      final = final.append(ssaprepare.finish(r, physicalbody.select(g.physical, position), lifted, leaves).formed.f);
+      let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), r.name, r.n_params, r.n_locals, r.ops, false)) { Ok(l) => l, Err(message) => { eprint(message); exit(106); } };
+      final = final.append(ssaprepare.finish(ircore.body_for_emit(r.name, r), physicalbody.select(g.physical, position), lifted, leaves).formed.f);
     }
     position = position + 1;
   }

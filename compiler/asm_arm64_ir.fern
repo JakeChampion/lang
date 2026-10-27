@@ -1304,7 +1304,13 @@ function ssa_dwarf(reg: string): i32 {
   return n;
 }
 
-function ssa_emit_unwind(saved: i32[], s: asmcore.EmitState, tail: string): asmcore.EmitState {
+function ssa_emit_unwind(saved: i32[], canary: i32, s: asmcore.EmitState, tail: string): asmcore.EmitState {
+  if (canary > 0) {
+    s = fr_ldr(s, "x17", 0 - canary);
+    let ok: asmcore.LabelOut = asmcore.fresh_label(s);
+    s = ok.state;
+    s = s.write("    adrp x16, __fern_canary\n    ldr x16, [x16, :lo12:__fern_canary]\n    cmp x16, x17\n    b.eq " + ok.name + "\n    b __fern_canary_fail\n" + ok.name + ":\n");
+  }
   s = ssa_cfi(s, 7, "", 0);
   if (saved.len() == 0) {
     s = ssa_mov_rr(s, "sp", "x29");
@@ -1345,7 +1351,7 @@ function ssa_exit(fr: SsaFrame, s: asmcore.EmitState, tail: string): asmcore.Emi
   if (fr.leaf) {
     return s.write(ssa_exit_mark() + tail + "\n");
   }
-  return ssa_emit_unwind(fr.saved, s, tail);
+  return ssa_emit_unwind(fr.saved, fr.canary, s, tail);
 }
 
 function ssa_exit_mark(): string {
@@ -1403,7 +1409,7 @@ function ssa_resolve_exits(text: string, framed: boolean, saved: i32[], s: asmco
     if (util.str_has_prefix(line, ssa_exit_mark())) {
       let tail: string = slice_unchecked(line, ssa_exit_mark().len(), line.len()) + "";
       if (framed) {
-        s = ssa_emit_unwind(saved, s, tail);
+        s = ssa_emit_unwind(saved, 0, s, tail);
       } else if (tail == "") {
         s = s.write("    ret\n");
       } else {
@@ -3060,7 +3066,7 @@ function ssa_back_copy(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSav
 }
 
 // An instruction whose caller registers are saved around its call.
-function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.LowerResult, around: i32, own s: asmcore.EmitState): asmcore.EmitState {
+function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, around: i32, own s: asmcore.EmitState): asmcore.EmitState {
   if (around != 0 && ssa_inline_rc_dec(blk.insts[ii], s)) {
     return ssa_rc_dec(blk.insts[ii], reg_of, lp, around, fr.cold_base, ssa_x0_forget(s));
   }
@@ -3752,7 +3758,7 @@ function ssa_frame_box(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32, leaf: boolean, fmask: string, lanes: boolean[], cold: ColdSaves, cold_base: i32 }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32, leaf: boolean, fmask: string, lanes: boolean[], cold: ColdSaves, cold_base: i32, canary: i32 }
 
 struct SsaFuse { n: i32, tag: i32, inverted: boolean, a: i32, b: i32, unique: boolean, aligned: boolean }
 
@@ -3813,7 +3819,7 @@ function ssa_fusable_cmp(cmp: ssa.SInst): boolean {
   return cmp.kind_tag == 9 && (ircore.is_int_cmp_kind(ir.kind_id(cmp.str)) || ssa.float_cmp(cmp.str));
 }
 
-function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
+function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, own s: asmcore.EmitState): asmcore.EmitState {
   let ins: ssa.SInst = blk.insts[ii];
   if (ins.kind_tag == 36) {
     return ssa_select(ins, reg_of, fr, ssa_select_fuse(fr, blk, ii), s);
@@ -4120,7 +4126,7 @@ function ssa_line_loc(ins: ssa.SInst, s: asmcore.EmitState): asmcore.EmitState {
   return s.write(row + "\n");
 }
 
-function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: irtables.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
+function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: irtables.Lowered, own s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
   if (ssa.back_copy_call(ins) && ssa_inline_back(s)) {
     return ssa_back_copy(ins, reg_of, lp, SlowSaves { mask: ssa_cold_mask(fr, ins), base: fr.cold_base }, s);
@@ -4707,10 +4713,17 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   s = ssa_entry_shim(f, asmcore.sanitize_label(label_name), s);
   s = ssa_release_entry(entry, lp, s);
   let saved: i32[] = ssa_saved_regs(reg_of);
-  let save: i32 = ssa_save_bytes(saved);
   let views: i32[] = ssa_view_slots(f);
   let tails: boolean = s.profile == 0;
   let leaf: boolean = s.profile == 0 && ssa.spill_count(reg_of) == 0 && ssa_view_count(views) == 0 && saved.len() == 0 && !ssa_calls_besides_tails(f, s, tails) && util.index_of_i32(reg_of, 12) < 0;
+  let canary: i32 = 0;
+  if (s.harden && !leaf) {
+    canary = ssa_save_bytes(saved) + 8;
+  }
+  let save: i32 = ssa_save_bytes(saved);
+  if (canary > 0) {
+    save = save + 16;
+  }
   let outer: usize = s.capture;
   let body: usize = 0 as usize;
   if (leaf) {
@@ -4727,7 +4740,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   s = s.lab_take(bp.len());
   let lanes: boolean[] = ssa.lane_values(f);
   let cold: ColdSaves = ssa_cold_saves(f, alloc);
-  let fr: SsaFrame = SsaFrame { nspill: ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes, cold: cold, cold_base: ssa_lane_spill(f, ssa.spill_count(reg_of)) + 3 * ssa_view_count(views) };
+  let fr: SsaFrame = SsaFrame { nspill: ssa_lane_spill(f, ssa.spill_count(reg_of)), views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)), lanes: lanes, cold: cold, cold_base: ssa_lane_spill(f, ssa.spill_count(reg_of)) + 3 * ssa_view_count(views), canary: canary };
   let fusions: ssaprepare.Fusion[] = [];
   let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
   if (cold.any) {
@@ -4736,8 +4749,16 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   if (frame % 16 != 0) {
     frame = frame + 8;
   }
-  if (frame > 0) {
-    s = fr_sub_imm(s, "sp", "sp", frame);
+  let drop: i32 = frame;
+  if (canary > 0) {
+    drop = frame + 16;
+  }
+  if (drop > 0) {
+    s = ssa_frame_drop(s, drop);
+  }
+  if (canary > 0) {
+    s = s.write("    adrp x17, __fern_canary\n    ldr x17, [x17, :lo12:__fern_canary]\n");
+    s = fr_str(s, "x17", 0 - canary);
   }
   s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save, ssa_lane_slots: ssa_lane_slot_table(reg_of, lanes) };
   s = ssa_load_params(f, reg_of, fr.fmask, s);
@@ -4795,6 +4816,22 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   return ssa_retain_allocation(s, prepared, label_name, context, entry, alloc, fr, frame, framed, fusions);
 }
 
+// A frame above one page touches every page it crosses, so it cannot step
+// over the guard below the stack.
+function ssa_frame_drop(s: asmcore.EmitState, frame: i32): asmcore.EmitState {
+  if (frame <= 4096) {
+    return fr_sub_imm(s, "sp", "sp", frame);
+  }
+  let lo: asmcore.LabelOut = asmcore.fresh_label(s);
+  s = lo.state;
+  s = s.write("    movz x16, #" + util.i32_to_string(frame & 65535) + "\n");
+  if (frame > 65535) {
+    s = s.write("    movk x16, #" + util.i32_to_string(frame >> 16 & 65535) + ", lsl #16\n");
+  }
+  s = s.write(lo.name + ":\n    sub sp, sp, #4096\n    str xzr, [sp, #0]\n    sub x16, x16, #4096\n    cmp x16, #4095\n    b.hi " + lo.name + "\n");
+  return s.write("    sub sp, sp, x16\n");
+}
+
 function ssa_frame_record(s: asmcore.EmitState): asmcore.EmitState {
   s = ssa_sign_ra(s, "paciasp");
   s = ssa_pair(s, false, 3, "x29", "x30", 0 - 16);
@@ -4828,17 +4865,14 @@ function ssa_dbg_locs(reg_of: i32[], save: i32, want: boolean): string[] {
   return out;
 }
 
-function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+function emit_ssa_function(r: irtables.Lowered, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let t_lift: i64 = monotonic_ns();
-  let lifted: ssa_lift.LResult = s.lift(pre, label_name, r);
-  let why: string = lifted.bail;
-  if (lifted.ok) {
-    let collision: i32 = ssa.repeated_block_id(lifted.func);
-    if (collision >= 0) {
-      ircore.ssa_block_id_collision(label_name, collision);
-    }
-    why = ssa_unsupported(lifted.func);
+  let lifted: ssa_lift.Lifted = match (s.lift(pre, label_name, r)) { Ok(l) => l, Err(message) => { ircore.ssa_refuse(label_name, message); return s; } };
+  let collision: i32 = ssa.repeated_block_id(lifted.func);
+  if (collision >= 0) {
+    ircore.ssa_block_id_collision(label_name, collision);
   }
+  let why: string = ssa_unsupported(lifted.func);
   if (why != "") {
     ircore.ssa_refuse(label_name, why);
   }
@@ -4866,12 +4900,12 @@ pub function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physica
 }
 
 pub function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+  let body = ircore.body_for_emit(label_name, r);
   if (weak) {
     s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n.weak __fn_" + asmcore.sanitize_label(label_name) + ".k\n");
   }
-  ircore.lower_failed_refuse(label_name, r);
-  irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vgate);
-  return emit_ssa_function(r, selected, pre, label_name, s, vgate);
+  irverifygate.verify_or_refuse(label_name, body.ops, body.n_params, body.n_locals, vgate);
+  return emit_ssa_function(body, selected, pre, label_name, s, vgate);
 }
 
 function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
@@ -4900,7 +4934,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // fern-lint: allow cyclomatic-complexity
-function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 112) {
     return s;
   }
@@ -5423,7 +5457,7 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
-function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let kind: i32 = r.ops[ins.imm].kind_tag;
   if (kind == 112) {
     s = ssa_x0_forget(s);
@@ -5999,6 +6033,9 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
   }
   if (!s.shared) {
     s = emit_stack_switch(s, darwin);
+    if (s.harden) {
+      s = emit_canary_init(s);
+    }
   }
   if (s.profile > 0) {
     s = s.write("    adrp x0, .Lprofile_ring\n    add x0, x0, :lo12:.Lprofile_ring\n");
@@ -6031,22 +6068,34 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
 function emit_stack_switch(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #30\n", darwin);
   s = s.write("    tbnz x0, #63, .Lfern_stack_kept\n    mov x19, x0\n    mov x1, #1\n    lsl x1, x1, #20\n    mov x2, #0\n    mov x8, #226\n    svc #0\n    cbnz x0, .Lfern_stack_guard_failed\n");
-  s = s.write("    mov x9, #1\n    lsl x9, x9, #30\n    add x9, x19, x9\n    sub sp, x9, #16\n.Lfern_stack_kept:\n");
+  s = s.write("    mov x9, #1\n    lsl x9, x9, #30\n    add x9, x19, x9\n    sub sp, x9, #16\n    mov x10, sp\n    adrp x11, __fern_stack_top\n    add x11, x11, :lo12:__fern_stack_top\n    str x10, [x11]\n.Lfern_stack_kept:\n");
   s = emit_stack_map(s, "    mov x1, #1\n    lsl x1, x1, #16\n", darwin);
-  s = s.write("    tbnz x0, #63, .Lfern_segv_skip\n    mov x9, #1\n    lsl x9, x9, #16\n    sub sp, sp, #32\n");
+  if (darwin) {
+    s = s.write("    tbnz x0, #63, .Lfern_segv_skip\n");
+  } else {
+    s = s.write("    tbnz x0, #63, .Lfern_signal_stack_map_failed\n");
+  }
+  s = s.write("    mov x9, #1\n    lsl x9, x9, #16\n    sub sp, sp, #32\n");
   if (darwin) {
     s = s.write("    stp x0, x9, [sp]\n    str xzr, [sp, #16]\n");
   } else {
     s = s.write("    stp x0, xzr, [sp]\n    str x9, [sp, #16]\n");
   }
-  s = s.write("    mov x0, sp\n    mov x1, #0\n    mov x8, #132\n    svc #0\n    adrp x9, __fern_segv\n    add x9, x9, :lo12:__fern_segv\n");
+  s = s.write("    mov x0, sp\n    mov x1, #0\n    mov x8, #132\n    svc #0\n");
+  if (!darwin) {
+    s = s.write("    cbnz x0, .Lfern_signal_stack_failed\n");
+  }
+  s = s.write("    adrp x9, __fern_segv\n    add x9, x9, :lo12:__fern_segv\n");
   if (darwin) {
     s = s.write("    adrp x10, __fern_segv_trampoline\n    add x10, x10, :lo12:__fern_segv_trampoline\n    mov x11, #0x41\n    lsl x11, x11, #32\n");
   } else {
     s = s.write("    mov x10, #4\n    movk x10, #0x800, lsl #16\n    mov x11, #0\n");
   }
   s = emit_segv_install(s.write("    stp x9, x10, [sp]\n    stp x11, xzr, [sp, #16]\n"), darwin);
-  return s.write("    add sp, sp, #32\n.Lfern_segv_skip:\n");
+  if (darwin) {
+    return s.write("    add sp, sp, #32\n.Lfern_segv_skip:\n");
+  }
+  return s.write("    cbnz x0, .Lfern_fault_handler_failed\n    add sp, sp, #32\n");
 }
 
 function emit_stack_map(s: asmcore.EmitState, size: string, darwin: boolean): asmcore.EmitState {
@@ -6085,7 +6134,7 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asm
   }
   s = s.write("    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n    .text\n");
   s = s.write("__fern_segv:\n" + landing_pad(s) + addr + ctx + "    sub x9, x9, x10\n    mov x10, #1\n    lsl x10, x10, #20\n    add x9, x9, x10\n    lsl x10, x10, #1\n    cmp x9, x10\n    b.hs .Lfern_segv_other\n" + frame);
-  s = s.write("    stp x12, x11, [sp, #-16]!\n    mov x29, sp\n    adrp x1, .Lmsg_stack_overflow\n    add x1, x1, :lo12:.Lmsg_stack_overflow\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #134\n    b __fern_report\n");
+  s = s.write("    stp x12, x11, [sp, #-16]!\n    mov x29, sp\n    adrp x10, __fern_stack_top\n    add x10, x10, :lo12:__fern_stack_top\n    str xzr, [x10]\n    adrp x1, .Lmsg_stack_overflow\n    add x1, x1, :lo12:.Lmsg_stack_overflow\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #134\n    b __fern_report\n");
   let tramp: string = "xzr";
   if (darwin) {
     s = s.write(".Lfern_segv_other:\n    adrp x10, __fern_segv_trampoline\n    add x10, x10, :lo12:__fern_segv_trampoline\n");
@@ -6101,10 +6150,26 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asm
   return s;
 }
 
-function emit_stack_guard_failure(s: asmcore.EmitState): asmcore.EmitState {
-  let msg: string = aborts.stack_guard();
-  s = s.write("    .section .rodata\n.Lmsg_stack_guard:\n    .ascii \"" + msg + "\\n\"\n    .text\n.Lfern_stack_guard_failed:\n");
-  s = s.write("    adrp x1, .Lmsg_stack_guard\n    add x1, x1, :lo12:.Lmsg_stack_guard\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #2\n    mov x8, #64\n    svc #0\n");
+function emit_startup_failures(s: asmcore.EmitState): asmcore.EmitState {
+  s = emit_startup_failure(s, ".Lfern_stack_guard_failed", aborts.stack_guard());
+  s = emit_startup_failure(s, ".Lfern_signal_stack_map_failed", aborts.signal_stack_map());
+  s = emit_startup_failure(s, ".Lfern_signal_stack_failed", aborts.signal_stack());
+  s = emit_startup_failure(s, ".Lfern_fault_handler_failed", aborts.fault_handler());
+  if (s.harden) {
+    s = emit_startup_failure(s, ".Lfern_canary_read_failed", aborts.canary_read());
+    s = emit_startup_failure(s, "__fern_canary_fail", aborts.canary());
+  }
+  return s;
+}
+
+function emit_canary_init(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    adrp x0, __fern_canary\n    add x0, x0, :lo12:__fern_canary\n    mov x1, #8\n    mov x2, #0\n    mov x8, #278\n    svc #0\n");
+  return s.write("    cmp x0, #8\n    b.ne .Lfern_canary_read_failed\n");
+}
+
+function emit_startup_failure(s: asmcore.EmitState, label: string, msg: string): asmcore.EmitState {
+  s = s.write("    .section .rodata\n" + label + "_msg:\n    .ascii \"" + msg + "\\n\"\n    .text\n" + label + ":\n");
+  s = s.write("    adrp x1, " + label + "_msg\n    add x1, x1, :lo12:" + label + "_msg\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #2\n    mov x8, #64\n    svc #0\n");
   return s.write("    mov x0, #134\n    mov x8, #94\n    svc #0\n");
 }
 
@@ -6207,7 +6272,7 @@ function emit_runtime(roots: string, s: asmcore.EmitState): asmcore.EmitState {
 pub function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.EmitState {
   let fns: parser.FuncDecl[] = m.funcs;
   let lowered: physicalbody.Lowered = s.rt_lower(m);
-  let bodies: irtables.LowerResult[] = lowered.bodies;
+  let bodies: irtables.LowerResult[] = irtables.lowered_results(lowered.bodies);
   let physical = physicalbody.collection(lowered);
   let previous_regs: irtables.SigReg = s.reg_entries;
   let previous_leaves: ssa.Leaves = s.leaves;
@@ -6655,6 +6720,7 @@ function apo_grow(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x8, #4\n");
   s = s.write(".Lapo_cap:\n");
   s = s.write("    add x9, x21, #1\n    cmp x8, x9\n    csel x8, x8, x9, hs\n");
+  s = s.write("    movz x9, #65535\n    movk x9, #4095, lsl #16\n    cmp x8, x9\n    b.ls .Lapo_sized\n    b __fern_alloc_size_abort\n.Lapo_sized:\n");
   s = s.write("    add x1, x8, #3\n");
   s = s.write("    lsl x1, x1, #3\n");
   s = s.write("    cmp x1, #2048\n");
@@ -6917,6 +6983,13 @@ function emit_bt_exit(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    b.lo .Lbt_done\n");
   s = s.write("    and x23, x20, #7\n");
   s = s.write("    cbnz x23, .Lbt_done\n");
+  s = s.write("    adrp x24, __fern_stack_top\n");
+  s = s.write("    add x24, x24, :lo12:__fern_stack_top\n");
+  s = s.write("    ldr x24, [x24]\n");
+  s = s.write("    cbz x24, .Lbt_top_ok\n");
+  s = s.write("    cmp x20, x24\n");
+  s = s.write("    b.hs .Lbt_done\n");
+  s = s.write(".Lbt_top_ok:\n");
   s = s.write("    ldr x1, [x20, #8]\n");
   s = bt_strip_signature(s);
   s = s.write("    cmp x1, #16, lsl #12\n");
@@ -7443,6 +7516,14 @@ function abort_trap(s: asmcore.EmitState, label: string, msg: string, text: stri
 }
 
 function emit_rt_report(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .bss\n");
+  s = s.write("    .align 3\n");
+  s = s.write("    .globl __fern_stack_top\n");
+  s = s.write("__fern_stack_top: .quad 0\n");
+  if (s.harden) {
+    s = s.write("    .globl __fern_canary\n");
+    s = s.write("__fern_canary: .quad 0\n");
+  }
   s = s.write("    .text\n");
   s = s.write(".globl __fern_report\n");
   s = s.write(".type __fern_report, %function\n");
@@ -7598,7 +7679,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    ret\n");
   s = s.write(".Lalloc_large:\n");
   s = s.write("    mov x1, #1\n");
-  s = s.write("    lsl x1, x1, #30\n");
+  s = s.write("    lsl x1, x1, #34\n");
   s = s.write("    cmp x0, x1\n");
   s = s.write("    b.hi .Lalloc_nofl\n");
   s = arm64_large_class(s, "x0", "x3", "x1");
@@ -7659,7 +7740,8 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    add x1, x1, :lo12:__fern_heap_ptr\n");
   s = s.write(".Lalloc_inited:\n");
   s = s.write("    ldr x2, [x1]\n");
-  s = s.write("    add x3, x2, x0\n");
+  s = s.write("    adds x3, x2, x0\n");
+  s = s.write("    b.cs __fern_alloc_size_abort\n");
   s = s.write("    str x4, [sp, #-16]!\n");
   s = s.write("    adrp x4, __fern_heap_end\n");
   s = s.write("    add x4, x4, :lo12:__fern_heap_end\n");
@@ -7679,11 +7761,13 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", aborts.str_oob(), 134);
   s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", aborts.slice_range(), 134);
   s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", aborts.alloc_size(), 134);
+  s = abort_trap(s, "__fern_free_range_abort", ".Lmsg_free_range", aborts.free_range(), 134);
   for name in leaf_aborts() {
     s = s.write(name + "_leaf:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    b " + name + "\n");
   }
 
   s = s.write("__fern_arr_box:\n");
+  s = s.write("    movz x1, #65535\n    movk x1, #4095, lsl #16\n    cmp x0, x1\n    b.ls .Larrbox_sized\n    b __fern_alloc_size_abort_leaf\n.Larrbox_sized:\n");
   if (profile_alloc_fast(s)) {
     s = s.write("    add x1, x0, #3\n");
     s = s.write("    lsl x1, x1, #3\n");
@@ -8517,7 +8601,7 @@ function arm64_large_class(s: asmcore.EmitState, n: string, cls: string, t: stri
 function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("__fern_large_push:\n");
   s = s.write("    mov x3, #1\n");
-  s = s.write("    lsl x3, x3, #30\n");
+  s = s.write("    lsl x3, x3, #34\n");
   s = s.write("    cmp x2, x3\n");
   s = s.write("    b.hi .Llpush_ret\n");
   s = lc_bump_free_add(s, "x2", "x3", "x4");
@@ -8536,6 +8620,8 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    stp x29, x30, [sp, #-16]!\n");
   s = s.write("    mov x29, sp\n");
   s = s.write("    cbz x0, .Lrawfree_done\n");
+  s = s.write("    adrp x9, __fern_heap_base\n    add x9, x9, :lo12:__fern_heap_base\n    ldr x9, [x9]\n    cmp x0, x9\n    b.lo .Lrawfree_bad\n");
+  s = s.write("    adrp x9, __fern_heap_end\n    add x9, x9, :lo12:__fern_heap_end\n    ldr x9, [x9]\n    cmp x0, x9\n    b.hs .Lrawfree_bad\n");
   s = s.write("    add x1, x1, #7\n");
   s = s.write("    lsr x5, x1, #3\n");
   s = s.write("    cbz x5, .Lrawfree_done\n");
@@ -8546,6 +8632,8 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lrawfree_done:\n");
   s = s.write("    ldp x29, x30, [sp], #16\n");
   s = s.write("    ret\n");
+  s = s.write(".Lrawfree_bad:\n");
+  s = s.write("    b __fern_free_range_abort\n");
   s = s.write("__fn___fern_arr_dec:\n");
   s = s.write("    ldr x0, [sp]\n");
   s = s.write("__fn___fern_arr_dec.r:\n");
@@ -9103,7 +9191,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   s = emit_lc_report(s);
   if (!s.shared) {
     s = emit_stack_overflow_runtime(s, darwin);
-    s = emit_stack_guard_failure(s);
+    s = emit_startup_failures(s);
   }
   s = emit_rt_report(s);
   if (s.shared) {
@@ -10792,10 +10880,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, darwin: boolean, sub: 
 }
 
 pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: ircore.Sub, recs: usize): string {
-  let g: ircore.Gated = ircore.gate_program(mod, sub);
-  if (!g.ok) {
-    return "";
-  }
+  let g = match (ircore.gate_program(mod, sub)) { Some(g) => g, None => { return ""; } };
   return emit_module_ir_flat(g.im, g.stab, darwin, ircore.inline_tiny_leaves(g.im, g.cache), g.physical, sub.rt_lower, recs, sub.switches);
 }
 

@@ -1,0 +1,16 @@
+// spec: RH-01
+// A consuming close moves the handle out of its binding. The first close is
+// not the local's last use, so the checker refuses it: a handle with a
+// consuming close cannot be closed twice.
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function main(): i32 {
+  let h: Handle = Handle { fd: 3 };
+  let first: i32 = h.close();
+  return h.close() + first;
+}

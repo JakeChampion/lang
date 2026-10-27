@@ -4,7 +4,7 @@ import "./util";
 
 pub struct ReturnPos { block: i32, line: i32, col: string }
 
-pub struct LResult { func: ssa.SFunc, ok: boolean, bail: string, seen_vals: i32[], seen_slots: i32[], source_returns: ReturnPos[], source_values: i64[] }
+pub struct Lifted { func: ssa.SFunc, seen_vals: i32[], seen_slots: i32[], source_returns: ReturnPos[], source_values: i64[] }
 
 function splice(insts: ssa.SInst[], more: ssa.SInst[]): ssa.SInst[] {
   for x in more {
@@ -65,8 +65,6 @@ function put_at_s(own xs: string[], d: i32, v: string): string[] {
 }
 
 struct LiftVals { nvals: i32, stack: i32[], insts: ssa.SInst[], ok: boolean }
-
-struct LitWord { ok: boolean, value: i32 }
 
 function bin_sym(k: string): string {
   if (k == "add") {
@@ -313,14 +311,14 @@ function listed(own f: KindFacts, names: string[], bit: i32, argc: i32, host: bo
   return f;
 }
 
-pub function lift_from_ir_prod(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean): LResult {
+pub function lift_from_ir_prod(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean): Result[Lifted, string] {
   return lift_impl(kt, name, nparams, nslots, ops, track_slots);
 }
 
-pub function lift_with_lanes(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean, lane_slots: i32[]): LResult {
-  let l: LResult = lift_impl(kt, name, nparams, nslots, ops, track_slots);
+pub function lift_with_lanes(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean, lane_slots: i32[]): Result[Lifted, string] {
+  let l: Lifted = match (lift_impl(kt, name, nparams, nslots, ops, track_slots)) { Ok(lifted) => lifted, Err(message) => { return Err(message); } };
   if (lane_slots.len() == 0 || l.func.blocks.len() == 0) {
-    return l;
+    return Ok(l);
   }
   let entry: ssa.SBlock = l.func.blocks[0];
   let insts: ssa.SInst[] = [];
@@ -331,7 +329,7 @@ pub function lift_with_lanes(kt: KindTable, name: string, nparams: i32, nslots: 
     insts = insts.append(ins);
   }
   let blocks: ssa.SBlock[] = l.func.blocks.with(0, ssa.SBlock { ...entry, insts: insts });
-  return LResult { ...l, func: ssa.SFunc { ...l.func, blocks: blocks } };
+  return Ok(Lifted { ...l, func: ssa.SFunc { ...l.func, blocks: blocks } });
 }
 
 function lift_lane_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: ssa.SInst[]): LiftVals {
@@ -581,8 +579,7 @@ function lift_prod_mem(kt: KindTable, tag: i32, k: string, op: ir.Op, nvals: i32
   if (kt.argc[tag] > 0) {
     return lift_pop_push(lv, kt.argc[tag], prod_call_kind(k), unique_push(k, op) + counted_bit(op), k + packed_suffix(op));
   }
-  let made: LiftVals = lift_prod_make(k, op, lv);
-  if (made.ok || made.stack.len() != lv.stack.len()) {
+  if let Some(made) = lift_prod_make(k, op, lv) {
     return made;
   }
   return lift_prod_read(k, op, lv);
@@ -630,26 +627,26 @@ function lift_prod_store(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   return lift_store_keep(lv, 55);
 }
 
-function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): LiftVals {
+function lift_prod_make(k: string, op: ir.Op, lv: LiftVals): Option[LiftVals] {
   if (k == "struct_make") {
-    return lift_box_make(op.i32_imm + 1, op.i32_imm, 8, op.str, lv);
+    return Some(lift_box_make(op.i32_imm + 1, op.i32_imm, 8, op.str, lv));
   }
   if (k == "arr_make" && op.i32_imm == 0) {
-    return lift_empty_arr(lv);
+    return Some(lift_empty_arr(lv));
   }
   if (k == "arr_make" && ir.is_packed(op)) {
-    return lift_packed_make(op.i32_imm, lv);
+    return Some(lift_packed_make(op.i32_imm, lv));
   }
   if (k == "arr_make") {
-    return lift_box_make(op.i32_imm, op.i32_imm, 8, "", lv);
+    return Some(lift_box_make(op.i32_imm, op.i32_imm, 8, "", lv));
   }
   if (k == "tuple_make") {
-    return lift_box_make(op.i32_imm, op.i32_imm, 0, "", lv);
+    return Some(lift_box_make(op.i32_imm, op.i32_imm, 0, "", lv));
   }
   if (k == "opt_make") {
-    return lift_opt_make_prod(op.i32_imm, lv);
+    return Some(lift_opt_make_prod(op.i32_imm, lv));
   }
-  return LiftVals { ...lv, ok: false };
+  return None;
 }
 
 function view_in_frame(op: ir.Op): i32 {
@@ -913,7 +910,7 @@ function tracked(xs: i32[], on: boolean, x: i32): i32[] {
   return xs.append(x);
 }
 
-function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean): LResult {
+function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: ir.Op[], track_slots: boolean): Result[Lifted, string] {
   let nvals: i32 = 0;
   let seen_vals: i32[] = [];
   let seen_slots: i32[] = [];
@@ -1859,8 +1856,11 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
     }
   }
 
+  if (!ok) {
+    return Err(bail);
+  }
   let f: ssa.SFunc = ssa.SFunc { name: name, nparams: nparams, nvals: nvals, blocks: blocks, entry: 0, takes_env: false };
-  return LResult { func: f, ok: ok, bail: bail, seen_vals: seen_vals, seen_slots: seen_slots, source_returns: source_returns, source_values: source_values };
+  return Ok(Lifted { func: f, seen_vals: seen_vals, seen_slots: seen_slots, source_returns: source_returns, source_values: source_values });
 }
 
 function filled(n: i32, v: i32): i32[] {

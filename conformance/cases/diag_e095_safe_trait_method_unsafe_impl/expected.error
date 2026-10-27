@@ -1,0 +1,1 @@
+method "peek" of trait "Read" is declared safe, so its implementation cannot be unsafe

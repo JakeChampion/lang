@@ -80,8 +80,7 @@ import "./ssa_lift";
 
 function main(): i32 {
     let ops: ir.Op[] = [ir.op_ptr_width(), ir.op_return()];
-    let r: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "width", 0, 0, ops, false);
-    if (!r.ok) { return 2; }
+    let r = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "width", 0, 0, ops, false)) { Ok(l) => l, Err(_) => { return 2; } };
     let n: i32 = 0;
     for blk in r.func.blocks {
         for ins in blk.insts {

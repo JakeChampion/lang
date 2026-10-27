@@ -18,8 +18,7 @@ function require(ok: boolean, id: i32): void {
 }
 
 function site_matches(b: irtables.LowerResult, site: incoming.Site): i32 {
-  let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), b.name, b.n_params, b.n_locals, b.ops, false);
-  require(lifted.ok, 93);
+  let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), b.name, b.n_params, b.n_locals, b.ops, false)) { Ok(l) => l, Err(message) => { eprint(message); exit(93); } };
   let found: i32 = 0;
   for block in lifted.func.blocks {
     for op in block.insts {

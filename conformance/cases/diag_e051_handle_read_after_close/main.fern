@@ -1,0 +1,15 @@
+// spec: RH-02
+// A field read after a consuming close is a use of a moved handle. The close
+// is not the local's last use, so the checker refuses the close.
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function main(): i32 {
+  let h: Handle = Handle { fd: 3 };
+  let closed: i32 = h.close();
+  return h.fd + closed;
+}

@@ -228,6 +228,9 @@ pub function resolve_module(ov: Overlay, dir: string, path: string): Resolved {
   if (ov.sealed) {
     return Resolved { ...res_none(), err_path: "stdlib://" + rel_path(path) + ".fern" };
   }
+  if let Some(declared) = declared_module(ov, dir, path) {
+    return declared;
+  }
   let direct: Resolved = res_read(ov, dir, rel_path(path));
   if (direct.ok || direct.err.len() > 0) {
     return direct;
@@ -239,71 +242,109 @@ pub function resolve_module(ov: Overlay, dir: string, path: string): Resolved {
   return direct;
 }
 
-pub function try_manifest(ov: Overlay, from: string, path: string): Resolved {
+function import_manifest(from: string, path: string): Option[(string, fern_toml.Manifest)] {
   if (util.is_stdlib_path(path) || util.is_local(path)) {
-    return res_none();
+    return None;
   }
   let dir: string = manifest_dir(from);
   match (read_file(dir + "fern.toml")) {
     Ok(src) => {
-      let m: fern_toml.Manifest = fern_toml.parse(src);
-      if (!util.has_str(fern_toml.dep_names(m), util.dep_name(path))) {
-        return Resolved { ...res_none(), err: undeclared_dependency(util.dep_name(path), dir + "fern.toml") };
-      }
-      match (dep_dir(m, dir, util.dep_name(path))) {
-        Some(dd) => {
-          if (!util.is_dir(dd) && util.str_has_prefix(dd, store_root() + "/")) {
-            return Resolved { ...res_none(), err: "dependency \"" + util.dep_name(path) + "\" is not in the package store — run `fern -fetch " + dir + "fern.toml` to download and verify it", err_path: dd };
-          }
-          let rest: string = util.dep_subpath(path);
-          if (rest.len() == 0) {
-            return load_lib(ov, dd);
-          }
-          return res_read(ov, dd, rest);
-        },
-        None => {}
-      }
+      return Some((dir, fern_toml.parse(src)));
     },
     Err(e) => {}
+  }
+  return None;
+}
+
+pub function declared_module(ov: Overlay, from: string, path: string): Option[Resolved] {
+  if let Some(found) = import_manifest(from, path) {
+    if (util.has_str(fern_toml.dep_names(found.1), util.dep_name(path))) {
+      return Some(load_dependency(ov, found.1, found.0, path));
+    }
+  }
+  return None;
+}
+
+pub function try_manifest(ov: Overlay, from: string, path: string): Resolved {
+  if let Some(found) = import_manifest(from, path) {
+    if (util.has_str(fern_toml.dep_names(found.1), util.dep_name(path))) {
+      return load_dependency(ov, found.1, found.0, path);
+    }
+    return Resolved { ...res_none(), err: undeclared_dependency(util.dep_name(path), found.0 + "fern.toml") };
   }
   return res_none();
 }
 
-function dep_dir(m: fern_toml.Manifest, dir: string, name: string): Option[string] {
+function load_dependency(ov: Overlay, m: fern_toml.Manifest, dir: string, path: string): Resolved {
+  match (dep_dir(m, dir, util.dep_name(path))) {
+    Ok(Some(dd)) => {
+      if (!util.is_dir(dd) && util.str_has_prefix(dd, store_root() + "/")) {
+        return Resolved { ...res_none(), err: "dependency \"" + util.dep_name(path) + "\" is not in the package store — run `fern -fetch " + dir + "fern.toml` to download and verify it", err_path: dd };
+      }
+      let rest: string = util.dep_subpath(path);
+      if (rest.len() == 0) {
+        return load_lib(ov, dd);
+      }
+      return res_read(ov, dd, rest);
+    },
+    Err(message) => {
+      return Resolved { ...res_none(), err: message };
+    },
+    _ => {}
+  }
+  return res_none();
+}
+
+function dep_dir(m: fern_toml.Manifest, dir: string, name: string): Result[Option[string], string] {
   let kind: string = fern_toml.dep_kind(m, name);
   if (kind.len() == 0) {
-    return None;
+    return Ok(None);
   }
   match (vendor_dir(dir, name)) {
     Some(vd) => {
-      return Some(vd);
+      return Ok(Some(vd));
     },
     None => {}
   }
   if (kind == "path") {
     match (fern_toml.dep_path(m, name)) {
       Some(dp) => {
-        return Some(dir + dp + "/");
+        return Ok(Some(dir + dp + "/"));
       },
       None => {}
     }
   } else if (kind == "workspace") {
-    return workspace_member_dir(dir, name);
+    return Ok(workspace_member_dir(dir, name));
   } else if (kind == "version") {
-    return locked_dir(dir, name);
+    match (locked_dir(dir, name)) {
+      Ok(dd) => {
+        return Ok(Some(dd));
+      },
+      Err(message) => {
+        return Err(message);
+      }
+    }
   } else if (kind == "url") {
     match (fern_toml.dep_hash(m, name)) {
       Some(h) => {
-        return store_dir(h);
+        return Ok(store_dir(h));
       },
       None => {}
     }
   }
-  return None;
+  return Ok(None);
 }
 
 pub function dependency_dir(m: fern_toml.Manifest, dir: string, name: string): Option[string] {
-  return dep_dir(m, dir, name);
+  // Capability grants omit unresolved dependencies until an import needs them.
+  match (dep_dir(m, dir, name)) {
+    Ok(found) => {
+      return found;
+    },
+    Err(_) => {
+      return None;
+    }
+  }
 }
 
 pub function manifest_dir(dir: string): string {
@@ -451,30 +492,39 @@ function member_name(memdir: string): string {
   return "";
 }
 
-function locked_dir(dir: string, name: string): Option[string] {
+function locked_dir(dir: string, name: string): Result[string, string] {
   match (read_file(dir + "fern.lock")) {
     Ok(src) => {
-      let lr: fern_toml.LockResult = fern_toml.parse_lock(src);
-      if (lr.err.len() > 0) {
-        return None;
+      let entries: fern_toml.LockEntry[] = match (fern_toml.parse_lock(src)) { Ok(es) => es, Err(message) => { return Err(dir + message); } };
+      for entry in entries {
+        if (entry.name == name) {
+          return locked_entry_dir(entry, dir);
+        }
       }
-      let entries: fern_toml.LockEntry[] = lr.entries;
-      match (fern_toml.lock_path_of(entries, name)) {
-        Some(p) => {
-          return Some(p + "/");
-        },
-        None => {}
-      }
-      match (fern_toml.lock_hash_of(entries, name)) {
-        Some(h) => {
-          return store_dir(h);
-        },
-        None => {}
-      }
+      return Err("dependency \"" + name + "\" is not in " + dir + "fern.lock — run `fern -resolve " + dir + "fern.toml`");
     },
-    Err(e) => {}
+    Err(e) => {
+      if (unreadable(e)) {
+        return Err(dir + "fern.lock: " + e.message());
+      }
+      return Err("dependency \"" + name + "\" is versioned but " + util.clean_path(dir) + " has no fern.lock — run `fern -resolve " + dir + "fern.toml`");
+    }
   }
-  return None;
+}
+
+function locked_entry_dir(entry: fern_toml.LockEntry, dir: string): Result[string, string] {
+  if (entry.path.len() > 0) {
+    return Ok(entry.path + "/");
+  }
+  if let Err(message) = fern_toml.validate_hash(entry.hash) {
+    return Err("dependency \"" + entry.name + "\": hash " + message);
+  }
+  if let Some(dd) = store_dir(entry.hash) {
+    if (util.is_dir(dd)) {
+      return Ok(dd);
+    }
+  }
+  return Err("dependency \"" + entry.name + "\"@" + entry.version + " (" + entry.hash + ") is not in the package store — run `fern -fetch " + dir + "fern.toml`");
 }
 
 pub function store_root(): string {
@@ -486,12 +536,15 @@ pub function store_root(): string {
 }
 
 pub function store_dir(hash: string): Option[string] {
-  let hr: fern_toml.HashResult = fern_toml.validate_hash(hash);
+  let checked: Result[string, string] = fern_toml.validate_hash(hash);
   let root: string = store_root();
-  if (hr.err.len() > 0 || root.len() == 0) {
+  if (root.len() == 0) {
     return None;
   }
-  return Some(root + "/" + hr.hex + "/");
+  if let Ok(hex) = checked {
+    return Some(root + "/" + hex + "/");
+  }
+  return None;
 }
 
 pub function unresolved_import(path: string, tried: string, reason: string): string {

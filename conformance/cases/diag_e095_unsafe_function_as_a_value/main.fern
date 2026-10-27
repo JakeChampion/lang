@@ -1,0 +1,25 @@
+// A function value carries no unsafe obligation, so an unsafe function never
+// becomes one. A safe closure that accepts the obligation in its own unsafe
+// block is the control.
+
+unsafe function danger(): i32 {
+    unsafe {
+        return 1;
+    }
+}
+
+function wrapped(): () => i32 {
+    return (): i32 => {
+        let v: i32 = 0;
+        unsafe {
+            v = danger();
+        }
+        return v;
+    };
+}
+
+function main(): i32 {
+    let ok: () => i32 = wrapped();
+    let escaped: () => i32 = danger;
+    return ok() + escaped();
+}

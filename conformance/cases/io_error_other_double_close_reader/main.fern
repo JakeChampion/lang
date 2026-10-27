@@ -1,0 +1,40 @@
+// spec: RH-05
+// A built-in Reader is a descriptor. A second close with no open between the
+// two closes answers Other with "Bad file descriptor" and errno 9 on every
+// engine, and the second close reaches no other file.
+
+import "std/i32";
+
+function main(): i32 {
+  match (open_reader("/dev/null")) {
+    Err(_) => {
+      return 1;
+    },
+    Ok(r) => {
+      match (r.close()) {
+        Err(_) => {
+          return 2;
+        },
+        Ok(_) => {}
+      }
+      match (r.close()) {
+        Ok(_) => {
+          print("second close accepted");
+          return 3;
+        },
+        Err(e) => {
+          match (e) {
+            Other(p, m, n) => {
+              print("second close: " + m + " " + n.to_string());
+              return 0;
+            },
+            _ => {
+              print("second close: other kind");
+              return 4;
+            }
+          }
+        }
+      }
+    }
+  }
+}

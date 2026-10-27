@@ -190,7 +190,7 @@ pub function verify_fn(fn_name: string, ops: ir.Op[], n_params: i32, n_locals: i
         out = out.append(Problem { fn_name: fn_name, op: i, kind: "call_direct", msg: "call with no callee name" });
       } else {
         let np: i32 = index_params(sigs, op.str);
-        if (np >= 0 && op.i32_imm != np && op.i32_imm != np - 1) {
+        if (np >= 0 && op.i32_imm != np) {
           out = out.append(Problem {
             fn_name: fn_name, op: i, kind: "call_direct",
             msg: "calls " + op.str + " with " + util.i32_to_string(op.i32_imm)

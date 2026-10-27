@@ -20,15 +20,18 @@ function __fern_write_file(path: string, contents: string): Result[void, IoError
   let put: i32 = 0;
   while (put < clen) {
     let w: i32 = __syscall3(4, fd as i64, (cbuf + put) as i64, (clen - put) as i64) as i32;
+    if (w == 0 - 4 && put > 0) {
+      continue;
+    }
     if (w < 0) {
       __syscall3(6, fd as i64, 0, 0);
       return Err(__fern_io_error(0 - w, __fern_path_copy(pathz_own, plen)));
     }
     if (w == 0) {
-      put = clen;
-    } else {
-      put = put + w;
+      __syscall3(6, fd as i64, 0, 0);
+      return Err(__fern_io_error(5, __fern_path_copy(pathz_own, plen)));
     }
+    put = put + w;
   }
   __syscall3(6, fd as i64, 0, 0);
   return Ok(());
