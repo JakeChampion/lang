@@ -1001,6 +1001,10 @@ findings. Ranked by leverage.
   The semantic front end and census driver match these outcomes.
   Body collections still use `LowerResult` and need the remaining migration.
 
+  The semantic planner stores standard outcomes in its private body rows.
+  Refusals retain their partial state until the planner reports them.
+  Declaration, instance and runtime collection boundaries still convert to the legacy record.
+
   Prepared bodies store only the complete `Lowered` payload.
   Native instruction emission, source maps and debug variables use that payload.
   Wasm function emission also requires complete body data.
