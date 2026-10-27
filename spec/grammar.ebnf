@@ -37,8 +37,11 @@ Visibility  = 'pub' [ '(' IDENT ')' ] ;
 
 # `fip` / `fbip` are contextual: identifiers everywhere but here.
 FuncMod     = 'fip' [ NUMBER ] | 'fbip' [ NUMBER ] | 'async' ;
+# `unsafe` is contextual too. It comes immediately before `function` and
+# declares the caller obligations that only an UnsafeBlock accepts (E095).
+UnsafeMod   = 'unsafe' ;
 
-FuncDecl    = { FuncMod } 'function' [ Receiver ] IDENT [ TypeParams ]
+FuncDecl    = { FuncMod } [ UnsafeMod ] 'function' [ Receiver ] IDENT [ TypeParams ]
               '(' [ ParamList ] ')' [ ':' Type ] ( Block | ';' ) ;
 # A method is written `function (self: T) name(...)`.
 Receiver    = '(' [ 'own' ] IDENT ':' Type ')' ;
@@ -94,7 +97,7 @@ TypeDecl    = 'type' IDENT [ TypeParams ] '=' Type '|' Type { '|' Type } ';' ;
 TraitDecl   = 'trait' IDENT [ TypeParams ] [ ':' Bounds ] '{' { TraitItem } '}' [ ';' ] ;
 TraitItem   = 'type' IDENT [ ':' Bounds ] ';'
             | 'const' IDENT ':' Type [ '=' Expr ] ';'
-            | { FuncMod } 'function' [ Receiver ] IDENT [ TypeParams ]
+            | { FuncMod } [ UnsafeMod ] 'function' [ Receiver ] IDENT [ TypeParams ]
               '(' [ ParamList ] ')' [ ':' Type ] ( Block | ';' )
             ;
 
@@ -157,6 +160,7 @@ ValueBlockItems
             = '}' | Expr '}' | ( ExprStmt | Stmt ) ValueBlockItems ;
 
 Stmt        = Block
+            | UnsafeBlock
             | LabeledLoop
             | IfStmt
             | WhileStmt
@@ -174,6 +178,8 @@ Stmt        = Block
             ;
 
 LabeledLoop = IDENT ':' ( WhileStmt | LoopStmt | ForStmt ) ;
+# The one place that accepts an unsafe function's obligations.
+UnsafeBlock = 'unsafe' Block ;
 
 IfStmt      = 'if' 'let' ArmPatterns '=' NoStructExpr Stmt [ 'else' Stmt ]
             | 'if' '(' Expr ')' Stmt [ 'else' Stmt ]

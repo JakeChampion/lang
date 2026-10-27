@@ -49,6 +49,17 @@ both a negative index and `index >= len`.
 
 All runners print the same cause line before an out-of-bounds index aborts.
 
+The check reads the index value, not the expression that produced it.
+Ordinary `i32` arithmetic wraps, so `i + 1` for the largest `i32` is
+negative and `lo + n` can wrap past a slice end. A guard on such a sum
+holds, and the read at `i` or the slice at `lo` still aborts (`AB-10`,
+`AB-12`). The bounds proofs in `compiler/ssabounds.fern` remove a check
+only for an index that the same facts bound on both sides: a guard on
+`i` proves nothing about `i - 1` (`AB-11`), a guard on `i + 1` proves
+nothing about `i` (`AB-10`), and a scaled index that wraps negative fails
+its own `>= 0` guard (`AB-14`). `docs/security/ARITHMETIC-AUDIT.md`
+records the rules the proofs use.
+
 ## Allocation size (#8457)
 
 `fern: allocation size out of range`, exit 134. A byte count computed in
@@ -70,11 +81,18 @@ siblings) had the same shape on every emitter (#8587): the capacity
 doubling went negative past 2^30 elements — the `max(.., 4)` floor then
 set cap = 4 under a length near 1e9 — and `cap * stride` wrapped past a
 4 GiB payload, so every later append stored far outside the buffer. Both
-natives and both SSA emitters now size the request in 64 bits and refuse
-one past 2^31 - 1 with this cause (the SSA emitters exit 134 without a
-message, their bounds-trap shape); wasm32 checks the doubled total in i64
-and traps. The ceiling is the same one `__alloc_u8` enforces: an array's
-byte size is an i32.
+natives and both SSA emitters now size the request in 64 bits; wasm32
+checks the doubled total in i64 and traps.
+
+The native ceiling lives in the box allocator, `__fern_arr_box`: a box
+holds at most 2^28 - 1 words, a payload of 2^31 - 8 bytes, and a larger
+request aborts with this cause before it touches memory. Every typed
+allocation and every grow passes through the box allocator, so a byte
+array stops at 2147483640 elements and an `i64` array at 268435455, and
+no length or byte count a program can read leaves the `i32` range.
+Before this ceiling the byte push path let a length reach 2^31, and the
+program then held an `i32` outside its range
+(`TestSelfHostArrayCeiling`).
 
 The native emitters rely on this ceiling. They can zero-extend an i32 index,
 and a negative index is then at least 2^31. So it still fails the check. The copy-on-write helpers read their capacity from a

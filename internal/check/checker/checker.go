@@ -2423,6 +2423,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			c.info.Generics[fn.Name] = fn
 		}
 	}
+	c.unsafeFuncs = map[string]bool{}
+	for _, fn := range prog.Funcs {
+		if fn.Unsafe {
+			c.unsafeFuncs[fn.Name] = true
+		}
+	}
+	c.checkUnsafeImpls(prog)
 
 	methodOwns := map[string][]bool{}
 	for _, fn := range prog.Funcs {
@@ -3469,6 +3476,7 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 		c.errfCode(fa.FieldPos, "E021", "no method %q on `%s`", fa.Field, dt.String())
 		return nil
 	}
+	c.checkUnsafeTraitCall(n, fa.Field, tm.Unsafe)
 	if tm.Assoc {
 		c.errfCode(fa.FieldPos, "E021",
 			"%q is an associated function of trait %s, not a method; it has no `self` receiver, so it cannot be called through a `%s` value — call it on a concrete type",
@@ -5285,6 +5293,8 @@ type checker struct {
 	litCompositeReads map[*ast.Ident]*ast.Var
 	current           *ast.FuncDecl
 	loopDepth         int
+	unsafeDepth       int
+	unsafeFuncs       map[string]bool
 	tryConvN          int
 	checkedN          int
 	inferReturns      *[]ast.Type
@@ -8394,6 +8404,60 @@ func (c *checker) calleeBinding(id *ast.Ident, s *scope) (ast.Type, bool) {
 	return c.identValueBinding(id.Name, s)
 }
 
+// The unsafe boundary: an unsafe declaration states caller obligations, and only an
+// unsafe block accepts them. docs/SAFETY-CONTRACT.md has the contract.
+func (c *checker) checkUnsafeCallee(n *ast.Call, s *scope) {
+	if c.unsafeDepth > 0 {
+		return
+	}
+	id, ok := n.Callee.(*ast.Ident)
+	if !ok || !c.unsafeFuncs[id.Name] {
+		return
+	}
+	if _, local := c.calleeBinding(id, s); local {
+		return
+	}
+	name := demangle(id.Name)
+	if n.Method != nil {
+		name = n.Method.Field
+	} else if n.SourceCallee != "" {
+		name = n.SourceCallee
+	}
+	c.errfCode(n.P, "E095", "unsafe function %q is called outside an unsafe block", name)
+}
+
+func (c *checker) checkUnsafeTraitCall(n *ast.Call, field string, unsafe bool) {
+	if unsafe && c.unsafeDepth == 0 {
+		c.errfCode(n.P, "E095", "unsafe function %q is called outside an unsafe block", field)
+	}
+}
+
+// A safe trait method promises its callers no obligation, so an unsafe
+// implementation cannot stand behind it.
+func (c *checker) checkUnsafeImpls(prog *ast.Program) {
+	for _, fn := range prog.Funcs {
+		if !fn.Unsafe || fn.ImplTrait == "" {
+			continue
+		}
+		td, ok := c.info.Traits[fn.ImplTrait]
+		if !ok {
+			continue
+		}
+		simple := fn.MethodSimpleName
+		if simple == "" {
+			simple = fn.DeclName
+		}
+		if simple == "" {
+			simple = fn.Name
+		}
+		for _, m := range td.Methods {
+			if m.Name == simple && !m.Unsafe {
+				c.errfCode(fn.P, "E095", "method %q of trait %q is declared safe, so its implementation cannot be unsafe", simple, demangle(fn.ImplTrait))
+			}
+		}
+	}
+}
+
 type cellStore struct {
 	pos      ast.Position
 	name     string
@@ -10012,6 +10076,10 @@ func (c *checker) ownedExprDiverges(e ast.Expr) bool {
 }
 
 func (c *checker) checkBlock(b *ast.Block, parent *scope) {
+	if b.IsUnsafe {
+		c.unsafeDepth++
+		defer func() { c.unsafeDepth-- }()
+	}
 	s := newScope(parent)
 	prevMutualRec := c.mutualRecSiblings
 	var localFns []*ast.FuncDecl
@@ -12920,6 +12988,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 		}
+		if c.unsafeFuncs[n.Name] && c.callee != ast.Expr(n) && c.funcVisibleHere(n.Name) {
+			c.errfCode(n.P, "E095", "unsafe function %q cannot be used as a value; a function value carries no unsafe obligation", demangle(n.Name))
+		}
 		if gf, isGen := c.info.GenericFuncs[n.Name]; isGen && c.funcVisibleHere(n.Name) {
 			if t, ok := c.instantiateFuncValue(n, gf); ok {
 				return t
@@ -13413,6 +13484,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					return ast.SubstSelf(tm.Result, tt)
 				}
 				n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tt, OwnerTrait: boundTrait}
+				c.checkUnsafeTraitCall(n, fa.Field, tm.Unsafe)
 				return c.checkBoundTraitCall(n, tm, wantParams, tt, callExpected, s)
 			}
 			if dt, ok := tt.(ast.DynTraitType); ok {
@@ -13504,6 +13576,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 			return nil
 		}
+		c.checkUnsafeCallee(n, s)
 		intrinsic := IntrinsicNone
 		if id, direct := n.Callee.(*ast.Ident); direct {
 			if _, local := c.calleeBinding(id, s); !local {

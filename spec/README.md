@@ -115,6 +115,7 @@ maintained as living documents and a copy would drift:
 | `docs/ARRAY-ALGEBRA.md` | The array algebra's semantics: what fusion may reorder or elide, that positional pairing truncates, and that a float reduction keeps index order. |
 | `docs/ALLOCATION-OBSERVABLE.md` | What `__heap_bump_bytes()` measures, what is portable about it, and the two allocation-shape claims that can be pinned. |
 | `docs/STRINGS-SOTA.md` | What a string slice yields: the checked `s[a:b]` answers `Option[str]`, `None` for an out-of-range or code-point-splitting endpoint; `slice_unchecked` is the byte-indexed form that aborts instead. |
+| `docs/SAFETY-CONTRACT.md` | The unsafe boundary: an unsafe declaration states caller obligations, and only an `unsafe` block accepts them (`E095` otherwise). |
 
 `semantics.md` is the index that ties these to tests. It extracts the
 claims each doc makes and names the conformance case that pins each one;

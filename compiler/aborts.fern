@@ -18,6 +18,30 @@ pub function stack_guard(): string {
   return "fern: could not protect the stack guard";
 }
 
+pub function signal_stack_map(): string {
+  return "fern: could not map the signal stack";
+}
+
+pub function signal_stack(): string {
+  return "fern: could not install the signal stack";
+}
+
+pub function fault_handler(): string {
+  return "fern: could not install the fault handler";
+}
+
+pub function canary_read(): string {
+  return "fern: could not read the stack canary";
+}
+
+pub function canary(): string {
+  return "fern: stack canary mismatch";
+}
+
+pub function free_range(): string {
+  return "fern: release of memory outside the heap";
+}
+
 pub function busy(): string {
   return "fern: two threads entered this shared object at once";
 }

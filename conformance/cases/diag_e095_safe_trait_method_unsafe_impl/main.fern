@@ -1,0 +1,38 @@
+// A safe trait method promises its callers no obligation, so an unsafe
+// implementation cannot stand behind it. An unsafe trait method accepts a safe
+// or an unsafe implementation, which is the control.
+
+struct Item { v: i32 }
+struct Plain { v: i32 }
+
+trait Read {
+    function peek(self: Self): i32;
+    unsafe function read(self: Self): i32;
+}
+
+impl Read for Item {
+    unsafe function peek(self: Self): i32 {
+        unsafe {
+            return self.v;
+        }
+    }
+    unsafe function read(self: Self): i32 {
+        unsafe {
+            return self.v;
+        }
+    }
+}
+
+impl Read for Plain {
+    function peek(self: Self): i32 {
+        return self.v;
+    }
+    function read(self: Self): i32 {
+        return self.v;
+    }
+}
+
+function main(): i32 {
+    let p: Plain = Plain { v: 1 };
+    return p.peek();
+}

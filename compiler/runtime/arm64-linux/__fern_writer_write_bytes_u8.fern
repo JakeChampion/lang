@@ -12,6 +12,9 @@ function __fern_writer_write_bytes_u8(fd: i32, bytes: usize): Result[void, IoErr
   let at: i32 = 0;
   while (true) {
     let w: i32 = __syscall3(64, fd as i64, (p + at) as i64, (n - at) as i64) as i32;
+    if (w == 0 - 4 && at > 0) {
+      continue;
+    }
     if (w < 0) {
       return Err(__fern_io_error(0 - w, ""));
     }
