@@ -1,0 +1,15 @@
+TAP version 13
+# Suite: ICC bounded quadratic inverses
+ok 1 - ICC quadratic inverse identity bits
+ok 2 - ICC quadratic inverse arithmetic
+ok 3 - ICC quadratic inverse range policy
+ok 4 - ICC quadratic inverse admission
+ok 5 - ICC quadratic inverse cancellation
+ok 6 - ICC quadratic inverse COW and fresh calls
+ok 7 - ICC quadratic inverse exact joins
+ok 8 - ICC quadratic inverse boundaries
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=311 frees=311 live_bytes=0

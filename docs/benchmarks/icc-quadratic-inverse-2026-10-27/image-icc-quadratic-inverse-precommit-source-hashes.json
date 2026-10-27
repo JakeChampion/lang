@@ -1,0 +1,5 @@
+{
+  "fern-image/packages/codecs/icc/quadratic_inverse.fern": "55d39f6a397ef24e9492f42d4a79c115b7759e77b5b088c574ec67afb3939479",
+  "fern-image/tests/icc_quadratic_inverse_test.fern": "c4fadefadc2d2a12c94d12e51864540b3c5f77bd1e437fd38e48017d5a203112",
+  "fern-image/tests/icc_quadratic_inverse.fern": "a2b9ee453fb9418fab3383f6d464a6b6300e2984f0d110b281c4d44a0ec5cd26"
+}

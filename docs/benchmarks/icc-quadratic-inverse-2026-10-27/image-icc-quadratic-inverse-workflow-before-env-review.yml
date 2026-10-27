@@ -1,0 +1,381 @@
+name: Fern image
+
+# Called from ci.yml, which decides from the changed files whether this lane
+# runs (its path filter is the lane table's `fern-image` row) and cancels the
+# rest of the run when it goes red. `workflow_dispatch` runs it on its own.
+#
+# One job. The native half and the wasm half each build the compiler, install
+# the Python reference and run two to three minutes of tests. As two jobs
+# they paid two builds, two setups and two slots of the runner pool.
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: "true"
+      - run: make build
+      - run: ./fern-image/scripts/test.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - name: Use cgroupfs for worker OOM events
+        run: |
+          docker info --format 'Before: {{.ServerVersion}} {{.CgroupDriver}} {{.CgroupVersion}}'
+          sudo python3 - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path('/etc/docker/daemon.json')
+          config = json.loads(path.read_text()) if path.exists() else {}
+          options = [value for value in config.get('exec-opts', []) if not value.startswith('native.cgroupdriver=')]
+          config['exec-opts'] = options + ['native.cgroupdriver=cgroupfs']
+          path.parent.mkdir(parents=True, exist_ok=True)
+          path.write_text(json.dumps(config) + '\n')
+          PY
+          sudo systemctl restart docker
+          docker info --format 'After: {{.ServerVersion}} {{.CgroupDriver}} {{.CgroupVersion}}'
+          test "$(docker info --format '{{.CgroupDriver}}')" = cgroupfs
+      - run: ./fern-image/scripts/qualify-workers.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-wasm.sh
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: python3 -m pip install --require-hashes -r fern-image/tests/requirements-reference.txt
+      - run: ./fern-image/scripts/test-png-corpus.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-png-corpus.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_coefficients_test.py
+      - run: ./fern-image/scripts/test-jpeg-coefficients.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-jpeg-coefficients.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_idct_test.py
+      - run: ./fern-image/scripts/test-jpeg-idct.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-jpeg-idct.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_grayscale_test.py
+      - run: ./fern-image/scripts/test-jpeg-grayscale.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-jpeg-grayscale.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_ycbcr_test.py
+      - run: ./fern-image/scripts/test-jpeg-ycbcr.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-jpeg-ycbcr.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_planes_test.py
+      - run: ./fern-image/scripts/test-jpeg-planes.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-jpeg-planes.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_chroma_test.py
+      - run: ./fern-image/scripts/test-jpeg-chroma.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-jpeg-chroma.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_rgb_test.py
+      - run: ./fern-image/scripts/test-jpeg-rgb.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-jpeg-rgb.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_exif_test.py
+      - run: ./fern-image/scripts/test-jpeg-exif.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-jpeg-exif.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_orientation_test.py
+      - run: ./fern-image/scripts/test-jpeg-orientation.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-jpeg-orientation.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/check-icc-primitives.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/check-icc-primitives.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_envelope_test.py
+      - run: ./fern-image/scripts/test-icc-envelope.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-envelope.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_tag_data_test.py
+      - run: ./fern-image/scripts/test-icc-tag-data.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-tag-data.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_curv_eval_test.py
+      - run: ./fern-image/scripts/test-icc-curv-eval.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-curv-eval.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_curv_inverse_test.py
+      - run: ./fern-image/scripts/test-icc-curv-inverse.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-curv-inverse.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_power_inverse_test.py
+      - run: ./fern-image/scripts/test-icc-power-inverse.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-power-inverse.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_affine_inverse_test.py
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_quadratic_inverse_test.py
+      - run: ./fern-image/scripts/test-icc-affine-inverse.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-affine-inverse.sh wasm
+      - run: ./fern-image/scripts/test-icc-quadratic-inverse.sh native
+      - run: ./fern-image/scripts/test-icc-quadratic-inverse.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_parametric_eval_test.py
+      - run: ./fern-image/scripts/test-icc-parametric-eval.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-parametric-eval.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_app2_test.py
+      - run: ./fern-image/scripts/test-icc-app2.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-app2.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_matrix_eval_test.py
+      - run: ./fern-image/scripts/test-icc-matrix-eval.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-matrix-eval.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_matrix_model_test.py
+      - run: ./fern-image/scripts/test-icc-matrix-model.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-matrix-model.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_matrix_trc_eval_test.py
+      - run: ./fern-image/scripts/test-icc-matrix-trc.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-matrix-trc.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_matrix_solve_test.py
+      - run: ./fern-image/scripts/test-icc-matrix-solve.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-matrix-solve.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-deflate-reader.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-deflate-reader.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/worker-qualification.json') != ''
+        with:
+          name: image-worker-qualification
+          path: fern-image/build/worker-qualification.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-png-corpus-native
+          path: fern-image/build/png-corpus-native.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-png-corpus-wasm
+          path: fern-image/build/png-corpus-wasm.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          name: image-deflate-reader
+          path: fern-image/build/deflate-reader-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-coefficients-*.json') != ''
+        with:
+          name: image-jpeg-coefficients
+          path: fern-image/build/jpeg-coefficients-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-idct-*.json') != ''
+        with:
+          name: image-jpeg-idct
+          path: fern-image/build/jpeg-idct-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-grayscale-*.json') != ''
+        with:
+          name: image-jpeg-grayscale
+          path: fern-image/build/jpeg-grayscale-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-ycbcr-*.json') != ''
+        with:
+          name: image-jpeg-ycbcr
+          path: fern-image/build/jpeg-ycbcr-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-planes-*.json') != ''
+        with:
+          name: image-jpeg-planes
+          path: fern-image/build/jpeg-planes-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-chroma-*.json') != ''
+        with:
+          name: image-jpeg-chroma
+          path: fern-image/build/jpeg-chroma-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-rgb-*.json') != ''
+        with:
+          name: image-jpeg-rgb
+          path: fern-image/build/jpeg-rgb-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-exif-*.json') != ''
+        with:
+          name: image-jpeg-exif
+          path: fern-image/build/jpeg-exif-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-orientation-*.json') != ''
+        with:
+          name: image-jpeg-orientation
+          path: fern-image/build/jpeg-orientation-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-primitives-*.json') != ''
+        with:
+          name: image-icc-primitives
+          path: fern-image/build/icc-primitives-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-envelope-*.json') != ''
+        with:
+          name: image-icc-envelope
+          path: fern-image/build/icc-envelope-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-tag-data-*.json') != ''
+        with:
+          name: image-icc-tag-data
+          path: fern-image/build/icc-tag-data-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-curv-eval-*.json') != ''
+        with:
+          name: image-icc-curv-eval
+          path: fern-image/build/icc-curv-eval-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-parametric-eval-*.json') != ''
+        with:
+          name: image-icc-parametric-eval
+          path: fern-image/build/icc-parametric-eval-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-app2-*.json') != ''
+        with:
+          name: image-icc-app2
+          path: fern-image/build/icc-app2-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-matrix-eval-*.json') != ''
+        with:
+          name: image-icc-matrix-eval
+          path: fern-image/build/icc-matrix-eval-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-matrix-model-*.json') != ''
+        with:
+          name: image-icc-matrix-model
+          path: fern-image/build/icc-matrix-model-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-matrix-trc-*.json') != ''
+        with:
+          name: image-icc-matrix-trc
+          path: fern-image/build/icc-matrix-trc-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-matrix-solve-*.json') != ''
+        with:
+          name: image-icc-matrix-solve
+          path: fern-image/build/icc-matrix-solve-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-curv-inverse-*.json') != ''
+        with:
+          name: image-icc-curv-inverse
+          path: fern-image/build/icc-curv-inverse-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-power-inverse-*.json') != ''
+        with:
+          name: image-icc-power-inverse
+          path: fern-image/build/icc-power-inverse-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-affine-inverse-*.json') != ''
+        with:
+          name: image-icc-affine-inverse
+          path: fern-image/build/icc-affine-inverse-*.json
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-quadratic-inverse-*.json') != ''
+        with:
+          name: image-icc-quadratic-inverse
+          path: fern-image/build/icc-quadratic-inverse-*.json
+          if-no-files-found: error

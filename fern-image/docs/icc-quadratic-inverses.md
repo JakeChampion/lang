@@ -66,3 +66,13 @@ The reference generator records its own hash and deterministic seed.
 There is no model selection, destination transform, adaptation, BPC, encoded-image admission, or runtime CMM dependency change.
 Finite results do not establish universal precision, compatibility, physical/process bounds, hard deadlines, or production readiness.
 All actual M5 and epic acceptance gates remain open.
+
+## Final observations
+
+Each target passed 5,780 committed-source cases through 723 fresh workers.
+All 2,169 workers exited normally with nonzero balanced zero-live heaps.
+Target sample records match exactly.
+
+The maximum observed absolute error is `1.0763250908555365e-16`, within the unchanged finite criterion.
+All three full regression runs passed 318 TAP tests.
+The [qualification record](../../docs/benchmarks/icc-quadratic-inverse-2026-10-27/README.md) retains source identities, raw evidence, and limitations.
