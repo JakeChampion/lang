@@ -32,7 +32,8 @@ func WriteLock(dir string, sel []Selected) error {
 }
 
 func ReadLock(dir string) (map[string]Selected, error) {
-	b, err := os.ReadFile(filepath.Join(dir, LockFileName))
+	file := filepath.Join(dir, LockFileName)
+	b, err := os.ReadFile(file)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -46,7 +47,7 @@ func ReadLock(dir string) (map[string]Selected, error) {
 			return nil
 		}
 		if cur.Name == "" || (cur.Version == Version{}) {
-			return fmt.Errorf("%s: incomplete [[package]] entry", LockFileName)
+			return fmt.Errorf("%s: incomplete [[package]] entry", file)
 		}
 		out[cur.Name] = *cur
 		cur = nil
@@ -65,16 +66,16 @@ func ReadLock(dir string) (map[string]Selected, error) {
 			continue
 		}
 		if cur == nil {
-			return nil, fmt.Errorf("%s line %d: %q outside a [[package]] entry", LockFileName, ln+1, line)
+			return nil, fmt.Errorf("%s line %d: %q outside a [[package]] entry", file, ln+1, line)
 		}
 		eq := strings.Index(line, "=")
 		if eq < 0 {
-			return nil, fmt.Errorf("%s line %d: expected `key = value`", LockFileName, ln+1)
+			return nil, fmt.Errorf("%s line %d: expected `key = value`", file, ln+1)
 		}
 		k := strings.TrimSpace(line[:eq])
 		v, err := unquote(strings.TrimSpace(line[eq+1:]))
 		if err != nil {
-			return nil, fmt.Errorf("%s line %d: %s: %w", LockFileName, ln+1, k, err)
+			return nil, fmt.Errorf("%s line %d: %s: %w", file, ln+1, k, err)
 		}
 		switch k {
 		case "name":
@@ -82,7 +83,7 @@ func ReadLock(dir string) (map[string]Selected, error) {
 		case "version":
 			ver, err := ParseVersion(v)
 			if err != nil {
-				return nil, fmt.Errorf("%s line %d: %w", LockFileName, ln+1, err)
+				return nil, fmt.Errorf("%s line %d: %w", file, ln+1, err)
 			}
 			cur.Version = ver
 		case "path":
@@ -91,11 +92,11 @@ func ReadLock(dir string) (map[string]Selected, error) {
 			cur.Source.URL = v
 		case "hash":
 			if !validHashShape(v) {
-				return nil, fmt.Errorf("%s line %d: hash must be `sha256:` + 64 lowercase hex digits of the archive bytes, got %q", LockFileName, ln+1, v)
+				return nil, fmt.Errorf("%s line %d: hash must be `sha256:` + 64 lowercase hex digits of the archive bytes, got %q", file, ln+1, v)
 			}
 			cur.Source.Hash = v
 		default:
-			return nil, fmt.Errorf("%s line %d: unknown key %q", LockFileName, ln+1, k)
+			return nil, fmt.Errorf("%s line %d: unknown key %q", file, ln+1, k)
 		}
 	}
 	if err := flush(); err != nil {

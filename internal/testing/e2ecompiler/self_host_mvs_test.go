@@ -131,22 +131,30 @@ func writeResolveProject(t *testing.T, dir string, files map[string]string) {
 }
 
 func TestSelfHostMvsCachedURLDependency(t *testing.T) {
-	root := t.TempDir()
-	cache := filepath.Join(root, "cache")
 	hex := strings.Repeat("ab", 32)
-	writeResolveProject(t, root, map[string]string{
-		"app/fern.toml":                    "[package]\nname = \"app\"\n[dependencies]\nhelper = { url = \"https://example.invalid/helper.tar.gz\", hash = \"sha256:" + hex + "\" }\n",
-		"app/main.fern":                    "import \"helper\";\nfunction main(): i32 { return helper.answer(); }\n",
-		"cache/pkgs/" + hex + "/fern.toml": "[package]\nname = \"helper\"\n",
-		"cache/pkgs/" + hex + "/lib.fern":  "pub function answer(): i32 { return 42; }\n",
-	})
-	for _, target := range []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux, e2eharness.TargetWasm32Wasi} {
-		t.Run(target, func(t *testing.T) {
-			bin := e2eharness.CompileSelfHostFile(t, target, filepath.Join(root, "app/main.fern"), []string{"FERN_CACHE_DIR=" + cache})
-			cmd := mvsDriverCommand(t, target, bin)
-			out, _ := cmd.CombinedOutput()
-			if cmd.ProcessState == nil || !cmd.ProcessState.Exited() || cmd.ProcessState.ExitCode() != 42 {
-				t.Fatalf("cached dependency: state=%v, want exit 42\n%s", cmd.ProcessState, out)
+	for _, tc := range []struct{ name, dependency, lock string }{
+		{"manifest-url", `{ url = "https://example.invalid/helper.tar.gz", hash = "sha256:` + hex + `" }`, ""},
+		{"lock-url", `"1.0.0"`, "[[package]]\nname = \"helper\"\nversion = \"1.0.0\"\nurl = \"https://example.invalid/helper.tar.gz\"\nhash = \"sha256:" + hex + "\"\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			cache := filepath.Join(root, "cache")
+			writeResolveProject(t, root, map[string]string{
+				"app/fern.toml":                    "[package]\nname = \"app\"\n[dependencies]\nhelper = " + tc.dependency + "\n",
+				"app/fern.lock":                    tc.lock,
+				"app/main.fern":                    "import \"helper\";\nfunction main(): i32 { return helper.answer(); }\n",
+				"cache/pkgs/" + hex + "/fern.toml": "[package]\nname = \"helper\"\n",
+				"cache/pkgs/" + hex + "/lib.fern":  "pub function answer(): i32 { return 42; }\n",
+			})
+			for _, target := range []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux, e2eharness.TargetWasm32Wasi} {
+				t.Run(target, func(t *testing.T) {
+					bin := e2eharness.CompileSelfHostFile(t, target, filepath.Join(root, "app/main.fern"), []string{"FERN_CACHE_DIR=" + cache})
+					cmd := mvsDriverCommand(t, target, bin)
+					out, _ := cmd.CombinedOutput()
+					if cmd.ProcessState == nil || !cmd.ProcessState.Exited() || cmd.ProcessState.ExitCode() != 42 {
+						t.Fatalf("cached dependency: state=%v, want exit 42\n%s", cmd.ProcessState, out)
+					}
+				})
 			}
 		})
 	}

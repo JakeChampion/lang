@@ -2051,12 +2051,9 @@ function fetch_locked(fetcher: Fetcher, w: FetchWalk, mdir: string): FetchWalk {
       return w;
     }
   }
-  let lr: fern_toml.LockResult = fern_toml.parse_lock(lsrc);
-  if (lr.err.len() > 0) {
-    return FetchWalk { ...w, err: mdir + "/" + lr.err };
-  }
+  let entries: fern_toml.LockEntry[] = match (fern_toml.parse_lock(lsrc)) { Ok(es) => es, Err(message) => { return FetchWalk { ...w, err: mdir + "/" + message }; } };
   let out: FetchWalk = w;
-  for e in lr.entries {
+  for e in entries {
     if (e.url.len() > 0 && store_dir(e.hash).len() == 0) {
       eprint("fetching " + e.name + "@" + e.version + " (" + e.url + ")");
       let got: Fetched = fetcher.fetch(e.url, e.hash);
@@ -2229,11 +2226,7 @@ function vendor_locked_dir(mdir: string, name: string): VendorSrc {
     return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is versioned but " + mdir
       + " has no fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
   }
-  let lr: fern_toml.LockResult = fern_toml.parse_lock(lsrc);
-  if (lr.err.len() > 0) {
-    return VendorSrc { dir: "", err: mdir + "/" + lr.err };
-  }
-  let entries: fern_toml.LockEntry[] = lr.entries;
+  let entries: fern_toml.LockEntry[] = match (fern_toml.parse_lock(lsrc)) { Ok(es) => es, Err(message) => { return VendorSrc { dir: "", err: mdir + "/" + message }; } };
   if (!fern_toml.lock_has(entries, name)) {
     return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is not in " + mdir
       + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };

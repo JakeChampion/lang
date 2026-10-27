@@ -61,7 +61,7 @@ func TestReadLockMalformedHashMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := ReadLock(dir)
-	want := "fern.lock line 5: hash must be `sha256:` + 64 lowercase hex digits of the archive bytes, got \"sha256:../../outside/evil\""
+	want := filepath.Join(dir, LockFileName) + " line 5: hash must be `sha256:` + 64 lowercase hex digits of the archive bytes, got \"sha256:../../outside/evil\""
 	if err == nil || err.Error() != want {
 		t.Errorf("ReadLock error = %v, want %s", err, want)
 	}

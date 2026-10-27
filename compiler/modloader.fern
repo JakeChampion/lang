@@ -454,11 +454,7 @@ function member_name(memdir: string): string {
 function locked_dir(dir: string, name: string): Option[string] {
   match (read_file(dir + "fern.lock")) {
     Ok(src) => {
-      let lr: fern_toml.LockResult = fern_toml.parse_lock(src);
-      if (lr.err.len() > 0) {
-        return None;
-      }
-      let entries: fern_toml.LockEntry[] = lr.entries;
+      let entries: fern_toml.LockEntry[] = match (fern_toml.parse_lock(src)) { Ok(es) => es, Err(_) => { return None; } };
       match (fern_toml.lock_path_of(entries, name)) {
         Some(p) => {
           return Some(p + "/");

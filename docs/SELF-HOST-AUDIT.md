@@ -760,8 +760,11 @@ findings. Ranked by leverage.
   conflation and it wants `Option[T]` — which is T8, so sequence the two
   together rather than hand-rolling a fifth result shape here.
 
-  _Also still open:_ the 22 bespoke `*Result` structs, two of them both named
-  `CheckResult` in different modules. Same dependency: that is T8's job.
+  _Also open:_ custom success and failure carriers under T8, such as `ssa_lift.LResult` and `irtables.LowerResult`.
+  Review their partial-state contracts before a result migration.
+  A `Result` suffix alone does not identify an error wrapper.
+  `LexResult` carries tokens and comments, and the checker's `CheckResult` carries a scope and a type.
+  These records carry simultaneous outputs and remain structs.
 
 
 ### T7 — O(n²) string accumulation in emitters
@@ -890,6 +893,13 @@ findings. Ranked by leverage.
   An empty directory succeeds with a present, empty bundle.
   A load failure carries only its diagnostic, without an absent-assets placeholder.
   The bundle and substitution assertions execute on x86-64, ARM64 and Wasm.
+
+  The lock-file parser returns `Result[LockEntry[], string]` instead of `LockResult`.
+  Empty files return `Ok` with no entries, and invalid hashes return their diagnostic without partial entries.
+  The loader, fetch and vendor paths match that result.
+  LF and CRLF lock-file checks execute on x86-64, ARM64 and Wasm.
+  The vendor differential also exposed a Go reader diagnostic that omitted the lock-file directory.
+  The Go reader now retains the file path in parse diagnostics, as the self-host CLI already does.
 
   _Rest of this row:_ the bespoke `*Result` structs remain.
   The generic-function migration is no longer blocked, and neither is

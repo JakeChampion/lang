@@ -131,6 +131,12 @@ func TestSelfHostVendorDifferentialX86_64(t *testing.T) {
 				"[dependencies]\nlibv = \"1.0.0\"\n",
 			"main.fern": "function main(): i32 { return 0; }\n",
 		}, ".", "", false, true},
+		{"versioned-with-invalid-lock", map[string]string{
+			"fern.toml": "[package]\nname = \"app\"\n[dependencies]\nlibv = \"1.0.0\"\n",
+			"main.fern": "function main(): i32 { return 0; }\n",
+			"fern.lock": "[[package]]\nname = \"good\"\nversion = \"1.0.0\"\n\n" +
+				"[[package]]\nname = \"libv\"\nversion = \"1.0.0\"\nhash = \"sha256:bad\"\n",
+		}, ".", "", false, true},
 		{"url-from-store", map[string]string{
 			"fern.toml": "[package]\nname = \"app\"\n[dependencies]\n" +
 				"remote = { url = \"https://example.invalid/remote.tar.gz\", hash = \"sha256:" + storeHex + "\" }\n",

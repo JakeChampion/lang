@@ -658,12 +658,7 @@ pub struct LockEntry {
   hash: string,
 }
 
-pub struct LockResult {
-  entries: LockEntry[],
-  err: string,
-}
-
-pub function parse_lock(src: string): LockResult {
+pub function parse_lock(src: string): Result[LockEntry[], string] {
   let out: LockEntry[] = [];
   let blank: LockEntry = LockEntry { name: "", version: "", path: "", url: "", hash: "" };
   let cur: LockEntry = blank;
@@ -690,9 +685,7 @@ pub function parse_lock(src: string): LockResult {
       Some(v) => {
         if (key == "hash") {
           if let Err(message) = validate_hash(v) {
-            let none: LockEntry[] = [];
-            return LockResult { entries: none, err: "fern.lock line "
-              + util.i32_to_string(li) + ": hash " + message };
+            return Err("fern.lock line " + util.i32_to_string(li) + ": hash " + message);
           }
         }
         cur = with_lock_field(cur, key, v);
@@ -703,7 +696,7 @@ pub function parse_lock(src: string): LockResult {
   if (have) {
     out = out.append(cur);
   }
-  return LockResult { entries: out, err: "" };
+  return Ok(out);
 }
 
 function with_lock_field(e: LockEntry, key: string, v: string): LockEntry {
