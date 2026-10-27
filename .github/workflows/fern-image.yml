@@ -113,6 +113,13 @@ jobs:
       - run: ./fern-image/scripts/test-jpeg-exif.sh wasm
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_jpeg_orientation_test.py
+      - run: ./fern-image/scripts/test-jpeg-orientation.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-jpeg-orientation.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/test-deflate-reader.sh native
         env:
           FERN: ${{ github.workspace }}/bin/fern
@@ -187,4 +194,10 @@ jobs:
         with:
           name: image-jpeg-exif
           path: fern-image/build/jpeg-exif-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/jpeg-orientation-*.json') != ''
+        with:
+          name: image-jpeg-orientation
+          path: fern-image/build/jpeg-orientation-*.json
           if-no-files-found: error

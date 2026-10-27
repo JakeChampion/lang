@@ -1,0 +1,195 @@
+import "../packages/codecs/jpeg/orientation";
+import "../packages/codecs/jpeg/exif";
+import "../packages/pixels/pixels";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function directions(): exif.Orientation[] {
+  return [exif.TopLeft, exif.TopRight, exif.BottomRight, exif.BottomLeft, exif.LeftTop, exif.RightTop, exif.RightBottom, exif.LeftBottom];
+}
+
+function image(width: i32, height: i32, padding: i32, format: pixels.Format): pixels.Image {
+  let stride = width * pixels.channels(format) + padding;
+  let layout = pixels.Layout { width: width, height: height, stride: stride, format: format, bytes: stride * height };
+  let bytes = __alloc_u8(layout.bytes);
+  for i in 0..bytes.len() {
+    bytes = bytes.with(i, 251 as u8);
+  }
+  for y in 0..height {
+    for x in 0..width {
+      for c in 0..pixels.channels(format) {
+        bytes = bytes.with(y * stride + x * pixels.channels(format) + c, ((y * width + x) * 19 + c * 37) as u8);
+      }
+    }
+  }
+  return pixels.Image { layout: layout, data: bytes };
+}
+
+function mappings(): test.TestOutcome {
+  let expected = [[0, 1, 2, 3, 4, 5], [2, 1, 0, 5, 4, 3], [5, 4, 3, 2, 1, 0], [3, 4, 5, 0, 1, 2], [0, 3, 1, 4, 2, 5], [3, 0, 4, 1, 5, 2], [5, 2, 4, 1, 3, 0], [2, 5, 1, 4, 0, 3]];
+  for format in [pixels.RGB8, pixels.RGBA8] {
+    let source = image(3, 2, 5, format);
+    for i in 0..8 {
+      let output = match (orientation.apply(source, directions()[i], orientation.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("orientation mapping"); } };
+      let width = if (i < 4) { 3 } else { 2 };
+      let height = if (i < 4) { 2 } else { 3 };
+      if (output.layout.width != width || output.layout.height != height || output.layout.stride != width * pixels.channels(format) || output.data.len() != 6 * pixels.channels(format)) {
+        return test.fail("packed dimensions");
+      }
+      for p in 0..6 {
+        for c in 0..pixels.channels(format) {
+          if (output.data[p * pixels.channels(format) + c] != (expected[i][p] * 19 + c * 37) as u8) {
+            return test.fail("exact channel permutation");
+          }
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function shapes(): test.TestOutcome {
+  for format in [pixels.RGB8, pixels.RGBA8] {
+    for width in [1, 2, 7] {
+      for height in [1, 3, 8] {
+        let source = image(width, height, 3, format);
+        for value in directions() {
+          let output = match (orientation.apply(source, value, orientation.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("degenerate dimensions"); } };
+          let undo = match (value) { exif.RightTop => exif.LeftBottom, exif.LeftBottom => exif.RightTop, _ => value };
+          let restored = match (orientation.apply(output, undo, orientation.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("inverse mapping"); } };
+          if (restored.layout.width != width || restored.layout.height != height) {
+            return test.fail("inverse dimensions");
+          }
+          for y in 0..height {
+            for x in 0..width {
+              for c in 0..pixels.channels(format) {
+                if (restored.data[(y * width + x) * pixels.channels(format) + c] != source.data[y * source.layout.stride + x * pixels.channels(format) + c]) {
+                  return test.fail("inverse channel bytes");
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  return test.pass();
+}
+
+function invalid(): test.TestOutcome {
+  let source = image(3, 2, 5, pixels.RGBA8);
+  let polls = cell_new(0);
+  let cancel = (): boolean => {
+    polls.set(polls.get() + 1);
+    return true;
+  };
+  let malformed = [
+    pixels.Image { layout: pixels.Layout { width: 0, height: 2, stride: 17, format: pixels.RGBA8, bytes: 34 }, data: source.data },
+    pixels.Image { layout: pixels.Layout { width: 3, height: 2, stride: 11, format: pixels.RGBA8, bytes: 22 }, data: source.data },
+    pixels.Image { layout: pixels.Layout { width: 3, height: 2, stride: 17, format: pixels.RGBA8, bytes: 33 }, data: source.data },
+    pixels.Image { layout: source.layout, data: [1 as u8] },
+    pixels.Image { layout: pixels.Layout { width: 2147483647, height: 2, stride: 17, format: pixels.RGBA8, bytes: 34 }, data: source.data },
+    pixels.Image { layout: pixels.Layout { width: 1, height: 2147483647, stride: 4, format: pixels.RGBA8, bytes: 34 }, data: source.data },
+  ];
+  for broken in malformed {
+    match (orientation.apply(broken, exif.TopLeft, orientation.default_limits(), cancel)) {
+      Err(orientation.OrientError.Image(_)) => {},
+      _ => {
+        return test.fail("invalid public image");
+      }
+    }
+  }
+  for limits in [
+    orientation.OrientLimits { output: pixels.Limits { max_pixels: 5, max_bytes: 24 }, max_planned_bytes: 58 },
+    orientation.OrientLimits { output: pixels.Limits { max_pixels: 6, max_bytes: 23 }, max_planned_bytes: 58 },
+    orientation.OrientLimits { output: pixels.Limits { max_pixels: 6, max_bytes: 24 }, max_planned_bytes: 57 },
+    orientation.OrientLimits { output: pixels.default_limits(), max_planned_bytes: 0 },
+  ] {
+    match (orientation.apply(source, exif.RightTop, limits, cancel)) {
+      Err(orientation.Cancelled()) => {
+        return test.fail("callback before admission");
+      },
+      Err(_) => {},
+      Ok(_) => {
+        return test.fail("one-less admission");
+      }
+    }
+  }
+  if (polls.get() != 0) {
+    return test.fail("invalid source callback");
+  }
+  let limits = orientation.OrientLimits { output: pixels.Limits { max_pixels: 6, max_bytes: 24 }, max_planned_bytes: 58 };
+  let plan = match (orientation.inspect(source, exif.RightTop, limits)) { Ok(v) => v, Err(_) => { return test.fail("exact plan"); } };
+  return test.assert_true(plan.input_bytes == 34 && plan.output_bytes == 24 && plan.planned_bytes == 58 && plan.layout.width == 2 && plan.layout.height == 3);
+}
+
+function cancellation(): test.TestOutcome {
+  for value in directions() {
+    let source = image(65, 3, 2, pixels.RGBA8);
+    let count = cell_new(0);
+    match (orientation.apply(source, value, orientation.default_limits(), (): boolean => {
+      count.set(count.get() + 1);
+      return false;
+    })) {
+      Err(_) => {
+        return test.fail("count cancellation points");
+      },
+      Ok(_) => {}
+    }
+    let expected = if (value == exif.TopLeft || value == exif.TopRight || value == exif.BottomRight || value == exif.BottomLeft) { 9 } else { 68 };
+    if (count.get() != expected) {
+      return test.fail("declared cancellation schedule");
+    }
+    for stop in 1..count.get() + 1 {
+      let current = cell_new(0);
+      match (orientation.apply(source, value, orientation.default_limits(), (): boolean => {
+        current.set(current.get() + 1);
+        return current.get() == stop;
+      })) {
+        Err(orientation.Cancelled()) => {},
+        _ => {
+          return test.fail("each cancellation poll");
+        }
+      }
+      if (current.get() != stop) {
+        return test.fail("terminal cancellation");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function ownership(): test.TestOutcome {
+  let source = cell_new(image(3, 2, 0, pixels.RGBA8));
+  let saved = source.get();
+  let polls = cell_new(0);
+  let output = match (orientation.apply(source.get(), exif.RightTop, orientation.default_limits(), (): boolean => {
+    polls.set(polls.get() + 1);
+    let current = source.get();
+    source.set(pixels.Image { layout: current.layout, data: current.data.with(12, 255 as u8) });
+    return false;
+  })) { Ok(v) => v, Err(_) => { return test.fail("alias callback"); } };
+  if (output.data[0] != saved.data[12] || source.get().data[12] != 255 as u8 || saved.data[12] == 255 as u8) {
+    return test.fail("borrowed source isolation");
+  }
+  let retained = output;
+  output = pixels.Image { layout: output.layout, data: output.data.with(0, 255 as u8) };
+  if (retained.data[0] != saved.data[12] || output.data[0] != 255 as u8) {
+    return test.fail("owned output isolation");
+  }
+  let fresh = match (orientation.apply(saved, exif.RightTop, orientation.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("fresh operation"); } };
+  return test.assert_true(fresh.data[0] == retained.data[0] && polls.get() == 6);
+}
+
+function main(): i32 {
+  let runner = test.test_new("explicit Exif orientation");
+  runner = runner.it("all eight exact RGB and RGBA mappings", mappings);
+  runner = runner.it("single axes and inverse mappings", shapes);
+  runner = runner.it("public layout and exact admission", invalid);
+  runner = runner.it("every cooperative cancellation poll", cancellation);
+  runner = runner.it("input callback and output ownership", ownership);
+  return runner.finish();
+}
