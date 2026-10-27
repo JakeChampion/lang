@@ -865,6 +865,11 @@ findings. Ranked by leverage.
   Arithmetic helpers return `Option[i64]` in both the folder and constant evaluator.
   The numeric width and negative-zero checks retain their behavior.
 
+  The closure lifter also uses `Option[FuncDecl]` for function construction.
+  Both captured closures and named-function wrappers share that result type.
+  A declined transformation returns `None` without a placeholder declaration.
+  The callers preserve the original expression on that path.
+
   _Rest of this row:_ the bespoke `*Result` structs remain.
   The generic-function migration is no longer blocked, and neither is
   T6/SH-026's real remainder (`lookup_*` returning `name: ""`), which depends
