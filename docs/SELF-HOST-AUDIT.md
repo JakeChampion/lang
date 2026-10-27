@@ -1050,6 +1050,30 @@ findings. Ranked by leverage.
   Both benchmark variants use the same current compiler.
   These probes establish no general compiler speed change.
 
+  Guarded graph construction separates complete data from failures.
+  Constant nodes return `Built` data directly.
+  Predicates, operations, selections, and reference-null queries return `Result[Built, BuildError]`.
+  Only successful construction contains a node ID.
+  A failure retains its partial arena and exact diagnostic.
+
+  Twenty-six construction records retain every node, memo entry, result, and diagnostic on x86-64, ARM64, and Wasm.
+  An overflow after one complete branch retains the new node and memo entry in the error arena.
+  The original arena remains unchanged, and the error arena permits further construction.
+  Four added algebra controls pin this contract.
+
+  All 865 solver snapshots retain complete state before and after the change on all three targets.
+  The records cover extraction, reuse, and dense and sparse phi results.
+  Failed states retain their temporary indices, vectors, and diagnostic priority.
+  Separate compiler copies contain the snapshot probes.
+  Two native sanitizer probes release all 3,389 allocations, with zero live bytes in each process.
+  Four guarded-credit suites pass all three targets with balanced sanitizer checks.
+
+  Forty paired probes per case perform 5,000 operations.
+  Memo hits take 12% more time, construction takes 9% less time, and partial errors take 3% more time.
+  Twenty process pairs for each complete proof workload retain exact output.
+  Extraction, phi, and reuse time ratios are 0.978, 1.023, and 1.024.
+  These probes establish no general compiler speed change.
+
   Printer recognition uses `Option[UseSugar]` and `Option[ForCSugar]`.
   Absent forms no longer contain placeholder calls, bodies, or loop conditions.
   Layout, statement output, and lint scores match the option before they use a payload.

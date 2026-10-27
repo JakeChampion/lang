@@ -1,11 +1,11 @@
 import "../ssacreditguard" as guard;
 
-function must(r: guard.Built): guard.Built {
-  if (r.error != "") {
-    print(r.error);
-    exit(1);
-  }
-  return r;
+function must(r: Result[guard.Built, guard.BuildError]): guard.Built {
+  return match (r) { Ok(value) => value, Err(error) => { print(error.message); exit(1); } };
+}
+
+function is_failed(r: Result[guard.Built, guard.BuildError]): boolean {
+  return match (r) { Ok(_) => false, Err(_) => true };
 }
 
 function require(ok: boolean, id: i32): void {
@@ -26,8 +26,8 @@ function main(): i32 {
   let p = must(guard.predicate(guard.empty(), 17));
   let q = must(guard.predicate(p.arena, 3));
   let r = must(guard.predicate(q.arena, 2147483647));
-  let one = must(guard.constant(r.arena, 1));
-  let zero = must(guard.constant(one.arena, 0));
+  let one = guard.constant(r.arena, 1);
+  let zero = guard.constant(one.arena, 0);
   let pq = must(guard.combine(zero.arena, 0, p.id, q.id));
   let sum = must(guard.combine(pq.arena, 0, pq.id, r.id));
   let qr = must(guard.combine(sum.arena, 0, q.id, r.id));
@@ -73,13 +73,13 @@ function main(): i32 {
   require(is_absent(guard.evaluate(p.arena, p.id, [], [])), 16);
   require(is_absent(guard.evaluate(p.arena, p.id, [17, 17], [true, false])), 17);
   require(is_absent(guard.evaluate(p.arena, 99, [17], [true])), 18);
-  require(guard.predicate(p.arena, -1).error != "", 19);
-  require(guard.combine(p.arena, 5, 0, 1).error != "", 20);
-  require(guard.combine(p.arena, 0, -1, 1).error != "", 21);
-  let max = must(guard.constant(repeated.arena, 2147483647));
-  require(guard.combine(max.arena, 0, max.id, one.id).error != "", 22);
-  let min = must(guard.constant(max.arena, -2147483648));
-  require(guard.combine(min.arena, 1, min.id, one.id).error != "", 23);
+  require(is_failed(guard.predicate(p.arena, -1)), 19);
+  require(is_failed(guard.combine(p.arena, 5, 0, 1)), 20);
+  require(is_failed(guard.combine(p.arena, 0, -1, 1)), 21);
+  let max = guard.constant(repeated.arena, 2147483647);
+  require(is_failed(guard.combine(max.arena, 0, max.id, one.id)), 22);
+  let min = guard.constant(max.arena, -2147483648);
+  require(is_failed(guard.combine(min.arena, 1, min.id, one.id)), 23);
   let extremes = must(guard.select(min.arena, p.id, max.id, min.id));
   let nested = must(guard.select(extremes.arena, q.id, extremes.id, diff.id));
   let feasible = must(guard.combine(nested.arena, 4, p.id, q.id));
@@ -94,14 +94,14 @@ function main(): i32 {
   let false_path = must(guard.combine(joined.arena, 4, p.id, shared.id));
   let unreachable = must(guard.combine(false_path.arena, 4, false_path.id, min.id));
   require(guard.is_constant(unreachable.arena, unreachable.id, 0), 28);
-  let two = must(guard.constant(unreachable.arena, 2));
+  let two = guard.constant(unreachable.arena, 2);
   let invalid_mask = must(guard.select(two.arena, r.id, two.id, zero.id));
-  require(guard.combine(invalid_mask.arena, 4, invalid_mask.id, zero.id).error != "", 29);
-  require(guard.select(invalid_mask.arena, invalid_mask.id, one.id, one.id).error != "", 30);
-  require(guard.select(invalid_mask.arena, p.id, -1, zero.id).error != "", 31);
-  require(guard.select(invalid_mask.arena, zero.id, one.id, -1).error != "", 32);
-  let negative_mask = must(guard.constant(invalid_mask.arena, -1));
-  require(guard.combine(negative_mask.arena, 4, negative_mask.id, zero.id).error != "", 33);
+  require(is_failed(guard.combine(invalid_mask.arena, 4, invalid_mask.id, zero.id)), 29);
+  require(is_failed(guard.select(invalid_mask.arena, invalid_mask.id, one.id, one.id)), 30);
+  require(is_failed(guard.select(invalid_mask.arena, p.id, -1, zero.id)), 31);
+  require(is_failed(guard.select(invalid_mask.arena, zero.id, one.id, -1)), 32);
+  let negative_mask = guard.constant(invalid_mask.arena, -1);
+  require(is_failed(guard.combine(negative_mask.arena, 4, negative_mask.id, zero.id)), 33);
   mask = 0;
   while (mask < 8) {
     let pv: i32 = mask & 1;
@@ -131,6 +131,18 @@ function main(): i32 {
   require(is_value(guard.evaluate(negative_mask.arena, min.id, [], []), -2147483648), 42);
   require(is_value(guard.evaluate(negative_mask.arena, max.id, [], []), 2147483647), 43);
   require(is_value(guard.evaluate(negative_mask.arena, zero.id, [99], [true]), 0), 44);
+  let partial_three = guard.constant(guard.empty(), 3);
+  let partial_one = guard.constant(partial_three.arena, 1);
+  let partial_max = guard.constant(partial_one.arena, 2147483647);
+  let partial_pred = must(guard.predicate(partial_max.arena, 7));
+  let partial_decision = must(guard.select(partial_pred.arena, partial_pred.id, partial_max.id, partial_three.id));
+  let before_nodes = guard.node_count(partial_decision.arena);
+  let before_memo = partial_decision.arena.memo.len();
+  let error: guard.BuildError = match (guard.combine(partial_decision.arena, 0, partial_decision.id, partial_one.id)) { Ok(_) => { exit(45); }, Err(value) => value };
+  require(error.message == "guarded credit overflow" && guard.node_count(error.arena) == before_nodes + 1 && error.arena.memo.len() == before_memo + 1, 46);
+  require(guard.node_count(partial_decision.arena) == before_nodes && partial_decision.arena.memo.len() == before_memo, 47);
+  let recovered = must(guard.combine(error.arena, 0, partial_three.id, partial_one.id));
+  require(is_value(guard.evaluate(recovered.arena, recovered.id, [], []), 4), 48);
   print("guarded credit algebra: all controls agree");
   return 0;
 }

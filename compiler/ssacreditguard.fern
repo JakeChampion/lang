@@ -6,14 +6,16 @@ struct Memo { op: i32, a: i32, b: i32, result: i32 }
 
 pub struct Arena { nodes: Node[], memo: Memo[] }
 
-pub struct Built { arena: Arena, id: i32, error: string }
+pub struct Built { arena: Arena, id: i32 }
+
+pub struct BuildError { arena: Arena, message: string }
 
 pub function empty(): Arena {
   return Arena { nodes: [], memo: [] };
 }
 
-function failed(a: Arena, why: string): Built {
-  return Built { arena: a, id: -1, error: why };
+function failed(a: Arena, why: string): Result[Built, BuildError] {
+  return Err(BuildError { arena: a, message: why });
 }
 
 function valid(a: Arena, id: i32): boolean {
@@ -24,33 +26,33 @@ function node(a: Arena, n: Node): Built {
   let i: i32 = 0;
   for old in a.nodes {
     if (old.variable == n.variable && old.low == n.low && old.high == n.high && old.value == n.value) {
-      return Built { arena: a, id: i, error: "" };
+      return Built { arena: a, id: i };
     }
     i = i + 1;
   }
-  return Built { arena: Arena { ...a, nodes: a.nodes.append(n) }, id: i, error: "" };
+  return Built { arena: Arena { ...a, nodes: a.nodes.append(n) }, id: i };
 }
 
 pub function constant(a: Arena, value: i32): Built {
   return node(a, Node { variable: -1, low: -1, high: -1, value: value });
 }
 
-function choice(a: Arena, variable: i32, low: i32, high: i32): Built {
+function choice(a: Arena, variable: i32, low: i32, high: i32): Result[Built, BuildError] {
   if (variable < 0 || !valid(a, low) || !valid(a, high)) {
     return failed(a, "invalid guarded node");
   }
   if (low == high) {
-    return Built { arena: a, id: low, error: "" };
+    return Ok(Built { arena: a, id: low });
   }
   let l = a.nodes[low];
   let h = a.nodes[high];
   if (l.variable >= 0 && l.variable <= variable || h.variable >= 0 && h.variable <= variable) {
     return failed(a, "unordered predicate");
   }
-  return node(a, Node { variable: variable, low: low, high: high, value: 0 });
+  return Ok(node(a, Node { variable: variable, low: low, high: high, value: 0 }));
 }
 
-pub function predicate(a: Arena, variable: i32): Built {
+pub function predicate(a: Arena, variable: i32): Result[Built, BuildError] {
   if (variable < 0) {
     return failed(a, "invalid predicate identity");
   }
@@ -59,19 +61,18 @@ pub function predicate(a: Arena, variable: i32): Built {
   return choice(one.arena, variable, zero.id, one.id);
 }
 
-pub function combine(a: Arena, op: i32, left: i32, right: i32): Built {
+pub function combine(a: Arena, op: i32, left: i32, right: i32): Result[Built, BuildError] {
   if (op < 0 || op > 4 || !valid(a, left) || !valid(a, right)) {
     return failed(a, "invalid guarded operation");
   }
   for m in a.memo {
     if (m.op == op && m.a == left && m.b == right) {
-      return Built { arena: a, id: m.result, error: "" };
+      return Ok(Built { arena: a, id: m.result });
     }
   }
   let l = a.nodes[left];
   let r = a.nodes[right];
-  let out = failed(a, "uncomputed guarded operation");
-  if (l.variable < 0 && r.variable < 0) {
+  let out: Built = if (l.variable < 0 && r.variable < 0) {
     let value: i64 = 0i64;
     if (op == 0) {
       value = l.value as i64 + r.value as i64;
@@ -96,7 +97,7 @@ pub function combine(a: Arena, op: i32, left: i32, right: i32): Built {
     if (value < -2147483648i64 || value > 2147483647i64) {
       return failed(a, "guarded credit overflow");
     }
-    out = constant(a, value as i32);
+    constant(a, value as i32)
   } else {
     let v: i32 = l.variable;
     if (v < 0 || r.variable >= 0 && r.variable < v) {
@@ -114,37 +115,19 @@ pub function combine(a: Arena, op: i32, left: i32, right: i32): Built {
       rl = r.low;
       rh = r.high;
     }
-    let low = combine(a, op, ll, rl);
-    if (low.error != "") {
-      return low;
-    }
-    let high = combine(low.arena, op, lh, rh);
-    if (high.error != "") {
-      return high;
-    }
-    out = choice(high.arena, v, low.id, high.id);
-  }
-  if (out.error != "") {
-    return out;
-  }
+    let low: Built = match (combine(a, op, ll, rl)) { Ok(value) => value, Err(error) => { return Err(error); } };
+    let high: Built = match (combine(low.arena, op, lh, rh)) { Ok(value) => value, Err(error) => { return Err(error); } };
+    match (choice(high.arena, v, low.id, high.id)) { Ok(value) => value, Err(error) => { return Err(error); } }
+  };
   let memo = out.arena.memo.append(Memo { op: op, a: left, b: right, result: out.id });
-  return Built { ...out, arena: Arena { ...out.arena, memo: memo } };
+  return Ok(Built { ...out, arena: Arena { ...out.arena, memo: memo } });
 }
 
-pub function select(a: Arena, condition: i32, when_true: i32, when_false: i32): Built {
-  let yes = combine(a, 4, condition, when_true);
-  if (yes.error != "") {
-    return yes;
-  }
+pub function select(a: Arena, condition: i32, when_true: i32, when_false: i32): Result[Built, BuildError] {
+  let yes: Built = match (combine(a, 4, condition, when_true)) { Ok(value) => value, Err(error) => { return Err(error); } };
   let one = constant(yes.arena, 1);
-  let negated = combine(one.arena, 1, one.id, condition);
-  if (negated.error != "") {
-    return negated;
-  }
-  let no = combine(negated.arena, 4, negated.id, when_false);
-  if (no.error != "") {
-    return no;
-  }
+  let negated: Built = match (combine(one.arena, 1, one.id, condition)) { Ok(value) => value, Err(error) => { return Err(error); } };
+  let no: Built = match (combine(negated.arena, 4, negated.id, when_false)) { Ok(value) => value, Err(error) => { return Err(error); } };
   return combine(no.arena, 0, yes.id, no.id);
 }
 

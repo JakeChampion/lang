@@ -14,13 +14,10 @@ function failed(a: guard.Arena, why: string): Joined {
   return Joined { arena: a, bindings: [], path: -1, error: why };
 }
 
-function implies(a: guard.Arena, path: i32, condition: i32): guard.Built {
+function implies(a: guard.Arena, path: i32, condition: i32): Result[guard.Built, guard.BuildError] {
   let one = guard.constant(a, 1);
-  let valid = guard.combine(one.arena, 4, condition, one.id);
-  if (valid.error != "") {
-    return valid;
-  }
-  let inverse = guard.combine(valid.arena, 1, one.id, condition);
+  let valid: guard.Built = match (guard.combine(one.arena, 4, condition, one.id)) { Ok(value) => value, Err(error) => { return Err(error); } };
+  let inverse: guard.Built = match (guard.combine(valid.arena, 1, one.id, condition)) { Ok(value) => value, Err(error) => { return Err(error); } };
   return guard.combine(inverse.arena, 4, path, inverse.id);
 }
 
@@ -66,15 +63,12 @@ function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i
       return failed(arena, "invalid phi predecessor");
     }
     seen = seen.append(e.predecessor);
-    let mask = guard.combine(arena, 4, e.path, one.id);
-    if (mask.error != "") {
-      return failed(mask.arena, mask.error);
-    }
-    let overlap = guard.combine(mask.arena, 4, path, e.path);
-    if (overlap.error != "" || !guard.is_constant(overlap.arena, overlap.id, 0)) {
+    let mask: guard.Built = match (guard.combine(arena, 4, e.path, one.id)) { Ok(value) => value, Err(error) => { return failed(error.arena, error.message); } };
+    let overlap: guard.Built = match (guard.combine(mask.arena, 4, path, e.path)) { Ok(value) => value, Err(error) => { return failed(error.arena, "overlapping phi edges"); } };
+    if (!guard.is_constant(overlap.arena, overlap.id, 0)) {
       return failed(overlap.arena, "overlapping phi edges");
     }
-    let joined = guard.combine(overlap.arena, 0, path, e.path);
+    let joined: guard.Built = match (guard.combine(overlap.arena, 0, path, e.path)) { Ok(value) => value, Err(error) => { return failed(error.arena, error.message); } };
     arena = joined.arena;
     path = joined.id;
   }
@@ -118,37 +112,25 @@ function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i
           if (value.kind != 0 && value.kind != 1) {
             return failed(arena, "unreadable phi operand");
           }
-          let available = implies(arena, e.path, value.available);
-          if (available.error != "") {
-            return failed(available.arena, available.error);
-          }
+          let available: guard.Built = match (implies(arena, e.path, value.available)) { Ok(value) => value, Err(error) => { return failed(error.arena, error.message); } };
           if (!guard.is_constant(available.arena, available.id, 0)) {
             return failed(available.arena, "unavailable phi operand");
           }
-          let contribution = guard.combine(available.arena, 4, e.path, value.identity);
-          if (contribution.error != "") {
-            return failed(contribution.arena, contribution.error);
-          }
+          let contribution: guard.Built = match (guard.combine(available.arena, 4, e.path, value.identity)) { Ok(value) => value, Err(error) => { return failed(error.arena, error.message); } };
           arena = contribution.arena;
           if (value.kind == 1) {
             kind = 1;
-            let negative = guard.combine(arena, 3, contribution.id, zero.id);
-            if (negative.error != "" || !guard.is_constant(negative.arena, negative.id, 0)) {
+            let negative: guard.Built = match (guard.combine(arena, 3, contribution.id, zero.id)) { Ok(value) => value, Err(error) => { return failed(error.arena, "invalid reference identity"); } };
+            if (!guard.is_constant(negative.arena, negative.id, 0)) {
               return failed(negative.arena, "invalid reference identity");
             }
             arena = negative.arena;
           } else {
-            let sum = guard.combine(arena, 0, scalar, contribution.id);
-            if (sum.error != "") {
-              return failed(sum.arena, sum.error);
-            }
+            let sum: guard.Built = match (guard.combine(arena, 0, scalar, contribution.id)) { Ok(value) => value, Err(error) => { return failed(error.arena, error.message); } };
             arena = sum.arena;
             scalar = sum.id;
           }
-          let sum = guard.combine(arena, 0, identity, contribution.id);
-          if (sum.error != "") {
-            return failed(sum.arena, sum.error);
-          }
+          let sum: guard.Built = match (guard.combine(arena, 0, identity, contribution.id)) { Ok(value) => value, Err(error) => { return failed(error.arena, error.message); } };
           arena = sum.arena;
           identity = sum.id;
         }
@@ -162,26 +144,20 @@ function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i
   return Joined { arena: arena, bindings: bindings, path: path, error: "" };
 }
 
-pub function is_null(a: guard.Arena, value: Value, path: i32): guard.Built {
+pub function is_null(a: guard.Arena, value: Value, path: i32): Result[guard.Built, guard.BuildError] {
   if (value.kind != 1) {
-    return guard.Built { arena: a, id: -1, error: "reference null test required" };
+    return Err(guard.BuildError { arena: a, message: "reference null test required" });
   }
-  let available = implies(a, path, value.available);
-  if (available.error != "") {
-    return available;
-  }
+  let available: guard.Built = match (implies(a, path, value.available)) { Ok(result) => result, Err(error) => { return Err(error); } };
   if (!guard.is_constant(available.arena, available.id, 0)) {
-    return guard.Built { arena: available.arena, id: -1, error: "unavailable null-test operand" };
+    return Err(guard.BuildError { arena: available.arena, message: "unavailable null-test operand" });
   }
   let zero = guard.constant(available.arena, 0);
-  let negative = guard.combine(zero.arena, 3, value.identity, zero.id);
-  let feasible = guard.combine(negative.arena, 4, path, negative.id);
-  if (feasible.error != "") {
-    return feasible;
-  }
+  let negative: guard.Built = match (guard.combine(zero.arena, 3, value.identity, zero.id)) { Ok(result) => result, Err(error) => { return Err(error); } };
+  let feasible: guard.Built = match (guard.combine(negative.arena, 4, path, negative.id)) { Ok(result) => result, Err(error) => { return Err(error); } };
   if (!guard.is_constant(feasible.arena, feasible.id, 0)) {
-    return guard.Built { arena: feasible.arena, id: -1, error: "invalid reference identity" };
+    return Err(guard.BuildError { arena: feasible.arena, message: "invalid reference identity" });
   }
-  let eq = guard.combine(feasible.arena, 2, value.identity, zero.id);
+  let eq: guard.Built = match (guard.combine(feasible.arena, 2, value.identity, zero.id)) { Ok(result) => result, Err(error) => { return Err(error); } };
   return guard.combine(eq.arena, 4, path, eq.id);
 }
