@@ -1,0 +1,7 @@
+ERROR   /tmp/image-engine-worktrees/lang-image-cli-harden-health/docs/rc-log/2026-10-27-cli-harden-refusal.md:par4 [rule 6.6] paragraph has 7 sentences (max 6).
+WARNING /tmp/image-engine-worktrees/lang-image-cli-harden-health/docs/rc-log/2026-10-27-cli-harden-refusal.md:par2 [rule 3.5] "hardening": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-cli-harden-health/docs/rc-log/2026-10-27-cli-harden-refusal.md:par3 [rule 3.5] "hardening": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-cli-harden-health/docs/rc-log/2026-10-27-cli-harden-refusal.md:par3 [rule 3.5] "hardening": an "-ing" form is permitted only in a technical name.
+WARNING /tmp/image-engine-worktrees/lang-image-cli-harden-health/docs/rc-log/2026-10-27-cli-harden-refusal.md:par5 [rule 3.5] "hardening": an "-ing" form is permitted only in a technical name.
+
+Result: 1 errors, 4 warnings.

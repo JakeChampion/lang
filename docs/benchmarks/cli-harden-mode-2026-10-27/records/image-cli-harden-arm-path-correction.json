@@ -1,0 +1,14 @@
+{
+  "source": "4f0e7f0a2f4d27f503720cb2dce05d1e722a5a57",
+  "first_Go_exit": 0,
+  "first_wrapper_exit": 1,
+  "first_PASS": 125,
+  "first_SKIP": 2,
+  "first_FAIL": 0,
+  "missing_cases": [
+    "emit-target-arm64",
+    "emit-target-arm64-android"
+  ],
+  "cause": "The launch omitted the existing ARM cross-toolchain and QEMU paths.",
+  "correction": "Export the installed toolchain paths and run only the two skipped cases. Preserve all completed cases without repetition."
+}

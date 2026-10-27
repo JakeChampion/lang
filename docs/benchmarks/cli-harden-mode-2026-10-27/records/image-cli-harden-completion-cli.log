@@ -1,0 +1,8 @@
+=== RUN   TestSelfHostCLIX86_64
+=== RUN   TestSelfHostCLIX86_64/emit-target-arm64
+=== RUN   TestSelfHostCLIX86_64/emit-target-arm64-android
+--- PASS: TestSelfHostCLIX86_64 (1.58s)
+    --- PASS: TestSelfHostCLIX86_64/emit-target-arm64 (0.03s)
+    --- PASS: TestSelfHostCLIX86_64/emit-target-arm64-android (0.02s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	1.600s

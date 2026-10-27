@@ -1,0 +1,6 @@
+{
+  "first_guard_exit": 128,
+  "reason": "git show-ref --verify without --quiet reports a missing ref with exit128. Corrected --quiet guard reports exit1.",
+  "first_worktree_created": false,
+  "source_edits": false
+}

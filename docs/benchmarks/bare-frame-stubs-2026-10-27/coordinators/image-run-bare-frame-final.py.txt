@@ -1,0 +1,26 @@
+from pathlib import Path
+import subprocess,json,hashlib,time,re,sys
+root=Path('/tmp/image-engine-worktrees/lang-image-bare-frame-health');mode=sys.argv[1];prefix=Path('/tmp/image-bare-frame-final-'+mode);assert not prefix.with_suffix('.json').exists();g=lambda *a:subprocess.check_output(['git',*a],cwd=root,text=True).strip();source=g('rev-parse','HEAD');assert source=='6c462549052932a976a7d4d146422add772a6f4c'and not g('status','--porcelain');paths=g('ls-files','compiler','internal/stdlib','internal/testing').splitlines();sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();before={p:sha(root/p)for p in paths};cli='/tmp/image-retained-bounded-current-fern-3a70b650d';cli_sha=sha(Path(cli));assert cli_sha=='e60468d00e57fe3b5badbf86878952432fd4744d0ef1d945386d67a680eac69e';assert not g('diff','3a70b650d36331d2febe0f88d207bf0702e09ef4','HEAD','--','compiler','internal/stdlib')
+commands={
+ 'abort':[['go','test','-v','./internal/testing/e2ecompiler','-run','^TestSelfHostAbort','-count=1','-timeout=15m']],
+ 'aux':[[cli,'-fmt','-d',*[p for p in g('ls-files','*.fern','*.fern.md').splitlines()if not p.startswith('conformance/')and '/testdata/'not in p]],['go','build','./...'],['go','vet','./...'],['make','gofmt-check','actionlint','testnames','ci-selftest','runtime-bundle-check'],['go','test','-v','./internal/testing/sourcelint','-count=1'],['git','diff','--check']],
+ 'controls':[['go','test','-overlay','/tmp/image-bare-frame-control-'+n+'.overlay.json','-v','./internal/testing/e2ecompiler','-run','^TestSelfHostAbortBareFrameX86_64$','-count=1','-timeout=10m']for n in ['missing','renamed','duplicate']]
+}[mode]
+rec=dict(source=source,worktree_clean=True,format_probe_compiler_build='3a70b650d36331d2febe0f88d207bf0702e09ef4',format_probe_compiler_sha256=cli_sha,source_hashes=before,checks=[]);prefix.with_suffix('.before.json').write_text(json.dumps(rec,indent=2)+'\n');t=time.time()
+with prefix.with_suffix('.log').open('w')as combined:
+ for i,c in enumerate(commands):
+  begin=time.time()
+  if mode=='controls':
+   name=['missing','renamed','duplicate'][i];creation=json.loads(Path('/tmp/image-bare-frame-controls-creation.json').read_text());meta=creation['controls'][name];assert sha(root/'internal/testing/e2ecompiler/self_host_abort_report_test.go')==meta['candidate_sha256'];assert sha(Path(meta['source_file']))==meta['overlay_source_sha256'];logpath=Path('/tmp/image-bare-frame-final-control-'+name+'.log')
+   with logpath.open('w')as log:r=subprocess.run(c,cwd=root,stdout=log,stderr=subprocess.STDOUT)
+   text=logpath.read_text();combined.write(text);expected={'missing':'[__fern_str_oob_abort.l1:]','renamed':'[__fern_str_oob_abort.l1: __fern_unrelated_abort.c:]','duplicate':'[__fern_str_oob_abort.l1: __fern_alloc_size_abort.c: __fern_alloc_size_abort.c:]'}[name]
+   errors=[l for l in text.splitlines()if re.search(r'self_host_abort_report_test.go:\d+:',l)];ok=r.returncode==1 and len(errors)==1 and 'trap stubs '+expected+', want exactly __fern_str_oob_abort.l1 and __fern_alloc_size_abort.c'in errors[0]and len(re.findall(r'^\s*--- FAIL:',text,re.M))==1 and not re.search(r'^\s*--- (PASS|SKIP):',text,re.M);rec['checks'].append(dict(command=c,exit=r.returncode,expected_exit=1,expected_failure_qualified=ok,seconds=time.time()-begin,overlay_source_sha256=meta['overlay_source_sha256'],only_inspected_assembly_view_changed=True))
+  else:
+   r=subprocess.run(c,cwd=root,stdout=combined,stderr=subprocess.STDOUT);ok=r.returncode==0;rec['checks'].append(dict(command=c,exit=r.returncode,seconds=time.time()-begin))
+  combined.flush();prefix.with_suffix('.checkpoint.json').write_text(json.dumps(rec,indent=2)+'\n')
+  if not ok:break
+text=prefix.with_suffix('.log').read_text();rec.update(seconds=time.time()-t,PASS=len(re.findall(r'^\s*--- PASS:',text,re.M)),FAIL=len(re.findall(r'^\s*--- FAIL:',text,re.M)),SKIP=len(re.findall(r'^\s*--- SKIP:',text,re.M)),sources_unchanged=before=={p:sha(root/p)for p in paths},format_probe_compiler_unchanged=sha(Path(cli))==cli_sha,worktree_still_clean=not g('status','--porcelain'));prefix.with_suffix('.json').write_text(json.dumps(rec,indent=2)+'\n');print({k:v for k,v in rec.items()if k not in ['source_hashes','checks']});print('exits',[x['exit']for x in rec['checks']]);assert len(rec['checks'])==len(commands)and rec['sources_unchanged']and rec['format_probe_compiler_unchanged']and rec['worktree_still_clean']and rec['SKIP']==0
+if mode=='controls':assert rec['PASS']==0 and rec['FAIL']==3 and all(c['expected_failure_qualified']for c in rec['checks'])
+else:assert rec['FAIL']==0 and all(c['exit']==0 for c in rec['checks'])
+if mode=='abort':assert '--- PASS: TestSelfHostAbortBareFrameX86_64'in text and rec['PASS']>=10
+if mode=='aux':assert rec['PASS']==219 and 'ERROR 'not in text

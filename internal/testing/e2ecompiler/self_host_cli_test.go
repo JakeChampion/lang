@@ -2392,7 +2392,9 @@ function main(): i32 {
 			{"-target", "x86-64-linux", "-shared", src},
 			{"-target", "x86-64-linux", "-shared", "-export", "nope", "-o", so, src},
 			{"-target", "arm64-darwin", "-harden", "-o", so, src},
-			{"-target", "x86-64-linux", "-harden", "-shared", "-o", so, src},
+			{"-target", "x86-64-linux", "-shared", "-harden", "-o", so, src},
+			{"-target", "arm64-linux", "-shared", "-harden", "-o", so, src},
+			{"-target", "wasm32-wasi", "-harden", "-o", so, src},
 			{"-target", "wasm32-wasi-http", "-run", src},
 			{"-target", "wasm32-wasi", "-cover", src},
 		} {
@@ -2405,6 +2407,46 @@ function main(): i32 {
 		_ = cmd.Run()
 		if code := cmd.ProcessState.ExitCode(); code != 2 {
 			t.Errorf("FERN_PROFILE=bogus exited %d, want 2", code)
+		}
+	})
+
+	t.Run("harden-executable-so-suffix", func(t *testing.T) {
+		tmp := t.TempDir()
+		src := filepath.Join(tmp, "main.fern")
+		if err := os.WriteFile(src, []byte("function main(): i32 { return 42; }\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		bin := filepath.Join(tmp, "executable.so")
+		if _, code := runDriver(t, "-target", "x86-64-linux", "-harden", "-o", bin, src); code != 0 {
+			t.Fatalf("native hardened executable compile exited %d, want 0", code)
+		}
+		image, err := elf.Open(bin)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer image.Close()
+		if image.Type != elf.ET_EXEC {
+			t.Fatalf("native executable with .so suffix has ELF type %s, want ET_EXEC", image.Type)
+		}
+		stack := false
+		for _, p := range image.Progs {
+			if p.Type == elf.PT_LOAD && p.Flags&(elf.PF_W|elf.PF_X) == elf.PF_W|elf.PF_X {
+				t.Fatal("native executable has a writable-executable load segment")
+			}
+			if p.Type == elf.PT_GNU_STACK {
+				stack = true
+				if p.Flags&elf.PF_X != 0 {
+					t.Fatal("native executable requests an executable stack")
+				}
+			}
+		}
+		if !stack {
+			t.Fatal("native executable has no GNU stack declaration")
+		}
+		cmd := exec.Command(bin)
+		_ = cmd.Run()
+		if cmd.ProcessState == nil || cmd.ProcessState.ExitCode() != 42 {
+			t.Fatalf("native executable returned %v, want exit 42", cmd.ProcessState)
 		}
 	})
 

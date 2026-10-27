@@ -1,0 +1,71 @@
+from pathlib import Path
+import subprocess,json,hashlib,shutil,re
+root=Path('/tmp/image-engine-worktrees/lang-image-cli-harden-health');source='4f0e7f0a2f4d27f503720cb2dce05d1e722a5a57';base='50e121fbab40c3ffe7f0172cf0ac2f51723e04e4';g=lambda *a:subprocess.check_output(['git',*a],cwd=root,text=True).strip();assert g('rev-parse','HEAD')==source and not g('status','--porcelain')
+records={n:json.loads(Path('/tmp/'+n+'.json').read_text())for n in ['image-cli-harden-final-cli','image-cli-harden-final-aux','image-cli-harden-completion-cli']}
+for n,j in records.items():
+ assert j['source']==source and j['sources_unchanged']and j['compiler_unchanged']and j['worktree_clean']and j['worktree_still_clean'];assert all(c['exit']==0 for c in j['checks'])and j['FAIL']==0
+first=records['image-cli-harden-final-cli'];aux=records['image-cli-harden-final-aux'];end=records['image-cli-harden-completion-cli'];assert first['PASS']==125 and first['SKIP']==2;assert end['PASS']==3 and end['SKIP']==0;assert aux['PASS']==219 and aux['SKIP']==0
+union=json.loads(Path('/tmp/image-cli-harden-coverage-union.json').read_text());assert union['coverage_union_complete']and union['union_PASS_nodes']==127 and not union['missing_cases']and not union['repeated_completed_semantic_cases']
+sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+for n,h in first['source_hashes'].items():assert sha(root/n)==h
+for n in ['compiler','internal/stdlib','.github','scripts','internal/testing/e2ecompiler/self_host_cli_harness_test.go']:
+ assert subprocess.run(['git','diff','--quiet',base,'HEAD','--',n],cwd=root).returncode==0
+out=root/'docs/benchmarks/cli-harden-mode-2026-10-27';assert not out.exists();out.mkdir(parents=True);manifest=[]
+def copy(p,rel):
+ q=out/rel;assert not q.exists();q.parent.mkdir(parents=True,exist_ok=True);shutil.copy2(p,q);manifest.append(dict(path=str(q.relative_to(out)),original=str(p),sha256=sha(q),bytes=q.stat().st_size))
+for p in sorted(Path('/tmp').glob('image-cli-harden-*')):
+ if p.is_file()and p.suffix in ['.json','.log','.md','.py']and not any(x in p.name for x in ['.before.json','.checkpoint.json']):copy(p,Path('records')/(p.name+'.txt'if p.suffix=='.py'else p.name))
+cap=Path('/tmp/image-cli-harden-contract-capability')
+for p in sorted(cap.glob('*.log')):copy(p,Path('capability')/p.name)
+copy(cap/'main.fern',Path('capability/main.fern.txt'))
+for n in ['image-run-cli-harden-before.py','image-run-cli-harden-focused-after.py','image-run-cli-harden-final.py','image-run-cli-harden-final-before-arm-path.py','image-run-cli-harden-arm-completion.py','image-finalize-cli-harden-evidence.py']:
+ p=Path('/tmp')/n;copy(p,Path('coordinators')/(n+'.txt'))
+(out/'artifact-manifest.json').write_text(json.dumps(manifest,indent=2)+'\n');(out/'summary.json').write_text(json.dumps(dict(source=source,base=base,full_cli_coverage=union,production_sources_and_gates_exact_base=True,format_inputs=len(aux['checks'][0]['command'])-3,source_audit_PASS=219,source_audit_SKIP=0,current_format_probe_compiler_build=first['compiler_build'],current_format_probe_compiler_sha256=first['compiler_sha256'],actual_CI_recovery_qualified=False),indent=2)+'\n')
+(out/'README.md').write_text('''# Native hardening CLI mode evidence
+
+The source commit is `4f0e7f0a2f4d27f503720cb2dce05d1e722a5a57`.
+The clean base is `50e121fbab40c3ffe7f0172cf0ac2f51723e04e4`.
+The manifest binds the copied raw records to their original paths and exact hashes.
+
+Clean main reproduced the unchanged flag-refusal failure with two failing nodes and zero skips.
+The command requested native executable hardening without explicit shared mode.
+The `.so` filename did not change its output mode.
+The independent capability probe observed executable ELF type, no writable-executable load segment, a non-executable stack declaration, and actual exit 42.
+Explicit shared mode on both native targets and Wasm hardening each returned exit two.
+These finite observations establish the current CLI contract, not general security qualification.
+
+The corrected refusal row adds explicit shared mode.
+All other original invalid-flag cases retain their required exit codes.
+Two additional rows cover ARM64 shared-mode hardening and unsupported Wasm hardening.
+The positive control compiles a native executable with the same `.so` suffix and checks its image and actual exit code.
+The website table now matches the current CLI help text.
+
+The focused candidate passed three nodes with zero skips before the source commit.
+That record retains its uncommitted source status.
+The clean committed full command returned Go exit zero with 125 passing nodes, zero failures, and two skips.
+Its qualification wrapper returned one because the launch omitted the installed ARM cross-toolchain paths.
+That initial command does not count as a complete pass.
+
+The corrected launch exported the existing cross-toolchain and QEMU paths without source changes.
+It ran only the two skipped ARM output cases.
+That command passed three nodes, including the repeated parent node, with zero skips.
+The union contains all 127 original test nodes with no missing case or repeated completed semantic case.
+The union record names every node and retains both command results.
+
+All 2,084 format inputs, Go build and vet, workflow checks, and SourceLint passed.
+SourceLint reported 219 passing nodes and zero skips.
+All guarded sources and the recorded format/probe compiler remained unchanged.
+The stock Go harness compiled the CLI from the pinned source through its normal cache.
+The record does not claim a separate hash for every private harness executable.
+
+The format and capability compiler came from clean build `3a70b650d36331d2febe0f88d207bf0702e09ef4`.
+Its compiler and standard-library sources match this candidate exactly.
+This test and documentation change did not require a compiler rebuild.
+Every production compiler source, runtime source, standard-library source, baseline, workload, threshold, and refusal policy remains unchanged.
+Actual CI recovery, the wider retained-machine proof, and all actual M5 and epic acceptance gates remain open.
+''')
+p=root/'docs/rc-log/2026-10-27-cli-harden-refusal.md';s=p.read_text().replace('The complete native CLI driver group requires final qualification after this source commit.','The [final evidence](../benchmarks/cli-harden-mode-2026-10-27/README.md) records complete native CLI coverage after the source commit.\nThe first command retained two ARM skips and did not qualify as a complete pass.\nOnly those unfinished cases ran again, with zero skips and no repeated completed semantic case.');p.write_text(s)
+for p in [out/'README.md',root/'docs/rc-log/2026-10-27-cli-harden-refusal.md']:
+ r=subprocess.run(['python3','.claude/skills/simplified-technical-english/scripts/ste_check.py','--no-vocab','--mode','descriptive',str(p)],cwd=root,capture_output=True,text=True);log=r.stdout+r.stderr;(out/(p.parent.name+'-STE.log')).write_text(log);assert r.returncode==0 and 'ERROR'not in log,log
+assert subprocess.run(['git','diff','--check'],cwd=root).returncode==0
+print(dict(copied_artifacts=len(manifest),coverage_union_nodes=127,SourceLint_PASS=219,evidence=str(out)))

@@ -1,0 +1,103 @@
+{
+  "source": "50e121fbab40c3ffe7f0172cf0ac2f51723e04e4",
+  "compiler_build": "3a70b650d36331d2febe0f88d207bf0702e09ef4",
+  "compiler": "/tmp/image-retained-bounded-current-fern-3a70b650d",
+  "compiler_sha256": "e60468d00e57fe3b5badbf86878952432fd4744d0ef1d945386d67a680eac69e",
+  "source_sha256": "f099a03954491aa3a0855b49473cd612d5071407120a9cc7b25c42d50febaddd",
+  "cases": [
+    {
+      "name": "exe-so",
+      "command": [
+        "/tmp/image-retained-bounded-current-fern-3a70b650d",
+        "-target",
+        "x86-64-linux",
+        "-harden",
+        "-o",
+        "/tmp/image-cli-harden-contract-capability/executable.so",
+        "/tmp/image-cli-harden-contract-capability/main.fern"
+      ],
+      "exit": 0,
+      "expected": 0,
+      "seconds": 0.023389339447021484,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "name": "shared",
+      "command": [
+        "/tmp/image-retained-bounded-current-fern-3a70b650d",
+        "-target",
+        "x86-64-linux",
+        "-shared",
+        "-harden",
+        "-o",
+        "/tmp/image-cli-harden-contract-capability/refused.so",
+        "/tmp/image-cli-harden-contract-capability/main.fern"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "seconds": 0.01487588882446289,
+      "stdout": "",
+      "stderr": "fern: -harden is only supported for -target arm64-linux and x86-64-linux executables (got \"x86-64-linux\" with -shared)\n"
+    },
+    {
+      "name": "wasm",
+      "command": [
+        "/tmp/image-retained-bounded-current-fern-3a70b650d",
+        "-target",
+        "wasm32-wasi",
+        "-harden",
+        "-o",
+        "/tmp/image-cli-harden-contract-capability/refused.wasm",
+        "/tmp/image-cli-harden-contract-capability/main.fern"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "seconds": 0.016512632369995117,
+      "stdout": "",
+      "stderr": "fern: -harden is only supported for -target arm64-linux and x86-64-linux executables (got \"wasm32-wasi\")\n"
+    },
+    {
+      "name": "arm-shared",
+      "command": [
+        "/tmp/image-retained-bounded-current-fern-3a70b650d",
+        "-target",
+        "arm64-linux",
+        "-shared",
+        "-harden",
+        "-o",
+        "/tmp/image-cli-harden-contract-capability/refused-arm.so",
+        "/tmp/image-cli-harden-contract-capability/main.fern"
+      ],
+      "exit": 2,
+      "expected": 2,
+      "seconds": 0.014376640319824219,
+      "stdout": "",
+      "stderr": "fern: -harden is only supported for -target arm64-linux and x86-64-linux executables (got \"arm64-linux\" with -shared)\n"
+    }
+  ],
+  "ELF_type": 2,
+  "program_headers": [
+    {
+      "type": 1,
+      "flags": 5
+    },
+    {
+      "type": 1,
+      "flags": 6
+    },
+    {
+      "type": 1685382480,
+      "flags": 4
+    },
+    {
+      "type": 1685382481,
+      "flags": 6
+    }
+  ],
+  "binary_sha256": "8d742629988278fffe3d219c5113a3507d235c25b88d6531d5f07678c556f78e",
+  "executable_exit": 42,
+  "compiler_unchanged": true,
+  "source_unchanged": true,
+  "worktree_clean": true
+}

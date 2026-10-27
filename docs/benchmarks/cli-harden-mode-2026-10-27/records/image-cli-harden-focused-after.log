@@ -1,0 +1,8 @@
+=== RUN   TestSelfHostCLIX86_64
+=== RUN   TestSelfHostCLIX86_64/flag-refusals-exit-2
+=== RUN   TestSelfHostCLIX86_64/harden-executable-so-suffix
+--- PASS: TestSelfHostCLIX86_64 (1.29s)
+    --- PASS: TestSelfHostCLIX86_64/flag-refusals-exit-2 (0.01s)
+    --- PASS: TestSelfHostCLIX86_64/harden-executable-so-suffix (0.01s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	1.303s

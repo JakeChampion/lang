@@ -1,0 +1,224 @@
+[
+  {
+    "path": "records/image-cli-harden-arm-path-correction.json",
+    "original": "/tmp/image-cli-harden-arm-path-correction.json",
+    "sha256": "c1daaedca1fe5c4f36cf867208f3808318434a2ea90013d62323dd3c59eff8ae",
+    "bytes": 473
+  },
+  {
+    "path": "records/image-cli-harden-completion-cli.json",
+    "original": "/tmp/image-cli-harden-completion-cli.json",
+    "sha256": "4c9effbb7be78428e4f344d8d57e9af437640b4344a192ed3f73cf2c7482f5e7",
+    "bytes": 668781
+  },
+  {
+    "path": "records/image-cli-harden-completion-cli.log",
+    "original": "/tmp/image-cli-harden-completion-cli.log",
+    "sha256": "f9268935eb474b7f17ae21b248a763e01fef7dc50f2216bdb486591f45d4e3f6",
+    "bytes": 387
+  },
+  {
+    "path": "records/image-cli-harden-contract-capability.json",
+    "original": "/tmp/image-cli-harden-contract-capability.json",
+    "sha256": "d517b3068ca508cebe0c91a932e116fdbe3158602e43ca3b35bdb6393936fd43",
+    "bytes": 3007
+  },
+  {
+    "path": "records/image-cli-harden-contract-capability.py.txt",
+    "original": "/tmp/image-cli-harden-contract-capability.py",
+    "sha256": "794c76533a6081ff2ef09d11872e7bff836f02b40133a7d31116b4b05ffd7a56",
+    "bytes": 2699
+  },
+  {
+    "path": "records/image-cli-harden-coverage-union.json",
+    "original": "/tmp/image-cli-harden-coverage-union.json",
+    "sha256": "0d2540ebacf3420e0a7ed08a5f26692e83bb35ce436fc4fb0ca484dbdb044e2b",
+    "bytes": 8064
+  },
+  {
+    "path": "records/image-cli-harden-current-before.json",
+    "original": "/tmp/image-cli-harden-current-before.json",
+    "sha256": "7dcf29fdf9f9420162048faa233299b93e0f9b54e85195a9079c8dd87bb35a79",
+    "bytes": 668298
+  },
+  {
+    "path": "records/image-cli-harden-current-before.log",
+    "original": "/tmp/image-cli-harden-current-before.log",
+    "sha256": "57a6f784a9308cfc97349730a5e96d08351d4dfc88a513f1fed211f2fec2596e",
+    "bytes": 491
+  },
+  {
+    "path": "records/image-cli-harden-final-aux.json",
+    "original": "/tmp/image-cli-harden-final-aux.json",
+    "sha256": "6441e475e1d80c6150847cdb5da0666e711284c9fb9f87a55ccecd830c51aefc",
+    "bytes": 776295
+  },
+  {
+    "path": "records/image-cli-harden-final-aux.log",
+    "original": "/tmp/image-cli-harden-final-aux.log",
+    "sha256": "546863f5e4a67c747658f69cb140b5fc363e1d46351afe9e80d9df949c265cd7",
+    "bytes": 26008
+  },
+  {
+    "path": "records/image-cli-harden-final-cli.json",
+    "original": "/tmp/image-cli-harden-final-cli.json",
+    "sha256": "356c347c21252f84d52025ec788811b5d45a5ec031204a4f5c7d88849309ad48",
+    "bytes": 668733
+  },
+  {
+    "path": "records/image-cli-harden-final-cli.log",
+    "original": "/tmp/image-cli-harden-final-cli.log",
+    "sha256": "054537abb1f965b34d9795ddd3ba8be2da042eb002f4d3ec148772d4faacf824",
+    "bytes": 17347
+  },
+  {
+    "path": "records/image-cli-harden-final-launches.json",
+    "original": "/tmp/image-cli-harden-final-launches.json",
+    "sha256": "af7e07f894ea6f86f537655c14ff9c81e530b48943a59f67f90b62c7891754b6",
+    "bytes": 166
+  },
+  {
+    "path": "records/image-cli-harden-focused-after.json",
+    "original": "/tmp/image-cli-harden-focused-after.json",
+    "sha256": "c8cc527b8108d11e16be70abd3a565ad6c60b0ee95db6f748b4b41a30fb8d9c1",
+    "bytes": 668364
+  },
+  {
+    "path": "records/image-cli-harden-focused-after.log",
+    "original": "/tmp/image-cli-harden-focused-after.log",
+    "sha256": "d0bdf09139dc1001456af05abda0d0242712a5e53fb3e04174e0b49e523a9c27",
+    "bytes": 397
+  },
+  {
+    "path": "records/image-cli-harden-health-issue-STE.log",
+    "original": "/tmp/image-cli-harden-health-issue-STE.log",
+    "sha256": "65c4daa31ea8dda049cc7085aeb543d511049e91718b34a6c5c0e864b4ac0b88",
+    "bytes": 1320
+  },
+  {
+    "path": "records/image-cli-harden-health-issue.md",
+    "original": "/tmp/image-cli-harden-health-issue.md",
+    "sha256": "fff3199af12457d336b0245bbf714dedbc40857dd2fed5f9be30570871bb58d5",
+    "bytes": 2317
+  },
+  {
+    "path": "records/image-cli-harden-new-website-prose.md",
+    "original": "/tmp/image-cli-harden-new-website-prose.md",
+    "sha256": "a6dbf1d668a128b7cc2091b47d8f58541c181899530684206425a4234c3eee6a",
+    "bytes": 156
+  },
+  {
+    "path": "records/image-cli-harden-parent-error.log",
+    "original": "/tmp/image-cli-harden-parent-error.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "path": "records/image-cli-harden-parent-response.json",
+    "original": "/tmp/image-cli-harden-parent-response.json",
+    "sha256": "c5ebe363ffdbfbefaab025e8e00b57d5cc2f88b43226eb64bf2a6ce021d9e835",
+    "bytes": 8288
+  },
+  {
+    "path": "records/image-cli-harden-pr-body-STE.log",
+    "original": "/tmp/image-cli-harden-pr-body-STE.log",
+    "sha256": "a8014fd2d5edffef5f411e4bfee04650bddf40ff91ee4265754c60742f4e2b59",
+    "bytes": 538
+  },
+  {
+    "path": "records/image-cli-harden-pr-body.md",
+    "original": "/tmp/image-cli-harden-pr-body.md",
+    "sha256": "d00b5f06e4a63cec2e63f3e32745528762d3db45d4b052f10b96550a18beb9a0",
+    "bytes": 1622
+  },
+  {
+    "path": "records/image-cli-harden-source-STE.log",
+    "original": "/tmp/image-cli-harden-source-STE.log",
+    "sha256": "e6c564681184d164ce08d23f7a1ea1196e6401e0a0fe4526724dfdf9d208c50a",
+    "bytes": 709
+  },
+  {
+    "path": "records/image-cli-harden-website-STE.log",
+    "original": "/tmp/image-cli-harden-website-STE.log",
+    "sha256": "5514ba5d7f0648932ab05ea4f6da8ca84efdd54fe8e612a1617881749e38243d",
+    "bytes": 297
+  },
+  {
+    "path": "records/image-cli-harden-worktree-setup-correction.json",
+    "original": "/tmp/image-cli-harden-worktree-setup-correction.json",
+    "sha256": "bb41255903b6fe315bf86c30cf7d9a2f1555dcb8f97ed4419a4cfe6e98fcfd5a",
+    "bytes": 218
+  },
+  {
+    "path": "capability/arm-shared.log",
+    "original": "/tmp/image-cli-harden-contract-capability/arm-shared.log",
+    "sha256": "2a3b11afe755ca64b22b10dd01b6cdc0667c44ee9291fc43726f17485d53fd80",
+    "bytes": 118
+  },
+  {
+    "path": "capability/exe-so.log",
+    "original": "/tmp/image-cli-harden-contract-capability/exe-so.log",
+    "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "bytes": 0
+  },
+  {
+    "path": "capability/shared.log",
+    "original": "/tmp/image-cli-harden-contract-capability/shared.log",
+    "sha256": "072666100969149746953383c261e6c0893f5de4eaa7760935a77f84ed3faa4a",
+    "bytes": 119
+  },
+  {
+    "path": "capability/wasm.log",
+    "original": "/tmp/image-cli-harden-contract-capability/wasm.log",
+    "sha256": "df2bd118832b6a5018520a59a73ba72789a955864a5276fdbe2f8deb2cabcc7c",
+    "bytes": 105
+  },
+  {
+    "path": "capability/main.fern.txt",
+    "original": "/tmp/image-cli-harden-contract-capability/main.fern",
+    "sha256": "f099a03954491aa3a0855b49473cd612d5071407120a9cc7b25c42d50febaddd",
+    "bytes": 36
+  },
+  {
+    "path": "coordinators/image-run-cli-harden-before.py.txt",
+    "original": "/tmp/image-run-cli-harden-before.py",
+    "sha256": "658203142338bd5c124495af89c9a0082f542ee3e19a492a6082302e90ecde93",
+    "bytes": 1522
+  },
+  {
+    "path": "coordinators/image-run-cli-harden-focused-after.py.txt",
+    "original": "/tmp/image-run-cli-harden-focused-after.py",
+    "sha256": "9d226be135c6ea211dec0f6a6d8b2bf049cac4eeb6129c7717cd0b68d8abb01c",
+    "bytes": 1581
+  },
+  {
+    "path": "coordinators/image-run-cli-harden-final.py.txt",
+    "original": "/tmp/image-run-cli-harden-final.py",
+    "sha256": "3d7362209b99313123084f4c05fb9f76eff93a54f6498c5e0d586c5cec4faea1",
+    "bytes": 3061
+  },
+  {
+    "path": "coordinators/image-run-cli-harden-final-before-arm-path.py.txt",
+    "original": "/tmp/image-run-cli-harden-final-before-arm-path.py",
+    "sha256": "3d7362209b99313123084f4c05fb9f76eff93a54f6498c5e0d586c5cec4faea1",
+    "bytes": 3061
+  },
+  {
+    "path": "coordinators/image-run-cli-harden-arm-completion.py.txt",
+    "original": "/tmp/image-run-cli-harden-arm-completion.py",
+    "sha256": "3f7f1bf03aafedb7bed2a9af37b904608a0ea4be03813bc27a5f0990d7783a55",
+    "bytes": 3115
+  },
+  {
+    "path": "coordinators/image-finalize-cli-harden-evidence.py.txt",
+    "original": "/tmp/image-finalize-cli-harden-evidence.py",
+    "sha256": "b00ee1dfdc733d678d5fd35378f09cd28ef97967574dd42e45a45ae19595634a",
+    "bytes": 7152
+  },
+  {
+    "path": "records/image-cli-harden-rc-before-paragraph-correction.md",
+    "original": "/tmp/image-cli-harden-rc-before-paragraph-correction.md",
+    "sha256": "bdff9630a8579a185b4d018405ade277552cc793d36b18017c5a04bb7cd1fcb5",
+    "bytes": 1750
+  }
+]
