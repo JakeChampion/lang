@@ -68,7 +68,8 @@ See [native allocator observations](docs/memory-measurements.md) for measured up
 
 ## Scope and status
 
-The 214 TAP cases cover compression, pixels, color, resize, PNG, JPEG headers, coefficients, scalar inverse DCT, grayscale images, JFIF identification, and restricted RGB assembly.
+The 222 TAP cases cover compression, pixels, color, resize, and PNG.
+JPEG cases cover headers, coefficients, scalar inverse DCT, grayscale, JFIF identification, restricted RGB assembly, and standalone Exif orientation.
 They also cover rows, providers, pipelines, regions, caches, RSS parsing, and fusion.
 The file I/O probe and pixel example also exit successfully.
 The native script checks source executables and additional allocator, cache, fusion, and formatter smoke modes with the sanitizer.
@@ -110,3 +111,6 @@ It does not infer color meaning from encoded JPEG data or apply color profiles.
 The [component-plane decoder](docs/jpeg-planes.md) reconstructs owned raw JPEG sample planes before chroma reconstruction or color interpretation.
 
 The [centered component-row sampler](docs/jpeg-chroma.md) offers explicit nearest and bilinear filters before color interpretation.
+
+The [Exif metadata reader](docs/jpeg-exif.md) reports primary orientation from a standalone APP1 payload.
+The JFIF and RGB entry points retain their strict metadata policy.
