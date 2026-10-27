@@ -9250,13 +9250,13 @@ function ssa_frame(s: asmcore.EmitState, saved: i32[], frame: i32, canary: i32):
 }
 
 // The canary sits between the spill slots and the saved registers, so a
-// write past a frame box reaches it before the return address. %rcx and
-// %r11 carry no argument and no result, so an exit can use them.
+// write past a frame box reaches it before the return address. %r11 is
+// the one register that carries no argument and no result at an exit.
 function ssa_canary_check(canary: i32): string {
   if (canary == 0) {
     return "";
   }
-  return "    movq -" + util.i32_to_string(canary) + "(%rbp), %r11\n    movq __fern_canary(%rip), %rcx\n    cmpq %rcx, %r11\n    jne __fern_canary_fail\n";
+  return "    movq -" + util.i32_to_string(canary) + "(%rbp), %r11\n    cmpq __fern_canary(%rip), %r11\n    jne __fern_canary_fail\n";
 }
 
 // A frame above one page touches every page it crosses, so it cannot step

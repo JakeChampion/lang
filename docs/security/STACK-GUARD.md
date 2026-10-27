@@ -62,8 +62,8 @@ The compiler itself has four such functions on x86-64, with frames up to 8120 by
 
 ## Stack canary
 
-`-harden` adds a stack canary on arm64-linux and x86-64-linux.
-See [the hardening reference](../HARDENING.md) for the layout, the startup read, and the failure path.
+The `-harden` flag adds a stack canary on arm64-linux and x86-64-linux.
+The hardening reference in `docs/HARDENING.md` describes the layout, the startup read, and the failure path.
 
 ## Regression evidence
 

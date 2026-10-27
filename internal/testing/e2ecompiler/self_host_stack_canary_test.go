@@ -37,7 +37,7 @@ function main(): i32 { print(keep(args().len()).to_string()); return 0; }
 
 var (
 	x86CanaryStoreRe   = regexp.MustCompile(`(?m)^    movq __fern_canary\(%rip\), %r11\n    movq %r11, -(\d+)\(%rbp\)\n`)
-	x86CanaryCheckRe   = regexp.MustCompile(`(?m)^    movq -(\d+)\(%rbp\), %r11\n    movq __fern_canary\(%rip\), %rcx\n    cmpq %rcx, %r11\n    jne __fern_canary_fail\n`)
+	x86CanaryCheckRe   = regexp.MustCompile(`(?m)^    movq -(\d+)\(%rbp\), %r11\n    cmpq __fern_canary\(%rip\), %r11\n    jne __fern_canary_fail\n`)
 	arm64CanaryStoreRe = regexp.MustCompile(`(?m)^    adrp x17, __fern_canary\n    ldr x17, \[x17, :lo12:__fern_canary\]\n    str x17, \[x29, #-(\d+)\]\n`)
 	arm64CanaryCheckRe = regexp.MustCompile(`(?m)^    ldr x17, \[x29, #-(\d+)\]\n    adrp x16, __fern_canary\n    ldr x16, \[x16, :lo12:__fern_canary\]\n    cmp x16, x17\n    b\.ne __fern_canary_fail\n`)
 )
