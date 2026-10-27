@@ -69,6 +69,22 @@ function main(): i32 {
  let seed = args()[0]; if (seed.len() == 0) { return 90; }
  return Ready.code() - 7;
 }`},
+		{"constructor-before-struct-method", `enum State { Ready, Other }
+struct Ready { number: i32 }
+function (value: State) code(): i32 { return match (value) { Ready => 7, Other => 9 }; }
+function main(): i32 {
+ let seed = args()[0]; if (seed.len() == 0) { return 90; }
+ let record: Ready = Ready { number: 11 };
+ return Ready.code() + record.number - 18;
+}`},
+		{"struct-before-constructor-method", `struct Ready { number: i32 }
+enum State { Ready, Other }
+function (value: State) code(): i32 { return match (value) { Ready => 7, Other => 9 }; }
+function main(): i32 {
+ let seed = args()[0]; if (seed.len() == 0) { return 90; }
+ let record: Ready = Ready { number: 11 };
+ return Ready.code() + record.number - 18;
+}`},
 		{"owned-record-payload", `struct Payload { bytes: u8[] }
 enum Choice { Node(Payload), Empty }
 enum Problem { Choice, Bad }
