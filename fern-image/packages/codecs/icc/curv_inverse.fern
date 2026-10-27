@@ -1,0 +1,150 @@
+import "tag_data";
+import "curv_eval";
+import "std/f64";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum InvertError { Limit, Input, Shape, Value, Unsupported, NonInvertible, Numeric, Cancelled }
+
+struct Position { high: f64, low: f64 }
+
+function scaled(input: f64): Position {
+  let value = input * 65535.0;
+  let split = input * 134217729.0;
+  let high = split - (split - input);
+  let low = input - high;
+  return Position { high: value, low: high * 65535.0 - value + low * 65535.0 };
+}
+
+function compare(position: Position, sample: i32): i32 {
+  if (position.high < sample as f64 || position.high == sample as f64 && position.low < 0.0) {
+    return -1;
+  }
+  if (position.high > sample as f64 || position.high == sample as f64 && position.low > 0.0) {
+    return 1;
+  }
+  return 0;
+}
+
+function finish(value: f64, cancelled: () => boolean): Result[f64, InvertError] {
+  if (!value.is_finite() || value < 0.0 || value > 1.0) {
+    return Err(InvertError.Numeric);
+  }
+  if (cancelled()) {
+    return Err(InvertError.Cancelled);
+  }
+  return Ok(value);
+}
+
+function sampled(values: [i32], input: f64, ascending: boolean): Result[f64, InvertError] {
+  let target = scaled(input);
+  let last = values[values.len() - 1];
+  let terminal = compare(target, last);
+  let low = 0;
+  let high = values.len() - 1;
+  if (ascending && terminal >= 0 || !ascending && terminal <= 0) {
+    // A terminal flat interval selects its first coordinate.
+    while (low < high) {
+      let mid = low + (high - low) / 2;
+      if (values[mid] == last) {
+        high = mid;
+      } else {
+        low = mid + 1;
+      }
+    }
+    return Ok(low as f64 / ((values.len() - 1) as f64));
+  }
+  let initial = compare(target, values[0]);
+  if (ascending && initial < 0 || !ascending && initial > 0) {
+    target = Position { high: values[0] as f64, low: 0.0 };
+  }
+  high = values.len();
+  // An upper bound selects the last coordinate of each nonterminal flat interval.
+  while (low < high) {
+    let mid = low + (high - low) / 2;
+    let side = compare(target, values[mid]);
+    if (ascending && side >= 0 || !ascending && side <= 0) {
+      low = mid + 1;
+    } else {
+      high = mid;
+    }
+  }
+  let index = low - 1;
+  if (index < 0 || index >= values.len() - 1) {
+    return Err(InvertError.Numeric);
+  }
+  let steps = (values.len() - 1) as i64;
+  let delta = values[index + 1] - values[index];
+  if (delta == 0) {
+    return Err(InvertError.Numeric);
+  }
+  // A selected identity segment preserves all input bits after full admission.
+  if (values[index] as i64 * steps == index as i64 * 65535i64 && delta as i64 * steps == 65535i64) {
+    return Ok(input);
+  }
+  let fraction = (target.high - values[index] as f64 + target.low) / (delta as f64);
+  let value = (index as f64 + fraction) / (steps as f64);
+  return Ok(if (value == 0.0) { 0.0 } else { value });
+}
+
+// Public tables receive fresh admission before the inverse search.
+pub function invert(curve: tag_data.CurveData, input: f64, limits: curv_eval.EvalLimits, cancelled: () => boolean): Result[f64, InvertError] {
+  if (limits.max_samples <= 0) {
+    return Err(InvertError.Limit);
+  }
+  if (!input.is_finite() || input < 0.0 || input > 1.0) {
+    return Err(InvertError.Input);
+  }
+  match (curve) {
+    tag_data.Parametric(_) => {
+      return Err(InvertError.Unsupported);
+    },
+    tag_data.Identity => {
+      if (cancelled()) {
+        return Err(InvertError.Cancelled);
+      }
+      return finish(input, cancelled);
+    },
+    tag_data.Gamma(numerator) => {
+      if (numerator <= 0 || numerator > 65535) {
+        return Err(InvertError.Value);
+      }
+      if (cancelled()) {
+        return Err(InvertError.Cancelled);
+      }
+      if (input == 0.0 || input == 1.0 || numerator == 256) {
+        return finish(input, cancelled);
+      }
+      return finish(input.pow(256.0 / (numerator as f64)), cancelled);
+    },
+    tag_data.Samples(values) => {
+      if (values.len() > limits.max_samples || values.len() > 65536) {
+        return Err(InvertError.Limit);
+      }
+      if (values.len() < 2) {
+        return Err(InvertError.Shape);
+      }
+      if (cancelled()) {
+        return Err(InvertError.Cancelled);
+      }
+      let ascending = true;
+      let descending = true;
+      for index in 0..values.len() {
+        if (index % 64 == 0 && cancelled()) {
+          return Err(InvertError.Cancelled);
+        }
+        if (values[index] < 0 || values[index] > 65535) {
+          return Err(InvertError.Value);
+        }
+        if (index > 0) {
+          ascending = ascending && values[index] >= values[index - 1];
+          descending = descending && values[index] <= values[index - 1];
+        }
+      }
+      if (ascending && descending || !ascending && !descending) {
+        return Err(InvertError.NonInvertible);
+      }
+      return finish(sampled(values, input, ascending)?, cancelled);
+    }
+  }
+}

@@ -1,0 +1,212 @@
+import "../packages/codecs/icc/curv_inverse";
+import "../packages/codecs/icc/curv_eval";
+import "../packages/codecs/icc/tag_data";
+import "std/test";
+import "std/f64";
+
+function never(): boolean {
+  return false;
+}
+
+function eval(curve: tag_data.CurveData, input: f64): Result[f64, curv_inverse.InvertError] {
+  return curv_inverse.invert(curve, input, curv_eval.default_limits(), never);
+}
+
+function close(result: Result[f64, curv_inverse.InvertError], expected: f64): boolean {
+  return match (result) { Ok(value) => (value - expected).abs() <= 1e-12, _ => false };
+}
+
+function exact(result: Result[f64, curv_inverse.InvertError], expected: f64): boolean {
+  return match (result) { Ok(value) => f64_bits(value) == f64_bits(expected), _ => false };
+}
+
+function identities(): test.TestOutcome {
+  for input in [-0.0, 0.0, f64_from_bits(1), f64_from_bits(0x0010000000000000), 0.25, 0.5, f64_from_bits(0x3fefffffffffffff), 1.0] {
+    for curve in [tag_data.Identity, tag_data.Gamma(256), tag_data.Samples([0, 65535]), tag_data.Samples([0, 21845, 43690, 65535])] {
+      if (!exact(eval(curve, input), input)) {
+        return test.fail("all identity forms preserve input bits");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function gammas(): test.TestOutcome {
+  for numerator in [1, 64, 128, 255, 256, 257, 512, 1024, 65535] {
+    for endpoint in [-0.0, 0.0, 1.0] {
+      if (!exact(eval(tag_data.Gamma(numerator), endpoint), endpoint)) {
+        return test.fail("inverse gamma endpoints");
+      }
+    }
+  }
+  return test.assert_true(close(eval(tag_data.Gamma(512), 0.25), 0.5) && close(eval(tag_data.Gamma(128), 0.5), 0.25) && close(eval(tag_data.Gamma(64), 0.5), 0.0625));
+}
+
+function sampled(): test.TestOutcome {
+  for (values, input, output) in [
+    ([65535, 0], 0.25, 0.75),
+    ([0, 0, 65535], 0.5, 0.75),
+    ([0, 65535, 65535], 0.5, 0.25),
+    ([65535, 65535, 0], 0.5, 0.75),
+    ([65535, 0, 0], 0.5, 0.25),
+  ] {
+    if (!exact(eval(tag_data.Samples(values), input), output)) {
+      return test.fail("exact sampled dyadic inverses in both directions");
+    }
+  }
+  return test.pass();
+}
+
+function flats_and_range(): test.TestOutcome {
+  for (values, input, output) in [
+    ([0, 0, 65535], 0.0, 0.5),
+    ([0, 65535, 65535], 1.0, 0.5),
+    ([65535, 65535, 0], 1.0, 0.5),
+    ([65535, 0, 0], 0.0, 0.5),
+    ([16384, 16384, 32768, 32768], 0.0, 1.0 / 3.0),
+    ([16384, 16384, 32768, 32768], 1.0, 2.0 / 3.0),
+    ([32768, 32768, 16384, 16384], 1.0, 1.0 / 3.0),
+    ([32768, 32768, 16384, 16384], 0.0, 2.0 / 3.0),
+  ] {
+    if (!close(eval(tag_data.Samples(values), input), output)) {
+      return test.fail("flat intervals and nearest range endpoints");
+    }
+  }
+  return test.pass();
+}
+
+function admission(): test.TestOutcome {
+  for (curve, error) in [
+    (tag_data.Samples([]), curv_inverse.InvertError.Shape),
+    (tag_data.Samples([1]), curv_inverse.InvertError.Shape),
+    (tag_data.Gamma(0), curv_inverse.InvertError.Value),
+    (tag_data.Gamma(-1), curv_inverse.InvertError.Value),
+    (tag_data.Gamma(65536), curv_inverse.InvertError.Value),
+    (tag_data.Parametric(tag_data.ParametricData { function_type: 0, coefficients: [65536] }), curv_inverse.InvertError.Unsupported),
+  ] {
+    let polls = cell_new(0);
+    let result = curv_inverse.invert(curve, 0.5, curv_eval.default_limits(), (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    });
+    if (polls.get() != 0 || match (result) { Err(actual) => actual != error, _ => true }) {
+      return test.fail("cheap admission before callbacks");
+    }
+  }
+  for input in [-0.001, 1.0000000000000002, f64_from_bits(0x7ff0000000000000), f64_from_bits(0x7ff8000000000000)] {
+    if (match (eval(tag_data.Identity, input)) { Err(curv_inverse.InvertError.Input()) => false, _ => true }) {
+      return test.fail("inverse input domain");
+    }
+  }
+  for (values, error) in [
+    ([0, -1], curv_inverse.InvertError.Value),
+    ([0, 65536], curv_inverse.InvertError.Value),
+    ([0, 0], curv_inverse.InvertError.NonInvertible),
+    ([1234, 1234, 1234], curv_inverse.InvertError.NonInvertible),
+    ([0, 65535, 0], curv_inverse.InvertError.NonInvertible),
+    ([65535, 0, 65535], curv_inverse.InvertError.NonInvertible),
+  ] {
+    if (match (eval(tag_data.Samples(values), 0.5)) { Err(actual) => actual != error, _ => true }) {
+      return test.fail("public sample value and monotonic admission");
+    }
+  }
+  for maximum in [0, -1] {
+    for curve in [tag_data.Identity, tag_data.Gamma(256), tag_data.Samples([0, 65535])] {
+      let polls = cell_new(0);
+      let result = curv_inverse.invert(curve, 0.5, curv_eval.EvalLimits { max_samples: maximum }, (): boolean => {
+        polls.set(polls.get() + 1);
+        return false;
+      });
+      if (polls.get() != 0 || match (result) { Err(curv_inverse.InvertError.Limit()) => false, _ => true }) {
+        return test.fail("caller sample limit before callbacks");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function cancellation(): test.TestOutcome {
+  let values: i32[] = [];
+  for index in 0..129 {
+    values = values.append(index * 65535 / 128);
+  }
+  for (curve, count) in [(tag_data.Identity, 2), (tag_data.Gamma(512), 2), (tag_data.Samples(values), 5)] {
+    for stop in 1..count + 1 {
+      let polls = cell_new(0);
+      let result = curv_inverse.invert(curve, 0.5, curv_eval.default_limits(), (): boolean => {
+        polls.set(polls.get() + 1);
+        return polls.get() == stop;
+      });
+      if (polls.get() != stop || match (result) { Err(curv_inverse.InvertError.Cancelled()) => false, _ => true }) {
+        return test.fail("every inverse cancellation poll");
+      }
+    }
+  }
+  return test.pass();
+}
+
+@noinline
+function ordinary(values: [i32], input: f64): f64 {
+  let target = input * 65535.0;
+  let index = 0;
+  while (index < values.len() - 1 && values[index + 1] as f64 <= target) {
+    index = index + 1;
+  }
+  if (index == values.len() - 1) {
+    return 1.0;
+  }
+  let fraction = (target - values[index] as f64) / ((values[index + 1] - values[index]) as f64);
+  return (index as f64 + fraction) / ((values.len() - 1) as f64);
+}
+
+function phase(): test.TestOutcome {
+  let values = [0, 21845, 21845, 65535];
+  let input = f64_from_bits(0x3fd5555555555555);
+  if ((ordinary(values[:], input) - input).abs() <= 1e-12) {
+    return test.fail("ordinary rounded search must choose the wrong side");
+  }
+  if (!exact(eval(tag_data.Samples(values), input), input)) {
+    return test.fail("compensated comparison and general identity segment");
+  }
+  let above = f64_from_bits(0x3fd5555555555556);
+  return test.assert_true(match (eval(tag_data.Samples(values), above)) { Ok(out) => out >= 2.0 / 3.0 && out < 0.67, _ => false });
+}
+
+function ownership_and_limits(): test.TestOutcome {
+  let values = [0, 21845, 43690, 65535];
+  let shared = cell_new(values);
+  let result = curv_inverse.invert(tag_data.Samples(values), 0.5, curv_eval.default_limits(), (): boolean => {
+    shared.set(shared.get().with(1, 0));
+    return false;
+  });
+  if (!exact(result, 0.5) || values[1] != 21845 || shared.get()[1] != 0 || !close(eval(tag_data.Samples(shared.get()), 0.5), 7.0 / 12.0)) {
+    return test.fail("borrowed sample COW and fresh calls");
+  }
+  let large: i32[] = [];
+  for index in 0..65536 {
+    large = large.append(index);
+  }
+  let limits = curv_eval.EvalLimits { max_samples: 65536 };
+  if (!exact(curv_inverse.invert(tag_data.Samples(large), -0.0, limits, never), -0.0)) {
+    return test.fail("maximum sample identity");
+  }
+  let polls = cell_new(0);
+  let rejected = curv_inverse.invert(tag_data.Samples(large.append(65535)), 0.5, limits, (): boolean => {
+    polls.set(polls.get() + 1);
+    return false;
+  });
+  return test.assert_true(polls.get() == 0 && match (rejected) { Err(curv_inverse.InvertError.Limit()) => true, _ => false });
+}
+
+pub function main(): i32 {
+  let runner = test.test_new("ICC inverse curves");
+  runner = runner.it("ICC inverse curve exact identity forms", identities);
+  runner = runner.it("ICC inverse gamma controls", gammas);
+  runner = runner.it("ICC inverse sampled directions", sampled);
+  runner = runner.it("ICC inverse flat and nearest range policy", flats_and_range);
+  runner = runner.it("ICC inverse curve fresh admission", admission);
+  runner = runner.it("ICC inverse curve cooperative cancellation", cancellation);
+  runner = runner.it("ICC inverse curve phase control", phase);
+  runner = runner.it("ICC inverse curve COW and sample limits", ownership_and_limits);
+  return runner.finish();
+}

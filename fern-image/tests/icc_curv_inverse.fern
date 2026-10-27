@@ -1,0 +1,68 @@
+import "../packages/codecs/icc/curv_eval";
+import "../packages/codecs/icc/curv_inverse";
+import "../packages/codecs/icc/tag_data";
+import "std/i32";
+import "std/i64";
+
+function signed(input: [u8], at: i32): i32 {
+  let value = input[at] as i64 | input[at + 1] as i64 << 8i64 | input[at + 2] as i64 << 16i64 | input[at + 3] as i64 << 24i64;
+  return (if (value >= 2147483648i64) { value - 4294967296i64 } else { value }) as i32;
+}
+
+function bits(input: [u8], at: i32): i64 {
+  let result = 0i64;
+  for index in 0..8 {
+    result = result | input[at + index] as i64 << (index * 8) as i64;
+  }
+  return result;
+}
+
+function error_name(error: curv_inverse.InvertError): string {
+  return match (error) { curv_inverse.InvertError.Limit => "Limit", curv_inverse.InvertError.Input => "Input", curv_inverse.InvertError.Shape => "Shape", curv_inverse.InvertError.Value => "Value", curv_inverse.InvertError.Unsupported => "Unsupported", curv_inverse.InvertError.NonInvertible => "NonInvertible", curv_inverse.InvertError.Numeric => "Numeric", curv_inverse.InvertError.Cancelled => "Cancelled" };
+}
+
+function emit(path: string): i32 {
+  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  if (input.len() < 32 || input[0] != 70 as u8 || input[1] != 67 as u8 || input[2] != 73 as u8 || input[3] != 49 as u8) {
+    return 3;
+  }
+  let kind = signed(input, 4);
+  let stop = signed(input, 12);
+  let count = signed(input, 20);
+  if (kind < 0 || kind > 3 || stop < 0 || count < 0 || count > 65537 || input.len() as i64 != 32i64 + count as i64 * 4i64) {
+    return 4;
+  }
+  let values: i32[] = [];
+  for index in 0..count {
+    values = values.append(signed(input, 32 + index * 4));
+  }
+  let curve = match (kind) { 0 => tag_data.Identity, 1 => tag_data.Gamma(signed(input, 16)), 2 => tag_data.Samples(values), _ => tag_data.Parametric(tag_data.ParametricData { function_type: signed(input, 16), coefficients: values }) };
+  let polls = cell_new(0);
+  let result = curv_inverse.invert(curve, f64_from_bits(bits(input, 24)), curv_eval.EvalLimits { max_samples: signed(input, 8) }, (): boolean => {
+    polls.set(polls.get() + 1);
+    return stop != 0 && polls.get() == stop;
+  });
+  match (result) {
+    Ok(value) => {
+      print("inv " + path + " ok " + polls.get().to_string() + " " + f64_bits(value).to_string());
+    },
+    Err(error) => {
+      print("inv " + path + " error " + error_name(error) + " " + polls.get().to_string());
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for index in 1..paths.len() {
+    let code = emit(paths[index]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}
