@@ -515,6 +515,27 @@ pub function elf_image_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[],
   return elf_image_two_seg(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr(), 2, true, note, true, elf_page_align());
 }
 
+// The same layout as a position-independent executable: ET_DYN at base 0, which the kernel loads at a random base.
+pub function elf_image_pie_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, note: boolean): u8[] {
+  return elf_image_two_seg(text, hdr, eh, data, machine, entry_off, bss, 0, 3, true, note, true, elf_page_align());
+}
+
+pub function elf_text_vaddr_pie_wx(note: boolean): i32 {
+  return elf_wx_text_off(note);
+}
+
+pub function elf_eh_hdr_vaddr_pie_wx(text_len: i32, note: boolean): i32 {
+  return elf_align4(elf_wx_text_off(note) + text_len);
+}
+
+pub function elf_eh_frame_vaddr_pie_wx(text_len: i32, hdr_len: i32, note: boolean): i32 {
+  return elf_align8(elf_eh_hdr_vaddr_pie_wx(text_len, note) + hdr_len);
+}
+
+pub function elf_data_vaddr_pie_wx_unwind(text_len: i32, hdr_len: i32, eh_len: i32, note: boolean): i32 {
+  return elf_page_up(elf_code_end(elf_unwind_end(elf_wx_text_off(note), text_len, hdr_len, eh_len), note));
+}
+
 pub function elf_x86_wx_text_off(): i32 {
   return elf_eh_size() + 4 * elf_ph_size();
 }
@@ -536,9 +557,29 @@ function elf_x86_page_align(): i32 {
 }
 
 pub function elf_x86_wx_data_vaddr(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
+  return elf_base_vaddr() + elf_x86_pie_data_vaddr(text_len, hdr_len, eh_len);
+}
+
+pub function elf_x86_pie_text_vaddr(): i32 {
+  return elf_x86_wx_text_off();
+}
+
+pub function elf_x86_pie_eh_hdr_vaddr(text_len: i32): i32 {
+  return elf_align4(elf_x86_wx_text_off() + text_len);
+}
+
+pub function elf_x86_pie_eh_frame_vaddr(text_len: i32, hdr_len: i32): i32 {
+  return elf_align8(elf_x86_pie_eh_hdr_vaddr(text_len) + hdr_len);
+}
+
+pub function elf_x86_pie_data_vaddr(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
   let end: i32 = elf_unwind_end(elf_x86_wx_text_off(), text_len, hdr_len, eh_len);
   let page: i32 = elf_x86_page_align();
-  return elf_base_vaddr() + (end + page - 1) / page * page;
+  return (end + page - 1) / page * page;
+}
+
+pub function elf_program_x86_pie(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32): u8[] {
+  return elf_image_two_seg(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, 0, 3, true, false, true, elf_x86_page_align());
 }
 
 pub function elf_program_x86_wx(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32): u8[] {

@@ -24,7 +24,7 @@ function emit(single: boolean): ssaprepare.Output {
   let m = parser.parse_module(lexer.tokenize(record + " function main(): i32 { return 0; }"));
   m = parser.Module { ...m, exports: [parser.ExportBinding { func_name: "parent", iface: "", wit: "", c_abi: true, method: false }] };
   let g = semlower.program(semlower.driven(m, "x86-64-linux"));
-  let sw = asmcore.Switches { backtrace: false, sanitize: false, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64 };
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, pie: false };
   return asm_ir.emit_module_ir_unit_prepared(g.im, true, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_module_lowering, 0 as usize, sw, true);
 }
 

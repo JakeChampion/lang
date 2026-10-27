@@ -5735,7 +5735,46 @@ function ssa_alu_ir(s: asmcore.EmitState, ext: i32, size: i32, imm: i64, dst: st
   return s.write("    " + ssa_alu_text(ext, size) + " $" + util.i64_to_string(imm) + ", " + ssa_wreg(size, dst) + "\n");
 }
 
+// A -pie image carries no absolute immediate: the compare reads a data word that
+// holds the symbol's address and that the startup relocation moves with the image.
+function sym_addr_label(sym: string): string {
+  let out: string = ".Lsa";
+  let i: i32 = 0;
+  while (i < sym.len()) {
+    if (sym[i] == b'.') {
+      out = out + "_";
+    } else {
+      out = out + slice_unchecked(sym, i, i + 1);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function with_sym_addr(s: asmcore.EmitState, sym: string): asmcore.EmitState {
+  if (util.has_str(s.sym_addrs, sym)) {
+    return s;
+  }
+  return asmcore.EmitState { ...s, sym_addrs: s.sym_addrs.append(sym) };
+}
+
+function emit_sym_addrs_from(s: asmcore.EmitState, first: i32): asmcore.EmitState {
+  if (s.sym_addrs.len() <= first) {
+    return s;
+  }
+  s = s.write("    .section .data\n    .align 8\n");
+  let i: i32 = first;
+  while (i < s.sym_addrs.len()) {
+    s = s.write(sym_addr_label(s.sym_addrs[i]) + ":\n    .quad " + s.sym_addrs[i] + "\n");
+    i = i + 1;
+  }
+  return s.write("    .text\n");
+}
+
 function ssa_alu_is(s: asmcore.EmitState, ext: i32, size: i32, sym: string, dst: string): asmcore.EmitState {
+  if (s.pie) {
+    return s.write("    " + ssa_alu_text(ext, size) + " " + sym_addr_label(sym) + "(%rip), " + ssa_wreg(size, dst) + "\n");
+  }
   if (s.records()) {
     let d: i32 = ssa_xreg(dst);
     if (d >= 0) {
@@ -5746,6 +5785,9 @@ function ssa_alu_is(s: asmcore.EmitState, ext: i32, size: i32, sym: string, dst:
 }
 
 function ssa_alu_ims(s: asmcore.EmitState, ext: i32, size: i32, sym: string, base: string, disp: i32): asmcore.EmitState {
+  if (s.pie) {
+    return s.write("    pushq %r11\n    movq " + sym_addr_label(sym) + "(%rip), %r11\n    " + ssa_alu_text(ext, size) + " " + ssa_wreg(size, "%r11") + ", " + ssa_mem(base, disp, false) + "\n    popq %r11\n");
+  }
   if (s.records()) {
     let b: i32 = ssa_xreg(base);
     if (b >= 0) {
@@ -5952,6 +5994,9 @@ function ssa_rhs(fr: SsaFrame, reg_of: i32[], v: i32, s: asmcore.EmitState): str
   if (fr.imm.is_imm[v]) {
     let sym: string = ssa.imm_sym(fr.imm, v);
     if (sym != "") {
+      if (s.pie) {
+        return sym_addr_label(sym) + "(%rip)";
+      }
       return "$" + sym;
     }
     return "$" + util.i64_to_string(fr.imm.value[v]);
@@ -9086,6 +9131,9 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   while (si < shapes.vals.len()) {
     s = asmcore.intern_shape(s, shapes.names[si]);
     imm = ssa.with_sym(imm, shapes.vals[si], asmcore.shape_label(s, shapes.names[si]));
+    if (s.pie) {
+      s = with_sym_addr(s, asmcore.shape_label(s, shapes.names[si]));
+    }
     si = si + 1;
   }
   let alloc: ssa.Alloc = ssa_allocate(f, imm, s);
@@ -10356,6 +10404,7 @@ function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.Em
   let lit0: i32 = s.string_lits.len();
   let agg0: i32 = s.const_aggs.len();
   let sh0: i32 = s.shape_lits.len();
+  let sa0: i32 = s.sym_addrs.len();
   let lowered: physicalbody.Lowered = s.rt_lower(m);
   let bodies: irtables.LowerResult[] = irtables.lowered_results(lowered.bodies);
   let physical = physicalbody.collection(lowered);
@@ -10394,6 +10443,7 @@ function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.Em
     s = asmcore.emit_const_agg_data_from(s, agg0);
     s = s.write("    .text\n");
   }
+  s = emit_sym_addrs_from(s, sa0);
   return asmcore.EmitState { ...s, reg_entries: previous_regs, leaves: previous_leaves, float_abi: previous_float.names, float_abi_masks: previous_float.masks };
 }
 
@@ -10533,6 +10583,7 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
     s = asmcore.emit_str_box_data_from(s, 0);
   }
   s = asmcore.emit_const_agg_data(s);
+  s = emit_sym_addrs_from(s, 0);
   s = emit_lane_consts(s);
   s = asmcore.emit_shape_lits_from(s, 0);
   if (is_entry) {
@@ -10604,7 +10655,13 @@ function emit_entry_runtime_settled(s0: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_process_entry(mod: parser.Module, own s: asmcore.EmitState): asmcore.EmitState {
+  if (s.pie) {
+    s = s.write("    .section .data\n    .align 8\n.Lfern_relanchor:\n    .quad .Lfern_relanchor\n__fern_reloc_list:\n    .quad 0\n__fern_reloc_count:\n    .quad 0\n    .text\n");
+  }
   s = s.write("_start:\n");
+  if (s.pie) {
+    s = emit_self_relocation(s);
+  }
   if (asmcore.sandbox_on()) {
     s = s.write("    call __fern_seccomp_install\n");
   }
@@ -10634,6 +10691,29 @@ function emit_process_entry(mod: parser.Module, own s: asmcore.EmitState): asmco
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
   return emit_process_finish(mod, s);
+}
+
+// The anchor holds its own link-time address, so the difference from its runtime
+// address is the load delta. Every listed word gains the delta, the anchor included.
+function emit_self_relocation(own s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    leaq .Lfern_relanchor(%rip), %rax\n");
+  s = s.write("    movq (%rax), %rcx\n");
+  s = s.write("    subq %rcx, %rax\n");
+  s = s.write("    jz .Lfern_reloc_done\n");
+  s = s.write("    movq __fern_reloc_count(%rip), %rcx\n");
+  s = s.write("    movq __fern_reloc_list(%rip), %rsi\n");
+  s = s.write("    addq %rax, %rsi\n");
+  s = s.write(".Lfern_reloc_loop:\n");
+  s = s.write("    cmpq $0, %rcx\n");
+  s = s.write("    je .Lfern_reloc_done\n");
+  s = s.write("    movq (%rsi), %rdi\n");
+  s = s.write("    addq %rax, %rdi\n");
+  s = s.write("    addq %rax, (%rdi)\n");
+  s = s.write("    addq $8, %rsi\n");
+  s = s.write("    subq $1, %rcx\n");
+  s = s.write("    jmp .Lfern_reloc_loop\n");
+  s = s.write(".Lfern_reloc_done:\n");
+  return s;
 }
 
 function emit_stack_switch(own s: asmcore.EmitState): asmcore.EmitState {

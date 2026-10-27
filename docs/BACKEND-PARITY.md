@@ -513,6 +513,13 @@ function. On x86-64-linux it adds the stack canary. Every other target, and
 What is left (x86-64 CET, the shared and Android images, the runtime's
 hand-written frames) is listed in `docs/HARDENING.md`.
 
+### Position-independent executables (`-pie`) are x86-64-linux and arm64-linux
+
+`-pie` writes an `ET_DYN` image at base 0 with no interpreter, which the
+kernel loads at a random base, and a startup loop relocates the absolute
+data words (`docs/security/PIE.md`). Android is position-independent
+without the flag. Darwin, wasm and `-shared` refuse it with exit 2.
+
 ### Heap exhaustion exits 125 on the natives, traps on wasm
 
 The native targets exit 125 when the arena runs out (`.Lalloc_oom` in

@@ -88,6 +88,16 @@ is a NOP on a core without the feature. The ARMv8.2-A baseline does not
 change: a hardened binary runs everywhere an unhardened one does, with the
 checks only where the hardware has them.
 
+## Position-independent executables
+
+`-pie` builds an `ET_DYN` image at base 0 for x86-64-linux and arm64-linux,
+which the kernel loads at a random base. The code is position-independent
+as emitted. A loop at `_start` moves the absolute words of the data
+segment by the load delta before the first function runs. `-harden` and
+`-g` compose with the flag, and `-shared` refuses it. `TestSelfHostPIE`
+pins the headers, the output, and on x86-64 a different base across two
+runs. The record is `docs/security/PIE.md`.
+
 ## Stack canaries
 
 Both native backends store a canary in every function that owns a frame with
@@ -143,10 +153,10 @@ runs passed, with no SIGILL and no canary mismatch. The six other runs are
 the two runner self-tests that print `not ok` lines by design and the
 Darwin-only time zone test, which fail the same way without the flag.
 
-`std/mitigations` reports, for a running process, whether the processor lists
-PAC, BTI and MTE (or the CET features on x86-64), whether the kernel enables
-them, and whether the process runs with them active. It reads the kernel's
-own records and infers nothing from the emitted code
+`std/mitigations` reports the state of PAC, BTI and MTE, or of the CET
+features on x86-64, for a running process. It says whether the processor
+lists each one, whether the kernel enables it, and whether the process runs
+with it active. It reads the kernel's own records and infers nothing from the emitted code
 (`docs/security/MITIGATION-REPORT.md`).
 
 ## Not covered yet
@@ -164,6 +174,8 @@ own records and infers nothing from the emitted code
   and the shadow stack is enabled through `arch_prctl` at startup. Both are
   their own design. On x86-64 `-harden` is the canary alone.
 - **RELRO**: a static image with no relocations has no GOT for RELRO to
-  protect.
+  protect. A `-pie` image relocates its data words at startup and leaves
+  them in the writable segment, so a read-only segment after relocation is
+  still open.
 - **Stack canaries**: not started. #5549 scopes them to frames with buffers,
   since they cost on every call.
