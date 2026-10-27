@@ -1,0 +1,500 @@
+# 2026-10-27: complete static snapshot at 45148d4a5feb8cd0a305dbec134fa50c3ea825a0.
+# Native string-byte capacity uses wide arithmetic. See docs/benchmarks/packed-string-bytes-2026-10-27/.
+# 2026-10-26: complete static measurements from local combined source
+# e068b9ae43e0ad05bed382d818a0231e203e50a1 (guard, entropy, and runtime bundle split).
+# 2026-10-26: SEC-015 checks guard protection before the stack switch.
+# CI run 40382820194 at a615af0e supplies the native static counts.
+# 2026-10-26, the 32-bit index arithmetic, the decrement below a greater-than test and the
+# x86-64 operation on a spill slot, from a local perf-bench run: x86_64/deflate_encode.ir
+# 47063418 to 43100357 (-8.4%), deflate_decode.ir
+# 35569469 to 34990848 (-1.6%), map_string.ir 59723383 to 58511942 (-2.0%), sort_ints.ir
+# 30644556 to 29952132 (-2.3%), perceus_nqueens.ir -1.3%, sort_inplace.ir -1.2% and
+# utf8_ingest_validated.ir -1.0%. The deflate_decode.text rows take the resumable inflate of
+# #13432, which no PR re-pinned: x86_64 12754 to 13233 and aarch64 13592 to 14100.
+# Main alone reads 13273 and 14139.
+# 2026-10-25, the hoisting of pure loop-invariant arithmetic: x86_64/deflate_encode.ir
+# 49355348 to 47063418 (-4.6%), deflate_decode.ir 36384995 to 35569469 (-2.2%),
+# and map_string.text 6520 to 6591 (+1.1%), from a local perf-bench run. aarch64/http_hello.text
+# goes from 18384 to 18592 (+1.1%), counted the same way: main moved it to 18590 first.
+# 2026-10-25, the branch forwarding: x86_64/deflate_encode.ir 49965640 to 49355348
+# (-1.2%) from a local perf-bench run. A branch skips a block that only jumps on.
+# 2026-10-25 (#13302), on the merge of main at a4d07da7: x86_64 deflate_decode.text
+# and .ir from a local perf-bench run. The aarch64 deflate_decode.text and
+# utf8_ingest_validated.text rows use the same count. Main alone reads 9202 for the last row.
+# Re-pinned 2026-10-25 (#13302) from Perf run 40205765929. The inline
+# back-reference copy cuts deflate_decode.ir by 14% on x86_64 and 13% on aarch64,
+# and adds 1% `.text` to deflate_decode on both targets. The other aarch64 rows take the
+# moves of #13251 and main that no PR re-pinned: deflate_encode.ir is 17% lower,
+# and the utf8_ingest_*.text rows take main's typed JSON decoding.
+# Re-pinned 2026-10-25 from Perf run 40215520155 (main at 5ee00b33): aarch64/map_string.ir
+# 61661591 to 60356414, a 2.1% win over its 2% tolerance, from the semunique fix (#13276)
+# and the HTTP/3 pass (#13324).
+# Re-pinned 2026-10-25 (#13276), aarch64 `.text` counted the way scripts/perf-bench counts it
+# (indented lines of fern -target arm64-linux) on main 1aaec0fd plus the semunique fix, which
+# main now carries: deflate_decode 13460, deflate_encode 7851, utf8_ingest_unchecked 8637.
+# Re-pinned 2026-10-25 (h3-hello-allocs-2), x86_64 .text rows from a local perf-bench run on
+# b9ca4974a1, the merge of main at 89756b51: deflate_decode 12488 to 12626, deflate_encode
+# 7144 to 7250, http_hello 17206 to 17393, utf8_ingest_validated 8710 to 8803. Main alone
+# reads 12599, 7250, 17393 and 8895 there.
+# Re-pinned 2026-10-25 (#13276): x86_64/utf8_ingest_unchecked.text 8288 to 8196 and
+# utf8_ingest_validated.text 8802 to 8710, from a local perf-bench run on e5f90a40.
+# Re-pinned 2026-10-25 from Perf run 40200803636 (main at 127eb63c), the aarch64 rows
+# #13251 pinned on x86_64 only: deflate_encode.ir -17%, deflate_decode.ir -7.8%,
+# http_hello.text -1.2%, string_find_byte.text -1.5%, and utf8_ingest_unchecked.text
+# +12.1% with utf8_ingest_validated.text +1.8% from #13153's utf8 module.
+# Re-pinned 2026-10-25 (#13251), x86_64 rows from a local perf-bench run on
+# f2a9fbef. The runtime word copy cuts byte_copy_*.ir by 73-74%, and the
+# register and release changes cut deflate_encode.ir by 18% and enum_match.ir
+# by 7%. struct_drop.ir (+7.2%) and string_build.ir (+2.6%) count more because
+# callgrind counts a short rep movsb as one instruction. Their wall time is 6%
+# and 22% lower. __fern_memcpy adds 1-5% `.text` to the string and sort rows.
+# After the merge of main at ec11dd1e, the utf8_ingest_*.text rows take main's
+# typed JSON decoding, which main's own compiler emits at 8213 and 9486.
+# 2026-10-25: the x86_64 perceus_rbtree rows re-pinned from a local perf-bench for the carried-token change (ssaunits.dying_unclaimed).
+# Re-pinned 2026-10-25 (#13177) from Perf run 40168342835 on both arches. The
+# word-refill decoder and the hash-chain matcher cut deflate_decode.ir by 36-41%
+# and deflate_encode.ir by 40-42%. The map, ordmap and pvec rows are 1-6% faster.
+# enum_match.ir is 3.1% and tokenize.ir 2.5% slower on x86_64. Splicing and word
+# reads add 1-9% `.text` to deflate, http_hello, sort_ints, struct_drop,
+# tokenize and utf8_ingest.
+# Re-pinned 2026-10-25 (#13143) from Perf run 40108312430. The LZ77 copy helper
+# and the byte-view mismatch cut deflate_decode.ir by 19-23% and deflate_encode.ir
+# by 9-11%. The new runtime helper adds 2-6% `.text` to deflate_decode,
+# deflate_encode, http_hello and utf8_ingest_validated.
+# Updated 2026-10-24 from PR #13125, CI run 40066011748.
+# Checked codec errors and byte views change emitted code and deflate instruction counts.
+# 2026-10-23: integrated PR sources 0b03aff204, Perf run 40015080180. Deterministic rows use these measurements.
+# Retired- and static-instruction baselines for the bench corpus,
+# checked against every run by scripts/ci-check-perf.
+#
+# FORMAT: metric  value  [tolerance%]. The metric key is
+# <arch>/<benchmark>.<text|ir> — .text is the count of instructions in the
+# emitted assembly, .ir the count of instructions actually retired.
+#
+# WHAT IS EXACT AND WHAT IS NOT. Every figure here repeats to the digit on a
+# given commit EXCEPT the rows that hash string keys: core/map draws a
+# per-process string-hash seed (#6194), which moves probe lengths, so a
+# benchmark that builds a string-keyed map counts differently every run. That
+# is `map_string.ir`, measured at a 0.541% spread over 15 runs of one binary;
+# it keeps the 2% it was given for a 0.51% spread, on BOTH arches, since the
+# seed is drawn per process and not per ISA. A range grows with sample count,
+# so this is a floor, not a ceiling — do not tighten a tolerance here against a
+# handful of runs. The `utf8_ingest_*.ir` rows hashed their keys the same way
+# through json_parse until an object stopped being a Map; its objects are under
+# the size that builds a key index, so they are exact now. Absolute endpoints are
+# deliberately NOT quoted: they go stale the next time a line is re-banked for
+# an unrelated reason, and a stale range reads as a real one. `map_int.ir` is
+# exact — the seed is consulted for string keys only — and is deliberately
+# left on the default so the two together show which half of a map regression
+# moved.
+#
+# Everything else uses the 1% default, which flags a change of one part in a
+# hundred. That is a significance threshold and not a noise floor: for those
+# rows the count is exact, which `int_loop.ir` measuring identically over six
+# runs is the control for.
+#
+# STRICT, IN BOTH DIRECTIONS — perf.yml runs this comparison with
+# FERN_CI_PERF_GATE_STRICT=1, so a row outside its tolerance fails the job
+# whether it got worse or better. When a number moves on purpose, update it in
+# the same PR; the job summary prints the corrected lines ready to paste. Keep
+# the reason in the PR, not here.
+#
+# TWO ARCHITECTURES. An instruction count is not comparable across ISAs, so the
+# keys are namespaced by arch and compared independently — and each job compares
+# only its OWN namespace, so an x86_64 entry is not a missing measurement on the
+# aarch64 runner.
+
+# Re-pinned 2026-10-11 (#12117) on seven x86_64 and six aarch64 rows after a
+# carried reuse donor's token is taken where the donor dies and a split
+# read's part phi is shared by every read: the `.text` rows fell 1-4% on both
+# (http_hello -3.6%, perceus_cfold -3.3%, pmap_insert -2.3% and -1.8%,
+# pvec_with -2.0% and -2.2%, ordmap_insert -1.3% and -1.6%); pmap_insert.ir
+# fell 3.9% on x86_64 and ordmap_insert.ir 5.5% on aarch64, while
+# ordmap_insert.ir rose 1.2% on x86_64, the token taken at each arm's exit
+# with its uniqueness test and children drop there, where the construction
+# past the join tested it once. Values are the perf-x86_64 and perf-aarch64
+# lanes' measurements of the branch.
+
+# Re-pinned 2026-10-21 (#12921) after the sole-owner append kernel grew a full
+# receiver in one frame: the `.text` rows carry the longer kernel, +51
+# instructions on every x86_64 binary and +35 on aarch64 (eleven and nine
+# rows past the tolerance), while the grows retire fewer instructions
+# (struct_drop.ir -1.8% and -1.9%, sort_inplace.ir and
+# utf8_ingest_validated.ir -1.1% on aarch64). Values are the perf-x86_64 and
+# perf-aarch64 lanes' measurements of the branch.
+
+x86_64/array_append.text	1054
+x86_64/array_append.ir	13366203
+x86_64/array_index.text	1055
+x86_64/array_index.ir	16315255
+x86_64/array_scale_f64.text	1181
+x86_64/array_scale_f64.ir	21301529
+x86_64/array_with.ir	37759081
+x86_64/array_with.text	1210
+x86_64/ascii_scan.text	1264
+x86_64/ascii_scan.ir	37213728
+x86_64/byte_copy_append.text	1165
+x86_64/byte_copy_append.ir	13448080
+x86_64/byte_copy_with.text	1122
+x86_64/byte_copy_with.ir	12850254
+x86_64/call_overhead.text	246
+x86_64/call_overhead.ir	8250807
+x86_64/closure_call.text	890
+x86_64/closure_call.ir	63018154
+x86_64/deflate_decode.ir	34990848
+x86_64/deflate_decode.text	13238
+x86_64/deflate_encode.ir	43100357
+x86_64/deflate_encode.text	7285
+x86_64/enum_match.text	1016
+x86_64/enum_match.ir	48825085
+x86_64/http_hello.text	17410
+x86_64/http_hello.ir	23788438
+x86_64/int_loop.text	191
+x86_64/int_loop.ir	12000070
+x86_64/map_int.text	5711
+x86_64/map_int.ir	36645632
+x86_64/map_probe_chain.text	5715
+x86_64/map_probe_chain.ir	342935024
+x86_64/map_string.text	6656
+x86_64/map_string.ir	58511942	2
+x86_64/ordmap_insert.text	5483
+x86_64/ordmap_insert.ir	83184689
+x86_64/pmap_insert.text	2697
+x86_64/pmap_insert.ir	53347199
+x86_64/pvec_with.text	2865
+x86_64/pvec_with.ir	55173081
+x86_64/record_update.ir	37759081
+x86_64/record_update.text	1301
+x86_64/sort_inplace.text	1408
+x86_64/sort_inplace.ir	41268315
+x86_64/sort_ints.text	1886
+x86_64/sort_ints.ir	29952132
+x86_64/sort_strings.text	3151
+x86_64/sort_strings.ir	105294698
+x86_64/string_build.text	1914
+x86_64/string_build.ir	43517008
+x86_64/string_count_byte.text	1155
+x86_64/string_count_byte.ir	135589342
+x86_64/string_find_byte.text	1510
+x86_64/string_find_byte.ir	43717394
+x86_64/string_rfind_byte.text	1681
+x86_64/string_rfind_byte.ir	43732300
+x86_64/string_scan.text	2160
+x86_64/string_scan.ir	52603745
+x86_64/string_slice.text	812
+x86_64/string_slice.ir	38700086
+x86_64/struct_drop.text	2334
+x86_64/struct_drop.ir	205020574
+x86_64/tokenize.text	1115
+x86_64/tokenize.ir	37880086
+x86_64/utf8_ingest_unchecked.text	8255
+x86_64/utf8_ingest_unchecked.ir	2205771
+x86_64/utf8_ingest_validated.text	8861
+x86_64/utf8_ingest_validated.ir	5242372
+
+# aarch64, the arch this project defaults to. The `.ir` half comes from the
+# Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
+# the dev container — paste its block in verbatim. The `.text` half needs no
+# such thing: it is a line count over `fern -target arm64-linux` output, which
+# is host-independent, so a cross-compile from the dev container reproduces the
+# runner's figure on EVERY row in this corpus and that is how the `.text` half
+# is kept current. perf-aarch64 runs natively on ubuntu-24.04-arm, so the two
+# are directly comparable. The seeded row, map_string.ir, carries the same
+# tolerance its x86_64 twin does, for the same per-process hash seed, which is
+# drawn per process rather than per ISA.
+#
+# Re-pinned 2026-09-04 (#7397) on the x86_64 `.text` half only, after the #4873
+# containment bracket gained three field- and path-granular deaths: the three
+# persistent-collection benchmarks lose bracket pairs (ordmap_insert -3.6%,
+# pmap_insert -1.3%, pvec_with -1.2%). Every `.ir` row moved by less than its
+# tolerance, so the trade is static size, not work.
+#
+# The two utf8_ingest `.text` rows were re-pinned in the same commit and
+# credited to it. They are not its doing: the parent, a5cea3cd2, measures 31,424
+# and 31,915 itself, so the +417 apiece was already on main. The values stand;
+# the attribution did not. `map_int.text`, `map_string.text` and
+# `map_probe_chain.ir` carry drift of the same kind — the last of them +1.35%,
+# over its tolerance — and all three read identically at that parent, so they
+# are left for whoever moved them rather than re-pinned here.
+#
+# Re-pinned 2026-09-05 (#8530) where the `.with` and constructor-reuse
+# decisions moved into the IR: every row was measured twice on THIS corpus, on
+# origin/main and on the change, and only the rows the pair disagreed on by
+# more than their own tolerance were touched. Dynamically nothing got slower
+# (pvec_with -10.5%, sort_inplace -7.8%, pmap_insert -5.9%); four `.text` rows
+# grew 3-5%, which is the inline branch standing in for a call at every `.with`
+# site. `array_with` and `record_update` are new, so their rows are first
+# pins rather than re-pins — and their aarch64 `.ir` half is missing, because
+# no aarch64 host measures it here; perf-aarch64 reports the two UNBASELINED
+# for one run and its block goes in verbatim.
+#
+# Re-pinned 2026-10-11 (#12103) on the four utf8_ingest rows of each arch,
+# whose json_parse now scans strings with __scan_set: `.ir` fell 19-29%
+# (x86_64 unchecked -28.7%, validated -18.8%; aarch64 -26.4%, -18.4%) and
+# `.text` grew 0.7-1.7% for the scan's tables and run helpers. Both figures
+# for both arches are this branch's own measurement.
+#
+# Re-pinned 2026-10-12 (#12105 slice 4) on the four utf8_ingest rows of each
+# arch, whose json_parse builds an object as two arrays instead of a Map
+# (x86_64 `.ir` -16.5% unchecked, -8.9% validated; `.text` -23%), and on
+# http_hello.text (+3.8%): std/http imports std/json, and the tree shaker keeps
+# a method by bare name where a call's receiver is untyped, so JsonObject's
+# `get` / `len` and its seeded key hash are kept. The aarch64 `.text` rows are
+# cross-compiled readings; its `.ir` rows come from the perf-aarch64 lane.
+#
+# Re-pinned 2026-10-12 (#12262) on the four utf8_ingest rows of each arch,
+# whose json_parse threads one position cell instead of a cursor (x86_64 `.ir`
+# -9.7% unchecked, -5.1% validated; `.text` -15%), and on http_hello.text and
+# pmap_insert.text (-5.8% and -0.9%): the tree shaker now keeps a method by its
+# receiver's type wherever that type is known, not by its bare name. The
+# aarch64 `.text` rows are cross-compiled readings; its `.ir` rows come from
+# the perf-aarch64 lane.
+#
+# Re-pinned 2026-10-13 (#12331) on http_hello.text (x86_64 +3.7%, aarch64
+# +4.1%): a produced body's trailers (+65 on x86_64), std/fetch driving an
+# HTTP/2 connection (+163), and the inliner splicing a shared callee its
+# caller reads apart whatever the caller's size (+471, the four splices it
+# now admits: `__serve_event` twice, `__serve_park` and `fetch.idle` into the
+# serve loop, `__chunked_trailers` into the request parser), which is what
+# keeps the hello path at zero allocations. Both `.text` figures are this
+# branch's own measurement, the aarch64 one cross-compiled and equal to the
+# perf-aarch64 lane's reading.
+#
+# Re-pinned 2026-10-13 (#12344) on http_hello.ir (x86_64 -1.65%, aarch64
+# -1.57%): the inliner splices a once-called callee that returns a box into
+# a caller past its budget, so the serve loop no longer builds
+# `__serve_pass_end`'s tuple on every pass. Both figures are the perf lanes'.
+#
+# Re-pinned 2026-10-14 (#12406) on sort_ints.ir, string_build.ir and
+# struct_drop.ir (x86_64 +5.5%, +2.2%, +1.7%; aarch64 +3.8%, +1.7%, +1.3%):
+# a branch between two pure values is now a conditional move, which runs
+# both arms where the branch ran one. These rows' branches are predictable,
+# so callgrind, which has no branch predictor, counts only the cost. Wall
+# time on sort_ints scaled up is 5-10% faster; struct_drop's is within
+# noise. Both arches' figures are the perf lanes'. The same change takes
+# aarch64 ordmap_insert.text and sort_strings.text down 1.0% and 1.1%,
+# measured by the perf-aarch64 lane. With #12402's constant index on top,
+# x86_64 sort_inplace.text falls 1.1%; neither PR's own run saw the two
+# together. The figure is the perf-x86_64 lane's.
+#
+# Re-pinned 2026-10-15 (#12418) on every row that moved: semreach drops code
+# no reachable construction enables, so `.text` falls by up to 63% where a
+# benchmark's imports carry what it never builds (array_scale_f64, sort_inplace,
+# string_count_byte) and by 16% on http_hello. `.ir` moves less than 1.5% on
+# every row. Rows moved a few tenths by earlier merges are re-banked to the same
+# reading. x86_64 figures are the dev container's perf-bench run; the aarch64
+# `.text` rows are cross-compiled readings, and its `.ir` rows are unchanged.
+#
+# Re-pinned 2026-10-17 (#12582) on x86_64/http_hello.text (+1.17%): the
+# chunked-body join and the TLS record writer call __bytes_into, so the hello
+# server carries its runtime helper where it inlined a byte loop. The figure is
+# the perf-x86_64 lane's.
+#
+# Re-pinned 2026-10-18 (#12630) on http_hello.ir (x86_64 -9.73%, aarch64
+# -8.54%): the request head is scanned once for its shape, the framing fields
+# are found in one pass, the body deadline starts after the burst's parse, and
+# the version prefix goes through the mismatch kernel. Both figures are the
+# perf lanes' own.
+#
+# Re-pinned 2026-10-18 (#12644) on http_hello.text (x86_64 +2.93%, aarch64
+# +3.23%): std/http's `__bytes_are` is the `__mismatch_bytes_str` kernel,
+# inlined at its three callers, in place of a byte loop. `.ir` does not move:
+# the benchmark parses without a previous request, so those compares never
+# run there. Both figures are the perf lanes' own.
+#
+# Re-pinned 2026-10-18 (#12743, merged with the lane red) on both arches:
+# core/int.int_to_string is a constant for 0 to 99, so every binary that
+# formats an integer carries the table (`.text` +3% on http_hello, +7% on
+# map_string, +17% to +33% on sort_strings, string_build, string_scan and
+# struct_drop) and the ones that format small integers in their loop run
+# fewer instructions (string_build.ir -26%, struct_drop.ir -35%,
+# http_hello.ir -3%). Both arches' figures are the perf lanes' own.
+#
+# Re-pinned 2026-10-18 on x86_64/perceus_cfold.ir (-2.55%),
+# perceus_deriv.text (-1.24%) and perceus_deriv.ir (-8.84%): a record whose
+# fields are i64 or f64 constants, and an integer literal cast to its field's
+# width, are static boxes, so the constant records those programs build on
+# every round allocate nothing. The x86_64 figures are the dev container's
+# perf-bench run; the aarch64 rows (perceus_cfold.ir -3.41%,
+# perceus_deriv.text -1.68%, perceus_deriv.ir -8.93%) are the perf lane's.
+#
+# Re-pinned 2026-10-18 (#12781) on x86_64 ordmap_insert.ir (-1.83%),
+# pmap_insert.ir (-2.72%) and pvec_with.ir (-3.50%), with their `.text` rows
+# and http_hello.text (#12780, +0.22%): a payload read out of an enum held in
+# an array slot or a local is taken rather than retained, so the node the
+# update rebuilds is unique. The x86_64 figures are the dev container's
+# perf-bench run; the aarch64 rows (ordmap_insert.ir -2.48%, pmap_insert.ir
+# -2.81%, pvec_with.text -3.26%, pvec_with.ir -3.80%) are the perf lane's.
+#
+# Re-pinned 2026-10-25 (#13402) on ordmap_insert: std/ordmap is a B+ tree that
+# searches its nodes with __count_below_u64. ordmap_insert.ir falls 19.58% on
+# x86_64 and 13.52% on aarch64, and the .text rows grow with the larger module
+# (x86_64 +95.63%, aarch64 +84.30%). The x86_64 figures and the aarch64 .text
+# row are the dev container's perf-bench run and arm64 emit; aarch64
+# ordmap_insert.ir is the perf lane's.
+#
+# Re-pinned 2026-10-22 (#12926) on http_hello.text (x86_64 +0.90%, aarch64
+# +0.93%, inside the tolerance but moved on purpose): the scalar concat's
+# runtime body grows a sole receiver's block in place and doubles on a sole
+# receiver that outgrew it, so the body the server's module carries is
+# longer; `.ir` moved +0.05% on x86_64. Both figures are the static count of
+# the cross-emitted assembly, which is what the lanes count.
+#
+# Re-pinned 2026-10-22 (#12947) on pvec_with.ir (x86_64 -1.44%, aarch64
+# -1.61%): an array element's take survives the record update that keeps
+# its array, so a `with` on an element no longer copies the holder's
+# records. The x86_64 figure is a local callgrind count on the merged
+# tree. The aarch64 figure is the perf lane's at the earlier head.
+#
+# Re-pinned 2026-10-22 (#12957) on `.text` only. Every aarch64 program with a
+# heap carries 3 more instructions, the frameless functions' string-index
+# trap entry (__fern_str_oob_abort_leaf). On x86_64 a program that indexes a
+# string carries its string trap stub (+4), and one that links __alloc_u8,
+# the byte allocator or str_grow carries the `.c` entries that keep the
+# caller's frame for their size and range traps (+3 each). No `.ir` row
+# moves: none of the new code runs unless a program aborts.
+#
+# Re-pinned 2026-10-22 (#13021) on every x86_64 row from a local perf-bench
+# run of the merge with main at 12625f42, and on aarch64/perceus_rbtree_ck.text
+# from the perf lane (3306 -> 3266). The x86_64 .text rows moved by about -1%
+# between main's earlier pin and this merge. No .ir row moved by 1% or more.
+#
+# Re-pinned 2026-10-22 (#12969) on every x86_64 row from a local
+# perf-bench run. A record updater is spliced into its callers, and
+# semdead drops a record cycle that nothing reads. The rows that moved by
+# 1% or more: record_update.ir -65.63% and .text -14.54%,
+# perceus_rbtree_ck.ir -14.51%, http_hello.ir -2.59% and .text +2.40%.
+# utf8_ingest_unchecked.text moved -1.39% and utf8_ingest_validated.text
+# -1.34%. Every other row moved by less than 1%. The x86_64 rows were
+# measured again after main brought in #12957, so they include its trap stubs.
+#
+# The aarch64 rows for #12969 are the perf lane's. record_update.ir moved
+# -70.25% and .text -12.29%. perceus_rbtree_ck.ir moved -15.91%.
+# http_hello.ir moved -2.20% and .text +2.42%. The two utf8_ingest .text
+# rows moved -1.2%. The http_hello and record_update .text rows add the 3
+# instructions of the #12957 trap entry.
+#
+# Re-pinned 2026-10-23 (#13026) on aarch64/perceus_rbtree_ck.text (3306 to
+# 3266, -1.21%), the perf lane's figure. The change is from main, not from
+# #13026: a compiler built from main at 7fccb64 emits the same 3266
+# instructions. Most other aarch64 `.text` rows moved about -0.5%, inside
+# the tolerance.
+#
+# Re-pinned 2026-10-23 (#13050) on sort_inplace (x86_64 .ir -2.9%, .text
+# +4.2%; aarch64 .ir -5.3%, .text +4.9%): std/sort's i32 insertion sort is gone and the benchmark runs
+# `cmp.sort_in_place`, a heapsort that compares through `cmp` directly. It
+# runs fewer instructions on these 48-element arrays and is O(n log n) on
+# any input, while its code is longer. The x86_64 figures are a local
+# perf-bench run, the aarch64 ones the perf-aarch64 lane's.
+#
+# Re-pinned 2026-10-23 (#13059) on string_find_byte.text and
+# string_rfind_byte.text (x86_64 +2.6% and +3.5%, aarch64 +2.0% and +2.7%):
+# `index_of` and `last_index_of` answer an Option now, so each benchmark
+# matches on it, and that match is the new code. Their `.ir` rows held. The
+# utf8_ingest `.text` rows fell about 1.1% (x86_64 both, aarch64 unchecked)
+# with std/string's search verbs. Values are the perf-x86_64 and
+# perf-aarch64 lanes'.
+#
+# Do NOT extrapolate an aarch64 figure from its x86_64 twin: the ratio is not
+# constant. Over `.text` it runs from 0.85 (call_overhead) to 1.18
+# (utf8_ingest_unchecked) — one ISA emitting fewer instructions than the other
+# on one program says nothing about the next. A new benchmark reports as
+# UNBASELINED here for one CI run, which is the gate saying "measured,
+# recorded, not yet compared" — paste that run's block in rather than guessing.
+# Re-pinned 2026-10-23 (arm64 cold-call register allocation) on the
+# aarch64 `.text` rows it moves, measured by scripts/perf-bench on this
+# branch merged with main: from 71 fewer to 54 more instructions. The
+# utf8_ingest_validated row was 7828 where main itself measures 7751.
+#
+aarch64/array_append.text	1252
+aarch64/array_append.ir	17876579
+aarch64/array_index.text	1250
+aarch64/array_index.ir	18388122
+aarch64/array_scale_f64.text	1344
+aarch64/array_scale_f64.ir	25324852
+aarch64/array_with.text	1406
+aarch64/array_with.ir	31217560
+aarch64/ascii_scan.text	1548
+aarch64/ascii_scan.ir	68735551
+aarch64/byte_copy_append.text	1381
+aarch64/byte_copy_append.ir	31944648
+aarch64/byte_copy_with.text	1327
+aarch64/byte_copy_with.ir	31304964
+aarch64/call_overhead.text	317
+aarch64/call_overhead.ir	11250819
+aarch64/closure_call.text	1099
+aarch64/closure_call.ir	72624168
+# 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
+aarch64/deflate_decode.ir	36402562
+aarch64/deflate_decode.text	14114
+aarch64/deflate_encode.ir	44038371
+aarch64/deflate_encode.text	7919
+aarch64/enum_match.text	1219
+aarch64/enum_match.ir	41175097
+aarch64/http_hello.text	18516
+aarch64/http_hello.ir	25860660
+aarch64/int_loop.text	259
+aarch64/int_loop.ir	18000078
+aarch64/map_int.text	5972
+aarch64/map_int.ir	35263853
+aarch64/map_probe_chain.text	5982
+aarch64/map_probe_chain.ir	334317381
+aarch64/map_string.text	7073
+# 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
+aarch64/map_string.ir	58932247	2
+aarch64/ordmap_insert.text	5847
+aarch64/ordmap_insert.ir	98616062
+aarch64/pmap_insert.text	2961
+aarch64/pmap_insert.ir	64018618
+aarch64/pvec_with.text	3103
+aarch64/pvec_with.ir	59217299
+aarch64/record_update.text	1506
+aarch64/record_update.ir	31217560
+aarch64/sort_inplace.text	1589
+aarch64/sort_inplace.ir	49103947
+aarch64/sort_ints.text	2082
+aarch64/sort_ints.ir	33051852
+aarch64/sort_strings.text	3493
+aarch64/sort_strings.ir	105881681
+aarch64/string_build.text	2267
+aarch64/string_build.ir	47131451
+aarch64/string_count_byte.text	1393
+aarch64/string_count_byte.ir	295207206
+aarch64/string_find_byte.text	1801
+aarch64/string_find_byte.ir	55945262
+aarch64/string_rfind_byte.text	1924
+aarch64/string_rfind_byte.ir	55959893
+aarch64/string_scan.text	2466
+aarch64/string_scan.ir	59777921
+aarch64/string_slice.text	1035
+aarch64/string_slice.ir	43620100
+aarch64/struct_drop.text	2571
+aarch64/struct_drop.ir	221660842
+aarch64/tokenize.text	1291
+aarch64/tokenize.ir	38350102
+aarch64/utf8_ingest_unchecked.text	8680
+aarch64/utf8_ingest_unchecked.ir	2683450
+aarch64/utf8_ingest_validated.text	9244
+aarch64/utf8_ingest_validated.ir	6269853
+
+# Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
+x86_64/perceus_cfold.text	1807
+x86_64/perceus_cfold.ir	53952488
+x86_64/perceus_deriv.text	2588
+x86_64/perceus_deriv.ir	66902002
+x86_64/perceus_nqueens.text	1472
+x86_64/perceus_nqueens.ir	91908271
+x86_64/perceus_rbtree.text	2790
+x86_64/perceus_rbtree.ir	56477535
+x86_64/perceus_rbtree_ck.text	3040
+x86_64/perceus_rbtree_ck.ir	55981855
+aarch64/perceus_cfold.text	2055
+aarch64/perceus_cfold.ir	61163127
+aarch64/perceus_deriv.text	2885
+aarch64/perceus_deriv.ir	81963685
+aarch64/perceus_nqueens.text	1708
+aarch64/perceus_nqueens.ir	104935847
+aarch64/perceus_rbtree.text	3061
+aarch64/perceus_rbtree.ir	61284969
+aarch64/perceus_rbtree_ck.text	3298
+aarch64/perceus_rbtree_ck.ir	60500171

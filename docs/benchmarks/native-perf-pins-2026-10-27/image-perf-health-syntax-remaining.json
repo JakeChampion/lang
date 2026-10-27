@@ -1,0 +1,23 @@
+{
+  "checks": [
+    {
+      "command": [
+        "bash",
+        "-n",
+        "scripts/perf-bench"
+      ],
+      "exit": 0,
+      "stderr": ""
+    },
+    {
+      "command": [
+        "bash",
+        "-n",
+        "scripts/perf-bench-selfhost"
+      ],
+      "exit": 0,
+      "stderr": ""
+    }
+  ],
+  "reason": "Bash accepts one script pathname. The initial command checks the comparator only. These distinct commands check the two remaining unchanged scripts without another completed comparator check."
+}

@@ -1,0 +1,13 @@
+from pathlib import Path
+import subprocess,hashlib,json,time
+root=Path.cwd();out=Path('/tmp/image-perf-health-semantic-probes');assert not out.exists();out.mkdir();sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();before={str(p):sha(p)for p in sorted((root/'bench').rglob('*'))if p.is_file()};records=[]
+for label,compiler in [('before9c',Path('/workspace/image-tuple-array-current-fern-9c4085d83')),('currentb42',Path('/tmp/image-icc-inverse-current-fern-b42a82ae9'))]:
+ for name in ['perceus_cfold','perceus_deriv','perceus_nqueens']:
+  for target in ['x86-64-linux','arm64-linux']:
+   p=out/(label+'-'+name+'-'+target+'.elf');cmd=[str(compiler),'-target',target,'-o',str(p),str(root/'bench'/(name+'.fern'))];r=subprocess.run(cmd,capture_output=True,text=True);assert r.returncode==0,(cmd,r.stderr)
+   run=[str(p)]if target=='x86-64-linux'else['/workspace/image-test-tools/qemu10/usr/bin/qemu-aarch64',str(p)];start=time.time();r=subprocess.run(run,capture_output=True,text=True)
+   d=dict(label=label,compiler=str(compiler),compiler_sha256=sha(compiler),benchmark=name,target=target,compile_exit=0,binary_sha256=sha(p),command=run,exit=r.returncode,stdout=r.stdout,stderr=r.stderr,seconds=time.time()-start);records.append(d);assert r.returncode not in [125,134,-11],d;print(label,name,target,r.returncode,flush=True)
+assert before=={p:sha(Path(p))for p in before}
+for name in ['perceus_cfold','perceus_deriv','perceus_nqueens']:
+ items=[d for d in records if d['benchmark']==name];assert len({(d['exit'],d['stdout'],d['stderr'])for d in items})==1
+(out/'observations.json').write_text(json.dumps(dict(source_commit=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),source_hashes=before,sources_unchanged=True,finite_checksum_agreement=True,observations=records,scope='Three unchanged benchmark checksums, not general compatibility or speed evidence.'),indent=2)+'\n')

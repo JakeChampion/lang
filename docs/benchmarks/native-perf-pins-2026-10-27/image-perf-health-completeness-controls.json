@@ -1,0 +1,42 @@
+{
+  "checks": [
+    {
+      "command": [
+        "python3",
+        "/tmp/image-check-perf-report-completeness.py",
+        ".github/perf-baseline.txt",
+        "/tmp/image-perf-health-perf-report-x86_64.txt",
+        "x86_64"
+      ],
+      "exit": 0,
+      "stdout": "complete: x86_64 78 metrics\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "python3",
+        "/tmp/image-check-perf-report-completeness.py",
+        ".github/perf-baseline.txt",
+        "/tmp/image-perf-health-perf-report-aarch64.txt",
+        "aarch64"
+      ],
+      "exit": 0,
+      "stdout": "complete: aarch64 78 metrics\n",
+      "stderr": ""
+    },
+    {
+      "command": [
+        "python3",
+        "/tmp/image-check-perf-report-completeness.py",
+        ".github/perf-baseline.txt",
+        "/tmp/image-perf-health-control-missing-row.txt",
+        "x86_64"
+      ],
+      "exit": 1,
+      "stdout": "",
+      "stderr": "Traceback (most recent call last):\n  File \"/tmp/image-check-perf-report-completeness.py\", line 14, in <module>\n    if missing:raise ValueError('missing required metric '+missing[0])\n               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nValueError: missing required metric x86_64/int_loop.text\n",
+      "required_failure": "missing required metric x86_64/int_loop.text"
+    }
+  ],
+  "prior_pin_qualification": "The earlier metadata records a set-difference assertion. These distinct executable controls establish actual subprocess exits without a benchmark or comparator change."
+}

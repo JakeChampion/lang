@@ -1,0 +1,30 @@
+[
+  {
+    "artifact_id": 12771575318,
+    "name": "perf-report-x86_64",
+    "digest": "sha256:fa422b883fbc18fa0bf084623d4393d78aeb7cb7d8413b4bbc15a6de45c3347e",
+    "workflow_run": {
+      "id": 40577171916,
+      "repository_id": 1230663420,
+      "head_repository_id": 1230663420,
+      "head_branch": "main",
+      "head_sha": "b42a82ae934be20d4b370ff8f0cc1b278b8804bc"
+    },
+    "file_id": "file_000000006c9081fdabd2f4698deebbb6",
+    "local_path": "/workspace/attachments/1b9c7c5c-fb84-4cb6-bd7f-03814e8324ca/github-actions-artifact-12771575318.zip"
+  },
+  {
+    "artifact_id": 12770888291,
+    "name": "perf-report-aarch64",
+    "digest": "sha256:615c79005bf673a65cf3a71d8f2b431d39e4544d0b70cb4b2a7087b6f2f90fa1",
+    "workflow_run": {
+      "id": 40577171916,
+      "repository_id": 1230663420,
+      "head_repository_id": 1230663420,
+      "head_branch": "main",
+      "head_sha": "b42a82ae934be20d4b370ff8f0cc1b278b8804bc"
+    },
+    "file_id": "file_0000000097d881fd99114fed17be5e21",
+    "local_path": "/workspace/attachments/fe8d804a-5a4b-4260-8d39-ebe2b5665197/github-actions-artifact-12770888291.zip"
+  }
+]

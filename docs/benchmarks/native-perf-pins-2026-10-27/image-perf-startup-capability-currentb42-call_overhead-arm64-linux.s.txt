@@ -1,0 +1,429 @@
+    .globl _start
+    .text
+__fn_fib:
+    .cfi_startproc
+    ldr x0, [sp, #0]
+__fn_fib.k:
+__fn_fib.r:
+    stp x29, x30, [sp, #-16]!
+    .cfi_def_cfa_offset 16
+    .cfi_offset x29, -16
+    .cfi_offset x30, -8
+    mov x29, sp
+    .cfi_def_cfa_register x29
+    stp x19, x20, [sp, #-16]!
+    mov x19, x0
+.Lssa_fib_0:
+    cmp x19, #2
+    b.ge .Lssa_fib_1
+.Lssa_fib_3:
+    mov x0, x19
+    .cfi_remember_state
+    sub sp, x29, #16
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    .cfi_def_cfa sp, 0
+    ret
+    .cfi_restore_state
+.Lssa_fib_1:
+    sub x9, x19, #1
+    sxtw x0, w9
+    bl __fn_fib.r
+    mov x20, x0
+    sub x19, x19, #2
+    sxtw x0, w19
+    bl __fn_fib.r
+    add x20, x20, x0
+    sxtw x0, w20
+    .cfi_remember_state
+    sub sp, x29, #16
+    ldp x19, x20, [sp], #16
+    ldp x29, x30, [sp], #16
+    .cfi_def_cfa sp, 0
+    ret
+    .cfi_restore_state
+    .cfi_endproc
+    .ltorg
+__fn_main:
+    .cfi_startproc
+__fn_main.k:
+__fn_main.r:
+    stp x29, x30, [sp, #-16]!
+    .cfi_def_cfa_offset 16
+    .cfi_offset x29, -16
+    .cfi_offset x30, -8
+    mov x29, sp
+    .cfi_def_cfa_register x29
+    str x19, [sp, #-16]!
+.Lssa_main_0:
+.Lssa_main_2:
+    mov x19, #0
+    mov x9, #0
+.Lssa_main_3:
+    ldr x10, =1000000
+    cmp x9, x10
+    b.ge .Lssa_main_1
+.Lssa_main_4:
+    mov x10, #3
+    mul x10, x9, x10
+    add x10, x19, x10
+    sub x19, x10, #1
+    add x9, x9, #1
+    b .Lssa_main_3
+.Lssa_main_1:
+    mov x0, #24
+    bl __fn_fib.r
+    sxtw x0, w0
+    add x19, x19, x0
+    mov x9, #97
+    mov x4, x19
+    mov x5, x9
+    sdiv x6, x4, x5
+    msub x4, x6, x5, x4
+    mov x10, x4
+    sxtw x0, w10
+    .cfi_remember_state
+    sub sp, x29, #16
+    ldr x19, [sp], #16
+    ldp x29, x30, [sp], #16
+    .cfi_def_cfa sp, 0
+    ret
+    .cfi_restore_state
+    .cfi_endproc
+    .ltorg
+_start:
+    adrp x9, .Lfern_relanchor
+    add x9, x9, :lo12:.Lfern_relanchor
+    ldr x10, [x9]
+    sub x9, x9, x10
+    cbz x9, .Lfern_reloc_done
+    adrp x11, .Lfern_sbox_begin
+    add x11, x11, :lo12:.Lfern_sbox_begin
+    adrp x12, .Lfern_sbox_end
+    add x12, x12, :lo12:.Lfern_sbox_end
+.Lfern_sbox_loop:
+    cmp x11, x12
+    b.hs .Lfern_sbox_done
+    ldr x13, [x11, #8]
+    add x13, x13, x9
+    str x13, [x11, #8]
+    add x11, x11, #24
+    b .Lfern_sbox_loop
+.Lfern_sbox_done:
+    adrp x11, .Lfern_cagg_begin
+    add x11, x11, :lo12:.Lfern_cagg_begin
+    adrp x12, .Lfern_cagg_end
+    add x12, x12, :lo12:.Lfern_cagg_end
+.Lfern_cagg_loop:
+    cmp x11, x12
+    b.hs .Lfern_cagg_done
+    ldr x13, [x11, #16]
+    add x13, x13, x9
+    str x13, [x11, #16]
+    ldr x14, [x11]
+    add x11, x11, #16
+    add x11, x11, x14, lsl #3
+    b .Lfern_cagg_loop
+.Lfern_cagg_done:
+    adrp x11, .Lfern_cfn_begin
+    add x11, x11, :lo12:.Lfern_cfn_begin
+    adrp x12, .Lfern_cfn_end
+    add x12, x12, :lo12:.Lfern_cfn_end
+.Lfern_cfn_loop:
+    cmp x11, x12
+    b.hs .Lfern_cfn_done
+    ldr x13, [x11, #24]
+    add x13, x13, x9
+    str x13, [x11, #24]
+    add x11, x11, #32
+    b .Lfern_cfn_loop
+.Lfern_cfn_done:
+    adrp x11, .Lfern_cref_begin
+    add x11, x11, :lo12:.Lfern_cref_begin
+    adrp x12, .Lfern_cref_end
+    add x12, x12, :lo12:.Lfern_cref_end
+.Lfern_cref_loop:
+    cmp x11, x12
+    b.hs .Lfern_reloc_done
+    ldr x13, [x11]
+    add x13, x13, x9
+    ldr x14, [x13]
+    add x14, x14, x9
+    str x14, [x13]
+    add x11, x11, #8
+    b .Lfern_cref_loop
+.Lfern_reloc_done:
+    mov x0, #0
+    mov x1, #1
+    lsl x1, x1, #30
+    mov x2, #3
+    mov x3, #0x4022
+    orr x3, x3, #0x20000
+    mov x4, #0
+    sub x4, x4, #1
+    mov x5, #0
+    mov x8, #222
+    svc #0
+    tbnz x0, #63, .Lfern_stack_kept
+    mov x19, x0
+    mov x1, #1
+    lsl x1, x1, #20
+    mov x2, #0
+    mov x8, #226
+    svc #0
+    cbnz x0, .Lfern_stack_guard_failed
+    mov x9, #1
+    lsl x9, x9, #30
+    add x9, x19, x9
+    sub sp, x9, #16
+    mov x10, sp
+    adrp x11, __fern_stack_top
+    add x11, x11, :lo12:__fern_stack_top
+    str x10, [x11]
+.Lfern_stack_kept:
+    mov x0, #0
+    mov x1, #1
+    lsl x1, x1, #16
+    mov x2, #3
+    mov x3, #0x4022
+    orr x3, x3, #0x20000
+    mov x4, #0
+    sub x4, x4, #1
+    mov x5, #0
+    mov x8, #222
+    svc #0
+    tbnz x0, #63, .Lfern_signal_stack_map_failed
+    mov x9, #1
+    lsl x9, x9, #16
+    sub sp, sp, #32
+    stp x0, xzr, [sp]
+    str x9, [sp, #16]
+    mov x0, sp
+    mov x1, #0
+    mov x8, #132
+    svc #0
+    cbnz x0, .Lfern_signal_stack_failed
+    adrp x9, __fern_segv
+    add x9, x9, :lo12:__fern_segv
+    mov x10, #4
+    movk x10, #0x800, lsl #16
+    mov x11, #0
+    stp x9, x10, [sp]
+    stp x11, xzr, [sp, #16]
+    mov x0, #11
+    mov x1, sp
+    mov x2, #0
+    mov x3, #8
+    mov x8, #134
+    svc #0
+    cbnz x0, .Lfern_fault_handler_failed
+    add sp, sp, #32
+    stp x29, x30, [sp, #-16]!
+    mov x29, sp
+    bl __fn_main
+    mov x8, #94
+    svc #0
+    .section .rodata
+.Lmsg_stack_overflow:
+    .ascii "fern: stack overflow\n"
+    .text
+__fern_segv:
+    ldr x9, [x1, #16]
+    ldr x10, [x2, #432]
+    sub x9, x9, x10
+    mov x10, #1
+    lsl x10, x10, #20
+    add x9, x9, x10
+    lsl x10, x10, #1
+    cmp x9, x10
+    b.hs .Lfern_segv_other
+    ldr x11, [x2, #440]
+    ldr x12, [x2, #416]
+    stp x12, x11, [sp, #-16]!
+    mov x29, sp
+    adrp x10, __fern_stack_top
+    add x10, x10, :lo12:__fern_stack_top
+    str xzr, [x10]
+    adrp x1, .Lmsg_stack_overflow
+    add x1, x1, :lo12:.Lmsg_stack_overflow
+    mov x2, #21
+    mov x0, #134
+    b __fern_report
+.Lfern_segv_other:
+    stp x29, x30, [sp, #-16]!
+    sub sp, sp, #32
+    stp xzr, xzr, [sp]
+    stp xzr, xzr, [sp, #16]
+    mov x0, #11
+    mov x1, sp
+    mov x2, #0
+    mov x3, #8
+    mov x8, #134
+    svc #0
+    add sp, sp, #32
+    ldp x29, x30, [sp], #16
+    ret
+    .section .rodata
+.Lfern_stack_guard_failed_msg:
+    .ascii "fern: could not protect the stack guard\n"
+    .text
+.Lfern_stack_guard_failed:
+    adrp x1, .Lfern_stack_guard_failed_msg
+    add x1, x1, :lo12:.Lfern_stack_guard_failed_msg
+    mov x2, #40
+    mov x0, #2
+    mov x8, #64
+    svc #0
+    mov x0, #134
+    mov x8, #94
+    svc #0
+    .section .rodata
+.Lfern_signal_stack_map_failed_msg:
+    .ascii "fern: could not map the signal stack\n"
+    .text
+.Lfern_signal_stack_map_failed:
+    adrp x1, .Lfern_signal_stack_map_failed_msg
+    add x1, x1, :lo12:.Lfern_signal_stack_map_failed_msg
+    mov x2, #37
+    mov x0, #2
+    mov x8, #64
+    svc #0
+    mov x0, #134
+    mov x8, #94
+    svc #0
+    .section .rodata
+.Lfern_signal_stack_failed_msg:
+    .ascii "fern: could not install the signal stack\n"
+    .text
+.Lfern_signal_stack_failed:
+    adrp x1, .Lfern_signal_stack_failed_msg
+    add x1, x1, :lo12:.Lfern_signal_stack_failed_msg
+    mov x2, #41
+    mov x0, #2
+    mov x8, #64
+    svc #0
+    mov x0, #134
+    mov x8, #94
+    svc #0
+    .section .rodata
+.Lfern_fault_handler_failed_msg:
+    .ascii "fern: could not install the fault handler\n"
+    .text
+.Lfern_fault_handler_failed:
+    adrp x1, .Lfern_fault_handler_failed_msg
+    add x1, x1, :lo12:.Lfern_fault_handler_failed_msg
+    mov x2, #42
+    mov x0, #2
+    mov x8, #64
+    svc #0
+    mov x0, #134
+    mov x8, #94
+    svc #0
+    .bss
+    .align 3
+    .globl __fern_stack_top
+__fern_stack_top: .quad 0
+    .text
+.globl __fern_report
+.type __fern_report, %function
+__fern_report:
+    mov x19, x0
+    mov x0, #2
+    mov x8, #64
+    svc #0
+    b __fern_bt_exit
+.size __fern_report, .-__fern_report
+    .section .rodata
+.Lmsg_bt:
+    .ascii "backtrace:\n"
+    .text
+    .globl __fern_bt_exit
+__fern_bt_exit:
+    adrp x1, .Lmsg_bt
+    add x1, x1, :lo12:.Lmsg_bt
+    mov x2, #11
+    mov x0, #2
+    mov x8, #64
+    svc #0
+    mov x20, x29
+    mov x21, #64
+    mov x22, sp
+.Lbt_loop:
+    cbz x21, .Lbt_done
+    cmp x20, x22
+    b.lo .Lbt_done
+    and x23, x20, #7
+    cbnz x23, .Lbt_done
+    adrp x24, __fern_stack_top
+    add x24, x24, :lo12:__fern_stack_top
+    ldr x24, [x24]
+    cbz x24, .Lbt_top_ok
+    cmp x20, x24
+    b.hs .Lbt_done
+.Lbt_top_ok:
+    ldr x1, [x20, #8]
+    cmp x1, #16, lsl #12
+    b.lo .Lbt_done
+    bl .Lbt_hex
+    mov x22, x20
+    ldr x20, [x20]
+    sub x21, x21, #1
+    b .Lbt_loop
+.Lbt_done:
+    mov x0, x19
+    mov x8, #94
+    svc #0
+.Lbt_hex:
+    sub sp, sp, #32
+    mov w2, #32
+    strb w2, [sp]
+    strb w2, [sp, #1]
+    mov w2, #48
+    strb w2, [sp, #2]
+    mov w2, #120
+    strb w2, [sp, #3]
+    mov w2, #10
+    strb w2, [sp, #20]
+    mov x3, #16
+    add x4, sp, #19
+.Lbt_hloop:
+    and x2, x1, #15
+    cmp x2, #10
+    b.lo .Lbt_hdec
+    add x2, x2, #87
+    b .Lbt_hput
+.Lbt_hdec:
+    add x2, x2, #48
+.Lbt_hput:
+    strb w2, [x4]
+    sub x4, x4, #1
+    lsr x1, x1, #4
+    subs x3, x3, #1
+    b.ne .Lbt_hloop
+    mov x0, #2
+    mov x1, sp
+    mov x2, #21
+    mov x8, #64
+    svc #0
+    add sp, sp, #32
+    ret
+    .section .data
+    .align 8
+.Lfern_relanchor:
+    .quad .Lfern_relanchor
+    .align 8
+.Lfern_sbox_begin:
+    .section .data
+.Lfern_sbox_end:
+    .align 8
+.Lfern_cagg_begin:
+    .section .data
+.Lfern_cagg_end:
+    .align 8
+.Lfern_cfn_begin:
+    .section .data
+.Lfern_cfn_end:
+    .align 8
+.Lfern_cref_begin:
+.Lfern_cref_end:
+    .text

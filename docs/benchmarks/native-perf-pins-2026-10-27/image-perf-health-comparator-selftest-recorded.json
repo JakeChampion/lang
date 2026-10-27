@@ -1,0 +1,15 @@
+{
+  "command": [
+    "node",
+    "scripts/perf-gate-selftest.mjs"
+  ],
+  "exit": 0,
+  "stdout": "perf-gate-selftest: 22 cases pass against scripts/ci-check-perf\n",
+  "stderr": "",
+  "source_hashes": {
+    "scripts/ci-check-perf": "fa5fce8c5cbe004f996c3cfd879b8115197d0e7c47489fff49c4fb9d9bd094ff",
+    "scripts/perf-gate-selftest.mjs": "cf43efd45ea24af40dcfbf895565116a7b404c300a112f40282a396e6e7309c7"
+  },
+  "sources_unchanged": true,
+  "reason": "The earlier shell output records 22 successful cases but did not separately capture the Node exit. This distinct process records the actual exit and preserves the original log."
+}
