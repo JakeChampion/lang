@@ -17555,18 +17555,17 @@ function lu_decl_count(fx: LuFn, name: string): i32 {
   return n;
 }
 
-struct LuInit { ok: boolean, init: ast.Expr }
-
-function lu_init_of(fx: LuFn, name: string): LuInit {
-  let found: i32 = 0;
-  let init: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
+function lu_init_of(fx: LuFn, name: string): Option[ast.Expr] {
+  let init: Option[ast.Expr] = None;
   for v in fx.facts.vars {
     if (v.name == name) {
-      found = found + 1;
-      init = v.init;
+      if let Some(_) = init {
+        return None;
+      }
+      init = Some(v.init);
     }
   }
-  return LuInit { ok: found == 1, init: init };
+  return init;
 }
 
 function lu_is_local(fx: LuFn, name: string): boolean {
@@ -17574,8 +17573,7 @@ function lu_is_local(fx: LuFn, name: string): boolean {
 }
 
 function lu_fresh_init(fx: LuFn, name: string): boolean {
-  let li: LuInit = lu_init_of(fx, name);
-  return li.ok && lu_fresh_expr(li.init);
+  return match (lu_init_of(fx, name)) { Some(init) => lu_fresh_expr(init), None => false };
 }
 
 // An own parameter holds its fields as a fresh local does, so a field unpacked from it is owned the same way.
@@ -17608,11 +17606,10 @@ function lu_fresh_expr(e: ast.Expr): boolean {
 }
 
 function lu_unpack_init(fx: LuFn, name: string): boolean {
-  let li: LuInit = lu_init_of(fx, name);
-  if (!li.ok) {
+  let Some(init) = lu_init_of(fx, name) else {
     return false;
-  }
-  if let ast.ExprFieldAccess(fa) = li.init {
+  };
+  if let ast.ExprFieldAccess(fa) = init {
     let h: string = ow_ident_name(fa.obj);
     if (h.len() == 0 || !lu_fresh_init(fx, h) && !lu_own_param(fx, h)) {
       return false;
@@ -17633,11 +17630,10 @@ function lu_unpack_init(fx: LuFn, name: string): boolean {
 }
 
 function lu_rename_source(fx: LuFn, name: string): string {
-  let li: LuInit = lu_init_of(fx, name);
-  if (!li.ok) {
+  let Some(init) = lu_init_of(fx, name) else {
     return "";
-  }
-  let src: string = ow_ident_name(li.init);
+  };
+  let src: string = ow_ident_name(init);
   if (src.len() == 0 || lu_occ_count(fx, src) != 1) {
     return "";
   }

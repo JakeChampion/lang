@@ -1219,6 +1219,22 @@ findings. Ranked by leverage.
   Both native backends, the certifier and the physical-credit proofs match the result before they use a function.
   Contract checks execute on x86-64, ARM64 and Wasm.
 
+  Last-use initializer lookup returns `Option[ast.Expr]` instead of `LuInit`.
+  Missing names and duplicate declarations return `None`.
+  A unique declaration retains its original expression.
+  A real `ExprUnknown` payload also remains present.
+  Fresh-value checks, field unpack checks, and rename checks match the option before they read that expression.
+
+  Sixty-five private lookup records retain their prior output on x86, ARM64, and Wasm.
+  They cover payload data, duplicate names, absent names, freshness, field selection, aliases, and last-use keys.
+  Sixty-three complete diagnostic outputs also retain their prior order and multiplicity on those targets.
+  The 65 native sanitizer probes report 63,392 allocations, 63,392 frees, and zero live bytes.
+
+  Forty process pairs per input run the complete parser and checker over 500 functions.
+  All inputs pass the Go checker and both self-host checker versions.
+  Candidate/baseline time ratios are 1.011 for fresh locals, 1.020 for rename chains, and 1.028 for field unpack operations.
+  These measurements record the option cost and establish no general compiler speed change.
+
   The scale-map matcher uses `Option[ast.Expr]` instead of `ScaleFactor` and its placeholder expression.
   A declined rewrite retains the original call.
   A matched rewrite receives the original factor expression as its success payload.
