@@ -1021,6 +1021,21 @@ findings. Ranked by leverage.
   Candidate/baseline time ratios range from 0.964 to 1.099 across six inputs.
   These probes establish no general compiler speed change.
 
+  Reference-target queries return `Option[Target]` without an empty target or a `R_NONE` marker.
+  Successful targets retain their kind, names, owner, function index, method coordinates, and the `spelled` field.
+  A known target remains present when its declaration span is absent.
+  Type, declaration, and local fallback retain their prior order.
+
+  Forty-seven target records match the native baseline on x86-64, ARM64, and Wasm.
+  Separate compiler copies expose target fields through a probe for this comparison.
+  The production compiler contains no probe.
+  Public reference output also matches the native baseline for all 47 cases.
+  Across 94 native sanitizer probes, 168,550 allocations match 168,550 releases, with zero live bytes in each process.
+
+  Forty process pairs per input repeat complete cached queries 50 times.
+  Candidate/baseline time ratios range from 0.894 to 1.027 across six inputs.
+  These probes establish no general compiler speed change.
+
   Printer recognition uses `Option[UseSugar]` and `Option[ForCSugar]`.
   Absent forms no longer contain placeholder calls, bodies, or loop conditions.
   Layout, statement output, and lint scores match the option before they use a payload.
