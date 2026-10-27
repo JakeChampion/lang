@@ -149,6 +149,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		src  string
 		want []string
 	}{
+		{"closure-consumes-captured-owned-then-use", "function take(own xs: i32[]): i32 { return xs.len(); } function f(own xs: i32[]): i32 { let g: () => i32 = (): i32 => take(xs); let a: i32 = g(); return a + xs.len(); } function main(): i32 { return f([1]); }", []string{"E050"}},
+		{"closure-consumes-captured-owned-only", "function take(own xs: i32[]): i32 { return xs.len(); } function f(own xs: i32[]): i32 { let g: () => i32 = (): i32 => take(xs); return g(); } function main(): i32 { return f([1]); }", nil},
+		{"closure-parameter-shadows-outer-owned", "function take(own xs: i32[]): i32 { return xs.len(); } function f(own xs: i32[]): i32 { let g: (i32[]) => i32 = (xs: i32[]): i32 => xs.len(); let a: i32 = g([5]); return a + take(xs); } function main(): i32 { return f([1]); }", nil},
 		{"unsafe-call-outside-block", "unsafe function danger(x: i32): i32 { unsafe { return x + 1; } } function main(): i32 { return danger(1); }", []string{"E095"}},
 		{"unsafe-call-inside-block", "unsafe function danger(x: i32): i32 { unsafe { return x + 1; } } function main(): i32 { let v: i32 = 0; unsafe { v = danger(1); } return v; }", nil},
 		{"unsafe-body-is-not-a-block", "unsafe function danger(x: i32): i32 { unsafe { return x + 1; } } unsafe function outer(): i32 { return danger(1); } function main(): i32 { let v: i32 = 0; unsafe { v = outer(); } return v; }", []string{"E095"}},

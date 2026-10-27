@@ -1,0 +1,22 @@
+// A closure body consumes the owned parameter it captures. The move belongs
+// to the enclosing function, so a later use there is a use after move. The
+// control moves the value into the closure and uses nothing afterwards.
+
+function take(own xs: i32[]): i32 {
+    return xs.len();
+}
+
+function consumed_then_used(own xs: i32[]): i32 {
+    let g: () => i32 = (): i32 => take(xs);
+    let a: i32 = g();
+    return a + xs.len();
+}
+
+function consumed_only(own xs: i32[]): i32 {
+    let g: () => i32 = (): i32 => take(xs);
+    return g();
+}
+
+function main(): i32 {
+    return consumed_then_used([1, 2]) + consumed_only([3]);
+}

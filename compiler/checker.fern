@@ -17484,6 +17484,18 @@ function ow_nested_moved(m: MovedEntry[], params: ast.ParamDecl[]): MovedEntry[]
   return out;
 }
 
+// A closure body consumes the captured owned names of its enclosing function.
+// Its own parameters shadow the outer names only inside the body.
+function ow_lambda_moved_out(outer: MovedEntry[], inner: MovedEntry[], params: ast.ParamDecl[]): MovedEntry[] {
+  let out: MovedEntry[] = ow_nested_moved(inner, params);
+  for param in params {
+    if (ow_moved_has(outer, param.name)) {
+      out = ow_moved_add(out, param.name, ow_moved_line(outer, param.name));
+    }
+  }
+  return out;
+}
+
 function ow_func_flags(ofuncs: OwnFuncs, name: string): boolean[] {
   let i: i32 = ofuncs.names.find(name);
   if (i >= 0) {
@@ -18661,7 +18673,7 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     ast.ExprLambda(lm) => {
       let lctx: OwnCtx = ow_nested_ctx(ctx, lm);
       let inner: OwnWalk = ow_stmts(lm.body, ow_nested_moved(moved, lm.params), lctx);
-      return OwnWalk { moved: moved, diags: inner.diags };
+      return OwnWalk { moved: ow_lambda_moved_out(moved, inner.moved, lm.params), diags: inner.diags };
     },
     _ => {
       return OwnWalk { moved: moved, diags: [] };
