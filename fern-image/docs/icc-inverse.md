@@ -76,3 +76,13 @@ This fixture protocol is not a runtime image format or public library API.
 No profile selection, matrix composition, adaptation, BPC, encoded admission, or runtime CMM dependency changes accompany this entry point.
 Finite observations do not establish universal precision, compatibility, physical/process bounds, hard deadlines, or production readiness.
 All actual M5 and epic acceptance gates remain open.
+
+## Final observations
+
+Each target passed 10,087 committed-source cases through 1,261 fresh workers.
+All 3,783 workers exited normally with nonzero balanced zero-live heaps.
+All 9,630 paired successes per target agree bit for bit, and the complete target sample records match exactly.
+
+The maximum observed absolute error across both routes is `1.7056711454934297e-16`, within the unchanged finite criterion.
+All three full regression runs passed 326 TAP tests.
+The [qualification record](../../docs/benchmarks/icc-inverse-dispatch-2026-10-27/README.md) retains source identities, provenance, raw evidence, and limitations.

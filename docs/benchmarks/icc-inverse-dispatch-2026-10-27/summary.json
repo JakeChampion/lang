@@ -1,0 +1,53 @@
+{
+  "source_commit": "715f63eb033811a4b159c4846df9ae14d8bc0967",
+  "records_equal": true,
+  "cases_per_target": 10087,
+  "dispatcher_numeric": 9630,
+  "dispatcher_errors": 457,
+  "direct_numeric": 9640,
+  "direct_errors": 447,
+  "paired_successes_exact": 9630,
+  "original_vectors_preserved": 9975,
+  "new_controls": 112,
+  "workers_per_target": 1261,
+  "total_workers": 3783,
+  "max_absolute_error": 1.7056711454934297e-16,
+  "hash_counts": [
+    1266,
+    1267,
+    1267
+  ],
+  "full_TAP_per_target": 326,
+  "censuses": [
+    85,
+    61,
+    46
+  ],
+  "full_source_hash_counts": [
+    1359,
+    1359,
+    1359
+  ],
+  "standalone_ARM_executables": 46,
+  "format_files": 2082,
+  "complexity": {
+    "command": [
+      "go",
+      "test",
+      "-v",
+      "./internal/testing/e2ecompiler",
+      "-run",
+      "^TestSelfHostRepoComplexityRatchet$",
+      "-count=1",
+      "-timeout=10m"
+    ],
+    "exit": 0,
+    "seconds": 96.82501316070557,
+    "PASS": 3,
+    "FAIL": 0,
+    "SKIP": 0
+  },
+  "Go_oracle_build_source": "8cb3ccf00e945ffda49c889e6cb5b037ebc2976b",
+  "Go_loaded_source": "715f63eb033811a4b159c4846df9ae14d8bc0967",
+  "scope": "Finite standalone routing among existing qualified inverse domains. No profile eligibility, destination composition, or encoded integration claim."
+}

@@ -1,0 +1,11 @@
+from pathlib import Path
+import subprocess,json,hashlib,time
+root=Path('/tmp/image-engine-worktrees/lang-image-icc-inverse-dispatch');output=Path('/tmp/image-icc-inverse-dispatch-committed-reference-repro.json.gz');assert not output.exists()
+sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest()
+generator=root/'fern-image/tests/generate_icc_inverse.py';bundle=root/'fern-image/tests/fixtures/icc-inverse-reference.json.gz'
+paths=[generator,bundle]
+for family in ['curv','power','affine','quadratic']:paths += [root/f'fern-image/tests/generate_icc_{family}_inverse.py',root/f'fern-image/tests/fixtures/icc-{family}-inverse-reference.json.gz']
+before={str(p):sha(p)for p in paths};source=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip();assert source=='715f63eb033811a4b159c4846df9ae14d8bc0967'and not subprocess.check_output(['git','status','--porcelain'],cwd=root)
+start=time.time();command=['python3',str(generator),str(output)];result=subprocess.run(command,capture_output=True,text=True)
+record=dict(source_commit=source,command=command,exit=result.returncode,stdout=result.stdout,stderr=result.stderr,seconds=time.time()-start,source_hashes=before,sources_unchanged=before=={str(p):sha(p)for p in paths},bundle_sha256=sha(bundle),reproduced_exactly=output.exists()and output.read_bytes()==bundle.read_bytes())
+Path('/tmp/image-icc-inverse-dispatch-final-reference-repro.json').write_text(json.dumps(record,indent=2));print({k:v for k,v in record.items()if k not in ['source_hashes','stdout']});assert result.returncode==0 and record['sources_unchanged']and record['reproduced_exactly']
