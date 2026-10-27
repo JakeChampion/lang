@@ -480,7 +480,7 @@ func declaredDepDir(man *manifest.Manifest, seg string, mans map[string]*manifes
 		return "", fmt.Errorf("dependency %q is not in the vendor directory %s — re-run `fern -vendor %s`", seg, filepath.Join(vr, "vendor"), filepath.Join(vr, manifest.FileName))
 	}
 	if d.Version != "" {
-		return lockedDepDir(man.Dir, seg)
+		return lockedDepDir(man.Dir, seg, d.Version)
 	}
 	if d.URL != "" {
 		depDir, present, err := pkgcache.Dir(d.Hash)
@@ -608,9 +608,12 @@ func resolveDepImport(depDir, rest string, mans map[string]*manifest.Manifest) (
 	return filepath.Abs(filepath.Join(depDir, lib))
 }
 
-func LockedDepDir(manDir, name string) (string, error) { return lockedDepDir(manDir, name) }
+func LockedDepDir(manDir, name, minimum string) (string, error) {
+	return lockedDepDir(manDir, name, minimum)
+}
 
-func lockedDepDir(manDir, name string) (string, error) {
+// minimum is the version the manifest demands; a lock below it is stale.
+func lockedDepDir(manDir, name, minimum string) (string, error) {
 	locked, err := mvs.ReadLock(manDir)
 	if err != nil {
 		return "", err
@@ -621,6 +624,9 @@ func lockedDepDir(manDir, name string) (string, error) {
 	sel, ok := locked[name]
 	if !ok {
 		return "", fmt.Errorf("dependency %q is not in %s — run `fern -resolve %s`", name, filepath.Join(manDir, mvs.LockFileName), filepath.Join(manDir, manifest.FileName))
+	}
+	if want, err := mvs.ParseVersion(minimum); minimum != "" && err == nil && sel.Version.Compare(want) < 0 {
+		return "", fmt.Errorf("dependency %q is locked at %s but %s demands at least %s — run `fern -resolve %s`", name, sel.Version, filepath.Join(manDir, manifest.FileName), minimum, filepath.Join(manDir, manifest.FileName))
 	}
 	if sel.Source.Path != "" {
 		return sel.Source.Path, nil
