@@ -89,7 +89,6 @@ pub function run(): void {
   let mod = parser.parse_module(lexer.tokenize(src));
   require(!asmcore.refuse_parse_errors([mod]), 74);
   let g = semlower.program(semlower.driven(mod, "x86-64-linux"));
-  require(g.ok, 75);
   for arm in [false, true] {
     for debug in [false, true] {
       let on = emit(g, arm, debug, true);

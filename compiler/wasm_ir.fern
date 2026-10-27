@@ -2869,8 +2869,7 @@ pub function emit_ir_module_mode(mod: parser.Module, ir_cache: irtables.LowerRes
 }
 
 pub function ir_route_ok(lm: parser.Module, component: boolean, io: boolean, sub: ircore.Sub): boolean {
-  let g: ircore.Lowered = ircore.gate(ircore.with_records(lm, sub), sub);
-  return g.ok && ir_route_final(g.cache, component, io, module_is_proxy(lm));
+  return match (ircore.gate(ircore.with_records(lm, sub), sub)) { Some(g) => ir_route_final(g.cache, component, io, module_is_proxy(lm)), None => false };
 }
 
 pub function ir_route_final(cache: irtables.LowerResult[], component: boolean, io: boolean, proxy: boolean): boolean {
@@ -2898,12 +2897,12 @@ pub function emit_core_or_error_sub(mod: parser.Module, component: boolean, io: 
       mode = 2;
     }
   }
-  let g: ircore.Lowered = ircore.gate(lm, sub);
+  let g = match (ircore.gate(lm, sub)) { Some(g) => g, None => { ircore.eprint_ir_ineligible(); exit(1); } };
   let cache: irtables.LowerResult[] = g.cache;
-  if (g.ok && ir_route_final(cache, component, io, module_is_proxy(lm))) {
+  if (ir_route_final(cache, component, io, module_is_proxy(lm))) {
     return EmittedCore { wat: emit_ir_module_mode(lm, cache, mode, sub.switches, g.physical, sub.rt_lower), needs: runtime_needs(lm, needs_of(cache)) };
   }
-  if (g.ok && component && wasm_ir_deferrals_ok(cache)) {
+  if (component && wasm_ir_deferrals_ok(cache)) {
     eprint("error: " + component_refused_need(needs_of(cache), io, module_is_proxy(lm))
       + " is not supported in a wasm component: the component framing has no import for it (build with -emit core-module for a preview1 module)");
     exit(1);

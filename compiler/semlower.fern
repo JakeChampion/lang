@@ -998,12 +998,7 @@ pub function verdict_text(v: Verdict): string {
 }
 
 pub function program(d: Driven): ircore.Gated {
-  let g: ircore.Gated = ircore.gate_program(ircore.sub_lifted(d.sub, checker.ensure_annotated(d.full)), d.sub);
-  if (!g.ok) {
-    ircore.eprint_ir_ineligible();
-    exit(1);
-  }
-  return g;
+  return match (ircore.gate_program(ircore.sub_lifted(d.sub, checker.ensure_annotated(d.full)), d.sub)) { Some(g) => g, None => { ircore.eprint_ir_ineligible(); exit(1); } };
 }
 
 struct RuntimeBodies { bodies: irtables.Lowered[], helper_indices: i32[] }

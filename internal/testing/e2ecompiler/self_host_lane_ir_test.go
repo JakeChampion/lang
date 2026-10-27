@@ -182,13 +182,11 @@ function main(): i32 {
     ir.op_const_i32(0), ir.op_return()];
   let mod = parser.parse_module(lexer.tokenize("@noinline function side(): i32 { return 7; } @noinline function kern(p: usize): i32 { return 0; } function main(): i32 { return side() + kern(0 as usize); }"));
   let d = semlower.driven(mod, av[1]);
-  let g = semlower.program(d);
-  if (av[1] == "wasm32-wasi") {
+  let g = if (av[1] == "wasm32-wasi") {
     let wm = ircore.with_records(wasm_ir.route_normalized(d.full), d.sub);
-    let l = ircore.gate(wm, d.sub);
-    g = ircore.Gated { ok: l.ok, im: wm, stab: irtables.struct_tab(wm.structs), cache: l.cache, physical: l.physical };
-  }
-  if (!g.ok) { return 3; }
+    let l = match (ircore.gate(wm, d.sub)) { Some(g) => g, None => { return 3; } };
+    ircore.Gated { im: wm, stab: irtables.struct_tab(wm.structs), cache: l.cache, physical: l.physical }
+  } else { semlower.program(d) };
   let cache: irtables.LowerResult[] = [];
   let i: i32 = 0;
   for r in g.cache {

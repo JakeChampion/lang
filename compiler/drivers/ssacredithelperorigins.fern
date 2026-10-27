@@ -118,7 +118,7 @@ pub function run(target: string): void {
   let source = "enum List { Cons(string, List), Nil } @noinline function discard(own x: List): i32 { return 0; } function main(): i32 { return discard(Cons(\"x\", Nil)); }";
   let d = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
   let g = semlower.program(d);
-  require(g.ok && g.physical.rows.len() == g.cache.len(), 248);
+  require(g.physical.rows.len() == g.cache.len(), 248);
   nominal(d.sub.physical_origins.extra, typeinfo.TypeUnion { name: "List", args: [] });
   nominal(g.physical.rows, typeinfo.TypeUnion { name: "List", args: [] });
   for row in d.sub.physical_origins.declarations {

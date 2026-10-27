@@ -1014,6 +1014,12 @@ findings. Ranked by leverage.
   Declaration order, metadata and helper provenance remain aligned.
   A temporary adapter serves the remaining legacy query and merge interfaces.
 
+  Module eligibility gates return `Option[Lowered]` and `Option[Gated]`.
+  An unknown call or function value returns `None` without a placeholder cache.
+  Successful payloads retain declaration order, body metadata and physical origins.
+  Strict mode retains the original refusal diagnostics.
+  Native and Wasm callers match the option before they read the cache.
+
   Prepared bodies store only the complete `Lowered` payload.
   Native instruction emission, source maps and debug variables use that payload.
   Wasm function emission also requires complete body data.

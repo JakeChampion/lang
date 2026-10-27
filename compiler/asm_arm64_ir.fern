@@ -10789,10 +10789,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, darwin: boolean, sub: 
 }
 
 pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: ircore.Sub, recs: usize): string {
-  let g: ircore.Gated = ircore.gate_program(mod, sub);
-  if (!g.ok) {
-    return "";
-  }
+  let g = match (ircore.gate_program(mod, sub)) { Some(g) => g, None => { return ""; } };
   return emit_module_ir_flat(g.im, g.stab, darwin, ircore.inline_tiny_leaves(g.im, g.cache), g.physical, sub.rt_lower, recs, sub.switches);
 }
 
