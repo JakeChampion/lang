@@ -1,0 +1,12 @@
+{
+  "recorded_utc": "2026-10-27T09:26:10.172134+00:00",
+  "source_base": "32d563abbc3e50fb190d503716870568eb5abf0f",
+  "feature_uncommitted": true,
+  "files": {
+    "compiler/cover.fern": "67fb79865d445d2f63ad613ac4ac91364e9873cfe7d4f2b8649e665e86da2dbc",
+    "compiler/runtime/templates/__fern_cov_report.fern": "ef35d8ba79301e08a22a3149850b10c3bb739221883e537626d1817398ccc508",
+    "compiler/rttemplates.fern": "5374bf51f5cea4ff88ca9a57396496fbdf29c233b63aa8bab4912feda7b94957",
+    "internal/testing/e2ecompiler/self_host_cover_test.go": "1662f3fda5f9960388c5ddaf8e024df4338fd5c2c5d2e3b481c1f555e41a0f0f"
+  },
+  "reason": "Preserve source counters outside the parser result scaffold. A multiline probe exposed the first candidate omission."
+}

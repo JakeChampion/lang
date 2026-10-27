@@ -1,0 +1,19 @@
+function __fern_cov_report(): void {
+  let names: string = __FERN_COVER_NAMES;
+  let t: usize = __raw_load_ptr(__raw_cover(), 0);
+  let k: i32 = 0;
+  let from: i32 = 0;
+  let i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i] as i32 == 10) {
+      let c: i64 = 0i64;
+      if (t != 0 as usize) {
+        c = __load_i64(t + k * 8);
+      }
+      eprint(slice_unchecked(names, from, i) + __fern_cov_count(c));
+      k = k + 1;
+      from = i + 1;
+    }
+    i = i + 1;
+  }
+}

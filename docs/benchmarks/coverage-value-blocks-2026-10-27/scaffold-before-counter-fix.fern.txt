@@ -1,0 +1,401 @@
+import "./ast";
+import "./astwalk";
+import "./parser";
+import "./util";
+import "./asmcore";
+import "./rtmodule";
+
+struct Ctx { files: string[], entry: string }
+
+struct Tab { keys: string[], head: i32[], next: i32[] }
+
+pub function instrument(mod: parser.Module, files: string[], entry: string): parser.Module {
+  let m: parser.Module = asmcore.synth_script_main(mod);
+  let ret: string = main_ret(m);
+  let wrap: boolean = ret == "i32" || ret == "" || ret == "void";
+  let ctx: Ctx = Ctx { files: files, entry: entry };
+  let marked: parser.FuncDecl[] = [];
+  for f in m.funcs {
+    let body: ast.Stmt[] = cover_stmts(f.body, ctx, true);
+    if (wrap && f.name == "main" && f.receiver_type == "") {
+      marked = marked.append(parser.FuncDecl { ...f, name: "__fern_cov_main", body: body });
+    } else {
+      marked = marked.append(parser.FuncDecl { ...f, body: body });
+    }
+  }
+  let seen: string[] = [];
+  for f in marked {
+    for st in f.body {
+      seen = astwalk.fold_stmt(st, seen, collect_site);
+    }
+  }
+  let t: Tab = table(seen);
+  function numbered(e: ast.Expr): ast.Expr {
+    return number_site(e, t);
+  }
+  let funcs: parser.FuncDecl[] = [];
+  for f in marked {
+    funcs = funcs.append(parser.FuncDecl { ...f, body: astwalk.map_stmts(f.body, numbered) });
+  }
+  let helpers: parser.Module = helper_module(t.keys, ret);
+  for h in helpers.funcs {
+    funcs = funcs.append(h);
+  }
+  return parser.Module { ...m, funcs: funcs };
+}
+
+function main_ret(m: parser.Module): string {
+  for f in m.funcs {
+    if (f.name == "main" && f.receiver_type == "") {
+      return f.ret_type;
+    }
+  }
+  return "-";
+}
+
+function table(seen: string[]): Tab {
+  let head: i32[] = [];
+  while (head.len() < 16381) {
+    head = head.append(0 - 1);
+  }
+  let keys: string[] = [];
+  let next: i32[] = [];
+  for key in seen {
+    let b: i32 = util.hash_bucket(key, head.len());
+    let i: i32 = head[b];
+    while (i >= 0 && keys[i] != key) {
+      i = next[i];
+    }
+    if (i < 0) {
+      next = next.append(head[b]);
+      head = head.with(b, keys.len());
+      keys = keys.append(key);
+    }
+  }
+  return Tab { keys: keys, head: head, next: next };
+}
+
+function find(t: Tab, key: string): i32 {
+  let i: i32 = t.head[util.hash_bucket(key, t.head.len())];
+  while (i >= 0) {
+    if (t.keys[i] == key) {
+      return i;
+    }
+    i = t.next[i];
+  }
+  return 0 - 1;
+}
+
+function site_key(e: ast.Expr): string {
+  match (e) {
+    ast.ExprCall(c) => {
+      match (c.callee) {
+        ast.ExprIdent(id) => {
+          if (id.name != "__fern_cov_hit" || c.args.len() != 1) {
+            return "";
+          }
+          match (c.args[0]) {
+            ast.ExprString(str) => {
+              return str.value;
+            },
+            _ => {
+              return "";
+            }
+          }
+        },
+        _ => {
+          return "";
+        }
+      }
+    },
+    _ => {
+      return "";
+    }
+  }
+}
+
+function collect_site(e: ast.Expr, own seen: string[]): string[] {
+  let key: string = site_key(e);
+  if (key == "") {
+    return seen;
+  }
+  return seen.append(key);
+}
+
+function number_site(e: ast.Expr, t: Tab): ast.Expr {
+  let key: string = site_key(e);
+  if (key == "") {
+    return e;
+  }
+  let n: ast.Expr = ast.ExprNumber { text: util.i32_to_string(find(t, key)), suffix: "", raw: "", is_float: false, bits: 0, line: 0, col: 0 };
+  return ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_hit", line: 0, col: 0, ty: "", builtin: false }, args: [n], line: 0, col: 0, type_args: [], ty: "" };
+}
+
+function file_of(c: Ctx, line: i32): string {
+  let f: string = util.pos_file(c.files, line);
+  if (f == "") {
+    return c.entry;
+  }
+  return f;
+}
+
+function line_key(c: Ctx, line: i32): string {
+  return "fern-cover: " + file_of(c, line) + ":" + util.i32_to_string(util.pos_line(line)) + " ";
+}
+
+function branch_key(c: Ctx, line: i32, col: i32, edge: string): string {
+  return "fern-branch: " + file_of(c, line) + ":" + util.i32_to_string(util.pos_line(line)) + ":" + util.i32_to_string(col) + " " + edge + " ";
+}
+
+function hit(key: string): ast.Expr {
+  let k: ast.Expr = ast.ExprString { value: key, line: 0, col: 0 };
+  return ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_hit", line: 0, col: 0, ty: "", builtin: false }, args: [k], line: 0, col: 0, type_args: [], ty: "" };
+}
+
+function hit_stmt(key: string): ast.Stmt {
+  return ast.StmtExpr { value: hit(key), line: 0 };
+}
+
+function and(a: ast.Expr, b: ast.Expr): ast.Expr {
+  return ast.ExprBinary { op: "&&", left: a, right: b, line: 0, col: 0, ty: "" };
+}
+
+function report_stmt(): ast.Stmt {
+  let none: ast.Expr[] = [];
+  return ast.StmtExpr { value: ast.ExprCall { callee: ast.ExprIdent { name: "__fern_cov_report", line: 0, col: 0, ty: "", builtin: false }, args: none, line: 0, col: 0, type_args: [], ty: "" }, line: 0 };
+}
+
+function cover_stmts(stmts: ast.Stmt[], c: Ctx, exprs: boolean): ast.Stmt[] {
+  let out: ast.Stmt[] = [];
+  let last: i32 = 0;
+  for st in stmts {
+    let line: i32 = ast.stmt_line(st);
+    if (line > 0 && line != last) {
+      out = out.append(hit_stmt(line_key(c, line)));
+      last = line;
+    }
+    if (is_exit(st)) {
+      out = out.append(report_stmt());
+    }
+    out = out.append(cover_stmt(st, c, exprs));
+    if (transfers(st)) {
+      last = 0;
+    }
+  }
+  return out;
+}
+
+function transfers(st: ast.Stmt): boolean {
+  match (st) {
+    ast.StmtIf(_) => {
+      return true;
+    },
+    ast.StmtWhile(_) => {
+      return true;
+    },
+    ast.StmtFor(_) => {
+      return true;
+    },
+    ast.StmtMatch(_) => {
+      return true;
+    },
+    ast.StmtReturn(_) => {
+      return true;
+    },
+    ast.StmtBreak(_) => {
+      return true;
+    },
+    ast.StmtContinue(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function is_exit(st: ast.Stmt): boolean {
+  if let ast.StmtExpr(x) = st {
+    return parser.calls_exit(x.value, false);
+  }
+  return false;
+}
+
+function guarded(cond: ast.Expr, c: Ctx, line: i32, exprs: boolean): ast.Expr {
+  let e: ast.Expr = cond;
+  if (exprs) {
+    e = cover_expr(cond, c);
+  }
+  return and(hit(branch_key(c, line, start_col(cond), "E")), e);
+}
+
+function opened(key: string, body: ast.Stmt[]): ast.Stmt[] {
+  let out: ast.Stmt[] = [hit_stmt(key)];
+  for st in body {
+    out = out.append(st);
+  }
+  return out;
+}
+
+function maybe(e: ast.Expr, c: Ctx, exprs: boolean): ast.Expr {
+  if (exprs) {
+    return cover_expr(e, c);
+  }
+  return e;
+}
+
+function cover_stmt(st: ast.Stmt, c: Ctx, exprs: boolean): ast.Stmt {
+  match (st) {
+    ast.StmtVar(v) => {
+      return ast.StmtVar { ...v, init: maybe(v.init, c, exprs) };
+    },
+    ast.StmtReturn(r) => {
+      return ast.StmtReturn { ...r, value: maybe(r.value, c, exprs) };
+    },
+    ast.StmtExpr(x) => {
+      return ast.StmtExpr { ...x, value: maybe(x.value, c, exprs) };
+    },
+    ast.StmtAssign(a) => {
+      return ast.StmtAssign { ...a, value: maybe(a.value, c, exprs) };
+    },
+    ast.StmtIf(f) => {
+      let tb: ast.Stmt[] = cover_stmts(f.then_body, c, exprs);
+      let eb: ast.Stmt[] = cover_stmts(f.else_body, c, exprs);
+      if (f.line > 0 && f.origin == "" && !literal_true(f.cond)) {
+        let taken: string = branch_key(c, f.line, start_col(f.cond), "T");
+        return ast.StmtIf { ...f, cond: guarded(f.cond, c, f.line, exprs), then_body: opened(taken, tb), else_body: eb };
+      }
+      return ast.StmtIf { ...f, cond: maybe(f.cond, c, exprs), then_body: tb, else_body: eb };
+    },
+    ast.StmtWhile(w) => {
+      let body: ast.Stmt[] = cover_stmts(w.body, c, exprs);
+      if (w.line > 0 && !w.is_loop && !literal_true(w.cond)) {
+        let taken: string = branch_key(c, w.line, start_col(w.cond), "T");
+        return ast.StmtWhile { ...w, cond: guarded(w.cond, c, w.line, exprs), body: opened(taken, body) };
+      }
+      return ast.StmtWhile { ...w, cond: maybe(w.cond, c, exprs), body: body };
+    },
+    ast.StmtFor(fo) => {
+      return ast.StmtFor { ...fo, iter: maybe(fo.iter, c, exprs), body: cover_stmts(fo.body, c, exprs) };
+    },
+    ast.StmtMatch(mt) => {
+      let arms: ast.MatchArm[] = [];
+      for arm in mt.arms {
+        let g: ast.Expr = arm.guard;
+        if (arm.has_guard) {
+          g = maybe(arm.guard, c, exprs);
+        }
+        arms = arms.append(ast.MatchArm { ...arm, body: cover_stmts(arm.body, c, exprs), guard: g });
+      }
+      return ast.StmtMatch { ...mt, scrutinee: maybe(mt.scrutinee, c, exprs), arms: arms };
+    },
+    _ => {
+      return st;
+    }
+  }
+}
+
+function literal_true(e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprBool(b) => {
+      return b.value;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function start_col(e: ast.Expr): i32 {
+  match (e) {
+    ast.ExprBinary(b) => {
+      return start_col(b.left);
+    },
+    ast.ExprCall(c) => {
+      return start_col(c.callee);
+    },
+    ast.ExprFieldAccess(fa) => {
+      return start_col(fa.obj);
+    },
+    ast.ExprIndex(ix) => {
+      return start_col(ix.array);
+    },
+    ast.ExprIdent(id) => {
+      return id.col;
+    },
+    ast.ExprUnary(u) => {
+      return u.col;
+    },
+    ast.ExprNumber(n) => {
+      return n.col;
+    },
+    ast.ExprBool(b) => {
+      return b.col;
+    },
+    _ => {
+      return 0;
+    }
+  }
+}
+
+function cover_expr(e: ast.Expr, c: Ctx): ast.Expr {
+  function visit(x: ast.Expr): ast.Expr {
+    return cover_node(x, c);
+  }
+  return astwalk.map_expr(e, visit);
+}
+
+function cover_node(e: ast.Expr, c: Ctx): ast.Expr {
+  match (e) {
+    ast.ExprBinary(b) => {
+      if (b.op != "&&" && b.op != "||" || b.line <= 0) {
+        return e;
+      }
+      let ev: ast.Expr = hit(branch_key(c, b.line, b.col, "E"));
+      let tk: ast.Expr = hit(branch_key(c, b.line, b.col, "T"));
+      if (b.op == "&&") {
+        return ast.ExprBinary { ...b, left: and(ev, b.left), right: and(tk, b.right) };
+      }
+      return ast.ExprBinary { ...b, left: and(and(ev, b.left), tk) };
+    },
+    ast.ExprLambda(lm) => {
+      if (lm.origin == parser.ORIGIN_MATCH_EXPR || lm.origin == parser.ORIGIN_IF_EXPR) {
+        // Keep the parser's result scaffold intact for type inference.
+        // The enclosing expression has a line counter. Branch bodies get their own counters.
+        let body: ast.Stmt[] = [];
+        for st in lm.body {
+          body = body.append(cover_stmt(st, c, false));
+        }
+        return ast.ExprLambda { ...lm, body: body };
+      }
+      return ast.ExprLambda { ...lm, body: cover_stmts(lm.body, c, false) };
+    },
+    _ => {
+      return e;
+    }
+  }
+}
+
+function helper_module(keys: string[], ret: string): parser.Module {
+  let roots = "__fern_cov_hit __fern_cov_report";
+  if (ret == "i32") {
+    roots = roots + " __fern_cov_entry_i32";
+  } else if (ret == "" || ret == "void") {
+    roots = roots + " __fern_cov_entry_void";
+  }
+  let names: string[] = [];
+  for key in keys {
+    names = names.append(key + "\n");
+  }
+  let values: ast.Expr[] = [parser.e_number(util.i32_to_string(keys.len()), "", false), ast.ExprString { value: util.str_join_chunks(names), line: 0, col: 0 }];
+  let mod = rtmodule.template(roots, ["__FERN_COVER_COUNT", "__FERN_COVER_NAMES"], values);
+  let funcs: parser.FuncDecl[] = [];
+  for fd in mod.funcs {
+    let name = fd.name;
+    if (name == "__fern_cov_entry_i32" || name == "__fern_cov_entry_void") {
+      name = "main";
+    }
+    funcs = funcs.append(parser.FuncDecl { ...fd, name: name });
+  }
+  return parser.Module { ...mod, funcs: funcs };
+}

@@ -1,0 +1,9 @@
+{
+  "exit": 1,
+  "log_sha256": "4c1be08a1755ec41cde25259b3c30ed25b975df6a17d1dc79e3aa3a4dd07c065",
+  "pass_nodes": 6,
+  "fail_nodes": 19,
+  "skip_nodes": 0,
+  "source_base": "3a6d11796dc2fc07a35c8191bf8d79ed7383b885",
+  "feature_uncommitted": true
+}

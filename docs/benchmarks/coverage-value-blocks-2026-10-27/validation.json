@@ -1,0 +1,79 @@
+{
+  "source_commit": "82ba47cad60c55a2c0649147afd0ff40802e1c4d",
+  "focused": {
+    "pass_nodes": 31,
+    "fail_nodes": 0,
+    "skip_nodes": 0,
+    "phase": "Two precommit runs with unchanged production correction bytes. The second adds and runs only the early-return root."
+  },
+  "complexity": {
+    "pass_nodes": 4,
+    "skip_nodes": 0,
+    "phase": "Precommit unchanged production correction bytes."
+  },
+  "campaign": {
+    "exit": 0,
+    "source_commit": "82ba47cad60c55a2c0649147afd0ff40802e1c4d",
+    "feature_uncommitted": false,
+    "pass_nodes": 3,
+    "fail_nodes": 0,
+    "skip_nodes": 0,
+    "log_sha256": "0dbc92922f00e86fd2a11c6f809787e4727e0131de160f8300ba77f09633a1c5",
+    "budget": "30s",
+    "scope": "Existing local default budget. This does not qualify the 25-minute nightly campaign."
+  },
+  "images": {
+    "native": {
+      "source_commit": "82ba47cad60c55a2c0649147afd0ff40802e1c4d",
+      "compiler_sha256": "6e95755acdba854fc94ec32aaa37d09dd8264bf4438b9952e37cc198bac5d9ab",
+      "mode": "native",
+      "exit_code": 0,
+      "sources_unchanged": true,
+      "TAP_ok": 276,
+      "TAP_not_ok": 0,
+      "censuses": 78,
+      "balanced_zero_live": true
+    },
+    "wasm": {
+      "source_commit": "82ba47cad60c55a2c0649147afd0ff40802e1c4d",
+      "compiler_sha256": "6e95755acdba854fc94ec32aaa37d09dd8264bf4438b9952e37cc198bac5d9ab",
+      "mode": "wasm",
+      "exit_code": 0,
+      "sources_unchanged": true,
+      "TAP_ok": 276,
+      "TAP_not_ok": 0,
+      "censuses": 54,
+      "balanced_zero_live": true
+    },
+    "arm64": {
+      "source_commit": "82ba47cad60c55a2c0649147afd0ff40802e1c4d",
+      "compiler_sha256": "6e95755acdba854fc94ec32aaa37d09dd8264bf4438b9952e37cc198bac5d9ab",
+      "mode": "arm64",
+      "exit_code": 0,
+      "sources_unchanged": true,
+      "TAP_ok": 276,
+      "TAP_not_ok": 0,
+      "censuses": 39,
+      "balanced_zero_live": true
+    }
+  },
+  "allocation": {
+    "allocs": 35059803,
+    "frees": 35059803,
+    "baseline": 34951426,
+    "baseline_unchanged": true,
+    "gate_exit": 0,
+    "rss_row": false
+  },
+  "compiler": {
+    "source": "82ba47cad60c55a2c0649147afd0ff40802e1c4d",
+    "make_exit": 0,
+    "seconds": 83.72328028798802,
+    "version_exit": 0,
+    "version": "fern 82ba47cad60c\nbuilt for x86-64-linux\n",
+    "compiler_sha256": "6e95755acdba854fc94ec32aaa37d09dd8264bf4438b9952e37cc198bac5d9ab",
+    "raw_sha256": "0420aab7a54babe46370d43b7bed849f5301cba48032ee90337db5b699f6dc41"
+  },
+  "first_candidate": "Source32d563abbc3e50fb190d503716870568eb5abf0f is superseded by the multiline counter correction. Its successes are not final proof.",
+  "tool_inventory_phase": "Post-run inventory. Source and compiler immutability are recorded by each image run. Do not infer a pre-run runner inventory."
+}
