@@ -1,0 +1,5 @@
+# github.com/jakechampion/lang/internal/testing/e2ecompiler [github.com/jakechampion/lang/internal/testing/e2ecompiler.test]
+internal/testing/e2ecompiler/self_host_vdso_clock_ptrace_test.go:89:12: invalid operation: got != want (mismatched types int64 and int)
+internal/testing/e2ecompiler/self_host_vdso_clock_ptrace_test.go:142:12: invalid operation: got != want (mismatched types int64 and int)
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler [build failed]
+FAIL

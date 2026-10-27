@@ -1,0 +1,24 @@
+{
+  "repo": "JakeChampion/lang",
+  "source_commit": "eb79b4673246b4f0d2d0f5a1aa9e7b45c9bf7826",
+  "run_id": 40483982751,
+  "job_id": 122121046862,
+  "conclusion": "failure",
+  "excerpt": [
+    "2026-10-27T09:52:11.6297595Z ##[endgroup]",
+    "2026-10-27T10:08:45.4338816Z --- FAIL: TestSelfHostServeSyscallsPerRequest (10.42s)",
+    "2026-10-27T10:08:45.4340323Z     self_host_vdso_clock_ptrace_test.go:80: 10009 syscalls over 5000 requests is 9 from a whole number per request:",
+    "2026-10-27T10:08:45.4341574Z           syscall 44: 5000",
+    "2026-10-27T10:08:45.4342381Z           syscall 426: 5009",
+    "2026-10-27T10:08:45.4342995Z     self_host_vdso_clock_ptrace_test.go:185: traced program's stderr:",
+    "2026-10-27T10:08:45.4343843Z --- FAIL: TestSelfHostServeSyscallsPerRequestTwoFetch (15.53s)",
+    "2026-10-27T10:08:45.4344898Z     self_host_vdso_clock_ptrace_test.go:127: 40027 syscalls over 5000 requests is 27 from a whole number per request:",
+    "2026-10-27T10:08:45.4345831Z           syscall 0: 10000",
+    "2026-10-27T10:08:45.4346427Z           syscall 44: 15000",
+    "2026-10-27T10:08:45.4347029Z           syscall 426: 15027",
+    "2026-10-27T10:08:45.4347440Z     self_host_vdso_clock_ptrace_test.go:185: traced program's stderr:",
+    "2026-10-27T10:08:45.4347917Z FAIL",
+    "2026-10-27T10:08:45.4348473Z FAIL\tgithub.com/jakechampion/lang/internal/testing/e2ecompiler\t976.637s"
+  ],
+  "scope": "Decoded job errors only. No complete CI recovery claim."
+}

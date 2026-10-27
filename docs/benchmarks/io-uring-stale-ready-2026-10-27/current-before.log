@@ -1,0 +1,16 @@
+=== RUN   TestSelfHostServeSyscallsPerRequest
+    self_host_vdso_clock_ptrace_test.go:80: 10081 syscalls over 5000 requests is 81 from a whole number per request:
+          syscall 44: 5000
+          syscall 426: 5081
+    self_host_vdso_clock_ptrace_test.go:185: traced program's stderr:
+--- FAIL: TestSelfHostServeSyscallsPerRequest (47.05s)
+=== RUN   TestSelfHostServeSyscallsPerRequestTwoFetch
+    self_host_vdso_clock_ptrace_test.go:127: 40555 syscalls over 5000 requests is 555 from a whole number per request:
+          syscall 0: 10000
+          syscall 44: 15000
+          syscall 426: 15555
+    self_host_vdso_clock_ptrace_test.go:185: traced program's stderr:
+--- FAIL: TestSelfHostServeSyscallsPerRequestTwoFetch (17.59s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	64.664s
+FAIL

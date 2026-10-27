@@ -1,0 +1,7 @@
+{
+  "purpose": "Temporary diagnostic only; unchanged workload, assertions, pins, and slack. Extra ptrace observation changes timing, so this is not qualification.",
+  "source": "/workspace/lang-image-io-uring-syscalls/internal/testing/e2ecompiler/self_host_vdso_clock_ptrace_test.go",
+  "original_sha256": "73d10d47c3527dcc1bd48215b788f5ddcac6e87ee71bec772d22bdc875d16f8c",
+  "overlay_before_gofmt_sha256": "5654a126a4d16fe4ce5fcc1dee59f1bfd061c5282beb3391516d7a26520a30ec",
+  "actual_formatted_overlay_sha256": "d4d94aa5a5713f6708aec12e2adaed5183c1094679001259b3e74c4342cedca8"
+}

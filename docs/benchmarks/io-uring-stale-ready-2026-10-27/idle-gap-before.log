@@ -1,0 +1,9 @@
+=== RUN   TestSelfHostServeRingIdleGap
+    self_host_ring_idle_gap_test.go:58: 193 syscalls over 64 delayed requests, want 128 within unchanged slack 8:
+          syscall 44: 64
+          syscall 426: 129
+    self_host_vdso_clock_ptrace_test.go:185: traced program's stderr:
+--- FAIL: TestSelfHostServeRingIdleGap (36.87s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	36.891s
+FAIL

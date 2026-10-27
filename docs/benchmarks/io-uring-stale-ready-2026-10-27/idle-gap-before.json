@@ -1,0 +1,15 @@
+{
+  "source_base": "9be369822099d322b4be9842c5eecddc8750162e",
+  "feature_uncommitted": true,
+  "test_exit": 1,
+  "test_PASS_nodes": 0,
+  "test_FAIL_nodes": 1,
+  "test_SKIP_nodes": 0,
+  "test_log": "/workspace/image-io-uring-idle-gap-before.log",
+  "test_log_sha256": "1229262567a6a7803e303fe8cb5d6e6f931a5abdfee3c997e385caf5a55a0304",
+  "sha256": {
+    "internal/testing/e2ecompiler/self_host_ring_idle_gap_test.go": "f2b7b683bc06659b25610a9f5aa7df6d936641ded923b75d217dfd9cef8b997d",
+    "compiler/runtime/linux/__fern_ring_wait.fern": "6afc8fcab63a5d75640d3b1c3baf8ebcddc34fbe71f2c9fb3bd96a9cfb0d9cf2",
+    "compiler/rtbundle.fern": "779ce15b9f000a3dc7640823278f03fdd5d85924fd11926562221732f29a599a"
+  }
+}

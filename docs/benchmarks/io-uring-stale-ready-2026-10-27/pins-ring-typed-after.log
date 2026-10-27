@@ -1,0 +1,18 @@
+=== RUN   TestSelfHostServeRingIdleGap
+    self_host_ring_idle_gap_test.go:57: 129 syscalls over 64 delayed requests, including 65 ring entries:
+          syscall 44: 64
+          syscall 426: 65
+--- PASS: TestSelfHostServeRingIdleGap (46.70s)
+=== RUN   TestSelfHostServeSyscallsPerRequest
+    self_host_vdso_clock_ptrace_test.go:81: 10000 syscalls over 5000 requests, rounded 2 per request:
+          syscall 44: 5000
+          syscall 426: 5000
+--- PASS: TestSelfHostServeSyscallsPerRequest (10.34s)
+=== RUN   TestSelfHostServeSyscallsPerRequestTwoFetch
+    self_host_vdso_clock_ptrace_test.go:134: 40000 syscalls over 5000 requests, rounded 8 per request:
+          syscall 0: 10000
+          syscall 44: 15000
+          syscall 426: 15000
+--- PASS: TestSelfHostServeSyscallsPerRequestTwoFetch (18.51s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	75.563s

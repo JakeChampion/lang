@@ -1,0 +1,4 @@
+=== RUN   TestRingDriverX86_64
+--- PASS: TestRingDriverX86_64 (153.09s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	153.197s

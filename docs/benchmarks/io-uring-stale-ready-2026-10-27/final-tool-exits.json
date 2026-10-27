@@ -1,0 +1,46 @@
+{
+  "aux": {
+    "session_id": 75170,
+    "exit_code": 0
+  },
+  "allocation": {
+    "session_id": 33379,
+    "exit_code": 0
+  },
+  "epoll": {
+    "session_id": 25846,
+    "exit_code": 0
+  },
+  "ring_driver": {
+    "session_id": 13505,
+    "exit_code": 0
+  },
+  "runtime": {
+    "session_id": 97179,
+    "exit_code": 0
+  },
+  "full_native": {
+    "session_id": 51824,
+    "exit_code": 0
+  },
+  "full_wasm": {
+    "session_id": 62809,
+    "exit_code": 0
+  },
+  "full_arm64": {
+    "session_id": 71843,
+    "exit_code": 0
+  },
+  "serve": {
+    "session_id": 96299,
+    "exit_code": 0
+  },
+  "reactor": {
+    "session_id": 61615,
+    "exit_code": 0
+  },
+  "fixture_census": {
+    "session_id": 28381,
+    "exit_code": 0
+  }
+}

@@ -1,0 +1,99 @@
+{
+  "source_commit": "234d92f49dd409d7cd49d9e6035e032474d889fb",
+  "issue": 13688,
+  "parent": 12918,
+  "original_workloads": {
+    "rounds": 5000,
+    "warmup": 1000,
+    "slack_per_second": 4
+  },
+  "pins": {
+    "epoll": [
+      3,
+      9
+    ],
+    "ring": [
+      2,
+      8
+    ]
+  },
+  "before": {
+    "plain_syscalls": 10081,
+    "fetch_syscalls": 40555,
+    "idle_gap_syscalls": 193,
+    "idle_gap_allowance": 136
+  },
+  "final": {
+    "serve-final": {
+      "PASS_nodes": 14,
+      "FAIL_nodes": 0,
+      "SKIP_nodes": 0,
+      "source_hashes": 3737
+    },
+    "epoll-final": {
+      "PASS_nodes": 2,
+      "FAIL_nodes": 0,
+      "SKIP_nodes": 0,
+      "source_hashes": 3737
+    },
+    "reactor-runtime-final": {
+      "PASS": 16,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    "fixture-census-verbose": {
+      "PASS": 25,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    "driver-final": {
+      "PASS": 1,
+      "FAIL": 0,
+      "SKIP": 0
+    }
+  },
+  "image_targets": {
+    "native": {
+      "TAP": 282,
+      "censuses": 79,
+      "source_hashes": 1335,
+      "balanced_zero_live": true
+    },
+    "wasm": {
+      "TAP": 282,
+      "censuses": 55,
+      "source_hashes": 1335,
+      "balanced_zero_live": true
+    },
+    "arm64": {
+      "TAP": 282,
+      "censuses": 40,
+      "source_hashes": 1335,
+      "balanced_zero_live": true
+    }
+  },
+  "clean_build": {
+    "seconds": 89.11690864700358,
+    "binaries": {
+      "bin/fern": "120622b5f74a846feb7220898b02b5c322ddfc5fa8d5a619eea2b9a87a8977d8",
+      "bin/fern-selfhost": "9af36cebc7575f5228485eb4386865f1bfd9a1e5e6093b9f3cc645170603d7a4"
+    },
+    "make_exit": 0,
+    "version_exit": 0
+  },
+  "allocation": {
+    "allocs": 35061110,
+    "frees": 35061110,
+    "baseline": 34951426,
+    "max_drift_percent": 10,
+    "RSS_row": false
+  },
+  "final_measured_counts": {
+    "ring_plain": 10001,
+    "ring_two_fetch": 40000,
+    "epoll_plain": 15000,
+    "epoll_two_fetch": 45000,
+    "idle_gap": 129
+  },
+  "scope": "Finite syscall observations within unchanged slack. No universal syscall/CPU/physical memory/deadline/production bound. Parent actual main/nightly CI recovery remains unqualified."
+}

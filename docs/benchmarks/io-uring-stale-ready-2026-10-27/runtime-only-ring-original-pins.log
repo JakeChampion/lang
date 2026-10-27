@@ -1,0 +1,18 @@
+=== RUN   TestSelfHostServeSyscallsPerRequest
+    self_host_vdso_clock_ptrace_test.go:83: the serve loop makes 2 syscalls per hello request; pinned 3.
+        Above the pin is a regression. Below it, lower the pin in the same change.
+          syscall 44: 5000
+          syscall 426: 5000
+    self_host_vdso_clock_ptrace_test.go:185: traced program's stderr:
+--- FAIL: TestSelfHostServeSyscallsPerRequest (43.50s)
+=== RUN   TestSelfHostServeSyscallsPerRequestTwoFetch
+    self_host_vdso_clock_ptrace_test.go:130: the two-fetch server makes 8 syscalls per request; pinned 9.
+        Above the pin is a regression. Below it, lower the pin in the same change.
+          syscall 0: 10000
+          syscall 44: 15000
+          syscall 426: 14999
+    self_host_vdso_clock_ptrace_test.go:185: traced program's stderr:
+--- FAIL: TestSelfHostServeSyscallsPerRequestTwoFetch (17.81s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	61.333s
+FAIL

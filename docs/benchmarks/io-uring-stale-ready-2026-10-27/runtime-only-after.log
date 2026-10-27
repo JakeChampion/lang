@@ -1,0 +1,8 @@
+=== RUN   TestSelfHostServeRingIdleGap
+--- PASS: TestSelfHostServeRingIdleGap (44.48s)
+=== RUN   TestSelfHostServeSyscallsPerRequest
+--- PASS: TestSelfHostServeSyscallsPerRequest (11.75s)
+=== RUN   TestSelfHostServeSyscallsPerRequestTwoFetch
+--- PASS: TestSelfHostServeSyscallsPerRequestTwoFetch (14.50s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	70.758s
