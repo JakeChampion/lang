@@ -78,8 +78,11 @@ function check(n: i32): i32 {
   if (!plan.ok) { print(plan.why); return 10; }
   let no_names: string[] = [];
   let lowered = ssarc.lower(p.func, p.modes, plan, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index(no_names), ssaunits.no_view(), suspend.none());
-  if (!lowered.ok) { print(lowered.why); return 11; }
-  if (lowered.ops.len() > 32) { return 12; }
+  match (lowered) {
+    Err(state) => { print(state.why); return 11; },
+    Ok(None()) => { print("no produced body"); return 11; },
+    Ok(Some(body)) => { if (body.ops.len() > 32) { return 12; } }
+  }
   return 0;
 }
 
