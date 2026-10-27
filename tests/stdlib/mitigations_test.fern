@@ -29,54 +29,84 @@ function auxv_sample(): u8[] {
 
 function image_with(line: string): u8[] {
   let img: u8[] = "ELF junk before ".bytes();
-  for c in ("FERNBUILD1 " + line + "\nmore junk\n").bytes() { img = img.append(c); }
+  for c in ("FERNBUILD1 " + line + "\nmore junk\n").bytes() {
+    img = img.append(c);
+  }
   return img;
 }
 
 function test_build_line(): test.TestOutcome {
   let line: string = "target=x86-64-linux profile=hardened harden=1 pie=1 sanitize=0 backtrace=1 size=0 shared=0 heap_limit=17179869184";
   match (mitigations.build_line(image_with(line))) {
-    Some(found) => { return test.assert_eq(found, line); },
-    None => { return test.fail("the line was not found"); }
+    Some(found) => {
+      return test.assert_eq(found, line);
+    },
+    None => {
+      return test.fail("the line was not found");
+    }
   }
 }
 
 function test_build_line_absent(): test.TestOutcome {
-  if (mitigations.build_line("no manifest here".bytes()).is_some()) { return test.fail("a line was found in bytes without one"); }
-  if (mitigations.build_line([]).is_some()) { return test.fail("a line was found in an empty image"); }
+  if (mitigations.build_line("no manifest here".bytes()).is_some()) {
+    return test.fail("a line was found in bytes without one");
+  }
+  if (mitigations.build_line([]).is_some()) {
+    return test.fail("a line was found in an empty image");
+  }
   return test.pass();
 }
 
 function test_parse_build(): test.TestOutcome {
   match (mitigations.parse_build("target=arm64-linux profile=diagnostic harden=0 pie=0 sanitize=1 backtrace=1 size=0 shared=0 heap_limit=67108864")) {
     Some(b) => {
-      if (b.target != "arm64-linux" || b.profile != "diagnostic") { return test.fail("target or profile"); }
-      if (b.harden || b.pie || !b.sanitize || !b.backtrace || b.size || b.shared) { return test.fail("a flag"); }
+      if (b.target != "arm64-linux" || b.profile != "diagnostic") {
+        return test.fail("target or profile");
+      }
+      if (b.harden || b.pie || !b.sanitize || !b.backtrace || b.size || b.shared) {
+        return test.fail("a flag");
+      }
       return test.assert_eq(b.heap_limit.to_string(), "67108864");
     },
-    None => { return test.fail("no build"); }
+    None => {
+      return test.fail("no build");
+    }
   }
 }
 
 function test_parse_build_unknown(): test.TestOutcome {
   match (mitigations.parse_build("target=x86-64-linux novelty=7 harden=1 trailer")) {
     Some(b) => {
-      if (b.target != "x86-64-linux" || !b.harden) { return test.fail("the known fields"); }
+      if (b.target != "x86-64-linux" || !b.harden) {
+        return test.fail("the known fields");
+      }
       return test.pass();
     },
-    None => { return test.fail("no build"); }
+    None => {
+      return test.fail("no build");
+    }
   }
 }
 
 function test_manifest_rows(): test.TestOutcome {
   let rows: mitigations.Status[] = mitigations.manifest();
-  if (target_os() != "linux") { return test.assert_eq(rows.len().to_string(), "5"); }
-  if (rows.len() < 5) { return test.fail("fewer than five rows"); }
-  if (rows[0].name != "nx-stack" || rows[1].name != "canary") { return test.fail("the row order"); }
+  if (target_os() != "linux") {
+    return test.assert_eq(rows.len().to_string(), "5");
+  }
+  if (rows.len() < 5) {
+    return test.fail("fewer than five rows");
+  }
+  if (rows[0].name != "nx-stack" || rows[1].name != "canary") {
+    return test.fail("the row order");
+  }
   for row in rows {
     let line: string = row.line();
-    if (!line.contains(" compiled=") || !line.contains(" verified=")) { return test.fail("the line shape: " + line); }
-    if (row.compiled != "yes" && row.compiled != "no" && row.compiled != "unknown") { return test.fail("the compiled cell: " + row.compiled); }
+    if (!line.contains(" compiled=") || !line.contains(" verified=")) {
+      return test.fail("the line shape: " + line);
+    }
+    if (row.compiled != "yes" && row.compiled != "no" && row.compiled != "unknown") {
+      return test.fail("the compiled cell: " + row.compiled);
+    }
   }
   return test.pass();
 }

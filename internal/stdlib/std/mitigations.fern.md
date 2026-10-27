@@ -514,7 +514,9 @@ pub function manifest(): Status[] {
   let build: Option[Build] = None;
   if (target_os() == "linux" || target_os() == "android") {
     match (build_line(__bytes("/proc/self/exe"))) {
-      Some(line) => { build = parse_build(line); },
+      Some(line) => {
+        build = parse_build(line);
+      },
       None => {}
     }
   }
@@ -547,7 +549,7 @@ function __status_rows(build: Option[Build], support: Support[]): Status[] {
     Status { name: "canary", compiled: harden, supported: "yes", requested: harden, enabled: harden, verified: "native (TestSelfHostStackCanary)" },
     Status { name: "cfi", compiled: harden, supported: "yes", requested: harden, enabled: harden, verified: "native (TestSelfHostForwardEdgeCFI)" },
     Status { name: "pie", compiled: pie, supported: "yes", requested: pie, enabled: pie, verified: "native (TestSelfHostPIE)" },
-    Status { name: "sanitizer", compiled: sanitize, supported: "yes", requested: sanitize, enabled: sanitize, verified: "native (the sanitizer suites)" }
+    Status { name: "sanitizer", compiled: sanitize, supported: "yes", requested: sanitize, enabled: sanitize, verified: "native (the sanitizer suites)" },
   ];
   for row in support {
     let have: string = __both(row.cpu, row.kernel).to_string();
