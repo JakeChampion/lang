@@ -1,0 +1,11 @@
+{
+  "source_commit": "eb79b4673246b4f0d2d0f5a1aa9e7b45c9bf7826",
+  "worktree_dirty": true,
+  "cases": 2824,
+  "workers": 353,
+  "status": "complete",
+  "sources_unchanged": true,
+  "record_path": "/workspace/lang-image-icc-matrix-trc/fern-image/build/icc-matrix-trc-provisional-native.json",
+  "record_sha256": "848705c2a04c379482f0307ba7f765ee02bc2a0f6520f6f421a1b7abc8c902e0",
+  "qualification": "Development evidence only. Does not qualify final source."
+}

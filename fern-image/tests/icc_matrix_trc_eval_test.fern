@@ -1,0 +1,175 @@
+import "../packages/codecs/icc/matrix_trc_eval";
+import "../packages/codecs/icc/matrix_model";
+import "../packages/codecs/icc/envelope";
+import "../packages/codecs/icc/tag_data";
+import "../packages/codecs/icc/curv_eval";
+import "../packages/codecs/icc/parametric_eval";
+import "std/test";
+import "std/f64";
+
+function never(): boolean {
+  return false;
+}
+
+function rgb(r: f64, g: f64, b: f64): matrix_trc_eval.DeviceRGB {
+  return matrix_trc_eval.DeviceRGB { r: r, g: g, b: b };
+}
+
+function frozen(): Result[matrix_model.ForwardData, matrix_model.ModelError] {
+  let input = match (read_file_bytes("tests/fixtures/icc-feasibility-srgb.icc")) { Ok(value) => value, Err(_) => [] };
+  return matrix_model.read(input[:], envelope.Intent.Relative, matrix_model.default_limits(), never);
+}
+
+function identity(data: matrix_model.ForwardData): matrix_model.ForwardData {
+  return matrix_model.ForwardData { ...data, matrix: [65536, 0, 0, 0, 65536, 0, 0, 0, 65536], red: tag_data.Identity, green: tag_data.Identity, blue: tag_data.Identity };
+}
+
+function eval(data: matrix_model.ForwardData, input: matrix_trc_eval.DeviceRGB): Result[matrix_trc_eval.Evaluation, matrix_trc_eval.EvalError] {
+  return matrix_trc_eval.evaluate(data, input, matrix_trc_eval.default_limits(), never);
+}
+
+function exact(out: matrix_trc_eval.Evaluation, r: f64, g: f64, b: f64, x: f64, y: f64, z: f64): boolean {
+  return f64_bits(out.linear.r) == f64_bits(r) && f64_bits(out.linear.g) == f64_bits(g) && f64_bits(out.linear.b) == f64_bits(b)
+    && f64_bits(out.xyz.x) == f64_bits(x) && f64_bits(out.xyz.y) == f64_bits(y) && f64_bits(out.xyz.z) == f64_bits(z);
+}
+
+function projections(): test.TestOutcome {
+  let original = match (frozen()) { Ok(value) => value, _ => { return test.fail("frozen profile fixture"); } };
+  let data = identity(original);
+  for value in [-0.0, 0.0, f64_from_bits(1), f64_from_bits(0x0010000000000000), 0.25, f64_from_bits(0x3fefffffffffffff), 1.0] {
+    if (match (eval(data, rgb(value, value, value))) { Ok(out) => !exact(out, value, value, value, value, value, value), _ => true }) {
+      return test.fail("identity trace and projection bits");
+    }
+  }
+  for (kind, values) in [(0, [65536]), (1, [65536, 65536, 0]), (2, [65536, 65536, 0, 0]), (3, [65536, 65536, 0, 65536, 32768]), (4, [65536, 65536, 0, 65536, 32768, 0, 0])] {
+    let curve = tag_data.Parametric(tag_data.ParametricData { function_type: kind, coefficients: values });
+    let model = matrix_model.ForwardData { ...data, red: curve, green: curve, blue: curve };
+    if (match (eval(model, rgb(-0.0, 0.25, 0.75))) { Ok(out) => !exact(out, -0.0, 0.25, 0.75, -0.0, 0.25, 0.75), _ => true }) {
+      return test.fail("every parametric identity branch");
+    }
+  }
+  return test.pass();
+}
+
+function mixed(): test.TestOutcome {
+  let original = match (frozen()) { Ok(value) => value, _ => { return test.fail("frozen profile fixture"); } };
+  let data = matrix_model.ForwardData { ...identity(original), matrix: [131072, 0, 0, 0, -65536, 0, 0, 0, 196608], red: tag_data.Gamma(512), green: tag_data.Samples([65535, 0]), blue: tag_data.Parametric(tag_data.ParametricData { function_type: 4, coefficients: [65536, 65536, 0, 65536, 32768, 0, 0] }) };
+  return test.assert_true(match (eval(data, rgb(0.25, 0.5, 0.75))) { Ok(out) => exact(out, 0.0625, 0.5, 0.75, 0.125, -0.5, 2.25), _ => false });
+}
+
+function admission(): test.TestOutcome {
+  let original = match (frozen()) { Ok(value) => value, _ => { return test.fail("frozen profile fixture"); } };
+  let data = identity(original);
+  for (model, input, limits, error) in [
+    (data, rgb(0.0, 0.0, 0.0), matrix_trc_eval.EvalLimits { max_samples: 0 }, matrix_trc_eval.EvalError.Limit),
+    (matrix_model.ForwardData { ...data, requested_intent: envelope.Intent.Absolute }, rgb(0.0, 0.0, 0.0), matrix_trc_eval.default_limits(), matrix_trc_eval.EvalError.Intent),
+    (matrix_model.ForwardData { ...data, requested_intent: envelope.Intent.Perceptual }, rgb(0.0, 0.0, 0.0), matrix_trc_eval.default_limits(), matrix_trc_eval.EvalError.Intent),
+    (matrix_model.ForwardData { ...data, requested_intent: envelope.Intent.Saturation }, rgb(0.0, 0.0, 0.0), matrix_trc_eval.default_limits(), matrix_trc_eval.EvalError.Intent),
+    (matrix_model.ForwardData { ...data, matrix: [] }, rgb(0.0, 0.0, 0.0), matrix_trc_eval.default_limits(), matrix_trc_eval.EvalError.Shape),
+  ] {
+    let polls = cell_new(0);
+    let result = matrix_trc_eval.evaluate(model, input, limits, (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    });
+    if (polls.get() != 0 || match (result) { Err(actual) => actual != error, _ => true }) {
+      return test.fail("cheap admission before callbacks");
+    }
+  }
+  for value in [-0.1, 1.1, f64_from_bits(0x7ff0000000000000), -f64_from_bits(0x7ff0000000000000), f64_from_bits(0x7ff8000000000000)] {
+    for input in [rgb(value, 0.0, 0.0), rgb(0.0, value, 0.0), rgb(0.0, 0.0, value)] {
+      let polls = cell_new(0);
+      let result = matrix_trc_eval.evaluate(data, input, matrix_trc_eval.default_limits(), (): boolean => {
+        polls.set(polls.get() + 1);
+        return false;
+      });
+      if (polls.get() != 0 || match (result) { Err(matrix_trc_eval.EvalError.Input()) => false, _ => true }) {
+        return test.fail("finite normalized RGB before callbacks");
+      }
+    }
+  }
+  for (curve, error) in [
+    (tag_data.Gamma(0), matrix_trc_eval.EvalError.Curve(curv_eval.EvalError.Value)),
+    (tag_data.Samples([0]), matrix_trc_eval.EvalError.Curve(curv_eval.EvalError.Shape)),
+    (tag_data.Samples([0, 65536]), matrix_trc_eval.EvalError.Curve(curv_eval.EvalError.Value)),
+    (tag_data.Parametric(tag_data.ParametricData { function_type: 5, coefficients: [] }), matrix_trc_eval.EvalError.Parametric(parametric_eval.EvalError.Function)),
+    (tag_data.Parametric(tag_data.ParametricData { function_type: 1, coefficients: [32768, 65536, 0] }), matrix_trc_eval.EvalError.Parametric(parametric_eval.EvalError.Unsupported)),
+  ] {
+    if (match (eval(matrix_model.ForwardData { ...data, green: curve }, rgb(0.25, 0.5, 0.75))) { Err(actual) => actual != error, _ => true }) {
+      return test.fail("public curve values receive fresh domain checks");
+    }
+  }
+  return test.pass();
+}
+
+function cancellation(): test.TestOutcome {
+  let original = match (frozen()) { Ok(value) => value, _ => { return test.fail("frozen profile fixture"); } };
+  let samples: i32[] = [];
+  for index in 0..129 {
+    samples = samples.append(index * 500);
+  }
+  for data in [identity(original), matrix_model.ForwardData { ...identity(original), red: tag_data.Samples(samples), blue: original.blue }] {
+    let polls = cell_new(0);
+    let result = matrix_trc_eval.evaluate(data, rgb(0.25, 0.5, 0.75), matrix_trc_eval.default_limits(), (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    });
+    let total = polls.get();
+    if (total < 10 || match (result) { Ok(_) => false, _ => true }) {
+      return test.fail("nonvacuous layered poll count");
+    }
+    for stop in 1..total + 1 {
+      let count = cell_new(0);
+      let result = matrix_trc_eval.evaluate(data, rgb(0.25, 0.5, 0.75), matrix_trc_eval.default_limits(), (): boolean => {
+        count.set(count.get() + 1);
+        return count.get() == stop;
+      });
+      if (count.get() != stop || match (result) { Err(matrix_trc_eval.EvalError.Cancelled()) => false, _ => true }) {
+        return test.fail("every layered cancellation point");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function ownership(): test.TestOutcome {
+  let original = match (frozen()) { Ok(value) => value, _ => { return test.fail("frozen profile fixture"); } };
+  let coefficients = [65536, 0, 0, 0, 65536, 0, 0, 0, 65536];
+  let values = [0, 65535];
+  let matrices = cell_new(coefficients);
+  let samples = cell_new(values);
+  let data = matrix_model.ForwardData { ...identity(original), matrix: coefficients, red: tag_data.Samples(values) };
+  let result = matrix_trc_eval.evaluate(data, rgb(0.25, 0.5, 0.75), matrix_trc_eval.default_limits(), (): boolean => {
+    matrices.set(matrices.get().with(0, -65536));
+    samples.set(samples.get().with(0, 65535));
+    return false;
+  });
+  if (coefficients[0] != 65536 || values[0] != 0 || match (result) { Ok(out) => !exact(out, 0.25, 0.5, 0.75, 0.25, 0.5, 0.75), _ => true }) {
+    return test.fail("matrix and curve COW during callbacks");
+  }
+  let next = matrix_model.ForwardData { ...data, matrix: matrices.get(), red: tag_data.Samples(samples.get()) };
+  return test.assert_true(match (eval(next, rgb(0.25, 0.5, 0.75))) { Ok(out) => exact(out, 1.0, 0.5, 0.75, -1.0, 0.5, 0.75), _ => false });
+}
+
+function preferences(): test.TestOutcome {
+  let data = match (frozen()) { Ok(value) => value, _ => { return test.fail("frozen profile fixture"); } };
+  let baseline = match (eval(data, rgb(0.25, 0.5, 0.75))) { Ok(value) => value, _ => { return test.fail("frozen profile numerical evaluation"); } };
+  for intent in [envelope.Intent.Perceptual, envelope.Intent.Absolute, envelope.Intent.Saturation] {
+    let next = matrix_model.ForwardData { ...data, info: envelope.ProfileInfo { ...data.info, preferred_intent: intent }, media_white: tag_data.XyzNumerators { x: -65536, y: 131072, z: 32768 } };
+    if (match (eval(next, rgb(0.25, 0.5, 0.75))) { Ok(out) => !exact(out, baseline.linear.r, baseline.linear.g, baseline.linear.b, baseline.xyz.x, baseline.xyz.y, baseline.xyz.z), _ => true }) {
+      return test.fail("explicit relative request does not repeat adaptation or white scaling");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.test_new("ICC matrix/TRC numerical composition");
+  runner = runner.it("ICC composition identity and projection bits", projections);
+  runner = runner.it("ICC composition mixed curves and unclipped XYZ", mixed);
+  runner = runner.it("ICC composition fresh public admission", admission);
+  runner = runner.it("ICC composition every cancellation point", cancellation);
+  runner = runner.it("ICC composition COW and fresh calls", ownership);
+  runner = runner.it("ICC composition explicit relative coordinate policy", preferences);
+  return runner.finish();
+}

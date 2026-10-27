@@ -1,0 +1,11 @@
+{
+  "compiler_source": "82ba47cad60c55a2c0649147afd0ff40802e1c4d",
+  "feature_source": "581469fb562de3c41890722a986b65e49726f644",
+  "compiler_stdlib_bytes_identical": true,
+  "standard_build_record": "/workspace/image-coverage-clean-build.json",
+  "standard_build_record_sha256": "58b074510849ec80214c7827d3cc2d580f06865ff9d6d6bf54d6c412b01e49c2",
+  "binaries": {
+    "/workspace/image-coverage-current-fern-82ba47cad": "6e95755acdba854fc94ec32aaa37d09dd8264bf4438b9952e37cc198bac5d9ab",
+    "/workspace/image-coverage-current-fern-selfhost-82ba47cad": "0420aab7a54babe46370d43b7bed849f5301cba48032ee90337db5b699f6dc41"
+  }
+}

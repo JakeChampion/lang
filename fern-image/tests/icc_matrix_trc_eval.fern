@@ -1,0 +1,122 @@
+import "../packages/codecs/icc/matrix_trc_eval";
+import "../packages/codecs/icc/matrix_model";
+import "../packages/codecs/icc/envelope";
+import "../packages/codecs/icc/tag_data";
+import "../packages/codecs/icc/curv_eval";
+import "../packages/codecs/icc/parametric_eval";
+import "../packages/codecs/icc/matrix_eval";
+import "std/i32";
+import "std/i64";
+
+function never(): boolean {
+  return false;
+}
+
+function signed(input: [u8], at: i32): i32 {
+  let value = input[at] as i64 | input[at + 1] as i64 << 8i64 | input[at + 2] as i64 << 16i64 | input[at + 3] as i64 << 24i64;
+  return (if (value >= 2147483648i64) { value - 4294967296i64 } else { value }) as i32;
+}
+
+function bits(input: [u8], at: i32): i64 {
+  let value = 0i64;
+  for index in 0..8 {
+    value = value | input[at + index] as i64 << (index * 8) as i64;
+  }
+  return value;
+}
+
+function read_curve(input: [u8], at: i32): Result[(tag_data.CurveData, i32), i32] {
+  if (at < 0 || at as i64 + 12i64 > input.len() as i64) {
+    return Err(4);
+  }
+  let kind = signed(input, at);
+  let parameter = signed(input, at + 4);
+  let count = signed(input, at + 8);
+  at = at + 12;
+  if (kind < 0 || kind > 3 || count < 0 || count > 65537 || at as i64 + count as i64 * 4i64 > input.len() as i64) {
+    return Err(4);
+  }
+  if (kind <= 1 && count != 0 || (kind == 0 || kind == 2) && parameter != 0) {
+    return Err(4);
+  }
+  let values: i32[] = [];
+  for index in 0..count {
+    values = values.append(signed(input, at + index * 4));
+  }
+  at = at + count * 4;
+  let value = match (kind) { 0 => tag_data.Identity, 1 => tag_data.Gamma(parameter), 2 => tag_data.Samples(values), _ => tag_data.Parametric(tag_data.ParametricData { function_type: parameter, coefficients: values }) };
+  return Ok((value, at));
+}
+
+function error_name(error: matrix_trc_eval.EvalError): string {
+  return match (error) { matrix_trc_eval.EvalError.Limit => "Limit", matrix_trc_eval.EvalError.Intent => "Intent", matrix_trc_eval.EvalError.Shape => "Shape", matrix_trc_eval.EvalError.Input => "Input", matrix_trc_eval.EvalError.Cancelled => "Cancelled", matrix_trc_eval.EvalError.Curve(value) => "Curve." + match (value) { curv_eval.EvalError.Limit => "Limit", curv_eval.EvalError.Input => "Input", curv_eval.EvalError.Shape => "Shape", curv_eval.EvalError.Value => "Value", curv_eval.EvalError.Unsupported => "Unsupported", curv_eval.EvalError.Numeric => "Numeric", curv_eval.EvalError.Cancelled => "Cancelled" }, matrix_trc_eval.EvalError.Parametric(value) => "Parametric." + match (value) { parametric_eval.EvalError.Function => "Function", parametric_eval.EvalError.Shape => "Shape", parametric_eval.EvalError.Input => "Input", parametric_eval.EvalError.Domain => "Domain", parametric_eval.EvalError.Unsupported => "Unsupported", parametric_eval.EvalError.Numeric => "Numeric", parametric_eval.EvalError.Cancelled => "Cancelled" }, matrix_trc_eval.EvalError.Matrix(value) => "Matrix." + match (value) { matrix_eval.MatrixError.Shape => "Shape", matrix_eval.MatrixError.Input => "Input", matrix_eval.MatrixError.Numeric => "Numeric", matrix_eval.MatrixError.Cancelled => "Cancelled" } };
+}
+
+function emit(path: string, original: matrix_model.ForwardData): i32 {
+  let input = match (read_file_bytes(path)) { Ok(value) => value, Err(_) => { return 2; } };
+  if (input.len() < 48 || input.len() > 1048576 || input[0] != 70 as u8 || input[1] != 84 as u8 || input[2] != 82 as u8 || input[3] != 49 as u8) {
+    return 3;
+  }
+  let request = signed(input[:], 4);
+  let maximum = signed(input[:], 8);
+  let stop = signed(input[:], 12);
+  let frozen = signed(input[:], 16);
+  let count = signed(input[:], 20);
+  if (request < 0 || request > 3 || stop < 0 || frozen < 0 || frozen > 1 || count < 0 || count > 10) {
+    return 4;
+  }
+  let requested = match (request) { 0 => envelope.Intent.Perceptual, 1 => envelope.Intent.Relative, 2 => envelope.Intent.Saturation, _ => envelope.Intent.Absolute };
+  let data = matrix_model.ForwardData { ...original, requested_intent: requested };
+  if (frozen == 1) {
+    if (input.len() != 48 || count != 0) {
+      return 4;
+    }
+  } else {
+    let at = 48;
+    if (at + count * 4 > input.len()) {
+      return 4;
+    }
+    let matrix: i32[] = [];
+    for index in 0..count {
+      matrix = matrix.append(signed(input[:], at + index * 4));
+    }
+    at = at + count * 4;
+    let (red, next) = match (read_curve(input[:], at)) { Ok(value) => value, Err(error) => { return error; } };
+    let (green, after) = match (read_curve(input[:], next)) { Ok(value) => value, Err(error) => { return error; } };
+    let (blue, end) = match (read_curve(input[:], after)) { Ok(value) => value, Err(error) => { return error; } };
+    if (end != input.len()) {
+      return 4;
+    }
+    data = matrix_model.ForwardData { ...data, matrix: matrix, red: red, green: green, blue: blue };
+  }
+  let polls = cell_new(0);
+  let result = matrix_trc_eval.evaluate(data, matrix_trc_eval.DeviceRGB { r: f64_from_bits(bits(input[:], 24)), g: f64_from_bits(bits(input[:], 32)), b: f64_from_bits(bits(input[:], 40)) }, matrix_trc_eval.EvalLimits { max_samples: maximum }, (): boolean => {
+    polls.set(polls.get() + 1);
+    return stop != 0 && polls.get() == stop;
+  });
+  match (result) {
+    Ok(value) => {
+      print("composition " + path + " ok " + polls.get().to_string() + " " + f64_bits(value.linear.r).to_string() + " " + f64_bits(value.linear.g).to_string() + " " + f64_bits(value.linear.b).to_string() + " " + f64_bits(value.xyz.x).to_string() + " " + f64_bits(value.xyz.y).to_string() + " " + f64_bits(value.xyz.z).to_string());
+    },
+    Err(error) => {
+      print("composition " + path + " error " + error_name(error) + " " + polls.get().to_string());
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  let profile = match (read_file_bytes("reference-profile.icc")) { Ok(value) => value, Err(_) => { return 2; } };
+  let original = match (matrix_model.read(profile[:], envelope.Intent.Relative, matrix_model.default_limits(), never)) { Ok(value) => value, Err(_) => { return 2; } };
+  for index in 1..paths.len() {
+    let code = emit(paths[index], original);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}
