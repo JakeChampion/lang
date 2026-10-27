@@ -89,3 +89,21 @@ The [qualification record](../benchmarks/qualified-type-heads-2026-10-26/qualifi
 contains compiler hashes, test totals, and the completed root inventory.
 The [allocation report](../benchmarks/qualified-type-heads-2026-10-26/alloc-report.txt)
 preserves the measured counters.
+
+## Constructor methods with a struct name
+
+The seccomp corpus exposes a regression in two existing fixtures.
+Each fixture declares an enum constructor and a plain struct with the name `Empty`.
+The expression `Empty.to_string()` calls a method on the constructor value.
+The compiler instead selects a static method on the struct and refuses typed lowering.
+
+The classifier retains the declared-enum check first.
+After that check, a constructor value retains precedence over a plain struct in expression context.
+Struct type annotations and struct literals retain their meaning.
+
+Two new controls cover both declaration orders with a method on the enum value.
+Both controls also construct and read the struct with the same name.
+The Go interpreter accepts both controls before the fix.
+All three compiled targets fail before the fix with a missing semantic contract.
+The complete qualifier and diagnostic suites cover the fix and the previous enum requirements.
+The two original seccomp fixtures also check plain and sandboxed execution.
