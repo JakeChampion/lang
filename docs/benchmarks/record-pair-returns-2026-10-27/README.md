@@ -92,6 +92,9 @@ The source patch applies to `1506551e149750e34dc5239368683577df0deda9`.
 The JSON records contain commands, compiler hashes, fixture hashes, statuses and raw output.
 The Python coordinators retain their original workspace paths for provenance.
 
+The raw fixture files use `.fern.txt` suffixes and retain their measured bytes.
+The original workspace `.fern` files remain unchanged.
+
 Gzip archives preserve raw Callgrind files and symbol maps without data loss.
 The archive records include raw and compressed hashes.
 The release and debug load proofs precede address attribution.
