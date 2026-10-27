@@ -1,0 +1,12 @@
+=== RUN   TestSelfHostRetainedNativeBodies
+=== RUN   TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux
+=== RUN   TestSelfHostRetainedNativeBodies/ssaallocationguards_run/x86-64-linux
+    self_host_ssa_retained_test.go:19: ssaallocationguards_run exited 180: array-box machine controls failed: cmpq $2048, %rdi -> 
+        leakcheck: allocs=1590902 frees=1590900 live_bytes=536 from=exit
+        fern-sanitizer: leak 536 bytes in 2 blocks
+--- FAIL: TestSelfHostRetainedNativeBodies (92.78s)
+    --- PASS: TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux (57.09s)
+    --- FAIL: TestSelfHostRetainedNativeBodies/ssaallocationguards_run/x86-64-linux (34.41s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	92.806s
+FAIL

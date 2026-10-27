@@ -1,0 +1,69 @@
+{
+  "source": "3a70b650d36331d2febe0f88d207bf0702e09ef4",
+  "base": "231becae0394b07f7bdbc5cf24922b6e9db67aed",
+  "selected_drivers": [
+    "ssaretained_run",
+    "ssaallocationguards_run"
+  ],
+  "execution_targets": [
+    "arm64-linux",
+    "x86-64-linux",
+    "wasm32-wasi"
+  ],
+  "driver_target_cases": 6,
+  "Go_PASS_nodes": 7,
+  "FAIL": 0,
+  "SKIP": 0,
+  "original_harness": true,
+  "existing_nonzero_balanced_zero_live_assertions": true,
+  "production_emitter_runtime_std_and_baselines_unchanged": true,
+  "full_retained_group_qualified": false,
+  "actual_CI_recovery_qualified": false,
+  "compiler": {
+    "bin/fern": "e60468d00e57fe3b5badbf86878952432fd4744d0ef1d945386d67a680eac69e",
+    "bin/fern-selfhost": "238621600593496f4c333c3661bc09464155c13d0796cec03939166b16cad4db"
+  },
+  "checks": {
+    "targets": {
+      "seconds": 360.9126298427582,
+      "PASS": 7,
+      "FAIL": 0,
+      "SKIP": 0,
+      "exits": [
+        0
+      ]
+    },
+    "aux": {
+      "seconds": 65.79737496376038,
+      "PASS": 219,
+      "FAIL": 0,
+      "SKIP": 0,
+      "exits": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    "complexity": {
+      "seconds": 58.193556785583496,
+      "PASS": 3,
+      "FAIL": 0,
+      "SKIP": 0,
+      "exits": [
+        0
+      ]
+    },
+    "runtime": {
+      "seconds": 100.46496438980103,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0,
+      "exits": [
+        0
+      ]
+    }
+  }
+}

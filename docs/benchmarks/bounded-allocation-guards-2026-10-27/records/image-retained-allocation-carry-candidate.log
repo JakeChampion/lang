@@ -1,0 +1,9 @@
+=== RUN   TestSelfHostRetainedNativeBodies
+=== RUN   TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux
+    self_host_ssa_retained_test.go:19: ssaretained_run exited 180: leakcheck: allocs=12393577 frees=12389474 live_bytes=267776 from=exit
+        fern-sanitizer: leak 267776 bytes in 4103 blocks
+--- FAIL: TestSelfHostRetainedNativeBodies (25.94s)
+    --- FAIL: TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux (24.58s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	25.973s
+FAIL

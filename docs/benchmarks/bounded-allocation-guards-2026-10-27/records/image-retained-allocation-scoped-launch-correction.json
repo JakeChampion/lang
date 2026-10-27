@@ -1,0 +1,6 @@
+{
+  "initial_tool_script_parse_failed": true,
+  "command_not_evaluated": true,
+  "test_or_build_started": false,
+  "reason": "Own JavaScript prompt string contained a raw newline. The corrected tool call launches the shell coordinator for the first time."
+}

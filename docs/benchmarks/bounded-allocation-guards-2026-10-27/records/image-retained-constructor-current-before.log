@@ -1,0 +1,10 @@
+=== RUN   TestSelfHostRetainedNativeBodies
+=== RUN   TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux
+    self_host_ssa_retained_test.go:19: ssaretained_run exited 180: constructor machine controls failed: actual complete constructor
+        leakcheck: allocs=375252 frees=371291 live_bytes=249296 from=exit
+        fern-sanitizer: leak 249296 bytes in 3961 blocks
+--- FAIL: TestSelfHostRetainedNativeBodies (35.42s)
+    --- FAIL: TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux (33.46s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	35.438s
+FAIL

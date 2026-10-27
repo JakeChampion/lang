@@ -1,0 +1,8 @@
+./scripts/fern-embed-stage build/embed
+./bin/fern-selfhost -target x86-64-linux -embed build/embed -o bin/fern compiler/fern_main.fern internal/stdlib
+
+ACTUAL_MAKE_EXIT=0
+fern 3a70b650d363
+built for x86-64-linux
+
+ACTUAL_VERSION_EXIT=0

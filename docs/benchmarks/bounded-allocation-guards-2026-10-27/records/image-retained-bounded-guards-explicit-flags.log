@@ -1,0 +1,10 @@
+=== RUN   TestSelfHostRetainedNativeBodies
+=== RUN   TestSelfHostRetainedNativeBodies/ssaallocationguards_run/x86-64-linux
+    self_host_ssa_retained_test.go:19: ssaallocationguards_run exited 180: array-box machine controls failed: pop controls with explicit unknown entry flags
+        leakcheck: allocs=1585698 frees=1585696 live_bytes=992 from=exit
+        fern-sanitizer: leak 992 bytes in 2 blocks
+--- FAIL: TestSelfHostRetainedNativeBodies (28.05s)
+    --- FAIL: TestSelfHostRetainedNativeBodies/ssaallocationguards_run/x86-64-linux (26.21s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	28.080s
+FAIL

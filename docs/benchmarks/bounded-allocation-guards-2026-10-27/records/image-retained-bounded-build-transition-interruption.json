@@ -1,0 +1,11 @@
+{
+  "source": "3a70b650d36331d2febe0f88d207bf0702e09ef4",
+  "original_session": 51148,
+  "original_outer_exit": null,
+  "original_record_exists": false,
+  "original_cli_exists": false,
+  "stage1_sha256": "238621600593496f4c333c3661bc09464155c13d0796cec03939166b16cad4db",
+  "stage1_smoke_log_preserved": true,
+  "live_builds": 0,
+  "reason": "Same environment startup transition lost the running coordinator. CLI process is now a zombie and its output is absent. Resume only the missing make target with current stage1."
+}

@@ -428,9 +428,9 @@ function path(p: isa.Program, capacity: i32, hit: boolean): boolean {
     if (op.kind == 18) {
       return finished(s, capacity, hit);
     }
-    if (op.kind == 17) {
+    if (op.kind == 17 || op.kind == 35) {
       let taken = branch(s, op.condition);
-      if (taken < 0) {
+      if (taken < 0 || op.kind == 35 && (taken != 0 || op.symbol != "__fern_alloc_size_abort.c")) {
         return false;
       }
       pc = if (taken == 1) { op.target } else { pc + 1 };

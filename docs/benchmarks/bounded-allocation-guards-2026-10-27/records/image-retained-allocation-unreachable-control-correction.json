@@ -1,0 +1,11 @@
+{
+  "failed_record": "/tmp/image-retained-allocation-carry-observe.json",
+  "failed_control": "jc to jnc in initialized-only model",
+  "reason": "The initialized fast path returns before the later first-mapping overflow guard. Its existing conditional proof correctly ignores that unreachable mutation.",
+  "restored_exact_HEAD": [
+    "compiler/ssaallocatormachine.fern",
+    "compiler/drivers/ssaallocatormachines.fern"
+  ],
+  "old_candidate_source_preserved": true,
+  "next_control": "Require initialized proof to remain valid while first-mapping and combined proofs reject the reachable incorrect carry guard."
+}

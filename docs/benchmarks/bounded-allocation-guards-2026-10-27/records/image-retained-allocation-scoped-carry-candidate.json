@@ -1,0 +1,37 @@
+{
+  "source_commit": "231becae0394b07f7bdbc5cf24922b6e9db67aed",
+  "feature_uncommitted": true,
+  "commands": [
+    {
+      "command": [
+        "/tmp/image-icc-inverse-current-fern-b42a82ae9",
+        "-check",
+        "compiler/drivers/ssaretained_run.fern"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "go",
+        "test",
+        "-v",
+        "./internal/testing/e2ecompiler",
+        "-run",
+        "^TestSelfHostRetainedNativeBodies$/^ssaretained_run$/^x86-64-linux$",
+        "-count=1",
+        "-timeout=15m"
+      ],
+      "exit": 1
+    }
+  ],
+  "seconds": 42.557355642318726,
+  "source_hashes": {
+    "compiler/ssacapacityisa.fern": "7f1ae6fc7b6f041037a6b852c93eb80c78bdf11645a2c32b0f4a5219a0c10da1",
+    "compiler/ssaarrayboxmachine.fern": "f2781319f216a900420445a2747fd068ae6486c3ab0d27e54431daebdd69ec19",
+    "compiler/drivers/ssaarrayboxmachines.fern": "a6bec8748889bb7272282ae0c8b40b7af78d75ae13f12c94cb15b6f608a0b2bf",
+    "compiler/ssaallocatorfirstmachine.fern": "613e6f13b7c9d96dca23fe93bfcdb181d75ce919b357d0bbe657e4d150d47f1b",
+    "compiler/drivers/ssaallocatorfirstmachines.fern": "1a43384bbaba9804907483baf06d9c15e1803d19013e4e90d4b9e4747db04e5a",
+    "compiler/drivers/ssaallocationchains.fern": "6418dd8c0f111a7a9bee66ecdd8f2288341ece9eca90dad6de6b641a31c1d113"
+  },
+  "sources_unchanged": true
+}

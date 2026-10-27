@@ -305,10 +305,11 @@ function selected_program(body: text.Body, mode: i32): Program {
     let ordinary = decode(line, labels);
     let op = if (ordinary.kind == 0) { extended_decode(line, mode) } else { ordinary };
     if (op.kind == 17 && op.target < 0) {
-      if (mode != 6) {
+      let symbol = util.trim(slice_unchecked(line, op.condition.len(), line.len()) + "");
+      if (mode != 6 && !(mode == 5 && symbol == "__fern_alloc_size_abort.c")) {
         return Program { ops: [], error: "capacity branch target outside selected body" };
       }
-      op = Op { ...op, kind: 35, symbol: util.trim(slice_unchecked(line, op.condition.len(), line.len()) + "") };
+      op = Op { ...op, kind: 35, symbol: symbol };
     }
     ops = ops.append(op);
   }

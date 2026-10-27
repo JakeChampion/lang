@@ -7,7 +7,7 @@ import (
 
 func TestSelfHostRetainedNativeBodies(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	for _, driver := range []string{"ssaretained_run", "ssaretainedmachines_run"} {
+	for _, driver := range []string{"ssaretained_run", "ssaretainedmachines_run", "ssaallocationguards_run"} {
 		path, err := filepath.Abs("../../../compiler/drivers/" + driver + ".fern")
 		if err != nil {
 			t.Fatal(err)

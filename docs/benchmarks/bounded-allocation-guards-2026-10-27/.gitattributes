@@ -1,0 +1,2 @@
+# Preserve the literal trailing space in the archived failure diagnostic.
+records/image-retained-bounded-guards-corrected.log -whitespace
