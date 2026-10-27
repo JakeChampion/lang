@@ -1,0 +1,16 @@
+fern: warning: -sanitize on -target wasm32-wasi carries the leak census only, not the rc over-release or use-after-free detectors
+TAP version 13
+# Suite: restricted ICC matrix data selection
+ok 1 - frozen exact columns and owned shared curves
+ok 2 - explicit intent and layered limits
+ok 3 - no forward LUT fallback
+ok 4 - required data and exact wire types
+ok 5 - existing qualified curve forms and domains
+ok 6 - every cancellation poll and cleanup
+ok 7 - input and output COW with fresh calls
+ok 8 - unordered aliases signed columns and preferences
+1..8
+# tests 8
+# pass 8
+# fail 0
+leakcheck: allocs=3532 frees=3532 live_bytes=0
