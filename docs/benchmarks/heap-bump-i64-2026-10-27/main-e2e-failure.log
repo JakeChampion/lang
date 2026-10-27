@@ -1,0 +1,5 @@
+2026-10-27T21:16:09.6204804Z     rc_heap_bump_i64_test.go:56: 2.4 GB bump probe returned 3, want 2
+2026-10-27T21:16:09.6205320Z --- FAIL: TestX86_64HeapBumpAbove2GiB (0.16s)
+2026-10-27T21:17:40.7593387Z     rc_heap_bump_i64_test.go:56: 2.4 GB bump probe returned 3, want 2
+2026-10-27T21:17:45.5409993Z ##[error]Process completed with exit code 1.
+2026-10-27T21:17:47.3543101Z ##[error]    rc_heap_bump_i64_test.go:56: 2.4 GB bump probe returned 3, want 2

@@ -1,0 +1,6 @@
+/tmp/image-heap-bump-reservation-probe.fern:7:5: error[E087]: module "io" has no function "println"
+      io.println(first.to_string());
+        ^
+/tmp/image-heap-bump-reservation-probe.fern:8:5: error[E087]: module "io" has no function "println"
+      io.println(second.to_string());
+        ^

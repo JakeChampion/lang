@@ -36,7 +36,8 @@ const heapBumpAbove2GiBSrc = `function main(): i32 {
     let mark: i64 = __heap_bump_bytes();
     if (mark <= (2147483647 as i64)) { return 1; }
     if (mark < (2400000000 as i64)) { return 2; }
-    if (mark > (2500000000 as i64)) { return 3; }
+    // Each live allocation reserves a 1,342,177,280-byte large-tier block.
+    if (mark != (2684354560 as i64)) { return 3; }
     return a.len() / 1200000000 + b.len() / 1200000000;
 }`
 

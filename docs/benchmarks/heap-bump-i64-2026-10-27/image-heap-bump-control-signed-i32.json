@@ -1,0 +1,23 @@
+{
+  "name": "signed-i32",
+  "command": [
+    "go",
+    "test",
+    "-overlay",
+    "/tmp/image-heap-bump-control-signed-i32.overlay.json",
+    "-v",
+    "./internal/testing/e2e",
+    "-run",
+    "^TestX86_64HeapBumpAbove2GiB$",
+    "-count=1",
+    "-timeout=10m"
+  ],
+  "exit": 1,
+  "seconds": 50.220616817474365,
+  "expected_probe_exit": 1,
+  "required_failure": "2.4 GB bump probe returned 1, want 2",
+  "mutant_sha256": "f104af6343b35b6e051fffa241e3cb02ac23d6d6ec34a81d7d033f2a2dad9534",
+  "original_source_sha256": "4905c59c30d760e5459df1193c370a07d8d349bdd79e662090479e6e12bda565",
+  "production_source_unchanged": true,
+  "feature_uncommitted": true
+}

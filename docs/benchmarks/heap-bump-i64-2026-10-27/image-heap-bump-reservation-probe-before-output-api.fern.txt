@@ -1,0 +1,10 @@
+import "std/io";
+function main(): i32 {
+  let a: u8[] = __alloc_u8(1200000000);
+  let first = __heap_bump_bytes();
+  let b: u8[] = __alloc_u8(1200000000);
+  let second = __heap_bump_bytes();
+  io.println(first.to_string());
+  io.println(second.to_string());
+  return a.len() / 1200000000 + b.len() / 1200000000;
+}

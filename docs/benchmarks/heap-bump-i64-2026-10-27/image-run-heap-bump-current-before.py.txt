@@ -1,0 +1,7 @@
+from pathlib import Path
+import subprocess,json,time,hashlib,re
+root=Path('/tmp/image-engine-worktrees/lang-image-heap-bump-health');prefix=Path('/tmp/image-heap-bump-current-before');assert not prefix.with_suffix('.json').exists()
+paths=subprocess.check_output(['git','ls-files','compiler','internal/stdlib','internal/testing/e2e','internal/testing/e2eharness','internal/compile'],cwd=root,text=True).splitlines();sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();before={p:sha(root/p)for p in paths if(root/p).is_file()};cmd=['go','test','-v','./internal/testing/e2e','-run','^Test(X86_64HeapBumpAbove2GiB|X86_64HeapBumpIsI64|Arm64HeapBumpIsI64)$','-count=1','-timeout=10m'];start=time.time()
+with prefix.with_suffix('.log').open('w')as f:r=subprocess.run(cmd,cwd=root,stdout=f,stderr=subprocess.STDOUT)
+s=prefix.with_suffix('.log').read_text();record=dict(source_commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip(),command=cmd,exit=r.returncode,seconds=time.time()-start,source_hashes=before,sources_unchanged=before=={p:sha(root/p)for p in before},PASS=len(re.findall(r'^\s*--- PASS:',s,re.M)),FAIL=len(re.findall(r'^\s*--- FAIL:',s,re.M)),SKIP=len(re.findall(r'^\s*--- SKIP:',s,re.M)))
+prefix.with_suffix('.json').write_text(json.dumps(record,indent=2)+'\n');print({k:v for k,v in record.items()if k!='source_hashes'});raise SystemExit(r.returncode)

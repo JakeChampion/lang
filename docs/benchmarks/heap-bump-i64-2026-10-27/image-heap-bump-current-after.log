@@ -1,0 +1,16 @@
+=== RUN   TestX86_64HeapBumpIsI64
+--- PASS: TestX86_64HeapBumpIsI64 (37.43s)
+=== RUN   TestArm64HeapBumpIsI64
+--- PASS: TestArm64HeapBumpIsI64 (0.03s)
+=== RUN   TestX86_64HeapBumpAbove2GiB
+--- PASS: TestX86_64HeapBumpAbove2GiB (1.58s)
+=== RUN   TestX86_64HeapBumpBounded
+--- PASS: TestX86_64HeapBumpBounded (0.07s)
+=== RUN   TestArm64HeapBumpBounded
+--- PASS: TestArm64HeapBumpBounded (0.05s)
+=== RUN   TestWASMHeapBumpBounded
+--- PASS: TestWASMHeapBumpBounded (0.09s)
+=== RUN   TestX86_64LargeClassIntegrity
+--- PASS: TestX86_64LargeClassIntegrity (0.05s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2e	39.324s

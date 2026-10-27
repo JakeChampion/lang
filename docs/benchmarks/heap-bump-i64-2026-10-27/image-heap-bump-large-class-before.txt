@@ -1,0 +1,21 @@
+function large_class(s: asmcore.EmitState): asmcore.EmitState {
+  let l: asmcore.LabelOut = asmcore.fresh_label(s);
+  s = l.state.write("    cmpq $524288, %rax\n");
+  s = s.write("    jae " + l.name + "\n");
+  s = s.write("    movl $524288, %eax\n");
+  s = s.write(l.name + ":\n");
+  s = s.write("    bsrq %rax, %rcx\n");
+  s = s.write("    subl $2, %ecx\n");
+  s = s.write("    movl $1, %edx\n");
+  s = s.write("    shlq %cl, %rdx\n");
+  s = s.write("    leaq -1(%rax,%rdx), %rax\n");
+  s = s.write("    negq %rdx\n");
+  s = s.write("    andq %rdx, %rax\n");
+  s = s.write("    bsrq %rax, %rcx\n");
+  s = s.write("    subl $2, %ecx\n");
+  s = s.write("    movq %rax, %rdx\n");
+  s = s.write("    shrq %cl, %rdx\n");
+  s = s.write("    shlq $2, %rcx\n");
+  s = s.write("    addq %rcx, %rdx\n");
+  return s.write("    subq $72, %rdx\n");
+}

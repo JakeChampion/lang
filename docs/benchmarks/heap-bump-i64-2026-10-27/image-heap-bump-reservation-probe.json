@@ -1,0 +1,12 @@
+{
+  "source": "23c5bc2e4a5993ffe092d04b5ad1dcf771af0269",
+  "compiler_build_source": "b42a82ae934be20d4b370ff8f0cc1b278b8804bc",
+  "compiler_sha256": "954350d3c637968434e5335efb4317437197618af0497ccd39598b95bb693cd2",
+  "source_sha256": "1dddf72bde0349da0335039e1c38b87372205ef275244125b90d924371da5a9a",
+  "binary_sha256": "3ae251cdc7e64858c0ba602b6d56e1e374fd7f3532ac49571e2d4245c914d044",
+  "exit": 2,
+  "stdout": "1342177280\n\n2684354560\n\n",
+  "stderr": "",
+  "interpretation": "Arena bump reservations, not resident memory.",
+  "prior_compile_error": "Own io.println API assumption. Canonical print corrects output only. No original assertion or compiler source changed."
+}

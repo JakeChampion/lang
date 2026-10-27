@@ -1,0 +1,11 @@
+{
+  "original_control_record": "/tmp/image-heap-bump-control-signed-i32.json",
+  "original_record_unchanged": true,
+  "actual_failure_matched": "mark above 2 GiB read back as <= 2^31-1",
+  "control_qualified": true,
+  "reason": "The Go test uses a specific case-one error message. The coordinator expected the generic default-case message. Only the matcher changes; the actual signed-i32 run did not repeat.",
+  "remaining_controls": [
+    "zero",
+    "one-byte-wrong"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "committed_source": "b284f64a7997a20d715a7a9820daf3ff0f3deb50",
+  "qualified_candidate_uncommitted": true,
+  "committed_test_byte_identical_to_qualified_candidate": true,
+  "test_sha256": "4905c59c30d760e5459df1193c370a07d8d349bdd79e662090479e6e12bda565",
+  "all_qualified_source_hashes_match_commit": true,
+  "compiler_std_and_gates_unchanged": true,
+  "passed_roots": 7,
+  "failed_roots": 0,
+  "skips": 0,
+  "required_fault_controls": 3,
+  "completed_roots_not_repeated": true
+}

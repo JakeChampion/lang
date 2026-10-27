@@ -1,0 +1,55 @@
+{
+  "checks": [
+    {
+      "command": [
+        "gofmt",
+        "-l",
+        "internal/testing/e2e/rc_heap_bump_i64_test.go"
+      ],
+      "exit": 0,
+      "seconds": 0.008779525756835938
+    },
+    {
+      "command": [
+        "go",
+        "build",
+        "./..."
+      ],
+      "exit": 0,
+      "seconds": 5.907667636871338
+    },
+    {
+      "command": [
+        "go",
+        "vet",
+        "./..."
+      ],
+      "exit": 0,
+      "seconds": 12.445999383926392
+    },
+    {
+      "command": [
+        "go",
+        "test",
+        "-v",
+        "./internal/testing/sourcelint",
+        "-count=1",
+        "-timeout=10m"
+      ],
+      "exit": 0,
+      "seconds": 11.112573385238647
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exit": 0,
+      "seconds": 0.013489246368408203
+    }
+  ],
+  "PASS": 219,
+  "FAIL": 0,
+  "SKIP": 0
+}

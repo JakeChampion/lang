@@ -1,0 +1,23 @@
+{
+  "name": "one-byte-wrong",
+  "command": [
+    "go",
+    "test",
+    "-overlay",
+    "/tmp/image-heap-bump-control-one-byte-wrong.overlay.json",
+    "-v",
+    "./internal/testing/e2e",
+    "-run",
+    "^TestX86_64HeapBumpAbove2GiB$",
+    "-count=1",
+    "-timeout=10m"
+  ],
+  "exit": 1,
+  "seconds": 9.09758973121643,
+  "expected_probe_exit": 3,
+  "required_failure": "2.4 GB bump probe returned 3, want 2",
+  "mutant_sha256": "abb957b85b1642b74e21b38688ef35b611644290b9ed6ac3d542727e4cd51c02",
+  "original_source_sha256": "4905c59c30d760e5459df1193c370a07d8d349bdd79e662090479e6e12bda565",
+  "production_source_unchanged": true,
+  "feature_uncommitted": true
+}

@@ -1,0 +1,9 @@
+function main(): i32 {
+  let a: u8[] = __alloc_u8(1200000000);
+  let first = __heap_bump_bytes();
+  let b: u8[] = __alloc_u8(1200000000);
+  let second = __heap_bump_bytes();
+  print(first.to_string() + "\n");
+  print(second.to_string() + "\n");
+  return a.len() / 1200000000 + b.len() / 1200000000;
+}
