@@ -35,6 +35,9 @@ function allocator_paths(output: ssaprepare.Output): void {
   require(initialized.check(bad_first) && !first.check(bad_first), "initialized alone cannot certify first mapping");
   let bad_fast = change(output.text, "popq (%rdi)\n    ret", "popq (%rax)\n    ret");
   require(first.check(bad_fast) && !initialized.check(bad_fast), "first mapping alone cannot certify free list");
+  let bad_carry = change(output.text, "jc __fern_alloc_size_abort", "jnc __fern_alloc_size_abort");
+  require(initialized.check(bad_carry) && !first.check(bad_carry), "initialized path cannot certify mapping carry");
+  require(!chain.allocator(bad_carry) && !chain.array_box(bad_carry), "composed allocator rejects mapping carry");
 }
 
 function coherent(output: ssaprepare.Output, from: string, to: string): ssaprepare.Output {

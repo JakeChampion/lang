@@ -84,11 +84,11 @@ function actual(output: string): void {
     }
     i = i + 1;
   }
-  require(added == 4, "two wide sizes, self XOR and syscall retained");
+  require(added == 5, "three wide sizes, self XOR and syscall retained");
 }
 
 function actual_added(op: isa.Op, line: string): i32 {
-  if (line == "movabs $17179869184, %rsi" || line == "movabs $17179869184, %rcx") {
+  if (line == "movabs $17179869184, %rax" || line == "movabs $17179869184, %rsi" || line == "movabs $17179869184, %rcx") {
     actual_wide(op, line);
     return 1;
   }
@@ -106,7 +106,7 @@ function actual_added(op: isa.Op, line: string): i32 {
 
 function actual_wide(op: isa.Op, line: string): void {
   require(op.kind == 36 && op.symbol == "17179869184" && op.width == 64, "actual wide size");
-  require(op.destination == (if (line.ends_with("%rsi")) { 6 } else { 1 }), "actual wide destination");
+  require(op.destination == (if (line.ends_with("%rax")) { 0 } else { if (line.ends_with("%rsi")) { 6 } else { 1 } }), "actual wide destination");
 }
 
 function selection(): void {

@@ -205,12 +205,18 @@ function register_arithmetic(s: State, op: isa.Op, a: Word, b: Word, request: i3
   let av = scalar(a);
   let bv = scalar(b);
   if (op.kind == 10 && pointer(b) && av >= 0) {
-    return shifted(s, op.destination, b, av, request);
+    return region_sum(s, op.destination, b, av, request);
   }
   if (pointer(a) && bv >= 0) {
-    return shifted(s, op.destination, a, if (op.kind == 9) { -bv } else { bv }, request);
+    return if (op.kind == 10) { region_sum(s, op.destination, a, bv, request) } else { shifted(s, op.destination, a, -bv, request) };
   }
   return pointer_difference(s, op, a, b);
+}
+
+// A mapped kind-three region contains every coordinate that shifted accepts.
+function region_sum(s: State, reg: i32, base: Word, delta: i64, request: i32): State {
+  let result = shifted(s, reg, base, delta, request);
+  return if (result.ok && base.low.kind == 3 && delta >= 0) { State { ...result, carry: 0 } } else { result };
 }
 
 function scalar(w: Word): i64 {
@@ -460,10 +466,10 @@ function branch(s: State, condition: string): i32 {
   if (condition == "jne" || condition == "jnz") {
     return inverse(s.zero);
   }
-  if (condition == "jb") {
+  if (condition == "jb" || condition == "jc") {
     return s.carry;
   }
-  if (condition == "jae") {
+  if (condition == "jae" || condition == "jnc") {
     return inverse(s.carry);
   }
   return ordered_branch(s, condition);

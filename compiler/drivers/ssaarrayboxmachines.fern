@@ -40,6 +40,10 @@ function sizes(body: string): void {
 }
 
 function pops(body: string): void {
+  // The earlier size guard now leaves known flags.
+  // This fixture gives the original missing-comparison control unknown flags.
+  body = change(body, "cmpq $2048, %rdi", "testq %rsi, %rsi\ncmpq $2048, %rdi");
+  require(machine.check(fixture(body)), "pop controls with explicit unknown entry flags");
   for to in ["cmpq $40, %rdi", "cmpq $32, %rdi", "cmpq $2048, %rax", ""] {
     altered(body, "cmpq $2048, %rdi", to, false);
   }
@@ -146,6 +150,21 @@ function boundaries(body: string): void {
   require(old.error == "" && old.ops[0].kind == 0, "old decoder unchanged");
 }
 
+function size_guard(body: string): void {
+  let comparison = "cmpq $268435455, %rdi";
+  let transfer = "ja __fern_alloc_size_abort.c";
+  altered(body, comparison, "cmpq $3, %rdi", true);
+  altered(body, comparison, "cmpq $4, %rdi", true);
+  for replacement in ["cmpq $2, %rdi", "cmpq $1, %rdi", "cmpq $268435455, %rsi", comparison + "\naddq $0, %rdi"] {
+    altered(body, comparison, replacement, false);
+  }
+  for replacement in ["jmp __fern_alloc_size_abort.c", "jbe __fern_alloc_size_abort.c", "jne __fern_alloc_size_abort.c", "ja absent", "ja __fern_alloc_size_abort"] {
+    altered(body, transfer, replacement, false);
+  }
+  let decoded = isa.array_box_program(fixture(body));
+  require(decoded.error == "" && decoded.ops[1].kind == 35 && decoded.ops[1].symbol == "__fern_alloc_size_abort.c", "size guard remains an external transfer");
+}
+
 pub function run(output: string): void {
   let selected = text.array_box(output);
   require(selected.error == "" && selected.register_entry == -1, "actual selection");
@@ -153,6 +172,7 @@ pub function run(output: string): void {
   let body = selected.lines.join("\n");
   require(!fixture(body).contains("__fern_alloc:") && machine.check(fixture(body)), "conditional premise, not linkage");
   require(!machine.check("") && !machine.check(fixture("ret")), "missing effects");
+  size_guard(body);
   sizes(body);
   pops(body);
   memory(body);

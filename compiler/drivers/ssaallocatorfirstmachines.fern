@@ -103,8 +103,18 @@ function flow(s: string): void {
   mutation(s, "cmpq $0, %rax", "cmpl $0, %eax", false);
 }
 
+function carry_guard(s: string): void {
+  let guard = "jc __fern_alloc_size_abort";
+  mutation(s, guard, "jb __fern_alloc_size_abort", true);
+  for replacement in ["jnc __fern_alloc_size_abort", "jmp __fern_alloc_size_abort", "addq $0, %rdi\n" + guard] {
+    mutation(s, guard, replacement, false);
+  }
+  mutation(s, "addq %rax, %rdi", "addl %eax, %edi", false);
+}
+
 pub function run(output: string): void {
   require(machine.check(output), "actual complete primary output");
+  carry_guard(output);
   mutation(output, "movl $9, %eax", "movl $10, %eax", false);
   mutation(output, "movq %rax, __fern_heap_base(%rip)", "movl %eax, __fern_heap_base(%rip)", false);
   let selected = text.allocator(output);
