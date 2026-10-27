@@ -25133,6 +25133,23 @@ function vb_pinned_ranges(ts: typeinfo.Type[], es: ast.Expr[]): util.Diag[] {
   return out;
 }
 
+function vb_empty_arrays_fit(e: ast.Expr, want: typeinfo.Type): boolean {
+  if let ast.ExprArray(array) = e {
+    if let typeinfo.TypeArray(target) = want {
+      if (target.view) {
+        return false;
+      }
+      for item in array.elements {
+        if (!vb_empty_arrays_fit(item, target.elem)) {
+          return false;
+        }
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 function vb_join(a: VbStore, b: VbStore): VbStore {
   let scalar: typeinfo.Type = scalar_numeric_join(a.t, b.t);
   if (scalar_vb_joinable(a, b, scalar)) {
@@ -25164,6 +25181,12 @@ function vb_join(a: VbStore, b: VbStore): VbStore {
   if let typeinfo.TypeArray(aa) = a.t {
     if let typeinfo.TypeArray(ba) = b.t {
       if (aa.view == ba.view) {
+        if (vb_empty_arrays_fit(a.e, b.t)) {
+          return b;
+        }
+        if (vb_empty_arrays_fit(b.e, a.t)) {
+          return a;
+        }
         let j: VbStore = vb_join(mx_elem_store(a.e, aa.elem), mx_elem_store(b.e, ba.elem));
         let t: typeinfo.Type = typeinfo.TypeArray { ...aa, elem: j.t };
         if let ast.ExprUnknown(_) = j.e {
