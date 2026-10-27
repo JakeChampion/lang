@@ -182,6 +182,13 @@ jobs:
       - run: ./fern-image/scripts/test-icc-matrix-trc.sh wasm
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_matrix_solve_test.py
+      - run: ./fern-image/scripts/test-icc-matrix-solve.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-matrix-solve.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/test-deflate-reader.sh native
         env:
           FERN: ${{ github.workspace }}/bin/fern
@@ -316,4 +323,10 @@ jobs:
         with:
           name: image-icc-matrix-trc
           path: fern-image/build/icc-matrix-trc-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-matrix-solve-*.json') != ''
+        with:
+          name: image-icc-matrix-solve
+          path: fern-image/build/icc-matrix-solve-*.json
           if-no-files-found: error

@@ -1,0 +1,129 @@
+import "./matrix_eval";
+import "std/f64";
+import "core/cmp";
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum SolveError { Shape, Input, Unsupported, Singular, Numeric, Cancelled }
+
+struct Pair { high: f64, low: f64 }
+
+function sum(a: f64, b: f64): Pair {
+  let high = a + b;
+  let virtual_b = high - a;
+  return Pair { high: high, low: a - (high - virtual_b) + (b - virtual_b) };
+}
+
+function product(raw: i64, input: f64): Pair {
+  let a = raw as f64;
+  let high = a * input;
+  let sa = a * 134217729.0;
+  let ah = sa - (sa - a);
+  let al = a - ah;
+  let sx = input * 134217729.0;
+  let xh = sx - (sx - input);
+  let xl = input - xh;
+  return Pair { high: high, low: ah * xh - high + ah * xl + al * xh + al * xl };
+}
+
+function add(a: Pair, b: Pair): Pair {
+  let high = sum(a.high, b.high);
+  let low = sum(a.low, b.low);
+  let middle = sum(high.low, low.high);
+  let top = sum(high.high, middle.high);
+  return sum(top.high, top.low + middle.low + low.low);
+}
+
+function magnitude(value: f64): f64 {
+  return if (value < 0.0) { -value } else { value };
+}
+
+function dot(a: i64, b: i64, c: i64, denominator: i64, input: matrix_eval.XYZ): f64 {
+  if (b == 0 && c == 0 && (a == denominator || a == -denominator)) {
+    return if (a == denominator) { input.x } else { -input.x };
+  }
+  if (a == 0 && c == 0 && (b == denominator || b == -denominator)) {
+    return if (b == denominator) { input.y } else { -input.y };
+  }
+  if (a == 0 && b == 0 && (c == denominator || c == -denominator)) {
+    return if (c == denominator) { input.z } else { -input.z };
+  }
+  let p = product(a, input.x);
+  let q = product(b, input.y);
+  let r = product(c, input.z);
+  if (magnitude(p.high) < magnitude(q.high)) {
+    let swap = p;
+    p = q;
+    q = swap;
+  }
+  if (magnitude(q.high) < magnitude(r.high)) {
+    let swap = q;
+    q = r;
+    r = swap;
+  }
+  if (magnitude(p.high) < magnitude(q.high)) {
+    let swap = p;
+    p = q;
+    q = swap;
+  }
+  let total = add(add(p, q), r);
+  let divisor = denominator as f64;
+  let estimate = total.high / divisor;
+  let residual = add(total, product(denominator, -estimate));
+  let value = estimate + (residual.high / divisor + residual.low / divisor);
+  return if (value == 0.0) { 0.0 } else { value };
+}
+
+// The bounded raw coefficients keep cofactors and the determinant exact in i64.
+pub function solve(coefficients: [i32], input: matrix_eval.XYZ, cancelled: () => boolean): Result[matrix_eval.LinearRGB, SolveError] {
+  if (coefficients.len() != 9) {
+    return Err(SolveError.Shape);
+  }
+  if (!input.x.is_finite() || !input.y.is_finite() || !input.z.is_finite()) {
+    return Err(SolveError.Input);
+  }
+  for value in coefficients {
+    if (value < -98304 || value > 98304) {
+      return Err(SolveError.Unsupported);
+    }
+  }
+  if (magnitude(input.x) > 2.0 || magnitude(input.y) > 2.0 || magnitude(input.z) > 2.0) {
+    return Err(SolveError.Unsupported);
+  }
+  let a = coefficients[0] as i64;
+  let b = coefficients[1] as i64;
+  let c = coefficients[2] as i64;
+  let d = coefficients[3] as i64;
+  let e = coefficients[4] as i64;
+  let f = coefficients[5] as i64;
+  let g = coefficients[6] as i64;
+  let h = coefficients[7] as i64;
+  let i = coefficients[8] as i64;
+  let c00 = e * i - f * h;
+  let c01 = f * g - d * i;
+  let c02 = d * h - e * g;
+  let c10 = c * h - b * i;
+  let c11 = a * i - c * g;
+  let c12 = b * g - a * h;
+  let c20 = b * f - c * e;
+  let c21 = c * d - a * f;
+  let c22 = a * e - b * d;
+  let determinant = a * c00 + b * c01 + c * c02;
+  if (determinant == 0) {
+    return Err(SolveError.Singular);
+  }
+  if (cancelled()) {
+    return Err(SolveError.Cancelled);
+  }
+  let output = matrix_eval.LinearRGB {
+    r: dot(c00 * 65536i64, c10 * 65536i64, c20 * 65536i64, determinant, input),
+    g: dot(c01 * 65536i64, c11 * 65536i64, c21 * 65536i64, determinant, input),
+    b: dot(c02 * 65536i64, c12 * 65536i64, c22 * 65536i64, determinant, input),
+  };
+  if (!output.r.is_finite() || !output.g.is_finite() || !output.b.is_finite()) {
+    return Err(SolveError.Numeric);
+  }
+  if (cancelled()) {
+    return Err(SolveError.Cancelled);
+  }
+  return Ok(output);
+}
