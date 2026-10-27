@@ -1,0 +1,10 @@
+{
+  "committed_source": "a5183e15d4656205f0c3d7d5bf759144c4d054e1",
+  "qualified_pin_update_uncommitted": true,
+  "committed_baseline_byte_identical_to_qualified_candidate": true,
+  "baseline_sha256": "17c50a68e462baa7ece384754d9751c0c90c06484878b34613a9a6004fa07919",
+  "all156values_match_verified_reports": true,
+  "per_row_tolerance_tokens_unchanged": true,
+  "production_inputs_scripts_workflows_allocation_and_other_baselines_unchanged": true,
+  "completed_measurements_not_repeated": true
+}
