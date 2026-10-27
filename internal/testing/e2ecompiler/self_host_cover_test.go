@@ -156,12 +156,77 @@ func TestSelfHostCoverInferredValueBlocks(t *testing.T) {
 					if strings.Contains(stderr, "allocs=0 ") {
 						t.Fatalf("expected owned payload allocation\n%s", stderr)
 					}
-					for _, line := range []string{":3 1\n", ":4 1\n", ":5 1\n"} {
+					valueCount := "2"
+					if tc.name == "if-expression" {
+						valueCount = "1"
+					}
+					for _, line := range []string{":3 1\n", ":4 " + valueCount + "\n", ":5 1\n"} {
 						if !strings.Contains(stderr, "fern-cover: "+path+line) {
 							t.Errorf("missing executed counter %q\n%s", line, stderr)
 						}
 					}
 				})
+			}
+		})
+	}
+}
+
+func TestSelfHostCoverMultilineValueBlockCounters(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	path := filepath.Join(t.TempDir(), "main.fern")
+	const source = `function main(): i32 {
+ let value: string =
+   match(true) {
+     true => "yes",
+     false => "no"
+   };
+ return if(value == "yes") {0} else {1};
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOfFile(t, path, target, nil, "FERN_COVER=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 0 {
+				t.Fatalf("multiline value block exit %d\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			for _, line := range []string{":2 1\n", ":3 1\n", ":7 1\n"} {
+				if !strings.Contains(stderr, "fern-cover: "+path+line) {
+					t.Errorf("missing original source counter %q\n%s", line, stderr)
+				}
+			}
+		})
+	}
+}
+
+func TestSelfHostCoverValueBlockEarlyReturn(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	path := filepath.Join(t.TempDir(), "main.fern")
+	const source = `function probe(t: boolean, seed: string): i32 {
+ let kind = match(t) { true => seed, false => { return 7; } };
+ return kind.len();
+}
+function main(): i32 {
+ let seed=args()[0]+"-owned-early-return";
+ if (probe(false,seed)!=7 || probe(true,seed)!=seed.len()) { return 1; }
+ return 0;
+}
+`
+	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOfFile(t, path, target, nil, "FERN_COVER=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 0 {
+				t.Fatalf("covered early return exit %d\n%s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+			if !strings.Contains(stderr, "fern-cover: "+path+":3 1\n") {
+				t.Errorf("the value tail must execute only on the non-returning arm\n%s", stderr)
 			}
 		})
 	}
