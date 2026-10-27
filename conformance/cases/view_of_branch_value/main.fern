@@ -1,0 +1,28 @@
+// spec: ML-08
+// An if or match expression whose arms build fresh arrays can be passed
+// where a view is expected. The storage of the chosen arm lives until the
+// view's last use.
+
+import "std/i32";
+
+function total(xs: [i32]): i32 {
+    let n: i32 = 0;
+    for x in xs {
+        n = n + x;
+    }
+    return n;
+}
+
+function pick(k: i32): i32 {
+    return total(match (k) { 1 => [1], 2 => [2, 3], _ => [] });
+}
+
+function main(): i32 {
+    let big: boolean = args().len() == 1;
+    print(total(if (big) { [10, 20] } else { [30] }).to_string());
+    print(total(if (!big) { [10, 20] } else { [30] }).to_string());
+    print(pick(1).to_string());
+    print(pick(2).to_string());
+    print(pick(3).to_string());
+    return 0;
+}

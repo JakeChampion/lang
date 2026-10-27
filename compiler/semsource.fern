@@ -3172,7 +3172,7 @@ function value_if(f: ast.StmtIf, s: State, ty: typeinfo.Type): Value {
     return unreachable_value(el.s, ty);
   }
   s = merge_env(open(el.s, join, preds), envs, count);
-  return define(s, 8, values, 0, "", ty);
+  return merge_arms(s, values, ty);
 }
 
 function is_slice_call(name: string, c: ast.ExprCall): boolean {
@@ -4083,6 +4083,37 @@ function fresh_view(v: Value): Value {
   return define(n.s, ssasem.slice(), [v.id, zero.id, n.id], 0, "", t_str());
 }
 
+// A phi of views lent from arm-local storage cannot keep that storage alive
+// past the join, so the owners merge first and one lend follows the phi.
+function merge_arms(s: State, values: i32[], ty: typeinfo.Type): Value {
+  let owners: i32[] = [];
+  for v in values {
+    let owner: i32 = lent_owner(s, v);
+    if (owner < 0 || owners.len() > 0 && !semtypes.equal(s.values[owner], s.values[owners[0]])) {
+      return define(s, 8, values, 0, "", ty);
+    }
+    owners = owners.append(owner);
+  }
+  let owned: Value = define(s, 8, owners, 0, "", s.values[owners[0]]);
+  return define(owned.s, ssasem.array_lend(), [owned.id], 0, "", ty);
+}
+
+function lent_owner(s: State, id: i32): i32 {
+  for b in s.blocks {
+    for ins in b.insts {
+      if (ins.result == id) {
+        return if (ins.kind_tag == ssasem.array_lend()) { ins.args[0] } else { 0 - 1 };
+      }
+    }
+  }
+  for ins in s.cur.insts {
+    if (ins.result == id) {
+      return if (ins.kind_tag == ssasem.array_lend()) { ins.args[0] } else { 0 - 1 };
+    }
+  }
+  return 0 - 1;
+}
+
 function defining_kind(s: State, id: i32): i32 {
   for b in s.blocks {
     for ins in b.insts {
@@ -4676,7 +4707,7 @@ function value_match(m: ast.StmtMatch, s: State, ty: typeinfo.Type): Value {
     return unreachable_value(s, ty);
   }
   s = merge_env(open(s, c.join, c.arms.preds), c.arms.envs, c.count);
-  return define(s, 8, c.arms.values, 0, "", ty);
+  return merge_arms(s, c.arms.values, ty);
 }
 
 function current_loop(s: State): Loop {
