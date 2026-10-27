@@ -133,6 +133,13 @@ jobs:
       - run: ./fern-image/scripts/test-icc-envelope.sh wasm
         env:
           FERN: ${{ github.workspace }}/bin/fern
+      - run: python3 -m unittest discover -s fern-image/tests -p qualify_icc_tag_data_test.py
+      - run: ./fern-image/scripts/test-icc-tag-data.sh native
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
+      - run: ./fern-image/scripts/test-icc-tag-data.sh wasm
+        env:
+          FERN: ${{ github.workspace }}/bin/fern
       - run: ./fern-image/scripts/test-deflate-reader.sh native
         env:
           FERN: ${{ github.workspace }}/bin/fern
@@ -225,4 +232,10 @@ jobs:
         with:
           name: image-icc-envelope
           path: fern-image/build/icc-envelope-*.json
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && hashFiles('fern-image/build/icc-tag-data-*.json') != ''
+        with:
+          name: image-icc-tag-data
+          path: fern-image/build/icc-tag-data-*.json
           if-no-files-found: error

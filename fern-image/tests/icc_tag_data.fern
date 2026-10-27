@@ -1,0 +1,84 @@
+import "../packages/codecs/icc/tag_data";
+import "std/i32";
+
+function signed(input: [u8], at: i32): i32 {
+  let value = input[at] as i64 | input[at + 1] as i64 << 8i64 | input[at + 2] as i64 << 16i64 | input[at + 3] as i64 << 24i64;
+  return (if (value >= 2147483648i64) { value - 4294967296i64 } else { value }) as i32;
+}
+
+function error_name(error: tag_data.TagError): string {
+  return match (error) { tag_data.TagError.Limit => "Limit", tag_data.TagError.Length => "Length", tag_data.TagError.Signature => "Signature", tag_data.TagError.Reserved => "Reserved", tag_data.TagError.Function => "Function", tag_data.TagError.Cancelled => "Cancelled" };
+}
+
+function report(path: string, polls: i32, kind: i32, function_type: i32, values: [i32]): void {
+  let text = "tag " + path + " ok " + polls.to_string() + " " + kind.to_string() + " " + function_type.to_string() + " " + values.len().to_string();
+  for value in values {
+    text = text + " " + value.to_string();
+  }
+  print(text);
+}
+
+function emit(path: string): i32 {
+  let input = match (read_file_bytes(path)) { Ok(v) => v, Err(_) => { return 2; } };
+  if (input.len() < 20 || input[0] != 70 as u8 || input[1] != 73 as u8 || input[2] != 84 as u8 || input[3] != 49 as u8) {
+    return 3;
+  }
+  let kind = signed(input, 4);
+  let stop = signed(input, 16);
+  if (kind < 0 || kind > 1 || stop < 0) {
+    return 4;
+  }
+  let polls = cell_new(0);
+  let cancelled = (): boolean => {
+    polls.set(polls.get() + 1);
+    return stop != 0 && polls.get() == stop;
+  };
+  if (kind == 0) {
+    match (tag_data.read_xyz_triplet(input[20:], cancelled)) {
+      Ok(value) => {
+        report(path, polls.get(), 0, -1, [value.x, value.y, value.z]);
+      },
+      Err(error) => {
+        print("tag " + path + " error " + error_name(error) + " " + polls.get().to_string());
+      }
+    }
+  } else {
+    let limits = tag_data.CurveLimits { max_bytes: signed(input, 8), max_samples: signed(input, 12) };
+    match (tag_data.read_curve(input[20:], limits, cancelled)) {
+      Ok(value) => {
+        match (value) {
+          tag_data.Identity => {
+            report(path, polls.get(), 1, -1, []);
+          },
+          tag_data.Gamma(v) => {
+            report(path, polls.get(), 2, -1, [v]);
+          },
+          tag_data.Samples(v) => {
+            report(path, polls.get(), 3, -1, v);
+          },
+          tag_data.Parametric(v) => {
+            report(path, polls.get(), 4, v.function_type, v.coefficients);
+          }
+        }
+      },
+      Err(error) => {
+        print("tag " + path + " error " + error_name(error) + " " + polls.get().to_string());
+      }
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let paths = args();
+  if (paths.len() < 2) {
+    return 1;
+  }
+  for index in 1..paths.len() {
+    let code = emit(paths[index]);
+    if (code != 0) {
+      return code;
+    }
+  }
+  return 0;
+}
