@@ -1,0 +1,9 @@
+{
+  "first_evidence_commit": "713ef34aea2187bded17e6b6fcd3e2ccaace837e",
+  "first_check_exit": 2,
+  "shell_continued_after_check": true,
+  "raw_log_bytes_unchanged": true,
+  "exact_log_attribute": "records/image-retained-bounded-guards-corrected.log -whitespace",
+  "corrected_full_diff_exit": 0,
+  "reason": "The raw diagnostic contains one literal trailing space. Preserve all archived bytes. Limit the attribute to that single evidence file."
+}
