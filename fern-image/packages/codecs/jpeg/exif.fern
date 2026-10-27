@@ -1,0 +1,142 @@
+import "core/cmp";
+
+@derive(cmp.Eq)
+pub enum ByteOrder { Little, Big }
+
+@derive(cmp.Eq)
+pub enum Orientation { TopLeft, TopRight, BottomRight, BottomLeft, LeftTop, RightTop, RightBottom, LeftBottom }
+
+@derive(cmp.Debug, cmp.Eq)
+pub enum ExifError { Signature, Truncated, ByteOrder, Version, Limit, Directory, Duplicate, Type, Value, Cancelled }
+
+pub struct ExifLimits { max_bytes: i32, max_entries: i32 }
+
+pub struct ExifInfo { orientation: Option[Orientation], order: ByteOrder, directories: i32, entries: i32 }
+
+struct IfdInfo { first: i32, end: i32, entries: i32, next: i64, orientation: Option[Orientation] }
+
+pub function default_limits(): ExifLimits {
+  return ExifLimits { max_bytes: 65533, max_entries: 128 };
+}
+
+function get16(input: [u8], at: i32, order: ByteOrder): i32 {
+  return match (order) { Little => input[at] as i32 | input[at + 1] as i32 << 8, Big => input[at] as i32 << 8 | input[at + 1] as i32 };
+}
+
+function get32(input: [u8], at: i32, order: ByteOrder): i64 {
+  return match (order) { Little => input[at] as i64 | input[at + 1] as i64 << 8i64 | input[at + 2] as i64 << 16i64 | input[at + 3] as i64 << 24i64, Big => input[at] as i64 << 24i64 | input[at + 1] as i64 << 16i64 | input[at + 2] as i64 << 8i64 | input[at + 3] as i64 };
+}
+
+function field_width(kind: i32): Result[i64, ExifError] {
+  if (kind == 1 || kind == 2 || kind == 7 || kind == 129) {
+    return Ok(1i64);
+  }
+  if (kind == 3) {
+    return Ok(2i64);
+  }
+  if (kind == 4 || kind == 9) {
+    return Ok(4i64);
+  }
+  if (kind == 5 || kind == 10) {
+    return Ok(8i64);
+  }
+  return Err(ExifError.Type);
+}
+
+function orientation_value(value: i32): Result[Orientation, ExifError] {
+  return match (value) { 1 => Ok(TopLeft), 2 => Ok(TopRight), 3 => Ok(BottomRight), 4 => Ok(BottomLeft), 5 => Ok(LeftTop), 6 => Ok(RightTop), 7 => Ok(RightBottom), 8 => Ok(LeftBottom), _ => Err(ExifError.Value) };
+}
+
+function directory(input: [u8], offset: i64, order: ByteOrder, budget: i32, cancelled: () => boolean): Result[IfdInfo, ExifError] {
+  if (offset < 8i64 || offset > input.len() as i64 - 2i64) {
+    return Err(ExifError.Directory);
+  }
+  let start = offset as i32;
+  let entries = get16(input, start, order);
+  if (entries > budget) {
+    return Err(ExifError.Limit);
+  }
+  let end = offset + 2i64 + entries as i64 * 12i64 + 4i64;
+  if (end > input.len() as i64) {
+    return Err(ExifError.Truncated);
+  }
+  let value: Option[Orientation] = None;
+  let previous = 0 - 1;
+  for index in 0..entries {
+    if (cancelled()) {
+      return Err(ExifError.Cancelled);
+    }
+    let at = start + 2 + index * 12;
+    let tag = get16(input, at, order);
+    if (tag == previous) {
+      return Err(ExifError.Duplicate);
+    }
+    if (tag < previous) {
+      return Err(ExifError.Directory);
+    }
+    previous = tag;
+    let kind = get16(input, at + 2, order);
+    let count = get32(input, at + 4, order);
+    let width = field_width(kind)?;
+    if (count == 0i64) {
+      return Err(ExifError.Value);
+    }
+    let bytes = count * width;
+    if (bytes > 4i64) {
+      let position = get32(input, at + 8, order);
+      if (position < 8i64 || position > input.len() as i64 || bytes > input.len() as i64 - position) {
+        return Err(ExifError.Value);
+      }
+    }
+    if (tag == 274) {
+      if (kind != 3 || count != 1i64) {
+        return Err(ExifError.Value);
+      }
+      value = Some(orientation_value(get16(input, at + 8, order))?);
+    }
+  }
+  return Ok(IfdInfo { first: start, end: end as i32, entries: entries, next: get32(input, end as i32 - 4, order), orientation: value });
+}
+
+// The input is an APP1 payload. Nested Exif, GPS, and MakerNote semantics remain unparsed.
+pub function inspect(input: [u8], limits: ExifLimits, cancelled: () => boolean): Result[ExifInfo, ExifError] {
+  if (limits.max_bytes <= 0 || limits.max_entries <= 0 || input.len() > limits.max_bytes || input.len() > 65533) {
+    return Err(ExifError.Limit);
+  }
+  if (cancelled()) {
+    return Err(ExifError.Cancelled);
+  }
+  if (input.len() < 14) {
+    return Err(ExifError.Truncated);
+  }
+  if (input[0] != 69 as u8 || input[1] != 120 as u8 || input[2] != 105 as u8 || input[3] != 102 as u8 || input[4] != 0 as u8 || input[5] != 0 as u8) {
+    return Err(ExifError.Signature);
+  }
+  let data = input[6:];
+  let order = if (data[0] == 73 as u8 && data[1] == 73 as u8) { ByteOrder.Little } else if (data[0] == 77 as u8 && data[1] == 77 as u8) { ByteOrder.Big } else { return Err(ExifError.ByteOrder); };
+  if (get16(data, 2, order) != 42) {
+    return Err(ExifError.Version);
+  }
+  let budget = if (limits.max_entries > 4096) { 4096 } else { limits.max_entries };
+  let first = directory(data, get32(data, 4, order), order, budget, cancelled)?;
+  let count = first.entries;
+  let directories = 1;
+  if (first.next != 0i64) {
+    if (cancelled()) {
+      return Err(ExifError.Cancelled);
+    }
+    if (first.next >= first.first as i64 && first.next < first.end as i64) {
+      return Err(ExifError.Directory);
+    }
+    let second = directory(data, first.next, order, budget - count, cancelled)?;
+    if (second.next != 0i64 || second.first < first.end && second.end > first.first) {
+      return Err(ExifError.Directory);
+    }
+    count = count + second.entries;
+    directories = 2;
+  }
+  if (cancelled()) {
+    return Err(ExifError.Cancelled);
+  }
+  return Ok(ExifInfo { orientation: first.orientation, order: order, directories: directories, entries: count });
+}

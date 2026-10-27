@@ -1,0 +1,254 @@
+import "../packages/codecs/jpeg/exif";
+import "std/test";
+
+function never(): boolean {
+  return false;
+}
+
+function append(output: u8[], input: [u8]): u8[] {
+  for byte in input {
+    output = output.append(byte);
+  }
+  return output;
+}
+
+function word(value: i32, big: boolean): u8[] {
+  return if (big) { [(value >> 8) as u8, (value & 255) as u8] } else { [(value & 255) as u8, (value >> 8) as u8] };
+}
+
+function number(value: i64, big: boolean): u8[] {
+  let bytes: u8[] = [];
+  for index in 0..4 {
+    let shift = (if (big) { 3 - index } else { index }) * 8;
+    bytes = bytes.append((value >> shift as i64 & 255i64) as u8);
+  }
+  return bytes;
+}
+
+function field(tag: i32, kind: i32, count: i64, value: [u8], big: boolean): u8[] {
+  return append(append(append(word(tag, big), word(kind, big)), number(count, big)), value);
+}
+
+function make(fields: u8[][], big: boolean): u8[] {
+  let input: u8[] = [69, 120, 105, 102, 0, 0];
+  input = append(input, if (big) { [77 as u8, 77 as u8] } else { [73 as u8, 73 as u8] });
+  input = append(append(input, word(42, big)), number(8i64, big));
+  input = append(input, word(fields.len(), big));
+  for entry in fields {
+    input = append(input, entry);
+  }
+  return append(input, number(0i64, big));
+}
+
+function oriented(value: i32, big: boolean): u8[] {
+  return make([field(274, 3, 1i64, append(word(value, big), [165 as u8, 90 as u8]), big)], big);
+}
+
+function expected(value: i32): exif.Orientation {
+  return match (value) { 1 => exif.TopLeft, 2 => exif.TopRight, 3 => exif.BottomRight, 4 => exif.BottomLeft, 5 => exif.LeftTop, 6 => exif.RightTop, 7 => exif.RightBottom, _ => exif.LeftBottom };
+}
+
+function two_directories(): u8[] {
+  let first = oriented(6, false).with(28, 26 as u8);
+  let second = oriented(8, false);
+  return append(first, second[14:]);
+}
+
+function rejects(input: [u8], wanted: exif.ExifError): boolean {
+  return match (exif.inspect(input, exif.default_limits(), never)) { Err(e) => e == wanted, Ok(_) => false };
+}
+
+function orientations(): test.TestOutcome {
+  for big in [false, true] {
+    for value in 1..9 {
+      let info = match (exif.inspect(oriented(value, big), exif.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("independent TIFF orientation entry"); } };
+      let order = if (big) { exif.ByteOrder.Big } else { exif.ByteOrder.Little };
+      if (info.order != order || info.entries != 1 || info.directories != 1 || match (info.orientation) { Some(v) => v != expected(value), None => true }) {
+        return test.fail("byte order, left-justified SHORT, and eight orientation values");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function primary_and_absence(): test.TestOutcome {
+  for big in [false, true] {
+    let absent = match (exif.inspect(make([], big), exif.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("empty directory"); } };
+    if (absent.entries != 0 || absent.directories != 1 || match (absent.orientation) { Some(_) => true, None => false }) {
+      return test.fail("absence is not a fabricated default");
+    }
+  }
+  let input = two_directories();
+  let primary = match (exif.inspect(input, exif.default_limits(), never)) { Ok(v) => v, Err(_) => { return test.fail("linked thumbnail directory"); } };
+  if (primary.entries != 2 || primary.directories != 2 || match (primary.orientation) { Some(v) => v != exif.RightTop, None => true }) {
+    return test.fail("thumbnail orientation must not override primary");
+  }
+  let first = oriented(6, false).with(28, 8 as u8);
+  let second = oriented(8, false);
+  let reversed = append(append(append([], second[:14]), second[14:]), first[14:]).with(10, 26 as u8);
+  return test.assert_true(match (exif.inspect(reversed, exif.default_limits(), never)) { Ok(v) => v.directories == 2 && match (v.orientation) { Some(o) => o == exif.RightTop, None => false }, Err(_) => false });
+}
+
+function framing(): test.TestOutcome {
+  let input = two_directories();
+  for length in 0..input.len() {
+    if (match (exif.inspect(input[:length], exif.default_limits(), never)) { Ok(_) => true, Err(_) => false }) {
+      return test.fail("every truncated visited-directory prefix");
+    }
+  }
+  if (!rejects(input.with(0, 0 as u8), exif.ExifError.Signature)
+    || !rejects(input.with(6, 0 as u8), exif.ExifError.ByteOrder)
+    || !rejects(input.with(8, 43 as u8), exif.ExifError.Version)) {
+    return test.fail("signature byte order and TIFF marker");
+  }
+  for offset in [0i64, 7i64, 4294967295i64, 2147483648i64] {
+    let changed = input;
+    let bytes = number(offset, false);
+    for i in 0..4 {
+      changed = changed.with(10 + i, bytes[i]);
+    }
+    if (!rejects(changed, exif.ExifError.Directory)) {
+      return test.fail("unsigned directory offset bounds");
+    }
+  }
+  return test.pass();
+}
+
+function fields(): test.TestOutcome {
+  for big in [false, true] {
+    for value in [0, 9, 65535] {
+      if (!rejects(oriented(value, big), exif.ExifError.Value)) {
+        return test.fail("reserved orientation value");
+      }
+    }
+    let orientation = field(274, 3, 1i64, append(word(1, big), [0 as u8, 0 as u8]), big);
+    if (!rejects(make([orientation, orientation], big), exif.ExifError.Duplicate)) {
+      return test.fail("duplicate orientation");
+    }
+    let before = field(270, 1, 1i64, [0 as u8, 0 as u8, 0 as u8, 0 as u8], big);
+    if (!rejects(make([orientation, before], big), exif.ExifError.Directory)) {
+      return test.fail("unsorted tags");
+    }
+    for kind in [0, 6, 8, 11, 12, 65535] {
+      if (!rejects(make([field(270, kind, 1i64, [0 as u8, 0 as u8, 0 as u8, 0 as u8], big)], big), exif.ExifError.Type)) {
+        return test.fail("unsupported wire field type");
+      }
+    }
+    for count in [0i64, 2i64] {
+      if (!rejects(make([field(274, 3, count, [0 as u8, 0 as u8, 0 as u8, 0 as u8], big)], big), exif.ExifError.Value)) {
+        return test.fail("orientation SHORT count one");
+      }
+    }
+    for kind in [1, 4] {
+      if (!rejects(make([field(274, kind, 1i64, number(1i64, big), big)], big), exif.ExifError.Value)) {
+        return test.fail("orientation wire type");
+      }
+    }
+    if (!rejects(make([field(270, 5, 4294967295i64, number(8i64, big), big)], big), exif.ExifError.Value)) {
+      return test.fail("count times field width uses checked wide extent");
+    }
+  }
+  return test.pass();
+}
+
+function value_extents_and_cycles(): test.TestOutcome {
+  for big in [false, true] {
+    let text = field(270, 2, 6i64, number(38i64, big), big);
+    let orientation = field(274, 3, 1i64, append(word(7, big), [0 as u8, 0 as u8]), big);
+    let input = append(make([text, orientation], big), [104 as u8, 101 as u8, 108 as u8, 108 as u8, 111 as u8, 0 as u8]);
+    if (match (exif.inspect(input, exif.default_limits(), never)) { Ok(v) => match (v.orientation) { Some(o) => o != exif.RightBottom, None => true }, Err(_) => true }) {
+      return test.fail("bounded out-of-line value");
+    }
+    let bad = make([field(270, 2, 6i64, number(4294967295i64, big), big)], big);
+    if (!rejects(bad, exif.ExifError.Value)) {
+      return test.fail("out-of-line value offset bounds");
+    }
+  }
+  let two = two_directories();
+  for bad in [two.with(28, 8 as u8), two.with(28, 9 as u8), two.with(46, 8 as u8), two.with(46, 26 as u8)] {
+    if (!rejects(bad, exif.ExifError.Directory)) {
+      return test.fail("directory cycle overlap or third directory");
+    }
+  }
+  let overlap = append(make([], false), [0 as u8, 0 as u8, 0 as u8, 0 as u8]).with(10, 12 as u8).with(20, 8 as u8);
+  if (!rejects(overlap, exif.ExifError.Directory)) {
+    return test.fail("overlapping empty tables without a cycle");
+  }
+  let nested = make([field(274, 3, 1i64, [1 as u8, 0 as u8, 0 as u8, 0 as u8], false), field(34665, 4, 1i64, number(4294967295i64, false), false)], false);
+  return test.assert_true(match (exif.inspect(nested, exif.default_limits(), never)) { Ok(v) => match (v.orientation) { Some(o) => o == exif.TopLeft, None => false }, Err(_) => false });
+}
+
+function limits(): test.TestOutcome {
+  let input = two_directories();
+  let exact = exif.ExifLimits { max_bytes: input.len(), max_entries: 2 };
+  if (match (exif.inspect(input, exact, never)) { Ok(_) => false, Err(_) => true }) {
+    return test.fail("exact byte and total entry budget");
+  }
+  for cap in [exif.ExifLimits { ...exact, max_bytes: input.len() - 1 }, exif.ExifLimits { ...exact, max_entries: 1 }, exif.ExifLimits { ...exact, max_entries: 0 }] {
+    if (match (exif.inspect(input, cap, never)) { Err(exif.ExifError.Limit()) => false, _ => true }) {
+      return test.fail("one-less global budget");
+    }
+  }
+  let entries: u8[][] = [];
+  for i in 0..4097 {
+    entries = entries.append(field(10000 + i, 1, 1i64, [0 as u8, 0 as u8, 0 as u8, 0 as u8], false));
+  }
+  let many = make(entries, false);
+  if (match (exif.inspect(many, exif.ExifLimits { max_bytes: 65533, max_entries: 2147483647 }, never)) { Err(exif.ExifError.Limit()) => false, _ => true }) {
+    return test.fail("absolute total entry ceiling");
+  }
+  let oversized = __alloc_u8(65534);
+  let polls = cell_new(0);
+  let result = exif.inspect(oversized, exif.ExifLimits { max_bytes: 2147483647, max_entries: 1 }, (): boolean => {
+    polls.set(polls.get() + 1);
+    return true;
+  });
+  return test.assert_true(polls.get() == 0 && match (result) { Err(exif.ExifError.Limit()) => true, _ => false });
+}
+
+function ownership(): test.TestOutcome {
+  let input = oriented(1, false);
+  let shared = cell_new(input);
+  let result = exif.inspect(input, exif.default_limits(), (): boolean => {
+    shared.set(shared.get().with(24, 8 as u8));
+    return false;
+  });
+  return test.assert_true(input[24] == 1 as u8 && shared.get()[24] == 8 as u8 && match (result) { Ok(v) => match (v.orientation) { Some(o) => o == exif.TopLeft, None => false }, Err(_) => false });
+}
+
+function cancellation(): test.TestOutcome {
+  for input in [oriented(8, false), two_directories()] {
+    let count = cell_new(0);
+    let success = exif.inspect(input, exif.default_limits(), (): boolean => {
+      count.set(count.get() + 1);
+      return false;
+    });
+    if (match (success) { Ok(_) => false, Err(_) => true } || count.get() < 3) {
+      return test.fail("metadata poll coverage");
+    }
+    for stop in 1..count.get() + 1 {
+      let polls = cell_new(0);
+      let result = exif.inspect(input, exif.default_limits(), (): boolean => {
+        polls.set(polls.get() + 1);
+        return polls.get() == stop;
+      });
+      if (polls.get() != stop || match (result) { Err(exif.ExifError.Cancelled()) => false, _ => true }) {
+        return test.fail("every metadata cancellation poll");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let runner = test.test_new("bounded Exif primary orientation");
+  runner = runner.it("little and big endian eight-value orientation mapping", orientations);
+  runner = runner.it("absence and primary versus thumbnail orientation", primary_and_absence);
+  runner = runner.it("truncated directories and unsigned offset bounds", framing);
+  runner = runner.it("sorted unique tags and field shape or count checks", fields);
+  runner = runner.it("out-of-line extents and bounded linked directories", value_extents_and_cycles);
+  runner = runner.it("exact byte and total entry admission", limits);
+  runner = runner.it("borrowed input updates preserve observed metadata", ownership);
+  runner = runner.it("every cooperative metadata cancellation poll", cancellation);
+  return runner.finish();
+}
