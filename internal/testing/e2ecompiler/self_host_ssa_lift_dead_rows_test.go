@@ -52,14 +52,11 @@ function looped(): ir.Op[] {
 
 function main(): i32 {
     let kt: ssa_lift.KindTable = ssa_lift.kind_table();
-    let dead: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(kt, "dead", 1, 2, chain(false), false);
-    if (!dead.ok) { return 2; }
+    let dead = match (ssa_lift.lift_from_ir_prod(kt, "dead", 1, 2, chain(false), false)) { Ok(l) => l, Err(_) => { return 2; } };
     if (phis(dead.func) != 1) { return 10 + phis(dead.func); }
-    let live: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(kt, "live", 1, 2, chain(true), false);
-    if (!live.ok) { return 3; }
+    let live = match (ssa_lift.lift_from_ir_prod(kt, "live", 1, 2, chain(true), false)) { Ok(l) => l, Err(_) => { return 3; } };
     if (phis(live.func) != 3) { return 20 + phis(live.func); }
-    let lp: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(kt, "looped", 1, 2, looped(), false);
-    if (!lp.ok) { return 4; }
+    let lp = match (ssa_lift.lift_from_ir_prod(kt, "looped", 1, 2, looped(), false)) { Ok(l) => l, Err(_) => { return 4; } };
     for b in lp.func.blocks {
         for ins in b.insts {
             if (ins.kind_tag == 8 && ins.args.len() == 2 && ins.args[1] == ins.result) { return 30; }

@@ -20,8 +20,7 @@ function body(sub: ircore.Sub, name: string): ssa.SFunc {
   for b in util.append_all(sub.bodies, sub.extra) {
     if (b.name == name) {
       require(b.ok, 1);
-      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), b.name, b.n_params, b.n_locals, b.ops, false);
-      require(lifted.ok, 2);
+      let lifted = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), b.name, b.n_params, b.n_locals, b.ops, false)) { Ok(l) => l, Err(message) => { eprint(message); exit(2); } };
       return lifted.func;
     }
   }

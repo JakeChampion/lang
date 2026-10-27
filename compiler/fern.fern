@@ -1715,11 +1715,7 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
     eprint("index " + ipath + ": cannot read");
     return 1;
   }
-  let ix: mvs.Index = mvs.parse_index(isrc);
-  if (ix.err.len() > 0) {
-    eprint("index " + ipath + ": " + ix.err);
-    return 1;
-  }
+  let ix: mvs.Index = match (mvs.parse_index(isrc)) { Ok(index) => index, Err(message) => { eprint("index " + ipath + ": " + message); return 1; } };
   ix = mvs.with_dir(ix, mvs.join_path(util.dir_of(ipath), "."));
 
   let bans: mvs.Ban[] = [];
@@ -1731,7 +1727,7 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
 
   let st: mvs.State = mvs.begin(roots, bans, ix);
   while (st.err.len() == 0 && !mvs.done(st)) {
-    let src: mvs.Source = mvs.index_source(ix, st.need_pkg, st.need_ver);
+    let src: mvs.Source = match (mvs.index_source(ix, st.need_pkg, st.need_ver)) { Some(value) => value, None => { st = mvs.fail(st, "registry has no source for " + st.need_pkg + "@" + st.need_ver); continue; } };
     if (src.path.len() == 0) {
       let got: Fetched = fetch_into_store(fetcher, src.url, src.hash);
       src = mvs.Source { ...src, path: got.dir };
@@ -1764,7 +1760,7 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
     return 1;
   }
 
-  let sel: mvs.Sel[] = mvs.selected(st);
+  let sel: mvs.Sel[] = match (mvs.selected(st)) { Ok(value) => value, Err(message) => { eprint(message); return 1; } };
   let lock: string = mdir + "/fern.lock";
   match (write_file(lock, mvs.lock_text(sel))) {
     Ok(u) => {},
@@ -1925,19 +1921,22 @@ function grant_list(grant: string): string {
     }
     quoted = quoted + mvs.quoted(name);
   }
-  let named: fern_toml.ParsedList = fern_toml.parse_capabilities("[" + quoted + "]");
-  if (named.err.len() > 0) {
-    eprint("fern: -add: -grant: " + named.err);
-    return "";
-  }
-  let out: string = "";
-  for cap in named.values {
-    if (out.len() > 0) {
-      out = out + ", ";
+  match (fern_toml.parse_capabilities("[" + quoted + "]")) {
+    Ok(caps) => {
+      let out: string = "";
+      for cap in caps {
+        if (out.len() > 0) {
+          out = out + ", ";
+        }
+        out = out + mvs.quoted(cap);
+      }
+      return "[" + out + "]";
+    },
+    Err(message) => {
+      eprint("fern: -add: -grant: " + message);
+      return "";
     }
-    out = out + mvs.quoted(cap);
   }
-  return "[" + out + "]";
 }
 
 function insert_dependency(src: string, line: string): string {
@@ -2048,12 +2047,9 @@ function fetch_locked(fetcher: Fetcher, w: FetchWalk, mdir: string): FetchWalk {
       return w;
     }
   }
-  let lr: fern_toml.LockResult = fern_toml.parse_lock(lsrc);
-  if (lr.err.len() > 0) {
-    return FetchWalk { ...w, err: mdir + "/" + lr.err };
-  }
+  let entries: fern_toml.LockEntry[] = match (fern_toml.parse_lock(lsrc)) { Ok(es) => es, Err(message) => { return FetchWalk { ...w, err: mdir + "/" + message }; } };
   let out: FetchWalk = w;
-  for e in lr.entries {
+  for e in entries {
     if (e.url.len() > 0 && store_dir(e.hash).len() == 0) {
       eprint("fetching " + e.name + "@" + e.version + " (" + e.url + ")");
       let got: Fetched = fetcher.fetch(e.url, e.hash);
@@ -2226,11 +2222,7 @@ function vendor_locked_dir(mdir: string, name: string): VendorSrc {
     return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is versioned but " + mdir
       + " has no fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
   }
-  let lr: fern_toml.LockResult = fern_toml.parse_lock(lsrc);
-  if (lr.err.len() > 0) {
-    return VendorSrc { dir: "", err: mdir + "/" + lr.err };
-  }
-  let entries: fern_toml.LockEntry[] = lr.entries;
+  let entries: fern_toml.LockEntry[] = match (fern_toml.parse_lock(lsrc)) { Ok(es) => es, Err(message) => { return VendorSrc { dir: "", err: mdir + "/" + message }; } };
   if (!fern_toml.lock_has(entries, name)) {
     return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is not in " + mdir
       + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
@@ -2503,6 +2495,10 @@ function display_path(mpath: string, root: string): string {
 }
 
 function read_bundle_module(s: Sources, mpath: string, from: string, ipath: string): modloader.Resolved {
+  let ov: modloader.Overlay = modloader.Overlay { ...modloader.no_overlay(), files: s.open };
+  if let Some(declared) = modloader.declared_module(ov, from, ipath) {
+    return declared;
+  }
   let gi: i32 = util.index_of_str(s.paths, mpath);
   if (gi >= 0) {
     return modloader.Resolved { src: s.srcs[gi], ok: true, err: "", err_path: "", shown: mpath, map: s.maps[gi] };
@@ -2511,7 +2507,7 @@ function read_bundle_module(s: Sources, mpath: string, from: string, ipath: stri
   if (r.ok || r.err.len() > 0) {
     return r;
   }
-  return modloader.try_manifest(modloader.Overlay { ...modloader.no_overlay(), files: s.open }, from, ipath);
+  return modloader.try_manifest(ov, from, ipath);
 }
 
 function module_package_at(mdir: string, module_gov: Governed, root_gov_dir: string, root_package: caps.Pkg, is_stdlib: boolean): pkggrants.ModuleAt {
@@ -2677,11 +2673,14 @@ function parse_findings(mod: parser.Module): Finding[] {
 function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, Finding[]) {
   let assets: embed.Assets = embed.no_assets();
   if (embed_dir.len() > 0) {
-    let lr: embed.LoadResult = embed.load(embed_dir);
-    if (lr.err.len() > 0) {
-      return (b, [refusal("fern: " + lr.err)]);
+    match (embed.load(embed_dir)) {
+      Ok(loaded) => {
+        assets = loaded;
+      },
+      Err(message) => {
+        return (b, [refusal("fern: " + message)]);
+      }
     }
-    assets = lr.assets;
   }
   let folded: embed.Folded = embed.fold_assets(b.merged, assets);
   let errs: Finding[] = errors_of(folded.errs);
@@ -3639,32 +3638,23 @@ function lsp_answer_at(s: Server, q: Asked, m: lsp.Message, line: i32, col: i32)
     return lsp_completion(lspassist.completion(q.d.prog, line, col));
   }
   if (method == "textDocument/signatureHelp") {
-    let sh: lspassist.Signature = lspassist.signature_help(q.d.prog, line, col);
-    if (!sh.found) {
-      return "null";
-    }
+    let sh: lspassist.Signature = match (lspassist.signature_help(q.d.prog, line, col)) { Some(value) => value, None => { return "null"; } };
     return lsp.signature_help(sh.label, sh.starts, sh.ends, sh.active);
   }
   if (method == "textDocument/hover") {
-    let h: lspquery.Answer = lspquery.hover(q.d.prog, line, col);
-    if (!h.found) {
-      return "null";
-    }
-    return lsp.hover_result(h.text, lspquery.hover_doc(q.d.prog, line, col), lsp_answer_range(q.d, q.text, h));
+    let h: lspquery.Hover = match (lspquery.hover(q.d.prog, line, col)) { Some(value) => value, None => { return "null"; } };
+    return lsp.hover_result(h.text, lspquery.hover_doc(q.d.prog, line, col), lsp_answer_range(q.d, q.text, h.line, h.col, h.len));
   }
   return lsp_definition(s, q, line, col);
 }
 
 function lsp_definition(s: Server, q: Asked, line: i32, col: i32): string {
-  let a: lspquery.Answer = lspquery.definition(q.d.prog, line, col);
-  if (!a.found) {
-    return "null";
-  }
+  let a: lspquery.SourceSpan = match (lspquery.definition(q.d.prog, line, col)) { Some(value) => value, None => { return "null"; } };
   let target: string = lsp_module_doc(s, q.d, util.pos_file_index(a.line), q.path);
   if (target == q.path) {
-    return lsp.location(q.uri, lsp_answer_range(q.d, q.text, a));
+    return lsp.location(q.uri, lsp_answer_range(q.d, q.text, a.line, a.col, a.len));
   }
-  return lsp.location(lsp.file_uri(target), lsp_answer_range(q.d, lsp.text_of(lsp_doc_text(s, target)), a));
+  return lsp.location(lsp.file_uri(target), lsp_answer_range(q.d, lsp.text_of(lsp_doc_text(s, target)), a.line, a.col, a.len));
 }
 
 function lsp_references(s: Server, q: Asked, refs: lsprefs.Ref[], with_decl: boolean): string {
@@ -3871,9 +3861,9 @@ function lsp_into_bundle(d: Doc, path: string, line: i32, col: i32): (i32, i32) 
   return (0, 0);
 }
 
-function lsp_answer_range(d: Doc, text: lsp.Text, a: lspquery.Answer): string {
-  let (al, ac) = util.doc_pos(d.maps, a.line, a.col);
-  return lsp.span_range(text, util.pos_line(al), ac, a.len);
+function lsp_answer_range(d: Doc, text: lsp.Text, line: i32, col: i32, width: i32): string {
+  let (al, ac) = util.doc_pos(d.maps, line, col);
+  return lsp.span_range(text, util.pos_line(al), ac, width);
 }
 
 function lsp_module_doc(s: Server, d: Doc, m: i32, entry: string): string {

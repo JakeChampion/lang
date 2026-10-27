@@ -56,13 +56,11 @@ function main(): i32 {
   main = main.append(ir.op_call_direct("__fern_rc_underflow_get", 0)).append(ir.op_return());
   let mod = parser.parse_module(lexer.tokenize("@noinline function probe(p: usize): i32 { return 0; } function main(): i32 { return probe(0 as usize); }"));
   let d = semlower.driven(mod, av[1]);
-  let g = semlower.program(d);
-  if (av[1] == "wasm32-wasi") {
+  let g = if (av[1] == "wasm32-wasi") {
     let wm = ircore.with_records(wasm_ir.route_normalized(d.full), d.sub);
-    let l = ircore.gate(wm, d.sub);
-    g = ircore.Gated { ok: l.ok, im: wm, stab: irtables.struct_tab(wm.structs), cache: l.cache, physical: l.physical };
-  }
-  if (!g.ok) { return 3; }
+    let l = match (ircore.gate(wm, d.sub)) { Some(g) => g, None => { return 3; } };
+    ircore.Gated { im: wm, stab: irtables.struct_tab(wm.structs), cache: l.cache, physical: l.physical }
+  } else { semlower.program(d) };
   let cache: irtables.LowerResult[] = [];
   let i: i32 = 0;
   for r in g.cache {

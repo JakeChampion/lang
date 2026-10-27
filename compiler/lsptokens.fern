@@ -104,10 +104,11 @@ function body_classes(v: checker.QueryView, m: i32, x: Ctx): Mark[] {
       }
       out = func_classes(s, x, r.func.body, params, out);
       for b in r.bindings {
-        let a: lspquery.Answer = lspquery.binding_decl(x.toks, b, util.has_str(params, b.symbol), b.name);
-        let i: i32 = lspquery.tok_at(x.toks, a.line, a.col);
-        if (a.found && i >= 0 && x.toks[i].text == b.name) {
-          out = marked(x, i, local_kind(b.symbol, params), out);
+        if let Some(a) = lspquery.binding_decl(x.toks, b, util.has_str(params, b.symbol), b.name) {
+          let i: i32 = lspquery.tok_at(x.toks, a.line, a.col);
+          if (i >= 0 && x.toks[i].text == b.name) {
+            out = marked(x, i, local_kind(b.symbol, params), out);
+          }
         }
       }
     }
@@ -246,25 +247,26 @@ function global_kind(s: checker.Scope, name: string): i32 {
   if (checker.variant_enum(s, name).len() > 0) {
     return T_ENUM_MEMBER;
   }
-  let sig: checker.FuncSig = checker.func_sig(s, name);
-  if (sig.name.len() > 0 && sig.is_const) {
-    return T_VARIABLE;
+  if let Some(sig) = checker.func_sig(s, name) {
+    if (sig.is_const) {
+      return T_VARIABLE;
+    }
+    return T_FUNCTION;
   }
-  if (sig.name.len() > 0 || parser.is_builtin_function(name)) {
+  if (parser.is_builtin_function(name)) {
     return T_FUNCTION;
   }
   return type_kind(s, name);
 }
 
 function type_kind(s: checker.Scope, name: string): i32 {
-  let u: checker.UnionSig = checker.enum_sig(s, name);
-  if (u.name.len() > 0 && u.is_enum) {
-    return T_ENUM;
-  }
-  if (u.name.len() > 0) {
+  if let Some(u) = checker.enum_sig(s, name) {
+    if (u.is_enum) {
+      return T_ENUM;
+    }
     return T_TYPE;
   }
-  if (checker.struct_sig(s, name).name.len() > 0) {
+  if (s.has_struct(name)) {
     return T_STRUCT;
   }
   return 0 - 1;

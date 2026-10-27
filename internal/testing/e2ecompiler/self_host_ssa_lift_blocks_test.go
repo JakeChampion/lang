@@ -12,8 +12,7 @@ import "./ssa";
 import "./ssa_lift";
 
 function distinct_block_ids(name: string, ops: ir.Op[]): i32 {
-    let r: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, 0, 0, ops, false);
-    if (!r.ok) { return 2; }
+    let r = match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, 0, 0, ops, false)) { Ok(l) => l, Err(_) => { return 2; } };
     if (ssa.repeated_block_id(r.func) >= 0) { return 3; }
     return 0;
 }
@@ -81,9 +80,10 @@ import "./ssa_lift";
 
 function main(): i32 {
     let ops: ir.Op[] = [ir.Op { ...ir.op_const_i32(0), kind_tag: 0 - 1 }, ir.op_return()];
-    let r: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "negative_kind", 0, 0, ops, false);
-    if (r.ok) { return 2; }
-    if (r.bail != "invalid#-1") { return 3; }
+    match (ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "negative_kind", 0, 0, ops, false)) {
+      Ok(_) => { return 2; },
+      Err(message) => { if (message != "invalid#-1") { return 3; } }
+    }
     return 0;
 }
 `

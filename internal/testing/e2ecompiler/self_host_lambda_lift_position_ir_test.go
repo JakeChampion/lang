@@ -13,6 +13,12 @@ var lambdaLiftPositionIRCases = []struct {
 function main(): i32 { let f: (i32) => i32 = inc; f = (x: i32): i32 => { return x * 2; }; return f(5); }`},
 	{"arg-regress", `function apply(f: (i32) => i32, x: i32): i32 { return f(x); }
 function main(): i32 { return apply((y: i32): i32 => { return y + 1; }, 4); }`},
+	{"named-void", `function ignore(n: i32): void { return; }
+function apply(f: (i32) => void): i32 { f(1); return 42; }
+function main(): i32 { return apply(ignore); }`},
+	{"named-return-callable", `function plus(n: i32): i32 { return n + 1; }
+function get(): (i32) => i32 { return plus; }
+function main(): i32 { let factory: () => ((i32) => i32) = get; let f = factory(); return f(41); }`},
 }
 
 func TestSelfHostLambdaLiftPositionIR(t *testing.T) {
@@ -21,7 +27,7 @@ func TestSelfHostLambdaLiftPositionIR(t *testing.T) {
 	for _, tc := range lambdaLiftPositionIRCases {
 		src := tc.main + "\n"
 		want := interpExit(t, interpBin, src)
-		for _, target := range []string{"x86-64-linux", "wasm32-wasi"} {
+		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 			t.Run(target+"/"+tc.name, func(t *testing.T) {
 				if stderr, code := cli.exitOf(t, src, target); code != want {
 					t.Errorf("exited %d, want %d (interp oracle)\n%s", code, want, stderr)

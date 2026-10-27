@@ -19,11 +19,7 @@ function render_manifest(label: string, src: string): string {
 }
 
 function render_lock(label: string, src: string): string {
-  let lr: fern_toml.LockResult = fern_toml.parse_lock(src);
-  if (lr.err.len() > 0) {
-    return label + " error " + lr.err + "\n";
-  }
-  let es: fern_toml.LockEntry[] = lr.entries;
+  let es: fern_toml.LockEntry[] = match (fern_toml.parse_lock(src)) { Ok(entries) => entries, Err(message) => { return label + " error " + message + "\n"; } };
   let out: string = label + " entries=" + util.i32_to_string(es.len()) + "\n";
   let i: i32 = 0;
   while (i < es.len()) {

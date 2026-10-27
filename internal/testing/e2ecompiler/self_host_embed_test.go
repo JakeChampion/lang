@@ -6,27 +6,38 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestSelfHostEmbedBundleAndSubstitution(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("embed_run driver runs natively; skipping under an exec runner")
-	}
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/embed_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "drivers/embed_run.fern", "embed_run")
-
-	cmd := exec.Command(bin)
-	out, _ := cmd.Output()
-	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
-		t.Fatalf("embed_run did not exit normally")
-	}
-	if code := cmd.ProcessState.ExitCode(); code != 0 {
-		t.Fatalf("embed_run exit code = %d, want 0 — that code is the failing assertion's id in embed_run.fern\n%s", code, out)
-	}
-	if want := "embed: bundle and substitution agree"; !strings.Contains(string(out), want) {
-		t.Errorf("embed_run stdout = %q, want it to contain %q", out, want)
+	for _, target := range []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux, e2eharness.TargetWasm32Wasi} {
+		t.Run(target, func(t *testing.T) {
+			bin := buildSelfHostBinFor(t, dir, "drivers/embed_run.fern", "embed_run", target)
+			scratch := t.TempDir()
+			var cmd *exec.Cmd
+			switch target {
+			case e2eharness.TargetX86_64Linux:
+				cmd = runX86_64Bin(x86_64Runner(t), bin, filepath.Join(scratch, "tree"))
+			case e2eharness.TargetArm64Linux:
+				cmd = runArm64Bin(arm64Runner(t), bin, filepath.Join(scratch, "tree"))
+			default:
+				wasmtime, err := exec.LookPath("wasmtime")
+				if err != nil {
+					t.Skip("wasmtime not on PATH")
+				}
+				cmd = exec.Command(wasmtime, "run", "--dir", scratch, bin, "tree")
+			}
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("embed_run: %v (an exit code names the failed assertion)\n%s", err, out)
+			}
+			if want := "embed: bundle and substitution agree"; !strings.Contains(string(out), want) {
+				t.Errorf("embed_run stdout = %q, want it to contain %q", out, want)
+			}
+		})
 	}
 }
 

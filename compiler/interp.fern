@@ -906,7 +906,7 @@ function interp_char_boundary(s: string, i: i32): boolean {
   return icb < 128 || icb >= 192;
 }
 
-pub struct Env { names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string }
+pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string }
 
 function new_env(): Env {
   let ns: string[] = [];
@@ -915,14 +915,14 @@ function new_env(): Env {
   let fs: parser.FuncDecl[] = [];
   let al: parser.TypeAlias[] = [];
   let no_structs: parser.StructDecl[] = [];
-  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), ret: "" };
+  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), ret: "" };
 }
 
 function new_module_env(fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
-  return Env { names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, ret: "" };
+  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, ret: "" };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
@@ -944,7 +944,7 @@ function (e: Env) decl_type(name: string): string {
     }
     i = i - 1;
   }
-  return "";
+  return match (e.outer) { Some(parent) => parent.decl_type(name), None => "" };
 }
 
 function (e: Env) static_type_of(x: ast.Expr): string {
@@ -1017,7 +1017,7 @@ function (e: Env) binds_name(name: string): boolean {
     }
     i = i - 1;
   }
-  return false;
+  return match (e.outer) { Some(parent) => parent.binds_name(name), None => false };
 }
 
 function func_ret_type(funcs: parser.FuncDecl[], name: string): string {
@@ -1039,7 +1039,7 @@ function (e: Env) lookup(name: string): Value {
     }
     i = i - 1;
   }
-  return v_err("undefined identifier: " + name);
+  return match (e.outer) { Some(parent) => parent.lookup(name), None => v_err("undefined identifier: " + name) };
 }
 
 function deref_cell(v: Value): Value {
@@ -1223,28 +1223,28 @@ function not_lambda_expr(e: ast.Expr): boolean {
   return true;
 }
 
-function (e: Env) raw_slot(name: string): i32 {
+function (e: Env) raw_value(name: string): Option[Value] {
   let i: i32 = e.names.len() - 1;
   while (i >= 0) {
     if (e.names[i] == name) {
-      return i;
+      return Some(e.values[i]);
     }
     i = i - 1;
   }
-  return 0 - 1;
+  return match (e.outer) { Some(parent) => parent.raw_value(name), None => None };
 }
 
 function cellify_env(e: Env, names: string[]): Env {
   let out: Env = e;
   let i: i32 = 0;
   while (i < names.len()) {
-    let idx: i32 = out.raw_slot(names[i]);
-    if (idx >= 0) {
-      let cur: Value = out.values[idx];
-      let boxed: Value = cell_for(cur);
-      if (!is_cell(cur)) {
-        out = out.update(names[i], boxed);
-      }
+    match (out.raw_value(names[i])) {
+      Some(cur) => {
+        if (!is_cell(cur)) {
+          out = out.update(names[i], cell_for(cur));
+        }
+      },
+      None => {}
     }
     i = i + 1;
   }
@@ -3321,7 +3321,7 @@ function (e: Env) update(name: string, v: Value): Env {
     }
     i = i - 1;
   }
-  return e;
+  return match (e.outer) { Some(parent) => Env { ...e, outer: Some(parent.update(name, v)) }, None => e };
 }
 
 function is_sat_op_name(op: string): boolean {
@@ -4659,13 +4659,14 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       return eval_expr_field_access(fa, env);
     },
     ast.ExprLambda(lm) => {
+      let captured = flattened_env(env);
       return VFunc {
         params: lm.params,
         ret_type: lm.ret_type,
         body: lm.body,
-        captured_names: env.names,
-        captured_values: env.values,
-        captured_types: env.types,
+        captured_names: captured.names,
+        captured_values: captured.values,
+        captured_types: captured.types,
         generic_name: "",
       };
     },
@@ -5285,7 +5286,7 @@ function call_closure_mode(cv: Value, args: Value[], funcs: parser.FuncDecl[], a
   if (args.len() != fv.params.len()) {
     return v_err("arity mismatch calling closure");
   }
-  let env: Env = Env { names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, ret: "" };
+  let env: Env = Env { outer: None, depth: 0, names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, ret: "" };
   let j: i32 = 0;
   while (j < fv.params.len()) {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
@@ -7685,7 +7686,8 @@ function eval_value_body(body: ast.Stmt[], env: Env, expect: string): StepResult
 @noinline
 function eval_while_stmt(w: ast.StmtWhile, env: Env): StepResult {
   let cur: Env = env;
-  let base: i32 = env.names.len();
+  let base: i32 = env.depth;
+  let scoped = body_binds(w.body);
   while (true) {
     let cv: Value = eval_expr(w.cond, cur);
     if (is_err(cv)) {
@@ -7701,7 +7703,7 @@ function eval_while_stmt(w: ast.StmtWhile, env: Env): StepResult {
         return step_stop(env, v_err("while cond not bool"));
       }
     }
-    let step: StepResult = eval_block(w.body, cur);
+    let step: StepResult = eval_block(w.body, scope_env(cur, scoped));
     if (step.sig == 2) {
       return step_none(trim_env(step.env, base));
     }
@@ -7794,8 +7796,8 @@ function eval_match_stmt_mode(m: ast.StmtMatch, env: Env, value_form: boolean, e
       }
     }
     if (matched) {
-      let base: i32 = env.names.len();
-      let bodyEnv: Env = env;
+      let base: i32 = env.depth;
+      let bodyEnv: Env = scope_env(env, bind_names.len() > 0 || body_binds(arm.body));
       let bk: i32 = 0;
       while (bk < bind_names.len()) {
         bodyEnv = bodyEnv.bind(bind_names[bk], bind_values[bk]);
@@ -7854,11 +7856,11 @@ function eval_for_stmt(f: ast.StmtFor, env: Env): StepResult {
       elem_ty = "u8";
     }
   }
-  let base: i32 = env.names.len();
+  let base: i32 = env.depth;
   let cur: Env = env;
   let i: i32 = 0;
   while (i < elems.len()) {
-    let iter_env: Env = bind_element(cur, f.var_name, elems[i], elem_ty);
+    let iter_env: Env = bind_element(scope_env(cur, true), f.var_name, elems[i], elem_ty);
     let step: StepResult = eval_block(f.body, iter_env);
     if (step.sig == 2) {
       return step_none(trim_env(step.env, base));
@@ -7934,8 +7936,8 @@ function eval_stmt(st: ast.Stmt, env: Env): StepResult {
           if (b.v) {
             body = ifs.then_body;
           }
-          let base: i32 = env.names.len();
-          let step: StepResult = eval_block(body, env);
+          let base: i32 = env.depth;
+          let step: StepResult = eval_block(body, scope_env(env, body_binds(body)));
           return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
         },
         _ => {
@@ -7977,20 +7979,16 @@ function eval_assign_stmt(a: ast.StmtAssign, env: Env): StepResult {
   if (is_err(av)) {
     return step_stop(env, av);
   }
-  let i: i32 = env.names.len() - 1;
-  let found: boolean = false;
-  while (i >= 0 && !found) {
-    if (env.names[i] == a.target) {
-      found = true;
-    }
-    i = i - 1;
-  }
-  if (!found) {
+  if (!env.binds_name(a.target)) {
     return step_stop(env, v_err("assign to undefined `" + a.target + "`"));
   }
-  let tslot: i32 = env.raw_slot(a.target);
-  if (tslot >= 0 && cell_slot_set(env.values[tslot], av)) {
-    return step_none(env);
+  match (env.raw_value(a.target)) {
+    Some(value) => {
+      if (cell_slot_set(value, av)) {
+        return step_none(env);
+      }
+    },
+    None => {}
   }
   return step_none(env.update(a.target, av));
 }
@@ -8003,18 +8001,15 @@ function in_place_array_write(a: ast.StmtAssign, env: Env): boolean {
   if (array_write_chain(a.value, a.target).len() == 0) {
     return false;
   }
-  let slot: i32 = env.raw_slot(a.target);
-  if (slot < 0) {
-    return false;
-  }
-  let VArr(av) = env.values[slot] else {
+  let value = match (env.raw_value(a.target)) { Some(v) => v, None => { return false; } };
+  let VArr(av) = value else {
     return false;
   };
   if (av.view || av.store.get().len() > 0) {
     return false;
   }
-  let (fd, known) = call_target("with", true, false, env.values[slot], env);
-  let (fd2, known2) = call_target("append", true, false, env.values[slot], env);
+  let (fd, known) = call_target("with", true, false, value, env);
+  let (fd2, known2) = call_target("append", true, false, value, env);
   return !known && !known2;
 }
 
@@ -8062,9 +8057,8 @@ function write_array_in_place(a: ast.StmtAssign, env: Env): StepResult {
     names = names.append(fa.field);
     args = args.append(vs);
   }
-  let slot: i32 = env.raw_slot(a.target);
-  let cur: Value = env.values[slot];
-  let released: Env = Env { ...env, values: env.values.with(slot, v_int(0)) };
+  let cur = match (env.raw_value(a.target)) { Some(v) => v, None => { return step_stop(env, v_err("in-place write: missing binding")); } };
+  let released = env.update(a.target, v_int(0));
   let i: i32 = 0;
   while (i < names.len()) {
     let VArr(av) = cur else {
@@ -8079,7 +8073,7 @@ function write_array_in_place(a: ast.StmtAssign, env: Env): StepResult {
     cur = out;
     i = i + 1;
   }
-  return step_none(Env { ...released, values: released.values.with(slot, cur) });
+  return step_none(released.update(a.target, cur));
 }
 
 function for_elements(iv: Value): Option[Value[]] {
@@ -8128,8 +8122,8 @@ function eval_iterator_for(f: ast.StmtFor, iv: Value, env: Env): StepResult {
     }
     subject = ast.ExprCall { callee: ast.ExprFieldAccess { obj: held, field: "iter", line: 0, col: 0, ty: "", const_read: false }, args: [], line: 0, col: 0, type_args: [], ty: "" };
   }
-  let base: i32 = env.names.len();
-  let step: StepResult = eval_stmt(parser.iterator_loop(f, subject, 0), env.bind("$for_subject", iv));
+  let base: i32 = env.depth;
+  let step: StepResult = eval_stmt(parser.iterator_loop(f, subject, 0), scope_env(env, true).bind("$for_subject", iv));
   return StepResult { env: trim_env(step.env, base), ret: step.ret, sig: step.sig };
 }
 
@@ -8143,21 +8137,69 @@ function receiver_has_method(funcs: parser.FuncDecl[], recv: Value, name: string
   return false;
 }
 
-function trim_env(e: Env, base: i32): Env {
-  if (e.names.len() <= base) {
+function body_binds(body: ast.Stmt[]): boolean {
+  for st in body {
+    if (stmt_binds(st)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function stmt_binds(st: ast.Stmt): boolean {
+  return match (st) { ast.StmtVar(_) => true, ast.StmtDefer(d) => stmt_binds(d.action), _ => false };
+}
+
+function scope_env(e: Env, needed: boolean): Env {
+  if (!needed) {
     return e;
   }
-  let ns: string[] = [];
-  let vs: Value[] = [];
-  let ts: string[] = [];
-  let i: i32 = 0;
-  while (i < base) {
-    ns = ns.append(e.names[i]);
-    vs = vs.append(e.values[i]);
-    ts = ts.append(e.types[i]);
-    i = i + 1;
+  return Env { ...e, outer: Some(e), depth: e.depth + 1, names: [], values: [], types: [] };
+}
+
+function trim_env(e: Env, base: i32): Env {
+  let out = e;
+  while (out.depth > base) {
+    match (out.outer) {
+      Some(parent) => {
+        out = parent;
+      },
+      None => {
+        return out;
+      }
+    }
   }
-  return Env { ...e, names: ns, values: vs, types: ts };
+  return out;
+}
+
+function flattened_env(e: Env): Env {
+  if (e.depth == 0) {
+    return e;
+  }
+  let frames: Env[] = [];
+  let cursor = Some(e);
+  while (true) {
+    match (cursor) {
+      Some(frame) => {
+        frames = frames.append(frame);
+        cursor = frame.outer;
+      },
+      None => {
+        break;
+      }
+    }
+  }
+  let names: string[] = [];
+  let values: Value[] = [];
+  let types: string[] = [];
+  let i = frames.len();
+  while (i > 0) {
+    i = i - 1;
+    names = util.append_all(names, frames[i].names);
+    values = util.append_all(values, frames[i].values);
+    types = util.append_all(types, frames[i].types);
+  }
+  return Env { ...e, outer: None, depth: 0, names: names, values: values, types: types };
 }
 
 function eval_block(body: ast.Stmt[], env: Env): StepResult {
@@ -8329,11 +8371,12 @@ pub function (s: Session) run(m: parser.Module, name: string): (Session, boolean
 }
 
 function session_env(env: Env): Env {
+  let flat = flattened_env(env);
   let names: string[] = [];
-  for name in env.names {
+  for name in flat.names {
     names = names.append(lexical.source_name(name));
   }
-  return Env { ...env, names: names };
+  return Env { ...flat, names: names };
 }
 
 function returns_void(env: Env, x: ast.Expr): boolean {

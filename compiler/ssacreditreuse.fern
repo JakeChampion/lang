@@ -27,8 +27,7 @@ function calc(c: Context, op: i32, a: i32, b: i32): Context {
   if (c.error != "") {
     return c;
   }
-  let r = guard.combine(c.arena, op, a, b);
-  return Context { ...c, arena: r.arena, temp: r.id, error: r.error };
+  return match (guard.combine(c.arena, op, a, b)) { Ok(r) => Context { ...c, arena: r.arena, temp: r.id, error: "" }, Err(error) => Context { ...c, arena: error.arena, temp: -1, error: error.message } };
 }
 
 function literal(c: Context, value: i32): Context {
@@ -205,15 +204,24 @@ function scalar_call(c: Context, op: ssa.SInst, call: CheckedCall): Context {
   return equal(out, out.state.path, covered, 1, "scalar call requires Boolean operand");
 }
 
+function arena_result(c: Context, r: Result[guard.Built, guard.BuildError]): Context {
+  return match (r) { Ok(value) => Context { ...c, arena: value.arena, error: "" }, Err(error) => Context { ...c, arena: error.arena, error: error.message } };
+}
+
+function with_contents(c: Context, slot: i32, r: Result[guard.Built, guard.BuildError]): Context {
+  return match (r) { Ok(value) => Context { ...c, arena: value.arena, error: "", state: State { ...c.state, contents: c.state.contents.with(slot, value.id) } }, Err(error) => Context { ...c, arena: error.arena, error: error.message, state: State { ...c.state, contents: c.state.contents.with(slot, -1) } } };
+}
+
 function reuse_donor(c: Context, donor: phi.Value, composed: boolean): Context {
   let n = phi.is_null(c.arena, donor, c.state.path);
-  let out = Context { ...c, arena: n.arena, error: n.error };
+  let id: i32 = match (n) { Ok(value) => value.id, Err(_) => -1 };
+  let out = arena_result(c, n);
   if (!composed) {
-    return equal(out, out.state.path, n.id, 1, "nonnull reuse donor unsupported");
+    return equal(out, out.state.path, id, 1, "nonnull reuse donor unsupported");
   }
   out = mask(out, donor.identity, 1);
   let old = out.temp;
-  out = calc(out, 4, out.state.path, n.id);
+  out = calc(out, 4, out.state.path, id);
   out = calc(out, 0, old, out.temp);
   out = equal(out, out.state.path, out.temp, 1, "invalid storage donor generation");
   out = equal(out, old, out.state.parents[0], 1, "storage transfer requires one old parent credit");
@@ -222,14 +230,14 @@ function reuse_donor(c: Context, donor: phi.Value, composed: boolean): Context {
     out = equal(out, old, out.state.credits[slot], 0, "storage transfer requires discharged children");
     let cleared = guard.select(out.arena, old, 0, out.state.contents[slot]);
     if (out.error == "") {
-      out = Context { ...out, arena: cleared.arena, error: cleared.error, state: State { ...out.state, contents: out.state.contents.with(slot, cleared.id) } };
+      out = with_contents(out, slot, cleared);
     }
   }
   out = calc(out, 1, out.state.parents[0], old);
   out = Context { ...out, state: State { ...out.state, parents: out.state.parents.with(0, out.temp) } };
   let shape = guard.select(out.arena, old, 0, out.state.shapes[0]);
   if (out.error == "") {
-    out = Context { ...out, arena: shape.arena, error: shape.error, state: State { ...out.state, shapes: out.state.shapes.with(0, shape.id) } };
+    out = match (shape) { Ok(value) => Context { ...out, arena: value.arena, error: "", state: State { ...out.state, shapes: out.state.shapes.with(0, value.id) } }, Err(error) => Context { ...out, arena: error.arena, error: error.message, state: State { ...out.state, shapes: out.state.shapes.with(0, -1) } } };
   }
   return out;
 }
@@ -284,9 +292,9 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       return failed(out, "signed comparison requires narrowed numeric operands");
     }
     let p = guard.predicate(out.arena, op.result + 1);
-    out = Context { ...out, arena: p.arena, error: p.error };
+    out = arena_result(out, p);
     kind = 0;
-    identity = p.id;
+    identity = match (p) { Ok(value) => value.id, Err(_) => -1 };
   } else if (op.kind_tag == 9 && op.args.len() == 2 && (op.str == "eq" || op.str == "ne")) {
     let a = out.values[op.args[0]];
     let b = out.values[op.args[1]];
@@ -304,8 +312,8 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       out = equal(out, out.state.path, scalar.identity, 0, "only reference null comparisons admitted");
       if (out.error == "") {
         let n = phi.is_null(out.arena, ref, out.state.path);
-        out = Context { ...out, arena: n.arena, error: n.error };
-        identity = n.id;
+        out = arena_result(out, n);
+        identity = match (n) { Ok(value) => value.id, Err(_) => -1 };
       }
     } else {
       return failed(out, "unsupported pointer comparison");
@@ -372,7 +380,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       out = equal(out, out.state.path, transferred, 1, "clearing slot without child identity");
       let contents = guard.select(out.arena, out.state.path, 0, out.state.contents[slot]);
       if (out.error == "") {
-        out = Context { ...out, arena: contents.arena, error: contents.error, state: State { ...out.state, contents: out.state.contents.with(slot, contents.id) } };
+        out = with_contents(out, slot, contents);
       }
       out = calc(out, 1, out.state.credits[slot], out.state.path);
       out = Context { ...out, state: State { ...out.state, credits: out.state.credits.with(slot, out.temp) } };
@@ -399,7 +407,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
         }
         let contents = guard.select(out.arena, path, source.identity, out.state.contents[slot]);
         if (out.error == "") {
-          out = Context { ...out, arena: contents.arena, error: contents.error, state: State { ...out.state, contents: out.state.contents.with(slot, contents.id) } };
+          out = with_contents(out, slot, contents);
         }
         out = calc(out, 0, out.state.credits[slot], path);
         out = Context { ...out, state: State { ...out.state, credits: out.state.credits.with(slot, out.temp) } };
@@ -626,14 +634,8 @@ function joined(a: guard.Arena, old: i32[], current: i32[], path: i32): Numbers 
   let values = old;
   let i: i32 = 0;
   while (i < old.len()) {
-    let masked = guard.combine(arena, 4, path, current[i]);
-    if (masked.error != "") {
-      return Numbers { arena: masked.arena, values: values, error: masked.error };
-    }
-    let sum = guard.combine(masked.arena, 0, old[i], masked.id);
-    if (sum.error != "") {
-      return Numbers { arena: sum.arena, values: values, error: sum.error };
-    }
+    let masked: guard.Built = match (guard.combine(arena, 4, path, current[i])) { Ok(value) => value, Err(error) => { return Numbers { arena: error.arena, values: values, error: error.message }; } };
+    let sum: guard.Built = match (guard.combine(masked.arena, 0, old[i], masked.id)) { Ok(value) => value, Err(error) => { return Numbers { arena: error.arena, values: values, error: error.message }; } };
     arena = sum.arena;
     values = values.with(i, sum.id);
     i = i + 1;
@@ -752,7 +754,7 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
   let one = guard.constant(zero.arena, 1);
   let left = guard.constant(one.arena, 4);
   let right = guard.constant(left.arena, 5);
-  let u = guard.predicate(right.arena, 0);
+  let u: guard.Built = match (guard.predicate(right.arena, 0)) { Ok(value) => value, Err(error) => { return helper.Proof { ok: false, function_name: f.name, message: error.message }; } };
   let empty = State { path: 0, parents: [0, 0], children: [0, 0, 0], contents: [0, 0, 0, 0], credits: [0, 0, 0, 0], shapes: [0, 0], allocated: 0 };
   let values: phi.Value[] = [];
   let ids: i32[] = [];
@@ -796,11 +798,17 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
       let b = f.blocks[chosen];
       c = Context { ...c, state: incoming[chosen].state };
       if (b.id != f.entry) {
-        let phis = phi.merge_mapped(c.arena, b, incoming[chosen].edges, f.nvals, c.ids);
-        c = Context { ...c, arena: phis.arena, error: phis.error };
-        c = equal(c, 1, phis.path, c.state.path, "phi edge coverage mismatch");
-        for binding in phis.bindings {
-          c = Context { ...c, values: c.values.with(util.index_of_i32(c.ids, binding.result), binding.value) };
+        match (phi.merge_mapped(c.arena, b, incoming[chosen].edges, f.nvals, c.ids)) {
+          Ok(phis) => {
+            c = Context { ...c, arena: phis.arena, error: "" };
+            c = equal(c, 1, phis.path, c.state.path, "phi edge coverage mismatch");
+            for binding in phis.bindings {
+              c = Context { ...c, values: c.values.with(util.index_of_i32(c.ids, binding.result), binding.value) };
+            }
+          },
+          Err(error) => {
+            c = Context { ...c, arena: error.arena, error: error.message };
+          }
         }
       }
       for op in b.insts {

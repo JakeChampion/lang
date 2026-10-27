@@ -38,11 +38,9 @@ themes:
    `asmcore.fern:2704 infer_expr_type` is **497**; `parser.fern:6033
    parse_type_name` is **341**. `wasm_ir.fern`'s `emit_function_ir` led this
    list at 1,257 and is now **84** (SH-058).
-2. **Left-fold string accumulation.** `out = out + …`, the O(n²) shape whose
-   cost the tree's own comments document. `wasm_ir.fern` led at **701 sites**
-   and is now down to **1** (SH-027); **278 in `ssa_arm64` and 259 in
-   `ssa_x86`** remain, though most of those are a fixed prologue rather than a
-   per-op path — see SH-027 for the breakdown.
+2. **String accumulation.** Module emitters use local chunk arrays.
+   Local string builders use the owned runtime growth path.
+   SH-027 records the current source inventory and generated-code evidence.
 3. **Parallel-maintained twins.** `asm_ir.fern` ↔ `asm_arm64_ir.fern` keep
    two `emit_runtime` surfaces whose `has_need` key sets have **drifted apart
    by 7 keys**.
@@ -160,7 +158,7 @@ These each touch many files; fixing the root removes dozens of individual
 findings. Ranked by leverage.
 
 ### T1 — Shared utility module
-- [~] **SH-020 — `compiler/util.fern`** exists, holds **31
+- [x] **SH-020 — `compiler/util.fern`** exists, holds **31
   definitions**, and is imported by **61 of the 91 modules**. The `i32_to_string`
   strand is finished: one canonical copy at `util.fern:21`.
   Current duplication census across the tree: **5,126 function definitions**
@@ -185,8 +183,12 @@ findings. Ranked by leverage.
     hand-synced **on purpose** and pinned by `TestSelfHostParseF64MirrorsAgree`.
     **Not a dedupe target.**
 
-  Genuinely liftable leftovers: `split_commas` (`irlower`, `printer`). The
-  `block_index` / `pred_slot` strand is closed by SH-025 (`pub` on `ssa.fern`'s
+  The last candidate was `split_commas` (`irlower`, `printer`).
+  The 2026-10 tree no longer contains `irlower.fern`.
+  Only `printer` and `ferndoc` define `split_commas` now.
+  The ownership distinction below excludes that pair from this work.
+  This closes the shared-utility item.
+  The `block_index` / `pred_slot` strand is closed by SH-025 (`pub` on `ssa.fern`'s
   pair, the three backend copies deleted). The `join_path` strand is closed by SH-055
   (`util.module_path_join`; `mvs.join_path` is a different function that stays).
 
@@ -310,15 +312,12 @@ findings. Ranked by leverage.
     collectors (`str_values`, `const_agg_values`, `field_reclaim_types`,
     `struct_drop_types`, `fn_value_table`, `indirect_fn_sigs`) keep their loops:
     they accumulate rather than short-circuit, so a boolean spine does not fit.
-  - **`parser.fern` — 12** rewrite passes (`expr_mentions`, `mono_infer`,
-    `mono_expr`, `mono_call_expected`, `mono_stmt`, `mono_stmts`, `ms_expr`,
-    `ms_stmt`, `ms_stmts`, `ms_func`, `rw_call_expr`, `rw_call_stmts`) — all
-    genuine hand-enumerated walks, and **none of them can use `astwalk`**.
-    `astwalk` imports `parser`, so parser importing `astwalk` is a cycle; the
-    fix this row prescribes does not compile there. Converting them needs the
-    AST types lifted into a base module both can import, or a second traversal
-    spine living inside `parser.fern` — a decision, not a mechanical change.
-    (Same shape as SH-025's proposed `ssabackend.fern`, which also cycles.)
+  - **`parser.fern`** already imports `astwalk` in the 2026-10 tree.
+    `astwalk` imports `ast` and `util`, so this dependency has no parser cycle.
+    Parser passes already use `fold_stmt_nodes`, `map_stmt_acc`, and related helpers.
+    The old twelve-pass census and cycle blocker are obsolete.
+    The remaining `mono_*` and `ms_*` passes carry type, scope, and instantiation state.
+    Separate their semantic decisions from mechanical child traversal before further conversions.
   - **`checker.fern`** — the row said 15; the real surface, measured, is:
 
     | | count | lines |
@@ -588,27 +587,32 @@ findings. Ranked by leverage.
     decision, not a mechanical change. Its order is pinned in the sequence gate
     either way.
 
-    Probing collectors for that gate has turned up **six divergences nothing
-    else can see**, every one of them same-code-set. Four were real bugs and
-    are fixed: the nested-lambda E049 gap (#7363), and the three E060/E062 ones
-    above — a downcast inside a lambda body, a `dyn` local declared inside one,
-    and the struct-literal base/field order. The remaining two are pinned and
-    open:
+    The sequence gate exposed **six divergences with the same diagnostic code sets**.
+    The earlier fixes covered the E049 gap and the three E060/E062 cases above.
+    The E044 capture-scope gap is also fixed now.
 
-    - `e044_expr` **under-reports**. For a lambda nested in a lambda where the
-      inner one captures an unsupported-typed variable, the Go checker reports
-      E044 twice (inner directly, outer transitively) and the self-host reports
-      once. Same root cause family as the E049 gap: `e044_stmts` walks only the
-      enclosing function's statements and `e044_expr` prunes at the outer
-      lambda, so the inner is never reached. The prune's comment worries about
-      double-reporting the SAME lambda; reaching the inner one yields two
-      DIFFERENT lambdas, which is what Go does. NOT a mechanical fix, which is
-      why it is recorded rather than done: `e044_lambda_check` reports at the
-      STATEMENT position against a suspects/labels list computed by
-      `e044_stmts` for the enclosing scope, so reaching a nested lambda needs a
-      decision about reusing those suspects minus accumulated param shadowing
-      versus recomputing them for the inner scope, and that choice changes
-      which diagnostics appear.
+    - `e044_expr` uses the shared expression fold and handles each lambda body once.
+      A written lambda gets its capture check before the body traversal.
+      The body inherits the outer unsupported bindings.
+      Parameters, local declarations, loop variables, and pattern bindings mask names that they shadow.
+      Synthetic value blocks get body traversal without a closure diagnostic.
+
+      The regression gate compares diagnostic multiplicity against the Go checker.
+      It covers nested captures, three closure levels, shadow scopes, and value blocks.
+      The previous code missed inner captures and reported false positives after shadow declarations.
+      The broader semantic traversal work remains open.
+
+      The same scope probes exposed an E013 mismatch for local function declarations.
+      The Go checker lets a local function replace a name in the current scope.
+      `dupvar_diags` now applies that rule to declarations with `ORIGIN_NESTED_FN`.
+      Ordinary variable declarations still get the duplicate-name check.
+      The regression gate tests both declaration orders and repeated function declarations.
+
+      `slit_diags` also uses the shared expression fold now.
+      Struct literals retain their field, diagnostic, and base order through a separate handler.
+      Lambda bodies retain their statement checks.
+      Match guards now receive the struct-literal checks that the previous statement walk omitted.
+      The regression gate compares seven scope cases against Go and runs them in Wasm.
     - `slit_diags` **over-reports**: for `Out { bad2: In { bad1: 1 } }` the self-host reports
     four diagnostics (the inner literal's unknown and missing fields as well as
     the outer's) where the Go checker reports two, having stopped descending
@@ -713,37 +717,24 @@ findings. Ranked by leverage.
   (`push`/`pop`/`load_local`/`branch_if_zero`/`call`/`syscall`) driven from
   shared code, with the need-key table as shared data; each backend implements
   only the leaves.
-- [~] **SH-025 — lift what the three SSA backends hand-mirror.**
-  _Helper half done:_ `block_index` and `pred_slot` were byte-identical across
-  all four SSA modules; `ssa.fern`'s two are now `pub` and the three backend
-  copies are gone (−48 lines, no new import — the backends already import
-  `./ssa` for `SFunc`/`SBlock`, and `ssa.fern` imports none of them).
+- [x] **SH-025 — the legacy SSA backend duplication is retired.**
+  The earlier helper cleanup shared `block_index` and `pred_slot`.
+  The 2026-10 tree no longer contains `ssa_x86.fern`, `ssa_arm64.fern`, or `ssa_wasm.fern`.
+  Their separate `emit_inst`, `emit_term`, `emit_func`, and `emit_program` interfaces are gone.
+  Do not create a new interface for those retired modules.
 
-  **This entry used to ask for a new `ssabackend.fern` (the SSA analogue of
-  `asmcore`). That module cannot exist**: it would have to import `ssa` for
-  `SFunc`/`SBlock`, and `ssa` would have to import it back for its own six
-  `block_index` call sites — a cycle. `asmcore` is not a precedent, because it
-  declares the types it shares rather than borrowing them. Lift to the module
-  that already declares the types.
+  The native emitters now share `ssaprepare` and consume physical-body metadata.
+  Their remaining runtime duplication belongs to SH-024.
+  The shared SSA representation still uses `SInst` and `STerm` under SH-049.
+  Those two items remain open.
 
-  _Still open:_ the three backends hand-mirror `emit_inst` / `emit_term` /
-  `emit_func` / `emit_program` / `emit_phi_moves` dispatch ladders. Align the
-  gratuitously-divergent `emit_term` signatures first — `ssa_x86` takes a `name`
-  param, `ssa_arm64` reads `f.name`, `ssa_wasm` takes neither — then lift a
-  parameterised `emit_func`/`emit_program` driver. Note the trap recorded under
-  T1: `regn` is byte-identical TEXT across `ssa_x86` and `ssa_arm64` with
-  per-ISA behaviour, so it is not liftable and a byte-diff will say otherwise.
-
-  _Noted, not changed:_ `pred_slot` returns 0 rather than −1 on a miss — the
-  shape SH-007 closed for `index_of_str`. It is consistent across all four
-  copies (so not drift), and whether a miss is reachable depends on the
-  phi-predecessor invariant. Changing it is a behaviour change wanting its own
-  analysis and test.
+  The current `ssa.pred_slot` returns zero on a miss.
+  Its callers depend on valid predecessor edges and phi arity.
+  Any change to that failure contract still needs a separate invariant analysis and regression test.
 
 ### T6 — Errors & signals smuggled through value types / sentinels
-- [~] **SH-026 — the surviving "sentinels" were not errors; the real half is
-  blocked on T8.** This row bundles three unrelated things, and they need
-  opposite treatment.
+- [x] **SH-026 — Missing signature lookups use standard options.**
+  The original row mixed absent values, missing signatures and failure results.
 
   _Done — and the row's premise on this part was wrong._ The four surviving
   `__noreceiver__` / `__noclosure__` sites are not signals smuggled through the
@@ -760,71 +751,133 @@ findings. Ranked by leverage.
   only "unknown" was ever load-bearing. A `VAbsent` variant was considered and
   rejected: it would add a dead arm to every exhaustive match over `Value`.
 
-  _Still open, and genuinely real:_ `lookup_sig` / `lookup_struct` /
-  `lookup_method` / `lookup_union` return `name: ""` to mean "not found",
-  forcing a `.name.len() > 0` probe at every call site. That IS a (value, ok)
-  conflation and it wants `Option[T]` — which is T8, so sequence the two
-  together rather than hand-rolling a fifth result shape here.
+  _Done:_ The function, struct, method and union lookup families return standard options.
+  Missing signatures no longer use empty signature records.
 
-  _Also still open:_ the 22 bespoke `*Result` structs, two of them both named
-  `CheckResult` in different modules. Same dependency: that is T8's job.
+  Union signature lookup now returns `Option[UnionSig]`.
+  Variant-owner lookup, built-in fallback and the public union and enum queries share this absence contract.
+  The checker, typed front end and LSP queries match the option before they use a signature.
+  Presence and metadata queries retain boolean results, module names and type parameters.
+  These queries preserve empty defaults for built-in types and display without a placeholder signature.
+  Contract checks execute on x86-64, ARM64 and Wasm, and Go-oracle checks retain exact diagnostics.
+
+  Fourteen before/after cases retain the well-typed flag, diagnostic text, positions and order.
+  Earlier large-input probes used the reserved function names `f32` and `f64`.
+  Those inputs are invalid Fern programs and provide no evidence for valid compiler performance.
+  The workspace preserves their raw measurements as invalid-input probes.
+
+  Method, array-method and visible-method lookup now return `Option[MethodSig]`.
+  The checker, typed front end and LSP queries match the option before they use a signature.
+  Missing methods retain their built-in and callable-field fallbacks.
+  Map iteration retains its provider alias, and array lookup retains visibility and view filters.
+  Contract checks execute on x86-64, ARM64 and Wasm.
+  Twenty-one before/after cases retain the well-typed flag, diagnostic text, positions and order.
+
+  Function, associated-function and generic-call signature lookup now return `Option[FuncSig]`.
+  Missing callees skip generic inference without a placeholder signature.
+  The checker, typed front end and LSP queries match the option before they use a signature.
+  Present signatures retain constant flags, ownership flags, generic metadata and cached type references.
+  Public lookup contracts execute on x86-64, ARM64 and Wasm.
+  Twenty-seven before/after cases retain the well-typed flag, diagnostic text, positions and order.
+
+  Struct and variant-signature lookup now return `Option[StructSig]`.
+  Ordinary lookup shares one table search with `find_struct_sig`.
+  The typed front end uses options for record schemas, instantiated records and record types.
+  Empty structs remain present, and built-in payload and legacy variant-shape fallbacks retain their behavior.
+  Field and type parameter queries preserve empty defaults for absent signatures.
+  Public lookup contracts execute on x86-64, ARM64 and Wasm.
+
+  Thirty-three before/after cases retain the well-typed flag, diagnostic text, positions and order.
+  LSP queries and generic record, dynamic trait, destructure and struct-update runtime checks pass.
+
+  _T8 remains open:_ custom success and failure carriers, such as `irtables.LowerResult`, still need a contract review.
+  Review their partial-state contracts before a result migration.
+  A `Result` suffix alone does not identify an error wrapper.
+  `LexResult` carries tokens and comments, and the checker's `CheckResult` carries a scope and a type.
+  These records carry simultaneous outputs and remain structs.
+
+  Versioned dependency lookup now returns a standard result and preserves lock-file diagnostics through import resolution.
+  Missing locks, missing entries and absent cached packages retain their specific errors.
+  A declared dependency takes priority over an adjacent file with the same name or its subpaths.
+
+  Explicit local imports and imports of undeclared adjacent files retain their behavior.
+  Capability grants still omit unresolved, unused dependencies, as the Go loader does.
+  Go-oracle CLI cases cover these contracts, and shared-loader probes execute on x86-64, ARM64 and Wasm.
 
 
-### T7 — O(n²) string accumulation in emitters
-- [ ] **SH-027 — Use a `strbuf`/chunk-join accumulator in the string emitters.**
-  `wasm_ir.fern` is **done**: `emit_ir_op` (#7320) and the other 19 accumulating
-  functions (420 sites) now collect into a `string[]` and
-  `util.str_join_chunks` once. One fold remains there, in `fn_type_decl`, which
-  returns `out + suffix` rather than `out` — the accumulator is read, so the
-  shape does not apply.
+### T7 — String accumulation in emitters
+- [x] **SH-027 — Use efficient accumulators in the string emitters.**
+  The module emitters and `printer.format_module` use local chunk arrays.
+  The remaining string builders use the runtime growth path or emit bounded fragments.
+  The 2026-10 review covers the current IR backends, printer, and documentation generator.
 
-  Remaining `out = out +` sites:
+  Current `out = out +` source sites:
 
-  | file | sites | where |
+  | file | sites | review |
   |---|---|---|
-  | `printer.fern` | 214 | does not take this rewrite, see below |
-  | `ferndoc.fern` | 30 | unexamined |
-  | `irlower.fern` | 25 | unexamined |
-  | `asm_ir.fern` | 2 | — |
-  | `asm_arm64_ir.fern` | 1 | — |
-  | `wasm_ir.fern` | 1 | `fn_type_decl`, above |
+  | `printer.fern` | 233 | 41 builders, with local accumulators |
+  | `ferndoc.fern` | 34 | 13 builders, with local accumulators |
+  | `irlower.fern` | 0 | module retired |
+  | `asm_ir.fern` | 16 | fixed table, register fragments, and two text transforms |
+  | `asm_arm64_ir.fern` | 2 | `darwin_retarget_locals` |
+  | `wasm_ir.fern` | 6 | one signature loop and two fixed lane fragments |
 
-  (`printer.fern` was missing from this table entirely; the `*_run.fern` test
-  drivers also fold, and are not worth converting.)
+  These counts describe source syntax, not repeated copies of the accumulated prefix.
+  The local accumulators do not escape into a retained alias during their loops.
+  Length tests and final suffixes do not prevent the runtime growth path.
+  The unused private `print_type_params_except` helper is absent.
 
-  **`printer.fern`'s per-node builders do not take the same rewrite, but its
-  whole-FILE accumulator did — and that is the one that mattered.** The
-  per-node observation above is right: most of printer's accumulators end
-  `return out + ")"`, so the partial string is read and the write-only
-  precondition fails; and converting a builder for a few dozen characters buys
-  nothing anyway. That framing missed `format_module`, the `-fmt` entry point,
-  which folds `out = out + decl` across **every declaration in the module** —
-  copying the whole document once per declaration.
+  **The growth path preserves the owned prefix.**
+  `ssaunits.string_append` recognizes string concatenation and slice append operations.
+  `ssarc.grow_or_concat` first calls `__fern_str_grow` or its range variant.
+  The runtime checks for a unique owner and sufficient capacity.
+  It then copies only the appended bytes.
 
-  _Done:_ `format_module` is chunk-join (`util.str_join_chunks`, the helper the
-  three SSA emitters already use). Chunk-join rather than the global `strbuf`
-  is required here, not a preference: `format_module` calls `print_import` /
-  `print_stmt` / `print_type_alias`, any of which could want a buffer of its
-  own, and a local array nests where a global buffer would corrupt.
+  When capacity is insufficient, the fresh helper allocates at least twice the previous size.
+  It copies the old prefix once and releases the old accumulator.
+  Thus a unique accumulator does not copy its complete prefix on every append.
+  This applies to a final `return out + suffix` as well as a loop assignment.
 
-  Its two failures of the write-only precondition were both `out.len() > 0`,
-  asking "has anything been emitted yet" — a boolean, not a string read. A
-  `wrote` flag replaces them and the precondition holds.
+  Generated x86 code confirms the growth calls in the live printer builders.
+  A separate diagnostic build sets `FERN_SEM_INLINE=0` to retain the private function names.
+  The normal build also retains growth calls with the default compiler options.
+  The two diff builders receive a separate diagnostic build.
+  Source inspection distinguishes initial fragments and independent operands from the loop accumulator.
 
-  Verified by the row's own method: **14 appended expressions before, 14 after,
-  identical sequence**, then the byte gates — `internal/syntax/printer` full corpus
-  (114s) and the self-host `Fmt|Print` parity suites (291s), both green.
+  **Large helper probes retain their exact output.**
+  The probes call unchanged private helpers through exports in separate module copies.
+  They cover replacement, tail resolution, Darwin local names, Wasm signature declarations, indentation, and literal escapes.
+  Forty-eight cases include empty inputs and 10,000 repetitions.
+  Actual x86, ARM64, and Wasm execution matches the independent expected bytes.
+  The 48 native sanitizer runs report 34,668 allocations, 34,668 frees, and zero live bytes.
 
-  Still not worth converting: `escape_fstring_lit` and `indent_str`, the two the
-  row nominates. They match the mechanical shape but bound their output by one
-  literal and one indent depth, so there is no fold to collapse.
+  The x86 register builders receive the bounded saved-register list.
+  The CRC table emits 256 rows.
+  Address operands and the two Wasm lane helpers emit fixed fragments.
+  The unbounded text transforms retain local accumulators and use the growth path.
+  SH-052 still tracks the separate Darwin dialect design.
 
-  _Method that worked on `wasm_ir.fern`:_ convert only where the accumulator is
-  provably **write-only** — every mention of `out` in the function is its
-  declaration, an `out = out + …` fold, or `return out;`. That is the
-  precondition: no arm inspects the partial string, so the concatenation can be
-  defer to the join. Then assert every appended expression survives **verbatim**
-  and the site count is unchanged, and gate on emitted bytes.
+  **`format_module` already uses chunk joins.**
+  Its 14 appended expressions retain their original order.
+  A local array permits nested printers to keep their own accumulators.
+  A global buffer cannot provide that isolation.
+  The earlier formatter corpus and byte-parity gates cover this conversion.
+
+  `escape_fstring_lit` calls `escape_lit_body`, which appends bytes to an owned `u8[]`.
+  It does not concatenate a string for each character.
+  `indent_str` uses the string growth path.
+  Neither helper requires a chunk array.
+
+  **The `ferndoc` measurements reject a mechanical chunk-join conversion.**
+  A chunk-join prototype retained exact output but regressed the measured page and table cases.
+  Local measurements cover a 1,000-declaration page and an 80-trait table.
+  The retained page builder uses the string growth path.
+
+  The repeated work was a declaration-table scan for each public declaration.
+  `DocDecl` retains its source-table index through sort and comment association.
+  The renderer uses that index instead of another name-and-line search.
+  Private sorted insertion consumes its array and appends directly after the final item.
+  Earlier declarations and ties retain stable insertion order.
 
 ### T8 — Hand-rolled options/containers that generics would replace
 - [x] **SH-028 (slice 1) — the `append_*` concat family is now one generic.**
@@ -849,10 +902,464 @@ findings. Ranked by leverage.
   the ninth failed the pin, and the pin is why the change got the fixpoint
   scrutiny that found the segfault instead of shipping as a tidy-up.
 
-  _Rest of this row:_ `OptInt` / `OptBool` / `OptString` and the 22 `*Result`
-  structs all want generics too. They are no longer blocked, and neither is
-  T6/SH-026's real remainder (`lookup_*` returning `name: ""`), which depends
-  on `Option[T]`.
+  _2026-10 constant-fold cleanup:_ the private `OptBool` and `OptString` wrappers are gone.
+  Their callers now match the `ExprBool` and `ExprString` variants directly.
+  The AST already carries the success tag and payload, so these paths need no new option container.
+  The numeric path now uses `Option[IntLiteral]` for a parsed value and suffix.
+  `IntLiteral` carries only the successful parse data.
+  Arithmetic helpers return `Option[i64]` in both the folder and constant evaluator.
+  The numeric width and negative-zero checks retain their behavior.
+
+  IR width folds now return `Option[i32]`.
+  The 64-bit binary folder returns `Option[Op]` with the complete replacement instruction.
+  Strength rewrites return `Option[Op[]]`.
+  `None` preserves the input, while `Some([])` removes an identity operation.
+  This removes `WidthFold`, `Fold64`, and `StrengthRewrite` without placeholder data.
+
+  Three array-payload constructors remain out of line because the pinned bootstrap compiler refuses their inlined ownership transfers.
+  Tests preserve trap guards, unsigned exclusions, shift masks, operation metadata, and input aliases.
+  The Go oracle and native, ARM64, and Wasm drivers retain all nine operation fields across 10,242 cases.
+
+  Forty paired probes run the full IR pipeline for each input and retain identical outputs.
+  Each input defines 501 functions over scalars, records, or arrays.
+  Candidate/baseline time ratios range from 0.993 to 1.000.
+  Separate pass-repetition probes show 6% more time for width folds, 8% more for binary folds, and 20% less for strength rewrites.
+  These measurements establish no general compiler speed change.
+
+  `word_of` and `word_byte` now return standard options.
+  A declined word-load rewrite retains the original instruction without a placeholder word or byte record.
+  Successful payloads retain the source array, index convention, offset, shift, width, and byte order.
+  Duplicate bytes, gaps, mixed arrays, mixed indices, and invalid shift layouts retain their refusal paths.
+
+  Twenty runtime cases cover owned byte arrays and views against the Go oracle on x86-64, ARM64, and Wasm.
+  Twenty-three programs retain all body fields in both inline modes before and after the change.
+  Their candidate outputs on ARM64 and Wasm match the native baseline.
+  Three native sanitizer probes retain exact outputs and release all allocations.
+  Forty paired probes per input use 201 functions with matched or declined word loads.
+  Candidate/baseline time ratios range from 0.997 to 1.026, without a general compiler speed claim.
+
+  LSP part queries return `Option[Parts]`, and `Parts` contains only parameter labels and the return label.
+  `call_parts` uses `Option[Option[Parts]]` to retain three outcomes.
+  `None` permits a module fallback.
+  `Some(None)` marks a located expression without a signature.
+  `Some(Some(parts))` supplies a located signature.
+
+  Signature help returns `Option[Signature]` without an empty signature record.
+  The CLI converts `None` to JSON `null` before it reads signature fields.
+  Completion labels and details retain their prior output without a synthetic `Parts` record.
+  Named-signature checks and module fallback retain their priority.
+
+  Seventeen before/after cases retain signature labels, parameter ranges, active parameters, and all three call-query outcomes.
+  Candidate ARM64 and Wasm outputs match the native baseline.
+  Across seventeen native sanitizer probes, 45,293 allocations match 45,293 releases, with zero live bytes in each process.
+  Eight integration suites pass, with signature-help, completion, hover, and inlay-hint protocol goldens.
+
+  Forty process pairs per input repeat cached signature and call queries 200 times, with complete output.
+  Inputs cover ordinary calls, zero arguments, local shadows, module fallback, and methods.
+  Candidate/baseline time ratios range from 0.926 to 1.015.
+  These probes establish no general compiler speed change.
+
+  Hover queries return `Option[Hover]`, and definition helpers return `Option[SourceSpan]`.
+  Hover data contains the text and source coordinates.
+  Definition data contains only source coordinates, without an unused text field or a presence flag.
+  The CLI converts absent results to JSON `null`.
+
+  Reference targets retain their name and kind when declaration coordinates are absent.
+  Semantic token selection matches the option before it reads coordinates.
+  A span with zero width remains `Some`.
+  An absent span returns `None` without a coordinate record.
+
+  All 25 before/after records retain hover, definition, documentation, reference, and token data on native, ARM64, and Wasm.
+  Across 25 native sanitizer probes, 335,328 allocations match 335,328 releases, with zero live bytes in each process.
+  A separate contract retains a reference to a known function without declaration coordinates on all three targets.
+  Its native sanitizer reports 3,270 allocations and releases, with zero live bytes.
+  All 20 LSP integration suites pass, with workspace, literate-document, stdlib, rename, and token protocol goldens.
+
+  Forty process pairs per input repeat cached hover, definition, documentation, reference, and token queries 50 times.
+  All complete outputs match the native baseline.
+  Candidate/baseline time ratios range from 0.939 to 0.988 across six inputs.
+  These probes establish no general compiler speed change.
+
+  Lexical site queries return `Option[Site]`, and combined queries return `Option[Query]`.
+  Absent sites no longer contain placeholder coordinates or a dummy expression query.
+  A dot without a receiver returns `None` before the query reads a negative token index.
+  A real lexical site retains its type context without an expression match.
+
+  Three inputs with an initial dot crash the native baseline and return `None` after the fix.
+  Twenty-one other lexical records retain all site fields.
+  All 24 records and a separate type-context contract pass on x86-64, ARM64, and Wasm.
+  Native sanitizer probes report 6,882 allocations and releases, with zero live bytes in each process.
+  All 22 LSP suites pass, with five protocol requests for a missing receiver.
+
+  Forty process pairs per input repeat complete cached queries 50 times.
+  Candidate/baseline time ratios range from 0.987 to 1.102 across six inputs.
+  These probes establish no general compiler speed change.
+
+  Expression discovery returns `Option[Found]`, and traversal probes hold `Option[Node]`.
+  Absent matches contain no placeholder expression or function index.
+  Successful matches retain their kind, original expression, and function index.
+  Match priority, local scopes, type fallback, and declaration fallback retain their prior behavior.
+
+  Twenty-seven discovery records match the native baseline on x86-64, ARM64, and Wasm.
+  Twenty-five complete records retain hover, definition, documentation, reference, and token output.
+  Across 52 native sanitizer probes, 376,468 allocations match 376,468 releases, with zero live bytes in each process.
+
+  Forty process pairs per input repeat complete cached queries 50 times.
+  Candidate/baseline time ratios range from 0.989 to 1.012 across six inputs.
+  These probes establish no general compiler speed change.
+
+  `binding_of` returns `Option[lexical.Binding]` without an empty result on a miss.
+  All five consumers match the option before they use the result.
+  Global fallback, parameter checks, and local-shadow refusal retain their priority.
+  Real results retain their IDs, names, symbols, coordinates, and parameter status.
+  A loop variable with column zero remains present.
+
+  Thirty-nine query records match the native baseline on x86-64, ARM64, and Wasm.
+  The records cover blocks, loops, lambdas, captures, match bindings, shadows, and global names.
+  Twenty-five complete records retain hover, definition, documentation, reference, and token output.
+  Across 64 native sanitizer probes, 398,410 allocations match 398,410 releases, with zero live bytes in each process.
+
+  Forty process pairs per input repeat complete cached queries 50 times.
+  Candidate/baseline time ratios range from 0.964 to 1.099 across six inputs.
+  These probes establish no general compiler speed change.
+
+  Reference-target queries return `Option[Target]` without an empty target or a `R_NONE` marker.
+  Successful targets retain their kind, names, owner, function index, method coordinates, and the `spelled` field.
+  A known target remains present when its declaration span is absent.
+  Type, declaration, and local fallback retain their prior order.
+
+  Forty-seven target records match the native baseline on x86-64, ARM64, and Wasm.
+  Separate compiler copies expose target fields through a probe for this comparison.
+  The production compiler contains no probe.
+  Public reference output also matches the native baseline for all 47 cases.
+  Across 94 native sanitizer probes, 168,550 allocations match 168,550 releases, with zero live bytes in each process.
+
+  Forty process pairs per input repeat complete cached queries 50 times.
+  Candidate/baseline time ratios range from 0.894 to 1.027 across six inputs.
+  These probes establish no general compiler speed change.
+
+  Guarded-credit evaluation returns `Option[i32]` without a numeric payload on failure.
+  Zero and both signed 32-bit limits remain present values.
+  Invalid node IDs, invalid assignments, and missing predicates return `None`.
+  Graph construction retains its partial arena and error state.
+
+  Thirty-eight records match an independent arithmetic model on x86-64, ARM64, and Wasm.
+  The algebra driver adds eight controls for absent inputs, zero, signed limits, and unused assignments.
+  A native sanitizer probe reports 318 allocations and releases, with zero live bytes.
+
+  Forty process pairs per mode perform 20,000 evaluations.
+  Present, absent, and zero cases have candidate/baseline time ratios of 1.039, 1.008, and 0.967.
+  Both benchmark variants use the same current compiler.
+  These probes establish no general compiler speed change.
+
+  Guarded graph construction separates complete data from failures.
+  Constant nodes return `Built` data directly.
+  Predicates, operations, selections, and reference-null queries return `Result[Built, BuildError]`.
+  Only successful construction contains a node ID.
+  A failure retains its partial arena and exact diagnostic.
+
+  Twenty-six construction records retain every node, memo entry, result, and diagnostic on x86-64, ARM64, and Wasm.
+  An overflow after one complete branch retains the new node and memo entry in the error arena.
+  The original arena remains unchanged, and the error arena permits further construction.
+  Four added algebra controls pin this contract.
+
+  All 865 solver snapshots retain complete state before and after the change on all three targets.
+  The records cover extraction, reuse, and dense and sparse phi results.
+  Failed states retain their temporary indices, vectors, and diagnostic priority.
+  Separate compiler copies contain the snapshot probes.
+  Two native sanitizer probes release all 3,389 allocations, with zero live bytes in each process.
+  Four guarded-credit suites pass all three targets with balanced sanitizer checks.
+
+  Forty paired probes per case perform 5,000 operations.
+  Memo hits take 12% more time, construction takes 9% less time, and partial errors take 3% more time.
+  Twenty process pairs for each complete proof workload retain exact output.
+  Extraction, phi, and reuse time ratios are 0.978, 1.023, and 1.024.
+  These probes establish no general compiler speed change.
+
+  Phi joins return `Result[Joined, guard.BuildError]`.
+  A successful join contains the arena, bindings, and path.
+  A failed join carries its partial arena and diagnostic through the shared error type.
+  Empty bindings and a zero path remain valid success data.
+  The consumer applies bindings and path checks after `Ok`.
+
+  Nineteen direct records retain complete arena and outcome data on x86-64, ARM64, and Wasm.
+  Four new controls pin successful empty joins with true and false paths.
+  All 865 solver snapshots remain exact on all three targets through separate probe copies.
+  A native sanitizer probe releases all 2,515 allocations, with zero live bytes.
+  The phi and reuse suites pass all six target cases with balanced sanitizer checks.
+
+  Twenty paired runs per complete proof workload retain exact output.
+  Phi and reuse time ratios are 1.009 and 1.021.
+  Both benchmark variants include the same four new controls.
+  These measurements cover the two proof drivers, without compilation.
+
+  Printer recognition uses `Option[UseSugar]` and `Option[ForCSugar]`.
+  Absent forms no longer contain placeholder calls, bodies, or loop conditions.
+  Layout, statement output, and lint scores match the option before they use a payload.
+  All 113 format cases retain exact output and lint scores, and their output matches the Go formatter.
+
+  Printer self-checks pass on native, ARM64, and Wasm.
+  The native sanitizer reports 41,116 allocations and releases, with zero live bytes.
+  Forty paired probes per input cover valid programs with ordinary returns, `use` forms, and C-style loops.
+  Their candidate/baseline time ratios range from 1.001 to 1.009, without a general compiler speed claim.
+
+  Assignment recognition now returns `Option[AssignParts]` without placeholder expressions.
+  Match-arm output retains the recognized value instead of a second lookup.
+  Chain output matches every assignment before it reads its payload.
+  An empty or malformed chain retains its statements as a block.
+  This prevents the empty-chain bounds failure and placeholder output for invalid chain metadata.
+
+  All 113 format cases retain exact output and lint scores, and their output matches the Go formatter.
+  Seven malformed-chain cases compare the chain fallback with the same statements in a block.
+  These contracts execute on x86-64, ARM64, and Wasm.
+  The native sanitizer reports 1,758 allocations and releases, with zero live bytes.
+
+  Forty paired probes per input use valid programs with ordinary returns, assignment chains, or match values.
+  Candidate/baseline time ratios range from 0.961 to 0.995.
+  These probes include the parser, formatter, and complete output.
+  They establish no general compiler speed change.
+
+  The closure lifter also uses `Option[FuncDecl]` for function construction.
+  Both captured closures and named-function wrappers share that result type.
+  A declined transformation returns `None` without a placeholder declaration.
+  The callers preserve the original expression on that path.
+
+  The registry source parser now returns `Result[Source, string]`.
+  `Ok` carries the source and `Err` carries the diagnostic, without an empty source placeholder.
+  Its error paths use the shared quote function for malformed source fields.
+  Differential cases check both source data and diagnostic text against the Go parser on x86-64, ARM64 and Wasm.
+
+  Registry indexes now use `Result[Index, string]` instead of an error field beside partial entries.
+  The CLI and test drivers match the result before they read the index.
+  A position map makes the last source for each raw package/version key replace the earlier source.
+  Duplicate keys no longer appear twice in the version list.
+  Distinct raw keys retain their identity, with the same leading-zero behavior as Go.
+
+  Malformed section headers now use the shared quote function for exact Go diagnostics.
+  Twenty-seven index records match Go on x86-64, ARM64, and Wasm.
+  The baseline differs on ten records, with duplicate entries and malformed-header escapes.
+  The native sanitizer reports 1,802 allocations and releases, with zero live bytes.
+
+  Forty process triples per input compare valid registries with 40 or 400 entries.
+  Each process repeats index parse, numeric sort, and complete output 200 times.
+  The position map reserves space from the line count to avoid repeated growth.
+  Candidate/baseline time ratios are 1.068 and 1.029.
+  A separate `get_or` prototype is no faster than the standard-option lookup in these probes.
+  These measurements accompany correct duplicate-key selection and establish no general compiler speed change.
+
+  Registry source lookup returns `Option[Source]` without an empty source on a miss.
+  A defined entry with empty source fields remains `Some`, as the Go map lookup does.
+  Final selection returns `Result[Sel[], string]` with complete source data.
+  It retains the first resolver error and refuses unfinished states, unequal columns, and missing sources.
+  The CLI matches both results before a fetch or lock-file write.
+
+  Source and selection contracts check absence, empty success, refusal priority, partial results, repeated reads, and name order.
+  These contracts execute on x86-64, ARM64, and Wasm.
+  The native sanitizer reports 293 allocations and releases, with zero live bytes.
+  All 27 index records and 55 version records still match Go across the three targets.
+
+  Forty process pairs per input repeat registry parse, resolution, selection, and complete output 100 times.
+  Inputs contain zero, four, or forty packages, with Go as the independent oracle.
+  Candidate/baseline time ratios are 1.088, 1.016, and 1.015.
+  These measurements include the cost of the explicit outcomes and establish no general compiler speed change.
+
+  Hash validation also uses `Result[string, string]` instead of `HashResult`.
+  Success carries the hexadecimal digest without its prefix, and failure carries the diagnostic.
+  Manifest, lock-file, registry and package-store callers match that result.
+  Dependency fields and classification use `Result[Dep, string]` instead of `DepResult`.
+  Failed dependency parses carry no partial dependency that the caller can mistake for success.
+  The manifest still retains its earlier entries and diagnostic location on failure.
+  The manifest differential checks all dependency fields, capability grants and source lines, as well as exact diagnostics.
+  The string, scalar, string-array and capability parsers also use standard results.
+  `Parsed` and `ParsedList` are gone, and the CLI grant parser matches the capability result.
+  The manifest differential also checks workspace members and excluded versions.
+  All 56 cases execute on x86-64, ARM64 and Wasm.
+
+  The asset loader returns `Result[Assets, string]` instead of `LoadResult`.
+  An empty directory succeeds with a present, empty bundle.
+  A load failure carries only its diagnostic, without an absent-assets placeholder.
+  The bundle and substitution assertions execute on x86-64, ARM64 and Wasm.
+
+  The lock-file parser returns `Result[LockEntry[], string]` instead of `LockResult`.
+  Empty files return `Ok` with no entries, and invalid hashes return their diagnostic without partial entries.
+  The loader, fetch and vendor paths match that result.
+  LF and CRLF lock-file checks execute on x86-64, ARM64 and Wasm.
+  The vendor differential also exposed a Go reader diagnostic that omitted the lock-file directory.
+  The Go reader now retains the file path in parse diagnostics, as the self-host CLI already does.
+  The Go reader also tracks version presence separately from the parsed number.
+  Version `0.0.0` now survives a lock-file round trip, and missing versions still fail.
+
+  `mvs.parse_version` now returns `Result[pkgversion.Version, string]`.
+  Successful versions contain three 64-bit components, and failed parses carry only their diagnostic.
+  The old 32-bit fields changed `2147483648.0.0` into a negative version and accepted components above the 64-bit limit.
+  Registry and lock readers now share numeric validation and canonical output.
+  Their identical byte-split loops also share `util.split_char`.
+
+  The registry sorts numeric data after it parses each accepted version once.
+  Invalid entries in manually constructed indexes no longer act as version zero.
+  Version diagnostics retain Go quote escapes for control characters.
+  Fifty-five Go-oracle checks cover the parser, comparisons, indexes, and resolution on native, ARM64, and Wasm.
+  The native sanitizer reports 2,262 allocations and releases, with zero live bytes.
+
+  Forty paired probes per input give candidate/baseline ratios of 0.773 for 40 index entries and 0.106 for 400 entries.
+  A lock file with 1,000 entries gives a ratio of 0.934.
+  These probes validate their inputs with Go and measure input parse, numeric sort, and output.
+  They establish no general compiler speed change.
+
+  The lock parser also rejects incomplete entries, unknown fields, malformed quoted values and invalid versions.
+  Versions retain the Go reader's 64-bit component range and canonical decimal form.
+  A map resolves duplicate package names, so the last entry wins as it does in Go.
+  The registry and lock parsers share quoted-value validation.
+  A 37-case differential checks exact data and diagnostics on x86-64, ARM64 and Wasm.
+
+  The SSA lifter returns `Result[Lifted, string]` instead of `LResult`.
+  `Lifted` contains only a complete function and its debug and source metadata.
+  Refused operations return their reason without a partial function.
+  Lane annotation applies only to successful lifts, and the preparation cache stores only successful payloads.
+  Both native backends, the certifier and the physical-credit proofs match the result before they use a function.
+  Contract checks execute on x86-64, ARM64 and Wasm.
+
+  Variant payload lookup uses `Option[Payloads]` for builtin, match-arm, and literal queries.
+  `Payloads` contains only resolved field types and the unit marker.
+  A known empty variant returns `Some`, while an unknown variant returns `None`.
+  The `None` variant of an `Option` retains an empty payload without the unit marker.
+
+  Pattern validation returns `Result[Payloads, string]`.
+  Error priority remains `alt_cont`, pattern shape, unknown variant, then arity.
+  Success carries the validated payload directly into the arm builder.
+  Try conversion, variant construction, slice construction, and downcast paths match their lookup results.
+  Escape analysis retains its member-type fact even when the payload lookup is absent.
+
+  One hundred private probes retain shape data, unit markers, diagnostic priority, and escape facts on x86, ARM64, and Wasm.
+  Fifty-seven complete lowered modules retain all 18 body fields in both inline modes on those targets.
+  Another module retains its prior refusal output and status for each target.
+  That isolated metadata driver does not load the numeric extension that this fixture requires.
+
+  The 100 private sanitizer runs report 338,678 allocations and frees.
+  The 57 complete-module sanitizer runs report 2,332,018 allocations and frees.
+  Every normal run ends with zero live bytes.
+  The refusal exits before normal cleanup and does not count as a successful sanitizer run.
+
+  Forty process pairs per input measure the complete typed pipeline and output in both inline modes.
+  All inputs pass the Go checker.
+  Candidate/baseline time ratios are 0.999 for enum variants, 0.993 for option propagation, and 1.019 for member escape analysis.
+  These measurements establish no general compiler speed change.
+
+  Last-use initializer lookup returns `Option[ast.Expr]` instead of `LuInit`.
+  Missing names and duplicate declarations return `None`.
+  A unique declaration retains its original expression.
+  A real `ExprUnknown` payload also remains present.
+  Fresh-value checks, field unpack checks, and rename checks match the option before they read that expression.
+
+  Sixty-five private lookup records retain their prior output on x86, ARM64, and Wasm.
+  They cover payload data, duplicate names, absent names, freshness, field selection, aliases, and last-use keys.
+  Sixty-three complete diagnostic outputs also retain their prior order and multiplicity on those targets.
+  The 65 native sanitizer probes report 63,392 allocations, 63,392 frees, and zero live bytes.
+
+  Forty process pairs per input run the complete parser and checker over 500 functions.
+  All inputs pass the Go checker and both self-host checker versions.
+  Candidate/baseline time ratios are 1.011 for fresh locals, 1.020 for rename chains, and 1.028 for field unpack operations.
+  These measurements record the option cost and establish no general compiler speed change.
+
+  The scale-map matcher uses `Option[ast.Expr]` instead of `ScaleFactor` and its placeholder expression.
+  A declined rewrite retains the original call.
+  A matched rewrite receives the original factor expression as its success payload.
+
+  Known enum fields use `Option[Field[]]` instead of `KnownFields`.
+  `Some([])` identifies a known variant with no fields, while `None` retains the general destruction path.
+  Destruction and token reuse match the option without an empty placeholder array.
+  A helper-call assertion checks the fast path for a known variant with no fields.
+  Runtime checks cover unique and shared values on x86-64, ARM64 and Wasm, with balanced allocation counts.
+
+  Generic instantiation discovery uses `Option[Inst]` for direct calls and function arguments.
+  `Inst` contains only the name, specialization types and discovery depth.
+  Missing or unbound instances return `None` without an empty-name record.
+  Argument instances enter the worklist before their parent call instance.
+  The worklist retains its specialization keys and depth limit of 64.
+  Seven before/after cases retain rendered clone bodies, declaration metadata, counts and order.
+
+  SSA constructor dispatch uses `Option[LiftVals]` to distinguish an unrecognized operation from a recognized constructor.
+  A recognized constructor retains its state and refusal status.
+  Only an unrecognized operation reaches the read fallback.
+  Previously, constructors with too few operands fell through as string constants.
+  Six refusal checks reproduce that bug on x86-64, ARM64 and Wasm.
+  Positive checks retain string reads and empty-array construction.
+
+  Twenty-one unchanged cases retain complete SSA functions and metadata before and after the fix.
+  The candidate also matches those native baseline outputs on ARM64 and Wasm.
+  A refused constructor retains its lift state.
+
+  IR construction uses a separate `LowerState` record.
+  The public `LowerResult` shape remains unchanged in this preparatory step.
+  State conversion retains operation buffers, slot classes, debug names, source positions and refusal status.
+  Declaration alignment and parameter counts pass contract checks on three targets.
+  Inline and `no_inline` modes each retain all body fields across twelve before/after comparisons.
+  The native baseline outputs match candidate outputs on ARM64 and Wasm.
+
+  Four physical proof suites pass on x86-64 and Wasm with balanced allocations.
+
+  The public `ssarc.lower` boundary returns `Result[Option[Lowered], LowerState]`.
+  `Ok(Some(body))` carries only complete body data.
+  `Ok(None)` identifies a superseded slot without a placeholder body.
+  `Err(state)` retains partial operations, diagnostic identity and source metadata.
+
+  A refusal takes precedence over the superseded flag.
+  The semantic front end and census driver match these outcomes.
+  Application caches and merge interfaces still use `LowerResult` and need the remaining migration.
+
+  The semantic planner stores standard outcomes in its private body rows.
+  Refusals retain their partial state until the planner reports them.
+  Declaration and instance collectors retain standard outcomes.
+  Valid templates, external declarations and dropped declarations retain their slots as `Ok(None)`.
+  Declaration counts and instance origins remain aligned.
+  Accepted collections convert once for the remaining legacy prune and cache interfaces.
+
+  Runtime callback collections now contain only complete `Lowered` payloads.
+  The callback refuses failed declarations and helpers before it returns.
+  Helper selection preserves cached names and the first helper for each name.
+  Declaration order, metadata and helper provenance remain aligned.
+  A temporary adapter serves the remaining legacy query and merge interfaces.
+
+  Drop helpers and byte helpers return `Result[Lowered, LowerState]`.
+  Helper collections retain complete data on success and partial state on refusal.
+  Failed helpers retain their names for duplicate selection and diagnostics.
+  Runtime helper selection matches the result before it publishes a body.
+  Helper selection and merge inputs also retain standard results.
+  The merge converts only selected helpers for the remaining legacy application cache.
+  Cached names and the first helper for each name retain priority, even for failed helpers.
+  Merge indices, refusal state and metadata remain aligned.
+
+  Module eligibility gates return `Option[Lowered]` and `Option[Gated]`.
+  An unknown call or function value returns `None` without a placeholder cache.
+  Successful payloads retain declaration order, body metadata and physical origins.
+  Strict mode retains the original refusal diagnostics.
+  Native and Wasm callers match the option before they read the cache.
+
+  Prepared bodies store only the complete `Lowered` payload.
+  Native instruction emission, source maps and debug variables use that payload.
+  Wasm function emission also requires complete body data.
+  The emission boundary refuses declined and superseded entries before it constructs a prepared body.
+
+  Seventy-two before/after comparisons retain identical assembly and Wasm text.
+  Twelve programs each use inline and `no_inline` modes across three output targets.
+  Valid emission probes use ordinary function names and pass compilation before measurement.
+  Twenty process pairs per input give candidate/baseline ratios from 0.994 to 1.015.
+  These probes include the parser, code emission and output, without a general compiler speed claim.
+
+  Builtin recognition retains its owned-state carrier.
+  A generic result prototype preserves all fields across 698 states and 349 dispatch inputs.
+  Both branches retain the construction state, and copy counters remain zero.
+  The prototype reduces allocations but regresses the repeated `__clz32` dispatch probe by 10.5%.
+  A repeated raw no-op probe regresses by 2.9%, while unknown-call dispatch improves by 4.3%.
+
+  These synthetic probes use 300,000 calls and twenty process pairs on one CPU.
+  The workspace preserves the rejected prototype, raw timings, outputs and source hashes.
+  The prototype remains outside production, and external body collections still need their result migration.
+
+  _Rest of this row:_ the bespoke `*Result` structs remain.
+  Generic functions no longer block these migrations.
+  T6/SH-026 is complete, and its four signature lookup families use standard options.
+  The remaining result families need a contract review before migration.
 
 ---
 
@@ -911,7 +1418,7 @@ appendix §6.)
   than native's "expected X, got Y". Positions are the half that gated
   usability; the message half wants the parser to carry errors and is its own
   change.
-- [~] **SH-042 — `parse_type_name` split; the structured-type half is T2.**
+- [x] **SH-042 — `parse_type_name` is split. The structured-type work belongs to T2.**
   _Done:_ 350 lines covering five unrelated grammars became an 8-line dispatch
   on the leading token, plus `parse_type_dyn` (18), `parse_type_handle` (11),
   `parse_type_punct_led` (27) -> `parse_type_paren` (167), and
@@ -937,7 +1444,7 @@ appendix §6.)
   `\u` escape is a one-site change.
 
 ### Checker / asmcore
-- [~] **SH-044 — the giant-function half is done; the table-drive half moved.**
+- [x] **SH-044 — the resolver split and named-builtin tables are complete.**
   _Done:_ `infer_expr_type` (`asmcore.fern:3224`) is **76 lines**, a flat match
   that dispatches to `infer_expr_binary_type` / `infer_expr_unary_type` /
   `infer_expr_call_type`, and the latter splits again into the per-receiver
@@ -966,9 +1473,10 @@ appendix §6.)
   here needs a (receiver-kind, name) key, which is more machinery than the chain
   it would replace.
 
-  _Noted:_ the table pattern re-allocates its array per call, as
-  `is_builtin_function` has since SH-046. Nothing gates the self-host compiler's
-  own compile time (`docs/TEST-GATES.md`), so that cost is unmeasured on both.
+  The 2026-10 `EmitState` stores `builtin_i32` and `builtin_string` name indices.
+  `new_state` builds each index once.
+  The named resolver uses their `has` methods and reuses the membership arrays.
+  The receiver-dependent method dispatch above remains intentional.
 - [x] **SH-045 — `check_module` rebuilt one function's scope 10-13 times.**
   _Done:_ the count was worse than this entry recorded — 9 rebuilds across the
   body diagnostic passes, a 10th inside `check_func_body` (which the same loop
@@ -1002,34 +1510,35 @@ appendix §6.)
   (`Option`/`Result`/`IoError`/`JsonValue`) that should read from the same table.
 
 ### Interp / SSA
-- [~] **SH-047 — the O(n²) claim was wrong; `update` was the real cost.**
-  The row said `Env`'s parallel arrays are "rebuilt per binding (O(n²))". They
-  are not. `bind` / `bind_decl` use `.append` plus a struct-update spread, and
-  `.append` is in-place on a uniquely-owned array.
+- [x] **SH-047 — Scope frames replace copies of outer bindings.**
+  The original claim about quadratic declaration cost was incorrect.
+  Array append retains amortized constant cost when the arrays have one owner.
+  The earlier assignment fix searches from the last declaration and updates only
+  the value array.
 
-  **Measured with the compiler's own instrument, not reasoned.**
-  `__arr_push_shared_count()` counts appends that copied the whole buffer
-  despite spare capacity — i.e. appends made O(n) by a stray reference, "zero
-  on a healthy run". A probe mirroring `bind_decl`'s exact shape (parallel
-  arrays in a struct, rebound through a spread with one appended element)
-  reports **0 over 2000 binds**. Binding is amortised O(1).
+  `Env` now links each scope to its parent.
+  Each frame contains its local names, values, and declared types.
+  Lookup and assignment search the local frame before the parent frames.
+  Scope exit follows parent links and preserves updates to outer variables.
+  Blocks without local declarations reuse their current frame.
 
-  _Done:_ `Env.update`, which runs on EVERY assignment in an interpreted
-  program, was the actual O(n): it rebuilt BOTH `names` and `values` element by
-  element to change one slot, and its backward scan never stopped on the hit —
-  it always walked to index 0. It is now a backward scan that returns at the
-  first (innermost) match with `values.with(i, v)`; `names` is untouched, so no
-  array is rebuilt. 29 lines to 11.
+  Closures and sessions retain their flat capture format.
+  `flattened_env` collects frame data at these boundaries and reuses root
+  arrays when the environment has no parent.
+  Tests on x86-64, ARM64, and Wasm cover typed shadows, shared cells, escaped
+  captures, loop exits, and session errors.
+  A counter probe removes two frames above 2,000 outer bindings without an
+  allocation, and a positive control confirms that the counter works.
+  The native sanitizer test reports equal allocation and release counts.
 
-  _Still open, and this is the row's real remainder:_ `trim_env` rebuilds three
-  arrays on every scope exit, and the "outer-scope updates live below `base`"
-  invariant is enforced only by comment. That one is NOT fixable with COW — the
-  function keeps a PREFIX, and a slice copies the prefix just as a loop does, so
-  there is no asymptotic win without changing the representation. It wants the
-  row's frame-stack `Env` (popping a frame rather than recomputing a prefix),
-  which is a redesign of the interpreter's scoping rather than a local fix.
-  Note the interpreter is not on the compile path — it serves `interp_run` and
-  the `-interp` oracle — so weigh that redesign against what it actually buys.
+  Five valid programs passed the Go checker and interpreter before native
+  measurements with 40 process pairs on CPU 2.
+  Two loop cases with 500 outer bindings and 3,000 iterations took 30–32% of
+  the baseline time.
+  The small loop took 7% more time, the closure case took 3% more time, and
+  the block case without declarations stayed near the baseline.
+  These measurements include parser execution and interpretation, which do not form
+  part of the compiler path.
 
 - [x] **SH-048 — `eval_expr` / `compile_expr` giants.** _Done:_ `eval_binary` and
   `eval_unary` extracted from interp's `eval_expr`; the VM's six near-identical
@@ -1188,7 +1697,7 @@ appendix §6.)
   it, #6756) has no counterpart in `asm_load_run`'s flat `add_imports`. Folding
   those together is a behaviour change to the asm loader, so it is its own
   change.
-- [~] **SH-056 — the shared preamble landed; the shims themselves are pinned.**
+- [x] **SH-056 — the shared preamble and dead-shim cleanup are complete.**
   _Done:_ one dead file deleted (`tmp_wprobe_run.fern` — a leftover probe no
   test, script, workflow or doc referenced), and the 17 stdin-driven drivers
   now share `rundriver.parse_stdin(driver)` instead of copying its three lines
@@ -1213,12 +1722,12 @@ appendix §6.)
   green because the warning goes to stderr and those tests assert on
   diagnostics and exit codes.
 
-  _Still open:_ retiring shims. Every remaining `*_run.fern` is referenced by a
-  Go test, script or workflow — checked by name across the tree — so the count
-  is not reducible by deletion. The two keeper groups this row already names
-  (golden-test drivers pinned by a Go test; a `main()` inside a library module
-  as the in-file test idiom) account for the rest. **The `main()` count is not
-  a debt number** and chasing it down is not an improvement.
+  _2026-10 verification:_ all 77 current `*_run.fern` entry points have a Go test, script or workflow reference.
+  The inventory includes filenames that tests construct from a driver name and the `.fern` extension.
+  For example, `TestSelfHostRetainedNativeBodies` constructs the paths for both retained-body drivers.
+  No unreferenced shim remains under this row.
+  Keep the golden-test drivers and in-file test entry points that this row exempts.
+  Their count does not identify redundant code.
 
 - [x] **SH-058 — `wasm_ir.fern` `emit_function_ir`**, the largest function named
   anywhere in this audit. **1254 → 84 lines (−93%)**: four slices each lifting
@@ -1268,10 +1777,9 @@ appendix §6.)
 ## 5. Suggested sequencing
 
 1. **Correctness first** — SH-001…SH-010 are all closed; keep that bar.
-2. **The giant splits are done** — SH-050, SH-042, SH-044's split half, SH-054
-   and SH-058 have all landed. What is left of SH-027 is `printer.fern` (a
-   different shape) and the SSA per-instruction chain (deliberately not worth
-   it) — see the row.
+2. **The giant splits and string-builder review are complete.**
+   SH-050, SH-042, SH-044's split half, SH-054, SH-058, and SH-027 are complete.
+   The remaining semantic walks and type representation still require changes.
 3. **T3 visitor** (SH-022) — `parser`'s 12 rewrite passes and `checker`'s 15
    scope-threading passes are what is left; `wasm_ir`'s cluster was never an AST
    walk and is done.

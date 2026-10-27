@@ -1,8 +1,10 @@
 package e2ecompiler
 
 import (
-	"github.com/jakechampion/lang/internal/testing/e2eharness"
+	"os/exec"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func writeSelfHostConstfoldProject(t *testing.T) string {
@@ -31,5 +33,17 @@ func TestSelfHostConstfoldArm64(t *testing.T) {
 	_, _ = cmd.CombinedOutput()
 	if code := cmd.ProcessState.ExitCode(); code != 0 {
 		t.Errorf("fern-port constfold assertion %d failed", code)
+	}
+}
+
+func TestSelfHostConstfoldWasm(t *testing.T) {
+	wasmtime, err := exec.LookPath("wasmtime")
+	if err != nil {
+		t.Skip("wasmtime not on PATH")
+	}
+	dir := writeSelfHostConstfoldProject(t)
+	bin := buildSelfHostBinFor(t, dir, "constfold.fern", "constfold.wasm", e2eharness.TargetWasm32Wasi)
+	if out, err := exec.Command(wasmtime, "run", bin).CombinedOutput(); err != nil {
+		t.Fatalf("Wasm constant-fold assertions: %v\n%s", err, out)
 	}
 }

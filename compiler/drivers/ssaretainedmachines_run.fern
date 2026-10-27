@@ -30,9 +30,6 @@ function main(): i32 {
     return 1;
   }
   let g = retained.program(mod);
-  if (!g.ok) {
-    return 1;
-  }
   let text = retained.emit(g, g.cache, g.physical, false, true, true, 0, -1).text;
   decrementtexts.run(text);
   decrementisas.run(text);

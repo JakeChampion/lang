@@ -172,12 +172,8 @@ struct Typed { g: ircore.Gated, u: ircore.Units, keys: ircore.UnitKeys }
 function typed_units(parts: flatten.PerModule[], d: semlower.Driven, cache_dir: string): Typed {
   let im: parser.Module = ircore.with_records(parser.infer_ret_types_module(wasm_ir.route_normalized(d.full)), d.sub);
   let stab: irtables.StructTab = irtables.struct_tab(im.structs);
-  let l: ircore.Lowered = ircore.gate(im, d.sub);
-  if (!l.ok) {
-    ircore.eprint_ir_ineligible();
-    exit(1);
-  }
-  let g: ircore.Gated = ircore.Gated { ok: true, im: im, stab: stab, cache: l.cache, physical: l.physical };
+  let l = match (ircore.gate(im, d.sub)) { Some(g) => g, None => { ircore.eprint_ir_ineligible(); exit(1); } };
+  let g: ircore.Gated = ircore.Gated { im: im, stab: stab, cache: l.cache, physical: l.physical };
   let raw: parser.Module[] = [];
   let entry_at: i32 = 0;
   let k: i32 = 0;

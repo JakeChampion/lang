@@ -14,13 +14,17 @@ function require(ok: boolean, code: i32): void {
   }
 }
 
-function body(name: string, ops: ir.Op[]): irtables.LowerResult {
-  return irtables.LowerResult {
+function state(name: string, ops: ir.Op[]): irtables.LowerState {
+  return irtables.LowerState {
     source_positions: irtables.no_source(),
     ok: true, ops: ops, n_locals: 0, n_params: 0,
     erased_wide: false, superseded: false, arr_slots: [], i64_slots: [], f64_slots: [], v128_slots: [], str_slots: [],
     why: "", name: name, result_kind: 0, dbg_slots: [], dbg_names: [], dbg_types: [],
   };
+}
+
+function body(name: string, ops: ir.Op[]): irtables.LowerResult {
+  return irtables.lower_result(state(name, ops));
 }
 
 function same(a: irtables.LowerResult[], b: irtables.LowerResult[]): void {
@@ -34,12 +38,12 @@ function same(a: irtables.LowerResult[], b: irtables.LowerResult[]): void {
 }
 
 function merged(): void {
-  let first = body("same", [ir.op_const_i32(1), ir.op_return()]);
-  let other = body("same", [ir.op_const_i32(2), ir.op_return()]);
-  let failed = irtables.LowerResult { ...other, name: "failed", ok: false, why: "retained refusal" };
-  let fold = body("fold", [ir.op_const_i32(2), ir.op_const_i32(3), ir.op_bin("add", 0, false), ir.op_return()]);
-  let rows = [other, fold, first, failed, irtables.LowerResult { ...failed, ok: true, why: "" }];
-  let cache = [first, other, failed];
+  let first = state("same", [ir.op_const_i32(1), ir.op_return()]);
+  let other = state("same", [ir.op_const_i32(2), ir.op_return()]);
+  let failed = irtables.LowerState { ...other, name: "failed", ok: false, why: "retained refusal", n_params: 1, n_locals: 4, str_slots: [0], dbg_slots: [0], dbg_names: ["partial"], dbg_types: ["string"] };
+  let fold = state("fold", [ir.op_const_i32(2), ir.op_const_i32(3), ir.op_bin("add", 0, false), ir.op_return()]);
+  let rows = [irtables.helper_outcome(other), irtables.helper_outcome(fold), irtables.helper_outcome(first), irtables.helper_outcome(failed), irtables.helper_outcome(irtables.LowerState { ...failed, ok: true, why: "" })];
+  let cache = [irtables.lower_result(first), irtables.lower_result(other), irtables.lower_result(failed)];
   let m = ssarc.merge_helpers_mapped(cache, rows);
   require(m.cache_len == 3 && m.helper_indices.len() == 1 && m.helper_indices[0] == 1, 133);
   same(m.bodies, ssarc.merge_helpers(cache, rows));
@@ -48,8 +52,17 @@ function merged(): void {
   let empty = ssarc.merge_helpers_mapped([], rows);
   require(empty.cache_len == 0 && empty.helper_indices.len() == 3, 135);
   require(empty.helper_indices[0] == 0 && empty.helper_indices[1] == 1 && empty.helper_indices[2] == 3, 136);
-  same([empty.bodies[0], empty.bodies[2]], [other, failed]);
+  same([empty.bodies[0], empty.bodies[2]], [irtables.lower_result(other), irtables.lower_result(failed)]);
+  require(empty.bodies[2].dbg_names[0] == "partial" && empty.bodies[2].dbg_types[0] == "string" && empty.bodies[2].dbg_slots[0] == 0 && empty.bodies[2].str_slots[0] == 0, 151);
   same(empty.bodies, ssarc.merge_helpers([], rows));
+  let retired = irtables.LowerState { ...fold, name: "retired", superseded: true };
+  let retired_merge = ssarc.merge_helpers_mapped([], [irtables.helper_outcome(retired)]);
+  let optimized = ir.optimize_ops(retired.ops, retired.n_params, retired.n_locals);
+  same(retired_merge.bodies, [irtables.lower_result(irtables.LowerState { ...retired, ops: optimized.ops, n_locals: optimized.n_locals })]);
+  require(retired_merge.helper_indices.len() == 1 && retired_merge.helper_indices[0] == 0, 152);
+  let refused_retired = irtables.LowerState { ...retired, ok: false, why: "refused before retirement" };
+  let refused_merge = ssarc.merge_helpers_mapped([], [irtables.helper_outcome(refused_retired)]);
+  same(refused_merge.bodies, [irtables.lower_result(refused_retired)]);
   let none = ssarc.merge_helpers_mapped([], []);
   require(none.cache_len == 0 && none.helper_indices.len() == 0 && none.bodies.len() == 0, 137);
   let cached = ssarc.merge_helpers_mapped(cache, []);
@@ -63,11 +76,11 @@ function frame(): void {
     ir.op_bin("lt_s", 0, false), ir.op_bin("not", 0, false), ir.op_brif(1), ir.op_load_local(1), ir.op_const_i32(1),
     ir.op_bin("add", 0, false), ir.op_store_local(1), ir.op_br(0), ir.op_end(), ir.op_end(),
   ];
-  let h = irtables.LowerResult { ...body("loop", ops), n_params: 1, n_locals: 2 };
-  let m = ssarc.merge_helpers_mapped([], [h]);
+  let h = irtables.LowerState { ...state("loop", ops), n_params: 1, n_locals: 2 };
+  let m = ssarc.merge_helpers_mapped([], [irtables.helper_outcome(h)]);
   let expected = ir.optimize_ops(h.ops, h.n_params, h.n_locals);
   require(expected.n_locals > h.n_locals && m.helper_indices[0] == 0, 138);
-  let transformed = irtables.LowerResult { ...h, ops: expected.ops, n_locals: expected.n_locals };
+  let transformed = irtables.lower_result(irtables.LowerState { ...h, ops: expected.ops, n_locals: expected.n_locals });
   same(m.bodies, [transformed]);
 }
 
@@ -111,7 +124,7 @@ function producers(): void {
   let a = semlower.runtime_lowering("struct A { n: i32 } function identity(x: A): i32 { return x.n; }");
   let b = semlower.runtime_lowering("struct B { n: i64 } function identity(x: B): i64 { return x.n + 1; }");
   let origins: physicalbody.Lowered[] = [a, b];
-  let rows = [a.bodies[0], b.bodies[0]];
+  let rows: Result[irtables.Lowered, irtables.LowerState][] = [Ok(a.bodies[0]), Ok(b.bodies[0])];
   let m = ssarc.merge_helpers_mapped([], rows);
   require(m.helper_indices.len() == 1 && m.helper_indices[0] == 0, 143);
   let selected = origins[m.helper_indices[0]];
@@ -125,7 +138,7 @@ function producers(): void {
   let kept = check_prune(mod, [], m.bodies, [0]);
   require(origins[m.helper_indices[kept.extra_indices[0]]].records.names.has("A"), 146);
   let adapter = parser.parse_module(lexer.tokenize("function ndarray__inner_kernel(): i32 { return 0; }"));
-  let gone = body("ndarray__gone", []);
+  let gone = irtables.helper_outcome(state("ndarray__gone", []));
   let with_tail = ssarc.merge_helpers_mapped([], [gone, rows[0], rows[1]]);
   let pruned = check_prune(adapter, [body("", [ir.op_call_direct("ndarray__gone", 0)])], with_tail.bodies, [1]);
   let inputs: physicalbody.Lowered[] = [physicalbody.empty(), a, b];

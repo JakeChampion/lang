@@ -3060,7 +3060,7 @@ function ssa_back_copy(ins: ssa.SInst, reg_of: i32[], lp: string, saves: SlowSav
 }
 
 // An instruction whose caller registers are saved around its call.
-function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.LowerResult, around: i32, own s: asmcore.EmitState): asmcore.EmitState {
+function ssa_saved_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, around: i32, own s: asmcore.EmitState): asmcore.EmitState {
   if (around != 0 && ssa_inline_rc_dec(blk.insts[ii], s)) {
     return ssa_rc_dec(blk.insts[ii], reg_of, lp, around, fr.cold_base, ssa_x0_forget(s));
   }
@@ -3813,7 +3813,7 @@ function ssa_fusable_cmp(cmp: ssa.SInst): boolean {
   return cmp.kind_tag == 9 && (ircore.is_int_cmp_kind(ir.kind_id(cmp.str)) || ssa.float_cmp(cmp.str));
 }
 
-function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
+function ssa_block_inst(blk: ssa.SBlock, ii: i32, reg_of: i32[], lp: string, fr: SsaFrame, r: irtables.Lowered, own s: asmcore.EmitState): asmcore.EmitState {
   let ins: ssa.SInst = blk.insts[ii];
   if (ins.kind_tag == 36) {
     return ssa_select(ins, reg_of, fr, ssa_select_fuse(fr, blk, ii), s);
@@ -4120,7 +4120,7 @@ function ssa_line_loc(ins: ssa.SInst, s: asmcore.EmitState): asmcore.EmitState {
   return s.write(row + "\n");
 }
 
-function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: irtables.LowerResult, own s: asmcore.EmitState): asmcore.EmitState {
+function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: irtables.Lowered, own s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ins.kind_tag;
   if (ssa.back_copy_call(ins) && ssa_inline_back(s)) {
     return ssa_back_copy(ins, reg_of, lp, SlowSaves { mask: ssa_cold_mask(fr, ins), base: fr.cold_base }, s);
@@ -4828,17 +4828,14 @@ function ssa_dbg_locs(reg_of: i32[], save: i32, want: boolean): string[] {
   return out;
 }
 
-function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+function emit_ssa_function(r: irtables.Lowered, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let t_lift: i64 = monotonic_ns();
-  let lifted: ssa_lift.LResult = s.lift(pre, label_name, r);
-  let why: string = lifted.bail;
-  if (lifted.ok) {
-    let collision: i32 = ssa.repeated_block_id(lifted.func);
-    if (collision >= 0) {
-      ircore.ssa_block_id_collision(label_name, collision);
-    }
-    why = ssa_unsupported(lifted.func);
+  let lifted: ssa_lift.Lifted = match (s.lift(pre, label_name, r)) { Ok(l) => l, Err(message) => { ircore.ssa_refuse(label_name, message); return s; } };
+  let collision: i32 = ssa.repeated_block_id(lifted.func);
+  if (collision >= 0) {
+    ircore.ssa_block_id_collision(label_name, collision);
   }
+  let why: string = ssa_unsupported(lifted.func);
   if (why != "") {
     ircore.ssa_refuse(label_name, why);
   }
@@ -4866,12 +4863,12 @@ pub function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physica
 }
 
 pub function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalbody.Selected, pre: asmcore.Prelift, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+  let body = ircore.body_for_emit(label_name, r);
   if (weak) {
     s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n.weak __fn_" + asmcore.sanitize_label(label_name) + ".k\n");
   }
-  ircore.lower_failed_refuse(label_name, r);
-  irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vgate);
-  return emit_ssa_function(r, selected, pre, label_name, s, vgate);
+  irverifygate.verify_or_refuse(label_name, body.ops, body.n_params, body.n_locals, vgate);
+  return emit_ssa_function(body, selected, pre, label_name, s, vgate);
 }
 
 function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
@@ -4900,7 +4897,7 @@ function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 }
 
 // fern-lint: allow cyclomatic-complexity
-function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 112) {
     return s;
   }
@@ -5423,7 +5420,7 @@ function ssa_dyn_dispatch(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.
   return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
 }
 
-function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.LowerResult, s: asmcore.EmitState): asmcore.EmitState {
+function ssa_flat_op(ins: ssa.SInst, reg_of: i32[], lp: string, r: irtables.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let kind: i32 = r.ops[ins.imm].kind_tag;
   if (kind == 112) {
     s = ssa_x0_forget(s);
@@ -6207,7 +6204,7 @@ function emit_runtime(roots: string, s: asmcore.EmitState): asmcore.EmitState {
 pub function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.EmitState {
   let fns: parser.FuncDecl[] = m.funcs;
   let lowered: physicalbody.Lowered = s.rt_lower(m);
-  let bodies: irtables.LowerResult[] = lowered.bodies;
+  let bodies: irtables.LowerResult[] = irtables.lowered_results(lowered.bodies);
   let physical = physicalbody.collection(lowered);
   let previous_regs: irtables.SigReg = s.reg_entries;
   let previous_leaves: ssa.Leaves = s.leaves;
@@ -10792,10 +10789,7 @@ pub function emit_module_or_error_sub(mod: parser.Module, darwin: boolean, sub: 
 }
 
 pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: ircore.Sub, recs: usize): string {
-  let g: ircore.Gated = ircore.gate_program(mod, sub);
-  if (!g.ok) {
-    return "";
-  }
+  let g = match (ircore.gate_program(mod, sub)) { Some(g) => g, None => { return ""; } };
   return emit_module_ir_flat(g.im, g.stab, darwin, ircore.inline_tiny_leaves(g.im, g.cache), g.physical, sub.rt_lower, recs, sub.switches);
 }
 

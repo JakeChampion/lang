@@ -1,6 +1,8 @@
 import "./util";
+import "./pkgversion";
 import "./capvocab";
 import "./docsummary";
+import "core/map";
 
 pub struct Dep {
   name: string,
@@ -39,31 +41,15 @@ function index_of(s: string, c: u8, from: i32): i32 {
   return 0 - 1;
 }
 
-function quoted_value(s: string, from: i32): Option[string] {
-  let q1: i32 = index_of(s, b'"', from);
-  if (q1 < 0) {
-    return None;
+pub function parse_quoted(s: string): Result[string, string] {
+  if (s.len() < 2 || s[0] != b'"' || s[s.len() - 1] != b'"') {
+    return Err("expected a quoted string, got " + docsummary.quote(s));
   }
-  let q2: i32 = index_of(s, b'"', q1 + 1);
-  if (q2 < 0) {
-    return None;
+  let inner: string = slice_unchecked(s, 1, s.len() - 1) + "";
+  if (index_of(inner, b'"', 0) >= 0 || index_of(inner, b'\\', 0) >= 0) {
+    return Err("escapes unsupported in " + docsummary.quote(s));
   }
-  return Some(slice_unchecked(s, q1 + 1, q2) + "");
-}
-
-function split_char(src: string, c: u8): string[] {
-  let out: string[] = [];
-  let start: i32 = 0;
-  let i: i32 = 0;
-  while (i < src.len()) {
-    if (src[i] == c) {
-      out = out.append(slice_unchecked(src, start, i) + "");
-      start = i + 1;
-    }
-    i = i + 1;
-  }
-  out = out.append(slice_unchecked(src, start, src.len()) + "");
-  return out;
+  return Ok(inner);
 }
 
 pub function line_content(raw: string): string {
@@ -103,7 +89,7 @@ pub function parse(src: string): Manifest {
   let workspace: boolean = false;
   let section: string = "";
   let seen: string[] = [];
-  let lines: string[] = split_char(src, b'\n');
+  let lines: string[] = util.split_char(src, b'\n');
   let li: i32 = 0;
   while (li < lines.len() && m.err.len() == 0) {
     let line: string = line_content(lines[li]);
@@ -193,126 +179,140 @@ function with_entry(m: Manifest, section: string, line: string, at: i32, seen: s
 }
 
 function with_package_key(m: Manifest, key: string, val: string): Manifest {
-  let s: Parsed = parse_string(val);
-  if (s.err.len() > 0) {
-    return failed(m, key + ": " + s.err);
+  match (parse_string(val)) {
+    Ok(value) => {
+      if (key == "name") {
+        return Manifest { ...m, name: value };
+      }
+      if (key == "lib") {
+        return Manifest { ...m, lib: value };
+      }
+      if (key == "index") {
+        return Manifest { ...m, index: value };
+      }
+      if (key == "version") {
+        return m;
+      }
+      return failed(m, "unknown [package] key " + docsummary.quote(key) + " (supported: name, version, lib, index)");
+    },
+    Err(message) => {
+      return failed(m, key + ": " + message);
+    }
   }
-  if (key == "name") {
-    return Manifest { ...m, name: s.value };
-  }
-  if (key == "lib") {
-    return Manifest { ...m, lib: s.value };
-  }
-  if (key == "index") {
-    return Manifest { ...m, index: s.value };
-  }
-  if (key == "version") {
-    return m;
-  }
-  return failed(m, "unknown [package] key " + docsummary.quote(key) + " (supported: name, version, lib, index)");
 }
 
 function with_dep(m: Manifest, key: string, val: string, at: i32): Manifest {
-  let d: DepResult = parse_dep(key, val);
-  if (d.err.len() > 0) {
-    return failed(m, "dependency " + docsummary.quote(key) + ": " + d.err);
+  match (parse_dep(key, val)) {
+    Ok(d) => {
+      if (!valid_dep_name(key)) {
+        return failed(m, "invalid dependency name " + docsummary.quote(key) + " (letters, digits, `_`, `-`; must not start with a digit)");
+      }
+      return Manifest { ...m, deps: m.deps.append(Dep { ...d, line: at }) };
+    },
+    Err(message) => {
+      return failed(m, "dependency " + docsummary.quote(key) + ": " + message);
+    }
   }
-  if (!valid_dep_name(key)) {
-    return failed(m, "invalid dependency name " + docsummary.quote(key) + " (letters, digits, `_`, `-`; must not start with a digit)");
-  }
-  return Manifest { ...m, deps: m.deps.append(Dep { ...d.dep, line: at }) };
 }
 
 function with_members(m: Manifest, key: string, val: string): Manifest {
   if (key != "members") {
     return failed(m, "unknown [workspace] key " + docsummary.quote(key) + " (supported: members)");
   }
-  let ms: ParsedList = parse_str_array(val);
-  if (ms.err.len() > 0) {
-    return failed(m, "members: " + ms.err);
+  match (parse_str_array(val)) {
+    Ok(members) => {
+      return Manifest { ...m, members: members };
+    },
+    Err(message) => {
+      return failed(m, "members: " + message);
+    }
   }
-  return Manifest { ...m, members: ms.values };
 }
 
 function with_lint(m: Manifest, section: string, key: string, val: string): Manifest {
-  let v: Parsed = parse_scalar(val);
-  if (v.err.len() > 0) {
-    return failed(m, "[" + section + "] " + key + ": " + v.err);
+  match (parse_scalar(val)) {
+    Ok(value) => {
+      if (section == "lint.options" && index_of(key, b'.', 0) < 0) {
+        return failed(m, "[lint.options] key " + docsummary.quote(key) + " must be spelled <rule>.<option>");
+      }
+      return Manifest { ...m, lint_keys: m.lint_keys.append(key), lint_vals: m.lint_vals.append(value) };
+    },
+    Err(message) => {
+      return failed(m, "[" + section + "] " + key + ": " + message);
+    }
   }
-  if (section == "lint.options" && index_of(key, b'.', 0) < 0) {
-    return failed(m, "[lint.options] key " + docsummary.quote(key) + " must be spelled <rule>.<option>");
-  }
-  return Manifest { ...m, lint_keys: m.lint_keys.append(key), lint_vals: m.lint_vals.append(v.value) };
 }
 
 function with_exclude(m: Manifest, key: string, val: string): Manifest {
   if (!valid_dep_name(key)) {
     return failed(m, "invalid [exclude] package name " + docsummary.quote(key) + " (letters, digits, `_`, `-`; must not start with a digit)");
   }
-  let vs: ParsedList = parse_str_array(val);
-  if (vs.err.len() > 0) {
-    return failed(m, "exclude " + key + ": " + vs.err);
-  }
-  let excl_pkg: string[] = m.excl_pkg;
-  let excl_ver: string[] = m.excl_ver;
-  for v in vs.values {
-    if (!is_version(v)) {
-      return failed(m, "exclude " + key + ": version must be MAJOR.MINOR.PATCH digits, got " + docsummary.quote(v));
+  match (parse_str_array(val)) {
+    Ok(versions) => {
+      let excl_pkg: string[] = m.excl_pkg;
+      let excl_ver: string[] = m.excl_ver;
+      for v in versions {
+        if (!is_version(v)) {
+          return failed(m, "exclude " + key + ": version must be MAJOR.MINOR.PATCH digits, got " + docsummary.quote(v));
+        }
+        excl_pkg = excl_pkg.append(key);
+        excl_ver = excl_ver.append(v);
+      }
+      return Manifest { ...m, excl_pkg: excl_pkg, excl_ver: excl_ver };
+    },
+    Err(message) => {
+      return failed(m, "exclude " + key + ": " + message);
     }
-    excl_pkg = excl_pkg.append(key);
-    excl_ver = excl_ver.append(v);
   }
-  return Manifest { ...m, excl_pkg: excl_pkg, excl_ver: excl_ver };
 }
 
-struct Parsed { value: string, err: string }
-
-pub struct ParsedList { values: string[], err: string }
-
-function parse_string(val: string): Parsed {
+function parse_string(val: string): Result[string, string] {
   if (val.len() < 2 || val[0] != b'"' || val[val.len() - 1] != b'"') {
-    return Parsed { value: "", err: "expected a double-quoted string, got " + docsummary.quote(val) };
+    return Err("expected a double-quoted string, got " + docsummary.quote(val));
   }
   let s: string = slice_unchecked(val, 1, val.len() - 1) + "";
   if (index_of(s, b'"', 0) >= 0 || index_of(s, b'\\', 0) >= 0) {
-    return Parsed { value: "", err: "escapes are not supported in " + docsummary.quote(val) + " (use forward slashes in paths)" };
+    return Err("escapes are not supported in " + docsummary.quote(val) + " (use forward slashes in paths)");
   }
-  return Parsed { value: s, err: "" };
+  return Ok(s);
 }
 
-function parse_scalar(val: string): Parsed {
+function parse_scalar(val: string): Result[string, string] {
   if (val.len() > 0 && val[0] == b'"') {
     return parse_string(val);
   }
   if (val.len() == 0) {
-    return Parsed { value: "", err: "expected a quoted string or a number, got an empty value" };
+    return Err("expected a quoted string or a number, got an empty value");
   }
   if (!is_integer_text(val)) {
-    return Parsed { value: "", err: "expected a quoted string or a number, got " + docsummary.quote(val) };
+    return Err("expected a quoted string or a number, got " + docsummary.quote(val));
   }
-  return Parsed { value: val, err: "" };
+  return Ok(val);
 }
 
-function parse_str_array(val: string): ParsedList {
+function parse_str_array(val: string): Result[string[], string] {
   if (val.len() < 2 || val[0] != b'[' || val[val.len() - 1] != b']') {
-    return ParsedList { values: [], err: "expected an array like [\"a\", \"b\"], got " + docsummary.quote(val) };
+    return Err("expected an array like [\"a\", \"b\"], got " + docsummary.quote(val));
   }
   let out: string[] = [];
-  for raw in split_char(slice_unchecked(val, 1, val.len() - 1) + "", b',') {
+  for raw in util.split_char(slice_unchecked(val, 1, val.len() - 1) + "", b',') {
     let part: string = util.trim(raw);
     if (part.len() > 0) {
-      let s: Parsed = parse_string(part);
-      if (s.err.len() > 0) {
-        return ParsedList { values: [], err: s.err };
+      match (parse_string(part)) {
+        Ok(value) => {
+          out = out.append(value);
+        },
+        Err(message) => {
+          return Err(message);
+        }
       }
-      out = out.append(s.value);
     }
   }
-  return ParsedList { values: out, err: "" };
+  return Ok(out);
 }
 
 pub function is_version(s: string): boolean {
-  let parts: string[] = split_char(s, b'.');
+  let parts: string[] = util.split_char(s, b'.');
   if (parts.len() != 3) {
     return false;
   }
@@ -344,20 +344,15 @@ function is_letter(c: u8): boolean {
   return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z';
 }
 
-pub struct HashResult {
-  hex: string,
-  err: string,
-}
-
-pub function validate_hash(hash: string): HashResult {
+pub function validate_hash(hash: string): Result[string, string] {
   let bad: string = "must be `sha256:` + 64 lowercase hex digits of the archive bytes, got "
     + docsummary.quote(hash);
   if (hash.len() < 7 || slice_unchecked(hash, 0, 7) != "sha256:") {
-    return HashResult { hex: "", err: bad };
+    return Err(bad);
   }
   let hex: string = slice_unchecked(hash, 7, hash.len()) + "";
   if (hex.len() != 64) {
-    return HashResult { hex: "", err: bad };
+    return Err(bad);
   }
   let i: i32 = 0;
   while (i < hex.len()) {
@@ -365,135 +360,143 @@ pub function validate_hash(hash: string): HashResult {
     let digit: boolean = c >= b'0' && c <= b'9';
     let lower: boolean = c >= b'a' && c <= b'f';
     if (!digit && !lower) {
-      return HashResult { hex: "", err: bad };
+      return Err(bad);
     }
     i = i + 1;
   }
-  return HashResult { hex: hex, err: "" };
+  return Ok(hex);
 }
 
-struct DepResult { dep: Dep, err: string }
-
-function dep_failed(d: Dep, err: string): DepResult {
-  return DepResult { dep: d, err: err };
-}
-
-function parse_dep(name: string, val: string): DepResult {
+function parse_dep(name: string, val: string): Result[Dep, string] {
   let d: Dep = Dep { name: name, kind: "", path: "", url: "", hash: "", version: "", governed: false, caps: [], line: 0 };
   if (val.len() == 0 || val[0] != b'{') {
-    let s: Parsed = parse_string(val);
-    if (s.err.len() > 0) {
-      return dep_failed(d, "a bare dependency value must be a version string like \"1.2.0\" (or use an inline table): " + s.err);
+    match (parse_string(val)) {
+      Ok(value) => {
+        match (with_dep_string(d, "version", value)) {
+          Ok(dep) => {
+            return classified(dep);
+          },
+          Err(message) => {
+            return Err(message);
+          }
+        }
+      },
+      Err(message) => {
+        return Err("a bare dependency value must be a version string like \"1.2.0\" (or use an inline table): " + message);
+      }
     }
-    let r: DepResult = with_dep_string(d, "version", s.value);
-    if (r.err.len() > 0) {
-      return r;
-    }
-    return classified(r.dep);
   }
   if (val[val.len() - 1] != b'}') {
-    return dep_failed(d, "malformed inline table " + docsummary.quote(val));
+    return Err("malformed inline table " + docsummary.quote(val));
   }
   for raw in inline_parts(util.trim(slice_unchecked(val, 1, val.len() - 1))) {
     let part: string = util.trim(raw);
     if (part.len() > 0) {
-      let r: DepResult = with_dep_field(d, part);
-      if (r.err.len() > 0) {
-        return r;
+      match (with_dep_field(d, part)) {
+        Ok(dep) => {
+          d = dep;
+        },
+        Err(message) => {
+          return Err(message);
+        }
       }
-      d = r.dep;
     }
   }
   return classified(d);
 }
 
-function with_dep_field(d: Dep, part: string): DepResult {
+function with_dep_field(d: Dep, part: string): Result[Dep, string] {
   let eq: i32 = index_of(part, b'=', 0);
   if (eq < 0) {
-    return dep_failed(d, "expected `key = value` in inline table, got " + docsummary.quote(part));
+    return Err("expected `key = value` in inline table, got " + docsummary.quote(part));
   }
   let k: string = util.trim(slice_unchecked(part, 0, eq));
   let v: string = util.trim(slice_unchecked(part, eq + 1, part.len()));
   if (k == "workspace") {
     if (v != "true") {
-      return dep_failed(d, "workspace must be `true` (the only supported value), got " + docsummary.quote(v));
+      return Err("workspace must be `true` (the only supported value), got " + docsummary.quote(v));
     }
-    return DepResult { dep: Dep { ...d, kind: "workspace" }, err: "" };
+    return Ok(Dep { ...d, kind: "workspace" });
   }
   if (k == "capabilities") {
-    let cs: ParsedList = parse_capabilities(v);
-    if (cs.err.len() > 0) {
-      return dep_failed(d, "capabilities: " + cs.err);
+    match (parse_capabilities(v)) {
+      Ok(caps) => {
+        return Ok(Dep { ...d, governed: true, caps: caps });
+      },
+      Err(message) => {
+        return Err("capabilities: " + message);
+      }
     }
-    return DepResult { dep: Dep { ...d, governed: true, caps: cs.values }, err: "" };
   }
-  let s: Parsed = parse_string(v);
-  if (s.err.len() > 0) {
-    return dep_failed(d, k + ": " + s.err);
+  match (parse_string(v)) {
+    Ok(value) => {
+      return with_dep_string(d, k, value);
+    },
+    Err(message) => {
+      return Err(k + ": " + message);
+    }
   }
-  return with_dep_string(d, k, s.value);
 }
 
-function with_dep_string(d: Dep, k: string, s: string): DepResult {
+function with_dep_string(d: Dep, k: string, s: string): Result[Dep, string] {
   if (k == "path") {
     if (s.len() == 0) {
-      return dep_failed(d, "path must not be empty");
+      return Err("path must not be empty");
     }
-    return DepResult { dep: Dep { ...d, path: s }, err: "" };
+    return Ok(Dep { ...d, path: s });
   }
   if (k == "url") {
     if (!util.str_has_prefix(s, "https://") && !util.str_has_prefix(s, "http://")) {
-      return dep_failed(d, "url must be http(s), got " + docsummary.quote(s));
+      return Err("url must be http(s), got " + docsummary.quote(s));
     }
-    return DepResult { dep: Dep { ...d, url: s }, err: "" };
+    return Ok(Dep { ...d, url: s });
   }
   if (k == "hash") {
-    let hr: HashResult = validate_hash(s);
-    if (hr.err.len() > 0) {
-      return dep_failed(d, "hash " + hr.err);
+    if let Err(message) = validate_hash(s) {
+      return Err("hash " + message);
     }
-    return DepResult { dep: Dep { ...d, hash: s }, err: "" };
+    return Ok(Dep { ...d, hash: s });
   }
   if (k == "version") {
     if (!is_version(s)) {
-      return dep_failed(d, "version must be MAJOR.MINOR.PATCH digits, got " + docsummary.quote(s));
+      return Err("version must be MAJOR.MINOR.PATCH digits, got " + docsummary.quote(s));
     }
-    return DepResult { dep: Dep { ...d, version: s }, err: "" };
+    return Ok(Dep { ...d, version: s });
   }
-  return dep_failed(d, "unknown dependency key " + docsummary.quote(k) + " (supported: path, url, hash, workspace, version, capabilities)");
+  return Err("unknown dependency key " + docsummary.quote(k) + " (supported: path, url, hash, workspace, version, capabilities)");
 }
 
-function classified(d: Dep): DepResult {
+function classified(d: Dep): Result[Dep, string] {
   let remote: boolean = d.url.len() > 0 || d.hash.len() > 0;
   if (d.kind == "workspace") {
     if (d.path.len() > 0 || remote || d.version.len() > 0) {
-      return dep_failed(d, "a `workspace` dependency takes no path/url/hash/version");
+      return Err("a `workspace` dependency takes no path/url/hash/version");
     }
-    return DepResult { dep: d, err: "" };
+    return Ok(d);
   }
   if (d.version.len() > 0) {
     if (d.path.len() > 0 || remote) {
-      return dep_failed(d, "a `version` dependency takes no path/url/hash (the version resolves through the index)");
+      return Err("a `version` dependency takes no path/url/hash (the version resolves through the index)");
     }
-    return DepResult { dep: Dep { ...d, kind: "version" }, err: "" };
+    return Ok(Dep { ...d, kind: "version" });
   }
   return source_classified(d, remote);
 }
 
-function source_classified(d: Dep, remote: boolean): DepResult {
+function source_classified(d: Dep, remote: boolean): Result[Dep, string] {
   if (d.path.len() > 0) {
     if (remote) {
-      return dep_failed(d, "a dependency is either `path` or `url`+`hash`, not both");
+      return Err("a dependency is either `path` or `url`+`hash`, not both");
     }
-    return DepResult { dep: Dep { ...d, kind: "path" }, err: "" };
+    return Ok(Dep { ...d, kind: "path" });
   }
   if (d.url.len() > 0 && d.hash.len() > 0) {
-    return DepResult { dep: Dep { ...d, kind: "url" }, err: "" };
+    return Ok(Dep { ...d, kind: "url" });
   }
   if (remote) {
-    return dep_failed(d, "url dependencies need BOTH `url` and `hash` — the hash is the identity, the url just a mirror hint");
+    return Err("url dependencies need BOTH `url` and `hash` — the hash is the identity, the url just a mirror hint");
   }
-  return dep_failed(d, "missing `path` (or `url` + `hash`, `workspace = true`, or a version)");
+  return Err("missing `path` (or `url` + `hash`, `workspace = true`, or a version)");
 }
 
 function inline_parts(body: string): string[] {
@@ -519,17 +522,20 @@ function inline_parts(body: string): string[] {
   return out.append(slice_unchecked(body, start, body.len()) + "");
 }
 
-pub function parse_capabilities(val: string): ParsedList {
-  let names: ParsedList = parse_str_array(val);
-  if (names.err.len() > 0) {
-    return names;
-  }
-  for name in names.values {
-    if (!util.has_str(capvocab.capabilities(), name)) {
-      return ParsedList { values: [], err: "unknown capability " + docsummary.quote(name) + " (valid capabilities: " + capability_choices() + ")" };
+pub function parse_capabilities(val: string): Result[string[], string] {
+  match (parse_str_array(val)) {
+    Ok(names) => {
+      for name in names {
+        if (!util.has_str(capvocab.capabilities(), name)) {
+          return Err("unknown capability " + docsummary.quote(name) + " (valid capabilities: " + capability_choices() + ")");
+        }
+      }
+      return Ok(ordered_caps(names));
+    },
+    Err(message) => {
+      return Err(message);
     }
   }
-  return ParsedList { values: ordered_caps(names.values), err: "" };
 }
 
 function capability_choices(): string {
@@ -638,70 +644,102 @@ pub struct LockEntry {
   hash: string,
 }
 
-pub struct LockResult {
-  entries: LockEntry[],
-  err: string,
-}
-
-pub function parse_lock(src: string): LockResult {
+pub function parse_lock(src: string): Result[LockEntry[], string] {
   let out: LockEntry[] = [];
-  let blank: LockEntry = LockEntry { name: "", version: "", path: "", url: "", hash: "" };
-  let cur: LockEntry = blank;
-  let have: boolean = false;
-  let lines: string[] = split_char(src, b'\n');
+  let cur: Option[LockEntry] = None;
+  let lines: string[] = util.split_char(src, b'\n');
   let li: i32 = 0;
   while (li < lines.len()) {
     let line: string = line_content(lines[li]);
     li = li + 1;
-    if (line == "[[package]]") {
-      if (have) {
-        out = out.append(cur);
-      }
-      cur = blank;
-      have = true;
+    if (line.len() == 0) {
       continue;
     }
+    if (line == "[[package]]") {
+      if let Some(entry) = cur {
+        let complete: LockEntry = match (complete_lock_entry(entry)) { Ok(e) => e, Err(message) => { return Err(message); } };
+        out = out.append(complete);
+      }
+      cur = Some(LockEntry { name: "", version: "", path: "", url: "", hash: "" });
+      continue;
+    }
+    let entry: LockEntry = match (cur) { Some(e) => e, None => { return Err(lock_line(li, docsummary.quote(line) + " outside a [[package]] entry")); } };
     let eq: i32 = index_of(line, b'=', 0);
     if (eq < 0) {
-      continue;
+      return Err(lock_line(li, "expected `key = value`"));
     }
     let key: string = util.trim(slice_unchecked(line, 0, eq));
-    match (quoted_value(util.trim(slice_unchecked(line, eq + 1, line.len())), 0)) {
-      Some(v) => {
-        let hr: HashResult = validate_hash(v);
-        if (key == "hash" && hr.err.len() > 0) {
-          let none: LockEntry[] = [];
-          return LockResult { entries: none, err: "fern.lock line "
-            + util.i32_to_string(li) + ": hash " + hr.err };
-        }
-        cur = with_lock_field(cur, key, v);
-      },
-      None => {}
-    }
+    let v: string = match (parse_quoted(util.trim(slice_unchecked(line, eq + 1, line.len())))) { Ok(value) => value, Err(message) => { return Err(lock_line(li, key + ": " + message)); } };
+    let updated: LockEntry = match (with_lock_field(entry, key, v)) { Ok(e) => e, Err(message) => { return Err(lock_line(li, message)); } };
+    cur = Some(updated);
   }
-  if (have) {
-    out = out.append(cur);
+  if let Some(entry) = cur {
+    let complete: LockEntry = match (complete_lock_entry(entry)) { Ok(e) => e, Err(message) => { return Err(message); } };
+    out = out.append(complete);
   }
-  return LockResult { entries: out, err: "" };
+  return Ok(unique_lock_entries(out));
 }
 
-function with_lock_field(e: LockEntry, key: string, v: string): LockEntry {
+function lock_line(line: i32, message: string): string {
+  return "fern.lock line " + util.i32_to_string(line) + ": " + message;
+}
+
+function complete_lock_entry(entry: LockEntry): Result[LockEntry, string] {
+  if (entry.name.len() == 0 || entry.version.len() == 0) {
+    return Err("fern.lock: incomplete [[package]] entry");
+  }
+  return Ok(entry);
+}
+
+function unique_lock_entries(entries: LockEntry[]): LockEntry[] {
+  if (entries.len() < 2) {
+    return entries;
+  }
+  let positions: Map[string, i32] = map_new(entries.len());
+  let out: LockEntry[] = [];
+  for entry in entries {
+    let at: i32 = positions.get_or(entry.name, 0 - 1);
+    if (at >= 0) {
+      out = out.with(at, entry);
+    } else {
+      positions = positions.insert(entry.name, out.len());
+      out = out.append(entry);
+    }
+  }
+  return out;
+}
+
+function lock_version(text: string): Result[string, string] {
+  return match (pkgversion.parse(text)) { Ok(value) => Ok(pkgversion.format(value)), Err(message) => Err(message) };
+}
+
+function with_lock_field(e: LockEntry, key: string, v: string): Result[LockEntry, string] {
   if (key == "name") {
-    return LockEntry { ...e, name: v };
+    return Ok(LockEntry { ...e, name: v });
   }
   if (key == "version") {
-    return LockEntry { ...e, version: v };
+    match (lock_version(v)) {
+      Ok(version) => {
+        return Ok(LockEntry { ...e, version: version });
+      },
+      Err(message) => {
+        return Err(message);
+      }
+    }
   }
   if (key == "path") {
-    return LockEntry { ...e, path: v };
+    return Ok(LockEntry { ...e, path: v });
   }
   if (key == "url") {
-    return LockEntry { ...e, url: v };
+    return Ok(LockEntry { ...e, url: v });
   }
   if (key == "hash") {
-    return LockEntry { ...e, hash: v };
+    if let Err(message) = validate_hash(v) {
+      return Err("hash " + message);
+    }
+    return Ok(LockEntry { ...e, hash: v });
   }
-  return e;
+  return Err("unknown key " + docsummary.quote(key));
 }
 
 pub function lock_has(entries: LockEntry[], name: string): boolean {
