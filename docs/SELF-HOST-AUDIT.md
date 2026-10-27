@@ -923,6 +923,10 @@ findings. Ranked by leverage.
   Both native backends, the certifier and the physical-credit proofs match the result before they use a function.
   Contract checks execute on x86-64, ARM64 and Wasm.
 
+  The scale-map matcher uses `Option[ast.Expr]` instead of `ScaleFactor` and its placeholder expression.
+  A declined rewrite retains the original call.
+  A matched rewrite receives the original factor expression as its success payload.
+
   _Rest of this row:_ the bespoke `*Result` structs remain.
   The generic-function migration is no longer blocked, and neither is
   T6/SH-026's real remainder (`lookup_*` returning `name: ""`), which depends

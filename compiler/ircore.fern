@@ -267,8 +267,6 @@ function stdlib_array_maps(funcs: parser.FuncDecl[]): string[] {
   return names;
 }
 
-struct ScaleFactor { ok: boolean, k: ast.Expr }
-
 function scale_map_call(e: ast.Expr, trusted: util.NameIndex): ast.Expr {
   if let ast.ExprCall(c) = e {
     if (c.args.len() != 2) {
@@ -279,14 +277,11 @@ function scale_map_call(e: ast.Expr, trusted: util.NameIndex): ast.Expr {
         return e;
       }
       if let ast.ExprLambda(lm) = c.args[1] {
-        let got: ScaleFactor = scale_lambda_factor(lm);
-        if (!got.ok) {
-          return e;
-        }
+        let factor: ast.Expr = match (scale_lambda_factor(lm)) { Some(k) => k, None => { return e; } };
         return ast.ExprCall {
           ...c, type_args: [],
           callee: ast.ExprIdent { name: "__scale_f64", line: id.line, col: id.col, ty: "", builtin: false },
-          args: [c.args[0], got.k],
+          args: [c.args[0], factor],
         };
       }
     }
@@ -294,31 +289,30 @@ function scale_map_call(e: ast.Expr, trusted: util.NameIndex): ast.Expr {
   return e;
 }
 
-function scale_lambda_factor(lm: ast.ExprLambda): ScaleFactor {
-  let no: ScaleFactor = ScaleFactor { ok: false, k: ast.ExprUnknown { kind: "", line: 0, col: 0 } };
+function scale_lambda_factor(lm: ast.ExprLambda): Option[ast.Expr] {
   if (lm.params.len() != 1) {
-    return no;
+    return None;
   }
   if (lm.params[0].type_name != "f64" || lm.ret_type != "f64") {
-    return no;
+    return None;
   }
   if (lm.body.len() != 1) {
-    return no;
+    return None;
   }
   if let ast.StmtReturn(r) = lm.body[0] {
     if let ast.ExprBinary(b) = r.value {
       if (b.op != "*") {
-        return no;
+        return None;
       }
       if (scale_is_param(b.left, lm.params[0].name) && scale_is_f64_literal(b.right)) {
-        return ScaleFactor { ok: true, k: b.right };
+        return Some(b.right);
       }
       if (scale_is_param(b.right, lm.params[0].name) && scale_is_f64_literal(b.left)) {
-        return ScaleFactor { ok: true, k: b.left };
+        return Some(b.left);
       }
     }
   }
-  return no;
+  return None;
 }
 
 function scale_is_param(e: ast.Expr, name: string): boolean {
