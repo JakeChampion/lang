@@ -957,6 +957,27 @@ findings. Ranked by leverage.
   Candidate/baseline time ratios range from 0.926 to 1.015.
   These probes establish no general compiler speed change.
 
+  Hover queries return `Option[Hover]`, and definition helpers return `Option[SourceSpan]`.
+  Hover data contains the text and source coordinates.
+  Definition data contains only source coordinates, without an unused text field or a presence flag.
+  The CLI converts absent results to JSON `null`.
+
+  Reference targets retain their name and kind when declaration coordinates are absent.
+  Semantic token selection matches the option before it reads coordinates.
+  A span with zero width remains `Some`.
+  An absent span returns `None` without a coordinate record.
+
+  All 25 before/after records retain hover, definition, documentation, reference, and token data on native, ARM64, and Wasm.
+  Across 25 native sanitizer probes, 335,328 allocations match 335,328 releases, with zero live bytes in each process.
+  A separate contract retains a reference to a known function without declaration coordinates on all three targets.
+  Its native sanitizer reports 3,270 allocations and releases, with zero live bytes.
+  All 20 LSP integration suites pass, with workspace, literate-document, stdlib, rename, and token protocol goldens.
+
+  Forty process pairs per input repeat cached hover, definition, documentation, reference, and token queries 50 times.
+  All complete outputs match the native baseline.
+  Candidate/baseline time ratios range from 0.939 to 0.988 across six inputs.
+  These probes establish no general compiler speed change.
+
   Printer recognition uses `Option[UseSugar]` and `Option[ForCSugar]`.
   Absent forms no longer contain placeholder calls, bodies, or loop conditions.
   Layout, statement output, and lint scores match the option before they use a payload.

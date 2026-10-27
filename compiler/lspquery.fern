@@ -31,16 +31,14 @@ pub function view_of(p: Program): View {
   return View { types: checker.query_view(p.merged), quals: flatten.bundle_qualifiers(p.entry, p.loaded) };
 }
 
-pub struct Answer { found: boolean, text: string, line: i32, col: i32, len: i32 }
+pub struct Hover { text: string, line: i32, col: i32, len: i32 }
 
-pub function no_answer(): Answer {
-  return Answer { found: false, text: "", line: 0, col: 0, len: 0 };
-}
+pub struct SourceSpan { line: i32, col: i32, len: i32 }
 
-pub function hover(p: Program, line: i32, col: i32): Answer {
+pub function hover(p: Program, line: i32, col: i32): Option[Hover] {
   let (q, ok) = query(p, line, col);
   if (!ok) {
-    return no_answer();
+    return None;
   }
   let text: string = "";
   if (q.f.kind == K_NONE) {
@@ -50,18 +48,18 @@ pub function hover(p: Program, line: i32, col: i32): Answer {
     text = node_text(scope_at(q.v, fd, q.site), fd, q.f, q.site);
   }
   if (text.len() == 0) {
-    return no_answer();
+    return None;
   }
-  return Answer { found: true, text: written(q.quals, util.show_type_vars(text)), line: q.site.line, col: q.site.col, len: q.site.len };
+  return Some(Hover { text: written(q.quals, util.show_type_vars(text)), line: q.site.line, col: q.site.col, len: q.site.len });
 }
 
 pub function hover_doc(p: Program, line: i32, col: i32): string {
   if (names_a_parameter(p, line, col)) {
     return "";
   }
-  let d: Answer = definition(p, line, col);
+  let d: SourceSpan = match (definition(p, line, col)) { Some(value) => value, None => { return ""; } };
   let m: i32 = util.pos_file_index(d.line);
-  if (!d.found || m < 0 || m >= p.srcs.len()) {
+  if (m < 0 || m >= p.srcs.len()) {
     return "";
   }
   let comments: lexer.Comment[] = lexer.tokenize_full(p.srcs[m]).comments;
@@ -81,10 +79,10 @@ function names_a_parameter(p: Program, line: i32, col: i32): boolean {
   return false;
 }
 
-pub function definition(p: Program, line: i32, col: i32): Answer {
+pub function definition(p: Program, line: i32, col: i32): Option[SourceSpan] {
   let (q, ok) = query(p, line, col);
   if (!ok) {
-    return no_answer();
+    return None;
   }
   if (q.f.kind == K_NONE) {
     return type_def(p, q.v, checker.module_scope(q.v), type_candidates(q));
@@ -890,7 +888,7 @@ function type_ref_text(s: checker.Scope, candidates: string[]): string {
   return "";
 }
 
-function node_def(p: Program, v: checker.QueryView, s: checker.Scope, fd: parser.FuncDecl, f: Found, site: Site): Answer {
+function node_def(p: Program, v: checker.QueryView, s: checker.Scope, fd: parser.FuncDecl, f: Found, site: Site): Option[SourceSpan] {
   match (f.expr) {
     ast.ExprIdent(id) => {
       if (f.kind == K_IDENT) {
@@ -914,14 +912,14 @@ function node_def(p: Program, v: checker.QueryView, s: checker.Scope, fd: parser
     },
     _ => {}
   }
-  return no_answer();
+  return None;
 }
 
-pub function local_def(p: Program, b: lexical.Binding, param: boolean, name: string): Answer {
+pub function local_def(p: Program, b: lexical.Binding, param: boolean, name: string): Option[SourceSpan] {
   return binding_decl(module_toks(p, util.pos_file_index(b.line)), b, param, name);
 }
 
-pub function binding_decl(toks: Tok[], b: lexical.Binding, param: boolean, name: string): Answer {
+pub function binding_decl(toks: Tok[], b: lexical.Binding, param: boolean, name: string): Option[SourceSpan] {
   let i: i32 = first_ident(toks, after(toks, b.line, b.col), name);
   while (param && i >= 0 && !(punct_before(toks, i, "(") || punct_before(toks, i, ","))) {
     i = first_ident(toks, i + 1, name);
@@ -929,7 +927,7 @@ pub function binding_decl(toks: Tok[], b: lexical.Binding, param: boolean, name:
   return tok_answer(toks, i, b.line, b.col, name);
 }
 
-function global_def(p: Program, v: checker.QueryView, s: checker.Scope, name: string): Answer {
+function global_def(p: Program, v: checker.QueryView, s: checker.Scope, name: string): Option[SourceSpan] {
   let owner: string = checker.variant_enum(s, name);
   if (owner.len() > 0) {
     return variant_def(p, v, owner, name);
@@ -942,7 +940,7 @@ function global_def(p: Program, v: checker.QueryView, s: checker.Scope, name: st
   return type_decl_def(p, v, name);
 }
 
-pub function type_decl_def(p: Program, v: checker.QueryView, name: string): Answer {
+pub function type_decl_def(p: Program, v: checker.QueryView, name: string): Option[SourceSpan] {
   for sd in v.mod.structs {
     if (sd.name == name && sd.enum_owner.len() == 0) {
       return decl_def(p, sd.line, sd.col, name);
@@ -953,23 +951,20 @@ pub function type_decl_def(p: Program, v: checker.QueryView, name: string): Answ
       return decl_def(p, ed.line, ed.col, name);
     }
   }
-  return no_answer();
+  return None;
 }
 
-pub function variant_def(p: Program, v: checker.QueryView, owner: string, name: string): Answer {
+pub function variant_def(p: Program, v: checker.QueryView, owner: string, name: string): Option[SourceSpan] {
   for ed in v.mod.enums {
     if (ed.name == owner) {
-      let at: Answer = decl_def(p, ed.line, ed.col, owner);
-      if (!at.found) {
-        return at;
-      }
+      let at: SourceSpan = match (decl_def(p, ed.line, ed.col, owner)) { Some(value) => value, None => { return None; } };
       return decl_def(p, at.line, at.col + at.len, name);
     }
   }
-  return no_answer();
+  return None;
 }
 
-function member_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess, called: boolean): Answer {
+function member_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess, called: boolean): Option[SourceSpan] {
   let owner: string = enum_qualifier(s, fa);
   if (owner.len() > 0) {
     return variant_def(p, v, owner, fa.field);
@@ -980,18 +975,18 @@ function member_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.
   return field_def(p, v, s, fa);
 }
 
-pub function field_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess): Answer {
+pub function field_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess): Option[SourceSpan] {
   if let typeinfo.TypeStruct(t) = checker.expr_type(fa.obj, s) {
-    let at: Answer = type_decl_def(p, v, t.name);
-    if (at.found && util.has_str(checker.struct_field_names(s, t.name), fa.field)) {
+    let at: SourceSpan = match (type_decl_def(p, v, t.name)) { Some(value) => value, None => { return None; } };
+    if (util.has_str(checker.struct_field_names(s, t.name), fa.field)) {
       let toks: Tok[] = module_toks(p, util.pos_file_index(at.line));
       return tok_answer(toks, field_tok(toks, after(toks, at.line, at.col + at.len), fa.field), at.line, at.col, fa.field);
     }
   }
-  return no_answer();
+  return None;
 }
 
-function method_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess): Answer {
+function method_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.ExprFieldAccess): Option[SourceSpan] {
   let t: typeinfo.Type = checker.expr_type(fa.obj, s);
   if let typeinfo.TypeArray(a) = t {
     return method_decl_def(p, checker.array_method_sig(s, fa.field, a.view), fa.field);
@@ -999,31 +994,31 @@ function method_def(p: Program, v: checker.QueryView, s: checker.Scope, fa: ast.
   return method_decl_def(p, checker.method_sig(s, fa.field, checker.receiver_key(t)), fa.field);
 }
 
-function method_decl_def(p: Program, found: Option[checker.MethodSig], name: string): Answer {
+function method_decl_def(p: Program, found: Option[checker.MethodSig], name: string): Option[SourceSpan] {
   if let Some(ms) = found {
     if (ms.line == 0) {
-      return no_answer();
+      return None;
     }
     return decl_def(p, ms.line, ms.col, name);
   }
-  return no_answer();
+  return None;
 }
 
-function type_def(p: Program, v: checker.QueryView, s: checker.Scope, candidates: string[]): Answer {
+function type_def(p: Program, v: checker.QueryView, s: checker.Scope, candidates: string[]): Option[SourceSpan] {
   for c in candidates {
     if (checker.variant_enum(s, c).len() == 0) {
-      let at: Answer = type_decl_def(p, v, c);
-      if (at.found) {
+      let at: Option[SourceSpan] = type_decl_def(p, v, c);
+      if let Some(_) = at {
         return at;
       }
     }
   }
-  return no_answer();
+  return None;
 }
 
-pub function decl_def(p: Program, line: i32, col: i32, name: string): Answer {
+pub function decl_def(p: Program, line: i32, col: i32, name: string): Option[SourceSpan] {
   if (line <= 0) {
-    return no_answer();
+    return None;
   }
   let m: i32 = util.pos_file_index(line);
   let shown: string = unprefixed(name, quals_of(view_of(p), m).own);
@@ -1031,11 +1026,14 @@ pub function decl_def(p: Program, line: i32, col: i32, name: string): Answer {
   return tok_answer(toks, first_ident(toks, after(toks, line, col), shown), line, col, shown);
 }
 
-function tok_answer(toks: Tok[], i: i32, line: i32, col: i32, name: string): Answer {
+function tok_answer(toks: Tok[], i: i32, line: i32, col: i32, name: string): Option[SourceSpan] {
   if (i >= 0) {
-    return Answer { found: true, text: "", line: toks[i].line, col: toks[i].col, len: name.len() };
+    return Some(SourceSpan { line: toks[i].line, col: toks[i].col, len: name.len() });
   }
-  return Answer { found: line > 0, text: "", line: line, col: col, len: name.len() };
+  if (line <= 0) {
+    return None;
+  }
+  return Some(SourceSpan { line: line, col: col, len: name.len() });
 }
 
 pub function tok_at(toks: Tok[], line: i32, col: i32): i32 {

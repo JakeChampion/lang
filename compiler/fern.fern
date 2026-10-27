@@ -3642,25 +3642,19 @@ function lsp_answer_at(s: Server, q: Asked, m: lsp.Message, line: i32, col: i32)
     return lsp.signature_help(sh.label, sh.starts, sh.ends, sh.active);
   }
   if (method == "textDocument/hover") {
-    let h: lspquery.Answer = lspquery.hover(q.d.prog, line, col);
-    if (!h.found) {
-      return "null";
-    }
-    return lsp.hover_result(h.text, lspquery.hover_doc(q.d.prog, line, col), lsp_answer_range(q.d, q.text, h));
+    let h: lspquery.Hover = match (lspquery.hover(q.d.prog, line, col)) { Some(value) => value, None => { return "null"; } };
+    return lsp.hover_result(h.text, lspquery.hover_doc(q.d.prog, line, col), lsp_answer_range(q.d, q.text, h.line, h.col, h.len));
   }
   return lsp_definition(s, q, line, col);
 }
 
 function lsp_definition(s: Server, q: Asked, line: i32, col: i32): string {
-  let a: lspquery.Answer = lspquery.definition(q.d.prog, line, col);
-  if (!a.found) {
-    return "null";
-  }
+  let a: lspquery.SourceSpan = match (lspquery.definition(q.d.prog, line, col)) { Some(value) => value, None => { return "null"; } };
   let target: string = lsp_module_doc(s, q.d, util.pos_file_index(a.line), q.path);
   if (target == q.path) {
-    return lsp.location(q.uri, lsp_answer_range(q.d, q.text, a));
+    return lsp.location(q.uri, lsp_answer_range(q.d, q.text, a.line, a.col, a.len));
   }
-  return lsp.location(lsp.file_uri(target), lsp_answer_range(q.d, lsp.text_of(lsp_doc_text(s, target)), a));
+  return lsp.location(lsp.file_uri(target), lsp_answer_range(q.d, lsp.text_of(lsp_doc_text(s, target)), a.line, a.col, a.len));
 }
 
 function lsp_references(s: Server, q: Asked, refs: lsprefs.Ref[], with_decl: boolean): string {
@@ -3867,9 +3861,9 @@ function lsp_into_bundle(d: Doc, path: string, line: i32, col: i32): (i32, i32) 
   return (0, 0);
 }
 
-function lsp_answer_range(d: Doc, text: lsp.Text, a: lspquery.Answer): string {
-  let (al, ac) = util.doc_pos(d.maps, a.line, a.col);
-  return lsp.span_range(text, util.pos_line(al), ac, a.len);
+function lsp_answer_range(d: Doc, text: lsp.Text, line: i32, col: i32, width: i32): string {
+  let (al, ac) = util.doc_pos(d.maps, line, col);
+  return lsp.span_range(text, util.pos_line(al), ac, width);
 }
 
 function lsp_module_doc(s: Server, d: Doc, m: i32, entry: string): string {

@@ -26,3 +26,10 @@ Live CI must confirm the new balance.
 
 The task workspace retains all seven x86-64 shard logs and the verify log.
 It also retains the selected inventory, duration rows, replay code and assignment records.
+
+## Live validation
+
+[Run 40528941443](https://github.com/JakeChampion/lang/actions/runs/40528941443)
+completed successfully for head `422c4124f` with the new weights and the unchanged deadline.
+All seven x86-64 shards, both ARM64 shards, the CLI driver job, and the verify job passed.
+Later commits require their own CI results.

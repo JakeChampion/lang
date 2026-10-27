@@ -104,10 +104,11 @@ function body_classes(v: checker.QueryView, m: i32, x: Ctx): Mark[] {
       }
       out = func_classes(s, x, r.func.body, params, out);
       for b in r.bindings {
-        let a: lspquery.Answer = lspquery.binding_decl(x.toks, b, util.has_str(params, b.symbol), b.name);
-        let i: i32 = lspquery.tok_at(x.toks, a.line, a.col);
-        if (a.found && i >= 0 && x.toks[i].text == b.name) {
-          out = marked(x, i, local_kind(b.symbol, params), out);
+        if let Some(a) = lspquery.binding_decl(x.toks, b, util.has_str(params, b.symbol), b.name) {
+          let i: i32 = lspquery.tok_at(x.toks, a.line, a.col);
+          if (i >= 0 && x.toks[i].text == b.name) {
+            out = marked(x, i, local_kind(b.symbol, params), out);
+          }
         }
       }
     }
