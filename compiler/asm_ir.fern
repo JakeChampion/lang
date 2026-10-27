@@ -270,6 +270,7 @@ function apo_grow(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq $4, %rcx\n");
   s = s.write(".Lapo_cap:\n");
   s = s.write("    leaq 1(%r14), %rax\n    cmpq %rax, %rcx\n    cmovbq %rax, %rcx\n");
+  s = s.write("    cmpq $268435455, %rcx\n    ja __fern_alloc_size_abort\n");
   s = s.write("    leaq 24(,%rcx,8), %rdi\n");
   s = s.write("    cmpq $2048, %rdi\n");
   s = s.write("    ja .Lapo_alloc\n");
@@ -2446,14 +2447,13 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", aborts.str_oob(), 134);
   s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", aborts.slice_range(), 134);
   s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", aborts.alloc_size(), 134);
-  if (s.has_need("alloc_u8") || s.has_need("alloc_bytes") || s.has_need("str_grow")) {
-    s = s.need("__fern_alloc_size_abort.c");
-  }
+  s = s.need("__fern_alloc_size_abort.c");
   if (s.has_need("str_grow") || s.has_need("buf")) {
     s = s.need("__fern_slice_abort.c");
   }
   s = emit_trap_stubs(s);
   s = s.write("__fern_arr_box:\n");
+  s = s.write("    cmpq $268435455, %rdi\n    ja __fern_alloc_size_abort.c\n");
   s = hev_shim_site(s, "arrbox");
   if (hev_on(s)) {
     s = s.write("    pushq %rbp\n");

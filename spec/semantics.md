@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**76 of 79** claims are pinned by a conformance case. The remaining
+**81 of 84** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -89,6 +89,11 @@ of them.
 | `AB-07` | `docs/ARRAY-BOUNDS.md` | A loop guard past the length does not elide the check; the first out-of-range index aborts | `oob_loop_guard_past_length` |
 | `AB-08` | `docs/ARRAY-BOUNDS.md` | A view's bound is its own length, not its storage's | `oob_view_index_past_view` |
 | `AB-09` | `docs/ARRAY-BOUNDS.md` | An array slice with a negative low bound aborts | `oob_slice_negative_start` |
+| `AB-10` | `docs/ARRAY-BOUNDS.md` | A guard on a wrapping sum (`i + 1 < len`) proves nothing about `i`; the read at the largest `i32` aborts | `oob_index_wrapped_guard` |
+| `AB-11` | `docs/ARRAY-BOUNDS.md` | A guard on `i` proves nothing about `i - 1`; the read at -1 aborts | `oob_index_below_guard` |
+| `AB-12` | `docs/ARRAY-BOUNDS.md` | A slice end that wrapping arithmetic makes negative aborts | `oob_slice_wrapped_end` |
+| `AB-13` | `docs/ARRAY-BOUNDS.md` | A write at the largest `i32` index aborts like a read | `oob_write_wrapped_index` |
+| `AB-14` | `docs/ARRAY-BOUNDS.md` | A scaled index that wraps negative fails its own guard, so the read is skipped | `index_wrapped_product_rejected` |
 | `IS-01` | `docs/INTEGER-SEMANTICS.md` | `+ - * <<` wrap at the operand's width | `int_wrap` |
 | `IS-02` | `docs/INTEGER-SEMANTICS.md` | Shift counts are masked (`& 31` / `& 63`) | `int_shift_count_masked` |
 | `IS-03` | `docs/INTEGER-SEMANTICS.md` | `>>` is arithmetic for signed operands, logical for unsigned | `int_shift_count_masked` |

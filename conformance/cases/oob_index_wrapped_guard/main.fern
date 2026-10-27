@@ -1,0 +1,21 @@
+// spec: AB-10
+// A guard on a wrapping sum proves nothing about the index itself. The sum
+// i + 1 wraps negative for the largest i32, so the guard holds, and the
+// read at i still aborts.
+
+import "std/i32";
+
+@noinline
+function pick(xs: i32[], i: i32): i32 {
+    if (i + 1 < xs.len()) {
+        return xs[i];
+    }
+    return -1;
+}
+
+function main(): i32 {
+    let xs: i32[] = [10, 20, 30];
+    print(pick(xs, 1).to_string());
+    print(pick(xs, 2147483647).to_string());
+    return 0;
+}

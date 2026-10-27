@@ -6720,6 +6720,7 @@ function apo_grow(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    mov x8, #4\n");
   s = s.write(".Lapo_cap:\n");
   s = s.write("    add x9, x21, #1\n    cmp x8, x9\n    csel x8, x8, x9, hs\n");
+  s = s.write("    movz x9, #65535\n    movk x9, #4095, lsl #16\n    cmp x8, x9\n    b.ls .Lapo_sized\n    b __fern_alloc_size_abort\n.Lapo_sized:\n");
   s = s.write("    add x1, x8, #3\n");
   s = s.write("    lsl x1, x1, #3\n");
   s = s.write("    cmp x1, #2048\n");
@@ -7765,6 +7766,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   }
 
   s = s.write("__fern_arr_box:\n");
+  s = s.write("    movz x1, #65535\n    movk x1, #4095, lsl #16\n    cmp x0, x1\n    b.ls .Larrbox_sized\n    b __fern_alloc_size_abort_leaf\n.Larrbox_sized:\n");
   if (profile_alloc_fast(s)) {
     s = s.write("    add x1, x0, #3\n");
     s = s.write("    lsl x1, x1, #3\n");

@@ -1,0 +1,17 @@
+// spec: AB-13
+// A write (xs.with(i, v)) at the largest i32 index aborts like a read.
+
+import "std/i32";
+
+@noinline
+function put(xs: i32[], i: i32): i32 {
+    let ys: i32[] = xs.with(i, 7);
+    return ys[0];
+}
+
+function main(): i32 {
+    let xs: i32[] = [10, 20, 30];
+    print(put(xs, 1).to_string());
+    print(put(xs, 2147483647).to_string());
+    return 0;
+}
