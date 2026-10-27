@@ -1,0 +1,9 @@
+{
+  "source_commit": "8cb3ccf00e945ffda49c889e6cb5b037ebc2976b",
+  "samples_exact_equal": true,
+  "cases_per_target": 2224,
+  "workers_per_target": 278,
+  "workers_total": 834,
+  "max_representable_steps": 0,
+  "all_workers_nonzero_balanced_zero_live": true
+}

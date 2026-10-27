@@ -1,0 +1,54 @@
+{
+  "source_commit": "8d19eb7c41de821aaad052897fa9250c1d53d2bc",
+  "feature_uncommitted": true,
+  "hashes": {
+    "/workspace/lang-image-icc-matrix-solve/bin/fern": "d1721835de31a7cc774df13ec7322a2d981066c442fcefe8611a19fc4ec4417b",
+    "/workspace/lang-image-icc-matrix-solve/fern-image/packages/codecs/icc/matrix_solve.fern": "a33f2195df1620301c7df243e5818142ce24c2b7a4dde91fd4ed5cf2e76ef19e",
+    "/workspace/lang-image-icc-matrix-solve/fern-image/tests/icc_matrix_solve_test.fern": "8cf49f3b12be72c8cc338ffd02cbf734b31e7e5dc2de5ac42de47654c5a1b665"
+  },
+  "commands": [
+    {
+      "command": [
+        "/workspace/lang-image-icc-matrix-solve/bin/fern",
+        "-target",
+        "wasm32-wasi",
+        "-check",
+        "tests/icc_matrix_solve_test.fern"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "/workspace/lang-image-icc-matrix-solve/bin/fern",
+        "-target",
+        "wasm32-wasi",
+        "-sanitize",
+        "-o",
+        "/workspace/lang-image-icc-matrix-solve/fern-image/build/matrix-solve-resumed-wasm.wasm",
+        "tests/icc_matrix_solve_test.fern"
+      ],
+      "exit": 0
+    },
+    {
+      "command": [
+        "wasmtime",
+        "run",
+        "--dir=.",
+        "/workspace/lang-image-icc-matrix-solve/fern-image/build/matrix-solve-resumed-wasm.wasm"
+      ],
+      "exit": 0
+    }
+  ],
+  "seconds": 5.152896165847778,
+  "exit": 0,
+  "TAP_ok": 6,
+  "TAP_fail": 0,
+  "heaps": [
+    [
+      285,
+      285,
+      0
+    ]
+  ],
+  "sources_unchanged": true
+}

@@ -1,0 +1,148 @@
+import "../packages/codecs/icc/matrix_solve";
+import "../packages/codecs/icc/matrix_eval";
+import "std/test";
+import "std/f64";
+
+function never(): boolean {
+  return false;
+}
+
+function xyz(x: f64, y: f64, z: f64): matrix_eval.XYZ {
+  return matrix_eval.XYZ { x: x, y: y, z: z };
+}
+
+function eval(coefficients: i32[], input: matrix_eval.XYZ): Result[matrix_eval.LinearRGB, matrix_solve.SolveError] {
+  return matrix_solve.solve(coefficients[:], input, never);
+}
+
+function same(value: matrix_eval.LinearRGB, r: f64, g: f64, b: f64): boolean {
+  return f64_bits(value.r) == f64_bits(r) && f64_bits(value.g) == f64_bits(g) && f64_bits(value.b) == f64_bits(b);
+}
+
+function projections(): test.TestOutcome {
+  for value in [-2.0, -1.0, -0.0, 0.0, f64_from_bits(1), f64_from_bits(0x0010000000000000), 0.25, 1.0, 2.0] {
+    if (match (eval([65536, 0, 0, 0, 65536, 0, 0, 0, 65536], xyz(value, value, value))) { Ok(out) => !same(out, value, value, value), _ => true }) {
+      return test.fail("identity preserves every input bit");
+    }
+  }
+  if (match (eval([0, 0, 65536, 65536, 0, 0, 0, 65536, 0], xyz(-0.0, 0.5, 1.0))) { Ok(out) => !same(out, 0.5, 1.0, -0.0), _ => true }) {
+    return test.fail("inverse permutation and negative zero");
+  }
+  return test.assert_true(match (eval([-65536, 0, 0, 0, -65536, 0, 0, 0, -65536], xyz(-0.0, 0.5, -0.75))) { Ok(out) => same(out, 0.0, -0.5, 0.75), _ => false });
+}
+
+function dyadic(): test.TestOutcome {
+  for (coefficients, input, r, g, b) in [
+    ([98304, 0, 0, 0, 98304, 0, 0, 0, 98304], xyz(0.75, -1.5, 0.0), 0.5, -1.0, 0.0),
+    ([32768, 0, 0, 0, -32768, 0, 0, 0, 32768], xyz(2.0, 0.5, -2.0), 4.0, -1.0, -4.0),
+    ([1, 1, 0, 1, 2, 0, 0, 0, 1], xyz(3.0 / 65536.0, 5.0 / 65536.0, 1.0 / 65536.0), 1.0, 2.0, 1.0),
+    ([65536, 65535, 0, 65535, 65534, 0, 0, 0, 65536], xyz(0.74999237060546875, 0.749980926513671875, 0.75), 0.25, 0.5, 0.75),
+  ] {
+    if (match (eval(coefficients, input)) { Ok(out) => !same(out, r, g, b), _ => true }) {
+      return test.fail("exact dyadic and near-singular controls remain unclipped");
+    }
+  }
+  return test.pass();
+}
+
+function admission(): test.TestOutcome {
+  for (coefficients, input, error) in [
+    ([], xyz(0.0, 0.0, 0.0), matrix_solve.SolveError.Shape),
+    ([1], xyz(0.0, 0.0, 0.0), matrix_solve.SolveError.Shape),
+    ([1, 0, 0, 0, 1, 0, 0, 0, 1, 0], xyz(0.0, 0.0, 0.0), matrix_solve.SolveError.Shape),
+    ([0, 0, 0, 0, 0, 0, 0, 0, 0], xyz(0.0, 0.0, 0.0), matrix_solve.SolveError.Singular),
+    ([1, 2, 3, 2, 4, 6, 1, 0, 1], xyz(0.0, 0.0, 0.0), matrix_solve.SolveError.Singular),
+  ] {
+    let polls = cell_new(0);
+    let result = matrix_solve.solve(coefficients[:], input, (): boolean => {
+      polls.set(polls.get() + 1);
+      return false;
+    });
+    if (polls.get() != 0 || match (result) { Err(actual) => actual != error, _ => true }) {
+      return test.fail("shape and singularity before callbacks");
+    }
+  }
+  for index in 0..9 {
+    for value in [-2147483648, -98305, 98305, 2147483647] {
+      let coefficients = [65536, 0, 0, 0, 65536, 0, 0, 0, 65536].with(index, value);
+      let polls = cell_new(0);
+      let result = matrix_solve.solve(coefficients[:], xyz(0.0, 0.0, 0.0), (): boolean => {
+        polls.set(polls.get() + 1);
+        return false;
+      });
+      if (polls.get() != 0 || match (result) { Err(matrix_solve.SolveError.Unsupported()) => false, _ => true }) {
+        return test.fail("every coefficient bound before callbacks");
+      }
+    }
+  }
+  for value in [f64_from_bits(0x7ff0000000000000), -f64_from_bits(0x7ff0000000000000), f64_from_bits(0x7ff8000000000000), f64_from_bits(0x4000000000000001), -f64_from_bits(0x4000000000000001), f64_from_bits(0x7fefffffffffffff)] {
+    for input in [xyz(value, 0.0, 0.0), xyz(0.0, value, 0.0), xyz(0.0, 0.0, value)] {
+      let polls = cell_new(0);
+      let result = matrix_solve.solve([65536, 0, 0, 0, 65536, 0, 0, 0, 65536], input, (): boolean => {
+        polls.set(polls.get() + 1);
+        return false;
+      });
+      let expected = if (value.is_finite()) { matrix_solve.SolveError.Unsupported } else { matrix_solve.SolveError.Input };
+      if (polls.get() != 0 || match (result) { Err(actual) => actual != expected, _ => true }) {
+        return test.fail("every XYZ component before callbacks");
+      }
+    }
+  }
+  return test.pass();
+}
+
+function cancellation(): test.TestOutcome {
+  for stop in 1..3 {
+    let polls = cell_new(0);
+    let result = matrix_solve.solve([65536, 0, 0, 0, 65536, 0, 0, 0, 65536], xyz(0.25, 0.5, 0.75), (): boolean => {
+      polls.set(polls.get() + 1);
+      return polls.get() == stop;
+    });
+    if (polls.get() != stop || match (result) { Err(matrix_solve.SolveError.Cancelled()) => false, _ => true }) {
+      return test.fail("both solve cancellation polls");
+    }
+  }
+  return test.pass();
+}
+
+@noinline
+function naive(input: matrix_eval.XYZ): f64 {
+  return 3390595039232.0 / 1081779929801.0 * input.x - 92080766976.0 / 56935785779.0 * input.y - 530867060736.0 / 1081779929801.0 * input.z;
+}
+
+function numerical_cancellation(): test.TestOutcome {
+  let input = xyz(f64_from_bits(0x3fd806fad56a71b2), 0.5, 0.75);
+  let low = f64_from_bits(0x3c4f45e6375fd47c);
+  let high = f64_from_bits(0x3c4f45e6375fd480);
+  let ordinary = naive(input);
+  if (ordinary >= low && ordinary <= high) {
+    return test.fail("ordinary inverse and dot must lose the residual");
+  }
+  return test.assert_true(match (eval([28576, 25239, 9375, 14581, 46983, 3972, 912, 6361, 46787], input)) { Ok(out) => out.r >= low && out.r <= high, _ => false });
+}
+
+function ownership(): test.TestOutcome {
+  let coefficients = [65536, 0, 0, 0, 65536, 0, 0, 0, 65536];
+  let shared = cell_new(coefficients);
+  let polls = cell_new(0);
+  let result = matrix_solve.solve(coefficients[:], xyz(-0.0, 0.5, 1.0), (): boolean => {
+    polls.set(polls.get() + 1);
+    shared.set(shared.get().with(4, -65536));
+    return false;
+  });
+  if (polls.get() != 2 || coefficients[4] != 65536 || shared.get()[4] != -65536 || match (result) { Ok(out) => !same(out, -0.0, 0.5, 1.0), _ => true }) {
+    return test.fail("borrowed input COW and retained output");
+  }
+  return test.assert_true(match (eval(shared.get(), xyz(0.25, 0.5, 0.75))) { Ok(out) => same(out, 0.25, -0.5, 0.75), _ => false });
+}
+
+pub function main(): i32 {
+  let runner = test.test_new("ICC inverse matrix");
+  runner = runner.it("ICC inverse exact signed projections", projections);
+  runner = runner.it("ICC inverse dyadic and small determinants", dyadic);
+  runner = runner.it("ICC inverse admission before callbacks", admission);
+  runner = runner.it("ICC inverse cooperative cancellation", cancellation);
+  runner = runner.it("ICC inverse numerical cancellation control", numerical_cancellation);
+  runner = runner.it("ICC inverse COW and fresh calls", ownership);
+  return runner.finish();
+}

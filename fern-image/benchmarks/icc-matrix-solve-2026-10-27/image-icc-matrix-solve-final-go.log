@@ -1,0 +1,12 @@
+TAP version 13
+# Suite: ICC inverse matrix
+ok 1 - ICC inverse exact signed projections
+ok 2 - ICC inverse dyadic and small determinants
+ok 3 - ICC inverse admission before callbacks
+ok 4 - ICC inverse cooperative cancellation
+ok 5 - ICC inverse numerical cancellation control
+ok 6 - ICC inverse COW and fresh calls
+1..6
+# tests 6
+# pass 6
+# fail 0
