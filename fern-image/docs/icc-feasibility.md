@@ -110,6 +110,19 @@ It checks output and a nonzero balanced heap census, and records source/tool ide
 Optional Go oracle checks use the same input.
 CI adds real native/Wasm probe commands without changing the existing image or worker assertions.
 
+Final portable records use source `b0b8b443fb6b79f9c79d3bf7433e73e408d1b611`.
+All three compiled probes pass with nonzero balanced heap counts and zero live blocks.
+The Go check and interpreter also pass on the same frozen fixture.
+Each record preserves all 1,221 selected source/tool hashes before and after execution, including all compiler and 163 stdlib sources.
+These include the offline LittleCMS shared library and the corresponding C extension.
+Compiler and stdlib sources match the clean compiler build.
+
+Records are [native](../benchmarks/results/icc-primitives-native.json),
+[Wasm](../benchmarks/results/icc-primitives-wasm.json), and
+[ARM64](../benchmarks/results/icc-primitives-arm64.json).
+The native record additionally identifies its Go oracle, while the other records identify their execution runner.
+The finite primitive checks do not qualify a transform or prove general numerical accuracy.
+
 ## Gates before color-management acceptance
 
 - Check every header, extent, count, alias, gap, reserved-field, and version-policy boundary with independent constructed inputs.
