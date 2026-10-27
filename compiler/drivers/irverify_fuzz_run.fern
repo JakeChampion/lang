@@ -1,0 +1,107 @@
+import "../ir";
+import "../irverify";
+import "../irverifystack";
+import "../irverifyrc";
+import "../util";
+
+// Decodes a byte file into an op sequence and runs the three op-stream
+// verifiers over it. Each verifier must return a problem list for any
+// sequence, so the only accepted outcomes are exit 0 with the counts on
+// stdout, or exit 2 for a missing or unreadable file.
+//
+// The first two bytes choose the parameter and local counts. Every later
+// group of four bytes is one op: the kind, a small signed immediate, a
+// width with its sign flag, and a callee name with a declaration index.
+
+function width_of(b: i32): i32 {
+  let r: i32 = b % 5;
+  if (r == 0) {
+    return 0;
+  }
+  if (r == 1) {
+    return 1;
+  }
+  if (r == 2) {
+    return 2;
+  }
+  if (r == 3) {
+    return 4;
+  }
+  return 8;
+}
+
+function name_of(b: i32): string {
+  let r: i32 = b % 4;
+  if (r == 0) {
+    return "";
+  }
+  if (r == 1) {
+    return "f";
+  }
+  if (r == 2) {
+    return "g";
+  }
+  return "h";
+}
+
+function decode(bytes: u8[]): ir.Op[] {
+  let ops: ir.Op[] = [];
+  let i: i32 = 2;
+  while (i + 4 <= bytes.len()) {
+    let b0: i32 = bytes[i] as i32;
+    let b1: i32 = bytes[i + 1] as i32;
+    let b2: i32 = bytes[i + 2] as i32;
+    let b3: i32 = bytes[i + 3] as i32;
+    let imm: i32 = b1 / 2 - 64;
+    ops = ops.append(ir.Op {
+      kind_tag: b0 + b1 % 2 * 256,
+      i32_imm: imm,
+      i64_imm: imm as i64,
+      f64_imm: 0.0,
+      width: width_of(b2),
+      unsigned: b2 / 8 % 2 == 1,
+      str: name_of(b3),
+      decl: b3 / 4 - 1,
+      source: 0,
+    });
+    i = i + 4;
+  }
+  return ops;
+}
+
+function main(): i32 {
+  let av: string[] = args();
+  if (av.len() < 2) {
+    eprint("usage: irverify_fuzz_run FILE");
+    return 2;
+  }
+  let bytes: u8[] = [];
+  match (read_file_bytes(av[1])) {
+    Ok(b) => {
+      bytes = b;
+    },
+    Err(_) => {
+      eprint("irverify_fuzz_run: cannot read " + av[1]);
+      return 2;
+    }
+  }
+  let n_params: i32 = 0;
+  let n_locals: i32 = 0;
+  if (bytes.len() >= 2) {
+    n_params = bytes[0] as i32 % 8;
+    n_locals = n_params + bytes[1] as i32 % 16;
+  }
+  let ops: ir.Op[] = decode(bytes);
+  let sigs: irverify.NameIndex = irverify.sig_index([
+    irverify.FnSig { name: "f", n_params: n_params },
+    irverify.FnSig { name: "g", n_params: 2 },
+  ]);
+  let structural: i32 = irverify.verify_fn("f", ops, n_params, n_locals, sigs).len();
+  let stack: irverifystack.StackResult = irverifystack.verify_stack_fn("f", ops, ir.pops_by_kind());
+  let rc: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", ops);
+  print("ops " + util.i32_to_string(ops.len())
+    + " structural " + util.i32_to_string(structural)
+    + " stack " + util.i32_to_string(stack.problems.len())
+    + " rc " + util.i32_to_string(rc.problems.len()));
+  return 0;
+}

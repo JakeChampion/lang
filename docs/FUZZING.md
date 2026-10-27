@@ -241,6 +241,15 @@ Assessment of Fuzzers using Mutation Analysis", USENIX Security 2023). Bugs
 found depend on which bugs exist; the score does not. `scripts/fernsmith-mutant`
 is the earlier, single hand-written plant.
 
+## The boundaries after the front end
+
+Four targets feed hostile bytes to the manifest reader, the IR verifiers and
+both in-process assemblers, through the CLI and two drivers. Each input runs
+in a child process under a time and a memory budget. The targets run from
+committed seeds on every pull request. `docs/security/FUZZING-AUDIT.md` has the
+targets, the encoding the verifier driver reads, the accepted outcomes and
+the triage rule.
+
 ## What it has found
 
 The first sweeps of the reworked generator (October 2026), each fixed with a
