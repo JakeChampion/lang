@@ -1,0 +1,3 @@
+# Preserve original bytes in raw measurement files.
+*-profile.log -whitespace
+*.patch -whitespace

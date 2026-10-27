@@ -1,0 +1,124 @@
+diff --git a/compiler/ir.fern b/compiler/ir.fern
+index 52d86e2ce..1f411f6e0 100644
+--- a/compiler/ir.fern
++++ b/compiler/ir.fern
+@@ -5904,8 +5904,12 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
+ }
+ 
+ pub function eliminate_dead_stores(ops: Op[]): Op[] {
++  return eliminate_dead_stores_slots(ops, cp_max_slot(ops));
++}
++
++function eliminate_dead_stores_slots(ops: Op[], maxs: i32): Op[] {
+   let cur: Op[] = ops;
+-  let loads: i32[] = slot_reads(ops);
++  let loads: i32[] = slot_reads(ops, maxs);
+   while (true) {
+     let stored: Op[] = drop_dead_stores(cur, loads);
+     let c: Cancelled = cancel_dropped_pushes(stored, loads);
+@@ -5947,10 +5951,10 @@ function writes_unread(ops: Op[], loads: i32[], k_store: i32, k_tee: i32): boole
+   return false;
+ }
+ 
+-function slot_reads(ops: Op[]): i32[] {
++function slot_reads(ops: Op[], maxs: i32): i32[] {
+   let k_load: i32 = K_LOAD_LOCAL;
+   let k_dyn: i32 = K_DYN_DISPATCH;
+-  let loads: i32[] = __alloc_i32(cp_max_slot(ops) + 1);
++  let loads: i32[] = __alloc_i32(maxs + 1);
+   for o in ops {
+     if (o.kind_tag == k_load) {
+       loads = loads.with(o.i32_imm, loads[o.i32_imm] + 1);
+@@ -6112,7 +6116,10 @@ function zg_zero_guard(ops: Op[], i: i32, n_params: i32, first: i32[], k_call: i
+ }
+ 
+ pub function prune_zero_slot_guards(ops: Op[], n_params: i32): Op[] {
+-  let maxs: i32 = cp_max_slot(ops);
++  return prune_zero_slot_guards_slots(ops, n_params, cp_max_slot(ops));
++}
++
++function prune_zero_slot_guards_slots(ops: Op[], n_params: i32, maxs: i32): Op[] {
+   if (maxs < n_params) {
+     return ops;
+   }
+@@ -6150,24 +6157,24 @@ pub struct OptimizedOps {
+   n_locals: i32,
+ }
+ 
+-function finish_ops(cur: Op[], n_locals: i32): OptimizedOps {
+-  let done: Op[] = cleanup(fuse_tee(eliminate_dead_code(cur)));
++function finish_ops(cur: Op[], n_locals: i32, maxs: i32): OptimizedOps {
++  let done: Op[] = cleanup(fuse_tee(eliminate_dead_code(cur)), maxs);
+   let again: StrengthResult = reduce_strength_ex(done);
+   if (again.changed) {
+-    done = cleanup(strength_fixpoint(fold_const_binaries(again.ops)));
++    done = cleanup(strength_fixpoint(fold_const_binaries(again.ops)), maxs);
+   }
+   return hoist_loop_invariants(done, n_locals);
+ }
+ 
+-function cleanup(ops: Op[]): Op[] {
+-  return eliminate_dead_code(eliminate_dead_stores(propagate_fold(ops)));
++function cleanup(ops: Op[], maxs: i32): Op[] {
++  return eliminate_dead_code(eliminate_dead_stores_slots(propagate_fold(ops, maxs), maxs));
+ }
+ 
+-function propagate_fold(ops: Op[]): Op[] {
+-  let cur: Op[] = propagate_copies(const_propagate(ops));
++function propagate_fold(ops: Op[], maxs: i32): Op[] {
++  let cur: Op[] = propagate_copies_slots(const_propagate_slots(ops, maxs), maxs);
+   let folded: Op[] = fold_const_binaries(cur);
+   while (folded.len() < cur.len()) {
+-    cur = propagate_copies(const_propagate(folded));
++    cur = propagate_copies_slots(const_propagate_slots(folded, maxs), maxs);
+     folded = fold_const_binaries(cur);
+   }
+   return folded;
+@@ -6188,7 +6195,9 @@ function strength_fixpoint(ops: Op[]): Op[] {
+ }
+ 
+ pub function optimize_ops(ops: Op[], n_params: i32, n_locals: i32): OptimizedOps {
+-  return finish_ops(strength_fixpoint(fold_const_binaries(prune_zero_slot_guards(ops, n_params))), n_locals);
++  // These passes do not create local slots. LICM computes its own bound.
++  let maxs: i32 = cp_max_slot(ops);
++  return finish_ops(strength_fixpoint(fold_const_binaries(prune_zero_slot_guards_slots(ops, n_params, maxs))), n_locals, maxs);
+ }
+ 
+ pub function hoist_loop_invariants(ops: Op[], n_locals: i32): OptimizedOps {
+@@ -6579,7 +6588,10 @@ function cp_loop_body_kill(ops: Op[], at: i32, own has: boolean[]): boolean[] {
+ }
+ 
+ pub function const_propagate(ops: Op[]): Op[] {
+-  let maxs: i32 = cp_max_slot(ops);
++  return const_propagate_slots(ops, cp_max_slot(ops));
++}
++
++function const_propagate_slots(ops: Op[], maxs: i32): Op[] {
+   if (maxs < 0) {
+     return ops;
+   }
+@@ -6715,20 +6727,14 @@ function cp_prev(ops: Op[], out: Op[], copying: boolean, i: i32): Op {
+ }
+ 
+ pub function propagate_copies(ops: Op[]): Op[] {
++  return propagate_copies_slots(ops, cp_max_slot(ops));
++}
++
++function propagate_copies_slots(ops: Op[], maxs: i32): Op[] {
+   let k_load: i32 = K_LOAD_LOCAL;
+   let k_store: i32 = K_STORE_LOCAL;
+   let k_tee: i32 = K_TEE_LOCAL;
+-  let maxs: i32 = 0 - 1;
+   let i: i32 = 0;
+-  while (i < ops.len()) {
+-    let kt: i32 = ops[i].kind_tag;
+-    if (kt == k_load || kt == k_store || kt == k_tee) {
+-      if (ops[i].i32_imm > maxs) {
+-        maxs = ops[i].i32_imm;
+-      }
+-    }
+-    i = i + 1;
+-  }
+   if (maxs < 0) {
+     return ops;
+   }

@@ -1,0 +1,24 @@
+from pathlib import Path
+import subprocess, time, hashlib, json, os
+
+p = Path(__file__).parent
+binary = p / 'candidate-c-stage2'
+subject = p / 'fixed-source/compiler/checker.fern'
+stdlib = p / 'fixed-source/internal/stdlib'
+env = dict(os.environ)
+env['FERN_RC_CERTIFY_MEMO'] = str(p / 'certifier-memo-candidate-c')
+env['VALGRIND_LIB'] = str(p / 'tools/usr/libexec/valgrind')
+out = p / 'candidate-c-checker.s'
+args = [str(binary), '-O', '-target', 'x86-64-linux', '-emit', 'asm']
+with (p / 'candidate-c-warm.log').open('wb') as f:
+    r = subprocess.run(args + ['-o', str(out), str(subject), str(stdlib)], env=env, stdout=f, stderr=subprocess.STDOUT)
+assert r.returncode == 0, ('warm', r.returncode)
+assert out.read_bytes() == (p / 'release-checker.s').read_bytes(), 'subject output differs'
+cmd = [str(p / 'tools/usr/bin/time'), '-v', str(p / 'tools/usr/bin/valgrind'), '--tool=callgrind', '--callgrind-out-file=' + str(p / 'candidate-c.callgrind')] + args + ['-o', '/dev/null', str(subject), str(stdlib)]
+start = time.perf_counter()
+with (p / 'candidate-c-profile.log').open('wb') as f:
+    r = subprocess.run(cmd, env=env, stdout=f, stderr=subprocess.STDOUT)
+record = {'command': cmd, 'exit': r.returncode, 'valid_full_run': r.returncode == 0, 'elapsed_seconds': time.perf_counter() - start, 'binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'subject_output_sha256': hashlib.sha256(out.read_bytes()).hexdigest(), 'subject_output_bytes': out.stat().st_size, 'byte_identical_to_baseline': True, 'memo_warmed': True}
+(p / 'candidate-c-profile.json').write_text(json.dumps(record, indent=2) + '\n')
+print(record, flush=True)
+assert r.returncode == 0

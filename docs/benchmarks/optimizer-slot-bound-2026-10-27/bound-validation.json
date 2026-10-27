@@ -1,0 +1,144 @@
+[
+  {
+    "version": "baseline",
+    "target": "x86-64-linux",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/baseline-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/baseline-bound-x86-64-linux",
+      "/workspace/lang-issue-work/perf-4412/baseline-bound-project/bound_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/baseline-bound-x86-64-linux"
+    ],
+    "exit": 0,
+    "output_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "stderr": ""
+  },
+  {
+    "version": "baseline",
+    "target": "arm64-linux",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/baseline-stage2",
+      "-O",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/baseline-bound-arm64-linux",
+      "/workspace/lang-issue-work/perf-4412/baseline-bound-project/bound_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/baseline-bound-arm64-linux"
+    ],
+    "exit": 0,
+    "output_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "stderr": ""
+  },
+  {
+    "version": "baseline",
+    "target": "wasm32-wasi",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/baseline-stage2",
+      "-O",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/baseline-bound-wasm32-wasi",
+      "/workspace/lang-issue-work/perf-4412/baseline-bound-project/bound_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "wasmtime",
+      "run",
+      "/workspace/lang-issue-work/perf-4412/baseline-bound-wasm32-wasi"
+    ],
+    "exit": 0,
+    "output_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "stderr": ""
+  },
+  {
+    "version": "candidate",
+    "target": "x86-64-linux",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/baseline-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/candidate-bound-x86-64-linux",
+      "/workspace/lang-issue-work/perf-4412/candidate-bound-project/bound_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-bound-x86-64-linux"
+    ],
+    "exit": 0,
+    "output_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "stderr": ""
+  },
+  {
+    "version": "candidate",
+    "target": "arm64-linux",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/baseline-stage2",
+      "-O",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/candidate-bound-arm64-linux",
+      "/workspace/lang-issue-work/perf-4412/candidate-bound-project/bound_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/candidate-bound-arm64-linux"
+    ],
+    "exit": 0,
+    "output_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "stderr": ""
+  },
+  {
+    "version": "candidate",
+    "target": "wasm32-wasi",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/baseline-stage2",
+      "-O",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/candidate-bound-wasm32-wasi",
+      "/workspace/lang-issue-work/perf-4412/candidate-bound-project/bound_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "wasmtime",
+      "run",
+      "/workspace/lang-issue-work/perf-4412/candidate-bound-wasm32-wasi"
+    ],
+    "exit": 0,
+    "output_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "stderr": ""
+  }
+]

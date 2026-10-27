@@ -1,0 +1,58 @@
+{
+  "release": {
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/tools/usr/bin/time",
+      "-v",
+      "/workspace/lang-issue-work/perf-4412/tools/usr/bin/valgrind",
+      "--tool=callgrind",
+      "--callgrind-out-file=/workspace/lang-issue-work/perf-4412/release.callgrind",
+      "/workspace/lang-issue-work/perf-4412/baseline-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/dev/null",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "certifier_memo": "/workspace/lang-issue-work/perf-4412/certifier-memo-release",
+    "memo_warmed": true,
+    "exit": 0,
+    "valid_full_run": true,
+    "elapsed_seconds": 237.62345816299967,
+    "binary_sha256": "80144d0359306c336b8e246c49bb50faac632675d8a968876e3360e62beb0c55",
+    "subject_output_sha256": "0b60857973ae1dccba313e350cbe51b286d2e18d435da614a4df5a534a370d78",
+    "subject_output_bytes": 26865028,
+    "debug_warning": ""
+  },
+  "attribution-g": {
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/tools/usr/bin/time",
+      "-v",
+      "/workspace/lang-issue-work/perf-4412/tools/usr/bin/valgrind",
+      "--tool=callgrind",
+      "--callgrind-out-file=/workspace/lang-issue-work/perf-4412/attribution-g.callgrind",
+      "/workspace/lang-issue-work/perf-4412/baseline-stage2-g",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/dev/null",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "certifier_memo": "/workspace/lang-issue-work/perf-4412/certifier-memo-attribution-g",
+    "memo_warmed": true,
+    "exit": 0,
+    "valid_full_run": true,
+    "elapsed_seconds": 178.54082483599996,
+    "binary_sha256": "fd298429088c167a1874fc48788a59b2aeb8b63dff8e77dc856781c58ecfa921",
+    "subject_output_sha256": "0b60857973ae1dccba313e350cbe51b286d2e18d435da614a4df5a534a370d78",
+    "subject_output_bytes": 26865028,
+    "debug_warning": "General -g layout warnings require validation. This exact baseline pair has identical PT_LOAD code/data apart from ELF section-table header fields. See baseline-elf-load-equivalence.json. Use release Ir totals for performance."
+  }
+}

@@ -1,0 +1,55 @@
+diff --git a/compiler/ir.fern b/compiler/ir.fern
+index 52d86e2ce..68ea0e646 100644
+--- a/compiler/ir.fern
++++ b/compiler/ir.fern
+@@ -6164,10 +6164,11 @@ function cleanup(ops: Op[]): Op[] {
+ }
+ 
+ function propagate_fold(ops: Op[]): Op[] {
+-  let cur: Op[] = propagate_copies(const_propagate(ops));
++  let maxs: i32 = cp_max_slot(ops);
++  let cur: Op[] = propagate_copies_slots(const_propagate_slots(ops, maxs), maxs);
+   let folded: Op[] = fold_const_binaries(cur);
+   while (folded.len() < cur.len()) {
+-    cur = propagate_copies(const_propagate(folded));
++    cur = propagate_copies_slots(const_propagate_slots(folded, maxs), maxs);
+     folded = fold_const_binaries(cur);
+   }
+   return folded;
+@@ -6579,7 +6580,10 @@ function cp_loop_body_kill(ops: Op[], at: i32, own has: boolean[]): boolean[] {
+ }
+ 
+ pub function const_propagate(ops: Op[]): Op[] {
+-  let maxs: i32 = cp_max_slot(ops);
++  return const_propagate_slots(ops, cp_max_slot(ops));
++}
++
++function const_propagate_slots(ops: Op[], maxs: i32): Op[] {
+   if (maxs < 0) {
+     return ops;
+   }
+@@ -6715,20 +6719,14 @@ function cp_prev(ops: Op[], out: Op[], copying: boolean, i: i32): Op {
+ }
+ 
+ pub function propagate_copies(ops: Op[]): Op[] {
++  return propagate_copies_slots(ops, cp_max_slot(ops));
++}
++
++function propagate_copies_slots(ops: Op[], maxs: i32): Op[] {
+   let k_load: i32 = K_LOAD_LOCAL;
+   let k_store: i32 = K_STORE_LOCAL;
+   let k_tee: i32 = K_TEE_LOCAL;
+-  let maxs: i32 = 0 - 1;
+   let i: i32 = 0;
+-  while (i < ops.len()) {
+-    let kt: i32 = ops[i].kind_tag;
+-    if (kt == k_load || kt == k_store || kt == k_tee) {
+-      if (ops[i].i32_imm > maxs) {
+-        maxs = ops[i].i32_imm;
+-      }
+-    }
+-    i = i + 1;
+-  }
+   if (maxs < 0) {
+     return ops;
+   }
