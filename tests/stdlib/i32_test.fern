@@ -97,8 +97,8 @@ function test_is_in_range(): test.TestOutcome {
   return test.assert_true(1.is_in_range(1, 10) && !10.is_in_range(1, 10));
 }
 
-function test_is_between(): test.TestOutcome {
-  return test.assert_true(10.is_between(1, 10) && !11.is_between(1, 10));
+function test_is_in_range_incl(): test.TestOutcome {
+  return test.assert_true(10.is_in_range_incl(1, 10) && !11.is_in_range_incl(1, 10));
 }
 
 function test_min(): test.TestOutcome {
@@ -213,7 +213,7 @@ function main(): i32 {
   r = r.it("is_perfect_square", test_perfect_square);
   r = r.it("is_multiple_of", test_is_multiple_of);
   r = r.it("is_in_range", test_is_in_range);
-  r = r.it("is_between", test_is_between);
+  r = r.it("is_in_range_incl", test_is_in_range_incl);
   r = r.it("min", test_min);
   r = r.it("percent_of", test_percent_of);
   r = r.it("percent_of large", test_percent_of_large);
