@@ -78,7 +78,7 @@ function main(): i32 {
 }
 
 function plan(raw: string, parsed: cli.CliArgs): Result[Plan, string] {
-  let Some(u) = url.url_parse(raw) else {
+  let Ok(u) = url.url_parse(raw) else {
     return Err("not a URL: " + raw);
   };
   if (u.scheme != "http") {

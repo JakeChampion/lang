@@ -473,10 +473,10 @@ function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] 
 
 function __http_url(raw: string): Result[Url, FetchError] {
   match (url.url_parse(raw)) {
-    Some(parsed) => {
+    Ok(parsed) => {
       return __http_url_checked(raw, parsed);
     },
-    None => {
+    Err(_) => {
       return Err(InvalidUrl(raw));
     }
   }
@@ -1782,10 +1782,10 @@ function __next_hop(cur: Request, resp: HttpResponse): Result[Request, FetchErro
   }
   let target: string = "";
   match (url.url_resolve(cur.url, location)) {
-    Some(t) => {
+    Ok(t) => {
       target = t;
     },
-    None => {
+    Err(_) => {
       return Err(Redirect("a Location that is not a URL"));
     }
   }
@@ -1832,18 +1832,18 @@ function __same_origin(a: string, b: string): boolean {
   let ua: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   let ub: Url = ua;
   match (url.url_parse(a)) {
-    Some(p) => {
+    Ok(p) => {
       ua = p;
     },
-    None => {
+    Err(_) => {
       return false;
     }
   }
   match (url.url_parse(b)) {
-    Some(p) => {
+    Ok(p) => {
       ub = p;
     },
-    None => {
+    Err(_) => {
       return false;
     }
   }
@@ -3110,10 +3110,10 @@ function __or_empty(v: Option[string]): string {
 <<62 pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string]>>=
 pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string] {
   match (url.url_parse(target_url)) {
-    Some(u) => {
+    Ok(u) => {
       return __proxy_for_url(p, u);
     },
-    None => {
+    Err(_) => {
       return None;
     }
   }
@@ -3428,10 +3428,10 @@ function __proxy_of(spec: string, name: string): Result[__Proxy, FetchError] {
   }
   let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.url_parse(full)) {
-    Some(parsed) => {
+    Ok(parsed) => {
       u = parsed;
     },
-    None => {
+    Err(_) => {
       return Err(InvalidUrl(name + " is not a URL"));
     }
   }
