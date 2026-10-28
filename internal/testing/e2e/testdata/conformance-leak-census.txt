@@ -1168,6 +1168,7 @@ variant_pattern_rename_rest                          0
 variant_pattern_rest                                 0
 variant_payload_expected_type                        0
 variant_payload_from_array_field                     0
+vec_lane_kernels                                     0
 view_of_branch_value                                 0
 views_in_aggregates_stay_local                       0
 wasi_http_error_code_names                           0
