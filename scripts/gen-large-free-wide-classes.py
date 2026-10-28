@@ -151,7 +151,7 @@ def main():
     raw = (json.dumps(bundle, sort_keys=True, indent=2) + '\n').encode()
     expected = {REFERENCE: gzip.compress(raw, mtime=0), DRIVER: driver(bundle).encode()}
     if args.check:
-        assert all(p.read_bytes() == value for p, value in expected.items()), 'reference or generated source differs'
+        assert gzip.decompress(REFERENCE.read_bytes()) == raw and DRIVER.read_bytes() == expected[DRIVER], 'reference or generated source differs'
     else:
         assert all(not p.exists() for p in expected), 'refuse existing output'
         for path, value in expected.items():
