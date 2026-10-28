@@ -40,11 +40,12 @@ func runCommandModule(t *testing.T, path string) (stdout, stderr string, code in
 
 func TestCommandModuleLeakCensusReportsLeak(t *testing.T) {
 	path := buildCommandModule(t, "function main(): i32 {\n"+
+		"  unsafe {\n"+
 		"  let a: usize = __alloc(64);\n"+
 		"  let b: usize = __alloc(64);\n"+
 		"  print(\"ran\");\n"+
 		"  if (a == 0 || b == 0) { return 1; }\n"+
-		"  return 42;\n}\n", "FERN_LEAKCHECK=1")
+		"  return 42;\n  }\n}\n", "FERN_LEAKCHECK=1")
 	stdout, stderr, code := runCommandModule(t, path)
 	if code != 42 {
 		t.Errorf("exit %d, want 42 — the census must not take over the exit code", code)
@@ -68,8 +69,10 @@ func TestCommandModuleLeakCensusBalancesAndIsOptIn(t *testing.T) {
 	const src = "function main(): i32 {\n" +
 		"  let i: i32 = 0;\n" +
 		"  while (i < 100) {\n" +
-		"    let a: usize = __alloc(64);\n" +
-		"    __free(a, 64);\n" +
+		"    unsafe {\n" +
+		"      let a: usize = __alloc(64);\n" +
+		"      __free(a, 64);\n" +
+		"    }\n" +
 		"    i = i + 1;\n" +
 		"  }\n  return 0;\n}\n"
 

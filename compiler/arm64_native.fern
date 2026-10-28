@@ -807,12 +807,10 @@ function arm64_loc_row(own a: Arm64Asm, line: string): Arm64Asm {
     col = arm64_gas_atoi(f[3]);
   }
   let flags: i32 = 0;
-  let i: i32 = 3;
-  while (i < f.len()) {
+  for i in 3..f.len() {
     if (f[i] == "prologue_end") {
       flags = 1;
     }
-    i = i + 1;
   }
   return Arm64Asm {
     ...a,
@@ -8595,6 +8593,9 @@ function arm64_parse_f64(s: string): f64 {
   return f64_from_bits(parse_f64_bits(s));
 }
 
+// arm64_gas_alignment is the byte alignment a directive asks for, or 0 when
+// it is above 64 KiB: the padding would grow without bound, and the
+// compiler's own text asks for at most 256 bytes.
 function arm64_gas_alignment(line: string): i32 {
   let sp: i32 = arm64_str_indexof(line, " ");
   if (sp < 0) {
@@ -8605,7 +8606,13 @@ function arm64_gas_alignment(line: string): i32 {
     return 1;
   }
   if (arm64_str_starts_with(line, ".balign")) {
+    if (n > 65536) {
+      return 0;
+    }
     return n;
+  }
+  if (n > 16) {
+    return 0;
   }
   let a: i32 = 1;
   let k: i32 = 0;
@@ -8639,6 +8646,9 @@ function arm64_gas_bss_directive(own p: Arm64GasProg, line: string): Arm64GasPro
     let sp2: i32 = arm64_str_indexof(line, " ");
     if (sp2 >= 0) {
       let a: i32 = arm64_gas_alignment(line);
+      if (a == 0) {
+        return Arm64GasProg { ...p, unknown: p.unknown.append(line + ": alignment too large") };
+      }
       let bs: i32 = p.bss_size;
       while (bs % a != 0) {
         bs = bs + 1;
@@ -8697,7 +8707,11 @@ function arm64_gas_data_directive(own p: Arm64GasProg, line: string, ro: boolean
   if (arm64_str_starts_with(line, ".align") || arm64_str_starts_with(line, ".p2align") || arm64_str_starts_with(line, ".balign")) {
     let sp: i32 = arm64_str_indexof(line, " ");
     if (sp >= 0) {
-      return arm64_gas_data_align(p, arm64_gas_alignment(line));
+      let a: i32 = arm64_gas_alignment(line);
+      if (a == 0) {
+        return Arm64GasProg { ...p, unknown: p.unknown.append(line + ": alignment too large") };
+      }
+      return arm64_gas_data_align(p, a);
     }
   }
   return p;

@@ -1232,7 +1232,20 @@ func (p *parser) maybeQualify(first string) string {
 
 func (p *parser) parseDeclTypeParams(kind, name string) ([]string, error) {
 	var typeParams []string
+	p.constParams = nil
 	for {
+		if p.match(lexer.Keyword, "const") {
+			cname, err := p.parseConstTypeParam()
+			if err != nil {
+				return nil, err
+			}
+			typeParams = append(typeParams, cname)
+			p.constParams = append(p.constParams, cname)
+			if p.moreElems("]") {
+				continue
+			}
+			break
+		}
 		pname, err := p.expect(lexer.Ident, "")
 		if err != nil {
 			return nil, err
@@ -1339,7 +1352,7 @@ func (p *parser) refuseConstParams(pos ast.Position) error {
 	}
 	name := p.constParams[0]
 	p.constParams = nil
-	return p.errorfCode(pos, "P001", "const parameter %s: only a function takes a const parameter", name)
+	return p.errorfCode(pos, "P001", "const parameter %s: only a function or a struct takes a const parameter", name)
 }
 
 func (p *parser) parseOptBoundsWithArgs() ([]string, [][]ast.Type, error) {
@@ -1607,12 +1620,13 @@ func (p *parser) parseStructDecl() (*ast.StructDecl, error) {
 	if err != nil {
 		return nil, err
 	}
-	var typeParams []string
+	var typeParams, constParams []string
 	if _, ok := p.accept(lexer.Punct, "["); ok {
 		typeParams, err = p.parseDeclTypeParams("struct", name.Text)
 		if err != nil {
 			return nil, err
 		}
+		constParams, p.constParams = p.constParams, nil
 	}
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, err
@@ -1644,7 +1658,7 @@ func (p *parser) parseStructDecl() (*ast.StructDecl, error) {
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return nil, err
 	}
-	return &ast.StructDecl{P: kw.Pos, Name: name.Text, TypeParams: typeParams, Fields: fields}, nil
+	return &ast.StructDecl{P: kw.Pos, Name: name.Text, TypeParams: typeParams, ConstParams: constParams, Fields: fields}, nil
 }
 
 func (p *parser) parseConstDecl() (*ast.ConstDecl, error) {
@@ -1686,9 +1700,12 @@ func (p *parser) parseEnumDecl() (*ast.EnumDecl, error) {
 		return nil, err
 	}
 	var typeParams []string
-	if _, ok := p.accept(lexer.Punct, "["); ok {
+	if open, ok := p.accept(lexer.Punct, "["); ok {
 		typeParams, err = p.parseDeclTypeParams("enum", name.Text)
 		if err != nil {
+			return nil, err
+		}
+		if err := p.refuseConstParams(open.Pos); err != nil {
 			return nil, err
 		}
 	}
@@ -1780,9 +1797,12 @@ func (p *parser) parseUnionDecl() (*ast.UnionDecl, error) {
 		return nil, err
 	}
 	var typeParams []string
-	if _, ok := p.accept(lexer.Punct, "["); ok {
+	if open, ok := p.accept(lexer.Punct, "["); ok {
 		typeParams, err = p.parseDeclTypeParams("type", name.Text)
 		if err != nil {
+			return nil, err
+		}
+		if err := p.refuseConstParams(open.Pos); err != nil {
 			return nil, err
 		}
 	}
@@ -2050,7 +2070,7 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 			p.advance()
 			var args []ast.Type
 			for {
-				at, err := p.parseType()
+				at, err := p.parseTypeArg()
 				if err != nil {
 					return nil, err
 				}
@@ -3129,26 +3149,28 @@ func isTypeKeyword(s string) bool {
 	return false
 }
 
+// parseTypeArg parses one argument of a type application: a type, or an
+// unsuffixed integer literal as a const argument.
+func (p *parser) parseTypeArg() (ast.Type, error) {
+	if !isConstArgTok(p.peek()) {
+		return p.parseType()
+	}
+	e, err := p.parsePrimary()
+	if err != nil {
+		return nil, err
+	}
+	lit := e.(*ast.NumberLit)
+	v := lit.Value
+	if lit.ExceedsI64 || lit.ExceedsU64 {
+		v = math.MaxInt64
+	}
+	return ast.ConstArg{Value: v, Raw: lit.Raw}, nil
+}
+
 func (p *parser) parseTypeArgList() ([]ast.Type, error) {
 	var args []ast.Type
 	for {
-		if isConstArgTok(p.peek()) {
-			e, err := p.parsePrimary()
-			if err != nil {
-				return nil, err
-			}
-			lit := e.(*ast.NumberLit)
-			v := lit.Value
-			if lit.ExceedsI64 || lit.ExceedsU64 {
-				v = math.MaxInt64
-			}
-			args = append(args, ast.ConstArg{Value: v, Raw: lit.Raw})
-			if !p.moreElems("]") {
-				break
-			}
-			continue
-		}
-		t, err := p.parseType()
+		t, err := p.parseTypeArg()
 		if err != nil {
 			return nil, err
 		}

@@ -13,48 +13,56 @@ var heapMarkCases = []struct {
 	want int
 }{
 	{"heap-mark-roundtrip", `function main(): i32 {
-    let m: i64 = __heap_mark();
-    __heap_release_to(m);
-    return 4;
+  unsafe {
+      let m: i64 = __heap_mark();
+      __heap_release_to(m);
+      return 4;
+  }
 }`, 4},
 	{"heap-mark-reclaims", `function main(): i32 {
-    let seed: i32[] = [(__heap_bump_bytes() as i32) + 1, 2, 3];
-    let m: i64 = __heap_mark();
-    let before: i64 = __heap_bump_bytes();
-    let i: i32 = 0;
-    while (i < 2000) { let p: usize = __raw_alloc(64); i = i + 1; }
-    let mid: i64 = __heap_bump_bytes();
-    __heap_release_to(m);
-    let after: i64 = __heap_bump_bytes();
-    if (((mid - before) / 1024) as i32 < 64) { return 97; }
-    if (((after - before) / 1024) as i32 > 1) { return 98; }
-    if (seed[0] != 1) { return 96; }
-    return 0;
+  unsafe {
+      let seed: i32[] = [(__heap_bump_bytes() as i32) + 1, 2, 3];
+      let m: i64 = __heap_mark();
+      let before: i64 = __heap_bump_bytes();
+      let i: i32 = 0;
+      while (i < 2000) { let p: usize = __raw_alloc(64); i = i + 1; }
+      let mid: i64 = __heap_bump_bytes();
+      __heap_release_to(m);
+      let after: i64 = __heap_bump_bytes();
+      if (((mid - before) / 1024) as i32 < 64) { return 97; }
+      if (((after - before) / 1024) as i32 > 1) { return 98; }
+      if (seed[0] != 1) { return 96; }
+      return 0;
+  }
 }`, 0},
 	{"heap-mark-reuse-after-release", `function main(): i32 {
-    let seed: i32[] = [(__heap_bump_bytes() as i32) + 1, 2, 3];
-    let m: i64 = __heap_mark();
-    let before: i64 = __heap_bump_bytes();
-    let i: i32 = 0;
-    while (i < 1000) { let p: usize = __raw_alloc(64); i = i + 1; }
-    __heap_release_to(m);
-    let m2: i64 = __heap_mark();
-    let j: i32 = 0;
-    while (j < 1000) { let q: usize = __raw_alloc(64); j = j + 1; }
-    __heap_release_to(m2);
-    let after: i64 = __heap_bump_bytes();
-    if (((after - before) / 1024) as i32 > 1) { return 98; }
-    if (seed[0] != 1) { return 96; }
-    return 0;
+  unsafe {
+      let seed: i32[] = [(__heap_bump_bytes() as i32) + 1, 2, 3];
+      let m: i64 = __heap_mark();
+      let before: i64 = __heap_bump_bytes();
+      let i: i32 = 0;
+      while (i < 1000) { let p: usize = __raw_alloc(64); i = i + 1; }
+      __heap_release_to(m);
+      let m2: i64 = __heap_mark();
+      let j: i32 = 0;
+      while (j < 1000) { let q: usize = __raw_alloc(64); j = j + 1; }
+      __heap_release_to(m2);
+      let after: i64 = __heap_bump_bytes();
+      if (((after - before) / 1024) as i32 > 1) { return 98; }
+      if (seed[0] != 1) { return 96; }
+      return 0;
+  }
 }`, 0},
 	{"heap-mark-zero-release-noop", `function main(): i32 {
-    let keep: i32[] = [(__heap_bump_bytes() as i32) + 7, 8, 9];
-    __heap_release_to(0i64);
-    let fresh: i32[] = [keep[0] - 6, 2, 3];
-    if (keep[0] != 7) { return 96; }
-    if (fresh[0] != 1) { return 95; }
-    if (keep[2] != 9) { return 94; }
-    return 0;
+  unsafe {
+      let keep: i32[] = [(__heap_bump_bytes() as i32) + 7, 8, 9];
+      __heap_release_to(0i64);
+      let fresh: i32[] = [keep[0] - 6, 2, 3];
+      if (keep[0] != 7) { return 96; }
+      if (fresh[0] != 1) { return 95; }
+      if (keep[2] != 9) { return 94; }
+      return 0;
+  }
 }`, 0},
 }
 

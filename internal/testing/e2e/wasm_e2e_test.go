@@ -5254,7 +5254,7 @@ import "std/url";
 function main(): i32 {
 		// Full URL with every section.
 		match (url.url_parse("https://example.com:8080/path/sub?q=1&r=2#section")) {
-			Some(u) => {
+			Ok(u) => {
 				if (u.scheme != "https") { return 1; }
 				if (u.host != "example.com") { return 2; }
 				if (u.port != 8080) { return 3; }
@@ -5262,24 +5262,24 @@ function main(): i32 {
 				if (u.query != "q=1&r=2") { return 5; }
 				if (u.fragment != "section") { return 6; }
 			},
-			None => { return 7; }
+			Err(_) => { return 7; }
 		}
 
 		// No port — port should default to 0.
 		match (url.url_parse("http://example.com/foo")) {
-			Some(u) => {
+			Ok(u) => {
 				if (u.scheme != "http") { return 10; }
 				if (u.host != "example.com") { return 11; }
 				if (u.port != 0) { return 12; }
 				if (u.path != "/foo") { return 13; }
 			},
-			None => { return 14; }
+			Err(_) => { return 14; }
 		}
 
 		// Path-only / relative URL — no scheme, no host, port
 		// stays 0, path is the whole input.
 		match (url.url_parse("/just/a/path?q=hi")) {
-			Some(u) => {
+			Ok(u) => {
 				if (u.scheme != "") { return 20; }
 				if (u.host != "") { return 21; }
 				if (u.port != 0) { return 22; }
@@ -5287,33 +5287,33 @@ function main(): i32 {
 				if (u.query != "q=hi") { return 24; }
 				if (u.fragment != "") { return 25; }
 			},
-			None => { return 26; }
+			Err(_) => { return 26; }
 		}
 
 		// Fragment without query.
 		match (url.url_parse("http://h/path#anchor")) {
-			Some(u) => {
+			Ok(u) => {
 				if (u.path != "/path") { return 30; }
 				if (u.query != "") { return 31; }
 				if (u.fragment != "anchor") { return 32; }
 			},
-			None => { return 33; }
+			Err(_) => { return 33; }
 		}
 
 		// Empty input -> None.
 		match (url.url_parse("")) {
-			Some(_) => { return 40; },
-			None => {}
+			Ok(_) => { return 40; },
+			Err(_) => {}
 		}
 
 		// Authority only (no path).
 		match (url.url_parse("http://localhost:3000")) {
-			Some(u) => {
+			Ok(u) => {
 				if (u.host != "localhost") { return 50; }
 				if (u.port != 3000) { return 51; }
 				if (u.path != "") { return 52; }
 			},
-			None => { return 53; }
+			Err(_) => { return 53; }
 		}
 
 		return 0;

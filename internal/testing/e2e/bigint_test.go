@@ -127,6 +127,10 @@ func bigintCases() []bigintCase {
 	emit("bigint.from_u64(9223372036854775808 as u64).to_string()", "9223372036854775808")
 	emit("bigint.from_u64(4294967296 as u64).to_string()", "4294967296")
 	emit("bigint.from_u64(0 as u64).to_string()", "0")
+	emit(`parse_text("")`, "number input is empty")
+	emit(`parse_text("-")`, "invalid digit at byte 1")
+	emit(`parse_text("12x4")`, "invalid digit at byte 2")
+	emit(`parse_text("+0042")`, "42")
 	return cases
 }
 
@@ -136,8 +140,15 @@ import "std/u64";
 
 function bigint_or_die(s: string): bigint.BigInt {
     match (bigint.parse(s)) {
-        Some(v) => { return v; },
-        None => { return bigint.from_i64(999999999); }
+        Ok(v) => { return v; },
+        Err(_) => { return bigint.from_i64(999999999); }
+    }
+}
+
+function parse_text(s: string): string {
+    match (bigint.parse(s)) {
+        Ok(v) => { return v.to_string(); },
+        Err(e) => { return e.message(); }
     }
 }
 `
@@ -195,7 +206,7 @@ function biggest[T: cmp.Ord](a: T, b: T): T { if (a.cmp(b) > 0) { return a; } re
 function mk[T: cmp.Default](): T { return T.default(); }
 
 function big(s: string): bigint.BigInt {
-    match (bigint.parse(s)) { Some(v) => { return v; }, None => { return bigint.zero(); } }
+    match (bigint.parse(s)) { Ok(v) => { return v; }, Err(_) => { return bigint.zero(); } }
 }
 
 function main(): i32 {

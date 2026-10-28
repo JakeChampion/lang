@@ -1,0 +1,11 @@
+// std/i64 imports std/number_parse, but this file does not, so the
+// qualifier is not in scope here. The call site is not a second error.
+import "std/i64";
+
+function digits(r: Result[i64, number_parse.ParseNumberError]): i32 {
+  return 0;
+}
+
+function main(): i32 {
+  return digits(i64.parse_i64("7"));
+}

@@ -154,7 +154,7 @@ function lent_arrays(f: ssasem.Func, call: ssa.SInst, own acc: i32[]): i32[] {
 }
 
 function keeps_receiver(ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.arr_concat();
+  return ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.arr_concat() || ins.kind_tag == ssasem.truncate();
 }
 
 function is_array(t: typeinfo.Type): boolean {
@@ -260,7 +260,7 @@ function grown_in_loop(g: ssa.SFunc, phi: i32, hi: i32): boolean {
 }
 
 function grows(ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.call() && rtbytecopy.is_helper(ins.str);
+  return ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.truncate() || ins.kind_tag == ssasem.call() && rtbytecopy.is_helper(ins.str);
 }
 
 function padded(source: sourcepos.SourceInfo, n: i32): sourcepos.SourceInfo {

@@ -202,11 +202,11 @@ function test_duration_negative(): test.TestOutcome {
 
 function test_duration_round_trips_parse(): test.TestOutcome {
   match (format.parse_duration("30d 1s")) {
-    Some(d) => {
+    Ok(d) => {
       return test.assert_eq(format.format_duration(d), "720h 1s");
     },
-    None => {
-      return test.fail("parse_duration(\"30d 1s\") answered None");
+    Err(_) => {
+      return test.fail("parse_duration(\"30d 1s\") was refused");
     }
   }
 }

@@ -4589,28 +4589,32 @@ function main(): i32 {
 	{name: "raw-floor-intrinsics", runtimeFloor: true, atLeast: 3, want: "3|Abc\n", nativeOnly: true, src: `
 function chr_of(b: i32): string { let p: usize = __raw_alloc(1); __raw_store8(p, 0, b); return __raw_string(p, 1); }
 function cat2(a: string, b: string): string {
-    let la: i32 = a.len();
-    let lb: i32 = b.len();
-    let p: usize = __raw_alloc(la + lb);
-    __memcpy(p, __raw_data(a), la);
-    __memcpy(p + la, __raw_data(b), lb);
-    return __raw_string(p, la + lb);
+  unsafe {
+      let la: i32 = a.len();
+      let lb: i32 = b.len();
+      let p: usize = __raw_alloc(la + lb);
+      __memcpy(p, __raw_data(a), la);
+      __memcpy(p + la, __raw_data(b), lb);
+      return __raw_string(p, la + lb);
+  }
 }
 function main(): i32 {
-    let t: string = cat2(chr_of(65), "bc");
-    let sc: usize = __raw_scratch(16);
-    __raw_store_ptr(sc, 0, __raw_data(t));
-    if (__raw_load8(__raw_load_ptr(sc, 0), 1) != 98) { return 90; }
-    if (__syscall3(4000, 0, 0, 0) != -38) { return 91; }
-    if (__syscall4(4000, 1, 2, 3, 4) != -38) { return 95; }
-    if (__syscall5(4000, 1, 2, 3, 4, 5) != -38) { return 96; }
-    if (__syscall6(4000, 1, 2, 3, 4, 5, 6) != -38) { return 92; }
-    if (__raw_load_ptr(__raw_environ(), 0) == (0 as usize)) { return 93; }
-    let kept: u8[] = __rc_inc(__alloc_u8(8));
-    let none: i32[] = __raw_array(__raw_arr_box(0));
-    if (__rc_underflow_count() != 0) { return 94; }
-    print(t);
-    return t.len() + kept.len() - 8 + none.len();
+  unsafe {
+      let t: string = cat2(chr_of(65), "bc");
+      let sc: usize = __raw_scratch(16);
+      __raw_store_ptr(sc, 0, __raw_data(t));
+      if (__raw_load8(__raw_load_ptr(sc, 0), 1) != 98) { return 90; }
+      if (__syscall3(4000, 0, 0, 0) != -38) { return 91; }
+      if (__syscall4(4000, 1, 2, 3, 4) != -38) { return 95; }
+      if (__syscall5(4000, 1, 2, 3, 4, 5) != -38) { return 96; }
+      if (__syscall6(4000, 1, 2, 3, 4, 5, 6) != -38) { return 92; }
+      if (__raw_load_ptr(__raw_environ(), 0) == (0 as usize)) { return 93; }
+      let kept: u8[] = __rc_inc(__alloc_u8(8));
+      let none: i32[] = __raw_array(__raw_arr_box(0));
+      if (__rc_underflow_count() != 0) { return 94; }
+      print(t);
+      return t.len() + kept.len() - 8 + none.len();
+  }
 }
 `},
 	{name: "runtime-helpers-take-the-typed-path", atLeast: 1, want: "5|01234!\n", reports: []string{"runtime __fern_arr_slice_u8: produced", "runtime __fern_str_concat: produced"}, src: `
@@ -4828,12 +4832,14 @@ function main(): i32 {
 `},
 	{name: "usize-widens-to-i64-whole", runtimeFloor: true, atLeast: 1, want: "0|", nativeOnly: true, src: `
 function main(): i32 {
-    let p: usize = __raw_scratch(8);
-    let w: i64 = p as i64;
-    __store_i64(p, w);
-    if (__raw_load_ptr(p, 0) != p) { return 1; }
-    if (__load_i64(p) != w) { return 2; }
-    return 0;
+  unsafe {
+      let p: usize = __raw_scratch(8);
+      let w: i64 = p as i64;
+      __store_i64(p, w);
+      if (__raw_load_ptr(p, 0) != p) { return 1; }
+      if (__load_i64(p) != w) { return 2; }
+      return 0;
+  }
 }
 `},
 	{name: "usize-unsigned-operators", atLeast: 1, want: "63|", src: semUsizeOperatorsSource},
@@ -6305,12 +6311,12 @@ function main(): i32 {
 `
 
 const semCCallSource = `
-function run0(cb: usize): i32 { return __c_call0(cb) as i32; }
-function run1(cb: usize, a: usize): i32 { return __c_call1(cb, a) as i32; }
-function run2(cb: usize, a: usize, b: usize): i32 { return __c_call2(cb, a, b) as i32; }
-function run3(cb: usize, a: usize, b: usize, c: usize): i32 { return __c_call3(cb, a, b, c) as i32; }
-function run4(cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { return __c_call4(cb, a, b, c, d) as i32; }
-function runf(cb: usize, a: usize): f64 { return __c_call1_f64(cb, a) + (__c_call2_f32(cb, a, a) as f64); }
+function run0(cb: usize): i32 { unsafe { return __c_call0(cb) as i32; } }
+function run1(cb: usize, a: usize): i32 { unsafe { return __c_call1(cb, a) as i32; } }
+function run2(cb: usize, a: usize, b: usize): i32 { unsafe { return __c_call2(cb, a, b) as i32; } }
+function run3(cb: usize, a: usize, b: usize, c: usize): i32 { unsafe { return __c_call3(cb, a, b, c) as i32; } }
+function run4(cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { unsafe { return __c_call4(cb, a, b, c, d) as i32; } }
+function runf(cb: usize, a: usize): f64 { unsafe { return __c_call1_f64(cb, a) + (__c_call2_f32(cb, a, a) as f64); } }
 function main(): i32 {
     let n: i32 = args().len();
     if (n > 100) {

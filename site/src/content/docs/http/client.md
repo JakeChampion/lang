@@ -142,7 +142,7 @@ function init(): serve.Config {
     match (fetch.allow(["api.github.com", "*.stripe.com", "hooks.example.com:8443"])) {
         Ok(a) => { return serve.Config { ...serve.config(), http_allow: Some(a) }; },
         Err(e) => {
-            eprint(e);
+            eprint(e.message());
             return serve.config();
         }
     }

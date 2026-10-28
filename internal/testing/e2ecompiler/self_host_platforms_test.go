@@ -115,7 +115,7 @@ func TestSelfHostTargetCapabilityDifferentialX86_64(t *testing.T) {
 	}{
 		{"proc-fork-wasm", "wasm32-wasi", "function main(): i32 {\n    let pid: i32 = proc_fork();\n    return pid;\n}\n"},
 		{"proc-fork-native-ok", "x86-64-linux", "function main(): i32 {\n    let pid: i32 = proc_fork();\n    return pid;\n}\n"},
-		{"heap-mark-wasm", "wasm32-wasi", "function main(): i32 {\n    let m: i64 = __heap_mark();\n    __heap_release_to(m);\n    return 0;\n}\n"},
+		{"heap-mark-wasm", "wasm32-wasi", "function main(): i32 {\n    unsafe {\n        let m: i64 = __heap_mark();\n        __heap_release_to(m);\n    }\n    return 0;\n}\n"},
 		{"heap-bump-bytes-wasm-ok", "wasm32-wasi", "function main(): i32 {\n    return __heap_bump_bytes();\n}\n"},
 		{"subprocess-wasm", "wasm32-wasi", "function main(): i32 {\n    let argv: string[] = [];\n    let r: i32 = run_it(argv);\n    return r;\n}\nfunction run_it(argv: string[]): i32 {\n    subprocess(\"ls\", argv, \"\");\n    return 0;\n}\n"},
 		{"subprocess-native-ok", "x86-64-linux", "function main(): i32 {\n    let argv: string[] = [];\n    let r: i32 = run_it(argv);\n    return r;\n}\nfunction run_it(argv: string[]): i32 {\n    subprocess(\"ls\", argv, \"\");\n    return 0;\n}\n"},

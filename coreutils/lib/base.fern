@@ -13,22 +13,24 @@ pub function block_bytes(): i32 {
 }
 
 function tables(alphabet: string): (usize, usize) {
-  let n: i32 = alphabet.len();
-  let a: usize = __alloc(n + 8);
-  let d: usize = __alloc(256 * 4);
-  let i: i32 = 0;
-  while (i < 256) {
-    __store_i32(d + (i * 4) as usize, 0 - 1);
-    i = i + 1;
+  unsafe {
+    let n: i32 = alphabet.len();
+    let a: usize = __alloc(n + 8);
+    let d: usize = __alloc(256 * 4);
+    let i: i32 = 0;
+    while (i < 256) {
+      __store_i32(d + (i * 4) as usize, 0 - 1);
+      i = i + 1;
+    }
+    i = 0;
+    while (i < n) {
+      let ch: i32 = alphabet[i] as i32;
+      __store_i32(a + i as usize, ch);
+      __store_i32(d + (ch * 4) as usize, i);
+      i = i + 1;
+    }
+    return (a, d);
   }
-  i = 0;
-  while (i < n) {
-    let ch: i32 = alphabet[i] as i32;
-    __store_i32(a + i as usize, ch);
-    __store_i32(d + (ch * 4) as usize, i);
-    i = i + 1;
-  }
-  return (a, d);
 }
 
 function bit_codec(alphabet: string, bits: i32, in_block: i32, out_block: i32, pad: boolean, rev: boolean): Codec {
@@ -37,12 +39,14 @@ function bit_codec(alphabet: string, bits: i32, in_block: i32, out_block: i32, p
 }
 
 function also_decodes(c: Codec, extra: string): Codec {
-  let i: i32 = 0;
-  while (i < extra.len()) {
-    __store_i32(c.dec + (extra[i] as i32 * 4) as usize, i);
-    i = i + 1;
+  unsafe {
+    let i: i32 = 0;
+    while (i < extra.len()) {
+      __store_i32(c.dec + (extra[i] as i32 * 4) as usize, i);
+      i = i + 1;
+    }
+    return c;
   }
-  return c;
 }
 
 pub function base64(): Codec {
@@ -103,26 +107,28 @@ function enc_chars(c: Codec, n: i32): i32 {
 }
 
 function enc_tail(c: Codec, acc0: i64, nb: i32): Chars {
-  let acc: i64 = acc0;
-  let chars: i32 = (nb * 8 + c.bits - 1) / c.bits;
-  acc = acc << chars * c.bits - nb * 8;
-  let mask: i64 = ((1 << c.bits) - 1) as i64;
-  let out: i64 = 0;
-  let sh: i32 = chars * c.bits;
-  let u: i32 = 0;
-  while (u < chars) {
-    sh = sh - c.bits;
-    out = out | __load_u8(c.alpha + (acc >> sh & mask) as usize) as i64 << u * 8;
-    u = u + 1;
-  }
-  let w: i32 = chars;
-  if (c.pad) {
-    while (w % c.out_block != 0) {
-      out = out | 61 as i64 << w * 8;
-      w = w + 1;
+  unsafe {
+    let acc: i64 = acc0;
+    let chars: i32 = (nb * 8 + c.bits - 1) / c.bits;
+    acc = acc << chars * c.bits - nb * 8;
+    let mask: i64 = ((1 << c.bits) - 1) as i64;
+    let out: i64 = 0;
+    let sh: i32 = chars * c.bits;
+    let u: i32 = 0;
+    while (u < chars) {
+      sh = sh - c.bits;
+      out = out | __load_u8(c.alpha + (acc >> sh & mask) as usize) as i64 << u * 8;
+      u = u + 1;
     }
+    let w: i32 = chars;
+    if (c.pad) {
+      while (w % c.out_block != 0) {
+        out = out | 61 as i64 << w * 8;
+        w = w + 1;
+      }
+    }
+    return Chars { v: out, n: w };
   }
-  return Chars { v: out, n: w };
 }
 
 function pack_bytes(c: Codec): i32 {
@@ -158,167 +164,179 @@ function pack_value(bs: u8[], i: i32, p: i32): i64 {
 }
 
 function pack_chars(alpha: usize, v: i64, bits: i32): i64 {
-  if (bits == 6) {
-    return __load_u8(alpha + (v >> 42 & 63 as i64) as usize) as i64
-      | __load_u8(alpha + (v >> 36 & 63 as i64) as usize) as i64 << 8
-      | __load_u8(alpha + (v >> 30 & 63 as i64) as usize) as i64 << 16
-      | __load_u8(alpha + (v >> 24 & 63 as i64) as usize) as i64 << 24
-      | __load_u8(alpha + (v >> 18 & 63 as i64) as usize) as i64 << 32
-      | __load_u8(alpha + (v >> 12 & 63 as i64) as usize) as i64 << 40
-      | __load_u8(alpha + (v >> 6 & 63 as i64) as usize) as i64 << 48
-      | __load_u8(alpha + (v & 63 as i64) as usize) as i64 << 56;
+  unsafe {
+    if (bits == 6) {
+      return __load_u8(alpha + (v >> 42 & 63 as i64) as usize) as i64
+        | __load_u8(alpha + (v >> 36 & 63 as i64) as usize) as i64 << 8
+        | __load_u8(alpha + (v >> 30 & 63 as i64) as usize) as i64 << 16
+        | __load_u8(alpha + (v >> 24 & 63 as i64) as usize) as i64 << 24
+        | __load_u8(alpha + (v >> 18 & 63 as i64) as usize) as i64 << 32
+        | __load_u8(alpha + (v >> 12 & 63 as i64) as usize) as i64 << 40
+        | __load_u8(alpha + (v >> 6 & 63 as i64) as usize) as i64 << 48
+        | __load_u8(alpha + (v & 63 as i64) as usize) as i64 << 56;
+    }
+    if (bits == 5) {
+      return __load_u8(alpha + (v >> 35 & 31 as i64) as usize) as i64
+        | __load_u8(alpha + (v >> 30 & 31 as i64) as usize) as i64 << 8
+        | __load_u8(alpha + (v >> 25 & 31 as i64) as usize) as i64 << 16
+        | __load_u8(alpha + (v >> 20 & 31 as i64) as usize) as i64 << 24
+        | __load_u8(alpha + (v >> 15 & 31 as i64) as usize) as i64 << 32
+        | __load_u8(alpha + (v >> 10 & 31 as i64) as usize) as i64 << 40
+        | __load_u8(alpha + (v >> 5 & 31 as i64) as usize) as i64 << 48
+        | __load_u8(alpha + (v & 31 as i64) as usize) as i64 << 56;
+    }
+    return __load_u8(alpha + (v >> 28 & 15 as i64) as usize) as i64
+      | __load_u8(alpha + (v >> 24 & 15 as i64) as usize) as i64 << 8
+      | __load_u8(alpha + (v >> 20 & 15 as i64) as usize) as i64 << 16
+      | __load_u8(alpha + (v >> 16 & 15 as i64) as usize) as i64 << 24
+      | __load_u8(alpha + (v >> 12 & 15 as i64) as usize) as i64 << 32
+      | __load_u8(alpha + (v >> 8 & 15 as i64) as usize) as i64 << 40
+      | __load_u8(alpha + (v >> 4 & 15 as i64) as usize) as i64 << 48
+      | __load_u8(alpha + (v & 15 as i64) as usize) as i64 << 56;
   }
-  if (bits == 5) {
-    return __load_u8(alpha + (v >> 35 & 31 as i64) as usize) as i64
-      | __load_u8(alpha + (v >> 30 & 31 as i64) as usize) as i64 << 8
-      | __load_u8(alpha + (v >> 25 & 31 as i64) as usize) as i64 << 16
-      | __load_u8(alpha + (v >> 20 & 31 as i64) as usize) as i64 << 24
-      | __load_u8(alpha + (v >> 15 & 31 as i64) as usize) as i64 << 32
-      | __load_u8(alpha + (v >> 10 & 31 as i64) as usize) as i64 << 40
-      | __load_u8(alpha + (v >> 5 & 31 as i64) as usize) as i64 << 48
-      | __load_u8(alpha + (v & 31 as i64) as usize) as i64 << 56;
-  }
-  return __load_u8(alpha + (v >> 28 & 15 as i64) as usize) as i64
-    | __load_u8(alpha + (v >> 24 & 15 as i64) as usize) as i64 << 8
-    | __load_u8(alpha + (v >> 20 & 15 as i64) as usize) as i64 << 16
-    | __load_u8(alpha + (v >> 16 & 15 as i64) as usize) as i64 << 24
-    | __load_u8(alpha + (v >> 12 & 15 as i64) as usize) as i64 << 32
-    | __load_u8(alpha + (v >> 8 & 15 as i64) as usize) as i64 << 40
-    | __load_u8(alpha + (v >> 4 & 15 as i64) as usize) as i64 << 48
-    | __load_u8(alpha + (v & 15 as i64) as usize) as i64 << 56;
 }
 
 function bit_table(c: Codec): usize {
-  let t: usize = __alloc(256 * 8);
-  let b: i32 = 0;
-  while (b < 256) {
-    let v: i64 = b as i64;
-    if (c.rev) {
-      v = rev8(v);
+  unsafe {
+    let t: usize = __alloc(256 * 8);
+    let b: i32 = 0;
+    while (b < 256) {
+      let v: i64 = b as i64;
+      if (c.rev) {
+        v = rev8(v);
+      }
+      let w: i64 = 0;
+      let k: i32 = 0;
+      while (k < 8) {
+        w = w | __load_u8(c.alpha + (v >> 7 - k & 1 as i64) as usize) as i64 << k * 8;
+        k = k + 1;
+      }
+      __store_i64(t + (b * 8) as usize, w);
+      b = b + 1;
     }
-    let w: i64 = 0;
-    let k: i32 = 0;
-    while (k < 8) {
-      w = w | __load_u8(c.alpha + (v >> 7 - k & 1 as i64) as usize) as i64 << k * 8;
-      k = k + 1;
-    }
-    __store_i64(t + (b * 8) as usize, w);
-    b = b + 1;
+    return t;
   }
-  return t;
 }
 
 function z85_digits(alpha: usize, value: i64): i64 {
-  let v: i64 = value;
-  let out: i64 = 0;
-  let u: i32 = 4;
-  while (u >= 0) {
-    out = out | __load_u8(alpha + (v % (85 as i64)) as usize) as i64 << u * 8;
-    v = v / (85 as i64);
-    u = u - 1;
+  unsafe {
+    let v: i64 = value;
+    let out: i64 = 0;
+    let u: i32 = 4;
+    while (u >= 0) {
+      out = out | __load_u8(alpha + (v % (85 as i64)) as usize) as i64 << u * 8;
+      v = v / (85 as i64);
+      u = u - 1;
+    }
+    return out;
   }
-  return out;
 }
 
 function dec_pairs(c: Codec): usize {
-  let t: usize = __alloc(65536 * 4);
-  __memset(t, 255, 65536 * 4);
-  let n: i32 = 1 << c.bits;
-  let i: i32 = 0;
-  while (i < n) {
-    let c0: i32 = __load_u8(c.alpha + i as usize);
-    let j: i32 = 0;
-    while (j < n) {
-      let c1: i32 = __load_u8(c.alpha + j as usize);
-      __store_i32(t + ((c0 | c1 << 8) << 2) as usize, i << c.bits | j);
-      j = j + 1;
+  unsafe {
+    let t: usize = __alloc(65536 * 4);
+    __memset(t, 255, 65536 * 4);
+    let n: i32 = 1 << c.bits;
+    let i: i32 = 0;
+    while (i < n) {
+      let c0: i32 = __load_u8(c.alpha + i as usize);
+      let j: i32 = 0;
+      while (j < n) {
+        let c1: i32 = __load_u8(c.alpha + j as usize);
+        __store_i32(t + ((c0 | c1 << 8) << 2) as usize, i << c.bits | j);
+        j = j + 1;
+      }
+      i = i + 1;
     }
-    i = i + 1;
+    return t;
   }
-  return t;
 }
 
 function dec_group(c: Codec, g: usize, gn: i32): Grp {
-  if (c.bits == 0) {
-    return z85_group(c, g, gn);
-  }
-  let acc: i32 = 0;
-  let held: i32 = 0;
-  let out: i64 = 0;
-  let w: i32 = 0;
-  let d: i32 = 0;
-  let bad: boolean = false;
-  while (d < gn) {
-    let ch: i32 = __load_i32(g + (d * 4) as usize);
-    if (c.pad && ch == 61) {
-      break;
+  unsafe {
+    if (c.bits == 0) {
+      return z85_group(c, g, gn);
     }
-    let v: i32 = __load_i32(c.dec + (ch * 4) as usize);
-    if (v < 0) {
-      bad = true;
-      break;
-    }
-    acc = acc << c.bits | v;
-    held = held + c.bits;
-    if (held >= 8) {
-      held = held - 8;
-      let byte: i32 = acc >> held & 255;
-      if (c.rev) {
-        byte = rev8(byte as i64) as i32;
+    let acc: i32 = 0;
+    let held: i32 = 0;
+    let out: i64 = 0;
+    let w: i32 = 0;
+    let d: i32 = 0;
+    let bad: boolean = false;
+    while (d < gn) {
+      let ch: i32 = __load_i32(g + (d * 4) as usize);
+      if (c.pad && ch == 61) {
+        break;
       }
-      out = out << 8 | byte as i64;
-      acc = acc & (1 << held) - 1;
-      w = w + 1;
+      let v: i32 = __load_i32(c.dec + (ch * 4) as usize);
+      if (v < 0) {
+        bad = true;
+        break;
+      }
+      acc = acc << c.bits | v;
+      held = held + c.bits;
+      if (held >= 8) {
+        held = held - 8;
+        let byte: i32 = acc >> held & 255;
+        if (c.rev) {
+          byte = rev8(byte as i64) as i32;
+        }
+        out = out << 8 | byte as i64;
+        acc = acc & (1 << held) - 1;
+        w = w + 1;
+      }
+      d = d + 1;
     }
-    d = d + 1;
-  }
-  if (bad) {
-    return Grp { v: out, n: w, ok: false };
-  }
-  let padded: boolean = d < gn;
-  let k: i32 = d;
-  while (k < gn) {
-    if (__load_i32(g + (k * 4) as usize) != 61) {
+    if (bad) {
       return Grp { v: out, n: w, ok: false };
     }
-    k = k + 1;
-  }
-  if (padded && gn != c.out_block) {
-    if (c.bits == 5) {
-      return Grp { v: 0, n: 0, ok: false };
+    let padded: boolean = d < gn;
+    let k: i32 = d;
+    while (k < gn) {
+      if (__load_i32(g + (k * 4) as usize) != 61) {
+        return Grp { v: out, n: w, ok: false };
+      }
+      k = k + 1;
     }
-    return Grp { v: out, n: w, ok: false };
+    if (padded && gn != c.out_block) {
+      if (c.bits == 5) {
+        return Grp { v: 0, n: 0, ok: false };
+      }
+      return Grp { v: out, n: w, ok: false };
+    }
+    if (d == 0) {
+      return Grp { v: out, n: w, ok: false };
+    }
+    if (d * c.bits - d * c.bits / 8 * 8 >= c.bits) {
+      return Grp { v: out, n: w, ok: false };
+    }
+    if (acc != 0) {
+      return Grp { v: out, n: w, ok: false };
+    }
+    return Grp { v: out, n: w, ok: true };
   }
-  if (d == 0) {
-    return Grp { v: out, n: w, ok: false };
-  }
-  if (d * c.bits - d * c.bits / 8 * 8 >= c.bits) {
-    return Grp { v: out, n: w, ok: false };
-  }
-  if (acc != 0) {
-    return Grp { v: out, n: w, ok: false };
-  }
-  return Grp { v: out, n: w, ok: true };
 }
 
 function z85_group(c: Codec, g: usize, gn: i32): Grp {
-  if (gn != 5) {
-    return Grp { v: 0, n: 0, ok: false };
-  }
-  let v: i64 = 0;
-  let k: i32 = 0;
-  while (k < 5) {
-    let d: i32 = __load_i32(c.dec + (__load_i32(g + (k * 4) as usize) * 4) as usize);
-    if (d < 0) {
+  unsafe {
+    if (gn != 5) {
       return Grp { v: 0, n: 0, ok: false };
     }
-    v = v * (85 as i64) + d as i64;
-    k = k + 1;
+    let v: i64 = 0;
+    let k: i32 = 0;
+    while (k < 5) {
+      let d: i32 = __load_i32(c.dec + (__load_i32(g + (k * 4) as usize) * 4) as usize);
+      if (d < 0) {
+        return Grp { v: 0, n: 0, ok: false };
+      }
+      v = v * (85 as i64) + d as i64;
+      k = k + 1;
+    }
+    if (v > 4294967295 as i64) {
+      return Grp { v: 0, n: 0, ok: false };
+    }
+    return Grp { v: v, n: 4, ok: true };
   }
-  if (v > 4294967295 as i64) {
-    return Grp { v: 0, n: 0, ok: false };
-  }
-  return Grp { v: v, n: 4, ok: true };
 }
 
 pub function parse_wrap(arg: string): i64 {
@@ -430,108 +448,124 @@ function open_input(has_file: boolean, file: string): Reader {
 }
 
 function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void {
-  let out: io_buffered.BufWriter = o;
-  let cap: i32 = block_bytes();
-  let bits: i32 = c.bits;
-  let inb: i32 = c.in_block;
-  let outb: i32 = c.out_block;
-  let alpha: usize = c.alpha;
-  let rev: boolean = c.rev;
-  let mask: i64 = 0;
-  if (bits > 0) {
-    mask = ((1 << bits) - 1) as i64;
-  }
-  let wrapping: boolean = wrap > 0 as i64;
-  let col: i64 = 0;
-  let table: usize = 0 as usize;
-  if (bits == 1) {
-    table = bit_table(c);
-  }
-  while (true) {
-    let chunk: u8[] = read_block(r, out, cap);
-    let n: i32 = chunk.len();
-    if (n == 0) {
-      break;
+  unsafe {
+    let out: io_buffered.BufWriter = o;
+    let cap: i32 = block_bytes();
+    let bits: i32 = c.bits;
+    let inb: i32 = c.in_block;
+    let outb: i32 = c.out_block;
+    let alpha: usize = c.alpha;
+    let rev: boolean = c.rev;
+    let mask: i64 = 0;
+    if (bits > 0) {
+      mask = ((1 << bits) - 1) as i64;
     }
-    if (bits == 0 && n % inb != 0) {
-      fail(out, "invalid input (length must be multiple of 4 characters)");
+    let wrapping: boolean = wrap > 0 as i64;
+    let col: i64 = 0;
+    let table: usize = 0 as usize;
+    if (bits == 1) {
+      table = bit_table(c);
     }
-    let bs: u8[] = chunk;
-    let i: i32 = 0;
-    let p: i32 = pack_bytes(c);
-    if (p > 0) {
-      let h: usize = out.handle();
-      let whole: i32 = n - n % p;
-      while (i < whole) {
-        let w: i64 = 0;
-        if (p == 1) {
-          w = __load_i64(table + (bs[i] as i32 * 8) as usize);
-        } else {
-          w = pack_chars(alpha, pack_value(bs, i, p), bits);
-        }
-        if (!wrapping) {
-          buf_push_u64(h, w as u64);
-        } else if (col + 8 as i64 <= wrap) {
-          buf_push_u64(h, w as u64);
-          col = col + 8 as i64;
-          if (col == wrap) {
-            buf_push_byte(h, 10);
-            col = 0 as i64;
+    while (true) {
+      let chunk: u8[] = read_block(r, out, cap);
+      let n: i32 = chunk.len();
+      if (n == 0) {
+        break;
+      }
+      if (bits == 0 && n % inb != 0) {
+        fail(out, "invalid input (length must be multiple of 4 characters)");
+      }
+      let bs: u8[] = chunk;
+      let i: i32 = 0;
+      let p: i32 = pack_bytes(c);
+      if (p > 0) {
+        let h: usize = out.handle();
+        let whole: i32 = n - n % p;
+        while (i < whole) {
+          let w: i64 = 0;
+          if (p == 1) {
+            w = __load_i64(table + (bs[i] as i32 * 8) as usize);
+          } else {
+            w = pack_chars(alpha, pack_value(bs, i, p), bits);
           }
-        } else {
-          let k: i32 = 0;
-          while (k < 8) {
-            buf_push_byte(h, (w >> k * 8 & 255 as i64) as i32);
-            col = col + 1 as i64;
+          if (!wrapping) {
+            buf_push_u64(h, w as u64);
+          } else if (col + 8 as i64 <= wrap) {
+            buf_push_u64(h, w as u64);
+            col = col + 8 as i64;
             if (col == wrap) {
               buf_push_byte(h, 10);
               col = 0 as i64;
             }
-            k = k + 1;
+          } else {
+            let k: i32 = 0;
+            while (k < 8) {
+              buf_push_byte(h, (w >> k * 8 & 255 as i64) as i32);
+              col = col + 1 as i64;
+              if (col == wrap) {
+                buf_push_byte(h, 10);
+                col = 0 as i64;
+              }
+              k = k + 1;
+            }
+          }
+          i = i + p;
+        }
+        out = gnu.settle(out);
+      }
+      let chars: i32 = enc_chars(c, n - i);
+      let nl: i32 = 0;
+      if (wrapping) {
+        nl = ((col + chars as i64) / wrap) as i32;
+      }
+      let buf: u8[] = __alloc_u8(chars + nl);
+      let j: i32 = 0;
+      while (i < n) {
+        let nb: i32 = inb;
+        if (n - i < nb) {
+          nb = n - i;
+        }
+        let acc: i64 = 0;
+        let t: i32 = 0;
+        while (t < nb) {
+          acc = acc << 8 | bs[i + t] as i64;
+          t = t + 1;
+        }
+        let pv: i64 = 0;
+        let pn: i32 = 0;
+        if (nb < inb) {
+          let tail: Chars = enc_tail(c, acc, nb);
+          pv = tail.v;
+          pn = tail.n;
+        } else if (bits == 0) {
+          pv = z85_digits(alpha, acc);
+          pn = 5;
+        } else {
+          if (rev) {
+            acc = rev8(acc);
+          }
+          let sh: i32 = inb * 8;
+          let u: i32 = 0;
+          while (u < outb) {
+            sh = sh - bits;
+            buf = buf.with(j, __load_u8(alpha + (acc >> sh & mask) as usize) as u8);
+            j = j + 1;
+            u = u + 1;
+            if (wrapping) {
+              col = col + 1 as i64;
+              if (col == wrap) {
+                buf = buf.with(j, 10 as u8);
+                j = j + 1;
+                col = 0 as i64;
+              }
+            }
           }
         }
-        i = i + p;
-      }
-      out = gnu.settle(out);
-    }
-    let chars: i32 = enc_chars(c, n - i);
-    let nl: i32 = 0;
-    if (wrapping) {
-      nl = ((col + chars as i64) / wrap) as i32;
-    }
-    let buf: u8[] = __alloc_u8(chars + nl);
-    let j: i32 = 0;
-    while (i < n) {
-      let nb: i32 = inb;
-      if (n - i < nb) {
-        nb = n - i;
-      }
-      let acc: i64 = 0;
-      let t: i32 = 0;
-      while (t < nb) {
-        acc = acc << 8 | bs[i + t] as i64;
-        t = t + 1;
-      }
-      let pv: i64 = 0;
-      let pn: i32 = 0;
-      if (nb < inb) {
-        let tail: Chars = enc_tail(c, acc, nb);
-        pv = tail.v;
-        pn = tail.n;
-      } else if (bits == 0) {
-        pv = z85_digits(alpha, acc);
-        pn = 5;
-      } else {
-        if (rev) {
-          acc = rev8(acc);
-        }
-        let sh: i32 = inb * 8;
-        let u: i32 = 0;
-        while (u < outb) {
-          sh = sh - bits;
-          buf = buf.with(j, __load_u8(alpha + (acc >> sh & mask) as usize) as u8);
+        let e: i32 = 0;
+        while (e < pn) {
+          buf = buf.with(j, (pv >> e * 8 & 255 as i64) as u8);
           j = j + 1;
-          u = u + 1;
+          e = e + 1;
           if (wrapping) {
             col = col + 1 as i64;
             if (col == wrap) {
@@ -541,35 +575,21 @@ function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void 
             }
           }
         }
+        i = i + nb;
       }
-      let e: i32 = 0;
-      while (e < pn) {
-        buf = buf.with(j, (pv >> e * 8 & 255 as i64) as u8);
-        j = j + 1;
-        e = e + 1;
-        if (wrapping) {
-          col = col + 1 as i64;
-          if (col == wrap) {
-            buf = buf.with(j, 10 as u8);
-            j = j + 1;
-            col = 0 as i64;
-          }
-        }
+      out = gnu.check(out.write_bytes(buf));
+      if (n < cap) {
+        break;
       }
-      i = i + nb;
     }
-    out = gnu.check(out.write_bytes(buf));
-    if (n < cap) {
-      break;
+    if (wrapping && col > 0 as i64) {
+      out = gnu.put(out, "\n");
     }
+    if (table != 0 as usize) {
+      __free(table, 256 * 8);
+    }
+    gnu.finish(out);
   }
-  if (wrapping && col > 0 as i64) {
-    out = gnu.put(out, "\n");
-  }
-  if (table != 0 as usize) {
-    __free(table, 256 * 8);
-  }
-  gnu.finish(out);
 }
 
 function word_rows(bs: u8[], i: i32, n: i32, pairs: usize, h: usize, bits: i32): i32 {
@@ -586,142 +606,148 @@ function word_rows(bs: u8[], i: i32, n: i32, pairs: usize, h: usize, bits: i32):
 }
 
 function hex_rows(bs: u8[], from: i32, n: i32, pairs: usize, h: usize): i32 {
-  let i: i32 = from;
-  while (i + 16 <= n) {
-    let v: u64 = 0 as u64;
-    let k: i32 = 0;
-    while (k < 16) {
-      let pv: i32 = __load_i32(pairs + ((bs[i + k] as i32 | bs[i + k + 1] as i32 << 8) << 2) as usize);
-      if (pv < 0) {
-        return i;
+  unsafe {
+    let i: i32 = from;
+    while (i + 16 <= n) {
+      let v: u64 = 0 as u64;
+      let k: i32 = 0;
+      while (k < 16) {
+        let pv: i32 = __load_i32(pairs + ((bs[i + k] as i32 | bs[i + k + 1] as i32 << 8) << 2) as usize);
+        if (pv < 0) {
+          return i;
+        }
+        v = v >> 8 as u64 | pv as u64 << 56 as u64;
+        k = k + 2;
       }
-      v = v >> 8 as u64 | pv as u64 << 56 as u64;
-      k = k + 2;
+      buf_push_u64(h, v);
+      i = i + 16;
     }
-    buf_push_u64(h, v);
-    i = i + 16;
+    return i;
   }
-  return i;
 }
 
 function b64_rows(bs: u8[], from: i32, n: i32, pairs: usize, h: usize): i32 {
-  let i: i32 = from;
-  while (i + 32 <= n) {
-    let g0: i32 = __load_i32(pairs + ((bs[i] as i32 | bs[i + 1] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 2] as i32 | bs[i + 3] as i32 << 8) << 2) as usize);
-    if (g0 < 0) {
-      return i;
+  unsafe {
+    let i: i32 = from;
+    while (i + 32 <= n) {
+      let g0: i32 = __load_i32(pairs + ((bs[i] as i32 | bs[i + 1] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 2] as i32 | bs[i + 3] as i32 << 8) << 2) as usize);
+      if (g0 < 0) {
+        return i;
+      }
+      let r0: u64 = (g0 >> 16 | (g0 >> 8 & 255) << 8 | (g0 & 255) << 16) as u64;
+      let g1: i32 = __load_i32(pairs + ((bs[i + 4] as i32 | bs[i + 5] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 6] as i32 | bs[i + 7] as i32 << 8) << 2) as usize);
+      if (g1 < 0) {
+        return i;
+      }
+      let r1: u64 = (g1 >> 16 | (g1 >> 8 & 255) << 8 | (g1 & 255) << 16) as u64;
+      let g2: i32 = __load_i32(pairs + ((bs[i + 8] as i32 | bs[i + 9] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 10] as i32 | bs[i + 11] as i32 << 8) << 2) as usize);
+      if (g2 < 0) {
+        return i;
+      }
+      let r2: u64 = (g2 >> 16 | (g2 >> 8 & 255) << 8 | (g2 & 255) << 16) as u64;
+      let g3: i32 = __load_i32(pairs + ((bs[i + 12] as i32 | bs[i + 13] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 14] as i32 | bs[i + 15] as i32 << 8) << 2) as usize);
+      if (g3 < 0) {
+        return i;
+      }
+      let r3: u64 = (g3 >> 16 | (g3 >> 8 & 255) << 8 | (g3 & 255) << 16) as u64;
+      let g4: i32 = __load_i32(pairs + ((bs[i + 16] as i32 | bs[i + 17] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 18] as i32 | bs[i + 19] as i32 << 8) << 2) as usize);
+      if (g4 < 0) {
+        return i;
+      }
+      let r4: u64 = (g4 >> 16 | (g4 >> 8 & 255) << 8 | (g4 & 255) << 16) as u64;
+      let g5: i32 = __load_i32(pairs + ((bs[i + 20] as i32 | bs[i + 21] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 22] as i32 | bs[i + 23] as i32 << 8) << 2) as usize);
+      if (g5 < 0) {
+        return i;
+      }
+      let r5: u64 = (g5 >> 16 | (g5 >> 8 & 255) << 8 | (g5 & 255) << 16) as u64;
+      let g6: i32 = __load_i32(pairs + ((bs[i + 24] as i32 | bs[i + 25] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 26] as i32 | bs[i + 27] as i32 << 8) << 2) as usize);
+      if (g6 < 0) {
+        return i;
+      }
+      let r6: u64 = (g6 >> 16 | (g6 >> 8 & 255) << 8 | (g6 & 255) << 16) as u64;
+      let g7: i32 = __load_i32(pairs + ((bs[i + 28] as i32 | bs[i + 29] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 30] as i32 | bs[i + 31] as i32 << 8) << 2) as usize);
+      if (g7 < 0) {
+        return i;
+      }
+      let r7: u64 = (g7 >> 16 | (g7 >> 8 & 255) << 8 | (g7 & 255) << 16) as u64;
+      buf_push_u64(h, r0 | r1 << 24 as u64 | r2 << 48 as u64);
+      buf_push_u64(h, r2 >> 16 as u64 | r3 << 8 as u64 | r4 << 32 as u64 | r5 << 56 as u64);
+      buf_push_u64(h, r5 >> 8 as u64 | r6 << 16 as u64 | r7 << 40 as u64);
+      i = i + 32;
     }
-    let r0: u64 = (g0 >> 16 | (g0 >> 8 & 255) << 8 | (g0 & 255) << 16) as u64;
-    let g1: i32 = __load_i32(pairs + ((bs[i + 4] as i32 | bs[i + 5] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 6] as i32 | bs[i + 7] as i32 << 8) << 2) as usize);
-    if (g1 < 0) {
-      return i;
-    }
-    let r1: u64 = (g1 >> 16 | (g1 >> 8 & 255) << 8 | (g1 & 255) << 16) as u64;
-    let g2: i32 = __load_i32(pairs + ((bs[i + 8] as i32 | bs[i + 9] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 10] as i32 | bs[i + 11] as i32 << 8) << 2) as usize);
-    if (g2 < 0) {
-      return i;
-    }
-    let r2: u64 = (g2 >> 16 | (g2 >> 8 & 255) << 8 | (g2 & 255) << 16) as u64;
-    let g3: i32 = __load_i32(pairs + ((bs[i + 12] as i32 | bs[i + 13] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 14] as i32 | bs[i + 15] as i32 << 8) << 2) as usize);
-    if (g3 < 0) {
-      return i;
-    }
-    let r3: u64 = (g3 >> 16 | (g3 >> 8 & 255) << 8 | (g3 & 255) << 16) as u64;
-    let g4: i32 = __load_i32(pairs + ((bs[i + 16] as i32 | bs[i + 17] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 18] as i32 | bs[i + 19] as i32 << 8) << 2) as usize);
-    if (g4 < 0) {
-      return i;
-    }
-    let r4: u64 = (g4 >> 16 | (g4 >> 8 & 255) << 8 | (g4 & 255) << 16) as u64;
-    let g5: i32 = __load_i32(pairs + ((bs[i + 20] as i32 | bs[i + 21] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 22] as i32 | bs[i + 23] as i32 << 8) << 2) as usize);
-    if (g5 < 0) {
-      return i;
-    }
-    let r5: u64 = (g5 >> 16 | (g5 >> 8 & 255) << 8 | (g5 & 255) << 16) as u64;
-    let g6: i32 = __load_i32(pairs + ((bs[i + 24] as i32 | bs[i + 25] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 26] as i32 | bs[i + 27] as i32 << 8) << 2) as usize);
-    if (g6 < 0) {
-      return i;
-    }
-    let r6: u64 = (g6 >> 16 | (g6 >> 8 & 255) << 8 | (g6 & 255) << 16) as u64;
-    let g7: i32 = __load_i32(pairs + ((bs[i + 28] as i32 | bs[i + 29] as i32 << 8) << 2) as usize) << 12 | __load_i32(pairs + ((bs[i + 30] as i32 | bs[i + 31] as i32 << 8) << 2) as usize);
-    if (g7 < 0) {
-      return i;
-    }
-    let r7: u64 = (g7 >> 16 | (g7 >> 8 & 255) << 8 | (g7 & 255) << 16) as u64;
-    buf_push_u64(h, r0 | r1 << 24 as u64 | r2 << 48 as u64);
-    buf_push_u64(h, r2 >> 16 as u64 | r3 << 8 as u64 | r4 << 32 as u64 | r5 << 56 as u64);
-    buf_push_u64(h, r5 >> 8 as u64 | r6 << 16 as u64 | r7 << 40 as u64);
-    i = i + 32;
+    return i;
   }
-  return i;
 }
 
 function b32_rows(bs: u8[], from: i32, n: i32, pairs: usize, h: usize): i32 {
-  let i: i32 = from;
-  while (i + 64 <= n) {
-    let h0: i32 = __load_i32(pairs + ((bs[i] as i32 | bs[i + 1] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 2] as i32 | bs[i + 3] as i32 << 8) << 2) as usize);
-    let l0: i32 = __load_i32(pairs + ((bs[i + 4] as i32 | bs[i + 5] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 6] as i32 | bs[i + 7] as i32 << 8) << 2) as usize);
-    if ((h0 | l0) < 0) {
-      return i;
+  unsafe {
+    let i: i32 = from;
+    while (i + 64 <= n) {
+      let h0: i32 = __load_i32(pairs + ((bs[i] as i32 | bs[i + 1] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 2] as i32 | bs[i + 3] as i32 << 8) << 2) as usize);
+      let l0: i32 = __load_i32(pairs + ((bs[i + 4] as i32 | bs[i + 5] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 6] as i32 | bs[i + 7] as i32 << 8) << 2) as usize);
+      if ((h0 | l0) < 0) {
+        return i;
+      }
+      let v0: u64 = h0 as u64 << 20 as u64 | l0 as u64;
+      let r0: u64 = v0 >> 32 as u64 | (v0 >> 24 as u64 & 255 as u64) << 8 as u64 | (v0 >> 16 as u64 & 255 as u64) << 16 as u64 | (v0 >> 8 as u64 & 255 as u64) << 24 as u64 | (v0 & 255 as u64) << 32 as u64;
+      let h1: i32 = __load_i32(pairs + ((bs[i + 8] as i32 | bs[i + 9] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 10] as i32 | bs[i + 11] as i32 << 8) << 2) as usize);
+      let l1: i32 = __load_i32(pairs + ((bs[i + 12] as i32 | bs[i + 13] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 14] as i32 | bs[i + 15] as i32 << 8) << 2) as usize);
+      if ((h1 | l1) < 0) {
+        return i;
+      }
+      let v1: u64 = h1 as u64 << 20 as u64 | l1 as u64;
+      let r1: u64 = v1 >> 32 as u64 | (v1 >> 24 as u64 & 255 as u64) << 8 as u64 | (v1 >> 16 as u64 & 255 as u64) << 16 as u64 | (v1 >> 8 as u64 & 255 as u64) << 24 as u64 | (v1 & 255 as u64) << 32 as u64;
+      let h2: i32 = __load_i32(pairs + ((bs[i + 16] as i32 | bs[i + 17] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 18] as i32 | bs[i + 19] as i32 << 8) << 2) as usize);
+      let l2: i32 = __load_i32(pairs + ((bs[i + 20] as i32 | bs[i + 21] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 22] as i32 | bs[i + 23] as i32 << 8) << 2) as usize);
+      if ((h2 | l2) < 0) {
+        return i;
+      }
+      let v2: u64 = h2 as u64 << 20 as u64 | l2 as u64;
+      let r2: u64 = v2 >> 32 as u64 | (v2 >> 24 as u64 & 255 as u64) << 8 as u64 | (v2 >> 16 as u64 & 255 as u64) << 16 as u64 | (v2 >> 8 as u64 & 255 as u64) << 24 as u64 | (v2 & 255 as u64) << 32 as u64;
+      let h3: i32 = __load_i32(pairs + ((bs[i + 24] as i32 | bs[i + 25] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 26] as i32 | bs[i + 27] as i32 << 8) << 2) as usize);
+      let l3: i32 = __load_i32(pairs + ((bs[i + 28] as i32 | bs[i + 29] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 30] as i32 | bs[i + 31] as i32 << 8) << 2) as usize);
+      if ((h3 | l3) < 0) {
+        return i;
+      }
+      let v3: u64 = h3 as u64 << 20 as u64 | l3 as u64;
+      let r3: u64 = v3 >> 32 as u64 | (v3 >> 24 as u64 & 255 as u64) << 8 as u64 | (v3 >> 16 as u64 & 255 as u64) << 16 as u64 | (v3 >> 8 as u64 & 255 as u64) << 24 as u64 | (v3 & 255 as u64) << 32 as u64;
+      let h4: i32 = __load_i32(pairs + ((bs[i + 32] as i32 | bs[i + 33] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 34] as i32 | bs[i + 35] as i32 << 8) << 2) as usize);
+      let l4: i32 = __load_i32(pairs + ((bs[i + 36] as i32 | bs[i + 37] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 38] as i32 | bs[i + 39] as i32 << 8) << 2) as usize);
+      if ((h4 | l4) < 0) {
+        return i;
+      }
+      let v4: u64 = h4 as u64 << 20 as u64 | l4 as u64;
+      let r4: u64 = v4 >> 32 as u64 | (v4 >> 24 as u64 & 255 as u64) << 8 as u64 | (v4 >> 16 as u64 & 255 as u64) << 16 as u64 | (v4 >> 8 as u64 & 255 as u64) << 24 as u64 | (v4 & 255 as u64) << 32 as u64;
+      let h5: i32 = __load_i32(pairs + ((bs[i + 40] as i32 | bs[i + 41] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 42] as i32 | bs[i + 43] as i32 << 8) << 2) as usize);
+      let l5: i32 = __load_i32(pairs + ((bs[i + 44] as i32 | bs[i + 45] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 46] as i32 | bs[i + 47] as i32 << 8) << 2) as usize);
+      if ((h5 | l5) < 0) {
+        return i;
+      }
+      let v5: u64 = h5 as u64 << 20 as u64 | l5 as u64;
+      let r5: u64 = v5 >> 32 as u64 | (v5 >> 24 as u64 & 255 as u64) << 8 as u64 | (v5 >> 16 as u64 & 255 as u64) << 16 as u64 | (v5 >> 8 as u64 & 255 as u64) << 24 as u64 | (v5 & 255 as u64) << 32 as u64;
+      let h6: i32 = __load_i32(pairs + ((bs[i + 48] as i32 | bs[i + 49] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 50] as i32 | bs[i + 51] as i32 << 8) << 2) as usize);
+      let l6: i32 = __load_i32(pairs + ((bs[i + 52] as i32 | bs[i + 53] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 54] as i32 | bs[i + 55] as i32 << 8) << 2) as usize);
+      if ((h6 | l6) < 0) {
+        return i;
+      }
+      let v6: u64 = h6 as u64 << 20 as u64 | l6 as u64;
+      let r6: u64 = v6 >> 32 as u64 | (v6 >> 24 as u64 & 255 as u64) << 8 as u64 | (v6 >> 16 as u64 & 255 as u64) << 16 as u64 | (v6 >> 8 as u64 & 255 as u64) << 24 as u64 | (v6 & 255 as u64) << 32 as u64;
+      let h7: i32 = __load_i32(pairs + ((bs[i + 56] as i32 | bs[i + 57] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 58] as i32 | bs[i + 59] as i32 << 8) << 2) as usize);
+      let l7: i32 = __load_i32(pairs + ((bs[i + 60] as i32 | bs[i + 61] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 62] as i32 | bs[i + 63] as i32 << 8) << 2) as usize);
+      if ((h7 | l7) < 0) {
+        return i;
+      }
+      let v7: u64 = h7 as u64 << 20 as u64 | l7 as u64;
+      let r7: u64 = v7 >> 32 as u64 | (v7 >> 24 as u64 & 255 as u64) << 8 as u64 | (v7 >> 16 as u64 & 255 as u64) << 16 as u64 | (v7 >> 8 as u64 & 255 as u64) << 24 as u64 | (v7 & 255 as u64) << 32 as u64;
+      buf_push_u64(h, r0 | r1 << 40 as u64);
+      buf_push_u64(h, r1 >> 24 as u64 | r2 << 16 as u64 | r3 << 56 as u64);
+      buf_push_u64(h, r3 >> 8 as u64 | r4 << 32 as u64);
+      buf_push_u64(h, r4 >> 32 as u64 | r5 << 8 as u64 | r6 << 48 as u64);
+      buf_push_u64(h, r6 >> 16 as u64 | r7 << 24 as u64);
+      i = i + 64;
     }
-    let v0: u64 = h0 as u64 << 20 as u64 | l0 as u64;
-    let r0: u64 = v0 >> 32 as u64 | (v0 >> 24 as u64 & 255 as u64) << 8 as u64 | (v0 >> 16 as u64 & 255 as u64) << 16 as u64 | (v0 >> 8 as u64 & 255 as u64) << 24 as u64 | (v0 & 255 as u64) << 32 as u64;
-    let h1: i32 = __load_i32(pairs + ((bs[i + 8] as i32 | bs[i + 9] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 10] as i32 | bs[i + 11] as i32 << 8) << 2) as usize);
-    let l1: i32 = __load_i32(pairs + ((bs[i + 12] as i32 | bs[i + 13] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 14] as i32 | bs[i + 15] as i32 << 8) << 2) as usize);
-    if ((h1 | l1) < 0) {
-      return i;
-    }
-    let v1: u64 = h1 as u64 << 20 as u64 | l1 as u64;
-    let r1: u64 = v1 >> 32 as u64 | (v1 >> 24 as u64 & 255 as u64) << 8 as u64 | (v1 >> 16 as u64 & 255 as u64) << 16 as u64 | (v1 >> 8 as u64 & 255 as u64) << 24 as u64 | (v1 & 255 as u64) << 32 as u64;
-    let h2: i32 = __load_i32(pairs + ((bs[i + 16] as i32 | bs[i + 17] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 18] as i32 | bs[i + 19] as i32 << 8) << 2) as usize);
-    let l2: i32 = __load_i32(pairs + ((bs[i + 20] as i32 | bs[i + 21] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 22] as i32 | bs[i + 23] as i32 << 8) << 2) as usize);
-    if ((h2 | l2) < 0) {
-      return i;
-    }
-    let v2: u64 = h2 as u64 << 20 as u64 | l2 as u64;
-    let r2: u64 = v2 >> 32 as u64 | (v2 >> 24 as u64 & 255 as u64) << 8 as u64 | (v2 >> 16 as u64 & 255 as u64) << 16 as u64 | (v2 >> 8 as u64 & 255 as u64) << 24 as u64 | (v2 & 255 as u64) << 32 as u64;
-    let h3: i32 = __load_i32(pairs + ((bs[i + 24] as i32 | bs[i + 25] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 26] as i32 | bs[i + 27] as i32 << 8) << 2) as usize);
-    let l3: i32 = __load_i32(pairs + ((bs[i + 28] as i32 | bs[i + 29] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 30] as i32 | bs[i + 31] as i32 << 8) << 2) as usize);
-    if ((h3 | l3) < 0) {
-      return i;
-    }
-    let v3: u64 = h3 as u64 << 20 as u64 | l3 as u64;
-    let r3: u64 = v3 >> 32 as u64 | (v3 >> 24 as u64 & 255 as u64) << 8 as u64 | (v3 >> 16 as u64 & 255 as u64) << 16 as u64 | (v3 >> 8 as u64 & 255 as u64) << 24 as u64 | (v3 & 255 as u64) << 32 as u64;
-    let h4: i32 = __load_i32(pairs + ((bs[i + 32] as i32 | bs[i + 33] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 34] as i32 | bs[i + 35] as i32 << 8) << 2) as usize);
-    let l4: i32 = __load_i32(pairs + ((bs[i + 36] as i32 | bs[i + 37] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 38] as i32 | bs[i + 39] as i32 << 8) << 2) as usize);
-    if ((h4 | l4) < 0) {
-      return i;
-    }
-    let v4: u64 = h4 as u64 << 20 as u64 | l4 as u64;
-    let r4: u64 = v4 >> 32 as u64 | (v4 >> 24 as u64 & 255 as u64) << 8 as u64 | (v4 >> 16 as u64 & 255 as u64) << 16 as u64 | (v4 >> 8 as u64 & 255 as u64) << 24 as u64 | (v4 & 255 as u64) << 32 as u64;
-    let h5: i32 = __load_i32(pairs + ((bs[i + 40] as i32 | bs[i + 41] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 42] as i32 | bs[i + 43] as i32 << 8) << 2) as usize);
-    let l5: i32 = __load_i32(pairs + ((bs[i + 44] as i32 | bs[i + 45] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 46] as i32 | bs[i + 47] as i32 << 8) << 2) as usize);
-    if ((h5 | l5) < 0) {
-      return i;
-    }
-    let v5: u64 = h5 as u64 << 20 as u64 | l5 as u64;
-    let r5: u64 = v5 >> 32 as u64 | (v5 >> 24 as u64 & 255 as u64) << 8 as u64 | (v5 >> 16 as u64 & 255 as u64) << 16 as u64 | (v5 >> 8 as u64 & 255 as u64) << 24 as u64 | (v5 & 255 as u64) << 32 as u64;
-    let h6: i32 = __load_i32(pairs + ((bs[i + 48] as i32 | bs[i + 49] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 50] as i32 | bs[i + 51] as i32 << 8) << 2) as usize);
-    let l6: i32 = __load_i32(pairs + ((bs[i + 52] as i32 | bs[i + 53] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 54] as i32 | bs[i + 55] as i32 << 8) << 2) as usize);
-    if ((h6 | l6) < 0) {
-      return i;
-    }
-    let v6: u64 = h6 as u64 << 20 as u64 | l6 as u64;
-    let r6: u64 = v6 >> 32 as u64 | (v6 >> 24 as u64 & 255 as u64) << 8 as u64 | (v6 >> 16 as u64 & 255 as u64) << 16 as u64 | (v6 >> 8 as u64 & 255 as u64) << 24 as u64 | (v6 & 255 as u64) << 32 as u64;
-    let h7: i32 = __load_i32(pairs + ((bs[i + 56] as i32 | bs[i + 57] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 58] as i32 | bs[i + 59] as i32 << 8) << 2) as usize);
-    let l7: i32 = __load_i32(pairs + ((bs[i + 60] as i32 | bs[i + 61] as i32 << 8) << 2) as usize) << 10 | __load_i32(pairs + ((bs[i + 62] as i32 | bs[i + 63] as i32 << 8) << 2) as usize);
-    if ((h7 | l7) < 0) {
-      return i;
-    }
-    let v7: u64 = h7 as u64 << 20 as u64 | l7 as u64;
-    let r7: u64 = v7 >> 32 as u64 | (v7 >> 24 as u64 & 255 as u64) << 8 as u64 | (v7 >> 16 as u64 & 255 as u64) << 16 as u64 | (v7 >> 8 as u64 & 255 as u64) << 24 as u64 | (v7 & 255 as u64) << 32 as u64;
-    buf_push_u64(h, r0 | r1 << 40 as u64);
-    buf_push_u64(h, r1 >> 24 as u64 | r2 << 16 as u64 | r3 << 56 as u64);
-    buf_push_u64(h, r3 >> 8 as u64 | r4 << 32 as u64);
-    buf_push_u64(h, r4 >> 32 as u64 | r5 << 8 as u64 | r6 << 48 as u64);
-    buf_push_u64(h, r6 >> 16 as u64 | r7 << 24 as u64);
-    i = i + 64;
+    return i;
   }
-  return i;
 }
 
 function push_low_bytes(h: usize, word: u64, bits: i32): void {
@@ -733,145 +759,149 @@ function push_low_bytes(h: usize, word: u64, bits: i32): void {
 }
 
 function decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter): void {
-  let out: io_buffered.BufWriter = o;
-  let cap: i32 = block_bytes();
-  let fast: boolean = c.bits > 0 && !c.rev;
-  let pairs: usize = 0 as usize;
-  if (fast) {
-    pairs = dec_pairs(c);
-  }
-  let gbuf: usize = __alloc(64);
-  let gn: i32 = 0;
-  let inb: i32 = c.in_block;
-  let outb: i32 = c.out_block;
-  let pbits: i32 = c.bits * 2;
-  while (true) {
-    let chunk: u8[] = read_block(r, out, cap);
-    let n: i32 = chunk.len();
-    if (n == 0) {
-      break;
+  unsafe {
+    let out: io_buffered.BufWriter = o;
+    let cap: i32 = block_bytes();
+    let fast: boolean = c.bits > 0 && !c.rev;
+    let pairs: usize = 0 as usize;
+    if (fast) {
+      pairs = dec_pairs(c);
     }
-    let bs: u8[] = chunk;
-    let h: usize = out.handle();
-    let word: u64 = 0 as u64;
-    let fill: i32 = 0;
-    let bad: boolean = false;
-    let i: i32 = 0;
-    let rows: boolean = fast;
-    while (i < n) {
-      if (rows && gn == 0) {
-        push_low_bytes(h, word, fill);
-        word = 0 as u64;
-        fill = 0;
-        i = word_rows(bs, i, n, pairs, h, c.bits);
-        rows = false;
-        continue;
+    let gbuf: usize = __alloc(64);
+    let gn: i32 = 0;
+    let inb: i32 = c.in_block;
+    let outb: i32 = c.out_block;
+    let pbits: i32 = c.bits * 2;
+    while (true) {
+      let chunk: u8[] = read_block(r, out, cap);
+      let n: i32 = chunk.len();
+      if (n == 0) {
+        break;
       }
-      if (fast && gn == 0 && i + outb <= n) {
-        let acc: i64 = 0;
-        let t: i32 = 0;
-        while (t < outb) {
-          let pv: i32 = __load_i32(pairs + ((bs[i + t] as i32 | bs[i + t + 1] as i32 << 8) << 2) as usize);
-          if (pv < 0) {
+      let bs: u8[] = chunk;
+      let h: usize = out.handle();
+      let word: u64 = 0 as u64;
+      let fill: i32 = 0;
+      let bad: boolean = false;
+      let i: i32 = 0;
+      let rows: boolean = fast;
+      while (i < n) {
+        if (rows && gn == 0) {
+          push_low_bytes(h, word, fill);
+          word = 0 as u64;
+          fill = 0;
+          i = word_rows(bs, i, n, pairs, h, c.bits);
+          rows = false;
+          continue;
+        }
+        if (fast && gn == 0 && i + outb <= n) {
+          let acc: i64 = 0;
+          let t: i32 = 0;
+          while (t < outb) {
+            let pv: i32 = __load_i32(pairs + ((bs[i + t] as i32 | bs[i + t + 1] as i32 << 8) << 2) as usize);
+            if (pv < 0) {
+              break;
+            }
+            acc = acc << pbits | pv as i64;
+            t = t + 2;
+          }
+          if (t == outb) {
+            let u: i32 = inb;
+            while (u > 0) {
+              u = u - 1;
+              word = word | (acc >> u * 8 & 255 as i64) as u64 << fill as u64;
+              fill = fill + 8;
+              if (fill == 64) {
+                buf_push_u64(h, word);
+                word = 0 as u64;
+                fill = 0;
+              }
+            }
+            i = i + outb;
+            continue;
+          }
+        }
+        let b: i32 = bs[i] as i32;
+        i = i + 1;
+        rows = fast;
+        if (ignore) {
+          if (!(c.pad && b == 61) && !(c.bits == 0 && b == 0) && __load_i32(c.dec + (b * 4) as usize) < 0) {
+            continue;
+          }
+        } else if (b == 10) {
+          continue;
+        }
+        __store_i32(gbuf + (gn * 4) as usize, b);
+        gn = gn + 1;
+        if (gn == outb) {
+          let g: Grp = dec_group(c, gbuf, gn);
+          gn = 0;
+          push_low_bytes(h, word, fill);
+          word = 0 as u64;
+          fill = 0;
+          let k: i32 = g.n;
+          while (k > 0) {
+            k = k - 1;
+            buf_push_byte(h, (g.v >> k * 8 & 255 as i64) as i32);
+          }
+          if (!g.ok) {
+            bad = true;
             break;
           }
-          acc = acc << pbits | pv as i64;
-          t = t + 2;
-        }
-        if (t == outb) {
-          let u: i32 = inb;
-          while (u > 0) {
-            u = u - 1;
-            word = word | (acc >> u * 8 & 255 as i64) as u64 << fill as u64;
-            fill = fill + 8;
-            if (fill == 64) {
-              buf_push_u64(h, word);
-              word = 0 as u64;
-              fill = 0;
-            }
-          }
-          i = i + outb;
-          continue;
         }
       }
-      let b: i32 = bs[i] as i32;
-      i = i + 1;
-      rows = fast;
-      if (ignore) {
-        if (!(c.pad && b == 61) && !(c.bits == 0 && b == 0) && __load_i32(c.dec + (b * 4) as usize) < 0) {
-          continue;
-        }
-      } else if (b == 10) {
-        continue;
+      push_low_bytes(h, word, fill);
+      out = gnu.settle(out);
+      if (bad) {
+        fail(out, "invalid input");
       }
-      __store_i32(gbuf + (gn * 4) as usize, b);
-      gn = gn + 1;
-      if (gn == outb) {
-        let g: Grp = dec_group(c, gbuf, gn);
-        gn = 0;
-        push_low_bytes(h, word, fill);
-        word = 0 as u64;
-        fill = 0;
-        let k: i32 = g.n;
+      if (n < cap) {
+        break;
+      }
+    }
+    if (gn > 0) {
+      let last: Grp = dec_group(c, gbuf, gn);
+      if (last.n > 0) {
+        let tail: u8[] = __alloc_u8(last.n);
+        let v: i64 = last.v;
+        let k: i32 = last.n;
         while (k > 0) {
           k = k - 1;
-          buf_push_byte(h, (g.v >> k * 8 & 255 as i64) as i32);
+          tail = tail.with(k, (v & 255 as i64) as u8);
+          v = v >> 8;
         }
-        if (!g.ok) {
-          bad = true;
-          break;
-        }
+        out = gnu.check(out.write_bytes(tail));
+      }
+      if (!last.ok) {
+        fail(out, "invalid input");
       }
     }
-    push_low_bytes(h, word, fill);
-    out = gnu.settle(out);
-    if (bad) {
-      fail(out, "invalid input");
+    __free(gbuf, 64);
+    if (pairs != 0 as usize) {
+      __free(pairs, 65536 * 4);
     }
-    if (n < cap) {
-      break;
-    }
+    gnu.finish(out);
   }
-  if (gn > 0) {
-    let last: Grp = dec_group(c, gbuf, gn);
-    if (last.n > 0) {
-      let tail: u8[] = __alloc_u8(last.n);
-      let v: i64 = last.v;
-      let k: i32 = last.n;
-      while (k > 0) {
-        k = k - 1;
-        tail = tail.with(k, (v & 255 as i64) as u8);
-        v = v >> 8;
-      }
-      out = gnu.check(out.write_bytes(tail));
-    }
-    if (!last.ok) {
-      fail(out, "invalid input");
-    }
-  }
-  __free(gbuf, 64);
-  if (pairs != 0 as usize) {
-    __free(pairs, 65536 * 4);
-  }
-  gnu.finish(out);
 }
 
 pub function run(c: Codec, decoding: boolean, ignore: boolean, wrap: i64, has_file: boolean, file: string): void {
-  let r: Reader = open_input(has_file, file);
-  let o: io_buffered.BufWriter = gnu.out_new();
-  if (c.bits < 0) {
-    if (decoding) {
-      b58_decode(r, c, ignore, o);
+  unsafe {
+    let r: Reader = open_input(has_file, file);
+    let o: io_buffered.BufWriter = gnu.out_new();
+    if (c.bits < 0) {
+      if (decoding) {
+        b58_decode(r, c, ignore, o);
+      } else {
+        b58_encode(r, c, wrap, o);
+      }
+    } else if (decoding) {
+      decode(r, c, ignore, o);
     } else {
-      b58_encode(r, c, wrap, o);
+      encode(r, c, wrap, o);
     }
-  } else if (decoding) {
-    decode(r, c, ignore, o);
-  } else {
-    encode(r, c, wrap, o);
+    __free(c.alpha, c.alpha_bytes);
+    __free(c.dec, 256 * 4);
   }
-  __free(c.alpha, c.alpha_bytes);
-  __free(c.dec, 256 * 4);
 }
 
 function read_all(r: Reader, o: io_buffered.BufWriter): u8[] {
@@ -917,32 +947,34 @@ function rebase(digits: u8[], from: i32, to: i32): u8[] {
 }
 
 function b58_encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void {
-  let data: u8[] = read_all(r, o);
-  let zeros: i32 = 0;
-  while (zeros < data.len() && data[zeros] as i32 == 0) {
-    zeros = zeros + 1;
+  unsafe {
+    let data: u8[] = read_all(r, o);
+    let zeros: i32 = 0;
+    while (zeros < data.len() && data[zeros] as i32 == 0) {
+      zeros = zeros + 1;
+    }
+    let rest: u8[] = [];
+    let i: i32 = zeros;
+    while (i < data.len()) {
+      rest = rest.append(data[i]);
+      i = i + 1;
+    }
+    let digits: u8[] = rebase(rest, 256, 58);
+    let text: u8[] = [];
+    let z: i32 = 0;
+    while (z < zeros) {
+      text = text.append(49 as u8);
+      z = z + 1;
+    }
+    let d: i32 = 0;
+    while (d < digits.len()) {
+      text = text.append(__load_i32(c.alpha + digits[d] as usize) as u8);
+      d = d + 1;
+    }
+    let out: io_buffered.BufWriter = o;
+    out = gnu.put(out, wrapped(string_from_bytes_unchecked(text), wrap));
+    gnu.finish(out);
   }
-  let rest: u8[] = [];
-  let i: i32 = zeros;
-  while (i < data.len()) {
-    rest = rest.append(data[i]);
-    i = i + 1;
-  }
-  let digits: u8[] = rebase(rest, 256, 58);
-  let text: u8[] = [];
-  let z: i32 = 0;
-  while (z < zeros) {
-    text = text.append(49 as u8);
-    z = z + 1;
-  }
-  let d: i32 = 0;
-  while (d < digits.len()) {
-    text = text.append(__load_i32(c.alpha + digits[d] as usize) as u8);
-    d = d + 1;
-  }
-  let out: io_buffered.BufWriter = o;
-  out = gnu.put(out, wrapped(string_from_bytes_unchecked(text), wrap));
-  gnu.finish(out);
 }
 
 function wrapped(text: string, wrap: i64): string {
@@ -966,49 +998,51 @@ function wrapped(text: string, wrap: i64): string {
 }
 
 function b58_decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter): void {
-  let text: u8[] = read_all(r, o);
-  let vals: u8[] = [];
-  let i: i32 = 0;
-  while (i < text.len()) {
-    let b: i32 = text[i] as i32;
-    i = i + 1;
-    if (b == 10) {
-      continue;
-    }
-    let v: i32 = __load_i32(c.dec + (b * 4) as usize);
-    if (v < 0) {
-      if (ignore) {
+  unsafe {
+    let text: u8[] = read_all(r, o);
+    let vals: u8[] = [];
+    let i: i32 = 0;
+    while (i < text.len()) {
+      let b: i32 = text[i] as i32;
+      i = i + 1;
+      if (b == 10) {
         continue;
       }
-      fail(o, "invalid input");
+      let v: i32 = __load_i32(c.dec + (b * 4) as usize);
+      if (v < 0) {
+        if (ignore) {
+          continue;
+        }
+        fail(o, "invalid input");
+      }
+      vals = vals.append(v as u8);
     }
-    vals = vals.append(v as u8);
+    let zeros: i32 = 0;
+    while (zeros < vals.len() && vals[zeros] as i32 == 0) {
+      zeros = zeros + 1;
+    }
+    let rest: u8[] = [];
+    let k: i32 = zeros;
+    while (k < vals.len()) {
+      rest = rest.append(vals[k]);
+      k = k + 1;
+    }
+    let bytes: u8[] = rebase(rest, 58, 256);
+    let all: u8[] = [];
+    let z: i32 = 0;
+    while (z < zeros) {
+      all = all.append(0 as u8);
+      z = z + 1;
+    }
+    let d: i32 = 0;
+    while (d < bytes.len()) {
+      all = all.append(bytes[d]);
+      d = d + 1;
+    }
+    let out: io_buffered.BufWriter = o;
+    if (all.len() > 0) {
+      out = gnu.check(out.write_bytes(all));
+    }
+    gnu.finish(out);
   }
-  let zeros: i32 = 0;
-  while (zeros < vals.len() && vals[zeros] as i32 == 0) {
-    zeros = zeros + 1;
-  }
-  let rest: u8[] = [];
-  let k: i32 = zeros;
-  while (k < vals.len()) {
-    rest = rest.append(vals[k]);
-    k = k + 1;
-  }
-  let bytes: u8[] = rebase(rest, 58, 256);
-  let all: u8[] = [];
-  let z: i32 = 0;
-  while (z < zeros) {
-    all = all.append(0 as u8);
-    z = z + 1;
-  }
-  let d: i32 = 0;
-  while (d < bytes.len()) {
-    all = all.append(bytes[d]);
-    d = d + 1;
-  }
-  let out: io_buffered.BufWriter = o;
-  if (all.len() > 0) {
-    out = gnu.check(out.write_bytes(all));
-  }
-  gnu.finish(out);
 }

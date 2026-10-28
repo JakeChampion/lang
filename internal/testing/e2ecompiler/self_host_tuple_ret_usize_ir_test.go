@@ -13,19 +13,19 @@ var tupleRetUsizeCases = []struct {
 	src  string
 	exit int
 }{
-	{"usize-tuple-ret-dot", `function mk(): (usize, usize) { let a: usize = __alloc(64); let b: usize = __alloc(64); __store_i32(a, 11); __store_i32(b, 22); return (a, b); }
-function main(): i32 { let t = mk(); return __load_i32(t.0) + __load_i32(t.1); }`, 33},
-	{"usize-tuple-ret-annotated", `function mk(): (usize, usize) { let a: usize = __alloc(64); __store_i32(a, 6); let b: usize = __alloc(64); __store_i32(b, 7); return (a, b); }
-function main(): i32 { let t: (usize, usize) = mk(); return __load_i32(t.0) + __load_i32(t.1); }`, 13},
-	{"usize-tuple-ret-destructure", `function mk(): (usize, usize) { let a: usize = __alloc(64); let b: usize = __alloc(64); __store_i32(a, 4); __store_i32(b, 5); return (a, b); }
-function main(): i32 { let (p, q) = mk(); return __load_i32(p) * __load_i32(q); }`, 20},
-	{"usize-tuple-ret-mixed", `function mk(n: i32): (usize, i32) { let a: usize = __alloc(64); __store_i32(a, n); return (a, n + 1); }
-function main(): i32 { let t = mk(9); return __load_i32(t.0) + t.1; }`, 19},
-	{"usize-tuple-elem-offset", `function mk(): (usize, usize) { let a: usize = __alloc(256); let b: usize = __alloc(256); return (a, b); }
-function main(): i32 { let t = mk(); __store_i32(t.0 + 32 as usize, 41); __store_i32(t.1 + 64 as usize, 1); if (__load_i32(t.0 + 32 as usize) != 41) { return 90; } if (__load_i32(t.1 + 64 as usize) != 1) { return 91; } return 7; }`, 7},
+	{"usize-tuple-ret-dot", `function mk(): (usize, usize) { unsafe { let a: usize = __alloc(64); let b: usize = __alloc(64); __store_i32(a, 11); __store_i32(b, 22); return (a, b); } }
+function main(): i32 { unsafe { let t = mk(); return __load_i32(t.0) + __load_i32(t.1); } }`, 33},
+	{"usize-tuple-ret-annotated", `function mk(): (usize, usize) { unsafe { let a: usize = __alloc(64); __store_i32(a, 6); let b: usize = __alloc(64); __store_i32(b, 7); return (a, b); } }
+function main(): i32 { unsafe { let t: (usize, usize) = mk(); return __load_i32(t.0) + __load_i32(t.1); } }`, 13},
+	{"usize-tuple-ret-destructure", `function mk(): (usize, usize) { unsafe { let a: usize = __alloc(64); let b: usize = __alloc(64); __store_i32(a, 4); __store_i32(b, 5); return (a, b); } }
+function main(): i32 { unsafe { let (p, q) = mk(); return __load_i32(p) * __load_i32(q); } }`, 20},
+	{"usize-tuple-ret-mixed", `function mk(n: i32): (usize, i32) { unsafe { let a: usize = __alloc(64); __store_i32(a, n); return (a, n + 1); } }
+function main(): i32 { unsafe { let t = mk(9); return __load_i32(t.0) + t.1; } }`, 19},
+	{"usize-tuple-elem-offset", `function mk(): (usize, usize) { unsafe { let a: usize = __alloc(256); let b: usize = __alloc(256); return (a, b); } }
+function main(): i32 { unsafe { let t = mk(); __store_i32(t.0 + 32 as usize, 41); __store_i32(t.1 + 64 as usize, 1); if (__load_i32(t.0 + 32 as usize) != 41) { return 90; } if (__load_i32(t.1 + 64 as usize) != 1) { return 91; } return 7;  } }`, 7},
 	{"usize-struct-field", `struct C { p: usize, n: i32, q: usize }
-function mk(): C { let a: usize = __alloc(64); __store_i32(a, 3); let b: usize = __alloc(64); __store_i32(b, 4); return C { p: a, n: 5, q: b }; }
-function main(): i32 { let c = mk(); return __load_i32(c.p) + c.n + __load_i32(c.q); }`, 12},
+function mk(): C { unsafe { let a: usize = __alloc(64); __store_i32(a, 3); let b: usize = __alloc(64); __store_i32(b, 4); return C { p: a, n: 5, q: b };  } }
+function main(): i32 { unsafe { let c = mk(); return __load_i32(c.p) + c.n + __load_i32(c.q); } }`, 12},
 	{"char-tuple-ret", `function mk(): (char, i32) { let c: char = 'A'; return (c, 1); }
 function main(): i32 { let t = mk(); if (t.0 == 'A') { return 6; } return t.1; }`, 6},
 	{"char-struct-field", `struct K { c: char, n: i32 }

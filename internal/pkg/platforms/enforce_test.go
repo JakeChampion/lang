@@ -193,8 +193,10 @@ func TestEnforceUnknownTargetSkips(t *testing.T) {
 
 func TestEnforceHeapCheckpointNativeOnly(t *testing.T) {
 	src := `function main(): i32 {
-    let m: i64 = __heap_mark();
-    __heap_release_to(m);
+    unsafe {
+        let m: i64 = __heap_mark();
+        __heap_release_to(m);
+    }
     return (__heap_bump_bytes() as i32);
 }`
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin", "arm64-android"} {
@@ -237,7 +239,9 @@ func TestEnforceWasmInexpressibleBuiltins(t *testing.T) {
     return 0;
 }`},
 		{"__c_call2_f64", "cabi", `function main(): i32 {
-    let v: f64 = __c_call2_f64((0 as usize), (0 as usize), (0 as usize));
+    unsafe {
+        let v: f64 = __c_call2_f64((0 as usize), (0 as usize), (0 as usize));
+    }
     return 0;
 }`},
 		{"access", "fsmode", `function main(): i32 {

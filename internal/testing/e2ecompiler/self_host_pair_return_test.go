@@ -1170,7 +1170,7 @@ struct View { v: [u8], n: i32 }
 
 impl mem.Drop for Watched {
   function drop(self: Self): void {
-    __store_i64(self.p, __load_i64(self.p) + 1i64);
+    unsafe { __store_i64(self.p, __load_i64(self.p) + 1i64); }
   }
 }
 
@@ -1185,7 +1185,7 @@ impl mem.Drop for Watched {
 function main(): i32 {
   let counter: i64[] = __alloc_i64(1);
   let p: usize = (counter as usize) + 8;
-  __store_i64(p, 0i64);
+  unsafe { __store_i64(p, 0i64); }
   let xs: u8[] = [7u8, 8u8];
   let before: i64 = bench.alloc_count();
   for i in 0..50 {
@@ -1196,7 +1196,7 @@ function main(): i32 {
   let allocated: i64 = bench.alloc_count() - before;
   print(allocated.to_string());
   if (allocated != 100i64) { return 2; }
-  if (__load_i64(p) != 50i64 || counter.len() != 1) { return 3; }
+  unsafe { if (__load_i64(p) != 50i64 || counter.len() != 1) { return 3; } }
   if (__rc_underflow_count() != 0) { return 99; }
   return 0;
 }

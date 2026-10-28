@@ -21,7 +21,7 @@ func TestSelfHostSemanticTypeBoundary(t *testing.T) {
 	if len(p.Imports) != 0 || len(p.PubUses) != 0 {
 		t.Fatal("semantic types must not depend on AST, checker, parser or physical lowering")
 	}
-	wantNames := []string{"TypeI32", "TypeBool", "TypeString", "TypeFloat", "TypeLanes", "TypeArray", "TypeStruct", "TypeTuple", "TypeFunc", "TypeMap", "TypeUnion", "TypeDyn", "TypeHandle", "TypeVoid", "TypeUnknown", "TypeErased", "TypeNever"}
+	wantNames := []string{"TypeI32", "TypeBool", "TypeString", "TypeFloat", "TypeLanes", "TypeArray", "TypeStruct", "TypeTuple", "TypeFunc", "TypeMap", "TypeUnion", "TypeDyn", "TypeHandle", "TypeVoid", "TypeUnknown", "TypeErased", "TypeNever", "TypeConst"}
 	wantFields := [][]string{
 		{"is_char:boolean", "width:i32", "unsigned:boolean", "polymorphic:boolean"},
 		{"tag:i32"}, {"tag:i32"}, {"width:i32", "polymorphic:boolean"}, {"width:i32"}, {"elem:Type", "view:boolean"},
@@ -29,6 +29,7 @@ func TestSelfHostSemanticTypeBoundary(t *testing.T) {
 		{"param_types:Type[]", "param_own:boolean[]", "ret_type:Type", "params_known:boolean"},
 		{"key:Type", "value:Type"}, {"name:string", "args:Type[]"},
 		{"traits:string"}, {"resource:string", "borrowed:boolean"}, {"tag:i32"}, {"reason:string"}, {"name:string"}, {"tag:i32"},
+		{"value:string"},
 	}
 	if len(p.Structs) != len(wantNames) || len(p.Unions) != 1 || p.Unions[0].Name != "Type" {
 		t.Fatal("semantic type declarations changed; audit all semantic consumers")

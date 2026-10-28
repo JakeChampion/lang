@@ -189,50 +189,52 @@ pub function sweep_seeds(n: i64, prop: (i64) => boolean): i64 {
 <<7 impl async.Driver for Sim>>=
 impl async.Driver for Sim {
   function poll_ready(self: Sim, toks: i32[], timeout: Option[Duration]): i32 {
-    if (__task_cur() != 0) {
-      return async.park_tokens(toks, timeout);
-    }
-    let timeout_ms: i32 = time.timeout_millis(timeout);
-    if (toks.len() == 0) {
-      return -1;
-    }
-    let best: i32 = -1;
-    let i: i32 = 0;
-    while (i < toks.len()) {
-      if (toks[i] >= 0) {
-        if (best < 0 || toks[i] < best) {
-          best = toks[i];
-        }
+    unsafe {
+      if (__task_cur() != 0) {
+        return async.park_tokens(toks, timeout);
       }
-      i = i + 1;
-    }
-    let now: i64 = self.clock_ns.get();
-    if (timeout_ms >= 0) {
-      let timeout_at: i64 = now + timeout_ms as i64 * 1000000;
-      if (best < 0 || timeout_at < best as i64 * 1000000) {
-        self.clock_ns.set(timeout_at);
+      let timeout_ms: i32 = time.timeout_millis(timeout);
+      if (toks.len() == 0) {
         return -1;
       }
-    }
-    if (best < 0) {
-      return -1;
-    }
-    let ready_ns: i64 = best as i64 * 1000000;
-    if (ready_ns > now) {
-      self.clock_ns.set(ready_ns);
-    }
-    let ties: i32[] = [];
-    let k: i32 = 0;
-    while (k < toks.len()) {
-      if (toks[k] == best) {
-        ties = ties.append(k);
+      let best: i32 = -1;
+      let i: i32 = 0;
+      while (i < toks.len()) {
+        if (toks[i] >= 0) {
+          if (best < 0 || toks[i] < best) {
+            best = toks[i];
+          }
+        }
+        i = i + 1;
       }
-      k = k + 1;
+      let now: i64 = self.clock_ns.get();
+      if (timeout_ms >= 0) {
+        let timeout_at: i64 = now + timeout_ms as i64 * 1000000;
+        if (best < 0 || timeout_at < best as i64 * 1000000) {
+          self.clock_ns.set(timeout_at);
+          return -1;
+        }
+      }
+      if (best < 0) {
+        return -1;
+      }
+      let ready_ns: i64 = best as i64 * 1000000;
+      if (ready_ns > now) {
+        self.clock_ns.set(ready_ns);
+      }
+      let ties: i32[] = [];
+      let k: i32 = 0;
+      while (k < toks.len()) {
+        if (toks[k] == best) {
+          ties = ties.append(k);
+        }
+        k = k + 1;
+      }
+      if (ties.len() == 1) {
+        return ties[0];
+      }
+      return ties[__roll(self, ties.len())];
     }
-    if (ties.len() == 1) {
-      return ties[0];
-    }
-    return ties[__roll(self, ties.len())];
   }
   function now(self: Sim): Instant {
     return time.instant_from_nanos(self.clock_ns.get());
@@ -323,17 +325,19 @@ impl async.Driver for Sim {
 ```fern
 <<8 pub function (s: Sim) advance_to(to: Instant): boolean>>=
 pub function (s: Sim) advance_to(to: Instant): boolean {
-  let to_ns: i64 = time.instant_nanos(to);
-  if (__task_cur() != 0) {
-    let set: i32[] = [(to_ns / 1000000) as i32, 1];
-    if (async.wait_any(set, None) == async.cancelled()) {
-      return false;
+  unsafe {
+    let to_ns: i64 = time.instant_nanos(to);
+    if (__task_cur() != 0) {
+      let set: i32[] = [(to_ns / 1000000) as i32, 1];
+      if (async.wait_any(set, None) == async.cancelled()) {
+        return false;
+      }
     }
+    if (to_ns > s.clock_ns.get()) {
+      s.clock_ns.set(to_ns);
+    }
+    return true;
   }
-  if (to_ns > s.clock_ns.get()) {
-    s.clock_ns.set(to_ns);
-  }
-  return true;
 }
 
 // Task `i` is cancelled at `cancel_at[i]` when that is present.

@@ -6,14 +6,14 @@ const durationParseProg = `
 import "std/format" as fmt;
 function chk(s: string, want: i64): boolean {
     match (fmt.parse_duration(s)) {
-        Some(v) => { return v.as_millis() == want; },
-        None => { return false; },
+        Ok(v) => { return v.as_millis() == want; },
+        Err(_) => { return false; },
     }
 }
 function isnone(s: string): boolean {
     match (fmt.parse_duration(s)) {
-        Some(v) => { return false; },
-        None => { return true; },
+        Ok(v) => { return false; },
+        Err(_) => { return true; },
     }
 }
 function main(): i32 {
