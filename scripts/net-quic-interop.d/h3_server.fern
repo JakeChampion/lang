@@ -11,6 +11,7 @@ import "std/time";
 import "std/option";
 import "std/i64";
 import "core/int";
+import "std/rand";
 
 struct Server { cfg: conn.Config, sock: i32, current: Option[h3q.Conn], peer: Option[net.SocketAddr], answered: i32 }
 
@@ -91,7 +92,7 @@ function accepted(s: Server, d: u8[], from: net.SocketAddr): Server {
   let Ok(h) = packet.parse(d, 0, 8) else {
     return s;
   };
-  let Ok(q) = conn.accept(s.cfg, random_bytes(conn.server_entropy(s.cfg)), h, now()) else {
+  let Ok(q) = conn.accept(s.cfg, rand.bytes(conn.server_entropy(s.cfg)), h, now()) else {
     return s;
   };
   return served(Server { ...s, peer: Some(from) }, h3q.server(q, h3.config()).receive(d, now()));

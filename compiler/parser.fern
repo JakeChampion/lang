@@ -24936,7 +24936,16 @@ pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
 }
 
 pub function rewrite_assoc_const_reads(mod: Module): Module {
-  let types: string[] = ["Self", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "boolean", "string", "char"];
+  let qualifiers: string[] = [];
+  for imp in mod.imports {
+    qualifiers = qualifiers.append(import_qualifier(imp));
+  }
+  let types: string[] = [];
+  for prim in ["Self", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "boolean", "string", "char"] {
+    if (!util.has_str(qualifiers, prim)) {
+      types = types.append(prim);
+    }
+  }
   for sd in mod.structs {
     types = types.append(sd.name);
   }

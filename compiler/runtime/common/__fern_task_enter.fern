@@ -4,6 +4,7 @@ function __fern_task_enter(id: i32, mode: i32): i32 {
   __raw_store_ptr(st, 0, id as usize);
   let rec: usize = __fern_task_rec(id);
   __raw_store_ptr(rec, 0, mode as usize);
+  __raw_store_ptr(st, 6, mode as usize);
   __raw_store_ptr(rec, 11, prev);
   __raw_store_ptr(st, 3, rec);
   return 0;

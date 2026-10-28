@@ -8,6 +8,7 @@ import "std/clock";
 import "std/time";
 import "std/option";
 import "std/i64";
+import "std/rand";
 
 struct Server {
   cfg: conn.Config,
@@ -105,7 +106,7 @@ function accepted(s: Server, d: u8[], from: net.SocketAddr): Server {
   let Ok(h) = packet.parse(d, 0, 8) else {
     return s;
   };
-  let Ok(c) = conn.accept(s.cfg, random_bytes(conn.server_entropy(s.cfg)), h, now()) else {
+  let Ok(c) = conn.accept(s.cfg, rand.bytes(conn.server_entropy(s.cfg)), h, now()) else {
     return s;
   };
   let step: conn.Conn = c.receive(d, now());

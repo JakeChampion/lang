@@ -704,8 +704,10 @@ import "core/int";
 import "core/int";
 @derive(cmp.Debug) struct P { x: i32, name: string } @derive(cmp.Debug) struct N { p: P, n: i32 } function main(): i32 { return N { p: P { x: 1, name: "z" }, n: 9 }.to_debug().len(); }`, 36},
 		{"method-dispatch", `struct P { x: i32 } pub function (p: P) get(): i32 { return p.x; } function main(): i32 { let p = P { x: 42 }; return p.get(); }`, 42},
-		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`, 8},
-		{"random-bytes-len-var", `function main(): i32 { let s: u8[] = random_bytes(13); return s.len(); }`, 13},
+		{"random-bytes-len", `import "std/rand";
+function main(): i32 { return rand.bytes(8).len(); }`, 8},
+		{"random-bytes-len-var", `import "std/rand";
+function main(): i32 { let s: u8[] = rand.bytes(13); return s.len(); }`, 13},
 		{"monotonic-ns-positive", `function main(): i32 { let a: i64 = monotonic_ns(); if (a > (0 as i64)) { return 1; } return 0; }`, 1},
 		{"now-unix-ms-past-2023", `function main(): i32 { let ms: i64 = now_unix_ms(); if (ms / (1000 as i64) > (1700000000 as i64)) { return 1; } return 0; }`, 1},
 		{"now-ns-past-2023", `function main(): i32 { let ns: i64 = now_ns(); if (ns / (1000000000 as i64) > (1700000000 as i64)) { return 1; } return 0; }`, 1},
@@ -992,9 +994,12 @@ function main(): i32 { let ms = [Map { 1: "abcd" }]; return ms[0].get_or(1, "z")
 		{"i64arr-unannot-index", `function main(): i32 { let xs = [10 as i64, 20 as i64]; let q: i64 = xs[0] + xs[1]; return q as i32; }`, 30},
 		{"i64arr-unannot-while", `function main(): i32 { let xs = [1 as i64, 2 as i64, 3 as i64]; let s: i64 = 0 as i64; let i = 0; while (i < 3) { s = s + xs[i]; i = i + 1; } return s as i32; }`, 6},
 		{"i64arr-unannot-forin", `function main(): i32 { let xs = [10 as i64, 20 as i64]; let s: i64 = 0 as i64; for x in xs { s = s + x; } return s as i32; }`, 30},
-		{"random-i32-varies", `function main(): i32 { let a: i32 = random_i32(); let b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
-		{"random-i32-signed", `function main(): i32 { let neg: i32 = 0; let i: i32 = 0; while (i < 200) { if (random_i32() < 0) { neg = neg + 1; } i = i + 1; } if (neg == 0) { return 1; } if (neg > 60) { if (neg < 140) { return 7; } } return 2; }`, 7},
-		{"random-bytes-byte-range", `function main(): i32 { let s: u8[] = random_bytes(4); let x: i32 = s[0] as i32; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
+		{"random-i32-varies", `import "std/rand";
+function main(): i32 { let a: i32 = rand.next_i32(); let b: i32 = rand.next_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
+		{"random-i32-signed", `import "std/rand";
+function main(): i32 { let neg: i32 = 0; let i: i32 = 0; while (i < 200) { if (rand.next_i32() < 0) { neg = neg + 1; } i = i + 1; } if (neg == 0) { return 1; } if (neg > 60) { if (neg < 140) { return 7; } } return 2; }`, 7},
+		{"random-bytes-byte-range", `import "std/rand";
+function main(): i32 { let s: u8[] = rand.bytes(4); let x: i32 = s[0] as i32; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
 		{"arr-slice-fern", `function main(): i32 { let a: i32[] = [10,20,30,40,50]; let b = a[1:4]; if (b.len() != 3) { return 1; } if (b[0] != 20) { return 2; } if (b[2] != 40) { return 3; } if (a[1] != 20) { return 4; } if (a.len() != 5) { return 5; } if (a[0:0].len() != 0) { return 6; } if (a[5:5].len() != 0) { return 7; } let f = a[0:5]; if (f.len() != 5) { return 8; } if (f[4] != 50) { return 9; } let s: string[] = ["aa","bbb","c"]; let t = s[1:3]; if (t.len() != 2) { return 10; } if (t[0] != "bbb") { return 11; } if (t[1] != "c") { return 12; } if (s[0] != "aa") { return 13; } return 33; }`, 33},
 		{"clocks-fern", `function main(): i32 { let t0: i64 = monotonic_ns(); let w: i64 = now_unix_ms(); let n: i64 = now_ns(); let t1: i64 = monotonic_ns(); if (t1 < t0) { return 1; } if (w < (1577836800000 as i64)) { return 2; } if (w > (4102444800000 as i64)) { return 3; } let nms: i64 = n / (1000000 as i64); let d: i64 = nms - w; if (d < (0 as i64)) { d = 0 - d; } if (d > (5000 as i64)) { return 4; } if (t0 > (4102444800000000000 as i64)) { return 5; } return 71; }`, 71},
 		{"clocks-no-heap", `function main(): i32 { let t: i64 = monotonic_ns(); if (t > (0 as i64)) { return 55; } return 1; }`, 55},
@@ -1007,7 +1012,8 @@ function main(): i32 { let ms = [Map { 1: "abcd" }]; return ms[0].get_or(1, "z")
 		{"fs-roundtrip", `function main(): i32 { let p: string = "/tmp/fern_fsrt_x86.txt"; match (write_file(p, "hello world")) { Ok(_) => {}, Err(_) => { return 1; } } match (read_file(p)) { Ok(c) => { if (c != "hello world") { return 2; } }, Err(_) => { return 3; } } match (remove_file(p)) { Ok(_) => {}, Err(_) => { return 4; } } match (read_file(p)) { Ok(_) => { return 5; }, Err(_) => {} } return 41; }`, 41},
 		{"read-file-bytes", `function main(): i32 { let p: string = "/tmp/fern_rfb_x86.bin"; match (write_file(p, "AZ")) { Ok(_) => {}, Err(_) => { return 1; } } match (read_file_bytes(p)) { Ok(b) => { if (b.len() != 2) { return 2; } if ((b[0] as i32) != 65) { return 3; } if ((b[1] as i32) != 90) { return 4; } }, Err(_) => { return 5; } } match (remove_file(p)) { Ok(_) => {}, Err(_) => { return 6; } } match (read_file_bytes(p)) { Ok(_) => { return 7; }, Err(e) => { match (e) { NotFound(_) => {}, _ => { return 8; } } } } return 45; }`, 45},
 		{"read-file-invalid-utf8", `function main(): i32 { let p: string = "/tmp/fern_rfu_x86.bin"; let raw: u8[] = [255 as u8, 254 as u8]; match (write_file(p, string_from_bytes_unchecked(raw))) { Ok(_) => {}, Err(_) => { return 1; } } match (read_file(p)) { Ok(_) => { return 2; }, Err(e) => { match (e) { InvalidUtf8(q) => { if (q != p) { return 3; } }, _ => { return 4; } } } } match (read_file_bytes(p)) { Ok(b) => { if (b.len() != 2) { return 5; } if ((b[0] as i32) != 255) { return 6; } }, Err(_) => { return 7; } } let _r: Result[void, IoError] = remove_file(p); return 46; }`, 46},
-		{"random-bytes-chunked", `function main(): i32 { let b: u8[] = random_bytes(600); if (b.len() != 600) { return 1; } let v: i32 = 0; let i: i32 = 256; while (i < 600) { v = v | (b[i] as i32); i = i + 1; } if (v == 0) { return 2; } let w: i32 = 0; let j: i32 = 0; while (j < 256) { w = w | (b[j] as i32); j = j + 1; } if (w == 0) { return 3; } return 42; }`, 42},
+		{"random-bytes-chunked", `import "std/rand";
+function main(): i32 { let b: u8[] = rand.bytes(600); if (b.len() != 600) { return 1; } let v: i32 = 0; let i: i32 = 256; while (i < 600) { v = v | (b[i] as i32); i = i + 1; } if (v == 0) { return 2; } let w: i32 = 0; let j: i32 = 0; while (j < 256) { w = w | (b[j] as i32); j = j + 1; } if (w == 0) { return 3; } return 42; }`, 42},
 		{"uuid-v4", uuidV4Program, 0},
 		{"range-sum", `function main(): i32 { let s = 0; for i in 0..5 { s = s + i; } return s; }`, 10},
 		{"rangei-sum", `function main(): i32 { let s = 0; for i in 0..=5 { s = s + i; } return s; }`, 15},

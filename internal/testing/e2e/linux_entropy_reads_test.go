@@ -16,15 +16,16 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-const entropyReadSource = `function main(): i32 {
-  let bs: u8[] = random_bytes(257);
+const entropyReadSource = `import "std/rand";
+function main(): i32 {
+  let bs: u8[] = rand.bytes(257);
   if (bs.len() != 257) { return 2; }
   let i: i32 = 0;
   while (i < bs.len()) {
     if (bs[i] != 90 as u8) { return 3; }
     i = i + 1;
   }
-  if (random_i32() != 1515870810) { return 4; }
+  if (rand.next_i32() != 1515870810) { return 4; }
   print("entropy complete");
   return 0;
 }`
@@ -53,7 +54,7 @@ func TestSelfHostEntropyReadCompletion(t *testing.T) {
 			if err := os.WriteFile(src, []byte(entropyReadSource), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			if out, err := exec.Command(cli, "-target", target, "-emit", "asm", "-o", asm, src).CombinedOutput(); err != nil {
+			if out, err := exec.Command(cli, "-target", target, "-emit", "asm", "-o", asm, src, entropyStdlibRoot(t)).CombinedOutput(); err != nil {
 				t.Fatalf("compile: %v\n%s", err, out)
 			}
 			text, err := os.ReadFile(asm)
@@ -165,11 +166,11 @@ func TestSelfHostEntropyAllocationCapacity(t *testing.T) {
 				t.Run(fmt.Sprint(n), func(t *testing.T) {
 					dir := t.TempDir()
 					src, asm, bin := filepath.Join(dir, "main.fern"), filepath.Join(dir, "main.s"), filepath.Join(dir, "main")
-					program := fmt.Sprintf("function main(): i32 { let bs: u8[] = random_bytes(%d); return bs.len(); }\n", n)
+					program := fmt.Sprintf("import \"std/rand\";\nfunction main(): i32 { let bs: u8[] = rand.bytes(%d); return bs.len(); }\n", n)
 					if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 						t.Fatal(err)
 					}
-					if out, err := exec.Command(cli, "-target", target, "-emit", "asm", "-o", asm, src).CombinedOutput(); err != nil {
+					if out, err := exec.Command(cli, "-target", target, "-emit", "asm", "-o", asm, src, entropyStdlibRoot(t)).CombinedOutput(); err != nil {
 						t.Fatalf("compile: %v\n%s", err, out)
 					}
 					text, err := os.ReadFile(asm)
@@ -213,4 +214,13 @@ func TestSelfHostEntropyAllocationCapacity(t *testing.T) {
 			}
 		})
 	}
+}
+
+func entropyStdlibRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs("../../stdlib")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
 }

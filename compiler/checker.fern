@@ -1811,6 +1811,7 @@ pub struct Scope {
   impls: parser.ImplInfo[],
   trait_reqs: parser.TraitReq[],
   fn_module: string,
+  fn_stdlib: boolean,
   default_trait: string,
   default_recv: string,
   tparams: string[],
@@ -2198,13 +2199,13 @@ function new_scope(): Scope {
   let ms: MethodSig[] = [];
   let structs: StructTable = struct_table(ss, [], [], no_spellings());
   let unions: UnionTable = union_table(us);
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
 }
 
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", fn_stdlib: false, default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
@@ -7942,7 +7943,7 @@ function const_tparams(fd: parser.FuncDecl): string[] {
 }
 
 function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
-  let s: Scope = Scope { ...new_scope_full(st, structs, unions.seen_from(fd), methods, imports, impls, trait_reqs), fn_module: fd.module };
+  let s: Scope = Scope { ...new_scope_full(st, structs, unions.seen_from(fd), methods, imports, impls, trait_reqs), fn_module: fd.module, fn_stdlib: fd.stdlib.len() > 0 };
   if (fd.impl_trait.len() > 0 && parser.is_inherited_default(impls, trait_reqs, fd)) {
     s = Scope { ...s, default_trait: fd.impl_trait, default_recv: util.base_type_name(fd.receiver_type) };
   }
@@ -9846,6 +9847,29 @@ function raw_call_diag(name: string, line: i32, col: i32): util.Diag {
   return dg_at("E095", "raw builtin \"" + name + "\" is called outside an unsafe block", line, col);
 }
 
+// The builtins only the standard library may name, each with the std
+// function a program calls instead. internal/check/checker's
+// StdlibOnlyBuiltins holds the same pairs.
+function stdlib_only_wrapper(name: string): string {
+  if (name == "random_i32") {
+    return "rand.next_i32 from \"std/rand\"";
+  }
+  if (name == "random_bytes") {
+    return "rand.bytes from \"std/rand\"";
+  }
+  return "";
+}
+
+// A program's use of a builtin reserved for the standard library. The
+// runtime helpers below the stdlib check with the raw floor allowed.
+function stdlib_only_note(acc: UnsafeWalk, name: string, line: i32, col: i32): UnsafeWalk {
+  let wrapper: string = stdlib_only_wrapper(name);
+  if (wrapper.len() == 0 || acc.scope.fn_stdlib || acc.scope.sigs.raw_allowed || acc.scope.defines(name)) {
+    return acc;
+  }
+  return unsafe_note(acc, dg_at("E097", "builtin \"" + name + "\" is reserved for the standard library; call " + wrapper + " instead", line, col));
+}
+
 // The raw builtins that forge an address, change a count or a length, or call
 // foreign code. docs/security/UNSAFE-INVENTORY.md lists each obligation, and
 // internal/check/checker's UnsafeIntrinsics holds the same set.
@@ -9977,6 +10001,7 @@ function unsafe_descend(e: ast.Expr): boolean {
 function unsafe_call(c: ast.ExprCall, own acc: UnsafeWalk): UnsafeWalk {
   match (c.callee) {
     ast.ExprIdent(id) => {
+      acc = stdlib_only_note(acc, id.name, id.line, id.col);
       if (!acc.inside && !acc.scope.defines(id.name) && is_unsafe_intrinsic(id.name)) {
         acc = unsafe_note(acc, raw_call_diag(id.name, c.line, c.col));
       } else if (!acc.inside && unsafe_sig_named(id.name, acc.scope)) {
@@ -10016,6 +10041,7 @@ function unsafe_visit(e: ast.Expr, own acc: UnsafeWalk): UnsafeWalk {
       return UnsafeWalk { scope: acc.scope, inside: acc.inside, diags: util.append_diags(acc.diags, body) };
     },
     ast.ExprIdent(id) => {
+      acc = stdlib_only_note(acc, id.name, id.line, id.col);
       if (unsafe_sig_named(id.name, acc.scope)) {
         return unsafe_note(acc, unsafe_value_diag(id.name, id.line, id.col));
       }

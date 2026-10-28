@@ -1,0 +1,6 @@
+// The qualifier `i32` names the imported module, not the scalar type.
+import "./i32";
+
+function main(): i32 {
+  return i32.MAX + 2;
+}

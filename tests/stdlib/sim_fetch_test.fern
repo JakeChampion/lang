@@ -706,6 +706,24 @@ function test_proxied_origin_judged(): test.TestOutcome {
   return test.assert_eq(__body(got), "via proxy");
 }
 
+function test_proxied_literal_judged(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let n: sim_fetch.Net = __proxy_net(d, []).route(PROXY, 3128, "http://8.8.8.8/", [sim_fetch.reply(200, "literal via proxy")]);
+  let inside: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://10.0.0.7/"), __via_proxy(true, "", false));
+  if (__message(inside) != "blocked: 10.0.0.7 is not a global address") {
+    return test.fail(__message(inside));
+  }
+  let v6: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://[fd00::7]/"), __via_proxy(true, "", false));
+  if (__message(v6) != "blocked: fd00::7 is not a global address") {
+    return test.fail(__message(v6));
+  }
+  if (n.connects() != 0) {
+    return test.fail("a blocked request connected");
+  }
+  let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://8.8.8.8/"), __via_proxy(true, "", false));
+  return test.assert_eq(__body(got), "literal via proxy");
+}
+
 function test_proxy_connection_kept(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __proxy_net(d, [sim_fetch.reply(200, "one").kept()]).route(PROXY, 3128, "http://other.test/", [sim_fetch.reply(200, "two").kept()]);
@@ -1041,6 +1059,7 @@ function main(): i32 {
   r = r.it("reads no proxy under REQUEST_METHOD", test_cgi_no_proxy);
   r = r.it("reports a proxy that refuses", test_proxy_refused);
   r = r.it("judges the origin a proxy reaches on the public route", test_proxied_origin_judged);
+  r = r.it("judges an address literal a proxy reaches on the public route", test_proxied_literal_judged);
   r = r.it("keeps the proxy's connection across origins", test_proxy_connection_kept);
   r = r.it("dials a proxy named without a port on 80", test_proxy_bare_host);
   r = r.it("sends a caller's own proxy credentials", test_caller_proxy_credentials);
