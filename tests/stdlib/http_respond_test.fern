@@ -260,7 +260,7 @@ function test_produced_body_trailers(): test.TestOutcome {
       parts.set(parts.get() + 1);
       return Some("ab".bytes());
     },
-    (): HeaderMap => headers.header_map_new().append("x-parts", parts.get().to_string()),
+    (): HeaderMap => headers.new().append("x-parts", parts.get().to_string()),
   );
   if (resp.body_string() != "abab") {
     return test.fail("body " + resp.body_string());

@@ -5,20 +5,20 @@ import "core/map";
 
 function main(): i32 {
 
-    let enc: string = url.url_encode("a b/c?x=1");
+    let enc: string = url.encode("a b/c?x=1");
     print(enc);
-    print(url.url_decode(enc));
+    print(url.decode(enc));
 
-    print(url.url_encode("Hello-World_1.2~"));
+    print(url.encode("Hello-World_1.2~"));
 
-    print(url.url_decode("100%zz"));
+    print(url.decode("100%zz"));
 
-    match (url.url_parse("http://h.com:8080/p?q#f")) {
+    match (url.parse("http://h.com:8080/p?q#f")) {
         Ok(u) => { print(u.scheme + " " + u.host + " " + u.port.to_string() + " " + u.path + " " + u.query + " " + u.fragment); },
         Err(_) => { print("parse-none"); },
     }
 
-    match (url.url_parse("")) {
+    match (url.parse("")) {
         Ok(u) => { print("unexpected"); },
         Err(_) => { print("empty-none"); },
     }

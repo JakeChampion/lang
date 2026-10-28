@@ -178,7 +178,7 @@ The self-host parse is 13 kept, 2 wrapper and 25 scratch:
 | ---: | --- | --- |
 | 3 | `HeaderMap.append` takes a fresh box for `HeaderMap { ...h, … }` and frees the old one: the spread does not reuse the box it consumes | `headers.fern` `append` |
 | 14 | `Option`, `Result`, tuple and `__Head` boxes returned between the head parse's helpers: `Some(v)` per field value, `Ok(h)`, `Ok(p)`, `Ok(joined)`, `Length(n)` and its `Ok`, `__Head` and its `Ok`, the request-line and `__framed_body` tuples, the `line` default tuple, the `Some(0)` length | `__field_value`, `__request_line`, `__head`, `__framed_body`, `__http_content_length` |
-| 2 | `header_map_new()` for a default overwritten before it is read, and for the trailers of a request that has none | `__head`, `__framed_body` |
+| 2 | `headers.new()` for a default overwritten before it is read, and for the trailers of a request that has none | `__head`, `__framed_body` |
 | 6 | request-target scratch: the method and path strings built only to pass to `http_request_target`, the decoded `u8[]`, a string copy made only to check its UTF-8, the empty first segment, the segments array | `__request_line`, `__decoded_path`, `__joined_segments` |
 
 The serialize's 4 are the builder's two blocks, the copy `buf_take_bytes`
@@ -214,7 +214,7 @@ on #4451, as slice 2 was.
 1. **A record field may hold a static box.** `[]` was already a static box,
    but the self-host's static-box plan admitted only scalar fields, so
    `HeaderMap { names: [], values: [] }` was built per call. A field now
-   holds another static box's address, so every `header_map_new()` is one
+   holds another static box's address, so every `headers.new()` is one
    static box. Done, after slice 2: parse 37 to 35. The trailers' map and
    the default map are static, and the parse's own map starts from the
    static box, which its first append copies.

@@ -935,7 +935,7 @@ along with §5 (use `Reader` / `Writer` interfaces).
 **Cost: already mostly done (`std/url.fern`).** **Impact:
 low; verify it composes with §1.**
 
-`url_parse(s) → Url` exists. Verify the shape works for
+`url.parse(s) → Url` exists. Verify the shape works for
 both inbound (parse `req.path`) and outbound (build
 `fetch` URLs).
 

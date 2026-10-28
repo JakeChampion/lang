@@ -237,6 +237,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_emits_op_cached(cache, "mulhi_u")) {
     out = out.append("@uses_mulhi_u");
   }
+  if (module_emits_op_cached(cache, "mulhi_s")) {
+    out = out.append("@uses_mulhi_s");
+  }
   if (module_uses_random(cache)) {
     out = out.append("@uses_random");
   }
@@ -4862,6 +4865,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = emit_wasm_call_indirect(o, parts);
   } else if (o.kind_tag == 430) {
     parts = parts.append("    call $__fern_mulhi_u64\n");
+  } else if (o.kind_tag == 484) {
+    parts = parts.append("    call $__fern_mulhi_s64\n");
   } else if (o.kind_tag >= 421 && o.kind_tag <= 427) {
     parts = parts.append("    unreachable\n");
   } else {
@@ -9384,6 +9389,9 @@ pub function with_runtime_units(units: WasmUnit[], needs: string[], rt_lower: (p
   }
   if (need(needs, "@uses_mulhi_u")) {
     roots = roots + " __fern_mulhi_u64";
+  }
+  if (need(needs, "@uses_mulhi_s")) {
+    roots = roots + " __fern_mulhi_s64 __fern_mulhi_u64";
   }
   if (need(needs, "@uses_count_byte_bytes")) {
     roots = roots + " __fern_count_byte_bytes";

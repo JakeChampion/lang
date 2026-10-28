@@ -16,7 +16,7 @@ Decoders that return bytes preserve arbitrary decoded bytes. Reference resolutio
 import "std/url";
 
 function main(): i32 {
-  if (url.url_encode("a b") != "a%20b" || url.form_decode("a+b") != "a b") { return 1; }
+  if (url.encode("a b") != "a%20b" || url.form_decode("a+b") != "a b") { return 1; }
   return 0;
 }
 ```
@@ -33,21 +33,21 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 function __url_unreserved(b: i32): boolean>>
 
-<<4 pub function url_encode(s: string): string>>
+<<4 pub function encode(s: string): string>>
 
 <<5 pub function form_encode(s: string): string>>
 
 <<6 function __url_scheme_char(b: i32, first: boolean): boolean>>
 
-<<7 pub function url_resolve(base: string, reference: string): Result[string, UrlError]>>
+<<7 pub function resolve(base: string, reference: string): Result[string, UrlError]>>
 
 <<8 function __resolved(b: Url, reference: string): Result[string, UrlError]>>
 
-<<9 pub function url_remove_dot_segments(path: string): string>>
+<<9 pub function remove_dot_segments(path: string): string>>
 
 <<10 function __drop_last(segments: string[]): string[]>>
 
-<<11 pub function url_parse(s: string): Result[Url, UrlError]>>
+<<11 pub function parse(s: string): Result[Url, UrlError]>>
 
 <<12 pub function query_parse(s: string): Map[string, string[]]>>
 
@@ -114,11 +114,11 @@ function __url_hex_val(c: i32): i32 {
 }
 ```
 
-### `4 pub function url_encode(s: string): string`
+### `4 pub function encode(s: string): string`
 
 ```fern
-<<4 pub function url_encode(s: string): string>>=
-pub function url_encode(s: string): string {
+<<4 pub function encode(s: string): string>>=
+pub function encode(s: string): string {
   let n: i32 = s.len();
   if (n == 0) {
     return "";
@@ -152,11 +152,11 @@ pub function url_encode(s: string): string {
   return string_from_bytes_unchecked(buf);
 }
 
-pub function url_decode(s: string): string {
-  return utf8.from_bytes_lossy(url_decode_bytes(s));
+pub function decode(s: string): string {
+  return utf8.from_bytes_lossy(decode_bytes(s));
 }
 
-pub function url_decode_bytes(s: string): u8[] {
+pub function decode_bytes(s: string): u8[] {
   let n: i32 = s.len();
   if (n == 0) {
     return [];
@@ -330,12 +330,12 @@ function __url_reg_name_char(b: i32): boolean {
 }
 ```
 
-### `7 pub function url_resolve(base: string, reference: string): Result[string, UrlError]`
+### `7 pub function resolve(base: string, reference: string): Result[string, UrlError]`
 
 ```fern
-<<7 pub function url_resolve(base: string, reference: string): Result[string, UrlError]>>=
-pub function url_resolve(base: string, reference: string): Result[string, UrlError] {
-  let b: Url = url_parse(base)?;
+<<7 pub function resolve(base: string, reference: string): Result[string, UrlError]>>=
+pub function resolve(base: string, reference: string): Result[string, UrlError] {
+  let b: Url = parse(base)?;
   if (b.scheme.len() == 0) {
     return Err(UrlError { text: base, kind: RelativeBase });
   }
@@ -354,12 +354,12 @@ function __resolved(b: Url, reference: string): Result[string, UrlError] {
   if (reference.len() >= 2 && reference[0] == 47 as u8 && reference[1] == 47 as u8) {
     return Ok(b.scheme + ":" + reference);
   }
-  let r: Url = url_parse(reference)?;
+  let r: Url = parse(reference)?;
   if (r.scheme.len() > 0) {
     return Ok(reference);
   }
   let pq: (string, string) = __merged(b, r, reference);
-  return Ok(__url_compose(b.scheme, b.host, b.port, url_remove_dot_segments(pq.0), pq.1, r.fragment));
+  return Ok(__url_compose(b.scheme, b.host, b.port, remove_dot_segments(pq.0), pq.1, r.fragment));
 }
 
 function __merged(b: Url, r: Url, reference: string): (string, string) {
@@ -417,11 +417,11 @@ function __port_text(port: i32): string {
 }
 ```
 
-### `9 pub function url_remove_dot_segments(path: string): string`
+### `9 pub function remove_dot_segments(path: string): string`
 
 ```fern
-<<9 pub function url_remove_dot_segments(path: string): string>>=
-pub function url_remove_dot_segments(path: string): string {
+<<9 pub function remove_dot_segments(path: string): string>>=
+pub function remove_dot_segments(path: string): string {
   let segments: string[] = [];
   let n: i32 = path.len();
   let absolute: boolean = n > 0 && path[0] == 47 as u8;
@@ -480,10 +480,10 @@ function __joined_path(segments: string[], absolute: boolean): string {
 }
 ```
 
-### `11 pub function url_parse(s: string): Result[Url, UrlError]`
+### `11 pub function parse(s: string): Result[Url, UrlError]`
 
 ```fern
-<<11 pub function url_parse(s: string): Result[Url, UrlError]>>=
+<<11 pub function parse(s: string): Result[Url, UrlError]>>=
 // The URL a parse refused, and which part of it was at fault.
 pub struct UrlError { text: string, kind: UrlErrorKind }
 
@@ -515,7 +515,7 @@ pub function (e: UrlError) to_string(): string {
   return e.message();
 }
 
-pub function url_parse(s: string): Result[Url, UrlError] {
+pub function parse(s: string): Result[Url, UrlError] {
   let n: i32 = s.len();
   if (n == 0) {
     return Err(UrlError { text: s, kind: EmptyUrl });

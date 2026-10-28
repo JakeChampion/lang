@@ -4,7 +4,7 @@ import "testing"
 
 const globProg = `
 import "std/glob" as glob;
-function y(p: string, t: string): boolean { return glob.glob_match(p, t); }
+function y(p: string, t: string): boolean { return glob.is_match(p, t); }
 function main(): i32 {
     if (!y("*.fern", "a.fern") || y("*.fern", "src/a.fern")) { return 1; }
     if (!y("src/*.fern", "src/a.fern") || y("src/*.fern", "src/x/a.fern")) { return 2; }

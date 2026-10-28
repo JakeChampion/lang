@@ -45,12 +45,12 @@ function opened(wire: u8[], k: packet.Keys, largest: i64): string {
           return "dcid " + hex.encode(h.dcid) + " scid " + hex.encode(h.scid) + " end " + int.int_to_string(h.end) + " pn " + o.pn.to_string() + " payload " + int.int_to_string(o.payload.len()) + " reserved " + o.reserved_ok.to_string();
         },
         Err(e) => {
-          return "open: " + e;
+          return "open: " + e.message();
         }
       }
     },
     Err(e) => {
-      return "parse: " + e;
+      return "parse: " + e.message();
     }
   }
   return "";
@@ -83,12 +83,12 @@ function test_chacha20_short(): test.TestOutcome {
           back = o.pn.to_string() + " " + hex.encode(o.payload);
         },
         Err(e) => {
-          back = e;
+          back = e.message();
         }
       }
     },
     Err(e) => {
-      back = e;
+      back = e.message();
     }
   }
   return test.assert_eq(shown_keys(k) + "\n" + hex.encode(sealed) + "\n" + back, "c6d98ff3441c3fe1b2182094f69caa2ed4b716b65488960a7a984979fb23e1c8 e0459b3474bdd0e44a41c144 25a282b9e82f06f21f488917a4fc8f1b73573685608597d0efcb076b0ab7a7a4\n4cfe4189655e5cd55c41f69080575d7999c25a5bfb\n654360564 01");
@@ -102,7 +102,7 @@ function test_retry(): test.TestOutcome {
       got = got + " | " + string_from_bytes_unchecked(h.token) + " " + hex.encode(h.tag) + " " + hex.encode(h.scid);
     },
     Err(e) => {
-      got = got + " | " + e;
+      got = got + " | " + e.message();
     }
   }
   return test.assert_eq(got, "ff000000010008f067a5502a4262b5746f6b656e04a265ba2eff4d829058fb3f0f2496ba true false | token 04a265ba2eff4d829058fb3f0f2496ba f067a5502a4262b5");
@@ -132,12 +132,12 @@ function test_version_negotiation(): test.TestOutcome {
           }
         },
         Err(e) => {
-          got = got + " " + e;
+          got = got + " " + e.message();
         }
       }
     },
     Err(e) => {
-      got = e;
+      got = e.message();
     }
   }
   return test.assert_eq(got, "c000000000020506040102030400000001 offers 1 to 0506");
@@ -160,17 +160,17 @@ function test_coalesced(): test.TestOutcome {
               got = got + " handshake pn " + o.pn.to_string() + " " + hex.encode(o.payload) + " end " + int.int_to_string(h2.end);
             },
             Err(e) => {
-              got = got + " " + e;
+              got = got + " " + e.message();
             }
           }
         },
         Err(e) => {
-          got = got + " " + e;
+          got = got + " " + e.message();
         }
       }
     },
     Err(e) => {
-      got = e;
+      got = e.message();
     }
   }
   return test.assert_eq(got + " of " + int.int_to_string(datagram.len()), int.int_to_string(a.len()) + " handshake pn 7 010100 end " + int.int_to_string(datagram.len()) + " of " + int.int_to_string(datagram.len()));
@@ -189,7 +189,7 @@ function test_key_update(): test.TestOutcome {
           with_new = o.pn.to_string() + " phase " + o.key_phase.to_string();
         },
         Err(e) => {
-          with_new = e;
+          with_new = e.message();
         }
       }
       match (packet.open(sealed, h, k0, 8 as i64)) {
@@ -197,12 +197,12 @@ function test_key_update(): test.TestOutcome {
           with_old = "opened";
         },
         Err(e) => {
-          with_old = e;
+          with_old = e.message();
         }
       }
     },
     Err(e) => {
-      with_new = e;
+      with_new = e.message();
     }
   }
   let same_hp: boolean = hex.encode(k0.hp) == hex.encode(k1.hp);
@@ -219,11 +219,57 @@ function test_malformed(): test.TestOutcome {
         got = got + "ok end " + int.int_to_string(h.end) + ";";
       },
       Err(e) => {
-        got = got + e + ";";
+        got = got + e.message() + ";";
       }
     }
   }
   return test.assert_eq(got, "first byte cut short;fixed bit not set;version cut short;destination connection id length cut short;destination connection id of 21 bytes;source connection id length cut short;packet of 5 bytes past the end of the datagram;ok end 10;retry without a token;");
+}
+
+function test_error_kinds(): test.TestOutcome {
+  let got: string = "";
+  match (packet.parse([], 0, 8)) {
+    Ok(h) => {
+      got = "parsed";
+    },
+    Err(e) => {
+      match (e) {
+        packet.PacketCutShort(what) => {
+          got = what;
+        },
+        _ => {
+          got = e.message();
+        }
+      }
+    }
+  }
+  let k: packet.Keys = packet.keys(keyschedule.ChaCha20Poly1305Sha256, __codec_bytes(hex.decode("9ac312a7f877468ebe69422748ad00a15443f18203a07d6060f688f30f21632b")));
+  let sealed: u8[] = packet.seal_short([], 654360564 as i64, 3, false, false, [1 as u8], k);
+  let last: i32 = sealed.len() - 1;
+  let bad: u8[] = sealed.with(last, (sealed[last] as i32 ^ 1) as u8);
+  match (packet.parse(bad, 0, 0)) {
+    Ok(h) => {
+      match (packet.open(bad, h, k, 654360563 as i64)) {
+        Ok(o) => {
+          got = got + " opened";
+        },
+        Err(e) => {
+          match (e) {
+            packet.PacketUndecryptable => {
+              got = got + " undecryptable";
+            },
+            _ => {
+              got = got + " " + e.message();
+            }
+          }
+        }
+      }
+    },
+    Err(e) => {
+      got = got + " " + e.message();
+    }
+  }
+  return test.assert_eq(got, "first byte undecryptable");
 }
 
 function main(): i32 {
@@ -238,6 +284,7 @@ function main(): i32 {
   r = r.it("coalesced packets", test_coalesced);
   r = r.it("key update", test_key_update);
   r = r.it("malformed headers", test_malformed);
+  r = r.it("typed packet errors", test_error_kinds);
   return r.finish();
 }
 

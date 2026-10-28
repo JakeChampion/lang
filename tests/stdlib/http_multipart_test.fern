@@ -46,16 +46,16 @@ function scripted(bytes: u8[], k: i32): BodySource {
 }
 
 function streamed(ct: string, bytes: u8[], k: i32): HttpRequest {
-  let h: HeaderMap = headers.header_map_new().set("content-type", ct);
-  return HttpRequest { method: "POST", path: "/upload", body: stream.stream_from_source(scripted(bytes, k)), headers: h, trailers: headers.header_map_new() };
+  let h: HeaderMap = headers.new().set("content-type", ct);
+  return HttpRequest { method: "POST", path: "/upload", body: stream.stream_from_source(scripted(bytes, k)), headers: h, trailers: headers.new() };
 }
 
 function buffered(ct: string, body: string): HttpRequest {
-  let h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.new();
   if (ct.len() > 0) {
     h = h.set("content-type", ct);
   }
-  return HttpRequest { method: "POST", path: "/upload", body: stream.stream_from_string(body), headers: h, trailers: headers.header_map_new() };
+  return HttpRequest { method: "POST", path: "/upload", body: stream.stream_from_string(body), headers: h, trailers: headers.new() };
 }
 
 function show(bytes: u8[]): string {

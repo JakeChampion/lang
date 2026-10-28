@@ -32,7 +32,7 @@ What Fern's prelude / built-ins cover today, as a baseline:
 - **bytes**: `is_digit`, `is_alpha`, `is_alnum`, `is_ascii`,
   `is_ascii_white_space`, `is_hex_digit`.
 - **encoding**: `encode` / `_decode`, `encode` /
-  `_decode`, `url_encode` / `_decode` / `url_parse`,
+  `_decode`, `url.encode` / `_decode` / `url.parse`,
   `query_parse`, `json_encode` / `json_parse`.
 - **maps**: `Map[K, V]` with `set` / `get` / `get_or` / `has`
   / `delete` / `iter` / `keys` / `values` / `len` / `clear`.
@@ -569,11 +569,10 @@ think they're free additions to make.
   `s.index_of_ci(needle)`. Folds A-Z to a-z per byte;
   multibyte UTF-8 matches only byte-exact.
 - **Multi-byte pad**: `s.pad_start_str(w, fill)` /
-  `s.pad_end_str(w, fill)`. The earlier `pad_start(n, ch)`
-  uses a single byte; these repeat the `fill` string and
-  truncate at the boundary. Useful for prefix-dash / line-
+  `s.pad_end_str(w, fill)`. These repeat the `fill` string and
+  cut it at a code point when it does not divide the width. Useful for prefix-dash / line-
   rule decoration.
-- **`s.truncate(n, ellipsis)`**: cap to n bytes, suffix with
+- **`s.truncate(n, ellipsis)`**: cap to n code points, suffix with
   ellipsis when the input is longer. If n is shorter than
   the ellipsis itself, hard-truncate without it.
 - **`(n: i32).digits()`**: number of decimal digits. Sign

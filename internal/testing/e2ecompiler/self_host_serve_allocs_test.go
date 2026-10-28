@@ -163,7 +163,7 @@ func TestSelfHostServeAllocsPerRequestH3Mux(t *testing.T) {
 	e2eharness.CheckServeAllocsH3Mux(t, addr, run, ServeAllocsH3MuxCeiling, e2eharness.ServeAllocsRounds, ServeAllocsH3MuxMinPeak)
 }
 
-const ServeFetchAllocsCeiling = 91
+const ServeFetchAllocsCeiling = 88
 
 func TestSelfHostServeAllocsPerRequestTwoFetch(t *testing.T) {
 	cli := buildSelfHostCLI(t)

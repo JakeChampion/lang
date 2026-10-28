@@ -91,6 +91,16 @@ var truncateCases = []struct{ name, body string }{
   }
   if (__heap_alloc_count() - before > 100i64) { return 97; }
   let r: i32 = sum % 101;`},
+	{"held-element-join", `  let ps: P[] = people(3000);
+  let before: i64 = __heap_alloc_count();
+  let sum: i32 = 0;
+  while (ps.len() > 0) {
+    let p: P = ps[ps.len() - 1];
+    ps = remove_at(ps, ps.len() - 1);
+    sum = sum + p.n + p.name.len();
+  }
+  if (__heap_alloc_count() - before > 100i64) { return 97; }
+  let r: i32 = sum % 101;`},
 	{"borrowed-swap-remove-kept", `  let ps: P[] = people(6);
   let qs: P[] = remove_at(ps, 1);
   let r: i32 = ps.len() * 10 + qs.len();

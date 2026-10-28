@@ -36,7 +36,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "std/utf8";
 import "std/string";
 import "std/array";
 ```

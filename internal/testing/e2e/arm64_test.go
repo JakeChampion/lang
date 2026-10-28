@@ -7374,7 +7374,7 @@ function main(): i32 {
     if ("42".pad_start(5, '0') != "00042") { return 1; }
     if ("42".pad_end(5, ' ') != "42   ") { return 2; }
     if ("longer".pad_start(3, '0') != "longer") { return 3; }
-    if ("x".pad_start(2, 'é') != "x") { return 4; }       // no whole fill character fits
+    if ("x".pad_start(3, 'é') != "ééx") { return 4; }     // width counts code points
     if ("".pad_start(3, 'a') != "aaa") { return 5; }    // repeat one fill character
 
     // split_once — first match wins, empty sep / no-match → None

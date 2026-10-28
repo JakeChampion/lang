@@ -20,7 +20,7 @@ function field_value(buf: u8[], from: i32, end: i32): Option[string] {
     return Some(bytes_string(buf, from, end));
 }
 function parse(buf: u8[]): Option[HeaderMap] {
-    let h: HeaderMap = headers.header_map_new();
+    let h: HeaderMap = headers.new();
     let at: i32 = 0;
     while (at < buf.len()) {
         let e: i32 = find_byte(buf, at, buf.len(), 10 as u8);

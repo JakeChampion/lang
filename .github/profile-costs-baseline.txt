@@ -147,7 +147,7 @@ profile/x86-64-linux/http_hello.hardened.bytes	79936
 profile/x86-64-linux/http_hello.hardened.emit	17724
 profile/x86-64-linux/http_hello.hardened.ir	23811453
 profile/x86-64-linux/http_hello.minimal.bytes	60432
-profile/x86-64-linux/http_hello.minimal.emit	14319
+profile/x86-64-linux/http_hello.minimal.emit	14151
 profile/x86-64-linux/http_hello.minimal.ir	25120450
 profile/x86-64-linux/http_hello.safe.bytes	72720
 profile/x86-64-linux/http_hello.safe.emit	17492

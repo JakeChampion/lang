@@ -253,37 +253,37 @@ pub function http_is_error(code: i32): boolean {
 }
 
 pub function ok(body: string): HttpResponse {
-  return HttpResponse { status: 200, body: BodyText(body), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: 200, body: BodyText(body), headers: headers.new(), trailers: headers.new(), background: None };
 }
 
 pub function text(status: i32, body: string): HttpResponse {
-  return HttpResponse { status: status, body: BodyText(body), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: status, body: BodyText(body), headers: headers.new(), trailers: headers.new(), background: None };
 }
 
 pub function not_found(): HttpResponse {
-  return HttpResponse { status: 404, body: BodyText("Not Found"), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: 404, body: BodyText("Not Found"), headers: headers.new(), trailers: headers.new(), background: None };
 }
 
 pub function bad_request(body: string): HttpResponse {
-  return HttpResponse { status: 400, body: BodyText(body), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: 400, body: BodyText(body), headers: headers.new(), trailers: headers.new(), background: None };
 }
 
 pub function internal_error(body: string): HttpResponse {
-  return HttpResponse { status: 500, body: BodyText(body), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: 500, body: BodyText(body), headers: headers.new(), trailers: headers.new(), background: None };
 }
 
 pub function redirect(location: string): HttpResponse {
-  let h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.new();
   h = h.set("Location", location);
-  return HttpResponse { status: 302, body: BodyText(location), headers: h, trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: 302, body: BodyText(location), headers: h, trailers: headers.new(), background: None };
 }
 
 pub function no_content(): HttpResponse {
-  return HttpResponse { status: 204, body: BodyText(""), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: 204, body: BodyText(""), headers: headers.new(), trailers: headers.new(), background: None };
 }
 
 pub function created(body: string): HttpResponse {
-  return HttpResponse { status: 201, body: BodyText(body), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: 201, body: BodyText(body), headers: headers.new(), trailers: headers.new(), background: None };
 }
 ```
 
@@ -292,9 +292,9 @@ pub function created(body: string): HttpResponse {
 ```fern
 <<4 function __http_response_typed(status: i32, body: string, ct: string): HttpResponse>>=
 function __http_response_typed(status: i32, body: string, ct: string): HttpResponse {
-  let h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.new();
   h = h.set("Content-Type", ct);
-  return HttpResponse { status: status, body: BodyText(body), headers: h, trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: status, body: BodyText(body), headers: h, trailers: headers.new(), background: None };
 }
 ```
 
@@ -663,7 +663,7 @@ pub function http_user_agent_is_bot(ua: string): boolean {
 
 pub function http_header_value(block: string, key: string): Option[string] {
   let bs: u8[] = block.bytes();
-  match (__parse_header_bytes(bs, 0, bs.len(), http_limits().header_fields, headers.header_map_new())) {
+  match (__parse_header_bytes(bs, 0, bs.len(), http_limits().header_fields, headers.new())) {
     Ok(h) => {
       return h.get(key);
     },
@@ -866,7 +866,7 @@ function __field_value(buf: u8[], from: i32, end: i32, prev: HeaderMap, at: i32)
 }
 
 function __parse_header_bytes(buf: u8[], from: i32, end: i32, fields: i32, prev: HeaderMap): Result[HeaderMap, i32] {
-  let h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.new();
   let same: boolean = true;
   let count: i32 = 0;
   let at: i32 = from;
@@ -932,7 +932,7 @@ function __field_line(buf: u8[], at: i32, end: i32): (i32, i32) {
 }
 
 function __leading_fields(h: HeaderMap, n: i32): HeaderMap {
-  let out: HeaderMap = headers.header_map_new();
+  let out: HeaderMap = headers.new();
   let i: i32 = 0;
   while (i < n) {
     out = out.append(h.names[i], h.values[i]);
@@ -1263,7 +1263,7 @@ function __chunked_walk(buf: u8[], from: i32, limits: HttpLimits): (i32, i32, i3
   let budget: i32 = limits.header_bytes;
   let room: i32 = limits.body;
   let spans: i32[] = [];
-  let none: HeaderMap = headers.header_map_new();
+  let none: HeaderMap = headers.new();
   while (true) {
     let line: (i32, i32, i32) = __chunk_size_line(buf, at, budget, room);
     if (line.0 != 2) {
@@ -1437,7 +1437,7 @@ function __is_quoted_byte(b: u8): boolean {
 <<30 function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[], fields: i32): (i32, i32, i32[], ...>>=
 function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[], fields: i32): (i32, i32, i32[], HeaderMap) {
   let n: i32 = buf.len();
-  let trailers: HeaderMap = headers.header_map_new();
+  let trailers: HeaderMap = headers.new();
   let limit: i32 = at + budget;
   if (limit > n) {
     limit = n;
@@ -1457,7 +1457,7 @@ function __chunked_trailers(buf: u8[], at: i32, budget: i32, spans: i32[], field
     return (1, 0, spans, trailers);
   }
   if (sep > at) {
-    match (__parse_header_bytes(buf, at, sep, fields, headers.header_map_new())) {
+    match (__parse_header_bytes(buf, at, sep, fields, headers.new())) {
       Ok(h) => {
         trailers = h;
       },
@@ -1489,7 +1489,7 @@ function __chunked_body(buf: u8[], spans: i32[]): u8[] {
 
 function __framed_body(buf: u8[], at: i32, framing: __BodyFraming, version: string, limits: HttpLimits): (i32, u8[], i32, HeaderMap) {
   let empty: u8[] = [];
-  let none: HeaderMap = headers.header_map_new();
+  let none: HeaderMap = headers.new();
   match (framing) {
     Length(content_length) => {
       if (content_length > limits.body) {
@@ -1530,7 +1530,7 @@ pub enum ChunkStep { ChunkData(ChunkDecoder, u8[]), ChunkEnd(u8[], HeaderMap, u8
 <<32 pub function chunk_decoder(limits: HttpLimits): ChunkDecoder>>=
 pub function chunk_decoder(limits: HttpLimits): ChunkDecoder {
   let none: u8[] = [];
-  return ChunkDecoder { state: 0, held: none, left: 0, budget: limits.header_bytes, room: limits.body, fields: limits.header_fields, trailers: headers.header_map_new() };
+  return ChunkDecoder { state: 0, held: none, left: 0, budget: limits.header_bytes, room: limits.body, fields: limits.header_fields, trailers: headers.new() };
 }
 
 pub function (d: ChunkDecoder) feed(bytes: u8[]): ChunkStep {
@@ -1801,7 +1801,7 @@ pub function http_parse_request_framed(buf: u8[]): HttpFraming {
 }
 
 pub function http_framed_none(): HttpFramed {
-  return HttpFramed { request: HttpRequest { method: "", path: "", body: ByteStream { data: [], pos: 0, source: None }, headers: headers.header_map_new(), trailers: headers.header_map_new() }, len: 0, keep_alive: false, version: "" };
+  return HttpFramed { request: HttpRequest { method: "", path: "", body: ByteStream { data: [], pos: 0, source: None }, headers: headers.new(), trailers: headers.new() }, len: 0, keep_alive: false, version: "" };
 }
 
 pub function http_framed_kept(f: HttpFramed): HttpFramed {
@@ -1809,7 +1809,7 @@ pub function http_framed_kept(f: HttpFramed): HttpFramed {
     return f;
   }
   let empty: u8[] = [];
-  return HttpFramed { ...f, request: HttpRequest { ...f.request, body: stream.stream_from_bytes(empty), trailers: headers.header_map_new() } };
+  return HttpFramed { ...f, request: HttpRequest { ...f.request, body: stream.stream_from_bytes(empty), trailers: headers.new() } };
 }
 
 pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpFramed): HttpFraming {
@@ -1874,7 +1874,7 @@ pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimi
         return HeadMalformed(400);
       }
       let empty: u8[] = [];
-      let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.stream_from_bytes(empty), headers: head.headers, trailers: headers.header_map_new() };
+      let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.stream_from_bytes(empty), headers: head.headers, trailers: headers.new() };
       let expects: boolean = head.version != "HTTP/1.0" && head.expectation == 1;
       return Headed(HttpHead { request: req, len: head.len, keep_alive: head.keep_alive, version: head.version, length: length, expects_continue: expects });
     },
@@ -1931,7 +1931,7 @@ function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequ
   if (hdr_start > headers_end) {
     hdr_start = headers_end;
   }
-  let req_headers: HeaderMap = headers.header_map_new();
+  let req_headers: HeaderMap = headers.new();
   match (__parse_header_bytes(buf, hdr_start, headers_end, limits.header_fields, prev.headers)) {
     Ok(h) => {
       req_headers = h;
@@ -2570,7 +2570,7 @@ function __take_wire(b: usize): u8[] {
 <<53 pub function request(method: string, path: string): HttpRequest>>=
 pub function request(method: string, path: string): HttpRequest {
   let empty: u8[] = [];
-  return HttpRequest { method: method, path: path, body: stream.stream_from_bytes(empty), headers: headers.header_map_new(), trailers: headers.header_map_new() };
+  return HttpRequest { method: method, path: path, body: stream.stream_from_bytes(empty), headers: headers.new(), trailers: headers.new() };
 }
 
 pub function (r: HttpRequest) with_header(name: string, value: string): HttpRequest {
@@ -2940,25 +2940,25 @@ function __read_span(r: Reader, offset: i64, len: i64): Option[u8[]] {
 ```fern
 <<65 pub function bytes(status: i32, bs: u8[]): HttpResponse>>=
 pub function bytes(status: i32, bs: u8[]): HttpResponse {
-  return HttpResponse { status: status, body: BodyBytes(bs), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: status, body: BodyBytes(bs), headers: headers.new(), trailers: headers.new(), background: None };
 }
 
 pub function stream(status: i32, s: ByteStream): HttpResponse {
-  return HttpResponse { status: status, body: BodyStream(s), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: status, body: BodyStream(s), headers: headers.new(), trailers: headers.new(), background: None };
 }
 
 pub function file(path: string): HttpResponse {
-  return HttpResponse { status: 200, body: BodyFile(path), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: 200, body: BodyFile(path), headers: headers.new(), trailers: headers.new(), background: None };
 }
 
 pub function chunks(status: i32, next: (i32) => Option[u8[]]): HttpResponse {
   let none: u8[] = [];
-  return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: 0, filler: none, trailers: __no_trailers }), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: 0, filler: none, trailers: __no_trailers }), headers: headers.new(), trailers: headers.new(), background: None };
 }
 
 pub function chunks_with_trailers(status: i32, next: (i32) => Option[u8[]], trailers: () => HeaderMap): HttpResponse {
   let none: u8[] = [];
-  return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: 0, filler: none, trailers: trailers }), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: 0, filler: none, trailers: trailers }), headers: headers.new(), trailers: headers.new(), background: None };
 }
 ```
 
@@ -2967,7 +2967,7 @@ pub function chunks_with_trailers(status: i32, next: (i32) => Option[u8[]], trai
 ```fern
 <<66 function __no_trailers(): HeaderMap>>=
 function __no_trailers(): HeaderMap {
-  return headers.header_map_new();
+  return headers.new();
 }
 ```
 
@@ -2980,7 +2980,7 @@ pub function chunks_idle(status: i32, next: (i32) => Option[u8[]], idle: Duratio
   if (ms > 2147483647 as i64) {
     ms = 2147483647 as i64;
   }
-  return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: ms as i32, filler: filler, trailers: __no_trailers }), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: ms as i32, filler: filler, trailers: __no_trailers }), headers: headers.new(), trailers: headers.new(), background: None };
 }
 
 pub function (r: HttpResponse) with_header(name: string, value: string): HttpResponse {
@@ -3111,7 +3111,7 @@ function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32
   if (hdr_start > headers_end) {
     hdr_start = headers_end;
   }
-  let h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.new();
   match (__parse_header_bytes(buf, hdr_start, headers_end, limits.header_fields, h)) {
     Ok(parsed) => {
       h = parsed;
@@ -3136,7 +3136,7 @@ function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32
 
 function __response_payload(buf: u8[], at: i32, h: HeaderMap, fields: (i32, i32, i32, i32, i32), status: i32, method: string, eof: boolean, version: string, limits: HttpLimits): (i32, u8[], i32, HeaderMap) {
   let empty: u8[] = [];
-  let none: HeaderMap = headers.header_map_new();
+  let none: HeaderMap = headers.new();
   if (method == "HEAD" || http_bodiless(status)) {
     return (2, empty, at, none);
   }
@@ -3190,7 +3190,7 @@ pub function http_end_to_end(h: HeaderMap): HeaderMap {
   if (i == h.names.len()) {
     return h;
   }
-  let out: HeaderMap = headers.header_map_new();
+  let out: HeaderMap = headers.new();
   i = 0;
   while (i < h.names.len()) {
     if (!http_hop_by_hop(h.names[i]) && !http_connection_names(h, h.names[i])) {

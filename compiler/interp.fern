@@ -7875,15 +7875,30 @@ function eval_match_stmt(m: ast.StmtMatch, env: Env): StepResult {
 // `vname`, with the arguments of the scrutinee's static type put in:
 // `Ring[4, string]` for the payload `Ring[N, T]` of `Full` in a
 // `Slot[4, string]`.
-function payload_decl_type(env: Env, vname: string, k: i32, scrutinee: ast.Expr): string {
-  for sd in env.type_decls {
+function payload_decl_type(env: Env, pattern: string, vname: string, k: i32, scrutinee: ast.Expr): string {
+  let r: parser.TypeRef = parser.parse_type_ref(bound_type_spelling(env.static_type_of(scrutinee), env));
+  let owner: string = r.base;
+  let simple: string = variant_simple_name(pattern);
+  if (simple.len() < pattern.len()) {
+    owner = slice_unchecked(pattern, 0, pattern.len() - simple.len() - 1) + "";
+  }
+  let only: i32 = 0 - 1;
+  let many: boolean = false;
+  for i in 0..env.type_decls.len() {
+    let sd = env.type_decls[i];
     if (sd.name == vname && sd.enum_owner.len() > 0 && k < sd.fields.len()) {
-      let r: parser.TypeRef = parser.parse_type_ref(bound_type_spelling(env.static_type_of(scrutinee), env));
-      if (r.base != sd.enum_owner) {
+      if (sd.enum_owner == r.base) {
+        return applied_spelling(sd.fields[k].type_name, decl_type_params(env.type_decls, env.aliases, sd.enum_owner), r.args);
+      }
+      if (sd.enum_owner == owner) {
         return bound_type_spelling(sd.fields[k].type_name, env);
       }
-      return applied_spelling(sd.fields[k].type_name, decl_type_params(env.type_decls, env.aliases, sd.enum_owner), r.args);
+      many = only >= 0;
+      only = i;
     }
+  }
+  if (only >= 0 && !many && owner.len() == 0) {
+    return bound_type_spelling(env.type_decls[only].fields[k].type_name, env);
   }
   return "";
 }
@@ -7943,7 +7958,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, env: Env, value_form: boolean, e
                   if (pat_binds[pbi] != "_") {
                     bind_names = bind_names.append(pat_binds[pbi]);
                     bind_values = bind_values.append(vs.field_values[pbi]);
-                    bind_types = bind_types.append(payload_decl_type(env, vs.type_name, pbi, m.scrutinee));
+                    bind_types = bind_types.append(payload_decl_type(env, pv.type_name, vs.type_name, pbi, m.scrutinee));
                   }
                   pbi = pbi + 1;
                 }

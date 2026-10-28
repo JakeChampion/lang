@@ -22,6 +22,13 @@ arithmetic** but deliberately **under-specify** the edge cases:
 | **Denormal handling** (subnormal → zero, or kept) | ❌ |
 | **Non-default rounding modes** (no API to switch — `RNE` only) | n/a |
 
+### Division by zero in a `const`
+
+A `const` initializer folds a float `/` by zero to the same result the
+expression gives as code: `1.0 / 0.0` is +Inf, `-1.0 / 0.0` is −Inf and
+`0.0 / 0.0` is NaN. Only an integer `/` or `%` by zero is a compile error
+(`E093`, `docs/INTEGER-SEMANTICS.md`).
+
 ### Float-to-int conversion is saturating
 
 `f as i32` / `i64` / `u32` / `u64` / `u8` (and the f32 sources)

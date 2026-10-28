@@ -240,7 +240,11 @@ for every plan ownership inference tries):
   tests the box's count, so it writes in place only when the caller is done
   with the array (the grow row brackets every caller still reading it), and
   copies otherwise. A link is never a reuse donor, since its box may be the
-  caller's.
+  caller's. A link ends where its value leaves the function: a return, a
+  tuple, a record, a variant or a returned pair (`__pair_set`). There the
+  value takes a count only if it is still the parameter's box (`take_owed`).
+  A call can give an array back as its result or in its pair (`__word_as`).
+  That array is linked when the call took the linked array at its last use.
 - **Reuse tokens** (`reuse_pairs`, `carried_pairs`, `block_keeps`,
   `Plan.reuse`): a value dying in a block, of the slot count a later
   construction in the block claims, has its drop turned into a **token**
