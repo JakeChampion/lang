@@ -3,13 +3,13 @@ import "std/net";
 
 function kind(text: string): string {
   match (net.ip_parse(text)) {
-    Some(a) => {
+    Ok(a) => {
       if (a.is_global()) {
         return "global";
       }
       return "special";
     },
-    None => {
+    Err(_) => {
       return "unparsed";
     }
   }
@@ -65,7 +65,7 @@ function test_local_use_nat64(): test.TestOutcome {
 
 function carried(text: string, bits: i32): string {
   match (net.ip_parse(text)) {
-    Some(a) => {
+    Ok(a) => {
       match (a.embedded_v4(bits)) {
         Some(v4) => {
           return v4.to_string();
@@ -75,7 +75,7 @@ function carried(text: string, bits: i32): string {
         }
       }
     },
-    None => {
+    Err(_) => {
       return "unparsed";
     }
   }
@@ -93,10 +93,10 @@ function quad(text: string): string {
   }
   let parsed: boolean = false;
   match (net.ipv4_parse(text)) {
-    Some(a) => {
+    Ok(a) => {
       parsed = true;
     },
-    None => {}
+    Err(_) => {}
   }
   if (parsed != net.is_ipv4(text)) {
     return said + "!";
@@ -115,8 +115,27 @@ function test_is_ipv4_agrees_with_the_parser(): test.TestOutcome {
   return test.assert_eq(out, "yes yes yes no no no no no no no no no no no no");
 }
 
+function refused[T](r: Result[T, net.AddrParseError]): string {
+  match (r) {
+    Ok(_) => {
+      return "accepted";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+// Each parser names the text it refused and what it was asked to read.
+function test_parse_errors(): test.TestOutcome {
+  let got: string[] = [refused(net.ipv4_parse("1.2.3")), refused(net.ipv6_parse("1:::2")), refused(net.ip_parse("x")), refused(net.socket_addr_parse("1.2.3.4")), refused(net.prefix_parse("10.0.0.1/8")), refused(net.prefix_parse("10.0.0.0/8"))];
+  return test.assert_eq(got.join(" | "), "\"1.2.3\" is not an IPv4 address | \"1:::2\" is not an IPv6 address | \"x\" is not an IP address | \"1.2.3.4\" is not a socket address | \"10.0.0.1/8\" is not a network prefix with its host bits clear | accepted");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/net");
+  r = r.it("each parser reports what it refused", test_parse_errors);
   r = r.it("is_ipv4 agrees with the parser", test_is_ipv4_agrees_with_the_parser);
   r = r.it("public addresses are global", test_public_addresses);
   r = r.it("v4 loopback, private and link-local", test_v4_loopback_private_and_link_local);

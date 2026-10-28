@@ -3211,10 +3211,10 @@ function __host_name(h: string): string {
 
 function __canonical_ip(text: string): Option[net.IpAddr] {
   match (net.ip_parse(text)) {
-    Some(a) => {
+    Ok(a) => {
       return Some(a.to_canonical());
     },
-    None => {
+    Err(_) => {
       return None;
     }
   }

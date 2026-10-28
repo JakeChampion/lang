@@ -160,7 +160,7 @@ function ran(c0: conn.Conn, sock: i32, peer: net.SocketAddr, size: i32): boolean
 
 function main(): i32 {
   let argv: string[] = args();
-  let Some(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
+  let Ok(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
     return 2;
   };
   let Ok(roots) = verify.roots_from_file(argv[3]) else {
@@ -171,7 +171,7 @@ function main(): i32 {
   let Ok(c0) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return 2;
   };
-  let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {
+  let Ok(any) = net.socket_addr_parse("127.0.0.1:0") else {
     return 2;
   };
   let Ok(sock) = net.udp_socket(any) else {

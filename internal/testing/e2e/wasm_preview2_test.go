@@ -1233,8 +1233,8 @@ func TestWasmPreview2SocketCliExtrasAdapterFree(t *testing.T) {
     match (env("TARGET")) { Some(v) => { host = v; }, None => {} }
     let t: i64 = now_ns();
     match (net.ipv4_parse(host)) {
-        Some(ip) => { if (send_datagram(ip, `+itoa(udpPort)+`, "telemetry") && t > 0) { return 0; } },
-        None => {},
+        Ok(ip) => { if (send_datagram(ip, `+itoa(udpPort)+`, "telemetry") && t > 0) { return 0; } },
+        Err(_) => {},
     }
     return 1;
 }`)
