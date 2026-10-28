@@ -133,6 +133,7 @@ pub struct Analysis {
   flow: ssalive.Flow,
   uses: Uses,
   anchored: Anchored,
+  facts: ssadeps.Facts,
 }
 
 pub struct Anchored { start: i32[], at: i32[] }
@@ -527,17 +528,7 @@ pub function refused_analysis(why: string): Analysis {
 }
 
 function failed(why: string): Analysis {
-  return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], slot: [], slot_value: [], at: [], none: [] }, uses: Uses { start: [0], kinds: [], block: [], at: [], slot: [] }, anchored: Anchored { start: [0], at: [] } };
-}
-
-function empty_dependencies(n: i32): i32[][] {
-  let out: i32[][] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append([]);
-    i = i + 1;
-  }
-  return out;
+  return Analysis { ok: false, why: why, parents: [], dependencies: [], flow: ssalive.Flow { ok: false, why: why, words: 0, live_in: [], live_out: [], slot: [], slot_value: [], at: [], none: [] }, uses: Uses { start: [0], kinds: [], block: [], at: [], slot: [] }, anchored: Anchored { start: [0], at: [] }, facts: ssadeps.unchecked() };
 }
 
 pub function is_i32(t: typeinfo.Type): boolean {
@@ -3068,21 +3059,15 @@ function dimension_error(f: Func): string {
   return "";
 }
 
-function schema_error(f: Func): string {
+function shape_error(f: Func): string {
   let why: string = dimension_error(f);
   if (why != "") {
     return why;
   }
-  why = ssadeps.limits_error(f.graph);
-  if (why != "") {
-    return why;
-  }
-  if (util.verify_on()) {
-    why = ssadeps.verify(f.graph, empty_dependencies(f.graph.nvals));
-    if (why != "") {
-      return why;
-    }
-  }
+  return ssadeps.limits_error(f.graph);
+}
+
+function schema_error(f: Func): string {
   if (!semtypes.concrete(f.result, true)) {
     return "unresolved result type";
   }
@@ -3096,7 +3081,7 @@ function schema_error(f: Func): string {
       return "unresolved parameter type";
     }
   }
-  why = contracts_error(f.calls);
+  let why: string = contracts_error(f.calls);
   if (why != "") {
     return why;
   }
@@ -3793,16 +3778,16 @@ function chain_of(ps: i32[], derived: i32[][]): i32[] {
   return out;
 }
 
-function analyze_parents(f: Func, parents: i32[][]): Analysis {
+function analyze_parents(f: Func, parents: i32[][], g: ssadeps.Facts): Analysis {
   let c: Closure = closure(parents);
   if (!c.ok) {
     return failed("cyclic semantic projection");
   }
-  let flow: ssalive.Flow = ssadeps.analyze(f.graph, c.dependencies);
+  let flow: ssalive.Flow = ssadeps.analyze_checked(f.graph, c.dependencies, g);
   if (!flow.ok) {
     return failed(flow.why);
   }
-  return Analysis { ok: true, why: "", parents: parents, dependencies: c.dependencies, flow: flow, uses: uses_of(f), anchored: anchored_of(c.dependencies, f.graph.nvals) };
+  return Analysis { ok: true, why: "", parents: parents, dependencies: c.dependencies, flow: flow, uses: uses_of(f), anchored: anchored_of(c.dependencies, f.graph.nvals), facts: g };
 }
 
 pub function called_names(f: Func): string[] {
@@ -3827,7 +3812,18 @@ function name_seen(names: string[], name: string): boolean {
 }
 
 pub function analyze(f: Func): Analysis {
-  let why: string = schema_error(f);
+  let why: string = shape_error(f);
+  if (why != "") {
+    return failed(why);
+  }
+  let g: ssadeps.Facts = ssadeps.unchecked();
+  if (util.verify_on()) {
+    g = ssadeps.check_graph(f.graph);
+    if (g.why != "") {
+      return failed(g.why);
+    }
+  }
+  why = schema_error(f);
   if (why != "") {
     return failed(why);
   }
@@ -3835,7 +3831,7 @@ pub function analyze(f: Func): Analysis {
   if (why != "") {
     return failed(why);
   }
-  return analyze_parents(f, borrow_parents(f));
+  return analyze_parents(f, borrow_parents(f), g);
 }
 
 pub function view_copy(first: i32, v: i32): ssa.SInst[] {
