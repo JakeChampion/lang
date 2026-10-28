@@ -41,3 +41,34 @@ function main(): i32 { return 0; }`)
 		t.Errorf("error should name the placement rule, got: %v", err)
 	}
 }
+
+func TestInlineHintOnImplMethods(t *testing.T) {
+	prog, err := Parse(`trait Pick { function a(self: Self): i32; function b(self: Self): i32; function c(self: Self): i32; }
+impl Pick for f64x2 {
+  @inline
+  function a(self: f64x2): i32 { return 1; }
+  @noinline
+  function b(self: f64x2): i32 { return 2; }
+  function c(self: f64x2): i32 { return 3; }
+}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []ast.InlineHint{ast.InlineHintAlways, ast.InlineHintNever, ast.InlineHintNone}
+	for i, m := range prog.Impls[0].Methods {
+		if m.InlineHint != want[i] {
+			t.Errorf("%s: InlineHint = %d, want %d", m.Name, m.InlineHint, want[i])
+		}
+	}
+}
+
+func TestOtherAttributeOnImplMethodRejected(t *testing.T) {
+	_, err := Parse(`trait Pick { function a(self: Self): i32; }
+impl Pick for f64x2 {
+  @must_consume
+  function a(self: f64x2): i32 { return 1; }
+}`)
+	if err == nil || !strings.Contains(err.Error(), "an impl method takes only @inline or @noinline") {
+		t.Errorf("want the impl method attribute rule, got: %v", err)
+	}
+}

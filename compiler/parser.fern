@@ -23264,13 +23264,27 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
       method_names = method_names.append(ic_func.name);
       continue;
     }
+    let hint: string = "";
+    if (p.peek_punct() == "@") {
+      let (ma, ma_bad, ma_p) = parse_decl_attr(p);
+      p = ma_p;
+      hint = ma.name;
+      if (ma_bad.len() == 0 && hint != "inline" && hint != "noinline") {
+        ma_bad = [decl_sentinel(p, "an impl method takes only @inline or @noinline")];
+      }
+      if (ma_bad.len() > 0) {
+        impl_bad = util.append_all(impl_bad, ma_bad);
+        hint = "";
+      }
+    }
     if (!function_head(p)) {
       impl_bad = impl_bad.append(decl_sentinel(p, "unexpected token in an impl body: expected `function`, `type` or `const`"));
       p = skip_body_item(p.advance());
       continue;
     }
     let name_at: Par = p.advance();
-    let (fr_func, fr_p) = parse_func_decl(p);
+    let (fr_func0, fr_p) = parse_func_decl(p);
+    let fr_func: FuncDecl = FuncDecl { ...fr_func0, always_inline: hint == "inline", no_inline: hint == "noinline" };
     p = fr_p;
     if (fr_func.receiver_name.len() == 0) {
       p = refuse_const_tparams(p, name_at, TpList { tnames: fr_func.type_params, tbounds: fr_func.bound_traits });
