@@ -26,7 +26,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<5 function __parent_shape(s: string): boolean>>
 
-<<6 pub function parse_state(v: string): Option[string]>>
+<<6 pub function parse_state(v: string): Result[string, headers.HeaderValueError]>>
 
 <<7 function __state_key(k: string): boolean>>
 ```
@@ -43,6 +43,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "std/headers";
+import "std/option";
 ```
 
 ### `3 pub struct Context`
@@ -97,9 +98,9 @@ pub function from_headers(h: HeaderMap): Option[Context] {
   if (parents.len() != 1) {
     return None;
   }
-  match (parse(parents[0])) {
+  match (__parse(parents[0])) {
     Some(c) => {
-      match (parse_state(h.get_all("tracestate").join(","))) {
+      match (__parse_state(h.get_all("tracestate").join(","))) {
         Some(s) => {
           return Some(Context { ...c, state: s });
         },
@@ -115,7 +116,11 @@ pub function from_headers(h: HeaderMap): Option[Context] {
   return None;
 }
 
-pub function parse(v: string): Option[Context] {
+pub function parse(v: string): Result[Context, headers.HeaderValueError] {
+  return __parse(v).ok_or(headers.HeaderValueError { field: "traceparent", value: v });
+}
+
+function __parse(v: string): Option[Context] {
   let s: string = v.trim();
   if (!__parent_shape(s)) {
     return None;
@@ -146,11 +151,15 @@ function __parent_shape(s: string): boolean {
 }
 ```
 
-### `6 pub function parse_state(v: string): Option[string]`
+### `6 pub function parse_state(v: string): Result[string, headers.HeaderValueError]`
 
 ```fern
-<<6 pub function parse_state(v: string): Option[string]>>=
-pub function parse_state(v: string): Option[string] {
+<<6 pub function parse_state(v: string): Result[string, headers.HeaderValueError]>>=
+pub function parse_state(v: string): Result[string, headers.HeaderValueError] {
+  return __parse_state(v).ok_or(headers.HeaderValueError { field: "tracestate", value: v });
+}
+
+function __parse_state(v: string): Option[string] {
   let keys: string[] = [];
   let members: string[] = [];
   for raw in v.split(",") {

@@ -26,7 +26,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<5 function __with_param(h: Hop, name: string, v: string): Option[Hop]>>
 
-<<6 pub function node_parse(s: string): Option[NodeId]>>
+<<6 pub function node_parse(s: string): Result[NodeId, headers.HeaderValueError]>>
 
 <<7 function __nodename(s: string): Option[Node]>>
 
@@ -70,6 +70,7 @@ import "std/net";
 import "std/platform";
 import "std/utf8" as utf8;
 import "std/array";
+import "std/option";
 ```
 
 ### `3 pub enum Node`
@@ -94,7 +95,7 @@ pub function hop(): Hop {
 pub function hops(h: HeaderMap): Option[Hop[]] {
   let out: Hop[] = [];
   for el in h.get_list("forwarded") {
-    match (parse_hop(el)) {
+    match (__parse_hop(el)) {
       Some(x) => {
         out = out.append(x);
       },
@@ -106,7 +107,11 @@ pub function hops(h: HeaderMap): Option[Hop[]] {
   return Some(out);
 }
 
-pub function parse_hop(el: string): Option[Hop] {
+pub function parse_hop(el: string): Result[Hop, headers.HeaderValueError] {
+  return __parse_hop(el).ok_or(headers.HeaderValueError { field: "Forwarded", value: el });
+}
+
+function __parse_hop(el: string): Option[Hop] {
   let h: Hop = hop();
   let seen: string[] = [];
   for pair in __pairs(el) {
@@ -147,7 +152,7 @@ pub function parse_hop(el: string): Option[Hop] {
 <<5 function __with_param(h: Hop, name: string, v: string): Option[Hop]>>=
 function __with_param(h: Hop, name: string, v: string): Option[Hop] {
   if (name == "for" || name == "by") {
-    match (node_parse(v)) {
+    match (__node_parse(v)) {
       Some(n) => {
         if (name == "for") {
           return Some(Hop { ...h, from: Some(n) });
@@ -252,11 +257,15 @@ function __holds(xs: string[], x: string): boolean {
 }
 ```
 
-### `6 pub function node_parse(s: string): Option[NodeId]`
+### `6 pub function node_parse(s: string): Result[NodeId, headers.HeaderValueError]`
 
 ```fern
-<<6 pub function node_parse(s: string): Option[NodeId]>>=
-pub function node_parse(s: string): Option[NodeId] {
+<<6 pub function node_parse(s: string): Result[NodeId, headers.HeaderValueError]>>=
+pub function node_parse(s: string): Result[NodeId, headers.HeaderValueError] {
+  return __node_parse(s).ok_or(headers.HeaderValueError { field: "Forwarded node", value: s });
+}
+
+function __node_parse(s: string): Option[NodeId] {
   if (s.len() > 0 && s[0] == 91 as u8) {
     let Some(close) = s.index_of("]") else {
       return None;
@@ -516,7 +525,7 @@ function __legacy_node(s: string): Option[NodeId] {
       return Some(NodeId { node: Ip(ip), port: "" });
     },
     None => {
-      return node_parse(s);
+      return __node_parse(s);
     }
   }
 }

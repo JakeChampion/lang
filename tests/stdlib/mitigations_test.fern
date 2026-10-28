@@ -59,7 +59,7 @@ function test_build_line_absent(): test.TestOutcome {
 
 function test_parse_build(): test.TestOutcome {
   match (mitigations.parse_build("target=arm64-linux profile=diagnostic harden=0 pie=0 sanitize=1 backtrace=1 size=0 shared=0 heap_limit=67108864")) {
-    Some(b) => {
+    Ok(b) => {
       if (b.target != "arm64-linux" || b.profile != "diagnostic") {
         return test.fail("target or profile");
       }
@@ -68,7 +68,7 @@ function test_parse_build(): test.TestOutcome {
       }
       return test.assert_eq(b.heap_limit.to_string(), "67108864");
     },
-    None => {
+    Err(_) => {
       return test.fail("no build");
     }
   }
@@ -76,16 +76,23 @@ function test_parse_build(): test.TestOutcome {
 
 function test_parse_build_unknown(): test.TestOutcome {
   match (mitigations.parse_build("target=x86-64-linux novelty=7 harden=1 trailer")) {
-    Some(b) => {
+    Ok(b) => {
       if (b.target != "x86-64-linux" || !b.harden) {
         return test.fail("the known fields");
       }
       return test.pass();
     },
-    None => {
+    Err(_) => {
       return test.fail("no build");
     }
   }
+}
+
+function test_parse_build_error(): test.TestOutcome {
+  let Err(e) = mitigations.parse_build("FERNBUILD1 trailer") else {
+    return test.fail("a line with no key=value field parsed");
+  };
+  return test.assert_eq(e.to_string(), "\"FERNBUILD1 trailer\" is not a build manifest line");
 }
 
 function test_manifest_rows(): test.TestOutcome {
@@ -261,6 +268,7 @@ function main(): i32 {
   r = r.it("build line absent", test_build_line_absent);
   r = r.it("parse build", test_parse_build);
   r = r.it("parse build ignores unknown fields", test_parse_build_unknown);
+  r = r.it("parse build refuses a line with no key=value field", test_parse_build_error);
   r = r.it("manifest rows", test_manifest_rows);
   return r.finish();
 }

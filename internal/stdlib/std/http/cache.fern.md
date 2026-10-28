@@ -83,6 +83,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "std/http";
 import "std/time";
 import "std/headers";
+import "std/option";
 ```
 
 ### `3 pub struct ETag`
@@ -111,7 +112,11 @@ pub function (e: ETag) to_string(): string {
   return "\"" + e.opaque + "\"";
 }
 
-pub function parse_etag(s: string): Option[ETag] {
+pub function parse_etag(s: string): Result[ETag, headers.HeaderValueError] {
+  return __parse_etag(s).ok_or(headers.HeaderValueError { field: "ETag", value: s });
+}
+
+function __parse_etag(s: string): Option[ETag] {
   let t: string = s.trim();
   let is_weak: boolean = t.starts_with("W/");
   if (is_weak) {
@@ -245,7 +250,7 @@ function __matches_weak(members: string[], v: Validators): boolean {
 function __tag_matches(member: string, v: Validators, strong_cmp: boolean): boolean {
   match (v.etag) {
     Some(current) => {
-      match (parse_etag(member)) {
+      match (__parse_etag(member)) {
         Some(t) => {
           if (strong_cmp) {
             return t.strong_eq(current);
