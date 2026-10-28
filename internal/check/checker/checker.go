@@ -13266,7 +13266,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		}
 		if sig, ok := c.visibleFuncSig(n.Name); ok {
 			if c.builtinFuncs[n.Name] && c.callee != ast.Expr(n) {
-				c.errfCode(n.P, "E097", "builtin %q can only be called, not used as a value", n.Name)
+				c.errfCode(n.P, "E098", "builtin %q can only be called, not used as a value", n.Name)
 				return nil
 			}
 			if lanesInside(sig) && c.callee != ast.Expr(n) {

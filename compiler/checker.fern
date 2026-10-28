@@ -9890,7 +9890,7 @@ function unsafe_visit(e: ast.Expr, own acc: UnsafeWalk): UnsafeWalk {
     },
     ast.ExprIdent(id) => {
       if (builtin_value_named(id.name, acc.scope)) {
-        return unsafe_note(acc, dg_at("E097", "builtin \"" + id.name + "\" can only be called, not used as a value", id.line, id.col));
+        return unsafe_note(acc, dg_at("E098", "builtin \"" + id.name + "\" can only be called, not used as a value", id.line, id.col));
       }
       if (unsafe_sig_named(id.name, acc.scope)) {
         return unsafe_note(acc, unsafe_value_diag(id.name, id.line, id.col));
