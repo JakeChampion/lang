@@ -1761,6 +1761,10 @@ function ssa_mov_rr(s: asmcore.EmitState, dst: string, src: string): asmcore.Emi
 }
 
 function ssa_ldst(s: asmcore.EmitState, load: boolean, reg: string, base: string, off: i32): asmcore.EmitState {
+  let size = if (reg[0] == b'w') { 4 } else { 8 };
+  if ((off < 0 - 256 || off > 255) && (off < 0 || off % size != 0 || off / size > 4095)) {
+    return ssa_ldst_wide(s, load, reg, base, off);
+  }
   if (s.records()) {
     let w: i64 = arm64_native.arm64_rec_ldst(load, reg, base, off);
     if (w >= 0) {
@@ -1772,6 +1776,17 @@ function ssa_ldst(s: asmcore.EmitState, load: boolean, reg: string, base: string
     m = "    ldr ";
   }
   return s.write(m + reg + ", [" + base + ", #" + util.i32_to_string(off) + "]\n");
+}
+
+// The scalar allocator reserves x16 and x17 for address calculations.
+function ssa_ldst_wide(s: asmcore.EmitState, load: boolean, reg: string, base: string, off: i32): asmcore.EmitState {
+  let scratch = if (reg == "x17" || reg == "w17" || base == "x17") { "w16" } else { "w17" };
+  s = s.write("    movz " + scratch + ", #" + util.i32_to_string(off & 65535) + "\n");
+  if (off >> 16 != 0) {
+    s = s.write("    movk " + scratch + ", #" + util.i32_to_string(off >> 16 & 65535) + ", lsl #16\n");
+  }
+  let mnemonic = if (load) { "    ldr " } else { "    str " };
+  return s.write(mnemonic + reg + ", [" + base + ", " + scratch + ", sxtw]\n");
 }
 
 function ssa_unscaled(s: asmcore.EmitState, load: boolean, reg: string, base: string, off: i32): asmcore.EmitState {
@@ -4763,6 +4778,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save, ssa_lane_slots: ssa_lane_slot_table(reg_of, lanes) };
   s = ssa_load_params(f, reg_of, fr.fmask, s);
   let pos: i32 = 0;
+  let pool_insts: i32 = 0;
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
     let blk: ssa.SBlock = f.blocks[bi];
@@ -4788,6 +4804,13 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
         s = ssa_saved_inst(blk, ii, reg_of, lp, fr, r, cold.by_pos[pos + ii], s);
       }
       ii = ii + 1;
+      pool_insts = pool_insts + 1;
+      if (pool_insts == 256) {
+        let after_pool = asmcore.lab_new(s, lp + "pool_" + util.i32_to_string(pos + ii));
+        s = ssa_b(after_pool.state, after_pool.lab).write("    .ltorg\n");
+        s = s.lab_def(after_pool.lab);
+        pool_insts = 0;
+      }
     }
     s = asmcore.dbg_labels(s, dbg, fn_label, pos + ii, pos + blk.insts.len());
     s = ssa_fused_loc(prepared.source, blk, ii, tailed, s);
