@@ -1,6 +1,7 @@
 import "std/i32";
 import "std/i64";
 import "std/io";
+import "std/rand";
 
 function kind(e: IoError): string {
   match (e) {
@@ -40,8 +41,8 @@ function main(): i32 {
     }
     print(f"environ: {found}");
     print("hostname: " + hostname());
-    print(f"random_bytes: {random_bytes(16).len()}");
-    let ri: i32 = random_i32();
+    print(f"random_bytes: {rand.bytes(16).len()}");
+    let ri: i32 = rand.next_i32();
     print(f"random_i32: {ri == ri}");
     let t0: i64 = monotonic_ns();
     sleep_ms(2i64);

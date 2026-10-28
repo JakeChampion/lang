@@ -96,7 +96,8 @@ function main(): i32 { return "a,b,c".split(",").len(); }`,
 		},
 		{
 			"random_bytes",
-			`function main(): i32 { let b: u8[] = random_bytes(8); return b.len(); }`,
+			`import "std/rand";
+function main(): i32 { let b: u8[] = rand.bytes(8); return b.len(); }`,
 			"__fn___fern_random_bytes_u8",
 			[]string{"\n__fern_random_bytes:"},
 		},

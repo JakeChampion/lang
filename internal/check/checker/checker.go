@@ -8698,6 +8698,13 @@ var UnsafeIntrinsics = map[string]bool{
 	"__syscall3": true, "__syscall4": true, "__syscall5": true, "__syscall6": true,
 }
 
+// StdlibOnlyBuiltins maps each builtin only the standard library may name to
+// the std function a program calls instead.
+var StdlibOnlyBuiltins = map[string]string{
+	"random_i32":   "rand.next_i32 from \"std/rand\"",
+	"random_bytes": "rand.bytes from \"std/rand\"",
+}
+
 // The unsafe boundary: an unsafe declaration states caller obligations, and only an
 // unsafe block accepts them. docs/SAFETY-CONTRACT.md has the contract.
 func (c *checker) checkUnsafeCallee(n *ast.Call, s *scope) {
@@ -13288,6 +13295,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					return t
 				}
 			}
+		}
+		if wrapper, reserved := StdlibOnlyBuiltins[n.Name]; reserved && !c.inStdlibContext() {
+			c.errfCode(n.P, "E097", "builtin %q is reserved for the standard library; call %s instead", n.Name, wrapper)
 		}
 		if c.unsafeFuncs[n.Name] && c.callee != ast.Expr(n) && c.funcVisibleHere(n.Name) {
 			c.errfCode(n.P, "E095", "unsafe function %q cannot be used as a value; a function value carries no unsafe obligation", demangle(n.Name))

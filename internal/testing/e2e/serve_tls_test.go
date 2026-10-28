@@ -83,6 +83,7 @@ import "std/serve";
 import "std/tls/identity";
 import "std/tls/server";
 
+import "std/rand";
 function big(n: i32): u8[] {
   let out: u8[] = [];
   let i: i32 = 0;
@@ -154,7 +155,7 @@ function main(): i32 {
   }
   match (identity.from_pem(cert, key)) {
     Ok(id) => {
-      let cfg: serve.Config = serve.config().with_tls(server.config(id, random_bytes(32)));
+      let cfg: serve.Config = serve.config().with_tls(server.config(id, rand.bytes(32)));
       match (env("SERVE_STREAM")) {
         Some(_) => {
           cfg = serve.Config { ...cfg, stream_bodies: true };

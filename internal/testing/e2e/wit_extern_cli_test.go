@@ -53,11 +53,12 @@ func TestManyWasiCategoriesViaCLI(t *testing.T) {
 	}
 	dir := t.TempDir()
 	const want = "many-ok"
-	src := `function main(): i32 {
+	src := `import "std/rand";
+function main(): i32 {
 	let a: string[] = args();
 	let g: string = "MISS";
 	match (env("GREETING")) { Some(v) => { g = v; }, None => {} }
-	let b: u8[] = random_bytes(8);
+	let b: u8[] = rand.bytes(8);
 	let t: i64 = now_ns();
 	if (a.len() == 2 && g == "` + want + `" && b.len() == 8 && t > 0) { write(g); } else { write("bad"); }
 	return 0;

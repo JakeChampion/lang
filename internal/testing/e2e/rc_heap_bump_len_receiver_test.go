@@ -111,10 +111,11 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
-const lenCallRecvBuiltinSrc = `function main(): i32 {
+const lenCallRecvBuiltinSrc = `import "std/rand";
+function main(): i32 {
     let i: i32 = 0;
     let acc: i32 = 0;
-    while (i < 200) { acc = acc + random_bytes(32).len(); i = i + 1; }
+    while (i < 200) { acc = acc + rand.bytes(32).len(); i = i + 1; }
     if (acc != 200 * 32) { return 121; }
     return __rc_underflow_count();
 }`

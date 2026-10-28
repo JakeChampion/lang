@@ -43,11 +43,12 @@ func TestReportsEffectsAroundTheBag(t *testing.T) {
 			name: "every ambient builtin in the body, one violation per capability",
 			src: `import "std/http";
 import "std/platform";
+import "std/rand";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     eprint("hit");
     let a: i64 = now_unix_ms();
     let b: i64 = monotonic_ns();
-    let c: i32 = random_i32();
+    let c: i32 = rand.next_i32();
     match (env("HOME")) { Some(v) => { }, None => { } }` + handlerTail,
 			want: []string{"env@env", "eprint@log", "now_unix_ms@now", "random_i32@random"},
 		},

@@ -190,14 +190,15 @@ func TestInterpScriptRandomAndBytes(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	cmd := exec.Command(bin, "-interp", "-")
 	cmd.Stdin = strings.NewReader(`
+import "std/rand";
 function main(): i32 {
     // random_i32 is live and varying.
-    let a: i32 = random_i32();
-    let b: i32 = random_i32();
+    let a: i32 = rand.next_i32();
+    let b: i32 = rand.next_i32();
     if (a == b) { return 1; }
     // random_bytes length is exact regardless of NUL bytes.
-    if (random_bytes(8).len() != 8) { return 2; }
-    if (random_bytes(0).len() != 0) { return 3; }
+    if (rand.bytes(8).len() != 8) { return 2; }
+    if (rand.bytes(0).len() != 0) { return 3; }
     // as_bytes view length + byte values match the source.
     let bs: [u8] = "ABC".as_bytes();
     if (bs.len() != 3) { return 4; }
