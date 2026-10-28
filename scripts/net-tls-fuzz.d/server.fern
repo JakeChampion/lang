@@ -10,6 +10,7 @@ import "std/tls/identity";
 import "std/tls/server";
 import "std/tls/verify";
 import "core/int";
+import "std/rand";
 
 function identity_of(cert_path: string, key_path: string): Result[identity.Identity, string] {
   let cert: string = "";
@@ -99,7 +100,7 @@ function setting(name: string, fallback: string): string {
 
 function configured(): Result[server.Config, string] {
   let id: identity.Identity = identity_of(setting("TLS_CERT", "leaf.pem"), setting("TLS_KEY", "leaf.key"))?;
-  let cfg: server.Config = server.config(id, random_bytes(32)).with_alpn(["http/1.1"]);
+  let cfg: server.Config = server.config(id, rand.bytes(32)).with_alpn(["http/1.1"]);
   match (env("TLS_CLIENT_CA")) {
     Some(path) => {
       match (verify.roots_from_file(path)) {
@@ -140,7 +141,7 @@ function listening(): Result[i32, string] {
 }
 
 function main(): i32 {
-  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) }, random_bytes(32));
+  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) }, rand.bytes(32));
   match (configured()) {
     Ok(c) => {
       cfg = c;

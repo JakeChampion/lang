@@ -81,7 +81,7 @@ func TestServeH3SocketX86_64(t *testing.T) {
   return (key, http.ok(key));
 }
 ` + src[end:]
-		src = strings.Replace(src, "serve.run(0, serve.config().with_tls(server.config(id, random_bytes(32))).with_h3(), handle)", "serve.supervise_with(0, serve.Config { ...serve.config().with_tls(server.config(id, random_bytes(32))).with_h3(), workers: 2 }, \"\", worker)", 1)
+		src = strings.Replace(src, "serve.run(0, serve.config().with_tls(server.config(id, rand.bytes(32))).with_h3(), handle)", "serve.supervise_with(0, serve.Config { ...serve.config().with_tls(server.config(id, rand.bytes(32))).with_h3(), workers: 2 }, \"\", worker)", 1)
 		bin := build(t, "socket_workers", src)
 		addr, _ := e2eharness.StartInheritedServer(t, runX86Bin(w.qemu, bin))
 		_, port, _ := net.SplitHostPort(addr)
@@ -115,13 +115,14 @@ import "std/async";
 import "std/option";
 import "std/string";
 
+import "std/rand";
 function main(): i32 {
   let argv: string[] = args();
   let Ok(peer) = net.socket_addr_parse(argv[1]) else { return 2; };
   let Ok(local) = net.socket_addr_parse(argv[2]) else { return 2; };
   let Ok(roots) = verify.roots_from_file(argv[3]) else { return 2; };
   let cfg: conn.Config = h3q.transport(conn.config([]).client_side("localhost", roots));
-  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), clock.instant(), clock.now()) else { return 2; };
+  let Ok(q) = conn.client(cfg, rand.bytes(conn.client_entropy(cfg)), clock.instant(), clock.now()) else { return 2; };
   let Ok(sock) = net.udp_socket(local) else { return 2; };
   let nb: Result[void, net.NetError] = net.set_nonblocking(sock, true);
   let c: h3q.Conn = h3q.client(q, h3.config());

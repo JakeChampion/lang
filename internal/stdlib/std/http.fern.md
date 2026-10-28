@@ -3029,10 +3029,11 @@ pub enum HttpResponseFraming { Complete(HttpResponseFramed), Unfinished, Rejecte
 ```fern
 <<69 pub function http_parse_response_framed(buf: u8[], method: string, eof: boolean, limits: HttpLimits): HttpR...>>=
 pub function http_parse_response_framed(buf: u8[], method: string, eof: boolean, limits: HttpLimits): HttpResponseFraming {
-  return http_parse_response_framed_from(buf, 0, method, eof, limits);
+  return http_parse_response_framed_from(buf, 0, method, eof, limits, headers.new());
 }
 
-pub function http_parse_response_framed_from(buf: u8[], from: i32, method: string, eof: boolean, limits: HttpLimits): HttpResponseFraming {
+// A field of prev that a response repeats is shared, not copied.
+pub function http_parse_response_framed_from(buf: u8[], from: i32, method: string, eof: boolean, limits: HttpLimits, prev: HeaderMap): HttpResponseFraming {
   let shape: (i32, i32, boolean) = __head_shape(buf, from, limits);
   let first_crlf: i32 = shape.0;
   let headers_end: i32 = shape.1;
@@ -3043,7 +3044,7 @@ pub function http_parse_response_framed_from(buf: u8[], from: i32, method: strin
   if (first_crlf < 0 || headers_end < 0) {
     return Unfinished;
   }
-  return __response_body(buf, from, first_crlf, headers_end, __status_code(buf, from), method, eof, limits);
+  return __response_body(buf, from, first_crlf, headers_end, __status_code(buf, from), method, eof, limits, prev);
 }
 ```
 
@@ -3106,13 +3107,13 @@ function __status_code(buf: u8[], from: i32): i32 {
   return (buf[from + 9] as i32 - 48) * 100 + (buf[from + 10] as i32 - 48) * 10 + (buf[from + 11] as i32 - 48);
 }
 
-function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32, status: i32, method: string, eof: boolean, limits: HttpLimits): HttpResponseFraming {
+function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32, status: i32, method: string, eof: boolean, limits: HttpLimits, prev: HeaderMap): HttpResponseFraming {
   let hdr_start: i32 = first_crlf + 2;
   if (hdr_start > headers_end) {
     hdr_start = headers_end;
   }
-  let h: HeaderMap = headers.new();
-  match (__parse_header_bytes(buf, hdr_start, headers_end, limits.header_fields, h)) {
+  let h: HeaderMap = prev;
+  match (__parse_header_bytes(buf, hdr_start, headers_end, limits.header_fields, prev)) {
     Ok(parsed) => {
       h = parsed;
     },

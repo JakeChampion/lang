@@ -17,6 +17,7 @@ import "std/serve";
 import "std/tls/identity";
 import "std/tls/server";
 import "core/int";
+import "std/rand";
 
 function payload(size: i32): u8[] {
   unsafe {
@@ -356,7 +357,7 @@ function tls_config(cfg: serve.Config): Result[serve.Config, string] {
           }
           match (identity.from_pem(cert, key)) {
             Ok(id) => {
-              return Ok(cfg.with_tls(server.config(id, random_bytes(32))));
+              return Ok(cfg.with_tls(server.config(id, rand.bytes(32))));
             },
             Err(e) => {
               return Err(e.message());

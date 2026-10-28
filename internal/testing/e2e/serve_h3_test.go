@@ -89,6 +89,7 @@ import "std/time";
 import "std/tls/identity";
 import "std/tls/server";
 
+import "std/rand";
 function part(i: i32): Option[u8[]] {
   if (i < 3) {
     return Some(("part " + i.to_string() + ";").bytes());
@@ -147,7 +148,7 @@ function main(): i32 {
   let Ok(id) = identity.from_pem(cert, key) else {
     return 4;
   };
-  return serve.exit_code(serve.run(0, @CONFIG@.with_tls(server.config(id, random_bytes(32))).with_h3(), handle));
+  return serve.exit_code(serve.run(0, @CONFIG@.with_tls(server.config(id, rand.bytes(32))).with_h3(), handle));
 }
 `
 
@@ -166,6 +167,7 @@ import "std/clock";
 import "std/option";
 import "std/string";
 
+import "std/rand";
 function now(): Instant {
   return clock.instant();
 }
@@ -242,7 +244,7 @@ function main(): i32 {
     return 2;
   };
   let cfg: conn.Config = h3q.transport(conn.config([]).client_side("localhost", roots));
-  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
+  let Ok(q) = conn.client(cfg, rand.bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return 2;
   };
   let Ok(any) = net.socket_addr_parse("127.0.0.1:0") else {

@@ -2,8 +2,9 @@ package e2e
 
 import "testing"
 
-const randomBytesLargeProbe = `function main(): i32 {
-    let bs: u8[] = random_bytes(1048576);
+const randomBytesLargeProbe = `import "std/rand";
+function main(): i32 {
+    let bs: u8[] = rand.bytes(1048576);
     if (bs.len() != 1048576) { return 1; }
     let run: i32 = 0;
     let worst: i32 = 0;
@@ -16,8 +17,8 @@ const randomBytesLargeProbe = `function main(): i32 {
     if (worst >= 64) { return 2; }
     // The edges of the contract, in the same program: nothing asked for is
     // the shared empty, and one byte is one byte.
-    if (random_bytes(0).len() != 0) { return 3; }
-    if (random_bytes(1).len() != 1) { return 4; }
+    if (rand.bytes(0).len() != 0) { return 3; }
+    if (rand.bytes(1).len() != 1) { return 4; }
     return 0;
 }
 `

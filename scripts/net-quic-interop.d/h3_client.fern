@@ -17,6 +17,7 @@ import "std/option";
 import "std/i64";
 import "std/string";
 import "core/int";
+import "std/rand";
 
 function now(): Instant {
   return clock.instant();
@@ -136,7 +137,7 @@ function opened(argv: string[]): Option[(h3q.Conn, i32)] {
     return None;
   };
   let cfg: conn.Config = h3q.transport(conn.config([]).client_side(argv[2], roots));
-  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
+  let Ok(q) = conn.client(cfg, rand.bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return None;
   };
   let Ok(any) = net.socket_addr_parse("127.0.0.1:0") else {

@@ -1,3 +1,4 @@
+import "std/rand";
 function main(): i32 {
-    return (random_bytes(32)).len();
+    return (rand.bytes(32)).len();
 }
