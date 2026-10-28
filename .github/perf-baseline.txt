@@ -1,3 +1,4 @@
+# 2026-10-28: Perf run 40603749599 on #13726, and scripts/perf-bench on the same tree for x86-64. The build manifest (SEC-046) adds 17 lines of read-only data to every arm64 program and 11 to every x86-64 program, so every .text row near its 1% tolerance moves by that constant. No .ir row moves.
 # 2026-10-27: verified complete native reports at b42a82ae934be20d4b370ff8f0cc1b278b8804bc.
 # Mandatory startup, backtrace, and allocation checks remain active.
 # Evidence: docs/benchmarks/native-perf-pins-2026-10-27/. Tolerances and workloads are unchanged.
@@ -140,19 +141,19 @@ x86_64/byte_copy_append.text	1233
 x86_64/byte_copy_append.ir	13442091
 x86_64/byte_copy_with.text	1190
 x86_64/byte_copy_with.ir	12841267
-x86_64/call_overhead.text	294
+x86_64/call_overhead.text	305
 x86_64/call_overhead.ir	8250814
-x86_64/closure_call.text	961
+x86_64/closure_call.text	972
 x86_64/closure_call.ir	63030162
 x86_64/deflate_decode.ir	34703269
 x86_64/deflate_decode.text	13313
 x86_64/deflate_encode.ir	43182612
 x86_64/deflate_encode.text	7360
-x86_64/enum_match.text	1087
+x86_64/enum_match.text	1098
 x86_64/enum_match.ir	48825092
 x86_64/http_hello.text	17480
 x86_64/http_hello.ir	23728450
-x86_64/int_loop.text	239
+x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
 x86_64/map_int.text	5781
 x86_64/map_int.ir	36432496
@@ -184,7 +185,7 @@ x86_64/string_rfind_byte.text	1749
 x86_64/string_rfind_byte.ir	43695768
 x86_64/string_scan.text	2230
 x86_64/string_scan.ir	52670002
-x86_64/string_slice.text	883
+x86_64/string_slice.text	894
 x86_64/string_slice.ir	38460093
 x86_64/struct_drop.text	2404
 x86_64/struct_drop.ir	205020598
@@ -409,34 +410,34 @@ x86_64/utf8_ingest_validated.ir	5247194
 # branch merged with main: from 71 fewer to 54 more instructions. The
 # utf8_ingest_validated row was 7828 where main itself measures 7751.
 #
-aarch64/array_append.text	1336
+aarch64/array_append.text	1353
 aarch64/array_append.ir	17880204
-aarch64/array_index.text	1334
+aarch64/array_index.text	1351
 aarch64/array_index.ir	18388238
-aarch64/array_scale_f64.text	1428
+aarch64/array_scale_f64.text	1445
 aarch64/array_scale_f64.ir	25340945
-aarch64/array_with.text	1490
+aarch64/array_with.text	1507
 aarch64/array_with.ir	31217639
-aarch64/ascii_scan.text	1627
+aarch64/ascii_scan.text	1644
 aarch64/ascii_scan.ir	68639570
-aarch64/byte_copy_append.text	1460
+aarch64/byte_copy_append.text	1477
 aarch64/byte_copy_append.ir	31926661
-aarch64/byte_copy_with.text	1406
+aarch64/byte_copy_with.text	1423
 aarch64/byte_copy_with.ir	31274981
-aarch64/call_overhead.text	371
+aarch64/call_overhead.text	388
 aarch64/call_overhead.ir	11250826
-aarch64/closure_call.text	1178
+aarch64/closure_call.text	1195
 aarch64/closure_call.ir	72648176
 # 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
 aarch64/deflate_decode.ir	36428245
 aarch64/deflate_decode.text	14202
 aarch64/deflate_encode.ir	44105199
 aarch64/deflate_encode.text	8007
-aarch64/enum_match.text	1298
+aarch64/enum_match.text	1315
 aarch64/enum_match.ir	41175104
 aarch64/http_hello.text	18600
 aarch64/http_hello.ir	25712697
-aarch64/int_loop.text	313
+aarch64/int_loop.text	330
 aarch64/int_loop.ir	18000085
 aarch64/map_int.text	6056
 aarch64/map_int.ir	35263992
@@ -451,9 +452,9 @@ aarch64/pmap_insert.text	3045
 aarch64/pmap_insert.ir	63996220
 aarch64/pvec_with.text	3187
 aarch64/pvec_with.ir	59221804
-aarch64/record_update.text	1590
+aarch64/record_update.text	1607
 aarch64/record_update.ir	31217639
-aarch64/sort_inplace.text	1673
+aarch64/sort_inplace.text	1690
 aarch64/sort_inplace.ir	49143963
 aarch64/sort_ints.text	2166
 aarch64/sort_ints.ir	33060144
@@ -461,7 +462,7 @@ aarch64/sort_strings.text	3577
 aarch64/sort_strings.ir	105485795
 aarch64/string_build.text	2346
 aarch64/string_build.ir	47221466
-aarch64/string_count_byte.text	1472
+aarch64/string_count_byte.text	1489
 aarch64/string_count_byte.ir	295207223
 aarch64/string_find_byte.text	1880
 aarch64/string_find_byte.ir	55921279
@@ -469,11 +470,11 @@ aarch64/string_rfind_byte.text	2003
 aarch64/string_rfind_byte.ir	55941911
 aarch64/string_scan.text	2550
 aarch64/string_scan.ir	59787692
-aarch64/string_slice.text	1114
+aarch64/string_slice.text	1131
 aarch64/string_slice.ir	43620107
 aarch64/struct_drop.text	2655
 aarch64/struct_drop.ir	222380901
-aarch64/tokenize.text	1370
+aarch64/tokenize.text	1387
 aarch64/tokenize.ir	38350109
 aarch64/utf8_ingest_unchecked.text	8764
 aarch64/utf8_ingest_unchecked.ir	2689511

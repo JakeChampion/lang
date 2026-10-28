@@ -4076,6 +4076,9 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   if (ssa.slot_call(ins)) {
     s = ssa_ldst(s, true, "x6", "x0", 8);
   }
+  if (s.harden) {
+    s = cfi_check_arm64(s, "x6");
+  }
   s = s.write("    blr x6\n");
   if (argc > ssa_nargs()) {
     s = ssa_addsub_imm(s, false, "sp", "sp", argc * 16);
@@ -4100,6 +4103,10 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   let label: string = "";
   if (k == 45) {
     label = "__fn_" + asmcore.sanitize_label(ins.str) + ".k";
+    if (s.harden) {
+      s = asmcore.with_cfi_stub(s, label);
+      label = asmcore.cfi_stub_label(s, label);
+    }
   } else if (k == 46) {
     let sh: asmcore.ShapeRefOut = asmcore.shape_ref(s, ins.str);
     s = sh.state;
@@ -4627,7 +4634,7 @@ function ssa_entry_shim(f: ssa.SFunc, name: string, s: asmcore.EmitState): asmco
     s = ssa_ldst(s, true, ssa_reg(p), "sp", 16 * p);
     p = p + 1;
   }
-  s = ssa_landing_pad(s.write("__fn_" + name + ".k:\n"));
+  s = s.write("__fn_" + name + ".k:\n");
   p = 0;
   while (p < k) {
     if (asmcore.float_param(mask, p)) {
@@ -5110,6 +5117,9 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   } else if (o.kind_tag == 396) {
     s = s.write("    bl __fn___fern_disable_core_dumps\n    str x0, [sp, #-16]!\n");
     s = s.need("disable_core_dumps");
+  } else if (o.kind_tag == 483) {
+    s = s.write("    bl __fn___fern_prctl_query\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+    s = s.need("prctl_query");
   } else if (o.kind_tag == 399) {
     s = s.need("ct_mark");
     s = s.write("    bl __fn___fern_" + asmcore.ct_mark_helper(o.i32_imm) + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
@@ -5709,13 +5719,25 @@ function arm64_copy_bytes(s: asmcore.EmitState, r: CopyRegs, words: string, tail
   return s.write(done + ":\n");
 }
 
+// A 64-bit immediate as one movz and a movk per nonzero upper half-word.
+function mov_imm64(reg: string, value: i64): string {
+  let out: string = "    movz " + reg + ", #" + (value & 65535i64).to_string() + "\n";
+  let shift: i32 = 16;
+  while (shift < 64) {
+    let part: i64 = value >> shift & 65535i64;
+    if (part != 0i64) {
+      out = out + "    movk " + reg + ", #" + part.to_string() + ", lsl #" + shift.to_string() + "\n";
+    }
+    shift = shift + 16;
+  }
+  return out;
+}
+
 function emit_arm64_op_heap_bump_bytes(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   s = s.need("heap");
   s = s.write("    adrp x0, __fern_heap_ptr\n    add x0, x0, :lo12:__fern_heap_ptr\n    ldr x0, [x0]\n");
-  s = s.write("    adrp x1, __fern_heap_end\n    add x1, x1, :lo12:__fern_heap_end\n    ldr x1, [x1]\n");
+  s = s.write("    adrp x1, __fern_heap_base\n    add x1, x1, :lo12:__fern_heap_base\n    ldr x1, [x1]\n");
   s = s.write("    sub x2, x0, x1\n");
-  s = s.write("    mov x3, #1\n    lsl x3, x3, #34\n");
-  s = s.write("    add x2, x2, x3\n");
   s = s.write("    cmp x0, #0\n");
   s = s.write("    csel x2, x2, xzr, ne\n");
   s = s.write("    str x2, [sp, #-16]!\n");
@@ -6129,11 +6151,35 @@ function emit_stack_map(s: asmcore.EmitState, size: string, darwin: boolean): as
   return s.write("    mov x0, #0\n" + size + "    mov x2, #3\n" + flags + "    mov x4, #0\n    sub x4, x4, #1\n    mov x5, #0\n    mov x8, #222\n    svc #0\n");
 }
 
+// A runtime entry point the kernel or a trampoline reaches. It is not a
+// function value, so it carries the pad an indirect call does not check for.
 function landing_pad(s: asmcore.EmitState): string {
   if (s.harden) {
-    return "    bti c\n";
+    return "    bti jc\n";
   }
   return "";
+}
+
+// The word at a valid target is bti c (0xd503245f).
+function cfi_check_arm64(s: asmcore.EmitState, reg: string): asmcore.EmitState {
+  let ok: asmcore.LabelOut = asmcore.fresh_label(s);
+  s = ok.state;
+  return s.write("    ldr w16, [" + reg + "]\n    movz w17, #9311\n    movk w17, #54531, lsl #16\n    cmp w16, w17\n    b.eq " + ok.name + "\n    b __fern_cfi_fail\n" + ok.name + ":\n");
+}
+
+function emit_cfi_stubs_from(s: asmcore.EmitState, first: i32): asmcore.EmitState {
+  if (s.cfi_stubs.len() <= first) {
+    return s;
+  }
+  s = s.write("    .text\n");
+  let i: i32 = first;
+  while (i < s.cfi_stubs.len()) {
+    let target: string = s.cfi_stubs[i];
+    s = ssa_landing_pad(s.write(asmcore.cfi_stub_label(s, target) + ":\n"));
+    s = s.write("    b " + target + "\n");
+    i = i + 1;
+  }
+  return s;
 }
 
 function emit_segv_install(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
@@ -6156,7 +6202,11 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asm
     frame = "    ldr x11, [x13, #272]\n    ldr x12, [x13, #248]\n    and x11, x11, #0x0000ffffffffffff\n    and x12, x12, #0x0000ffffffffffff\n";
   }
   s = s.write("    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n    .text\n");
-  s = s.write("__fern_segv:\n" + landing_pad(s) + addr + ctx + "    sub x9, x9, x10\n    mov x10, #1\n    lsl x10, x10, #20\n    add x9, x9, x10\n    lsl x10, x10, #1\n    cmp x9, x10\n    b.hs .Lfern_segv_other\n" + frame);
+  // A fault inside the guard of the runtime's own stack is an overflow. On
+  // the kernel's stack, kept when that mapping failed, a fault within 1 MiB
+  // of the stack pointer counts as one.
+  let guard: string = "    adrp x14, __fern_stack_top\n    add x14, x14, :lo12:__fern_stack_top\n    ldr x14, [x14]\n    cbz x14, .Lfern_segv_near_sp\n    mov x15, #1\n    lsl x15, x15, #30\n    sub x14, x14, x15\n    add x14, x14, #16\n    sub x15, x9, x14\n    mov x16, #1\n    lsl x16, x16, #20\n    cmp x15, x16\n    b.lo .Lfern_segv_overflow\n    b .Lfern_segv_other\n.Lfern_segv_near_sp:\n";
+  s = s.write("__fern_segv:\n" + landing_pad(s) + addr + guard + ctx + "    sub x9, x9, x10\n    mov x10, #1\n    lsl x10, x10, #20\n    add x9, x9, x10\n    lsl x10, x10, #1\n    cmp x9, x10\n    b.hs .Lfern_segv_other\n.Lfern_segv_overflow:\n" + frame);
   s = s.write("    stp x12, x11, [sp, #-16]!\n    mov x29, sp\n    adrp x10, __fern_stack_top\n    add x10, x10, :lo12:__fern_stack_top\n    str xzr, [x10]\n    adrp x1, .Lmsg_stack_overflow\n    add x1, x1, :lo12:.Lmsg_stack_overflow\n    mov x2, #" + util.i32_to_string(msg.len() + 1) + "\n    mov x0, #134\n    b __fern_report\n");
   let tramp: string = "xzr";
   if (darwin) {
@@ -6181,6 +6231,7 @@ function emit_startup_failures(s: asmcore.EmitState): asmcore.EmitState {
   if (s.harden) {
     s = emit_startup_failure(s, ".Lfern_canary_read_failed", aborts.canary_read());
     s = emit_startup_failure(s, "__fern_canary_fail", aborts.canary());
+    s = emit_startup_failure(s, "__fern_cfi_fail", aborts.cfi());
   }
   return s;
 }
@@ -6214,6 +6265,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
     fi = fi + 1;
   }
   s = emit_named_bodies(cache, physical, unit.pre, mod.funcs.len(), s, vgate);
+  s = emit_cfi_stubs_from(s, 0);
   irverifygate.report(vgate);
   return emit_ir_start(s, darwin);
 }
@@ -6300,6 +6352,7 @@ pub function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcor
   let previous_regs: irtables.SigReg = s.reg_entries;
   let previous_leaves: ssa.Leaves = s.leaves;
   let previous_float: asmcore.FloatAbi = asmcore.FloatAbi { names: s.float_abi, masks: s.float_abi_masks };
+  let cf0: i32 = s.cfi_stubs.len();
   let unit: asmcore.UnitLeaves = asmcore.unit_leaves(m, 0, fns.len(), bodies);
   let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(m, 0, fns.len(), bodies);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(m, 0, fns.len(), bodies)), leaves: unit.leaves, float_abi: fabi.names, float_abi_masks: fabi.masks };
@@ -6314,6 +6367,7 @@ pub function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcor
     i = i + 1;
   }
   s = emit_named_bodies(bodies, physical, unit.pre, fns.len(), s, vgate);
+  s = emit_cfi_stubs_from(s, cf0);
   return asmcore.EmitState { ...s, reg_entries: previous_regs, leaves: previous_leaves, float_abi: previous_float.names, float_abi_masks: previous_float.masks };
 }
 
@@ -7729,8 +7783,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    mov x0, #1\n");
   }
   s = s.write("    lsl x0, x0, #28\n");
-  s = s.write("    mov x1, #1\n");
-  s = s.write("    lsl x1, x1, #34\n");
+  s = s.write(mov_imm64("x1", s.heap_limit));
   s = s.write("    mov x2, #3\n");
   if (darwin) {
     s = s.write("    mov x3, #0x1002\n");
@@ -7750,8 +7803,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    adrp x1, __fern_heap_base\n");
   s = s.write("    add x1, x1, :lo12:__fern_heap_base\n");
   s = s.write("    str x0, [x1]\n");
-  s = s.write("    mov x2, #1\n");
-  s = s.write("    lsl x2, x2, #34\n");
+  s = s.write(mov_imm64("x2", s.heap_limit));
   s = s.write("    add x2, x0, x2\n");
   s = s.write("    adrp x3, __fern_heap_end\n");
   s = s.write("    add x3, x3, :lo12:__fern_heap_end\n");
@@ -9215,6 +9267,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
   if (!s.shared) {
     s = emit_stack_overflow_runtime(s, darwin);
     s = emit_startup_failures(s);
+    s = asmcore.emit_build_manifest(s);
   }
   s = emit_rt_report(s);
   if (s.shared) {
@@ -9823,6 +9876,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("disable_core_dumps")) {
     s = emit_runtime("__fern_disable_core_dumps", s);
   }
+  if (s.has_need("prctl_query")) {
+    s = emit_runtime("__fern_prctl_query", s);
+  }
   if (s.has_need("ct_mark")) {
     s = emit_runtime("__fern_ct_mark __fern_ct_secret __fern_ct_public", s);
   }
@@ -10024,7 +10080,7 @@ function emit_rt_signal_flags(s: asmcore.EmitState, darwin: boolean): asmcore.Em
   }
   s = s.write("    .section .bss\n    .align 3\n__fern_sig_flags: .skip 65\n    .text\n");
   if (s.has_need("signal_catch")) {
-    s = ssa_landing_pad(s.write("    .global __fern_sig_catcher\n    .global __fern_sig_return\n__fern_sig_catcher:\n"));
+    s = s.write("    .global __fern_sig_catcher\n    .global __fern_sig_return\n__fern_sig_catcher:\n" + landing_pad(s));
     s = s.write("    adrp x1, __fern_sig_flags\n    add x1, x1, :lo12:__fern_sig_flags\n    sxtw x0, w0\n    add x1, x1, x0\n    mov w2, #1\n    strb w2, [x1]\n    ret\n");
     s = s.write("__fern_sig_return:\n");
     if (darwin) {
@@ -10968,6 +11024,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
     fi = fi + 1;
   }
   s = emit_named_bodies(cache, physical, unit.pre, mod.funcs.len(), s, vgate);
+  s = emit_cfi_stubs_from(s, 0);
   irverifygate.report(vgate);
   let en: i32 = 0;
   while (en < extra_needs.len()) {

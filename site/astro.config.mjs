@@ -63,7 +63,7 @@ const STDLIB_GROUPS = [
   ["Numbers", ["bigint", "f32", "f64", "i32", "i64", "int", "math", "number_parse", "rand", "simd", "u32",
     "u64"]],
   ["Files, I/O & time", ["async", "cli", "dotenv", "envflag", "errno", "io", "io_buffered",
-    "log", "path", "signal", "stream", "time", "clock", "tz"]],
+    "log", "mitigations", "path", "signal", "stream", "time", "clock", "tz"]],
   ["Networking", ["dns", "fetch", "headers", "http", "http_accesslog", "http_auth", "http_cache", "http_compress", "http_cookie", "http_cors", "http_form", "http_forwarded", "http_grpc", "http_h2", "http_h2_frame", "http_h3", "http_h3q", "http_hpack", "http_huffman", "http_multipart", "http_qpack", "http_requestid", "http_router", "http_sse", "http_static", "http_trace", "http_websocket", "metrics", "net", "platform", "publicsuffix", "quic_conn", "quic_frames", "quic_packet", "quic_params", "quic_recovery", "quic_streams", "serve", "tcp",
     "tls", "tls_client", "tls_der", "tls_handshake", "tls_identity", "tls_keyschedule", "tls_keyshare", "tls_ktls", "tls_message", "tls_mozilla", "tls_pem", "tls_record", "tls_server", "tls_verify", "tls_x509", "wasi_http"]],
   ["Testing", ["bench", "fuzz", "mock_platform", "sim", "sim_fetch", "sim_platform", "test"]],

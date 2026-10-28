@@ -136,6 +136,7 @@ func TestSelfHostMvsCachedURLDependency(t *testing.T) {
 		{"manifest-url", `{ url = "https://example.invalid/helper.tar.gz", hash = "sha256:` + hex + `" }`, ""},
 		{"lock-url", `"1.0.0"`, "[[package]]\nname = \"helper\"\nversion = \"1.0.0\"\nurl = \"https://example.invalid/helper.tar.gz\"\nhash = \"sha256:" + hex + "\"\n"},
 		{"lock-url-zero-version", `"0.0.0"`, "[[package]]\nname = \"helper\"\nversion = \"0.0.0\"\nurl = \"https://example.invalid/helper.tar.gz\"\nhash = \"sha256:" + hex + "\"\n"},
+		{"lock-url-above-demand", `"0.9.0"`, "[[package]]\nname = \"helper\"\nversion = \"1.0.0\"\nurl = \"https://example.invalid/helper.tar.gz\"\nhash = \"sha256:" + hex + "\"\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -158,6 +159,30 @@ func TestSelfHostMvsCachedURLDependency(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+// A lock written before the manifest raised its demand selects a version the
+// manifest no longer accepts; the build refuses it and names `fern -resolve`.
+// TestSelfHostMvsCachedURLDependency holds the controls at and above the
+// demand.
+func TestSelfHostStaleLockRefused(t *testing.T) {
+	hex := strings.Repeat("ab", 32)
+	root := t.TempDir()
+	cache := filepath.Join(root, "cache")
+	writeResolveProject(t, root, map[string]string{
+		"app/fern.toml":                    "[package]\nname = \"app\"\n[dependencies]\nhelper = \"1.2.0\"\n",
+		"app/fern.lock":                    "[[package]]\nname = \"helper\"\nversion = \"1.0.0\"\nurl = \"https://example.invalid/helper.tar.gz\"\nhash = \"sha256:" + hex + "\"\n",
+		"app/main.fern":                    "import \"helper\";\nfunction main(): i32 { return helper.answer(); }\n",
+		"cache/pkgs/" + hex + "/fern.toml": "[package]\nname = \"helper\"\n",
+		"cache/pkgs/" + hex + "/lib.fern":  "pub function answer(): i32 { return 42; }\n",
+	})
+	cmd := exec.Command(e2eharness.SelfHostCLI(t), "-check", filepath.Join(root, "app/main.fern"), e2eharness.SelfHostStdlibRoot(t))
+	cmd.Env = e2eharness.SelfHostChildEnv("FERN_CACHE_DIR=" + cache)
+	out, err := cmd.CombinedOutput()
+	want := "dependency \"helper\" is locked at 1.0.0 but "
+	if err == nil || !strings.Contains(string(out), want) || !strings.Contains(string(out), "run `fern -resolve") {
+		t.Fatalf("a stale lock must be refused with %q and the resolve hint: err=%v\n%s", want, err, out)
 	}
 }
 

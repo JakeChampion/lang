@@ -4,11 +4,11 @@ This module provides message digests, key derivation, and authentication codes.
 
 ## Model
 
-Digest states are values. Every digest has the same surface: `<algorithm>_new()` builds a state, `update` borrows input bytes and returns the next state, and `finish` returns the owned digest bytes. The one-shot form is the algorithm's name, so `sha256(data)` is `sha256_new().update(data).finish()`. Hexadecimal text is `hex.encode` of the digest.
+Digest states are values. Every digest has the same surface: `<algorithm>_new()` builds a state, `update` borrows input bytes and returns the next state, and `finish` returns the owned digest bytes. The one-shot form is the algorithm's name, so `sha256(data)` is `sha256_new().update(data).finish()`. Hexadecimal text is `hex.encode` of the digest. `erase` consumes an owned byte array and zeroes its storage when that reference was the last one.
 
 ## Contracts
 
-The same state must receive each returned update value. Authentication helpers compare codes without ordinary string equality. Generated digest cores remain in one generator-controlled chunk.
+The same state must receive each returned update value. Authentication helpers compare codes without ordinary string equality. Generated digest cores remain in one generator-controlled chunk. `erase` takes an owned array, which the checker accepts only at its last use.
 
 ## Executable example
 
@@ -70,6 +70,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<20 pub struct Shake>>
 
 <<21 pub function shake128_new(): Shake>>
+
+<<22 pub function erase(own bytes: u8[]): void>>
 ```
 
 ### `module introduction`
@@ -3962,5 +3964,21 @@ pub function shake128(data: [u8], out_len: i32): u8[] {
 
 pub function shake256(data: [u8], out_len: i32): u8[] {
   return shake256_new().update(data).reader().squeeze(out_len).0;
+}
+```
+
+### `22 pub function erase(own bytes: u8[]): void`
+
+`with` writes in place when no other reference shares the array, so the block holds zeros when it returns to the allocator. A reference that another value still shares keeps its bytes for that value, and only this one ends. No compiler pass removes a store to an array, and `TestSelfHostEraseZeroesStorage` reads the released block back through a raw allocation to pin that.
+
+```fern
+<<22 pub function erase(own bytes: u8[]): void>>=
+pub function erase(own bytes: u8[]): void {
+  let n: i32 = bytes.len();
+  let i: i32 = 0;
+  while (i < n) {
+    bytes = bytes.with(i, 0 as u8);
+    i = i + 1;
+  }
 }
 ```

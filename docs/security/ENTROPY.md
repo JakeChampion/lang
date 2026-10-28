@@ -72,7 +72,7 @@ go test ./internal/testing/e2e -run '^TestSelfHost(EntropyFailure|EntropyReadCom
 ## Remaining limits
 
 This change does not complete SEC-019.
-CPU and kernel mitigation reports still require a separate implementation.
+The mitigation report is `std/mitigations`, recorded in [MITIGATION-REPORT.md](MITIGATION-REPORT.md).
 The tests establish completion and failure behavior, not a statistical proof of entropy quality.
 The kernel and host entropy services remain trusted.
 

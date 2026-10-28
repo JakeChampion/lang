@@ -8,7 +8,7 @@ Format helpers substitute values through their display traits. Byte-count and du
 
 ## Contracts
 
-The numbered helpers retain each argument type through a generic bound. The duration parser returns an option because input text can be invalid.
+The numbered helpers retain each argument type through a generic bound. The duration parser returns an option because input text can be invalid. A width or a precision in a format specification saturates at one million, so a hostile specification cannot make a format allocate without bound.
 
 ## Executable example
 
@@ -190,7 +190,7 @@ function __format_apply_spec(s: string, spec: string): string {
   }
   let width: i32 = 0;
   while (p < m && spec[p] >= 48 && spec[p] <= 57) {
-    width = width * 10 + (spec[p] as i32 - 48);
+    width = __bounded_count(width, spec[p] as i32 - 48);
     p = p + 1;
   }
   let val: string = s;
@@ -198,7 +198,7 @@ function __format_apply_spec(s: string, spec: string): string {
     p = p + 1;
     let prec: i32 = 0;
     while (p < m && spec[p] >= 48 && spec[p] <= 57) {
-      prec = prec * 10 + (spec[p] as i32 - 48);
+      prec = __bounded_count(prec, spec[p] as i32 - 48);
       p = p + 1;
     }
     if (__is_decimal_numeral(val)) {
@@ -351,6 +351,19 @@ function __align_code(c: i32): i32 {
     return 2;
   }
   return 3;
+}
+
+// A width or precision saturates at one million, so a hostile specification
+// cannot make a format allocate without bound.
+function __bounded_count(acc: i32, digit: i32): i32 {
+  if (acc >= 1000000) {
+    return 1000000;
+  }
+  let next: i32 = acc * 10 + digit;
+  if (next > 1000000) {
+    return 1000000;
+  }
+  return next;
 }
 
 function __repeat_char(s: string, count: i32): string {

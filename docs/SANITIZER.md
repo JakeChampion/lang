@@ -66,6 +66,9 @@ Real, and the reason this is opt-in:
   `__fern_free` accounts the release and declines to push the block onto a
   freelist. The heap only grows. A loop that churns 200 rows through one
   recycled block instead bumps 200 blocks' worth of arena.
+  `TestSelfHostSanitizeQuarantineGrowth` pins the growth, 88 bytes per
+  release of a 64-byte array, and `docs/security/QUARANTINE.md` records the
+  bounded-quarantine options that wait for a policy.
 - Every `inc`/`dec` takes the out-of-line helper (the inline rc fast path is
   bypassed, since it is the helper that carries the poison check).
 

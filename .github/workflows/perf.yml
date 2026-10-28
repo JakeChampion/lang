@@ -180,6 +180,21 @@ jobs:
           FERN_PERF_GATE_LABEL: self-host emitted size
         run: scripts/ci-check-perf .github/perf-baseline-selfhost.txt "${{ runner.temp }}/selfhost-size-report.txt"
 
+      # What each SECURITY PROFILE costs: emitted size, image size and retired
+      # instructions for a bench subset under safe, hardened, diagnostic and
+      # minimal, on both native targets from one build
+      # (docs/security/PROFILE-COSTS.md). The hardened rows are where a check
+      # added to a hot path shows; nothing else measures a hardened build.
+      - name: Measure the cost of each build profile
+        if: ${{ !cancelled() && matrix.host == 'x86_64' }}
+        run: scripts/profile-costs "${{ runner.temp }}/profile-costs-report.txt"
+
+      - name: Compare the profile costs against the baseline
+        if: ${{ !cancelled() && matrix.host == 'x86_64' }}
+        env:
+          FERN_PERF_GATE_LABEL: profile costs
+        run: scripts/ci-check-perf .github/profile-costs-baseline.txt "${{ runner.temp }}/profile-costs-report.txt"
+
       # How much the SELF-HOST COMPILER ALLOCATES compiling one real module.
       #
       # docs/IR-SELFCOMPILE-OOM-FINDINGS.md pins the self-compile's binding
@@ -240,6 +255,7 @@ jobs:
           scripts/perf-history record append-cliff-x86_64 "${{ runner.temp }}/cliff-report.txt"
           scripts/perf-history record selfhost-size-x86_64 "${{ runner.temp }}/selfhost-size-report.txt"
           scripts/perf-history record selfhost-alloc-x86_64 "${{ runner.temp }}/alloc-report.txt"
+          scripts/perf-history record profile-costs-x86_64 "${{ runner.temp }}/profile-costs-report.txt"
 
       - name: Upload the reports
         if: ${{ always() && matrix.host == 'x86_64' }}
@@ -250,6 +266,7 @@ jobs:
             ${{ runner.temp }}/cliff-report.txt
             ${{ runner.temp }}/selfhost-size-report.txt
             ${{ runner.temp }}/alloc-report.txt
+            ${{ runner.temp }}/profile-costs-report.txt
           if-no-files-found: warn
 
 

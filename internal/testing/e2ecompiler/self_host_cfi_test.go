@@ -1,9 +1,7 @@
 package e2ecompiler
 
 import (
-	"encoding/binary"
-	"encoding/hex"
-	"fmt"
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,166 +9,158 @@ import (
 	"testing"
 )
 
-const (
-	cfiTextVAddr = 0x400000
-	cfiHdrVAddr  = 0x400080
-	cfiEhVAddr   = 0x400100
-)
+// Under -harden a function value points at a stub that starts with the
+// landing pad, and every indirect call checks for that pad. The control
+// takes the address of a closure and of twice; thrice has the same
+// signature as twice and is only called directly.
+const cfiSrc = `import "std/i32";
 
-func gasCfi(t *testing.T, o gnuAsOracle, src string) (eh, hdr, dbg []byte) {
-	t.Helper()
-	dir := t.TempDir()
-	sPath, oPath, exe := filepath.Join(dir, "cfi.s"), filepath.Join(dir, "cfi.o"), filepath.Join(dir, "cfi")
-	if err := os.WriteFile(sPath, []byte(".cfi_sections .eh_frame, .debug_frame\n"+src), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if msg, err := exec.Command(o.as, append(append([]string{}, o.asArgs...), sPath, "-o", oPath)...).CombinedOutput(); err != nil {
-		t.Fatalf("GNU as rejects the case: %v\n%s", err, msg)
-	}
-	if msg, err := exec.Command(o.ld, "-static", "--eh-frame-hdr", "--no-check-sections", "-e", fmt.Sprint(cfiTextVAddr),
-		fmt.Sprintf("-Ttext=%#x", cfiTextVAddr),
-		fmt.Sprintf("--section-start=.eh_frame_hdr=%#x", cfiHdrVAddr),
-		fmt.Sprintf("--section-start=.eh_frame=%#x", cfiEhVAddr),
-		oPath, "-o", exe).CombinedOutput(); err != nil {
-		t.Fatalf("ld: %v\n%s", err, msg)
-	}
-	read := func(file, section string) []byte {
-		out := filepath.Join(dir, filepath.Base(file)+section)
-		if msg, err := exec.Command(o.objcopy, "--dump-section", section+"="+out, file, out+".tmp").CombinedOutput(); err != nil {
-			t.Fatalf("objcopy %s: %v\n%s", section, err, msg)
-		}
-		b, err := os.ReadFile(out)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return b
-	}
-	eh = read(oPath, ".eh_frame")
-	linked := read(exe, ".eh_frame")
-	for off := 0; off+12 <= len(eh); {
-		n := int(binary.LittleEndian.Uint32(eh[off:]))
-		if binary.LittleEndian.Uint32(eh[off+4:]) != 0 {
-			copy(eh[off+8:off+12], linked[off+8:off+12])
-		}
-		off += 4 + n
-	}
-	return append(eh, 0, 0, 0, 0), read(exe, ".eh_frame_hdr"), read(exe, ".debug_frame")
+@noinline
+function apply(f: (i32) => i32, x: i32): i32 {
+  return f(x);
 }
 
-func checkCfiAgainstGas(t *testing.T, o gnuAsOracle, bin string, runner []string, src string) {
-	t.Helper()
-	wantEh, wantHdr, wantDbg := gasCfi(t, o, src)
-	if len(wantEh) == 0 || len(wantDbg) == 0 {
-		t.Fatal("GNU as rendered no CFI — the case carries none")
-	}
-	out := runX86BenchDriver(t, bin, runner, src, "-ehframe")
-	if refused := asmRefusals(out); len(refused) > 0 {
-		t.Fatalf("the self-host assembler refused: %v", refused)
-	}
-	if got := parseDumpLines(out, "eh"); string(got) != string(wantEh) {
-		t.Errorf(".eh_frame differs\nself-host % x\nGNU as    % x", got, wantEh)
-	}
-	if got := parseDumpLines(out, "hdr"); string(got) != string(wantHdr) {
-		t.Errorf(".eh_frame_hdr differs\nself-host % x\nGNU ld    % x", got, wantHdr)
-	}
-	if got := parseDumpLines(out, "dbg"); string(got) != string(wantDbg) {
-		t.Errorf(".debug_frame differs\nself-host % x\nGNU as    % x", got, wantDbg)
-	}
+@noinline
+function twice(x: i32): i32 {
+  return x * 2;
 }
 
-func parseDumpLines(out, tag string) []byte {
-	var b []byte
-	for _, ln := range strings.Split(out, "\n") {
-		var idx, val int
-		if _, err := fmt.Sscanf(ln, tag+" %d %d", &idx, &val); err == nil {
-			b = append(b, byte(val))
-		}
-	}
-	return b
+@noinline
+function thrice(x: i32): i32 {
+  return x * 3;
 }
 
-func TestSelfHostCfiMatchesGasX86_64(t *testing.T) {
-	gas := gnuX86Oracle(t)
-	gcc, runner := x86_64Tooling(t)
-	bin := buildX86AsmBenchDriver(t, gcc)
-
-	cases := []struct{ name, src string }{
-		{"frame_pointer",
-			".text\n__fn_f:\n.cfi_startproc\npushq %rbp\n.cfi_def_cfa_offset 16\n.cfi_offset %rbp, -16\nmovq %rsp, %rbp\n.cfi_def_cfa_register %rbp\nmovl $7, %eax\npopq %rbp\n.cfi_def_cfa %rsp, 8\nret\n.cfi_endproc\n"},
-		{"two_procs_long",
-			".text\n__fn_a:\n.cfi_startproc\npushq %rbp\n.cfi_def_cfa_offset 16\n.cfi_offset %rbp, -16\nmovq %rsp, %rbp\n.cfi_def_cfa_register %rbp\n" + strings.Repeat("nop\n", 80) + "popq %rbp\n.cfi_def_cfa %rsp, 8\nret\n.cfi_endproc\n" +
-				"__fn_b:\n.cfi_startproc\nsubq $8, %rsp\n.cfi_def_cfa_offset 16\naddq $8, %rsp\n.cfi_def_cfa_offset 8\nret\n.cfi_endproc\n"},
-		{"three_procs_middle_bare",
-			".text\n__fn_a:\n.cfi_startproc\npushq %rbp\n.cfi_def_cfa_offset 16\n.cfi_offset %rbp, -16\npopq %rbp\n.cfi_def_cfa_offset 8\nret\n.cfi_endproc\n" +
-				"__fn_b:\n.cfi_startproc\nret\n.cfi_endproc\n" +
-				"__fn_c:\n.cfi_startproc\nsubq $8, %rsp\n.cfi_def_cfa_offset 16\naddq $8, %rsp\n.cfi_def_cfa_offset 8\nret\n.cfi_endproc\n"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) { checkCfiAgainstGas(t, gas, bin, runner, c.src) })
-	}
-
-	if refused := refusalsForX86(t, bin, runner, ".text\nf:\n.cfi_startproc\n.cfi_escape 0x2e\nret\n.cfi_endproc\n"); len(refused) == 0 {
-		t.Error(".cfi_escape was accepted; the recorder cannot express it")
-	}
-	if refused := refusalsForX86(t, bin, runner, ".text\nf:\n.cfi_def_cfa_offset 16\nret\n"); len(refused) == 0 {
-		t.Error("a rule outside .cfi_startproc was accepted")
-	}
+function main(): i32 {
+  let k: i32 = 5;
+  let add: (i32) => i32 = (x: i32): i32 => x + k;
+  let xs: i32[] = [1, 2, 3].map(twice);
+  print(apply(add, 10).to_string() + " " + apply(twice, 7).to_string() + " " + xs[2].to_string() + " " + thrice(1).to_string());
+  return 0;
 }
+`
 
-func TestSelfHostCfiMatchesGasArm64(t *testing.T) {
-	gas := gnuArm64Oracle(t)
-	gcc, runner := x86_64Tooling(t)
-	bin := buildAsmBenchDriver(t, gcc)
+const cfiWant = "15 14 6 3\n"
 
-	cases := []struct{ name, src string }{
-		{"frame_pointer",
-			".text\n__fn_f:\n.cfi_startproc\nstp x29, x30, [sp, #-16]!\n.cfi_def_cfa_offset 16\n.cfi_offset x29, -16\n.cfi_offset x30, -8\nmov x29, sp\n.cfi_def_cfa_register x29\nmov w0, #7\nldp x29, x30, [sp], #16\n.cfi_def_cfa sp, 0\nret\n.cfi_endproc\n"},
-		{"two_procs_pool",
-			".text\n__fn_a:\n.cfi_startproc\nstp x29, x30, [sp, #-16]!\n.cfi_def_cfa_offset 16\n.cfi_offset x29, -16\n.cfi_offset x30, -8\nmov x29, sp\n.cfi_def_cfa_register x29\nldr x0, =0x123456789\n" + strings.Repeat("nop\n", 70) + "ldp x29, x30, [sp], #16\n.cfi_def_cfa sp, 0\nret\n.cfi_endproc\n.ltorg\n" +
-				"__fn_b:\n.cfi_startproc\nsub sp, sp, #32\n.cfi_def_cfa_offset 32\nadd sp, sp, #32\n.cfi_def_cfa_offset 0\nret\n.cfi_endproc\n"},
-		{"three_procs_middle_bare",
-			".text\n__fn_a:\n.cfi_startproc\nstp x29, x30, [sp, #-16]!\n.cfi_def_cfa_offset 16\n.cfi_offset x29, -16\nldp x29, x30, [sp], #16\n.cfi_def_cfa_offset 0\nret\n.cfi_endproc\n" +
-				"__fn_b:\n.cfi_startproc\nret\n.cfi_endproc\n" +
-				"__fn_c:\n.cfi_startproc\nsub sp, sp, #32\n.cfi_def_cfa_offset 32\nadd sp, sp, #32\n.cfi_def_cfa_offset 0\nret\n.cfi_endproc\n"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) { checkCfiAgainstGas(t, gas, bin, runner, c.src) })
-	}
-}
+const cfiCause = "fern: indirect call to an address that is not a function\n"
 
-func TestSelfHostCfiArm64Darwin(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	bin := buildAsmBenchDriver(t, gcc)
-
-	cases := []struct{ name, src, want string }{
-		{"frame_pointer",
-			".text\n__fn_f:\n.cfi_startproc\nstp x29, x30, [sp, #-16]!\n.cfi_def_cfa_offset 16\n.cfi_offset x29, -16\n.cfi_offset x30, -8\nmov x29, sp\n.cfi_def_cfa_register x29\nmov w0, #7\nldp x29, x30, [sp], #16\n.cfi_def_cfa sp, 0\nret\n.cfi_endproc\n",
-			"1000000000000000017a520001781e01100c1f002800000018000000e4feffffffffffff140000000000000000440e109d029e01440d1d480c1f00000000000000000000"},
-		{"two_procs_long",
-			".text\n__fn_a:\n.cfi_startproc\nstp x29, x30, [sp, #-16]!\n.cfi_def_cfa_offset 16\n.cfi_offset x29, -16\n.cfi_offset x30, -8\nmov x29, sp\n.cfi_def_cfa_register x29\n" + strings.Repeat("nop\n", 70) + "ldp x29, x30, [sp], #16\n.cfi_def_cfa sp, 0\nret\n.cfi_endproc\n" +
-				"__fn_b:\n.cfi_startproc\nsub sp, sp, #32\n.cfi_def_cfa_offset 32\nadd sp, sp, #32\n.cfi_def_cfa_offset 0\nret\n.cfi_endproc\n",
-			"1000000000000000017a520001781e01100c1f002800000018000000e4feffffffffffff280100000000000000440e109d029e01440d1d031c010c1f000000001c00000044000000e0ffffffffffffff0c0000000000000000440e20440e000000000000"},
-		{"three_procs",
-			".text\n__fn_a:\n.cfi_startproc\nsub sp, sp, #16\n.cfi_def_cfa_offset 16\nadd sp, sp, #16\n.cfi_def_cfa_offset 0\nret\n.cfi_endproc\n" +
-				"__fn_b:\n.cfi_startproc\nstp x29, x30, [sp, #-16]!\n.cfi_def_cfa_offset 16\n.cfi_offset x30, -8\nldp x29, x30, [sp], #16\n.cfi_def_cfa_offset 0\nret\n.cfi_endproc\n" +
-				"__fn_c:\n.cfi_startproc\nnop\n.cfi_remember_state\nnop\n.cfi_restore_state\nret\n.cfi_endproc\n",
-			"1000000000000000017a520001781e01100c1f002000000018000000e4feffffffffffff0c0000000000000000440e10440e000000000000240000003c000000ccfeffffffffffff0c0000000000000000440e109e01440e00000000000000001c00000064000000b0feffffffffffff0c0000000000000000440a440b00000000000000"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			want, err := hex.DecodeString(c.want)
+func TestSelfHostForwardEdgeCFI(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	x86gcc, _ := x86_64Tooling(t)
+	arm64gcc, qemu := arm64Tooling(t)
+	for _, tc := range []struct {
+		target, gcc, entry string
+		pad, check         []byte
+	}{
+		// The check is cmpl $imm32, (%r11) on x86-64 and movz w17, #0x245f on arm64.
+		{"x86-64-linux", x86gcc, ".r", []byte{0xf3, 0x0f, 0x1e, 0xfa}, []byte{0x41, 0x81, 0x3b, 0xf3, 0x0f, 0x1e, 0xfa}},
+		{"arm64-linux", arm64gcc, ".k", []byte{0x5f, 0x24, 0x03, 0xd5}, []byte{0xf1, 0x8b, 0x84, 0x52}},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "main.fern")
+			if err := os.WriteFile(src, []byte(cfiSrc), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			compile := func(out string, flags ...string) {
+				t.Helper()
+				args := append(append([]string{}, flags...), "-target", tc.target, "-o", out, src, cli.stdlib)
+				cmd := runX86_64Bin(cli.runner, cli.bin, args...)
+				cmd.Env = childEnv()
+				if msg, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("compile %v: %v\n%s", flags, err, msg)
+				}
+			}
+			run := func(bin string) (string, string, int) {
+				t.Helper()
+				var c *exec.Cmd
+				if tc.target == "arm64-linux" {
+					c = runArm64Bin(qemu, bin)
+				} else {
+					c = runX86_64Bin(cli.runner, bin)
+				}
+				var stdout, stderr bytes.Buffer
+				c.Stdout, c.Stderr = &stdout, &stderr
+				_ = c.Run()
+				return stdout.String(), stderr.String(), c.ProcessState.ExitCode()
+			}
+			plain := filepath.Join(dir, "plain")
+			hard := filepath.Join(dir, "hard")
+			pie := filepath.Join(dir, "hard-pie")
+			compile(plain)
+			compile(hard, "-harden")
+			compile(pie, "-harden", "-pie")
+			for _, bin := range []string{plain, hard, pie} {
+				if out, errout, code := run(bin); out != cfiWant || code != 0 {
+					t.Fatalf("%s printed %q with exit %d (stderr %q), want %q and exit 0", filepath.Base(bin), out, code, errout, cfiWant)
+				}
+			}
+			plainImg, err := os.ReadFile(plain)
 			if err != nil {
 				t.Fatal(err)
 			}
-			out := runX86BenchDriver(t, bin, runner, c.src, "-ehframe-darwin")
-			if refused := asmRefusals(out); len(refused) > 0 {
-				t.Fatalf("the self-host assembler refused: %v", refused)
+			hardImg, err := os.ReadFile(hard)
+			if err != nil {
+				t.Fatal(err)
 			}
-			if got := parseDumpLines(out, "eh"); string(got) != string(want) {
-				t.Errorf("__eh_frame differs\nself-host % x\nllvm-mc   % x", got, want)
+			if n := bytes.Count(plainImg, tc.pad); n != 0 {
+				t.Errorf("the plain image carries %d pads, want none", n)
 			}
-			if elf := parseDumpLines(runX86BenchDriver(t, bin, runner, c.src, "-ehframe"), "eh"); string(elf) == string(want) {
-				t.Error("the ELF and Mach-O profiles rendered identical bytes for this case, so it cannot tell them apart")
+			if bytes.Contains(plainImg, []byte(cfiCause)) {
+				t.Error("the plain image carries the CFI cause")
+			}
+			// The x86-64 check embeds the pad bytes as its immediate, so the
+			// stubs are the pads that are not checks.
+			pads := bytes.Count(hardImg, tc.pad)
+			checks := bytes.Count(hardImg, tc.check)
+			if tc.target == "x86-64-linux" {
+				pads -= checks
+			}
+			if pads != 2 {
+				t.Errorf("the -harden image carries %d stubs, want one for the closure and one for twice", pads)
+			}
+			if checks == 0 {
+				t.Error("the -harden image carries no indirect-call check")
+			}
+
+			asmPath := filepath.Join(dir, "hard.s")
+			compile(asmPath, "-harden", "-emit", "asm")
+			asm, err := os.ReadFile(asmPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stub := ".quad .Lfern_cfi___fn_twice$wrap__" + strings.TrimPrefix(tc.entry, ".") + "\n"
+			if bytes.Count(asm, []byte(stub)) != 1 {
+				t.Fatalf("the emitted text holds %d references to the stub of twice, want one:\n%s", bytes.Count(asm, []byte(stub)), stub)
+			}
+			link := func(name string, body []byte) string {
+				t.Helper()
+				s := filepath.Join(dir, name+".s")
+				bin := filepath.Join(dir, name)
+				if err := os.WriteFile(s, body, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				args := []string{"-static", "-nostdlib", s, "-o", bin}
+				if tc.target == "x86-64-linux" {
+					args = append([]string{"-no-pie"}, args...)
+				}
+				if msg, err := exec.Command(tc.gcc, args...).CombinedOutput(); err != nil {
+					t.Fatalf("link %s: %v\n%s", name, err, msg)
+				}
+				return bin
+			}
+			if out, errout, code := run(link("linked", asm)); out != cfiWant || code != 0 {
+				t.Fatalf("the linked control printed %q with exit %d (stderr %q)", out, code, errout)
+			}
+			for _, forged := range []struct{ name, target string }{
+				{"real-entry", "__fn_twice$wrap" + tc.entry},
+				{"same-signature", "__fn_thrice" + tc.entry},
+				{"data", "__fern_cfi_fail_msg"},
+			} {
+				patched := bytes.Replace(asm, []byte(stub), []byte(".quad "+forged.target+"\n"), 1)
+				out, errout, code := run(link(forged.name, patched))
+				if code != 134 || !strings.HasPrefix(errout, cfiCause) {
+					t.Errorf("%s: exit %d, stdout %q, stderr %q; want exit 134 with the CFI cause", forged.name, code, out, errout)
+				}
 			}
 		})
 	}

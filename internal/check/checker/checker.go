@@ -1484,6 +1484,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{},
 		Result: ast.BoolType{},
 	}
+	c.info.FuncSigs["prctl_query"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
 	c.info.FuncSigs["process_alive"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.BoolType{},

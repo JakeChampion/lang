@@ -38,6 +38,10 @@ pub function canary(): string {
   return "fern: stack canary mismatch";
 }
 
+pub function cfi(): string {
+  return "fern: indirect call to an address that is not a function";
+}
+
 pub function free_range(): string {
   return "fern: release of memory outside the heap";
 }

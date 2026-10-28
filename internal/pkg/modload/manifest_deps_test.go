@@ -300,3 +300,40 @@ func TestLoadWorkspaceIsolation(t *testing.T) {
 		t.Fatal("undeclared workspace sibling should not resolve")
 	}
 }
+
+// A lock written before the manifest raised its demand must not load the
+// older package; a lock at or above the demand loads.
+func TestLoadStaleLockErrors(t *testing.T) {
+	hex64 := strings.Repeat("ab", 32)
+	cache := writeTree(t, map[string]string{
+		"pkgs/" + hex64 + "/fern.toml": "[package]\nname = \"helper\"\n",
+		"pkgs/" + hex64 + "/lib.fern":  "pub function answer(): i32 { return 42; }\n",
+	})
+	t.Setenv("FERN_CACHE_DIR", cache)
+	lock := "[[package]]\nname = \"helper\"\nversion = \"1.0.0\"\nurl = \"https://example.invalid/helper.tar.gz\"\nhash = \"sha256:" + hex64 + "\"\n"
+	for _, tc := range []struct {
+		name, demand, wantErr string
+	}{
+		{"at-demand", "1.0.0", ""},
+		{"above-demand", "0.9.0", ""},
+		{"stale", "1.2.0", `dependency "helper" is locked at 1.0.0 but`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := writeTree(t, map[string]string{
+				"app/fern.toml": "[package]\nname = \"app\"\n[dependencies]\nhelper = \"" + tc.demand + "\"\n",
+				"app/fern.lock": lock,
+				"app/main.fern": `import "helper";` + "\n" + `function main(): i32 { return helper.answer(); }`,
+			})
+			_, _, err := Load(filepath.Join(root, "app", "main.fern"))
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("a lock at or above the demand must load: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) || !strings.Contains(err.Error(), "-resolve") {
+				t.Fatalf("want an error %q pointing at `fern -resolve`, got %v", tc.wantErr, err)
+			}
+		})
+	}
+}

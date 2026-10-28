@@ -77,6 +77,23 @@ jobs:
       - name: fuzz parse round-trip (arch-independent, x86 only)
         if: ${{ !cancelled() && matrix.host == 'x86_64' }}
         run: gotestsum --format testname -- -fuzz=FuzzGenerate_ParseRoundTrips -fuzztime=60s -run=^$ ./internal/testing/fernsmith
+      # The boundary targets drive self-host binaries (the CLI and two
+      # drivers), which run natively on x86-64 only; each gets a short
+      # budget from the committed seeds (docs/security/FUZZING-AUDIT.md).
+      #
+      # A fuzz run that never leaves baseline gathering (a worker still
+      # building its driver when the budget ends) exits 0, so the marker the
+      # engine prints when the workers start is required as well.
+      - name: fuzz the manifest reader, the IR verifiers and the assemblers (x86 only)
+        if: ${{ !cancelled() && matrix.host == 'x86_64' }}
+        run: |
+          set -euo pipefail
+          for target in FuzzSelfHostManifest FuzzSelfHostIRVerify FuzzSelfHostX86Assembler FuzzSelfHostArm64Assembler; do
+            log="$RUNNER_TEMP/$target.log"
+            go test -fuzz="^${target}\$" -fuzztime=30s -fuzzminimizetime=10x -run=^$ ./internal/testing/e2ecompiler > "$log" 2>&1 || { cat "$log"; exit 1; }
+            grep -q "now fuzzing with" "$log" || { cat "$log"; echo "::error::$target never left baseline gathering within its budget"; exit 1; }
+            grep "execs:" "$log" | tail -n 1
+          done
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

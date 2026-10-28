@@ -5131,6 +5131,9 @@ function os_query_site(own r: irtables.LowerState, ins: ssa.SInst): Lowered {
   if (ins.str == "disable_core_dumps") {
     return Lowered { found: true, r: emit(r, ir.op_disable_core_dumps()) };
   }
+  if (ins.str == "prctl_query") {
+    return Lowered { found: true, r: emit(r, ir.op_prctl_query()) };
+  }
   if (ins.str == "uname_field") {
     return Lowered { found: true, r: emit(r, ir.op_uname_field()) };
   }

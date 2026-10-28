@@ -3043,6 +3043,9 @@ function call_host_system(name: string, args: Value[]): Value {
   if (name == "cpu_count") {
     return v_int(cpu_count());
   }
+  if (name == "prctl_query") {
+    return v_int64(prctl_query(arg_i32(args, 0)));
+  }
   if (name == "getcwd") {
     return string_result_value(getcwd());
   }

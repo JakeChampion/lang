@@ -1,0 +1,266 @@
+import "std/test";
+import "std/mitigations";
+import "std/option";
+import "std/string";
+
+function le_word(bytes: u8[], v: i64): u8[] {
+  let i: i32 = 0;
+  while (i < 8) {
+    bytes = bytes.append((v >> 8 * i & 255i64) as u8);
+    i = i + 1;
+  }
+  return bytes;
+}
+
+function auxv_sample(): u8[] {
+  let b: u8[] = [];
+  b = le_word(b, 33i64);
+  b = le_word(b, 4096i64);
+  b = le_word(b, 16i64);
+  b = le_word(b, 1i64 << 30 | 1i64 << 31 | 7i64);
+  b = le_word(b, 26i64);
+  b = le_word(b, 1i64 << 17 | 1i64 << 18);
+  b = le_word(b, 0i64);
+  b = le_word(b, 0i64);
+  b = le_word(b, 51i64);
+  b = le_word(b, 99i64);
+  return b;
+}
+
+function image_with(line: string): u8[] {
+  let img: u8[] = "ELF junk before ".bytes();
+  for c in ("FERNBUILD1 " + line + "\nmore junk\n").bytes() {
+    img = img.append(c);
+  }
+  return img;
+}
+
+function test_build_line(): test.TestOutcome {
+  let line: string = "target=x86-64-linux profile=hardened harden=1 pie=1 sanitize=0 backtrace=1 size=0 shared=0 heap_limit=17179869184";
+  match (mitigations.build_line(image_with(line))) {
+    Some(found) => {
+      return test.assert_eq(found, line);
+    },
+    None => {
+      return test.fail("the line was not found");
+    }
+  }
+}
+
+function test_build_line_absent(): test.TestOutcome {
+  if (mitigations.build_line("no manifest here".bytes()).is_some()) {
+    return test.fail("a line was found in bytes without one");
+  }
+  if (mitigations.build_line([]).is_some()) {
+    return test.fail("a line was found in an empty image");
+  }
+  return test.pass();
+}
+
+function test_parse_build(): test.TestOutcome {
+  match (mitigations.parse_build("target=arm64-linux profile=diagnostic harden=0 pie=0 sanitize=1 backtrace=1 size=0 shared=0 heap_limit=67108864")) {
+    Some(b) => {
+      if (b.target != "arm64-linux" || b.profile != "diagnostic") {
+        return test.fail("target or profile");
+      }
+      if (b.harden || b.pie || !b.sanitize || !b.backtrace || b.size || b.shared) {
+        return test.fail("a flag");
+      }
+      return test.assert_eq(b.heap_limit.to_string(), "67108864");
+    },
+    None => {
+      return test.fail("no build");
+    }
+  }
+}
+
+function test_parse_build_unknown(): test.TestOutcome {
+  match (mitigations.parse_build("target=x86-64-linux novelty=7 harden=1 trailer")) {
+    Some(b) => {
+      if (b.target != "x86-64-linux" || !b.harden) {
+        return test.fail("the known fields");
+      }
+      return test.pass();
+    },
+    None => {
+      return test.fail("no build");
+    }
+  }
+}
+
+function test_manifest_rows(): test.TestOutcome {
+  let rows: mitigations.Status[] = mitigations.manifest();
+  if (target_os() != "linux") {
+    return test.assert_eq(rows.len().to_string(), "5");
+  }
+  if (rows.len() < 5) {
+    return test.fail("fewer than five rows");
+  }
+  if (rows[0].name != "nx-stack" || rows[1].name != "canary") {
+    return test.fail("the row order");
+  }
+  for row in rows {
+    let line: string = row.line();
+    if (!line.contains(" compiled=") || !line.contains(" verified=")) {
+      return test.fail("the line shape: " + line);
+    }
+    if (row.compiled != "yes" && row.compiled != "no" && row.compiled != "unknown") {
+      return test.fail("the compiled cell: " + row.compiled);
+    }
+  }
+  return test.pass();
+}
+
+function test_auxv_keys(): test.TestOutcome {
+  let b: u8[] = auxv_sample();
+  match (mitigations.auxv_value(b, 16i64)) {
+    Some(v) => {
+      if (v != (1i64 << 30 | 1i64 << 31 | 7i64)) {
+        return test.fail("hwcap " + v.to_string());
+      }
+    },
+    None => {
+      return test.fail("hwcap missing");
+    }
+  }
+  match (mitigations.auxv_value(b, 26i64)) {
+    Some(v) => {
+      if (v != (1i64 << 17 | 1i64 << 18)) {
+        return test.fail("hwcap2 " + v.to_string());
+      }
+    },
+    None => {
+      return test.fail("hwcap2 missing");
+    }
+  }
+  return test.pass();
+}
+
+function test_auxv_stops_at_null(): test.TestOutcome {
+  let b: u8[] = auxv_sample();
+  return test.assert_true(mitigations.auxv_value(b, 51i64).is_none());
+}
+
+function test_auxv_truncated(): test.TestOutcome {
+  let b: u8[] = auxv_sample();
+  if (mitigations.auxv_value(b[0:40], 26i64).is_some()) {
+    return test.fail("a truncated pair answered");
+  }
+  let empty: u8[] = [];
+  if (mitigations.auxv_value(empty, 16i64).is_some()) {
+    return test.fail("an empty vector answered");
+  }
+  return test.pass();
+}
+
+function test_feature_tokens(): test.TestOutcome {
+  let arm: string = "processor\t: 0\nBogoMIPS\t: 50.00\nFeatures\t: fp asimd paca pacg btix mte\nCPU implementer\t: 0x41\n";
+  if (mitigations.feature_listed(arm, "paca").to_string() != "yes") {
+    return test.fail("paca");
+  }
+  if (mitigations.feature_listed(arm, "bti").to_string() != "no") {
+    return test.fail("btix matched bti");
+  }
+  if (mitigations.feature_listed(arm, "mte").to_string() != "yes") {
+    return test.fail("mte at the line end");
+  }
+  if (mitigations.feature_listed(arm, "fp").to_string() != "yes") {
+    return test.fail("fp at the line start");
+  }
+  let x86: string = "processor\t: 0\nflags\t\t: fpu nx user_shstk ibt\nbugs\t\t: spectre_v1\n";
+  if (mitigations.feature_listed(x86, "user_shstk").to_string() != "yes") {
+    return test.fail("user_shstk");
+  }
+  if (mitigations.feature_listed(x86, "shstk").to_string() != "no") {
+    return test.fail("shstk is not user_shstk");
+  }
+  return test.pass();
+}
+
+function test_feature_unknown_without_a_line(): test.TestOutcome {
+  if (mitigations.feature_listed("", "bti").to_string() != "unknown") {
+    return test.fail("empty text");
+  }
+  if (mitigations.feature_listed("processor\t: 0\nmodel name\t: x\n", "nx").to_string() != "unknown") {
+    return test.fail("no flags line");
+  }
+  return test.pass();
+}
+
+function test_thread_features(): test.TestOutcome {
+  let status: string = "Name:\tprog\nx86_Thread_features:\tshstk\nx86_Thread_features_locked:\t\n";
+  match (mitigations.thread_features(status)) {
+    Some(f) => {
+      if (f.len() != 1 || f[0] != "shstk") {
+        return test.fail("features " + f.len().to_string());
+      }
+    },
+    None => {
+      return test.fail("line missing");
+    }
+  }
+  let locked_only: string = "Name:\tprog\nx86_Thread_features_locked:\tshstk\n";
+  if (mitigations.thread_features(locked_only).is_some()) {
+    return test.fail("the locked line counted");
+  }
+  if (mitigations.thread_features("Name:\tprog\n").is_some()) {
+    return test.fail("absent line");
+  }
+  return test.pass();
+}
+
+function test_mapping_flag(): test.TestOutcome {
+  let smaps: string = "00400000-00401000 r-xp 00000000 00:00 0\nSize: 4 kB\nVmFlags: rd ex mr me\n00401000-00402000 rw-p 00000000 00:00 0\nVmFlags: rd wr mr mw me bt\n";
+  if (mitigations.mapping_flag(smaps, "bt").to_string() != "yes") {
+    return test.fail("bt on the second mapping");
+  }
+  if (mitigations.mapping_flag(smaps, "b").to_string() != "no") {
+    return test.fail("b matched bt");
+  }
+  if (mitigations.mapping_flag("", "bt").to_string() != "unknown") {
+    return test.fail("empty smaps");
+  }
+  return test.pass();
+}
+
+function test_report_rows(): test.TestOutcome {
+  let rows: mitigations.Support[] = mitigations.report();
+  let names: string = "";
+  for row in rows {
+    names = names + row.name + " ";
+    for cell in [row.cpu.to_string(), row.kernel.to_string(), row.process.to_string()] {
+      if (cell != "yes" && cell != "no" && cell != "unknown") {
+        return test.fail(row.name + " cell " + cell);
+      }
+    }
+    let line: string = row.line();
+    if (!line.starts_with(row.name + " cpu=")) {
+      return test.fail("line " + line);
+    }
+  }
+  if (target_os() != "linux" && target_os() != "android") {
+    return test.assert_eq(rows.len(), 0);
+  }
+  if (target_arch() == "x86-64") {
+    return test.assert_eq(names, "shstk ibt ");
+  }
+  return test.assert_eq(names, "pac bti mte ");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/mitigations");
+  r = r.it("auxv keys", test_auxv_keys);
+  r = r.it("auxv stops at AT_NULL", test_auxv_stops_at_null);
+  r = r.it("auxv truncated", test_auxv_truncated);
+  r = r.it("feature tokens", test_feature_tokens);
+  r = r.it("feature unknown without a line", test_feature_unknown_without_a_line);
+  r = r.it("thread features", test_thread_features);
+  r = r.it("mapping flag", test_mapping_flag);
+  r = r.it("report rows", test_report_rows);
+  r = r.it("build line", test_build_line);
+  r = r.it("build line absent", test_build_line_absent);
+  r = r.it("parse build", test_parse_build);
+  r = r.it("parse build ignores unknown fields", test_parse_build_unknown);
+  r = r.it("manifest rows", test_manifest_rows);
+  return r.finish();
+}
