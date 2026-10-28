@@ -8,6 +8,7 @@ function __fern_task_park(set: i32[], timeout_ms: i32): i32 {
   let mode: i32 = __raw_load_ptr(rec, 0) as i32;
   if (mode == 2) {
     __raw_store_ptr(rec, 0, 0 as usize);
+    __raw_store_ptr(st, 6, 0 as usize);
     if (__raw_load_ptr(rec, 3) != 0 as usize) {
       return 0 - 2;
     }
@@ -17,6 +18,7 @@ function __fern_task_park(set: i32[], timeout_ms: i32): i32 {
     return 0 - 2;
   }
   __raw_store_ptr(rec, 0, 1 as usize);
+  __raw_store_ptr(st, 6, 1 as usize);
   __raw_store_ptr(rec, 1, timeout_ms as usize);
   let n: i32 = set.len();
   let buf: usize = __raw_load_ptr(rec, 8);

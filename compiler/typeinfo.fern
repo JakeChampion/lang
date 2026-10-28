@@ -201,6 +201,43 @@ pub function lanes_spelling(width: i32): string {
   return "";
 }
 
+// vec_lanes is the lane type spelled `Vec[n, elem]`, or "" when the portable
+// tier has none.
+pub function vec_lanes(n: string, elem: string): string {
+  for lanes in lane_types() {
+    let pair: string[] = lane_vec_spellings(lanes);
+    if (pair[0] == n && pair[1] == elem) {
+      return lanes;
+    }
+  }
+  return "";
+}
+
+// lane_types are the lane types of the portable tier.
+pub function lane_types(): string[] {
+  return ["f64x2", "f32x4"];
+}
+
+// lane_vec_spellings are the N and T of `Vec[N, T]` for a lane type.
+pub function lane_vec_spellings(lanes: string): string[] {
+  if (lanes == "f64x2") {
+    return ["2", "f64"];
+  }
+  if (lanes == "f32x4") {
+    return ["4", "f32"];
+  }
+  return [];
+}
+
+// lane_vec_args are the arguments of `Vec[N, T]` that a lane type binds.
+pub function lane_vec_args(t: Type): Type[] {
+  let TypeLanes(l) = t else {
+    return [];
+  };
+  let nt: string[] = lane_vec_spellings(lanes_spelling(l.width));
+  return [TypeConst { value: nt[0] }, TypeFloat { width: l.width, polymorphic: false }];
+}
+
 pub function lanes_width(t: string): i32 {
   if (t == "f64x2") {
     return 64;

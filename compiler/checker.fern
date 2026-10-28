@@ -5310,6 +5310,20 @@ function bound_type_arg_diags(sig: FuncSig, c: ast.ExprCall, ai: i32, at: typein
   return out;
 }
 
+// vec_arg_diags is the E038 for an argument that is none of the lane types a
+// generic `Vec[N, T]` parameter can stand for.
+function vec_arg_diags(sig: FuncSig, c: ast.ExprCall, ai: i32, at: typeinfo.Type, s: Scope): util.Diag[] {
+  let none: util.Diag[] = [];
+  if (ai >= sig.param_type_names.len() || is_unknown(at) || is_type_variable(at) || !type_contains_unknown(sig.param_types[ai])) {
+    return none;
+  }
+  let pref: parser.TypeRef = sig_param_ref(sig, ai);
+  if (!builtin_vec(pref, s.type_names()) || util.has_str(vec_lane_types(pref, sig.all_type_params), typeinfo.spelling(at))) {
+    return none;
+  }
+  return [dg_at("E038", arg_subject(c, ai + 1) + ": expected " + parser.render_type_ref(pref) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai]))];
+}
+
 function param_has_bindings(sig: FuncSig, ai: i32, names: string[]): boolean {
   return names.len() > 0 && type_contains_unknown(sig.param_types[ai]) && type_ref_names_any(sig_param_ref(sig, ai), names);
 }
@@ -7306,6 +7320,9 @@ function type_from_ref_names(r: parser.TypeRef, tn: TypeNames): typeinfo.Type {
   if (r.is_view) {
     return t_view(type_from_ref_names(r.args[0], tn));
   }
+  if (builtin_vec(r, tn)) {
+    return vec_type(r, [], [], tn);
+  }
   let name: string = parser.render_type_ref(r);
   if (name.len() >= 5 && slice_unchecked(name, 0, 4) == "dyn ") {
     return t_dyn(slice_unchecked(name, 4, name.len()) + "");
@@ -7487,6 +7504,9 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
   if (r.base == "Map" && r.args.len() == 2) {
     return t_map(type_from_ref_subst(r.args[0], tparams, targs, tn), type_from_ref_subst(r.args[1], tparams, targs, tn));
   }
+  if (builtin_vec(r, tn)) {
+    return vec_type(r, tparams, targs, tn);
+  }
   let whole: typeinfo.Type = type_from_ref_names(r, tn);
   if (r.is_tuple || r.args.len() == 0) {
     return whole;
@@ -7503,6 +7523,37 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
     ai = ai + 1;
   }
   return with_nominal_args(whole, sargs);
+}
+
+// builtin_vec is a `Vec[N, T]` spelling where no declared type is named Vec.
+function builtin_vec(r: parser.TypeRef, tn: TypeNames): boolean {
+  return r.base == "Vec" && r.args.len() == 2 && r.array_depth == 0 && !r.is_tuple && !r.is_view && e064_unknown_bare("Vec", tn);
+}
+
+// vec_type is a lane type once N and T are a pair of the portable tier. A
+// `Vec[N, T]` that the enclosing function names is its own type parameter.
+function vec_type(r: parser.TypeRef, tparams: string[], targs: typeinfo.Type[], tn: TypeNames): typeinfo.Type {
+  let at: i32 = util.index_of_str(tparams, parser.render_type_ref(r));
+  if (at >= 0 && at < targs.len()) {
+    return targs[at];
+  }
+  let n: typeinfo.Type = type_from_ref_subst(r.args[0], tparams, targs, tn);
+  let elem: typeinfo.Type = type_from_ref_subst(r.args[1], tparams, targs, tn);
+  if (is_unknown(n) && is_type_variable(n) || is_unknown(elem) && is_type_variable(elem)) {
+    return t_unknown(TPARAM_MARK + parser.render_type_ref(r));
+  }
+  if (is_type_variable(n) || is_type_variable(elem)) {
+    return typeinfo.TypeErased { name: parser.render_type_ref(r) };
+  }
+  let ns: string = "";
+  if let typeinfo.TypeConst(c) = n {
+    ns = c.value;
+  }
+  let lanes: string = typeinfo.vec_lanes(ns, typeinfo.spelling(elem));
+  if (lanes.len() > 0) {
+    return t_lanes(typeinfo.lanes_width(lanes));
+  }
+  return t_unknown(parser.render_type_ref(r) + " names no lane type");
 }
 
 function with_nominal_args(t: typeinfo.Type, args: typeinfo.Type[]): typeinfo.Type {
@@ -7627,6 +7678,78 @@ function erased_tparams(tparams: string[]): typeinfo.Type[] {
   return erased;
 }
 
+// generic_vecs are the `Vec[N, T]` spellings in a signature that name a type
+// parameter. The body sees each one as a type parameter of its own.
+function generic_vecs(fd: parser.FuncDecl, tps: string[], tn: TypeNames): string[] {
+  let out: string[] = [];
+  let spellings: string[] = [fd.ret_type];
+  for p in fd.params {
+    spellings = spellings.append(p.type_name);
+  }
+  for sp in spellings {
+    out = vecs_in_ref(parser.parse_type_ref(sp), tps, tn, out);
+  }
+  return out;
+}
+
+function vecs_in_ref(r: parser.TypeRef, tps: string[], tn: TypeNames, out: string[]): string[] {
+  if (builtin_vec(r, tn) && type_ref_names_any(r, tps) && vec_lane_types(r, tps).len() > 0) {
+    let v: string = parser.render_type_ref(r);
+    if (!util.has_str(out, v)) {
+      out = out.append(v);
+    }
+    return out;
+  }
+  for a in r.args {
+    out = vecs_in_ref(parser.ref_without_own(a), tps, tn, out);
+  }
+  return out;
+}
+
+// vec_bounds are the traits that every lane type a generic `Vec[N, T]` can
+// stand for implements.
+function vec_bounds(r: parser.TypeRef, tps: string[], s: Scope): string {
+  let common: string[] = [];
+  let first: boolean = true;
+  for lanes in vec_lane_types(r, tps) {
+    let have: string[] = [];
+    for im in s.impls {
+      if (im.impl_type == lanes && im.type_params.len() == 0) {
+        have = have.append(parser.impl_trait_key(im));
+      }
+    }
+    if (first) {
+      common = have;
+      first = false;
+    } else {
+      let kept: string[] = [];
+      for t in common {
+        if (util.has_str(have, t)) {
+          kept = kept.append(t);
+        }
+      }
+      common = kept;
+    }
+  }
+  return common.join(" + ");
+}
+
+// vec_lane_types are the lane types a `Vec[N, T]` can stand for.
+function vec_lane_types(r: parser.TypeRef, tps: string[]): string[] {
+  let out: string[] = [];
+  for lanes in typeinfo.lane_types() {
+    let fit: string[] = typeinfo.lane_vec_spellings(lanes);
+    if (vec_arg_fits(r.args[0], fit[0], tps) && vec_arg_fits(r.args[1], fit[1], tps)) {
+      out = out.append(lanes);
+    }
+  }
+  return out;
+}
+
+function vec_arg_fits(a: parser.TypeRef, want: string, tps: string[]): boolean {
+  return a.args.len() == 0 && (a.base == want || util.has_str(tps, a.base));
+}
+
 function rigid_tparams(tparams: string[]): typeinfo.Type[] {
   let rigid: typeinfo.Type[] = [];
   for tp in tparams {
@@ -7697,6 +7820,9 @@ function gc_bind_param(r: parser.TypeRef, at: typeinfo.Type, tparams: string[], 
     return (ns, ts);
   }
   let nargs: typeinfo.Type[] = nominal_args(at);
+  if (builtin_vec(r, tn)) {
+    nargs = typeinfo.lane_vec_args(at);
+  }
   if (r.args.len() > 0 && nargs.len() == r.args.len()) {
     let ni: i32 = 0;
     while (ni < r.args.len()) {
@@ -7856,6 +7982,10 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
     if (util.has_str(rcv, tps[ri])) {
       tbs = tbs.with(ri, parser.CONST_BOUND);
     }
+  }
+  for v in generic_vecs(fd, tps, s.type_names()) {
+    tps = tps.append(v);
+    tbs = tbs.append(vec_bounds(parser.parse_type_ref(v), tps, s));
   }
   s = s.with_tparams(tps, tbs);
   if (fd.ret_type.len() > 0) {
@@ -13881,6 +14011,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
               let at: typeinfo.Type = check_expr(c.args[ai], s);
               out = util.append_diags(out, int_dest_range_diags(c.args[ai], sig.param_types[ai]));
               out = util.append_diags(out, bound_type_arg_diags(sig, c, ai, at, s, cbn, cbt));
+              out = util.append_diags(out, vec_arg_diags(sig, c, ai, at, s));
               out = util.append_diags(out, ctor_payload_diags(c.args[ai], sig.param_types[ai], s));
               let bound_checked: boolean = param_has_bindings(sig, ai, cbn);
               if (!bound_checked && !(sig.all_type_params.len() > 0 && type_contains_unknown(sig.param_types[ai]) && binds_nothing(c.args[ai], s)) && !is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to_dest(c.args[ai], sig.param_types[ai], s) && !view_arg_borrow(at, sig.param_types[ai]) && !coercible(at, sig.param_types[ai], s)) {
@@ -14085,6 +14216,8 @@ function type_param_method_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv
     let tph: AssocHit = tp_assoc_req(s, tpn, mfa.field);
     if (tph.found) {
       out = out.append(dg_at("E021", "\"" + mfa.field + "\" is an associated function of trait " + tph.owner + ", not a method; call it as " + tpn + "." + mfa.field + "(...)", c.line, c.col));
+    } else if (!tp_bound_provides(s, tpn, mfa.field) && util.str_has_prefix(tpn, "Vec[")) {
+      out = out.append(dg_at("E021", "no method \"" + mfa.field + "\" on " + tpn + ": no trait that every lane type it can be implements provides it", c.line, c.col));
     } else if (!tp_bound_provides(s, tpn, mfa.field)) {
       out = out.append(dg_at("E021", "no method \"" + mfa.field + "\" on type parameter " + tpn + "; add a trait bound such as [" + tpn + ": SomeTrait] that provides it", c.line, c.col));
     } else {
@@ -20480,6 +20613,15 @@ function plain_ident(name: string): boolean {
   return name.len() > 0;
 }
 
+// unknown_type_diag reports a type spelling that names nothing: E096 for a
+// `Vec[N, T]` with no lane type on the portable tier, E064 otherwise.
+function unknown_type_diag(name: string, traits: string[], line: i32, col: i32): util.Diag {
+  if (util.str_has_prefix(name, "Vec[")) {
+    return dg_at("E096", name + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", line, col);
+  }
+  return dg_at("E064", "cannot find type \"" + util.demangle(name) + "\" in this scope" + unknown_type_hint(name, traits), line, col);
+}
+
 function e064_unknown_name(type_name: string, tn: TypeNames, extra_known: string[], tparams: string[]): string {
   return e064_unknown_name_tref(parser.parse_type_ref(type_name), tn, extra_known, tparams);
 }
@@ -20498,6 +20640,12 @@ function e064_unknown_name_tref(tr: parser.TypeRef, tn: TypeNames, extra_known: 
   }
   if (tr.is_tuple || parser.ref_is_fn_value(tr)) {
     return e064_component_unknown(parser.ref_ungroup(tr).args, tn, extra_known, tparams);
+  }
+  if (builtin_vec(tr, tn)) {
+    if (vec_lane_types(tr, tparams).len() == 0) {
+      return parser.render_type_ref(tr);
+    }
+    return e064_component_unknown(tr.args, tn, extra_known, tparams);
   }
   if (tr.args.len() > 0) {
     if (!parser.is_reserved_struct_name(tr.base) && !parser.is_reserved_enum_name(tr.base)) {
@@ -20851,7 +20999,7 @@ function e064_annot_diags(an: Annot[], tn: TypeNames, extra_known: string[], tpa
   for elem in an {
     let vu: string = e064_unknown_name(elem.type_name, tn, extra_known, tparams);
     if (vu.len() > 0) {
-      out = out.append(dg_at("E064", "cannot find type \"" + util.demangle(vu) + "\" in this scope" + unknown_type_hint(vu, traits), elem.line, elem.col));
+      out = out.append(unknown_type_diag(vu, traits, elem.line, elem.col));
     }
   }
   return out;
@@ -23517,12 +23665,12 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
         let pu: string = e064_unknown_name(e064_decl_spelling(param.type_name, param.fn_ret, param.fn_param_types), e064_tn, e064_extra, efn_tps);
         if (pu.len() > 0) {
           let (pl, pc) = param_pos(param, efn.line, efn.col);
-          signature_diags = signature_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(pu) + "\" in this scope" + unknown_type_hint(pu, e064_traits), pl, pc));
+          signature_diags = signature_diags.append(unknown_type_diag(pu, e064_traits, pl, pc));
         }
       }
       let ru: string = e064_unknown_name(e064_decl_spelling(efn.ret_type, efn.ret_fn_ret, efn.ret_fn_param_types), e064_tn, e064_extra, efn_tps);
       if (ru.len() > 0) {
-        signature_diags = signature_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(ru) + "\" in this scope" + unknown_type_hint(ru, e064_traits), efn.line, efn.col));
+        signature_diags = signature_diags.append(unknown_type_diag(ru, e064_traits, efn.line, efn.col));
       }
       let efn_annots: Annot[] = collect_annots(efn.body);
       signature_diags = util.append_diags(signature_diags, e064_annot_diags(efn_annots, e064_tn, e064_extra, efn_tps, e064_traits));
@@ -23635,7 +23783,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
         let fu: string = e064_unknown_name(e064_decl_spelling(field.type_name, field.fn_ret, field.fn_param_types), e064_tn, e064_extra, esd.type_params);
         if (fu.len() > 0) {
           let (fl, fc) = field_pos(field, esd.line, esd.col);
-          body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(fu) + "\" in this scope" + unknown_type_hint(fu, e064_traits), fl, fc));
+          body_diags = body_diags.append(unknown_type_diag(fu, e064_traits, fl, fc));
         }
       }
     }

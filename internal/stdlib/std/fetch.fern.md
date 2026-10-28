@@ -1900,9 +1900,19 @@ function __send_dialled[T: Transport](tr: T, req: Request, t: __Target, started:
 }
 
 function __origin_checked[T: Transport](tr: T, t: __Target, policy: Policy): Result[void, FetchError] {
-  if (policy.public_only && !t.direct) {
-    let checked: net.IpAddr[] = __resolve(tr, t.origin, true)?;
+  if (!policy.public_only || t.direct) {
+    return Ok(());
   }
+  // Every transport names and judges an IPv4 literal as itself.
+  if (!t.origin.contains(":")) {
+    match (net.ipv4_parse(t.origin)) {
+      Ok(a) => {
+        return __global_addr(a, a);
+      },
+      Err(_) => {}
+    }
+  }
+  let checked: net.IpAddr[] = __resolve(tr, t.origin, true)?;
   return Ok(());
 }
 
@@ -2522,12 +2532,15 @@ function __resolve[T: Transport](tr: T, host: string, guard: boolean): Result[ne
 }
 
 function __global_only(found: Lookup): Result[void, FetchError] {
-  let i: i32 = 0;
-  while (i < found.named.len()) {
-    if (!found.judged[i].is_global()) {
-      return Err(Blocked(found.named[i].to_string() + " is not a global address"));
-    }
-    i = i + 1;
+  for i in 0..found.named.len() {
+    __global_addr(found.named[i], found.judged[i])?;
+  }
+  return Ok(());
+}
+
+function __global_addr(named: net.IpAddr, judged: net.IpAddr): Result[void, FetchError] {
+  if (!judged.is_global()) {
+    return Err(Blocked(named.to_string() + " is not a global address"));
   }
   return Ok(());
 }

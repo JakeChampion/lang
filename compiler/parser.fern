@@ -7109,6 +7109,9 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
     p = p.advance();
   }
   let nm: string = base + "[" + canonicalise_type_args(inner) + "]";
+  if (!p.verbatim) {
+    nm = canon_vec(nm);
+  }
   while (p.peek_punct() == "::") {
     let pp: Par = p.advance();
     let pseg: string = pp.peek_ident();
@@ -8995,9 +8998,40 @@ pub function parse_type_ref(sin: string): TypeRef {
       gargs = gargs.append(parse_type_ref(gsegs[gi]));
       gi = gi + 1;
     }
-    return TypeRef { base: slice_unchecked(s, 0, lb) + "", args: gargs, array_depth: depth, is_tuple: false, is_fn: false, is_view: false };
+    let gbase: string = slice_unchecked(s, 0, lb) + "";
+    let lanes: string = vec_lanes(gbase, gargs);
+    if (lanes.len() > 0) {
+      return TypeRef { base: lanes, args: [], array_depth: depth, is_tuple: false, is_fn: false, is_view: false };
+    }
+    return TypeRef { base: gbase, args: gargs, array_depth: depth, is_tuple: false, is_fn: false, is_view: false };
   }
   return TypeRef { base: s, args: [], array_depth: depth, is_tuple: false, is_fn: false, is_view: false };
+}
+
+// canon_vec spells a `Vec[N, T]` of the portable tier as its lane type.
+pub function canon_vec(spelling: string): string {
+  if (!util.str_has_prefix(spelling, "Vec[")) {
+    return spelling;
+  }
+  let ref: TypeRef = parse_type_ref(spelling);
+  if (ref.args.len() == 0 && ref.array_depth == 0 && typeinfo.lanes_width(ref.base) > 0) {
+    return ref.base;
+  }
+  return spelling;
+}
+
+// vec_lanes is the lane type that `Vec[N, T]` names when N and T are a pair
+// of the portable tier, and "" for any other spelling.
+pub function vec_lanes(base: string, args: TypeRef[]): string {
+  if (base != "Vec" || args.len() != 2) {
+    return "";
+  }
+  for a in args {
+    if (a.args.len() > 0 || a.array_depth > 0 || a.is_tuple || a.is_fn || a.is_view) {
+      return "";
+    }
+  }
+  return typeinfo.vec_lanes(args[0].base, args[1].base);
 }
 
 function fn_parameter_type(spelling: string): string {
@@ -11618,7 +11652,7 @@ pub function subst_ty(name: string, tparams: string[], cts: string[]): string {
   }
   let lb: i32 = first_bracket(name);
   if (lb > 0 && slice_unchecked(name, name.len() - 1, name.len()) == "]") {
-    return slice_unchecked(name, 0, lb) + "[" + subst_ty_join(split_top_commas(slice_unchecked(name, lb + 1, name.len() - 1)), ", ", tparams, cts) + "]";
+    return canon_vec(slice_unchecked(name, 0, lb) + "[" + subst_ty_join(split_top_commas(slice_unchecked(name, lb + 1, name.len() - 1)), ", ", tparams, cts) + "]");
   }
   let ps: i32 = name.len() - 1;
   while (ps > 0 && ident_byte(name[ps] as i32)) {
@@ -24750,7 +24784,16 @@ pub function substitute_const_refs(mod: Module, t: ConstTable): Module {
 }
 
 pub function rewrite_assoc_const_reads(mod: Module): Module {
-  let types: string[] = ["Self", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "boolean", "string", "char"];
+  let qualifiers: string[] = [];
+  for imp in mod.imports {
+    qualifiers = qualifiers.append(import_qualifier(imp));
+  }
+  let types: string[] = [];
+  for prim in ["Self", "i32", "i64", "u8", "u32", "u64", "usize", "f32", "f64", "boolean", "string", "char"] {
+    if (!util.has_str(qualifiers, prim)) {
+      types = types.append(prim);
+    }
+  }
   for sd in mod.structs {
     types = types.append(sd.name);
   }

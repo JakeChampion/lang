@@ -5135,7 +5135,12 @@ func (c *checker) resolveTraitMethodForParam(paramName, field string) (ast.Trait
 	if decl == nil {
 		return ast.TraitMethod{}, "", false
 	}
-	for _, requirement := range c.expandTraitRequirements(decl.Bounds[paramName], decl.BoundArgs[paramName], ast.ParamType{Name: paramName}) {
+	return c.traitMethodIn(c.expandTraitRequirements(decl.Bounds[paramName], decl.BoundArgs[paramName], ast.ParamType{Name: paramName}), field)
+}
+
+// traitMethodIn finds field among the methods that requirements provide.
+func (c *checker) traitMethodIn(requirements []traitRequirement, field string) (ast.TraitMethod, string, bool) {
+	for _, requirement := range requirements {
 		traitName := requirement.name
 		args := requirement.args
 		td, ok := c.info.Traits[traitName]
@@ -5816,6 +5821,10 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			for i := range args {
 				c.resolveType(&args[i], params, pos)
 			}
+			if lanes, ok := vecLanes(args); ok && c.isBuiltinVec(t.Name, args) {
+				*slot = lanes
+				return
+			}
 			*slot = ast.StructType{Name: t.Name, Args: args}
 		}
 	case ast.EnumType:
@@ -5823,6 +5832,14 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 		copy(args, t.Args)
 		for i := range args {
 			c.resolveType(&args[i], params, pos)
+		}
+		if c.isBuiltinVec(t.Name, args) {
+			if lanes, ok := vecLanes(args); ok {
+				*slot = lanes
+				return
+			}
+			*slot = ast.StructType{Name: t.Name, Args: args}
+			return
 		}
 		if sd, ok := c.info.Structs[t.Name]; ok {
 			if len(sd.TypeParams) != len(args) {
@@ -6001,6 +6018,16 @@ func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
 func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Position) {
 	switch x := t.(type) {
 	case ast.StructType:
+		if c.isBuiltinVec(x.Name, x.Args) {
+			if len(vecLaneTypes(x.Args)) == 0 {
+				c.errfCode(pos, "E096", "%s names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", x)
+				return
+			}
+			for _, a := range x.Args {
+				c.checkTypeKnown(a, params, pos)
+			}
+			return
+		}
 		if !c.knownTypeName(x.Name, params) {
 			c.errfCode(pos, "E064", "cannot find type %q in this scope%s", demangle(x.Name), c.unknownTypeHint(x.Name))
 			return
@@ -6412,11 +6439,21 @@ func (c *checker) compositeOpOverload(n *ast.Binary, lt, rt ast.Type, s *scope) 
 		return nil, false
 	}
 	opMethod := arithOpMethod[n.Op]
-	if pt, ok := lt.(ast.ParamType); ok {
+	lanes, isVec := c.genericVec(lt)
+	if pt, ok := lt.(ast.ParamType); ok || isVec {
 		if opMethod == "" {
 			return nil, false
 		}
-		if _, _, found := c.resolveTraitMethodForParam(pt.Name, opMethod); !found {
+		if isVec && len(lanes) == 0 {
+			return lt, true
+		}
+		found := false
+		if isVec {
+			_, _, found = c.resolveTraitMethodForVec(lanes, lt, opMethod)
+		} else {
+			_, _, found = c.resolveTraitMethodForParam(pt.Name, opMethod)
+		}
+		if !found {
 			return nil, false
 		}
 		call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: opMethod}, Args: []ast.Expr{n.Right}}
@@ -7010,6 +7047,9 @@ func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
 		for i := range x.Args {
 			args[i] = substituteType(x.Args[i], sub)
 		}
+		if lanes, ok := vecLanes(args); ok && x.Name == "Vec" {
+			return lanes
+		}
 		return ast.StructType{Name: x.Name, Args: args}
 	case ast.ArrayType:
 		return ast.ArrayType{Elem: substituteType(x.Elem, sub)}
@@ -7106,6 +7146,9 @@ func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) 
 		return true
 	}
 	if e, ok := expected.(ast.StructType); ok {
+		if l, ok := actual.(ast.LanesType); ok && c.isBuiltinVec(e.Name, e.Args) {
+			return c.unifyType(e.Args[0], ast.ConstArg{Value: int64(l.Lanes())}, sub) && c.unifyType(e.Args[1], ast.FloatType{Width: l.Width}, sub)
+		}
 		a, ok := actual.(ast.StructType)
 		if !ok || a.Name != e.Name || len(a.Args) != len(e.Args) {
 			return false
@@ -13745,8 +13788,25 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			if tt == nil {
 				return nil
 			}
-			if pt, ok := tt.(ast.ParamType); ok {
-				tm, boundTrait, found := c.resolveTraitMethodForParam(pt.Name, fa.Field)
+			vlanes, isVec := c.genericVec(tt)
+			if pt, ok := tt.(ast.ParamType); ok || isVec {
+				var tm ast.TraitMethod
+				var boundTrait string
+				var found bool
+				name := pt.Name
+				if isVec {
+					name = tt.String()
+					tm, boundTrait, found = c.resolveTraitMethodForVec(vlanes, tt, fa.Field)
+				} else {
+					tm, boundTrait, found = c.resolveTraitMethodForParam(pt.Name, fa.Field)
+				}
+				if isVec && len(vlanes) == 0 {
+					return nil
+				}
+				if !found && isVec {
+					c.errfCode(n.P, "E021", "no method %q on %s: no trait that every lane type it can be implements provides it", fa.Field, name)
+					return nil
+				}
 				if !found {
 					c.errfCode(n.P, "E021",
 						"no method %q on type parameter %s; add a trait bound such as [%s: SomeTrait] that provides it",
@@ -13756,7 +13816,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				if tm.Assoc {
 					c.errfCode(n.P, "E021",
 						"%q is an associated function of trait %s, not a method; call it as %s.%s(...)",
-						fa.Field, boundTrait, pt.Name, fa.Field)
+						fa.Field, boundTrait, name, fa.Field)
 					return nil
 				}
 				wantParams := tm.Params[1:]

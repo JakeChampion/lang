@@ -10,7 +10,7 @@ var mathCases = []struct {
 	main string
 	exit int
 }{
-	{"i32-max", "import \"std/math\";\nfunction main(): i32 { return math.i32_max() - 2147483637; }\n", 10},
+	{"pi-const", "import \"std/math\";\nfunction main(): i32 { return (math.PI * 3.0) as i32; }\n", 9},
 	{"pack-rgb", "import \"std/math\";\nfunction main(): i32 { return math.pack_rgb(0, 0, 20); }\n", 20},
 	{"random-bytes-len", "import \"std/math\";\nfunction main(): i32 { let b: u8[] = random_bytes(7); return b.len(); }\n", 7},
 }

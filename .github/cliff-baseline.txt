@@ -1,3 +1,4 @@
+# 2026-10-28: Perf run 40717823865 on #13803 (merged with main at 903c9a49) measured 331,386 crossings, 14.8% fewer. The bytes stay within tolerance.
 # 2026-10-28: Exact reports from CI run 40620158743 at c63e488b4 on PR #13718.
 # Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
 # 2026-10-28: scripts/cliff-bench on #13726 (merged with main at 5acfabebb). The last pin predates #13677, which grew checker.fern with the unsafe obligation pass and the handle rules.
@@ -130,4 +131,4 @@
 # Main measured these values at eb0e5fdc0, and the run on #13768 agrees.
 
 x86_64/checker.cliff_bytes	40432712
-x86_64/checker.cliff_count	388867
+x86_64/checker.cliff_count	331386

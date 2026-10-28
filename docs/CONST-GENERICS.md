@@ -1,7 +1,8 @@
 # Const generics
 
-Status: [plan] CG1 ships. A function, a struct, an enum, a type alias, an
-impl or a trait takes a const parameter (§4). CG2 and CG3 are plans.
+Status: [plan] CG1 and CG2 ship. A function, a struct, an enum, a type
+alias, an impl or a trait takes a const parameter. `Vec[N, T]` is the second
+spelling of the lane types (§4). CG3 is a plan.
 
 A const parameter is a generic parameter whose argument is an integer, not a
 type. `Vec[N, T]` is the first consumer: it is a lane type of `N` lanes of
@@ -80,8 +81,7 @@ The design adds these codes:
 - E090: an argument of the wrong kind. That is a type for a const parameter,
   or an integer for a type parameter.
 - E091: an assignment to a const parameter.
-- A `Vec[N, T]` with no lane type on the portable tier (§2.2). It gets the
-  next free code when CG2 lands.
+- E096: a `Vec[N, T]` with no lane type on the portable tier (§2.2).
 
 A const parameter in the list of a method is a P001. A method gets the const
 parameters of its receiver from the receiver spelling:
@@ -98,16 +98,31 @@ does.
 
 `Vec` is a builtin type constructor with one const parameter and one type
 parameter. `Vec[2, f64]` is `f64x2` and `Vec[4, f32]` is `f32x4`. Each pair
-is one type with two spellings. A diagnostic prints the spelling the program
-wrote. The lane builtins and the `Lanes` surface do not change.
+is one type with two spellings, and the formatter keeps the spelling that
+the program wrote. A diagnostic names the lane type: `f64x2`, not
+`Vec[2, f64]`. The lane builtins and the `Lanes` surface do not change.
+
+The two pairs always name the lane types. A declared type named `Vec` takes
+every other application of the name.
 
 ### 2.2 Which pairs exist
 
 The portable tier has a lane type only where `N` lanes of `T` fill 128 bits
 and every target has the instructions: `Vec[2, f64]` and `Vec[4, f32]`.
-Any other pair is refused where it is written with concrete arguments. A
-generic `Vec[N, T]` is checked at each instance. `i32x4`, `i64x2` and `u8x16`
-join the table when their lane types land, through the same rule.
+Any other pair is refused (E096) where it is written with concrete
+arguments. A generic `Vec[N, T]` that no pair can fit, such as `Vec[3, T]`,
+is refused too. `i32x4`, `i64x2` and `u8x16` join the table when their lane
+types land, through the same rule.
+
+In a generic body, a `Vec[N, T]` that names a type parameter is a type
+parameter of its own. Its bounds are the traits that every lane type it can
+stand for implements. `Vec[N, T]` takes the traits that both `f64x2` and
+`f32x4` implement, and `Vec[N, f64]` takes the traits of `f64x2`.
+
+A method or an operator on a generic `Vec` resolves as it does for
+`T: Lanes`. A method that one of the lane types does not provide is E021. A
+call infers `N` and `T` from a lane type argument. An argument that is none
+of the lane types that the parameter can stand for is E038.
 
 ### 2.3 What it gives a kernel
 
@@ -118,9 +133,10 @@ by `N` in its body:
 function scaled[const N: i32](own xs: f64[], k: Vec[N, f64]): f64[]
 ```
 
-Today the same kernel takes a type parameter `T: Lanes` and reads `T.LANES`.
-`T.LANES` stays, and `Vec[N, T].LANES` is `N`. A lane index stays an integer
-literal (E038), so a body cannot read lane `i` for a variable `i`.
+The same kernel can also take a type parameter `T: Lanes` and read
+`T.LANES`. A body over `Vec[N, T]` reads `N`. The index of a lane builtin
+stays an integer literal (E038). The `lane` method of `Lanes` takes a
+variable index.
 
 ## 3. Where it goes
 
@@ -205,9 +221,11 @@ places each compiler has to change.
   arguments from the expected alias instance (#13784). The gate is the
   conformance case `const_param_aliases_traits` on every engine.
 
-- **CG2.** `Vec[N, T]` as the second spelling of the lane types, and
-  inference of `N` and `T` from a lane type. The gate is a kernel over
-  `Vec[N, T]` at both widths on every engine.
+- **CG2 (done).** `Vec[N, T]` as the second spelling of the lane types, and
+  inference of `N` and `T` from a lane type. A generic `Vec[N, T]` takes the
+  traits that every lane type it can stand for implements, and a pair with no
+  lane type is E096. The gate is the conformance case `vec_lane_kernels` on
+  every engine.
 
 - **CG3.** `std/simd` writes its kernels over `Vec[N, T]` where a lane count
   is named.
