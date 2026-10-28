@@ -192,6 +192,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"raw-name-shadow", `function __raw_data(s: string): i32 { return 1; } function main(): i32 { return __raw_data("a"); }`, nil},
 		{"array-truncate", `function main(): i32 { let xs: i32[] = [1, 2]; xs = xs.truncate(1); return xs.len(); }`, nil},
 		{"array-truncate-unused", `function main(): i32 { let xs: i32[] = [1, 2]; xs.truncate(1); return xs.len(); }`, []string{"E055"}},
+		{"generic-callee-concrete-param-empty-array", "struct S { a: i32[], n: i32 }\nfunction f[D](d: D, x: S): i32 { return x.n; }\nfunction main(): i32 { return f(1, []); }\n", []string{"E038"}},
+		{"generic-callee-concrete-param-in-generic-body", "struct S { a: i32[], n: i32 }\nfunction f[D](d: D, x: S): i32 { return x.n; }\nfunction g[D](d: D): i32 { return f(d, []); }\nfunction main(): i32 { return 0; }\n", []string{"E038"}},
+		{"generic-callee-type-param-empty-array", "function f[T](d: i32, x: T[]): i32 { return d; }\nfunction main(): i32 { let xs: i32[] = []; return f(1, xs) + f[i32](1, []); }\n", nil},
 		{"array-truncate-length-type", `function main(): i32 { let xs: i32[] = [1, 2]; xs = xs.truncate("1"); return xs.len(); }`, []string{"E038"}},
 		{"array-truncate-arity", `function main(): i32 { let xs: i32[] = [1, 2]; xs = xs.truncate(); return xs.len(); }`, []string{"E004"}},
 
