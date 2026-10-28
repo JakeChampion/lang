@@ -43,6 +43,8 @@ import "./lspquery";
 import "./lsprefs";
 import "./lsptokens";
 import "std/envflag";
+import "std/hex";
+import "std/crypto/ed25519";
 import "std/io";
 import "std/error";
 import "std/rand";
@@ -1827,6 +1829,46 @@ pub function ambient_diags(merged: parser.Module): util.Diag[] {
   return out;
 }
 
+// The refusal when IPATH.sig, 128 hex digits of an ed25519 signature
+// over the index bytes, is absent, malformed or does not verify against
+// the manifest's index_key. Empty when the signature verifies.
+function index_signature_error(ipath: string, isrc: string, key: string): string {
+  let spath: string = ipath + ".sig";
+  let pub_hex: string = slice_unchecked(key, 8, key.len()) + "";
+  let pubkey: u8[] = match (hex.decode(pub_hex)) { Ok(bytes) => bytes, Err(e) => [] };
+  let pk: ed25519.PublicKey = match (ed25519.public_key(pubkey)) { Ok(k) => k, Err(e) => { return "index " + ipath + ": index_key is not an ed25519 public key"; } };
+  let stext: string = "";
+  match (read_file(spath)) {
+    Ok(s) => {
+      stext = s;
+    },
+    Err(e) => {
+      return "index " + ipath + ": fern.toml names index_key but " + spath + " cannot be read";
+    }
+  }
+  let sig: u8[] = match (hex.decode(strip_lines(stext))) { Ok(bytes) => bytes, Err(e) => [] };
+  if (sig.len() != 64) {
+    return "index " + spath + ": must be 128 hex digits of the ed25519 signature over the index";
+  }
+  if (!pk.verify(isrc.bytes(), sig)) {
+    return "index " + ipath + ": the signature in " + spath + " does not verify against index_key";
+  }
+  return "";
+}
+
+// The text without the spaces, tabs and line ends at either end.
+function strip_lines(s: string): string {
+  let a: i32 = 0;
+  let b: i32 = s.len();
+  while (a < b && (s[a] == b' ' || s[a] == b'\t' || s[a] == b'\r' || s[a] == b'\n')) {
+    a = a + 1;
+  }
+  while (b > a && (s[b - 1] == b' ' || s[b - 1] == b'\t' || s[b - 1] == b'\r' || s[b - 1] == b'\n')) {
+    b = b - 1;
+  }
+  return slice_unchecked(s, a, b) + "";
+}
+
 function read_manifest(dir_slash: string): fern_toml.Manifest {
   match (read_file(dir_slash + "fern.toml")) {
     Ok(src) => {
@@ -1838,7 +1880,7 @@ function read_manifest(dir_slash: string): fern_toml.Manifest {
   let no_members: string[] = [];
   let no_excl: string[] = [];
   return fern_toml.Manifest {
-    name: "", lib: "lib.fern", index: "", deps: no_deps, members: no_members,
+    name: "", lib: "lib.fern", index: "", index_key: "", deps: no_deps, members: no_members,
     excl_pkg: no_excl, excl_ver: no_excl, lint_keys: no_excl, lint_vals: no_excl, err: "", err_line: 0,
   };
 }
@@ -1978,6 +2020,13 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
   if (!iok) {
     eprint("index " + ipath + ": cannot read");
     return 1;
+  }
+  if (man.index_key.len() > 0) {
+    let why: string = index_signature_error(ipath, isrc, man.index_key);
+    if (why.len() > 0) {
+      eprint(why);
+      return 1;
+    }
   }
   let ix: mvs.Index = match (mvs.parse_index(isrc)) { Ok(index) => index, Err(message) => { eprint("index " + ipath + ": " + message); return 1; } };
   ix = mvs.with_dir(ix, mvs.join_path(util.dir_of(ipath), "."));

@@ -4,12 +4,14 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"crypto/ed25519"
 	"crypto/sha256"
 	"encoding/hex"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/pkg/modload"
@@ -139,5 +141,59 @@ func TestResolveNoIndexErrors(t *testing.T) {
 	})
 	if err := runResolve(filepath.Join(root, "app")); err == nil {
 		t.Fatal("versioned deps without an index should error")
+	}
+}
+
+func TestResolveSignedIndex(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherPub, _, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const index = "[foo]\n\"1.0.0\" = { path = \"pkgs/foo-1.0.0\" }\n"
+	signature := hex.EncodeToString(ed25519.Sign(priv, []byte(index))) + "\n"
+	keyOf := func(k ed25519.PublicKey) string { return "ed25519:" + hex.EncodeToString(k) }
+	manifest := func(key string) string {
+		return "[package]\nname = \"app\"\nindex = \"index.toml\"\nindex_key = \"" + key + "\"\n[dependencies]\nfoo = \"1.0.0\"\n"
+	}
+	for _, c := range []struct {
+		name  string
+		files map[string]string
+		want  string
+	}{
+		{"signed", map[string]string{"app/fern.toml": manifest(keyOf(pub)), "app/index.toml": index, "app/index.toml.sig": signature}, ""},
+		{"no signature file", map[string]string{"app/fern.toml": manifest(keyOf(pub)), "app/index.toml": index}, "fern.toml names index_key but <ROOT>/app/index.toml.sig cannot be read"},
+		{"altered index", map[string]string{"app/fern.toml": manifest(keyOf(pub)), "app/index.toml": index + "\"1.1.0\" = { path = \"pkgs/foo-1.1.0\" }\n", "app/index.toml.sig": signature}, "the signature in <ROOT>/app/index.toml.sig does not verify against index_key"},
+		{"wrong key", map[string]string{"app/fern.toml": manifest(keyOf(otherPub)), "app/index.toml": index, "app/index.toml.sig": signature}, "does not verify against index_key"},
+		{"malformed signature", map[string]string{"app/fern.toml": manifest(keyOf(pub)), "app/index.toml": index, "app/index.toml.sig": "not hex\n"}, "index <ROOT>/app/index.toml.sig: must be 128 hex digits of the ed25519 signature over the index"},
+		{"unsigned without a key", map[string]string{"app/fern.toml": "[package]\nname = \"app\"\nindex = \"index.toml\"\n[dependencies]\nfoo = \"1.0.0\"\n", "app/index.toml": index}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			files := map[string]string{"app/pkgs/foo-1.0.0/fern.toml": "[package]\nname = \"foo\"\n", "app/pkgs/foo-1.1.0/fern.toml": "[package]\nname = \"foo\"\n"}
+			for k, v := range c.files {
+				files[k] = v
+			}
+			root := writeResolveTree(t, files)
+			err := runResolve(filepath.Join(root, "app"))
+			if c.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := os.Stat(filepath.Join(root, "app", "fern.lock")); err != nil {
+					t.Fatalf("no lock written: %v", err)
+				}
+				return
+			}
+			want := strings.ReplaceAll(c.want, "<ROOT>", root)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("err = %v, want %q", err, want)
+			}
+			if _, err := os.Stat(filepath.Join(root, "app", "fern.lock")); err == nil {
+				t.Fatal("a refused resolve wrote fern.lock")
+			}
+		})
 	}
 }

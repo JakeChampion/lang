@@ -20,6 +20,7 @@ pub struct Manifest {
   name: string,
   lib: string,
   index: string,
+  index_key: string,
   deps: Dep[],
   members: string[],
   excl_pkg: string[],
@@ -82,7 +83,7 @@ function is_integer_text(s: string): boolean {
 
 pub function parse(src: string): Manifest {
   let m: Manifest = Manifest {
-    name: "", lib: "lib.fern", index: "", deps: [], members: [],
+    name: "", lib: "lib.fern", index: "", index_key: "", deps: [], members: [],
     excl_pkg: [], excl_ver: [], lint_keys: [], lint_vals: [], err: "", err_line: 0,
   };
   let package_line: i32 = 1;
@@ -190,10 +191,13 @@ function with_package_key(m: Manifest, key: string, val: string): Manifest {
       if (key == "index") {
         return Manifest { ...m, index: value };
       }
+      if (key == "index_key") {
+        return match (validate_index_key(value)) { Ok(k) => Manifest { ...m, index_key: k }, Err(message) => failed(m, "index_key: " + message) };
+      }
       if (key == "version") {
         return m;
       }
-      return failed(m, "unknown [package] key " + docsummary.quote(key) + " (supported: name, version, lib, index)");
+      return failed(m, "unknown [package] key " + docsummary.quote(key) + " (supported: name, version, lib, index, index_key)");
     },
     Err(message) => {
       return failed(m, key + ": " + message);
@@ -347,10 +351,16 @@ function is_letter(c: u8): boolean {
 pub function validate_hash(hash: string): Result[string, string] {
   let bad: string = "must be `sha256:` + 64 lowercase hex digits of the archive bytes, got "
     + docsummary.quote(hash);
-  if (hash.len() < 7 || slice_unchecked(hash, 0, 7) != "sha256:") {
+  return tagged_hex(hash, "sha256:", bad);
+}
+
+// The hex digits after the prefix, or `bad` when the text is not the
+// prefix plus 64 lowercase hex digits.
+function tagged_hex(text: string, prefix: string, bad: string): Result[string, string] {
+  if (text.len() < prefix.len() || slice_unchecked(text, 0, prefix.len()) != prefix) {
     return Err(bad);
   }
-  let hex: string = slice_unchecked(hash, 7, hash.len()) + "";
+  let hex: string = slice_unchecked(text, prefix.len(), text.len()) + "";
   if (hex.len() != 64) {
     return Err(bad);
   }
@@ -365,6 +375,14 @@ pub function validate_hash(hash: string): Result[string, string] {
     i = i + 1;
   }
   return Ok(hex);
+}
+
+// The public key that signs the index, as `ed25519:` + 64 lowercase hex
+// digits. The result is the whole spelling, not the digits.
+pub function validate_index_key(key: string): Result[string, string] {
+  let bad: string = "must be `ed25519:` + 64 lowercase hex digits of the public key, got "
+    + docsummary.quote(key);
+  return match (tagged_hex(key, "ed25519:", bad)) { Ok(hex) => Ok(key + ""), Err(message) => Err(message) };
 }
 
 function parse_dep(name: string, val: string): Result[Dep, string] {
