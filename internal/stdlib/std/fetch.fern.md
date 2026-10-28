@@ -706,7 +706,7 @@ pub function (p: Idle) proxy_env(): ProxyEnv {
 
 ```fern
 <<16 pub struct Kept>>=
-pub struct Kept { place: __Place, fd: i32, since: Instant, tls: Option[client.Session], h2: Option[h2.Conn] }
+pub struct Kept { place: __Place, fd: i32, since: Instant, tls: Option[client.Session], h2: Option[h2.Conn], heard: HeaderMap }
 ```
 
 ### `17 pub function idle(): Idle`
@@ -1357,7 +1357,7 @@ function __take_idle[T: Transport](tr: T, place: __Place): __Conn {
 }
 
 function __park[T: Transport](tr: T, place: __Place, conn: __Conn): void {
-  let rows: Kept[] = __live_kept(tr).append(Kept { place: place, fd: conn.fd, since: tr.now(), tls: conn.tls, h2: conn.h2 });
+  let rows: Kept[] = __live_kept(tr).append(Kept { place: place, fd: conn.fd, since: tr.now(), tls: conn.tls, h2: conn.h2, heard: conn.heard });
   let from: i32 = 0;
   while (rows.len() - from > tr.idle().max) {
     __close(tr, __kept_conn(rows[from]));
@@ -1392,7 +1392,7 @@ function __live_kept[T: Transport](tr: T): Kept[] {
 }
 
 function __kept_conn(k: Kept): __Conn {
-  return __Conn { fd: k.fd, tls: k.tls, closed: false, h2: k.h2 };
+  return __Conn { fd: k.fd, tls: k.tls, closed: false, h2: k.h2, heard: k.heard };
 }
 
 function __kept_without(rows: Kept[], skip: i32): Kept[] {
@@ -2177,7 +2177,8 @@ function __h2_answer(events: h2.Event[], stream: i32): Option[Result[HttpRespons
 
 ```fern
 <<48 struct __Conn>>=
-struct __Conn { fd: i32, tls: Option[client.Session], closed: boolean, h2: Option[h2.Conn] }
+// heard is the header block of the last response read on the connection.
+struct __Conn { fd: i32, tls: Option[client.Session], closed: boolean, h2: Option[h2.Conn], heard: HeaderMap }
 ```
 
 ### `49 function __has_tls(conn: __Conn): boolean`
@@ -2197,7 +2198,7 @@ function __has_tls(conn: __Conn): boolean {
 }
 
 function __no_conn(): __Conn {
-  return __Conn { fd: 0 - 1, tls: None, closed: false, h2: None };
+  return __Conn { fd: 0 - 1, tls: None, closed: false, h2: None, heard: headers.new() };
 }
 
 function __close[T: Transport](tr: T, conn: __Conn): void {
@@ -2224,12 +2225,12 @@ function __connect[T: Transport](tr: T, t: __Target, req: Request, guard: boolea
   match (tr.connect(addrs, t.port, __connect_bound(timeouts))) {
     Ok(fd) => {
       if (!t.tls) {
-        return Ok(__Conn { fd: fd, tls: None, closed: false, h2: None });
+        return Ok(__Conn { fd: fd, tls: None, closed: false, h2: None, heard: headers.new() });
       }
       match (__secured(tr, fd, t, begun + __connect_bound(timeouts).as_nanos(), roots, req)) {
         Ok(s) => {
           if (s.alpn() != "h2") {
-            return Ok(__Conn { fd: fd, tls: Some(s), closed: false, h2: None });
+            return Ok(__Conn { fd: fd, tls: Some(s), closed: false, h2: None, heard: headers.new() });
           }
           return __h2_opened(tr, fd, s);
         },
@@ -2254,7 +2255,7 @@ function __connect[T: Transport](tr: T, t: __Target, req: Request, guard: boolea
 
 function __h2_opened[T: Transport](tr: T, fd: i32, s: client.Session): Result[__Conn, FetchError] {
   let start: h2.Step = h2.client(h2.config());
-  match (__send_all(tr, __Conn { fd: fd, tls: Some(s), closed: false, h2: Some(start.conn) }, start.output)) {
+  match (__send_all(tr, __Conn { fd: fd, tls: Some(s), closed: false, h2: Some(start.conn), heard: headers.new() }, start.output)) {
     Ok(c) => {
       return Ok(c);
     },
@@ -2756,12 +2757,12 @@ function __read_response[T: Transport](tr: T, conn: __Conn, req: Request, starte
   let from: i32 = 0;
   let eof: boolean = false;
   while (true) {
-    match (http.http_parse_response_framed_from(buf, from, req.method, eof, req.limits)) {
+    match (http.http_parse_response_framed_from(buf, from, req.method, eof, req.limits, conn.heard)) {
       Complete(framed) => {
         let next: i32 = __after_interim(framed, from, req.limits)?;
         if (next < 0) {
           let response: HttpResponse = HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) };
-          return Ok(__Read { response: response, keep: __reusable(framed, from, buf.len(), eof || conn.closed), conn: conn });
+          return Ok(__Read { response: response, keep: __reusable(framed, from, buf.len(), eof || conn.closed), conn: __Conn { ...conn, heard: framed.response.headers } });
         }
         from = next;
         continue;

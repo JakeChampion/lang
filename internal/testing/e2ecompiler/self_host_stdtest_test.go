@@ -239,6 +239,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"header_map_migrated", langSrcAbs(t, "tests/stdlib/header_map_migrated_test.fern"), ""},
 		{"http_request_headers_migrated", langSrcAbs(t, "tests/stdlib/http_request_headers_migrated_test.fern"), ""},
 		{"http_request_bytes", langSrcAbs(t, "tests/stdlib/http_request_bytes_test.fern"), ""},
+		{"http_response_bytes", langSrcAbs(t, "tests/stdlib/http_response_bytes_test.fern"), ""},
 		{"http_request_builder", langSrcAbs(t, "tests/stdlib/http_request_builder_test.fern"), ""},
 		{"http_respond", langSrcAbs(t, "tests/stdlib/http_respond_test.fern"), ""},
 		{"http_router", langSrcAbs(t, "tests/stdlib/http_router_test.fern"), ""},
