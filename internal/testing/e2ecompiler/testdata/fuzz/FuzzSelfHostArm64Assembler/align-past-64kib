@@ -1,0 +1,2 @@
+go test fuzz v1
+[]byte("    .section .data\n    .quad .Lfern_relanchor\n    .align 8.se  .quad 3\n")

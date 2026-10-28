@@ -1028,10 +1028,10 @@ function main(): i32 {
 		{
 			name: "date_parse_iso accepts canonical form",
 			source: `import "std/time";
-function show(opt: Option[Date]): void {
-    match (opt) {
-        Some(d) => { print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string()); },
-        None => { print("none"); }
+function show(r: Result[Date, time.TimeParseError]): void {
+    match (r) {
+        Ok(d) => { print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string()); },
+        Err(_) => { print("none"); }
     }
 }
 function main(): i32 {
@@ -1047,8 +1047,8 @@ function main(): i32 {
 			source: `import "std/time";
 function show(s: string): void {
     match (time.date_parse_iso(s)) {
-        Some(_) => { print("ACCEPTED " + s); },
-        None => { print("rejected " + s); }
+        Ok(_) => { print("ACCEPTED " + s); },
+        Err(_) => { print("rejected " + s); }
     }
 }
 function main(): i32 {
@@ -1085,8 +1085,8 @@ function main(): i32 {
 			source: `import "std/time";
 function show(s: string): void {
     match (time.timestamp_parse_rfc3339(s)) {
-        Some(p) => { print(p.format_rfc3339()); },
-        None => { print("rejected"); }
+        Ok(p) => { print(p.format_rfc3339()); },
+        Err(_) => { print("rejected"); }
     }
 }
 function main(): i32 {
@@ -1107,8 +1107,8 @@ function main(): i32 {
 			source: `import "std/time";
 function show(s: string): void {
     match (time.timestamp_parse_rfc3339(s)) {
-        Some(_) => { print("ACCEPTED"); },
-        None => { print("rejected"); }
+        Ok(_) => { print("ACCEPTED"); },
+        Err(_) => { print("rejected"); }
     }
 }
 function main(): i32 {
@@ -1171,8 +1171,8 @@ func TestInterpScriptZonedFixedOffset(t *testing.T) {
 			source: `import "std/tz";
 function show(s: string): void {
     match (tz.zoned_parse_rfc3339(s)) {
-        Some(z) => { print(z.zone.abbrev_at(z.timestamp)); },
-        None => { print("rejected"); }
+        Ok(z) => { print(z.zone.abbrev_at(z.timestamp)); },
+        Err(_) => { print("rejected"); }
     }
 }
 function main(): i32 {
@@ -1217,8 +1217,8 @@ function main(): i32 {
 			source: `import "std/tz";
 function show(s: string): void {
     match (tz.zoned_parse_rfc3339(s)) {
-        Some(z) => { print(z.format_rfc3339()); },
-        None => { print("rejected"); }
+        Ok(z) => { print(z.format_rfc3339()); },
+        Err(_) => { print("rejected"); }
     }
 }
 function main(): i32 {
@@ -1245,15 +1245,15 @@ function main(): i32 {
     // The equivalent UTC RFC 3339 string parses to the same
     // Timestamp.sec.
     match (tz.zoned_parse_rfc3339("2026-05-19T14:30:00+09:00")) {
-        Some(zonedJp) => {
+        Ok(zonedJp) => {
             match (time.timestamp_parse_rfc3339("2026-05-19T05:30:00Z")) {
-                Some(utc) => {
+                Ok(utc) => {
                     if (zonedJp.timestamp.sec == utc.sec) { print("match"); } else { print("mismatch"); }
                 },
-                None => { print("utc parse fail"); }
+                Err(_) => { print("utc parse fail"); }
             }
         },
-        None => { print("jp parse fail"); }
+        Err(_) => { print("jp parse fail"); }
     }
     return 0;
 }`,
@@ -1264,8 +1264,8 @@ function main(): i32 {
 			source: `import "std/tz";
 function show(s: string): void {
     match (tz.zoned_parse_rfc3339(s)) {
-        Some(_) => { print("ACCEPTED"); },
-        None => { print("rejected"); }
+        Ok(_) => { print("ACCEPTED"); },
+        Err(_) => { print("rejected"); }
     }
 }
 function main(): i32 {

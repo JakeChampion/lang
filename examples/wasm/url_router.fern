@@ -39,10 +39,10 @@ function describe(path: string, q: Map[string, string[]]): json.JsonValue {
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   let full: string = "http://example.local" + req.path;
   match (url.url_parse(full)) {
-    None => {
+    Err(_) => {
       return http.bad_request("bad URL\n");
     },
-    Some(u) => {
+    Ok(u) => {
       let q: Map[string, string[]] = url.query_parse(u.query);
       let body: string = describe(u.path, q) |> json.json_encode;
       return http.ok(body);

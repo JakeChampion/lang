@@ -1940,10 +1940,12 @@ function main(): i32 {
 }
 `, 42, ""},
 			{"bulk-memory-fill", `function main(): i32 {
-    let p: usize = __alloc(8);
-    __memset(p, 65, 8);
-    if ((__load_i32(p) & 255) == 65) { return 42; }
-    return 1;
+  unsafe {
+      let p: usize = __alloc(8);
+      __memset(p, 65, 8);
+      if ((__load_i32(p) & 255) == 65) { return 42; }
+      return 1;
+  }
 }
 `, 42, ""},
 		}
@@ -2317,7 +2319,7 @@ function main(): i32 {
 			src     string
 			mustSay []string
 		}{
-			{"syscall-floor", "function main(): i32 { let r: i64 = __syscall3(1, 1, 0, 0); return 0; }\n", []string{"__syscall3", "E066", "syscall"}},
+			{"syscall-floor", "function main(): i32 { unsafe { let r: i64 = __syscall3(1, 1, 0, 0); } return 0; }\n", []string{"__syscall3", "E066", "syscall"}},
 			{"raw-memory-floor", "function main(): i32 { let p: usize = __raw_alloc(64); return 0; }\n", []string{"__raw_alloc", "E066", "rawmem"}},
 			{"timer-fd", "function main(): i32 { return timer_fd(10); }\n", []string{"timer_fd", "E066", "pollfd"}},
 		} {

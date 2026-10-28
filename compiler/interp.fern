@@ -787,14 +787,18 @@ function module_type_decls(structs: parser.StructDecl[]): parser.StructDecl[] {
   return all;
 }
 
+// struct_field_type is the declared type of `field` in the struct type
+// `sname`, with the type's arguments put in when it applies a generic struct
+// (`Pair[3]`).
 function struct_field_type(decls: parser.StructDecl[], sname: string, field: string): string {
+  let r: parser.TypeRef = parser.parse_type_ref(sname);
   let i: i32 = 0;
   while (i < decls.len()) {
-    if (decls[i].name == sname) {
+    if (decls[i].name == sname || decls[i].name == r.base && r.args.len() > 0) {
       let j: i32 = 0;
       while (j < decls[i].fields.len()) {
         if (decls[i].fields[j].name == field) {
-          return decls[i].fields[j].type_name;
+          return applied_spelling(decls[i].fields[j].type_name, decls[i].type_params, r.args);
         }
         j = j + 1;
       }
@@ -803,6 +807,19 @@ function struct_field_type(decls: parser.StructDecl[], sname: string, field: str
     i = i + 1;
   }
   return "";
+}
+
+// applied_spelling is `spelling` with each of `vars` replaced by the matching
+// argument, or `spelling` unchanged when the counts differ.
+function applied_spelling(spelling: string, vars: string[], args: parser.TypeRef[]): string {
+  if (vars.len() == 0 || vars.len() != args.len()) {
+    return spelling;
+  }
+  let cts: string[] = [];
+  for a in args {
+    cts = cts.append(parser.render_type_ref(a));
+  }
+  return parser.subst_ty(spelling, vars, cts);
 }
 
 function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, enum_name: string): parser.StructDecl[] {
@@ -823,7 +840,7 @@ function add_variant_decl(acc: parser.StructDecl[], name: string, arity: i32, en
     fields = fields.append(parser.bare_field(fname, ""));
     f = f + 1;
   }
-  return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+  return acc.append(parser.StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
 
 function variant_arity(name: string, decls: parser.StructDecl[]): i32 {
@@ -972,7 +989,7 @@ function (e: Env) static_type_of(x: ast.Expr): string {
           if (e.binds_name(id.name)) {
             return "";
           }
-          return func_ret_type(e.funcs, id.name);
+          return func_ret_type(e.funcs, id.name, bound_type_args(c.type_args, e));
         },
         ast.ExprFieldAccess(fa) => {
           let rt: string = e.static_type_of(fa.obj);
@@ -997,16 +1014,46 @@ function method_ret_type(funcs: parser.FuncDecl[], recv_ty: string, name: string
   let seen: boolean = false;
   let i: i32 = 0;
   while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_type == recv_ty) {
-      if (seen && funcs[i].ret_type != found) {
+    if (funcs[i].name == name && receiver_matches(funcs[i].receiver_type, recv_ty)) {
+      let rt: string = applied_ret_type(funcs[i], recv_ty);
+      if (seen && rt != found) {
         return "";
       }
-      found = funcs[i].ret_type;
+      found = rt;
       seen = true;
     }
     i = i + 1;
   }
   return found;
+}
+
+// receiver_matches reports whether a method declared on `decl` takes a
+// receiver of static type `recv_ty`: the same spelling, or the same generic
+// type with its variables (`Ring[N, T]` for `Ring[2, i32]`).
+function receiver_matches(decl: string, recv_ty: string): boolean {
+  if (decl == recv_ty) {
+    return true;
+  }
+  let d: parser.TypeRef = parser.parse_type_ref(decl);
+  let r: parser.TypeRef = parser.parse_type_ref(recv_ty);
+  return d.args.len() > 0 && d.base == r.base && d.args.len() == r.args.len();
+}
+
+// applied_ret_type is fd's result type with the receiver's type variables
+// replaced by the arguments of the static receiver type.
+function applied_ret_type(fd: parser.FuncDecl, recv_ty: string): string {
+  let d: parser.TypeRef = parser.parse_type_ref(fd.receiver_type);
+  let r: parser.TypeRef = parser.parse_type_ref(recv_ty);
+  if (d.args.len() == 0 || d.args.len() != r.args.len()) {
+    return fd.ret_type;
+  }
+  let vars: string[] = [];
+  let cts: string[] = [];
+  for i in 0..d.args.len() {
+    vars = vars.append(d.args[i].base);
+    cts = cts.append(parser.render_type_ref(r.args[i]));
+  }
+  return parser.subst_ty(fd.ret_type, vars, cts);
 }
 
 function (e: Env) binds_name(name: string): boolean {
@@ -1020,11 +1067,17 @@ function (e: Env) binds_name(name: string): boolean {
   return match (e.outer) { Some(parent) => parent.binds_name(name), None => false };
 }
 
-function func_ret_type(funcs: parser.FuncDecl[], name: string): string {
+// func_ret_type is the declared result type of function `name`, with the
+// call's written type arguments put in.
+function func_ret_type(funcs: parser.FuncDecl[], name: string, targs: string[]): string {
   let i: i32 = 0;
   while (i < funcs.len()) {
     if (funcs[i].name == name && funcs[i].receiver_type.len() == 0) {
-      return funcs[i].ret_type;
+      let refs: parser.TypeRef[] = [];
+      for ta in targs {
+        refs = refs.append(parser.parse_type_ref(ta));
+      }
+      return applied_spelling(funcs[i].ret_type, funcs[i].all_type_params, refs);
     }
     i = i + 1;
   }
@@ -4713,6 +4766,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
   let variant_name: string = "";
   let variant_enum: string = "";
   let recv: Value = v_absent();
+  let recv_static: string = "";
   let closure_val: Value = v_absent();
   match (c.callee) {
     ast.ExprIdent(id) => {
@@ -4791,7 +4845,8 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
             if (is_err(recv)) {
               return recv;
             }
-            name = dyn_method_name(name, env.static_type_of(fa.obj), recv, env.funcs);
+            recv_static = env.static_type_of(fa.obj);
+            name = dyn_method_name(name, recv_static, recv, env.funcs);
           }
         }
       }
@@ -4828,7 +4883,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
     return v_variant_of(variant_enum, variant_name, arg_vals);
   }
   if (is_method) {
-    return call_method_targs(recv, name, arg_vals, targs, env.funcs, env.aliases, env.type_decls);
+    return call_method_targs(recv, recv_static, name, arg_vals, targs, env.funcs, env.aliases, env.type_decls);
   }
   if (is_closure) {
     let inline_value: boolean = false;
@@ -5519,10 +5574,32 @@ function bind_tyargs(env: Env, fd: parser.FuncDecl, has_recv: boolean, recv: Val
     if (concrete.len() == 0 && expect.len() > 0) {
       concrete = tyarg_match_names(fd.ret_type, tp, expect);
     }
-    if (concrete.len() > 0 && !util.has_str(fd.type_params, concrete)) {
+    if (parser.is_const_arg(concrete)) {
+      e = e.bind(tp, v_int(util.digits_to_i32(concrete)));
+    } else if (concrete.len() > 0 && !util.has_str(fd.type_params, concrete)) {
       e = e.bind(tp, v_type(concrete));
     }
     t = t + 1;
+  }
+  return e;
+}
+
+// bind_receiver_consts binds each name of a receiver spelling that the
+// receiver's static type fills with a const argument: N in
+// `function (r: Ring[N, T]) cap()` called on a `Ring[4, string]`. A struct
+// value does not carry its type arguments, so the call site gives the type.
+function bind_receiver_consts(env: Env, receiver_type: string, recv_type: string): Env {
+  let e: Env = env;
+  if (recv_type.len() == 0) {
+    return e;
+  }
+  for a in parser.parse_type_ref(receiver_type).args {
+    if (a.args.len() == 0) {
+      let concrete: string = tyarg_match_names(receiver_type, a.base, recv_type);
+      if (parser.is_const_arg(concrete)) {
+        e = e.bind(a.base, v_int(util.digits_to_i32(concrete)));
+      }
+    }
   }
   return e;
 }
@@ -5661,7 +5738,7 @@ function has_key_eq(k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlia
 }
 
 function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
-  return call_method_targs(recv, name, args, [], funcs, aliases, type_decls);
+  return call_method_targs(recv, "", name, args, [], funcs, aliases, type_decls);
 }
 
 // .len, .bytes and .as_bytes on a string; None for any other method.
@@ -5706,7 +5783,25 @@ function array_with(own av: VArr, args: Value[]): Value {
   return v_arr_of(items.with(wi, args[1]), elem);
 }
 
-// .len, .with and .append on an array; None for any other method.
+function array_truncate(own av: VArr, args: Value[]): Value {
+  if (args.len() != 1 || !is_i32_arg(args[0])) {
+    return v_err("array.truncate: need an integer length");
+  }
+  let n: i32 = vint_bits(args[0]);
+  let elem: string = av.elem;
+  let items: Value[] = arr_take_els(av);
+  let keep: i32 = n;
+  if (keep > items.len()) {
+    keep = items.len();
+  }
+  let kept: Value[] = [];
+  for i in 0..keep {
+    kept = kept.append(items[i]);
+  }
+  return v_arr_of(kept, elem);
+}
+
+// .len, .with, .truncate and .append on an array; None for any other method.
 function array_method(own av: VArr, name: string, args: Value[]): Option[Value] {
   if (name == "len") {
     if (args.len() != 0) {
@@ -5716,6 +5811,9 @@ function array_method(own av: VArr, name: string, args: Value[]): Option[Value] 
   }
   if (name == "with" && !av.view) {
     return Some(array_with(av, args));
+  }
+  if (name == "truncate" && !av.view) {
+    return Some(array_truncate(av, args));
   }
   if (name == "append" && !av.view) {
     if (args.len() != 1) {
@@ -5728,7 +5826,7 @@ function array_method(own av: VArr, name: string, args: Value[]): Option[Value] 
   return None;
 }
 
-function call_method_targs(recv: Value, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_method_targs(recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   match (recv) {
     VType(tv) => {
       return call_assoc(tv.name, name, args, funcs, aliases, type_decls);
@@ -5853,10 +5951,10 @@ function call_method_targs(recv: Value, name: string, args: Value[], type_args: 
     },
     _ => {}
   }
-  return call_declared_method(recv, name, args, type_args, funcs, aliases, type_decls);
+  return call_declared_method(recv, recv_static, name, args, type_args, funcs, aliases, type_decls);
 }
 
-function call_declared_method(recv: Value, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_declared_method(recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let recv_type: string = dispatch_type_name(recv);
   if (recv_type.len() == 0) {
     return v_err("method `" + name + "`: receiver has no type name to dispatch on");
@@ -5879,6 +5977,7 @@ function call_declared_method(recv: Value, name: string, args: Value[], type_arg
       }
       let env: Env = Env { ...new_module_env(funcs, aliases, type_decls), ret: fd.ret_type };
       env = bind_tyargs(env, fd, true, recv, args, type_args, "");
+      env = bind_receiver_consts(env, fd.receiver_type, recv_static);
       env = env.bind(fd.receiver_name, recv);
       let j: i32 = 0;
       while (j < fd.params.len()) {
@@ -8390,7 +8489,7 @@ function returns_void(env: Env, x: ast.Expr): boolean {
     ast.ExprCall(c) => {
       match (c.callee) {
         ast.ExprIdent(id) => {
-          return !env.binds_name(id.name) && func_ret_type(env.funcs, id.name).len() == 0
+          return !env.binds_name(id.name) && func_ret_type(env.funcs, id.name, []).len() == 0
             && (id.name == "print" || id.name == "write" || id.name == "eprint" || id.name == "putchar");
         },
         _ => {}

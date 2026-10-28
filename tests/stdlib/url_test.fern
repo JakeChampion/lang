@@ -5,14 +5,13 @@ import "std/utf8" as utf8;
 
 function resolved(base: string, reference: string): string {
   match (url.url_resolve(base, reference)) {
-    Some(s) => {
+    Ok(s) => {
       return s;
     },
-    None => {
-      return "none";
+    Err(e) => {
+      return e.message();
     }
   }
-  return "none";
 }
 
 function test_resolve_normal(): test.TestOutcome {
@@ -75,7 +74,7 @@ function test_resolve_base_parts(): test.TestOutcome {
 }
 
 function test_resolve_no_scheme(): test.TestOutcome {
-  return test.assert_eq(resolved("/a/b", "c"), "none");
+  return test.assert_eq(resolved("/a/b", "c"), "\"/a/b\" has no scheme, so it cannot be a base URL");
 }
 
 function test_remove_dot_segments(): test.TestOutcome {
@@ -121,36 +120,36 @@ function test_roundtrip(): test.TestOutcome {
 
 function test_parse_full(): test.TestOutcome {
   match (url.url_parse("http://example.com:8080/path?q=1#frag")) {
-    Some(u) => {
+    Ok(u) => {
       return test.assert_true(u.scheme == "http" && u.host == "example.com"
         && u.port == 8080 && u.path == "/path" && u.query == "q=1"
         && u.fragment == "frag");
     },
-    None => {
-      return test.fail("url_parse(full) expected Some");
+    Err(_) => {
+      return test.fail("url_parse(full) expected Ok");
     }
   }
 }
 
 function test_parse_minimal(): test.TestOutcome {
   match (url.url_parse("https://host.com/")) {
-    Some(u) => {
+    Ok(u) => {
       return test.assert_true(u.scheme == "https" && u.host == "host.com"
         && u.port == 0 && u.path == "/" && u.query == "" && u.fragment == "");
     },
-    None => {
-      return test.fail("url_parse(minimal) expected Some");
+    Err(_) => {
+      return test.fail("url_parse(minimal) expected Ok");
     }
   }
 }
 
 function test_parse_empty(): test.TestOutcome {
   match (url.url_parse("")) {
-    Some(u) => {
-      return test.fail("url_parse(\"\") expected None");
+    Ok(u) => {
+      return test.fail("url_parse(\"\") expected an error");
     },
-    None => {
-      return test.pass();
+    Err(e) => {
+      return test.assert_eq(e.message(), "a URL cannot be empty");
     }
   }
 }
@@ -262,13 +261,17 @@ function test_query_has_and_all(): test.TestOutcome {
 
 function __parse_host_port(s: string): string {
   match (url.url_parse(s)) {
-    Some(u) => {
+    Ok(u) => {
       return u.host + "|" + u.port.to_string();
     },
-    None => {
-      return "None";
+    Err(e) => {
+      return e.message();
     }
   }
+}
+
+function bad_host(s: string): string {
+  return "\"" + s + "\" has an invalid host";
 }
 
 function test_parse_userinfo(): test.TestOutcome {
@@ -292,33 +295,33 @@ function test_parse_ipv6(): test.TestOutcome {
 }
 
 function test_parse_ipv6_malformed(): test.TestOutcome {
-  if (__parse_host_port("http://[::1/x") != "None") {
+  if (__parse_host_port("http://[::1/x") != bad_host("http://[::1/x")) {
     return test.fail("unterminated");
   }
-  if (__parse_host_port("http://[]/x") != "None") {
+  if (__parse_host_port("http://[]/x") != bad_host("http://[]/x")) {
     return test.fail("empty brackets");
   }
-  if (__parse_host_port("http://[g::1]/x") != "None") {
+  if (__parse_host_port("http://[g::1]/x") != bad_host("http://[g::1]/x")) {
     return test.fail("non-hex byte");
   }
-  return test.assert_eq(__parse_host_port("http://[::1]junk:80/x"), "None");
+  return test.assert_eq(__parse_host_port("http://[::1]junk:80/x"), bad_host("http://[::1]junk:80/x"));
 }
 
 function test_parse_port(): test.TestOutcome {
   if (__parse_host_port("http://host:65535/") != "host|65535") {
     return test.fail("max port");
   }
-  if (__parse_host_port("http://host:99999/") != "None") {
+  if (__parse_host_port("http://host:99999/") != "\"http://host:99999/\" has an invalid port") {
     return test.fail("port overflow");
   }
-  if (__parse_host_port("http://host:abc/") != "None") {
+  if (__parse_host_port("http://host:abc/") != "\"http://host:abc/\" has an invalid port") {
     return test.fail("non-digit port");
   }
   return test.assert_eq(__parse_host_port("http://host:/p"), "host|0");
 }
 
 function test_parse_host_shape(): test.TestOutcome {
-  if (__parse_host_port("http://ho[st/x") != "None") {
+  if (__parse_host_port("http://ho[st/x") != bad_host("http://ho[st/x")) {
     return test.fail("bracket in reg-name");
   }
   if (__parse_host_port("http://a%20b.example/x") != "a%20b.example|0") {
@@ -329,22 +332,22 @@ function test_parse_host_shape(): test.TestOutcome {
 
 function test_parse_scheme_anchored(): test.TestOutcome {
   match (url.url_parse("/redirect?to=http://evil.example")) {
-    Some(u) => {
+    Ok(u) => {
       if (u.scheme != "" || u.path != "/redirect"
         || u.query != "to=http://evil.example") {
         return test.fail("nested URL leaked into the scheme");
       }
     },
-    None => {
-      return test.fail("relative path expected Some");
+    Err(_) => {
+      return test.fail("relative path expected Ok");
     }
   }
   match (url.url_parse("ws+x-1.y://h/p")) {
-    Some(u) => {
+    Ok(u) => {
       return test.assert_eq(u.scheme, "ws+x-1.y");
     },
-    None => {
-      return test.fail("valid scheme punctuation expected Some");
+    Err(_) => {
+      return test.fail("valid scheme punctuation expected Ok");
     }
   }
 }

@@ -35,18 +35,20 @@ function wipe(n: i32): i32 {
   return len;
 }
 function stale(): i32 {
-  let found: i32 = 0;
-  let k: i32 = 0;
-  while (k < 8) {
-    let p: usize = __alloc(72);
-    let i: i32 = 0;
-    while (i < 72) {
-      if (__load_u8(p + (i as usize)) == 65 as u8) { found = found + 1; }
-      i = i + 1;
+  unsafe {
+    let found: i32 = 0;
+    let k: i32 = 0;
+    while (k < 8) {
+      let p: usize = __alloc(72);
+      let i: i32 = 0;
+      while (i < 72) {
+        if (__load_u8(p + (i as usize)) == 65 as u8) { found = found + 1; }
+        i = i + 1;
+      }
+      k = k + 1;
     }
-    k = k + 1;
+    return found;
   }
-  return found;
 }
 function main(): i32 {
   if (args().len() > 1 && args()[1] == "erase") {

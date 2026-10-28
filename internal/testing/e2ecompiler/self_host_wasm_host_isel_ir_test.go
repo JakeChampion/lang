@@ -40,13 +40,15 @@ const wasmHandleFlagsSrc = `function main(): i32 {
 `
 
 const wasmStoreU8Src = `function main(): i32 {
-    let p: usize = __alloc(8);
-    __store_u8(p, 104);
-    __store_u8(p + 1, 361);
-    __raw_store8(p, 2, 106);
-    if (__load_u8(p) != 104 || __load_u8(p + 1) != 105 || __raw_load8(p, 2) != 106) { return 1; }
-    __free(p, 8);
-    return 0;
+  unsafe {
+      let p: usize = __alloc(8);
+      __store_u8(p, 104);
+      __store_u8(p + 1, 361);
+      __raw_store8(p, 2, 106);
+      if (__load_u8(p) != 104 || __load_u8(p + 1) != 105 || __raw_load8(p, 2) != 106) { return 1; }
+      __free(p, 8);
+      return 0;
+  }
 }
 `
 

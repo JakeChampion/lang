@@ -20,7 +20,9 @@ const sharedBusySrc = `function spin(n: i32): i32 {
 }
 
 function call_back(cb: usize, x: usize): i32 {
-    return __c_call1(cb, x) as i32;
+  unsafe {
+      return __c_call1(cb, x) as i32;
+  }
 }
 
 function main(): i32 { return 0; }

@@ -5,7 +5,10 @@ import (
 	"bufio"
 	"debug/elf"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,6 +45,48 @@ func TestSelfHostServeAllocsCensusH3(t *testing.T) {
 	if err := os.WriteFile(out, []byte(report.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestSelfHostServeAllocsCensusTwoFetch writes the same census for the
+// two-fetch handler of TestSelfHostServeAllocsPerRequestTwoFetch, to the
+// census file's name with ".twofetch" after it.
+func TestSelfHostServeAllocsCensusTwoFetch(t *testing.T) {
+	out := os.Getenv("FERN_SERVE_ALLOC_CENSUS")
+	if out == "" {
+		t.Skip("set FERN_SERVE_ALLOC_CENSUS to a file to write the census to")
+	}
+	cli := buildSelfHostCLI(t)
+	short := censusFetchRun(t, cli, censusShort)
+	long := censusFetchRun(t, cli, censusLong)
+	var report strings.Builder
+	writeCensus(&report, "two-fetch, keep-alive", short, long, censusLong-censusShort)
+	if err := os.WriteFile(out+".twofetch", []byte(report.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func censusFetchRun(t *testing.T, cli *selfHostCLI, rounds int) map[censusSite]int {
+	t.Helper()
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "upstream")
+	}))
+	defer up.Close()
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(e2eharness.ServeFetchAllocsServerSource(0, rounds)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1", "FERN_RC_TRACE=1")
+	cmd := runX86_64Bin(cli.runner, bin)
+	cmd.Env = append(os.Environ(), "http_proxy=http://u@"+up.Listener.Addr().String())
+	addr, stderrPath := e2eharness.StartInheritedServer(t, cmd)
+	e2eharness.WaitServerReady(t, addr)
+	get := e2eharness.KeepAliveGET(t, addr)
+	for i := 0; i < rounds; i++ {
+		if body := get("/"); body != "hello" {
+			t.Fatalf("request %d answered %q", i, body)
+		}
+	}
+	return traceSites(t, bin, stderrPath)
 }
 
 func censusRun(t *testing.T, cli *selfHostCLI, mux bool, rounds int) map[censusSite]int {

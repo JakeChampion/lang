@@ -188,7 +188,7 @@ function test_http_reaches_only_the_allow_list(): test.TestOutcome {
       return test.assert_eq(listed + "|" + __message(p.http(fetch.get("http://other.test/"))), "status 200|blocked: other.test:80 is not on the allow-list");
     },
     Err(why) => {
-      return test.fail(why);
+      return test.fail(why.message());
     }
   }
   return test.fail("unreachable");

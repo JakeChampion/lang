@@ -51,7 +51,7 @@ pub struct Supply { value: i32, slot: i32, mode: i32 }
 
 pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops: i32[], hand_roots: i32[], hand_fields: i32[] }
 
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], likely: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[], links: i32[], reuse: Reuse }
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], likely: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[], links: i32[], reuse: Reuse, forced: boolean[] }
 
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
@@ -369,7 +369,7 @@ function plan_callers(kix: util.NameIndex, funcs: ssasem.Func[], plans: Plan[]):
 }
 
 function bad(why: string): Plan {
-  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], likely: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], fresh_seeded: false, checked_writes: [], links: [], reuse: no_reuse() };
+  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], likely: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], fresh_seeded: false, checked_writes: [], links: [], reuse: no_reuse(), forced: [] };
 }
 
 pub function refused(why: string): Plan {
@@ -640,7 +640,7 @@ function hands_out(kind: i32): boolean {
     || kind == ssasem.map_insert() || kind == ssasem.map_get_or() || kind == ssasem.map_get()
     || kind == ssasem.map_keys() || kind == ssasem.map_values() || kind == ssasem.map_delete()
     || kind == ssasem.str_bytes() || kind == ssasem.str_byte_view() || ssasem.is_arr_helper_op(kind) || kind == ssasem.arr_slice()
-    || kind == ssasem.hole_fill();
+    || kind == ssasem.hole_fill() || kind == ssasem.truncate();
 }
 
 function literals(f: ssasem.Func): boolean[] {
@@ -800,7 +800,7 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     counted = [true, false];
   } else if (ins.kind_tag == ssasem.append()) {
     counted = [true, ssasem.reference(f.values[ins.args[1]])];
-  } else if (ins.kind_tag == ssasem.arr_concat()) {
+  } else if (ins.kind_tag == ssasem.arr_concat() || ins.kind_tag == ssasem.truncate()) {
     counted = [true, false];
   } else if (ins.kind_tag == ssasem.with()) {
     counted = [true, false, ssasem.reference(f.values[ins.args[2]])];
@@ -1644,7 +1644,7 @@ function tuple_takes(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs:
 
 struct Units { owned: boolean[], parents: i32[][], deps: i32[][], takes: i32[], held: boolean[], payloads: boolean[], reflow: boolean, likely: boolean[] }
 
-function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa.SInst[], sup: SupplyTable): Units {
+function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa.SInst[], sup: SupplyTable, forced: boolean[]): Units {
   let pt: PayloadTakes = payload_takes(f, a, base, defs, __alloc_bool(f.graph.nvals));
   let payloads: boolean[] = pt.taken;
   let likely: boolean[] = pt.likely;
@@ -1680,6 +1680,7 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
   if (added) {
     held = either(asked, held_elements(f, a, owned, defs, sup));
   }
+  held = either(held, forced);
   i = 0;
   while (i < held.len()) {
     if (held[i] && (payloads[i] || takes[i] >= 0)) {
@@ -1689,7 +1690,7 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
   }
   let parents: i32[][] = a.parents;
   let deps: i32[][] = a.dependencies;
-  let reflow: boolean = pt.crossing;
+  let reflow: boolean = pt.crossing || count_true(forced) > 0;
   i = 0;
   while (i < takes.len()) {
     if (payloads[i] && (defs[i].kind_tag == ssasem.record_get() || defs[i].kind_tag == ssasem.tuple_get() || option_layout(f, f.values[defs[i].args[0]]))) {
@@ -2002,7 +2003,7 @@ function mark_all(own flags: boolean[], ids: i32[]): boolean[] {
   return flags;
 }
 
-function count_true(flags: boolean[]): i32 {
+pub function count_true(flags: boolean[]): i32 {
   let n: i32 = 0;
   for flag in flags {
     if (flag) {
@@ -2702,6 +2703,64 @@ pub function plan(f: ssasem.Func, modes: i32[], view: SchemaView): Plan {
 }
 
 pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, view: SchemaView): Plan {
+  return plan_held(f, modes, semantic, view, __alloc_bool(f.graph.nvals));
+}
+
+// grow_holds names the reads to count so that an array parameter or an owned
+// array goes whole to a write in place: a callee's grow position or an update
+// here. The array itself must not be read again, only reads taken off it before.
+pub function grow_holds(f: ssasem.Func, p: Plan, grows: GrowTable): boolean[] {
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
+  if (!p.ok) {
+    return out;
+  }
+  let a: ssasem.Analysis = p.unit_analysis;
+  let bare: ssalive.Flow = ssalive.compute_checked(f.graph, empty_chains(f.graph.nvals));
+  for bi in 0..f.graph.blocks.len() {
+    let insts: ssa.SInst[] = f.graph.blocks[bi].insts;
+    for pos in 0..insts.len() {
+      for v in grown_params(f, p, grows, insts[pos]) {
+        if (!ssasem.read_after(a.uses, bi, pos, v) && !ssalive.live_out_has(bare, bi, v)) {
+          let kids: i32[] = outliving(f, a, p.defs, p.owned, out, v, bi, pos, 0 - 1, insts[pos].args);
+          out = mark_all(out, kids);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function grown_params(f: ssasem.Func, p: Plan, grows: GrowTable, ins: ssa.SInst): i32[] {
+  let out: i32[] = [];
+  if (box_update(ins) && handed_array(f, p, ins.args[0])) {
+    return [ins.args[0]];
+  }
+  if (ins.kind_tag != ssasem.call()) {
+    return out;
+  }
+  let modes: i32[] = callee_modes(f, ins);
+  for i in 0..ins.args.len() {
+    let v: i32 = ins.args[i];
+    if (i < modes.len() && modes[i] == borrow_mode() && occurrences(ins.args, v) == 1 && handed_array(f, p, v) && grows_buffer(grows, ins.str, i)) {
+      out = out.append(v);
+    }
+  }
+  return out;
+}
+
+function handed_array(f: ssasem.Func, p: Plan, v: i32): boolean {
+  return v >= 0 && (p.defs[v].kind_tag == 6 || p.owned[v]) && is_array(f.values[v]);
+}
+
+function forced_of(p: Plan, f: ssasem.Func): boolean[] {
+  if (p.forced.len() == f.graph.nvals) {
+    return p.forced;
+  }
+  return __alloc_bool(f.graph.nvals);
+}
+
+// plan_held plans with the element reads in forced counted as holds.
+pub function plan_held(f: ssasem.Func, modes: i32[], semantic: ssasem.Analysis, view: SchemaView, forced: boolean[]): Plan {
   if (!semantic.ok) {
     return bad(semantic.why);
   }
@@ -2714,7 +2773,7 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
   let owned: boolean[] = owned_values(f, modes, defs);
   let reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
   let sup: SupplyTable = supply_table(f);
-  let units: Units = units_of(f, owned, analysis, defs, sup);
+  let units: Units = units_of(f, owned, analysis, defs, sup, forced);
   owned = units.owned;
   let takes: i32[] = units.takes;
   analysis = units_analysis(f, analysis, units);
@@ -2818,7 +2877,7 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
     return bad(why);
   }
   let consts: string[] = constants(f, defs);
-  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts, no_fresh(), lent_withs(f, defs, owned, kept)), fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse() };
+  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, likely: units.likely, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts, no_fresh(), lent_withs(f, defs, owned, kept)), fresh_seeded: false, checked_writes: checked_writes(f), links: [], reuse: no_reuse(), forced: forced };
 }
 
 pub function without_constant_drops(p: Plan): Plan {
@@ -2997,7 +3056,7 @@ pub function fresh_rows_agree(a: FreshRows, b: FreshRows, callees: string[]): bo
 }
 
 function box_update(ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.arr_concat();
+  return ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.arr_concat() || ins.kind_tag == ssasem.truncate();
 }
 
 function moved_at(st: Step, v: i32, slot: i32): boolean {
@@ -3699,7 +3758,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   }
   let owned: boolean[] = p.owned;
   if (whole || !same_i32s(modes, p.modes)) {
-    let units: Units = units_of(f, owned_values(f, modes, defs), analysis, defs, supply_table(f));
+    let units: Units = units_of(f, owned_values(f, modes, defs), analysis, defs, supply_table(f), forced_of(p, f));
     owned = units.owned;
     if (!same_i32s(units.takes, p.takes)) {
       return "tuple take disagrees with the plan";

@@ -34,7 +34,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<8 function (z: Zone) index_at(sec: i64): i32>>
 
-<<9 pub function iana_zone(name: string): Option[Zone]>>
+<<9 pub function iana_zone(name: string): Result[Zone, ZoneError]>>
 
 <<10 function has_table_separator(name: string): boolean>>
 
@@ -46,7 +46,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<14 function read_counts(bs: [u8], off: i32): Counts>>
 
-<<15 pub function parse_tzif(bs: [u8]): Option[Zone]>>
+<<15 pub function parse_tzif(bs: [u8]): Result[Zone, ZoneError]>>
 
 <<16 function read_zone_block(bs: [u8], c: Counts, off: i32, width: i32, footer: string): Option[Zone]>>
 
@@ -70,8 +70,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 1>>=
 // This module provides the time-zone type and loads zones from the IANA database, from TZif files, and from POSIX rules.
+import "core/cmp";
 import "std/string";
 import "std/array";
+import "std/error";
+import "std/option";
 import "std/result";
 import "std/time";
 import "std/utf8";
@@ -283,14 +286,12 @@ function two_digits(n: i32): string {
 }
 
 // A fixed zone for an RFC 3339 time with a `Z` or `±hh:mm` offset. A nonzero offset names the zone `UTC+hh:mm` or `UTC-hh:mm`.
-pub function zoned_parse_rfc3339(s: string): Option[Zoned] {
-  let Some(parsed) = time.timestamp_parse_rfc3339_offset(s) else {
-    return None;
-  };
+pub function zoned_parse_rfc3339(s: string): Result[Zoned, time.TimeParseError] {
+  let parsed: (time.Timestamp, i32) = time.timestamp_parse_rfc3339_offset(s)?;
   if (parsed.1 == 0) {
-    return Some(utc_zone().at(parsed.0));
+    return Ok(utc_zone().at(parsed.0));
   }
-  return Some(fixed_zone(parsed.1, "UTC" + offset_text(parsed.1)).at(parsed.0));
+  return Ok(fixed_zone(parsed.1, "UTC" + offset_text(parsed.1)).at(parsed.0));
 }
 ```
 
@@ -326,20 +327,48 @@ function (z: Zone) index_at(sec: i64): i32 {
 }
 ```
 
-### `9 pub function iana_zone(name: string): Option[Zone]`
+### `9 pub function iana_zone(name: string): Result[Zone, ZoneError]`
 
 ```fern
-<<9 pub function iana_zone(name: string): Option[Zone]>>=
-pub function iana_zone(name: string): Option[Zone] {
+<<9 pub function iana_zone(name: string): Result[Zone, ZoneError]>>=
+// Why a zone could not be found or read.
+pub enum ZoneError { UnknownZone(string), TzifHeader, TzifTruncated, TzifText }
+
+impl error.Error for ZoneError {}
+
+impl cmp.Display for ZoneError {}
+
+pub function (e: ZoneError) message(): string {
+  match (e) {
+    UnknownZone(name) => {
+      return "\"" + name + "\" is not an IANA time-zone name";
+    },
+    TzifHeader => {
+      return "the data does not start with a valid TZif header";
+    },
+    TzifTruncated => {
+      return "the TZif data ends before its last block";
+    },
+    TzifText => {
+      return "a TZif zone abbreviation or footer is not UTF-8";
+    }
+  }
+}
+
+pub function (e: ZoneError) to_string(): string {
+  return e.message();
+}
+
+pub function iana_zone(name: string): Result[Zone, ZoneError] {
   if (name.len() == 0 || has_table_separator(name)) {
-    return None;
+    return Err(UnknownZone(name));
   }
   let names: string = iana_names();
   let Some(at) = names.index_of(";" + name + "=") else {
-    return None;
+    return Err(UnknownZone(name));
   };
   let off: (i32, i32) = table_uint(names, at + name.len() + 2);
-  return Some(decode_record(iana_records(), off.0));
+  return Ok(decode_record(iana_records(), off.0));
 }
 ```
 
@@ -543,7 +572,7 @@ function read_zone_file(path: string): Option[Zone] {
   }
   match (read_file_bytes(path)) {
     Ok(bs) => {
-      return parse_tzif(bs);
+      return parse_tzif(bs).ok();
     },
     Err(_) => {
       return None;
@@ -552,14 +581,14 @@ function read_zone_file(path: string): Option[Zone] {
 }
 ```
 
-### `15 pub function parse_tzif(bs: [u8]): Option[Zone]`
+### `15 pub function parse_tzif(bs: [u8]): Result[Zone, ZoneError]`
 
 ```fern
-<<15 pub function parse_tzif(bs: [u8]): Option[Zone]>>=
-pub function parse_tzif(bs: [u8]): Option[Zone] {
+<<15 pub function parse_tzif(bs: [u8]): Result[Zone, ZoneError]>>=
+pub function parse_tzif(bs: [u8]): Result[Zone, ZoneError] {
   let h1: Counts = read_counts(bs, 0);
   if (h1.isut < 0 || h1.type_ < 1) {
-    return None;
+    return Err(TzifHeader);
   }
   let version: i32 = bs[4] as i32;
   let off: i32 = 44;
@@ -582,7 +611,7 @@ pub function parse_tzif(bs: [u8]): Option[Zone] {
               footer = text;
             },
             None => {
-              return None;
+              return Err(TzifText);
             }
           }
         }
@@ -590,9 +619,9 @@ pub function parse_tzif(bs: [u8]): Option[Zone] {
     }
   }
   if (off as i64 + block_bytes(c, width) > bs.len() as i64) {
-    return None;
+    return Err(TzifTruncated);
   }
-  return read_zone_block(bs, c, off, width, footer);
+  return read_zone_block(bs, c, off, width, footer).ok_or(TzifText);
 }
 ```
 

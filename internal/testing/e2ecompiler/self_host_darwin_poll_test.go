@@ -44,17 +44,19 @@ func TestSelfHostArm64DarwinPoll(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := fmt.Sprintf(`function exercise(): i32 {
-    let fds: i32[] = %s;
-    let before: i64 = __syscall3(41, 3, 0, 0);
-    if (before < 0 || __syscall3(6, before, 0, 0) != 0) { return 2; }
-    let i: i32 = 0;
-    while (i < %d) {
-        if (poll(fds, %d) != %d) { return 1; }
-        i = i + 1;
-    }
-    let after: i64 = __syscall3(41, 3, 0, 0);
-    if (after != before || __syscall3(6, after, 0, 0) != 0) { return 3; }
-    return 0;
+  unsafe {
+      let fds: i32[] = %s;
+      let before: i64 = __syscall3(41, 3, 0, 0);
+      if (before < 0 || __syscall3(6, before, 0, 0) != 0) { return 2; }
+      let i: i32 = 0;
+      while (i < %d) {
+          if (poll(fds, %d) != %d) { return 1; }
+          i = i + 1;
+      }
+      let after: i64 = __syscall3(41, 3, 0, 0);
+      if (after != before || __syscall3(6, after, 0, 0) != 0) { return 3; }
+      return 0;
+  }
 }
 function main(): i32 { return exercise(); }
 `, tc.fds, tc.rounds, tc.timeout, tc.want)

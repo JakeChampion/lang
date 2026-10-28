@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**81 of 84** claims are pinned by a conformance case. The remaining
+**82 of 85** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -157,6 +157,7 @@ of them.
 | `ST-03` | `docs/STRINGS-SOTA.md` | `slice_unchecked(s, a, b)` indexes bytes and checks no code-point boundary | `slice_unchecked_bytes` |
 | `ST-04` | `docs/STRINGS-SOTA.md` | `slice_unchecked(s, a, b)` aborts when its bounds are out of range | `slice_unchecked_oob` |
 | `SC-01` | `docs/SAFETY-CONTRACT.md` | A call to an unsafe function is accepted only inside an `unsafe` block, through a direct call, a method, a trait object, a bound type parameter, an import, or a closure that holds its own block (`E095` otherwise) | `unsafe_block_accepts_obligations` |
+| `SC-02` | `docs/SAFETY-CONTRACT.md` | A call to a raw builtin (the raw allocation, load, store, copy, fill and release builtins, the box count helpers, `__arr_set_len`, the heap checkpoints, the `__c_call` forms, the task hooks and the syscall floor) is accepted only inside an `unsafe` block, in a function body or in a closure (`E095` otherwise) | `unsafe_block_accepts_raw_builtins` |
 | `RH-01` | `docs/security/HANDLE-AUDIT.md` | A handle whose `close` consumes its receiver cannot be closed twice; the first close is not the local's last use (`E051`) | `diag_e051_handle_closed_twice` |
 | `RH-02` | `docs/security/HANDLE-AUDIT.md` | A handle is not read after a consuming close (`E051`) | `diag_e051_handle_read_after_close` |
 | `RH-03` | `docs/security/HANDLE-AUDIT.md` | A handle passed to an `own` parameter is not used after the transfer (`E051`) | `diag_e051_handle_used_after_transfer` |

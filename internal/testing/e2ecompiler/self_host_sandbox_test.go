@@ -157,9 +157,11 @@ func TestSelfHostSandboxOffEmitsNothing(t *testing.T) {
 
 func TestSelfHostSandboxRefusesRunTimeSyscallNumber(t *testing.T) {
 	const src = `function main(): i32 {
-    let r: i64 = __syscall3(args().len() + 38, 0, 0, 0);
-    if (r > 0) { return 0; }
-    return 1;
+  unsafe {
+      let r: i64 = __syscall3(args().len() + 38, 0, 0, 0);
+      if (r > 0) { return 0; }
+      return 1;
+  }
 }
 `
 	exe := filepath.Join(t.TempDir(), "prog")

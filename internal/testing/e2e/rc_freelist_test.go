@@ -10,33 +10,39 @@ import (
 var freelistReuseSrc = struct{ reuse, wrongClass, lifo string }{
 	reuse: `
 function main(): i32 {
-    let a: usize = __alloc(64);
-    __free(a, 64);
-    let b: usize = __alloc(64);
-    if (a == b) { return 0; }
-    return 1;
+  unsafe {
+      let a: usize = __alloc(64);
+      __free(a, 64);
+      let b: usize = __alloc(64);
+      if (a == b) { return 0; }
+      return 1;
+  }
 }`,
 	wrongClass: `
 function main(): i32 {
-    let a: usize = __alloc(64);
-    __free(a, 64);
-    let b: usize = __alloc(32);
-    if (a == b) { return 1; }
-    return 0;
+  unsafe {
+      let a: usize = __alloc(64);
+      __free(a, 64);
+      let b: usize = __alloc(32);
+      if (a == b) { return 1; }
+      return 0;
+  }
 }`,
 	lifo: `
 function main(): i32 {
-    let a: usize = __alloc(48);
-    let b: usize = __alloc(48);
-    __free(a, 48);
-    __free(b, 48);
-    let c: usize = __alloc(48);
-    let d: usize = __alloc(48);
-    if (c == b) {
-        if (d == a) { return 0; }
-        return 1;
-    }
-    return 2;
+  unsafe {
+      let a: usize = __alloc(48);
+      let b: usize = __alloc(48);
+      __free(a, 48);
+      __free(b, 48);
+      let c: usize = __alloc(48);
+      let d: usize = __alloc(48);
+      if (c == b) {
+          if (d == a) { return 0; }
+          return 1;
+      }
+      return 2;
+  }
 }`,
 }
 
@@ -209,39 +215,45 @@ func TestWASMStringReassignFree(t *testing.T) {
 func TestWASMFreelistReuse(t *testing.T) {
 
 	reuse := `function main(): i32 {
-    let a: usize = __alloc(64);
-    __free(a, 64);
-    let b: usize = __alloc(64);
-    if (a == b) { return 0; }
-    return 1;
+  unsafe {
+      let a: usize = __alloc(64);
+      __free(a, 64);
+      let b: usize = __alloc(64);
+      if (a == b) { return 0; }
+      return 1;
+  }
 }`
 	if got := runWasm(t, reuse); got != 0 {
 		t.Errorf("same-size reuse: got %d, want 0 (freed block should be reused)", got)
 	}
 
 	wrongClass := `function main(): i32 {
-    let a: usize = __alloc(64);
-    __free(a, 64);
-    let b: usize = __alloc(32);
-    if (a == b) { return 1; }
-    return 0;
+  unsafe {
+      let a: usize = __alloc(64);
+      __free(a, 64);
+      let b: usize = __alloc(32);
+      if (a == b) { return 1; }
+      return 0;
+  }
 }`
 	if got := runWasm(t, wrongClass); got != 0 {
 		t.Errorf("wrong-class reuse: got %d, want 0 (32-byte alloc must not reuse a 64-byte free)", got)
 	}
 
 	lifo := `function main(): i32 {
-    let a: usize = __alloc(48);
-    let b: usize = __alloc(48);
-    __free(a, 48);
-    __free(b, 48);
-    let c: usize = __alloc(48);
-    let d: usize = __alloc(48);
-    if (c == b) {
-        if (d == a) { return 0; }
-        return 1;
-    }
-    return 2;
+  unsafe {
+      let a: usize = __alloc(48);
+      let b: usize = __alloc(48);
+      __free(a, 48);
+      __free(b, 48);
+      let c: usize = __alloc(48);
+      let d: usize = __alloc(48);
+      if (c == b) {
+          if (d == a) { return 0; }
+          return 1;
+      }
+      return 2;
+  }
 }`
 	if got := runWasm(t, lifo); got != 0 {
 		t.Errorf("LIFO reuse: got %d, want 0 (c==b, d==a)", got)

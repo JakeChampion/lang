@@ -16,7 +16,7 @@ pub function bare_field(name: string, type_name: string): StructFieldDecl {
   return StructFieldDecl { name: name, type_name: type_name, fn_ret: "", fn_param_types: "", line: 0, col: 0 };
 }
 
-pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], derives: string[], line: i32, col: i32, enum_owner: string, must_consume: boolean, variant_field_names: string[], is_pub: boolean, is_package: boolean, opaque: boolean, module: string }
+pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], const_params: string[], derives: string[], line: i32, col: i32, enum_owner: string, must_consume: boolean, variant_field_names: string[], is_pub: boolean, is_package: boolean, opaque: boolean, module: string }
 
 pub struct TypeAlias { name: string, variants: string[], variant_args: string[], variant_lines: i32[], type_params: string[], line: i32, col: i32, is_pub: boolean, is_package: boolean, module: string }
 
@@ -7070,6 +7070,17 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
       prev_ident = false;
       continue;
     }
+    // A const argument (`Ring[4, string]`).
+    let carg: string = p.peek_const_arg();
+    if (carg.len() > 0) {
+      if (prev_ident) {
+        inner = inner + " ";
+      }
+      inner = inner + carg;
+      p = p.advance();
+      prev_ident = true;
+      continue;
+    }
     let seg: string = p.peek_ident();
     if (seg.len() == 0) {
       seg = p.peek_keyword();
@@ -7584,7 +7595,7 @@ function refuse_const_tparams(p: Par, at: Par, tpl: TpList): Par {
   let i: i32 = 0;
   while (i < tpl.tnames.len()) {
     if (is_const_bound(tpl.tbounds[i])) {
-      return Par { ...p, type_errs: p.type_errs.append(s_unknown(at, "decl:const parameter " + tpl.tnames[i] + ": only a function takes a const parameter")) };
+      return Par { ...p, type_errs: p.type_errs.append(s_unknown(at, "decl:const parameter " + tpl.tnames[i] + ": " + const_param_owners())) };
     }
     i = i + 1;
   }
@@ -7872,14 +7883,26 @@ function parse_field_type(p: Par, name: string): (StructFieldDecl, Par) {
   return (StructFieldDecl { name: name, type_name: ty.name, fn_ret: ty.fn_ret, fn_param_types: ty.fn_params, line: 0, col: 0 }, end);
 }
 
-function parse_decl_tparams(p: Par, kind: string, name: string): (string[], Par) {
+function parse_decl_tparams(p: Par, kind: string, name: string): (string[], string[], Par) {
   let tparams: string[] = [];
+  let cparams: string[] = [];
   if (p.peek_punct() != "[") {
-    return (tparams, p);
+    return (tparams, cparams, p);
   }
+  let open: Par = p;
   p = p.advance();
   let gd: i32 = 1;
   while (!p.at_end() && gd > 0) {
+    if (gd == 1 && p.peek_keyword() == "const") {
+      let (cname, cp) = parse_const_tparam(p);
+      p = cp;
+      tparams = tparams.append(cname);
+      cparams = cparams.append(cname);
+      if (kind != "struct") {
+        p = Par { ...p, type_errs: p.type_errs.append(s_unknown(open, "decl:const parameter " + cname + ": " + const_param_owners())) };
+      }
+      continue;
+    }
     let gpk: string = p.peek_punct();
     if (gpk == "[") {
       gd = gd + 1;
@@ -7904,7 +7927,12 @@ function parse_decl_tparams(p: Par, kind: string, name: string): (string[], Par)
     }
     p = p.advance();
   }
-  return (tparams, p);
+  return (tparams, cparams, p);
+}
+
+// const_param_owners names the declarations that take a const parameter.
+function const_param_owners(): string {
+  return "only a function or a struct takes a const parameter";
 }
 
 function parse_struct_decl(p: Par): (StructDecl, Par) {
@@ -7915,14 +7943,14 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
   let notp0: string[] = [];
   if (name.len() == 0) {
     let empty: StructFieldDecl[] = [];
-    return (StructDecl { name: "", fields: empty, type_params: notp0, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" }, p);
+    return (StructDecl { name: "", fields: empty, type_params: notp0, const_params: [], derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" }, p);
   }
   p = p.advance();
-  let (tparams, tp_p) = parse_decl_tparams(p, "struct", name);
+  let (tparams, cparams, tp_p) = parse_decl_tparams(p, "struct", name);
   p = tp_p;
   if (p.peek_punct() != "{") {
     let empty: StructFieldDecl[] = [];
-    return (StructDecl { name: name, fields: empty, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" }, p);
+    return (StructDecl { name: name, fields: empty, type_params: tparams, const_params: cparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" }, p);
   }
   p = p.advance();
   let fields: StructFieldDecl[] = [];
@@ -7944,7 +7972,7 @@ function parse_struct_decl(p: Par): (StructDecl, Par) {
   if (p.peek_punct() == "}") {
     p = p.advance();
   }
-  return (StructDecl { name: name, fields: fields, type_params: tparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" }, p);
+  return (StructDecl { name: name, fields: fields, type_params: tparams, const_params: cparams, derives: [], line: sline, col: scol, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" }, p);
 }
 
 function parse_type_alias(p: Par): (TypeAlias, Par) {
@@ -7956,7 +7984,7 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
     return (TypeAlias { name: "", variants: [], variant_args: [], variant_lines: [], type_params: [], line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
   }
   p = p.advance();
-  let (tparams, tp_p) = parse_decl_tparams(p, "type", name);
+  let (tparams, tp_cparams, tp_p) = parse_decl_tparams(p, "type", name);
   p = tp_p;
   if (p.peek_punct() != "=") {
     return (TypeAlias { name: name, variants: [], variant_args: [], variant_lines: [], type_params: tparams, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
@@ -8002,7 +8030,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
     return ("", out, [], vlines, p);
   }
   p = p.advance();
-  let (tparams, tp_p) = parse_decl_tparams(p, "enum", name);
+  let (tparams, tp_cparams, tp_p) = parse_decl_tparams(p, "enum", name);
   p = tp_p;
   if (p.peek_punct() != "{") {
     return (name, out, tparams, vlines, p);
@@ -8069,7 +8097,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
         p = p.advance();
       }
     }
-    out = out.append(StructDecl { name: vname, fields: fields, type_params: [], derives: [], line: vline, col: vcol, enum_owner: name, must_consume: false, variant_field_names: vfnames, is_pub: true, is_package: false, opaque: false, module: "" });
+    out = out.append(StructDecl { name: vname, fields: fields, type_params: [], const_params: [], derives: [], line: vline, col: vcol, enum_owner: name, must_consume: false, variant_field_names: vfnames, is_pub: true, is_package: false, opaque: false, module: "" });
     vlines = vlines.append(vline);
     if (p.peek_punct() == ",") {
       p = p.advance();
@@ -8254,7 +8282,7 @@ function add_builtin_variant(acc: StructDecl[], name: string, payload_types: str
     }
     fields = fields.append(bare_field(field, t));
   }
-  return acc.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+  return acc.append(StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: enum_name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
 
 pub function builtin_function_names(): string[] {
@@ -8382,14 +8410,14 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     fsf = fsf.append(bare_field("ctime_nsec", "i64"));
     fsf = fsf.append(bare_field("btime", "i64"));
     fsf = fsf.append(bare_field("btime_nsec", "i64"));
-    structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "FileStat", fields: fsf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "DirEntry")) {
     let def: StructFieldDecl[] = [];
     def = def.append(bare_field("name", "string"));
     def = def.append(bare_field("ino", "i64"));
     def = def.append(bare_field("kind", "u32"));
-    structs = structs.append(StructDecl { name: "DirEntry", fields: def, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "DirEntry", fields: def, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "FsStat")) {
     let fvf: StructFieldDecl[] = [];
@@ -8405,7 +8433,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     fvf = fvf.append(bare_field("fsid", "i64"));
     fvf = fvf.append(bare_field("frag_size", "i64"));
     fvf = fvf.append(bare_field("fs_type_name", "string"));
-    structs = structs.append(StructDecl { name: "FsStat", fields: fvf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "FsStat", fields: fvf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "MountEntry")) {
     let mef: StructFieldDecl[] = [];
@@ -8413,32 +8441,32 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     mef = mef.append(bare_field("target", "string"));
     mef = mef.append(bare_field("fstype", "string"));
     mef = mef.append(bare_field("dev", "i64"));
-    structs = structs.append(StructDecl { name: "MountEntry", fields: mef, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "MountEntry", fields: mef, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "WinSize")) {
     let wsf: StructFieldDecl[] = [];
     wsf = wsf.append(bare_field("rows", "i64"));
     wsf = wsf.append(bare_field("cols", "i64"));
-    structs = structs.append(StructDecl { name: "WinSize", fields: wsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "WinSize", fields: wsf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "Pipe")) {
     let pf: StructFieldDecl[] = [];
     pf = pf.append(bare_field("r", "Reader"));
     pf = pf.append(bare_field("w", "Writer"));
-    structs = structs.append(StructDecl { name: "Pipe", fields: pf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "Pipe", fields: pf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "ProcessResult")) {
     let prf: StructFieldDecl[] = [];
     prf = prf.append(bare_field("stdout", "string"));
     prf = prf.append(bare_field("stderr", "string"));
     prf = prf.append(bare_field("exit_code", "i32"));
-    structs = structs.append(StructDecl { name: "ProcessResult", fields: prf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "ProcessResult", fields: prf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "HeaderMap")) {
     let hmf: StructFieldDecl[] = [];
     hmf = hmf.append(bare_field("names", "string[]"));
     hmf = hmf.append(bare_field("values", "string[]"));
-    structs = structs.append(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "HeaderMap", fields: hmf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   structs = add_builtin_stream(structs);
   if (!name_declared(structs, "ChunkProducer")) {
@@ -8447,7 +8475,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     cpf = cpf.append(bare_field("idle_ms", "i32"));
     cpf = cpf.append(bare_field("filler", "u8[]"));
     cpf = cpf.append(StructFieldDecl { name: "trailers", type_name: "fn", fn_ret: "HeaderMap", fn_param_types: "", line: 0, col: 0 });
-    structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "HttpRequest")) {
     let hrf: StructFieldDecl[] = [];
@@ -8456,7 +8484,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     hrf = hrf.append(bare_field("body", "ByteStream"));
     hrf = hrf.append(bare_field("headers", "HeaderMap"));
     hrf = hrf.append(bare_field("trailers", "HeaderMap"));
-    structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "HttpRequest", fields: hrf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "HttpResponse")) {
     let hsf: StructFieldDecl[] = [];
@@ -8465,7 +8493,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     hsf = hsf.append(bare_field("headers", "HeaderMap"));
     hsf = hsf.append(bare_field("trailers", "HeaderMap"));
     hsf = hsf.append(bare_field("background", "Option[() => void]"));
-    structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "HttpResponse", fields: hsf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   structs = add_builtin_struct2(structs, "Instant", "sec", "i64", "nsec", "i32");
   structs = add_builtin_struct2(structs, "Duration", "sec", "i64", "nsec", "i32");
@@ -8475,7 +8503,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     df = df.append(bare_field("year", "i32"));
     df = df.append(bare_field("month", "i32"));
     df = df.append(bare_field("day", "i32"));
-    structs = structs.append(StructDecl { name: "Date", fields: df, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "Date", fields: df, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "Time")) {
     let tf: StructFieldDecl[] = [];
@@ -8483,7 +8511,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     tf = tf.append(bare_field("minute", "i32"));
     tf = tf.append(bare_field("second", "i32"));
     tf = tf.append(bare_field("nsec", "i32"));
-    structs = structs.append(StructDecl { name: "Time", fields: tf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "Time", fields: tf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "Span")) {
     let spf: StructFieldDecl[] = [];
@@ -8495,7 +8523,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     spf = spf.append(bare_field("minutes", "i32"));
     spf = spf.append(bare_field("seconds", "i32"));
     spf = spf.append(bare_field("nanos", "i32"));
-    structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "Span", fields: spf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   structs = add_builtin_stream(structs);
   if (!name_declared(structs, "ChunkProducer")) {
@@ -8504,12 +8532,12 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     cpf = cpf.append(bare_field("idle_ms", "i32"));
     cpf = cpf.append(bare_field("filler", "u8[]"));
     cpf = cpf.append(StructFieldDecl { name: "trailers", type_name: "fn", fn_ret: "HeaderMap", fn_param_types: "", line: 0, col: 0 });
-    structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "ChunkProducer", fields: cpf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "BytesWriter")) {
     let bwf: StructFieldDecl[] = [];
     bwf = bwf.append(bare_field("data", "u8[]"));
-    structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "BytesWriter", fields: bwf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "Url")) {
     let urlf: StructFieldDecl[] = [];
@@ -8519,7 +8547,7 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     urlf = urlf.append(bare_field("path", "string"));
     urlf = urlf.append(bare_field("query", "string"));
     urlf = urlf.append(bare_field("fragment", "string"));
-    structs = structs.append(StructDecl { name: "Url", fields: urlf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "Url", fields: urlf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   return structs;
 }
@@ -8530,14 +8558,14 @@ function add_builtin_stream(structs: StructDecl[]): StructDecl[] {
     bsf = bsf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "", line: 0, col: 0 });
     bsf = bsf.append(bare_field("fault", "Cell[Option[StreamFault]]"));
     bsf = bsf.append(StructFieldDecl { name: "send", type_name: "fn", fn_ret: "i32", fn_param_types: "u8[]", line: 0, col: 0 });
-    structs = structs.append(StructDecl { name: "BodySource", fields: bsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "BodySource", fields: bsf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   if (!name_declared(structs, "ByteStream")) {
     let stf: StructFieldDecl[] = [];
     stf = stf.append(bare_field("data", "u8[]"));
     stf = stf.append(bare_field("pos", "i32"));
     stf = stf.append(bare_field("source", "Option[BodySource]"));
-    structs = structs.append(StructDecl { name: "ByteStream", fields: stf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+    structs = structs.append(StructDecl { name: "ByteStream", fields: stf, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
   }
   return structs;
 }
@@ -8549,7 +8577,7 @@ function add_builtin_struct2(structs: StructDecl[], name: string, f0: string, t0
   let fields: StructFieldDecl[] = [];
   fields = fields.append(bare_field(f0, t0));
   fields = fields.append(bare_field(f1, t1));
-  return structs.append(StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+  return structs.append(StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
 }
 
 struct MEnv { mnames: string[], mtypes: string[] }
@@ -9461,7 +9489,7 @@ function lambda_ret_of(e: ast.Expr, env: MEnv, funcs: MFns): string {
       if (et.len() > 0) {
         return me_fn_ret_spelling(et);
       }
-      return func_ret_of(funcs.decls, fid.name);
+      return func_ret_of(funcs, fid.name);
     },
     ast.ExprCall(_) => {
       return callable_ret_spelling(fn_value_spelling(e, env, funcs));
@@ -10078,23 +10106,20 @@ function builtin_variant_arg_binds(pattern: string, c: ast.ExprCall, env: MEnv, 
   return bind_unify(strip_ws(pargs[slot]), pt, vars, binds, funcs);
 }
 
-function func_ret_of(funcs: FuncDecl[], name: string): string {
-  let i: i32 = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) {
-      return funcs[i].ret_type;
-    }
-    i = i + 1;
-  }
-  return "";
-}
-
-function func_param_type_at(funcs: FuncDecl[], name: string, idx: i32): string {
-  let at: i32 = free_decl_at(funcs, name);
-  if (at < 0 || idx < 0 || idx >= funcs[at].params.len()) {
+function func_ret_of(funcs: MFns, name: string): string {
+  let at: i32 = funcs.free_at(name);
+  if (at < 0) {
     return "";
   }
-  return funcs[at].params[idx].type_name;
+  return funcs.decls[at].ret_type;
+}
+
+function func_param_type_at(funcs: MFns, name: string, idx: i32): string {
+  let at: i32 = funcs.free_at(name);
+  if (at < 0 || idx < 0 || idx >= funcs.decls[at].params.len()) {
+    return "";
+  }
+  return funcs.decls[at].params[idx].type_name;
 }
 
 function me_method_arg_types(fa: ast.ExprFieldAccess, argc: i32, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): string[] {
@@ -10510,7 +10535,7 @@ function mono_named_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: M
   }
   let result: string = call_ret_type(funcs, name, c.args, env);
   if (result.len() == 0 && !uninferred_generic_ret(funcs, name)) {
-    result = func_ret_of(funcs.decls, name);
+    result = func_ret_of(funcs, name);
   }
   if (result.len() == 0) {
     result = fn_spelling_ret(env.elook(name));
@@ -11401,7 +11426,7 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
       let cv: RExpr = mono_expr(f.cond, env, funcs, ins);
       let tb: RStmts = mono_stmts(f.then_body, env, funcs, cv.rins, ret_ty);
       let eb: RStmts = mono_stmts(f.else_body, env, funcs, tb.rins3, ret_ty);
-      return RStmtOne { rstmt: ast.StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: "" }, renv: env, rins2: eb.rins3 };
+      return RStmtOne { rstmt: ast.StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: f.origin }, renv: env, rins2: eb.rins3 };
     },
     ast.StmtWhile(w) => {
       let cv: RExpr = mono_expr(w.cond, env, funcs, ins);
@@ -12122,7 +12147,7 @@ function const_reads(fd: FuncDecl, body: ast.Stmt[], tparams: string[], cts: str
   if (vars.len() == 0) {
     return body;
   }
-  let values: string[] = [];
+  let values: string[] = astwalk.append_bound_name([], fd.receiver_name);
   for pd in fd.params {
     values = astwalk.append_bound_name(values, pd.name);
   }
@@ -13577,6 +13602,9 @@ function ms_struct_lit(s: ast.ExprStructLit, dest: string, env: MEnv, gstructs: 
   while (i < s.field_values.len()) {
     let fdest: string = "";
     let fty: string = lit_field_decl_type(funcs.structs, s.type_name, s.field_names[i]);
+    if (fty.len() == 0 && lit_dest.len() > 0) {
+      fty = inst_field_type(lit_dest, s.field_names[i], funcs);
+    }
     if (fty.len() > 0 && !mono_ty_mentions_var(fty)) {
       let fm: TyIns = mg_ty(fty, gstructs, cur);
       cur = fm.mins;
@@ -13605,6 +13633,22 @@ function ms_struct_lit(s: ast.ExprStructLit, dest: string, env: MEnv, gstructs: 
     written = "";
   }
   return RExpr { rexpr: ast.ExprStructLit { ...s, type_name: tn, field_values: vals, base: rb.rexpr, written: written }, rins: cur };
+}
+
+// inst_field_type is the type of field `field` in the generic struct instance
+// `inst` (`Pair__3`, `Pair[3]`), with the instance's arguments put in.
+function inst_field_type(inst: string, field: string, funcs: MFns): string {
+  let is: InstStruct = inst_struct(inst, funcs);
+  if (is.at < 0) {
+    return "";
+  }
+  let sd: StructDecl = funcs.structs[is.at];
+  for f in sd.fields {
+    if (f.name == field) {
+      return subst_ty(f.type_name, sd.type_params, is.cts);
+    }
+  }
+  return "";
 }
 
 function lit_field_decl_type(structs: StructDecl[], name: string, field: string): string {
@@ -13756,7 +13800,7 @@ function ms_call(c: ast.ExprCall, arg_dests: string[], env: MEnv, gstructs: Stru
     let dest: string = "";
     let pty: string = "";
     if (fname.len() > 0) {
-      pty = func_param_type_at(funcs.decls, fname, i);
+      pty = func_param_type_at(funcs, fname, i);
     } else if (mdecl >= 0 && i < funcs.decls[mdecl].params.len()) {
       pty = funcs.decls[mdecl].params[i].type_name;
     }
@@ -14038,7 +14082,7 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
       let cv: RExpr = ms_expr(f.cond, env, gstructs, funcs, ins);
       let tb: RStmts = ms_stmts(f.then_body, env, gstructs, funcs, cv.rins, ret_ty);
       let eb: RStmts = ms_stmts(f.else_body, env, gstructs, funcs, tb.rins3, ret_ty);
-      return RStmtOne { rstmt: ast.StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: "" }, renv: env, rins2: eb.rins3 };
+      return RStmtOne { rstmt: ast.StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: f.origin }, renv: env, rins2: eb.rins3 };
     },
     ast.StmtWhile(w) => {
       let cv: RExpr = ms_expr(w.cond, env, gstructs, funcs, ins);
@@ -14156,7 +14200,7 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
   let rl: TyIns = to_concrete_struct_ty_list(subst_ty_list(m.ret_fn_param_types, tparams, cts), base, mang, gstructs, rr.mins);
   let notp: string[] = [];
   return FRes {
-    ffn: FuncDecl { ...m, receiver_type: mang, type_params: notp, all_type_params: [], params: nparams, ret_type: rt.ty, ret_fn_ret: rr.ty, ret_fn_param_types: rl.ty, body: subst_stmts(method_bound_rewritten(m, tparams, cts, mod.trait_reqs, funcs), tparams, cts), bound_traits: [] },
+    ffn: FuncDecl { ...m, receiver_type: mang, type_params: notp, all_type_params: [], params: nparams, ret_type: rt.ty, ret_fn_ret: rr.ty, ret_fn_param_types: rl.ty, body: const_reads(m, subst_stmts(method_bound_rewritten(m, tparams, cts, mod.trait_reqs, funcs), tparams, cts), tparams, cts), bound_traits: [] },
     fins: rl.mins,
   };
 }
@@ -14404,7 +14448,7 @@ function ms_module(mod: Module): Module {
         nf = nf.append(StructFieldDecl { ...sd.fields[fj], type_name: ft.ty, fn_ret: ffr.ty, fn_param_types: ffl.ty });
         fj = fj + 1;
       }
-      nstructs = nstructs.append(StructDecl { name: sd.name, fields: nf, type_params: [], derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names, is_pub: sd.is_pub, is_package: false, opaque: sd.opaque, module: sd.module });
+      nstructs = nstructs.append(StructDecl { name: sd.name, fields: nf, type_params: [], const_params: [], derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names, is_pub: sd.is_pub, is_package: false, opaque: sd.opaque, module: sd.module });
     }
     si = si + 1;
   }
@@ -14476,7 +14520,7 @@ function ms_module(mod: Module): Module {
         cf = cf.append(StructFieldDecl { ...gd.fields[cfi], type_name: ft2.ty, fn_ret: gfr.ty, fn_param_types: gfl.ty });
         cfi = cfi + 1;
       }
-      nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], derives: gd.derives, line: gd.line, col: gd.col, enum_owner: gd.enum_owner, must_consume: gd.must_consume, variant_field_names: gd.variant_field_names, is_pub: true, is_package: false, opaque: gd.opaque, module: gd.module });
+      nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], const_params: [], derives: gd.derives, line: gd.line, col: gd.col, enum_owner: gd.enum_owner, must_consume: gd.must_consume, variant_field_names: gd.variant_field_names, is_pub: true, is_package: false, opaque: gd.opaque, module: gd.module });
       let cms: MsClones = ms_clone_methods(nfuncs, mod, base, key, gstructs, sfns, ins);
       ins = cms.ins;
       nfuncs = cms.fns;
@@ -15080,11 +15124,11 @@ function me_call_arg_types(funcs: MFns, fname: string, args: ast.Expr[], env: ME
 }
 
 function me_call_decl_at(funcs: MFns, fname: string, ins: Insts): i32 {
-  return free_decl_at(funcs.decls, me_called_name(funcs, fname, ins));
+  return funcs.free_at(me_called_name(funcs, fname, ins));
 }
 
 function me_called_name(funcs: MFns, fname: string, ins: Insts): string {
-  if (free_decl_at(funcs.decls, fname) >= 0 || util.index_of_sub(fname, "__") <= 0) {
+  if (funcs.free_at(fname) >= 0 || util.index_of_sub(fname, "__") <= 0) {
     return fname;
   }
   let k: i32 = 0;
@@ -15097,15 +15141,14 @@ function me_called_name(funcs: MFns, fname: string, ins: Insts): string {
   return fname;
 }
 
-function free_decl_at(funcs: FuncDecl[], name: string): i32 {
-  let i: i32 = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) {
-      return i;
-    }
-    i = i + 1;
+// free_at is the position in `decls` of the first free function named
+// `name`, -1 for none.
+function (funcs: MFns) free_at(name: string): i32 {
+  let k: i32 = funcs.pix.find(name);
+  if (k < 0) {
+    return 0 - 1;
   }
-  return 0 - 1;
+  return funcs.pat[k];
 }
 
 function me_ident(id: ast.ExprIdent, expected: string, env: MEnv, enums: EnumDecl[], funcs: MFns, ins: Insts): RExpr {
@@ -15493,7 +15536,7 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
           if (crt.len() > 0) {
             return crt;
           }
-          return func_ret_of(funcs.decls, cid.name);
+          return func_ret_of(funcs, cid.name);
         },
         ast.ExprFieldAccess(cfa) => {
           let rt: string = me_scrutinee_type(cfa.obj, env, enums, structs, funcs, ins);
@@ -15641,7 +15684,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
       let cv: RExpr = me_expr(f.cond, "", env, enums, structs, funcs, ins);
       let tb: RStmts = me_stmts(f.then_body, env, ret_ty, enums, structs, funcs, cv.rins);
       let eb: RStmts = me_stmts(f.else_body, env, ret_ty, enums, structs, funcs, tb.rins3);
-      return RStmtOne { rstmt: ast.StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: "" }, renv: env, rins2: eb.rins3 };
+      return RStmtOne { rstmt: ast.StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: f.origin }, renv: env, rins2: eb.rins3 };
     },
     ast.StmtWhile(w) => {
       let cv: RExpr = me_expr(w.cond, "", env, enums, structs, funcs, ins);
@@ -16155,7 +16198,7 @@ pub function monomorphize_enums(mod: Module): Module {
             nf = nf.append(StructFieldDecl { ...vs.fields[fj2], type_name: f_ty, fn_ret: f_ret, fn_param_types: f_ptys });
             fj2 = fj2 + 1;
           }
-          cl_structs = cl_structs.append(StructDecl { name: vn0 + "__" + key, fields: nf, type_params: [], derives: vs.derives, line: vs.line, col: vs.col, enum_owner: mname, must_consume: vs.must_consume, variant_field_names: vs.variant_field_names, is_pub: true, is_package: false, opaque: vs.opaque, module: vs.module });
+          cl_structs = cl_structs.append(StructDecl { name: vn0 + "__" + key, fields: nf, type_params: [], const_params: [], derives: vs.derives, line: vs.line, col: vs.col, enum_owner: mname, must_consume: vs.must_consume, variant_field_names: vs.variant_field_names, is_pub: true, is_package: false, opaque: vs.opaque, module: vs.module });
         }
         vi2 = vi2 + 1;
       }
@@ -16204,7 +16247,7 @@ pub function monomorphize_enums(mod: Module): Module {
         rf = rf.append(StructFieldDecl { ...sd.fields[rfj], type_name: fslot.ty, fn_ret: fslot.fn_ret, fn_param_types: fslot.fn_params });
         rfj = rfj + 1;
       }
-      out_structs = out_structs.append(StructDecl { name: sd.name, fields: rf, type_params: sd.type_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names, is_pub: sd.is_pub, is_package: false, opaque: sd.opaque, module: sd.module });
+      out_structs = out_structs.append(StructDecl { name: sd.name, fields: rf, type_params: sd.type_params, const_params: sd.const_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names, is_pub: sd.is_pub, is_package: false, opaque: sd.opaque, module: sd.module });
     }
     osi = osi + 1;
   }
@@ -18152,7 +18195,7 @@ pub function desugar_union_aliases(mod: Module): Module {
       if (vi < al.variant_args.len() && al.variant_args[vi].len() > 0) {
         payload = member + "[" + al.variant_args[vi] + "]";
       }
-      structs = structs.append(StructDecl { name: member, fields: [bare_field("__ev", payload)], type_params: [], derives: [], line: 0, col: 0, enum_owner: al.name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
+      structs = structs.append(StructDecl { name: member, fields: [bare_field("__ev", payload)], type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: al.name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
       vi = vi + 1;
     }
     enums = enums.append(EnumDecl { name: al.name, variant_names: al.variants, type_params: al.type_params, line: al.line, col: al.col, must_consume: false, try_marker: false, is_pub: al.is_pub, is_package: al.is_package, module: al.module, instance: "", visible_from: [] });
@@ -21250,7 +21293,12 @@ function respell_type_vars_module(mod: Module, written: boolean): Module {
   }
   let structs: StructDecl[] = [];
   for sd in mod.structs {
-    let svars: string[] = sd.type_params;
+    let svars: string[] = [];
+    for tv in sd.type_params {
+      if (!util.has_str(sd.const_params, tv)) {
+        svars = svars.append(tv);
+      }
+    }
     if (sd.enum_owner.len() > 0) {
       svars = decl_type_params(sd.enum_owner, mod);
     }
@@ -21351,9 +21399,43 @@ function fn_type_vars(fd: FuncDecl, mod: Module, respelled: boolean): string[] {
     vars = add_tvars(vars, decl_type_params(fd.receiver_type, mod));
   }
   if (respelled) {
-    return type_str_vars(fd.receiver_type, vars);
+    vars = type_str_vars(fd.receiver_type, vars);
+  } else {
+    vars = add_tvars(vars, receiver_type_vars(parse_type_ref(fd.receiver_type), mod));
   }
-  return add_tvars(vars, receiver_type_vars(parse_type_ref(fd.receiver_type), mod));
+  let consts: string[] = receiver_const_names(fd.receiver_type, mod);
+  let out: string[] = [];
+  for v in vars {
+    if (!util.has_str(consts, v)) {
+      out = out.append(v);
+    }
+  }
+  return out;
+}
+
+// receiver_const_names is the names a receiver spelling gives to its struct's
+// const parameters: N in `function (r: Ring[N, T]) cap()`.
+function receiver_const_names(receiver_type: string, mod: Module): string[] {
+  let out: string[] = [];
+  let r: TypeRef = parse_type_ref(receiver_type);
+  for sd in mod.structs {
+    if (sd.name == r.base) {
+      return const_arg_names(r, sd.type_params, sd.const_params);
+    }
+  }
+  return out;
+}
+
+// const_arg_names is the names r writes at the const parameters of a type
+// that declares type_params.
+pub function const_arg_names(r: TypeRef, type_params: string[], const_params: string[]): string[] {
+  let out: string[] = [];
+  for i in 0..r.args.len() {
+    if (i < type_params.len() && util.has_str(const_params, type_params[i]) && r.args[i].args.len() == 0) {
+      out = out.append(r.args[i].base);
+    }
+  }
+  return out;
 }
 
 function receiver_type_vars(r: TypeRef, mod: Module): string[] {
@@ -21467,7 +21549,7 @@ function rename_struct_type_vars(sd: StructDecl, vars: string[], cts: string[]):
   for f in sd.fields {
     fields = fields.append(StructFieldDecl { ...f, type_name: subst_ty(f.type_name, vars, cts), fn_ret: subst_ty(f.fn_ret, vars, cts), fn_param_types: subst_ty_list(f.fn_param_types, vars, cts) });
   }
-  return StructDecl { ...sd, fields: fields, type_params: rename_ty_list(sd.type_params, vars, cts) };
+  return StructDecl { ...sd, fields: fields, type_params: rename_ty_list(sd.type_params, vars, cts), const_params: rename_ty_list(sd.const_params, vars, cts) };
 }
 
 function rename_impl_type_vars(im: ImplInfo, vars: string[], cts: string[]): ImplInfo {
@@ -25039,7 +25121,7 @@ pub function merge_module_prefixed(into: Module, from: Module, prefix: string): 
   let si: i32 = 0;
   while (si < from.structs.len()) {
     let sd: StructDecl = from.structs[si];
-    nstructs = nstructs.append(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names, is_pub: true, is_package: false, opaque: sd.opaque, module: sd.module });
+    nstructs = nstructs.append(StructDecl { name: prefix + "." + sd.name, fields: sd.fields, type_params: sd.type_params, const_params: sd.const_params, derives: sd.derives, line: sd.line, col: sd.col, enum_owner: sd.enum_owner, must_consume: sd.must_consume, variant_field_names: sd.variant_field_names, is_pub: true, is_package: false, opaque: sd.opaque, module: sd.module });
     si = si + 1;
   }
   let naliases: TypeAlias[] = into.aliases;

@@ -31,12 +31,14 @@ func mustMatch(t *testing.T, pat, asm string) bool {
 const armQuarantineSrc = `import "std/string";
 function mk(a: string): string { return a + "!"; }
 function main(): i32 {
-    let xs: string[] = [mk("x"), mk("y")];
-    let s: string = mk("ab");
-    let n: i32[] = [1, 2, 3];
-    let big: u8[] = __alloc_u8(600000);
-    __rc_dec(big);
-    return xs.len() + s.len() + n[0];
+  unsafe {
+      let xs: string[] = [mk("x"), mk("y")];
+      let s: string = mk("ab");
+      let n: i32[] = [1, 2, 3];
+      let big: u8[] = __alloc_u8(600000);
+      __rc_dec(big);
+      return xs.len() + s.len() + n[0];
+  }
 }`
 
 func arm64Target(t *testing.T, h ssaBackendHost) ssaBackendTarget {

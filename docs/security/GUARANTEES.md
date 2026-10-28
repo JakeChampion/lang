@@ -20,6 +20,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | An out-of-range index, slice or write aborts the program with exit 134 on every backend | `conformance/cases/oob_index_wrapped` and the bounds rows of `ADVERSARIAL-SUITE.md`, `TestArrayBoundsCheck` | interp, x86, arm64, wasm |
 | Integer arithmetic wraps and never traps, with the same result on every backend | `TestIntOverflowingX86_64`, `TestIntOverflowingArm64`, `TestIntOverflowingWasm`, `TestIntOverflowingInterp` | x86, arm64, wasm, interp |
 | An unsafe function is callable only inside an unsafe block, cannot become a value, and cannot implement a safe trait method | `conformance/cases/diag_e095`, `conformance/cases/diag_e095_unsafe_function_as_a_value`, `conformance/cases/diag_e095_safe_trait_method_unsafe_impl` | both checkers |
+| A raw builtin that forges an address, changes a count or a length, or calls foreign code is callable only inside an unsafe block | `conformance/cases/diag_e095_raw_builtin_outside_unsafe`, with the control `conformance/cases/unsafe_block_accepts_raw_builtins`, `TestUnsafeIntrinsicsMatchSelfHost` | both checkers |
 | A consumed owned value cannot be used again, through a closure or a handle | `conformance/cases/diag_e050_closure_consumes_captured_owned`, `conformance/cases/diag_e051_handle_closed_twice` | both checkers |
 | Every compile verifies its IR unless `FERN_IR_VERIFY=0` | `TestSelfHostIRVerifyGateRefuses`, `TestVerifyGateRunsOnNativeCompile` | x86 |
 

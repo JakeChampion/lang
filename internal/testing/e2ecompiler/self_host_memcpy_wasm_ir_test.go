@@ -18,11 +18,13 @@ func TestSelfHostMemcpyWasmIR(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	src := `function main(): i32 {
-    let src: u8[] = __alloc_u8(3);
-    src = src.with(0, 5 as u8); src = src.with(1, 7 as u8); src = src.with(2, 9 as u8);
-    let dst: u8[] = __alloc_u8(3);
-    __memcpy(dst as usize, src as usize, 20);
-    return (dst[0] as i32) + (dst[1] as i32) + (dst[2] as i32);
+  unsafe {
+      let src: u8[] = __alloc_u8(3);
+      src = src.with(0, 5 as u8); src = src.with(1, 7 as u8); src = src.with(2, 9 as u8);
+      let dst: u8[] = __alloc_u8(3);
+      __memcpy(dst as usize, src as usize, 20);
+      return (dst[0] as i32) + (dst[1] as i32) + (dst[2] as i32);
+  }
 }`
 	const want = 21
 

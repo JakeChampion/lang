@@ -530,7 +530,7 @@ func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
 	}
 	f.b.WriteString("struct ")
 	f.b.WriteString(sd.Name)
-	f.writeTypeParams(sd.TypeParams, nil, nil, nil)
+	f.writeTypeParams(sd.TypeParams, nil, nil, sd.ConstParams)
 	if n := len(sd.Fields); n > 0 && sd.Fields[n-1].NamePos.Line > 0 &&
 		f.keepListLines(sd.P.Line, sd.Fields[n-1].NamePos.Line) {
 		f.b.WriteString(" {\n")

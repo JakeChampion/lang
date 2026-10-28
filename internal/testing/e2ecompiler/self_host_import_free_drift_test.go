@@ -30,6 +30,11 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	}
 	bodies := map[string][]copyOf{}
 	var free []string
+	// The wide reference rows and wide range checks have independent contracts.
+	independent := map[string]bool{
+		"ssalargepushwidecases.rows":   true,
+		"ssalargepushwideranges.valid": true,
+	}
 
 	for _, p := range paths {
 		src, err := os.ReadFile(p)
@@ -48,6 +53,9 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 			continue
 		}
 		for name, body := range topLevelFuncs(lines) {
+			if independent[mod+"."+name] {
+				name = mod + "." + name
+			}
 			code := normaliseCode(body)
 			sum := md5.Sum([]byte(strings.Join(code, "\n")))
 			bodies[name] = append(bodies[name], copyOf{mod, hex.EncodeToString(sum[:]), len(code)})
@@ -57,7 +65,7 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	sort.Strings(free)
 	wantFree := []string{
 		"aborts", "aesref", "arm64_native", "builtins", "capvocab", "docprintable", "elf", "literate", "rtbundle", "rtbytecopy", "rttemplates", "rtwasm",
-		"sourcepos", "ssadecrementcount", "ssafixed", "stdlib_methods", "typeinfo", "watbin", "wit_fern_world", "wit_proxy_world", "x86_native",
+		"sourcepos", "ssadecrementcount", "ssafixed", "ssalargepushwidecases", "ssalargepushwideranges", "stdlib_methods", "typeinfo", "watbin", "wit_fern_world", "wit_proxy_world", "x86_native",
 	}
 	if strings.Join(free, ",") != strings.Join(wantFree, ",") {
 		t.Errorf("the import-free module set changed.\n  got:  %v\n  want: %v\n"+
