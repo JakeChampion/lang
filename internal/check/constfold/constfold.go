@@ -570,9 +570,6 @@ func foldFloatBinary(n *ast.Binary, l, r float64, width int) (ast.Expr, error) {
 	case "*":
 		return &ast.FloatLit{P: n.P, Value: l * r, Width: width}, nil
 	case "/":
-		if r == 0 {
-			return nil, &Error{Pos: n.P, Msg: "division by zero in constant expression"}
-		}
 		return &ast.FloatLit{P: n.P, Value: l / r, Width: width}, nil
 	case "==":
 		return &ast.BoolLit{P: n.P, Value: l == r}, nil
