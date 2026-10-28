@@ -36,8 +36,8 @@ inlines leaves, splits reads of known constructions into their parts, and
 runs tail recursion modulo cons. A spliced callee's field read of a
 parameter the caller passed narrowed out of a struct-union becomes a payload
 read of the union (`scrutinee_reads`), the form the source lowering gives a
-member binding's field read. It splices a function declared `@inline` at
-every call, as it splices a function called once. The function must not be
+member binding's field read. It splices a function or an impl method
+declared `@inline` at every call, as it splices a function called once. The function must not be
 recursive, must have at most 400 instructions, and must only read its view
 parameters (`seminline.forced_spliceable`). It is a graph-to-graph pass; the stages
 below never see what it removed.

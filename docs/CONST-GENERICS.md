@@ -2,7 +2,7 @@
 
 Status: [plan] CG1 and CG2 ship. A function, a struct, an enum, a type
 alias, an impl or a trait takes a const parameter. `Vec[N, T]` is the second
-spelling of the lane types (§4). CG3a ships, and CG3b and CG3c are a plan.
+spelling of the lane types (§4). CG3a and CG3b ship, and CG3c is a plan.
 
 A const parameter is a generic parameter whose argument is an integer, not a
 type. `Vec[N, T]` is the first consumer: it is a lane type of `N` lanes of
@@ -124,7 +124,25 @@ A method or an operator on a generic `Vec` resolves as it does for
 call infers `N` and `T` from a lane type argument. An argument that is none
 of the lane types that the parameter can stand for is E038.
 
-### 2.3 What it gives a kernel
+### 2.3 An impl for a generic `Vec`
+
+An impl whose type is a generic `Vec` is one impl for each lane type that the
+spelling can stand for:
+
+```fern
+impl[const N: i32, T] Total for Vec[N, T] {
+  function total(self: Vec[N, T]): f64 { ... }
+}
+```
+
+This is `impl Total for f64x2` with `N = 2` and `T = f64`, and
+`impl Total for f32x4` with `N = 4` and `T = f32`. Each copy reads `N` as its
+integer. `impl[const N: i32] Count for Vec[N, f64]` is an impl for `f64x2`
+only. Each copy is checked as a concrete impl, so a body that one lane type
+cannot run is E043 for that lane type. An impl for a `Vec` that no pair can
+fit is E096. A module that declares its own `Vec` keeps the impl as written.
+
+### 2.4 What it gives a kernel
 
 A kernel can name its lane count in its signature, and step through an array
 by `N` in its body:
@@ -239,11 +257,12 @@ places each compiler has to change.
 
     The gate is the conformance case `loop_unroll_counted` on every engine,
     and `TestSelfHostSemanticUnrollCountedLoops`.
-  - **CG3b.** `@inline` on an impl method, `Lanes.with_lane` with a variable
-    index, and `impl[const N: i32, T] Trait for Vec[N, T]` in both front
-    ends.
-  - **CG3c.** One `impl Math for Vec[N, T]` replaces the two per-lane
-    impls of `std/simd`.
+  - **CG3b (done).** `@inline` and `@noinline` on an impl method, and an
+    impl for a generic `Vec` (§2.3) in both front ends. The gate is the
+    conformance case `vec_generic_impls` on every engine.
+  - **CG3c.** `Lanes.with_lane` with a variable index, and one
+    `impl Math for Vec[N, T]` in place of the two per-lane impls of
+    `std/simd`.
 
 ## 5. Not in this design
 

@@ -9034,6 +9034,144 @@ pub function vec_lanes(base: string, args: TypeRef[]): string {
   return typeinfo.vec_lanes(args[0].base, args[1].base);
 }
 
+// An impl for `Vec[N, T]` whose arguments name its own parameters is one impl
+// per lane type the spelling can stand for, with N and T bound to that lane
+// type's count and element. A module that declares its own `Vec` keeps it.
+struct VecImpl { funcs: FuncDecl[], info: ImplInfo }
+
+function generic_vec_impl(impl_type: string, tparams: string[]): boolean {
+  let ref: TypeRef = parse_type_ref(impl_type);
+  if (ref.base != "Vec" || ref.args.len() != 2 || ref.array_depth > 0) {
+    return false;
+  }
+  return tp_index(ref.args[0].base, tparams) >= 0 || tp_index(ref.args[1].base, tparams) >= 0;
+}
+
+pub function declares_vec(structs: StructDecl[], enums: EnumDecl[], aliases: TypeAlias[], traits: TraitDecl[]): boolean {
+  for sd in structs {
+    if (sd.name == "Vec") {
+      return true;
+    }
+  }
+  for ed in enums {
+    if (ed.name == "Vec") {
+      return true;
+    }
+  }
+  for ad in aliases {
+    if (ad.name == "Vec") {
+      return true;
+    }
+  }
+  for td in traits {
+    if (td.name == "Vec") {
+      return true;
+    }
+  }
+  return false;
+}
+
+function vec_impl_parts(v: VecImpl, own_vec: boolean): VecImpl[] {
+  if (own_vec) {
+    return [v];
+  }
+  let ref: TypeRef = parse_type_ref(v.info.impl_type);
+  let out: VecImpl[] = [];
+  for lane in typeinfo.lane_types() {
+    let parts: string[] = typeinfo.lane_vec_spellings(lane);
+    let names: string[] = vec_binding(ref.args, v.info.all_type_params, parts);
+    if (names.len() > 0) {
+      out = out.append(bound_vec_impl(v, lane, names, vec_binding_values(ref.args, names, parts)));
+    }
+  }
+  if (out.len() == 0) {
+    return [v];
+  }
+  return out;
+}
+
+// The parameters of the impl that `args` names, when the lane type whose
+// spellings are `parts` fits it, and none when it does not.
+function vec_binding(args: TypeRef[], tparams: string[], parts: string[]): string[] {
+  let names: string[] = [];
+  let values: string[] = [];
+  for k in 0..2 {
+    let a: TypeRef = args[k];
+    let bound: boolean = names_param(a, tparams);
+    let at: i32 = tp_index(a.base, names);
+    if (!bound && a.base != parts[k] || bound && at >= 0 && values[at] != parts[k]) {
+      return [];
+    }
+    if (bound && at < 0) {
+      names = names.append(a.base);
+      values = values.append(parts[k]);
+    }
+  }
+  return names;
+}
+
+function names_param(a: TypeRef, tparams: string[]): boolean {
+  return a.args.len() == 0 && a.array_depth == 0 && tp_index(a.base, tparams) >= 0;
+}
+
+function vec_binding_values(args: TypeRef[], names: string[], parts: string[]): string[] {
+  let out: string[] = [];
+  for n in names {
+    let k: i32 = 0;
+    if (args[0].base != n) {
+      k = 1;
+    }
+    out = out.append(parts[k]);
+  }
+  return out;
+}
+
+function bound_vec_impl(v: VecImpl, lane: string, names: string[], cts: string[]): VecImpl {
+  let funcs: FuncDecl[] = [];
+  for fd in v.funcs {
+    funcs = funcs.append(bound_vec_method(fd, lane, names, cts));
+  }
+  let (tps, tbs) = without_params(v.info.type_params, v.info.bounds, names);
+  let (all, _) = without_params(v.info.all_type_params, [], names);
+  return VecImpl { funcs: funcs, info: ImplInfo { ...v.info, impl_type: lane, type_params: tps, bounds: tbs, all_type_params: all } };
+}
+
+function bound_vec_method(fd: FuncDecl, lane: string, names: string[], cts: string[]): FuncDecl {
+  let params: ast.ParamDecl[] = [];
+  for pd in fd.params {
+    params = params.append(ast.ParamDecl { ...pd, type_name: subst_ty(pd.type_name, names, cts), fn_ret: subst_ty(pd.fn_ret, names, cts), fn_param_types: subst_ty_list(pd.fn_param_types, names, cts) });
+  }
+  let (tps, tbs) = without_params(fd.type_params, fd.bound_traits, names);
+  let (all, _) = without_params(fd.all_type_params, [], names);
+  return FuncDecl {
+    ...fd,
+    receiver_type: lane,
+    type_params: tps,
+    bound_traits: tbs,
+    all_type_params: all,
+    params: params,
+    ret_type: subst_ty(fd.ret_type, names, cts),
+    ret_fn_ret: subst_ty(fd.ret_fn_ret, names, cts),
+    ret_fn_param_types: subst_ty_list(fd.ret_fn_param_types, names, cts),
+    body: const_reads(fd, subst_stmts(fd.body, names, cts), names, cts),
+  };
+}
+
+// The parameters, and the bounds that line up with them, less `drop`.
+function without_params(params: string[], bounds: string[], drop: string[]): (string[], string[]) {
+  let ps: string[] = [];
+  let bs: string[] = [];
+  for i in 0..params.len() {
+    if (tp_index(params[i], drop) < 0) {
+      ps = ps.append(params[i]);
+      if (i < bounds.len()) {
+        bs = bs.append(bounds[i]);
+      }
+    }
+  }
+  return (ps, bs);
+}
+
 function fn_parameter_type(spelling: string): string {
   let depth: i32 = 0;
   let i: i32 = 0;
@@ -24916,6 +25054,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   let impl_decls: ImplDecl[] = [];
   let flines: FieldLines[] = [];
   let inline_hints: FunctionInlineHint[] = [];
+  let vec_impls: VecImpl[] = [];
   let mth_keys: string[] = [];
   let mth_traits: string[] = [];
   while (!p.at_end()) {
@@ -25126,6 +25265,11 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         top_stmts = top_stmts.append(b);
       }
       impl_decls = impl_decls.append(imr_decl);
+      let imr_info: ImplInfo = ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, all_type_params: imr_decl.type_params, bounds: imr_bounds, method_names: imr_method_names, trait_spelling: imr_trait_spelling, trait_ref: imr_decl.trait_ref, assoc_names: imr_decl.assoc_names, assoc_values: imr_decl.assoc_values, trait_module: "", module: "", line: imr_decl.line, col: imr_decl.col };
+      if (!p.verbatim && generic_vec_impl(imr_impl_type, imr_decl.type_params)) {
+        vec_impls = vec_impls.append(VecImpl { funcs: imr_funcs, info: imr_info });
+        continue;
+      }
       let mi: i32 = 0;
       while (mi < imr_funcs.len() && !p.verbatim) {
         let im_cl: MethodClaim = claim_method_name(imr_funcs[mi], imr_trait_name, mth_keys, mth_traits);
@@ -25134,7 +25278,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         funcs = funcs.append(im_cl.fn);
         mi = mi + 1;
       }
-      impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, all_type_params: imr_decl.type_params, bounds: imr_bounds, method_names: imr_method_names, trait_spelling: imr_trait_spelling, trait_ref: imr_decl.trait_ref, assoc_names: imr_decl.assoc_names, assoc_values: imr_decl.assoc_values, trait_module: "", module: "", line: imr_decl.line, col: imr_decl.col });
+      impl_infos = impl_infos.append(imr_info);
       continue;
     }
     if (is_resource) {
@@ -25152,6 +25296,18 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     }
     p = stmtR_p;
     top_stmts = top_stmts.append(stmtR_stmt);
+  }
+  let own_vec: boolean = declares_vec(structs, enums, aliases, traits);
+  for v in vec_impls {
+    for part in vec_impl_parts(v, own_vec) {
+      for fd in part.funcs {
+        let vi_cl: MethodClaim = claim_method_name(fd, part.info.trait_name, mth_keys, mth_traits);
+        mth_keys = vi_cl.keys;
+        mth_traits = vi_cl.traits;
+        funcs = funcs.append(vi_cl.fn);
+      }
+      impl_infos = impl_infos.append(part.info);
+    }
   }
   let iii: i32 = 0;
   while (iii < impl_infos.len() && !verbatim) {

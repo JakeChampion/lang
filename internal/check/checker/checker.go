@@ -515,6 +515,7 @@ func checkTarget(ctx context.Context, prog *ast.Program, target string) (*Info, 
 	if targetHasEnv(target) {
 		configFromEnv(prog)
 	}
+	expandVecImpls(prog)
 	info, err := checkImpl(ctx, prog, target)
 	if info != nil {
 		info.Target = target
@@ -2462,6 +2463,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		}
 	}
 	for _, impl := range prog.Impls {
+		if name, args := namedApplication(impl.Type); c.isBuiltinVec(name, args) {
+			continue
+		}
 		typeName, ok := methodTypeName(impl.Type)
 		if !ok {
 			c.errfCode(impl.TypePos, "E021", "`impl … for %s`: type must be a struct, enum, or built-in type", impl.Type)

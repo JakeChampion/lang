@@ -22261,8 +22261,13 @@ function e021_diags(mod: parser.Module): util.Diag[] {
       }
     }
   }
+  let own_vec: boolean = parser.declares_vec(mod.structs, mod.enums, mod.aliases, mod.trait_decls);
   for im in mod.impls {
     let ir: parser.TypeRef = parser.parse_type_ref(im.impl_type);
+    if (ir.base == "Vec" && ir.args.len() == 2 && !own_vec) {
+      out = out.append(dg_at("E096", im.impl_type + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", im.line, im.col));
+      continue;
+    }
     if (im.trait_name != "" && (ir.array_depth > 0 || ir.is_view)) {
       out = out.append(dg("E021", "`impl … for " + im.impl_type + "`: type must be a struct, enum, or built-in type"));
       continue;
