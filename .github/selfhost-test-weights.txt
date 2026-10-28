@@ -437,6 +437,7 @@ TestSelfHostDnsPair 3
 TestSelfHostDnsTCPBytesExchange 22
 TestSelfHostDnsTCPBytesFaults 19
 TestSelfHostDocsPlaygroundEmbeds 167
+TestSelfHostDominatedReadMerged 3
 TestSelfHostDropFinalizersRunOnceIRArm64 4
 TestSelfHostDropFinalizersRunOnceIRX86_64 3
 TestSelfHostDropFinalizersRunOnceWasmIR 3

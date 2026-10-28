@@ -3033,8 +3033,7 @@ func guarded {
     v6 = binary * v2 v5
     ret v6
   b5:
-    v8 = variant_get 0 Some v0
-    ret v8
+    ret v2
   b6:
     br b7
   b7:

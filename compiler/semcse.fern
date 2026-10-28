@@ -1,19 +1,30 @@
 import "./ssa";
+import "./ssadeps";
 import "./ssasem";
 import "./semtypes";
 import "./typeinfo";
+import "./util";
 
 pub struct Merged { f: ssasem.Func, merged: i32 }
 
 struct Same { of: i32[], merged: i32 }
 
+// A scalar read also merges into the same read in a dominating block. A
+// counted read does not: semsink decides those, since the merge keeps the
+// first read alive across the blocks between them.
+struct Across { reads: ssa.SInst[], at: i32[], slots: Slots, dom: ssadeps.Dom }
+
 pub function merge(f: ssasem.Func): Merged {
   let same: Same = Same { of: identity(f.values.len()), merged: 0 };
+  let across: Across = scalar_reads(f.graph, f.values);
   let before: i32 = 0 - 1;
   while (same.merged != before) {
     before = same.merged;
     for b in f.graph.blocks {
       same = merge_block(b, f.values, same);
+    }
+    if (across.reads.len() > 1) {
+      same = merge_dominated(across, f.values, same);
     }
   }
   if (same.merged == 0) {
@@ -30,7 +41,78 @@ pub function replaced(f: ssasem.Func, same: i32[]): ssasem.Func {
   return ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: blocks } };
 }
 
-function identity(n: i32): i32[] {
+function scalar_reads(g: ssa.SFunc, values: typeinfo.Type[]): Across {
+  let reads: ssa.SInst[] = [];
+  let at: i32[] = [];
+  let first: i32 = 0 - 1;
+  let spread: boolean = false;
+  for bi in 0..g.blocks.len() {
+    for ins in g.blocks[bi].insts {
+      if (read(ins.kind_tag) && ins.result >= 0 && ins.result < values.len() && !ssasem.reference(values[ins.result])) {
+        reads = reads.append(ins);
+        at = at.append(bi);
+        if (first < 0) {
+          first = bi;
+        }
+        spread = spread || bi != first;
+      }
+    }
+  }
+  if (!spread) {
+    return Across { reads: [], at: [], slots: Slots { head: [], next: [] }, dom: ssadeps.Dom { pre: [], post: [], idom: [], by_clock: [] } };
+  }
+  return Across { reads: reads, at: at, slots: read_slots(reads), dom: ssadeps.dominates(g) };
+}
+
+function merge_dominated(a: Across, values: typeinfo.Type[], own same: Same): Same {
+  for k in 0..a.reads.len() {
+    let r: ssa.SInst = a.reads[k];
+    if (same.of[r.result] == r.result) {
+      let first: i32 = dominating(a, k, same.of, values);
+      if (first >= 0) {
+        same = Same { of: same.of.with(r.result, first), merged: same.merged + 1 };
+      }
+    }
+  }
+  return same;
+}
+
+function dominating(a: Across, k: i32, same: i32[], values: typeinfo.Type[]): i32 {
+  let r: ssa.SInst = a.reads[k];
+  let i: i32 = a.slots.head[slot_hash(r) & a.slots.head.len() - 1];
+  while (i >= 0) {
+    if (a.at[i] != a.at[k] && ssadeps.dom_holds(a.dom, a.at[k], a.at[i]) && same_slot(a.reads[i], r, same, values)) {
+      return stand_in(same, a.reads[i].result);
+    }
+    i = a.slots.next[i];
+  }
+  return 0 - 1;
+}
+
+pub struct Slots { head: i32[], next: i32[] }
+
+pub function slot_hash(u: ssa.SInst): i32 {
+  return ((u.kind_tag & 1023) * 31 + (u.imm & 65535)) * 31 + (__str_hash(u.str, 0) & 65535);
+}
+
+pub function read_slots(reads: ssa.SInst[]): Slots {
+  let nb: i32 = 2;
+  while (nb <= reads.len() * 2) {
+    nb = nb * 2;
+  }
+  let head: i32[] = util.minus_ones(nb);
+  let next: i32[] = util.minus_ones(reads.len());
+  let k: i32 = reads.len() - 1;
+  while (k >= 0) {
+    let b: i32 = slot_hash(reads[k]) & nb - 1;
+    next = next.with(k, head[b]);
+    head = head.with(b, k);
+    k = k - 1;
+  }
+  return Slots { head: head, next: next };
+}
+
+pub function identity(n: i32): i32[] {
   let out: i32[] = __alloc_i32(n);
   let k: i32 = 0;
   while (k < n) {
@@ -80,7 +162,7 @@ pub function same_slot(a: ssa.SInst, b: ssa.SInst, same: i32[], values: typeinfo
 }
 
 function read(kind: i32): boolean {
-  return kind == ssasem.record_get() || kind == ssasem.tuple_get() || kind == ssasem.variant_get() || kind == ssasem.array_get();
+  return kind == ssasem.record_get() || kind == ssasem.tuple_get() || kind == ssasem.variant_get() || kind == ssasem.array_get() || kind == ssasem.str_index();
 }
 
 function earlier(seen: ssa.SInst[], ins: ssa.SInst, args: i32[], values: typeinfo.Type[]): i32 {
