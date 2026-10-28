@@ -2713,16 +2713,31 @@ pub function grow_holds(f: ssasem.Func, p: Plan, grows: GrowTable): boolean[] {
     return out;
   }
   let a: ssasem.Analysis = p.unit_analysis;
-  let bare: ssalive.Flow = ssalive.compute_checked(f.graph, empty_chains(f.graph.nvals));
+  let at_block: i32[] = [];
+  let at_pos: i32[] = [];
+  let at_value: i32[] = [];
   for bi in 0..f.graph.blocks.len() {
     let insts: ssa.SInst[] = f.graph.blocks[bi].insts;
     for pos in 0..insts.len() {
       for v in grown_params(f, p, grows, insts[pos]) {
-        if (!ssasem.read_after(a.uses, bi, pos, v) && !ssalive.live_out_has(bare, bi, v)) {
-          let kids: i32[] = outliving(f, a, p.defs, p.owned, out, v, bi, pos, 0 - 1, insts[pos].args);
-          out = mark_all(out, kids);
+        if (!ssasem.read_after(a.uses, bi, pos, v)) {
+          at_block = at_block.append(bi);
+          at_pos = at_pos.append(pos);
+          at_value = at_value.append(v);
         }
       }
+    }
+  }
+  if (at_value.len() == 0) {
+    return out;
+  }
+  let bare: ssalive.Flow = ssalive.compute_checked(f.graph, empty_chains(f.graph.nvals));
+  for k in 0..at_value.len() {
+    let bi: i32 = at_block[k];
+    let v: i32 = at_value[k];
+    if (!ssalive.live_out_has(bare, bi, v)) {
+      let kids: i32[] = outliving(f, a, p.defs, p.owned, out, v, bi, at_pos[k], 0 - 1, f.graph.blocks[bi].insts[at_pos[k]].args);
+      out = mark_all(out, kids);
     }
   }
   return out;
