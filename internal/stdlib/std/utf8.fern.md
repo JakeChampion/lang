@@ -143,6 +143,12 @@ pub function encode(ch: char): string {
 ```fern
 <<3 pub function is_valid(s: string): boolean>>=
 pub function is_valid(s: string): boolean {
+  return __valid_prefix(s) == s.len();
+}
+
+// The length of the longest valid prefix: the offset of the first invalid
+// sequence, or the whole length.
+function __valid_prefix(s: string): i32 {
   let n: i32 = s.len();
   let i: i32 = 0;
   while (i < n) {
@@ -150,73 +156,73 @@ pub function is_valid(s: string): boolean {
     if (b0 < 128) {
       i = __ascii_run(s, i);
       if (i >= n) {
-        return true;
+        return n;
       }
       b0 = s[i] as i32;
     }
     if (b0 < 192) {
-      return false;
+      return i;
     } else if (b0 < 224) {
       if (i + 1 >= n) {
-        return false;
+        return i;
       }
       let c1: i32 = s[i + 1] as i32;
       if (c1 < 128 || c1 >= 192) {
-        return false;
+        return i;
       }
       if ((b0 - 192 << 6 | c1 - 128) < 128) {
-        return false;
+        return i;
       }
       i = i + 2;
     } else if (b0 < 240) {
       if (i + 2 >= n) {
-        return false;
+        return i;
       }
       let d1: i32 = s[i + 1] as i32;
       let d2: i32 = s[i + 2] as i32;
       if (d1 < 128 || d1 >= 192) {
-        return false;
+        return i;
       }
       if (d2 < 128 || d2 >= 192) {
-        return false;
+        return i;
       }
       let cp3: i32 = b0 - 224 << 12 | d1 - 128 << 6 | d2 - 128;
       if (cp3 < 2048) {
-        return false;
+        return i;
       }
       if (cp3 >= 55296 && cp3 <= 57343) {
-        return false;
+        return i;
       }
       i = i + 3;
     } else if (b0 < 248) {
       if (i + 3 >= n) {
-        return false;
+        return i;
       }
       let e1: i32 = s[i + 1] as i32;
       let e2: i32 = s[i + 2] as i32;
       let e3: i32 = s[i + 3] as i32;
       if (e1 < 128 || e1 >= 192) {
-        return false;
+        return i;
       }
       if (e2 < 128 || e2 >= 192) {
-        return false;
+        return i;
       }
       if (e3 < 128 || e3 >= 192) {
-        return false;
+        return i;
       }
       let cp4: i32 = b0 - 240 << 18 | e1 - 128 << 12 | e2 - 128 << 6 | e3 - 128;
       if (cp4 < 65536) {
-        return false;
+        return i;
       }
       if (cp4 > 1114111) {
-        return false;
+        return i;
       }
       i = i + 4;
     } else {
-      return false;
+      return i;
     }
   }
-  return true;
+  return n;
 }
 
 // The byte offset of the first sequence that is not valid UTF-8.
@@ -236,21 +242,11 @@ pub function (e: Utf8Error) to_string(): string {
 
 pub function from_bytes(b: [u8]): Result[string, Utf8Error] {
   let s: string = string_from_bytes_unchecked(__bytes_owned(b));
-  if (is_valid(s)) {
+  let valid: i32 = __valid_prefix(s);
+  if (valid == s.len()) {
     return Ok(s);
   }
-  return Err(Utf8Error { offset: __first_invalid(s) });
-}
-
-function __first_invalid(s: string): i32 {
-  let i: i32 = 0;
-  while (i < s.len()) {
-    let Some(step) = decode_at(s, i) else {
-      return i;
-    };
-    i = i + step.1;
-  }
-  return i;
+  return Err(Utf8Error { offset: valid });
 }
 
 pub function from_bytes_lossy(b: [u8]): string {
