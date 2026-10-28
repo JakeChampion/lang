@@ -19,7 +19,7 @@ function main(): i32 {
   let round: i32 = 0;
   while (round < 200) {
     match (utf8.from_bytes(b)) {
-      Some(s) => {
+      Ok(s) => {
         match (json.parse(s)) {
           Ok(_) => {
             acc = acc + 1;
@@ -29,7 +29,7 @@ function main(): i32 {
           }
         }
       },
-      None => {
+      Err(_) => {
         acc = acc + 4;
       }
     }

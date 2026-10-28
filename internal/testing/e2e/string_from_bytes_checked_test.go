@@ -7,16 +7,16 @@ import "std/utf8" as utf8;
 
 function must(b: u8[], code: i32): string {
     match (utf8.from_bytes(b)) {
-        Some(s) => { return s; },
-        None => { exit(code); }
+        Ok(s) => { return s; },
+        Err(_) => { exit(code); }
     }
     return "";
 }
 
 function rejects(b: u8[]): boolean {
     match (utf8.from_bytes(b)) {
-        Some(s) => { return false; },
-        None => { return true; }
+        Ok(s) => { return false; },
+        Err(_) => { return true; }
     }
 }
 

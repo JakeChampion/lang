@@ -226,10 +226,10 @@ const ORIGIN: string = "93.184.216.34";
 
 function sent_text(n: sim_fetch.Net, i: i32): string {
   match (utf8.from_bytes(n.sent(i))) {
-    Some(text) => {
+    Ok(text) => {
       return text;
     },
-    None => {
+    Err(_) => {
       return "<not utf-8>";
     }
   }

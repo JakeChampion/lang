@@ -17,7 +17,7 @@ function check_len_nonneg(input: u8[]): test.TestOutcome {
 
 function check_to_upper_idempotent(input: u8[]): test.TestOutcome {
   match (utf8.from_bytes(input)) {
-    Some(s) => {
+    Ok(s) => {
       let once: string = s.to_upper();
       let twice: string = once.to_upper();
       if (once == twice) {
@@ -25,7 +25,7 @@ function check_to_upper_idempotent(input: u8[]): test.TestOutcome {
       }
       return test.fail("to_upper is not idempotent: \"" + once + "\" vs \"" + twice + "\"");
     },
-    None => {
+    Err(_) => {
       return test.pass();
     }
   }

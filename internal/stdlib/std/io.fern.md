@@ -164,10 +164,10 @@ pub function read_line(r: Reader): Result[Option[string], IoError] {
   let bytes: u8[] = buf_take_bytes(b);
   buf_free(b);
   match (utf8.from_bytes(bytes)) {
-    Some(line) => {
+    Ok(line) => {
       return Ok(Some(line));
     },
-    None => {
+    Err(_) => {
       return Err(InvalidUtf8(""));
     }
   }
@@ -182,10 +182,10 @@ pub function read_all_stdin(): Result[string, IoError] {
       let bytes: u8[] = buf_take_bytes(b);
       buf_free(b);
       match (utf8.from_bytes(bytes)) {
-        Some(text) => {
+        Ok(text) => {
           return Ok(text);
         },
-        None => {
+        Err(_) => {
           return Err(InvalidUtf8("stdin"));
         }
       }
@@ -246,10 +246,10 @@ function __hex_name(bytes: u8[]): string {
     out = out.append(__hex_digit(v & 15));
   }
   match (utf8.from_bytes(out)) {
-    Some(text) => {
+    Ok(text) => {
       return text;
     },
-    None => {
+    Err(_) => {
       return "";
     }
   }

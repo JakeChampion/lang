@@ -698,7 +698,7 @@ function designation(bs: [u8], base: i32, len: i32, at: i32): Option[string] {
     out = out.append(bs[i]);
     i = i + 1;
   }
-  return utf8.from_bytes(out);
+  return utf8.from_bytes(out).ok();
 }
 
 function read_footer(bs: [u8], start: i32): Option[string] {
@@ -711,7 +711,7 @@ function read_footer(bs: [u8], start: i32): Option[string] {
     out = out.append(bs[i]);
     i = i + 1;
   }
-  return utf8.from_bytes(out);
+  return utf8.from_bytes(out).ok();
 }
 ```
 

@@ -266,10 +266,10 @@ function test_the_deadline_cancels_on_the_sims_clock(): test.TestOutcome {
 function __sent_traceparent(n: sim_fetch.Net): string {
   let text: string = "";
   match (utf8.from_bytes(n.sent(n.sent_count() - 1))) {
-    Some(t) => {
+    Ok(t) => {
       text = t;
     },
-    None => {
+    Err(_) => {
       return "<not utf-8>";
     }
   }

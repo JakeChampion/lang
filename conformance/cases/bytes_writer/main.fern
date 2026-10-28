@@ -13,8 +13,8 @@ function main(): i32 {
     w = w.write_bytes([68 as u8, 69 as u8]);
     print(w.len().to_string());
     match (w.into_string()) {
-        Some(s) => { print(s); },
-        None => { return 1; },
+        Ok(s) => { print(s); },
+        Err(_) => { return 1; },
     }
     let w2: BytesWriter = w.reset();
     print(w2.len().to_string());

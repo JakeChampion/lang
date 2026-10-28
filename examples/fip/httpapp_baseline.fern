@@ -545,13 +545,13 @@ function main(): i32 {
   while (w < batch) {
     wire = build_request(wire, w as i64);
     match (http.http_parse_request(string_from_bytes_unchecked(wire.take(wire_len_of(wire))))) {
-      Some(req) => {
+      Ok(req) => {
         let d: Decision = route(counters, req);
         counters = update(counters, d);
         t = tally(t, d);
         let warm: string = http.http_serialize_response(render(d, req, t, counters.len()));
       },
-      None => {
+      Err(_) => {
         t = tally(t, decision(400));
         let warm: string = http.http_serialize_response(http.bad_request("bad request"));
       }
@@ -571,13 +571,13 @@ function main(): i32 {
       wire = build_request(wire, n);
       let resp: string = "";
       match (http.http_parse_request(string_from_bytes_unchecked(wire.take(wire_len_of(wire))))) {
-        Some(req) => {
+        Ok(req) => {
           let d: Decision = route(counters, req);
           counters = update(counters, d);
           t = tally(t, d);
           resp = http.http_serialize_response(render(d, req, t, counters.len()));
         },
-        None => {
+        Err(_) => {
           t = tally(t, decision(400));
           resp = http.http_serialize_response(http.bad_request("bad request"));
         }

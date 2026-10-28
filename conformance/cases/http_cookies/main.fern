@@ -20,7 +20,7 @@ function main(): i32 {
 
     let wire: string = "GET / HTTP/1.1\r\nHost: x\r\nCookie: a=1; session=abc; b=2\r\n\r\n";
     match (http.http_parse_request(wire)) {
-        Some(req) => {
+        Ok(req) => {
             match (req.cookie("session")) {
                 Some(v) => { if (v != "abc") { return 1; } },
                 None => { return 2; }
@@ -44,7 +44,7 @@ function main(): i32 {
                 None => { }
             }
         },
-        None => { return 9; }
+        Err(_) => { return 9; }
     }
 
 

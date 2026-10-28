@@ -415,11 +415,11 @@ pub function taped(req: fetch.Request, resp: HttpResponse): string {
   let values: json.JsonValue[] = [json.JString(req.method), json.JString(req.url), json.JNumber(int.int_to_string(resp.status)), json.JArray(pairs)];
   let body: u8[] = resp.body_bytes();
   match (utf8.from_bytes(body)) {
-    Some(text) => {
+    Ok(text) => {
       keys = keys.append("body");
       values = values.append(json.JString(text));
     },
-    None => {
+    Err(_) => {
       keys = keys.append("body_hex");
       values = values.append(json.JString(hex.encode(body)));
     }
@@ -759,10 +759,10 @@ function __target(data: u8[]): string {
     i = i + 1;
   }
   match (utf8.from_bytes(bytes)) {
-    Some(target) => {
+    Ok(target) => {
       return target;
     },
-    None => {
+    Err(_) => {
       return "";
     }
   }
