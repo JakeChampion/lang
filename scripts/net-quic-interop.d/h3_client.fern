@@ -139,7 +139,7 @@ function opened(argv: string[]): Option[(h3q.Conn, i32)] {
   let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return None;
   };
-  let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {
+  let Ok(any) = net.socket_addr_parse("127.0.0.1:0") else {
     return None;
   };
   let Ok(sock) = net.udp_socket(any) else {
@@ -151,7 +151,7 @@ function opened(argv: string[]): Option[(h3q.Conn, i32)] {
 
 function main(): i32 {
   let argv: string[] = args();
-  let Some(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
+  let Ok(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
     return 2;
   };
   let Ok(size) = i32.parse_i32(argv[4]) else {

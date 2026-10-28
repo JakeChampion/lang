@@ -221,7 +221,7 @@ function test_the_peer_answers_what_was_canned(): test.TestOutcome {
     },
     None => {}
   }
-  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse("192.0.2.7:5000"));
+  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse("192.0.2.7:5000").ok());
   match (m.peer()) {
     Some(a) => {
       return test.assert_eq(none + " " + a.to_string(), "none 192.0.2.7:5000");

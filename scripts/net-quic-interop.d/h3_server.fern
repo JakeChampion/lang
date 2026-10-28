@@ -146,7 +146,7 @@ function bound(port: string, cert: string, key: string): Option[Server] {
     return None;
   };
   let cfg: conn.Config = h3q.transport(conn.config([]).server_side(id));
-  let Some(addr) = net.socket_addr_parse("127.0.0.1:" + port) else {
+  let Ok(addr) = net.socket_addr_parse("127.0.0.1:" + port) else {
     return None;
   };
   let Ok(sock) = net.udp_socket(addr) else {

@@ -200,10 +200,10 @@ function __offer(config: Config, now: time.Timestamp): Option[handshake.Resumpti
 
 function __is_address(name: string): boolean {
   match (net.ip_parse(name)) {
-    Some(_) => {
+    Ok(_) => {
       return true;
     },
-    None => {
+    Err(_) => {
       return false;
     }
   }
