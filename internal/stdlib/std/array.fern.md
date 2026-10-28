@@ -996,13 +996,7 @@ pub function rotate_right[T](xs: T[], n: i32): T[] {
 }
 
 pub function take[T](xs: T[], n: i32): T[] {
-  let out: T[] = [];
-  let i: i32 = 0;
-  while (i < n && i < xs.len()) {
-    out = out.append(xs[i]);
-    i = i + 1;
-  }
-  return out;
+  return xs.truncate(n);
 }
 
 pub function drop[T](xs: T[], n: i32): T[] {
@@ -1036,13 +1030,9 @@ pub function take_last[T](xs: T[], n: i32): T[] {
 <<10 pub function drop_last[T](xs: T[], n: i32): T[]>>=
 pub function drop_last[T](xs: T[], n: i32): T[] {
   if (n <= 0) {
-    return slice(xs, 0, xs.len());
+    return xs.truncate(xs.len());
   }
-  let end: i32 = xs.len() - n;
-  if (end < 0) {
-    end = 0;
-  }
-  return slice(xs, 0, end);
+  return xs.truncate(xs.len() - n);
 }
 
 pub function slice[T](xs: T[], start: i32, end: i32): T[] {
