@@ -600,7 +600,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, opts:
   array_storage_report(mod, built, r, opts.array_report);
   tally("module", "produced " + util.i32_to_string(n) + " of "
     + util.i32_to_string(mod.funcs.len()) + " declarations and "
-    + util.i32_to_string(instances.len()) + " of "
+    + util.i32_to_string(instances.len() + unspliced) + " of "
     + util.i32_to_string(built.instances.len()) + " instances");
   let bodies = collected_bodies(decl.bodies);
   let selected: SelectedHelpers = selected_helpers(built, helpers);

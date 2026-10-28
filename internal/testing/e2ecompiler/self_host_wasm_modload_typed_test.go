@@ -56,7 +56,7 @@ func TestSelfHostWasmModloadTypedLowering(t *testing.T) {
 
 	t.Run("windowed_units_link_and_run", func(t *testing.T) {
 		proj := t.TempDir()
-		write(t, filepath.Join(proj, "leaf.fern"), `pub function pick[T](a: T, b: T, first: boolean): T {
+		write(t, filepath.Join(proj, "leaf.fern"), `@noinline pub function pick[T](a: T, b: T, first: boolean): T {
     if (first) { return a; }
     return b;
 }
