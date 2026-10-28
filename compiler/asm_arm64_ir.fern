@@ -4299,10 +4299,47 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
     }
   }
   s = ssa_parallel_moves(srcs, dsts, s);
-  let i: i32 = 0;
-  while (i < imm_dsts.len()) {
-    s = ssa_imm_to(imm_vals[i], imm_dsts[i], s);
-    i = i + 1;
+  let zeroed: i32[] = [];
+  for i in 0..imm_dsts.len() {
+    if (imm_vals[i] == 0 as i64 && imm_dsts[i] < 0 && !ssa_lane_off(ssa_slot_off(ssa.spill_slot(imm_dsts[i])), s)) {
+      zeroed = zeroed.append(ssa.spill_slot(imm_dsts[i]));
+    } else {
+      s = ssa_imm_to(imm_vals[i], imm_dsts[i], s);
+    }
+  }
+  return ssa_zero_slots(zeroed, s);
+}
+
+// ssa_zero_slots stores xzr to spill slots, with one stp for each two
+// adjacent slots in its reach. Slot v+1 is the one below slot v.
+function ssa_zero_slots(slots: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  if (slots.len() < 2) {
+    for v in slots {
+      s = ssa_fr_str(s, "xzr", ssa_slot_off(v), 0);
+    }
+    return s;
+  }
+  let top: i32 = 0;
+  for v in slots {
+    if (v > top) {
+      top = v;
+    }
+  }
+  let want: boolean[] = __alloc_bool(top + 2);
+  for v in slots {
+    want = want.with(v, true);
+  }
+  let v: i32 = 0;
+  while (v <= top) {
+    let step: i32 = 1;
+    let pos: i32 = ssa_fr_pos(s, ssa_slot_off(v + 1) - s.ssa_save, 0);
+    if (want[v] && want[v + 1] && pos >= 0 && pos <= 504) {
+      s = s.write("    stp xzr, xzr, [sp, #" + util.i32_to_string(pos) + "]\n");
+      step = 2;
+    } else if (want[v]) {
+      s = ssa_fr_str(s, "xzr", ssa_slot_off(v), 0);
+    }
+    v = v + step;
   }
   return s;
 }
@@ -6514,7 +6551,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    .section .bss\n    .p2align 3\n__fern_cov_counters: .quad 0\n    .text\n");
   }
   if (s.has_need("task")) {
-    s = s.write("    .section .bss\n    .p2align 3\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0\n    .text\n");
+    s = s.write("    .section .bss\n    .p2align 3\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0\n    .text\n");
   }
   if (s.has_need("str_print")) {
     s = emit_runtime("__fern_print_str", s);

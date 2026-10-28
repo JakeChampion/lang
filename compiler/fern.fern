@@ -45,6 +45,7 @@ import "./lsptokens";
 import "std/envflag";
 import "std/io";
 import "std/error";
+import "std/rand";
 
 function blank_line_map(src: string): boolean[] {
   let out: boolean[] = [false];
@@ -4638,7 +4639,7 @@ function run_output(target: string, emit: string, shared: boolean, out_path: str
     None => {}
   }
   let suffix: string = "";
-  for rb in random_bytes(6) {
+  for rb in rand.bytes(6) {
     suffix = suffix + util.i32_to_string(rb as i32);
   }
   let dir: string = tmp + "/fern-run-" + suffix;

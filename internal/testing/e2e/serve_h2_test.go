@@ -36,6 +36,7 @@ import "std/time";
 import "std/tls/identity";
 import "std/tls/server";
 
+import "std/rand";
 function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   if (req.path == "/echo") {
     return http.bytes(200, req.body_bytes());
@@ -142,7 +143,7 @@ function main(): i32 {
       }
       match (identity.from_pem(cert, key)) {
         Ok(id) => {
-          cfg = cfg.with_tls(server.config(id, random_bytes(32)));
+          cfg = cfg.with_tls(server.config(id, rand.bytes(32)));
         },
         Err(e) => {
           eprint(e.message());

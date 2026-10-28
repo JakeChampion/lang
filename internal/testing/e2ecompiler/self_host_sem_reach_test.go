@@ -237,6 +237,7 @@ import "std/platform";
 import "std/tls/identity";
 import "std/tls/server";
 
+import "std/rand";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   return http.ok("hello");
 }
@@ -247,7 +248,7 @@ function main(): i32 {
     Some(pem) => {
       match (identity.from_pem(pem, pem)) {
         Ok(id) => {
-          opts = opts.with_tls(server.config(id, random_bytes(32)));
+          opts = opts.with_tls(server.config(id, rand.bytes(32)));
         },
         Err(e) => {
           eprint(e.message());
@@ -287,6 +288,7 @@ import "std/platform";
 import "std/tls/identity";
 import "std/tls/server";
 
+import "std/rand";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   return http.ok("hello");
 }
@@ -297,7 +299,7 @@ function main(): i32 {
     Some(pem) => {
       match (identity.from_pem(pem, pem)) {
         Ok(id) => {
-          opts = opts.with_tls(server.config(id, random_bytes(32)));
+          opts = opts.with_tls(server.config(id, rand.bytes(32)));
         },
         Err(e) => {
           eprint(e.message());

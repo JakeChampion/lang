@@ -1,0 +1,1 @@
+builtin "random_i32" is reserved for the standard library; call rand.next_i32 from "std/rand" instead

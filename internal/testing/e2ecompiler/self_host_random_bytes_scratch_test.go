@@ -6,9 +6,10 @@ import (
 	"testing"
 )
 
-const randomBytesScratchSrc = `function main(): i32 {
+const randomBytesScratchSrc = `import "std/rand";
+function main(): i32 {
     let t: i32 = 0; let i: i32 = 0;
-    while (i < 50) { let b: u8[] = random_bytes(16); t = t + b.len(); i = i + 1; }
+    while (i < 50) { let b: u8[] = rand.bytes(16); t = t + b.len(); i = i + 1; }
     return t % 200;
 }
 `

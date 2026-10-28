@@ -6905,13 +6905,14 @@ function main(): i32 {
 
 func TestArm64StdlibBundle10(t *testing.T) {
 	src := `
-import "std/math";
+import "std/i32";
+import "std/i64";
 import "core/cmp";
 function main(): i32 {
     // Range constants
-    if (math.i32_max() != 2147483647) { return 1; }
-    if (math.i32_min() != (0 - 2147483647 - 1)) { return 2; }
-    if (math.i64_max() != 9223372036854775807) { return 3; }
+    if (i32.MAX != 2147483647) { return 1; }
+    if (i32.MIN != (0 - 2147483647 - 1)) { return 2; }
+    if (i64.MAX != 9223372036854775807) { return 3; }
 
     // trim_start / trim_end
     if ("  hello  ".trim_start() != "hello  ") { return 4; }
@@ -8296,8 +8297,9 @@ func TestArm64SliceMake(t *testing.T) {
 }
 
 func TestArm64RandomBytes(t *testing.T) {
-	out, code := compileAndRunArm64(t, `function main(): i32 {
-    let s: u8[] = random_bytes(16);
+	out, code := compileAndRunArm64(t, `import "std/rand";
+function main(): i32 {
+    let s: u8[] = rand.bytes(16);
     write(string_from_bytes_unchecked(s));
     return s.len();
 }`)
@@ -8320,9 +8322,10 @@ func TestArm64RandomBytes(t *testing.T) {
 }
 
 func TestArm64RandomI32(t *testing.T) {
-	_, code := compileAndRunArm64(t, `function main(): i32 {
-    let a: i32 = random_i32();
-    let b: i32 = random_i32();
+	_, code := compileAndRunArm64(t, `import "std/rand";
+function main(): i32 {
+    let a: i32 = rand.next_i32();
+    let b: i32 = rand.next_i32();
     if (a == 0) { return 0; }
     if (a == b) { return 1; }
     return 7;

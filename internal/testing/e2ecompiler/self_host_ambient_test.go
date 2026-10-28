@@ -62,9 +62,10 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 			name: "the bag by type, in any position",
 			src: `import "std/http";
 import "std/platform";
+import "std/rand";
 function route(bag: platform.Platform, req: HttpRequest): HttpResponse {
-    let c: i32 = random_i32();` + tail,
-			want: []string{"3:1 route random_i32 random"},
+    let c: i32 = rand.next_i32();` + tail,
+			want: []string{"4:1 route random_i32 random"},
 		},
 		{
 			name: "through the bag",
