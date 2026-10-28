@@ -314,7 +314,7 @@ function spend_phi_inputs(g: ssa.SFunc, pos: i32[], b: ssa.SBlock, spent0: i32[]
 }
 
 function grows(kind: i32): boolean {
-  return kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.arr_concat();
+  return kind == ssasem.append() || kind == ssasem.with() || kind == ssasem.arr_concat() || kind == ssasem.truncate();
 }
 
 function spend(own spent: i32[][], parent: boolean[], v: i32, bi: i32): i32[][] {

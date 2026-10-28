@@ -640,7 +640,7 @@ function hands_out(kind: i32): boolean {
     || kind == ssasem.map_insert() || kind == ssasem.map_get_or() || kind == ssasem.map_get()
     || kind == ssasem.map_keys() || kind == ssasem.map_values() || kind == ssasem.map_delete()
     || kind == ssasem.str_bytes() || kind == ssasem.str_byte_view() || ssasem.is_arr_helper_op(kind) || kind == ssasem.arr_slice()
-    || kind == ssasem.hole_fill();
+    || kind == ssasem.hole_fill() || kind == ssasem.truncate();
 }
 
 function literals(f: ssasem.Func): boolean[] {
@@ -800,7 +800,7 @@ function operation_supplies(f: ssasem.Func, ins: ssa.SInst): Supply[] {
     counted = [true, false];
   } else if (ins.kind_tag == ssasem.append()) {
     counted = [true, ssasem.reference(f.values[ins.args[1]])];
-  } else if (ins.kind_tag == ssasem.arr_concat()) {
+  } else if (ins.kind_tag == ssasem.arr_concat() || ins.kind_tag == ssasem.truncate()) {
     counted = [true, false];
   } else if (ins.kind_tag == ssasem.with()) {
     counted = [true, false, ssasem.reference(f.values[ins.args[2]])];
@@ -2997,7 +2997,7 @@ pub function fresh_rows_agree(a: FreshRows, b: FreshRows, callees: string[]): bo
 }
 
 function box_update(ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.arr_concat();
+  return ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.arr_concat() || ins.kind_tag == ssasem.truncate();
 }
 
 function moved_at(st: Step, v: i32, slot: i32): boolean {

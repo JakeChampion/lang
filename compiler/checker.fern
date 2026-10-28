@@ -3199,7 +3199,7 @@ function (s: Scope) array_recv_method(field: string, view: boolean): Option[Meth
 function (s: Scope) array_method_ret_type(c: ast.ExprCall, recv_ty: typeinfo.Type, field: string): typeinfo.Type {
   match (recv_ty) {
     typeinfo.TypeArray(array) => {
-      if (!array.view && (field == "append" || field == "with")) {
+      if (!array.view && (field == "append" || field == "with" || field == "truncate")) {
         return recv_ty;
       }
       if (field == "len") {
@@ -3693,7 +3693,7 @@ function (s: Scope) methods_in_namespace(ns: string): string[] {
 
 function preregistered_methods(ns: string): string[] {
   if (ns == "Array") {
-    return ["append", "len", "with"];
+    return ["append", "len", "truncate", "with"];
   }
   if (ns == "slice") {
     return ["len"];
@@ -13800,6 +13800,12 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
             }
             out = util.append_diags(out, array_elem_check(array_elem_type_of(ar.elem), c.args[1], s));
           }
+          if (!ar.view && mfa.field == "truncate" && c.args.len() == 1) {
+            let tnt: typeinfo.Type = check_expr(c.args[0], s);
+            if (!is_unknown(tnt) && !settles_to_dest(c.args[0], t_i32(), s) && !coercible(tnt, t_i32(), s)) {
+              out = out.append(dg_at("E038", "argument 1 to \"truncate\": expected i32, got " + type_label(tnt), expr_line(c.args[0]), expr_col(c.args[0])));
+            }
+          }
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("Array", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
           }
@@ -13823,6 +13829,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           }
           if (!ar.view && mfa.field == "with") {
             abw = 2;
+          }
+          if (!ar.view && mfa.field == "truncate") {
+            abw = 1;
           }
           if (abw >= 0 && c.args.len() != abw) {
             out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", abw, c.args.len(), "argument"), c.line, c.col));
@@ -14981,7 +14990,7 @@ function param_decl_names(params: ast.ParamDecl[]): string[] {
 }
 
 function is_collection_mutator(field: string): boolean {
-  return field == "insert" || field == "remove" || field == "cleared" || field == "with" || field == "append";
+  return field == "insert" || field == "remove" || field == "cleared" || field == "with" || field == "append" || field == "truncate";
 }
 
 function e055_diag(e: ast.Expr, s: Scope): util.Diag[] {
@@ -15152,7 +15161,7 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
   }
   match (recv) {
     typeinfo.TypeArray(array) => {
-      let builtin: boolean = field == "len" || !array.view && (field == "append" || field == "with");
+      let builtin: boolean = field == "len" || !array.view && (field == "append" || field == "with" || field == "truncate");
       return !builtin && !s.has_array_recv_method(field, array.view);
     },
     typeinfo.TypeMap(_) => {
@@ -15235,6 +15244,9 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
         }
         if (mfa.field == "with") {
           return [t_i32(), at.elem];
+        }
+        if (mfa.field == "truncate") {
+          return [t_i32()];
         }
         return s.array_method_param_types(c, rt, mfa.field, at.view);
       }

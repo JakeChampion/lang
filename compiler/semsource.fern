@@ -2308,6 +2308,21 @@ function builtin_with(c: ast.ExprCall, recv: i32, s: State): Value {
   return define(v.s, ssasem.with(), [recv, at.id, v.id], 0, "", t);
 }
 
+function builtin_truncate(c: ast.ExprCall, recv: i32, s: State): Value {
+  let t: typeinfo.Type = s.values[recv];
+  if (!semtypes.concrete(element_type(t), false)) {
+    return refused(s, "unsupported call target");
+  }
+  let n: Value = expr(c.args[0], s, t_i32());
+  if (!n.s.ok) {
+    return n;
+  }
+  if (!semtypes.equal(n.s.values[n.id], t_i32())) {
+    return refused(n.s, "truncate length type");
+  }
+  return define(n.s, ssasem.truncate(), [recv, n.id], 0, "", t);
+}
+
 function is_string_array(t: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(a) = t {
     return ssasem.is_string(a.elem);
@@ -2636,6 +2651,9 @@ function builtin_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: St
   }
   if (fa.field == "with" && c.args.len() == 2) {
     return builtin_with(c, recv, s);
+  }
+  if (fa.field == "truncate" && c.args.len() == 1) {
+    return builtin_truncate(c, recv, s);
   }
   if (fa.field == "join" && c.args.len() == 1 && is_string_array(s.values[recv])) {
     return builtin_join(c, recv, s);

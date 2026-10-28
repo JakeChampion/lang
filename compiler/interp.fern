@@ -5706,7 +5706,23 @@ function array_with(own av: VArr, args: Value[]): Value {
   return v_arr_of(items.with(wi, args[1]), elem);
 }
 
-// .len, .with and .append on an array; None for any other method.
+function array_truncate(own av: VArr, args: Value[]): Value {
+  if (args.len() != 1 || !is_i32_arg(args[0])) {
+    return v_err("array.truncate: need an integer length");
+  }
+  let n: i32 = vint_bits(args[0]);
+  let elem: string = av.elem;
+  let items: Value[] = arr_take_els(av);
+  let kept: Value[] = [];
+  let i: i32 = 0;
+  while (i < n && i < items.len()) {
+    kept = kept.append(items[i]);
+    i = i + 1;
+  }
+  return v_arr_of(kept, elem);
+}
+
+// .len, .with, .truncate and .append on an array; None for any other method.
 function array_method(own av: VArr, name: string, args: Value[]): Option[Value] {
   if (name == "len") {
     if (args.len() != 0) {
@@ -5716,6 +5732,9 @@ function array_method(own av: VArr, name: string, args: Value[]): Option[Value] 
   }
   if (name == "with" && !av.view) {
     return Some(array_with(av, args));
+  }
+  if (name == "truncate" && !av.view) {
+    return Some(array_truncate(av, args));
   }
   if (name == "append" && !av.view) {
     if (args.len() != 1) {
