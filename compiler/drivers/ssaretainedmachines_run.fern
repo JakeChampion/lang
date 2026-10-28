@@ -9,7 +9,7 @@ import "./ssadecrementdependencies" as decrementdependencies;
 import "./ssacapacityisas" as capacityisas;
 import "./ssacapacitymachines" as capacitymachines;
 import "./ssalargepushisas" as largepushisas;
-import "./ssalargepushmachines" as largepushmachines;
+import "./ssalargepushwidemachines" as largepushmachines;
 import "./ssaarrayreleaseisas" as arrayreleaseisas;
 import "./ssasmallarraymachines" as smallarraymachines;
 import "./ssalargearraymachines" as largearraymachines;

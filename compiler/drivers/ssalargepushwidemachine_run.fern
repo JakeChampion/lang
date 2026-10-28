@@ -1,6 +1,5 @@
 import "../asmcore";
 import "../ssadecrementtext" as text;
-import "../ssalargepushmachine" as legacy;
 import "../ssalargepushranges" as oldranges;
 import "../ssalargepushwideranges" as ranges;
 import "../ssalargepushwidevalue" as value;
@@ -49,7 +48,6 @@ function main(): i32 {
   let program = retained.program(mod);
   let output = retained.emit(program, program.cache, program.physical, false, true, true, 0, -1).text;
   require(machine.check(output), "actual complete output");
-  require(!legacy.check(output), "legacy proof interface unchanged");
   let body = text.dependency(output, "__fern_large_push");
   require(body.error == "" && body.lines.len() == 29, "current complete helper");
   let selected = ".text\n__fern_large_push:\n    " + body.lines.join("\n    ") + "\n__fern_capw:\nret\n";
