@@ -515,6 +515,7 @@ var stdlibMethodIndex = map[string]map[string]string{
 		"strip_prefix":              "std/string",
 		"strip_quotes":              "std/string",
 		"strip_suffix":              "std/string",
+		"surround":                  "std/string",
 		"swap_case":                 "std/unicode",
 		"take":                      "std/string",
 		"title_case":                "std/unicode",
@@ -547,7 +548,6 @@ var stdlibMethodIndex = map[string]map[string]string{
 		"without_byte":              "std/string",
 		"without_chars":             "std/string",
 		"word_at":                   "std/string",
-		"wrap":                      "std/string",
 		"zfill":                     "std/string",
 	},
 	"u32": {

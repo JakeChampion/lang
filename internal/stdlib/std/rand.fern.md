@@ -1,6 +1,6 @@
 # Random choices and seeded sequences
 
-This module provides random array operations and a seeded PCG32 generator.
+This module provides random integers, random array operations, and a seeded PCG32 generator.
 
 ## Model
 
@@ -32,7 +32,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<*>>=
 <<module introduction>>
 
-<<dependencies 2>>
+<<2 pub function between(lo: i32, hi: i32): i32>>
 
 <<3 pub function shuffle[T](xs: T[]): T[]>>
 
@@ -53,14 +53,43 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<module introduction>>=
-// This module provides random array operations and a seeded PCG32 generator.
+// This module provides random integers, random array operations, and a seeded PCG32 generator.
 ```
 
-### `dependencies 2`
+### `2 pub function between(lo: i32, hi: i32): i32`
 
 ```fern
-<<dependencies 2>>=
-import "std/math" as math;
+<<2 pub function between(lo: i32, hi: i32): i32>>=
+pub function between(lo: i32, hi: i32): i32 {
+  if (hi <= lo) {
+    return lo;
+  }
+  let range: u32 = (hi - lo) as u32;
+  return lo + __random_below(range) as i32;
+}
+
+function __random_u32(): u32 {
+  let b: u8[] = random_bytes(4);
+  return b[0] as u32 << 24 as u32
+    | b[1] as u32 << 16 as u32
+    | b[2] as u32 << 8 as u32
+    | b[3] as u32;
+}
+
+function __random_below(range: u32): u32 {
+  let wide: u64 = range as u64;
+  let mask: u64 = (1 as u64 << 32 as u64) - 1 as u64;
+  let product: u64 = __random_u32() as u64 * wide;
+  let low: u64 = product & mask;
+  if (low < wide) {
+    let threshold: u64 = ((1 as u64 << 32 as u64) - wide) % wide;
+    while (low < threshold) {
+      product = __random_u32() as u64 * wide;
+      low = product & mask;
+    }
+  }
+  return (product >> 32 as u64) as u32;
+}
 ```
 
 ### `3 pub function shuffle[T](xs: T[]): T[]`
@@ -76,7 +105,7 @@ pub function shuffle[T](xs: T[]): T[] {
   }
   let j: i32 = out.len() - 1;
   while (j > 0) {
-    let k: i32 = math.random_int(0, j + 1);
+    let k: i32 = between(0, j + 1);
     let tmp: T = out[j];
     out = out.with(j, out[k]);
     out = out.with(k, tmp);
@@ -89,7 +118,7 @@ pub function choice[T](xs: T[]): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
-  return Some(xs[math.random_int(0, xs.len())]);
+  return Some(xs[between(0, xs.len())]);
 }
 
 pub function sample[T](xs: T[], k: i32): T[] {
@@ -186,7 +215,7 @@ pub function rng_between(state: i64, lo: i32, hi: i32): (i64, i32) {
   return (step.0, lo + step.1);
 }
 
-pub function shuffle_seeded[T](seed: i64, xs: T[]): T[] {
+pub function shuffle_seeded[T](xs: T[], seed: i64): T[] {
   let out: T[] = [];
   let i: i32 = 0;
   while (i < xs.len()) {
@@ -207,7 +236,7 @@ pub function shuffle_seeded[T](seed: i64, xs: T[]): T[] {
   return out;
 }
 
-pub function choice_seeded[T](seed: i64, xs: T[]): Option[T] {
+pub function choice_seeded[T](xs: T[], seed: i64): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
@@ -282,12 +311,12 @@ pub function rng_seed_from_os(): i64 {
   return rng_seed(seed as i64);
 }
 
-pub function sample_seeded[T](seed: i64, xs: T[], k: i32): T[] {
+pub function sample_seeded[T](xs: T[], k: i32, seed: i64): T[] {
   let out: T[] = [];
   if (k <= 0) {
     return out;
   }
-  let pool: T[] = shuffle_seeded(seed, xs);
+  let pool: T[] = shuffle_seeded(xs, seed);
   let take: i32 = k;
   if (take > pool.len()) {
     take = pool.len();

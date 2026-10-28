@@ -1,7 +1,7 @@
 import "std/array";
-import "std/math";
+import "core/iter";
 
 function main(): i32 {
-    let r = math.range(0, 5);
+    let r: i32[] = iter.range(0, 5).collect();
     return r.len() + r.sum();
 }

@@ -116,7 +116,7 @@ function test_reverse_words(): test.TestOutcome {
 }
 
 function test_wrap(): test.TestOutcome {
-  return test.assert_eq("x".wrap("[", "]"), "[x]");
+  return test.assert_eq("x".surround("[", "]"), "[x]");
 }
 
 function test_indent(): test.TestOutcome {
