@@ -1,0 +1,56 @@
+import "../ssalargepushwidemachine" as machine;
+import "std/io";
+import "std/utf8";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+function word(input: [u8], at: i32): i64 {
+  let result = 0 as i64;
+  for index in 0..4 {
+    result = result | input[at + index] as i64 << (index * 8) as i64;
+  }
+  return result;
+}
+
+function emit(id: i32, source: string): void {
+  print("proof " + id.to_string() + " " + (if (machine.check(source)) { "1" } else { "0" }));
+  print("end " + id.to_string());
+}
+
+function frame(input: [u8], at: i32): i32 {
+  if (input.len() - at < 12 || input[at] != b'F' || input[at + 1] != b'W' || input[at + 2] != b'P' || input[at + 3] != b'1') {
+    return -1;
+  }
+  let id = word(input, at + 4);
+  let length = word(input, at + 8);
+  if (id > 2147483647 as i64 || length > (input.len() - at - 12) as i64) {
+    return -1;
+  }
+  let end = at + 12 + length as i32;
+  let bytes: u8[] = [];
+  for index in at + 12..end {
+    bytes = bytes.append(input[index]);
+  }
+  if let Some(source) = utf8.from_bytes(bytes) {
+    emit(id as i32, source);
+    return end;
+  }
+  return -1;
+}
+
+pub function main(): i32 {
+  let input = match (io.read_all_stdin_bytes()) { Ok(value) => value, Err(_) => { return 2; } };
+  if (input.len() == 0) {
+    return 2;
+  }
+  let at = 0;
+  while (at < input.len()) {
+    let next = frame(input, at);
+    if (next < 0) {
+      return 2;
+    }
+    at = next;
+  }
+  return 0;
+}
