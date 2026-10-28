@@ -311,8 +311,8 @@ func TestSelfHostAbortBareFrameX86_64(t *testing.T) {
 	if body := asmFuncBody(t, string(asm), "__fn_cut"); strings.Contains(body, "%rbp") {
 		t.Fatalf("cut keeps a frame pointer, so it no longer tests the frameless trap:\n%s", body)
 	}
-	if stubs := trapStubRe.FindAllString(string(asm), -1); len(stubs) != 1 || stubs[0] != "__fern_str_oob_abort.l1:" {
-		t.Errorf("trap stubs %v, want only __fern_str_oob_abort.l1", stubs)
+	if stubs := trapStubRe.FindAllString(string(asm), -1); len(stubs) != 2 || stubs[0] != "__fern_str_oob_abort.l1:" || stubs[1] != "__fern_alloc_size_abort.c:" {
+		t.Errorf("trap stubs %v, want exactly __fern_str_oob_abort.l1 and __fern_alloc_size_abort.c", stubs)
 	}
 	bin := filepath.Join(dir, "bare")
 	if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", asmPath, "-o", bin).CombinedOutput(); err != nil {

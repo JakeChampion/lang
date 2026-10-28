@@ -17,6 +17,7 @@ function __fern_open_res(path: string, flags: i32, mode: i32): Result[i32, IoErr
   if (f == 193) {
     f = 2561;
   }
+  f = f | 16777216;
   let pathz_own: string = __raw_string(pathz, plen + 1);
   if (plen > 0 && path[plen - 1] == 47 && (f & 515) != 0) {
     return Err(__fern_io_error(21, __fern_path_copy(pathz_own, plen)));

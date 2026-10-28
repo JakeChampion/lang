@@ -1,0 +1,6 @@
+=== RUN   TestSelfHostAbortBareFrameX86_64
+    self_host_abort_report_test.go:316: trap stubs [__fern_str_oob_abort.l1: __fern_alloc_size_abort.c: __fern_alloc_size_abort.c:], want exactly __fern_str_oob_abort.l1 and __fern_alloc_size_abort.c
+--- FAIL: TestSelfHostAbortBareFrameX86_64 (1.30s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	1.314s
+FAIL

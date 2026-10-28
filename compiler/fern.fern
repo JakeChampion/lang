@@ -685,7 +685,7 @@ function comp_dir(): string {
   }
 }
 
-function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, harden: boolean): string {
+function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, harden: boolean, pie: boolean): string {
   let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-linux", "assembler", p.unknown);
@@ -696,9 +696,17 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
   let hdr_len: i32 = arm64_native.arm64_eh_frame_hdr_len(p);
   let hv: i64 = elf.elf_eh_hdr_vaddr_wx(text_len, harden) as i64;
   let ev: i64 = elf.elf_eh_frame_vaddr_wx(text_len, hdr_len, harden) as i64;
+  if (pie) {
+    tv = elf.elf_text_vaddr_pie_wx(harden) as i64;
+    hv = elf.elf_eh_hdr_vaddr_pie_wx(text_len, harden) as i64;
+    ev = elf.elf_eh_frame_vaddr_pie_wx(text_len, hdr_len, harden) as i64;
+  }
   let eh: i32[] = arm64_native.arm64_eh_frame(p, tv, ev);
   let hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, tv, ev, hv);
   let dv: i64 = elf.elf_data_vaddr_wx_unwind(text_len, hdr.len(), eh.len(), harden) as i64;
+  if (pie) {
+    dv = elf.elf_data_vaddr_pie_wx_unwind(text_len, hdr.len(), eh.len(), harden) as i64;
+  }
   p = arm64_native.arm64_gas_link(p, tv, dv);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-linux", "linker", p.unknown);
@@ -709,13 +717,16 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
     eoff = 0;
   }
   let bin: u8[] = elf.elf_image_wx_unwind(pa2.text, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, harden);
+  if (pie) {
+    bin = elf.elf_image_pie_wx_unwind(pa2.text, hdr, eh, p.data, elf.elf_em_aarch64(), eoff, p.bss_size, harden);
+  }
   if (!emit_syms) {
     return string_from_bytes_unchecked(bin);
   }
   let aend: i32 = arm64_native.arm64_code_len(p);
   let nosec: i32[] = [];
   let wide: i32[] = elf.elf_append_debug(
-    elf.elf_cat_u8([], bin), elf.elf_text_vaddr_wx(harden), elf.elf_wx_text_off(harden), aend,
+    elf.elf_cat_u8([], bin), tv as i32, elf.elf_wx_text_off(harden), aend,
     elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
     elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
     elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
@@ -771,18 +782,36 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
   return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size));
 }
 
-function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string): string {
+function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, pie: boolean): string {
   util.arr_push_cliff_report("x86:emitted", 0);
   let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words_unlinked(asm, words);
   util.arr_push_cliff_report("x86:assembled", 0);
+  let reloc_at: i32 = a.rodata.len();
+  if (pie) {
+    a = x86_native.X86Asm { ...a, rodata: reserve_bytes(a.rodata, 8 * a.dfix_offs.len()) };
+  }
   let tv: i64 = elf.elf_x86_wx_text_vaddr() as i64;
   let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
   let hv: i64 = elf.elf_x86_wx_eh_hdr_vaddr(a.text.len()) as i64;
   let ev: i64 = elf.elf_x86_wx_eh_frame_vaddr(a.text.len(), hdr_len) as i64;
+  if (pie) {
+    tv = elf.elf_x86_pie_text_vaddr() as i64;
+    hv = elf.elf_x86_pie_eh_hdr_vaddr(a.text.len()) as i64;
+    ev = elf.elf_x86_pie_eh_frame_vaddr(a.text.len(), hdr_len) as i64;
+  }
   let eh: i32[] = x86_native.x86_eh_frame(a, tv, ev);
   let hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv, ev, hv);
   let dv: i32 = elf.elf_x86_wx_data_vaddr(a.text.len(), hdr.len(), eh.len());
+  if (pie) {
+    dv = elf.elf_x86_pie_data_vaddr(a.text.len(), hdr.len(), eh.len());
+  }
   a = x86_native.x86_link(a, tv as i32, dv);
+  if (pie && a.afix_offs.len() > 0 && a.unknown.len() == 0) {
+    a = x86_native.X86Asm { ...a, unknown: ["an absolute code address in a -pie image: " + a.afix_names[0]] };
+  }
+  if (pie && a.unknown.len() == 0) {
+    a = x86_self_relocation(a, tv as i32, dv, reloc_at);
+  }
   util.arr_push_cliff_report("x86:resolved", 0);
   if (a.unknown.len() > 0) {
     eprint("fern: -target x86-64-linux: in-process assembler could not encode: " + a.unknown[0]);
@@ -795,6 +824,9 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
   }
   util.arr_push_cliff_report("x86:unwind", 0);
   let bin: u8[] = elf.elf_program_x86_wx(a.text, hdr, eh, a.rodata, a.bss_size, eoff);
+  if (pie) {
+    bin = elf.elf_program_x86_pie(a.text, hdr, eh, a.rodata, a.bss_size, eoff);
+  }
   util.arr_push_cliff_report("x86:image", 0);
   if (!emit_syms) {
     return string_from_bytes_unchecked(bin);
@@ -811,6 +843,45 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
     x86_var_ranges(a, tv as i32),
   );
   return string_from_bytes_unchecked(util.to_u8(wide));
+}
+
+function reserve_bytes(own data: i32[], n: i32): i32[] {
+  let i: i32 = 0;
+  while (i < n) {
+    data = data.append(0);
+    i = i + 1;
+  }
+  return data;
+}
+
+function store_le64(own data: i32[], at: i32, v: i64): i32[] {
+  let j: i32 = 0;
+  while (j < 8) {
+    data = data.with(at + j, (v >> 8 * j & 255i64) as i32);
+    j = j + 1;
+  }
+  return data;
+}
+
+// A position-independent image relocates its own absolute data words at startup.
+// The list of their link-time addresses sits in the reserved tail of the data, and
+// the two slots the startup loop reads hold the list's address and its length.
+function x86_self_relocation(own a: x86_native.X86Asm, tv: i32, dv: i32, reloc_at: i32): x86_native.X86Asm {
+  let list_slot: i32 = x86_native.x86_symbol_addr(a, "__fern_reloc_list", tv) - dv;
+  let count_slot: i32 = x86_native.x86_symbol_addr(a, "__fern_reloc_count", tv) - dv;
+  if (list_slot < 0 || count_slot < 0) {
+    return x86_native.X86Asm { ...a, unknown: a.unknown.append("the self-relocation slots of a -pie image") };
+  }
+  let data: i32[] = a.rodata;
+  a = x86_native.X86Asm { ...a, rodata: [] };
+  let i: i32 = 0;
+  while (i < a.dfix_offs.len()) {
+    data = store_le64(data, reloc_at + 8 * i, (dv + a.dfix_offs[i]) as i64);
+    i = i + 1;
+  }
+  data = store_le64(data, list_slot, (dv + reloc_at) as i64);
+  data = store_le64(data, count_slot, a.dfix_offs.len() as i64);
+  return x86_native.X86Asm { ...a, rodata: data };
 }
 
 function shared_export_names(list: string): string[] {
@@ -987,13 +1058,13 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
     return arm64_refusals(target, "assembler", p.unknown);
   }
   let text_len: i32 = p.asm.text.len();
-  let tv: i32 = elf.elf_text_off_so(true);
+  let tv: i32 = elf.elf_text_off_so();
   let hdr_len: i32 = arm64_native.arm64_eh_frame_hdr_len(p);
-  let hv: i32 = elf.elf_eh_hdr_off_so(true, text_len);
-  let ev: i32 = elf.elf_eh_frame_off_so(true, text_len, hdr_len);
+  let hv: i32 = elf.elf_eh_hdr_off_so(text_len);
+  let ev: i32 = elf.elf_eh_frame_off_so(text_len, hdr_len);
   let eh: i32[] = arm64_native.arm64_eh_frame(p, tv as i64, ev as i64);
   let hdr: i32[] = arm64_native.arm64_eh_frame_hdr(p, tv as i64, ev as i64, hv as i64);
-  let dv: i32 = elf.elf_data_off_so_wx(text_len, hdr.len(), eh.len());
+  let dv: i32 = elf.elf_data_off_so(text_len, hdr.len(), eh.len());
   p = arm64_native.arm64_gas_link(p, tv as i64, dv as i64);
   if (p.unknown.len() > 0) {
     return arm64_refusals(target, "linker", p.unknown);
@@ -1016,14 +1087,20 @@ function arm64_elf_shared(asm: string, words: u8[], names: string[], soname: str
     vals = vals.append(tv + sym_offs[k]);
     sizes = sizes.append(sym_sizes[k]);
   }
-  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), true, elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  let so: i32[] = elf.elf_shared(elf.elf_em_aarch64(), elf.elf_cat_u8([], pa.text), hdr, eh, p.data, dv, p.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
 function x86_elf_shared(asm: string, words: u8[], names: string[], soname: string): string {
-  let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words(asm, words);
-  let tv: i32 = elf.elf_text_off_so(false);
-  a = x86_native.x86_resolve_data(a, tv);
+  let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words_unlinked(asm, words);
+  let tv: i32 = elf.elf_text_off_so();
+  let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
+  let hv: i32 = elf.elf_eh_hdr_off_so(a.text.len());
+  let ev: i32 = elf.elf_eh_frame_off_so(a.text.len(), hdr_len);
+  let eh: i32[] = x86_native.x86_eh_frame(a, tv as i64, ev as i64);
+  let hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv as i64, ev as i64, hv as i64);
+  let data_at: i32 = elf.elf_data_off_so(a.text.len(), hdr.len(), eh.len());
+  a = x86_native.x86_link(a, tv, data_at);
   if (a.afix_offs.len() > 0 && a.unknown.len() == 0) {
     a = x86_native.X86Asm { ...a, unknown: ["an absolute code address in a shared object: " + a.afix_names[0]] };
   }
@@ -1031,12 +1108,6 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     eprint("fern: -target x86-64-linux: in-process assembler could not encode: " + a.unknown[0]);
     return "";
   }
-  let hdr_len: i32 = x86_native.x86_eh_frame_hdr_len(a);
-  let hv: i32 = elf.elf_eh_hdr_off_so(false, a.text.len());
-  let ev: i32 = elf.elf_eh_frame_off_so(false, a.text.len(), hdr_len);
-  let eh: i32[] = x86_native.x86_eh_frame(a, tv as i64, ev as i64);
-  let hdr: i32[] = x86_native.x86_eh_frame_hdr(a, tv as i64, ev as i64, hv as i64);
-  let data_at: i32 = tv + x86_native.x86_data_base(a, a.text.len());
   let rel_offs: i32[] = [];
   let rel_adds: i64[] = [];
   for off in a.dfix_offs {
@@ -1054,7 +1125,7 @@ function x86_elf_shared(asm: string, words: u8[], names: string[], soname: strin
     vals = vals.append(tv + sym_offs[k]);
     sizes = sizes.append(sym_sizes[k]);
   }
-  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), false, elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
+  let so: i32[] = elf.elf_shared(elf.elf_em_x86_64(), elf.elf_cat_u8([], a.text), hdr, eh, a.rodata, data_at, a.bss_size, rel_offs, rel_adds, names, vals, sizes, soname);
   return string_from_bytes_unchecked(util.to_u8(so));
 }
 
@@ -1245,6 +1316,63 @@ function harden_refused(harden: boolean, target: string, shared: boolean): boole
   return true;
 }
 
+function pie_refused(pie: boolean, target: string, shared: boolean): boolean {
+  if (!pie || (target == "arm64-linux" || target == "x86-64-linux") && !shared) {
+    return false;
+  }
+  let with: string = "";
+  if (shared) {
+    with = " with -shared";
+  }
+  eprint("fern: -pie is only supported for -target arm64-linux and x86-64-linux executables (got \"" + target + "\"" + with + ")");
+  return true;
+}
+
+// The -heap-limit value in bytes: zero without the flag, below zero after a refusal.
+function heap_limit_bytes(text: string, target: string): i64 {
+  if (text.len() == 0) {
+    return 0i64;
+  }
+  if (!(target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-android" || target == "arm64-darwin")) {
+    eprint("fern: -heap-limit is only supported for the native targets (got \"" + target + "\")");
+    return 0i64 - 1i64;
+  }
+  let value: i64 = size_bytes(text);
+  if (value < 1048576i64 || value > 17179869184i64) {
+    eprint("fern: -heap-limit takes a size from 1M to 16G, as digits with an optional K, M or G suffix (got \"" + text + "\")");
+    return 0i64 - 1i64;
+  }
+  return value;
+}
+
+// Digits with an optional K, M or G suffix, as bytes. Malformed text is zero.
+function size_bytes(text: string): i64 {
+  let n: i32 = text.len();
+  let scale: i64 = 1i64;
+  let last: u8 = text[n - 1];
+  if (last == b'K') {
+    scale = 1024i64;
+    n = n - 1;
+  } else if (last == b'M') {
+    scale = 1048576i64;
+    n = n - 1;
+  } else if (last == b'G') {
+    scale = 1073741824i64;
+    n = n - 1;
+  }
+  let value: i64 = 0i64;
+  let i: i32 = 0;
+  while (i < n) {
+    let d: i32 = text[i] as i32 - 48;
+    if (d < 0 || d > 9 || value > 17179869184i64) {
+      return 0i64;
+    }
+    value = value * 10i64 + d as i64;
+    i = i + 1;
+  }
+  return value * scale;
+}
+
 function bti_property_text(on: boolean): string {
   if (!on) {
     return "";
@@ -1286,7 +1414,10 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-O", "", "release build: elide every assert() check"),
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
       cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export (default main)"),
-      cli_flag("-harden", "", "arm64-linux and x86-64-linux executables: stack canaries; on arm64 also BTI landing pads and signed return addresses"),
+      cli_flag("-harden", "", "arm64-linux and x86-64-linux executables: stack canaries and a check on every indirect call; on arm64 also BTI landing pads and signed return addresses, on x86-64 the shadow stack where the kernel offers it"),
+      cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
+      cli_flag("-heap-limit", "SIZE", "native executables: the heap arena size, 1M to 16G with a K, M or G suffix (default 16G); a full arena exits 125"),
+      cli_flag("-profile", "NAME", "a flag set: safe (the defaults), hardened (-harden -pie), diagnostic (-sanitize -backtrace -g) or minimal (-size)"),
     ] },
     FlagGroup { title: "run", flags: [
       cli_flag("-run", "", "build to a temporary binary (or -o) and run it with the program's arguments"),
@@ -1300,6 +1431,7 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-effects", "", "the effect row of every function"),
       cli_flag("-array-report", "", "the array decisions compiling FILE makes, on stdout, writing no output (also FERN_ARRAY_REPORT=1 on stderr)"),
       cli_flag("-targets", "", "list the supported targets and what each provides"),
+      cli_flag("-manifest", "", "print the build manifest stamped into the native image FILE: its target, profile and flags"),
     ] },
     FlagGroup { title: "fmt", flags: [
       cli_flag("-fmt", "", "print each FILE formatted: - for stdin, a DIR for every source beneath it (-o OUT takes one FILE)"),
@@ -1465,6 +1597,109 @@ function help(embedded: boolean): i32 {
     write(l + "\n");
   }
   return 0;
+}
+
+// Prints the build manifest a native image carries, one field per line.
+function run_manifest(path: string): i32 {
+  let image: u8[] = [];
+  match (read_file_bytes(path)) {
+    Ok(b) => {
+      image = b;
+    },
+    Err(e) => {
+      eprint("fern: cannot read " + path + ": " + e.message());
+      return 1;
+    }
+  }
+  let line: string = image_manifest_line(image);
+  if (line.len() == 0) {
+    eprint("fern: no build manifest in " + path + ": not a native Fern executable, or one built before the manifest");
+    return 1;
+  }
+  let field: string = "";
+  let i: i32 = 0;
+  while (i < line.len()) {
+    if (line[i] == b' ') {
+      print(manifest_field(field));
+      field = "";
+    } else {
+      field = field + string_from_bytes_unchecked([line[i]]);
+    }
+    i = i + 1;
+  }
+  if (field.len() > 0) {
+    print(manifest_field(field));
+  }
+  return 0;
+}
+
+// The manifest line of an image, or "" without one. The magic is built from
+// bytes so that this compiler's own literal pool never holds it, and a
+// candidate must name its target and end in a newline within 512 bytes.
+function image_manifest_line(image: u8[]): string {
+  let magic: string = string_from_bytes_unchecked([70, 69, 82, 78, 66, 85, 73, 76, 68, 49, 32, 116, 97, 114, 103, 101, 116, 61]);
+  let from: i32 = 0;
+  while (true) {
+    let at: i32 = find_bytes_from(image, magic, from);
+    if (at < 0) {
+      return "";
+    }
+    let start: i32 = at + magic.len() - 7;
+    let end: i32 = start;
+    while (end < image.len() && end - start < 512 && image[end] != b'\n') {
+      end = end + 1;
+    }
+    if (end < image.len() && image[end] == b'\n' && image[start + 7] != b' ') {
+      let bytes: u8[] = [];
+      let k: i32 = start;
+      while (k < end) {
+        bytes = bytes.append(image[k]);
+        k = k + 1;
+      }
+      let line: string = string_from_bytes_unchecked(bytes);
+      if (find_bytes(bytes, " profile=") >= 0 && find_bytes(bytes, " heap_limit=") >= 0) {
+        return line;
+      }
+    }
+    from = at + 1;
+  }
+  return "";
+}
+
+// "harden=1" prints as "harden: yes"; a value that is not a flag prints as it is.
+function manifest_field(field: string): string {
+  let eq: i32 = __memchr(field, 61, 0);
+  if (eq < 0) {
+    return field;
+  }
+  let key: string = slice_unchecked(field, 0, eq) + "";
+  let value: string = slice_unchecked(field, eq + 1, field.len()) + "";
+  if (value == "1") {
+    value = "yes";
+  } else if (value == "0") {
+    value = "no";
+  }
+  return key + ": " + value;
+}
+
+function find_bytes(hay: u8[], needle: string): i32 {
+  return find_bytes_from(hay, needle, 0);
+}
+
+function find_bytes_from(hay: u8[], needle: string, from: i32): i32 {
+  let n: i32 = needle.len();
+  let i: i32 = from;
+  while (i + n <= hay.len()) {
+    let j: i32 = 0;
+    while (j < n && hay[i + j] == needle[j]) {
+      j = j + 1;
+    }
+    if (j == n) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
 }
 
 function list_targets(): i32 {
@@ -4772,6 +5007,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let fmt_write: boolean = false;
   let fmt_diff: boolean = false;
   let mode_caps: boolean = false;
+  let mode_manifest: boolean = false;
+  let profile_name: string = "";
   let mode_effects: boolean = false;
   let mode_targets: boolean = false;
   let mode_resolve: boolean = false;
@@ -4796,6 +5033,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let shared: boolean = false;
   let export_list: string = "";
   let harden: boolean = false;
+  let heap_limit_text: string = "";
+  let pie: boolean = false;
   let cover_on: boolean = envflag.on("FERN_COVER");
   let array_report: i32 = semarrayreport.from_env();
   let have_entry: boolean = false;
@@ -4871,6 +5110,14 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       sanitize_flag = f.on;
     } else if (f.name == "-harden") {
       harden = f.on;
+    } else if (f.name == "-heap-limit") {
+      heap_limit_text = f.value;
+    } else if (f.name == "-pie") {
+      pie = f.on;
+    } else if (f.name == "-profile") {
+      profile_name = f.value;
+    } else if (f.name == "-manifest") {
+      mode_manifest = f.on;
     } else if (f.name == "-shared") {
       shared = f.on;
     } else if (f.name == "-export") {
@@ -4920,8 +5167,25 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
 
   let st: DiagStyle = diag_style(tf.color_mode, tf.ascii, tf.terse);
 
+  if (profile_name == "hardened") {
+    harden = true;
+    pie = true;
+  } else if (profile_name == "diagnostic") {
+    sanitize_flag = true;
+    backtrace = true;
+    backtrace_set = true;
+    emit_syms = true;
+  } else if (profile_name == "minimal") {
+    size = true;
+  } else if (profile_name != "" && profile_name != "safe") {
+    eprint("fern: -profile takes safe, hardened, diagnostic or minimal (got \"" + profile_name + "\")");
+    return 2;
+  }
   if (mode_targets) {
     return list_targets();
+  }
+  if (mode_manifest) {
+    return run_manifest(entry_path);
   }
   if (tf.version) {
     return print_version(root);
@@ -5059,6 +5323,13 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   }
   emit_syms = rtprofile.symbols(emit_syms, profile_mode);
   if (harden_refused(harden, target, shared)) {
+    return 2;
+  }
+  let heap_limit: i64 = heap_limit_bytes(heap_limit_text, target);
+  if (heap_limit < 0i64) {
+    return 2;
+  }
+  if (pie_refused(pie, target, shared)) {
     return 2;
   }
   if (backend != "" && backend != "ssa" && backend != "flat") {
@@ -5240,7 +5511,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let typed: parser.Module = parser.module_with_builtins_typed(merged);
   let full: parser.Module = parser.erase_view_module(typed);
   let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden } };
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, pie: pie, profile: profile_name, target: target } };
   if (array_report == semarrayreport.to_stdout()) {
     return 0;
   }
@@ -5269,7 +5540,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
         return 2;
       }
     } else if (!emit_text) {
-      out_asm = arm64_elf_binary(out_asm, words_of(recs), emit_syms, entry_path, harden);
+      out_asm = arm64_elf_binary(out_asm, words_of(recs), emit_syms, entry_path, harden, pie);
       util.arr_push_cliff_report("arm64:image", 0);
       if (out_asm.len() == 0) {
         return 2;
@@ -5385,7 +5656,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
         return 2;
       }
     } else if (!emit_text) {
-      out_asm = x86_elf_binary(out_asm, words_of(recs), emit_syms, entry_path);
+      out_asm = x86_elf_binary(out_asm, words_of(recs), emit_syms, entry_path, pie);
       if (out_asm.len() == 0) {
         return 2;
       }

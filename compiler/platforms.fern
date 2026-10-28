@@ -317,6 +317,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "hostname", capability: "host" },
     Gate { builtin: "uname_field", capability: "sysinfo" },
     Gate { builtin: "cpu_count", capability: "sysinfo" },
+    Gate { builtin: "prctl_query", capability: "sysinfo" },
     Gate { builtin: "sysctl", capability: "sysctl" },
     Gate { builtin: "getcwd", capability: "cwd" },
     Gate { builtin: "signal_ignore", capability: "signal" },

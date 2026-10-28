@@ -84,7 +84,7 @@ It is a `-harden` design of its own and is not in this record.
 |---|---|
 | Free list link inside the freed block | A raw write through a dangling pointer to that word forges the next link, and the allocation after the next returns the forged address; `-sanitize` quarantines freed blocks and detects the touch, the release build does not (SEC-023) |
 | A raw double free | `__free` twice on one block links it to itself, because a raw block has no count to read; the typed release helpers count the second release instead (SEC-023) |
-| No zeroing on free | A secret stays in the arena until the block is reused and zero-filled; SEC-025 owns erasure |
+| No zeroing on free | A secret stays in the arena until the block is reused and zero-filled. `crypto.erase` zeroes an owned byte array before its release, and `-heap-limit` bounds the arena ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)) |
 | A runtime helper that computes a size | The helper is responsible for its arithmetic; the bump's wrap check is the last line, and a wrapped positive size below the arena end is not caught there |
 | Alignment above 8 bytes | No entry takes an alignment; lane values and SIMD kernels use unaligned loads and stores by design |
 | `munmap` | The arena is never unmapped; a freed block returns to a list, never to the kernel |
@@ -97,6 +97,9 @@ It now aborts with the out-of-heap cause before it touches the address, on both 
 A freed block above one gigabyte was dropped at the free: both the lookup and the free push stopped at that bound, so the block was lost for the life of the process.
 A program that allocated a 1.1 GB buffer twice advanced the bump by 2.2 GB on both targets.
 Twenty such allocations exhausted the host before the arena.
+
+With the lists in reach, a block above one gigabyte rounds up to its size class like every large block.
+A 1.2 GB request therefore bumps 1342177280 bytes, and `TestX86_64HeapBumpAbove2GiB` pins that.
 The bound is now the arena size, so the class math, which already covered that range, reaches every block the arena can hold.
 
 The bump added the request to the heap pointer and compared the sum with the arena end.

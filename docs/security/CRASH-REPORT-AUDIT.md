@@ -25,8 +25,10 @@ The bounds and allocation aborts exit with status 134.
 ## The fault handler
 
 Startup maps a 64 KiB alternate signal stack and installs `__fern_segv` for `SIGSEGV` with `SA_ONSTACK`, `SA_SIGINFO`, and `SA_RESTORER`.
-The handler reads the fault address from the signal information and the stack pointer from the context.
-A fault inside the 1 MiB guard below the stack pointer is a stack overflow.
+The handler reads the fault address from the signal information.
+A fault inside the 1 MiB guard of the runtime's own stack is a stack overflow.
+The runtime keeps the kernel's stack when its own mapping fails. There a fault within 1 MiB of the context's stack pointer counts as one.
+
 The handler then builds a frame record on the alternate stack from the context's frame pointer and return address.
 It enters the report path with `fern: stack overflow` and status 134.
 

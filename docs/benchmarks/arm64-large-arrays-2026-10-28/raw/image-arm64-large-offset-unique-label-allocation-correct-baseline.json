@@ -1,0 +1,26 @@
+{
+  "source": "3ba81dccd2de600e45fa9539247e28352e07118b",
+  "command": [
+    "bash",
+    "scripts/ci-check-perf",
+    ".github/alloc-baseline.txt",
+    "/tmp/image-arm64-large-offset-unique-label-allocation.txt"
+  ],
+  "exit": 0,
+  "seconds": 0.011886119842529297,
+  "measurement_reused_without_repeat": true,
+  "measurement_actual_exit": 0,
+  "initial_comparison_exit": 2,
+  "initial_comparison_error": "Wrong baseline filename, before comparison.",
+  "baseline_sha256_checked_after_measurement": "2dcb9ea3731e35e21911e374a919aa2d9fecc49d0e876c8a86b49d575d7f6865",
+  "baseline_byte_identical_to_committed_source": true,
+  "report_sha256": "fc3fdb88b245c7385d43b68cae7d9065899387d5850a6cfd3f3f4906e0de4867",
+  "report_unchanged": true,
+  "allocs": 36900494,
+  "frees": 36900494,
+  "baseline": 34951426,
+  "drift_percent": 5.5765049471801165,
+  "advisory_tolerance_percent": 1,
+  "fatal_ceiling_percent": 10,
+  "RSS_row_present": false
+}

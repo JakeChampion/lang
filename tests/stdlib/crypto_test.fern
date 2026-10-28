@@ -296,6 +296,18 @@ function test_hotp_and_digits(): test.TestOutcome {
   return test.assert_eq(crypto.hotp_sha256(key, 1, 6), 46119246 % 1000000);
 }
 
+function test_erase_accepts_owned_bytes(): test.TestOutcome {
+  let key: u8[] = crypto.sha256("secret".as_bytes());
+  if (key.len() != 32) {
+    return test.fail("digest length " + key.len().to_string());
+  }
+  crypto.erase(key);
+  let empty: u8[] = __alloc_u8(0);
+  crypto.erase(empty);
+  crypto.erase([7 as u8]);
+  return test.pass();
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/crypto");
   r = r.it("sha256 empty", test_sha256_empty);
@@ -325,6 +337,7 @@ function main(): i32 {
   r = r.it("shake256 empty", test_shake256_empty);
   r = r.it("shake256 0xa3 x 200", test_shake256_a3);
   r = r.it("shake streaming", test_shake_streaming);
+  r = r.it("erase accepts owned bytes", test_erase_accepts_owned_bytes);
   return r.finish();
 }
 

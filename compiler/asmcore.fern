@@ -64,6 +64,10 @@ pub struct EmitState {
   local_types: Ty[],
   str_ns: string,
   shape_lits: string[],
+  sym_addrs: string[],
+  cfi_stubs: string[],
+  build_profile: string,
+  build_target: string,
   const_aggs: string[],
   const_agg_ix: util.NameIndex,
   ssa_frame: i32,
@@ -96,6 +100,8 @@ pub struct EmitState {
   shared: boolean,
   size: boolean,
   harden: boolean,
+  pie: boolean,
+  heap_limit: i64,
   dw_first: boolean,
   dw_pos: i64,
   debug_rows: string[],
@@ -407,6 +413,10 @@ pub function new_state(): EmitState {
     local_types: lts,
     str_ns: "",
     shape_lits: [],
+    sym_addrs: [],
+    cfi_stubs: [],
+    build_profile: "",
+    build_target: "",
     const_aggs: [],
     const_agg_ix: util.name_index([]),
     ssa_frame: 0,
@@ -438,6 +448,8 @@ pub function new_state(): EmitState {
     shared: false,
     size: false,
     harden: false,
+    pie: false,
+    heap_limit: 17179869184i64,
     var_rows: false,
     dw_first: false,
     dw_pos: 0,
@@ -484,14 +496,39 @@ pub function leak_check_on(): boolean {
   return envflag.on("FERN_LEAKCHECK");
 }
 
-pub struct Switches { backtrace: boolean, sanitize: boolean, leak_check: boolean, rc_free_debug: boolean, var_rows: boolean, shared: boolean, size: boolean, harden: boolean }
+pub struct Switches { backtrace: boolean, sanitize: boolean, leak_check: boolean, rc_free_debug: boolean, var_rows: boolean, shared: boolean, size: boolean, harden: boolean, heap_limit: i64, pie: boolean, profile: string, target: string }
+
+// The arena reservation in bytes: a -heap-limit when one was given, else 16 GiB.
+pub function arena_bytes(limit: i64): i64 {
+  if (limit > 0i64) {
+    return limit;
+  }
+  return 17179869184i64;
+}
 
 pub function env_switches(): Switches {
-  return Switches { backtrace: backtrace_on(), sanitize: sanitize_on(), leak_check: leak_check_on(), rc_free_debug: rc_free_debug_on(), var_rows: false, shared: false, size: size_on(), harden: false };
+  return Switches { backtrace: backtrace_on(), sanitize: sanitize_on(), leak_check: leak_check_on(), rc_free_debug: rc_free_debug_on(), var_rows: false, shared: false, size: size_on(), harden: false, heap_limit: 0i64, pie: false, profile: "", target: "" };
 }
 
 pub function with_switches(s: EmitState, sw: Switches): EmitState {
-  return EmitState { ...s, backtrace: sw.backtrace, var_rows: sw.var_rows, shared: sw.shared, size: sw.size, harden: sw.harden, sanitize: sw.sanitize, leak_check: sw.sanitize || sw.leak_check, rc_free_debug: sw.sanitize || sw.rc_free_debug };
+  return EmitState { ...s, backtrace: sw.backtrace, var_rows: sw.var_rows, shared: sw.shared, size: sw.size, harden: sw.harden, pie: sw.pie, heap_limit: arena_bytes(sw.heap_limit), build_profile: sw.profile, build_target: sw.target, sanitize: sw.sanitize, leak_check: sw.sanitize || sw.leak_check, rc_free_debug: sw.sanitize || sw.rc_free_debug };
+}
+
+function flag01(on: boolean): string {
+  if (on) {
+    return "1";
+  }
+  return "0";
+}
+
+// The build manifest stamped into every native executable, which
+// `fern -manifest` and std/mitigations read back.
+pub function build_manifest(s: EmitState): string {
+  return "FERNBUILD1 target=" + s.build_target + " profile=" + s.build_profile + " harden=" + flag01(s.harden) + " pie=" + flag01(s.pie) + " sanitize=" + flag01(s.sanitize) + " backtrace=" + flag01(s.backtrace) + " size=" + flag01(s.size) + " shared=" + flag01(s.shared) + " heap_limit=" + util.i64_to_string(s.heap_limit);
+}
+
+pub function emit_build_manifest(s: EmitState): EmitState {
+  return s.write("    .section .rodata\n__fern_build:\n    .ascii \"" + build_manifest(s) + "\\n\"\n    .text\n");
 }
 
 pub function rc_free_debug_on(): boolean {
@@ -3492,6 +3529,7 @@ function builtin_i32_names(): string[] {
     "process_alive",
     "rlimit_nofile",
     "disable_core_dumps",
+    "prctl_query",
     "clock_resolution",
     "priority",
     "geteuid",
@@ -4094,6 +4132,23 @@ pub function (s: EmitState) has_local(name: string): boolean {
 
 pub struct LabelOut { state: EmitState, name: string }
 
+// Under -harden a function value points at a stub that starts with the
+// landing pad an indirect call checks for, so only an address-taken
+// function is a valid indirect target.
+pub function cfi_stub_label(s: EmitState, target: string): string {
+  if (s.str_ns.len() > 0) {
+    return ".Lfern_cfi_" + s.str_ns + "_" + sanitize_label(target);
+  }
+  return ".Lfern_cfi_" + sanitize_label(target);
+}
+
+pub function with_cfi_stub(s: EmitState, target: string): EmitState {
+  if (util.index_of_str(s.cfi_stubs, target) >= 0) {
+    return s;
+  }
+  return EmitState { ...s, cfi_stubs: s.cfi_stubs.append(target) };
+}
+
 pub function fresh_label(s: EmitState): LabelOut {
   let name: string = ".L" + util.i32_to_string(s.label_n);
   if (s.str_ns.len() > 0) {
@@ -4191,7 +4246,13 @@ pub function const_agg_pack(own s: EmitState, packed: string, entry: string): Co
   }
   let body: string = ir.const_struct_fn_body(packed);
   if (body.len() > 0) {
-    return ConstAggPack { state: s, text: "1|__fn_" + sanitize_label(body) + entry };
+    let target: string = "__fn_" + sanitize_label(body) + entry;
+    if (s.harden) {
+      s = with_cfi_stub(s, target);
+      let stub: string = cfi_stub_label(s, target);
+      return ConstAggPack { state: s, text: "1|" + stub };
+    }
+    return ConstAggPack { state: s, text: "1|" + target };
   }
   let shp: ShapeRefOut = const_agg_shape(s, packed);
   s = shp.state;

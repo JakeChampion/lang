@@ -92,6 +92,7 @@ pub function builtin_caps(): BuiltinCap[] {
     BuiltinCap { builtin: "hostname", capability: "env" },
     BuiltinCap { builtin: "uname_field", capability: "env" },
     BuiltinCap { builtin: "cpu_count", capability: "env" },
+    BuiltinCap { builtin: "prctl_query", capability: "env" },
     BuiltinCap { builtin: "sysctl", capability: "env" },
     BuiltinCap { builtin: "subprocess", capability: "subprocess" },
     BuiltinCap { builtin: "proc_fork", capability: "subprocess" },

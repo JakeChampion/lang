@@ -8296,6 +8296,7 @@ pub function builtin_function_names(): string[] {
     "uname_field", "getcwd", "cpu_count",
     "rlimit_nofile",
     "disable_core_dumps",
+    "prctl_query",
     "signal_ignore", "signal_default", "signal_catch", "signal_taken", "signal_catch_interrupting",
     "signal_raise",
     "now_unix_ms", "now_ns", "monotonic_ns", "sleep_ms", "sleep_ns", "random_bytes",

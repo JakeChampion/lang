@@ -7,7 +7,7 @@ function __fern_open_res(path: string, flags: i32, mode: i32): Result[i32, IoErr
     i = i + 1;
   }
   __raw_store8(pathz, plen, 0);
-  let f: i32 = flags;
+  let f: i32 = flags | 524288;
   let pathz_own: string = __raw_string(pathz, plen + 1);
   let fd: i32 = __syscall4(56, -100, pathz as i64, f as i64, mode as i64) as i32;
   if (fd >= 0 && fd < 3) {

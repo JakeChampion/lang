@@ -98,7 +98,7 @@ func runVendor(start string) error {
 
 func depSourceDir(m *manifest.Manifest, name string, d manifest.Dep) (string, error) {
 	if d.Version != "" {
-		return modload.LockedDepDir(m.Dir, name)
+		return modload.LockedDepDir(m.Dir, name, d.Version)
 	}
 	if d.URL != "" {
 		store, present, err := pkgcache.Dir(d.Hash)

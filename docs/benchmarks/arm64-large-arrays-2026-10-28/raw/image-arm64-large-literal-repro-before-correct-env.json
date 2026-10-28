@@ -1,0 +1,7 @@
+{
+  "assembler_exit": 0,
+  "source_sha256": "fbc522e40cabae2a1502debf714f83a5e54817d2d6e52a8f542791574aff15e1",
+  "asm_sha256": "ba16ed9801f908200a0d3c205536c000d5857fecbbcdf4a6e44e3eff61519bec",
+  "seconds": 0.01583409309387207,
+  "earlier_attempt": "assembler_did_not_start_missing_libopcodes"
+}

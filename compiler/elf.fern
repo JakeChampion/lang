@@ -265,27 +265,26 @@ function elf_push_zeros(b: usize, n: i32): void {
   }
 }
 
-function elf_so_phnum(wx: boolean): i32 {
-  if (wx) {
-    return 6;
-  }
-  return 5;
+// Code, data, the dynamic tables, PT_DYNAMIC, the unwind header or its
+// padding, PT_GNU_STACK and PT_GNU_RELRO.
+function elf_so_phnum(): i32 {
+  return 7;
 }
 
-pub function elf_text_off_so(wx: boolean): i32 {
-  return elf_align16(elf_eh_size() + elf_so_phnum(wx) * elf_ph_size());
+pub function elf_text_off_so(): i32 {
+  return elf_align16(elf_eh_size() + elf_so_phnum() * elf_ph_size());
 }
 
-pub function elf_eh_hdr_off_so(wx: boolean, text_len: i32): i32 {
-  return elf_align4(elf_text_off_so(wx) + text_len);
+pub function elf_eh_hdr_off_so(text_len: i32): i32 {
+  return elf_align4(elf_text_off_so() + text_len);
 }
 
-pub function elf_eh_frame_off_so(wx: boolean, text_len: i32, hdr_len: i32): i32 {
-  return elf_align8(elf_eh_hdr_off_so(wx, text_len) + hdr_len);
+pub function elf_eh_frame_off_so(text_len: i32, hdr_len: i32): i32 {
+  return elf_align8(elf_eh_hdr_off_so(text_len) + hdr_len);
 }
 
-pub function elf_data_off_so_wx(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
-  return elf_page_up(elf_unwind_end(elf_text_off_so(true), text_len, hdr_len, eh_len));
+pub function elf_data_off_so(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
+  return elf_page_up(elf_unwind_end(elf_text_off_so(), text_len, hdr_len, eh_len));
 }
 
 function elf_phdr(buf: i32[], p_type: i32, flags: i32, off: i32, vaddr: i32, filesz: i32, memsz: i32, align: i32): i32[] {
@@ -306,14 +305,13 @@ function elf_pad_to(buf: i32[], off: i32): i32[] {
   return buf;
 }
 
-pub function elf_shared(machine: i32, wx: boolean, text: i32[], hdr: i32[], eh: i32[], data: i32[], data_off: i32, bss: i32, rel_offs: i32[], rel_adds: i64[], names: string[], vals: i32[], sizes: i32[], soname: string): i32[] {
+pub function elf_shared(machine: i32, text: i32[], hdr: i32[], eh: i32[], data: i32[], data_off: i32, bss: i32, rel_offs: i32[], rel_adds: i64[], names: string[], vals: i32[], sizes: i32[], soname: string): i32[] {
   let has_unwind: boolean = hdr.len() > 0 && eh.len() > 0;
-  let text_off: i32 = elf_text_off_so(wx);
+  let text_off: i32 = elf_text_off_so();
   let code_end: i32 = elf_unwind_end(text_off, text.len(), hdr.len(), eh.len());
-  let page: i32 = 4096;
+  let page: i32 = elf_page_align();
   let rel_type: i32 = 8;
-  if (wx) {
-    page = elf_page_align();
+  if (machine == elf_em_aarch64()) {
     rel_type = 1027;
   }
 
@@ -353,6 +351,7 @@ pub function elf_shared(machine: i32, wx: boolean, text: i32[], hdr: i32[], eh: 
   vals_d = vals_d.append(0 as i64);
   let dyn_sz: i32 = tags.len() * 16;
   let end: i32 = dyn_off + dyn_sz;
+  let tab_mem: i32 = (end - tab_file + page - 1) / page * page;
 
   let buf: i32[] = [127, 69, 76, 70, 2, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0];
   buf = elf_le16(buf, 3);
@@ -364,21 +363,18 @@ pub function elf_shared(machine: i32, wx: boolean, text: i32[], hdr: i32[], eh: 
   buf = elf_le32(buf, 0);
   buf = elf_le16(buf, elf_eh_size());
   buf = elf_le16(buf, elf_ph_size());
-  buf = elf_le16(buf, elf_so_phnum(wx));
+  buf = elf_le16(buf, elf_so_phnum());
   buf = elf_le16(buf, 0);
   buf = elf_le16(buf, 0);
   buf = elf_le16(buf, 0);
 
-  if (wx) {
-    buf = elf_phdr(buf, 1, 5, 0, 0, code_end, code_end, page);
-    buf = elf_phdr(buf, 1, 6, data_off, data_off, data.len(), data.len() + bss, page);
-  } else {
-    buf = elf_phdr(buf, 1, 7, 0, 0, image_sz, image_sz + bss, page);
-  }
-  buf = elf_phdr(buf, 1, 6, tab_file, tab_file + slide, end - tab_file, end - tab_file, page);
+  buf = elf_phdr(buf, 1, 5, 0, 0, code_end, code_end, page);
+  buf = elf_phdr(buf, 1, 6, data_off, data_off, data.len(), data.len() + bss, page);
+  buf = elf_phdr(buf, 1, 6, tab_file, tab_file + slide, end - tab_file, tab_mem, page);
   buf = elf_phdr(buf, 2, 6, dyn_off, dyn_off + slide, dyn_sz, dyn_sz, 8);
+  buf = elf_phdr(buf, 1685382482, 4, tab_file, tab_file + slide, tab_mem, tab_mem, 1);
   if (has_unwind) {
-    let ho: i32 = elf_eh_hdr_off_so(wx, text.len());
+    let ho: i32 = elf_eh_hdr_off_so(text.len());
     buf = elf_phdr(buf, 1685382480, 4, ho, ho, hdr.len(), hdr.len(), 4);
   } else {
     buf = elf_pad_to(buf, buf.len() + elf_ph_size());
@@ -389,8 +385,8 @@ pub function elf_shared(machine: i32, wx: boolean, text: i32[], hdr: i32[], eh: 
 
   buf = elf_cat(elf_pad_to(buf, text_off), text);
   if (has_unwind) {
-    buf = elf_cat(elf_pad_to(buf, elf_eh_hdr_off_so(wx, text.len())), hdr);
-    buf = elf_cat(elf_pad_to(buf, elf_eh_frame_off_so(wx, text.len(), hdr.len())), eh);
+    buf = elf_cat(elf_pad_to(buf, elf_eh_hdr_off_so(text.len())), hdr);
+    buf = elf_cat(elf_pad_to(buf, elf_eh_frame_off_so(text.len(), hdr.len())), eh);
   }
   buf = elf_cat(elf_pad_to(buf, data_off), data);
   buf = elf_pad_to(buf, rela_off);
@@ -515,6 +511,27 @@ pub function elf_image_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[],
   return elf_image_two_seg(text, hdr, eh, data, machine, entry_off, bss, elf_base_vaddr(), 2, true, note, true, elf_page_align());
 }
 
+// The same layout as a position-independent executable: ET_DYN at base 0, which the kernel loads at a random base.
+pub function elf_image_pie_wx_unwind(text: u8[], hdr: i32[], eh: i32[], data: i32[], machine: i32, entry_off: i32, bss: i32, note: boolean): u8[] {
+  return elf_image_two_seg(text, hdr, eh, data, machine, entry_off, bss, 0, 3, true, note, true, elf_page_align());
+}
+
+pub function elf_text_vaddr_pie_wx(note: boolean): i32 {
+  return elf_wx_text_off(note);
+}
+
+pub function elf_eh_hdr_vaddr_pie_wx(text_len: i32, note: boolean): i32 {
+  return elf_align4(elf_wx_text_off(note) + text_len);
+}
+
+pub function elf_eh_frame_vaddr_pie_wx(text_len: i32, hdr_len: i32, note: boolean): i32 {
+  return elf_align8(elf_eh_hdr_vaddr_pie_wx(text_len, note) + hdr_len);
+}
+
+pub function elf_data_vaddr_pie_wx_unwind(text_len: i32, hdr_len: i32, eh_len: i32, note: boolean): i32 {
+  return elf_page_up(elf_code_end(elf_unwind_end(elf_wx_text_off(note), text_len, hdr_len, eh_len), note));
+}
+
 pub function elf_x86_wx_text_off(): i32 {
   return elf_eh_size() + 4 * elf_ph_size();
 }
@@ -536,9 +553,29 @@ function elf_x86_page_align(): i32 {
 }
 
 pub function elf_x86_wx_data_vaddr(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
+  return elf_base_vaddr() + elf_x86_pie_data_vaddr(text_len, hdr_len, eh_len);
+}
+
+pub function elf_x86_pie_text_vaddr(): i32 {
+  return elf_x86_wx_text_off();
+}
+
+pub function elf_x86_pie_eh_hdr_vaddr(text_len: i32): i32 {
+  return elf_align4(elf_x86_wx_text_off() + text_len);
+}
+
+pub function elf_x86_pie_eh_frame_vaddr(text_len: i32, hdr_len: i32): i32 {
+  return elf_align8(elf_x86_pie_eh_hdr_vaddr(text_len) + hdr_len);
+}
+
+pub function elf_x86_pie_data_vaddr(text_len: i32, hdr_len: i32, eh_len: i32): i32 {
   let end: i32 = elf_unwind_end(elf_x86_wx_text_off(), text_len, hdr_len, eh_len);
   let page: i32 = elf_x86_page_align();
-  return elf_base_vaddr() + (end + page - 1) / page * page;
+  return (end + page - 1) / page * page;
+}
+
+pub function elf_program_x86_pie(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32): u8[] {
+  return elf_image_two_seg(text, hdr, eh, data, elf_em_x86_64(), entry_off, bss, 0, 3, true, false, true, elf_x86_page_align());
 }
 
 pub function elf_program_x86_wx(text: u8[], hdr: i32[], eh: i32[], data: i32[], bss: i32, entry_off: i32): u8[] {

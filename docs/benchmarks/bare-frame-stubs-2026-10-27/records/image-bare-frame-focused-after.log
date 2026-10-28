@@ -1,0 +1,4 @@
+=== RUN   TestSelfHostAbortBareFrameX86_64
+--- PASS: TestSelfHostAbortBareFrameX86_64 (1.27s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	1.287s
