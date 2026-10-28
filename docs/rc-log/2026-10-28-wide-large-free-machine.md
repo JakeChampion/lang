@@ -39,3 +39,8 @@ Production emitters, runtime instructions, standard library files, mathematical 
 These symbolic regions do not establish a physical memory or process RSS bound.
 Integration into the retained-driver group requires a later scope after this proof merge.
 Full retained-machine recovery, actual CI recovery, and all actual M5 and epic gates remain open.
+
+The [final evidence](../benchmarks/wide-large-free-machine-2026-10-28/README.md) records the source-pinned campaigns and qualification checks.
+All three targets completed the same 336 exact proof results through 126 fresh workers.
+All worker censuses are nonzero, balanced, and zero-live.
+Retained-driver integration remains a later scope.
