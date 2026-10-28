@@ -3998,7 +3998,7 @@ pub function register_form(f: SFunc): Formed {
   let merged: Formed = merge_duplicates(folded.f);
   let plain: Formed = fold_identities(merged.f);
   let shared: Formed = share_shape_loads(plain.f);
-  let unwrapped: Formed = drop_low_wraps(prune_dead(fuse_rotates(double_lanes(shared.f))));
+  let unwrapped: Formed = drop_low_wraps(prune_dead(fold_offsets(fuse_rotates(double_lanes(shared.f)))));
   let extended: Formed = fold_extensions(unwrapped.f);
   let g: SFunc = extended.f;
   let bytes: Formed = fold_byte_access(g);
@@ -4951,6 +4951,37 @@ function term_operand(t: STerm): i32 {
     return t.cond;
   }
   return 0 - 1;
+}
+
+// A load or a store through base + constant takes the constant as its offset.
+pub function fold_offsets(f: SFunc): SFunc {
+  return rewrite_insts(f, inst_defs(f), offset_access).f;
+}
+
+function offset_access(defs: SInst[], ins: SInst): SInst {
+  if (ins.kind_tag != 40 && ins.kind_tag != 41 || ins.str != "" || ins.args.len() == 0 || ins.args[0] < 0) {
+    return no_inst();
+  }
+  let at: SInst = def_of(defs, ins.args[0]);
+  if (at.kind_tag != 9 || at.str != "add" || at.imm != 64 || at.args.len() != 2) {
+    return no_inst();
+  }
+  let off: i64 = ins.imm as i64 + offset_const(defs, at.args[1]);
+  if (off < ins.imm as i64 || off > 1073741824i64) {
+    return no_inst();
+  }
+  return SInst { ...ins, args: ins.args.with(0, at.args[0]), imm: off as i32 };
+}
+
+function offset_const(defs: SInst[], v: i32): i64 {
+  let d: SInst = def_of(defs, v);
+  if (d.kind_tag == 1 && d.imm >= 0) {
+    return d.imm as i64;
+  }
+  if (d.kind_tag == 3 && d.str.len() > 0 && d.str[0] != b'-') {
+    return util.lit_to_i64(d.str);
+  }
+  return 0i64 - 1i64;
 }
 
 pub function fuse_rotates(f: SFunc): SFunc {

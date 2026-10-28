@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -26,6 +27,31 @@ func TestSelfHostTaskFrame(t *testing.T) {
 			t.Fatalf("self-host CLI: %v\n%s", err, msg)
 		}
 		checkRoundsSaves(t, string(msg))
+	})
+	t.Run("offsets", func(t *testing.T) {
+		src := filepath.Join(t.TempDir(), "main.fern")
+		if err := os.WriteFile(src, []byte(e2eharness.TaskFrameProgram), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		shapes := map[string][2]string{
+			"x86-64-linux": {"call __fn___fern_task_reserve", `movq %\w+, 16\(%rax\)`},
+			"arm64-linux":  {"bl __fn___fern_task_reserve", `str x\d+, \[x0, #16\]`},
+		}
+		for target, shape := range shapes {
+			asm, err := os.ReadFile(cli.emit(t, src, target))
+			if err != nil {
+				t.Fatal(err)
+			}
+			body := asmFunction(string(asm), "__fn_rounds:")
+			_, save, ok := strings.Cut(body, shape[0])
+			if !ok {
+				t.Fatalf("%s: rounds does not park:\n%s", target, body)
+			}
+			save, _, _ = strings.Cut(save, ".cfi_remember_state")
+			if !regexp.MustCompile(shape[1]).MatchString(save) || strings.Contains(save, "leaq") || strings.Contains(save, "add x") {
+				t.Errorf("%s: the park does not store each slot at an offset from the frame:\n%s", target, save)
+			}
+		}
 	})
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {
