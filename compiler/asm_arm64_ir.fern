@@ -4140,7 +4140,7 @@ function ssa_line_loc(ins: ssa.SInst, s: asmcore.EmitState): asmcore.EmitState {
     return s;
   }
   s = asmcore.EmitState { ...s, dw_pos: pos };
-  let row: string = "    .loc " + util.i32_to_string(util.pos_file_index(ins.imm) + 1) + " " + util.i32_to_string(util.pos_line(ins.imm)) + " " + ins.str;
+  let row: string = asmcore.loc_row(s, ins.imm, ins.str);
   if (s.dw_first) {
     row = row + " prologue_end";
     s = asmcore.EmitState { ...s, dw_first: false };
