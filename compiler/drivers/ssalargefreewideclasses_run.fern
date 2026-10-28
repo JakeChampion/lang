@@ -1,0 +1,10 @@
+import "./ssalargefreewideclassescases" as cases;
+
+pub function main(): i32 {
+  if (!cases.run()) {
+    print("current caller class reference failed");
+    return 180;
+  }
+  print("current caller class reference passed");
+  return 0;
+}

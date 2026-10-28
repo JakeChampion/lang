@@ -1,0 +1,17 @@
+{
+  "unpublished_archive_before_sha256": "81d79e6b16ab6ce4f0d3554262eab14d7db8039882ced823fc801723862913df",
+  "preserved_original": "/tmp/image-wide-integration-evidence-secondary/qualification-records-before-packaging-log-finalization.tar.gz",
+  "published_archive_after_sha256": "0887d6f913df05ddca6def7d3d429535f1a3d8014eee039bf5835d9e816123a3",
+  "changed_members": [
+    {
+      "member": "current/finalize-evidence.log",
+      "before_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "after_sha256": "bb8ebfcde4cdd32fd5c8939cd20c5f19631fb3672e30ae35f162fda729912fcb",
+      "reason": "packaging log was open during archive capture; qualification members unchanged"
+    }
+  ],
+  "all_target_gzip_roundtrips_exact": true,
+  "all_archive_members_match_actual_files": true,
+  "member_count": 2486,
+  "qualification_member_changes": 0
+}
