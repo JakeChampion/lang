@@ -1,0 +1,30 @@
+{
+  "STE": [
+    {
+      "command": [
+        "python3",
+        ".claude/skills/simplified-technical-english/scripts/ste_check.py",
+        "--no-vocab",
+        "--mode",
+        "descriptive",
+        "docs/benchmarks/wide-large-free-machine-2026-10-28/README.md"
+      ],
+      "exit": 0,
+      "no_ERROR": true
+    },
+    {
+      "command": [
+        "python3",
+        ".claude/skills/simplified-technical-english/scripts/ste_check.py",
+        "--no-vocab",
+        "--mode",
+        "descriptive",
+        "docs/rc-log/2026-10-28-wide-large-free-machine.md"
+      ],
+      "exit": 0,
+      "no_ERROR": true
+    }
+  ],
+  "archives_and_raw_records_verified": true,
+  "no_source_changes_after_qualification": true
+}
