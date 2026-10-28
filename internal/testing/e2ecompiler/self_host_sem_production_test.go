@@ -2852,7 +2852,7 @@ function main(): i32 {
 	{name: "ordmap-bounded-method-clones", atLeast: 61, want: "52|", src: `
 import "std/ordmap";
 function main(): i32 {
-    let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+    let m: ordmap.OrdMap[i32, i32] = ordmap.new();
     m = m.insert(3, 4);
     m = m.insert(3, 5);
     m = m.insert(9, 1);

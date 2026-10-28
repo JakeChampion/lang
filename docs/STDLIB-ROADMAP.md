@@ -377,7 +377,7 @@ repetitive `to_lower` allocations.
 ### 16. `Set[T]` · small · ☑
 
 **Surface**: `std/set` — a generic, value-semantic
-`Set[T: cmp.Eq]`: `set_new` / `set_of`, `add` / `remove` /
+`Set[T: cmp.Eq]`: `set.new` / `set.of`, `add` / `remove` /
 `contains` / `len` / `is_empty` / `to_array`, and the algebra
 `union` / `intersect` / `difference` / `is_subset` / `equals`
 (order-insensitive).

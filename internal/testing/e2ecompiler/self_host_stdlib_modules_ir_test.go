@@ -111,7 +111,7 @@ function main(): i32 {
 }`},
 	{"ordmap", `import "std/ordmap";
 function main(): i32 {
-    let m: ordmap.OrdMap[i32, string] = ordmap.ordmap_new();
+    let m: ordmap.OrdMap[i32, string] = ordmap.new();
     let i: i32 = 0;
     while (i < 50) { m = m.insert((i * 7) % 50, "v"); i = i + 1; }
     let snap: ordmap.OrdMap[i32, string] = m;
@@ -149,7 +149,7 @@ function main(): i32 {
 }`},
 	{"pmap", `import "std/pmap";
 function main(): i32 {
-    let m: pmap.PMap[string, i32] = pmap.pmap_new();
+    let m: pmap.PMap[string, i32] = pmap.new();
     m = m.insert("a", 1);
     m = m.insert("b", 2);
     m = m.insert("c", 3);
@@ -164,7 +164,7 @@ function main(): i32 {
 }`},
 	{"pvec", `import "std/pvec";
 function main(): i32 {
-    let v: pvec.PVec[i32] = pvec.pvec_new();
+    let v: pvec.PVec[i32] = pvec.new();
     let i: i32 = 0;
     while (i < 100) { v = v.append(i); i = i + 1; }
     let snap: pvec.PVec[i32] = v;
@@ -180,7 +180,7 @@ function main(): i32 {
 }`},
 	{"ordset", `import "std/ordset";
 function main(): i32 {
-    let s: ordset.OrdSet[i32] = ordset.ordset_of([5, 3, 9, 3, 1]);
+    let s: ordset.OrdSet[i32] = ordset.of([5, 3, 9, 3, 1]);
     let snap: ordset.OrdSet[i32] = s;
     s = s.remove(3);
     s = s.insert(7);
@@ -193,7 +193,7 @@ function main(): i32 {
 }`},
 	{"pset", `import "std/pset";
 function main(): i32 {
-    let s: pset.PSet[string] = pset.pset_of(["a", "b", "a", "c"]);
+    let s: pset.PSet[string] = pset.of(["a", "b", "a", "c"]);
     let snap: pset.PSet[string] = s;
     s = s.remove("a");
     s = s.insert("d");

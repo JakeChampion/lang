@@ -34,7 +34,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 pub(package) enum VNode[T]>>
 
-<<4 pub function pvec_new[T](): PVec[T]>>
+<<4 pub function new[T](): PVec[T]>>
 
 <<5 function __pv_tail_off(len: i32): i32>>
 
@@ -78,18 +78,18 @@ pub(package) enum VNode[T] { Empty, Leaf(T[]), Branch(VNode[T][]) }
 pub struct PVec[T] { len: i32, shift: i32, root: VNode[T], tail: T[] }
 ```
 
-### `4 pub function pvec_new[T](): PVec[T]`
+### `4 pub function new[T](): PVec[T]`
 
 ```fern
-<<4 pub function pvec_new[T](): PVec[T]>>=
-pub function pvec_new[T](): PVec[T] {
+<<4 pub function new[T](): PVec[T]>>=
+pub function new[T](): PVec[T] {
   let e: VNode[T] = Empty;
   let t: T[] = [];
   return PVec { len: 0, shift: 0, root: e, tail: t };
 }
 
 pub function from_array[T](xs: T[]): PVec[T] {
-  let v: PVec[T] = pvec_new();
+  let v: PVec[T] = new();
   let i: i32 = 0;
   while (i < xs.len()) {
     v = v.append(xs[i]);
@@ -491,7 +491,7 @@ pub function (v: PVec[T]) pop(): Option[(PVec[T], T)] {
 <<10 function __pv_without_last[T](v: PVec[T]): PVec[T]>>=
 function __pv_without_last[T](v: PVec[T]): PVec[T] {
   if (v.len == 1) {
-    return pvec_new();
+    return new();
   }
   if (v.len - __pv_tail_off(v.len) > 1) {
     let t: T[] = [];
@@ -554,7 +554,7 @@ pub function (v: PVec[T]) for_each(f: (T) => void): void {
 }
 
 pub function (v: PVec[T]) map[T, U](f: (T) => U): PVec[U] {
-  let out: PVec[U] = pvec_new();
+  let out: PVec[U] = new();
   let xs: T[] = v.to_array();
   let i: i32 = 0;
   while (i < xs.len()) {
@@ -565,7 +565,7 @@ pub function (v: PVec[T]) map[T, U](f: (T) => U): PVec[U] {
 }
 
 pub function (v: PVec[T]) filter(pred: (T) => boolean): PVec[T] {
-  let out: PVec[T] = pvec_new();
+  let out: PVec[T] = new();
   let xs: T[] = v.to_array();
   let i: i32 = 0;
   while (i < xs.len()) {
@@ -589,7 +589,7 @@ pub function (v: PVec[T]) concat(other: PVec[T]): PVec[T] {
 }
 
 pub function (v: PVec[T]) slice(lo: i32, hi: i32): PVec[T] {
-  let out: PVec[T] = pvec_new();
+  let out: PVec[T] = new();
   let i: i32 = lo;
   if (i < 0) {
     i = 0;

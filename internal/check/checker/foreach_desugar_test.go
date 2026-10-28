@@ -179,7 +179,7 @@ func TestForEachOverIteratorChecks(t *testing.T) {
 		{"pattern-header", "import \"core/iter\";\nfunction main(): i32 { let n: i32 = 0; for (i, w) in iter.of([\"a\"]).enumerate() { n = n + i + w.len(); } return n; }\n"},
 		{"bounded-type-parameter", "import \"core/iter\";\nfunction total[I: iter.Iterator[i32]](it: I): i32 { let n: i32 = 0; for v in it { n = n + v; } return n; }\nfunction main(): i32 { return total(iter.range(0, 4)); }\n"},
 		{"iter-method", "import \"core/iter\";\nstruct Bag { xs: string[] }\nfunction (b: Bag) iter(): iter.ArrayIter[string] { return iter.of(b.xs); }\nfunction main(): i32 { let n: i32 = 0; let b: Bag = Bag { xs: [\"a\"] }; for s in b { n = n + s.len(); } return n; }\n"},
-		{"ordmap", "import \"std/ordmap\";\nfunction main(): i32 { let m: ordmap.OrdMap[string, i32] = ordmap.ordmap_new(); m = m.insert(\"a\", 1); let n: i32 = 0; for (k, v) in m { n = n + k.len() + v; } return n; }\n"},
+		{"ordmap", "import \"std/ordmap\";\nfunction main(): i32 { let m: ordmap.OrdMap[string, i32] = ordmap.new(); m = m.insert(\"a\", 1); let n: i32 = 0; for (k, v) in m { n = n + k.len() + v; } return n; }\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if err := checkModuleSource(t, tc.src); err != nil {

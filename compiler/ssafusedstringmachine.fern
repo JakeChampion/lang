@@ -1,7 +1,7 @@
 import "./ssacapacityisa" as isa;
 import "./ssastringvalue" as value;
 import "./ssacapacitymachine" as capacity;
-import "./ssalargepushmachine" as large;
+import "./ssalargepushwidemachine" as large;
 
 struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
 

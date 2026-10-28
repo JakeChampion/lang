@@ -66,7 +66,7 @@ function calls(s: string): void {
   require(outer.len() == 2, "unique large dependency");
   let next = outer[1].split("__fern_capw:\n");
   require(next.len() == 2, "dependency following helper");
-  for pair in [["cmpq $0x40000000, %rsi", "cmpl $0x40000000, %esi"], ["subq $72, %rdx", "subq $71, %rdx"], ["movq %rcx, (%r8)", ""], ["movq %r8, (%rdx,%rax,8)", ""], ["movq %rdx, %rax", "movq %rdx, %rbx"], ["    ret\n", "ret $8\n"]] {
+  for pair in [["cmpq %rax, %rsi", "cmpl %eax, %esi"], ["movabs $17179869184, %rax", "movabs $17179869185, %rax"], ["subq $72, %rdx", "subq $71, %rdx"], ["movq %rcx, (%r8)", ""], ["movq %r8, (%rdx,%rax,8)", ""], ["movq %rdx, %rax", "movq %rdx, %rbx"], ["    ret\n", "ret $8\n"]] {
     let parts = next[0].split(pair[0]);
     require(parts.len() > 1, "dependency mutation present");
     require(!machine.check(outer[0] + "__fern_large_push:\n" + parts.join(pair[1]) + "__fern_capw:\n" + next[1]), "dependency: " + pair[0]);

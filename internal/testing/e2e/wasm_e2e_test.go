@@ -14827,7 +14827,7 @@ function main(): i32 {
 		{"pvec-for-each", `
 import "std/pvec";
 function main(): i32 {
-    let v: pvec.PVec[i32] = pvec.pvec_new();
+    let v: pvec.PVec[i32] = pvec.new();
     v = v.append(1);
     v = v.append(2);
     let total: i32 = 0;

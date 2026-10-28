@@ -17,7 +17,7 @@ pub function new_db(capacity: i32, key_bytes: i32, value_bytes: i32, batch: i32)
   if (!kv_config_core.valid_config(capacity, key_bytes, value_bytes, batch)) {
     return None;
   }
-  let entries: pmap.PMap[string, string] = pmap.pmap_new();
+  let entries: pmap.PMap[string, string] = pmap.new();
   return Some(Db {
     capacity: capacity, key_bytes: key_bytes, value_bytes: value_bytes,
     batch: batch, refused: false, entries: entries, output: [],
