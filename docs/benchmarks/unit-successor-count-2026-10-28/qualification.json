@@ -1,0 +1,36 @@
+{
+  "primary": {
+    "command": [
+      "go",
+      "test",
+      "./internal/testing/e2ecompiler",
+      "-run",
+      "^TestSelfHostSSAUnits($|IR|IndexedReplay)",
+      "-count=1",
+      "-json"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 37.98629420499856,
+    "previous_log_reported_pass": true,
+    "previous_shell_wrapper_exit": 1,
+    "previous_status_accepted": false,
+    "test_passes": 89,
+    "test_failures": [],
+    "test_skips": []
+  },
+  "measurement_source_base": "c63e488b4ed21b7161417382b8e4f7f6f05a5da5",
+  "combined_validation_source_base": "ed6d8d6fc839f9d3a8ec511b0860b169a372a666",
+  "combined_fixpoint": {
+    "stage2_sha256": "1e0ad6be807a01bbf50a05535d46808d611816016ce388e687d44589c5dc7e52",
+    "stage3_sha256": "1e0ad6be807a01bbf50a05535d46808d611816016ce388e687d44589c5dc7e52",
+    "byte_identical": true,
+    "primary_completed_first": true,
+    "source_base": "ed6d8d6fc839f9d3a8ec511b0860b169a372a666",
+    "local_patch": "source-change.patch",
+    "comparison": "combined current branch self-reproduction, separate from measured C63 profile group"
+  },
+  "source_feature_complexity_vet_testnames_formatter_pass": true,
+  "three_target_output_identity": true,
+  "full_current_ci_pass": false,
+  "architecture_4412_complete": false
+}

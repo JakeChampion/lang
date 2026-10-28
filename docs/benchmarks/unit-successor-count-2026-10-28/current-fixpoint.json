@@ -1,0 +1,9 @@
+{
+  "stage2_sha256": "1e0ad6be807a01bbf50a05535d46808d611816016ce388e687d44589c5dc7e52",
+  "stage3_sha256": "1e0ad6be807a01bbf50a05535d46808d611816016ce388e687d44589c5dc7e52",
+  "byte_identical": true,
+  "primary_completed_first": true,
+  "source_base": "ed6d8d6fc839f9d3a8ec511b0860b169a372a666",
+  "local_patch": "source-change.patch",
+  "comparison": "combined current branch self-reproduction, separate from measured C63 profile group"
+}
