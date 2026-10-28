@@ -1,0 +1,43 @@
+{
+  "records": [
+    {
+      "shard": "0/4",
+      "command": [
+        "go",
+        "test",
+        "./internal/syntax/printer",
+        "-count=1",
+        "-timeout",
+        "20m",
+        "-json"
+      ],
+      "started_at": "2026-10-28T10:03:56.496541+00:00",
+      "process_id": 139323,
+      "exit": 0,
+      "seconds": 561.739751699999,
+      "passes": 297,
+      "failures": [],
+      "skips": []
+    },
+    {
+      "shard": "1/4",
+      "command": [
+        "go",
+        "test",
+        "./internal/syntax/printer",
+        "-count=1",
+        "-timeout",
+        "20m",
+        "-json"
+      ],
+      "started_at": "2026-10-28T10:13:18.237248+00:00",
+      "process_id": 139853,
+      "aborted_for_new_main": true
+    }
+  ],
+  "complete": false,
+  "aborted_for_new_main": true,
+  "source_head": "9e8edb879cf0f6895350e972ce3aecfc913fff00",
+  "new_main": "b0241b2f3d542a7cc5a8a421cc4df4d24a4d7517",
+  "reason": "New main changes the compiler inputs. Stop old-snapshot corpus before checkout edits; completed shard remains historical, current full corpus unqualified."
+}

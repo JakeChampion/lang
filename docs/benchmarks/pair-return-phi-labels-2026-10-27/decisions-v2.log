@@ -1,0 +1,10 @@
+pair probe other type_holds_view caller=type_holds_view kind=8 result=87 str=type_holds_view
+pair probe other type_holds_view caller=type_holds_view kind=8 result=88 str=type_holds_view
+pair probe other type_holds_view caller=type_holds_view kind=8 result=89 str=type_holds_view
+pair probe other type_holds_view caller=type_holds_view kind=8 result=87 str=type_holds_view
+pair probe other type_holds_view caller=type_holds_view kind=8 result=88 str=type_holds_view
+pair probe other type_holds_view caller=type_holds_view kind=8 result=89 str=type_holds_view
+pair probe holds_view_aggregate calls=13 other=0 rewrite=1 unnamed=1 shaped=0 paired=0
+pair probe type_holds_view calls=6 other=1 rewrite=1 unnamed=1 shaped=1 paired=0
+pair probe any_holds_view calls=6 other=0 rewrite=1 unnamed=1 shaped=1 paired=1
+pair probe rejected any_holds_view caller=type_holds_view value=14

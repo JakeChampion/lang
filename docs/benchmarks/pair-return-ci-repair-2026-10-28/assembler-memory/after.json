@@ -1,0 +1,41 @@
+[
+  {
+    "label": 1000000,
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/tools/usr/bin/time",
+      "-v",
+      "/workspace/lang-issue-work/perf-4412/assembler-memory/asm-after",
+      "arm64",
+      "/workspace/lang-issue-work/perf-4412/assembler-memory/1000000.s.txt"
+    ],
+    "exit": 0,
+    "seconds": 0.0037504600004467648,
+    "maxrss_kib": 932
+  },
+  {
+    "label": 2000000,
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/tools/usr/bin/time",
+      "-v",
+      "/workspace/lang-issue-work/perf-4412/assembler-memory/asm-after",
+      "arm64",
+      "/workspace/lang-issue-work/perf-4412/assembler-memory/2000000.s.txt"
+    ],
+    "exit": 0,
+    "seconds": 0.003669268000521697,
+    "maxrss_kib": 932
+  },
+  {
+    "label": 134217728,
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/tools/usr/bin/time",
+      "-v",
+      "/workspace/lang-issue-work/perf-4412/assembler-memory/asm-after",
+      "arm64",
+      "/workspace/lang-issue-work/perf-4412/assembler-memory/134217728.s.txt"
+    ],
+    "exit": 0,
+    "seconds": 0.003734475998498965,
+    "maxrss_kib": 932
+  }
+]

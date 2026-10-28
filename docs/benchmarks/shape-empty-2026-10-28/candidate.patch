@@ -1,0 +1,24 @@
+--- /workspace/lang-perf-4412/compiler/asm_ir.fern	2026-10-28 01:56:04.817403788 +0000
++++ /workspace/lang-issue-work/perf-4412/shape-empty-candidate/compiler/asm_ir.fern	2026-10-28 07:09:54.984986509 +0000
+@@ -9091,14 +9091,20 @@
+   if (shared) {
+     return plan;
+   }
+-  let shape: boolean[] = __alloc_bool(f.nvals);
++  let shape: boolean[] = [];
+   for blk in f.blocks {
+     for ins in blk.insts {
+       if (ins.kind_tag == 46) {
++        if (shape.len() == 0) {
++          shape = __alloc_bool(f.nvals);
++        }
+         shape = shape.with(ins.result, true);
+       }
+     }
+   }
++  if (shape.len() == 0) {
++    return plan;
++  }
+   for blk in f.blocks {
+     for ins in blk.insts {
+       let a: i32 = 0;

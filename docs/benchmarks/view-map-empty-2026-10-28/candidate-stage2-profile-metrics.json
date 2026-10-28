@@ -1,0 +1,30 @@
+{
+  "command": [
+    "/workspace/lang-issue-work/perf-4412/tools/usr/bin/time",
+    "-v",
+    "/workspace/lang-issue-work/perf-4412/tools/usr/bin/valgrind",
+    "--tool=callgrind",
+    "--callgrind-out-file=/workspace/lang-issue-work/perf-4412/view-any-candidate/stage2.callgrind",
+    "/workspace/lang-issue-work/perf-4412/view-any-candidate/stage2",
+    "-O",
+    "-target",
+    "x86-64-linux",
+    "-emit",
+    "asm",
+    "-o",
+    "/dev/null",
+    "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/compiler/checker.fern",
+    "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/internal/stdlib"
+  ],
+  "exit": 0,
+  "valid_full_run": true,
+  "elapsed_seconds_under_callgrind": 257.94050289299776,
+  "binary_sha256": "7b2c84743f3b1fbfaa87f36a6622c63204258dfab562e6ac48870c5fe13afba0",
+  "common_producer_sha256": "1e0ad6be807a01bbf50a05535d46808d611816016ce388e687d44589c5dc7e52",
+  "subject_sha256": "cb79b4d73e84f3b9f34bf4f30d95b9a14341189f29cd039b3f705b753da91ccd",
+  "subject_output_sha256": "da4633415050f5fa206a66455c0eaffd39c8c5039be2b41218039a6dd21b4171",
+  "memo_warmed": true,
+  "comparison_kind": "Common-producer stage2 A/B against post-eb0e-baseline with the same frozen subject and library.",
+  "instructions": 25435514391,
+  "box_calls": 17681143
+}

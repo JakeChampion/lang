@@ -1,0 +1,16 @@
+[
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/record-pair-candidate/stage2.callgrind",
+    "archive": "stage2.callgrind.gz",
+    "raw_bytes": 2260876,
+    "raw_sha256": "a67e7658c9b49ab3cd9e8d2506945d5729c4964c2e2c275a3d898abe4c50ec9e",
+    "gzip_sha256": "9f0ed414918d32a8d9f0e9f21418efde01366f6bbd7b0fd56b5a1486fdcb666c"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/record-pair-candidate/stage2-g.nm",
+    "archive": "stage2-g.nm.gz",
+    "raw_bytes": 436253,
+    "raw_sha256": "d9fe4faf7dd822106a5bd2f76f6eccc97021e63979a140efd1b679d73685b5a0",
+    "gzip_sha256": "e9bdacbdd73f04d46f3711468bf1924d1c274cc3d853d569e0a3308a2d5157ad"
+  }
+]

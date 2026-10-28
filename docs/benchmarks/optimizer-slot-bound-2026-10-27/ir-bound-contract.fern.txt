@@ -1,0 +1,41 @@
+import "./ir";
+import "./util";
+
+function show(ops: ir.Op[]): string {
+  let out: string = util.i32_to_string(ops.len()) + ":";
+  for op in ops {
+    out = out + util.i32_to_string(op.kind_tag) + "," + util.i32_to_string(op.i32_imm)
+      + "," + util.i64_to_string(op.i64_imm) + "," + util.i64_to_string(f64_bits(op.f64_imm))
+      + "," + util.i32_to_string(op.width) + "," + if (op.unsigned) { "1" } else { "0" }
+      + "," + op.str + "," + util.i32_to_string(op.decl) + "," + util.i64_to_string(op.source) + "|";
+  }
+  return out;
+}
+
+function report(ops: ir.Op[], slot: i32, seed: i32): void {
+  let marked: ir.Op[] = [];
+  for i in 0..ops.len() {
+    marked = marked.append(ir.Op { ...ops[i], decl: i + seed, source: 9000000000i64 + (i as i64) });
+  }
+  let alias: ir.Op[] = marked;
+  print(show(ir.const_propagate(marked)));
+  print(show(ir.propagate_copies(marked)));
+  let optimized: ir.OptimizedOps = ir.optimize_ops(marked, 1, slot + 2);
+  print(util.i32_to_string(optimized.n_locals) + ":" + show(optimized.ops));
+  print(show(alias));
+}
+
+function main(): i32 {
+  for slot in [0, 1, 7, 31, 255] {
+    for seed in 1..11 {
+      report([], slot, seed);
+      report([ir.op_const_i32(seed), ir.op_const_i32(3), ir.op_bin("add", 0, false), ir.op_return()], slot, seed);
+      report([ir.op_const_i32(seed), ir.op_tee_local(slot), ir.op_return()], slot, seed);
+      report([ir.op_const_i32(seed), ir.op_store_local(slot), ir.op_load_local(slot), ir.op_const_i32(2), ir.op_bin("mul", 0, false), ir.op_return()], slot, seed);
+      report([ir.op_const_i32(seed), ir.op_store_local(slot), ir.op_load_local(slot), ir.op_const_i32(3), ir.op_bin("add", 0, false), ir.op_store_local(slot + 1), ir.op_load_local(slot + 1), ir.op_return()], slot, seed);
+      report([ir.op_load_local(0), ir.op_if(0), ir.op_const_i32(seed), ir.op_store_local(slot + 1), ir.op_else(), ir.op_const_i32(seed + 1), ir.op_store_local(slot + 1), ir.op_end(), ir.op_load_local(slot + 1), ir.op_return()], slot, seed);
+      report([ir.op_loop(0), ir.op_load_local(slot), ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_store_local(slot), ir.op_load_local(0), ir.op_brif(0), ir.op_end(), ir.op_load_local(slot), ir.op_return()], slot, seed);
+    }
+  }
+  return 0;
+}

@@ -125,6 +125,8 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"zg_param_refused: load_local 1 ; call_direct __fern_rc_is_unique/1 ; if ; load_local 1 ; call_direct __fern_arr_dec/1 ; drop ; end ; return\n" +
 		"zg_in_loop_refused: loop ; load_local 1 ; call_direct __fern_rc_is_unique/1 ; if ; end ; br 0 ; end\n" +
 		"zg_past_loop_fires: loop ; br 0 ; end ; const_i32 0\n" +
+		"zg_nested_regions: block ; loop ; if ; loop ; load_local 1 ; call_direct __fern_rc_is_unique/1 ; drop ; end ; else ; load_local 2 ; call_direct __fern_rc_is_unique/1 ; drop ; end ; end ; const_i32 0 ; end\n" +
+		"zg_adjacent_regions: const_i32 0 ; const_i32 0 ; loop ; load_local 3 ; call_direct __fern_rc_is_unique/1 ; end ; const_i32 0\n" +
 		"zg_written_refused: call_direct mk/0 ; store_local 1 ; load_local 1 ; call_direct __fern_rc_is_unique/1\n" +
 		"zg_late_write_fires: const_i32 0 ; if ; end ; call_direct mk/0 ; store_local 1\n" +
 		"zg_rezero_fires: const_i32 0 ; store_local 1 ; const_i32 0\n" +

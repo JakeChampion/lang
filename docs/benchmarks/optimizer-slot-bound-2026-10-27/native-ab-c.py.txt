@@ -1,0 +1,37 @@
+from pathlib import Path
+import subprocess, time, os, resource, json, statistics
+
+p = Path(__file__).parent
+subject = str(p / 'fixed-source/compiler/checker.fern')
+stdlib = str(p / 'fixed-source/internal/stdlib')
+records = []
+for target in ['arm64-linux', 'wasm32-wasi']:
+    outputs = []
+    for version in ['baseline', 'candidate-c']:
+        output = p / (version + '-' + target + '-checker.s')
+        cmd = [str(p / (version + '-stage2')), '-O', '-target', target, '-emit', 'asm', '-o', str(output), subject, stdlib]
+        with (p / (version + '-' + target + '-identity.log')).open('wb') as f:
+            r = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT)
+        assert r.returncode == 0, (target, version, r.returncode)
+        outputs.append(output)
+    assert outputs[0].read_bytes() == outputs[1].read_bytes(), ('listing differs', target)
+    print('byte-identical', target, outputs[0].stat().st_size, flush=True)
+for repeat in range(5):
+    for version in (['baseline', 'candidate-c'] if repeat % 2 == 0 else ['candidate-c', 'baseline']):
+        env = dict(os.environ)
+        env['FERN_RC_CERTIFY_MEMO'] = str(p / ('certifier-memo-' + ('release' if version == 'baseline' else 'candidate-c')))
+        cmd = [str(p / (version + '-stage2')), '-O', '-target', 'x86-64-linux', '-emit', 'asm', '-o', '/dev/null', subject, stdlib]
+        before = resource.getrusage(resource.RUSAGE_CHILDREN)
+        start = time.perf_counter()
+        with (p / ('native-' + str(repeat) + '-' + version + '.log')).open('wb') as f:
+            r = subprocess.run(cmd, env=env, stdout=f, stderr=subprocess.STDOUT)
+        elapsed = time.perf_counter() - start
+        after = resource.getrusage(resource.RUSAGE_CHILDREN)
+        record = {'repeat': repeat, 'version': version, 'command': cmd, 'exit': r.returncode, 'elapsed_seconds': elapsed, 'user_seconds': after.ru_utime - before.ru_utime, 'system_seconds': after.ru_stime - before.ru_stime}
+        records.append(record)
+        (p / 'native-ab-c.json').write_text(json.dumps(records, indent=2) + '\n')
+        print(record, flush=True)
+        assert r.returncode == 0
+for version in ['baseline', 'candidate-c']:
+    data = [r['user_seconds'] + r['system_seconds'] for r in records if r['version'] == version]
+    print(version, 'cpu best', min(data), 'median', statistics.median(data), flush=True)

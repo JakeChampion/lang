@@ -1,0 +1,2 @@
+leakcheck: allocs=23972 frees=21474 live_bytes=169880 from=exit
+fern-sanitizer: leak 169880 bytes in 2498 blocks

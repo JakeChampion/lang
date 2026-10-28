@@ -1,0 +1,86 @@
+[
+  {
+    "name": "baseline-stage2.callgrind.gz",
+    "raw_bytes": 2239142,
+    "raw_sha256": "e9df8fd221c121d13679d29695f9b8019630855f5e5cf4d60101e69bf0ede17c",
+    "archive_sha256": "27a2748e3bdbda198f41909d117bd261e283e8c78ffb9d9397318a691e60e07e"
+  },
+  {
+    "name": "baseline-stage2.self.resolved.gz",
+    "raw_bytes": 362188,
+    "raw_sha256": "143258e6b5e6922bd2c08a64a8f1113c9980998dca9dd172383527b4c0b40861",
+    "archive_sha256": "1e80a11bdaf4fa78569f82379e17046b57bb17c8745d4840ddd3bb27bf77ae3c"
+  },
+  {
+    "name": "baseline-stage2.callers.resolved.gz",
+    "raw_bytes": 2466082,
+    "raw_sha256": "83a6938fcd507ee40400de5a7a002598a0a34728eab0ca6532a02f1dacb0c248",
+    "archive_sha256": "f854ad6ac27f47d62c56528c4257f91cbc071d6efa845dee97c286d09e0b7c3c"
+  },
+  {
+    "name": "baseline-stage2-g.nm.gz",
+    "raw_bytes": 437349,
+    "raw_sha256": "068e934b252f19c1434cc27c5b0e27fd4a832c8090a870a096aba470beee28db",
+    "archive_sha256": "e3e8a3241f8fa5d4c38d2fa0c8dbbd43c68e0879ba0473ecc65e25e218aff107"
+  },
+  {
+    "name": "baseline-stage2-profile.log.gz",
+    "raw_bytes": 1827,
+    "raw_sha256": "f7a51cdd80575fd17c8acfe129c26ede3322267417b4b61170cf417ad7841810",
+    "archive_sha256": "5f2e4df95259cdc235696610b1743dca44c4f5a65dc90d5c11e9ee83b24b7121"
+  },
+  {
+    "name": "baseline-ssaunits.fern.txt.gz",
+    "raw_bytes": 159338,
+    "raw_sha256": "f1f0cd92910d987422a5aff78599a929e47afb1b2dc29c7cbd39de96f254ae22",
+    "archive_sha256": "5c115dd0585b6b476639fb9bfc77ca0fd33dc6abc6d5873f468f7ed1fe37ad6d"
+  },
+  {
+    "name": "candidate-stage2.callgrind.gz",
+    "raw_bytes": 2238550,
+    "raw_sha256": "0c0937e22b3076396acf5d99cd1f12e301693ae615ec9a1cdf0d5fdbfa00e782",
+    "archive_sha256": "2e4e29883863740a5643090a7d1499b1ad46e5d25523d02b7701e2adcc72453b"
+  },
+  {
+    "name": "candidate-stage2.self.resolved.gz",
+    "raw_bytes": 362203,
+    "raw_sha256": "a1b1df685dbbb6fad15f8c430f89a077c28d02d9825e36c5997757d89cf6cafe",
+    "archive_sha256": "ec172ceb06d83c98b50e806921df002ac15d9368a0b596de7b6e8bc278883baf"
+  },
+  {
+    "name": "candidate-stage2.callers.resolved.gz",
+    "raw_bytes": 2465908,
+    "raw_sha256": "0c21f6c37c371fd9e36caa66c620aa6a2e2a880212404d372802925ad7cf40a2",
+    "archive_sha256": "7c97fcf7893cb5616e10b2e733378184c25cb0404220da4552d8adb756af1125"
+  },
+  {
+    "name": "candidate-stage2-g.nm.gz",
+    "raw_bytes": 437354,
+    "raw_sha256": "04231161d8dff788003b38623b1544e5c477d6396aa5119df7b00b605eb619fb",
+    "archive_sha256": "9aad449050396080a82b60e9029481aab28f52238ca96ded1a4dc75502abb036"
+  },
+  {
+    "name": "candidate-stage2-profile.log.gz",
+    "raw_bytes": 1842,
+    "raw_sha256": "5e28f6798b451d69f0dc779dfc9d7e4cdff752aab81b5d187517fa6fd1f0eff0",
+    "archive_sha256": "e06fc2c8be8bed3c780e6bd27f7bab7bc4a894a36fdea18f9f2109e2dd9200c1"
+  },
+  {
+    "name": "candidate-ssaunits.fern.txt.gz",
+    "raw_bytes": 159858,
+    "raw_sha256": "7a0f49b0e49db79a7e59ce11af25c7c2da5b356ab3fcfdb18a6b6ade8901d247",
+    "archive_sha256": "3303cb912a41fe8712197b220df56cd753d6c7277ab3e67b071debf0643f6d60"
+  },
+  {
+    "name": "baseline-source.tar.gz",
+    "raw_bytes": 11530240,
+    "raw_sha256": "aa0c67d116fb8b86e2c751123c28e848d24c3b638df819e0e10b4873ae70e503",
+    "archive_sha256": "37cb889f3b1c5aa63395a4283ba1b58fc5c6be90520193a4cc51ed072b2a892f"
+  },
+  {
+    "name": "fixed-subject-source.tar.gz",
+    "raw_bytes": 16404480,
+    "raw_sha256": "733bcde2f7e991a9e77be92d7037e4456265d49276f0cf5c4ba3612a8c878d88",
+    "archive_sha256": "d080515547b8ff3f4e7932cf7d29ce7874d792b02bbd07033c756c2559eb6ec0"
+  }
+]

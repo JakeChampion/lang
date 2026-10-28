@@ -1,0 +1,9 @@
+{
+  "contract_directory": "/workspace/lang-issue-work/perf-4412/shape-plan-candidate/contract",
+  "baseline_source_archive": "/workspace/lang-issue-work/perf-4412/shape-plan-candidate/baseline-source.tar",
+  "candidate_function_exact": true,
+  "helpers_sha256": "15bc28ecbabdb9e015063367d491a8ad39ca1dc4afdf1258a47b1608dab1302f",
+  "fixture_sha256": "f644ad55959b8b0e5b126f4ea62e8e9c649bdbd7a6e3581f34ad5ef403a92e3d",
+  "cases": 6048,
+  "scope": "Helper contract inputs include out-of-range operands. These are not all typed valid SSA graphs. Real emitter tests remain required."
+}

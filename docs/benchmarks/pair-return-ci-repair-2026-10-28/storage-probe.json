@@ -1,0 +1,32 @@
+[
+  {
+    "label": "before",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/ci-repair/compiler-0b",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/ci-repair/storage-before",
+      "/workspace/lang-perf-4412/compiler/drivers/ssacreditstorageabi_run.fern",
+      "/workspace/lang-perf-4412/internal/stdlib"
+    ],
+    "exit": 91,
+    "stdout": "handoff: unsupported caller origin effect expected replace: scalar call may exit with unproved caller obligations\n",
+    "stderr": "leakcheck: allocs=23972 frees=21474 live_bytes=169880 from=exit\nfern-sanitizer: leak 169880 bytes in 2498 blocks\n"
+  },
+  {
+    "label": "after",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/ci-repair/compiler-0b",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/ci-repair/storage-after",
+      "/workspace/lang-issue-work/perf-4412/ci-repair/boxed-probe-compiler/drivers/ssacreditstorageabi_run.fern",
+      "/workspace/lang-perf-4412/internal/stdlib"
+    ],
+    "exit": 0,
+    "stdout": "typed storage invocation controls passed\n",
+    "stderr": "leakcheck: allocs=746801 frees=746801 live_bytes=0\n"
+  }
+]

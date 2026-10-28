@@ -524,7 +524,7 @@ import "core/cmp";
 struct Coarse { bucket: i32, id: i32 }
 impl cmp.Hash for Coarse { function hash(self: Coarse): i32 { return self.bucket; } }
 function main(): i32 {
-    let m: pmap.PMap[Coarse, i32] = pmap.pmap_new();
+    let m: pmap.PMap[Coarse, i32] = pmap.new();
     let i: i32 = 0;
     while (i < 40) { m = m.insert(Coarse { bucket: i % 5, id: i }, i); i = i + 1; }
     let n: i32 = m.get_or(Coarse { bucket: 3, id: 13 }, -1) * 10 + m.get_or(Coarse { bucket: 3, id: 14 }, -1);
@@ -574,7 +574,7 @@ function main(): i32 {
 import "std/ordmap" as ordmap;
 import "core/cmp";
 function main(): i32 {
-    let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+    let m: ordmap.OrdMap[i32, i32] = ordmap.new();
     let i: i32 = 0;
     while (i < 30) { m = m.insert((i * 7) % 31, i); i = i + 1; }
     let total: i32 = m.fold(0, (acc: i32, k: i32, v: i32) => acc + k * 2 + v);

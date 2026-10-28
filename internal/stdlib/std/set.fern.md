@@ -16,7 +16,7 @@ Membership requires `cmp.Eq`. The equality contract determines duplicate removal
 import "std/set";
 
 function main(): i32 {
-  let s = set.set_of([2, 2, 3]);
+  let s = set.of([2, 2, 3]);
   if (s.len() != 2 || !s.contains(3)) { return 1; }
   return 0;
 }
@@ -34,7 +34,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 pub struct Set[T]>>
 
-<<4 pub function set_new[T](): Set[T]>>
+<<4 pub function new[T](): Set[T]>>
 
 <<5 pub function (s: Set[T]) is_disjoint[T: cmp.Eq](other: Set[T]): boolean>>
 ```
@@ -63,16 +63,16 @@ pub struct Set[T] {
 }
 ```
 
-### `4 pub function set_new[T](): Set[T]`
+### `4 pub function new[T](): Set[T]`
 
 ```fern
-<<4 pub function set_new[T](): Set[T]>>=
-pub function set_new[T](): Set[T] {
+<<4 pub function new[T](): Set[T]>>=
+pub function new[T](): Set[T] {
   return Set { xs: [] };
 }
 
-pub function set_of[T: cmp.Eq](xs: T[]): Set[T] {
-  let s: Set[T] = set_new();
+pub function of[T: cmp.Eq](xs: T[]): Set[T] {
+  let s: Set[T] = new();
   let i: i32 = 0;
   while (i < xs.len()) {
     s = s.insert(xs[i]);

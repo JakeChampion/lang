@@ -1,0 +1,5 @@
+{
+  "stage3_equals_stage4": true,
+  "source": "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/compiler",
+  "note": "Private stage2 came from the earlier common Stage1. It implements the new pass but its own code came from the old pass. Stage3 is the first compiler artifact with the new ABI. Stage4 proves its fixed point."
+}

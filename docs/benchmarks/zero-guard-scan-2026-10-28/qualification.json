@@ -1,0 +1,21 @@
+{
+  "compiler_ir_matches_measured_candidate": true,
+  "primary_native_driver_pass": true,
+  "primary_seconds": 0.495,
+  "sanitized_differential_cases_per_target_per_version": 1350,
+  "sanitized_differential_targets": 3,
+  "sanitized_differential_versions": 2,
+  "sanitized_all_output_identical": true,
+  "sanitized_all_zero_live_bytes": true,
+  "complete_checker_output_identity_targets": 3,
+  "stage2_equals_stage3": true,
+  "source_gates_pass": true,
+  "fixture_feature_complexity_pass": true,
+  "ratchet_seconds": 53.244,
+  "vet_pass": true,
+  "testname_pass": true,
+  "full_formatter_pass": true,
+  "reproduction_script_syntax_pass": true,
+  "full_reproduction_script_rerun": false,
+  "note": "The portable script reconstructs the protocol. The actual comparison uses the preserved common-producer baseline and this candidate. No native latency comparison."
+}

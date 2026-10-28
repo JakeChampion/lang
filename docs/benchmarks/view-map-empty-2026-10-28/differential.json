@@ -1,0 +1,98 @@
+[
+  {
+    "target": "x86-64-linux",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2-current",
+      "-O",
+      "-sanitize",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-x86-64-linux",
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract/view_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-x86-64-linux"
+    ],
+    "exit": 0,
+    "output_bytes": 299435,
+    "output_lines": 1730,
+    "output_sha256": "4b15612981f0578da6dc450da97d860425f0ab22c172abed0672a82aa307b962",
+    "same_output": true,
+    "binary_sha256": "b87b6e70bc7c9307f35f92685855339418e9b8a27ad8ab21af1dbb1a6daf21a3",
+    "census": [
+      461093,
+      461093,
+      0
+    ]
+  },
+  {
+    "target": "arm64-linux",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2-current",
+      "-O",
+      "-sanitize",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-arm64-linux",
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract/view_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-arm64-linux"
+    ],
+    "exit": 0,
+    "output_bytes": 299435,
+    "output_lines": 1730,
+    "output_sha256": "4b15612981f0578da6dc450da97d860425f0ab22c172abed0672a82aa307b962",
+    "same_output": true,
+    "binary_sha256": "ce80f621c72acd99deec2f43679b92198c760e88578f1f2be3af5e04ada2bad7",
+    "census": [
+      461093,
+      461093,
+      0
+    ]
+  },
+  {
+    "target": "wasm32-wasi",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2-current",
+      "-O",
+      "-sanitize",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-wasm32-wasi",
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract/view_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "wasmtime",
+      "run",
+      "--env",
+      "FERN_LEAKCHECK=1",
+      "--env",
+      "FERN_SANITIZE=1",
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-wasm32-wasi"
+    ],
+    "exit": 0,
+    "output_bytes": 299435,
+    "output_lines": 1730,
+    "output_sha256": "4b15612981f0578da6dc450da97d860425f0ab22c172abed0672a82aa307b962",
+    "same_output": true,
+    "binary_sha256": "7c39d667687c291423d4dbd911ec6adae0eaed966834c83091ade1fe2f6456fe",
+    "census": [
+      467109,
+      467109,
+      0
+    ]
+  }
+]

@@ -1,0 +1,11 @@
+=== RUN   TestSelfHostDarwinSignalContext
+=== RUN   TestSelfHostDarwinSignalContext/guard
+    self_host_stack_overflow_test.go:73: Darwin signal context: signal: segmentation fault
+        qemu: uncaught target signal 11 (Segmentation fault) - core dumped
+=== RUN   TestSelfHostDarwinSignalContext/near-sp
+--- FAIL: TestSelfHostDarwinSignalContext (1.44s)
+    --- FAIL: TestSelfHostDarwinSignalContext/guard (0.01s)
+    --- PASS: TestSelfHostDarwinSignalContext/near-sp (0.01s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	1.456s
+FAIL

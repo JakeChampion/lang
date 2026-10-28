@@ -1,0 +1,12 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./compiler",
+    "./internal/testing/sourcelint"
+  ],
+  "exit": 0,
+  "source_log": "source.log",
+  "timing_not_captured": true,
+  "source_state": "Clean automatic merge of eb0e5fdc into a0b1aec3; MERGE_HEAD present."
+}

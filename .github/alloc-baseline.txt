@@ -1,4 +1,9 @@
 # 2026-10-28: Perf run 40651501783 on #13768 measured 37,524,739 balanced events. Main measured 37,521,377 at eb0e5fdc0, so the move is on main.
+# 2026-10-28: Exact reports from CI run 40624419024 at fa0eedfa5 on PR #13718.
+# Checker allocations and frees each decrease by 525401. All tolerances remain unchanged.
+# Evidence: docs/benchmarks/main-wide-decoder-merge-2026-10-28/.
+# 2026-10-28: Exact reports from CI run 40620158743 at c63e488b4 on PR #13718.
+# Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
 # 2026-10-28: scripts/selfhost-alloc-bench on #13726 (merged with main at 5acfabebb). The last pin predates #13677, which runs the IR verifier in every compile and grew checker.fern with the unsafe obligation pass; the build manifest of #13726 adds a few allocations per compile.
 # 2026-10-26: Full CI run 40337273239 at 7cd5b7d81 measured 34,951,426 balanced events. Reachability also runs before scalar transforms.
 # 2026-10-25: Perf run 40200803636 (main at 127eb63c). checker.fern grew with today's merges (#13153, #13242, #13261): +10.2% allocations.

@@ -60,15 +60,15 @@ function test_ends_with(): test.TestOutcome {
 }
 
 function test_set_membership(): test.TestOutcome {
-  let s: set.Set[Point] = set.set_of([p(1, 2), p(3, 4), p(1, 2)]);
+  let s: set.Set[Point] = set.of([p(1, 2), p(3, 4), p(1, 2)]);
   if (s.len() != 2) {
-    return test.fail("set_of kept a duplicate");
+    return test.fail("set.of kept a duplicate");
   }
   return test.assert_true(s.contains(p(1, 2)) && !s.contains(p(9, 9)));
 }
 
 function test_set_remove(): test.TestOutcome {
-  let s: set.Set[Point] = set.set_of([p(1, 2), p(3, 4)]);
+  let s: set.Set[Point] = set.of([p(1, 2), p(3, 4)]);
   return test.assert_eq_array(s.remove(p(1, 2)).to_array(), [p(3, 4)]);
 }
 

@@ -1,0 +1,16 @@
+=== RUN   TestSelfHostSSAUnits
+=== RUN   TestSelfHostSSAUnits/same-destination
+=== RUN   TestSelfHostSSAUnits/same-destination-duplicate-edge
+--- PASS: TestSelfHostSSAUnits (5.31s)
+    --- PASS: TestSelfHostSSAUnits/same-destination (2.84s)
+    --- PASS: TestSelfHostSSAUnits/same-destination-duplicate-edge (2.47s)
+=== RUN   TestSelfHostSSAUnitsIRArm64
+--- PASS: TestSelfHostSSAUnitsIRArm64 (4.23s)
+=== RUN   TestSelfHostSSAUnitsIRX86_64
+--- PASS: TestSelfHostSSAUnitsIRX86_64 (3.99s)
+=== RUN   TestSelfHostSSAUnitsIRWasm
+--- PASS: TestSelfHostSSAUnitsIRWasm (3.93s)
+=== RUN   TestSelfHostSSAUnitsIndexedReplay
+--- PASS: TestSelfHostSSAUnitsIndexedReplay (1.39s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	18.852s

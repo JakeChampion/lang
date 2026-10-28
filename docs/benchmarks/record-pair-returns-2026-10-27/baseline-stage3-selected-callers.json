@@ -1,0 +1,807 @@
+{
+  "415,294,509 ( 1.66%)  *  ???:__fern_arr_box@00000000010295f1 [???]": {
+    "calls": 18489777,
+    "top": [
+      {
+        "caller": "???:__fern_alloc_u8@000000000102a91e",
+        "calls": 1841046,
+        "annotation": "41,439,879 ( 0.17%)  < ???:__fern_alloc_u8@000000000102a91e (1,841,046x) [???]"
+      },
+      {
+        "caller": "???:__fn_ssa_lift__lift_impl+0x1e@0000000000b59802",
+        "calls": 838150,
+        "annotation": "15,924,850 ( 0.06%)  < ???:__fn_ssa_lift__lift_impl+0x1e@0000000000b59802 (838,150x) [???]"
+      },
+      {
+        "caller": "???:__fern_alloc_bytes@000000000102ae4f",
+        "calls": 716434,
+        "annotation": "13,612,499 ( 0.05%)  < ???:__fern_alloc_bytes@000000000102ae4f (716,434x) [???]"
+      },
+      {
+        "caller": "???:__fern_arr_push@000000000102a957",
+        "calls": 577034,
+        "annotation": "12,920,740 ( 0.05%)  < ???:__fern_arr_push@000000000102a957 (577,034x) [???]"
+      },
+      {
+        "caller": "???:__fn_ssaunits__plan_analyzed+0x14@0000000000dc3e67",
+        "calls": 335217,
+        "annotation": "12,737,877 ( 0.05%)  < ???:__fn_ssaunits__plan_analyzed+0x14@0000000000dc3e67 (335,217x) [???]"
+      },
+      {
+        "caller": "???:__fn_ssaunits__successors+0x5@0000000000db5207",
+        "calls": 527237,
+        "annotation": "10,032,098 ( 0.04%)  < ???:__fn_ssaunits__successors+0x5@0000000000db5207 (527,237x) [???]"
+      },
+      {
+        "caller": "???:__fn_lexer__tokenize_impl+0xf@000000000040b4f6",
+        "calls": 357871,
+        "annotation": "9,600,466 ( 0.04%)  < ???:__fn_lexer__tokenize_impl+0xf@000000000040b4f6 (357,871x) [???]"
+      },
+      {
+        "caller": "???:__fn_parser__parse_type_ref+0x5@0000000000476006",
+        "calls": 449953,
+        "annotation": "8,887,585 ( 0.04%)  < ???:__fn_parser__parse_type_ref+0x5@0000000000476006 (449,953x) [???]"
+      },
+      {
+        "caller": "???:__fern_arr_push_owned@000000000102aafb",
+        "calls": 197790,
+        "annotation": "7,911,600 ( 0.03%)  < ???:__fern_arr_push_owned@000000000102aafb (197,790x) [???]"
+      },
+      {
+        "caller": "???:__fn_ssarc__instruction_body@0000000000cfeeba",
+        "calls": 226423,
+        "annotation": "7,876,321 ( 0.03%)  < ???:__fn_ssarc__instruction_body@0000000000cfeeba (226,423x) [???]"
+      },
+      {
+        "caller": "???:__fn_astwalk__cs_expr_at$wrap+0xf@0000000000fc9619",
+        "calls": 370328,
+        "annotation": "7,740,236 ( 0.03%)  < ???:__fn_astwalk__cs_expr_at$wrap+0xf@0000000000fc9619 (370,328x) [???]"
+      },
+      {
+        "caller": "???:__fn_checker__annotate_typed+0xa@000000000088ce39'2",
+        "calls": 273605,
+        "annotation": "6,905,396 ( 0.03%)  < ???:__fn_checker__annotate_typed+0xa@000000000088ce39'2 (273,605x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__renumber+0x19@0000000000c4633f",
+        "calls": 175333,
+        "annotation": "5,305,096 ( 0.02%)  < ???:__fn_semsource__renumber+0x19@0000000000c4633f (175,333x) [???]"
+      },
+      {
+        "caller": "???:__fn_lexer__ident_tok+0xf@00000000004086ec",
+        "calls": 187832,
+        "annotation": "5,176,190 ( 0.02%)  < ???:__fn_lexer__ident_tok+0xf@00000000004086ec (187,832x) [???]"
+      },
+      {
+        "caller": "???:__fn_flatten__rewrite_expr+0xa@00000000005528ca'2",
+        "calls": 137300,
+        "annotation": "5,002,742 ( 0.02%)  < ???:__fn_flatten__rewrite_expr+0xa@00000000005528ca'2 (137,300x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__define+0x1e@0000000000be3ee2",
+        "calls": 233920,
+        "annotation": "4,991,782 ( 0.02%)  < ???:__fn_semsource__define+0x1e@0000000000be3ee2 (233,920x) [???]"
+      },
+      {
+        "caller": "???:__fn_lexical__expr_at$wrap+0xf@0000000000fd0b69",
+        "calls": 215695,
+        "annotation": "4,952,443 ( 0.02%)  < ???:__fn_lexical__expr_at$wrap+0xf@0000000000fd0b69 (215,695x) [???]"
+      },
+      {
+        "caller": "???:__fn_seminline__split_constructions+0xa@0000000000e7308c",
+        "calls": 232044,
+        "annotation": "4,920,417 ( 0.02%)  < ???:__fn_seminline__split_constructions+0xa@0000000000e7308c (232,044x) [???]"
+      }
+    ],
+    "semsource": [
+      {
+        "caller": "???:__fn_semsource__renumber+0x19@0000000000c4633f",
+        "calls": 175333,
+        "annotation": "5,305,096 ( 0.02%)  < ???:__fn_semsource__renumber+0x19@0000000000c4633f (175,333x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__define+0x1e@0000000000be3ee2",
+        "calls": 233920,
+        "annotation": "4,991,782 ( 0.02%)  < ???:__fn_semsource__define+0x1e@0000000000be3ee2 (233,920x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__prune_dead_constructions+0x5@0000000000c86aeb",
+        "calls": 138766,
+        "annotation": "2,636,554 ( 0.01%)  < ???:__fn_semsource__prune_dead_constructions+0x5@0000000000c86aeb (138,766x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__build@0000000000c585da",
+        "calls": 111859,
+        "annotation": "2,408,695 ( 0.01%)  < ???:__fn_semsource__build@0000000000c585da (111,859x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__enum_members+0xf@0000000000c4f5a8",
+        "calls": 102716,
+        "annotation": "1,953,179 ( 0.01%)  < ???:__fn_semsource__enum_members+0xf@0000000000c4f5a8 (102,716x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__fields_of+0xa@0000000000c4f7d8",
+        "calls": 75217,
+        "annotation": "1,683,979 ( 0.01%)  < ???:__fn_semsource__fields_of+0xa@0000000000c4f7d8 (75,217x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__merge_env+0xf@0000000000be7ad0",
+        "calls": 61747,
+        "annotation": "1,173,340 ( 0.00%)  < ???:__fn_semsource__merge_env+0xf@0000000000be7ad0 (61,747x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__produce+0xf@0000000000c1fe5e'2",
+        "calls": 55423,
+        "annotation": "1,073,911 ( 0.00%)  < ???:__fn_semsource__produce+0xf@0000000000c1fe5e'2 (55,423x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__open+0xf@0000000000be4ec6",
+        "calls": 37357,
+        "annotation": "856,279 ( 0.00%)  < ???:__fn_semsource__open+0xf@0000000000be4ec6 (37,357x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__terminate+0xa@0000000000be54f9",
+        "calls": 39951,
+        "annotation": "760,287 ( 0.00%)  < ???:__fn_semsource__terminate+0xa@0000000000be54f9 (39,951x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__bound_exprs$wrap+0xf@0000000000fd2105",
+        "calls": 32287,
+        "annotation": "617,884 ( 0.00%)  < ???:__fn_semsource__bound_exprs$wrap+0xf@0000000000fd2105 (32,287x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__arithmetic+0x14@0000000000bf5b91",
+        "calls": 23058,
+        "annotation": "446,712 ( 0.00%)  < ???:__fn_semsource__arithmetic+0x14@0000000000bf5b91 (23,058x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__cond+0x14@0000000000c01758'2",
+        "calls": 19580,
+        "annotation": "446,129 ( 0.00%)  < ???:__fn_semsource__cond+0x14@0000000000c01758'2 (19,580x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__laid_variants+0xf@0000000000c4f9a8",
+        "calls": 19053,
+        "annotation": "427,632 ( 0.00%)  < ???:__fn_semsource__laid_variants+0xf@0000000000c4f9a8 (19,053x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__arm@0000000000c29d06",
+        "calls": 16730,
+        "annotation": "406,007 ( 0.00%)  < ???:__fn_semsource__arm@0000000000c29d06 (16,730x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__cond+0x14@0000000000c01758",
+        "calls": 18264,
+        "annotation": "400,566 ( 0.00%)  < ???:__fn_semsource__cond+0x14@0000000000c01758 (18,264x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__field_read+0x19@0000000000c2b00d",
+        "calls": 17129,
+        "annotation": "370,139 ( 0.00%)  < ???:__fn_semsource__field_read+0x19@0000000000c2b00d (17,129x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__header_phis+0xa@0000000000c3815c",
+        "calls": 15590,
+        "annotation": "348,290 ( 0.00%)  < ???:__fn_semsource__header_phis+0xa@0000000000c3815c (15,590x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__stmt+0xa@0000000000c3e24b'2",
+        "calls": 14379,
+        "annotation": "336,096 ( 0.00%)  < ???:__fn_semsource__stmt+0xa@0000000000c3e24b'2 (14,379x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__with_inferred_modes+0x5@0000000000c932b8",
+        "calls": 16588,
+        "annotation": "319,561 ( 0.00%)  < ???:__fn_semsource__with_inferred_modes+0x5@0000000000c932b8 (16,588x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__match_chain+0xf@0000000000c2d0f4",
+        "calls": 14480,
+        "annotation": "310,127 ( 0.00%)  < ???:__fn_semsource__match_chain+0xf@0000000000c2d0f4 (14,480x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__stmt+0xa@0000000000c3e24b",
+        "calls": 12265,
+        "annotation": "259,033 ( 0.00%)  < ???:__fn_semsource__stmt+0xa@0000000000c3e24b (12,265x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__settled+0x5@0000000000beb099",
+        "calls": 8686,
+        "annotation": "258,505 ( 0.00%)  < ???:__fn_semsource__settled+0x5@0000000000beb099 (8,686x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__arm@0000000000c29d06'2",
+        "calls": 8634,
+        "annotation": "230,406 ( 0.00%)  < ???:__fn_semsource__arm@0000000000c29d06'2 (8,634x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__produce+0xf@0000000000c1fe5e",
+        "calls": 11542,
+        "annotation": "227,005 ( 0.00%)  < ???:__fn_semsource__produce+0xf@0000000000c1fe5e (11,542x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__produce_module+0x1e@0000000000c7235d",
+        "calls": 8593,
+        "annotation": "225,826 ( 0.00%)  < ???:__fn_semsource__produce_module+0x1e@0000000000c7235d (8,593x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__intrinsic_contracts@0000000000c65b4a",
+        "calls": 11076,
+        "annotation": "219,138 ( 0.00%)  < ???:__fn_semsource__intrinsic_contracts@0000000000c65b4a (11,076x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__refuse+0x5@0000000000c49bea",
+        "calls": 8022,
+        "annotation": "199,080 ( 0.00%)  < ???:__fn_semsource__refuse+0x5@0000000000c49bea (8,022x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__arm_body+0x1e@0000000000c2a4d1",
+        "calls": 7236,
+        "annotation": "174,612 ( 0.00%)  < ???:__fn_semsource__arm_body+0x1e@0000000000c2a4d1 (7,236x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__bound_type+0xf@0000000000beb065",
+        "calls": 8920,
+        "annotation": "170,740 ( 0.00%)  < ???:__fn_semsource__bound_type+0xf@0000000000beb065 (8,920x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__builtin_contracts@0000000000c61e60",
+        "calls": 8658,
+        "annotation": "170,319 ( 0.00%)  < ???:__fn_semsource__builtin_contracts@0000000000c61e60 (8,658x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__call+0x19@0000000000c12cdb",
+        "calls": 8276,
+        "annotation": "167,366 ( 0.00%)  < ???:__fn_semsource__call+0x19@0000000000c12cdb (8,276x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__anchor_module+0xf@0000000000c6abeb",
+        "calls": 5708,
+        "annotation": "160,070 ( 0.00%)  < ???:__fn_semsource__anchor_module+0xf@0000000000c6abeb (5,708x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__payloads+0x19@0000000000c2b22a",
+        "calls": 5082,
+        "annotation": "109,998 ( 0.00%)  < ???:__fn_semsource__payloads+0x19@0000000000c2b22a (5,082x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__handle_contracts@0000000000c5b79b",
+        "calls": 5304,
+        "annotation": "104,493 ( 0.00%)  < ???:__fn_semsource__handle_contracts@0000000000c5b79b (5,304x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__os_floor_contracts+0xa@0000000000c5fa48",
+        "calls": 5109,
+        "annotation": "100,830 ( 0.00%)  < ???:__fn_semsource__os_floor_contracts+0xa@0000000000c5fa48 (5,109x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__os_contracts@0000000000c5da29",
+        "calls": 4719,
+        "annotation": "92,916 ( 0.00%)  < ???:__fn_semsource__os_contracts@0000000000c5da29 (4,719x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__collect+0xa@0000000000c2ab44",
+        "calls": 4322,
+        "annotation": "88,838 ( 0.00%)  < ???:__fn_semsource__collect+0xa@0000000000c2ab44 (4,322x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__parts+0x5@0000000000c2a950",
+        "calls": 4322,
+        "annotation": "83,294 ( 0.00%)  < ???:__fn_semsource__parts+0x5@0000000000c2a950 (4,322x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__binary+0x14@0000000000bf2e1f",
+        "calls": 3480,
+        "annotation": "76,221 ( 0.00%)  < ???:__fn_semsource__binary+0x14@0000000000bf2e1f (3,480x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__match_chain+0xf@0000000000c2d0f4'2",
+        "calls": 2808,
+        "annotation": "68,493 ( 0.00%)  < ???:__fn_semsource__match_chain+0xf@0000000000c2d0f4'2 (2,808x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__settled+0x5@0000000000beb099'2",
+        "calls": 1926,
+        "annotation": "64,881 ( 0.00%)  < ???:__fn_semsource__settled+0x5@0000000000beb099'2 (1,926x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__guard_gate+0xf@0000000000c2c228",
+        "calls": 3005,
+        "annotation": "57,095 ( 0.00%)  < ???:__fn_semsource__guard_gate+0xf@0000000000c2c228 (3,005x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__schemas+0xf@0000000000c4b069",
+        "calls": 2970,
+        "annotation": "56,430 ( 0.00%)  < ???:__fn_semsource__schemas+0xf@0000000000c4b069 (2,970x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__lent_rereads+0x5@0000000000c998fc",
+        "calls": 2855,
+        "annotation": "54,245 ( 0.00%)  < ???:__fn_semsource__lent_rereads+0x5@0000000000c998fc (2,855x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__binary+0x14@0000000000bf2e1f'2",
+        "calls": 2563,
+        "annotation": "53,317 ( 0.00%)  < ???:__fn_semsource__binary+0x14@0000000000bf2e1f'2 (2,563x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__finish_arm+0x19@0000000000c2a3a4",
+        "calls": 1954,
+        "annotation": "48,361 ( 0.00%)  < ???:__fn_semsource__finish_arm+0x19@0000000000c2a3a4 (1,954x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__member_type+0x5@0000000000c2b1a2",
+        "calls": 2396,
+        "annotation": "45,524 ( 0.00%)  < ???:__fn_semsource__member_type+0x5@0000000000c2b1a2 (2,396x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__destructure_tuple+0x14@0000000000c280aa",
+        "calls": 1878,
+        "annotation": "38,538 ( 0.00%)  < ???:__fn_semsource__destructure_tuple+0x14@0000000000c280aa (1,878x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__arm_body+0x1e@0000000000c2a4d1'2",
+        "calls": 1404,
+        "annotation": "37,953 ( 0.00%)  < ???:__fn_semsource__arm_body+0x1e@0000000000c2a4d1'2 (1,404x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__payload_variant+0xa@0000000000bec1cf",
+        "calls": 1674,
+        "annotation": "32,394 ( 0.00%)  < ???:__fn_semsource__payload_variant+0xa@0000000000bec1cf (1,674x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__written_fields+0xf@0000000000bf10f9",
+        "calls": 1437,
+        "annotation": "29,949 ( 0.00%)  < ???:__fn_semsource__written_fields+0xf@0000000000bf10f9 (1,437x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__lane_contracts@0000000000c69e85",
+        "calls": 1248,
+        "annotation": "25,056 ( 0.00%)  < ???:__fn_semsource__lane_contracts@0000000000c69e85 (1,248x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__raw_floor_contracts@0000000000c6a319",
+        "calls": 1209,
+        "annotation": "24,273 ( 0.00%)  < ???:__fn_semsource__raw_floor_contracts@0000000000c6a319 (1,209x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__call+0x19@0000000000c12cdb'2",
+        "calls": 1015,
+        "annotation": "19,999 ( 0.00%)  < ???:__fn_semsource__call+0x19@0000000000c12cdb'2 (1,015x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__checked+0xa@0000000000beb728",
+        "calls": 899,
+        "annotation": "17,396 ( 0.00%)  < ???:__fn_semsource__checked+0xa@0000000000beb728 (899x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__leave_loop+0xf@0000000000c36107",
+        "calls": 759,
+        "annotation": "16,584 ( 0.00%)  < ???:__fn_semsource__leave_loop+0xf@0000000000c36107 (759x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__analysed_rows+0x5@0000000000c71f5a",
+        "calls": 705,
+        "annotation": "13,395 ( 0.00%)  < ???:__fn_semsource__analysed_rows+0x5@0000000000c71f5a (705x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__c_call_contracts@0000000000c6a14b",
+        "calls": 585,
+        "annotation": "11,745 ( 0.00%)  < ???:__fn_semsource__c_call_contracts@0000000000c6a14b (585x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__expr+0xf@0000000000c1fd83",
+        "calls": 487,
+        "annotation": "10,387 ( 0.00%)  < ???:__fn_semsource__expr+0xf@0000000000c1fd83 (487x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__finish_arm+0x19@0000000000c2a3a4'2",
+        "calls": 290,
+        "annotation": "8,282 ( 0.00%)  < ???:__fn_semsource__finish_arm+0x19@0000000000c2a3a4'2 (290x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__builtin_variants+0x5@0000000000bebfef",
+        "calls": 409,
+        "annotation": "7,813 ( 0.00%)  < ???:__fn_semsource__builtin_variants+0x5@0000000000bebfef (409x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__unary+0x14@0000000000bf69fd",
+        "calls": 344,
+        "annotation": "6,830 ( 0.00%)  < ???:__fn_semsource__unary+0x14@0000000000bf69fd (344x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__schema_of+0xf@0000000000c4bbe8",
+        "calls": 305,
+        "annotation": "6,656 ( 0.00%)  < ???:__fn_semsource__schema_of+0xf@0000000000c4bbe8 (305x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__slice_parts+0xa@0000000000c0e57e",
+        "calls": 320,
+        "annotation": "6,269 ( 0.00%)  < ???:__fn_semsource__slice_parts+0xa@0000000000c0e57e (320x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__env_type+0x19@0000000000c48c03",
+        "calls": 184,
+        "annotation": "3,496 ( 0.00%)  < ???:__fn_semsource__env_type+0x19@0000000000c48c03 (184x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__expr+0xf@0000000000c1fd83'2",
+        "calls": 127,
+        "annotation": "2,665 ( 0.00%)  < ???:__fn_semsource__expr+0xf@0000000000c1fd83'2 (127x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__typed_variants+0xa@0000000000c4f911",
+        "calls": 63,
+        "annotation": "2,016 ( 0.00%)  < ???:__fn_semsource__typed_variants+0xa@0000000000c4f911 (63x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__byte_copy_loops+0x5@0000000000c7c0ec",
+        "calls": 104,
+        "annotation": "1,976 ( 0.00%)  < ???:__fn_semsource__byte_copy_loops+0x5@0000000000c7c0ec (104x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__settled_payload+0x5@0000000000beb62b",
+        "calls": 91,
+        "annotation": "1,771 ( 0.00%)  < ???:__fn_semsource__settled_payload+0x5@0000000000beb62b (91x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__indirect_call+0x14@0000000000c0ef76",
+        "calls": 89,
+        "annotation": "1,691 ( 0.00%)  < ???:__fn_semsource__indirect_call+0x14@0000000000c0ef76 (89x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__reach_module+0x19@0000000000c80c56",
+        "calls": 64,
+        "annotation": "1,216 ( 0.00%)  < ???:__fn_semsource__reach_module+0x19@0000000000c80c56 (64x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__schema_of+0xf@0000000000c4bbe8'2",
+        "calls": 64,
+        "annotation": "1,216 ( 0.00%)  < ???:__fn_semsource__schema_of+0xf@0000000000c4bbe8'2 (64x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__resolved_checked+0x14@0000000000be8a94",
+        "calls": 37,
+        "annotation": "1,018 ( 0.00%)  < ???:__fn_semsource__resolved_checked+0x14@0000000000be8a94 (37x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__written_fields+0xf@0000000000bf10f9'2",
+        "calls": 41,
+        "annotation": "800 ( 0.00%)  < ???:__fn_semsource__written_fields+0xf@0000000000bf10f9'2 (41x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__merge_arms+0xf@0000000000c2984e",
+        "calls": 40,
+        "annotation": "760 ( 0.00%)  < ???:__fn_semsource__merge_arms+0xf@0000000000c2984e (40x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__unique_loops+0x5@0000000000c7973d",
+        "calls": 39,
+        "annotation": "741 ( 0.00%)  < ???:__fn_semsource__unique_loops+0x5@0000000000c7973d (39x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__lend+0x14@0000000000c0ec4f",
+        "calls": 37,
+        "annotation": "724 ( 0.00%)  < ???:__fn_semsource__lend+0x14@0000000000c0ec4f (37x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__refused+0xa@0000000000be3e03",
+        "calls": 26,
+        "annotation": "536 ( 0.00%)  < ???:__fn_semsource__refused+0xa@0000000000be3e03 (26x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__value_arm@0000000000c0fdfb",
+        "calls": 16,
+        "annotation": "346 ( 0.00%)  < ???:__fn_semsource__value_arm@0000000000c0fdfb (16x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__address_widen+0xa@0000000000bf2c96",
+        "calls": 16,
+        "annotation": "304 ( 0.00%)  < ???:__fn_semsource__address_widen+0xa@0000000000bf2c96 (16x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__unary+0x14@0000000000bf69fd'2",
+        "calls": 14,
+        "annotation": "287 ( 0.00%)  < ???:__fn_semsource__unary+0x14@0000000000bf69fd'2 (14x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__invoke_method+0x1e@0000000000c1a8f9",
+        "calls": 12,
+        "annotation": "228 ( 0.00%)  < ???:__fn_semsource__invoke_method+0x1e@0000000000c1a8f9 (12x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__destination_type+0xf@0000000000bed8a8",
+        "calls": 6,
+        "annotation": "114 ( 0.00%)  < ???:__fn_semsource__destination_type+0xf@0000000000bed8a8 (6x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__packed_bytes+0x14@0000000000beda29",
+        "calls": 3,
+        "annotation": "57 ( 0.00%)  < ???:__fn_semsource__packed_bytes+0x14@0000000000beda29 (3x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__settled_in+0xa@0000000000beb745",
+        "calls": 1,
+        "annotation": "19 ( 0.00%)  < ???:__fn_semsource__settled_in+0xa@0000000000beb745 (1x) [???]"
+      }
+    ]
+  },
+  "166,758,488 ( 0.67%)  *  ???:__fern_memcpy@0000000001029e94 [???]": {
+    "calls": 7858946,
+    "top": [
+      {
+        "caller": "???:__fn___fern_str_concat@000000000102bedd",
+        "calls": 6966324,
+        "annotation": "77,801,388 ( 0.31%)  < ???:__fn___fern_str_concat@000000000102bedd (6,966,324x) [???]"
+      },
+      {
+        "caller": "???:__fn___fern_arr_slice@000000000102b955",
+        "calls": 164362,
+        "annotation": "63,268,120 ( 0.25%)  < ???:__fn___fern_arr_slice@000000000102b955 (164,362x) [???]"
+      },
+      {
+        "caller": "???:__fn___fern_string_from_bytes_u8@000000000102b661",
+        "calls": 727054,
+        "annotation": "10,330,614 ( 0.04%)  < ???:__fn___fern_string_from_bytes_u8@000000000102b661 (727,054x) [???]"
+      },
+      {
+        "caller": "???:__fern_buf_reserve@000000000102a04c",
+        "calls": 110,
+        "annotation": "8,389,932 ( 0.03%)  < ???:__fern_buf_reserve@000000000102a04c (110x) [???]"
+      },
+      {
+        "caller": "???:__fn___fern_buf_take_text@000000000102a574",
+        "calls": 1095,
+        "annotation": "6,738,148 ( 0.03%)  < ???:__fn___fern_buf_take_text@000000000102a574 (1,095x) [???]"
+      },
+      {
+        "caller": "???:__fn___fern_read_file_bytes_u8@0000000001033911",
+        "calls": 1,
+        "annotation": "230,286 ( 0.00%)  < ???:__fn___fern_read_file_bytes_u8@0000000001033911 (1x) [???]"
+      }
+    ],
+    "semsource": []
+  },
+  "113,505,518 ( 0.45%)  *  ???:__fn_semsource__define+0x1e@0000000000be3ee2 [???]": {
+    "calls": 116960,
+    "top": [
+      {
+        "caller": "???:__fn_semsource__produce+0xf@0000000000c1fe5e'2",
+        "calls": 17521,
+        "annotation": "16,951,093 ( 0.07%)  < ???:__fn_semsource__produce+0xf@0000000000c1fe5e'2 (17,521x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__field_read+0x19@0000000000c2b00d",
+        "calls": 17129,
+        "annotation": "16,582,308 ( 0.07%)  < ???:__fn_semsource__field_read+0x19@0000000000c2b00d (17,129x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__header_phis+0xa@0000000000c3815c",
+        "calls": 15590,
+        "annotation": "15,093,925 ( 0.06%)  < ???:__fn_semsource__header_phis+0xa@0000000000c3815c (15,590x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__arithmetic+0x14@0000000000bf5b91",
+        "calls": 11529,
+        "annotation": "11,129,788 ( 0.04%)  < ???:__fn_semsource__arithmetic+0x14@0000000000bf5b91 (11,529x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__invoke_rest@0000000000c1ad79",
+        "calls": 10326,
+        "annotation": "9,990,629 ( 0.04%)  < ???:__fn_semsource__invoke_rest@0000000000c1ad79 (10,326x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__parameters+0xa@0000000000c4914b",
+        "calls": 6525,
+        "annotation": "6,530,426 ( 0.03%)  < ???:__fn_semsource__parameters+0xa@0000000000c4914b (6,525x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__call+0x19@0000000000c12cdb",
+        "calls": 6629,
+        "annotation": "6,414,795 ( 0.03%)  < ???:__fn_semsource__call+0x19@0000000000c12cdb (6,629x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__merge_env+0xf@0000000000be7ad0",
+        "calls": 5370,
+        "annotation": "5,203,432 ( 0.02%)  < ???:__fn_semsource__merge_env+0xf@0000000000be7ad0 (5,370x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__produce+0xf@0000000000c1fe5e",
+        "calls": 4722,
+        "annotation": "4,582,857 ( 0.02%)  < ???:__fn_semsource__produce+0xf@0000000000c1fe5e (4,722x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__stmt+0xa@0000000000c3e24b",
+        "calls": 3366,
+        "annotation": "3,270,718 ( 0.01%)  < ???:__fn_semsource__stmt+0xa@0000000000c3e24b (3,366x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__stmt+0xa@0000000000c3e24b'2",
+        "calls": 3366,
+        "annotation": "3,261,205 ( 0.01%)  < ???:__fn_semsource__stmt+0xa@0000000000c3e24b'2 (3,366x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__match_chain+0xf@0000000000c2d0f4",
+        "calls": 2638,
+        "annotation": "2,570,898 ( 0.01%)  < ???:__fn_semsource__match_chain+0xf@0000000000c2d0f4 (2,638x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__payloads+0x19@0000000000c2b22a",
+        "calls": 2538,
+        "annotation": "2,496,018 ( 0.01%)  < ???:__fn_semsource__payloads+0x19@0000000000c2b22a (2,538x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__invoke_rest@0000000000c1ad79'2",
+        "calls": 2176,
+        "annotation": "2,105,895 ( 0.01%)  < ???:__fn_semsource__invoke_rest@0000000000c1ad79'2 (2,176x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__destructure_tuple+0x14@0000000000c280aa",
+        "calls": 1878,
+        "annotation": "1,817,862 ( 0.01%)  < ???:__fn_semsource__destructure_tuple+0x14@0000000000c280aa (1,878x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__built_record+0xf@0000000000bf1b9a",
+        "calls": 1478,
+        "annotation": "1,428,780 ( 0.01%)  < ???:__fn_semsource__built_record+0xf@0000000000bf1b9a (1,478x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__binary+0x14@0000000000bf2e1f",
+        "calls": 1005,
+        "annotation": "989,599 ( 0.00%)  < ???:__fn_semsource__binary+0x14@0000000000bf2e1f (1,005x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__call+0x19@0000000000c12cdb'2",
+        "calls": 851,
+        "annotation": "829,623 ( 0.00%)  < ???:__fn_semsource__call+0x19@0000000000c12cdb'2 (851x) [???]"
+      }
+    ],
+    "semsource": [
+      {
+        "caller": "???:__fn_semsource__produce+0xf@0000000000c1fe5e'2",
+        "calls": 17521,
+        "annotation": "16,951,093 ( 0.07%)  < ???:__fn_semsource__produce+0xf@0000000000c1fe5e'2 (17,521x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__field_read+0x19@0000000000c2b00d",
+        "calls": 17129,
+        "annotation": "16,582,308 ( 0.07%)  < ???:__fn_semsource__field_read+0x19@0000000000c2b00d (17,129x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__header_phis+0xa@0000000000c3815c",
+        "calls": 15590,
+        "annotation": "15,093,925 ( 0.06%)  < ???:__fn_semsource__header_phis+0xa@0000000000c3815c (15,590x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__arithmetic+0x14@0000000000bf5b91",
+        "calls": 11529,
+        "annotation": "11,129,788 ( 0.04%)  < ???:__fn_semsource__arithmetic+0x14@0000000000bf5b91 (11,529x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__invoke_rest@0000000000c1ad79",
+        "calls": 10326,
+        "annotation": "9,990,629 ( 0.04%)  < ???:__fn_semsource__invoke_rest@0000000000c1ad79 (10,326x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__parameters+0xa@0000000000c4914b",
+        "calls": 6525,
+        "annotation": "6,530,426 ( 0.03%)  < ???:__fn_semsource__parameters+0xa@0000000000c4914b (6,525x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__call+0x19@0000000000c12cdb",
+        "calls": 6629,
+        "annotation": "6,414,795 ( 0.03%)  < ???:__fn_semsource__call+0x19@0000000000c12cdb (6,629x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__merge_env+0xf@0000000000be7ad0",
+        "calls": 5370,
+        "annotation": "5,203,432 ( 0.02%)  < ???:__fn_semsource__merge_env+0xf@0000000000be7ad0 (5,370x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__produce+0xf@0000000000c1fe5e",
+        "calls": 4722,
+        "annotation": "4,582,857 ( 0.02%)  < ???:__fn_semsource__produce+0xf@0000000000c1fe5e (4,722x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__stmt+0xa@0000000000c3e24b",
+        "calls": 3366,
+        "annotation": "3,270,718 ( 0.01%)  < ???:__fn_semsource__stmt+0xa@0000000000c3e24b (3,366x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__stmt+0xa@0000000000c3e24b'2",
+        "calls": 3366,
+        "annotation": "3,261,205 ( 0.01%)  < ???:__fn_semsource__stmt+0xa@0000000000c3e24b'2 (3,366x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__match_chain+0xf@0000000000c2d0f4",
+        "calls": 2638,
+        "annotation": "2,570,898 ( 0.01%)  < ???:__fn_semsource__match_chain+0xf@0000000000c2d0f4 (2,638x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__payloads+0x19@0000000000c2b22a",
+        "calls": 2538,
+        "annotation": "2,496,018 ( 0.01%)  < ???:__fn_semsource__payloads+0x19@0000000000c2b22a (2,538x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__invoke_rest@0000000000c1ad79'2",
+        "calls": 2176,
+        "annotation": "2,105,895 ( 0.01%)  < ???:__fn_semsource__invoke_rest@0000000000c1ad79'2 (2,176x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__destructure_tuple+0x14@0000000000c280aa",
+        "calls": 1878,
+        "annotation": "1,817,862 ( 0.01%)  < ???:__fn_semsource__destructure_tuple+0x14@0000000000c280aa (1,878x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__built_record+0xf@0000000000bf1b9a",
+        "calls": 1478,
+        "annotation": "1,428,780 ( 0.01%)  < ???:__fn_semsource__built_record+0xf@0000000000bf1b9a (1,478x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__binary+0x14@0000000000bf2e1f",
+        "calls": 1005,
+        "annotation": "989,599 ( 0.00%)  < ???:__fn_semsource__binary+0x14@0000000000bf2e1f (1,005x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__call+0x19@0000000000c12cdb'2",
+        "calls": 851,
+        "annotation": "829,623 ( 0.00%)  < ???:__fn_semsource__call+0x19@0000000000c12cdb'2 (851x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__binary+0x14@0000000000bf2e1f'2",
+        "calls": 738,
+        "annotation": "723,860 ( 0.00%)  < ???:__fn_semsource__binary+0x14@0000000000bf2e1f'2 (738x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__expr+0xf@0000000000c1fd83",
+        "calls": 487,
+        "annotation": "471,272 ( 0.00%)  < ???:__fn_semsource__expr+0xf@0000000000c1fd83 (487x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__match_chain+0xf@0000000000c2d0f4'2",
+        "calls": 367,
+        "annotation": "353,760 ( 0.00%)  < ???:__fn_semsource__match_chain+0xf@0000000000c2d0f4'2 (367x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__unary+0x14@0000000000bf69fd",
+        "calls": 344,
+        "annotation": "330,968 ( 0.00%)  < ???:__fn_semsource__unary+0x14@0000000000bf69fd (344x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__expr+0xf@0000000000c1fd83'2",
+        "calls": 127,
+        "annotation": "123,222 ( 0.00%)  < ???:__fn_semsource__expr+0xf@0000000000c1fd83'2 (127x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__variant+0x14@0000000000bf1dd1",
+        "calls": 89,
+        "annotation": "86,599 ( 0.00%)  < ???:__fn_semsource__variant+0x14@0000000000bf1dd1 (89x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__indirect_call+0x14@0000000000c0ef76",
+        "calls": 89,
+        "annotation": "86,125 ( 0.00%)  < ???:__fn_semsource__indirect_call+0x14@0000000000c0ef76 (89x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__lend+0x14@0000000000c0ec4f",
+        "calls": 49,
+        "annotation": "47,071 ( 0.00%)  < ???:__fn_semsource__lend+0x14@0000000000c0ec4f (49x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__address_widen+0xa@0000000000bf2c96",
+        "calls": 16,
+        "annotation": "15,872 ( 0.00%)  < ???:__fn_semsource__address_widen+0xa@0000000000bf2c96 (16x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__unary+0x14@0000000000bf69fd'2",
+        "calls": 14,
+        "annotation": "13,710 ( 0.00%)  < ???:__fn_semsource__unary+0x14@0000000000bf69fd'2 (14x) [???]"
+      },
+      {
+        "caller": "???:__fn_semsource__packed_bytes+0x14@0000000000beda29",
+        "calls": 3,
+        "annotation": "3,208 ( 0.00%)  < ???:__fn_semsource__packed_bytes+0x14@0000000000beda29 (3x) [???]"
+      }
+    ]
+  }
+}

@@ -16,7 +16,7 @@ Values require compatible hash and equality implementations. Set membership chec
 import "std/pset";
 
 function main(): i32 {
-  let s = pset.pset_of([1, 2, 1]);
+  let s = pset.of([1, 2, 1]);
   if (s.len() != 2 || s.contains(3)) { return 1; }
   return 0;
 }
@@ -34,7 +34,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 pub struct PSet[T]>>
 
-<<4 pub function pset_new[T](): PSet[T]>>
+<<4 pub function new[T](): PSet[T]>>
 
 <<5 function __ps_insert_all[T: cmp.Hash + cmp.Eq](s: PSet[T], xs: T[]): PSet[T]>>
 
@@ -64,17 +64,17 @@ import "std/pmap";
 pub struct PSet[T] { root: pmap.PMap[T, i32] }
 ```
 
-### `4 pub function pset_new[T](): PSet[T]`
+### `4 pub function new[T](): PSet[T]`
 
 ```fern
-<<4 pub function pset_new[T](): PSet[T]>>=
-pub function pset_new[T](): PSet[T] {
-  let e: pmap.PMap[T, i32] = pmap.pmap_new();
+<<4 pub function new[T](): PSet[T]>>=
+pub function new[T](): PSet[T] {
+  let e: pmap.PMap[T, i32] = pmap.new();
   return PSet { root: e };
 }
 
-pub function pset_of[T: cmp.Hash + cmp.Eq](xs: T[]): PSet[T] {
-  let s: PSet[T] = pset_new();
+pub function of[T: cmp.Hash + cmp.Eq](xs: T[]): PSet[T] {
+  let s: PSet[T] = new();
   let i: i32 = 0;
   while (i < xs.len()) {
     s = s.insert(xs[i]);
@@ -139,7 +139,7 @@ function __ps_insert_all[T: cmp.Hash + cmp.Eq](s: PSet[T], xs: T[]): PSet[T] {
 ```fern
 <<6 pub function (s: PSet[T]) intersection[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T]>>=
 pub function (s: PSet[T]) intersection[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T] {
-  let out: PSet[T] = pset_new();
+  let out: PSet[T] = new();
   let xs: T[] = s.to_array();
   let i: i32 = 0;
   while (i < xs.len()) {
@@ -182,7 +182,7 @@ pub function (s: PSet[T]) equals[T: cmp.Hash + cmp.Eq](other: PSet[T]): boolean 
 }
 
 pub function (s: PSet[T]) filter[T: cmp.Hash + cmp.Eq](pred: (T) => boolean): PSet[T] {
-  let out: PSet[T] = pset_new();
+  let out: PSet[T] = new();
   let xs: T[] = s.to_array();
   let i: i32 = 0;
   while (i < xs.len()) {

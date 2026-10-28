@@ -1,0 +1,51 @@
+{
+  "source_base": "0b506a797f6b1e4afde7d169412f0a009927764a",
+  "completed": {
+    "native_boxed_before_after": true,
+    "checked_family_targets": 3,
+    "checked_family_suite_seconds": 273.266,
+    "typed_incoming_and_storage_targets": 3,
+    "heap_generic_and_field_ownership_targets": 3,
+    "typed_physical_and_wrapper_final_targets": 3,
+    "final_primary_seconds": 206.235,
+    "darwin_synthetic_guard_red_and_green": true,
+    "darwin_synthetic_near_sp_control_pass": true,
+    "linux_overflow_controls_targets": 2,
+    "per_module_compiler_fixpoint_units": 205,
+    "per_module_compiler_fixpoint_seconds": 166.15,
+    "small_per_module_link_red_and_green": true,
+    "small_per_module_green_seconds": 1.41,
+    "source_checks_pass": true,
+    "feature_fixture_complexity_pass": true,
+    "vet_and_testnames_pass": true,
+    "full_formatter_pass": true
+  },
+  "unresolved": {
+    "native_darwin_signal_delivery": "Requires current-head macOS CI, not available locally.",
+    "legacy_wide_retained_machine": "Fails on 16GiB runtime guard, tracked in13717. Diagnostic prefix change is not adopted. Legacy decoder/machine controls remain unchanged.",
+    "architecture_4412": "Incomplete tracking issue. PR remains draft.",
+    "current_head_full_ci": "Must run after publication. No green claim."
+  },
+  "new_bug_issues": [
+    13736,
+    13737
+  ],
+  "compiler_speed_measurement": false,
+  "followup": {
+    "source_base": "9e7bb620129d70c0456205d75b3d47579ee58eda",
+    "arm_and_x86_permodule_counter_execution": true,
+    "ir_registry_and_constructors_and_lift_census": true,
+    "heap_registry_suite_seconds": 28.966,
+    "branch_roundtrip_targets": 2,
+    "branch_classifier_positive_negative_controls": 3,
+    "branch_suite_seconds": 36.998,
+    "playground_exact_output_forms": 11,
+    "playground_refusals_and_target_table": true,
+    "source_gate_seconds": 9.119,
+    "feature_census_pass": true,
+    "complexity_and_literate_pass": true,
+    "full_formatter_inputs": 2092,
+    "vet_and_testnames_pass": true,
+    "new_bug_issue": 13739
+  }
+}

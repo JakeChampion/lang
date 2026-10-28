@@ -1,0 +1,522 @@
+[
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/builds.json",
+    "archive": "baseline-builds.json",
+    "compressed": false,
+    "raw_bytes": 1299,
+    "raw_sha256": "9162889f188114f490831295bfa80aa36bf338fa0d46c4e5b8cc510bbfdf9b55",
+    "archive_sha256": "9162889f188114f490831295bfa80aa36bf338fa0d46c4e5b8cc510bbfdf9b55"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/outputs.json",
+    "archive": "baseline-outputs.json",
+    "compressed": false,
+    "raw_bytes": 1709,
+    "raw_sha256": "6bb919872819390ebe9a370c8b79f2b291bed15d571c8fb6698d82780c4c1cc1",
+    "archive_sha256": "6bb919872819390ebe9a370c8b79f2b291bed15d571c8fb6698d82780c4c1cc1"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/stage2-profile-metrics.json",
+    "archive": "baseline-stage2-profile-metrics.json",
+    "compressed": false,
+    "raw_bytes": 1256,
+    "raw_sha256": "42cb68efe97176f3288932f02b473b7535f29b734abf26b722dfbacd366f30c6",
+    "archive_sha256": "42cb68efe97176f3288932f02b473b7535f29b734abf26b722dfbacd366f30c6"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/stage2-elf-load-equivalence.json",
+    "archive": "baseline-stage2-elf-load-equivalence.json",
+    "compressed": false,
+    "raw_bytes": 1218,
+    "raw_sha256": "99b7c08cd512c6a890ae7e37b16a20bd08d04e03529e73da1702e2cc456c3c8c",
+    "archive_sha256": "99b7c08cd512c6a890ae7e37b16a20bd08d04e03529e73da1702e2cc456c3c8c"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/stage2.callgrind",
+    "archive": "baseline-stage2.callgrind.gz",
+    "compressed": true,
+    "raw_bytes": 2259072,
+    "raw_sha256": "4acbda6d578d8508a9e9665204255503b452c890006f1c49b72aec5929fc4a54",
+    "archive_sha256": "3c66678b7507c2f50db10146e6d58f76296a027d5d411ab6e6ed3d4a460ad010"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/stage2.self.resolved",
+    "archive": "baseline-stage2.self.resolved.gz",
+    "compressed": true,
+    "raw_bytes": 364560,
+    "raw_sha256": "5911aa73c8eb26efa30edfcb1455684943be64413c5a729d96495eeda1bf4bb0",
+    "archive_sha256": "c9eae9e0346e84450867b3330eb57282ef4e724eecdbbff36bc2736a85116672"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/stage2.callers.resolved",
+    "archive": "baseline-stage2.callers.resolved.gz",
+    "compressed": true,
+    "raw_bytes": 2491166,
+    "raw_sha256": "7fb18d913cee40e2ffc714f923c80431d69f159b360f0de444ab10e6f97521a3",
+    "archive_sha256": "efecd2a5d9ea4b8cc5071c67557adc287e2d394d1e6f54aeb80fc720274bbdd2"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/stage2-g.nm",
+    "archive": "baseline-stage2-g.nm.gz",
+    "compressed": true,
+    "raw_bytes": 438245,
+    "raw_sha256": "be21f0d1e4a01a53f488eab56b0bc20df74e23d7d35c7a76ec8d4f349fc91f9f",
+    "archive_sha256": "cd0ef9267a72a3cc6e874d58f32ae9a44eeadc9888111ea4de4a0f0d7bcf3778"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/stage2-profile.log",
+    "archive": "baseline-stage2-profile.log.gz",
+    "compressed": true,
+    "raw_bytes": 1856,
+    "raw_sha256": "ae776b45f4bc95a397f98b8141aa9b28242872b93c23018944afbf82cf7640d3",
+    "archive_sha256": "ed4151f0d5b7ff9960cc5250344d77e4e168ace3b39c2d57ee6348d952e5f1ae"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/builds.json",
+    "archive": "candidate-builds.json",
+    "compressed": false,
+    "raw_bytes": 1299,
+    "raw_sha256": "a337a5de5542c3055e8a1fea14a3545891a0b1229f33e9552c395915b428a1db",
+    "archive_sha256": "a337a5de5542c3055e8a1fea14a3545891a0b1229f33e9552c395915b428a1db"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/outputs.json",
+    "archive": "candidate-outputs.json",
+    "compressed": false,
+    "raw_bytes": 1709,
+    "raw_sha256": "b1f63d734f4b3fdac280b47c60573113cf4facff688a7db64c06b3c8280dc636",
+    "archive_sha256": "b1f63d734f4b3fdac280b47c60573113cf4facff688a7db64c06b3c8280dc636"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/stage2-profile-metrics.json",
+    "archive": "candidate-stage2-profile-metrics.json",
+    "compressed": false,
+    "raw_bytes": 1278,
+    "raw_sha256": "446d0a480bce8427f96e4daadf9083fac036ac9897f0b04552317b761111b6d1",
+    "archive_sha256": "446d0a480bce8427f96e4daadf9083fac036ac9897f0b04552317b761111b6d1"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/stage2-elf-load-equivalence.json",
+    "archive": "candidate-stage2-elf-load-equivalence.json",
+    "compressed": false,
+    "raw_bytes": 1218,
+    "raw_sha256": "65e871cd32abbb56a14e94d49082f0c44910431536602ee8d89659cef2db5797",
+    "archive_sha256": "65e871cd32abbb56a14e94d49082f0c44910431536602ee8d89659cef2db5797"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/stage2.callgrind",
+    "archive": "candidate-stage2.callgrind.gz",
+    "compressed": true,
+    "raw_bytes": 2259032,
+    "raw_sha256": "0af30d4d85e6e7f5d014891eaaf40d460c8eb9cfab70ef6c38680fd739ded84c",
+    "archive_sha256": "6d6445cbdb62429c2efb6da64dfb3ccc12f2399ae1313ea670273f533bbfcec1"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/stage2.self.resolved",
+    "archive": "candidate-stage2.self.resolved.gz",
+    "compressed": true,
+    "raw_bytes": 364560,
+    "raw_sha256": "e78d73cb459254250d8e767459368f8072d77e3182ec7be6e21cdbb9a3620091",
+    "archive_sha256": "4f4583a8a548bfb538745cc3d74551d6aaf1d5096210e86a8e21088e93afe46a"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/stage2.callers.resolved",
+    "archive": "candidate-stage2.callers.resolved.gz",
+    "compressed": true,
+    "raw_bytes": 2491164,
+    "raw_sha256": "a03eea15a09bfbf4a884041a74ce0001887d2e7ee3c4d6652769e793d4269e31",
+    "archive_sha256": "b324e72771cdbe9db5c3dcf26cca1646c0ed893fb5fe6642f70a8b485e818634"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/stage2-g.nm",
+    "archive": "candidate-stage2-g.nm.gz",
+    "compressed": true,
+    "raw_bytes": 438245,
+    "raw_sha256": "b93053196dca855ceff88bc31bbba8cf425cf7232e48d60814780d228c633347",
+    "archive_sha256": "d3a352a04ae0d314d2bc8aecf772d11cac6fa8bac4e0ef4f73b67d8e0510a08c"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/stage2-profile.log",
+    "archive": "candidate-stage2-profile.log.gz",
+    "compressed": true,
+    "raw_bytes": 1856,
+    "raw_sha256": "8f6b98d7c482f69fae6242056ad5cc796b0388bd335f5347bcae29dc3c69496f",
+    "archive_sha256": "ad36c474b67d49b8692f21572eec74dec796f36e6f840de72b440d9f30b33112"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/provenance.json",
+    "archive": "baseline-provenance.json",
+    "compressed": false,
+    "raw_bytes": 722,
+    "raw_sha256": "dea9195126e8fb599b829643f1b07813892400da18e1305df608d85b8d102258",
+    "archive_sha256": "dea9195126e8fb599b829643f1b07813892400da18e1305df608d85b8d102258"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/source-hashes.json",
+    "archive": "baseline-source-hashes.json",
+    "compressed": false,
+    "raw_bytes": 185921,
+    "raw_sha256": "306612e5e6137c281442185396f87b11e8825b4833efb07ed6cf3f0f50dac5d4",
+    "archive_sha256": "306612e5e6137c281442185396f87b11e8825b4833efb07ed6cf3f0f50dac5d4"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/build-profile.py",
+    "archive": "baseline-build-profile.py",
+    "compressed": false,
+    "raw_bytes": 3837,
+    "raw_sha256": "1f16602d44b76b392ce322b45bf2637f3447dc07e0e81624c1b8d4148cf42e1e",
+    "archive_sha256": "1f16602d44b76b392ce322b45bf2637f3447dc07e0e81624c1b8d4148cf42e1e"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/provenance.json",
+    "archive": "provenance.json",
+    "compressed": false,
+    "raw_bytes": 551,
+    "raw_sha256": "908c951d24289beac0c3db0ec3a0f938b2b05941aaaafd33cfefe39d1aa6ab8e",
+    "archive_sha256": "908c951d24289beac0c3db0ec3a0f938b2b05941aaaafd33cfefe39d1aa6ab8e"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/production-preservation.json",
+    "archive": "production-preservation.json",
+    "compressed": false,
+    "raw_bytes": 170733,
+    "raw_sha256": "2ccc1398232ab5ddc9871dda931d184dae12ce611d04ac1ce8b8de95d0e5b5f7",
+    "archive_sha256": "2ccc1398232ab5ddc9871dda931d184dae12ce611d04ac1ce8b8de95d0e5b5f7"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/comparison.json",
+    "archive": "comparison.json",
+    "compressed": false,
+    "raw_bytes": 2833,
+    "raw_sha256": "f615a7fac3450745b36a47a280f70c48c1e81f3c039dcb04a02be6ff9a9ca520",
+    "archive_sha256": "f615a7fac3450745b36a47a280f70c48c1e81f3c039dcb04a02be6ff9a9ca520"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/output-identity.json",
+    "archive": "output-identity.json",
+    "compressed": false,
+    "raw_bytes": 514,
+    "raw_sha256": "da8c15a958ba7a26bb067f59d47a12d534567787d4d4280a7afa380f200ef6d4",
+    "archive_sha256": "da8c15a958ba7a26bb067f59d47a12d534567787d4d4280a7afa380f200ef6d4"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-provenance.json",
+    "archive": "contract-provenance.json",
+    "compressed": false,
+    "raw_bytes": 456,
+    "raw_sha256": "f79b79a530fce5d6bc7acabf080b271e8eda55ee6891bc82fc75d1e6d6dd45af",
+    "archive_sha256": "f79b79a530fce5d6bc7acabf080b271e8eda55ee6891bc82fc75d1e6d6dd45af"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-source-identity.json",
+    "archive": "contract-source-identity.json",
+    "compressed": false,
+    "raw_bytes": 334,
+    "raw_sha256": "ffee788a933988f2205a98961a986390fb512767ab6361601956fe093098620c",
+    "archive_sha256": "ffee788a933988f2205a98961a986390fb512767ab6361601956fe093098620c"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/differential.json",
+    "archive": "differential.json",
+    "compressed": false,
+    "raw_bytes": 3027,
+    "raw_sha256": "71c898a7abdb978e19cc51897da5c4e42b8e6f39c3e9634be1121339a0bba244",
+    "archive_sha256": "71c898a7abdb978e19cc51897da5c4e42b8e6f39c3e9634be1121339a0bba244"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/primary.json",
+    "archive": "primary.json",
+    "compressed": false,
+    "raw_bytes": 665,
+    "raw_sha256": "338bd77d606e2a68ecf865f230b1c55767387aa56f847013ed87df13b33c4436",
+    "archive_sha256": "338bd77d606e2a68ecf865f230b1c55767387aa56f847013ed87df13b33c4436"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/source.json",
+    "archive": "source.json",
+    "compressed": false,
+    "raw_bytes": 284,
+    "raw_sha256": "492276446aa7514de1d105b372e953770b4f819fae7b22ac93662805cfa01bd6",
+    "archive_sha256": "492276446aa7514de1d105b372e953770b4f819fae7b22ac93662805cfa01bd6"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/ratchets.json",
+    "archive": "ratchets.json",
+    "compressed": false,
+    "raw_bytes": 453,
+    "raw_sha256": "284573ef4f25f0398dd28a4ddbd1ae65f07fb3cb5867ee826b0af5bc2416674f",
+    "archive_sha256": "284573ef4f25f0398dd28a4ddbd1ae65f07fb3cb5867ee826b0af5bc2416674f"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/formatter.json",
+    "archive": "formatter.json",
+    "compressed": false,
+    "raw_bytes": 349,
+    "raw_sha256": "0dd6f196ffdea92d47cefbf3c9ca68837779e23b49472ba86fb48fa1f0ac9bd4",
+    "archive_sha256": "0dd6f196ffdea92d47cefbf3c9ca68837779e23b49472ba86fb48fa1f0ac9bd4"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/build-profile.py",
+    "archive": "build-profile.py",
+    "compressed": false,
+    "raw_bytes": 3902,
+    "raw_sha256": "a2fa61ed1a29928157b8119cf5b1c4d0318f6809d6368abca1b8c160c5e8201a",
+    "archive_sha256": "a2fa61ed1a29928157b8119cf5b1c4d0318f6809d6368abca1b8c160c5e8201a"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/resolve-profile.py",
+    "archive": "resolve-profile.py",
+    "compressed": false,
+    "raw_bytes": 2538,
+    "raw_sha256": "5341f8ceb272ed32325bbd3ef3d467cbffb6714d34b379d9d2e3857c3a28d7a6",
+    "archive_sha256": "5341f8ceb272ed32325bbd3ef3d467cbffb6714d34b379d9d2e3857c3a28d7a6"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/compare.py",
+    "archive": "compare.py",
+    "compressed": false,
+    "raw_bytes": 2031,
+    "raw_sha256": "d8e6c56babc2fdafdf1c150ca4d56adac781fd96b0836a23d04c99bdb0b961a9",
+    "archive_sha256": "d8e6c56babc2fdafdf1c150ca4d56adac781fd96b0836a23d04c99bdb0b961a9"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/differential.py",
+    "archive": "differential.py",
+    "compressed": false,
+    "raw_bytes": 2302,
+    "raw_sha256": "e3c52d1478e9586f557486ce1c600fda531075287678b7fc238458a8020d4071",
+    "archive_sha256": "e3c52d1478e9586f557486ce1c600fda531075287678b7fc238458a8020d4071"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/validate.py",
+    "archive": "validate.py",
+    "compressed": false,
+    "raw_bytes": 2194,
+    "raw_sha256": "b37e40b36c1ebd2ef8ba8b763192195348078d9ef2a7e27b51d89e6518925a14",
+    "archive_sha256": "b37e40b36c1ebd2ef8ba8b763192195348078d9ef2a7e27b51d89e6518925a14"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/format.py",
+    "archive": "format.py",
+    "compressed": false,
+    "raw_bytes": 1049,
+    "raw_sha256": "6270e9886d4a00e5db3df9419907c2a1f30dfab6c74960ddfc36004cd6d8b43a",
+    "archive_sha256": "6270e9886d4a00e5db3df9419907c2a1f30dfab6c74960ddfc36004cd6d8b43a"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/primary.jsonl",
+    "archive": "primary.jsonl.gz",
+    "compressed": true,
+    "raw_bytes": 65209,
+    "raw_sha256": "72f464681e7779e7908ffae7fdf29acf9a44ca84eedf6c0534446d625aeafc7a",
+    "archive_sha256": "9a01a95e2bc7fa9309cc3bc5b331a1b6266ffe6ea26a1f172be12b924e130f78"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/source.log",
+    "archive": "source.log.gz",
+    "compressed": true,
+    "raw_bytes": 119,
+    "raw_sha256": "88460db96cf5b98bdf617113905c8a5117339e91e1ce1154bee38b636a56b9e4",
+    "archive_sha256": "681977aff9022f27e4006b727ef4cf228bafa25214f8c44b489c095aa58f3581"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/ratchets.jsonl",
+    "archive": "ratchets.jsonl.gz",
+    "compressed": true,
+    "raw_bytes": 9109,
+    "raw_sha256": "b49350479f99eb449f5ae8ffcf572567156c3528b1b8d75f02a8ca9a44e56c4c",
+    "archive_sha256": "3886e9c41448cae3ea7966f57c7a24948b67d18308dcaed028bd90b39a7b054e"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/formatter.log",
+    "archive": "formatter.log.gz",
+    "compressed": true,
+    "raw_bytes": 0,
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "d1111b245f685176180e6f1631e6dc49badf6672368e9ce260c71355165effdf"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/differential.log",
+    "archive": "differential.log.gz",
+    "compressed": true,
+    "raw_bytes": 2529,
+    "raw_sha256": "ef626af836d9f83eb1caaaca1ed5632a4beaa3dd900b54d22a50911898041a6b",
+    "archive_sha256": "973d091b29d090ace031a730315f737cd06265c30b026f84199dc07eec36b65f"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/validate.log",
+    "archive": "validate.log.gz",
+    "compressed": true,
+    "raw_bytes": 1254,
+    "raw_sha256": "938981d1b61eac1906047e1b3a23c35b2d3bc4e0799cad6ef51a3fa1ac3dbddb",
+    "archive_sha256": "71e942e9a8400460f169771f5622074e3449fc26e3fac4ca5700925e89543a1e"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/prototype.patch",
+    "archive": "candidate.patch.gz",
+    "compressed": true,
+    "raw_bytes": 1622,
+    "raw_sha256": "afef0c79445f73771bf5dbf7e19839292afa8198d7554848ccd7d75b1f64c7d9",
+    "archive_sha256": "c313e50a2225d401a7ead60e8450b2fb088b881b7b1e11298c89763243d27c4c"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/baseline-source.tar",
+    "archive": "baseline-source.tar.gz",
+    "compressed": true,
+    "raw_bytes": 20736000,
+    "raw_sha256": "e8acb7b91199a91978db47b3547965969a9addf1591e878e9bd40c9715286e9a",
+    "archive_sha256": "cdd677de51d7c29867e1ce621b7bf7a96b8d3b4565b6f6cc9fe75ac18b176eaf"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract/view_contract.fern",
+    "archive": "view_contract.fern.txt.gz",
+    "compressed": true,
+    "raw_bytes": 2658,
+    "raw_sha256": "a363735fe3fa0fbd79a7013fcf68e03145db09721d8c3cb62ebe7ca9e212ac7a",
+    "archive_sha256": "878f523cd7c734f62e90717f63b6b27f6c5dd3ebcf364a6738c7f38e4d2616ce"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract/view_contract_helpers.fern",
+    "archive": "view_contract_helpers.fern.txt.gz",
+    "compressed": true,
+    "raw_bytes": 785,
+    "raw_sha256": "cfb825311b8eb75b72e85135fd6ef2de76ffc64aaa04ec4dc429b24f6c68772b",
+    "archive_sha256": "ffa229b337102c834bd1da1f0082572ed947dbbead3654f49236fdb3acb436cc"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-x86-64-linux-build.log",
+    "archive": "contract-x86-64-linux-build.log.gz",
+    "compressed": true,
+    "raw_bytes": 0,
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "d1111b245f685176180e6f1631e6dc49badf6672368e9ce260c71355165effdf"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-x86-64-linux.stdout",
+    "archive": "contract-x86-64-linux.stdout.gz",
+    "compressed": true,
+    "raw_bytes": 299435,
+    "raw_sha256": "4b15612981f0578da6dc450da97d860425f0ab22c172abed0672a82aa307b962",
+    "archive_sha256": "e735ed27b82b0300c68ec5902572493930b92893a344c6c0a9496536b4d2f184"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-x86-64-linux.stderr",
+    "archive": "contract-x86-64-linux.stderr.gz",
+    "compressed": true,
+    "raw_bytes": 51,
+    "raw_sha256": "0dac1757ccd31b64817e059a63526121d7233772c530c5c99bde05e7a0d3b614",
+    "archive_sha256": "5d7a0a378a58ca673d49a7c93fbeddb1b31a276e296c328fcd610a3896720ecd"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-arm64-linux-build.log",
+    "archive": "contract-arm64-linux-build.log.gz",
+    "compressed": true,
+    "raw_bytes": 0,
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "d1111b245f685176180e6f1631e6dc49badf6672368e9ce260c71355165effdf"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-arm64-linux.stdout",
+    "archive": "contract-arm64-linux.stdout.gz",
+    "compressed": true,
+    "raw_bytes": 299435,
+    "raw_sha256": "4b15612981f0578da6dc450da97d860425f0ab22c172abed0672a82aa307b962",
+    "archive_sha256": "e735ed27b82b0300c68ec5902572493930b92893a344c6c0a9496536b4d2f184"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-arm64-linux.stderr",
+    "archive": "contract-arm64-linux.stderr.gz",
+    "compressed": true,
+    "raw_bytes": 51,
+    "raw_sha256": "0dac1757ccd31b64817e059a63526121d7233772c530c5c99bde05e7a0d3b614",
+    "archive_sha256": "5d7a0a378a58ca673d49a7c93fbeddb1b31a276e296c328fcd610a3896720ecd"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-wasm32-wasi-build.log",
+    "archive": "contract-wasm32-wasi-build.log.gz",
+    "compressed": true,
+    "raw_bytes": 130,
+    "raw_sha256": "caf2ecb68301a329be5f91fceb707850338d529f3c6c6bbaecd5e475164788b1",
+    "archive_sha256": "a800fe3c3045105f1ba7ad7d349a4a3f2bee980aa9032705d7cde7b1e3f25857"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-wasm32-wasi.stdout",
+    "archive": "contract-wasm32-wasi.stdout.gz",
+    "compressed": true,
+    "raw_bytes": 299435,
+    "raw_sha256": "4b15612981f0578da6dc450da97d860425f0ab22c172abed0672a82aa307b962",
+    "archive_sha256": "e735ed27b82b0300c68ec5902572493930b92893a344c6c0a9496536b4d2f184"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-any-candidate/contract-wasm32-wasi.stderr",
+    "archive": "contract-wasm32-wasi.stderr.gz",
+    "compressed": true,
+    "raw_bytes": 51,
+    "raw_sha256": "b83e8c5013f7336be50bd8ada655de19a4033700633ed4bc77b2e6d76a53d06d",
+    "archive_sha256": "3772cfd100ad84263451674d40717e7ec99ba17d32ccbd2c0fa82c1aa019d510"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-empty-candidate/provenance.json",
+    "archive": "rejected-provenance.json",
+    "compressed": false,
+    "raw_bytes": 458,
+    "raw_sha256": "e96ebce2e1dc322fec10f71387e6b691ab38a85c8c8dd990ece366d81cd148a3",
+    "archive_sha256": "e96ebce2e1dc322fec10f71387e6b691ab38a85c8c8dd990ece366d81cd148a3"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-empty-candidate/builds.json",
+    "archive": "rejected-builds.json",
+    "compressed": false,
+    "raw_bytes": 1308,
+    "raw_sha256": "b0457ea1b4538fe50d67e8b04557e122692e0828ae4d28c2ae8426031b3df1f8",
+    "archive_sha256": "b0457ea1b4538fe50d67e8b04557e122692e0828ae4d28c2ae8426031b3df1f8"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-empty-candidate/outputs.json",
+    "archive": "rejected-outputs.json",
+    "compressed": false,
+    "raw_bytes": 474,
+    "raw_sha256": "3510dd461a465e2fea14c8a3d846d76408199b2b3425da51d86ce4ea181eba42",
+    "archive_sha256": "3510dd461a465e2fea14c8a3d846d76408199b2b3425da51d86ce4ea181eba42"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-empty-candidate/failure-backtrace-symbols.json",
+    "archive": "rejected-failure-backtrace-symbols.json",
+    "compressed": false,
+    "raw_bytes": 875,
+    "raw_sha256": "f318d768c5a7357d155643dc46eedf9933781a7e95d5e7dd0bf050c62efa2e65",
+    "archive_sha256": "f318d768c5a7357d155643dc46eedf9933781a7e95d5e7dd0bf050c62efa2e65"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-empty-candidate/prototype.patch",
+    "archive": "rejected-prototype.patch.gz",
+    "compressed": true,
+    "raw_bytes": 1328,
+    "raw_sha256": "ce5f97416dc8b69b43a7e4305ce62d066dce13272b14d8c51c6a45bd660bc021",
+    "archive_sha256": "361aad37298a625c0251ec2313605a9801ba703e5f34204b07fd2b46103a445f"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-empty-candidate/checker-x86-64-linux.log",
+    "archive": "rejected-checker-x86-64-linux.log.gz",
+    "compressed": true,
+    "raw_bytes": 210,
+    "raw_sha256": "e6b1b4dd6aac8db0ec0c87992fc9113f57b30adfdcf7b0edc99334f85d477b13",
+    "archive_sha256": "5141856c642e28076c61238d7518af5c4a80a7b2b2693dec010b253b7b60ac30"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-empty-candidate/stage2-g.nm",
+    "archive": "rejected-stage2-g.nm.gz",
+    "compressed": true,
+    "raw_bytes": 438245,
+    "raw_sha256": "c69151ba69ea20a1b03d3f836a0989f952fb944c0f1fec46d248b09990381194",
+    "archive_sha256": "b0c67164d96cd1c3cc2eb8354d73534aed2fcd5635405e60d32c6c6a1d0a676d"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/view-empty-candidate/run.log",
+    "archive": "rejected-run.log.gz",
+    "compressed": true,
+    "raw_bytes": 1361,
+    "raw_sha256": "730fbf5a388e32c34130e81435ea35521591efe63476cba4dfabdc892dd2933f",
+    "archive_sha256": "a69cc21b242ed86a81c7a9f6e9cf8fd85c55ea55e877676f2eaecb6b78a1a0a1"
+  }
+]

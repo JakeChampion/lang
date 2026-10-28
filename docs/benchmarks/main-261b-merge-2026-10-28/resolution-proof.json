@@ -1,0 +1,23 @@
+[
+  {
+    "path": ".github/alloc-baseline.txt",
+    "owner_changed_rows_preserved": 2,
+    "unrelated_branch_rows_preserved": 0,
+    "all_thresholds_unchanged": true,
+    "all_rows_exact_main": true
+  },
+  {
+    "path": ".github/cliff-baseline.txt",
+    "owner_changed_rows_preserved": 2,
+    "unrelated_branch_rows_preserved": 0,
+    "all_thresholds_unchanged": true,
+    "all_rows_exact_main": true
+  },
+  {
+    "path": ".github/perf-baseline-selfhost.txt",
+    "owner_changed_rows_preserved": 101,
+    "unrelated_branch_rows_preserved": 0,
+    "all_thresholds_unchanged": true,
+    "all_rows_exact_main": true
+  }
+]

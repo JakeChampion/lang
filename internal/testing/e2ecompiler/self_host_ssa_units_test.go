@@ -128,8 +128,25 @@ graph = ssa.SFunc { name: "lentphi", nparams: 3, nvals: 5, entry: 7, takes_env: 
 
 type unitCase struct{ name, setup, check, mutate, want string }
 
+const unitSameDestination = `
+params = [bt, st]; types = [bt, st, st]; result = st; modes = [1, 3];
+graph = ssa.SFunc { name: "same_destination", nparams: 2, nvals: 3, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1)], term: ssa.STerm { ...branch(), t: 17, f: 17 } },
+    ssa.SBlock { id: 17, preds: [7], insts: [inst(8, 2, [1], 0)], term: ret(2) }
+] };
+`
+
 func unitCases() []unitCase {
 	base := []unitCase{
+		{"same-destination", unitSameDestination, `
+let edges: i32 = 0;
+for s in p.steps { if (s.point == ssaunits.edge_point()) { edges = edges + 1; } }
+if (edges != 1 || !supply(find(p, 7, ssaunits.edge_point(), 17), 0, 1, 0, ssaunits.move_unit())) { return 93; }
+`, "", ""},
+		{"same-destination-duplicate-edge", unitSameDestination, "", `
+let edge = find(p, 7, ssaunits.edge_point(), 17);
+p = ssaunits.Plan { ...p, steps: p.steps.append(edge) };
+`, "missing or duplicate edge step"},
 		{"nested-projections", "", `
 if (!p.payloads[2] || !drops(find(p, 7, 7, 0 - 1), [0])) { return 10; }
 if (!p.payloads[3] || !drops(find(p, 7, 3, 0 - 1), [2])) { return 16; }

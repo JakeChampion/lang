@@ -1347,7 +1347,7 @@ pub function (s: string) is_float(): boolean {
   return code == number_parse.SUCCESS;
 }
 
-pub function (s: string) wrap(prefix: string, suffix: string): string {
+pub function (s: string) surround(prefix: string, suffix: string): string {
   return prefix + s + suffix;
 }
 ```

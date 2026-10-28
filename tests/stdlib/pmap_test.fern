@@ -14,7 +14,7 @@ impl cmp.Hash for Coarse {
 }
 
 function test_new_is_empty(): test.TestOutcome {
-  let m: pmap.PMap[i32, i32] = pmap.pmap_new();
+  let m: pmap.PMap[i32, i32] = pmap.new();
   if (!m.is_empty() || m.len() != 0) {
     return test.fail("empty map has entries");
   }
@@ -22,7 +22,7 @@ function test_new_is_empty(): test.TestOutcome {
 }
 
 function test_insert_get(): test.TestOutcome {
-  let m: pmap.PMap[i32, string] = pmap.pmap_new();
+  let m: pmap.PMap[i32, string] = pmap.new();
   m = m.insert(2, "two");
   m = m.insert(1, "one");
   m = m.insert(3, "three");
@@ -44,7 +44,7 @@ function test_insert_replaces(): test.TestOutcome {
 }
 
 function test_insert_is_persistent(): test.TestOutcome {
-  let m: pmap.PMap[i32, i32] = pmap.pmap_new();
+  let m: pmap.PMap[i32, i32] = pmap.new();
   let i: i32 = 0;
   while (i < 2000) {
     m = m.insert(i * 37 % 2000, i);
@@ -73,7 +73,7 @@ function test_insert_is_persistent(): test.TestOutcome {
 }
 
 function test_remove(): test.TestOutcome {
-  let m: pmap.PMap[i32, i32] = pmap.pmap_new();
+  let m: pmap.PMap[i32, i32] = pmap.new();
   let i: i32 = 0;
   while (i < 1000) {
     m = m.insert(i * 53 % 1000, i);
@@ -152,8 +152,8 @@ function test_update_map_filter(): test.TestOutcome {
 }
 
 function test_set_algebra(): test.TestOutcome {
-  let a: pmap.PMap[i32, i32] = pmap.pmap_new();
-  let b: pmap.PMap[i32, i32] = pmap.pmap_new();
+  let a: pmap.PMap[i32, i32] = pmap.new();
+  let b: pmap.PMap[i32, i32] = pmap.new();
   let i: i32 = 0;
   while (i < 500) {
     a = a.insert(i, 1);
@@ -184,7 +184,7 @@ function test_set_algebra(): test.TestOutcome {
 }
 
 function test_string_keys(): test.TestOutcome {
-  let m: pmap.PMap[string, i32] = pmap.pmap_new();
+  let m: pmap.PMap[string, i32] = pmap.new();
   let i: i32 = 0;
   while (i < 300) {
     m = m.insert("key-" + i.to_string(), i);
@@ -202,7 +202,7 @@ function test_string_keys(): test.TestOutcome {
 }
 
 function test_collisions(): test.TestOutcome {
-  let c: pmap.PMap[Coarse, i32] = pmap.pmap_new();
+  let c: pmap.PMap[Coarse, i32] = pmap.new();
   let i: i32 = 0;
   while (i < 200) {
     c = c.insert(Coarse { bucket: i % 5, id: i }, i);

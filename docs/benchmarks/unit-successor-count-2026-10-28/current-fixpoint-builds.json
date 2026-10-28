@@ -1,0 +1,34 @@
+[
+  {
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/stage1",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2-current",
+      "/workspace/lang-perf-4412/compiler/fern.fern",
+      "/workspace/lang-perf-4412/internal/stdlib"
+    ],
+    "exit": 0,
+    "seconds": 45.132909175998066,
+    "producer_sha256": "ce1074b697485ad511740e5c499ff771ceccf270c5afaf521fcc85e74e847b05",
+    "output_sha256": "1e0ad6be807a01bbf50a05535d46808d611816016ce388e687d44589c5dc7e52"
+  },
+  {
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2-current",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage3-current",
+      "/workspace/lang-perf-4412/compiler/fern.fern",
+      "/workspace/lang-perf-4412/internal/stdlib"
+    ],
+    "exit": 0,
+    "seconds": 33.327529621001304,
+    "producer_sha256": "1e0ad6be807a01bbf50a05535d46808d611816016ce388e687d44589c5dc7e52",
+    "output_sha256": "1e0ad6be807a01bbf50a05535d46808d611816016ce388e687d44589c5dc7e52"
+  }
+]

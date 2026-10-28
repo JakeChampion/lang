@@ -1,0 +1,154 @@
+[
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/primary.json",
+    "archive": "primary.json",
+    "compressed": false,
+    "raw_bytes": 510,
+    "raw_sha256": "a5e8adf901e06d3fc09e00fb82afb66906502e236e99b2a3de1c26ed76c795e7",
+    "archive_sha256": "a5e8adf901e06d3fc09e00fb82afb66906502e236e99b2a3de1c26ed76c795e7"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/source.json",
+    "archive": "source.json",
+    "compressed": false,
+    "raw_bytes": 284,
+    "raw_sha256": "0a8b30433a0a9eb5d323d401ebcd4f1c7c524739fb25e1e25819c8c23d73492d",
+    "archive_sha256": "0a8b30433a0a9eb5d323d401ebcd4f1c7c524739fb25e1e25819c8c23d73492d"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/ratchets.json",
+    "archive": "ratchets.json",
+    "compressed": false,
+    "raw_bytes": 453,
+    "raw_sha256": "a07c48796966841982d25ddd51307404464c1d3b45d6a6dd48136d6246326826",
+    "archive_sha256": "a07c48796966841982d25ddd51307404464c1d3b45d6a6dd48136d6246326826"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/formatter.json",
+    "archive": "formatter.json",
+    "compressed": false,
+    "raw_bytes": 348,
+    "raw_sha256": "1d3138f0dc67485a8b58a6f4e0a52a4710bc768d054fe0da4ef5f5e09215d1e8",
+    "archive_sha256": "1d3138f0dc67485a8b58a6f4e0a52a4710bc768d054fe0da4ef5f5e09215d1e8"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/perf-resolution.json",
+    "archive": "perf-resolution.json",
+    "compressed": false,
+    "raw_bytes": 727,
+    "raw_sha256": "6742d21ae1b7ec5b80f72804dac0336cb6ff51cc62732cef8bff1f83fa581b4f",
+    "archive_sha256": "6742d21ae1b7ec5b80f72804dac0336cb6ff51cc62732cef8bff1f83fa581b4f"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/compiler-preservation.json",
+    "archive": "compiler-preservation.json",
+    "compressed": false,
+    "raw_bytes": 170791,
+    "raw_sha256": "af53a8c2b7a7e882fa1e6bee804b03488fc11701de07c7aef2b485ec5b2881d2",
+    "archive_sha256": "af53a8c2b7a7e882fa1e6bee804b03488fc11701de07c7aef2b485ec5b2881d2"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/validate.py",
+    "archive": "validate.py",
+    "compressed": false,
+    "raw_bytes": 2038,
+    "raw_sha256": "24224b4d0187db19594be0b5842817ce791e5103c31d3e69ace61a8dc661efb1",
+    "archive_sha256": "24224b4d0187db19594be0b5842817ce791e5103c31d3e69ace61a8dc661efb1"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/format.py",
+    "archive": "format.py",
+    "compressed": false,
+    "raw_bytes": 1049,
+    "raw_sha256": "6270e9886d4a00e5db3df9419907c2a1f30dfab6c74960ddfc36004cd6d8b43a",
+    "archive_sha256": "6270e9886d4a00e5db3df9419907c2a1f30dfab6c74960ddfc36004cd6d8b43a"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/incoming-preservation-final.json",
+    "archive": "incoming-preservation.json",
+    "compressed": false,
+    "raw_bytes": 7433,
+    "raw_sha256": "972863ce54e4c5f06c07546a822cd4c2083f89feb4d71f14e108c054f9e8e775",
+    "archive_sha256": "972863ce54e4c5f06c07546a822cd4c2083f89feb4d71f14e108c054f9e8e775"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/primary.jsonl",
+    "archive": "primary.jsonl.gz",
+    "compressed": true,
+    "raw_bytes": 10833,
+    "raw_sha256": "1cf576992680686718ebd14d8c27b8a03c314a7bea00705352d531fc2504211b",
+    "archive_sha256": "868b7224d2780601f024e5e535e4c990da3d8800d6d55886d244b62d8722a67b"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/source.log",
+    "archive": "source.log.gz",
+    "compressed": true,
+    "raw_bytes": 121,
+    "raw_sha256": "7cc15ab138040ba18792ebedcb3c28e2d8d41b9ace5301ab955c91d2cfd327e2",
+    "archive_sha256": "b3aa001e1a69f3532350f294536c5923acb3c7675d03ccad83504b975ae8063f"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/ratchets.jsonl",
+    "archive": "ratchets.jsonl.gz",
+    "compressed": true,
+    "raw_bytes": 9102,
+    "raw_sha256": "04370731cf0549004e21a0f35da78922f23fa87f3829218110e0175abf13f1e0",
+    "archive_sha256": "7f9e2135c8dbe5bd50d9ec39ee77ed776f24510b1aaf5b2d0b05c4377889adfb"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/formatter.log",
+    "archive": "formatter.log.gz",
+    "compressed": true,
+    "raw_bytes": 0,
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "d1111b245f685176180e6f1631e6dc49badf6672368e9ce260c71355165effdf"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/validate.log",
+    "archive": "validate.log.gz",
+    "compressed": true,
+    "raw_bytes": 1099,
+    "raw_sha256": "31ff3e900efec2f34e865541a423485135006fbb44ad461b152ffa1ab3fbd930",
+    "archive_sha256": "326221e5cb1be06a61c9a00370ff4496e6a70f92876f43aaca89b438ceb31f3a"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/perf-stage-1.txt",
+    "archive": "perf-stage-1.txt.gz",
+    "compressed": true,
+    "raw_bytes": 28028,
+    "raw_sha256": "609ccf28b5f4cabb1bb66c4ea8e69ff33b49a1ed5303fc5774806699fcfd92ac",
+    "archive_sha256": "2088081e775943c524e2cf93d46535728a896d6b4cef7f6eab6fe2e18e944e76"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/perf-stage-2.txt",
+    "archive": "perf-stage-2.txt.gz",
+    "compressed": true,
+    "raw_bytes": 28664,
+    "raw_sha256": "87dda11bee89f1925a0639abcc30109b914a16473226fd48891b5539504ca282",
+    "archive_sha256": "5f930ec3296df80d767a1dd136c878a7491d913a3c20cfddce3bd98ddc786950"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/perf-stage-3.txt",
+    "archive": "perf-stage-3.txt.gz",
+    "compressed": true,
+    "raw_bytes": 28028,
+    "raw_sha256": "ab23a2bceac2a2d07f5d11aab1b30cfdd61cb444f8a9b25a2a9edf5444d5a5f6",
+    "archive_sha256": "5f41facae65e1cbf0de74fb8a2b9725798c81ddf769e0f906ad08c71773b3f62"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/perf-unresolved.txt",
+    "archive": "perf-unresolved.txt.gz",
+    "compressed": true,
+    "raw_bytes": 28811,
+    "raw_sha256": "03c4389f07d35989e81c1da2b97f67c62fcd9511ea3f91172c388397ee3c033f",
+    "archive_sha256": "c5d81f1f921a238b6f7f2aa8f2e154fb25aa17bdf310a2d58365aed9c40bb566"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-a26-merge/perf-resolved-published.txt",
+    "archive": "perf-resolved-published.txt.gz",
+    "compressed": true,
+    "raw_bytes": 28831,
+    "raw_sha256": "b54c78cc48b92cc31c5f2fdece3851fc9de747a9c8819163654b2eeb5a2a9bcf",
+    "archive_sha256": "3fd55af3eb246f3c956febb649d91bbd93417f5ac4e9f2e07d738b17d51ecd1a"
+  }
+]

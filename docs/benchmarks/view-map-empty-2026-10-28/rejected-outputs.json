@@ -1,0 +1,17 @@
+[
+  {
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/view-empty-candidate/stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/view-empty-candidate/checker-x86-64-linux.s",
+      "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/internal/stdlib"
+    ],
+    "exit": 134
+  }
+]

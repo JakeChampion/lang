@@ -153,7 +153,7 @@ def main():
             raise SystemExit('Refuse existing reference output')
         REFERENCE.write_bytes(data)
     if options.check:
-        assert REFERENCE.read_bytes() == data, 'reference reproduction differs'
+        assert gzip.decompress(REFERENCE.read_bytes()) == gzip.decompress(data), 'reference reproduction differs'
     print(json.dumps(dict(cases=len(ref['cases']), positive=sum(c['expected'] for c in ref['cases']), negative=sum(not c['expected'] for c in ref['cases']), bundle_sha256=sha(data))))
 
 

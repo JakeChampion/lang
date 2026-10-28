@@ -16,7 +16,7 @@ Updates preserve the previous set value. Comparison follows `cmp.Ord`, and order
 import "std/ordset";
 
 function main(): i32 {
-  let s = ordset.ordset_of([3, 1, 3]);
+  let s = ordset.of([3, 1, 3]);
   if (s.len() != 2 || !s.contains(1)) { return 1; }
   return 0;
 }
@@ -34,7 +34,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 pub struct OrdSet[T]>>
 
-<<4 pub function ordset_new[T](): OrdSet[T]>>
+<<4 pub function new[T](): OrdSet[T]>>
 ```
 
 ### `module introduction`
@@ -60,17 +60,17 @@ import "std/ordmap";
 pub struct OrdSet[T] { root: ordmap.OrdMap[T, i32] }
 ```
 
-### `4 pub function ordset_new[T](): OrdSet[T]`
+### `4 pub function new[T](): OrdSet[T]`
 
 ```fern
-<<4 pub function ordset_new[T](): OrdSet[T]>>=
-pub function ordset_new[T](): OrdSet[T] {
-  let e: ordmap.OrdMap[T, i32] = ordmap.ordmap_new();
+<<4 pub function new[T](): OrdSet[T]>>=
+pub function new[T](): OrdSet[T] {
+  let e: ordmap.OrdMap[T, i32] = ordmap.new();
   return OrdSet { root: e };
 }
 
-pub function ordset_of[T: cmp.Ord](xs: T[]): OrdSet[T] {
-  let s: OrdSet[T] = ordset_new();
+pub function of[T: cmp.Ord](xs: T[]): OrdSet[T] {
+  let s: OrdSet[T] = new();
   let i: i32 = 0;
   while (i < xs.len()) {
     s = s.insert(xs[i]);

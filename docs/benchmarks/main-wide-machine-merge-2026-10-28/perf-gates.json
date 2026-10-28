@@ -1,0 +1,56 @@
+[
+  {
+    "command": [
+      "scripts/ci-check-perf",
+      ".github/perf-baseline.txt",
+      "/workspace/lang-issue-work/perf-4412/main-7aded-merge/perf/12792325965/perf-report.txt"
+    ],
+    "strict": true,
+    "exit": 0
+  },
+  {
+    "command": [
+      "scripts/ci-check-perf",
+      ".github/perf-baseline.txt",
+      "/workspace/lang-issue-work/perf-4412/main-7aded-merge/perf/12791864112/perf-report.txt"
+    ],
+    "strict": true,
+    "exit": 0
+  },
+  {
+    "command": [
+      "scripts/ci-check-perf",
+      ".github/alloc-baseline.txt",
+      "/workspace/lang-issue-work/perf-4412/main-7aded-merge/perf/12792810036/alloc-report.txt"
+    ],
+    "strict": true,
+    "exit": 0
+  },
+  {
+    "command": [
+      "scripts/ci-check-perf",
+      ".github/cliff-baseline.txt",
+      "/workspace/lang-issue-work/perf-4412/main-7aded-merge/perf/12792810036/cliff-report.txt"
+    ],
+    "strict": true,
+    "exit": 0
+  },
+  {
+    "command": [
+      "scripts/ci-check-perf",
+      ".github/perf-baseline-selfhost.txt",
+      "/workspace/lang-issue-work/perf-4412/main-7aded-merge/perf/12792810036/selfhost-size-report.txt"
+    ],
+    "strict": true,
+    "exit": 0
+  },
+  {
+    "command": [
+      "scripts/ci-check-perf",
+      ".github/profile-costs-baseline.txt",
+      "/workspace/lang-issue-work/perf-4412/main-7aded-merge/perf/12792810036/profile-costs-report.txt"
+    ],
+    "strict": true,
+    "exit": 0
+  }
+]

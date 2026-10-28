@@ -1,0 +1,30 @@
+=== RUN   TestImportFreeModulesDoNotDrift
+    self_host_import_free_drift_test.go:63: the import-free module set changed.
+          got:  [aborts aesref arm64_native builtins capvocab docprintable elf literate rtbundle rtbytecopy rttemplates rtwasm sourcepos ssadecrementcount ssafixed ssalargepushwidecases ssalargepushwideranges stdlib_methods typeinfo watbin wit_fern_world wit_proxy_world x86_native]
+          want: [aborts aesref arm64_native builtins capvocab docprintable elf literate rtbundle rtbytecopy rttemplates rtwasm sourcepos ssadecrementcount ssafixed stdlib_methods typeinfo watbin wit_fern_world wit_proxy_world x86_native]
+            These modules carry no `import` so e2ecompiler drivers can concatenate them with a
+            driver main() — see x86_native.fern's header. A module that GAINED an import breaks
+            those drivers; one that LOST its last import can join this list. Update wantFree and
+            say in the commit message which driver you checked.
+    self_host_import_free_drift_test.go:101: rows has 2 copies across import-free modules and they have DIVERGED (2 distinct bodies):
+                ssafixed           323cde22067e  25 code lines
+                ssalargepushwidecases bc4e6071fb61  4478 code lines
+            These modules cannot import each other — e2ecompiler drivers concatenate them with a
+            driver main(), which only works while they pull in nothing — so the duplication is
+            deliberate and the copies must be kept in step BY HAND. A fix applied to one and not
+            the others is silent: every driver still builds and the fixpoint still converges.
+            Apply the change to every copy. If the copies are genuinely meant to differ, add the
+            name to `allowed` above with the reason.
+    self_host_import_free_drift_test.go:101: valid has 2 copies across import-free modules and they have DIVERGED (2 distinct bodies):
+                ssadecrementcount  69f1aebdbfa4  3 code lines
+                ssalargepushwideranges de7df8094053  3 code lines
+            These modules cannot import each other — e2ecompiler drivers concatenate them with a
+            driver main(), which only works while they pull in nothing — so the duplication is
+            deliberate and the copies must be kept in step BY HAND. A fix applied to one and not
+            the others is silent: every driver still builds and the fixpoint still converges.
+            Apply the change to every copy. If the copies are genuinely meant to differ, add the
+            name to `allowed` above with the reason.
+--- FAIL: TestImportFreeModulesDoNotDrift (0.08s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	0.090s
+FAIL

@@ -4,6 +4,7 @@ import "std/http/forwarded";
 import "std/headers";
 import "std/mock_platform";
 import "std/net";
+import "std/result";
 
 function req(fields: string[]): HttpRequest {
   let r: HttpRequest = http.request("GET", "/");
@@ -73,9 +74,16 @@ function test_malformed(): test.TestOutcome {
   return test.assert_eq(got, "malformed malformed malformed malformed malformed malformed malformed malformed malformed ");
 }
 
+function test_node_parse_error(): test.TestOutcome {
+  let Err(e) = forwarded.node_parse("[2001:db8::1") else {
+    return test.fail("an unclosed bracket parsed");
+  };
+  return test.assert_eq(e.message(), "\"[2001:db8::1\" is not a valid Forwarded node value");
+}
+
 function test_write(): test.TestOutcome {
-  let h: forwarded.Hop = forwarded.Hop { ...forwarded.hop(), from: forwarded.node_parse("[2001:db8::1]:443"), host: Some("example.com"), proto: Some("https") };
-  let obf: forwarded.Hop = forwarded.Hop { ...forwarded.hop(), from: forwarded.node_parse("_x"), by: forwarded.node_parse("192.0.2.9") };
+  let h: forwarded.Hop = forwarded.Hop { ...forwarded.hop(), from: forwarded.node_parse("[2001:db8::1]:443").ok(), host: Some("example.com"), proto: Some("https") };
+  let obf: forwarded.Hop = forwarded.Hop { ...forwarded.hop(), from: forwarded.node_parse("_x").ok(), by: forwarded.node_parse("192.0.2.9").ok() };
   let text: string = h.to_string();
   return test.assert_eq(text + " | " + obf.to_string() + " | " + hops_of(["Forwarded", text]), "for=\"[2001:db8::1]:443\";host=example.com;proto=https | for=_x;by=192.0.2.9 | [[2001:db8::1]:443 - example.com https]");
 }
@@ -245,6 +253,7 @@ function main(): i32 {
   r = r.it("RFC 7239's examples", test_rfc_examples);
   r = r.it("quoted values and obfuscated ports", test_quoting);
   r = r.it("malformed elements leave the list unread", test_malformed);
+  r = r.it("node_parse names the value it refused", test_node_parse_error);
   r = r.it("an element written and read back", test_write);
   r = r.it("an untrusted peer is the client", test_untrusted_peer);
   r = r.it("one trusted proxy", test_one_proxy);

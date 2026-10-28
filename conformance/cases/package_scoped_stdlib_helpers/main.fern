@@ -22,8 +22,8 @@ function main(): i32 {
       }
     }
   }
-  let numbers: pvec.PVec[i32] = pvec.pvec_new();
-  let words: pvec.PVec[string] = pvec.pvec_new();
+  let numbers: pvec.PVec[i32] = pvec.new();
+  let words: pvec.PVec[string] = pvec.new();
   let i: i32 = 0;
   while (i < 96) {
     numbers = numbers.append(i);

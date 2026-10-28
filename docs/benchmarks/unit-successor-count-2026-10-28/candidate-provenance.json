@@ -1,0 +1,10 @@
+{
+  "source_base": "c63e488b4ed21b7161417382b8e4f7f6f05a5da5",
+  "common_producer": "/workspace/lang-issue-work/perf-4412/current-c63-baseline/stage1",
+  "baseline_stage2": "/workspace/lang-issue-work/perf-4412/current-c63-baseline/stage2",
+  "profile_instructions": 25020841026,
+  "successor_box_calls": 525401,
+  "hypothesis": "Enumerate the distinct successor count and scalar IDs without a temporary array. Preserve target order, duplicate-target collapse, and both verifier edge states.",
+  "status": "Private candidate, not adopted.",
+  "candidate_ssaunits_sha256": "7a0f49b0e49db79a7e59ce11af25c7c2da5b356ab3fcfdb18a6b6ade8901d247"
+}

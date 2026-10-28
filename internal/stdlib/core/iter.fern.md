@@ -83,6 +83,9 @@ pub trait Iterator[T] {
   function skip(self: Self, n: i32): Skipped[Self, T] {
     return Skipped[Self, T] { it: self, left: n };
   }
+  function step_by(self: Self, n: i32): Stepped[Self, T] {
+    return Stepped[Self, T] { it: self, step: n, first: true };
+  }
   function flat_map[U](self: Self, f: (T) => U[]): FlatMapped[Self, T, U] {
     let none: U[] = [];
     return FlatMapped[Self, T, U] { it: self, f: f, ys: none, at: 0 };
@@ -252,6 +255,38 @@ impl[I: Iterator[T], T] Iterator[T] for Skipped[I, T] {
       }
     }
     return None;
+  }
+}
+
+// A step below 1 yields nothing.
+pub struct Stepped[I, T] { it: I, step: i32, first: boolean }
+
+impl[I: Iterator[T], T] Iterator[T] for Stepped[I, T] {
+  function next(self: Stepped[I, T]): Option[(T, Stepped[I, T])] {
+    if (self.step <= 0) {
+      return None;
+    }
+    let cur: I = self.it;
+    let left: i32 = if (self.first) { 0 } else { self.step - 1 };
+    while (left > 0) {
+      match (cur.next()) {
+        Some(t) => {
+          cur = t.1;
+          left = left - 1;
+        },
+        None => {
+          return None;
+        }
+      }
+    }
+    match (cur.next()) {
+      Some(t) => {
+        return Some((t.0, Stepped[I, T] { it: t.1, step: self.step, first: false }));
+      },
+      None => {
+        return None;
+      }
+    }
   }
 }
 

@@ -1,0 +1,15 @@
+{
+  "command": [
+    "python3",
+    "-m",
+    "unittest",
+    "discover",
+    "-s",
+    "scripts",
+    "-p",
+    "test_large_free_wide_classes.py"
+  ],
+  "exit": 0,
+  "seconds": 1.76587321000261,
+  "source_head": "b72381ec50d4390a703d17096a4a61deae25cb2f"
+}

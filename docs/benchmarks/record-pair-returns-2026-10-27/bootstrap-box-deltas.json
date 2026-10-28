@@ -1,0 +1,4472 @@
+[
+  {
+    "caller": "???:__fn_ssaunits__block_claims",
+    "before": 130380,
+    "after": 0,
+    "delta": -130380
+  },
+  {
+    "caller": "???:__fn_semsource__build",
+    "before": 111859,
+    "after": 2847,
+    "delta": -109012
+  },
+  {
+    "caller": "???:__fn_asmcore__lab_new",
+    "before": 145404,
+    "after": 72766,
+    "delta": -72638
+  },
+  {
+    "caller": "???:__fn_parser__mono_expr",
+    "before": 122763,
+    "after": 61224,
+    "delta": -61539
+  },
+  {
+    "caller": "???:__fn_checker__check_stmt",
+    "before": 51873,
+    "after": 0,
+    "delta": -51873
+  },
+  {
+    "caller": "???:__fn_checker__view_callee",
+    "before": 30244,
+    "after": 0,
+    "delta": -30244
+  },
+  {
+    "caller": "???:__fn_parser__mono_call_expected",
+    "before": 31086,
+    "after": 1494,
+    "delta": -29592
+  },
+  {
+    "caller": "???:__fn_lift__desugar_lambda_returns",
+    "before": 36947,
+    "after": 14537,
+    "delta": -22410
+  },
+  {
+    "caller": "???:__fn_parser__mono_stmts",
+    "before": 20855,
+    "after": 0,
+    "delta": -20855
+  },
+  {
+    "caller": "???:__fn_checker__for_binding",
+    "before": 19029,
+    "after": 0,
+    "delta": -19029
+  },
+  {
+    "caller": "???:__fn_asmcore__add_string_lit",
+    "before": 18447,
+    "after": 0,
+    "delta": -18447
+  },
+  {
+    "caller": "???:__fn_ssarc__value_builtin_site",
+    "before": 12207,
+    "after": 0,
+    "delta": -12207
+  },
+  {
+    "caller": "???:__fn_ssarc__intrinsic_site",
+    "before": 12213,
+    "after": 6,
+    "delta": -12207
+  },
+  {
+    "caller": "???:__fn_ssarc__handle_site",
+    "before": 12207,
+    "after": 0,
+    "delta": -12207
+  },
+  {
+    "caller": "???:__fn_ssarc__raw_memory_site",
+    "before": 14367,
+    "after": 2162,
+    "delta": -12205
+  },
+  {
+    "caller": "???:__fn_semthread__key_of",
+    "before": 10263,
+    "after": 0,
+    "delta": -10263
+  },
+  {
+    "caller": "???:__fn_ssaunits__carried_params",
+    "before": 18686,
+    "after": 9343,
+    "delta": -9343
+  },
+  {
+    "caller": "???:__fn_lift__lift_call_arg",
+    "before": 7942,
+    "after": 0,
+    "delta": -7942
+  },
+  {
+    "caller": "???:__fn_asmcore__add_const_agg",
+    "before": 3006,
+    "after": 0,
+    "delta": -3006
+  },
+  {
+    "caller": "???:__fn_semsource__guard_gate",
+    "before": 3005,
+    "after": 0,
+    "delta": -3005
+  },
+  {
+    "caller": "???:__fn_semsource__lent_rereads",
+    "before": 2855,
+    "after": 0,
+    "delta": -2855
+  },
+  {
+    "caller": "???:__fn_lexical__resolve_func",
+    "before": 5422,
+    "after": 2711,
+    "delta": -2711
+  },
+  {
+    "caller": "???:__fn_ir__optimize_ops",
+    "before": 45630,
+    "after": 43250,
+    "delta": -2380
+  },
+  {
+    "caller": "???:__fn_asmcore__const_agg_pack",
+    "before": 2123,
+    "after": 0,
+    "delta": -2123
+  },
+  {
+    "caller": "???:__fn_irverifygate__verdict",
+    "before": 2071,
+    "after": 0,
+    "delta": -2071
+  },
+  {
+    "caller": "???:__fn_ssa__fold_extensions",
+    "before": 2071,
+    "after": 0,
+    "delta": -2071
+  },
+  {
+    "caller": "???:__fn_lift__lift_stmts",
+    "before": 1888,
+    "after": 0,
+    "delta": -1888
+  },
+  {
+    "caller": "???:__fn_ssaunits__successors",
+    "before": 527237,
+    "after": 525401,
+    "delta": -1836
+  },
+  {
+    "caller": "???:__fn_semsink__sink_rereads",
+    "before": 1992,
+    "after": 303,
+    "delta": -1689
+  },
+  {
+    "caller": "???:__fn_ssa__drop_low_wraps",
+    "before": 12008,
+    "after": 10339,
+    "delta": -1669
+  },
+  {
+    "caller": "???:__fern_alloc_bytes",
+    "before": 716434,
+    "after": 715417,
+    "delta": -1017
+  },
+  {
+    "caller": "???:__fn_seminline__drop_unread",
+    "before": 64408,
+    "after": 63640,
+    "delta": -768
+  },
+  {
+    "caller": "???:__fn_lift__lift_expr_walk",
+    "before": 6866,
+    "after": 6182,
+    "delta": -684
+  },
+  {
+    "caller": "???:__fn_parser__elb_mark_cond",
+    "before": 642,
+    "after": 54,
+    "delta": -588
+  },
+  {
+    "caller": "???:__fn_parser__inst_struct",
+    "before": 553,
+    "after": 0,
+    "delta": -553
+  },
+  {
+    "caller": "???:__fn_ssa_lift__lift_box_make",
+    "before": 23950,
+    "after": 23430,
+    "delta": -520
+  },
+  {
+    "caller": "???:__fn_ssa__formed_by",
+    "before": 391,
+    "after": 0,
+    "delta": -391
+  },
+  {
+    "caller": "???:__fn_semcse__replaced",
+    "before": 102177,
+    "after": 101844,
+    "delta": -333
+  },
+  {
+    "caller": "???:__fn_ssa_lift__lift_impl",
+    "before": 838150,
+    "after": 837834,
+    "delta": -316
+  },
+  {
+    "caller": "???:__fn_asm_ir__ssa_blab",
+    "before": 142145,
+    "after": 141918,
+    "delta": -227
+  },
+  {
+    "caller": "???:__fn_ssaunits__operation_supplies",
+    "before": 69540,
+    "after": 69327,
+    "delta": -213
+  },
+  {
+    "caller": "???:__fn_ssarc__reuse_construct",
+    "before": 12543,
+    "after": 12334,
+    "delta": -209
+  },
+  {
+    "caller": "???:__fn_asmcore__fresh_label",
+    "before": 196,
+    "after": 0,
+    "delta": -196
+  },
+  {
+    "caller": "???:__fn_ssa_lift__lift_prod_mem",
+    "before": 65188,
+    "after": 65022,
+    "delta": -166
+  },
+  {
+    "caller": "???:__fn_seminline__split_constructions",
+    "before": 232044,
+    "after": 231888,
+    "delta": -156
+  },
+  {
+    "caller": "???:__fn_ssarc__block_body",
+    "before": 3751,
+    "after": 3601,
+    "delta": -150
+  },
+  {
+    "caller": "???:__fern_arr_push_owned",
+    "before": 197790,
+    "after": 197662,
+    "delta": -128
+  },
+  {
+    "caller": "???:__fn_ir__op_call_direct",
+    "before": 60783,
+    "after": 60682,
+    "delta": -101
+  },
+  {
+    "caller": "???:__fn_ssaunits__needed_past_slot",
+    "before": 10067,
+    "after": 9976,
+    "delta": -91
+  },
+  {
+    "caller": "???:__fn_ssarc__field_get",
+    "before": 16560,
+    "after": 16470,
+    "delta": -90
+  },
+  {
+    "caller": "???:__fn_ssasem__borrow_parents",
+    "before": 44111,
+    "after": 44033,
+    "delta": -78
+  },
+  {
+    "caller": "???:__fn_ssarc__instruction_body",
+    "before": 226423,
+    "after": 226347,
+    "delta": -76
+  },
+  {
+    "caller": "???:__fn_ssarc__unless_unique",
+    "before": 2115,
+    "after": 2040,
+    "delta": -75
+  },
+  {
+    "caller": "???:__fn_ir__op_struct_make",
+    "before": 1092,
+    "after": 1027,
+    "delta": -65
+  },
+  {
+    "caller": "???:__fn_ssaunits__with_reuse",
+    "before": 48330,
+    "after": 48266,
+    "delta": -64
+  },
+  {
+    "caller": "???:__fn_ir__op_else",
+    "before": 19135,
+    "after": 19076,
+    "delta": -59
+  },
+  {
+    "caller": "???:__fn___fern_arr_slice",
+    "before": 164362,
+    "after": 164305,
+    "delta": -57
+  },
+  {
+    "caller": "???:__fn_rccertify__Abis__lookup",
+    "before": 56258,
+    "after": 56201,
+    "delta": -57
+  },
+  {
+    "caller": "???:__fn_lexer__tokenize_impl",
+    "before": 357871,
+    "after": 357816,
+    "delta": -55
+  },
+  {
+    "caller": "???:__fn_ssarc__classified_death",
+    "before": 1863,
+    "after": 1812,
+    "delta": -51
+  },
+  {
+    "caller": "???:__fn_ssarc__helper",
+    "before": 33969,
+    "after": 33927,
+    "delta": -42
+  },
+  {
+    "caller": "???:__fn_ssadeps__dominates",
+    "before": 41115,
+    "after": 41079,
+    "delta": -36
+  },
+  {
+    "caller": "???:__fn_flatten__disambiguate_methods",
+    "before": 31,
+    "after": 0,
+    "delta": -31
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_fields_except",
+    "before": 1059,
+    "after": 1029,
+    "delta": -30
+  },
+  {
+    "caller": "???:__fn_ir__op_end",
+    "before": 82621,
+    "after": 82591,
+    "delta": -30
+  },
+  {
+    "caller": "???:__fn_ssaunits__carried_pairs",
+    "before": 3683,
+    "after": 3653,
+    "delta": -30
+  },
+  {
+    "caller": "???:__fn_asm_ir__ssa_fuse",
+    "before": 31713,
+    "after": 31686,
+    "delta": -27
+  },
+  {
+    "caller": "???:__fn_ssarc__took_payload",
+    "before": 13695,
+    "after": 13673,
+    "delta": -22
+  },
+  {
+    "caller": "???:__fn_irverifyrc__verify_rc_fn",
+    "before": 2568,
+    "after": 2547,
+    "delta": -21
+  },
+  {
+    "caller": "???:__fn_ir__op_bin",
+    "before": 23550,
+    "after": 23529,
+    "delta": -21
+  },
+  {
+    "caller": "???:__fn_lift__lift_lambda_body_only",
+    "before": 20,
+    "after": 0,
+    "delta": -20
+  },
+  {
+    "caller": "???:__fn_ssa__refreshed_preds",
+    "before": 37890,
+    "after": 37872,
+    "delta": -18
+  },
+  {
+    "caller": "???:__fn_lift__lift_stmt",
+    "before": 6635,
+    "after": 6618,
+    "delta": -17
+  },
+  {
+    "caller": "???:__fn_ssarc__field_store",
+    "before": 829,
+    "after": 812,
+    "delta": -17
+  },
+  {
+    "caller": "???:__fn_ssarc__slot_token",
+    "before": 380,
+    "after": 364,
+    "delta": -16
+  },
+  {
+    "caller": "???:__fn_ir__sole$wrap",
+    "before": 366,
+    "after": 351,
+    "delta": -15
+  },
+  {
+    "caller": "???:__fn_asmcore__unit_float_abi",
+    "before": 13,
+    "after": 0,
+    "delta": -13
+  },
+  {
+    "caller": "???:__fn_asmcore__unit_leaves",
+    "before": 4155,
+    "after": 4142,
+    "delta": -13
+  },
+  {
+    "caller": "???:__fn_ssadeps__analyze",
+    "before": 4246,
+    "after": 4233,
+    "delta": -13
+  },
+  {
+    "caller": "???:__fn_semsource__anchor_module",
+    "before": 5708,
+    "after": 5695,
+    "delta": -13
+  },
+  {
+    "caller": "???:__fn_ssadeps__reachable_blocks",
+    "before": 14755,
+    "after": 14744,
+    "delta": -11
+  },
+  {
+    "caller": "???:__fn_ssa__rewrite_insts",
+    "before": 8,
+    "after": 0,
+    "delta": -8
+  },
+  {
+    "caller": "???:__fn_ssaunits__return_supplies",
+    "before": 18340,
+    "after": 18332,
+    "delta": -8
+  },
+  {
+    "caller": "???:__fn_ssalive__compute_kept",
+    "before": 1476,
+    "after": 1468,
+    "delta": -8
+  },
+  {
+    "caller": "???:__fern_arr_push_u8",
+    "before": 10475,
+    "after": 10467,
+    "delta": -8
+  },
+  {
+    "caller": "???:__fn_semsink__reads_of",
+    "before": 1476,
+    "after": 1468,
+    "delta": -8
+  },
+  {
+    "caller": "???:__fn_ssaunits__constants",
+    "before": 146,
+    "after": 139,
+    "delta": -7
+  },
+  {
+    "caller": "???:__fn_ssa_lift__lift_pop_push",
+    "before": 70038,
+    "after": 70033,
+    "delta": -5
+  },
+  {
+    "caller": "???:__fn_ssarc__zero_local",
+    "before": 216,
+    "after": 212,
+    "delta": -4
+  },
+  {
+    "caller": "???:__fn_ssarc__grow_call",
+    "before": 6276,
+    "after": 6272,
+    "delta": -4
+  },
+  {
+    "caller": "???:__fn_ssarc__held",
+    "before": 211,
+    "after": 208,
+    "delta": -3
+  },
+  {
+    "caller": "???:__fn_ssa__read_sites",
+    "before": 815,
+    "after": 812,
+    "delta": -3
+  },
+  {
+    "caller": "???:__fn_ssaunits__plan_analyzed",
+    "before": 335217,
+    "after": 335214,
+    "delta": -3
+  },
+  {
+    "caller": "???:__fn_ir__op_const_struct",
+    "before": 2995,
+    "after": 2992,
+    "delta": -3
+  },
+  {
+    "caller": "???:__fn_semsource__with_inferred_modes",
+    "before": 16588,
+    "after": 16586,
+    "delta": -2
+  },
+  {
+    "caller": "???:__fn_ssaunits__units_of",
+    "before": 2517,
+    "after": 2515,
+    "delta": -2
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_value",
+    "before": 1334,
+    "after": 1332,
+    "delta": -2
+  },
+  {
+    "caller": "???:__fn_ssarc__arr_get_op",
+    "before": 5513,
+    "after": 5512,
+    "delta": -1
+  },
+  {
+    "caller": "???:__fn_ir__op_load_i32",
+    "before": 4,
+    "after": 4,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__constfold__TargetAcc",
+    "before": 29026,
+    "after": 29026,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lexer__quoted_escape",
+    "before": 730,
+    "after": 730,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_consteval__number",
+    "before": 21732,
+    "after": 21732,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_modloader__read_module",
+    "before": 11,
+    "after": 11,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__rewrite_assoc_const_reads",
+    "before": 8950,
+    "after": 8950,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__ru_expr",
+    "before": 50104,
+    "after": 50104,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__fold_const_binaries",
+    "before": 310,
+    "after": 310,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__renumber",
+    "before": 175333,
+    "after": 175333,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__packed_bytes",
+    "before": 3,
+    "after": 3,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__annotate_module_in",
+    "before": 4453,
+    "after": 4453,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_treeshake__ts_named_types",
+    "before": 2647,
+    "after": 2647,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_block_body_mode",
+    "before": 1069,
+    "after": 1069,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__elb_mark_expr",
+    "before": 7685,
+    "after": 7685,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__desugar_ranges_one",
+    "before": 1177,
+    "after": 1177,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_constfold__fold_node$wrap",
+    "before": 1,
+    "after": 1,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__match_chain",
+    "before": 17288,
+    "after": 17288,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ircore__inline_tiny_leaves",
+    "before": 6447,
+    "after": 6447,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semlower__inferred_rows",
+    "before": 13,
+    "after": 13,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__e_binary_at",
+    "before": 23973,
+    "after": 23973,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__e065_call_roots",
+    "before": 16,
+    "after": 16,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__merge_arms",
+    "before": 40,
+    "after": 40,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__builtin_ctor_type",
+    "before": 1606,
+    "after": 1606,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__cs_stmt_at$wrap",
+    "before": 141588,
+    "after": 141588,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__rename_tv_annot",
+    "before": 666,
+    "after": 666,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_funary",
+    "before": 1,
+    "after": 1,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__s_assign",
+    "before": 17,
+    "after": 17,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__settle_int_tree",
+    "before": 497,
+    "after": 497,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__zero",
+    "before": 132,
+    "after": 132,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__vb_join",
+    "before": 127,
+    "after": 127,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__invoke_method",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__checker__LitRewrite",
+    "before": 1262,
+    "after": 1262,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__i32",
+    "before": 24834,
+    "after": 24834,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__member_type",
+    "before": 2396,
+    "after": 2396,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__s_unknown",
+    "before": 3727,
+    "after": 3727,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__checker__LitRewrite",
+    "before": 1186,
+    "after": 1186,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__generic_scalar_own_callback",
+    "before": 188,
+    "after": 188,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_asmcore__unknown_errors_stmts",
+    "before": 9896,
+    "after": 9896,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__rename_tv_stmts$clo0",
+    "before": 3756,
+    "after": 3756,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__Scope__call_param_types",
+    "before": 2458,
+    "after": 2458,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__value_arm",
+    "before": 16,
+    "after": 16,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_load_checked",
+    "before": 4446,
+    "after": 4446,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__slc_src_roots",
+    "before": 5470,
+    "after": 5470,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_by_position",
+    "before": 9,
+    "after": 9,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__astwalk__ConstSubst",
+    "before": 40902,
+    "after": 40902,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__own_diags",
+    "before": 9534,
+    "after": 9534,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__passthrough_array_literal",
+    "before": 4,
+    "after": 4,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__t_func_own",
+    "before": 60779,
+    "after": 60779,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__e049_diags",
+    "before": 8565,
+    "after": 8565,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__os_contracts",
+    "before": 4719,
+    "after": 4719,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_flatten__mangle_sigs",
+    "before": 19,
+    "after": 19,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_asm_ir__arr_push_labs",
+    "before": 2552,
+    "after": 2552,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__monomorphize_chain",
+    "before": 2631,
+    "after": 2631,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__e_ident",
+    "before": 69,
+    "after": 69,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__e_struct_update",
+    "before": 693,
+    "after": 693,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssasem__refused_analysis",
+    "before": 7232,
+    "after": 7232,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__needs_lit_settle",
+    "before": 9096,
+    "after": 9096,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__consume_array_suffix",
+    "before": 465,
+    "after": 465,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_flatten__resolve_imports",
+    "before": 76,
+    "after": 76,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__check_module_with_file",
+    "before": 118,
+    "after": 118,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_store_i64",
+    "before": 2,
+    "after": 2,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__terminate",
+    "before": 39951,
+    "after": 39951,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__Scope__bind_inferred",
+    "before": 1,
+    "after": 1,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__refuse",
+    "before": 8022,
+    "after": 8022,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_sempair__test_ids",
+    "before": 153,
+    "after": 153,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_treeshake__treeshake_roots",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_sempair__tests_on",
+    "before": 910,
+    "after": 910,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__trait_bound_method",
+    "before": 270,
+    "after": 270,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lexical__expr_at$wrap",
+    "before": 217299,
+    "after": 217299,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_seminline__aliases_of",
+    "before": 256,
+    "after": 256,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semscalarreturn__record_words",
+    "before": 124,
+    "after": 124,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__variant_ctor_type",
+    "before": 82,
+    "after": 82,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__value_chain_expr",
+    "before": 8,
+    "after": 8,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__bound_exprs$wrap",
+    "before": 32287,
+    "after": 32287,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__annot_of_stmt$wrap",
+    "before": 51908,
+    "after": 51908,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lexical__stmt_at$wrap",
+    "before": 58012,
+    "after": 58012,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssasem__rewrite_block",
+    "before": 177,
+    "after": 177,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__e049_expr_lambdas",
+    "before": 33411,
+    "after": 33411,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__append_helpers",
+    "before": 1766,
+    "after": 1766,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ircore__counted_release_body",
+    "before": 880,
+    "after": 880,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__loop_can_break",
+    "before": 56,
+    "after": 56,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_governing_manifest",
+    "before": 31,
+    "after": 31,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__qualrefs_expr",
+    "before": 42390,
+    "after": 42390,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__e065_return_roots",
+    "before": 2735,
+    "after": 2735,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_physicalbody__lowered_origins",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__rewrite_assoc_const_reads",
+    "before": 8894,
+    "after": 8894,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__elb_mark_stmt",
+    "before": 2479,
+    "after": 2479,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__gcall_of",
+    "before": 4320,
+    "after": 4320,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn___fern_read_file_bytes_u8",
+    "before": 2,
+    "after": 2,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__lift_lambdas_view_typed",
+    "before": 6747,
+    "after": 6747,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_constfold__elided_lambda_captures$wrap",
+    "before": 69,
+    "after": 69,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__mx_fold_arms",
+    "before": 125,
+    "after": 125,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__module_env",
+    "before": 19792,
+    "after": 19792,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semlower__helper_origins",
+    "before": 1320,
+    "after": 1320,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__ensure_annotated",
+    "before": 32,
+    "after": 32,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_physicalbody__collection",
+    "before": 24,
+    "after": 24,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_irtables__lowered_result",
+    "before": 2123,
+    "after": 2123,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__known_fields",
+    "before": 34,
+    "after": 34,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_type_param_list",
+    "before": 144,
+    "after": 144,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__check_module_pass",
+    "before": 59767,
+    "after": 59767,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__lift__InlineCloAcc",
+    "before": 668,
+    "after": 668,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__astwalk__ConstSubst",
+    "before": 58452,
+    "after": 58452,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__ret_diags_in_exprs",
+    "before": 47277,
+    "after": 47277,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_asm_ir__ssa_block_inst",
+    "before": 257,
+    "after": 257,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__borrowed_with_base",
+    "before": 9,
+    "after": 9,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__produce",
+    "before": 66965,
+    "after": 66965,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__handle_contracts",
+    "before": 5304,
+    "after": 5304,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_asmcore__ty_from_ref",
+    "before": 73,
+    "after": 73,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_constfold__fold_module",
+    "before": 4453,
+    "after": 4453,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__with_spellings",
+    "before": 57,
+    "after": 57,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_opt_tag",
+    "before": 57,
+    "after": 57,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_int_cast",
+    "before": 3180,
+    "after": 3180,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fern_args",
+    "before": 1,
+    "after": 1,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_asmcore__struct_local_tag",
+    "before": 4137,
+    "after": 4137,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__whole_focus",
+    "before": 14,
+    "after": 14,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__route_inherited_defaults",
+    "before": 200,
+    "after": 200,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_physicalbody__abis",
+    "before": 8188,
+    "after": 8188,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__binary_diags_typed",
+    "before": 13614,
+    "after": 13614,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__lexical__Scope",
+    "before": 8696,
+    "after": 8696,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__e044_expr",
+    "before": 47360,
+    "after": 47360,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__lit_stmt",
+    "before": 34,
+    "after": 34,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_decltypes__fn_param_from_type",
+    "before": 10068,
+    "after": 10068,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_constfold__to_expr$wrap",
+    "before": 208505,
+    "after": 208505,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_asmcore__infer_expr_type",
+    "before": 78,
+    "after": 78,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__Scope__lookup_method",
+    "before": 22472,
+    "after": 22472,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt",
+    "before": 100604,
+    "after": 100604,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_let_stmt",
+    "before": 9750,
+    "after": 9750,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_rtmodule__load_with",
+    "before": 48,
+    "after": 48,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_asmcore__infer_call_named_type",
+    "before": 41,
+    "after": 41,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__mono_stmt",
+    "before": 72272,
+    "after": 72272,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__nested_fns",
+    "before": 160,
+    "after": 160,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__written_fields",
+    "before": 1478,
+    "after": 1478,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__checker__LitRewrite",
+    "before": 536,
+    "after": 536,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__typed_variants",
+    "before": 63,
+    "after": 63,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__annot_of_expr$wrap",
+    "before": 528,
+    "after": 528,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__i32",
+    "before": 29033,
+    "after": 29033,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__Scope__lookup_union",
+    "before": 134348,
+    "after": 134348,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__settled_payload",
+    "before": 91,
+    "after": 91,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_f64_from_bits",
+    "before": 1,
+    "after": 1,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssaunits__no_fresh",
+    "before": 2469,
+    "after": 2469,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_asmcore__new_state",
+    "before": 4,
+    "after": 4,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__header_phis",
+    "before": 15590,
+    "after": 15590,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__lu_last_use_args",
+    "before": 4665,
+    "after": 4665,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__s_var_at",
+    "before": 581,
+    "after": 581,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__bc_expr$wrap",
+    "before": 40,
+    "after": 40,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_block_or_stmt",
+    "before": 3,
+    "after": 3,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__settle_to_name",
+    "before": 6828,
+    "after": 6828,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_match_arms",
+    "before": 9778,
+    "after": 9778,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_entry_sources",
+    "before": 3,
+    "after": 3,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__needs_pretype_or_rescope",
+    "before": 8962,
+    "after": 8962,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__mono_infer",
+    "before": 30,
+    "after": 30,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__splice_stmts_with_lambda$clo0",
+    "before": 88,
+    "after": 88,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_variant_is",
+    "before": 3222,
+    "after": 3222,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__body_address",
+    "before": 1338,
+    "after": 1338,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_decltypes__fn_param_decl",
+    "before": 80,
+    "after": 80,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__make_wrap_named_func",
+    "before": 950,
+    "after": 950,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssasem__phi_over",
+    "before": 640,
+    "after": 640,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__type_names",
+    "before": 36312,
+    "after": 36312,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_util__name_index",
+    "before": 128268,
+    "after": 128268,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssasem__substitute",
+    "before": 92874,
+    "after": 92874,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__MEnv__ebind",
+    "before": 26284,
+    "after": 26284,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__erase_view_module",
+    "before": 193,
+    "after": 193,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__reach_module",
+    "before": 64,
+    "after": 64,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__with_sugar_origin",
+    "before": 855,
+    "after": 855,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__lift__InlineCloAcc",
+    "before": 1974,
+    "after": 1974,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__intrinsic_params",
+    "before": 157,
+    "after": 157,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr",
+    "before": 211557,
+    "after": 211557,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_stmt_nested",
+    "before": 11262,
+    "after": 11262,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_sembytecopy__no_loop",
+    "before": 828,
+    "after": 828,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semscalarreturn__read_of_parts",
+    "before": 38,
+    "after": 38,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_const_f64_text",
+    "before": 1,
+    "after": 1,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__slc_walk",
+    "before": 94019,
+    "after": 94019,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__box_scan_stmts",
+    "before": 7515,
+    "after": 7515,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__open",
+    "before": 37357,
+    "after": 37357,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__scope_variant_sig",
+    "before": 174,
+    "after": 174,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_constfold__to_keep_stmt$wrap",
+    "before": 43836,
+    "after": 43836,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__i32",
+    "before": 42896,
+    "after": 42896,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__unsettled_marked_at",
+    "before": 32,
+    "after": 32,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semlower__runtime_module_lowering$wrap",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_embed__fa_keep_stmt$wrap",
+    "before": 43836,
+    "after": 43836,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssasem__anchored_of",
+    "before": 6069,
+    "after": 6069,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lexer__decode_utf8",
+    "before": 3,
+    "after": 3,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__e_number",
+    "before": 34,
+    "after": 34,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semlower__pure_rows",
+    "before": 14,
+    "after": 14,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semreach__reach",
+    "before": 1492,
+    "after": 1492,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__finish_arm",
+    "before": 2244,
+    "after": 2244,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lexer__utf8_encode",
+    "before": 713,
+    "after": 713,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__e049_body_stores",
+    "before": 131,
+    "after": 131,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_str_data",
+    "before": 235,
+    "after": 235,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__produce_module",
+    "before": 8593,
+    "after": 8593,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_alloc_u8",
+    "before": 7,
+    "after": 7,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__settles_to",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__Scope__lookup_sig",
+    "before": 158575,
+    "after": 158575,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_queue_imports",
+    "before": 31,
+    "after": 31,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__destination_type",
+    "before": 6,
+    "after": 6,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssabounds__grouped_reads",
+    "before": 404,
+    "after": 404,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__t_unknown",
+    "before": 40330,
+    "after": 40330,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_str_eq",
+    "before": 2525,
+    "after": 2525,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_field_type",
+    "before": 1008,
+    "after": 1008,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_irtables__sig_reg_of",
+    "before": 35,
+    "after": 35,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__ow_own_call",
+    "before": 57684,
+    "after": 57684,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__elb_loop_match",
+    "before": 1305,
+    "after": 1305,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__lu_fact_stmt",
+    "before": 11875,
+    "after": 11875,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_asmcore__check_stmts",
+    "before": 3022,
+    "after": 3022,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__arm_body",
+    "before": 8640,
+    "after": 8640,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_treeshake__treeshake",
+    "before": 2635,
+    "after": 2635,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_load_bundle",
+    "before": 1429,
+    "after": 1429,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_module_flagged",
+    "before": 5547,
+    "after": 5547,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_return",
+    "before": 6049,
+    "after": 6049,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__splice_own_children",
+    "before": 18220,
+    "after": 18220,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_stmt",
+    "before": 43570,
+    "after": 43570,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__lambda_exits",
+    "before": 20,
+    "after": 20,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__parts",
+    "before": 4322,
+    "after": 4322,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__e_struct_lit",
+    "before": 1300,
+    "after": 1300,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__lit_signs_stmts$wrap0",
+    "before": 453,
+    "after": 453,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__constfold__TargetAcc",
+    "before": 48726,
+    "after": 48726,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__slc_expr_roots",
+    "before": 1460,
+    "after": 1460,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_irtables__lowered_state",
+    "before": 2123,
+    "after": 2123,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__stmts_mention",
+    "before": 153,
+    "after": 153,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__s_if",
+    "before": 34,
+    "after": 34,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__settle_to_type",
+    "before": 186,
+    "after": 186,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssaprepare__finish_formed",
+    "before": 732,
+    "after": 732,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_module_bodies",
+    "before": 10328,
+    "after": 10328,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__elb_assigns_stmt",
+    "before": 3922,
+    "after": 3922,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__embed__FoldAcc",
+    "before": 48725,
+    "after": 48725,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__lit_type_demand",
+    "before": 6,
+    "after": 6,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__resolved_checked",
+    "before": 37,
+    "after": 37,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_sempair__term_targets",
+    "before": 145,
+    "after": 145,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_block_items",
+    "before": 26,
+    "after": 26,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__e065_stmts",
+    "before": 36489,
+    "after": 36489,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__pattern_if_chain",
+    "before": 855,
+    "after": 855,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__sole_owned_base",
+    "before": 306,
+    "after": 306,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__trait_assoc_req",
+    "before": 20,
+    "after": 20,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_literate__parse_pieces",
+    "before": 15711,
+    "after": 15711,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__c_call_contracts",
+    "before": 585,
+    "after": 585,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__lift_iife_body$clo1",
+    "before": 138,
+    "after": 138,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__ru_borrow",
+    "before": 114724,
+    "after": 114724,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__valueless_branch_tail",
+    "before": 3738,
+    "after": 3738,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_destructure_names",
+    "before": 581,
+    "after": 581,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__build_lower",
+    "before": 45796,
+    "after": 45796,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__release_helper",
+    "before": 440,
+    "after": 440,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__lower",
+    "before": 3366,
+    "after": 3366,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__destructure_tuple",
+    "before": 1878,
+    "after": 1878,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__s_if_chained",
+    "before": 16932,
+    "after": 16932,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__uninferred_method_diags",
+    "before": 1,
+    "after": 1,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__os_floor_contracts",
+    "before": 5109,
+    "after": 5109,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semscalarreturn__contract",
+    "before": 132,
+    "after": 132,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_load_i64",
+    "before": 4,
+    "after": 4,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__hl_rewrite",
+    "before": 2636,
+    "after": 2636,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__e049_check_assigns",
+    "before": 290,
+    "after": 290,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__embed__FoldAcc",
+    "before": 29026,
+    "after": 29026,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__closure_lift_one",
+    "before": 1946,
+    "after": 1946,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__call_ret_type",
+    "before": 218,
+    "after": 218,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__field_read",
+    "before": 17129,
+    "after": 17129,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__constfold__TargetAcc",
+    "before": 30859,
+    "after": 30859,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__claim_method_name",
+    "before": 4390,
+    "after": 4390,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__parser__BoundUse",
+    "before": 40,
+    "after": 40,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__inject_builtin_enums",
+    "before": 704,
+    "after": 704,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_rcmemo__off",
+    "before": 15,
+    "after": 15,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__func_ret_type",
+    "before": 901,
+    "after": 901,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__settle_stmt",
+    "before": 97096,
+    "after": 97096,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__settled_in",
+    "before": 1,
+    "after": 1,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_constfold__prune_literal_branches",
+    "before": 4441,
+    "after": 4441,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__type_from_name_subst",
+    "before": 3651,
+    "after": 3651,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__erase_view_expr$wrap",
+    "before": 5401,
+    "after": 5401,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_type_ref",
+    "before": 503957,
+    "after": 503957,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__erase_view_stmt$wrap",
+    "before": 1261,
+    "after": 1261,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_const_i64_text",
+    "before": 88,
+    "after": 88,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__e_lambda_at",
+    "before": 90,
+    "after": 90,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssaquotient__shared_quotients",
+    "before": 102,
+    "after": 102,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__settle_module",
+    "before": 8950,
+    "after": 8950,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__erase_view_struct",
+    "before": 5697,
+    "after": 5697,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__lit_bound_typevar",
+    "before": 16,
+    "after": 16,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__unary_result_type",
+    "before": 475,
+    "after": 475,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__hold_token",
+    "before": 184,
+    "after": 184,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__binary_result_type",
+    "before": 32,
+    "after": 32,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__bc_stmt$wrap",
+    "before": 40,
+    "after": 40,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__empty_array_positions",
+    "before": 6232,
+    "after": 6232,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__parser__TvScope",
+    "before": 564,
+    "after": 564,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__slc_agg_roots",
+    "before": 340,
+    "after": 340,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__lit_rewrite_expr$wrap",
+    "before": 6652,
+    "after": 6652,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_flatten__imported_enums",
+    "before": 2,
+    "after": 2,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__ms_module",
+    "before": 1,
+    "after": 1,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__lexical__Scope",
+    "before": 24289,
+    "after": 24289,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_postfix",
+    "before": 57372,
+    "after": 57372,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__new_scope_full",
+    "before": 103628,
+    "after": 103628,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn___fern_io_error",
+    "before": 276,
+    "after": 276,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_treeshake__refset_add",
+    "before": 5954,
+    "after": 5954,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__inst_stmts",
+    "before": 5241,
+    "after": 5241,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semthread__test_of",
+    "before": 25190,
+    "after": 25190,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_pattern_if_branches",
+    "before": 855,
+    "after": 855,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_seminline__splice_calls",
+    "before": 61637,
+    "after": 61637,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__iter_subject",
+    "before": 1506,
+    "after": 1506,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_run_with_gate",
+    "before": 4449,
+    "after": 4449,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__slc_string_roots",
+    "before": 282,
+    "after": 282,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__lift_iife_body",
+    "before": 168,
+    "after": 168,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__elide_len_bounded_body",
+    "before": 1727,
+    "after": 1727,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssa__leaves_of",
+    "before": 15,
+    "after": 15,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__settle_expr",
+    "before": 178515,
+    "after": 178515,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__view_index",
+    "before": 28,
+    "after": 28,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__erase_view_params",
+    "before": 12331,
+    "after": 12331,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__e_call",
+    "before": 18,
+    "after": 18,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lexical__pattern",
+    "before": 3110,
+    "after": 3110,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_consteval__settle",
+    "before": 21702,
+    "after": 21702,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__tv_obj_expr$wrap",
+    "before": 4153,
+    "after": 4153,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__leave_loop",
+    "before": 759,
+    "after": 759,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__lane_contracts",
+    "before": 1248,
+    "after": 1248,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_rcsigs__inert",
+    "before": 260,
+    "after": 260,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_treeshake__refset_of",
+    "before": 26,
+    "after": 26,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__cs_expr_at$wrap",
+    "before": 441835,
+    "after": 441835,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__lift_iife_arm_values$clo0",
+    "before": 236,
+    "after": 236,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssa_lift__kind_table",
+    "before": 56,
+    "after": 56,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__arr_set_op",
+    "before": 152,
+    "after": 152,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__ilc_stmt_at",
+    "before": 5339,
+    "after": 5339,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__calls_a_generic",
+    "before": 4416,
+    "after": 4416,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_literate__parse",
+    "before": 1106,
+    "after": 1106,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssaunits__supply_table",
+    "before": 2415,
+    "after": 2415,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__gcall_open_tvars",
+    "before": 10,
+    "after": 10,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__mfns_of",
+    "before": 59,
+    "after": 59,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__e021_dyn_sites",
+    "before": 26116,
+    "after": 26116,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__type_from_ref_subst",
+    "before": 2592,
+    "after": 2592,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssaunits__use_ids",
+    "before": 32609,
+    "after": 32609,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__module_with_builtins_typed",
+    "before": 7914,
+    "after": 7914,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__rigid_tparams",
+    "before": 14450,
+    "after": 14450,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssaunits__verify_planned",
+    "before": 45143,
+    "after": 45143,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__byte_copy_loops",
+    "before": 104,
+    "after": 104,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_irtables__fn_sig_index",
+    "before": 2860,
+    "after": 2860,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__enum_sig",
+    "before": 199,
+    "after": 199,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__inst_stmt$clo0",
+    "before": 1248,
+    "after": 1248,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__tv_obj_ident",
+    "before": 4,
+    "after": 4,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__match_diags",
+    "before": 47628,
+    "after": 47628,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__stamp_fn_local_types_stmts",
+    "before": 13536,
+    "after": 13536,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_imported_parse_findings",
+    "before": 30,
+    "after": 30,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssaunits__with_row",
+    "before": 617,
+    "after": 617,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_consteval__elements",
+    "before": 15447,
+    "after": 15447,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__t_union_g",
+    "before": 3085,
+    "after": 3085,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_mismatch",
+    "before": 3,
+    "after": 3,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__lret_expr",
+    "before": 20,
+    "after": 20,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_type_ident_led",
+    "before": 25759,
+    "after": 25759,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__astwalk__ConstSubst",
+    "before": 10970,
+    "after": 10970,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__borrowed_push",
+    "before": 486,
+    "after": 486,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssa__regalloc_linear_fixed",
+    "before": 6213,
+    "after": 6213,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_seminline__fields_all",
+    "before": 252,
+    "after": 252,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__stmts_call_diags",
+    "before": 4190,
+    "after": 4190,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__mx_elem_store",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_asm_ir__emit_ssa_allocated_x86",
+    "before": 4142,
+    "after": 4142,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_sembytecopy__index",
+    "before": 3,
+    "after": 3,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__elb_recurse_stmt",
+    "before": 13545,
+    "after": 13545,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ircore__body_for_emit",
+    "before": 2071,
+    "after": 2071,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__laid_variants",
+    "before": 19053,
+    "after": 19053,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssasem__bytes_roots",
+    "before": 3,
+    "after": 3,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__stamp_value_block_ret",
+    "before": 1655,
+    "after": 1655,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__lift__InlineCloAcc",
+    "before": 2080,
+    "after": 2080,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__lift_iife_arm_values",
+    "before": 112,
+    "after": 112,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__settle_literal_locals_in",
+    "before": 54,
+    "after": 54,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__try_fn_field_value",
+    "before": 977,
+    "after": 977,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lexer__ident_tok",
+    "before": 187832,
+    "after": 187832,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lexical__params",
+    "before": 6051,
+    "after": 6051,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__parser__TvScope",
+    "before": 1206,
+    "after": 1206,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__rename_fn_type_vars",
+    "before": 340,
+    "after": 340,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__builtin_contracts",
+    "before": 8658,
+    "after": 8658,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssa__tested",
+    "before": 957,
+    "after": 957,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__bind_stmt",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssaunits__built_fields",
+    "before": 12754,
+    "after": 12754,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__add_builtin_stream",
+    "before": 88,
+    "after": 88,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__unary",
+    "before": 358,
+    "after": 358,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_let_else_tail",
+    "before": 52,
+    "after": 52,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__t_union",
+    "before": 39333,
+    "after": 39333,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_irtables__struct_tab",
+    "before": 16,
+    "after": 16,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semfuse__context",
+    "before": 13,
+    "after": 13,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_branch_body",
+    "before": 11,
+    "after": 11,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__raw_floor_sigs",
+    "before": 4674,
+    "after": 4674,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssaprepare__with_selects",
+    "before": 4161,
+    "after": 4161,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ircore__release_entry",
+    "before": 660,
+    "after": 660,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__fold_lit_cond",
+    "before": 3998,
+    "after": 3998,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_call_indirect_sig",
+    "before": 86,
+    "after": 86,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__container",
+    "before": 1260,
+    "after": 1260,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__strength_pair",
+    "before": 18,
+    "after": 18,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__lexical__Scope",
+    "before": 60901,
+    "after": 60901,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__widen_binary_operand",
+    "before": 338,
+    "after": 338,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_exit",
+    "before": 10,
+    "after": 10,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_replaced",
+    "before": 93,
+    "after": 93,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__address_widen",
+    "before": 16,
+    "after": 16,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__own_copied",
+    "before": 833,
+    "after": 833,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__arr_make_op",
+    "before": 441,
+    "after": 441,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__ow_type_namespaces",
+    "before": 5308,
+    "after": 5308,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lexer__number_tok",
+    "before": 19025,
+    "after": 19025,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_pattern_if",
+    "before": 3420,
+    "after": 3420,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__ilc_keep_expr$wrap",
+    "before": 5,
+    "after": 5,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__me_mono_enums",
+    "before": 2,
+    "after": 2,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_record_fields",
+    "before": 2794,
+    "after": 2794,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_const_func",
+    "before": 392,
+    "after": 392,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_const_str",
+    "before": 12615,
+    "after": 12615,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__drops_less",
+    "before": 48,
+    "after": 48,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__merge_env",
+    "before": 61747,
+    "after": 61747,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__cell_site",
+    "before": 33,
+    "after": 33,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__ow_value_arms",
+    "before": 71,
+    "after": 71,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__bound_method",
+    "before": 270,
+    "after": 270,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__annotate_stmt",
+    "before": 48699,
+    "after": 48699,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__intrinsic_contracts",
+    "before": 11076,
+    "after": 11076,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_value_inline",
+    "before": 440,
+    "after": 440,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssa__select_run",
+    "before": 656,
+    "after": 656,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__call",
+    "before": 9291,
+    "after": 9291,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__slit_diags",
+    "before": 56131,
+    "after": 56131,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_pattern",
+    "before": 3277,
+    "after": 3277,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__desugar_trait_params",
+    "before": 256,
+    "after": 256,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__add_builtin_struct2",
+    "before": 132,
+    "after": 132,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__tv_obj_stmt$wrap",
+    "before": 1640,
+    "after": 1640,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_raw_load8",
+    "before": 192,
+    "after": 192,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_decltypes__retained_type",
+    "before": 265,
+    "after": 265,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_flatten__bundle_with_prefixes",
+    "before": 114,
+    "after": 114,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssasem__contracts_of",
+    "before": 26,
+    "after": 26,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__collect",
+    "before": 4322,
+    "after": 4322,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__t_tuple",
+    "before": 10324,
+    "after": 10324,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_irverifygate__open_memo",
+    "before": 1,
+    "after": 1,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__settled",
+    "before": 10612,
+    "after": 10612,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__settle_lit_body",
+    "before": 162,
+    "after": 162,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semreach__walk",
+    "before": 7833,
+    "after": 7833,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__annotate_lambda_expr",
+    "before": 303,
+    "after": 303,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__s_var",
+    "before": 81,
+    "after": 81,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semlower__declined_state",
+    "before": 1164,
+    "after": 1164,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_param",
+    "before": 8216,
+    "after": 8216,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semlower__substitution",
+    "before": 4004,
+    "after": 4004,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__first_returned",
+    "before": 304,
+    "after": 304,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_literate__emit_line",
+    "before": 15488,
+    "after": 15488,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__e049_lambda_locals_nt",
+    "before": 136,
+    "after": 136,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semscalarreturn__call",
+    "before": 108,
+    "after": 108,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssasem__env_type",
+    "before": 64,
+    "after": 64,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__refused",
+    "before": 26,
+    "after": 26,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__into_address",
+    "before": 18,
+    "after": 18,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_str_index",
+    "before": 239,
+    "after": 239,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__expr",
+    "before": 614,
+    "after": 614,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__t_struct",
+    "before": 47114,
+    "after": 47114,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__destr_marker_split",
+    "before": 55099,
+    "after": 55099,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__ow_moved_add",
+    "before": 2146,
+    "after": 2146,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semscalarreturn__lanes_of",
+    "before": 6,
+    "after": 6,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssalive__compute_checked",
+    "before": 7281,
+    "after": 7281,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semlower__rows_planned",
+    "before": 4381,
+    "after": 4381,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__scalar",
+    "before": 39,
+    "after": 39,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__handle_leaves",
+    "before": 139,
+    "after": 139,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__expr_can_break",
+    "before": 20,
+    "after": 20,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__lu_fact_expr$wrap",
+    "before": 120459,
+    "after": 120459,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_platforms__for_target",
+    "before": 5,
+    "after": 5,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__expr_type",
+    "before": 8,
+    "after": 8,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semrecords__no_records",
+    "before": 6859,
+    "after": 6859,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__builtin_variants",
+    "before": 409,
+    "after": 409,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_read_flag",
+    "before": 4,
+    "after": 4,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__ow_count_ident",
+    "before": 691,
+    "after": 691,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__bound_type",
+    "before": 10,
+    "after": 10,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__type_from_ref_names",
+    "before": 1601,
+    "after": 1601,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_modloader__tangle_module",
+    "before": 38,
+    "after": 38,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__ilc_expr_at",
+    "before": 14623,
+    "after": 14623,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__t_struct_g",
+    "before": 147,
+    "after": 147,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_typeinfo__lane_builtin_params",
+    "before": 4994,
+    "after": 4994,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__const_propagate",
+    "before": 2388,
+    "after": 2388,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_asmcore__EmitState__finish",
+    "before": 1339,
+    "after": 1339,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__slice_parts",
+    "before": 320,
+    "after": 320,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__settle_const_types",
+    "before": 63,
+    "after": 63,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__method_binding",
+    "before": 20054,
+    "after": 20054,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semrecords__records_of",
+    "before": 2955,
+    "after": 2955,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__erase_view_funcs",
+    "before": 5616,
+    "after": 5616,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_params",
+    "before": 8114,
+    "after": 8114,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semlower__no_reuse",
+    "before": 120,
+    "after": 120,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__arm",
+    "before": 25364,
+    "after": 25364,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__finalize_impl_method",
+    "before": 244,
+    "after": 244,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ircore__sub_lifted",
+    "before": 193,
+    "after": 193,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__enum_members",
+    "before": 102716,
+    "after": 102716,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_const_bytes",
+    "before": 4,
+    "after": 4,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__collect_calls_stmt$clo0",
+    "before": 20435,
+    "after": 20435,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__intrinsic_result",
+    "before": 280,
+    "after": 280,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__dl_expr_kids",
+    "before": 882,
+    "after": 882,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_primary_nested",
+    "before": 37972,
+    "after": 37972,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_sempair__repointed",
+    "before": 288,
+    "after": 288,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lexical__bind",
+    "before": 17619,
+    "after": 17619,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_constfold__prune_arm",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__schema_of",
+    "before": 369,
+    "after": 369,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__count_ident_expr",
+    "before": 17512,
+    "after": 17512,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__stmts_assign_diags_mode",
+    "before": 12493,
+    "after": 12493,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_rtmodule__load_files",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__clone_bg",
+    "before": 491,
+    "after": 491,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__s_for",
+    "before": 1176,
+    "after": 1176,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semlower__produced_body",
+    "before": 1164,
+    "after": 1164,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__no_helpers",
+    "before": 13,
+    "after": 13,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__view_parts",
+    "before": 532,
+    "after": 532,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__e_unary_at",
+    "before": 3586,
+    "after": 3586,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__define",
+    "before": 233920,
+    "after": 233920,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_asmcore__entry_check_errors",
+    "before": 2712,
+    "after": 2712,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__stmt_ret_diags",
+    "before": 5,
+    "after": 5,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_expr",
+    "before": 174340,
+    "after": 174340,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__cond",
+    "before": 37844,
+    "after": 37844,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__e_ident_at",
+    "before": 97652,
+    "after": 97652,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__bound_type",
+    "before": 8920,
+    "after": 8920,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__constfold__TargetAcc",
+    "before": 1,
+    "after": 1,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__e_call_at",
+    "before": 24,
+    "after": 24,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_rtmodule__load_bound",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__with_update",
+    "before": 386,
+    "after": 386,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_visibility__vis_ctx",
+    "before": 31,
+    "after": 31,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_optbisect__switches",
+    "before": 1735,
+    "after": 1735,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_seminline__swapped_blocks",
+    "before": 2606,
+    "after": 2606,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__ow_count_field_reads",
+    "before": 92,
+    "after": 92,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_func_decl",
+    "before": 4454,
+    "after": 4454,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__lit_rewrite_stmt$wrap",
+    "before": 1164,
+    "after": 1164,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__i32",
+    "before": 32,
+    "after": 32,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__subst_expr",
+    "before": 6923,
+    "after": 6923,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__Scope__array_recv_method",
+    "before": 62,
+    "after": 62,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_str_from_bytes",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__ow_stmts",
+    "before": 34931,
+    "after": 34931,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__loop_diags",
+    "before": 33607,
+    "after": 33607,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__with_drop_helpers",
+    "before": 4246,
+    "after": 4246,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__slc_call_roots",
+    "before": 2240,
+    "after": 2240,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__substitute_consts",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_irverifygate__gate_unreported",
+    "before": 13,
+    "after": 13,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__subst_stmts",
+    "before": 8440,
+    "after": 8440,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_sempair__arm_return",
+    "before": 172,
+    "after": 172,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__lu_fact_stmt$wrap",
+    "before": 21605,
+    "after": 21605,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssaunits__payload_takes",
+    "before": 2415,
+    "after": 2415,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__fn_param_from_spelling",
+    "before": 6620,
+    "after": 6620,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__collect_calls_stmt",
+    "before": 39184,
+    "after": 39184,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_children",
+    "before": 2961,
+    "after": 2961,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__indirect_call",
+    "before": 89,
+    "after": 89,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_raw_store_ptr",
+    "before": 32,
+    "after": 32,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_main",
+    "before": 1,
+    "after": 1,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__s_assign_at",
+    "before": 8353,
+    "after": 8353,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__schemas",
+    "before": 2970,
+    "after": 2970,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__e_binary",
+    "before": 51,
+    "after": 51,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__with_set_op",
+    "before": 50,
+    "after": 50,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__e049_scope",
+    "before": 10729,
+    "after": 10729,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__env_type",
+    "before": 184,
+    "after": 184,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_match_expr",
+    "before": 267,
+    "after": 267,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_consteval__evaluate",
+    "before": 9462,
+    "after": 9462,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_rcsigs__sig_also",
+    "before": 26,
+    "after": 26,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn___fern_env",
+    "before": 3,
+    "after": 3,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssaunits__refused",
+    "before": 1164,
+    "after": 1164,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__lu_dies",
+    "before": 85,
+    "after": 85,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_flatten__import_graph",
+    "before": 2,
+    "after": 2,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_sempair__word_types",
+    "before": 817,
+    "after": 817,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__capture_scalar_words",
+    "before": 4,
+    "after": 4,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn___fern_read_file",
+    "before": 307,
+    "after": 307,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__payload_variant",
+    "before": 1674,
+    "after": 1674,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_arr_push",
+    "before": 847,
+    "after": 847,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_flatten__cycle_from",
+    "before": 29,
+    "after": 29,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__e065_string_src_roots",
+    "before": 4115,
+    "after": 4115,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__e060_e062_diags",
+    "before": 4571,
+    "after": 4571,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_physicalbody__metadata",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__binary",
+    "before": 6043,
+    "after": 6043,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__unique_loops",
+    "before": 39,
+    "after": 39,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__lend",
+    "before": 37,
+    "after": 37,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_asm_ir__emit_module_or_error_sub",
+    "before": 2839,
+    "after": 2839,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__embed__FoldAcc",
+    "before": 30860,
+    "after": 30860,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__raw_floor_contracts",
+    "before": 1209,
+    "after": 1209,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__payloads",
+    "before": 5082,
+    "after": 5082,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssaunits__without_constant_drops",
+    "before": 199430,
+    "after": 199430,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__full_ret_binds",
+    "before": 1103,
+    "after": 1103,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__struct_lit_gives_way",
+    "before": 63,
+    "after": 63,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ownership__index",
+    "before": 39,
+    "after": 39,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_decl_type",
+    "before": 23254,
+    "after": 23254,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__t_func",
+    "before": 14202,
+    "after": 14202,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lift__lift_inline_closures_expr",
+    "before": 25992,
+    "after": 25992,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssa__cold_positions",
+    "before": 2071,
+    "after": 2071,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_constfold__drop_assert$wrap",
+    "before": 43836,
+    "after": 43836,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__module_env_with_file",
+    "before": 10378,
+    "after": 10378,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssa__imm_operands",
+    "before": 2071,
+    "after": 2071,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__fold_exits",
+    "before": 20,
+    "after": 20,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssarc__append_push",
+    "before": 9159,
+    "after": 9159,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lexer__string_tok",
+    "before": 11115,
+    "after": 11115,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__suffix_range_stmts",
+    "before": 4774,
+    "after": 4774,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__fields_of",
+    "before": 75217,
+    "after": 75217,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__bare_field",
+    "before": 1930,
+    "after": 1930,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__enum_argument_from_ref",
+    "before": 131,
+    "after": 131,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ssabounds__nonneg_quotients",
+    "before": 8,
+    "after": 8,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_branch_body_written",
+    "before": 38,
+    "after": 38,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__inherit_default",
+    "before": 40,
+    "after": 40,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_constfold__keep_expr$wrap",
+    "before": 153988,
+    "after": 153988,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__settle_int_tree",
+    "before": 11279,
+    "after": 11279,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__stmt",
+    "before": 26644,
+    "after": 26644,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__add_builtin_variant",
+    "before": 836,
+    "after": 836,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_constfold__prune_stmt$wrap",
+    "before": 52258,
+    "after": 52258,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__splice_stmts_with_lambda",
+    "before": 4464,
+    "after": 4464,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_typeinfo__mixed_integer_join",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_if_chain",
+    "before": 12,
+    "after": 12,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_str_len",
+    "before": 3500,
+    "after": 3500,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__annotate_typed",
+    "before": 350856,
+    "after": 350856,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__s_match_sugared",
+    "before": 1684,
+    "after": 1684,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_typeinfo__lane_builtin_result",
+    "before": 1248,
+    "after": 1248,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__s_while",
+    "before": 1597,
+    "after": 1597,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__type_from_spelling",
+    "before": 4316,
+    "after": 4316,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__stmts_assign_diags",
+    "before": 35135,
+    "after": 35135,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_pattern",
+    "before": 3268,
+    "after": 3268,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_embed__fa_expr$wrap",
+    "before": 208505,
+    "after": 208505,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_constfold__fold_target_name",
+    "before": 4442,
+    "after": 4442,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semscalarreturn__option_payload",
+    "before": 4,
+    "after": 4,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__checked",
+    "before": 899,
+    "after": 899,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_asm_ir__ssa_fixed_registers",
+    "before": 2071,
+    "after": 2071,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_opt_payload",
+    "before": 57,
+    "after": 57,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_raw_store8",
+    "before": 32,
+    "after": 32,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__instantiate_func",
+    "before": 480,
+    "after": 480,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__lu_stmts",
+    "before": 47579,
+    "after": 47579,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__parse_stmt_at",
+    "before": 21616,
+    "after": 21616,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__resolve_dyn_traits",
+    "before": 331,
+    "after": 331,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_semsource__arithmetic",
+    "before": 23058,
+    "after": 23058,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_arr_push_owned",
+    "before": 1705,
+    "after": 1705,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__union_sig_of_variant",
+    "before": 4100,
+    "after": 4100,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_lexer__keyword_tok",
+    "before": 65224,
+    "after": 65224,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__parser__TvScope",
+    "before": 491,
+    "after": 491,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_checker__check_expr",
+    "before": 14204,
+    "after": 14204,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__bound_use",
+    "before": 214,
+    "after": 214,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_parser__dl_expr_with_kids",
+    "before": 886,
+    "after": 886,
+    "delta": 0
+  },
+  {
+    "caller": "???:__fn_ir__op_str_concat",
+    "before": 867,
+    "after": 868,
+    "delta": 1
+  },
+  {
+    "caller": "???:__fn_ssaunits__step_of",
+    "before": 14405,
+    "after": 14406,
+    "delta": 1
+  },
+  {
+    "caller": "???:__fn_semsource__analysed_rows",
+    "before": 705,
+    "after": 707,
+    "delta": 2
+  },
+  {
+    "caller": "???:__fn_ssabounds__proven_indices",
+    "before": 1096,
+    "after": 1098,
+    "delta": 2
+  },
+  {
+    "caller": "???:__fn_ssasem__operations_error",
+    "before": 15103,
+    "after": 15105,
+    "delta": 2
+  },
+  {
+    "caller": "???:__fn_ssa__spill_live_at",
+    "before": 2413,
+    "after": 2415,
+    "delta": 2
+  },
+  {
+    "caller": "???:__fn_seminline__part_of",
+    "before": 1191,
+    "after": 1193,
+    "delta": 2
+  },
+  {
+    "caller": "???:__fn_ssabounds__graph_of",
+    "before": 1053,
+    "after": 1060,
+    "delta": 7
+  },
+  {
+    "caller": "???:__fn_ssarc__jump",
+    "before": 125266,
+    "after": 125273,
+    "delta": 7
+  },
+  {
+    "caller": "???:__fn_ssa__rewrite_through",
+    "before": 4490,
+    "after": 4500,
+    "delta": 10
+  },
+  {
+    "caller": "???:__fn_ssa__assign_spill_slots",
+    "before": 16573,
+    "after": 16585,
+    "delta": 12
+  },
+  {
+    "caller": "???:__fn_ssaunits__edge_supplies",
+    "before": 67233,
+    "after": 67247,
+    "delta": 14
+  },
+  {
+    "caller": "???:__fn_ir__op_arr_len",
+    "before": 7096,
+    "after": 7116,
+    "delta": 20
+  },
+  {
+    "caller": "???:__fn_sempair__split_calls",
+    "before": 71,
+    "after": 96,
+    "delta": 25
+  },
+  {
+    "caller": "???:__fn_seminline__defs_of",
+    "before": 6667,
+    "after": 6696,
+    "delta": 29
+  },
+  {
+    "caller": "???:__fn_ssarc__capture_pair_words",
+    "before": 493,
+    "after": 525,
+    "delta": 32
+  },
+  {
+    "caller": "???:__fn_ir__op_call_word",
+    "before": 497,
+    "after": 529,
+    "delta": 32
+  },
+  {
+    "caller": "???:__fn_ssarc__constant",
+    "before": 16842,
+    "after": 16874,
+    "delta": 32
+  },
+  {
+    "caller": "???:__fn_sempair__pair_set_contract",
+    "before": 327,
+    "after": 363,
+    "delta": 36
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_linked",
+    "before": 8007,
+    "after": 8049,
+    "delta": 42
+  },
+  {
+    "caller": "???:__fn_lift__iife_scope_vars",
+    "before": 0,
+    "after": 56,
+    "delta": 56
+  },
+  {
+    "caller": "???:__fn_sempair__shape_of",
+    "before": 827,
+    "after": 885,
+    "delta": 58
+  },
+  {
+    "caller": "???:__fn_ssabounds__fact",
+    "before": 11738,
+    "after": 11797,
+    "delta": 59
+  },
+  {
+    "caller": "???:__fn_ir__op_ret_word",
+    "before": 389,
+    "after": 465,
+    "delta": 76
+  },
+  {
+    "caller": "???:__fn_ssarc__region",
+    "before": 95251,
+    "after": 95327,
+    "delta": 76
+  },
+  {
+    "caller": "???:__fn_sempair__word_contract",
+    "before": 1472,
+    "after": 1564,
+    "delta": 92
+  },
+  {
+    "caller": "???:__fn_ssarc__call_site",
+    "before": 909,
+    "after": 1017,
+    "delta": 108
+  },
+  {
+    "caller": "???:__fern_arr_push",
+    "before": 577034,
+    "after": 577180,
+    "delta": 146
+  },
+  {
+    "caller": "???:__fn_semscalarreturn__parts_of",
+    "before": 1504,
+    "after": 1655,
+    "delta": 151
+  },
+  {
+    "caller": "???:__fn_seminline__inline_leaves",
+    "before": 123402,
+    "after": 123576,
+    "delta": 174
+  },
+  {
+    "caller": "???:__fn_ir__op_drop",
+    "before": 67940,
+    "after": 68130,
+    "delta": 190
+  },
+  {
+    "caller": "???:__fn_ssasem__analyze",
+    "before": 212412,
+    "after": 212620,
+    "delta": 208
+  },
+  {
+    "caller": "???:__fern_alloc_u8",
+    "before": 1841046,
+    "after": 1841262,
+    "delta": 216
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_elements",
+    "before": 61455,
+    "after": 61755,
+    "delta": 300
+  },
+  {
+    "caller": "???:__fn_sempair__pair_returns",
+    "before": 1930,
+    "after": 2376,
+    "delta": 446
+  },
+  {
+    "caller": "???:__fn_sempair__rebuild_calls",
+    "before": 9160,
+    "after": 9620,
+    "delta": 460
+  },
+  {
+    "caller": "???:__fn_semsource__prune_dead_constructions",
+    "before": 138766,
+    "after": 139723,
+    "delta": 957
+  },
+  {
+    "caller": "???:__fn_ssa__register_form",
+    "before": 100116,
+    "after": 101963,
+    "delta": 1847
+  },
+  {
+    "caller": "???:__fn_sempair__seeded",
+    "before": 33884,
+    "after": 35996,
+    "delta": 2112
+  },
+  {
+    "caller": "???:__fn_semsource__complete",
+    "before": 0,
+    "after": 106165,
+    "delta": 106165
+  }
+]

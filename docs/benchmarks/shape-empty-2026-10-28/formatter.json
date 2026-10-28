@@ -1,0 +1,13 @@
+{
+  "command": [
+    "bin/fern",
+    "-fmt",
+    "-d",
+    "all tracked inputs with Makefile filters"
+  ],
+  "exit": 0,
+  "seconds": 3.060449297001469,
+  "inputs": 2110,
+  "source_sha256": "f721129155bd7ac36ed715703072bf8cb9f6c812f22d6a62455f919fbb4fffe5",
+  "formatter_sha256": "111c2eb2c7a331203cdd5d1be809379c77cad785990ade63eabf519a923f5b0a"
+}

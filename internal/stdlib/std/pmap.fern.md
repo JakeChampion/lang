@@ -17,7 +17,7 @@ import "std/pmap";
 import "std/option";
 
 function main(): i32 {
-  let a = pmap.pmap_new[string, i32]();
+  let a = pmap.new[string, i32]();
   let b = a.insert("answer", 42);
   if (!a.is_empty() || b.get("answer").unwrap_or(0) != 42) { return 1; }
   return 0;
@@ -36,7 +36,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 pub enum PMap[K, V]>>
 
-<<4 pub function pmap_new[K, V](): PMap[K, V]>>
+<<4 pub function new[K, V](): PMap[K, V]>>
 
 <<5 function node_mix(x: i32): i32>>
 
@@ -76,17 +76,17 @@ import "std/i32";
 pub enum PMap[K, V] { Empty, Leaf(i32, K, V), Coll(i32, PMap[K, V][]), Branch(i32, i32, PMap[K, V][]) }
 ```
 
-### `4 pub function pmap_new[K, V](): PMap[K, V]`
+### `4 pub function new[K, V](): PMap[K, V]`
 
 ```fern
-<<4 pub function pmap_new[K, V](): PMap[K, V]>>=
-pub function pmap_new[K, V](): PMap[K, V] {
+<<4 pub function new[K, V](): PMap[K, V]>>=
+pub function new[K, V](): PMap[K, V] {
   let e: PMap[K, V] = Empty;
   return e;
 }
 
 pub function from[K: cmp.Hash + cmp.Eq, V](pairs: (K, V)[]): PMap[K, V] {
-  let m: PMap[K, V] = pmap_new();
+  let m: PMap[K, V] = new();
   for p in pairs {
     m = m.insert(p.0, p.1);
   }
@@ -755,7 +755,7 @@ pub function (m: PMap[K, V]) map_values[K, V, W](f: (V) => W): PMap[K, W] {
 }
 
 pub function (m: PMap[K, V]) filter[K: cmp.Hash + cmp.Eq, V](pred: (K, V) => boolean): PMap[K, V] {
-  let out: PMap[K, V] = pmap_new();
+  let out: PMap[K, V] = new();
   let ks: K[] = m.keys();
   let vs: V[] = m.values();
   let i: i32 = 0;
@@ -811,7 +811,7 @@ pub function (m: PMap[K, V]) entries(): (K, V)[] {
 }
 
 pub function (m: PMap[K, V]) intersection[K: cmp.Hash + cmp.Eq, V](other: PMap[K, V]): PMap[K, V] {
-  let out: PMap[K, V] = pmap_new();
+  let out: PMap[K, V] = new();
   let ks: K[] = m.keys();
   let vs: V[] = m.values();
   let i: i32 = 0;

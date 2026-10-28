@@ -9,6 +9,26 @@ function test_len_range(): test.TestOutcome {
   return test.assert_eq(iter.range(2, 9).len(), 7);
 }
 
+function test_range_collect(): test.TestOutcome {
+  return test.assert_eq_array(iter.range(2, 5).collect(), [2, 3, 4]);
+}
+
+function test_range_empty(): test.TestOutcome {
+  return test.assert_eq(iter.range(5, 2).len(), 0);
+}
+
+function test_step_by(): test.TestOutcome {
+  return test.assert_eq_array(iter.range(0, 10).step_by(3).collect(), [0, 3, 6, 9]);
+}
+
+function test_step_by_exact(): test.TestOutcome {
+  return test.assert_eq_array(iter.range(0, 9).step_by(3).collect(), [0, 3, 6]);
+}
+
+function test_step_by_nonpositive(): test.TestOutcome {
+  return test.assert_eq(iter.range(0, 10).step_by(0).len(), 0);
+}
+
 function test_of_sum(): test.TestOutcome {
   let xs: i32[] = [3, 1, 4, 1, 5];
   return test.assert_eq(iter.sum(iter.of(xs)), 14);
@@ -101,6 +121,11 @@ function main(): i32 {
   let r: test.TestRunner = test.test_new("core/iter");
   r = r.it("sum over a range", test_sum_range);
   r = r.it("len over a range", test_len_range);
+  r = r.it("range collect", test_range_collect);
+  r = r.it("range empty", test_range_empty);
+  r = r.it("step_by", test_step_by);
+  r = r.it("step_by exact end", test_step_by_exact);
+  r = r.it("step_by nonpositive", test_step_by_nonpositive);
   r = r.it("of: array to iterator", test_of_sum);
   r = r.it("product", test_product);
   r = r.it("nth", test_nth);

@@ -1,0 +1,40 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^(TestSelfHostSemanticProduction|TestSelfHostSSAUnitsIR(Arm64|X86_64|Wasm)|TestSelfHostSSAUnitsIndexedReplay|TestSelfHostTypeResolve(Simple)?|TestSelfHostCheckerCodesX86_64|TestSelfHostStreamUTF8|TestSelfHostFmtNativeParityX86_64)$",
+    "-count=1",
+    "-timeout",
+    "20m",
+    "-json"
+  ],
+  "exit": 0,
+  "seconds": 337.5170371500062,
+  "started_at": "2026-10-28T09:39:20.636817+00:00",
+  "source_sha256": "112f0f09385e735c7a32f4529f969630a80c036280c7f7c609e10a96c59fcc46",
+  "passes": 5861,
+  "failures": [],
+  "skips": [
+    "TestSelfHostSemanticProduction/os-floor-queries/wasm32-wasi",
+    "TestSelfHostSemanticProduction/os-floor-files/wasm32-wasi",
+    "TestSelfHostSemanticProduction/os-floor-subprocess/wasm32-wasi",
+    "TestSelfHostSemanticProduction/os-floor-signals-and-process/wasm32-wasi",
+    "TestSelfHostSemanticProduction/os-floor-sockets-and-ids/wasm32-wasi",
+    "TestSelfHostSemanticProduction/os-floor-times-nodes-terminal/wasm32-wasi",
+    "TestSelfHostSemanticProduction/os-floor-fresh-results-are-freed/wasm32-wasi",
+    "TestSelfHostSemanticProduction/raw-floor-intrinsics/wasm32-wasi",
+    "TestSelfHostSemanticProduction/process-helpers-take-the-typed-path/wasm32-wasi",
+    "TestSelfHostSemanticProduction/fs-bundle-takes-the-typed-path/wasm32-wasi",
+    "TestSelfHostSemanticProduction/fs-leaves-take-the-typed-path/wasm32-wasi",
+    "TestSelfHostSemanticProduction/fs-bundle-reads-and-writes/wasm32-wasi",
+    "TestSelfHostSemanticProduction/sys-helpers-take-the-typed-path/wasm32-wasi",
+    "TestSelfHostSemanticProduction/proc-leaves-take-the-typed-path/wasm32-wasi",
+    "TestSelfHostSemanticProduction/arr-slice-takes-the-typed-path/wasm32-wasi",
+    "TestSelfHostSemanticProduction/usize-widens-to-i64-whole/wasm32-wasi",
+    "TestSelfHostSemanticProduction/usize-operators-at-register-width/wasm32-wasi",
+    "TestSelfHostSemanticProduction/c-call-trampolines/wasm32-wasi",
+    "TestSelfHostSemanticProduction/raw-floor-symbols-link-without-a-helper/wasm32-wasi"
+  ]
+}

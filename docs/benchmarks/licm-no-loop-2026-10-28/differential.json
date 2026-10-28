@@ -1,0 +1,200 @@
+[
+  {
+    "version": "before",
+    "target": "x86-64-linux",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2-current",
+      "-O",
+      "-sanitize",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-before-x86-64-linux",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-before/bound_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-before-x86-64-linux"
+    ],
+    "exit": 0,
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "output_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "same_output": true,
+    "binary_sha256": "9dd1349deec478c86883b4e01bd2c68d75f55b4d135f4a556aae3e654caa8ccd",
+    "census": [
+      73388,
+      73388,
+      0
+    ]
+  },
+  {
+    "version": "before",
+    "target": "arm64-linux",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2-current",
+      "-O",
+      "-sanitize",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-before-arm64-linux",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-before/bound_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-before-arm64-linux"
+    ],
+    "exit": 0,
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "output_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "same_output": true,
+    "binary_sha256": "2d22bbb3fbf4c981036fdb394d54461dc209c5087524a8860cb2e9bd54e1062e",
+    "census": [
+      73388,
+      73388,
+      0
+    ]
+  },
+  {
+    "version": "before",
+    "target": "wasm32-wasi",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2-current",
+      "-O",
+      "-sanitize",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-before-wasm32-wasi",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-before/bound_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "wasmtime",
+      "run",
+      "--env",
+      "FERN_LEAKCHECK=1",
+      "--env",
+      "FERN_SANITIZE=1",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-before-wasm32-wasi"
+    ],
+    "exit": 0,
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "output_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "same_output": true,
+    "binary_sha256": "194e7718540de0bd7dfb999a9dfde1834fbbe271e3049f39af5fa67b59eee914",
+    "census": [
+      77341,
+      77341,
+      0
+    ]
+  },
+  {
+    "version": "after",
+    "target": "x86-64-linux",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2-current",
+      "-O",
+      "-sanitize",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-after-x86-64-linux",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-after/bound_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-after-x86-64-linux"
+    ],
+    "exit": 0,
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "output_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "same_output": true,
+    "binary_sha256": "b04f69286078f50732d919e2d01d1d36407e3aa4756656271a301ec850bb055b",
+    "census": [
+      73338,
+      73338,
+      0
+    ]
+  },
+  {
+    "version": "after",
+    "target": "arm64-linux",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2-current",
+      "-O",
+      "-sanitize",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-after-arm64-linux",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-after/bound_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-after-arm64-linux"
+    ],
+    "exit": 0,
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "output_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "same_output": true,
+    "binary_sha256": "be5e2b3a34c0965903b557a6eb3f3498dcecdcee2fb5ea2814fd0faae629dad1",
+    "census": [
+      73338,
+      73338,
+      0
+    ]
+  },
+  {
+    "version": "after",
+    "target": "wasm32-wasi",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2-current",
+      "-O",
+      "-sanitize",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-after-wasm32-wasi",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-after/bound_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "wasmtime",
+      "run",
+      "--env",
+      "FERN_LEAKCHECK=1",
+      "--env",
+      "FERN_SANITIZE=1",
+      "/workspace/lang-issue-work/perf-4412/licm-no-loop-candidate/contract-after-wasm32-wasi"
+    ],
+    "exit": 0,
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "output_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "same_output": true,
+    "binary_sha256": "cdd5a44f9fac0d8677395a5a3470a9533020415229df026244d8c1d04f23d353",
+    "census": [
+      77291,
+      77291,
+      0
+    ]
+  }
+]
