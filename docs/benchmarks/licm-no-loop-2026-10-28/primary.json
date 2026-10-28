@@ -1,0 +1,20 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^(TestSelfHostIRLICM|TestSelfHostLICM(X86_64|Arm64|WasmIR)|TestSelfHostTypedLICM.*)$",
+    "-count=1",
+    "-timeout",
+    "20m",
+    "-json"
+  ],
+  "exit": 0,
+  "seconds": 92.74338476900448,
+  "started_at": "2026-10-28T06:46:02.096732+00:00",
+  "source_sha256": "90c366c59b40d5e065d3195710d0d349288197c8871b2ad31071ade52cd76ed3",
+  "passes": 38,
+  "failures": [],
+  "skips": []
+}

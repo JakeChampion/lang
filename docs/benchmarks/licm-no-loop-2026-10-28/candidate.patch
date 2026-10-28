@@ -1,0 +1,21 @@
+diff --git a/compiler/ir.fern b/compiler/ir.fern
+index f13208102..1adad9a51 100644
+--- a/compiler/ir.fern
++++ b/compiler/ir.fern
+@@ -6188,9 +6188,15 @@ pub function optimize_ops(ops: Op[], n_params: i32, n_locals: i32): OptimizedOps
+ pub function hoist_loop_invariants(ops: Op[], n_locals: i32): OptimizedOps {
+   let k_loop: i32 = K_LOOP;
+   let cur: OptimizedOps = OptimizedOps { ops: ops, n_locals: n_locals };
++  let i: i32 = ops.len() - 1;
++  while (i >= 0 && ops[i].kind_tag != k_loop) {
++    i = i - 1;
++  }
++  if (i < 0) {
++    return cur;
++  }
+   let maxs: i32 = cp_max_slot(ops);
+   let stored: i32[] = __alloc_i32(maxs + 1);
+-  let i: i32 = ops.len() - 1;
+   while (i >= 0) {
+     if (cur.ops[i].kind_tag == k_loop) {
+       let pure: PureHoist = licm_hoist_pure(cur.ops, i, maxs);
