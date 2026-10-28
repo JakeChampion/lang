@@ -488,24 +488,19 @@ function flow_graph(ops: ir.Op[]): Flow {
 }
 
 function reaches(ops: ir.Op[], flow: Flow, from: i32, to: i32, donor: i32): boolean {
-  let seen: i32[] = [];
-  let n: i32 = 0;
-  while (n < ops.len()) {
-    seen = seen.append(0);
-    n = n + 1;
-  }
+  let seen: boolean[] = __alloc_bool(ops.len());
   let work: i32[] = [from + 1];
   let at: i32 = 0;
   while (at < work.len()) {
     let i: i32 = work[at];
     at = at + 1;
-    if (i < 0 || i >= ops.len() || seen[i] != 0) {
+    if (i < 0 || i >= ops.len() || seen[i]) {
       continue;
     }
     if (i == to) {
       return true;
     }
-    seen = seen.with(i, 1);
+    seen = seen.with(i, true);
     if ((ops[i].kind_tag == ir.K_STORE_LOCAL || ops[i].kind_tag == ir.K_TEE_LOCAL) && ops[i].i32_imm == donor) {
       continue;
     }
