@@ -1958,6 +1958,16 @@ function loop_writes(ops: ir.Op[], at: i32, nslots: i32, tags: i32[]): i32[] {
   return out;
 }
 
+// The task's mode is word 6 of __fern_task_state, so the check is one load,
+// not a call. The load is marked for rccertify.resumes.
+function lift_task_mode(nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
+  let none: i32[] = [];
+  let insts: ssa.SInst[] = cur_insts.append(ssa.SInst { kind_tag: 58, result: nvals, args: none, imm: 0, str: "__fern_task_state" });
+  insts = insts.append(ssa.SInst { kind_tag: 1, result: nvals + 1, args: none, imm: 6, str: "" });
+  insts = insts.append(ssa.SInst { kind_tag: 52, result: nvals + 2, args: [nvals, nvals + 1], imm: 0, str: "task_mode" });
+  return LiftVals { nvals: nvals + 3, stack: stack.append(nvals + 2), insts: insts, ok: ok };
+}
+
 struct LoopFall { falls: boolean, tail: i32, cont: i32, next_blk: i32 }
 
 function loop_fall(dead: boolean, term: ssa.STerm, id: i32, next_blk: i32): LoopFall {
@@ -1976,6 +1986,9 @@ function loop_tail_appended(blocks: ssa.SBlock[], dead: boolean, id: i32, insts:
 
 function lift_call_direct(op: ir.Op, nvals: i32, stack: i32[], cur_insts: ssa.SInst[], ok: boolean): LiftVals {
   let argc: i32 = op.i32_imm;
+  if (argc == 0 && op.str == "__fern_task_mode") {
+    return lift_task_mode(nvals, stack, cur_insts, ok);
+  }
   if (stack.len() < argc) {
     ok = false;
   } else {
