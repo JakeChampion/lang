@@ -1685,17 +1685,20 @@ pub function const_str_word(text: string): string {
 }
 
 function hex_text(text: string): string {
-  let out: string = "";
+  let out: u8[] = [];
   let i: i32 = 0;
   while (i < text.len()) {
-    out = out + hex_digit(text[i] as i32 >> 4) + hex_digit(text[i] as i32 & 15);
+    out = out.append(hex_digit(text[i] as i32 >> 4)).append(hex_digit(text[i] as i32 & 15));
     i = i + 1;
   }
-  return out;
+  return string_from_bytes_unchecked(out);
 }
 
-function hex_digit(d: i32): string {
-  return slice_unchecked("0123456789abcdef", d, d + 1) + "";
+function hex_digit(d: i32): u8 {
+  if (d < 10) {
+    return (48 + d) as u8;
+  }
+  return (87 + d) as u8;
 }
 
 pub function const_struct_is_str(packed: string): boolean {
