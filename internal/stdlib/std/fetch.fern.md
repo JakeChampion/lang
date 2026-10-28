@@ -92,7 +92,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<38 pub struct Allow>>
 
-<<39 pub function allow(entries: string[]): Result[Allow, string]>>
+<<39 pub function allow(entries: string[]): Result[Allow, AllowError]>>
 
 <<40 function __allow_rule(e: string): Option[__AllowRule]>>
 
@@ -1577,14 +1577,29 @@ pub function public_policy_via(proxies: ProxyEnv): Policy {
 <<38 pub struct Allow>>=
 pub struct Allow { rules: __AllowRule[] }
 
+// AllowError is the allow-list entry `allow` refused.
+pub struct AllowError { entry: string }
+
+pub function (e: AllowError) message(): string {
+  return "allow-list entry \"" + e.entry + "\" is not a host, a host:port or a *.domain";
+}
+
+pub function (e: AllowError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for AllowError {}
+
+impl cmp.Display for AllowError {}
+
 struct __AllowRule { host: string, sub: boolean, port: i32 }
 ```
 
-### `39 pub function allow(entries: string[]): Result[Allow, string]`
+### `39 pub function allow(entries: string[]): Result[Allow, AllowError]`
 
 ```fern
-<<39 pub function allow(entries: string[]): Result[Allow, string]>>=
-pub function allow(entries: string[]): Result[Allow, string] {
+<<39 pub function allow(entries: string[]): Result[Allow, AllowError]>>=
+pub function allow(entries: string[]): Result[Allow, AllowError] {
   let rules: __AllowRule[] = [];
   for e in entries {
     match (__allow_rule(e.to_lower())) {
@@ -1592,7 +1607,7 @@ pub function allow(entries: string[]): Result[Allow, string] {
         rules = rules.append(r);
       },
       None => {
-        return Err("allow-list entry \"" + e + "\" is not a host, a host:port or a *.domain");
+        return Err(AllowError { entry: e });
       }
     }
   }
