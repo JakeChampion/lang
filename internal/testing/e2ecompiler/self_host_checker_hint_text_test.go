@@ -273,7 +273,7 @@ function main(): i32 { let m = Map { K { a: 1 }: 1 }; return 0; }`,
 		name:     "E043 unknown array method lists the API",
 		src:      `function main(): i32 { let a: i32[] = [1]; return a.sum(); }`,
 		code:     "E043",
-		spelling: "it has: append, len, with",
+		spelling: "it has: append, len, truncate, with",
 	},
 	{
 		name:     "E043 retired collection spelling names the replacement",
