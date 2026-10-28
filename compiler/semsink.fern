@@ -39,8 +39,8 @@ function reuse(f: ssasem.Func): Reused {
     return Reused { s: Sunk { f: f, reread: 0 }, reads: Some(rd) };
   }
   let reads: ssa.SInst[] = counted_reads(g, f.values);
-  let slots: Slots = read_slots(reads);
-  let same: i32[] = identity(f.values.len());
+  let slots: semcse.Slots = semcse.read_slots(reads);
+  let same: i32[] = semcse.identity(f.values.len());
   let n: i32 = 0;
   for r in reads {
     let bi: i32 = rd.at[r.result];
@@ -68,41 +68,8 @@ function counted_reads(g: ssa.SFunc, values: typeinfo.Type[]): ssa.SInst[] {
   return reads;
 }
 
-function identity(n: i32): i32[] {
-  let out: i32[] = __alloc_i32(n);
-  let k: i32 = 0;
-  while (k < n) {
-    out = out.with(k, k);
-    k = k + 1;
-  }
-  return out;
-}
-
-struct Slots { head: i32[], next: i32[] }
-
-function slot_hash(u: ssa.SInst): i32 {
-  return ((u.kind_tag & 1023) * 31 + (u.imm & 65535)) * 31 + (__str_hash(u.str, 0) & 65535);
-}
-
-function read_slots(reads: ssa.SInst[]): Slots {
-  let nb: i32 = 2;
-  while (nb <= reads.len() * 2) {
-    nb = nb * 2;
-  }
-  let head: i32[] = util.minus_ones(nb);
-  let next: i32[] = util.minus_ones(reads.len());
-  let k: i32 = reads.len() - 1;
-  while (k >= 0) {
-    let b: i32 = slot_hash(reads[k]) & nb - 1;
-    next = next.with(k, head[b]);
-    head = head.with(b, k);
-    k = k - 1;
-  }
-  return Slots { head: head, next: next };
-}
-
-function earlier_read(rd: Reads, reads: ssa.SInst[], slots: Slots, r: ssa.SInst, bi: i32, same: i32[], values: typeinfo.Type[]): i32 {
-  let i: i32 = slots.head[slot_hash(r) & slots.head.len() - 1];
+function earlier_read(rd: Reads, reads: ssa.SInst[], slots: semcse.Slots, r: ssa.SInst, bi: i32, same: i32[], values: typeinfo.Type[]): i32 {
+  let i: i32 = slots.head[semcse.slot_hash(r) & slots.head.len() - 1];
   while (i >= 0) {
     let u: ssa.SInst = reads[i];
     let ub: i32 = rd.at[u.result];
@@ -212,7 +179,7 @@ function projection_tree(g: ssa.SFunc, values: typeinfo.Type[], deps: i32[][]): 
   let par: i32[] = __alloc_i32(values.len());
   let parent: boolean[] = __alloc_bool(values.len());
   let kids: i32[][] = deps;
-  let first: i32[] = identity(values.len());
+  let first: i32[] = semcse.identity(values.len());
   for b in g.blocks {
     let seen: ssa.SInst[] = [];
     for ins in b.insts {
