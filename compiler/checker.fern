@@ -15232,6 +15232,29 @@ function lit_field_type(ssig: StructSig, fi: i32, args: typeinfo.Type[], s: Scop
   return type_from_ref_subst(parser.parse_type_ref(ssig.field_type_names[fi]), ssig.type_params, args, s.type_names());
 }
 
+// member_dest is the type a struct literal of `name` takes from an expected
+// union instance that has `name` as a member: `P[string]` for `P { ... }`
+// where a `U[string]` is expected and `type U[T] = P[T] | Q`.
+function member_dest(name: string, dest: typeinfo.Type, s: Scope): typeinfo.Type {
+  let typeinfo.TypeUnion(du) = dest else {
+    return dest;
+  };
+  let Some(u) = s.lookup_union(du.name) else {
+    return dest;
+  };
+  let Some(vs) = s.lookup_owned_struct(name, u.name) else {
+    return dest;
+  };
+  if (u.type_params.len() != du.args.len() || vs.enum_owner != u.name || vs.field_type_names.len() != 1) {
+    return dest;
+  }
+  let member: parser.TypeRef = parser.parse_type_ref(vs.field_type_names[0]);
+  if (member.base != name) {
+    return dest;
+  }
+  return type_from_ref_subst(member, u.type_params, du.args, s.type_names());
+}
+
 function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[] {
   if let ast.ExprCall(c) = e {
     return call_diags_call(c, s, [], dest);
@@ -15250,7 +15273,7 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
     }
   }
   if let ast.ExprStructLit(sl) = e {
-    if let typeinfo.TypeStruct(ds) = dest {
+    if let typeinfo.TypeStruct(ds) = member_dest(sl.type_name, dest, s) {
       if (ds.name == sl.type_name) {
         return call_diags_struct_lit(sl, ds.args, s, []);
       }
@@ -20587,8 +20610,8 @@ function e064_fn_tparams(fd: parser.FuncDecl): string[] {
   return out;
 }
 
-// const_kind_module_diags checks each written application of a struct or an
-// enum that takes a const parameter. A const parameter takes an integer that
+// const_kind_module_diags checks each written application of a struct, an
+// enum or a trait that takes a const parameter. A const parameter takes an integer that
 // fits in i32 (E089) or a const parameter in scope, and a type parameter takes
 // a type (E090).
 function const_kind_module_diags(mod: parser.Module, focus: util.NameIndex): util.Diag[] {
@@ -20618,12 +20641,21 @@ function const_kind_module_diags(mod: parser.Module, focus: util.NameIndex): uti
       for an in collect_annots(efn.body) {
         out = util.append_diags(out, const_kind_diags(an.type_name, owners, consts, an.line, an.col));
       }
+      for bound in efn.bound_traits {
+        for entry in parser.split_plus_bounds(bound) {
+          out = util.append_diags(out, const_kind_diags(entry, owners, consts, efn.line, efn.col));
+        }
+      }
     }
+  }
+  for im in mod.impls {
+    let consts: string[] = owner_arg_names(owners, parser.parse_type_ref(im.impl_type));
+    out = util.append_diags(out, const_kind_diags(im.trait_ref, owners, consts, im.line, im.col));
   }
   return out;
 }
 
-// ConstOwner is a struct or an enum that declares a const parameter.
+// ConstOwner is a struct, an enum or a trait that declares a const parameter.
 struct ConstOwner { name: string, type_params: string[], const_params: string[] }
 
 function const_owners(mod: parser.Module): ConstOwner[] {
@@ -20636,6 +20668,11 @@ function const_owners(mod: parser.Module): ConstOwner[] {
   for ed in mod.enums {
     if (ed.const_params.len() > 0) {
       out = out.append(ConstOwner { name: ed.name, type_params: ed.type_params, const_params: ed.const_params });
+    }
+  }
+  for td in mod.trait_decls {
+    if (td.const_params.len() > 0) {
+      out = out.append(ConstOwner { name: td.name, type_params: td.type_params, const_params: td.const_params });
     }
   }
   return out;
@@ -20657,15 +20694,20 @@ function fn_const_names(fd: parser.FuncDecl, owners: ConstOwner[]): string[] {
   if (fd.receiver_type.len() == 0) {
     return out;
   }
-  let r: parser.TypeRef = parser.parse_type_ref(fd.receiver_type);
-  for o in owners {
-    if (o.name == r.base) {
-      for name in parser.const_arg_names(r, o.type_params, o.const_params) {
-        out = out.append(name);
-      }
-    }
+  for name in owner_arg_names(owners, parser.parse_type_ref(fd.receiver_type)) {
+    out = out.append(name);
   }
   return out;
+}
+
+// owner_arg_names is the names r writes at the const parameters of its owner.
+function owner_arg_names(owners: ConstOwner[], r: parser.TypeRef): string[] {
+  for o in owners {
+    if (o.name == r.base) {
+      return parser.const_arg_names(r, o.type_params, o.const_params);
+    }
+  }
+  return [];
 }
 
 function const_kind_diags(spelling: string, owners: ConstOwner[], consts: string[], line: i32, col: i32): util.Diag[] {

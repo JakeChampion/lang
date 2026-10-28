@@ -5356,7 +5356,7 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
         k = k + 1;
       }
       if (k == out.len()) {
-        out = out.append(parser.TypeAlias { name: owner, variants: [types[i].name], variant_args: [], variant_lines: [], type_params: enum_type_params(enums, owner), line: 0, col: 0, is_pub: true, is_package: false, module: "" });
+        out = out.append(parser.TypeAlias { name: owner, variants: [types[i].name], variant_args: [], variant_lines: [], type_params: enum_type_params(enums, owner), const_params: [], line: 0, col: 0, is_pub: true, is_package: false, module: "" });
       } else {
         out = out.with(k, parser.TypeAlias { ...out[k], variants: out[k].variants.append(types[i].name) });
       }

@@ -1380,6 +1380,7 @@ function rewrite_module_bodies(mod: parser.Module, ctx: RewriteCtx): parser.Modu
       variant_args: vargs,
       variant_lines: mod.aliases[k].variant_lines,
       type_params: mod.aliases[k].type_params,
+      const_params: mod.aliases[k].const_params,
       line: mod.aliases[k].line,
       col: mod.aliases[k].col,
       is_pub: true,
@@ -1577,7 +1578,7 @@ function module_ctx(mod: parser.Module, prefix: string, ids: string[], pfxs: str
   };
 }
 
-struct TraitDefaultIn { key: string, params: string[], method: parser.FuncDecl }
+struct TraitDefaultIn { key: string, params: string[], consts: string[], method: parser.FuncDecl }
 
 function module_trait_defaults(mod: parser.Module, ctx: RewriteCtx, acc: TraitDefaultIn[]): TraitDefaultIn[] {
   for td in mod.trait_decls {
@@ -1586,7 +1587,7 @@ function module_trait_defaults(mod: parser.Module, ctx: RewriteCtx, acc: TraitDe
         let tctx: RewriteCtx = with_type_params(with_type_params(ctx, td.type_params), m.all_type_params);
         let bctx: RewriteCtx = RewriteCtx { ...tctx, locals: param_names(m) };
         let rm: parser.FuncDecl = parser.FuncDecl { ...m, params: rewrite_params(m.params, bctx), ret_type: rewrite_type_name(m.ret_type, tctx), ret_fn_ret: rewrite_type_name(m.ret_fn_ret, tctx), ret_fn_param_types: rewrite_type_name_list(m.ret_fn_param_types, tctx), body: rewrite_block(m.body, bctx), module: ctx.prefix };
-        acc = acc.append(TraitDefaultIn { key: ctx.prefix + "." + td.name, params: td.type_params, method: rm });
+        acc = acc.append(TraitDefaultIn { key: ctx.prefix + "." + td.name, params: td.type_params, consts: td.const_params, method: rm });
       }
     }
   }
@@ -1600,7 +1601,7 @@ function inherit_trait_defaults(mod: parser.Module, own: string, defaults: Trait
       let key: string = parser.impl_trait_key(im);
       for d in defaults {
         if (d.key == key && index_of_str(d.method.name, im.method_names) < 0) {
-          funcs = funcs.append(parser.FuncDecl { ...parser.inherit_default(d.method, d.params, im), module: d.method.module, impl_trait: im.trait_name });
+          funcs = funcs.append(parser.FuncDecl { ...parser.inherit_default(d.method, d.params, d.consts, im), module: d.method.module, impl_trait: im.trait_name });
         }
       }
     }

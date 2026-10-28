@@ -54,7 +54,8 @@ func TestFormatConstParams(t *testing.T) {
 		t.Errorf("format:\ngot  %q\nwant %q", got, want)
 	}
 	in = "struct Ring[const N: i32, T] { items: T[] }\nenum Slot[const N: i32, T] { Full(Ring[N, T]), Empty }\ntrait Cap { function cap(self: Self): i32; }\nimpl[const N: i32, T] Cap for Ring[N, T] { function cap(self: Ring[N, T]): i32 { return N; } }\n"
-	for _, line := range []string{"enum Slot[const N: i32, T] { Full(Ring[N, T]), Empty }", "impl[const N: i32, T] Cap for Ring[N, T] {"} {
+	in += "struct Gone { n: i32 }\ntype Hold[const N: i32] = Ring[N, i32] | Gone;\ntrait Fixed[const N: i32] { function room(self: Self): i32; }\n"
+	for _, line := range []string{"enum Slot[const N: i32, T] { Full(Ring[N, T]), Empty }", "impl[const N: i32, T] Cap for Ring[N, T] {", "type Hold[const N: i32] = Ring[N, i32] | Gone;", "trait Fixed[const N: i32] {"} {
 		if got := formatSrc(t, in); !strings.Contains(got, line) {
 			t.Errorf("format:\ngot  %q\nwant a line %q", got, line)
 		}

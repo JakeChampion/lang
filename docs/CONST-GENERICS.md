@@ -1,7 +1,7 @@
 # Const generics
 
-Status: [plan] CG1a, CG1b and CG1c ship. A function, a struct, an enum or an
-impl takes a const parameter (§4). CG1d, CG2 and CG3 are plans.
+Status: [plan] CG1 ships. A function, a struct, an enum, a type alias, an
+impl or a trait takes a const parameter (§4). CG2 and CG3 are plans.
 
 A const parameter is a generic parameter whose argument is an integer, not a
 type. `Vec[N, T]` is the first consumer: it is a lane type of `N` lanes of
@@ -14,8 +14,8 @@ after the lane types was taken on 2026-10-21.
 ### 1.1 Declaring a const parameter
 
 A const parameter is `const NAME: i32` in a generic parameter list. It can
-go in the list of a function, a struct, an enum, an impl or a trait, in any
-position:
+go in the list of a function, a struct, an enum, a type alias, an impl or a
+trait, in any position:
 
 ```fern
 struct Ring[const N: i32, T] { items: T[], head: i32 }
@@ -83,10 +83,11 @@ The design adds these codes:
 - A `Vec[N, T]` with no lane type on the portable tier (§2.2). It gets the
   next free code when CG2 lands.
 
-A const parameter in the list of a type alias, a trait or a method is a P001
-until CG1d. A method gets the const parameters of its receiver from the
-receiver spelling: `function (r: Ring[N, T]) cap()`. An impl method gets the
-const parameters of its impl.
+A const parameter in the list of a method is a P001. A method gets the const
+parameters of its receiver from the receiver spelling:
+`function (r: Ring[K, T]) cap()` gives the method K. An impl method gets the
+const parameters of its impl. A default method of a trait reads the impl's
+argument for the trait's const parameter.
 
 A const argument that cannot be inferred reports E040, as a type argument
 does.
@@ -196,7 +197,13 @@ places each compiler has to change.
   from `Slot[4, string]`. The gate is the conformance case
   `const_param_enums_impls` on every engine.
 
-- **CG1d.** A const parameter on a type alias and a trait.
+- **CG1d (done).** A const parameter on a type alias and a trait:
+  `type Slot[const N: i32] = Ring[N, i32] | Gone`, `trait Fixed[const N: i32]`.
+  A bound and an impl write an argument for it: `F: Fixed[4]`,
+  `impl Fixed[8] for Box`. A default method of the trait reads N as the
+  impl's argument. A member literal of a union alias takes its type
+  arguments from the expected alias instance (#13784). The gate is the
+  conformance case `const_param_aliases_traits` on every engine.
 
 - **CG2.** `Vec[N, T]` as the second spelling of the lane types, and
   inference of `N` and `T` from a lane type. The gate is a kernel over
