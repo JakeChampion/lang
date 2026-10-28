@@ -15,14 +15,14 @@ function main(): i32 {
         PSeq([PLit("("), PRef("b"), PLit(")"), PRef("b")]),
         PLit("")
     ]));
-    rules = rules.insert("all", PSeq([PRef("b"), PCap("tail", PPlus(peg.peg_digit())), PEof]));
-    let Ok(g) = peg.peg_grammar(rules, "all") else { return 90; };
-    let Ok(r) = peg.peg_match(g, "(()(()))42") else { return 91; };
+    rules = rules.insert("all", PSeq([PRef("b"), PCap("tail", PPlus(peg.digit())), PEof]));
+    let Ok(g) = peg.grammar(rules, "all") else { return 90; };
+    let Ok(r) = peg.parse(g, "(()(()))42") else { return 91; };
     if (r.caps.get_or("tail", "") != "42") { return 92; }
-    if (ok(peg.peg_match(g, "((x"))) { return 93; }
-    let kw: peg.Pattern = PSeq([PLit("if"), PNot(peg.peg_alnum())]);
-    if (ok(peg.peg_match_pattern(kw, "iffy"))) { return 94; }
-    if (!ok(peg.peg_match_pattern(kw, "if (x)"))) { return 95; }
+    if (ok(peg.parse(g, "((x"))) { return 93; }
+    let kw: peg.Pattern = PSeq([PLit("if"), PNot(peg.alnum())]);
+    if (ok(peg.parse_pattern(kw, "iffy"))) { return 94; }
+    if (!ok(peg.parse_pattern(kw, "if (x)"))) { return 95; }
     return 55;
 }
 function ok(r: Result[peg.PegMatch, peg.PegError]): boolean {
@@ -57,24 +57,24 @@ func TestPegLeftRecursion(t *testing.T) {
 function main(): i32 {
     let r1: Map[string, peg.Pattern] = map_new(2);
     r1 = r1.insert("l", PSeq([PRef("l"), PLit("a")]));
-    let Ok(g1) = peg.peg_grammar(r1, "l") else { return 90; };
-    if (ok(peg.peg_match(g1, "aaa"))) { return 91; }
+    let Ok(g1) = peg.grammar(r1, "l") else { return 90; };
+    if (ok(peg.parse(g1, "aaa"))) { return 91; }
     let r2: Map[string, peg.Pattern] = map_new(2);
     r2 = r2.insert("a", PSeq([PRef("b"), PLit("x")]));
     r2 = r2.insert("b", PRef("a"));
-    let Ok(g2) = peg.peg_grammar(r2, "a") else { return 92; };
-    if (ok(peg.peg_match(g2, "xxx"))) { return 93; }
+    let Ok(g2) = peg.grammar(r2, "a") else { return 92; };
+    if (ok(peg.parse(g2, "xxx"))) { return 93; }
     let r3: Map[string, peg.Pattern] = map_new(2);
     r3 = r3.insert("r", PChoice([PSeq([PLit("a"), PRef("r")]), PLit("")]));
     let deep: string = "";
     let i: i32 = 0;
     while (i < 200) { deep = deep + "a"; i = i + 1; }
-    let Ok(g3) = peg.peg_grammar(r3, "r") else { return 94; };
-    if (!ok(peg.peg_match(g3, deep))) { return 95; }
+    let Ok(g3) = peg.grammar(r3, "r") else { return 94; };
+    if (!ok(peg.parse(g3, deep))) { return 95; }
     let r4: Map[string, peg.Pattern] = map_new(2);
     r4 = r4.insert("b", PChoice([PSeq([PLit("("), PRef("b"), PLit(")")]), PLit("")]));
-    let Ok(g4) = peg.peg_grammar(r4, "b") else { return 96; };
-    if (!ok(peg.peg_match(g4, "((()))"))) { return 97; }
+    let Ok(g4) = peg.grammar(r4, "b") else { return 96; };
+    if (!ok(peg.parse(g4, "((()))"))) { return 97; }
     return 55;
 }
 function ok(r: Result[peg.PegMatch, peg.PegError]): boolean {

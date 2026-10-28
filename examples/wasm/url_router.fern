@@ -38,7 +38,7 @@ function describe(path: string, q: Map[string, string[]]): json.JsonValue {
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   let full: string = "http://example.local" + req.path;
-  match (url.url_parse(full)) {
+  match (url.parse(full)) {
     Err(_) => {
       return http.bad_request("bad URL\n");
     },

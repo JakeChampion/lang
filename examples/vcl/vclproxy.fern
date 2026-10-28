@@ -75,7 +75,7 @@ function client_ip_of(h: HeaderMap): string {
 }
 
 function to_response(o: machine.Outcome): HttpResponse {
-  let h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.new();
   let i: i32 = 0;
   while (i < o.txn.resp.headers.names.len()) {
     let n: string = o.txn.resp.headers.names[i];
@@ -88,13 +88,13 @@ function to_response(o: machine.Outcome): HttpResponse {
   if (status == 0) {
     status = 200;
   }
-  return HttpResponse { status: status, body: BodyText(o.txn.resp.body), headers: h, trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: status, body: BodyText(o.txn.resp.body), headers: h, trailers: headers.new(), background: None };
 }
 
 function error_response(o: machine.Outcome): HttpResponse {
-  let h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.new();
   h = h.set("Content-Type", "text/plain");
-  return HttpResponse { status: 503, body: BodyText("VCL error: " + o.err + "\n"), headers: h, trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: 503, body: BodyText("VCL error: " + o.err + "\n"), headers: h, trailers: headers.new(), background: None };
 }
 
 function report_diags(path: string, diags: diag.Diag[]): void {

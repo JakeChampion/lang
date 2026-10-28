@@ -171,7 +171,7 @@ self-host emitter tracks the Map value type in the type tag
 (`"map:<value-tag>"`), so `m.get(k): Option[string[]]` binds the payload
 as `string[]` — `existing.push(val)` / `.len()` dispatch to the array
 runtime instead of mis-typing as a string. Verified by
-`self_host_url_test.go` (x86 + CI-gated arm64): `url_parse`,
+`self_host_url_test.go` (x86 + CI-gated arm64): `url.parse`,
 `query_parse` over `Map[string, string[]]` with duplicate keys.
 `std/json` now round-trips on both backends (parse / encode / typed
 get, incl. nested objects + arrays) — see `self_host_json_test.go`. Four

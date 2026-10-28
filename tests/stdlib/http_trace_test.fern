@@ -15,7 +15,7 @@ function counter(): () => i32 {
 }
 
 function fields(pairs: string[]): HeaderMap {
-  let h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.new();
   let i: i32 = 0;
   while (i + 1 < pairs.len()) {
     h = h.append(pairs[i], pairs[i + 1]);
@@ -162,7 +162,7 @@ function test_inject_writes_the_span_onward(): test.TestOutcome {
   if (parent != EXAMPLE || h.has("tracestate")) {
     return test.fail("injected " + parent);
   }
-  let with_state: HeaderMap = trace.Context { ...c, state: "rojo=1" }.inject(headers.header_map_new());
+  let with_state: HeaderMap = trace.Context { ...c, state: "rojo=1" }.inject(headers.new());
   return test.assert_eq(with_state.get("tracestate").unwrap_or(""), "rojo=1");
 }
 

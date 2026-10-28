@@ -67,7 +67,7 @@ function test_partial_and_refused(): test.TestOutcome {
 }
 
 function timeout_text(v: string): string {
-  match (grpc.timeout(headers.header_map_new().append("grpc-timeout", v))) {
+  match (grpc.timeout(headers.new().append("grpc-timeout", v))) {
     Some(d) => {
       return d.as_nanos().to_string();
     },
@@ -81,7 +81,7 @@ function timeout_text(v: string): string {
 function test_timeout(): test.TestOutcome {
   let got: string = timeout_text("1H") + " " + timeout_text("2M") + " " + timeout_text("3S") + " " + timeout_text("150m") + " " + timeout_text("7u") + " " + timeout_text("99999999n") + " " + timeout_text("1") + " " + timeout_text("123456789S") + " " + timeout_text("1x") + " " + timeout_text("a1S");
   let none: string = "none";
-  match (grpc.timeout(headers.header_map_new())) {
+  match (grpc.timeout(headers.new())) {
     Some(d) => {
       none = "some";
     },
@@ -91,11 +91,11 @@ function test_timeout(): test.TestOutcome {
 }
 
 function request_with(ct: string): HttpRequest {
-  return HttpRequest { method: "POST", path: "/grpc.testing.TestService/EmptyCall", body: stream.stream_empty(), headers: headers.header_map_new().append("Content-Type", ct), trailers: headers.header_map_new() };
+  return HttpRequest { method: "POST", path: "/grpc.testing.TestService/EmptyCall", body: stream.stream_empty(), headers: headers.new().append("Content-Type", ct), trailers: headers.new() };
 }
 
 function test_is_grpc(): test.TestOutcome {
-  let plain: HttpRequest = HttpRequest { method: "POST", path: "/x", body: stream.stream_empty(), headers: headers.header_map_new(), trailers: headers.header_map_new() };
+  let plain: HttpRequest = HttpRequest { method: "POST", path: "/x", body: stream.stream_empty(), headers: headers.new(), trailers: headers.new() };
   let got: string = grpc.is_grpc(request_with("application/grpc")).to_string() + " " + grpc.is_grpc(request_with("application/grpc+proto")).to_string() + " " + grpc.is_grpc(request_with("Application/GRPC; charset=x")).to_string() + " " + grpc.is_grpc(request_with("application/json")).to_string() + " " + grpc.is_grpc(request_with("application/grpcx")).to_string() + " " + grpc.is_grpc(plain).to_string();
   return test.assert_eq(got, "true true true false false false");
 }

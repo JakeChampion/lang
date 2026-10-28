@@ -386,7 +386,7 @@ pub function decoding(): Decoding {
 
 pub function request(method: string, url: string): Request {
   let none: u8[] = [];
-  return Request { method: method, url: url, headers: headers.header_map_new(), body: BodyBytes(none), timeouts: timeouts(), limits: http.http_limits(), redirects: 10, decoding: decoding(), ktls: false };
+  return Request { method: method, url: url, headers: headers.new(), body: BodyBytes(none), timeouts: timeouts(), limits: http.http_limits(), redirects: 10, decoding: decoding(), ktls: false };
 }
 
 pub function get(url: string): Request {
@@ -472,7 +472,7 @@ function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] 
 }
 
 function __http_url(raw: string): Result[Url, FetchError] {
-  match (url.url_parse(raw)) {
+  match (url.parse(raw)) {
     Ok(parsed) => {
       return __http_url_checked(raw, parsed);
     },
@@ -617,7 +617,7 @@ function __wire(req: Request, t: __Target, body: u8[]): u8[] {
 }
 
 function __sent_fields(req: Request, t: __Target, body_len: i32): HeaderMap {
-  let out: HeaderMap = headers.header_map_new();
+  let out: HeaderMap = headers.new();
   let i: i32 = 0;
   while (i < req.headers.names.len()) {
     if (__sent(req.headers, i)) {
@@ -910,7 +910,7 @@ pub function (sh: Shared) dialed(key: string): void {
   let i: i32 = 0;
   while (i < mail.len()) {
     if (mail[i].fd < 0 && mail[i].key == key) {
-      mail = mail.with(i, Mail { ...mail[i], answer: Some(Ok(Answer { status: 0, headers: headers.header_map_new(), body: [], trailers: headers.header_map_new() })) });
+      mail = mail.with(i, Mail { ...mail[i], answer: Some(Ok(Answer { status: 0, headers: headers.new(), body: [], trailers: headers.new() })) });
     }
     i = i + 1;
   }
@@ -1785,7 +1785,7 @@ function __next_hop(cur: Request, resp: HttpResponse): Result[Request, FetchErro
     }
   }
   let target: string = "";
-  match (url.url_resolve(cur.url, location)) {
+  match (url.resolve(cur.url, location)) {
     Ok(t) => {
       target = t;
     },
@@ -1812,7 +1812,7 @@ function __rewrites_to_get(status: i32, method: string): boolean {
 }
 
 function __without(h: HeaderMap, names: string[]): HeaderMap {
-  let out: HeaderMap = headers.header_map_new();
+  let out: HeaderMap = headers.new();
   let i: i32 = 0;
   while (i < h.names.len()) {
     if (!__holds(names, h.names[i])) {
@@ -1835,7 +1835,7 @@ function __holds(names: string[], name: string): boolean {
 function __same_origin(a: string, b: string): boolean {
   let ua: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   let ub: Url = ua;
-  match (url.url_parse(a)) {
+  match (url.parse(a)) {
     Ok(p) => {
       ua = p;
     },
@@ -1843,7 +1843,7 @@ function __same_origin(a: string, b: string): boolean {
       return false;
     }
   }
-  match (url.url_parse(b)) {
+  match (url.parse(b)) {
     Ok(p) => {
       ub = p;
     },
@@ -1959,7 +1959,7 @@ function __attempt_shared[T: Transport](tr: T, req: Request, t: __Target, starte
     }
   }
   let body: u8[] = req.body.bytes();
-  let id: i32 = sh.submit(fd, h2.Outgoing { method: req.method, scheme: "https", authority: t.host_field, path: t.target, headers: __sent_fields(req, t, body.len()), body: body, trailers: headers.header_map_new() });
+  let id: i32 = sh.submit(fd, h2.Outgoing { method: req.method, scheme: "https", authority: t.host_field, path: t.target, headers: __sent_fields(req, t, body.len()), body: body, trailers: headers.new() });
   if (id == 0) {
     return Err(Io(net.ConnectionReset));
   }
@@ -2086,7 +2086,7 @@ function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i
 
 function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, conn: __Conn, hc: h2.Conn): Result[HttpResponse, FetchError] {
   let body: u8[] = req.body.bytes();
-  let (sent, stream) = hc.request(h2.Outgoing { method: req.method, scheme: "https", authority: t.host_field, path: t.target, headers: __sent_fields(req, t, body.len()), body: body, trailers: headers.header_map_new() });
+  let (sent, stream) = hc.request(h2.Outgoing { method: req.method, scheme: "https", authority: t.host_field, path: t.target, headers: __sent_fields(req, t, body.len()), body: body, trailers: headers.new() });
   if (stream < 0) {
     tr.close(conn.fd);
     return Err(Io(net.ConnectionReset));
@@ -3119,7 +3119,7 @@ function __or_empty(v: Option[string]): string {
 ```fern
 <<62 pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string]>>=
 pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string] {
-  match (url.url_parse(target_url)) {
+  match (url.parse(target_url)) {
     Ok(u) => {
       return __proxy_for_url(p, u);
     },
@@ -3437,7 +3437,7 @@ function __proxy_of(spec: string, name: string): Result[__Proxy, FetchError] {
     full = "http://" + full;
   }
   let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
-  match (url.url_parse(full)) {
+  match (url.parse(full)) {
     Ok(parsed) => {
       u = parsed;
     },

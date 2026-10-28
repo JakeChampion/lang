@@ -5,7 +5,7 @@ import "std/headers";
 
 
 function main(): i32 {
-    let h: HeaderMap = headers.header_map_new();
+    let h: HeaderMap = headers.new();
 
     h = h.set("Set-Cookie", "a");
     h = h.append("Set-Cookie", "b");

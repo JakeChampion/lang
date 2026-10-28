@@ -231,7 +231,7 @@ records their bugs in the audit log.
 | `std/hex` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_codec_roundtrip`; self-host IR path: `encode`/`decode` lower end-to-end (real std/hex source, routing-pinned `TestSelfHostHexIR`, x86-64 + wasm + arm64 oracle-checked) — unblocked by the wasm `string_from_bytes_unchecked` helper-gate fix |
 | `std/crypto` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | SHA-256 vectors ✅ native (`audit_std_crypto`); self-host now correct via the IR path — u32 wrapping + array builders + byte builtins ([#2861](https://github.com/JakeChampion/lang/issues/2861) fixed, #2891; `TestSelfHostU32WrapIR`) |
 | `std/uuid` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | v4 length/dashes/version/uniqueness — `audit_std_uuid`; self-host v4 + v7 via the IR path (`TestSelfHostUuidIR`) |
-| `std/url` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_url_roundtrip` — 300 text inputs and 300 full-byte-range inputs, all four backends; the arm64 heap-corruption ([#2817](https://github.com/JakeChampion/lang/issues/2817)) is fixed (two-word `string_from_bytes_unchecked` now uses `__fern_alloc_rc1`); self-host via the IR path (x86-64 + wasm): `url_encode`/`url_decode` percent-coding (`TestSelfHostUrlCodecIR`) + `url_parse` URL decomposition (`TestSelfHostUrlParseIR` — 6-field struct w/ mixed string+i32 fields, repeated struct-spread updates, `Option[Url]` + payload `match`) + `query_parse` (`TestSelfHostUrlQueryIR` — `Map[string, string[]]` w/ string-ARRAY values via `Map {}`/`.get`/`.insert`, incl. the duplicate-key append-to-existing case) — byte classification, bit ops, `u8[]` literals + `as u8` casts, and the `string_from_bytes_unchecked` builtin all lower; native via the `url_codec` fixture (encode/decode + `url_parse` + `query_parse` incl. dup-key accumulation). (The dup-key wasm-IR map miscompile [#3495](https://github.com/JakeChampion/lang/issues/3495) is now fixed — `op_map_set` threads value-pointerness into the wasm `vis` flag — and the dup-key case is the regression guard.) |
+| `std/url` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `prop_url_roundtrip` — 300 text inputs and 300 full-byte-range inputs, all four backends; the arm64 heap-corruption ([#2817](https://github.com/JakeChampion/lang/issues/2817)) is fixed (two-word `string_from_bytes_unchecked` now uses `__fern_alloc_rc1`); self-host via the IR path (x86-64 + wasm): `url.encode`/`url.decode` percent-coding (`TestSelfHostUrlCodecIR`) + `url.parse` URL decomposition (`TestSelfHostUrlParseIR` — 6-field struct w/ mixed string+i32 fields, repeated struct-spread updates, `Option[Url]` + payload `match`) + `query_parse` (`TestSelfHostUrlQueryIR` — `Map[string, string[]]` w/ string-ARRAY values via `Map {}`/`.get`/`.insert`, incl. the duplicate-key append-to-existing case) — byte classification, bit ops, `u8[]` literals + `as u8` casts, and the `string_from_bytes_unchecked` builtin all lower; native via the `url_codec` fixture (encode/decode + `url.parse` + `query_parse` incl. dup-key accumulation). (The dup-key wasm-IR map miscompile [#3495](https://github.com/JakeChampion/lang/issues/3495) is now fixed — `op_map_set` threads value-pointerness into the wasm `vis` flag — and the dup-key case is the regression guard.) |
 | `std/json` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | parse → get_i32/get_string → encode → re-parse — `audit_std_json` + `self_host_json_test`; `@derive(Json)` incl. **array fields** (`T[]`) — native all backends (`derive_json` fixture), self-host i32/string/struct arrays via the IR path ([#2766](https://github.com/JakeChampion/lang/issues/2766); `TestSelfHostJsonArrayIR`) |
 | `std/error` | ✅ | ✅ | ✅ | ✅ | | ✅ | canonical `Error` supertype (`message()`) for heterogeneous errors: `Result[_, dyn error.Error]` + `?` boxes any concrete error that `impl error.Error for …` (`std_error_test`, all four backends) — caps the dyn-error story (#3216 dispatch fix + #3242 `?`-conversion; #2707) |
 | `std/convert` | ✅ | ✅ | ✅ | ✅ | | ✅ | canonical `From[T]` / `Into[T]` conversion traits (on generic traits, #3254): `impl convert.From[i32] for Celsius` + `Celsius.from(20)`, `impl convert.Into[F] for Celsius` + `c.into()` (`std_convert_test`, all four backends; #2691) — generic use over a bound awaits bounded-generics-over-generic-traits |
@@ -2613,20 +2613,20 @@ Exercises `string[]` accumulation (`.append`), `.index_of` / `.replace`
 dispatch, and char-scan/slice lowering end-to-end through the self-host IR — no
 AST fallback.
 
-### 2026-06-21 — std/url: pure-Fern std/test migration coverage (`url_encode` / `url_decode` / `url_parse`)
+### 2026-06-21 — std/url: pure-Fern std/test migration coverage (`url.encode` / `url.decode` / `url.parse`)
 
 `std/url`'s RFC 3986 percent-encoding and best-effort URL parsing had Go-side
 coverage but no migration-shaped (pure-Fern, `std/test`-driven) companion. Added
-`tests/stdlib/url_test.fern` — 10 assertions: `url_encode` unreserved
+`tests/stdlib/url_test.fern` — 10 assertions: `url.encode` unreserved
 pass-through (`aZ9-._~`), reserved escaping (`/?&=` → `%2F%3F%26%3D`, uppercase
-hex) and the space case; `url_decode` lower-case hex acceptance (`%2f` → `/`)
+hex) and the space case; `url.decode` lower-case hex acceptance (`%2f` → `/`)
 and the truncated-escape-left-literal edge (`%2` → `%2`); a round-trip; and
-`url_parse`'s full scheme/host/port/path/query/fragment split
+`url.parse`'s full scheme/host/port/path/query/fragment split
 (`http://example.com:8080/path?q=1#frag`), a minimal `https://host.com/`, and
 the empty-input `None`. Gated natively (`TestRunnerUrlExamplePasses`) and
 through the self-host differential gate (`TestSelfHostStdTestE2E/url`), which
 oracle-checks TAP-13 stdout + exit code against the interpreter **byte-for-byte**.
-Notably the `url_parse` path — struct-spread update (`Url { ...u, scheme: … }`)
+Notably the `url.parse` path — struct-spread update (`Url { ...u, scheme: … }`)
 + `Option[Url]` match — routes cleanly through the self-host IR (no AST
 fallback), a step beyond the pure byte-buffer encoders.
 
@@ -3418,44 +3418,44 @@ accumulate). `TestSelfHostUrlQueryIR{X86_64,Wasm}` run the inlined parser throug
 the x86-64 + wasm IR drivers, pinned to the `"ir"` path. It exercises a `Map`
 with string keys and **string-ARRAY values** built via `Map {}` / `.get` /
 `.insert`, the append-or-create idiom over the map's `string[]` value,
-`Option[string[]]` `Some`/`None` `match`, and `url_decode`'s `u8[]` +
+`Option[string[]]` `Some`/`None` `match`, and `url.decode`'s `u8[]` +
 `string_from_bytes_unchecked` — all already lower, so no compiler change. The native
 `url_codec` fixture also exercises `query_parse` incl. duplicate-key
 accumulation.
 
 The audit surfaced a **self-host wasm-IR bug**: query_parse's duplicate-key path
 (append to an existing `string[]` map value, where the strings come from
-slices / `url_decode`) yields the wrong count on a sibling key on the wasm IR
+slices / `url.decode`) yields the wrong count on a sibling key on the wasm IR
 backend (`a=1&b=2&a=3` → b gets 2 values, exit 22 vs 21) — correct on x86-64 IR
 and every native backend. Filed as [#3495](https://github.com/JakeChampion/lang/issues/3495)
 (looks like the `Map[K, string[]]` analog of the known "map array values"
 RC gap in #2857); the dup-key case is omitted from the self-host pinned set and
 kept on the native side. The other `std/url` self-host pieces
-(`url_encode`/`url_decode`/`url_parse` + single-value `query_parse`) are all ✅.
+(`url.encode`/`url.decode`/`url.parse` + single-value `query_parse`) are all ✅.
 
-### 2026-06-20 — std/url `url_parse` on the self-host IR path
+### 2026-06-20 — std/url `url.parse` on the self-host IR path
 
-Extended the `std/url` self-host audit to `url_parse` (URL → 6-field `Url`
+Extended the `std/url` self-host audit to `url.parse` (URL → 6-field `Url`
 struct). `TestSelfHostUrlParseIR{X86_64,Wasm}` run the inlined parser through the
 x86-64 + wasm IR drivers, pinned to the `"ir"` path (return value = a chosen
 component's length / port). It exercises a 6-field struct with mixed string + i32
 fields, repeated functional struct-spread updates (`Url { ...u, host: …, port:
 … }`), string slicing, byte scanning, and `Option[Url]` `Some`/`None` returned
 and read via a payload-binding `match` — all already lower, so no compiler
-change. The native `url_codec` fixture now also exercises `url_parse`
+change. The native `url_codec` fixture now also exercises `url.parse`
 (round-trip + the empty→`None` case). `query_parse` (builds a `Map`) is still a
 later slice.
 
 ### 2026-06-20 — std/url percent-encoding on the self-host IR path + native audit
 
-Audited the `std/url` self-host column (was blank). `url_encode` / `url_decode`
+Audited the `std/url` self-host column (was blank). `url.encode` / `url.decode`
 — RFC 3986 percent-coding — now route through the IR path on x86-64 + wasm
 (`TestSelfHostUrlCodecIR{X86_64,Wasm}`, pinned to `"ir"`, hardcoded expectations
 verified against native interp + x86-64) and have a native `url_codec` fixture
 (interp / x86-64 / arm64 / wasm). It exercises byte classification, bit ops
 (`>>` / `&` / `<<` / `|`), `u8[]` array literals with `as u8` element casts, and
 the `string_from_bytes_unchecked(u8[])` builtin — all already lower, so no compiler change.
-(`url_parse` / `query_parse`, which build a `Map`, are left for a later slice.)
+(`url.parse` / `query_parse`, which build a `Map`, are left for a later slice.)
 
 ### 2026-06-21 — std/sort: `sort_by_i32_key` (sort by a numeric projection) ([#2686](https://github.com/JakeChampion/lang/issues/2686))
 
@@ -4586,13 +4586,13 @@ the arm64 `std/url` heap-corruption bug below (reconfirmed reproducing today).
 
 ### 2026-06-09 — 🐛 arm64 heap-corruption in the RcFree freelist drop/reuse path (FIXED 2026-06-13 — [#2817](https://github.com/JakeChampion/lang/issues/2817))
 
-**Found by:** `prop_url_roundtrip` property fixture — `url_decode(url_encode(s)) == s`
+**Found by:** `prop_url_roundtrip` property fixture — `url.decode(url.encode(s)) == s`
 over 300 deterministic random inputs (full 0..255 byte range, lengths 0..47; since
-D9 the byte sweep checks `url_decode_bytes(url_encode(s)) == s.bytes()`).
+D9 the byte sweep checks `url.decode_bytes(url.encode(s)) == s.bytes()`).
 
 **Symptom:** On **arm64 only** (interp / x86-64 / wasm all pass), the round-trip
 fails. The corruption is a *single byte* of a **still-live** string being
-overwritten: e.g. `url_encode` output `…%DB%90%C0d` becomes `…%DB%80%C0d`
+overwritten: e.g. `url.encode` output `…%DB%90%C0d` becomes `…%DB%80%C0d`
 (0x90→0x80) — the byte read by `enc` is 16 lower (bit 4 cleared), yet a later
 read of the same string sees the correct value. Different byte values are hit on
 different iterations (state-dependent), so it is **not** a logic error in

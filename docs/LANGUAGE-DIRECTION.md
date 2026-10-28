@@ -1219,7 +1219,7 @@ tests.
     Steele/White / Ryu yet; close-enough-for-handler-config
     semantics. Hex / scientific formats with explicit base
     will get separate methods.
-  - **`url_parse(s)` shipped.** Decomposes an absolute or
+  - **`url.parse(s)` shipped.** Decomposes an absolute or
     relative URL into a `Url` struct (auto-injected, six
     fields: `scheme`, `host`, `port`, `path`, `query`,
     `fragment`). Returns `Option[Url]`; `None` only on
@@ -1237,7 +1237,7 @@ tests.
     `b.scratchType` via the slot map, so match-arm-bound
     struct values (`Some(u) => u.scheme`) work — first time
     we exercised that path.
-  - **`url_encode(s)` / `url_decode(s)` shipped.** RFC 3986
+  - **`url.encode(s)` / `url.decode(s)` shipped.** RFC 3986
     percent-encoding. The unreserved set
     (`A-Za-z0-9-_.~`) passes through unchanged; everything
     else is emitted as `%HH` (uppercase hex). Decoding is
@@ -1249,7 +1249,7 @@ tests.
   - **`query_parse(s)` shipped.** Splits a URL-encoded
     query string into a `Map[string, string[]]`. Pairs
     are separated by `&`; within a pair, `=` separates key
-    from value. Both halves are url_decode'd before
+    from value. Both halves are url.decode'd before
     storage. **Duplicate keys** (`?tag=a&tag=b&tag=c`) all
     preserved — values for the same key collect into a
     `string[]` in insertion order, matching Go's

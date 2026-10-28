@@ -217,11 +217,11 @@ pub function next_message(buffered: u8[]): Result[Option[(u8[], u8[])], string] 
 }
 
 pub function headers(): HeaderMap {
-  return headers.header_map_new().append("Content-Type", "application/grpc");
+  return headers.new().append("Content-Type", "application/grpc");
 }
 
 pub function status(code: i32, message: string): HeaderMap {
-  let out: HeaderMap = headers.header_map_new().append("Grpc-Status", code.to_string());
+  let out: HeaderMap = headers.new().append("Grpc-Status", code.to_string());
   if (message.len() == 0) {
     return out;
   }

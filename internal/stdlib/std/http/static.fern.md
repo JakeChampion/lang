@@ -193,7 +193,7 @@ function __add_slash(target: string): HttpResponse {
   let path: string = http.http_url_path_only(target);
   let query: string = target.slice_snap(path.len(), target.len());
   let base: string = __last_segment(path);
-  return HttpResponse { ...http.redirect(url.url_encode(base) + "/" + query), status: 301 };
+  return HttpResponse { ...http.redirect(url.encode(base) + "/" + query), status: 301 };
 }
 
 function __last_segment(path: string): string {
@@ -308,14 +308,14 @@ function __etag(rep: Rep): cache.ETag {
 }
 
 function __headed(rep: Rep, o: Options, ctype: string): HttpResponse {
-  let h: HeaderMap = headers.header_map_new().append("Content-Type", ctype).append("Accept-Ranges", "bytes");
+  let h: HeaderMap = headers.new().append("Content-Type", ctype).append("Accept-Ranges", "bytes");
   if (rep.coding.len() > 0) {
     h = h.append("Content-Encoding", rep.coding);
   }
   if (o.precompressed.len() > 0) {
     h = h.append("Vary", "Accept-Encoding");
   }
-  let resp: HttpResponse = HttpResponse { status: 200, body: __file_body(rep.path, 0 as i64, rep.st.size), headers: h, trailers: headers.header_map_new(), background: None };
+  let resp: HttpResponse = HttpResponse { status: 200, body: __file_body(rep.path, 0 as i64, rep.st.size), headers: h, trailers: headers.new(), background: None };
   match (o.cache_control) {
     Some(cc) => {
       return resp.with_cache_control(cc);

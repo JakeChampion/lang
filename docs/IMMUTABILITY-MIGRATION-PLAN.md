@@ -254,7 +254,7 @@ thread it back — a signature change, not a local rewrite.
     build and return a fresh `Counts`; the call site is unchanged.
   - `main` accumulates `total.lines/words/bytes` (`:73-75`) — a pure
     local accumulator. Rebuild `total` from itself + `got`.
-- **`url.fern` (7).** `url_parse` builds a local `u: Url` with seven
+- **`url.fern` (7).** `url.parse` builds a local `u: Url` with seven
   *conditional* field writes (`:118,130,141,168,180,182,188`) then
   `return Some(u)` (`:191`). No aliasing, no through-call — a local
   builder. Cleanest rewrite: compute the seven pieces into local

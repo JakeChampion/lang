@@ -429,7 +429,7 @@ function (c: Conn) __ended(id: i64): Conn {
 }
 
 function __request(fields: qpack.Field[], body: u8[], trailers: qpack.Field[]): HttpRequest {
-  let hs: HeaderMap = headers.header_map_new();
+  let hs: HeaderMap = headers.new();
   let authority: string = "";
   let method: string = "";
   let path: string = "";
@@ -452,7 +452,7 @@ function __request(fields: qpack.Field[], body: u8[], trailers: qpack.Field[]): 
 
 function __response(fields: qpack.Field[], body: u8[], trailers: qpack.Field[]): HttpResponse {
   let status: i32 = 0;
-  let hs: HeaderMap = headers.header_map_new();
+  let hs: HeaderMap = headers.new();
   for f in fields {
     if (f.name == ":status") {
       status = i32.parse_i32(f.value).unwrap_or(0);
@@ -464,7 +464,7 @@ function __response(fields: qpack.Field[], body: u8[], trailers: qpack.Field[]):
 }
 
 function __map(fields: qpack.Field[]): HeaderMap {
-  let hs: HeaderMap = headers.header_map_new();
+  let hs: HeaderMap = headers.new();
   for f in fields {
     hs = hs.append(f.name, f.value);
   }
