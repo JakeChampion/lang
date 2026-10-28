@@ -6905,13 +6905,14 @@ function main(): i32 {
 
 func TestArm64StdlibBundle10(t *testing.T) {
 	src := `
-import "std/math";
+import "std/i32";
+import "std/i64";
 import "core/cmp";
 function main(): i32 {
     // Range constants
-    if (math.i32_max() != 2147483647) { return 1; }
-    if (math.i32_min() != (0 - 2147483647 - 1)) { return 2; }
-    if (math.i64_max() != 9223372036854775807) { return 3; }
+    if (i32.MAX != 2147483647) { return 1; }
+    if (i32.MIN != (0 - 2147483647 - 1)) { return 2; }
+    if (i64.MAX != 9223372036854775807) { return 3; }
 
     // trim_start / trim_end
     if ("  hello  ".trim_start() != "hello  ") { return 4; }

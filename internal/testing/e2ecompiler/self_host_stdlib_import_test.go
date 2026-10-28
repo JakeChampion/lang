@@ -26,7 +26,7 @@ func TestSelfHostStdlibImportX86_64(t *testing.T) {
 		main string
 		exit int
 	}{
-		{"std-math-leaf", "import \"std/math\";\nfunction main(): i32 {\n return math.i32_max() - 2147483605;\n}\n", 42},
+		{"std-math-leaf", "import \"std/math\";\nfunction main(): i32 {\n return math.pack_rgb(0, 0, 42);\n}\n", 42},
 		{"core-cmp-transitive", "import \"core/cmp\";\nfunction main(): i32 {\n let a: i32[] = [5, 3, 8, 1, 9, 2];\n let s: i32[] = cmp.sort(a);\n return s[0] + s[5] + 32;\n}\n", 42},
 		{"std-json-intrinsics", "import \"std/json\";\nfunction main(): i32 {\n let m: Map[string,i32] = map_new(8);\n m = m.insert(\"a\", 10);\n m = m.insert(\"b\", 32);\n let r: i32 = 0;\n match (m.get(\"a\")) { Some(v) => { r = r + v; }, None => { } }\n match (m.get(\"b\")) { Some(v) => { r = r + v; }, None => { } }\n return r;\n}\n", 42},
 	}

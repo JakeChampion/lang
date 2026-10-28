@@ -29,7 +29,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<*>>=
 <<module introduction>>
 
-<<2 pub function i32_max(): i32>>
+<<2 constants and conversions>>
 
 <<3 function __hex_digit(b: i32): i32>>
 
@@ -45,40 +45,22 @@ import "core/cmp";
 import "std/error";
 ```
 
-### `2 pub function i32_max(): i32`
+### `2 constants and conversions`
 
 ```fern
-<<2 pub function i32_max(): i32>>=
-pub function i32_max(): i32 {
-  return 2147483647;
-}
+<<2 constants and conversions>>=
+pub const PI: f64 = 3.141592653589793;
 
-pub function i32_min(): i32 {
-  return 0 - 2147483647 - 1;
-}
+pub const TAU: f64 = 6.283185307179586;
 
-pub function i64_max(): i64 {
-  return 9223372036854775807;
-}
-
-pub function i64_min(): i64 {
-  return 0 as i64 - 9223372036854775807 - 1 as i64;
-}
-
-pub function pi(): f64 {
-  return 3.141592653589793;
-}
-
-pub function tau(): f64 {
-  return 6.283185307179586;
-}
+pub const E: f64 = 2.718281828459045;
 
 pub function to_radians(deg: f64): f64 {
-  return deg * (pi() / 180.0);
+  return deg * (PI / 180.0);
 }
 
 pub function to_degrees(rad: f64): f64 {
-  return rad * (180.0 / pi());
+  return rad * (180.0 / PI);
 }
 
 pub function lerp(a: f64, b: f64, t: f64): f64 {
