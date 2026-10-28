@@ -44,3 +44,8 @@ The fresh stock retained-machine failure remains evidence for the parent issue.
 The independent native capability probe remains a finite observation.
 This decoder does not repair the full retained-machine driver or qualify a symbolic machine proof.
 Actual CI recovery and all M5 and epic gates remain open.
+
+The [final evidence](../benchmarks/wide-large-free-decoder-2026-10-28/README.md) records the source-pinned campaigns and qualification checks.
+All three targets completed the same 4,681 cases with exact operation records.
+All 1,758 fresh workers reported nonzero balanced censuses with zero live bytes.
+The full retained-machine proof remains a later scope.
