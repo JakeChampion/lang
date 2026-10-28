@@ -2,26 +2,30 @@ package caps_test
 
 import (
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/pkg/caps"
 )
 
+// via is the stdlib wrapper between the default and the builtin, for a
+// builtin that only the standard library can name.
 type traitDefaultCase struct {
 	capability string
 	builtin    string
 	stmt       string
+	via        string
 }
 
 var traitDefaultCases = []traitDefaultCase{
-	{"env", "env", `env("HOME");`},
-	{"env", "hostname", `hostname();`},
-	{"fs", "read_file", `read_file("/etc/hostname");`},
-	{"net", "tcp_close", `tcp_close(1);`},
-	{"random", "random_i32", `random_i32();`},
-	{"subprocess", "subprocess", `subprocess("/bin/true", [], "");`},
-	{"time", "now_unix_ms", `now_unix_ms();`},
+	{"env", "env", `env("HOME");`, ""},
+	{"env", "hostname", `hostname();`, ""},
+	{"fs", "read_file", `read_file("/etc/hostname");`, ""},
+	{"net", "tcp_close", `tcp_close(1);`, ""},
+	{"random", "random_i32", `rand.next_i32();`, "rand__next_i32"},
+	{"subprocess", "subprocess", `subprocess("/bin/true", [], "");`, ""},
+	{"time", "now_unix_ms", `now_unix_ms();`, ""},
 }
 
 func pkgByDir(dirs ...string) func(string) string {
@@ -53,7 +57,8 @@ function main(): i32 {
   return r.grab();
 }`,
 				"b/fern.toml": "[package]\nname = \"b\"\n",
-				"b/lib.fern": `pub trait Leaky {
+				"b/lib.fern": `import "std/rand";
+pub trait Leaky {
   function tag(self: Self): i32;
   function grab(self: Self): i32 {
     ` + tc.stmt + `
@@ -69,7 +74,11 @@ function main(): i32 {
 				t.Fatalf("declaring package must report %s alone, got %+v", tc.capability, b.Uses)
 			}
 			chain := b.Uses[0].Chain
-			if len(chain) != 2 || !strings.Contains(chain[0], "grab") || chain[1] != tc.builtin {
+			want := []string{tc.builtin}
+			if tc.via != "" {
+				want = []string{tc.via, tc.builtin}
+			}
+			if len(chain) != len(want)+1 || !strings.Contains(chain[0], "grab") || !slices.Equal(chain[1:], want) {
 				t.Errorf("b's chain must be the synthesised default reaching %q on its own, got %v", tc.builtin, chain)
 			}
 
