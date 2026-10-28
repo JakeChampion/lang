@@ -1,0 +1,80 @@
+[
+  {
+    "path": "/tmp/image-wide-decoder-evidence-secondary/checkpoint-fault/worker/worker.elf",
+    "archive_group": "qualification-records.tar.gz",
+    "bytes": 85056,
+    "sha256": "55c80388148f271fb42f227b0a5b4b88e2ab1dc5895fadc2c1f6ea0629b6b08a"
+  },
+  {
+    "path": "/tmp/image-wide-decoder-evidence-secondary/fern-oracle-a928e68f14",
+    "archive_group": "qualification-records.tar.gz",
+    "bytes": 29469687,
+    "sha256": "e75024219e6731a061d7749212eb2cf35f91aca1358507032e71304fb806d98c"
+  },
+  {
+    "path": "/tmp/image-wide-decoder-evidence-secondary/final-corpus-arm64-linux-worker/worker.elf",
+    "archive_group": "qualification-records.tar.gz",
+    "bytes": 145168,
+    "sha256": "44af190e78e8a088978f5430cf3e622b6e7920b67d9def34d1b030a0efd008c0"
+  },
+  {
+    "path": "/tmp/image-wide-decoder-evidence-secondary/final-corpus-wasm32-wasi-worker/worker.wasm",
+    "archive_group": "qualification-records.tar.gz",
+    "bytes": 62893,
+    "sha256": "71fe3c6939d2d565870017002b96d69ac04d449a508da1eddc7cc561d3d2e8a4"
+  },
+  {
+    "path": "/tmp/image-wide-decoder-evidence-secondary/final-corpus-x86-64-linux-worker/worker.elf",
+    "archive_group": "qualification-records.tar.gz",
+    "bytes": 85056,
+    "sha256": "2f53eb1c29ddb410830f51880d5a2bcb700c7757a7ecf5df7b563c7e8c4b0ccd"
+  },
+  {
+    "path": "/tmp/image-wide-decoder-evidence-secondary/private-controls-cache-corrected/accept-unknown/worker.elf",
+    "archive_group": "qualification-records.tar.gz",
+    "bytes": 85040,
+    "sha256": "235798490e6e584cd2e2db2f89896fd1999b997164354f28e5b1b7939b48c94c"
+  },
+  {
+    "path": "/tmp/image-wide-decoder-evidence-secondary/private-controls-cache-corrected/swap-compare/worker.elf",
+    "archive_group": "qualification-records.tar.gz",
+    "bytes": 85056,
+    "sha256": "691d731e21b76e5d2e82df4486e6b591fbe9e3946dec7f0d618fe27a2c7f9022"
+  },
+  {
+    "path": "/tmp/image-wide-decoder-evidence-secondary/private-controls-cache-corrected/truncate-i64/worker.elf",
+    "archive_group": "qualification-records.tar.gz",
+    "bytes": 85056,
+    "sha256": "55c80388148f271fb42f227b0a5b4b88e2ab1dc5895fadc2c1f6ea0629b6b08a"
+  },
+  {
+    "path": "/tmp/image-wide-decoder-evidence-secondary/provisional-native-worker/worker.elf",
+    "archive_group": "qualification-records.tar.gz",
+    "bytes": 85056,
+    "sha256": "2f53eb1c29ddb410830f51880d5a2bcb700c7757a7ecf5df7b563c7e8c4b0ccd"
+  },
+  {
+    "path": "/tmp/image-retained-wide-machine-emitted-helper-diagnostic.elf",
+    "archive_group": "before-and-initial-records.tar.gz",
+    "bytes": 9651520,
+    "sha256": "1a694d525fb8683d6145ed8a628259a2d63d448a767bd6e57d818f567fd6f710"
+  },
+  {
+    "path": "/tmp/image-retained-wide-machine-native-capability/actual.elf",
+    "archive_group": "before-and-initial-records.tar.gz",
+    "bytes": 11272,
+    "sha256": "b76f56fba6fea5b1374221a20f945e63420257da3bcb57438c8d41463bf8a487"
+  },
+  {
+    "path": "/tmp/image-retained-wide-machine-native-capability/wrong-shift32.elf",
+    "archive_group": "before-and-initial-records.tar.gz",
+    "bytes": 11272,
+    "sha256": "42c8812cba6e8887c958652576c28cf5b38adb3877b9671744d453e5c599e5d8"
+  },
+  {
+    "path": "/tmp/image-retained-wide-machine-unmodified-driver.elf",
+    "archive_group": "before-and-initial-records.tar.gz",
+    "bytes": 10127152,
+    "sha256": "38b1fa709b852d0b759140fb173ad15e183a880314570635624e57d820506e1f"
+  }
+]
