@@ -28,3 +28,10 @@ This scope changes test drivers only.
 It preserves the qualified production compiler implementation and records the actual build identity of each reused tool.
 The complete retained-machine command still requires separate caller-proof work.
 Full recovery, actual CI recovery, M5, and epic acceptance remain open.
+
+## Published evidence
+
+The [qualification record](../benchmarks/retained-wide-helper-controls-2026-10-28/README.md) binds the source, tool identities, private views, and preserved failures.
+The final focused target and complexity checks passed seven TAP nodes with zero skips.
+The source gate, 2110 format inputs, Go checks, and all 219 source-audit nodes passed.
+Full retained-machine and caller-proof qualification remain open.
