@@ -177,37 +177,39 @@ function __decimal_top(n: i64): i64 {
 }
 
 pub function decode(coded: [u8], room: i32): Result[u8[], HuffmanError] {
-  let out: u8[] = __alloc_u8(coded.len() * 8 / 5 + 1);
-  __arr_set_len(out, 0);
-  let state: i32 = 0;
-  let entry: i32 = DEC_ACCEPT;
-  for b in coded {
-    entry = HUFF_DEC[state * 16 + (b as i32 >> 4)];
-    if ((entry & DEC_FAIL) != 0) {
+  unsafe {
+    let out: u8[] = __alloc_u8(coded.len() * 8 / 5 + 1);
+    __arr_set_len(out, 0);
+    let state: i32 = 0;
+    let entry: i32 = DEC_ACCEPT;
+    for b in coded {
+      entry = HUFF_DEC[state * 16 + (b as i32 >> 4)];
+      if ((entry & DEC_FAIL) != 0) {
+        return Err(InvalidCode);
+      }
+      if ((entry & DEC_EMIT) != 0) {
+        if (out.len() >= room) {
+          return Err(ExceedsRoom);
+        }
+        out = out.append((entry & 255) as u8);
+      }
+      entry = HUFF_DEC[(entry >> 11) * 16 + (b as i32 & 15)];
+      if ((entry & DEC_FAIL) != 0) {
+        return Err(InvalidCode);
+      }
+      if ((entry & DEC_EMIT) != 0) {
+        if (out.len() >= room) {
+          return Err(ExceedsRoom);
+        }
+        out = out.append((entry & 255) as u8);
+      }
+      state = entry >> 11;
+    }
+    if ((entry & DEC_ACCEPT) == 0) {
       return Err(InvalidCode);
     }
-    if ((entry & DEC_EMIT) != 0) {
-      if (out.len() >= room) {
-        return Err(ExceedsRoom);
-      }
-      out = out.append((entry & 255) as u8);
-    }
-    entry = HUFF_DEC[(entry >> 11) * 16 + (b as i32 & 15)];
-    if ((entry & DEC_FAIL) != 0) {
-      return Err(InvalidCode);
-    }
-    if ((entry & DEC_EMIT) != 0) {
-      if (out.len() >= room) {
-        return Err(ExceedsRoom);
-      }
-      out = out.append((entry & 255) as u8);
-    }
-    state = entry >> 11;
+    return Ok(out);
   }
-  if ((entry & DEC_ACCEPT) == 0) {
-    return Err(InvalidCode);
-  }
-  return Ok(out);
 }
 ```
 

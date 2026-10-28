@@ -10,10 +10,10 @@ var rcRuntimeCases = []struct {
 	src  string
 	exit int
 }{
-	{"rc-inc-dec", "function main(): i32 { let f: i32[] = [0]; let base: usize = __alloc(24); __store_i32(base + 8, 5); __fern_rc_inc(base + 16); __fern_rc_inc(base + 16); __fern_rc_dec(base + 16); return __load_i32(base + 8); }", 6},
-	{"rc-underflow-detected", "function main(): i32 { let f: i32[] = [0]; let base: usize = __alloc(24); __store_i32(base + 8, 1); __fern_rc_dec(base + 16); __fern_rc_dec(base + 16); return __rc_underflow_count(); }", 1},
-	{"rc-underflow-clean", "function main(): i32 { let f: i32[] = [0]; let base: usize = __alloc(24); __store_i32(base + 8, 3); __fern_rc_dec(base + 16); __fern_rc_dec(base + 16); return __rc_underflow_count(); }", 0},
-	{"rc-inc-null-safe", "function main(): i32 { let f: i32[] = [0]; __fern_rc_inc(0); __fern_rc_dec(0); return 7; }", 7},
+	{"rc-inc-dec", "function main(): i32 { unsafe { let f: i32[] = [0]; let base: usize = __alloc(24); __store_i32(base + 8, 5); __fern_rc_inc(base + 16); __fern_rc_inc(base + 16); __fern_rc_dec(base + 16); return __load_i32(base + 8); } }", 6},
+	{"rc-underflow-detected", "function main(): i32 { unsafe { let f: i32[] = [0]; let base: usize = __alloc(24); __store_i32(base + 8, 1); __fern_rc_dec(base + 16); __fern_rc_dec(base + 16); return __rc_underflow_count(); } }", 1},
+	{"rc-underflow-clean", "function main(): i32 { unsafe { let f: i32[] = [0]; let base: usize = __alloc(24); __store_i32(base + 8, 3); __fern_rc_dec(base + 16); __fern_rc_dec(base + 16); return __rc_underflow_count(); } }", 0},
+	{"rc-inc-null-safe", "function main(): i32 { unsafe { let f: i32[] = [0]; __fern_rc_inc(0); __fern_rc_dec(0); return 7; } }", 7},
 }
 
 func TestSelfHostRcRuntimeX86_64(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 func TestSelfHostArenaUnmappedExit(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
-	prog := "function main(): i32 {\n  let p: usize = __alloc(64);\n  if (p == 0) {\n    return 9;\n  }\n  return 0;\n}\n"
+	prog := "function main(): i32 {\n  let p: usize = 0 as usize;\n  unsafe { p = __alloc(64); }\n  if (p == 0) {\n    return 9;\n  }\n  return 0;\n}\n"
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
 		t.Fatal(err)
 	}

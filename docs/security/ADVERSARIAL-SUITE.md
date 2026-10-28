@@ -76,6 +76,7 @@ QEMU establishes emulated behaviour only.
 | An ELF file supplied as source | the probes in `ELF-INPUTS.md` | `P001` | x86 |
 | A malformed attribute in a format directive | `TestSelfHostFmtWriteRefusesMalformedAttribute` | refusal | x86 |
 | An unsafe function reached without an unsafe block | `conformance/cases/diag_e095`, `conformance/cases/diag_e095_unsafe_function_as_a_value`, `conformance/cases/diag_e095_import_conceals_unsafe_function`, `conformance/cases/diag_e095_safe_trait_method_unsafe_impl` | `E095` | both checkers |
+| A raw builtin called without an unsafe block, in a safe function and after an unsafe block that ends | `conformance/cases/diag_e095_raw_builtin_outside_unsafe`, control `conformance/cases/unsafe_block_accepts_raw_builtins` | `E095` | both checkers |
 
 ## Hostile input to the standard library
 

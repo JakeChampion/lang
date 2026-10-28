@@ -9,12 +9,14 @@ import (
 const storeI64Want = 42
 
 const storeI64Src = `function main(): i32 {
-    let p: usize = __alloc(16);
-    __store_i64(p, 5000000005 as i64);
-    if (__load_i64(p) != 5000000005) { return 1; }
-    __store_i64(p + 8, (0 - 3) as i64);
-    if (__load_i64(p + 8) != (0 - 3)) { return 2; }
-    return 42;
+  unsafe {
+      let p: usize = __alloc(16);
+      __store_i64(p, 5000000005 as i64);
+      if (__load_i64(p) != 5000000005) { return 1; }
+      __store_i64(p + 8, (0 - 3) as i64);
+      if (__load_i64(p + 8) != (0 - 3)) { return 2; }
+      return 42;
+  }
 }`
 
 func TestSelfHostStoreI64IRX86_64(t *testing.T) {

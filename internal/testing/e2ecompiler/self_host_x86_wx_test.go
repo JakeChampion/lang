@@ -111,7 +111,7 @@ function main(): i32 {
 		}
 	}
 	writeSrc := filepath.Join(dir, "write_code.fern")
-	if err := os.WriteFile(writeSrc, []byte(fmt.Sprintf("function main(): i32 { __store_u8(%du64 as usize, 0); return 0; }", code.Vaddr)), 0o644); err != nil {
+	if err := os.WriteFile(writeSrc, []byte(fmt.Sprintf("function main(): i32 { unsafe { __store_u8(%du64 as usize, 0); } return 0; }", code.Vaddr)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	writeBin := filepath.Join(dir, "write_code")

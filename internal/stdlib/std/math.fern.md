@@ -38,7 +38,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<5 function __hex_digit(b: i32): i32>>
 
-<<6 pub function parse_rgb_hex(s: string): Option[i32]>>
+<<6 pub function parse_rgb_hex(s: string): Result[i32, RgbParseError]>>
 ```
 
 ### `module introduction`
@@ -46,6 +46,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module provides random integers, integer ranges, numeric constants, and RGB operations.
+import "core/cmp";
+import "std/error";
 ```
 
 ### `2 pub function random_int(lo: i32, hi: i32): i32`
@@ -175,11 +177,26 @@ function __hex_digit(b: i32): i32 {
 }
 ```
 
-### `6 pub function parse_rgb_hex(s: string): Option[i32]`
+### `6 pub function parse_rgb_hex(s: string): Result[i32, RgbParseError]`
 
 ```fern
-<<6 pub function parse_rgb_hex(s: string): Option[i32]>>=
-pub function parse_rgb_hex(s: string): Option[i32] {
+<<6 pub function parse_rgb_hex(s: string): Result[i32, RgbParseError]>>=
+// The text `parse_rgb_hex` refused.
+pub struct RgbParseError { text: string }
+
+impl error.Error for RgbParseError {}
+
+impl cmp.Display for RgbParseError {}
+
+pub function (e: RgbParseError) message(): string {
+  return "\"" + e.text + "\" is not a hex color such as #f80 or #ff8800";
+}
+
+pub function (e: RgbParseError) to_string(): string {
+  return e.message();
+}
+
+pub function parse_rgb_hex(s: string): Result[i32, RgbParseError] {
   let start: i32 = 0;
   if (s.len() > 0 && s[0] == 35) {
     start = 1;
@@ -191,23 +208,23 @@ pub function parse_rgb_hex(s: string): Option[i32] {
     while (i < 6) {
       let d: i32 = __hex_digit(s[start + i] as i32);
       if (d < 0) {
-        return None;
+        return Err(RgbParseError { text: s });
       }
       v = v << 4 | d;
       i = i + 1;
     }
-    return Some(v);
+    return Ok(v);
   }
   if (body == 3) {
     let r: i32 = __hex_digit(s[start] as i32);
     let g: i32 = __hex_digit(s[start + 1] as i32);
     let b: i32 = __hex_digit(s[start + 2] as i32);
     if (r < 0 || g < 0 || b < 0) {
-      return None;
+      return Err(RgbParseError { text: s });
     }
-    return Some((r << 4 | r) << 16 | (g << 4 | g) << 8 | (b << 4 | b));
+    return Ok((r << 4 | r) << 16 | (g << 4 | g) << 8 | (b << 4 | b));
   }
-  return None;
+  return Err(RgbParseError { text: s });
 }
 
 pub function rgb_luminance(rgb: i32): i32 {

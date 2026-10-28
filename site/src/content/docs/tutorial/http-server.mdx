@@ -183,8 +183,8 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     // req.path is path+query; anchor it against a host so url_parse
     // has something to chew on.
     match (url.url_parse("http://x.local" + req.path)) {
-        None => { return http.bad_request("bad URL\n"); },
-        Some(u) => {
+        Err(_) => { return http.bad_request("bad URL\n"); },
+        Ok(u) => {
             let q: Map[string, string[]] = url.query_parse(u.query);
             let out: json.JsonObject = json.object();
             out = out.insert("path", JString(u.path));

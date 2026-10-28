@@ -478,6 +478,10 @@ pub function arr_concat(): i32 {
   return 0 - 54;
 }
 
+pub function truncate(): i32 {
+  return 0 - 56;
+}
+
 pub function dyn_up(): i32 {
   return 0 - 44;
 }
@@ -1711,6 +1715,18 @@ function append_range_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): str
   return "";
 }
 
+function truncate_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
+  if (ins.args.len() != 2) {
+    return "truncate arity";
+  }
+  if let typeinfo.TypeArray(a) = result {
+    if (!a.view && semtypes.equal(f.values[ins.args[0]], result) && is_i32(f.values[ins.args[1]])) {
+      return "";
+    }
+  }
+  return "truncate type";
+}
+
 function arr_helper_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (ins.kind_tag == arr_concat()) {
     return arr_concat_error(ins, f, result);
@@ -1782,7 +1798,7 @@ function str_index_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string
 
 function is_builtin_op(kind: i32): boolean {
   return kind == length() || kind == append() || kind == with() || kind == slice() || kind == str_index()
-    || kind == append_range() || kind == str_bytes() || kind == str_byte_view() || kind == arr_slice() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind);
+    || kind == append_range() || kind == str_bytes() || kind == str_byte_view() || kind == arr_slice() || kind == truncate() || is_arr_helper_op(kind) || is_cell_op(kind) || is_map_op(kind);
 }
 
 pub function is_arr_helper_op(kind: i32): boolean {
@@ -1834,6 +1850,9 @@ function arr_join_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string 
 function builtin_error(ins: ssa.SInst, f: Func, result: typeinfo.Type): string {
   if (is_arr_helper_op(ins.kind_tag)) {
     return arr_helper_error(ins, f, result);
+  }
+  if (ins.kind_tag == truncate()) {
+    return truncate_error(ins, f, result);
   }
   if (ins.kind_tag == length()) {
     return length_error(ins, f, result);
@@ -2450,6 +2469,9 @@ function key_args(name: string, args: typeinfo.Type[]): string {
 function leaf_key(t: typeinfo.Type): string {
   if (semtypes.is_never(t)) {
     return "$never";
+  }
+  if let typeinfo.TypeConst(c) = t {
+    return c.value;
   }
   if let typeinfo.TypeLanes(l) = t {
     return typeinfo.lanes_spelling(l.width);

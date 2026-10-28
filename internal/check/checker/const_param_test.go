@@ -5,6 +5,49 @@ import (
 	"testing"
 )
 
+const constStructDecls = `struct Ring[const N: i32, T] { items: T[], head: i32 }
+function cap[const N: i32, T](r: Ring[N, T]): i32 { return N; }
+`
+
+// A const parameter on a struct: each rejected program names its code and the
+// words of its message.
+func TestConstParamStructRejected(t *testing.T) {
+	for name, tc := range map[string]struct{ src, code, msg string }{
+		"type for const":    {`function f(r: Ring[string, i32]): i32 { return 0; }`, "E090", "const parameter N takes an integer, not the type string"},
+		"integer for type":  {`function f(r: Ring[4, 5]): i32 { return 0; }`, "E090", "type parameter T takes a type, not the integer 5"},
+		"type param":        {`function f[T](r: Ring[T, T]): i32 { return 0; }`, "E090", "const parameter N takes an integer, not the type T"},
+		"past i32":          {`function f(r: Ring[2147483648, i32]): i32 { return 0; }`, "E089", "the const argument for N must fit in i32"},
+		"identity":          {`function f(r: Ring[4, i32]): i32 { return 0; } function g(r: Ring[2, i32]): i32 { return f(r); }`, "E038", "expected Ring[4, i32], got Ring[2, i32]"},
+		"no argument":       {`function f(): i32 { let r = Ring { items: [1], head: 0 }; return r.head; }`, "E040", "could not infer type parameter N for struct Ring"},
+		"method assignment": {`function (r: Ring[N, T]) bad(): i32 { N = 3; return N; }`, "E091", "cannot assign to const parameter N"},
+	} {
+		err := checkSource(t, constStructDecls+tc.src)
+		if err == nil || !hasCode(err, tc.code) {
+			t.Errorf("%s: want %s, got %v", name, tc.code, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.msg) {
+			t.Errorf("%s: want %q in the message, got %v", name, tc.msg, err)
+		}
+	}
+}
+
+// What a const parameter on a struct allows: an annotation, an inferred N, a
+// method that reads N, and a struct that passes its own N on.
+func TestConstParamStructAccepted(t *testing.T) {
+	for name, src := range map[string]string{
+		"annotation": `function f(): i32 { let r: Ring[4, string] = Ring { items: ["a"], head: 0 }; return cap(r); }`,
+		"written":    `function f(): i32 { return cap(Ring[0x10, i32] { items: [], head: 0 }); }`,
+		"method":     `function (r: Ring[N, T]) full(): boolean { return r.items.len() >= N; }`,
+		"passed on":  `function g[const M: i32](x: i32): Ring[M, i32] { let r: Ring[M, i32] = Ring { items: [x], head: 0 }; return r; }`,
+		"nested":     `struct Pair[const N: i32] { a: Ring[N, i32], b: i32 } function f(): i32 { let p: Pair[3] = Pair { a: Ring { items: [1], head: 0 }, b: 1 }; return p.b; }`,
+	} {
+		if err := checkSource(t, constStructDecls+src); err != nil {
+			t.Errorf("%s: want accepted, got %v", name, err)
+		}
+	}
+}
+
 const constParamDecls = `function filled[const N: i32](x: f64): f64[] { let out: f64[] = []; while (out.len() < N) { out = out.append(x); } return out; }
 function count[const N: i32, T](x: T): i32 { return N * 10; }
 `

@@ -506,7 +506,7 @@ function __exchange(line: string): Option[__Exchange] {
 function __exchange_of(o: json.JsonObject): Option[__Exchange] {
   let method: string = __string_member(o, "method");
   let status: i32 = __int(__string_member(o, "status"));
-  let Some(u) = url.url_parse(__string_member(o, "url")) else {
+  let Ok(u) = url.url_parse(__string_member(o, "url")) else {
     return None;
   };
   if (method.len() == 0 || status <= 0 || u.host.len() == 0) {

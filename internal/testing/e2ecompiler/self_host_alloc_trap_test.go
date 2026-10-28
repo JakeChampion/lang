@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const allocTrapSrc = "function main(): i32 { let i: i32 = 0; let last: usize = 0; while (i < 100000) { last = __alloc(2000000000); i = i + 1; } if (last == 0) { return 99; } return i; }"
+const allocTrapSrc = "function main(): i32 { unsafe { let i: i32 = 0; let last: usize = 0; while (i < 100000) { last = __alloc(2000000000); i = i + 1; } if (last == 0) { return 99; } return i; } }"
 
 func TestSelfHostAllocTrapX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

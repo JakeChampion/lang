@@ -1,0 +1,2 @@
+raw builtin "__alloc" is called outside an unsafe block
+raw builtin "__free" is called outside an unsafe block

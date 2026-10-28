@@ -1,0 +1,65 @@
+// A struct takes a const parameter (`struct Ring[const N: i32, T]`). Each
+// application writes an integer for it (`Ring[4, string]`), and two
+// applications with different integers are different types. A function over
+// `Ring[N, T]` infers N from its argument, a method on `Ring[N, T]` reads N
+// as an i32, and a generic constructor writes N into its result type. A
+// struct that holds `Ring[N, i32]` passes its own N on, and a nested literal
+// takes N from the field type. A literal can also write its arguments
+// (`Ring[0x10, string] { ... }`).
+import "std/i32";
+
+struct Ring[const N: i32, T] { items: T[], head: i32 }
+
+struct Pair[const N: i32] { a: Ring[N, i32], b: i32 }
+
+function (p: Pair[N]) size(): i32 {
+  return N + p.b;
+}
+
+function ring_of[const N: i32, T](x: T): Ring[N, T] {
+  let items: T[] = [];
+  while (items.len() < N) {
+    items = items.append(x);
+  }
+  return Ring { items: items, head: 0 };
+}
+
+function capacity[const N: i32, T](r: Ring[N, T]): i32 {
+  return N;
+}
+
+function (r: Ring[N, T]) full(): boolean {
+  return r.items.len() >= N;
+}
+
+function (r: Ring[N, T]) push(x: T): Ring[N, T] {
+  if (r.items.len() >= N) {
+    return Ring { items: r.items.with(r.head, x), head: (r.head + 1) % N };
+  }
+  return Ring { items: r.items.append(x), head: r.head };
+}
+
+function main(): i32 {
+  let a: Ring[3, string] = ring_of[3, string]("a");
+  let b: Ring[2, i32] = Ring { items: [], head: 0 };
+  print(a.items.len().to_string());
+  print(capacity(a).to_string());
+  print(capacity(b).to_string());
+  b = b.push(1).push(2);
+  if (b.full()) {
+    print("full");
+  }
+  b = b.push(3);
+  print(b.items[0].to_string());
+  print(b.items[1].to_string());
+  print(b.head.to_string());
+  let p: Pair[6] = Pair { a: Ring { items: [1, 2], head: 0 }, b: 1 };
+  print(p.size().to_string());
+  print(capacity(p.a).to_string());
+  print(capacity(Ring[0x10, string] { items: [], head: 0 }).to_string());
+  print(ring_of[2, i32](5).push(6).push(7).items[0].to_string());
+  if (p.a.full()) {
+    print("p.a full");
+  }
+  return 0;
+}

@@ -142,7 +142,7 @@ function main(): i32 {
   while (i < zones.len()) {
     let parts: string[] = zones[i].split(":");
     match (tz.iana_zone(parts[0])) {
-      Some(z) => {
+      Ok(z) => {
         let qs: string[] = parts[1].split(",");
         let j: i32 = 0;
         while (j < qs.len()) {
@@ -157,7 +157,7 @@ function main(): i32 {
           j = j + 1;
         }
       },
-      None => {
+      Err(_) => {
         print(parts[0] + " missing");
         bad = bad + 1;
       }

@@ -236,9 +236,9 @@ function main():i32 {let f:(i32)=>Quad=record;let before=__heap_alloc_count();le
 `
 const scalarRecordFinalizer = `import "core/mem";import "std/i64";
 struct Watched {a:i64,p:usize}
-impl mem.Drop for Watched {function drop(self:Self):void {__store_i64(self.p,__load_i64(self.p)+1i64);}}
+impl mem.Drop for Watched {function drop(self:Self):void {unsafe {__store_i64(self.p,__load_i64(self.p)+1i64);}}}
 @noinline function record(i:i32,p:usize):Watched {return Watched {a:i as i64,p:p};}
-function main():i32 {let counter:i64[]=__alloc_i64(1);let p=(counter as usize)+8;__store_i64(p,0i64);let before=__heap_alloc_count();let i=0;while(i<1000){let q=record(i,p);if(q.a!=(i as i64)){return 29;}i=i+1;}let count=__heap_alloc_count()-before;if(__load_i64(p)!=1000i64||counter.len()!=1){return 30;}print(count.to_string());return 0;}
+function main():i32 { unsafe { let counter:i64[]=__alloc_i64(1);let p=(counter as usize)+8;__store_i64(p,0i64);let before=__heap_alloc_count();let i=0;while(i<1000){let q=record(i,p);if(q.a!=(i as i64)){return 29;}i=i+1;}let count=__heap_alloc_count()-before;if(__load_i64(p)!=1000i64||counter.len()!=1){return 30;}print(count.to_string());return 0; } }
 `
 
 const scalarPaddingTail = `@noinline function increment(c:i64):i64{return c+1i64;}

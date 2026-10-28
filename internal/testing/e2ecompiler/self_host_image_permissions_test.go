@@ -31,27 +31,29 @@ function main(): i32 {
 const codeWriteSrc = `import "std/string";
 
 function main(): i32 {
-  match (read_file("/proc/self/maps")) {
-    Ok(maps) => {
-      for line in maps.split("\n") {
-        if (line.contains(" r-xp ") && line.contains("code-write")) {
-          let hex: string = line.split("-")[0];
-          let at: i64 = 0i64;
-          for c in hex.bytes() {
-            let d: i64 = 0i64;
-            if (c >= b'a') { d = (c - b'a') as i64 + 10i64; } else { d = (c - b'0') as i64; }
-            at = at * 16i64 + d;
+  unsafe {
+    match (read_file("/proc/self/maps")) {
+      Ok(maps) => {
+        for line in maps.split("\n") {
+          if (line.contains(" r-xp ") && line.contains("code-write")) {
+            let hex: string = line.split("-")[0];
+            let at: i64 = 0i64;
+            for c in hex.bytes() {
+              let d: i64 = 0i64;
+              if (c >= b'a') { d = (c - b'a') as i64 + 10i64; } else { d = (c - b'0') as i64; }
+              at = at * 16i64 + d;
+            }
+            print("writing");
+            __store_u8(at as usize, 0);
+            print("survived");
+            return 3;
           }
-          print("writing");
-          __store_u8(at as usize, 0);
-          print("survived");
-          return 3;
         }
-      }
-      print("no mapping");
-      return 2;
-    },
-    Err(_) => { print("no maps"); return 2; }
+        print("no mapping");
+        return 2;
+      },
+      Err(_) => { print("no maps"); return 2; }
+    }
   }
 }
 `

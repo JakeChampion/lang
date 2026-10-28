@@ -87,7 +87,11 @@ pub struct TypeErased { name: string }
 
 pub struct TypeNever { tag: i32 }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeLanes | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeHandle | TypeVoid | TypeUnknown | TypeErased | TypeNever;
+// TypeConst is a const argument of a generic type: the `4` of `Ring[4, T]`,
+// as its decimal digits. It is a type argument, and no value has it.
+pub struct TypeConst { value: string }
+
+pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeLanes | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeHandle | TypeVoid | TypeUnknown | TypeErased | TypeNever | TypeConst;
 
 pub function unchecked(): Type {
   return TypeUnknown { reason: "not yet checked" };
@@ -373,6 +377,9 @@ pub function spelling(t: Type): string {
     },
     TypeNever(_) => {
       return "";
+    },
+    TypeConst(c) => {
+      return c.value;
     },
     TypeUnknown(_) => {
       return "";

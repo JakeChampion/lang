@@ -77,27 +77,31 @@ const ZERO_BLOCK: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 ```fern
 <<6 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>=
 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
-  let n: i32 = plaintext.len();
-  let a: i32 = aad.len();
-  let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(n + 16 + a), 0, plaintext, 0, n), n + 16, aad, 0, a);
-  buf = k.seal_in_place(nonce, 0 as u64, buf, n + 16, a, 0, n)?;
-  __arr_set_len(buf, n + 16);
-  return Ok(buf);
+  unsafe {
+    let n: i32 = plaintext.len();
+    let a: i32 = aad.len();
+    let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(n + 16 + a), 0, plaintext, 0, n), n + 16, aad, 0, a);
+    buf = k.seal_in_place(nonce, 0 as u64, buf, n + 16, a, 0, n)?;
+    __arr_set_len(buf, n + 16);
+    return Ok(buf);
+  }
 }
 
 pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
-  if (nonce.len() != 12) {
-    return Err(aead.NonceLength(nonce.len()));
+  unsafe {
+    if (nonce.len() != 12) {
+      return Err(aead.NonceLength(nonce.len()));
+    }
+    if (sealed.len() < 16) {
+      return Err(aead.Forged);
+    }
+    let n: i32 = sealed.len() - 16;
+    let a: i32 = aad.len();
+    let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(n + 16 + a), 0, sealed, 0, n + 16), n + 16, aad, 0, a);
+    buf = k.open_in_place(nonce, 0 as u64, buf, n + 16, a, 0, n)?;
+    __arr_set_len(buf, n);
+    return Ok(buf);
   }
-  if (sealed.len() < 16) {
-    return Err(aead.Forged);
-  }
-  let n: i32 = sealed.len() - 16;
-  let a: i32 = aad.len();
-  let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(n + 16 + a), 0, sealed, 0, n + 16), n + 16, aad, 0, a);
-  buf = k.open_in_place(nonce, 0 as u64, buf, n + 16, a, 0, n)?;
-  __arr_set_len(buf, n);
-  return Ok(buf);
 }
 ```
 

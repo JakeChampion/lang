@@ -195,7 +195,7 @@ function pure_kind(k: i32): boolean {
   if (k == ssasem.call_value() || k == ssasem.cell_set()) {
     return false;
   }
-  return k >= ssasem.arr_slice() || k <= ssasem.dyn_up() && k >= ssasem.dyn_as() || k == ssasem.arr_concat();
+  return k >= ssasem.arr_slice() || k <= ssasem.dyn_up() && k >= ssasem.dyn_as() || k == ssasem.arr_concat() || k == ssasem.truncate();
 }
 
 function direct_effect(f: ssasem.Func): boolean {

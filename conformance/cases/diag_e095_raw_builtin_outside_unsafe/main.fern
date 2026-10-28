@@ -1,0 +1,25 @@
+// A raw builtin forges an address or changes a count, so only an unsafe
+// block accepts the obligation. A call from any other position is refused,
+// whatever the caller validated first.
+
+function accepted(): i32 {
+    let v: i32 = 0;
+    unsafe {
+        let p: usize = __alloc(16);
+        __store_i32(p, 7);
+        v = __load_i32(p);
+        __free(p, 16);
+    }
+    return v;
+}
+
+function main(): i32 {
+    let p: usize = __alloc(16);
+    let v: i32 = 0;
+    unsafe {
+        __store_i32(p, 7);
+        v = __load_i32(p);
+    }
+    __free(p, 16);
+    return accepted() + v;
+}

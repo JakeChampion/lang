@@ -172,15 +172,17 @@ function __raw(own d: __D, input: [u8]): __D {
 // meta-blocks copies the output a few times only. The copy of a match
 // writes eight bytes at a time, so the room has 16 bytes more.
 function __reserve(own d: __D, n: i32, limit: i32): __D {
-  if (n + 16 <= d.cap) {
-    return d;
+  unsafe {
+    if (n + 16 <= d.cap) {
+      return d;
+    }
+    let want: i32 = cmp.max(n, cmp.min(d.cap * 2, limit)) + 16;
+    let room: u8[] = __alloc_u8(want);
+    __arr_set_len(room, 0);
+    let old: u8[] = d.out;
+    d = __D { ...d, out: [] };
+    return __D { ...d, out: __joined(room, old), cap: want };
   }
-  let want: i32 = cmp.max(n, cmp.min(d.cap * 2, limit)) + 16;
-  let room: u8[] = __alloc_u8(want);
-  __arr_set_len(room, 0);
-  let old: u8[] = d.out;
-  d = __D { ...d, out: [] };
-  return __D { ...d, out: __joined(room, old), cap: want };
 }
 
 function __joined(own out: u8[], more: u8[]): u8[] {

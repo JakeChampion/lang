@@ -61,7 +61,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<9 function __rfc3339_fields_valid(y: i32, mo: i32, d: i32, h: i32, mn: i32, sc: i32): boolean>>
 
-<<10 pub function timestamp_parse_rfc3339(s: string): Option[Timestamp]>>
+<<10 pub function timestamp_parse_rfc3339(s: string): Result[Timestamp, TimeParseError]>>
 
 <<11 function __weekday_short(n: i32): string>>
 
@@ -69,11 +69,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<13 function __month_from_short(s: string, start: i32): i32>>
 
-<<14 pub function http_date_parse(s: string): Option[Timestamp]>>
+<<14 pub function http_date_parse(s: string): Result[Timestamp, TimeParseError]>>
 
 <<15 function __http_timestamp(year: i32, mo: i32, day: i32, h: i32, mn: i32, sc: i32): Option[Timestamp]>>
 
-<<17 pub function timestamp_parse_rfc3339_offset(s: string): Option[(Timestamp, i32)]>>
+<<17 pub function timestamp_parse_rfc3339_offset(s: string): Result[(Timestamp, i32), TimeParseError]>>
 
 <<18 pub function span_years(n: i32): Span>>
 
@@ -93,8 +93,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "core/cmp";
 import "core/int";
+import "std/error";
 import "std/i64";
+import "std/option";
 import "std/string";
 ```
 
@@ -696,7 +699,29 @@ pub function (d: Date) format_iso(): string {
   return __pad4(d.year) + "-" + __pad2(d.month) + "-" + __pad2(d.day);
 }
 
-pub function date_parse_iso(s: string): Option[Date] {
+pub function date_parse_iso(s: string): Result[Date, TimeParseError] {
+  return __iso_date(s).ok_or(TimeParseError { text: s, form: IsoDate });
+}
+
+// The text a parser refused, and the form it expected.
+pub struct TimeParseError { text: string, form: TimeForm }
+
+pub enum TimeForm { IsoDate, Rfc3339, HttpDate }
+
+impl error.Error for TimeParseError {}
+
+impl cmp.Display for TimeParseError {}
+
+pub function (e: TimeParseError) message(): string {
+  let form: string = match (e.form) { IsoDate => "an ISO 8601 date (YYYY-MM-DD)", Rfc3339 => "an RFC 3339 timestamp", HttpDate => "an HTTP-date" };
+  return "\"" + e.text + "\" is not " + form;
+}
+
+pub function (e: TimeParseError) to_string(): string {
+  return e.message();
+}
+
+function __iso_date(s: string): Option[Date] {
   if (s.len() != 10) {
     return None;
   }
@@ -773,15 +798,13 @@ function __rfc3339_fields_valid(y: i32, mo: i32, d: i32, h: i32, mn: i32, sc: i3
 }
 ```
 
-### `10 pub function timestamp_parse_rfc3339(s: string): Option[Timestamp]`
+### `10 pub function timestamp_parse_rfc3339(s: string): Result[Timestamp, TimeParseError]`
 
 ```fern
-<<10 pub function timestamp_parse_rfc3339(s: string): Option[Timestamp]>>=
-pub function timestamp_parse_rfc3339(s: string): Option[Timestamp] {
-  let Some(parsed) = timestamp_parse_rfc3339_offset(s) else {
-    return None;
-  };
-  return Some(parsed.0);
+<<10 pub function timestamp_parse_rfc3339(s: string): Result[Timestamp, TimeParseError]>>=
+pub function timestamp_parse_rfc3339(s: string): Result[Timestamp, TimeParseError] {
+  let parsed: (Timestamp, i32) = timestamp_parse_rfc3339_offset(s)?;
+  return Ok(parsed.0);
 }
 ```
 
@@ -980,11 +1003,25 @@ function __month_from_short(s: string, start: i32): i32 {
 }
 ```
 
-### `14 pub function http_date_parse(s: string): Option[Timestamp]`
+### `14 pub function http_date_parse(s: string): Result[Timestamp, TimeParseError]`
 
 ```fern
-<<14 pub function http_date_parse(s: string): Option[Timestamp]>>=
-pub function http_date_parse(s: string): Option[Timestamp] {
+<<14 pub function http_date_parse(s: string): Result[Timestamp, TimeParseError]>>=
+pub function http_date_parse(s: string): Result[Timestamp, TimeParseError] {
+  return __http_date(s).ok_or(TimeParseError { text: s, form: HttpDate });
+}
+
+pub function http_date_parse_at(s: string, now: Timestamp): Result[Timestamp, TimeParseError] {
+  match (__http_date(s)) {
+    Some(t) => {
+      return Ok(t);
+    },
+    None => {}
+  }
+  return __rfc850_date(s, now).ok_or(TimeParseError { text: s, form: HttpDate });
+}
+
+function __http_date(s: string): Option[Timestamp] {
   if (s.len() == 29) {
     return __imf_fixdate(s);
   }
@@ -992,16 +1029,6 @@ pub function http_date_parse(s: string): Option[Timestamp] {
     return __asctime_date(s);
   }
   return None;
-}
-
-pub function http_date_parse_at(s: string, now: Timestamp): Option[Timestamp] {
-  match (http_date_parse(s)) {
-    Some(i) => {
-      return Some(i);
-    },
-    None => {}
-  }
-  return __rfc850_date(s, now);
 }
 ```
 
@@ -1080,12 +1107,16 @@ function __imf_punctuation(s: string): boolean {
 }
 ```
 
-### `17 pub function timestamp_parse_rfc3339_offset(s: string): Option[(Timestamp, i32)]`
+### `17 pub function timestamp_parse_rfc3339_offset(s: string): Result[(Timestamp, i32), TimeParseError]`
 
 ```fern
-<<17 pub function timestamp_parse_rfc3339_offset(s: string): Option[(Timestamp, i32)]>>=
+<<17 pub function timestamp_parse_rfc3339_offset(s: string): Result[(Timestamp, i32), TimeParseError]>>=
 // The timestamp and the UTC offset in seconds of an RFC 3339 time with a `Z` or `±hh:mm` offset.
-pub function timestamp_parse_rfc3339_offset(s: string): Option[(Timestamp, i32)] {
+pub function timestamp_parse_rfc3339_offset(s: string): Result[(Timestamp, i32), TimeParseError] {
+  return __rfc3339(s).ok_or(TimeParseError { text: s, form: Rfc3339 });
+}
+
+function __rfc3339(s: string): Option[(Timestamp, i32)] {
   let n: i32 = s.len();
   if (n < 20) {
     return None;

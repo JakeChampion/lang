@@ -554,7 +554,7 @@ function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {
       let ce: LiftExpr = lift_expr_walk(f.cond, acc, gfns);
       let tb: LiftStmts = lift_stmts(f.then_body, ce.acc, gfns);
       let eb: LiftStmts = lift_stmts(f.else_body, tb.acc, gfns);
-      let ns: ast.Stmt = ast.StmtIf { cond: ce.expr, then_body: tb.stmts, else_body: eb.stmts, line: 0, else_chained: false, sugar: parser.no_match_sugar(), origin: "" };
+      let ns: ast.Stmt = ast.StmtIf { cond: ce.expr, then_body: tb.stmts, else_body: eb.stmts, line: 0, else_chained: false, sugar: parser.no_match_sugar(), origin: f.origin };
       return LiftStmts { stmts: [ns], acc: eb.acc };
     },
     ast.StmtMatch(m) => {
@@ -3368,7 +3368,7 @@ function wcap_stmt(st: ast.Stmt, fd: parser.FuncDecl, gfns: string[], structs: i
       let cr: WCapExpr = wcap_expr(f.cond, fd, gfns, structs, mfuncs, acc, atargets);
       let tb: WCapBody = box_wide_captures_stmts(f.then_body, fd, gfns, structs, mfuncs, atargets);
       let eb: WCapBody = box_wide_captures_stmts(f.else_body, fd, gfns, structs, mfuncs, atargets);
-      return WCapStmt { stmt: ast.StmtIf { cond: cr.expr, then_body: tb.stmts, else_body: eb.stmts, line: 0, else_chained: false, sugar: parser.no_match_sugar(), origin: "" }, caps: cr.caps, changed: cr.changed || tb.changed || eb.changed };
+      return WCapStmt { stmt: ast.StmtIf { cond: cr.expr, then_body: tb.stmts, else_body: eb.stmts, line: 0, else_chained: false, sugar: parser.no_match_sugar(), origin: f.origin }, caps: cr.caps, changed: cr.changed || tb.changed || eb.changed };
     },
     ast.StmtWhile(w) => {
       let cr: WCapExpr = wcap_expr(w.cond, fd, gfns, structs, mfuncs, acc, atargets);

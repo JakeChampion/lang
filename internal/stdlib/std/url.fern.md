@@ -39,15 +39,15 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<6 function __url_scheme_char(b: i32, first: boolean): boolean>>
 
-<<7 pub function url_resolve(base: string, reference: string): Option[string]>>
+<<7 pub function url_resolve(base: string, reference: string): Result[string, UrlError]>>
 
-<<8 function __resolved(b: Url, reference: string): Option[string]>>
+<<8 function __resolved(b: Url, reference: string): Result[string, UrlError]>>
 
 <<9 pub function url_remove_dot_segments(path: string): string>>
 
 <<10 function __drop_last(segments: string[]): string[]>>
 
-<<11 pub function url_parse(s: string): Option[Url]>>
+<<11 pub function url_parse(s: string): Result[Url, UrlError]>>
 
 <<12 pub function query_parse(s: string): Map[string, string[]]>>
 
@@ -67,7 +67,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "core/cmp";
 import "core/map";
+import "std/error";
 import "std/utf8" as utf8;
 ```
 
@@ -328,51 +330,36 @@ function __url_reg_name_char(b: i32): boolean {
 }
 ```
 
-### `7 pub function url_resolve(base: string, reference: string): Option[string]`
+### `7 pub function url_resolve(base: string, reference: string): Result[string, UrlError]`
 
 ```fern
-<<7 pub function url_resolve(base: string, reference: string): Option[string]>>=
-pub function url_resolve(base: string, reference: string): Option[string] {
-  match (url_parse(base)) {
-    Some(b) => {
-      if (b.scheme.len() == 0) {
-        return None;
-      }
-      return __resolved(b, reference);
-    },
-    None => {
-      return None;
-    }
+<<7 pub function url_resolve(base: string, reference: string): Result[string, UrlError]>>=
+pub function url_resolve(base: string, reference: string): Result[string, UrlError] {
+  let b: Url = url_parse(base)?;
+  if (b.scheme.len() == 0) {
+    return Err(UrlError { text: base, kind: RelativeBase });
   }
-  return None;
+  return __resolved(b, reference);
 }
 ```
 
-### `8 function __resolved(b: Url, reference: string): Option[string]`
+### `8 function __resolved(b: Url, reference: string): Result[string, UrlError]`
 
 ```fern
-<<8 function __resolved(b: Url, reference: string): Option[string]>>=
-function __resolved(b: Url, reference: string): Option[string] {
+<<8 function __resolved(b: Url, reference: string): Result[string, UrlError]>>=
+function __resolved(b: Url, reference: string): Result[string, UrlError] {
   if (reference.len() == 0) {
-    return Some(__url_compose(b.scheme, b.host, b.port, b.path, b.query, ""));
+    return Ok(__url_compose(b.scheme, b.host, b.port, b.path, b.query, ""));
   }
   if (reference.len() >= 2 && reference[0] == 47 as u8 && reference[1] == 47 as u8) {
-    return Some(b.scheme + ":" + reference);
+    return Ok(b.scheme + ":" + reference);
   }
-  let r: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
-  match (url_parse(reference)) {
-    Some(parsed) => {
-      r = parsed;
-    },
-    None => {
-      return None;
-    }
-  }
+  let r: Url = url_parse(reference)?;
   if (r.scheme.len() > 0) {
-    return Some(reference);
+    return Ok(reference);
   }
   let pq: (string, string) = __merged(b, r, reference);
-  return Some(__url_compose(b.scheme, b.host, b.port, url_remove_dot_segments(pq.0), pq.1, r.fragment));
+  return Ok(__url_compose(b.scheme, b.host, b.port, url_remove_dot_segments(pq.0), pq.1, r.fragment));
 }
 
 function __merged(b: Url, r: Url, reference: string): (string, string) {
@@ -493,14 +480,45 @@ function __joined_path(segments: string[], absolute: boolean): string {
 }
 ```
 
-### `11 pub function url_parse(s: string): Option[Url]`
+### `11 pub function url_parse(s: string): Result[Url, UrlError]`
 
 ```fern
-<<11 pub function url_parse(s: string): Option[Url]>>=
-pub function url_parse(s: string): Option[Url] {
+<<11 pub function url_parse(s: string): Result[Url, UrlError]>>=
+// The URL a parse refused, and which part of it was at fault.
+pub struct UrlError { text: string, kind: UrlErrorKind }
+
+pub enum UrlErrorKind { EmptyUrl, InvalidHost, InvalidPort, RelativeBase }
+
+impl error.Error for UrlError {}
+
+impl cmp.Display for UrlError {}
+
+pub function (e: UrlError) message(): string {
+  let quoted: string = "\"" + e.text + "\"";
+  match (e.kind) {
+    EmptyUrl => {
+      return "a URL cannot be empty";
+    },
+    InvalidHost => {
+      return quoted + " has an invalid host";
+    },
+    InvalidPort => {
+      return quoted + " has an invalid port";
+    },
+    RelativeBase => {
+      return quoted + " has no scheme, so it cannot be a base URL";
+    }
+  }
+}
+
+pub function (e: UrlError) to_string(): string {
+  return e.message();
+}
+
+pub function url_parse(s: string): Result[Url, UrlError] {
   let n: i32 = s.len();
   if (n == 0) {
-    return None;
+    return Err(UrlError { text: s, kind: EmptyUrl });
   }
 
   let u: Url = Url {
@@ -594,21 +612,21 @@ pub function url_parse(s: string): Option[Url] {
           close = i;
           i = authority_end;
         } else if (!__url_ip_literal_char(s[i] as i32)) {
-          return None;
+          return Err(UrlError { text: s, kind: InvalidHost });
         } else {
           i = i + 1;
         }
       }
       if (close < 0) {
-        return None;
+        return Err(UrlError { text: s, kind: InvalidHost });
       }
       if (close == host_start + 1) {
-        return None;
+        return Err(UrlError { text: s, kind: InvalidHost });
       }
       host = slice_unchecked(s, host_start + 1, close) + "";
       if (close + 1 < authority_end) {
         if (s[close + 1] != 58) {
-          return None;
+          return Err(UrlError { text: s, kind: InvalidHost });
         }
         colon = close + 1;
       }
@@ -619,7 +637,7 @@ pub function url_parse(s: string): Option[Url] {
           colon = i;
           i = authority_end;
         } else if (!__url_reg_name_char(s[i] as i32)) {
-          return None;
+          return Err(UrlError { text: s, kind: InvalidHost });
         } else {
           i = i + 1;
         }
@@ -637,11 +655,11 @@ pub function url_parse(s: string): Option[Url] {
       while (i < authority_end) {
         let b: i32 = s[i] as i32;
         if (b < 48 || b > 57) {
-          return None;
+          return Err(UrlError { text: s, kind: InvalidPort });
         }
         port = port * 10 + (b - 48);
         if (port > 65535) {
-          return None;
+          return Err(UrlError { text: s, kind: InvalidPort });
         }
         i = i + 1;
       }
@@ -653,7 +671,7 @@ pub function url_parse(s: string): Option[Url] {
     u = Url { ...u, path: slice_unchecked(s, authority_end, query_start) + "" };
   }
 
-  return Some(u);
+  return Ok(u);
 }
 ```
 

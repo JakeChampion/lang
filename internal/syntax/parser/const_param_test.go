@@ -22,6 +22,23 @@ func TestConstParamOnFunction(t *testing.T) {
 	}
 }
 
+// A struct declares a const parameter as a function does, and a type
+// application writes an integer for it.
+func TestConstParamOnStruct(t *testing.T) {
+	prog, err := Parse("struct Ring[const N: i32, T] { items: T[] }\nfunction f(r: Ring[4, string]): i32 {\n  return 0;\n}")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sd := prog.Structs[0]
+	if !slices.Equal(sd.TypeParams, []string{"N", "T"}) || !slices.Equal(sd.ConstParams, []string{"N"}) {
+		t.Errorf("TypeParams = %v, ConstParams = %v, want [N T] and [N]", sd.TypeParams, sd.ConstParams)
+	}
+	pt, ok := prog.Funcs[0].Params[0].Type.(ast.EnumType)
+	if !ok || len(pt.Args) != 2 || !ast.Equal(pt.Args[0], ast.ConstArg{Value: 4}) {
+		t.Errorf("parameter type = %#v, want Ring[4, string]", prog.Funcs[0].Params[0].Type)
+	}
+}
+
 func TestConstArgInTypeArgList(t *testing.T) {
 	prog, err := Parse("function main(): i32 {\n  return count[3, string](\"a\");\n}")
 	if err != nil {
@@ -57,11 +74,13 @@ func TestConstParamRefusals(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"no type", "function f[const N](): i32 {\n  return 0;\n}", "const parameter N needs a type: write const N: i32"},
 		{"not i32", "function f[const N: i64](): i32 {\n  return 0;\n}", "const parameter N has type i32, got \"i64\""},
-		{"impl", "trait Show {\n  function show(self: Self): i32;\n}\nstruct B { x: i32 }\nimpl[const N: i32] Show for B {\n  function show(self: B): i32 {\n    return 0;\n  }\n}", "const parameter N: only a function takes a const parameter"},
-		{"trait", "trait T[const N: i32] {\n  function get(self: Self): i32;\n}", "const parameter N: only a function takes a const parameter"},
-		{"method", "struct B { x: i32 }\nfunction (b: B) get[const N: i32](): i32 {\n  return 0;\n}", "const parameter N: only a function takes a const parameter"},
-		{"impl method", "trait Show {\n  function show(self: Self): i32;\n}\nstruct B { x: i32 }\nimpl Show for B {\n  function show[const N: i32](self: B): i32 {\n    return 0;\n  }\n}", "const parameter N: only a function takes a const parameter"},
-		{"trait method", "trait T {\n  function get[const N: i32](self: Self): i32;\n}", "const parameter N: only a function takes a const parameter"},
+		{"impl", "trait Show {\n  function show(self: Self): i32;\n}\nstruct B { x: i32 }\nimpl[const N: i32] Show for B {\n  function show(self: B): i32 {\n    return 0;\n  }\n}", "const parameter N: only a function or a struct takes a const parameter"},
+		{"trait", "trait T[const N: i32] {\n  function get(self: Self): i32;\n}", "const parameter N: only a function or a struct takes a const parameter"},
+		{"method", "struct B { x: i32 }\nfunction (b: B) get[const N: i32](): i32 {\n  return 0;\n}", "const parameter N: only a function or a struct takes a const parameter"},
+		{"impl method", "trait Show {\n  function show(self: Self): i32;\n}\nstruct B { x: i32 }\nimpl Show for B {\n  function show[const N: i32](self: B): i32 {\n    return 0;\n  }\n}", "const parameter N: only a function or a struct takes a const parameter"},
+		{"enum", "enum E[const N: i32] { A, B }", "const parameter N: only a function or a struct takes a const parameter"},
+		{"type alias", "struct L[T] { v: T }\nstruct Q { n: i32 }\ntype V[const N: i32] = L[i32] | Q;", "const parameter N: only a function or a struct takes a const parameter"},
+		{"trait method", "trait T {\n  function get[const N: i32](self: Self): i32;\n}", "const parameter N: only a function or a struct takes a const parameter"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

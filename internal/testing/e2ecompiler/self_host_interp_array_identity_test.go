@@ -50,20 +50,24 @@ func TestSelfHostInterpArrSetLenSharedMatchesOracleAndX86_64(t *testing.T) {
 struct Holder { b: u8[] }
 
 function shrink(b: u8[]): void {
-  __arr_set_len(b, 2);
+  unsafe {
+    __arr_set_len(b, 2);
+  }
 }
 
 function main(): i32 {
-  let buf: u8[] = [1u8, 2u8, 3u8, 4u8];
-  let alias: u8[] = buf;
-  let h: Holder = Holder { b: buf };
-  __arr_set_len(buf, 3);
-  print(f"{buf.len()} {alias.len()} {h.b.len()}");
-  shrink(alias);
-  print(f"{buf.len()} {alias.len()} {h.b.len()}");
-  __arr_set_len(h.b, 4);
-  print(f"{buf.len()} {alias.len()} {h.b.len()} {buf[3]}");
-  return 0;
+  unsafe {
+    let buf: u8[] = [1u8, 2u8, 3u8, 4u8];
+    let alias: u8[] = buf;
+    let h: Holder = Holder { b: buf };
+    __arr_set_len(buf, 3);
+    print(f"{buf.len()} {alias.len()} {h.b.len()}");
+    shrink(alias);
+    print(f"{buf.len()} {alias.len()} {h.b.len()}");
+    __arr_set_len(h.b, 4);
+    print(f"{buf.len()} {alias.len()} {h.b.len()} {buf[3]}");
+    return 0;
+  }
 }
 `
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {

@@ -358,10 +358,10 @@ func TestSharedLibX86CCallFFI(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("host is not amd64")
 	}
-	src := `function run0(env: usize, cls: usize, cb: usize): i32 { return __c_call0(cb) as i32; }
-function run1(env: usize, cls: usize, cb: usize, x: usize): i32 { return __c_call1(cb, x) as i32; }
-function run4(env: usize, cls: usize, cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { return __c_call4(cb, a, b, c, d) as i32; }
-function run_live(env: usize, cls: usize, cb: usize): i32 { let a: i32 = 35; let b: i32 = __c_call0(cb) as i32; return a + b; }
+	src := `function run0(env: usize, cls: usize, cb: usize): i32 { unsafe { return __c_call0(cb) as i32; } }
+function run1(env: usize, cls: usize, cb: usize, x: usize): i32 { unsafe { return __c_call1(cb, x) as i32; } }
+function run4(env: usize, cls: usize, cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { unsafe { return __c_call4(cb, a, b, c, d) as i32; } }
+function run_live(env: usize, cls: usize, cb: usize): i32 { unsafe { let a: i32 = 35; let b: i32 = __c_call0(cb) as i32; return a + b; } }
 function main(): i32 { return 0; }`
 	exps := []string{"run0", "run1", "run4", "run_live"}
 	so := selfHostSharedX86(t, src, exps...)

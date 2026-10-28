@@ -66,6 +66,11 @@ function atomic_equal(a: typeinfo.Type, b: typeinfo.Type): boolean {
       return true;
     }
   }
+  if let typeinfo.TypeConst(x) = a {
+    if let typeinfo.TypeConst(y) = b {
+      return x.value == y.value;
+    }
+  }
   return false;
 }
 
@@ -241,6 +246,9 @@ function concrete_leaf(t: typeinfo.Type, allow_void: boolean): boolean {
   }
   if let typeinfo.TypeVoid(_) = t {
     return allow_void;
+  }
+  if let typeinfo.TypeConst(c) = t {
+    return c.value.len() > 0;
   }
   return false;
 }

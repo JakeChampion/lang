@@ -736,9 +736,11 @@ pub function (e: Encoder) encode(fields: Field[]): u8[] {
 // section starts a field section that references no dynamic entry, with
 // room for about n bytes of field lines after its prefix.
 pub function (e: Encoder) section(n: i32): u8[] {
-  let out: u8[] = __alloc_u8(n + 2);
-  __arr_set_len(out, 0);
-  return out.append(0 as u8).append(0 as u8);
+  unsafe {
+    let out: u8[] = __alloc_u8(n + 2);
+    __arr_set_len(out, 0);
+    return out.append(0 as u8).append(0 as u8);
+  }
 }
 
 // put appends the field line for name and value.
