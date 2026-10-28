@@ -11,6 +11,8 @@ The first correction passed all record cases on native, ARM64, and Wasm.
 The float cases exposed a second assembler limit within one large function.
 The emitter now flushes literal pools after 256 SSA instructions and branches around each pool.
 The function-end flush remains.
+Each pool boundary uses a unique textual label as well as a distinct structured label ID.
+The first pool candidate reused textual names and failed GNU assembly despite direct in-process success.
 
 The regression uses record and float arrays with 4095, 4100, and 8193 entries on all three targets.
 The stock harness requires strict IR, sanitizers, nonzero allocations, balanced counts, and zero live allocations.

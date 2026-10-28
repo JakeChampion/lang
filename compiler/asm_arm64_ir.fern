@@ -4806,7 +4806,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
       ii = ii + 1;
       pool_insts = pool_insts + 1;
       if (pool_insts == 256) {
-        let after_pool = asmcore.lab_new(s, lp + "pool");
+        let after_pool = asmcore.lab_new(s, lp + "pool_" + util.i32_to_string(pos + ii));
         s = ssa_b(after_pool.state, after_pool.lab).write("    .ltorg\n");
         s = s.lab_def(after_pool.lab);
         pool_insts = 0;
