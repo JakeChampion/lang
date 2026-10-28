@@ -1478,13 +1478,8 @@ function construction_error(f: ssasem.Func, ins: ssa.SInst, structs: irtables.St
 }
 
 function wide_element_site(k: i32): boolean {
-  return kind_in(
-    [
-      ssasem.array_new(), ssasem.tuple_new(), ssasem.append(), ssasem.with(),
-      ssasem.cell_new(), ssasem.cell_set(), ssasem.dyn_box(),
-    ],
-    k,
-  );
+  return k == ssasem.array_new() || k == ssasem.tuple_new() || k == ssasem.append() || k == ssasem.with()
+    || k == ssasem.cell_new() || k == ssasem.cell_set() || k == ssasem.dyn_box();
 }
 
 function decl_of(f: ssasem.Func, ins: ssa.SInst, structs: irtables.StructTab): i32 {
@@ -2161,22 +2156,9 @@ function validate(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtab
 }
 
 function builds(k: i32): boolean {
-  return kind_in(
-    [
-      ssasem.array_new(), ssasem.tuple_new(), ssasem.record_new(), ssasem.variant_new(),
-      ssasem.append(), ssasem.with(), ssasem.closure_new(), ssasem.cell_new(), ssasem.cell_set(), ssasem.dyn_box(),
-    ],
-    k,
-  );
-}
-
-function kind_in(kinds: i32[], k: i32): boolean {
-  for kind in kinds {
-    if (kind == k) {
-      return true;
-    }
-  }
-  return false;
+  return k == ssasem.array_new() || k == ssasem.tuple_new() || k == ssasem.record_new() || k == ssasem.variant_new()
+    || k == ssasem.append() || k == ssasem.with() || k == ssasem.closure_new() || k == ssasem.cell_new()
+    || k == ssasem.cell_set() || k == ssasem.dyn_box();
 }
 
 function unchecked_str_index(ins: ssa.SInst): boolean {
@@ -2184,27 +2166,27 @@ function unchecked_str_index(ins: ssa.SInst): boolean {
 }
 
 function value_op(k: i32): boolean {
-  return kind_in([1, 2, 5, 6, 7, 8, 35, ssasem.zero(), ssasem.call(), ssasem.append_range()], k) || ssasem.scalar_op(k) || ssasem.is_function_op(k);
+  return k == 1 || k == 2 || k == 5 || k == 6 || k == 7 || k == 8 || k == 35 || k == ssasem.zero() || k == ssasem.call()
+    || k == ssasem.append_range() || ssasem.scalar_op(k) || ssasem.is_function_op(k);
 }
 
 function container_op(k: i32): boolean {
-  return kind_in(
-    [
-      ssasem.array_new(), ssasem.bytes_new(), ssasem.array_reserve(), ssasem.tuple_new(), ssasem.record_new(), ssasem.dyn_box(),
-      ssasem.array_get(), ssasem.tuple_get(), ssasem.record_get(),
-      ssasem.length(), ssasem.append(), ssasem.with(), ssasem.slice(), ssasem.str_index(),
-      ssasem.str_bytes(), ssasem.str_byte_view(), ssasem.arr_join(), ssasem.arr_slice(), ssasem.arr_concat(), ssasem.truncate(),
-    ],
-    k,
-  ) || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_hole_op(k);
+  return k == ssasem.array_new() || k == ssasem.bytes_new() || k == ssasem.array_reserve() || k == ssasem.tuple_new()
+    || k == ssasem.record_new() || k == ssasem.dyn_box() || k == ssasem.array_get() || k == ssasem.tuple_get()
+    || k == ssasem.record_get() || k == ssasem.length() || k == ssasem.append() || k == ssasem.with()
+    || k == ssasem.slice() || k == ssasem.str_index() || k == ssasem.str_bytes() || k == ssasem.str_byte_view()
+    || k == ssasem.arr_join() || k == ssasem.arr_slice() || k == ssasem.arr_concat() || k == ssasem.truncate()
+    || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_hole_op(k);
 }
 
 function variant_op(k: i32): boolean {
-  return kind_in([ssasem.variant_new(), ssasem.variant_is(), ssasem.variant_get(), ssasem.dyn_is()], k) || identity_op(k);
+  return k == ssasem.variant_new() || k == ssasem.variant_is() || k == ssasem.variant_get() || k == ssasem.dyn_is()
+    || identity_op(k);
 }
 
 function identity_op(k: i32): boolean {
-  return kind_in([ssasem.variant_up(), ssasem.variant_as(), ssasem.str_as(), ssasem.array_lend(), ssasem.dyn_up(), ssasem.dyn_as()], k);
+  return k == ssasem.variant_up() || k == ssasem.variant_as() || k == ssasem.str_as() || k == ssasem.array_lend()
+    || k == ssasem.dyn_up() || k == ssasem.dyn_as();
 }
 
 function supported_op(k: i32): boolean {
