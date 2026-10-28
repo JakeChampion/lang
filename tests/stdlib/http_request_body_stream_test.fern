@@ -21,10 +21,10 @@ function wire(body: string): string {
 
 function parsed(body: string): HttpRequest {
   match (http.http_parse_request(wire(body))) {
-    Some(req) => {
+    Ok(req) => {
       return req;
     },
-    None => {
+    Err(_) => {
       return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder(), trailers: req_headers_placeholder() };
     }
   }
@@ -146,10 +146,10 @@ function test_body_bytes_matches_body_len(): test.TestOutcome {
 
 function test_bodyless_request_reads_empty(): test.TestOutcome {
   match (http.http_parse_request("GET / HTTP/1.0\r\n\r\n")) {
-    Some(req) => {
+    Ok(req) => {
       return test.assert_eq(body_text(req) + "/" + req.body_len().to_string(), "/0");
     },
-    None => {
+    Err(_) => {
       return test.fail("well-formed request wrongly rejected");
     }
   }

@@ -47,8 +47,8 @@ func TestSelfHostOverBudgetRoutesIRArm64(t *testing.T) {
 function main(): i32 {
     let raw: string = "GET /abc HTTP/1.1\r\nHost: x\r\n\r\n";
     match (http.http_parse_request(raw)) {
-        Some(req) => { return req.path.len(); },
-        None => { return 7; }
+        Ok(req) => { return req.path.len(); },
+        Err(_) => { return 7; }
     }
 }
 `},
@@ -74,11 +74,11 @@ func TestSelfHostOverBudgetProgramsRunX86_64(t *testing.T) {
 function main(): i32 {
     let raw: string = "GET /abc HTTP/1.1\r\nHost: x\r\n\r\n";
     match (http.http_parse_request(raw)) {
-        Some(req) => {
+        Ok(req) => {
             print("method=" + req.method + " path=" + req.path);
             return req.path.len();
         },
-        None => { return 7; }
+        Err(_) => { return 7; }
     }
 }
 `
