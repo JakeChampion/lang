@@ -1186,7 +1186,7 @@ func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { let b: u8[] = random_bytes(16); if (b.len() == 16) { write("ok\n"); return 0; } return 1; }`
+	src := `import "std/rand"; function main(): i32 { let b: u8[] = rand.bytes(16); if (b.len() == 16) { write("ok\n"); return 0; } return 1; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -2235,7 +2235,7 @@ func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 		t.Fatalf("build fern: %v\n%s", err, out)
 	}
 	progPath := filepath.Join(dir, "prog.fern")
-	src := `function main(): i32 { let id: u8[] = random_bytes(8); match (write_file("id.bin", string_from_bytes_unchecked(id))) { Err(e) => { return 1; }, Ok(_) => {} } write("saved\n"); return 0; }`
+	src := `import "std/rand"; function main(): i32 { let id: u8[] = rand.bytes(8); match (write_file("id.bin", string_from_bytes_unchecked(id))) { Err(e) => { return 1; }, Ok(_) => {} } write("saved\n"); return 0; }`
 	if err := os.WriteFile(progPath, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
