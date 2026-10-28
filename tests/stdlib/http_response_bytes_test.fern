@@ -1,0 +1,82 @@
+import "std/test";
+import "std/http";
+import "std/headers";
+
+function wire(date: string, body: string): string {
+  return "HTTP/1.1 200 OK\r\nContent-Length: " + body.len().to_string() + "\r\nContent-Type: text/plain\r\nDate: " + date + "\r\n\r\n" + body;
+}
+
+function framed(text: string, prev: HeaderMap): Option[http.HttpResponseFramed] {
+  match (http.http_parse_response_framed_from(text.bytes(), 0, "GET", false, http.http_limits(), prev)) {
+    Complete(f) => {
+      return Some(f);
+    },
+    _ => {
+      return None;
+    }
+  }
+  return None;
+}
+
+function fields(h: HeaderMap): string {
+  let out: string = "";
+  for i in 0..h.names.len() {
+    out = out + h.names[i] + "=" + h.values[i] + ";";
+  }
+  return out;
+}
+
+function parsed_fields(text: string, prev: HeaderMap): string {
+  match (framed(text, prev)) {
+    Some(f) => {
+      return f.response.status.to_string() + " " + fields(f.response.headers) + " " + f.response.body_string();
+    },
+    None => {
+      return "<not framed>";
+    }
+  }
+  return "<not framed>";
+}
+
+function first_headers(): HeaderMap {
+  match (framed(wire("Tue, 27 Oct 2026 10:00:00 GMT", "hello"), headers.new())) {
+    Some(f) => {
+      return f.response.headers;
+    },
+    None => {
+      return headers.new();
+    }
+  }
+  return headers.new();
+}
+
+function test_parses_without_a_previous_block(): test.TestOutcome {
+  return test.assert_eq(parsed_fields(wire("Tue, 27 Oct 2026 10:00:00 GMT", "hello"), headers.new()), "200 Content-Length=5;Content-Type=text/plain;Date=Tue, 27 Oct 2026 10:00:00 GMT; hello");
+}
+
+function test_a_repeated_block_reads_the_same(): test.TestOutcome {
+  return test.assert_eq(parsed_fields(wire("Tue, 27 Oct 2026 10:00:00 GMT", "hello"), first_headers()), "200 Content-Length=5;Content-Type=text/plain;Date=Tue, 27 Oct 2026 10:00:00 GMT; hello");
+}
+
+function test_a_changed_value_is_read(): test.TestOutcome {
+  return test.assert_eq(parsed_fields(wire("Tue, 27 Oct 2026 10:00:01 GMT", "hi"), first_headers()), "200 Content-Length=2;Content-Type=text/plain;Date=Tue, 27 Oct 2026 10:00:01 GMT; hi");
+}
+
+function test_fewer_fields_than_the_previous_block(): test.TestOutcome {
+  return test.assert_eq(parsed_fields("HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n", first_headers()), "204 Content-Length=0; ");
+}
+
+function test_more_fields_than_the_previous_block(): test.TestOutcome {
+  let prev: HeaderMap = headers.new().append("Content-Length", "5");
+  return test.assert_eq(parsed_fields(wire("Tue, 27 Oct 2026 10:00:00 GMT", "hello"), prev), "200 Content-Length=5;Content-Type=text/plain;Date=Tue, 27 Oct 2026 10:00:00 GMT; hello");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http response bytes");
+  r = r.it("parses without a previous block", test_parses_without_a_previous_block);
+  r = r.it("a repeated block reads the same", test_a_repeated_block_reads_the_same);
+  r = r.it("a changed value is read", test_a_changed_value_is_read);
+  r = r.it("fewer fields than the previous block", test_fewer_fields_than_the_previous_block);
+  r = r.it("more fields than the previous block", test_more_fields_than_the_previous_block);
+  return r.finish();
+}
