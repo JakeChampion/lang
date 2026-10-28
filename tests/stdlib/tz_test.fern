@@ -131,7 +131,7 @@ function test_at_is_the_local_time_then(): test.TestOutcome {
 }
 
 function test_zoned_parse_keeps_the_offset(): test.TestOutcome {
-  let Some(zt) = tz.zoned_parse_rfc3339("2026-05-19T14:30:00.25+09:00") else {
+  let Ok(zt) = tz.zoned_parse_rfc3339("2026-05-19T14:30:00.25+09:00") else {
     return test.fail("an offset time was refused");
   };
   if (zt.timestamp.format_rfc3339() != "2026-05-19T05:30:00.250000000Z" || zt.zone.abbrev_at(zt.timestamp) != "UTC+09:00") {
@@ -141,13 +141,16 @@ function test_zoned_parse_keeps_the_offset(): test.TestOutcome {
 }
 
 function test_zoned_parse_utc(): test.TestOutcome {
-  let Some(zt) = tz.zoned_parse_rfc3339("2026-05-19T05:30:00Z") else {
+  let Ok(zt) = tz.zoned_parse_rfc3339("2026-05-19T05:30:00Z") else {
     return test.fail("a UTC time was refused");
   };
   if (zt.zone.abbrev_at(zt.timestamp) != "UTC" || !zt.zone.is_fixed()) {
     return test.fail("the zone");
   }
-  return test.assert_eq(tz.zoned_parse_rfc3339("2026-05-19T05:30:00+0900").is_none(), true);
+  let Err(e) = tz.zoned_parse_rfc3339("2026-05-19T05:30:00+0900") else {
+    return test.fail("an offset without a colon was accepted");
+  };
+  return test.assert_eq(e.message(), "\"2026-05-19T05:30:00+0900\" is not an RFC 3339 timestamp");
 }
 
 function test_fixed_zone_negative_offset(): test.TestOutcome {
