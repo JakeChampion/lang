@@ -110,20 +110,22 @@ func TestSelfHostImagePermissions(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			command := func(bin string) *exec.Cmd {
+				if tc.target == "arm64-linux" {
+					return runArm64Bin(qemu, bin)
+				}
+				return runX86_64Bin(cli.runner, bin)
+			}
 			run := func(bin string) (string, *exec.Cmd) {
 				t.Helper()
-				var c *exec.Cmd
-				if tc.target == "arm64-linux" {
-					c = runArm64Bin(qemu, bin)
-				} else {
-					c = runX86_64Bin(cli.runner, bin)
-				}
+				c := command(bin)
 				out, _ := c.CombinedOutput()
 				return string(out), c
 			}
 			expectSegv := func(what, bin string) {
 				t.Helper()
-				out, c := run(bin)
+				c := withoutCoreDump(command(bin))
+				out, _ := c.CombinedOutput()
 				status, ok := c.ProcessState.Sys().(syscall.WaitStatus)
 				if !ok || !status.Signaled() || status.Signal() != syscall.SIGSEGV {
 					t.Errorf("%s: want SIGSEGV, got %v\n%s", what, c.ProcessState, out)
