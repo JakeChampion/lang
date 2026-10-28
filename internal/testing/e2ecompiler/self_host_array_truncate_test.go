@@ -71,6 +71,26 @@ var truncateCases = []struct{ name, body string }{
   let k: i32 = 0;
   while (ps.len() > 1) { ps = remove_at(ps, k % ps.len()); k = k + 3; }
   let r: i32 = ps[0].n;`},
+	{"held-element-removal", `  let ps: P[] = people(3000);
+  let before: i64 = __heap_alloc_count();
+  let sum: i32 = 0;
+  while (ps.len() > 0) {
+    let w: (P[], i32) = wake(ps, 0);
+    ps = w.0;
+    sum = sum + w.1;
+  }
+  if (__heap_alloc_count() - before > 6100i64) { return 97; }
+  let r: i32 = sum % 101;`},
+	{"held-element-removal-inlined", `  let ps: P[] = people(3000);
+  let before: i64 = __heap_alloc_count();
+  let sum: i32 = 0;
+  while (ps.len() > 0) {
+    let p: P = ps[0];
+    ps = ps.with(0, ps[ps.len() - 1]).truncate(ps.len() - 1);
+    sum = sum + p.n + p.name.len();
+  }
+  if (__heap_alloc_count() - before > 100i64) { return 97; }
+  let r: i32 = sum % 101;`},
 	{"borrowed-swap-remove-kept", `  let ps: P[] = people(6);
   let qs: P[] = remove_at(ps, 1);
   let r: i32 = ps.len() * 10 + qs.len();
@@ -87,6 +107,11 @@ function remove_at(ps: P[], at: i32): P[] {
     ps = ps.with(at, ps[last]);
   }
   return ps.truncate(last);
+}
+@noinline function wake(ps: P[], at: i32): (P[], i32) {
+  let p: P = ps[at];
+  ps = remove_at(ps, at);
+  return (ps, p.n + p.name.len());
 }
 function pop_all(own xs: string[]): i32 {
   let popped: i32 = 0;
