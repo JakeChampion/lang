@@ -81,6 +81,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "std/http";
+import "std/result";
 import "std/time";
 import "std/headers";
 ```
