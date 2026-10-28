@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -130,6 +131,101 @@ func flightsH2(client *e2eharness.H2CClient, c, streams int, want func(string) s
 		if body != want(path) {
 			return fmt.Errorf("%s answered %q, want %q", path, body, want(path))
 		}
+	}
+	return nil
+}
+
+const servePoolSource = `import "std/http";
+import "std/serve";
+import "std/platform";
+import "std/fetch";
+function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, fetch.FetchError] {
+    let got: HttpResponse = plat.http(fetch.get("http://8.8.8.8" + req.path))?;
+    return Ok(http.ok(got.body_string()));
+}
+function main(): i32 {
+    return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), max_connections_per_ip: 0 }, handle));
+}
+`
+
+// A second wave of parked handlers takes the upstream connections the first
+// wave gave back, so it dials none of its own.
+func TestSelfHostServeSharedPoolKeeps(t *testing.T) {
+	const wave = 150
+	cli := buildSelfHostCLI(t)
+	var dials atomic.Int64
+	var held sync.WaitGroup
+	up := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		held.Done()
+		held.Wait()
+		io.WriteString(w, strings.TrimPrefix(r.URL.Path, "/"))
+	}))
+	up.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			dials.Add(1)
+		}
+	}
+	up.Start()
+	t.Cleanup(up.Close)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte(servePoolSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := runX86_64Bin(cli.runner, cli.x86Binary(t, src, "FERN_STRICT_IR=1"))
+	cmd.Env = append(os.Environ(), "http_proxy=http://u@"+up.Listener.Addr().String())
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	e2eharness.WaitServerReady(t, addr)
+	conns := make([]net.Conn, wave)
+	for c := range conns {
+		conn, err := net.DialTimeout("tcp", addr, 10*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Close()
+		conns[c] = conn
+	}
+	var first int64
+	for round := 0; round < 2; round++ {
+		held.Add(wave)
+		errs := make(chan error, wave)
+		for c, conn := range conns {
+			go func(c int, conn net.Conn) {
+				errs <- poolRequest(conn, fmt.Sprintf("/w%dc%d", round, c))
+			}(c, conn)
+		}
+		for range conns {
+			if err := <-errs; err != nil {
+				t.Fatal(err)
+			}
+		}
+		if round == 0 {
+			first = dials.Load()
+		}
+	}
+	if first < wave {
+		t.Fatalf("the first wave dialled %d upstream connections; %d handlers held one each at once", first, wave)
+	}
+	if again := dials.Load() - first; again != 0 {
+		t.Errorf("the second wave dialled %d upstream connections; the first wave gave back %d", again, first)
+	}
+}
+
+func poolRequest(conn net.Conn, path string) error {
+	conn.SetDeadline(time.Now().Add(time.Minute))
+	if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: localhost\r\n\r\n", path); err != nil {
+		return err
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		return fmt.Errorf("%s: %v", path, err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return fmt.Errorf("%s: %v", path, err)
+	}
+	if got := string(body); resp.StatusCode != 200 || got != path[1:] {
+		return fmt.Errorf("%s answered %d %q", path, resp.StatusCode, got)
 	}
 	return nil
 }

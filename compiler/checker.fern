@@ -13874,7 +13874,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
               out = util.append_diags(out, bound_type_arg_diags(sig, c, ai, at, s, cbn, cbt));
               out = util.append_diags(out, ctor_payload_diags(c.args[ai], sig.param_types[ai], s));
               let bound_checked: boolean = param_has_bindings(sig, ai, cbn);
-              if (!bound_checked && !(sig.all_type_params.len() > 0 && binds_nothing(c.args[ai], s)) && !is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to_dest(c.args[ai], sig.param_types[ai], s) && !view_arg_borrow(at, sig.param_types[ai]) && !coercible(at, sig.param_types[ai], s)) {
+              if (!bound_checked && !(sig.all_type_params.len() > 0 && type_contains_unknown(sig.param_types[ai]) && binds_nothing(c.args[ai], s)) && !is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to_dest(c.args[ai], sig.param_types[ai], s) && !view_arg_borrow(at, sig.param_types[ai]) && !coercible(at, sig.param_types[ai], s)) {
                 out = out.append(dg_at("E038", arg_subject(c, ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + argument_type_label(c.args[ai], at, s), expr_line(c.args[ai]), expr_col(c.args[ai])));
               }
               out = util.append_diags(out, array_elem_check(array_elem_type_of(sig.param_types[ai]), c.args[ai], s));
