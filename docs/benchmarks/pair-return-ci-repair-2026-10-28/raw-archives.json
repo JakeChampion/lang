@@ -131,5 +131,12 @@
     "raw_sha256": "7965055b1e3a86f7852e0f44f6528c2df7388303e2bb7898281e02c44797fa6d",
     "archive_name": "ci-c63-122593836677.log.gz",
     "archive_sha256": "b7b5d9aef39e6b68f5bbe6ee1801871d884ce2d62863bf2198844f1c9b3dc45e"
+  },
+  {
+    "raw_name": "ci-c63-122593836666.log",
+    "raw_bytes": 1919007,
+    "raw_sha256": "7bf133cb798c0452cac4d8efb13b78eb1393c5d59df4d3f0de80e21b9691b512",
+    "archive_name": "ci-c63-122593836666.log.gz",
+    "archive_sha256": "fce779060f3095eeb9094e75a91d79b7c342fd9b49cc25e570dec12cbe81a716"
   }
 ]

@@ -50,3 +50,10 @@ The DEFLATE round trip passes on both native targets.
 The playground omitted its selected target from the `FERNBUILD1` record, as recorded in #13739.
 It now sets that field through the build switches.
 The output comparison retains complete byte equality for each form.
+
+The branch now includes main at `f7bdaba5a4811476db32e137419971497e7da70f`.
+The import-free gate now includes both new wide arithmetic modules.
+Their generic `rows` and `valid` names describe separate reference-data and interval contracts.
+The gate uses qualified names for those two functions and preserves all other shared-copy checks.
+All seven qualified arithmetic and legacy source files remain byte-identical to main.
+The `ssalargepushwide_run` driver retains its imports and interfaces.
