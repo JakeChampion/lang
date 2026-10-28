@@ -584,11 +584,13 @@ function intersect(idom: i32[], po: i32[], a: i32, b: i32): i32 {
 function postorder(f: SFunc, at: i32[], entry: i32): i32[] {
   let seen: boolean[] = __alloc_bool(f.blocks.len());
   let out: i32[] = [];
-  let stack: i32[] = [entry];
-  let next: i32[] = [0];
+  let stack: i32[] = __alloc_i32(f.blocks.len());
+  let next: i32[] = __alloc_i32(f.blocks.len());
+  stack = stack.with(0, entry);
+  let depth: i32 = 1;
   seen = seen.with(entry, true);
-  while (stack.len() > 0) {
-    let top: i32 = stack.len() - 1;
+  while (depth > 0) {
+    let top: i32 = depth - 1;
     let b: i32 = stack[top];
     let which: i32 = next[top];
     if (which < 2) {
@@ -596,13 +598,13 @@ function postorder(f: SFunc, at: i32[], entry: i32): i32[] {
       let s: i32 = distinct_successor_position(at, f.blocks[b].term, which);
       if (s >= 0 && !seen[s]) {
         seen = seen.with(s, true);
-        stack = stack.append(s);
-        next = next.append(0);
+        stack = stack.with(depth, s);
+        next = next.with(depth, 0);
+        depth = depth + 1;
       }
     } else {
       out = out.append(b);
-      stack = drop_last_i(stack);
-      next = drop_last_i(next);
+      depth = depth - 1;
     }
   }
   return out;
@@ -2048,6 +2050,51 @@ function pred_index(at: i32[], id: i32): i32 {
     return 0 - 1;
   }
   return at[id];
+}
+
+// live_masks gives, for each position of `at` in ascending order, the
+// registers below `nregs` that hold a value live across it. The mask at
+// `at[k]` leaves out the value `skip[k]`.
+pub function live_masks(alloc: Alloc, nregs: i32, at: i32[], skip: i32[]): i32[] {
+  let masks: i32[] = __alloc_i32(at.len());
+  if (at.len() == 0) {
+    return masks;
+  }
+  let order: i32[] = order_by_lo(alloc.reg_of.len(), alloc.lo);
+  let active: i32[] = __alloc_i32(order.len());
+  let na: i32 = 0;
+  let next: i32 = 0;
+  let k: i32 = 0;
+  while (k < at.len()) {
+    let p: i32 = at[k];
+    while (next < order.len() && alloc.lo[order[next]] < p) {
+      let v: i32 = order[next];
+      let r: i32 = alloc.reg_of[v];
+      if (r >= 0 && r < nregs) {
+        active = active.with(na, v);
+        na = na + 1;
+      }
+      next = next + 1;
+    }
+    let mask: i32 = 0;
+    let kept: i32 = 0;
+    let j: i32 = 0;
+    while (j < na) {
+      let v: i32 = active[j];
+      if (alloc.hi[v] > p) {
+        active = active.with(kept, v);
+        kept = kept + 1;
+        if (v != skip[k]) {
+          mask = mask | 1 << alloc.reg_of[v];
+        }
+      }
+      j = j + 1;
+    }
+    na = kept;
+    masks = masks.with(k, mask);
+    k = k + 1;
+  }
+  return masks;
 }
 
 pub function position_count(f: SFunc): i32 {
