@@ -36,10 +36,10 @@ function main(): i32 {
   print(b3.remaining().to_string());
   let (rest, b4) = b3.read_all_string();
   match (rest) {
-    Some(text) => {
+    Ok(text) => {
       print(text);
     },
-    None => {
+    Err(_) => {
       return 1;
     }
   }

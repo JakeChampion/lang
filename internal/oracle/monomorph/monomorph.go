@@ -123,15 +123,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		for i, tp := range gen.TypeParams {
 			sub[tp] = args[i]
 		}
-		c := cloneFuncDecl(gen)
-		c.Name = k.mang
-		c.TypeParams = nil
-		for i := range c.Params {
-			c.Params[i].Type = substituteType(c.Params[i].Type, sub)
-		}
-		c.ReturnType = substituteType(c.ReturnType, sub)
-		substituteBlock(c.Body, sub)
-		substituteConstParams(c, sub)
+		c := instantiateFunc(gen, k.mang, sub)
 		before := len(instantiations)
 		for mk, margs := range boundEnumImplMethods(prog, info, gen, args) {
 			if _, seen := instantiations[mk]; !seen {
@@ -359,8 +351,12 @@ func Run(prog *ast.Program, info *checker.Info) error {
 				if sk.name != baseName {
 					continue
 				}
+				var inst ast.Type = ast.StructType{Name: baseName, Args: structInsts[sk]}
+				if _, isEnum := impl.Type.(ast.EnumType); isEnum {
+					inst = ast.EnumType{Name: baseName, Args: structInsts[sk]}
+				}
 				psub := map[string]ast.Type{}
-				if !unifyImplType(impl.Type, ast.StructType{Name: baseName, Args: structInsts[sk]}, pset, psub) {
+				if !unifyImplType(impl.Type, inst, pset, psub) {
 					continue
 				}
 				implK := impl.Trait + "/" + sk.mang
@@ -445,16 +441,9 @@ func Run(prog *ast.Program, info *checker.Info) error {
 			for i, tp := range gen.TypeParams {
 				sub[tp] = margs[i]
 			}
-			mc := cloneFuncDecl(gen)
-			mc.Name = mk.mang
-			mc.TypeParams = nil
+			mc := instantiateFunc(gen, mk.mang, sub)
 			mc.MethodRecv = methodRecv[mk]
 			mc.MethodSimpleName = methodSimple[mk]
-			for i := range mc.Params {
-				mc.Params[i].Type = substituteType(mc.Params[i].Type, sub)
-			}
-			mc.ReturnType = substituteType(mc.ReturnType, sub)
-			substituteBlock(mc.Body, sub)
 			collectCalls(mc.Body)
 			mangleBodyStructLits(mc.Body)
 			prog.Funcs = append(prog.Funcs, mc)
@@ -476,14 +465,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 			for i, tp := range gen.TypeParams {
 				sub[tp] = args[i]
 			}
-			fc := cloneFuncDecl(gen)
-			fc.Name = fk.mang
-			fc.TypeParams = nil
-			for i := range fc.Params {
-				fc.Params[i].Type = substituteType(fc.Params[i].Type, sub)
-			}
-			fc.ReturnType = substituteType(fc.ReturnType, sub)
-			substituteBlock(fc.Body, sub)
+			fc := instantiateFunc(gen, fk.mang, sub)
 			collectCalls(fc.Body)
 			mangleBodyStructLits(fc.Body)
 			prog.Funcs = append(prog.Funcs, fc)
@@ -1002,6 +984,21 @@ func substituteNode(n ast.Node, sub map[string]ast.Type) {
 		}
 		return true
 	})
+}
+
+// instantiateFunc is a copy of gen named name, with sub put in for its type
+// parameters and its const parameters.
+func instantiateFunc(gen *ast.FuncDecl, name string, sub map[string]ast.Type) *ast.FuncDecl {
+	c := cloneFuncDecl(gen)
+	c.Name = name
+	c.TypeParams = nil
+	for i := range c.Params {
+		c.Params[i].Type = substituteType(c.Params[i].Type, sub)
+	}
+	c.ReturnType = substituteType(c.ReturnType, sub)
+	substituteBlock(c.Body, sub)
+	substituteConstParams(c, sub)
+	return c
 }
 
 func substituteConstParams(fn *ast.FuncDecl, sub map[string]ast.Type) {

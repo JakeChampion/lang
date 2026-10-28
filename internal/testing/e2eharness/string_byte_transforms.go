@@ -13,7 +13,7 @@ function found_at(o: Option[i32]): i32 {
 function main(): i32 {
     let reversed: u8[] = "é".reverse_bytes();
     if (!reversed.equal([169 as u8, 195 as u8])) { return 1; }
-    match (utf8.from_bytes(reversed)) { Some(_) => { return 2; }, None => { } }
+    match (utf8.from_bytes(reversed)) { Ok(_) => { return 2; }, Err(_) => { } }
     let removed: u8[] = "éê".without_byte(195);
     if (!removed.equal([169 as u8, 170 as u8])) { return 3; }
     let replaced: u8[] = "éê".replace_byte(195, 255);

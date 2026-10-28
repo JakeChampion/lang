@@ -3242,7 +3242,7 @@ function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow
   return state;
 }
 
-function holds_invariant(state: boolean[], f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): boolean {
+function holds_invariant(state: boolean[], f: ssasem.Func, bi: i32, owned: boolean[], owned_ids: i32[], flow: ssalive.Flow): boolean {
   let want: i32 = 0;
   for v in ssalive.live_in_ids(flow, bi) {
     if (owned[v]) {
@@ -3261,8 +3261,8 @@ function holds_invariant(state: boolean[], f: ssasem.Func, bi: i32, owned: boole
     }
   }
   let have: i32 = 0;
-  for bit in state {
-    if (bit) {
+  for v in owned_ids {
+    if (state[v]) {
       have = have + 1;
     }
   }
@@ -3377,7 +3377,9 @@ pub function step_at(p: Plan, idx: i32[][], block: i32, point: i32, target: i32)
   return 0 - 1;
 }
 
-struct ReplayIndex { positions: i32[], offsets: i32[], slots: i32[] }
+// `owned` lists the owned values: a replay row sets no
+// other bit.
+struct ReplayIndex { positions: i32[], offsets: i32[], slots: i32[], owned: i32[] }
 
 function replay_point(b: ssa.SBlock, point: i32, target: i32): i32 {
   if (target == 0 - 1) {
@@ -3408,7 +3410,7 @@ function replay_point(b: ssa.SBlock, point: i32, target: i32): i32 {
   return 0 - 1;
 }
 
-function replay_index(f: ssasem.Func, p: Plan, flow: ssalive.Flow): ReplayIndex {
+function replay_index(f: ssasem.Func, p: Plan, flow: ssalive.Flow, owned: boolean[]): ReplayIndex {
   let offsets: i32[] = [];
   let slots: i32[] = [];
   for b in f.graph.blocks {
@@ -3436,7 +3438,15 @@ function replay_index(f: ssasem.Func, p: Plan, flow: ssalive.Flow): ReplayIndex 
     }
     i = i + 1;
   }
-  return ReplayIndex { positions: flow.at, offsets: offsets, slots: slots };
+  let owned_ids: i32[] = [];
+  let v: i32 = 0;
+  while (v < owned.len()) {
+    if (owned[v]) {
+      owned_ids = owned_ids.append(v);
+    }
+    v = v + 1;
+  }
+  return ReplayIndex { positions: flow.at, offsets: offsets, slots: slots, owned: owned_ids };
 }
 
 function find_step(b: ssa.SBlock, idx: ReplayIndex, point: i32, target: i32): i32 {
@@ -3666,7 +3676,7 @@ function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, idx: R
   if (!entered.ok) {
     return entered.why;
   }
-  if (!holds_invariant(entered.bits, f, si, owned, analysis.flow)) {
+  if (!holds_invariant(entered.bits, f, si, owned, idx.owned, analysis.flow)) {
     return "edge unit invariant mismatch";
   }
   return "";
@@ -3779,7 +3789,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
     analysis = p.unit_analysis;
   }
   let reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
-  let idx: ReplayIndex = replay_index(f, p, analysis.flow);
+  let idx: ReplayIndex = replay_index(f, p, analysis.flow, owned);
   let ids: i32[] = identity_roots(defs);
   let count: i32 = 0;
   let bi: i32 = 0;

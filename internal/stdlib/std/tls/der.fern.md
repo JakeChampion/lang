@@ -500,10 +500,10 @@ pub function text(b: [u8], e: Element): Result[string, DerError] {
     return Err(BadValue("string"));
   }
   match (utf8.from_bytes(raw)) {
-    Some(s) => {
+    Ok(s) => {
       return Ok(s);
     },
-    None => {
+    Err(_) => {
       return Err(BadValue("string"));
     }
   }

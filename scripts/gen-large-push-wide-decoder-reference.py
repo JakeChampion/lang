@@ -221,7 +221,7 @@ def number(n, bits=32):
 
 
 def fern_bytes(reference):
-    lines = ['import "std/hex";', 'import "std/utf8";', '', 'pub struct ExpectedOp { kind: i32, width: i32, source: i32, destination: i32, base: i32, index: i32, scale: i32, offset: i32, narrow_immediate: i32, immediate: i64, condition: string, target: i32, symbol: string }', '', 'pub struct Case { id: i32, source: string, ok: boolean, ops: ExpectedOp[] }', '', 'function source(spelling: string): string {', '  if let Ok(bytes) = hex.decode(spelling) {', '    if let Some(value) = utf8.from_bytes(bytes) {', '      return value;', '    }', '  }', '  exit(2);', '  return "";', '}', '', 'pub function rows(): Case[] {', '  return [']
+    lines = ['import "std/hex";', 'import "std/utf8";', '', 'pub struct ExpectedOp { kind: i32, width: i32, source: i32, destination: i32, base: i32, index: i32, scale: i32, offset: i32, narrow_immediate: i32, immediate: i64, condition: string, target: i32, symbol: string }', '', 'pub struct Case { id: i32, source: string, ok: boolean, ops: ExpectedOp[] }', '', 'function source(spelling: string): string {', '  if let Ok(bytes) = hex.decode(spelling) {', '    if let Ok(value) = utf8.from_bytes(bytes) {', '      return value;', '    }', '  }', '  exit(2);', '  return "";', '}', '', 'pub function rows(): Case[] {', '  return [']
     for case in reference['cases']:
         ops = []
         for op in case['expected']['ops']:

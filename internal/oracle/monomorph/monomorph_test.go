@@ -600,6 +600,35 @@ function main(): i32 { match (read(1, "GREETING")) { Some(v) => { return 0; }, N
 	})
 }
 
+// A generic enum whose payload holds a generic struct is cloned per instance.
+// A call through a trait bound still reaches the impl method of the clone.
+func TestRunInstantiatesEnumImplForBoundCall(t *testing.T) {
+	prog, err := parser.Parse(`struct Pk[T] { items: T[] }
+enum Box[T] { Full(Pk[T]), Empty }
+trait Size { function size(self: Self): i32; }
+impl[T] Size for Box[T] {
+  function size(self: Box[T]): i32 { return match (self) { Full(p) => p.items.len(), Empty => 0 }; }
+}
+function size_of[S: Size](s: S): i32 { return s.size(); }
+function main(): i32 { let b: Box[i32] = Full(Pk { items: [1, 2] }); return size_of(b); }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	for _, fn := range prog.Funcs {
+		if fn.Name == "__method_Box__i32_size" {
+			return
+		}
+	}
+	t.Errorf("no instance __method_Box__i32_size of the enum impl method")
+}
+
 func TestRunReportsPolymorphicRecursion(t *testing.T) {
 	src := `struct Nest[T] { head: T, tail: Nest[Nest[T]] }
 function f(n: Nest[i32]): i32 { return n.head; }

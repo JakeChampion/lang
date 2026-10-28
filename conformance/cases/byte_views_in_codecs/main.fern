@@ -1,5 +1,6 @@
 import "std/string";
 import "std/option";
+import "std/result";
 import "std/hex" as hex;
 import "std/base64" as b64;
 import "std/base32" as b32;
@@ -12,10 +13,10 @@ function text_copy(): string {
   let bytes: u8[] = [0 as u8, 104 as u8, 195 as u8, 169 as u8, 0 as u8];
   let borrowed: [u8] = bytes[1:4];
   match (utf8.from_bytes(borrowed)) {
-    Some(s) => {
+    Ok(s) => {
       return s;
     },
-    None => {
+    Err(_) => {
       return "bad";
     }
   }
@@ -141,7 +142,7 @@ function main(): i32 {
   }
   let invalid: u8[] = [255 as u8, 97 as u8];
   let invalid_view: [u8] = invalid;
-  if (utf8.from_bytes(invalid_view).is_some() || utf8.from_bytes_lossy(invalid_view) != "�a") {
+  if (utf8.from_bytes(invalid_view).is_ok() || utf8.from_bytes_lossy(invalid_view) != "�a") {
     return 71;
   }
   for text in ["", "a", "abcdef", "abcdefg", "abcdefgh", "abcdefghijklmno", "abcdefghijklmnop", "abcdefghijklmnopqrstuvwxyz012345", "0123456789".repeat(41)] {

@@ -39,7 +39,7 @@ function main(): i32 {
     }
     // The result can contain malformed UTF-8 without pretending to be text.
     let first = rand.rng_bytes(initial, 64);
-    match (utf8.from_bytes(first.1)) { Some(_) => { return 4; }, None => { } }
+    match (utf8.from_bytes(first.1)) { Ok(_) => { return 4; }, Err(_) => { } }
     let again = rand.rng_bytes(initial, 64);
     if (!same_bytes(first.1, again.1) || first.0 != again.0) { return 5; }
     let saved: u8[] = first.1;

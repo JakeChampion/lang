@@ -285,7 +285,7 @@ import "std/http";
 function main(): i32 {
     let raw: string = "POST /todos HTTP/1.1\r\nHost: localhost\r\nContent-Length: 13\r\n\r\nhello, world!";
     match (http.http_parse_request(raw)) {
-        Some(req) => {
+        Ok(req) => {
             if (req.method != "POST") { return 1; }
             if (req.path != "/todos") { return 2; }
             match (req.body_string()) {
@@ -294,7 +294,7 @@ function main(): i32 {
             }
             return 42;
         },
-        None => { return 99; }
+        Err(_) => { return 99; }
     }
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -308,13 +308,13 @@ import "std/http";
 function main(): i32 {
     let raw: string = "GET /hello?name=world HTTP/1.1\r\nHost: localhost\r\n\r\n";
     match (http.http_parse_request(raw)) {
-        Some(req) => {
+        Ok(req) => {
             if (req.method != "GET") { return 1; }
             if (req.path != "/hello?name=world") { return 2; }
             if (req.body_len() != 0) { return 3; }
             return 42;
         },
-        None => { return 99; }
+        Err(_) => { return 99; }
     }
 }`
 	if got := runWasm(t, src); got != 42 {
@@ -328,8 +328,8 @@ import "std/http";
 function main(): i32 {
     let raw: string = "GET /partial HTTP/1.1\r\nHost: loca";
     match (http.http_parse_request(raw)) {
-        Some(_) => { return 1; },
-        None => { return 42; }
+        Ok(_) => { return 1; },
+        Err(_) => { return 42; }
     }
 }`
 	if got := runWasm(t, src); got != 42 {

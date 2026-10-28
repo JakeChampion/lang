@@ -10,10 +10,10 @@ function text(r: Result[deflate.Inflated, deflate.InflateError]): string {
   match (r) {
     Ok(inflated) => {
       match (utf8.from_bytes(inflated.out)) {
-        Some(s) => {
+        Ok(s) => {
           return s;
         },
-        None => {
+        Err(_) => {
           return "<not utf-8>";
         }
       }
@@ -29,10 +29,10 @@ function bytes_text(r: Result[u8[], deflate.InflateError]): string {
   match (r) {
     Ok(out) => {
       match (utf8.from_bytes(out)) {
-        Some(s) => {
+        Ok(s) => {
           return s;
         },
-        None => {
+        Err(_) => {
           return "<not utf-8>";
         }
       }

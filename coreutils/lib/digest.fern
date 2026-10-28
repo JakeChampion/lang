@@ -564,10 +564,10 @@ function isubase64(b: i32): boolean {
 
 function read_digest(s: Settings, bytes: u8[], n: i32): Digest {
   match (utf8.from_bytes(bytes)) {
-    Some(field) => {
+    Ok(field) => {
       return read_digest_text(s, field, n);
     },
-    None => {
+    Err(_) => {
       return bad_digest();
     }
   }
@@ -820,10 +820,10 @@ function finish_line(a: Algo, d: Digest, bits: i32, raw_name: u8[], escaped: boo
     name = u.1;
   }
   match (utf8.from_bytes(name)) {
-    Some(text) => {
+    Ok(text) => {
       return Line { ok: true, invalid_name: false, hex: d.hex, name: text, algo: a, bits: bits };
     },
-    None => {
+    Err(_) => {
       return Line { ...bad_line(a), invalid_name: true };
     }
   }

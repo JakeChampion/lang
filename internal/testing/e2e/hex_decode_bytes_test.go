@@ -15,15 +15,15 @@ function main(): i32 {
     // ...and they really are invalid UTF-8, which is the whole reason
     // this is not a string: the checked constructor rejects them.
     match (utf8.from_bytes(b)) {
-        Some(s) => { return 3; },
-        None => {}
+        Ok(s) => { return 3; },
+        Err(_) => {}
     }
 
     // ASCII payloads decode to bytes that DO read back as text.
     let hi: u8[] = __codec_bytes(hex.decode("6869"));
     match (utf8.from_bytes(hi)) {
-        Some(s) => { if (s != "hi") { return 4; } },
-        None => { return 5; }
+        Ok(s) => { if (s != "hi") { return 4; } },
+        Err(_) => { return 5; }
     }
 
     // Empty input succeeds. Malformed input returns a typed error.

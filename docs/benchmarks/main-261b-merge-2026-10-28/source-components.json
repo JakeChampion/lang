@@ -1,0 +1,19 @@
+{
+  "overall_exit": 1,
+  "passed_packages": [
+    [
+      "github.com/jakechampion/lang/compiler",
+      "0.060s"
+    ],
+    [
+      "github.com/jakechampion/lang/internal/testing/sourcelint",
+      "11.473s"
+    ],
+    [
+      "github.com/jakechampion/lang/internal/syntax/parser",
+      "5.723s"
+    ]
+  ],
+  "unqualified_package": "github.com/jakechampion/lang/internal/syntax/printer",
+  "reason": "Unsharded TestFormatCorpusOutputTypeChecks reached default10minute timeout while advancing. No pass claim; supportedcorpusshards next."
+}

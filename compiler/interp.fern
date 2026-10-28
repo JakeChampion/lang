@@ -3227,10 +3227,10 @@ function read_chunk_value(r: Reader, n: i32): Value {
   match (r.read_chunk_bytes(n)) {
     Ok(chunk) => {
       match (utf8.from_bytes(chunk)) {
-        Some(text) => {
+        Ok(text) => {
           return ok_value(v_string(text));
         },
-        None => {
+        Err(_) => {
           return io_err_value(InvalidUtf8(""));
         }
       }
@@ -4845,7 +4845,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
             if (is_err(recv)) {
               return recv;
             }
-            recv_static = env.static_type_of(fa.obj);
+            recv_static = bound_type_spelling(env.static_type_of(fa.obj), env);
             name = dyn_method_name(name, recv_static, recv, env.funcs);
           }
         }
@@ -4885,6 +4885,9 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
   if (is_method) {
     return call_method_targs(recv, recv_static, name, arg_vals, targs, env.funcs, env.aliases, env.type_decls);
   }
+  if (targs.len() == 0 && callee_known && !is_closure) {
+    targs = static_type_args(callee_fd, c.args, arg_vals, env);
+  }
   if (is_closure) {
     let inline_value: boolean = false;
     if let ast.ExprLambda(lm) = c.callee {
@@ -4897,6 +4900,45 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
     return call_closure_mode(closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, inline_value);
   }
   return call_func_targs(name, arg_vals, targs, expect, env.funcs, env.aliases, env.type_decls);
+}
+
+// static_type_args is the type arguments of a call to fd that writes none,
+// where the static type of an argument names more than its value does. A
+// struct value does not carry its type arguments: `Ring[16, i32]`, not `Ring`.
+// An entry is empty where the value decides.
+function static_type_args(fd: parser.FuncDecl, args: ast.Expr[], vals: Value[], env: Env): string[] {
+  let n: i32 = fd.type_params.len();
+  if (fd.all_type_params.len() > n) {
+    n = fd.all_type_params.len();
+  }
+  let out: string[] = [];
+  for k in 0..n {
+    out = out.append("");
+  }
+  let found: boolean = false;
+  for t in 0..fd.type_params.len() {
+    let tp: string = fd.type_params[t];
+    let at: i32 = util.index_of_str(fd.all_type_params, tp);
+    if (at < 0) {
+      at = t;
+    }
+    for j in 0..fd.params.len() {
+      if (j >= args.len() || j >= vals.len()) {
+        break;
+      }
+      let vc: string = tyarg_match(fd.params[j].type_name, tp, vals[j]);
+      let sc: string = tyarg_match_names(fd.params[j].type_name, tp, bound_type_spelling(env.static_type_of(args[j]), env));
+      if (vc.len() > 0 && sc.len() > vc.len() && util.base_type_name(sc) == util.base_type_name(vc)) {
+        out = out.with(at, sc);
+        found = true;
+        break;
+      }
+    }
+  }
+  if (!found) {
+    return [];
+  }
+  return out;
 }
 
 function eval_pinned_arg(c: ast.ExprCall, i: i32, fd: parser.FuncDecl, known: boolean, has_recv: boolean, recv: Value, earlier: Value[], targs: string[], env: Env): Value {
@@ -7829,6 +7871,23 @@ function eval_match_stmt(m: ast.StmtMatch, env: Env): StepResult {
   return eval_match_stmt_mode(m, env, false, "");
 }
 
+// payload_decl_type is the declared type of payload k of the variant
+// `vname`, with the arguments of the scrutinee's static type put in:
+// `Ring[4, string]` for the payload `Ring[N, T]` of `Full` in a
+// `Slot[4, string]`.
+function payload_decl_type(env: Env, vname: string, k: i32, scrutinee: ast.Expr): string {
+  for sd in env.type_decls {
+    if (sd.name == vname && sd.enum_owner.len() > 0 && k < sd.fields.len()) {
+      let r: parser.TypeRef = parser.parse_type_ref(bound_type_spelling(env.static_type_of(scrutinee), env));
+      if (r.base != sd.enum_owner) {
+        return bound_type_spelling(sd.fields[k].type_name, env);
+      }
+      return applied_spelling(sd.fields[k].type_name, decl_type_params(env.type_decls, env.aliases, sd.enum_owner), r.args);
+    }
+  }
+  return "";
+}
+
 function eval_match_stmt_mode(m: ast.StmtMatch, env: Env, value_form: boolean, expect: string): StepResult {
   let sv: Value = eval_expr(m.scrutinee, env);
   if (is_err(sv)) {
@@ -7840,6 +7899,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, env: Env, value_form: boolean, e
     let matched: boolean = false;
     let bind_names: string[] = [];
     let bind_values: Value[] = [];
+    let bind_types: string[] = [];
     match (arm.pattern) {
       ast.PatWildcard(_) => {
         matched = true;
@@ -7866,6 +7926,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, env: Env, value_form: boolean, e
               if (pv.at_binding.len() > 0) {
                 bind_names = bind_names.append(pv.at_binding);
                 bind_values = bind_values.append(sv);
+                bind_types = bind_types.append("");
               }
               if (is_payload) {
                 let pat_binds: string[] = [];
@@ -7882,6 +7943,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, env: Env, value_form: boolean, e
                   if (pat_binds[pbi] != "_") {
                     bind_names = bind_names.append(pat_binds[pbi]);
                     bind_values = bind_values.append(vs.field_values[pbi]);
+                    bind_types = bind_types.append(payload_decl_type(env, vs.type_name, pbi, m.scrutinee));
                   }
                   pbi = pbi + 1;
                 }
@@ -7889,6 +7951,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, env: Env, value_form: boolean, e
                 if (pv.binding.len() > 0 && pv.binding != "_") {
                   bind_names = bind_names.append(pv.binding);
                   bind_values = bind_values.append(sv);
+                  bind_types = bind_types.append("");
                 }
               }
             }
@@ -7902,7 +7965,7 @@ function eval_match_stmt_mode(m: ast.StmtMatch, env: Env, value_form: boolean, e
       let bodyEnv: Env = scope_env(env, bind_names.len() > 0 || body_binds(arm.body));
       let bk: i32 = 0;
       while (bk < bind_names.len()) {
-        bodyEnv = bodyEnv.bind(bind_names[bk], bind_values[bk]);
+        bodyEnv = bodyEnv.bind_decl(bind_names[bk], bind_values[bk], bind_types[bk]);
         bk = bk + 1;
       }
       let pass: boolean = true;

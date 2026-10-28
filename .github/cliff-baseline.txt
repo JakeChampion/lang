@@ -125,6 +125,9 @@
 #
 # Re-pinned 2026-10-15 (#12418): 33,052,304 / 236,323 on main (the previous
 # pin was drift) to 33,306,720 / 239,924, semreach's facts grown per function.
+#
+# Re-pinned 2026-10-28 (#13768): 39,645,312 / 371,072 to 40,432,712 / 388,867.
+# Main measured these values at eb0e5fdc0, and the run on #13768 agrees.
 
-x86_64/checker.cliff_bytes	39674024
-x86_64/checker.cliff_count	371241
+x86_64/checker.cliff_bytes	40432712
+x86_64/checker.cliff_count	388867

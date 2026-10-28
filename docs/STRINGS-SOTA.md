@@ -908,9 +908,10 @@ So the constructor splits, on the Rust `from_utf8` /
   renamed from `string_from_bytes`. Same signature, same codegen, no
   validation. Its contract is that *the caller guarantees the bytes are
   well-formed UTF-8*.
-- **`std/utf8.from_bytes(u8[]) -> Option[string]`** — validating.
+- **`std/utf8.from_bytes(u8[]) -> Result[string, Utf8Error]`** —
+  validating; the error carries the offset of the first bad byte.
   Ordinary Fern, deliberately *not* a builtin, so no backend has to
-  learn to box an `Option` for it.
+  learn to box a `Result` for it.
 
 The old name is retired outright rather than kept as an alias, so
 reaching for `string_from_bytes` is a compile error carrying a
@@ -1261,7 +1262,7 @@ The socket TRANSPORT followed. `tcp_recv_deadline` returns
 `Option[u8[]]`, and `std/fetch` is byte-domain end to end: `send(req)`
 and `plat.http(req)` answer `Result[HttpResponse, FetchError]` with the
 body as `BodyBytes`, `(resp).body_text()` is the checked decode that
-answers `None` for bytes that are not UTF-8, and `(resp).body_bytes()`
+answers `Err(Utf8Error)` for bytes that are not UTF-8, and `(resp).body_bytes()`
 the body as it came. An upstream serves whatever bytes it likes, so a
 text-typed response was a `string` this decision forbids.
 

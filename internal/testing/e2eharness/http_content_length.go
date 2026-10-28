@@ -13,8 +13,8 @@ func HTTPContentLengthProbe() string {
 function parsed_length(value: string, body: string): i32 {
     let wire: string = "POST / HTTP/1.1\r\nHost: localhost\r\nContent-Length: " + value + "\r\n\r\n" + body;
     match (http.http_parse_request(wire)) {
-        Some(req) => { return req.body_len(); },
-        None => { return -1; }
+        Ok(req) => { return req.body_len(); },
+        Err(_) => { return -1; }
     }
 }
 function main(): i32 {
