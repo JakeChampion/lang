@@ -2710,6 +2710,22 @@ function print_type_params(fd: parser.FuncDecl): string {
   return out + "]";
 }
 
+// print_decl_tparams is the parameter list of a struct or an enum.
+function print_decl_tparams(type_params: string[], const_params: string[]): string {
+  if (type_params.len() == 0) {
+    return "";
+  }
+  let parts: string[] = [];
+  for tp in type_params {
+    if (util.has_str(const_params, tp)) {
+      parts = parts.append(print_tparam(tp, parser.CONST_BOUND));
+    } else {
+      parts = parts.append(tp);
+    }
+  }
+  return "[" + parts.join(", ") + "]";
+}
+
 function print_tparam(name: string, bound: string): string {
   if (parser.is_const_bound(bound)) {
     return "const " + name + ": i32";
@@ -2848,23 +2864,7 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
   if (sd.opaque) {
     out = out + "opaque ";
   }
-  out = out + "struct " + sd.name;
-  if (sd.type_params.len() > 0) {
-    out = out + "[";
-    let tpi: i32 = 0;
-    while (tpi < sd.type_params.len()) {
-      if (tpi > 0) {
-        out = out + ", ";
-      }
-      if (util.has_str(sd.const_params, sd.type_params[tpi])) {
-        out = out + print_tparam(sd.type_params[tpi], parser.CONST_BOUND);
-      } else {
-        out = out + sd.type_params[tpi];
-      }
-      tpi = tpi + 1;
-    }
-    out = out + "]";
-  }
+  out = out + "struct " + sd.name + print_decl_tparams(sd.type_params, sd.const_params);
   let lns: i32[] = field_lines_for(flines, sd.name, sd.line);
   if (lns.len() == sd.fields.len() && lns.len() > 0 && keep_list_lines(f, sd.line, lns[lns.len() - 1])) {
     out = out + " {\n";
@@ -2968,19 +2968,7 @@ function print_enum_decl(ed: parser.EnumDecl, structs: parser.StructDecl[], flin
   if (ed.is_package) {
     out = out + "pub(package) ";
   }
-  out = out + "enum " + ed.name;
-  if (ed.type_params.len() > 0) {
-    out = out + "[";
-    let ti: i32 = 0;
-    while (ti < ed.type_params.len()) {
-      if (ti > 0) {
-        out = out + ", ";
-      }
-      out = out + ed.type_params[ti];
-      ti = ti + 1;
-    }
-    out = out + "]";
-  }
+  out = out + "enum " + ed.name + print_decl_tparams(ed.type_params, ed.const_params);
   let lns: i32[] = field_lines_for(flines, ed.name, ed.line);
   if (lns.len() == ed.variant_names.len() && lns.len() > 0 && keep_list_lines(f, ed.line, lns[lns.len() - 1])) {
     out = out + " {\n";

@@ -699,9 +699,9 @@ think they're free additions to make.
   Y not counted.
 - **`s.rstrip_newline()`**: strip a single trailing `\n` or
   `\r\n` — preserves runs.
-- **i32 rounding**: `(n).ceil_div(d)` / `(n).round_up_to(m)`
+- **i32 rounding**: `(n).div_ceil(d)` / `(n).next_multiple_of(m)`
   / `(n).round_down_to(m)`. Useful for memory alignment,
-  page rounding, table-column math. d/m <= 0 are no-ops.
+  page rounding, table-column math. A zero divisor gives 0.
 - **String prefix/suffix removal**: `s.remove_prefix(p)` /
   `s.remove_suffix(s)`. Like strip_* but return s unchanged
   on no-match instead of `Option[None]`.
@@ -760,8 +760,8 @@ think they're free additions to make.
   empty.
 - **`s.between(start, end)`**: Some(content) between matched
   markers; None if either is missing.
-- **`(n: i32).is_between(lo, hi)`**: inclusive companion to
-  `is_in_range` (which is half-open).
+- **`(n: i32).is_in_range_incl(lo, hi)`**: inclusive companion to
+  `is_in_range` (which is half-open), named like `iter.range_incl`.
 - **`(b: i32).is_ascii_letter()`**: alias for `is_ascii_alpha`. Roc /
   MoonBit naming.
 - **`(arr: string[]).all_non_empty()`**: vacuously true on

@@ -1,0 +1,38 @@
+// A variant constructor gives its payload the type the expected enum instance
+// names. `P { n: 2 }` mentions no T, so only the expected type
+// `Option[P[string]]` decides that the payload is a `P[string]`. The same
+// holds for `Ok`, `Err` and the variant of a user enum.
+import "std/i32";
+
+struct P[T] { n: i32 }
+
+enum Holder[T] {
+  Held(P[T]),
+  Nothing,
+}
+
+function read(o: Option[P[string]]): i32 {
+  return match (o) {
+    Some(p) => p.n,
+    None => 0,
+  };
+}
+
+function main(): i32 {
+  let o: Option[P[string]] = Some(P { n: 2 });
+  print(read(o).to_string());
+  print(read(Some(P { n: 3 })).to_string());
+  let r: Result[P[i32], P[boolean]] = Err(P { n: 4 });
+  let k: i32 = match (r) {
+    Ok(p) => p.n,
+    Err(q) => q.n * 10,
+  };
+  print(k.to_string());
+  let h: Holder[string] = Held(P { n: 5 });
+  let j: i32 = match (h) {
+    Held(p) => p.n,
+    Nothing => 0,
+  };
+  print(j.to_string());
+  return 0;
+}

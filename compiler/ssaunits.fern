@@ -1657,8 +1657,9 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
     i = i + 1;
   }
   let takes: i32[] = tuple_takes(f, a, owned, defs);
-  let held: boolean[] = held_elements(f, a, owned, defs, sup);
-  let asked: boolean[] = twin_holds(f, a, defs, owned, held);
+  let flows: Flows = Flows { direct: ssalive.compute_checked(f.graph, a.parents), bare: ssalive.compute_checked(f.graph, empty_chains(f.graph.nvals)) };
+  let held: boolean[] = held_elements(f, a, owned, defs, sup, flows);
+  let asked: boolean[] = twin_holds(f, a, defs, owned, held, flows.bare);
   let past: PayloadTakes = takes_past_holds(f, a, owned, asked, defs);
   let added: boolean = false;
   let grew: boolean = true;
@@ -1678,7 +1679,7 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
     }
   }
   if (added) {
-    held = either(asked, held_elements(f, a, owned, defs, sup));
+    held = either(asked, held_elements(f, a, owned, defs, sup, flows));
   }
   held = either(held, forced);
   i = 0;
@@ -1739,10 +1740,9 @@ function takes_past_holds(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
   return payload_takes(f, cut, either(owned, held), defs, held);
 }
 
-function twin_holds(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned: boolean[], held: boolean[]): boolean[] {
+function twin_holds(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned: boolean[], held: boolean[], bare: ssalive.Flow): boolean[] {
   let out: boolean[] = held;
   let reads: i32[][] = field_reads(f, owned);
-  let bare: ssalive.Flow = ssalive.compute_checked(f.graph, empty_chains(f.graph.nvals));
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     let pos: i32 = 0;
@@ -1918,16 +1918,14 @@ function lends_view_of(f: ssasem.Func, a: ssasem.Analysis, args: i32[], w: i32):
   return false;
 }
 
-function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], sup: SupplyTable): boolean[] {
+function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[], sup: SupplyTable, flows: Flows): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
-  let direct: ssalive.Flow = ssalive.compute_checked(f.graph, a.parents);
-  let bare: ssalive.Flow = ssalive.compute_checked(f.graph, empty_chains(f.graph.nvals));
   let consumed: boolean[] = consumed_values(f, owned, sup);
   let before: i32 = 0 - 1;
   let count: i32 = 0;
   while (count != before) {
     before = count;
-    out = hold_pass(f, a, defs, Flows { direct: direct, bare: bare }, consumed, owned, out, sup);
+    out = hold_pass(f, a, defs, flows, consumed, owned, out, sup);
     count = count_true(out);
   }
   return out;

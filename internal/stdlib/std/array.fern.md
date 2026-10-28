@@ -96,32 +96,20 @@ pub function (arr: i32[]) avg(): Option[i32] {
   return Some((s / (n as i64)) as i32);
 }
 
-pub function (arr: i32[]) gcd_all(): Option[i32] {
-  let n: i32 = arr.len();
-  if (n == 0) {
-    return None;
+pub function (arr: i32[]) gcd_all(): i32 {
+  let g: i32 = 0;
+  for x in arr {
+    g = g.gcd(x);
   }
-  let g: i32 = arr[0].abs();
-  let i: i32 = 1;
-  while (i < n) {
-    g = g.gcd(arr[i].abs());
-    i = i + 1;
-  }
-  return Some(g);
+  return g;
 }
 
-pub function (arr: i32[]) lcm_all(): Option[i32] {
-  let n: i32 = arr.len();
-  if (n == 0) {
-    return None;
+pub function (arr: i32[]) lcm_all(): i32 {
+  let l: i32 = 1;
+  for x in arr {
+    l = l.lcm(x);
   }
-  let l: i32 = arr[0].abs();
-  let i: i32 = 1;
-  while (i < n) {
-    l = l.lcm(arr[i].abs());
-    i = i + 1;
-  }
-  return Some(l);
+  return l;
 }
 
 pub function (arr: i32[]) abs_each(): i32[] {

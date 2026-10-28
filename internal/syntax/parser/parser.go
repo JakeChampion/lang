@@ -914,18 +914,15 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	var implTypeParams []string
+	var implTypeParams, implConstParams []string
 	var implBounds map[string][]string
 	var implBoundArgs map[string][][]ast.Type
 	if p.match(lexer.Punct, "[") {
-		open := p.peek().Pos
 		implTypeParams, implBounds, implBoundArgs, err = p.parseTypeParamListWithArgs()
 		if err != nil {
 			return nil, nil, err
 		}
-		if err := p.refuseConstParams(open); err != nil {
-			return nil, nil, err
-		}
+		implConstParams, p.constParams = p.constParams, nil
 	}
 	tnameTok, err := p.expect(lexer.Ident, "")
 	if err != nil {
@@ -972,7 +969,7 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, nil, err
 	}
-	id := &ast.ImplDecl{P: kw.Pos, Trait: trait, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams, Bounds: implBounds, BoundArgs: implBoundArgs, TraitArgs: traitArgs}
+	id := &ast.ImplDecl{P: kw.Pos, Trait: trait, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams, ConstParams: implConstParams, Bounds: implBounds, BoundArgs: implBoundArgs, TraitArgs: traitArgs}
 	var methods []*ast.FuncDecl
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		if p.match(lexer.Keyword, "type") {
@@ -1073,6 +1070,7 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 					"impl method %q cannot declare its own type parameters inside a parametric `impl[…]` block", fn.Name)
 			}
 			fn.TypeParams = implTypeParams
+			fn.ConstParams = implConstParams
 			fn.Bounds = implBounds
 			fn.BoundArgs = implBoundArgs
 		}
@@ -1352,7 +1350,7 @@ func (p *parser) refuseConstParams(pos ast.Position) error {
 	}
 	name := p.constParams[0]
 	p.constParams = nil
-	return p.errorfCode(pos, "P001", "const parameter %s: only a function or a struct takes a const parameter", name)
+	return p.errorfCode(pos, "P001", "const parameter %s: only a function, a struct, an enum or an impl takes a const parameter", name)
 }
 
 func (p *parser) parseOptBoundsWithArgs() ([]string, [][]ast.Type, error) {
@@ -1699,15 +1697,13 @@ func (p *parser) parseEnumDecl() (*ast.EnumDecl, error) {
 	if err != nil {
 		return nil, err
 	}
-	var typeParams []string
-	if open, ok := p.accept(lexer.Punct, "["); ok {
+	var typeParams, constParams []string
+	if _, ok := p.accept(lexer.Punct, "["); ok {
 		typeParams, err = p.parseDeclTypeParams("enum", name.Text)
 		if err != nil {
 			return nil, err
 		}
-		if err := p.refuseConstParams(open.Pos); err != nil {
-			return nil, err
-		}
+		constParams, p.constParams = p.constParams, nil
 	}
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, err
@@ -1784,7 +1780,7 @@ func (p *parser) parseEnumDecl() (*ast.EnumDecl, error) {
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
 		return nil, err
 	}
-	return &ast.EnumDecl{P: kw.Pos, Name: name.Text, TypeParams: typeParams, Variants: variants}, nil
+	return &ast.EnumDecl{P: kw.Pos, Name: name.Text, TypeParams: typeParams, ConstParams: constParams, Variants: variants}, nil
 }
 
 func (p *parser) parseUnionDecl() (*ast.UnionDecl, error) {
