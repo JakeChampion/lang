@@ -14,6 +14,7 @@ const packedBytesElementsSrc = `import "std/i32";
 import "std/crypto";
 import "std/hex";
 
+import "std/rand";
 function total(bs: [u8]): i32 {
     let t: i32 = 0;
     for b in bs { t = t + (b as i32); }
@@ -39,7 +40,7 @@ function main(): i32 {
     let z: u8[] = __alloc_u8(13);
     z = z.with(12, 9 as u8);
     print("alloc " + z.len().to_string() + " " + total(z).to_string());
-    print("random " + random_bytes(37).len().to_string());
+    print("random " + rand.bytes(37).len().to_string());
     let big: string = "abcdefghijklmnop";
     let k: i32 = 0;
     while (k < 12) { big = big + big; k = k + 1; }

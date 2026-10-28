@@ -1,10 +1,11 @@
 package e2eharness
 
 const UuidV4Program = `
+import "std/rand";
 function hexd(n: i32): string { return slice_unchecked("0123456789abcdef", n, n + 1) + ""; }
 function bh(b: i32): string { return hexd((b >> 4) & 15) + hexd(b & 15); }
 function v4(): string {
-  let b: u8[] = random_bytes(16);
+  let b: u8[] = rand.bytes(16);
   let b6: i32 = ((b[6] as i32) & 15) | 64;
   let b8: i32 = ((b[8] as i32) & 63) | 128;
   return bh((b[0] as i32)) + bh((b[1] as i32)) + bh((b[2] as i32)) + bh((b[3] as i32)) + "-" + bh((b[4] as i32)) + bh((b[5] as i32)) + "-" + bh(b6) + bh((b[7] as i32)) + "-" + bh(b8) + bh((b[9] as i32)) + "-" + bh((b[10] as i32)) + bh((b[11] as i32)) + bh((b[12] as i32)) + bh((b[13] as i32)) + bh((b[14] as i32)) + bh((b[15] as i32));

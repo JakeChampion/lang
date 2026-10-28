@@ -190,7 +190,7 @@ function shuffled_vocab(): i32[] {
     all = all.append(flip_first(bases[i]));
     i = i + 1;
   }
-  let rnd: u8[] = random_bytes(all.len() * 2);
+  let rnd: u8[] = rand.bytes(all.len() * 2);
   let k: i32 = all.len() - 1;
   while (k > 0) {
     let j: i32 = (rnd[k * 2] as i32 * 256 + rnd[k * 2 + 1] as i32) % (k + 1);

@@ -38,6 +38,7 @@ import "std/i64";
 import "std/number_parse";
 import "std/result";
 import "std/binary";
+import "std/rand";
 import "std/async";
 import "std/array";
 import "std/crypto";
@@ -480,7 +481,7 @@ pub function mounted_routes[P: platform.Platform](state: Stats, web: string, sou
 
 function main(): i32 {
   let identity: (i64, string) = own_binary();
-  let state: Stats = stats(hex6(random_i32()), now_unix_ms(), identity.0, identity.1);
+  let state: Stats = stats(hex6(rand.next_i32()), now_unix_ms(), identity.0, identity.1);
   match (source.load(".")) {
     Ok(sources) => {
       let handler: (HttpRequest, platform.Host) => HttpResponse = mounted_routes[platform.Host](state, "web", sources).handler();

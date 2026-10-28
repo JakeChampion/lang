@@ -12,7 +12,7 @@ var mathCases = []struct {
 }{
 	{"pi-const", "import \"std/math\";\nfunction main(): i32 { return (math.PI * 3.0) as i32; }\n", 9},
 	{"pack-rgb", "import \"std/math\";\nfunction main(): i32 { return math.pack_rgb(0, 0, 20); }\n", 20},
-	{"random-bytes-len", "import \"std/math\";\nfunction main(): i32 { let b: u8[] = random_bytes(7); return b.len(); }\n", 7},
+	{"random-bytes-len", "import \"std/math\";import \"std/rand\";\n\nfunction main(): i32 { let b: u8[] = rand.bytes(7); return b.len(); }\n", 7},
 }
 
 func TestSelfHostMathX86_64(t *testing.T) {

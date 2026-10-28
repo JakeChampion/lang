@@ -21,6 +21,7 @@ import "std/serve";
 import "std/tls/identity";
 import "std/tls/server";
 import "std/platform";
+import "std/rand";
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.plain("hello over TLS\n");
@@ -37,7 +38,7 @@ function main(): i32 {
     };
     match (identity.from_pem(cert, key)) {
         Ok(id) => {
-            return serve.exit_code(serve.supervise(8443, serve.config().with_tls(server.config(id, random_bytes(32))), handle));
+            return serve.exit_code(serve.supervise(8443, serve.config().with_tls(server.config(id, rand.bytes(32))), handle));
         },
         Err(e) => {
             eprint(e.message());
@@ -58,7 +59,7 @@ are not accepted. The handshake counts against `recv_deadline`, so a
 client that never completes one is closed when it passes.
 
 `server.config(id, key)` turns on session tickets sealed under `key`
-with a two-hour lifetime. A key from `random_bytes(32)` serves one
+with a two-hour lifetime. A key from `rand.bytes(32)` serves one
 process; behind a load balancer, give every instance the same key so a
 client can resume on any of them, or turn tickets off with
 `without_tickets()`.
@@ -70,7 +71,7 @@ them against:
 
 ```fern
 let roots: verify.Roots = verify.roots_from_file("clients-ca.pem")?;
-let tls: server.Config = server.config(id, random_bytes(32)).with_client_roots(roots);
+let tls: server.Config = server.config(id, rand.bytes(32)).with_client_roots(roots);
 ```
 
 On the client side, `std/tls/client`'s `with_identity(id)` presents a

@@ -24,6 +24,8 @@
 # Eighty-four rows raised or added on 2026-10-27 from run 40506583681.
 # Each value is ceil of 1.5 times a full-lifetime measurement. No rows decrease.
 # Replay details: docs/ci-log/2026-10-27-self-host-weight-raises.md.
+# Six rows raised or added on 2026-10-28 after x86_64 shard 3 of run 40748946900
+# ran into its 28-minute budget: ceil of 1.5 times a measurement with a warm build cache.
 
 TestSelfHostASCIIByteText 2
 TestSelfHostAbortBacktraceOffArm64 2
@@ -1160,7 +1162,7 @@ TestSelfHostResolveDifferentialX86_64 2
 TestSelfHostResultErrStringArm64 5
 TestSelfHostResultErrStringWasm 5
 TestSelfHostResultErrStringX86_64 7
-TestSelfHostResultMethodTParam 16
+TestSelfHostResultMethodTParam 33
 TestSelfHostResultStructErrIR 2
 TestSelfHostResultTupleIR 2
 TestSelfHostResultTuplePayloadIR 2
@@ -1249,6 +1251,7 @@ TestSelfHostServeCorksBurst 116
 TestSelfHostServeDynErrorHandler 145
 TestSelfHostServeDynErrorHandlerAliased 129
 TestSelfHostServeFileBody 104
+TestSelfHostServeFlightTable 27
 TestSelfHostServeHandleOnly 15
 TestSelfHostServeHandlersOverlap 110
 TestSelfHostServeIncompleteRequestAtEOF 16
@@ -1269,6 +1272,7 @@ TestSelfHostServeResponseRateKeepsSteadyReader 133
 TestSelfHostServeResultHandler 105
 TestSelfHostServeSSE 135
 TestSelfHostServeSSEArm64 11
+TestSelfHostServeSharedPoolKeeps 25
 TestSelfHostServeShutdownAbortsAtDrainDeadline 148
 TestSelfHostServeShutdownDrainsAndExitsClean 130
 TestSelfHostServeShutdownHook 19
@@ -1433,6 +1437,7 @@ TestSelfHostSupervisedServeSurvivesHandlerTrap 109
 TestSelfHostSupervisedServeTrapThenShutdownExitsClean 144
 TestSelfHostSupervisedServeWorkersServeSideBySide 18
 TestSelfHostSupervisedServeWorkersStopWithSupervisor 139
+TestSelfHostSuspendSiteFreeConstructs 6
 TestSelfHostTCPSendBuf 2
 TestSelfHostTCPSendBytes 20
 TestSelfHostTCPSendBytesFaults 13
@@ -1448,6 +1453,7 @@ TestSelfHostTaskPortable 2
 TestSelfHostTaskProgramsBalanceTheLeakCensus 3
 TestSelfHostTaskRuntimeKeepsOnlyItsPoolX86_64 2
 TestSelfHostTaskScheduler 2
+TestSelfHostTaskTableConstant 4
 TestSelfHostTcoIR 2
 TestSelfHostTeeBytes 3
 TestSelfHostTempDirErrorNamesPrefix 2
@@ -1719,6 +1725,7 @@ TestSelfHostX86RodataRuns 2
 TestSelfHostX86ScaleProbe 2
 TestSelfHostX86TableRowsMatchGas 2
 TestSelfHostXattrBytes 2
+TestSelfHostZeroSlotsPaired 3
 TestShippedFernAddURL 123
 TestShippedFernFetch 113
 TestShippedFernFetchFlatArchive 111

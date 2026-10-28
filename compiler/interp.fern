@@ -11,6 +11,7 @@ import "./platforms";
 import "./typeinfo";
 import "std/utf8";
 import "std/f64";
+import "std/rand";
 
 pub struct VInt { v: i32, is_char: boolean, is_byte: boolean }
 
@@ -2660,10 +2661,10 @@ function call_host_process(name: string, vals: Value[]): Value {
     return v_string(hostname());
   }
   if (name == "random_bytes") {
-    return byte_array_value(random_bytes(arg_i32(vals, 0)));
+    return byte_array_value(rand.bytes(arg_i32(vals, 0)));
   }
   if (name == "random_i32") {
-    return v_int(random_i32());
+    return v_int(rand.next_i32());
   }
   return call_host_core(name, vals);
 }

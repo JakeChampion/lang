@@ -1,4 +1,5 @@
 import "core/int";
+import "std/rand";
 
 
 
@@ -18,9 +19,9 @@ function main(): i32 {
 
     if (now_unix_ms() <= 1600000000000) { print("FAIL now"); return 12; }
 
-    if (random_bytes(16).len() != 16) { print("FAIL randbytes"); return 14; }
+    if (rand.bytes(16).len() != 16) { print("FAIL randbytes"); return 14; }
 
-    let r: i32 = random_i32();
+    let r: i32 = rand.next_i32();
     if (r != r) { print("FAIL randi32"); return 15; }
     print("OK");
     return 0;

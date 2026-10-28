@@ -66,7 +66,8 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		{"array_sum", `function main(): i32 { let a = [1, 2, 3, 4, 5]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }`, 15},
 		{"option", `function pick(n: i32): Option[i32] { if (n == 0) { return None; } return Some(n + 1); } function main(): i32 { match (pick(41)) { Some(v) => { return v; }, None => { return 0; } } return 99; }`, 42},
 		{"now_unix_ms", `function main(): i32 { let t: i64 = now_unix_ms(); if (t > 1700000000000) { return 7; } return 1; }`, 7},
-		{"random_bytes", `function main(): i32 { let b: u8[] = random_bytes(8); if (b.len() != 8) { return 1; } let v: i32 = 0; let i: i32 = 0; while (i < 8) { v = v | (b[i] as i32); i = i + 1; } if (v != 0) { return 7; } return 2; }`, 7},
+		{"random_bytes", `import "std/rand";
+function main(): i32 { let b: u8[] = rand.bytes(8); if (b.len() != 8) { return 1; } let v: i32 = 0; let i: i32 = 0; while (i < 8) { v = v | (b[i] as i32); i = i + 1; } if (v != 0) { return 7; } return 2; }`, 7},
 		{"memchr", `function main(): i32 { let s = "aaaaaaaaaaaaaaaaaaaa*aaa"; return __memchr(s, 42, 0) + 22; }`, 42},
 		{"ascii_run", `function main(): i32 { let s = "aaaaaaaaaaaaaaaaaaaaaaaa"; return __ascii_run(s, 0) + 18; }`, 42},
 		{"const_agg_union", `struct Add { l: i32, r: i32 }
@@ -94,7 +95,11 @@ function main(): i32 { let e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 				t.Fatalf("write src: %v", err)
 			}
 			binPath := filepath.Join(dir, name+".bin")
-			out, err := exec.Command(fernBin, "-target", "arm64-darwin", "-o", binPath, srcPath).CombinedOutput()
+			stdlibRoot, err := filepath.Abs("../../stdlib")
+			if err != nil {
+				t.Fatalf("abs stdlib root: %v", err)
+			}
+			out, err := exec.Command(fernBin, "-target", "arm64-darwin", "-o", binPath, srcPath, stdlibRoot).CombinedOutput()
 			if err != nil {
 				if native && len(bytes.TrimSpace(out)) == 0 {
 					t.Skipf("self-host CLI did not launch (err=%v, no output)", err)

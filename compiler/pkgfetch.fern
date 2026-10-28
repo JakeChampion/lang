@@ -7,6 +7,7 @@ import "std/http";
 import "./fern";
 import "./modloader";
 import "./util";
+import "std/rand";
 
 const MAX_ARCHIVE: i32 = 67108864;
 
@@ -73,7 +74,7 @@ function unpack_into(dir: string, raw: u8[]): string {
   }
   let parent: string = util.dir_of(dir);
   let suffix: string = "";
-  for b in random_bytes(6) {
+  for b in rand.bytes(6) {
     suffix = suffix + util.i32_to_string(b as i32);
   }
   let tmp: string = parent + "/.unpack-" + suffix;

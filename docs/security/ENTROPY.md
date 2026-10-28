@@ -10,6 +10,7 @@ Parent: [security epic](https://github.com/JakeChampion/lang/issues/13502).
 The native runtime uses the kernel entropy source without a deterministic fallback.
 An empty byte request requires no entropy syscall.
 The separate seeded PCG32 API retains its reproducible sequence contract.
+Programs reach both builtins through `std/rand` (`rand.bytes(n)` and `rand.next_i32()`); naming either outside the standard library is a check error (E097).
 
 The old native helpers ignored errors or advanced past short reads.
 They could return zero or incomplete data after an entropy failure.
