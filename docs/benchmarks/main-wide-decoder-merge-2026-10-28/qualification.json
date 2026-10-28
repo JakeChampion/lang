@@ -1,0 +1,25 @@
+{
+  "main": "8c688043465450e18520d7d32bfb0db8dde32ebf",
+  "local_merge": "40e5dd24adb3ddfd619ef3d6f53cae7b8235059f",
+  "prior_pr_head": "fa0eedfa56b0724eb6cfa65579c8ec83ac573c72",
+  "primary": {
+    "command": [
+      "go",
+      "test",
+      "./internal/testing/e2ecompiler",
+      "-run",
+      "^(TestImportFreeModulesDoNotDrift|TestSelfHostLargePushWideDecoder|TestSelfHostLargePushWideDecoderWorker)$",
+      "-count=1",
+      "-json"
+    ],
+    "exit": 0,
+    "seconds": 252.57233948900102,
+    "passes": 30,
+    "failures": [],
+    "skips": []
+  },
+  "full_ci_pass": false,
+  "issue_4412_complete": false,
+  "issue_13717_complete": false,
+  "qualified_decoder_unchanged": true
+}

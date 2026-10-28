@@ -1,3 +1,6 @@
+# 2026-10-28: Exact reports from CI run 40624419024 at fa0eedfa5 on PR #13718.
+# Checker allocations and frees each decrease by 525401. All tolerances remain unchanged.
+# Evidence: docs/benchmarks/main-wide-decoder-merge-2026-10-28/.
 # 2026-10-28: Exact reports from CI run 40620158743 at c63e488b4 on PR #13718.
 # Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
 # 2026-10-28: scripts/selfhost-alloc-bench on #13726 (merged with main at 5acfabebb). The last pin predates #13677, which runs the IR verifier in every compile and grew checker.fern with the unsafe obligation pass; the build manifest of #13726 adds a few allocations per compile.
@@ -70,5 +73,5 @@
 # Re-pinned 2026-10-22: main's merges since moved it 3.7% (26,298,117 on main
 # ddc5b110 on the dev container); const_propagate's known table starts on one
 # placeholder op, 0.5% fewer.
-x86_64/checker.allocs	34278531
-x86_64/checker.frees	34278531
+x86_64/checker.allocs	33753130
+x86_64/checker.frees	33753130

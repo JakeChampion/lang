@@ -1,3 +1,6 @@
+# 2026-10-28: Exact reports from CI run 40624419024 at fa0eedfa5 on PR #13718.
+# Checker allocations and frees each decrease by 525401. All tolerances remain unchanged.
+# Evidence: docs/benchmarks/main-wide-decoder-merge-2026-10-28/.
 # 2026-10-28: Exact reports from CI run 40620158743 at c63e488b4 on PR #13718.
 # Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
 # 2026-10-28: Perf run 40603749599 on #13726, and scripts/perf-bench on the same tree for x86-64. The build manifest (SEC-046) adds 17 lines of read-only data to every arm64 program and 11 to every x86-64 program, so every .text row near its 1% tolerance moves by that constant. No .ir row moves.
@@ -162,7 +165,7 @@ x86_64/map_int.ir	36432496
 x86_64/map_probe_chain.text	5797
 x86_64/map_probe_chain.ir	340655457
 x86_64/map_string.text	6738
-x86_64/map_string.ir	58471578	2
+x86_64/map_string.ir	58342774	2
 x86_64/ordmap_insert.text	5568
 x86_64/ordmap_insert.ir	82943055
 x86_64/pmap_insert.text	2782
@@ -447,7 +450,7 @@ aarch64/map_probe_chain.text	6084
 aarch64/map_probe_chain.ir	334317575
 aarch64/map_string.text	7175
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
-aarch64/map_string.ir	59247734	2
+aarch64/map_string.ir	59115995	2
 aarch64/ordmap_insert.text	5953
 aarch64/ordmap_insert.ir	98457462
 aarch64/pmap_insert.text	3063
