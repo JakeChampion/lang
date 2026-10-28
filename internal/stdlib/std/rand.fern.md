@@ -4,7 +4,7 @@ This module provides random integers, random array operations, and a seeded PCG3
 
 ## Model
 
-Array helpers select, sample, or shuffle values. Seeded variants use a PCG32 state so callers can reproduce a sequence.
+`next_i32` and `bytes` read the operating system's entropy source; a program reaches that source only through them, since the `random_i32` and `random_bytes` builtins are reserved for the standard library (E096). Array helpers select, sample, or shuffle values. Seeded variants use a PCG32 state so callers can reproduce a sequence.
 
 ## Contracts
 
@@ -32,6 +32,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<*>>=
 <<module introduction>>
 
+<<1 pub function next_i32(): i32>>
+
 <<2 pub function between(lo: i32, hi: i32): i32>>
 
 <<3 pub function shuffle[T](xs: T[]): T[]>>
@@ -54,6 +56,21 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module provides random integers, random array operations, and a seeded PCG32 generator.
+```
+
+### `1 pub function next_i32(): i32`
+
+```fern
+<<1 pub function next_i32(): i32>>=
+// A uniformly random i32 from the operating system's entropy source.
+pub function next_i32(): i32 {
+  return random_i32();
+}
+
+// n bytes from the operating system's entropy source.
+pub function bytes(n: i32): u8[] {
+  return random_bytes(n);
+}
 ```
 
 ### `2 pub function between(lo: i32, hi: i32): i32`

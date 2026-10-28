@@ -56,8 +56,9 @@ function main(): i32 { let a: string = "foo"; return (a + "bar").len(); }`, 6},
   return 1;
 }`, 7},
 		{"random_bytes", `
+import "std/rand";
 function main(): i32 {
-  let b: u8[] = random_bytes(8);
+  let b: u8[] = rand.bytes(8);
   if (b.len() != 8) { return 1; }
   let v: i32 = 0; let i: i32 = 0;
   while (i < 8) { v = v | (b[i] as i32); i = i + 1; }

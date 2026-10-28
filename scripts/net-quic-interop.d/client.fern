@@ -13,6 +13,7 @@ import "std/option";
 import "std/i64";
 import "std/string";
 import "core/int";
+import "std/rand";
 
 function now(): Instant {
   return clock.instant();
@@ -168,7 +169,7 @@ function main(): i32 {
     return 2;
   };
   let cfg: conn.Config = conn.config(["fern-echo"]).with_streams(16 as i64, 16 as i64, 262144 as i64, 1048576 as i64).client_side(argv[2], roots);
-  let Ok(c0) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
+  let Ok(c0) = conn.client(cfg, rand.bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return 2;
   };
   let Ok(any) = net.socket_addr_parse("127.0.0.1:0") else {

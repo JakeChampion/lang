@@ -212,6 +212,7 @@ import "std/tls/identity";
 import "std/tls/server";
 import "std/tls/verify";
 
+import "std/rand";
 // The server: a listener on a port the host picks, printed first, then
 // count connections one at a time, each offloaded to the kernel and
 // reported on a line of its own: where its records went, then each line it
@@ -357,10 +358,10 @@ function serve_conn(first: server.Connection): string {
 }
 
 function serve(count: i32): i32 {
-  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) }, random_bytes(32));
+  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) }, rand.bytes(32));
   match (identity_of()) {
     Ok(id) => {
-      cfg = server.config(id, random_bytes(32));
+      cfg = server.config(id, rand.bytes(32));
     },
     Err(e) => {
       print("identity: " + e);

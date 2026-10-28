@@ -3114,6 +3114,7 @@ function main(): i32 {
 }
 `},
 	{name: "os-floor-fresh-results-are-freed", atLeast: 3, want: "57|", nativeOnly: true, src: `
+import "std/rand";
 function leaves(dir: string, p: string): i32 {
     let n: i32 = 0;
     match (create_dir(p + ".d", 493)) { Ok(_) => { n = n + 1; }, Err(_) => { n = n + 2; } }
@@ -3169,7 +3170,7 @@ function each(dir: string): i32 {
         Err(_) => { n = n + 6; }
     }
     n = n + leaves(dir, dir + "/f") + leaves(dir, dir + "/missing/f");
-    let rb: u8[] = random_bytes(24);
+    let rb: u8[] = rand.bytes(24);
     n = n + rb.len();
     if (cpu_count() >= 0) { n = n + 1; }
     let gs: i64[] = getgroups();
@@ -4670,11 +4671,12 @@ function main(): i32 {
 		"runtime __fern_cpu_count: produced", "runtime __fern_sleep_ms: produced",
 		"runtime __fern_sleep_ns: produced",
 	}, src: `
+import "std/rand";
 function main(): i32 {
     sleep_ms(1 as i64);
     sleep_ns(1000 as i64);
-    let r: i32 = random_i32();
-    let bs: u8[] = random_bytes(8);
+    let r: i32 = rand.next_i32();
+    let bs: u8[] = rand.bytes(8);
     let n: i32 = cpu_count();
     let tty: boolean = isatty(99);
     let alive: boolean = process_alive(1);

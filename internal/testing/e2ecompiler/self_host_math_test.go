@@ -12,7 +12,7 @@ var mathCases = []struct {
 }{
 	{"i32-max", "import \"std/math\";\nfunction main(): i32 { return math.i32_max() - 2147483637; }\n", 10},
 	{"pack-rgb", "import \"std/math\";\nfunction main(): i32 { return math.pack_rgb(0, 0, 20); }\n", 20},
-	{"random-bytes-len", "import \"std/math\";\nfunction main(): i32 { let b: u8[] = random_bytes(7); return b.len(); }\n", 7},
+	{"random-bytes-len", "import \"std/math\";import \"std/rand\";\n\nfunction main(): i32 { let b: u8[] = rand.bytes(7); return b.len(); }\n", 7},
 }
 
 func TestSelfHostMathX86_64(t *testing.T) {

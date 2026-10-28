@@ -2134,7 +2134,11 @@ function main(): i32 {
 				t.Fatalf("write src: %v", err)
 			}
 			outPath := filepath.Join(dir, "compw_"+name+".wasm")
-			_, code := runDriver(t, "-target", "wasm32-wasi", "-o", outPath, srcPath)
+			stdlibRoot, err := filepath.Abs("../../stdlib")
+			if err != nil {
+				t.Fatalf("abs stdlib root: %v", err)
+			}
+			_, code := runDriver(t, "-target", "wasm32-wasi", "-o", outPath, srcPath, stdlibRoot)
 			if code != 0 {
 				t.Fatalf("%s: the wasm component exited %d, want 0", name, code)
 			}
@@ -2166,7 +2170,7 @@ function main(): i32 {
 			t.Errorf("clock-mono: stdout = %q, want %q", string(out), "ok")
 		}
 
-		rndBin := build(t, "rnd", "function main(): i32 { let x: i32 = random_i32(); if (x == x) { write(\"ok\"); return 0; } return 1; }\n")
+		rndBin := build(t, "rnd", "import \"std/rand\";\nfunction main(): i32 { let x: i32 = rand.next_i32(); if (x == x) { write(\"ok\"); return 0; } return 1; }\n")
 		if out, _ := exec.Command(wasmtime, "run", rndBin).Output(); string(out) != "ok" {
 			t.Errorf("random: stdout = %q, want %q", string(out), "ok")
 		}
@@ -2219,7 +2223,11 @@ function main(): i32 {
 				t.Fatalf("write src: %v", err)
 			}
 			outPath := filepath.Join(dir, "compc_"+name+".wasm")
-			_, code := runDriver(t, "-target", "wasm32-wasi", "-o", outPath, srcPath)
+			stdlibRoot, err := filepath.Abs("../../stdlib")
+			if err != nil {
+				t.Fatalf("abs stdlib root: %v", err)
+			}
+			_, code := runDriver(t, "-target", "wasm32-wasi", "-o", outPath, srcPath, stdlibRoot)
 			if code != 0 {
 				t.Fatalf("%s: the wasm component exited %d, want 0", name, code)
 			}
@@ -2253,7 +2261,7 @@ function main(): i32 {
 			t.Errorf("rw+env: out.txt = %q, want %q", string(got), "ENV")
 		}
 
-		rndWrite := build(t, "rnd_write", "function main(): i32 { let x: i32 = random_i32(); if (x != x) { return 9; } match (write_file(\"out.txt\", \"R\")) { Err(e) => { return 1; }, Ok(_) => {} } return 0; }\n")
+		rndWrite := build(t, "rnd_write", "import \"std/rand\";\nfunction main(): i32 { let x: i32 = rand.next_i32(); if (x != x) { return 9; } match (write_file(\"out.txt\", \"R\")) { Err(e) => { return 1; }, Ok(_) => {} } return 0; }\n")
 		d3 := t.TempDir()
 		if ec := exec.Command(wasmtime, "run", "--dir", d3+"::/", rndWrite).Run(); ec != nil {
 			t.Fatalf("random+write: run failed: %v", ec)
