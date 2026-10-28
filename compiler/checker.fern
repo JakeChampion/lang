@@ -20279,10 +20279,25 @@ function e064_unknown_bare(type_name: string, tn: TypeNames): boolean {
   if (parser.is_reserved_struct_name(type_name) || parser.is_reserved_enum_name(type_name)) {
     return false;
   }
-  if (!plain_ident(type_name) || parser.looks_type_var(type_name)) {
+  if (parser.looks_type_var(type_name)) {
     return false;
   }
+  if (!plain_ident(type_name)) {
+    return unresolved_qualifier(type_name, tn);
+  }
   return is_unknown(type_from_spelling(type_name, tn));
+}
+
+// Flattening mangles every imported qualifier, so a `q.T` that survives it
+// names a module this one never imported, unless `q` is an enum.
+function unresolved_qualifier(type_name: string, tn: TypeNames): boolean {
+  for i in 0..type_name.len() {
+    if (type_name[i] == b'.') {
+      let q: string = slice_unchecked(type_name, 0, i) + "";
+      return plain_ident(q) && !tn.unions.has(q) && !tn.structs.has(q);
+    }
+  }
+  return false;
 }
 
 function declared_struct_names(structs: parser.StructDecl[]): string[] {
