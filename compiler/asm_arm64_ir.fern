@@ -6197,8 +6197,8 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asm
   let ctx: string = "    ldr x10, [x2, #432]\n";
   let frame: string = "    ldr x11, [x2, #440]\n    ldr x12, [x2, #416]\n";
   if (darwin) {
-    addr = "    ldr x9, [x1, #24]\n";
-    ctx = "    ldr x13, [x2, #48]\n    ldr x10, [x13, #264]\n    and x10, x10, #0x0000ffffffffffff\n";
+    addr = "    ldr x9, [x1, #24]\n    ldr x13, [x2, #48]\n";
+    ctx = "    ldr x10, [x13, #264]\n    and x10, x10, #0x0000ffffffffffff\n";
     frame = "    ldr x11, [x13, #272]\n    ldr x12, [x13, #248]\n    and x11, x11, #0x0000ffffffffffff\n    and x12, x12, #0x0000ffffffffffff\n";
   }
   s = s.write("    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n    .text\n");
@@ -7677,7 +7677,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    .globl __fern_heap_end\n");
   s = s.write("__fern_heap_end: .quad 0\n");
   s = s.write("    .align 3\n");
-  s = s.write("__fern_heap_base: .quad 0\n");
+  s = s.write("    .globl __fern_heap_base\n__fern_heap_base: .quad 0\n");
   s = s.write("    .align 3\n");
   s = s.write("__fern_rc_underflow: .quad 0\n");
   s = s.write("    .align 3\n");
