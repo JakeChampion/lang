@@ -648,7 +648,14 @@ pub struct Prefix {
 ```fern
 <<14 pub function prefix_parse(s: string): Result[Prefix, AddrParseError]>>=
 pub function prefix_parse(s: string): Result[Prefix, AddrParseError] {
-  return __prefix(s).ok_or(AddrParseError { text: s, kind: NetworkPrefix });
+  match (__prefix(s)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(AddrParseError { text: s, kind: NetworkPrefix });
+    }
+  }
 }
 
 function __prefix(s: string): Option[Prefix] {
@@ -823,7 +830,14 @@ function __octet(s: string, from: i32, sep: i32): i32 {
 ```fern
 <<20 pub function ipv4_parse(s: string): Result[IpAddr, AddrParseError]>>=
 pub function ipv4_parse(s: string): Result[IpAddr, AddrParseError] {
-  return __ipv4(s).ok_or(AddrParseError { text: s, kind: Ipv4Addr });
+  match (__ipv4(s)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(AddrParseError { text: s, kind: Ipv4Addr });
+    }
+  }
 }
 
 function __ipv4(s: string): Option[IpAddr] {
@@ -999,7 +1013,14 @@ function __v6_compressed(s: string, at: i32): Option[IpAddr] {
 ```fern
 <<22 pub function ipv6_parse(s: string): Result[IpAddr, AddrParseError]>>=
 pub function ipv6_parse(s: string): Result[IpAddr, AddrParseError] {
-  return __ipv6(s).ok_or(AddrParseError { text: s, kind: Ipv6Addr });
+  match (__ipv6(s)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(AddrParseError { text: s, kind: Ipv6Addr });
+    }
+  }
 }
 
 function __ipv6(s: string): Option[IpAddr] {
@@ -1024,7 +1045,14 @@ function __ipv6(s: string): Option[IpAddr] {
 }
 
 pub function ip_parse(s: string): Result[IpAddr, AddrParseError] {
-  return __ip(s).ok_or(AddrParseError { text: s, kind: IpAddress });
+  match (__ip(s)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(AddrParseError { text: s, kind: IpAddress });
+    }
+  }
 }
 
 function __ip(s: string): Option[IpAddr] {
@@ -1132,7 +1160,14 @@ function __socket_addr_bracketed(s: string): Option[SocketAddr] {
 ```fern
 <<24 pub function socket_addr_parse(s: string): Result[SocketAddr, AddrParseError]>>=
 pub function socket_addr_parse(s: string): Result[SocketAddr, AddrParseError] {
-  return __socket_addr(s).ok_or(AddrParseError { text: s, kind: SocketAddress });
+  match (__socket_addr(s)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(AddrParseError { text: s, kind: SocketAddress });
+    }
+  }
 }
 
 function __socket_addr(s: string): Option[SocketAddr] {
