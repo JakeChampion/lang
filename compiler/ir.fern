@@ -1686,10 +1686,8 @@ pub function const_str_word(text: string): string {
 
 function hex_text(text: string): string {
   let out: u8[] = [];
-  let i: i32 = 0;
-  while (i < text.len()) {
-    out = out.append(hex_digit(text[i] as i32 >> 4)).append(hex_digit(text[i] as i32 & 15));
-    i = i + 1;
+  for c in text {
+    out = out.append(hex_digit(c as i32 >> 4)).append(hex_digit(c as i32 & 15));
   }
   return string_from_bytes_unchecked(out);
 }
