@@ -666,10 +666,10 @@ function __busy(n: Net, row: string[]): boolean {
 
 function __canon(addr: string): string {
   match (net.ip_parse(addr)) {
-    Some(a) => {
+    Ok(a) => {
       return a.to_string();
     },
-    None => {
+    Err(_) => {
       return addr;
     }
   }
@@ -688,19 +688,19 @@ function __connect_ms(n: Net, addr: string, port: i32): i64 {
 function __addrs_of(n: Net, host: string): net.IpAddr[] {
   let out: net.IpAddr[] = [];
   match (net.ip_parse(host)) {
-    Some(a) => {
+    Ok(a) => {
       return out.append(a);
     },
-    None => {}
+    Err(_) => {}
   }
   for name in n.names {
     if (name.host == host) {
       for s in name.addrs {
         match (net.ip_parse(s)) {
-          Some(a) => {
+          Ok(a) => {
             out = out.append(a);
           },
-          None => {}
+          Err(_) => {}
         }
       }
     }

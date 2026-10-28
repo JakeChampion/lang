@@ -754,7 +754,7 @@ function __rooted(certs: x509.Certificate[], roots: Roots, now: i64, server: boo
 <<23 pub function matches_name(c: x509.Certificate, name: string): boolean>>=
 pub function matches_name(c: x509.Certificate, name: string): boolean {
   match (net.ip_parse(name)) {
-    Some(ip) => {
+    Ok(ip) => {
       let want: u8[] = ip.bytes();
       for got in c.ip_addresses {
         if (__same_bytes(got, want)) {
@@ -763,7 +763,7 @@ pub function matches_name(c: x509.Certificate, name: string): boolean {
       }
       return false;
     },
-    None => {
+    Err(_) => {
       if (name.contains("*")) {
         return false;
       }

@@ -76,7 +76,7 @@ import "std/option";
 import "std/result";
 
 function added(cs: h3q.Conn[], socks: i32[], cfg: conn.Config, ip: string): Result[(h3q.Conn[], i32[]), string] {
-  let Some(addr) = net.socket_addr_parse(ip + ":0") else {
+  let Ok(addr) = net.socket_addr_parse(ip + ":0") else {
     return Err("bad bind address");
   };
   let Ok(sock) = net.udp_socket(addr) else {
@@ -125,7 +125,7 @@ function driven(cs: h3q.Conn[], socks: i32[], peer: net.SocketAddr, buf: u8[], n
 
 function main(): i32 {
   let argv: string[] = args();
-  let Some(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
+  let Ok(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
     return 2;
   };
   let Ok(roots) = verify.roots_from_file(argv[2]) else {

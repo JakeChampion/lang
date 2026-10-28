@@ -88,7 +88,7 @@ function plan(raw: string, parsed: cli.CliArgs): Result[Plan, string] {
   if (host == "localhost") {
     host = "127.0.0.1";
   }
-  let Some(ip) = net.ip_parse(host) else {
+  let Ok(ip) = net.ip_parse(host) else {
     return Err("the host must be an IP literal or localhost: " + u.host);
   };
   let port: i32 = u.port;
