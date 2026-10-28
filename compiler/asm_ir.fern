@@ -10489,10 +10489,10 @@ function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.Em
   let previous_regs: irtables.SigReg = s.reg_entries;
   let previous_leaves: ssa.Leaves = s.leaves;
   let previous_float: asmcore.FloatAbi = asmcore.FloatAbi { names: s.float_abi, masks: s.float_abi_masks };
-  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(m, 0, fns.len(), bodies);
+  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(m, 0, fns.len(), bodies, s.kinds);
   let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(m, 0, fns.len(), bodies);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(m, 0, fns.len(), bodies)), leaves: unit.leaves, float_abi: fabi.names, float_abi_masks: fabi.masks };
-  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns, m.funcs, bodies), s.kinds.pops, physicalbody.abis(physical)), s.memo);
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns, m.funcs, bodies), s.kinds, physicalbody.abis(physical)), s.memo);
   s = asmcore.export_runtime_fns(s, fns);
   let i: i32 = 0;
   while (i < fns.len()) {
@@ -10527,12 +10527,12 @@ function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.Em
 }
 
 function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection): asmcore.EmitState {
-  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs, mod.funcs, cache), s.kinds.pops, physicalbody.abis(physical)), s.memo);
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs, mod.funcs, cache), s.kinds, physicalbody.abis(physical)), s.memo);
   let hh: i32 = hi;
   if (hh < 0 || hh > mod.funcs.len()) {
     hh = mod.funcs.len();
   }
-  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, lo, hh, cache);
+  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, lo, hh, cache, s.kinds);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: unit.leaves };
   let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(mod, lo, hh, cache);
   s = asmcore.EmitState { ...s, float_abi: fabi.names, float_abi_masks: fabi.masks };

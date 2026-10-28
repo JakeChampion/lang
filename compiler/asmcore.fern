@@ -315,10 +315,9 @@ pub function lane_result(mask: string): boolean {
   return mask.len() > 0 && mask[mask.len() - 1] == b'v';
 }
 
-pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[]): UnitLeaves {
+pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[], kt: ssa_lift.KindTable): UnitLeaves {
   let out: ssa.Leaf[] = [];
   let pre: Prelift[] = [];
-  let kt: ssa_lift.KindTable = ssa_lift.kind_table();
   let fi: i32 = 0;
   while (fi < cache.len()) {
     let p: Prelift = no_prelift();

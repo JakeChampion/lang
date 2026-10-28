@@ -169,7 +169,7 @@ pub function run(source: string, target: string, exiting: boolean): void {
   }
   let g = match (ircore.gate_program(ircore.sub_lifted(sub, driven.full), sub)) { Some(g) => g, None => { exit(105); } };
   let cache = ircore.inline_tiny_leaves(g.im, g.cache);
-  let leaves = asmcore.unit_leaves(g.im, 0, g.im.funcs.len(), cache).leaves;
+  let leaves = asmcore.unit_leaves(g.im, 0, g.im.funcs.len(), cache, ssa_lift.kind_table()).leaves;
   let final: ssa.SFunc[] = [];
   let position: i32 = 0;
   for r in cache {
