@@ -56,6 +56,7 @@ import "std/string";
 import "std/time";
 import "std/utf8" as utf8;
 import "core/cmp" as cmp;
+import "std/error";
 ```
 
 ### `3 pub function format(fmt: string, args: string[]): string`
@@ -452,7 +453,22 @@ pub function format_duration(d: Duration): string {
 }
 
 // Reads numbers with the units `ms`, `s`, `m`, `h`, and `d`, such as `1h 30m`.
-pub function parse_duration(s: string): Option[Duration] {
+// The text `parse_duration` refused, and the byte where reading stopped.
+pub struct DurationParseError { text: string, offset: i32 }
+
+impl error.Error for DurationParseError {}
+
+impl cmp.Display for DurationParseError {}
+
+pub function (e: DurationParseError) message(): string {
+  return "\"" + e.text + "\" is not a duration such as \"1h 30m\": stopped at byte " + e.offset.to_string();
+}
+
+pub function (e: DurationParseError) to_string(): string {
+  return e.message();
+}
+
+pub function parse_duration(s: string): Result[Duration, DurationParseError] {
   let n: i32 = s.len();
   let i: i32 = 0;
   let total: i64 = 0;
@@ -469,7 +485,7 @@ pub function parse_duration(s: string): Option[Duration] {
       i = i + 1;
     }
     if (i == start) {
-      return None;
+      return Err(DurationParseError { text: s, offset: i });
     }
     let unit_ms: i64 = 0;
     if (i + 1 < n && s[i] == 109 && s[i + 1] == 115) {
@@ -488,14 +504,14 @@ pub function parse_duration(s: string): Option[Duration] {
       unit_ms = 86400000;
       i = i + 1;
     } else {
-      return None;
+      return Err(DurationParseError { text: s, offset: i });
     }
     total = total + num * unit_ms;
     saw = true;
   }
   if (!saw) {
-    return None;
+    return Err(DurationParseError { text: s, offset: i });
   }
-  return Some(time.duration_millis(total));
+  return Ok(time.duration_millis(total));
 }
 ```

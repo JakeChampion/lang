@@ -1554,46 +1554,48 @@ function __proxied[D: async.Driver](drv: D, c: __Conns, at: i32, next: Option[se
 }
 
 function __serve_read_plain[D: async.Driver](drv: D, c: __Conns, at: i32, scratch: u8[], opts: Config): (__Conns, boolean) {
-  let buf: u8[] = c.bufs[at];
-  let was_idle: boolean = buf.len() == 0;
-  let lent: i32 = c.lent;
-  let done: boolean = false;
-  let more: boolean = true;
-  while (more) {
-    if (lent == at) {
-      buf = __bytes_from(buf, 0);
-      lent = 0 - 1;
-    }
-    __arr_set_len(scratch, __recv_room());
-    let n: i32 = drv.recv_into(c.fds[at], scratch);
-    if (n == 0 - __eagain()) {
-      more = false;
-    } else if (n <= 0) {
-      let stopped: (__Conns, boolean) = __plain_stopped(c, at, n);
-      c = stopped.0;
-      done = stopped.1;
-      more = !done;
-    } else {
-      __arr_set_len(scratch, n);
-      if (buf.len() == 0) {
-        buf = scratch;
-        lent = at;
-      } else {
-        buf = buf.concat(scratch);
+  unsafe {
+    let buf: u8[] = c.bufs[at];
+    let was_idle: boolean = buf.len() == 0;
+    let lent: i32 = c.lent;
+    let done: boolean = false;
+    let more: boolean = true;
+    while (more) {
+      if (lent == at) {
+        buf = __bytes_from(buf, 0);
+        lent = 0 - 1;
       }
-      if (buf.len() > http.http_request_bytes_cap(opts.limits)) {
+      __arr_set_len(scratch, __recv_room());
+      let n: i32 = drv.recv_into(c.fds[at], scratch);
+      if (n == 0 - __eagain()) {
         more = false;
-        done = true;
+      } else if (n <= 0) {
+        let stopped: (__Conns, boolean) = __plain_stopped(c, at, n);
+        c = stopped.0;
+        done = stopped.1;
+        more = !done;
       } else {
-        more = n == __recv_room();
+        __arr_set_len(scratch, n);
+        if (buf.len() == 0) {
+          buf = scratch;
+          lent = at;
+        } else {
+          buf = buf.concat(scratch);
+        }
+        if (buf.len() > http.http_request_bytes_cap(opts.limits)) {
+          more = false;
+          done = true;
+        } else {
+          more = n == __recv_room();
+        }
       }
     }
+    if (done || !was_idle || buf.len() == 0) {
+      return (__Conns { ...c, bufs: c.bufs.with(at, buf), lent: lent }, done);
+    }
+    let deadline: i64 = monotonic_ns() + opts.recv_deadline.as_nanos();
+    return (__Conns { ...c, bufs: c.bufs.with(at, buf), lent: lent, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline) }, false);
   }
-  if (done || !was_idle || buf.len() == 0) {
-    return (__Conns { ...c, bufs: c.bufs.with(at, buf), lent: lent }, done);
-  }
-  let deadline: i64 = monotonic_ns() + opts.recv_deadline.as_nanos();
-  return (__Conns { ...c, bufs: c.bufs.with(at, buf), lent: lent, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline) }, false);
 }
 
 function __read_onto(buf: u8[], plain: u8[]): u8[] {
@@ -1604,45 +1606,47 @@ function __read_onto(buf: u8[], plain: u8[]): u8[] {
 }
 
 function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, scratch: u8[], opts: Config): (__Conns, boolean) {
-  let buf: u8[] = c.bufs[at];
-  let was_idle: boolean = buf.len() == 0;
-  let t: __Tls = c.tls[at];
-  c = __Conns { ...c, tls: c.tls.with(at, Plain) };
-  let was: boolean = false;
-  if let Secured(sess) = t {
-    was = sess.connected();
-  }
-  let done: boolean = false;
-  let more: boolean = true;
-  while (more) {
-    __arr_set_len(scratch, __recv_room());
-    let n: i32 = drv.recv_into(c.fds[at], scratch);
-    if (n == 0 - __eagain()) {
-      more = false;
-    } else if (n <= 0) {
-      more = false;
-      done = true;
-    } else {
-      let took: (__Conns, __Tls, u8[], boolean) = __tls_taken(drv, c, at, t, scratch[0:n], opts);
-      c = took.0;
-      t = took.1;
-      buf = __read_onto(buf, took.2);
-      done = took.3;
-      more = !done && n == __recv_room() && buf.len() <= http.http_request_bytes_cap(opts.limits);
-      if (buf.len() > http.http_request_bytes_cap(opts.limits)) {
+  unsafe {
+    let buf: u8[] = c.bufs[at];
+    let was_idle: boolean = buf.len() == 0;
+    let t: __Tls = c.tls[at];
+    c = __Conns { ...c, tls: c.tls.with(at, Plain) };
+    let was: boolean = false;
+    if let Secured(sess) = t {
+      was = sess.connected();
+    }
+    let done: boolean = false;
+    let more: boolean = true;
+    while (more) {
+      __arr_set_len(scratch, __recv_room());
+      let n: i32 = drv.recv_into(c.fds[at], scratch);
+      if (n == 0 - __eagain()) {
+        more = false;
+      } else if (n <= 0) {
+        more = false;
         done = true;
+      } else {
+        let took: (__Conns, __Tls, u8[], boolean) = __tls_taken(drv, c, at, t, scratch[0:n], opts);
+        c = took.0;
+        t = took.1;
+        buf = __read_onto(buf, took.2);
+        done = took.3;
+        more = !done && n == __recv_room() && buf.len() <= http.http_request_bytes_cap(opts.limits);
+        if (buf.len() > http.http_request_bytes_cap(opts.limits)) {
+          done = true;
+        }
       }
     }
+    c = __Conns { ...c, bufs: c.bufs.with(at, buf), tls: c.tls.with(at, t) };
+    let off: (__Conns, boolean) = __serve_handshook(c, at, was, done, opts);
+    c = off.0;
+    done = off.1;
+    if (done || !was_idle || buf.len() == 0) {
+      return (c, done);
+    }
+    let deadline: i64 = monotonic_ns() + opts.recv_deadline.as_nanos();
+    return (__Conns { ...c, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline) }, false);
   }
-  c = __Conns { ...c, bufs: c.bufs.with(at, buf), tls: c.tls.with(at, t) };
-  let off: (__Conns, boolean) = __serve_handshook(c, at, was, done, opts);
-  c = off.0;
-  done = off.1;
-  if (done || !was_idle || buf.len() == 0) {
-    return (c, done);
-  }
-  let deadline: i64 = monotonic_ns() + opts.recv_deadline.as_nanos();
-  return (__Conns { ...c, deadlines: c.deadlines.with(at, deadline), due: __sooner(c.due, deadline) }, false);
 }
 ```
 

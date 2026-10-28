@@ -53,14 +53,16 @@ func unpairedAllocs(t *testing.T, src string) int {
 
 func TestRcTraceX86_64LeavesStdoutAndExit(t *testing.T) {
 	const src = `function main(): i32 {
-    let i: i32 = 0;
-    while (i < 40) {
-        let a: usize = __alloc(64);
-        __free(a, 64);
-        i = i + 1;
-    }
-    print("done");
-    return 7;
+  unsafe {
+      let i: i32 = 0;
+      while (i < 40) {
+          let a: usize = __alloc(64);
+          __free(a, 64);
+          i = i + 1;
+      }
+      print("done");
+      return 7;
+  }
 }`
 	stdout, stderr, code := runTracedX86_64(t, src)
 	if code != 7 {

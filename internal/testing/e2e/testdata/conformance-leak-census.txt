@@ -1135,6 +1135,7 @@ union_eval                                           0
 union_lambda_param                                   0
 union_member_widens_in_variant_payload               0
 unsafe_block_accepts_obligations                     0
+unsafe_block_accepts_raw_builtins                    0
 url_codec                                            0
 url_roundtrip                                        0
 use_callback_bind                                    0

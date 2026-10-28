@@ -9685,10 +9685,12 @@ function main(): i32 {
 
 func TestArm64HeapAddressFits32Bits(t *testing.T) {
 	src := `function main(): i32 {
-    let p: usize = __alloc(8);
-    let pi: i64 = p as i64;
-    let hi: i32 = (pi >> (32 as i64)) as i32;
-    return hi;
+  unsafe {
+      let p: usize = __alloc(8);
+      let pi: i64 = p as i64;
+      let hi: i32 = (pi >> (32 as i64)) as i32;
+      return hi;
+  }
 }`
 	out, code := compileAndRunArm64(t, src)
 	if code != 0 {

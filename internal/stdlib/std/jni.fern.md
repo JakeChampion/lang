@@ -37,48 +37,70 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<2 pub function method_ptr(env: usize, index: i32): usize>>=
 pub function method_ptr(env: usize, index: i32): usize {
-  let table: usize = __load_ptr(env);
-  return __load_ptr(table + (index * 8) as usize);
+  unsafe {
+    let table: usize = __load_ptr(env);
+    return __load_ptr(table + (index * 8) as usize);
+  }
 }
 
 pub function call0(env: usize, index: i32): usize {
-  return __c_call1(method_ptr(env, index), env);
+  unsafe {
+    return __c_call1(method_ptr(env, index), env);
+  }
 }
 
 pub function call1(env: usize, index: i32, a0: usize): usize {
-  return __c_call2(method_ptr(env, index), env, a0);
+  unsafe {
+    return __c_call2(method_ptr(env, index), env, a0);
+  }
 }
 
 pub function call2(env: usize, index: i32, a0: usize, a1: usize): usize {
-  return __c_call3(method_ptr(env, index), env, a0, a1);
+  unsafe {
+    return __c_call3(method_ptr(env, index), env, a0, a1);
+  }
 }
 
 pub function call3(env: usize, index: i32, a0: usize, a1: usize, a2: usize): usize {
-  return __c_call4(method_ptr(env, index), env, a0, a1, a2);
+  unsafe {
+    return __c_call4(method_ptr(env, index), env, a0, a1, a2);
+  }
 }
 
 pub function call1_f32(env: usize, index: i32, a0: usize): f32 {
-  return __c_call2_f32(method_ptr(env, index), env, a0);
+  unsafe {
+    return __c_call2_f32(method_ptr(env, index), env, a0);
+  }
 }
 
 pub function call1_f64(env: usize, index: i32, a0: usize): f64 {
-  return __c_call2_f64(method_ptr(env, index), env, a0);
+  unsafe {
+    return __c_call2_f64(method_ptr(env, index), env, a0);
+  }
 }
 
 pub function call2_f32(env: usize, index: i32, a0: usize, a1: usize): f32 {
-  return __c_call3_f32(method_ptr(env, index), env, a0, a1);
+  unsafe {
+    return __c_call3_f32(method_ptr(env, index), env, a0, a1);
+  }
 }
 
 pub function call2_f64(env: usize, index: i32, a0: usize, a1: usize): f64 {
-  return __c_call3_f64(method_ptr(env, index), env, a0, a1);
+  unsafe {
+    return __c_call3_f64(method_ptr(env, index), env, a0, a1);
+  }
 }
 
 pub function call3_f32(env: usize, index: i32, a0: usize, a1: usize, a2: usize): f32 {
-  return __c_call4_f32(method_ptr(env, index), env, a0, a1, a2);
+  unsafe {
+    return __c_call4_f32(method_ptr(env, index), env, a0, a1, a2);
+  }
 }
 
 pub function call3_f64(env: usize, index: i32, a0: usize, a1: usize, a2: usize): f64 {
-  return __c_call4_f64(method_ptr(env, index), env, a0, a1, a2);
+  unsafe {
+    return __c_call4_f64(method_ptr(env, index), env, a0, a1, a2);
+  }
 }
 
 pub function FIND_CLASS(): i32 {
@@ -118,24 +140,26 @@ pub function RELEASE_STRING_UTF_CHARS(): i32 {
 }
 
 pub function cstr(s: string): usize {
-  let n: i32 = s.len();
-  let buf: usize = __alloc(n + 4);
-  let i: i32 = 0;
-  while (i + 4 <= n) {
-    let w: i32 = s[i] as i32 | s[i + 1] as i32 << 8 | s[i + 2] as i32 << 16 | s[i + 3] as i32 << 24;
-    __store_i32(buf + i as usize, w);
-    i = i + 4;
+  unsafe {
+    let n: i32 = s.len();
+    let buf: usize = __alloc(n + 4);
+    let i: i32 = 0;
+    while (i + 4 <= n) {
+      let w: i32 = s[i] as i32 | s[i + 1] as i32 << 8 | s[i + 2] as i32 << 16 | s[i + 3] as i32 << 24;
+      __store_i32(buf + i as usize, w);
+      i = i + 4;
+    }
+    let base: i32 = i;
+    let t: i32 = 0;
+    let sh: i32 = 0;
+    while (i < n) {
+      t = t | s[i] as i32 << sh;
+      sh = sh + 8;
+      i = i + 1;
+    }
+    __store_i32(buf + base as usize, t);
+    return buf;
   }
-  let base: i32 = i;
-  let t: i32 = 0;
-  let sh: i32 = 0;
-  while (i < n) {
-    t = t | s[i] as i32 << sh;
-    sh = sh + 8;
-    i = i + 1;
-  }
-  __store_i32(buf + base as usize, t);
-  return buf;
 }
 
 pub function get_version(env: usize): i32 {
@@ -337,44 +361,56 @@ pub function get_array_length(env: usize, array: usize): i32 {
 }
 
 pub function jvalues(args: usize[]): usize {
-  let n: i32 = args.len();
-  let buf: usize = __alloc(n * 8);
-  let i: i32 = 0;
-  while (i < n) {
-    __store_i64(buf + (i * 8) as usize, args[i] as i64);
-    i = i + 1;
+  unsafe {
+    let n: i32 = args.len();
+    let buf: usize = __alloc(n * 8);
+    let i: i32 = 0;
+    while (i < n) {
+      __store_i64(buf + (i * 8) as usize, args[i] as i64);
+      i = i + 1;
+    }
+    return buf;
   }
-  return buf;
 }
 
 pub function jvalue_alloc(n: i32): usize {
-  let buf: usize = __alloc(n * 8);
-  let i: i32 = 0;
-  while (i < n) {
-    __store_i64(buf + (i * 8) as usize, 0 as i64);
-    i = i + 1;
+  unsafe {
+    let buf: usize = __alloc(n * 8);
+    let i: i32 = 0;
+    while (i < n) {
+      __store_i64(buf + (i * 8) as usize, 0 as i64);
+      i = i + 1;
+    }
+    return buf;
   }
-  return buf;
 }
 
 pub function jvalue_set_int(args: usize, idx: i32, v: usize): usize {
-  __store_i64(args + (idx * 8) as usize, v as i64);
-  return args;
+  unsafe {
+    __store_i64(args + (idx * 8) as usize, v as i64);
+    return args;
+  }
 }
 
 pub function jvalue_set_long(args: usize, idx: i32, v: i64): usize {
-  __store_i64(args + (idx * 8) as usize, v);
-  return args;
+  unsafe {
+    __store_i64(args + (idx * 8) as usize, v);
+    return args;
+  }
 }
 
 pub function jvalue_set_f32(args: usize, idx: i32, x: f32): usize {
-  __store_i32(args + (idx * 8) as usize, f32_bits(x));
-  return args;
+  unsafe {
+    __store_i32(args + (idx * 8) as usize, f32_bits(x));
+    return args;
+  }
 }
 
 pub function jvalue_set_f64(args: usize, idx: i32, d: f64): usize {
-  __store_i64(args + (idx * 8) as usize, f64_bits(d));
-  return args;
+  unsafe {
+    __store_i64(args + (idx * 8) as usize, f64_bits(d));
+    return args;
+  }
 }
 
 pub function call_object_method_a(env: usize, obj: usize, method: usize, args: usize): usize {

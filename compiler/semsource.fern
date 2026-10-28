@@ -3034,8 +3034,8 @@ function value_block(e: ast.Expr, c: ast.ExprCall, s: State, expected: typeinfo.
   }
   let last: ast.Stmt = body[body.len() - 1];
   let v: Value = refused(s, "unsupported value block: " + block_stmt_kind(last));
-  if let ast.StmtIf(f) = last {
-    v = value_if(f, s, ty);
+  if let ast.StmtIf(_) = last {
+    v = arm_value(last, s, ty);
   }
   if let ast.StmtMatch(m) = last {
     v = value_match(m, s, ty);
@@ -3101,6 +3101,9 @@ struct VArm { s: State, live: boolean, end: i32, env: i32[], value: i32 }
 
 function arm_value(st: ast.Stmt, s: State, ty: typeinfo.Type): Value {
   if let ast.StmtIf(f) = st {
+    if (f.origin == "block" || f.origin == "unsafe") {
+      return block_arm_value(f.then_body, s, ty);
+    }
     return value_if(f, s, ty);
   }
   if let ast.StmtReturn(r) = st {
@@ -3117,6 +3120,31 @@ function arm_value(st: ast.Stmt, s: State, ty: typeinfo.Type): Value {
     return unaliased_view(v);
   }
   return refused(s, "value block arm has no value");
+}
+
+// A block that ends a value arm is a scope around the arm's value, not a branch.
+function block_arm_value(body: ast.Stmt[], s: State, ty: typeinfo.Type): Value {
+  if (body.len() == 0) {
+    return refused(s, "value block arm has no value");
+  }
+  let count: i32 = s.names.len();
+  let scope: checker.Scope = s.scope;
+  let last_at: i32 = body.len() - 1;
+  for i in 0..last_at {
+    s = stmt(body[i], s);
+  }
+  if (!s.ok) {
+    return Value { s: s, id: 0 - 1 };
+  }
+  if (!s.live) {
+    let z: Value = unreachable_value(s, ty);
+    return Value { s: leave(z.s, count, scope), id: z.id };
+  }
+  let v: Value = arm_value(body[last_at], s, ty);
+  if (!v.s.ok) {
+    return v;
+  }
+  return Value { s: leave(v.s, count, scope), id: v.id };
 }
 
 function value_arm(body: ast.Stmt[], s: State, entry: i32[], id: i32, preds: i32[], join: i32, count: i32, scope: checker.Scope, ty: typeinfo.Type): VArm {
@@ -4992,6 +5020,9 @@ function stmt(st: ast.Stmt, s: State): State {
       return ret(r, s);
     },
     ast.StmtIf(f) => {
+      if (f.origin == "block" || f.origin == "unsafe") {
+        return stmts(f.then_body, s);
+      }
       return branch(f, s);
     },
     ast.StmtWhile(w) => {

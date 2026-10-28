@@ -83,72 +83,74 @@ function show_bytes(label: string, xs: u8[]): void {
 }
 
 function main(): i32 {
-  let a: i32[] = [1, 2];
-  let b: i32[] = a;
-  b = b.append(3);
-  a = a.append(4);
-  show("a", a);
-  show("b", b);
+  unsafe {
+    let a: i32[] = [1, 2];
+    let b: i32[] = a;
+    b = b.append(3);
+    a = a.append(4);
+    show("a", a);
+    show("b", b);
 
-  let base: i32[] = [7];
-  let h: Holder = Holder { xs: base };
-  base = base.append(8);
-  h = Holder { ...h, xs: h.xs.append(9) };
-  let h2: Holder = h;
-  h2 = Holder { ...h2, xs: h2.xs.append(10) };
-  show("base", base);
-  show("h.xs", h.xs);
-  show("h2.xs", h2.xs);
+    let base: i32[] = [7];
+    let h: Holder = Holder { xs: base };
+    base = base.append(8);
+    h = Holder { ...h, xs: h.xs.append(9) };
+    let h2: Holder = h;
+    h2 = Holder { ...h2, xs: h2.xs.append(10) };
+    show("base", base);
+    show("h.xs", h.xs);
+    show("h2.xs", h2.xs);
 
-  let c: i32[] = [10];
-  let add = (v: i32): i32[] => { return c.append(v); };
-  let c1: i32[] = add(11);
-  let c2: i32[] = add(12);
-  c = c.append(13);
-  show("c", c);
-  show("c1", c1);
-  show("c2", c2);
+    let c: i32[] = [10];
+    let add = (v: i32): i32[] => { return c.append(v); };
+    let c1: i32[] = add(11);
+    let c2: i32[] = add(12);
+    c = c.append(13);
+    show("c", c);
+    show("c1", c1);
+    show("c2", c2);
 
-  let d: i32[] = [20, 21];
-  let e: i32[] = grow(d, 22);
-  let g: i32[] = grow(d, 23);
-  d = d.append(24);
-  show("d", d);
-  show("e", e);
-  show("g", g);
+    let d: i32[] = [20, 21];
+    let e: i32[] = grow(d, 22);
+    let g: i32[] = grow(d, 23);
+    d = d.append(24);
+    show("d", d);
+    show("e", e);
+    show("g", g);
 
-  let inner: i32[] = [30];
-  let outer: i32[][] = [inner];
-  inner = inner.append(31);
-  outer = outer.append(inner);
-  inner = inner.append(32);
-  show("outer[0]", outer[0]);
-  show("outer[1]", outer[1]);
-  show("inner", inner);
+    let inner: i32[] = [30];
+    let outer: i32[][] = [inner];
+    inner = inner.append(31);
+    outer = outer.append(inner);
+    inner = inner.append(32);
+    show("outer[0]", outer[0]);
+    show("outer[1]", outer[1]);
+    show("inner", inner);
 
-  let xs: i32[] = [];
-  let snap: i32[] = [];
-  let i: i32 = 0;
-  while (i < 5) {
-    xs = xs.append(i);
-    if (i == 2) {
-      snap = xs;
+    let xs: i32[] = [];
+    let snap: i32[] = [];
+    let i: i32 = 0;
+    while (i < 5) {
+      xs = xs.append(i);
+      if (i == 2) {
+        snap = xs;
+      }
+      i = i + 1;
     }
-    i = i + 1;
-  }
-  snap = snap.append(99);
-  xs = xs.append(5);
-  show("snap", snap);
-  show("xs", xs);
+    snap = snap.append(99);
+    xs = xs.append(5);
+    show("snap", snap);
+    show("xs", xs);
 
-  let buf: u8[] = [1u8, 2u8, 3u8, 4u8];
-  let held: u8[] = buf;
-  __arr_set_len(buf, 2);
-  buf = buf.append(9u8);
-  held = held.append(7u8);
-  show_bytes("buf", buf);
-  show_bytes("held", held);
-  return 0;
+    let buf: u8[] = [1u8, 2u8, 3u8, 4u8];
+    let held: u8[] = buf;
+    __arr_set_len(buf, 2);
+    buf = buf.append(9u8);
+    held = held.append(7u8);
+    show_bytes("buf", buf);
+    show_bytes("held", held);
+    return 0;
+  }
 }
 `
 	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {

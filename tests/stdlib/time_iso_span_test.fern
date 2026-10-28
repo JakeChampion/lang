@@ -11,21 +11,21 @@ function test_format_iso_pad_year(): test.TestOutcome {
 
 function test_parse_iso_ok(): test.TestOutcome {
   match (time.date_parse_iso("2024-03-07")) {
-    Some(d) => {
+    Ok(d) => {
       return test.assert_true(d.year == 2024 && d.month == 3 && d.day == 7);
     },
-    None => {
-      return test.fail("date_parse_iso expected Some");
+    Err(_) => {
+      return test.fail("date_parse_iso expected Ok");
     }
   }
 }
 
 function test_parse_iso_bad_len(): test.TestOutcome {
   match (time.date_parse_iso("2024-3-7")) {
-    Some(d) => {
-      return test.fail("expected None for short string");
+    Ok(d) => {
+      return test.fail("expected an error for short string");
     },
-    None => {
+    Err(_) => {
       return test.pass();
     }
   }
@@ -33,22 +33,29 @@ function test_parse_iso_bad_len(): test.TestOutcome {
 
 function test_parse_iso_bad_sep(): test.TestOutcome {
   match (time.date_parse_iso("2024/03/07")) {
-    Some(d) => {
-      return test.fail("expected None for wrong separator");
+    Ok(d) => {
+      return test.fail("expected an error for wrong separator");
     },
-    None => {
+    Err(_) => {
       return test.pass();
     }
   }
 }
 
+function test_parse_iso_error(): test.TestOutcome {
+  let Err(e) = time.date_parse_iso("2024/03/07") else {
+    return test.fail("expected an error for wrong separator");
+  };
+  return test.assert_eq(e.to_string(), "\"2024/03/07\" is not an ISO 8601 date (YYYY-MM-DD)");
+}
+
 function test_iso_round_trip(): test.TestOutcome {
   let s: string = time.date_make(2024, 12, 31).format_iso();
   match (time.date_parse_iso(s)) {
-    Some(d) => {
+    Ok(d) => {
       return test.assert_true(d.year == 2024 && d.month == 12 && d.day == 31);
     },
-    None => {
+    Err(_) => {
       return test.fail("round-trip parse failed");
     }
   }
@@ -111,6 +118,7 @@ function main(): i32 {
   r = r.it("parse_iso ok", test_parse_iso_ok);
   r = r.it("parse_iso bad len", test_parse_iso_bad_len);
   r = r.it("parse_iso bad sep", test_parse_iso_bad_sep);
+  r = r.it("parse_iso error names the text", test_parse_iso_error);
   r = r.it("iso round trip", test_iso_round_trip);
   r = r.it("add_span days", test_add_span_days);
   r = r.it("add_span weeks", test_add_span_weeks);

@@ -210,9 +210,11 @@ function __skipped(input: [u8], at: i32): Result[i32, ZstdError] {
 // An empty array with room for `n` bytes and the eight bytes past them that
 // a back-reference copy writes.
 function __buffer(n: i32): u8[] {
-  let out: u8[] = __alloc_u8(n + 8);
-  __arr_set_len(out, 0);
-  return out;
+  unsafe {
+    let out: u8[] = __alloc_u8(n + 8);
+    __arr_set_len(out, 0);
+    return out;
+  }
 }
 ```
 

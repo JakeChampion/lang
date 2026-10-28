@@ -3,22 +3,22 @@ import "std/format" as format;
 
 function ms_of(s: string): i64 {
   match (format.parse_duration(s)) {
-    Some(v) => {
+    Ok(v) => {
       return v.as_millis();
     },
-    None => {
+    Err(_) => {
       return -(1 as i64);
     }
   }
 }
 
-function is_none(s: string): boolean {
+function refusal(s: string): string {
   match (format.parse_duration(s)) {
-    Some(v) => {
-      return false;
+    Ok(v) => {
+      return "accepted";
     },
-    None => {
-      return true;
+    Err(e) => {
+      return e.message();
     }
   }
 }
@@ -54,19 +54,8 @@ function test_beyond_i32(): test.TestOutcome {
 }
 
 function test_rejections(): test.TestOutcome {
-  if (!is_none("")) {
-    return test.fail("empty");
-  }
-  if (!is_none("5")) {
-    return test.fail("bare number");
-  }
-  if (!is_none("5x")) {
-    return test.fail("unknown unit");
-  }
-  if (!is_none("h")) {
-    return test.fail("unit with no number");
-  }
-  return test.pass();
+  let got: string = refusal("") + " | " + refusal("5") + " | " + refusal("1h 5x") + " | " + refusal("h");
+  return test.assert_eq(got, "\"\" is not a duration such as \"1h 30m\": stopped at byte 0 | \"5\" is not a duration such as \"1h 30m\": stopped at byte 1 | \"1h 5x\" is not a duration such as \"1h 30m\": stopped at byte 4 | \"h\" is not a duration such as \"1h 30m\": stopped at byte 0");
 }
 
 function main(): i32 {

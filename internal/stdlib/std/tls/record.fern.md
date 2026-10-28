@@ -222,12 +222,14 @@ function __copy(src: [u8], from: i32, len: i32): u8[] {
 
 // A protected fragment is copied with room behind it for the five header bytes open authenticates.
 function __fragment(src: [u8], from: i32, len: i32, code: i32): u8[] {
-  if (code != 23) {
-    return __copy(src, from, len);
+  unsafe {
+    if (code != 23) {
+      return __copy(src, from, len);
+    }
+    let out: u8[] = __bytes_into(__alloc_u8(len + 5), 0, src, from, len);
+    __arr_set_len(out, len);
+    return out;
   }
-  let out: u8[] = __bytes_into(__alloc_u8(len + 5), 0, src, from, len);
-  __arr_set_len(out, len);
-  return out;
 }
 
 function __put(own dst: u8[], at: i32, src: [u8]): u8[] {
@@ -576,24 +578,26 @@ pub struct Opened { content_type: ContentType, content: u8[], next: Protection }
 ```fern
 <<21 pub function (p: Protection) open(own r: Record): Result[Opened, RecordError]>>=
 pub function (p: Protection) open(own r: Record): Result[Opened, RecordError] {
-  if (r.content_type.code() != 23) {
-    return Err(UnexpectedContentType(r.content_type.code()));
+  unsafe {
+    if (r.content_type.code() != 23) {
+      return Err(UnexpectedContentType(r.content_type.code()));
+    }
+    let version: i32 = r.version;
+    let fragment: u8[] = r.fragment;
+    if (fragment.len() > MAX_PROTECTED) {
+      return Err(RecordOverflow(fragment.len()));
+    }
+    __advanceable(p)?;
+    let n: i32 = fragment.len() - TAG_LEN;
+    if (n < 0) {
+      return Err(BadRecordMac);
+    }
+    let inner: u8[] = __open(p, __header_behind(fragment, version), n)?;
+    let end: i32 = __content_end(inner[0:n])?;
+    let t: ContentType = __inner_type(inner[end] as i32, end)?;
+    __arr_set_len(inner, end);
+    return Ok(Opened { content_type: t, content: inner, next: __advanced(p) });
   }
-  let version: i32 = r.version;
-  let fragment: u8[] = r.fragment;
-  if (fragment.len() > MAX_PROTECTED) {
-    return Err(RecordOverflow(fragment.len()));
-  }
-  __advanceable(p)?;
-  let n: i32 = fragment.len() - TAG_LEN;
-  if (n < 0) {
-    return Err(BadRecordMac);
-  }
-  let inner: u8[] = __open(p, __header_behind(fragment, version), n)?;
-  let end: i32 = __content_end(inner[0:n])?;
-  let t: ContentType = __inner_type(inner[end] as i32, end)?;
-  __arr_set_len(inner, end);
-  return Ok(Opened { content_type: t, content: inner, next: __advanced(p) });
 }
 
 // Appends the record header behind the fragment, into the room deframe left there.

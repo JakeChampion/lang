@@ -6,13 +6,15 @@ import (
 )
 
 const loadU8Src = `function main(): i32 {
-    let p: usize = __alloc(16);
-    __store_i32(p, 0 - 939326975);
-    if (__load_u8(p) != 1) { return 1; }
-    if (__load_u8(p + 1) != 2) { return 2; }
-    if (__load_u8(p + 2) != 3) { return 3; }
-    if (__load_u8(p + 3) != 200) { return 4; }
-    return 42;
+  unsafe {
+      let p: usize = __alloc(16);
+      __store_i32(p, 0 - 939326975);
+      if (__load_u8(p) != 1) { return 1; }
+      if (__load_u8(p + 1) != 2) { return 2; }
+      if (__load_u8(p + 2) != 3) { return 3; }
+      if (__load_u8(p + 3) != 200) { return 4; }
+      return 42;
+  }
 }
 `
 

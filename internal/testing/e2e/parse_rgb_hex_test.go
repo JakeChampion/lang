@@ -5,8 +5,8 @@ import "testing"
 const parseRgbHexProg = `
 import "std/math" as math;
 import "std/i32";
-function opt(o: Option[i32], fb: i32): i32 {
-    match (o) { Some(v) => { return v; }, None => { return fb; } }
+function opt(r: Result[i32, math.RgbParseError], fb: i32): i32 {
+    match (r) { Ok(v) => { return v; }, Err(_) => { return fb; } }
 }
 function main(): i32 {
     if (opt(math.parse_rgb_hex("#ff8800"), -1) != math.pack_rgb(255, 136, 0)) { return 1; }
