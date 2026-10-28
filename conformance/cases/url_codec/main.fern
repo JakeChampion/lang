@@ -14,13 +14,13 @@ function main(): i32 {
     print(url.url_decode("100%zz"));
 
     match (url.url_parse("http://h.com:8080/p?q#f")) {
-        Some(u) => { print(u.scheme + " " + u.host + " " + u.port.to_string() + " " + u.path + " " + u.query + " " + u.fragment); },
-        None => { print("parse-none"); },
+        Ok(u) => { print(u.scheme + " " + u.host + " " + u.port.to_string() + " " + u.path + " " + u.query + " " + u.fragment); },
+        Err(_) => { print("parse-none"); },
     }
 
     match (url.url_parse("")) {
-        Some(u) => { print("unexpected"); },
-        None => { print("empty-none"); },
+        Ok(u) => { print("unexpected"); },
+        Err(_) => { print("empty-none"); },
     }
 
     let q: Map[string, string[]] = url.query_parse("a=1&b=2&a=3");

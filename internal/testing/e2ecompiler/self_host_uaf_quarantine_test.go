@@ -12,10 +12,12 @@ import (
 var uafPoisonDec = strconv.Itoa(ast.RcPoison)
 
 const uafSelfHostIncSrc = `function main(): i32 {
-    let a: u8[] = __alloc_u8(16);
-    __rc_dec(a);
-    __rc_inc(a);
-    return 0;
+  unsafe {
+      let a: u8[] = __alloc_u8(16);
+      __rc_dec(a);
+      __rc_inc(a);
+      return 0;
+  }
 }`
 
 func TestSelfHostUafIncAfterFreeReportedX86_64(t *testing.T) {

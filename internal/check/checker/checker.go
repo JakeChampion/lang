@@ -2079,6 +2079,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.Methods["Array.append"] = "__method_Array_push"
 	c.info.Methods["Array.with"] = "__method_Array_set"
+	c.info.Methods["Array.truncate"] = "__method_Array_truncate"
+	c.info.FuncSigs["__method_Array_truncate"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: arrayElemParam},
+			ast.NumberType{},
+		},
+		Result: ast.ArrayType{Elem: arrayElemParam},
+	}
 	delete(c.info.Methods, "Map.set")
 	delete(c.info.Methods, "Map.clear")
 	delete(c.info.Methods, "Array.set")
@@ -2393,6 +2401,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			simpleName := methodName
 			mangled := c.mangleMethodName("__method_", typeName, fn.Name, fn.ImplTrait)
 			fn.Name = mangled
+			fn.ConstParams = append(fn.ConstParams, c.receiverConstParams(fn.Receiver.Type)...)
 			fn.MethodRecv = typeName
 			fn.MethodSimpleName = simpleName
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
@@ -4256,9 +4265,6 @@ func (c *checker) moduleSees(from, decl string) bool {
 	if from == "" || decl == "" || from == decl {
 		return true
 	}
-	if strings.HasPrefix(from, "stdlib://") && strings.HasPrefix(decl, "stdlib://") {
-		return true
-	}
 	if c.info.ModuleImports == nil {
 		return true
 	}
@@ -5328,6 +5334,11 @@ type checker struct {
 	captureOuter *scope
 	captureChain []captureEntry
 
+	// resolvingConsts is the const parameters in scope while a declaration's
+	// types are resolved: a struct's own, or a function's own and those its
+	// receiver names.
+	resolvingConsts []string
+
 	capturedVars map[*ast.Var]bool
 	cellStores   []cellStore
 
@@ -5386,7 +5397,9 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 				params[n] = true
 			}
 		}
+		c.resolvingConsts = fn.ConstParams
 		if fn.Receiver != nil {
+			c.resolvingConsts = append(slices.Clone(fn.ConstParams), c.receiverConstParams(fn.Receiver.Type)...)
 			c.resolveType(&fn.Receiver.Type, params, orPos(fn.Receiver.NamePos, fn.P))
 		}
 		for i := range fn.Params {
@@ -5396,6 +5409,7 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 		if fn.Body != nil {
 			c.resolveTypesInBlock(fn.Body, params)
 		}
+		c.resolvingConsts = nil
 	}
 	for _, sd := range prog.Structs {
 		var params map[string]bool
@@ -5405,9 +5419,11 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 				params[n] = true
 			}
 		}
+		c.resolvingConsts = sd.ConstParams
 		for i := range sd.Fields {
 			c.resolveType(&sd.Fields[i].Type, params, orPos(sd.Fields[i].NamePos, sd.P))
 		}
+		c.resolvingConsts = nil
 	}
 	for _, ed := range prog.Enums {
 		var params map[string]bool
@@ -5732,6 +5748,8 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 		if sd, ok := c.info.Structs[t.Name]; ok {
 			if len(sd.TypeParams) != len(args) {
 				c.errfCode(sd.P, "E019", "%s", arityMsg("struct "+t.Name, len(sd.TypeParams), len(args), "type argument"))
+			} else if len(sd.ConstParams) > 0 || hasConstArg(args) {
+				c.structArgKinds(sd, args, pos)
 			}
 			if t.Name == "Cell" && len(args) == 1 {
 				at := pos
@@ -7767,11 +7785,12 @@ func (c *checker) hasDropImpl(typeName string) bool {
 }
 
 var pureCollectionMutators = map[string]string{
-	"__method_Map_set":    "insert",
-	"__method_Map_remove": "remove",
-	"__method_Map_clear":  "cleared",
-	"__method_Array_set":  "with",
-	"__method_Array_push": "append",
+	"__method_Map_set":        "insert",
+	"__method_Map_remove":     "remove",
+	"__method_Map_clear":      "cleared",
+	"__method_Array_set":      "with",
+	"__method_Array_push":     "append",
+	"__method_Array_truncate": "truncate",
 }
 
 var retiredCollectionSpellings = map[string]string{
@@ -7931,6 +7950,95 @@ func hoistReceiver(fn *ast.FuncDecl) {
 	fn.Receiver = nil
 }
 
+// structArgKinds checks the arguments of an application of sd: a const
+// parameter takes an integer that fits in i32 (E089) or a const parameter in
+// scope, and a type parameter takes a type (E090).
+func (c *checker) structArgKinds(sd *ast.StructDecl, args []ast.Type, pos ast.Position) {
+	if pos.Line == 0 {
+		pos = sd.P
+	}
+	for i, a := range args {
+		tp := sd.TypeParams[i]
+		ca, isInt := a.(ast.ConstArg)
+		if !slices.Contains(sd.ConstParams, tp) {
+			if isInt {
+				c.errfCode(pos, "E090", "type parameter %s takes a type, not the integer %s", tp, ca)
+			}
+			continue
+		}
+		if isInt {
+			if ca.Value > math.MaxInt32 {
+				c.errfCode(pos, "E089", "the const argument for %s must fit in i32", tp)
+			}
+			continue
+		}
+		if pt, ok := a.(ast.ParamType); ok && c.constParamDeclared(pt.Name) {
+			continue
+		}
+		c.errfCode(pos, "E090", "const parameter %s takes an integer, not the type %s", tp, a)
+	}
+}
+
+// constParamDeclared reports whether name is a const parameter of a generic
+// function being checked, or of an enclosing one.
+func (c *checker) constParamDeclared(name string) bool {
+	if slices.Contains(c.resolvingConsts, name) {
+		return true
+	}
+	if c.current != nil && slices.Contains(c.current.ConstParams, name) {
+		return true
+	}
+	for _, e := range c.captureChain {
+		if e.outer != nil && slices.Contains(e.outer.ConstParams, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasConstArg(args []ast.Type) bool {
+	for _, a := range args {
+		if _, ok := a.(ast.ConstArg); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// receiverConstParams is the names a receiver spelling gives to its struct's
+// const parameters: N in `function (r: Ring[N, T]) cap()`.
+func (c *checker) receiverConstParams(t ast.Type) []string {
+	var name string
+	var args []ast.Type
+	switch rt := t.(type) {
+	case ast.StructType:
+		name, args = rt.Name, rt.Args
+	case ast.EnumType:
+		name, args = rt.Name, rt.Args
+	default:
+		return nil
+	}
+	sd, ok := c.info.Structs[name]
+	if !ok {
+		return nil
+	}
+	var out []string
+	for i, a := range args {
+		if i >= len(sd.TypeParams) || !slices.Contains(sd.ConstParams, sd.TypeParams[i]) {
+			continue
+		}
+		switch x := a.(type) {
+		case ast.StructType:
+			if len(x.Args) == 0 {
+				out = append(out, x.Name)
+			}
+		case ast.ParamType:
+			out = append(out, x.Name)
+		}
+	}
+	return out
+}
+
 func (c *checker) receiverDeclares(name, tp string) bool {
 	fn, ok := c.info.GenericFuncs[name]
 	if !ok || fn.MethodRecv == "" || len(fn.Params) == 0 {
@@ -7948,6 +8056,9 @@ func elemDispatchable(elem ast.Type) bool {
 }
 
 func (c *checker) errArgMismatch(n *ast.Call, i int, recvIsArg0 bool, expected, at ast.Type) {
+	if mentionsUnresolvedQualifier(expected) {
+		return
+	}
 	if recvIsArg0 && i == 0 && n.Method != nil {
 		c.errfCode(n.Method.FieldPos, "E043", "no method %q on %s — %q is declared for %s",
 			n.Method.Field, at, n.Method.Field, expected)
@@ -7959,6 +8070,36 @@ func (c *checker) errArgMismatch(n *ast.Call, i int, recvIsArg0 bool, expected, 
 	}
 	c.errfCode(n.Args[i].Pos(), "E038", "%s: expected %s, got %s%s",
 		argSubject(n, num), expected, at, assignHint(expected, at))
+}
+
+// A type name still spelled `q.T` names a module that was never imported;
+// E064 has already reported it, so an argument checked against it is not a
+// second error.
+func mentionsUnresolvedQualifier(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.StructType:
+		return strings.Contains(x.Name, ".") || anyUnresolvedQualifier(x.Args)
+	case ast.EnumType:
+		return strings.Contains(x.Name, ".") || anyUnresolvedQualifier(x.Args)
+	case ast.ArrayType:
+		return mentionsUnresolvedQualifier(x.Elem)
+	case ast.SliceType:
+		return mentionsUnresolvedQualifier(x.Elem)
+	case ast.TupleType:
+		return anyUnresolvedQualifier(x.Elems)
+	case *ast.FuncType:
+		return mentionsUnresolvedQualifier(x.Result) || anyUnresolvedQualifier(x.Params)
+	}
+	return false
+}
+
+func anyUnresolvedQualifier(ts []ast.Type) bool {
+	for _, t := range ts {
+		if mentionsUnresolvedQualifier(t) {
+			return true
+		}
+	}
+	return false
 }
 
 func argSubject(n *ast.Call, num int) string {
@@ -8408,6 +8549,30 @@ func (c *checker) calleeBinding(id *ast.Ident, s *scope) (ast.Type, bool) {
 	return c.identValueBinding(id.Name, s)
 }
 
+// UnsafeIntrinsics names the raw builtins that forge an address, change a
+// reference count or a length, or call foreign code, so a call to one is
+// only accepted inside an unsafe block. docs/security/UNSAFE-INVENTORY.md
+// lists each one with its obligation. compiler/checker.fern's
+// unsafe_intrinsics holds the same set.
+var UnsafeIntrinsics = map[string]bool{
+	"__alloc": true, "__alloc_reuse": true, "__free": true,
+	"__load_u8": true, "__load_i32": true, "__load_i64": true, "__load_ptr": true,
+	"__store_u8": true, "__store_i32": true, "__store_i64": true, "__store_ptr": true,
+	"__memcpy": true, "__memset": true, "__str_bytes": true, "__account_entry": true,
+	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,
+	"__rc_inc": true, "__rc_dec": true, "__rc_get": true, "__fern_rc_dec": true,
+	"__arr_set_len": true, "__heap_mark": true, "__heap_release_to": true,
+	"__c_call0": true, "__c_call0_f32": true, "__c_call0_f64": true,
+	"__c_call1": true, "__c_call1_f32": true, "__c_call1_f64": true,
+	"__c_call2": true, "__c_call2_f32": true, "__c_call2_f64": true,
+	"__c_call3": true, "__c_call3_f32": true, "__c_call3_f64": true,
+	"__c_call4": true, "__c_call4_f32": true, "__c_call4_f64": true,
+	"__task_new": true, "__task_free": true, "__task_enter": true, "__task_leave": true,
+	"__task_park": true, "__task_wait": true, "__task_set_ready": true, "__task_set_cancelled": true,
+	"__task_cancelled": true, "__task_timeout": true, "__task_cur": true,
+	"__syscall3": true, "__syscall4": true, "__syscall5": true, "__syscall6": true,
+}
+
 // The unsafe boundary: an unsafe declaration states caller obligations, and only an
 // unsafe block accepts them. docs/SAFETY-CONTRACT.md has the contract.
 func (c *checker) checkUnsafeCallee(n *ast.Call, s *scope) {
@@ -8415,10 +8580,17 @@ func (c *checker) checkUnsafeCallee(n *ast.Call, s *scope) {
 		return
 	}
 	id, ok := n.Callee.(*ast.Ident)
-	if !ok || !c.unsafeFuncs[id.Name] {
+	if !ok {
 		return
 	}
 	if _, local := c.calleeBinding(id, s); local {
+		return
+	}
+	if UnsafeIntrinsics[id.Name] {
+		c.errfCode(n.P, "E095", "raw builtin %q is called outside an unsafe block", id.Name)
+		return
+	}
+	if !c.unsafeFuncs[id.Name] {
 		return
 	}
 	name := demangle(id.Name)
@@ -14749,7 +14921,9 @@ func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast
 	}
 	sd := c.info.Structs[st.Name]
 	if sd == nil {
-		c.errfCode(n.P, "E043", "cannot find struct %q in this scope", demangle(st.Name))
+		if !mentionsUnresolvedQualifier(st) {
+			c.errfCode(n.P, "E043", "cannot find struct %q in this scope", demangle(st.Name))
+		}
 		return nil
 	}
 	c.checkOpaqueAccess(sd, n.P, "access a field of")

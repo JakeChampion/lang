@@ -204,14 +204,16 @@ func TestSelfHostCPUProfileCapacity(t *testing.T) {
 				getpid, gettid, tgkill = "172", "178", "131"
 			}
 			src := `function main(): i32 {
-  let pid: i64 = __syscall3(` + getpid + `, 0, 0, 0);
-  let tid: i64 = __syscall3(` + gettid + `, 0, 0, 0);
-  let i: i32 = 0;
-  while (i < 9000) {
-    if (__syscall3(` + tgkill + `, pid, tid, 27) != (0 as i64)) { return 11; }
-    i = i + 1;
+  unsafe {
+    let pid: i64 = __syscall3(` + getpid + `, 0, 0, 0);
+    let tid: i64 = __syscall3(` + gettid + `, 0, 0, 0);
+    let i: i32 = 0;
+    while (i < 9000) {
+      if (__syscall3(` + tgkill + `, pid, tid, 27) != (0 as i64)) { return 11; }
+      i = i + 1;
+    }
+    return 7;
   }
-  return 7;
 }`
 			bin := compileCPUProfile(t, cli, src, target, "cpu")
 			cmd := runX86_64Bin(cli.runner, bin)
@@ -281,11 +283,13 @@ func TestSelfHostCPUProfileRetainsLateSamples(t *testing.T) {
 `
 		src := "@noinline function early" + body + "@noinline function late" + body + `
 function main(): i32 {
-  let pid: i64 = __syscall3(` + getpid + `, 0, 0, 0);
-  let tid: i64 = __syscall3(` + gettid + `, 0, 0, 0);
-  early(pid, tid);
-  late(pid, tid);
-  return 7;
+  unsafe {
+    let pid: i64 = __syscall3(` + getpid + `, 0, 0, 0);
+    let tid: i64 = __syscall3(` + gettid + `, 0, 0, 0);
+    early(pid, tid);
+    late(pid, tid);
+    return 7;
+  }
 }`
 		bin := compileCPUProfile(t, cli, src, target, "cpu")
 		cmd := runX86_64Bin(cli.runner, bin)

@@ -7,8 +7,8 @@ import (
 
 func TestSelfHostCCallFPShimsReturnInTheResultRegister(t *testing.T) {
 	cli := newStrictCLI(t)
-	src := `function d(p: usize): f64 { return __c_call1_f64(p, 7 as usize); }
-function f(p: usize): f32 { return __c_call0_f32(p); }
+	src := `function d(p: usize): f64 { unsafe { return __c_call1_f64(p, 7 as usize); } }
+function f(p: usize): f32 { unsafe { return __c_call0_f32(p); } }
 function main(): i32 { return (d(0 as usize) + (f(0 as usize) as f64)) as i32; }
 `
 	cases := []struct {

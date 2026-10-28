@@ -10,20 +10,22 @@ const argvStraddleSrc = `
 // Leave one block on every small freelist class (16..2048) so a block freed
 // into the wrong class has a neighbour to be confused with.
 function churn(): i32 {
-    let held: usize[] = [];
-    let n: i32 = 16;
-    while (n <= 2048) {
-        held = held.append(__alloc(n));
-        n = n + 16;
-    }
-    let i: i32 = 0;
-    n = 16;
-    while (n <= 2048) {
-        __free(held[i], n);
-        i = i + 1;
-        n = n + 16;
-    }
-    return i;
+  unsafe {
+      let held: usize[] = [];
+      let n: i32 = 16;
+      while (n <= 2048) {
+          held = held.append(__alloc(n));
+          n = n + 16;
+      }
+      let i: i32 = 0;
+      n = 16;
+      while (n <= 2048) {
+          __free(held[i], n);
+          i = i + 1;
+          n = n + 16;
+      }
+      return i;
+  }
 }
 function main(): i32 {
     let xs: string[] = args();

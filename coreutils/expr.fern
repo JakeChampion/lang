@@ -103,10 +103,10 @@ function is_null(s: string): boolean {
 
 function to_int(s: string): bigint.BigInt {
   match (bigint.parse(s)) {
-    Some(v) => {
+    Ok(v) => {
       return v;
     },
-    None => {
+    Err(_) => {
       return bigint.zero();
     }
   }

@@ -1615,19 +1615,21 @@ pub function (s: string) ends_with_ci(suffix: string): boolean {
 ```fern
 <<24 pub function (s: string) bytes(): u8[]>>=
 pub function (s: string) bytes(): u8[] {
-  let n: i32 = s.len();
-  let out: u8[] = __alloc_u8(n);
-  let data: usize = __str_bytes(s, 0 as usize);
-  if (data == 0 as usize) {
-    let i: i32 = 0;
-    while (i < n) {
-      out = out.with(i, s[i]);
-      i = i + 1;
+  unsafe {
+    let n: i32 = s.len();
+    let out: u8[] = __alloc_u8(n);
+    let data: usize = __str_bytes(s, 0 as usize);
+    if (data == 0 as usize) {
+      let i: i32 = 0;
+      while (i < n) {
+        out = out.with(i, s[i]);
+        i = i + 1;
+      }
+    } else {
+      __memcpy(out as usize, data, n);
     }
-  } else {
-    __memcpy(out as usize, data, n);
+    return out;
   }
-  return out;
 }
 ```
 ### `25 function __string_case_fold(s: string, srcBase: i32, dstBase: i32): string`

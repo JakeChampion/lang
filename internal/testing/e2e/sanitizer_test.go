@@ -78,19 +78,23 @@ const sanCleanSrc = `function main(): i32 {
 }`
 
 const sanLeakSrc = `function main(): i32 {
-    let a: usize = __alloc(60);
-    let b: usize = __alloc(60);
-    let c: usize = __alloc(60);
-    __free(a, 60);
-    if (b == c) { return 9; }
-    return 42;
+  unsafe {
+      let a: usize = __alloc(60);
+      let b: usize = __alloc(60);
+      let c: usize = __alloc(60);
+      __free(a, 60);
+      if (b == c) { return 9; }
+      return 42;
+  }
 }`
 
 const sanDoubleFreeSrc = `function main(): i32 {
-    let a: u8[] = __alloc_u8(16);
-    __rc_dec(a);
-    __rc_dec(a);
-    return 0;
+  unsafe {
+      let a: u8[] = __alloc_u8(16);
+      __rc_dec(a);
+      __rc_dec(a);
+      return 0;
+  }
 }`
 
 const sanQuarantineSrc = `function main(): i32 {
@@ -104,11 +108,13 @@ const sanQuarantineSrc = `function main(): i32 {
 }`
 
 const sanStaleTouchSrc = `function main(): i32 {
-    let a: u8[] = __alloc_u8(16);
-    let p: usize = a as usize;
-    __rc_dec(a);
-    __fern_rc_inc(p);
-    return 0;
+  unsafe {
+      let a: u8[] = __alloc_u8(16);
+      let p: usize = a as usize;
+      __rc_dec(a);
+      __fern_rc_inc(p);
+      return 0;
+  }
 }`
 
 var sanLeakVerdictRe = regexp.MustCompile(`fern-sanitizer: leak (\d+) bytes in (\d+) blocks\n`)

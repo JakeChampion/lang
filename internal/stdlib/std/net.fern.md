@@ -1361,10 +1361,12 @@ pub function read(sock: i32, buf: u8[]): Result[i32, NetError] {
 }
 
 pub function read_up_to(sock: i32, max: i32): Result[u8[], NetError] {
-  let buf: u8[] = __alloc_u8(max);
-  let n: i32 = read(sock, buf)?;
-  __arr_set_len(buf, n);
-  return Ok(buf);
+  unsafe {
+    let buf: u8[] = __alloc_u8(max);
+    let n: i32 = read(sock, buf)?;
+    __arr_set_len(buf, n);
+    return Ok(buf);
+  }
 }
 
 pub function write(sock: i32, data: u8[]): Result[i32, NetError] {

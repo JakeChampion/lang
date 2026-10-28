@@ -9,11 +9,13 @@ import (
 
 const mapDropImplReuseSrc = `import "core/map";
 function handle(): usize {
-    let base: usize = __alloc(16);
-    __store_i32(base, 1);
-    let h: usize = base + 8;
-    __store_ptr(h, 0 as usize);
-    return h;
+  unsafe {
+      let base: usize = __alloc(16);
+      __store_i32(base, 1);
+      let h: usize = base + 8;
+      __store_ptr(h, 0 as usize);
+      return h;
+  }
 }
 function main(): i32 {
     let i: i32 = 0;

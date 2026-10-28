@@ -10,7 +10,9 @@ import (
 
 const byteAccessProg = `@noinline
 function table_char(alpha: usize, v: i64): i64 {
-    return __load_u8(alpha + (v >> 6 & 63 as i64) as usize) as i64 | __load_u8(alpha + (v & 63 as i64) as usize) as i64 << 8;
+  unsafe {
+      return __load_u8(alpha + (v >> 6 & 63 as i64) as usize) as i64 | __load_u8(alpha + (v & 63 as i64) as usize) as i64 << 8;
+  }
 }
 @noinline
 function elem_wide(bs: u8[], i: i32): i64 {
@@ -26,37 +28,41 @@ function text_byte(s: string, i: i32): i64 {
 }
 @noinline
 function poke(base: usize, j: i32, v: i32): void {
-    __store_u8(base + j as usize, v);
+  unsafe {
+      __store_u8(base + j as usize, v);
+  }
 }
 function main(): i32 {
-    let alpha: usize = __alloc(256);
-    let b: i32 = 0;
-    while (b < 256) {
-        poke(alpha, b, 255 - b);
-        b = b + 1;
-    }
-    let bs: u8[] = [];
-    b = 0;
-    while (b < 256) {
-        bs = bs.append(b as u8);
-        b = b + 1;
-    }
-    b = 0;
-    while (b < 255) {
-        if (elem_wide(bs, b) != (b * 256 + b + 1) as i64) { return 1; }
-        b = b + 1;
-    }
-    let v: i64 = 0;
-    while (v < 4096 as i64) {
-        let want: i64 = (255 as i64 - (v >> 6 & 63 as i64)) | (255 as i64 - (v & 63 as i64)) << 8;
-        if (table_char(alpha, v) != want) { return 2; }
-        v = v + 1 as i64;
-    }
-    if (masked(0 as i64 - 1 as i64) != 255 as i64) { return 3; }
-    if (masked(0 as i64 - 200 as i64) != 56 as i64) { return 4; }
-    if (text_byte("aé", 1) != 195 as i64) { return 5; }
-    if (text_byte("aé", 2) != 169 as i64) { return 6; }
-    return 42;
+  unsafe {
+      let alpha: usize = __alloc(256);
+      let b: i32 = 0;
+      while (b < 256) {
+          poke(alpha, b, 255 - b);
+          b = b + 1;
+      }
+      let bs: u8[] = [];
+      b = 0;
+      while (b < 256) {
+          bs = bs.append(b as u8);
+          b = b + 1;
+      }
+      b = 0;
+      while (b < 255) {
+          if (elem_wide(bs, b) != (b * 256 + b + 1) as i64) { return 1; }
+          b = b + 1;
+      }
+      let v: i64 = 0;
+      while (v < 4096 as i64) {
+          let want: i64 = (255 as i64 - (v >> 6 & 63 as i64)) | (255 as i64 - (v & 63 as i64)) << 8;
+          if (table_char(alpha, v) != want) { return 2; }
+          v = v + 1 as i64;
+      }
+      if (masked(0 as i64 - 1 as i64) != 255 as i64) { return 3; }
+      if (masked(0 as i64 - 200 as i64) != 56 as i64) { return 4; }
+      if (text_byte("aé", 1) != 195 as i64) { return 5; }
+      if (text_byte("aé", 2) != 169 as i64) { return 6; }
+      return 42;
+  }
 }
 `
 

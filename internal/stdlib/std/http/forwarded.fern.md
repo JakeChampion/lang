@@ -32,7 +32,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<8 pub struct Trust>>
 
-<<9 pub function trust(blocks: string[]): Result[Trust, string]>>
+<<9 pub function trust(blocks: string[]): Result[Trust, TrustError]>>
 
 <<10 pub struct Client>>
 
@@ -71,6 +71,8 @@ import "std/platform";
 import "std/utf8" as utf8;
 import "std/array";
 import "std/option";
+import "std/error";
+import "core/cmp";
 ```
 
 ### `3 pub enum Node`
@@ -358,13 +360,29 @@ function __obfuscated(s: string): boolean {
 ```fern
 <<8 pub struct Trust>>=
 pub struct Trust { proxies: net.Prefix[], legacy: boolean }
+
+// TrustError is the entry `trust` refused: not an address, nor a prefix whose
+// host bits are clear.
+pub struct TrustError { block: string }
+
+pub function (e: TrustError) message(): string {
+  return "trusted proxy \"" + e.block + "\" is not an address or a network prefix with its host bits clear";
+}
+
+pub function (e: TrustError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for TrustError {}
+
+impl cmp.Display for TrustError {}
 ```
 
-### `9 pub function trust(blocks: string[]): Result[Trust, string]`
+### `9 pub function trust(blocks: string[]): Result[Trust, TrustError]`
 
 ```fern
-<<9 pub function trust(blocks: string[]): Result[Trust, string]>>=
-pub function trust(blocks: string[]): Result[Trust, string] {
+<<9 pub function trust(blocks: string[]): Result[Trust, TrustError]>>=
+pub function trust(blocks: string[]): Result[Trust, TrustError] {
   let out: net.Prefix[] = [];
   for b in blocks {
     match (net.prefix_parse(b)) {
@@ -372,7 +390,7 @@ pub function trust(blocks: string[]): Result[Trust, string] {
         out = out.append(p);
       },
       None => {
-        return Err(b);
+        return Err(TrustError { block: b });
       }
     }
   }

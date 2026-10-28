@@ -94,24 +94,26 @@ function image_bytes(hex: string): u8[] {
   return out;
 }
 function main(): i32 {
-  let image: string = string_from_bytes_unchecked(image_bytes("%x"));
-  let im = __raw_data(image);
-  let pc = im + %du64 as usize;
-  let size = image.len() as usize;
-  if (__fern_profile_macho_image_size(im) != size) { return 1; }
-  let found = __fern_profile_name(pc, im, size);
-  if ((found != 0) != %s) { return 2; }
-  if (found != 0) {
-    let expected = "__fn_probe";
-    let i = 0;
-    while (i < expected.len()) {
-      if (__load_u8(found + i) != __load_u8(__raw_data(expected) + i)) { return 3; }
-      i = i + 1;
+  unsafe {
+    let image: string = string_from_bytes_unchecked(image_bytes("%x"));
+    let im = __raw_data(image);
+    let pc = im + %du64 as usize;
+    let size = image.len() as usize;
+    if (__fern_profile_macho_image_size(im) != size) { return 1; }
+    let found = __fern_profile_name(pc, im, size);
+    if ((found != 0) != %s) { return 2; }
+    if (found != 0) {
+      let expected = "__fn_probe";
+      let i = 0;
+      while (i < expected.len()) {
+        if (__load_u8(found + i) != __load_u8(__raw_data(expected) + i)) { return 3; }
+        i = i + 1;
+      }
     }
+    if (__fern_profile_name(im + size, im, size) != 0) { return 4; }
+    if (__fern_profile_name(pc, im, 31) != 0) { return 5; }
+    return 42;
   }
-  if (__fern_profile_name(im + size, im, size) != 0) { return 4; }
-  if (__fern_profile_name(pc, im, 31) != 0) { return 5; }
-  return 42;
 }
 `, mapped, address-base+1, want)
 			program := compileCPUProfile(t, cli, source, "x86-64-linux", "")

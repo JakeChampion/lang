@@ -155,7 +155,7 @@ function test_trust_errors(): test.TestOutcome {
       return test.fail("a block with host bits set was accepted");
     },
     Err(bad) => {
-      return test.assert_eq(bad, "10.0.0.1/8");
+      return test.assert_eq(bad.block + " | " + bad.message(), "10.0.0.1/8 | trusted proxy \"10.0.0.1/8\" is not an address or a network prefix with its host bits clear");
     }
   }
 }

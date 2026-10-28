@@ -76,7 +76,7 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
       return http.ok(peer + " " + ip + " " + text(c.proto) + " " + text(c.host));
     },
     Err(bad) => {
-      return http.internal_error(bad);
+      return http.internal_error(bad.message());
     }
   }
   return http.internal_error("");

@@ -48,8 +48,8 @@ func TestFormatKeepsStreamType(t *testing.T) {
 }
 
 func TestFormatConstParams(t *testing.T) {
-	in := "function count[const N: i32, T](x: T): i32 { return N; }\nfunction main(): i32 { return count[0x10, string](\"a\") + count[3, i32](1); }\n"
-	want := "function count[const N: i32, T](x: T): i32 {\n  return N;\n}\n\nfunction main(): i32 {\n  return count[0x10, string](\"a\") + count[3, i32](1);\n}\n"
+	in := "struct Ring[const N: i32, T] { items: T[] }\nfunction count[const N: i32, T](x: T): i32 { return N; }\nfunction main(): i32 { let r: Ring[0x4, i32] = Ring { items: [] }; return count[0x10, string](\"a\") + count[3, i32](1); }\n"
+	want := "struct Ring[const N: i32, T] { items: T[] }\n\nfunction count[const N: i32, T](x: T): i32 {\n  return N;\n}\n\nfunction main(): i32 {\n  let r: Ring[0x4, i32] = Ring { items: [] };\n  return count[0x10, string](\"a\") + count[3, i32](1);\n}\n"
 	if got := formatSrc(t, in); got != want {
 		t.Errorf("format:\ngot  %q\nwant %q", got, want)
 	}

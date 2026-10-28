@@ -429,145 +429,169 @@ function darwin(): boolean {
 }
 
 pub function session_login(): Option[string] {
-  if (!darwin()) {
-    return None;
+  unsafe {
+    if (!darwin()) {
+      return None;
+    }
+    let p: usize = __account_entry(4, 0 as usize);
+    if (p == 0 as usize) {
+      return None;
+    }
+    return Some(c_string(p));
   }
-  let p: usize = __account_entry(4, 0 as usize);
-  if (p == 0 as usize) {
-    return None;
-  }
-  return Some(c_string(p));
 }
 
 function account_user_id(uid: i64): Option[User] {
-  if (!darwin() || uid < 0 as i64 || uid > 4294967295 as i64) {
-    return None;
+  unsafe {
+    if (!darwin() || uid < 0 as i64 || uid > 4294967295 as i64) {
+      return None;
+    }
+    return account_user(__account_entry(0, uid as usize));
   }
-  return account_user(__account_entry(0, uid as usize));
 }
 
 function account_user_named(name: string): Option[User] {
-  if (!darwin()) {
-    return None;
+  unsafe {
+    if (!darwin()) {
+      return None;
+    }
+    let key: usize = cstr_key(name);
+    let u: Option[User] = account_user(__account_entry(1, key));
+    __free(key, name.len() + 1);
+    return u;
   }
-  let key: usize = cstr_key(name);
-  let u: Option[User] = account_user(__account_entry(1, key));
-  __free(key, name.len() + 1);
-  return u;
 }
 
 function account_group_id(gid: i64): Option[Group] {
-  if (!darwin() || gid < 0 as i64 || gid > 4294967295 as i64) {
-    return None;
+  unsafe {
+    if (!darwin() || gid < 0 as i64 || gid > 4294967295 as i64) {
+      return None;
+    }
+    return account_group(__account_entry(2, gid as usize));
   }
-  return account_group(__account_entry(2, gid as usize));
 }
 
 function account_group_named(name: string): Option[Group] {
-  if (!darwin()) {
-    return None;
+  unsafe {
+    if (!darwin()) {
+      return None;
+    }
+    let key: usize = cstr_key(name);
+    let g: Option[Group] = account_group(__account_entry(3, key));
+    __free(key, name.len() + 1);
+    return g;
   }
-  let key: usize = cstr_key(name);
-  let g: Option[Group] = account_group(__account_entry(3, key));
-  __free(key, name.len() + 1);
-  return g;
 }
 
 function account_group_list(name: string, gid: i64): Option[i64[]] {
-  if (!darwin() || gid < 0 as i64 || gid > 4294967295 as i64) {
-    return None;
-  }
-  let key: usize = cstr_key(name);
-  let block: usize = __alloc(32);
-  let count: usize = __alloc(8);
-  let cap: i32 = 64;
-  let out: Option[i64[]] = None;
-  while (cap <= 65536) {
-    let buf: usize = __alloc(cap * 4);
-    __store_ptr(block, key);
-    __store_i64(block + 8 as usize, gid);
-    __store_ptr(block + 16 as usize, buf);
-    __store_ptr(block + 24 as usize, count);
-    __store_i64(count, cap as i64);
-    let rc: i64 = __account_entry(5, block) as i64 & 4294967295 as i64;
-    if (rc != 4294967295 as i64) {
-      let gids: i64[] = [];
-      let n: i32 = __load_i32(count);
-      let i: i32 = 0;
-      while (i < n && i < cap) {
-        gids = gids.append(id_at(buf + (i * 4) as usize));
-        i = i + 1;
-      }
-      out = Some(gids);
-      __free(buf, cap * 4);
-      break;
+  unsafe {
+    if (!darwin() || gid < 0 as i64 || gid > 4294967295 as i64) {
+      return None;
     }
-    __free(buf, cap * 4);
-    cap = cap * 2;
+    let key: usize = cstr_key(name);
+    let block: usize = __alloc(32);
+    let count: usize = __alloc(8);
+    let cap: i32 = 64;
+    let out: Option[i64[]] = None;
+    while (cap <= 65536) {
+      let buf: usize = __alloc(cap * 4);
+      __store_ptr(block, key);
+      __store_i64(block + 8 as usize, gid);
+      __store_ptr(block + 16 as usize, buf);
+      __store_ptr(block + 24 as usize, count);
+      __store_i64(count, cap as i64);
+      let rc: i64 = __account_entry(5, block) as i64 & 4294967295 as i64;
+      if (rc != 4294967295 as i64) {
+        let gids: i64[] = [];
+        let n: i32 = __load_i32(count);
+        let i: i32 = 0;
+        while (i < n && i < cap) {
+          gids = gids.append(id_at(buf + (i * 4) as usize));
+          i = i + 1;
+        }
+        out = Some(gids);
+        __free(buf, cap * 4);
+        break;
+      }
+      __free(buf, cap * 4);
+      cap = cap * 2;
+    }
+    __free(count, 8);
+    __free(block, 32);
+    __free(key, name.len() + 1);
+    return out;
   }
-  __free(count, 8);
-  __free(block, 32);
-  __free(key, name.len() + 1);
-  return out;
 }
 
 pub function lookup_failure_text(): string {
-  if (!darwin()) {
-    return "";
+  unsafe {
+    if (!darwin()) {
+      return "";
+    }
+    let at: usize = __account_entry(7, 0 as usize);
+    if (at == 0 as usize) {
+      return "";
+    }
+    let e: i32 = __load_i32(at);
+    if (e == 0) {
+      return "";
+    }
+    return c_string(__account_entry(6, e as usize));
   }
-  let at: usize = __account_entry(7, 0 as usize);
-  if (at == 0 as usize) {
-    return "";
-  }
-  let e: i32 = __load_i32(at);
-  if (e == 0) {
-    return "";
-  }
-  return c_string(__account_entry(6, e as usize));
 }
 
 function account_user(p: usize): Option[User] {
-  if (p == 0 as usize) {
-    return None;
+  unsafe {
+    if (p == 0 as usize) {
+      return None;
+    }
+    return Some(User { name: c_string(__load_ptr(p)), uid: id_at(p + 16 as usize), gid: id_at(p + 20 as usize), gecos: c_string(__load_ptr(p + 40 as usize)), dir: c_string(__load_ptr(p + 48 as usize)), shell: c_string(__load_ptr(p + 56 as usize)) });
   }
-  return Some(User { name: c_string(__load_ptr(p)), uid: id_at(p + 16 as usize), gid: id_at(p + 20 as usize), gecos: c_string(__load_ptr(p + 40 as usize)), dir: c_string(__load_ptr(p + 48 as usize)), shell: c_string(__load_ptr(p + 56 as usize)) });
 }
 
 function account_group(p: usize): Option[Group] {
-  if (p == 0 as usize) {
-    return None;
+  unsafe {
+    if (p == 0 as usize) {
+      return None;
+    }
+    return Some(Group { gid: id_at(p + 16 as usize), name: c_string(__load_ptr(p)) });
   }
-  return Some(Group { gid: id_at(p + 16 as usize), name: c_string(__load_ptr(p)) });
 }
 
 function id_at(at: usize): i64 {
-  let v: i64 = __load_i32(at) as i64;
-  if (v < 0 as i64) {
-    return v + 4294967296 as i64;
+  unsafe {
+    let v: i64 = __load_i32(at) as i64;
+    if (v < 0 as i64) {
+      return v + 4294967296 as i64;
+    }
+    return v;
   }
-  return v;
 }
 
 function cstr_key(name: string): usize {
-  let p: usize = __alloc(name.len() + 1);
-  let i: i32 = 0;
-  while (i < name.len()) {
-    __store_u8(p + i as usize, name[i] as i32);
-    i = i + 1;
+  unsafe {
+    let p: usize = __alloc(name.len() + 1);
+    let i: i32 = 0;
+    while (i < name.len()) {
+      __store_u8(p + i as usize, name[i] as i32);
+      i = i + 1;
+    }
+    __store_u8(p + name.len() as usize, 0);
+    return p;
   }
-  __store_u8(p + name.len() as usize, 0);
-  return p;
 }
 
 function c_string(p: usize): string {
-  if (p == 0 as usize) {
-    return "";
+  unsafe {
+    if (p == 0 as usize) {
+      return "";
+    }
+    let bs: u8[] = [];
+    let at: usize = p;
+    while (__load_u8(at) != 0) {
+      bs = bs.append(__load_u8(at) as u8);
+      at = at + 1 as usize;
+    }
+    return string_from_bytes_unchecked(bs);
   }
-  let bs: u8[] = [];
-  let at: usize = p;
-  while (__load_u8(at) != 0) {
-    bs = bs.append(__load_u8(at) as u8);
-    at = at + 1 as usize;
-  }
-  return string_from_bytes_unchecked(bs);
 }

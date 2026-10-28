@@ -348,10 +348,12 @@ pub function (d: RealDriver) handle(): i32 {
 <<13 impl Driver for RealDriver>>=
 impl Driver for RealDriver {
   function poll_ready(self: RealDriver, toks: i32[], timeout: Option[Duration]): i32 {
-    if (__task_cur() != 0) {
-      return park_tokens(toks, timeout);
+    unsafe {
+      if (__task_cur() != 0) {
+        return park_tokens(toks, timeout);
+      }
+      return poll(toks, time.timeout_millis(timeout));
     }
-    return poll(toks, time.timeout_millis(timeout));
   }
   function now(self: RealDriver): Instant {
     return clock.instant();
@@ -728,7 +730,9 @@ pub function cancelled(): i32 {
 }
 
 pub function task_new[T](entry: () => T): Task[T] {
-  return Task { id: __task_new(), entry: entry };
+  unsafe {
+    return Task { id: __task_new(), entry: entry };
+  }
 }
 
 pub function task_start[T](t: Task[T]): TaskStatus[T] {
@@ -736,41 +740,53 @@ pub function task_start[T](t: Task[T]): TaskStatus[T] {
 }
 
 pub function in_task(): boolean {
-  return __task_cur() != 0;
+  unsafe {
+    return __task_cur() != 0;
+  }
 }
 
 pub function parks(): boolean {
-  let t: Task[boolean] = task_new((): boolean => __task_cur() != 0);
-  match (task_start(t)) {
-    Done(ran) => {
-      task_free(t);
-      return ran;
-    },
-    _ => {
-      task_free(t);
-      return true;
+  unsafe {
+    let t: Task[boolean] = task_new((): boolean => __task_cur() != 0);
+    match (task_start(t)) {
+      Done(ran) => {
+        task_free(t);
+        return ran;
+      },
+      _ => {
+        task_free(t);
+        return true;
+      }
     }
+    return false;
   }
-  return false;
 }
 
 pub function task_resume[T](t: Task[T], ready: i32): TaskStatus[T] {
-  __task_set_ready(t.id, ready);
-  return run_task(t, 2);
+  unsafe {
+    __task_set_ready(t.id, ready);
+    return run_task(t, 2);
+  }
 }
 
 pub function task_cancel[T](t: Task[T]): TaskStatus[T] {
-  __task_set_cancelled(t.id);
-  let st: TaskStatus[T] = run_task(t, 2);
-  return Cancelled;
+  unsafe {
+    __task_set_cancelled(t.id);
+    let st: TaskStatus[T] = run_task(t, 2);
+    return Cancelled;
+  }
 }
 
 pub function task_cancelled(): boolean {
-  return __task_cancelled() != 0;
+  unsafe {
+    return __task_cancelled() != 0;
+  }
 }
 
 pub function task_free[T](t: Task[T]): void {
-  __task_free(t.id);
+  unsafe {
+    __task_free(t.id);
+  }
 }
 ```
 
@@ -780,13 +796,15 @@ pub function task_free[T](t: Task[T]): void {
 <<20 function run_task[T](t: Task[T], mode: i32): TaskStatus[T]>>=
 @noinline
 function run_task[T](t: Task[T], mode: i32): TaskStatus[T] {
-  __task_enter(t.id, mode);
-  let v: T = t.entry();
-  let m: i32 = __task_leave();
-  if (m == 1) {
-    return Suspended(Wait { task: t.id, set: __task_wait(t.id), timeout: time.millis_timeout(__task_timeout(t.id)) });
+  unsafe {
+    __task_enter(t.id, mode);
+    let v: T = t.entry();
+    let m: i32 = __task_leave();
+    if (m == 1) {
+      return Suspended(Wait { task: t.id, set: __task_wait(t.id), timeout: time.millis_timeout(__task_timeout(t.id)) });
+    }
+    return Done(v);
   }
-  return Done(v);
 }
 ```
 
@@ -802,20 +820,22 @@ pub struct Call[A, B, T] { id: i32, f: (A, B) => T, a: A, b: B }
 ```fern
 <<22 pub function call_start[A, B, T](f: (A, B)>>=
 pub function call_start[A, B, T](f: (A, B) => T, a: A, b: B): TaskStatus[T] {
-  let id: i32 = __task_new();
-  match (run_task_call(id, f, a, b, 0)) {
-    Done(v) => {
-      __task_free(id);
-      return Done(v);
-    },
-    Suspended(w) => {
-      return Suspended(w);
-    },
-    Cancelled => {
-      __task_free(id);
+  unsafe {
+    let id: i32 = __task_new();
+    match (run_task_call(id, f, a, b, 0)) {
+      Done(v) => {
+        __task_free(id);
+        return Done(v);
+      },
+      Suspended(w) => {
+        return Suspended(w);
+      },
+      Cancelled => {
+        __task_free(id);
+      }
     }
+    return Cancelled;
   }
-  return Cancelled;
 }
 
 pub function call_of[A, B, T](w: Wait, f: (A, B) => T, a: A, b: B): Call[A, B, T] {
@@ -823,18 +843,24 @@ pub function call_of[A, B, T](w: Wait, f: (A, B) => T, a: A, b: B): Call[A, B, T
 }
 
 pub function call_resume[A, B, T](c: Call[A, B, T], ready: i32): TaskStatus[T] {
-  __task_set_ready(c.id, ready);
-  return run_task_call(c.id, c.f, c.a, c.b, 2);
+  unsafe {
+    __task_set_ready(c.id, ready);
+    return run_task_call(c.id, c.f, c.a, c.b, 2);
+  }
 }
 
 pub function call_cancel[A, B, T](c: Call[A, B, T]): TaskStatus[T] {
-  __task_set_cancelled(c.id);
-  let st: TaskStatus[T] = run_task_call(c.id, c.f, c.a, c.b, 2);
-  return Cancelled;
+  unsafe {
+    __task_set_cancelled(c.id);
+    let st: TaskStatus[T] = run_task_call(c.id, c.f, c.a, c.b, 2);
+    return Cancelled;
+  }
 }
 
 pub function call_free[A, B, T](c: Call[A, B, T]): void {
-  __task_free(c.id);
+  unsafe {
+    __task_free(c.id);
+  }
 }
 ```
 
@@ -844,13 +870,15 @@ pub function call_free[A, B, T](c: Call[A, B, T]): void {
 <<23 function run_task_call[A, B, T](id: i32, f: (A, B)>>=
 @noinline
 function run_task_call[A, B, T](id: i32, f: (A, B) => T, a: A, b: B, mode: i32): TaskStatus[T] {
-  __task_enter(id, mode);
-  let v: T = f(a, b);
-  let m: i32 = __task_leave();
-  if (m == 1) {
-    return Suspended(Wait { task: id, set: __task_wait(id), timeout: time.millis_timeout(__task_timeout(id)) });
+  unsafe {
+    __task_enter(id, mode);
+    let v: T = f(a, b);
+    let m: i32 = __task_leave();
+    if (m == 1) {
+      return Suspended(Wait { task: id, set: __task_wait(id), timeout: time.millis_timeout(__task_timeout(id)) });
+    }
+    return Done(v);
   }
-  return Done(v);
 }
 ```
 
@@ -859,22 +887,24 @@ function run_task_call[A, B, T](id: i32, f: (A, B) => T, a: A, b: B, mode: i32):
 ```fern
 <<24 pub function park_tokens(toks: i32[], timeout: Option[Duration]): i32>>=
 pub function park_tokens(toks: i32[], timeout: Option[Duration]): i32 {
-  let set: i32[] = [];
-  let idxs: i32[] = [];
-  let i: i32 = 0;
-  while (i < toks.len()) {
-    if (toks[i] >= 0) {
-      set = set.append(toks[i]);
-      set = set.append(1);
-      idxs = idxs.append(i);
+  unsafe {
+    let set: i32[] = [];
+    let idxs: i32[] = [];
+    let i: i32 = 0;
+    while (i < toks.len()) {
+      if (toks[i] >= 0) {
+        set = set.append(toks[i]);
+        set = set.append(1);
+        idxs = idxs.append(i);
+      }
+      i = i + 1;
     }
-    i = i + 1;
+    let r: i32 = __task_park(set, time.timeout_millis(timeout));
+    if (r < 0) {
+      return r;
+    }
+    return idxs[r];
   }
-  let r: i32 = __task_park(set, time.timeout_millis(timeout));
-  if (r < 0) {
-    return r;
-  }
-  return idxs[r];
 }
 ```
 
@@ -1141,29 +1171,31 @@ pub function with_deadline_tasks[T](deadline: Duration, entries: (() => T)[]): O
 }
 
 pub function wait_any(set: i32[], timeout: Option[Duration]): i32 {
-  let timeout_ms: i32 = time.timeout_millis(timeout);
-  if (__task_cur() != 0) {
-    return __task_park(set, timeout_ms);
-  }
-  let n: i32 = set.len() / 2;
-  if (n <= 0) {
-    if (timeout_ms > 0) {
-      sleep_ms(timeout_ms as i64);
+  unsafe {
+    let timeout_ms: i32 = time.timeout_millis(timeout);
+    if (__task_cur() != 0) {
+      return __task_park(set, timeout_ms);
     }
-    return 0 - 1;
-  }
-  let reads: boolean = true;
-  let i: i32 = 0;
-  while (i < n) {
-    if (interest_bits(set[i * 2 + 1]) != 1) {
-      reads = false;
+    let n: i32 = set.len() / 2;
+    if (n <= 0) {
+      if (timeout_ms > 0) {
+        sleep_ms(timeout_ms as i64);
+      }
+      return 0 - 1;
     }
-    i = i + 1;
+    let reads: boolean = true;
+    let i: i32 = 0;
+    while (i < n) {
+      if (interest_bits(set[i * 2 + 1]) != 1) {
+        reads = false;
+      }
+      i = i + 1;
+    }
+    if (reads) {
+      return __wait_readable(set, n, timeout_ms);
+    }
+    return __wait_watched(set, n, timeout_ms);
   }
-  if (reads) {
-    return __wait_readable(set, n, timeout_ms);
-  }
-  return __wait_watched(set, n, timeout_ms);
 }
 ```
 

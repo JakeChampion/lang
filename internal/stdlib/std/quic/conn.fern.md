@@ -1462,8 +1462,10 @@ function __no_plan(space: i32): Plan {
 
 // __emptied is a sealed plan made ready for the next datagram, its buffer kept.
 function __emptied(p: Plan): Plan {
-  __arr_set_len(p.payload, 0);
-  return Plan { ...p, eliciting: false, resend: [] };
+  unsafe {
+    __arr_set_len(p.payload, 0);
+    return Plan { ...p, eliciting: false, resend: [] };
+  }
 }
 
 function (c: Conn) __datagram_out(now: i64): Conn {
@@ -1593,12 +1595,14 @@ function (p: Plan) __ack_put(delay: i64, ranges: frames.AckRange[], room: i32): 
 
 // __started gives a plan's first frame a buffer the whole datagram fits in.
 function (p: Plan) __started(room: i32): Plan {
-  if (p.payload.len() > 0 || p.sized) {
-    return p;
+  unsafe {
+    if (p.payload.len() > 0 || p.sized) {
+      return p;
+    }
+    let out: u8[] = __alloc_u8(room);
+    __arr_set_len(out, 0);
+    return Plan { ...p, payload: out, sized: true };
   }
-  let out: u8[] = __alloc_u8(room);
-  __arr_set_len(out, 0);
-  return Plan { ...p, payload: out, sized: true };
 }
 
 function (c: Conn) __acked_out(space: i32): Conn {

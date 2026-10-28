@@ -66,6 +66,9 @@ whose kinds are semantic (`record_get`, `tuple_new`, `append`, `with`,
 `0..nparams-1`. There is no retain or release in it. A value is immutable:
 `append` and `with` answer a new container, and the physical question of
 whether that container is the old buffer written in place is the plan's.
+`truncate` consumes its receiver the same way. `ssarc` tests the box at run
+time. A unique box releases its tail and keeps its storage. A shared box is
+copied up to the new length.
 
 A struct-union's member IS its box, so a match arm's binding is the scrutinee
 narrowed (`variant_as`), and a field read of that binding is lowered as a

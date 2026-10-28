@@ -229,8 +229,31 @@ function rows_planned(mod: parser.Module, built: semsource.Built, prev: Rows, ch
     plans = plans.with(i, ssaunits.with_fresh(plans[i], funcs[i], fresh));
     i = i + 1;
   }
-  r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans), fresh: fresh, pure: pure_rows(keys, funcs), susp: suspend.classify(keys, funcs), plans: plans };
+  let grows: ssaunits.GrowTable = ssaunits.grow_table(keys, funcs, plans);
+  let held: boolean = false;
+  for k in 0..funcs.len() {
+    let forced: boolean[] = ssaunits.grow_holds(funcs[k], plans[k], grows);
+    if (ssaunits.count_true(forced) > 0) {
+      plans = plans.with(k, ssaunits.with_fresh(held_plan(produced_at(built, mod, k), views[k], forced), funcs[k], fresh));
+      held = true;
+    }
+  }
+  if (held) {
+    grows = ssaunits.grow_table(keys, funcs, plans);
+  }
+  r = Rows { ...r, grows: grows, fresh: fresh, pure: pure_rows(keys, funcs), susp: suspend.classify(keys, funcs), plans: plans };
   return Planned { r: r, views: views };
+}
+
+function held_plan(p: semsource.Produced, view: ssaunits.SchemaView, forced: boolean[]): ssaunits.Plan {
+  match (p.analysis) {
+    Some(a) => {
+      return ssaunits.plan_held(p.func, p.modes, a, view, forced);
+    },
+    None => {
+      return ssaunits.plan_held(p.func, p.modes, ssasem.analyze(p.func), view, forced);
+    }
+  }
 }
 
 function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced, view: ssaunits.SchemaView): ssaunits.Plan {
@@ -444,7 +467,7 @@ function instance_records(built: semsource.Built): parser.StructDecl[] {
           for fl in rec.fields {
             fields = fields.append(parser.bare_field(fl.name, field_spelling(fl.ty)));
           }
-          out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: false, is_package: false, opaque: false, module: "" });
+          out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: false, is_package: false, opaque: false, module: "" });
         }
       }
     }
@@ -487,7 +510,7 @@ function instance_variants(built: semsource.Built): parser.StructDecl[] {
         for fl in v.fields {
           fields = fields.append(parser.bare_field(fl.name, field_spelling(fl.ty)));
         }
-        out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], derives: [], line: 0, col: 0, enum_owner: ssasem.type_key(e.ty), must_consume: false, variant_field_names: [], is_pub: false, is_package: false, opaque: false, module: "" });
+        out = out.append(parser.StructDecl { name: name, fields: fields, type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: ssasem.type_key(e.ty), must_consume: false, variant_field_names: [], is_pub: false, is_package: false, opaque: false, module: "" });
       }
     }
   }

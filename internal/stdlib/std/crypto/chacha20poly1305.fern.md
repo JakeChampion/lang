@@ -521,25 +521,29 @@ function __aead_tag(k: Stream, aad: [u8], ct: [u8], from: i32, len: i32): u8[] {
 ```fern
 <<13 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError]>>=
 pub function (k: Key) seal(nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
-  let n: i32 = plaintext.len();
-  let a: i32 = aad.len();
-  let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(n + 16 + a), 0, plaintext, 0, n), n + 16, aad, 0, a);
-  buf = k.seal_in_place(nonce, 0 as u64, buf, n + 16, a, 0, n)?;
-  __arr_set_len(buf, n + 16);
-  return Ok(buf);
+  unsafe {
+    let n: i32 = plaintext.len();
+    let a: i32 = aad.len();
+    let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(n + 16 + a), 0, plaintext, 0, n), n + 16, aad, 0, a);
+    buf = k.seal_in_place(nonce, 0 as u64, buf, n + 16, a, 0, n)?;
+    __arr_set_len(buf, n + 16);
+    return Ok(buf);
+  }
 }
 
 pub function (k: Key) open(nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], aead.AeadError] {
-  if (sealed.len() < 16) {
-    __stream(k, nonce)?;
-    return Err(aead.Forged);
+  unsafe {
+    if (sealed.len() < 16) {
+      __stream(k, nonce)?;
+      return Err(aead.Forged);
+    }
+    let n: i32 = sealed.len() - 16;
+    let a: i32 = aad.len();
+    let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(n + 16 + a), 0, sealed, 0, n + 16), n + 16, aad, 0, a);
+    buf = k.open_in_place(nonce, 0 as u64, buf, n + 16, a, 0, n)?;
+    __arr_set_len(buf, n);
+    return Ok(buf);
   }
-  let n: i32 = sealed.len() - 16;
-  let a: i32 = aad.len();
-  let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(n + 16 + a), 0, sealed, 0, n + 16), n + 16, aad, 0, a);
-  buf = k.open_in_place(nonce, 0 as u64, buf, n + 16, a, 0, n)?;
-  __arr_set_len(buf, n);
-  return Ok(buf);
 }
 
 // Seals buf[at:at + n] in place under the nonce iv ^ seq, authenticating buf[aad_at:aad_at + aad_n], with the

@@ -314,7 +314,7 @@ function test_hex_agrees_with_the_stdlib(): test.TestOutcome {
   ];
   for i in 0..good.len() {
     let mine: Option[Rgb] = parse_hex(good[i]);
-    let theirs: Option[i32] = math.parse_rgb_hex(good[i]);
+    let theirs: Option[i32] = math.parse_rgb_hex(good[i]).ok();
     match (mine) {
       None => {
         return test.fail("rejected \"" + good[i] + "\", which is valid");

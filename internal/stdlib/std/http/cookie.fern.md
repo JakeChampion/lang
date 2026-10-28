@@ -475,10 +475,10 @@ pub function (j: Jar) set(request_url: string, set_cookie: string, now: time.Tim
 pub function (j: Jar) header(request_url: string, now: time.Timestamp): Option[string] {
   let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.url_parse(request_url)) {
-    Some(p) => {
+    Ok(p) => {
       u = p;
     },
-    None => {
+    Err(_) => {
       return None;
     }
   }
@@ -545,13 +545,13 @@ struct __Parsed { name: string, value: string, domain: string, path: string, has
 <<18 function __url(request_url: string): Result[Url, Ignored]>>=
 function __url(request_url: string): Result[Url, Ignored] {
   match (url.url_parse(request_url)) {
-    Some(u) => {
+    Ok(u) => {
       if (u.host.len() == 0) {
         return Err(NotACookie);
       }
       return Ok(u);
     },
-    None => {
+    Err(_) => {
       return Err(NotACookie);
     }
   }

@@ -11,7 +11,7 @@ import (
 const tailArrayAllocationSource = `@noinline function raw_arr_box(x: f64): f64 { return x + 1.0; }
 @noinline function lane_keep(v: f64x2): f64x2 { return v + __f64x2_splat(2.0); }
 @noinline function lane_tail(v: f64x2): f64x2 { return lane_keep(v); }
-@noinline function overwrite(p: usize): i32 { __store_i32(p, 7); return 0; }
+@noinline function overwrite(p: usize): i32 { unsafe { __store_i32(p, 7); } return 0; }
 @noinline function live(n: i32): i32[] {
   overwrite(__raw_scratch(8));
   return __raw_array(__raw_arr_box(n));

@@ -73,13 +73,15 @@ func parseLeakCheckLineFrom(t *testing.T, stderr string) (allocs, frees, live in
 }
 
 const leakCheckBalancedSrc = `function main(): i32 {
-    let i: i32 = 0;
-    while (i < 100) {
-        let a: usize = __alloc(64);
-        __free(a, 64);
-        i = i + 1;
-    }
-    return 0;
+  unsafe {
+      let i: i32 = 0;
+      while (i < 100) {
+          let a: usize = __alloc(64);
+          __free(a, 64);
+          i = i + 1;
+      }
+      return 0;
+  }
 }`
 
 const leakCheckRcDropSrc = `function main(): i32 {
@@ -95,19 +97,23 @@ const leakCheckRcDropSrc = `function main(): i32 {
 }`
 
 const leakCheckLeakySrc = `function main(): i32 {
-    let a: usize = __alloc(60);
-    let b: usize = __alloc(60);
-    let c: usize = __alloc(60);
-    __free(a, 60);
-    if (b == c) { return 9; }
-    return 42;
+  unsafe {
+      let a: usize = __alloc(60);
+      let b: usize = __alloc(60);
+      let c: usize = __alloc(60);
+      __free(a, 60);
+      if (b == c) { return 9; }
+      return 42;
+  }
 }`
 
 const leakCheckExitBuiltinSrc = `function main(): i32 {
-    let a: usize = __alloc(100);
-    print("hello");
-    exit(7);
-    return 0;
+  unsafe {
+      let a: usize = __alloc(100);
+      print("hello");
+      exit(7);
+      return 0;
+  }
 }`
 
 func TestX86_64LeakCheckBalanced(t *testing.T) {

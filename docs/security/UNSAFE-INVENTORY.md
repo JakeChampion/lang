@@ -4,8 +4,7 @@ Status: [reference] inventory for [SEC-003](https://github.com/JakeChampion/lang
 Parent: [security epic](https://github.com/JakeChampion/lang/issues/13502).
 
 This file lists each builtin that a safe caller cannot use without an obligation.
-It records the current access rule for each group.
-It does not change any access rule.
+It records the access rule for each group.
 The types come from `checker.intrinsic_params`, `checker.intrinsic_result`, and `checker.raw_floor_sigs`.
 
 ## Access rules today
@@ -13,15 +12,18 @@ The types come from `checker.intrinsic_params`, `checker.intrinsic_result`, and 
 | Group | Who can call it today | Checker rule |
 |---|---|---|
 | Raw floor (`__raw_*`, `__syscall3` to `__syscall6`) | Runtime helper sources only | `raw_allowed` is true only for the bundle check path. Other sources receive `E001`. |
-| Memory intrinsics (groups A and B below) | Every source: user programs, the standard library, `coreutils` | `is_resolvable_callee` admits every `__` name. No obligation is recorded. |
-| Bounded intrinsics (group C below) | Every source | Same admission. The operations carry a typed value and a length. |
+| Memory intrinsics (groups A and B below) | Every source, inside an `unsafe` block | Both checkers refuse a call outside an `unsafe` block as `E095`. The bundle check path is an unsafe context, because the runtime helper sources are the raw floor. |
+| Bounded intrinsics (group C below) | Every source | `is_resolvable_callee` admits them. The operations carry a typed value and a length. |
 | `unsafe function` declarations | Every source | `E095` refuses a call outside an `unsafe` block, a function value, and an unsafe implementation of a safe trait method. |
 
-The probe `__alloc(16)`, `__store_i32(p, 7)`, `__store_u8(4096 as usize, 1)`, `__load_i32(p)` and `__c_call0(p)` in an ordinary `main` passes both checkers at this commit.
-That is the gap that the coordinated enforcement change must close.
-The standard library calls group A in `core/map`, `std/jni`, `std/string`, `std/brotli`, `std/deflate`, `std/zstd`, `std/net`, and `std/serve`.
-The HTTP and QUIC modules and the TLS record layer call it too.
-`coreutils/lib/base.fern` and `coreutils/lib/pwdb.fern` call it too.
+The set is `unsafe_intrinsics` in `compiler/checker.fern` and `UnsafeIntrinsics` in `internal/check/checker`.
+`TestUnsafeIntrinsicsMatchSelfHost` pins the two equal.
+The probe `__alloc(16)`, `__store_i32(p, 7)`, `__load_i32(p)` and `__free(p, 16)` in an ordinary `main` is `conformance/cases/diag_e095_raw_builtin_outside_unsafe`, and the same calls inside a block are the control `unsafe_block_accepts_raw_builtins`.
+
+The standard library carries the blocks in `core/map`, `std/jni`, `std/async`, `std/string`, `std/brotli`, `std/deflate`, `std/zstd`, `std/net`, `std/serve` and `std/sim`.
+The HTTP and QUIC modules, the TLS record layer and the AEAD modules carry them too.
+`coreutils/lib/base.fern` and `coreutils/lib/pwdb.fern` carry them too.
+A block wraps the body of each function that calls a raw builtin, so the function's own validation runs inside it.
 
 ## Group A: address-carrying intrinsics
 
@@ -49,7 +51,6 @@ These take typed values, but they change ownership, layout, or control flow outs
 | `__rc_inc(a)`, `__rc_dec(a)`, `__rc_get(a)`, `__fern_rc_dec(p)` | The count must match the real number of references after the call. |
 | `__arr_set_len(a, n)` | `n` must not exceed the capacity, and the new elements must be initialized before a read. [The bounds audit](BOUNDS-AUDIT.md) shows a safe `main` that reads past a three-element array through it. |
 | `__arr_push_shared_bytes()`, `__arr_push_shared_count()` | Read-only counters. No obligation. |
-| `__alloc_bool(n)`, `__alloc_i32(n)`, `__alloc_i64(n)`, `__alloc_u8(n)` | The array is typed, but its elements are not initialized by the language. The initialization audit is SEC-006. |
 | `__heap_mark()`, `__heap_release_to(m)` | Every value allocated after the mark must be dead before the release. |
 | `__c_call0` to `__c_call4`, with `_f32` and `_f64` forms | A foreign call through a code address. The address and the argument contract are the caller's proof. |
 | `__task_new`, `__task_free`, `__task_enter`, `__task_leave`, `__task_park`, `__task_wait`, `__task_set_ready`, `__task_set_cancelled`, `__task_cancelled`, `__task_timeout`, `__task_cur` | Runtime scheduler hooks. A task id must be live and the state transition must be valid. |
@@ -63,6 +64,7 @@ The audit of their internal range checks belongs to SEC-005 and SEC-035.
 
 - Scan and count kernels: `__memchr`, `__rmemchr`, `__memchr_bytes`, `__rmemchr_bytes`, `__mismatch`, `__mismatch_bytes`, `__mismatch_bytes_str`, `__count_byte`, `__count_byte_bytes`, `__count_runs`, `__count_runs_bytes`, `__count_below_u64`, `__scan_set`, `__scan_set_bytes`, `__ascii_run`, `__sum_bytes`, `__sum_bytes_array`, `__bsd_sum`, `__bsd_sum_bytes`, `__crc32_cksum`, `__crc32_cksum_array`, `__crc32_ieee_array`, `__str_hash`.
 - Byte views: `__bytes_into`, `__bytes_owned`, `__bytes_range`.
+- Typed allocations: `__alloc_bool`, `__alloc_i32`, `__alloc_i64`, `__alloc_u8`. Every payload word is zero at allocation ([ERASURE-AND-QUOTAS.md](ERASURE-AND-QUOTAS.md)), so a fresh array carries no obligation.
 - Arithmetic and text conversion: `__abs_f64`, `__ceil_f64`, `__floor_f64`, `__round_f64`, `__sqrt_f64`, `__trunc_f64`, `__scale_f64`, `__outer_mul_f64`, `__inner_mul_add_f64`, `__clz32`, `__clz64`, `__ctz32`, `__ctz64`, `__popcount32`, `__popcount64`, `__mulhi_u64`, `__ptr_width`, the `__primitive_*_to_string` family.
 - Lanes: the `__f64x2_*` and `__f32x4_*` families.
 - Cryptographic kernels: `__aes_expand_key`, `__aes_ctr32`, `__aes_gcm_seal_into`, `__aes_gcm_open_into`, `__ghash`, `__sha1_hw`, `__sha1_hw_blocks`, `__sha256_hw`, `__sha256_hw_blocks`. Their buffer contracts belong to SEC-037.
@@ -76,10 +78,8 @@ The audit of their internal range checks belongs to SEC-005 and SEC-035.
 The floor is private to the runtime helper sources.
 A user program or a standard library module that names one receives `E001`.
 
-## Required change
+## Remaining limits
 
-Groups A and B must require an `unsafe` block at every call site.
-The standard library, `coreutils`, and the runtime helpers must accept that obligation in annotated blocks.
-The compiler imports `std/string`, `std/crypto`, `std/deflate`, `std/http`, and other modules that call group A.
-The pinned stage0 compiler, `stage0-20261028-9193717`, parses `unsafe` blocks.
-Therefore those modules can carry `unsafe` blocks now, and the enforcement change is one coordinated PR.
+- A block wraps a whole function body. A finer block per raw operation, with the validation outside it, is a per-function refactor the contract's step 4 still describes.
+- The runtime helper sources carry no blocks. Their check path admits the raw floor, and the same path is the unsafe context.
+- A call through a function value carries no obligation, as for an unsafe function. A raw builtin is not a value, so no such path exists for it.
