@@ -18,6 +18,16 @@ function pick(v: f64x2, i: i32): f64 {
     while (i < 2) { s = s + pick(v, i); i = i + 1; }
     return s;
 }
+@noinline function ranged(v: f64x2): f64 {
+    let s: f64 = 0.0;
+    for i in 0..2 { s = s * 10.0 + pick(v, i); }
+    return s;
+}
+@noinline function ranged17(): i32 {
+    let s: i32 = 0;
+    for i in 0..17 { s = s + i; }
+    return s;
+}
 @noinline function kept17(): i32 {
     let s: i32 = 0;
     let i: i32 = 0;
@@ -32,7 +42,8 @@ function pick(v: f64x2, i: i32): f64 {
 }
 function main(): i32 {
     print(summed(__f64x2_of(1.5, 2.25)));
-    print(kept17() + unknown(4));
+    print(ranged(__f64x2_of(1.5, 2.25)));
+    print(kept17() + unknown(4) + ranged17());
     return 0;
 }
 `
@@ -67,14 +78,16 @@ func TestSelfHostSemanticUnrollCountedLoops(t *testing.T) {
 	}
 	dump := string(out)
 
-	summed := semDumpBody(t, dump, "summed")
-	if strings.Contains(summed, "brif") {
-		t.Errorf("summed keeps a loop or a lane branch:\n%s", summed)
+	for _, name := range []string{"summed", "ranged"} {
+		body := semDumpBody(t, dump, name)
+		if strings.Contains(body, "brif") {
+			t.Errorf("%s keeps a loop or a lane branch:\n%s", name, body)
+		}
+		if n := strings.Count(body, "call __f64x2_lane"); n != 2 {
+			t.Errorf("%s reads %d lanes, want 2:\n%s", name, n, body)
+		}
 	}
-	if n := strings.Count(summed, "call __f64x2_lane"); n != 2 {
-		t.Errorf("summed reads %d lanes, want 2:\n%s", n, summed)
-	}
-	for _, name := range []string{"kept17", "unknown"} {
+	for _, name := range []string{"kept17", "unknown", "ranged17"} {
 		if body := semDumpBody(t, dump, name); !strings.Contains(body, "brif") || !strings.Contains(body, "phi") {
 			t.Errorf("%s lost its loop:\n%s", name, body)
 		}
@@ -84,7 +97,7 @@ func TestSelfHostSemanticUnrollCountedLoops(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, got)
 	}
-	if string(got) != "3.75\n142\n" {
-		t.Errorf("output %q, want %q", got, "3.75\n142\n")
+	if want := "3.75\n17.25\n278\n"; string(got) != want {
+		t.Errorf("output %q, want %q", got, want)
 	}
 }

@@ -1,5 +1,6 @@
 import "./ssa";
 import "./ssasem";
+import "./typeinfo";
 
 pub struct Pruned { f: ssasem.Func, removed: i32 }
 
@@ -117,11 +118,17 @@ function droppable(k: i32): boolean {
 
 function unread_construction(f: ssasem.Func, uses: i32[], ins: ssa.SInst): boolean {
   let k: i32 = ins.kind_tag;
-  if (k != ssasem.record_new() && k != ssasem.tuple_new() && k != ssasem.variant_new() && k != 7) {
+  if (k != ssasem.record_new() && k != ssasem.tuple_new() && k != ssasem.variant_new() && k != 7 && !pure_lane_call(ins)) {
     return false;
   }
   if (ins.result < 0 || ins.result >= uses.len() || uses[ins.result] != 0) {
     return false;
   }
-  return k == 7 || !ssasem.has_finalizer(f, f.values[ins.result]);
+  return k == 7 || k == ssasem.call() || !ssasem.has_finalizer(f, f.values[ins.result]);
+}
+
+// A lane builtin that reads only its operands.
+function pure_lane_call(ins: ssa.SInst): boolean {
+  let verb: string = typeinfo.lane_builtin_verb(ins.str);
+  return ins.kind_tag == ssasem.call() && verb != "" && verb != "with" && verb != "load";
 }
