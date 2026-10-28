@@ -15693,6 +15693,18 @@ func isPolymorphicNumeric(t ast.Type) bool {
 	return false
 }
 
+// floatResultParam reports a call of fn[T] that returns its T, with T bound to
+// a float or to an unsettled numeric literal, so a float hint on the result
+// settles T.
+func floatResultParam(fn *ast.FuncDecl, typeArgs []ast.Type) bool {
+	if len(fn.TypeParams) != 1 || len(typeArgs) != 1 {
+		return false
+	}
+	rt, ok := fn.ReturnType.(ast.ParamType)
+	_, float := typeArgs[0].(ast.FloatType)
+	return ok && rt.Name == fn.TypeParams[0] && (float || isPolymorphicNumeric(typeArgs[0]))
+}
+
 func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 	width := hf.NormalWidth()
 	switch x := e.(type) {
@@ -15742,7 +15754,7 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 		}
 	case *ast.Call:
 		if id, ok := x.Callee.(*ast.Ident); ok && !c.shadowedGenericCalls[x] {
-			if fn, isGen := c.info.GenericFuncs[id.Name]; isGen {
+			if fn, isGen := c.info.GenericFuncs[id.Name]; isGen && floatResultParam(fn, x.TypeArgs) {
 				for i, p := range fn.Params {
 					if i >= len(x.Args) {
 						break
@@ -15751,9 +15763,7 @@ func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
 						c.settleFloat(x.Args[i], hf)
 					}
 				}
-				if len(fn.TypeParams) == 1 && len(x.TypeArgs) == 1 {
-					x.TypeArgs[0] = hf
-				}
+				x.TypeArgs[0] = hf
 			}
 		}
 	case *ast.FieldAccess:
