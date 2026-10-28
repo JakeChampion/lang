@@ -1,0 +1,167 @@
+{
+  "main": "a26e7c62054053a9c4e4902c80b78d632d2f74ff",
+  "files": [
+    {
+      "path": ".github/perf-baseline.txt",
+      "main_sha256": "ab23a2bceac2a2d07f5d11aab1b30cfdd61cb444f8a9b25a2a9edf5444d5a5f6",
+      "merged_sha256": "b54c78cc48b92cc31c5f2fdece3851fc9de747a9c8819163654b2eeb5a2a9bcf",
+      "exact_main": false
+    },
+    {
+      "path": "coreutils/lib/resolv.fern",
+      "main_sha256": "c5b528b6a317c16caf07c6b4e06ae107b7a17ddc9a368cdb2d53857db94fcf89",
+      "merged_sha256": "c5b528b6a317c16caf07c6b4e06ae107b7a17ddc9a368cdb2d53857db94fcf89",
+      "exact_main": true
+    },
+    {
+      "path": "internal/stdlib/std/dns.fern.md",
+      "main_sha256": "084c0db390f48f12fbe788fe288a037dabd4a1d633ab75741929e2bd894676a1",
+      "merged_sha256": "084c0db390f48f12fbe788fe288a037dabd4a1d633ab75741929e2bd894676a1",
+      "exact_main": true
+    },
+    {
+      "path": "internal/stdlib/std/fetch.fern.md",
+      "main_sha256": "68431158465a703bab3f28c8d5345223d63d919d37089bde904a45b1e3d7e99f",
+      "merged_sha256": "68431158465a703bab3f28c8d5345223d63d919d37089bde904a45b1e3d7e99f",
+      "exact_main": true
+    },
+    {
+      "path": "internal/stdlib/std/http/forwarded.fern.md",
+      "main_sha256": "36db1dd49a86b4669053c2e91cf45a5c29ac261383870a5c746301365700b66f",
+      "merged_sha256": "36db1dd49a86b4669053c2e91cf45a5c29ac261383870a5c746301365700b66f",
+      "exact_main": true
+    },
+    {
+      "path": "internal/stdlib/std/net.fern.md",
+      "main_sha256": "32fc8385cc8a3a45ff1ad6f8358e54d8de7f40ee557af60111bd79a79c4cc5d3",
+      "merged_sha256": "32fc8385cc8a3a45ff1ad6f8358e54d8de7f40ee557af60111bd79a79c4cc5d3",
+      "exact_main": true
+    },
+    {
+      "path": "internal/stdlib/std/sim_fetch.fern.md",
+      "main_sha256": "3dc70f19bcc6249d0b18fbb9f3d0bdaa8a720e95fd8ee31ecbb52faaf4cfb852",
+      "merged_sha256": "3dc70f19bcc6249d0b18fbb9f3d0bdaa8a720e95fd8ee31ecbb52faaf4cfb852",
+      "exact_main": true
+    },
+    {
+      "path": "internal/stdlib/std/tls/client.fern.md",
+      "main_sha256": "3d8f7b2858838968dd54fa5323f8cb2b8ca53db0ac6ac6ffa350aab8605bc84c",
+      "merged_sha256": "3d8f7b2858838968dd54fa5323f8cb2b8ca53db0ac6ac6ffa350aab8605bc84c",
+      "exact_main": true
+    },
+    {
+      "path": "internal/stdlib/std/tls/verify.fern.md",
+      "main_sha256": "a8f33599f6bc7e77a855d4607906c49e280015f94817c98d0da3e6bdcd44b2c6",
+      "merged_sha256": "a8f33599f6bc7e77a855d4607906c49e280015f94817c98d0da3e6bdcd44b2c6",
+      "exact_main": true
+    },
+    {
+      "path": "internal/testing/e2e/serve_h3_peer_limit_test.go",
+      "main_sha256": "ed3e445badd1be260f4e20a3ab1fc8404584b1a600895d2d7b79f5a4e904c35f",
+      "merged_sha256": "ed3e445badd1be260f4e20a3ab1fc8404584b1a600895d2d7b79f5a4e904c35f",
+      "exact_main": true
+    },
+    {
+      "path": "internal/testing/e2e/serve_h3_socket_test.go",
+      "main_sha256": "a2b873fafbf52bae18e48cd4179e73419d4e85d3b57582240c0194b77982b826",
+      "merged_sha256": "a2b873fafbf52bae18e48cd4179e73419d4e85d3b57582240c0194b77982b826",
+      "exact_main": true
+    },
+    {
+      "path": "internal/testing/e2e/serve_h3_test.go",
+      "main_sha256": "9f8007bac534e4a6e31cbea8c323392bdde0038c3e0cd4a7f9eeb445aa6db412",
+      "merged_sha256": "9f8007bac534e4a6e31cbea8c323392bdde0038c3e0cd4a7f9eeb445aa6db412",
+      "exact_main": true
+    },
+    {
+      "path": "internal/testing/e2e/wasm_preview2_test.go",
+      "main_sha256": "fa5db021a68870e6dfdb4329877ba6e8a90c2c7dc629140c9285c71e86f6b7c0",
+      "merged_sha256": "fa5db021a68870e6dfdb4329877ba6e8a90c2c7dc629140c9285c71e86f6b7c0",
+      "exact_main": true
+    },
+    {
+      "path": "internal/testing/e2eharness/dns_exchange.go",
+      "main_sha256": "f202c4d10628d1111a2757a540f8c144326a88f06f1ead4961e63367360241bf",
+      "merged_sha256": "f202c4d10628d1111a2757a540f8c144326a88f06f1ead4961e63367360241bf",
+      "exact_main": true
+    },
+    {
+      "path": "internal/testing/e2eharness/net_addr.go",
+      "main_sha256": "f98dfef5d523fb1dc72721a05507e821fe9aec64f9a81ad20c106ce1b765a111",
+      "merged_sha256": "f98dfef5d523fb1dc72721a05507e821fe9aec64f9a81ad20c106ce1b765a111",
+      "exact_main": true
+    },
+    {
+      "path": "internal/testing/e2eharness/serve_allocs.go",
+      "main_sha256": "ba275790dbe26c74f6a69bf2752328fcd54744b33b1cb85d0ca0098a4d083963",
+      "merged_sha256": "ba275790dbe26c74f6a69bf2752328fcd54744b33b1cb85d0ca0098a4d083963",
+      "exact_main": true
+    },
+    {
+      "path": "scripts/net-quic-interop.d/client.fern",
+      "main_sha256": "fdd018e5c5b40690bd80e13291091294df6a4f91a35fa4077f59da8b06a0833a",
+      "merged_sha256": "fdd018e5c5b40690bd80e13291091294df6a4f91a35fa4077f59da8b06a0833a",
+      "exact_main": true
+    },
+    {
+      "path": "scripts/net-quic-interop.d/h3_client.fern",
+      "main_sha256": "58478f716ffd9113169fed144329498848a01ac9fd6e80d9c2d8a367a7cb8b1f",
+      "merged_sha256": "58478f716ffd9113169fed144329498848a01ac9fd6e80d9c2d8a367a7cb8b1f",
+      "exact_main": true
+    },
+    {
+      "path": "scripts/net-quic-interop.d/h3_server.fern",
+      "main_sha256": "8a3fc25a632332fddaf60cb3ee1a25ab2e071cce573e94808a8ee37a63ebed4e",
+      "merged_sha256": "8a3fc25a632332fddaf60cb3ee1a25ab2e071cce573e94808a8ee37a63ebed4e",
+      "exact_main": true
+    },
+    {
+      "path": "scripts/net-quic-interop.d/server.fern",
+      "main_sha256": "e10565165c17f63e6ef981c516cc421cfa14738d2deab32d85daca97f3ba674c",
+      "merged_sha256": "e10565165c17f63e6ef981c516cc421cfa14738d2deab32d85daca97f3ba674c",
+      "exact_main": true
+    },
+    {
+      "path": "tests/stdlib/dns_test.fern",
+      "main_sha256": "52c7210bc01e551366bbe5297b0890d6c303de633b07b6040bad1b92cbba95a4",
+      "merged_sha256": "52c7210bc01e551366bbe5297b0890d6c303de633b07b6040bad1b92cbba95a4",
+      "exact_main": true
+    },
+    {
+      "path": "tests/stdlib/http_accesslog_test.fern",
+      "main_sha256": "918ce1e3a79a3ac2fb914649323c93d924062007026c303d7c1dcb1d5aba54b7",
+      "merged_sha256": "918ce1e3a79a3ac2fb914649323c93d924062007026c303d7c1dcb1d5aba54b7",
+      "exact_main": true
+    },
+    {
+      "path": "tests/stdlib/http_forwarded_test.fern",
+      "main_sha256": "bb7a6ed9cea86bf856b10879d53261f8f10f25bf63978f1d996dfce9041dcc6d",
+      "merged_sha256": "bb7a6ed9cea86bf856b10879d53261f8f10f25bf63978f1d996dfce9041dcc6d",
+      "exact_main": true
+    },
+    {
+      "path": "tests/stdlib/mock_platform_canned_test.fern",
+      "main_sha256": "824ae8bb19412b1fd5387b5f8d575b1b516b59f3346a78904e13ca39113994d2",
+      "merged_sha256": "824ae8bb19412b1fd5387b5f8d575b1b516b59f3346a78904e13ca39113994d2",
+      "exact_main": true
+    },
+    {
+      "path": "tests/stdlib/net_test.fern",
+      "main_sha256": "ca4ee5816033b9b9179c66d3bb1d29342fa2ef676ebc31f480993c82baa8cb70",
+      "merged_sha256": "ca4ee5816033b9b9179c66d3bb1d29342fa2ef676ebc31f480993c82baa8cb70",
+      "exact_main": true
+    },
+    {
+      "path": "tests/stdlib/sim_platform_test.fern",
+      "main_sha256": "6c5bef146754facb98ee53b81b29c9198edc41b18ecf5c9c3704e31241b267ed",
+      "merged_sha256": "6c5bef146754facb98ee53b81b29c9198edc41b18ecf5c9c3704e31241b267ed",
+      "exact_main": true
+    },
+    {
+      "path": "tools/fernload/fernload.fern",
+      "main_sha256": "23ba22014ae6ff4823fba70810ca734cac1344078e1dd5ab20fc83ae6c8873ad",
+      "merged_sha256": "23ba22014ae6ff4823fba70810ca734cac1344078e1dd5ab20fc83ae6c8873ad",
+      "exact_main": true
+    }
+  ]
+}

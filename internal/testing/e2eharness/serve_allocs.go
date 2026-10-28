@@ -298,7 +298,7 @@ var ServeAllocsH3ClientSource = serveAllocsH3ClientCommon + `import "std/i32";
 
 function main(): i32 {
   let argv: string[] = args();
-  let Some(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
+  let Ok(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
     return 2;
   };
   let Ok(rounds) = i32.parse_i32(argv[2]) else {
@@ -309,7 +309,7 @@ function main(): i32 {
   let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return 2;
   };
-  let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {
+  let Ok(any) = net.socket_addr_parse("127.0.0.1:0") else {
     return 2;
   };
   let Ok(sock) = net.udp_socket(any) else {
@@ -428,7 +428,7 @@ function drive(k0: Cli, rounds: i32, m: i32): (Cli, i32, i32) {
 
 function main(): i32 {
   let argv: string[] = args();
-  let Some(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
+  let Ok(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
     return 2;
   };
   let Ok(rounds) = i32.parse_i32(argv[2]) else {
@@ -442,7 +442,7 @@ function main(): i32 {
   let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return 2;
   };
-  let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {
+  let Ok(any) = net.socket_addr_parse("127.0.0.1:0") else {
     return 2;
   };
   let Ok(sock) = net.udp_socket(any) else {

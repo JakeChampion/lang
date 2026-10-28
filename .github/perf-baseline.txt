@@ -1,3 +1,6 @@
+# 2026-10-28: Native map_string.ir rows use main commit 1c8d476b9 (PR #13770).
+# The 81 updated rows retain data from CI run 40649279321.
+# Both tolerances remain 2%.
 # 2026-10-28: Exact reports from CI run 40630000183 at b706d4299 on PR #13718.
 # The six map measurements show mixed changes. All tolerances remain unchanged.
 # Evidence: docs/benchmarks/main-wide-machine-merge-2026-10-28/.
@@ -168,7 +171,7 @@ x86_64/map_int.ir	36432496
 x86_64/map_probe_chain.text	5797
 x86_64/map_probe_chain.ir	340655457
 x86_64/map_string.text	6738
-x86_64/map_string.ir	58418402	2
+x86_64/map_string.ir	58500783	2
 x86_64/ordmap_insert.text	5568
 x86_64/ordmap_insert.ir	82943055
 x86_64/pmap_insert.text	2782
@@ -453,7 +456,7 @@ aarch64/map_probe_chain.text	6084
 aarch64/map_probe_chain.ir	334317575
 aarch64/map_string.text	7175
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
-aarch64/map_string.ir	59323785	2
+aarch64/map_string.ir	59261619	2
 aarch64/ordmap_insert.text	5953
 aarch64/ordmap_insert.ir	98457462
 aarch64/pmap_insert.text	3063

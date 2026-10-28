@@ -96,7 +96,7 @@ function trusted(blocks: string[]): forwarded.Trust {
 }
 
 function client_of(peer: string, blocks: string[], fields: string[]): string {
-  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse(peer));
+  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse(peer).ok());
   return shown(forwarded.client(req(fields), m, trusted(blocks)));
 }
 
@@ -117,7 +117,7 @@ function test_chain_and_forgery(): test.TestOutcome {
 
 function test_edges(): test.TestOutcome {
   let bad: string = client_of("10.0.0.5:1", ["10.0.0.0/8"], ["Forwarded", "for=192.0.2.60;for=192.0.2.61"]);
-  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse("10.0.0.5:1"));
+  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse("10.0.0.5:1").ok());
   let hidden: forwarded.Client = forwarded.client(req(["Forwarded", "for=_hidden"]), m, trusted(["10.0.0.0/8"]));
   let no_ip: boolean = false;
   match (hidden.ip()) {
@@ -132,7 +132,7 @@ function test_edges(): test.TestOutcome {
 
 function test_legacy(): test.TestOutcome {
   let t: forwarded.Trust = forwarded.Trust { ...trusted(["10.0.0.0/8"]), legacy: true };
-  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse("10.0.0.5:1"));
+  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse("10.0.0.5:1").ok());
   let fields: string[] = ["X-Forwarded-For", "203.0.113.1, 10.0.0.3", "X-Forwarded-Proto", "https", "X-Forwarded-Host", "shop.example"];
   let on: string = shown(forwarded.client(req(fields), m, t));
   let off: string = shown(forwarded.client(req(fields), m, trusted(["10.0.0.0/8"])));
@@ -154,17 +154,17 @@ function test_trust_errors(): test.TestOutcome {
 
 function in_block(block: string, ip: string): string {
   match (net.prefix_parse(block)) {
-    Some(p) => {
+    Ok(p) => {
       match (net.ip_parse(ip)) {
-        Some(a) => {
+        Ok(a) => {
           return p.contains(a).to_string();
         },
-        None => {
+        Err(_) => {
           return "bad-ip";
         }
       }
     },
-    None => {
+    Err(_) => {
       return "bad-block";
     }
   }
@@ -179,7 +179,7 @@ function test_prefix(): test.TestOutcome {
 }
 
 function test_hop_of(): test.TestOutcome {
-  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse("192.0.2.7:5000"));
+  let m: mock_platform.MockPlatform = mock_platform.new().with_peer(net.socket_addr_parse("192.0.2.7:5000").ok());
   let r: HttpRequest = req(["Host", "example.com", "Forwarded", "for=198.51.100.1"]);
   let out: HttpRequest = r.with_hop(forwarded.hop_of(r, m, "https"));
   return test.assert_eq(out.headers.get_all("forwarded").join(" / "), "for=198.51.100.1 / for=\"192.0.2.7:5000\";host=example.com;proto=https");
