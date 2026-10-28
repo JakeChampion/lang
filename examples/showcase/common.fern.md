@@ -33,6 +33,7 @@ import "std/hex";
 import "std/i32";
 import "std/i64";
 import "../../compiler/weave";
+import "std/rand";
 ```
 
 ## Validate request values
@@ -80,7 +81,7 @@ A short allowlist prevents path separators and control characters in room names.
 ```fern
 <<Create identifiers>>=
 pub function token(): string {
-  let bytes: u8[] = random_bytes(24);
+  let bytes: u8[] = rand.bytes(24);
   return hex.encode(crypto.sha256_new().update(bytes).finish()).take(24);
 }
 

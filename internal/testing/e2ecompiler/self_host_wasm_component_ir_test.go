@@ -66,15 +66,18 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		{"io-exit", true, `function main(): i32 { write("bye"); exit(0); return 0; }`,
 			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:cli/exit@0.2.0 exit"}},
 
-		{"io-random-i32", true, `function main(): i32 { if (random_i32() != 0) { write("r"); } return 0; }`,
+		{"io-random-i32", true, `import "std/rand";
+function main(): i32 { if (rand.next_i32() != 0) { write("r"); } return 0; }`,
 			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:random/random@0.2.0 get-random-u64"}},
-		{"io-random-bytes", true, `function main(): i32 { let b: u8[] = random_bytes(4); if (b.len() == 4) { write("b"); } return 0; }`,
+		{"io-random-bytes", true, `import "std/rand";
+function main(): i32 { let b: u8[] = rand.bytes(4); if (b.len() == 4) { write("b"); } return 0; }`,
 			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:random/random@0.2.0 get-random-u64"}},
 		{"io-clock-wall", true, `function main(): i32 { if (now_unix_ms() > 0) { write("w"); } return 0; }`,
 			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:clocks/wall-clock@0.2.0 now"}},
 		{"io-clock-mono", true, `function main(): i32 { if (monotonic_ns() > 0) { write("m"); } return 0; }`,
 			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:clocks/monotonic-clock@0.2.0 now"}},
-		{"noio-random-refused", false, `function main(): i32 { return random_i32() & 1; }`, nil},
+		{"noio-random-refused", false, `import "std/rand";
+function main(): i32 { return rand.next_i32() & 1; }`, nil},
 
 		{"io-env", true, `function main(): i32 { match (env("HOME")) { Some(v) => { write(v); }, None => { write("none"); } } return 0; }`,
 			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout", "wasi:cli/environment@0.2.0 get-environment"}},

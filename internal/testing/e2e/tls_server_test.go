@@ -118,6 +118,7 @@ import "std/tls/identity";
 import "std/tls/server";
 import "std/tls/verify";
 
+import "std/rand";
 function identity_of(): Result[identity.Identity, string] {
   let cert: string = "";
   let key: string = "";
@@ -204,10 +205,10 @@ function echo(c: server.Connection): string {
 }
 
 function main(): i32 {
-  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) }, random_bytes(32));
+  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) }, rand.bytes(32));
   match (identity_of()) {
     Ok(id) => {
-      cfg = server.config(id, random_bytes(32)).with_alpn(["fern-echo", "h2"]);
+      cfg = server.config(id, rand.bytes(32)).with_alpn(["fern-echo", "h2"]);
     },
     Err(e) => {
       print("identity: " + e);

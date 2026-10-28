@@ -4,6 +4,7 @@ import "./util";
 import "std/crypto";
 import "std/hex";
 import "std/error";
+import "std/rand";
 
 function main(): i32 {
   let root: string = stdlib_root();
@@ -48,7 +49,7 @@ function stdlib_root(): string {
     return root;
   }
   let suffix: string = "";
-  for b in random_bytes(6) {
+  for b in rand.bytes(6) {
     suffix = suffix + util.i32_to_string(b as i32);
   }
   let tmp: string = root + ".tmp-" + suffix;

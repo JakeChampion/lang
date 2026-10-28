@@ -10,6 +10,7 @@ import "std/tls/identity";
 import "std/tls/server";
 import "std/tls/verify";
 import "std/time";
+import "std/rand";
 
 const ROOT: string = "3082011c3081cfa00302010202020201300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320536572766572205465737420526f6f74302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341007353a91b5ad2e713d51d2fa08f3e800b99afa9e5725cfd746269d03210b1faadccfc942258bb8151da41be07943a4e8a14bd615e96692c8b896872460e827c0a";
 
@@ -243,7 +244,7 @@ function srd_at(s: server.Session, input: u8[], now: i64): Result[server.Step, s
 }
 
 function started(cfg: client.Config): Result[client.Step, string] {
-  return started_with(cfg, random_bytes(client.entropy(cfg)));
+  return started_with(cfg, rand.bytes(client.entropy(cfg)));
 }
 
 function started_with(cfg: client.Config, entropy: u8[]): Result[client.Step, string] {
@@ -259,7 +260,7 @@ function started_with(cfg: client.Config, entropy: u8[]): Result[client.Step, st
 }
 
 function listening(cfg: server.Config): Result[server.Session, string] {
-  return listening_with(cfg, random_bytes(server.entropy(cfg)));
+  return listening_with(cfg, rand.bytes(server.entropy(cfg)));
 }
 
 function listening_with(cfg: server.Config, entropy: u8[]): Result[server.Session, string] {
@@ -325,7 +326,7 @@ function swrite(s: server.Session, text: string): Result[server.Step, string] {
 
 function served(leaf: string, key_pem: string): string {
   let cc: client.Config = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
-  let sc: server.Config = server.config(identity_of(leaf, key_pem), random_bytes(32)).with_alpn(["http/1.1"]);
+  let sc: server.Config = server.config(identity_of(leaf, key_pem), rand.bytes(32)).with_alpn(["http/1.1"]);
   match (connect(cc, sc)) {
     Ok(p) => {
       match (exchange(p)) {
@@ -368,7 +369,7 @@ function outcome(r: Result[Pair, string]): string {
 }
 
 function test_names_and_protocols(): test.TestOutcome {
-  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), random_bytes(32));
+  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32));
   if (outcome(connect(client.config("192.0.2.7", roots()), sc)) != "connected [] []") {
     return test.fail("an address: " + outcome(connect(client.config("192.0.2.7", roots()), sc)));
   }
@@ -409,11 +410,11 @@ function refusal_alert(cc: client.Config, sc: server.Config): Result[string, str
 }
 
 function test_no_common_scheme(): test.TestOutcome {
-  let sc: server.Config = server.config(identity_of(P256_LEAF, P256_PKCS8), random_bytes(32));
+  let sc: server.Config = server.config(identity_of(P256_LEAF, P256_PKCS8), rand.bytes(32));
   let cc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config("tls.example"), schemes: [0x0804] };
-  match (handshake.client_start(cc, random_bytes(handshake.client_entropy(cc)))) {
+  match (handshake.client_start(cc, rand.bytes(handshake.client_entropy(cc)))) {
     Ok(c0) => {
-      match (server.start(sc, random_bytes(server.entropy(sc)))) {
+      match (server.start(sc, rand.bytes(server.entropy(sc)))) {
         Ok(s0) => {
           match (s0.read(c0.output, time.timestamp_from_unix_millis(WALL_MS))) {
             Ok(_) => {
@@ -439,7 +440,7 @@ function test_no_common_scheme(): test.TestOutcome {
 function test_wrong_key(): test.TestOutcome {
   let id: identity.Identity = identity.Identity { chain: [__codec_bytes(hex.decode(P256_LEAF))], key: identity_of(P384_LEAF, P384_PKCS8).key };
   let cc: client.Config = client.config("tls.example", roots());
-  match (connect(cc, server.config(id, random_bytes(32)))) {
+  match (connect(cc, server.config(id, rand.bytes(32)))) {
     Ok(p) => {
       return test.fail("connected");
     },
@@ -451,7 +452,7 @@ function test_wrong_key(): test.TestOutcome {
 }
 
 function test_close(): test.TestOutcome {
-  match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8), random_bytes(32)))) {
+  match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)))) {
     Ok(p) => {
       match (close_both(p)) {
         Ok(t) => {
@@ -470,7 +471,7 @@ function test_close(): test.TestOutcome {
 }
 
 function test_records_across_reads(): test.TestOutcome {
-  match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8), random_bytes(32)))) {
+  match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)))) {
     Ok(p) => {
       match (records_across(p)) {
         Ok(t) => {
@@ -560,7 +561,7 @@ function how(r: Result[Pair, string]): string {
 }
 
 function test_resumption(): test.TestOutcome {
-  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), random_bytes(32)).with_alpn(["http/1.1"]);
+  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_alpn(["http/1.1"]);
   let cc: client.Config = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
   let t: client.Ticket = client.Ticket { identity: [], psk: [], suite: 0, lifetime: time.DURATION_ZERO, age_add: 0 as u32, received: time.timestamp_from_unix(0), server_name: "" };
   match (connect(cc, sc)) {
@@ -762,7 +763,7 @@ function refused_with(cc: client.Config, sc: server.Config): string {
 
 function test_client_signature_refused(): test.TestOutcome {
   let cc: client.Config = client.config("tls.example", roots());
-  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), random_bytes(32)).with_client_roots(roots());
+  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_client_roots(roots());
   let other_ed: identity.Identity = identity.Identity { ...identity_of(ED_LEAF, ED_PKCS8), chain: [__codec_bytes(hex.decode(CLIENT_LEAF))] };
   if (refused_with(cc.with_identity(other_ed), sc) != "server: the peer's CertificateVerify does not verify / client: tls handshake: the peer sent alert 51") {
     return test.fail("another key: " + refused_with(cc.with_identity(other_ed), sc));
@@ -772,7 +773,7 @@ function test_client_signature_refused(): test.TestOutcome {
 }
 
 function test_client_certificate(): test.TestOutcome {
-  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), random_bytes(32)).with_client_roots(roots());
+  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_client_roots(roots());
   let cc: client.Config = client.config("tls.example", roots());
   if (presented(cc.with_identity(client_identity(CLIENT_LEAF)), sc) != "ping pong chain 1") {
     return test.fail("trusted: " + presented(cc.with_identity(client_identity(CLIENT_LEAF)), sc));
@@ -786,14 +787,14 @@ function test_client_certificate(): test.TestOutcome {
   if (presented(cc.with_identity(client_identity(SERVER_ONLY_CLIENT_LEAF)), sc) != "server: the peer's certificate is not trusted: tls verify: the certificate is not for TLS clients") {
     return test.fail("server-only: " + presented(cc.with_identity(client_identity(SERVER_ONLY_CLIENT_LEAF)), sc));
   }
-  if (presented(cc.with_identity(client_identity(CLIENT_LEAF)), server.config(identity_of(ED_LEAF, ED_PKCS8), random_bytes(32))) != "ping pong chain 0") {
-    return test.fail("not asked: " + presented(cc.with_identity(client_identity(CLIENT_LEAF)), server.config(identity_of(ED_LEAF, ED_PKCS8), random_bytes(32))));
+  if (presented(cc.with_identity(client_identity(CLIENT_LEAF)), server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32))) != "ping pong chain 0") {
+    return test.fail("not asked: " + presented(cc.with_identity(client_identity(CLIENT_LEAF)), server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32))));
   }
   return test.assert_eq(client_refusal(cc, sc), "client: tls handshake: the peer sent alert 116");
 }
 
 function test_client_certificate_validity(): test.TestOutcome {
-  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), random_bytes(32)).with_client_roots(roots());
+  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_client_roots(roots());
   let cc: client.Config = client.config("tls.example", roots()).with_identity(client_identity(CLIENT_LEAF));
   if (presented_at(cc, sc, NOT_BEFORE_MS - 1000) != "server: the peer's certificate is not trusted: tls verify: certificate 0 is not yet valid") {
     return test.fail("before notBefore: " + presented_at(cc, sc, NOT_BEFORE_MS - 1000));
@@ -852,7 +853,7 @@ function client_refusal(cc: client.Config, sc: server.Config): string {
 }
 
 function test_client_certificate_resumed(): test.TestOutcome {
-  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), random_bytes(32)).with_client_roots(roots());
+  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)).with_client_roots(roots());
   let cc: client.Config = client.config("tls.example", roots()).with_identity(client_identity(CLIENT_LEAF));
   match (connect(cc, sc)) {
     Ok(p) => {
@@ -869,7 +870,7 @@ function test_client_certificate_resumed(): test.TestOutcome {
 }
 
 function test_key_update(): test.TestOutcome {
-  match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8), random_bytes(32)))) {
+  match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)))) {
     Ok(p) => {
       match (updated(p)) {
         Ok(t) => {
@@ -929,7 +930,7 @@ function updated(p: Pair): Result[string, string] {
 }
 
 function test_offload(): test.TestOutcome {
-  match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8), random_bytes(32)))) {
+  match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8), rand.bytes(32)))) {
     Ok(p) => {
       match (offloaded(p)) {
         Ok(t) => {

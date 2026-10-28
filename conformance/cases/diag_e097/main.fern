@@ -1,0 +1,11 @@
+// The entropy builtins are reserved for the standard library, so a program
+// reaches the operating system's entropy through std/rand. A local binding
+// that reuses a builtin's name is the program's own value and stays legal.
+
+import "std/rand";
+
+function main(): i32 {
+    let random_bytes: (i32) => i32 = (n: i32): i32 => n;
+    let wrapped: i32 = rand.next_i32() & 1;
+    return random_i32() + random_bytes(2) + wrapped;
+}

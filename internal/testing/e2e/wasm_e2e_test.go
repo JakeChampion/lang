@@ -4837,9 +4837,10 @@ func TestWASMGenericResult(t *testing.T) {
 }
 
 func TestWASMRandomBytes(t *testing.T) {
-	src := `function main(): i32 {
-		let a: u8[] = random_bytes(16);
-		let b: u8[] = random_bytes(16);
+	src := `import "std/rand";
+function main(): i32 {
+		let a: u8[] = rand.bytes(16);
+		let b: u8[] = rand.bytes(16);
 		if (a.len() != 16) { return 1; }
 		if (b.len() != 16) { return 2; }
 		let same: i32 = 1;
@@ -4857,9 +4858,10 @@ func TestWASMRandomBytes(t *testing.T) {
 }
 
 func TestWASMRandomI32(t *testing.T) {
-	src := `function main(): i32 {
-		let a: i32 = random_i32();
-		let b: i32 = random_i32();
+	src := `import "std/rand";
+function main(): i32 {
+		let a: i32 = rand.next_i32();
+		let b: i32 = rand.next_i32();
 		if (a == b) { return 1; }
 		return 0;
 	}`
@@ -8392,8 +8394,9 @@ func TestCmdLangComponentWrapCliWithRandom(t *testing.T) {
 	}
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "rand.fern")
-	src := []byte(`function main(): i32 {
-    let r: i32 = random_i32();
+	src := []byte(`import "std/rand";
+function main(): i32 {
+    let r: i32 = rand.next_i32();
     if (r == r) { return 0; }
     return 1;
 }`)
@@ -9528,8 +9531,9 @@ func TestCmdLangComponentWrapCliWithMultipleImports(t *testing.T) {
 	}
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "multi.fern")
-	src := []byte(`function main(): i32 {
-    let r: i32 = random_i32();
+	src := []byte(`import "std/rand";
+function main(): i32 {
+    let r: i32 = rand.next_i32();
     if (r == r) {
         exit(0);
     }
@@ -9575,8 +9579,9 @@ func TestCmdLangComponentWrapCliWithRandomBytes(t *testing.T) {
 	}
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "randbytes.fern")
-	src := []byte(`function main(): i32 {
-    let b: u8[] = random_bytes(3);
+	src := []byte(`import "std/rand";
+function main(): i32 {
+    let b: u8[] = rand.bytes(3);
     if (b.len() == 3) { return 0; }
     return 1;
 }`)

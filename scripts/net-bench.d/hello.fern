@@ -27,6 +27,7 @@ import "std/tls/identity";
 import "std/tls/server";
 import "std/tls/verify";
 import "core/int";
+import "std/rand";
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   if (req.path == "/bulk") {
@@ -111,7 +112,7 @@ function secured(opts: serve.Config): Result[serve.Config, string] {
   match (env("TLS_KEY")) {
     Some(key_path) => {
       let id: identity.Identity = identity_from(cert_path, key_path)?;
-      let tls: serve.Config = opts.with_tls(client_roots(server.config(id, random_bytes(32)))?);
+      let tls: serve.Config = opts.with_tls(client_roots(server.config(id, rand.bytes(32)))?);
       if (env("H3").is_some()) {
         return Ok(tls.with_h3());
       }

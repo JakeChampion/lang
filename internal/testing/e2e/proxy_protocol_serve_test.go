@@ -81,6 +81,7 @@ import "std/time";
 import "std/tls/identity";
 import "std/tls/server";
 
+import "std/rand";
 function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   match (plat.peer()) {
     Some(p) => {
@@ -100,7 +101,7 @@ function with_tls(cfg: serve.Config): serve.Config {
         Ok(key) => {
           match (identity.from_pem(cert, key)) {
             Ok(id) => {
-              return cfg.with_tls(server.config(id, random_bytes(32)));
+              return cfg.with_tls(server.config(id, rand.bytes(32)));
             },
             Err(e) => {}
           }

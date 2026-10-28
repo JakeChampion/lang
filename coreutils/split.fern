@@ -4,6 +4,7 @@ import "std/i32";
 import "std/io_buffered";
 import "./lib/gnu";
 import "./lib/signals";
+import "std/rand";
 
 function opt_bytes(): i32 {
   return 1;
@@ -590,7 +591,7 @@ function temp_name(root: string): string {
   let letters: string = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
   let i: i32 = 0;
   while (i < 6) {
-    let v: i32 = random_i32();
+    let v: i32 = rand.next_i32();
     if (v < 0) {
       v = 0 - v;
     }
