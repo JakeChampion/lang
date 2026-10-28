@@ -1,0 +1,33 @@
+{
+  "source": "5383d709b477ff52737c8915b93a54e4790699d2",
+  "jobs": [
+    {
+      "mode": "targets",
+      "session_id": 77991
+    },
+    {
+      "mode": "go",
+      "session_id": 60801
+    },
+    {
+      "mode": "sources",
+      "session_id": 62622
+    },
+    {
+      "mode": "aux",
+      "session_id": 5365
+    },
+    {
+      "mode": "complexity",
+      "session_id": 16937
+    },
+    {
+      "mode": "runtime",
+      "session_id": 71206
+    },
+    {
+      "mode": "direct",
+      "session_id": 20879
+    }
+  ]
+}

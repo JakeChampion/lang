@@ -1,0 +1,14 @@
+{
+  "base": "0ad5969c55baffc172526038dcac3ea0e613722e",
+  "source": "5383d709b477ff52737c8915b93a54e4790699d2",
+  "all_legacy_files_byte_identical": {
+    "compiler/ssalargepushranges.fern": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb",
+    "compiler/ssalargepushvalue.fern": "59b53d3c3a2d1f72cd41583c4625941e53dc394042a86cff5441386b5f1a3890",
+    "compiler/drivers/ssalargepushpartitions.fern": "42a84c4feeca11072d97d24607319af228560c122eb3b9763a9274626861daef",
+    "compiler/drivers/ssalargepushvalues.fern": "9bc4c14304982176b465ac159f2e90994448f57880523b99fb2f5d2154715e01",
+    "compiler/ssalargepushmachine.fern": "6347d59cf071c55ab6cd241089bf72bdff58e5be22a7297e1030066cb48bab1c",
+    "compiler/ssacapacityisa.fern": "7f1ae6fc7b6f041037a6b852c93eb80c78bdf11645a2c32b0f4a5219a0c10da1",
+    "compiler/ssaallocatorfirstmachine.fern": "613e6f13b7c9d96dca23fe93bfcdb181d75ce919b357d0bbe657e4d150d47f1b"
+  },
+  "existing_tracked_files_changed": []
+}

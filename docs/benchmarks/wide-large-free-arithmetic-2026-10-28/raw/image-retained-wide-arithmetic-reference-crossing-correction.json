@@ -1,0 +1,20 @@
+{
+  "first_generator_exit": 1,
+  "reference_outputs_written": false,
+  "incorrect_assumption": "All class and highest-bit partitions also have uniform high-word quotients.",
+  "actual_interval": [
+    10737418241,
+    12884901888
+  ],
+  "word_quotients": [
+    2,
+    3
+  ],
+  "predeclared_rule": "A projection is known only when the high-word quotient is uniform across the interval.",
+  "correction": "Preserve the whole interval with required unknown projections. Add known projection and join cases on both sides of the word boundary.",
+  "helper_source_changed": false,
+  "domain_changed": false,
+  "criterion_changed": false,
+  "source_archive": "/tmp/image-gen-large-push-wide-reference-before-word-crossing.py",
+  "archive_sha256": "b4a4ae390ae8e3d7b62535e88c6d1e83dae6b78b19e8b02828852c3459b65cb4"
+}

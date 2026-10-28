@@ -25,8 +25,23 @@ No domain, expected value, seed, tolerance, or unknown-result exemption changed 
 The expanded driver exposed the ARM64 emitter defects that PR #13728 corrected first.
 All seven arithmetic files remained byte-identical through that prerequisite.
 The unchanged expanded driver then passed native, Wasm, and ARM64 execution with the stock nonzero balanced zero-live assertions.
-Final qualification will bind the committed source and a clean standard build.
+Final qualification binds source `5383d709b477ff52737c8915b93a54e4790699d2` and a clean standard build.
 
 The new APIs do not authorize decoder or machine integration.
 That integration requires a later scoped PR after this arithmetic PR merges normally.
 The full retained-machine recovery and all actual M5 and epic gates remain open.
+
+The final stock harness passed all 4474 cases on native, ARM64, and Wasm with zero skips.
+The three direct production workers also passed, with 45291, 45291, and 45834 balanced allocations and zero live bytes.
+The fresh Go oracle from the committed source passed check and interpreter execution.
+All source and binary hashes remained unchanged.
+
+The clean standard build passed in 89.918 seconds.
+The broader source check, 2088-source format check, Go build and vet, source audit, runtime checks, and unchanged complexity gate passed.
+The source audit passed 219 nodes, and the complexity gate passed three nodes, both with zero skips.
+The newly built raw compiler is byte-identical to the qualified prerequisite compiler.
+
+A fourth private control corrupts only the last reference row expectation.
+It exits at case 4473 with the exact correct helper result and the required error reason.
+The committed reference stays unchanged.
+[The evidence record](../benchmarks/wide-large-free-arithmetic-2026-10-28/README.md) retains all earlier failures, corrections, and producer identities.

@@ -1,0 +1,14 @@
+{
+  "main": "0ad5969c55baffc172526038dcac3ea0e613722e",
+  "all_seven_parent_files_byte_identical": {
+    "compiler/drivers/ssalargepushwide_run.fern": "b575a8fef196c7f43ab602f44bf662a250573fd7aad2bdf2127a6a494074cb71",
+    "compiler/drivers/ssalargepushwidecases.fern": "d7119618f8bfa609628d0200b61a74ff204469b4c2e4143fae49e8ced0e1887b",
+    "compiler/ssalargepushwideranges.fern": "b4e3d583baaf082ff5dcab5ccb31ffdab0fc2d13e3cfb20e18765014791c8dbd",
+    "compiler/ssalargepushwidevalue.fern": "ca68452e4f548f11e402a67233a526d766c4f851e7281c6b5fc12c02e75ecf46",
+    "internal/testing/e2ecompiler/self_host_ssa_large_push_wide_test.go": "c9d175ba904b094b7a74010639fad8a16cc30373b97f0fc637ed360c81e59d92",
+    "internal/testing/e2ecompiler/testdata/large_push_wide_reference.json": "202f62bedee59fc3efe113d7e6ea26a1de76cf1724e9d86bfa723c3ff03b6a9f",
+    "scripts/gen-large-push-wide-reference.py": "5b1634f2d51e8f1130594056a6e7d1a9af0a9e059301f31b94df6bccfc1e44d5"
+  },
+  "current_compiler_source": "3ba81dccd2de600e45fa9539247e28352e07118b",
+  "compiler_std_identical_to_current_main": true
+}

@@ -1,0 +1,6 @@
+{
+  "compiler/ssalargepushwideranges.fern": "b4e3d583baaf082ff5dcab5ccb31ffdab0fc2d13e3cfb20e18765014791c8dbd",
+  "compiler/ssalargepushwidevalue.fern": "ca68452e4f548f11e402a67233a526d766c4f851e7281c6b5fc12c02e75ecf46",
+  "compiler/drivers/ssalargepushwide_run.fern": "730fa0b90c10498c26a81857580f5c6755c3a390670e213ce452cc7ab5ed6461",
+  "internal/testing/e2ecompiler/self_host_ssa_large_push_wide_test.go": "c9d175ba904b094b7a74010639fad8a16cc30373b97f0fc637ed360c81e59d92"
+}

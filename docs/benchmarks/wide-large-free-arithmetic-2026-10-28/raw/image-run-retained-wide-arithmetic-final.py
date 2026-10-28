@@ -1,0 +1,18 @@
+from pathlib import Path
+import subprocess,json,time,hashlib,re,sys
+root=Path('/tmp/image-engine-worktrees/lang-image-retained-large-free-health');mode=sys.argv[1];prefix=Path('/tmp/image-retained-wide-arithmetic-final-'+mode);assert not prefix.with_suffix('.json').exists();git=lambda *a:subprocess.check_output(['git',*a],cwd=root,text=True).strip();source=git('rev-parse','HEAD');assert source=='5383d709b477ff52737c8915b93a54e4790699d2'and not git('status','--porcelain');paths=git('ls-files','compiler','internal/stdlib','internal/testing','scripts').splitlines();sha=lambda p:hashlib.sha256(p.read_bytes()).hexdigest();before={p:sha(root/p)for p in paths if(root/p).is_file()};bins={p:sha(root/p)for p in ['bin/fern','bin/fern-selfhost']};oracle=Path('/tmp/image-retained-wide-arithmetic-final-go-oracle');entry=str(root/'compiler/drivers/ssalargepushwide_run.fern')
+checks={'targets':[['go','test','-v','./internal/testing/e2ecompiler','-run','^TestSelfHostLargePushWideArithmetic$','-count=1','-timeout=10m']], 'complexity':[['go','test','-v','./internal/testing/e2ecompiler','-run','^TestSelfHostRepoComplexityRatchet$','-count=1','-timeout=10m']], 'runtime':[['make','runtime-check']], 'sources':[['make','check-sources']], 'aux':[['bin/fern','-fmt','-d',*[p for p in git('ls-files','*.fern','*.fern.md').splitlines()if not p.startswith('conformance/')and'/testdata/'not in p]],['go','build','./...'],['go','vet','./...'],['make','actionlint','testnames','ci-selftest','runtime-bundle-check','gofmt-check'],['go','test','-v','./internal/testing/sourcelint','-count=1'],['python3','scripts/gen-large-push-wide-reference.py','--check'],['git','diff','--check']], 'go':[['go','version'],['go','build','-o',str(oracle),'./cmd/fern'],[str(oracle),'-check',entry],[str(oracle),'-interp',entry]]}[mode]
+if mode=='go':assert not oracle.exists()
+rec=dict(source=source,worktree_clean=True,feature_uncommitted=False,source_hashes=before,binaries=bins,checks=[]);prefix.with_suffix('.before.json').write_text(json.dumps(rec,indent=2)+'\n');start=time.time()
+with prefix.with_suffix('.log').open('w')as log:
+ for i,cmd in enumerate(checks):
+  if mode=='go'and i==2:rec['Go_oracle_sha256_before_execution']=sha(oracle);rec['actual_Go_oracle_build_source']=source
+  t=time.time();r=subprocess.run(cmd,cwd=root,stdout=log,stderr=subprocess.STDOUT);rec['checks'].append(dict(command=cmd,exit=r.returncode,seconds=time.time()-t));log.flush();prefix.with_suffix('.checkpoint.json').write_text(json.dumps(rec,indent=2)+'\n')
+  if r.returncode:break
+s=prefix.with_suffix('.log').read_text();rec.update(seconds=time.time()-start,sources_unchanged=before=={p:sha(root/p)for p in before},binaries_unchanged=bins=={p:sha(root/p)for p in bins},PASS=len(re.findall(r'^\s*--- PASS:',s,re.M)),FAIL=len(re.findall(r'^\s*--- FAIL:',s,re.M)),SKIP=len(re.findall(r'^\s*--- SKIP:',s,re.M)),worktree_still_clean=not git('status','--porcelain'))
+if mode=='go'and oracle.exists():rec['Go_oracle_sha256_after_execution']=sha(oracle)
+prefix.with_suffix('.json').write_text(json.dumps(rec,indent=2)+'\n');print({k:v for k,v in rec.items()if k not in ['source_hashes','checks']});print('exits',[c['exit']for c in rec['checks']]);assert len(rec['checks'])==len(checks)and all(c['exit']==0 for c in rec['checks'])and rec['sources_unchanged']and rec['binaries_unchanged']and rec['worktree_still_clean']and rec['FAIL']==rec['SKIP']==0
+if mode=='targets':assert rec['PASS']==4
+if mode=='complexity':assert rec['PASS']==3
+if mode=='aux':assert rec['PASS']==219 and 'ERROR 'not in s
+if mode=='go':assert rec['Go_oracle_sha256_before_execution']==rec['Go_oracle_sha256_after_execution']and 'wide large-push arithmetic controls passed'in s
