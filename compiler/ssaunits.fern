@@ -3256,7 +3256,7 @@ function read_error(state: boolean[], value: i32, owned: boolean[], deps: i32[][
 }
 
 function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): (boolean[], i32) {
-  let state: boolean[] = flow.none;
+  let state: boolean[] = __alloc_bool(f.graph.nvals);
   let held: i32 = 0;
   for v in ssalive.live_in_ids(flow, bi) {
     if (owned[v] && !state[v]) {
