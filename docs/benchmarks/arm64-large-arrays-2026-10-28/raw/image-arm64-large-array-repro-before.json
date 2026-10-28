@@ -1,0 +1,12 @@
+{
+  "assembler_exit": 1,
+  "source_sha256": "446a54056dc715f9629864b35ece5946c4cee6d0a7e6b07c78f96c0887462d3f",
+  "asm_sha256": "f00e87900892cefa20d7b3cc8d7cb31a9cdc637a9da11ea5aef730b3f4fbf19d",
+  "invalid_stores": [
+    "str x21, [x0, #32768]",
+    "str x23, [x0, #32776]",
+    "str x24, [x0, #32784]",
+    "str x25, [x0, #32792]",
+    "str x22, [x0, #32800]"
+  ]
+}

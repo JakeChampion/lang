@@ -1,0 +1,18 @@
+{
+  "command": [
+    "go",
+    "test",
+    "-v",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^TestSelfHostArm64LargeMemoryOffsets$/^record-4100$/^arm64-linux$",
+    "-count=1",
+    "-timeout=10m"
+  ],
+  "exit": 1,
+  "seconds": 27.523772478103638,
+  "feature_uncommitted": true,
+  "test_source_sha256": "67af3088dc85213561038c4a4fc551f846f356522da14761d372526a8f5a6c71",
+  "source_unchanged": true,
+  "expected_failure": "immediate offset out of range"
+}

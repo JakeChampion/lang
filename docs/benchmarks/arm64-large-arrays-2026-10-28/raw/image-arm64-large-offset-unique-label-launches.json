@@ -1,0 +1,37 @@
+{
+  "source": "3ba81dccd2de600e45fa9539247e28352e07118b",
+  "jobs": [
+    {
+      "mode": "targets",
+      "session_id": 89988
+    },
+    {
+      "mode": "complexity",
+      "session_id": 25267
+    },
+    {
+      "mode": "runtime",
+      "session_id": 65652
+    },
+    {
+      "mode": "aux",
+      "session_id": 97371
+    },
+    {
+      "mode": "full-native",
+      "session_id": 32922
+    },
+    {
+      "mode": "full-wasm",
+      "session_id": 79591
+    },
+    {
+      "mode": "full-arm64",
+      "session_id": 18116
+    },
+    {
+      "mode": "direct",
+      "session_id": 14158
+    }
+  ]
+}

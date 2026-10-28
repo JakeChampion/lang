@@ -1,0 +1,29 @@
+{
+  "source": "3ba81dccd2de600e45fa9539247e28352e07118b",
+  "original_record_sha256": "fc8d39c3735edf2e094cf03f9a558aceff3b1c6315733bd4e627ed662b133875",
+  "original_log_sha256": "ce7d9fe81f2820bd4defab9df3b2e06952ffbe6e3625c791154ffef5744b5a3a",
+  "original_coordinator_outer_exit": 1,
+  "executed_native_script_exit": 0,
+  "original_collector_error": "Introduced positive-allocation condition for every census, including the unchanged allocation-free formatter fixture.",
+  "original_collector_result_preserved": true,
+  "no_test_repeated": true,
+  "executed_scripts_and_assertions_unchanged": true,
+  "TAP_ok": 326,
+  "TAP_not_ok": 0,
+  "censuses": 85,
+  "nonzero_censuses": 84,
+  "zero_allocation_censuses": [
+    {
+      "line": 692,
+      "allocs": 0,
+      "frees": 0,
+      "live_bytes": 0
+    }
+  ],
+  "all_balanced_zero_live": true,
+  "fixture_sha256": "9099881c8fcef323c69f87bd562fa03a6321cb0c7a93a783c107fda1af28e876",
+  "script_sha256": "0cc06854a4f29c1c9460b805b013d3f73fd0f7b10a3100006002e7eb0f378ac9",
+  "source_hash_count": 1361,
+  "sources_unchanged": true,
+  "new_regression_nonzero_assertions_unchanged": true
+}

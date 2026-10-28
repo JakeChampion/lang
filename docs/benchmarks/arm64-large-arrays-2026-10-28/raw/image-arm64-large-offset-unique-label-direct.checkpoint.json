@@ -1,0 +1,246 @@
+{
+  "source": "3ba81dccd2de600e45fa9539247e28352e07118b",
+  "compiler_sha256": "b7bb59c4ccc841709950b369fc996cd04087eda762ab46549b97ad3ba48336de",
+  "cases": [
+    {
+      "name": "record-4095",
+      "source_sha256": "6a61c08c8ee03470d4ae3d61b4818eca08be6f7f30a1e446fd2e541c3a7b6597",
+      "checks": [
+        {
+          "stage": "compile",
+          "command": [
+            "/tmp/image-engine-worktrees/lang-image-arm64-large-offset-health/bin/fern",
+            "-target",
+            "arm64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/image-arm64-large-offset-unique-label-direct/record-4095.elf",
+            "/tmp/image-arm64-large-offset-unique-label-direct/record-4095.fern"
+          ],
+          "exit": 0,
+          "seconds": 0.9338173866271973,
+          "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "stage": "runtime",
+          "command": [
+            "/workspace/image-test-tools/qemu10/usr/bin/qemu-aarch64",
+            "/tmp/image-arm64-large-offset-unique-label-direct/record-4095.elf"
+          ],
+          "exit": 0,
+          "seconds": 0.3037571907043457,
+          "log_sha256": "edb1f489a385cd9b3f33ccec29f49ce4e2391181f00377a608afa4e71827cd8f"
+        }
+      ],
+      "binary_sha256": "2f97120f3b6df315bf8309bc8eece54e4c0b0e238395236daddbe5388ca6e046",
+      "heaps": [
+        [
+          4096,
+          4096,
+          0
+        ]
+      ],
+      "nonzero_balanced_zero_live": true
+    },
+    {
+      "name": "record-4100",
+      "source_sha256": "23c55feb07ab96bdc318210deef24a3aeee13b628987bba58b92d6fc49fd1bb2",
+      "checks": [
+        {
+          "stage": "compile",
+          "command": [
+            "/tmp/image-engine-worktrees/lang-image-arm64-large-offset-health/bin/fern",
+            "-target",
+            "arm64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/image-arm64-large-offset-unique-label-direct/record-4100.elf",
+            "/tmp/image-arm64-large-offset-unique-label-direct/record-4100.fern"
+          ],
+          "exit": 0,
+          "seconds": 1.1064167022705078,
+          "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "stage": "runtime",
+          "command": [
+            "/workspace/image-test-tools/qemu10/usr/bin/qemu-aarch64",
+            "/tmp/image-arm64-large-offset-unique-label-direct/record-4100.elf"
+          ],
+          "exit": 0,
+          "seconds": 0.18878412246704102,
+          "log_sha256": "5955bf748c91108a6a67901a1e6d6c66d78d656255537a23d64bee19130a7a05"
+        }
+      ],
+      "binary_sha256": "bce4be38248984007ba22401e33cc87c58381ca05c52d31e55a0a219f8c4b561",
+      "heaps": [
+        [
+          4101,
+          4101,
+          0
+        ]
+      ],
+      "nonzero_balanced_zero_live": true
+    },
+    {
+      "name": "record-8193",
+      "source_sha256": "7503e706f3821ac962e98c798a4ccbc3316973739fc3177a96a28031a6d18a44",
+      "checks": [
+        {
+          "stage": "compile",
+          "command": [
+            "/tmp/image-engine-worktrees/lang-image-arm64-large-offset-health/bin/fern",
+            "-target",
+            "arm64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/image-arm64-large-offset-unique-label-direct/record-8193.elf",
+            "/tmp/image-arm64-large-offset-unique-label-direct/record-8193.fern"
+          ],
+          "exit": 0,
+          "seconds": 2.16430401802063,
+          "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "stage": "runtime",
+          "command": [
+            "/workspace/image-test-tools/qemu10/usr/bin/qemu-aarch64",
+            "/tmp/image-arm64-large-offset-unique-label-direct/record-8193.elf"
+          ],
+          "exit": 0,
+          "seconds": 0.19413208961486816,
+          "log_sha256": "84f5c9b7371a5f79acda897fce1cc9c8ccdc3c3711dd6e1197b3b71fc320777e"
+        }
+      ],
+      "binary_sha256": "06f8def38d76759ea8bb18f2d1226a0448a1a1eeaa4d590ef5e47362524d2ff1",
+      "heaps": [
+        [
+          8194,
+          8194,
+          0
+        ]
+      ],
+      "nonzero_balanced_zero_live": true
+    },
+    {
+      "name": "float-4095",
+      "source_sha256": "65cf9344e9407c8051958bbf3ee246ffadc5bc1ec440a1b0ee1765bfd24a64f5",
+      "checks": [
+        {
+          "stage": "compile",
+          "command": [
+            "/tmp/image-engine-worktrees/lang-image-arm64-large-offset-health/bin/fern",
+            "-target",
+            "arm64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/image-arm64-large-offset-unique-label-direct/float-4095.elf",
+            "/tmp/image-arm64-large-offset-unique-label-direct/float-4095.fern"
+          ],
+          "exit": 0,
+          "seconds": 0.572678804397583,
+          "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "stage": "runtime",
+          "command": [
+            "/workspace/image-test-tools/qemu10/usr/bin/qemu-aarch64",
+            "/tmp/image-arm64-large-offset-unique-label-direct/float-4095.elf"
+          ],
+          "exit": 0,
+          "seconds": 0.16028976440429688,
+          "log_sha256": "2827ceb472117034aa21b2bbfe07f5f4d5504f94b3ef9fe00f24e3acfc738b5f"
+        }
+      ],
+      "binary_sha256": "cf17cba8e44c0d158ba8bd4586a28f98062fd2e896448bba8e4c7b813a088d55",
+      "heaps": [
+        [
+          1,
+          1,
+          0
+        ]
+      ],
+      "nonzero_balanced_zero_live": true
+    },
+    {
+      "name": "float-4100",
+      "source_sha256": "58369d496017565ef9536dfcd5926b49d9bca49b61de2e27be99ebd2cb19c031",
+      "checks": [
+        {
+          "stage": "compile",
+          "command": [
+            "/tmp/image-engine-worktrees/lang-image-arm64-large-offset-health/bin/fern",
+            "-target",
+            "arm64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/image-arm64-large-offset-unique-label-direct/float-4100.elf",
+            "/tmp/image-arm64-large-offset-unique-label-direct/float-4100.fern"
+          ],
+          "exit": 0,
+          "seconds": 0.4114413261413574,
+          "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "stage": "runtime",
+          "command": [
+            "/workspace/image-test-tools/qemu10/usr/bin/qemu-aarch64",
+            "/tmp/image-arm64-large-offset-unique-label-direct/float-4100.elf"
+          ],
+          "exit": 0,
+          "seconds": 0.16500329971313477,
+          "log_sha256": "2827ceb472117034aa21b2bbfe07f5f4d5504f94b3ef9fe00f24e3acfc738b5f"
+        }
+      ],
+      "binary_sha256": "e707410a408111a0f25843e7e77c5fe38d171ff5a232d84e4e48afd75901c02b",
+      "heaps": [
+        [
+          1,
+          1,
+          0
+        ]
+      ],
+      "nonzero_balanced_zero_live": true
+    },
+    {
+      "name": "float-8193",
+      "source_sha256": "e85c0d618e4ce42440ba48b952bbd242660e5d217668774e35ae16b31fd60222",
+      "checks": [
+        {
+          "stage": "compile",
+          "command": [
+            "/tmp/image-engine-worktrees/lang-image-arm64-large-offset-health/bin/fern",
+            "-target",
+            "arm64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/image-arm64-large-offset-unique-label-direct/float-8193.elf",
+            "/tmp/image-arm64-large-offset-unique-label-direct/float-8193.fern"
+          ],
+          "exit": 0,
+          "seconds": 0.9172143936157227,
+          "log_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        },
+        {
+          "stage": "runtime",
+          "command": [
+            "/workspace/image-test-tools/qemu10/usr/bin/qemu-aarch64",
+            "/tmp/image-arm64-large-offset-unique-label-direct/float-8193.elf"
+          ],
+          "exit": 0,
+          "seconds": 0.2935178279876709,
+          "log_sha256": "2827ceb472117034aa21b2bbfe07f5f4d5504f94b3ef9fe00f24e3acfc738b5f"
+        }
+      ],
+      "binary_sha256": "916e6842932c0031b2a87f457cc5a681cdf187cc774b67eaa020638da9f9ee47",
+      "heaps": [
+        [
+          1,
+          1,
+          0
+        ]
+      ],
+      "nonzero_balanced_zero_live": true
+    }
+  ]
+}

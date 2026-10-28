@@ -1,0 +1,66 @@
+{
+  "reason": "Committed candidate d249 uses duplicate textual literal-pool labels; qualification stops before source correction.",
+  "roots": [
+    834022,
+    834100
+  ],
+  "processes": {
+    "842789": [
+      834193,
+      "R",
+      "/tmp/image-engine-worktrees/lang-image-arm64-large-offset-health/bin/fern -check tests/pipeline_test.fern"
+    ],
+    "834022": [
+      481,
+      "Ss",
+      "python3 /tmp/image-run-arm64-large-offset-full.py native"
+    ],
+    "834221": [
+      834100,
+      "S",
+      "bash fern-image/scripts/test-wasm.sh"
+    ],
+    "842798": [
+      834221,
+      "Rl",
+      "wasmtime build/wasm-deflate_reader_test.wasm"
+    ],
+    "834193": [
+      834022,
+      "S",
+      "bash fern-image/scripts/test.sh"
+    ],
+    "834100": [
+      481,
+      "Ss",
+      "python3 /tmp/image-run-arm64-large-offset-full.py wasm"
+    ]
+  },
+  "signal_requested": "SIGTERM",
+  "completed_results": [
+    "image-arm64-large-offset-full-arm64.json",
+    "image-arm64-large-offset-final-targets.json",
+    "image-arm64-large-offset-final-targets.checkpoint.json",
+    "image-arm64-large-offset-final-runtime.json",
+    "image-arm64-large-offset-final-runtime.checkpoint.json",
+    "image-arm64-large-offset-final-aux.json",
+    "image-arm64-large-offset-direct.json",
+    "image-arm64-large-offset-direct.checkpoint.json",
+    "image-arm64-large-offset-current-frozen.json",
+    "image-arm64-large-offset-final-complexity.json",
+    "image-arm64-large-offset-final-complexity.checkpoint.json",
+    "image-arm64-large-offset-final-aux.checkpoint.json",
+    "image-arm64-large-offset-final-aux.before.json",
+    "image-arm64-large-offset-final-targets.before.json",
+    "image-arm64-large-offset-final-runtime.before.json",
+    "image-arm64-large-offset-final-complexity.before.json",
+    "image-arm64-large-offset-current-build.json",
+    "image-arm64-large-offset-first-candidate-result-preserved.json",
+    "image-arm64-large-offset-regression-after.json",
+    "image-arm64-large-offset-regression-after.before.json",
+    "image-arm64-large-offset-regression-before.json",
+    "image-arm64-large-offset-parent-get.json",
+    "image-arm64-large-offset-parent-post.json"
+  ],
+  "pending_final_results_not_inferred": true
+}
