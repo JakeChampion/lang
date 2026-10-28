@@ -359,7 +359,7 @@ function test_allow_list_entries(): test.TestOutcome {
     match (fetch.allow([e])) {
       Ok(_) => {},
       Err(why) => {
-        out = out + why + ";";
+        out = out + why.message() + ";";
       }
     }
   }
@@ -374,10 +374,10 @@ function test_allow_list_entries(): test.TestOutcome {
   match (fetch.allow(["fine.test", "a b"])) {
     Ok(_) => {},
     Err(why) => {
-      out = out + why;
+      out = out + why.entry + " | " + why.message();
     }
   }
-  return test.assert_eq(out, "allow-list entry \"a b\" is not a host, a host:port or a *.domain");
+  return test.assert_eq(out, "a b | allow-list entry \"a b\" is not a host, a host:port or a *.domain");
 }
 
 function test_allow_list_route(): test.TestOutcome {

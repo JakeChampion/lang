@@ -68,7 +68,7 @@ function main(): i32 {
       return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), http_allow: Some(a) }, handle));
     },
     Err(why) => {
-      print(why);
+      print(why.message());
       return 1;
     }
   }
