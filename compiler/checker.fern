@@ -1876,10 +1876,13 @@ pub struct TypeNames {
   unions: util.NameIndex,
   resources: util.NameIndex,
   spellings: SpellMemo,
+  // unloaded is the qualifiers of the module's imports that were not loaded,
+  // so their types are not known here: `json` for an unloaded "std/json".
+  unloaded: util.NameIndex,
 }
 
 function type_names(struct_names: string[], union_names: string[], resource_names: string[]): TypeNames {
-  return TypeNames { structs: util.name_index(struct_names), unions: util.name_index(union_names), resources: util.name_index(resource_names), spellings: no_spellings() };
+  return TypeNames { structs: util.name_index(struct_names), unions: util.name_index(union_names), resources: util.name_index(resource_names), spellings: no_spellings(), unloaded: util.name_index([]) };
 }
 
 function with_spellings(tn: TypeNames, mod: parser.Module): TypeNames {
@@ -2195,13 +2198,13 @@ function new_scope(): Scope {
   let ms: MethodSig[] = [];
   let structs: StructTable = struct_table(ss, [], [], no_spellings());
   let unions: UnionTable = union_table(us);
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: method_table(ms), imports: Imports { paths: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], view_memo: new_view_memo() };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], view_memo: new_view_memo() };
 }
 
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], view_memo: new_view_memo() };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], view_memo: new_view_memo() };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
@@ -2260,8 +2263,8 @@ function (s: Scope) type_names(): TypeNames {
   return s.names_of_types;
 }
 
-function type_names_of(structs: StructTable, unions: UnionTable): TypeNames {
-  return TypeNames { structs: structs.heads, unions: unions.index, resources: structs.resources, spellings: structs.spellings };
+function type_names_of(structs: StructTable, unions: UnionTable, unloaded: string[]): TypeNames {
+  return TypeNames { structs: structs.heads, unions: unions.index, resources: structs.resources, spellings: structs.spellings, unloaded: util.name_index(unloaded) };
 }
 
 function (s: Scope) resolve_type(name: string): typeinfo.Type {
@@ -20402,12 +20405,13 @@ function e064_unknown_bare(type_name: string, tn: TypeNames): boolean {
 }
 
 // Flattening mangles every imported qualifier, so a `q.T` that survives it
-// names a module this one never imported, unless `q` is an enum.
+// names a module this one never imported, unless `q` is an enum or an import
+// that was not loaded.
 function unresolved_qualifier(type_name: string, tn: TypeNames): boolean {
   for i in 0..type_name.len() {
     if (type_name[i] == b'.') {
       let q: string = slice_unchecked(type_name, 0, i) + "";
-      return plain_ident(q) && !tn.unions.has(q) && !tn.structs.has(q);
+      return plain_ident(q) && !tn.unions.has(q) && !tn.structs.has(q) && !tn.unloaded.has(q);
     }
   }
   return false;
@@ -23445,7 +23449,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   for resource in mod.resources {
     e064_extra = e064_extra.append(resource.name);
   }
-  let e064_tn: TypeNames = with_spellings(type_names(declared_struct_names(mod.structs), union_names, rnames), mod);
+  let e064_tn: TypeNames = TypeNames { ...with_spellings(type_names(declared_struct_names(mod.structs), union_names, rnames), mod), unloaded: util.name_index(unloaded_qualifiers(mod)) };
   for efn in mod.funcs {
     if (in_focus(focus, efn) && efn.receiver_name.len() == 0) {
       let efn_tps: string[] = e064_fn_tparams(efn);
@@ -24698,10 +24702,20 @@ function type_to_arrtag(t: typeinfo.Type): string {
   return "";
 }
 
-pub struct Imports { paths: string[], sights: parser.ModuleSight[] }
+pub struct Imports { paths: string[], unloaded: string[], sights: parser.ModuleSight[] }
 
 function module_imports(mod: parser.Module): Imports {
-  return Imports { paths: import_paths_of(mod), sights: mod.sights };
+  return Imports { paths: import_paths_of(mod), unloaded: unloaded_qualifiers(mod), sights: mod.sights };
+}
+
+function unloaded_qualifiers(mod: parser.Module): string[] {
+  let out: string[] = [];
+  for im in mod.imports {
+    if (im.resolved.len() == 0) {
+      out = out.append(parser.import_qualifier(im));
+    }
+  }
+  return out;
 }
 
 function (im: Imports) sees(from: string, decl: string): boolean {

@@ -8815,6 +8815,22 @@ pub function split_top_commas(s: string): string[] {
   return out;
 }
 
+// import_qualifier is the name an import gives to the module it loads: its
+// alias, or the last segment of its path (`json` for `import "std/json"`).
+pub function import_qualifier(im: Import): string {
+  if (im.alias.len() > 0) {
+    return im.alias;
+  }
+  let p: string = util.without_fern_ext(im.path);
+  let start: i32 = 0;
+  for i in 0..p.len() {
+    if (p[i] == b'/') {
+      start = i + 1;
+    }
+  }
+  return slice_unchecked(p, start, p.len()) + "";
+}
+
 pub function std_qualifier(mod: Module, name: string): string {
   let want: string = "std/" + name;
   for imp in mod.imports {
