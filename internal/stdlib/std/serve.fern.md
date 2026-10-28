@@ -2271,7 +2271,7 @@ function __h2_turn_with[D: async.Driver, S](drv: D, c: __Conns, at: i32, st: S, 
     }
   }
   c = __Conns { ...c, framing: c.framing.with(at, Http2(conn)), keep: c.keep.with(at, !conn.closed() && !eof) };
-  let flushed: (__Conns, __Flights) = __h2_flushed(drv, c, [], at, out, opts, conn.closed() || eof);
+  let flushed: (__Conns, __Flights) = __h2_flushed(drv, c, __flights_none(), at, out, opts, conn.closed() || eof);
   return (flushed.0, st);
 }
 
