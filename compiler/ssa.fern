@@ -584,11 +584,13 @@ function intersect(idom: i32[], po: i32[], a: i32, b: i32): i32 {
 function postorder(f: SFunc, at: i32[], entry: i32): i32[] {
   let seen: boolean[] = __alloc_bool(f.blocks.len());
   let out: i32[] = [];
-  let stack: i32[] = [entry];
-  let next: i32[] = [0];
+  let stack: i32[] = __alloc_i32(f.blocks.len());
+  let next: i32[] = __alloc_i32(f.blocks.len());
+  stack = stack.with(0, entry);
+  let depth: i32 = 1;
   seen = seen.with(entry, true);
-  while (stack.len() > 0) {
-    let top: i32 = stack.len() - 1;
+  while (depth > 0) {
+    let top: i32 = depth - 1;
     let b: i32 = stack[top];
     let which: i32 = next[top];
     if (which < 2) {
@@ -596,13 +598,13 @@ function postorder(f: SFunc, at: i32[], entry: i32): i32[] {
       let s: i32 = distinct_successor_position(at, f.blocks[b].term, which);
       if (s >= 0 && !seen[s]) {
         seen = seen.with(s, true);
-        stack = stack.append(s);
-        next = next.append(0);
+        stack = stack.with(depth, s);
+        next = next.with(depth, 0);
+        depth = depth + 1;
       }
     } else {
       out = out.append(b);
-      stack = drop_last_i(stack);
-      next = drop_last_i(next);
+      depth = depth - 1;
     }
   }
   return out;
