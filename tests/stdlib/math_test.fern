@@ -44,10 +44,10 @@ function test_pack_rgb_wraps(): test.TestOutcome {
 
 function pr(s: string): i32 {
   match (math.parse_rgb_hex(s)) {
-    Some(v) => {
+    Ok(v) => {
       return v;
     },
-    None => {
+    Err(_) => {
       return -1;
     }
   }
@@ -76,7 +76,13 @@ function test_parse_rgb_hex_invalid(): test.TestOutcome {
   if (pr("") != -1) {
     return test.fail("empty");
   }
-  return test.assert_eq(pr("#"), -1);
+  if (pr("#") != -1) {
+    return test.fail("hash only");
+  }
+  let Err(e) = math.parse_rgb_hex("#gg0000") else {
+    return test.fail("bad digit accepted");
+  };
+  return test.assert_eq(e.message(), "\"#gg0000\" is not a hex color such as #f80 or #ff8800");
 }
 
 function test_rgb_luminance(): test.TestOutcome {

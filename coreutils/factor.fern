@@ -804,10 +804,10 @@ function handle(h: usize, text: u8[], lo: i32, hi: i32, split: boolean, exponent
     let number: string = buf_take(digits);
     buf_free(digits);
     match (bigint.parse(number)) {
-      Some(b) => {
+      Ok(b) => {
         code = handle_wide(h, text, sig, i, b, exponents, pr);
       },
-      None => {}
+      Err(_) => {}
     }
   }
   return end as i64 << 3 as i64 | code;

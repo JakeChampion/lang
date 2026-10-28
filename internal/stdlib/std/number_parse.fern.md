@@ -343,13 +343,13 @@ function _float32_midpoint(s: str, midpoint: f64, lower: i32, upper: i32, negati
 function __bn_of_digits(s: string): bigint.BigInt {
   // `s` carries only significant digits by __decimal_to_f64's contract,
   // and the empty string is handled before any caller reaches here — so
-  // the None arm is unreachable. It returns zero rather than trapping to
+  // the Err arm is unreachable. It returns zero rather than trapping to
   // keep the documented `"" is 0` behaviour total.
   match (bigint.parse(s)) {
-    Some(v) => {
+    Ok(v) => {
       return v;
     },
-    None => {
+    Err(_) => {
       return bigint.zero();
     }
   }

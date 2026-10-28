@@ -427,10 +427,10 @@ pub function (f: Format) from_decimal(digits: string, k: i32, neg: boolean): (LD
   }
   let d: bigint.BigInt = bigint.zero();
   match (bigint.parse(digits)) {
-    Some(v) => {
+    Ok(v) => {
       d = v;
     },
-    None => {}
+    Err(_) => {}
   }
   if (k >= 0) {
     return f.round(d.mul_pow10(k), 0, false, neg);

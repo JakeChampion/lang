@@ -8,7 +8,7 @@ This module provides arbitrary-precision integers.
 
 ## Contracts
 
-Arithmetic methods return a new value. `parse` returns `None` for invalid text. The shift and bit methods operate on the magnitude.
+Arithmetic methods return a new value. `parse` refuses invalid text with the `ParseNumberError` the integer parsers use. The shift and bit methods operate on the magnitude.
 
 ## Executable example
 
@@ -52,6 +52,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module provides arbitrary-precision integers.
+import "std/number_parse";
 ```
 
 ### `2 pub struct BigInt`
@@ -308,10 +309,10 @@ pub function from_i64(v: i64): BigInt {
   return __bi_make(neg, m);
 }
 
-pub function parse(s: string): Option[BigInt] {
+pub function parse(s: string): Result[BigInt, number_parse.ParseNumberError] {
   let n: i32 = s.len();
   if (n == 0) {
-    return None;
+    return Err(number_parse.EmptyInput);
   }
   let i: i32 = 0;
   let neg: boolean = false;
@@ -324,7 +325,7 @@ pub function parse(s: string): Option[BigInt] {
     }
   }
   if (i >= n) {
-    return None;
+    return Err(number_parse.InvalidDigit(i));
   }
   let mag: u64[] = [];
   mag = mag.append(0 as u64);
@@ -335,7 +336,7 @@ pub function parse(s: string): Option[BigInt] {
     while (i < n && taken < 9) {
       let c: i32 = s[i] as i32;
       if (c < 48 || c > 57) {
-        return None;
+        return Err(number_parse.InvalidDigit(i));
       }
       chunk = chunk * (10 as u64) + (c - 48) as u64;
       scale = scale * (10 as u64);
@@ -345,7 +346,7 @@ pub function parse(s: string): Option[BigInt] {
     mag = __bi_mul_small(mag, scale);
     mag = __bi_add_small(mag, chunk);
   }
-  return Some(__bi_make(neg, mag));
+  return Ok(__bi_make(neg, mag));
 }
 
 pub function (a: BigInt) is_zero(): boolean {

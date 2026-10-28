@@ -72,13 +72,13 @@ function test_rule_time_past_24_hours(): test.TestOutcome {
 
 function test_rule_time_negative(): test.TestOutcome {
   match (tz.iana_zone("America/Nuuk")) {
-    Some(z) => {
+    Ok(z) => {
       if (z.offset_at(time.timestamp_from_unix(13576813200i64 - 1i64)) != 0 - 7200) {
         return test.fail("-02 before -1:00 on the Sunday");
       }
       return test.assert_eq(z.offset_at(time.timestamp_from_unix(13576813200i64)), 0 - 3600);
     },
-    None => {
+    Err(_) => {
       return test.fail("America/Nuuk missing");
     }
   }
@@ -91,13 +91,13 @@ function test_rule_time_past_167_hours_refused(): test.TestOutcome {
 
 function test_iana_zone_london(): test.TestOutcome {
   match (tz.iana_zone("Europe/London")) {
-    Some(z) => {
+    Ok(z) => {
       if (z.abbrev_at(time.timestamp_from_unix(1720000000i64)) != "BST" || z.offset_at(time.timestamp_from_unix(1720000000i64)) != 3600) {
         return test.fail("BST in July 2024");
       }
       return test.assert_eq(z.abbrev_at(time.timestamp_from_unix(1700000000i64)), "GMT");
     },
-    None => {
+    Err(_) => {
       return test.fail("Europe/London missing");
     }
   }
@@ -105,20 +105,23 @@ function test_iana_zone_london(): test.TestOutcome {
 
 function test_iana_zone_far_future(): test.TestOutcome {
   match (tz.iana_zone("US/Pacific")) {
-    Some(z) => {
+    Ok(z) => {
       return test.assert_eq(z.abbrev_at(time.timestamp_from_unix(13585190400i64)), "PDT");
     },
-    None => {
+    Err(_) => {
       return test.fail("US/Pacific missing");
     }
   }
 }
 
 function test_iana_zone_unknown(): test.TestOutcome {
-  if (tz.iana_zone("Mars/Olympus").is_some() || tz.iana_zone("").is_some()) {
+  if (tz.iana_zone("").is_ok() || tz.iana_zone("UTC;Europe/London").is_ok()) {
     return test.fail("an unknown name answered");
   }
-  return test.assert_eq(tz.iana_zone("UTC;Europe/London").is_some(), false);
+  let Err(e) = tz.iana_zone("Mars/Olympus") else {
+    return test.fail("Mars/Olympus answered");
+  };
+  return test.assert_eq(e.message(), "\"Mars/Olympus\" is not an IANA time-zone name");
 }
 
 function test_at_is_the_local_time_then(): test.TestOutcome {
@@ -245,7 +248,7 @@ function fixture(): u8[] {
 
 function test_tzif_before_and_after_transition(): test.TestOutcome {
   match (tz.parse_tzif(fixture())) {
-    Some(z) => {
+    Ok(z) => {
       if (z.offset_at(time.timestamp_from_unix(999999i64)) != 3600 || z.abbrev_at(time.timestamp_from_unix(999999i64)) != "AAA") {
         return test.fail("before the transition");
       }
@@ -257,7 +260,7 @@ function test_tzif_before_and_after_transition(): test.TestOutcome {
       }
       return test.pass();
     },
-    None => {
+    Err(_) => {
       return test.fail("a well-formed file was refused");
     }
   }
@@ -265,10 +268,10 @@ function test_tzif_before_and_after_transition(): test.TestOutcome {
 
 function test_tzif_reads_the_64_bit_table(): test.TestOutcome {
   match (tz.parse_tzif(fixture())) {
-    Some(z) => {
+    Ok(z) => {
       return test.assert_eq(z.offset_at(time.timestamp_from_unix(1999999i64)), 7200);
     },
-    None => {
+    Err(_) => {
       return test.fail("refused");
     }
   }
@@ -276,13 +279,13 @@ function test_tzif_reads_the_64_bit_table(): test.TestOutcome {
 
 function test_tzif_footer_governs_the_future(): test.TestOutcome {
   match (tz.parse_tzif(fixture())) {
-    Some(z) => {
+    Ok(z) => {
       if (z.abbrev_at(time.timestamp_from_unix(4000000000i64)) != "+03") {
         return test.fail("footer abbreviation");
       }
       return test.assert_eq(z.offset_at(time.timestamp_from_unix(4000000000i64)), 10800);
     },
-    None => {
+    Err(_) => {
       return test.fail("refused");
     }
   }
@@ -297,11 +300,11 @@ function test_tzif_truncated_is_refused(): test.TestOutcome {
     i = i + 1;
   }
   match (tz.parse_tzif(cut)) {
-    Some(_) => {
+    Ok(_) => {
       return test.fail("a file cut inside its first block parsed");
     },
-    None => {
-      return test.pass();
+    Err(e) => {
+      return test.assert_eq(e.message(), "the TZif data ends before its last block");
     }
   }
 }
@@ -325,11 +328,11 @@ function test_tzif_absurd_count_is_refused(): test.TestOutcome {
   out = push_bytes(out, "UTC");
   out = out.append(0 as u8);
   match (tz.parse_tzif(out)) {
-    Some(_) => {
+    Ok(_) => {
       return test.fail("parsed");
     },
-    None => {
-      return test.pass();
+    Err(e) => {
+      return test.assert_eq(e.message(), "the data does not start with a valid TZif header");
     }
   }
 }
@@ -338,11 +341,11 @@ function test_not_tzif_is_refused(): test.TestOutcome {
   let bs: u8[] = [];
   bs = push_bytes(bs, "not a zoneinfo file at all, just forty-eight bytes..");
   match (tz.parse_tzif(bs)) {
-    Some(_) => {
+    Ok(_) => {
       return test.fail("parsed");
     },
-    None => {
-      return test.pass();
+    Err(e) => {
+      return test.assert_eq(e.message(), "the data does not start with a valid TZif header");
     }
   }
 }
