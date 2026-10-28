@@ -3904,6 +3904,9 @@ function method_namespace_of(t: typeinfo.Type): string {
     typeinfo.TypeFloat(f) => {
       return float_label(f);
     },
+    typeinfo.TypeLanes(l) => {
+      return typeinfo.lanes_spelling(l.width);
+    },
     _ => {
       return "";
     }
@@ -14055,6 +14058,13 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           }
           out = util.append_diags(out, declared_method_diags(c, recv, "boolean", mfa.field, s));
         },
+        typeinfo.TypeLanes(l) => {
+          let lanes: string = typeinfo.lanes_spelling(l.width);
+          if (s.method_missing(recv, mfa.field)) {
+            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(lanes, mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+          }
+          out = util.append_diags(out, declared_method_diags(c, recv, lanes, mfa.field, s));
+        },
         typeinfo.TypeString(_) => {
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("string", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
@@ -15463,6 +15473,10 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
     return !s.has_visible_method(field, scalar) && is_unknown(builtin_method_sig(scalar, field));
   }
   match (recv) {
+    typeinfo.TypeLanes(l) => {
+      let lanes: string = typeinfo.lanes_spelling(l.width);
+      return !s.has_visible_method(field, lanes) && is_unknown(builtin_method_sig(lanes, field));
+    },
     typeinfo.TypeArray(array) => {
       let builtin: boolean = field == "len" || !array.view && (field == "append" || field == "with" || field == "truncate");
       return !builtin && !s.has_array_recv_method(field, array.view);
