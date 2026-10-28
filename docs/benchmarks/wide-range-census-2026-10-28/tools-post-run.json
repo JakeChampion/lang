@@ -1,0 +1,60 @@
+{
+  "phase": "POSTRUN explicit executable hash revalidation",
+  "recorded_version_observation_source": "a3296b1a5694a7d456bb3d8d526d7bf381a09b8d",
+  "current_source": "73f407b489ea3f66d55bc3b3329a474dff070762",
+  "tools": [
+    {
+      "name": "go",
+      "path": "/home/agent/.local/share/mise/installs/go/1.27.3/bin/go",
+      "sha256": "5f5eb6d0b2fb6aa0bb5d5f8c5f1c944e0de955c925f0111af92a9d8f79680b5b",
+      "version": "go version go1.27.3 linux/amd64",
+      "executable_hash_revalidated_after_current_runs": true
+    },
+    {
+      "name": "python3",
+      "path": "/opt/codex/runtimes/codex-primary-runtime/dependencies/python/bin/python3",
+      "sha256": "fa67443527ed9647f760d807e2a38f26340757123e643c4639cf273ed15d5ea7",
+      "version": "Python 3.12.14",
+      "executable_hash_revalidated_after_current_runs": true
+    },
+    {
+      "name": "wasmtime",
+      "path": "/home/agent/.local/share/mise/installs/wasmtime/46.0.1/wasmtime-v46.0.1-x86_64-linux/wasmtime",
+      "sha256": "2b95a43218597466c7e56208af292d410c6d6b002a98d10d76d7273199bcd1ff",
+      "version": "wasmtime 46.0.1 (823d1b8f2 2026-06-24)",
+      "executable_hash_revalidated_after_current_runs": true
+    },
+    {
+      "name": "wasm-tools",
+      "path": "/home/agent/.local/share/mise/installs/wasm-tools/1.253.0/wasm-tools-1.253.0-x86_64-linux/wasm-tools",
+      "sha256": "4781d5b7e1d6cedcd8f2384cf6578f4ed7022d305a6e580bde902c32756ca661",
+      "version": "wasm-tools 1.253.0 (c799bb87b 2026-07-07)",
+      "executable_hash_revalidated_after_current_runs": true
+    },
+    {
+      "name": "gcc",
+      "path": "/usr/bin/gcc",
+      "sha256": "a23ecab8ff08f09ad8c80602c2c5df7f49e09c25905cb8975902e101bf72635f",
+      "version": "gcc (Debian 14.2.0-19) 14.2.0",
+      "executable_hash_revalidated_after_current_runs": true
+    },
+    {
+      "name": "aarch64-linux-gnu-gcc",
+      "path": "/workspace/image-test-tools/arm64-cross/usr/bin/aarch64-linux-gnu-gcc",
+      "sha256": "fb743ca27a77466c91da66047eec879a615993feaabd860aaf3750e7b222b131",
+      "version": "aarch64-linux-gnu-gcc (Debian 14.2.0-19) 14.2.0",
+      "executable_hash_revalidated_after_current_runs": true
+    },
+    {
+      "name": "qemu-aarch64",
+      "path": "/workspace/image-test-tools/qemu10/usr/bin/qemu-aarch64",
+      "sha256": "73cc2584f119f9e74c85c0a8549dbb6fd104ae3897a06a7500797f9e5b4d0943",
+      "version": "qemu-aarch64 version 10.0.13 (Debian 1:10.0.13+ds-0+deb13u1)",
+      "executable_hash_revalidated_after_current_runs": true
+    }
+  ],
+  "compiler_binaries": {
+    "bin/fern": "7b2b56007d2e561363d02d33a7f8627a7258f492ca405cb61cf71b1b4067b8eb",
+    "bin/fern-selfhost": "db42054a760c888b803ac61d1cdc625c79add769062463cb50878ce50097c544"
+  }
+}

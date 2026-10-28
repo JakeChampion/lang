@@ -7,24 +7,20 @@ pub function valid(r: Interval): boolean {
 pub function capacities(): i64[] {
   let result: i64[] = [];
   let quarter = 131072 as i64;
-  let index = 0;
-  while (index < 61) {
+  for index in 0..61 {
     result = result.append((4 + index % 4) as i64 * quarter);
     if (index % 4 == 3) {
       quarter = quarter * (2 as i64);
     }
-    index = index + 1;
   }
   return result;
 }
 
 function class_at(n: i64, bins: i64[]): i32 {
-  let at = 0;
-  while (at < bins.len()) {
+  for at in 0..bins.len() {
     if (n <= bins[at]) {
       return at;
     }
-    at = at + 1;
   }
   return -1;
 }
