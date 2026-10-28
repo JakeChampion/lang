@@ -1,13 +1,15 @@
 import "std/test";
 import "std/math" as math;
+import "std/i32";
+import "std/i64";
 
 function test_i32_bounds(): test.TestOutcome {
-  return test.assert_true(math.i32_max() == 2147483647
-    && math.i32_min() == 0 - 2147483647 - 1);
+  return test.assert_true(i32.MAX == 2147483647
+    && i32.MIN == 0 - 2147483647 - 1);
 }
 
 function test_i64_bounds(): test.TestOutcome {
-  return test.assert_eq(math.i64_max(), 9223372036854775807);
+  return test.assert_eq(i64.MAX, 9223372036854775807);
 }
 
 function test_pack_rgb(): test.TestOutcome {
