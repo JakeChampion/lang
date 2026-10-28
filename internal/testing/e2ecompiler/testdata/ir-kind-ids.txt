@@ -421,3 +421,4 @@ crc32_ieee=480
 crc32_ieee_array=481
 count_below_u64=482
 prctl_query=483
+mulhi_s=484
