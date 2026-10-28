@@ -129,7 +129,7 @@ function main(): i32 {
   if (" a ".count_byte(32 as u8) != 2 || "  a".leading_count(32 as u8) != 2 || "a  ".trailing_count(32 as u8) != 2 || "abc".replace_byte(98 as u8, 255 as u8)[1] != 255 as u8 || "abc".without_byte(98 as u8).len() != 2) {
     return 61;
   }
-  if ("x".pad_start(3, '0') != "00x" || "x".pad_end(3, '.') != "x.." || "x".center(5, '-') != "--x--" || "x".pad_start(4, 'é') != "éx" || "x".center(9, '𝄞') != "𝄞x𝄞") {
+  if ("x".pad_start(3, '0') != "00x" || "x".pad_end(3, '.') != "x.." || "x".center(5, '-') != "--x--" || "x".pad_start(4, 'é') != "éééx" || "x".center(5, '𝄞') != "𝄞𝄞x𝄞𝄞") {
     return 62;
   }
   let (byte, cursor) = stream.stream_from_string("abc").read_byte();

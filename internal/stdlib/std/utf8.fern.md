@@ -393,15 +393,4 @@ pub function (s: string) chars(): char[] {
   }
   return out;
 }
-
-pub function (s: string) codepoint_count(): i32 {
-  let n: i32 = s.len();
-  let count: i32 = 0;
-  let i: i32 = 0;
-  while (i < n) {
-    i = i + utf8_scalar.step(s, i, n);
-    count = count + 1;
-  }
-  return count;
-}
 ```
