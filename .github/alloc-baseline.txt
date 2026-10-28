@@ -1,3 +1,4 @@
+# 2026-10-28: Perf run 40651501783 on #13768 measured 37,524,739 balanced events. Main measured 37,521,377 at eb0e5fdc0, so the move is on main.
 # 2026-10-28: scripts/selfhost-alloc-bench on #13726 (merged with main at 5acfabebb). The last pin predates #13677, which runs the IR verifier in every compile and grew checker.fern with the unsafe obligation pass; the build manifest of #13726 adds a few allocations per compile.
 # 2026-10-26: Full CI run 40337273239 at 7cd5b7d81 measured 34,951,426 balanced events. Reachability also runs before scalar transforms.
 # 2026-10-25: Perf run 40200803636 (main at 127eb63c). checker.fern grew with today's merges (#13153, #13242, #13261): +10.2% allocations.
@@ -68,5 +69,5 @@
 # Re-pinned 2026-10-22: main's merges since moved it 3.7% (26,298,117 on main
 # ddc5b110 on the dev container); const_propagate's known table starts on one
 # placeholder op, 0.5% fewer.
-x86_64/checker.allocs	36901932
-x86_64/checker.frees	36901932
+x86_64/checker.allocs	37524739
+x86_64/checker.frees	37524739
