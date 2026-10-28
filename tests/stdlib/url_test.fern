@@ -4,7 +4,7 @@ import "core/map";
 import "std/utf8" as utf8;
 
 function resolved(base: string, reference: string): string {
-  match (url.url_resolve(base, reference)) {
+  match (url.resolve(base, reference)) {
     Ok(s) => {
       return s;
     },
@@ -78,75 +78,75 @@ function test_resolve_no_scheme(): test.TestOutcome {
 }
 
 function test_remove_dot_segments(): test.TestOutcome {
-  if (url.url_remove_dot_segments("/a/b/c/./../../g") != "/a/g") {
-    return test.fail("RFC 3986 §5.2.4 example 1: " + url.url_remove_dot_segments("/a/b/c/./../../g"));
+  if (url.remove_dot_segments("/a/b/c/./../../g") != "/a/g") {
+    return test.fail("RFC 3986 §5.2.4 example 1: " + url.remove_dot_segments("/a/b/c/./../../g"));
   }
-  if (url.url_remove_dot_segments("mid/content=5/../6") != "mid/6") {
-    return test.fail("RFC 3986 §5.2.4 example 2: " + url.url_remove_dot_segments("mid/content=5/../6"));
+  if (url.remove_dot_segments("mid/content=5/../6") != "mid/6") {
+    return test.fail("RFC 3986 §5.2.4 example 2: " + url.remove_dot_segments("mid/content=5/../6"));
   }
-  if (url.url_remove_dot_segments("/a//b/") != "/a//b/") {
-    return test.fail("empty segments are kept: " + url.url_remove_dot_segments("/a//b/"));
+  if (url.remove_dot_segments("/a//b/") != "/a//b/") {
+    return test.fail("empty segments are kept: " + url.remove_dot_segments("/a//b/"));
   }
-  return test.assert_eq(url.url_remove_dot_segments("/.."), "/");
+  return test.assert_eq(url.remove_dot_segments("/.."), "/");
 }
 
 function test_encode_space(): test.TestOutcome {
-  return test.assert_eq(url.url_encode("a b"), "a%20b");
+  return test.assert_eq(url.encode("a b"), "a%20b");
 }
 
 function test_encode_unreserved(): test.TestOutcome {
-  return test.assert_eq(url.url_encode("aZ9-._~"), "aZ9-._~");
+  return test.assert_eq(url.encode("aZ9-._~"), "aZ9-._~");
 }
 
 function test_encode_reserved(): test.TestOutcome {
-  return test.assert_eq(url.url_encode("/?&="), "%2F%3F%26%3D");
+  return test.assert_eq(url.encode("/?&="), "%2F%3F%26%3D");
 }
 
 function test_decode_space(): test.TestOutcome {
-  return test.assert_eq(url.url_decode("a%20b"), "a b");
+  return test.assert_eq(url.decode("a%20b"), "a b");
 }
 
 function test_decode_lowercase_hex(): test.TestOutcome {
-  return test.assert_eq(url.url_decode("%2f"), "/");
+  return test.assert_eq(url.decode("%2f"), "/");
 }
 
 function test_decode_truncated(): test.TestOutcome {
-  return test.assert_eq(url.url_decode("%2"), "%2");
+  return test.assert_eq(url.decode("%2"), "%2");
 }
 
 function test_roundtrip(): test.TestOutcome {
-  return test.assert_eq(url.url_decode(url.url_encode("a b/c?d=e&f")), "a b/c?d=e&f");
+  return test.assert_eq(url.decode(url.encode("a b/c?d=e&f")), "a b/c?d=e&f");
 }
 
 function test_parse_full(): test.TestOutcome {
-  match (url.url_parse("http://example.com:8080/path?q=1#frag")) {
+  match (url.parse("http://example.com:8080/path?q=1#frag")) {
     Ok(u) => {
       return test.assert_true(u.scheme == "http" && u.host == "example.com"
         && u.port == 8080 && u.path == "/path" && u.query == "q=1"
         && u.fragment == "frag");
     },
     Err(_) => {
-      return test.fail("url_parse(full) expected Ok");
+      return test.fail("url.parse(full) expected Ok");
     }
   }
 }
 
 function test_parse_minimal(): test.TestOutcome {
-  match (url.url_parse("https://host.com/")) {
+  match (url.parse("https://host.com/")) {
     Ok(u) => {
       return test.assert_true(u.scheme == "https" && u.host == "host.com"
         && u.port == 0 && u.path == "/" && u.query == "" && u.fragment == "");
     },
     Err(_) => {
-      return test.fail("url_parse(minimal) expected Ok");
+      return test.fail("url.parse(minimal) expected Ok");
     }
   }
 }
 
 function test_parse_empty(): test.TestOutcome {
-  match (url.url_parse("")) {
+  match (url.parse("")) {
     Ok(u) => {
-      return test.fail("url_parse(\"\") expected an error");
+      return test.fail("url.parse(\"\") expected an error");
     },
     Err(e) => {
       return test.assert_eq(e.message(), "a URL cannot be empty");
@@ -159,7 +159,7 @@ function test_form_decode_plus(): test.TestOutcome {
 }
 
 function test_url_decode_keeps_plus(): test.TestOutcome {
-  return test.assert_eq(url.url_decode("a+b"), "a+b");
+  return test.assert_eq(url.decode("a+b"), "a+b");
 }
 
 function test_form_encode_space(): test.TestOutcome {
@@ -260,7 +260,7 @@ function test_query_has_and_all(): test.TestOutcome {
 }
 
 function __parse_host_port(s: string): string {
-  match (url.url_parse(s)) {
+  match (url.parse(s)) {
     Ok(u) => {
       return u.host + "|" + u.port.to_string();
     },
@@ -331,7 +331,7 @@ function test_parse_host_shape(): test.TestOutcome {
 }
 
 function test_parse_scheme_anchored(): test.TestOutcome {
-  match (url.url_parse("/redirect?to=http://evil.example")) {
+  match (url.parse("/redirect?to=http://evil.example")) {
     Ok(u) => {
       if (u.scheme != "" || u.path != "/redirect"
         || u.query != "to=http://evil.example") {
@@ -342,7 +342,7 @@ function test_parse_scheme_anchored(): test.TestOutcome {
       return test.fail("relative path expected Ok");
     }
   }
-  match (url.url_parse("ws+x-1.y://h/p")) {
+  match (url.parse("ws+x-1.y://h/p")) {
     Ok(u) => {
       return test.assert_eq(u.scheme, "ws+x-1.y");
     },
@@ -354,19 +354,19 @@ function test_parse_scheme_anchored(): test.TestOutcome {
 
 function test_decode_ill_formed_is_replacement(): test.TestOutcome {
   let fffd: string = utf8.encode(65533 as char);
-  if (url.url_decode("a%FFb") != "a" + fffd + "b") {
-    return test.fail("url_decode %FF");
+  if (url.decode("a%FFb") != "a" + fffd + "b") {
+    return test.fail("url.decode %FF");
   }
   if (url.form_decode("a%C3+b") != "a" + fffd + " b") {
     return test.fail("form_decode %C3");
   }
-  return test.assert_eq(url.url_decode("%C3%A9"), "é");
+  return test.assert_eq(url.decode("%C3%A9"), "é");
 }
 
 function test_decode_bytes_keeps_the_bytes(): test.TestOutcome {
-  let bs: u8[] = url.url_decode_bytes("a%FFb");
+  let bs: u8[] = url.decode_bytes("a%FFb");
   if (bs.len() != 3 || bs[1] as i32 != 255) {
-    return test.fail("url_decode_bytes");
+    return test.fail("url.decode_bytes");
   }
   let fs: u8[] = url.form_decode_bytes("%00+");
   return test.assert_true(fs.len() == 2 && fs[0] as i32 == 0 && fs[1] as i32 == 32);
@@ -385,7 +385,7 @@ function main(): i32 {
   r = r.it("parse minimal URL", test_parse_minimal);
   r = r.it("parse empty is None", test_parse_empty);
   r = r.it("form_decode plus", test_form_decode_plus);
-  r = r.it("url_decode keeps plus", test_url_decode_keeps_plus);
+  r = r.it("url.decode keeps plus", test_url_decode_keeps_plus);
   r = r.it("form_encode space", test_form_encode_space);
   r = r.it("form round-trip", test_form_roundtrip);
   r = r.it("query_encode", test_query_encode);

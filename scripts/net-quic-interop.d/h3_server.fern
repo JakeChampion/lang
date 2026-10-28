@@ -45,7 +45,7 @@ function wait_until(deadline: Option[Instant]): Option[Duration] {
 function answer(req: HttpRequest): HttpResponse {
   let body: string = req.method + " " + req.path + " " + int.int_to_string(req.body.data.len());
   print("fern h3 server: answered " + body);
-  return HttpResponse { status: 200, body: BodyText(body), headers: headers.header_map_new().append("content-type", "text/plain"), trailers: headers.header_map_new().append("x-served-by", "fern"), background: None };
+  return HttpResponse { status: 200, body: BodyText(body), headers: headers.new().append("content-type", "text/plain"), trailers: headers.new().append("x-served-by", "fern"), background: None };
 }
 
 function served(s: Server, c: h3q.Conn): Server {

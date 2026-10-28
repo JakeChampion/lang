@@ -402,7 +402,7 @@ func TestInterpScriptHeaderMap(t *testing.T) {
 			name: "case-insensitive get",
 			source: `import "std/headers";
 function main(): i32 {
-    let h: HeaderMap = headers.header_map_new();
+    let h: HeaderMap = headers.new();
     h = h.set("Content-Type", "application/json");
     match (h.get("CONTENT-TYPE")) {
         Some(v) => { print(v); },
@@ -416,7 +416,7 @@ function main(): i32 {
 			name: "get_all preserves duplicates in insertion order",
 			source: `import "std/headers";
 function main(): i32 {
-    let h: HeaderMap = headers.header_map_new();
+    let h: HeaderMap = headers.new();
     h = h.append("Set-Cookie", "a=1");
     h = h.append("Set-Cookie", "b=2");
     h = h.append("Set-Cookie", "c=3");
@@ -434,7 +434,7 @@ function main(): i32 {
 			name: "set replaces in place and drops other duplicates",
 			source: `import "std/headers";
 function main(): i32 {
-    let h: HeaderMap = headers.header_map_new();
+    let h: HeaderMap = headers.new();
     h = h.append("X", "first");
     h = h.append("Y", "y1");
     h = h.append("X", "second");
@@ -452,7 +452,7 @@ function main(): i32 {
 			name: "set on absent name appends",
 			source: `import "std/headers";
 function main(): i32 {
-    let h: HeaderMap = headers.header_map_new();
+    let h: HeaderMap = headers.new();
     h = h.set("X-First", "1");
     return h.len();
 }`,
@@ -462,7 +462,7 @@ function main(): i32 {
 			name: "get_all on missing name is empty",
 			source: `import "std/headers";
 function main(): i32 {
-    let h: HeaderMap = headers.header_map_new();
+    let h: HeaderMap = headers.new();
     h = h.append("X", "1");
     return (h.get_all("Y")).len();
 }`,
@@ -1692,7 +1692,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 function main(): i32 {
     let m: mock_platform.MockPlatform = mock_platform.new();
-    let req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.stream_empty(), headers: headers.header_map_new(), trailers: headers.header_map_new() };
+    let req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.stream_empty(), headers: headers.new(), trailers: headers.new() };
     let resp: HttpResponse = handle(req, m);
     print(resp.body_string());
     let cs: mock_platform.MockCall[] = m.calls();

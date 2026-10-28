@@ -14,7 +14,7 @@ var stdlibModuleCases = []struct {
 }{
 	{"headers", `import "std/headers";
 function main(): i32 {
-    let h = headers.header_map_new();
+    let h = headers.new();
     h = h.append("Content-Type", "text/html");
     h = h.append("X-Count", "7");
     match (h.get("Content-Type")) {

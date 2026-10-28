@@ -382,7 +382,7 @@ pub function (r: HttpResponse) with_validators(v: Validators, now: time.Timestam
 }
 
 pub function not_modified(resp: HttpResponse): HttpResponse {
-  let out: HttpResponse = HttpResponse { status: 304, body: BodyText(""), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  let out: HttpResponse = HttpResponse { status: 304, body: BodyText(""), headers: headers.new(), trailers: headers.new(), background: None };
   for name in ["Cache-Control", "Content-Location", "ETag", "Expires", "Vary"] {
     out = __carry(out, resp, name);
   }
@@ -411,7 +411,7 @@ function __carry(out: HttpResponse, from: HttpResponse, name: string): HttpRespo
 ```fern
 <<14 pub function precondition_failed(): HttpResponse>>=
 pub function precondition_failed(): HttpResponse {
-  return HttpResponse { status: 412, body: BodyText(""), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: 412, body: BodyText(""), headers: headers.new(), trailers: headers.new(), background: None };
 }
 ```
 

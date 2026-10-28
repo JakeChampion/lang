@@ -2,71 +2,71 @@ import "std/test";
 import "std/glob" as glob;
 
 function test_literal(): test.TestOutcome {
-  return test.assert_true(glob.glob_match("abc", "abc")
-    && !glob.glob_match("abc", "abd"));
+  return test.assert_true(glob.is_match("abc", "abc")
+    && !glob.is_match("abc", "abd"));
 }
 
 function test_star_no_cross(): test.TestOutcome {
-  return test.assert_true(glob.glob_match("*.fern", "a.fern")
-    && !glob.glob_match("*.fern", "src/a.fern")
-    && glob.glob_match("src/*.fern", "src/a.fern")
-    && !glob.glob_match("src/*.fern", "src/x/a.fern"));
+  return test.assert_true(glob.is_match("*.fern", "a.fern")
+    && !glob.is_match("*.fern", "src/a.fern")
+    && glob.is_match("src/*.fern", "src/a.fern")
+    && !glob.is_match("src/*.fern", "src/x/a.fern"));
 }
 
 function test_question(): test.TestOutcome {
-  return test.assert_true(glob.glob_match("a?c", "abc")
-    && !glob.glob_match("a?c", "ac")
-    && !glob.glob_match("a?c", "a/c"));
+  return test.assert_true(glob.is_match("a?c", "abc")
+    && !glob.is_match("a?c", "ac")
+    && !glob.is_match("a?c", "a/c"));
 }
 
 function test_globstar(): test.TestOutcome {
-  if (!glob.glob_match("src/**", "src/a")) {
+  if (!glob.is_match("src/**", "src/a")) {
     return test.fail("src/** vs src/a");
   }
-  if (!glob.glob_match("src/**", "src/a/b/c")) {
+  if (!glob.is_match("src/**", "src/a/b/c")) {
     return test.fail("src/** deep");
   }
-  if (!glob.glob_match("**/*.fern", "a.fern")) {
+  if (!glob.is_match("**/*.fern", "a.fern")) {
     return test.fail("**/ zero dirs");
   }
-  if (!glob.glob_match("**/*.fern", "src/x/a.fern")) {
+  if (!glob.is_match("**/*.fern", "src/x/a.fern")) {
     return test.fail("**/ deep");
   }
-  if (glob.glob_match("**/*.fern", "a.txt")) {
+  if (glob.is_match("**/*.fern", "a.txt")) {
     return test.fail("**/ wrong ext");
   }
   return test.pass();
 }
 
 function test_char_class(): test.TestOutcome {
-  if (!glob.glob_match("[abc]x", "bx")) {
+  if (!glob.is_match("[abc]x", "bx")) {
     return test.fail("set member");
   }
-  if (glob.glob_match("[abc]x", "dx")) {
+  if (glob.is_match("[abc]x", "dx")) {
     return test.fail("set non-member");
   }
-  if (!glob.glob_match("[a-z]9", "m9")) {
+  if (!glob.is_match("[a-z]9", "m9")) {
     return test.fail("range");
   }
-  if (glob.glob_match("[a-z]9", "M9")) {
+  if (glob.is_match("[a-z]9", "M9")) {
     return test.fail("range case");
   }
-  if (!glob.glob_match("file[0-9].log", "file7.log")) {
+  if (!glob.is_match("file[0-9].log", "file7.log")) {
     return test.fail("digit range");
   }
   return test.pass();
 }
 
 function test_negated_class(): test.TestOutcome {
-  return test.assert_true(glob.glob_match("[!0-9]", "a")
-    && !glob.glob_match("[!0-9]", "5"));
+  return test.assert_true(glob.is_match("[!0-9]", "a")
+    && !glob.is_match("[!0-9]", "5"));
 }
 
 function test_edges(): test.TestOutcome {
-  return test.assert_true(glob.glob_match("", "")
-    && !glob.glob_match("", "x")
-    && glob.glob_match("ab*", "ab")
-    && glob.glob_match("**", "any/thing"));
+  return test.assert_true(glob.is_match("", "")
+    && !glob.is_match("", "x")
+    && glob.is_match("ab*", "ab")
+    && glob.is_match("**", "any/thing"));
 }
 
 function main(): i32 {

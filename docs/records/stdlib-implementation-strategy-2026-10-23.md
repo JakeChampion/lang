@@ -72,8 +72,8 @@ The quotation below comes from `docs/LANGUAGE-DIRECTION.md` at commit
 >    methods. First migration: `s.is_empty()` — was 11 lines
 >    of hand-written wat, now 3 lines of Fern.
 > 2. **Phase B: migrate higher-level stdlib.** `parse_int`,
->    `parse_float`, `s.repeat`, `url_encode`, `url_decode`,
->    `query_parse`, `url_parse`, `json_encode`, `json_parse`,
+>    `parse_float`, `s.repeat`, `url.encode`, `url.decode`,
+>    `query_parse`, `url.parse`, `json_encode`, `json_parse`,
 >    `f32.to_string`, `f64.to_string` — all shipped on a
 >    per-PR cadence. Phase B continued with the string
 >    methods: `starts_with`, `ends_with`, `contains`,

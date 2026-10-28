@@ -110,7 +110,7 @@ function piece(n: i32, i: i32): Option[u8[]] {
 }
 
 function parts_trailers(): HeaderMap {
-  return headers.header_map_new().append("x-parts", "3");
+  return headers.new().append("x-parts", "3");
 }
 
 function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
@@ -171,7 +171,7 @@ function now(): Instant {
 }
 
 function request(method: string, path: string, body: u8[]): HttpRequest {
-  return HttpRequest { method: method, path: path, body: ByteStream { data: body, pos: 0, source: None }, headers: headers.header_map_new().append("host", "localhost"), trailers: headers.header_map_new() };
+  return HttpRequest { method: method, path: path, body: ByteStream { data: body, pos: 0, source: None }, headers: headers.new().append("host", "localhost"), trailers: headers.new() };
 }
 
 function summary(method: string, resp: HttpResponse): string {

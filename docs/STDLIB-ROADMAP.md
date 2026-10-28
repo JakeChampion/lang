@@ -32,7 +32,7 @@ What Fern's prelude / built-ins cover today, as a baseline:
 - **bytes**: `is_digit`, `is_alpha`, `is_alnum`, `is_ascii`,
   `is_ascii_white_space`, `is_hex_digit`.
 - **encoding**: `encode` / `_decode`, `encode` /
-  `_decode`, `url_encode` / `_decode` / `url_parse`,
+  `_decode`, `url.encode` / `_decode` / `url.parse`,
   `query_parse`, `json_encode` / `json_parse`.
 - **maps**: `Map[K, V]` with `set` / `get` / `get_or` / `has`
   / `delete` / `iter` / `keys` / `values` / `len` / `clear`.

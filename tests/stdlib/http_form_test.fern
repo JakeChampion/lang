@@ -51,8 +51,8 @@ function test_media_type(): test.TestOutcome {
 }
 
 function test_not_utf8(): test.TestOutcome {
-  let h: HeaderMap = headers.header_map_new().set("content-type", "application/x-www-form-urlencoded");
-  let req: HttpRequest = HttpRequest { method: "POST", path: "/login", body: stream.stream_from_bytes([97 as u8, 61 as u8, 255 as u8]), headers: h, trailers: headers.header_map_new() };
+  let h: HeaderMap = headers.new().set("content-type", "application/x-www-form-urlencoded");
+  let req: HttpRequest = HttpRequest { method: "POST", path: "/login", body: stream.stream_from_bytes([97 as u8, 61 as u8, 255 as u8]), headers: h, trailers: headers.new() };
   return test.assert_eq(outcome(form.parse(req)), "400 {\"type\":\"about:blank\",\"title\":\"Bad Request\",\"status\":400,\"detail\":\"body is not valid UTF-8\"}");
 }
 

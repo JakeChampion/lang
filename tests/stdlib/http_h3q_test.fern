@@ -240,7 +240,7 @@ function ticked(e: Ends): Ends {
 }
 
 function get(path: string): HttpRequest {
-  return HttpRequest { method: "GET", path: path, body: ByteStream { data: [], pos: 0, source: None }, headers: headers.header_map_new().append("host", "tls.example").append("accept", "*/*"), trailers: headers.header_map_new() };
+  return HttpRequest { method: "GET", path: path, body: ByteStream { data: [], pos: 0, source: None }, headers: headers.new().append("host", "tls.example").append("accept", "*/*"), trailers: headers.new() };
 }
 
 function asked(e: Ends, req: HttpRequest): Result[Ends, string] {
@@ -256,7 +256,7 @@ function answered(e: Ends, i: i32, resp: HttpResponse): Ends {
 }
 
 function text(status: i32, body: string): HttpResponse {
-  return HttpResponse { status: status, body: BodyText(body), headers: headers.header_map_new().append("Content-Type", "text/plain"), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: status, body: BodyText(body), headers: headers.new().append("Content-Type", "text/plain"), trailers: headers.new(), background: None };
 }
 
 function test_get(): test.TestOutcome {
@@ -295,7 +295,7 @@ function test_upload_lossy(): test.TestOutcome {
   match (begin()) {
     Ok(e0) => {
       let e: Ends = Ends { ...settled(e0, 12), log: "", lose_every: 9, reorder: true };
-      let req: HttpRequest = HttpRequest { method: "POST", path: "/up", body: ByteStream { data: big(30000), pos: 0, source: None }, headers: headers.header_map_new().append("host", "tls.example"), trailers: headers.header_map_new() };
+      let req: HttpRequest = HttpRequest { method: "POST", path: "/up", body: ByteStream { data: big(30000), pos: 0, source: None }, headers: headers.new().append("host", "tls.example"), trailers: headers.new() };
       match (asked(e, req)) {
         Ok(e1) => {
           let e2: Ends = settled(e1, 300);
@@ -303,7 +303,7 @@ function test_upload_lossy(): test.TestOutcome {
           if (e2.requests.len() > 0) {
             size = e2.requests[0].body.data.len();
           }
-          let resp: HttpResponse = HttpResponse { ...text(201, "got " + int.int_to_string(size)), trailers: headers.header_map_new().append("x-check", "ok") };
+          let resp: HttpResponse = HttpResponse { ...text(201, "got " + int.int_to_string(size)), trailers: headers.new().append("x-check", "ok") };
           let e3: Ends = settled(answered(e2, 0, resp), 300);
           return test.assert_eq(e3.log, "server request 0 POST /up 30000b host=tls.example; client response 0 201 got 30000 trailer x-check=ok; ");
         },
@@ -396,7 +396,7 @@ function test_shutdown_inflight(): test.TestOutcome {
   if (boundary != id + 4) {
     return test.assert_eq(boundary.to_string(), (id + 4).to_string());
   }
-  e = settled(Ends { ...e, client: e.client.write(id, "bc".bytes()).end(id, headers.header_map_new()) }, 8);
+  e = settled(Ends { ...e, client: e.client.write(id, "bc".bytes()).end(id, headers.new()) }, 8);
   if (e.requests.len() != 1) {
     return test.assert_eq(e.requests.len().to_string(), "1");
   }
@@ -433,7 +433,7 @@ function test_date(): test.TestOutcome {
               let Some(s) = e3.server else {
                 return test.fail("no server");
               };
-              let own: HttpResponse = HttpResponse { ...text(200, "b"), headers: headers.header_map_new().append("Date", "Mon, 01 Jan 2029 00:00:00 GMT") };
+              let own: HttpResponse = HttpResponse { ...text(200, "b"), headers: headers.new().append("Date", "Mon, 01 Jan 2029 00:00:00 GMT") };
               let dated: h3q.Conn = s.with_date("Tue, 01 Jan 2030 00:00:00 GMT").respond(e3.ids[0], text(200, "a")).respond(e3.ids[1], own);
               let e4: Ends = settled(Ends { ...e3, server: Some(dated), log: "" }, 6);
               return test.assert_eq(e4.log, "client response 0 200 a date=Tue, 01 Jan 2030 00:00:00 GMT; client response 4 200 b date=Mon, 01 Jan 2029 00:00:00 GMT; ");

@@ -194,7 +194,7 @@ pub function import_href_from(module: string, current: string, files: string[]):
     }
     let encoded: string[] = [];
     for segment in path.split("/") {
-      encoded = encoded.append(url.url_encode(segment));
+      encoded = encoded.append(url.encode(segment));
     }
     return Some(REPOSITORY + encoded.join("/"));
   }

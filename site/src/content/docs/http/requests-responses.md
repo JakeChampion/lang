@@ -57,7 +57,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 
 `url.query_parse(query)` gives the whole thing as a
 `Map[string, string[]]`, and `url.query_encode(pairs)` goes the other
-way. For a full URL, `url.url_parse` returns its parts.
+way. For a full URL, `url.parse` returns its parts.
 
 ## JSON in, JSON out
 

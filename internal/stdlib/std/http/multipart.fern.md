@@ -444,7 +444,7 @@ function __boundary_line_end(r: Reader): Result[Reader, MultipartError] {
 
 function __part_head(r: Reader): Result[(Part, Reader), MultipartError] {
   let cur: Reader = r;
-  let h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.new();
   let used: i32 = 0;
   while (true) {
     let line: (string, Reader) = __line(cur, cur.limits.header_bytes - used)?;
@@ -651,7 +651,7 @@ pub function (b: Builder) bytes(): u8[] {
 }
 
 pub function (b: Builder) request(method: string, path: string): HttpRequest {
-  return HttpRequest { method: method, path: path, body: stream.stream_from_bytes(b.bytes()), headers: headers.header_map_new().set("content-type", b.content_type()), trailers: headers.header_map_new() };
+  return HttpRequest { method: method, path: path, body: stream.stream_from_bytes(b.bytes()), headers: headers.new().set("content-type", b.content_type()), trailers: headers.new() };
 }
 ```
 

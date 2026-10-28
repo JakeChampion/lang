@@ -28,7 +28,7 @@ record; a closed epic alone is not validation evidence.
 | `http` header values, request path | the peer | refused, 400 |
 | `HttpRequest.body_string` | the peer | `Err(BodyError.NotUtf8)`, 400 as a response; `body_bytes` is raw |
 | `dns.decode_name` | the wire | `Err(Malformed)` |
-| `url_decode` / `form_decode` | an escape | U+FFFD per ill-formed unit; `*_decode_bytes` are raw |
+| `url.decode` / `form_decode` | an escape | U+FFFD per ill-formed unit; `*_decode_bytes` are raw |
 | `ByteStream.read_all_string` | a byte cursor | `None` (#10950); `read_all` is raw |
 | `ByteStream.read_line` | a byte cursor | U+FFFD, since its `None` means end of input |
 | `BytesWriter.into_string` | the program's own `write_byte` | `None` (#10950); `into_bytes` is raw |

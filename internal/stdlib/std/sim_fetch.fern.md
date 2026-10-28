@@ -506,7 +506,7 @@ function __exchange(line: string): Option[__Exchange] {
 function __exchange_of(o: json.JsonObject): Option[__Exchange] {
   let method: string = __string_member(o, "method");
   let status: i32 = __int(__string_member(o, "status"));
-  let Ok(u) = url.url_parse(__string_member(o, "url")) else {
+  let Ok(u) = url.parse(__string_member(o, "url")) else {
     return None;
   };
   if (method.len() == 0 || status <= 0 || u.host.len() == 0) {
@@ -526,7 +526,7 @@ function __exchange_of(o: json.JsonObject): Option[__Exchange] {
   let Some(body) = __body_member(o) else {
     return None;
   };
-  let resp: HttpResponse = HttpResponse { status: status, body: BodyBytes(body), headers: __headers_member(o), trailers: headers.header_map_new(), background: None };
+  let resp: HttpResponse = HttpResponse { status: status, body: BodyBytes(body), headers: __headers_member(o), trailers: headers.new(), background: None };
   return Some(__Exchange { host: u.host, port: port, target: target, answer: raw_bytes(http.http_serialize_response_to_bytes(method, "HTTP/1.1", resp, false)) });
 }
 
@@ -553,7 +553,7 @@ function __string_member(o: json.JsonObject, key: string): string {
 }
 
 function __headers_member(o: json.JsonObject): HeaderMap {
-  let out: HeaderMap = headers.header_map_new();
+  let out: HeaderMap = headers.new();
   match (o.get("headers")) {
     Some(v) => {
       match (v) {
