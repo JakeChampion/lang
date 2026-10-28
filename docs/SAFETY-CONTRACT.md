@@ -131,13 +131,14 @@ The final change must reject unmarked raw operations and preserve ordinary arith
    A safe trait method must not acquire an unsafe implementation.
    The normative cases are `diag_e095` and its siblings, with the control `unsafe_block_accepts_obligations`.
 
-4. Annotate the trusted runtime, compiler, and standard library callers.
-   Each safe wrapper must validate every input before it uses its unsafe block.
+4. Done: the standard library and `coreutils` callers carry unsafe blocks.
+   The runtime helper sources are the raw floor itself, so their check path is an unsafe context.
+   The compiler's own modules call no raw builtin.
    The unsafe function modifier alone does not authorize raw operations in its body.
 
-5. Enable the same refusal rules in the native checker and the Go oracle.
-   Run the negative cases and their positive controls on both native targets.
-   Re-run the existing ownership, bounds, initialization, and integer corpus.
+5. Done: both checkers refuse a raw builtin outside an unsafe block as `E095`.
+   The set is `unsafe_intrinsics` in `compiler/checker.fern` and `UnsafeIntrinsics` in the Go checker, pinned equal by `TestUnsafeIntrinsicsMatchSelfHost`.
+   The normative cases are `diag_e095_raw_builtin_outside_unsafe` and the control `unsafe_block_accepts_raw_builtins`.
 
 6. Publish a safe-code guarantee only after the enforcement and runtime audits
    establish the required invariants. Until then, report the remaining gaps.

@@ -47,17 +47,17 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 		},
 		{
 			name:    "c_call",
-			src:     `function main(): i32 { let cb: usize = 0; return __c_call0(cb) as i32; }` + "\n",
+			src:     `function main(): i32 { unsafe { let cb: usize = 0; return __c_call0(cb) as i32; } }` + "\n",
 			mustSay: "__c_call0",
 		},
 		{
 			name:    "syscall3",
-			src:     `function main(): i32 { return __syscall3(1, 1, 0, 0); }` + "\n",
+			src:     `function main(): i32 { unsafe { return __syscall3(1, 1, 0, 0); } }` + "\n",
 			mustSay: "__syscall3",
 		},
 		{
 			name:    "syscall6",
-			src:     `function main(): i32 { return __syscall6(1, 1, 0, 0, 0, 0, 0); }` + "\n",
+			src:     `function main(): i32 { unsafe { return __syscall6(1, 1, 0, 0, 0, 0, 0); } }` + "\n",
 			mustSay: "__syscall6",
 		},
 		{
@@ -82,7 +82,7 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 		},
 		{
 			name:    "raw_vg_request",
-			src:     `function main(): i32 { let a: usize = __alloc(48); return __raw_vg_request(a) as i32; }` + "\n",
+			src:     `function main(): i32 { unsafe { let a: usize = __alloc(48); return __raw_vg_request(a) as i32; } }` + "\n",
 			mustSay: "__raw_vg_request",
 		},
 	}

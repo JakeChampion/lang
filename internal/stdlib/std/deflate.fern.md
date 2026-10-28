@@ -203,19 +203,21 @@ function __inflated(input: [u8], from: i32, history: u8[], max_out: i32): Result
 // Room for four times the input, at least 4 KiB and at most the output
 // limit, so the output rarely grows and copies.
 function __room(avail: i32, max_out: i32): u8[] {
-  let want: i64 = avail as i64 * 4i64;
-  if (want < 4096i64) {
-    want = 4096i64;
+  unsafe {
+    let want: i64 = avail as i64 * 4i64;
+    if (want < 4096i64) {
+      want = 4096i64;
+    }
+    if (want > max_out as i64) {
+      want = max_out as i64;
+    }
+    if (want < 0i64) {
+      want = 0i64;
+    }
+    let out: u8[] = __alloc_u8(want as i32);
+    __arr_set_len(out, 0);
+    return out;
   }
-  if (want > max_out as i64) {
-    want = max_out as i64;
-  }
-  if (want < 0i64) {
-    want = 0i64;
-  }
-  let out: u8[] = __alloc_u8(want as i32);
-  __arr_set_len(out, 0);
-  return out;
 }
 ```
 

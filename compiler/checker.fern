@@ -9644,6 +9644,38 @@ function unsafe_call_diag(name: string, line: i32, col: i32): util.Diag {
   return dg_at("E095", "unsafe function \"" + name + "\" is called outside an unsafe block", line, col);
 }
 
+function raw_call_diag(name: string, line: i32, col: i32): util.Diag {
+  return dg_at("E095", "raw builtin \"" + name + "\" is called outside an unsafe block", line, col);
+}
+
+// The raw builtins that forge an address, change a count or a length, or call
+// foreign code. docs/security/UNSAFE-INVENTORY.md lists each obligation, and
+// internal/check/checker's UnsafeIntrinsics holds the same set.
+pub function unsafe_intrinsics(): string[] {
+  return [
+    "__alloc", "__alloc_reuse", "__free",
+    "__load_u8", "__load_i32", "__load_i64", "__load_ptr",
+    "__store_u8", "__store_i32", "__store_i64", "__store_ptr",
+    "__memcpy", "__memset", "__str_bytes", "__account_entry",
+    "__fern_rc_inc", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr", "__fern_str_dec",
+    "__rc_inc", "__rc_dec", "__rc_get", "__fern_rc_dec",
+    "__arr_set_len", "__heap_mark", "__heap_release_to",
+    "__c_call0", "__c_call0_f32", "__c_call0_f64",
+    "__c_call1", "__c_call1_f32", "__c_call1_f64",
+    "__c_call2", "__c_call2_f32", "__c_call2_f64",
+    "__c_call3", "__c_call3_f32", "__c_call3_f64",
+    "__c_call4", "__c_call4_f32", "__c_call4_f64",
+    "__task_new", "__task_free", "__task_enter", "__task_leave",
+    "__task_park", "__task_wait", "__task_set_ready", "__task_set_cancelled",
+    "__task_cancelled", "__task_timeout", "__task_cur",
+    "__syscall3", "__syscall4", "__syscall5", "__syscall6",
+  ];
+}
+
+function is_unsafe_intrinsic(name: string): boolean {
+  return util.has_str(unsafe_intrinsics(), name);
+}
+
 function unsafe_value_diag(name: string, line: i32, col: i32): util.Diag {
   return dg_at("E095", "unsafe function \"" + name + "\" cannot be used as a value; a function value carries no unsafe obligation", line, col);
 }
@@ -9747,7 +9779,9 @@ function unsafe_descend(e: ast.Expr): boolean {
 function unsafe_call(c: ast.ExprCall, own acc: UnsafeWalk): UnsafeWalk {
   match (c.callee) {
     ast.ExprIdent(id) => {
-      if (!acc.inside && unsafe_sig_named(id.name, acc.scope)) {
+      if (!acc.inside && !acc.scope.defines(id.name) && is_unsafe_intrinsic(id.name)) {
+        acc = unsafe_note(acc, raw_call_diag(id.name, c.line, c.col));
+      } else if (!acc.inside && unsafe_sig_named(id.name, acc.scope)) {
         acc = unsafe_note(acc, unsafe_call_diag(id.name, c.line, c.col));
       }
     },
@@ -23036,7 +23070,6 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     slc_marked = util.name_index(slc_now);
   }
   let const_inits: ConstInit = const_init(mod);
-  let unsafe_on: boolean = module_declares_unsafe(mod);
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
     if (!in_focus(focus, mod.funcs[i]) || derive_body_suppressed(mod.funcs[i], derive_keys)) {
@@ -23084,9 +23117,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     function_diags = util.append_diags(function_diags, mx_stmts(dbody, fsc, unions, mod.enums));
     function_diags = util.append_diags(function_diags, stmts_slit_diags(dbody, stt));
     function_diags = util.append_diags(function_diags, stmts_call_diags(dbody, fsc));
-    if (unsafe_on) {
-      function_diags = util.append_diags(function_diags, unsafe_stmts(dbody, fsc, false));
-    }
+    function_diags = util.append_diags(function_diags, unsafe_stmts(dbody, fsc, fsc.sigs.raw_allowed));
     function_diags = util.append_diags(function_diags, stmts_assign_diags(dbody, fsc, unions));
     function_diags = util.append_diags(function_diags, loop_diags(dbody, false, []));
     function_diags = util.append_diags(function_diags, dupvar_diags(dbody));
@@ -23131,10 +23162,8 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   body_diags = util.append_diags(body_diags, mx_stmts(dtop, tsc, unions, mod.enums));
   body_diags = util.append_diags(body_diags, stmts_slit_diags(dtop, stt));
   body_diags = util.append_diags(body_diags, stmts_call_diags(dtop, tsc));
-  if (unsafe_on) {
-    body_diags = util.append_diags(body_diags, unsafe_stmts(dtop, tsc, false));
-    body_diags = util.append_diags(body_diags, unsafe_impl_diags(mod));
-  }
+  body_diags = util.append_diags(body_diags, unsafe_stmts(dtop, tsc, tsc.sigs.raw_allowed));
+  body_diags = util.append_diags(body_diags, unsafe_impl_diags(mod));
   body_diags = util.append_diags(body_diags, stmts_assign_diags(dtop, tsc, unions));
   if (ambig.len() > 0) {
     body_diags = util.append_diags(body_diags, vref_stmts(dtop, tsc, ambig));

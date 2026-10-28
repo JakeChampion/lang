@@ -1,0 +1,5 @@
+waiver: implementation-gap
+issue: 13730
+reason: the Go oracle's interpreter has no raw memory, so __alloc, __store_*,
+  __load_* and __free are undefined functions there. The three compiled
+  targets run the case, and the self-host checker and interpreter accept it.

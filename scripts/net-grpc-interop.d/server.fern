@@ -19,9 +19,11 @@ import "std/tls/server";
 import "core/int";
 
 function payload(size: i32): u8[] {
-  let body: u8[] = __alloc_u8(size);
-  __arr_set_len(body, size);
-  return protobuf.varint_field(1, 0 as i64).concat(protobuf.bytes_field(2, body));
+  unsafe {
+    let body: u8[] = __alloc_u8(size);
+    __arr_set_len(body, size);
+    return protobuf.varint_field(1, 0 as i64).concat(protobuf.bytes_field(2, body));
+  }
 }
 
 function payload_size(fields: protobuf.Field[], number: i32): i32 {

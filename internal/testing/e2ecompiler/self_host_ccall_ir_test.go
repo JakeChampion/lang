@@ -21,11 +21,11 @@ func TestSelfHostCCallIRX86_64(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
-	prog := `function run0(cb: usize): i32 { return __c_call0(cb) as i32; }
-function run1(cb: usize, x: usize): i32 { return __c_call1(cb, x) as i32; }
-function run2(cb: usize, a: usize, b: usize): i32 { return __c_call2(cb, a, b) as i32; }
-function run3(cb: usize, a: usize, b: usize, c: usize): i32 { return __c_call3(cb, a, b, c) as i32; }
-function run4(cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { return __c_call4(cb, a, b, c, d) as i32; }
+	prog := `function run0(cb: usize): i32 { unsafe { return __c_call0(cb) as i32; } }
+function run1(cb: usize, x: usize): i32 { unsafe { return __c_call1(cb, x) as i32; } }
+function run2(cb: usize, a: usize, b: usize): i32 { unsafe { return __c_call2(cb, a, b) as i32; } }
+function run3(cb: usize, a: usize, b: usize, c: usize): i32 { unsafe { return __c_call3(cb, a, b, c) as i32; } }
+function run4(cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { unsafe { return __c_call4(cb, a, b, c, d) as i32; } }
 function main(): i32 { return run0(0 as usize) + run1(0 as usize, 1 as usize) + run2(0 as usize, 1 as usize, 2 as usize) + run3(0 as usize, 1 as usize, 2 as usize, 3 as usize) + run4(0 as usize, 1 as usize, 2 as usize, 3 as usize, 4 as usize); }`
 	asm := string(runCapture(t, gcc, runner, driverBin, []byte(prog)))
 	if len(asm) == 0 {
@@ -88,9 +88,9 @@ func TestSelfHostCCallIRArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	prog := `function run0(cb: usize): i32 { return __c_call0(cb) as i32; }
-function run1(cb: usize, x: usize): i32 { return __c_call1(cb, x) as i32; }
-function run4(cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { return __c_call4(cb, a, b, c, d) as i32; }
+	prog := `function run0(cb: usize): i32 { unsafe { return __c_call0(cb) as i32; } }
+function run1(cb: usize, x: usize): i32 { unsafe { return __c_call1(cb, x) as i32; } }
+function run4(cb: usize, a: usize, b: usize, c: usize, d: usize): i32 { unsafe { return __c_call4(cb, a, b, c, d) as i32; } }
 function main(): i32 { return run0(0 as usize) + run1(0 as usize, 1 as usize) + run4(0 as usize, 1 as usize, 2 as usize, 3 as usize, 4 as usize); }`
 	var cmd *exec.Cmd
 	if len(x86runner) == 0 {

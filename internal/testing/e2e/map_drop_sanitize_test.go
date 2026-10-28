@@ -9,10 +9,12 @@ import (
 
 const mapOverReleaseSrc = `import "core/map";
 function main(): i32 {
-    let h: usize = map_new_impl(4, 0, 0);
-    __store_i32(h - 8, 0);
-    __map_drop_impl(h);
-    return __rc_underflow_count();
+  unsafe {
+      let h: usize = map_new_impl(4, 0, 0);
+      __store_i32(h - 8, 0);
+      __map_drop_impl(h);
+      return __rc_underflow_count();
+  }
 }`
 
 const mapDoubleDropSrc = `import "core/map";

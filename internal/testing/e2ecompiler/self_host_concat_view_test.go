@@ -43,24 +43,26 @@ function sum(xs: [u8]): i32 {
 }
 
 function main(): i32 {
-  let src: u8[] = [1, 2, 3, 4, 5, 6, 7, 8];
-  let out: u8[] = __alloc_u8(4096);
-  __arr_set_len(out, 0);
-  out = grow(out, src, 0, 1);
-  let before: i64 = __heap_alloc_count();
-  for i in 0..1000 {
-    out = grow(out, src, i % 4, i % 4 + 3);
+  unsafe {
+    let src: u8[] = [1, 2, 3, 4, 5, 6, 7, 8];
+    let out: u8[] = __alloc_u8(4096);
+    __arr_set_len(out, 0);
+    out = grow(out, src, 0, 1);
+    let before: i64 = __heap_alloc_count();
+    for i in 0..1000 {
+      out = grow(out, src, i % 4, i % 4 + 3);
+    }
+    let allocs: i64 = __heap_alloc_count() - before;
+    let grown: u8[] = grow([9], src, 2, 6);
+    let text: string = "hi";
+    let viewed: u8[] = grow_view([0], text.as_bytes());
+    let w: i64[] = wide([10 as i64], [1 as i64, 2 as i64, 3 as i64, 4 as i64], 1, 3);
+    let four: i32[] = [1, 2, 3, 4];
+    let ws: i32[] = words([5], four[2:4]);
+    let ts: string[] = texts(["a"], ["b", "c", "d"], 1, 3);
+    print(allocs.to_string() + " " + out.len().to_string() + " " + sum(out).to_string() + " " + sum(grown).to_string() + " " + grown.len().to_string() + " " + sum(viewed).to_string() + " " + (w[0] + w[1] + w[2]).to_string() + " " + (ws[0] * 100 + ws[1] * 10 + ws[2]).to_string() + " " + ts[0] + ts[1] + ts[2]);
+    return 0;
   }
-  let allocs: i64 = __heap_alloc_count() - before;
-  let grown: u8[] = grow([9], src, 2, 6);
-  let text: string = "hi";
-  let viewed: u8[] = grow_view([0], text.as_bytes());
-  let w: i64[] = wide([10 as i64], [1 as i64, 2 as i64, 3 as i64, 4 as i64], 1, 3);
-  let four: i32[] = [1, 2, 3, 4];
-  let ws: i32[] = words([5], four[2:4]);
-  let ts: string[] = texts(["a"], ["b", "c", "d"], 1, 3);
-  print(allocs.to_string() + " " + out.len().to_string() + " " + sum(out).to_string() + " " + sum(grown).to_string() + " " + grown.len().to_string() + " " + sum(viewed).to_string() + " " + (w[0] + w[1] + w[2]).to_string() + " " + (ws[0] * 100 + ws[1] * 10 + ws[2]).to_string() + " " + ts[0] + ts[1] + ts[2]);
-  return 0;
 }
 `
 

@@ -99,13 +99,15 @@ function align(own w: Writer): Writer {
 // The written bytes, with the last byte padded. The buffer becomes the
 // result, so no byte is copied.
 function finish(own w: Writer): u8[] {
-  w = align(w);
-  let bytes: u8[] = w.bytes;
-  let none: u8[] = [];
-  let at: i32 = w.at;
-  w = Writer { ...w, bytes: none };
-  __arr_set_len(bytes, at);
-  return bytes;
+  unsafe {
+    w = align(w);
+    let bytes: u8[] = w.bytes;
+    let none: u8[] = [];
+    let at: i32 = w.at;
+    w = Writer { ...w, bytes: none };
+    __arr_set_len(bytes, at);
+    return bytes;
+  }
 }
 ```
 

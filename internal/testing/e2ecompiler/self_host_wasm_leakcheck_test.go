@@ -77,7 +77,7 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 		},
 		{
 			name: "leak_raw_alloc",
-			src: `function round(i: i32): i32 { let p: usize = __alloc(24); return i; }
+			src: `function round(i: i32): i32 { unsafe { let p: usize = __alloc(24); return i; } }
 function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`,
 			want: 53, verdict: "leaky",
 		},
@@ -159,7 +159,7 @@ func TestSelfHostWasmSanitizeLeakVerdict(t *testing.T) {
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 	verdict := regexp.MustCompile(`fern-sanitizer: leak (\d+) bytes in (\d+) blocks\n`)
 
-	leaky := `function round(i: i32): i32 { let p: usize = __alloc(24); return i; }
+	leaky := `function round(i: i32): i32 { unsafe { let p: usize = __alloc(24); return i; } }
 function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } return x % 83; }`
 	wat := wasmLcCompile(t, runner, driverBin, leaky, []string{"FERN_SANITIZE=1"})
 	stderr, exit := wasmLcRun(t, dir, "san_leaky", wat)
@@ -178,7 +178,7 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 		t.Errorf("verdict %q disagrees with the summary %q", m[0], leakSummaryLine(stderr))
 	}
 
-	clean := `function main(): i32 { let i: i32 = 0; while (i < 100) { let a: usize = __alloc(64); __free(a, 64); i = i + 1; } return 0; }`
+	clean := `function main(): i32 { unsafe { let i: i32 = 0; while (i < 100) { let a: usize = __alloc(64); __free(a, 64); i = i + 1; } return 0;  } }`
 	wat = wasmLcCompile(t, runner, driverBin, clean, []string{"FERN_SANITIZE=1"})
 	stderr, exit = wasmLcRun(t, dir, "san_clean", wat)
 	if exit != 0 {
@@ -204,8 +204,8 @@ func TestSelfHostWasmLeakcheckReportsOnInvoke(t *testing.T) {
 	for _, tc := range []struct {
 		name, src, want string
 	}{
-		{"returning", `function main(): i32 { let p: usize = __alloc(24); return 7; }`, "7"},
-		{"exiting", `function main(): i32 { let p: usize = __alloc(24); exit(9); return 1; }`, ""},
+		{"returning", `function main(): i32 { unsafe { let p: usize = __alloc(24); return 7; } }`, "7"},
+		{"exiting", `function main(): i32 { unsafe { let p: usize = __alloc(24); exit(9); return 1; } }`, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wat := wasmLcCompile(t, runner, driverBin, tc.src, []string{"FERN_LEAKCHECK=1"})
@@ -272,8 +272,8 @@ func TestSelfHostWasmLeakcheckComponent(t *testing.T) {
 		allocs, frees, bytes int64
 		fromExit             bool
 	}{
-		{"returning", `function main(): i32 { let p: usize = __alloc(24); return 0; }`, 0, 1, 0, 24, false},
-		{"exiting", `function main(): i32 { let p: usize = __alloc(24); exit(9); return 1; }`, 1, 1, 0, 24, true},
+		{"returning", `function main(): i32 { unsafe { let p: usize = __alloc(24); return 0; } }`, 0, 1, 0, 24, false},
+		{"exiting", `function main(): i32 { unsafe { let p: usize = __alloc(24); exit(9); return 1; } }`, 1, 1, 0, 24, true},
 		{"printing", "import \"std/i32\";\nfunction main(): i32 { let s: string = \"a\" + 107.to_string(); print(s); return 0; }", 0, 5, 5, 0, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

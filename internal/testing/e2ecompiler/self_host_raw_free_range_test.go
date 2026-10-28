@@ -14,16 +14,18 @@ import (
 // arena bounds and aborts with its cause. The control frees a live block,
 // allocates again and reads the recycled block back.
 const rawFreeSrc = `function main(): i32 {
-  let p: usize = __alloc(64);
-  __store_i64(p, 7i64);
-  __free(p, 64);
-  let q: usize = __alloc(64);
-  print((q == p).to_string());
-  __free(0 as usize, 64);
-  print("null free is a no-op");
-  __free(4096 as usize, 64);
-  print("freed a non-heap address");
-  return 0;
+  unsafe {
+    let p: usize = __alloc(64);
+    __store_i64(p, 7i64);
+    __free(p, 64);
+    let q: usize = __alloc(64);
+    print((q == p).to_string());
+    __free(0 as usize, 64);
+    print("null free is a no-op");
+    __free(4096 as usize, 64);
+    print("freed a non-heap address");
+    return 0;
+  }
 }
 `
 

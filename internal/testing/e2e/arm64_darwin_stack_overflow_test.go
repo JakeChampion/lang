@@ -31,7 +31,7 @@ func TestArm64DarwinStackOverflow(t *testing.T) {
 					t.Errorf("exit %d, stdout %q, stderr %q; want 1000000", ps.ExitCode(), stdout, stderr)
 				}
 			}},
-		{"other-fault", "function main(): i32 {\n  return __load_i32(8 as usize);\n}\n",
+		{"other-fault", "function main(): i32 {\n  unsafe { return __load_i32(8 as usize); }\n}\n",
 			func(t *testing.T, stdout, stderr string, ps *os.ProcessState) {
 				ws, _ := ps.Sys().(syscall.WaitStatus)
 				if !ws.Signaled() || (ws.Signal() != syscall.SIGSEGV && ws.Signal() != syscall.SIGBUS) || strings.Contains(stderr, "fern:") {

@@ -807,12 +807,10 @@ function arm64_loc_row(own a: Arm64Asm, line: string): Arm64Asm {
     col = arm64_gas_atoi(f[3]);
   }
   let flags: i32 = 0;
-  let i: i32 = 3;
-  while (i < f.len()) {
+  for i in 3..f.len() {
     if (f[i] == "prologue_end") {
       flags = 1;
     }
-    i = i + 1;
   }
   return Arm64Asm {
     ...a,
@@ -8095,33 +8093,55 @@ function arm64_gas_dec(n: i32): string {
   return out;
 }
 
-function arm64_gas_nl_name(n: i32, k: i32): string {
-  return arm64_gas_dec(n) + "#" + arm64_gas_dec(k);
+struct Arm64NumericLabels { names: string[], counts: i32[] }
+
+function arm64_gas_nl_name(n: string, k: i32): string {
+  return n + "#" + arm64_gas_dec(k);
 }
 
-function arm64_gas_nl_grow(c: i32[], n: i32): i32[] {
-  let out: i32[] = c;
-  while (out.len() <= n) {
-    out = out.append(0);
+function arm64_gas_nl_number(s: string): string {
+  let i: i32 = 0;
+  while (i + 1 < s.len() && s[i] == b'0') {
+    i = i + 1;
   }
-  return out;
+  return slice_unchecked(s, i, s.len()) + "";
 }
 
-function arm64_gas_nl_ref(cnt: i32[], tok: string): string {
+function arm64_gas_nl_index(c: Arm64NumericLabels, n: string): i32 {
+  for i in 0..c.names.len() {
+    if (c.names[i] == n) {
+      return i;
+    }
+  }
+  return 0 - 1;
+}
+
+function arm64_gas_nl_define(own c: Arm64NumericLabels, name: string): (Arm64NumericLabels, string) {
+  let n: string = arm64_gas_nl_number(name);
+  let i: i32 = arm64_gas_nl_index(c, n);
+  if (i < 0) {
+    return (Arm64NumericLabels { names: c.names.append(n), counts: c.counts.append(1) }, arm64_gas_nl_name(n, 0));
+  }
+  let k: i32 = c.counts[i];
+  return (Arm64NumericLabels { ...c, counts: c.counts.with(i, k + 1) }, arm64_gas_nl_name(n, k));
+}
+
+function arm64_gas_nl_ref(cnt: Arm64NumericLabels, tok: string): string {
   let s: string = arm64_gas_trim(tok);
   let dir: i32 = arm64_gas_numref_dir(s);
   if (dir < 0) {
     return s;
   }
-  let n: i32 = arm64_gas_atoi(slice_unchecked(s, 0, s.len() - 1) + "");
+  let n: string = arm64_gas_nl_number(slice_unchecked(s, 0, s.len() - 1) + "");
+  let i: i32 = arm64_gas_nl_index(cnt, n);
   let k: i32 = 0;
-  if (n < cnt.len()) {
-    k = cnt[n];
+  if (i >= 0) {
+    k = cnt.counts[i];
   }
   if (dir == 0) {
     k = k - 1;
     if (k < 0) {
-      return arm64_gas_dec(n) + "#none";
+      return n + "#none";
     }
   }
   return arm64_gas_nl_name(n, k);
@@ -8751,7 +8771,7 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
   let pf_syms: string[] = [];
   let pf_kinds: i32[] = [];
   let section: i32 = 0;
-  let nl_cnt: i32[] = [];
+  let nl_cnt: Arm64NumericLabels = Arm64NumericLabels { names: [], counts: [] };
   let srcn: i32 = src.len();
   let pos: i32 = 0;
   let wi: i32 = 0;
@@ -8816,10 +8836,9 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
         p = Arm64GasProg { ...p, bss_names: p.bss_names.append(before + "") };
         p = Arm64GasProg { ...p, bss_offs: p.bss_offs.append(p.bss_size) };
       } else if (arm64_gas_is_digits(before + "")) {
-        let nv: i32 = arm64_gas_atoi(before + "");
-        nl_cnt = arm64_gas_nl_grow(nl_cnt, nv);
-        a = arm64_asm_label(a, arm64_gas_nl_name(nv, nl_cnt[nv]));
-        nl_cnt = nl_cnt.with(nv, nl_cnt[nv] + 1);
+        let (next, name) = arm64_gas_nl_define(nl_cnt, before + "");
+        nl_cnt = next;
+        a = arm64_asm_label(a, name);
       } else {
         a = arm64_asm_label(a, before);
       }
