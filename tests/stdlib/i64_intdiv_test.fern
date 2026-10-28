@@ -34,14 +34,14 @@ function test_next_power_of_2_cap(): test.TestOutcome {
   return test.assert_true((9223372036854775807 as i64).next_power_of_2() == 0 as i64);
 }
 
-function test_ceil_div(): test.TestOutcome {
-  if ((10 as i64).ceil_div(3 as i64) != 4 as i64) {
+function test_div_ceil(): test.TestOutcome {
+  if ((10 as i64).div_ceil(3 as i64) != 4 as i64) {
     return test.fail("10/3 -> 4");
   }
-  if ((9 as i64).ceil_div(3 as i64) != 3 as i64) {
+  if ((9 as i64).div_ceil(3 as i64) != 3 as i64) {
     return test.fail("9/3 -> 3");
   }
-  return test.assert_true((7 as i64).ceil_div(0 as i64) == 0 as i64);
+  return test.assert_true((7 as i64).div_ceil(0 as i64) == 0 as i64);
 }
 
 function test_log2_floor(): test.TestOutcome {
@@ -59,7 +59,7 @@ function main(): i32 {
   r = r.it("is_multiple_of", test_is_multiple_of);
   r = r.it("next_power_of_2", test_next_power_of_2);
   r = r.it("next_power_of_2 cap", test_next_power_of_2_cap);
-  r = r.it("ceil_div", test_ceil_div);
+  r = r.it("div_ceil", test_div_ceil);
   r = r.it("log2_floor", test_log2_floor);
   return r.finish();
 }

@@ -6,7 +6,7 @@ import (
 )
 
 const arrayMain = "import \"std/array\";\n" +
-	"function main(): i32 { let xs: i32[] = [12, 18, 24]; match (xs.gcd_all()) { Some(g) => { return g; }, None => { return 0; } } return 0; }\n"
+	"function main(): i32 { let xs: i32[] = [12, 18, 24]; return xs.gcd_all(); }\n"
 
 func TestSelfHostArrayX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)

@@ -649,8 +649,8 @@ pub struct Prefix {
 <<14 pub function prefix_parse(s: string): Result[Prefix, AddrParseError]>>=
 pub function prefix_parse(s: string): Result[Prefix, AddrParseError] {
   match (__prefix(s)) {
-    Some(v) => {
-      return Ok(v);
+    Some(a) => {
+      return Ok(a);
     },
     None => {
       return Err(AddrParseError { text: s, kind: NetworkPrefix });
@@ -831,8 +831,8 @@ function __octet(s: string, from: i32, sep: i32): i32 {
 <<20 pub function ipv4_parse(s: string): Result[IpAddr, AddrParseError]>>=
 pub function ipv4_parse(s: string): Result[IpAddr, AddrParseError] {
   match (__ipv4(s)) {
-    Some(v) => {
-      return Ok(v);
+    Some(a) => {
+      return Ok(a);
     },
     None => {
       return Err(AddrParseError { text: s, kind: Ipv4Addr });
@@ -1014,8 +1014,8 @@ function __v6_compressed(s: string, at: i32): Option[IpAddr] {
 <<22 pub function ipv6_parse(s: string): Result[IpAddr, AddrParseError]>>=
 pub function ipv6_parse(s: string): Result[IpAddr, AddrParseError] {
   match (__ipv6(s)) {
-    Some(v) => {
-      return Ok(v);
+    Some(a) => {
+      return Ok(a);
     },
     None => {
       return Err(AddrParseError { text: s, kind: Ipv6Addr });
@@ -1046,8 +1046,8 @@ function __ipv6(s: string): Option[IpAddr] {
 
 pub function ip_parse(s: string): Result[IpAddr, AddrParseError] {
   match (__ip(s)) {
-    Some(v) => {
-      return Ok(v);
+    Some(a) => {
+      return Ok(a);
     },
     None => {
       return Err(AddrParseError { text: s, kind: IpAddress });
@@ -1161,8 +1161,8 @@ function __socket_addr_bracketed(s: string): Option[SocketAddr] {
 <<24 pub function socket_addr_parse(s: string): Result[SocketAddr, AddrParseError]>>=
 pub function socket_addr_parse(s: string): Result[SocketAddr, AddrParseError] {
   match (__socket_addr(s)) {
-    Some(v) => {
-      return Ok(v);
+    Some(a) => {
+      return Ok(a);
     },
     None => {
       return Err(AddrParseError { text: s, kind: SocketAddress });
