@@ -88,11 +88,16 @@ func TestSelfHostSuspendSiteFreeConstructs(t *testing.T) {
 	if err := os.WriteFile(src, []byte(suspendFoldProgram), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(t.TempDir(), "out.s"), src, cli.stdlib)
+	asm := filepath.Join(t.TempDir(), "out.s")
+	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", "-emit", "asm", "-o", asm, src, cli.stdlib)
 	cmd.Env = append(os.Environ(), "FERN_SUSPEND_DUMP=scan")
 	msg, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("self-host CLI: %v\n%s", err, msg)
+	}
+	// The mode check is a load of the task state, not a call.
+	if text, err := os.ReadFile(asm); err != nil || strings.Contains(string(text), "call __fn___fern_task_mode") {
+		t.Errorf("a suspendable function calls __fern_task_mode (read: %v)", err)
 	}
 	before, after := suspendIfs(string(msg), "before"), suspendIfs(string(msg), "after")
 	if before == 0 || after-before > 14 {

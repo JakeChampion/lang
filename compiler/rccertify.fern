@@ -2965,7 +2965,7 @@ function count_use(own uses: i32[], v: i32): i32[] {
 function resumes(f: ssa.SFunc): boolean {
   for b in f.blocks {
     for ins in b.insts {
-      if (is_call(ins, "__fern_task_mode")) {
+      if (is_call(ins, "__fern_task_mode") || ins.kind_tag == 52 && ins.str == "task_mode") {
         return true;
       }
     }

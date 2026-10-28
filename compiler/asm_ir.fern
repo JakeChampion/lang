@@ -11195,7 +11195,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .section .bss\n    .align 8\n__fern_cov_counters: .quad 0\n    .text\n");
   }
   if (s.has_need("task")) {
-    s = s.write("    .section .bss\n    .align 8\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0\n    .text\n");
+    s = s.write("    .section .bss\n    .align 8\n__fern_task_state: .quad 0, 0, 0, 0, 0, 0, 0\n    .text\n");
   }
   if (s.has_need("str_print")) {
     s = s.write("    .text\n");

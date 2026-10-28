@@ -8,9 +8,12 @@ function __fern_task_leave(): i32 {
   let prev: i32 = __raw_load_ptr(rec, 11) as i32;
   __raw_store_ptr(st, 0, prev as usize);
   let outer: usize = 0 as usize;
+  let mode: usize = 0 as usize;
   if (prev != 0) {
     outer = __fern_task_rec(prev);
+    mode = __raw_load_ptr(outer, 0);
   }
   __raw_store_ptr(st, 3, outer);
+  __raw_store_ptr(st, 6, mode);
   return __raw_load_ptr(rec, 0) as i32;
 }
