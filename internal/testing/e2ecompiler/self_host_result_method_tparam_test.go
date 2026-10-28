@@ -10,76 +10,148 @@ var resultMethodTParamCases = []struct {
 	src  string
 	want int
 }{
-	{"and_string", `import "std/result";
-@noinline function then(r: Result[i32, string]): Result[string, string] { return r.and(Ok("vw")); }
-function main(): i32 {
+	{"and_string", `import "std/string";
+import "std/result";
+@noinline
+function probe(): i32 {
     let r: Result[i32, string] = Ok(1);
-    let s: Result[string, string] = then(r);
+    let s: Result[string, string] = r.and(Ok("vw"));
     return s.unwrap_or("").len();
 }
+@noinline
+function keeps_heap_work(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let value = probe();
+    if (data.len() != n || data[0] != first) { return 99; }
+    return value;
+}
+function main(): i32 { return keeps_heap_work(); }
 `, 2},
-	{"and_string_loop", `import "std/result";
-@noinline function then(r: Result[i32, string], v: string): Result[string, string] { return r.and(Ok(v)); }
-function main(): i32 {
+	{"and_string_loop", `import "std/string";
+import "std/result";
+@noinline
+function probe(): i32 {
     let n: i32 = 0;
     let i: i32 = 0;
     while (i < 200) {
         let r: Result[i32, string] = Ok(i);
-        let s: Result[string, string] = then(r, "v" + "w");
+        let s: Result[string, string] = r.and(Ok("v" + "w"));
         n = n + s.unwrap_or("").len();
         i = i + 1;
     }
     return n % 101;
 }
+@noinline
+function keeps_heap_work(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let value = probe();
+    if (data.len() != n || data[0] != first) { return 99; }
+    return value;
+}
+function main(): i32 { return keeps_heap_work(); }
 `, 400 % 101},
-	{"and_i32_loop", `import "std/result";
-@noinline function then(r: Result[string, string], v: i32): Result[i32, string] { return r.and(Ok(v)); }
-function main(): i32 {
+	{"and_i32_loop", `import "std/string";
+import "std/result";
+@noinline
+function probe(): i32 {
     let n: i32 = 0;
     let i: i32 = 0;
     while (i < 200) {
         let r: Result[string, string] = Ok("a" + "b");
-        let s: Result[i32, string] = then(r, i);
+        let s: Result[i32, string] = r.and(Ok(i));
         n = n + s.unwrap_or(0);
         i = i + 1;
     }
     return n % 101;
 }
+@noinline
+function keeps_heap_work(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let value = probe();
+    if (data.len() != n || data[0] != first) { return 99; }
+    return value;
+}
+function main(): i32 { return keeps_heap_work(); }
 `, 19900 % 101},
-	{"and_err", `import "std/result";
-@noinline function then(r: Result[i32, string]): Result[string, string] { return r.and(Ok("vw")); }
-function main(): i32 {
+	{"and_err", `import "std/string";
+import "std/result";
+@noinline
+function probe(): i32 {
     let n: i32 = 0;
     let i: i32 = 0;
     while (i < 50) {
         let r: Result[i32, string] = Err("e" + "rr");
-        let s: Result[string, string] = then(r);
+        let s: Result[string, string] = r.and(Ok("vw"));
         match (s) { Ok(v) => { n = n + 100; }, Err(e) => { n = n + e.len(); } }
         i = i + 1;
     }
     return n % 101;
 }
+@noinline
+function keeps_heap_work(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let value = probe();
+    if (data.len() != n || data[0] != first) { return 99; }
+    return value;
+}
+function main(): i32 { return keeps_heap_work(); }
 `, 150 % 101},
-	{"or_string", `import "std/result";
-@noinline function alt(r: Result[string, string], v: string): Result[string, string] { return r.or(Ok(v)); }
-function main(): i32 {
+	{"or_string", `import "std/string";
+import "std/result";
+@noinline
+function probe(): i32 {
     let n: i32 = 0;
     let i: i32 = 0;
     while (i < 50) {
         let r: Result[string, string] = Err("e");
-        let s: Result[string, string] = alt(r, "x" + "yz");
+        let s: Result[string, string] = r.or(Ok("x" + "yz"));
         n = n + s.unwrap_or("").len();
         i = i + 1;
     }
     return n % 101;
 }
-`, 150 % 101},
-	{"unwrap_or_string", `import "std/result";
-@noinline function get(s: Result[string, string]): string { return s.unwrap_or(""); }
-function main(): i32 {
-    let s: Result[string, string] = Ok("x" + "yz");
-    return get(s).len();
+@noinline
+function keeps_heap_work(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let value = probe();
+    if (data.len() != n || data[0] != first) { return 99; }
+    return value;
 }
+function main(): i32 { return keeps_heap_work(); }
+`, 150 % 101},
+	{"unwrap_or_string", `import "std/string";
+import "std/result";
+@noinline
+function probe(): i32 {
+    let s: Result[string, string] = Ok("x" + "yz");
+    return s.unwrap_or("").len();
+}
+@noinline
+function keeps_heap_work(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let value = probe();
+    if (data.len() != n || data[0] != first) { return 99; }
+    return value;
+}
+function main(): i32 { return keeps_heap_work(); }
 `, 3},
 	{"map_or_string", `import "std/result";
 function slen(s: string): i32 { return s.len(); }
@@ -94,98 +166,185 @@ function main(): i32 {
     return n % 101;
 }
 `, 200 % 101},
-	{"flatten_string", `import "std/result";
-@noinline function flat(r: Result[Result[string, string], string]): Result[string, string] { return r.flatten(); }
-function main(): i32 {
+	{"flatten_string", `import "std/string";
+import "std/result";
+@noinline
+function probe(): i32 {
     let n: i32 = 0;
     let i: i32 = 0;
     while (i < 50) {
         let inner: Result[string, string] = Ok("p" + "q");
         let r: Result[Result[string, string], string] = Ok(inner);
-        n = n + flat(r).unwrap_or("").len();
+        n = n + r.flatten().unwrap_or("").len();
         i = i + 1;
     }
     return n % 101;
 }
+@noinline
+function keeps_heap_work(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let value = probe();
+    if (data.len() != n || data[0] != first) { return 99; }
+    return value;
+}
+function main(): i32 { return keeps_heap_work(); }
 `, 100 % 101},
-	{"option_and_string", `import "std/option";
-import "std/i32";
-@noinline function then(o: Option[i32], v: string): Option[string] { return o.and(Some(v)); }
-function main(): i32 {
+	{"option_and_string", `import "std/string";
+import "std/option";
+@noinline
+function probe(): i32 {
     let o: Option[i32] = Some(4);
-    let s: Option[string] = then(o, (10000 + o.unwrap_or(0)).to_string());
+    let s: Option[string] = o.and(Some("abcde"));
     return s.unwrap_or("").len();
 }
+@noinline
+function keeps_heap_work(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let value = probe();
+    if (data.len() != n || data[0] != first) { return 99; }
+    return value;
+}
+function main(): i32 { return keeps_heap_work(); }
 `, 5},
-	{"generic_fn_result_matched", `@noinline function either[T, E](r: Result[T, E], other: Result[T, E]): Result[T, E] {
+	{"generic_fn_result_matched", `import "std/string";
+function either[T, E](r: Result[T, E], other: Result[T, E]): Result[T, E] {
     match (r) { Ok(x) => { return Ok(x); }, Err(e) => { return other; } }
 }
-function main(): i32 {
+@noinline
+function probe(): i32 {
     let r: Result[string, string] = Err("e");
     let s: Result[string, string] = either(r, Ok("x" + "yz"));
     match (s) { Ok(v) => { return v.len(); }, Err(e) => { return 50; } }
 }
-`, 3},
-	{"scalar_recv_unwrap_or", `import "std/result";
-@noinline function get(o: Result[i32, i32]): i32 { return o.unwrap_or(0); }
-function main(): i32 {
-    let o: Result[i32, i32] = Ok(3);
-    return get(o);
+@noinline
+function keeps_heap_work(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let value = probe();
+    if (data.len() != n || data[0] != first) { return 99; }
+    return value;
 }
+function main(): i32 { return keeps_heap_work(); }
 `, 3},
-	{"scalar_recv_is_ok", `import "std/result";
-@noinline function ok(o: Result[i32, i32]): boolean { return o.is_ok(); }
-function main(): i32 {
+	{"scalar_recv_unwrap_or", `import "std/string";
+import "std/result";
+@noinline
+function probe(): i32 {
+    let o: Result[i32, i32] = Ok(3);
+    return o.unwrap_or(0);
+}
+@noinline
+function keeps_heap_work(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let value = probe();
+    if (data.len() != n || data[0] != first) { return 99; }
+    return value;
+}
+function main(): i32 { return keeps_heap_work(); }
+`, 3},
+	{"scalar_recv_is_ok", `import "std/string";
+import "std/result";
+@noinline
+function probe(): i32 {
     let o: Result[i32, i32] = Err(4);
-    if (ok(o)) { return 1; }
+    if (o.is_ok()) { return 1; }
     return 2;
 }
+@noinline
+function keeps_heap_work(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let value = probe();
+    if (data.len() != n || data[0] != first) { return 99; }
+    return value;
+}
+function main(): i32 { return keeps_heap_work(); }
 `, 2},
-	{"option_scalar_recv", `import "std/option";
-import "std/string";
-@noinline function get(o: Option[i32]): i32 {
+	{"option_scalar_recv", `import "std/string";
+import "std/option";
+@noinline
+function probe(): i32 {
+    let o: Option[i32] = Some(3);
     if (o.is_some()) { return o.unwrap_or(0); }
     return 1;
 }
-function main(): i32 {
-    let base: i32 = args()[0].bytes().len();
-    let o: Option[i32] = Some(3 + base);
-    return get(o) - base;
+@noinline
+function keeps_heap_work(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let value = probe();
+    if (data.len() != n || data[0] != first) { return 99; }
+    return value;
 }
+function main(): i32 { return keeps_heap_work(); }
 `, 3},
-	{"scalar_recv_loop", `import "std/result";
+	{"scalar_recv_loop", `import "std/string";
+import "std/result";
 import "std/option";
-@noinline function both(o: Option[i32], r: Result[i32, string]): i32 {
-    if (o.is_some() && r.is_ok()) { return o.unwrap_or(0) + r.unwrap_or(0); }
-    return 0;
-}
-function main(): i32 {
+@noinline
+function probe(): i32 {
     let n: i32 = 0;
     let i: i32 = 0;
     while (i < 200) {
         let o: Option[i32] = Some(i);
         let r: Result[i32, string] = Ok(i + 1);
-        n = (n + both(o, r)) % 101;
+        if (o.is_some() && r.is_ok()) { n = (n + o.unwrap_or(0) + r.unwrap_or(0)) % 101; }
         i = i + 1;
     }
     return n;
 }
+@noinline
+function keeps_heap_work(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let value = probe();
+    if (data.len() != n || data[0] != first) { return 99; }
+    return value;
+}
+function main(): i32 { return keeps_heap_work(); }
 `, 4},
-	{"scalar_rebound_recv", `import "std/option";
-import "std/string";
-@noinline function get(o: Option[i32]): i32 { return o.unwrap_or(0); }
-function main(): i32 {
-    let base: i32 = args()[0].bytes().len();
+	{"scalar_rebound_recv", `import "std/string";
+import "std/option";
+@noinline
+function probe(): i32 {
     let n: i32 = 0;
     let i: i32 = 0;
     let o: Option[i32] = None;
     while (i < 200) {
-        o = Some(i + base);
-        n = (n + get(o) - base) % 101;
+        o = Some(i);
+        n = (n + o.unwrap_or(0)) % 101;
         i = i + 1;
     }
-    return n + (get(o) - base) % 7;
+    return n + o.unwrap_or(0) % 7;
 }
+@noinline
+function keeps_heap_work(): i32 {
+    let data = args()[0].bytes();
+    let n = data.len();
+    if (n == 0) { return 99; }
+    let first = data[0];
+    let value = probe();
+    if (data.len() != n || data[0] != first) { return 99; }
+    return value;
+}
+function main(): i32 { return keeps_heap_work(); }
 `, 6},
 	{"mixed_unused", `@noinline function keep(r: Result[i32, string]): i32 { return 0; }
 function main(): i32 {

@@ -71,8 +71,7 @@ function main(): i32 {
     "vsplat", "vextract", "vreplace", "vadd", "vsub", "vmul", "vdiv", "vmin", "vmax", "vfma",
     "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "vround", "veq", "vne", "vlt", "vle", "vgt", "vge",
     "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore",
-    "vget", "vset", "vbitmask", "crc32_ieee", "crc32_ieee_array", "count_below_u64", "prctl_query",
-    "mulhi_s",
+    "vget", "vset", "vbitmask", "crc32_ieee", "crc32_ieee_array", "count_below_u64", "prctl_query", "mulhi_s",
   ];
   if (!ir.kind_retired(198) || ir.kind_name(198) != "invalid") {
     failures = failures + 1;
