@@ -1,0 +1,2 @@
+Vec[3, f64] names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]
+Vec[8, T] names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]

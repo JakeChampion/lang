@@ -355,7 +355,13 @@ pub function body_refs(fd: parser.FuncDecl): BodyRefs {
 
 struct LocalTypes { names: string[], types: string[] }
 
-function lt_bind(own lt: LocalTypes, name: string, ty: string): LocalTypes {
+function lt_bind(own lt: LocalTypes, name: string, ty0: string): LocalTypes {
+  // A generic `Vec[N, T]` is a lane type the instance picks, so its methods
+  // keep the bare method root.
+  let ty: string = ty0;
+  if (util.str_has_prefix(ty, "Vec[") && util.str_has_suffix(ty, "]")) {
+    ty = "";
+  }
   let k: i32 = util.index_of_str(lt.names, name);
   if (k < 0) {
     return LocalTypes { names: lt.names.append(name), types: lt.types.append(ty) };
