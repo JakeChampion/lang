@@ -1,0 +1,3 @@
+pub function first(r: Result[i32, string]): Option[i32] {
+  return r.ok();
+}
