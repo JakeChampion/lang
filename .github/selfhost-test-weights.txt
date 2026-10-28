@@ -1166,7 +1166,7 @@ TestSelfHostResultTupleIR 2
 TestSelfHostResultTuplePayloadIR 2
 TestSelfHostRetArrEnumIR 2
 TestSelfHostRetStructFieldIR 2
-TestSelfHostRetainedNativeBodies 717
+TestSelfHostRetainedNativeBodies 820
 TestSelfHostReturnClosureIR 2
 TestSelfHostReturnedLocalTupleReleasesItsChild 2
 TestSelfHostReuseCarry 13
