@@ -30,7 +30,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<7 pub function initial_secret(dcid: [u8], client: boolean): u8[]>>
 
-<<8 function __cid_len(datagram: [u8], p: i32, max: i32, what: string): Result[i32, string]>>
+<<8 function __cid_len(datagram: [u8], p: i32, max: i32, what: string): Result[i32, PacketError]>>
 
 <<9 pub function mask(k: Keys, sample: [u8]): u8[]>>
 
@@ -40,7 +40,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<12 pub struct Unprotected>>
 
-<<13 pub function unprotect(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Unprotected, string]>>
+<<13 pub function unprotect(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Unprotected, PacketError]>>
 
 <<14 pub struct Long>>
 
@@ -75,6 +75,8 @@ import "std/crypto/chacha20poly1305";
 import "std/array";
 import "std/i64";
 import "std/u32";
+import "std/error";
+import "core/cmp";
 ```
 
 ### `3 pub const VERSION_1: i64`
@@ -222,16 +224,56 @@ pub function decode_pn(largest: i64, truncated: i64, bits: i32): i64 {
   return candidate;
 }
 
-pub function parse(datagram: [u8], at: i32, short_dcid_len: i32): Result[Header, string] {
+// Why a QUIC packet could not be parsed, unprotected or opened.
+pub enum PacketError { PacketCutShort(string), PacketConnectionIdTooLong(string, i32), PacketFixedBitClear, PacketVersionListLength(i32), PacketPastDatagram(i64), PacketRetryWithoutToken, PacketTooShortToSample, PacketUndecryptable }
+
+impl error.Error for PacketError {}
+
+impl cmp.Display for PacketError {}
+
+pub function (e: PacketError) message(): string {
+  match (e) {
+    PacketCutShort(what) => {
+      return what + " cut short";
+    },
+    PacketConnectionIdTooLong(what, n) => {
+      return what + " of " + n.to_string() + " bytes";
+    },
+    PacketFixedBitClear => {
+      return "fixed bit not set";
+    },
+    PacketVersionListLength(n) => {
+      return "version negotiation of " + n.to_string() + " bytes of versions";
+    },
+    PacketPastDatagram(n) => {
+      return "packet of " + n.to_string() + " bytes past the end of the datagram";
+    },
+    PacketRetryWithoutToken => {
+      return "retry without a token";
+    },
+    PacketTooShortToSample => {
+      return "packet too short to sample";
+    },
+    PacketUndecryptable => {
+      return "packet does not decrypt";
+    }
+  }
+}
+
+pub function (e: PacketError) to_string(): string {
+  return e.message();
+}
+
+pub function parse(datagram: [u8], at: i32, short_dcid_len: i32): Result[Header, PacketError] {
   if (at >= datagram.len()) {
-    return Err("first byte cut short");
+    return Err(PacketCutShort("first byte"));
   }
   let b0: i32 = datagram[at] as i32;
   if ((b0 & 128) == 0) {
     return __short(datagram, b0, at, short_dcid_len);
   }
   if (at + 5 > datagram.len()) {
-    return Err("version cut short");
+    return Err(PacketCutShort("version"));
   }
   let version: i64 = __be32(datagram, at + 1);
   let max: i32 = MAX_CID_LEN;
@@ -254,38 +296,38 @@ pub function parse(datagram: [u8], at: i32, short_dcid_len: i32): Result[Header,
 }
 ```
 
-### `8 function __cid_len(datagram: [u8], p: i32, max: i32, what: string): Result[i32, string]`
+### `8 function __cid_len(datagram: [u8], p: i32, max: i32, what: string): Result[i32, PacketError]`
 
 ```fern
-<<8 function __cid_len(datagram: [u8], p: i32, max: i32, what: string): Result[i32, string]>>=
-function __cid_len(datagram: [u8], p: i32, max: i32, what: string): Result[i32, string] {
+<<8 function __cid_len(datagram: [u8], p: i32, max: i32, what: string): Result[i32, PacketError]>>=
+function __cid_len(datagram: [u8], p: i32, max: i32, what: string): Result[i32, PacketError] {
   if (p >= datagram.len()) {
-    return Err(what + " length cut short");
+    return Err(PacketCutShort(what + " length"));
   }
   let n: i32 = datagram[p] as i32;
   if (n > max) {
-    return Err(what + " of " + n.to_string() + " bytes");
+    return Err(PacketConnectionIdTooLong(what, n));
   }
   if (p + 1 + n > datagram.len()) {
-    return Err(what + " cut short");
+    return Err(PacketCutShort(what));
   }
   return Ok(n);
 }
 
-function __short(datagram: [u8], b0: i32, at: i32, dcid_len: i32): Result[Header, string] {
+function __short(datagram: [u8], b0: i32, at: i32, dcid_len: i32): Result[Header, PacketError] {
   if ((b0 & 64) == 0) {
-    return Err("fixed bit not set");
+    return Err(PacketFixedBitClear);
   }
   if (dcid_len < 0 || at + 1 + dcid_len > datagram.len()) {
-    return Err("destination connection id cut short");
+    return Err(PacketCutShort("destination connection id"));
   }
   return Ok(Header { kind: OneRtt, version: VERSION_1, dcid: __slice(datagram, at + 1, at + 1 + dcid_len), scid: [], token: [], tag: [], versions: [], at: at, pn_at: at + 1 + dcid_len, end: datagram.len() });
 }
 
-function __version_negotiation(h: Header, datagram: [u8], at: i32): Result[Header, string] {
+function __version_negotiation(h: Header, datagram: [u8], at: i32): Result[Header, PacketError] {
   let left: i32 = datagram.len() - at;
   if (left == 0 || left % 4 != 0) {
-    return Err("version negotiation of " + left.to_string() + " bytes of versions");
+    return Err(PacketVersionListLength(left));
   }
   let versions: i64[] = [];
   let p: i32 = at;
@@ -296,9 +338,9 @@ function __version_negotiation(h: Header, datagram: [u8], at: i32): Result[Heade
   return Ok(Header { ...h, kind: VersionNegotiation, versions: versions, pn_at: datagram.len() });
 }
 
-function __long(h: Header, datagram: [u8], b0: i32, at: i32): Result[Header, string] {
+function __long(h: Header, datagram: [u8], b0: i32, at: i32): Result[Header, PacketError] {
   if ((b0 & 64) == 0) {
-    return Err("fixed bit not set");
+    return Err(PacketFixedBitClear);
   }
   let kind: i32 = b0 >> 4 & 3;
   if (kind == 3) {
@@ -309,11 +351,11 @@ function __long(h: Header, datagram: [u8], b0: i32, at: i32): Result[Header, str
   if (kind == 0) {
     let n: i64 = frames.varint_at(datagram, p);
     if (n < 0) {
-      return Err("token length cut short");
+      return Err(PacketCutShort("token length"));
     }
     let token_at: i32 = frames.varint_end(datagram, p);
     if (n > (datagram.len() - token_at) as i64) {
-      return Err("token cut short");
+      return Err(PacketCutShort("token"));
     }
     p = token_at + n as i32;
     h = Header { ...h, token: __slice(datagram, token_at, p) };
@@ -324,19 +366,19 @@ function __long(h: Header, datagram: [u8], b0: i32, at: i32): Result[Header, str
   }
   let len: i64 = frames.varint_at(datagram, p);
   if (len < 0) {
-    return Err("length cut short");
+    return Err(PacketCutShort("length"));
   }
   let body: i32 = frames.varint_end(datagram, p);
   if (len > (datagram.len() - body) as i64) {
-    return Err("packet of " + len.to_string() + " bytes past the end of the datagram");
+    return Err(PacketPastDatagram(len));
   }
   return Ok(Header { ...h, kind: k, pn_at: body, end: body + len as i32 });
 }
 
-function __retry_header(h: Header, datagram: [u8], at: i32): Result[Header, string] {
+function __retry_header(h: Header, datagram: [u8], at: i32): Result[Header, PacketError] {
   let rest: i32 = datagram.len() - at - TAG_LEN;
   if (rest < 1) {
-    return Err("retry without a token");
+    return Err(PacketRetryWithoutToken);
   }
   return Ok(Header { ...h, kind: Retry, token: __slice(datagram, at, at + rest), tag: __slice(datagram, at + rest, datagram.len()), pn_at: datagram.len() });
 }
@@ -458,13 +500,13 @@ function __open(k: Keys, pn: i64, own buf: u8[], n: i32): Option[u8[]] {
 pub struct Unprotected { header: u8[], body_at: i32, pn: i64, key_phase: boolean, spin: boolean, reserved_ok: boolean }
 ```
 
-### `13 pub function unprotect(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Unprotected, string]`
+### `13 pub function unprotect(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Unprotected, PacketError]`
 
 ```fern
-<<13 pub function unprotect(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Unprotected, string]>>=
-pub function unprotect(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Unprotected, string] {
+<<13 pub function unprotect(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Unprotected, PacketError]>>=
+pub function unprotect(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Unprotected, PacketError] {
   if (h.pn_at + 4 + 16 > h.end) {
-    return Err("packet too short to sample");
+    return Err(PacketTooShortToSample);
   }
   let m: u8[] = mask(k, datagram[h.pn_at + 4:h.pn_at + 20]);
   let long: boolean = (datagram[h.at] as i32 & 128) != 0;
@@ -493,10 +535,10 @@ pub function unprotect(datagram: [u8], h: Header, k: Keys, largest: i64): Result
   return Ok(Unprotected { header: header, body_at: h.pn_at + n, pn: pn, key_phase: (b0 & 4) != 0, spin: (b0 & 32) != 0, reserved_ok: (b0 & reserved) == 0 });
 }
 
-pub function open_unprotected(datagram: [u8], h: Header, u: Unprotected, k: Keys): Result[Opened, string] {
+pub function open_unprotected(datagram: [u8], h: Header, u: Unprotected, k: Keys): Result[Opened, PacketError] {
   let sealed: i32 = h.end - u.body_at;
   if (sealed < 16) {
-    return Err("packet does not decrypt");
+    return Err(PacketUndecryptable);
   }
   let buf: u8[] = __bytes_into(__bytes_into(__alloc_u8(sealed + u.header.len()), 0, datagram, u.body_at, sealed), sealed, u.header, 0, u.header.len());
   match (__open(k, u.pn, buf, sealed - 16)) {
@@ -504,12 +546,12 @@ pub function open_unprotected(datagram: [u8], h: Header, u: Unprotected, k: Keys
       return Ok(Opened { pn: u.pn, payload: payload, key_phase: u.key_phase, spin: u.spin, reserved_ok: u.reserved_ok });
     },
     None => {
-      return Err("packet does not decrypt");
+      return Err(PacketUndecryptable);
     }
   }
 }
 
-pub function open(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Opened, string] {
+pub function open(datagram: [u8], h: Header, k: Keys, largest: i64): Result[Opened, PacketError] {
   let u: Unprotected = unprotect(datagram, h, k, largest)?;
   return open_unprotected(datagram, h, u, k);
 }
