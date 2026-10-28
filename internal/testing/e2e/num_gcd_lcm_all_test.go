@@ -3,18 +3,18 @@ package e2e
 import "testing"
 
 const numGcdLcmAllProg = `
-import "std/i32";
+import "std/array";
 import "std/i64" as i64m;
 function main(): i32 {
-    if (i32.gcd_all([12, 18, 24]) != 6) { return 1; }
-    if (i32.gcd_all([13, 17]) != 1) { return 2; }        // coprime
-    if (i32.gcd_all([7]) != 7) { return 3; }
-    if (i32.gcd_all([]) != 0) { return 4; }              // gcd identity
-    if (i32.lcm_all([2, 3, 4]) != 12) { return 5; }
-    if (i32.lcm_all([]) != 1) { return 6; }              // lcm identity
-    if (i32.lcm_all([5]) != 5) { return 7; }
-    // gcd_all(x) * lcm-style relationship spot check.
-    if (i32.gcd_all([6, 10, 15]) != 1) { return 8; }
+    let none: i32[] = [];
+    if ([12, 18, 24].gcd_all() != 6) { return 1; }
+    if ([13, 17].gcd_all() != 1) { return 2; }        // coprime
+    if ([7].gcd_all() != 7) { return 3; }
+    if (none.gcd_all() != 0) { return 4; }            // gcd identity
+    if ([2, 3, 4].lcm_all() != 12) { return 5; }
+    if (none.lcm_all() != 1) { return 6; }            // lcm identity
+    if ([5].lcm_all() != 5) { return 7; }
+    if ([0 - 6, 10, 15].gcd_all() != 1) { return 8; }
     // i64 width, past the i32 range.
     if (i64m.gcd_all([100000000000 as i64, 250000000000 as i64]) != 50000000000) { return 9; }
     if (i64m.lcm_all([1000000 as i64, 1500000 as i64]) != 3000000) { return 10; }

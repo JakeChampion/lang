@@ -21,7 +21,7 @@ function test_u32_in_range(): test.TestOutcome {
 
 function test_u32_range_max(): test.TestOutcome {
   let big: u32 = 0 as u32 - 1 as u32;
-  if (!big.is_between(0 as u32, big)) {
+  if (!big.is_in_range_incl(0 as u32, big)) {
     return test.fail("MAX in inclusive");
   }
   return test.assert_true(!big.is_in_range(0 as u32, big));
@@ -36,12 +36,12 @@ function test_u64_in_range(): test.TestOutcome {
   if (!(5 as u64).is_in_range(1 as u64, 10 as u64)) {
     return test.fail("5 in [1,10)");
   }
-  return test.assert_true((10 as u64).is_between(1 as u64, 10 as u64));
+  return test.assert_true((10 as u64).is_in_range_incl(1 as u64, 10 as u64));
 }
 
 function test_u64_range_max(): test.TestOutcome {
   let big: u64 = 0 as u64 - 1 as u64;
-  if (!big.is_between(0 as u64, big)) {
+  if (!big.is_in_range_incl(0 as u64, big)) {
     return test.fail("MAX in inclusive");
   }
   return test.assert_true(!big.is_in_range(0 as u64, big));

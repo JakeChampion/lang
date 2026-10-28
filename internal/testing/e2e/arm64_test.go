@@ -5733,34 +5733,16 @@ function main(): i32 {
     if (["a.txt", "b.png"].all_ends_with(".txt")) { return 21; }
     if (!empty.all_ends_with(".txt")) { return 22; }
 
-    match ([12, 18, 24].gcd_all()) {
-        Some(g) => { if (g != 6) { return 30; } },
-        None => { return 31; },
-    }
-    match ([7, 13, 11].gcd_all()) {
-        Some(g) => { if (g != 1) { return 32; } },
-        None => { return 33; },
-    }
-    match ([5].gcd_all()) {
-        Some(g) => { if (g != 5) { return 34; } },
-        None => { return 35; },
-    }
+    if ([12, 18, 24].gcd_all() != 6) { return 30; }
+    if ([7, 13, 11].gcd_all() != 1) { return 32; }
+    if ([5].gcd_all() != 5) { return 34; }
     let empty_i: i32[] = [];
-    match (empty_i.gcd_all()) { Some(_) => { return 36; }, None => { } }
+    if (empty_i.gcd_all() != 0) { return 36; }   // gcd identity
 
-    match ([2, 3, 4].lcm_all()) {
-        Some(l) => { if (l != 12) { return 40; } },
-        None => { return 41; },
-    }
-    match ([6, 8].lcm_all()) {
-        Some(l) => { if (l != 24) { return 42; } },
-        None => { return 43; },
-    }
-    match ([5].lcm_all()) {
-        Some(l) => { if (l != 5) { return 44; } },
-        None => { return 45; },
-    }
-    match (empty_i.lcm_all()) { Some(_) => { return 46; }, None => { } }
+    if ([2, 3, 4].lcm_all() != 12) { return 40; }
+    if ([6, 8].lcm_all() != 24) { return 42; }
+    if ([5].lcm_all() != 5) { return 44; }
+    if (empty_i.lcm_all() != 1) { return 46; }   // lcm identity
 
     if ("a bb ccc dddd".whitespace_word_count_min(3) != 2) { return 50; }
     if ("a bb ccc dddd".whitespace_word_count_min(1) != 4) { return 51; }
@@ -5973,9 +5955,6 @@ function main(): i32 {
     if ("hi".ellipsis(1) != ".") { return 35; }
     if ("".ellipsis(5) != "") { return 36; }
 
-    if ((0 - 5).min_zero() != 0) { return 40; }
-    if ((0).min_zero() != 0) { return 41; }
-    if ((7).min_zero() != 7) { return 42; }
 
     if ((5).sign_str() != "+") { return 50; }
     if ((0 - 3).sign_str() != "-") { return 51; }
@@ -6287,11 +6266,11 @@ function main(): i32 {
     match ("no markers".between("[", "]")) { Some(_) => { return 14; }, None => { } }
     match ("[unclosed".between("[", "]")) { Some(_) => { return 15; }, None => { } }
 
-    // is_between (inclusive)
-    if (!(5).is_between(0, 10)) { return 16; }
-    if (!(10).is_between(0, 10)) { return 17; }    // inclusive upper
-    if ((11).is_between(0, 10)) { return 18; }
-    if ((0 - 1).is_between(0, 10)) { return 19; }
+    // is_in_range_incl (inclusive)
+    if (!(5).is_in_range_incl(0, 10)) { return 16; }
+    if (!(10).is_in_range_incl(0, 10)) { return 17; }    // inclusive upper
+    if ((11).is_in_range_incl(0, 10)) { return 18; }
+    if ((0 - 1).is_in_range_incl(0, 10)) { return 19; }
 
     // is_letter
     if (!(65 as u8).is_ascii_letter()) { return 20; }
@@ -6517,16 +6496,16 @@ import "std/time";
 import "std/format";
 import "std/uuid";
 function main(): i32 {
-    // ceil_div
-    if ((10).ceil_div(3) != 4) { return 1; }
-    if ((9).ceil_div(3) != 3) { return 2; }
-    if ((0).ceil_div(3) != 0) { return 3; }
-    if ((10).ceil_div(0) != 0) { return 4; }
+    // div_ceil
+    if ((10).div_ceil(3) != 4) { return 1; }
+    if ((9).div_ceil(3) != 3) { return 2; }
+    if ((0).div_ceil(3) != 0) { return 3; }
+    if ((10).div_ceil(0) != 0) { return 4; }
 
-    // round_up_to / round_down_to
-    if ((13).round_up_to(4) != 16) { return 5; }
-    if ((16).round_up_to(4) != 16) { return 6; }
-    if ((10).round_up_to(0) != 10) { return 7; }
+    // next_multiple_of / round_down_to
+    if ((13).next_multiple_of(4) != 16) { return 5; }
+    if ((16).next_multiple_of(4) != 16) { return 6; }
+    if ((10).next_multiple_of(0) != 0) { return 7; }
     if ((13).round_down_to(4) != 12) { return 8; }
     if ((3).round_down_to(4) != 0) { return 9; }
 

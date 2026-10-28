@@ -95,6 +95,19 @@ var truncateCases = []struct{ name, body string }{
   let qs: P[] = remove_at(ps, 1);
   let r: i32 = ps.len() * 10 + qs.len();
   if (ps[1].n != 1 || qs[1].n != 5) { return 98; }`},
+	{"shared-to-empty", `  let xs: string[] = names(3);
+  let before: i64 = __heap_alloc_count();
+  let ys: string[] = xs.truncate(0);
+  if (__heap_alloc_count() - before != 0i64) { return 97; }
+  ys = ys.append("tail");
+  let r: i32 = xs.len() * 10 + ys.len();
+  if (xs[2] != "d2" || ys[0] != "tail") { return 98; }`},
+	{"shared-bytes-to-empty", `  let xs: u8[] = [1, 2, 3];
+  let before: i64 = __heap_alloc_count();
+  let ys: u8[] = xs.truncate(0 - 1);
+  if (__heap_alloc_count() - before != 0i64) { return 97; }
+  ys = ys.append(9);
+  let r: i32 = xs.len() * 10 + ys.len() + (ys[0] as i32);`},
 }
 
 const truncateHelpers = `import "core/int";
