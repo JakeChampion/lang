@@ -1,0 +1,33 @@
+import "../ssalargefreewideclasses" as current;
+import "../ssalargearrayvalue" as array;
+import "../ssastringvalue" as strings;
+
+pub function result(mode: i32, low: i64, high: i64, minimum: i32, maximum: i32): i64[] {
+  if (mode == 0) {
+    let r = array.Interval { low: low, high: high };
+    return [current.array_class(r) as i64, array.expected_class(r) as i64, 0 as i64, 0 as i64, 0 as i64, 0 as i64];
+  }
+  if (mode == 1 || mode == 2) {
+    let r = strings.Interval { low: low, high: high, min_residue: minimum, max_residue: maximum };
+    return [current.string_class(r, mode == 2) as i64, strings.expected_class(r, mode == 2) as i64, 0 as i64, 0 as i64, 0 as i64, 0 as i64];
+  }
+  if (mode == 3) {
+    let rows = current.array_intervals();
+    let old = array.intervals().len() as i64;
+    if (low < 0 || low >= rows.len() as i64) {
+      return [-(1 as i64), old, 0 as i64, 0 as i64, 0 as i64, 0 as i64];
+    }
+    let r = rows[low as i32];
+    return [rows.len() as i64, old, r.low, r.high, 0 as i64, 0 as i64];
+  }
+  if (mode == 4 || mode == 5) {
+    let rows = current.string_intervals(mode == 5);
+    let old = strings.intervals(mode == 5).len() as i64;
+    if (low < 0 || low >= rows.len() as i64) {
+      return [-(1 as i64), old, 0 as i64, 0 as i64, 0 as i64, 0 as i64];
+    }
+    let r = rows[low as i32];
+    return [rows.len() as i64, old, r.low, r.high, r.min_residue as i64, r.max_residue as i64];
+  }
+  return [];
+}
