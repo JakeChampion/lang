@@ -56,7 +56,7 @@ func TestSelfHostInterpRefusesTheRawFloor(t *testing.T) {
 		call := tc.call
 		t.Run(strings.Fields(call)[0], func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "raw.fern")
-			if err := os.WriteFile(src, []byte("function main(): i32 { return "+call+"; }\n"), 0o644); err != nil {
+			if err := os.WriteFile(src, []byte("function main(): i32 { unsafe { return "+call+"; } }\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			_, stderr, code := runInterpCLI(t, runX86_64Bin(cli.runner, cli.bin, "-interp", src, cli.stdlib), "")

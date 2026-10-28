@@ -308,7 +308,9 @@ function read(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): (Conn, Tally) 
       }
       return (reopen(drv, p, conn), tally);
     }
-    __arr_set_len(scratch, n);
+    unsafe {
+      __arr_set_len(scratch, n);
+    }
     conn = Conn { ...conn, buf: conn.buf.concat(scratch) };
     if (conn.state != BUSY) {
       return (reopen(drv, p, conn), tally);
