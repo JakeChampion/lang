@@ -1,0 +1,5 @@
+{
+  "method": "Sum incoming edge call counts for the nonrecursive __fern_arr_box block in callgrind_annotate --inclusive=yes --tree=caller --threshold=100.",
+  "calls": 20526860,
+  "incoming_edges": 897
+}

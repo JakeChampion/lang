@@ -1,0 +1,29 @@
+import "std/bench";
+
+struct Last { n: i32, s: string }
+struct Both { a: string[], b: string[] }
+
+@noinline function last(n: i32, s: string): Last {
+  return Last { n: n, s: s };
+}
+
+@noinline function both(xs: string[]): Both {
+  return Both { a: xs, b: xs };
+}
+
+function main(): i32 {
+  let s: string = "held" + args()[0];
+  let xs: string[] = [s];
+  let before: i64 = bench.alloc_count();
+  for i in 0..50 {
+    let l: Last = last(i, s);
+    let refs: Both = both(xs);
+    if (l.n != i || l.s != s || refs.a[0] != s || refs.b[0] != s) { return 1; }
+  }
+  let allocated: i64 = bench.alloc_count() - before;
+  print(allocated.to_string());
+  if (allocated != 0i64) { return 2; }
+  if (xs[0] != s || s.len() <= 4) { return 3; }
+  if (__rc_underflow_count() != 0) { return 99; }
+  return 0;
+}

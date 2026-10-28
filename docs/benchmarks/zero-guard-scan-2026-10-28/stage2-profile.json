@@ -1,0 +1,30 @@
+{
+  "command": [
+    "/workspace/lang-issue-work/perf-4412/tools/usr/bin/time",
+    "-v",
+    "/workspace/lang-issue-work/perf-4412/tools/usr/bin/valgrind",
+    "--tool=callgrind",
+    "--callgrind-out-file=/workspace/lang-issue-work/perf-4412/zero-guard-candidate/stage2.callgrind",
+    "/workspace/lang-issue-work/perf-4412/zero-guard-candidate/stage2",
+    "-O",
+    "-target",
+    "x86-64-linux",
+    "-emit",
+    "asm",
+    "-o",
+    "/dev/null",
+    "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+    "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+  ],
+  "exit": 0,
+  "valid_full_run": true,
+  "baseline_sha256": "64f876ff80e4db91d1eb614605a7fe567bbad13ecb061dce204defb5c0b975a0",
+  "candidate_sha256": "b5f3a8529bdd5e6c3b1169b136c42511291536437a0d1bbe9056189228156d07",
+  "common_producer_sha256": "64f876ff80e4db91d1eb614605a7fe567bbad13ecb061dce204defb5c0b975a0",
+  "baseline_profile": "/workspace/lang-issue-work/perf-4412/record-pair-candidate/stage3-profile.json",
+  "baseline_profile_binary_identical_to_stage2_baseline": true,
+  "baseline_output_reused_from": "/workspace/lang-issue-work/perf-4412/edge-check-candidate/output-identities.json",
+  "elapsed_seconds_under_callgrind": 233.54876561200035,
+  "subject_sha256": "a0b69a0f97f3b45bf06eca8160200a936b56b06a279bb538795a387a5d76e172",
+  "instructions": 25020122061
+}

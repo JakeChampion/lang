@@ -1,0 +1,30 @@
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/x86-64-linux
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/arm64-linux
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/arm64-android
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/arm64-darwin
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-asm
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-core-module
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-command-module
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-component
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/http-asm
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/http-core-module
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/http-component
+--- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits (95.67s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/x86-64-linux (0.51s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/arm64-linux (0.39s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/arm64-android (0.39s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/arm64-darwin (0.39s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-asm (0.35s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-core-module (0.34s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-command-module (0.33s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-component (0.35s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/http-asm (7.45s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/http-core-module (7.61s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/http-component (7.75s)
+=== RUN   TestSelfHostPlaygroundRefusesUnknownForms
+--- PASS: TestSelfHostPlaygroundRefusesUnknownForms (32.51s)
+=== RUN   TestSelfHostPlaygroundTargetsAreThePlatformsTable
+--- PASS: TestSelfHostPlaygroundTargetsAreThePlatformsTable (35.21s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	163.407s

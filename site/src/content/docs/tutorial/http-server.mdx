@@ -167,7 +167,7 @@ a new response — chain as many as you like.
 ## Parsing the query string and returning JSON
 
 Real handlers parse query parameters and emit structured output.
-`std/url` gives you `url_parse` and `query_parse`; `std/json` builds and
+`std/url` gives you `url.parse` and `query_parse`; `std/json` builds and
 encodes a `json.JsonValue`. Query parsing is multi-valued — `?tag=a&tag=b`
 collects both into a `string[]`.
 
@@ -180,9 +180,9 @@ import "core/map";
 import "std/platform";
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-    // req.path is path+query; anchor it against a host so url_parse
+    // req.path is path+query; anchor it against a host so url.parse
     // has something to chew on.
-    match (url.url_parse("http://x.local" + req.path)) {
+    match (url.parse("http://x.local" + req.path)) {
         Err(_) => { return http.bad_request("bad URL\n"); },
         Ok(u) => {
             let q: Map[string, string[]] = url.query_parse(u.query);

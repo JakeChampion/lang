@@ -22,7 +22,6 @@ import "./ssadecrementcounts" as decrementcounts;
 import "./ssadecrementmemories" as decrementmemories;
 import "./ssacapacityvalues" as capacityvalues;
 import "./ssalargepushpartitions" as largepushpartitions;
-import "./ssalargepushvalues" as largepushvalues;
 import "./ssalargearrayvalues" as largearrayvalues;
 import "./ssaretainedtext" as retainedtext;
 import "./ssaconstructorisas" as constructorisas;
@@ -207,7 +206,6 @@ function main(): i32 {
   decrementmemories.run();
   capacityvalues.run();
   largepushpartitions.run();
-  largepushvalues.run();
   largearrayvalues.run();
   print("retained native body controls passed");
   return 0;

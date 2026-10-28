@@ -1,0 +1,6 @@
+=== RUN   TestSelfHostArm64GasNumericLabels
+--- PASS: TestSelfHostArm64GasNumericLabels (30.95s)
+=== RUN   TestSelfHostArm64NumericLabelMemory
+--- PASS: TestSelfHostArm64NumericLabelMemory (2.28s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	33.238s

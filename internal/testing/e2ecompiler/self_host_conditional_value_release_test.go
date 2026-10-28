@@ -371,7 +371,7 @@ function main(): i32 {
 `
 
 const condHandbackFreshSrc = `struct P { x: i32, y: i32 }
-function idg[T](v: T): T { return v; }
+@noinline function idg[T](v: T): T { return v; }
 function mkp(j: i32): P { return P { x: 1000, y: j }; }
 function main(): i32 {
     let t: i32 = 0;

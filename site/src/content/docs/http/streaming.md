@@ -177,7 +177,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
         sent.set(sent.get() + chunk.len());
         return Some(chunk);
     };
-    let trailers: () => HeaderMap = (): HeaderMap => headers.header_map_new().set("x-bytes-sent", sent.get().to_string());
+    let trailers: () => HeaderMap = (): HeaderMap => headers.new().set("x-bytes-sent", sent.get().to_string());
     return http.chunks_with_trailers(200, next, trailers);
 }
 ```

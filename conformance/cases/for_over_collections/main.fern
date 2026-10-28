@@ -9,37 +9,37 @@ import "std/pvec";
 import "std/set";
 
 function main(): i32 {
-  let om: ordmap.OrdMap[string, i32] = ordmap.ordmap_new();
+  let om: ordmap.OrdMap[string, i32] = ordmap.new();
   om = om.insert("pear", 3);
   om = om.insert("apple", 1);
   om = om.insert("fig", 2);
   for (k, v) in om {
     print(f"ordmap {k}={v}");
   }
-  let pm: pmap.PMap[string, i32] = pmap.pmap_new();
+  let pm: pmap.PMap[string, i32] = pmap.new();
   pm = pm.insert("one", 1);
   for (k, v) in pm {
     print(f"pmap {k}={v}");
   }
-  let pv: pvec.PVec[i32] = pvec.pvec_new();
+  let pv: pvec.PVec[i32] = pvec.new();
   pv = pv.append(7);
   pv = pv.append(8);
   for x in pv {
     print(f"pvec {x}");
   }
-  let os: ordset.OrdSet[i32] = ordset.ordset_new();
+  let os: ordset.OrdSet[i32] = ordset.new();
   os = os.insert(30);
   os = os.insert(10);
   os = os.insert(20);
   for x in os {
     print(f"ordset {x}");
   }
-  let ps: pset.PSet[string] = pset.pset_new();
+  let ps: pset.PSet[string] = pset.new();
   ps = ps.insert("only");
   for x in ps {
     print(f"pset {x}");
   }
-  let s: set.Set[string] = set.set_of(["b", "a", "b"]);
+  let s: set.Set[string] = set.of(["b", "a", "b"]);
   for x in s {
     print(f"set {x}");
   }

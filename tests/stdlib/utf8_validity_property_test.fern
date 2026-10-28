@@ -99,7 +99,7 @@ function check_width_ops(input: u8[]): test.TestOutcome {
     ok("pad_end", s.pad_end(w, '中')),
     ok("center", s.center(w, 'ß')),
     ok("indent", s.indent("  ")),
-    ok("wrap", s.wrap("[", "]")),
+    ok("surround", s.surround("[", "]")),
   ]);
 }
 

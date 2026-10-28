@@ -84,6 +84,7 @@ import "std/http";
 import "std/result";
 import "std/time";
 import "std/headers";
+import "std/option";
 ```
 
 ### `3 pub struct ETag`
@@ -112,7 +113,18 @@ pub function (e: ETag) to_string(): string {
   return "\"" + e.opaque + "\"";
 }
 
-pub function parse_etag(s: string): Option[ETag] {
+pub function parse_etag(s: string): Result[ETag, headers.HeaderValueError] {
+  match (__parse_etag(s)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(headers.HeaderValueError { field: "ETag", value: s });
+    }
+  }
+}
+
+function __parse_etag(s: string): Option[ETag] {
   let t: string = s.trim();
   let is_weak: boolean = t.starts_with("W/");
   if (is_weak) {
@@ -246,7 +258,7 @@ function __matches_weak(members: string[], v: Validators): boolean {
 function __tag_matches(member: string, v: Validators, strong_cmp: boolean): boolean {
   match (v.etag) {
     Some(current) => {
-      match (parse_etag(member)) {
+      match (__parse_etag(member)) {
         Some(t) => {
           if (strong_cmp) {
             return t.strong_eq(current);
@@ -382,7 +394,7 @@ pub function (r: HttpResponse) with_validators(v: Validators, now: time.Timestam
 }
 
 pub function not_modified(resp: HttpResponse): HttpResponse {
-  let out: HttpResponse = HttpResponse { status: 304, body: BodyText(""), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  let out: HttpResponse = HttpResponse { status: 304, body: BodyText(""), headers: headers.new(), trailers: headers.new(), background: None };
   for name in ["Cache-Control", "Content-Location", "ETag", "Expires", "Vary"] {
     out = __carry(out, resp, name);
   }
@@ -411,7 +423,7 @@ function __carry(out: HttpResponse, from: HttpResponse, name: string): HttpRespo
 ```fern
 <<14 pub function precondition_failed(): HttpResponse>>=
 pub function precondition_failed(): HttpResponse {
-  return HttpResponse { status: 412, body: BodyText(""), headers: headers.header_map_new(), trailers: headers.header_map_new(), background: None };
+  return HttpResponse { status: 412, body: BodyText(""), headers: headers.new(), trailers: headers.new(), background: None };
 }
 ```
 

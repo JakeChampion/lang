@@ -86,6 +86,45 @@ func TestConstParamEnumAndImpl(t *testing.T) {
 	}
 }
 
+const constTraitDecls = `struct Ring[const N: i32, T] { items: T[] }
+struct Gone { n: i32 }
+struct B { n: i32 }
+type Slot[const N: i32] = Ring[N, i32] | Gone;
+trait Fixed[const N: i32] { function room(self: Self): i32; function size(self: Self): i32 { return N * 10; } }
+`
+
+// A const parameter on a type alias and on a trait.
+func TestConstParamAliasAndTrait(t *testing.T) {
+	for name, tc := range map[string]struct{ src, code, msg string }{
+		"impl type for const":  {`impl Fixed[i32] for B { function room(self: B): i32 { return 0; } }`, "E090", "const parameter N takes an integer, not the type i32"},
+		"bound type for const": {`function f[F: Fixed[string]](x: F): i32 { return 0; }`, "E090", "const parameter N takes an integer, not the type string"},
+		"impl past i32":        {`impl Fixed[2147483648] for B { function room(self: B): i32 { return 0; } }`, "E089", "the const argument for N must fit in i32"},
+		"alias type for const": {`function f(s: Slot[string]): i32 { return 0; }`, "E090", "const parameter N takes an integer, not the type string"},
+		"bound mismatch":       {`impl[const M: i32, T] Fixed[M] for Ring[M, T] { function room(self: Ring[M, T]): i32 { return M; } } function f[F: Fixed[4]](x: F): i32 { return x.room(); } function g(): i32 { let r: Ring[8, i32] = Ring { items: [] }; return f(r); }`, "E021", "the bound requires Fixed[4]"},
+	} {
+		err := checkSource(t, constTraitDecls+tc.src)
+		if err == nil || !hasCode(err, tc.code) {
+			t.Errorf("%s: want %s, got %v", name, tc.code, err)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.msg) {
+			t.Errorf("%s: want %q in the message, got %v", name, tc.msg, err)
+		}
+	}
+	for name, src := range map[string]string{
+		"alias member":   `function f(): i32 { let s: Slot[4] = Ring { items: [1] }; return 0; }`,
+		"alias over N":   `function cap[const N: i32](s: Slot[N]): i32 { return N; }`,
+		"impl integer":   `impl Fixed[8] for B { function room(self: B): i32 { return 8 - self.n; } } function f(): i32 { let b: B = B { n: 1 }; return b.size(); }`,
+		"impl own name":  `impl[const M: i32, T] Fixed[M] for Ring[M, T] { function room(self: Ring[M, T]): i32 { return M; } }`,
+		"bound in scope": `impl[const M: i32, T] Fixed[M] for Ring[M, T] { function room(self: Ring[M, T]): i32 { return M; } } function f[const K: i32, F: Fixed[K]](x: F): i32 { return x.room() + K; }`,
+		"receiver name":  `function (r: Ring[K, T]) cap_of(): i32 { return K; }`,
+	} {
+		if err := checkSource(t, constTraitDecls+src); err != nil {
+			t.Errorf("%s: want accepted, got %v", name, err)
+		}
+	}
+}
+
 const constParamDecls = `function filled[const N: i32](x: f64): f64[] { let out: f64[] = []; while (out.len() < N) { out = out.append(x); } return out; }
 function count[const N: i32, T](x: T): i32 { return N * 10; }
 `

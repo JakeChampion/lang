@@ -1,0 +1,18 @@
+// spec: FS-08
+const INF: f64 = 1.0 / (0.5 - 0.5);
+const NEG_INF: f64 = -1.0 / 0.0;
+const NAN: f64 = 0.0 / 0.0;
+
+function main(): i32 {
+    let z: f64 = 0.0;
+    if (INF != 1.0 / z || !(INF > 1.0e308)) {
+        return 1;
+    }
+    if (NEG_INF != -1.0 / z || !(NEG_INF < -1.0e308)) {
+        return 2;
+    }
+    if (NAN == NAN) {
+        return 3;
+    }
+    return 42;
+}

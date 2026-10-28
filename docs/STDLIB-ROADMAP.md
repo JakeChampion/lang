@@ -32,7 +32,7 @@ What Fern's prelude / built-ins cover today, as a baseline:
 - **bytes**: `is_digit`, `is_alpha`, `is_alnum`, `is_ascii`,
   `is_ascii_white_space`, `is_hex_digit`.
 - **encoding**: `encode` / `_decode`, `encode` /
-  `_decode`, `url_encode` / `_decode` / `url_parse`,
+  `_decode`, `url.encode` / `_decode` / `url.parse`,
   `query_parse`, `json_encode` / `json_parse`.
 - **maps**: `Map[K, V]` with `set` / `get` / `get_or` / `has`
   / `delete` / `iter` / `keys` / `values` / `len` / `clear`.
@@ -377,7 +377,7 @@ repetitive `to_lower` allocations.
 ### 16. `Set[T]` · small · ☑
 
 **Surface**: `std/set` — a generic, value-semantic
-`Set[T: cmp.Eq]`: `set_new` / `set_of`, `add` / `remove` /
+`Set[T: cmp.Eq]`: `set.new` / `set.of`, `add` / `remove` /
 `contains` / `len` / `is_empty` / `to_array`, and the algebra
 `union` / `intersect` / `difference` / `is_subset` / `equals`
 (order-insensitive).
@@ -529,10 +529,6 @@ think they're free additions to make.
   (no intrinsic surface in Fern yet) — O(width) per call.
 - **i64 pow/gcd/lcm**: parity with the i32 versions. `pow`
   takes an i32 exponent.
-- **`range(start, end)` / `range_step(start, end, step)`**:
-  i32[] generators for half-open ranges. `range(5, 5)` is
-  empty; `range_step` with step <= 0 is empty (no reverse
-  ranges).
 - **`s.repeat_with_sep(n, sep)`**: like `repeat` but with a
   separator between every pair. `n <= 0` returns empty.
 - **i32[] product / avg**: `arr.product()` (multiplicative
@@ -573,11 +569,10 @@ think they're free additions to make.
   `s.index_of_ci(needle)`. Folds A-Z to a-z per byte;
   multibyte UTF-8 matches only byte-exact.
 - **Multi-byte pad**: `s.pad_start_str(w, fill)` /
-  `s.pad_end_str(w, fill)`. The earlier `pad_start(n, ch)`
-  uses a single byte; these repeat the `fill` string and
-  truncate at the boundary. Useful for prefix-dash / line-
+  `s.pad_end_str(w, fill)`. These repeat the `fill` string and
+  cut it at a code point when it does not divide the width. Useful for prefix-dash / line-
   rule decoration.
-- **`s.truncate(n, ellipsis)`**: cap to n bytes, suffix with
+- **`s.truncate(n, ellipsis)`**: cap to n code points, suffix with
   ellipsis when the input is longer. If n is shorter than
   the ellipsis itself, hard-truncate without it.
 - **`(n: i32).digits()`**: number of decimal digits. Sign
@@ -646,7 +641,7 @@ think they're free additions to make.
   (`-0042` not `0-042`).
 - **`trim_start_chars` / `trim_end_chars`**: one-sided
   trim_chars companions.
-- **`random_int(lo, hi)`**: CSPRNG-backed random in [lo,
+- **`rand.between(lo, hi)`**: CSPRNG-backed random in [lo,
   hi). Draws a full 32-bit value (4 bytes) and modulo-maps to
   the range width, so the WHOLE requested range is reachable
   (previously a 24-bit draw silently truncated any range >
@@ -739,7 +734,7 @@ think they're free additions to make.
 - **String numeric predicates**: `s.is_int()` /
   `s.is_float()` agree with `i32.parse_i32(s)` / `f64.parse_f64(s)`.
   Range errors make the predicate false.
-- **`s.wrap(prefix, suffix)`**: thin concat helper.
+- **`s.surround(prefix, suffix)`**: thin concat helper.
 - **String[] take / drop**: bounds-clamped prefix /
   suffix selection on string arrays.
 - **`pack_rgb(r, g, b)`**: pack three 0..255 components

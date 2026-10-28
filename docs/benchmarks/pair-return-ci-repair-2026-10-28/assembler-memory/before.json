@@ -1,0 +1,41 @@
+[
+  {
+    "label": 1000000,
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/tools/usr/bin/time",
+      "-v",
+      "/workspace/lang-issue-work/perf-4412/assembler-memory/asm-before",
+      "arm64",
+      "/workspace/lang-issue-work/perf-4412/assembler-memory/1000000.s.txt"
+    ],
+    "exit": 0,
+    "seconds": 0.008791309999651276,
+    "stderr": "\tCommand being timed: \"/workspace/lang-issue-work/perf-4412/assembler-memory/asm-before arm64 /workspace/lang-issue-work/perf-4412/assembler-memory/1000000.s.txt\"\n\tUser time (seconds): 0.00\n\tSystem time (seconds): 0.00\n\tPercent of CPU this job got: 100%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.00\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 17060\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 4123\n\tVoluntary context switches: 1\n\tInvoluntary context switches: 0\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 8\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+  },
+  {
+    "label": 2000000,
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/tools/usr/bin/time",
+      "-v",
+      "/workspace/lang-issue-work/perf-4412/assembler-memory/asm-before",
+      "arm64",
+      "/workspace/lang-issue-work/perf-4412/assembler-memory/2000000.s.txt"
+    ],
+    "exit": 0,
+    "seconds": 0.015827627998078242,
+    "stderr": "\tCommand being timed: \"/workspace/lang-issue-work/perf-4412/assembler-memory/asm-before arm64 /workspace/lang-issue-work/perf-4412/assembler-memory/2000000.s.txt\"\n\tUser time (seconds): 0.00\n\tSystem time (seconds): 0.00\n\tPercent of CPU this job got: 92%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.01\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 33060\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 8126\n\tVoluntary context switches: 1\n\tInvoluntary context switches: 1\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 8\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 0\n"
+  },
+  {
+    "label": 134217728,
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/tools/usr/bin/time",
+      "-v",
+      "/workspace/lang-issue-work/perf-4412/assembler-memory/asm-before",
+      "arm64",
+      "/workspace/lang-issue-work/perf-4412/assembler-memory/134217728.s.txt"
+    ],
+    "exit": 134,
+    "seconds": 0.8667795979999937,
+    "stderr": "fern: allocation size out of range\nbacktrace:\n  0x0000000000488109\n  0x00000000004917f0\n  0x00000000004af0ab\n  0x00000000004b242b\nCommand exited with non-zero status 134\n\tCommand being timed: \"/workspace/lang-issue-work/perf-4412/assembler-memory/asm-before arm64 /workspace/lang-issue-work/perf-4412/assembler-memory/134217728.s.txt\"\n\tUser time (seconds): 0.33\n\tSystem time (seconds): 0.49\n\tPercent of CPU this job got: 99%\n\tElapsed (wall clock) time (h:mm:ss or m:ss): 0:00.83\n\tAverage shared text size (kbytes): 0\n\tAverage unshared data size (kbytes): 0\n\tAverage stack size (kbytes): 0\n\tAverage total size (kbytes): 0\n\tMaximum resident set size (kbytes): 2098212\n\tAverage resident set size (kbytes): 0\n\tMajor (requiring I/O) page faults: 0\n\tMinor (reclaiming a frame) page faults: 524414\n\tVoluntary context switches: 1\n\tInvoluntary context switches: 15\n\tSwaps: 0\n\tFile system inputs: 0\n\tFile system outputs: 8\n\tSocket messages sent: 0\n\tSocket messages received: 0\n\tSignals delivered: 0\n\tPage size (bytes): 4096\n\tExit status: 134\n"
+  }
+]

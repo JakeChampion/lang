@@ -5253,7 +5253,7 @@ import "core/int";
 import "std/url";
 function main(): i32 {
 		// Full URL with every section.
-		match (url.url_parse("https://example.com:8080/path/sub?q=1&r=2#section")) {
+		match (url.parse("https://example.com:8080/path/sub?q=1&r=2#section")) {
 			Ok(u) => {
 				if (u.scheme != "https") { return 1; }
 				if (u.host != "example.com") { return 2; }
@@ -5266,7 +5266,7 @@ function main(): i32 {
 		}
 
 		// No port — port should default to 0.
-		match (url.url_parse("http://example.com/foo")) {
+		match (url.parse("http://example.com/foo")) {
 			Ok(u) => {
 				if (u.scheme != "http") { return 10; }
 				if (u.host != "example.com") { return 11; }
@@ -5278,7 +5278,7 @@ function main(): i32 {
 
 		// Path-only / relative URL — no scheme, no host, port
 		// stays 0, path is the whole input.
-		match (url.url_parse("/just/a/path?q=hi")) {
+		match (url.parse("/just/a/path?q=hi")) {
 			Ok(u) => {
 				if (u.scheme != "") { return 20; }
 				if (u.host != "") { return 21; }
@@ -5291,7 +5291,7 @@ function main(): i32 {
 		}
 
 		// Fragment without query.
-		match (url.url_parse("http://h/path#anchor")) {
+		match (url.parse("http://h/path#anchor")) {
 			Ok(u) => {
 				if (u.path != "/path") { return 30; }
 				if (u.query != "") { return 31; }
@@ -5301,13 +5301,13 @@ function main(): i32 {
 		}
 
 		// Empty input -> None.
-		match (url.url_parse("")) {
+		match (url.parse("")) {
 			Ok(_) => { return 40; },
 			Err(_) => {}
 		}
 
 		// Authority only (no path).
-		match (url.url_parse("http://localhost:3000")) {
+		match (url.parse("http://localhost:3000")) {
 			Ok(u) => {
 				if (u.host != "localhost") { return 50; }
 				if (u.port != 3000) { return 51; }
@@ -5319,7 +5319,7 @@ function main(): i32 {
 		return 0;
 	}`
 	if got := runWasm(t, src); got != 0 {
-		t.Errorf("WASM url_parse: exit = %d, want 0", got)
+		t.Errorf("WASM url.parse: exit = %d, want 0", got)
 	}
 }
 
@@ -5329,41 +5329,41 @@ import "core/int";
 import "std/url";
 function main(): i32 {
 		// All-unreserved input round-trips byte-for-byte.
-		if (url.url_encode("safe-text_~.0Aa") != "safe-text_~.0Aa") { return 1; }
-		if (url.url_decode("safe-text_~.0Aa") != "safe-text_~.0Aa") { return 2; }
+		if (url.encode("safe-text_~.0Aa") != "safe-text_~.0Aa") { return 1; }
+		if (url.decode("safe-text_~.0Aa") != "safe-text_~.0Aa") { return 2; }
 
 		// Spaces become %20.
-		if (url.url_encode("hello world") != "hello%20world") { return 3; }
-		if (url.url_decode("hello%20world") != "hello world") { return 4; }
+		if (url.encode("hello world") != "hello%20world") { return 3; }
+		if (url.decode("hello%20world") != "hello world") { return 4; }
 
 		// Round-trip a query-style payload.
-		if (url.url_encode("k=v&x=1") != "k%3Dv%26x%3D1") { return 5; }
-		if (url.url_decode("k%3Dv%26x%3D1") != "k=v&x=1") { return 6; }
+		if (url.encode("k=v&x=1") != "k%3Dv%26x%3D1") { return 5; }
+		if (url.decode("k%3Dv%26x%3D1") != "k=v&x=1") { return 6; }
 
 		// Lowercase hex decodes too.
-		if (url.url_decode("a%2bb") != "a+b") { return 7; }
+		if (url.decode("a%2bb") != "a+b") { return 7; }
 
 		// Malformed percent sequences pass through verbatim
 		// (the decoder is forgiving rather than fatal).
-		if (url.url_decode("100%") != "100%") { return 8; }
-		if (url.url_decode("%xy") != "%xy") { return 9; }
-		if (url.url_decode("%2") != "%2") { return 10; }
+		if (url.decode("100%") != "100%") { return 8; }
+		if (url.decode("%xy") != "%xy") { return 9; }
+		if (url.decode("%2") != "%2") { return 10; }
 
 		// Empty round-trips to empty.
-		if (url.url_encode("") != "") { return 11; }
-		if (url.url_decode("") != "") { return 12; }
+		if (url.encode("") != "") { return 11; }
+		if (url.decode("") != "") { return 12; }
 
 		// Reserved-set chars (RFC 3986 gen-delims +
 		// sub-delims) all need encoding.
-		if (url.url_encode("/") != "%2F") { return 13; }
-		if (url.url_encode("?") != "%3F") { return 14; }
-		if (url.url_encode("#") != "%23") { return 15; }
-		if (url.url_decode("%2F%3F%23") != "/?#") { return 16; }
+		if (url.encode("/") != "%2F") { return 13; }
+		if (url.encode("?") != "%3F") { return 14; }
+		if (url.encode("#") != "%23") { return 15; }
+		if (url.decode("%2F%3F%23") != "/?#") { return 16; }
 
 		return 0;
 	}`
 	if got := runWasm(t, src); got != 0 {
-		t.Errorf("WASM url_encode/decode: exit = %d, want 0", got)
+		t.Errorf("WASM url.encode/decode: exit = %d, want 0", got)
 	}
 }
 
@@ -9476,7 +9476,7 @@ func TestCmdLangComponentWrapCliWithPutchar(t *testing.T) {
 	}
 }
 
-func TestCmdLangComponentWrapCliWithRandomInt(t *testing.T) {
+func TestCmdLangComponentWrapCliWithRandBetween(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
@@ -9486,9 +9486,9 @@ func TestCmdLangComponentWrapCliWithRandomInt(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "randint.fern")
 	src := []byte(`
-import "std/math";
+import "std/rand";
 function main(): i32 {
-    let r: i32 = math.random_int(0, 100);
+    let r: i32 = rand.between(0, 100);
     if (r >= 0 && r < 100) { return 0; }
     return 1;
 }`)
@@ -9500,7 +9500,7 @@ function main(): i32 {
 		"-target", "wasm32-wasi", "-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("fern -component-wrap-cli (random_int) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (rand.between) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -14827,7 +14827,7 @@ function main(): i32 {
 		{"pvec-for-each", `
 import "std/pvec";
 function main(): i32 {
-    let v: pvec.PVec[i32] = pvec.pvec_new();
+    let v: pvec.PVec[i32] = pvec.new();
     v = v.append(1);
     v = v.append(2);
     let total: i32 = 0;

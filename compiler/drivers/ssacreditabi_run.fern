@@ -737,7 +737,8 @@ function partial_source(mode: i32): string {
   return leaf + declarations + "struct Parent { left: " + child + ", right: " + other + marker + " }\n"
     + "@noinline\nfunction partial_left(own p: Parent, child: " + child + "): Parent { return Parent { ...p, left: child }; }\n"
     + "@noinline\nfunction partial_right(own p: Parent, child: " + other + "): Parent { return Parent { ...p, right: child }; }\n"
-    + "function main(): i32 { let l: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = Parent { left: l, right: " + value + marker_value + " }; return partial_left(p, l).left.n; }\n";
+    + "@noinline\nfunction boxed_partial(p: Parent): i32 { return p.left.n; }\n"
+    + "function main(): i32 { let l: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = Parent { left: l, right: " + value + marker_value + " }; return boxed_partial(partial_left(p, l)); }\n";
 }
 
 function partial_read(sub: ircore.Sub, name: string, field: i32, mode: i32): ircore.Sub {
@@ -1029,7 +1030,8 @@ function origin_caller_checks(target: string): void {
     let source = leaf + "struct Parent { left: " + child + ", right: " + child + " }\n"
       + "@noinline\nfunction parent(a: " + child + ", b: " + child + "): Parent { return Parent { left: a, right: b }; }\n"
       + "@noinline\nfunction select_parent(flag: boolean, a: " + child + ", b: " + child + "): Parent { let p = if (flag) { parent(a,b) } else { parent(b,a) }; return p; }\n"
-      + "function main(): i32 { let l: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = select_parent(true,l,l); return p.left.n; }\n";
+      + "@noinline\nfunction boxed_result(p: Parent): i32 { return p.left.n; }\n"
+      + "function main(): i32 { let l: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = select_parent(true,l,l); return boxed_result(p); }\n";
     let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
     origin_caller_expect(sub, "select_parent", "");
     origin_schema_controls(sub);

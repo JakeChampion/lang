@@ -139,7 +139,7 @@ import "core/cmp" as cmp;
 @derive(cmp.Eq)
 struct Point { x: i32, y: i32 }
 function main(): i32 {
-    let s: set.Set[Point] = set.set_of([Point { x: 1, y: 2 }, Point { x: 3, y: 4 }, Point { x: 1, y: 2 }]);
+    let s: set.Set[Point] = set.of([Point { x: 1, y: 2 }, Point { x: 3, y: 4 }, Point { x: 1, y: 2 }]);
     if (s.len() != 2) { return 1; }
     if (!s.contains(Point { x: 1, y: 2 })) { return 2; }
     if (s.contains(Point { x: 9, y: 9 })) { return 3; }
@@ -147,7 +147,7 @@ function main(): i32 {
     if (r.len() != 1) { return 4; }
     if (r.contains(Point { x: 1, y: 2 })) { return 5; }
     if (s.len() != 2) { return 6; }
-    let other: set.Set[Point] = set.set_of([Point { x: 3, y: 4 }, Point { x: 5, y: 6 }]);
+    let other: set.Set[Point] = set.of([Point { x: 3, y: 4 }, Point { x: 5, y: 6 }]);
     if (s.union(other).len() != 3) { return 7; }
     if (s.intersection(other).len() != 1) { return 8; }
     if (s.difference(other).len() != 1) { return 9; }

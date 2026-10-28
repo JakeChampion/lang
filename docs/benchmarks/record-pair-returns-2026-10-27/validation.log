@@ -1,0 +1,12 @@
+before-record-pair-x86-64-linux-default 2 '425\n' 'leakcheck: allocs=427 frees=427 live_bytes=0\n'
+before-record-pair-x86-64-linux-optimized 2 '425\n' 'leakcheck: allocs=427 frees=427 live_bytes=0\n'
+before-record-pair-x86-64-linux-sanitized 2 '425\n' 'leakcheck: allocs=427 frees=427 live_bytes=0\n'
+before-record-pair-arm64-linux-default 2 '425\n' 'leakcheck: allocs=427 frees=427 live_bytes=0\n'
+before-record-pair-arm64-linux-optimized 2 '425\n' 'leakcheck: allocs=427 frees=427 live_bytes=0\n'
+before-record-pair-arm64-linux-sanitized 2 '425\n' 'leakcheck: allocs=427 frees=427 live_bytes=0\n'
+before-record-pair-wasm32-wasi-default 1 '425\n' 'leakcheck: allocs=429 frees=429 live_bytes=0\n'
+Traceback (most recent call last):
+  File "/workspace/lang-issue-work/perf-4412/record-pair-candidate/validate.py", line 29, in <module>
+    assert r.returncode == (2 if version == 'before' and subject == 'record-pair' else 0), (name, r.returncode)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ('before-record-pair-wasm32-wasi-default', 1)

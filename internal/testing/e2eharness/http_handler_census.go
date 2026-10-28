@@ -55,8 +55,8 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	end += burstStart
 	body, burst := src[start:burstStart], src[burstStart:end]
 	const answered = "more = answered.1;"
-	const burstCall = "let burst: (__Conns, __Flight[]) = __serve_burst(drv, conns, flights, at, ev.2, handler, start, opts, stop, clk);"
-	const burstSignature = "stop: __Stop, clk: __Clock): (__Conns, __Flight[]) {"
+	const burstCall = "let burst: (__Conns, __Flights) = __serve_burst(drv, conns, flights, at, ev.2, handler, start, opts, stop, clk);"
+	const burstSignature = "stop: __Stop, clk: __Clock): (__Conns, __Flights) {"
 	const burstReturn = "return (conns, flights);"
 	if strings.Count(body, "while (true)") != 1 || strings.Count(burst, answered) != 1 ||
 		strings.Count(body, burstCall) != 1 || strings.Count(body, "flights = burst.1;") != 1 ||
@@ -64,9 +64,9 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 		t.Fatal("accept loop changed; update its bounded census fixture")
 	}
 	body = strings.Replace(body, "while (true)", fmt.Sprintf("let completed: i32 = 0;\n    while (completed < %d || conns.open > 0)", rounds), 1)
-	body = strings.Replace(body, burstCall, "let burst: (__Conns, __Flight[], i32) = __serve_burst(drv, conns, flights, at, ev.2, handler, start, opts, stop, clk, completed);", 1)
+	body = strings.Replace(body, burstCall, "let burst: (__Conns, __Flights, i32) = __serve_burst(drv, conns, flights, at, ev.2, handler, start, opts, stop, clk, completed);", 1)
 	body = strings.Replace(body, "flights = burst.1;", "flights = burst.1;\n      completed = burst.2;", 1)
-	burst = strings.Replace(burst, burstSignature, "stop: __Stop, clk: __Clock, census_completed: i32): (__Conns, __Flight[], i32) {\n  let completed: i32 = census_completed;", 1)
+	burst = strings.Replace(burst, burstSignature, "stop: __Stop, clk: __Clock, census_completed: i32): (__Conns, __Flights, i32) {\n  let completed: i32 = census_completed;", 1)
 	burst = strings.Replace(burst, answered, answered+"\n                        completed = completed + 1;", 1)
 	burst = strings.Replace(burst, burstReturn, "return (conns, flights, completed);", 1)
 	return src[:start] + body + burst + src[end:] + `

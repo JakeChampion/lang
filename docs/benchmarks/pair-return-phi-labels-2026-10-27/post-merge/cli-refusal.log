@@ -1,0 +1,6 @@
+=== RUN   TestSelfHostCLIX86_64
+=== RUN   TestSelfHostCLIX86_64/flag-refusals-exit-2
+--- PASS: TestSelfHostCLIX86_64 (1.32s)
+    --- PASS: TestSelfHostCLIX86_64/flag-refusals-exit-2 (0.01s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	1.328s

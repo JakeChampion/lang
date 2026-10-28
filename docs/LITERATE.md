@@ -345,7 +345,8 @@ The compiler tangles for every `-target` compile, and for its own
 module, or to every `file=` module with the entry first; `modloader.read_module`
 falls back to a `.fern.md` sibling for an import; and each module's
 `util.LineMap` moves a diagnostic onto its document when it is printed
-(`util.doc_diag`). Positions are remapped there rather than in the lexer
+(`util.doc_diag`). A `-g` build moves each line row the same way
+(`asmcore.loc_row`). Positions are remapped there rather than in the lexer
 because the compiler orders and identifies expressions by position, and a chunk
 can be expanded twice.
 

@@ -1,0 +1,12 @@
+[
+  {
+    "version": "expected",
+    "function_sha256": "48fc375d2a2a7e70ff932ea9e42423815761b518cc02123e70d4eae6e095e79a",
+    "contract_extraction_exact": true
+  },
+  {
+    "version": "candidate",
+    "function_sha256": "660b1e5b3a7c7f12818a8132f0c3c4ba5371d5ad82caf72f383fdd3bf664c640",
+    "contract_extraction_exact": true
+  }
+]

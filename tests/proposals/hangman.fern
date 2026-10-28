@@ -12,7 +12,7 @@ struct Game {
 
 function new_game(word: string, max_wrong: i32): Game {
   return Game {
-    word: word, guessed: set.set_new(), wrong: 0,
+    word: word, guessed: set.new(), wrong: 0,
     max_wrong: max_wrong,
   };
 }
@@ -31,7 +31,7 @@ function word_has(w: string, c: string): boolean {
 }
 
 function distinct_letters(w: string): set.Set[string] {
-  let s: set.Set[string] = set.set_new();
+  let s: set.Set[string] = set.new();
   for i in 0..w.len() {
     s = s.insert(letter_at(w, i));
   }

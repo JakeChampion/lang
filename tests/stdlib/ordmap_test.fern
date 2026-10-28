@@ -8,7 +8,7 @@ import "core/cmp";
 import "core/iter";
 
 function test_new_is_empty(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[i32, i32] = ordmap.new();
   if (!m.is_empty() || m.len() != 0) {
     return test.fail("empty map has entries");
   }
@@ -16,7 +16,7 @@ function test_new_is_empty(): test.TestOutcome {
 }
 
 function test_insert_get(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, string] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[i32, string] = ordmap.new();
   m = m.insert(2, "two");
   m = m.insert(1, "one");
   m = m.insert(3, "three");
@@ -38,7 +38,7 @@ function test_insert_replaces(): test.TestOutcome {
 }
 
 function test_insert_is_persistent(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[i32, i32] = ordmap.new();
   let i: i32 = 0;
   while (i < 200) {
     m = m.insert(i * 37 % 200, i);
@@ -67,7 +67,7 @@ function test_insert_is_persistent(): test.TestOutcome {
 }
 
 function test_remove(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[i32, i32] = ordmap.new();
   let i: i32 = 0;
   while (i < 300) {
     m = m.insert(i * 53 % 300, i);
@@ -112,7 +112,7 @@ function test_sorted_iteration(): test.TestOutcome {
 }
 
 function test_rank(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[i32, i32] = ordmap.new();
   let i: i32 = 0;
   while (i < 100) {
     m = m.insert(i * 2, i);
@@ -161,8 +161,8 @@ function test_update_map_filter(): test.TestOutcome {
 }
 
 function test_set_algebra(): test.TestOutcome {
-  let a: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
-  let b: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  let a: ordmap.OrdMap[i32, i32] = ordmap.new();
+  let b: ordmap.OrdMap[i32, i32] = ordmap.new();
   let i: i32 = 0;
   while (i < 500) {
     a = a.insert(i, 1);
@@ -189,7 +189,7 @@ function test_set_algebra(): test.TestOutcome {
 }
 
 function test_split(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[i32, i32] = ordmap.new();
   let i: i32 = 0;
   while (i < 100) {
     m = m.insert(i, i);
@@ -204,7 +204,7 @@ function test_split(): test.TestOutcome {
 }
 
 function test_string_keys(): test.TestOutcome {
-  let m: ordmap.OrdMap[string, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[string, i32] = ordmap.new();
   m = m.insert("pear", 3);
   m = m.insert("apple", 1);
   m = m.insert("fig", 2);
@@ -289,7 +289,7 @@ function test_random_ops(): test.TestOutcome {
     present = present.append(-1);
     i = i + 1;
   }
-  let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[i32, i32] = ordmap.new();
   i = 0;
   while (i < range) {
     m = m.insert(i, i);
@@ -362,7 +362,7 @@ function strings_match(m: ordmap.OrdMap[string, i32], want: string[]): boolean {
 }
 
 function test_shared_prefix_strings(): test.TestOutcome {
-  let m: ordmap.OrdMap[string, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[string, i32] = ordmap.new();
   let all: string[] = [];
   let x: i32 = 11;
   let i: i32 = 0;
@@ -416,7 +416,7 @@ function test_shared_prefix_strings(): test.TestOutcome {
 }
 
 function test_wide_integer_keys(): test.TestOutcome {
-  let m: ordmap.OrdMap[i64, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[i64, i32] = ordmap.new();
   let ks: i64[] = [0i64, -1i64, 1i64, 9223372036854775807i64, -9223372036854775807i64 - 1i64, 4294967296i64, -4294967296i64, 255i64, -256i64];
   let i: i32 = 0;
   for k in ks {
@@ -435,14 +435,14 @@ function test_wide_integer_keys(): test.TestOutcome {
     }
     i = i + 1;
   }
-  let u: ordmap.OrdMap[u64, i32] = ordmap.ordmap_new();
+  let u: ordmap.OrdMap[u64, i32] = ordmap.new();
   for w in [18446744073709551615u64, 0u64, 9223372036854775808u64, 9223372036854775807u64, 1u64] {
     u = u.insert(w, 0);
   }
   if (!u.is_valid() || u.min_key().unwrap_or(5u64) != 0u64 || u.max_key().unwrap_or(5u64) != 18446744073709551615u64) {
     return test.fail("u64 order");
   }
-  let n: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  let n: ordmap.OrdMap[i32, i32] = ordmap.new();
   i = -1000;
   while (i < 1000) {
     n = n.insert(i * 7 % 2003, i);
@@ -460,7 +460,7 @@ impl cmp.Ord for Rev {
 }
 
 function test_default_prefix_keys(): test.TestOutcome {
-  let m: ordmap.OrdMap[Rev, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[Rev, i32] = ordmap.new();
   let i: i32 = 0;
   while (i < 500) {
     m = m.insert(Rev { v: i * 13 % 500 }, i);
@@ -472,7 +472,7 @@ function test_default_prefix_keys(): test.TestOutcome {
 }
 
 function test_lazy_iteration(): test.TestOutcome {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[i32, i32] = ordmap.new();
   let i: i32 = 0;
   while (i < 2000) {
     m = m.insert(1999 - i, i);
@@ -491,12 +491,12 @@ function test_lazy_iteration(): test.TestOutcome {
     last = e.0;
     n = n + 1;
   }
-  let empty: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  let empty: ordmap.OrdMap[i32, i32] = ordmap.new();
   return test.assert_true(n == 2000 && m.entries().len() == 2000 && empty.iter().next().is_none());
 }
 
 function filled(from: i32, to: i32, v: i32): ordmap.OrdMap[i32, i32] {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[i32, i32] = ordmap.new();
   let i: i32 = from;
   while (i < to) {
     m = m.insert(i, v);

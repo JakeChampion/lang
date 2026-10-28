@@ -16,10 +16,11 @@ function (b: Box[T]) clear(): Box[T] {
     return b;
 }
 function main(): i32 {
-    let b: Box[string] = Box { items: ["retained"], count: 1 };
+    let text: string = "retained" + args()[0];
+    let b: Box[string] = Box { items: [text], count: 1 };
     let c: Box[string] = b.clear();
     if (c.items.len() != 0 || c.count != 1) { return 1; }
-    if (b.items.len() != 1 || b.items[0] != "retained") { return 2; }
+    if (b.items.len() != 1 || b.items[0] != text) { return 2; }
     return 0;
 }`},
 		{"nested-update-from-other-instantiation", `
@@ -39,7 +40,7 @@ function main(): i32 {
 		{"persistent-vector-empty-tail", `
 import "std/pvec";
 function main(): i32 {
-    let old: pvec.PVec[string] = pvec.pvec_new[string]();
+    let old: pvec.PVec[string] = pvec.new[string]();
     let i: i32 = 0;
     while (i < 40) { old = old.append("keep"); i = i + 1; }
     let changed: pvec.PVec[string] = old.with(39, "tail").with(0, "root");

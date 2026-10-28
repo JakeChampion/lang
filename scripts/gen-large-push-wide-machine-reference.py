@@ -12,7 +12,8 @@ from large_push_wide_machine_reference import proof, DECODER, ROOT, INTERVALS
 
 REFERENCE = ROOT / 'internal/testing/e2ecompiler/testdata/large_push_wide_machine_reference.json.gz'
 FIXTURE = ROOT / 'internal/testing/e2ecompiler/testdata/large_push_wide_decoder_current_helper.txt'
-LEGACY = ROOT / 'compiler/drivers/ssalargepushmachines.fern'
+LEGACY_PATH = 'compiler/drivers/ssalargepushmachines.fern'
+LEGACY_SHA256 = 'dbdffb26523a9e0a333028827b53b6c8566171a1f9f0e5ec7faf014b40bea229'
 SEED = 0x13744
 
 
@@ -25,15 +26,22 @@ def packet(case):
     return struct.pack('<4sII', b'FWP1', case['id'], len(data)) + data
 
 
+def legacy_text():
+    # The predecessor driver is deleted; its text survives only in the frozen reference.
+    text = json.loads(gzip.decompress(REFERENCE.read_bytes()))['legacy_source_text']
+    assert sha(text.encode()) == LEGACY_SHA256
+    return text
+
+
 def catalog():
     helper = FIXTURE.read_text().split('\n', 1)[1]
     cases = []
-    legacy = LEGACY.read_text()
+    legacy = legacy_text()
     inherited = {}
     for old, new in [('bsrq %rax, %rcx', 'bsrl %eax, %ecx'), ('shrq %cl, %rdx', 'shrl %cl, %edx'), ('cmpq $524288, %rax', 'cmpl $524288, %eax')]:
         original = f'mutation(s, {json.dumps(old)}, {json.dumps(new)}, true);'
         assert original in legacy
-        inherited[(old, new)] = dict(source_path=str(LEGACY.relative_to(ROOT)), source_sha256=sha(LEGACY.read_bytes()), original_assertion=original, original_expected=True, original_context='Bounded predecessor through 1 GiB; current wider expectation is explicit in issue #13744')
+        inherited[(old, new)] = dict(source_path=LEGACY_PATH, source_sha256=LEGACY_SHA256, original_assertion=original, original_expected=True, original_context='Bounded predecessor through 1 GiB; current wider expectation is explicit in issue #13744')
 
     def add(name, body, required, origin=None, source=None):
         expected = proof(body) if body is not None else False
@@ -124,7 +132,7 @@ def catalog():
     source = DECODER.envelope(helper)
     for at, bad in enumerate(['.set alias, __fern_large_push\n' + source, source + '.data\n__fern_large_push:\n.quad 0\n', source + '.include "hidden.s"\n', source.replace('.Llpush_ret:', '.Llpush_ret: ret'), source.replace('ja .Llpush_ret', 'ja .Loutside')]):
         add('namespace-' + str(at), None, False, source=bad)
-    return dict(schema=1, seed=SEED, criterion='Exact ABI proof results over all 77 normal partitions and the complete oversized predicate', fixture_sha256=sha(FIXTURE.read_bytes()), legacy_source_text=legacy, legacy_source_sha256=sha(LEGACY.read_bytes()), cases=cases)
+    return dict(schema=1, seed=SEED, criterion='Exact ABI proof results over all 77 normal partitions and the complete oversized predicate', fixture_sha256=sha(FIXTURE.read_bytes()), legacy_source_text=legacy, legacy_source_sha256=LEGACY_SHA256, cases=cases)
 
 
 def generate():
@@ -145,7 +153,7 @@ def main():
             raise SystemExit('Refuse existing reference output')
         REFERENCE.write_bytes(data)
     if options.check:
-        assert REFERENCE.read_bytes() == data, 'reference reproduction differs'
+        assert gzip.decompress(REFERENCE.read_bytes()) == gzip.decompress(data), 'reference reproduction differs'
     print(json.dumps(dict(cases=len(ref['cases']), positive=sum(c['expected'] for c in ref['cases']), negative=sum(not c['expected'] for c in ref['cases']), bundle_sha256=sha(data))))
 
 

@@ -1,0 +1,13 @@
+diff --git a/compiler/drivers/ssadecrementdependencies.fern b/compiler/drivers/ssadecrementdependencies.fern
+index 11392855c..0d2ff89a2 100644
+--- a/compiler/drivers/ssadecrementdependencies.fern
++++ b/compiler/drivers/ssadecrementdependencies.fern
+@@ -66,7 +66,7 @@ pub function run(output: string): void {
+     check(output, entry, true);
+     let p = text.dependency(output, entry);
+     require(p.lines.len() > 15 && p.lines[p.lines.len() - 1] == "ret");
+-    require(p.lines[0] == (if (entry == "__fern_capw") { "pushq %rax" } else { "cmpq $0x40000000, %rsi" }));
++    require(p.lines[0] == (if (entry == "__fern_capw") { "pushq %rax" } else { "movabs $17179869184, %rax" }));
+     let s = ".text\n" + entry + ":\n" + p.lines.join("\n") + "\n";
+     require(text.dependency(s, entry).lines.join("\n") == p.lines.join("\n"));
+     check(change(s, "\n", "\r\n\t"), entry, true);

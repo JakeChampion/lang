@@ -1,7 +1,6 @@
 import "../ssalargepushwideranges" as ranges;
 import "../ssalargepushwidevalue" as value;
 import "./ssalargepushpartitions" as legacy_ranges;
-import "./ssalargepushvalues" as legacy_values;
 import "./ssalargepushwidecases" as reference;
 import "std/i32";
 import "std/i64";
@@ -268,7 +267,6 @@ function reference_cases(): void {
 
 function main(): i32 {
   legacy_ranges.run();
-  legacy_values.run();
   partitions();
   words();
   arithmetic();

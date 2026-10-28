@@ -63,10 +63,10 @@ function test_chunks_ascii_identity(): test.TestOutcome {
   return test.assert_eq_array("abcdefg".chunks(3), ["abc", "def", "g"]);
 }
 
-function test_truncate_snaps(): test.TestOutcome {
+function test_truncate_code_points(): test.TestOutcome {
   let s: string = hello_acc() + " world";
-  return test.assert_true(s.truncate(4, "..") == "h.."
-    && s.truncate(5, "..") == "hé..");
+  return test.assert_true(s.truncate(4, "..") == "hé.."
+    && s.truncate(5, "..") == "hél..");
 }
 
 function test_truncate_ascii(): test.TestOutcome {
@@ -74,9 +74,9 @@ function test_truncate_ascii(): test.TestOutcome {
     && "hi".truncate(10, "...") == "hi");
 }
 
-function test_ellipsis_snaps(): test.TestOutcome {
+function test_ellipsis_code_points(): test.TestOutcome {
   let s: string = hello_acc() + " world";
-  return test.assert_true(s.ellipsis(6) == "hé..." && s.ellipsis(5) == "h...");
+  return test.assert_true(s.ellipsis(6) == "hél..." && s.ellipsis(5) == "hé...");
 }
 
 function main(): i32 {
@@ -90,8 +90,8 @@ function main(): i32 {
   r = r.it("chunks never split", test_chunks_no_split);
   r = r.it("chunks progress on wide char", test_chunks_progress_on_wide_char);
   r = r.it("chunks ascii identity", test_chunks_ascii_identity);
-  r = r.it("truncate snaps", test_truncate_snaps);
+  r = r.it("truncate counts code points", test_truncate_code_points);
   r = r.it("truncate ascii", test_truncate_ascii);
-  r = r.it("ellipsis snaps", test_ellipsis_snaps);
+  r = r.it("ellipsis counts code points", test_ellipsis_code_points);
   return r.finish();
 }

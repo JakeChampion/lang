@@ -61,7 +61,7 @@ function cut_ok(m: ordmap.OrdMap[i32, i32], present: i32[], k: i32): boolean {
 function ints(): i32 {
   let range: i32 = 40000;
   let present: i32[] = [];
-  let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[i32, i32] = ordmap.new();
   let i: i32 = 0;
   while (i < range) {
     present = present.append(i);
@@ -108,7 +108,7 @@ function ints(): i32 {
 }
 
 function strs(): i32 {
-  let m: ordmap.OrdMap[string, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[string, i32] = ordmap.new();
   let all: string[] = [];
   let x: i32 = 5;
   let i: i32 = 0;

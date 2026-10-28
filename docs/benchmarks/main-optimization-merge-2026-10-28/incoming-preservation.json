@@ -1,0 +1,95 @@
+{
+  "main": "b0241b2f3d542a7cc5a8a421cc4df4d24a4d7517",
+  "base": "261b2188a66db8e19a0105a9738befb2f9c8fd37",
+  "files": [
+    {
+      "path": "compiler/asm_arm64_ir.fern",
+      "main_sha256": "34dacee82b6f451dc4f7d4206d6bc696c100abb23d4678f518e80698eea075ba",
+      "merged_sha256": "5a0a331774b6c80861f1eaca2bad5a84bb5458e2620339c44ac2641bd6fbe2e5",
+      "exact_main": false
+    },
+    {
+      "path": "compiler/asm_ir.fern",
+      "main_sha256": "eaa66589a216c3fbf6f1032db43506815c9ec639c01a993edc3f5112cec5b95d",
+      "merged_sha256": "3da18711b578ffe743af2b2b49b064dde72b4f71880cc315135d9f6c6076e315",
+      "exact_main": false
+    },
+    {
+      "path": "compiler/ir.fern",
+      "main_sha256": "3ec75479b372a6deaf4d5dbf0dbf9e2d9136b73209ededb6718031124774165e",
+      "merged_sha256": "198bc86324d8801a5446b8112351ddd1d3f66940c50e54c9f4c456d13cfedebd",
+      "exact_main": false
+    },
+    {
+      "path": "compiler/parser.fern",
+      "main_sha256": "0379ee6f1a4deec7c6c4ac0ae515161aac5595d8f0467a66f10fccd72910c8ad",
+      "merged_sha256": "0379ee6f1a4deec7c6c4ac0ae515161aac5595d8f0467a66f10fccd72910c8ad",
+      "exact_main": true
+    },
+    {
+      "path": "compiler/ssa.fern",
+      "main_sha256": "2c72043b63ade923f04788cd7a40a4fa40156b8086aaa1fb72edfad5c556e193",
+      "merged_sha256": "2c72043b63ade923f04788cd7a40a4fa40156b8086aaa1fb72edfad5c556e193",
+      "exact_main": true
+    },
+    {
+      "path": "compiler/ssaunits.fern",
+      "main_sha256": "d1b56132bd7ca7b170dbeb69298c849f89728c0db7edc7078b1295a66de6cfc3",
+      "merged_sha256": "f26743a5845a7388dc4c47cdd8dd421460f370f88328da019bfa7e108d1e618e",
+      "exact_main": false
+    },
+    {
+      "path": "docs/ssa-log/2026-10-28-d-the-generic-walk-finds-a-method-by-its-index.md",
+      "main_sha256": "7758f3b3db0f598195e55748ce7fc87d9ea41835ab5fb207785ee0171f6addef",
+      "merged_sha256": "7758f3b3db0f598195e55748ce7fc87d9ea41835ab5fb207785ee0171f6addef",
+      "exact_main": true
+    },
+    {
+      "path": "docs/ssa-log/2026-10-28-e-the-cold-saves-sweep-the-live-values-once.md",
+      "main_sha256": "5041fd2c96d087f8b152a3d98e37e411d31507d068b4a97d4d4547908f90066d",
+      "merged_sha256": "5041fd2c96d087f8b152a3d98e37e411d31507d068b4a97d4d4547908f90066d",
+      "exact_main": true
+    },
+    {
+      "path": "docs/ssa-log/2026-10-28-f-the-pure-hoist-counts-slot-use-on-demand.md",
+      "main_sha256": "1a9cac806dcfa93d36b1b89efae318d0771beb8b11f7fad4dd48b4d61f53b7e1",
+      "merged_sha256": "1a9cac806dcfa93d36b1b89efae318d0771beb8b11f7fad4dd48b4d61f53b7e1",
+      "exact_main": true
+    },
+    {
+      "path": "docs/ssa-log/2026-10-28-g-the-unit-search-finds-its-two-flows-once.md",
+      "main_sha256": "c330bb3b93de93d5628c36f084efe973e05a000fd84a10459cc492c429345c3d",
+      "merged_sha256": "c330bb3b93de93d5628c36f084efe973e05a000fd84a10459cc492c429345c3d",
+      "exact_main": true
+    },
+    {
+      "path": "docs/ssa-log/2026-10-28-h-the-postorder-walk-keeps-a-fixed-stack.md",
+      "main_sha256": "96ad2d5c9eb7d18e1b5b039777bf175c1da62f7a5bd40d1d7d4dacab74c31be0",
+      "merged_sha256": "96ad2d5c9eb7d18e1b5b039777bf175c1da62f7a5bd40d1d7d4dacab74c31be0",
+      "exact_main": true
+    }
+  ],
+  "licm_owner_helpers": [
+    {
+      "function": "licm_hoist_pure",
+      "owner_helper_exact": true,
+      "sha256": "794c502b4f36028d98de27c3fd632c232a24c4536ec76118ee6bcf574502f50c"
+    },
+    {
+      "function": "licm_pure_store",
+      "owner_helper_exact": true,
+      "sha256": "598921bb5fca62639a650aac853e3a82a5fe1c8f01328a06fdce4f7b388ed883"
+    },
+    {
+      "function": "licm_stored_once",
+      "owner_helper_exact": true,
+      "sha256": "fd685703ce510d9e14fed47d21a1ca4434c10b9fa5b9edce0d8127917ec5eba5"
+    },
+    {
+      "function": "licm_slot_use",
+      "owner_helper_exact": true,
+      "sha256": "b4e3ecd46a5249e680c84e21e8c8efb7b3a558789cd6ae1cb505853f11bdbeb1"
+    }
+  ],
+  "other_owned_patches_unchanged": true
+}

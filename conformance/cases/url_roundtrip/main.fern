@@ -3,7 +3,7 @@ import "std/url";
 
 function main(): i32 {
     let s: string = "a b/c?d&e";
-    if (url.url_decode(url.url_encode(s)) == s) {
+    if (url.decode(url.encode(s)) == s) {
         return 42;
     }
     return 1;

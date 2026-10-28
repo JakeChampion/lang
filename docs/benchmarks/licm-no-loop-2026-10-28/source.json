@@ -1,0 +1,12 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./compiler",
+    "./internal/testing/sourcelint"
+  ],
+  "exit": 0,
+  "seconds": 15.187468671996612,
+  "started_at": "2026-10-28T06:47:34.841249+00:00",
+  "source_sha256": "90c366c59b40d5e065d3195710d0d349288197c8871b2ad31071ade52cd76ed3"
+}

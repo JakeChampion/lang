@@ -1,0 +1,4307 @@
+[
+  {
+    "caller": "???:__fern_alloc_u8@0000000001011ca0",
+    "calls": 1839237,
+    "annotation": "41,391,981 ( 0.17%)  < ???:__fern_alloc_u8@0000000001011ca0 (1,839,237x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa_lift__lift_impl+0x1e@0000000000b48f46",
+    "calls": 837834,
+    "annotation": "15,918,846 ( 0.06%)  < ???:__fn_ssa_lift__lift_impl+0x1e@0000000000b48f46 (837,834x) [???]"
+  },
+  {
+    "caller": "???:__fern_alloc_bytes@00000000010121d1",
+    "calls": 715417,
+    "annotation": "13,593,176 ( 0.05%)  < ???:__fern_alloc_bytes@00000000010121d1 (715,417x) [???]"
+  },
+  {
+    "caller": "???:__fern_arr_push@0000000001011cd9",
+    "calls": 577180,
+    "annotation": "12,925,385 ( 0.05%)  < ???:__fern_arr_push@0000000001011cd9 (577,180x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__plan_analyzed+0x14@0000000000daca9d",
+    "calls": 335214,
+    "annotation": "12,736,896 ( 0.05%)  < ???:__fn_ssaunits__plan_analyzed+0x14@0000000000daca9d (335,214x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__successors+0x5@0000000000d9de3d",
+    "calls": 525401,
+    "annotation": "9,996,374 ( 0.04%)  < ???:__fn_ssaunits__successors+0x5@0000000000d9de3d (525,401x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexer__tokenize_impl+0xf@000000000040b443",
+    "calls": 357816,
+    "annotation": "9,599,106 ( 0.04%)  < ???:__fn_lexer__tokenize_impl+0xf@000000000040b443 (357,816x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_type_ref+0x5@0000000000475eb4",
+    "calls": 449953,
+    "annotation": "8,887,585 ( 0.04%)  < ???:__fn_parser__parse_type_ref+0x5@0000000000475eb4 (449,953x) [???]"
+  },
+  {
+    "caller": "???:__fern_arr_push_owned@0000000001011e7d",
+    "calls": 197662,
+    "annotation": "7,906,480 ( 0.03%)  < ???:__fern_arr_push_owned@0000000001011e7d (197,662x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__instruction_body@0000000000ceb3c4",
+    "calls": 226347,
+    "annotation": "7,871,475 ( 0.03%)  < ???:__fn_ssarc__instruction_body@0000000000ceb3c4 (226,347x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__cs_expr_at$wrap+0xf@0000000000fb099b",
+    "calls": 370328,
+    "annotation": "7,740,236 ( 0.03%)  < ???:__fn_astwalk__cs_expr_at$wrap+0xf@0000000000fb099b (370,328x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__annotate_typed+0xa@000000000087d77a'2",
+    "calls": 273605,
+    "annotation": "6,905,396 ( 0.03%)  < ???:__fn_checker__annotate_typed+0xa@000000000087d77a'2 (273,605x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__renumber+0x19@0000000000c32a7c",
+    "calls": 175333,
+    "annotation": "5,305,096 ( 0.02%)  < ???:__fn_semsource__renumber+0x19@0000000000c32a7c (175,333x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexer__ident_tok+0xf@00000000004086ec",
+    "calls": 187832,
+    "annotation": "5,176,190 ( 0.02%)  < ???:__fn_lexer__ident_tok+0xf@00000000004086ec (187,832x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_expr+0xa@0000000000549875'2",
+    "calls": 137300,
+    "annotation": "5,002,742 ( 0.02%)  < ???:__fn_flatten__rewrite_expr+0xa@0000000000549875'2 (137,300x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__define+0x1e@0000000000bd060a",
+    "calls": 233920,
+    "annotation": "4,992,097 ( 0.02%)  < ???:__fn_semsource__define+0x1e@0000000000bd060a (233,920x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexical__expr_at$wrap+0xf@0000000000fb7eeb",
+    "calls": 215695,
+    "annotation": "4,953,010 ( 0.02%)  < ???:__fn_lexical__expr_at$wrap+0xf@0000000000fb7eeb (215,695x) [???]"
+  },
+  {
+    "caller": "???:__fn_seminline__split_constructions+0xa@0000000000e5bdea",
+    "calls": 231888,
+    "annotation": "4,934,526 ( 0.02%)  < ???:__fn_seminline__split_constructions+0xa@0000000000e5bdea (231,888x) [???]"
+  },
+  {
+    "caller": "???:__fn___fern_arr_slice@0000000001012cd7",
+    "calls": 164305,
+    "annotation": "4,411,925 ( 0.02%)  < ???:__fn___fern_arr_slice@0000000001012cd7 (164,305x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssasem__analyze+0x5@0000000000bc04c8",
+    "calls": 212620,
+    "annotation": "4,107,988 ( 0.02%)  < ???:__fn_ssasem__analyze+0x5@0000000000bc04c8 (212,620x) [???]"
+  },
+  {
+    "caller": "???:__fn_constfold__to_expr$wrap+0xf@0000000000fa3bff",
+    "calls": 208505,
+    "annotation": "3,961,595 ( 0.02%)  < ???:__fn_constfold__to_expr$wrap+0xf@0000000000fa3bff (208,505x) [???]"
+  },
+  {
+    "caller": "???:__fn_embed__fa_expr$wrap+0xf@0000000000fa4572",
+    "calls": 208505,
+    "annotation": "3,961,595 ( 0.02%)  < ???:__fn_embed__fa_expr$wrap+0xf@0000000000fa4572 (208,505x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__without_constant_drops+0x5@0000000000db0de3",
+    "calls": 199430,
+    "annotation": "3,902,486 ( 0.02%)  < ???:__fn_ssaunits__without_constant_drops+0x5@0000000000db0de3 (199,430x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__jump+0x1e@0000000000d8ce22",
+    "calls": 125273,
+    "annotation": "3,599,573 ( 0.01%)  < ???:__fn_ssarc__jump+0x1e@0000000000d8ce22 (125,273x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__e_ident_at+0xf@0000000000413bce",
+    "calls": 97652,
+    "annotation": "3,486,794 ( 0.01%)  < ???:__fn_parser__e_ident_at+0xf@0000000000413bce (97,652x) [???]"
+  },
+  {
+    "caller": "???:__fn_seminline__inline_leaves@0000000000e4434f",
+    "calls": 123576,
+    "annotation": "3,099,093 ( 0.01%)  < ???:__fn_seminline__inline_leaves@0000000000e4434f (123,576x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__Scope__lookup_sig+0xa@000000000076d948",
+    "calls": 158575,
+    "annotation": "3,018,784 ( 0.01%)  < ???:__fn_checker__Scope__lookup_sig+0xa@000000000076d948 (158,575x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_end@0000000000af8f95",
+    "calls": 82591,
+    "annotation": "2,950,357 ( 0.01%)  < ???:__fn_ir__op_end@0000000000af8f95 (82,591x) [???]"
+  },
+  {
+    "caller": "???:__fn_constfold__keep_expr$wrap+0xf@0000000000fa38c7",
+    "calls": 153980,
+    "annotation": "2,925,620 ( 0.01%)  < ???:__fn_constfold__keep_expr$wrap+0xf@0000000000fa38c7 (153,980x) [???]"
+  },
+  {
+    "caller": "???:__fn_asm_ir__ssa_blab+0xf@0000000000593010",
+    "calls": 141918,
+    "annotation": "2,696,442 ( 0.01%)  < ???:__fn_asm_ir__ssa_blab+0xf@0000000000593010 (141,918x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__prune_dead_constructions+0x5@0000000000c7306d",
+    "calls": 139723,
+    "annotation": "2,654,737 ( 0.01%)  < ???:__fn_semsource__prune_dead_constructions+0x5@0000000000c7306d (139,723x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr+0xa@0000000000ae6b8a'2",
+    "calls": 136986,
+    "annotation": "2,604,456 ( 0.01%)  < ???:__fn_astwalk__map_expr+0xa@0000000000ae6b8a'2 (136,986x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__Scope__lookup_union+0xa@000000000077a051",
+    "calls": 134348,
+    "annotation": "2,573,675 ( 0.01%)  < ???:__fn_checker__Scope__lookup_union+0xa@000000000077a051 (134,348x) [???]"
+  },
+  {
+    "caller": "???:__fn_util__name_index+0x5@0000000000400a1a",
+    "calls": 128268,
+    "annotation": "2,457,105 ( 0.01%)  < ???:__fn_util__name_index+0x5@0000000000400a1a (128,268x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_drop@0000000000af903b",
+    "calls": 68130,
+    "annotation": "2,396,193 ( 0.01%)  < ???:__fn_ir__op_drop@0000000000af903b (68,130x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_elements+0x19@0000000000c91b14",
+    "calls": 61380,
+    "annotation": "2,354,715 ( 0.01%)  < ???:__fn_ssarc__drop_elements+0x19@0000000000c91b14 (61,380x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__complete+0x19@0000000000c3e125",
+    "calls": 106165,
+    "annotation": "2,300,572 ( 0.01%)  < ???:__fn_semsource__complete+0x19@0000000000c3e125 (106,165x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lu_fact_expr$wrap+0xf@0000000000f979a5",
+    "calls": 120459,
+    "annotation": "2,288,721 ( 0.01%)  < ???:__fn_checker__lu_fact_expr$wrap+0xf@0000000000f979a5 (120,459x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__settle_expr+0x19@0000000000522177'2",
+    "calls": 114455,
+    "annotation": "2,246,948 ( 0.01%)  < ???:__fn_parser__settle_expr+0x19@0000000000522177'2 (114,455x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__new_scope_full@0000000000767eda",
+    "calls": 103628,
+    "annotation": "2,242,100 ( 0.01%)  < ???:__fn_checker__new_scope_full@0000000000767eda (103,628x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_call_direct+0xa@0000000000af8d6b",
+    "calls": 60682,
+    "annotation": "2,219,947 ( 0.01%)  < ???:__fn_ir__op_call_direct+0xa@0000000000af8d6b (60,682x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__enum_members+0xf@0000000000c3bce5",
+    "calls": 102716,
+    "annotation": "1,953,179 ( 0.01%)  < ???:__fn_semsource__enum_members+0xf@0000000000c3bce5 (102,716x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__annotate_typed+0xa@000000000087d77a",
+    "calls": 77251,
+    "annotation": "1,939,009 ( 0.01%)  < ???:__fn_checker__annotate_typed+0xa@000000000087d77a (77,251x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa__register_form+0x5@0000000000b324e7",
+    "calls": 101963,
+    "annotation": "1,937,297 ( 0.01%)  < ???:__fn_ssa__register_form+0x5@0000000000b324e7 (101,963x) [???]"
+  },
+  {
+    "caller": "???:__fn_semcse__replaced+0xa@0000000000e68379",
+    "calls": 101844,
+    "annotation": "1,935,036 ( 0.01%)  < ???:__fn_semcse__replaced+0xa@0000000000e68379 (101,844x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__cs_stmt_at$wrap+0xf@0000000000fafd34'2",
+    "calls": 75518,
+    "annotation": "1,807,067 ( 0.01%)  < ???:__fn_astwalk__cs_stmt_at$wrap+0xf@0000000000fafd34'2 (75,518x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__cs_stmt_at$wrap+0xf@0000000000fafd34",
+    "calls": 66070,
+    "annotation": "1,714,999 ( 0.01%)  < ???:__fn_astwalk__cs_stmt_at$wrap+0xf@0000000000fafd34 (66,070x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__fields_of+0xa@0000000000c3bf15",
+    "calls": 75217,
+    "annotation": "1,684,021 ( 0.01%)  < ???:__fn_semsource__fields_of+0xa@0000000000c3bf15 (75,217x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexer__keyword_tok+0xf@000000000040874c",
+    "calls": 65224,
+    "annotation": "1,667,257 ( 0.01%)  < ???:__fn_lexer__keyword_tok+0xf@000000000040874c (65,224x) [???]"
+  },
+  {
+    "caller": "???:__fn_seminline__splice_calls@0000000000e551da",
+    "calls": 61637,
+    "annotation": "1,583,942 ( 0.01%)  < ???:__fn_seminline__splice_calls@0000000000e551da (61,637x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__region@0000000000d8fa79",
+    "calls": 61855,
+    "annotation": "1,569,037 ( 0.01%)  < ???:__fn_ssarc__region@0000000000d8fa79 (61,855x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__slc_walk@00000000007ab105'2",
+    "calls": 81743,
+    "annotation": "1,553,117 ( 0.01%)  < ???:__fn_checker__slc_walk@00000000007ab105'2 (81,743x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__optimize_ops+0xf@0000000000b087f4",
+    "calls": 43250,
+    "annotation": "1,542,890 ( 0.01%)  < ???:__fn_ir__optimize_ops+0xf@0000000000b087f4 (43,250x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__operation_supplies+0xa@0000000000d9f10a",
+    "calls": 69327,
+    "annotation": "1,462,344 ( 0.01%)  < ???:__fn_ssaunits__operation_supplies+0xa@0000000000d9f10a (69,327x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr+0xa@0000000000ae6b8a",
+    "calls": 74571,
+    "annotation": "1,419,474 ( 0.01%)  < ???:__fn_astwalk__map_expr+0xa@0000000000ae6b8a (74,571x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__cs_expr_at$wrap+0xf@0000000000fb099b'2",
+    "calls": 71507,
+    "annotation": "1,391,015 ( 0.01%)  < ???:__fn_astwalk__cs_expr_at$wrap+0xf@0000000000fb099b'2 (71,507x) [???]"
+  },
+  {
+    "caller": "???:__fn_asmcore__lab_new+0xa@0000000000969bf8",
+    "calls": 72766,
+    "annotation": "1,382,554 ( 0.01%)  < ???:__fn_asmcore__lab_new+0xa@0000000000969bf8 (72,766x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__edge_supplies+0x14@0000000000d9fdde",
+    "calls": 67247,
+    "annotation": "1,340,924 ( 0.01%)  < ???:__fn_ssaunits__edge_supplies+0x14@0000000000d9fdde (67,247x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa_lift__lift_pop_push+0x19@0000000000b47f54",
+    "calls": 70033,
+    "annotation": "1,330,627 ( 0.01%)  < ???:__fn_ssa_lift__lift_pop_push+0x19@0000000000b47f54 (70,033x) [???]"
+  },
+  {
+    "caller": "???:__fn_seminline__drop_unread+0x5@0000000000e622f6",
+    "calls": 63640,
+    "annotation": "1,305,676 ( 0.01%)  < ???:__fn_seminline__drop_unread+0x5@0000000000e622f6 (63,640x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__settle_expr+0x19@0000000000522177",
+    "calls": 64060,
+    "annotation": "1,299,859 ( 0.01%)  < ???:__fn_parser__settle_expr+0x19@0000000000522177 (64,060x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__helper+0xf@0000000000c88daa",
+    "calls": 33927,
+    "annotation": "1,257,939 ( 0.01%)  < ???:__fn_ssarc__helper+0xf@0000000000c88daa (33,927x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssasem__borrow_parents+0x5@0000000000bbfafb",
+    "calls": 44033,
+    "annotation": "1,245,791 ( 0.00%)  < ???:__fn_ssasem__borrow_parents+0x5@0000000000bbfafb (44,033x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa_lift__lift_prod_mem@0000000000b43fff",
+    "calls": 65022,
+    "annotation": "1,235,418 ( 0.00%)  < ???:__fn_ssa_lift__lift_prod_mem@0000000000b43fff (65,022x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__check_module_pass+0x14@0000000000868c97",
+    "calls": 59767,
+    "annotation": "1,223,605 ( 0.00%)  < ???:__fn_checker__check_module_pass+0x14@0000000000868c97 (59,767x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__t_func_own+0xf@000000000075d4b2",
+    "calls": 60779,
+    "annotation": "1,205,873 ( 0.00%)  < ???:__fn_checker__t_func_own+0xf@000000000075d4b2 (60,779x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_expr+0xa@0000000000549875",
+    "calls": 37040,
+    "annotation": "1,185,269 ( 0.00%)  < ???:__fn_flatten__rewrite_expr+0xa@0000000000549875 (37,040x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__merge_env+0xf@0000000000bd41f8",
+    "calls": 61747,
+    "annotation": "1,173,340 ( 0.00%)  < ???:__fn_semsource__merge_env+0xf@0000000000bd41f8 (61,747x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_postfix+0xa@000000000041f442",
+    "calls": 39888,
+    "annotation": "1,152,336 ( 0.00%)  < ???:__fn_parser__parse_postfix+0xa@000000000041f442 (39,888x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__destr_marker_split+0x5@000000000046460d",
+    "calls": 55099,
+    "annotation": "1,145,539 ( 0.00%)  < ???:__fn_parser__destr_marker_split+0x5@000000000046460d (55,099x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__region@0000000000d8fa79'2",
+    "calls": 33472,
+    "annotation": "1,144,210 ( 0.00%)  < ???:__fn_ssarc__region@0000000000d8fa79'2 (33,472x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt+0xa@0000000000ae7ce9'2",
+    "calls": 58131,
+    "annotation": "1,128,639 ( 0.00%)  < ???:__fn_astwalk__map_stmt+0xa@0000000000ae7ce9'2 (58,131x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ru_borrow+0xf@0000000000831ad5'2",
+    "calls": 58357,
+    "annotation": "1,108,783 ( 0.00%)  < ???:__fn_checker__ru_borrow+0xf@0000000000831ad5'2 (58,357x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssasem__substitute+0xa@0000000000bb18eb",
+    "calls": 57744,
+    "annotation": "1,099,845 ( 0.00%)  < ???:__fn_ssasem__substitute+0xa@0000000000bb18eb (57,744x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ow_own_call+0xa@0000000000830db4",
+    "calls": 57684,
+    "annotation": "1,095,996 ( 0.00%)  < ???:__fn_checker__ow_own_call+0xa@0000000000830db4 (57,684x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__produce+0xf@0000000000c0c586'2",
+    "calls": 55423,
+    "annotation": "1,074,142 ( 0.00%)  < ???:__fn_semsource__produce+0xf@0000000000c0c586'2 (55,423x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ru_borrow+0xf@0000000000831ad5",
+    "calls": 56367,
+    "annotation": "1,070,973 ( 0.00%)  < ???:__fn_checker__ru_borrow+0xf@0000000000831ad5 (56,367x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__settle_stmt+0x1e@0000000000523d0b'2",
+    "calls": 55474,
+    "annotation": "1,068,076 ( 0.00%)  < ???:__fn_parser__settle_stmt+0x1e@0000000000523d0b'2 (55,474x) [???]"
+  },
+  {
+    "caller": "???:__fn_rccertify__Abis__lookup+0xa@0000000000de475e",
+    "calls": 56201,
+    "annotation": "1,067,819 ( 0.00%)  < ???:__fn_rccertify__Abis__lookup+0xa@0000000000de475e (56,201x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_type_ref+0x5@0000000000475eb4'2",
+    "calls": 54004,
+    "annotation": "1,032,544 ( 0.00%)  < ???:__fn_parser__parse_type_ref+0x5@0000000000475eb4'2 (54,004x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__annot_of_stmt$wrap+0xf@0000000000f99050",
+    "calls": 51908,
+    "annotation": "986,252 ( 0.00%)  < ???:__fn_checker__annot_of_stmt$wrap+0xf@0000000000f99050 (51,908x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__lexical__Scope+0x14@0000000000f55e5d'2",
+    "calls": 39889,
+    "annotation": "954,325 ( 0.00%)  < ???:__fn_astwalk__map_expr_acc__lexical__Scope+0x14@0000000000f55e5d'2 (39,889x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__with_reuse+0x14@0000000000db9dda",
+    "calls": 48266,
+    "annotation": "936,332 ( 0.00%)  < ???:__fn_ssaunits__with_reuse+0x14@0000000000db9dda (48,266x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__t_struct+0x5@000000000075d32a",
+    "calls": 47114,
+    "annotation": "915,137 ( 0.00%)  < ???:__fn_checker__t_struct+0x5@000000000075d32a (47,114x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__build_lower@0000000000d96a1a",
+    "calls": 45796,
+    "annotation": "898,642 ( 0.00%)  < ???:__fn_ssarc__build_lower@0000000000d96a1a (45,796x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ret_diags_in_exprs+0x19@00000000007a6888",
+    "calls": 47192,
+    "annotation": "896,648 ( 0.00%)  < ???:__fn_checker__ret_diags_in_exprs+0x19@00000000007a6888 (47,192x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e044_expr+0x1e@000000000084e3b5",
+    "calls": 46984,
+    "annotation": "892,696 ( 0.00%)  < ???:__fn_checker__e044_expr+0x1e@000000000084e3b5 (46,984x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__slit_diags+0xa@00000000007c4f60",
+    "calls": 46984,
+    "annotation": "892,696 ( 0.00%)  < ???:__fn_checker__slit_diags+0xa@00000000007c4f60 (46,984x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__mono_stmt+0x19@00000000004933cf'2",
+    "calls": 45474,
+    "annotation": "884,103 ( 0.00%)  < ???:__fn_parser__mono_stmt+0x19@00000000004933cf'2 (45,474x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__verify_planned+0xf@0000000000db41ca",
+    "calls": 45143,
+    "annotation": "857,717 ( 0.00%)  < ???:__fn_ssaunits__verify_planned+0xf@0000000000db41ca (45,143x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__open+0xf@0000000000bd15ee",
+    "calls": 37357,
+    "annotation": "856,279 ( 0.00%)  < ???:__fn_semsource__open+0xf@0000000000bd15ee (37,357x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__astwalk__ConstSubst+0x14@0000000000f50263'2",
+    "calls": 42196,
+    "annotation": "854,434 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__astwalk__ConstSubst+0x14@0000000000f50263'2 (42,196x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_bin+0xf@0000000000af558f",
+    "calls": 23529,
+    "annotation": "847,941 ( 0.00%)  < ???:__fn_ir__op_bin+0xf@0000000000af558f (23,529x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt+0xa@0000000000ae7ce9",
+    "calls": 42473,
+    "annotation": "837,710 ( 0.00%)  < ???:__fn_astwalk__map_stmt+0xa@0000000000ae7ce9 (42,473x) [???]"
+  },
+  {
+    "caller": "???:__fn_constfold__to_keep_stmt$wrap+0xf@0000000000fa3b8a",
+    "calls": 43836,
+    "annotation": "832,884 ( 0.00%)  < ???:__fn_constfold__to_keep_stmt$wrap+0xf@0000000000fa3b8a (43,836x) [???]"
+  },
+  {
+    "caller": "???:__fn_embed__fa_keep_stmt$wrap+0xf@0000000000fa44fd",
+    "calls": 43836,
+    "annotation": "832,884 ( 0.00%)  < ???:__fn_embed__fa_keep_stmt$wrap+0xf@0000000000fa44fd (43,836x) [???]"
+  },
+  {
+    "caller": "???:__fn_constfold__drop_assert$wrap+0xa@0000000000fa3f23",
+    "calls": 43836,
+    "annotation": "832,884 ( 0.00%)  < ???:__fn_constfold__drop_assert$wrap+0xa@0000000000fa3f23 (43,836x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__settle_stmt+0x1e@0000000000523d0b",
+    "calls": 41622,
+    "annotation": "799,176 ( 0.00%)  < ???:__fn_parser__settle_stmt+0x1e@0000000000523d0b (41,622x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__qualrefs_expr+0xf@0000000000aed72a",
+    "calls": 42030,
+    "annotation": "798,654 ( 0.00%)  < ???:__fn_astwalk__qualrefs_expr+0xf@0000000000aed72a (42,030x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_stmt+0xa@000000000054b959'2",
+    "calls": 26020,
+    "annotation": "795,646 ( 0.00%)  < ???:__fn_flatten__rewrite_stmt+0xa@000000000054b959'2 (26,020x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssadeps__dominates+0x5@0000000000e29ca0",
+    "calls": 41079,
+    "annotation": "793,605 ( 0.00%)  < ???:__fn_ssadeps__dominates+0x5@0000000000e29ca0 (41,079x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__t_unknown+0x5@000000000075da8b",
+    "calls": 40330,
+    "annotation": "767,362 ( 0.00%)  < ???:__fn_checker__t_unknown+0x5@000000000075da8b (40,330x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__terminate+0xa@0000000000bd1c21",
+    "calls": 39951,
+    "annotation": "760,287 ( 0.00%)  < ???:__fn_semsource__terminate+0xa@0000000000bd1c21 (39,951x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__t_union+0x5@000000000075d6e4",
+    "calls": 39333,
+    "annotation": "756,021 ( 0.00%)  < ???:__fn_checker__t_union+0x5@000000000075d6e4 (39,333x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexical__stmt_at$wrap+0xf@0000000000fb68f0'2",
+    "calls": 36187,
+    "annotation": "754,648 ( 0.00%)  < ???:__fn_lexical__stmt_at$wrap+0xf@0000000000fb68f0'2 (36,187x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__mono_expr+0x14@000000000048a694'2",
+    "calls": 39619,
+    "annotation": "752,761 ( 0.00%)  < ???:__fn_parser__mono_expr+0x14@000000000048a694'2 (39,619x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__annotate_stmt+0xf@00000000008853dd'2",
+    "calls": 27807,
+    "annotation": "747,762 ( 0.00%)  < ???:__fn_checker__annotate_stmt+0xf@00000000008853dd'2 (27,807x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__collect_calls_stmt+0xf@0000000000aec98c",
+    "calls": 39184,
+    "annotation": "744,496 ( 0.00%)  < ???:__fn_astwalk__collect_calls_stmt+0xf@0000000000aec98c (39,184x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa__refreshed_preds+0x5@0000000000b30f09",
+    "calls": 37872,
+    "annotation": "720,513 ( 0.00%)  < ???:__fn_ssa__refreshed_preds+0x5@0000000000b30f09 (37,872x) [???]"
+  },
+  {
+    "caller": "???:__fn_constfold__prune_stmt$wrap+0xf@0000000000fa35c4",
+    "calls": 36448,
+    "annotation": "692,512 ( 0.00%)  < ???:__fn_constfold__prune_stmt$wrap+0xf@0000000000fa35c4 (36,448x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__type_names+0xf@00000000007654c6",
+    "calls": 36312,
+    "annotation": "691,041 ( 0.00%)  < ???:__fn_checker__type_names+0xf@00000000007654c6 (36,312x) [???]"
+  },
+  {
+    "caller": "???:__fn_sempair__seeded@0000000000e0e647",
+    "calls": 35996,
+    "annotation": "683,924 ( 0.00%)  < ???:__fn_sempair__seeded@0000000000e0e647 (35,996x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssasem__substitute+0xa@0000000000bb18eb'2",
+    "calls": 35130,
+    "annotation": "667,701 ( 0.00%)  < ???:__fn_ssasem__substitute+0xa@0000000000bb18eb'2 (35,130x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_else@0000000000af8eef",
+    "calls": 19076,
+    "annotation": "663,017 ( 0.00%)  < ???:__fn_ir__op_else@0000000000af8eef (19,076x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__e_binary_at+0x19@0000000000413d3e",
+    "calls": 23973,
+    "annotation": "634,743 ( 0.00%)  < ???:__fn_parser__e_binary_at+0x19@0000000000413d3e (23,973x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e049_expr_lambdas+0xa@0000000000844cb6",
+    "calls": 33352,
+    "annotation": "633,688 ( 0.00%)  < ???:__fn_checker__e049_expr_lambdas+0xa@0000000000844cb6 (33,352x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__use_ids+0xa@0000000000d9f028",
+    "calls": 32609,
+    "annotation": "619,571 ( 0.00%)  < ???:__fn_ssaunits__use_ids+0xa@0000000000d9f028 (32,609x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__bound_exprs$wrap+0xf@0000000000fb9487",
+    "calls": 32287,
+    "annotation": "617,884 ( 0.00%)  < ???:__fn_semsource__bound_exprs$wrap+0xf@0000000000fb9487 (32,287x) [???]"
+  },
+  {
+    "caller": "???:__fn_asm_ir__ssa_fuse+0xa@00000000005be88c",
+    "calls": 31686,
+    "annotation": "602,034 ( 0.00%)  < ???:__fn_asm_ir__ssa_fuse+0xa@00000000005be88c (31,686x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__field_get+0xf@0000000000ce7463",
+    "calls": 16470,
+    "annotation": "595,485 ( 0.00%)  < ???:__fn_ssarc__field_get+0xf@0000000000ce7463 (16,470x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__astwalk__ConstSubst+0x14@0000000000f6cca0",
+    "calls": 30877,
+    "annotation": "586,663 ( 0.00%)  < ???:__fn_astwalk__map_exprs_acc__astwalk__ConstSubst+0x14@0000000000f6cca0 (30,877x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__constant+0xf@0000000000ce8883",
+    "calls": 16874,
+    "annotation": "581,678 ( 0.00%)  < ???:__fn_ssarc__constant+0xf@0000000000ce8883 (16,874x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__annotate_stmt+0xf@00000000008853dd",
+    "calls": 20892,
+    "annotation": "575,154 ( 0.00%)  < ???:__fn_checker__annotate_stmt+0xf@00000000008853dd (20,892x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e065_stmts@0000000000852dbd'2",
+    "calls": 30157,
+    "annotation": "572,983 ( 0.00%)  < ???:__fn_checker__e065_stmts@0000000000852dbd'2 (30,157x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_stmt+0xa@000000000054b959",
+    "calls": 17550,
+    "annotation": "567,075 ( 0.00%)  < ???:__fn_flatten__rewrite_stmt+0xa@000000000054b959 (17,550x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__match_diags+0xf@00000000007cba3e'2",
+    "calls": 29558,
+    "annotation": "561,602 ( 0.00%)  < ???:__fn_checker__match_diags+0xf@00000000007cba3e'2 (29,558x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__s_if_chained+0x14@00000000004158ba",
+    "calls": 16932,
+    "annotation": "560,856 ( 0.00%)  < ???:__fn_parser__s_if_chained+0x14@00000000004158ba (16,932x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lu_stmts@000000000082ea98'2",
+    "calls": 29442,
+    "annotation": "559,398 ( 0.00%)  < ???:__fn_checker__lu_stmts@000000000082ea98'2 (29,442x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ru_expr+0xf@0000000000831e0c",
+    "calls": 29230,
+    "annotation": "555,370 ( 0.00%)  < ???:__fn_checker__ru_expr+0xf@0000000000831e0c (29,230x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_primary_nested+0x5@0000000000425c6b",
+    "calls": 20593,
+    "annotation": "553,828 ( 0.00%)  < ???:__fn_parser__parse_primary_nested+0x5@0000000000425c6b (20,593x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_postfix+0xa@000000000041f442'2",
+    "calls": 17484,
+    "annotation": "540,936 ( 0.00%)  < ???:__fn_parser__parse_postfix+0xa@000000000041f442'2 (17,484x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ow_stmts+0xf@000000000083659f'2",
+    "calls": 28145,
+    "annotation": "534,755 ( 0.00%)  < ???:__fn_checker__ow_stmts+0xf@000000000083659f'2 (28,145x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__constfold__TargetAcc+0x14@0000000000f76be0'2",
+    "calls": 27965,
+    "annotation": "531,335 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__constfold__TargetAcc+0x14@0000000000f76be0'2 (27,965x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__embed__FoldAcc+0x14@0000000000f78eb8'2",
+    "calls": 27965,
+    "annotation": "531,335 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__embed__FoldAcc+0x14@0000000000f78eb8'2 (27,965x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_decl_type+0x5@000000000046348b",
+    "calls": 23254,
+    "annotation": "520,849 ( 0.00%)  < ???:__fn_parser__parse_decl_type+0x5@000000000046348b (23,254x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__lexical__Scope+0x14@0000000000f55e5d",
+    "calls": 21012,
+    "annotation": "519,873 ( 0.00%)  < ???:__fn_astwalk__map_expr_acc__lexical__Scope+0x14@0000000000f55e5d (21,012x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__mono_stmt+0x19@00000000004933cf",
+    "calls": 26798,
+    "annotation": "518,234 ( 0.00%)  < ???:__fn_parser__mono_stmt+0x19@00000000004933cf (26,798x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__MEnv__ebind+0xf@000000000047376b",
+    "calls": 26284,
+    "annotation": "499,396 ( 0.00%)  < ???:__fn_parser__MEnv__ebind+0xf@000000000047376b (26,284x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e021_dyn_sites+0x5@00000000008622da",
+    "calls": 26116,
+    "annotation": "496,204 ( 0.00%)  < ???:__fn_checker__e021_dyn_sites+0x5@00000000008622da (26,116x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_type_ident_led+0xa@0000000000460943",
+    "calls": 25759,
+    "annotation": "495,028 ( 0.00%)  < ???:__fn_parser__parse_type_ident_led+0xa@0000000000460943 (25,759x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__took_payload+0x14@0000000000d074a6",
+    "calls": 13673,
+    "annotation": "486,902 ( 0.00%)  < ???:__fn_ssarc__took_payload+0x14@0000000000d074a6 (13,673x) [???]"
+  },
+  {
+    "caller": "???:__fn_semthread__test_of+0xf@0000000000e6ad56",
+    "calls": 25190,
+    "annotation": "478,610 ( 0.00%)  < ???:__fn_semthread__test_of+0xf@0000000000e6ad56 (25,190x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__i32+0x14@0000000000f68cdb'2",
+    "calls": 24591,
+    "annotation": "467,229 ( 0.00%)  < ???:__fn_astwalk__map_stmts_acc_changed__i32+0x14@0000000000f68cdb'2 (24,591x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__constfold__TargetAcc+0x14@0000000000f68fa8'2",
+    "calls": 24584,
+    "annotation": "467,096 ( 0.00%)  < ???:__fn_astwalk__map_stmts_acc_changed__constfold__TargetAcc+0x14@0000000000f68fa8'2 (24,584x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__embed__FoldAcc+0x14@0000000000f692dc'2",
+    "calls": 24584,
+    "annotation": "467,096 ( 0.00%)  < ???:__fn_astwalk__map_stmts_acc_changed__embed__FoldAcc+0x14@0000000000f692dc'2 (24,584x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_primary_nested+0x5@0000000000425c6b'2",
+    "calls": 17379,
+    "annotation": "464,433 ( 0.00%)  < ???:__fn_parser__parse_primary_nested+0x5@0000000000425c6b'2 (17,379x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__i32+0x14@0000000000f74fd3'2",
+    "calls": 24263,
+    "annotation": "460,997 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__i32+0x14@0000000000f74fd3'2 (24,263x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__module_env+0x5@0000000000875770",
+    "calls": 19792,
+    "annotation": "456,373 ( 0.00%)  < ???:__fn_checker__module_env+0x5@0000000000875770 (19,792x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__arithmetic+0x14@0000000000be22b9",
+    "calls": 23058,
+    "annotation": "446,712 ( 0.00%)  < ???:__fn_semsource__arithmetic+0x14@0000000000be22b9 (23,058x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__cond+0x14@0000000000bede80'2",
+    "calls": 19580,
+    "annotation": "446,129 ( 0.00%)  < ???:__fn_semsource__cond+0x14@0000000000bede80'2 (19,580x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa_lift__lift_box_make+0x19@0000000000b4857c",
+    "calls": 23430,
+    "annotation": "445,170 ( 0.00%)  < ???:__fn_ssa_lift__lift_box_make+0x19@0000000000b4857c (23,430x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexical__bind+0x14@0000000000b9b8ed",
+    "calls": 17619,
+    "annotation": "443,583 ( 0.00%)  < ???:__fn_lexical__bind+0x14@0000000000b9b8ed (17,619x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__embed__FoldAcc+0x14@0000000000f88020",
+    "calls": 23308,
+    "annotation": "442,852 ( 0.00%)  < ???:__fn_astwalk__map_exprs_acc__embed__FoldAcc+0x14@0000000000f88020 (23,308x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__constfold__TargetAcc+0x14@0000000000f87cec",
+    "calls": 23307,
+    "annotation": "442,833 ( 0.00%)  < ???:__fn_astwalk__map_exprs_acc__constfold__TargetAcc+0x14@0000000000f87cec (23,307x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexical__stmt_at$wrap+0xf@0000000000fb68f0",
+    "calls": 21825,
+    "annotation": "428,010 ( 0.00%)  < ???:__fn_lexical__stmt_at$wrap+0xf@0000000000fb68f0 (21,825x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__laid_variants+0xf@0000000000c3c0e5",
+    "calls": 19053,
+    "annotation": "427,632 ( 0.00%)  < ???:__fn_semsource__laid_variants+0xf@0000000000c3c0e5 (19,053x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__Scope__lookup_method+0xf@0000000000775dd1",
+    "calls": 22472,
+    "annotation": "427,094 ( 0.00%)  < ???:__fn_checker__Scope__lookup_method+0xf@0000000000775dd1 (22,472x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__loop_diags+0xf@00000000007c835e'2",
+    "calls": 22474,
+    "annotation": "427,006 ( 0.00%)  < ???:__fn_checker__loop_diags+0xf@00000000007c835e'2 (22,474x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexer__number_tok+0x19@00000000004087b6",
+    "calls": 19025,
+    "annotation": "420,380 ( 0.00%)  < ???:__fn_lexer__number_tok+0x19@00000000004087b6 (19,025x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_const_str+0x5@0000000000af53f9",
+    "calls": 12615,
+    "annotation": "415,035 ( 0.00%)  < ???:__fn_ir__op_const_str+0x5@0000000000af53f9 (12,615x) [???]"
+  },
+  {
+    "caller": "???:__fn_consteval__number+0xa@0000000000b96679",
+    "calls": 21732,
+    "annotation": "412,908 ( 0.00%)  < ???:__fn_consteval__number+0xa@0000000000b96679 (21,732x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__reuse_construct+0x1e@0000000000c9b5c2",
+    "calls": 12334,
+    "annotation": "412,510 ( 0.00%)  < ???:__fn_ssarc__reuse_construct+0x1e@0000000000c9b5c2 (12,334x) [???]"
+  },
+  {
+    "caller": "???:__fn_consteval__settle+0xa@0000000000b9b058",
+    "calls": 21702,
+    "annotation": "412,338 ( 0.00%)  < ???:__fn_consteval__settle+0xa@0000000000b9b058 (21,702x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lu_fact_stmt$wrap+0xf@0000000000f9796f",
+    "calls": 21605,
+    "annotation": "410,495 ( 0.00%)  < ???:__fn_checker__lu_fact_stmt$wrap+0xf@0000000000f9796f (21,605x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__mono_expr+0x14@000000000048a694",
+    "calls": 21605,
+    "annotation": "410,495 ( 0.00%)  < ???:__fn_parser__mono_expr+0x14@000000000048a694 (21,605x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__arm@0000000000c1642e",
+    "calls": 16730,
+    "annotation": "406,007 ( 0.00%)  < ???:__fn_semsource__arm@0000000000c1642e (16,730x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__cond+0x14@0000000000bede80",
+    "calls": 18264,
+    "annotation": "400,566 ( 0.00%)  < ???:__fn_semsource__cond+0x14@0000000000bede80 (18,264x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ru_expr+0xf@0000000000831e0c'2",
+    "calls": 20874,
+    "annotation": "396,606 ( 0.00%)  < ???:__fn_checker__ru_expr+0xf@0000000000831e0c'2 (20,874x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__constfold__TargetAcc+0x14@0000000000f76be0",
+    "calls": 20761,
+    "annotation": "394,459 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__constfold__TargetAcc+0x14@0000000000f76be0 (20,761x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__embed__FoldAcc+0x14@0000000000f78eb8",
+    "calls": 20760,
+    "annotation": "394,440 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__embed__FoldAcc+0x14@0000000000f78eb8 (20,760x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__collect_calls_stmt$clo0+0xf@0000000000faf895",
+    "calls": 20435,
+    "annotation": "388,265 ( 0.00%)  < ???:__fn_astwalk__collect_calls_stmt$clo0+0xf@0000000000faf895 (20,435x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__method_binding+0x14@00000000007977ad",
+    "calls": 20054,
+    "annotation": "381,026 ( 0.00%)  < ???:__fn_checker__method_binding+0x14@00000000007977ad (20,054x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__field_read+0x19@0000000000c17735",
+    "calls": 17129,
+    "annotation": "370,139 ( 0.00%)  < ???:__fn_semsource__field_read+0x19@0000000000c17735 (17,129x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__lexical__Scope+0x14@0000000000f6d970",
+    "calls": 18240,
+    "annotation": "360,231 ( 0.00%)  < ???:__fn_astwalk__map_exprs_acc__lexical__Scope+0x14@0000000000f6d970 (18,240x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__erase_view_params+0x5@00000000004fa9af",
+    "calls": 12331,
+    "annotation": "359,722 ( 0.00%)  < ???:__fn_parser__erase_view_params+0x5@00000000004fa9af (12,331x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__i32+0x14@0000000000f74fd3",
+    "calls": 18633,
+    "annotation": "354,027 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__i32+0x14@0000000000f74fd3 (18,633x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__return_supplies+0xa@0000000000d9fd17",
+    "calls": 18332,
+    "annotation": "353,054 ( 0.00%)  < ???:__fn_ssaunits__return_supplies+0xa@0000000000d9fd17 (18,332x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__header_phis+0xa@0000000000c24899",
+    "calls": 15590,
+    "annotation": "348,290 ( 0.00%)  < ???:__fn_semsource__header_phis+0xa@0000000000c24899 (15,590x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lu_stmts@000000000082ea98",
+    "calls": 18137,
+    "annotation": "344,603 ( 0.00%)  < ???:__fn_checker__lu_stmts@000000000082ea98 (18,137x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__settle_int_tree+0xa@000000000087ce90",
+    "calls": 11279,
+    "annotation": "344,186 ( 0.00%)  < ???:__fn_checker__settle_int_tree+0xa@000000000087ce90 (11,279x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__stmts_assign_diags+0xf@000000000081a7b6",
+    "calls": 18070,
+    "annotation": "343,330 ( 0.00%)  < ???:__fn_checker__stmts_assign_diags+0xf@000000000081a7b6 (18,070x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__match_diags+0xf@00000000007cba3e",
+    "calls": 18070,
+    "annotation": "343,330 ( 0.00%)  < ???:__fn_checker__match_diags+0xf@00000000007cba3e (18,070x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__append_push@0000000000d09196",
+    "calls": 9159,
+    "annotation": "343,302 ( 0.00%)  < ???:__fn_ssarc__append_push@0000000000d09196 (9,159x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__astwalk__ConstSubst+0x14@0000000000f50263",
+    "calls": 16256,
+    "annotation": "340,721 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__astwalk__ConstSubst+0x14@0000000000f50263 (16,256x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__stmt+0xa@0000000000c2a988'2",
+    "calls": 14379,
+    "annotation": "336,096 ( 0.00%)  < ???:__fn_semsource__stmt+0xa@0000000000c2a988'2 (14,379x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__i32+0x14@0000000000f87a1f",
+    "calls": 17574,
+    "annotation": "333,906 ( 0.00%)  < ???:__fn_astwalk__map_exprs_acc__i32+0x14@0000000000f87a1f (17,574x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__count_ident_expr+0xa@0000000000aec354",
+    "calls": 17512,
+    "annotation": "332,728 ( 0.00%)  < ???:__fn_astwalk__count_ident_expr+0xa@0000000000aec354 (17,512x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__stmts_assign_diags+0xf@000000000081a7b6'2",
+    "calls": 17065,
+    "annotation": "324,235 ( 0.00%)  < ???:__fn_checker__stmts_assign_diags+0xf@000000000081a7b6'2 (17,065x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_params+0xa@000000000054d138",
+    "calls": 8114,
+    "annotation": "324,161 ( 0.00%)  < ???:__fn_flatten__rewrite_params+0xa@000000000054d138 (8,114x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__with_inferred_modes+0x5@0000000000c7f7c5",
+    "calls": 16586,
+    "annotation": "319,439 ( 0.00%)  < ???:__fn_semsource__with_inferred_modes+0x5@0000000000c7f7c5 (16,586x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_param+0xa@0000000000466332",
+    "calls": 8216,
+    "annotation": "318,875 ( 0.00%)  < ???:__fn_parser__parse_param+0xa@0000000000466332 (8,216x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa__assign_spill_slots@0000000000b2bda7",
+    "calls": 16585,
+    "annotation": "315,115 ( 0.00%)  < ???:__fn_ssa__assign_spill_slots@0000000000b2bda7 (16,585x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__rewrite_assoc_const_reads+0x5@000000000052815e",
+    "calls": 8894,
+    "annotation": "315,083 ( 0.00%)  < ???:__fn_parser__rewrite_assoc_const_reads+0x5@000000000052815e (8,894x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_stmt_at+0x5@0000000000452921'2",
+    "calls": 10989,
+    "annotation": "313,266 ( 0.00%)  < ???:__fn_parser__parse_stmt_at+0x5@0000000000452921'2 (10,989x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__match_chain+0xf@0000000000c19789",
+    "calls": 14480,
+    "annotation": "310,127 ( 0.00%)  < ???:__fn_semsource__match_chain+0xf@0000000000c19789 (14,480x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_linked+0x14@0000000000d13007",
+    "calls": 8049,
+    "annotation": "305,496 ( 0.00%)  < ???:__fn_ssarc__drop_linked+0x14@0000000000d13007 (8,049x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_inline_closures_expr@0000000000b75bc5'2",
+    "calls": 15564,
+    "annotation": "303,318 ( 0.00%)  < ???:__fn_lift__lift_inline_closures_expr@0000000000b75bc5'2 (15,564x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssasem__operations_error+0x5@0000000000bba32b",
+    "calls": 15105,
+    "annotation": "301,254 ( 0.00%)  < ???:__fn_ssasem__operations_error+0x5@0000000000bba32b (15,105x) [???]"
+  },
+  {
+    "caller": "???:__fn_constfold__prune_stmt$wrap+0xf@0000000000fa35c4'2",
+    "calls": 15810,
+    "annotation": "300,390 ( 0.00%)  < ???:__fn_constfold__prune_stmt$wrap+0xf@0000000000fa35c4'2 (15,810x) [???]"
+  },
+  {
+    "caller": "???:__fn_literate__parse_pieces+0x5@000000000099d430",
+    "calls": 15711,
+    "annotation": "298,509 ( 0.00%)  < ???:__fn_literate__parse_pieces+0x5@000000000099d430 (15,711x) [???]"
+  },
+  {
+    "caller": "???:__fn_literate__emit_line+0x14@000000000099d85b",
+    "calls": 15488,
+    "annotation": "294,272 ( 0.00%)  < ???:__fn_literate__emit_line+0x14@000000000099d85b (15,488x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_module_bodies+0xa@000000000054da0b",
+    "calls": 10328,
+    "annotation": "294,155 ( 0.00%)  < ???:__fn_flatten__rewrite_module_bodies+0xa@000000000054da0b (10,328x) [???]"
+  },
+  {
+    "caller": "???:__fn_consteval__elements+0x19@0000000000b9685e",
+    "calls": 15447,
+    "annotation": "293,493 ( 0.00%)  < ???:__fn_consteval__elements+0x19@0000000000b9685e (15,447x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssadeps__reachable_blocks+0x5@0000000000e299ea",
+    "calls": 14744,
+    "annotation": "287,297 ( 0.00%)  < ???:__fn_ssadeps__reachable_blocks+0x5@0000000000e299ea (14,744x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__rigid_tparams+0x5@000000000079fa24",
+    "calls": 14450,
+    "annotation": "283,454 ( 0.00%)  < ???:__fn_checker__rigid_tparams+0x5@000000000079fa24 (14,450x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexer__string_tok+0xf@000000000040868c",
+    "calls": 11115,
+    "annotation": "281,808 ( 0.00%)  < ???:__fn_lexer__string_tok+0xf@000000000040868c (11,115x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_stmt_at+0x5@0000000000452921",
+    "calls": 10627,
+    "annotation": "278,836 ( 0.00%)  < ???:__fn_parser__parse_stmt_at+0x5@0000000000452921 (10,627x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__step_of+0x19@0000000000dbff80",
+    "calls": 14406,
+    "annotation": "273,714 ( 0.00%)  < ???:__fn_ssaunits__step_of+0x19@0000000000dbff80 (14,406x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__module_env_with_file+0xa@0000000000875783",
+    "calls": 10378,
+    "annotation": "273,454 ( 0.00%)  < ???:__fn_checker__module_env_with_file+0xa@0000000000875783 (10,378x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__t_func+0xa@000000000075d43a",
+    "calls": 14202,
+    "annotation": "269,838 ( 0.00%)  < ???:__fn_checker__t_func+0xa@000000000075d43a (14,202x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_let_stmt+0x5@000000000044a82b",
+    "calls": 9647,
+    "annotation": "266,033 ( 0.00%)  < ???:__fn_parser__parse_let_stmt+0x5@000000000044a82b (9,647x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_arr_len@0000000000af5c97",
+    "calls": 7116,
+    "annotation": "262,905 ( 0.00%)  < ???:__fn_ir__op_arr_len@0000000000af5c97 (7,116x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__stamp_fn_local_types_stmts+0xa@0000000000b5e2f2",
+    "calls": 7462,
+    "annotation": "260,974 ( 0.00%)  < ???:__fn_lift__stamp_fn_local_types_stmts+0xa@0000000000b5e2f2 (7,462x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__stmt+0xa@0000000000c2a988",
+    "calls": 12265,
+    "annotation": "259,033 ( 0.00%)  < ???:__fn_semsource__stmt+0xa@0000000000c2a988 (12,265x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__settled+0x5@0000000000bd77c1",
+    "calls": 8686,
+    "annotation": "258,505 ( 0.00%)  < ???:__fn_semsource__settled+0x5@0000000000bd77c1 (8,686x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__built_fields+0xa@0000000000da29cd",
+    "calls": 12754,
+    "annotation": "248,689 ( 0.00%)  < ???:__fn_ssaunits__built_fields+0xa@0000000000da29cd (12,754x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssabounds__fact+0x19@0000000000e2f5d1",
+    "calls": 11797,
+    "annotation": "247,411 ( 0.00%)  < ???:__fn_ssabounds__fact+0x19@0000000000e2f5d1 (11,797x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexical__params+0x14@0000000000b9c603",
+    "calls": 6051,
+    "annotation": "242,040 ( 0.00%)  < ???:__fn_lexical__params+0x14@0000000000b9c603 (6,051x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__slc_walk@00000000007ab105",
+    "calls": 12276,
+    "annotation": "233,244 ( 0.00%)  < ???:__fn_checker__slc_walk@00000000007ab105 (12,276x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__arm@0000000000c1642e'2",
+    "calls": 8634,
+    "annotation": "230,406 ( 0.00%)  < ???:__fn_semsource__arm@0000000000c1642e'2 (8,634x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__grow_call+0xf@0000000000cbd4df",
+    "calls": 6272,
+    "annotation": "230,405 ( 0.00%)  < ???:__fn_ssarc__grow_call+0xf@0000000000cbd4df (6,272x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__produce+0xf@0000000000c0c586",
+    "calls": 11542,
+    "annotation": "227,026 ( 0.00%)  < ???:__fn_semsource__produce+0xf@0000000000c0c586 (11,542x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__produce_module+0x1e@0000000000c5e92b",
+    "calls": 8593,
+    "annotation": "225,868 ( 0.00%)  < ???:__fn_semsource__produce_module+0x1e@0000000000c5e92b (8,593x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lu_fact_stmt+0xa@000000000082abcb",
+    "calls": 11875,
+    "annotation": "225,625 ( 0.00%)  < ???:__fn_checker__lu_fact_stmt+0xa@000000000082abcb (11,875x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__s_assign_at+0x1e@0000000000416254",
+    "calls": 8353,
+    "annotation": "223,954 ( 0.00%)  < ???:__fn_parser__s_assign_at+0x1e@0000000000416254 (8,353x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__astwalk__ConstSubst+0x14@0000000000f4d31e",
+    "calls": 6334,
+    "annotation": "222,784 ( 0.00%)  < ???:__fn_astwalk__map_expr_acc__astwalk__ConstSubst+0x14@0000000000f4d31e (6,334x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssasem__refused_analysis+0x5@0000000000bae0c5",
+    "calls": 7232,
+    "annotation": "220,652 ( 0.00%)  < ???:__fn_ssasem__refused_analysis+0x5@0000000000bae0c5 (7,232x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__intrinsic_contracts@0000000000c52220",
+    "calls": 11076,
+    "annotation": "219,138 ( 0.00%)  < ???:__fn_semsource__intrinsic_contracts@0000000000c52220 (11,076x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__loop_diags+0xf@00000000007c835e",
+    "calls": 11133,
+    "annotation": "211,527 ( 0.00%)  < ???:__fn_checker__loop_diags+0xf@00000000007c835e (11,133x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__check_expr+0xa@000000000078e53e",
+    "calls": 11083,
+    "annotation": "210,724 ( 0.00%)  < ???:__fn_checker__check_expr+0xa@000000000078e53e (11,083x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__stamp_fn_local_types_stmts+0xa@0000000000b5e2f2'2",
+    "calls": 6074,
+    "annotation": "208,205 ( 0.00%)  < ???:__fn_lift__stamp_fn_local_types_stmts+0xa@0000000000b5e2f2'2 (6,074x) [???]"
+  },
+  {
+    "caller": "???:__fn_sempair__rebuild_calls+0x14@0000000000e11abd",
+    "calls": 9620,
+    "annotation": "199,433 ( 0.00%)  < ???:__fn_sempair__rebuild_calls+0x14@0000000000e11abd (9,620x) [???]"
+  },
+  {
+    "caller": "???:__fn_semreach__walk+0xf@0000000000e8452d",
+    "calls": 7833,
+    "annotation": "199,395 ( 0.00%)  < ???:__fn_semreach__walk+0xf@0000000000e8452d (7,833x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__refuse+0x5@0000000000c36327",
+    "calls": 8022,
+    "annotation": "199,080 ( 0.00%)  < ???:__fn_semsource__refuse+0x5@0000000000c36327 (8,022x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_inline_closures_expr@0000000000b75bc5",
+    "calls": 10428,
+    "annotation": "198,741 ( 0.00%)  < ???:__fn_lift__lift_inline_closures_expr@0000000000b75bc5 (10,428x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_match_arms+0xa@000000000054cbd6",
+    "calls": 7832,
+    "annotation": "198,641 ( 0.00%)  < ???:__fn_flatten__rewrite_match_arms+0xa@000000000054cbd6 (7,832x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__t_tuple+0x5@000000000075d3f5",
+    "calls": 10324,
+    "annotation": "197,416 ( 0.00%)  < ???:__fn_checker__t_tuple+0x5@000000000075d3f5 (10,324x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_return@0000000000af90e1",
+    "calls": 6049,
+    "annotation": "197,041 ( 0.00%)  < ???:__fn_ir__op_return@0000000000af90e1 (6,049x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa__drop_low_wraps+0x5@0000000000b3af1a",
+    "calls": 10339,
+    "annotation": "196,441 ( 0.00%)  < ???:__fn_ssa__drop_low_wraps+0x5@0000000000b3af1a (10,339x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__splice_own_children+0xa@0000000000ae8b58",
+    "calls": 10238,
+    "annotation": "195,551 ( 0.00%)  < ???:__fn_astwalk__splice_own_children+0xa@0000000000ae8b58 (10,238x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__stmts_assign_diags_mode+0x14@000000000081a7eb",
+    "calls": 10273,
+    "annotation": "195,187 ( 0.00%)  < ???:__fn_checker__stmts_assign_diags_mode+0x14@000000000081a7eb (10,273x) [???]"
+  },
+  {
+    "caller": "???:__fn_decltypes__fn_param_from_type+0xa@0000000000b94e30",
+    "calls": 10068,
+    "annotation": "191,292 ( 0.00%)  < ???:__fn_decltypes__fn_param_from_type+0xa@0000000000b94e30 (10,068x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__astwalk__ConstSubst+0x14@0000000000f6cca0'2",
+    "calls": 10025,
+    "annotation": "190,538 ( 0.00%)  < ???:__fn_astwalk__map_exprs_acc__astwalk__ConstSubst+0x14@0000000000f6cca0'2 (10,025x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__needed_past_slot@0000000000da96e4",
+    "calls": 9976,
+    "annotation": "189,544 ( 0.00%)  < ???:__fn_ssaunits__needed_past_slot@0000000000da96e4 (9,976x) [???]"
+  },
+  {
+    "caller": "???:__fn_asmcore__unknown_errors_stmts+0xf@00000000009730fd",
+    "calls": 9896,
+    "annotation": "188,024 ( 0.00%)  < ???:__fn_asmcore__unknown_errors_stmts+0xf@00000000009730fd (9,896x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_lambdas_view_typed+0xa@0000000000b83b58",
+    "calls": 6747,
+    "annotation": "187,434 ( 0.00%)  < ???:__fn_lift__lift_lambdas_view_typed+0xa@0000000000b83b58 (6,747x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__own_diags+0xf@000000000083e978",
+    "calls": 9534,
+    "annotation": "181,146 ( 0.00%)  < ???:__fn_checker__own_diags+0xf@000000000083e978 (9,534x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_stmt_nested+0x5@000000000044a41f",
+    "calls": 5792,
+    "annotation": "180,713 ( 0.00%)  < ???:__fn_parser__parse_stmt_nested+0x5@000000000044a41f (5,792x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__carried_params+0x14@0000000000d9d6ec",
+    "calls": 9343,
+    "annotation": "177,517 ( 0.00%)  < ???:__fn_ssaunits__carried_params+0x14@0000000000d9d6ec (9,343x) [???]"
+  },
+  {
+    "caller": "???:__fn_consteval__evaluate+0x14@0000000000b96b5e'2",
+    "calls": 9282,
+    "annotation": "176,358 ( 0.00%)  < ???:__fn_consteval__evaluate+0x14@0000000000b96b5e'2 (9,282x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_stmt_nested+0x5@000000000044a41f'2",
+    "calls": 5470,
+    "annotation": "176,002 ( 0.00%)  < ???:__fn_parser__parse_stmt_nested+0x5@000000000044a41f'2 (5,470x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__astwalk__ConstSubst+0x14@0000000000f4d31e'2",
+    "calls": 4636,
+    "annotation": "174,856 ( 0.00%)  < ???:__fn_astwalk__map_expr_acc__astwalk__ConstSubst+0x14@0000000000f4d31e'2 (4,636x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__arm_body+0x1e@0000000000c16bf9",
+    "calls": 7236,
+    "annotation": "174,612 ( 0.00%)  < ???:__fn_semsource__arm_body+0x1e@0000000000c16bf9 (7,236x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__slit_diags+0xa@00000000007c4f60'2",
+    "calls": 9147,
+    "annotation": "173,793 ( 0.00%)  < ???:__fn_checker__slit_diags+0xa@00000000007c4f60'2 (9,147x) [???]"
+  },
+  {
+    "caller": "???:__fern_arr_push_u8@0000000001012033",
+    "calls": 9102,
+    "annotation": "172,938 ( 0.00%)  < ???:__fern_arr_push_u8@0000000001012033 (9,102x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__needs_lit_settle+0xa@00000000008a634d",
+    "calls": 9096,
+    "annotation": "172,845 ( 0.00%)  < ???:__fn_checker__needs_lit_settle+0xa@00000000008a634d (9,096x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__bound_type+0xf@0000000000bd778d",
+    "calls": 8920,
+    "annotation": "170,803 ( 0.00%)  < ???:__fn_semsource__bound_type+0xf@0000000000bd778d (8,920x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__builtin_contracts@0000000000c4e536",
+    "calls": 8658,
+    "annotation": "170,319 ( 0.00%)  < ???:__fn_semsource__builtin_contracts@0000000000c4e536 (8,658x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__needs_pretype_or_rescope+0xa@000000000088ed1b",
+    "calls": 8962,
+    "annotation": "170,278 ( 0.00%)  < ???:__fn_checker__needs_pretype_or_rescope+0xa@000000000088ed1b (8,962x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__settle_module+0x5@0000000000525150",
+    "calls": 8950,
+    "annotation": "170,176 ( 0.00%)  < ???:__fn_parser__settle_module+0x5@0000000000525150 (8,950x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__rewrite_assoc_const_reads+0x19@0000000000aeee8d",
+    "calls": 8950,
+    "annotation": "170,050 ( 0.00%)  < ???:__fn_astwalk__rewrite_assoc_const_reads+0x19@0000000000aeee8d (8,950x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__call+0x19@0000000000bff403",
+    "calls": 8276,
+    "annotation": "167,366 ( 0.00%)  < ???:__fn_semsource__call+0x19@0000000000bff403 (8,276x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__ilc_expr_at@0000000000b70967",
+    "calls": 7149,
+    "annotation": "163,530 ( 0.00%)  < ???:__fn_lift__ilc_expr_at@0000000000b70967 (7,149x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e049_diags+0xf@0000000000845b74",
+    "calls": 8565,
+    "annotation": "162,735 ( 0.00%)  < ???:__fn_checker__e049_diags+0xf@0000000000845b74 (8,565x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__binary_diags_typed+0xa@00000000007f94d2",
+    "calls": 8457,
+    "annotation": "160,683 ( 0.00%)  < ???:__fn_checker__binary_diags_typed+0xa@00000000007f94d2 (8,457x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__arr_get_op+0xa@0000000000c86615",
+    "calls": 5512,
+    "annotation": "160,042 ( 0.00%)  < ???:__fn_ssarc__arr_get_op+0xa@0000000000c86615 (5,512x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__anchor_module+0xf@0000000000c572c1",
+    "calls": 5695,
+    "annotation": "159,802 ( 0.00%)  < ???:__fn_semsource__anchor_module+0xf@0000000000c572c1 (5,695x) [???]"
+  },
+  {
+    "caller": "???:__fn_physicalbody__abis+0x5@0000000000b55942",
+    "calls": 8188,
+    "annotation": "155,572 ( 0.00%)  < ???:__fn_physicalbody__abis+0x5@0000000000b55942 (8,188x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__ilc_expr_at@0000000000b70967'2",
+    "calls": 7474,
+    "annotation": "154,837 ( 0.00%)  < ???:__fn_lift__ilc_expr_at@0000000000b70967'2 (7,474x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__desugar_lambda_returns+0xf@0000000000b61f58",
+    "calls": 7830,
+    "annotation": "154,356 ( 0.00%)  < ???:__fn_lift__desugar_lambda_returns+0xf@0000000000b61f58 (7,830x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__splice_own_children+0xa@0000000000ae8b58'2",
+    "calls": 7982,
+    "annotation": "152,645 ( 0.00%)  < ???:__fn_astwalk__splice_own_children+0xa@0000000000ae8b58'2 (7,982x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__module_with_builtins_typed+0x5@00000000004fcbd5",
+    "calls": 7914,
+    "annotation": "150,366 ( 0.00%)  < ???:__fn_parser__module_with_builtins_typed+0x5@00000000004fcbd5 (7,914x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_module_flagged+0xa@000000000052a532",
+    "calls": 5547,
+    "annotation": "149,031 ( 0.00%)  < ???:__fn_parser__parse_module_flagged+0xa@000000000052a532 (5,547x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__elb_mark_expr+0xf@00000000004f93ec'2",
+    "calls": 5648,
+    "annotation": "147,800 ( 0.00%)  < ???:__fn_parser__elb_mark_expr+0xf@00000000004f93ec'2 (5,648x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssalive__compute_checked+0xa@0000000000e2860a",
+    "calls": 7281,
+    "annotation": "146,319 ( 0.00%)  < ???:__fn_ssalive__compute_checked+0xa@0000000000e2860a (7,281x) [???]"
+  },
+  {
+    "caller": "???:__fn_constfold__prune_literal_branches+0x5@000000000093e134",
+    "calls": 4441,
+    "annotation": "143,998 ( 0.00%)  < ???:__fn_constfold__prune_literal_branches+0x5@000000000093e134 (4,441x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__constfold__TargetAcc+0x14@0000000000f87cec'2",
+    "calls": 7552,
+    "annotation": "143,488 ( 0.00%)  < ???:__fn_astwalk__map_exprs_acc__constfold__TargetAcc+0x14@0000000000f87cec'2 (7,552x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__embed__FoldAcc+0x14@0000000000f88020'2",
+    "calls": 7552,
+    "annotation": "143,488 ( 0.00%)  < ???:__fn_astwalk__map_exprs_acc__embed__FoldAcc+0x14@0000000000f88020'2 (7,552x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__elb_recurse_stmt+0x5@00000000004f77a7",
+    "calls": 7462,
+    "annotation": "142,240 ( 0.00%)  < ???:__fn_parser__elb_recurse_stmt+0x5@00000000004f77a7 (7,462x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__i32+0x14@0000000000f87a1f'2",
+    "calls": 7260,
+    "annotation": "137,940 ( 0.00%)  < ???:__fn_astwalk__map_exprs_acc__i32+0x14@0000000000f87a1f'2 (7,260x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__desugar_lambda_returns+0xf@0000000000b61f58'2",
+    "calls": 6707,
+    "annotation": "135,707 ( 0.00%)  < ???:__fn_lift__desugar_lambda_returns+0xf@0000000000b61f58'2 (6,707x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_pattern+0xa@0000000000549572",
+    "calls": 3268,
+    "annotation": "130,720 ( 0.00%)  < ???:__fn_flatten__rewrite_pattern+0xa@0000000000549572 (3,268x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__block_body@0000000000d7e00e",
+    "calls": 3601,
+    "annotation": "130,684 ( 0.00%)  < ???:__fn_ssarc__block_body@0000000000d7e00e (3,601x) [???]"
+  },
+  {
+    "caller": "???:__fn_semrecords__no_records@0000000000bcf794",
+    "calls": 6859,
+    "annotation": "130,363 ( 0.00%)  < ???:__fn_semrecords__no_records@0000000000bcf794 (6,859x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__settle_to_name+0xa@0000000000521fb0",
+    "calls": 6828,
+    "annotation": "129,732 ( 0.00%)  < ???:__fn_parser__settle_to_name+0xa@0000000000521fb0 (6,828x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ow_stmts+0xf@000000000083659f",
+    "calls": 6786,
+    "annotation": "128,934 ( 0.00%)  < ???:__fn_checker__ow_stmts+0xf@000000000083659f (6,786x) [???]"
+  },
+  {
+    "caller": "???:__fn_seminline__defs_of+0x5@0000000000e5bbfa",
+    "calls": 6696,
+    "annotation": "127,224 ( 0.00%)  < ???:__fn_seminline__defs_of+0x5@0000000000e5bbfa (6,696x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_pattern+0x5@00000000004423eb",
+    "calls": 3277,
+    "annotation": "126,880 ( 0.00%)  < ???:__fn_parser__parse_pattern+0x5@00000000004423eb (3,277x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lit_rewrite_expr$wrap+0xf@0000000000fa13ed",
+    "calls": 6652,
+    "annotation": "126,535 ( 0.00%)  < ???:__fn_checker__lit_rewrite_expr$wrap+0xf@0000000000fa13ed (6,652x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__fn_param_from_spelling+0xa@0000000000b5f0af",
+    "calls": 6620,
+    "annotation": "125,822 ( 0.00%)  < ???:__fn_lift__fn_param_from_spelling+0xa@0000000000b5f0af (6,620x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssasem__anchored_of+0xa@0000000000bad90d",
+    "calls": 6069,
+    "annotation": "124,467 ( 0.00%)  < ???:__fn_ssasem__anchored_of+0xa@0000000000bad90d (6,069x) [???]"
+  },
+  {
+    "caller": "???:__fn_ircore__inline_tiny_leaves+0xa@0000000000aa09c4",
+    "calls": 6447,
+    "annotation": "122,493 ( 0.00%)  < ???:__fn_ircore__inline_tiny_leaves+0xa@0000000000aa09c4 (6,447x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__e_unary_at+0x14@0000000000413e4b",
+    "calls": 3586,
+    "annotation": "121,432 ( 0.00%)  < ???:__fn_parser__e_unary_at+0x14@0000000000413e4b (3,586x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e065_stmts@0000000000852dbd",
+    "calls": 6332,
+    "annotation": "120,308 ( 0.00%)  < ???:__fn_checker__e065_stmts@0000000000852dbd (6,332x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e049_scope+0x5@000000000084231e",
+    "calls": 6261,
+    "annotation": "118,959 ( 0.00%)  < ???:__fn_checker__e049_scope+0x5@000000000084231e (6,261x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__empty_array_positions+0x14@00000000007879df",
+    "calls": 6232,
+    "annotation": "118,408 ( 0.00%)  < ???:__fn_checker__empty_array_positions+0x14@00000000007879df (6,232x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__claim_method_name+0x14@0000000000509743",
+    "calls": 4390,
+    "annotation": "118,207 ( 0.00%)  < ???:__fn_parser__claim_method_name+0x14@0000000000509743 (4,390x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa__regalloc_linear_fixed@0000000000b2452e",
+    "calls": 6213,
+    "annotation": "118,047 ( 0.00%)  < ???:__fn_ssa__regalloc_linear_fixed@0000000000b2452e (6,213x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssadeps__analyze+0xa@0000000000e2a75e",
+    "calls": 4233,
+    "annotation": "117,282 ( 0.00%)  < ???:__fn_ssadeps__analyze+0xa@0000000000e2a75e (4,233x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_str_len@0000000000af64c3",
+    "calls": 3500,
+    "annotation": "116,543 ( 0.00%)  < ???:__fn_ir__op_str_len@0000000000af64c3 (3,500x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__lexical__Scope+0x14@0000000000f6d970'2",
+    "calls": 6049,
+    "annotation": "116,422 ( 0.00%)  < ???:__fn_astwalk__map_exprs_acc__lexical__Scope+0x14@0000000000f6d970'2 (6,049x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__elb_recurse_stmt+0x5@00000000004f77a7'2",
+    "calls": 6083,
+    "annotation": "116,018 ( 0.00%)  < ???:__fn_parser__elb_recurse_stmt+0x5@00000000004f77a7'2 (6,083x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__lexical__Scope+0x14@0000000000f58a13'2",
+    "calls": 6035,
+    "annotation": "114,665 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__lexical__Scope+0x14@0000000000f58a13'2 (6,035x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_expr_walk+0xf@0000000000b5fa16'2",
+    "calls": 3963,
+    "annotation": "114,231 ( 0.00%)  < ???:__fn_lift__lift_expr_walk+0xf@0000000000b5fa16'2 (3,963x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__erase_view_struct+0x5@00000000004fb77c",
+    "calls": 5697,
+    "annotation": "113,262 ( 0.00%)  < ???:__fn_parser__erase_view_struct+0x5@00000000004fb77c (5,697x) [???]"
+  },
+  {
+    "caller": "???:__fn_treeshake__refset_add+0xa@00000000009b6d36",
+    "calls": 5954,
+    "annotation": "113,126 ( 0.00%)  < ???:__fn_treeshake__refset_add+0xa@00000000009b6d36 (5,954x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__ilc_stmt_at@0000000000b77116",
+    "calls": 5339,
+    "annotation": "113,054 ( 0.00%)  < ???:__fn_lift__ilc_stmt_at@0000000000b77116 (5,339x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_children+0x19@0000000000c8d657",
+    "calls": 2961,
+    "annotation": "112,035 ( 0.00%)  < ???:__fn_ssarc__drop_children+0x19@0000000000c8d657 (2,961x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__rename_tv_stmts$clo0+0xa@0000000000f9115d",
+    "calls": 3756,
+    "annotation": "111,684 ( 0.00%)  < ???:__fn_parser__rename_tv_stmts$clo0+0xa@0000000000f9115d (3,756x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_int_cast+0x5@0000000000af635f",
+    "calls": 3180,
+    "annotation": "110,568 ( 0.00%)  < ???:__fn_ir__op_int_cast+0x5@0000000000af635f (3,180x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__box_scan_stmts@0000000000b7ff99'2",
+    "calls": 5788,
+    "annotation": "110,077 ( 0.00%)  < ???:__fn_lift__box_scan_stmts@0000000000b7ff99'2 (5,788x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__payloads+0x19@0000000000c17952",
+    "calls": 5082,
+    "annotation": "109,998 ( 0.00%)  < ???:__fn_semsource__payloads+0x19@0000000000c17952 (5,082x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__subst_stmts+0xf@000000000049747b'2",
+    "calls": 5760,
+    "annotation": "109,440 ( 0.00%)  < ???:__fn_parser__subst_stmts+0xf@000000000049747b'2 (5,760x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_variant_is+0x5@0000000000af8ca3",
+    "calls": 3222,
+    "annotation": "106,977 ( 0.00%)  < ???:__fn_ir__op_variant_is+0x5@0000000000af8ca3 (3,222x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__erase_view_funcs+0x5@00000000004fb1e5",
+    "calls": 5616,
+    "annotation": "106,704 ( 0.00%)  < ???:__fn_parser__erase_view_funcs+0x5@00000000004fb1e5 (5,616x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__s_unknown+0xa@00000000004178d1",
+    "calls": 3727,
+    "annotation": "105,736 ( 0.00%)  < ???:__fn_parser__s_unknown+0xa@00000000004178d1 (3,727x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__handle_contracts@0000000000c47e71",
+    "calls": 5304,
+    "annotation": "104,493 ( 0.00%)  < ???:__fn_semsource__handle_contracts@0000000000c47e71 (5,304x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__erase_view_expr$wrap+0xa@0000000000f90693",
+    "calls": 5401,
+    "annotation": "102,619 ( 0.00%)  < ???:__fn_parser__erase_view_expr$wrap+0xa@0000000000f90693 (5,401x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_stmt+0xf@0000000000b62cdb'2",
+    "calls": 4526,
+    "annotation": "101,786 ( 0.00%)  < ???:__fn_lift__lift_stmt+0xf@0000000000b62cdb'2 (4,526x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_const_struct+0xf@0000000000af7cd6",
+    "calls": 2992,
+    "annotation": "101,200 ( 0.00%)  < ???:__fn_ir__op_const_struct+0xf@0000000000af7cd6 (2,992x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ow_type_namespaces+0x5@000000000083c895",
+    "calls": 5308,
+    "annotation": "100,852 ( 0.00%)  < ???:__fn_checker__ow_type_namespaces+0x5@000000000083c895 (5,308x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__os_floor_contracts+0xa@0000000000c4c11e",
+    "calls": 5109,
+    "annotation": "100,830 ( 0.00%)  < ???:__fn_semsource__os_floor_contracts+0xa@0000000000c4c11e (5,109x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__binary_diags_typed+0xa@00000000007f94d2'2",
+    "calls": 5157,
+    "annotation": "97,983 ( 0.00%)  < ???:__fn_checker__binary_diags_typed+0xa@00000000007f94d2'2 (5,157x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__type_from_spelling+0xa@000000000079b329",
+    "calls": 4316,
+    "annotation": "97,859 ( 0.00%)  < ???:__fn_checker__type_from_spelling+0xa@000000000079b329 (4,316x) [???]"
+  },
+  {
+    "caller": "???:__fn_typeinfo__lane_builtin_params+0x5@0000000000af04da",
+    "calls": 4994,
+    "annotation": "97,721 ( 0.00%)  < ???:__fn_typeinfo__lane_builtin_params+0x5@0000000000af04da (4,994x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_record_fields+0x1e@0000000000c94227",
+    "calls": 2794,
+    "annotation": "95,212 ( 0.00%)  < ???:__fn_ssarc__drop_record_fields+0x1e@0000000000c94227 (2,794x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__os_contracts@0000000000c4a0ff",
+    "calls": 4719,
+    "annotation": "92,916 ( 0.00%)  < ???:__fn_semsource__os_contracts@0000000000c4a0ff (4,719x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexical__pattern+0xa@0000000000b9c87a",
+    "calls": 3110,
+    "annotation": "92,333 ( 0.00%)  < ???:__fn_lexical__pattern+0xa@0000000000b9c87a (3,110x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__suffix_range_stmts+0x5@00000000007d02c5",
+    "calls": 4774,
+    "annotation": "90,706 ( 0.00%)  < ???:__fn_checker__suffix_range_stmts+0x5@00000000007d02c5 (4,774x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__raw_floor_sigs@00000000007620dc",
+    "calls": 4674,
+    "annotation": "89,646 ( 0.00%)  < ???:__fn_checker__raw_floor_sigs@00000000007620dc (4,674x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__collect+0xa@0000000000c1726c",
+    "calls": 4322,
+    "annotation": "88,838 ( 0.00%)  < ???:__fn_semsource__collect+0xa@0000000000c1726c (4,322x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lu_last_use_args+0xa@000000000082f666",
+    "calls": 4618,
+    "annotation": "87,742 ( 0.00%)  < ???:__fn_checker__lu_last_use_args+0xa@000000000082f666 (4,618x) [???]"
+  },
+  {
+    "caller": "???:__fn_constfold__fold_module+0x5@000000000093d830",
+    "calls": 4453,
+    "annotation": "87,379 ( 0.00%)  < ???:__fn_constfold__fold_module+0x5@000000000093d830 (4,453x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e060_e062_diags+0xa@00000000008629cf",
+    "calls": 4571,
+    "annotation": "86,849 ( 0.00%)  < ???:__fn_checker__e060_e062_diags+0xa@00000000008629cf (4,571x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__annotate_module_in+0xf@000000000088648c",
+    "calls": 4453,
+    "annotation": "85,804 ( 0.00%)  < ???:__fn_checker__annotate_module_in+0xf@000000000088648c (4,453x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_str_eq@0000000000af66e8",
+    "calls": 2525,
+    "annotation": "85,796 ( 0.00%)  < ???:__fn_ir__op_str_eq@0000000000af66e8 (2,525x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa__rewrite_through+0xa@0000000000b2ff68",
+    "calls": 4500,
+    "annotation": "85,500 ( 0.00%)  < ???:__fn_ssa__rewrite_through+0xa@0000000000b2ff68 (4,500x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e049_scope+0x5@000000000084231e'2",
+    "calls": 4468,
+    "annotation": "84,892 ( 0.00%)  < ???:__fn_checker__e049_scope+0x5@000000000084231e'2 (4,468x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__splice_stmts_with_lambda+0xf@0000000000ae8701",
+    "calls": 4464,
+    "annotation": "84,816 ( 0.00%)  < ???:__fn_astwalk__splice_stmts_with_lambda+0xf@0000000000ae8701 (4,464x) [???]"
+  },
+  {
+    "caller": "???:__fn_run_with_gate+0x14@0000000000f0e05d",
+    "calls": 4449,
+    "annotation": "84,573 ( 0.00%)  < ???:__fn_run_with_gate+0x14@0000000000f0e05d (4,449x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_func_decl+0x5@00000000004696c7",
+    "calls": 4407,
+    "annotation": "84,489 ( 0.00%)  < ???:__fn_parser__parse_func_decl+0x5@00000000004696c7 (4,407x) [???]"
+  },
+  {
+    "caller": "???:__fn_load_checked+0x14@0000000000ec8d6e",
+    "calls": 4446,
+    "annotation": "84,474 ( 0.00%)  < ???:__fn_load_checked+0x14@0000000000ec8d6e (4,446x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__embed__FoldAcc+0x14@0000000000f692dc",
+    "calls": 4442,
+    "annotation": "84,398 ( 0.00%)  < ???:__fn_astwalk__map_stmts_acc_changed__embed__FoldAcc+0x14@0000000000f692dc (4,442x) [???]"
+  },
+  {
+    "caller": "???:__fn_constfold__fold_target_name+0xf@000000000093f1fb",
+    "calls": 4442,
+    "annotation": "84,398 ( 0.00%)  < ???:__fn_constfold__fold_target_name+0xf@000000000093f1fb (4,442x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__constfold__TargetAcc+0x14@0000000000f68fa8",
+    "calls": 4442,
+    "annotation": "84,398 ( 0.00%)  < ???:__fn_astwalk__map_stmts_acc_changed__constfold__TargetAcc+0x14@0000000000f68fa8 (4,442x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__i32+0x14@0000000000f68cdb",
+    "calls": 4442,
+    "annotation": "84,398 ( 0.00%)  < ???:__fn_astwalk__map_stmts_acc_changed__i32+0x14@0000000000f68cdb (4,442x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__calls_a_generic+0xa@0000000000863564",
+    "calls": 4416,
+    "annotation": "83,904 ( 0.00%)  < ???:__fn_checker__calls_a_generic+0xa@0000000000863564 (4,416x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__parts+0x5@0000000000c17078",
+    "calls": 4322,
+    "annotation": "83,294 ( 0.00%)  < ???:__fn_semsource__parts+0x5@0000000000c17078 (4,322x) [???]"
+  },
+  {
+    "caller": "???:__fn_semlower__rows_planned+0x14@0000000000aade86",
+    "calls": 4381,
+    "annotation": "83,239 ( 0.00%)  < ???:__fn_semlower__rows_planned+0x14@0000000000aade86 (4,381x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__gcall_of+0xf@000000000089622d",
+    "calls": 4320,
+    "annotation": "82,101 ( 0.00%)  < ???:__fn_checker__gcall_of+0xf@000000000089622d (4,320x) [???]"
+  },
+  {
+    "caller": "???:__fn_irtables__lowered_result+0x5@0000000000b117c2",
+    "calls": 2123,
+    "annotation": "81,266 ( 0.00%)  < ???:__fn_irtables__lowered_result+0x5@0000000000b117c2 (2,123x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__subst_expr+0xf@00000000004963b3",
+    "calls": 4253,
+    "annotation": "80,807 ( 0.00%)  < ???:__fn_parser__subst_expr+0xf@00000000004963b3 (4,253x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__with_drop_helpers+0xa@0000000000ca672e",
+    "calls": 4246,
+    "annotation": "80,674 ( 0.00%)  < ???:__fn_ssarc__with_drop_helpers+0xa@0000000000ca672e (4,246x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__slc_src_roots@00000000007aa63c",
+    "calls": 4240,
+    "annotation": "80,623 ( 0.00%)  < ???:__fn_checker__slc_src_roots@00000000007aa63c (4,240x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__inst_stmts+0x19@00000000008636d3'2",
+    "calls": 4207,
+    "annotation": "79,933 ( 0.00%)  < ???:__fn_checker__inst_stmts+0x19@00000000008636d3'2 (4,207x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaprepare__with_selects+0x5@0000000000b57705",
+    "calls": 4161,
+    "annotation": "79,059 ( 0.00%)  < ???:__fn_ssaprepare__with_selects+0x5@0000000000b57705 (4,161x) [???]"
+  },
+  {
+    "caller": "???:__fn_asm_ir__emit_ssa_allocated_x86+0x19@00000000005cdfc9",
+    "calls": 4142,
+    "annotation": "78,698 ( 0.00%)  < ???:__fn_asm_ir__emit_ssa_allocated_x86+0x19@00000000005cdfc9 (4,142x) [???]"
+  },
+  {
+    "caller": "???:__fn_asmcore__unit_leaves+0x14@000000000095b3bb",
+    "calls": 4142,
+    "annotation": "78,698 ( 0.00%)  < ???:__fn_asmcore__unit_leaves+0x14@000000000095b3bb (4,142x) [???]"
+  },
+  {
+    "caller": "???:__fn_asmcore__struct_local_tag+0xa@000000000096115d",
+    "calls": 4137,
+    "annotation": "78,603 ( 0.00%)  < ???:__fn_asmcore__struct_local_tag+0xa@000000000096115d (4,137x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__union_sig_of_variant+0xa@000000000076ae13",
+    "calls": 4100,
+    "annotation": "77,900 ( 0.00%)  < ???:__fn_checker__union_sig_of_variant+0xa@000000000076ae13 (4,100x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_pattern_if+0xa@000000000044eee9",
+    "calls": 2760,
+    "annotation": "77,199 ( 0.00%)  < ???:__fn_parser__parse_pattern_if+0xa@000000000044eee9 (2,760x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__fold_lit_cond+0xf@0000000000417051",
+    "calls": 3998,
+    "annotation": "76,550 ( 0.00%)  < ???:__fn_parser__fold_lit_cond+0xf@0000000000417051 (3,998x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__tv_obj_expr$wrap+0xf@0000000000f91a82",
+    "calls": 4003,
+    "annotation": "76,351 ( 0.00%)  < ???:__fn_parser__tv_obj_expr$wrap+0xf@0000000000f91a82 (4,003x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__binary+0x14@0000000000bdf547",
+    "calls": 3480,
+    "annotation": "76,221 ( 0.00%)  < ???:__fn_semsource__binary+0x14@0000000000bdf547 (3,480x) [???]"
+  },
+  {
+    "caller": "???:__fn_semlower__substitution+0x1e@0000000000ab96d8",
+    "calls": 4004,
+    "annotation": "76,076 ( 0.00%)  < ???:__fn_semlower__substitution+0x1e@0000000000ab96d8 (4,004x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__elb_assigns_stmt+0xa@00000000004f8462",
+    "calls": 3922,
+    "annotation": "74,518 ( 0.00%)  < ???:__fn_parser__elb_assigns_stmt+0xa@00000000004f8462 (3,922x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__type_from_name_subst+0x14@000000000079f7ea",
+    "calls": 3651,
+    "annotation": "73,527 ( 0.00%)  < ???:__fn_checker__type_from_name_subst+0x14@000000000079f7ea (3,651x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__unless_unique+0x14@0000000000d13e51",
+    "calls": 2040,
+    "annotation": "72,885 ( 0.00%)  < ???:__fn_ssarc__unless_unique+0x14@0000000000d13e51 (2,040x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__valueless_branch_tail+0x5@0000000000437aba",
+    "calls": 3730,
+    "annotation": "72,340 ( 0.00%)  < ???:__fn_parser__valueless_branch_tail+0x5@0000000000437aba (3,730x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e065_string_src_roots+0x1e@0000000000851bd0",
+    "calls": 3692,
+    "annotation": "70,148 ( 0.00%)  < ???:__fn_checker__e065_string_src_roots+0x1e@0000000000851bd0 (3,692x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__carried_pairs+0x1e@0000000000dc0c75",
+    "calls": 3653,
+    "annotation": "69,407 ( 0.00%)  < ???:__fn_ssaunits__carried_pairs+0x1e@0000000000dc0c75 (3,653x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__const_propagate+0x5@0000000000b0c6a6",
+    "calls": 2388,
+    "annotation": "68,955 ( 0.00%)  < ???:__fn_ir__const_propagate+0x5@0000000000b0c6a6 (2,388x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__match_chain+0xf@0000000000c19789'2",
+    "calls": 2808,
+    "annotation": "68,493 ( 0.00%)  < ???:__fn_semsource__match_chain+0xf@0000000000c19789'2 (2,808x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__classified_death+0x19@0000000000c98c40",
+    "calls": 1812,
+    "annotation": "67,440 ( 0.00%)  < ???:__fn_ssarc__classified_death+0x19@0000000000c98c40 (1,812x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__lower@0000000000d9d16f",
+    "calls": 3366,
+    "annotation": "65,466 ( 0.00%)  < ???:__fn_ssarc__lower@0000000000d9d16f (3,366x) [???]"
+  },
+  {
+    "caller": "???:__fn_seminline__swapped_blocks+0xa@0000000000e617c1",
+    "calls": 2606,
+    "annotation": "65,390 ( 0.00%)  < ???:__fn_seminline__swapped_blocks+0xa@0000000000e617c1 (2,606x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__settled+0x5@0000000000bd77c1'2",
+    "calls": 1926,
+    "annotation": "64,881 ( 0.00%)  < ???:__fn_semsource__settled+0x5@0000000000bd77c1'2 (1,926x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_arr_push_owned@0000000000af5de3",
+    "calls": 1705,
+    "annotation": "63,790 ( 0.00%)  < ???:__fn_ir__op_arr_push_owned@0000000000af5de3 (1,705x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_expr_walk+0xf@0000000000b5fa16",
+    "calls": 2219,
+    "annotation": "62,951 ( 0.00%)  < ???:__fn_lift__lift_expr_walk+0xf@0000000000b5fa16 (2,219x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__t_union_g+0xa@000000000075d73e",
+    "calls": 3085,
+    "annotation": "61,135 ( 0.00%)  < ???:__fn_checker__t_union_g+0xa@000000000075d73e (3,085x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__stmts_call_diags+0xa@000000000081119a",
+    "calls": 3167,
+    "annotation": "60,173 ( 0.00%)  < ???:__fn_checker__stmts_call_diags+0xa@000000000081119a (3,167x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__check_expr+0xa@000000000078e53e'2",
+    "calls": 3121,
+    "annotation": "59,383 ( 0.00%)  < ???:__fn_checker__check_expr+0xa@000000000078e53e'2 (3,121x) [???]"
+  },
+  {
+    "caller": "???:__fn_semrecords__records_of+0x5@0000000000bcf5bd",
+    "calls": 2955,
+    "annotation": "56,691 ( 0.00%)  < ???:__fn_semrecords__records_of+0x5@0000000000bcf5bd (2,955x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__append_helpers+0x14@0000000000cadae4",
+    "calls": 1766,
+    "annotation": "56,549 ( 0.00%)  < ???:__fn_ssarc__append_helpers+0x14@0000000000cadae4 (1,766x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__schemas+0xf@0000000000c377a6",
+    "calls": 2970,
+    "annotation": "56,430 ( 0.00%)  < ???:__fn_semsource__schemas+0xf@0000000000c377a6 (2,970x) [???]"
+  },
+  {
+    "caller": "???:__fn_irtables__fn_sig_index+0xf@0000000000b12cc6",
+    "calls": 2860,
+    "annotation": "54,340 ( 0.00%)  < ???:__fn_irtables__fn_sig_index+0xf@0000000000b12cc6 (2,860x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__build@0000000000c44cd2",
+    "calls": 2847,
+    "annotation": "54,093 ( 0.00%)  < ???:__fn_semsource__build@0000000000c44cd2 (2,847x) [???]"
+  },
+  {
+    "caller": "???:__fn_asm_ir__emit_module_or_error_sub+0xf@00000000005deeee",
+    "calls": 2839,
+    "annotation": "53,941 ( 0.00%)  < ???:__fn_asm_ir__emit_module_or_error_sub+0xf@00000000005deeee (2,839x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__binary+0x14@0000000000bdf547'2",
+    "calls": 2563,
+    "annotation": "53,317 ( 0.00%)  < ???:__fn_semsource__binary+0x14@0000000000bdf547'2 (2,563x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__elb_mark_expr+0xf@00000000004f93ec",
+    "calls": 2037,
+    "annotation": "53,067 ( 0.00%)  < ???:__fn_parser__elb_mark_expr+0xf@00000000004f93ec (2,037x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_value+0x19@0000000000c90ae2",
+    "calls": 1330,
+    "annotation": "51,856 ( 0.00%)  < ???:__fn_ssarc__drop_value+0x19@0000000000c90ae2 (1,330x) [???]"
+  },
+  {
+    "caller": "???:__fn_asmcore__entry_check_errors+0x5@0000000000978605",
+    "calls": 2712,
+    "annotation": "51,528 ( 0.00%)  < ???:__fn_asmcore__entry_check_errors+0x5@0000000000978605 (2,712x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexical__resolve_func+0x5@0000000000b9cd97",
+    "calls": 2711,
+    "annotation": "51,509 ( 0.00%)  < ???:__fn_lexical__resolve_func+0x5@0000000000b9cd97 (2,711x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__subst_expr+0xf@00000000004963b3'2",
+    "calls": 2670,
+    "annotation": "51,360 ( 0.00%)  < ???:__fn_parser__subst_expr+0xf@00000000004963b3'2 (2,670x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__subst_stmts+0xf@000000000049747b",
+    "calls": 2680,
+    "annotation": "50,920 ( 0.00%)  < ???:__fn_parser__subst_stmts+0xf@000000000049747b (2,680x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__lexical__Scope+0x14@0000000000f58a13",
+    "calls": 2661,
+    "annotation": "50,559 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__lexical__Scope+0x14@0000000000f58a13 (2,661x) [???]"
+  },
+  {
+    "caller": "???:__fn_treeshake__ts_named_types+0x5@00000000009b807c",
+    "calls": 2647,
+    "annotation": "50,293 ( 0.00%)  < ???:__fn_treeshake__ts_named_types+0x5@00000000009b807c (2,647x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__hl_rewrite+0xf@00000000004d7344",
+    "calls": 2636,
+    "annotation": "50,084 ( 0.00%)  < ???:__fn_parser__hl_rewrite+0xf@00000000004d7344 (2,636x) [???]"
+  },
+  {
+    "caller": "???:__fn_treeshake__treeshake+0x5@00000000009b84f9",
+    "calls": 2635,
+    "annotation": "50,065 ( 0.00%)  < ???:__fn_treeshake__treeshake+0x5@00000000009b84f9 (2,635x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__monomorphize_chain+0xa@00000000004a00d9",
+    "calls": 2631,
+    "annotation": "49,989 ( 0.00%)  < ???:__fn_parser__monomorphize_chain+0xa@00000000004a00d9 (2,631x) [???]"
+  },
+  {
+    "caller": "???:__fn_asm_ir__arr_push_labs+0xa@00000000005be40a",
+    "calls": 2552,
+    "annotation": "48,488 ( 0.00%)  < ???:__fn_asm_ir__arr_push_labs+0xa@00000000005be40a (2,552x) [???]"
+  },
+  {
+    "caller": "???:__fn_irverifyrc__verify_rc_fn+0xa@0000000000de064f",
+    "calls": 2547,
+    "annotation": "48,393 ( 0.00%)  < ???:__fn_irverifyrc__verify_rc_fn+0xa@0000000000de064f (2,547x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__finish_arm+0x19@0000000000c16acc",
+    "calls": 1954,
+    "annotation": "48,361 ( 0.00%)  < ???:__fn_semsource__finish_arm+0x19@0000000000c16acc (1,954x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__units_of+0x19@0000000000da4075",
+    "calls": 2515,
+    "annotation": "47,785 ( 0.00%)  < ???:__fn_ssaunits__units_of+0x19@0000000000da4075 (2,515x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__no_fresh@0000000000db176a",
+    "calls": 2469,
+    "annotation": "46,932 ( 0.00%)  < ???:__fn_ssaunits__no_fresh@0000000000db176a (2,469x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__container+0x14@0000000000cca4fb",
+    "calls": 1260,
+    "annotation": "46,872 ( 0.00%)  < ???:__fn_ssarc__container+0x14@0000000000cca4fb (1,260x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__Scope__call_param_types+0xa@000000000080821f",
+    "calls": 2458,
+    "annotation": "46,702 ( 0.00%)  < ???:__fn_checker__Scope__call_param_types+0xa@000000000080821f (2,458x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__payload_takes+0x19@0000000000dab783",
+    "calls": 2415,
+    "annotation": "46,515 ( 0.00%)  < ???:__fn_ssaunits__payload_takes+0x19@0000000000dab783 (2,415x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__rewrite_match_arms+0xa@000000000054cbd6'2",
+    "calls": 1946,
+    "annotation": "46,298 ( 0.00%)  < ???:__fn_flatten__rewrite_match_arms+0xa@000000000054cbd6'2 (1,946x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__supply_table+0x5@0000000000d9f88d",
+    "calls": 2415,
+    "annotation": "45,885 ( 0.00%)  < ???:__fn_ssaunits__supply_table+0x5@0000000000d9f88d (2,415x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa__spill_live_at+0x1e@0000000000b2f2ba",
+    "calls": 2415,
+    "annotation": "45,885 ( 0.00%)  < ???:__fn_ssa__spill_live_at+0x1e@0000000000b2f2ba (2,415x) [???]"
+  },
+  {
+    "caller": "???:__fn_sempair__pair_returns+0x14@0000000000e08da2",
+    "calls": 2376,
+    "annotation": "45,606 ( 0.00%)  < ???:__fn_sempair__pair_returns+0x14@0000000000e08da2 (2,376x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__member_type+0x5@0000000000c178ca",
+    "calls": 2396,
+    "annotation": "45,524 ( 0.00%)  < ???:__fn_semsource__member_type+0x5@0000000000c178ca (2,396x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_stmt+0xf@0000000000b62cdb",
+    "calls": 2092,
+    "annotation": "44,977 ( 0.00%)  < ???:__fn_lift__lift_stmt+0xf@0000000000b62cdb (2,092x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__refused+0x5@0000000000d9de33",
+    "calls": 1164,
+    "annotation": "43,977 ( 0.00%)  < ???:__fn_ssaunits__refused+0x5@0000000000d9de33 (1,164x) [???]"
+  },
+  {
+    "caller": "???:__fn_asmcore__check_stmts+0x14@00000000009740c1",
+    "calls": 2306,
+    "annotation": "43,814 ( 0.00%)  < ???:__fn_asmcore__check_stmts+0x14@00000000009740c1 (2,306x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexical__expr_at$wrap+0xf@0000000000fb7eeb'2",
+    "calls": 1604,
+    "annotation": "42,782 ( 0.00%)  < ???:__fn_lexical__expr_at$wrap+0xf@0000000000fb7eeb'2 (1,604x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__body_address+0xa@0000000000d203b4",
+    "calls": 1338,
+    "annotation": "42,663 ( 0.00%)  < ???:__fn_ssarc__body_address+0xa@0000000000d203b4 (1,338x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__stmts_assign_diags_mode+0x14@000000000081a7eb'2",
+    "calls": 2220,
+    "annotation": "42,180 ( 0.00%)  < ???:__fn_checker__stmts_assign_diags_mode+0x14@000000000081a7eb'2 (2,220x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e065_return_roots+0x1e@0000000000851a42",
+    "calls": 2207,
+    "annotation": "41,933 ( 0.00%)  < ???:__fn_checker__e065_return_roots+0x1e@0000000000851a42 (2,207x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__slc_call_roots@00000000007aa8f7",
+    "calls": 2168,
+    "annotation": "41,192 ( 0.00%)  < ???:__fn_checker__slc_call_roots@00000000007aa8f7 (2,168x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__e_struct_lit@0000000000413ff1",
+    "calls": 1300,
+    "annotation": "41,143 ( 0.00%)  < ???:__fn_parser__e_struct_lit@0000000000413ff1 (1,300x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__raw_memory_site+0xa@0000000000d6ada9",
+    "calls": 2162,
+    "annotation": "41,078 ( 0.00%)  < ???:__fn_ssarc__raw_memory_site+0xa@0000000000d6ada9 (2,162x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ow_moved_add+0xf@00000000008292f6",
+    "calls": 2146,
+    "annotation": "40,774 ( 0.00%)  < ???:__fn_checker__ow_moved_add+0xf@00000000008292f6 (2,146x) [???]"
+  },
+  {
+    "caller": "???:__fn_irtables__lowered_state+0x5@0000000000b11445",
+    "calls": 2123,
+    "annotation": "40,337 ( 0.00%)  < ???:__fn_irtables__lowered_state+0x5@0000000000b11445 (2,123x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa__imm_operands+0x19@0000000000b2f683",
+    "calls": 2071,
+    "annotation": "39,349 ( 0.00%)  < ???:__fn_ssa__imm_operands+0x19@0000000000b2f683 (2,071x) [???]"
+  },
+  {
+    "caller": "???:__fn_asm_ir__ssa_fixed_registers+0x19@000000000058f815",
+    "calls": 2071,
+    "annotation": "39,349 ( 0.00%)  < ???:__fn_asm_ir__ssa_fixed_registers+0x19@000000000058f815 (2,071x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa__cold_positions+0xf@0000000000b1fe9c",
+    "calls": 2071,
+    "annotation": "39,349 ( 0.00%)  < ???:__fn_ssa__cold_positions+0xf@0000000000b1fe9c (2,071x) [???]"
+  },
+  {
+    "caller": "???:__fn_ircore__body_for_emit+0xa@0000000000aa3ac1",
+    "calls": 2071,
+    "annotation": "39,349 ( 0.00%)  < ???:__fn_ircore__body_for_emit+0xa@0000000000aa3ac1 (2,071x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_fields_except+0x1e@0000000000c9a960",
+    "calls": 1029,
+    "annotation": "39,144 ( 0.00%)  < ???:__fn_ssarc__drop_fields_except+0x1e@0000000000c9a960 (1,029x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__destructure_tuple+0x14@0000000000c147d2",
+    "calls": 1878,
+    "annotation": "38,538 ( 0.00%)  < ???:__fn_semsource__destructure_tuple+0x14@0000000000c147d2 (1,878x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__s_for+0xf@0000000000415c16",
+    "calls": 1176,
+    "annotation": "38,073 ( 0.00%)  < ???:__fn_parser__s_for+0xf@0000000000415c16 (1,176x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__arm_body+0x1e@0000000000c16bf9'2",
+    "calls": 1404,
+    "annotation": "37,953 ( 0.00%)  < ???:__fn_semsource__arm_body+0x1e@0000000000c16bf9'2 (1,404x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__bare_field+0xa@000000000041335b",
+    "calls": 1930,
+    "annotation": "37,321 ( 0.00%)  < ???:__fn_parser__bare_field+0xa@000000000041335b (1,930x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_struct_make+0xf@0000000000af7c13",
+    "calls": 1027,
+    "annotation": "36,481 ( 0.00%)  < ???:__fn_ir__op_struct_make+0xf@0000000000af7c13 (1,027x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__call_site+0xf@0000000000d21d17",
+    "calls": 1017,
+    "annotation": "36,333 ( 0.00%)  < ???:__fn_ssarc__call_site+0xf@0000000000d21d17 (1,017x) [???]"
+  },
+  {
+    "caller": "???:__fn_sempair__word_contract+0x5@0000000000e18e96",
+    "calls": 1564,
+    "annotation": "35,302 ( 0.00%)  < ???:__fn_sempair__word_contract+0x5@0000000000e18e96 (1,564x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__type_from_ref_names+0xa@000000000079b485",
+    "calls": 1592,
+    "annotation": "33,923 ( 0.00%)  < ???:__fn_checker__type_from_ref_names+0xa@000000000079b485 (1,592x) [???]"
+  },
+  {
+    "caller": "???:__fn_semscalarreturn__parts_of+0xa@0000000000dd56cb",
+    "calls": 1655,
+    "annotation": "33,587 ( 0.00%)  < ???:__fn_semscalarreturn__parts_of+0xa@0000000000dd56cb (1,655x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__lift__InlineCloAcc+0x14@0000000000f6d308'2",
+    "calls": 1767,
+    "annotation": "33,573 ( 0.00%)  < ???:__fn_astwalk__map_stmts_acc_changed__lift__InlineCloAcc+0x14@0000000000f6d308'2 (1,767x) [???]"
+  },
+  {
+    "caller": "???:__fn_optbisect__switches@0000000000e7dfbf",
+    "calls": 1735,
+    "annotation": "32,965 ( 0.00%)  < ???:__fn_optbisect__switches@0000000000e7dfbf (1,735x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__box_scan_stmts@0000000000b7ff99",
+    "calls": 1727,
+    "annotation": "32,834 ( 0.00%)  < ???:__fn_lift__box_scan_stmts@0000000000b7ff99 (1,727x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__payload_variant+0xa@0000000000bd88f7",
+    "calls": 1674,
+    "annotation": "32,394 ( 0.00%)  < ???:__fn_semsource__payload_variant+0xa@0000000000bd88f7 (1,674x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__s_match_sugared+0x19@0000000000416443",
+    "calls": 1684,
+    "annotation": "31,996 ( 0.00%)  < ???:__fn_parser__s_match_sugared+0x19@0000000000416443 (1,684x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__closure_lift_one@0000000000b64816'2",
+    "calls": 1683,
+    "annotation": "31,977 ( 0.00%)  < ???:__fn_lift__closure_lift_one@0000000000b64816'2 (1,683x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_arr_push@0000000000af5d3d",
+    "calls": 847,
+    "annotation": "31,675 ( 0.00%)  < ???:__fn_ir__op_arr_push@0000000000af5d3d (847x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__field_store+0xf@0000000000ca2dea",
+    "calls": 812,
+    "annotation": "31,493 ( 0.00%)  < ???:__fn_ssarc__field_store+0xf@0000000000ca2dea (812x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__stamp_value_block_ret+0xa@00000000004f18b7",
+    "calls": 1655,
+    "annotation": "31,445 ( 0.00%)  < ???:__fn_parser__stamp_value_block_ret+0xa@00000000004f18b7 (1,655x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__own_copied+0x14@0000000000cc9b5d",
+    "calls": 833,
+    "annotation": "31,178 ( 0.00%)  < ???:__fn_ssarc__own_copied+0x14@0000000000cc9b5d (833x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_str_concat@0000000000af6642",
+    "calls": 868,
+    "annotation": "31,087 ( 0.00%)  < ???:__fn_ir__op_str_concat@0000000000af6642 (868x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__elb_mark_stmt+0xf@00000000004f8756'2",
+    "calls": 1278,
+    "annotation": "30,981 ( 0.00%)  < ???:__fn_parser__elb_mark_stmt+0xf@00000000004f8756'2 (1,278x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__type_from_ref_subst+0x14@000000000079e0e2'2",
+    "calls": 1614,
+    "annotation": "30,960 ( 0.00%)  < ???:__fn_checker__type_from_ref_subst+0x14@000000000079e0e2'2 (1,614x) [???]"
+  },
+  {
+    "caller": "???:__fn_semlower__declined_state+0x5@0000000000aad873",
+    "calls": 1164,
+    "annotation": "30,894 ( 0.00%)  < ???:__fn_semlower__declined_state+0x5@0000000000aad873 (1,164x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__s_while+0xa@0000000000415b97",
+    "calls": 1597,
+    "annotation": "30,784 ( 0.00%)  < ???:__fn_parser__s_while+0xa@0000000000415b97 (1,597x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__builtin_ctor_type+0x14@000000000077d22b",
+    "calls": 1606,
+    "annotation": "30,535 ( 0.00%)  < ???:__fn_checker__builtin_ctor_type+0x14@000000000077d22b (1,606x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__written_fields+0xf@0000000000bdd821",
+    "calls": 1437,
+    "annotation": "29,949 ( 0.00%)  < ???:__fn_semsource__written_fields+0xf@0000000000bdd821 (1,437x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__with_sugar_origin+0xf@000000000042e8d2",
+    "calls": 855,
+    "annotation": "29,874 ( 0.00%)  < ???:__fn_parser__with_sugar_origin+0xf@000000000042e8d2 (855x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__iter_subject+0xa@00000000008093b0",
+    "calls": 1506,
+    "annotation": "28,614 ( 0.00%)  < ???:__fn_checker__iter_subject+0xa@00000000008093b0 (1,506x) [???]"
+  },
+  {
+    "caller": "???:__fn_semreach__reach+0x19@0000000000e7e3d1",
+    "calls": 1492,
+    "annotation": "28,390 ( 0.00%)  < ???:__fn_semreach__reach+0x19@0000000000e7e3d1 (1,492x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__mono_call_expected+0x19@000000000048f528",
+    "calls": 1484,
+    "annotation": "28,196 ( 0.00%)  < ???:__fn_parser__mono_call_expected+0x19@000000000048f528 (1,484x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssabounds__proven_indices+0x5@0000000000e2c4fc",
+    "calls": 1098,
+    "annotation": "27,897 ( 0.00%)  < ???:__fn_ssabounds__proven_indices+0x5@0000000000e2c4fc (1,098x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsink__reads_of+0xf@0000000000e66341",
+    "calls": 1468,
+    "annotation": "27,892 ( 0.00%)  < ???:__fn_semsink__reads_of+0xf@0000000000e66341 (1,468x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssalive__compute_kept+0xf@0000000000e284bb",
+    "calls": 1468,
+    "annotation": "27,892 ( 0.00%)  < ???:__fn_ssalive__compute_kept+0xf@0000000000e284bb (1,468x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__slc_expr_roots@00000000007aaddb",
+    "calls": 1460,
+    "annotation": "27,803 ( 0.00%)  < ???:__fn_checker__slc_expr_roots@00000000007aaddb (1,460x) [???]"
+  },
+  {
+    "caller": "???:__fern_arr_push_u8+0x2b@000000000101205e",
+    "calls": 1365,
+    "annotation": "27,409 ( 0.00%)  < ???:__fern_arr_push_u8+0x2b@000000000101205e (1,365x) [???]"
+  },
+  {
+    "caller": "???:__fn_load_bundle+0x14@0000000000ebbccd",
+    "calls": 1429,
+    "annotation": "27,151 ( 0.00%)  < ???:__fn_load_bundle+0x14@0000000000ebbccd (1,429x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__pattern_if_chain+0x19@000000000044ee2d",
+    "calls": 855,
+    "annotation": "25,989 ( 0.00%)  < ???:__fn_parser__pattern_if_chain+0x19@000000000044ee2d (855x) [???]"
+  },
+  {
+    "caller": "???:__fn_asmcore__EmitState__finish+0x19@000000000095d33d",
+    "calls": 1339,
+    "annotation": "25,441 ( 0.00%)  < ???:__fn_asmcore__EmitState__finish+0x19@000000000095d33d (1,339x) [???]"
+  },
+  {
+    "caller": "???:__fn_semlower__helper_origins+0x5@0000000000ac3c0c",
+    "calls": 1320,
+    "annotation": "25,080 ( 0.00%)  < ???:__fn_semlower__helper_origins+0x5@0000000000ac3c0c (1,320x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__lane_contracts@0000000000c5655b",
+    "calls": 1248,
+    "annotation": "25,056 ( 0.00%)  < ???:__fn_semsource__lane_contracts@0000000000c5655b (1,248x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__elb_mark_stmt+0xf@00000000004f8756",
+    "calls": 1201,
+    "annotation": "25,024 ( 0.00%)  < ???:__fn_parser__elb_mark_stmt+0xf@00000000004f8756 (1,201x) [???]"
+  },
+  {
+    "caller": "???:__fn_typeinfo__lane_builtin_result+0x5@0000000000af0d75",
+    "calls": 1248,
+    "annotation": "24,888 ( 0.00%)  < ???:__fn_typeinfo__lane_builtin_result+0x5@0000000000af0d75 (1,248x) [???]"
+  },
+  {
+    "caller": "???:__fn_semlower__produced_body@0000000000aad9ee",
+    "calls": 1164,
+    "annotation": "24,825 ( 0.00%)  < ???:__fn_semlower__produced_body@0000000000aad9ee (1,164x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_field_type+0xa@000000000046e32b",
+    "calls": 1008,
+    "annotation": "24,780 ( 0.00%)  < ???:__fn_parser__parse_field_type+0xa@000000000046e32b (1,008x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__lift__InlineCloAcc+0x14@0000000000f7c109'2",
+    "calls": 1238,
+    "annotation": "24,341 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__lift__InlineCloAcc+0x14@0000000000f7c109'2 (1,238x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__raw_floor_contracts@0000000000c569ef",
+    "calls": 1209,
+    "annotation": "24,273 ( 0.00%)  < ???:__fn_semsource__raw_floor_contracts@0000000000c569ef (1,209x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__make_wrap_named_func+0xf@0000000000b671ae",
+    "calls": 950,
+    "annotation": "24,014 ( 0.00%)  < ???:__fn_lift__make_wrap_named_func+0xf@0000000000b671ae (950x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__erase_view_stmt$wrap+0xa@0000000000f90fcf",
+    "calls": 1261,
+    "annotation": "23,959 ( 0.00%)  < ???:__fn_parser__erase_view_stmt$wrap+0xa@0000000000f90fcf (1,261x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__inst_stmt$clo0+0xf@0000000000f9d23f",
+    "calls": 1248,
+    "annotation": "23,712 ( 0.00%)  < ???:__fn_checker__inst_stmt$clo0+0xf@0000000000f9d23f (1,248x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__try_fn_field_value@0000000000b67c1b",
+    "calls": 977,
+    "annotation": "23,645 ( 0.00%)  < ???:__fn_lift__try_fn_field_value@0000000000b67c1b (977x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__slc_src_roots@00000000007aa63c'2",
+    "calls": 1230,
+    "annotation": "23,622 ( 0.00%)  < ???:__fn_checker__slc_src_roots@00000000007aa63c'2 (1,230x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__elb_loop_match+0x5@00000000004f7d24",
+    "calls": 1232,
+    "annotation": "23,429 ( 0.00%)  < ???:__fn_parser__elb_loop_match+0x5@00000000004f7d24 (1,232x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__e_struct_update@000000000041414f",
+    "calls": 693,
+    "annotation": "23,394 ( 0.00%)  < ???:__fn_parser__e_struct_update@000000000041414f (693x) [???]"
+  },
+  {
+    "caller": "???:__fn_sempair__tests_on@0000000000e18fb8",
+    "calls": 910,
+    "annotation": "22,729 ( 0.00%)  < ???:__fn_sempair__tests_on@0000000000e18fb8 (910x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lit_rewrite_stmt$wrap+0xf@0000000000fa08e5",
+    "calls": 1164,
+    "annotation": "22,116 ( 0.00%)  < ???:__fn_checker__lit_rewrite_stmt$wrap+0xf@0000000000fa08e5 (1,164x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_pattern_if_branches+0xf@000000000044e572",
+    "calls": 690,
+    "annotation": "21,846 ( 0.00%)  < ???:__fn_parser__parse_pattern_if_branches+0xf@000000000044e572 (690x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexer__quoted_escape+0xf@000000000040a065",
+    "calls": 730,
+    "annotation": "21,619 ( 0.00%)  < ???:__fn_lexer__quoted_escape+0xf@000000000040a065 (730x) [???]"
+  },
+  {
+    "caller": "???:__fn_literate__parse+0x5@000000000099bc83",
+    "calls": 1106,
+    "annotation": "21,140 ( 0.00%)  < ???:__fn_literate__parse+0x5@000000000099bc83 (1,106x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__full_ret_binds+0x19@00000000004804a2",
+    "calls": 1103,
+    "annotation": "20,957 ( 0.00%)  < ???:__fn_parser__full_ret_binds+0x19@00000000004804a2 (1,103x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssabounds__graph_of+0x5@0000000000e2db9b",
+    "calls": 1060,
+    "annotation": "20,938 ( 0.00%)  < ???:__fn_ssabounds__graph_of+0x5@0000000000e2db9b (1,060x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexer__utf8_encode+0x5@000000000040b050",
+    "calls": 713,
+    "annotation": "20,897 ( 0.00%)  < ???:__fn_lexer__utf8_encode+0x5@000000000040b050 (713x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_block_body_mode+0x14@0000000000440a3a'2",
+    "calls": 1069,
+    "annotation": "20,857 ( 0.00%)  < ???:__fn_parser__parse_block_body_mode+0x14@0000000000440a3a'2 (1,069x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__func_ret_type+0x14@0000000000796eb3",
+    "calls": 901,
+    "annotation": "20,689 ( 0.00%)  < ???:__fn_checker__func_ret_type+0x14@0000000000796eb3 (901x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__call+0x19@0000000000bff403'2",
+    "calls": 1015,
+    "annotation": "19,999 ( 0.00%)  < ???:__fn_semsource__call+0x19@0000000000bff403'2 (1,015x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__inst_stmts+0x19@00000000008636d3",
+    "calls": 1034,
+    "annotation": "19,646 ( 0.00%)  < ???:__fn_checker__inst_stmts+0x19@00000000008636d3 (1,034x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__elide_len_bounded_body+0x5@00000000004f6602",
+    "calls": 1031,
+    "annotation": "19,589 ( 0.00%)  < ???:__fn_parser__elide_len_bounded_body+0x5@00000000004f6602 (1,031x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__stmts_call_diags+0xa@000000000081119a'2",
+    "calls": 1023,
+    "annotation": "19,437 ( 0.00%)  < ???:__fn_checker__stmts_call_diags+0xa@000000000081119a'2 (1,023x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_call_word@0000000000af6e50",
+    "calls": 529,
+    "annotation": "18,997 ( 0.00%)  < ???:__fn_ir__op_call_word@0000000000af6e50 (529x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__type_from_ref_subst+0x14@000000000079e0e2",
+    "calls": 978,
+    "annotation": "18,960 ( 0.00%)  < ???:__fn_checker__type_from_ref_subst+0x14@000000000079e0e2 (978x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__capture_pair_words+0xa@0000000000d2c03d",
+    "calls": 525,
+    "annotation": "18,879 ( 0.00%)  < ???:__fn_ssarc__capture_pair_words+0xa@0000000000d2c03d (525x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__unary_result_type+0xf@0000000000793151",
+    "calls": 475,
+    "annotation": "18,769 ( 0.00%)  < ???:__fn_checker__unary_result_type+0xf@0000000000793151 (475x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_pattern_if+0xa@000000000044eee9'2",
+    "calls": 660,
+    "annotation": "18,609 ( 0.00%)  < ???:__fn_parser__parse_pattern_if+0xa@000000000044eee9'2 (660x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssasem__phi_over+0x14@0000000000bcf4de",
+    "calls": 640,
+    "annotation": "18,292 ( 0.00%)  < ???:__fn_ssasem__phi_over+0x14@0000000000bcf4de (640x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa__tested@0000000000b3cde7",
+    "calls": 957,
+    "annotation": "18,183 ( 0.00%)  < ???:__fn_ssa__tested@0000000000b3cde7 (957x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__tv_obj_stmt$wrap+0xf@0000000000f911b2'2",
+    "calls": 933,
+    "annotation": "17,727 ( 0.00%)  < ???:__fn_parser__tv_obj_stmt$wrap+0xf@0000000000f911b2'2 (933x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__clone_bg+0x19@0000000000499290",
+    "calls": 491,
+    "annotation": "17,624 ( 0.00%)  < ???:__fn_parser__clone_bg+0x19@0000000000499290 (491x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__checked+0xa@0000000000bd7e50",
+    "calls": 899,
+    "annotation": "17,396 ( 0.00%)  < ???:__fn_semsource__checked+0xa@0000000000bd7e50 (899x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_value_inline+0x19@0000000000c90c8b",
+    "calls": 440,
+    "annotation": "17,138 ( 0.00%)  < ???:__fn_ssarc__drop_value_inline+0x19@0000000000c90c8b (440x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__lift__InlineCloAcc+0x14@0000000000f7c109",
+    "calls": 842,
+    "annotation": "17,048 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__lift__InlineCloAcc+0x14@0000000000f7c109 (842x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__borrowed_push+0x19@0000000000d10b7f",
+    "calls": 486,
+    "annotation": "16,920 ( 0.00%)  < ???:__fn_ssarc__borrowed_push+0x19@0000000000d10b7f (486x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__dl_expr_with_kids+0xa@00000000004cd94a",
+    "calls": 886,
+    "annotation": "16,834 ( 0.00%)  < ???:__fn_parser__dl_expr_with_kids+0xa@00000000004cd94a (886x) [???]"
+  },
+  {
+    "caller": "???:__fn_sempair__shape_of+0xf@0000000000e0f66a",
+    "calls": 885,
+    "annotation": "16,815 ( 0.00%)  < ???:__fn_sempair__shape_of+0xf@0000000000e0f66a (885x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__dl_expr_kids+0x5@00000000004ccf3e",
+    "calls": 882,
+    "annotation": "16,758 ( 0.00%)  < ???:__fn_parser__dl_expr_kids+0x5@00000000004ccf3e (882x) [???]"
+  },
+  {
+    "caller": "???:__fn_ircore__counted_release_body+0x5@0000000000a9d85a",
+    "calls": 880,
+    "annotation": "16,720 ( 0.00%)  < ???:__fn_ircore__counted_release_body+0x5@0000000000a9d85a (880x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__leave_loop+0xf@0000000000c22844",
+    "calls": 759,
+    "annotation": "16,584 ( 0.00%)  < ???:__fn_semsource__leave_loop+0xf@0000000000c22844 (759x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_ret_word@0000000000af6daa",
+    "calls": 465,
+    "annotation": "16,521 ( 0.00%)  < ???:__fn_ir__op_ret_word@0000000000af6daa (465x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__checker__LitRewrite+0x14@0000000000f68159",
+    "calls": 860,
+    "annotation": "16,361 ( 0.00%)  < ???:__fn_astwalk__map_exprs_acc__checker__LitRewrite+0x14@0000000000f68159 (860x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__add_builtin_variant+0x14@000000000046f0ce",
+    "calls": 836,
+    "annotation": "15,884 ( 0.00%)  < ???:__fn_parser__add_builtin_variant+0x14@000000000046f0ce (836x) [???]"
+  },
+  {
+    "caller": "???:__fn_sembytecopy__no_loop@0000000000e435d8",
+    "calls": 828,
+    "annotation": "15,732 ( 0.00%)  < ???:__fn_sembytecopy__no_loop@0000000000e435d8 (828x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__arr_make_op+0xa@0000000000c864b2",
+    "calls": 441,
+    "annotation": "15,624 ( 0.00%)  < ???:__fn_ssarc__arr_make_op+0xa@0000000000c864b2 (441x) [???]"
+  },
+  {
+    "caller": "???:__fn_sempair__word_types+0xa@0000000000e0fc08",
+    "calls": 817,
+    "annotation": "15,523 ( 0.00%)  < ???:__fn_sempair__word_types+0xa@0000000000e0fc08 (817x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__parser__TvScope+0x14@0000000000f38e85'2",
+    "calls": 813,
+    "annotation": "15,447 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__parser__TvScope+0x14@0000000000f38e85'2 (813x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa__read_sites+0xf@0000000000b2e383",
+    "calls": 812,
+    "annotation": "15,428 ( 0.00%)  < ???:__fn_ssa__read_sites+0xf@0000000000b2e383 (812x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__checker__LitRewrite+0x14@0000000000f7271e'2",
+    "calls": 806,
+    "annotation": "15,314 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__checker__LitRewrite+0x14@0000000000f7271e'2 (806x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__desugar_ranges_one+0x5@00000000004e5155'2",
+    "calls": 790,
+    "annotation": "15,010 ( 0.00%)  < ???:__fn_parser__desugar_ranges_one+0x5@00000000004e5155'2 (790x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_elements+0x19@0000000000c91b14'2",
+    "calls": 375,
+    "annotation": "15,000 ( 0.00%)  < ???:__fn_ssarc__drop_elements+0x19@0000000000c91b14'2 (375x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__settle_int_tree+0xa@0000000000483ef7",
+    "calls": 467,
+    "annotation": "14,585 ( 0.00%)  < ???:__fn_parser__settle_int_tree+0xa@0000000000483ef7 (467x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__s_var_at+0x19@00000000004146f7",
+    "calls": 581,
+    "annotation": "14,294 ( 0.00%)  < ???:__fn_parser__s_var_at+0x19@00000000004146f7 (581x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__with_update@0000000000d1561f",
+    "calls": 386,
+    "annotation": "14,264 ( 0.00%)  < ???:__fn_ssarc__with_update@0000000000d1561f (386x) [???]"
+  },
+  {
+    "caller": "???:__fn_seminline__part_of+0x19@0000000000e5ef01'2",
+    "calls": 697,
+    "annotation": "14,125 ( 0.00%)  < ???:__fn_seminline__part_of+0x19@0000000000e5ef01'2 (697x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaprepare__finish_formed+0x14@0000000000b56afd",
+    "calls": 732,
+    "annotation": "13,908 ( 0.00%)  < ???:__fn_ssaprepare__finish_formed+0x14@0000000000b56afd (732x) [???]"
+  },
+  {
+    "caller": "???:__fn_asmcore__check_stmts+0x14@00000000009740c1'2",
+    "calls": 716,
+    "annotation": "13,604 ( 0.00%)  < ???:__fn_asmcore__check_stmts+0x14@00000000009740c1'2 (716x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__tv_obj_stmt$wrap+0xf@0000000000f911b2",
+    "calls": 707,
+    "annotation": "13,538 ( 0.00%)  < ???:__fn_parser__tv_obj_stmt$wrap+0xf@0000000000f911b2 (707x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__analysed_rows+0x5@0000000000c5e528",
+    "calls": 707,
+    "annotation": "13,433 ( 0.00%)  < ???:__fn_semsource__analysed_rows+0x5@0000000000c5e528 (707x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__inject_builtin_enums+0x5@000000000046f984",
+    "calls": 704,
+    "annotation": "13,376 ( 0.00%)  < ???:__fn_parser__inject_builtin_enums+0x5@000000000046f984 (704x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__lift__InlineCloAcc+0x14@0000000000f53219",
+    "calls": 369,
+    "annotation": "13,332 ( 0.00%)  < ???:__fn_astwalk__map_expr_acc__lift__InlineCloAcc+0x14@0000000000f53219 (369x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_const_func+0xa@0000000000af54c1",
+    "calls": 392,
+    "annotation": "13,328 ( 0.00%)  < ???:__fn_ir__op_const_func+0xa@0000000000af54c1 (392x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__elide_len_bounded_body+0x5@00000000004f6602'2",
+    "calls": 696,
+    "annotation": "13,224 ( 0.00%)  < ???:__fn_parser__elide_len_bounded_body+0x5@00000000004f6602'2 (696x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__slot_token+0xf@0000000000c97370",
+    "calls": 364,
+    "annotation": "13,132 ( 0.00%)  < ???:__fn_ssarc__slot_token+0xf@0000000000c97370 (364x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ow_count_ident+0xa@0000000000830311",
+    "calls": 691,
+    "annotation": "13,129 ( 0.00%)  < ???:__fn_checker__ow_count_ident+0xa@0000000000830311 (691x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_destructure_names+0x5@00000000004147b0",
+    "calls": 581,
+    "annotation": "13,013 ( 0.00%)  < ???:__fn_parser__parse_destructure_names+0x5@00000000004147b0 (581x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__release_helper+0xa@0000000000ca3e29",
+    "calls": 440,
+    "annotation": "12,749 ( 0.00%)  < ???:__fn_ssarc__release_helper+0xa@0000000000ca3e29 (440x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__widen_binary_operand+0x19@00000000008a9132",
+    "calls": 338,
+    "annotation": "12,722 ( 0.00%)  < ???:__fn_checker__widen_binary_operand+0x19@00000000008a9132 (338x) [???]"
+  },
+  {
+    "caller": "???:__fn_ircore__release_entry+0x14@0000000000a9cdc3",
+    "calls": 660,
+    "annotation": "12,540 ( 0.00%)  < ???:__fn_ircore__release_entry+0x14@0000000000a9cdc3 (660x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa__select_run+0xa@0000000000b321d9",
+    "calls": 656,
+    "annotation": "12,464 ( 0.00%)  < ???:__fn_ssa__select_run+0xa@0000000000b321d9 (656x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__with_row+0x14@0000000000d9d4ae",
+    "calls": 617,
+    "annotation": "12,185 ( 0.00%)  < ???:__fn_ssaunits__with_row+0x14@0000000000d9d4ae (617x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__sole_owned_base+0x14@0000000000d07508",
+    "calls": 306,
+    "annotation": "11,862 ( 0.00%)  < ???:__fn_ssarc__sole_owned_base+0x14@0000000000d07508 (306x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__c_call_contracts@0000000000c56821",
+    "calls": 585,
+    "annotation": "11,745 ( 0.00%)  < ???:__fn_semsource__c_call_contracts@0000000000c56821 (585x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__consume_array_suffix+0xa@000000000045d979",
+    "calls": 465,
+    "annotation": "11,208 ( 0.00%)  < ???:__fn_parser__consume_array_suffix+0xa@000000000045d979 (465x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__parser__TvScope+0x14@0000000000f64450",
+    "calls": 548,
+    "annotation": "10,496 ( 0.00%)  < ???:__fn_astwalk__map_exprs_acc__parser__TvScope+0x14@0000000000f64450 (548x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__expr+0xf@0000000000c0c4ab",
+    "calls": 487,
+    "annotation": "10,387 ( 0.00%)  < ???:__fn_semsource__expr+0xf@0000000000c0c4ab (487x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__lift__InlineCloAcc+0x14@0000000000f53219'2",
+    "calls": 299,
+    "annotation": "10,364 ( 0.00%)  < ???:__fn_astwalk__map_expr_acc__lift__InlineCloAcc+0x14@0000000000f53219'2 (299x) [???]"
+  },
+  {
+    "caller": "???:__fn_seminline__part_of+0x19@0000000000e5ef01",
+    "calls": 496,
+    "annotation": "10,285 ( 0.00%)  < ???:__fn_seminline__part_of+0x19@0000000000e5ef01 (496x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__view_parts+0xf@00000000007ae83f",
+    "calls": 532,
+    "annotation": "10,171 ( 0.00%)  < ???:__fn_checker__view_parts+0xf@00000000007ae83f (532x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__annot_of_expr$wrap+0xf@0000000000f9918d",
+    "calls": 528,
+    "annotation": "10,032 ( 0.00%)  < ???:__fn_checker__annot_of_expr$wrap+0xf@0000000000f9918d (528x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e065_return_roots+0x1e@0000000000851a42'2",
+    "calls": 528,
+    "annotation": "10,032 ( 0.00%)  < ???:__fn_checker__e065_return_roots+0x1e@0000000000851a42'2 (528x) [???]"
+  },
+  {
+    "caller": "???:__fn_sempair__repointed+0x14@0000000000e1b23d",
+    "calls": 288,
+    "annotation": "10,008 ( 0.00%)  < ???:__fn_sempair__repointed+0x14@0000000000e1b23d (288x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__checker__LitRewrite+0x14@0000000000f6848d'2",
+    "calls": 502,
+    "annotation": "9,538 ( 0.00%)  < ???:__fn_astwalk__map_stmts_acc_changed__checker__LitRewrite+0x14@0000000000f6848d'2 (502x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__fold_const_binaries+0x5@0000000000b0296f",
+    "calls": 310,
+    "annotation": "9,439 ( 0.00%)  < ???:__fn_ir__fold_const_binaries+0x5@0000000000b0296f (310x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__instantiate_func+0x19@000000000049c49c",
+    "calls": 480,
+    "annotation": "9,120 ( 0.00%)  < ???:__fn_parser__instantiate_func+0x19@000000000049c49c (480x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lit_signs_stmts$wrap0+0xf@0000000000f962eb",
+    "calls": 453,
+    "annotation": "8,607 ( 0.00%)  < ???:__fn_checker__lit_signs_stmts$wrap0+0xf@0000000000f962eb (453x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__rename_tv_annot+0xf@0000000000508f21",
+    "calls": 385,
+    "annotation": "8,428 ( 0.00%)  < ???:__fn_parser__rename_tv_annot+0xf@0000000000508f21 (385x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_match_expr+0x5@000000000043a047",
+    "calls": 267,
+    "annotation": "8,391 ( 0.00%)  < ???:__fn_parser__parse_match_expr+0x5@000000000043a047 (267x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__finish_arm+0x19@0000000000c16acc'2",
+    "calls": 290,
+    "annotation": "8,282 ( 0.00%)  < ???:__fn_semsource__finish_arm+0x19@0000000000c16acc'2 (290x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_str_index@0000000000af678e",
+    "calls": 239,
+    "annotation": "8,279 ( 0.00%)  < ???:__fn_ir__op_str_index@0000000000af678e (239x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e065_string_src_roots+0x1e@0000000000851bd0'2",
+    "calls": 423,
+    "annotation": "8,037 ( 0.00%)  < ???:__fn_checker__e065_string_src_roots+0x1e@0000000000851bd0'2 (423x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__builtin_variants+0x5@0000000000bd8717",
+    "calls": 409,
+    "annotation": "7,813 ( 0.00%)  < ???:__fn_semsource__builtin_variants+0x5@0000000000bd8717 (409x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssabounds__grouped_reads+0x5@0000000000e33f90",
+    "calls": 404,
+    "annotation": "7,760 ( 0.00%)  < ???:__fn_ssabounds__grouped_reads+0x5@0000000000e33f90 (404x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__checker__LitRewrite+0x14@0000000000f68159'2",
+    "calls": 402,
+    "annotation": "7,680 ( 0.00%)  < ???:__fn_astwalk__map_exprs_acc__checker__LitRewrite+0x14@0000000000f68159'2 (402x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__zero_local+0xa@0000000000c96b8f",
+    "calls": 212,
+    "annotation": "7,472 ( 0.00%)  < ???:__fn_ssarc__zero_local+0xa@0000000000c96b8f (212x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__parser__TvScope+0x14@0000000000f38e85",
+    "calls": 393,
+    "annotation": "7,467 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__parser__TvScope+0x14@0000000000f38e85 (393x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__held+0xf@0000000000d048bc",
+    "calls": 208,
+    "annotation": "7,438 ( 0.00%)  < ???:__fn_ssarc__held+0xf@0000000000d048bc (208x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__desugar_ranges_one+0x5@00000000004e5155",
+    "calls": 387,
+    "annotation": "7,353 ( 0.00%)  < ???:__fn_parser__desugar_ranges_one+0x5@00000000004e5155 (387x) [???]"
+  },
+  {
+    "caller": "???:__fn_sempair__pair_set_contract+0xa@0000000000e199ee",
+    "calls": 363,
+    "annotation": "7,317 ( 0.00%)  < ???:__fn_sempair__pair_set_contract+0xa@0000000000e199ee (363x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__checker__LitRewrite+0x14@0000000000f7271e",
+    "calls": 380,
+    "annotation": "7,220 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__checker__LitRewrite+0x14@0000000000f7271e (380x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e044_expr+0x1e@000000000084e3b5'2",
+    "calls": 376,
+    "annotation": "7,144 ( 0.00%)  < ???:__fn_checker__e044_expr+0x1e@000000000084e3b5'2 (376x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__desugar_trait_params+0xf@00000000005035bd",
+    "calls": 256,
+    "annotation": "6,985 ( 0.00%)  < ???:__fn_parser__desugar_trait_params+0xf@00000000005035bd (256x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__qualrefs_expr+0xf@0000000000aed72a'2",
+    "calls": 360,
+    "annotation": "6,840 ( 0.00%)  < ???:__fn_astwalk__qualrefs_expr+0xf@0000000000aed72a'2 (360x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__unary+0x14@0000000000be3125",
+    "calls": 344,
+    "annotation": "6,830 ( 0.00%)  < ???:__fn_semsource__unary+0x14@0000000000be3125 (344x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__sole$wrap+0xa@0000000000fb98da",
+    "calls": 351,
+    "annotation": "6,669 ( 0.00%)  < ???:__fn_ir__sole$wrap+0xa@0000000000fb98da (351x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__schema_of+0xf@0000000000c38325",
+    "calls": 305,
+    "annotation": "6,656 ( 0.00%)  < ???:__fn_semsource__schema_of+0xf@0000000000c38325 (305x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__rename_fn_type_vars+0x14@000000000050646f",
+    "calls": 340,
+    "annotation": "6,544 ( 0.00%)  < ???:__fn_parser__rename_fn_type_vars+0x14@000000000050646f (340x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__parser__TvScope+0x14@0000000000f3b15d",
+    "calls": 342,
+    "annotation": "6,540 ( 0.00%)  < ???:__fn_astwalk__map_expr_acc__parser__TvScope+0x14@0000000000f3b15d (342x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_str_data@0000000000af6569",
+    "calls": 235,
+    "annotation": "6,502 ( 0.00%)  < ???:__fn_ir__op_str_data@0000000000af6569 (235x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__hold_token+0x14@0000000000c97b6b",
+    "calls": 184,
+    "annotation": "6,457 ( 0.00%)  < ???:__fn_ssarc__hold_token+0x14@0000000000c97b6b (184x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssasem__rewrite_block@0000000000bcd315",
+    "calls": 177,
+    "annotation": "6,345 ( 0.00%)  < ???:__fn_ssasem__rewrite_block@0000000000bcd315 (177x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__resolve_dyn_traits+0x5@000000000050a775",
+    "calls": 331,
+    "annotation": "6,289 ( 0.00%)  < ???:__fn_parser__resolve_dyn_traits+0x5@000000000050a775 (331x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__slice_parts+0xa@0000000000bfaca6",
+    "calls": 320,
+    "annotation": "6,269 ( 0.00%)  < ???:__fn_semsource__slice_parts+0xa@0000000000bfaca6 (320x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__rename_tv_annot+0xf@0000000000508f21'2",
+    "calls": 281,
+    "annotation": "5,948 ( 0.00%)  < ???:__fn_parser__rename_tv_annot+0xf@0000000000508f21'2 (281x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__finalize_impl_method+0x14@000000000051edc1",
+    "calls": 244,
+    "annotation": "5,938 ( 0.00%)  < ???:__fn_parser__finalize_impl_method+0x14@000000000051edc1 (244x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__erase_view_module+0x5@00000000004fbb4f",
+    "calls": 193,
+    "annotation": "5,914 ( 0.00%)  < ???:__fn_parser__erase_view_module+0x5@00000000004fbb4f (193x) [???]"
+  },
+  {
+    "caller": "???:__fn___fern_read_file@000000000101a55f",
+    "calls": 307,
+    "annotation": "5,833 ( 0.00%)  < ???:__fn___fern_read_file@000000000101a55f (307x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__annotate_lambda_expr+0x14@00000000008823bb",
+    "calls": 303,
+    "annotation": "5,757 ( 0.00%)  < ???:__fn_checker__annotate_lambda_expr+0x14@00000000008823bb (303x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsink__sink_rereads+0xf@0000000000e63ab2",
+    "calls": 303,
+    "annotation": "5,757 ( 0.00%)  < ???:__fn_semsink__sink_rereads+0xf@0000000000e63ab2 (303x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_raw_load8@0000000000af68da",
+    "calls": 192,
+    "annotation": "5,727 ( 0.00%)  < ???:__fn_ir__op_raw_load8@0000000000af68da (192x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__arr_set_op+0x5@0000000000c868f4",
+    "calls": 152,
+    "annotation": "5,723 ( 0.00%)  < ???:__fn_ssarc__arr_set_op+0x5@0000000000c868f4 (152x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__slc_agg_roots@00000000007af244",
+    "calls": 290,
+    "annotation": "5,573 ( 0.00%)  < ???:__fn_checker__slc_agg_roots@00000000007af244 (290x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_pattern_if_branches+0xf@000000000044e572'2",
+    "calls": 165,
+    "annotation": "5,403 ( 0.00%)  < ???:__fn_parser__parse_pattern_if_branches+0xf@000000000044e572'2 (165x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__settle_to_type+0xa@0000000000521c37",
+    "calls": 186,
+    "annotation": "5,361 ( 0.00%)  < ???:__fn_parser__settle_to_type+0xa@0000000000521c37 (186x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__intrinsic_result+0xf@000000000075dc50",
+    "calls": 280,
+    "annotation": "5,320 ( 0.00%)  < ???:__fn_checker__intrinsic_result+0xf@000000000075dc50 (280x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__first_returned+0xa@000000000087a26f",
+    "calls": 279,
+    "annotation": "5,301 ( 0.00%)  < ???:__fn_checker__first_returned+0xa@000000000087a26f (279x) [???]"
+  },
+  {
+    "caller": "???:__fn___fern_io_error+0xa@0000000001014e62",
+    "calls": 276,
+    "annotation": "5,244 ( 0.00%)  < ???:__fn___fern_io_error+0xa@0000000001014e62 (276x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__trait_bound_method+0x19@00000000007da007",
+    "calls": 270,
+    "annotation": "5,130 ( 0.00%)  < ???:__fn_checker__trait_bound_method+0x19@00000000007da007 (270x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__bound_method+0xf@00000000007d9cee",
+    "calls": 270,
+    "annotation": "5,130 ( 0.00%)  < ???:__fn_checker__bound_method+0xf@00000000007d9cee (270x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__slc_string_roots@00000000007aa369",
+    "calls": 260,
+    "annotation": "5,024 ( 0.00%)  < ???:__fn_checker__slc_string_roots@00000000007aa369 (260x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__closure_lift_one@0000000000b64816",
+    "calls": 263,
+    "annotation": "4,997 ( 0.00%)  < ???:__fn_lift__closure_lift_one@0000000000b64816 (263x) [???]"
+  },
+  {
+    "caller": "???:__fn_rcsigs__inert+0x5@0000000000de3d38",
+    "calls": 260,
+    "annotation": "4,940 ( 0.00%)  < ???:__fn_rcsigs__inert+0x5@0000000000de3d38 (260x) [???]"
+  },
+  {
+    "caller": "???:__fn_asm_ir__ssa_block_inst@00000000005bf763",
+    "calls": 257,
+    "annotation": "4,883 ( 0.00%)  < ???:__fn_asm_ir__ssa_block_inst@00000000005bf763 (257x) [???]"
+  },
+  {
+    "caller": "???:__fn_seminline__aliases_of+0xf@0000000000e5965e",
+    "calls": 256,
+    "annotation": "4,864 ( 0.00%)  < ???:__fn_seminline__aliases_of+0xf@0000000000e5965e (256x) [???]"
+  },
+  {
+    "caller": "???:__fn_seminline__fields_all+0xf@0000000000e4dfec",
+    "calls": 252,
+    "annotation": "4,788 ( 0.00%)  < ???:__fn_seminline__fields_all+0xf@0000000000e4dfec (252x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__call_ret_type+0x14@0000000000482c9a",
+    "calls": 218,
+    "annotation": "4,142 ( 0.00%)  < ???:__fn_parser__call_ret_type+0x14@0000000000482c9a (218x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__bound_use+0x14@000000000049aafa",
+    "calls": 214,
+    "annotation": "4,066 ( 0.00%)  < ???:__fn_parser__bound_use+0x14@000000000049aafa (214x) [???]"
+  },
+  {
+    "caller": "???:__fn_decltypes__retained_type+0x5@0000000000b9429d",
+    "calls": 211,
+    "annotation": "4,009 ( 0.00%)  < ???:__fn_decltypes__retained_type+0x5@0000000000b9429d (211x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__lift__InlineCloAcc+0x14@0000000000f6d308",
+    "calls": 207,
+    "annotation": "3,933 ( 0.00%)  < ???:__fn_astwalk__map_stmts_acc_changed__lift__InlineCloAcc+0x14@0000000000f6d308 (207x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__route_inherited_defaults+0x5@000000000050c43d",
+    "calls": 200,
+    "annotation": "3,842 ( 0.00%)  < ???:__fn_parser__route_inherited_defaults+0x5@000000000050c43d (200x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__enum_sig+0xa@000000000087afb1",
+    "calls": 199,
+    "annotation": "3,781 ( 0.00%)  < ???:__fn_checker__enum_sig+0xa@000000000087afb1 (199x) [???]"
+  },
+  {
+    "caller": "???:__fn_ircore__sub_lifted+0xa@0000000000aa02f3",
+    "calls": 193,
+    "annotation": "3,667 ( 0.00%)  < ???:__fn_ircore__sub_lifted+0xa@0000000000aa02f3 (193x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__zero+0x5@0000000000ce877d",
+    "calls": 132,
+    "annotation": "3,621 ( 0.00%)  < ???:__fn_ssarc__zero+0x5@0000000000ce877d (132x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e049_check_assigns+0xf@00000000008438fa'2",
+    "calls": 189,
+    "annotation": "3,591 ( 0.00%)  < ???:__fn_checker__e049_check_assigns+0xf@00000000008438fa'2 (189x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__generic_scalar_own_callback+0x19@0000000000785f73",
+    "calls": 188,
+    "annotation": "3,572 ( 0.00%)  < ???:__fn_checker__generic_scalar_own_callback+0x19@0000000000785f73 (188x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_replaced+0x19@0000000000d14bd9",
+    "calls": 93,
+    "annotation": "3,552 ( 0.00%)  < ???:__fn_ssarc__drop_replaced+0x19@0000000000d14bd9 (93x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__env_type+0x19@0000000000c35340",
+    "calls": 184,
+    "annotation": "3,496 ( 0.00%)  < ???:__fn_semsource__env_type+0x19@0000000000c35340 (184x) [???]"
+  },
+  {
+    "caller": "???:__fn_consteval__evaluate+0x14@0000000000b96b5e",
+    "calls": 180,
+    "annotation": "3,420 ( 0.00%)  < ???:__fn_consteval__evaluate+0x14@0000000000b96b5e (180x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_let_stmt+0x5@000000000044a82b'2",
+    "calls": 103,
+    "annotation": "3,385 ( 0.00%)  < ???:__fn_parser__parse_let_stmt+0x5@000000000044a82b'2 (103x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__scope_variant_sig+0xa@000000000076b117",
+    "calls": 174,
+    "annotation": "3,306 ( 0.00%)  < ???:__fn_checker__scope_variant_sig+0xa@000000000076b117 (174x) [???]"
+  },
+  {
+    "caller": "???:__fn_sempair__arm_return+0x19@0000000000e0ff97",
+    "calls": 172,
+    "annotation": "3,268 ( 0.00%)  < ???:__fn_sempair__arm_return+0x19@0000000000e0ff97 (172x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__settle_lit_body+0xa@00000000008a64d1",
+    "calls": 162,
+    "annotation": "3,078 ( 0.00%)  < ???:__fn_checker__settle_lit_body+0xa@00000000008a64d1 (162x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_const_i64_text+0x5@0000000000af52c2",
+    "calls": 88,
+    "annotation": "3,058 ( 0.00%)  < ???:__fn_ir__op_const_i64_text+0x5@0000000000af52c2 (88x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__nested_fns+0x5@00000000004d63af",
+    "calls": 160,
+    "annotation": "3,040 ( 0.00%)  < ???:__fn_parser__nested_fns+0x5@00000000004d63af (160x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__t_struct_g+0xa@000000000075d384",
+    "calls": 147,
+    "annotation": "3,024 ( 0.00%)  < ???:__fn_checker__t_struct_g+0xa@000000000075d384 (147x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__intrinsic_params+0xa@000000000075f554",
+    "calls": 157,
+    "annotation": "2,983 ( 0.00%)  < ???:__fn_checker__intrinsic_params+0xa@000000000075f554 (157x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__stmts_mention+0xa@000000000044a04d",
+    "calls": 153,
+    "annotation": "2,907 ( 0.00%)  < ???:__fn_parser__stmts_mention+0xa@000000000044a04d (153x) [???]"
+  },
+  {
+    "caller": "???:__fn_sempair__test_ids+0xf@0000000000e18f24",
+    "calls": 153,
+    "annotation": "2,907 ( 0.00%)  < ???:__fn_sempair__test_ids+0xf@0000000000e18f24 (153x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__parser__TvScope+0x14@0000000000f3b15d'2",
+    "calls": 149,
+    "annotation": "2,894 ( 0.00%)  < ???:__fn_astwalk__map_expr_acc__parser__TvScope+0x14@0000000000f3b15d'2 (149x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__tv_obj_expr$wrap+0xf@0000000000f91a82'2",
+    "calls": 150,
+    "annotation": "2,850 ( 0.00%)  < ???:__fn_parser__tv_obj_expr$wrap+0xf@0000000000f91a82'2 (150x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_type_param_list+0x5@000000000046716d",
+    "calls": 144,
+    "annotation": "2,757 ( 0.00%)  < ???:__fn_parser__parse_type_param_list+0x5@000000000046716d (144x) [???]"
+  },
+  {
+    "caller": "???:__fn_sempair__term_targets+0x5@0000000000e19a8b",
+    "calls": 145,
+    "annotation": "2,755 ( 0.00%)  < ???:__fn_sempair__term_targets+0x5@0000000000e19a8b (145x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__bundle_with_prefixes+0x14@0000000000552d2d",
+    "calls": 114,
+    "annotation": "2,691 ( 0.00%)  < ???:__fn_flatten__bundle_with_prefixes+0x14@0000000000552d2d (114x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__expr+0xf@0000000000c0c4ab'2",
+    "calls": 127,
+    "annotation": "2,665 ( 0.00%)  < ???:__fn_semsource__expr+0xf@0000000000c0c4ab'2 (127x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__handle_leaves+0xa@000000000084b75e",
+    "calls": 139,
+    "annotation": "2,641 ( 0.00%)  < ???:__fn_checker__handle_leaves+0xa@000000000084b75e (139x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaunits__constants+0xa@0000000000da022a",
+    "calls": 139,
+    "annotation": "2,641 ( 0.00%)  < ???:__fn_ssaunits__constants+0xa@0000000000da022a (139x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e049_lambda_locals_nt+0x5@000000000084351d",
+    "calls": 136,
+    "annotation": "2,584 ( 0.00%)  < ???:__fn_checker__e049_lambda_locals_nt+0x5@000000000084351d (136x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__enum_argument_from_ref+0xa@000000000079b3ab",
+    "calls": 131,
+    "annotation": "2,573 ( 0.00%)  < ???:__fn_checker__enum_argument_from_ref+0xa@000000000079b3ab (131x) [???]"
+  },
+  {
+    "caller": "???:__fn_semscalarreturn__contract+0x14@0000000000dd6430",
+    "calls": 132,
+    "annotation": "2,508 ( 0.00%)  < ???:__fn_semscalarreturn__contract+0x14@0000000000dd6430 (132x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__add_builtin_struct2+0x1e@0000000000473531",
+    "calls": 132,
+    "annotation": "2,508 ( 0.00%)  < ???:__fn_parser__add_builtin_struct2+0x1e@0000000000473531 (132x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e049_body_stores+0xf@00000000008468f5",
+    "calls": 131,
+    "annotation": "2,489 ( 0.00%)  < ???:__fn_checker__e049_body_stores+0xf@00000000008468f5 (131x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__settle_const_types+0xa@0000000000529604",
+    "calls": 63,
+    "annotation": "2,478 ( 0.00%)  < ???:__fn_parser__settle_const_types+0xa@0000000000529604 (63x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__vb_join+0xa@0000000000889cd7",
+    "calls": 127,
+    "annotation": "2,476 ( 0.00%)  < ???:__fn_checker__vb_join+0xa@0000000000889cd7 (127x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__mx_fold_arms+0x1e@00000000007be071",
+    "calls": 125,
+    "annotation": "2,375 ( 0.00%)  < ???:__fn_checker__mx_fold_arms+0x1e@00000000007be071 (125x) [???]"
+  },
+  {
+    "caller": "???:__fn_semscalarreturn__record_words+0x14@0000000000dd857c",
+    "calls": 124,
+    "annotation": "2,356 ( 0.00%)  < ???:__fn_semscalarreturn__record_words+0x14@0000000000dd857c (124x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_iife_arm_values$clo0+0xf@0000000000fb2afb'2",
+    "calls": 124,
+    "annotation": "2,356 ( 0.00%)  < ???:__fn_lift__lift_iife_arm_values$clo0+0xf@0000000000fb2afb'2 (124x) [???]"
+  },
+  {
+    "caller": "???:__fn_semlower__no_reuse@0000000000aadce3",
+    "calls": 120,
+    "annotation": "2,301 ( 0.00%)  < ???:__fn_semlower__no_reuse@0000000000aadce3 (120x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__check_module_with_file+0xa@0000000000864e5b",
+    "calls": 118,
+    "annotation": "2,242 ( 0.00%)  < ???:__fn_checker__check_module_with_file+0xa@0000000000864e5b (118x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_iife_arm_values$clo0+0xf@0000000000fb2afb",
+    "calls": 112,
+    "annotation": "2,128 ( 0.00%)  < ???:__fn_lift__lift_iife_arm_values$clo0+0xf@0000000000fb2afb (112x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_iife_body@0000000000b6d122'2",
+    "calls": 108,
+    "annotation": "2,094 ( 0.00%)  < ???:__fn_lift__lift_iife_body@0000000000b6d122'2 (108x) [???]"
+  },
+  {
+    "caller": "???:__fn_semscalarreturn__call+0x19@0000000000dd695c",
+    "calls": 108,
+    "annotation": "2,052 ( 0.00%)  < ???:__fn_semscalarreturn__call+0x19@0000000000dd695c (108x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__typed_variants+0xa@0000000000c3c04e",
+    "calls": 63,
+    "annotation": "2,016 ( 0.00%)  < ???:__fn_semsource__typed_variants+0xa@0000000000c3c04e (63x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssaquotient__shared_quotients+0x5@0000000000e3b350",
+    "calls": 102,
+    "annotation": "1,980 ( 0.00%)  < ???:__fn_ssaquotient__shared_quotients+0x5@0000000000e3b350 (102x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__byte_copy_loops+0x5@0000000000c68566",
+    "calls": 104,
+    "annotation": "1,976 ( 0.00%)  < ???:__fn_semsource__byte_copy_loops+0x5@0000000000c68566 (104x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_opt_payload@0000000000af7701",
+    "calls": 57,
+    "annotation": "1,965 ( 0.00%)  < ???:__fn_ir__op_opt_payload@0000000000af7701 (57x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_opt_tag@0000000000af765b",
+    "calls": 57,
+    "annotation": "1,944 ( 0.00%)  < ???:__fn_ir__op_opt_tag@0000000000af765b (57x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e049_check_assigns+0xf@00000000008438fa",
+    "calls": 101,
+    "annotation": "1,919 ( 0.00%)  < ???:__fn_checker__e049_check_assigns+0xf@00000000008438fa (101x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_call_indirect_sig+0xa@0000000000af8e30",
+    "calls": 86,
+    "annotation": "1,886 ( 0.00%)  < ???:__fn_ir__op_call_indirect_sig+0xa@0000000000af8e30 (86x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__with_set_op+0x14@0000000000d1d037",
+    "calls": 50,
+    "annotation": "1,874 ( 0.00%)  < ???:__fn_ssarc__with_set_op+0x14@0000000000d1d037 (50x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_iife_body$clo1+0xf@0000000000fb1be8",
+    "calls": 96,
+    "annotation": "1,845 ( 0.00%)  < ???:__fn_lift__lift_iife_body$clo1+0xf@0000000000fb1be8 (96x) [???]"
+  },
+  {
+    "caller": "???:__fn_sempair__split_calls+0xf@0000000000e1c441",
+    "calls": 96,
+    "annotation": "1,824 ( 0.00%)  < ???:__fn_sempair__split_calls+0xf@0000000000e1c441 (96x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__settled_payload+0x5@0000000000bd7d53",
+    "calls": 91,
+    "annotation": "1,771 ( 0.00%)  < ???:__fn_semsource__settled_payload+0x5@0000000000bd7d53 (91x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__drops_less@0000000000c95245",
+    "calls": 48,
+    "annotation": "1,752 ( 0.00%)  < ???:__fn_ssarc__drops_less@0000000000c95245 (48x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ow_count_field_reads+0xf@0000000000830765",
+    "calls": 92,
+    "annotation": "1,748 ( 0.00%)  < ???:__fn_checker__ow_count_field_reads+0xf@0000000000830765 (92x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__e_lambda_at@00000000004143e0",
+    "calls": 90,
+    "annotation": "1,710 ( 0.00%)  < ???:__fn_parser__e_lambda_at@00000000004143e0 (90x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssasem__env_type+0xa@0000000000baf393",
+    "calls": 64,
+    "annotation": "1,699 ( 0.00%)  < ???:__fn_ssasem__env_type+0xa@0000000000baf393 (64x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__indirect_call+0x14@0000000000bfb69e",
+    "calls": 89,
+    "annotation": "1,691 ( 0.00%)  < ???:__fn_semsource__indirect_call+0x14@0000000000bfb69e (89x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__e_ident+0x5@00000000004139b6",
+    "calls": 69,
+    "annotation": "1,689 ( 0.00%)  < ???:__fn_parser__e_ident+0x5@00000000004139b6 (69x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__splice_stmts_with_lambda$clo0+0xa@0000000000faefc3",
+    "calls": 88,
+    "annotation": "1,672 ( 0.00%)  < ???:__fn_astwalk__splice_stmts_with_lambda$clo0+0xa@0000000000faefc3 (88x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__add_builtin_stream+0x5@0000000000473125",
+    "calls": 88,
+    "annotation": "1,672 ( 0.00%)  < ???:__fn_parser__add_builtin_stream+0x5@0000000000473125 (88x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__elb_mark_cond+0xf@00000000004f905f",
+    "calls": 52,
+    "annotation": "1,660 ( 0.00%)  < ???:__fn_parser__elb_mark_cond+0xf@00000000004f905f (52x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ret_diags_in_exprs+0x19@00000000007a6888'2",
+    "calls": 85,
+    "annotation": "1,615 ( 0.00%)  < ???:__fn_checker__ret_diags_in_exprs+0x19@00000000007a6888'2 (85x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lu_dies@000000000082c53f",
+    "calls": 85,
+    "annotation": "1,615 ( 0.00%)  < ???:__fn_checker__lu_dies@000000000082c53f (85x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__s_var+0xf@0000000000414624",
+    "calls": 81,
+    "annotation": "1,602 ( 0.00%)  < ???:__fn_parser__s_var+0xf@0000000000414624 (81x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__variant_ctor_type+0x14@0000000000774544",
+    "calls": 82,
+    "annotation": "1,558 ( 0.00%)  < ???:__fn_checker__variant_ctor_type+0x14@0000000000774544 (82x) [???]"
+  },
+  {
+    "caller": "???:__fn_decltypes__fn_param_decl+0xf@0000000000b94920",
+    "calls": 80,
+    "annotation": "1,520 ( 0.00%)  < ???:__fn_decltypes__fn_param_decl+0xf@0000000000b94920 (80x) [???]"
+  },
+  {
+    "caller": "???:__fn_asmcore__infer_expr_type+0xa@0000000000967495",
+    "calls": 78,
+    "annotation": "1,482 ( 0.00%)  < ???:__fn_asmcore__infer_expr_type+0xa@0000000000967495 (78x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__resolve_imports+0xf@00000000005459c5",
+    "calls": 76,
+    "annotation": "1,444 ( 0.00%)  < ???:__fn_flatten__resolve_imports+0xf@00000000005459c5 (76x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__slc_call_roots@00000000007aa8f7'2",
+    "calls": 72,
+    "annotation": "1,389 ( 0.00%)  < ???:__fn_checker__slc_call_roots@00000000007aa8f7'2 (72x) [???]"
+  },
+  {
+    "caller": "???:__fn_asmcore__ty_from_ref+0x5@0000000000961aed",
+    "calls": 73,
+    "annotation": "1,387 ( 0.00%)  < ???:__fn_asmcore__ty_from_ref+0x5@0000000000961aed (73x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__elb_loop_match+0x5@00000000004f7d24'2",
+    "calls": 73,
+    "annotation": "1,387 ( 0.00%)  < ???:__fn_parser__elb_loop_match+0x5@00000000004f7d24'2 (73x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_iife_arm_values@0000000000b6d7d3'2",
+    "calls": 72,
+    "annotation": "1,368 ( 0.00%)  < ???:__fn_lift__lift_iife_arm_values@0000000000b6d7d3'2 (72x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ow_value_arms+0x5@0000000000835d89",
+    "calls": 71,
+    "annotation": "1,349 ( 0.00%)  < ???:__fn_checker__ow_value_arms+0x5@0000000000835d89 (71x) [???]"
+  },
+  {
+    "caller": "???:__fn_constfold__elided_lambda_captures$wrap+0xa@0000000000fa4046",
+    "calls": 69,
+    "annotation": "1,311 ( 0.00%)  < ???:__fn_constfold__elided_lambda_captures$wrap+0xa@0000000000fa4046 (69x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__cell_site+0xf@0000000000d1d79d",
+    "calls": 33,
+    "annotation": "1,278 ( 0.00%)  < ???:__fn_ssarc__cell_site+0xf@0000000000d1d79d (33x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_branch_body_written+0x5@00000000004387a6",
+    "calls": 38,
+    "annotation": "1,247 ( 0.00%)  < ???:__fn_parser__parse_branch_body_written+0x5@00000000004387a6 (38x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__schema_of+0xf@0000000000c38325'2",
+    "calls": 64,
+    "annotation": "1,216 ( 0.00%)  < ???:__fn_semsource__schema_of+0xf@0000000000c38325'2 (64x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__reach_module+0x19@0000000000c6d0d0",
+    "calls": 64,
+    "annotation": "1,216 ( 0.00%)  < ???:__fn_semsource__reach_module+0x19@0000000000c6d0d0 (64x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__struct_lit_gives_way+0x14@0000000000793eac",
+    "calls": 63,
+    "annotation": "1,197 ( 0.00%)  < ???:__fn_checker__struct_lit_gives_way+0x14@0000000000793eac (63x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__Scope__array_recv_method+0xf@0000000000771e00",
+    "calls": 62,
+    "annotation": "1,178 ( 0.00%)  < ???:__fn_checker__Scope__array_recv_method+0xf@0000000000771e00 (62x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__mfns_of+0x14@0000000000474182",
+    "calls": 59,
+    "annotation": "1,163 ( 0.00%)  < ???:__fn_parser__mfns_of+0x14@0000000000474182 (59x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_iife_body@0000000000b6d122",
+    "calls": 60,
+    "annotation": "1,161 ( 0.00%)  < ???:__fn_lift__lift_iife_body@0000000000b6d122 (60x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__with_spellings+0xa@0000000000765576",
+    "calls": 57,
+    "annotation": "1,125 ( 0.00%)  < ???:__fn_checker__with_spellings+0xa@0000000000765576 (57x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e049_expr_lambdas+0xa@0000000000844cb6'2",
+    "calls": 59,
+    "annotation": "1,121 ( 0.00%)  < ???:__fn_checker__e049_expr_lambdas+0xa@0000000000844cb6'2 (59x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__settle_int_tree+0xa@0000000000483ef7'2",
+    "calls": 30,
+    "annotation": "1,116 ( 0.00%)  < ???:__fn_parser__settle_int_tree+0xa@0000000000483ef7'2 (30x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa_lift__kind_table@0000000000b4215e",
+    "calls": 56,
+    "annotation": "1,064 ( 0.00%)  < ???:__fn_ssa_lift__kind_table@0000000000b4215e (56x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__iife_scope_vars+0xa@0000000000b6efac",
+    "calls": 56,
+    "annotation": "1,064 ( 0.00%)  < ???:__fn_lift__iife_scope_vars+0xa@0000000000b6efac (56x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__settle_literal_locals_in+0xf@00000000008a80b3",
+    "calls": 54,
+    "annotation": "1,026 ( 0.00%)  < ???:__fn_checker__settle_literal_locals_in+0xf@00000000008a80b3 (54x) [???]"
+  },
+  {
+    "caller": "???:__fn_decltypes__retained_type+0x5@0000000000b9429d'2",
+    "calls": 54,
+    "annotation": "1,026 ( 0.00%)  < ???:__fn_decltypes__retained_type+0x5@0000000000b9429d'2 (54x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__resolved_checked+0x14@0000000000bd51bc",
+    "calls": 37,
+    "annotation": "1,018 ( 0.00%)  < ???:__fn_semsource__resolved_checked+0x14@0000000000bd51bc (37x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_let_else_tail+0x5@0000000000440433",
+    "calls": 49,
+    "annotation": "1,015 ( 0.00%)  < ???:__fn_parser__parse_let_else_tail+0x5@0000000000440433 (49x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__slc_agg_roots@00000000007af244'2",
+    "calls": 50,
+    "annotation": "992 ( 0.00%)  < ???:__fn_checker__slc_agg_roots@00000000007af244'2 (50x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__e_binary+0xf@0000000000413c9e",
+    "calls": 51,
+    "annotation": "969 ( 0.00%)  < ???:__fn_parser__e_binary+0xf@0000000000413c9e (51x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__e_call_at+0x14@0000000000413f64",
+    "calls": 24,
+    "annotation": "939 ( 0.00%)  < ???:__fn_parser__e_call_at+0x14@0000000000413f64 (24x) [???]"
+  },
+  {
+    "caller": "???:__fn_rtmodule__load_with+0x19@0000000000af2af1",
+    "calls": 48,
+    "annotation": "912 ( 0.00%)  < ???:__fn_rtmodule__load_with+0x19@0000000000af2af1 (48x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_func_decl+0x5@00000000004696c7'2",
+    "calls": 47,
+    "annotation": "893 ( 0.00%)  < ???:__fn_parser__parse_func_decl+0x5@00000000004696c7'2 (47x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lu_last_use_args+0xa@000000000082f666'2",
+    "calls": 47,
+    "annotation": "893 ( 0.00%)  < ???:__fn_checker__lu_last_use_args+0xa@000000000082f666'2 (47x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__scalar+0xf@0000000000cc2a9d",
+    "calls": 39,
+    "annotation": "888 ( 0.00%)  < ???:__fn_ssarc__scalar+0xf@0000000000cc2a9d (39x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__inherit_default+0xf@000000000051da02",
+    "calls": 40,
+    "annotation": "802 ( 0.00%)  < ???:__fn_parser__inherit_default+0xf@000000000051da02 (40x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__written_fields+0xf@0000000000bdd821'2",
+    "calls": 41,
+    "annotation": "800 ( 0.00%)  < ???:__fn_semsource__written_fields+0xf@0000000000bdd821'2 (41x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_iife_body$clo1+0xf@0000000000fb1be8'2",
+    "calls": 42,
+    "annotation": "798 ( 0.00%)  < ???:__fn_lift__lift_iife_body$clo1+0xf@0000000000fb1be8'2 (42x) [???]"
+  },
+  {
+    "caller": "???:__fn_asmcore__infer_call_named_type+0xf@000000000096501e",
+    "calls": 41,
+    "annotation": "779 ( 0.00%)  < ???:__fn_asmcore__infer_call_named_type+0xf@000000000096501e (41x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__bc_stmt$wrap+0xf@0000000000f8865b",
+    "calls": 40,
+    "annotation": "760 ( 0.00%)  < ???:__fn_parser__bc_stmt$wrap+0xf@0000000000f8865b (40x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmt_acc__parser__BoundUse+0x14@0000000000f2bb4d",
+    "calls": 40,
+    "annotation": "760 ( 0.00%)  < ???:__fn_astwalk__map_stmt_acc__parser__BoundUse+0x14@0000000000f2bb4d (40x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__bc_expr$wrap+0xf@0000000000f89656",
+    "calls": 40,
+    "annotation": "760 ( 0.00%)  < ???:__fn_parser__bc_expr$wrap+0xf@0000000000f89656 (40x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__merge_arms+0xf@0000000000c15f76",
+    "calls": 40,
+    "annotation": "760 ( 0.00%)  < ???:__fn_semsource__merge_arms+0xf@0000000000c15f76 (40x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__lift_iife_arm_values@0000000000b6d7d3",
+    "calls": 40,
+    "annotation": "760 ( 0.00%)  < ???:__fn_lift__lift_iife_arm_values@0000000000b6d7d3 (40x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__unique_loops+0x5@0000000000c65bb7",
+    "calls": 39,
+    "annotation": "741 ( 0.00%)  < ???:__fn_semsource__unique_loops+0x5@0000000000c65bb7 (39x) [???]"
+  },
+  {
+    "caller": "???:__fn_ownership__index+0x5@0000000000e425a7",
+    "calls": 39,
+    "annotation": "741 ( 0.00%)  < ???:__fn_ownership__index+0x5@0000000000e425a7 (39x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__lend+0x14@0000000000bfb377",
+    "calls": 37,
+    "annotation": "724 ( 0.00%)  < ???:__fn_semsource__lend+0x14@0000000000bfb377 (37x) [???]"
+  },
+  {
+    "caller": "???:__fn_semscalarreturn__read_of_parts+0x14@0000000000dd7bf8",
+    "calls": 38,
+    "annotation": "722 ( 0.00%)  < ???:__fn_semscalarreturn__read_of_parts+0x14@0000000000dd7bf8 (38x) [???]"
+  },
+  {
+    "caller": "???:__fn_modloader__tangle_module+0xf@000000000094d1ef",
+    "calls": 38,
+    "annotation": "722 ( 0.00%)  < ???:__fn_modloader__tangle_module+0xf@000000000094d1ef (38x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__mangle_sigs+0xa@000000000055044b",
+    "calls": 19,
+    "annotation": "718 ( 0.00%)  < ???:__fn_flatten__mangle_sigs+0xa@000000000055044b (19x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_block_items+0x5@0000000000436468",
+    "calls": 26,
+    "annotation": "704 ( 0.00%)  < ???:__fn_parser__parse_block_items+0x5@0000000000436468 (26x) [???]"
+  },
+  {
+    "caller": "???:__fn_irtables__sig_reg_of+0x5@0000000000b0eb2f",
+    "calls": 35,
+    "annotation": "665 ( 0.00%)  < ???:__fn_irtables__sig_reg_of+0x5@0000000000b0eb2f (35x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__s_if+0xf@00000000004157f4",
+    "calls": 34,
+    "annotation": "646 ( 0.00%)  < ???:__fn_parser__s_if+0xf@00000000004157f4 (34x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__known_fields+0x14@0000000000c961f7",
+    "calls": 34,
+    "annotation": "646 ( 0.00%)  < ???:__fn_ssarc__known_fields+0x14@0000000000c961f7 (34x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__e_number+0xf@0000000000413415",
+    "calls": 34,
+    "annotation": "646 ( 0.00%)  < ???:__fn_parser__e_number+0xf@0000000000413415 (34x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_stmts_acc_changed__checker__LitRewrite+0x14@0000000000f6848d",
+    "calls": 34,
+    "annotation": "646 ( 0.00%)  < ???:__fn_astwalk__map_stmts_acc_changed__checker__LitRewrite+0x14@0000000000f6848d (34x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__unsettled_marked_at+0x19@00000000007bf239'2",
+    "calls": 32,
+    "annotation": "608 ( 0.00%)  < ???:__fn_checker__unsettled_marked_at+0x19@00000000007bf239'2 (32x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__binary_result_type+0x14@0000000000791da8",
+    "calls": 32,
+    "annotation": "608 ( 0.00%)  < ???:__fn_checker__binary_result_type+0x14@0000000000791da8 (32x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__ensure_annotated+0x5@00000000008873cc",
+    "calls": 32,
+    "annotation": "608 ( 0.00%)  < ???:__fn_checker__ensure_annotated+0x5@00000000008873cc (32x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_raw_store_ptr@0000000000af6980",
+    "calls": 32,
+    "annotation": "608 ( 0.00%)  < ???:__fn_ir__op_raw_store_ptr@0000000000af6980 (32x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_raw_store8@0000000000af6834",
+    "calls": 32,
+    "annotation": "608 ( 0.00%)  < ???:__fn_ir__op_raw_store8@0000000000af6834 (32x) [???]"
+  },
+  {
+    "caller": "???:__fn_queue_imports+0x1e@0000000000e9f2c8",
+    "calls": 31,
+    "annotation": "589 ( 0.00%)  < ???:__fn_queue_imports+0x1e@0000000000e9f2c8 (31x) [???]"
+  },
+  {
+    "caller": "???:__fn_visibility__vis_ctx@00000000009527e6",
+    "calls": 31,
+    "annotation": "589 ( 0.00%)  < ???:__fn_visibility__vis_ctx@00000000009527e6 (31x) [???]"
+  },
+  {
+    "caller": "???:__fn_governing_manifest+0x5@0000000000ea7de2",
+    "calls": 31,
+    "annotation": "589 ( 0.00%)  < ???:__fn_governing_manifest+0x5@0000000000ea7de2 (31x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__e_call+0xa@0000000000413ec0",
+    "calls": 18,
+    "annotation": "573 ( 0.00%)  < ???:__fn_parser__e_call+0xa@0000000000413ec0 (18x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__mono_infer+0xf@0000000000484bdf",
+    "calls": 30,
+    "annotation": "570 ( 0.00%)  < ???:__fn_parser__mono_infer+0xf@0000000000484bdf (30x) [???]"
+  },
+  {
+    "caller": "???:__fn_imported_parse_findings+0x5@0000000000ecf123",
+    "calls": 30,
+    "annotation": "570 ( 0.00%)  < ???:__fn_imported_parse_findings+0x5@0000000000ecf123 (30x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__loop_can_break+0xf@00000000007c7b90'2",
+    "calls": 30,
+    "annotation": "570 ( 0.00%)  < ???:__fn_checker__loop_can_break+0xf@00000000007c7b90'2 (30x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__view_index+0x5@00000000007a8e4b",
+    "calls": 28,
+    "annotation": "553 ( 0.00%)  < ???:__fn_checker__view_index+0x5@00000000007a8e4b (28x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__refused+0xa@0000000000bd052b",
+    "calls": 26,
+    "annotation": "536 ( 0.00%)  < ???:__fn_semsource__refused+0xa@0000000000bd052b (26x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssasem__contracts_of+0x5@0000000000bad610",
+    "calls": 26,
+    "annotation": "494 ( 0.00%)  < ???:__fn_ssasem__contracts_of+0x5@0000000000bad610 (26x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__i32+0x14@0000000000f7f26e",
+    "calls": 26,
+    "annotation": "494 ( 0.00%)  < ???:__fn_astwalk__map_expr_acc__i32+0x14@0000000000f7f26e (26x) [???]"
+  },
+  {
+    "caller": "???:__fn_rcsigs__sig_also+0x19@0000000000de3c8f",
+    "calls": 26,
+    "annotation": "494 ( 0.00%)  < ???:__fn_rcsigs__sig_also+0x19@0000000000de3c8f (26x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__loop_can_break+0xf@00000000007c7b90",
+    "calls": 26,
+    "annotation": "494 ( 0.00%)  < ???:__fn_checker__loop_can_break+0xf@00000000007c7b90 (26x) [???]"
+  },
+  {
+    "caller": "???:__fn_treeshake__refset_of+0x5@00000000009b6b6c",
+    "calls": 26,
+    "annotation": "494 ( 0.00%)  < ???:__fn_treeshake__refset_of+0x5@00000000009b6b6c (26x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__first_returned+0xa@000000000087a26f'2",
+    "calls": 25,
+    "annotation": "475 ( 0.00%)  < ???:__fn_checker__first_returned+0xa@000000000087a26f'2 (25x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__trait_assoc_req+0x14@00000000007d68e9",
+    "calls": 20,
+    "annotation": "464 ( 0.00%)  < ???:__fn_checker__trait_assoc_req+0x14@00000000007d68e9 (20x) [???]"
+  },
+  {
+    "caller": "???:__fn_physicalbody__collection+0x5@0000000000b55470",
+    "calls": 24,
+    "annotation": "456 ( 0.00%)  < ???:__fn_physicalbody__collection+0x5@0000000000b55470 (24x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_if_chain+0x5@0000000000439403",
+    "calls": 12,
+    "annotation": "438 ( 0.00%)  < ???:__fn_parser__parse_if_chain+0x5@0000000000439403 (12x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__slc_string_roots@00000000007aa369'2",
+    "calls": 22,
+    "annotation": "418 ( 0.00%)  < ???:__fn_checker__slc_string_roots@00000000007aa369'2 (22x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__cycle_from+0xf@0000000000544bf0'2",
+    "calls": 21,
+    "annotation": "399 ( 0.00%)  < ???:__fn_flatten__cycle_from+0xf@0000000000544bf0'2 (21x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lambda_exits+0xf@00000000007b469e",
+    "calls": 20,
+    "annotation": "380 ( 0.00%)  < ???:__fn_checker__lambda_exits+0xf@00000000007b469e (20x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__fold_exits+0x5@00000000007b3d35",
+    "calls": 20,
+    "annotation": "380 ( 0.00%)  < ???:__fn_checker__fold_exits+0x5@00000000007b3d35 (20x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lret_expr+0x14@00000000007b4ec2'2",
+    "calls": 20,
+    "annotation": "380 ( 0.00%)  < ???:__fn_checker__lret_expr+0x14@00000000007b4ec2'2 (20x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lit_stmt+0xf@000000000089f82a",
+    "calls": 20,
+    "annotation": "380 ( 0.00%)  < ???:__fn_checker__lit_stmt+0xf@000000000089f82a (20x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__expr_can_break+0xf@00000000007c8054",
+    "calls": 20,
+    "annotation": "380 ( 0.00%)  < ???:__fn_checker__expr_can_break+0xf@00000000007c8054 (20x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__bound_type+0xa@00000000007af099",
+    "calls": 10,
+    "annotation": "358 ( 0.00%)  < ???:__fn_checker__bound_type+0xa@00000000007af099 (10x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_exit@0000000000af784d",
+    "calls": 10,
+    "annotation": "358 ( 0.00%)  < ???:__fn_ir__op_exit@0000000000af784d (10x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_str_from_bytes@0000000000af601c",
+    "calls": 12,
+    "annotation": "354 ( 0.00%)  < ???:__fn_ir__op_str_from_bytes@0000000000af601c (12x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__value_arm@0000000000bfc523",
+    "calls": 16,
+    "annotation": "346 ( 0.00%)  < ???:__fn_semsource__value_arm@0000000000bfc523 (16x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__into_address+0xa@0000000000cc9381",
+    "calls": 18,
+    "annotation": "342 ( 0.00%)  < ???:__fn_ssarc__into_address+0xa@0000000000cc9381 (18x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__strength_pair+0xa@0000000000b05c63",
+    "calls": 18,
+    "annotation": "342 ( 0.00%)  < ???:__fn_ir__strength_pair+0xa@0000000000b05c63 (18x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__s_assign+0xa@00000000004161b6",
+    "calls": 17,
+    "annotation": "323 ( 0.00%)  < ???:__fn_parser__s_assign+0xa@00000000004161b6 (17x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lit_bound_typevar+0x14@0000000000896bcc",
+    "calls": 16,
+    "annotation": "304 ( 0.00%)  < ???:__fn_checker__lit_bound_typevar+0x14@0000000000896bcc (16x) [???]"
+  },
+  {
+    "caller": "???:__fn_irtables__struct_tab+0x5@0000000000b0f039",
+    "calls": 16,
+    "annotation": "304 ( 0.00%)  < ???:__fn_irtables__struct_tab+0x5@0000000000b0f039 (16x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_exprs_acc__parser__TvScope+0x14@0000000000f64450'2",
+    "calls": 16,
+    "annotation": "304 ( 0.00%)  < ???:__fn_astwalk__map_exprs_acc__parser__TvScope+0x14@0000000000f64450'2 (16x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__e065_call_roots+0x1e@000000000085214e",
+    "calls": 16,
+    "annotation": "304 ( 0.00%)  < ???:__fn_checker__e065_call_roots+0x1e@000000000085214e (16x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__address_widen+0xa@0000000000bdf3be",
+    "calls": 16,
+    "annotation": "304 ( 0.00%)  < ???:__fn_semsource__address_widen+0xa@0000000000bdf3be (16x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__whole_focus+0x5@00000000008863de",
+    "calls": 14,
+    "annotation": "287 ( 0.00%)  < ???:__fn_checker__whole_focus+0x5@00000000008863de (14x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__unary+0x14@0000000000be3125'2",
+    "calls": 14,
+    "annotation": "287 ( 0.00%)  < ???:__fn_semsource__unary+0x14@0000000000be3125'2 (14x) [???]"
+  },
+  {
+    "caller": "???:__fn_rcmemo__off@0000000000babf04",
+    "calls": 15,
+    "annotation": "285 ( 0.00%)  < ???:__fn_rcmemo__off@0000000000babf04 (15x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssa__leaves_of+0x5@0000000000b2fca4",
+    "calls": 15,
+    "annotation": "285 ( 0.00%)  < ???:__fn_ssa__leaves_of+0x5@0000000000b2fca4 (15x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lit_stmt+0xf@000000000089f82a'2",
+    "calls": 14,
+    "annotation": "266 ( 0.00%)  < ???:__fn_checker__lit_stmt+0xf@000000000089f82a'2 (14x) [???]"
+  },
+  {
+    "caller": "???:__fn_semlower__pure_rows+0xa@0000000000ab5807",
+    "calls": 14,
+    "annotation": "266 ( 0.00%)  < ???:__fn_semlower__pure_rows+0xa@0000000000ab5807 (14x) [???]"
+  },
+  {
+    "caller": "???:__fn_irverifygate__gate_unreported+0xf@0000000000b13aef",
+    "calls": 13,
+    "annotation": "247 ( 0.00%)  < ???:__fn_irverifygate__gate_unreported+0xf@0000000000b13aef (13x) [???]"
+  },
+  {
+    "caller": "???:__fn_semfuse__context+0x1e@0000000000e6bad9",
+    "calls": 13,
+    "annotation": "247 ( 0.00%)  < ???:__fn_semfuse__context+0x1e@0000000000e6bad9 (13x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__no_helpers@0000000000ca66c0",
+    "calls": 13,
+    "annotation": "247 ( 0.00%)  < ???:__fn_ssarc__no_helpers@0000000000ca66c0 (13x) [???]"
+  },
+  {
+    "caller": "???:__fn_semlower__inferred_rows+0x14@0000000000ab6362",
+    "calls": 13,
+    "annotation": "247 ( 0.00%)  < ???:__fn_semlower__inferred_rows+0x14@0000000000ab6362 (13x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_alloc_u8@0000000000af5e89",
+    "calls": 7,
+    "annotation": "238 ( 0.00%)  < ???:__fn_ir__op_alloc_u8@0000000000af5e89 (7x) [???]"
+  },
+  {
+    "caller": "???:__fn_treeshake__treeshake_roots+0xa@00000000009b850c",
+    "calls": 12,
+    "annotation": "228 ( 0.00%)  < ???:__fn_treeshake__treeshake_roots+0xa@00000000009b850c (12x) [???]"
+  },
+  {
+    "caller": "???:__fn_typeinfo__mixed_integer_join+0xa@0000000000af218c",
+    "calls": 12,
+    "annotation": "228 ( 0.00%)  < ???:__fn_typeinfo__mixed_integer_join+0xa@0000000000af218c (12x) [???]"
+  },
+  {
+    "caller": "???:__fn_semlower__runtime_module_lowering$wrap+0xa@0000000000fab5f2",
+    "calls": 12,
+    "annotation": "228 ( 0.00%)  < ???:__fn_semlower__runtime_module_lowering$wrap+0xa@0000000000fab5f2 (12x) [???]"
+  },
+  {
+    "caller": "???:__fn_physicalbody__metadata+0x5@0000000000b555df",
+    "calls": 12,
+    "annotation": "228 ( 0.00%)  < ???:__fn_physicalbody__metadata+0x5@0000000000b555df (12x) [???]"
+  },
+  {
+    "caller": "???:__fn_rtmodule__load_bound+0x14@0000000000af2cca",
+    "calls": 12,
+    "annotation": "228 ( 0.00%)  < ???:__fn_rtmodule__load_bound+0x14@0000000000af2cca (12x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__substitute_consts+0x14@0000000000aeebd8",
+    "calls": 12,
+    "annotation": "228 ( 0.00%)  < ???:__fn_astwalk__substitute_consts+0x14@0000000000aeebd8 (12x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__invoke_method+0x1e@0000000000c07021",
+    "calls": 12,
+    "annotation": "228 ( 0.00%)  < ???:__fn_semsource__invoke_method+0x1e@0000000000c07021 (12x) [???]"
+  },
+  {
+    "caller": "???:__fn_physicalbody__lowered_origins+0xa@0000000000b5571a",
+    "calls": 12,
+    "annotation": "228 ( 0.00%)  < ???:__fn_physicalbody__lowered_origins+0xa@0000000000b5571a (12x) [???]"
+  },
+  {
+    "caller": "???:__fn_rtmodule__load_files+0x14@0000000000af2ed8",
+    "calls": 12,
+    "annotation": "228 ( 0.00%)  < ???:__fn_rtmodule__load_files+0x14@0000000000af2ed8 (12x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__bind_stmt+0xa@0000000000796ca3",
+    "calls": 12,
+    "annotation": "228 ( 0.00%)  < ???:__fn_checker__bind_stmt+0xa@0000000000796ca3 (12x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__mx_elem_store+0xa@00000000007bc9cb",
+    "calls": 12,
+    "annotation": "228 ( 0.00%)  < ???:__fn_checker__mx_elem_store+0xa@00000000007bc9cb (12x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__value_chain_expr+0x14@0000000000438f16",
+    "calls": 8,
+    "annotation": "215 ( 0.00%)  < ???:__fn_parser__value_chain_expr+0x14@0000000000438f16 (8x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__type_from_ref_names+0xa@000000000079b485'2",
+    "calls": 9,
+    "annotation": "213 ( 0.00%)  < ???:__fn_checker__type_from_ref_names+0xa@000000000079b485'2 (9x) [???]"
+  },
+  {
+    "caller": "???:__fn_modloader__read_module+0xa@000000000094c8a5",
+    "calls": 11,
+    "annotation": "209 ( 0.00%)  < ???:__fn_modloader__read_module+0xa@000000000094c8a5 (11x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_branch_body+0x5@00000000004385d1",
+    "calls": 11,
+    "annotation": "209 ( 0.00%)  < ???:__fn_parser__parse_branch_body+0x5@00000000004385d1 (11x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssabounds__nonneg_quotients+0x5@0000000000e327fe",
+    "calls": 8,
+    "annotation": "194 ( 0.00%)  < ???:__fn_ssabounds__nonneg_quotients+0x5@0000000000e327fe (8x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__gcall_open_tvars+0xa@000000000089712d",
+    "calls": 10,
+    "annotation": "190 ( 0.00%)  < ???:__fn_checker__gcall_open_tvars+0xa@000000000089712d (10x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__mono_call_expected+0x19@000000000048f528'2",
+    "calls": 10,
+    "annotation": "190 ( 0.00%)  < ???:__fn_parser__mono_call_expected+0x19@000000000048f528'2 (10x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__borrowed_with_base+0x19@0000000000d1b5cf",
+    "calls": 9,
+    "annotation": "171 ( 0.00%)  < ???:__fn_ssarc__borrowed_with_base+0x19@0000000000d1b5cf (9x) [???]"
+  },
+  {
+    "caller": "???:__fn_by_position+0xa@0000000000e93b28",
+    "calls": 9,
+    "annotation": "171 ( 0.00%)  < ???:__fn_by_position+0xa@0000000000e93b28 (9x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__cycle_from+0xf@0000000000544bf0",
+    "calls": 8,
+    "annotation": "152 ( 0.00%)  < ???:__fn_flatten__cycle_from+0xf@0000000000544bf0 (8x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__expr_type+0xa@00000000008794e2",
+    "calls": 8,
+    "annotation": "152 ( 0.00%)  < ???:__fn_checker__expr_type+0xa@00000000008794e2 (8x) [???]"
+  },
+  {
+    "caller": "???:__fn_constfold__keep_expr$wrap+0xf@0000000000fa38c7'2",
+    "calls": 8,
+    "annotation": "152 ( 0.00%)  < ???:__fn_constfold__keep_expr$wrap+0xf@0000000000fa38c7'2 (8x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__valueless_branch_tail+0x5@0000000000437aba'2",
+    "calls": 8,
+    "annotation": "152 ( 0.00%)  < ???:__fn_parser__valueless_branch_tail+0x5@0000000000437aba'2 (8x) [???]"
+  },
+  {
+    "caller": "???:__fn_constfold__prune_arm+0x5@000000000093ec82'2",
+    "calls": 8,
+    "annotation": "152 ( 0.00%)  < ???:__fn_constfold__prune_arm+0x5@000000000093ec82'2 (8x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__settles_to+0xf@00000000007d1762'2",
+    "calls": 8,
+    "annotation": "152 ( 0.00%)  < ???:__fn_checker__settles_to+0xf@00000000007d1762'2 (8x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__capture_scalar_words+0xa@0000000000d2cbda",
+    "calls": 4,
+    "annotation": "139 ( 0.00%)  < ???:__fn_ssarc__capture_scalar_words+0xa@0000000000d2cbda (4x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_const_bytes+0x5@0000000000af882e",
+    "calls": 4,
+    "annotation": "139 ( 0.00%)  < ???:__fn_ir__op_const_bytes+0x5@0000000000af882e (4x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__intrinsic_site+0xa@0000000000d61a04",
+    "calls": 6,
+    "annotation": "135 ( 0.00%)  < ???:__fn_ssarc__intrinsic_site+0xa@0000000000d61a04 (6x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__lit_type_demand+0xf@000000000089b2c2",
+    "calls": 6,
+    "annotation": "114 ( 0.00%)  < ???:__fn_checker__lit_type_demand+0xf@000000000089b2c2 (6x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__i32+0x14@0000000000f7f26e'2",
+    "calls": 6,
+    "annotation": "114 ( 0.00%)  < ???:__fn_astwalk__map_expr_acc__i32+0x14@0000000000f7f26e'2 (6x) [???]"
+  },
+  {
+    "caller": "???:__fn_semscalarreturn__lanes_of+0x5@0000000000dd6bb6",
+    "calls": 6,
+    "annotation": "114 ( 0.00%)  < ???:__fn_semscalarreturn__lanes_of+0x5@0000000000dd6bb6 (6x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__destination_type+0xf@0000000000bd9fd0",
+    "calls": 6,
+    "annotation": "114 ( 0.00%)  < ???:__fn_semsource__destination_type+0xf@0000000000bd9fd0 (6x) [???]"
+  },
+  {
+    "caller": "???:__fn_platforms__for_target+0x5@00000000009403ef",
+    "calls": 5,
+    "annotation": "95 ( 0.00%)  < ???:__fn_platforms__for_target+0x5@00000000009403ef (5x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__ilc_keep_expr$wrap+0xf@0000000000fb38b5",
+    "calls": 5,
+    "annotation": "95 ( 0.00%)  < ???:__fn_lift__ilc_keep_expr$wrap+0xf@0000000000fb38b5 (5x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__stmt_ret_diags+0x19@00000000007a7cf5",
+    "calls": 5,
+    "annotation": "95 ( 0.00%)  < ???:__fn_checker__stmt_ret_diags+0x19@00000000007a7cf5 (5x) [???]"
+  },
+  {
+    "caller": "???:__fern_args@00000000010111b4",
+    "calls": 1,
+    "annotation": "94 ( 0.00%)  < ???:__fern_args@00000000010111b4 (1x) [???]"
+  },
+  {
+    "caller": "???:__fn___fern_read_file_bytes_u8@000000000101ac93",
+    "calls": 2,
+    "annotation": "84 ( 0.00%)  < ???:__fn___fern_read_file_bytes_u8@000000000101ac93 (2x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssarc__drop_value+0x19@0000000000c90ae2'2",
+    "calls": 2,
+    "annotation": "80 ( 0.00%)  < ???:__fn_ssarc__drop_value+0x19@0000000000c90ae2'2 (2x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_mismatch@0000000000af7085",
+    "calls": 3,
+    "annotation": "78 ( 0.00%)  < ???:__fn_ir__op_mismatch@0000000000af7085 (3x) [???]"
+  },
+  {
+    "caller": "???:__fn_lift__passthrough_array_literal+0xa@0000000000b6dbb2",
+    "calls": 4,
+    "annotation": "76 ( 0.00%)  < ???:__fn_lift__passthrough_array_literal+0xa@0000000000b6dbb2 (4x) [???]"
+  },
+  {
+    "caller": "???:__fn_read_flag+0xa@0000000000ea167a",
+    "calls": 4,
+    "annotation": "76 ( 0.00%)  < ???:__fn_read_flag+0xa@0000000000ea167a (4x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_load_i64@0000000000af620e",
+    "calls": 4,
+    "annotation": "76 ( 0.00%)  < ???:__fn_ir__op_load_i64@0000000000af620e (4x) [???]"
+  },
+  {
+    "caller": "???:__fn_constfold__prune_arm+0x5@000000000093ec82",
+    "calls": 4,
+    "annotation": "76 ( 0.00%)  < ???:__fn_constfold__prune_arm+0x5@000000000093ec82 (4x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__settles_to+0xf@00000000007d1762",
+    "calls": 4,
+    "annotation": "76 ( 0.00%)  < ???:__fn_checker__settles_to+0xf@00000000007d1762 (4x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_load_i32@0000000000af6168",
+    "calls": 4,
+    "annotation": "76 ( 0.00%)  < ???:__fn_ir__op_load_i32@0000000000af6168 (4x) [???]"
+  },
+  {
+    "caller": "???:__fn_asmcore__new_state@000000000095de11",
+    "calls": 4,
+    "annotation": "76 ( 0.00%)  < ???:__fn_asmcore__new_state@000000000095de11 (4x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__tv_obj_ident+0xa@00000000005086b3",
+    "calls": 4,
+    "annotation": "76 ( 0.00%)  < ???:__fn_parser__tv_obj_ident+0xa@00000000005086b3 (4x) [???]"
+  },
+  {
+    "caller": "???:__fn_semscalarreturn__option_payload+0xa@0000000000dd740c",
+    "calls": 4,
+    "annotation": "76 ( 0.00%)  < ???:__fn_semscalarreturn__option_payload+0xa@0000000000dd740c (4x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssasem__bytes_roots+0x14@0000000000bbec14'2",
+    "calls": 2,
+    "annotation": "59 ( 0.00%)  < ???:__fn_ssasem__bytes_roots+0x14@0000000000bbec14'2 (2x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__elb_mark_cond+0xf@00000000004f905f'2",
+    "calls": 2,
+    "annotation": "59 ( 0.00%)  < ???:__fn_parser__elb_mark_cond+0xf@00000000004f905f'2 (2x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__packed_bytes+0x14@0000000000bda151",
+    "calls": 3,
+    "annotation": "57 ( 0.00%)  < ???:__fn_semsource__packed_bytes+0x14@0000000000bda151 (3x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_let_else_tail+0x5@0000000000440433'2",
+    "calls": 3,
+    "annotation": "57 ( 0.00%)  < ???:__fn_parser__parse_let_else_tail+0x5@0000000000440433'2 (3x) [???]"
+  },
+  {
+    "caller": "???:__fn_entry_sources+0xa@0000000000eb9885",
+    "calls": 3,
+    "annotation": "57 ( 0.00%)  < ???:__fn_entry_sources+0xa@0000000000eb9885 (3x) [???]"
+  },
+  {
+    "caller": "???:__fn_sembytecopy__index+0x5@0000000000e43731",
+    "calls": 3,
+    "annotation": "57 ( 0.00%)  < ???:__fn_sembytecopy__index+0x5@0000000000e43731 (3x) [???]"
+  },
+  {
+    "caller": "???:__fn___fern_env@00000000010244fa",
+    "calls": 3,
+    "annotation": "57 ( 0.00%)  < ???:__fn___fern_env@00000000010244fa (3x) [???]"
+  },
+  {
+    "caller": "???:__fn_lexer__decode_utf8+0xf@0000000000409584",
+    "calls": 3,
+    "annotation": "57 ( 0.00%)  < ???:__fn_lexer__decode_utf8+0xf@0000000000409584 (3x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__parse_block_or_stmt+0x5@0000000000442284",
+    "calls": 3,
+    "annotation": "57 ( 0.00%)  < ???:__fn_parser__parse_block_or_stmt+0x5@0000000000442284 (3x) [???]"
+  },
+  {
+    "caller": "???:__fn_main@0000000000ea4299",
+    "calls": 1,
+    "annotation": "40 ( 0.00%)  < ???:__fn_main@0000000000ea4299 (1x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__imported_enums+0xa@00000000005442d5",
+    "calls": 2,
+    "annotation": "38 ( 0.00%)  < ???:__fn_flatten__imported_enums+0xa@00000000005442d5 (2x) [???]"
+  },
+  {
+    "caller": "???:__fn_flatten__import_graph+0xf@00000000005449b6",
+    "calls": 2,
+    "annotation": "38 ( 0.00%)  < ???:__fn_flatten__import_graph+0xf@00000000005449b6 (2x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__me_mono_enums+0x5@00000000004c6478",
+    "calls": 2,
+    "annotation": "38 ( 0.00%)  < ???:__fn_parser__me_mono_enums+0x5@00000000004c6478 (2x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_store_i64@0000000000af62b4",
+    "calls": 2,
+    "annotation": "38 ( 0.00%)  < ???:__fn_ir__op_store_i64@0000000000af62b4 (2x) [???]"
+  },
+  {
+    "caller": "???:__fn_irverifygate__open_memo+0x5@0000000000b146bf",
+    "calls": 1,
+    "annotation": "19 ( 0.00%)  < ???:__fn_irverifygate__open_memo+0x5@0000000000b146bf (1x) [???]"
+  },
+  {
+    "caller": "???:__fn_semsource__settled_in+0xa@0000000000bd7e6d",
+    "calls": 1,
+    "annotation": "19 ( 0.00%)  < ???:__fn_semsource__settled_in+0xa@0000000000bd7e6d (1x) [???]"
+  },
+  {
+    "caller": "???:__fn_ssasem__bytes_roots+0x14@0000000000bbec14",
+    "calls": 1,
+    "annotation": "19 ( 0.00%)  < ???:__fn_ssasem__bytes_roots+0x14@0000000000bbec14 (1x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_f64_from_bits@0000000000af5788",
+    "calls": 1,
+    "annotation": "19 ( 0.00%)  < ???:__fn_ir__op_f64_from_bits@0000000000af5788 (1x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_const_f64_text+0x5@0000000000af5b30",
+    "calls": 1,
+    "annotation": "19 ( 0.00%)  < ???:__fn_ir__op_const_f64_text+0x5@0000000000af5b30 (1x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__Scope__bind_inferred+0xf@0000000000768ec9",
+    "calls": 1,
+    "annotation": "19 ( 0.00%)  < ???:__fn_checker__Scope__bind_inferred+0xf@0000000000768ec9 (1x) [???]"
+  },
+  {
+    "caller": "???:__fn_checker__uninferred_method_diags+0x19@000000000078640b",
+    "calls": 1,
+    "annotation": "19 ( 0.00%)  < ???:__fn_checker__uninferred_method_diags+0x19@000000000078640b (1x) [???]"
+  },
+  {
+    "caller": "???:__fn_ir__op_funary+0x5@0000000000af5636",
+    "calls": 1,
+    "annotation": "19 ( 0.00%)  < ???:__fn_ir__op_funary+0x5@0000000000af5636 (1x) [???]"
+  },
+  {
+    "caller": "???:__fn_parser__ms_module+0x5@00000000004b0ee2",
+    "calls": 1,
+    "annotation": "19 ( 0.00%)  < ???:__fn_parser__ms_module+0x5@00000000004b0ee2 (1x) [???]"
+  },
+  {
+    "caller": "???:__fn_astwalk__map_expr_acc__constfold__TargetAcc+0x14@0000000000f815bf",
+    "calls": 1,
+    "annotation": "19 ( 0.00%)  < ???:__fn_astwalk__map_expr_acc__constfold__TargetAcc+0x14@0000000000f815bf (1x) [???]"
+  },
+  {
+    "caller": "???:__fn_constfold__fold_node$wrap+0xa@0000000000fa23dd",
+    "calls": 1,
+    "annotation": "19 ( 0.00%)  < ???:__fn_constfold__fold_node$wrap+0xa@0000000000fa23dd (1x) [???]"
+  }
+]

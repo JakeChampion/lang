@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"math"
+	"math/big"
 	"math/bits"
 	"os"
 	"os/exec"
@@ -127,6 +129,11 @@ function main(): i32 {
 		{
 			name: "fern_runtime_mulhi",
 			src:  wasmRuntimeMulhiProgram(),
+			want: 0,
+		},
+		{
+			name: "fern_runtime_mulhi_signed",
+			src:  wasmRuntimeSignedMulhiProgram(),
 			want: 0,
 		},
 		{
@@ -282,6 +289,13 @@ function main(): i32 { let gs: (() => string)[] = [(): string => "ab" + "c"]; re
 		} else if strings.Contains(string(wat), "(func $__fern_mulhi_u64 ") {
 			t.Fatal("an unrelated module contains the high multiplication runtime helper")
 		}
+		if strings.HasPrefix(tag, "fern_runtime_mulhi_signed") {
+			if strings.Count(string(wat), "(func $__fern_mulhi_s64 ") != 1 || !strings.Contains(string(wat), "(func $__fern_mulhi_s64 (param i64) (param i64) (result i64)") {
+				t.Fatal("signed high multiplication does not use one ordinary Fern function with the i64 ABI")
+			}
+		} else if strings.Contains(string(wat), "(func $__fern_mulhi_s64 ") {
+			t.Fatal("an unrelated module contains the signed high multiplication runtime helper")
+		}
 
 		for _, name := range []string{"scan_set", "count_runs", "scan_set_bytes", "count_runs_bytes"} {
 			symbol := "(func $__fern_" + name + " "
@@ -388,6 +402,33 @@ func wasmRuntimeMulhiProgram() string {
 	}
 	src.WriteString("return 0;\n}\n")
 	return src.String()
+}
+
+// The checked i64 product is the one reader of the signed high half.
+func wasmRuntimeSignedMulhiProgram() string {
+	values := []int64{0, 1, -1, 2, -2, 3037000499, 3037000500, -3037000500, 1 << 32, -(1 << 32), 1 << 62, -(1 << 62), math.MaxInt64, math.MinInt64}
+	for bit := range 63 {
+		values = append(values, int64(1)<<bit, -(int64(1) << bit))
+	}
+	var src strings.Builder
+	src.WriteString("@noinline function lost(a: i64, b: i64): boolean {\n  match (a *? b) {\n    Some(_) => { return false; },\n    None => { return true; }\n  }\n  return false;\n}\nfunction main(): i32 {\n")
+	for i, a := range values {
+		b := values[len(values)-1-i]
+		p := new(big.Int).Mul(big.NewInt(a), big.NewInt(b))
+		fmt.Fprintf(&src, "if (lost(%s, %s) != %t) { return 1; }\n", i64Lit(a), i64Lit(b), !p.IsInt64())
+	}
+	src.WriteString("return 0;\n}\n")
+	return src.String()
+}
+
+func i64Lit(v int64) string {
+	if v == math.MinInt64 {
+		return "(0 - 9223372036854775807 - 1)"
+	}
+	if v < 0 {
+		return fmt.Sprintf("(0 - %d)", -v)
+	}
+	return fmt.Sprint(v)
 }
 
 func wasmRuntimeStringSetScansProgram() string {

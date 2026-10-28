@@ -1,0 +1,56 @@
+--- /workspace/lang-perf-4412/compiler/asm_ir.fern	2026-10-28 01:56:04.817403788 +0000
++++ /workspace/lang-issue-work/perf-4412/shape-plan-candidate/compiler/asm_ir.fern	2026-10-28 06:59:42.772758729 +0000
+@@ -9091,14 +9091,22 @@
+   if (shared) {
+     return plan;
+   }
+-  let shape: boolean[] = __alloc_bool(f.nvals);
++  let shape: boolean[] = [];
++  let remaining: i32 = 0;
+   for blk in f.blocks {
+     for ins in blk.insts {
+       if (ins.kind_tag == 46) {
++        if (remaining == 0) {
++          shape = __alloc_bool(f.nvals);
++        }
+         shape = shape.with(ins.result, true);
++        remaining = remaining + 1;
+       }
+     }
+   }
++  if (remaining == 0) {
++    return plan;
++  }
+   for blk in f.blocks {
+     for ins in blk.insts {
+       let a: i32 = 0;
+@@ -9106,18 +9114,27 @@
+         let v: i32 = ins.args[a];
+         if (v >= 0 && v < shape.len() && shape[v] && !ssa_shape_compare(ins, 1 - a, imm, shape)) {
+           shape = shape.with(v, false);
++          remaining = remaining - 1;
+         }
+         a = a + 1;
+       }
+     }
++    if (remaining == 0) {
++      return plan;
++    }
+     let t: ssa.STerm = blk.term;
+-    if (t.kind_tag == 1 && t.value >= 0 && t.value < shape.len()) {
++    if (t.kind_tag == 1 && t.value >= 0 && t.value < shape.len() && shape[t.value]) {
+       shape = shape.with(t.value, false);
++      remaining = remaining - 1;
+     }
+-    if (t.kind_tag == 3 && t.cond >= 0 && t.cond < shape.len()) {
++    if (t.kind_tag == 3 && t.cond >= 0 && t.cond < shape.len() && shape[t.cond]) {
+       shape = shape.with(t.cond, false);
++      remaining = remaining - 1;
+     }
+   }
++  if (remaining == 0) {
++    return plan;
++  }
+   for blk in f.blocks {
+     for ins in blk.insts {
+       if (ins.kind_tag == 46 && shape[ins.result]) {

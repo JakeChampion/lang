@@ -15,7 +15,7 @@ function counter(): () => i32 {
 }
 
 function fields(pairs: string[]): HeaderMap {
-  let h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.new();
   let i: i32 = 0;
   while (i + 1 < pairs.len()) {
     h = h.append(pairs[i], pairs[i + 1]);
@@ -26,13 +26,13 @@ function fields(pairs: string[]): HeaderMap {
 
 function test_the_spec_example_round_trips(): test.TestOutcome {
   match (trace.parse(EXAMPLE)) {
-    Some(c) => {
+    Ok(c) => {
       if (c.trace_id != "4bf92f3577b34da6a3ce929d0e0e4736" || c.span_id != "00f067aa0ba902b7" || !c.sampled()) {
         return test.fail("parsed " + c.trace_id + " " + c.span_id);
       }
       return test.assert_eq(c.header(), EXAMPLE);
     },
-    None => {
+    Err(_) => {
       return test.fail("the spec's example did not parse");
     }
   }
@@ -41,10 +41,10 @@ function test_the_spec_example_round_trips(): test.TestOutcome {
 
 function refused(v: string): boolean {
   match (trace.parse(v)) {
-    Some(c) => {
+    Ok(c) => {
       return false;
     },
-    None => {
+    Err(_) => {
       return true;
     }
   }
@@ -78,10 +78,10 @@ function test_malformed_traceparents_are_refused(): test.TestOutcome {
 function test_tracestate_is_kept_only_when_well_formed(): test.TestOutcome {
   let good: string = "";
   match (trace.parse_state("congo=t61rcWkgMzE, ,rojo=00f067aa0ba902b7,tenant@vendor=x")) {
-    Some(s) => {
+    Ok(s) => {
       good = s;
     },
-    None => {
+    Err(_) => {
       return test.fail("a valid tracestate was refused");
     }
   }
@@ -91,10 +91,10 @@ function test_tracestate_is_kept_only_when_well_formed(): test.TestOutcome {
   let bad: string[] = ["Congo=1", "congo=1,congo=2", "congo", "congo=a,b", "congo="];
   for v in bad {
     match (trace.parse_state(v)) {
-      Some(s) => {
+      Ok(s) => {
         return test.fail("accepted: " + v);
       },
-      None => {}
+      Err(_) => {}
     }
   }
   let many: string[] = [];
@@ -104,10 +104,10 @@ function test_tracestate_is_kept_only_when_well_formed(): test.TestOutcome {
     i = i + 1;
   }
   match (trace.parse_state(many.join(","))) {
-    Some(s) => {
+    Ok(s) => {
       return test.fail("accepted 33 members");
     },
-    None => {}
+    Err(_) => {}
   }
   return test.pass();
 }
@@ -162,7 +162,7 @@ function test_inject_writes_the_span_onward(): test.TestOutcome {
   if (parent != EXAMPLE || h.has("tracestate")) {
     return test.fail("injected " + parent);
   }
-  let with_state: HeaderMap = trace.Context { ...c, state: "rojo=1" }.inject(headers.header_map_new());
+  let with_state: HeaderMap = trace.Context { ...c, state: "rojo=1" }.inject(headers.new());
   return test.assert_eq(with_state.get("tracestate").unwrap_or(""), "rojo=1");
 }
 

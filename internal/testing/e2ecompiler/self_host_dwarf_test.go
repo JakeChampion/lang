@@ -794,3 +794,46 @@ func imageBytes(f *goelf.File, vaddr uint64, n int) []byte {
 	}
 	return nil
 }
+
+// A literate module's line rows name document lines, not the tangled ones.
+func TestSelfHostDWARFLiterateLines(t *testing.T) {
+	cli := newStrictCLI(t)
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "lib"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lib := "# Util\n\nProse.\n\nMore prose.\n\n```fern\n<<*>>=\n@noinline pub function twice(x: i32): i32 {\n    let y: i32 = x * 2;\n    return y;\n}\n```\n"
+	main := "# Main\n\nProse.\n\n```fern\n<<*>>=\nimport \"./lib/util\";\nfunction main(): i32 {\n    let a: i32 = util.twice(20);\n    return a + 2;\n}\n```\n"
+	if err := os.WriteFile(filepath.Join(dir, "lib", "util.fern.md"), []byte(lib), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.fern.md"), []byte(main), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		t.Run(target, func(t *testing.T) {
+			out := filepath.Join(dir, "prog-"+target)
+			cmd := runX86_64Bin(cli.runner, cli.bin, "-g", "-target", target, "-o", out, "main.fern.md", cli.stdlib)
+			cmd.Dir = dir
+			if o, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("-g build: %v\n%s", err, o)
+			}
+			subs, rows := dwarfSubprograms(t, out)
+			want := map[string][]int{"util__twice": {10, 11}, "main": {9, 10}}
+			for fn, lines := range want {
+				seen := map[int]bool{}
+				for _, le := range rowsIn(t, subs, rows, fn) {
+					seen[le.Line] = true
+				}
+				for _, l := range lines {
+					if !seen[l] {
+						t.Errorf("%s: no row for document line %d (rows name %v)", fn, l, seen)
+					}
+				}
+				if len(seen) != len(lines) {
+					t.Errorf("%s: rows name lines %v, want only %v", fn, seen, lines)
+				}
+			}
+		})
+	}
+}

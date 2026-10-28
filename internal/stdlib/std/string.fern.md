@@ -1347,7 +1347,7 @@ pub function (s: string) is_float(): boolean {
   return code == number_parse.SUCCESS;
 }
 
-pub function (s: string) wrap(prefix: string, suffix: string): string {
+pub function (s: string) surround(prefix: string, suffix: string): string {
   return prefix + s + suffix;
 }
 ```
@@ -2048,12 +2048,12 @@ function __fill_lead_len(b: i32): i32 {
   return 1;
 }
 
-function __fill_bytes(ch: string, need: i32): u8[] {
+function __fill_bytes(ch: string, count: i32): u8[] {
   let clen: i32 = __fill_lead_len(ch[0] as i32);
   if (clen > ch.len()) {
     clen = ch.len();
   }
-  let total: i32 = need / clen * clen;
+  let total: i32 = count * clen;
   let buf: u8[] = __alloc_u8(total);
   let i: i32 = 0;
   while (i < total) {
@@ -2067,12 +2067,36 @@ function __fill_bytes(ch: string, need: i32): u8[] {
 
 ```fern
 <<32 pub function (s: string) pad_start(n: i32, ch: char): string>>=
+pub function (s: string) codepoint_count(): i32 {
+  let n: i32 = s.len();
+  let count: i32 = 0;
+  let i: i32 = 0;
+  while (i < n) {
+    i = i + utf8_scalar.step(s, i, n);
+    count = count + 1;
+  }
+  return count;
+}
+
+// The byte offset just past the first k code points, or s.len().
+function __codepoint_offset(s: string, k: i32): i32 {
+  let n: i32 = s.len();
+  let i: i32 = 0;
+  let left: i32 = k;
+  while (i < n && left > 0) {
+    i = i + utf8_scalar.step(s, i, n);
+    left = left - 1;
+  }
+  return i;
+}
+
 pub function (s: string) pad_start(n: i32, ch: char): string {
-  let sl: i32 = s.len();
-  if (sl >= n) {
+  let short: i32 = n - s.codepoint_count();
+  if (short <= 0) {
     return s;
   }
-  let fill: u8[] = __fill_bytes(utf8_scalar.from_codepoint(ch), n - sl);
+  let sl: i32 = s.len();
+  let fill: u8[] = __fill_bytes(utf8_scalar.from_codepoint(ch), short);
   let fl: i32 = fill.len();
   let buf: u8[] = __alloc_u8(fl + sl);
   let i: i32 = 0;
@@ -2089,11 +2113,12 @@ pub function (s: string) pad_start(n: i32, ch: char): string {
 }
 
 pub function (s: string) pad_end(n: i32, ch: char): string {
-  let sl: i32 = s.len();
-  if (sl >= n) {
+  let short: i32 = n - s.codepoint_count();
+  if (short <= 0) {
     return s;
   }
-  let fill: u8[] = __fill_bytes(utf8_scalar.from_codepoint(ch), n - sl);
+  let sl: i32 = s.len();
+  let fill: u8[] = __fill_bytes(utf8_scalar.from_codepoint(ch), short);
   let fl: i32 = fill.len();
   let buf: u8[] = __alloc_u8(sl + fl);
   let j: i32 = 0;
@@ -2110,13 +2135,13 @@ pub function (s: string) pad_end(n: i32, ch: char): string {
 }
 
 pub function (s: string) zfill(width: i32): string {
-  let sl: i32 = s.len();
-  if (sl >= width) {
+  let need: i32 = width - s.codepoint_count();
+  if (need <= 0) {
     return s;
   }
+  let sl: i32 = s.len();
   let has_sign: boolean = sl > 0 && (s[0] == 45 || s[0] == 43);
-  let need: i32 = width - sl;
-  let buf: u8[] = __alloc_u8(width);
+  let buf: u8[] = __alloc_u8(sl + need);
   let pos: i32 = 0;
   let body_start: i32 = 0;
   if (has_sign) {
@@ -2268,41 +2293,30 @@ function __str_index_ci(s: string, needle: string): i32 {
 ```fern
 <<35 pub function (s: string) pad_start_str(width: i32, fill: string): string>>=
 pub function (s: string) pad_start_str(width: i32, fill: string): string {
-  let sLen: i32 = s.len();
-  if (sLen >= width || fill.len() == 0) {
+  let short: i32 = width - s.codepoint_count();
+  let flen: i32 = fill.codepoint_count();
+  if (short <= 0 || flen == 0) {
     return s;
   }
-  let pad: string = "";
-  while (pad.len() + fill.len() <= width - sLen) {
-    pad = pad + fill;
-  }
-  if (pad.len() < width - sLen) {
-    pad = pad + fill.take(width - sLen - pad.len());
-  }
+  let pad: string = fill.repeat(short / flen) + slice_unchecked(fill, 0, __codepoint_offset(fill, short % flen));
   return pad + s;
 }
 
 pub function (s: string) pad_end_str(width: i32, fill: string): string {
-  let sLen: i32 = s.len();
-  if (sLen >= width || fill.len() == 0) {
+  let short: i32 = width - s.codepoint_count();
+  let flen: i32 = fill.codepoint_count();
+  if (short <= 0 || flen == 0) {
     return s;
   }
-  let pad: string = "";
-  while (pad.len() + fill.len() <= width - sLen) {
-    pad = pad + fill;
-  }
-  if (pad.len() < width - sLen) {
-    pad = pad + fill.take(width - sLen - pad.len());
-  }
+  let pad: string = fill.repeat(short / flen) + slice_unchecked(fill, 0, __codepoint_offset(fill, short % flen));
   return s + pad;
 }
 
 pub function (s: string) center(width: i32, ch: char): string {
-  let sLen: i32 = s.len();
-  if (sLen >= width) {
+  let total: i32 = width - s.codepoint_count();
+  if (total <= 0) {
     return s;
   }
-  let total: i32 = width - sLen;
   let lpad: i32 = total / 2;
   let rpad: i32 = total - lpad;
   return string_from_bytes_unchecked(__fill_bytes(utf8_scalar.from_codepoint(ch), lpad)) + s + string_from_bytes_unchecked(__fill_bytes(utf8_scalar.from_codepoint(ch), rpad));
@@ -2317,31 +2331,28 @@ pub function (s: string) truncate(n: i32, ellipsis: string): string {
   if (n <= 0) {
     return "";
   }
-  let sLen: i32 = s.len();
-  if (sLen <= n) {
+  let cut: i32 = __codepoint_offset(s, n);
+  if (cut == s.len()) {
     return s;
   }
-  let eLen: i32 = ellipsis.len();
+  let eLen: i32 = ellipsis.codepoint_count();
   if (n <= eLen) {
-    return s.slice_snap(0, n).to_owned();
+    return slice_unchecked(s, 0, cut) + "";
   }
-  return s.slice_snap(0, n - eLen) + ellipsis;
+  return slice_unchecked(s, 0, __codepoint_offset(s, n - eLen)) + ellipsis;
 }
 
 pub function (s: string) ellipsis(n: i32): string {
-  if (s.len() <= n) {
+  if (n <= 0) {
+    return "";
+  }
+  if (__codepoint_offset(s, n) == s.len()) {
     return s;
   }
-  if (n < 3) {
-    if (n <= 0) {
-      return "";
-    }
-    return slice_unchecked("...", 0, n).to_owned();
+  if (n <= 3) {
+    return slice_unchecked("...", 0, n) + "";
   }
-  if (n == 3) {
-    return "...";
-  }
-  return s.slice_snap(0, n - 3) + "...";
+  return slice_unchecked(s, 0, __codepoint_offset(s, n - 3)) + "...";
 }
 
 pub function (s: string) first_line(): Option[string] {

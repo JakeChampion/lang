@@ -63,7 +63,7 @@ function main(): i32 {
 
     // (e) Snap-semantics helpers (#5634 PR 2). take/drop/split_at floor
     // the mid-é cut at 2 (partition preserved); chunks(2) floor-snaps
-    // each cut (h | é | ll | o); truncate/ellipsis keep at most n bytes.
+    // each cut (h | é | ll | o); truncate/ellipsis keep at most n code points.
     if (s.take(2) != "h") { return 21; }
     if (s.drop(2).len() != 5) { return 22; }
     if (s.take(2).to_owned() + s.drop(2).to_owned() != s) { return 23; }
@@ -74,19 +74,19 @@ function main(): i32 {
     if (cs.len() != 4) { return 26; }
     if (cs[1].len() != 2) { return 27; }
     let w: string = s + " world";
-    if (w.truncate(4, "..") != "h..") { return 28; }
-    if (w.truncate(5, "..").len() != 5) { return 29; }
-    if (w.ellipsis(5) != "h...") { return 30; }
-    // A partial repeated fill must end at a scalar boundary as well.
-    if ("x".pad_start_str(4, "é") != "éx") { return 31; }
-    if ("x".pad_end_str(4, "é") != "xé") { return 32; }
-    if ("x".pad_start_str(3, "€") != "x") { return 33; }
-    if ("x".pad_end_str(4, "€") != "x€") { return 34; }
-    if ("x".pad_start_str(6, "𐀀") != "𐀀x") { return 35; }
-    if ("x".pad_end_str(7, "aé") != "xaéaé") { return 36; }
-    if ("x".pad_end_str(6, "aé") != "xaéa") { return 37; }
-    if ("x".pad_start_str(6, "aé") != "aéax") { return 38; }
-    if ("x".pad_start_str(2, "é") != "x") { return 39; }
+    if (w.truncate(4, "..") != "hé..") { return 28; }
+    if (w.truncate(5, "..") != "hél..") { return 29; }
+    if (w.ellipsis(5) != "hé...") { return 30; }
+    // Widths count code points; a partial repeated fill ends at a code point.
+    if ("x".pad_start_str(4, "é") != "éééx") { return 31; }
+    if ("x".pad_end_str(4, "é") != "xééé") { return 32; }
+    if ("x".pad_start_str(3, "€") != "€€x") { return 33; }
+    if ("x".pad_end_str(4, "€") != "x€€€") { return 34; }
+    if ("x".pad_start_str(3, "𐀀") != "𐀀𐀀x") { return 35; }
+    if ("x".pad_end_str(6, "aé") != "xaéaéa") { return 36; }
+    if ("x".pad_end_str(5, "aé") != "xaéaé") { return 37; }
+    if ("x".pad_start_str(4, "aé") != "aéax") { return 38; }
+    if ("x".pad_start_str(2, "é") != "éx") { return 39; }
     if ("x".pad_end_str(0 - 1, "é") != "x") { return 40; }
     if ("x".pad_end_str(5, "") != "x") { return 41; }
     if ("x".pad_end_str(5, "ab") != "xabab") { return 42; }

@@ -1,0 +1,8 @@
+{
+  "source_head": "fbaf6b329e1711ace006fd7b70499adc8dd668e0",
+  "baseline_archive": "/workspace/lang-issue-work/perf-4412/shape-plan-candidate/baseline-source.tar",
+  "baseline_sha256": "997c5b370b1180893c71e0f4e1971fff022092c344f5d9ba8cf6ec6d7d1ebf5f",
+  "common_producer_sha256": "1e0ad6be807a01bbf50a05535d46808d611816016ce388e687d44589c5dc7e52",
+  "source_sha256": "f721129155bd7ac36ed715703072bf8cb9f6c812f22d6a62455f919fbb4fffe5",
+  "status": "Private smaller variant. Not adopted or validated."
+}

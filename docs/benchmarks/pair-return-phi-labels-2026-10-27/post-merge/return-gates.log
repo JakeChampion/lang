@@ -1,0 +1,314 @@
+=== RUN   TestSelfHostPairReturn
+=== RUN   TestSelfHostPairReturn/variant/x86-64-linux
+=== RUN   TestSelfHostPairReturn/variant/arm64-linux
+=== RUN   TestSelfHostPairReturn/variant/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/pair/x86-64-linux
+=== RUN   TestSelfHostPairReturn/pair/arm64-linux
+=== RUN   TestSelfHostPairReturn/pair/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/suspend/x86-64-linux
+=== RUN   TestSelfHostPairReturn/suspend/arm64-linux
+=== RUN   TestSelfHostPairReturn/suspend/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/method/x86-64-linux
+=== RUN   TestSelfHostPairReturn/method/arm64-linux
+=== RUN   TestSelfHostPairReturn/method/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/lanes/x86-64-linux
+=== RUN   TestSelfHostPairReturn/lanes/arm64-linux
+=== RUN   TestSelfHostPairReturn/lanes/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/split/x86-64-linux
+=== RUN   TestSelfHostPairReturn/split/arm64-linux
+=== RUN   TestSelfHostPairReturn/split/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/forward/x86-64-linux
+=== RUN   TestSelfHostPairReturn/forward/arm64-linux
+=== RUN   TestSelfHostPairReturn/forward/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/wide/x86-64-linux
+=== RUN   TestSelfHostPairReturn/wide/arm64-linux
+=== RUN   TestSelfHostPairReturn/wide/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/tail-phi/x86-64-linux
+=== RUN   TestSelfHostPairReturn/tail-phi/arm64-linux
+=== RUN   TestSelfHostPairReturn/tail-phi/wasm32-wasi
+--- PASS: TestSelfHostPairReturn (10.40s)
+    --- PASS: TestSelfHostPairReturn/variant/x86-64-linux (0.33s)
+    --- PASS: TestSelfHostPairReturn/variant/arm64-linux (0.34s)
+    --- PASS: TestSelfHostPairReturn/variant/wasm32-wasi (0.34s)
+    --- PASS: TestSelfHostPairReturn/pair/x86-64-linux (0.35s)
+    --- PASS: TestSelfHostPairReturn/pair/arm64-linux (0.34s)
+    --- PASS: TestSelfHostPairReturn/pair/wasm32-wasi (0.32s)
+    --- PASS: TestSelfHostPairReturn/suspend/x86-64-linux (0.52s)
+    --- PASS: TestSelfHostPairReturn/suspend/arm64-linux (0.65s)
+    --- PASS: TestSelfHostPairReturn/suspend/wasm32-wasi (0.40s)
+    --- PASS: TestSelfHostPairReturn/method/x86-64-linux (0.34s)
+    --- PASS: TestSelfHostPairReturn/method/arm64-linux (0.35s)
+    --- PASS: TestSelfHostPairReturn/method/wasm32-wasi (0.32s)
+    --- PASS: TestSelfHostPairReturn/lanes/x86-64-linux (0.30s)
+    --- PASS: TestSelfHostPairReturn/lanes/arm64-linux (0.30s)
+    --- PASS: TestSelfHostPairReturn/lanes/wasm32-wasi (0.27s)
+    --- PASS: TestSelfHostPairReturn/split/x86-64-linux (0.36s)
+    --- PASS: TestSelfHostPairReturn/split/arm64-linux (0.34s)
+    --- PASS: TestSelfHostPairReturn/split/wasm32-wasi (0.33s)
+    --- PASS: TestSelfHostPairReturn/forward/x86-64-linux (0.29s)
+    --- PASS: TestSelfHostPairReturn/forward/arm64-linux (0.29s)
+    --- PASS: TestSelfHostPairReturn/forward/wasm32-wasi (0.29s)
+    --- PASS: TestSelfHostPairReturn/wide/x86-64-linux (0.29s)
+    --- PASS: TestSelfHostPairReturn/wide/arm64-linux (0.32s)
+    --- PASS: TestSelfHostPairReturn/wide/wasm32-wasi (0.27s)
+    --- PASS: TestSelfHostPairReturn/tail-phi/x86-64-linux (0.31s)
+    --- PASS: TestSelfHostPairReturn/tail-phi/arm64-linux (0.29s)
+    --- PASS: TestSelfHostPairReturn/tail-phi/wasm32-wasi (0.28s)
+=== RUN   TestSelfHostScalarRecordReturns
+=== RUN   TestSelfHostScalarRecordReturns/four-wide
+=== RUN   TestSelfHostScalarRecordReturns/four-wide/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/four-wide/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/four-wide/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturns/mixed-float-bits
+=== RUN   TestSelfHostScalarRecordReturns/mixed-float-bits/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/mixed-float-bits/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/mixed-float-bits/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturns/narrow-float
+=== RUN   TestSelfHostScalarRecordReturns/narrow-float/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/narrow-float/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/narrow-float/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturns/one-two-three-phis
+=== RUN   TestSelfHostScalarRecordReturns/one-two-three-phis/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/one-two-three-phis/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/one-two-three-phis/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturns/cleanup-pressure
+=== RUN   TestSelfHostScalarRecordReturns/cleanup-pressure/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/cleanup-pressure/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/cleanup-pressure/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturns/padding-tail-arguments
+=== RUN   TestSelfHostScalarRecordReturns/padding-tail-arguments/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/padding-tail-arguments/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/padding-tail-arguments/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturns/reference-field
+=== RUN   TestSelfHostScalarRecordReturns/reference-field/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/reference-field/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/reference-field/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturns/five-fields
+=== RUN   TestSelfHostScalarRecordReturns/five-fields/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/five-fields/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/five-fields/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturns/escaping-result
+=== RUN   TestSelfHostScalarRecordReturns/escaping-result/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/escaping-result/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/escaping-result/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturns/update-donor
+=== RUN   TestSelfHostScalarRecordReturns/update-donor/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/update-donor/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/update-donor/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturns/inferred-donor
+=== RUN   TestSelfHostScalarRecordReturns/inferred-donor/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/inferred-donor/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/inferred-donor/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturns/function-value
+=== RUN   TestSelfHostScalarRecordReturns/function-value/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/function-value/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/function-value/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturns/finalizer
+=== RUN   TestSelfHostScalarRecordReturns/finalizer/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/finalizer/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/finalizer/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturns/tuple-lanes
+=== RUN   TestSelfHostScalarRecordReturns/tuple-lanes/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/tuple-lanes/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/tuple-lanes/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturns/tuple-boxed
+=== RUN   TestSelfHostScalarRecordReturns/tuple-boxed/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturns/tuple-boxed/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturns/tuple-boxed/wasm32-wasi
+--- PASS: TestSelfHostScalarRecordReturns (9.51s)
+    --- PASS: TestSelfHostScalarRecordReturns/four-wide (0.58s)
+        --- PASS: TestSelfHostScalarRecordReturns/four-wide/x86-64-linux (0.20s)
+        --- PASS: TestSelfHostScalarRecordReturns/four-wide/arm64-linux (0.19s)
+        --- PASS: TestSelfHostScalarRecordReturns/four-wide/wasm32-wasi (0.19s)
+    --- PASS: TestSelfHostScalarRecordReturns/mixed-float-bits (0.54s)
+        --- PASS: TestSelfHostScalarRecordReturns/mixed-float-bits/x86-64-linux (0.19s)
+        --- PASS: TestSelfHostScalarRecordReturns/mixed-float-bits/arm64-linux (0.17s)
+        --- PASS: TestSelfHostScalarRecordReturns/mixed-float-bits/wasm32-wasi (0.17s)
+    --- PASS: TestSelfHostScalarRecordReturns/narrow-float (0.59s)
+        --- PASS: TestSelfHostScalarRecordReturns/narrow-float/x86-64-linux (0.22s)
+        --- PASS: TestSelfHostScalarRecordReturns/narrow-float/arm64-linux (0.20s)
+        --- PASS: TestSelfHostScalarRecordReturns/narrow-float/wasm32-wasi (0.17s)
+    --- PASS: TestSelfHostScalarRecordReturns/one-two-three-phis (0.56s)
+        --- PASS: TestSelfHostScalarRecordReturns/one-two-three-phis/x86-64-linux (0.20s)
+        --- PASS: TestSelfHostScalarRecordReturns/one-two-three-phis/arm64-linux (0.18s)
+        --- PASS: TestSelfHostScalarRecordReturns/one-two-three-phis/wasm32-wasi (0.18s)
+    --- PASS: TestSelfHostScalarRecordReturns/cleanup-pressure (0.73s)
+        --- PASS: TestSelfHostScalarRecordReturns/cleanup-pressure/x86-64-linux (0.25s)
+        --- PASS: TestSelfHostScalarRecordReturns/cleanup-pressure/arm64-linux (0.23s)
+        --- PASS: TestSelfHostScalarRecordReturns/cleanup-pressure/wasm32-wasi (0.24s)
+    --- PASS: TestSelfHostScalarRecordReturns/padding-tail-arguments (0.07s)
+        --- PASS: TestSelfHostScalarRecordReturns/padding-tail-arguments/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostScalarRecordReturns/padding-tail-arguments/arm64-linux (0.02s)
+        --- PASS: TestSelfHostScalarRecordReturns/padding-tail-arguments/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostScalarRecordReturns/reference-field (0.56s)
+        --- PASS: TestSelfHostScalarRecordReturns/reference-field/x86-64-linux (0.19s)
+        --- PASS: TestSelfHostScalarRecordReturns/reference-field/arm64-linux (0.18s)
+        --- PASS: TestSelfHostScalarRecordReturns/reference-field/wasm32-wasi (0.20s)
+    --- PASS: TestSelfHostScalarRecordReturns/five-fields (0.58s)
+        --- PASS: TestSelfHostScalarRecordReturns/five-fields/x86-64-linux (0.20s)
+        --- PASS: TestSelfHostScalarRecordReturns/five-fields/arm64-linux (0.18s)
+        --- PASS: TestSelfHostScalarRecordReturns/five-fields/wasm32-wasi (0.19s)
+    --- PASS: TestSelfHostScalarRecordReturns/escaping-result (0.63s)
+        --- PASS: TestSelfHostScalarRecordReturns/escaping-result/x86-64-linux (0.23s)
+        --- PASS: TestSelfHostScalarRecordReturns/escaping-result/arm64-linux (0.19s)
+        --- PASS: TestSelfHostScalarRecordReturns/escaping-result/wasm32-wasi (0.20s)
+    --- PASS: TestSelfHostScalarRecordReturns/update-donor (0.57s)
+        --- PASS: TestSelfHostScalarRecordReturns/update-donor/x86-64-linux (0.19s)
+        --- PASS: TestSelfHostScalarRecordReturns/update-donor/arm64-linux (0.20s)
+        --- PASS: TestSelfHostScalarRecordReturns/update-donor/wasm32-wasi (0.18s)
+    --- PASS: TestSelfHostScalarRecordReturns/inferred-donor (0.57s)
+        --- PASS: TestSelfHostScalarRecordReturns/inferred-donor/x86-64-linux (0.20s)
+        --- PASS: TestSelfHostScalarRecordReturns/inferred-donor/arm64-linux (0.18s)
+        --- PASS: TestSelfHostScalarRecordReturns/inferred-donor/wasm32-wasi (0.19s)
+    --- PASS: TestSelfHostScalarRecordReturns/function-value (0.60s)
+        --- PASS: TestSelfHostScalarRecordReturns/function-value/x86-64-linux (0.22s)
+        --- PASS: TestSelfHostScalarRecordReturns/function-value/arm64-linux (0.20s)
+        --- PASS: TestSelfHostScalarRecordReturns/function-value/wasm32-wasi (0.19s)
+    --- PASS: TestSelfHostScalarRecordReturns/finalizer (0.55s)
+        --- PASS: TestSelfHostScalarRecordReturns/finalizer/x86-64-linux (0.20s)
+        --- PASS: TestSelfHostScalarRecordReturns/finalizer/arm64-linux (0.17s)
+        --- PASS: TestSelfHostScalarRecordReturns/finalizer/wasm32-wasi (0.17s)
+    --- PASS: TestSelfHostScalarRecordReturns/tuple-lanes (0.56s)
+        --- PASS: TestSelfHostScalarRecordReturns/tuple-lanes/x86-64-linux (0.20s)
+        --- PASS: TestSelfHostScalarRecordReturns/tuple-lanes/arm64-linux (0.18s)
+        --- PASS: TestSelfHostScalarRecordReturns/tuple-lanes/wasm32-wasi (0.18s)
+    --- PASS: TestSelfHostScalarRecordReturns/tuple-boxed (0.60s)
+        --- PASS: TestSelfHostScalarRecordReturns/tuple-boxed/x86-64-linux (0.23s)
+        --- PASS: TestSelfHostScalarRecordReturns/tuple-boxed/arm64-linux (0.18s)
+        --- PASS: TestSelfHostScalarRecordReturns/tuple-boxed/wasm32-wasi (0.18s)
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/four-wide
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/four-wide/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/four-wide/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/four-wide/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/mixed-float-bits
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/mixed-float-bits/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/mixed-float-bits/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/mixed-float-bits/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/narrow-float
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/narrow-float/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/narrow-float/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/narrow-float/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/one-two-three-phis
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/one-two-three-phis/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/one-two-three-phis/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/one-two-three-phis/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/cleanup-pressure
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/cleanup-pressure/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/cleanup-pressure/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/cleanup-pressure/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/padding-tail-arguments
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/padding-tail-arguments/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/padding-tail-arguments/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/padding-tail-arguments/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/reference-field
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/reference-field/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/reference-field/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/reference-field/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/five-fields
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/five-fields/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/five-fields/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/five-fields/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/escaping-result
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/escaping-result/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/escaping-result/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/escaping-result/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/update-donor
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/update-donor/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/update-donor/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/update-donor/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/inferred-donor
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/inferred-donor/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/inferred-donor/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/inferred-donor/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/function-value
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/function-value/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/function-value/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/function-value/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/finalizer
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/finalizer/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/finalizer/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/finalizer/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/tuple-lanes
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/tuple-lanes/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/tuple-lanes/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/tuple-lanes/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/tuple-boxed
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/tuple-boxed/x86-64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/tuple-boxed/arm64-linux
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/tuple-boxed/wasm32-wasi
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/x86-64-linux/cpu
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/x86-64-linux/alloc
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/arm64-linux/cpu
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/arm64-linux/cpu/harden
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/arm64-linux/alloc
+=== RUN   TestSelfHostScalarRecordReturnsInstrumented/arm64-linux/alloc/harden
+--- PASS: TestSelfHostScalarRecordReturnsInstrumented (11.01s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/four-wide (0.52s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/four-wide/x86-64-linux (0.18s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/four-wide/arm64-linux (0.17s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/four-wide/wasm32-wasi (0.17s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/mixed-float-bits (0.57s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/mixed-float-bits/x86-64-linux (0.18s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/mixed-float-bits/arm64-linux (0.20s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/mixed-float-bits/wasm32-wasi (0.19s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/narrow-float (0.57s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/narrow-float/x86-64-linux (0.19s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/narrow-float/arm64-linux (0.21s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/narrow-float/wasm32-wasi (0.17s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/one-two-three-phis (0.68s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/one-two-three-phis/x86-64-linux (0.23s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/one-two-three-phis/arm64-linux (0.24s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/one-two-three-phis/wasm32-wasi (0.21s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/cleanup-pressure (0.69s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/cleanup-pressure/x86-64-linux (0.25s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/cleanup-pressure/arm64-linux (0.21s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/cleanup-pressure/wasm32-wasi (0.22s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/padding-tail-arguments (0.06s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/padding-tail-arguments/x86-64-linux (0.02s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/padding-tail-arguments/arm64-linux (0.02s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/padding-tail-arguments/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/reference-field (0.62s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/reference-field/x86-64-linux (0.18s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/reference-field/arm64-linux (0.23s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/reference-field/wasm32-wasi (0.22s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/five-fields (0.57s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/five-fields/x86-64-linux (0.22s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/five-fields/arm64-linux (0.19s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/five-fields/wasm32-wasi (0.17s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/escaping-result (0.61s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/escaping-result/x86-64-linux (0.24s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/escaping-result/arm64-linux (0.18s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/escaping-result/wasm32-wasi (0.19s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/update-donor (0.57s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/update-donor/x86-64-linux (0.21s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/update-donor/arm64-linux (0.18s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/update-donor/wasm32-wasi (0.18s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/inferred-donor (0.57s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/inferred-donor/x86-64-linux (0.18s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/inferred-donor/arm64-linux (0.22s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/inferred-donor/wasm32-wasi (0.18s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/function-value (0.53s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/function-value/x86-64-linux (0.19s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/function-value/arm64-linux (0.17s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/function-value/wasm32-wasi (0.17s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/finalizer (0.53s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/finalizer/x86-64-linux (0.18s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/finalizer/arm64-linux (0.17s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/finalizer/wasm32-wasi (0.18s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/tuple-lanes (0.56s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/tuple-lanes/x86-64-linux (0.19s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/tuple-lanes/arm64-linux (0.19s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/tuple-lanes/wasm32-wasi (0.18s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/tuple-boxed (0.56s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/tuple-boxed/x86-64-linux (0.20s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/tuple-boxed/arm64-linux (0.19s)
+        --- PASS: TestSelfHostScalarRecordReturnsInstrumented/tuple-boxed/wasm32-wasi (0.18s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/x86-64-linux/cpu (0.27s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/x86-64-linux/alloc (0.25s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/arm64-linux/cpu (0.25s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/arm64-linux/cpu/harden (0.26s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/arm64-linux/alloc (0.25s)
+    --- PASS: TestSelfHostScalarRecordReturnsInstrumented/arm64-linux/alloc/harden (0.26s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	30.928s

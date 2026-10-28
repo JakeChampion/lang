@@ -153,7 +153,7 @@ Repeat the Phase 3 pattern, one PR per module:
 - `std/http` — request / response builders, header parsing,
   serialization.
 - `std/json` — encode / parse.
-- `std/url` — url_parse, query_parse, url_encode / decode.
+- `std/url` — url.parse, query_parse, url.encode / decode.
 - `std/format` — `format(template, args)`, `format_bytes`.
 - `std/math` — pow, sqrt_floor, etc. (overlap with std/i32;
   decide on boundary: math = generic, i32 = receiver methods).

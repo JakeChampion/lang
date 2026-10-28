@@ -6081,15 +6081,15 @@ function main(): i32 {
     let nosuf: string[] = [];
     if ("anything".ends_with_any(nosuf)) { return 12; }
 
-    // math.range(i32[])
+    // spread (i32[])
     let xs: i32[] = [3, 1, 4, 1, 5, 9, 2, 6];
-    match (xs.range()) {
+    match (xs.spread()) {
         Some(r) => { if (r != 8) { return 20; } },
         None => { return 21; },
     }
     let empty32: i32[] = [];
-    match (empty32.range()) { Some(_) => { return 22; }, None => { } }
-    match ([7].range()) {
+    match (empty32.spread()) { Some(_) => { return 22; }, None => { } }
+    match ([7].spread()) {
         Some(r) => { if (r != 0) { return 23; } },
         None => { return 24; },
     }
@@ -6354,9 +6354,9 @@ function main(): i32 {
     if (!".5".is_float()) { return 8; }
     if ("abc".is_float()) { return 9; }
 
-    // wrap
-    if ("x".wrap("[", "]") != "[x]") { return 10; }
-    if ("".wrap("a", "b") != "ab") { return 11; }
+    // surround
+    if ("x".surround("[", "]") != "[x]") { return 10; }
+    if ("".surround("a", "b") != "ab") { return 11; }
 
     // string[] take / drop
     let arr: string[] = ["a", "b", "c", "d", "e"];
@@ -6701,7 +6701,7 @@ func TestArm64StdlibBundle14(t *testing.T) {
 	src := `
 import "std/csv";
 import "std/format";
-import "std/math";
+import "std/rand";
 function main(): i32 {
     // trim_start_chars / trim_end_chars
     if ("==hello".trim_start_chars("=") != "hello") { return 1; }
@@ -6710,12 +6710,12 @@ function main(): i32 {
     if ("hello".trim_start_chars("") != "hello") { return 4; }
     if ("===".trim_start_chars("=") != "") { return 5; }
 
-    // random_int — range checks
-    let r: i32 = math.random_int(0, 100);
+    // rand.between — range checks
+    let r: i32 = rand.between(0, 100);
     if (r < 0 || r >= 100) { return 6; }
-    if (math.random_int(10, 11) != 10) { return 7; }
-    if (math.random_int(5, 5) != 5) { return 8; }
-    if (math.random_int(10, 1) != 10) { return 9; }
+    if (rand.between(10, 11) != 10) { return 7; }
+    if (rand.between(5, 5) != 5) { return 8; }
+    if (rand.between(10, 1) != 10) { return 9; }
 
     // format_bytes — binary prefixes
     if (format.format_bytes(0) != "0 B") { return 10; }
@@ -7105,6 +7105,7 @@ func TestArm64StdlibBundle6(t *testing.T) {
 import "std/i32";
 import "std/i64";
 import "std/math";
+import "core/iter";
 function main(): i32 {
     // count_ones — population count
     if ((0).count_ones() != 0) { return 1; }
@@ -7132,14 +7133,14 @@ function main(): i32 {
     if ((4 as i64).lcm(6 as i64) != (12 as i64)) { return 15; }
 
     // range — half-open
-    let r1: i32[] = math.range(0, 5);
+    let r1: i32[] = iter.range(0, 5).collect();
     if (r1.len() != 5 || r1[0] != 0 || r1[4] != 4) { return 16; }
-    if ((math.range(5, 5)).len() != 0) { return 17; }   // empty when start >= end
+    if (iter.range(5, 5).len() != 0) { return 17; }   // empty when start >= end
 
-    // range_step — step <= 0 returns empty
-    let rs: i32[] = math.range_step(0, 10, 2);
+    // step_by — step <= 0 yields nothing
+    let rs: i32[] = iter.range(0, 10).step_by(2).collect();
     if (rs.len() != 5 || rs[0] != 0 || rs[4] != 8) { return 18; }
-    if ((math.range_step(0, 10, 0)).len() != 0) { return 19; }
+    if (iter.range(0, 10).step_by(0).len() != 0) { return 19; }
 
     // repeat_with_sep
     if ("x".repeat_with_sep(3, ", ") != "x, x, x") { return 20; }
@@ -7373,7 +7374,7 @@ function main(): i32 {
     if ("42".pad_start(5, '0') != "00042") { return 1; }
     if ("42".pad_end(5, ' ') != "42   ") { return 2; }
     if ("longer".pad_start(3, '0') != "longer") { return 3; }
-    if ("x".pad_start(2, 'é') != "x") { return 4; }       // no whole fill character fits
+    if ("x".pad_start(3, 'é') != "ééx") { return 4; }     // width counts code points
     if ("".pad_start(3, 'a') != "aaa") { return 5; }    // repeat one fill character
 
     // split_once — first match wins, empty sep / no-match → None

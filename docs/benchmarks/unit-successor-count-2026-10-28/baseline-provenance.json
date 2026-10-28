@@ -1,0 +1,7 @@
+{
+  "source_head": "c63e488b4ed21b7161417382b8e4f7f6f05a5da5",
+  "source_archive_sha256": "aa0c67d116fb8b86e2c751123c28e848d24c3b638df819e0e10b4873ae70e503",
+  "fixed_subject_head": "23c5bc2e4a5993ffe092d04b5ad1dcf771af0269",
+  "subject_sha256": "a0b69a0f97f3b45bf06eca8160200a936b56b06a279bb538795a387a5d76e172",
+  "purpose": "Fresh baseline after runtime and CI repairs. No performance comparison or optimization claim yet."
+}

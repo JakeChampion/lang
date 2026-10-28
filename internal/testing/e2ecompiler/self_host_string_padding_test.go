@@ -6,10 +6,10 @@ func TestSelfHostStringPaddingUTF8(t *testing.T) {
 	const source = `import "std/string";
 import "std/utf8" as utf8;
 function main(): i32 {
-    if ("x".pad_start_str(4, "é") != "éx") { return 1; }
-    if ("x".pad_end_str(4, "é") != "xé") { return 2; }
-    if ("x".pad_start_str(3, "€") != "x") { return 3; }
-    if ("x".pad_end_str(6, "aé") != "xaéa") { return 4; }
+    if ("x".pad_start_str(4, "é") != "éééx") { return 1; }
+    if ("x".pad_end_str(4, "é") != "xééé") { return 2; }
+    if ("x".pad_start_str(3, "€") != "€€x") { return 3; }
+    if ("x".pad_end_str(6, "aé") != "xaéaéa") { return 4; }
     let fills: string[] = ["", "a", "é", "€", "𐀀", "aé€𐀀"];
     for fill in fills {
         let width: i32 = 1;
@@ -17,7 +17,7 @@ function main(): i32 {
             let left: string = "x".pad_start_str(width, fill);
             let right: string = "x".pad_end_str(width, fill);
             if (!utf8.is_valid(left) || !utf8.is_valid(right)) { return 5; }
-            if (left.len() > width || right.len() > width) { return 6; }
+            if (fill.len() > 0 && (left.codepoint_count() != width || right.codepoint_count() != width)) { return 6; }
             if (!left.ends_with("x") || !right.starts_with("x")) { return 7; }
             width = width + 1;
         }

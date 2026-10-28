@@ -1,0 +1,24 @@
+// A struct literal of a union member takes its type arguments from the
+// expected union instance. `P { n: 1 }` mentions no T, so only the expected
+// type `U[string]` decides that it is a `P[string]`.
+import "std/i32";
+
+struct P[T] { n: i32 }
+struct Q { m: i32 }
+
+type U[T] = P[T] | Q;
+
+function read(u: U[string]): i32 {
+  return match (u) {
+    P(p) => p.n,
+    Q(q) => q.m,
+  };
+}
+
+function main(): i32 {
+  let u: U[string] = P { n: 1 };
+  print(read(u).to_string());
+  print(read(Q { m: 2 }).to_string());
+  print(read(P { n: 3 }).to_string());
+  return 0;
+}

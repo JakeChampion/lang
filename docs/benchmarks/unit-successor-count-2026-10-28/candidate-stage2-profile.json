@@ -1,0 +1,33 @@
+{
+  "command": [
+    "/workspace/lang-issue-work/perf-4412/tools/usr/bin/time",
+    "-v",
+    "/workspace/lang-issue-work/perf-4412/tools/usr/bin/valgrind",
+    "--tool=callgrind",
+    "--callgrind-out-file=/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2.callgrind",
+    "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2",
+    "-O",
+    "-target",
+    "x86-64-linux",
+    "-emit",
+    "asm",
+    "-o",
+    "/dev/null",
+    "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+    "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+  ],
+  "exit": 0,
+  "valid_full_run": true,
+  "elapsed_seconds_under_callgrind": 243.41631804200006,
+  "baseline_sha256": "4948b305ce2012f2aa47704843e883566a14ac79274aac3b50becb0d9f966251",
+  "candidate_sha256": "508bd68532007dcf82b6bb3425186dba81c33bbaaca110571ed648d42ac5e219",
+  "common_producer_sha256": "ce1074b697485ad511740e5c499ff771ceccf270c5afaf521fcc85e74e847b05",
+  "subject_sha256": "a0b69a0f97f3b45bf06eca8160200a936b56b06a279bb538795a387a5d76e172",
+  "baseline_instructions": 25020841026,
+  "memo_warmed": true,
+  "instructions": 24995670399,
+  "instruction_change_percent": -0.10059864484108783,
+  "box_calls": 17398916,
+  "baseline_box_calls": 17924317,
+  "box_delta": -525401
+}

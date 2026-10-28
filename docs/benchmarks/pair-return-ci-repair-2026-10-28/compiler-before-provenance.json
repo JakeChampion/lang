@@ -1,0 +1,8 @@
+{
+  "source": "0b506a797f6b1e4afde7d169412f0a009927764a",
+  "artifact": "/workspace/lang-issue-work/perf-4412/ci-repair/compiler-0b",
+  "sha256": "8b1dde1bc25afb7d89a4326e3864fe643711923c9f441ebe0175fccf54ad4e6c",
+  "origin": "durable Go harness driver cache from before-targeted.log",
+  "pinned_stage0_lock_source": "9193717cfa8ddce4927761cc5ff5d47faf29b473",
+  "performance_comparison": false
+}

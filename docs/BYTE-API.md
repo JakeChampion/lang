@@ -43,8 +43,9 @@ and replacements take `u8`. Indices, lengths and counts use `i32`.
 A byte stream's `read_byte` also returns `Option[u8]` with the advanced cursor.
 
 `pad_start`, `pad_end` and `center` take one `char` as their fill. Width is
-in bytes. A fill is repeated whole, so a multibyte character can leave
-space unused. Use `pad_start_str` or `pad_end_str` to repeat a text pattern.
+in code points, as in `std/table` and `std/textwrap`, and so is the length
+of `zfill`, `truncate` and `ellipsis`. Use `pad_start_str` or `pad_end_str`
+to repeat a text pattern.
 
 The checksum view readers select the string or packed-array
 kernel from the view's storage. They do not copy the input. The UTF-8

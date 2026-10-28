@@ -23,7 +23,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 
 function main(): i32 {
     let m: mock_platform.MockPlatform = mock_platform.new();
-    let req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.stream_empty(), headers: headers.header_map_new(), trailers: headers.header_map_new() };
+    let req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.stream_empty(), headers: headers.new(), trailers: headers.new() };
     let resp: HttpResponse = handle(req, m);
     print(resp.body_string());
     print(m.call_count().to_string());

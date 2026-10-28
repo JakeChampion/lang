@@ -4,7 +4,7 @@ import "std/option";
 import "std/i32";
 
 function test_new_is_empty(): test.TestOutcome {
-  let v: pvec.PVec[i32] = pvec.pvec_new();
+  let v: pvec.PVec[i32] = pvec.new();
   if (!v.is_empty() || v.len() != 0) {
     return test.fail("empty vector has elements");
   }
@@ -12,7 +12,7 @@ function test_new_is_empty(): test.TestOutcome {
 }
 
 function test_append_get(): test.TestOutcome {
-  let v: pvec.PVec[i32] = pvec.pvec_new();
+  let v: pvec.PVec[i32] = pvec.new();
   let i: i32 = 0;
   while (i < 3000) {
     v = v.append(i);
@@ -38,7 +38,7 @@ function test_append_get(): test.TestOutcome {
 }
 
 function test_with_is_persistent(): test.TestOutcome {
-  let v: pvec.PVec[i32] = pvec.pvec_new();
+  let v: pvec.PVec[i32] = pvec.new();
   let i: i32 = 0;
   while (i < 1500) {
     v = v.append(i);
@@ -78,7 +78,7 @@ function drop_last(v: pvec.PVec[i32]): pvec.PVec[i32] {
 }
 
 function test_pop(): test.TestOutcome {
-  let v: pvec.PVec[i32] = pvec.pvec_new();
+  let v: pvec.PVec[i32] = pvec.new();
   let i: i32 = 0;
   while (i < 1100) {
     v = v.append(i);
@@ -143,7 +143,7 @@ function test_pop_then_append(): test.TestOutcome {
 }
 
 function test_to_array_fold(): test.TestOutcome {
-  let v: pvec.PVec[i32] = pvec.pvec_new();
+  let v: pvec.PVec[i32] = pvec.new();
   let i: i32 = 0;
   while (i < 2500) {
     v = v.append(i);
@@ -178,7 +178,7 @@ function test_map_filter(): test.TestOutcome {
 }
 
 function test_slice_concat(): test.TestOutcome {
-  let v: pvec.PVec[i32] = pvec.pvec_new();
+  let v: pvec.PVec[i32] = pvec.new();
   let i: i32 = 0;
   while (i < 100) {
     v = v.append(i);
@@ -199,7 +199,7 @@ function test_slice_concat(): test.TestOutcome {
 }
 
 function test_strings(): test.TestOutcome {
-  let v: pvec.PVec[string] = pvec.pvec_new();
+  let v: pvec.PVec[string] = pvec.new();
   let i: i32 = 0;
   while (i < 70) {
     v = v.append("s" + i.to_string());

@@ -16,8 +16,8 @@ A match tests the pattern against the complete input. Callers that require files
 import "std/glob";
 
 function main(): i32 {
-  if (!glob.glob_match("*.fern", "main.fern")) { return 1; }
-  if (glob.glob_match("a?c", "ac")) { return 2; }
+  if (!glob.is_match("*.fern", "main.fern")) { return 1; }
+  if (glob.is_match("a?c", "ac")) { return 2; }
   return 0;
 }
 ```
@@ -32,7 +32,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<2 function __glob_class(p: string, start: i32, ch: i32): (boolean, i32)>>
 
-<<3 pub function glob_match(pattern: string, text: string): boolean>>
+<<3 pub function is_match(pattern: string, text: string): boolean>>
 ```
 
 ### `module introduction`
@@ -145,11 +145,11 @@ function __glob_match(p: string, i: i32, t: string, j: i32): boolean {
 }
 ```
 
-### `3 pub function glob_match(pattern: string, text: string): boolean`
+### `3 pub function is_match(pattern: string, text: string): boolean`
 
 ```fern
-<<3 pub function glob_match(pattern: string, text: string): boolean>>=
-pub function glob_match(pattern: string, text: string): boolean {
+<<3 pub function is_match(pattern: string, text: string): boolean>>=
+pub function is_match(pattern: string, text: string): boolean {
   return __glob_match(pattern, 0, text, 0);
 }
 ```

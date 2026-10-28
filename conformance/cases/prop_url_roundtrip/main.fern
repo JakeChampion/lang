@@ -81,13 +81,13 @@ function main(): i32 {
         state = lcg_next(state);
         let n: i32 = state % 48;
         let s: string = gen_text(state, n, alpha);
-        let enc: string = url.url_encode(s);
+        let enc: string = url.encode(s);
 
-        if (url.url_decode(enc) != s) {
+        if (url.decode(enc) != s) {
             print("url roundtrip FAILED at trial " + trial.to_string());
             return 1;
         }
-        if (!same_bytes(url.url_decode_bytes(enc), s.bytes())) {
+        if (!same_bytes(url.decode_bytes(enc), s.bytes())) {
             print("url byte roundtrip FAILED at trial " + trial.to_string());
             return 1;
         }
@@ -100,7 +100,7 @@ function main(): i32 {
         let raw: u8[] = gen_bytes(state, n);
         let s: string = string_from_bytes_unchecked(raw);
 
-        if (!same_bytes(url.url_decode_bytes(url.url_encode(s)), raw)) {
+        if (!same_bytes(url.decode_bytes(url.encode(s)), raw)) {
             print("url byte roundtrip FAILED at byte trial " + trial.to_string());
             return 1;
         }

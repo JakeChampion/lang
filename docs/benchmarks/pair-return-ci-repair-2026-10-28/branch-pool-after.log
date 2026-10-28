@@ -1,0 +1,16 @@
+=== RUN   TestSelfHostSSABranchForwarding
+=== RUN   TestSelfHostSSABranchForwarding/x86-64-linux
+=== RUN   TestSelfHostSSABranchForwarding/arm64-linux
+--- PASS: TestSelfHostSSABranchForwarding (36.98s)
+    --- PASS: TestSelfHostSSABranchForwarding/x86-64-linux (0.71s)
+    --- PASS: TestSelfHostSSABranchForwarding/arm64-linux (0.62s)
+=== RUN   TestSSABranchForwardingLiteralPool
+=== RUN   TestSSABranchForwardingLiteralPool/empty-block
+=== RUN   TestSSABranchForwardingLiteralPool/literal-pool
+=== RUN   TestSSABranchForwardingLiteralPool/pool-after-code
+--- PASS: TestSSABranchForwardingLiteralPool (0.00s)
+    --- PASS: TestSSABranchForwardingLiteralPool/empty-block (0.00s)
+    --- PASS: TestSSABranchForwardingLiteralPool/literal-pool (0.00s)
+    --- PASS: TestSSABranchForwardingLiteralPool/pool-after-code (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	36.998s

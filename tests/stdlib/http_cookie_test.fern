@@ -70,11 +70,11 @@ function test_refused(): test.TestOutcome {
 }
 
 function request(cookies: string[]): HttpRequest {
-  let h: HeaderMap = headers.header_map_new();
+  let h: HeaderMap = headers.new();
   for c in cookies {
     h = h.append("Cookie", c);
   }
-  return HttpRequest { method: "GET", path: "/", body: stream.stream_from_string(""), headers: h, trailers: headers.header_map_new() };
+  return HttpRequest { method: "GET", path: "/", body: stream.stream_from_string(""), headers: h, trailers: headers.new() };
 }
 
 function read(req: HttpRequest, name: string): string {
@@ -180,10 +180,10 @@ function test_jar_lifetime(): test.TestOutcome {
 
 function date(s: string): string {
   match (cookie.parse_date(s)) {
-    Some(t) => {
+    Ok(t) => {
       return t.sec.to_string();
     },
-    None => {
+    Err(_) => {
       return "none";
     }
   }

@@ -72,7 +72,7 @@ func checkServeH3Files(t *testing.T, target string, size int) {
   if (req.path == "/not-modified") {
     return HttpResponse { ...resp, status: 304 };
   }
-  return HttpResponse { ...resp, trailers: headers.header_map_new().append("x-file", "done") };
+  return HttpResponse { ...resp, trailers: headers.new().append("x-file", "done") };
 }
 
 `, path+".absent", empty, path, path, length, tail, path, path, size-1)

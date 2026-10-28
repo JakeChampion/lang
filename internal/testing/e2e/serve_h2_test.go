@@ -59,8 +59,8 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
         }
       }
       return None;
-    }, idle_ms: 0, filler: [], trailers: (): HeaderMap => headers.header_map_new() };
-    return HttpResponse { status: 200, body: BodyChunks(producer), headers: headers.header_map_new().append("Content-Type", "application/grpc"), trailers: headers.header_map_new().append("Grpc-Status", "0"), background: None };
+    }, idle_ms: 0, filler: [], trailers: (): HeaderMap => headers.new() };
+    return HttpResponse { status: 200, body: BodyChunks(producer), headers: headers.new().append("Content-Type", "application/grpc"), trailers: headers.new().append("Grpc-Status", "0"), background: None };
   }
   if (req.path == "/trailing") {
     let parts: Cell[i32] = cell_new(0);
@@ -70,8 +70,8 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
       }
       parts.set(parts.get() + 1);
       return Some(("part" + i.to_string()).bytes());
-    }, (): HeaderMap => headers.header_map_new().append("x-parts", parts.get().to_string()));
-    return HttpResponse { ...resp, trailers: headers.header_map_new().append("x-static", "yes") };
+    }, (): HeaderMap => headers.new().append("x-parts", parts.get().to_string()));
+    return HttpResponse { ...resp, trailers: headers.new().append("x-static", "yes") };
   }
   if (req.path == "/park") {
     let parked: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), inactivity: time.duration_seconds(300 as i64), total: time.duration_seconds(600 as i64) };

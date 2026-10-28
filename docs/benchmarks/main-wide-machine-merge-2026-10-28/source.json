@@ -1,0 +1,11 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./compiler",
+    "./internal/testing/sourcelint"
+  ],
+  "exit": 0,
+  "seconds": 14.830491437998717,
+  "source_head": "b8b83c0fffd5d8570c5d621636c49ee0a95095d1"
+}

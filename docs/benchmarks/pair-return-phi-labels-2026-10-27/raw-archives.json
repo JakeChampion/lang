@@ -1,0 +1,18 @@
+[
+  {
+    "original_file": "stage2.callgrind",
+    "archive_file": "stage2.callgrind.gz",
+    "original_sha256": "513956cea22090186c9204207342b353ba8b36ee785299342e6bfbba10c97a8e",
+    "archive_sha256": "a1b0ae0dac54f71b010025e2996b875792885ea2cd9f860976aaafa0a9a48767",
+    "original_bytes": 2262618,
+    "archive_bytes": 554326
+  },
+  {
+    "original_file": "stage2-g.nm",
+    "archive_file": "stage2-g.nm.gz",
+    "original_sha256": "e33953c5dcedaaf4a3035b281914843cab372eafe95235ba3ca6fa2ebee8ce01",
+    "archive_sha256": "0a9c300e2b80a54600e84085c2a4057e0d376ed1c8a136df72e46dbd910393d4",
+    "original_bytes": 436160,
+    "archive_bytes": 84410
+  }
+]

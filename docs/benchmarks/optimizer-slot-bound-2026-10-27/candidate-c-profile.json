@@ -1,0 +1,27 @@
+{
+  "command": [
+    "/workspace/lang-issue-work/perf-4412/tools/usr/bin/time",
+    "-v",
+    "/workspace/lang-issue-work/perf-4412/tools/usr/bin/valgrind",
+    "--tool=callgrind",
+    "--callgrind-out-file=/workspace/lang-issue-work/perf-4412/candidate-c.callgrind",
+    "/workspace/lang-issue-work/perf-4412/candidate-c-stage2",
+    "-O",
+    "-target",
+    "x86-64-linux",
+    "-emit",
+    "asm",
+    "-o",
+    "/dev/null",
+    "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+    "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+  ],
+  "exit": 0,
+  "valid_full_run": true,
+  "elapsed_seconds": 230.44714593200115,
+  "binary_sha256": "c5670a91c6f559f700456efe631847c562b04f38fd7c578ddec3cd301f126ede",
+  "subject_output_sha256": "0b60857973ae1dccba313e350cbe51b286d2e18d435da614a4df5a534a370d78",
+  "subject_output_bytes": 26865028,
+  "byte_identical_to_baseline": true,
+  "memo_warmed": true
+}

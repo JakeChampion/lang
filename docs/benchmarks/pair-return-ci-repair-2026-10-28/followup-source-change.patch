@@ -1,0 +1,146 @@
+diff --git a/compiler/asm_arm64_ir.fern b/compiler/asm_arm64_ir.fern
+index 5152399ad..82a9a3a14 100644
+--- a/compiler/asm_arm64_ir.fern
++++ b/compiler/asm_arm64_ir.fern
+@@ -7677,7 +7677,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
+   s = s.write("    .globl __fern_heap_end\n");
+   s = s.write("__fern_heap_end: .quad 0\n");
+   s = s.write("    .align 3\n");
+-  s = s.write("__fern_heap_base: .quad 0\n");
++  s = s.write("    .globl __fern_heap_base\n__fern_heap_base: .quad 0\n");
+   s = s.write("    .align 3\n");
+   s = s.write("__fern_rc_underflow: .quad 0\n");
+   s = s.write("    .align 3\n");
+diff --git a/compiler/drivers/ir_kind_run.fern b/compiler/drivers/ir_kind_run.fern
+index 447ad79c5..6be1c8506 100644
+--- a/compiler/drivers/ir_kind_run.fern
++++ b/compiler/drivers/ir_kind_run.fern
+@@ -71,7 +71,7 @@ function main(): i32 {
+     "vsplat", "vextract", "vreplace", "vadd", "vsub", "vmul", "vdiv", "vmin", "vmax", "vfma",
+     "vsqrt", "vabs", "vneg", "vfloor", "vceil", "vtrunc", "vround", "veq", "vne", "vlt", "vle", "vgt", "vge",
+     "vand", "vor", "vxor", "vandnot", "vselect", "vload", "vstore",
+-    "vget", "vset", "vbitmask", "crc32_ieee", "crc32_ieee_array", "count_below_u64",
++    "vget", "vset", "vbitmask", "crc32_ieee", "crc32_ieee_array", "count_below_u64", "prctl_query",
+   ];
+   if (!ir.kind_retired(198) || ir.kind_name(198) != "invalid") {
+     failures = failures + 1;
+@@ -191,7 +191,7 @@ function main(): i32 {
+     ir.op_aes_expand_key(), ir.op_aes_ctr32(), ir.op_ghash(), ir.op_clone_file(), ir.op_set_extproc(), ir.op_reader_copy_range(), ir.op_pipe(), ir.op_sha256_hw(), ir.op_sha256_hw_blocks(), ir.op_bswap(32),
+     ir.op_open_dir(), ir.op_dir_open(), ir.op_dir_entries(), ir.op_dir_stat(0), ir.op_dir_access(), ir.op_dir_unlink(0), ir.op_dir_chmod(), ir.op_dir_chown(),
+     ir.op_bin("mulhi_u", 64, true), ir.op_writer_splice_forever(), ir.op_utf8_blocks(), ir.op_sha1_hw(), ir.op_sha1_hw_blocks(), ir.op_aes_gcm_seal_into(), ir.op_aes_gcm_open_into(), ir.op_mismatch_bytes_str(), ir.op_opt_set_payload(), ir.op_lane("vbitmask", 64),
+-    ir.op_crc32_ieee(), ir.op_crc32_ieee_array(), ir.op_count_below_u64(),
++    ir.op_crc32_ieee(), ir.op_crc32_ieee_array(), ir.op_count_below_u64(), ir.op_prctl_query(),
+   ];
+   let names: string[] = [
+     "const_i32", "const_str", "load_local",
+@@ -231,7 +231,7 @@ function main(): i32 {
+     "aes_expand_key", "aes_ctr32", "ghash", "clone_file", "set_extproc", "reader_copy_range", "pipe", "sha256_hw", "sha256_hw_blocks", "bswap",
+     "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
+     "mulhi_u", "writer_splice_forever", "utf8_blocks", "sha1_hw", "sha1_hw_blocks", "aes_gcm_seal_into", "aes_gcm_open_into", "mismatch_bytes_str", "opt_set_payload", "vbitmask",
+-    "crc32_ieee", "crc32_ieee_array", "count_below_u64",
++    "crc32_ieee", "crc32_ieee_array", "count_below_u64", "prctl_query",
+   ];
+   let tag_ok: i32 = 0;
+   let tag_bad: i32 = 0;
+diff --git a/compiler/playground_run.fern b/compiler/playground_run.fern
+index 551b8b706..49061bef7 100644
+--- a/compiler/playground_run.fern
++++ b/compiler/playground_run.fern
+@@ -229,7 +229,7 @@ function emit(merged: parser.Module, files: string[], target: string, form: stri
+ 
+   let typed: parser.Module = parser.module_with_builtins_typed(merged);
+   let full: parser.Module = parser.erase_view_module(typed);
+-  let sub: ircore.Sub = semlower.target_substitution(typed, target, semlower.build_opts(false, false, true, semarrayreport.off()));
++  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(false, false, true, semarrayreport.off())), switches: asmcore.Switches { ...asmcore.env_switches(), target: target } };
+   if (report_diags(sub.refused, files)) {
+     return 1;
+   }
+diff --git a/internal/testing/e2ecompiler/self_host_ir_kind_test.go b/internal/testing/e2ecompiler/self_host_ir_kind_test.go
+index de8fc00f5..8b4bbab77 100644
+--- a/internal/testing/e2ecompiler/self_host_ir_kind_test.go
++++ b/internal/testing/e2ecompiler/self_host_ir_kind_test.go
+@@ -18,7 +18,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
+ 		"bijection_ok=162\n" +
+ 		"bijection_failures=0\n" +
+ 		"retired=26\n" +
+-		"ext_ok=260\n" +
++		"ext_ok=261\n" +
+ 		"ext_failures=0\n" +
+ 		"neg_ok=15\n" +
+ 		"neg_failures=0\n" +
+@@ -33,7 +33,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
+ 		"is_term return=1 br=1 exit=1 brif=0\n" +
+ 		"is_fold add=1 div_s=1 ge_s=1 fadd=0\n" +
+ 		"is_commute add=1 xor=1 sub=0 shl=0\n" +
+-		"tag_consistency ok=231 bad=0\n"
++		"tag_consistency ok=232 bad=0\n"
+ 
+ 	table, err := os.ReadFile(filepath.Join("testdata", "ir-kind-ids.txt"))
+ 	if err != nil {
+diff --git a/internal/testing/e2ecompiler/self_host_ssa_branch_forward_test.go b/internal/testing/e2ecompiler/self_host_ssa_branch_forward_test.go
+index a97c14d81..f8e2dc9df 100644
+--- a/internal/testing/e2ecompiler/self_host_ssa_branch_forward_test.go
++++ b/internal/testing/e2ecompiler/self_host_ssa_branch_forward_test.go
+@@ -60,14 +60,16 @@ func jumpsToJumps(assembly string) []string {
+ 	lines := strings.Split(assembly, "\n")
+ 	first := map[string]string{}
+ 	label := ""
+-	for _, line := range lines {
++	for i, line := range lines {
+ 		if m := ssaLabel.FindStringSubmatch(line); m != nil {
+ 			label = m[1]
+ 			continue
+ 		}
+ 		code := strings.TrimSpace(line)
+ 		if label != "" && code != "" && !strings.HasPrefix(code, ".") {
+-			first[label] = line
++			if !blockJump.MatchString(line) || i+1 >= len(lines) || strings.TrimSpace(lines[i+1]) != ".ltorg" {
++				first[label] = line
++			}
+ 			label = ""
+ 		}
+ 	}
+@@ -80,3 +82,21 @@ func jumpsToJumps(assembly string) []string {
+ 	}
+ 	return bad
+ }
++
++func TestSSABranchForwardingLiteralPool(t *testing.T) {
++	for _, tc := range []struct {
++		name, body string
++		want       int
++	}{
++		{"empty-block", "    b .Lssa_f_2\n", 1},
++		{"literal-pool", "    b .Lssa_f_pool_2\n    .ltorg\n.Lssa_f_pool_2:\n    add x0, x0, #1\n", 0},
++		{"pool-after-code", "    add x0, x0, #1\n    b .Lssa_f_pool_2\n    .ltorg\n.Lssa_f_pool_2:\n", 0},
++	} {
++		t.Run(tc.name, func(t *testing.T) {
++			asm := "    b .Lssa_f_1\n.Lssa_f_1:\n" + tc.body
++			if got := jumpsToJumps(asm); len(got) != tc.want {
++				t.Fatalf("redundant branches = %v, want %d", got, tc.want)
++			}
++		})
++	}
++}
+diff --git a/internal/testing/e2ecompiler/self_host_ssa_lift_admits_test.go b/internal/testing/e2ecompiler/self_host_ssa_lift_admits_test.go
+index 5aa012d0e..46870cce3 100644
+--- a/internal/testing/e2ecompiler/self_host_ssa_lift_admits_test.go
++++ b/internal/testing/e2ecompiler/self_host_ssa_lift_admits_test.go
+@@ -11,7 +11,7 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
+ 	const want = "load pops=-1 pushes=1\n" +
+ 		"store pops=-1 pushes=1\n" +
+ 		"call_closure_direct pops=-1 pushes=1\n" +
+-		"registered=422 declined=3\n"
++		"registered=423 declined=3\n"
+ 
+ 	cmd := runX86_64Bin(runner, bin)
+ 	out, err := cmd.Output()
+diff --git a/internal/testing/e2ecompiler/testdata/ir-kind-ids.txt b/internal/testing/e2ecompiler/testdata/ir-kind-ids.txt
+index e9bd2ed5d..7f38b9758 100644
+--- a/internal/testing/e2ecompiler/testdata/ir-kind-ids.txt
++++ b/internal/testing/e2ecompiler/testdata/ir-kind-ids.txt
+@@ -420,3 +420,4 @@ vbitmask=479
+ crc32_ieee=480
+ crc32_ieee_array=481
+ count_below_u64=482
++prctl_query=483

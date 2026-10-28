@@ -86,10 +86,10 @@ function test_etag_read(): test.TestOutcome {
   let out: string = "";
   for s in ["\"xyzzy\"", " W/\"xyzzy\" ", "\"\"", "\"a,b\"", "xyzzy", "\"a b\"", "W/xyzzy", "\"a\"b\"", "w/\"x\""] {
     match (cache.parse_etag(s)) {
-      Some(e) => {
+      Ok(e) => {
         out = out + "<" + e.to_string() + ">";
       },
-      None => {
+      Err(_) => {
         out = out + "<->";
       }
     }
@@ -203,7 +203,7 @@ function test_cache_control_written(): test.TestOutcome {
 }
 
 function test_cache_control_read(): test.TestOutcome {
-  let h: HeaderMap = headers.header_map_new().append("Cache-Control", "Max-Age=60, PUBLIC").append("cache-control", "no-cache=\"set-cookie, x-id\", max-age=10, s-maxage=\"30\", min-fresh=1x, stale-if-error=99999999999, ext=\"a,b\", max-stale");
+  let h: HeaderMap = headers.new().append("Cache-Control", "Max-Age=60, PUBLIC").append("cache-control", "no-cache=\"set-cookie, x-id\", max-age=10, s-maxage=\"30\", min-fresh=1x, stale-if-error=99999999999, ext=\"a,b\", max-stale");
   let c: cache.CacheControl = cache.parse_cache_control(h);
   let out: string = opt(c.max_age) + " " + c.public.to_string() + " " + c.no_cache.to_string() + joined(c.no_cache_fields) + " " + opt(c.s_maxage) + " " + opt(c.min_fresh) + " " + opt(c.stale_if_error) + " " + opt(c.max_stale);
   return test.assert_eq(out, "60 true true[set-cookie][x-id] 30 - 2147483648 2147483648");
@@ -211,7 +211,7 @@ function test_cache_control_read(): test.TestOutcome {
 
 function test_cache_control_round_trip(): test.TestOutcome {
   let v: string = "no-store, private=\"Authorization\", must-understand, no-transform, max-age=0, stale-while-revalidate=30";
-  let h: HeaderMap = headers.header_map_new().append("Cache-Control", v);
+  let h: HeaderMap = headers.new().append("Cache-Control", v);
   return test.assert_eq(cache.parse_cache_control(h).to_string(), v);
 }
 

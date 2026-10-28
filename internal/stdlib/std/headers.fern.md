@@ -17,7 +17,7 @@ import "std/headers";
 import "std/option";
 
 function main(): i32 {
-  let h = headers.header_map_new().append("X-Name", "Ada");
+  let h = headers.new().append("X-Name", "Ada");
   if (h.get("x-name").unwrap_or("") != "Ada") { return 1; }
   return 0;
 }
@@ -33,7 +33,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<dependencies 2>>
 
-<<3 pub function header_map_new(): HeaderMap>>
+<<3 pub function new(): HeaderMap>>
 
 <<4 function __list_member(out: string[], value: string, from: i32, to: i32): string[]>>
 
@@ -59,15 +59,32 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "core/cmp";
+import "std/error";
 import "std/string";
 import "core/map";
 ```
 
-### `3 pub function header_map_new(): HeaderMap`
+### `3 pub function new(): HeaderMap`
 
 ```fern
-<<3 pub function header_map_new(): HeaderMap>>=
-pub function header_map_new(): HeaderMap {
+<<3 pub function new(): HeaderMap>>=
+// A header field value that does not have the form its field requires.
+pub struct HeaderValueError { field: string, value: string }
+
+impl error.Error for HeaderValueError {}
+
+impl cmp.Display for HeaderValueError {}
+
+pub function (e: HeaderValueError) message(): string {
+  return "\"" + e.value + "\" is not a valid " + e.field + " value";
+}
+
+pub function (e: HeaderValueError) to_string(): string {
+  return e.message();
+}
+
+pub function new(): HeaderMap {
   let names: string[] = [];
   let values: string[] = [];
   return HeaderMap { names: names, values: values };

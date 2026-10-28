@@ -1,0 +1,14 @@
+[
+  {
+    "archive": "ci-fa0-122606856506.log.gz",
+    "raw_bytes": 110521,
+    "raw_sha256": "f829ef325a0f07f16bf236c64bc79342bcab40d3f06ceb75228411b88d39c661",
+    "archive_sha256": "490e729da507698831454c1f9dec9e8ca5651b3df0a15c0066523ed0c7f03f3a"
+  },
+  {
+    "archive": "ci-fa0-122606856538.log.gz",
+    "raw_bytes": 66513,
+    "raw_sha256": "75174eb55e323e87ac7be95f9bdb750e55c5942089f3d27f5e2f7a7599a4c6f0",
+    "archive_sha256": "ac441524398101018fa8e8f04351816fd6b3d1bd3d226630bca0b9c01688ba6a"
+  }
+]

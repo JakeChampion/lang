@@ -1,0 +1,30 @@
+from pathlib import Path
+import subprocess, json, os, hashlib
+
+p = Path(__file__).parent
+root = p.parent
+subject = root / 'tuple-return-probe/tail-phi.fern'
+records = []
+for version, compiler in [('before', root / 'candidate-c-stage2'), ('after', p / 'stage2')]:
+    for target in ['x86-64-linux', 'arm64-linux', 'wasm32-wasi']:
+        for mode, flags, sanitize in [('default', [], False), ('optimized', ['-O'], False), ('sanitized', ['-O'], True)]:
+            name = version + '-' + target + '-' + mode
+            binary = p / name
+            env = dict(os.environ)
+            env['FERN_LEAKCHECK'] = '1'
+            env['FERN_STRICT_IR'] = '1'
+            if sanitize:
+                env['FERN_SANITIZE'] = '1'
+            cmd = [str(compiler)] + flags + ['-target', target, '-o', str(binary), str(subject), str(root / 'fixed-source/internal/stdlib')]
+            with (p / (name + '-build.log')).open('wb') as f:
+                r = subprocess.run(cmd, env=env, stdout=f, stderr=subprocess.STDOUT)
+            assert r.returncode == 0, ('build', name, r.returncode)
+            run = [str(binary)] if target == 'x86-64-linux' else ['qemu-aarch64', '-cpu', 'max', str(binary)] if target == 'arm64-linux' else ['wasmtime', 'run', str(binary)]
+            r = subprocess.run(run, env=env, capture_output=True, text=True)
+            record = {'version': version, 'target': target, 'mode': mode, 'compile_command': cmd, 'run_command': run, 'compiler_sha256': hashlib.sha256(compiler.read_bytes()).hexdigest(), 'fixture_sha256': hashlib.sha256(subject.read_bytes()).hexdigest(), 'exit': r.returncode, 'stdout': r.stdout, 'stderr': r.stderr}
+            records.append(record)
+            (p / 'regression-validation.json').write_text(json.dumps(records, indent=2) + '\n')
+            print(record, flush=True)
+            assert r.stdout == ('100\n' if version == 'before' else '50\n'), (name, 'allocation count', r.stdout)
+            assert (r.returncode != 0 if version == 'before' else r.returncode == 0), (name, r.returncode)
+            assert 'live_bytes=0' in r.stderr, (name, 'leak census', r.stderr)

@@ -1,0 +1,6 @@
+{
+  "stage3_equals_stage4": true,
+  "source": "/workspace/lang-issue-work/perf-4412/record-pair-candidate/compiler",
+  "primary_e2e_completed_first": true,
+  "note": "The common producer is pair-phi-candidate/post-merge/stage3. Candidate stage2 implements record pair returns but its own code retains the prior ABI. Candidate stage3 first uses the record pair ABI for its own machine code. Stage4 tests self-reproduction. These build times are telemetry, not A/B performance data."
+}

@@ -65,7 +65,7 @@ function test_the_body_is_sent_as_the_policy_left_it(): test.TestOutcome {
 }
 
 function test_response_headers_become_the_proxys(): test.TestOutcome {
-  let h: HeaderMap = headers.header_map_new().append("X-A", "1").append("X-B", "two words");
+  let h: HeaderMap = headers.new().append("X-A", "1").append("X-B", "two words");
   let out: runtime.Headers = wire.headers_of(h);
   match (out.get("X-A")) {
     VString(s) => {
