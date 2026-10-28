@@ -15,8 +15,8 @@ var urlCoreIRCases = []struct {
 	{"encode", "import \"std/url\";\nfunction main(): i32 { return url.url_encode(\"a b&c\").len(); }\n"},
 	{"decode", "import \"std/url\";\nfunction main(): i32 { return url.url_decode(\"a%20b\").len(); }\n"},
 	{"roundtrip", "import \"std/url\";\nfunction main(): i32 { return url.url_decode(url.url_encode(\"hi there\")).len(); }\n"},
-	{"host-len", "import \"std/url\";\nfunction main(): i32 { match (url.url_parse(\"http://example.com/p\")) { Some(u) => { return u.host.len(); }, None => { return 0; }, } }\n"},
-	{"port", "import \"std/url\";\nfunction main(): i32 { match (url.url_parse(\"http://x.com:42/p\")) { Some(u) => { return u.port; }, None => { return 0; }, } }\n"},
+	{"host-len", "import \"std/url\";\nfunction main(): i32 { match (url.url_parse(\"http://example.com/p\")) { Ok(u) => { return u.host.len(); }, Err(_) => { return 0; }, } }\n"},
+	{"port", "import \"std/url\";\nfunction main(): i32 { match (url.url_parse(\"http://x.com:42/p\")) { Ok(u) => { return u.port; }, Err(_) => { return 0; }, } }\n"},
 	{"query", "import \"std/url\";\nfunction main(): i32 { let m = url.query_parse(\"a=1&b=2\"); return m.len(); }\n"},
 }
 
