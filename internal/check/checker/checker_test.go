@@ -30,6 +30,7 @@ func TestUnderInferredGenericStructLitIsE040(t *testing.T) {
 	bad := []string{
 		`function main(): i32 { let s = Stack { items: [] }; return 0; }`,
 		`function main(): i32 { let t = Tagged { n: 1 }; return t.n; }`,
+		`function main(): i32 { let o = Some(Tagged { n: 1 }); return 0; }`,
 	}
 	for _, body := range bad {
 		err := checkSource(t, decls+body)
@@ -52,6 +53,13 @@ function main(): i32 { return wrap(7); }`,
 function main(): i32 { return wrap(7); }`,
 		`function main(): i32 { let s = Stack[i32] { items: [] }; return s.items.len(); }`,
 		`function main(): i32 { let s: Stack[i32] = Stack { items: [] }; return s.items.len(); }`,
+		// A variant payload takes its type from the expected enum instance.
+		`function main(): i32 { let o: Option[Tagged[string]] = Some(Tagged { n: 1 }); return 0; }`,
+		`function take(o: Option[Tagged[string]]): i32 { return 0; }
+function main(): i32 { return take(Some(Tagged { n: 1 })); }`,
+		`function main(): i32 { let r: Result[Tagged[i32], Tagged[string]] = Err(Tagged { n: 1 }); return 0; }`,
+		`enum Holder[T] { Held(Tagged[T]), Nothing }
+function main(): i32 { let h: Holder[boolean] = Held(Tagged { n: 1 }); return 0; }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, decls+src); err != nil {

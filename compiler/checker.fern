@@ -1794,7 +1794,7 @@ pub struct StructSig { name: string, field_names: string[], field_types: typeinf
 
 pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_params: string[], type_bounds: string[], module: string, impl_trait: string, line: i32, col: i32, file: string, is_unsafe: boolean }
 
-pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string, type_params: string[], instance: string, visible_from: string[] }
+pub struct UnionSig { name: string, variants: string[], is_try: boolean, is_enum: boolean, module: string, type_params: string[], const_params: string[], instance: string, visible_from: string[] }
 
 pub struct Scope {
   names: string[],
@@ -1971,7 +1971,7 @@ pub struct UnionTable {
 }
 
 function enum_union_sig(ed: parser.EnumDecl): UnionSig {
-  return UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true, module: ed.module, type_params: ed.type_params, instance: ed.instance, visible_from: ed.visible_from };
+  return UnionSig { name: ed.name, variants: ed.variant_names, is_try: ed.try_marker, is_enum: true, module: ed.module, type_params: ed.type_params, const_params: ed.const_params, instance: ed.instance, visible_from: ed.visible_from };
 }
 
 function union_table(unions: UnionSig[]): UnionTable {
@@ -7740,7 +7740,7 @@ function collect_union_sigs(mod: parser.Module): UnionSig[] {
   while (i < mod.aliases.len()) {
     let a: parser.TypeAlias = mod.aliases[i];
     if (parser.alias_registers(mod, i)) {
-      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: a.module, type_params: [], instance: "", visible_from: [] });
+      out = out.append(UnionSig { name: a.name, variants: a.variants, is_try: false, is_enum: false, module: a.module, type_params: [], const_params: [], instance: "", visible_from: [] });
     }
     i = i + 1;
   }
@@ -7873,16 +7873,21 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
   return s;
 }
 
-// receiver_const_vars is the names a receiver spelling gives to its struct's
-// const parameters: N in `function (r: Ring[N, T]) cap()`.
+// receiver_const_vars is the names a receiver spelling gives to the const
+// parameters of its struct or enum: N in `function (r: Ring[N, T]) cap()`.
 function receiver_const_vars(s: Scope, receiver_type: string): string[] {
   let out: string[] = [];
   if (receiver_type.len() == 0) {
     return out;
   }
   let r: parser.TypeRef = parser.parse_type_ref(receiver_type);
-  let sig: StructSig = match (s.lookup_struct(r.base)) { Some(found) => found, None => { return out; } };
-  return parser.const_arg_names(r, sig.type_params, sig.const_params);
+  match (s.lookup_struct(r.base)) {
+    Some(sig) => {
+      return parser.const_arg_names(r, sig.type_params, sig.const_params);
+    },
+    None => {}
+  }
+  return match (s.lookup_union(r.base)) { Some(u) => parser.const_arg_names(r, u.type_params, u.const_params), None => out };
 }
 
 function func_scope_tparams(fd: parser.FuncDecl): string[] {
@@ -10112,10 +10117,10 @@ function drop_lit_locals(lits: string[], names: string[]): string[] {
 
 function builtin_union_sig(name: string): Option[UnionSig] {
   if (name == "Option") {
-    return Some(UnionSig { name: name, variants: ["Some", "None"], is_try: false, is_enum: true, module: "", type_params: ["T"], instance: "", visible_from: [] });
+    return Some(UnionSig { name: name, variants: ["Some", "None"], is_try: false, is_enum: true, module: "", type_params: ["T"], const_params: [], instance: "", visible_from: [] });
   }
   if (name == "Result") {
-    return Some(UnionSig { name: name, variants: ["Ok", "Err"], is_try: false, is_enum: true, module: "", type_params: ["T", "E"], instance: "", visible_from: [] });
+    return Some(UnionSig { name: name, variants: ["Ok", "Err"], is_try: false, is_enum: true, module: "", type_params: ["T", "E"], const_params: [], instance: "", visible_from: [] });
   }
   return None;
 }
@@ -13678,6 +13683,45 @@ function map_arg_diag(c: ast.ExprCall, ii: i32, method: string, slot: typeinfo.T
   return out;
 }
 
+// variant_payload_dests is the payload types of a variant constructor whose
+// expected type is an instance of its enum: `P[string]` for the argument of
+// `Some(...)` where an `Option[P[string]]` is expected.
+function variant_payload_dests(c: ast.ExprCall, dest: typeinfo.Type, s: Scope, dests: typeinfo.Type[]): typeinfo.Type[] {
+  let ast.ExprIdent(id) = c.callee else {
+    return dests;
+  };
+  let typeinfo.TypeUnion(du) = dest else {
+    return dests;
+  };
+  if (s.ident_binding(id) >= 0) {
+    return dests;
+  }
+  if (du.name == "Option" || du.name == "Result") {
+    let slot: i32 = ctor_payload_slot(s, du.name, id.name, 0);
+    if (slot < 0 || slot >= du.args.len() || parser.builtin_enum_of(id.name) != du.name) {
+      return dests;
+    }
+    return [du.args[slot]];
+  }
+  let Some(u) = s.lookup_union(du.name) else {
+    return dests;
+  };
+  if (u.type_params.len() == 0 || u.type_params.len() != du.args.len()) {
+    return dests;
+  }
+  let Some(vs) = s.lookup_owned_struct(id.name, u.name) else {
+    return dests;
+  };
+  if (vs.enum_owner != u.name) {
+    return dests;
+  }
+  let out: typeinfo.Type[] = [];
+  for n in vs.field_type_names {
+    out = out.append(type_from_ref_subst(parser.parse_type_ref(n), u.type_params, du.args, s.type_names()));
+  }
+  return out;
+}
+
 function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: typeinfo.Type): util.Diag[] {
   out = util.append_diags(out, e032_call_check(c, s));
   match (c.callee) {
@@ -13747,7 +13791,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
       out = call_diags(c.callee, s);
     }
   }
-  let dests: typeinfo.Type[] = s.call_param_types(c);
+  let dests: typeinfo.Type[] = variant_payload_dests(c, dest, s, s.call_param_types(c));
   let di: i32 = 0;
   if (!s.callee_resolves(c)) {
     di = c.args.len();
@@ -20539,54 +20583,80 @@ function e064_fn_tparams(fd: parser.FuncDecl): string[] {
   return out;
 }
 
-// const_kind_module_diags checks each written application of a struct that
-// takes a const parameter. A const parameter takes an integer that fits in
-// i32 (E089) or a const parameter in scope, and a type parameter takes a type
-// (E090).
+// const_kind_module_diags checks each written application of a struct or an
+// enum that takes a const parameter. A const parameter takes an integer that
+// fits in i32 (E089) or a const parameter in scope, and a type parameter takes
+// a type (E090).
 function const_kind_module_diags(mod: parser.Module, focus: util.NameIndex): util.Diag[] {
   let out: util.Diag[] = [];
-  let cstructs: parser.StructDecl[] = [];
-  for sd in mod.structs {
-    if (sd.const_params.len() > 0) {
-      cstructs = cstructs.append(sd);
-    }
-  }
-  if (cstructs.len() == 0) {
+  let owners: ConstOwner[] = const_owners(mod);
+  if (owners.len() == 0) {
     return out;
   }
   for sd in mod.structs {
+    let consts: string[] = sd.const_params;
+    if (sd.enum_owner.len() > 0) {
+      consts = owner_consts(owners, sd.enum_owner);
+    }
     for field in sd.fields {
       let (fl, fc) = field_pos(field, sd.line, sd.col);
-      out = util.append_diags(out, const_kind_diags(field.type_name, cstructs, sd.const_params, fl, fc));
+      out = util.append_diags(out, const_kind_diags(field.type_name, owners, consts, fl, fc));
     }
   }
   for efn in mod.funcs {
     if (in_focus(focus, efn)) {
-      let consts: string[] = fn_const_names(efn, cstructs);
+      let consts: string[] = fn_const_names(efn, owners);
       for param in efn.params {
         let (pl, pc) = param_pos(param, efn.line, efn.col);
-        out = util.append_diags(out, const_kind_diags(param.type_name, cstructs, consts, pl, pc));
+        out = util.append_diags(out, const_kind_diags(param.type_name, owners, consts, pl, pc));
       }
-      out = util.append_diags(out, const_kind_diags(efn.ret_type, cstructs, consts, efn.line, efn.col));
+      out = util.append_diags(out, const_kind_diags(efn.ret_type, owners, consts, efn.line, efn.col));
       for an in collect_annots(efn.body) {
-        out = util.append_diags(out, const_kind_diags(an.type_name, cstructs, consts, an.line, an.col));
+        out = util.append_diags(out, const_kind_diags(an.type_name, owners, consts, an.line, an.col));
       }
     }
   }
   return out;
 }
 
+// ConstOwner is a struct or an enum that declares a const parameter.
+struct ConstOwner { name: string, type_params: string[], const_params: string[] }
+
+function const_owners(mod: parser.Module): ConstOwner[] {
+  let out: ConstOwner[] = [];
+  for sd in mod.structs {
+    if (sd.const_params.len() > 0) {
+      out = out.append(ConstOwner { name: sd.name, type_params: sd.type_params, const_params: sd.const_params });
+    }
+  }
+  for ed in mod.enums {
+    if (ed.const_params.len() > 0) {
+      out = out.append(ConstOwner { name: ed.name, type_params: ed.type_params, const_params: ed.const_params });
+    }
+  }
+  return out;
+}
+
+function owner_consts(owners: ConstOwner[], name: string): string[] {
+  for o in owners {
+    if (o.name == name) {
+      return o.const_params;
+    }
+  }
+  return [];
+}
+
 // fn_const_names is the const parameters in scope in fd: its own, and those a
 // receiver spelling names.
-function fn_const_names(fd: parser.FuncDecl, cstructs: parser.StructDecl[]): string[] {
+function fn_const_names(fd: parser.FuncDecl, owners: ConstOwner[]): string[] {
   let out: string[] = const_tparams(fd);
   if (fd.receiver_type.len() == 0) {
     return out;
   }
   let r: parser.TypeRef = parser.parse_type_ref(fd.receiver_type);
-  for sd in cstructs {
-    if (sd.name == r.base) {
-      for name in parser.const_arg_names(r, sd.type_params, sd.const_params) {
+  for o in owners {
+    if (o.name == r.base) {
+      for name in parser.const_arg_names(r, o.type_params, o.const_params) {
         out = out.append(name);
       }
     }
@@ -20594,26 +20664,26 @@ function fn_const_names(fd: parser.FuncDecl, cstructs: parser.StructDecl[]): str
   return out;
 }
 
-function const_kind_diags(spelling: string, cstructs: parser.StructDecl[], consts: string[], line: i32, col: i32): util.Diag[] {
+function const_kind_diags(spelling: string, owners: ConstOwner[], consts: string[], line: i32, col: i32): util.Diag[] {
   if (spelling.len() == 0) {
     return [];
   }
-  return const_kind_ref_diags(parser.parse_type_ref(spelling), cstructs, consts, line, col);
+  return const_kind_ref_diags(parser.parse_type_ref(spelling), owners, consts, line, col);
 }
 
-function const_kind_ref_diags(r: parser.TypeRef, cstructs: parser.StructDecl[], consts: string[], line: i32, col: i32): util.Diag[] {
+function const_kind_ref_diags(r: parser.TypeRef, owners: ConstOwner[], consts: string[], line: i32, col: i32): util.Diag[] {
   let out: util.Diag[] = [];
-  for sd in cstructs {
-    if (sd.name == r.base) {
+  for o in owners {
+    if (o.name == r.base) {
       for i in 0..r.args.len() {
-        if (i >= sd.type_params.len()) {
+        if (i >= o.type_params.len()) {
           break;
         }
         let a: parser.TypeRef = r.args[i];
-        let tp: string = sd.type_params[i];
+        let tp: string = o.type_params[i];
         let leaf: boolean = a.args.len() == 0 && a.array_depth == 0 && !a.is_tuple;
         let integer: boolean = leaf && parser.is_const_arg(a.base);
-        if (util.has_str(sd.const_params, tp)) {
+        if (util.has_str(o.const_params, tp)) {
           if (integer && !parser.const_arg_fits(a.base)) {
             out = out.append(dg_at("E089", "the const argument for " + tp + " must fit in i32", line, col));
           } else if (!integer && !(leaf && util.has_str(consts, a.base))) {
@@ -20626,7 +20696,7 @@ function const_kind_ref_diags(r: parser.TypeRef, cstructs: parser.StructDecl[], 
     }
   }
   for a in r.args {
-    out = util.append_diags(out, const_kind_ref_diags(a, cstructs, consts, line, col));
+    out = util.append_diags(out, const_kind_ref_diags(a, owners, consts, line, col));
   }
   return out;
 }
