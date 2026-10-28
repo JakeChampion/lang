@@ -1,0 +1,68 @@
+// An enum and an impl take a const parameter. `Slot[4, string]` and
+// `Slot[8, i32]` are instances of one enum over N, and a method on
+// `Slot[N, T]` reads N as an i32. A variant payload takes N from the expected
+// type, so `Full(Ring { ... })` needs no written arguments. An impl over N
+// gives each instance its own N, both when the method is called directly and
+// when a generic function calls it through a trait bound.
+import "std/i32";
+
+struct Ring[const N: i32, T] { items: T[], head: i32 }
+
+enum Slot[const N: i32, T] {
+  Full(Ring[N, T]),
+  Empty,
+}
+
+function (s: Slot[N, T]) cap(): i32 {
+  return N;
+}
+
+function used[const N: i32, T](s: Slot[N, T]): i32 {
+  return match (s) {
+    Full(r) => r.items.len(),
+    Empty => 0,
+  };
+}
+
+trait Capacity {
+  function room(self: Self): i32;
+}
+
+impl[const N: i32, T] Capacity for Ring[N, T] {
+  function room(self: Ring[N, T]): i32 {
+    return N - self.items.len();
+  }
+}
+
+impl[const N: i32, T] Capacity for Slot[N, T] {
+  function room(self: Slot[N, T]): i32 {
+    return match (self) {
+      Full(r) => r.room(),
+      Empty => N,
+    };
+  }
+}
+
+function room_of[C: Capacity](c: C): i32 {
+  return c.room();
+}
+
+function main(): i32 {
+  let a: Slot[4, string] = Full(Ring { items: ["x", "y"], head: 0 });
+  let b: Slot[8, i32] = Empty;
+  print(a.cap().to_string());
+  print(b.cap().to_string());
+  print(used(a).to_string());
+  print(used(b).to_string());
+  let r: Ring[16, i32] = Ring { items: [1, 2, 3], head: 0 };
+  print(r.room().to_string());
+  print(room_of(r).to_string());
+  print(a.room().to_string());
+  print(room_of(b).to_string());
+  let left: i32 = match (a) {
+    Full(ring) => ring.room(),
+    Empty => 0,
+  };
+  print(left.to_string());
+  return 0;
+}

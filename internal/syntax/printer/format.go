@@ -369,16 +369,7 @@ func (f *formatter) formatEnumDecl(ed *ast.EnumDecl) {
 	}
 	f.b.WriteString("enum ")
 	f.b.WriteString(ed.Name)
-	if len(ed.TypeParams) > 0 {
-		f.b.WriteByte('[')
-		for i, p := range ed.TypeParams {
-			if i > 0 {
-				f.b.WriteString(", ")
-			}
-			f.b.WriteString(p)
-		}
-		f.b.WriteByte(']')
-	}
+	f.writeTypeParams(ed.TypeParams, nil, nil, ed.ConstParams)
 	if len(ed.Variants) > 0 && f.keepListLines(ed.P.Line, ed.Variants[len(ed.Variants)-1].P.Line) {
 		f.b.WriteString(" {\n")
 		for _, v := range ed.Variants {
@@ -653,7 +644,7 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 
 func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 	f.b.WriteString("impl")
-	f.writeTypeParams(id.TypeParams, id.Bounds, id.BoundArgs, nil)
+	f.writeTypeParams(id.TypeParams, id.Bounds, id.BoundArgs, id.ConstParams)
 	f.b.WriteByte(' ')
 	f.b.WriteString(id.Trait)
 	if len(id.TraitArgs) > 0 {

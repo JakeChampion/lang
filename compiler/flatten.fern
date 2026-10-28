@@ -1473,6 +1473,7 @@ function mangle_enum_decls(enums: parser.EnumDecl[], ctx: RewriteCtx): parser.En
       name: mangle_bare(e.name, ctx),
       variant_names: nvn,
       type_params: e.type_params,
+      const_params: e.const_params,
       line: e.line,
       col: e.col,
       must_consume: e.must_consume,
