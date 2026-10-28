@@ -28,7 +28,7 @@ function main(): i32 {
 	// The phi carries a fresh box across the edge; it is a value of its
 	// own, and the box's unit moves into it.
 	"fresh-phi": `struct Vec2 { x: f32, y: f32 }
-function id[T](x: T): T { return x; }
+@noinline function id[T](x: T): T { return x; }
 @noinline function half(): f32 { return 1.5f32; }
 function main(): i32 {
   let y: f32 = half();

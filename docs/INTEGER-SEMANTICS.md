@@ -178,26 +178,45 @@ holds.
 
 There is no saturating IR opcode. The compiler's lowering
 (`irtables.sat_binary_ops`) expands each operator to a clamp over
-ordinary IR ops, so every backend gets it for free; the oracle
+ordinary IR ops, so every backend gets it for free. The oracle
 interpreter computes the same clamp directly (`satArith` in
-`internal/oracle/interp`). The tests are formulated as *pre*-checks
-against the type's MIN / MAX rather than as post-hoc overflow-flag
-reconstruction, which makes one shape work at every width — including
-sub-i32 `u8`, whose wrap mask never has to run because a saturated
-result is in range by construction:
+`internal/oracle/interp`). The checked operators (`+?`, `-?`, `*?`) use
+the same overflow tests (`irtables.chk_binary_ops`).
+
+An unsigned add or subtract uses a pre-check against MAX or zero:
 
 ```
-signed   a +| b →  b > 0 && a > MAX - b ? MAX
-                 : b < 0 && a < MIN - b ? MIN : a + b
+unsigned a +| b →  a > MAX - b ? MAX : a + b
 unsigned a -| b →  a < b ? 0 : a - b
-unsigned a *| b →  a != 0 && b > MAX / a ? MAX : a * b
 ```
 
-Signed `*|` is the one shape a pre-check can't express cheaply (four
-sign quadrants), so it post-checks the *wrapped* product with a
-division: `a != 0 && (s / a != b || (a == -1 && b == MIN))`. The second
-term is needed precisely because division is total here — `MIN / -1`
-yields `MIN`, so the round-trip spuriously agrees on exactly that pair.
+A signed add or subtract examines the sign of the wrapped result
+(`irtables.add_lost`). The result wraps only when its sign is not the sign
+of the true result. The direction of the clamp is the sign of `a`:
+
+```
+signed a +| b →  ((a ^ s) & (b ^ s)) < 0 ? (a < 0 ? MIN : MAX) : s     (s = a + b)
+signed a -| b →  ((a ^ b) & (a ^ s)) < 0 ? (a < 0 ? MIN : MAX) : s     (s = a - b)
+```
+
+A 64-bit multiply examines the high half of the full product
+(`irtables.mul_lost`). The `mulhi_u` and `mulhi_s` IR ops give that half:
+`mulq` and `imulq` on x86-64, `umulh` and `smulh` on arm64, and the
+`__fern_mulhi_u64` and `__fern_mulhi_s64` runtime functions on wasm. An
+unsigned product overflows when its high half is not zero. A signed
+product overflows when its high half is not the sign of its low half
+(`hi != lo >> 63`).
+
+A narrower multiply (`i32`, `u32`, `u8`) has no high-half op. It divides:
+
+```
+unsigned a *| b →  a != 0 && b > MAX / a ? MAX : a * b
+signed            a != 0 && (s / a != b || (a == -1 && b == MIN))   (s = a * b, wrapped)
+```
+
+The second signed term is necessary because division is total here.
+`MIN / -1` gives `MIN`, so the round trip agrees on that pair although
+the product overflows.
 
 `<<|` post-checks too, by shifting the wrapped result back. The test
 it uses, `lost`, is the same predicate `<<?` answers `None` on:

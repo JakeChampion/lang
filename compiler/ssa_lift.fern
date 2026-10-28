@@ -139,6 +139,9 @@ function bin_sym(k: string): string {
   if (k == "mulhi_u") {
     return "*hi";
   }
+  if (k == "mulhi_s") {
+    return "*hs";
+  }
   return "";
 }
 

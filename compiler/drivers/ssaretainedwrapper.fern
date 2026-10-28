@@ -40,7 +40,7 @@ function emit_source(arm: boolean, src: string, debug: boolean): ssaprepare.Emit
   let mod = parser.parse_module(lexer.tokenize(src));
   require(!asmcore.refuse_parse_errors([mod]), 61);
   let g = semlower.program(semlower.driven(mod, "x86-64-linux"));
-  let sw = asmcore.Switches { backtrace: false, sanitize: debug, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, pie: false, profile: "", target: "" };
+  let sw = asmcore.Switches { backtrace: false, sanitize: debug, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, pie: false, profile: "", target: "", line_maps: [] };
   if (arm) {
     return asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_module_lowering, sw, true).bodies;
   }

@@ -1,0 +1,10 @@
+function __fern_mulhi_s64(a: u64, b: u64): u64 {
+  let h: u64 = __fern_mulhi_u64(a, b);
+  if (a >> 63 != 0 as u64) {
+    h = h - b;
+  }
+  if (b >> 63 != 0 as u64) {
+    h = h - a;
+  }
+  return h;
+}
