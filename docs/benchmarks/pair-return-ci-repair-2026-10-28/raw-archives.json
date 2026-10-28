@@ -61,5 +61,47 @@
     "raw_sha256": "246c02779e9f0f4ae0ec5860f171888352f10f1ba70d80bb6d0c902470f3b4ae",
     "archive_name": "ci-6398-122552995805.log.gz",
     "archive_sha256": "805f8d9c8c269269aafdc97cf8c84f435381578fbc1baacb07a14c44d843c8c1"
+  },
+  {
+    "raw_name": "ci-0b-122575451253.log",
+    "raw_bytes": 1779318,
+    "raw_sha256": "815a134ef4e99182ead416d2096cffc4f4cfd84f35d512b0029b3831cf2abe9a",
+    "archive_name": "ci-0b-122575451253.log.gz",
+    "archive_sha256": "9914d25a15a7bfad5ecace17dd8d779b6b614e40a602803bb0e7c724b5244838"
+  },
+  {
+    "raw_name": "ci-0b-122575451284.log",
+    "raw_bytes": 2004653,
+    "raw_sha256": "55fb43891ef633fc29fbfc0a2480d06aa0f8160d73412e149f70ab21a9ebf733",
+    "archive_name": "ci-0b-122575451284.log.gz",
+    "archive_sha256": "abf86166101ff8e8fff94459203260f6db614e00fe8758f2df6d4f10f89424b4"
+  },
+  {
+    "raw_name": "ci-0b-122575451301.log",
+    "raw_bytes": 1378538,
+    "raw_sha256": "580236aa68e4134c7a8c0f94946d410b900265ff40e60b1233e736bc8d665c1e",
+    "archive_name": "ci-0b-122575451301.log.gz",
+    "archive_sha256": "0173301d5e154fa1df74098efb54076079922cb3991a14009029f0dc9fc2310c"
+  },
+  {
+    "raw_name": "ci-0b-122575451334.log",
+    "raw_bytes": 3250467,
+    "raw_sha256": "f97f229368b15360394ffe4c1062304e725bc905b1416edd1f69d5cf7ee83a43",
+    "archive_name": "ci-0b-122575451334.log.gz",
+    "archive_sha256": "60cd79c7e6b2294c09cd5686f401a958384afc992ffe56d682da1090dbcacd3d"
+  },
+  {
+    "raw_name": "ci-0b-122575451345.log",
+    "raw_bytes": 1453633,
+    "raw_sha256": "69b2ee129ca147a9c8fe6c0040283dd00d7d3aa95b0a491744e1705d93e2ac96",
+    "archive_name": "ci-0b-122575451345.log.gz",
+    "archive_sha256": "929e44060b6f4fc9a8eee7d40cfd50c927149c982a4da4571686e2adc665cbd9"
+  },
+  {
+    "raw_name": "ci-0b-122575451436.log",
+    "raw_bytes": 1876562,
+    "raw_sha256": "500e59c2ce8c101681998692b70fd604bf42d2040f5ac1f98ecdb152f29d7aa7",
+    "archive_name": "ci-0b-122575451436.log.gz",
+    "archive_sha256": "1fa2b0636b4886702cabc54401332a7626b24412b7a123bb8fa0ec9d1395aacd"
   }
 ]

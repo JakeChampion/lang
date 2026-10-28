@@ -1,0 +1,10 @@
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (2.11s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+=== RUN   TestSelfHostRatchetIncludesLiterateSources
+--- PASS: TestSelfHostRatchetIncludesLiterateSources (0.35s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	2.470s

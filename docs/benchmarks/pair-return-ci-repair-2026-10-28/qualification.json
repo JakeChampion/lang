@@ -30,5 +30,22 @@
     13736,
     13737
   ],
-  "compiler_speed_measurement": false
+  "compiler_speed_measurement": false,
+  "followup": {
+    "source_base": "9e7bb620129d70c0456205d75b3d47579ee58eda",
+    "arm_and_x86_permodule_counter_execution": true,
+    "ir_registry_and_constructors_and_lift_census": true,
+    "heap_registry_suite_seconds": 28.966,
+    "branch_roundtrip_targets": 2,
+    "branch_classifier_positive_negative_controls": 3,
+    "branch_suite_seconds": 36.998,
+    "playground_exact_output_forms": 11,
+    "playground_refusals_and_target_table": true,
+    "source_gate_seconds": 9.119,
+    "feature_census_pass": true,
+    "complexity_and_literate_pass": true,
+    "full_formatter_inputs": 2092,
+    "vet_and_testnames_pass": true,
+    "new_bug_issue": 13739
+  }
 }

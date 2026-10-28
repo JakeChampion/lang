@@ -36,3 +36,17 @@ The performance profiles retain their named source snapshots and common producer
 These correctness repairs do not supply a new compiler-speed measurement.
 Native Darwin signal delivery still requires current-head macOS CI.
 The architecture roadmap in #4412 remains incomplete.
+
+The remaining CI logs exposed the same heap-base export defect on ARM64.
+Both native runtimes now export the symbol, and both per-module counter executables pass.
+The IR registry fixture now covers `prctl_query` in its name, constructor and exact census controls.
+The operation keeps ID 483.
+
+The branch classifier mistook a literal-pool barrier for a block with only a jump.
+The classifier now recognizes the jump immediately before `.ltorg`.
+Separate controls retain rejection of an actual block with only a jump.
+The DEFLATE round trip passes on both native targets.
+
+The playground omitted its selected target from the `FERNBUILD1` record, as recorded in #13739.
+It now sets that field through the build switches.
+The output comparison retains complete byte equality for each form.

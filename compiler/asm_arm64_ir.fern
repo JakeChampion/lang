@@ -7677,7 +7677,7 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   s = s.write("    .globl __fern_heap_end\n");
   s = s.write("__fern_heap_end: .quad 0\n");
   s = s.write("    .align 3\n");
-  s = s.write("__fern_heap_base: .quad 0\n");
+  s = s.write("    .globl __fern_heap_base\n__fern_heap_base: .quad 0\n");
   s = s.write("    .align 3\n");
   s = s.write("__fern_rc_underflow: .quad 0\n");
   s = s.write("    .align 3\n");

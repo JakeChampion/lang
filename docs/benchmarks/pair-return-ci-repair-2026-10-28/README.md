@@ -39,3 +39,14 @@ The archive manifest records raw hashes and byte counts for the preserved CI log
 The red test logs retain the expected failures before each production fix.
 The validation logs distinguish completed checks from any checks still in progress.
 The [RC log](../../rc-log/2026-10-28-pair-return-ci-controls.md) explains the fixture changes and remaining CI requirement.
+
+The follow-up logs retain the remaining failures from the superseded `0b506a797` CI run.
+The ARM64 runtime has the same heap-base export correction as x86-64.
+Both native counter executables pass after that correction.
+The IR registry now includes the `prctl_query` operation in all exact census controls.
+
+The branch classifier distinguishes a required literal-pool barrier from a block with only a jump.
+The positive and negative classifier controls accompany the unchanged executable DEFLATE round trip.
+The playground target correction retains exact output comparison across native, Wasm and HTTP forms.
+The raw native assembly comparison identifies the missing target in the build record.
+The older manual CLI also lacks the heap export, so that comparison records the additional symbol directive separately.
