@@ -1,0 +1,60 @@
+import "../asmcore";
+import "../ssadecrementtext" as text;
+import "../ssalargepushmachine" as legacy;
+import "../ssalargepushranges" as oldranges;
+import "../ssalargepushwideranges" as ranges;
+import "../ssalargepushwidevalue" as value;
+import "../ssalargepushwidemachine" as machine;
+import "./ssaretainedprogram" as retained;
+import "./ssalargepushwidemachines" as controls;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("wide large-push proof controls failed: " + group);
+    exit(180);
+  }
+}
+
+function full_words(): void {
+  let capacities = ranges.capacities();
+  let partitions = ranges.intervals();
+  require(capacities.len() == 61 && partitions.len() == 77, "full fixed domain");
+  require(oldranges.capacities().len() == 45 && oldranges.intervals().len() == 57, "legacy domain unchanged");
+  let crossing = ranges.Interval { low: 10737418241 as i64, high: 12884901888 as i64 };
+  let original = value.original(crossing);
+  require(value.valid(crossing, original) && value.zero32(crossing, original).factor == -1 && value.high32(crossing, original).factor == -1, "independent full numeric fact");
+  require(ranges.expected_class(crossing) == 58 && ranges.rounded(crossing) == 12884901888 as i64, "unchanged crossing class");
+  let low = 0 as i64;
+  let covered = false;
+  for r in partitions {
+    require(r.low == low && r.high >= r.low && ranges.expected_class(r) >= 0 && ranges.expected_class(r) <= 60, "complete adjacent partitions");
+    low = r.high + 1 as i64;
+    covered = covered || r.low == crossing.low && r.high == crossing.high;
+  }
+  require(covered && low == 17179869185 as i64, "crossing interval retained");
+}
+
+function ownership(s: string): void {
+  let alias = s;
+  require(machine.check(s) && machine.check(alias), "shared source repeated proofs");
+  let unrelated = ".text\n__fern_large_push:\nret\n__fern_capw:\nret\n";
+  require(!machine.check(unrelated) && machine.check(s) && alias == s, "independent proof state");
+}
+
+function main(): i32 {
+  full_words();
+  let mod = retained.module();
+  require(!asmcore.refuse_parse_errors([mod]), "retained source parse");
+  let program = retained.program(mod);
+  let output = retained.emit(program, program.cache, program.physical, false, true, true, 0, -1).text;
+  require(machine.check(output), "actual complete output");
+  require(!legacy.check(output), "legacy proof interface unchanged");
+  let body = text.dependency(output, "__fern_large_push");
+  require(body.error == "" && body.lines.len() == 29, "current complete helper");
+  let selected = ".text\n__fern_large_push:\n    " + body.lines.join("\n    ") + "\n__fern_capw:\nret\n";
+  controls.run(selected);
+  ownership(selected);
+  print("wide large-push symbolic proof controls passed");
+  return 0;
+}

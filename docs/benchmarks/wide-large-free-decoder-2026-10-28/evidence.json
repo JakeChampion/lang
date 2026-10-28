@@ -1,0 +1,148 @@
+{
+  "source": "a928e68f14ede0df5afe9b046bb866eb4455b82e",
+  "PR": 13743,
+  "native_issue": 13738,
+  "source_commit_precedes_final_campaigns": true,
+  "reference_bundle": "124f50eea183b4640755e2c09cbad28bdab39d7d851bf5757ef3015ce5227c5e",
+  "case_count_per_target": 4681,
+  "success_per_target": 4224,
+  "expected_error_per_target": 457,
+  "workers_per_target": 586,
+  "total_workers": 1758,
+  "records_exactly_equal": true,
+  "all_workers_nonzero_balanced_zero_live": true,
+  "build": {
+    "source": "a928e68f14ede0df5afe9b046bb866eb4455b82e",
+    "make_exit": 0,
+    "version_exit": 0,
+    "version": "fern a928e68f14ed\nbuilt for x86-64-linux",
+    "seconds": 107.74185156822205,
+    "sources_unchanged": true,
+    "binaries": {
+      "bin/fern": "dfa4afd7bc020cda3446d6f94a875042dcd549cf946a190b8ae19690bbb1284b",
+      "bin/fern-selfhost": "db42054a760c888b803ac61d1cdc625c79add769062463cb50878ce50097c544"
+    },
+    "worktree_clean": true
+  },
+  "checks": [
+    {
+      "name": "source-gate",
+      "exit": 0,
+      "seconds": 288.40558433532715,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "targets-complexity",
+      "exit": 0,
+      "seconds": 212.99836707115173,
+      "PASS": 32,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "Fern-format",
+      "exit": 0,
+      "seconds": 2.6061744689941406,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "Go-build",
+      "exit": 0,
+      "seconds": 3.1806864738464355,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "Go-vet",
+      "exit": 0,
+      "seconds": 12.049396991729736,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "aux",
+      "exit": 0,
+      "seconds": 5.37734842300415,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "source-audit",
+      "exit": 0,
+      "seconds": 10.165066480636597,
+      "PASS": 219,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "reference-exact",
+      "exit": 0,
+      "seconds": 0.2032454013824463,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "diff",
+      "exit": 0,
+      "seconds": 0.011764764785766602,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    }
+  ],
+  "Go_oracle_actual_build": "a928e68f14ede0df5afe9b046bb866eb4455b82e",
+  "Go_oracle_postrun_sha256": "e75024219e6731a061d7749212eb2cf35f91aca1358507032e71304fb806d98c",
+  "sourcegate_node_count_unclaimed": true,
+  "initial_expanded_source": "f7bdaba5a4811476db32e137419971497e7da70f + UNCOMMITTED",
+  "stock_retained_failure_persists": true,
+  "machine_integration": false,
+  "full_CI_recovery": false,
+  "M5_epic_gates": "OPEN",
+  "manifest": [
+    {
+      "original": "/tmp/image-wide-decoder-evidence-secondary/final-corpus-x86-64-linux.json",
+      "published": "large-free-wide-decoder-x86-64-linux.json.gz",
+      "original_sha256": "4ee3d434ba953d91c8f4ad9357a4a7f2f4fea61cf8f5014d8377991389575944",
+      "published_sha256": "8b48ed3cdf44cb75fa3054ac288139d2ea88baa814a34d1c623c261198b38fab",
+      "published_bytes": 287565
+    },
+    {
+      "original": "/tmp/image-wide-decoder-evidence-secondary/final-corpus-wasm32-wasi.json",
+      "published": "large-free-wide-decoder-wasm32-wasi.json.gz",
+      "original_sha256": "49a204e888711d5c93d84e02f8f5778d1fe90f2c3d25087831ed0c6d1defa008",
+      "published_sha256": "fb3517f1382f11d4ea7969df2bba5d4aa0e2d4fc3641065cbba4bbf301412d09",
+      "published_bytes": 287791
+    },
+    {
+      "original": "/tmp/image-wide-decoder-evidence-secondary/final-corpus-arm64-linux.json",
+      "published": "large-free-wide-decoder-arm64-linux.json.gz",
+      "original_sha256": "eb961d8362eee20fc6420e3de9fa85ca26dbc38cd205f4ed4c8d3539000dd9e2",
+      "published_sha256": "7f0a64e86ffe7ad34675e3c69cf027eb16a00a1e624e86a8d37b6762b39ad708",
+      "published_bytes": 287598
+    },
+    {
+      "original": "archive",
+      "published": "qualification-records.tar.gz",
+      "original_sha256": null,
+      "published_sha256": "ddf7d5ca3a0658060745b49ee047bae286ea1b406eb88de1a3c9db3449a07314",
+      "published_bytes": 4168379,
+      "member_count": 7140
+    },
+    {
+      "original": "archive",
+      "published": "before-and-initial-records.tar.gz",
+      "original_sha256": null,
+      "published_sha256": "4984788c305232d31bf04352599fb9ba0fe63ffa637720ac65378bb1078ef70c",
+      "published_bytes": 860082,
+      "member_count": 53
+    }
+  ]
+}

@@ -1,0 +1,143 @@
+{
+  "PR": 13754,
+  "native_issue": 13753,
+  "source": "cac925e341192154358ff3dfda3e8d11009f51f7",
+  "source_commit_precedes_final_campaigns": true,
+  "changed_test_drivers_only": true,
+  "production_tool_reuse": {
+    "qualified_source": "7872a0970739ed6cfc100b48750f1bfb5716a4bb",
+    "loaded_fixture_source": "cac925e341192154358ff3dfda3e8d11009f51f7",
+    "make_q_exit": 0,
+    "production_closure_unchanged": true,
+    "new_compiler_build": false,
+    "copies": {
+      "fern-selfhost": {
+        "original": "/tmp/image-engine-secondary-worktrees/lang-image-retained-wide-integration/bin/fern-selfhost",
+        "copy": "/tmp/image-engine-secondary-worktrees/lang-image-retained-wide-call-summaries/bin/fern-selfhost",
+        "sha256": "db42054a760c888b803ac61d1cdc625c79add769062463cb50878ce50097c544",
+        "actual_build": "7872a0970739ed6cfc100b48750f1bfb5716a4bb"
+      },
+      "fern": {
+        "original": "/tmp/image-engine-secondary-worktrees/lang-image-retained-wide-integration/bin/fern",
+        "copy": "/tmp/image-engine-secondary-worktrees/lang-image-retained-wide-call-summaries/bin/fern",
+        "sha256": "19e7c88db3015b2373d2c1e48175e91cd3a2bd8ea81ddeda454f9e6b0ffb974b",
+        "actual_build": "7872a0970739ed6cfc100b48750f1bfb5716a4bb"
+      }
+    }
+  },
+  "source_hash_count": 6221,
+  "sourcegate_node_count_unclaimed": true,
+  "Go_oracle_actual_build": "7872a0970739ed6cfc100b48750f1bfb5716a4bb",
+  "Go_oracle_loaded_source": "cac925e341192154358ff3dfda3e8d11009f51f7",
+  "Go_oracle_postrun_sha256": "05b739cb256bbb2daf2766495a698b1f49e654602f0a8476d34a5b9a0d9e3d6b",
+  "all_tools_sampled_before_and_after": true,
+  "checks": [
+    {
+      "name": "source-gate",
+      "exit": 0,
+      "seconds": 243.31305384635925,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "targets-complexity",
+      "exit": 0,
+      "seconds": 74.76332068443298,
+      "PASS": 7,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "Fern-format",
+      "exit": 0,
+      "seconds": 2.8123254776000977,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "Go-build",
+      "exit": 0,
+      "seconds": 3.0497331619262695,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "Go-vet",
+      "exit": 0,
+      "seconds": 9.566293239593506,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "aux",
+      "exit": 0,
+      "seconds": 8.187355279922485,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "source-audit",
+      "exit": 0,
+      "seconds": 10.999427080154419,
+      "PASS": 219,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "diff",
+      "exit": 0,
+      "seconds": 0.012569427490234375,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    }
+  ],
+  "private_view_controls": {
+    "binary": "2ca769e0e79d6aad70b55fcab9a76c07289810cbb5254b0d86d7150b3c5ec492",
+    "baseline_nonzero_balanced_zero_live": true,
+    "intentional_failures": 6,
+    "ordinary_pass_claim_for_intentional_failures": false,
+    "all_assertion_messages_and_exit_codes_exact": true
+  },
+  "old_control_function_bodies_and_order_byte_exact": true,
+  "old_models_apis_domains_production_baselines_unchanged": true,
+  "full_retained_machine_qualification": false,
+  "caller_machine_integration": false,
+  "full_CI_recovery": false,
+  "M5_epic": "OPEN",
+  "manifest": [
+    {
+      "original": "/tmp/image-wide-call-summary-evidence-secondary/final-gates.json",
+      "published": "final-gates.json.gz",
+      "original_sha256": "0373dba0bbcc6501c2cf9d97b500c69080e756e87069a6f7adde45293475e916",
+      "published_sha256": "dd1305f4f6ccdce414e63dd1cca76511566a16964d8cbfbb5b8df2320b2967aa",
+      "published_bytes": 309497
+    },
+    {
+      "original": "/tmp/image-wide-call-summary-evidence-secondary/final-Go.json",
+      "published": "final-Go.json.gz",
+      "original_sha256": "68e98acc379eabe683a068d69f1f51fd18f4369b9df01809f1df3d7ee448706e",
+      "published_sha256": "ca0f6cf2c6b4c4cfb8ec64d653de076f8154f5f56f8676f6d51c7b98058d6783",
+      "published_bytes": 297292
+    },
+    {
+      "original": "/tmp/image-wide-call-summary-evidence-secondary/private-view-controls.json",
+      "published": "private-view-controls.json.gz",
+      "original_sha256": "b8771457a8f4c3b4f95c04fd67bbcf6f87082941853b216b16402c486652bed2",
+      "published_sha256": "d15991a36c710ce4fcfc9f101143f6e39ebdfe5a4b7a17483edc05593e6b5495",
+      "published_bytes": 172503
+    },
+    {
+      "original": "Frozen qualification logs, sources, view packets, failures, and corrections",
+      "published": "qualification-records.tar.gz",
+      "published_sha256": "667b342d9740500daba69cdb0271320108a13c3e434b24f79af237f11aefae21",
+      "published_bytes": 2171801,
+      "member_count": 87
+    }
+  ]
+}
