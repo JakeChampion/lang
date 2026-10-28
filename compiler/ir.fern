@@ -2049,6 +2049,9 @@ pub function kind_id(name: string): i32 {
   if (n == 7 && name == "mulhi_u") {
     return 430;
   }
+  if (n == 7 && name == "mulhi_s") {
+    return 484;
+  }
   let lane: i32 = kind_id_lane(name);
   if (lane > 0) {
     return lane;
@@ -4562,6 +4565,9 @@ pub function kind_name(id: i32): string {
   if (id == 430) {
     return "mulhi_u";
   }
+  if (id == 484) {
+    return "mulhi_s";
+  }
   if (id == 431) {
     return "writer_splice_forever";
   }
@@ -4862,7 +4868,7 @@ function pops1_io(t: i32): boolean {
 }
 
 function pops2_arith(t: i32): boolean {
-  return t >= 21 && t <= 33 || t >= 35 && t <= 54 || t == 430;
+  return t >= 21 && t <= 33 || t >= 35 && t <= 54 || t == 430 || t == 484;
 }
 
 function pops2_kernel(t: i32): boolean {

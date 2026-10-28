@@ -418,6 +418,9 @@ They cover all byte values, extreme start offsets, aliases and allocation counts
 Its test checks 272 products against `math/bits.Mul64` in each module mode.
 The cases include zero, all ones, each individual bit, complements and mixed bits.
 The test also checks the emitted `i64` parameter and result types.
+`__fern_mulhi_s64.fern` computes the signed high half from the unsigned one.
+The checked `i64` multiply is its only caller.
+Its test compares the overflow result of 77 products with `math/big`.
 
 Four source files define set scans and run counts for strings and byte arrays.
 Each function uses its input layout's data offset.

@@ -866,7 +866,7 @@ function first_above(xs: i32[], v: i32): i32 {
 }
 
 pub function binary_fixes_abi(op: string): boolean {
-  return op == "div_s" || op == "div_u" || op == "rem_s" || op == "rem_u" || op == "mulhi_u";
+  return op == "div_s" || op == "div_u" || op == "rem_s" || op == "rem_u" || op == "mulhi_u" || op == "mulhi_s";
 }
 
 function pick_caller_reg(free: i32[], abi_reg: i32, want_abi: boolean, abi_ok: boolean): i32 {
