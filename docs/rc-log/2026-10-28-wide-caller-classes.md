@@ -28,3 +28,10 @@ The collector must reject all three controls.
 
 The fresh retained-machine failure remains open under #13717.
 Full recovery, native milestones, M5, and epic acceptance remain open.
+
+## Published evidence
+
+The [qualification record](../benchmarks/wide-large-free-caller-classes-2026-10-28/README.md) binds the source, tools, raw records, and private controls.
+All three targets passed the same 1566 cases across 588 fresh workers.
+The source gate, format, Go checks, 219 source-audit nodes, and unchanged complexity checks passed.
+Retained-driver integration and full recovery remain open.
