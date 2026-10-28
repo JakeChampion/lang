@@ -1,0 +1,7 @@
+{
+  "original_harness_sha256": "f070a736708ef82069a5a0f8c8ea0403cefb1bdd43f54b1d347c35f9f08164d8",
+  "overlay_sha256": "70722bd1a1c678328e248155b175fc185b1a626637bb9fc8b1a5626ea056b5d3",
+  "only_stdout_capture_added": true,
+  "original_harness_unchanged": true,
+  "final_qualification": false
+}

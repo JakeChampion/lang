@@ -1,0 +1,172 @@
+{
+  "source": "0ad5969c55baffc172526038dcac3ea0e613722e",
+  "feature_uncommitted": true,
+  "compiler_build": "3ba81dccd2de600e45fa9539247e28352e07118b",
+  "compiler_sha256": "b7bb59c4ccc841709950b369fc996cd04087eda762ab46549b97ad3ba48336de",
+  "original_closure_hashes": {
+    "compiler/drivers/ssalargepushwide_run.fern": "b575a8fef196c7f43ab602f44bf662a250573fd7aad2bdf2127a6a494074cb71",
+    "compiler/drivers/ssalargepushwidecases.fern": "d7119618f8bfa609628d0200b61a74ff204469b4c2e4143fae49e8ced0e1887b",
+    "compiler/drivers/ssalargepushvalues.fern": "9bc4c14304982176b465ac159f2e90994448f57880523b99fb2f5d2154715e01",
+    "compiler/ssalargepushvalue.fern": "59b53d3c3a2d1f72cd41583c4625941e53dc394042a86cff5441386b5f1a3890",
+    "compiler/ssalargepushranges.fern": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb",
+    "compiler/drivers/ssalargepushpartitions.fern": "42a84c4feeca11072d97d24607319af228560c122eb3b9763a9274626861daef",
+    "compiler/ssalargepushwidevalue.fern": "ca68452e4f548f11e402a67233a526d766c4f851e7281c6b5fc12c02e75ecf46",
+    "compiler/ssalargepushwideranges.fern": "b4e3d583baaf082ff5dcab5ccb31ffdab0fc2d13e3cfb20e18765014791c8dbd"
+  },
+  "controls": [
+    {
+      "name": "floor",
+      "expected_reason": "signed floor word projection",
+      "source_hashes": {
+        "compiler/drivers/ssalargepushwide_run.fern": "b575a8fef196c7f43ab602f44bf662a250573fd7aad2bdf2127a6a494074cb71",
+        "compiler/drivers/ssalargepushwidecases.fern": "d7119618f8bfa609628d0200b61a74ff204469b4c2e4143fae49e8ced0e1887b",
+        "compiler/drivers/ssalargepushvalues.fern": "9bc4c14304982176b465ac159f2e90994448f57880523b99fb2f5d2154715e01",
+        "compiler/ssalargepushvalue.fern": "59b53d3c3a2d1f72cd41583c4625941e53dc394042a86cff5441386b5f1a3890",
+        "compiler/ssalargepushranges.fern": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb",
+        "compiler/drivers/ssalargepushpartitions.fern": "42a84c4feeca11072d97d24607319af228560c122eb3b9763a9274626861daef",
+        "compiler/ssalargepushwidevalue.fern": "311316436bacffa87c410664e601eebd8e5e8b8a3babc7836fcc43b289f0391e",
+        "compiler/ssalargepushwideranges.fern": "b4e3d583baaf082ff5dcab5ccb31ffdab0fc2d13e3cfb20e18765014791c8dbd"
+      },
+      "checks": [
+        {
+          "stage": "compile",
+          "command": [
+            "/tmp/image-arm64-large-offset-unique-label-current-fern-3ba81dccd",
+            "-target",
+            "x86-64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/image-retained-wide-arithmetic-controls/floor/control.elf",
+            "/tmp/image-retained-wide-arithmetic-controls/floor/compiler/drivers/ssalargepushwide_run.fern"
+          ],
+          "exit": 0,
+          "seconds": 3.2344377040863037
+        },
+        {
+          "stage": "runtime",
+          "command": [
+            "/tmp/image-retained-wide-arithmetic-controls/floor/control.elf"
+          ],
+          "exit": 180,
+          "seconds": 0.0048449039459228516
+        }
+      ],
+      "binary_sha256_before_runtime": "0b5672424e59059da3918b3b3fe728954217b81ba86977772dce38ea0122ec58",
+      "sources_unchanged": true,
+      "original_sources_unchanged": true,
+      "binary_sha256_after_runtime": "0b5672424e59059da3918b3b3fe728954217b81ba86977772dce38ea0122ec58",
+      "actual_heaps": [
+        [
+          2421,
+          2421,
+          0
+        ]
+      ],
+      "expected_failure_qualified": true
+    },
+    {
+      "name": "join",
+      "expected_reason": "signed word reconstruction",
+      "source_hashes": {
+        "compiler/drivers/ssalargepushwide_run.fern": "b575a8fef196c7f43ab602f44bf662a250573fd7aad2bdf2127a6a494074cb71",
+        "compiler/drivers/ssalargepushwidecases.fern": "d7119618f8bfa609628d0200b61a74ff204469b4c2e4143fae49e8ced0e1887b",
+        "compiler/drivers/ssalargepushvalues.fern": "9bc4c14304982176b465ac159f2e90994448f57880523b99fb2f5d2154715e01",
+        "compiler/ssalargepushvalue.fern": "59b53d3c3a2d1f72cd41583c4625941e53dc394042a86cff5441386b5f1a3890",
+        "compiler/ssalargepushranges.fern": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb",
+        "compiler/drivers/ssalargepushpartitions.fern": "42a84c4feeca11072d97d24607319af228560c122eb3b9763a9274626861daef",
+        "compiler/ssalargepushwidevalue.fern": "ccc2e0440f935a4c6740b68a8605627c372530ffbfb78a9678db421058b4faf0",
+        "compiler/ssalargepushwideranges.fern": "b4e3d583baaf082ff5dcab5ccb31ffdab0fc2d13e3cfb20e18765014791c8dbd"
+      },
+      "checks": [
+        {
+          "stage": "compile",
+          "command": [
+            "/tmp/image-arm64-large-offset-unique-label-current-fern-3ba81dccd",
+            "-target",
+            "x86-64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/image-retained-wide-arithmetic-controls/join/control.elf",
+            "/tmp/image-retained-wide-arithmetic-controls/join/compiler/drivers/ssalargepushwide_run.fern"
+          ],
+          "exit": 0,
+          "seconds": 3.809441328048706
+        },
+        {
+          "stage": "runtime",
+          "command": [
+            "/tmp/image-retained-wide-arithmetic-controls/join/control.elf"
+          ],
+          "exit": 180,
+          "seconds": 0.00515437126159668
+        }
+      ],
+      "binary_sha256_before_runtime": "7a53a1a9bcc2a4b437b17246c703c94f5cdff4dcadbada19a11100540f47a23a",
+      "sources_unchanged": true,
+      "original_sources_unchanged": true,
+      "binary_sha256_after_runtime": "7a53a1a9bcc2a4b437b17246c703c94f5cdff4dcadbada19a11100540f47a23a",
+      "actual_heaps": [
+        [
+          2422,
+          2422,
+          0
+        ]
+      ],
+      "expected_failure_qualified": true
+    },
+    {
+      "name": "mask",
+      "expected_reason": "wide rounding boundary",
+      "source_hashes": {
+        "compiler/drivers/ssalargepushwide_run.fern": "b575a8fef196c7f43ab602f44bf662a250573fd7aad2bdf2127a6a494074cb71",
+        "compiler/drivers/ssalargepushwidecases.fern": "d7119618f8bfa609628d0200b61a74ff204469b4c2e4143fae49e8ced0e1887b",
+        "compiler/drivers/ssalargepushvalues.fern": "9bc4c14304982176b465ac159f2e90994448f57880523b99fb2f5d2154715e01",
+        "compiler/ssalargepushvalue.fern": "59b53d3c3a2d1f72cd41583c4625941e53dc394042a86cff5441386b5f1a3890",
+        "compiler/ssalargepushranges.fern": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb",
+        "compiler/drivers/ssalargepushpartitions.fern": "42a84c4feeca11072d97d24607319af228560c122eb3b9763a9274626861daef",
+        "compiler/ssalargepushwidevalue.fern": "e4de1f47025b7746e0dc7e657e2d795abdecc6641353eec2d745d241dc2a4c43",
+        "compiler/ssalargepushwideranges.fern": "b4e3d583baaf082ff5dcab5ccb31ffdab0fc2d13e3cfb20e18765014791c8dbd"
+      },
+      "checks": [
+        {
+          "stage": "compile",
+          "command": [
+            "/tmp/image-arm64-large-offset-unique-label-current-fern-3ba81dccd",
+            "-target",
+            "x86-64-linux",
+            "-sanitize",
+            "-o",
+            "/tmp/image-retained-wide-arithmetic-controls/mask/control.elf",
+            "/tmp/image-retained-wide-arithmetic-controls/mask/compiler/drivers/ssalargepushwide_run.fern"
+          ],
+          "exit": 0,
+          "seconds": 3.263845682144165
+        },
+        {
+          "stage": "runtime",
+          "command": [
+            "/tmp/image-retained-wide-arithmetic-controls/mask/control.elf"
+          ],
+          "exit": 180,
+          "seconds": 0.0021843910217285156
+        }
+      ],
+      "binary_sha256_before_runtime": "2506ffc7d8bc27247e42cde28f865f5d939ea1634f4ba36c897a24a0b20c730a",
+      "sources_unchanged": true,
+      "original_sources_unchanged": true,
+      "binary_sha256_after_runtime": "2506ffc7d8bc27247e42cde28f865f5d939ea1634f4ba36c897a24a0b20c730a",
+      "actual_heaps": [
+        [
+          2464,
+          2464,
+          0
+        ]
+      ],
+      "expected_failure_qualified": true
+    }
+  ],
+  "seconds": 10.356613397598267,
+  "compiler_unchanged": true,
+  "original_sources_unchanged": true,
+  "intentional_early_exit_not_persistent_leak_qualification": true
+}

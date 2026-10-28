@@ -1,0 +1,9 @@
+{
+  "format_diff_exit": 1,
+  "check_issued": false,
+  "only_format_changes": [
+    "blank line between structs",
+    "trailing array commas"
+  ],
+  "source_archive": "/tmp/image-retained-wide-arithmetic-before-format"
+}

@@ -1,0 +1,13 @@
+{
+  "first_prepare_exit": 2,
+  "first_prepare_cwd": "/workspace",
+  "first_failure": "gofmt could not find relative test path",
+  "coordinator_was_not_created": true,
+  "two_following_python_launches_exit": [
+    2,
+    2
+  ],
+  "tests_started": 0,
+  "correction": "Use the explicit checkout workdir, require preparation exit zero, then launch the two initial probes.",
+  "source_workaround": false
+}

@@ -1,0 +1,5 @@
+{
+  "Replace": {
+    "/tmp/image-engine-worktrees/lang-image-retained-large-free-health/internal/testing/e2ecompiler/self_host_cli_harness_test.go": "/tmp/image-retained-large-free-observe-harness.go"
+  }
+}
