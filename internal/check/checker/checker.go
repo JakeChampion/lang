@@ -7948,6 +7948,9 @@ func elemDispatchable(elem ast.Type) bool {
 }
 
 func (c *checker) errArgMismatch(n *ast.Call, i int, recvIsArg0 bool, expected, at ast.Type) {
+	if mentionsUnresolvedQualifier(expected) {
+		return
+	}
 	if recvIsArg0 && i == 0 && n.Method != nil {
 		c.errfCode(n.Method.FieldPos, "E043", "no method %q on %s — %q is declared for %s",
 			n.Method.Field, at, n.Method.Field, expected)
@@ -7959,6 +7962,36 @@ func (c *checker) errArgMismatch(n *ast.Call, i int, recvIsArg0 bool, expected, 
 	}
 	c.errfCode(n.Args[i].Pos(), "E038", "%s: expected %s, got %s%s",
 		argSubject(n, num), expected, at, assignHint(expected, at))
+}
+
+// A type name still spelled `q.T` names a module that was never imported;
+// E064 has already reported it, so an argument checked against it is not a
+// second error.
+func mentionsUnresolvedQualifier(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.StructType:
+		return strings.Contains(x.Name, ".") || anyUnresolvedQualifier(x.Args)
+	case ast.EnumType:
+		return strings.Contains(x.Name, ".") || anyUnresolvedQualifier(x.Args)
+	case ast.ArrayType:
+		return mentionsUnresolvedQualifier(x.Elem)
+	case ast.SliceType:
+		return mentionsUnresolvedQualifier(x.Elem)
+	case ast.TupleType:
+		return anyUnresolvedQualifier(x.Elems)
+	case *ast.FuncType:
+		return mentionsUnresolvedQualifier(x.Result) || anyUnresolvedQualifier(x.Params)
+	}
+	return false
+}
+
+func anyUnresolvedQualifier(ts []ast.Type) bool {
+	for _, t := range ts {
+		if mentionsUnresolvedQualifier(t) {
+			return true
+		}
+	}
+	return false
 }
 
 func argSubject(n *ast.Call, num int) string {
@@ -14749,7 +14782,9 @@ func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast
 	}
 	sd := c.info.Structs[st.Name]
 	if sd == nil {
-		c.errfCode(n.P, "E043", "cannot find struct %q in this scope", demangle(st.Name))
+		if !mentionsUnresolvedQualifier(st) {
+			c.errfCode(n.P, "E043", "cannot find struct %q in this scope", demangle(st.Name))
+		}
 		return nil
 	}
 	c.checkOpaqueAccess(sd, n.P, "access a field of")
