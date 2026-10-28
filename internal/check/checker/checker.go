@@ -728,6 +728,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			P:            ud.P,
 			Name:         ud.Name,
 			TypeParams:   ud.TypeParams,
+			ConstParams:  ud.ConstParams,
 			Variants:     variants,
 			Public:       ud.Public,
 			SourceModule: ud.SourceModule,
@@ -2476,6 +2477,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				demangle(impl.Trait), len(td.TypeParams), len(impl.TraitArgs))
 			continue
 		}
+		if len(td.ConstParams) > 0 || hasConstArg(impl.TraitArgs) {
+			c.resolvingConsts = impl.ConstParams
+			c.argKinds(td.P, td.TypeParams, td.ConstParams, implTraitArgs(impl), impl.TraitPos)
+			c.resolvingConsts = nil
+		}
 		if impl.SourceModule != "" {
 			traitLocal := td.SourceModule == impl.SourceModule
 			typeLocal := false
@@ -2735,13 +2741,17 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 					c.errfCode(fn.P, "E021", "unknown trait %q in bound on type parameter %s", demangle(traitName), tp)
 					continue
 				}
-				var nargs int
+				var args []ast.Type
 				if ba := fn.BoundArgs[tp]; i < len(ba) {
-					nargs = len(ba[i])
+					args = ba[i]
 				}
-				if nargs != len(td.TypeParams) {
+				if len(args) != len(td.TypeParams) {
 					c.errfCode(fn.P, "E021", "trait %s takes %d type argument(s), %d supplied in bound on type parameter %s",
-						demangle(traitName), len(td.TypeParams), nargs, tp)
+						demangle(traitName), len(td.TypeParams), len(args), tp)
+				} else if len(td.ConstParams) > 0 || hasConstArg(args) {
+					c.resolvingConsts = fn.ConstParams
+					c.argKinds(fn.P, td.TypeParams, td.ConstParams, args, fn.P)
+					c.resolvingConsts = nil
 				}
 			}
 		}
@@ -4039,6 +4049,7 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 			}
 			substTraitArgs(method, m.TypeParams, ownTo)
 			substTraitArgs(method, td.TypeParams, implTraitArgs(impl))
+			substTraitConsts(method, td, implTraitArgs(impl))
 			method.ReturnType = ast.SubstSelf(method.ReturnType, impl.Type)
 			method.Params = substSelfParams(method.Params, impl.Type)
 			ast.Walk(method.Body, func(n ast.Node) bool {
@@ -4049,6 +4060,7 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 			})
 			if len(impl.TypeParams) > 0 || len(own) > 0 {
 				method.TypeParams = append(append([]string(nil), impl.TypeParams...), own...)
+				method.ConstParams = impl.ConstParams
 				method.Bounds = mergeBounds(impl.Bounds, m.Bounds, renamed)
 				method.BoundArgs = mergeBounds(impl.BoundArgs, m.BoundArgs, renamed)
 			}
@@ -4153,6 +4165,57 @@ func mergeBounds[V any](impl, own map[string]V, renamed map[string]string) map[s
 		out[k] = v
 	}
 	return out
+}
+
+// substTraitConsts puts in each read of a const parameter of td the impl's
+// argument for it: the integer of `impl Fixed[8] for B`, or the name of
+// `impl[const M: i32] Fixed[M] for Ring[M, i32]`.
+func substTraitConsts(method *ast.FuncDecl, td *ast.TraitDecl, args []ast.Type) {
+	if len(td.ConstParams) == 0 || len(args) != len(td.TypeParams) {
+		return
+	}
+	to := map[string]ast.Expr{}
+	for i, tp := range td.TypeParams {
+		if !slices.Contains(td.ConstParams, tp) {
+			continue
+		}
+		switch a := args[i].(type) {
+		case ast.ConstArg:
+			to[tp] = &ast.NumberLit{Value: a.Value}
+		case ast.ParamType:
+			to[tp] = &ast.Ident{Name: a.Name}
+		case ast.StructType:
+			if len(a.Args) == 0 {
+				to[tp] = &ast.Ident{Name: a.Name}
+			}
+		}
+	}
+	for _, p := range method.Params {
+		delete(to, p.Name)
+	}
+	if method.Receiver != nil {
+		delete(to, method.Receiver.Name)
+	}
+	if len(to) == 0 {
+		return
+	}
+	ast.RewriteBlockExprs(method.Body, func(e ast.Expr) ast.Expr {
+		id, ok := e.(*ast.Ident)
+		if !ok {
+			return e
+		}
+		r, ok := to[id.Name]
+		if !ok {
+			return e
+		}
+		switch x := r.(type) {
+		case *ast.NumberLit:
+			return &ast.NumberLit{P: id.P, Value: x.Value}
+		case *ast.Ident:
+			return &ast.Ident{P: id.P, Name: x.Name}
+		}
+		return e
+	})
 }
 
 func implTraitArgs(impl *ast.ImplDecl) []ast.Type {
@@ -7320,7 +7383,11 @@ func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.
 		Args:   []ast.Expr{src},
 	}
 	*holder = wrapped
-	return c.checkExpr(wrapped, s)
+	saved := c.expectedType
+	c.expectedType = dst
+	t := c.checkExpr(wrapped, s)
+	c.expectedType = saved
+	return t
 }
 
 func (c *checker) variantDynPayloadTypes(du ast.EnumType, variantName string) ([]ast.Type, bool) {
@@ -7983,6 +8050,9 @@ func (c *checker) argKinds(decl ast.Position, typeParams, constParams []string, 
 			continue
 		}
 		if pt, ok := a.(ast.ParamType); ok && c.constParamDeclared(pt.Name) {
+			continue
+		}
+		if st, ok := a.(ast.StructType); ok && len(st.Args) == 0 && c.constParamDeclared(st.Name) {
 			continue
 		}
 		c.errfCode(pos, "E090", "const parameter %s takes an integer, not the type %s", tp, a)
@@ -14679,7 +14749,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		seeded := map[string]bool{}
 		if len(sd.TypeParams) > 0 {
 			sub = make(map[string]ast.Type, len(sd.TypeParams))
-			if et, ok := c.expectedType.(ast.StructType); ok && et.Name == sd.Name && len(et.Args) == len(sd.TypeParams) {
+			if et, ok := c.memberExpected(c.expectedType, sd.Name).(ast.StructType); ok && et.Name == sd.Name && len(et.Args) == len(sd.TypeParams) {
 				seedScope := c.typeParamsInScope()
 				for i, tp := range sd.TypeParams {
 					if _, escaped := paramTypeNotIn(et.Args[i], seedScope); escaped {
@@ -14991,6 +15061,33 @@ func (c *checker) requireInteger(p ast.Position, t ast.Type, op string) {
 func isRuntimeGenericStruct(name string) bool {
 	// Map uses one struct and helper set across all (K, V) via a
 	return name == "Map" || name == "Cell"
+}
+
+// memberExpected is the type a struct literal of name takes from an expected
+// enum instance with a variant that wraps that struct: P[string] for
+// `P { ... }` where a U[string] is expected and `type U[T] = P[T] | Q`.
+func (c *checker) memberExpected(expected ast.Type, name string) ast.Type {
+	et, ok := expected.(ast.EnumType)
+	if !ok {
+		return expected
+	}
+	ed := c.info.Enums[et.Name]
+	if ed == nil || len(ed.TypeParams) != len(et.Args) {
+		return expected
+	}
+	for _, v := range ed.Variants {
+		if v.Name != name || len(v.Payloads) != 1 {
+			continue
+		}
+		if st, ok := v.Payloads[0].(ast.StructType); ok && st.Name == name {
+			sub := make(map[string]ast.Type, len(et.Args))
+			for i, p := range ed.TypeParams {
+				sub[p] = et.Args[i]
+			}
+			return substituteType(st, sub)
+		}
+	}
+	return expected
 }
 
 func (c *checker) stampStructTypeArgs(e ast.Expr, dst ast.Type) {

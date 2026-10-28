@@ -18,7 +18,7 @@ pub function bare_field(name: string, type_name: string): StructFieldDecl {
 
 pub struct StructDecl { name: string, fields: StructFieldDecl[], type_params: string[], const_params: string[], derives: string[], line: i32, col: i32, enum_owner: string, must_consume: boolean, variant_field_names: string[], is_pub: boolean, is_package: boolean, opaque: boolean, module: string }
 
-pub struct TypeAlias { name: string, variants: string[], variant_args: string[], variant_lines: i32[], type_params: string[], line: i32, col: i32, is_pub: boolean, is_package: boolean, module: string }
+pub struct TypeAlias { name: string, variants: string[], variant_args: string[], variant_lines: i32[], type_params: string[], const_params: string[], line: i32, col: i32, is_pub: boolean, is_package: boolean, module: string }
 
 pub struct Import { path: string, is_reexport: boolean, reexport_names: string[], alias: string, line: i32, col: i32, resolved: string }
 
@@ -65,7 +65,7 @@ pub function with_stdlib_origin(mod: Module, path: string): Module {
 
 pub struct TraitReq { trait_name: string, type_params: string[], methods: string[], req_sigs: FuncDecl[], supertraits: string[], assoc_sigs: FuncDecl[], provided: string[], assoc_types: string[], module: string, default_sigs: FuncDecl[], visible_from: string[] }
 
-pub struct TraitDecl { name: string, type_params: string[], supertraits: string[], methods: FuncDecl[], line: i32, col: i32, is_pub: boolean, is_package: boolean, assoc_types: string[] }
+pub struct TraitDecl { name: string, type_params: string[], const_params: string[], supertraits: string[], methods: FuncDecl[], line: i32, col: i32, is_pub: boolean, is_package: boolean, assoc_types: string[] }
 
 pub struct ImplDecl { trait_ref: string, type_ref: string, type_params: string[], bounds: string[], methods: FuncDecl[], line: i32, col: i32, assoc_names: string[], assoc_values: string[] }
 
@@ -7510,12 +7510,18 @@ function parse_type_param_list(p: Par): (TpList, Par) {
           p = p.advance();
           let bargs: string = "";
           while (!p.at_end() && p.peek_punct() != "]") {
-            let barg_at: i32 = p.pos;
-            let (barg, barg_ret, barg_p) = parse_type_name(p);
-            p = barg_p;
-            if (p.pos == barg_at) {
-              p = p.expected_type().advance();
-              continue;
+            let barg: string = p.peek_const_arg();
+            if (barg.len() > 0) {
+              p = p.advance();
+            } else {
+              let barg_at: i32 = p.pos;
+              let (bt, bt_ret, bt_p) = parse_type_name(p);
+              p = bt_p;
+              if (p.pos == barg_at) {
+                p = p.expected_type().advance();
+                continue;
+              }
+              barg = bt;
             }
             if (bargs.len() > 0) {
               bargs = bargs + ", ";
@@ -7898,7 +7904,7 @@ function parse_decl_tparams(p: Par, kind: string, name: string): (string[], stri
       p = cp;
       tparams = tparams.append(cname);
       cparams = cparams.append(cname);
-      if (kind != "struct" && kind != "enum") {
+      if (kind != "struct" && kind != "enum" && kind != "type") {
         p = Par { ...p, type_errs: p.type_errs.append(s_unknown(open, "decl:const parameter " + cname + ": " + const_param_owners())) };
       }
       continue;
@@ -7932,7 +7938,7 @@ function parse_decl_tparams(p: Par, kind: string, name: string): (string[], stri
 
 // const_param_owners names the declarations that take a const parameter.
 function const_param_owners(): string {
-  return "only a function, a struct, an enum or an impl takes a const parameter";
+  return "only a function, a struct, an enum, a type alias, an impl or a trait takes a const parameter";
 }
 
 function parse_struct_decl(p: Par): (StructDecl, Par) {
@@ -7981,13 +7987,13 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
   p = p.advance();
   let name: string = p.peek_ident();
   if (name.len() == 0) {
-    return (TypeAlias { name: "", variants: [], variant_args: [], variant_lines: [], type_params: [], line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
+    return (TypeAlias { name: "", variants: [], variant_args: [], variant_lines: [], type_params: [], const_params: [], line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
   }
   p = p.advance();
-  let (tparams, tp_cparams, tp_p) = parse_decl_tparams(p, "type", name);
+  let (tparams, cparams, tp_p) = parse_decl_tparams(p, "type", name);
   p = tp_p;
   if (p.peek_punct() != "=") {
-    return (TypeAlias { name: name, variants: [], variant_args: [], variant_lines: [], type_params: tparams, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
+    return (TypeAlias { name: name, variants: [], variant_args: [], variant_lines: [], type_params: tparams, const_params: cparams, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
   }
   p = p.advance();
   let variants: string[] = [];
@@ -8007,7 +8013,7 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
     break;
   }
   p = p.expect_semi();
-  return (TypeAlias { name: name, variants: variants, variant_args: vargs, variant_lines: vlines, type_params: tparams, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
+  return (TypeAlias { name: name, variants: variants, variant_args: vargs, variant_lines: vlines, type_params: tparams, const_params: cparams, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
 }
 
 function type_ref_args_spelling(r: TypeRef): string {
@@ -12430,6 +12436,28 @@ function collect_tvars(name: string, acc: string[]): string[] {
   return acc;
 }
 
+// receiver_param_names is the names a receiver spelling gives to the
+// parameters of its declaration: `[K, 0_T]` for `Ring[K, 0_T]`. It is empty
+// when an argument is not such a name. A const parameter keeps the name it is
+// written with, so that name need not look like a type variable.
+function receiver_param_names(recv: string, type_params: string[], const_params: string[]): string[] {
+  let r: TypeRef = parse_type_ref(recv);
+  if (r.args.len() != type_params.len()) {
+    return [];
+  }
+  let out: string[] = [];
+  for i in 0..r.args.len() {
+    let a: TypeRef = r.args[i];
+    let leaf: boolean = a.args.len() == 0 && a.array_depth == 0 && !a.is_tuple && !a.is_fn;
+    let as_const: boolean = util.has_str(const_params, type_params[i]) && !is_const_arg(a.base);
+    if (!leaf || !looks_type_var(a.base) && !as_const) {
+      return [];
+    }
+    out = out.append(a.base);
+  }
+  return out;
+}
+
 pub function struct_receiver_typevars(recv: string): string[] {
   let none: string[] = [];
   let lb: i32 = first_bracket(recv);
@@ -13608,9 +13636,42 @@ function ms_lambda(lm: ast.ExprLambda, dest: string, env: MEnv, gstructs: Struct
   return RExpr { rexpr: ast.ExprLambda { ...lm, params: nparams, ret_type: rt.ty, ret_fn_ret: lrr.ty, ret_fn_param_types: lrl.ty, body: bodyr.rstmts, use_infer: false, captures: caps }, rins: pcur };
 }
 
+// member_lit_dest is the type of a literal of the struct `name` whose
+// destination is an instance of a union that has `name` as a member:
+// `P[string]` for `P { ... }` with the destination `U[string]` or
+// `U__string`, where `type U[T] = P[T] | Q`.
+function member_lit_dest(dest: string, name: string, funcs: MFns): string {
+  for ed in funcs.enums {
+    if (ed.type_params.len() == 0) {
+      continue;
+    }
+    let cts: string[] = [];
+    if (first_bracket(dest) >= 0 && strip_struct_base(dest) == ed.name) {
+      cts = type_args_of(dest);
+    } else if (util.str_has_prefix(dest, ed.name + "__")) {
+      cts = split_key(slice_unchecked(dest, ed.name.len() + 2, dest.len()) + "", ed.type_params.len(), funcs.structs, funcs.enums);
+    }
+    if (cts.len() != ed.type_params.len()) {
+      continue;
+    }
+    for vs in funcs.structs {
+      if (vs.name == name && vs.enum_owner == ed.name && vs.fields.len() == 1 && strip_struct_base(vs.fields[0].type_name) == name) {
+        return subst_ty(vs.fields[0].type_name, ed.type_params, cts);
+      }
+    }
+  }
+  return dest;
+}
+
 function ms_struct_lit(s: ast.ExprStructLit, dest: string, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): RExpr {
   let cur: Insts = ins;
   let lit_dest: string = dest;
+  let member: string = member_lit_dest(dest, s.type_name, funcs);
+  if (member != dest && !mono_ty_mentions_var(member)) {
+    let mm: TyIns = mg_ty(member, gstructs, cur);
+    cur = mm.mins;
+    lit_dest = mm.ty;
+  }
   if (s.written.len() > 0 && !mono_ty_mentions_var(s.written)) {
     let wm: TyIns = mg_ty(s.written, gstructs, cur);
     cur = wm.mins;
@@ -14202,7 +14263,11 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
     tparams = gstructs[gsi].type_params;
   }
   let cts: string[] = split_key(key, tparams.len(), mod.structs, mod.enums);
-  let spelled: string[] = struct_receiver_typevars(m.receiver_type);
+  let consts: string[] = [];
+  if (gsi >= 0) {
+    consts = gstructs[gsi].const_params;
+  }
+  let spelled: string[] = receiver_param_names(m.receiver_type, tparams, consts);
   if (spelled.len() == cts.len()) {
     tparams = spelled;
   }
@@ -14424,8 +14489,30 @@ function on_call_template(funcs: FuncDecl[], name: string): FuncDecl {
 
 struct MsClones { fns: FuncDecl[], ins: Insts }
 
+// const_args_known reports whether the instance `key` of the generic struct
+// `base` has an integer at each const parameter. A body generic over its own
+// const parameter names `Ring[N, i32]`, and that is not an instance to clone
+// methods for.
+function const_args_known(base: string, key: string, gstructs: StructDecl[], mod: Module): boolean {
+  let gsi: i32 = gstruct_index(gstructs, base);
+  if (gsi < 0 || gstructs[gsi].const_params.len() == 0) {
+    return true;
+  }
+  let gs: StructDecl = gstructs[gsi];
+  let cts: string[] = split_key(key, gs.type_params.len(), mod.structs, mod.enums);
+  for j in 0..cts.len() {
+    if (j < gs.type_params.len() && util.has_str(gs.const_params, gs.type_params[j]) && !is_const_arg(cts[j])) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function ms_clone_methods(fns: FuncDecl[], mod: Module, base: string, key: string, gstructs: StructDecl[], sfns: MFns, ins: Insts): MsClones {
   let out: MsClones = MsClones { fns: fns, ins: ins };
+  if (!const_args_known(base, key, gstructs, mod)) {
+    return out;
+  }
   for mm in mod.funcs {
     if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base && util.index_of_str(sfns.on_call, base + "." + mm.name) < 0) {
       let cm: FRes = ms_clone_method(mm, key, gstructs, mod, sfns, out.ins);
@@ -15811,7 +15898,7 @@ function me_rewrite_params(params: ast.ParamDecl[], enums: EnumDecl[]): ast.Para
 }
 
 function clone_enum_method(m: FuncDecl, ed: EnumDecl, cts: string[], mname: string, mod: Module, efns: MFns, ins: Insts): FRes {
-  let tps: string[] = struct_receiver_typevars(m.receiver_type);
+  let tps: string[] = receiver_param_names(m.receiver_type, ed.type_params, ed.const_params);
   if (tps.len() != cts.len()) {
     tps = ed.type_params;
   }
@@ -18221,7 +18308,7 @@ pub function desugar_union_aliases(mod: Module): Module {
       structs = structs.append(StructDecl { name: member, fields: [bare_field("__ev", payload)], type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: al.name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
       vi = vi + 1;
     }
-    enums = enums.append(EnumDecl { name: al.name, variant_names: al.variants, type_params: al.type_params, const_params: [], line: al.line, col: al.col, must_consume: false, try_marker: false, is_pub: al.is_pub, is_package: al.is_package, module: al.module, instance: "", visible_from: [] });
+    enums = enums.append(EnumDecl { name: al.name, variant_names: al.variants, type_params: al.type_params, const_params: al.const_params, line: al.line, col: al.col, must_consume: false, try_marker: false, is_pub: al.is_pub, is_package: al.is_package, module: al.module, instance: "", visible_from: [] });
     i = i + 1;
   }
   return Module { ...mod, aliases: aliases, structs: structs, enums: enums };
@@ -21335,12 +21422,13 @@ function respell_type_vars_module(mod: Module, written: boolean): Module {
   }
   let traits: TraitDecl[] = [];
   for td in mod.trait_decls {
+    let tvars: string[] = type_vars(td.type_params, td.const_params);
     let methods: FuncDecl[] = [];
     for m in td.methods {
-      let mvars: string[] = add_tvars(fn_type_vars(m, mod, written), td.type_params);
+      let mvars: string[] = add_tvars(fn_type_vars(m, mod, written), tvars);
       methods = methods.append(rename_fn_type_vars(m, mvars, tvar_respellings(mvars, written), mvals));
     }
-    traits = traits.append(TraitDecl { ...td, type_params: tvar_respellings(td.type_params, written), methods: methods });
+    traits = traits.append(TraitDecl { ...td, type_params: rename_ty_list(td.type_params, tvars, tvar_respellings(tvars, written)), methods: methods });
   }
   return Module { ...mod, funcs: funcs, structs: structs, enums: enums, impls: impls, trait_decls: traits };
 }
@@ -21683,7 +21771,7 @@ function tv_obj_in(e: ast.Expr, sc: TvScope): ast.Expr {
 function tv_obj_ident(e: ast.Expr, sc: TvScope): ast.Expr {
   if let ast.ExprIdent(id) = e {
     let k: i32 = tp_index(id.name, sc.vars);
-    if (k >= 0 && !str_in(sc.values, id.name) && sc.lits) {
+    if (k >= 0 && !str_in(sc.values, id.name) && sc.lits && is_const_arg(sc.cts[k])) {
       return ast.ExprNumber { text: sc.cts[k], suffix: "", raw: "", is_float: false, bits: 0, line: id.line, col: id.col };
     }
     if (k >= 0 && !str_in(sc.values, id.name)) {
@@ -21799,7 +21887,7 @@ function rename_tv_annot(st: ast.Stmt, vars: string[], cts: string[]): ast.Stmt 
   return st;
 }
 
-pub struct TraitDefault { trait_name: string, trait_params: string[], method: FuncDecl }
+pub struct TraitDefault { trait_name: string, trait_params: string[], trait_consts: string[], method: FuncDecl }
 
 pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], all_type_params: string[], bounds: string[], method_names: string[], trait_spelling: string, trait_ref: string, assoc_names: string[], assoc_values: string[], trait_module: string, module: string, line: i32, col: i32 }
 
@@ -23728,7 +23816,40 @@ function renamed_list(xs: string[], from: string[], to: string[]): string[] {
   return out;
 }
 
-pub function inherit_default(m: FuncDecl, trait_params: string[], im: ImplInfo): FuncDecl {
+// tparam_consts is the names in tpl that are const parameters.
+function tparam_consts(tpl: TpList): string[] {
+  let out: string[] = [];
+  for i in 0..tpl.tnames.len() {
+    if (is_const_bound(tpl.tbounds[i])) {
+      out = out.append(tpl.tnames[i]);
+    }
+  }
+  return out;
+}
+
+// trait_const_reads puts in each read of a trait's const parameter the
+// impl's argument for it: the integer of `impl Fixed[8] for B`, or the name
+// of `impl[const M: i32] Fixed[M] for Ring[M, i32]`.
+function trait_const_reads(m: FuncDecl, body: ast.Stmt[], consts: string[], trait_params: string[], args: string[]): ast.Stmt[] {
+  let vars: string[] = [];
+  let cts: string[] = [];
+  for i in 0..trait_params.len() {
+    if (i < args.len() && util.has_str(consts, trait_params[i]) && args[i] != trait_params[i]) {
+      vars = vars.append(trait_params[i]);
+      cts = cts.append(args[i]);
+    }
+  }
+  if (vars.len() == 0) {
+    return body;
+  }
+  let values: string[] = astwalk.append_bound_name([], m.receiver_name);
+  for pd in m.params {
+    values = astwalk.append_bound_name(values, pd.name);
+  }
+  return tv_obj_body(body, TvScope { vars: vars, cts: cts, values: values, lits: true });
+}
+
+pub function inherit_default(m: FuncDecl, trait_params: string[], trait_consts: string[], im: ImplInfo): FuncDecl {
   let args: string[] = type_args_of(im.trait_ref);
   let from: string[] = [];
   let to: string[] = [];
@@ -23754,7 +23875,7 @@ pub function inherit_default(m: FuncDecl, trait_params: string[], im: ImplInfo):
   for pd in m.params {
     params = params.append(ast.ParamDecl { ...pd, type_name: subst_ty(pd.type_name, from, to), fn_ret: subst_ty(pd.fn_ret, from, to), fn_param_types: subst_ty_list(pd.fn_param_types, from, to) });
   }
-  let sub: FuncDecl = FuncDecl { ...m, type_params: renamed_list(m.type_params, from, to), all_type_params: renamed_list(m.all_type_params, from, to), params: params, ret_type: subst_ty(m.ret_type, from, to), ret_fn_ret: subst_ty(m.ret_fn_ret, from, to), ret_fn_param_types: subst_ty_list(m.ret_fn_param_types, from, to), body: subst_stmts(m.body, from, to) };
+  let sub: FuncDecl = FuncDecl { ...m, type_params: renamed_list(m.type_params, from, to), all_type_params: renamed_list(m.all_type_params, from, to), params: params, ret_type: subst_ty(m.ret_type, from, to), ret_fn_ret: subst_ty(m.ret_fn_ret, from, to), ret_fn_param_types: subst_ty_list(m.ret_fn_param_types, from, to), body: trait_const_reads(m, subst_stmts(m.body, from, to), trait_consts, trait_params, args) };
   return finalize_impl_method(sub, im.impl_type, im.type_params, im.bounds);
 }
 
@@ -23842,7 +23963,8 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
   let simple: string = derive_simple_name(tname);
   // Trait parameters bind arguments in requirements and inherited methods.
   let (trait_tps, trait_tp_p) = parse_type_param_list(p);
-  p = refuse_const_tparams(trait_tp_p, p, trait_tps);
+  p = trait_tp_p;
+  let trait_consts: string[] = tparam_consts(trait_tps);
   // Parent names retain qualifiers and type arguments.
   if (p.peek_punct() == ":") {
     p = p.advance();
@@ -23907,7 +24029,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
         provided = provided.append(ac_func.name);
         assoc_sigs = assoc_sigs.append(ac_func);
         if (ac_func.body.len() > 0) {
-          defaults = defaults.append(TraitDefault { trait_name: simple, trait_params: trait_tps.tnames, method: ac_func });
+          defaults = defaults.append(TraitDefault { trait_name: simple, trait_params: trait_tps.tnames, trait_consts: trait_consts, method: ac_func });
           default_sigs = default_sigs.append(FuncDecl { ...ac_func, body: [] });
         } else {
           required = required.append(ac_func.name);
@@ -23941,7 +24063,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
           assoc_sigs = assoc_sigs.append(fr_func);
         }
         if (fr_func.body.len() > 0) {
-          defaults = defaults.append(TraitDefault { trait_name: simple, trait_params: trait_tps.tnames, method: fr_func });
+          defaults = defaults.append(TraitDefault { trait_name: simple, trait_params: trait_tps.tnames, trait_consts: trait_consts, method: fr_func });
           default_sigs = default_sigs.append(FuncDecl { ...fr_func, body: [] });
         } else {
           required = required.append(fr_func.name);
@@ -23956,7 +24078,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
       p = p.advance();
     }
   }
-  return (defaults, TraitReq { trait_name: simple, type_params: trait_tps.tnames, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types, module: "", default_sigs: default_sigs, visible_from: [] }, TraitDecl { name: tname, type_params: trait_tps.tnames, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types, is_package: false }, trait_bad, p);
+  return (defaults, TraitReq { trait_name: simple, type_params: trait_tps.tnames, methods: required, req_sigs: required_sigs, supertraits: supertraits, assoc_sigs: assoc_sigs, provided: provided, assoc_types: assoc_types, module: "", default_sigs: default_sigs, visible_from: [] }, TraitDecl { name: tname, type_params: trait_tps.tnames, const_params: trait_consts, supertraits: decl_supers, methods: decl_methods, line: tline, col: tcol, is_pub: false, assoc_types: assoc_types, is_package: false }, trait_bad, p);
 }
 
 function skip_decl_modifier(p: Par, name: string, before: string): Par {
@@ -24991,7 +25113,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       let td: TraitDefault = trait_defaults[ddi];
       if (td.trait_name == info.trait_name) {
         if (!str_list_contains(info.method_names, td.method.name)) {
-          let td_cl: MethodClaim = claim_method_name(inherit_default(td.method, td.trait_params, info), info.trait_name, mth_keys, mth_traits);
+          let td_cl: MethodClaim = claim_method_name(inherit_default(td.method, td.trait_params, td.trait_consts, info), info.trait_name, mth_keys, mth_traits);
           mth_keys = td_cl.keys;
           mth_traits = td_cl.traits;
           funcs = funcs.append(td_cl.fn);
