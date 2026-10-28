@@ -1658,7 +1658,7 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
     i = i + 1;
   }
   let takes: i32[] = tuple_takes(f, a, owned, defs);
-  let flows: Flows = Flows { direct: ssalive.compute_checked(f.graph, a.parents), bare: ssalive.compute_checked(f.graph, empty_chains(f.graph.nvals)) };
+  let flows: Flows = Flows { direct: ssalive.compute_checked(f.graph, a.parents), bare: ssalive.compute_checked_kept(f.graph, empty_chains(f.graph.nvals), retainable_reads(f, defs)) };
   let held: boolean[] = held_elements(f, a, owned, defs, sup, flows);
   let asked: boolean[] = twin_holds(f, a, defs, owned, held, flows.bare);
   let past: PayloadTakes = takes_past_holds(f, a, owned, asked, defs);
@@ -1882,6 +1882,16 @@ function retainable_read(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean {
   }
   let t: typeinfo.Type = f.values[w];
   return ssasem.reference(t) && !ssasem.is_view(t);
+}
+
+function retainable_reads(f: ssasem.Func, defs: ssa.SInst[]): boolean[] {
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
+  for w in 0..f.graph.nvals {
+    if (retainable_read(f, defs, w)) {
+      out = out.with(w, true);
+    }
+  }
+  return out;
 }
 
 function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], owned: boolean[], held: boolean[], s: i32, bi: i32, pos: i32, si: i32, args: i32[]): i32[] {
