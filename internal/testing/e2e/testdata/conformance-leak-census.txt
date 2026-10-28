@@ -174,6 +174,7 @@ const_char_comparison                                0
 const_composite                                      0
 const_divisor_lowering                               0
 const_divisor_runtime                                0
+const_float_div_by_zero_ieee                         0
 const_folds_at_declared_width                        0
 const_integer_literals_beside_a_typed_float          0
 const_integer_literals_settle_to_float               0

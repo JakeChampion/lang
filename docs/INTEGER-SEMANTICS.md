@@ -240,7 +240,8 @@ compile error, ``error[E093]: const A: division by zero in constant
 expression`` (or `modulo by zero`), rather than the `0` or dividend the same
 division gives as code. The divisor is evaluated at the declared width, so
 `const Z: i32 = 2147483647 + 1 + 2147483647 + 1` is a zero divisor and the
-same sum declared `i64` is not. A float `/` by zero is refused the same way.
+same sum declared `i64` is not. A float `/` by zero is not an error: it folds
+to ±Inf or NaN, as `docs/FLOAT-SEMANTICS.md` describes.
 
 ## Checked arithmetic (opt-in)
 

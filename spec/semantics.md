@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**82 of 85** claims are pinned by a conformance case. The remaining
+**83 of 86** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -120,6 +120,7 @@ of them.
 | `FS-05` | `docs/FLOAT-SEMANTICS.md` | Denormal handling is not specified | n/a — freedom |
 | `FS-06` | `docs/FLOAT-SEMANTICS.md` | Whether `-0.0` survives arithmetic is not specified | n/a — freedom |
 | `FS-07` | `docs/FLOAT-SEMANTICS.md` | Ordinary `+ - * /` and comparisons are portable across backends | `float_pythagoras` |
+| `FS-08` | `docs/FLOAT-SEMANTICS.md` | A float `/` by zero in a `const` initializer folds to the same ±Inf or NaN it gives as code | `const_float_div_by_zero_ieee` |
 | `CC-01` | `docs/CLOSURE-CAPTURE.md` | A mutation of a captured scalar inside a closure is visible outside | `closure_capture_shared_cell` |
 | `CC-02` | `docs/CLOSURE-CAPTURE.md` | A write to the outer variable is visible inside the closure | `closure_capture_shared_cell` |
 | `CC-03` | `docs/CLOSURE-CAPTURE.md` | Assigning a reference-typed capture is rejected, inside the closure and from the enclosing scope when the stored value can reach a closure (`E049`) | `diag_e049` |

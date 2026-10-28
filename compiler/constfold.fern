@@ -335,9 +335,6 @@ function int_binary(op: string, l: i64, r: i64, w: IntWidth): ConstNum {
 }
 
 function float_binary(op: string, l: f64, r: f64): ConstNum {
-  if (op == "/" && r == 0.0) {
-    return num_err("division by zero in constant expression");
-  }
   if (op == "/") {
     return float_num(l / r);
   }
@@ -1196,7 +1193,7 @@ function eval_cases(): i32 {
   let errs: string[] = [
     "division by zero in constant expression",
     "modulo by zero in constant expression",
-    "division by zero in constant expression",
+    "",
     "division by zero in constant expression",
     "division by zero in constant expression",
     "",

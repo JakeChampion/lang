@@ -199,9 +199,6 @@ function float_binary(op: string, a: f64, b: f64): Value {
     return floating(a * b);
   }
   if (op == "/") {
-    if (b == 0.0) {
-      return refuse("division by zero in constant expression");
-    }
     return floating(a / b);
   }
   return float_compare(op, a, b);

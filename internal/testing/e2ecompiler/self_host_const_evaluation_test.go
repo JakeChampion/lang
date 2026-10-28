@@ -24,8 +24,6 @@ func TestSelfHostConstEvaluationErrors(t *testing.T) {
 		{"wrapped-u64", `const A: u64 = 1 / (18446744073709551615 + 1);`, "division by zero", "E093"},
 		{"masked-shift", `const A: i32 = 1 / ((1 << 32) - 1);`, "division by zero", "E093"},
 		{"unsigned-shift", `const A: u64 = 1 / ((18446744073709551615 >> 63) - 1);`, "division by zero", "E093"},
-		{"float", `const A: f64 = 1.0 / (0.5 - 0.5);`, "division by zero", "E093"},
-		{"negative-zero", `const A: f64 = 1.0 / -0.0;`, "division by zero", "E093"},
 		{"dead-boolean", `const A: boolean = false && (1 / 0 == 0);`, "division by zero", "E093"},
 		{"array", `const A: i32[] = [1, 2 / 0];`, "division by zero", "E093"},
 		{"nested-array", `const A: i32[][] = [[1], [2 / 0]];`, "division by zero", "E093"},
