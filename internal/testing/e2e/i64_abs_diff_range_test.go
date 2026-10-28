@@ -18,10 +18,10 @@ function main(): i32 {
     if ((10 as i64).is_in_range(1 as i64, 10 as i64)) { return 7; }   // hi excluded
     if ((0 as i64).is_in_range(1 as i64, 10 as i64)) { return 8; }
     if (!(4000000000 as i64).is_in_range(0 as i64, 5000000000 as i64)) { return 9; }
-    // ---- is_between (inclusive) ----
-    if (!(10 as i64).is_between(1 as i64, 10 as i64)) { return 10; }   // hi included
-    if (!(1 as i64).is_between(1 as i64, 10 as i64)) { return 11; }    // lo included
-    if ((11 as i64).is_between(1 as i64, 10 as i64)) { return 12; }
+    // ---- is_in_range_incl (inclusive) ----
+    if (!(10 as i64).is_in_range_incl(1 as i64, 10 as i64)) { return 10; }   // hi included
+    if (!(1 as i64).is_in_range_incl(1 as i64, 10 as i64)) { return 11; }    // lo included
+    if ((11 as i64).is_in_range_incl(1 as i64, 10 as i64)) { return 12; }
     return 42;
 }
 `
