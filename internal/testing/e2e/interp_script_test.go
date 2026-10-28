@@ -507,14 +507,14 @@ func TestInterpScriptHttpRequestHeaders(t *testing.T) {
 function main(): i32 {
     let wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
-        Some(req) => {
+        Ok(req) => {
             match (req.headers.get("content-type")) {
                 Some(v) => { print(v); },
                 None => { print("MISSING"); }
             }
             return req.headers.len();
         },
-        None => {
+        Err(_) => {
             print("PARSE_FAIL");
             return 99;
         }
@@ -531,7 +531,7 @@ function main(): i32 {
 function main(): i32 {
     let wire: string = "GET / HTTP/1.1\r\nHost: h\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
-        Some(req) => {
+        Ok(req) => {
             let all: string[] = req.headers.get_all("Set-Cookie");
             let i: i32 = 0;
             while (i < all.len()) {
@@ -540,7 +540,7 @@ function main(): i32 {
             }
             return 0;
         },
-        None => { return 99; }
+        Err(_) => { return 99; }
     }
     return 0;
 }`,
@@ -553,13 +553,13 @@ function main(): i32 {
 function main(): i32 {
     let wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
     match (http.http_parse_request(wire)) {
-        Some(req) => {
+        Ok(req) => {
             match (req.headers.get("X-Absent")) {
                 Some(v) => { print(v); return 1; },
                 None => { print("none"); return 0; }
             }
         },
-        None => { return 99; }
+        Err(_) => { return 99; }
     }
     return 0;
 }`,
@@ -1486,7 +1486,7 @@ func TestInterpScriptHttpRequestBodyShim(t *testing.T) {
 function main(): i32 {
     let wire: string = "POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: 11\r\n\r\nhello world";
     match (http.http_parse_request(wire)) {
-        Some(req) => {
+        Ok(req) => {
             match (req.body_string()) {
                 Ok(text) => { if (text != "hello world") { return 1; } },
                 Err(e) => { return 5; }
@@ -1498,7 +1498,7 @@ function main(): i32 {
             if (bs[10] != 100) { return 5; } // 'd'
             return 0;
         },
-        None => { return 99; }
+        Err(_) => { return 99; }
     }
     return 0;
 }`

@@ -6,12 +6,12 @@ function main(): i32 {
   let i: i32 = 0;
   while (i < 4000) {
     match (http.http_parse_request(wire)) {
-      Some(req) => {
+      Ok(req) => {
         let resp: HttpResponse = http.ok("hello " + req.path);
         let out: string = http.http_serialize_response(resp);
         total = total + (out.len() + req.headers.len()) as i64;
       },
-      None => {
+      Err(_) => {
         return 100;
       }
     }
