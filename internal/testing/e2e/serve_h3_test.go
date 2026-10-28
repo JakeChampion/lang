@@ -235,7 +235,7 @@ function asked(c: h3q.Conn, a: Asked): (h3q.Conn, Asked) {
 
 function main(): i32 {
   let argv: string[] = args();
-  let Some(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
+  let Ok(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
     return 2;
   };
   let Ok(roots) = verify.roots_from_file(argv[2]) else {
@@ -245,7 +245,7 @@ function main(): i32 {
   let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return 2;
   };
-  let Some(any) = net.socket_addr_parse("127.0.0.1:0") else {
+  let Ok(any) = net.socket_addr_parse("127.0.0.1:0") else {
     return 2;
   };
   let Ok(sock) = net.udp_socket(any) else {

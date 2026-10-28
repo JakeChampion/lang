@@ -111,7 +111,7 @@ function test_env_answers_what_was_set(): test.TestOutcome {
 }
 
 function test_peer_files_and_directories_answer_what_was_set(): test.TestOutcome {
-  let p: sim_platform.SimPlatform = __plat(1).with_peer(net.socket_addr_parse("192.0.2.7:5000")).with_file("www/a.txt", "hello", time.timestamp_from_unix(7)).with_dir("www");
+  let p: sim_platform.SimPlatform = __plat(1).with_peer(net.socket_addr_parse("192.0.2.7:5000").ok()).with_file("www/a.txt", "hello", time.timestamp_from_unix(7)).with_dir("www");
   let got: string = "";
   match (p.peer()) {
     Some(a) => {

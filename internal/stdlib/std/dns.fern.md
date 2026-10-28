@@ -987,10 +987,10 @@ pub function parse_hosts(contents: string): HostsEntry[] {
       continue;
     }
     match (net.ip_parse(f[0])) {
-      Some(ip) => {
+      Ok(ip) => {
         out = out.append(HostsEntry { ip: ip, names: f.drop(1) });
       },
-      None => {}
+      Err(_) => {}
     }
   }
   return out;
@@ -1110,10 +1110,10 @@ function with_nameserver(ns: net.SocketAddr[], text: string): net.SocketAddr[] {
     return ns;
   }
   match (net.ip_parse(text)) {
-    Some(ip) => {
+    Ok(ip) => {
       return ns.append(net.socket_addr(ip, dns_port()));
     },
-    None => {
+    Err(_) => {
       return ns;
     }
   }
@@ -2728,10 +2728,10 @@ pub function resolve(name: string): Result[net.IpAddr[], DnsError] {
 
 pub function resolve_plain(name: string): Result[net.IpAddr[], DnsError] {
   match (net.ip_parse(name)) {
-    Some(ip) => {
+    Ok(ip) => {
       return Ok([ip]);
     },
-    None => {}
+    Err(_) => {}
   }
   return resolve_with(system_conf(), name);
 }
@@ -2839,10 +2839,10 @@ function (r: Resolver) prefixes(): Nat64Prefix[] {
 <<88 pub function (r: Resolver) resolve_plain(name: string): Result[net.IpAddr[], DnsError]>>=
 pub function (r: Resolver) resolve_plain(name: string): Result[net.IpAddr[], DnsError] {
   match (net.ip_parse(name)) {
-    Some(ip) => {
+    Ok(ip) => {
       return Ok([ip]);
     },
-    None => {}
+    Err(_) => {}
   }
   let s: Seen = r.fresh();
   return resolve_in(s.conf, (): HostsEntry[] => s.hosts, name);
@@ -2872,10 +2872,10 @@ function resolve_with(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsE
 
 function resolve_in(conf: ResolvConf, hosts_of: () => HostsEntry[], name: string): Result[net.IpAddr[], DnsError] {
   match (net.ip_parse(name)) {
-    Some(ip) => {
+    Ok(ip) => {
       return Ok([ip]);
     },
-    None => {}
+    Err(_) => {}
   }
   let hosts: net.IpAddr[] = hosts_lookup(hosts_of(), name);
   if (hosts.len() > 0) {

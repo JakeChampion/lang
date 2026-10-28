@@ -344,8 +344,8 @@ function recv(fd: i32, max: i32): u8[] {
 function main(): i32 {
     let first: net.IpAddr = net.ipv4_unspecified();
     match (net.ip_parse(%q)) {
-        Some(ip) => { first = ip; },
-        None => { return 3; }
+        Ok(ip) => { first = ip; },
+        Err(_) => { return 3; }
     }
     let opts: dns.DialOptions = dns.DialOptions { fallback: time.duration_millis(200 as i64), timeout: time.duration_seconds(5 as i64) };
     match (dns.connect_race([first, net.ipv4_loopback()], %d, opts)) {

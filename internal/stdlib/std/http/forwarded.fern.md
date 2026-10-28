@@ -264,10 +264,10 @@ pub function node_parse(s: string): Option[NodeId] {
       return None;
     };
     match (net.ipv6_parse(s.slice_snap(1, close))) {
-      Some(ip) => {
+      Ok(ip) => {
         return __with_port(Ip(ip), s.slice_snap(close + 1, s.len()));
       },
-      None => {
+      Err(_) => {
         return None;
       }
     }
@@ -301,10 +301,10 @@ function __nodename(s: string): Option[Node] {
     return Some(Obfuscated(s));
   }
   match (net.ipv4_parse(s)) {
-    Some(ip) => {
+    Ok(ip) => {
       return Some(Ip(ip));
     },
-    None => {
+    Err(_) => {
       return None;
     }
   }
@@ -377,10 +377,10 @@ pub function trust(blocks: string[]): Result[Trust, TrustError] {
   let out: net.Prefix[] = [];
   for b in blocks {
     match (net.prefix_parse(b)) {
-      Some(p) => {
+      Ok(p) => {
         out = out.append(p);
       },
-      None => {
+      Err(_) => {
         return Err(TrustError { block: b });
       }
     }
@@ -530,10 +530,10 @@ function __legacy_hops(h: HeaderMap): Option[Hop[]] {
 
 function __legacy_node(s: string): Option[NodeId] {
   match (net.ip_parse(s)) {
-    Some(ip) => {
+    Ok(ip) => {
       return Some(NodeId { node: Ip(ip), port: "" });
     },
-    None => {
+    Err(_) => {
       return node_parse(s);
     }
   }
@@ -723,13 +723,13 @@ function __v1_fields(f: string[], len: i32): ProxyHeader {
 function __v1_addr(text: string, v4: boolean, port: string): Option[net.SocketAddr] {
   let n: i32 = __v1_port(port);
   match (net.ip_parse(text)) {
-    Some(ip) => {
+    Ok(ip) => {
       if (ip.is_v4() != v4 || n < 0) {
         return None;
       }
       return Some(net.socket_addr(ip, n));
     },
-    None => {
+    Err(_) => {
       return None;
     }
   }
