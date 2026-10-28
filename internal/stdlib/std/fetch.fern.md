@@ -130,7 +130,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<57 struct __Got>>
 
-<<58 function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, started: i64): Result[__Got,...>>
+<<58 function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, started: i64, size: i32): Re...>>
 
 <<59 pub struct ProxyEnv>>
 
@@ -2119,7 +2119,7 @@ struct __H2Call { conn: __Conn, h2: h2.Conn, out: u8[] }
 function __h2_answered[T: Transport](tr: T, req: Request, started: i64, call: __H2Call, stream: i32): Result[(__H2Call, HttpResponse), FetchError] {
   while (true) {
     let conn: __Conn = __send_all(tr, call.conn, call.out)?;
-    let got: __Got = __recv_bounded(tr, conn, req.timeouts, started)?;
+    let got: __Got = __recv_bounded(tr, conn, req.timeouts, started, 65536)?;
     if (got.bytes.len() == 0) {
       return Err(__closed_early(0));
     }
@@ -2761,7 +2761,7 @@ function __read_response[T: Transport](tr: T, conn: __Conn, req: Request, starte
         return Err(__rejected(code));
       }
     }
-    let got: __Got = __recv_bounded(tr, conn, req.timeouts, started)?;
+    let got: __Got = __recv_bounded(tr, conn, req.timeouts, started, __read_size(buf.len()))?;
     conn = got.conn;
     let chunk: u8[] = got.bytes;
     if (chunk.len() == 0) {
@@ -2777,12 +2777,18 @@ function __append_bytes(own buf: u8[], chunk: u8[]): u8[] {
   if (buf.len() == 0) {
     return chunk;
   }
-  let i: i32 = 0;
-  while (i < chunk.len()) {
-    buf = buf.append(chunk[i]);
-    i = i + 1;
+  return buf.concat(chunk);
+}
+
+// The first read of a response asks for 8 KiB. A later read asks for what is held, up to 64 KiB.
+function __read_size(held: i32): i32 {
+  if (held < 8192) {
+    return 8192;
   }
-  return buf;
+  if (held > 65536) {
+    return 65536;
+  }
+  return held;
 }
 
 function __closed_early(got: i32): FetchError {
@@ -2938,22 +2944,22 @@ function __interim(status: i32): boolean {
 struct __Got { conn: __Conn, bytes: u8[] }
 ```
 
-### `58 function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, started: i64): Result[__Got,...`
+### `58 function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, started: i64, size: i32): Re...`
 
 ```fern
-<<58 function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, started: i64): Result[__Got,...>>=
-function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, started: i64): Result[__Got, FetchError] {
+<<58 function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, started: i64, size: i32): Re...>>=
+function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, started: i64, size: i32): Result[__Got, FetchError] {
   if (conn.closed) {
     return Ok(__Got { conn: conn, bytes: [] });
   }
   match (conn.tls) {
     Some(s) => {
       if (s.offloaded()) {
-        return __recv_kernel(tr, conn, s, timeouts, started);
+        return __recv_kernel(tr, conn, s, timeouts, started, size);
       }
       let session: client.Session = s;
       while (true) {
-        let raw: u8[] = __recv_raw(tr, conn.fd, timeouts, started)?;
+        let raw: u8[] = __recv_raw(tr, conn.fd, timeouts, started, size)?;
         if (raw.len() == 0) {
           if (session.held.len() > 0) {
             return Err(Tls(tls.RecordCut));
@@ -2969,16 +2975,16 @@ function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, s
       }
     },
     None => {
-      return Ok(__Got { conn: conn, bytes: __recv_raw(tr, conn.fd, timeouts, started)? });
+      return Ok(__Got { conn: conn, bytes: __recv_raw(tr, conn.fd, timeouts, started, size)? });
     }
   }
   return Ok(__Got { conn: conn, bytes: [] });
 }
 
-function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, timeouts: Timeouts, started: i64): Result[__Got, FetchError] {
+function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, timeouts: Timeouts, started: i64, size: i32): Result[__Got, FetchError] {
   let session: client.Session = s;
   while (true) {
-    let raw: u8[] = __recv_raw(tr, conn.fd, timeouts, started)?;
+    let raw: u8[] = __recv_raw(tr, conn.fd, timeouts, started, size)?;
     if (raw.len() > 0) {
       return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: raw });
     }
@@ -3001,7 +3007,7 @@ function __recv_kernel[T: Transport](tr: T, conn: __Conn, s: client.Session, tim
   return Ok(__Got { conn: conn, bytes: [] });
 }
 
-function __recv_raw[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started: i64): Result[u8[], FetchError] {
+function __recv_raw[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started: i64, size: i32): Result[u8[], FetchError] {
   let ns_per_ms: i64 = 1000000;
   let left_ms: i64 = timeouts.total.as_millis() - (time.instant_nanos(tr.now()) - started) / ns_per_ms;
   if (left_ms <= 0) {
@@ -3013,7 +3019,7 @@ function __recv_raw[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started:
     wait_ms = left_ms;
     bound = Total;
   }
-  match (__io(tr.read(conn, 65536, time.duration_millis(wait_ms)))?) {
+  match (__io(tr.read(conn, size, time.duration_millis(wait_ms)))?) {
     Chunk(chunk) => {
       return Ok(chunk);
     },
