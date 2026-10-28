@@ -1,7 +1,7 @@
 # Const generics
 
-Status: [plan] CG1a and CG1b ship. A function or a struct takes a const
-parameter (§4). CG1c, CG2 and CG3 are plans.
+Status: [plan] CG1a, CG1b and CG1c ship. A function, a struct, an enum or an
+impl takes a const parameter (§4). CG1d, CG2 and CG3 are plans.
 
 A const parameter is a generic parameter whose argument is an integer, not a
 type. `Vec[N, T]` is the first consumer: it is a lane type of `N` lanes of
@@ -83,9 +83,10 @@ The design adds these codes:
 - A `Vec[N, T]` with no lane type on the portable tier (§2.2). It gets the
   next free code when CG2 lands.
 
-A const parameter in the list of an enum, a type alias, an impl, a trait or a
-method is a P001 until CG1c. A method gets the const parameters of its
-receiver from the receiver spelling: `function (r: Ring[N, T]) cap()`.
+A const parameter in the list of a type alias, a trait or a method is a P001
+until CG1d. A method gets the const parameters of its receiver from the
+receiver spelling: `function (r: Ring[N, T]) cap()`. An impl method gets the
+const parameters of its impl.
 
 A const argument that cannot be inferred reports E040, as a type argument
 does.
@@ -187,8 +188,15 @@ places each compiler has to change.
   its expected type, or it writes them (`Ring[4, i32] { ... }`). The gate is
   the conformance case `const_param_structs` on every engine.
 
-- **CG1c.** A const parameter on an enum, a type alias, an impl and a trait.
-  The gate is a generic enum and an impl over `N` on every engine.
+- **CG1c (done).** A const parameter on an enum and an impl:
+  `enum Slot[const N: i32, T]`, `impl[const N: i32, T] Cap for Ring[N, T]`.
+  A method on `Slot[N, T]` reads N. Each instance of an impl gets its own N,
+  also through a trait bound. A variant payload takes its type arguments
+  from the expected enum instance (#13767), so `Full(Ring { ... })` gets N
+  from `Slot[4, string]`. The gate is the conformance case
+  `const_param_enums_impls` on every engine.
+
+- **CG1d.** A const parameter on a type alias and a trait.
 
 - **CG2.** `Vec[N, T]` as the second spelling of the lane types, and
   inference of `N` and `T` from a lane type. The gate is a kernel over

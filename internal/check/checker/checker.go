@@ -2401,7 +2401,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			simpleName := methodName
 			mangled := c.mangleMethodName("__method_", typeName, fn.Name, fn.ImplTrait)
 			fn.Name = mangled
-			fn.ConstParams = append(fn.ConstParams, c.receiverConstParams(fn.Receiver.Type)...)
+			for _, n := range c.receiverConstParams(fn.Receiver.Type) {
+				if !slices.Contains(fn.ConstParams, n) {
+					fn.ConstParams = append(fn.ConstParams, n)
+				}
+			}
 			fn.MethodRecv = typeName
 			fn.MethodSimpleName = simpleName
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
@@ -5433,11 +5437,13 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 				params[n] = true
 			}
 		}
+		c.resolvingConsts = ed.ConstParams
 		for i := range ed.Variants {
 			for j := range ed.Variants[i].Payloads {
 				c.resolveType(&ed.Variants[i].Payloads[j], params, orPos(ed.Variants[i].P, ed.P))
 			}
 		}
+		c.resolvingConsts = nil
 	}
 	for _, impl := range prog.Impls {
 		if len(impl.TypeParams) == 0 {
@@ -5447,11 +5453,13 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 		for _, n := range impl.TypeParams {
 			params[n] = true
 		}
+		c.resolvingConsts = impl.ConstParams
 		c.resolveType(&impl.Type, params, impl.P)
 		for name, bt := range impl.AssocTypeBindings {
 			c.resolveType(&bt, params, impl.P)
 			impl.AssocTypeBindings[name] = bt
 		}
+		c.resolvingConsts = nil
 	}
 }
 
@@ -5749,7 +5757,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 			if len(sd.TypeParams) != len(args) {
 				c.errfCode(sd.P, "E019", "%s", arityMsg("struct "+t.Name, len(sd.TypeParams), len(args), "type argument"))
 			} else if len(sd.ConstParams) > 0 || hasConstArg(args) {
-				c.structArgKinds(sd, args, pos)
+				c.argKinds(sd.P, sd.TypeParams, sd.ConstParams, args, pos)
 			}
 			if t.Name == "Cell" && len(args) == 1 {
 				at := pos
@@ -5764,6 +5772,8 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 		if ed, ok := c.info.Enums[t.Name]; ok && len(args) > 0 {
 			if len(ed.TypeParams) != len(args) {
 				c.errfCode(ed.P, "E019", "%s", arityMsg("enum "+t.Name, len(ed.TypeParams), len(args), "type argument"))
+			} else if len(ed.ConstParams) > 0 || hasConstArg(args) {
+				c.argKinds(ed.P, ed.TypeParams, ed.ConstParams, args, pos)
 			}
 		}
 		*slot = ast.EnumType{Name: t.Name, Args: args}
@@ -7950,17 +7960,17 @@ func hoistReceiver(fn *ast.FuncDecl) {
 	fn.Receiver = nil
 }
 
-// structArgKinds checks the arguments of an application of sd: a const
-// parameter takes an integer that fits in i32 (E089) or a const parameter in
-// scope, and a type parameter takes a type (E090).
-func (c *checker) structArgKinds(sd *ast.StructDecl, args []ast.Type, pos ast.Position) {
+// argKinds checks the arguments of an application of a struct or an enum
+// declared at decl: a const parameter takes an integer that fits in i32 (E089)
+// or a const parameter in scope, and a type parameter takes a type (E090).
+func (c *checker) argKinds(decl ast.Position, typeParams, constParams []string, args []ast.Type, pos ast.Position) {
 	if pos.Line == 0 {
-		pos = sd.P
+		pos = decl
 	}
 	for i, a := range args {
-		tp := sd.TypeParams[i]
+		tp := typeParams[i]
 		ca, isInt := a.(ast.ConstArg)
-		if !slices.Contains(sd.ConstParams, tp) {
+		if !slices.Contains(constParams, tp) {
 			if isInt {
 				c.errfCode(pos, "E090", "type parameter %s takes a type, not the integer %s", tp, ca)
 			}
@@ -8005,8 +8015,8 @@ func hasConstArg(args []ast.Type) bool {
 	return false
 }
 
-// receiverConstParams is the names a receiver spelling gives to its struct's
-// const parameters: N in `function (r: Ring[N, T]) cap()`.
+// receiverConstParams is the names a receiver spelling gives to the const
+// parameters of its struct or enum: N in `function (r: Ring[N, T]) cap()`.
 func (c *checker) receiverConstParams(t ast.Type) []string {
 	var name string
 	var args []ast.Type
@@ -8018,13 +8028,15 @@ func (c *checker) receiverConstParams(t ast.Type) []string {
 	default:
 		return nil
 	}
-	sd, ok := c.info.Structs[name]
-	if !ok {
-		return nil
+	var typeParams, constParams []string
+	if sd, ok := c.info.Structs[name]; ok {
+		typeParams, constParams = sd.TypeParams, sd.ConstParams
+	} else if ed, ok := c.info.Enums[name]; ok {
+		typeParams, constParams = ed.TypeParams, ed.ConstParams
 	}
 	var out []string
 	for i, a := range args {
-		if i >= len(sd.TypeParams) || !slices.Contains(sd.ConstParams, sd.TypeParams[i]) {
+		if i >= len(typeParams) || !slices.Contains(constParams, typeParams[i]) {
 			continue
 		}
 		switch x := a.(type) {
@@ -13542,8 +13554,19 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 						c.settleNumeric(a, vr.payloads[i])
 					}
 				}
+				var destSub map[string]ast.Type
+				if ed != nil {
+					if da := destEnumArgs(callExpected, vr.enumName, len(ed.TypeParams)); da != nil {
+						destSub = make(map[string]ast.Type, len(da))
+						for i, p := range ed.TypeParams {
+							destSub[p] = da[i]
+						}
+					}
+				}
 				for i, a := range n.Args {
-					if i < len(vr.payloads) && c.monomorphCloneEnumName(substituteType(vr.payloads[i], sub)) != "" {
+					if i < len(vr.payloads) && destSub != nil {
+						c.expectedType = substituteType(vr.payloads[i], destSub)
+					} else if i < len(vr.payloads) && c.monomorphCloneEnumName(substituteType(vr.payloads[i], sub)) != "" {
 						c.expectedType = substituteType(vr.payloads[i], sub)
 					}
 					at := c.checkExpr(a, s)
@@ -13897,7 +13920,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					}
 					if c.monomorphCloneEnumName(pt) != "" {
 						c.expectedType = pt
-					} else if _, isEnum := pt.(ast.EnumType); isEnum && sub != nil {
+					} else if et, isEnum := pt.(ast.EnumType); isEnum && (sub != nil || len(et.Args) > 0) {
 						c.expectedType = pt
 					} else if st, isStruct := pt.(ast.StructType); isStruct && len(st.Args) > 0 {
 						c.expectedType = pt

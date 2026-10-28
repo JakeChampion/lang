@@ -170,7 +170,7 @@ pub struct ResourceDecl { name: string, iface: string, wit: string, line: i32, c
 
 pub struct ExportBinding { func_name: string, iface: string, wit: string, c_abi: boolean, method: boolean }
 
-pub struct EnumDecl { name: string, variant_names: string[], type_params: string[], line: i32, col: i32, must_consume: boolean, try_marker: boolean, is_pub: boolean, is_package: boolean, module: string, instance: string, visible_from: string[] }
+pub struct EnumDecl { name: string, variant_names: string[], type_params: string[], const_params: string[], line: i32, col: i32, must_consume: boolean, try_marker: boolean, is_pub: boolean, is_package: boolean, module: string, instance: string, visible_from: string[] }
 
 function enum_variant_names(variants: StructDecl[]): string[] {
   let out: string[] = [];
@@ -7898,7 +7898,7 @@ function parse_decl_tparams(p: Par, kind: string, name: string): (string[], stri
       p = cp;
       tparams = tparams.append(cname);
       cparams = cparams.append(cname);
-      if (kind != "struct") {
+      if (kind != "struct" && kind != "enum") {
         p = Par { ...p, type_errs: p.type_errs.append(s_unknown(open, "decl:const parameter " + cname + ": " + const_param_owners())) };
       }
       continue;
@@ -7932,7 +7932,7 @@ function parse_decl_tparams(p: Par, kind: string, name: string): (string[], stri
 
 // const_param_owners names the declarations that take a const parameter.
 function const_param_owners(): string {
-  return "only a function or a struct takes a const parameter";
+  return "only a function, a struct, an enum or an impl takes a const parameter";
 }
 
 function parse_struct_decl(p: Par): (StructDecl, Par) {
@@ -8021,19 +8021,19 @@ function type_ref_args_spelling(r: TypeRef): string {
   return out;
 }
 
-function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
+function parse_enum_decl(p: Par): (string, StructDecl[], string[], string[], i32[], Par) {
   p = p.advance();
   let out: StructDecl[] = [];
   let vlines: i32[] = [];
   let name: string = p.peek_ident();
   if (name.len() == 0) {
-    return ("", out, [], vlines, p);
+    return ("", out, [], [], vlines, p);
   }
   p = p.advance();
-  let (tparams, tp_cparams, tp_p) = parse_decl_tparams(p, "enum", name);
+  let (tparams, cparams, tp_p) = parse_decl_tparams(p, "enum", name);
   p = tp_p;
   if (p.peek_punct() != "{") {
-    return (name, out, tparams, vlines, p);
+    return (name, out, tparams, cparams, vlines, p);
   }
   p = p.advance();
   while (p.peek_punct() != "}" && !p.at_end()) {
@@ -8108,7 +8108,7 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
   if (p.peek_punct() == "}") {
     p = p.advance();
   }
-  return (name, out, tparams, vlines, p);
+  return (name, out, tparams, cparams, vlines, p);
 }
 
 function parse_import(p: Par): (Import, ast.Stmt[], Par) {
@@ -8638,6 +8638,8 @@ pub struct MFns {
   gat: i32[],
   pix: util.NameIndex,
   pat: i32[],
+  mix: util.NameIndex,
+  mat: i32[],
   smm: string[],
   array_concrete: i32[],
   structs: StructDecl[],
@@ -8676,6 +8678,8 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
   let array_concrete: i32[] = [];
   let pnames: string[] = [];
   let pat: i32[] = [];
+  let mnames: string[] = [];
+  let mat: i32[] = [];
   let i: i32 = 0;
   while (i < decls.len()) {
     if (is_free_bg_template(decls[i])) {
@@ -8685,6 +8689,10 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     if (decls[i].receiver_name.len() == 0 && decls[i].receiver_type.len() == 0) {
       pnames = pnames.append(decls[i].name);
       pat = pat.append(i);
+    }
+    if (decls[i].receiver_name.len() > 0 && decls[i].all_type_params.len() == 0) {
+      mnames = mnames.append(decls[i].name);
+      mat = mat.append(i);
     }
     if (decls[i].name.len() > 6 && slice_unchecked(decls[i].name, 0, 6) == "__smm_") {
       smm = smm.append(decls[i].name);
@@ -8707,7 +8715,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     ghead = ghead.with(bk, k);
     k = k - 1;
   }
-  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, pix: util.name_index(pnames), pat: pat, smm: smm, array_concrete: array_concrete, structs: structs, snames: util.name_index(struct_names(structs)), enums: enums, impls: impls, keep_vars: false, on_call: [], renamed: renamed_receivers(decls), lane_bounds: [] };
+  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, pix: util.name_index(pnames), pat: pat, mix: util.name_index(mnames), mat: mat, smm: smm, array_concrete: array_concrete, structs: structs, snames: util.name_index(struct_names(structs)), enums: enums, impls: impls, keep_vars: false, on_call: [], renamed: renamed_receivers(decls), lane_bounds: [] };
 }
 
 function renamed_receivers(decls: FuncDecl[]): string[] {
@@ -8813,6 +8821,22 @@ pub function split_top_commas(s: string): string[] {
   }
   out = out.append(slice_unchecked(s, start, s.len()) + "");
   return out;
+}
+
+// import_qualifier is the name an import gives to the module it loads: its
+// alias, or the last segment of its path (`json` for `import "std/json"`).
+pub function import_qualifier(im: Import): string {
+  if (im.alias.len() > 0) {
+    return im.alias;
+  }
+  let p: string = util.without_fern_ext(im.path);
+  let start: i32 = 0;
+  for i in 0..p.len() {
+    if (p[i] == b'/') {
+      start = i + 1;
+    }
+  }
+  return slice_unchecked(p, start, p.len()) + "";
 }
 
 pub function std_qualifier(mod: Module, name: string): string {
@@ -13839,13 +13863,12 @@ function method_decl_at(callee: ast.Expr, env: MEnv, funcs: MFns): i32 {
     if (rt.len() == 0) {
       return 0 - 1;
     }
-    let i: i32 = 0;
-    while (i < funcs.decls.len()) {
-      let d: FuncDecl = funcs.decls[i];
-      if (d.name == fa.field && d.receiver_name.len() > 0 && d.receiver_type == rt && d.all_type_params.len() == 0) {
-        return i;
+    let e: i32 = funcs.mix.chain(fa.field);
+    while (e >= 0) {
+      if (funcs.mix.names[e] == fa.field && funcs.decls[funcs.mat[e]].receiver_type == rt) {
+        return funcs.mat[e];
       }
-      i = i + 1;
+      e = funcs.mix.next[e];
     }
   }
   return 0 - 1;
@@ -15827,7 +15850,7 @@ function clone_enum_method(m: FuncDecl, ed: EnumDecl, cts: string[], mname: stri
   if (m.receiver_name.len() > 0) {
     menv = menv.ebind(m.receiver_name, recv);
   }
-  let mb: RStmts = mono_stmts(subst_stmts(method_bound_rewritten(m, tps, cts, mod.trait_reqs, efns), tps, cts), menv, efns, cur, fn_tag_spelling(rt, rfr, rfps));
+  let mb: RStmts = mono_stmts(const_reads(m, subst_stmts(method_bound_rewritten(m, tps, cts, mod.trait_reqs, efns), tps, cts), tps, cts), menv, efns, cur, fn_tag_spelling(rt, rfr, rfps));
   let rb: RStmts = me_stmts(mb.rstmts, env, rt, mod.enums, mod.structs, efns, mb.rins3);
   let notp: string[] = [];
   let fn: FuncDecl = FuncDecl {
@@ -16202,7 +16225,7 @@ pub function monomorphize_enums(mod: Module): Module {
         }
         vi2 = vi2 + 1;
       }
-      cl_enums = cl_enums.append(EnumDecl { name: mname, variant_names: nvn, type_params: [], line: ed.line, col: ed.col, must_consume: ed.must_consume, try_marker: ed.try_marker, is_pub: true, is_package: false, module: ed.module, instance: ed.name + "[" + subst_ty_join(cts, ",", [], []) + "]", visible_from: ed.visible_from });
+      cl_enums = cl_enums.append(EnumDecl { name: mname, variant_names: nvn, type_params: [], const_params: [], line: ed.line, col: ed.col, must_consume: ed.must_consume, try_marker: ed.try_marker, is_pub: true, is_package: false, module: ed.module, instance: ed.name + "[" + subst_ty_join(cts, ",", [], []) + "]", visible_from: ed.visible_from });
       let mi: i32 = 0;
       while (mi < mod.funcs.len()) {
         let mm: FuncDecl = mod.funcs[mi];
@@ -18198,7 +18221,7 @@ pub function desugar_union_aliases(mod: Module): Module {
       structs = structs.append(StructDecl { name: member, fields: [bare_field("__ev", payload)], type_params: [], const_params: [], derives: [], line: 0, col: 0, enum_owner: al.name, must_consume: false, variant_field_names: [], is_pub: true, is_package: false, opaque: false, module: "" });
       vi = vi + 1;
     }
-    enums = enums.append(EnumDecl { name: al.name, variant_names: al.variants, type_params: al.type_params, line: al.line, col: al.col, must_consume: false, try_marker: false, is_pub: al.is_pub, is_package: al.is_package, module: al.module, instance: "", visible_from: [] });
+    enums = enums.append(EnumDecl { name: al.name, variant_names: al.variants, type_params: al.type_params, const_params: [], line: al.line, col: al.col, must_consume: false, try_marker: false, is_pub: al.is_pub, is_package: al.is_package, module: al.module, instance: "", visible_from: [] });
     i = i + 1;
   }
   return Module { ...mod, aliases: aliases, structs: structs, enums: enums };
@@ -21293,20 +21316,16 @@ function respell_type_vars_module(mod: Module, written: boolean): Module {
   }
   let structs: StructDecl[] = [];
   for sd in mod.structs {
-    let svars: string[] = [];
-    for tv in sd.type_params {
-      if (!util.has_str(sd.const_params, tv)) {
-        svars = svars.append(tv);
-      }
-    }
+    let svars: string[] = type_vars(sd.type_params, sd.const_params);
     if (sd.enum_owner.len() > 0) {
-      svars = decl_type_params(sd.enum_owner, mod);
+      svars = decl_type_vars(sd.enum_owner, mod);
     }
     structs = structs.append(rename_struct_type_vars(sd, svars, tvar_respellings(svars, written)));
   }
   let enums: EnumDecl[] = [];
   for ed in mod.enums {
-    enums = enums.append(EnumDecl { ...ed, type_params: tvar_respellings(ed.type_params, written) });
+    let evars: string[] = type_vars(ed.type_params, ed.const_params);
+    enums = enums.append(EnumDecl { ...ed, type_params: rename_ty_list(ed.type_params, evars, tvar_respellings(evars, written)) });
   }
   let impls: ImplInfo[] = [];
   for im in mod.impls {
@@ -21369,19 +21388,31 @@ function add_tvars(acc: string[], vars: string[]): string[] {
   return out;
 }
 
-function decl_type_params(name: string, mod: Module): string[] {
+// decl_type_vars is the type parameters of the struct or enum `name` that
+// are not const.
+function decl_type_vars(name: string, mod: Module): string[] {
   for ed in mod.enums {
     if (ed.name == name) {
-      return ed.type_params;
+      return type_vars(ed.type_params, ed.const_params);
     }
   }
   for sd in mod.structs {
     if (sd.name == name) {
-      return sd.type_params;
+      return type_vars(sd.type_params, sd.const_params);
     }
   }
   let none: string[] = [];
   return none;
+}
+
+function type_vars(type_params: string[], const_params: string[]): string[] {
+  let out: string[] = [];
+  for tv in type_params {
+    if (!util.has_str(const_params, tv)) {
+      out = out.append(tv);
+    }
+  }
+  return out;
 }
 
 function fn_type_vars(fd: FuncDecl, mod: Module, respelled: boolean): string[] {
@@ -21396,7 +21427,7 @@ function fn_type_vars(fd: FuncDecl, mod: Module, respelled: boolean): string[] {
     return vars;
   }
   if (first_bracket(fd.receiver_type) < 0) {
-    vars = add_tvars(vars, decl_type_params(fd.receiver_type, mod));
+    vars = add_tvars(vars, decl_type_vars(fd.receiver_type, mod));
   }
   if (respelled) {
     vars = type_str_vars(fd.receiver_type, vars);
@@ -21413,14 +21444,19 @@ function fn_type_vars(fd: FuncDecl, mod: Module, respelled: boolean): string[] {
   return out;
 }
 
-// receiver_const_names is the names a receiver spelling gives to its struct's
-// const parameters: N in `function (r: Ring[N, T]) cap()`.
+// receiver_const_names is the names a receiver spelling gives to the const
+// parameters of its struct or enum: N in `function (r: Ring[N, T]) cap()`.
 function receiver_const_names(receiver_type: string, mod: Module): string[] {
   let out: string[] = [];
   let r: TypeRef = parse_type_ref(receiver_type);
   for sd in mod.structs {
     if (sd.name == r.base) {
       return const_arg_names(r, sd.type_params, sd.const_params);
+    }
+  }
+  for ed in mod.enums {
+    if (ed.name == r.base) {
+      return const_arg_names(r, ed.type_params, ed.const_params);
     }
   }
   return out;
@@ -23026,12 +23062,12 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
   let icol: i32 = p.peek_col();
   p = p.advance();
   let (impl_tpl, impl_tp_p) = parse_type_param_list(p);
-  p = refuse_const_tparams(impl_tp_p, p, impl_tpl);
+  p = impl_tp_p;
   let impl_tps: string[] = [];
   let impl_tbs: string[] = [];
   let itpi: i32 = 0;
   while (itpi < impl_tpl.tnames.len()) {
-    if (impl_tpl.tbounds[itpi].len() > 0) {
+    if (impl_tpl.tbounds[itpi].len() > 0 && !is_const_bound(impl_tpl.tbounds[itpi])) {
       impl_tps = impl_tps.append(impl_tpl.tnames[itpi]);
       impl_tbs = impl_tbs.append(impl_tpl.tbounds[itpi]);
     }
@@ -24858,10 +24894,10 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
     if (kw == "enum") {
       let eline: i32 = p.peek_line();
       let ecol: i32 = p.peek_col();
-      let (enr_name, enr_variants, enr_type_params, enr_vlines, enr_p) = parse_enum_decl(p);
+      let (enr_name, enr_variants, enr_type_params, enr_const_params, enr_vlines, enr_p) = parse_enum_decl(p);
       p = enr_p;
       flines = record_field_lines(flines, verbatim, enr_name, eline, enr_vlines);
-      enums = enums.append(EnumDecl { name: enr_name, variant_names: enum_variant_names(enr_variants), type_params: enr_type_params, line: eline, col: ecol, must_consume: attr.name == "must_consume", try_marker: attr.name == "try", is_pub: decl_pub, is_package: decl_package, module: "", instance: "", visible_from: [] });
+      enums = enums.append(EnumDecl { name: enr_name, variant_names: enum_variant_names(enr_variants), type_params: enr_type_params, const_params: enr_const_params, line: eline, col: ecol, must_consume: attr.name == "must_consume", try_marker: attr.name == "try", is_pub: decl_pub, is_package: decl_package, module: "", instance: "", visible_from: [] });
       let ei: i32 = 0;
       while (ei < enr_variants.len()) {
         structs = structs.append(StructDecl { ...enr_variants[ei], derives: attr.derives });

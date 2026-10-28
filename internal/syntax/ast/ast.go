@@ -1932,9 +1932,11 @@ type StructDecl struct {
 }
 
 type EnumDecl struct {
-	P             Position
-	Name          string
-	TypeParams    []string
+	P          Position
+	Name       string
+	TypeParams []string
+	// ConstParams names the const parameters among TypeParams.
+	ConstParams   []string
 	Variants      []EnumVariant
 	Monomorphized bool
 	Derives       []string
@@ -2002,14 +2004,16 @@ type TraitMethod struct {
 }
 
 type ImplDecl struct {
-	P                 Position
-	Trait             string
-	TraitPos          Position
-	Type              Type
-	TypePos           Position
-	MethodNames       []string
-	TraitArgs         []Type
-	TypeParams        []string
+	P           Position
+	Trait       string
+	TraitPos    Position
+	Type        Type
+	TypePos     Position
+	MethodNames []string
+	TraitArgs   []Type
+	TypeParams  []string
+	// ConstParams names the const parameters among TypeParams.
+	ConstParams       []string
 	Bounds            map[string][]string
 	BoundArgs         map[string][][]Type
 	AssocTypeBindings map[string]Type
