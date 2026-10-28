@@ -15,10 +15,11 @@ Reader and writer state must follow the returned value. A line reader answers `O
 ```fern test name=std-io_buffered-example
 import "std/io_buffered";
 import "std/option";
+import "std/result";
 
 function main(): i32 {
   let w = io_buffered.bytes_writer_new().write_string("hello");
-  if (w.len() != 5 || w.into_string().unwrap_or("") != "hello") { return 1; }
+  if (w.len() != 5 || w.into_string().ok().unwrap_or("") != "hello") { return 1; }
   return 0;
 }
 ```
@@ -124,7 +125,7 @@ pub function (w: BytesWriter) into_bytes(): u8[] {
   return w.data;
 }
 
-pub function (w: BytesWriter) into_string(): Option[string] {
+pub function (w: BytesWriter) into_string(): Result[string, utf8.Utf8Error] {
   return utf8.from_bytes(w.data);
 }
 
@@ -555,10 +556,10 @@ pub function (lr: LineReader) next_line(): Result[(Option[string], LineReader), 
     },
     Some(bytes) => {
       match (utf8.from_bytes(bytes)) {
-        Some(text) => {
+        Ok(text) => {
           return Ok((Some(text), LineReader { raw: raw }));
         },
-        None => {
+        Err(_) => {
           return Err(invalid_text(raw));
         }
       }
@@ -660,10 +661,10 @@ pub function (lr: LineReader) next_chunk(): Result[(Option[string], LineReader),
         prefix = copy_line_bytes(bytes, 0, end);
       }
       match (utf8.from_bytes(prefix)) {
-        None => {
+        Err(_) => {
           return Err(invalid_text(raw));
         },
-        Some(text) => {
+        Ok(text) => {
           if (end < bytes.len()) {
             raw = ByteLineReader { ...raw, chunk: bytes, pos: end };
           }

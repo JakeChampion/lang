@@ -2048,10 +2048,10 @@ function tz_prefix(s: [u8]): (boolean, string, i32, boolean) {
       name = name.append(s[i]);
     } else if (c == 34) {
       match (utf8.from_bytes(name)) {
-        Some(text) => {
+        Ok(text) => {
           return (true, text, i + 1, true);
         },
-        None => {
+        Err(_) => {
           return (false, "", 0, false);
         }
       }

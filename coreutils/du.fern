@@ -713,10 +713,10 @@ function files0_names(bytes: u8[], origin: string): Option[string[]] {
     }
     ordinal = ordinal + 1;
     match (utf8.from_bytes(array.slice(bytes, start, end))) {
-      Some(name) => {
+      Ok(name) => {
         out = out.append(name);
       },
-      None => {
+      Err(_) => {
         gnu.error(gnu.quotef(origin) + ":" + (ordinal as i64).to_string() + ": invalid UTF-8 file name");
         return None;
       }

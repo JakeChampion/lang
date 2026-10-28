@@ -1530,7 +1530,7 @@ function main(): i32 {
     let s: ByteStream = stream.stream_from_string("hello world");
     print(s.len().to_string());
     let (text, s2) = s.read_all_string();
-    match (text) { Some(value) => { print(value); }, None => { return 1; }, }
+    match (text) { Ok(value) => { print(value); }, Err(_) => { return 1; }, }
     if (s2.is_empty()) { print("done"); }
     return 0;
 }`,
@@ -1996,7 +1996,7 @@ function main(): i32 {
     w = w.write_string("HTTP/1.1 200 OK\r\n");
     w = w.write_string("\r\nhello");
     print(w.len().to_string());
-    match (w.into_string()) { Some(s) => { print(s); }, None => { return 1; }, }
+    match (w.into_string()) { Ok(s) => { print(s); }, Err(_) => { return 1; }, }
     return 0;
 }`,
 			wantStdout: "24\nHTTP/1.1 200 OK\r\n\r\nhello\n",
@@ -2008,7 +2008,7 @@ function main(): i32 {
     let w: BytesWriter = io_buffered.bytes_writer_new();
     w = w.write_byte(72);  // 'H'
     w = w.write_byte(105); // 'i'
-    match (w.into_string()) { Some(s) => { print(s); }, None => { return 1; }, }
+    match (w.into_string()) { Ok(s) => { print(s); }, Err(_) => { return 1; }, }
     return 0;
 }`,
 			wantStdout: "Hi\n",
@@ -2024,7 +2024,7 @@ function main(): i32 {
     if (w.len() != 0) { return 2; }
     if (!w.is_empty()) { return 3; }
     w = w.write_string("second");
-    match (w.into_string()) { Some(s) => { print(s); }, None => { return 1; }, }
+    match (w.into_string()) { Ok(s) => { print(s); }, Err(_) => { return 1; }, }
     return 0;
 }`,
 			wantStdout: "second\n",
@@ -2037,7 +2037,7 @@ function main(): i32 {
     let bs: u8[] = "binary".bytes();
     w = w.write_bytes(bs);
     if (w.len() != 6) { return 1; }
-    match (w.into_string()) { Some(s) => { print(s); }, None => { return 1; }, }
+    match (w.into_string()) { Ok(s) => { print(s); }, Err(_) => { return 1; }, }
     return 0;
 }`,
 			wantStdout: "binary\n",

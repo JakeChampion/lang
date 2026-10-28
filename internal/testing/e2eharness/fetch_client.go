@@ -349,8 +349,8 @@ function show(name: string, answer: Result[HttpResponse, fetch.FetchError]): voi
         Ok(resp) => {
             let text: string = "<not utf-8>";
             match (resp.body_text()) {
-                Some(s) => { text = s; },
-                None => {}
+                Ok(s) => { text = s; },
+                Err(_) => {}
             }
             let fields: string = "";
             let i: i32 = 0;
@@ -395,8 +395,8 @@ function main(): i32 {
             let bs: u8[] = resp.body_bytes();
             let text: string = "<not utf-8>";
             match (resp.body_text()) {
-                Some(s) => { text = s; },
-                None => {}
+                Ok(s) => { text = s; },
+                Err(_) => {}
             }
             print("binary: " + bs.len().to_string() + " " + (bs[0] as i32).to_string() + " " + (bs[3] as i32).to_string() + " " + text);
         },
@@ -501,8 +501,8 @@ function line(name: string, answer: Result[HttpResponse, fetch.FetchError]): str
         Ok(resp) => {
             let text: string = "<not utf-8>";
             match (resp.body_text()) {
-                Some(s) => { text = s; },
-                None => {}
+                Ok(s) => { text = s; },
+                Err(_) => {}
             }
             let fields: string = "";
             let i: i32 = 0;
@@ -549,8 +549,8 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
             let bs: u8[] = resp.body_bytes();
             let text: string = "<not utf-8>";
             match (resp.body_text()) {
-                Some(s) => { text = s; },
-                None => {}
+                Ok(s) => { text = s; },
+                Err(_) => {}
             }
             out = out + "binary: " + bs.len().to_string() + " " + (bs[0] as i32).to_string() + " " + (bs[3] as i32).to_string() + " " + text + "\n";
         },

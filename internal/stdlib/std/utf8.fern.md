@@ -40,8 +40,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 1>>=
 // This module encodes, decodes, and validates UTF-8 code points.
-
-// This module encodes, decodes, and validates UTF-8 code points.
+import "core/cmp";
+import "std/error";
 import "std/string";
 import "core/utf8_scalar";
 ```
@@ -219,12 +219,38 @@ pub function is_valid(s: string): boolean {
   return true;
 }
 
-pub function from_bytes(b: [u8]): Option[string] {
+// The byte offset of the first sequence that is not valid UTF-8.
+pub struct Utf8Error { offset: i32 }
+
+impl error.Error for Utf8Error {}
+
+impl cmp.Display for Utf8Error {}
+
+pub function (e: Utf8Error) message(): string {
+  return "invalid UTF-8 at byte " + e.offset.to_string();
+}
+
+pub function (e: Utf8Error) to_string(): string {
+  return e.message();
+}
+
+pub function from_bytes(b: [u8]): Result[string, Utf8Error] {
   let s: string = string_from_bytes_unchecked(__bytes_owned(b));
   if (is_valid(s)) {
-    return Some(s);
+    return Ok(s);
   }
-  return None;
+  return Err(Utf8Error { offset: __first_invalid(s) });
+}
+
+function __first_invalid(s: string): i32 {
+  let i: i32 = 0;
+  while (i < s.len()) {
+    let Some(step) = decode_at(s, i) else {
+      return i;
+    };
+    i = i + step.1;
+  }
+  return i;
 }
 
 pub function from_bytes_lossy(b: [u8]): string {

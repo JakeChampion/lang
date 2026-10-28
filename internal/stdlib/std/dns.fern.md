@@ -666,13 +666,13 @@ function join_label(out: string, msg: u8[], at: i32, len: i32): Option[string] {
     k = k + 1;
   }
   match (utf8.from_bytes(label)) {
-    Some(text) => {
+    Ok(text) => {
       if (out.len() > 0) {
         return Some(out + "." + text);
       }
       return Some(text);
     },
-    None => {
+    Err(_) => {
       return None;
     }
   }

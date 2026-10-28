@@ -425,12 +425,12 @@ pub function build_line(image: [u8]): Option[string] {
       }
       if (end < image.len() && image[end] == b'\n') {
         match (utf8.from_bytes(image[start:end])) {
-          Some(line) => {
+          Ok(line) => {
             if (__manifest_shape(line)) {
               return Some(line);
             }
           },
-          None => {}
+          Err(_) => {}
         }
       }
     }

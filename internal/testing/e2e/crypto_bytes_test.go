@@ -18,8 +18,8 @@ function main(): i32 {
     // ...and it is NOT valid UTF-8, which is the whole reason it is not
     // a string: the checked constructor rejects it.
     match (utf8.from_bytes(d)) {
-        Some(s) => { return 3; },
-        None => {}
+        Ok(s) => { return 3; },
+        Err(_) => {}
     }
 
     // The one-shot digest agrees with the streaming hasher.

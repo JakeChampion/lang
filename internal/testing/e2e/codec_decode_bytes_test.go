@@ -17,18 +17,18 @@ function main(): i32 {
     if (raw[1] as i32 != 254) { return 3; }
     if (raw[2] as i32 != 253) { return 4; }
     match (utf8.from_bytes(raw)) {
-        Some(s) => { return 5; },
-        None => {}
+        Ok(s) => { return 5; },
+        Err(_) => {}
     }
 
     // ASCII payloads still read back as text.
     match (utf8.from_bytes(__codec_bytes(b64.decode("TWFu")))) {
-        Some(s) => { if (s != "Man") { return 6; } },
-        None => { return 7; }
+        Ok(s) => { if (s != "Man") { return 6; } },
+        Err(_) => { return 7; }
     }
     match (utf8.from_bytes(__codec_bytes(b32.decode("MZXW6YTBOI======")))) {
-        Some(s) => { if (s != "foobar") { return 8; } },
-        None => { return 9; }
+        Ok(s) => { if (s != "foobar") { return 8; } },
+        Err(_) => { return 9; }
     }
 
     // Empty decodes to an empty u8[], not to None.

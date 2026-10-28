@@ -72,6 +72,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 // This module provides the time-zone type and loads zones from the IANA database, from TZif files, and from POSIX rules.
 import "std/string";
 import "std/array";
+import "std/result";
 import "std/time";
 import "std/utf8";
 import "std/i64";
@@ -668,7 +669,7 @@ function designation(bs: [u8], base: i32, len: i32, at: i32): Option[string] {
     out = out.append(bs[i]);
     i = i + 1;
   }
-  return utf8.from_bytes(out);
+  return utf8.from_bytes(out).ok();
 }
 
 function read_footer(bs: [u8], start: i32): Option[string] {
@@ -681,7 +682,7 @@ function read_footer(bs: [u8], start: i32): Option[string] {
     out = out.append(bs[i]);
     i = i + 1;
   }
-  return utf8.from_bytes(out);
+  return utf8.from_bytes(out).ok();
 }
 ```
 

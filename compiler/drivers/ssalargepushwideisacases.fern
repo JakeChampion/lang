@@ -7,7 +7,7 @@ pub struct Case { id: i32, source: string, ok: boolean, ops: ExpectedOp[] }
 
 function source(spelling: string): string {
   if let Ok(bytes) = hex.decode(spelling) {
-    if let Some(value) = utf8.from_bytes(bytes) {
+    if let Ok(value) = utf8.from_bytes(bytes) {
       return value;
     }
   }

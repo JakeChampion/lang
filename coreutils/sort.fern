@@ -2093,10 +2093,10 @@ function read_names(file: string): Option[string[]] {
     n = n + 1;
     let name: string = "";
     match (utf8.from_bytes(byte_range(text, start, end))) {
-      Some(valid) => {
+      Ok(valid) => {
         name = valid;
       },
-      None => {
+      Err(_) => {
         gnu.error(gnu.quotef(file) + ":" + n.to_string() + ": invalid UTF-8 file name");
         return None;
       }

@@ -3174,10 +3174,10 @@ function read_chunk_value(r: Reader, n: i32): Value {
   match (r.read_chunk_bytes(n)) {
     Ok(chunk) => {
       match (utf8.from_bytes(chunk)) {
-        Some(text) => {
+        Ok(text) => {
           return ok_value(v_string(text));
         },
-        None => {
+        Err(_) => {
           return io_err_value(InvalidUtf8(""));
         }
       }

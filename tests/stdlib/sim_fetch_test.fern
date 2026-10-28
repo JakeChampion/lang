@@ -16,10 +16,10 @@ const MS: i64 = 1000000;
 
 function __sent_text(n: sim_fetch.Net, i: i32): string {
   match (utf8.from_bytes(n.sent(i))) {
-    Some(text) => {
+    Ok(text) => {
       return text;
     },
-    None => {
+    Err(_) => {
       return "<not utf-8>";
     }
   }
@@ -55,10 +55,10 @@ function __body(got: Result[HttpResponse, fetch.FetchError]): string {
   match (got) {
     Ok(resp) => {
       match (resp.body_text()) {
-        Some(s) => {
+        Ok(s) => {
           return s;
         },
-        None => {
+        Err(_) => {
           return "<not utf-8>";
         }
       }
@@ -747,10 +747,10 @@ function test_binary_sent_snapshot(): test.TestOutcome {
     i = i + 1;
   }
   match (utf8.from_bytes(held)) {
-    Some(_) => {
+    Ok(_) => {
       return test.fail("fixture must contain binary bytes");
     },
-    None => {}
+    Err(_) => {}
   }
   let changed: u8[] = held.with(0, 0 as u8);
   let second = fetch.send_on(n, fetch.get("http://example.test/"), __open());
@@ -859,7 +859,7 @@ function test_served_route_first_and_refuses_malformed(): test.TestOutcome {
   }
   match (n.read(conn, 4096, time.duration_millis(100))) {
     Ok(net.Chunk(bytes)) => {
-      let Some(text) = utf8.from_bytes(bytes) else {
+      let Ok(text) = utf8.from_bytes(bytes) else {
         return test.fail("not utf-8");
       };
       if (!text.starts_with("HTTP/1.1 400 ") || !text.contains("Connection: close")) {

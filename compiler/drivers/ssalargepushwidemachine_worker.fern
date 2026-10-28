@@ -32,7 +32,7 @@ function frame(input: [u8], at: i32): i32 {
   for index in at + 12..end {
     bytes = bytes.append(input[index]);
   }
-  if let Some(source) = utf8.from_bytes(bytes) {
+  if let Ok(source) = utf8.from_bytes(bytes) {
     emit(id as i32, source);
     return end;
   }

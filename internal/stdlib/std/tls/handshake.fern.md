@@ -1996,10 +1996,10 @@ pub function client_restore(saved: [u8]): Result[Client, HandshakeError] {
   let share: keyshare.ClientShare = keyshare.ClientShare { group: keyshare.X25519, public: [], scalar: [], decapsulation_key: [] };
   let alpn: string = "";
   match (utf8.from_bytes(f[6])) {
-    Some(p) => {
+    Ok(p) => {
       alpn = p;
     },
-    None => {
+    Err(_) => {
       return Err(Misuse("client_restore"));
     }
   }
