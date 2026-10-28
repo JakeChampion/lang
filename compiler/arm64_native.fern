@@ -8102,11 +8102,12 @@ function arm64_gas_nl_name(n: string, k: i32): string {
 }
 
 function arm64_gas_nl_number(s: string): string {
-  let i: i32 = 0;
-  while (i + 1 < s.len() && s[i] == b'0') {
-    i = i + 1;
+  for i in 0..s.len() {
+    if (s[i] != b'0' || i + 1 == s.len()) {
+      return slice_unchecked(s, i, s.len()) + "";
+    }
   }
-  return slice_unchecked(s, i, s.len()) + "";
+  return "";
 }
 
 function arm64_gas_nl_index(c: Arm64NumericLabels, n: string): i32 {
