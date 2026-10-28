@@ -388,7 +388,7 @@ func TestEnforceArgsAndEnvNotOnProxyWorld(t *testing.T) {
 
 func TestEnforceRandomUniversal(t *testing.T) {
 	srcs := map[string]string{
-		"random": `function main(): i32 { return random_i32(); }`,
+		"random": `import "std/rand"; function main(): i32 { return rand.next_i32(); }`,
 	}
 	for name, src := range srcs {
 		for _, target := range platforms.Targets() {
@@ -410,7 +410,7 @@ func TestEnforceFreestandingGrantsNoHost(t *testing.T) {
 		"clock":  `function main(): i32 { return (now_unix_ms() as i32); }`,
 		"env":    `function main(): i32 { let v = env("HOME"); return 0; }`,
 		"args":   `function main(): i32 { let a: string[] = args(); return 0; }`,
-		"random": `function main(): i32 { return random_i32(); }`,
+		"random": `import "std/rand"; function main(): i32 { return rand.next_i32(); }`,
 		"fs":     `function main(): i32 { let r = read_file("/etc/x"); return 0; }`,
 		"poll":   `function main(): i32 { let none: i32[] = []; return poll(none, 10); }`,
 	}

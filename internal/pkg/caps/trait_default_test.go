@@ -12,16 +12,17 @@ type traitDefaultCase struct {
 	capability string
 	builtin    string
 	stmt       string
+	imports    string
 }
 
 var traitDefaultCases = []traitDefaultCase{
-	{"env", "env", `env("HOME");`},
-	{"env", "hostname", `hostname();`},
-	{"fs", "read_file", `read_file("/etc/hostname");`},
-	{"net", "tcp_close", `tcp_close(1);`},
-	{"random", "random_i32", `random_i32();`},
-	{"subprocess", "subprocess", `subprocess("/bin/true", [], "");`},
-	{"time", "now_unix_ms", `now_unix_ms();`},
+	{"env", "env", `env("HOME");`, ""},
+	{"env", "hostname", `hostname();`, ""},
+	{"fs", "read_file", `read_file("/etc/hostname");`, ""},
+	{"net", "tcp_close", `tcp_close(1);`, ""},
+	{"random", "random_i32", `rand.next_i32();`, "import \"std/rand\";\n"},
+	{"subprocess", "subprocess", `subprocess("/bin/true", [], "");`, ""},
+	{"time", "now_unix_ms", `now_unix_ms();`, ""},
 }
 
 func pkgByDir(dirs ...string) func(string) string {
@@ -53,7 +54,7 @@ function main(): i32 {
   return r.grab();
 }`,
 				"b/fern.toml": "[package]\nname = \"b\"\n",
-				"b/lib.fern": `pub trait Leaky {
+				"b/lib.fern": tc.imports + `pub trait Leaky {
   function tag(self: Self): i32;
   function grab(self: Self): i32 {
     ` + tc.stmt + `
@@ -69,8 +70,8 @@ function main(): i32 {
 				t.Fatalf("declaring package must report %s alone, got %+v", tc.capability, b.Uses)
 			}
 			chain := b.Uses[0].Chain
-			if len(chain) != 2 || !strings.Contains(chain[0], "grab") || chain[1] != tc.builtin {
-				t.Errorf("b's chain must be the synthesised default reaching %q on its own, got %v", tc.builtin, chain)
+			if len(chain) < 2 || !strings.Contains(chain[0], "grab") || chain[len(chain)-1] != tc.builtin {
+				t.Errorf("b's chain must start at the synthesised default and reach %q, got %v", tc.builtin, chain)
 			}
 
 			errs, _ := caps.Enforce(rows, map[string]caps.Grant{
