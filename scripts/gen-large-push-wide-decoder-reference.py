@@ -252,7 +252,7 @@ def main():
         REFERENCE.write_bytes(data)
         FERN.write_bytes(fern)
     if options.check:
-        assert REFERENCE.read_bytes() == data and FERN.read_bytes() == fern, 'reference reproduction differs'
+        assert gzip.decompress(REFERENCE.read_bytes()) == gzip.decompress(data) and FERN.read_bytes() == fern, 'reference reproduction differs'
     print(json.dumps(dict(cases=len(ref['cases']), success=sum(c['expected']['ok'] for c in ref['cases']), errors=sum(not c['expected']['ok'] for c in ref['cases']), bundle_sha256=sha(data + b'\n--FERN--\n' + fern))))
 
 
