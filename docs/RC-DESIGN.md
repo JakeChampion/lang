@@ -24,6 +24,13 @@ an earlier one.
 | physical lowering | `ssarc.fern` | the graph, the modes, the plan | stack IR with retains, releases, reuse tokens, takes, steals and grow brackets |
 | certifier | `rccertify.fern` (through `irverifygate.fern`, memo in `rcmemo.fern`) | the lowered ops, lifted back to SSA | a clean report, or a refusal naming the unit that is leaked or over-spent |
 
+Before inlining, `semunroll.fern` replaces a counted loop with straight-line
+code. The loop must have a body of one block and an `i32` induction variable
+with a constant start, step and bound. It must run at most 16 times, and the
+copies must have at most 400 instructions. Each copy of the body reads the
+induction variable as a constant. A loop whose variable overflows stays a
+loop.
+
 The seminline pass (`seminline.fern`) rewrites graphs before the plan: it
 inlines leaves, splits reads of known constructions into their parts, and
 runs tail recursion modulo cons. A spliced callee's field read of a
@@ -33,7 +40,11 @@ member binding's field read. It splices a function declared `@inline` at
 every call, as it splices a function called once. The function must not be
 recursive, must have at most 400 instructions, and must only read its view
 parameters (`seminline.forced_spliceable`). It is a graph-to-graph pass; the stages
-below never see what it removed. Four more run last. `semthread.fern` sends
+below never see what it removed.
+
+`semunroll.fold_constants` replaces an `i32` comparison, sum, difference or
+product of two constants with its value, when the value does not overflow.
+Four more passes run after it. `semthread.fern` sends
 a branch the path to it already decided straight to the side it takes: a
 branch on a constant (the done flag a nested pattern's arms test), and a
 variant test an earlier test on the same value, or the same payload of one,

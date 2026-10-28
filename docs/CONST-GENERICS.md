@@ -2,7 +2,7 @@
 
 Status: [plan] CG1 and CG2 ship. A function, a struct, an enum, a type
 alias, an impl or a trait takes a const parameter. `Vec[N, T]` is the second
-spelling of the lane types (§4). CG3 is a plan.
+spelling of the lane types (§4). CG3a ships, and CG3b and CG3c are a plan.
 
 A const parameter is a generic parameter whose argument is an integer, not a
 type. `Vec[N, T]` is the first consumer: it is a lane type of `N` lanes of
@@ -228,7 +228,22 @@ places each compiler has to change.
   every engine.
 
 - **CG3.** `std/simd` writes its kernels over `Vec[N, T]` where a lane count
-  is named.
+  is named. It ships in three parts.
+
+  - **CG3a (done).** The semantic graph unrolls a loop that runs a small
+    constant number of times (`compiler/semunroll.fern`). Each copy of the
+    body reads the induction variable as a constant. A constant fold then
+    lets `semthread` remove the branches of a lane index that an `@inline`
+    method tests. Thus a lane loop `while (i < N)` costs the same as the
+    lanes written out one by one.
+
+    The gate is the conformance case `loop_unroll_counted` on every engine,
+    and `TestSelfHostSemanticUnrollCountedLoops`.
+  - **CG3b.** `@inline` on an impl method, `Lanes.with_lane` with a variable
+    index, and `impl[const N: i32, T] Trait for Vec[N, T]` in both front
+    ends.
+  - **CG3c.** One `impl Math for Vec[N, T]` replaces the two per-lane
+    impls of `std/simd`.
 
 ## 5. Not in this design
 
