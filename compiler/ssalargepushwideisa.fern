@@ -1,0 +1,105 @@
+import "./ssacapacityisa" as isa;
+import "./ssadecrementtext" as text;
+import "./ssaproofnames" as names;
+import "./ssainlineuniqueisa" as registers;
+import "./util";
+import "std/i64";
+import "std/string";
+
+pub struct WideOp { instruction: isa.Op, immediate: i64 }
+
+pub struct WideProgram { ops: WideOp[], error: string }
+
+function scalar(kind: i32, width: i32, source: i32, destination: i32, immediate: i64): WideOp {
+  let op = isa.Op { kind: kind, width: width, source: source, destination: destination, base: -1, index: -1, scale: 1, offset: 0, immediate: 0, condition: "", target: -1, symbol: "" };
+  return WideOp { instruction: op, immediate: immediate };
+}
+
+function unknown(): WideOp {
+  return scalar(0, 0, -1, -1, 0 as i64);
+}
+
+function error(message: string): WideProgram {
+  return WideProgram { ops: [], error: message };
+}
+
+function literal(operand: string): Option[i64] {
+  if (!operand.starts_with("$")) {
+    return None;
+  }
+  let spelling = slice_unchecked(operand, 1, operand.len()) + "";
+  if let Ok(value) = i64.parse_i64(spelling) {
+    return if (value.to_string() == spelling) { Some(value) } else { None };
+  }
+  return None;
+}
+
+function separator(line: string): i32 {
+  for at in 0..line.len() {
+    if (line[at] == b' ' || line[at] == b'\t') {
+      return at;
+    }
+  }
+  return -1;
+}
+
+function operands(name: string, source: string, destination: string): WideOp {
+  if (name == "movabs") {
+    let dst = registers.reg(destination, false, 64);
+    if let Some(value) = literal(source) {
+      if (dst >= 0) {
+        return scalar(41, 64, -1, dst, value);
+      }
+    }
+    return unknown();
+  }
+  let width = if (name == "cmpq") { 64 } else { if (name == "cmpl") { 32 } else { 0 } };
+  if (width == 0) {
+    return unknown();
+  }
+  let src = registers.reg(source, false, width);
+  let dst = registers.reg(destination, false, width);
+  return if (src >= 0 && dst >= 0) { scalar(28, width, src, dst, 0 as i64) } else { unknown() };
+}
+
+function extra(line: string): WideOp {
+  let at = separator(line);
+  if (at < 0) {
+    return unknown();
+  }
+  let name = slice_unchecked(line, 0, at) + "";
+  let parts = util.trim(slice_unchecked(line, at + 1, line.len()) + "").split(",");
+  return if (parts.len() == 2) { operands(name, util.trim(parts[0]), util.trim(parts[1])) } else { unknown() };
+}
+
+function label(line: string): string {
+  return if (line.ends_with(":")) { slice_unchecked(line, 0, line.len() - 1) + "" } else { "" };
+}
+
+pub function large_program(output: string): WideProgram {
+  let body = text.dependency(output, "__fern_large_push");
+  if (body.error != "") {
+    return error(body.error);
+  }
+  let definitions: string[] = [];
+  for line in body.lines {
+    definitions = definitions.append(label(line));
+  }
+  let labels = names.index(definitions);
+  if (labels.duplicate >= 0) {
+    return error("duplicate wide large-push label");
+  }
+  let ops: WideOp[] = [];
+  for line in body.lines {
+    let ordinary = isa.large_op(line, labels);
+    let op = if (ordinary.kind == 0) { extra(line) } else { WideOp { instruction: ordinary, immediate: ordinary.immediate as i64 } };
+    if (op.instruction.kind == 0) {
+      return error("unsupported wide large-push instruction");
+    }
+    if (op.instruction.kind == 17 && op.instruction.target < 0) {
+      return error("wide large-push branch target outside selected body");
+    }
+    ops = ops.append(op);
+  }
+  return WideProgram { ops: ops, error: "" };
+}

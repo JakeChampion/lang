@@ -754,3 +754,8 @@ function indexed_movement(name: string, a: string, b: string): Op {
   }
   return empty(0);
 }
+
+pub function large_op(line: string, labels: names.Names): Op {
+  let ordinary = decode(line, labels);
+  return if (ordinary.kind == 0) { large_decode(line) } else { ordinary };
+}
