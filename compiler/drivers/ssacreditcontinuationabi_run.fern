@@ -31,7 +31,8 @@ function source(generic: boolean, exiting: boolean): string {
     + "@noinline\nfunction parent(left: " + child + ", right: " + child + "): Parent { return Parent { left: left, right: right }; }\n"
     + "@noinline\nfunction replace(own p: Parent, child: " + child + "): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; }\n"
     + "@noinline\nfunction handoff(flag: boolean, left: " + child + ", right: " + child + ", incoming: " + child + "): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); }\n"
-    + "function main(): i32 { let c: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
+    + "@noinline\nfunction boxed_result(p: Other): i32 { return p.first.n - 7; }\n"
+    + "function main(): i32 { let c: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return boxed_result(p); }\n";
 }
 
 function expect(p: helper.Proof, name: string, why: string): void {

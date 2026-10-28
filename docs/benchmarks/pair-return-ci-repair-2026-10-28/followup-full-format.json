@@ -1,0 +1,10 @@
+{
+  "command": [
+    "bin/fern",
+    "-fmt",
+    "-d",
+    "all tracked Fern sources except conformance and testdata"
+  ],
+  "input_count": 2092,
+  "exit": 0
+}

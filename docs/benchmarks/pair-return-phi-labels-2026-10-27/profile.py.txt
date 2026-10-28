@@ -1,0 +1,28 @@
+from pathlib import Path
+import subprocess, os, time, hashlib, json, sys, re
+
+p = Path(__file__).parent
+kind = sys.argv[1]
+assert kind in ['stage2', 'stage3']
+binary = p / kind
+env = dict(os.environ)
+env['FERN_RC_CERTIFY_MEMO'] = str(p / ('certifier-memo-profile-' + kind))
+env['VALGRIND_LIB'] = str(p.parent / 'tools/usr/libexec/valgrind')
+subject = str(p.parent / 'fixed-source/compiler/checker.fern')
+stdlib = str(p.parent / 'fixed-source/internal/stdlib')
+output = p / (kind + '-checker.s')
+args = [str(binary), '-O', '-target', 'x86-64-linux', '-emit', 'asm']
+with (p / (kind + '-warm.log')).open('wb') as f:
+    r = subprocess.run(args + ['-o', str(output), subject, stdlib], env=env, stdout=f, stderr=subprocess.STDOUT)
+assert r.returncode == 0, ('warm', kind, r.returncode)
+cmd = [str(p.parent / 'tools/usr/bin/time'), '-v', str(p.parent / 'tools/usr/bin/valgrind'), '--tool=callgrind', '--callgrind-out-file=' + str(p / (kind + '.callgrind'))] + args + ['-o', '/dev/null', subject, stdlib]
+start = time.perf_counter()
+log = p / (kind + '-profile.log')
+with log.open('wb') as f:
+    r = subprocess.run(cmd, env=env, stdout=f, stderr=subprocess.STDOUT)
+record = {'artifact_generation': kind, 'command': cmd, 'exit': r.returncode, 'valid_full_run': r.returncode == 0, 'elapsed_seconds_under_callgrind': time.perf_counter() - start, 'compiler_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'subject_output_sha256': hashlib.sha256(output.read_bytes()).hexdigest(), 'subject_output_bytes': output.stat().st_size, 'subject_output_identical_to_C': output.read_bytes() == (p.parent / 'release-checker.s').read_bytes(), 'note': 'This is a lowering change. The pair-return e2e suite is the primary correctness gate. The compiler fixed point is secondary. Stage2 and C stage2 share one producer. Stage3 is a separate bootstrap observation with a different producer.'}
+if r.returncode == 0:
+    record['instructions'] = int(re.search(r'Collected\s*:\s*(\d+)', log.read_text())[1])
+(p / (kind + '-profile.json')).write_text(json.dumps(record, indent=2) + '\n')
+print(record, flush=True)
+assert r.returncode == 0

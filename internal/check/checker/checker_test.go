@@ -60,6 +60,14 @@ function main(): i32 { return take(Some(Tagged { n: 1 })); }`,
 		`function main(): i32 { let r: Result[Tagged[i32], Tagged[string]] = Err(Tagged { n: 1 }); return 0; }`,
 		`enum Holder[T] { Held(Tagged[T]), Nothing }
 function main(): i32 { let h: Holder[boolean] = Held(Tagged { n: 1 }); return 0; }`,
+		// A union member literal takes its type from the expected union instance.
+		`struct Q { m: i32 }
+type U[T] = Tagged[T] | Q;
+function main(): i32 { let u: U[string] = Tagged { n: 1 }; return 0; }`,
+		`struct Q { m: i32 }
+type U[T] = Tagged[T] | Q;
+function take(u: U[string]): i32 { return 0; }
+function main(): i32 { return take(Tagged { n: 1 }); }`,
 	}
 	for _, src := range ok {
 		if err := checkSource(t, decls+src); err != nil {

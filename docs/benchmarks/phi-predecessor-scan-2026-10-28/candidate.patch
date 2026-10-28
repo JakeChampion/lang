@@ -1,0 +1,22 @@
+diff --git a/compiler/ssalive.fern b/compiler/ssalive.fern
+index f44c0b4c2..a4dd46cd0 100644
+--- a/compiler/ssalive.fern
++++ b/compiler/ssalive.fern
+@@ -409,11 +409,13 @@ function compute_checked_kept(f: ssa.SFunc, dependencies: i32[][], keep: boolean
+             }
+           }
+           seeded = true;
+-          let pi: i32 = pred_index(f.blocks[sb], b.id);
+           let pj: i32 = phi_from[sb];
+-          while (pj < phi_from[sb + 1]) {
+-            row = add_use(row, slot, f.blocks[sb].insts[phi_at[pj]].args[pi], dependencies);
+-            pj = pj + 1;
++          if (pj < phi_from[sb + 1]) {
++            let pi: i32 = pred_index(f.blocks[sb], b.id);
++            while (pj < phi_from[sb + 1]) {
++              row = add_use(row, slot, f.blocks[sb].insts[phi_at[pj]].args[pi], dependencies);
++              pj = pj + 1;
++            }
+           }
+         }
+         si = si + 1;

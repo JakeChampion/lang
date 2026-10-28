@@ -1,0 +1,23 @@
+{
+  "validated_source_head": "083d184baeaa7195dea065ed9fd7ae650d7da2be",
+  "merged_main": "50e121fbab40c3ffe7f0172cf0ac2f51723e04e4",
+  "completed_at": "2026-10-27T22:53:31Z",
+  "return_suites_seconds": 30.928,
+  "top_level_tests": [
+    "TestSelfHostPairReturn",
+    "TestSelfHostScalarRecordReturns",
+    "TestSelfHostScalarRecordReturnsInstrumented"
+  ],
+  "skips": 0,
+  "checker_output_identical_to_pre_merge_D": true,
+  "checker_output_sha256": "7929fef58c94e62deda9337b1435ef7982549f03df6f84f4726da8f1e2adca94",
+  "stage3_equals_stage4": true,
+  "binary_sha256": {
+    "stage2": "4a961c82f8a05f230020b2b3dbeb1938f50fd9ca88c6f1bed556f210711156a7",
+    "stage3": "bddb8e23b04acf6db660c5217d7472405c1898b80b20853fbf12c7e5762c19ff",
+    "stage4": "bddb8e23b04acf6db660c5217d7472405c1898b80b20853fbf12c7e5762c19ff"
+  },
+  "note": "The published branch includes newer allocator proof changes. Frozen A/B data remains tied to its pre-merge snapshots, not a new measurement of this merged compiler.",
+  "stage2_identical_to_measured_D": true,
+  "stage3_identical_to_pre_merge_fixedpoint": true
+}

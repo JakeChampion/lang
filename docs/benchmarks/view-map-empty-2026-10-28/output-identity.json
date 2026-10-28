@@ -1,0 +1,20 @@
+[
+  {
+    "target": "x86-64-linux",
+    "bytes": 26862285,
+    "sha256": "da4633415050f5fa206a66455c0eaffd39c8c5039be2b41218039a6dd21b4171",
+    "byte_identical": true
+  },
+  {
+    "target": "arm64-linux",
+    "bytes": 27198169,
+    "sha256": "64f95a148db3e6161b650b9d43664853240934472be93d6d2ef0470d85e0647a",
+    "byte_identical": true
+  },
+  {
+    "target": "wasm32-wasi",
+    "bytes": 14640644,
+    "sha256": "ae5e83961fa4b4a0e63859914eb3d572ab9b98a09aa0daeb041f9cbd3db61c8a",
+    "byte_identical": true
+  }
+]

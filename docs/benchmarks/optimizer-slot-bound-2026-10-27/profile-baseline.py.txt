@@ -1,0 +1,11 @@
+from pathlib import Path
+import subprocess,time,hashlib,json,os
+p=Path(__file__).parent;subject=p/'fixed-source/compiler/checker.fern';stdlib=p/'fixed-source/internal/stdlib';records={};timebin=p/'tools/usr/bin/time';valgrind=p/'tools/usr/bin/valgrind'
+for kind,binary in [('release',p/'baseline-stage2'),('attribution-g',p/'baseline-stage2-g')]:
+ env=dict(os.environ);env['FERN_RC_CERTIFY_MEMO']=str(p/('certifier-memo-'+kind));env['VALGRIND_LIB']=str(p/'tools/usr/libexec/valgrind');out=p/(kind+'-checker.s');warm=[str(binary),'-O','-target','x86-64-linux','-emit','asm','-o',str(out),str(subject),str(stdlib)]
+ with (p/(kind+'-warm.log')).open('wb') as f:r=subprocess.run(warm,env=env,stdout=f,stderr=subprocess.STDOUT)
+ assert r.returncode==0,(kind,'warm',r.returncode)
+ cmd=[str(timebin),'-v',str(valgrind),'--tool=callgrind','--callgrind-out-file='+str(p/(kind+'.callgrind')),str(binary),'-O','-target','x86-64-linux','-emit','asm','-o','/dev/null',str(subject),str(stdlib)];start=time.perf_counter()
+ with (p/(kind+'-profile.log')).open('wb') as f:r=subprocess.run(cmd,env=env,stdout=f,stderr=subprocess.STDOUT)
+ records[kind]={'command':cmd,'certifier_memo':env['FERN_RC_CERTIFY_MEMO'],'memo_warmed':True,'exit':r.returncode,'valid_full_run':r.returncode==0,'elapsed_seconds':time.perf_counter()-start,'binary_sha256':hashlib.sha256(binary.read_bytes()).hexdigest(),'subject_output_sha256':hashlib.sha256(out.read_bytes()).hexdigest(),'subject_output_bytes':out.stat().st_size,'debug_warning':'The -g compiler materializes source variables. Its attribution is not the release allocation count.' if kind=='attribution-g' else ''};(p/'baseline-profile.json').write_text(json.dumps(records,indent=2)+'\n');assert r.returncode==0,(kind,'profile',r.returncode)
+ print(kind,records[kind],flush=True)

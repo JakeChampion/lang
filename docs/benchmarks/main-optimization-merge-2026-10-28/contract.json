@@ -1,0 +1,95 @@
+[
+  {
+    "target": "x86-64-linux",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/main-b024-merge/fern-oracle",
+      "-O",
+      "-sanitize",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-x86-64-linux",
+      "/workspace/lang-issue-work/perf-4412/main-b024-merge/contract-current/bound_contract.fern"
+    ],
+    "build_exit": 0,
+    "expected_stdout_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-x86-64-linux"
+    ],
+    "exit": 0,
+    "stdout_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "binary_sha256": "9c8e46699a7ef55f8647847d21bb141264bb8bf4237914e97a2614a6fbdf4bd5",
+    "census": [
+      73188,
+      73188,
+      0
+    ]
+  },
+  {
+    "target": "arm64-linux",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/main-b024-merge/fern-oracle",
+      "-O",
+      "-sanitize",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-arm64-linux",
+      "/workspace/lang-issue-work/perf-4412/main-b024-merge/contract-current/bound_contract.fern"
+    ],
+    "build_exit": 0,
+    "expected_stdout_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-arm64-linux"
+    ],
+    "exit": 0,
+    "stdout_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "binary_sha256": "0cde6ffa207450175d743ce42b86194e20a761b0b2d6736807a8e866321048d2",
+    "census": [
+      73188,
+      73188,
+      0
+    ]
+  },
+  {
+    "target": "wasm32-wasi",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/main-b024-merge/fern-oracle",
+      "-O",
+      "-sanitize",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-wasm32-wasi",
+      "/workspace/lang-issue-work/perf-4412/main-b024-merge/contract-current/bound_contract.fern"
+    ],
+    "build_exit": 0,
+    "expected_stdout_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "run_command": [
+      "wasmtime",
+      "run",
+      "--env",
+      "FERN_LEAKCHECK=1",
+      "--env",
+      "FERN_SANITIZE=1",
+      "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-wasm32-wasi"
+    ],
+    "exit": 0,
+    "stdout_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "output_bytes": 211729,
+    "output_lines": 1400,
+    "binary_sha256": "5e26e77b31312f9099bce9cabf478f915a4a034ed71c8300e8c9e2084a1836b0",
+    "census": [
+      77141,
+      77141,
+      0
+    ]
+  }
+]

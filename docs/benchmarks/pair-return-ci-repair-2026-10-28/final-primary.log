@@ -1,0 +1,42 @@
+=== RUN   TestSelfHostTypedPhysicalExtraction
+=== RUN   TestSelfHostTypedPhysicalExtraction/arm64-linux
+=== RUN   TestSelfHostTypedPhysicalExtraction/x86-64-linux
+=== RUN   TestSelfHostTypedPhysicalExtraction/wasm32-wasi
+--- PASS: TestSelfHostTypedPhysicalExtraction (107.50s)
+    --- PASS: TestSelfHostTypedPhysicalExtraction/arm64-linux (25.74s)
+    --- PASS: TestSelfHostTypedPhysicalExtraction/x86-64-linux (19.89s)
+    --- PASS: TestSelfHostTypedPhysicalExtraction/wasm32-wasi (25.99s)
+=== RUN   TestSelfHostTypedWrapperContinuation
+=== RUN   TestSelfHostTypedWrapperContinuation/arm64-linux
+=== RUN   TestSelfHostTypedWrapperContinuation/x86-64-linux
+=== RUN   TestSelfHostTypedWrapperContinuation/wasm32-wasi
+--- PASS: TestSelfHostTypedWrapperContinuation (94.93s)
+    --- PASS: TestSelfHostTypedWrapperContinuation/arm64-linux (33.41s)
+    --- PASS: TestSelfHostTypedWrapperContinuation/x86-64-linux (25.71s)
+    --- PASS: TestSelfHostTypedWrapperContinuation/wasm32-wasi (34.59s)
+=== RUN   TestSelfHostStackOverflow
+=== RUN   TestSelfHostStackOverflow/x86-64-linux
+=== RUN   TestSelfHostStackOverflow/x86-64-linux/runaway-recursion
+=== RUN   TestSelfHostStackOverflow/x86-64-linux/million-deep
+=== RUN   TestSelfHostStackOverflow/x86-64-linux/other-fault
+=== RUN   TestSelfHostStackOverflow/arm64-linux
+=== RUN   TestSelfHostStackOverflow/arm64-linux/runaway-recursion
+=== RUN   TestSelfHostStackOverflow/arm64-linux/million-deep
+=== RUN   TestSelfHostStackOverflow/arm64-linux/other-fault
+--- PASS: TestSelfHostStackOverflow (2.43s)
+    --- PASS: TestSelfHostStackOverflow/x86-64-linux (0.60s)
+        --- PASS: TestSelfHostStackOverflow/x86-64-linux/runaway-recursion (0.32s)
+        --- PASS: TestSelfHostStackOverflow/x86-64-linux/million-deep (0.25s)
+        --- PASS: TestSelfHostStackOverflow/x86-64-linux/other-fault (0.02s)
+    --- PASS: TestSelfHostStackOverflow/arm64-linux (0.63s)
+        --- PASS: TestSelfHostStackOverflow/arm64-linux/runaway-recursion (0.41s)
+        --- PASS: TestSelfHostStackOverflow/arm64-linux/million-deep (0.20s)
+        --- PASS: TestSelfHostStackOverflow/arm64-linux/other-fault (0.02s)
+=== RUN   TestSelfHostDarwinSignalContext
+=== RUN   TestSelfHostDarwinSignalContext/guard
+=== RUN   TestSelfHostDarwinSignalContext/near-sp
+--- PASS: TestSelfHostDarwinSignalContext (1.36s)
+    --- PASS: TestSelfHostDarwinSignalContext/guard (0.01s)
+    --- PASS: TestSelfHostDarwinSignalContext/near-sp (0.01s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	206.235s

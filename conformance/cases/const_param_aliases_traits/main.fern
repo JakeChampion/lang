@@ -1,0 +1,68 @@
+// A type alias and a trait take a const parameter. `Slot[4]` is an instance
+// of the alias over N, and a member literal takes N from it. A default method
+// of `Fixed[N]` reads N as the impl's argument: the integer of
+// `impl Fixed[8] for Box`, or the impl's own `M`. A bound names an argument
+// (`Fixed[4]`) or a const parameter in scope (`Fixed[M]`). A receiver can
+// give the const parameter a name of its own (`Ring[K, T]`).
+import "std/i32";
+
+struct Ring[const N: i32, T] { items: T[] }
+struct Gone { n: i32 }
+struct Box { n: i32 }
+
+type Slot[const N: i32] = Ring[N, i32] | Gone;
+
+function cap[const N: i32](s: Slot[N]): i32 {
+  return match (s) {
+    Ring(r) => N - r.items.len(),
+    Gone(g) => g.n,
+  };
+}
+
+trait Fixed[const N: i32] {
+  function room(self: Self): i32;
+  function size(self: Self): i32 {
+    return N * 10;
+  }
+}
+
+impl[const M: i32, T] Fixed[M] for Ring[M, T] {
+  function room(self: Ring[M, T]): i32 {
+    return M - self.items.len();
+  }
+}
+
+impl Fixed[8] for Box {
+  function room(self: Box): i32 {
+    return 8 - self.n;
+  }
+}
+
+function (r: Ring[K, T]) cap_of(): i32 {
+  return K;
+}
+
+function room_of[F: Fixed[4]](f: F): i32 {
+  return f.room();
+}
+
+function room_m[const M: i32, F: Fixed[M]](f: F): i32 {
+  return f.room() + M;
+}
+
+function main(): i32 {
+  let a: Slot[4] = Ring { items: [1] };
+  let b: Slot[8] = Gone { n: 0 };
+  print(cap(a).to_string());
+  print(cap(b).to_string());
+  let r: Ring[4, string] = Ring { items: ["x"] };
+  print(r.room().to_string());
+  print(r.size().to_string());
+  print(r.cap_of().to_string());
+  print(room_of(r).to_string());
+  print(room_m[4, Ring[4, string]](r).to_string());
+  let x: Box = Box { n: 3 };
+  print(x.room().to_string());
+  print(x.size().to_string());
+  return 0;
+}

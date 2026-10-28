@@ -1,0 +1,9 @@
+{
+  "source_head": "f2f6a166a3b08e268c9ee0ca6f58b0808cbe4ff5",
+  "baseline_compiler": "/workspace/lang-issue-work/perf-4412/main-64896-merge/stage2-current",
+  "baseline_sha256": "fb78dd106a460a9732db18e3d45b3f837aec9b132f3fe49488681403df6eea80",
+  "baseline_profile": "/workspace/lang-issue-work/perf-4412/phi-predecessor-candidate/candidate-profile-metrics.json",
+  "common_producer_sha256": "1e0ad6be807a01bbf50a05535d46808d611816016ce388e687d44589c5dc7e52",
+  "candidate_source_sha256": "90c366c59b40d5e065d3195710d0d349288197c8871b2ad31071ade52cd76ed3",
+  "status": "Prepared private prototype only; build and profile not started"
+}

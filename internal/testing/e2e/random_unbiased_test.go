@@ -3,7 +3,7 @@ package e2e
 import "testing"
 
 const randomUnbiasedProg = `
-import "std/math" as math;
+import "std/rand" as rand;
 
 function main(): i32 {
     // Containment across range widths that straddle the mapping boundaries.
@@ -13,7 +13,7 @@ function main(): i32 {
         let width: i32 = widths[w];
         let t: i32 = 0;
         while (t < 300) {
-            let v: i32 = math.random_int(10, 10 + width);
+            let v: i32 = rand.between(10, 10 + width);
             if (v < 10 || v >= 10 + width) { return 1; }
             t = t + 1;
         }
@@ -24,7 +24,7 @@ function main(): i32 {
     let seen: i32[] = [0, 0, 0, 0, 0];
     let k: i32 = 0;
     while (k < 4000) {
-        let v2: i32 = math.random_int(0, 5);
+        let v2: i32 = rand.between(0, 5);
         seen = seen.with(v2, seen[v2] + 1);
         k = k + 1;
     }
@@ -38,20 +38,20 @@ function main(): i32 {
     }
 
     // Degenerate and boundary ranges.
-    if (math.random_int(5, 5) != 5) { return 4; }
-    if (math.random_int(9, 3) != 9) { return 5; }
+    if (rand.between(5, 5) != 5) { return 4; }
+    if (rand.between(9, 3) != 9) { return 5; }
     let single: i32 = 0;
     while (single < 50) {
-        if (math.random_int(7, 8) != 7) { return 6; }
+        if (rand.between(7, 8) != 7) { return 6; }
         single = single + 1;
     }
 
     // Negative and wide ranges stay in bounds.
     let n: i32 = 0;
     while (n < 200) {
-        let v3: i32 = math.random_int(0 - 100, 100);
+        let v3: i32 = rand.between(0 - 100, 100);
         if (v3 < (0 - 100) || v3 >= 100) { return 7; }
-        let v4: i32 = math.random_int(0, 2000000000);
+        let v4: i32 = rand.between(0, 2000000000);
         if (v4 < 0 || v4 >= 2000000000) { return 8; }
         n = n + 1;
     }
@@ -61,7 +61,7 @@ function main(): i32 {
     // rejection threshold. Reaching here at all also proves termination.
     let wide: i32 = 0;
     while (wide < 100) {
-        let v5: i32 = math.random_int((0 - 2147483647) - 1, 2147483647);
+        let v5: i32 = rand.between((0 - 2147483647) - 1, 2147483647);
         if (v5 == 2147483647) { return 9; }
         wide = wide + 1;
     }

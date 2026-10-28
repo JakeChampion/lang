@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+source /workspace/lang-issue-work/toolchain-env.sh
+cd /workspace/lang-perf-4412
+artifact_dir=/workspace/lang-issue-work/perf-4412
+go test ./compiler ./internal/testing/sourcelint -count=1 > "$artifact_dir/source-gates.log" 2>&1
+go test ./internal/testing/e2ecompiler -run '^(TestSelfHostIR(ConstNumeric|FoldOptions|LICM|StrengthPeephole|KindRegistry|OpConstructorTags|KindConstants)|TestSelfHostLICM(X86_64|Arm64|WasmIR)|TestSelfHostConstfold(X86_64|Arm64|Wasm))$' -count=1 -v > "$artifact_dir/ir-gates.log" 2>&1
+go test ./internal/testing/e2ecompiler -run '^TestSelfHost(FeatureCensus|FixtureSourcesCheck|RepoComplexityRatchet)$' -count=1 -v > "$artifact_dir/ratchets.log" 2>&1
+go vet ./compiler ./internal/testing/e2ecompiler > "$artifact_dir/vet.log" 2>&1
+bash scripts/testname_gate.sh > "$artifact_dir/testnames.log" 2>&1
+git diff --check > "$artifact_dir/diff-check.log" 2>&1
+date -u +%FT%TZ > "$artifact_dir/gates-complete.txt"

@@ -1,0 +1,10 @@
+=== RUN   TestSelfHostPairReturn
+=== RUN   TestSelfHostPairReturn/record-heap-alias/x86-64-linux
+=== RUN   TestSelfHostPairReturn/record-heap-alias/arm64-linux
+=== RUN   TestSelfHostPairReturn/record-heap-alias/wasm32-wasi
+--- PASS: TestSelfHostPairReturn (2.43s)
+    --- PASS: TestSelfHostPairReturn/record-heap-alias/x86-64-linux (0.41s)
+    --- PASS: TestSelfHostPairReturn/record-heap-alias/arm64-linux (0.31s)
+    --- PASS: TestSelfHostPairReturn/record-heap-alias/wasm32-wasi (0.31s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	2.440s

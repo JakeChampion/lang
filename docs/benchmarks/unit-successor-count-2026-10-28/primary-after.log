@@ -1,0 +1,180 @@
+=== RUN   TestSelfHostSSAUnits
+=== RUN   TestSelfHostSSAUnits/same-destination
+=== RUN   TestSelfHostSSAUnits/same-destination-duplicate-edge
+=== RUN   TestSelfHostSSAUnits/nested-projections
+=== RUN   TestSelfHostSSAUnits/borrowed-root
+=== RUN   TestSelfHostSSAUnits/duplicate-store
+=== RUN   TestSelfHostSSAUnits/borrowed-store
+=== RUN   TestSelfHostSSAUnits/branch-phis
+=== RUN   TestSelfHostSSAUnits/loop-phi
+=== RUN   TestSelfHostSSAUnits/lent-projection-phi
+=== RUN   TestSelfHostSSAUnits/counted-projection-phi
+=== RUN   TestSelfHostSSAUnits/unused-parameter
+=== RUN   TestSelfHostSSAUnits/byte-view-handback
+=== RUN   TestSelfHostSSAUnits/byte-view-static-handback
+=== RUN   TestSelfHostSSAUnits/byte-view-direct-handback
+=== RUN   TestSelfHostSSAUnits/missing-supply
+=== RUN   TestSelfHostSSAUnits/wrong-slot
+=== RUN   TestSelfHostSSAUnits/double-move
+=== RUN   TestSelfHostSSAUnits/borrowed-move
+=== RUN   TestSelfHostSSAUnits/invalid-mode
+=== RUN   TestSelfHostSSAUnits/premature-parent-drop
+=== RUN   TestSelfHostSSAUnits/leaked-parent
+=== RUN   TestSelfHostSSAUnits/drop-moved-value
+=== RUN   TestSelfHostSSAUnits/missing-return
+=== RUN   TestSelfHostSSAUnits/duplicate-step
+=== RUN   TestSelfHostSSAUnits/extra-step
+=== RUN   TestSelfHostSSAUnits/broken-edge-invariant
+=== RUN   TestSelfHostSSAUnits/edge-drops-live-unit
+=== RUN   TestSelfHostSSAUnits/changed-parameter-contract
+=== RUN   TestSelfHostSSAUnits/missing-entry
+=== RUN   TestSelfHostSSAUnits/invalid-drop-id
+=== RUN   TestSelfHostSSAUnits/call-supplies
+=== RUN   TestSelfHostSSAUnits/call-moves-lent-alias
+=== RUN   TestSelfHostSSAUnits/call-borrowed-argument
+=== RUN   TestSelfHostSSAUnits/changed-call-contract
+=== RUN   TestSelfHostSSAUnits/call-contract-mode
+=== RUN   TestSelfHostSSAUnits/dropped-call-contract
+=== RUN   TestSelfHostSSAUnits/call-lent-operand-owner
+=== RUN   TestSelfHostSSAUnits/call-lent-operand-kept
+=== RUN   TestSelfHostSSAUnits/call-moves-lent-owner
+=== RUN   TestSelfHostSSAUnits/held-element
+=== RUN   TestSelfHostSSAUnits/element-read-dies-first
+=== RUN   TestSelfHostSSAUnits/changed-hold
+=== RUN   TestSelfHostSSAUnits/string-units
+=== RUN   TestSelfHostSSAUnits/record-borrowed-replacement
+=== RUN   TestSelfHostSSAUnits/record-counted-replacement
+=== RUN   TestSelfHostSSAUnits/record-loop-phi
+=== RUN   TestSelfHostSSAUnits/record-recursive-return
+=== RUN   TestSelfHostSSAUnits/record-empty-construction
+=== RUN   TestSelfHostSSAUnits/record-leaked-replacement
+=== RUN   TestSelfHostSSAUnits/record-missing-borrowed-supply
+=== RUN   TestSelfHostSSAUnits/record-duplicate-stores
+=== RUN   TestSelfHostSSAUnits/record-duplicate-borrowed-stores
+=== RUN   TestSelfHostSSAUnits/record-double-move
+=== RUN   TestSelfHostSSAUnits/record-borrowed-move
+=== RUN   TestSelfHostSSAUnits/record-field-handed
+=== RUN   TestSelfHostSSAUnits/record-field-not-handed-beside-its-record
+=== RUN   TestSelfHostSSAUnits/record-changed-schema
+=== RUN   TestSelfHostSSAUnits/indexed-reordered-sparse-loop
+=== RUN   TestSelfHostSSAUnits/indexed-missing-edge
+=== RUN   TestSelfHostSSAUnits/indexed-duplicate-entry-2
+=== RUN   TestSelfHostSSAUnits/indexed-duplicate-entry-3
+=== RUN   TestSelfHostSSAUnits/indexed-duplicate-operation-2
+=== RUN   TestSelfHostSSAUnits/indexed-duplicate-operation-3
+=== RUN   TestSelfHostSSAUnits/indexed-duplicate-return-2
+=== RUN   TestSelfHostSSAUnits/indexed-duplicate-return-3
+=== RUN   TestSelfHostSSAUnits/indexed-duplicate-edge-2
+=== RUN   TestSelfHostSSAUnits/indexed-duplicate-edge-3
+=== RUN   TestSelfHostSSAUnits/indexed-extra-negative-block
+=== RUN   TestSelfHostSSAUnits/indexed-extra-large-block
+=== RUN   TestSelfHostSSAUnits/indexed-extra-large-point
+=== RUN   TestSelfHostSSAUnits/indexed-extra-unknown-point
+=== RUN   TestSelfHostSSAUnits/indexed-extra-parameter-step
+=== RUN   TestSelfHostSSAUnits/indexed-extra-entry-target
+=== RUN   TestSelfHostSSAUnits/indexed-extra-return-target
+=== RUN   TestSelfHostSSAUnits/indexed-extra-operation-target
+=== RUN   TestSelfHostSSAUnits/indexed-extra-nonexistent-edge
+=== RUN   TestSelfHostSSAUnits/enum-borrowed-match
+=== RUN   TestSelfHostSSAUnits/enum-counted-match
+=== RUN   TestSelfHostSSAUnits/enum-leaked-counted-match
+=== RUN   TestSelfHostSSAUnits/changed-payload-take
+=== RUN   TestSelfHostSSAUnits/enum-construction-supply
+--- PASS: TestSelfHostSSAUnits (206.87s)
+    --- PASS: TestSelfHostSSAUnits/same-destination (3.29s)
+    --- PASS: TestSelfHostSSAUnits/same-destination-duplicate-edge (2.93s)
+    --- PASS: TestSelfHostSSAUnits/nested-projections (2.97s)
+    --- PASS: TestSelfHostSSAUnits/borrowed-root (3.16s)
+    --- PASS: TestSelfHostSSAUnits/duplicate-store (2.94s)
+    --- PASS: TestSelfHostSSAUnits/borrowed-store (2.66s)
+    --- PASS: TestSelfHostSSAUnits/branch-phis (2.47s)
+    --- PASS: TestSelfHostSSAUnits/loop-phi (2.53s)
+    --- PASS: TestSelfHostSSAUnits/lent-projection-phi (2.51s)
+    --- PASS: TestSelfHostSSAUnits/counted-projection-phi (2.64s)
+    --- PASS: TestSelfHostSSAUnits/unused-parameter (2.50s)
+    --- PASS: TestSelfHostSSAUnits/byte-view-handback (2.43s)
+    --- PASS: TestSelfHostSSAUnits/byte-view-static-handback (2.43s)
+    --- PASS: TestSelfHostSSAUnits/byte-view-direct-handback (2.42s)
+    --- PASS: TestSelfHostSSAUnits/missing-supply (2.35s)
+    --- PASS: TestSelfHostSSAUnits/wrong-slot (2.48s)
+    --- PASS: TestSelfHostSSAUnits/double-move (2.38s)
+    --- PASS: TestSelfHostSSAUnits/borrowed-move (2.51s)
+    --- PASS: TestSelfHostSSAUnits/invalid-mode (2.40s)
+    --- PASS: TestSelfHostSSAUnits/premature-parent-drop (2.56s)
+    --- PASS: TestSelfHostSSAUnits/leaked-parent (2.32s)
+    --- PASS: TestSelfHostSSAUnits/drop-moved-value (2.39s)
+    --- PASS: TestSelfHostSSAUnits/missing-return (2.42s)
+    --- PASS: TestSelfHostSSAUnits/duplicate-step (2.54s)
+    --- PASS: TestSelfHostSSAUnits/extra-step (2.49s)
+    --- PASS: TestSelfHostSSAUnits/broken-edge-invariant (2.60s)
+    --- PASS: TestSelfHostSSAUnits/edge-drops-live-unit (2.47s)
+    --- PASS: TestSelfHostSSAUnits/changed-parameter-contract (2.50s)
+    --- PASS: TestSelfHostSSAUnits/missing-entry (2.44s)
+    --- PASS: TestSelfHostSSAUnits/invalid-drop-id (2.42s)
+    --- PASS: TestSelfHostSSAUnits/call-supplies (2.46s)
+    --- PASS: TestSelfHostSSAUnits/call-moves-lent-alias (2.52s)
+    --- PASS: TestSelfHostSSAUnits/call-borrowed-argument (2.60s)
+    --- PASS: TestSelfHostSSAUnits/changed-call-contract (2.32s)
+    --- PASS: TestSelfHostSSAUnits/call-contract-mode (2.46s)
+    --- PASS: TestSelfHostSSAUnits/dropped-call-contract (2.53s)
+    --- PASS: TestSelfHostSSAUnits/call-lent-operand-owner (2.42s)
+    --- PASS: TestSelfHostSSAUnits/call-lent-operand-kept (2.40s)
+    --- PASS: TestSelfHostSSAUnits/call-moves-lent-owner (2.37s)
+    --- PASS: TestSelfHostSSAUnits/held-element (2.42s)
+    --- PASS: TestSelfHostSSAUnits/element-read-dies-first (2.65s)
+    --- PASS: TestSelfHostSSAUnits/changed-hold (2.48s)
+    --- PASS: TestSelfHostSSAUnits/string-units (2.37s)
+    --- PASS: TestSelfHostSSAUnits/record-borrowed-replacement (2.51s)
+    --- PASS: TestSelfHostSSAUnits/record-counted-replacement (2.46s)
+    --- PASS: TestSelfHostSSAUnits/record-loop-phi (2.72s)
+    --- PASS: TestSelfHostSSAUnits/record-recursive-return (2.49s)
+    --- PASS: TestSelfHostSSAUnits/record-empty-construction (2.81s)
+    --- PASS: TestSelfHostSSAUnits/record-leaked-replacement (2.81s)
+    --- PASS: TestSelfHostSSAUnits/record-missing-borrowed-supply (2.44s)
+    --- PASS: TestSelfHostSSAUnits/record-duplicate-stores (2.32s)
+    --- PASS: TestSelfHostSSAUnits/record-duplicate-borrowed-stores (2.58s)
+    --- PASS: TestSelfHostSSAUnits/record-double-move (2.44s)
+    --- PASS: TestSelfHostSSAUnits/record-borrowed-move (2.42s)
+    --- PASS: TestSelfHostSSAUnits/record-field-handed (2.57s)
+    --- PASS: TestSelfHostSSAUnits/record-field-not-handed-beside-its-record (2.53s)
+    --- PASS: TestSelfHostSSAUnits/record-changed-schema (2.41s)
+    --- PASS: TestSelfHostSSAUnits/indexed-reordered-sparse-loop (2.55s)
+    --- PASS: TestSelfHostSSAUnits/indexed-missing-edge (2.42s)
+    --- PASS: TestSelfHostSSAUnits/indexed-duplicate-entry-2 (2.61s)
+    --- PASS: TestSelfHostSSAUnits/indexed-duplicate-entry-3 (2.37s)
+    --- PASS: TestSelfHostSSAUnits/indexed-duplicate-operation-2 (2.53s)
+    --- PASS: TestSelfHostSSAUnits/indexed-duplicate-operation-3 (2.84s)
+    --- PASS: TestSelfHostSSAUnits/indexed-duplicate-return-2 (2.63s)
+    --- PASS: TestSelfHostSSAUnits/indexed-duplicate-return-3 (2.48s)
+    --- PASS: TestSelfHostSSAUnits/indexed-duplicate-edge-2 (2.60s)
+    --- PASS: TestSelfHostSSAUnits/indexed-duplicate-edge-3 (2.46s)
+    --- PASS: TestSelfHostSSAUnits/indexed-extra-negative-block (2.42s)
+    --- PASS: TestSelfHostSSAUnits/indexed-extra-large-block (2.51s)
+    --- PASS: TestSelfHostSSAUnits/indexed-extra-large-point (2.78s)
+    --- PASS: TestSelfHostSSAUnits/indexed-extra-unknown-point (2.61s)
+    --- PASS: TestSelfHostSSAUnits/indexed-extra-parameter-step (2.90s)
+    --- PASS: TestSelfHostSSAUnits/indexed-extra-entry-target (2.76s)
+    --- PASS: TestSelfHostSSAUnits/indexed-extra-return-target (2.40s)
+    --- PASS: TestSelfHostSSAUnits/indexed-extra-operation-target (2.50s)
+    --- PASS: TestSelfHostSSAUnits/indexed-extra-nonexistent-edge (2.69s)
+    --- PASS: TestSelfHostSSAUnits/enum-borrowed-match (2.53s)
+    --- PASS: TestSelfHostSSAUnits/enum-counted-match (2.52s)
+    --- PASS: TestSelfHostSSAUnits/enum-leaked-counted-match (2.59s)
+    --- PASS: TestSelfHostSSAUnits/changed-payload-take (2.46s)
+    --- PASS: TestSelfHostSSAUnits/enum-construction-supply (3.03s)
+=== RUN   TestSelfHostSSAUnitsIRArm64
+--- PASS: TestSelfHostSSAUnitsIRArm64 (40.63s)
+=== RUN   TestSelfHostSSAUnitsIRX86_64
+--- PASS: TestSelfHostSSAUnitsIRX86_64 (3.54s)
+=== RUN   TestSelfHostSSAUnitsIRWasm
+--- PASS: TestSelfHostSSAUnitsIRWasm (3.93s)
+=== RUN   TestSelfHostSSAUnitsIndexedReplay
+=== RUN   TestSelfHostSSAUnitsIndexedReplay/arm64-linux
+=== RUN   TestSelfHostSSAUnitsIndexedReplay/x86-64-linux
+=== RUN   TestSelfHostSSAUnitsIndexedReplay/wasm32-wasi
+--- PASS: TestSelfHostSSAUnitsIndexedReplay (9.82s)
+    --- PASS: TestSelfHostSSAUnitsIndexedReplay/arm64-linux (2.74s)
+    --- PASS: TestSelfHostSSAUnitsIndexedReplay/x86-64-linux (2.85s)
+    --- PASS: TestSelfHostSSAUnitsIndexedReplay/wasm32-wasi (2.75s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	264.805s

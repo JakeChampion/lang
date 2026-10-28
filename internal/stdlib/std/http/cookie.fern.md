@@ -54,7 +54,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<19 function __max_age(v: string): Option[i32]>>
 
-<<20 pub function parse_date(s: string): Option[time.Timestamp]>>
+<<20 pub function parse_date(s: string): Result[time.Timestamp, headers.HeaderValueError]>>
 
 <<21 function __year_of(year: i32): i32>>
 
@@ -91,6 +91,7 @@ import "std/publicsuffix";
 import "core/int";
 import "std/error";
 import "core/cmp";
+import "std/option";
 ```
 
 ### `3 pub enum SameSite`
@@ -648,7 +649,7 @@ function __lifetime(p: __Parsed, key: string, value: string, now: i64): __Parsed
   if (p.max_age_set) {
     return p;
   }
-  match (parse_date(value)) {
+  match (__parse_date(value)) {
     Some(at) => {
       return __Parsed { ...p, expires: __min(at.unix_millis(), cap) };
     },
@@ -697,11 +698,22 @@ function __min(a: i64, b: i64): i64 {
 }
 ```
 
-### `20 pub function parse_date(s: string): Option[time.Timestamp]`
+### `20 pub function parse_date(s: string): Result[time.Timestamp, headers.HeaderValueError]`
 
 ```fern
-<<20 pub function parse_date(s: string): Option[time.Timestamp]>>=
-pub function parse_date(s: string): Option[time.Timestamp] {
+<<20 pub function parse_date(s: string): Result[time.Timestamp, headers.HeaderValueError]>>=
+pub function parse_date(s: string): Result[time.Timestamp, headers.HeaderValueError] {
+  match (__parse_date(s)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(headers.HeaderValueError { field: "cookie date", value: s });
+    }
+  }
+}
+
+function __parse_date(s: string): Option[time.Timestamp] {
   let found: i32[] = [0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1, 0 - 1];
   for token in __date_tokens(s) {
     found = __date_token(found, token);

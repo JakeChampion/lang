@@ -1,0 +1,36 @@
+FUNC make entry=0 nvals=7
+BLOCK 0 preds=
+  v0 = k6 [] imm=0 
+  v1 = k6 [] imm=1 
+  v2 = k1 [] imm=2 
+  v3 = k9 [0,2,] imm=0 %
+  v4 = k1 [] imm=0 
+  v5 = k9 [3,4,] imm=0 ==
+  v6 = k-5 [1,5,] imm=0 
+  TERM k1 cond=0 target=0 t=0 f=0 value=6
+FERN_SEM_DUMP: make modes 1 2
+func make {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = const_int 2
+    v3 = binary % v0 v2
+    v4 = const_int 0
+    v5 = binary == v3 v4
+    v6 = record_new v1 v5
+    ret v6
+}
+
+FERN_SEM_DUMP: make modes 1 3
+func make {
+  b0:
+    v0 = param 0
+    v1 = param 1
+    v2 = const_int 2
+    v3 = binary % v0 v2
+    v4 = const_int 0
+    v5 = binary == v3 v4
+    v6 = record_new v1 v5
+    ret v6
+}
+

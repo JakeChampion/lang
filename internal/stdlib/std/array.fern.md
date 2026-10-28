@@ -1541,7 +1541,7 @@ pub function (xs: T[]) min[T: cmp.Ord](): Option[T] {
   return cmp.min_of(xs);
 }
 
-pub function (xs: T[]) range[T: cmp.Ord + num.Sub](): Option[T] {
+pub function (xs: T[]) spread[T: cmp.Ord + num.Sub](): Option[T] {
   if (xs.len() == 0) {
     return None;
   }

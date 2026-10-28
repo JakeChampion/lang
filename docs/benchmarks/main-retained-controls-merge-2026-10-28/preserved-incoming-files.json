@@ -1,0 +1,67 @@
+[
+  {
+    "path": "compiler/drivers/ssadecrementdependencies.fern",
+    "sha256": "85cdef7d04c9375062fc3b4e596b5ca35614b6131258940a3fabb96d4b019f40",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssalargepushisas.fern",
+    "sha256": "9f2db35ebdd8aee74767177dfee3c364b465f94ca077d389c7d1cb3a62447217",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssaretainedwidecontrols_run.fern",
+    "sha256": "aff67be9a8bedec5c5c22a0d10f92ebb527fa0d3e2716f6e30dc19f6521b51a6",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/retained-wide-helper-controls-2026-10-28/README.md",
+    "sha256": "38b684471d643445c2b44712e49ac288b9307dd0e0bacc4a40227cb69e0db8c9",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/retained-wide-helper-controls-2026-10-28/evidence.json",
+    "sha256": "10ff4988fee6bcf367598903780229bda3bca6f9fe3990738f4185365e659fe3",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/retained-wide-helper-controls-2026-10-28/final-Go.json.gz",
+    "sha256": "ca0f6cf2c6b4c4cfb8ec64d653de076f8154f5f56f8676f6d51c7b98058d6783",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/retained-wide-helper-controls-2026-10-28/final-gates.json.gz",
+    "sha256": "dd1305f4f6ccdce414e63dd1cca76511566a16964d8cbfbb5b8df2320b2967aa",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/retained-wide-helper-controls-2026-10-28/omitted-executable-identities.json",
+    "sha256": "7e55af59b9661a6d5f345f29a2b6a961c4afd92c93122595e424545aee996b43",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/retained-wide-helper-controls-2026-10-28/private-view-controls.json.gz",
+    "sha256": "d15991a36c710ce4fcfc9f101143f6e39ebdfe5a4b7a17483edc05593e6b5495",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/retained-wide-helper-controls-2026-10-28/publication-checks.json",
+    "sha256": "e284bc12f6330444c5e727e2343a50703ee9d718775cbaa851137f3cb781d50b",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/retained-wide-helper-controls-2026-10-28/qualification-records.tar.gz",
+    "sha256": "667b342d9740500daba69cdb0271320108a13c3e434b24f79af237f11aefae21",
+    "matches_main": true
+  },
+  {
+    "path": "docs/rc-log/2026-10-28-retained-wide-helper-controls.md",
+    "sha256": "c7576f2ee5ed3b3613e03aa7e85aa0a623cbb98ae0634810cb1e74c03b63f7b5",
+    "matches_main": true
+  },
+  {
+    "path": "internal/testing/e2ecompiler/self_host_ssa_retained_wide_controls_test.go",
+    "sha256": "2e83d7ca418f386d57f0ef73c491ca3575f9f7a706f168e73af0fc24cff1323f",
+    "matches_main": true
+  }
+]

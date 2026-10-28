@@ -1,0 +1,58 @@
+[
+  {
+    "original_file": "baseline-stage2-g.nm",
+    "archive_file": "baseline-stage2-g.nm.gz",
+    "uncompressed_bytes": 436160,
+    "uncompressed_sha256": "fde14c3b71ba5a965d867a93341652f4ea5fd2736caa7e62979b858b211060ef",
+    "archive_bytes": 84425,
+    "archive_sha256": "a24a8348badd7fcb93171d0f80a6f6e31c963850ca2aad73b787e91ba78a2302"
+  },
+  {
+    "original_file": "candidate-b.callgrind",
+    "archive_file": "candidate-b.callgrind.gz",
+    "uncompressed_bytes": 2262609,
+    "uncompressed_sha256": "8470653d6e6fc837e17099064b5aa9052e012f3c8b72d1df17ee41d916e92996",
+    "archive_bytes": 553933,
+    "archive_sha256": "78d6999e76de03f4c0d994f31f4033817cc761decd52845999ae44f658181046"
+  },
+  {
+    "original_file": "candidate-c-stage2-g.nm",
+    "archive_file": "candidate-c-stage2-g.nm.gz",
+    "uncompressed_bytes": 436160,
+    "uncompressed_sha256": "67b74b9ffcdd196a217491d668e9ba1a94f5a4da8b6bf0817cfde432746df592",
+    "archive_bytes": 84420,
+    "archive_sha256": "c7ce682a88c8391724b00b88b6c127509969d969350d9659d494a461d5e6d8cb"
+  },
+  {
+    "original_file": "candidate-c.callgrind",
+    "archive_file": "candidate-c.callgrind.gz",
+    "uncompressed_bytes": 2262654,
+    "uncompressed_sha256": "bbfd9235d4054e478c6802c5602e705251549988fccfb915741d4d627daf435b",
+    "archive_bytes": 553951,
+    "archive_sha256": "b8f2bed444edf76a88561e66aeaba630bafd2cf28e7de8ffb4bbef8ddecdb6e9"
+  },
+  {
+    "original_file": "candidate-stage2-g.nm",
+    "archive_file": "candidate-stage2-g.nm.gz",
+    "uncompressed_bytes": 436172,
+    "uncompressed_sha256": "5c6b30f30095b0759f5f4f14a4c54250e4fff96e6145727c0ce959749061be66",
+    "archive_bytes": 84435,
+    "archive_sha256": "c8653a5ca8aa9765c308c7160916110f9123274a76ee6aa374673471ef04cc8d"
+  },
+  {
+    "original_file": "candidate.callgrind",
+    "archive_file": "candidate.callgrind.gz",
+    "uncompressed_bytes": 2262696,
+    "uncompressed_sha256": "89be92fed0a3ca2c54675ca86809f4600ea7a88ac65155327fc3906ae3580eb3",
+    "archive_bytes": 553958,
+    "archive_sha256": "ded653570ffcea48684be4003167dbb7c5051683dd7530b1e547423155637072"
+  },
+  {
+    "original_file": "release.callgrind",
+    "archive_file": "release.callgrind.gz",
+    "uncompressed_bytes": 2262699,
+    "uncompressed_sha256": "d215eccdcd60a687e6157e5f7518c4270a495a76a693dbfbb0afd4d9250bed5d",
+    "archive_bytes": 554214,
+    "archive_sha256": "0033bbd9edb0a3f212336abbc9260c6ad7e00bb36f0b306ef7f43d9e4cd1408c"
+  }
+]

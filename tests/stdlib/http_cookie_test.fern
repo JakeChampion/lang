@@ -180,10 +180,10 @@ function test_jar_lifetime(): test.TestOutcome {
 
 function date(s: string): string {
   match (cookie.parse_date(s)) {
-    Some(t) => {
+    Ok(t) => {
       return t.sec.to_string();
     },
-    None => {
+    Err(_) => {
       return "none";
     }
   }

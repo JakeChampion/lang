@@ -1,0 +1,74 @@
+[
+  {
+    "target": "x86-64-linux",
+    "baseline_file": "release-checker.s",
+    "candidate_file": "candidate-checker.s",
+    "byte_identical": true,
+    "bytes": 26865028,
+    "sha256": "0b60857973ae1dccba313e350cbe51b286d2e18d435da614a4df5a534a370d78"
+  },
+  {
+    "target": "x86-64-linux",
+    "baseline_file": "release-checker.s",
+    "candidate_file": "candidate-b-checker.s",
+    "byte_identical": true,
+    "bytes": 26865028,
+    "sha256": "0b60857973ae1dccba313e350cbe51b286d2e18d435da614a4df5a534a370d78"
+  },
+  {
+    "target": "x86-64-linux",
+    "baseline_file": "release-checker.s",
+    "candidate_file": "candidate-c-checker.s",
+    "byte_identical": true,
+    "bytes": 26865028,
+    "sha256": "0b60857973ae1dccba313e350cbe51b286d2e18d435da614a4df5a534a370d78"
+  },
+  {
+    "target": "arm64-linux",
+    "baseline_file": "baseline-arm64-linux-checker.s",
+    "candidate_file": "candidate-arm64-linux-checker.s",
+    "byte_identical": true,
+    "bytes": 27162338,
+    "sha256": "544734a0cfa9c71b6c2eee0943df3db365fc8b040866d0df0b25bf7ce36f0164"
+  },
+  {
+    "target": "arm64-linux",
+    "baseline_file": "baseline-arm64-linux-checker.s",
+    "candidate_file": "candidate-b-arm64-linux-checker.s",
+    "byte_identical": true,
+    "bytes": 27162338,
+    "sha256": "544734a0cfa9c71b6c2eee0943df3db365fc8b040866d0df0b25bf7ce36f0164"
+  },
+  {
+    "target": "arm64-linux",
+    "baseline_file": "baseline-arm64-linux-checker.s",
+    "candidate_file": "candidate-c-arm64-linux-checker.s",
+    "byte_identical": true,
+    "bytes": 27162338,
+    "sha256": "544734a0cfa9c71b6c2eee0943df3db365fc8b040866d0df0b25bf7ce36f0164"
+  },
+  {
+    "target": "wasm32-wasi",
+    "baseline_file": "baseline-wasm32-wasi-checker.s",
+    "candidate_file": "candidate-wasm32-wasi-checker.s",
+    "byte_identical": true,
+    "bytes": 14659092,
+    "sha256": "1cd263a3cac06fc224fc2a9fafea8ba43ddd63fde201c8d931c3b9143aeee852"
+  },
+  {
+    "target": "wasm32-wasi",
+    "baseline_file": "baseline-wasm32-wasi-checker.s",
+    "candidate_file": "candidate-b-wasm32-wasi-checker.s",
+    "byte_identical": true,
+    "bytes": 14659092,
+    "sha256": "1cd263a3cac06fc224fc2a9fafea8ba43ddd63fde201c8d931c3b9143aeee852"
+  },
+  {
+    "target": "wasm32-wasi",
+    "baseline_file": "baseline-wasm32-wasi-checker.s",
+    "candidate_file": "candidate-c-wasm32-wasi-checker.s",
+    "byte_identical": true,
+    "bytes": 14659092,
+    "sha256": "1cd263a3cac06fc224fc2a9fafea8ba43ddd63fde201c8d931c3b9143aeee852"
+  }
+]

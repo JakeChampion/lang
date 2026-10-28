@@ -1,0 +1,9 @@
+=== RUN   TestSelfHostPerModuleHeapMetricLinks
+    self_host_permodule_heap_metric_test.go:55: per-module link: exit status 1
+        /usr/bin/ld: /tmp/cc8zBD9F.o: in function `__fn_leaf__used':
+        (.text+0xb): undefined reference to `__fern_heap_base'
+        collect2: error: ld returned 1 exit status
+--- FAIL: TestSelfHostPerModuleHeapMetricLinks (33.51s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	33.527s
+FAIL

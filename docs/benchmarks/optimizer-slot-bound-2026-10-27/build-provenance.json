@@ -1,0 +1,64 @@
+{
+  "frozen_source_commit": "23c5bc2e4a5993ffe092d04b5ad1dcf771af0269",
+  "worktree_base_after_refresh": "231becae0394b07f7bdbc5cf24922b6e9db67aed",
+  "committed_compiler_stdlib_differences": [],
+  "ir_sources": {
+    "baseline": "8348c4724395e90f82414599850274d4e0a39fa4d37a1497be76b2cb47755409",
+    "prototype_a": "3b64eb032fd37af9756637ea74c295cbe50cfe9151f7fd99680d3782ecc9d067",
+    "prototype_b": "5abc5dba28d33fb5da81e261da29b06a7b18e2d57c5ca02914bf1766ee09f61d",
+    "prototype_c": "eb3ffcdb6abe9457e272c9df92cb858f28bf44483d998e5e6e3f655c6e99998d"
+  },
+  "binaries": {
+    "stage1": "238621600593496f4c333c3661bc09464155c13d0796cec03939166b16cad4db",
+    "baseline-stage2": "80144d0359306c336b8e246c49bb50faac632675d8a968876e3360e62beb0c55",
+    "baseline-stage2-g": "fd298429088c167a1874fc48788a59b2aeb8b63dff8e77dc856781c58ecfa921",
+    "candidate-stage2": "78124695c02f4d374f4c7ea307836100dded789b1622ead82ecf7c9c98d948e6",
+    "candidate-stage2-g": "21eabdff91b2fef8a2a330373b5a507386cf5c5c3ffd7d042fba2818b41b0414",
+    "candidate-b-stage2": "332a947e17da07553c14ab26ac0447a330275b41982dde67343fe10c957d1cdb",
+    "candidate-c-stage2": "c5670a91c6f559f700456efe631847c562b04f38fd7c578ddec3cd301f126ede",
+    "candidate-c-stage2-g": "1ef1dccf1aae2185eb5268ecb9fb449c2be1a10f9719872a85fc0c181e789287"
+  },
+  "frozen_manifest_files": 1215,
+  "stage2_build_commands": {
+    "baseline-stage2": [
+      "/workspace/lang-issue-work/perf-4412/stage1",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/baseline-stage2",
+      "/workspace/lang-perf-4412/compiler/fern.fern",
+      "/workspace/lang-perf-4412/internal/stdlib"
+    ],
+    "candidate-stage2": [
+      "/workspace/lang-issue-work/perf-4412/stage1",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/candidate-stage2",
+      "/workspace/lang-perf-4412/compiler/fern.fern",
+      "/workspace/lang-perf-4412/internal/stdlib"
+    ],
+    "candidate-b-stage2": [
+      "/workspace/lang-issue-work/perf-4412/stage1",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/candidate-b-stage2",
+      "/workspace/lang-perf-4412/compiler/fern.fern",
+      "/workspace/lang-perf-4412/internal/stdlib"
+    ],
+    "candidate-c-stage2": [
+      "/workspace/lang-issue-work/perf-4412/stage1",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/candidate-c-stage2",
+      "/workspace/lang-perf-4412/compiler/fern.fern",
+      "/workspace/lang-perf-4412/internal/stdlib"
+    ]
+  }
+}

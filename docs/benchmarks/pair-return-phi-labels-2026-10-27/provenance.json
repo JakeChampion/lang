@@ -1,0 +1,15 @@
+{
+  "candidate_source_base": "fa5546746c4801c29d2670b175b192715895686d",
+  "published_C_source_equivalent_head": "6a90987759ae910877e7816c2645de6e1b9b3390",
+  "producer_stage1_sha256": "238621600593496f4c333c3661bc09464155c13d0796cec03939166b16cad4db",
+  "baseline_C_stage2_sha256": "c5670a91c6f559f700456efe631847c562b04f38fd7c578ddec3cd301f126ede",
+  "candidate_D_stage2_sha256": "4a961c82f8a05f230020b2b3dbeb1938f50fd9ca88c6f1bed556f210711156a7",
+  "candidate_D_stage2_g_sha256": "b1f1ff995996bd4951fb65b233d001eac73839619cc98da2e4ffecadaa5bed1d",
+  "candidate_D_stage3_sha256": "bddb8e23b04acf6db660c5217d7472405c1898b80b20853fbf12c7e5762c19ff",
+  "candidate_D_stage4_sha256": "bddb8e23b04acf6db660c5217d7472405c1898b80b20853fbf12c7e5762c19ff",
+  "frozen_subject_commit": "23c5bc2e4a5993ffe092d04b5ad1dcf771af0269",
+  "same_stage1_for_primary_comparison": true,
+  "e2e_primary_completed_before_fixpoint": true,
+  "scalar_record_suite_seconds": 20.409,
+  "candidate_compiler_module_count": 1044
+}

@@ -9476,7 +9476,7 @@ func TestCmdLangComponentWrapCliWithPutchar(t *testing.T) {
 	}
 }
 
-func TestCmdLangComponentWrapCliWithRandomInt(t *testing.T) {
+func TestCmdLangComponentWrapCliWithRandBetween(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
 	}
@@ -9486,9 +9486,9 @@ func TestCmdLangComponentWrapCliWithRandomInt(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "randint.fern")
 	src := []byte(`
-import "std/math";
+import "std/rand";
 function main(): i32 {
-    let r: i32 = math.random_int(0, 100);
+    let r: i32 = rand.between(0, 100);
     if (r >= 0 && r < 100) { return 0; }
     return 1;
 }`)
@@ -9500,7 +9500,7 @@ function main(): i32 {
 		"-target", "wasm32-wasi", "-o", compPath, srcPath)
 	cmd.Dir = projectRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("fern -component-wrap-cli (random_int) failed: %v\n%s", err, out)
+		t.Fatalf("fern -component-wrap-cli (rand.between) failed: %v\n%s", err, out)
 	}
 	if out, err := exec.Command("wasm-tools", "validate", compPath).CombinedOutput(); err != nil {
 		t.Fatalf("wasm-tools validate failed: %v\n%s", err, out)
@@ -14827,7 +14827,7 @@ function main(): i32 {
 		{"pvec-for-each", `
 import "std/pvec";
 function main(): i32 {
-    let v: pvec.PVec[i32] = pvec.pvec_new();
+    let v: pvec.PVec[i32] = pvec.new();
     v = v.append(1);
     v = v.append(2);
     let total: i32 = 0;

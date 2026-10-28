@@ -1,0 +1,42 @@
+[
+  {
+    "path": "compiler/drivers/ssalargepushwideisa_run.fern",
+    "sha256": "1a7285322c4ccc0082123f0c080bfad28f42f07cc7b34f10e8cc1c081d9290f5",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssalargepushwideisa_worker.fern",
+    "sha256": "23090281e0fd357ddfca2bd51114bb92a0ab3d46adfe90be2780a374b49ec201",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssalargepushwideisacases.fern",
+    "sha256": "7eba82f8033d35d0947f5ea582a3d58d7b08b5613bf8e8020759907b5515fb01",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssacapacityisa.fern",
+    "sha256": "f1171d3e597a6456c11ca16e212592c52e0c515c9933857ff2fcc9ffc2468a9e",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssalargepushwideisa.fern",
+    "sha256": "94ff49024e6f5d7aeb749886508a5b7b4facdd15d88dacc03ea3e6ad83048a60",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssalargepushranges.fern",
+    "sha256": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssalargepushvalue.fern",
+    "sha256": "59b53d3c3a2d1f72cd41583c4625941e53dc394042a86cff5441386b5f1a3890",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssadecrementcount.fern",
+    "sha256": "765c64f591db71d5c9a7129c065b7b0a606be1c97b0519520bb6c9f2e401721c",
+    "matches_main": true
+  }
+]

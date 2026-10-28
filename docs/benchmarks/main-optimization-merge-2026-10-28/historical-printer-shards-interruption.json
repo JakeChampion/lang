@@ -1,0 +1,9 @@
+{
+  "stopped_python": 139322,
+  "stopped_children": [
+    139896,
+    139853
+  ],
+  "time": "2026-10-28T10:17:27.410193+00:00",
+  "reason": "New main changes the compiler inputs. Stop old-snapshot corpus before checkout edits; completed shard remains historical, current full corpus unqualified."
+}

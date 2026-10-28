@@ -1,0 +1,38 @@
+{
+  "records": [
+    {
+      "shard": "0/4",
+      "command": [
+        "go",
+        "test",
+        "./internal/syntax/printer",
+        "-count=1",
+        "-timeout",
+        "20m",
+        "-json"
+      ],
+      "started_at": "2026-10-28T10:03:56.496541+00:00",
+      "process_id": 139323,
+      "exit": 0,
+      "seconds": 561.739751699999,
+      "passes": 297,
+      "failures": [],
+      "skips": []
+    },
+    {
+      "shard": "1/4",
+      "command": [
+        "go",
+        "test",
+        "./internal/syntax/printer",
+        "-count=1",
+        "-timeout",
+        "20m",
+        "-json"
+      ],
+      "started_at": "2026-10-28T10:13:18.237248+00:00",
+      "process_id": 139853
+    }
+  ],
+  "complete": false
+}

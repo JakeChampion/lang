@@ -59,6 +59,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "core/cmp";
+import "std/error";
 import "std/string";
 import "core/map";
 ```
@@ -67,6 +69,21 @@ import "core/map";
 
 ```fern
 <<3 pub function new(): HeaderMap>>=
+// A header field value that does not have the form its field requires.
+pub struct HeaderValueError { field: string, value: string }
+
+impl error.Error for HeaderValueError {}
+
+impl cmp.Display for HeaderValueError {}
+
+pub function (e: HeaderValueError) message(): string {
+  return "\"" + e.value + "\" is not a valid " + e.field + " value";
+}
+
+pub function (e: HeaderValueError) to_string(): string {
+  return e.message();
+}
+
 pub function new(): HeaderMap {
   let names: string[] = [];
   let values: string[] = [];

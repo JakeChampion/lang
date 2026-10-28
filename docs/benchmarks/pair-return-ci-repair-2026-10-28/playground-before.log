@@ -1,0 +1,31 @@
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/x86-64-linux
+    self_host_playground_forms_test.go:82: playground_run -target x86-64-linux emits 47205 bytes, fern -target x86-64-linux -emit asm 47217 bytes, first difference at byte 40849
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/arm64-linux
+    self_host_playground_forms_test.go:82: playground_run -target arm64-linux emits 57149 bytes, fern -target arm64-linux -emit asm 57160 bytes, first difference at byte 39306
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/arm64-android
+    self_host_playground_forms_test.go:82: playground_run -target arm64-android emits 57149 bytes, fern -target arm64-android -emit asm 57162 bytes, first difference at byte 39306
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/arm64-darwin
+    self_host_playground_forms_test.go:82: playground_run -target arm64-darwin -emit asm emits 54413 bytes, fern -target arm64-darwin -emit asm 54425 bytes, first difference at byte 38551
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-asm
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-core-module
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-command-module
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-component
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/http-asm
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/http-core-module
+=== RUN   TestSelfHostPlaygroundEmitsWhatTheCLIEmits/http-component
+--- FAIL: TestSelfHostPlaygroundEmitsWhatTheCLIEmits (146.11s)
+    --- FAIL: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/x86-64-linux (0.44s)
+    --- FAIL: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/arm64-linux (0.39s)
+    --- FAIL: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/arm64-android (0.39s)
+    --- FAIL: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/arm64-darwin (0.40s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-asm (0.46s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-core-module (0.38s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-command-module (0.41s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/wasm-component (0.36s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/http-asm (12.35s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/http-core-module (8.22s)
+    --- PASS: TestSelfHostPlaygroundEmitsWhatTheCLIEmits/http-component (7.56s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	146.131s
+FAIL

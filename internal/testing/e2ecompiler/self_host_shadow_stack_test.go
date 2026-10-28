@@ -126,7 +126,9 @@ func TestSelfHostShadowStack(t *testing.T) {
 	if msg, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", s, "-o", bin).CombinedOutput(); err != nil {
 		t.Fatalf("link: %v\n%s", err, msg)
 	}
-	out, c = run(bin)
+	c = withoutCoreDump(runX86_64Bin(cli.runner, bin))
+	msg, _ := c.CombinedOutput()
+	out = string(msg)
 	status, _ := c.ProcessState.Sys().(syscall.WaitStatus)
 	if active {
 		if !status.Signaled() || status.Signal() != syscall.SIGSEGV {

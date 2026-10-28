@@ -1,0 +1,4 @@
+=== RUN   TestImportFreeModulesDoNotDrift
+--- PASS: TestImportFreeModulesDoNotDrift (0.08s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	0.089s

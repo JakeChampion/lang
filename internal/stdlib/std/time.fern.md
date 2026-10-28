@@ -700,7 +700,14 @@ pub function (d: Date) format_iso(): string {
 }
 
 pub function date_parse_iso(s: string): Result[Date, TimeParseError] {
-  return __iso_date(s).ok_or(TimeParseError { text: s, form: IsoDate });
+  match (__iso_date(s)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(TimeParseError { text: s, form: IsoDate });
+    }
+  }
 }
 
 // The text a parser refused, and the form it expected.
@@ -1008,7 +1015,14 @@ function __month_from_short(s: string, start: i32): i32 {
 ```fern
 <<14 pub function http_date_parse(s: string): Result[Timestamp, TimeParseError]>>=
 pub function http_date_parse(s: string): Result[Timestamp, TimeParseError] {
-  return __http_date(s).ok_or(TimeParseError { text: s, form: HttpDate });
+  match (__http_date(s)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(TimeParseError { text: s, form: HttpDate });
+    }
+  }
 }
 
 pub function http_date_parse_at(s: string, now: Timestamp): Result[Timestamp, TimeParseError] {
@@ -1018,7 +1032,14 @@ pub function http_date_parse_at(s: string, now: Timestamp): Result[Timestamp, Ti
     },
     None => {}
   }
-  return __rfc850_date(s, now).ok_or(TimeParseError { text: s, form: HttpDate });
+  match (__rfc850_date(s, now)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(TimeParseError { text: s, form: HttpDate });
+    }
+  }
 }
 
 function __http_date(s: string): Option[Timestamp] {
@@ -1113,7 +1134,14 @@ function __imf_punctuation(s: string): boolean {
 <<17 pub function timestamp_parse_rfc3339_offset(s: string): Result[(Timestamp, i32), TimeParseError]>>=
 // The timestamp and the UTC offset in seconds of an RFC 3339 time with a `Z` or `±hh:mm` offset.
 pub function timestamp_parse_rfc3339_offset(s: string): Result[(Timestamp, i32), TimeParseError] {
-  return __rfc3339(s).ok_or(TimeParseError { text: s, form: Rfc3339 });
+  match (__rfc3339(s)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(TimeParseError { text: s, form: Rfc3339 });
+    }
+  }
 }
 
 function __rfc3339(s: string): Option[(Timestamp, i32)] {

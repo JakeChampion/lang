@@ -28,7 +28,8 @@ function source(exiting: boolean): string {
     + "@noinline function parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; } "
     + "@noinline function replace(own p: Parent, child: Leaf): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; } "
     + "@noinline function handoff(flag: boolean, left: Leaf, right: Leaf, incoming: Leaf): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); } "
-    + "function main(): i32 { let c: Leaf = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return p.first.n - 7; }";
+    + "@noinline function boxed_result(p: Other): i32 { return p.first.n - 7; } "
+    + "function main(): i32 { let c: Leaf = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return boxed_result(p); }";
 }
 
 function emit(arm: boolean, exiting: boolean, debug: boolean): ssaprepare.Emitted[] {
@@ -39,7 +40,7 @@ function emit_source(arm: boolean, src: string, debug: boolean): ssaprepare.Emit
   let mod = parser.parse_module(lexer.tokenize(src));
   require(!asmcore.refuse_parse_errors([mod]), 61);
   let g = semlower.program(semlower.driven(mod, "x86-64-linux"));
-  let sw = asmcore.Switches { backtrace: false, sanitize: debug, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, pie: false, profile: "", target: "" };
+  let sw = asmcore.Switches { backtrace: false, sanitize: debug, leak_check: false, rc_free_debug: false, var_rows: false, shared: false, size: false, harden: false, heap_limit: 0i64, pie: false, profile: "", target: "", line_maps: [] };
   if (arm) {
     return asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_module_lowering, sw, true).bodies;
   }

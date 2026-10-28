@@ -1,0 +1,6 @@
+### performance (bench)
+| metric | measured | baseline | delta |
+| --- | --- | --- | --- |
+| x86_64/checker.allocs | 33.8M | 33.8M | +0.00% |
+| x86_64/checker.frees | 33.8M | 33.8M | +0.00% |
+Every metric is within tolerance of its baseline.

@@ -1,0 +1,10 @@
+{
+  "source_head": "d9e569d5e5e5731f39efb13c73a373ccc9aca38f",
+  "source_worktree": "/workspace/lang-perf-4412",
+  "common_producer_sha256": "1e0ad6be807a01bbf50a05535d46808d611816016ce388e687d44589c5dc7e52",
+  "build_stdlib": "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib",
+  "profile_stdlib": "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/internal/stdlib",
+  "subject": "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/compiler/checker.fern",
+  "subject_sha256": "cb79b4d73e84f3b9f34bf4f30d95b9a14341189f29cd039b3f705b753da91ccd",
+  "purpose": "New current-source baseline after owner main integration. No A/B speed gain claim and no direct gain comparison with prior subject."
+}

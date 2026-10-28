@@ -1,0 +1,147 @@
+[
+  {
+    "path": "Makefile",
+    "sha256": "6f75f37cfb68e65eb57a704fca66434a3b0e59256394a52784a8b4d8ce272b67",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssalargepushwidemachine_run.fern",
+    "sha256": "307fe9a8346dcbbe0fe56cccd95c674ebbea7bfd94e4fcde035f253f1fc73180",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssalargepushwidemachine_worker.fern",
+    "sha256": "fb625589b167368ec7a695771132865031da0cb6300a2b602cdd96b8d3efc73c",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssalargepushwidemachines.fern",
+    "sha256": "327ba7f6fe102a8eae1d842176dd91f3d463c9fafa732763546c5c44da82846f",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssalargepushwidemachine.fern",
+    "sha256": "9ac1f9c78d743da71729d57c0f3bddb0da23c0df6cdec357310becf908988ed5",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-machine-2026-10-28/README.md",
+    "sha256": "82ae52f0ca188cd35329bf532f17e4d7101dd3ea2d70bd1542143b6fc7fe8efd",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-machine-2026-10-28/evidence.json",
+    "sha256": "a013fd6a852f2d540d6f9122f1cad1d111cb537616c0b00d1960e79fb3aec503",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-machine-2026-10-28/large-free-wide-machine-arm64-linux.json.gz",
+    "sha256": "2b11e9506c30dc3217212d9d68f99d628b95563ed5262a197cb6b711531204bc",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-machine-2026-10-28/large-free-wide-machine-wasm32-wasi.json.gz",
+    "sha256": "1e007a31982def37a41b0acbf1ac5b956baa1bc1c2ac7da42ebe6ac9693951d2",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-machine-2026-10-28/large-free-wide-machine-x86-64-linux.json.gz",
+    "sha256": "24eea857852db5146ecb581f1c390648a4cda16b0b35ffe277e678c0126305e5",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-machine-2026-10-28/omitted-executable-identities.json",
+    "sha256": "611cdd0f48a49db953611226f6a823d67464d68c38cbfa2976c673bb4f3c5410",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-machine-2026-10-28/publication-checks.json",
+    "sha256": "af36b21dd93600440c736880d1a01aca8e3badb3bc1002ba995efb1f38a067f6",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-machine-2026-10-28/qualification-records.tar.gz",
+    "sha256": "5f933c284621bc5c1efa92272d2197f2b7f494528c4b1ce9e26e0d31375dfd4b",
+    "matches_main": true
+  },
+  {
+    "path": "docs/rc-log/2026-10-28-wide-large-free-machine.md",
+    "sha256": "ec861029b5cb1b909b1234b74fd5381b7e65c31e7f20430ae2533732580607dc",
+    "matches_main": true
+  },
+  {
+    "path": "internal/testing/e2ecompiler/self_host_ssa_large_push_wide_machine_test.go",
+    "sha256": "0a549a0d2b5b1d44f4141e5b83c2bf64010591bfaa62305aac454fd4e5d9eece",
+    "matches_main": true
+  },
+  {
+    "path": "internal/testing/e2ecompiler/self_host_ssa_large_push_wide_machine_worker_test.go",
+    "sha256": "932635f74ef167f81aa4272f47e5d2191f90ec4977a353e3bda73db053bc59aa",
+    "matches_main": true
+  },
+  {
+    "path": "internal/testing/e2ecompiler/testdata/large_push_wide_machine_reference.json.gz",
+    "sha256": "4d22272a26f32fc656b487b84a930e9fa7e2f6a102977ecd3d80d5a1e9acf9ae",
+    "matches_main": true
+  },
+  {
+    "path": "scripts/gen-large-push-wide-machine-reference.py",
+    "sha256": "f7358dbc31fed9fa53cedf109b726fad0e2a68d73e43f73232bd66e70d076193",
+    "matches_main": true
+  },
+  {
+    "path": "scripts/large_push_wide_machine_reference.py",
+    "sha256": "23b2561c2feaedbba759ec99b3f3024128941f43d7b00cd6ac80a21b9e4637bf",
+    "matches_main": true
+  },
+  {
+    "path": "scripts/qualify_large_push_wide_machine.py",
+    "sha256": "db64f5414c4683ad801c46a0e2857a6876cd29f46d875db0cc782aae880a17c4",
+    "matches_main": true
+  },
+  {
+    "path": "scripts/test_large_push_wide_machine.py",
+    "sha256": "bce6cc1cb9021e1f614bb61e59118a280acb895f6c12876e454b0ebc9db54188",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssalargepushwideisa.fern",
+    "sha256": "94ff49024e6f5d7aeb749886508a5b7b4facdd15d88dacc03ea3e6ad83048a60",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssacapacityisa.fern",
+    "sha256": "f1171d3e597a6456c11ca16e212592c52e0c515c9933857ff2fcc9ffc2468a9e",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssalargepushmachine.fern",
+    "sha256": "6347d59cf071c55ab6cd241089bf72bdff58e5be22a7297e1030066cb48bab1c",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssalargepushranges.fern",
+    "sha256": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssalargepushvalue.fern",
+    "sha256": "59b53d3c3a2d1f72cd41583c4625941e53dc394042a86cff5441386b5f1a3890",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssadecrementcount.fern",
+    "sha256": "765c64f591db71d5c9a7129c065b7b0a606be1c97b0519520bb6c9f2e401721c",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssalargepushmachines.fern",
+    "sha256": "dbdffb26523a9e0a333028827b53b6c8566171a1f9f0e5ec7faf014b40bea229",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssadecrementdependencies.fern",
+    "sha256": "370ac36dfb244ea453acbac49cf889fcadf4080dbcf9c08f9e89325dbebf0b79",
+    "matches_main": true
+  }
+]

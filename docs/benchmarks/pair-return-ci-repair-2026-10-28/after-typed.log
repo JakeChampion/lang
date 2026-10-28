@@ -1,0 +1,33 @@
+=== RUN   TestSelfHostTypedWrapperContinuation
+=== RUN   TestSelfHostTypedWrapperContinuation/arm64-linux
+    self_host_ssa_credit_continuation_abi_test.go:18: typed wrapper continuation proof exited 120: leakcheck: allocs=1343737 frees=1341951 live_bytes=224000 from=exit
+        fern-sanitizer: leak 224000 bytes in 1786 blocks
+=== RUN   TestSelfHostTypedWrapperContinuation/x86-64-linux
+    self_host_ssa_credit_continuation_abi_test.go:18: typed wrapper continuation proof exited 120: leakcheck: allocs=1343737 frees=1341951 live_bytes=224000 from=exit
+        fern-sanitizer: leak 224000 bytes in 1786 blocks
+=== RUN   TestSelfHostTypedWrapperContinuation/wasm32-wasi
+    self_host_ssa_credit_continuation_abi_test.go:18: typed wrapper continuation proof exited 120: leakcheck: allocs=1535541 frees=1533755 live_bytes=167928 from=exit
+        fern-sanitizer: leak 167928 bytes in 1786 blocks
+--- FAIL: TestSelfHostTypedWrapperContinuation (91.77s)
+    --- FAIL: TestSelfHostTypedWrapperContinuation/arm64-linux (29.59s)
+    --- FAIL: TestSelfHostTypedWrapperContinuation/x86-64-linux (24.95s)
+    --- FAIL: TestSelfHostTypedWrapperContinuation/wasm32-wasi (35.11s)
+=== RUN   TestSelfHostTypedIncomingCapacity
+=== RUN   TestSelfHostTypedIncomingCapacity/arm64-linux
+=== RUN   TestSelfHostTypedIncomingCapacity/x86-64-linux
+=== RUN   TestSelfHostTypedIncomingCapacity/wasm32-wasi
+--- PASS: TestSelfHostTypedIncomingCapacity (85.32s)
+    --- PASS: TestSelfHostTypedIncomingCapacity/arm64-linux (28.49s)
+    --- PASS: TestSelfHostTypedIncomingCapacity/x86-64-linux (23.43s)
+    --- PASS: TestSelfHostTypedIncomingCapacity/wasm32-wasi (31.86s)
+=== RUN   TestSelfHostTypedStorageInvocation
+=== RUN   TestSelfHostTypedStorageInvocation/arm64-linux
+=== RUN   TestSelfHostTypedStorageInvocation/x86-64-linux
+=== RUN   TestSelfHostTypedStorageInvocation/wasm32-wasi
+--- PASS: TestSelfHostTypedStorageInvocation (74.39s)
+    --- PASS: TestSelfHostTypedStorageInvocation/arm64-linux (25.65s)
+    --- PASS: TestSelfHostTypedStorageInvocation/x86-64-linux (20.27s)
+    --- PASS: TestSelfHostTypedStorageInvocation/wasm32-wasi (27.15s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	251.529s
+FAIL

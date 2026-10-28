@@ -43,7 +43,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "std/i32";
 import "std/string";
 import "std/array";
-import "std/math";
 import "std/rand";
 import "core/cmp";
 import "std/test";
@@ -211,7 +210,7 @@ function __fuzz_escape(bs: u8[]): string {
 ```fern
 <<5 pub function run(seeds: u8[][], iterations: i32, target: (u8[])>>=
 pub function run(seeds: u8[][], iterations: i32, target: (u8[]) => test.TestOutcome): test.TestOutcome {
-  return run_seeded(seeds, iterations, math.random_int(0 - 2000000000, 2000000000) as i64, target);
+  return run_seeded(seeds, iterations, rand.between(0 - 2000000000, 2000000000) as i64, target);
 }
 
 pub function run_seeded(seeds: u8[][], iterations: i32, rng_seed: i64, target: (u8[]) => test.TestOutcome): test.TestOutcome {
@@ -363,7 +362,7 @@ pub function run_shrink(seeds: u8[][], iterations: i32, target: (u8[]) => test.T
     }
     i = i + 1;
   }
-  let rng_seed: i64 = math.random_int(0 - 2000000000, 2000000000) as i64;
+  let rng_seed: i64 = rand.between(0 - 2000000000, 2000000000) as i64;
   let st: i64 = rand.rng_seed(rng_seed);
   let iter: i32 = 0;
   while (iter < iterations) {

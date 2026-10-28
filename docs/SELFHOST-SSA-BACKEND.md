@@ -45,6 +45,8 @@ lowered function it:
    turns `(x >> n) | (x << (W - n))`, Fern's only spelling of a rotate, into
    one `rotr:W:n` unary on x at either width (`ssa.fuse_rotates`; a u32's
    left half is recognised through the zero extension that follows it),
+   moves the constant of a `base + constant` address into the offset of
+   its load or store (`ssa.fold_offsets`),
    replaces a signed 32-bit wrap by its operand where nothing reads the high
    half of its result (`ssa.drop_low_wraps`: a sum, difference, product,
    bitwise op or left shift reads only its operands' low halves, so the wrap

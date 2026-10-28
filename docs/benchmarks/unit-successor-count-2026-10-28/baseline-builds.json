@@ -1,0 +1,71 @@
+[
+  {
+    "name": "stage1",
+    "command": [
+      "/home/agent/.cache/fern/stage0/stage0-20261028-9193717/fern-selfhost-x86-64-linux",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/stage1",
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/compiler/fern.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "producer_sha256": "199cdd36374c8254741c2a525ae3ae2ccea2d106cb67a9ec85f568df5569f2a2",
+    "exit": 0,
+    "elapsed_seconds": 43.78559829399819,
+    "output_sha256": "ce1074b697485ad511740e5c499ff771ceccf270c5afaf521fcc85e74e847b05"
+  },
+  {
+    "name": "stage2",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/stage1",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/stage2",
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/compiler/fern.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "producer_sha256": "ce1074b697485ad511740e5c499ff771ceccf270c5afaf521fcc85e74e847b05",
+    "exit": 0,
+    "elapsed_seconds": 38.4732945479991,
+    "output_sha256": "4948b305ce2012f2aa47704843e883566a14ac79274aac3b50becb0d9f966251"
+  },
+  {
+    "name": "stage2-g",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/stage1",
+      "-O",
+      "-g",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/stage2-g",
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/compiler/fern.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "producer_sha256": "ce1074b697485ad511740e5c499ff771ceccf270c5afaf521fcc85e74e847b05",
+    "exit": 0,
+    "elapsed_seconds": 38.66408599699935,
+    "output_sha256": "6bf19e79c33268f0baa3ac8e392ab89d2f19666f5f0a8274e47cbe09710fc956"
+  },
+  {
+    "name": "stage3",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/stage3",
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/compiler/fern.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "producer_sha256": "4948b305ce2012f2aa47704843e883566a14ac79274aac3b50becb0d9f966251",
+    "exit": 0,
+    "elapsed_seconds": 32.47370223800317,
+    "output_sha256": "4948b305ce2012f2aa47704843e883566a14ac79274aac3b50becb0d9f966251"
+  }
+]

@@ -1,0 +1,4 @@
+# github.com/jakechampion/lang/internal/testing/e2ecompiler
+# [github.com/jakechampion/lang/internal/testing/e2ecompiler]
+vet: internal/testing/e2ecompiler/self_host_arm64_numeric_memory_test.go:32:50: cannot use nil as string value in argument to cli.exitOf
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler [build failed]

@@ -1,0 +1,58 @@
+=== RUN   TestSelfHostPairReturn
+=== RUN   TestSelfHostPairReturn/variant/x86-64-linux
+=== RUN   TestSelfHostPairReturn/variant/arm64-linux
+=== RUN   TestSelfHostPairReturn/variant/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/pair/x86-64-linux
+=== RUN   TestSelfHostPairReturn/pair/arm64-linux
+=== RUN   TestSelfHostPairReturn/pair/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/suspend/x86-64-linux
+=== RUN   TestSelfHostPairReturn/suspend/arm64-linux
+=== RUN   TestSelfHostPairReturn/suspend/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/method/x86-64-linux
+=== RUN   TestSelfHostPairReturn/method/arm64-linux
+=== RUN   TestSelfHostPairReturn/method/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/lanes/x86-64-linux
+=== RUN   TestSelfHostPairReturn/lanes/arm64-linux
+=== RUN   TestSelfHostPairReturn/lanes/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/split/x86-64-linux
+=== RUN   TestSelfHostPairReturn/split/arm64-linux
+=== RUN   TestSelfHostPairReturn/split/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/forward/x86-64-linux
+=== RUN   TestSelfHostPairReturn/forward/arm64-linux
+=== RUN   TestSelfHostPairReturn/forward/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/wide/x86-64-linux
+=== RUN   TestSelfHostPairReturn/wide/arm64-linux
+=== RUN   TestSelfHostPairReturn/wide/wasm32-wasi
+=== RUN   TestSelfHostPairReturn/tail-phi/x86-64-linux
+=== RUN   TestSelfHostPairReturn/tail-phi/arm64-linux
+=== RUN   TestSelfHostPairReturn/tail-phi/wasm32-wasi
+--- PASS: TestSelfHostPairReturn (39.69s)
+    --- PASS: TestSelfHostPairReturn/variant/x86-64-linux (0.34s)
+    --- PASS: TestSelfHostPairReturn/variant/arm64-linux (0.34s)
+    --- PASS: TestSelfHostPairReturn/variant/wasm32-wasi (0.36s)
+    --- PASS: TestSelfHostPairReturn/pair/x86-64-linux (0.36s)
+    --- PASS: TestSelfHostPairReturn/pair/arm64-linux (0.33s)
+    --- PASS: TestSelfHostPairReturn/pair/wasm32-wasi (0.38s)
+    --- PASS: TestSelfHostPairReturn/suspend/x86-64-linux (0.66s)
+    --- PASS: TestSelfHostPairReturn/suspend/arm64-linux (0.58s)
+    --- PASS: TestSelfHostPairReturn/suspend/wasm32-wasi (0.50s)
+    --- PASS: TestSelfHostPairReturn/method/x86-64-linux (0.35s)
+    --- PASS: TestSelfHostPairReturn/method/arm64-linux (0.35s)
+    --- PASS: TestSelfHostPairReturn/method/wasm32-wasi (0.35s)
+    --- PASS: TestSelfHostPairReturn/lanes/x86-64-linux (0.33s)
+    --- PASS: TestSelfHostPairReturn/lanes/arm64-linux (0.30s)
+    --- PASS: TestSelfHostPairReturn/lanes/wasm32-wasi (0.29s)
+    --- PASS: TestSelfHostPairReturn/split/x86-64-linux (0.34s)
+    --- PASS: TestSelfHostPairReturn/split/arm64-linux (0.35s)
+    --- PASS: TestSelfHostPairReturn/split/wasm32-wasi (0.36s)
+    --- PASS: TestSelfHostPairReturn/forward/x86-64-linux (0.31s)
+    --- PASS: TestSelfHostPairReturn/forward/arm64-linux (0.32s)
+    --- PASS: TestSelfHostPairReturn/forward/wasm32-wasi (0.31s)
+    --- PASS: TestSelfHostPairReturn/wide/x86-64-linux (0.30s)
+    --- PASS: TestSelfHostPairReturn/wide/arm64-linux (0.29s)
+    --- PASS: TestSelfHostPairReturn/wide/wasm32-wasi (0.29s)
+    --- PASS: TestSelfHostPairReturn/tail-phi/x86-64-linux (0.31s)
+    --- PASS: TestSelfHostPairReturn/tail-phi/arm64-linux (0.30s)
+    --- PASS: TestSelfHostPairReturn/tail-phi/wasm32-wasi (0.31s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	39.697s

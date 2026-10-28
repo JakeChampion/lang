@@ -8280,18 +8280,20 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
   let uncalled: boolean[] = [];
   let always: boolean[] = [];
   let arms: util.NameIndex = util.name_index(dispatched_arms(all));
+  let keys: util.NameIndex = decl_keys(mod.funcs);
   let sw: optbisect.Switches = optbisect.switches();
   let i: i32 = 0;
   while (i < all.len()) {
     let p: Produced = all[i];
     let usable: boolean = p.ok && !p.template && !p.bodyless;
+    let d: i32 = decl_of(p, i, mod.funcs.len(), keys);
     funcs = funcs.append(p.func);
     modes = modes.append(p.modes);
     rewrite = rewrite.append(usable);
-    inlinable = inlinable.append(usable && i < mod.funcs.len() && !mod.funcs[i].no_inline && !mod.funcs[i].fip && !mod.funcs[i].fbip && optbisect.allowed_by(sw, "inline", names[i]));
+    inlinable = inlinable.append(usable && d >= 0 && inlinable_decl(mod.funcs[d]) && optbisect.allowed_by(sw, "inline", names[i]));
     unnamed = unnamed.append(outside_unnamed(p, names[i], i, mod));
     uncalled = uncalled.append(outside_uncalled(p, names[i], i, mod, arms));
-    always = always.append(i < mod.funcs.len() && mod.funcs[i].always_inline);
+    always = always.append(d >= 0 && mod.funcs[d].always_inline);
     i = i + 1;
   }
   let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, size);
@@ -8513,6 +8515,27 @@ function unnamed(all: Produced[], names: string[], spliced: boolean[], mod: pars
   return out;
 }
 
+// The declaration a function was built from: its own, or the generic one
+// an instance names by key.
+function decl_of(p: Produced, i: i32, ndecls: i32, keys: util.NameIndex): i32 {
+  if (i < ndecls) {
+    return i;
+  }
+  return keys.find(p.key);
+}
+
+function decl_keys(decls: parser.FuncDecl[]): util.NameIndex {
+  let out: string[] = [];
+  for fd in decls {
+    out = out.append(parser.decl_key(fd));
+  }
+  return util.name_index(out);
+}
+
+function inlinable_decl(fd: parser.FuncDecl): boolean {
+  return !fd.no_inline && !fd.fip && !fd.fbip;
+}
+
 function outside_unnamed(p: Produced, name: string, i: i32, mod: parser.Module): boolean {
   if (p.template || p.bodyless || !p.ok || name == "main" || util.str_has_prefix(name, "__") || util.contains(name, ".")) {
     return false;
@@ -8572,9 +8595,11 @@ function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl
   if (inline_on()) {
     let inlinable: boolean[] = [];
     let modes: i32[][] = [];
+    let keys: util.NameIndex = decl_keys(decls);
     let at: i32 = 0;
     while (at < all.len()) {
-      inlinable = inlinable.append(usable[at] && at < decls.len() && !decls[at].no_inline && !decls[at].fip && !decls[at].fbip && optbisect.allowed_by(sw, "inline", names[at]));
+      let d: i32 = decl_of(all[at], at, decls.len(), keys);
+      inlinable = inlinable.append(usable[at] && d >= 0 && inlinable_decl(decls[d]) && optbisect.allowed_by(sw, "inline", names[at]));
       modes = modes.append(all[at].modes);
       at = at + 1;
     }
