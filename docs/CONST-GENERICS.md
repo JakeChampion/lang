@@ -2,7 +2,7 @@
 
 Status: [plan] CG1 and CG2 ship. A function, a struct, an enum, a type
 alias, an impl or a trait takes a const parameter. `Vec[N, T]` is the second
-spelling of the lane types (§4). CG3a and CG3b ship, and CG3c is a plan.
+spelling of the lane types (§4). CG3 ships.
 
 A const parameter is a generic parameter whose argument is an integer, not a
 type. `Vec[N, T]` is the first consumer: it is a lane type of `N` lanes of
@@ -253,7 +253,7 @@ places each compiler has to change.
     (`compiler/semunroll.fern`). Each copy of the body reads the induction
     variable as a constant. A constant fold then
     lets `semthread` remove the branches of a lane index that an `@inline`
-    method tests. Thus a lane loop `while (i < N)` costs the same as the
+    method tests. Thus a lane loop `for i in 0..N` costs the same as the
     lanes written out one by one.
 
     The gate is the conformance case `loop_unroll_counted` on every engine,
@@ -261,9 +261,14 @@ places each compiler has to change.
   - **CG3b (done).** `@inline` and `@noinline` on an impl method, and an
     impl for a generic `Vec` (§2.3) in both front ends. The gate is the
     conformance case `vec_generic_impls` on every engine.
-  - **CG3c.** `Lanes.with_lane` with a variable index, and one
-    `impl Math for Vec[N, T]` in place of the two per-lane impls of
-    `std/simd`.
+  - **CG3c (done).** `Lanes.with_lane(i, x)` gives a copy of a value with
+    lane `i` set to `x`. One `impl Math for Vec[N, T]` replaces the two
+    per-lane impls of `std/simd`. Each method reads, computes and sets each
+    lane in a `for i in 0..N` loop. The unroller accepts the loop that a
+    range gives. A lane read of a vector built from its lanes is that
+    operand. So each method compiles to the code of the impl it replaces, and
+    gives the same bits. The gates are `tests/stdlib/simd_test.fern` and the
+    lane conformance cases on every engine.
 
 ## 5. Not in this design
 

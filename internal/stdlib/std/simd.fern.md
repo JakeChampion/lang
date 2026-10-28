@@ -28,6 +28,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<6 impl Lanes for f32x4>>
 
+<<impl[const N: i32, T] Math for Vec[N, T]>>
+
 <<7 pub function eq[T: Lanes](a: T, b: T): T>>
 
 <<8 pub struct Dual[T]>>
@@ -81,6 +83,7 @@ pub trait Lanes: num.Num + num.Neg {
   const SPLIT: f64;
   function splat(x: f64): Self;
   function lane(self: Self, i: i32): f64;
+  function with_lane(self: Self, i: i32, x: f64): Self;
   function mul_add(self: Self, b: Self, c: Self): Self;
   function sqrt(self: Self): Self;
   function abs(self: Self): Self;
@@ -115,6 +118,9 @@ impl Lanes for f64 {
   }
   function lane(self: f64, i: i32): f64 {
     return self;
+  }
+  function with_lane(self: f64, i: i32, x: f64): f64 {
+    return x;
   }
   function lt(self: f64, o: f64): f64 {
     if (self < o) {
@@ -172,6 +178,9 @@ impl Lanes for f32 {
   function lane(self: f32, i: i32): f64 {
     return self as f64;
   }
+  function with_lane(self: f32, i: i32, x: f64): f32 {
+    return x as f32;
+  }
   function lt(self: f32, o: f32): f32 {
     if (self < o) {
       return 1.0;
@@ -203,11 +212,19 @@ impl Lanes for f64x2 {
   function splat(x: f64): f64x2 {
     return __f64x2_splat(x);
   }
+  @inline
   function lane(self: f64x2, i: i32): f64 {
     if (i == 0) {
       return __f64x2_lane(self, 0);
     }
     return __f64x2_lane(self, 1);
+  }
+  @inline
+  function with_lane(self: f64x2, i: i32, x: f64): f64x2 {
+    if (i == 0) {
+      return __f64x2_of(x, __f64x2_lane(self, 1));
+    }
+    return __f64x2_of(__f64x2_lane(self, 0), x);
   }
   function mul_add(self: f64x2, b: f64x2, c: f64x2): f64x2 {
     return __f64x2_mul_add(self, b, c);
@@ -243,39 +260,6 @@ impl Lanes for f64x2 {
     return __f64x2_of(__f64x2_lane(self, 0) * pow2_f64(__f64x2_lane(k, 0)), __f64x2_lane(self, 1) * pow2_f64(__f64x2_lane(k, 1)));
   }
 }
-
-impl Math for f64x2 {
-  function exp(self: f64x2): f64x2 {
-    return __f64x2_of(__f64x2_lane(self, 0).exp(), __f64x2_lane(self, 1).exp());
-  }
-  function log(self: f64x2): f64x2 {
-    return __f64x2_of(__f64x2_lane(self, 0).log(), __f64x2_lane(self, 1).log());
-  }
-  function sin(self: f64x2): f64x2 {
-    return __f64x2_of(__f64x2_lane(self, 0).sin(), __f64x2_lane(self, 1).sin());
-  }
-  function cos(self: f64x2): f64x2 {
-    return __f64x2_of(__f64x2_lane(self, 0).cos(), __f64x2_lane(self, 1).cos());
-  }
-  function tan(self: f64x2): f64x2 {
-    return __f64x2_of(__f64x2_lane(self, 0).tan(), __f64x2_lane(self, 1).tan());
-  }
-  function tanh(self: f64x2): f64x2 {
-    return __f64x2_of(__f64x2_lane(self, 0).tanh(), __f64x2_lane(self, 1).tanh());
-  }
-  function atan(self: f64x2): f64x2 {
-    return __f64x2_of(__f64x2_lane(self, 0).atan(), __f64x2_lane(self, 1).atan());
-  }
-  function expm1(self: f64x2): f64x2 {
-    return __f64x2_of(__f64x2_lane(self, 0).expm1(), __f64x2_lane(self, 1).expm1());
-  }
-  function log1p(self: f64x2): f64x2 {
-    return __f64x2_of(__f64x2_lane(self, 0).log1p(), __f64x2_lane(self, 1).log1p());
-  }
-  function pow(self: f64x2, y: f64x2): f64x2 {
-    return __f64x2_of(__f64x2_lane(self, 0).pow(__f64x2_lane(y, 0)), __f64x2_lane(self, 1).pow(__f64x2_lane(y, 1)));
-  }
-}
 ```
 
 ### `6 impl Lanes for f32x4`
@@ -288,6 +272,7 @@ impl Lanes for f32x4 {
   function splat(x: f64): f32x4 {
     return __f32x4_splat(x as f32);
   }
+  @inline
   function lane(self: f32x4, i: i32): f64 {
     if (i == 0) {
       return __f32x4_lane(self, 0) as f64;
@@ -299,6 +284,23 @@ impl Lanes for f32x4 {
       return __f32x4_lane(self, 2) as f64;
     }
     return __f32x4_lane(self, 3) as f64;
+  }
+  @inline
+  function with_lane(self: f32x4, i: i32, x: f64): f32x4 {
+    let a: f32 = __f32x4_lane(self, 0);
+    let b: f32 = __f32x4_lane(self, 1);
+    let c: f32 = __f32x4_lane(self, 2);
+    let d: f32 = __f32x4_lane(self, 3);
+    if (i == 0) {
+      return __f32x4_of(x as f32, b, c, d);
+    }
+    if (i == 1) {
+      return __f32x4_of(a, x as f32, c, d);
+    }
+    if (i == 2) {
+      return __f32x4_of(a, b, x as f32, d);
+    }
+    return __f32x4_of(a, b, c, x as f32);
   }
   function mul_add(self: f32x4, b: f32x4, c: f32x4): f32x4 {
     return __f32x4_mul_add(self, b, c);
@@ -334,37 +336,84 @@ impl Lanes for f32x4 {
     return __f32x4_of((__f32x4_lane(self, 0) as f64 * pow2_f64(__f32x4_lane(k, 0) as f64)) as f32, (__f32x4_lane(self, 1) as f64 * pow2_f64(__f32x4_lane(k, 1) as f64)) as f32, (__f32x4_lane(self, 2) as f64 * pow2_f64(__f32x4_lane(k, 2) as f64)) as f32, (__f32x4_lane(self, 3) as f64 * pow2_f64(__f32x4_lane(k, 3) as f64)) as f32);
   }
 }
+```
 
-impl Math for f32x4 {
-  function exp(self: f32x4): f32x4 {
-    return __f32x4_of(__f32x4_lane(self, 0).exp(), __f32x4_lane(self, 1).exp(), __f32x4_lane(self, 2).exp(), __f32x4_lane(self, 3).exp());
+### `impl[const N: i32, T] Math for Vec[N, T]`
+
+Each method applies the scalar method to each lane. The loop has a constant trip count, so the compiler unrolls it and reads each lane directly.
+
+```fern
+<<impl[const N: i32, T] Math for Vec[N, T]>>=
+impl[const N: i32, T] Math for Vec[N, T] {
+  function exp(self: Vec[N, T]): Vec[N, T] {
+    let out: Vec[N, T] = self;
+    for i in 0..N {
+      out = out.with_lane(i, self.lane(i).exp());
+    }
+    return out;
   }
-  function log(self: f32x4): f32x4 {
-    return __f32x4_of(__f32x4_lane(self, 0).log(), __f32x4_lane(self, 1).log(), __f32x4_lane(self, 2).log(), __f32x4_lane(self, 3).log());
+  function log(self: Vec[N, T]): Vec[N, T] {
+    let out: Vec[N, T] = self;
+    for i in 0..N {
+      out = out.with_lane(i, self.lane(i).log());
+    }
+    return out;
   }
-  function sin(self: f32x4): f32x4 {
-    return __f32x4_of(__f32x4_lane(self, 0).sin(), __f32x4_lane(self, 1).sin(), __f32x4_lane(self, 2).sin(), __f32x4_lane(self, 3).sin());
+  function sin(self: Vec[N, T]): Vec[N, T] {
+    let out: Vec[N, T] = self;
+    for i in 0..N {
+      out = out.with_lane(i, self.lane(i).sin());
+    }
+    return out;
   }
-  function cos(self: f32x4): f32x4 {
-    return __f32x4_of(__f32x4_lane(self, 0).cos(), __f32x4_lane(self, 1).cos(), __f32x4_lane(self, 2).cos(), __f32x4_lane(self, 3).cos());
+  function cos(self: Vec[N, T]): Vec[N, T] {
+    let out: Vec[N, T] = self;
+    for i in 0..N {
+      out = out.with_lane(i, self.lane(i).cos());
+    }
+    return out;
   }
-  function tan(self: f32x4): f32x4 {
-    return __f32x4_of(__f32x4_lane(self, 0).tan(), __f32x4_lane(self, 1).tan(), __f32x4_lane(self, 2).tan(), __f32x4_lane(self, 3).tan());
+  function tan(self: Vec[N, T]): Vec[N, T] {
+    let out: Vec[N, T] = self;
+    for i in 0..N {
+      out = out.with_lane(i, self.lane(i).tan());
+    }
+    return out;
   }
-  function tanh(self: f32x4): f32x4 {
-    return __f32x4_of(__f32x4_lane(self, 0).tanh(), __f32x4_lane(self, 1).tanh(), __f32x4_lane(self, 2).tanh(), __f32x4_lane(self, 3).tanh());
+  function tanh(self: Vec[N, T]): Vec[N, T] {
+    let out: Vec[N, T] = self;
+    for i in 0..N {
+      out = out.with_lane(i, self.lane(i).tanh());
+    }
+    return out;
   }
-  function atan(self: f32x4): f32x4 {
-    return __f32x4_of(__f32x4_lane(self, 0).atan(), __f32x4_lane(self, 1).atan(), __f32x4_lane(self, 2).atan(), __f32x4_lane(self, 3).atan());
+  function atan(self: Vec[N, T]): Vec[N, T] {
+    let out: Vec[N, T] = self;
+    for i in 0..N {
+      out = out.with_lane(i, self.lane(i).atan());
+    }
+    return out;
   }
-  function expm1(self: f32x4): f32x4 {
-    return __f32x4_of(__f32x4_lane(self, 0).expm1(), __f32x4_lane(self, 1).expm1(), __f32x4_lane(self, 2).expm1(), __f32x4_lane(self, 3).expm1());
+  function expm1(self: Vec[N, T]): Vec[N, T] {
+    let out: Vec[N, T] = self;
+    for i in 0..N {
+      out = out.with_lane(i, self.lane(i).expm1());
+    }
+    return out;
   }
-  function log1p(self: f32x4): f32x4 {
-    return __f32x4_of(__f32x4_lane(self, 0).log1p(), __f32x4_lane(self, 1).log1p(), __f32x4_lane(self, 2).log1p(), __f32x4_lane(self, 3).log1p());
+  function log1p(self: Vec[N, T]): Vec[N, T] {
+    let out: Vec[N, T] = self;
+    for i in 0..N {
+      out = out.with_lane(i, self.lane(i).log1p());
+    }
+    return out;
   }
-  function pow(self: f32x4, y: f32x4): f32x4 {
-    return __f32x4_of(__f32x4_lane(self, 0).pow(__f32x4_lane(y, 0)), __f32x4_lane(self, 1).pow(__f32x4_lane(y, 1)), __f32x4_lane(self, 2).pow(__f32x4_lane(y, 2)), __f32x4_lane(self, 3).pow(__f32x4_lane(y, 3)));
+  function pow(self: Vec[N, T], y: Vec[N, T]): Vec[N, T] {
+    let out: Vec[N, T] = self;
+    for i in 0..N {
+      out = out.with_lane(i, self.lane(i).pow(y.lane(i)));
+    }
+    return out;
   }
 }
 ```
@@ -452,6 +501,9 @@ impl[T: Lanes] Lanes for Dual[T] {
   }
   function lane(self: Dual[T], i: i32): f64 {
     return self.v.lane(i);
+  }
+  function with_lane(self: Dual[T], i: i32, x: f64): Dual[T] {
+    return Dual { v: self.v.with_lane(i, x), d: self.d.with_lane(i, 0.0) };
   }
   function mul_add(self: Dual[T], b: Dual[T], c: Dual[T]): Dual[T] {
     return Dual { v: self.v.mul_add(b.v, c.v), d: self.d * b.v + self.v * b.d + c.d };
@@ -656,6 +708,9 @@ impl[T: Lanes] Lanes for DoubleDouble[T] {
   }
   function lane(self: DoubleDouble[T], i: i32): f64 {
     return self.hi.lane(i) + self.lo.lane(i);
+  }
+  function with_lane(self: DoubleDouble[T], i: i32, x: f64): DoubleDouble[T] {
+    return DoubleDouble { hi: self.hi.with_lane(i, x), lo: self.lo.with_lane(i, 0.0) };
   }
   function mul_add(self: DoubleDouble[T], b: DoubleDouble[T], c: DoubleDouble[T]): DoubleDouble[T] {
     return self * b + c;

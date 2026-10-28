@@ -214,9 +214,10 @@ separate change to the contract of `Math`.
   rule to the inner type's functions; `DoubleDouble` reduces the argument
   and sums a series at its own precision, seeded by the inner type's own
   result where a Newton step doubles it (log, atan, sqrt).
-- **`f64x2` and `f32x4`** (slice 5a): `impl Lanes`, `impl Math` and the
-  `std/num` operator traits, so a generic kernel takes a lane type as its
-  type argument.
+- **`f64x2` and `f32x4`** (slice 5a): `impl Lanes` and the `std/num`
+  operator traits, so a generic kernel takes a lane type as its type
+  argument. Both get `Math` from one `impl Math for Vec[N, T]`
+  (`CONST-GENERICS.md` CG3c).
 
 On a lane type, `lt` and `ne` turn the all-ones bit masks of the builtins
 into the masks of the contract (1.0 and 0.0). `select` reads a lane that is not
