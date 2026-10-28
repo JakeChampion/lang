@@ -3961,7 +3961,8 @@ struct __Flight { job: __Job, wait: async.Wait, fd: i32, set: i32[], due: i64, m
 
 // keys counts the flights that wait on a key or run on a connection. A spot
 // names one such flight, and a lookup trusts it only when the count is 1.
-struct __Flights { all: __Flight[], keys: i64[], counts: i32[], spots: i32[], used: i32 }
+// soonest is never later than the soonest deadline of any flight.
+struct __Flights { all: __Flight[], keys: i64[], counts: i32[], spots: i32[], used: i32, soonest: i64 }
 
 const FLIGHT_SHARED: i32 = -2;
 
@@ -4396,7 +4397,7 @@ function __flight_at(fls: __Flights, fd: i32): i32 {
 }
 
 function __flights_none(): __Flights {
-  return __Flights { all: [], keys: [], counts: [], spots: [], used: 0 };
+  return __Flights { all: [], keys: [], counts: [], spots: [], used: 0, soonest: 0 - 1 as i64 };
 }
 
 function __flights_of(list: __Flight[]): __Flights {
@@ -4410,7 +4411,7 @@ function __flights_of(list: __Flight[]): __Flights {
 function __flights_add(fls: __Flights, fl: __Flight): __Flights {
   fls = __flights_room(fls, __flight_keys(fl));
   fls = __flights_count_all(fls, fl, fls.all.len());
-  return __Flights { ...fls, all: fls.all.append(fl) };
+  return __Flights { ...fls, all: fls.all.append(fl), soonest: __flight_soonest(fls.soonest, fl) };
 }
 
 function __flights_put(fls: __Flights, at: i32, fl: __Flight): __Flights {
@@ -4420,7 +4421,7 @@ function __flights_put(fls: __Flights, at: i32, fl: __Flight): __Flights {
     fls = __flights_uncount_all(fls, old, at);
     fls = __flights_count_all(fls, fl, at);
   }
-  return __Flights { ...fls, all: fls.all.with(at, fl) };
+  return __Flights { ...fls, all: fls.all.with(at, fl), soonest: __flight_soonest(fls.soonest, fl) };
 }
 
 function __flights_remove(fls: __Flights, at: i32): __Flights {
@@ -4504,7 +4505,7 @@ function __flights_room(fls: __Flights, extra: i32): __Flights {
   }
   let all: __Flight[] = fls.all;
   let none: __Flight[] = [];
-  let out: __Flights = __Flights { all: none, keys: keys, counts: counts, spots: spots, used: 0 };
+  let out: __Flights = __Flights { all: none, keys: keys, counts: counts, spots: spots, used: 0, soonest: fls.soonest };
   for p in 0..all.len() {
     out = __flights_count_all(out, all[p], p);
   }
@@ -4586,12 +4587,7 @@ function __flights_move_spot(fls: __Flights, key: i64, from: i32, to: i32): __Fl
 }
 
 function __flights_timeout(fls: __Flights, now: i64): i32 {
-  let best: i64 = 0 - 1 as i64;
-  for fl in fls.all {
-    best = __sooner(best, fl.due);
-    best = __sooner(best, fl.idle);
-    best = __sooner(best, fl.ends);
-  }
+  let best: i64 = fls.soonest;
   if (best < 0 as i64) {
     return -1;
   }
@@ -4603,6 +4599,18 @@ function __flights_timeout(fls: __Flights, now: i64): i32 {
     return 2147483647;
   }
   return ms as i32;
+}
+
+function __flight_soonest(best: i64, fl: __Flight): i64 {
+  return __sooner(__sooner(__sooner(best, fl.due), fl.idle), fl.ends);
+}
+
+function __flights_resoon(fls: __Flights): __Flights {
+  let best: i64 = 0 - 1 as i64;
+  for fl in fls.all {
+    best = __flight_soonest(best, fl);
+  }
+  return __Flights { ...fls, soonest: best };
 }
 
 function __sooner(a: i64, b: i64): i64 {
@@ -4626,6 +4634,9 @@ function __least_timeout(a: i32, b: i32): i32 {
 }
 
 function __flights_expire[D: async.Driver](drv: D, c: __Conns, fls: __Flights, opts: Config, clk: __Clock): (__Conns, __Flights) {
+  if (fls.soonest < 0 as i64 || fls.soonest > monotonic_ns()) {
+    return (c, fls);
+  }
   let again: boolean = fls.all.len() > 0;
   while (again) {
     again = false;
@@ -4651,7 +4662,7 @@ function __flights_expire[D: async.Driver](drv: D, c: __Conns, fls: __Flights, o
       i = i + 1;
     }
   }
-  return (c, fls);
+  return (c, __flights_resoon(fls));
 }
 
 function __flight_overdue[D: async.Driver](drv: D, c: __Conns, fls: __Flights, i: i32, opts: Config, clk: __Clock): (__Conns, __Flights) {
