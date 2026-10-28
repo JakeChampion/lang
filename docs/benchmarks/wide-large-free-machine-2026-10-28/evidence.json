@@ -1,0 +1,142 @@
+{
+  "source": "12129f769fa75a9327892e6535dbef12f7b51a27",
+  "PR": 13747,
+  "native_issue": 13744,
+  "source_commit_precedes_final_campaigns": true,
+  "reference_bundle": "4d22272a26f32fc656b487b84a930e9fa7e2f6a102977ecd3d80d5a1e9acf9ae",
+  "case_count_per_target": 336,
+  "proved_per_target": 160,
+  "rejected_per_target": 176,
+  "workers_per_target": 42,
+  "total_workers": 126,
+  "records_exactly_equal": true,
+  "all_workers_nonzero_balanced_zero_live": true,
+  "build": {
+    "source": "12129f769fa75a9327892e6535dbef12f7b51a27",
+    "make_exit": 0,
+    "version_exit": 0,
+    "version": "fern 12129f769fa7\nbuilt for x86-64-linux",
+    "seconds": 87.47228574752808,
+    "sources_unchanged": true,
+    "binaries": {
+      "bin/fern": "1a77eb1627d6c48198ea59995fa99126b2ba9e5618bceb9161fcf3e9c6b3a45b",
+      "bin/fern-selfhost": "db42054a760c888b803ac61d1cdc625c79add769062463cb50878ce50097c544"
+    },
+    "worktree_clean": true
+  },
+  "checks": [
+    {
+      "name": "source-gate",
+      "exit": 0,
+      "seconds": 267.7885627746582,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "targets-complexity",
+      "exit": 0,
+      "seconds": 84.09753322601318,
+      "PASS": 32,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "Fern-format",
+      "exit": 0,
+      "seconds": 2.707001209259033,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "Go-build",
+      "exit": 0,
+      "seconds": 3.2061514854431152,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "Go-vet",
+      "exit": 0,
+      "seconds": 10.5919029712677,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "aux",
+      "exit": 0,
+      "seconds": 6.669068098068237,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "source-audit",
+      "exit": 0,
+      "seconds": 10.57017207145691,
+      "PASS": 219,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "reference-exact",
+      "exit": 0,
+      "seconds": 1.2121269702911377,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "diff",
+      "exit": 0,
+      "seconds": 0.032929420471191406,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    }
+  ],
+  "Go_oracle_actual_build": "12129f769fa75a9327892e6535dbef12f7b51a27",
+  "Go_oracle_postrun_sha256": "add0202f0209d379e0f5cb3fb881889d92b5331adabe6ad54bbabfbab48b72e5",
+  "tool_identity_basis": "Explicit earlier pre-campaign identities, confirmed after launch and after all checks. CLI and raw identities also precede launch in current-build.json.",
+  "sourcegate_node_count_unclaimed": true,
+  "initial_source": "8c688043465450e18520d7d32bfb0db8dde32ebf + UNCOMMITTED",
+  "old_sources_and_domains_unchanged": true,
+  "stock_retained_failure_persists": true,
+  "retained_driver_integration": false,
+  "full_CI_recovery": false,
+  "M5_epic_gates": "OPEN",
+  "manifest": [
+    {
+      "original": "/tmp/image-wide-machine-proof-evidence-secondary/final-corpus-x86-64-linux.json",
+      "published": "large-free-wide-machine-x86-64-linux.json.gz",
+      "original_sha256": "799c3ee4c6f726e3875d30b208a12677347707e80698ae1a5be3c6a726014303",
+      "published_sha256": "24eea857852db5146ecb581f1c390648a4cda16b0b35ffe277e678c0126305e5",
+      "published_bytes": 190467
+    },
+    {
+      "original": "/tmp/image-wide-machine-proof-evidence-secondary/final-corpus-wasm32-wasi.json",
+      "published": "large-free-wide-machine-wasm32-wasi.json.gz",
+      "original_sha256": "8497d0d03987c9cdc644d7a665d16a6bce284a01c90bfb8aa817bf9969e88253",
+      "published_sha256": "1e007a31982def37a41b0acbf1ac5b956baa1bc1c2ac7da42ebe6ac9693951d2",
+      "published_bytes": 190548
+    },
+    {
+      "original": "/tmp/image-wide-machine-proof-evidence-secondary/final-corpus-arm64-linux.json",
+      "published": "large-free-wide-machine-arm64-linux.json.gz",
+      "original_sha256": "787d6a9eb1717fa170f132f5177f479d90c65473beffe0956efbb1a323a85f0c",
+      "published_sha256": "2b11e9506c30dc3217212d9d68f99d628b95563ed5262a197cb6b711531204bc",
+      "published_bytes": 190505
+    },
+    {
+      "original": "Qualification records and explicit historical supporting observations",
+      "published": "qualification-records.tar.gz",
+      "original_sha256": null,
+      "published_sha256": "5f933c284621bc5c1efa92272d2197f2b7f494528c4b1ce9e26e0d31375dfd4b",
+      "published_bytes": 4298930,
+      "member_count": 659
+    }
+  ]
+}
