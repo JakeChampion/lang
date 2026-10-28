@@ -4382,15 +4382,11 @@ function __flight_at(fls: __Flight[], fd: i32): i32 {
 }
 
 function __flights_remove(fls: __Flight[], at: i32): __Flight[] {
-  let out: __Flight[] = [];
-  let i: i32 = 0;
-  while (i < fls.len()) {
-    if (i != at) {
-      out = out.append(fls[i]);
-    }
-    i = i + 1;
+  let last: i32 = fls.len() - 1;
+  if (at != last) {
+    fls = fls.with(at, fls[last]);
   }
-  return out;
+  return fls.truncate(last);
 }
 
 function __flights_timeout(fls: __Flight[], now: i64): i32 {

@@ -40,7 +40,7 @@ function hoist_block(insts: ssa.SInst[]): (ssa.SInst[], i32) {
 }
 
 function consumed(ins: ssa.SInst): i32 {
-  if ((ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.append()) && ins.args.len() > 0) {
+  if ((ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.append() || ins.kind_tag == ssasem.truncate()) && ins.args.len() > 0) {
     return ins.args[0];
   }
   return 0 - 1;

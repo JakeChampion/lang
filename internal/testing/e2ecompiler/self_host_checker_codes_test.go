@@ -190,6 +190,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"generic-array-result-receiver", `function mk[T](): T[] { return []; } function main(): i32 { return mk().len(); }`, []string{"E040"}},
 		{"generic-array-result-unused", `function mk[T](): T[] { return []; } function main(): i32 { mk(); return 0; }`, []string{"E040"}},
 		{"raw-name-shadow", `function __raw_data(s: string): i32 { return 1; } function main(): i32 { return __raw_data("a"); }`, nil},
+		{"array-truncate", `function main(): i32 { let xs: i32[] = [1, 2]; xs = xs.truncate(1); return xs.len(); }`, nil},
+		{"array-truncate-unused", `function main(): i32 { let xs: i32[] = [1, 2]; xs.truncate(1); return xs.len(); }`, []string{"E055"}},
+		{"array-truncate-length-type", `function main(): i32 { let xs: i32[] = [1, 2]; xs = xs.truncate("1"); return xs.len(); }`, []string{"E038"}},
+		{"array-truncate-arity", `function main(): i32 { let xs: i32[] = [1, 2]; xs = xs.truncate(); return xs.len(); }`, []string{"E004"}},
 
 		{"literal-match-wrong-type", `function main(): i32 { match (true) { 1 => { return 1; }, _ => { return 0; } } }`, []string{"E035"}},
 		{"literal-value-match-wrong-type", `function main(): i32 { let n = match (true) { 1 => 1, _ => 0 }; return n; }`, []string{"E035"}},

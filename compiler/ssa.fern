@@ -245,6 +245,7 @@ function semantic_kind_names(): string[] {
     "arr_join", "arr_slice", "invalid", "invalid",
     "invalid", "invalid", "invalid", "dyn_up", "dyn_box",
     "dyn_is", "dyn_as", "hole_at", "hole_fill", "array_lend", "str_byte_view", "append_range",
+    "array_reserve", "arr_concat", "bytes_new", "truncate",
   ];
 }
 

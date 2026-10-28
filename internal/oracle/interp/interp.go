@@ -646,6 +646,7 @@ func New() *Interp {
 	i.Builtins["__method_Writer_dup_onto"] = &Builtin{Fn: builtinDupOnto}
 	i.Builtins["__method_Array_push"] = &Builtin{Fn: builtinArrayPush}
 	i.Builtins["__method_Array_set"] = &Builtin{Fn: builtinArraySet}
+	i.Builtins["__method_Array_truncate"] = &Builtin{Fn: builtinArrayTruncate}
 	i.Builtins["map_new"] = &Builtin{Fn: builtinMapNew}
 	i.Builtins["cell_new"] = &Builtin{Fn: builtinCellNew}
 	i.Builtins["__method_Cell_get"] = &Builtin{Fn: builtinCellGet}
@@ -7791,6 +7792,24 @@ func movesFirst(rhs ast.Expr, name string) bool {
 		}
 		e = c.Args[0]
 	}
+}
+
+func builtinArrayTruncate(ip *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("__method_Array_truncate: expected 2 args (arr, n), got %d", len(args))
+	}
+	arr, ok := args[0].(Array)
+	if !ok {
+		return nil, fmt.Errorf("__method_Array_truncate: receiver must be array, got %T", args[0])
+	}
+	n, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("__method_Array_truncate: length must be number, got %T", args[1])
+	}
+	keep := max(0, min(int(n), len(arr.Elems())))
+	out := newArray(keep)
+	copy(out.Elems(), arr.Elems()[:keep])
+	return out, nil
 }
 
 func isUpdateCall(c *ast.Call) bool {

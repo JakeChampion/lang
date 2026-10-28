@@ -2079,6 +2079,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.Methods["Array.append"] = "__method_Array_push"
 	c.info.Methods["Array.with"] = "__method_Array_set"
+	c.info.Methods["Array.truncate"] = "__method_Array_truncate"
+	c.info.FuncSigs["__method_Array_truncate"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: arrayElemParam},
+			ast.NumberType{},
+		},
+		Result: ast.ArrayType{Elem: arrayElemParam},
+	}
 	delete(c.info.Methods, "Map.set")
 	delete(c.info.Methods, "Map.clear")
 	delete(c.info.Methods, "Array.set")
@@ -7764,11 +7772,12 @@ func (c *checker) hasDropImpl(typeName string) bool {
 }
 
 var pureCollectionMutators = map[string]string{
-	"__method_Map_set":    "insert",
-	"__method_Map_remove": "remove",
-	"__method_Map_clear":  "cleared",
-	"__method_Array_set":  "with",
-	"__method_Array_push": "append",
+	"__method_Map_set":        "insert",
+	"__method_Map_remove":     "remove",
+	"__method_Map_clear":      "cleared",
+	"__method_Array_set":      "with",
+	"__method_Array_push":     "append",
+	"__method_Array_truncate": "truncate",
 }
 
 var retiredCollectionSpellings = map[string]string{
