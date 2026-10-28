@@ -160,7 +160,7 @@ function bound(port: string, cert: string, key: string): Option[Server] {
     return None;
   };
   let cfg: conn.Config = conn.config(["fern-echo"]).with_streams(16 as i64, 16 as i64, 262144 as i64, 1048576 as i64).server_side(id);
-  let Some(addr) = net.socket_addr_parse("127.0.0.1:" + port) else {
+  let Ok(addr) = net.socket_addr_parse("127.0.0.1:" + port) else {
     return None;
   };
   let Ok(sock) = net.udp_socket(addr) else {

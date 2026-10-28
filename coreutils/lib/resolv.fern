@@ -228,10 +228,10 @@ pub function resolve(name: string): Option[i32] {
 
 pub function canon_host(name: string): Option[string] {
   match (net.ip_parse(name)) {
-    Some(_) => {
+    Ok(_) => {
       return Some(name);
     },
-    None => {}
+    Err(_) => {}
   }
   let sources: Source[] = system_sources();
   let i: i32 = 0;

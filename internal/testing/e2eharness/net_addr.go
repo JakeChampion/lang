@@ -13,40 +13,41 @@ func NetAddrProbe() string {
 import "std/errno";
 import "std/error";
 import "std/option";
+import "std/result";
 import "core/cmp";
 
 ` + HostErrnoFern() + `
 function v6rt(s: string, want: string): boolean {
     match (net.ipv6_parse(s)) {
-        Some(ip) => { return ip.is_v6() && ip.to_string() == want; },
-        None => { return false; },
+        Ok(ip) => { return ip.is_v6() && ip.to_string() == want; },
+        Err(_) => { return false; },
     }
 }
 function v6bad(s: string): boolean {
-    match (net.ipv6_parse(s)) { Some(ip) => { return false; }, None => { return true; } }
+    match (net.ipv6_parse(s)) { Ok(ip) => { return false; }, Err(_) => { return true; } }
 }
 function v4rt(s: string, want: string): boolean {
     match (net.ipv4_parse(s)) {
-        Some(ip) => { return ip.is_v4() && ip.to_string() == want; },
-        None => { return false; },
+        Ok(ip) => { return ip.is_v4() && ip.to_string() == want; },
+        Err(_) => { return false; },
     }
 }
 function v4bad(s: string): boolean {
-    match (net.ipv4_parse(s)) { Some(ip) => { return false; }, None => { return true; } }
+    match (net.ipv4_parse(s)) { Ok(ip) => { return false; }, Err(_) => { return true; } }
 }
 function sart(s: string, want: string): boolean {
     match (net.socket_addr_parse(s)) {
-        Some(sa) => { return sa.to_string() == want; },
-        None => { return false; },
+        Ok(sa) => { return sa.to_string() == want; },
+        Err(_) => { return false; },
     }
 }
 function sabad(s: string): boolean {
-    match (net.socket_addr_parse(s)) { Some(sa) => { return false; }, None => { return true; } }
+    match (net.socket_addr_parse(s)) { Ok(sa) => { return false; }, Err(_) => { return true; } }
 }
 function ip(s: string): net.IpAddr {
     match (net.ip_parse(s)) {
-        Some(a) => { return a; },
-        None => { return net.ipv4(0, 0, 0, 0); },
+        Ok(a) => { return a; },
+        Err(_) => { return net.ipv4(0, 0, 0, 0); },
     }
 }
 function show[T: cmp.Display](v: T): string { return v.to_string(); }
