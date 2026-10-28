@@ -24,7 +24,7 @@ A key type that overrides `cmp_prefix` or `cmp_shared` must keep the contract th
 import "std/ordmap";
 
 function main(): i32 {
-  let original = ordmap.ordmap_new[string, i32]();
+  let original = ordmap.new[string, i32]();
   let changed = original.insert("a", 1);
   if (!original.is_empty() || changed.len() != 1) { return 1; }
   return 0;
@@ -1040,12 +1040,12 @@ Merge, intersection and difference walk both maps in order and build the result 
 
 ```fern
 <<public interface>>=
-pub function ordmap_new[K, V](): OrdMap[K, V] {
+pub function new[K, V](): OrdMap[K, V] {
   return OrdMap { root: empty_leaf() };
 }
 
 pub function from[K: cmp.Ord, V](pairs: (K, V)[]): OrdMap[K, V] {
-  let m: OrdMap[K, V] = ordmap_new();
+  let m: OrdMap[K, V] = new();
   for p in pairs {
     m = m.insert(p.0, p.1);
   }

@@ -5,7 +5,7 @@ import "std/i32";
 import "core/iter";
 
 function test_of_dedup(): test.TestOutcome {
-  let s: ordset.OrdSet[i32] = ordset.ordset_of([3, 1, 2, 3, 1]);
+  let s: ordset.OrdSet[i32] = ordset.of([3, 1, 2, 3, 1]);
   if (s.len() != 3 || !s.is_valid()) {
     return test.fail("len " + s.len().to_string() + " != 3");
   }
@@ -14,7 +14,7 @@ function test_of_dedup(): test.TestOutcome {
 }
 
 function test_insert_is_persistent(): test.TestOutcome {
-  let a: ordset.OrdSet[i32] = ordset.ordset_of([1, 2]);
+  let a: ordset.OrdSet[i32] = ordset.of([1, 2]);
   let b: ordset.OrdSet[i32] = a.insert(3);
   if (a.len() != 2 || b.len() != 3) {
     return test.fail("insert mutated receiver");
@@ -23,7 +23,7 @@ function test_insert_is_persistent(): test.TestOutcome {
 }
 
 function test_remove(): test.TestOutcome {
-  let s: ordset.OrdSet[i32] = ordset.ordset_new();
+  let s: ordset.OrdSet[i32] = ordset.new();
   let i: i32 = 0;
   while (i < 500) {
     s = s.insert(i * 31 % 500);
@@ -47,7 +47,7 @@ function test_remove(): test.TestOutcome {
 }
 
 function test_order_and_rank(): test.TestOutcome {
-  let s: ordset.OrdSet[i32] = ordset.ordset_of([50, 10, 40, 20, 30]);
+  let s: ordset.OrdSet[i32] = ordset.of([50, 10, 40, 20, 30]);
   let arr: i32[] = s.to_array();
   if (arr[0] != 10 || arr[4] != 50) {
     return test.fail("order");
@@ -62,8 +62,8 @@ function test_order_and_rank(): test.TestOutcome {
 }
 
 function test_algebra(): test.TestOutcome {
-  let a: ordset.OrdSet[i32] = ordset.ordset_of([1, 2, 3, 4]);
-  let b: ordset.OrdSet[i32] = ordset.ordset_of([3, 4, 5, 6]);
+  let a: ordset.OrdSet[i32] = ordset.of([1, 2, 3, 4]);
+  let b: ordset.OrdSet[i32] = ordset.of([3, 4, 5, 6]);
   let u: ordset.OrdSet[i32] = a.union(b);
   let x: ordset.OrdSet[i32] = a.intersection(b);
   let d: ordset.OrdSet[i32] = a.difference(b);
@@ -77,14 +77,14 @@ function test_algebra(): test.TestOutcome {
   if (ux[0] != 3 || ux[1] != 4 || !d.contains(1) || d.contains(3)) {
     return test.fail("members");
   }
-  if (!ordset.ordset_of([3, 1]).is_subset(a) || a.is_subset(b) || !a.equals(ordset.ordset_of([4, 3, 2, 1]))) {
+  if (!ordset.of([3, 1]).is_subset(a) || a.is_subset(b) || !a.equals(ordset.of([4, 3, 2, 1]))) {
     return test.fail("subset/equals");
   }
   return test.assert_true(a.len() == 4 && b.len() == 4);
 }
 
 function test_filter_strings(): test.TestOutcome {
-  let s: ordset.OrdSet[string] = ordset.ordset_of(["pear", "apple", "fig", "apple"]);
+  let s: ordset.OrdSet[string] = ordset.of(["pear", "apple", "fig", "apple"]);
   let arr: string[] = s.to_array();
   if (arr.len() != 3 || arr[0] != "apple" || arr[2] != "pear") {
     return test.fail("string order");
@@ -94,7 +94,7 @@ function test_filter_strings(): test.TestOutcome {
 }
 
 function test_iteration(): test.TestOutcome {
-  let s: ordset.OrdSet[i32] = ordset.ordset_new();
+  let s: ordset.OrdSet[i32] = ordset.new();
   let i: i32 = 0;
   while (i < 300) {
     s = s.insert(299 - i);

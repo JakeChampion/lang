@@ -39,7 +39,7 @@ function main(): i32 {
 		{"persistent-vector-empty-tail", `
 import "std/pvec";
 function main(): i32 {
-    let old: pvec.PVec[string] = pvec.pvec_new[string]();
+    let old: pvec.PVec[string] = pvec.new[string]();
     let i: i32 = 0;
     while (i < 40) { old = old.append("keep"); i = i + 1; }
     let changed: pvec.PVec[string] = old.with(39, "tail").with(0, "root");

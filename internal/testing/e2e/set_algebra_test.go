@@ -5,16 +5,16 @@ import "testing"
 const setAlgebraProg = `
 import "std/set" as set;
 function main(): i32 {
-    let a: set.Set[i32] = set.set_of([1, 2, 3]);
-    let b: set.Set[i32] = set.set_of([2, 3, 4]);
-    let sub: set.Set[i32] = set.set_of([2, 3]);
-    let empty: set.Set[i32] = set.set_new();
+    let a: set.Set[i32] = set.of([1, 2, 3]);
+    let b: set.Set[i32] = set.of([2, 3, 4]);
+    let sub: set.Set[i32] = set.of([2, 3]);
+    let empty: set.Set[i32] = set.new();
     if (!a.is_superset(sub)) { return 1; }
     if (a.is_superset(b)) { return 2; }
     if (!a.is_superset(empty)) { return 3; }
     if (!a.is_superset(a)) { return 4; }
     if (a.is_disjoint(b)) { return 5; }
-    if (!a.is_disjoint(set.set_of([7, 8]))) { return 6; }
+    if (!a.is_disjoint(set.of([7, 8]))) { return 6; }
     if (!a.is_disjoint(empty)) { return 7; }
     if (!empty.is_disjoint(empty)) { return 8; }
     let sd: set.Set[i32] = a.symmetric_difference(b);

@@ -1,7 +1,7 @@
 import "std/ordmap";
 
 function main(): i32 {
-  let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+  let m: ordmap.OrdMap[i32, i32] = ordmap.new();
   let i: i32 = 0;
   while (i < 4000) {
     m = m.insert(i * 7, i);

@@ -366,7 +366,7 @@ function main(): i32 {
   let mix: i32 = mix_of(mix_name);
   let universe: i64 = max_entries() as i64 * (load_pct as i64) / (100 as i64);
 
-  let entries: pmap.PMap[string, string] = pmap.pmap_new();
+  let entries: pmap.PMap[string, string] = pmap.new();
   let c: Counters = fresh_counters();
   let prefilled: i64 = 0 as i64;
   while (prefilled + batch_size() as i64 <= universe / (2 as i64)) {
