@@ -709,10 +709,10 @@ function has_loopback(xs: net.IpAddr[]): boolean {
 
 function addr(s: string): net.IpAddr {
   match (net.ip_parse(s)) {
-    Some(ip) => {
+    Ok(ip) => {
       return ip;
     },
-    None => {
+    Err(_) => {
       return net.ipv4_unspecified();
     }
   }
@@ -1047,7 +1047,7 @@ function test_live_resolver(): test.TestOutcome {
       return test.fail("localhost resolves: " + e.message());
     }
   }
-  let Some(home) = net.ip_parse("127.0.0.1") else {
+  let Ok(home) = net.ip_parse("127.0.0.1") else {
     return test.fail("127.0.0.1 parses");
   };
   let first: Option[net.IpAddr] = names.source(home);
