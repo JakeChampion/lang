@@ -86,7 +86,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<14 pub function build_line(image: [u8]): Option[string]>>
 
-<<15 pub function parse_build(line: string): Option[Build]>>
+<<15 pub function parse_build(line: string): Result[Build, BuildLineError]>>
 
 <<16 pub struct Status>>
 
@@ -100,6 +100,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module reports which hardware mitigations the processor offers, the kernel enables, and this process uses.
+import "core/cmp";
+import "std/error";
+import "std/option";
 import "std/string";
 import "std/utf8";
 ```
@@ -446,13 +449,39 @@ function __manifest_shape(line: string): boolean {
 }
 ```
 
-### `15 pub function parse_build(line: string): Option[Build]`
+### `15 pub function parse_build(line: string): Result[Build, BuildLineError]`
 
 A field without `=` or an unknown key is ignored, so a later manifest with more fields still parses.
 
 ```fern
-<<15 pub function parse_build(line: string): Option[Build]>>=
-pub function parse_build(line: string): Option[Build] {
+<<15 pub function parse_build(line: string): Result[Build, BuildLineError]>>=
+// A build manifest line `parse_build` could not read.
+pub struct BuildLineError { line: string }
+
+impl error.Error for BuildLineError {}
+
+impl cmp.Display for BuildLineError {}
+
+pub function (e: BuildLineError) message(): string {
+  return "\"" + e.line + "\" is not a build manifest line";
+}
+
+pub function (e: BuildLineError) to_string(): string {
+  return e.message();
+}
+
+pub function parse_build(line: string): Result[Build, BuildLineError] {
+  match (__parse_build(line)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(BuildLineError { line: line });
+    }
+  }
+}
+
+function __parse_build(line: string): Option[Build] {
   let b: Build = Build { target: "", profile: "", harden: false, pie: false, sanitize: false, backtrace: false, size: false, shared: false, heap_limit: 0i64 };
   let seen: boolean = false;
   for field in line.trim().split(" ") {
@@ -515,7 +544,7 @@ pub function manifest(): Status[] {
   if (target_os() == "linux" || target_os() == "android") {
     match (build_line(__bytes("/proc/self/exe"))) {
       Some(line) => {
-        build = parse_build(line);
+        build = __parse_build(line);
       },
       None => {}
     }
