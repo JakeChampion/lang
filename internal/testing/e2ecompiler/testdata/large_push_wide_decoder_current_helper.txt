@@ -1,0 +1,30 @@
+__fern_large_push:
+movabs $17179869184, %rax
+cmpq %rax, %rsi
+ja .Llpush_ret
+movq %rsi, %rax
+cmpq $524288, %rax
+jae .L2
+movl $524288, %eax
+.L2:
+bsrq %rax, %rcx
+subl $2, %ecx
+movl $1, %edx
+shlq %cl, %rdx
+leaq -1(%rax,%rdx), %rax
+negq %rdx
+andq %rdx, %rax
+bsrq %rax, %rcx
+subl $2, %ecx
+movq %rax, %rdx
+shrq %cl, %rdx
+shlq $2, %rcx
+addq %rcx, %rdx
+subq $72, %rdx
+movq %rdx, %rax
+leaq __fern_large_freelist(%rip), %rdx
+movq (%rdx,%rax,8), %rcx
+movq %rcx, (%r8)
+movq %r8, (%rdx,%rax,8)
+.Llpush_ret:
+ret
