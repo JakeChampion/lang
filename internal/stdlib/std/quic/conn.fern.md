@@ -865,24 +865,27 @@ function (c: Conn) __protected_application(datagram: [u8], h: packet.Header, key
   }
 }
 
-function (c: Conn) __opening_failed(datagram: [u8], h: packet.Header, keys: packet.Keys, why: string, now: i64): Conn {
-  let cur: Conn = c;
-  if (why == "packet does not decrypt") {
-    let limit: i64 = 4503599627370496;
-    match (keys.suite.aead()) {
-      keyschedule.ChaCha20Poly1305 => {
-        limit = 68719476736;
-      },
-      _ => {}
+function (c: Conn) __opening_failed(datagram: [u8], h: packet.Header, keys: packet.Keys, why: packet.PacketError, now: i64): Conn {
+  match (why) {
+    packet.PacketUndecryptable => {},
+    _ => {
+      return c.__maybe_reset(datagram, h, now);
     }
-    let failed: i64 = c.failed_auth;
-    if (failed < limit) {
-      failed = failed + 1;
-    }
-    cur = Conn { ...c, failed_auth: failed };
-    if (failed >= limit) {
-      return cur.__fail(frames.AEAD_LIMIT_REACHED, 0 as i64, "packet authentication limit reached", now);
-    }
+  }
+  let limit: i64 = 4503599627370496;
+  match (keys.suite.aead()) {
+    keyschedule.ChaCha20Poly1305 => {
+      limit = 68719476736;
+    },
+    _ => {}
+  }
+  let failed: i64 = c.failed_auth;
+  if (failed < limit) {
+    failed = failed + 1;
+  }
+  let cur: Conn = Conn { ...c, failed_auth: failed };
+  if (failed >= limit) {
+    return cur.__fail(frames.AEAD_LIMIT_REACHED, 0 as i64, "packet authentication limit reached", now);
   }
   return cur.__maybe_reset(datagram, h, now);
 }

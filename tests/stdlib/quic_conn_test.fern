@@ -141,7 +141,7 @@ function to_server(p: Pair, d: u8[]): Pair {
           }
         },
         Err(e) => {
-          return Pair { ...p, log: p.log + "parse: " + e + "; " };
+          return Pair { ...p, log: p.log + "parse: " + e.message() + "; " };
         }
       }
     }
@@ -414,7 +414,7 @@ function test_retry(): test.TestOutcome {
           opened = "pn " + o.pn.to_string();
         },
         Err(e) => {
-          opened = e;
+          opened = e.message();
         }
       }
       return test.assert_eq(hex.encode(again.dcid) + " " + string_from_bytes_unchecked(again.token) + " " + opened, "0102030405060708 fern-token pn 2");
