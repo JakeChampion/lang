@@ -3378,18 +3378,23 @@ function wide_elem(t: typeinfo.Type): boolean {
   return ssasem.is_wide(t) || ssasem.is_float(t);
 }
 
+// The constant shape of an array whose elements have this type.
+function array_shape(elem: typeinfo.Type): string {
+  if (ssasem.is_u8(elem)) {
+    return "&bytes";
+  }
+  if (wide_elem(elem)) {
+    return "&arr64";
+  }
+  return "&arr";
+}
+
 function static_name(f: ssasem.Func, ins: ssa.SInst): string {
   if (ins.kind_tag == ssasem.bytes_new()) {
     return "&bytes";
   }
-  if (ins.kind_tag == ssasem.array_new() && ssasem.is_u8(elem_type(f.values[ins.result]))) {
-    return "&bytes";
-  }
-  if (ins.kind_tag == ssasem.array_new() && wide_elem(elem_type(f.values[ins.result]))) {
-    return "&arr64";
-  }
   if (ins.kind_tag == ssasem.array_new()) {
-    return "&arr";
+    return array_shape(elem_type(f.values[ins.result]));
   }
   if (ins.kind_tag == ssasem.record_new()) {
     return record_name(f.values[ins.result]);
@@ -3744,8 +3749,7 @@ function took_payload(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pl
   return steal(r, f, ins.result, scratch_base(f));
 }
 
-function sole_owned_base(own r: irtables.LowerState, f: ssasem.Func, base: i32, scratch: i32): irtables.LowerState {
-  let elem: typeinfo.Type = elem_type(f.values[base]);
+function sole_owned_base(own r: irtables.LowerState, f: ssasem.Func, base: i32, scratch: i32, keep: i32): irtables.LowerState {
   r = emit(r, ir.op_load_local(base));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
   r = emit(r, ir.op_if(0));
@@ -3753,24 +3757,15 @@ function sole_owned_base(own r: irtables.LowerState, f: ssasem.Func, base: i32, 
   r = emit(r, ir.op_store_local(scratch));
   r = emit(r, ir.op_else());
   r = release(r, base, f.values[base], f);
-  r = emit(r, ir.op_load_local(base));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_load_local(base));
-  r = emit(r, ir.op_arr_len());
-  r = emit(r, ir.op_arr_slice(elem_width(elem)));
-  r = emit(r, ir.op_store_local(scratch));
-  if (ssasem.reference(elem)) {
-    r = own_copied(r, elem, scratch, scratch);
-  }
+  r = copied_base(r, elem_type(f.values[base]), base, scratch, keep);
   return emit(r, ir.op_end());
 }
 
-// A unique base releases its tail and keeps its storage; a base its caller still shares is copied up to the length.
+// A unique base releases its tail and keeps its storage. A base its caller still shares is copied up to the kept length, or is the empty constant when that length is zero.
 function truncate_update(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link): irtables.LowerState {
   let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
   let out: i32 = scratch_base(f);
-  let keep: i32 = out + 1;
-  r = update_base(r, f, p, ins, defer0, link);
+  let keep: i32 = out + 2;
   r = reserve(r, keep + 1);
   r = emit(r, ir.op_load_local(ins.args[1]));
   r = emit(r, ir.op_store_local(keep));
@@ -3781,6 +3776,16 @@ function truncate_update(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(keep));
   r = emit(r, ir.op_end());
+  r = emit(r, ir.op_load_local(keep));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_arr_len());
+  r = emit(r, ir.op_bin("gt_s", 0, false));
+  r = emit(r, ir.op_if(0));
+  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = emit(r, ir.op_arr_len());
+  r = emit(r, ir.op_store_local(keep));
+  r = emit(r, ir.op_end());
+  r = update_base(r, f, p, ins, defer0, link, keep);
   r = emit(r, ir.op_load_local(keep));
   r = emit(r, ir.op_load_local(out));
   r = emit(r, ir.op_arr_len());
@@ -3799,14 +3804,7 @@ function truncate_update(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits
   r = emit(r, ir.op_drop());
   r = emit(r, ir.op_else());
   r = release(r, out, f.values[ins.args[0]], f);
-  r = emit(r, ir.op_load_local(out));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_load_local(keep));
-  r = emit(r, ir.op_arr_slice(elem_width(elem)));
-  r = emit(r, ir.op_store_local(out));
-  if (ssasem.reference(elem)) {
-    r = own_copied(r, elem, out, out);
-  }
+  r = copied_base(r, elem, out, out, keep);
   r = emit(r, ir.op_end());
   r = emit(r, ir.op_end());
   return emit(r, ir.op_load_local(out));
@@ -4056,45 +4054,45 @@ function drop_replaced(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SIns
 }
 
 function with_update(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link): irtables.LowerState {
-  r = update_base(r, f, p, ins, defer0, link);
+  r = update_base(r, f, p, ins, defer0, link, 0 - 1);
   return with_write(r, f, p, ins, scratch_base(f));
 }
 
 // Leaves in the first scratch local a box the update may write in place.
-function update_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link): irtables.LowerState {
+// A shared box is copied: the whole of it, or its first `keep` elements when `keep` is a local.
+function update_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, defer0: boolean, link: Link, keep: i32): irtables.LowerState {
   if (link.root >= 0) {
-    return linked_base(r, f, ins, link);
+    return linked_base(r, f, ins, link, keep);
   }
   if (defer0 && p.grows[ins.result] >= 0) {
-    return field_base(r, f, p, ins);
+    return field_base(r, f, p, ins, keep);
   }
   let scratch: i32 = scratch_base(f);
   r = reserve(r, scratch + 1);
   if (defer0) {
-    return borrowed_with_base(r, f, ins, scratch, link.out);
+    return borrowed_with_base(r, f, ins, scratch, link.out, keep);
   }
   if (p.unique_receivers[ins.result]) {
     r = emit(r, ir.op_load_local(ins.args[0]));
     return emit(r, ir.op_store_local(scratch));
   }
-  return sole_owned_base(r, f, ins.args[0], scratch);
+  return sole_owned_base(r, f, ins.args[0], scratch, keep);
 }
 
-function linked_base(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, link: Link): irtables.LowerState {
+function linked_base(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, link: Link, keep: i32): irtables.LowerState {
   let scratch: i32 = scratch_base(f);
   r = reserve(r, scratch + 1);
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_load_local(link.root));
   r = emit(r, ir.op_bin("eq", 0, false));
   r = emit(r, ir.op_if(0));
-  r = borrowed_with_base(r, f, ins, scratch, link.out);
+  r = borrowed_with_base(r, f, ins, scratch, link.out, keep);
   r = emit(r, ir.op_else());
-  r = sole_owned_base(r, f, ins.args[0], scratch);
+  r = sole_owned_base(r, f, ins.args[0], scratch, keep);
   return emit(r, ir.op_end());
 }
 
-function borrowed_with_base(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, scratch: i32, out: boolean): irtables.LowerState {
-  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+function borrowed_with_base(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst, scratch: i32, out: boolean, keep: i32): irtables.LowerState {
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
   r = emit(r, ir.op_if(0));
@@ -4104,16 +4102,38 @@ function borrowed_with_base(own r: irtables.LowerState, f: ssasem.Func, ins: ssa
     r = helper(r, scratch, "__fern_rc_inc");
   }
   r = emit(r, ir.op_else());
-  r = emit(r, ir.op_load_local(ins.args[0]));
+  r = copied_base(r, elem_type(f.values[ins.args[0]]), ins.args[0], scratch, keep);
+  return emit(r, ir.op_end());
+}
+
+// Copies the box in `base` into `scratch`: the whole of it, or its first `keep` elements when `keep` is a local. No elements is the empty constant.
+function copied_base(own r: irtables.LowerState, elem: typeinfo.Type, base: i32, scratch: i32, keep: i32): irtables.LowerState {
+  if (keep >= 0) {
+    r = emit(r, ir.op_load_local(keep));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_bin("eq", 0, false));
+    r = emit(r, ir.op_if(0));
+    r = emit(r, ir.op_const_struct(array_shape(elem), 0, ""));
+    r = emit(r, ir.op_store_local(scratch));
+    r = emit(r, ir.op_else());
+  }
+  r = emit(r, ir.op_load_local(base));
   r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_load_local(ins.args[0]));
-  r = emit(r, ir.op_arr_len());
+  if (keep >= 0) {
+    r = emit(r, ir.op_load_local(keep));
+  } else {
+    r = emit(r, ir.op_load_local(base));
+    r = emit(r, ir.op_arr_len());
+  }
   r = emit(r, ir.op_arr_slice(elem_width(elem)));
   r = emit(r, ir.op_store_local(scratch));
   if (ssasem.reference(elem)) {
     r = own_copied(r, elem, scratch, scratch);
   }
-  return emit(r, ir.op_end());
+  if (keep >= 0) {
+    r = emit(r, ir.op_end());
+  }
+  return r;
 }
 
 function with_write(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, scratch: i32): irtables.LowerState {
@@ -4128,8 +4148,7 @@ function with_write(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
   return emit(r, ir.op_load_local(scratch));
 }
 
-function field_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerState {
-  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+function field_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, keep: i32): irtables.LowerState {
   let root: i32 = p.grows[ins.result];
   let res: i32 = scratch_base(f);
   let unique: i32 = res + 1;
@@ -4152,15 +4171,7 @@ function field_base(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_struct_set(p.grow_fields[ins.result], 0));
   r = emit(r, ir.op_else());
-  r = emit(r, ir.op_load_local(ins.args[0]));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_load_local(ins.args[0]));
-  r = emit(r, ir.op_arr_len());
-  r = emit(r, ir.op_arr_slice(elem_width(elem)));
-  r = emit(r, ir.op_store_local(res));
-  if (ssasem.reference(elem)) {
-    r = own_copied(r, elem, res, res);
-  }
+  r = copied_base(r, elem_type(f.values[ins.args[0]]), ins.args[0], res, keep);
   return emit(r, ir.op_end());
 }
 
@@ -4432,7 +4443,7 @@ function map_in_place(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst
   let buf: i32 = scratch_base(f);
   let index: i32 = buf + 1;
   r = reserve(r, index + 1);
-  r = sole_owned_base(r, f, ins.args[0], buf);
+  r = sole_owned_base(r, f, ins.args[0], buf, 0 - 1);
   r = emit(r, ir.op_const_i32(0));
   r = emit(r, ir.op_store_local(index));
   r = emit(r, ir.op_block(0));

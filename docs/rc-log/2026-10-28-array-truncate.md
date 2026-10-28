@@ -46,7 +46,8 @@ consumed like the receiver of `with`.
 
 - `truncate_update` tests the base. A unique box releases its tail elements
   and sets its length. A box that is still shared is copied up to the new
-  length.
+  length. When that length is zero, the result is the empty constant that an
+  empty literal gives, and nothing is allocated.
 
 - The Go checker registers `Array.truncate`, and both interpreters copy the
   prefix.
