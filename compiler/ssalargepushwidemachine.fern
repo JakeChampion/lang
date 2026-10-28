@@ -1,0 +1,395 @@
+import "./ssacapacityisa" as isa;
+import "./ssalargepushwidevalue" as value;
+import "./ssalargepushwideranges" as ranges;
+import "./ssalargepushwideisa" as decoder;
+
+struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
+
+struct Word { low: Half, high: Half, full: value.Value }
+
+struct Flow { state: State, next: i32 }
+
+struct State { regs: Word[], cells: Half[], flags: value.Comparison, ok: boolean, oversized: boolean, block_writes: i32, slot_writes: i32 }
+
+function token(kind: i32, identity: i32, part: i32): Half {
+  return Half { kind: kind, identity: identity, part: part, number: value.unknown() };
+}
+
+function identity(kind: i32, id: i32): Word {
+  return Word { low: token(kind, id, 0), high: token(kind, id, 1), full: value.unknown() };
+}
+
+function numeric_half(v: value.Value): Half {
+  return Half { kind: if (v.factor < 0) { 0 } else { 1 }, identity: 0, part: 0, number: v };
+}
+
+function zero(r: ranges.Interval): Half {
+  return numeric_half(value.number(r, 0 as i64));
+}
+
+function nonnegative(r: ranges.Interval, v: value.Value): boolean {
+  return value.valid(r, v) && v.factor as i64 * r.low + v.offset >= 0;
+}
+
+function numeric(r: ranges.Interval, v: value.Value): Word {
+  if (!value.valid(r, v)) {
+    return identity(0, 0);
+  }
+  return Word { low: numeric_half(value.zero32(r, v)), high: numeric_half(value.high32(r, v)), full: v };
+}
+
+function number(r: ranges.Interval, w: Word, width: i32): value.Value {
+  if (width == 64 && value.valid(r, w.full)) {
+    return w.full;
+  }
+  if (w.low.kind != 1 || !nonnegative(r, w.low.number)) {
+    return value.unknown();
+  }
+  if (width == 32) {
+    return w.low.number;
+  }
+  return if (w.high.kind == 1) { value.join32(r, w.low.number, w.high.number) } else { value.unknown() };
+}
+
+function same_half(a: Half, b: Half): boolean {
+  return a.kind == b.kind && a.identity == b.identity && a.part == b.part && a.number.factor == b.number.factor && a.number.offset == b.number.offset;
+}
+
+function same_word(a: Word, b: Word): boolean {
+  return same_half(a.low, b.low) && same_half(a.high, b.high) && a.full.factor == b.full.factor && a.full.offset == b.full.offset;
+}
+
+function unknown_flags(): value.Comparison {
+  return value.Comparison { less: -1, equal: -1, less_equal: -1 };
+}
+
+function initial_register(r: ranges.Interval, reg: i32, oversized: boolean): Word {
+  if (reg == 4) {
+    return identity(3, 0);
+  }
+  if (reg == 8) {
+    return identity(8, 0);
+  }
+  if (reg == 6) {
+    return if (oversized) { identity(7, 0) } else { numeric(r, value.original(r)) };
+  }
+  return identity(2, reg);
+}
+
+function initial(r: ranges.Interval, oversized: boolean): State {
+  let regs: Word[] = [];
+  for reg in 0..16 {
+    regs = regs.append(initial_register(r, reg, oversized));
+  }
+  let cells = [token(5, 0, 0), token(5, 0, 1), token(6, 0, 0), token(6, 0, 1), token(4, 0, 0), token(4, 0, 1)];
+  return State { regs: regs, cells: cells, flags: unknown_flags(), ok: true, oversized: oversized, block_writes: 0, slot_writes: 0 };
+}
+
+function write(s: State, r: ranges.Interval, reg: i32, w: Word): State {
+  let known = value.valid(r, w.full) || w.low.kind != 0 && w.high.kind != 0;
+  return State { ...s, regs: s.regs.with(reg, w), ok: s.ok && known };
+}
+
+function narrowed(r: ranges.Interval, w: Word, width: i32): Word {
+  if (width == 64) {
+    return w;
+  }
+  return if (w.low.kind == 1) { numeric(r, w.low.number) } else { Word { low: w.low, high: zero(r), full: value.unknown() } };
+}
+
+function slot(s: State, r: ranges.Interval, op: isa.Op): boolean {
+  if (s.oversized || op.index < 0 || op.scale != 8 || !same_word(s.regs[op.base], identity(9, 0))) {
+    return false;
+  }
+  let index = number(r, s.regs[op.index], 64);
+  return value.valid(r, index) && index.factor == 0 && index.offset >= 0 as i64 && index.offset <= 60 as i64 && index.offset == ranges.expected_class(r) as i64;
+}
+
+function cell_extent(op: isa.Op): boolean {
+  return (op.width == 32 || op.width == 64) && op.offset >= 0 && op.offset <= 8 - op.width / 8 && op.offset % 4 == 0;
+}
+
+function address(s: State, r: ranges.Interval, op: isa.Op): i32 {
+  if (!cell_extent(op)) {
+    return -1;
+  }
+  let half = op.offset / 4;
+  if (op.index < 0 && same_word(s.regs[op.base], identity(3, 0))) {
+    return 4 + half;
+  }
+  if (op.index < 0 && same_word(s.regs[op.base], identity(8, 0))) {
+    return half;
+  }
+  return if (slot(s, r, op)) { 2 + half } else { -1 };
+}
+
+function read(s: State, r: ranges.Interval, at: i32, width: i32): Word {
+  if (at < 0) {
+    return identity(0, 0);
+  }
+  let low = s.cells[at];
+  let high = if (width == 64) { s.cells[at + 1] } else { zero(r) };
+  let full = if (low.kind == 1 && high.kind == 1) { value.join32(r, low.number, high.number) } else { value.unknown() };
+  return Word { low: low, high: high, full: full };
+}
+
+function store(s: State, at: i32, width: i32, w: Word): State {
+  if (s.oversized || width != 64 || at != 0 && at != 2) {
+    return State { ...s, ok: false };
+  }
+  let count = if (at == 0) { s.block_writes } else { s.slot_writes };
+  if (count != 0) {
+    return State { ...s, ok: false };
+  }
+  let cells = s.cells.with(at, w.low).with(at + 1, w.high);
+  return State { ...s, cells: cells, block_writes: s.block_writes + (if (at == 0) { 1 } else { 0 }), slot_writes: s.slot_writes + (if (at == 2) { 1 } else { 0 }) };
+}
+
+function movement(s: State, r: ranges.Interval, op: isa.Op): State {
+  if (op.kind == 2) {
+    return write(s, r, op.destination, narrowed(r, s.regs[op.source], op.width));
+  }
+  if (op.kind == 3) {
+    return write(s, r, op.destination, read(s, r, address(s, r, op), op.width));
+  }
+  if (op.kind == 4) {
+    return store(s, address(s, r, op), op.width, s.regs[op.source]);
+  }
+  if (op.kind == 5) {
+    let w = numeric(r, value.number(r, op.immediate as i64));
+    return write(s, r, op.destination, narrowed(r, w, op.width));
+  }
+  return State { ...s, ok: false };
+}
+
+function arithmetic_source(s: State, r: ranges.Interval, op: isa.Op): value.Value {
+  return if (op.source < 0) { value.number(r, op.immediate as i64) } else { number(r, s.regs[op.source], op.width) };
+}
+
+function add_sub(r: ranges.Interval, a: value.Value, b: value.Value, subtract: boolean, width: i32): value.Value {
+  if (!value.valid(r, b) || b.factor != 0) {
+    return value.unknown();
+  }
+  let v = value.add(r, a, if (subtract) { -b.offset } else { b.offset });
+  return if (width == 64 || nonnegative(r, v)) { v } else { value.unknown() };
+}
+
+function shift(r: ranges.Interval, v: value.Value, count: value.Value, left: boolean): value.Value {
+  if (!nonnegative(r, v) || v.factor != 0 || !value.valid(r, count) || count.factor != 0) {
+    return value.unknown();
+  }
+  let n = v.offset;
+  for bit in 0..count.offset as i32 {
+    if (left && n > 17179869183 as i64) {
+      return value.unknown();
+    }
+    n = if (left) { n * (2 as i64) } else { n / (2 as i64) };
+  }
+  return value.number(r, n);
+}
+
+function shifted(s: State, r: ranges.Interval, op: isa.Op): State {
+  let count = if (op.kind == 20 || op.kind == 21) { value.number(r, op.immediate as i64) } else { number(r, s.regs[1], 32) };
+  if (!value.valid(r, count) || count.factor != 0 || count.offset < 0 as i64) {
+    return State { ...s, ok: false };
+  }
+  let masked = value.number(r, count.offset % (op.width as i64));
+  let flags = if (masked.offset == 0) { s.flags } else { unknown_flags() };
+  let v = number(r, s.regs[op.destination], op.width);
+  let result = if (masked.offset == 0) { narrowed(r, s.regs[op.destination], op.width) } else { numeric(r, shift(r, v, masked, op.kind == 13 || op.kind == 20)) };
+  return write(State { ...s, flags: flags }, r, op.destination, result);
+}
+
+function calculated(s: State, r: ranges.Interval, op: isa.Op): value.Value {
+  let a = number(r, s.regs[op.destination], op.width);
+  if (op.kind == 12) {
+    return value.negate(r, a);
+  }
+  let b = arithmetic_source(s, r, op);
+  if (op.kind == 11) {
+    return if (op.width == 64) { value.mask(r, a, b) } else { value.unknown() };
+  }
+  return add_sub(r, a, b, op.kind == 9, op.width);
+}
+
+function arithmetic(s: State, r: ranges.Interval, op: isa.Op): State {
+  if (op.kind == 13 || op.kind == 14 || op.kind == 20 || op.kind == 21) {
+    return shifted(s, r, op);
+  }
+  let v = value.unknown();
+  if (op.kind == 8) {
+    let bit = value.bit_scan(r, number(r, s.regs[op.source], op.width));
+    if (bit >= 0) {
+      v = value.number(r, bit as i64);
+    }
+  } else {
+    v = calculated(s, r, op);
+  }
+  let w = narrowed(r, numeric(r, v), op.width);
+  return write(State { ...s, flags: unknown_flags() }, r, op.destination, w);
+}
+
+function lea(s: State, r: ranges.Interval, op: isa.Op): State {
+  let base = number(r, s.regs[op.base], 64);
+  let index = if (op.index < 0) { value.number(r, 0 as i64) } else { number(r, s.regs[op.index], 64) };
+  if (!value.valid(r, index) || index.factor != 0) {
+    return State { ...s, ok: false };
+  }
+  let result = value.add(r, base, index.offset * (op.scale as i64) + op.offset as i64);
+  return write(s, r, op.destination, numeric(r, result));
+}
+
+function comparison(s: State, r: ranges.Interval, op: isa.Op): State {
+  let operand = if (op.kind == 16) { op.source } else { op.destination };
+  let threshold = if (op.kind == 16) { value.number(r, op.immediate as i64) } else { number(r, s.regs[op.source], op.width) };
+  if (!nonnegative(r, threshold) || threshold.factor != 0) {
+    return State { ...s, flags: unknown_flags() };
+  }
+  if (op.width == 64 && same_word(s.regs[operand], identity(7, 0)) && threshold.offset <= 17179869184 as i64) {
+    return State { ...s, flags: value.Comparison { less: 0, equal: 0, less_equal: 0 } };
+  }
+  let v = number(r, s.regs[operand], op.width);
+  if (!nonnegative(r, v)) {
+    return State { ...s, flags: unknown_flags() };
+  }
+  return State { ...s, flags: value.compare(r, v, threshold.offset) };
+}
+
+function step(s: State, r: ranges.Interval, op: isa.Op): State {
+  if (op.kind == 1) {
+    return s;
+  }
+  if (op.kind >= 2 && op.kind <= 7) {
+    return movement(s, r, op);
+  }
+  if (op.kind >= 8 && op.kind <= 14 || op.kind == 20 || op.kind == 21) {
+    return arithmetic(s, r, op);
+  }
+  return addressing_or_comparison(s, r, op);
+}
+
+function addressing_or_comparison(s: State, r: ranges.Interval, op: isa.Op): State {
+  if (op.kind == 19 && op.width == 64 && op.symbol == "__fern_large_freelist") {
+    return write(s, r, op.destination, identity(9, 0));
+  }
+  if (op.kind == 15) {
+    return lea(s, r, op);
+  }
+  if (op.kind == 16 || op.kind == 28) {
+    return comparison(s, r, op);
+  }
+  return State { ...s, ok: false };
+}
+
+function invert(v: i32): i32 {
+  return if (v < 0) { -1 } else { 1 - v };
+}
+
+function ordered(f: value.Comparison, name: string): i32 {
+  if (name == "jb" || name == "jc" || name == "jnae") {
+    return f.less;
+  }
+  if (name == "jae" || name == "jnb" || name == "jnc") {
+    return invert(f.less);
+  }
+  return inclusive(f, name);
+}
+
+function inclusive(f: value.Comparison, name: string): i32 {
+  if (name == "jbe" || name == "jna") {
+    return f.less_equal;
+  }
+  if (name == "ja" || name == "jnbe") {
+    return invert(f.less_equal);
+  }
+  return -1;
+}
+
+function branch(f: value.Comparison, name: string): i32 {
+  if (name == "jmp") {
+    return 1;
+  }
+  if (name == "je" || name == "jz") {
+    return f.equal;
+  }
+  if (name == "jne" || name == "jnz") {
+    return invert(f.equal);
+  }
+  return ordered(f, name);
+}
+
+function final_register(s: State, r: ranges.Interval, reg: i32): Word {
+  if (reg == 0) {
+    return numeric(r, value.number(r, if (s.oversized) { 17179869184 as i64 } else { ranges.expected_class(r) as i64 }));
+  }
+  if (!s.oversized) {
+    if (reg == 1) {
+      return identity(6, 0);
+    }
+    if (reg == 2) {
+      return identity(9, 0);
+    }
+  }
+  return initial_register(r, reg, s.oversized);
+}
+
+function finished(s: State, r: ranges.Interval): boolean {
+  for reg in 0..16 {
+    if (!same_word(s.regs[reg], final_register(s, r, reg))) {
+      return false;
+    }
+  }
+  let block = if (s.oversized) { identity(5, 0) } else { identity(6, 0) };
+  let head = if (s.oversized) { identity(6, 0) } else { identity(8, 0) };
+  let writes = if (s.oversized) { 0 } else { 1 };
+  return s.block_writes == writes && s.slot_writes == writes && same_word(read(s, r, 0, 64), block) && same_word(read(s, r, 2, 64), head) && same_word(read(s, r, 4, 64), identity(4, 0));
+}
+
+function execute(s: State, r: ranges.Interval, item: decoder.WideOp, pc: i32): Flow {
+  let op = item.instruction;
+  if (op.kind == 17) {
+    let taken = branch(s.flags, op.condition);
+    return Flow { state: State { ...s, ok: s.ok && taken >= 0 }, next: if (taken == 1) { op.target } else { pc + 1 } };
+  }
+  let next = if (op.kind == 41) { write(s, r, op.destination, numeric(r, value.number(r, item.immediate))) } else { step(s, r, op) };
+  return Flow { state: next, next: pc + 1 };
+}
+
+function path(p: decoder.WideProgram, r: ranges.Interval, oversized: boolean): boolean {
+  let s = initial(r, oversized);
+  let visited: boolean[] = [];
+  for op in p.ops {
+    visited = visited.append(false);
+  }
+  let pc = 0;
+  for budget in 0..p.ops.len() {
+    if (pc < 0 || pc >= p.ops.len() || visited[pc]) {
+      return false;
+    }
+    visited = visited.with(pc, true);
+    let op = p.ops[pc];
+    if (op.instruction.kind == 18) {
+      return finished(s, r);
+    }
+    let flow = execute(s, r, op, pc);
+    s = flow.state;
+    pc = flow.next;
+    if (!s.ok) {
+      return false;
+    }
+  }
+  return false;
+}
+
+pub function check(output: string): boolean {
+  let p = decoder.large_program(output);
+  if (p.error != "") {
+    return false;
+  }
+  for r in ranges.intervals() {
+    if (!path(p, r, false)) {
+      return false;
+    }
+  }
+  return path(p, ranges.Interval { low: 0, high: 0 }, true);
+}
