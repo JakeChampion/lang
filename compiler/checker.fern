@@ -7849,12 +7849,10 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
     }
   }
   let rcv: string[] = receiver_const_vars(s, fd.receiver_type);
-  let ri: i32 = 0;
-  while (ri < tps.len()) {
+  for ri in 0..tps.len() {
     if (util.has_str(rcv, tps[ri])) {
       tbs = tbs.with(ri, parser.CONST_BOUND);
     }
-    ri = ri + 1;
   }
   s = s.with_tparams(tps, tbs);
   if (fd.ret_type.len() > 0) {
@@ -7884,14 +7882,7 @@ function receiver_const_vars(s: Scope, receiver_type: string): string[] {
   }
   let r: parser.TypeRef = parser.parse_type_ref(receiver_type);
   let sig: StructSig = match (s.lookup_struct(r.base)) { Some(found) => found, None => { return out; } };
-  let i: i32 = 0;
-  while (i < r.args.len() && i < sig.type_params.len()) {
-    if (util.has_str(sig.const_params, sig.type_params[i]) && r.args[i].args.len() == 0) {
-      out = out.append(r.args[i].base);
-    }
-    i = i + 1;
-  }
-  return out;
+  return parser.const_arg_names(r, sig.type_params, sig.const_params);
 }
 
 function func_scope_tparams(fd: parser.FuncDecl): string[] {
@@ -20534,12 +20525,8 @@ function fn_const_names(fd: parser.FuncDecl, cstructs: parser.StructDecl[]): str
   let r: parser.TypeRef = parser.parse_type_ref(fd.receiver_type);
   for sd in cstructs {
     if (sd.name == r.base) {
-      let i: i32 = 0;
-      while (i < r.args.len() && i < sd.type_params.len()) {
-        if (util.has_str(sd.const_params, sd.type_params[i])) {
-          out = out.append(r.args[i].base);
-        }
-        i = i + 1;
+      for name in parser.const_arg_names(r, sd.type_params, sd.const_params) {
+        out = out.append(name);
       }
     }
   }
@@ -20557,8 +20544,10 @@ function const_kind_ref_diags(r: parser.TypeRef, cstructs: parser.StructDecl[], 
   let out: util.Diag[] = [];
   for sd in cstructs {
     if (sd.name == r.base) {
-      let i: i32 = 0;
-      while (i < r.args.len() && i < sd.type_params.len()) {
+      for i in 0..r.args.len() {
+        if (i >= sd.type_params.len()) {
+          break;
+        }
         let a: parser.TypeRef = r.args[i];
         let tp: string = sd.type_params[i];
         let leaf: boolean = a.args.len() == 0 && a.array_depth == 0 && !a.is_tuple;
@@ -20572,7 +20561,6 @@ function const_kind_ref_diags(r: parser.TypeRef, cstructs: parser.StructDecl[], 
         } else if (integer) {
           out = out.append(dg_at("E090", "type parameter " + tp + " takes a type, not the integer " + a.base, line, col));
         }
-        i = i + 1;
       }
     }
   }

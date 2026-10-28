@@ -21423,15 +21423,20 @@ function receiver_const_names(receiver_type: string, mod: Module): string[] {
   let out: string[] = [];
   let r: TypeRef = parse_type_ref(receiver_type);
   for sd in mod.structs {
-    if (sd.name == r.base && sd.const_params.len() > 0) {
-      let i: i32 = 0;
-      while (i < r.args.len() && i < sd.type_params.len()) {
-        if (util.has_str(sd.const_params, sd.type_params[i])) {
-          out = out.append(r.args[i].base);
-        }
-        i = i + 1;
-      }
-      return out;
+    if (sd.name == r.base) {
+      return const_arg_names(r, sd.type_params, sd.const_params);
+    }
+  }
+  return out;
+}
+
+// const_arg_names is the names r writes at the const parameters of a type
+// that declares type_params.
+pub function const_arg_names(r: TypeRef, type_params: string[], const_params: string[]): string[] {
+  let out: string[] = [];
+  for i in 0..r.args.len() {
+    if (i < type_params.len() && util.has_str(const_params, type_params[i]) && r.args[i].args.len() == 0) {
+      out = out.append(r.args[i].base);
     }
   }
   return out;

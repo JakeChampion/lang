@@ -1049,11 +1049,9 @@ function applied_ret_type(fd: parser.FuncDecl, recv_ty: string): string {
   }
   let vars: string[] = [];
   let cts: string[] = [];
-  let i: i32 = 0;
-  while (i < d.args.len()) {
+  for i in 0..d.args.len() {
     vars = vars.append(d.args[i].base);
     cts = cts.append(parser.render_type_ref(r.args[i]));
-    i = i + 1;
   }
   return parser.subst_ty(fd.ret_type, vars, cts);
 }
