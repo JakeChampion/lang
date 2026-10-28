@@ -1,0 +1,34 @@
+[
+  {
+    "callee": "__fern_arr_box",
+    "caller": "__fn_ir__optimize_ops",
+    "baseline": [
+      {
+        "calls": 43250,
+        "line": "1,542,890 ( 0.01%)  < ???:__fn_ir__optimize_ops+0xf@0000000000b087f4 (43,250x) [???]"
+      }
+    ],
+    "candidate": [
+      {
+        "calls": 43250,
+        "line": "1,542,890 ( 0.01%)  < ???:__fn_ir__optimize_ops+0xf@0000000000b087f4 (43,250x) [???]"
+      }
+    ]
+  },
+  {
+    "callee": "__fern_alloc_u8",
+    "caller": "__fn_ir__optimize_ops",
+    "baseline": [
+      {
+        "calls": 29994,
+        "line": "47,314,727 ( 0.19%)  < ???:__fn_ir__optimize_ops+0xf@0000000000b087f4 (29,994x) [???]"
+      }
+    ],
+    "candidate": [
+      {
+        "calls": 27969,
+        "line": "46,147,195 ( 0.18%)  < ???:__fn_ir__optimize_ops+0xf@0000000000b087f4 (27,969x) [???]"
+      }
+    ]
+  }
+]

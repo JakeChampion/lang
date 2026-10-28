@@ -1,0 +1,73 @@
+--- a/compiler/ir.fern
++++ b/compiler/ir.fern
+@@ -6065,38 +6065,6 @@
+   return first;
+ }
+ 
+-function zg_in_loop(ops: Op[]): boolean[] {
+-  let k_block: i32 = K_BLOCK;
+-  let k_loop: i32 = K_LOOP;
+-  let k_if: i32 = K_IF;
+-  let k_end: i32 = K_END;
+-  let marks: boolean[] = __alloc_bool(ops.len());
+-  let depth: i32 = 0;
+-  let loop_at: i32 = 0 - 1;
+-  let i: i32 = 0;
+-  while (i < ops.len()) {
+-    let t: i32 = ops[i].kind_tag;
+-    if (t == k_block || t == k_if) {
+-      depth = depth + 1;
+-    } else if (t == k_loop) {
+-      if (loop_at < 0) {
+-        loop_at = depth;
+-      }
+-      depth = depth + 1;
+-    } else if (t == k_end && depth > 0) {
+-      depth = depth - 1;
+-      if (depth == loop_at) {
+-        loop_at = 0 - 1;
+-      }
+-    }
+-    if (loop_at >= 0) {
+-      marks = marks.with(i, true);
+-    }
+-    i = i + 1;
+-  }
+-  return marks;
+-}
+-
+ function zg_zero_guard(ops: Op[], i: i32, n_params: i32, first: i32[], k_call: i32): boolean {
+   if (i + 1 >= ops.len()) {
+     return false;
+@@ -6117,14 +6085,29 @@
+     return ops;
+   }
+   let first: i32[] = zg_first_write(ops, maxs + 1);
+-  let in_loop: boolean[] = zg_in_loop(ops);
++  let depth: i32 = 0;
++  let loop_at: i32 = 0 - 1;
+   let k_load: i32 = K_LOAD_LOCAL;
+   let k_call: i32 = K_CALL_DIRECT;
+   let out: Op[] = [];
+   let copying: boolean = false;
+   let i: i32 = 0;
+   while (i < ops.len()) {
+-    if (ops[i].kind_tag == k_load && !in_loop[i]
++    let tag: i32 = ops[i].kind_tag;
++    if (tag == K_BLOCK || tag == K_IF) {
++      depth = depth + 1;
++    } else if (tag == K_LOOP) {
++      if (loop_at < 0) {
++        loop_at = depth;
++      }
++      depth = depth + 1;
++    } else if (tag == K_END && depth > 0) {
++      depth = depth - 1;
++      if (depth == loop_at) {
++        loop_at = 0 - 1;
++      }
++    }
++    if (tag == k_load && loop_at < 0
+       && zg_zero_guard(ops, i, n_params, first, k_call)) {
+       if (!copying) {
+         out = fold_prefixed(ops, i, []);

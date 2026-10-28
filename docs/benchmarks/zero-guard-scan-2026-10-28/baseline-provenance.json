@@ -1,0 +1,17 @@
+{
+  "baseline_source": "b0958981729ecb84c9fc91b1f49e2ed7ff1171ec",
+  "baseline_compiler_source_matches_frozen_record_source": true,
+  "source_hashes": "source-hashes.json",
+  "common_producer_sha256": "64f876ff80e4db91d1eb614605a7fe567bbad13ecb061dce204defb5c0b975a0",
+  "baseline_stage2_sha256": "64f876ff80e4db91d1eb614605a7fe567bbad13ecb061dce204defb5c0b975a0",
+  "baseline_is_output_of_common_producer": "../record-pair-returns-2026-10-27/fixpoint-builds.json, stage3 produces stage4",
+  "baseline_profile_binary": "record-pair-candidate/stage3, byte-identical to stage4",
+  "baseline_raw_profile": "../record-pair-returns-2026-10-27/stage3.callgrind.gz",
+  "baseline_raw_symbols": "../record-pair-returns-2026-10-27/stage3-g.nm.gz",
+  "baseline_load_proof": "../record-pair-returns-2026-10-27/stage3-elf-load-equivalence.json",
+  "subject_commit": "23c5bc2e4a5993ffe092d04b5ad1dcf771af0269",
+  "subject_sha256": "a0b69a0f97f3b45bf06eca8160200a936b56b06a279bb538795a387a5d76e172",
+  "candidate_source_patch": "source-change.patch",
+  "candidate_binary_sha256": "b5f3a8529bdd5e6c3b1169b136c42511291536437a0d1bbe9056189228156d07",
+  "candidate_symbol_binary_sha256": "72266adbf7e6f7757bee59bbd56e554ba87b026a915c66c342992761aa3d9faa"
+}

@@ -1,0 +1,49 @@
+{
+  "stage2": [
+    {
+      "flags": 5,
+      "offset": 0,
+      "address": 4194304,
+      "file_size": 14549244,
+      "memory_size": 14549244,
+      "sha256_without_elf_header": "c71234c13bdf9913520ae865b026fa183fa6567b93e8bb67907b42c6e23f18d5"
+    },
+    {
+      "flags": 6,
+      "offset": 14553088,
+      "address": 18747392,
+      "file_size": 621584,
+      "memory_size": 1711553,
+      "sha256_without_elf_header": "008f8719d7ad4e685c8179ecb7ecce7a2f79a84f99d202e4539098fc4ab23b94"
+    }
+  ],
+  "stage2-g": [
+    {
+      "flags": 5,
+      "offset": 0,
+      "address": 4194304,
+      "file_size": 14549244,
+      "memory_size": 14549244,
+      "sha256_without_elf_header": "c71234c13bdf9913520ae865b026fa183fa6567b93e8bb67907b42c6e23f18d5"
+    },
+    {
+      "flags": 6,
+      "offset": 14553088,
+      "address": 18747392,
+      "file_size": 621584,
+      "memory_size": 1711553,
+      "sha256_without_elf_header": "008f8719d7ad4e685c8179ecb7ecce7a2f79a84f99d202e4539098fc4ab23b94"
+    }
+  ],
+  "loaded_code_and_data_identical_except_elf_header": true,
+  "elf_header_different_byte_offsets": [
+    40,
+    41,
+    42,
+    43,
+    58,
+    60,
+    62
+  ],
+  "elf_header_differences_only_section_fields": true
+}

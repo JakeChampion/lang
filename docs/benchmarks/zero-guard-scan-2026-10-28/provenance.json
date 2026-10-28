@@ -1,0 +1,9 @@
+{
+  "source_base": "b0958981729ecb84c9fc91b1f49e2ed7ff1171ec",
+  "candidate_source_sha256": "753990fa0a26e5f7447cd10de3e05790e967552be0d0da44da693cdcf592843a",
+  "common_producer_sha256": "64f876ff80e4db91d1eb614605a7fe567bbad13ecb061dce204defb5c0b975a0",
+  "baseline_stage2": "/workspace/lang-issue-work/perf-4412/record-pair-candidate/stage4",
+  "hypothesis": "Fuse loop depth tracking into the guard scan, remove one full operation scan and one boolean array. Skipped operations are only the matched call_direct, which cannot change scope depth.",
+  "pure_refactor": true,
+  "status": "private experiment, not adopted"
+}
