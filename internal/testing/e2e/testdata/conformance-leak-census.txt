@@ -47,6 +47,7 @@ alloc_flat_struct_string_field                       0
 alloc_flat_under_reclaim                             0
 alloc_flat_writer_accumulator                        0
 alloc_grows_when_retained                            0
+an_import_named_like_a_scalar_type                   0
 an_imported_module_does_not_see_the_programs_variants 0
 an_io_error_pattern_beside_std_net                   0
 args                                                 0
@@ -553,6 +554,7 @@ none_branch                                          0
 none_equal_none                                      0
 number_parsing                                     0
 numeric_lossless_widening 0
+numeric_module_limits                                0
 oob_index_below_guard                                0
 oob_index_negative                                   0
 oob_index_read                                       0
@@ -1167,6 +1169,7 @@ variant_pattern_rename_rest                          0
 variant_pattern_rest                                 0
 variant_payload_expected_type                        0
 variant_payload_from_array_field                     0
+vec_lane_kernels                                     0
 view_of_branch_value                                 0
 views_in_aggregates_stay_local                       0
 wasi_http_error_code_names                           0

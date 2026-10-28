@@ -1,9 +1,3 @@
 function __fern_task_mode(): i32 {
-  let st: usize = __raw_task_state();
-  let id: i32 = __raw_load_ptr(st, 0) as i32;
-  if (id == 0) {
-    return 0;
-  }
-  let rec: usize = __raw_load_ptr(st, 3);
-  return __raw_load_ptr(rec, 0) as i32;
+  return __raw_load_ptr(__raw_task_state(), 6) as i32;
 }

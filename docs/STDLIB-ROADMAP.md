@@ -580,9 +580,9 @@ think they're free additions to make.
 - **`(n: i32).pluralize(singular, plural)`**: choose
   singular when `|n| == 1` else plural. Caller composes
   the count into the result themselves.
-- **Range constants**: `i32_max()` / `i32_min()` /
-  `i64_max()` / `i64_min()` as function-style accessors
-  (Fern has no const declaration syntax yet).
+- **Range constants**: `i32.MAX` / `i32.MIN` and the
+  same pair on `i64`, `u32`, `u64`, `f32`, `f64` as
+  `pub const`s in each numeric module.
 - **One-sided trim**: `s.trim_start()` / `s.trim_end()`.
   Asymmetric whitespace strip.
 - **`s.trim_chars(chars)`**: strip any Unicode scalar in `chars`

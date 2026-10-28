@@ -1,0 +1,11 @@
+function wide(v: Vec[3, f64]): i32 {
+  return 0;
+}
+
+function odd[T](v: Vec[8, T]): i32 {
+  return 0;
+}
+
+function main(): i32 {
+  return 0;
+}

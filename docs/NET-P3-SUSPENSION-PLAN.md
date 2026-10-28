@@ -137,7 +137,9 @@ Asyncify, which applies here unchanged in shape:
 - Skipping in structured code is the guarded re-walk Asyncify uses: every
   straight-line segment of a transformed function is wrapped in
   `if (!rewinding)`, and the block and loop structure is re-entered as
-  written, so no new control-flow form is added to either IR.
+  written, so no new control-flow form is added to either IR. A block, loop
+  or if with no call site in it is part of the segment around it: a rewind
+  skips it whole, so it gets no guard of its own.
 
 The pass runs on the stack IR after Perceus has emitted its ops, in both
 compilers, so a saved local that owns a reference keeps that reference in the

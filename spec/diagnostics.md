@@ -53,7 +53,7 @@ source plus expected output and any implementation can be run against it
 `fern -check`). So a diagnostic rule with only Go-side coverage is a rule
 the compiler is never checked against.
 
-**82 of 103** codes are pinned by a conformance case. The table
+**83 of 104** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -168,6 +168,7 @@ language does not have. It is deleted.
 | `E093` | a `const` initializer is not a constant expression | `const_initialiser_not_a_constant` |
 | `E094` | an embedded asset the compiler cannot resolve | — |
 | `E095` | an unsafe obligation escapes its boundary | `diag_e095` |
+| `E096` | a `Vec[N, T]` that names no lane type | `diag_e096` |
 | `E097` | a builtin reserved for the standard library | `diag_e097` |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |

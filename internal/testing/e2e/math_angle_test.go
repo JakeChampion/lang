@@ -11,10 +11,10 @@ function main(): i32 {
     if (math.lerp(2.0, 10.0, 0.5) != 6.0) { return 3; }
     if (math.lerp(0.0, 100.0, 0.25) != 25.0) { return 4; }
     if (math.lerp(0.0 - 4.0, 4.0, 0.5) != 0.0) { return 5; }   // spans zero
-    // tau is exactly two pi (scaling an f64 by 2 only bumps the exponent).
-    if (math.tau() != 2.0 * math.pi()) { return 6; }
-    // pi() sits in the tight interval around the true value.
-    if (math.pi() <= 3.141592653 || math.pi() >= 3.141592654) { return 7; }
+    // TAU is exactly two PI (scaling an f64 by 2 only bumps the exponent).
+    if (math.TAU != 2.0 * math.PI) { return 6; }
+    // PI sits in the tight interval around the true value.
+    if (math.PI <= 3.141592653 || math.PI >= 3.141592654) { return 7; }
     // zero-angle conversions are exact both ways.
     if (math.to_radians(0.0) != 0.0) { return 8; }
     if (math.to_degrees(0.0) != 0.0) { return 9; }
@@ -25,7 +25,7 @@ function main(): i32 {
     if (d > 0.0000001) { return 10; }
     // 180 degrees is pi radians (up to rounding).
     let rad: f64 = math.to_radians(180.0);
-    let dp: f64 = rad - math.pi();
+    let dp: f64 = rad - math.PI;
     if (dp < 0.0) { dp = 0.0 - dp; }
     if (dp > 0.0000001) { return 11; }
     // to_degrees is the inverse of to_radians on a non-trivial angle.

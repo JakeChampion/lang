@@ -43,14 +43,6 @@ function rm_rup(): i32 {
   return 5;
 }
 
-function i64_max(): i64 {
-  return 9223372036854775807 as i64;
-}
-
-function i64_min(): i64 {
-  return 0 as i64 - 9223372036854775807 as i64 - 1 as i64;
-}
-
 function help_text(): string {
   let out: string = "";
   out = out + "Usage: " + gnu.prog() + " OPTION... FILE...\n";
@@ -283,7 +275,7 @@ function scale_blocks(cfg: Cfg, info: Info, name: string): (i64, boolean) {
     return (cfg.size, true);
   }
   let bs: i64 = block_size(info);
-  if (cfg.size < i64_min() / bs || i64_max() / bs < cfg.size) {
+  if (cfg.size < i64.MIN / bs || i64.MAX / bs < cfg.size) {
     gnu.error("overflow in " + cfg.size.to_string() + " * " + bs.to_string() + " byte blocks for file " + gnu.quotea(name));
     return (0 as i64, false);
   }
