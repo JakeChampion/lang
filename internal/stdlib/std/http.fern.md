@@ -94,7 +94,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<33 function __chunk_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32, ChunkDecoder, i32, u8[])>>
 
-<<34 pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest]>>
+<<34 pub function http_parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseError]>>
 
 <<35 pub struct HttpFramed>>
 
@@ -124,7 +124,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<48 function __version_status(buf: u8[], from: i32, end: i32): i32>>
 
-<<49 pub function http_parse_request(buf: string): Option[HttpRequest]>>
+<<49 pub function http_parse_request(buf: string): Result[HttpRequest, RequestParseError]>>
 
 <<50 function __http_reason(code: i32): string>>
 
@@ -1628,26 +1628,50 @@ function __chunk_trailers_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): 
 }
 ```
 
-### `34 pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest]`
+### `34 pub function http_parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseError]`
 
 ```fern
-<<34 pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest]>>=
-pub function http_parse_request_bytes(buf: u8[]): Option[HttpRequest] {
-  match (http_parse_request_framed(buf)) {
-    Framed(f) => {
-      return Some(f.request);
+<<34 pub function http_parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseError]>>=
+// Why a buffer is not yet, or never will be, one whole request.
+pub enum RequestParseError { RequestIncomplete, RequestNeedsContinue, RequestMalformed(i32) }
+
+impl error.Error for RequestParseError {}
+
+impl cmp.Display for RequestParseError {}
+
+pub function (e: RequestParseError) message(): string {
+  match (e) {
+    RequestIncomplete => {
+      return "the request is incomplete";
     },
-    Incomplete => {
-      return None;
+    RequestNeedsContinue => {
+      return "the request waits for 100 Continue before sending its body";
     },
-    Continue => {
-      return None;
-    },
-    Malformed(_) => {
-      return None;
+    RequestMalformed(status) => {
+      return "the request is malformed (status " + status.to_string() + ")";
     }
   }
-  return None;
+}
+
+pub function (e: RequestParseError) to_string(): string {
+  return e.message();
+}
+
+pub function http_parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseError] {
+  match (http_parse_request_framed(buf)) {
+    Framed(f) => {
+      return Ok(f.request);
+    },
+    Incomplete => {
+      return Err(RequestIncomplete);
+    },
+    Continue => {
+      return Err(RequestNeedsContinue);
+    },
+    Malformed(status) => {
+      return Err(RequestMalformed(status));
+    }
+  }
 }
 ```
 
@@ -2347,11 +2371,11 @@ function __persists(version: string, h: HeaderMap, at: i32): boolean {
 }
 ```
 
-### `49 pub function http_parse_request(buf: string): Option[HttpRequest]`
+### `49 pub function http_parse_request(buf: string): Result[HttpRequest, RequestParseError]`
 
 ```fern
-<<49 pub function http_parse_request(buf: string): Option[HttpRequest]>>=
-pub function http_parse_request(buf: string): Option[HttpRequest] {
+<<49 pub function http_parse_request(buf: string): Result[HttpRequest, RequestParseError]>>=
+pub function http_parse_request(buf: string): Result[HttpRequest, RequestParseError] {
   return http_parse_request_bytes(buf.bytes());
 }
 ```

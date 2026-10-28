@@ -20,7 +20,7 @@ function wire_post(): string {
 
 function test_bytes_parse_keeps_the_request(): test.TestOutcome {
   match (http.http_parse_request_bytes(wire_post().bytes())) {
-    Some(req) => {
+    Ok(req) => {
       if (req.method != "POST") {
         return test.fail("method: " + req.method);
       }
@@ -35,7 +35,7 @@ function test_bytes_parse_keeps_the_request(): test.TestOutcome {
       }
       return test.assert_is_some_eq_string(req.headers.get("x-request-id"), "42");
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed on a well-formed request");
     }
   }
@@ -45,9 +45,9 @@ function test_bytes_parse_keeps_the_request(): test.TestOutcome {
 function test_text_and_bytes_agree(): test.TestOutcome {
   let wire: string = wire_post();
   match (http.http_parse_request(wire)) {
-    Some(a) => {
+    Ok(a) => {
       match (http.http_parse_request_bytes(wire.bytes())) {
-        Some(b) => {
+        Ok(b) => {
           if (a.method != b.method || a.path != b.path) {
             return test.fail("request line differs");
           }
@@ -56,12 +56,12 @@ function test_text_and_bytes_agree(): test.TestOutcome {
           }
           return test.assert_eq(body_text(a), body_text(b));
         },
-        None => {
+        Err(_) => {
           return test.fail("bytes parse failed");
         }
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("text parse failed");
     }
   }
@@ -70,13 +70,13 @@ function test_text_and_bytes_agree(): test.TestOutcome {
 
 function test_bare_request_has_no_headers(): test.TestOutcome {
   match (http.http_parse_request_bytes("GET / HTTP/1.0\r\n\r\n".bytes())) {
-    Some(req) => {
+    Ok(req) => {
       if (req.headers.len() != 0) {
         return test.fail("headers on a bare request");
       }
       return test.assert_eq(req.body_len(), 0);
     },
-    None => {
+    Err(_) => {
       return test.fail("bare request refused");
     }
   }
@@ -121,10 +121,10 @@ function block_of(block_len: i32): string {
 
 function accepted(wire: string): boolean {
   match (http.http_parse_request_bytes(wire.bytes())) {
-    Some(_) => {
+    Ok(_) => {
       return true;
     },
-    None => {
+    Err(_) => {
       return false;
     }
   }
@@ -133,12 +133,12 @@ function accepted(wire: string): boolean {
 
 function test_caps_admit_what_fits(): test.TestOutcome {
   match (http.http_parse_request_bytes(("GET / HTTP/1.1\r\nHost: h\r\n" + fields(99) + "\r\n").bytes())) {
-    Some(req) => {
+    Ok(req) => {
       if (req.headers.len() != 100) {
         return test.fail("100 fields kept as " + req.headers.len().to_string());
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("100 header fields refused");
     }
   }
@@ -169,17 +169,17 @@ function test_caps_admit_what_fits(): test.TestOutcome {
 function refused(wire: string): boolean {
   let text: boolean = true;
   match (http.http_parse_request(wire)) {
-    Some(_) => {
+    Ok(_) => {
       text = false;
     },
-    None => {}
+    Err(_) => {}
   }
   let bytes: boolean = true;
   match (http.http_parse_request_bytes(wire.bytes())) {
-    Some(_) => {
+    Ok(_) => {
       bytes = false;
     },
-    None => {}
+    Err(_) => {}
   }
   return text && bytes;
 }
@@ -367,10 +367,10 @@ function chunked(body: string): string {
 
 function body_of(wire: string): string {
   match (http.http_parse_request_bytes(wire.bytes())) {
-    Some(req) => {
+    Ok(req) => {
       return body_text(req);
     },
-    None => {
+    Err(_) => {
       return "<refused>";
     }
   }
@@ -379,7 +379,7 @@ function body_of(wire: string): string {
 
 function test_chunked_body_is_decoded(): test.TestOutcome {
   match (http.http_parse_request_bytes(wire_chunked().bytes())) {
-    Some(req) => {
+    Ok(req) => {
       if (body_text(req) != "hello world") {
         return test.fail("body: " + body_text(req));
       }
@@ -400,7 +400,7 @@ function test_chunked_body_is_decoded(): test.TestOutcome {
         }
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("a chunked request refused");
     }
   }
@@ -438,12 +438,12 @@ function test_chunked_body_is_decoded(): test.TestOutcome {
     return test.fail("an empty chunked body refused");
   }
   match (http.http_parse_request(wire_post())) {
-    Some(req) => {
+    Ok(req) => {
       if (req.trailers.len() != 0) {
         return test.fail("a Content-Length body has trailers");
       }
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
@@ -677,6 +677,24 @@ function framed(wire: string): Option[http.HttpFramed] {
   return None;
 }
 
+function refusal_of(text: string): string {
+  match (http.http_parse_request(text)) {
+    Ok(_) => {
+      return "parsed";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+}
+
+function test_parse_names_why_it_refused(): test.TestOutcome {
+  let short: string = refusal_of("GET / HTTP/1.1\r\nHost: h\r\n");
+  let waits: string = refusal_of("POST / HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\n");
+  let bad: string = refusal_of("GET / HTTP/1.1\r\n\r\n");
+  return test.assert_eq(short + " | " + waits + " | " + bad, "the request is incomplete | the request waits for 100 Continue before sending its body | the request is malformed (status 400)");
+}
+
 function test_framed_length_covers_headers_and_body(): test.TestOutcome {
   let wire: string = wire_post() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
   match (framed(wire)) {
@@ -901,7 +919,7 @@ function test_serialize_names_the_connection(): test.TestOutcome {
 function test_parse_holds_no_view_into_the_wire(): test.TestOutcome {
   let wire: u8[] = wire_post().bytes();
   match (http.http_parse_request_bytes(wire)) {
-    Some(req) => {
+    Ok(req) => {
       let i: i32 = 0;
       while (i < wire.len()) {
         wire = wire.with(i, 120 as u8);
@@ -912,7 +930,7 @@ function test_parse_holds_no_view_into_the_wire(): test.TestOutcome {
       }
       return test.assert_eq(body_text(req), "hello");
     },
-    None => {
+    Err(_) => {
       return test.fail("parse failed");
     }
   }
@@ -984,10 +1002,10 @@ function test_target_is_normalised(): test.TestOutcome {
     return test.fail("asterisk-form: " + target_of("OPTIONS", "*"));
   }
   match (http.http_parse_request_bytes("GET /a/%2e%2e/b?c=%2F HTTP/1.1\r\nHost: h\r\n\r\n".bytes())) {
-    Some(req) => {
+    Ok(req) => {
       return test.assert_eq(req.path, "/b?c=%2F");
     },
-    None => {
+    Err(_) => {
       return test.fail("the parse refused a target it normalises");
     }
   }
@@ -1192,7 +1210,7 @@ function test_empty_line_before_the_request(): test.TestOutcome {
 
 function header_of(wire: string, name: string): string {
   match (http.http_parse_request(wire)) {
-    Some(req) => {
+    Ok(req) => {
       match (req.headers.get(name)) {
         Some(v) => {
           return v;
@@ -1202,7 +1220,7 @@ function header_of(wire: string, name: string): string {
         }
       }
     },
-    None => {
+    Err(_) => {
       return "<refused>";
     }
   }
@@ -1253,6 +1271,7 @@ function main(): i32 {
   r = r.it("chunked framing tells incomplete from malformed", test_chunked_framing_tells_incomplete_from_malformed);
   r = r.it("refusal statuses", test_refusal_statuses);
   r = r.it("expect continue", test_expect_continue);
+  r = r.it("parse names why it refused", test_parse_names_why_it_refused);
   r = r.it("target is normalised", test_target_is_normalised);
   r = r.it("target refusals", test_target_refusals);
   r = r.it("version rules", test_version_rules);

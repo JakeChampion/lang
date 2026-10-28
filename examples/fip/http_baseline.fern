@@ -33,10 +33,10 @@ function route(req: HttpRequest): HttpResponse {
 
 function serve(wire: u8[], wire_len: i32): string {
   match (http.http_parse_request(string_from_bytes_unchecked(wire.take(wire_len)))) {
-    Some(req) => {
+    Ok(req) => {
       return http.http_serialize_response(route(req));
     },
-    None => {
+    Err(_) => {
       return http.http_serialize_response(http.bad_request("bad request"));
     }
   }
