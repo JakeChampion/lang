@@ -38,14 +38,14 @@ function test_in_range_wide(): test.TestOutcome {
 }
 
 function test_between_includes_bounds(): test.TestOutcome {
-  if (!(10 as i64).is_between(1 as i64, 10 as i64)) {
+  if (!(10 as i64).is_in_range_incl(1 as i64, 10 as i64)) {
     return test.fail("hi should be included");
   }
-  return test.assert_true((1 as i64).is_between(1 as i64, 10 as i64));
+  return test.assert_true((1 as i64).is_in_range_incl(1 as i64, 10 as i64));
 }
 
 function test_between_outside(): test.TestOutcome {
-  return test.assert_true(!(11 as i64).is_between(1 as i64, 10 as i64));
+  return test.assert_true(!(11 as i64).is_in_range_incl(1 as i64, 10 as i64));
 }
 
 function main(): i32 {
@@ -58,7 +58,7 @@ function main(): i32 {
   r = r.it("is_in_range inside", test_in_range_inside);
   r = r.it("is_in_range excludes hi", test_in_range_excludes_hi);
   r = r.it("is_in_range wide", test_in_range_wide);
-  r = r.it("is_between includes bounds", test_between_includes_bounds);
-  r = r.it("is_between outside", test_between_outside);
+  r = r.it("is_in_range_incl includes bounds", test_between_includes_bounds);
+  r = r.it("is_in_range_incl outside", test_between_outside);
   return r.finish();
 }
