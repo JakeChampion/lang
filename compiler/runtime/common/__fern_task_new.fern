@@ -1,25 +1,28 @@
 function __fern_task_new(): i32 {
   let st: usize = __raw_task_state();
   let tab: usize = __fern_task_tab();
-  let cap: i32 = __raw_load_ptr(st, 2) as i32;
-  let id: i32 = 1;
-  while (id < cap) {
+  let id: i32 = __raw_load_ptr(st, 4) as i32;
+  if (id != 0) {
     let rec: usize = __raw_load_ptr(tab, id);
-    if (rec == 0 as usize) {
-      __raw_store_ptr(tab, id, __fern_task_blank());
-      return id;
-    }
-    if (__raw_load_ptr(rec, 7) != 0 as usize) {
-      __raw_store_ptr(rec, 7, 0 as usize);
-      __raw_store_ptr(rec, 0, 0 as usize);
-      __raw_store_ptr(rec, 1, 0 as usize);
-      __raw_store_ptr(rec, 2, 0 as usize);
-      __raw_store_ptr(rec, 3, 0 as usize);
-      __raw_store_ptr(rec, 5, 0 as usize);
-      __raw_store_ptr(rec, 9, 0 as usize);
-      return id;
-    }
-    id = id + 1;
+    __raw_store_ptr(st, 4, __raw_load_ptr(rec, 7) - 1 as usize);
+    __raw_store_ptr(rec, 7, 0 as usize);
+    __raw_store_ptr(rec, 0, 0 as usize);
+    __raw_store_ptr(rec, 1, 0 as usize);
+    __raw_store_ptr(rec, 2, 0 as usize);
+    __raw_store_ptr(rec, 3, 0 as usize);
+    __raw_store_ptr(rec, 5, 0 as usize);
+    __raw_store_ptr(rec, 9, 0 as usize);
+    return id;
+  }
+  let cap: i32 = __raw_load_ptr(st, 2) as i32;
+  id = __raw_load_ptr(st, 5) as i32;
+  if (id == 0) {
+    id = 1;
+  }
+  __raw_store_ptr(st, 5, (id + 1) as usize);
+  if (id < cap) {
+    __raw_store_ptr(tab, id, __fern_task_blank());
+    return id;
   }
   let ntab: usize = __alloc(cap * 16);
   let j: i32 = 0;

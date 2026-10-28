@@ -1816,7 +1816,6 @@ pub struct Scope {
   tparams: string[],
   tbounds: string[],
   lit_locals: string[],
-  view_memo: Cell[ViewMemo],
 }
 
 pub struct ViewMemo { names: util.NameIndex, holds: boolean[] }
@@ -1971,6 +1970,7 @@ pub struct UnionTable {
   bnames: string[],
   bhead: i32[],
   bnext: i32[],
+  view_memo: Cell[ViewMemo],
 }
 
 function enum_union_sig(ed: parser.EnumDecl): UnionSig {
@@ -2023,7 +2023,7 @@ function union_table(unions: UnionSig[]): UnionTable {
     names = names.append(unions[m].name);
     m = m + 1;
   }
-  return UnionTable { unions: unions, vnames: vnames, vowner: vowner, index: util.name_index(names), head: head, next: next, lib_head: lib_head, lib_next: lib_next, from_import: false, bnames: bnames, bhead: bhead, bnext: bnext };
+  return UnionTable { unions: unions, vnames: vnames, vowner: vowner, index: util.name_index(names), head: head, next: next, lib_head: lib_head, lib_next: lib_next, from_import: false, bnames: bnames, bhead: bhead, bnext: bnext, view_memo: new_view_memo() };
 }
 
 function declared_by_entry(u: UnionSig): boolean {
@@ -2198,13 +2198,13 @@ function new_scope(): Scope {
   let ms: MethodSig[] = [];
   let structs: StructTable = struct_table(ss, [], [], no_spellings());
   let unions: UnionTable = union_table(us);
-  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], view_memo: new_view_memo() };
+  return Scope { names: ns, types: ts, sigs: sig_table(fs), structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, []), methods: method_table(ms), imports: Imports { paths: [], unloaded: [], sights: [] }, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: [], trait_reqs: [], fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
 }
 
 function new_scope_full(st: SigTable, structs: StructTable, unions: UnionTable, methods: MethodTable, imports: Imports, impls: parser.ImplInfo[], trait_reqs: parser.TraitReq[]): Scope {
   let ns: string[] = [];
   let ts: typeinfo.Type[] = [];
-  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [], view_memo: new_view_memo() };
+  return Scope { names: ns, types: ts, sigs: st, structs: structs, unions: unions, names_of_types: type_names_of(structs, unions, imports.unloaded), methods: methods, imports: imports, loop_depth: 0, ret_type: t_unknown("no enclosing function"), try_ret: t_unknown("no enclosing function"), impls: impls, trait_reqs: trait_reqs, fn_module: "", default_trait: "", default_recv: "", tparams: [], tbounds: [], lit_locals: [] };
 }
 
 function (s: Scope) bind(name: string, t: typeinfo.Type): Scope {
@@ -8899,13 +8899,13 @@ function holds_view_aggregate(t: typeinfo.Type, s: Scope): boolean {
   }
   let key = kind + spelling;
   // Cache only complete root queries. A recursive visit can skip an ancestor that carries a view.
-  let memo = s.view_memo.get();
+  let memo = s.unions.view_memo.get();
   let at = memo.names.find(key);
   if (at >= 0) {
     return memo.holds[at];
   }
   let (holds, _) = type_holds_view(t, s, []);
-  s.view_memo.set(ViewMemo { names: memo.names.added(key), holds: memo.holds.append(holds) });
+  s.unions.view_memo.set(ViewMemo { names: memo.names.added(key), holds: memo.holds.append(holds) });
   return holds;
 }
 
@@ -14005,7 +14005,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
               out = util.append_diags(out, vec_arg_diags(sig, c, ai, at, s));
               out = util.append_diags(out, ctor_payload_diags(c.args[ai], sig.param_types[ai], s));
               let bound_checked: boolean = param_has_bindings(sig, ai, cbn);
-              if (!bound_checked && !(sig.all_type_params.len() > 0 && binds_nothing(c.args[ai], s)) && !is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to_dest(c.args[ai], sig.param_types[ai], s) && !view_arg_borrow(at, sig.param_types[ai]) && !coercible(at, sig.param_types[ai], s)) {
+              if (!bound_checked && !(sig.all_type_params.len() > 0 && type_contains_unknown(sig.param_types[ai]) && binds_nothing(c.args[ai], s)) && !is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to_dest(c.args[ai], sig.param_types[ai], s) && !view_arg_borrow(at, sig.param_types[ai]) && !coercible(at, sig.param_types[ai], s)) {
                 out = out.append(dg_at("E038", arg_subject(c, ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + argument_type_label(c.args[ai], at, s), expr_line(c.args[ai]), expr_col(c.args[ai])));
               }
               out = util.append_diags(out, array_elem_check(array_elem_type_of(sig.param_types[ai]), c.args[ai], s));

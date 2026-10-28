@@ -54,7 +54,7 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 
 pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], likely: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[], links: i32[], reuse: Reuse, forced: boolean[] }
 
-struct Ledger { ok: boolean, why: string, bits: boolean[] }
+struct Ledger { ok: boolean, why: string, bits: boolean[], held: i32 }
 
 pub struct GrowRow { callee: string, param: i32, field: i32 }
 
@@ -378,7 +378,7 @@ pub function refused(why: string): Plan {
 }
 
 function rejected(why: string): Ledger {
-  return Ledger { ok: false, why: why, bits: [] };
+  return Ledger { ok: false, why: why, bits: [], held: 0 };
 }
 
 function step(block: i32, point: i32, target: i32): Step {
@@ -2715,16 +2715,31 @@ pub function grow_holds(f: ssasem.Func, p: Plan, grows: GrowTable): boolean[] {
     return out;
   }
   let a: ssasem.Analysis = p.unit_analysis;
-  let bare: ssalive.Flow = ssalive.compute_checked(f.graph, empty_chains(f.graph.nvals));
+  let at_block: i32[] = [];
+  let at_pos: i32[] = [];
+  let at_value: i32[] = [];
   for bi in 0..f.graph.blocks.len() {
     let insts: ssa.SInst[] = f.graph.blocks[bi].insts;
     for pos in 0..insts.len() {
       for v in grown_params(f, p, grows, insts[pos]) {
-        if (!ssasem.read_after(a.uses, bi, pos, v) && !ssalive.live_out_has(bare, bi, v)) {
-          let kids: i32[] = outliving(f, a, p.defs, p.owned, out, v, bi, pos, 0 - 1, insts[pos].args);
-          out = mark_all(out, kids);
+        if (!ssasem.read_after(a.uses, bi, pos, v)) {
+          at_block = at_block.append(bi);
+          at_pos = at_pos.append(pos);
+          at_value = at_value.append(v);
         }
       }
+    }
+  }
+  if (at_value.len() == 0) {
+    return out;
+  }
+  let bare: ssalive.Flow = ssalive.compute_checked(f.graph, empty_chains(f.graph.nvals));
+  for k in 0..at_value.len() {
+    let bi: i32 = at_block[k];
+    let v: i32 = at_value[k];
+    if (!ssalive.live_out_has(bare, bi, v)) {
+      let kids: i32[] = outliving(f, a, p.defs, p.owned, out, v, bi, at_pos[k], 0 - 1, f.graph.blocks[bi].insts[at_pos[k]].args);
+      out = mark_all(out, kids);
     }
   }
   return out;
@@ -3226,22 +3241,25 @@ function read_error(state: boolean[], value: i32, owned: boolean[], deps: i32[][
   return "";
 }
 
-function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): boolean[] {
+function invariant(f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): (boolean[], i32) {
   let state: boolean[] = flow.none;
+  let held: i32 = 0;
   for v in ssalive.live_in_ids(flow, bi) {
-    if (owned[v]) {
+    if (owned[v] && !state[v]) {
       state = state.with(v, true);
+      held = held + 1;
     }
   }
   for ins in f.graph.blocks[bi].insts {
-    if ((ins.kind_tag == 8 || ins.kind_tag == 6) && owned[ins.result]) {
+    if ((ins.kind_tag == 8 || ins.kind_tag == 6) && owned[ins.result] && !state[ins.result]) {
       state = state.with(ins.result, true);
+      held = held + 1;
     }
   }
-  return state;
+  return (state, held);
 }
 
-function holds_invariant(state: boolean[], f: ssasem.Func, bi: i32, owned: boolean[], owned_ids: i32[], flow: ssalive.Flow): boolean {
+function holds_invariant(state: boolean[], held: i32, f: ssasem.Func, bi: i32, owned: boolean[], flow: ssalive.Flow): boolean {
   let want: i32 = 0;
   for v in ssalive.live_in_ids(flow, bi) {
     if (owned[v]) {
@@ -3259,13 +3277,7 @@ function holds_invariant(state: boolean[], f: ssasem.Func, bi: i32, owned: boole
       want = want + 1;
     }
   }
-  let have: i32 = 0;
-  for v in owned_ids {
-    if (state[v]) {
-      have = have + 1;
-    }
-  }
-  return have == want;
+  return held == want;
 }
 
 function same_bits(a: boolean[], b: boolean[]): boolean {
@@ -3376,9 +3388,7 @@ pub function step_at(p: Plan, idx: i32[][], block: i32, point: i32, target: i32)
   return 0 - 1;
 }
 
-// `owned` lists the owned values: a replay row sets no
-// other bit.
-struct ReplayIndex { positions: i32[], offsets: i32[], slots: i32[], owned: i32[] }
+struct ReplayIndex { positions: i32[], offsets: i32[], slots: i32[] }
 
 function replay_point(b: ssa.SBlock, point: i32, target: i32): i32 {
   if (target == 0 - 1) {
@@ -3409,7 +3419,7 @@ function replay_point(b: ssa.SBlock, point: i32, target: i32): i32 {
   return 0 - 1;
 }
 
-function replay_index(f: ssasem.Func, p: Plan, flow: ssalive.Flow, owned: boolean[]): ReplayIndex {
+function replay_index(f: ssasem.Func, p: Plan, flow: ssalive.Flow): ReplayIndex {
   let offsets: i32[] = [];
   let slots: i32[] = [];
   for b in f.graph.blocks {
@@ -3437,15 +3447,7 @@ function replay_index(f: ssasem.Func, p: Plan, flow: ssalive.Flow, owned: boolea
     }
     i = i + 1;
   }
-  let owned_ids: i32[] = [];
-  let v: i32 = 0;
-  while (v < owned.len()) {
-    if (owned[v]) {
-      owned_ids = owned_ids.append(v);
-    }
-    v = v + 1;
-  }
-  return ReplayIndex { positions: flow.at, offsets: offsets, slots: slots, owned: owned_ids };
+  return ReplayIndex { positions: flow.at, offsets: offsets, slots: slots };
 }
 
 function find_step(b: ssa.SBlock, idx: ReplayIndex, point: i32, target: i32): i32 {
@@ -3514,19 +3516,27 @@ function replay_error(state: boolean[], s: Step, wanted: Supply[], result: i32, 
   return "";
 }
 
-function apply_step(own state: boolean[], s: Step, result: i32, owned: boolean[], ids: i32[]): boolean[] {
+function apply_step(own state: boolean[], held: i32, s: Step, result: i32, owned: boolean[], ids: i32[]): (boolean[], i32) {
   for got in s.supplies {
     if (got.mode == move_unit()) {
-      state = state.with(supplied_unit(owned, ids, got.value), false);
+      let u: i32 = supplied_unit(owned, ids, got.value);
+      if (state[u]) {
+        state = state.with(u, false);
+        held = held - 1;
+      }
     }
   }
-  if (result >= 0 && owned[result]) {
+  if (result >= 0 && owned[result] && !state[result]) {
     state = state.with(result, true);
+    held = held + 1;
   }
   for value in s.drops {
-    state = state.with(value, false);
+    if (state[value]) {
+      state = state.with(value, false);
+      held = held - 1;
+    }
   }
-  return state;
+  return (state, held);
 }
 
 function copy_row(state: boolean[]): boolean[] {
@@ -3536,13 +3546,13 @@ function copy_row(state: boolean[]): boolean[] {
   return state.with(0, state[0]);
 }
 
-struct ReplayProgress { why: string, state: boolean[], count: i32 }
+struct ReplayProgress { why: string, state: boolean[], held: i32, count: i32 }
 
 function progress_error(why: string): ReplayProgress {
-  return ReplayProgress { why: why, state: [], count: 0 };
+  return ReplayProgress { why: why, state: [], held: 0, count: 0 };
 }
 
-function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIndex, own state: boolean[], owned: boolean[], ids: i32[], deps: i32[][]): ReplayProgress {
+function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIndex, own state: boolean[], held: i32, owned: boolean[], ids: i32[], deps: i32[][]): ReplayProgress {
   let at0: i32 = find_step(b, idx, entry_point(), 0 - 1);
   if (at0 < 0) {
     return progress_error("missing or duplicate entry step");
@@ -3551,7 +3561,7 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIn
   if (entry_why != "") {
     return progress_error(entry_why);
   }
-  let next: boolean[] = apply_step(state, p.steps[at0], 0 - 1, owned, ids);
+  let (next, n) = apply_step(state, held, p.steps[at0], 0 - 1, owned, ids);
   let count: i32 = 0;
   let pos: i32 = 0;
   for ins in b.insts {
@@ -3575,12 +3585,14 @@ function verify_operations(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIn
       if (why != "") {
         return progress_error(why);
       }
-      next = apply_step(next, p.steps[at], ins.result, owned, ids);
+      let (bits, count_held) = apply_step(next, n, p.steps[at], ins.result, owned, ids);
+      next = bits;
+      n = count_held;
       count = count + 1;
     }
     pos = pos + 1;
   }
-  return ReplayProgress { why: "", state: next, count: count };
+  return ReplayProgress { why: "", state: next, held: n, count: count };
 }
 
 function lent_error(state: boolean[], s: Step, ins: ssa.SInst, counted: Supply[], owned: boolean[], ids: i32[], deps: i32[][]): string {
@@ -3648,19 +3660,20 @@ function verify_return(f: ssasem.Func, b: ssa.SBlock, p: Plan, idx: ReplayIndex,
   return "";
 }
 
-function enter_phis(b: ssa.SBlock, own state: boolean[], owned: boolean[]): Ledger {
+function enter_phis(b: ssa.SBlock, own state: boolean[], held: i32, owned: boolean[]): Ledger {
   for ins in b.insts {
     if (ins.kind_tag == 8 && owned[ins.result]) {
       if (state[ins.result]) {
         return rejected("phi unit already present");
       }
       state = state.with(ins.result, true);
+      held = held + 1;
     }
   }
-  return Ledger { ok: true, why: "", bits: state };
+  return Ledger { ok: true, why: "", bits: state, held: held };
 }
 
-function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, idx: ReplayIndex, own state: boolean[], owned: boolean[], ids: i32[], analysis: ssasem.Analysis): string {
+function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, idx: ReplayIndex, own state: boolean[], held: i32, owned: boolean[], ids: i32[], analysis: ssasem.Analysis): string {
   let at: i32 = find_step(b, idx, edge_point(), target);
   if (at < 0) {
     return "missing or duplicate edge step";
@@ -3670,12 +3683,12 @@ function verify_edge(f: ssasem.Func, b: ssa.SBlock, target: i32, p: Plan, idx: R
   if (why != "") {
     return why;
   }
-  let left: boolean[] = apply_step(state, p.steps[at], 0 - 1, owned, ids);
-  let entered: Ledger = enter_phis(f.graph.blocks[si], left, owned);
+  let (left, left_held) = apply_step(state, held, p.steps[at], 0 - 1, owned, ids);
+  let entered: Ledger = enter_phis(f.graph.blocks[si], left, left_held, owned);
   if (!entered.ok) {
     return entered.why;
   }
-  if (!holds_invariant(entered.bits, f, si, owned, idx.owned, analysis.flow)) {
+  if (!holds_invariant(entered.bits, entered.held, f, si, owned, analysis.flow)) {
     return "edge unit invariant mismatch";
   }
   return "";
@@ -3685,8 +3698,8 @@ struct BlockProgress { why: string, count: i32 }
 
 function verify_block(f: ssasem.Func, bi: i32, p: Plan, idx: ReplayIndex, owned: boolean[], ids: i32[], analysis: ssasem.Analysis): BlockProgress {
   let b: ssa.SBlock = f.graph.blocks[bi];
-  let entry_row: boolean[] = invariant(f, bi, owned, analysis.flow);
-  let operations: ReplayProgress = verify_operations(f, b, p, idx, entry_row, owned, ids, analysis.dependencies);
+  let (entry_row, entry_held) = invariant(f, bi, owned, analysis.flow);
+  let operations: ReplayProgress = verify_operations(f, b, p, idx, entry_row, entry_held, owned, ids, analysis.dependencies);
   if (operations.why != "") {
     return BlockProgress { why: operations.why, count: 0 };
   }
@@ -3708,14 +3721,14 @@ function verify_block(f: ssasem.Func, bi: i32, p: Plan, idx: ReplayIndex, owned:
   let targets: i32 = successor_count(b);
   if (targets == 2) {
     let first: boolean[] = copy_row(state);
-    let why: string = verify_edge(f, b, ssa.successor_id(b.term, 0), p, idx, first, owned, ids, analysis);
+    let why: string = verify_edge(f, b, ssa.successor_id(b.term, 0), p, idx, first, operations.held, owned, ids, analysis);
     if (why != "") {
       return BlockProgress { why: why, count: 0 };
     }
     count = count + 1;
   }
   if (targets > 0) {
-    let why: string = verify_edge(f, b, ssa.successor_id(b.term, targets - 1), p, idx, state, owned, ids, analysis);
+    let why: string = verify_edge(f, b, ssa.successor_id(b.term, targets - 1), p, idx, state, operations.held, owned, ids, analysis);
     if (why != "") {
       return BlockProgress { why: why, count: 0 };
     }
@@ -3788,7 +3801,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
     analysis = p.unit_analysis;
   }
   let reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
-  let idx: ReplayIndex = replay_index(f, p, analysis.flow, owned);
+  let idx: ReplayIndex = replay_index(f, p, analysis.flow);
   let ids: i32[] = identity_roots(defs);
   let count: i32 = 0;
   let bi: i32 = 0;

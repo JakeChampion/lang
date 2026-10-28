@@ -50,7 +50,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<17 pub function idle(): Idle>>
 
-<<18 function __has_fd(fds: i32[], fd: i32): boolean>>
+<<18 function __has_fd(marks: u8[], fd: i32): boolean>>
 
 <<19 pub function (p: Idle) armed(fd: i32): boolean>>
 
@@ -682,7 +682,7 @@ pub trait Transport {
   function socket(self: Self, conn: i32): i32;
 }
 
-pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared], names: dns.Resolver, proxies: Cell[Option[ProxyEnv]], armed: Option[Cell[i32[]]] }
+pub struct Idle { kept: Cell[Kept[]], max: i32, idle: Duration, shared: Option[Shared], names: dns.Resolver, proxies: Cell[Option[ProxyEnv]], armed: Option[Cell[u8[]]] }
 ```
 
 ### `15 pub function (p: Idle) proxy_env(): ProxyEnv`
@@ -726,18 +726,18 @@ pub function idle_shared(): Idle {
   let rows: Driven[] = [];
   let mail: Mail[] = [];
   let dialing: string[] = [];
-  let fds: i32[] = [];
-  return Idle { ...idle(), shared: Some(Shared { rows: cell_new(rows), mail: cell_new(mail), next: cell_new(3), dialing: cell_new(dialing) }), armed: Some(cell_new(fds)) };
+  let marks: u8[] = [];
+  // No count limit: the pool never holds more than the handlers held at once.
+  return Idle { ...idle_limited(2147483647, time.duration_seconds(90 as i64)), shared: Some(Shared { rows: cell_new(rows), mail: cell_new(mail), next: cell_new(3), dialing: cell_new(dialing) }), armed: Some(cell_new(marks)) };
 }
 
 pub function (p: Idle) read_interest(fd: i32): i32 {
   match (p.armed) {
     Some(c) => {
-      let fds: i32[] = c.get();
-      if (__has_fd(fds, fd)) {
+      if (__has_fd(c.get(), fd)) {
         return 1 | async.WATCHED;
       }
-      c.set(fds.append(fd));
+      __mark_fd(c, fd, 1);
       return 1 | async.KEEP;
     },
     None => {
@@ -748,32 +748,26 @@ pub function (p: Idle) read_interest(fd: i32): i32 {
 }
 ```
 
-### `18 function __has_fd(fds: i32[], fd: i32): boolean`
+### `18 function __has_fd(marks: u8[], fd: i32): boolean`
 
 ```fern
-<<18 function __has_fd(fds: i32[], fd: i32): boolean>>=
-function __has_fd(fds: i32[], fd: i32): boolean {
-  let i: i32 = 0;
-  while (i < fds.len()) {
-    if (fds[i] == fd) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
+<<18 function __has_fd(marks: u8[], fd: i32): boolean>>=
+function __has_fd(marks: u8[], fd: i32): boolean {
+  return fd >= 0 && fd < marks.len() && marks[fd] != 0;
 }
 
-function __without_fd(fds: i32[], fd: i32): i32[] {
-  let kept: i32 = 0;
-  for i in 0..fds.len() {
-    if (fds[i] != fd) {
-      if (kept != i) {
-        fds = fds.with(kept, fds[i]);
-      }
-      kept = kept + 1;
-    }
+// The cell lets go of the map before the write, so the write is in place.
+function __mark_fd(c: Cell[u8[]], fd: i32, mark: u8): void {
+  if (fd < 0 || mark == 0 && fd >= c.get().len()) {
+    return;
   }
-  return fds.truncate(kept);
+  let marks: u8[] = c.get();
+  let none: u8[] = [];
+  c.set(none);
+  while (marks.len() <= fd) {
+    marks = marks.append(0);
+  }
+  c.set(marks.with(fd, mark));
 }
 ```
 
@@ -796,7 +790,7 @@ pub function (p: Idle) armed(fd: i32): boolean {
 pub function (p: Idle) disarm(fd: i32): void {
   match (p.armed) {
     Some(c) => {
-      c.set(__without_fd(c.get(), fd));
+      __mark_fd(c, fd, 0);
     },
     None => {}
   }
@@ -1354,6 +1348,7 @@ function __take_idle[T: Transport](tr: T, place: __Place): __Conn {
     pick = pick - 1;
   }
   if (pick < 0) {
+    tr.idle().kept.set(rows);
     return __no_conn();
   }
   let conn: __Conn = __kept_conn(rows[pick]);
@@ -1374,9 +1369,13 @@ function __park[T: Transport](tr: T, place: __Place, conn: __Conn): void {
   tr.idle().kept.set(rows);
 }
 
+// Takes the rows out of the pool, so the caller updates them in place and
+// sets them back.
 function __live_kept[T: Transport](tr: T): Kept[] {
   let pool: Idle = tr.idle();
   let rows: Kept[] = pool.kept.get();
+  let none: Kept[] = [];
+  pool.kept.set(none);
   if (rows.len() == 0) {
     return rows;
   }
@@ -1389,9 +1388,7 @@ function __live_kept[T: Transport](tr: T): Kept[] {
   if (from == 0) {
     return rows;
   }
-  let out: Kept[] = __kept_from(rows, from);
-  pool.kept.set(out);
-  return out;
+  return __kept_from(rows, from);
 }
 
 function __kept_conn(k: Kept): __Conn {
@@ -1483,7 +1480,7 @@ impl Transport for Sockets {
   function close(self: Sockets, conn: i32): i32 {
     match (self.pool.armed) {
       Some(c) => {
-        c.set(__without_fd(c.get(), conn));
+        __mark_fd(c, conn, 0);
       },
       None => {}
     }

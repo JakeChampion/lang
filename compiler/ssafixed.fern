@@ -24,27 +24,36 @@ function rows(first: i32, count: i32, masks: i32[]): i32[][] {
     eprint("SSA fixed-register table: invalid register range");
     exit(3);
   }
+  let any = 0;
   for mask in masks {
     if (mask < 0 || mask >> count != 0) {
       eprint("SSA fixed-register table: mask outside register range");
       exit(3);
     }
+    any = any | mask;
   }
+  let zero: i32[] = __alloc_i32(masks.len() + 1);
   let out: i32[][] = [];
-  let reg = 0;
-  while (reg < count) {
-    let row: i32[] = [0];
-    let n = 0;
-    for mask in masks {
-      if ((mask & 1 << reg) != 0) {
-        n = n + 1;
-      }
-      row = row.append(n);
+  for reg in 0..count {
+    if ((any & 1 << reg) == 0) {
+      out = out.append(zero);
+    } else {
+      out = out.append(prefix_counts(masks, reg));
     }
-    out = out.append(row);
-    reg = reg + 1;
   }
   return out;
+}
+
+function prefix_counts(masks: i32[], reg: i32): i32[] {
+  let row: i32[] = [0];
+  let n = 0;
+  for mask in masks {
+    if ((mask & 1 << reg) != 0) {
+      n = n + 1;
+    }
+    row = row.append(n);
+  }
+  return row;
 }
 
 pub function validate(t: Table, nregs: i32, positions: i32): void {
