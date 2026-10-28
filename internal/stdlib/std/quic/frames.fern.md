@@ -1105,9 +1105,11 @@ function __pick(cond: boolean, a: i64, b: i64): i64 {
 }
 
 function __alloc_empty(): u8[] {
-  let out: u8[] = __alloc_u8(64);
-  __arr_set_len(out, 0);
-  return out;
+  unsafe {
+    let out: u8[] = __alloc_u8(64);
+    __arr_set_len(out, 0);
+    return out;
+  }
 }
 
 function __slice(buf: u8[], from: i32, to: i32): u8[] {

@@ -593,9 +593,11 @@ pub const BLOCK_ROOM: i32 = 128;
 ```fern
 <<18 pub function headers_room(data_len: i32): u8[]>>=
 pub function headers_room(data_len: i32): u8[] {
-  let out: u8[] = __alloc_u8(HEADER_LEN + BLOCK_ROOM + HEADER_LEN + data_len);
-  __arr_set_len(out, HEADER_LEN);
-  return out;
+  unsafe {
+    let out: u8[] = __alloc_u8(HEADER_LEN + BLOCK_ROOM + HEADER_LEN + data_len);
+    __arr_set_len(out, HEADER_LEN);
+    return out;
+  }
 }
 
 // The DATA frame goes on by appends, which use the room headers_room left

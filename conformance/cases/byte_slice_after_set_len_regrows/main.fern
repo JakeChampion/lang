@@ -21,13 +21,15 @@ import "std/i32";
 }
 
 function main(): i32 {
-  let scratch: u8[] = [];
-  let i: i32 = 0;
-  while (i < 64) {
-    scratch = scratch.append(1 as u8);
-    i = i + 1;
+  unsafe {
+    let scratch: u8[] = [];
+    let i: i32 = 0;
+    while (i < 64) {
+      scratch = scratch.append(1 as u8);
+      i = i + 1;
+    }
+    __arr_set_len(scratch, 3);
+    print(rounds(scratch, [3, 10, 64, 5]).to_string());
+    return 0;
   }
-  __arr_set_len(scratch, 3);
-  print(rounds(scratch, [3, 10, 64, 5]).to_string());
-  return 0;
 }

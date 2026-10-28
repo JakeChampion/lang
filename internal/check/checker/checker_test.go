@@ -3620,11 +3620,16 @@ func TestMatchSubstitutesTypeArgs(t *testing.T) {
 func TestUsizePreludeHelpersRequireExplicitCastInUserCode(t *testing.T) {
 	for _, src := range []string{
 		`function f(a: string, b: string, n: i32): i32 {
-    __memcpy(a as usize, b as usize, n);
+    unsafe {
+        __memcpy(a as usize, b as usize, n);
+    }
     return 0;
 }`,
 		`function f(): i32 {
-    let buf: usize = __alloc(16);
+    let buf: usize = 0 as usize;
+    unsafe {
+        buf = __alloc(16);
+    }
     return buf as i32;
 }`,
 	} {

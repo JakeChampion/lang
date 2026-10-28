@@ -159,6 +159,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"unsafe-closure-holds-its-own-block", "unsafe function danger(): i32 { unsafe { return 1; } } function main(): i32 { let f: () => i32 = (): i32 => { let v: i32 = 0; unsafe { v = danger(); } return v; }; return f(); }", nil},
 		{"unsafe-local-function-inside-block", "unsafe function danger(): i32 { unsafe { return 1; } } function main(): i32 { let total: i32 = 0; unsafe { function inner(): i32 { return danger(); } total = inner(); } return total; }", nil},
 		{"unsafe-struct-method-outside-block", "struct Item { v: i32 } unsafe function (self: Item) raw(): i32 { unsafe { return self.v; } } function main(): i32 { let it: Item = Item { v: 1 }; return it.raw(); }", []string{"E095"}},
+		{"raw-builtin-outside-block", "function main(): i32 { let p: usize = __alloc(16); return 0; }", []string{"E095"}},
+		{"raw-builtin-store-outside-block", "function main(): i32 { let p: usize = 0 as usize; unsafe { p = __alloc(16); } __store_i32(p, 7); return 0; }", []string{"E095"}},
+		{"raw-builtin-inside-block", "function main(): i32 { let v: i32 = 0; unsafe { let p: usize = __alloc(16); __store_i32(p, 7); v = __load_i32(p); __free(p, 16); } return v - 7; }", nil},
 		{"unsafe-dyn-method-outside-block", "struct Item { v: i32 } trait Read { unsafe function read(self: Self): i32; } impl Read for Item { unsafe function read(self: Self): i32 { unsafe { return self.v; } } } function via(r: dyn Read): i32 { return r.read(); } function main(): i32 { return via(Item { v: 1 }); }", []string{"E095"}},
 		{"unsafe-bound-method-outside-block", "struct Item { v: i32 } trait Read { unsafe function read(self: Self): i32; } impl Read for Item { unsafe function read(self: Self): i32 { unsafe { return self.v; } } } function via[T: Read](r: T): i32 { return r.read(); } function main(): i32 { return via(Item { v: 1 }); }", []string{"E095"}},
 		{"unsafe-trait-method-inside-block", "struct Item { v: i32 } trait Read { unsafe function read(self: Self): i32; } impl Read for Item { unsafe function read(self: Self): i32 { unsafe { return self.v; } } } function via(r: dyn Read): i32 { let v: i32 = 0; unsafe { v = r.read(); } return v; } function main(): i32 { return via(Item { v: 1 }); }", nil},
@@ -200,7 +203,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"use-zero-argument-callback", `function take(f: () => i32): i32 { return f(); } function main(): i32 { use x <- take(); return 0; }`, []string{"E032", "E038"}},
 		{"use-noncallback-source", `function take(n: i32): i32 { return n; } function main(): i32 { use x <- take(1); return 0; }`, []string{"E032", "E004"}},
 
-		{"public-rc-helper-remains-admitted", `function main(): i32 { __fern_rc_dec(0 as usize); return 0; }`, nil},
+		{"public-rc-helper-remains-admitted", `function main(): i32 { unsafe { __fern_rc_dec(0 as usize); } return 0; }`, nil},
+		{"public-rc-helper-needs-unsafe", `function main(): i32 { __fern_rc_dec(0 as usize); return 0; }`, []string{"E095"}},
 		{"raw-data-value-is-private", `function main(): i32 { let f = __raw_data; return 0; }`, []string{"E001"}},
 
 		{"clean", "function main(): i32 { return 1 + 2; }\n", nil},

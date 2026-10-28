@@ -8408,6 +8408,30 @@ func (c *checker) calleeBinding(id *ast.Ident, s *scope) (ast.Type, bool) {
 	return c.identValueBinding(id.Name, s)
 }
 
+// UnsafeIntrinsics names the raw builtins that forge an address, change a
+// reference count or a length, or call foreign code, so a call to one is
+// only accepted inside an unsafe block. docs/security/UNSAFE-INVENTORY.md
+// lists each one with its obligation. compiler/checker.fern's
+// unsafe_intrinsics holds the same set.
+var UnsafeIntrinsics = map[string]bool{
+	"__alloc": true, "__alloc_reuse": true, "__free": true,
+	"__load_u8": true, "__load_i32": true, "__load_i64": true, "__load_ptr": true,
+	"__store_u8": true, "__store_i32": true, "__store_i64": true, "__store_ptr": true,
+	"__memcpy": true, "__memset": true, "__str_bytes": true, "__account_entry": true,
+	"__fern_rc_inc": true, "__fern_arr_dec": true, "__fern_box_free": true, "__fern_drop_arr_ptr": true, "__fern_str_dec": true,
+	"__rc_inc": true, "__rc_dec": true, "__rc_get": true, "__fern_rc_dec": true,
+	"__arr_set_len": true, "__heap_mark": true, "__heap_release_to": true,
+	"__c_call0": true, "__c_call0_f32": true, "__c_call0_f64": true,
+	"__c_call1": true, "__c_call1_f32": true, "__c_call1_f64": true,
+	"__c_call2": true, "__c_call2_f32": true, "__c_call2_f64": true,
+	"__c_call3": true, "__c_call3_f32": true, "__c_call3_f64": true,
+	"__c_call4": true, "__c_call4_f32": true, "__c_call4_f64": true,
+	"__task_new": true, "__task_free": true, "__task_enter": true, "__task_leave": true,
+	"__task_park": true, "__task_wait": true, "__task_set_ready": true, "__task_set_cancelled": true,
+	"__task_cancelled": true, "__task_timeout": true, "__task_cur": true,
+	"__syscall3": true, "__syscall4": true, "__syscall5": true, "__syscall6": true,
+}
+
 // The unsafe boundary: an unsafe declaration states caller obligations, and only an
 // unsafe block accepts them. docs/SAFETY-CONTRACT.md has the contract.
 func (c *checker) checkUnsafeCallee(n *ast.Call, s *scope) {
@@ -8415,10 +8439,17 @@ func (c *checker) checkUnsafeCallee(n *ast.Call, s *scope) {
 		return
 	}
 	id, ok := n.Callee.(*ast.Ident)
-	if !ok || !c.unsafeFuncs[id.Name] {
+	if !ok {
 		return
 	}
 	if _, local := c.calleeBinding(id, s); local {
+		return
+	}
+	if UnsafeIntrinsics[id.Name] {
+		c.errfCode(n.P, "E095", "raw builtin %q is called outside an unsafe block", id.Name)
+		return
+	}
+	if !c.unsafeFuncs[id.Name] {
 		return
 	}
 	name := demangle(id.Name)
