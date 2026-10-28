@@ -1,0 +1,20 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^(TestSelfHostIRLICM|TestSelfHostLICM(X86_64|Arm64|WasmIR)|TestSelfHostTypedLICM.*|TestSelfHostSSAUnitsIR(Arm64|X86_64|Wasm)|TestSelfHostSSAUnitsIndexedReplay|TestSelfHostSSAColdCalls|TestSelfHostSSABackendAgreesWithNative|TestSelfHostGenericReceiverBindings|TestSelfHostGenericFnValueChecks|TestSelfHostDynGenericTwoInstantiations|TestSelfHostFrameViews|TestSelfHostLeafFrame|TestSelfHostPIE)$",
+    "-count=1",
+    "-timeout",
+    "20m",
+    "-json"
+  ],
+  "exit": 0,
+  "seconds": 248.2984696679996,
+  "started_at": "2026-10-28T10:23:36.523859+00:00",
+  "source_sha256": "3da18711b578ffe743af2b2b49b064dde72b4f71880cc315135d9f6c6076e315",
+  "passes": 144,
+  "failures": [],
+  "skips": []
+}

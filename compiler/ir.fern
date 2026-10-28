@@ -6199,7 +6199,7 @@ pub function hoist_loop_invariants(ops: Op[], n_locals: i32): OptimizedOps {
   let stored: i32[] = __alloc_i32(maxs + 1);
   while (i >= 0) {
     if (cur.ops[i].kind_tag == k_loop) {
-      let pure: PureHoist = licm_hoist_pure(cur.ops, i, maxs);
+      let pure: PureHoist = licm_hoist_pure(cur.ops, i, maxs + 1);
       cur = OptimizedOps { ...cur, ops: pure.ops };
       let h: Hoisted = licm_hoist_from_loop(cur, pure.at, maxs, stored);
       cur = h.cur;
@@ -6225,13 +6225,14 @@ struct SlotUse { stores: i32[], first_load: i32[], last_load: i32[] }
 // A pure computation of two invariant operands moves in front of the loop when
 // its result goes to a local that the function stores once and reads only
 // later in the same loop. A local that it stores counts as invariant after it.
-function licm_hoist_pure(ops: Op[], loop_idx: i32, maxs: i32): PureHoist {
+// Every slot of `ops` is below `nslots`.
+function licm_hoist_pure(ops: Op[], loop_idx: i32, nslots: i32): PureHoist {
   let end: i32 = licm_scope_end(ops, loop_idx);
   if (end < 0) {
     return PureHoist { ops: ops, at: loop_idx };
   }
-  let uses: SlotUse = licm_slot_use(ops, maxs);
-  let stored: boolean[] = __alloc_bool(uses.stores.len());
+  let uses: SlotUse = SlotUse { stores: [], first_load: [], last_load: [] };
+  let stored: boolean[] = __alloc_bool(nslots);
   for j in loop_idx + 1..end {
     let t: i32 = ops[j].kind_tag;
     if (t == K_STORE_LOCAL || t == K_TEE_LOCAL) {
@@ -6242,11 +6243,15 @@ function licm_hoist_pure(ops: Op[], loop_idx: i32, maxs: i32): PureHoist {
   let pre: Op[] = [];
   let j: i32 = loop_idx + 1;
   while (j < end) {
-    let n: i32 = licm_pure_len(ops, j, end, stored, uses);
-    if (n == 0) {
+    let st: i32 = licm_pure_store(ops, j, end, stored);
+    if (st >= 0 && uses.stores.len() == 0) {
+      uses = licm_slot_use(ops, nslots);
+    }
+    if (st < 0 || !licm_stored_once(uses, ops[st].i32_imm, st, end)) {
       j = j + 1;
       continue;
     }
+    let n: i32 = st - j + 1;
     for k in j..j + n {
       pre = pre.append(ops[k]);
       moved = moved.with(k, true);
@@ -6272,23 +6277,24 @@ function licm_hoist_pure(ops: Op[], loop_idx: i32, maxs: i32): PureHoist {
   return PureHoist { ops: out, at: loop_idx + pre.len() };
 }
 
-// The length of the hoistable sequence at j, or 0.
-function licm_pure_len(ops: Op[], j: i32, end: i32, stored: boolean[], uses: SlotUse): i32 {
+// The store that ends a pure sequence at j, or -1.
+function licm_pure_store(ops: Op[], j: i32, end: i32, stored: boolean[]): i32 {
   if (j + 3 >= end || !licm_invariant(ops[j], stored) || !licm_invariant(ops[j + 1], stored) || !licm_pure_binary(ops[j + 2].kind_tag)) {
-    return 0;
+    return 0 - 1;
   }
   let k: i32 = j + 3;
   if (ops[k].kind_tag == K_INT_CAST) {
     k = k + 1;
   }
   if (k >= end || ops[k].kind_tag != K_STORE_LOCAL) {
-    return 0;
+    return 0 - 1;
   }
-  let t: i32 = ops[k].i32_imm;
-  if (t < 0 || t >= uses.stores.len() || uses.stores[t] != 1 || uses.first_load[t] <= k || uses.last_load[t] >= end) {
-    return 0;
-  }
-  return k - j + 1;
+  return k;
+}
+
+// Slot t has its only store at k and its loads after k, before end.
+function licm_stored_once(uses: SlotUse, t: i32, k: i32, end: i32): boolean {
+  return t >= 0 && t < uses.stores.len() && uses.stores[t] == 1 && uses.first_load[t] > k && uses.last_load[t] < end;
 }
 
 function licm_invariant(o: Op, stored: boolean[]): boolean {
@@ -6303,8 +6309,7 @@ function licm_pure_binary(k: i32): boolean {
 }
 
 // For each slot: its stores, and its first and last load (-1 when none).
-function licm_slot_use(ops: Op[], maxs: i32): SlotUse {
-  let n: i32 = maxs + 1;
+function licm_slot_use(ops: Op[], n: i32): SlotUse {
   let stores: i32[] = __alloc_i32(n);
   let first: i32[] = util.minus_ones(n);
   let last: i32[] = util.minus_ones(n);

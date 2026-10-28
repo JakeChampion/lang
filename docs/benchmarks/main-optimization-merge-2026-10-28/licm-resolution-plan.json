@@ -1,0 +1,22 @@
+[
+  {
+    "old": "      let pure: PureHoist = licm_hoist_pure(cur.ops, i, maxs);\n",
+    "main": "      let pure: PureHoist = licm_hoist_pure(cur.ops, i, maxs + 1);\n",
+    "chosen": "      let pure: PureHoist = licm_hoist_pure(cur.ops, i, maxs + 1);\n"
+  },
+  {
+    "old": "function licm_hoist_pure(ops: Op[], loop_idx: i32, maxs: i32): PureHoist {\n",
+    "main": "// Every slot of `ops` is below `nslots`.\nfunction licm_hoist_pure(ops: Op[], loop_idx: i32, nslots: i32): PureHoist {\n",
+    "chosen": "// Every slot of `ops` is below `nslots`.\nfunction licm_hoist_pure(ops: Op[], loop_idx: i32, nslots: i32): PureHoist {\n"
+  },
+  {
+    "old": "  let uses: SlotUse = licm_slot_use(ops, maxs);\n  let stored: boolean[] = __alloc_bool(uses.stores.len());\n",
+    "main": "  let uses: SlotUse = SlotUse { stores: [], first_load: [], last_load: [] };\n  let stored: boolean[] = __alloc_bool(nslots);\n",
+    "chosen": "  let uses: SlotUse = SlotUse { stores: [], first_load: [], last_load: [] };\n  let stored: boolean[] = __alloc_bool(nslots);\n"
+  },
+  {
+    "old": "function licm_slot_use(ops: Op[], maxs: i32): SlotUse {\n  let n: i32 = maxs + 1;\n",
+    "main": "function licm_slot_use(ops: Op[], n: i32): SlotUse {\n",
+    "chosen": "function licm_slot_use(ops: Op[], n: i32): SlotUse {\n"
+  }
+]

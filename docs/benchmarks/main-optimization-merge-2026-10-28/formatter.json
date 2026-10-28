@@ -1,0 +1,13 @@
+{
+  "command": [
+    "current public Go launcher",
+    "-fmt",
+    "-d",
+    "all tracked inputs with Makefile filters"
+  ],
+  "exit": 0,
+  "seconds": 2.728238314994087,
+  "inputs": 2110,
+  "source_sha256": "3da18711b578ffe743af2b2b49b064dde72b4f71880cc315135d9f6c6076e315",
+  "formatter_sha256": "1f13200a492b0a328b15f6d9704af7c27a770db6735a2e500a2734472217a88a"
+}
