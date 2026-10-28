@@ -1,0 +1,142 @@
+[
+  {
+    "path": "Makefile",
+    "sha256": "bdc90c33760598a5b1970588805fff670c76a37560d1996afcd2e73dcad62b31",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssalargefreewideclasses.fern",
+    "sha256": "05030392bdb0c1579985e1475e8be6fb268c1b81e7825a5c183fbf15c5ed5dfc",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssalargefreewideclasses_run.fern",
+    "sha256": "2b09cbd710523b0936e5a9166b1e2738ae5f684b752a67f5b95a9941cf6111dc",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssalargefreewideclasses_worker.fern",
+    "sha256": "6fca864c8de9bfea2e618c1e462d1166e1185ebc3e6e563b2a88e919d30f86a5",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssalargefreewideclassescases.fern",
+    "sha256": "2270e4da0a6037adc317b146f4bc60c96d9bf52da3ac6ca48fa98feb0e686c66",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssalargefreewideclasses.fern",
+    "sha256": "8ed28288132fec51f5c4699f2a0240a1385713d198b7a00ba469c22cb5739511",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-caller-classes-2026-10-28/README.md",
+    "sha256": "d1d28a57e2b9c00ddc8a63d754f6c1fe69eb2343d9bf5730370ab9c6054c12cc",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-caller-classes-2026-10-28/evidence.json",
+    "sha256": "2ec3569c44fc597c75148d7912cb38a833f7c038404359a4331a41ed2a857623",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-caller-classes-2026-10-28/large-free-wide-classes-arm64-linux.json.gz",
+    "sha256": "0acf673102f0a717f14ec7dc284fccc4533e593558047ab16a548bd5e6dcac8e",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-caller-classes-2026-10-28/large-free-wide-classes-wasm32-wasi.json.gz",
+    "sha256": "fa215b9bdaca5a0d60b72431e1a5e6e232f5d9d8170bb3719acd8a104132d6a0",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-caller-classes-2026-10-28/large-free-wide-classes-x86-64-linux.json.gz",
+    "sha256": "29301973d6ba58668f37d27d9bfd0379156004cce023c895459a1c7df455b271",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-caller-classes-2026-10-28/omitted-file-identities.json",
+    "sha256": "a9825137d042837c388cd1976244b04755795bf3289a91f3d0621e4d7dbdecb9",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-caller-classes-2026-10-28/publication-checks.json",
+    "sha256": "2c42cb07e95f5931e1bc3140d95f55e27bf9e4b08c1f81898374c49ac0c00894",
+    "matches_main": true
+  },
+  {
+    "path": "docs/benchmarks/wide-large-free-caller-classes-2026-10-28/qualification-records.tar.gz",
+    "sha256": "0887d6f913df05ddca6def7d3d429535f1a3d8014eee039bf5835d9e816123a3",
+    "matches_main": true
+  },
+  {
+    "path": "docs/rc-log/2026-10-28-wide-caller-classes.md",
+    "sha256": "8168b65a472be308a1f51fb37e75d2062a681f46f8a47aa372e76b78501cd818",
+    "matches_main": true
+  },
+  {
+    "path": "internal/testing/e2ecompiler/self_host_ssa_large_free_wide_classes_test.go",
+    "sha256": "710da5f72962c1b5ffd8470d99e474cebe874e729cb41707ed4baa587c9f2e60",
+    "matches_main": true
+  },
+  {
+    "path": "internal/testing/e2ecompiler/self_host_ssa_large_free_wide_classes_worker_test.go",
+    "sha256": "eddd085e1e3bb552c787a45c1712fcf2d0971c419614c062763e62fef1caf6b9",
+    "matches_main": true
+  },
+  {
+    "path": "internal/testing/e2ecompiler/testdata/large_free_wide_classes.json.gz",
+    "sha256": "b4b295071acc37d8ef1d93a0d61c8fc095baaeecee976977a6211c4156e24e6e",
+    "matches_main": true
+  },
+  {
+    "path": "scripts/gen-large-free-wide-classes.py",
+    "sha256": "e68931935436c625c2ad478c5850e83460263c2c2c2557b19b53ba805075cce1",
+    "matches_main": true
+  },
+  {
+    "path": "scripts/qualify_large_free_wide_classes.py",
+    "sha256": "4302ee801c559495858ee83d60bd89fb933c8591b39819d96904bc99d3c3f272",
+    "matches_main": true
+  },
+  {
+    "path": "scripts/test_large_free_wide_classes.py",
+    "sha256": "432d356e54699a8b22d154e0aadfe0ce8a538b2138a9f61c78e3710a4aaf7784",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssacapacityvalue.fern",
+    "sha256": "28e16aefde526b130020f02b3a9d9811a655f0bc7363426de6042846c1670800",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssalargearrayvalue.fern",
+    "sha256": "a8fda4ca9ae517cd62c703bdb4bbead61d3c76f90e58a92864d8db1c636d151f",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssalargepushranges.fern",
+    "sha256": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssastringvalue.fern",
+    "sha256": "bb74e0f95963c68a5a9a71fa8e16af1477196b55a5ebb2f06e6914f66be83cc2",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/ssalargepushwidemachine.fern",
+    "sha256": "9ac1f9c78d743da71729d57c0f3bddb0da23c0df6cdec357310becf908988ed5",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssadecrementdependencies.fern",
+    "sha256": "370ac36dfb244ea453acbac49cf889fcadf4080dbcf9c08f9e89325dbebf0b79",
+    "matches_main": true
+  },
+  {
+    "path": "compiler/drivers/ssalargepushmachines.fern",
+    "sha256": "dbdffb26523a9e0a333028827b53b6c8566171a1f9f0e5ec7faf014b40bea229",
+    "matches_main": true
+  }
+]

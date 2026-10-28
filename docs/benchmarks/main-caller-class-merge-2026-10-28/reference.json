@@ -1,0 +1,10 @@
+{
+  "command": [
+    "python3",
+    "scripts/gen-large-free-wide-classes.py",
+    "--check"
+  ],
+  "exit": 0,
+  "seconds": 0.2734248499982641,
+  "source_head": "b72381ec50d4390a703d17096a4a61deae25cb2f"
+}
