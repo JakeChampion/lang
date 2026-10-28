@@ -35,20 +35,24 @@ func runLeakCheckWasm(t *testing.T, src string, sanitize bool) (string, string, 
 }
 
 const wasmLeakBalancedSrc = `function main(): i32 {
-    let i: i32 = 0;
-    while (i < 100) {
-        let a: usize = __alloc(64);
-        __free(a, 64);
-        i = i + 1;
-    }
-    return 0;
+  unsafe {
+      let i: i32 = 0;
+      while (i < 100) {
+          let a: usize = __alloc(64);
+          __free(a, 64);
+          i = i + 1;
+      }
+      return 0;
+  }
 }`
 
 const wasmLeakRawSrc = `function main(): i32 {
-    let a: usize = __alloc(64);
-    let b: usize = __alloc(64);
-    if (a == 0 || b == 0) { return 1; }
-    return 42;
+  unsafe {
+      let a: usize = __alloc(64);
+      let b: usize = __alloc(64);
+      if (a == 0 || b == 0) { return 1; }
+      return 42;
+  }
 }`
 
 const wasmLeakRcDropSrc = `function main(): i32 {
@@ -138,10 +142,12 @@ func TestWASMSanitizeCleanRunIsSilent(t *testing.T) {
 
 func TestWASMLeakCheckReportsOnce(t *testing.T) {
 	src := `function main(): i32 {
-    let a: usize = __alloc(64);
-    __free(a, 64);
-    exit(0);
-    return 1;
+  unsafe {
+      let a: usize = __alloc(64);
+      __free(a, 64);
+      exit(0);
+      return 1;
+  }
 }`
 	_, stderr, _ := runLeakCheckWasm(t, src, false)
 	if got := strings.Count(stderr, "leakcheck: allocs="); got != 1 {

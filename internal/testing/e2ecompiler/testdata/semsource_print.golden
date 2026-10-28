@@ -2975,17 +2975,20 @@ func buffered {
 }
 
 modes result i32
-v0:i32 v1:usize v2:i32 v3:void v4:i32 v5:i32 v6:void
+v0:boolean v1:i32 v2:usize v3:i32 v4:void v5:i32 v6:i32 v7:void
 func poked {
   b0:
-    v0 = const_int 16
-    v1 = call __alloc v0
-    v2 = const_int 7
-    v3 = call __store_i32 v1 v2
-    v4 = call __load_i32 v1
-    v5 = const_int 16
-    v6 = call __free v1 v5
-    ret v4
+    v0 = const_bool 1
+    br b1
+  b1:
+    v1 = const_int 16
+    v2 = call __alloc v1
+    v3 = const_int 7
+    v4 = call __store_i32 v2 v3
+    v5 = call __load_i32 v2
+    v6 = const_int 16
+    v7 = call __free v2 v6
+    ret v5
 }
 
 modes 2 1 result i32

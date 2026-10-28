@@ -15,7 +15,7 @@ func TestSelfHostStackOverflow(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	const runaway = "function f(n: i32): i32 {\n  return 1 + f(n - 1);\n}\nfunction main(): i32 {\n  return f(1);\n}\n"
 	const deep = "import \"std/i32\";\nfunction f(n: i32): i32 {\n  if (n == 0) {\n    return 0;\n  }\n  return 1 + f(n - 1);\n}\nfunction main(): i32 {\n  print(f(1000000).to_string());\n  return 0;\n}\n"
-	const wild = "function main(): i32 {\n  return __load_i32(8 as usize);\n}\n"
+	const wild = "function main(): i32 {\n  unsafe { return __load_i32(8 as usize); }\n}\n"
 	report := regexp.MustCompile(`^fern: stack overflow\nbacktrace:\n(  0x[0-9a-f]{16}\n)+$`)
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		t.Run(target, func(t *testing.T) {

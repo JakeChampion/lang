@@ -22,19 +22,23 @@ const sanSelfHostCleanSrc = `function main(): i32 {
 }`
 
 const sanSelfHostLeakSrc = `function main(): i32 {
-    let a: usize = __alloc(60);
-    let b: usize = __alloc(60);
-    let c: usize = __alloc(60);
-    __free(a, 60);
-    if (b == c) { return 9; }
-    return 42;
+  unsafe {
+      let a: usize = __alloc(60);
+      let b: usize = __alloc(60);
+      let c: usize = __alloc(60);
+      __free(a, 60);
+      if (b == c) { return 9; }
+      return 42;
+  }
 }`
 
 const sanSelfHostDoubleFreeSrc = `function main(): i32 {
-    let a: u8[] = __alloc_u8(16);
-    __rc_dec(a);
-    __rc_dec(a);
-    return 0;
+  unsafe {
+      let a: u8[] = __alloc_u8(16);
+      __rc_dec(a);
+      __rc_dec(a);
+      return 0;
+  }
 }`
 
 var sanSelfHostLeakRe = regexp.MustCompile(`fern-sanitizer: leak (\d+) bytes in (\d+) blocks\n`)
@@ -155,10 +159,12 @@ function main(): i32 {
 
 const sanMapOverReleaseSrc = `import "core/map";
 function main(): i32 {
-    let h: usize = map_new_impl(4, 0, 0);
-    __store_i32(h - 8, 0);
-    __map_drop_impl(h);
-    return __rc_underflow_count();
+  unsafe {
+      let h: usize = map_new_impl(4, 0, 0);
+      __store_i32(h - 8, 0);
+      __map_drop_impl(h);
+      return __rc_underflow_count();
+  }
 }`
 
 const uncertified = "FERN_RC_CERTIFY=0"
