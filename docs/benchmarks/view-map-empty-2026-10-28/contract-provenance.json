@@ -1,0 +1,7 @@
+{
+  "cases_per_target": 1729,
+  "source_functions_exact": true,
+  "baseline_and_candidate_function_text_identical_across_native_backends": true,
+  "comparison": "Exact maps when any kind51 exists. When none exists, normalize absent slots to -1 and require an empty candidate map. Check SSA input aliases.",
+  "scope": "Helper-only graphs include unsupported immediate flags and are not all valid typed SSA graphs. Real emitter controls remain required."
+}

@@ -86,10 +86,10 @@ function test_etag_read(): test.TestOutcome {
   let out: string = "";
   for s in ["\"xyzzy\"", " W/\"xyzzy\" ", "\"\"", "\"a,b\"", "xyzzy", "\"a b\"", "W/xyzzy", "\"a\"b\"", "w/\"x\""] {
     match (cache.parse_etag(s)) {
-      Some(e) => {
+      Ok(e) => {
         out = out + "<" + e.to_string() + ">";
       },
-      None => {
+      Err(_) => {
         out = out + "<->";
       }
     }

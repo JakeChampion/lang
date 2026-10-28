@@ -746,12 +746,8 @@ test independently runs the core-safe modules through `Enforce` against `freesta
 so the partition means what the compiler enforces rather than only agreeing with it by
 construction.
 
-Today: **45 of 59 modules are core-safe.** Three results worth knowing:
+Today: **59 of 87 modules are core-safe.** Two results worth knowing:
 
-- **`std/math` is hosted, on `random`.** It reads like an obviously-core numerics module
-  and is in fact the random-number module (`random_int` over the platform CSPRNG). A
-  hand-written classification would have got this wrong, which is the argument for
-  deriving in one line.
 - **`std/test` reaches `env`, `fs`, `log` and `now`.** So a freestanding target cannot run
   the in-language test runner, and its output sink is only one of four things in the way.
   Worth knowing before treating "core-safe" and "testable in-language" as the same set.

@@ -455,6 +455,23 @@ function main(): i32 {
   ];
   out = out + "zg_past_loop_fires: " + render(ir.prune_zero_slot_guards(zg_past_loop, 0)) + "\n";
 
+  let zg_nested: ir.Op[] = [
+    ir.op_block(0), ir.op_loop(0), ir.op_if(0), ir.op_loop(0),
+    ir.op_load_local(1), ir.op_call_direct("__fern_rc_is_unique", 1), ir.op_drop(), ir.op_end(),
+    ir.op_else(), ir.op_load_local(2), ir.op_call_direct("__fern_rc_is_unique", 1), ir.op_drop(),
+    ir.op_end(), ir.op_end(), ir.op_load_local(3), ir.op_call_direct("__fern_rc_is_unique", 1),
+    ir.op_end(),
+  ];
+  out = out + "zg_nested_regions: " + render(ir.prune_zero_slot_guards(zg_nested, 0)) + "\n";
+
+  let zg_adjacent: ir.Op[] = [
+    ir.op_load_local(1), ir.op_call_direct("__fern_rc_is_unique", 1),
+    ir.op_load_local(2), ir.op_call_direct("__fern_rc_is_unique", 1),
+    ir.op_loop(0), ir.op_load_local(3), ir.op_call_direct("__fern_rc_is_unique", 1), ir.op_end(),
+    ir.op_load_local(4), ir.op_call_direct("__fern_rc_is_unique", 1),
+  ];
+  out = out + "zg_adjacent_regions: " + render(ir.prune_zero_slot_guards(zg_adjacent, 0)) + "\n";
+
   let zg_written: ir.Op[] = [
     ir.op_call_direct("mk", 0), ir.op_store_local(1),
     ir.op_load_local(1), ir.op_call_direct("__fern_rc_is_unique", 1),

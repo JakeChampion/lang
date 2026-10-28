@@ -45,6 +45,7 @@ var runInterpExit = e2eharness.RunInterpExit
 var runInterp = e2eharness.RunInterp
 var runX86_64Bin = e2eharness.RunX86_64Bin
 var selfHostImportClosure = e2eharness.SelfHostImportClosure
+var withoutCoreDump = e2eharness.WithoutCoreDump
 
 const uuidV4Program = e2eharness.UuidV4Program
 

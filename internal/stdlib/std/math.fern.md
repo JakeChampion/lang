@@ -1,14 +1,14 @@
-# Ranges, numeric constants, and RGB values
+# Numeric constants and RGB values
 
-This module provides random integers, integer ranges, numeric constants, and RGB operations.
+This module provides numeric constants and RGB operations.
 
 ## Model
 
-Range helpers construct integer sequences. Numeric helpers expose constants and angle conversion. RGB helpers use packed color values.
+Numeric helpers expose constants and angle conversion. RGB helpers use packed color values.
 
 ## Contracts
 
-The text color parser returns an option for invalid input. Random integer generation uses the runtime source and has a different contract from deterministic ranges.
+The text color parser returns an `RgbParseError` for invalid input.
 
 ## Executable example
 
@@ -16,8 +16,7 @@ The text color parser returns an option for invalid input. Random integer genera
 import "std/math";
 
 function main(): i32 {
-  let xs = math.range(2, 5);
-  if (xs.len() != 3 || xs[0] != 2 || xs[2] != 4) { return 1; }
+  if (math.lerp(2.0, 4.0, 0.5) != 3.0) { return 1; }
   return 0;
 }
 ```
@@ -30,94 +29,26 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<*>>=
 <<module introduction>>
 
-<<2 pub function random_int(lo: i32, hi: i32): i32>>
+<<2 pub function i32_max(): i32>>
 
-<<3 function __random_u32(): u32>>
+<<3 function __hex_digit(b: i32): i32>>
 
-<<4 pub function range(start: i32, end: i32): i32[]>>
-
-<<5 function __hex_digit(b: i32): i32>>
-
-<<6 pub function parse_rgb_hex(s: string): Result[i32, RgbParseError]>>
+<<4 pub function parse_rgb_hex(s: string): Result[i32, RgbParseError]>>
 ```
 
 ### `module introduction`
 
 ```fern
 <<module introduction>>=
-// This module provides random integers, integer ranges, numeric constants, and RGB operations.
+// This module provides numeric constants and RGB operations.
 import "core/cmp";
 import "std/error";
 ```
 
-### `2 pub function random_int(lo: i32, hi: i32): i32`
+### `2 pub function i32_max(): i32`
 
 ```fern
-<<2 pub function random_int(lo: i32, hi: i32): i32>>=
-pub function random_int(lo: i32, hi: i32): i32 {
-  if (hi <= lo) {
-    return lo;
-  }
-  let range: u32 = (hi - lo) as u32;
-  return lo + __random_below(range) as i32;
-}
-```
-
-### `3 function __random_u32(): u32`
-
-```fern
-<<3 function __random_u32(): u32>>=
-function __random_u32(): u32 {
-  let b: u8[] = random_bytes(4);
-  return b[0] as u32 << 24 as u32
-    | b[1] as u32 << 16 as u32
-    | b[2] as u32 << 8 as u32
-    | b[3] as u32;
-}
-
-function __random_below(range: u32): u32 {
-  let wide: u64 = range as u64;
-  let mask: u64 = (1 as u64 << 32 as u64) - 1 as u64;
-  let product: u64 = __random_u32() as u64 * wide;
-  let low: u64 = product & mask;
-  if (low < wide) {
-    let threshold: u64 = ((1 as u64 << 32 as u64) - wide) % wide;
-    while (low < threshold) {
-      product = __random_u32() as u64 * wide;
-      low = product & mask;
-    }
-  }
-  return (product >> 32 as u64) as u32;
-}
-```
-
-### `4 pub function range(start: i32, end: i32): i32[]`
-
-```fern
-<<4 pub function range(start: i32, end: i32): i32[]>>=
-pub function range(start: i32, end: i32): i32[] {
-  let out: i32[] = [];
-  let i: i32 = start;
-  while (i < end) {
-    out = out.append(i);
-    i = i + 1;
-  }
-  return out;
-}
-
-pub function range_step(start: i32, end: i32, step: i32): i32[] {
-  let out: i32[] = [];
-  if (step <= 0) {
-    return out;
-  }
-  let i: i32 = start;
-  while (i < end) {
-    out = out.append(i);
-    i = i + step;
-  }
-  return out;
-}
-
+<<2 pub function i32_max(): i32>>=
 pub function i32_max(): i32 {
   return 2147483647;
 }
@@ -159,10 +90,10 @@ pub function pack_rgb(r: i32, g: i32, b: i32): i32 {
 }
 ```
 
-### `5 function __hex_digit(b: i32): i32`
+### `3 function __hex_digit(b: i32): i32`
 
 ```fern
-<<5 function __hex_digit(b: i32): i32>>=
+<<3 function __hex_digit(b: i32): i32>>=
 function __hex_digit(b: i32): i32 {
   if (b >= 48 && b <= 57) {
     return b - 48;
@@ -177,10 +108,10 @@ function __hex_digit(b: i32): i32 {
 }
 ```
 
-### `6 pub function parse_rgb_hex(s: string): Result[i32, RgbParseError]`
+### `4 pub function parse_rgb_hex(s: string): Result[i32, RgbParseError]`
 
 ```fern
-<<6 pub function parse_rgb_hex(s: string): Result[i32, RgbParseError]>>=
+<<4 pub function parse_rgb_hex(s: string): Result[i32, RgbParseError]>>=
 // The text `parse_rgb_hex` refused.
 pub struct RgbParseError { text: string }
 

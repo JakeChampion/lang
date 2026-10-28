@@ -996,6 +996,19 @@ func instantiateFunc(gen *ast.FuncDecl, name string, sub map[string]ast.Type) *a
 		c.Params[i].Type = substituteType(c.Params[i].Type, sub)
 	}
 	c.ReturnType = substituteType(c.ReturnType, sub)
+	if len(c.BoundArgs) > 0 {
+		args := make(map[string][][]ast.Type, len(c.BoundArgs))
+		for tp, lists := range c.BoundArgs {
+			for _, l := range lists {
+				out := make([]ast.Type, len(l))
+				for i, a := range l {
+					out[i] = substituteType(a, sub)
+				}
+				args[tp] = append(args[tp], out)
+			}
+		}
+		c.BoundArgs = args
+	}
 	substituteBlock(c.Body, sub)
 	substituteConstParams(c, sub)
 	return c

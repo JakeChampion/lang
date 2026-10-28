@@ -48,7 +48,7 @@ var stdModuleReach = map[string]string{
 	"std/jni":           "cabi",
 	"std/json":          "",
 	"std/log":           "log",
-	"std/math":          "random",
+	"std/math":          "",
 	"std/mitigations":   "fs,sysinfo",
 	"std/metrics":       "config,env,fs,host,ktls,log,now,pollable,random,reactor,tcp,unix,uring",
 	"std/mock_platform": "config,env,fs,host,ktls,log,now,pollable,random,reactor,tcp,unix,uring",

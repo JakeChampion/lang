@@ -1,0 +1,200 @@
+[
+  {
+    "fixture": "const_param_enums_impls",
+    "target": "x86-64-linux",
+    "source_sha256": "a17cf329cb8374cbf3d41facd4e289d4b93221c9d2b62ff3aeee3d598a745a41",
+    "expected_sha256": "badb662d8afad59b2555a2ec51beab03fc00fba38fd25816582d7b794328cdfc",
+    "launcher_sha256": "922bca6d2c9fc8439d6956445c33f048885ed19229ae45dffca77c13c70e89e3",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/fern-oracle",
+      "-O",
+      "-sanitize",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/const_param_enums_impls-x86-64-linux",
+      "/workspace/lang-perf-4412/conformance/cases/const_param_enums_impls/main.fern"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/const_param_enums_impls-x86-64-linux"
+    ],
+    "exit": 0,
+    "exact_expected_output": true,
+    "stdout_sha256": "badb662d8afad59b2555a2ec51beab03fc00fba38fd25816582d7b794328cdfc",
+    "binary_sha256": "6300e4f74451cd44b61b9cc2b2b13ea8b3e78c7b02ce2b85bdf0206b79805388",
+    "census": [
+      0,
+      0,
+      0
+    ]
+  },
+  {
+    "fixture": "const_param_enums_impls",
+    "target": "arm64-linux",
+    "source_sha256": "a17cf329cb8374cbf3d41facd4e289d4b93221c9d2b62ff3aeee3d598a745a41",
+    "expected_sha256": "badb662d8afad59b2555a2ec51beab03fc00fba38fd25816582d7b794328cdfc",
+    "launcher_sha256": "922bca6d2c9fc8439d6956445c33f048885ed19229ae45dffca77c13c70e89e3",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/fern-oracle",
+      "-O",
+      "-sanitize",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/const_param_enums_impls-arm64-linux",
+      "/workspace/lang-perf-4412/conformance/cases/const_param_enums_impls/main.fern"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/const_param_enums_impls-arm64-linux"
+    ],
+    "exit": 0,
+    "exact_expected_output": true,
+    "stdout_sha256": "badb662d8afad59b2555a2ec51beab03fc00fba38fd25816582d7b794328cdfc",
+    "binary_sha256": "779fa0c3a0f25fcdd45538cda34b961318ffe35987ed456c8779e70b61ad7e0e",
+    "census": [
+      0,
+      0,
+      0
+    ]
+  },
+  {
+    "fixture": "const_param_enums_impls",
+    "target": "wasm32-wasi",
+    "source_sha256": "a17cf329cb8374cbf3d41facd4e289d4b93221c9d2b62ff3aeee3d598a745a41",
+    "expected_sha256": "badb662d8afad59b2555a2ec51beab03fc00fba38fd25816582d7b794328cdfc",
+    "launcher_sha256": "922bca6d2c9fc8439d6956445c33f048885ed19229ae45dffca77c13c70e89e3",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/fern-oracle",
+      "-O",
+      "-sanitize",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/const_param_enums_impls-wasm32-wasi",
+      "/workspace/lang-perf-4412/conformance/cases/const_param_enums_impls/main.fern"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "wasmtime",
+      "run",
+      "--env",
+      "FERN_LEAKCHECK=1",
+      "--env",
+      "FERN_SANITIZE=1",
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/const_param_enums_impls-wasm32-wasi"
+    ],
+    "exit": 0,
+    "exact_expected_output": true,
+    "stdout_sha256": "badb662d8afad59b2555a2ec51beab03fc00fba38fd25816582d7b794328cdfc",
+    "binary_sha256": "53a0f54f908f8a9b6c1b0e98035a87d2efcc539de222b5dac95d8bd9a3290762",
+    "census": [
+      18,
+      18,
+      0
+    ]
+  },
+  {
+    "fixture": "variant_payload_expected_type",
+    "target": "x86-64-linux",
+    "source_sha256": "154d8c30c0ea1e0498452ff98d1e63bf09191bbe52b6461a7950dd95da56404c",
+    "expected_sha256": "21bfa72ae87e625da8b9398308ffb2195d465438e5db8c4a3ffc3e7980365897",
+    "launcher_sha256": "922bca6d2c9fc8439d6956445c33f048885ed19229ae45dffca77c13c70e89e3",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/fern-oracle",
+      "-O",
+      "-sanitize",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/variant_payload_expected_type-x86-64-linux",
+      "/workspace/lang-perf-4412/conformance/cases/variant_payload_expected_type/main.fern"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/variant_payload_expected_type-x86-64-linux"
+    ],
+    "exit": 0,
+    "exact_expected_output": true,
+    "stdout_sha256": "21bfa72ae87e625da8b9398308ffb2195d465438e5db8c4a3ffc3e7980365897",
+    "binary_sha256": "9ce6ba64f72a27abd461e83dc1f47107f5aa08f8b06b4e21849d543e60242d4a",
+    "census": [
+      0,
+      0,
+      0
+    ]
+  },
+  {
+    "fixture": "variant_payload_expected_type",
+    "target": "arm64-linux",
+    "source_sha256": "154d8c30c0ea1e0498452ff98d1e63bf09191bbe52b6461a7950dd95da56404c",
+    "expected_sha256": "21bfa72ae87e625da8b9398308ffb2195d465438e5db8c4a3ffc3e7980365897",
+    "launcher_sha256": "922bca6d2c9fc8439d6956445c33f048885ed19229ae45dffca77c13c70e89e3",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/fern-oracle",
+      "-O",
+      "-sanitize",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/variant_payload_expected_type-arm64-linux",
+      "/workspace/lang-perf-4412/conformance/cases/variant_payload_expected_type/main.fern"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/variant_payload_expected_type-arm64-linux"
+    ],
+    "exit": 0,
+    "exact_expected_output": true,
+    "stdout_sha256": "21bfa72ae87e625da8b9398308ffb2195d465438e5db8c4a3ffc3e7980365897",
+    "binary_sha256": "f7d4811fb4479c6ad5cb10e1b02111c9670de8ff13358b70c2d6a35232e8c7c7",
+    "census": [
+      0,
+      0,
+      0
+    ]
+  },
+  {
+    "fixture": "variant_payload_expected_type",
+    "target": "wasm32-wasi",
+    "source_sha256": "154d8c30c0ea1e0498452ff98d1e63bf09191bbe52b6461a7950dd95da56404c",
+    "expected_sha256": "21bfa72ae87e625da8b9398308ffb2195d465438e5db8c4a3ffc3e7980365897",
+    "launcher_sha256": "922bca6d2c9fc8439d6956445c33f048885ed19229ae45dffca77c13c70e89e3",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/fern-oracle",
+      "-O",
+      "-sanitize",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/variant_payload_expected_type-wasm32-wasi",
+      "/workspace/lang-perf-4412/conformance/cases/variant_payload_expected_type/main.fern"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "wasmtime",
+      "run",
+      "--env",
+      "FERN_LEAKCHECK=1",
+      "--env",
+      "FERN_SANITIZE=1",
+      "/workspace/lang-issue-work/perf-4412/main-261b-merge/variant_payload_expected_type-wasm32-wasi"
+    ],
+    "exit": 0,
+    "exact_expected_output": true,
+    "stdout_sha256": "21bfa72ae87e625da8b9398308ffb2195d465438e5db8c4a3ffc3e7980365897",
+    "binary_sha256": "d7e2b2fcdeeadbaf4287daac75b141aded5ca0844cf2bdb140489883c68abdce",
+    "census": [
+      8,
+      8,
+      0
+    ]
+  }
+]

@@ -18,6 +18,7 @@ import "./ssaunits";
 import "./suspend";
 import "./semtypes";
 import "./semrecords";
+import "./semscalarreturn";
 import "./typeinfo";
 import "./util";
 import "./semarrayreport";
@@ -623,7 +624,7 @@ function physical_contracts(built: semsource.Built): ssasem.Contract[] {
   for p in util.append_all(built.decls, built.instances) {
     if (p.ok && ssasem.is_wide(p.func.result) && i < built.names.len()) {
       let at: i32 = built.contracts.names.find(built.names[i]);
-      if (at >= 0 && semrecords.find(built.records, out[at].result) >= 0) {
+      if (at >= 0 && semscalarreturn.eligible(p.func, out[at].result) && semrecords.find(built.records, out[at].result) >= 0) {
         out = out.with(at, ssasem.Contract { ...out[at], result: p.func.result });
       }
     }

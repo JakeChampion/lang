@@ -141,7 +141,7 @@ function main(): i32 {
 
 	t.Run("accept-stdlib", func(t *testing.T) {
 		asm, _ := compileSourceModload(t, runner, driverBin,
-			"import \"std/math\";\nfunction main(): i32 { return math.range(0, 7).len(); }\n")
+			"import \"std/math\";\nfunction main(): i32 { return math.i32_max() & 7; }\n")
 		if !strings.Contains(asm, "__fn_main") {
 			t.Fatalf("stdlib program emitted no main (%d bytes)", len(asm))
 		}

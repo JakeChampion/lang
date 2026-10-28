@@ -1,0 +1,33 @@
+{
+  "command": [
+    "/workspace/lang-issue-work/perf-4412/tools/usr/bin/time",
+    "-v",
+    "/workspace/lang-issue-work/perf-4412/tools/usr/bin/valgrind",
+    "--tool=callgrind",
+    "--callgrind-out-file=/workspace/lang-issue-work/perf-4412/record-pair-candidate/stage2.callgrind",
+    "/workspace/lang-issue-work/perf-4412/record-pair-candidate/stage2",
+    "-O",
+    "-target",
+    "x86-64-linux",
+    "-emit",
+    "asm",
+    "-o",
+    "/dev/null",
+    "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+    "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+  ],
+  "artifact_generation": "stage2",
+  "comparison_kind": "common-producer",
+  "exit": 0,
+  "valid_full_run": true,
+  "elapsed_seconds_under_callgrind": 239.5510674289999,
+  "candidate_sha256": "b0bd2c4a0f9c03d39c9558a97b0fda8108b94de6feaec44618d07abdbd062308",
+  "baseline_sha256": "bddb8e23b04acf6db660c5217d7472405c1898b80b20853fbf12c7e5762c19ff",
+  "producer_sha256": "bddb8e23b04acf6db660c5217d7472405c1898b80b20853fbf12c7e5762c19ff",
+  "subject_sha256": "a0b69a0f97f3b45bf06eca8160200a936b56b06a279bb538795a387a5d76e172",
+  "candidate_output_sha256": "6ede521a93108492362e54f018dc863eef2734d8457f13a553a89f3b238cd8e8",
+  "baseline_output_sha256": "7929fef58c94e62deda9337b1435ef7982549f03df6f84f4726da8f1e2adca94",
+  "subject_output_bytes": 26653064,
+  "note": "Only candidate stage2 shares the baseline producer. That primary comparison prices analysis cost without the new ABI in compiler machine code. Stage3 uses candidate stage2 as producer, so it is a separate bootstrap observation.",
+  "instructions": 25077429011
+}

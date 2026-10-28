@@ -1,7 +1,0 @@
-import "std/array";
-import "std/math";
-
-function main(): i32 {
-    let r = math.range(0, 5);
-    return r.len() + r.sum();
-}

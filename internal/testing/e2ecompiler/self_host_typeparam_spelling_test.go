@@ -16,7 +16,7 @@ import "core/cmp";
 struct K { bucket: i32, id: i32 }
 impl cmp.Hash for K { function hash(self: K): i32 { return self.bucket; } }
 function main(): i32 {
-    let m: pmap.PMap[K, i32] = pmap.pmap_new();
+    let m: pmap.PMap[K, i32] = pmap.new();
     let i: i32 = 0;
     while (i < 40) { m = m.insert(K { bucket: i % 5, id: i }, i); i = i + 1; }
     let n: i32 = m.get_or(K { bucket: 3, id: 13 }, -1) * 10 + m.get_or(K { bucket: 3, id: 14 }, -1);
@@ -31,7 +31,7 @@ import "std/i32";
 enum V { Small(i32), Big(i32) }
 function weight(v: V): i32 { match (v) { Small(n) => { return n; }, Big(n) => { return n * 100; } } return 0; }
 function main(): i32 {
-    let m: pmap.PMap[i32, V] = pmap.pmap_new();
+    let m: pmap.PMap[i32, V] = pmap.new();
     let i: i32 = 0;
     while (i < 30) {
         if (i % 3 == 0) { m = m.insert(i, Big(i)); } else { m = m.insert(i, Small(i)); }

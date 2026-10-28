@@ -2710,7 +2710,8 @@ function print_type_params(fd: parser.FuncDecl): string {
   return out + "]";
 }
 
-// print_decl_tparams is the parameter list of a struct or an enum.
+// print_decl_tparams is the parameter list of a struct, an enum, a type
+// alias or a trait.
 function print_decl_tparams(type_params: string[], const_params: string[]): string {
   if (type_params.len() == 0) {
     return "";
@@ -3137,19 +3138,7 @@ function print_trait_decl(td: parser.TraitDecl, f: Fmt): (string, Fmt) {
   if (td.is_package) {
     out = out + "pub(package) ";
   }
-  out = out + "trait " + td.name;
-  if (td.type_params.len() > 0) {
-    out = out + "[";
-    let tpi: i32 = 0;
-    while (tpi < td.type_params.len()) {
-      if (tpi > 0) {
-        out = out + ", ";
-      }
-      out = out + td.type_params[tpi];
-      tpi = tpi + 1;
-    }
-    out = out + "]";
-  }
+  out = out + "trait " + td.name + print_decl_tparams(td.type_params, td.const_params);
   if (td.supertraits.len() > 0) {
     out = out + ": ";
     let spi: i32 = 0;
@@ -3228,19 +3217,7 @@ function print_type_alias(a: parser.TypeAlias): string {
   if (a.is_package) {
     out = out + "pub(package) ";
   }
-  out = out + "type " + a.name;
-  if (a.type_params.len() > 0) {
-    out = out + "[";
-    let ti: i32 = 0;
-    while (ti < a.type_params.len()) {
-      if (ti > 0) {
-        out = out + ", ";
-      }
-      out = out + a.type_params[ti];
-      ti = ti + 1;
-    }
-    out = out + "]";
-  }
+  out = out + "type " + a.name + print_decl_tparams(a.type_params, a.const_params);
   out = out + " = ";
   let ln: i32[] = a.variant_lines;
   let n: i32 = ln.len();

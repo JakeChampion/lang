@@ -1,0 +1,28 @@
+from pathlib import Path
+import subprocess, json, hashlib, os, shutil
+
+p = Path(__file__).parent
+records = []
+for version in ['baseline', 'candidate']:
+    project = p / (version + '-bound-project')
+    shutil.copytree(p / 'fixed-source/compiler', project, dirs_exist_ok=True)
+    if version == 'candidate':
+        shutil.copyfile('/workspace/lang-perf-4412/compiler/ir.fern', project / 'ir.fern')
+    shutil.copyfile(p / 'ir-bound-contract.fern', project / 'bound_contract.fern')
+    for target in ['x86-64-linux', 'arm64-linux', 'wasm32-wasi']:
+        name = version + '-bound-' + target
+        binary = p / name
+        cmd = [str(p / 'baseline-stage2'), '-O', '-target', target, '-o', str(binary), str(project / 'bound_contract.fern'), str(p / 'fixed-source/internal/stdlib')]
+        with (p / (name + '-build.log')).open('wb') as f:
+            r = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT)
+        assert r.returncode == 0, (name, 'build', r.returncode)
+        run = ([str(binary)] if target == 'x86-64-linux' else ['qemu-aarch64', '-cpu', 'max', str(binary)] if target == 'arm64-linux' else ['wasmtime', 'run', str(binary)])
+        r = subprocess.run(run, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        (p / (name + '.out')).write_bytes(r.stdout)
+        (p / (name + '.err')).write_bytes(r.stderr)
+        record = {'version': version, 'target': target, 'build_command': cmd, 'run_command': run, 'exit': r.returncode, 'output_sha256': hashlib.sha256(r.stdout).hexdigest(), 'output_bytes': len(r.stdout), 'output_lines': len(r.stdout.splitlines()), 'stderr': r.stderr.decode(errors='replace')}
+        records.append(record)
+        (p / 'bound-validation.json').write_text(json.dumps(records, indent=2) + '\n')
+        print(record, flush=True)
+        assert r.returncode == 0 and not r.stderr, (name, r.returncode, r.stderr)
+        assert r.stdout == (p / 'baseline-bound-x86-64-linux.out').read_bytes(), (name, 'output mismatch')

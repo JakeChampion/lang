@@ -18,13 +18,13 @@ function main(): i32 {
     if (!approx(unwrap(array.median_f64(even2)), 6.0)) { return 3; }   // sorted 2,4,8,10 -> (4+8)/2
     if (!approx(unwrap(array.median_f64([42.0])), 42.0)) { return 4; }
     // range = max - min
-    if (!approx(unwrap(odd.range()), 4.0)) { return 5; }
-    if (!approx(unwrap([7.0].range()), 0.0)) { return 6; }
-    if (!approx(unwrap([0.0 - 3.0, 5.0, 1.0].range()), 8.0)) { return 7; }
+    if (!approx(unwrap(odd.spread()), 4.0)) { return 5; }
+    if (!approx(unwrap([7.0].spread()), 0.0)) { return 6; }
+    if (!approx(unwrap([0.0 - 3.0, 5.0, 1.0].spread()), 8.0)) { return 7; }
     // empty -> None
     let empty: f64[] = [];
     match (array.median_f64(empty)) { Some(v) => { return 8; }, None => {} }
-    match (empty.range()) { Some(v) => { return 9; }, None => {} }
+    match (empty.spread()) { Some(v) => { return 9; }, None => {} }
     return 42;
 }
 `

@@ -629,6 +629,26 @@ function main(): i32 { let b: Box[i32] = Full(Pk { items: [1, 2] }); return size
 	t.Errorf("no instance __method_Box__i32_size of the enum impl method")
 }
 
+// An instance of a function generic over a const parameter puts its argument
+// into a bound that names that parameter (`F: Fixed[M]` becomes Fixed[4]).
+func TestRunSubstitutesConstBoundArgs(t *testing.T) {
+	prog, err := parser.Parse(`struct Ring[const N: i32, T] { items: T[] }
+trait Fixed[const N: i32] { function room(self: Self): i32; }
+impl[const N: i32, T] Fixed[N] for Ring[N, T] { function room(self: Ring[N, T]): i32 { return N; } }
+function room_m[const M: i32, F: Fixed[M]](f: F): i32 { return f.room() + M; }
+function main(): i32 { let r: Ring[4, i32] = Ring { items: [] }; return room_m[4, Ring[4, i32]](r); }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+}
+
 func TestRunReportsPolymorphicRecursion(t *testing.T) {
 	src := `struct Nest[T] { head: T, tail: Nest[Nest[T]] }
 function f(n: Nest[i32]): i32 { return n.head; }

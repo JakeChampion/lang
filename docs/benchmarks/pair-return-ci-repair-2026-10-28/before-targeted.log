@@ -1,0 +1,69 @@
+=== RUN   TestSelfHostGenericUpdateBase
+=== RUN   TestSelfHostGenericUpdateBase/empty-array-assignment
+=== RUN   TestSelfHostGenericUpdateBase/empty-array-assignment/x86-64-linux
+    self_host_generic_update_base_test.go:64: allocs=0 — the probe exercised no allocation
+=== RUN   TestSelfHostGenericUpdateBase/empty-array-assignment/arm64-linux
+    self_host_generic_update_base_test.go:64: allocs=0 — the probe exercised no allocation
+=== RUN   TestSelfHostGenericUpdateBase/empty-array-assignment/wasm32-wasi
+    self_host_generic_update_base_test.go:64: allocs=0 — the probe exercised no allocation
+=== RUN   TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation
+=== RUN   TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation/x86-64-linux
+=== RUN   TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation/arm64-linux
+=== RUN   TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation/wasm32-wasi
+=== RUN   TestSelfHostGenericUpdateBase/persistent-vector-empty-tail
+=== RUN   TestSelfHostGenericUpdateBase/persistent-vector-empty-tail/x86-64-linux
+=== RUN   TestSelfHostGenericUpdateBase/persistent-vector-empty-tail/arm64-linux
+=== RUN   TestSelfHostGenericUpdateBase/persistent-vector-empty-tail/wasm32-wasi
+--- FAIL: TestSelfHostGenericUpdateBase (43.41s)
+    --- FAIL: TestSelfHostGenericUpdateBase/empty-array-assignment (0.09s)
+        --- FAIL: TestSelfHostGenericUpdateBase/empty-array-assignment/x86-64-linux (0.04s)
+        --- FAIL: TestSelfHostGenericUpdateBase/empty-array-assignment/arm64-linux (0.03s)
+        --- FAIL: TestSelfHostGenericUpdateBase/empty-array-assignment/wasm32-wasi (0.03s)
+    --- PASS: TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation (0.08s)
+        --- PASS: TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation/arm64-linux (0.03s)
+        --- PASS: TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostGenericUpdateBase/persistent-vector-empty-tail (0.75s)
+        --- PASS: TestSelfHostGenericUpdateBase/persistent-vector-empty-tail/x86-64-linux (0.26s)
+        --- PASS: TestSelfHostGenericUpdateBase/persistent-vector-empty-tail/arm64-linux (0.24s)
+        --- PASS: TestSelfHostGenericUpdateBase/persistent-vector-empty-tail/wasm32-wasi (0.24s)
+=== RUN   TestSelfHostSemanticAllocationCounts
+=== RUN   TestSelfHostSemanticAllocationCounts/element-read-outlives-the-array-write
+=== RUN   TestSelfHostSemanticAllocationCounts/field-read-outlives-the-record-move
+=== RUN   TestSelfHostSemanticAllocationCounts/an-element-handed-beside-its-dying-array
+    self_host_sem_production_test.go:6577: the produced bodies allocated 12 times, want 44
+=== RUN   TestSelfHostSemanticAllocationCounts/a-view-of-a-dominating-source-is-not-copied
+=== RUN   TestSelfHostSemanticAllocationCounts/a-tuple-element-is-taken-past-a-later-sibling-read
+=== RUN   TestSelfHostSemanticAllocationCounts/a-destructured-element-is-taken-past-a-later-sibling-read
+=== RUN   TestSelfHostSemanticAllocationCounts/a-field-is-taken-past-a-sibling-read-in-a-later-block
+--- FAIL: TestSelfHostSemanticAllocationCounts (1.89s)
+    --- PASS: TestSelfHostSemanticAllocationCounts/element-read-outlives-the-array-write (0.19s)
+    --- PASS: TestSelfHostSemanticAllocationCounts/field-read-outlives-the-record-move (0.20s)
+    --- FAIL: TestSelfHostSemanticAllocationCounts/an-element-handed-beside-its-dying-array (0.22s)
+    --- PASS: TestSelfHostSemanticAllocationCounts/a-view-of-a-dominating-source-is-not-copied (0.02s)
+    --- PASS: TestSelfHostSemanticAllocationCounts/a-tuple-element-is-taken-past-a-later-sibling-read (0.02s)
+    --- PASS: TestSelfHostSemanticAllocationCounts/a-destructured-element-is-taken-past-a-later-sibling-read (0.03s)
+    --- PASS: TestSelfHostSemanticAllocationCounts/a-field-is-taken-past-a-sibling-read-in-a-later-block (0.03s)
+=== RUN   TestSelfHostTypedStorageInvocation
+=== RUN   TestSelfHostTypedStorageInvocation/arm64-linux
+    self_host_ssa_credit_storage_abi_test.go:18: typed storage invocation proof exited 91: leakcheck: allocs=24034 frees=21536 live_bytes=169880 from=exit
+        fern-sanitizer: leak 169880 bytes in 2498 blocks
+=== RUN   TestSelfHostTypedStorageInvocation/x86-64-linux
+    self_host_ssa_credit_storage_abi_test.go:18: typed storage invocation proof exited 91: leakcheck: allocs=24034 frees=21536 live_bytes=169880 from=exit
+        fern-sanitizer: leak 169880 bytes in 2498 blocks
+=== RUN   TestSelfHostTypedStorageInvocation/wasm32-wasi
+    self_host_ssa_credit_storage_abi_test.go:18: typed storage invocation proof exited 91: leakcheck: allocs=26438 frees=23940 live_bytes=123304 from=exit
+        fern-sanitizer: leak 123304 bytes in 2498 blocks
+--- FAIL: TestSelfHostTypedStorageInvocation (81.58s)
+    --- FAIL: TestSelfHostTypedStorageInvocation/arm64-linux (25.24s)
+    --- FAIL: TestSelfHostTypedStorageInvocation/x86-64-linux (24.59s)
+    --- FAIL: TestSelfHostTypedStorageInvocation/wasm32-wasi (30.55s)
+=== RUN   TestSelfHostStructFieldArgReleaseX86_64
+    self_host_struct_field_arg_release_test.go:69: allocs=0 — the probe exercised no allocation
+--- FAIL: TestSelfHostStructFieldArgReleaseX86_64 (1.27s)
+=== RUN   TestSelfHostStructFieldArgReleaseWasm
+    self_host_struct_field_arg_release_test.go:111: allocs=0 — the probe exercised no allocation
+--- FAIL: TestSelfHostStructFieldArgReleaseWasm (1.20s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	129.363s
+FAIL

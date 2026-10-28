@@ -426,7 +426,7 @@ func (f *formatter) formatUnionDecl(ud *ast.UnionDecl) {
 	}
 	f.b.WriteString("type ")
 	f.b.WriteString(ud.Name)
-	f.writeTypeParams(ud.TypeParams, nil, nil, nil)
+	f.writeTypeParams(ud.TypeParams, nil, nil, ud.ConstParams)
 	f.b.WriteString(" = ")
 	ln := ud.MemberLines
 	kept := len(ln) == len(ud.Members) && len(ln) > 0 && ln[0] > 0 && ln[len(ln)-1] > ln[0]
@@ -558,7 +558,7 @@ func (f *formatter) formatTraitDecl(td *ast.TraitDecl) {
 	}
 	f.b.WriteString("trait ")
 	f.b.WriteString(td.Name)
-	f.writeTypeParams(td.TypeParams, nil, nil, nil)
+	f.writeTypeParams(td.TypeParams, nil, nil, td.ConstParams)
 	if len(td.Supertraits) > 0 {
 		f.b.WriteString(": ")
 		for i, name := range td.Supertraits {

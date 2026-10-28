@@ -761,16 +761,13 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 	if err != nil {
 		return nil, err
 	}
-	var typeParams []string
+	var typeParams, constParams []string
 	if p.match(lexer.Punct, "[") {
-		open := p.peek().Pos
 		typeParams, _, err = p.parseTypeParamList()
 		if err != nil {
 			return nil, err
 		}
-		if err := p.refuseConstParams(open); err != nil {
-			return nil, err
-		}
+		constParams, p.constParams = p.constParams, nil
 	}
 	supertraits, supertraitArgs, err := p.parseOptBoundsWithArgs()
 	if err != nil {
@@ -779,7 +776,7 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, err
 	}
-	td := &ast.TraitDecl{P: kw.Pos, Name: name.Text, NamePos: name.Pos, Supertraits: supertraits, SupertraitArgs: supertraitArgs, TypeParams: typeParams}
+	td := &ast.TraitDecl{P: kw.Pos, Name: name.Text, NamePos: name.Pos, Supertraits: supertraits, SupertraitArgs: supertraitArgs, TypeParams: typeParams, ConstParams: constParams}
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		if p.match(lexer.Keyword, "type") {
 			p.advance()
@@ -933,7 +930,7 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	if p.match(lexer.Punct, "[") {
 		p.advance()
 		for {
-			at, err := p.parseType()
+			at, err := p.parseTypeArg()
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1350,7 +1347,7 @@ func (p *parser) refuseConstParams(pos ast.Position) error {
 	}
 	name := p.constParams[0]
 	p.constParams = nil
-	return p.errorfCode(pos, "P001", "const parameter %s: only a function, a struct, an enum or an impl takes a const parameter", name)
+	return p.errorfCode(pos, "P001", "const parameter %s: only a function, a struct, an enum, a type alias, an impl or a trait takes a const parameter", name)
 }
 
 func (p *parser) parseOptBoundsWithArgs() ([]string, [][]ast.Type, error) {
@@ -1369,7 +1366,7 @@ func (p *parser) parseOptBoundsWithArgs() ([]string, [][]ast.Type, error) {
 		if p.match(lexer.Punct, "[") {
 			p.advance()
 			for {
-				at, err := p.parseType()
+				at, err := p.parseTypeArg()
 				if err != nil {
 					return nil, nil, err
 				}
@@ -1792,15 +1789,13 @@ func (p *parser) parseUnionDecl() (*ast.UnionDecl, error) {
 	if err != nil {
 		return nil, err
 	}
-	var typeParams []string
-	if open, ok := p.accept(lexer.Punct, "["); ok {
+	var typeParams, constParams []string
+	if _, ok := p.accept(lexer.Punct, "["); ok {
 		typeParams, err = p.parseDeclTypeParams("type", name.Text)
 		if err != nil {
 			return nil, err
 		}
-		if err := p.refuseConstParams(open.Pos); err != nil {
-			return nil, err
-		}
+		constParams, p.constParams = p.constParams, nil
 	}
 	if _, err := p.expect(lexer.Punct, "="); err != nil {
 		return nil, err
@@ -1825,7 +1820,7 @@ func (p *parser) parseUnionDecl() (*ast.UnionDecl, error) {
 	if len(members) < 2 {
 		return nil, p.errorf(name.Pos, "union %q must list at least two struct members (use a struct alias for a single type)", name.Text)
 	}
-	return &ast.UnionDecl{P: kw.Pos, Name: name.Text, TypeParams: typeParams, Members: members, MemberLines: lines}, nil
+	return &ast.UnionDecl{P: kw.Pos, Name: name.Text, TypeParams: typeParams, ConstParams: constParams, Members: members, MemberLines: lines}, nil
 }
 
 func (p *parser) parseUnionMember() (ast.StructType, error) {
@@ -1837,7 +1832,7 @@ func (p *parser) parseUnionMember() (ast.StructType, error) {
 	if p.match(lexer.Punct, "[") {
 		p.advance()
 		for {
-			arg, err := p.parseType()
+			arg, err := p.parseTypeArg()
 			if err != nil {
 				return ast.StructType{}, err
 			}
@@ -2002,7 +1997,7 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 						}
 						assoc = append(assoc, ast.AssocBinding{Name: nameT.Text, Type: bt})
 					} else {
-						at, err := p.parseType()
+						at, err := p.parseTypeArg()
 						if err != nil {
 							return nil, err
 						}

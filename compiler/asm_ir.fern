@@ -8003,13 +8003,18 @@ function ssa_rt_arg_reg(a: i32): i32 {
 }
 
 function ssa_view_slots(f: ssa.SFunc): i32[] {
-  let out: i32[] = util.minus_ones(f.nvals);
+  let out: i32[] = [];
   let n: i32 = 0;
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == 51 && ins.imm >= 1) {
-        out = out.with(ins.result, n);
-        n = n + 1;
+      if (ins.kind_tag == 51) {
+        if (out.len() == 0) {
+          out = util.minus_ones(f.nvals);
+        }
+        if (ins.imm >= 1) {
+          out = out.with(ins.result, n);
+          n = n + 1;
+        }
       }
     }
   }
@@ -9089,13 +9094,19 @@ function ssa_shape_plan(f: ssa.SFunc, imm: ssa.Imms, shared: boolean): ShapePlan
   if (shared) {
     return plan;
   }
-  let shape: boolean[] = __alloc_bool(f.nvals);
+  let shape: boolean[] = [];
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 46) {
+        if (shape.len() == 0) {
+          shape = __alloc_bool(f.nvals);
+        }
         shape = shape.with(ins.result, true);
       }
     }
+  }
+  if (shape.len() == 0) {
+    return plan;
   }
   for blk in f.blocks {
     for ins in blk.insts {

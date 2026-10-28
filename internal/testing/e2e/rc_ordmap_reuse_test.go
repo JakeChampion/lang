@@ -16,7 +16,7 @@ func ordmapReuseSrc(rounds int, shared bool) string {
 	return fmt.Sprintf(`import "std/ordmap";
 
 function main(): i32 {
-    let m: ordmap.OrdMap[i32, i32] = ordmap.ordmap_new();
+    let m: ordmap.OrdMap[i32, i32] = ordmap.new();
     let i: i32 = 0;
     while (i < 500) {
         m = m.insert(i * 7, 0);

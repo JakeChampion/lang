@@ -1,0 +1,40 @@
+[
+  {
+    "producer": "stage2",
+    "producer_sha256": "4a961c82f8a05f230020b2b3dbeb1938f50fd9ca88c6f1bed556f210711156a7",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage3",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/compiler/fern.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "output": "stage3",
+    "exit": 0,
+    "elapsed_seconds": 42.49489119300051,
+    "output_sha256": "bddb8e23b04acf6db660c5217d7472405c1898b80b20853fbf12c7e5762c19ff",
+    "output_bytes": 15274480
+  },
+  {
+    "producer": "stage3",
+    "producer_sha256": "bddb8e23b04acf6db660c5217d7472405c1898b80b20853fbf12c7e5762c19ff",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage3",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage4",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/compiler/fern.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "output": "stage4",
+    "exit": 0,
+    "elapsed_seconds": 42.52914954600055,
+    "output_sha256": "bddb8e23b04acf6db660c5217d7472405c1898b80b20853fbf12c7e5762c19ff",
+    "output_bytes": 15274480
+  }
+]

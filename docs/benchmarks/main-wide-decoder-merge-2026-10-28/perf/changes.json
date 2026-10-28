@@ -1,0 +1,50 @@
+[
+  {
+    "file": "perf-baseline.txt",
+    "metric": "aarch64/map_string.ir",
+    "before": 59247734,
+    "after": 59115995
+  },
+  {
+    "file": "perf-baseline.txt",
+    "metric": "x86_64/map_string.ir",
+    "before": 58471578,
+    "after": 58342774
+  },
+  {
+    "file": "alloc-baseline.txt",
+    "metric": "x86_64/checker.allocs",
+    "before": 34278531,
+    "after": 33753130
+  },
+  {
+    "file": "alloc-baseline.txt",
+    "metric": "x86_64/checker.frees",
+    "before": 34278531,
+    "after": 33753130
+  },
+  {
+    "file": "profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/map_string.diagnostic.ir",
+    "before": 63674487,
+    "after": 63852617
+  },
+  {
+    "file": "profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/map_string.hardened.ir",
+    "before": 61095835,
+    "after": 61185265
+  },
+  {
+    "file": "profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/map_string.minimal.ir",
+    "before": 61276745,
+    "after": 61235593
+  },
+  {
+    "file": "profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/map_string.safe.ir",
+    "before": 58512192,
+    "after": 58546430
+  }
+]

@@ -19,7 +19,7 @@ pub function new_world(count: i32, clustered: boolean): Option[World] {
   if (count < 0 || count > 4096) {
     return None;
   }
-  let entities: pvec.PVec[simulation_entity.Entity] = pvec.pvec_new[simulation_entity.Entity]();
+  let entities: pvec.PVec[simulation_entity.Entity] = pvec.new[simulation_entity.Entity]();
   let i: i32 = 0;
   while (i < count) {
     entities = entities.append(simulation_entity.initial(i, count, clustered));

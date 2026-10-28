@@ -1,0 +1,14 @@
+=== RUN   TestSelfHostIRKindRegistry
+--- PASS: TestSelfHostIRKindRegistry (0.33s)
+=== RUN   TestSelfHostIROpConstructorTags
+--- PASS: TestSelfHostIROpConstructorTags (0.01s)
+=== RUN   TestSelfHostIRKindConstants
+--- PASS: TestSelfHostIRKindConstants (0.00s)
+=== RUN   TestSelfHostPerModuleCounterBSSLinkX86_64
+--- PASS: TestSelfHostPerModuleCounterBSSLinkX86_64 (26.69s)
+=== RUN   TestSelfHostPerModuleCounterBSSLinkArm64
+--- PASS: TestSelfHostPerModuleCounterBSSLinkArm64 (1.71s)
+=== RUN   TestSelfHostSSALiftAdmitsEveryOp
+--- PASS: TestSelfHostSSALiftAdmitsEveryOp (0.21s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	28.966s

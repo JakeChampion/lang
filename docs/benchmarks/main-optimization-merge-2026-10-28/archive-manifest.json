@@ -1,0 +1,346 @@
+[
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/primary.json",
+    "archive": "primary.json",
+    "compressed": false,
+    "raw_bytes": 786,
+    "raw_sha256": "cb8b5ff6dcd869f9cf5039979c9d8b6de3951511b7397aea861a9227839ec38f",
+    "archive_sha256": "cb8b5ff6dcd869f9cf5039979c9d8b6de3951511b7397aea861a9227839ec38f"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/source.json",
+    "archive": "source.json",
+    "compressed": false,
+    "raw_bytes": 284,
+    "raw_sha256": "076da10052c1a5961217c49d2a9892c68a4860f961bc5f4834bded99f4217b19",
+    "archive_sha256": "076da10052c1a5961217c49d2a9892c68a4860f961bc5f4834bded99f4217b19"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/ratchets.json",
+    "archive": "ratchets.json",
+    "compressed": false,
+    "raw_bytes": 454,
+    "raw_sha256": "7cb56fad25eccbb9518f82c00e06f3d50d75ff8eb2cd7fcc94c3a7b5553c16f4",
+    "archive_sha256": "7cb56fad25eccbb9518f82c00e06f3d50d75ff8eb2cd7fcc94c3a7b5553c16f4"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/formatter.json",
+    "archive": "formatter.json",
+    "compressed": false,
+    "raw_bytes": 366,
+    "raw_sha256": "f2859d040de83b7f761bc200e7c69cba648aaecb0afe3e622f8062613a6929b7",
+    "archive_sha256": "f2859d040de83b7f761bc200e7c69cba648aaecb0afe3e622f8062613a6929b7"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/contract.json",
+    "archive": "contract.json",
+    "compressed": false,
+    "raw_bytes": 3012,
+    "raw_sha256": "4224c85665ee0d97a048d55dced30fdd5fa6983f7afe9606e329ae7ff521b697",
+    "archive_sha256": "4224c85665ee0d97a048d55dced30fdd5fa6983f7afe9606e329ae7ff521b697"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/incoming-preservation.json",
+    "archive": "incoming-preservation.json",
+    "compressed": false,
+    "raw_bytes": 3935,
+    "raw_sha256": "704d2839b864eaf026101fe68b05eb01e12b9c84f21b07f454c192c737262687",
+    "archive_sha256": "704d2839b864eaf026101fe68b05eb01e12b9c84f21b07f454c192c737262687"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/licm-resolution-plan.json",
+    "archive": "licm-resolution-plan.json",
+    "compressed": false,
+    "raw_bytes": 1303,
+    "raw_sha256": "cbde84d5ba0987b1ce510c74c4b18a0bfdb39fb8058425d6dbe98449ccdfb13a",
+    "archive_sha256": "cbde84d5ba0987b1ce510c74c4b18a0bfdb39fb8058425d6dbe98449ccdfb13a"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/contract-source-identity.json",
+    "archive": "contract-source-identity.json",
+    "compressed": false,
+    "raw_bytes": 170752,
+    "raw_sha256": "5600ed6b363416e6e5c3f97f6d3e3143b14bdc8a397fd65e91ee0a682e8f2c93",
+    "archive_sha256": "5600ed6b363416e6e5c3f97f6d3e3143b14bdc8a397fd65e91ee0a682e8f2c93"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/current-producer.json",
+    "archive": "current-producer.json",
+    "compressed": false,
+    "raw_bytes": 548,
+    "raw_sha256": "242645d85751095ce3cac88393e3725b173a84f3a95aa5187e631a354a878e05",
+    "archive_sha256": "242645d85751095ce3cac88393e3725b173a84f3a95aa5187e631a354a878e05"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/current-cli-info.json",
+    "archive": "current-cli-info.json",
+    "compressed": false,
+    "raw_bytes": 304,
+    "raw_sha256": "b8f8e06df60039440626b39ed1fbed0971e8f24831632bacfb5dfdd9560b1b76",
+    "archive_sha256": "b8f8e06df60039440626b39ed1fbed0971e8f24831632bacfb5dfdd9560b1b76"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/validate.py",
+    "archive": "validate.py",
+    "compressed": false,
+    "raw_bytes": 2314,
+    "raw_sha256": "006258653b2ea6b698f6d0bbd1411285514cac9a2f3df00290909843fca68270",
+    "archive_sha256": "006258653b2ea6b698f6d0bbd1411285514cac9a2f3df00290909843fca68270"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/contract.py",
+    "archive": "contract.py",
+    "compressed": false,
+    "raw_bytes": 2259,
+    "raw_sha256": "cfb76c53bac96f2f75d0a587fd38ddccaff4201b8ed0ca3c8db7edf3b44cd1ce",
+    "archive_sha256": "cfb76c53bac96f2f75d0a587fd38ddccaff4201b8ed0ca3c8db7edf3b44cd1ce"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/format-current.py",
+    "archive": "format-current.py",
+    "compressed": false,
+    "raw_bytes": 1176,
+    "raw_sha256": "611f2352c1c968c94c471110c218a9be164e1f14e172173acf5423f86e720e7e",
+    "archive_sha256": "611f2352c1c968c94c471110c218a9be164e1f14e172173acf5423f86e720e7e"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/primary.jsonl",
+    "archive": "primary.jsonl.gz",
+    "compressed": true,
+    "raw_bytes": 141258,
+    "raw_sha256": "6c435de9918ff8fa799d6e42968c333592cb8aa0427d0ae12a15747e6a1d8dcd",
+    "archive_sha256": "65b892bba658e8448c74c0f7bdd52cf2d35194b25e532c6d5cfe077fbdca7571"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/source.log",
+    "archive": "source.log.gz",
+    "compressed": true,
+    "raw_bytes": 119,
+    "raw_sha256": "432fc8fea2be45054f3f935f660b715777ed6130e8a37eff1fbe866d37f1fa3f",
+    "archive_sha256": "03118c6b0c6674bf0444d7af72b62811044f0f9daca6c11bfdcd56251bffc9d4"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/ratchets.jsonl",
+    "archive": "ratchets.jsonl.gz",
+    "compressed": true,
+    "raw_bytes": 9109,
+    "raw_sha256": "18f5575f3e242e4ec3e9c54d6621c5fce376a4063e2b13cec35376f1734c9651",
+    "archive_sha256": "f5e1c8b55d1f4f71b0b13fc17269d1ebbaa5acca89063d93cdb0f0cae7ce036b"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/formatter.log",
+    "archive": "formatter.log.gz",
+    "compressed": true,
+    "raw_bytes": 0,
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "d1111b245f685176180e6f1631e6dc49badf6672368e9ce260c71355165effdf"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/contract.log",
+    "archive": "contract.log.gz",
+    "compressed": true,
+    "raw_bytes": 2532,
+    "raw_sha256": "838c69953eefbdc1a75a548be1cfdb1e0e7380a4346cafd863f372cb7d8e29b7",
+    "archive_sha256": "617fdd9fe33da7716e2d029a6ec8e3652bfcd51e0f38582daecffd4ba40a1975"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/validate.log",
+    "archive": "validate.log.gz",
+    "compressed": true,
+    "raw_bytes": 1376,
+    "raw_sha256": "9e5004e0e80f3fd4ebe53ff06fe243dabbe200d27ec73927d7cec4dcd00e39b2",
+    "archive_sha256": "c0b6fc021238a06e96e8f07b3d275a2a7f961d726a887c5e93e953a4ffa51428"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/public-cli-build.log",
+    "archive": "public-cli-build.log.gz",
+    "compressed": true,
+    "raw_bytes": 0,
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "d1111b245f685176180e6f1631e6dc49badf6672368e9ce260c71355165effdf"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/current-cli-info.log",
+    "archive": "current-cli-info.log.gz",
+    "compressed": true,
+    "raw_bytes": 0,
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "d1111b245f685176180e6f1631e6dc49badf6672368e9ce260c71355165effdf"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/current-cli-helper.go.txt",
+    "archive": "current-cli-helper.go.txt.gz",
+    "compressed": true,
+    "raw_bytes": 671,
+    "raw_sha256": "61bf9dc7094b01f68495dbf840d24a02c622c93b01652fb002cd89172a93e6ab",
+    "archive_sha256": "d80a0618bdd0b5b243ebb3429366f8377826704ab6d9580800e00e6aa2a259ef"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/ir-stage1.fern.txt",
+    "archive": "ir-stage1.fern.txt.gz",
+    "compressed": true,
+    "raw_bytes": 150345,
+    "raw_sha256": "7c627068dbba0aa14d673ab953eacf93ff45e484b24030d7a28f47b389f74dc1",
+    "archive_sha256": "ffff12948d7bbd16a461820a7a83e641acf4f55b36829ff71debb41e03623155"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/ir-stage2.fern.txt",
+    "archive": "ir-stage2.fern.txt.gz",
+    "compressed": true,
+    "raw_bytes": 150074,
+    "raw_sha256": "90c366c59b40d5e065d3195710d0d349288197c8871b2ad31071ade52cd76ed3",
+    "archive_sha256": "ad7a5568d33a9dd3d7de9b293036e089f7ee61649b603d2934f6919fe0ab3e86"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/ir-stage3.fern.txt",
+    "archive": "ir-stage3.fern.txt.gz",
+    "compressed": true,
+    "raw_bytes": 150663,
+    "raw_sha256": "3ec75479b372a6deaf4d5dbf0dbf9e2d9136b73209ededb6718031124774165e",
+    "archive_sha256": "594574df7ed2bb6f7b10e6b35482716603616ffbf6341566ace571bfdb69fa22"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/ir-unresolved.fern.txt",
+    "archive": "ir-unresolved.fern.txt.gz",
+    "compressed": true,
+    "raw_bytes": 150860,
+    "raw_sha256": "0c0217331028e1675caeb93e98cd26e7969dd6e693d4f6243b237d65f63dda6a",
+    "archive_sha256": "a742509467f2594799c6a5d55b4e0e24071ea0d8696cc244552fa1da5b5fcdeb"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/contract-current/bound_contract.fern",
+    "archive": "bound-contract.fern.txt.gz",
+    "compressed": true,
+    "raw_bytes": 2247,
+    "raw_sha256": "ec0efd7fab6bc3616552899b6d38bf2aa4852203edbac5ab1aca01678caea223",
+    "archive_sha256": "4e1587b32c74816a211ab68b1cb9fb833a86af3b5cfd804cf2c0219590ca5e87"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/compiler-source.tar",
+    "archive": "compiler-source.tar.gz",
+    "compressed": true,
+    "raw_bytes": 16885760,
+    "raw_sha256": "b87fe67c5e3d5906f1caaa88436035ba7873d21c9ab2497e60ff2aa90d387334",
+    "archive_sha256": "d673164c337eb4d8b753bba0ca7e3f42f1676a197777097bffdfc93e10ea2307"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-x86-64-linux-build.log",
+    "archive": "bound-contract-x86-64-linux-build.log.gz",
+    "compressed": true,
+    "raw_bytes": 0,
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "d1111b245f685176180e6f1631e6dc49badf6672368e9ce260c71355165effdf"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-x86-64-linux.stdout",
+    "archive": "bound-contract-x86-64-linux.stdout.gz",
+    "compressed": true,
+    "raw_bytes": 211729,
+    "raw_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "archive_sha256": "04e04f117028901e11fc587178d32cc08957c8ca4e0bd5b13e5a402dc5372f64"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-x86-64-linux.stderr",
+    "archive": "bound-contract-x86-64-linux.stderr.gz",
+    "compressed": true,
+    "raw_bytes": 49,
+    "raw_sha256": "66fe00f327405adb86041374cc6f99b607f82cdacf2b5341df60e5bbb5ec163d",
+    "archive_sha256": "9d29ab8ca0f0b20ee276a559a03813bba00712916d1c1c1b0e29fe6bc58c4139"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-arm64-linux-build.log",
+    "archive": "bound-contract-arm64-linux-build.log.gz",
+    "compressed": true,
+    "raw_bytes": 0,
+    "raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "archive_sha256": "d1111b245f685176180e6f1631e6dc49badf6672368e9ce260c71355165effdf"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-arm64-linux.stdout",
+    "archive": "bound-contract-arm64-linux.stdout.gz",
+    "compressed": true,
+    "raw_bytes": 211729,
+    "raw_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "archive_sha256": "04e04f117028901e11fc587178d32cc08957c8ca4e0bd5b13e5a402dc5372f64"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-arm64-linux.stderr",
+    "archive": "bound-contract-arm64-linux.stderr.gz",
+    "compressed": true,
+    "raw_bytes": 49,
+    "raw_sha256": "66fe00f327405adb86041374cc6f99b607f82cdacf2b5341df60e5bbb5ec163d",
+    "archive_sha256": "9d29ab8ca0f0b20ee276a559a03813bba00712916d1c1c1b0e29fe6bc58c4139"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-wasm32-wasi-build.log",
+    "archive": "bound-contract-wasm32-wasi-build.log.gz",
+    "compressed": true,
+    "raw_bytes": 130,
+    "raw_sha256": "caf2ecb68301a329be5f91fceb707850338d529f3c6c6bbaecd5e475164788b1",
+    "archive_sha256": "a800fe3c3045105f1ba7ad7d349a4a3f2bee980aa9032705d7cde7b1e3f25857"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-wasm32-wasi.stdout",
+    "archive": "bound-contract-wasm32-wasi.stdout.gz",
+    "compressed": true,
+    "raw_bytes": 211729,
+    "raw_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397",
+    "archive_sha256": "04e04f117028901e11fc587178d32cc08957c8ca4e0bd5b13e5a402dc5372f64"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-b024-merge/bound-contract-wasm32-wasi.stderr",
+    "archive": "bound-contract-wasm32-wasi.stderr.gz",
+    "compressed": true,
+    "raw_bytes": 49,
+    "raw_sha256": "4abf88d7d4b36b5ae66282bae9c2fc5e484e6381c1dac9ae6fddcb4ccfd2ea03",
+    "archive_sha256": "6523a5021b3a0bf3f0982bbec9cd0a4c0a0b5f927da6ca031c7cdbf6378807cf"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-261b-merge/printer-shards-state.json",
+    "archive": "historical-printer-shards-state.json",
+    "compressed": false,
+    "raw_bytes": 1082,
+    "raw_sha256": "08d328b92efb79960124bcd56b2f1306ecf94d8e8505291efcb1c88876489ee1",
+    "archive_sha256": "08d328b92efb79960124bcd56b2f1306ecf94d8e8505291efcb1c88876489ee1"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-261b-merge/printer-shards-state-before-main-update.json",
+    "archive": "historical-printer-shards-state-before-main-update.json",
+    "compressed": false,
+    "raw_bytes": 725,
+    "raw_sha256": "8630e443a09a4f27ad2733045b92c6e501141310297885b2e16f8f38743862d2",
+    "archive_sha256": "8630e443a09a4f27ad2733045b92c6e501141310297885b2e16f8f38743862d2"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-261b-merge/printer-shards-interruption.json",
+    "archive": "historical-printer-shards-interruption.json",
+    "compressed": false,
+    "raw_bytes": 299,
+    "raw_sha256": "7ec62304070e62b7a50e56157dba86013779fdeb28895d6af6b06eac4eb1bcf8",
+    "archive_sha256": "7ec62304070e62b7a50e56157dba86013779fdeb28895d6af6b06eac4eb1bcf8"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-261b-merge/printer-shard-0.jsonl",
+    "archive": "historical-printer-shard-0.jsonl.gz",
+    "compressed": true,
+    "raw_bytes": 269630,
+    "raw_sha256": "861309dc9b97b35b15b08778ccc9650b4950e8faad14303a6396f6fa4d3934b3",
+    "archive_sha256": "811fa7f437f1a77820cb955e9d8f18c606bdf55cdfbb351fc960d0b81936e603"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-261b-merge/printer-shard-1.jsonl",
+    "archive": "historical-printer-shard-1.jsonl.gz",
+    "compressed": true,
+    "raw_bytes": 43626,
+    "raw_sha256": "f87f8214b779acd619973bd46e497a3522cbdafe257688f0fddafd5cbb8d697c",
+    "archive_sha256": "8f23b229a01db3d76a446e1f485d6a2906ee760fe3e3d3e72a147f296939c5dc"
+  },
+  {
+    "source": "/workspace/lang-issue-work/perf-4412/main-261b-merge/printer-shards.log",
+    "archive": "historical-printer-shards.log.gz",
+    "compressed": true,
+    "raw_bytes": 269,
+    "raw_sha256": "184b853c90eba5df840909fab925734a685c44210f9e0a48976264843c74f6ea",
+    "archive_sha256": "16a94bb1f91f6d4efd88d912f38f4d905d6b07e9f2872fa9802578efd809385b"
+  }
+]

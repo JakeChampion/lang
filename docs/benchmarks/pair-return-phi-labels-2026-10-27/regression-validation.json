@@ -1,0 +1,440 @@
+[
+  {
+    "version": "before",
+    "target": "x86-64-linux",
+    "mode": "default",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-c-stage2",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-x86-64-linux-default",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-x86-64-linux-default"
+    ],
+    "compiler_sha256": "c5670a91c6f559f700456efe631847c562b04f38fd7c578ddec3cd301f126ede",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 2,
+    "stdout": "100\n",
+    "stderr": "leakcheck: allocs=102 frees=102 live_bytes=0\n"
+  },
+  {
+    "version": "before",
+    "target": "x86-64-linux",
+    "mode": "optimized",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-c-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-x86-64-linux-optimized",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-x86-64-linux-optimized"
+    ],
+    "compiler_sha256": "c5670a91c6f559f700456efe631847c562b04f38fd7c578ddec3cd301f126ede",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 2,
+    "stdout": "100\n",
+    "stderr": "leakcheck: allocs=102 frees=102 live_bytes=0\n"
+  },
+  {
+    "version": "before",
+    "target": "x86-64-linux",
+    "mode": "sanitized",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-c-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-x86-64-linux-sanitized",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-x86-64-linux-sanitized"
+    ],
+    "compiler_sha256": "c5670a91c6f559f700456efe631847c562b04f38fd7c578ddec3cd301f126ede",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 2,
+    "stdout": "100\n",
+    "stderr": "leakcheck: allocs=102 frees=102 live_bytes=0\n"
+  },
+  {
+    "version": "before",
+    "target": "arm64-linux",
+    "mode": "default",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-c-stage2",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-arm64-linux-default",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-arm64-linux-default"
+    ],
+    "compiler_sha256": "c5670a91c6f559f700456efe631847c562b04f38fd7c578ddec3cd301f126ede",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 2,
+    "stdout": "100\n",
+    "stderr": "leakcheck: allocs=102 frees=102 live_bytes=0\n"
+  },
+  {
+    "version": "before",
+    "target": "arm64-linux",
+    "mode": "optimized",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-c-stage2",
+      "-O",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-arm64-linux-optimized",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-arm64-linux-optimized"
+    ],
+    "compiler_sha256": "c5670a91c6f559f700456efe631847c562b04f38fd7c578ddec3cd301f126ede",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 2,
+    "stdout": "100\n",
+    "stderr": "leakcheck: allocs=102 frees=102 live_bytes=0\n"
+  },
+  {
+    "version": "before",
+    "target": "arm64-linux",
+    "mode": "sanitized",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-c-stage2",
+      "-O",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-arm64-linux-sanitized",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-arm64-linux-sanitized"
+    ],
+    "compiler_sha256": "c5670a91c6f559f700456efe631847c562b04f38fd7c578ddec3cd301f126ede",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 2,
+    "stdout": "100\n",
+    "stderr": "leakcheck: allocs=102 frees=102 live_bytes=0\n"
+  },
+  {
+    "version": "before",
+    "target": "wasm32-wasi",
+    "mode": "default",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-c-stage2",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-wasm32-wasi-default",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "wasmtime",
+      "run",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-wasm32-wasi-default"
+    ],
+    "compiler_sha256": "c5670a91c6f559f700456efe631847c562b04f38fd7c578ddec3cd301f126ede",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 1,
+    "stdout": "100\n",
+    "stderr": "leakcheck: allocs=104 frees=104 live_bytes=0\n"
+  },
+  {
+    "version": "before",
+    "target": "wasm32-wasi",
+    "mode": "optimized",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-c-stage2",
+      "-O",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-wasm32-wasi-optimized",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "wasmtime",
+      "run",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-wasm32-wasi-optimized"
+    ],
+    "compiler_sha256": "c5670a91c6f559f700456efe631847c562b04f38fd7c578ddec3cd301f126ede",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 1,
+    "stdout": "100\n",
+    "stderr": "leakcheck: allocs=104 frees=104 live_bytes=0\n"
+  },
+  {
+    "version": "before",
+    "target": "wasm32-wasi",
+    "mode": "sanitized",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-c-stage2",
+      "-O",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-wasm32-wasi-sanitized",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "wasmtime",
+      "run",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/before-wasm32-wasi-sanitized"
+    ],
+    "compiler_sha256": "c5670a91c6f559f700456efe631847c562b04f38fd7c578ddec3cd301f126ede",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 1,
+    "stdout": "100\n",
+    "stderr": "leakcheck: allocs=104 frees=104 live_bytes=0\n"
+  },
+  {
+    "version": "after",
+    "target": "x86-64-linux",
+    "mode": "default",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage2",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-x86-64-linux-default",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-x86-64-linux-default"
+    ],
+    "compiler_sha256": "4a961c82f8a05f230020b2b3dbeb1938f50fd9ca88c6f1bed556f210711156a7",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 0,
+    "stdout": "50\n",
+    "stderr": "leakcheck: allocs=52 frees=52 live_bytes=0\n"
+  },
+  {
+    "version": "after",
+    "target": "x86-64-linux",
+    "mode": "optimized",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-x86-64-linux-optimized",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-x86-64-linux-optimized"
+    ],
+    "compiler_sha256": "4a961c82f8a05f230020b2b3dbeb1938f50fd9ca88c6f1bed556f210711156a7",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 0,
+    "stdout": "50\n",
+    "stderr": "leakcheck: allocs=52 frees=52 live_bytes=0\n"
+  },
+  {
+    "version": "after",
+    "target": "x86-64-linux",
+    "mode": "sanitized",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-x86-64-linux-sanitized",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-x86-64-linux-sanitized"
+    ],
+    "compiler_sha256": "4a961c82f8a05f230020b2b3dbeb1938f50fd9ca88c6f1bed556f210711156a7",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 0,
+    "stdout": "50\n",
+    "stderr": "leakcheck: allocs=52 frees=52 live_bytes=0\n"
+  },
+  {
+    "version": "after",
+    "target": "arm64-linux",
+    "mode": "default",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage2",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-arm64-linux-default",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-arm64-linux-default"
+    ],
+    "compiler_sha256": "4a961c82f8a05f230020b2b3dbeb1938f50fd9ca88c6f1bed556f210711156a7",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 0,
+    "stdout": "50\n",
+    "stderr": "leakcheck: allocs=52 frees=52 live_bytes=0\n"
+  },
+  {
+    "version": "after",
+    "target": "arm64-linux",
+    "mode": "optimized",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage2",
+      "-O",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-arm64-linux-optimized",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-arm64-linux-optimized"
+    ],
+    "compiler_sha256": "4a961c82f8a05f230020b2b3dbeb1938f50fd9ca88c6f1bed556f210711156a7",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 0,
+    "stdout": "50\n",
+    "stderr": "leakcheck: allocs=52 frees=52 live_bytes=0\n"
+  },
+  {
+    "version": "after",
+    "target": "arm64-linux",
+    "mode": "sanitized",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage2",
+      "-O",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-arm64-linux-sanitized",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-arm64-linux-sanitized"
+    ],
+    "compiler_sha256": "4a961c82f8a05f230020b2b3dbeb1938f50fd9ca88c6f1bed556f210711156a7",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 0,
+    "stdout": "50\n",
+    "stderr": "leakcheck: allocs=52 frees=52 live_bytes=0\n"
+  },
+  {
+    "version": "after",
+    "target": "wasm32-wasi",
+    "mode": "default",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage2",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-wasm32-wasi-default",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "wasmtime",
+      "run",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-wasm32-wasi-default"
+    ],
+    "compiler_sha256": "4a961c82f8a05f230020b2b3dbeb1938f50fd9ca88c6f1bed556f210711156a7",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 0,
+    "stdout": "50\n",
+    "stderr": "leakcheck: allocs=54 frees=54 live_bytes=0\n"
+  },
+  {
+    "version": "after",
+    "target": "wasm32-wasi",
+    "mode": "optimized",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage2",
+      "-O",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-wasm32-wasi-optimized",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "wasmtime",
+      "run",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-wasm32-wasi-optimized"
+    ],
+    "compiler_sha256": "4a961c82f8a05f230020b2b3dbeb1938f50fd9ca88c6f1bed556f210711156a7",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 0,
+    "stdout": "50\n",
+    "stderr": "leakcheck: allocs=54 frees=54 live_bytes=0\n"
+  },
+  {
+    "version": "after",
+    "target": "wasm32-wasi",
+    "mode": "sanitized",
+    "compile_command": [
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage2",
+      "-O",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-wasm32-wasi-sanitized",
+      "/workspace/lang-issue-work/perf-4412/tuple-return-probe/tail-phi.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "run_command": [
+      "wasmtime",
+      "run",
+      "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/after-wasm32-wasi-sanitized"
+    ],
+    "compiler_sha256": "4a961c82f8a05f230020b2b3dbeb1938f50fd9ca88c6f1bed556f210711156a7",
+    "fixture_sha256": "03b0007c435cfb67a297335679ce38bef4462a5ad656ee82b8cc23cf7859fd68",
+    "exit": 0,
+    "stdout": "50\n",
+    "stderr": "leakcheck: allocs=54 frees=54 live_bytes=0\n"
+  }
+]

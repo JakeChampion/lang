@@ -47,13 +47,13 @@ function test_median_single(): test.TestOutcome {
 
 function test_range(): test.TestOutcome {
   let xs: f64[] = [5.0, 1.0, 3.0, 2.0, 4.0];
-  if (!near(unwrap(xs.range()), 4.0)) {
+  if (!near(unwrap(xs.spread()), 4.0)) {
     return test.fail("range 5-1");
   }
-  if (!near(unwrap([7.0].range()), 0.0)) {
+  if (!near(unwrap([7.0].spread()), 0.0)) {
     return test.fail("single -> 0");
   }
-  return test.assert_eq_f64_near(unwrap([0.0 - 3.0, 5.0, 1.0].range()), 8.0, 0.0001);
+  return test.assert_eq_f64_near(unwrap([0.0 - 3.0, 5.0, 1.0].spread()), 8.0, 0.0001);
 }
 
 function test_empty_none(): test.TestOutcome {
@@ -61,7 +61,7 @@ function test_empty_none(): test.TestOutcome {
   if (!is_none(array.median_f64(empty))) {
     return test.fail("median of empty");
   }
-  return test.assert_true(is_none(empty.range()));
+  return test.assert_true(is_none(empty.spread()));
 }
 
 function main(): i32 {

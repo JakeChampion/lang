@@ -1,0 +1,451 @@
+diff --git a/compiler/asm_arm64_ir.fern b/compiler/asm_arm64_ir.fern
+index d4bd95f1d..5152399ad 100644
+--- a/compiler/asm_arm64_ir.fern
++++ b/compiler/asm_arm64_ir.fern
+@@ -6197,8 +6197,8 @@ function emit_stack_overflow_runtime(s: asmcore.EmitState, darwin: boolean): asm
+   let ctx: string = "    ldr x10, [x2, #432]\n";
+   let frame: string = "    ldr x11, [x2, #440]\n    ldr x12, [x2, #416]\n";
+   if (darwin) {
+-    addr = "    ldr x9, [x1, #24]\n";
+-    ctx = "    ldr x13, [x2, #48]\n    ldr x10, [x13, #264]\n    and x10, x10, #0x0000ffffffffffff\n";
++    addr = "    ldr x9, [x1, #24]\n    ldr x13, [x2, #48]\n";
++    ctx = "    ldr x10, [x13, #264]\n    and x10, x10, #0x0000ffffffffffff\n";
+     frame = "    ldr x11, [x13, #272]\n    ldr x12, [x13, #248]\n    and x11, x11, #0x0000ffffffffffff\n    and x12, x12, #0x0000ffffffffffff\n";
+   }
+   s = s.write("    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n    .text\n");
+diff --git a/compiler/asm_ir.fern b/compiler/asm_ir.fern
+index 323480c91..805d2706d 100644
+--- a/compiler/asm_ir.fern
++++ b/compiler/asm_ir.fern
+@@ -2281,7 +2281,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
+   s = s.write("    .globl __fern_heap_end\n");
+   s = s.write("__fern_heap_end: .quad 0\n");
+   s = s.write("    .align 8\n");
+-  s = s.write("__fern_heap_base: .quad 0\n");
++  s = s.write("    .globl __fern_heap_base\n__fern_heap_base: .quad 0\n");
+   s = s.write("    .align 8\n");
+   if (s.has_need("alloc_count")) {
+     s = s.write("    .globl __fern_alloc_count\n");
+diff --git a/compiler/drivers/ssacreditabi_run.fern b/compiler/drivers/ssacreditabi_run.fern
+index 4cb279df8..67249bb45 100644
+--- a/compiler/drivers/ssacreditabi_run.fern
++++ b/compiler/drivers/ssacreditabi_run.fern
+@@ -737,7 +737,8 @@ function partial_source(mode: i32): string {
+   return leaf + declarations + "struct Parent { left: " + child + ", right: " + other + marker + " }\n"
+     + "@noinline\nfunction partial_left(own p: Parent, child: " + child + "): Parent { return Parent { ...p, left: child }; }\n"
+     + "@noinline\nfunction partial_right(own p: Parent, child: " + other + "): Parent { return Parent { ...p, right: child }; }\n"
+-    + "function main(): i32 { let l: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = Parent { left: l, right: " + value + marker_value + " }; return partial_left(p, l).left.n; }\n";
++    + "@noinline\nfunction boxed_partial(p: Parent): i32 { return p.left.n; }\n"
++    + "function main(): i32 { let l: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = Parent { left: l, right: " + value + marker_value + " }; return boxed_partial(partial_left(p, l)); }\n";
+ }
+ 
+ function partial_read(sub: ircore.Sub, name: string, field: i32, mode: i32): ircore.Sub {
+@@ -1029,7 +1030,8 @@ function origin_caller_checks(target: string): void {
+     let source = leaf + "struct Parent { left: " + child + ", right: " + child + " }\n"
+       + "@noinline\nfunction parent(a: " + child + ", b: " + child + "): Parent { return Parent { left: a, right: b }; }\n"
+       + "@noinline\nfunction select_parent(flag: boolean, a: " + child + ", b: " + child + "): Parent { let p = if (flag) { parent(a,b) } else { parent(b,a) }; return p; }\n"
+-      + "function main(): i32 { let l: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = select_parent(true,l,l); return p.left.n; }\n";
++      + "@noinline\nfunction boxed_result(p: Parent): i32 { return p.left.n; }\n"
++      + "function main(): i32 { let l: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = select_parent(true,l,l); return boxed_result(p); }\n";
+     let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+     origin_caller_expect(sub, "select_parent", "");
+     origin_schema_controls(sub);
+diff --git a/compiler/drivers/ssacreditcontinuation_run.fern b/compiler/drivers/ssacreditcontinuation_run.fern
+index 8b7bbbec8..6f209f44b 100644
+--- a/compiler/drivers/ssacreditcontinuation_run.fern
++++ b/compiler/drivers/ssacreditcontinuation_run.fern
+@@ -23,7 +23,8 @@ function source(exiting: boolean): string {
+     + "@noinline\nfunction parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; }\n"
+     + "@noinline\nfunction replace(own p: Parent, child: Leaf): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; }\n"
+     + "@noinline\nfunction handoff(flag: boolean, left: Leaf, right: Leaf, incoming: Leaf): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); }\n"
+-    + "function main(): i32 { let c = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
++    + "@noinline\nfunction boxed_result(p: Other): i32 { return p.first.n - 7; }\n"
++    + "function main(): i32 { let c = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return boxed_result(p); }\n";
+ }
+ 
+ function body(sub: ircore.Sub, name: string): ssa.SFunc {
+diff --git a/compiler/drivers/ssacreditcontinuationabi_run.fern b/compiler/drivers/ssacreditcontinuationabi_run.fern
+index 3c71178de..4ecc4506b 100644
+--- a/compiler/drivers/ssacreditcontinuationabi_run.fern
++++ b/compiler/drivers/ssacreditcontinuationabi_run.fern
+@@ -31,7 +31,8 @@ function source(generic: boolean, exiting: boolean): string {
+     + "@noinline\nfunction parent(left: " + child + ", right: " + child + "): Parent { return Parent { left: left, right: right }; }\n"
+     + "@noinline\nfunction replace(own p: Parent, child: " + child + "): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; }\n"
+     + "@noinline\nfunction handoff(flag: boolean, left: " + child + ", right: " + child + ", incoming: " + child + "): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); }\n"
+-    + "function main(): i32 { let c: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
++    + "@noinline\nfunction boxed_result(p: Other): i32 { return p.first.n - 7; }\n"
++    + "function main(): i32 { let c: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return boxed_result(p); }\n";
+ }
+ 
+ function expect(p: helper.Proof, name: string, why: string): void {
+diff --git a/compiler/drivers/ssacreditincoming_run.fern b/compiler/drivers/ssacreditincoming_run.fern
+index d7e4ef5e6..5f485b5b3 100644
+--- a/compiler/drivers/ssacreditincoming_run.fern
++++ b/compiler/drivers/ssacreditincoming_run.fern
+@@ -183,7 +183,8 @@ function source(): string {
+     + "@noinline\nfunction parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; }\n"
+     + "@noinline\nfunction replace(own p: Parent, child: Leaf): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; }\n"
+     + "@noinline\nfunction handoff(flag: boolean, left: Leaf, right: Leaf, incoming: Leaf): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); }\n"
+-    + "function main(): i32 { let c = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
++    + "@noinline\nfunction boxed_result(p: Other): i32 { return p.first.n - 7; }\n"
++    + "function main(): i32 { let c = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return boxed_result(p); }\n";
+ }
+ 
+ function target_checks(target: string): void {
+diff --git a/compiler/drivers/ssacreditincomingabi_run.fern b/compiler/drivers/ssacreditincomingabi_run.fern
+index 596361c91..7c2687249 100644
+--- a/compiler/drivers/ssacreditincomingabi_run.fern
++++ b/compiler/drivers/ssacreditincomingabi_run.fern
+@@ -64,7 +64,8 @@ function source(generic: boolean): string {
+     + "@noinline\nfunction parent(left: " + child + ", right: " + child + "): Parent { return Parent { left: left, right: right }; }\n"
+     + "@noinline\nfunction replace(own p: Parent, child: " + child + "): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; }\n"
+     + "@noinline\nfunction handoff(flag: boolean, left: " + child + ", right: " + child + ", incoming: " + child + "): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); }\n"
+-    + "function main(): i32 { let c: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
++    + "@noinline\nfunction boxed_result(p: Other): i32 { return p.first.n - 7; }\n"
++    + "function main(): i32 { let c: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return boxed_result(p); }\n";
+ }
+ 
+ function other_contracts(sub: ircore.Sub, subject: string): ssasem.Contract[] {
+diff --git a/compiler/drivers/ssacreditorigin_run.fern b/compiler/drivers/ssacreditorigin_run.fern
+index bd6397453..5d065ae17 100644
+--- a/compiler/drivers/ssacreditorigin_run.fern
++++ b/compiler/drivers/ssacreditorigin_run.fern
+@@ -160,7 +160,7 @@ function sparse_controls(f: ssa.SFunc, shape: string, refs: boolean[]): void {
+ }
+ 
+ function target_checks(target: string): void {
+-  let source = "struct Leaf { n: i32[] }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction leaf(own n: i32[]): Leaf { return Leaf { n: n }; }\n@noinline\nfunction parent(own left: Leaf, own right: Leaf): Parent { return Parent { left: left, right: right }; }\nfunction main(): i32 { let p = parent(leaf([1]), leaf([2])); return p.left.n[0] + p.right.n[0] - 3; }\n";
++  let source = "struct Leaf { n: i32[] }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction leaf(own n: i32[]): Leaf { return Leaf { n: n }; }\n@noinline\nfunction parent(own left: Leaf, own right: Leaf): Parent { return Parent { left: left, right: right }; }\n@noinline\nfunction boxed_result(p: Parent): i32 { return p.left.n[0] + p.right.n[0] - 3; }\nfunction main(): i32 { let p = parent(leaf([1]), leaf([2])); return boxed_result(p); }\n";
+   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+   let count: i32 = 0;
+   for body in sub.bodies {
+diff --git a/compiler/drivers/ssacreditoriginflow_run.fern b/compiler/drivers/ssacreditoriginflow_run.fern
+index b3925427d..89ac5649c 100644
+--- a/compiler/drivers/ssacreditoriginflow_run.fern
++++ b/compiler/drivers/ssacreditoriginflow_run.fern
+@@ -238,7 +238,7 @@ function controls(f: ssa.SFunc, producer: ssa.SFunc): void {
+ }
+ 
+ function target_checks(target: string): void {
+-  let source = "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; }\n@noinline\nfunction select_parent(flag: boolean, a: Leaf, b: Leaf): Parent { let chosen = if (flag) { parent(a, b) } else { parent(b, a) }; return chosen; }\nfunction main(): i32 { let p = select_parent(true, Leaf { n: 1, a: 0, b: 0, c: 0, d: 0 }, Leaf { n: 2, a: 0, b: 0, c: 0, d: 0 }); return p.left.n + p.right.n - 3; }\n";
++  let source = "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; }\n@noinline\nfunction select_parent(flag: boolean, a: Leaf, b: Leaf): Parent { let chosen = if (flag) { parent(a, b) } else { parent(b, a) }; return chosen; }\n@noinline\nfunction boxed_result(p: Parent): i32 { return p.left.n + p.right.n - 3; }\nfunction main(): i32 { let p = select_parent(true, Leaf { n: 1, a: 0, b: 0, c: 0, d: 0 }, Leaf { n: 2, a: 0, b: 0, c: 0, d: 0 }); return boxed_result(p); }\n";
+   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+   let producers: ssa.SFunc[] = [];
+   let callers: ssa.SFunc[] = [];
+diff --git a/compiler/drivers/ssacreditruntime.fern b/compiler/drivers/ssacreditruntime.fern
+index 41c7bfafb..b8c6f305b 100644
+--- a/compiler/drivers/ssacreditruntime.fern
++++ b/compiler/drivers/ssacreditruntime.fern
+@@ -69,7 +69,8 @@ function graphs(selected: physicalbody.Lowered): ssa.SFunc[] {
+ function wrapper(src: string, exiting: boolean, state: asmcore.EmitState): void {
+   let selected = state.rt_lower(parser.parse_module(lexer.tokenize(src)));
+   parity(src, selected);
+-  require(selected.declarations.len() == 5 && selected.bodies.len() > selected.declarations.len(), 120);
++  require(selected.declarations.len() == 6 && selected.bodies.len() > selected.declarations.len(), 120);
++  require(util.index_of_str(selected.declarations, "boxed_result") >= 0, 120);
+   let sub = ircore.Sub { ...ircore.no_sub(), physical_contracts: selected.contracts, physical_records: selected.records, physical_enums: selected.enums, physical_finalizers: selected.finalizers };
+   let fs = graphs(selected);
+   let p = abi.check_wrapper_final(sub, fs, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"]);
+diff --git a/compiler/drivers/ssacreditstorage_run.fern b/compiler/drivers/ssacreditstorage_run.fern
+index e72a5cd38..9e52aad99 100644
+--- a/compiler/drivers/ssacreditstorage_run.fern
++++ b/compiler/drivers/ssacreditstorage_run.fern
+@@ -39,7 +39,8 @@ function source_with_assertion(assertion: string): string {
+     + "@noinline\nfunction parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; }\n"
+     + "@noinline\nfunction replace(own p: Parent, child: Leaf): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; }\n"
+     + "@noinline\nfunction handoff(flag: boolean, left: Leaf, right: Leaf, incoming: Leaf): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); }\n"
+-    + "function main(): i32 { let c = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
++    + "@noinline\nfunction boxed_result(p: Other): i32 { return p.first.n - 7; }\n"
++    + "function main(): i32 { let c = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return boxed_result(p); }\n";
+ }
+ 
+ function expect(p: helper.Proof, name: string, why: string): void {
+diff --git a/compiler/drivers/ssacreditstorageabi_run.fern b/compiler/drivers/ssacreditstorageabi_run.fern
+index 105ca9fd8..057caca32 100644
+--- a/compiler/drivers/ssacreditstorageabi_run.fern
++++ b/compiler/drivers/ssacreditstorageabi_run.fern
+@@ -16,7 +16,7 @@ function require(ok: boolean, code: i32): void {
+   }
+ }
+ 
+-function source(generic: boolean, exiting: boolean): string {
++function source(generic: boolean, exiting: boolean, boxed: boolean): string {
+   let leaf = if (generic) { "struct Leaf[T] { n: T, a: i32, b: i32, c: i32, d: i32 }\n" } else { "struct Leaf { n: i32, a: i32, b: i32, c: i32, d: i32 }\n" };
+   let child = if (generic) { "Leaf[i32]" } else { "Leaf" };
+   let assertion = if (exiting) { "if (!ok) { exit(code); }" } else { "if (ok) { return; } return;" };
+@@ -25,7 +25,8 @@ function source(generic: boolean, exiting: boolean): string {
+     + "@noinline\nfunction parent(left: " + child + ", right: " + child + "): Parent { return Parent { left: left, right: right }; }\n"
+     + "@noinline\nfunction replace(own p: Parent, child: " + child + "): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; }\n"
+     + "@noinline\nfunction handoff(flag: boolean, left: " + child + ", right: " + child + ", incoming: " + child + "): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); }\n"
+-    + "function main(): i32 { let c: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
++    + (if (boxed) { "@noinline\nfunction boxed_result(p: Other): i32 { return p.first.n - 7; }\n" } else { "" })
++    + "function main(): i32 { let c: " + child + " = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return " + (if (boxed) { "boxed_result(p)" } else { "p.first.n - 7" }) + "; }\n";
+ }
+ 
+ function expect(p: helper.Proof, name: string, why: string): void {
+@@ -144,9 +145,11 @@ function changed(sub: ircore.Sub, rename: boolean): ircore.Sub {
+ 
+ function target_checks(target: string): void {
+   for generic in [false, true] {
+-    let original = semlower.driven(parser.parse_module(lexer.tokenize(source(generic, true))), target).sub;
++    let paired = semlower.driven(parser.parse_module(lexer.tokenize(source(generic, false, false))), target).sub;
++    check(paired, "handoff", "unsupported caller origin effect");
++    let original = semlower.driven(parser.parse_module(lexer.tokenize(source(generic, true, true))), target).sub;
+     check(original, "replace", "scalar call may exit with unproved caller obligations");
+-    let sub = semlower.driven(parser.parse_module(lexer.tokenize(source(generic, false))), target).sub;
++    let sub = semlower.driven(parser.parse_module(lexer.tokenize(source(generic, false, true))), target).sub;
+     check(sub, "replace", "proved checked-capacity consumer invocation");
+     assertion_contracts(sub);
+     for name in ["require", "__sem_drop_Parent", "__sem_release_Parent"] {
+diff --git a/compiler/drivers/ssaretainedwrapper.fern b/compiler/drivers/ssaretainedwrapper.fern
+index 01a5bb01b..16a4be683 100644
+--- a/compiler/drivers/ssaretainedwrapper.fern
++++ b/compiler/drivers/ssaretainedwrapper.fern
+@@ -28,7 +28,8 @@ function source(exiting: boolean): string {
+     + "@noinline function parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; } "
+     + "@noinline function replace(own p: Parent, child: Leaf): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; } "
+     + "@noinline function handoff(flag: boolean, left: Leaf, right: Leaf, incoming: Leaf): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); } "
+-    + "function main(): i32 { let c: Leaf = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return p.first.n - 7; }";
++    + "@noinline function boxed_result(p: Other): i32 { return p.first.n - 7; } "
++    + "function main(): i32 { let c: Leaf = Leaf { n: 7, a: 0, b: 0, c: 0, d: 0 }; let p = handoff(true,c,c,c); return boxed_result(p); }";
+ }
+ 
+ function emit(arm: boolean, exiting: boolean, debug: boolean): ssaprepare.Emitted[] {
+diff --git a/internal/testing/e2ecompiler/self_host_generic_update_base_test.go b/internal/testing/e2ecompiler/self_host_generic_update_base_test.go
+index ff49f1b4d..485e054e1 100644
+--- a/internal/testing/e2ecompiler/self_host_generic_update_base_test.go
++++ b/internal/testing/e2ecompiler/self_host_generic_update_base_test.go
+@@ -16,10 +16,11 @@ function (b: Box[T]) clear(): Box[T] {
+     return b;
+ }
+ function main(): i32 {
+-    let b: Box[string] = Box { items: ["retained"], count: 1 };
++    let text: string = "retained" + args()[0];
++    let b: Box[string] = Box { items: [text], count: 1 };
+     let c: Box[string] = b.clear();
+     if (c.items.len() != 0 || c.count != 1) { return 1; }
+-    if (b.items.len() != 1 || b.items[0] != "retained") { return 2; }
++    if (b.items.len() != 1 || b.items[0] != text) { return 2; }
+     return 0;
+ }`},
+ 		{"nested-update-from-other-instantiation", `
+diff --git a/internal/testing/e2ecompiler/self_host_permodule_heap_metric_test.go b/internal/testing/e2ecompiler/self_host_permodule_heap_metric_test.go
+new file mode 100644
+index 000000000..e0c0d3e13
+--- /dev/null
++++ b/internal/testing/e2ecompiler/self_host_permodule_heap_metric_test.go
+@@ -0,0 +1,60 @@
++package e2ecompiler
++
++import (
++	"os/exec"
++	"path/filepath"
++	"strconv"
++	"strings"
++	"testing"
++)
++
++func TestSelfHostPerModuleHeapMetricLinks(t *testing.T) {
++	gcc, runner := x86_64Tooling(t)
++	dir := writeSelfHostModloadProject(t)
++	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "heapmetricdriver")
++	proj := t.TempDir()
++	mustWrite(t, proj, "leaf.fern", `@noinline pub function used(): i64 { return __heap_bump_bytes(); }
++@noinline pub function fresh(s: string): string[] { return [s]; }
++`)
++	mustWrite(t, proj, "main.fern", `import "./leaf";
++function main(): i32 {
++    let before = leaf.used();
++    let text = args()[0];
++    let xs = leaf.fresh(text);
++    let after = leaf.used();
++    if (after <= before || xs[0] != text) { return 1; }
++    return 0;
++}
++`)
++	copyStdlibTree(t, proj)
++	entry := filepath.Join(proj, "main.fern")
++	drive := func(args ...string) string {
++		t.Helper()
++		cmd := runX86_64Bin(runner, driver, append([]string{entry, "-target", "x86-64-linux"}, args...)...)
++		out, err := cmd.CombinedOutput()
++		if err != nil {
++			t.Fatalf("driver %v: %v\n%s", args, err, out)
++		}
++		return string(out)
++	}
++	n, err := strconv.Atoi(strings.TrimSpace(drive("-per-module-count")))
++	if err != nil || n < 2 {
++		t.Fatalf("module count=%d, error=%v", n, err)
++	}
++	var needs, objects []string
++	for _, need := range strings.Fields(drive("-per-module-needs")) {
++		needs = append(needs, "-extra-need", need)
++	}
++	for i := 0; i < n; i++ {
++		asm := drive(append([]string{"-per-module-emit", strconv.Itoa(i)}, needs...)...)
++		objects = append(objects, mustWrite(t, proj, "u"+strconv.Itoa(i)+".s", asm))
++	}
++	bin := filepath.Join(proj, "heapmetric")
++	args := append([]string{"-static", "-nostdlib", "-no-pie"}, objects...)
++	if out, err := exec.Command(gcc, append(args, "-o", bin)...).CombinedOutput(); err != nil {
++		t.Fatalf("per-module link: %v\n%s", err, out)
++	}
++	if out, err := runX86_64Bin(runner, bin).CombinedOutput(); err != nil {
++		t.Fatalf("per-module result: %v\n%s", err, out)
++	}
++}
+diff --git a/internal/testing/e2ecompiler/self_host_sem_production_test.go b/internal/testing/e2ecompiler/self_host_sem_production_test.go
+index c1ced6186..8beff82e7 100644
+--- a/internal/testing/e2ecompiler/self_host_sem_production_test.go
++++ b/internal/testing/e2ecompiler/self_host_sem_production_test.go
+@@ -6562,7 +6562,7 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
+ 	}{
+ 		{"element-read-outlives-the-array-write", 3, semHeldElementSource},
+ 		{"field-read-outlives-the-record-move", 13, semHeldFieldSource},
+-		{"an-element-handed-beside-its-dying-array", 44, semElementBesideArraySource},
++		{"an-element-handed-beside-its-dying-array", 12, semElementBesideArraySource},
+ 		{"a-view-of-a-dominating-source-is-not-copied", 28, semDominatingViewSource},
+ 		{"a-tuple-element-is-taken-past-a-later-sibling-read", 2, semTupleElementTakeSource},
+ 		{"a-destructured-element-is-taken-past-a-later-sibling-read", 2, semTupleDestructureTakeSource},
+diff --git a/internal/testing/e2ecompiler/self_host_stack_overflow_test.go b/internal/testing/e2ecompiler/self_host_stack_overflow_test.go
+index bf6889b20..72ae1f457 100644
+--- a/internal/testing/e2ecompiler/self_host_stack_overflow_test.go
++++ b/internal/testing/e2ecompiler/self_host_stack_overflow_test.go
+@@ -41,6 +41,41 @@ func TestSelfHostStackOverflow(t *testing.T) {
+ 	}
+ }
+ 
++func TestSelfHostDarwinSignalContext(t *testing.T) {
++	armgcc, qemu := arm64Tooling(t)
++	cli := buildSelfHostCLI(t)
++	src := filepath.Join(t.TempDir(), "main.fern")
++	if err := os.WriteFile(src, []byte("function main(): i32 { return 0; }\n"), 0o644); err != nil {
++		t.Fatal(err)
++	}
++	text, err := os.ReadFile(cli.emit(t, src, "arm64-darwin"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	start := strings.Index(string(text), "__fern_segv:\n")
++	end := strings.Index(string(text), "__fern_segv_trampoline:\n")
++	if start < 0 || end <= start {
++		t.Fatal("the Darwin output has no complete signal handler")
++	}
++	handler := string(text[start:end])
++	handler = regexp.MustCompile(`([A-Za-z0-9_.]+)@PAGEOFF`).ReplaceAllString(handler, ":lo12:$1")
++	handler = strings.ReplaceAll(handler, "@PAGE", "")
++	template, err := os.ReadFile("testdata/darwin_signal_context.s")
++	if err != nil {
++		t.Fatal(err)
++	}
++	for _, tc := range []struct{ name, stackTop string }{{"guard", "1342177280"}, {"near-sp", "0"}} {
++		t.Run(tc.name, func(t *testing.T) {
++			asm := strings.ReplaceAll(string(template), "@HANDLER@", handler)
++			asm = strings.ReplaceAll(asm, "@STACK_TOP@", tc.stackTop)
++			bin := buildBinArm64(t, armgcc, t.TempDir(), "darwin_context", asm)
++			if out, err := runArm64Bin(qemu, bin).CombinedOutput(); err != nil {
++				t.Fatalf("Darwin signal context: %v\n%s", err, out)
++			}
++		})
++	}
++}
++
+ type stackRun struct {
+ 	stdout, stderr string
+ 	code           int
+diff --git a/internal/testing/e2ecompiler/self_host_struct_field_arg_release_test.go b/internal/testing/e2ecompiler/self_host_struct_field_arg_release_test.go
+index 1105db2f8..72fadb430 100644
+--- a/internal/testing/e2ecompiler/self_host_struct_field_arg_release_test.go
++++ b/internal/testing/e2ecompiler/self_host_struct_field_arg_release_test.go
+@@ -19,20 +19,26 @@ function (a: Big) id_or_make(k: i32): Big {
+ }
+ @noinline
+ function handed_back(i: i32): i32 {
+-    let b: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
++    let seed: u64 = (i as u64) + 4294967301u64;
++    let b: Big = Big { neg: false, mag: [seed, 2 as u64, 3 as u64] };
+     let c: Big = b.id_or_make(0);
++    if (c.mag[0] != seed) { return 90; }
+     return c.mag.len() + i;
+ }
+ @noinline
+ function remade(i: i32): i32 {
+-    let b: Big = Big { neg: false, mag: [1 as u64, 2 as u64] };
++    let seed: u64 = (i as u64) + 4294967301u64;
++    let b: Big = Big { neg: false, mag: [seed, 2 as u64] };
+     let c: Big = b.id_or_make(1);
++    if (c.mag[0] != seed) { return 90; }
+     return c.mag.len() + i;
+ }
+ @noinline
+ function field_args(i: i32): i32 {
+-    let b: Big = Big { neg: true, mag: [4 as u64] };
++    let seed: u64 = (i as u64) + 4294967301u64;
++    let b: Big = Big { neg: true, mag: [seed] };
+     let c: Big = make(b.neg, b.mag);
++    if (c.mag[0] != seed || b.mag[0] != seed) { return 90; }
+     return c.mag.len() + b.mag.len() + i;
+ }
+ function main(): i32 {
+diff --git a/internal/testing/e2ecompiler/testdata/darwin_signal_context.s b/internal/testing/e2ecompiler/testdata/darwin_signal_context.s
+new file mode 100644
+index 000000000..88fa2e456
+--- /dev/null
++++ b/internal/testing/e2ecompiler/testdata/darwin_signal_context.s
+@@ -0,0 +1,55 @@
++.text
++.global _start
++_start:
++    adrp x1, siginfo
++    add x1, x1, :lo12:siginfo
++    adrp x2, context
++    add x2, x2, :lo12:context
++    mov x13, xzr
++    b __fern_segv
++__fern_report:
++    cmp x0, #134
++    b.ne failure
++    cmp x2, #21
++    b.ne failure
++    adrp x9, Lmsg_stack_overflow
++    add x9, x9, :lo12:Lmsg_stack_overflow
++    cmp x1, x9
++    b.ne failure
++    ldp x9, x10, [sp]
++    mov x11, #0x3344
++    cmp x9, x11
++    b.ne failure
++    mov x11, #0x1122
++    cmp x10, x11
++    b.ne failure
++    mov x11, sp
++    cmp x29, x11
++    b.ne failure
++    adrp x9, __fern_stack_top
++    add x9, x9, :lo12:__fern_stack_top
++    ldr x9, [x9]
++    cbnz x9, failure
++    mov x0, #0
++    b done
++failure:
++    mov x0, #1
++done:
++    mov x8, #93
++    svc #0
++__fern_segv_trampoline:
++    b failure
++@HANDLER@
++.data
++.balign 8
++__fern_stack_top: .quad @STACK_TOP@
++siginfo: .zero 24
++    .quad 0x10000020
++context: .zero 48
++    .quad mcontext
++mcontext: .zero 248
++    .quad 0xffff000000003344
++    .quad 0
++    .quad 0x10000020
++    .quad 0xffff000000001122
++Lmsg_stack_overflow: .ascii "fern: stack overflow\n"

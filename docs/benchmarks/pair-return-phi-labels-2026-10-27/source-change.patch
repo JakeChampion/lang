@@ -1,0 +1,17 @@
+diff --git a/compiler/sempair.fern b/compiler/sempair.fern
+index daa8c7870..9dc24fd58 100644
+--- a/compiler/sempair.fern
++++ b/compiler/sempair.fern
+@@ -282,10 +282,9 @@ function refs_of(funcs: ssasem.Func[], ix: util.NameIndex, rewrite: boolean[]):
+   return Refs { calls: calls, other: other };
+ }
+ 
+-// An instruction whose str is a string literal, a field or a variant, never
+-// a function.
++// These instructions carry data names or parameter labels, never function references.
+ function names_data(k: i32): boolean {
+-  return k == 5 || reads_apart(k) || k == ssasem.record_new() || k == ssasem.variant_new();
++  return k == 5 || k == 8 || reads_apart(k) || k == ssasem.record_new() || k == ssasem.variant_new();
+ }
+ 
+ function shaped(f: ssasem.Func): boolean {

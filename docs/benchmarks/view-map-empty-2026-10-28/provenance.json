@@ -1,0 +1,8 @@
+{
+  "source_head": "d9e569d5e5e5731f39efb13c73a373ccc9aca38f",
+  "baseline_sha256": "eb073fa5b9923c66829d1f417ad5a5fd452f89387213f5ec0b85bbedce1ad0af",
+  "common_producer_sha256": "1e0ad6be807a01bbf50a05535d46808d611816016ce388e687d44589c5dc7e52",
+  "subject_sha256": "cb79b4d73e84f3b9f34bf4f30d95b9a14341189f29cd039b3f705b753da91ccd",
+  "baseline_helpers_identical_across_native_backends": true,
+  "status": "Private corrected prototype. Allocate on any kind51, map only imm>=1. Initial prototype preserved in view-empty-candidate. Not qualified."
+}

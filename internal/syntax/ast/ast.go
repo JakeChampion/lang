@@ -1964,9 +1964,11 @@ type ResourceDecl struct {
 }
 
 type UnionDecl struct {
-	P             Position
-	Name          string
-	TypeParams    []string
+	P          Position
+	Name       string
+	TypeParams []string
+	// ConstParams names the const parameters among TypeParams.
+	ConstParams   []string
 	Members       []StructType
 	MemberLines   []int
 	Public        bool
@@ -1975,11 +1977,13 @@ type UnionDecl struct {
 }
 
 type TraitDecl struct {
-	P           Position
-	Name        string
-	NamePos     Position
-	Methods     []TraitMethod
-	TypeParams  []string
+	P          Position
+	Name       string
+	NamePos    Position
+	Methods    []TraitMethod
+	TypeParams []string
+	// ConstParams names the const parameters among TypeParams.
+	ConstParams []string
 	Supertraits []string
 	// SupertraitArgs stores the type arguments for each parent in Supertraits order.
 	SupertraitArgs [][]Type

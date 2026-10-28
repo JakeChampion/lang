@@ -70,7 +70,7 @@ import "std/ordmap";
 let evens = iter.range(0, 10).filter((n: i32): boolean => n % 2 == 0);
 for n in evens { print(n); }
 
-let ranks: ordmap.OrdMap[string, i32] = ordmap.ordmap_new();
+let ranks: ordmap.OrdMap[string, i32] = ordmap.new();
 ranks = ranks.insert("fir", 2);
 for (tree, rank) in ranks { print(f"{tree}={rank}"); }
 ```

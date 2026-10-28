@@ -24,16 +24,18 @@ function rows(first: i32, count: i32, masks: i32[]): i32[][] {
     eprint("SSA fixed-register table: invalid register range");
     exit(3);
   }
+  for mask in masks {
+    if (mask < 0 || mask >> count != 0) {
+      eprint("SSA fixed-register table: mask outside register range");
+      exit(3);
+    }
+  }
   let out: i32[][] = [];
   let reg = 0;
   while (reg < count) {
     let row: i32[] = [0];
     let n = 0;
     for mask in masks {
-      if (mask < 0 || mask >> count != 0) {
-        eprint("SSA fixed-register table: mask outside register range");
-        exit(3);
-      }
       if ((mask & 1 << reg) != 0) {
         n = n + 1;
       }

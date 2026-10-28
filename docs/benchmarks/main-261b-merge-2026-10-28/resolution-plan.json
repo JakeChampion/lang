@@ -1,0 +1,93 @@
+[
+  {
+    "path": ".github/alloc-baseline.txt",
+    "rule": "Keep newer owner note and historical branch notes",
+    "old": "# 2026-10-28: Exact reports from CI run 40624419024 at fa0eedfa5 on PR #13718.\n# Checker allocations and frees each decrease by 525401. All tolerances remain unchanged.\n# Evidence: docs/benchmarks/main-wide-decoder-merge-2026-10-28/.\n# 2026-10-28: Exact reports from CI run 40620158743 at c63e488b4 on PR #13718.\n# Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.\n",
+    "main": "# 2026-10-28: Perf run 40651501783 on #13768 measured 37,524,739 balanced events. Main measured 37,521,377 at eb0e5fdc0, so the move is on main.\n",
+    "resolved": "# 2026-10-28: Perf run 40651501783 on #13768 measured 37,524,739 balanced events. Main measured 37,521,377 at eb0e5fdc0, so the move is on main.\n# 2026-10-28: Exact reports from CI run 40624419024 at fa0eedfa5 on PR #13718.\n# Checker allocations and frees each decrease by 525401. All tolerances remain unchanged.\n# Evidence: docs/benchmarks/main-wide-decoder-merge-2026-10-28/.\n# 2026-10-28: Exact reports from CI run 40620158743 at c63e488b4 on PR #13718.\n# Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.\n"
+  },
+  {
+    "path": ".github/alloc-baseline.txt",
+    "rule": "Keep newer owner measured cells",
+    "old": "x86_64/checker.allocs\t33753130\nx86_64/checker.frees\t33753130\n",
+    "main": "x86_64/checker.allocs\t37524739\nx86_64/checker.frees\t37524739\n",
+    "resolved": "x86_64/checker.allocs\t37524739\nx86_64/checker.frees\t37524739\n"
+  },
+  {
+    "path": ".github/cliff-baseline.txt",
+    "rule": "Keep newer owner measured cells",
+    "old": "x86_64/checker.cliff_bytes\t39674024\nx86_64/checker.cliff_count\t371241\n",
+    "main": "x86_64/checker.cliff_bytes\t40432712\nx86_64/checker.cliff_count\t388867\n",
+    "resolved": "x86_64/checker.cliff_bytes\t40432712\nx86_64/checker.cliff_count\t388867\n"
+  },
+  {
+    "path": ".github/perf-baseline-selfhost.txt",
+    "rule": "Keep newer owner measured cells",
+    "old": "selfhost/arm64-linux/ascii_scan.emit\t1645\n",
+    "main": "selfhost/arm64-linux/ascii_scan.emit\t1668\n",
+    "resolved": "selfhost/arm64-linux/ascii_scan.emit\t1668\n"
+  },
+  {
+    "path": ".github/perf-baseline-selfhost.txt",
+    "rule": "Keep newer owner measured cells",
+    "old": "selfhost/arm64-linux/http_hello.emit\t18632\n",
+    "main": "selfhost/arm64-linux/http_hello.emit\t18501\n",
+    "resolved": "selfhost/arm64-linux/http_hello.emit\t18501\n"
+  },
+  {
+    "path": ".github/perf-baseline-selfhost.txt",
+    "rule": "Keep newer owner measured cells",
+    "old": "selfhost/arm64-linux/utf8_ingest_validated.emit\t9348\n",
+    "main": "selfhost/arm64-linux/utf8_ingest_validated.emit\t9410\n",
+    "resolved": "selfhost/arm64-linux/utf8_ingest_validated.emit\t9410\n"
+  },
+  {
+    "path": ".github/perf-baseline-selfhost.txt",
+    "rule": "Keep newer owner measured cells",
+    "old": "selfhost/wasm32-wasi/ascii_scan.emit\t1205\n",
+    "main": "selfhost/wasm32-wasi/ascii_scan.emit\t1216\n",
+    "resolved": "selfhost/wasm32-wasi/ascii_scan.emit\t1216\n"
+  },
+  {
+    "path": ".github/perf-baseline-selfhost.txt",
+    "rule": "Keep newer owner measured cells",
+    "old": "selfhost/wasm32-wasi/deflate_decode.emit\t19957\nselfhost/wasm32-wasi/deflate_encode.emit\t11497\nselfhost/wasm32-wasi/enum_match.emit\t710\nselfhost/wasm32-wasi/http_hello.emit\t20774\n",
+    "main": "selfhost/wasm32-wasi/deflate_decode.emit\t19961\nselfhost/wasm32-wasi/deflate_encode.emit\t11501\nselfhost/wasm32-wasi/enum_match.emit\t710\nselfhost/wasm32-wasi/http_hello.emit\t20819\n",
+    "resolved": "selfhost/wasm32-wasi/deflate_decode.emit\t19961\nselfhost/wasm32-wasi/deflate_encode.emit\t11501\nselfhost/wasm32-wasi/enum_match.emit\t710\nselfhost/wasm32-wasi/http_hello.emit\t20819\n"
+  },
+  {
+    "path": ".github/perf-baseline-selfhost.txt",
+    "rule": "Keep newer owner measured cells",
+    "old": "selfhost/wasm32-wasi/ordmap_insert.emit\t6742\nselfhost/wasm32-wasi/pmap_insert.emit\t3134\nselfhost/wasm32-wasi/pvec_with.emit\t2801\n",
+    "main": "selfhost/wasm32-wasi/ordmap_insert.emit\t6746\nselfhost/wasm32-wasi/pmap_insert.emit\t3138\nselfhost/wasm32-wasi/pvec_with.emit\t2805\n",
+    "resolved": "selfhost/wasm32-wasi/ordmap_insert.emit\t6746\nselfhost/wasm32-wasi/pmap_insert.emit\t3138\nselfhost/wasm32-wasi/pvec_with.emit\t2805\n"
+  },
+  {
+    "path": ".github/perf-baseline-selfhost.txt",
+    "rule": "Keep newer owner measured cells",
+    "old": "selfhost/wasm32-wasi/struct_drop.emit\t1642\nselfhost/wasm32-wasi/tokenize.emit\t875\nselfhost/wasm32-wasi/utf8_ingest_unchecked.emit\t8880\nselfhost/wasm32-wasi/utf8_ingest_validated.emit\t9814\n",
+    "main": "selfhost/wasm32-wasi/struct_drop.emit\t1646\nselfhost/wasm32-wasi/tokenize.emit\t875\nselfhost/wasm32-wasi/utf8_ingest_unchecked.emit\t8885\nselfhost/wasm32-wasi/utf8_ingest_validated.emit\t9859\n",
+    "resolved": "selfhost/wasm32-wasi/struct_drop.emit\t1646\nselfhost/wasm32-wasi/tokenize.emit\t875\nselfhost/wasm32-wasi/utf8_ingest_unchecked.emit\t8885\nselfhost/wasm32-wasi/utf8_ingest_validated.emit\t9859\n"
+  },
+  {
+    "path": ".github/perf-baseline-selfhost.txt",
+    "rule": "Keep newer owner measured cells",
+    "old": "selfhost/x86-64-linux/ascii_scan.emit\t1344\n",
+    "main": "selfhost/x86-64-linux/ascii_scan.emit\t1368\n",
+    "resolved": "selfhost/x86-64-linux/ascii_scan.emit\t1368\n"
+  },
+  {
+    "path": ".github/perf-baseline-selfhost.txt",
+    "rule": "Keep newer owner measured cells",
+    "old": "selfhost/x86-64-linux/http_hello.emit\t17492\n",
+    "main": "selfhost/x86-64-linux/http_hello.emit\t17278\n",
+    "resolved": "selfhost/x86-64-linux/http_hello.emit\t17278\n"
+  },
+  {
+    "path": ".github/perf-baseline-selfhost.txt",
+    "rule": "Keep newer owner measured cells",
+    "old": "selfhost/x86-64-linux/utf8_ingest_validated.emit\t8943\n",
+    "main": "selfhost/x86-64-linux/utf8_ingest_validated.emit\t9001\n",
+    "resolved": "selfhost/x86-64-linux/utf8_ingest_validated.emit\t9001\n"
+  }
+]

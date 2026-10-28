@@ -1,0 +1,10 @@
+=== RUN   TestSelfHostArm64NumericLabelsIR
+=== RUN   TestSelfHostArm64NumericLabelsIR/x86-64-linux
+=== RUN   TestSelfHostArm64NumericLabelsIR/arm64-linux
+=== RUN   TestSelfHostArm64NumericLabelsIR/wasm32-wasi
+--- PASS: TestSelfHostArm64NumericLabelsIR (50.82s)
+    --- PASS: TestSelfHostArm64NumericLabelsIR/x86-64-linux (1.55s)
+    --- PASS: TestSelfHostArm64NumericLabelsIR/arm64-linux (1.65s)
+    --- PASS: TestSelfHostArm64NumericLabelsIR/wasm32-wasi (0.70s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	50.836s

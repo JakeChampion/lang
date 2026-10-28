@@ -1,0 +1,18 @@
+{
+  "command": [
+    "/workspace/lang/build/bootstrap/stage0/stage0-20261025-433d93a/fern-selfhost-x86-64-linux",
+    "-O",
+    "-target",
+    "x86-64-linux",
+    "-o",
+    "/workspace/lang-issue-work/perf-4412/stage1",
+    "/workspace/lang-perf-4412/compiler/fern.fern",
+    "/workspace/lang-perf-4412/internal/stdlib"
+  ],
+  "producer_sha256": "efafedd32a9223a2c87b385e8425d155d5f59c10fab7e3bf9e09509254fce748",
+  "source_commit": "23c5bc2e4a5993ffe092d04b5ad1dcf771af0269",
+  "exit": 0,
+  "elapsed_seconds": 33.54584140799943,
+  "build_maxrss_kib": 2239560,
+  "binary_sha256": "238621600593496f4c333c3661bc09464155c13d0796cec03939166b16cad4db"
+}
