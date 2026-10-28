@@ -1,1 +1,0 @@
-no method "ok" on Result[i32, string] — add `import "std/result"`
