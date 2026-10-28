@@ -129,6 +129,7 @@ function unwrap(value: i64): Option[u8] {
 	{"opaque-struct-kept", "pub opaque struct A { a: i32 }\npub(package) opaque struct B { b: i32 }\n@must_consume pub opaque struct C { c: i32 }\ntrait Default { function default(): Self; }\n@derive(Default) opaque struct D { d: i32 }\nfunction main(): i32 { return 0; }\n"},
 	{"omitted-return-type-as-written", "function helper() {}\n\nfunction main(): i32 {\n  return 0;\n}\n"},
 	{"assoc-const-as-written", "trait Lanes {\n  const LANES: i32;\n  const NAME: string = \"lanes\";\n  function width(self: Self): i32;\n}\n\nstruct V2 { a: f64 }\n\nimpl Lanes for V2 {\n  const LANES: i32 = 2;\n  function width(self: Self): i32 {\n    return Self.LANES;\n  }\n}\n\nfunction chunk[T: Lanes](n: i32): i32 {\n  return n / T.LANES + f64.LANES;\n}\n\nfunction main(): i32 {\n  return 0;\n}\n"},
+	{"const-struct-params-as-written", "struct Ring[const N: i32, T] { items: T[], head: i32 }\n\nfunction (r: Ring[N, T]) cap(): i32 {\n  return N;\n}\n\nfunction main(): i32 {\n  let r: Ring[0x4, i32] = Ring[4, i32] { items: [], head: 0 };\n  return r.cap();\n}\n"},
 	{"const-params-as-written", "function filled[const N: i32](x: f64): f64[] {\n  return [x];\n}\n\nfunction count[const N: i32, T](x: T): i32 {\n  return N;\n}\n\nfunction main(): i32 {\n  return filled[0x4](1.0).len() + count[1_000, string](\"a\") + count[0o17, i32](1);\n}\n"},
 	{"value-block-statements-span-lines", `function g(c: boolean, n: i32): i32 {
   let total: i32 = 0;

@@ -2401,6 +2401,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			simpleName := methodName
 			mangled := c.mangleMethodName("__method_", typeName, fn.Name, fn.ImplTrait)
 			fn.Name = mangled
+			fn.ConstParams = append(fn.ConstParams, c.receiverConstParams(fn.Receiver.Type)...)
 			fn.MethodRecv = typeName
 			fn.MethodSimpleName = simpleName
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
@@ -5333,6 +5334,11 @@ type checker struct {
 	captureOuter *scope
 	captureChain []captureEntry
 
+	// resolvingConsts is the const parameters in scope while a declaration's
+	// types are resolved: a struct's own, or a function's own and those its
+	// receiver names.
+	resolvingConsts []string
+
 	capturedVars map[*ast.Var]bool
 	cellStores   []cellStore
 
@@ -5391,7 +5397,9 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 				params[n] = true
 			}
 		}
+		c.resolvingConsts = fn.ConstParams
 		if fn.Receiver != nil {
+			c.resolvingConsts = append(slices.Clone(fn.ConstParams), c.receiverConstParams(fn.Receiver.Type)...)
 			c.resolveType(&fn.Receiver.Type, params, orPos(fn.Receiver.NamePos, fn.P))
 		}
 		for i := range fn.Params {
@@ -5401,6 +5409,7 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 		if fn.Body != nil {
 			c.resolveTypesInBlock(fn.Body, params)
 		}
+		c.resolvingConsts = nil
 	}
 	for _, sd := range prog.Structs {
 		var params map[string]bool
@@ -5410,9 +5419,11 @@ func (c *checker) resolveTypeNames(prog *ast.Program) {
 				params[n] = true
 			}
 		}
+		c.resolvingConsts = sd.ConstParams
 		for i := range sd.Fields {
 			c.resolveType(&sd.Fields[i].Type, params, orPos(sd.Fields[i].NamePos, sd.P))
 		}
+		c.resolvingConsts = nil
 	}
 	for _, ed := range prog.Enums {
 		var params map[string]bool
@@ -5737,6 +5748,8 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 		if sd, ok := c.info.Structs[t.Name]; ok {
 			if len(sd.TypeParams) != len(args) {
 				c.errfCode(sd.P, "E019", "%s", arityMsg("struct "+t.Name, len(sd.TypeParams), len(args), "type argument"))
+			} else if len(sd.ConstParams) > 0 || hasConstArg(args) {
+				c.structArgKinds(sd, args, pos)
 			}
 			if t.Name == "Cell" && len(args) == 1 {
 				at := pos
@@ -7935,6 +7948,95 @@ func hoistReceiver(fn *ast.FuncDecl) {
 	}
 	fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
 	fn.Receiver = nil
+}
+
+// structArgKinds checks the arguments of an application of sd: a const
+// parameter takes an integer that fits in i32 (E089) or a const parameter in
+// scope, and a type parameter takes a type (E090).
+func (c *checker) structArgKinds(sd *ast.StructDecl, args []ast.Type, pos ast.Position) {
+	if pos.Line == 0 {
+		pos = sd.P
+	}
+	for i, a := range args {
+		tp := sd.TypeParams[i]
+		ca, isInt := a.(ast.ConstArg)
+		if !slices.Contains(sd.ConstParams, tp) {
+			if isInt {
+				c.errfCode(pos, "E090", "type parameter %s takes a type, not the integer %s", tp, ca)
+			}
+			continue
+		}
+		if isInt {
+			if ca.Value > math.MaxInt32 {
+				c.errfCode(pos, "E089", "the const argument for %s must fit in i32", tp)
+			}
+			continue
+		}
+		if pt, ok := a.(ast.ParamType); ok && c.constParamDeclared(pt.Name) {
+			continue
+		}
+		c.errfCode(pos, "E090", "const parameter %s takes an integer, not the type %s", tp, a)
+	}
+}
+
+// constParamDeclared reports whether name is a const parameter of a generic
+// function being checked, or of an enclosing one.
+func (c *checker) constParamDeclared(name string) bool {
+	if slices.Contains(c.resolvingConsts, name) {
+		return true
+	}
+	if c.current != nil && slices.Contains(c.current.ConstParams, name) {
+		return true
+	}
+	for _, e := range c.captureChain {
+		if e.outer != nil && slices.Contains(e.outer.ConstParams, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasConstArg(args []ast.Type) bool {
+	for _, a := range args {
+		if _, ok := a.(ast.ConstArg); ok {
+			return true
+		}
+	}
+	return false
+}
+
+// receiverConstParams is the names a receiver spelling gives to its struct's
+// const parameters: N in `function (r: Ring[N, T]) cap()`.
+func (c *checker) receiverConstParams(t ast.Type) []string {
+	var name string
+	var args []ast.Type
+	switch rt := t.(type) {
+	case ast.StructType:
+		name, args = rt.Name, rt.Args
+	case ast.EnumType:
+		name, args = rt.Name, rt.Args
+	default:
+		return nil
+	}
+	sd, ok := c.info.Structs[name]
+	if !ok {
+		return nil
+	}
+	var out []string
+	for i, a := range args {
+		if i >= len(sd.TypeParams) || !slices.Contains(sd.ConstParams, sd.TypeParams[i]) {
+			continue
+		}
+		switch x := a.(type) {
+		case ast.StructType:
+			if len(x.Args) == 0 {
+				out = append(out, x.Name)
+			}
+		case ast.ParamType:
+			out = append(out, x.Name)
+		}
+	}
+	return out
 }
 
 func (c *checker) receiverDeclares(name, tp string) bool {

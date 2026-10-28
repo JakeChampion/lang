@@ -2470,6 +2470,9 @@ function leaf_key(t: typeinfo.Type): string {
   if (semtypes.is_never(t)) {
     return "$never";
   }
+  if let typeinfo.TypeConst(c) = t {
+    return c.value;
+  }
   if let typeinfo.TypeLanes(l) = t {
     return typeinfo.lanes_spelling(l.width);
   }
