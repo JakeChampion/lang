@@ -90,10 +90,10 @@ func WriteTZifUTF8Fixture(t testing.TB) string {
 import "std/utf8";
 
 function valid(own data: u8[], name: string, rule: string): boolean {
-  let parsed: Option[tz.Zone] = tz.parse_tzif(data);
+  let parsed: Result[tz.Zone, tz.ZoneError] = tz.parse_tzif(data);
   data = [];
   match (parsed) {
-    Some(zone) => {
+    Ok(zone) => {
       if (zone.first_abbr != name || zone.abbrs.len() != 2 || zone.rule.std_name != rule) { return false; }
       if (!utf8.is_valid(zone.first_abbr) || !utf8.is_valid(zone.rule.std_name) || !utf8.is_valid(zone.rule.dst_name)) { return false; }
       let i: i32 = 0;
@@ -103,14 +103,14 @@ function valid(own data: u8[], name: string, rule: string): boolean {
       }
       return true;
     },
-    None => { return false; }
+    Err(_) => { return false; }
   }
 }
 
 function rejected(data: u8[]): boolean {
   match (tz.parse_tzif(data)) {
-    Some(_) => { return false; },
-    None => { return true; }
+    Ok(_) => { return false; },
+    Err(_) => { return true; }
   }
 }
 

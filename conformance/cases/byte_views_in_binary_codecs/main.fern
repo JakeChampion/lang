@@ -56,8 +56,8 @@ function main(): i32 {
     return 12;
   }
   let zone_bytes: u8[] = [0 as u8].concat(__codec_bytes(hex.decode("545a69663200000000000000000000000000000000000000000000000000000000000000000000010000000400000000000055544300545a696632000000000000000000000000000000000000000000000000000000000000000000000100000004000000000000555443000a555443300a"))).append(0 as u8);
-  let zone: Option[tz.Zone] = tz.parse_tzif(zone_bytes[1:zone_bytes.len() - 1]);
-  if (!zone.is_some()) {
+  let zone: Result[tz.Zone, tz.ZoneError] = tz.parse_tzif(zone_bytes[1:zone_bytes.len() - 1]);
+  if (!zone.is_ok()) {
     return 40;
   }
   let message: u8[] = [0 as u8].concat(protobuf.string_field(7, "nested")).append(0 as u8);
