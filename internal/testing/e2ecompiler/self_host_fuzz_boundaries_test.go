@@ -269,6 +269,7 @@ func fuzzAssembler(f *testing.F, which, target string) {
 		text,
 		[]byte(".text\n_start:\n ret\n"),
 		[]byte(".text\n_start:\n b _start\n"),
+		[]byte(".text\n134217728:\n b 134217728b\n"),
 		[]byte(".data\nx: .quad y\n.text\ny: .cfi_startproc\n.cfi_endproc\n"),
 		[]byte(strings.Repeat(".section .rodata\n", 50)),
 		[]byte("\x00\xff .text \n\n\n"),
