@@ -1,0 +1,84 @@
+pub struct Interval { low: i64, high: i64 }
+
+pub function valid(r: Interval): boolean {
+  return r.low >= 0 && r.low <= r.high && r.high <= 17179869184 as i64;
+}
+
+pub function capacities(): i64[] {
+  let result: i64[] = [];
+  let quarter = 131072 as i64;
+  for index in 0..61 {
+    result = result.append((4 + index % 4) as i64 * quarter);
+    if (index % 4 == 3) {
+      quarter = quarter * (2 as i64);
+    }
+  }
+  return result;
+}
+
+function class_at(n: i64, bins: i64[]): i32 {
+  for at in 0..bins.len() {
+    if (n <= bins[at]) {
+      return at;
+    }
+  }
+  return -1;
+}
+
+pub function expected_class(r: Interval): i32 {
+  if (!valid(r)) {
+    return -1;
+  }
+  let bins = capacities();
+  let low = class_at(r.low, bins);
+  return if (low == class_at(r.high, bins)) { low } else { -1 };
+}
+
+pub function intervals(): Interval[] {
+  let result: Interval[] = [];
+  let low = 0 as i64;
+  for cap in capacities() {
+    let cut = 524288 as i64;
+    while (cut <= cap) {
+      if (cut > low) {
+        result = result.append(Interval { low: low, high: cut - 1 as i64 });
+        low = cut;
+      }
+      cut = cut * (2 as i64);
+    }
+    result = result.append(Interval { low: low, high: cap });
+    low = cap + 1 as i64;
+  }
+  return result;
+}
+
+function highest(n: i64): i32 {
+  let rest = n;
+  let bit = -1;
+  while (rest > 0 as i64) {
+    rest = rest / (2 as i64);
+    bit = bit + 1;
+  }
+  return bit;
+}
+
+pub function rounded(r: Interval): i64 {
+  if (!valid(r)) {
+    return -(1 as i64);
+  }
+  let low = if (r.low < 524288 as i64) { 524288 as i64 } else { r.low };
+  let high = if (r.high < 524288 as i64) { 524288 as i64 } else { r.high };
+  let bit = highest(low);
+  if (bit != highest(high)) {
+    return -(1 as i64);
+  }
+  let quantum = 131072 as i64;
+  let at = 19;
+  while (at < bit) {
+    quantum = quantum * (2 as i64);
+    at = at + 1;
+  }
+  let a = ((low - 1 as i64) / quantum + 1 as i64) * quantum;
+  let b = ((high - 1 as i64) / quantum + 1 as i64) * quantum;
+  return if (a == b) { a } else { -(1 as i64) };
+}

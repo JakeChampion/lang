@@ -1,0 +1,12 @@
+{
+  "source": "5acfabebbef2f87844e1389615c7aecd3288baa3",
+  "hash_capture_phase": "after native capability execution",
+  "source_hashes_match_earlier_diagnostic": true,
+  "gcc_sha256": "a23ecab8ff08f09ad8c80602c2c5df7f49e09c25905cb8975902e101bf72635f",
+  "capability_json_sha256": "c6e78cee9246b6859e7ffb26df460623fc41e2dee8c7b252bd3c9937a067c147",
+  "helper_sha256": "f090f1056dbadbb422ff1495afb1d4523600486041b20e9b622fc1785500481e",
+  "compiler_build": "3a70b650d36331d2febe0f88d207bf0702e09ef4",
+  "compiler_sha256": "e60468d00e57fe3b5badbf86878952432fd4744d0ef1d945386d67a680eac69e",
+  "no_tracked_source_edits": true,
+  "not_Fern_model_qualification": true
+}

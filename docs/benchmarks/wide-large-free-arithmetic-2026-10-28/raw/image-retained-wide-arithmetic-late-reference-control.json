@@ -1,0 +1,67 @@
+{
+  "source": "5383d709b477ff52737c8915b93a54e4790699d2",
+  "compiler_sha256": "610f9e62d848b94e2d150881f24929393546e12a6f1e074a2ea7c0b4f295ee85",
+  "private_reference_corruption_only": true,
+  "corrupted_case": 4473,
+  "original_expected_offset": -4294967297,
+  "incorrect_private_expected_offset": -4294967296,
+  "source_hashes": {
+    "compiler/drivers/ssalargepushwide_run.fern": "b575a8fef196c7f43ab602f44bf662a250573fd7aad2bdf2127a6a494074cb71",
+    "compiler/drivers/ssalargepushwidecases.fern": "55cff21c193745cb4ea0b5cb9e05a2e5a6557efe98d2f1363b0ec474d89426a9",
+    "compiler/drivers/ssalargepushvalues.fern": "9bc4c14304982176b465ac159f2e90994448f57880523b99fb2f5d2154715e01",
+    "compiler/ssalargepushvalue.fern": "59b53d3c3a2d1f72cd41583c4625941e53dc394042a86cff5441386b5f1a3890",
+    "compiler/ssalargepushranges.fern": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb",
+    "compiler/drivers/ssalargepushpartitions.fern": "42a84c4feeca11072d97d24607319af228560c122eb3b9763a9274626861daef",
+    "compiler/ssalargepushwidevalue.fern": "ca68452e4f548f11e402a67233a526d766c4f851e7281c6b5fc12c02e75ecf46",
+    "compiler/ssalargepushwideranges.fern": "b4e3d583baaf082ff5dcab5ccb31ffdab0fc2d13e3cfb20e18765014791c8dbd"
+  },
+  "original_source_hashes": {
+    "compiler/drivers/ssalargepushwide_run.fern": "b575a8fef196c7f43ab602f44bf662a250573fd7aad2bdf2127a6a494074cb71",
+    "compiler/drivers/ssalargepushwidecases.fern": "d7119618f8bfa609628d0200b61a74ff204469b4c2e4143fae49e8ced0e1887b",
+    "compiler/drivers/ssalargepushvalues.fern": "9bc4c14304982176b465ac159f2e90994448f57880523b99fb2f5d2154715e01",
+    "compiler/ssalargepushvalue.fern": "59b53d3c3a2d1f72cd41583c4625941e53dc394042a86cff5441386b5f1a3890",
+    "compiler/ssalargepushranges.fern": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb",
+    "compiler/drivers/ssalargepushpartitions.fern": "42a84c4feeca11072d97d24607319af228560c122eb3b9763a9274626861daef",
+    "compiler/ssalargepushwidevalue.fern": "ca68452e4f548f11e402a67233a526d766c4f851e7281c6b5fc12c02e75ecf46",
+    "compiler/ssalargepushwideranges.fern": "b4e3d583baaf082ff5dcab5ccb31ffdab0fc2d13e3cfb20e18765014791c8dbd"
+  },
+  "checks": [
+    {
+      "stage": "compile",
+      "command": [
+        "/tmp/image-retained-wide-arithmetic-current-fern-5383d709b",
+        "-target",
+        "x86-64-linux",
+        "-sanitize",
+        "-o",
+        "/tmp/image-retained-wide-arithmetic-late-reference-control/control.elf",
+        "/tmp/image-retained-wide-arithmetic-late-reference-control/compiler/drivers/ssalargepushwide_run.fern"
+      ],
+      "exit": 0,
+      "seconds": 2.9698474407196045
+    },
+    {
+      "stage": "runtime",
+      "command": [
+        "/tmp/image-retained-wide-arithmetic-late-reference-control/control.elf"
+      ],
+      "exit": 180,
+      "seconds": 0.0038869380950927734
+    }
+  ],
+  "binary_sha256_before_runtime": "af7a0741b588496bda00d81ee5f8c80eeadb261b5a7dadd908948f4b31a88ad9",
+  "seconds": 2.9748358726501465,
+  "original_sources_unchanged": true,
+  "private_sources_unchanged": true,
+  "binary_sha256_after_runtime": "af7a0741b588496bda00d81ee5f8c80eeadb261b5a7dadd908948f4b31a88ad9",
+  "expected_reason": "reference case 4473 op 3 expected 0:-4294967296 got 0:-4294967297",
+  "intentional_early_exit_not_persistent_leak_qualification": true,
+  "actual_heap_rows": [
+    [
+      45292,
+      44602,
+      140552
+    ]
+  ],
+  "expected_failure_qualified": true
+}

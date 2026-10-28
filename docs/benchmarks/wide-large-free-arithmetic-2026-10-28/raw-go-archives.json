@@ -1,0 +1,36 @@
+{
+  "source": "a3296b1a5694a7d456bb3d8d526d7bf381a09b8d",
+  "issue": 13732,
+  "files": [
+    {
+      "path": "docs/benchmarks/wide-large-free-arithmetic-2026-10-28/raw/image-retained-wide-arithmetic-before-reference-expansion--self_host_ssa_large_push_wide_test.go",
+      "sha256": "c9d175ba904b094b7a74010639fad8a16cc30373b97f0fc637ed360c81e59d92",
+      "git_blob": "43ce0b1532b176c5c0c5feaafc9d0a72f54b8157",
+      "bytes": 631,
+      "archive": "docs/benchmarks/wide-large-free-arithmetic-2026-10-28/raw/image-retained-wide-arithmetic-before-reference-expansion--self_host_ssa_large_push_wide_test.go.gz",
+      "archive_sha256": "28e507c901cda45ce80559f2d843884b4e2e2ac28b99ac3181a81bb3b5951991",
+      "decompressed_exact": true,
+      "original_preserved_in_merged_worktree": true
+    },
+    {
+      "path": "docs/benchmarks/wide-large-free-arithmetic-2026-10-28/raw/image-retained-wide-arithmetic-before-arm-freeze--internal--testing--e2ecompiler--self_host_ssa_large_push_wide_test.go",
+      "sha256": "c9d175ba904b094b7a74010639fad8a16cc30373b97f0fc637ed360c81e59d92",
+      "git_blob": "43ce0b1532b176c5c0c5feaafc9d0a72f54b8157",
+      "bytes": 631,
+      "archive": "docs/benchmarks/wide-large-free-arithmetic-2026-10-28/raw/image-retained-wide-arithmetic-before-arm-freeze--internal--testing--e2ecompiler--self_host_ssa_large_push_wide_test.go.gz",
+      "archive_sha256": "28e507c901cda45ce80559f2d843884b4e2e2ac28b99ac3181a81bb3b5951991",
+      "decompressed_exact": true,
+      "original_preserved_in_merged_worktree": true
+    },
+    {
+      "path": "docs/benchmarks/wide-large-free-arithmetic-2026-10-28/raw/image-retained-large-free-observe-harness.go",
+      "sha256": "70722bd1a1c678328e248155b175fc185b1a626637bb9fc8b1a5626ea056b5d3",
+      "git_blob": "b7f1ccb281690abcf406b799bb01c80817667532",
+      "bytes": 4951,
+      "archive": "docs/benchmarks/wide-large-free-arithmetic-2026-10-28/raw/image-retained-large-free-observe-harness.go.gz",
+      "archive_sha256": "3adfbdc630dec18b5a100d24ceda852110800fd3fa91e3c3b2646e187bb479da",
+      "decompressed_exact": true,
+      "original_preserved_in_merged_worktree": true
+    }
+  ]
+}

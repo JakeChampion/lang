@@ -1,0 +1,20 @@
+{
+  "source": "5383d709b477ff52737c8915b93a54e4790699d2",
+  "case_count": 4474,
+  "partition_count": 77,
+  "capacity_count": 61,
+  "seed": 79653,
+  "source_hashes": {
+    "scripts/gen-large-push-wide-reference.py": "5b1634f2d51e8f1130594056a6e7d1a9af0a9e059301f31b94df6bccfc1e44d5",
+    "compiler/drivers/ssalargepushwidecases.fern": "d7119618f8bfa609628d0200b61a74ff204469b4c2e4143fae49e8ced0e1887b",
+    "internal/testing/e2ecompiler/testdata/large_push_wide_reference.json": "202f62bedee59fc3efe113d7e6ea26a1de76cf1724e9d86bfa723c3ff03b6a9f"
+  },
+  "bundle_sha256": "efb9abd8395ed9a69c81498c39d31821c01b4a2379ce2d432be321ac14cb9731",
+  "bundle_recipe": "SHA256(reference JSON bytes + newline--FERN--newline + generated Fern bytes)",
+  "reference_reproduced_exactly": true,
+  "reproduction_actual_command": [
+    "python3",
+    "scripts/gen-large-push-wide-reference.py",
+    "--check"
+  ]
+}

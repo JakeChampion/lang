@@ -1,0 +1,278 @@
+import "../ssalargepushwideranges" as ranges;
+import "../ssalargepushwidevalue" as value;
+import "./ssalargepushpartitions" as legacy_ranges;
+import "./ssalargepushvalues" as legacy_values;
+import "./ssalargepushwidecases" as reference;
+import "std/i32";
+import "std/i64";
+
+struct Reference { low: i64, high: i64, index: i32, rounded: i64 }
+
+struct WordReference { number: i64, low: i64, high: i64 }
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    eprint("wide large-push arithmetic controls failed: " + group);
+    exit(180);
+  }
+}
+
+function constant(r: ranges.Interval, v: value.Value, n: i64): boolean {
+  return value.valid(r, v) && v.factor == 0 && v.offset == n;
+}
+
+function references(): Reference[] {
+  return [
+    Reference { low: 0, high: 524287, index: 0, rounded: 524288 },
+    Reference { low: 524288, high: 524288, index: 0, rounded: 524288 },
+    Reference { low: 524289, high: 655360, index: 1, rounded: 655360 },
+    Reference { low: 655361, high: 786432, index: 2, rounded: 786432 },
+    Reference { low: 786433, high: 917504, index: 3, rounded: 917504 },
+    Reference { low: 917505, high: 1048575, index: 4, rounded: 1048576 },
+    Reference { low: 1048576, high: 1048576, index: 4, rounded: 1048576 },
+    Reference { low: 1048577, high: 1310720, index: 5, rounded: 1310720 },
+    Reference { low: 1310721, high: 1572864, index: 6, rounded: 1572864 },
+    Reference { low: 1572865, high: 1835008, index: 7, rounded: 1835008 },
+    Reference { low: 1835009, high: 2097151, index: 8, rounded: 2097152 },
+    Reference { low: 2097152, high: 2097152, index: 8, rounded: 2097152 },
+    Reference { low: 2097153, high: 2621440, index: 9, rounded: 2621440 },
+    Reference { low: 2621441, high: 3145728, index: 10, rounded: 3145728 },
+    Reference { low: 3145729, high: 3670016, index: 11, rounded: 3670016 },
+    Reference { low: 3670017, high: 4194303, index: 12, rounded: 4194304 },
+    Reference { low: 4194304, high: 4194304, index: 12, rounded: 4194304 },
+    Reference { low: 4194305, high: 5242880, index: 13, rounded: 5242880 },
+    Reference { low: 5242881, high: 6291456, index: 14, rounded: 6291456 },
+    Reference { low: 6291457, high: 7340032, index: 15, rounded: 7340032 },
+    Reference { low: 7340033, high: 8388607, index: 16, rounded: 8388608 },
+    Reference { low: 8388608, high: 8388608, index: 16, rounded: 8388608 },
+    Reference { low: 8388609, high: 10485760, index: 17, rounded: 10485760 },
+    Reference { low: 10485761, high: 12582912, index: 18, rounded: 12582912 },
+    Reference { low: 12582913, high: 14680064, index: 19, rounded: 14680064 },
+    Reference { low: 14680065, high: 16777215, index: 20, rounded: 16777216 },
+    Reference { low: 16777216, high: 16777216, index: 20, rounded: 16777216 },
+    Reference { low: 16777217, high: 20971520, index: 21, rounded: 20971520 },
+    Reference { low: 20971521, high: 25165824, index: 22, rounded: 25165824 },
+    Reference { low: 25165825, high: 29360128, index: 23, rounded: 29360128 },
+    Reference { low: 29360129, high: 33554431, index: 24, rounded: 33554432 },
+    Reference { low: 33554432, high: 33554432, index: 24, rounded: 33554432 },
+    Reference { low: 33554433, high: 41943040, index: 25, rounded: 41943040 },
+    Reference { low: 41943041, high: 50331648, index: 26, rounded: 50331648 },
+    Reference { low: 50331649, high: 58720256, index: 27, rounded: 58720256 },
+    Reference { low: 58720257, high: 67108863, index: 28, rounded: 67108864 },
+    Reference { low: 67108864, high: 67108864, index: 28, rounded: 67108864 },
+    Reference { low: 67108865, high: 83886080, index: 29, rounded: 83886080 },
+    Reference { low: 83886081, high: 100663296, index: 30, rounded: 100663296 },
+    Reference { low: 100663297, high: 117440512, index: 31, rounded: 117440512 },
+    Reference { low: 117440513, high: 134217727, index: 32, rounded: 134217728 },
+    Reference { low: 134217728, high: 134217728, index: 32, rounded: 134217728 },
+    Reference { low: 134217729, high: 167772160, index: 33, rounded: 167772160 },
+    Reference { low: 167772161, high: 201326592, index: 34, rounded: 201326592 },
+    Reference { low: 201326593, high: 234881024, index: 35, rounded: 234881024 },
+    Reference { low: 234881025, high: 268435455, index: 36, rounded: 268435456 },
+    Reference { low: 268435456, high: 268435456, index: 36, rounded: 268435456 },
+    Reference { low: 268435457, high: 335544320, index: 37, rounded: 335544320 },
+    Reference { low: 335544321, high: 402653184, index: 38, rounded: 402653184 },
+    Reference { low: 402653185, high: 469762048, index: 39, rounded: 469762048 },
+    Reference { low: 469762049, high: 536870911, index: 40, rounded: 536870912 },
+    Reference { low: 536870912, high: 536870912, index: 40, rounded: 536870912 },
+    Reference { low: 536870913, high: 671088640, index: 41, rounded: 671088640 },
+    Reference { low: 671088641, high: 805306368, index: 42, rounded: 805306368 },
+    Reference { low: 805306369, high: 939524096, index: 43, rounded: 939524096 },
+    Reference { low: 939524097, high: 1073741823, index: 44, rounded: 1073741824 },
+    Reference { low: 1073741824, high: 1073741824, index: 44, rounded: 1073741824 },
+    Reference { low: 1073741825, high: 1342177280, index: 45, rounded: 1342177280 },
+    Reference { low: 1342177281, high: 1610612736, index: 46, rounded: 1610612736 },
+    Reference { low: 1610612737, high: 1879048192, index: 47, rounded: 1879048192 },
+    Reference { low: 1879048193, high: 2147483647, index: 48, rounded: 2147483648 },
+    Reference { low: 2147483648, high: 2147483648, index: 48, rounded: 2147483648 },
+    Reference { low: 2147483649, high: 2684354560, index: 49, rounded: 2684354560 },
+    Reference { low: 2684354561, high: 3221225472, index: 50, rounded: 3221225472 },
+    Reference { low: 3221225473, high: 3758096384, index: 51, rounded: 3758096384 },
+    Reference { low: 3758096385, high: 4294967295, index: 52, rounded: 4294967296 },
+    Reference { low: 4294967296, high: 4294967296, index: 52, rounded: 4294967296 },
+    Reference { low: 4294967297, high: 5368709120, index: 53, rounded: 5368709120 },
+    Reference { low: 5368709121, high: 6442450944, index: 54, rounded: 6442450944 },
+    Reference { low: 6442450945, high: 7516192768, index: 55, rounded: 7516192768 },
+    Reference { low: 7516192769, high: 8589934591, index: 56, rounded: 8589934592 },
+    Reference { low: 8589934592, high: 8589934592, index: 56, rounded: 8589934592 },
+    Reference { low: 8589934593, high: 10737418240, index: 57, rounded: 10737418240 },
+    Reference { low: 10737418241, high: 12884901888, index: 58, rounded: 12884901888 },
+    Reference { low: 12884901889, high: 15032385536, index: 59, rounded: 15032385536 },
+    Reference { low: 15032385537, high: 17179869183, index: 60, rounded: 17179869184 },
+    Reference { low: 17179869184, high: 17179869184, index: 60, rounded: 17179869184 },
+  ];
+}
+
+function partitions(): void {
+  let actual = ranges.intervals();
+  let expected = references();
+  let bins = ranges.capacities();
+  require(actual.len() == 77 && expected.len() == 77 && bins.len() == 61, "wide coverage counts");
+  let next = 0 as i64;
+  let index = 0;
+  for row in expected {
+    let r = actual[index];
+    require(r.low == row.low && r.high == row.high && r.low == next, "reference partition " + index.to_string());
+    require(ranges.valid(r) && ranges.expected_class(r) == row.index && ranges.rounded(r) == row.rounded, "reference class " + index.to_string());
+    require(bins[row.index] == row.rounded, "ordered capacity");
+    next = r.high + 1 as i64;
+    index = index + 1;
+  }
+  require(next == 17179869185 as i64, "complete integer input domain");
+  let all = ranges.Interval { low: 0, high: 17179869184 };
+  require(ranges.valid(all) && ranges.expected_class(all) == -1 && ranges.rounded(all) == -(1 as i64), "mixed facts remain unknown");
+  require(!ranges.valid(ranges.Interval { low: 0, high: 17179869185 }), "domain upper bound");
+  require(!ranges.valid(ranges.Interval { low: -1, high: 0 }) && !ranges.valid(ranges.Interval { low: 2, high: 1 }), "invalid interval");
+}
+
+function word_references(): WordReference[] {
+  return [
+    WordReference { number: -34359738367, low: 1, high: 4294967288 },
+    WordReference { number: -4294967297, low: 4294967295, high: 4294967294 },
+    WordReference { number: -4294967296, low: 0, high: 4294967295 },
+    WordReference { number: -1, low: 4294967295, high: 4294967295 },
+    WordReference { number: 0, low: 0, high: 0 },
+    WordReference { number: 1, low: 1, high: 0 },
+    WordReference { number: 4294967295, low: 4294967295, high: 0 },
+    WordReference { number: 4294967296, low: 0, high: 1 },
+    WordReference { number: 17179869184, low: 0, high: 4 },
+    WordReference { number: 34359738367, low: 4294967295, high: 7 },
+  ];
+}
+
+function words(): void {
+  let r = ranges.Interval { low: 0, high: 0 };
+  for row in word_references() {
+    let v = value.number(r, row.number);
+    let low = value.zero32(r, v);
+    let high = value.high32(r, v);
+    require(constant(r, low, row.low) && constant(r, high, row.high), "signed floor word projection");
+    require(constant(r, value.join32(r, low, high), row.number), "signed word reconstruction");
+  }
+  r = ranges.Interval { low: 4294967296, high: 4294967396 };
+  let v = value.original(r);
+  let low = value.zero32(r, v);
+  let high = value.high32(r, v);
+  require(low.factor == 1 && low.offset == -(4294967296 as i64) && constant(r, high, 1 as i64), "affine high word");
+  let joined = value.join32(r, low, high);
+  require(joined.factor == 1 && joined.offset == 0 as i64, "affine word reconstruction");
+  r = ranges.Interval { low: 4294967295, high: 4294967296 };
+  require(!value.valid(r, value.zero32(r, value.original(r))) && !value.valid(r, value.high32(r, value.original(r))), "word crossing remains unknown");
+}
+
+function arithmetic(): void {
+  let r = ranges.Interval { low: 3758096385, high: 4294967295 };
+  let v = value.original(r);
+  let sum = value.add(r, v, 536870911 as i64);
+  let rounded = value.mask(r, sum, value.number(r, -(536870912 as i64)));
+  require(constant(r, rounded, 4294967296 as i64), "wide rounding boundary");
+  require(value.bit_scan(r, rounded) == 32 && value.power(34) == 17179869184 as i64, "wide highest bit");
+  require(value.power(-1) == 0 as i64 && value.power(35) == 0 as i64, "power bounds");
+  r = ranges.Interval { low: 0, high: 17179869184 };
+  v = value.original(r);
+  let c = value.compare(r, v, 17179869184 as i64);
+  require(c.less == -1 && c.equal == -1 && c.less_equal == 1, "whole-domain comparison");
+  require(!value.valid(r, value.Value { factor: 2, offset: 0 as i64 }), "invalid factor");
+  require(!value.valid(r, value.number(r, 34359738368 as i64)), "constant bound");
+  require(!value.valid(r, value.Value { factor: 1, offset: 34359738367 as i64 }), "endpoint bound");
+  require(!value.valid(r, value.negate(r, v)), "unsupported affine negation");
+  r = ranges.Interval { low: 0, high: 0 };
+  require(!value.valid(r, value.add(r, value.number(r, 34359738367 as i64), 1 as i64)), "addition bound");
+  require(!value.valid(r, value.join32(r, value.number(r, 0 as i64), value.number(r, 8 as i64))), "join bound");
+}
+
+function value_fact(row: reference.Case, r: ranges.Interval, v: value.Value, other: value.Value): value.Value {
+  if (row.op == 3) {
+    return value.number(r, row.scalar);
+  }
+  if (row.op == 4) {
+    return value.original(r);
+  }
+  if (row.op == 6) {
+    return value.add(r, v, row.scalar);
+  }
+  if (row.op == 7) {
+    return value.negate(r, v);
+  }
+  if (row.op == 8) {
+    return value.zero32(r, v);
+  }
+  if (row.op == 9) {
+    return value.high32(r, v);
+  }
+  if (row.op == 10) {
+    return value.join32(r, v, other);
+  }
+  if (row.op == 13) {
+    return value.mask(r, v, other);
+  }
+  require(false, "unknown value operation");
+  return value.unknown();
+}
+
+function scalar_fact(row: reference.Case, r: ranges.Interval, v: value.Value): i64 {
+  if (row.op == 0) {
+    return if (ranges.valid(r)) { 1 as i64 } else { 0 as i64 };
+  }
+  if (row.op == 1) {
+    return ranges.expected_class(r) as i64;
+  }
+  if (row.op == 2) {
+    return ranges.rounded(r);
+  }
+  if (row.op == 5) {
+    return if (value.valid(r, v)) { 1 as i64 } else { 0 as i64 };
+  }
+  if (row.op == 11) {
+    return value.power(row.scalar as i32);
+  }
+  if (row.op == 12) {
+    return value.bit_scan(r, v) as i64;
+  }
+  require(false, "unknown scalar operation");
+  return 0 as i64;
+}
+
+function value_operation(op: i32): boolean {
+  return op == 3 || op == 4 || op == 6 || op == 7 || op == 8 || op == 9 || op == 10 || op == 13;
+}
+
+function reference_case(row: reference.Case): void {
+  let r = ranges.Interval { low: row.low, high: row.high };
+  let v = value.Value { factor: row.factor, offset: row.offset };
+  let other = value.Value { factor: row.other_factor, offset: row.other_offset };
+  let name = "reference case " + row.id.to_string() + " op " + row.op.to_string();
+  if (row.op == 14) {
+    let c = value.compare(r, v, row.scalar);
+    require(c.less == row.less && c.equal == row.equal && c.less_equal == row.less_equal, name + " comparison");
+  } else if (value_operation(row.op)) {
+    let actual = value_fact(row, r, v, other);
+    require(actual.factor == row.expected_factor && actual.offset == row.expected_offset, name + " expected " + row.expected_factor.to_string() + ":" + row.expected_offset.to_string() + " got " + actual.factor.to_string() + ":" + actual.offset.to_string());
+  } else {
+    let actual = scalar_fact(row, r, v);
+    require(actual == row.expected_scalar, name + " expected " + row.expected_scalar.to_string() + " got " + actual.to_string());
+  }
+}
+
+function reference_cases(): void {
+  let rows = reference.rows();
+  require(rows.len() == reference.count() && rows.len() == 4474, "fixed independent reference coverage");
+  let next = 0;
+  for row in rows {
+    require(row.id == next, "reference ordinal");
+    reference_case(row);
+    next = next + 1;
+  }
+  require(next == 4474, "complete reference execution");
+}
+
+function main(): i32 {
+  legacy_ranges.run();
+  legacy_values.run();
+  partitions();
+  words();
+  arithmetic();
+  reference_cases();
+  print("wide large-push arithmetic controls passed");
+  return 0;
+}
