@@ -1,0 +1,12 @@
+[
+  {
+    "path": "/tmp/image-wide-call-summary-evidence-secondary/helper-controls-diagnostic.elf",
+    "bytes": 9629536,
+    "sha256": "183c9fbe443dfa12a962c36c7ac90ebd324a9797e2636debc6bd3f989068236d"
+  },
+  {
+    "path": "/tmp/image-wide-call-summary-evidence-secondary/private-views/control.elf",
+    "bytes": 9675360,
+    "sha256": "2ca769e0e79d6aad70b55fcab9a76c07289810cbb5254b0d86d7150b3c5ec492"
+  }
+]
