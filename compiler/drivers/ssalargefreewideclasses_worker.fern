@@ -1,0 +1,40 @@
+import "./ssalargefreewideclasses" as classes;
+import "std/io";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+function word(input: [u8], at: i32, count: i32): i64 {
+  let value = 0 as i64;
+  for index in 0..count {
+    value = value | input[at + index] as i64 << (index * 8) as i64;
+  }
+  return value;
+}
+
+pub function main(): i32 {
+  let input = match (io.read_all_stdin_bytes()) { Ok(value) => value, Err(_) => { return 2; } };
+  if (input.len() == 0) {
+    return 2;
+  }
+  let at = 0;
+  while (at < input.len()) {
+    if (input.len() - at < 36 || input[at] != b'F' || input[at + 1] != b'W' || input[at + 2] != b'C' || input[at + 3] != b'1') {
+      return 2;
+    }
+    let id = word(input, at + 4, 4);
+    let mode = word(input, at + 8, 4);
+    if (id > 2147483647 as i64 || mode > 5 as i64) {
+      return 2;
+    }
+    let values = classes.result(mode as i32, word(input, at + 12, 8), word(input, at + 20, 8), word(input, at + 28, 4) as i32, word(input, at + 32, 4) as i32);
+    let line = "class " + id.to_string();
+    for value in values {
+      line = line + " " + value.to_string();
+    }
+    print(line);
+    print("end " + id.to_string());
+    at = at + 36;
+  }
+  return 0;
+}

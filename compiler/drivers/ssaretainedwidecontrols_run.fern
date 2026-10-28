@@ -1,0 +1,17 @@
+import "../asmcore";
+import "./ssaretainedprogram" as retained;
+import "./ssadecrementdependencies" as dependencies;
+import "./ssalargepushisas" as instructions;
+
+pub function main(): i32 {
+  let mod = retained.module();
+  if (asmcore.refuse_parse_errors([mod])) {
+    return 1;
+  }
+  let g = retained.program(mod);
+  let output = retained.emit(g, g.cache, g.physical, false, true, true, 0, -1).text;
+  dependencies.run(output);
+  instructions.run(output);
+  print("current retained helper controls passed");
+  return 0;
+}
