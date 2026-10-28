@@ -34,7 +34,7 @@ var mathIRCases = []stdlibConcatCase{
 	{"pack-rgb-mid", `return (pack_rgb(1, 2, 3) >> 8) & 255;`},
 	{"lerp-int", `return lerp(0.0, 10.0, 0.5) as i32;`},
 	{"pack-rgb-low", `return pack_rgb(255, 128, 64) & 255;`},
-	{"i32-max", `return i32_max() - 2147483527;`},
+	{"tau", `return (TAU * 10.0) as i32;`},
 }
 
 func stdlibConcatSource(t *testing.T, mod, mainBody string) []byte {
