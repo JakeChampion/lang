@@ -41,6 +41,41 @@ func TestSelfHostStackOverflow(t *testing.T) {
 	}
 }
 
+func TestSelfHostDarwinSignalContext(t *testing.T) {
+	armgcc, qemu := arm64Tooling(t)
+	cli := buildSelfHostCLI(t)
+	src := filepath.Join(t.TempDir(), "main.fern")
+	if err := os.WriteFile(src, []byte("function main(): i32 { return 0; }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text, err := os.ReadFile(cli.emit(t, src, "arm64-darwin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := strings.Index(string(text), "__fern_segv:\n")
+	end := strings.Index(string(text), "__fern_segv_trampoline:\n")
+	if start < 0 || end <= start {
+		t.Fatal("the Darwin output has no complete signal handler")
+	}
+	handler := string(text[start:end])
+	handler = regexp.MustCompile(`([A-Za-z0-9_.]+)@PAGEOFF`).ReplaceAllString(handler, ":lo12:$1")
+	handler = strings.ReplaceAll(handler, "@PAGE", "")
+	template, err := os.ReadFile("testdata/darwin_signal_context.s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, stackTop string }{{"guard", "1342177280"}, {"near-sp", "0"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := strings.ReplaceAll(string(template), "@HANDLER@", handler)
+			asm = strings.ReplaceAll(asm, "@STACK_TOP@", tc.stackTop)
+			bin := buildBinArm64(t, armgcc, t.TempDir(), "darwin_context", asm)
+			if out, err := runArm64Bin(qemu, bin).CombinedOutput(); err != nil {
+				t.Fatalf("Darwin signal context: %v\n%s", err, out)
+			}
+		})
+	}
+}
+
 type stackRun struct {
 	stdout, stderr string
 	code           int

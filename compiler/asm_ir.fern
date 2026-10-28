@@ -2281,7 +2281,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .globl __fern_heap_end\n");
   s = s.write("__fern_heap_end: .quad 0\n");
   s = s.write("    .align 8\n");
-  s = s.write("__fern_heap_base: .quad 0\n");
+  s = s.write("    .globl __fern_heap_base\n__fern_heap_base: .quad 0\n");
   s = s.write("    .align 8\n");
   if (s.has_need("alloc_count")) {
     s = s.write("    .globl __fern_alloc_count\n");

@@ -4992,6 +4992,9 @@ function stmt(st: ast.Stmt, s: State): State {
       return ret(r, s);
     },
     ast.StmtIf(f) => {
+      if (f.origin == "block" || f.origin == "unsafe") {
+        return stmts(f.then_body, s);
+      }
       return branch(f, s);
     },
     ast.StmtWhile(w) => {
