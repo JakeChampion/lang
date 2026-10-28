@@ -110,7 +110,14 @@ pub function hops(h: HeaderMap): Option[Hop[]] {
 }
 
 pub function parse_hop(el: string): Result[Hop, headers.HeaderValueError] {
-  return __parse_hop(el).ok_or(headers.HeaderValueError { field: "Forwarded", value: el });
+  match (__parse_hop(el)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(headers.HeaderValueError { field: "Forwarded", value: el });
+    }
+  }
 }
 
 function __parse_hop(el: string): Option[Hop] {
@@ -264,7 +271,14 @@ function __holds(xs: string[], x: string): boolean {
 ```fern
 <<6 pub function node_parse(s: string): Result[NodeId, headers.HeaderValueError]>>=
 pub function node_parse(s: string): Result[NodeId, headers.HeaderValueError] {
-  return __node_parse(s).ok_or(headers.HeaderValueError { field: "Forwarded node", value: s });
+  match (__node_parse(s)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(headers.HeaderValueError { field: "Forwarded node", value: s });
+    }
+  }
 }
 
 function __node_parse(s: string): Option[NodeId] {

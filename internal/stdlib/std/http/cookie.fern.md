@@ -703,7 +703,14 @@ function __min(a: i64, b: i64): i64 {
 ```fern
 <<20 pub function parse_date(s: string): Result[time.Timestamp, headers.HeaderValueError]>>=
 pub function parse_date(s: string): Result[time.Timestamp, headers.HeaderValueError] {
-  return __parse_date(s).ok_or(headers.HeaderValueError { field: "cookie date", value: s });
+  match (__parse_date(s)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(headers.HeaderValueError { field: "cookie date", value: s });
+    }
+  }
 }
 
 function __parse_date(s: string): Option[time.Timestamp] {

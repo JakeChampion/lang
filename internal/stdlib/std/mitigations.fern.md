@@ -471,7 +471,14 @@ pub function (e: BuildLineError) to_string(): string {
 }
 
 pub function parse_build(line: string): Result[Build, BuildLineError] {
-  return __parse_build(line).ok_or(BuildLineError { line: line });
+  match (__parse_build(line)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(BuildLineError { line: line });
+    }
+  }
 }
 
 function __parse_build(line: string): Option[Build] {

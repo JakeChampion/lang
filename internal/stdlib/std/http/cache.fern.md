@@ -114,7 +114,14 @@ pub function (e: ETag) to_string(): string {
 }
 
 pub function parse_etag(s: string): Result[ETag, headers.HeaderValueError] {
-  return __parse_etag(s).ok_or(headers.HeaderValueError { field: "ETag", value: s });
+  match (__parse_etag(s)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(headers.HeaderValueError { field: "ETag", value: s });
+    }
+  }
 }
 
 function __parse_etag(s: string): Option[ETag] {

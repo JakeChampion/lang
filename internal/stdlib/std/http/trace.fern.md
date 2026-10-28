@@ -117,7 +117,14 @@ pub function from_headers(h: HeaderMap): Option[Context] {
 }
 
 pub function parse(v: string): Result[Context, headers.HeaderValueError] {
-  return __parse(v).ok_or(headers.HeaderValueError { field: "traceparent", value: v });
+  match (__parse(v)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(headers.HeaderValueError { field: "traceparent", value: v });
+    }
+  }
 }
 
 function __parse(v: string): Option[Context] {
@@ -156,7 +163,14 @@ function __parent_shape(s: string): boolean {
 ```fern
 <<6 pub function parse_state(v: string): Result[string, headers.HeaderValueError]>>=
 pub function parse_state(v: string): Result[string, headers.HeaderValueError] {
-  return __parse_state(v).ok_or(headers.HeaderValueError { field: "tracestate", value: v });
+  match (__parse_state(v)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(headers.HeaderValueError { field: "tracestate", value: v });
+    }
+  }
 }
 
 function __parse_state(v: string): Option[string] {
