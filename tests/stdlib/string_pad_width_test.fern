@@ -1,0 +1,44 @@
+import "std/test";
+import "std/string";
+import "std/table" as table;
+
+function test_pad_end_matches_table(): test.TestOutcome {
+  let row: string = "café".pad_end(6, ' ') + "x\n" + "a".pad_end(6, ' ') + "y";
+  return test.assert_eq(row, table.render([["café", "x"], ["a", "y"]]));
+}
+
+function test_pad_start_counts_code_points(): test.TestOutcome {
+  return test.assert_eq("é".pad_start(3, '.'), "..é");
+}
+
+function test_multibyte_fill(): test.TestOutcome {
+  return test.assert_eq("a".pad_end(3, '中'), "a中中");
+}
+
+function test_center(): test.TestOutcome {
+  return test.assert_eq("ü".center(4, '-'), "-ü--");
+}
+
+function test_zfill(): test.TestOutcome {
+  return test.assert_eq("½".zfill(3), "00½");
+}
+
+function test_already_wide(): test.TestOutcome {
+  return test.assert_eq("日本語".pad_start(3, ' '), "日本語");
+}
+
+function test_codepoint_count(): test.TestOutcome {
+  return test.assert_eq("a𝄞é".codepoint_count(), 3);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/string widths");
+  r = r.it("pad_end matches table", test_pad_end_matches_table);
+  r = r.it("pad_start counts code points", test_pad_start_counts_code_points);
+  r = r.it("multibyte fill", test_multibyte_fill);
+  r = r.it("center", test_center);
+  r = r.it("zfill", test_zfill);
+  r = r.it("already wide", test_already_wide);
+  r = r.it("codepoint_count", test_codepoint_count);
+  return r.finish();
+}

@@ -21,6 +21,6 @@ function main(): i32 {
   show("dashes", "x".center(7, '-'));
 
   show("already_long", "long".pad_start(2, '0'));
-  show("no_whole_fill", "q".pad_start(2, 'é'));
+  show("one_fill", "q".pad_start(2, 'é'));
   return 0;
 }
