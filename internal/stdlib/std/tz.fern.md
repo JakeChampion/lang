@@ -282,14 +282,12 @@ function two_digits(n: i32): string {
 }
 
 // A fixed zone for an RFC 3339 time with a `Z` or `±hh:mm` offset. A nonzero offset names the zone `UTC+hh:mm` or `UTC-hh:mm`.
-pub function zoned_parse_rfc3339(s: string): Option[Zoned] {
-  let Some(parsed) = time.timestamp_parse_rfc3339_offset(s) else {
-    return None;
-  };
+pub function zoned_parse_rfc3339(s: string): Result[Zoned, time.TimeParseError] {
+  let parsed: (time.Timestamp, i32) = time.timestamp_parse_rfc3339_offset(s)?;
   if (parsed.1 == 0) {
-    return Some(utc_zone().at(parsed.0));
+    return Ok(utc_zone().at(parsed.0));
   }
-  return Some(fixed_zone(parsed.1, "UTC" + offset_text(parsed.1)).at(parsed.0));
+  return Ok(fixed_zone(parsed.1, "UTC" + offset_text(parsed.1)).at(parsed.0));
 }
 ```
 

@@ -304,7 +304,7 @@ function __field_date(h: HeaderMap, name: string, now: time.Timestamp): Option[t
   if (values.len() != 1) {
     return None;
   }
-  return time.http_date_parse_at(values[0].trim(), now);
+  return time.http_date_parse_at(values[0].trim(), now).ok();
 }
 ```
 
@@ -325,7 +325,7 @@ pub function if_range(req: HttpRequest, v: Validators, now: time.Timestamp): boo
     return __tag_matches(value, v, true);
   }
   match (time.http_date_parse_at(value, now)) {
-    Some(d) => {
+    Ok(d) => {
       match (v.last_modified) {
         Some(lm) => {
           return lm.sec == d.sec;
@@ -335,7 +335,7 @@ pub function if_range(req: HttpRequest, v: Validators, now: time.Timestamp): boo
         }
       }
     },
-    None => {
+    Err(_) => {
       return false;
     }
   }
