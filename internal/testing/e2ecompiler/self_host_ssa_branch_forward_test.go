@@ -60,14 +60,16 @@ func jumpsToJumps(assembly string) []string {
 	lines := strings.Split(assembly, "\n")
 	first := map[string]string{}
 	label := ""
-	for _, line := range lines {
+	for i, line := range lines {
 		if m := ssaLabel.FindStringSubmatch(line); m != nil {
 			label = m[1]
 			continue
 		}
 		code := strings.TrimSpace(line)
 		if label != "" && code != "" && !strings.HasPrefix(code, ".") {
-			first[label] = line
+			if !blockJump.MatchString(line) || i+1 >= len(lines) || strings.TrimSpace(lines[i+1]) != ".ltorg" {
+				first[label] = line
+			}
 			label = ""
 		}
 	}
@@ -79,4 +81,22 @@ func jumpsToJumps(assembly string) []string {
 		}
 	}
 	return bad
+}
+
+func TestSSABranchForwardingLiteralPool(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       int
+	}{
+		{"empty-block", "    b .Lssa_f_2\n", 1},
+		{"literal-pool", "    b .Lssa_f_pool_2\n    .ltorg\n.Lssa_f_pool_2:\n    add x0, x0, #1\n", 0},
+		{"pool-after-code", "    add x0, x0, #1\n    b .Lssa_f_pool_2\n    .ltorg\n.Lssa_f_pool_2:\n", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := "    b .Lssa_f_1\n.Lssa_f_1:\n" + tc.body
+			if got := jumpsToJumps(asm); len(got) != tc.want {
+				t.Fatalf("redundant branches = %v, want %d", got, tc.want)
+			}
+		})
+	}
 }

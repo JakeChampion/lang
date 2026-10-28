@@ -1,0 +1,67 @@
+[
+  {
+    "path": "/tmp/image-wide-machine-proof-evidence-secondary/current-mutation-capability-hash-corrected/actual.elf",
+    "bytes": 11272,
+    "sha256": "7774fa67a1393af23a38fc9723366e35a00885011ed5e0dddfe5ed9d63bd9335"
+  },
+  {
+    "path": "/tmp/image-wide-machine-proof-evidence-secondary/current-mutation-capability-hash-corrected/wrong-bit-scan32.elf",
+    "bytes": 11272,
+    "sha256": "1c2a246dc037b6ece05bc7a359e1bd9f4c48404503ea8855157f64e9c47c6729"
+  },
+  {
+    "path": "/tmp/image-wide-machine-proof-evidence-secondary/fern-oracle-12129f769f",
+    "bytes": 29482055,
+    "sha256": "add0202f0209d379e0f5cb3fb881889d92b5331adabe6ad54bbabfbab48b72e5"
+  },
+  {
+    "path": "/tmp/image-wide-machine-proof-evidence-secondary/final-corpus-arm64-linux-worker/worker.elf",
+    "bytes": 146816,
+    "sha256": "8f44129f7ab3fb755516d12f063a83aabf37d2699aaf437a9c9081482eb3dd23"
+  },
+  {
+    "path": "/tmp/image-wide-machine-proof-evidence-secondary/final-corpus-wasm32-wasi-worker/worker.wasm",
+    "bytes": 84075,
+    "sha256": "014d27b6e33175234b8428728c3bc8c81d936d2a1d8b660896081b0d257aec31"
+  },
+  {
+    "path": "/tmp/image-wide-machine-proof-evidence-secondary/final-corpus-x86-64-linux-worker/worker.elf",
+    "bytes": 107024,
+    "sha256": "2504a4eadc6ee67e74eeb58f62473cc0f3d5052d5eb7e89890d13d0c1e19070e"
+  },
+  {
+    "path": "/tmp/image-wide-machine-proof-evidence-secondary/private-controls/allow-bad-scale/worker.elf",
+    "bytes": 107024,
+    "sha256": "636057a8f9278836c52f24adf3cac9d54f5cb989bb0b2f33462eb369ffe3965b"
+  },
+  {
+    "path": "/tmp/image-wide-machine-proof-evidence-secondary/private-controls/checkpoint-fault/worker/worker.elf",
+    "bytes": 107024,
+    "sha256": "636057a8f9278836c52f24adf3cac9d54f5cb989bb0b2f33462eb369ffe3965b"
+  },
+  {
+    "path": "/tmp/image-wide-machine-proof-evidence-secondary/private-controls/missing-last-partition/worker.elf",
+    "bytes": 107024,
+    "sha256": "8895cb8b9a497c0081d9232b7cfd9c04c31ffa6906350c56dd39030808f203b8"
+  },
+  {
+    "path": "/tmp/image-wide-machine-proof-evidence-secondary/private-controls/wrong-oversized-rax/worker.elf",
+    "bytes": 107024,
+    "sha256": "c0afce233384fe802b33a45ecc46343ae08e90423ff456ee43d7c595de340c5d"
+  },
+  {
+    "path": "/tmp/image-wide-machine-proof-evidence-secondary/provisional-native-worker/worker.elf",
+    "bytes": 107024,
+    "sha256": "2504a4eadc6ee67e74eeb58f62473cc0f3d5052d5eb7e89890d13d0c1e19070e"
+  },
+  {
+    "path": "/tmp/image-wide-machine-proof-evidence-secondary/remaining-mutation-observations/clamp-compare32.elf",
+    "bytes": 11272,
+    "sha256": "71386336cf58cdb13c164fb550dff0be0b7f2fbd17816c55dd87a3359e9d47f4"
+  },
+  {
+    "path": "/tmp/image-wide-machine-proof-evidence-secondary/remaining-mutation-observations/left-shift32.elf",
+    "bytes": 11272,
+    "sha256": "ca81da1c2895818e851bb63060390eb5d1a62602f4a80d969861b29288724920"
+  }
+]
