@@ -152,5 +152,54 @@
     "raw_name": "validate.py",
     "raw_sha256": "e1650e51861f36540d0996d7341b000d08e2da6fada04eea6a93af0c6acba587",
     "raw_bytes": 2430
+  },
+  {
+    "archive": "census.json.gz",
+    "raw_name": "census.json",
+    "raw_bytes": 389,
+    "raw_sha256": "e49d73df126a963dc4ae47ea9901fd837dd05311ae2b37cc87f34bc212c3aee8",
+    "archive_sha256": "57053b1c54e3798a733ba3315c00298680c7323f3abb5ba5c7e0cf34471ebc43"
+  },
+  {
+    "archive": "census.jsonl.gz",
+    "raw_name": "census.jsonl",
+    "raw_bytes": 1550,
+    "raw_sha256": "da02ea2dc9720bcd4bf0945b3b9f13c9dc7c7f1a8375f064df5ae65cd6e762c0",
+    "archive_sha256": "f9820dfd1a9019ca499cd38d8ebfafb3906308612a18de80fce1e4190c76012b"
+  },
+  {
+    "archive": "serve-census.twofetch.gz",
+    "raw_name": "serve-census.twofetch",
+    "raw_bytes": 3071,
+    "raw_sha256": "73baefca6864386499711c9b5f430ab47081ea451b2e11ef99b8455298e4c913",
+    "archive_sha256": "6cd0b25ed0abd02ea38352457b268a5c0d428ae4f327b4da0e03fa1cd6d188b4"
+  },
+  {
+    "archive": "ci-unit-heavy-shard-0.log.gz",
+    "raw_name": "ci-unit-heavy-shard-0.log",
+    "raw_bytes": 66101,
+    "raw_sha256": "e86a47da1db449a5e961bc3c0389bca9b52bdd06d0aaf5bfdf9a5220473eacfb",
+    "archive_sha256": "c1ff953f4ce4e8fab56d9e8f4957cdc4d32e3d122622c57efa976013b11a596b"
+  },
+  {
+    "archive": "ci-unit-heavy-shard-1.log.gz",
+    "raw_name": "ci-unit-heavy-shard-1.log",
+    "raw_bytes": 66166,
+    "raw_sha256": "3f67c2f19da8fb044e5995e8b44b5cf571089f13c0eacfbddbc19950c0aae2e6",
+    "archive_sha256": "44a2c9a1c92da586a0227ba8d74ed340069ccc6cdd91519e03e4dffcbb1e3455"
+  },
+  {
+    "archive": "ci-printer.json.gz",
+    "raw_name": "ci-printer.json",
+    "raw_bytes": 814,
+    "raw_sha256": "8c18fed3306d04bbfc4ef7480a4795c5c5cb54d473692415d3a94995fb955bf3",
+    "archive_sha256": "a745922593c4b5f4cf9346bb261a5e6c3033dc61a00cc6cad94be50eb3185511"
+  },
+  {
+    "archive": "qualification-summary.json.gz",
+    "raw_name": "qualification-summary.json",
+    "raw_bytes": 577,
+    "raw_sha256": "7301e7015349546f27f46420d642e01377236022e51f83d4715d8920a64d3613",
+    "archive_sha256": "aaa13eb0c54f2febfb4ba4ccee675a7cfa04b106bd9862791df61acbbf4f1fab"
   }
 ]

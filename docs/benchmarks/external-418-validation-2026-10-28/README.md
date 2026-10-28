@@ -9,7 +9,10 @@ The focused compiler checks pass 116 nodes in 287.083 seconds, with zero failure
 They cover arrays, truncation, checker hints, network parsers, semantic allocations and a local directory named `std`.
 The optional two-fetch census skips because it requires an explicit report path.
 The initial driver stops on that skip and preserves its failure record.
-This record does not establish a completed census.
+
+An explicit report path later enables that census.
+The census passes in 25.425 seconds, with zero skips, and preserves its allocation-site report.
+The archives retain both the original skip and its completed replacement.
 
 The separate two-fetch allocation gate passes in 18.661 seconds, with zero skips.
 Its ceiling remains 91 allocations per request.
@@ -21,6 +24,13 @@ The current Go launcher checks all 2,110 formatter inputs in 2.998 seconds.
 The formatter record includes its binary hash.
 These checks do not establish a full Go formatter corpus pass or a new bootstrap fixpoint.
 They do not alter the earlier optimization comparison's frozen sources.
+
+CI run `40677447257` later passes both printer corpus shards for head `41879a90`.
+The `0/2` and `1/2` jobs run the complete printer package with a 25-minute timeout.
+They pass in 19 minutes and 17 minutes, respectively.
+The raw logs and job records preserve those successful results.
+The earlier local timeout and interrupted shards remain separate historical records.
+The full CI workflow remains incomplete at this observation.
 
 The manifests record compressed and decompressed hashes for each raw archive.
 Each archive passes a decompression identity check.
