@@ -127,9 +127,9 @@ Host: Linux `6.18.55`, x86-64, AMD EPYC 9V74.
 
 Toolchain: Go `1.27.3` from the repository lockfile.
 
-Stage0: `stage0-20261025-433d93a`.
+Stage0: `stage0-20261028-9193717`.
 
-Stage0 SHA-256: `efafedd32a9223a2c87b385e8425d155d5f59c10fab7e3bf9e09509254fce748`.
+Stage0 SHA-256: `199cdd36374c8254741c2a525ae3ae2ccea2d106cb67a9ec85f568df5569f2a2`.
 
 | Command | Result |
 |---|---|
