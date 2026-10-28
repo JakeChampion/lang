@@ -1,0 +1,65 @@
+[
+  {
+    "raw_name": "ci-0b-122575451274.log",
+    "raw_bytes": 2484725,
+    "raw_sha256": "d245d3b397e127c18fb59348ab25966b6f8b824b40e3d70b592e613b0024a423",
+    "archive_name": "ci-0b-122575451274.log.gz",
+    "archive_sha256": "eb45b2846ae6034ee4639e3c77ea0c40aeca475c1822f3df1043889c854a2a13"
+  },
+  {
+    "raw_name": "ci-0b-122575451317.log",
+    "raw_bytes": 1397696,
+    "raw_sha256": "567d5535200871883398cb8f54ce0c1cba24c3d4af2ab18e00453617464ab8a6",
+    "archive_name": "ci-0b-122575451317.log.gz",
+    "archive_sha256": "b31116be8a745a56b926f57cad18adac36b82c7d9b751fa8f54196e73385c6b8"
+  },
+  {
+    "raw_name": "ci-0b-macos-shard1.log",
+    "raw_bytes": 94425,
+    "raw_sha256": "832dba7bd2b4b340fb1a20bd919453a905dc791c22f53d3fe137933f32010bb7",
+    "archive_name": "ci-0b-macos-shard1.log.gz",
+    "archive_sha256": "649b1a9ad1007acb529daf16cf5c4cfbc53b1bcccf946e04e506d66dbf461100"
+  },
+  {
+    "raw_name": "ci-6398-122552995690.log",
+    "raw_bytes": 1845805,
+    "raw_sha256": "e7be425f9f3057495ddfcd504dc29d5a41efeec1a2564f75ccab5388ca72ef94",
+    "archive_name": "ci-6398-122552995690.log.gz",
+    "archive_sha256": "720f7c4985041f7514c1e25a5ad248e87ef32901dc228364dbdb8110b903bed0"
+  },
+  {
+    "raw_name": "ci-6398-122552995700.log",
+    "raw_bytes": 1867458,
+    "raw_sha256": "763646bef150dd04008c74bc25d95159942c877e13297a0b1b5d54fafa53968d",
+    "archive_name": "ci-6398-122552995700.log.gz",
+    "archive_sha256": "29f2ec415b057cbd7c6dda47351354e94b08154e0f5159306a7f890bdf181fd4"
+  },
+  {
+    "raw_name": "ci-6398-122552995722.log",
+    "raw_bytes": 3168376,
+    "raw_sha256": "2e5935e751776c1df20130d57d21957b7a33b6680aadd81341112da0abd56e34",
+    "archive_name": "ci-6398-122552995722.log.gz",
+    "archive_sha256": "e2d43090181569a56cc532394e018ced40fcf6d80a16b3a86766e549bf8a76a9"
+  },
+  {
+    "raw_name": "ci-6398-122552995734.log",
+    "raw_bytes": 1461375,
+    "raw_sha256": "002982747e331bd464df23470629b80464adfcd7654eda8f268556320242b508",
+    "archive_name": "ci-6398-122552995734.log.gz",
+    "archive_sha256": "8e4b763a720d5ddf8efbd731bb339740097962cc392472b53e0bfb5bcbf87b6f"
+  },
+  {
+    "raw_name": "ci-6398-122552995758.log",
+    "raw_bytes": 1361434,
+    "raw_sha256": "02f281260ba91c3e62a01c0a78549213da8bd72ff363295b3c3df29891099cf8",
+    "archive_name": "ci-6398-122552995758.log.gz",
+    "archive_sha256": "2019f949acddcdff2c94ff9586ab2f7f6a6e6c3e48333ac52bb299040580bc4a"
+  },
+  {
+    "raw_name": "ci-6398-122552995805.log",
+    "raw_bytes": 2089251,
+    "raw_sha256": "246c02779e9f0f4ae0ec5860f171888352f10f1ba70d80bb6d0c902470f3b4ae",
+    "archive_name": "ci-6398-122552995805.log.gz",
+    "archive_sha256": "805f8d9c8c269269aafdc97cf8c84f435381578fbc1baacb07a14c44d843c8c1"
+  }
+]

@@ -19,20 +19,26 @@ function (a: Big) id_or_make(k: i32): Big {
 }
 @noinline
 function handed_back(i: i32): i32 {
-    let b: Big = Big { neg: false, mag: [1 as u64, 2 as u64, 3 as u64] };
+    let seed: u64 = (i as u64) + 4294967301u64;
+    let b: Big = Big { neg: false, mag: [seed, 2 as u64, 3 as u64] };
     let c: Big = b.id_or_make(0);
+    if (c.mag[0] != seed) { return 90; }
     return c.mag.len() + i;
 }
 @noinline
 function remade(i: i32): i32 {
-    let b: Big = Big { neg: false, mag: [1 as u64, 2 as u64] };
+    let seed: u64 = (i as u64) + 4294967301u64;
+    let b: Big = Big { neg: false, mag: [seed, 2 as u64] };
     let c: Big = b.id_or_make(1);
+    if (c.mag[0] != seed) { return 90; }
     return c.mag.len() + i;
 }
 @noinline
 function field_args(i: i32): i32 {
-    let b: Big = Big { neg: true, mag: [4 as u64] };
+    let seed: u64 = (i as u64) + 4294967301u64;
+    let b: Big = Big { neg: true, mag: [seed] };
     let c: Big = make(b.neg, b.mag);
+    if (c.mag[0] != seed || b.mag[0] != seed) { return 90; }
     return c.mag.len() + b.mag.len() + i;
 }
 function main(): i32 {

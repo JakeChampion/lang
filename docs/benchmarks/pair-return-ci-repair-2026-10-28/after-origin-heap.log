@@ -1,0 +1,92 @@
+=== RUN   TestSelfHostGenericUpdateBase
+=== RUN   TestSelfHostGenericUpdateBase/empty-array-assignment
+=== RUN   TestSelfHostGenericUpdateBase/empty-array-assignment/x86-64-linux
+=== RUN   TestSelfHostGenericUpdateBase/empty-array-assignment/arm64-linux
+=== RUN   TestSelfHostGenericUpdateBase/empty-array-assignment/wasm32-wasi
+=== RUN   TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation
+=== RUN   TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation/x86-64-linux
+=== RUN   TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation/arm64-linux
+=== RUN   TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation/wasm32-wasi
+=== RUN   TestSelfHostGenericUpdateBase/persistent-vector-empty-tail
+=== RUN   TestSelfHostGenericUpdateBase/persistent-vector-empty-tail/x86-64-linux
+=== RUN   TestSelfHostGenericUpdateBase/persistent-vector-empty-tail/arm64-linux
+=== RUN   TestSelfHostGenericUpdateBase/persistent-vector-empty-tail/wasm32-wasi
+--- PASS: TestSelfHostGenericUpdateBase (2.60s)
+    --- PASS: TestSelfHostGenericUpdateBase/empty-array-assignment (0.13s)
+        --- PASS: TestSelfHostGenericUpdateBase/empty-array-assignment/x86-64-linux (0.05s)
+        --- PASS: TestSelfHostGenericUpdateBase/empty-array-assignment/arm64-linux (0.04s)
+        --- PASS: TestSelfHostGenericUpdateBase/empty-array-assignment/wasm32-wasi (0.04s)
+    --- PASS: TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation (0.09s)
+        --- PASS: TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation/x86-64-linux (0.03s)
+        --- PASS: TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation/arm64-linux (0.03s)
+        --- PASS: TestSelfHostGenericUpdateBase/nested-update-from-other-instantiation/wasm32-wasi (0.02s)
+    --- PASS: TestSelfHostGenericUpdateBase/persistent-vector-empty-tail (0.81s)
+        --- PASS: TestSelfHostGenericUpdateBase/persistent-vector-empty-tail/x86-64-linux (0.32s)
+        --- PASS: TestSelfHostGenericUpdateBase/persistent-vector-empty-tail/arm64-linux (0.25s)
+        --- PASS: TestSelfHostGenericUpdateBase/persistent-vector-empty-tail/wasm32-wasi (0.24s)
+=== RUN   TestSelfHostSemanticAllocationCounts
+=== RUN   TestSelfHostSemanticAllocationCounts/element-read-outlives-the-array-write
+=== RUN   TestSelfHostSemanticAllocationCounts/field-read-outlives-the-record-move
+=== RUN   TestSelfHostSemanticAllocationCounts/an-element-handed-beside-its-dying-array
+=== RUN   TestSelfHostSemanticAllocationCounts/a-view-of-a-dominating-source-is-not-copied
+=== RUN   TestSelfHostSemanticAllocationCounts/a-tuple-element-is-taken-past-a-later-sibling-read
+=== RUN   TestSelfHostSemanticAllocationCounts/a-destructured-element-is-taken-past-a-later-sibling-read
+=== RUN   TestSelfHostSemanticAllocationCounts/a-field-is-taken-past-a-sibling-read-in-a-later-block
+--- PASS: TestSelfHostSemanticAllocationCounts (1.95s)
+    --- PASS: TestSelfHostSemanticAllocationCounts/element-read-outlives-the-array-write (0.18s)
+    --- PASS: TestSelfHostSemanticAllocationCounts/field-read-outlives-the-record-move (0.19s)
+    --- PASS: TestSelfHostSemanticAllocationCounts/an-element-handed-beside-its-dying-array (0.18s)
+    --- PASS: TestSelfHostSemanticAllocationCounts/a-view-of-a-dominating-source-is-not-copied (0.02s)
+    --- PASS: TestSelfHostSemanticAllocationCounts/a-tuple-element-is-taken-past-a-later-sibling-read (0.02s)
+    --- PASS: TestSelfHostSemanticAllocationCounts/a-destructured-element-is-taken-past-a-later-sibling-read (0.02s)
+    --- PASS: TestSelfHostSemanticAllocationCounts/a-field-is-taken-past-a-sibling-read-in-a-later-block (0.02s)
+=== RUN   TestSelfHostTypedPhysicalExtraction
+=== RUN   TestSelfHostTypedPhysicalExtraction/arm64-linux
+    self_host_ssa_credit_abi_test.go:18: typed physical extraction exited 191: leakcheck: allocs=553065 frees=553065 live_bytes=0 from=exit
+=== RUN   TestSelfHostTypedPhysicalExtraction/x86-64-linux
+    self_host_ssa_credit_abi_test.go:18: typed physical extraction exited 191: leakcheck: allocs=553065 frees=553065 live_bytes=0 from=exit
+=== RUN   TestSelfHostTypedPhysicalExtraction/wasm32-wasi
+    self_host_ssa_credit_abi_test.go:18: typed physical extraction exited 1: leakcheck: allocs=615019 frees=615019 live_bytes=0 from=exit
+        Error: failed to run main module `/tmp/TestSelfHostTypedPhysicalExtractionwasm32-wasi2767535670/001/out.wat`
+        
+        Caused by:
+            0: failed to invoke command default
+            1: error while executing at wasm backtrace:
+            0: 0x4ddcec - <unknown>!__fern_proc_exit
+            1: 0x462c0f - <unknown>!caller_controls
+            2: 0x470063 - <unknown>!main
+            3: 0x4ddcf3 - <unknown>!__fern_main_reporting
+            4: 0x4ddd00 - <unknown>!__fern_start
+            2: exit with invalid exit status outside of [0..126)
+        
+--- FAIL: TestSelfHostTypedPhysicalExtraction (87.38s)
+    --- FAIL: TestSelfHostTypedPhysicalExtraction/arm64-linux (27.84s)
+    --- FAIL: TestSelfHostTypedPhysicalExtraction/x86-64-linux (25.28s)
+    --- FAIL: TestSelfHostTypedPhysicalExtraction/wasm32-wasi (32.83s)
+=== RUN   TestSelfHostCallerAllocationOrigin
+=== RUN   TestSelfHostCallerAllocationOrigin/arm64-linux
+=== RUN   TestSelfHostCallerAllocationOrigin/x86-64-linux
+=== RUN   TestSelfHostCallerAllocationOrigin/wasm32-wasi
+--- PASS: TestSelfHostCallerAllocationOrigin (88.65s)
+    --- PASS: TestSelfHostCallerAllocationOrigin/arm64-linux (28.40s)
+    --- PASS: TestSelfHostCallerAllocationOrigin/x86-64-linux (26.19s)
+    --- PASS: TestSelfHostCallerAllocationOrigin/wasm32-wasi (32.74s)
+=== RUN   TestSelfHostPhysicalAllocationOrigin
+=== RUN   TestSelfHostPhysicalAllocationOrigin/arm64-linux
+=== RUN   TestSelfHostPhysicalAllocationOrigin/x86-64-linux
+=== RUN   TestSelfHostPhysicalAllocationOrigin/wasm32-wasi
+--- PASS: TestSelfHostPhysicalAllocationOrigin (72.09s)
+    --- PASS: TestSelfHostPhysicalAllocationOrigin/arm64-linux (22.41s)
+    --- PASS: TestSelfHostPhysicalAllocationOrigin/x86-64-linux (20.68s)
+    --- PASS: TestSelfHostPhysicalAllocationOrigin/wasm32-wasi (27.52s)
+=== RUN   TestSelfHostStructFieldArgReleaseX86_64
+--- PASS: TestSelfHostStructFieldArgReleaseX86_64 (1.32s)
+=== RUN   TestSelfHostStructFieldArgReleaseSanitizeX86_64
+--- PASS: TestSelfHostStructFieldArgReleaseSanitizeX86_64 (1.24s)
+=== RUN   TestSelfHostStructFieldArgReleaseArm64
+--- PASS: TestSelfHostStructFieldArgReleaseArm64 (1.26s)
+=== RUN   TestSelfHostStructFieldArgReleaseWasm
+--- PASS: TestSelfHostStructFieldArgReleaseWasm (1.30s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	257.793s
+FAIL

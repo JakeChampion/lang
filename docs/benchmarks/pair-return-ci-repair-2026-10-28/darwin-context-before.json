@@ -1,0 +1,28 @@
+[
+  {
+    "case": "guard",
+    "command": [
+      "aarch64-linux-gnu-gcc",
+      "-nostdlib",
+      "-static",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/ci-repair/darwin-context-before-guard",
+      "/workspace/lang-issue-work/perf-4412/ci-repair/darwin-context-before-guard.s"
+    ],
+    "exit": -11,
+    "stderr": "qemu: uncaught target signal 11 (Segmentation fault) - core dumped\n"
+  },
+  {
+    "case": "near-sp",
+    "command": [
+      "aarch64-linux-gnu-gcc",
+      "-nostdlib",
+      "-static",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/ci-repair/darwin-context-before-near-sp",
+      "/workspace/lang-issue-work/perf-4412/ci-repair/darwin-context-before-near-sp.s"
+    ],
+    "exit": 0,
+    "stderr": ""
+  }
+]

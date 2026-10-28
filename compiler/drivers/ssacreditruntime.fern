@@ -69,7 +69,8 @@ function graphs(selected: physicalbody.Lowered): ssa.SFunc[] {
 function wrapper(src: string, exiting: boolean, state: asmcore.EmitState): void {
   let selected = state.rt_lower(parser.parse_module(lexer.tokenize(src)));
   parity(src, selected);
-  require(selected.declarations.len() == 5 && selected.bodies.len() > selected.declarations.len(), 120);
+  require(selected.declarations.len() == 6 && selected.bodies.len() > selected.declarations.len(), 120);
+  require(util.index_of_str(selected.declarations, "boxed_result") >= 0, 120);
   let sub = ircore.Sub { ...ircore.no_sub(), physical_contracts: selected.contracts, physical_records: selected.records, physical_enums: selected.enums, physical_finalizers: selected.finalizers };
   let fs = graphs(selected);
   let p = abi.check_wrapper_final(sub, fs, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"]);

@@ -1,0 +1,26 @@
+=== RUN   TestSelfHostCheckedWrapperContinuation
+=== RUN   TestSelfHostCheckedWrapperContinuation/arm64-linux
+=== RUN   TestSelfHostCheckedWrapperContinuation/x86-64-linux
+=== RUN   TestSelfHostCheckedWrapperContinuation/wasm32-wasi
+--- PASS: TestSelfHostCheckedWrapperContinuation (89.58s)
+    --- PASS: TestSelfHostCheckedWrapperContinuation/arm64-linux (29.67s)
+    --- PASS: TestSelfHostCheckedWrapperContinuation/x86-64-linux (25.22s)
+    --- PASS: TestSelfHostCheckedWrapperContinuation/wasm32-wasi (33.12s)
+=== RUN   TestSelfHostIncomingCapacityBoundary
+=== RUN   TestSelfHostIncomingCapacityBoundary/arm64-linux
+=== RUN   TestSelfHostIncomingCapacityBoundary/x86-64-linux
+=== RUN   TestSelfHostIncomingCapacityBoundary/wasm32-wasi
+--- PASS: TestSelfHostIncomingCapacityBoundary (89.90s)
+    --- PASS: TestSelfHostIncomingCapacityBoundary/arm64-linux (28.96s)
+    --- PASS: TestSelfHostIncomingCapacityBoundary/x86-64-linux (25.76s)
+    --- PASS: TestSelfHostIncomingCapacityBoundary/wasm32-wasi (32.96s)
+=== RUN   TestSelfHostCheckedStorageInvocation
+=== RUN   TestSelfHostCheckedStorageInvocation/arm64-linux
+=== RUN   TestSelfHostCheckedStorageInvocation/x86-64-linux
+=== RUN   TestSelfHostCheckedStorageInvocation/wasm32-wasi
+--- PASS: TestSelfHostCheckedStorageInvocation (93.77s)
+    --- PASS: TestSelfHostCheckedStorageInvocation/arm64-linux (30.42s)
+    --- PASS: TestSelfHostCheckedStorageInvocation/x86-64-linux (27.07s)
+    --- PASS: TestSelfHostCheckedStorageInvocation/wasm32-wasi (34.07s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	273.266s
