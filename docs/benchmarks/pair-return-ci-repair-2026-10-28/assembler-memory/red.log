@@ -1,0 +1,6 @@
+=== RUN   TestSelfHostArm64NumericLabelMemory
+    self_host_arm64_numeric_memory_test.go:21: large numeric label used 2148175872 bytes of resident memory on 31 bytes of input, budget 536870912
+--- FAIL: TestSelfHostArm64NumericLabelMemory (2.30s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	2.316s
+FAIL

@@ -50,3 +50,11 @@ The positive and negative classifier controls accompany the unchanged executable
 The playground target correction retains exact output comparison across native, Wasm and HTTP forms.
 The raw native assembly comparison identifies the missing target in the build record.
 The older manual CLI also lacks the heap export, so that comparison records the additional symbol directive separately.
+
+The `ci-perf` directory retains the exact reports from CI run `40620158743` at `c63e488b4`.
+The baseline update uses all 256 changed measured rows and preserves every tolerance.
+All six report comparisons pass against the updated baselines.
+These CI workloads use their own subjects and protocols, separate from the frozen checker profile comparisons.
+
+The `assembler-memory` directory retains the independent large-label memory reproduction and sparse-counter repair.
+The [numeric-label log](../../rc-log/2026-10-28-arm64-sparse-numeric-labels.md) describes its bounded evidence and unresolved CI requirement.

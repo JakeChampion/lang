@@ -1,3 +1,5 @@
+# 2026-10-28: Exact reports from CI run 40620158743 at c63e488b4 on PR #13718.
+# Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
 # 2026-10-28: scripts/cliff-bench on #13726 (merged with main at 5acfabebb). The last pin predates #13677, which grew checker.fern with the unsafe obligation pass and the handle rules.
 # 2026-10-26: PR13578 CI40354664618 at b2c7c6251 measured 38,503,920 bytes / 365,557 crossings. Main a4f676d26 already measured 38,494,112 / 365,552.
 # 2026-10-25: Perf run 40200803636 (main at 127eb63c). checker.fern grew with today's merges: +5.0% cliff count, +5.3% bytes.
@@ -124,5 +126,5 @@
 # Re-pinned 2026-10-15 (#12418): 33,052,304 / 236,323 on main (the previous
 # pin was drift) to 33,306,720 / 239,924, semreach's facts grown per function.
 
-x86_64/checker.cliff_bytes	39645312
-x86_64/checker.cliff_count	371072
+x86_64/checker.cliff_bytes	39674024
+x86_64/checker.cliff_count	371241

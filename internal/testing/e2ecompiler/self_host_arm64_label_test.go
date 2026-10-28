@@ -165,6 +165,13 @@ function main(): i32 {
     // A numeric reference with no matching definition is refused the same way.
     let p3: Arm64GasProg = arm64_gas_program("    b.eq 1f\n    mov x0, #0\n");
     if (p3.unknown.len() != 1) { return 7; }
+    let big: string = "999999999999999999999999999999999999";
+    let sparse: string = "b " + big + "f\n" + big + ":\nmov x0, #0\nb " + big + "f\n000" + big + ":\nb " + big + "b\n";
+    let p4: Arm64GasProg = arm64_gas_program(sparse);
+    if (p4.unknown.len() != 0 || p4.asm.text.len() != 16) { return 8; }
+    if (imm26_at(p4.asm.text, 0) != 1 || imm26_at(p4.asm.text, 8) != 1 || imm26_at(p4.asm.text, 12) != 0) { return 9; }
+    if (arm64_gas_program("b " + big + "b\n").unknown.len() != 1) { return 10; }
+    if (arm64_gas_program("b 4294967296f\n0:\nret\n").unknown.len() != 1) { return 11; }
     return 0;
 }
 
