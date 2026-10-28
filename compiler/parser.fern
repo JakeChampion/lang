@@ -9461,7 +9461,7 @@ function lambda_ret_of(e: ast.Expr, env: MEnv, funcs: MFns): string {
       if (et.len() > 0) {
         return me_fn_ret_spelling(et);
       }
-      return func_ret_of(funcs.decls, fid.name);
+      return func_ret_of(funcs, fid.name);
     },
     ast.ExprCall(_) => {
       return callable_ret_spelling(fn_value_spelling(e, env, funcs));
@@ -10078,23 +10078,20 @@ function builtin_variant_arg_binds(pattern: string, c: ast.ExprCall, env: MEnv, 
   return bind_unify(strip_ws(pargs[slot]), pt, vars, binds, funcs);
 }
 
-function func_ret_of(funcs: FuncDecl[], name: string): string {
-  let i: i32 = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) {
-      return funcs[i].ret_type;
-    }
-    i = i + 1;
-  }
-  return "";
-}
-
-function func_param_type_at(funcs: FuncDecl[], name: string, idx: i32): string {
-  let at: i32 = free_decl_at(funcs, name);
-  if (at < 0 || idx < 0 || idx >= funcs[at].params.len()) {
+function func_ret_of(funcs: MFns, name: string): string {
+  let at: i32 = funcs.free_at(name);
+  if (at < 0) {
     return "";
   }
-  return funcs[at].params[idx].type_name;
+  return funcs.decls[at].ret_type;
+}
+
+function func_param_type_at(funcs: MFns, name: string, idx: i32): string {
+  let at: i32 = funcs.free_at(name);
+  if (at < 0 || idx < 0 || idx >= funcs.decls[at].params.len()) {
+    return "";
+  }
+  return funcs.decls[at].params[idx].type_name;
 }
 
 function me_method_arg_types(fa: ast.ExprFieldAccess, argc: i32, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): string[] {
@@ -10510,7 +10507,7 @@ function mono_named_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: M
   }
   let result: string = call_ret_type(funcs, name, c.args, env);
   if (result.len() == 0 && !uninferred_generic_ret(funcs, name)) {
-    result = func_ret_of(funcs.decls, name);
+    result = func_ret_of(funcs, name);
   }
   if (result.len() == 0) {
     result = fn_spelling_ret(env.elook(name));
@@ -13756,7 +13753,7 @@ function ms_call(c: ast.ExprCall, arg_dests: string[], env: MEnv, gstructs: Stru
     let dest: string = "";
     let pty: string = "";
     if (fname.len() > 0) {
-      pty = func_param_type_at(funcs.decls, fname, i);
+      pty = func_param_type_at(funcs, fname, i);
     } else if (mdecl >= 0 && i < funcs.decls[mdecl].params.len()) {
       pty = funcs.decls[mdecl].params[i].type_name;
     }
@@ -15080,11 +15077,11 @@ function me_call_arg_types(funcs: MFns, fname: string, args: ast.Expr[], env: ME
 }
 
 function me_call_decl_at(funcs: MFns, fname: string, ins: Insts): i32 {
-  return free_decl_at(funcs.decls, me_called_name(funcs, fname, ins));
+  return funcs.free_at(me_called_name(funcs, fname, ins));
 }
 
 function me_called_name(funcs: MFns, fname: string, ins: Insts): string {
-  if (free_decl_at(funcs.decls, fname) >= 0 || util.index_of_sub(fname, "__") <= 0) {
+  if (funcs.free_at(fname) >= 0 || util.index_of_sub(fname, "__") <= 0) {
     return fname;
   }
   let k: i32 = 0;
@@ -15097,15 +15094,14 @@ function me_called_name(funcs: MFns, fname: string, ins: Insts): string {
   return fname;
 }
 
-function free_decl_at(funcs: FuncDecl[], name: string): i32 {
-  let i: i32 = 0;
-  while (i < funcs.len()) {
-    if (funcs[i].name == name && funcs[i].receiver_name.len() == 0 && funcs[i].receiver_type.len() == 0) {
-      return i;
-    }
-    i = i + 1;
+// free_at is the position in `decls` of the first free function named
+// `name`, -1 for none.
+function (funcs: MFns) free_at(name: string): i32 {
+  let k: i32 = funcs.pix.find(name);
+  if (k < 0) {
+    return 0 - 1;
   }
-  return 0 - 1;
+  return funcs.pat[k];
 }
 
 function me_ident(id: ast.ExprIdent, expected: string, env: MEnv, enums: EnumDecl[], funcs: MFns, ins: Insts): RExpr {
@@ -15493,7 +15489,7 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
           if (crt.len() > 0) {
             return crt;
           }
-          return func_ret_of(funcs.decls, cid.name);
+          return func_ret_of(funcs, cid.name);
         },
         ast.ExprFieldAccess(cfa) => {
           let rt: string = me_scrutinee_type(cfa.obj, env, enums, structs, funcs, ins);
