@@ -68,7 +68,8 @@ whose kinds are semantic (`record_get`, `tuple_new`, `append`, `with`,
 whether that container is the old buffer written in place is the plan's.
 `truncate` consumes its receiver the same way. `ssarc` tests the box at run
 time. A unique box releases its tail and keeps its storage. A shared box is
-copied up to the new length.
+copied up to the new length, or is the empty constant when that length is
+zero.
 
 A struct-union's member IS its box, so a match arm's binding is the scrutinee
 narrowed (`variant_as`), and a field read of that binding is lowered as a
