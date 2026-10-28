@@ -1348,6 +1348,7 @@ function __take_idle[T: Transport](tr: T, place: __Place): __Conn {
     pick = pick - 1;
   }
   if (pick < 0) {
+    tr.idle().kept.set(rows);
     return __no_conn();
   }
   let conn: __Conn = __kept_conn(rows[pick]);
@@ -1368,9 +1369,13 @@ function __park[T: Transport](tr: T, place: __Place, conn: __Conn): void {
   tr.idle().kept.set(rows);
 }
 
+// Takes the rows out of the pool, so the caller updates them in place and
+// sets them back.
 function __live_kept[T: Transport](tr: T): Kept[] {
   let pool: Idle = tr.idle();
   let rows: Kept[] = pool.kept.get();
+  let none: Kept[] = [];
+  pool.kept.set(none);
   if (rows.len() == 0) {
     return rows;
   }
@@ -1383,9 +1388,7 @@ function __live_kept[T: Transport](tr: T): Kept[] {
   if (from == 0) {
     return rows;
   }
-  let out: Kept[] = __kept_from(rows, from);
-  pool.kept.set(out);
-  return out;
+  return __kept_from(rows, from);
 }
 
 function __kept_conn(k: Kept): __Conn {
