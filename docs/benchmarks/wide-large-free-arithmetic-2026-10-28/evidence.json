@@ -3353,5 +3353,10 @@
   "new_image_campaign": false,
   "prior_image_qualification_source": "3ba81dccd2de600e45fa9539247e28352e07118b",
   "all_actual_M5_and_epic_gates": "OPEN",
-  "CI_pass_claim": false
+  "CI_pass_claim": false,
+  "additional_tool_inventory": {
+    "path": "tools-post-run.json",
+    "sha256": "3b821d4674486c060f88e0c2ff144cc3808efa75069481df9318fb24a5a9b5df",
+    "phase": "after_execution"
+  }
 }

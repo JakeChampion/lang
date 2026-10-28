@@ -108,3 +108,6 @@ No whole-Go-ARM, CPU, RSS, physical-memory, compatibility, or production claim f
 
 The decoder, machine, oversized-path policy, and complete retained-driver recovery require later work after this normal merge.
 All actual M5 and epic acceptance gates remain open.
+
+`tools-post-run.json` records additional tool versions and hashes after all qualification commands completed.
+It does not invent before-execution inventory checks.
