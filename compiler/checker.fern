@@ -12347,7 +12347,7 @@ function settles_to(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
       return tuple_literal_settles(e, wt.elements, s);
     },
     typeinfo.TypeUnion(_) => {
-      return ctor_boxes_into(e, want, s) || ctor_payload_settles(e, want, s);
+      return ctor_boxes_into(e, want, s) || ctor_payload_settles(e, want, s) || member_lit_settles(e, want, s);
     },
     typeinfo.TypeStruct(ws) => {
       return struct_lit_settles(e, ws, s);
@@ -12621,6 +12621,15 @@ function builtin_payload_index(variant: string, want: typeinfo.Type): i32 {
     }
   }
   return 0 - 1;
+}
+
+function member_lit_settles(e: ast.Expr, want: typeinfo.Type, s: Scope): boolean {
+  if let ast.ExprStructLit(sl) = e {
+    if let typeinfo.TypeStruct(ds) = member_dest(sl.type_name, want, s) {
+      return struct_lit_settles(e, ds, s);
+    }
+  }
+  return false;
 }
 
 function struct_lit_settles(e: ast.Expr, want: typeinfo.TypeStruct, s: Scope): boolean {
