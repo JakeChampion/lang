@@ -2050,6 +2050,51 @@ function pred_index(at: i32[], id: i32): i32 {
   return at[id];
 }
 
+// live_masks gives, for each position of `at` in ascending order, the
+// registers below `nregs` that hold a value live across it. The mask at
+// `at[k]` leaves out the value `skip[k]`.
+pub function live_masks(alloc: Alloc, nregs: i32, at: i32[], skip: i32[]): i32[] {
+  let masks: i32[] = __alloc_i32(at.len());
+  if (at.len() == 0) {
+    return masks;
+  }
+  let order: i32[] = order_by_lo(alloc.reg_of.len(), alloc.lo);
+  let active: i32[] = __alloc_i32(order.len());
+  let na: i32 = 0;
+  let next: i32 = 0;
+  let k: i32 = 0;
+  while (k < at.len()) {
+    let p: i32 = at[k];
+    while (next < order.len() && alloc.lo[order[next]] < p) {
+      let v: i32 = order[next];
+      let r: i32 = alloc.reg_of[v];
+      if (r >= 0 && r < nregs) {
+        active = active.with(na, v);
+        na = na + 1;
+      }
+      next = next + 1;
+    }
+    let mask: i32 = 0;
+    let kept: i32 = 0;
+    let j: i32 = 0;
+    while (j < na) {
+      let v: i32 = active[j];
+      if (alloc.hi[v] > p) {
+        active = active.with(kept, v);
+        kept = kept + 1;
+        if (v != skip[k]) {
+          mask = mask | 1 << alloc.reg_of[v];
+        }
+      }
+      j = j + 1;
+    }
+    na = kept;
+    masks = masks.with(k, mask);
+    k = k + 1;
+  }
+  return masks;
+}
+
 pub function position_count(f: SFunc): i32 {
   let n: i32 = 0;
   for blk in f.blocks {
