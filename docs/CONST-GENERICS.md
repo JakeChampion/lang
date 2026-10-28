@@ -248,9 +248,10 @@ places each compiler has to change.
 - **CG3.** `std/simd` writes its kernels over `Vec[N, T]` where a lane count
   is named. It ships in three parts.
 
-  - **CG3a (done).** The semantic graph unrolls a loop that runs a small
-    constant number of times (`compiler/semunroll.fern`). Each copy of the
-    body reads the induction variable as a constant. A constant fold then
+  - **CG3a (done).** The semantic graph unrolls a small loop that runs a
+    constant number of times and whose body reads its counter
+    (`compiler/semunroll.fern`). Each copy of the body reads the induction
+    variable as a constant. A constant fold then
     lets `semthread` remove the branches of a lane index that an `@inline`
     method tests. Thus a lane loop `while (i < N)` costs the same as the
     lanes written out one by one.

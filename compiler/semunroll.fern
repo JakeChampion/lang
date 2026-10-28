@@ -15,10 +15,13 @@ function max_trips(): i32 {
 }
 
 function max_unrolled_insts(): i32 {
-  return 400;
+  return 64;
 }
 
 pub function unroll(f: ssasem.Func): Unrolled {
+  if (!has_loop_head(f.graph)) {
+    return Unrolled { f: f, loops: 0 };
+  }
   let cur: ssasem.Func = f;
   let loops: i32 = 0;
   while (loops < 8) {
@@ -88,6 +91,17 @@ function block_at(g: ssa.SFunc, id: i32): i32 {
   return 0 - 1;
 }
 
+// A block that a loop could branch back to: two predecessors, a phi first and
+// a conditional branch out.
+function has_loop_head(g: ssa.SFunc): boolean {
+  for b in g.blocks {
+    if (b.preds.len() == 2 && b.term.kind_tag == 3 && b.insts.len() > 0 && b.insts[0].kind_tag == 8) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function first_counted(f: ssasem.Func): i32 {
   let d: Defs = defs_of(f.graph);
   for bi in 0..f.graph.blocks.len() {
@@ -117,7 +131,28 @@ function counted_at(f: ssasem.Func, d: Defs, hi: i32): Counted {
   if (trips < 0 || (trips + 1) * h.insts.len() + trips * g.blocks[shape.body].insts.len() > max_unrolled_insts() || escapes(f, hi, shape.body)) {
     return no_loop();
   }
+  if (!reads_counter(g, d, c)) {
+    return no_loop();
+  }
   return Counted { ...c, trips: trips };
+}
+
+// A body that reads the induction variable only to step and test it gains
+// nothing from a constant in each copy, so its loop stays a loop.
+function reads_counter(g: ssa.SFunc, d: Defs, c: Counted): boolean {
+  let h: ssa.SBlock = g.blocks[c.head];
+  let step: i32 = 0 - 1;
+  for ins in h.insts {
+    if (ins.result == c.iv) {
+      step = ins.args[c.latch];
+    }
+  }
+  for ins in util.append_all(h.insts, g.blocks[c.body].insts) {
+    if (ins.result != h.term.cond && ins.result != step && ins.result != c.iv && util.index_of_i32(ins.args, c.iv) >= 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 // A header with two predecessors that branches either to the body or out of
@@ -329,16 +364,53 @@ function unrolled_at(f: ssasem.Func, hi: i32): ssasem.Func {
   }
   cp = header_pass(cp, h, c, incoming, c.trips, true);
   let head: ssa.SBlock = ssa.SBlock { ...h, insts: cp.insts, term: ssa.STerm { kind_tag: 2, cond: 0, target: c.exit, t: 0, f: 0, value: 0 } };
+  let finals: i32[] = final_values(cp, h, c.iv);
   let blocks: ssa.SBlock[] = [];
   for bi in 0..g.blocks.len() {
     if (bi == hi) {
       blocks = blocks.append(head);
     } else if (bi != c.body) {
-      blocks = blocks.append(g.blocks[bi]);
+      blocks = blocks.append(renamed_block(g.blocks[bi], finals));
     }
   }
+  let dbg: i32[] = [];
+  for v in cp.values.dbg_vals {
+    dbg = dbg.append(renamed(finals, v));
+  }
   let out: ssa.SFunc = ssa.SFunc { ...g, blocks: blocks, nvals: cp.nvals };
-  return ssasem.Func { ...cp.values, graph: ssa.SFunc { ...out, blocks: ssa.refreshed_preds(out) } };
+  return ssasem.Func { ...cp.values, dbg_vals: dbg, graph: ssa.SFunc { ...out, blocks: ssa.refreshed_preds(out) } };
+}
+
+// The value each header phi holds after the last pass, by phi id.
+function final_values(cp: Copy, h: ssa.SBlock, iv: i32): i32[] {
+  let finals: i32[] = util.minus_ones(cp.nvals);
+  for ins in h.insts {
+    if (ins.kind_tag == 8 && ins.result != iv) {
+      finals = finals.with(ins.result, mapped(cp, ins.result));
+    }
+  }
+  return finals;
+}
+
+function renamed(finals: i32[], v: i32): i32 {
+  if (v >= 0 && v < finals.len() && finals[v] >= 0) {
+    return finals[v];
+  }
+  return v;
+}
+
+// The block with each read of a header phi replaced by the phi's value after
+// the last pass, so no copy of an owned value is made.
+function renamed_block(b: ssa.SBlock, finals: i32[]): ssa.SBlock {
+  let insts: ssa.SInst[] = [];
+  for ins in b.insts {
+    let args: i32[] = [];
+    for a in ins.args {
+      args = args.append(renamed(finals, a));
+    }
+    insts = insts.append(ssa.SInst { ...ins, args: args });
+  }
+  return ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...b.term, cond: renamed(finals, b.term.cond), value: renamed(finals, b.term.value) } };
 }
 
 function known_constants(f: ssasem.Func, d: Defs): Copy {
@@ -398,8 +470,8 @@ function fresh(cp: Copy, like: i32): Copy {
 }
 
 // Binds a header phi for one pass through the loop. The induction variable is
-// a constant. On the last pass each phi keeps its own value, for the reads
-// after the loop.
+// a constant, and keeps its own id on the last pass for the reads after the
+// loop.
 function bound_phi(cp: Copy, phi: ssa.SInst, value: i32, iv: boolean, at: i32, last: boolean): Copy {
   if (iv) {
     let next: Copy = Copy { ...cp, map: cp.map.with(phi.result, 0 - 1) };
@@ -410,15 +482,7 @@ function bound_phi(cp: Copy, phi: ssa.SInst, value: i32, iv: boolean, at: i32, l
     }
     return emitted(next, ssa.SInst { kind_tag: 1, result: r, args: [], imm: at, str: "" }, true, at);
   }
-  if (!last) {
-    return Copy { ...cp, map: cp.map.with(phi.result, value) };
-  }
-  let k: boolean = is_marked(cp.known, value);
-  let kv: i32 = 0;
-  if (k) {
-    kv = cp.konst[value];
-  }
-  return emitted(Copy { ...cp, map: cp.map.with(phi.result, 0 - 1) }, ssa.SInst { kind_tag: 7, result: phi.result, args: [value], imm: 0, str: "" }, k, kv);
+  return Copy { ...cp, map: cp.map.with(phi.result, value) };
 }
 
 function emitted(cp: Copy, ins: ssa.SInst, known: boolean, value: i32): Copy {

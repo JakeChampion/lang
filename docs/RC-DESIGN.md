@@ -27,9 +27,10 @@ an earlier one.
 Before inlining, `semunroll.fern` replaces a counted loop with straight-line
 code. The loop must have a body of one block and an `i32` induction variable
 with a constant start, step and bound. It must run at most 16 times, and the
-copies must have at most 400 instructions. Each copy of the body reads the
-induction variable as a constant. A loop whose variable overflows stays a
-loop.
+copies must have at most 64 instructions. The body must read the induction
+variable for more than its step and its test, because each copy reads it as a
+constant. A loop whose variable overflows stays a loop. A read after the loop
+takes the last value of each phi directly, so an owned value is not copied.
 
 The seminline pass (`seminline.fern`) rewrites graphs before the plan: it
 inlines leaves, splits reads of known constructions into their parts, and

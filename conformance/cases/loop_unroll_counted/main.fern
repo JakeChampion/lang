@@ -1,5 +1,5 @@
-// Counted loops with constant bounds, which the compiler unrolls, and the
-// loops just past its limits, which it keeps.
+// Counted loops with constant bounds, which the compiler unrolls when the body
+// reads the counter, and the loops past its limits, which it keeps.
 
 function up(): i32 {
   let s: i32 = 0;
@@ -35,7 +35,7 @@ function not_equal(): i32 {
   let s: i32 = 1;
   let i: i32 = 0;
   while (i != 5) {
-    s = s * 2;
+    s = s * 2 + i;
     i = i + 1;
   }
   return s;
@@ -45,7 +45,7 @@ function no_trips(): i32 {
   let s: i32 = 7;
   let i: i32 = 3;
   while (i < 3) {
-    s = 0;
+    s = i;
     i = i + 1;
   }
   return s + i;
@@ -56,6 +56,16 @@ function sixteen(): i32 {
   let i: i32 = 0;
   while (i < 16) {
     s = s + i;
+    i = i + 1;
+  }
+  return s;
+}
+
+function sixteen_wide(): i32 {
+  let s: i32 = 0;
+  let i: i32 = 0;
+  while (i < 16) {
+    s = s + i * i + (s >> 3) - i / 2;
     i = i + 1;
   }
   return s;
@@ -88,7 +98,7 @@ function swapped(): i32 {
   while (i < 3) {
     let t: i32 = a;
     a = b;
-    b = t + b;
+    b = t + b + i;
     i = i + 1;
   }
   return a * 10 + b;
@@ -112,7 +122,7 @@ function words(): string {
   let s: string = "";
   let i: i32 = 0;
   while (i < 3) {
-    s = s + "ab";
+    s = s + "ab" + i.to_string();
     i = i + 1;
   }
   return s;
@@ -125,6 +135,7 @@ function main(): i32 {
   print(not_equal());
   print(no_trips());
   print(sixteen());
+  print(sixteen_wide());
   print(seventeen());
   print(wraps());
   print(swapped());
