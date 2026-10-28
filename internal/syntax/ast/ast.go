@@ -1916,9 +1916,12 @@ type GenericDecl interface {
 }
 
 type StructDecl struct {
-	P             Position
-	Name          string
-	TypeParams    []string
+	P          Position
+	Name       string
+	TypeParams []string
+	// ConstParams names the const parameters among TypeParams
+	// (`struct Ring[const N: i32, T]`).
+	ConstParams   []string
 	Fields        []Param
 	Public        bool
 	PackageScoped bool

@@ -2856,7 +2856,11 @@ function print_struct_decl(sd: parser.StructDecl, flines: parser.FieldLines[], f
       if (tpi > 0) {
         out = out + ", ";
       }
-      out = out + sd.type_params[tpi];
+      if (util.has_str(sd.const_params, sd.type_params[tpi])) {
+        out = out + print_tparam(sd.type_params[tpi], parser.CONST_BOUND);
+      } else {
+        out = out + sd.type_params[tpi];
+      }
       tpi = tpi + 1;
     }
     out = out + "]";
