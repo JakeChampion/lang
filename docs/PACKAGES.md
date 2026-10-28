@@ -225,11 +225,19 @@ no SAT solver, no conflict-explanation UX debt.
 [package]
 name = "app"
 index = "index.toml"    # the version source
+index_key = "ed25519:…" # optional: the key that signs index.toml.sig
 
 [dependencies]
 foo = "1.1.0"           # min version; MVS picks the exact one
 bar = { version = "1.0.0" }
 ```
+
+With `index_key`, `fern -resolve` verifies the detached Ed25519
+signature in `index.toml.sig` (128 hex digits over the index bytes)
+before it reads the index, and refuses a missing, malformed or
+non-matching signature. The key is `ed25519:` and 64 lowercase hex
+digits of the public key. `docs/security/PACKAGE-INTEGRITY.md` has
+the refusals and the signing command.
 
 The **version source** is a plain **index file** (no registry service —
 consistent with the shipped hash-addressing), mapping each package's
