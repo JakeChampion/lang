@@ -4,9 +4,9 @@ name: Fern image
 # runs (its path filter is the lane table's `fern-image` row) and cancels the
 # rest of the run when it goes red. `workflow_dispatch` runs it on its own.
 #
-# One job. The native half and the wasm half each build the compiler, install
-# the Python reference and run two to three minutes of tests. As two jobs
-# they paid two builds, two setups and two slots of the runner pool.
+# One job. The native half and the wasm half each build the compiler and
+# install the Python reference. As two jobs they paid two builds, two setups
+# and two slots of the runner pool. The tests take about 28 minutes.
 on:
   workflow_call:
   workflow_dispatch:
@@ -15,7 +15,7 @@ permissions:
 jobs:
   image:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-fern
