@@ -1,3 +1,6 @@
+# 2026-10-28: Exact reports from CI run 40630000183 at b706d4299 on PR #13718.
+# The six map measurements show mixed changes. All tolerances remain unchanged.
+# Evidence: docs/benchmarks/main-wide-machine-merge-2026-10-28/.
 # 2026-10-28: Exact reports from CI run 40624419024 at fa0eedfa5 on PR #13718.
 # Checker allocations and frees each decrease by 525401. All tolerances remain unchanged.
 # Evidence: docs/benchmarks/main-wide-decoder-merge-2026-10-28/.
@@ -163,16 +166,16 @@ profile/x86-64-linux/int_loop.safe.emit	250
 profile/x86-64-linux/int_loop.safe.ir	12000077
 profile/x86-64-linux/map_string.diagnostic.bytes	77720
 profile/x86-64-linux/map_string.diagnostic.emit	7363
-profile/x86-64-linux/map_string.diagnostic.ir	63852617
+profile/x86-64-linux/map_string.diagnostic.ir	63801607
 profile/x86-64-linux/map_string.hardened.bytes	33952
 profile/x86-64-linux/map_string.hardened.emit	7019
-profile/x86-64-linux/map_string.hardened.ir	61185265
+profile/x86-64-linux/map_string.hardened.ir	61107437
 profile/x86-64-linux/map_string.minimal.bytes	28144
 profile/x86-64-linux/map_string.minimal.emit	6204
-profile/x86-64-linux/map_string.minimal.ir	61235593
+profile/x86-64-linux/map_string.minimal.ir	61038909
 profile/x86-64-linux/map_string.safe.bytes	28144
 profile/x86-64-linux/map_string.safe.emit	6738
-profile/x86-64-linux/map_string.safe.ir	58546430
+profile/x86-64-linux/map_string.safe.ir	58589961
 profile/x86-64-linux/startup.diagnostic.bytes	5832
 profile/x86-64-linux/startup.diagnostic.emit	437
 profile/x86-64-linux/startup.diagnostic.ir	192
