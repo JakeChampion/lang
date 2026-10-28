@@ -31,8 +31,8 @@ var pathIRCases = []stdlibConcatCase{
 }
 
 var mathIRCases = []stdlibConcatCase{
-	{"range-sum", `let a = range(0, 10); let s = 0; for x in a { s = s + x; } return s - 35;`},
-	{"range-step-len", `return range_step(0, 20, 5).len();`},
+	{"pack-rgb-mid", `return (pack_rgb(1, 2, 3) >> 8) & 255;`},
+	{"lerp-int", `return lerp(0.0, 10.0, 0.5) as i32;`},
 	{"pack-rgb-low", `return pack_rgb(255, 128, 64) & 255;`},
 	{"i32-max", `return i32_max() - 2147483527;`},
 }

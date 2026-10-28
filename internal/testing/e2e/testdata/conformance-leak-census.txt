@@ -423,6 +423,8 @@ io_error_variant_beside_a_struct_of_its_name         0
 io_error_variant_beside_an_enum_of_its_name          0
 io_void_results_compose                              0
 iter_build_consume                                   0
+iter_range_collect                                   0
+iter_step_by                                         0
 iterator_nested_tuple_adapter                        0
 json_array_field                                     0
 json_arrays_and_options                              0
@@ -508,7 +510,6 @@ match_returning_cast                                 0
 match_some                                           0
 match_struct_pattern                                 0
 match_wildcard                                       0
-math_range                                           0
 method_type_arg_names_the_method                     0
 method_written_type_arg_result                       0
 minimum_i32_crc_seed                                0

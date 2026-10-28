@@ -88,8 +88,8 @@ function main(): i32 {
     let xs: i32[] = [];
     let x: i32 = 0;
     while (x < 40) { xs = xs.append(x); x = x + 1; }
-    let p1: i32[] = rand.shuffle_seeded(2024 as i64, xs);
-    let p2: i32[] = rand.shuffle_seeded(2024 as i64, xs);
+    let p1: i32[] = rand.shuffle_seeded(xs, 2024 as i64);
+    let p2: i32[] = rand.shuffle_seeded(xs, 2024 as i64);
     if (p1.len() != 40) { return 13; }
     let fixed: i32 = 0;
     let q: i32 = 0;
@@ -117,7 +117,7 @@ function main(): i32 {
         o = o + 1;
     }
     // A different seed gives a different permutation.
-    let p3: i32[] = rand.shuffle_seeded(2025 as i64, xs);
+    let p3: i32[] = rand.shuffle_seeded(xs, 2025 as i64);
     let identical: boolean = true;
     let w2: i32 = 0;
     while (w2 < 40) {
@@ -127,19 +127,19 @@ function main(): i32 {
     if (identical) { return 18; }
     // Empty and single-element inputs.
     let none: i32[] = [];
-    if (rand.shuffle_seeded(1 as i64, none).len() != 0) { return 19; }
+    if (rand.shuffle_seeded(none, 1 as i64).len() != 0) { return 19; }
     let one: i32[] = [9];
-    let so: i32[] = rand.shuffle_seeded(1 as i64, one);
+    let so: i32[] = rand.shuffle_seeded(one, 1 as i64);
     if (so.len() != 1 || so[0] != 9) { return 20; }
 
     // choice_seeded / sample_seeded
-    if (rand.choice_seeded(5 as i64, xs).is_none()) { return 21; }
-    if (rand.choice_seeded(5 as i64, none).is_some()) { return 22; }
-    if (rand.sample_seeded(5 as i64, xs, 7).len() != 7) { return 23; }
-    if (rand.sample_seeded(5 as i64, xs, 0).len() != 0) { return 24; }
-    if (rand.sample_seeded(5 as i64, xs, 100).len() != 40) { return 25; }
+    if (rand.choice_seeded(xs, 5 as i64).is_none()) { return 21; }
+    if (rand.choice_seeded(none, 5 as i64).is_some()) { return 22; }
+    if (rand.sample_seeded(xs, 7, 5 as i64).len() != 7) { return 23; }
+    if (rand.sample_seeded(xs, 0, 5 as i64).len() != 0) { return 24; }
+    if (rand.sample_seeded(xs, 100, 5 as i64).len() != 40) { return 25; }
     // sample_seeded draws WITHOUT replacement: 7 distinct elements.
-    let smp: i32[] = rand.sample_seeded(11 as i64, xs, 7);
+    let smp: i32[] = rand.sample_seeded(xs, 7, 11 as i64);
     let dup: i32[] = [];
     let d0: i32 = 0;
     while (d0 < 40) { dup = dup.append(0); d0 = d0 + 1; }

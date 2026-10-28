@@ -22,8 +22,8 @@ func TestSelfHostLocalShadowsImportedDecl(t *testing.T) {
 
 	prog := filepath.Join(t.TempDir(), "shadow_prog.fern")
 	src := "" +
-		"import \"std/math\";\n" +
-		"function main(): i32 { return math.random_int(0, 1); }\n"
+		"import \"std/rand\";\n" +
+		"function main(): i32 { return rand.between(0, 1); }\n"
 	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
 		t.Fatalf("write prog: %v", err)
 	}
@@ -37,7 +37,7 @@ func TestSelfHostLocalShadowsImportedDecl(t *testing.T) {
 		c := exec.Command(bin)
 		c.Run()
 		if code := c.ProcessState.ExitCode(); code != 0 {
-			t.Fatalf("random_int(0,1) returned %d, want 0 (local `range` mis-resolved to range() function)", code)
+			t.Fatalf("rand.between(0,1) returned %d, want 0 (local `range` mis-resolved to range() function)", code)
 		}
 	}
 }
