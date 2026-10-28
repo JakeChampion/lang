@@ -1733,7 +1733,7 @@ function takes_past_holds(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
     w = w + 1;
   }
   deps = through_takes(parents, deps, no_takes(f.graph.nvals), held, __alloc_bool(f.graph.nvals));
-  let flow: ssalive.Flow = ssadeps.analyze(f.graph, deps);
+  let flow: ssalive.Flow = ssadeps.analyze_checked(f.graph, deps, a.facts);
   if (!flow.ok) {
     return none;
   }
@@ -1871,7 +1871,7 @@ function units_analysis(f: ssasem.Func, a: ssasem.Analysis, units: Units): ssase
   if (!any) {
     return ssasem.Analysis { ...a, parents: units.parents, dependencies: units.deps, anchored: ssasem.anchored_of(units.deps, f.graph.nvals) };
   }
-  let flow: ssalive.Flow = ssadeps.analyze(f.graph, units.deps);
+  let flow: ssalive.Flow = ssadeps.analyze_checked(f.graph, units.deps, a.facts);
   return ssasem.Analysis { ...a, ok: flow.ok, why: flow.why, parents: units.parents, dependencies: units.deps, flow: flow, anchored: ssasem.anchored_of(units.deps, f.graph.nvals) };
 }
 
