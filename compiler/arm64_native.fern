@@ -195,7 +195,7 @@ pub function arm64_rec_cmp_shifted(n: string, imm: i32): i64 {
 }
 
 pub function arm64_rec_unscaled(load: boolean, rt: string, base: string, off: i32): i64 {
-  let t: i32 = arm64_rec_gpr(rt);
+  let t: i32 = arm64_rec_rt(rt);
   let rn: i32 = arm64_rec_base(base);
   if (t < 0 || rn < 0 || off < 0 - 256 || off > 255) {
     return 0 - 1;
@@ -206,8 +206,16 @@ pub function arm64_rec_unscaled(load: boolean, rt: string, base: string, off: i3
   return arm64_unscaled_word(0xf8000000, t, rn, off, rt[0] == b'w');
 }
 
+// A load or store's Rt of 31 is the zero register.
+function arm64_rec_rt(tok: string): i32 {
+  if (tok == "xzr" || tok == "wzr") {
+    return 31;
+  }
+  return arm64_rec_gpr(tok);
+}
+
 pub function arm64_rec_ldst(load: boolean, rt: string, base: string, off: i32): i64 {
-  let t: i32 = arm64_rec_gpr(rt);
+  let t: i32 = arm64_rec_rt(rt);
   let rn: i32 = arm64_rec_base(base);
   let w: boolean = t >= 0 && rt[0] == b'w';
   let size: i32 = 8;
