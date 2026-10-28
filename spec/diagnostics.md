@@ -168,7 +168,7 @@ language does not have. It is deleted.
 | `E093` | a `const` initializer is not a constant expression | `const_initialiser_not_a_constant` |
 | `E094` | an embedded asset the compiler cannot resolve | — |
 | `E095` | an unsafe obligation escapes its boundary | `diag_e095` |
-| `E096` | a builtin reserved for the standard library | `diag_e096` |
+| `E097` | a builtin reserved for the standard library | `diag_e097` |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |

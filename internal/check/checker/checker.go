@@ -13254,7 +13254,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 		}
 		if wrapper, reserved := StdlibOnlyBuiltins[n.Name]; reserved && !c.inStdlibContext() {
-			c.errfCode(n.P, "E096", "builtin %q is reserved for the standard library; call %s instead", n.Name, wrapper)
+			c.errfCode(n.P, "E097", "builtin %q is reserved for the standard library; call %s instead", n.Name, wrapper)
 		}
 		if c.unsafeFuncs[n.Name] && c.callee != ast.Expr(n) && c.funcVisibleHere(n.Name) {
 			c.errfCode(n.P, "E095", "unsafe function %q cannot be used as a value; a function value carries no unsafe obligation", demangle(n.Name))

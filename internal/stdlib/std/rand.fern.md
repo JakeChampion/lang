@@ -4,7 +4,7 @@ This module provides random integers, random array operations, and a seeded PCG3
 
 ## Model
 
-`next_i32` and `bytes` read the operating system's entropy source; a program reaches that source only through them, since the `random_i32` and `random_bytes` builtins are reserved for the standard library (E096). Array helpers select, sample, or shuffle values. Seeded variants use a PCG32 state so callers can reproduce a sequence.
+`next_i32` and `bytes` read the operating system's entropy source; a program reaches that source only through them, since the `random_i32` and `random_bytes` builtins are reserved for the standard library (E097). Array helpers select, sample, or shuffle values. Seeded variants use a PCG32 state so callers can reproduce a sequence.
 
 ## Contracts
 

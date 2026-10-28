@@ -9734,7 +9734,7 @@ function stdlib_only_note(acc: UnsafeWalk, name: string, line: i32, col: i32): U
   if (wrapper.len() == 0 || acc.scope.fn_stdlib || acc.scope.sigs.raw_allowed || acc.scope.defines(name)) {
     return acc;
   }
-  return unsafe_note(acc, dg_at("E096", "builtin \"" + name + "\" is reserved for the standard library; call " + wrapper + " instead", line, col));
+  return unsafe_note(acc, dg_at("E097", "builtin \"" + name + "\" is reserved for the standard library; call " + wrapper + " instead", line, col));
 }
 
 // The raw builtins that forge an address, change a count or a length, or call
