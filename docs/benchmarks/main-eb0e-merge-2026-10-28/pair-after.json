@@ -1,0 +1,20 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^TestSelfHostPairReturn$",
+    "-count=1",
+    "-timeout",
+    "20m",
+    "-json"
+  ],
+  "exit": 0,
+  "seconds": 30.82894436600327,
+  "started_at": "2026-10-28T07:36:46.878123+00:00",
+  "source_sha256": "f721129155bd7ac36ed715703072bf8cb9f6c812f22d6a62455f919fbb4fffe5",
+  "passes": 37,
+  "failures": [],
+  "skips": []
+}

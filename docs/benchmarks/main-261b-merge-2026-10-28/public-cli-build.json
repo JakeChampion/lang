@@ -1,0 +1,12 @@
+{
+  "command": [
+    "go",
+    "build",
+    "-o",
+    "/workspace/lang-issue-work/perf-4412/main-261b-merge/fern-oracle",
+    "./cmd/fern"
+  ],
+  "exit": 0,
+  "seconds": 0.9805293059980613,
+  "launcher_sha256": "922bca6d2c9fc8439d6956445c33f048885ed19229ae45dffca77c13c70e89e3"
+}

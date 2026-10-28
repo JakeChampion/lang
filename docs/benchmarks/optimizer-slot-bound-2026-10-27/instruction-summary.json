@@ -1,0 +1,10 @@
+{
+  "baseline_ir": 25719653483,
+  "candidate_ir": 25261399930,
+  "delta": -458253553,
+  "reduction_percent": 1.7817252215427182,
+  "baseline_max_slot_scans": 17152,
+  "baseline_max_slot_scan_ir": 515372921,
+  "candidate_max_slot_scans": 9199,
+  "candidate_max_slot_scan_ir": 56940213
+}

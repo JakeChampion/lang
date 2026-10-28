@@ -1,0 +1,202 @@
+[
+  {
+    "repeat": 0,
+    "version": "baseline",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/baseline-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/dev/null",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 6.288600133999353,
+    "user_seconds": 6.161431,
+    "system_seconds": 0.12519600000000008
+  },
+  {
+    "repeat": 0,
+    "version": "candidate",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/dev/null",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 6.119428084999527,
+    "user_seconds": 6.024566999999998,
+    "system_seconds": 0.09326199999999996
+  },
+  {
+    "repeat": 1,
+    "version": "candidate",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/dev/null",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 5.935311463000289,
+    "user_seconds": 5.767792,
+    "system_seconds": 0.16498199999999996
+  },
+  {
+    "repeat": 1,
+    "version": "baseline",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/baseline-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/dev/null",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 5.719393278000098,
+    "user_seconds": 5.558424000000002,
+    "system_seconds": 0.15808
+  },
+  {
+    "repeat": 2,
+    "version": "baseline",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/baseline-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/dev/null",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 5.75764203899962,
+    "user_seconds": 5.5913539999999955,
+    "system_seconds": 0.16385699999999992
+  },
+  {
+    "repeat": 2,
+    "version": "candidate",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/dev/null",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 5.778196682000271,
+    "user_seconds": 5.626841000000006,
+    "system_seconds": 0.14883000000000024
+  },
+  {
+    "repeat": 3,
+    "version": "candidate",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/dev/null",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 5.680461928000113,
+    "user_seconds": 5.546899999999994,
+    "system_seconds": 0.13169299999999984
+  },
+  {
+    "repeat": 3,
+    "version": "baseline",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/baseline-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/dev/null",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 5.9997712300000785,
+    "user_seconds": 5.842872999999997,
+    "system_seconds": 0.14920599999999995
+  },
+  {
+    "repeat": 4,
+    "version": "baseline",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/baseline-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/dev/null",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 5.90920801700031,
+    "user_seconds": 5.781955000000011,
+    "system_seconds": 0.12472400000000006
+  },
+  {
+    "repeat": 4,
+    "version": "candidate",
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/candidate-stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/dev/null",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 5.752779018000183,
+    "user_seconds": 5.622591999999997,
+    "system_seconds": 0.12594700000000003
+  }
+]

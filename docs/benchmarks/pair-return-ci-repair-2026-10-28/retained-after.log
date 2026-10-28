@@ -1,0 +1,42 @@
+=== RUN   TestSelfHostRetainedNativeBodies
+=== RUN   TestSelfHostRetainedNativeBodies/ssaretained_run/arm64-linux
+=== RUN   TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux
+=== RUN   TestSelfHostRetainedNativeBodies/ssaretained_run/wasm32-wasi
+=== RUN   TestSelfHostRetainedNativeBodies/ssaretainedmachines_run/arm64-linux
+    self_host_ssa_retained_test.go:19: ssaretainedmachines_run exited 180: leakcheck: allocs=5190704 frees=5190644 live_bytes=26048 from=exit
+        fern-sanitizer: leak 26048 bytes in 60 blocks
+=== RUN   TestSelfHostRetainedNativeBodies/ssaretainedmachines_run/x86-64-linux
+    self_host_ssa_retained_test.go:19: ssaretainedmachines_run exited 180: leakcheck: allocs=5191355 frees=5191295 live_bytes=26048 from=exit
+        fern-sanitizer: leak 26048 bytes in 60 blocks
+=== RUN   TestSelfHostRetainedNativeBodies/ssaretainedmachines_run/wasm32-wasi
+    self_host_ssa_retained_test.go:19: ssaretainedmachines_run exited 1: leakcheck: allocs=8774591 frees=8774531 live_bytes=25024 from=exit
+        fern-sanitizer: leak 25024 bytes in 60 blocks
+        Error: failed to run main module `/tmp/TestSelfHostRetainedNativeBodiesssaretainedmachines_runwasm32-1803787931/001/out.wat`
+        
+        Caused by:
+            0: failed to invoke command default
+            1: error while executing at wasm backtrace:
+            0: 0x62909f - <unknown>!__fern_proc_exit
+            1:  0x33320 - <unknown>!ssalargepushisas__require
+            2:  0x336a6 - <unknown>!ssalargepushisas__run
+            3: 0x5b77f3 - <unknown>!main
+            4: 0x6290a6 - <unknown>!__fern_main_reporting
+            5: 0x6290b3 - <unknown>!__fern_start
+            2: exit with invalid exit status outside of [0..126)
+        
+=== RUN   TestSelfHostRetainedNativeBodies/ssaallocationguards_run/arm64-linux
+=== RUN   TestSelfHostRetainedNativeBodies/ssaallocationguards_run/x86-64-linux
+=== RUN   TestSelfHostRetainedNativeBodies/ssaallocationguards_run/wasm32-wasi
+--- FAIL: TestSelfHostRetainedNativeBodies (447.30s)
+    --- PASS: TestSelfHostRetainedNativeBodies/ssaretained_run/arm64-linux (97.45s)
+    --- PASS: TestSelfHostRetainedNativeBodies/ssaretained_run/x86-64-linux (50.84s)
+    --- PASS: TestSelfHostRetainedNativeBodies/ssaretained_run/wasm32-wasi (65.43s)
+    --- FAIL: TestSelfHostRetainedNativeBodies/ssaretainedmachines_run/arm64-linux (38.89s)
+    --- FAIL: TestSelfHostRetainedNativeBodies/ssaretainedmachines_run/x86-64-linux (34.89s)
+    --- FAIL: TestSelfHostRetainedNativeBodies/ssaretainedmachines_run/wasm32-wasi (51.52s)
+    --- PASS: TestSelfHostRetainedNativeBodies/ssaallocationguards_run/arm64-linux (33.32s)
+    --- PASS: TestSelfHostRetainedNativeBodies/ssaallocationguards_run/x86-64-linux (30.47s)
+    --- PASS: TestSelfHostRetainedNativeBodies/ssaallocationguards_run/wasm32-wasi (43.18s)
+FAIL
+FAIL	github.com/jakechampion/lang/internal/testing/e2ecompiler	447.325s
+FAIL

@@ -1,0 +1,44 @@
+[
+  {
+    "file": ".github/perf-baseline.txt",
+    "key": "x86_64/map_string.ir",
+    "old": 58342774,
+    "measured": 58418402,
+    "delta_percent": 0.12962702116289498
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "key": "aarch64/map_string.ir",
+    "old": 59115995,
+    "measured": 59323785,
+    "delta_percent": 0.35149539477429076
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "key": "profile/x86-64-linux/map_string.diagnostic.ir",
+    "old": 63852617,
+    "measured": 63801607,
+    "delta_percent": -0.07988709374276703
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "key": "profile/x86-64-linux/map_string.hardened.ir",
+    "old": 61185265,
+    "measured": 61107437,
+    "delta_percent": -0.1272005604617386
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "key": "profile/x86-64-linux/map_string.minimal.ir",
+    "old": 61235593,
+    "measured": 61038909,
+    "delta_percent": -0.3211922843631154
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "key": "profile/x86-64-linux/map_string.safe.ir",
+    "old": 58546430,
+    "measured": 58589961,
+    "delta_percent": 0.07435295371553825
+  }
+]

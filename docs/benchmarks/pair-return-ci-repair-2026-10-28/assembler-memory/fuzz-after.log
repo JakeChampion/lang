@@ -1,0 +1,15 @@
+fuzz: elapsed: 0s, gathering baseline coverage: 0/8 completed
+fuzz: elapsed: 3s, gathering baseline coverage: 0/8 completed
+fuzz: elapsed: 3s, gathering baseline coverage: 8/8 completed, now fuzzing with 1 workers
+fuzz: elapsed: 6s, execs: 1408 (470/sec), new interesting: 2 (total: 10)
+fuzz: elapsed: 9s, execs: 3279 (623/sec), new interesting: 3 (total: 11)
+fuzz: elapsed: 12s, execs: 5466 (729/sec), new interesting: 4 (total: 12)
+fuzz: elapsed: 15s, execs: 7299 (611/sec), new interesting: 4 (total: 12)
+fuzz: elapsed: 18s, execs: 9698 (800/sec), new interesting: 4 (total: 12)
+fuzz: elapsed: 21s, execs: 11852 (718/sec), new interesting: 4 (total: 12)
+fuzz: elapsed: 24s, execs: 14014 (721/sec), new interesting: 4 (total: 12)
+fuzz: elapsed: 27s, execs: 16066 (684/sec), new interesting: 4 (total: 12)
+fuzz: elapsed: 30s, execs: 18250 (728/sec), new interesting: 4 (total: 12)
+fuzz: elapsed: 30s, execs: 18250 (0/sec), new interesting: 4 (total: 12)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	67.294s

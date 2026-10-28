@@ -1,0 +1,28 @@
+=== RUN   TestSelfHostFeatureCensus
+    self_host_feature_census_test.go:282: self-host feature census over 349 modules, literals stripped:
+    self_host_feature_census_test.go:282:   generic functions              16  in 2 modules
+    self_host_feature_census_test.go:282:   generic structs                 0  in 0 modules
+    self_host_feature_census_test.go:282:   arrow lambdas                  16  in 5 modules
+    self_host_feature_census_test.go:282:   nested named fns               87  in 7 modules
+    self_host_feature_census_test.go:282:   for..in loops                4696  in 265 modules
+    self_host_feature_census_test.go:282:   try op                          0  in 0 modules
+    self_host_feature_census_test.go:282:   Map type spellings             10  in 6 modules
+    self_host_feature_census_test.go:282:   astwalk call sites            334  in 30 modules
+    self_host_feature_census_test.go:282:   wildcard match arms          1378  in 45 modules
+    self_host_feature_census_test.go:282:   arrow tokens                 6801  in 114 modules
+    self_host_feature_census_test.go:282:   while loops                  4918  in 242 modules
+    self_host_feature_census_test.go:282:   as casts                     4679  in 206 modules
+    self_host_feature_census_test.go:282:   minus-one sentinel returns    709  in 73 modules
+    self_host_feature_census_test.go:282:   method decls                  169  in 10 modules
+    self_host_feature_census_test.go:282:   annotated let decls         28290  in 279 modules
+    self_host_feature_census_test.go:282:   inferred let decls           4446  in 196 modules
+    self_host_feature_census_test.go:282:   increment by one             5200  in 284 modules
+--- PASS: TestSelfHostFeatureCensus (0.46s)
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (1.90s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	2.376s

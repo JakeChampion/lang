@@ -1,0 +1,20 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^(TestSelfHostNetAddr|TestSelfHostDnsPair|TestSelfHostDnsNat64|TestSelfHostForwardedProducerReclaim(IRX86_64|WasmIR))$",
+    "-count=1",
+    "-timeout",
+    "20m",
+    "-json"
+  ],
+  "exit": 0,
+  "seconds": 181.69538633900083,
+  "started_at": "2026-10-28T08:13:44.809875+00:00",
+  "source_sha256": "112f0f09385e735c7a32f4529f969630a80c036280c7f7c609e10a96c59fcc46",
+  "passes": 11,
+  "failures": [],
+  "skips": []
+}

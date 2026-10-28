@@ -1,0 +1,35 @@
+[
+  {
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/record-pair-candidate/stage3",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/zero-guard-candidate/stage2",
+      "/workspace/lang-issue-work/perf-4412/zero-guard-candidate/compiler/fern.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "producer_sha256": "64f876ff80e4db91d1eb614605a7fe567bbad13ecb061dce204defb5c0b975a0",
+    "exit": 0,
+    "elapsed_seconds": 42.134822101999816,
+    "output_sha256": "b5f3a8529bdd5e6c3b1169b136c42511291536437a0d1bbe9056189228156d07"
+  },
+  {
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/record-pair-candidate/stage3",
+      "-O",
+      "-g",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/zero-guard-candidate/stage2-g",
+      "/workspace/lang-issue-work/perf-4412/zero-guard-candidate/compiler/fern.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "producer_sha256": "64f876ff80e4db91d1eb614605a7fe567bbad13ecb061dce204defb5c0b975a0",
+    "exit": 0,
+    "elapsed_seconds": 37.40339912200034,
+    "output_sha256": "72266adbf7e6f7757bee59bbd56e554ba87b026a915c66c342992761aa3d9faa"
+  }
+]

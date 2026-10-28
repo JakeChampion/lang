@@ -1,0 +1,1538 @@
+[
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/array_append.text",
+    "before": 1127,
+    "after": 1139
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/array_index.text",
+    "before": 1128,
+    "after": 1140
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/array_scale_f64.text",
+    "before": 1254,
+    "after": 1266
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/array_with.text",
+    "before": 1283,
+    "after": 1295
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/ascii_scan.text",
+    "before": 1332,
+    "after": 1344
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/byte_copy_append.text",
+    "before": 1233,
+    "after": 1245
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/byte_copy_with.text",
+    "before": 1190,
+    "after": 1202
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/closure_call.text",
+    "before": 972,
+    "after": 973
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/deflate_decode.text",
+    "before": 13313,
+    "after": 13325
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/deflate_encode.text",
+    "before": 7360,
+    "after": 7372
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/enum_match.text",
+    "before": 1098,
+    "after": 1099
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/http_hello.text",
+    "before": 17480,
+    "after": 17492
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/map_int.text",
+    "before": 5781,
+    "after": 5793
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/map_probe_chain.text",
+    "before": 5785,
+    "after": 5797
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/map_string.text",
+    "before": 6726,
+    "after": 6738
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/map_string.ir",
+    "before": 58464730,
+    "after": 58471578
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/ordmap_insert.text",
+    "before": 5556,
+    "after": 5568
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/pmap_insert.text",
+    "before": 2770,
+    "after": 2782
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/pvec_with.text",
+    "before": 2938,
+    "after": 2950
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/record_update.text",
+    "before": 1374,
+    "after": 1386
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/sort_inplace.text",
+    "before": 1481,
+    "after": 1493
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/sort_ints.text",
+    "before": 1959,
+    "after": 1971
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/sort_strings.text",
+    "before": 3221,
+    "after": 3233
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/string_build.text",
+    "before": 1982,
+    "after": 1994
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/string_count_byte.text",
+    "before": 1223,
+    "after": 1235
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/string_find_byte.text",
+    "before": 1578,
+    "after": 1590
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/string_rfind_byte.text",
+    "before": 1749,
+    "after": 1761
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/string_scan.text",
+    "before": 2230,
+    "after": 2242
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/string_slice.text",
+    "before": 894,
+    "after": 895
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/struct_drop.text",
+    "before": 2404,
+    "after": 2416
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/tokenize.text",
+    "before": 1186,
+    "after": 1198
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/utf8_ingest_unchecked.text",
+    "before": 8325,
+    "after": 8337
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/utf8_ingest_validated.text",
+    "before": 8931,
+    "after": 8943
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/array_append.text",
+    "before": 1353,
+    "after": 1354
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/array_index.text",
+    "before": 1351,
+    "after": 1352
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/array_scale_f64.text",
+    "before": 1445,
+    "after": 1446
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/array_with.text",
+    "before": 1507,
+    "after": 1508
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/ascii_scan.text",
+    "before": 1644,
+    "after": 1645
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/byte_copy_append.text",
+    "before": 1477,
+    "after": 1478
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/byte_copy_with.text",
+    "before": 1423,
+    "after": 1424
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/closure_call.text",
+    "before": 1195,
+    "after": 1196
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/deflate_decode.ir",
+    "before": 36428245,
+    "after": 36429262
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/deflate_decode.text",
+    "before": 14202,
+    "after": 14230
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/deflate_encode.ir",
+    "before": 44105199,
+    "after": 44105319
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/deflate_encode.text",
+    "before": 8007,
+    "after": 8033
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/enum_match.text",
+    "before": 1315,
+    "after": 1316
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/http_hello.text",
+    "before": 18600,
+    "after": 18632
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/http_hello.ir",
+    "before": 25712697,
+    "after": 25728698
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/map_int.text",
+    "before": 6056,
+    "after": 6074
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/map_probe_chain.text",
+    "before": 6066,
+    "after": 6084
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/map_string.text",
+    "before": 7157,
+    "after": 7175
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/map_string.ir",
+    "before": 59358954,
+    "after": 59247734
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/ordmap_insert.text",
+    "before": 5931,
+    "after": 5953
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/ordmap_insert.ir",
+    "before": 98373462,
+    "after": 98457462
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/pmap_insert.text",
+    "before": 3045,
+    "after": 3063
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/pvec_with.text",
+    "before": 3187,
+    "after": 3205
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/record_update.text",
+    "before": 1607,
+    "after": 1608
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/sort_inplace.text",
+    "before": 1690,
+    "after": 1691
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/sort_ints.text",
+    "before": 2166,
+    "after": 2184
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/sort_strings.text",
+    "before": 3577,
+    "after": 3597
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/sort_strings.ir",
+    "before": 105485795,
+    "after": 105486307
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/string_build.text",
+    "before": 2346,
+    "after": 2364
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/string_count_byte.text",
+    "before": 1489,
+    "after": 1490
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/string_find_byte.text",
+    "before": 1880,
+    "after": 1898
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/string_rfind_byte.text",
+    "before": 2003,
+    "after": 2021
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/string_scan.text",
+    "before": 2550,
+    "after": 2568
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/string_slice.text",
+    "before": 1131,
+    "after": 1132
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/struct_drop.text",
+    "before": 2655,
+    "after": 2673
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/tokenize.text",
+    "before": 1387,
+    "after": 1388
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/utf8_ingest_unchecked.text",
+    "before": 8764,
+    "after": 8784
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/utf8_ingest_validated.text",
+    "before": 9328,
+    "after": 9348
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/perceus_cfold.text",
+    "before": 1878,
+    "after": 1890
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/perceus_deriv.text",
+    "before": 2659,
+    "after": 2671
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/perceus_nqueens.text",
+    "before": 1543,
+    "after": 1555
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/perceus_rbtree.text",
+    "before": 2861,
+    "after": 2873
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "x86_64/perceus_rbtree_ck.text",
+    "before": 3111,
+    "after": 3123
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/perceus_cfold.text",
+    "before": 2134,
+    "after": 2152
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/perceus_deriv.text",
+    "before": 2964,
+    "after": 2982
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/perceus_nqueens.text",
+    "before": 1787,
+    "after": 1805
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/perceus_rbtree.text",
+    "before": 3140,
+    "after": 3162
+  },
+  {
+    "file": ".github/perf-baseline.txt",
+    "metric": "aarch64/perceus_rbtree_ck.text",
+    "before": 3377,
+    "after": 3399
+  },
+  {
+    "file": ".github/alloc-baseline.txt",
+    "metric": "x86_64/checker.allocs",
+    "before": 36901932,
+    "after": 34278531
+  },
+  {
+    "file": ".github/alloc-baseline.txt",
+    "metric": "x86_64/checker.frees",
+    "before": 36901932,
+    "after": 34278531
+  },
+  {
+    "file": ".github/cliff-baseline.txt",
+    "metric": "x86_64/checker.cliff_bytes",
+    "before": 39645312,
+    "after": 39674024
+  },
+  {
+    "file": ".github/cliff-baseline.txt",
+    "metric": "x86_64/checker.cliff_count",
+    "before": 371072,
+    "after": 371241
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/array_append.emit",
+    "before": 1353,
+    "after": 1354
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/array_index.emit",
+    "before": 1351,
+    "after": 1352
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/array_scale_f64.emit",
+    "before": 1445,
+    "after": 1446
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/array_with.emit",
+    "before": 1507,
+    "after": 1508
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/ascii_scan.emit",
+    "before": 1644,
+    "after": 1645
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/byte_copy_append.emit",
+    "before": 1477,
+    "after": 1478
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/byte_copy_with.emit",
+    "before": 1423,
+    "after": 1424
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/closure_call.emit",
+    "before": 1195,
+    "after": 1196
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/deflate_decode.emit",
+    "before": 14114,
+    "after": 14230
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/deflate_encode.emit",
+    "before": 8024,
+    "after": 8033
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/enum_match.emit",
+    "before": 1315,
+    "after": 1316
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/http_hello.emit",
+    "before": 18516,
+    "after": 18632
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/map_int.emit",
+    "before": 6073,
+    "after": 6074
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/map_probe_chain.emit",
+    "before": 6083,
+    "after": 6084
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/map_string.emit",
+    "before": 7174,
+    "after": 7175
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/ordmap_insert.emit",
+    "before": 5948,
+    "after": 5953
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/pmap_insert.emit",
+    "before": 3062,
+    "after": 3063
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/pvec_with.emit",
+    "before": 3204,
+    "after": 3205
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/record_update.emit",
+    "before": 1607,
+    "after": 1608
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/sort_inplace.emit",
+    "before": 1690,
+    "after": 1691
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/sort_ints.emit",
+    "before": 2183,
+    "after": 2184
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/sort_strings.emit",
+    "before": 3594,
+    "after": 3597
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/string_build.emit",
+    "before": 2363,
+    "after": 2364
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/string_count_byte.emit",
+    "before": 1489,
+    "after": 1490
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/string_find_byte.emit",
+    "before": 1897,
+    "after": 1898
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/string_rfind_byte.emit",
+    "before": 2020,
+    "after": 2021
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/string_scan.emit",
+    "before": 2567,
+    "after": 2568
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/string_slice.emit",
+    "before": 1131,
+    "after": 1132
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/struct_drop.emit",
+    "before": 2672,
+    "after": 2673
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/tokenize.emit",
+    "before": 1387,
+    "after": 1388
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/utf8_ingest_unchecked.emit",
+    "before": 8781,
+    "after": 8784
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/utf8_ingest_validated.emit",
+    "before": 9345,
+    "after": 9348
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/ascii_scan.emit",
+    "before": 1199,
+    "after": 1205
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/deflate_decode.emit",
+    "before": 19942,
+    "after": 19957
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/deflate_encode.emit",
+    "before": 11482,
+    "after": 11497
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/enum_match.emit",
+    "before": 704,
+    "after": 710
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/http_hello.emit",
+    "before": 20768,
+    "after": 20774
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/map_int.emit",
+    "before": 7177,
+    "after": 7183
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/map_probe_chain.emit",
+    "before": 7202,
+    "after": 7208
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/map_string.emit",
+    "before": 7999,
+    "after": 8005
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/ordmap_insert.emit",
+    "before": 6736,
+    "after": 6742
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/pmap_insert.emit",
+    "before": 3128,
+    "after": 3134
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/pvec_with.emit",
+    "before": 2795,
+    "after": 2801
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/sort_inplace.emit",
+    "before": 1013,
+    "after": 1019
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/sort_ints.emit",
+    "before": 2112,
+    "after": 2118
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/sort_strings.emit",
+    "before": 3375,
+    "after": 3381
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/string_build.emit",
+    "before": 1275,
+    "after": 1281
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/string_find_byte.emit",
+    "before": 1790,
+    "after": 1796
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/string_rfind_byte.emit",
+    "before": 1793,
+    "after": 1799
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/string_scan.emit",
+    "before": 1413,
+    "after": 1419
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/struct_drop.emit",
+    "before": 1636,
+    "after": 1642
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/tokenize.emit",
+    "before": 869,
+    "after": 875
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/utf8_ingest_unchecked.emit",
+    "before": 8874,
+    "after": 8880
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/utf8_ingest_validated.emit",
+    "before": 9808,
+    "after": 9814
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/array_append.emit",
+    "before": 1138,
+    "after": 1139
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/array_index.emit",
+    "before": 1139,
+    "after": 1140
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/array_scale_f64.emit",
+    "before": 1265,
+    "after": 1266
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/array_with.emit",
+    "before": 1294,
+    "after": 1295
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/ascii_scan.emit",
+    "before": 1343,
+    "after": 1344
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/byte_copy_append.emit",
+    "before": 1244,
+    "after": 1245
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/byte_copy_with.emit",
+    "before": 1201,
+    "after": 1202
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/closure_call.emit",
+    "before": 972,
+    "after": 973
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/deflate_decode.emit",
+    "before": 13238,
+    "after": 13325
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/deflate_encode.emit",
+    "before": 7371,
+    "after": 7372
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/enum_match.emit",
+    "before": 1098,
+    "after": 1099
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/http_hello.emit",
+    "before": 17410,
+    "after": 17492
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/map_int.emit",
+    "before": 5792,
+    "after": 5793
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/map_probe_chain.emit",
+    "before": 5796,
+    "after": 5797
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/map_string.emit",
+    "before": 6737,
+    "after": 6738
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/ordmap_insert.emit",
+    "before": 5567,
+    "after": 5568
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/pmap_insert.emit",
+    "before": 2781,
+    "after": 2782
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/pvec_with.emit",
+    "before": 2949,
+    "after": 2950
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/record_update.emit",
+    "before": 1385,
+    "after": 1386
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/sort_inplace.emit",
+    "before": 1492,
+    "after": 1493
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/sort_ints.emit",
+    "before": 1970,
+    "after": 1971
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/sort_strings.emit",
+    "before": 3232,
+    "after": 3233
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/string_build.emit",
+    "before": 1993,
+    "after": 1994
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/string_count_byte.emit",
+    "before": 1234,
+    "after": 1235
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/string_find_byte.emit",
+    "before": 1589,
+    "after": 1590
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/string_rfind_byte.emit",
+    "before": 1760,
+    "after": 1761
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/string_scan.emit",
+    "before": 2241,
+    "after": 2242
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/string_slice.emit",
+    "before": 894,
+    "after": 895
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/struct_drop.emit",
+    "before": 2415,
+    "after": 2416
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/tokenize.emit",
+    "before": 1197,
+    "after": 1198
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/utf8_ingest_unchecked.emit",
+    "before": 8255,
+    "after": 8337
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/utf8_ingest_validated.emit",
+    "before": 8861,
+    "after": 8943
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/perceus_cfold.emit",
+    "before": 1889,
+    "after": 1890
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/perceus_cfold.emit",
+    "before": 2151,
+    "after": 2152
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/perceus_cfold.emit",
+    "before": 1729,
+    "after": 1735
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/perceus_deriv.emit",
+    "before": 2670,
+    "after": 2671
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/perceus_deriv.emit",
+    "before": 2981,
+    "after": 2982
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/perceus_deriv.emit",
+    "before": 2784,
+    "after": 2790
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/perceus_nqueens.emit",
+    "before": 1554,
+    "after": 1555
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/perceus_nqueens.emit",
+    "before": 1804,
+    "after": 1805
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/perceus_nqueens.emit",
+    "before": 1261,
+    "after": 1267
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/perceus_rbtree.emit",
+    "before": 2872,
+    "after": 2873
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/perceus_rbtree.emit",
+    "before": 3157,
+    "after": 3162
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/perceus_rbtree.emit",
+    "before": 3562,
+    "after": 3568
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/x86-64-linux/perceus_rbtree_ck.emit",
+    "before": 3122,
+    "after": 3123
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/arm64-linux/perceus_rbtree_ck.emit",
+    "before": 3394,
+    "after": 3399
+  },
+  {
+    "file": ".github/perf-baseline-selfhost.txt",
+    "metric": "selfhost/wasm32-wasi/perceus_rbtree_ck.emit",
+    "before": 3978,
+    "after": 3984
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/array_append.diagnostic.bytes",
+    "before": 71392,
+    "after": 71432
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/array_append.diagnostic.emit",
+    "before": 1446,
+    "after": 1447
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/array_append.hardened.emit",
+    "before": 1442,
+    "after": 1443
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/array_append.minimal.emit",
+    "before": 1259,
+    "after": 1260
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/array_append.safe.emit",
+    "before": 1353,
+    "after": 1354
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/call_overhead.diagnostic.bytes",
+    "before": 68024,
+    "after": 68056
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/closure_call.diagnostic.bytes",
+    "before": 72000,
+    "after": 72040
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/closure_call.diagnostic.emit",
+    "before": 1378,
+    "after": 1379
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/closure_call.hardened.emit",
+    "before": 1310,
+    "after": 1311
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/closure_call.minimal.emit",
+    "before": 1091,
+    "after": 1092
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/closure_call.safe.emit",
+    "before": 1195,
+    "after": 1196
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/deflate_decode.diagnostic.bytes",
+    "before": 133768,
+    "after": 133800
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/deflate_decode.diagnostic.emit",
+    "before": 13915,
+    "after": 13926
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/deflate_decode.hardened.emit",
+    "before": 15518,
+    "after": 15529
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/deflate_decode.minimal.emit",
+    "before": 12443,
+    "after": 12450
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/deflate_decode.safe.emit",
+    "before": 14219,
+    "after": 14230
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/enum_match.diagnostic.bytes",
+    "before": 71480,
+    "after": 71512
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/enum_match.diagnostic.emit",
+    "before": 1474,
+    "after": 1475
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/enum_match.hardened.emit",
+    "before": 1433,
+    "after": 1434
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/enum_match.minimal.emit",
+    "before": 1162,
+    "after": 1163
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/enum_match.safe.emit",
+    "before": 1315,
+    "after": 1316
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/http_hello.diagnostic.bytes",
+    "before": 201128,
+    "after": 201168
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/http_hello.diagnostic.emit",
+    "before": 17737,
+    "after": 17752
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/http_hello.hardened.emit",
+    "before": 20282,
+    "after": 20297
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/http_hello.minimal.emit",
+    "before": 14954,
+    "after": 14965
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/http_hello.safe.emit",
+    "before": 18617,
+    "after": 18632
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/int_loop.diagnostic.bytes",
+    "before": 67728,
+    "after": 67768
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/map_string.diagnostic.bytes",
+    "before": 121472,
+    "after": 121512
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/map_string.diagnostic.emit",
+    "before": 7495,
+    "after": 7496
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/map_string.hardened.emit",
+    "before": 8394,
+    "after": 8395
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/map_string.minimal.emit",
+    "before": 6641,
+    "after": 6642
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/map_string.safe.emit",
+    "before": 7174,
+    "after": 7175
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/arm64-linux/startup.diagnostic.bytes",
+    "before": 67360,
+    "after": 67376
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/array_append.diagnostic.bytes",
+    "before": 12336,
+    "after": 12368
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/array_append.diagnostic.emit",
+    "before": 1198,
+    "after": 1199
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/array_append.hardened.emit",
+    "before": 1215,
+    "after": 1216
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/array_append.minimal.emit",
+    "before": 1049,
+    "after": 1050
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/array_append.safe.emit",
+    "before": 1138,
+    "after": 1139
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/call_overhead.diagnostic.bytes",
+    "before": 6456,
+    "after": 6496
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/closure_call.diagnostic.bytes",
+    "before": 12960,
+    "after": 13000
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/closure_call.diagnostic.emit",
+    "before": 1145,
+    "after": 1146
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/closure_call.hardened.emit",
+    "before": 1052,
+    "after": 1053
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/closure_call.minimal.emit",
+    "before": 874,
+    "after": 875
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/closure_call.safe.emit",
+    "before": 972,
+    "after": 973
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/deflate_decode.diagnostic.bytes",
+    "before": 114976,
+    "after": 115016
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/deflate_decode.diagnostic.emit",
+    "before": 12959,
+    "after": 12960
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/deflate_decode.hardened.emit",
+    "before": 13638,
+    "after": 13639
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/deflate_decode.minimal.emit",
+    "before": 11698,
+    "after": 11699
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/deflate_decode.safe.emit",
+    "before": 13324,
+    "after": 13325
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/enum_match.diagnostic.bytes",
+    "before": 12424,
+    "after": 12464
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/enum_match.diagnostic.emit",
+    "before": 1242,
+    "after": 1243
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/enum_match.hardened.emit",
+    "before": 1179,
+    "after": 1180
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/enum_match.minimal.emit",
+    "before": 950,
+    "after": 951
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/enum_match.safe.emit",
+    "before": 1098,
+    "after": 1099
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/http_hello.diagnostic.bytes",
+    "before": 127304,
+    "after": 127344
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/http_hello.diagnostic.emit",
+    "before": 16481,
+    "after": 16482
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/http_hello.hardened.emit",
+    "before": 17723,
+    "after": 17724
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/http_hello.minimal.emit",
+    "before": 14318,
+    "after": 14319
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/http_hello.safe.emit",
+    "before": 17491,
+    "after": 17492
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/int_loop.diagnostic.bytes",
+    "before": 6200,
+    "after": 6232
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/map_string.diagnostic.bytes",
+    "before": 77680,
+    "after": 77720
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/map_string.diagnostic.emit",
+    "before": 7362,
+    "after": 7363
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/map_string.diagnostic.ir",
+    "before": 63794906,
+    "after": 63674487
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/map_string.hardened.emit",
+    "before": 7018,
+    "after": 7019
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/map_string.hardened.ir",
+    "before": 61305081,
+    "after": 61095835
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/map_string.minimal.emit",
+    "before": 6203,
+    "after": 6204
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/map_string.minimal.ir",
+    "before": 61168968,
+    "after": 61276745
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/map_string.safe.emit",
+    "before": 6737,
+    "after": 6738
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/map_string.safe.ir",
+    "before": 58391336,
+    "after": 58512192
+  },
+  {
+    "file": ".github/profile-costs-baseline.txt",
+    "metric": "profile/x86-64-linux/startup.diagnostic.bytes",
+    "before": 5824,
+    "after": 5832
+  }
+]

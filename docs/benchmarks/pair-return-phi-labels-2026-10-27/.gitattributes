@@ -1,0 +1,3 @@
+# Preserve raw tool output and source patches.
+*-profile.log -whitespace
+*.patch -whitespace

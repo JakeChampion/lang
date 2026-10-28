@@ -1,0 +1,29 @@
+[
+  {
+    "artifact_id": 12792325965,
+    "zip": "perf-b706-12792325965.zip",
+    "sha256": "9ed4e8d1e9f7f1650b11774dc87970dec369a27ef220c0e093e9be16881597a7",
+    "members": [
+      "perf-report.txt"
+    ]
+  },
+  {
+    "artifact_id": 12791864112,
+    "zip": "perf-b706-12791864112.zip",
+    "sha256": "5bb6d8b8635e5434488be3d71829f4211356bd0f6d16e934057d34ec7bedaf17",
+    "members": [
+      "perf-report.txt"
+    ]
+  },
+  {
+    "artifact_id": 12792810036,
+    "zip": "perf-b706-12792810036.zip",
+    "sha256": "6a9a07bb99f790b565ea82958c3b14e700cef962d228c257b99ae8fb98b2470a",
+    "members": [
+      "cliff-report.txt",
+      "alloc-report.txt",
+      "selfhost-size-report.txt",
+      "profile-costs-report.txt"
+    ]
+  }
+]

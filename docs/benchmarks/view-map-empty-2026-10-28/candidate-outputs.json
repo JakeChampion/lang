@@ -1,0 +1,53 @@
+[
+  {
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/stage2",
+      "-O",
+      "-target",
+      "x86-64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/checker-x86-64-linux.s",
+      "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/internal/stdlib"
+    ],
+    "exit": 0,
+    "sha256": "da4633415050f5fa206a66455c0eaffd39c8c5039be2b41218039a6dd21b4171",
+    "bytes": 26862285
+  },
+  {
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/stage2",
+      "-O",
+      "-target",
+      "arm64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/checker-arm64-linux.s",
+      "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/internal/stdlib"
+    ],
+    "exit": 0,
+    "sha256": "64f95a148db3e6161b650b9d43664853240934472be93d6d2ef0470d85e0647a",
+    "bytes": 27198169
+  },
+  {
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/stage2",
+      "-O",
+      "-target",
+      "wasm32-wasi",
+      "-emit",
+      "asm",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/view-any-candidate/checker-wasm32-wasi.s",
+      "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/post-eb0e-baseline/internal/stdlib"
+    ],
+    "exit": 0,
+    "sha256": "ae5e83961fa4b4a0e63859914eb3d572ab9b98a09aa0daeb041f9cbd3db61c8a",
+    "bytes": 14640644
+  }
+]

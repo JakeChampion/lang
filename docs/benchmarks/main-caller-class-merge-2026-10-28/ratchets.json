@@ -1,0 +1,19 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^(TestSelfHostFeatureCensus|TestSelfHostRepoComplexityRatchet)$",
+    "-count=1",
+    "-timeout",
+    "10m",
+    "-json"
+  ],
+  "exit": 0,
+  "seconds": 3.724125565997383,
+  "source_head": "b72381ec50d4390a703d17096a4a61deae25cb2f",
+  "passes": 4,
+  "failures": [],
+  "skips": []
+}

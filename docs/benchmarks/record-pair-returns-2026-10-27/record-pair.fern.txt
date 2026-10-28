@@ -1,0 +1,86 @@
+import "std/bench";
+
+struct Box { n: i32, s: string }
+struct First { b: Box, yes: boolean }
+struct Last { n: i32, s: string }
+struct Both { xs: string[], s: string }
+struct Wide { n: i64, s: string }
+
+@noinline function make(n: i32, b: Box): First {
+  return First { b: b, yes: n % 2 == 0 };
+}
+
+@noinline function forward(n: i32, b: Box): First {
+  return make(n + 1, b);
+}
+
+@noinline function picked(n: i32, b: Box): First {
+  let r: First = First { b: b, yes: false };
+  if (n % 2 == 0) { r = First { b: b, yes: true }; }
+  return r;
+}
+
+@noinline function tail(n: i32, b: Box): First {
+  if (n > 0) { return tail(n - 1, b); }
+  return make(0, b);
+}
+
+@noinline function borrowed(r: First): First { return r; }
+
+@noinline function last(n: i32, s: string): Last {
+  return Last { n: n * 3, s: s };
+}
+
+@noinline function both(xs: string[], s: string): Both {
+  return Both { xs: xs, s: s };
+}
+
+@noinline function wide(n: i32, s: string): Wide {
+  return Wide { n: n as i64 * 4000000000i64, s: s };
+}
+
+@noinline function kept(n: i32, b: Box): First {
+  return First { b: b, yes: n % 2 == 0 };
+}
+
+@noinline function whole(n: i32, b: Box): First {
+  return First { b: b, yes: n % 2 == 0 };
+}
+
+@noinline function consume(r: First): i32 {
+  if (r.yes) { return r.b.n + 1; }
+  return r.b.n;
+}
+
+function main(): i32 {
+  let s: string = "held";
+  let xs: string[] = [s];
+  let b: Box = Box { n: 7, s: s };
+  let r: First = First { b: b, yes: true };
+  let f: (i32, Box) => First = kept;
+  let before: i64 = bench.alloc_count();
+  for i in 0..50 {
+    let a: First = forward(i, b);
+    let p: First = picked(i, b);
+    let t: First = tail(i % 7, b);
+    let q: First = borrowed(r);
+    let l: Last = last(i, s);
+    let refs: Both = both(xs, s);
+    let w: Wide = wide(i, s);
+    let k: First = f(i, b);
+    if (a.b.n != 7 || a.b.s != s || a.yes != (i % 2 != 0)
+      || p.yes != (i % 2 == 0) || !t.yes || !q.yes || q.b.n != 7
+      || l.n != i * 3 || l.s != s || refs.xs[0] != s || refs.s != s
+      || w.n != i as i64 * 4000000000i64 || w.s != s
+      || k.b.s != s || k.yes != (i % 2 == 0)) { return 1; }
+    let expected: i32 = 7;
+    if (i % 2 == 0) { expected = 8; }
+    if (consume(whole(i, b)) != expected) { return 1; }
+  }
+  let allocated: i64 = bench.alloc_count() - before;
+  print(allocated.to_string());
+  if (allocated != 100i64) { return 2; }
+  if (b.n != 7 || b.s != s || xs[0] != s || r.b.s != s) { return 3; }
+  if (__rc_underflow_count() != 0) { return 99; }
+  return 0;
+}

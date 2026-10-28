@@ -1,0 +1,42 @@
+[
+  {
+    "address": "0x00000000005b8c68",
+    "symbol": "__fn_asm_ir__ssa_saved_inst",
+    "offset": 417
+  },
+  {
+    "address": "0x00000000005d8def",
+    "symbol": "__fn_asm_ir__emit_ssa_allocated_x86",
+    "offset": 26466
+  },
+  {
+    "address": "0x00000000005dd68b",
+    "symbol": "__fn_asm_ir__emit_function_via_ir_named",
+    "offset": 3096
+  },
+  {
+    "address": "0x00000000005dca2b",
+    "symbol": "__fn_asm_ir__emit_function_via_ir_pre",
+    "offset": 338
+  },
+  {
+    "address": "0x00000000005e8048",
+    "symbol": "__fn_asm_ir__emit_module_or_error_sub",
+    "offset": 15261
+  },
+  {
+    "address": "0x0000000000f49cc2",
+    "symbol": "__fn_run_with_gate",
+    "offset": 117520
+  },
+  {
+    "address": "0x0000000000ec2ab2",
+    "symbol": "__fn_main",
+    "offset": 103
+  },
+  {
+    "address": "0x000000000103262f",
+    "symbol": "_start",
+    "offset": 361
+  }
+]

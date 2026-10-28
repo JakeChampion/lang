@@ -3700,13 +3700,18 @@ function push_count_test(unique: boolean, slow: asmcore.Lab, ok: asmcore.Lab, s:
 }
 
 function ssa_view_slots(f: ssa.SFunc): i32[] {
-  let out: i32[] = util.minus_ones(f.nvals);
+  let out: i32[] = [];
   let n: i32 = 0;
   for blk in f.blocks {
     for ins in blk.insts {
-      if (ins.kind_tag == 51 && ins.imm >= 1) {
-        out = out.with(ins.result, n);
-        n = n + 1;
+      if (ins.kind_tag == 51) {
+        if (out.len() == 0) {
+          out = util.minus_ones(f.nvals);
+        }
+        if (ins.imm >= 1) {
+          out = out.with(ins.result, n);
+          n = n + 1;
+        }
       }
     }
   }

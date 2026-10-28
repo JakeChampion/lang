@@ -1,0 +1,40 @@
+{
+  "completed_at": "2026-10-27T22:14:03Z",
+  "targeted_ir_tests": [
+    "TestSelfHostConstfoldX86_64",
+    "TestSelfHostConstfoldArm64",
+    "TestSelfHostConstfoldWasm",
+    "TestSelfHostIRConstNumeric",
+    "TestSelfHostIRFoldOptions",
+    "TestSelfHostIRKindRegistry",
+    "TestSelfHostIROpConstructorTags",
+    "TestSelfHostIRKindConstants",
+    "TestSelfHostIRLICM",
+    "TestSelfHostLICMX86_64",
+    "TestSelfHostLICMArm64",
+    "TestSelfHostLICMWasmIR",
+    "TestSelfHostIRStrengthPeephole"
+  ],
+  "ir_tests_seconds": 80.167,
+  "source_gates": {
+    "compiler_seconds": 0.098,
+    "sourcelint_seconds": 8.281
+  },
+  "ratchets_seconds": 55.601,
+  "ir_skips": 0,
+  "vet": "pass",
+  "testname_gate": "pass",
+  "diff_check": "pass",
+  "private_differential": {
+    "cases_per_run": 350,
+    "targets": [
+      "x86-64-linux",
+      "arm64-linux",
+      "wasm32-wasi"
+    ],
+    "all_operation_fields": true,
+    "retained_aliases": true,
+    "matching_output_lines": 1400,
+    "matching_output_sha256": "cd5c9feafa6f7026b5e97a48c6d6b791df0b27a9f3e43e523a5dccc0472c9397"
+  }
+}

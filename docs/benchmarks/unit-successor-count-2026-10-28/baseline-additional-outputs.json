@@ -1,0 +1,40 @@
+[
+  {
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/stage2",
+      "-O",
+      "-target",
+      "arm64-linux",
+      "-emit",
+      "asm",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/checker-arm64-linux.s",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 7.940020058002119,
+    "target": "arm64-linux",
+    "sha256": "131f08b19e5df71771402420f86a47d164c4d39adc0178e6bf01ee0424c5f9dc",
+    "bytes": 26984409
+  },
+  {
+    "command": [
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/stage2",
+      "-O",
+      "-target",
+      "wasm32-wasi",
+      "-emit",
+      "asm",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/current-c63-baseline/checker-wasm32-wasi.s",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/compiler/checker.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "exit": 0,
+    "elapsed_seconds": 11.084551533000194,
+    "target": "wasm32-wasi",
+    "sha256": "af8060fa6b119e9e65679efd5094947c8567cf8c940c7aa99b5038e9aab24508",
+    "bytes": 14539859
+  }
+]

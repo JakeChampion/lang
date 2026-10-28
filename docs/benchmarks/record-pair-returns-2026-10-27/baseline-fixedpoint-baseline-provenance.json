@@ -1,0 +1,11 @@
+{
+  "purpose": "Observe the post-fixpoint compiler as a new baseline before selecting the next allocation optimization. No A/B improvement claim.",
+  "source_equivalent_head": "1506551e149750e34dc5239368683577df0deda9",
+  "profile_binary_original_bootstrap_generation": 3,
+  "profile_binary": "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/stage3",
+  "profile_binary_sha256": "bddb8e23b04acf6db660c5217d7472405c1898b80b20853fbf12c7e5762c19ff",
+  "identical_completed_stage4": "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/post-merge/stage4",
+  "next_comparison_common_producer": "/workspace/lang-issue-work/perf-4412/pair-phi-candidate/post-merge/stage3",
+  "next_comparison_producer_sha256": "bddb8e23b04acf6db660c5217d7472405c1898b80b20853fbf12c7e5762c19ff",
+  "next_baseline_stage2_role": "The completed stage4 artifact was produced by the named stage3 producer. It has the same bytes as the profiled artifact. Future source candidates must use that same producer and fixed inputs."
+}

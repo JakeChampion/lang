@@ -1,0 +1,2425 @@
+    .globl _start
+    .text
+__fn_i32__to_string:
+    .cfi_startproc
+    movq 8(%rsp), %rax
+__fn_i32__to_string.r:
+.Lssa_i32__to_string_0:
+    jmp __fn_int__int_to_string.r
+    .cfi_endproc
+__fn___primitive_i32_to_string:
+    .cfi_startproc
+    movq 8(%rsp), %rax
+__fn___primitive_i32_to_string.r:
+.Lssa___primitive_i32_to_string_0:
+    jmp __fn_int__int_to_string.r
+    .cfi_endproc
+__fn___primitive_string_to_string:
+    .cfi_startproc
+    movq 8(%rsp), %rax
+__fn___primitive_string_to_string.r:
+.Lssa___primitive_string_to_string_0:
+    testb $1, %al
+    jnz .Lssa___primitive_string_to_string_rcinc1
+    cmpq $0x10000, %rax
+    jb .Lssa___primitive_string_to_string_rcinc1
+    cmpl $0, -8(%rax)
+    js .Lssa___primitive_string_to_string_rcinc1
+    addl $1, -8(%rax)
+.Lssa___primitive_string_to_string_rcinc1:
+    movq %rax, %rsi
+    ret
+    .cfi_endproc
+__fn_int__int_to_string:
+    .cfi_startproc
+    movq 8(%rsp), %rax
+__fn_int__int_to_string.r:
+    pushq %rbx
+    .cfi_def_cfa_offset 16
+    .cfi_offset %rbx, -16
+    pushq %r12
+    .cfi_def_cfa_offset 24
+    .cfi_offset %r12, -24
+    pushq %r13
+    .cfi_def_cfa_offset 32
+    .cfi_offset %r13, -32
+    pushq %r14
+    .cfi_def_cfa_offset 40
+    .cfi_offset %r14, -40
+    pushq %rcx
+    .cfi_def_cfa_offset 48
+.Lssa_int__int_to_string_0:
+    cmpq $0, %rax
+    jl .Lssa_int__int_to_string_44
+.Lssa_int__int_to_string_47:
+    cmpq $100, %rax
+    jge .Lssa_int__int_to_string_44
+.Lssa_int__int_to_string_46:
+    leaq .K0(%rip), %rsi
+    cmpq (%rsi), %rax
+    jae __fern_oob_abort.l5
+    movq 8(%rsi,%rax,8), %rdi
+    testb $1, %dil
+    jnz .Lssa_int__int_to_string_rcinc221
+    cmpq $0x10000, %rdi
+    jb .Lssa_int__int_to_string_rcinc221
+    cmpl $0, -8(%rdi)
+    js .Lssa_int__int_to_string_rcinc221
+    addl $1, -8(%rdi)
+.Lssa_int__int_to_string_rcinc221:
+    movq %rdi, %rsi
+    movq %rdi, %rax
+    .cfi_remember_state
+    leaq 8(%rsp), %rsp
+    .cfi_def_cfa_offset 40
+    popq %r14
+    .cfi_def_cfa_offset 32
+    popq %r13
+    .cfi_def_cfa_offset 24
+    popq %r12
+    .cfi_def_cfa_offset 16
+    popq %rbx
+    .cfi_def_cfa_offset 8
+    ret
+    .cfi_restore_state
+.Lssa_int__int_to_string_44:
+    xorl %esi, %esi
+    xorl %edi, %edi
+    subq %rax, %rdi
+    movl $1, %r8d
+    cmpq $0, %rax
+    cmovgeq %rax, %rdi
+    movq %r8, %rbx
+    cmovgeq %rsi, %rbx
+.Lssa_int__int_to_string_41:
+    movl %edi, %r12d
+.Lssa_int__int_to_string_40:
+    cmpq $10, %r12
+    jae .Lssa_int__int_to_string_37
+.Lssa_int__int_to_string_39:
+    movl $1, %edi
+    jmp .Lssa_int__int_to_string_12
+.Lssa_int__int_to_string_37:
+    cmpq $100, %r12
+    jae .Lssa_int__int_to_string_34
+.Lssa_int__int_to_string_36:
+    movl $2, %edi
+    jmp .Lssa_int__int_to_string_12
+.Lssa_int__int_to_string_34:
+    cmpq $1000, %r12
+    jae .Lssa_int__int_to_string_31
+.Lssa_int__int_to_string_33:
+    movl $3, %edi
+    jmp .Lssa_int__int_to_string_12
+.Lssa_int__int_to_string_31:
+    cmpq $10000, %r12
+    jae .Lssa_int__int_to_string_28
+.Lssa_int__int_to_string_30:
+    movl $4, %edi
+    jmp .Lssa_int__int_to_string_12
+.Lssa_int__int_to_string_28:
+    cmpq $100000, %r12
+    jae .Lssa_int__int_to_string_25
+.Lssa_int__int_to_string_27:
+    movl $5, %edi
+    jmp .Lssa_int__int_to_string_12
+.Lssa_int__int_to_string_25:
+    cmpq $1000000, %r12
+    jae .Lssa_int__int_to_string_22
+.Lssa_int__int_to_string_24:
+    movl $6, %edi
+    jmp .Lssa_int__int_to_string_12
+.Lssa_int__int_to_string_22:
+    cmpq $10000000, %r12
+    jae .Lssa_int__int_to_string_19
+.Lssa_int__int_to_string_21:
+    movl $7, %edi
+    jmp .Lssa_int__int_to_string_12
+.Lssa_int__int_to_string_19:
+    cmpq $100000000, %r12
+    jae .Lssa_int__int_to_string_16
+.Lssa_int__int_to_string_18:
+    movl $8, %edi
+    jmp .Lssa_int__int_to_string_12
+.Lssa_int__int_to_string_16:
+    cmpq $1000000000, %r12
+    jae .Lssa_int__int_to_string_13
+.Lssa_int__int_to_string_15:
+    movl $9, %edi
+    jmp .Lssa_int__int_to_string_12
+.Lssa_int__int_to_string_13:
+    movl $10, %edi
+.Lssa_int__int_to_string_12:
+    leaq 1(%rdi), %r9
+    movslq %r9d, %r9
+    testq %rbx, %rbx
+    movq %r9, %r13
+    cmoveq %rdi, %r13
+.Lssa_int__int_to_string_9:
+    movq %r13, %rdi
+    call __fern_alloc_bytes
+    movq %rax, %r14
+    leaq .SB100(%rip), %r9
+.Lssa_int__int_to_string_8:
+.Lssa_int__int_to_string_111:
+    cmpq $100, %r12
+    jb .Lssa_int__int_to_string_7
+.Lssa_int__int_to_string_112:
+    movq %r12, %rax
+    movl %eax, %ecx
+    movl $1374389535, %eax
+    mull %ecx
+    shrl $5, %edx
+    movl %edx, %eax
+    movq %rax, %rdi
+    imulq $100, %rdi, %r8
+    movq %r12, %r11
+    subq %r8, %r11
+    movq %r11, %r8
+    leaq -2(%r13), %rsi
+    movslq %esi, %r13
+    shlq $1, %r8
+    movslq %r8d, %r8
+    cmpq 8(%r9), %r8
+    jae __fern_str_oob_abort.l5
+    movq (%r9), %rdx
+    movzbl (%rdx,%r8), %esi
+    cmpq (%r14), %r13
+    jae __fern_oob_abort.l5
+    movb %sil, 8(%r14,%r13)
+    leal 1(%r13), %r10d
+    addl $1, %r8d
+    cmpq 8(%r9), %r8
+    jae __fern_str_oob_abort.l5
+    movq (%r9), %rdx
+    movzbl (%rdx,%r8), %esi
+    cmpq (%r14), %r10
+    jae __fern_oob_abort.l5
+    movb %sil, 8(%r14,%r10)
+    movq %rdi, %r12
+    cmpq $100, %r12
+    jae .Lssa_int__int_to_string_112
+.Lssa_int__int_to_string_7:
+    cmpq $10, %r12
+    jb .Lssa_int__int_to_string_5
+.Lssa_int__int_to_string_6:
+    leaq -2(%r13), %r8
+    movslq %r8d, %r8
+    movq %r12, %rsi
+    shlq $1, %rsi
+    movslq %esi, %rsi
+    cmpq 8(%r9), %rsi
+    jae __fern_str_oob_abort.l5
+    movq (%r9), %rdx
+    movzbl (%rdx,%rsi), %r10d
+    cmpq (%r14), %r8
+    jae __fern_oob_abort.l5
+    movb %r10b, 8(%r14,%r8)
+    addl $1, %r8d
+    addl $1, %esi
+    cmpq 8(%r9), %rsi
+    jae __fern_str_oob_abort.l5
+    movq (%r9), %rdx
+    movzbl (%rdx,%rsi), %edi
+    cmpq (%r14), %r8
+    jae __fern_oob_abort.l5
+    movb %dil, 8(%r14,%r8)
+    jmp .Lssa_int__int_to_string_4
+.Lssa_int__int_to_string_5:
+    subl $1, %r13d
+    addq $48, %r12
+    andq $255, %r12
+    cmpq (%r14), %r13
+    jae __fern_oob_abort.l5
+    movb %r12b, 8(%r14,%r13)
+.Lssa_int__int_to_string_4:
+    testq %rbx, %rbx
+    jz .Lssa_int__int_to_string_1
+.Lssa_int__int_to_string_3:
+    testb $1, %r14b
+    jnz .Lssa_int__int_to_string_uq3
+    cmpq $0x10000, %r14
+    jb .Lssa_int__int_to_string_uq3
+    cmpl $1, -8(%r14)
+.Lssa_int__int_to_string_uq3:
+    jne .Lssa_int__int_to_string_129
+.Lssa_int__int_to_string_128:
+    jmp .Lssa_int__int_to_string_130
+.Lssa_int__int_to_string_129:
+    cmpq $0x10000, %r14
+    jb .Lssa_int__int_to_string_rcdeck346
+    cmpl $1, -8(%r14)
+    jg .Lssa_int__int_to_string_rcdecd346
+    cmpl $0, -8(%r14)
+    js .Lssa_int__int_to_string_rcdeck346
+    movq %r14, %rax
+    call __fn___fern_arr_dec.u
+    jmp .Lssa_int__int_to_string_rcdece346
+.Lssa_int__int_to_string_rcdecd346:
+    subl $1, -8(%r14)
+.Lssa_int__int_to_string_rcdeck346:
+    movq %r14, %rax
+.Lssa_int__int_to_string_rcdece346:
+    xorl %esi, %esi
+    movq 0(%r14), %rdi
+    pushq %rdi
+    pushq %rsi
+    pushq %r14
+    call __fn___fern_arr_slice_u8
+    addq $24, %rsp
+    movq %rax, %r14
+.Lssa_int__int_to_string_130:
+    movl $45, %edi
+    cmpq $0, 0(%r14)
+    jbe __fern_oob_abort.l5
+    movb %dil, 8(%r14)
+    jmp .Lssa_int__int_to_string_1
+.Lssa_int__int_to_string_2:
+.Lssa_int__int_to_string_1:
+    pushq %r14
+    call __fn___fern_string_from_bytes_u8
+    addq $8, %rsp
+    movq %rax, %r12
+    cmpq $0x10000, %r14
+    jb .Lssa_int__int_to_string_rcdeck356
+    cmpl $1, -8(%r14)
+    jg .Lssa_int__int_to_string_rcdecd356
+    cmpl $0, -8(%r14)
+    js .Lssa_int__int_to_string_rcdeck356
+    movq %r14, %rax
+    call __fn___fern_arr_dec.u
+    jmp .Lssa_int__int_to_string_rcdece356
+.Lssa_int__int_to_string_rcdecd356:
+    subl $1, -8(%r14)
+.Lssa_int__int_to_string_rcdeck356:
+    movq %r14, %rax
+.Lssa_int__int_to_string_rcdece356:
+    movq %r12, %rax
+    .cfi_remember_state
+    leaq 8(%rsp), %rsp
+    .cfi_def_cfa_offset 40
+    popq %r14
+    .cfi_def_cfa_offset 32
+    popq %r13
+    .cfi_def_cfa_offset 24
+    popq %r12
+    .cfi_def_cfa_offset 16
+    popq %rbx
+    .cfi_def_cfa_offset 8
+    ret
+    .cfi_restore_state
+    .cfi_endproc
+__fn_fact:
+    .cfi_startproc
+    movq 8(%rsp), %rax
+__fn_fact.r:
+    pushq %rbx
+    .cfi_def_cfa_offset 16
+    .cfi_offset %rbx, -16
+    movq %rax, %rbx
+.Lssa_fact_0:
+    cmpq $0, %rbx
+    jne .Lssa_fact_1
+.Lssa_fact_3:
+    movl $1, %eax
+    .cfi_remember_state
+    popq %rbx
+    .cfi_def_cfa_offset 8
+    ret
+    .cfi_restore_state
+.Lssa_fact_1:
+    leaq -1(%rbx), %rsi
+    movslq %esi, %rax
+    call __fn_fact.r
+    imulq %rax, %rbx
+    movslq %ebx, %rax
+    .cfi_remember_state
+    popq %rbx
+    .cfi_def_cfa_offset 8
+    ret
+    .cfi_restore_state
+    .cfi_endproc
+__fn_main:
+    .cfi_startproc
+__fn_main.r:
+    pushq %rbx
+    .cfi_def_cfa_offset 16
+    .cfi_offset %rbx, -16
+    pushq %r12
+    .cfi_def_cfa_offset 24
+    .cfi_offset %r12, -24
+    pushq %r13
+    .cfi_def_cfa_offset 32
+    .cfi_offset %r13, -32
+    pushq %r14
+    .cfi_def_cfa_offset 40
+    .cfi_offset %r14, -40
+    pushq %rcx
+    .cfi_def_cfa_offset 48
+.Lssa_main_0:
+    movl $5, %eax
+    call __fn_fact.r
+    movq %rax, %rbx
+    leaq .SB101(%rip), %r12
+    movq %rbx, %rax
+    call __fn_i32__to_string.r
+    movq %rax, %r13
+    pushq %r13
+    pushq %r12
+    call __fn___fern_str_concat
+    addq $16, %rsp
+    movq %rax, %r14
+    testb $1, %r13b
+    jnz .Lssa_main_rcdeck11
+    cmpq $0x10000, %r13
+    jb .Lssa_main_rcdeck11
+    cmpl $1, -8(%r13)
+    jg .Lssa_main_rcdecd11
+    cmpl $0, -8(%r13)
+    js .Lssa_main_rcdeck11
+    movq %r13, %rax
+    call __fn___fern_str_free.u
+    jmp .Lssa_main_rcdece11
+.Lssa_main_rcdecd11:
+    subl $1, -8(%r13)
+.Lssa_main_rcdeck11:
+    movq %r13, %rax
+.Lssa_main_rcdece11:
+    pushq %r14
+    call __fn___fern_print_str
+    addq $8, %rsp
+    leaq .SB102(%rip), %rsi
+    pushq %rsi
+    call __fn___fern_print_str
+    addq $8, %rsp
+    testb $1, %r14b
+    jnz .Lssa_main_rcdeck15
+    cmpq $0x10000, %r14
+    jb .Lssa_main_rcdeck15
+    cmpl $1, -8(%r14)
+    jg .Lssa_main_rcdecd15
+    cmpl $0, -8(%r14)
+    js .Lssa_main_rcdeck15
+    movq %r14, %rax
+    call __fn___fern_str_free.u
+    jmp .Lssa_main_rcdece15
+.Lssa_main_rcdecd15:
+    subl $1, -8(%r14)
+.Lssa_main_rcdeck15:
+    movq %r14, %rax
+.Lssa_main_rcdece15:
+    movq %rbx, %rax
+    .cfi_remember_state
+    leaq 8(%rsp), %rsp
+    .cfi_def_cfa_offset 40
+    popq %r14
+    .cfi_def_cfa_offset 32
+    popq %r13
+    .cfi_def_cfa_offset 24
+    popq %r12
+    .cfi_def_cfa_offset 16
+    popq %rbx
+    .cfi_def_cfa_offset 8
+    ret
+    .cfi_restore_state
+    .cfi_endproc
+_start:
+    xorl %edi, %edi
+    movq $1073741824, %rsi
+    movl $3, %edx
+    movl $0x24022, %r10d
+    movq $-1, %r8
+    xorl %r9d, %r9d
+    movl $9, %eax
+    syscall
+    cmpq $-4096, %rax
+    ja .Lfern_stack_kept
+    movq %rax, %rbx
+    movq %rax, %rdi
+    movq $1048576, %rsi
+    xorl %edx, %edx
+    movl $10, %eax
+    syscall
+    testq %rax, %rax
+    jnz .Lfern_stack_guard_failed
+    leaq 1073741808(%rbx), %rsp
+    movq %rsp, __fern_stack_top(%rip)
+.Lfern_stack_kept:
+    xorl %edi, %edi
+    movq $65536, %rsi
+    movl $3, %edx
+    movl $0x24022, %r10d
+    movq $-1, %r8
+    xorl %r9d, %r9d
+    movl $9, %eax
+    syscall
+    cmpq $-4096, %rax
+    ja .Lfern_signal_stack_map_failed
+    subq $32, %rsp
+    movq %rax, (%rsp)
+    movq $0, 8(%rsp)
+    movq $65536, 16(%rsp)
+    movq %rsp, %rdi
+    xorl %esi, %esi
+    movl $131, %eax
+    syscall
+    testq %rax, %rax
+    jnz .Lfern_signal_stack_failed
+    leaq __fern_segv(%rip), %rax
+    movq %rax, (%rsp)
+    movq $0x0c000004, 8(%rsp)
+    leaq .Lfern_segv_restorer(%rip), %rax
+    movq %rax, 16(%rsp)
+    movq $0, 24(%rsp)
+    movl $11, %edi
+    movq %rsp, %rsi
+    xorl %edx, %edx
+    movl $8, %r10d
+    movl $13, %eax
+    syscall
+    testq %rax, %rax
+    jnz .Lfern_fault_handler_failed
+    addq $32, %rsp
+    pushq %rbp
+    movq %rsp, %rbp
+    call __fn_main
+    movq %rax, %rdi
+    movq $231, %rax
+    syscall
+    .section .rodata
+.S0: .ascii "0"
+.S1: .ascii "1"
+.S2: .ascii "2"
+.S3: .ascii "3"
+.S4: .ascii "4"
+.S5: .ascii "5"
+.S6: .ascii "6"
+.S7: .ascii "7"
+.S8: .ascii "8"
+.S9: .ascii "9"
+.S10: .ascii "10"
+.S11: .ascii "11"
+.S12: .ascii "12"
+.S13: .ascii "13"
+.S14: .ascii "14"
+.S15: .ascii "15"
+.S16: .ascii "16"
+.S17: .ascii "17"
+.S18: .ascii "18"
+.S19: .ascii "19"
+.S20: .ascii "20"
+.S21: .ascii "21"
+.S22: .ascii "22"
+.S23: .ascii "23"
+.S24: .ascii "24"
+.S25: .ascii "25"
+.S26: .ascii "26"
+.S27: .ascii "27"
+.S28: .ascii "28"
+.S29: .ascii "29"
+.S30: .ascii "30"
+.S31: .ascii "31"
+.S32: .ascii "32"
+.S33: .ascii "33"
+.S34: .ascii "34"
+.S35: .ascii "35"
+.S36: .ascii "36"
+.S37: .ascii "37"
+.S38: .ascii "38"
+.S39: .ascii "39"
+.S40: .ascii "40"
+.S41: .ascii "41"
+.S42: .ascii "42"
+.S43: .ascii "43"
+.S44: .ascii "44"
+.S45: .ascii "45"
+.S46: .ascii "46"
+.S47: .ascii "47"
+.S48: .ascii "48"
+.S49: .ascii "49"
+.S50: .ascii "50"
+.S51: .ascii "51"
+.S52: .ascii "52"
+.S53: .ascii "53"
+.S54: .ascii "54"
+.S55: .ascii "55"
+.S56: .ascii "56"
+.S57: .ascii "57"
+.S58: .ascii "58"
+.S59: .ascii "59"
+.S60: .ascii "60"
+.S61: .ascii "61"
+.S62: .ascii "62"
+.S63: .ascii "63"
+.S64: .ascii "64"
+.S65: .ascii "65"
+.S66: .ascii "66"
+.S67: .ascii "67"
+.S68: .ascii "68"
+.S69: .ascii "69"
+.S70: .ascii "70"
+.S71: .ascii "71"
+.S72: .ascii "72"
+.S73: .ascii "73"
+.S74: .ascii "74"
+.S75: .ascii "75"
+.S76: .ascii "76"
+.S77: .ascii "77"
+.S78: .ascii "78"
+.S79: .ascii "79"
+.S80: .ascii "80"
+.S81: .ascii "81"
+.S82: .ascii "82"
+.S83: .ascii "83"
+.S84: .ascii "84"
+.S85: .ascii "85"
+.S86: .ascii "86"
+.S87: .ascii "87"
+.S88: .ascii "88"
+.S89: .ascii "89"
+.S90: .ascii "90"
+.S91: .ascii "91"
+.S92: .ascii "92"
+.S93: .ascii "93"
+.S94: .ascii "94"
+.S95: .ascii "95"
+.S96: .ascii "96"
+.S97: .ascii "97"
+.S98: .ascii "98"
+.S99: .ascii "99"
+.S100: .ascii "00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899"
+.S101: .ascii "5! = "
+.S102: .ascii "\n"
+    .section .data
+    .align 8
+    .quad -1
+.SB0:
+    .quad .S0
+    .quad 1
+    .quad -1
+.SB1:
+    .quad .S1
+    .quad 1
+    .quad -1
+.SB2:
+    .quad .S2
+    .quad 1
+    .quad -1
+.SB3:
+    .quad .S3
+    .quad 1
+    .quad -1
+.SB4:
+    .quad .S4
+    .quad 1
+    .quad -1
+.SB5:
+    .quad .S5
+    .quad 1
+    .quad -1
+.SB6:
+    .quad .S6
+    .quad 1
+    .quad -1
+.SB7:
+    .quad .S7
+    .quad 1
+    .quad -1
+.SB8:
+    .quad .S8
+    .quad 1
+    .quad -1
+.SB9:
+    .quad .S9
+    .quad 1
+    .quad -1
+.SB10:
+    .quad .S10
+    .quad 2
+    .quad -1
+.SB11:
+    .quad .S11
+    .quad 2
+    .quad -1
+.SB12:
+    .quad .S12
+    .quad 2
+    .quad -1
+.SB13:
+    .quad .S13
+    .quad 2
+    .quad -1
+.SB14:
+    .quad .S14
+    .quad 2
+    .quad -1
+.SB15:
+    .quad .S15
+    .quad 2
+    .quad -1
+.SB16:
+    .quad .S16
+    .quad 2
+    .quad -1
+.SB17:
+    .quad .S17
+    .quad 2
+    .quad -1
+.SB18:
+    .quad .S18
+    .quad 2
+    .quad -1
+.SB19:
+    .quad .S19
+    .quad 2
+    .quad -1
+.SB20:
+    .quad .S20
+    .quad 2
+    .quad -1
+.SB21:
+    .quad .S21
+    .quad 2
+    .quad -1
+.SB22:
+    .quad .S22
+    .quad 2
+    .quad -1
+.SB23:
+    .quad .S23
+    .quad 2
+    .quad -1
+.SB24:
+    .quad .S24
+    .quad 2
+    .quad -1
+.SB25:
+    .quad .S25
+    .quad 2
+    .quad -1
+.SB26:
+    .quad .S26
+    .quad 2
+    .quad -1
+.SB27:
+    .quad .S27
+    .quad 2
+    .quad -1
+.SB28:
+    .quad .S28
+    .quad 2
+    .quad -1
+.SB29:
+    .quad .S29
+    .quad 2
+    .quad -1
+.SB30:
+    .quad .S30
+    .quad 2
+    .quad -1
+.SB31:
+    .quad .S31
+    .quad 2
+    .quad -1
+.SB32:
+    .quad .S32
+    .quad 2
+    .quad -1
+.SB33:
+    .quad .S33
+    .quad 2
+    .quad -1
+.SB34:
+    .quad .S34
+    .quad 2
+    .quad -1
+.SB35:
+    .quad .S35
+    .quad 2
+    .quad -1
+.SB36:
+    .quad .S36
+    .quad 2
+    .quad -1
+.SB37:
+    .quad .S37
+    .quad 2
+    .quad -1
+.SB38:
+    .quad .S38
+    .quad 2
+    .quad -1
+.SB39:
+    .quad .S39
+    .quad 2
+    .quad -1
+.SB40:
+    .quad .S40
+    .quad 2
+    .quad -1
+.SB41:
+    .quad .S41
+    .quad 2
+    .quad -1
+.SB42:
+    .quad .S42
+    .quad 2
+    .quad -1
+.SB43:
+    .quad .S43
+    .quad 2
+    .quad -1
+.SB44:
+    .quad .S44
+    .quad 2
+    .quad -1
+.SB45:
+    .quad .S45
+    .quad 2
+    .quad -1
+.SB46:
+    .quad .S46
+    .quad 2
+    .quad -1
+.SB47:
+    .quad .S47
+    .quad 2
+    .quad -1
+.SB48:
+    .quad .S48
+    .quad 2
+    .quad -1
+.SB49:
+    .quad .S49
+    .quad 2
+    .quad -1
+.SB50:
+    .quad .S50
+    .quad 2
+    .quad -1
+.SB51:
+    .quad .S51
+    .quad 2
+    .quad -1
+.SB52:
+    .quad .S52
+    .quad 2
+    .quad -1
+.SB53:
+    .quad .S53
+    .quad 2
+    .quad -1
+.SB54:
+    .quad .S54
+    .quad 2
+    .quad -1
+.SB55:
+    .quad .S55
+    .quad 2
+    .quad -1
+.SB56:
+    .quad .S56
+    .quad 2
+    .quad -1
+.SB57:
+    .quad .S57
+    .quad 2
+    .quad -1
+.SB58:
+    .quad .S58
+    .quad 2
+    .quad -1
+.SB59:
+    .quad .S59
+    .quad 2
+    .quad -1
+.SB60:
+    .quad .S60
+    .quad 2
+    .quad -1
+.SB61:
+    .quad .S61
+    .quad 2
+    .quad -1
+.SB62:
+    .quad .S62
+    .quad 2
+    .quad -1
+.SB63:
+    .quad .S63
+    .quad 2
+    .quad -1
+.SB64:
+    .quad .S64
+    .quad 2
+    .quad -1
+.SB65:
+    .quad .S65
+    .quad 2
+    .quad -1
+.SB66:
+    .quad .S66
+    .quad 2
+    .quad -1
+.SB67:
+    .quad .S67
+    .quad 2
+    .quad -1
+.SB68:
+    .quad .S68
+    .quad 2
+    .quad -1
+.SB69:
+    .quad .S69
+    .quad 2
+    .quad -1
+.SB70:
+    .quad .S70
+    .quad 2
+    .quad -1
+.SB71:
+    .quad .S71
+    .quad 2
+    .quad -1
+.SB72:
+    .quad .S72
+    .quad 2
+    .quad -1
+.SB73:
+    .quad .S73
+    .quad 2
+    .quad -1
+.SB74:
+    .quad .S74
+    .quad 2
+    .quad -1
+.SB75:
+    .quad .S75
+    .quad 2
+    .quad -1
+.SB76:
+    .quad .S76
+    .quad 2
+    .quad -1
+.SB77:
+    .quad .S77
+    .quad 2
+    .quad -1
+.SB78:
+    .quad .S78
+    .quad 2
+    .quad -1
+.SB79:
+    .quad .S79
+    .quad 2
+    .quad -1
+.SB80:
+    .quad .S80
+    .quad 2
+    .quad -1
+.SB81:
+    .quad .S81
+    .quad 2
+    .quad -1
+.SB82:
+    .quad .S82
+    .quad 2
+    .quad -1
+.SB83:
+    .quad .S83
+    .quad 2
+    .quad -1
+.SB84:
+    .quad .S84
+    .quad 2
+    .quad -1
+.SB85:
+    .quad .S85
+    .quad 2
+    .quad -1
+.SB86:
+    .quad .S86
+    .quad 2
+    .quad -1
+.SB87:
+    .quad .S87
+    .quad 2
+    .quad -1
+.SB88:
+    .quad .S88
+    .quad 2
+    .quad -1
+.SB89:
+    .quad .S89
+    .quad 2
+    .quad -1
+.SB90:
+    .quad .S90
+    .quad 2
+    .quad -1
+.SB91:
+    .quad .S91
+    .quad 2
+    .quad -1
+.SB92:
+    .quad .S92
+    .quad 2
+    .quad -1
+.SB93:
+    .quad .S93
+    .quad 2
+    .quad -1
+.SB94:
+    .quad .S94
+    .quad 2
+    .quad -1
+.SB95:
+    .quad .S95
+    .quad 2
+    .quad -1
+.SB96:
+    .quad .S96
+    .quad 2
+    .quad -1
+.SB97:
+    .quad .S97
+    .quad 2
+    .quad -1
+.SB98:
+    .quad .S98
+    .quad 2
+    .quad -1
+.SB99:
+    .quad .S99
+    .quad 2
+    .quad -1
+.SB100:
+    .quad .S100
+    .quad 200
+    .quad -1
+.SB101:
+    .quad .S101
+    .quad 5
+    .quad -1
+.SB102:
+    .quad .S102
+    .quad 1
+    .section .data
+    .align 8
+    .quad 100
+    .quad -1
+.K0:
+    .quad 100
+.K0_0:
+    .quad .SB0
+.K0_1:
+    .quad .SB1
+.K0_2:
+    .quad .SB2
+.K0_3:
+    .quad .SB3
+.K0_4:
+    .quad .SB4
+.K0_5:
+    .quad .SB5
+.K0_6:
+    .quad .SB6
+.K0_7:
+    .quad .SB7
+.K0_8:
+    .quad .SB8
+.K0_9:
+    .quad .SB9
+.K0_10:
+    .quad .SB10
+.K0_11:
+    .quad .SB11
+.K0_12:
+    .quad .SB12
+.K0_13:
+    .quad .SB13
+.K0_14:
+    .quad .SB14
+.K0_15:
+    .quad .SB15
+.K0_16:
+    .quad .SB16
+.K0_17:
+    .quad .SB17
+.K0_18:
+    .quad .SB18
+.K0_19:
+    .quad .SB19
+.K0_20:
+    .quad .SB20
+.K0_21:
+    .quad .SB21
+.K0_22:
+    .quad .SB22
+.K0_23:
+    .quad .SB23
+.K0_24:
+    .quad .SB24
+.K0_25:
+    .quad .SB25
+.K0_26:
+    .quad .SB26
+.K0_27:
+    .quad .SB27
+.K0_28:
+    .quad .SB28
+.K0_29:
+    .quad .SB29
+.K0_30:
+    .quad .SB30
+.K0_31:
+    .quad .SB31
+.K0_32:
+    .quad .SB32
+.K0_33:
+    .quad .SB33
+.K0_34:
+    .quad .SB34
+.K0_35:
+    .quad .SB35
+.K0_36:
+    .quad .SB36
+.K0_37:
+    .quad .SB37
+.K0_38:
+    .quad .SB38
+.K0_39:
+    .quad .SB39
+.K0_40:
+    .quad .SB40
+.K0_41:
+    .quad .SB41
+.K0_42:
+    .quad .SB42
+.K0_43:
+    .quad .SB43
+.K0_44:
+    .quad .SB44
+.K0_45:
+    .quad .SB45
+.K0_46:
+    .quad .SB46
+.K0_47:
+    .quad .SB47
+.K0_48:
+    .quad .SB48
+.K0_49:
+    .quad .SB49
+.K0_50:
+    .quad .SB50
+.K0_51:
+    .quad .SB51
+.K0_52:
+    .quad .SB52
+.K0_53:
+    .quad .SB53
+.K0_54:
+    .quad .SB54
+.K0_55:
+    .quad .SB55
+.K0_56:
+    .quad .SB56
+.K0_57:
+    .quad .SB57
+.K0_58:
+    .quad .SB58
+.K0_59:
+    .quad .SB59
+.K0_60:
+    .quad .SB60
+.K0_61:
+    .quad .SB61
+.K0_62:
+    .quad .SB62
+.K0_63:
+    .quad .SB63
+.K0_64:
+    .quad .SB64
+.K0_65:
+    .quad .SB65
+.K0_66:
+    .quad .SB66
+.K0_67:
+    .quad .SB67
+.K0_68:
+    .quad .SB68
+.K0_69:
+    .quad .SB69
+.K0_70:
+    .quad .SB70
+.K0_71:
+    .quad .SB71
+.K0_72:
+    .quad .SB72
+.K0_73:
+    .quad .SB73
+.K0_74:
+    .quad .SB74
+.K0_75:
+    .quad .SB75
+.K0_76:
+    .quad .SB76
+.K0_77:
+    .quad .SB77
+.K0_78:
+    .quad .SB78
+.K0_79:
+    .quad .SB79
+.K0_80:
+    .quad .SB80
+.K0_81:
+    .quad .SB81
+.K0_82:
+    .quad .SB82
+.K0_83:
+    .quad .SB83
+.K0_84:
+    .quad .SB84
+.K0_85:
+    .quad .SB85
+.K0_86:
+    .quad .SB86
+.K0_87:
+    .quad .SB87
+.K0_88:
+    .quad .SB88
+.K0_89:
+    .quad .SB89
+.K0_90:
+    .quad .SB90
+.K0_91:
+    .quad .SB91
+.K0_92:
+    .quad .SB92
+.K0_93:
+    .quad .SB93
+.K0_94:
+    .quad .SB94
+.K0_95:
+    .quad .SB95
+.K0_96:
+    .quad .SB96
+.K0_97:
+    .quad .SB97
+.K0_98:
+    .quad .SB98
+.K0_99:
+    .quad .SB99
+    .section .bss
+    .align 8
+    .globl __fern_heap_ptr
+__fern_heap_ptr: .quad 0
+    .align 8
+    .globl __fern_heap_end
+__fern_heap_end: .quad 0
+    .align 8
+__fern_heap_base: .quad 0
+    .align 8
+__fern_rc_underflow: .quad 0
+    .align 8
+__fern_map_seed: .quad 0
+    .align 8
+    .globl __fern_arr_push_shared
+__fern_arr_push_shared: .quad 0
+    .align 8
+    .globl __fern_arr_push_copied
+__fern_arr_push_copied: .quad 0
+    .align 8
+__fern_freelist: .skip 524288
+    .align 8
+__fern_large_freelist: .skip 20480
+    .align 8
+__fern_freelist_shadow: .skip 524288
+    .align 8
+__fern_large_freelist_shadow: .skip 20480
+    .section .text
+__fern_alloc:
+    addq $7, %rdi
+    andq $-8, %rdi
+    cmpq $2048, %rdi
+    ja .Lalloc_full
+    leaq __fern_freelist(%rip), %rax
+    addq %rax, %rdi
+    movq (%rdi), %rax
+    testq %rax, %rax
+    jz .Lalloc_fast_miss
+    pushq (%rax)
+    popq (%rdi)
+    ret
+.Lalloc_fast_miss:
+    leaq __fern_freelist(%rip), %rax
+    subq %rax, %rdi
+    movq __fern_heap_ptr(%rip), %rax
+    testq %rax, %rax
+    jz .Lalloc_full
+    addq %rax, %rdi
+    cmpq __fern_heap_end(%rip), %rdi
+    ja .Lalloc_oom
+    movq %rdi, __fern_heap_ptr(%rip)
+    ret
+.Lalloc_full:
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %rcx
+    pushq %rdx
+    movq %rdi, %rcx
+    shrq $3, %rcx
+    cmpq $65536, %rcx
+    jae .Lalloc_large
+    cmpq $256, %rcx
+    jbe .L0
+    pushq %rcx
+    call __fern_capw
+    popq %rcx
+.L0:
+    leaq 0(,%rcx,8), %rdi
+    leaq __fern_freelist(%rip), %rdx
+    movq (%rdx,%rcx,8), %rax
+    testq %rax, %rax
+    jz .Lalloc_nofl
+    movq (%rax), %rdi
+    movq %rdi, (%rdx,%rcx,8)
+    popq %rdx
+    popq %rcx
+    popq %rbp
+    ret
+.Lalloc_large:
+    movabs $17179869184, %rax
+    cmpq %rax, %rdi
+    ja .Lalloc_nofl
+    movq %rdi, %rax
+    cmpq $524288, %rax
+    jae .L1
+    movl $524288, %eax
+.L1:
+    bsrq %rax, %rcx
+    subl $2, %ecx
+    movl $1, %edx
+    shlq %cl, %rdx
+    leaq -1(%rax,%rdx), %rax
+    negq %rdx
+    andq %rdx, %rax
+    bsrq %rax, %rcx
+    subl $2, %ecx
+    movq %rax, %rdx
+    shrq %cl, %rdx
+    shlq $2, %rcx
+    addq %rcx, %rdx
+    subq $72, %rdx
+    movq %rax, %rdi
+    movq %rdx, %rax
+    leaq __fern_large_freelist(%rip), %rdx
+    movq (%rdx,%rax,8), %rcx
+    testq %rcx, %rcx
+    jz .Lalloc_nofl
+    movq (%rcx), %rdi
+    movq %rdi, (%rdx,%rax,8)
+    movq %rcx, %rax
+    popq %rdx
+    popq %rcx
+    popq %rbp
+    ret
+.Lalloc_nofl:
+    popq %rdx
+    popq %rcx
+    movq __fern_heap_ptr(%rip), %rax
+    testq %rax, %rax
+    jne .Lalloc_inited
+    pushq %rdi
+    pushq %rsi
+    pushq %rcx
+    pushq %rdx
+    pushq %r8
+    pushq %r9
+    pushq %r10
+    pushq %r11
+    movl $0x10000000, %edi
+    movabs $17179869184, %rsi
+    movl $3, %edx
+    movl $0x4022, %r10d
+    movq $-1, %r8
+    xorl %r9d, %r9d
+    movl $9, %eax
+    syscall
+    cmpq $0, %rax
+    jl .Lalloc_map_fail
+    movq %rax, __fern_heap_ptr(%rip)
+    movq %rax, __fern_heap_base(%rip)
+    movabs $17179869184, %rcx
+    addq %rax, %rcx
+    movq %rcx, __fern_heap_end(%rip)
+    popq %r11
+    popq %r10
+    popq %r9
+    popq %r8
+    popq %rdx
+    popq %rcx
+    popq %rsi
+    popq %rdi
+.Lalloc_inited:
+    movq __fern_heap_ptr(%rip), %rax
+    addq %rax, %rdi
+    jc __fern_alloc_size_abort
+    cmpq __fern_heap_end(%rip), %rdi
+    ja .Lalloc_oom
+    movq %rdi, __fern_heap_ptr(%rip)
+    popq %rbp
+    ret
+    .section .rodata
+.Lmsg_oom:
+    .ascii "fern: out of memory (heap arena exhausted)\n"
+    .section .text
+.Lalloc_oom:
+    leaq .Lmsg_oom(%rip), %rsi
+    movq $43, %rdx
+    movq $125, %rdi
+    jmp __fern_report
+    .section .rodata
+.Lmsg_map_fail:
+    .ascii "fern: could not map the heap arena (errno "
+    .section .text
+.Lalloc_map_fail:
+    negq %rax
+    subq $96, %rsp
+    leaq 96(%rsp), %rdi
+    movl $10, %edx
+    decq %rdi
+    movb %dl, (%rdi)
+    movl $41, %edx
+    decq %rdi
+    movb %dl, (%rdi)
+    movl $10, %ecx
+.Lmap_fail_digit:
+    xorl %edx, %edx
+    divq %rcx
+    addl $48, %edx
+    decq %rdi
+    movb %dl, (%rdi)
+    testq %rax, %rax
+    jne .Lmap_fail_digit
+    leaq .Lmsg_map_fail(%rip), %rsi
+    addq $42, %rsi
+    movl $42, %ecx
+.Lmap_fail_copy:
+    decq %rsi
+    movb (%rsi), %dl
+    decq %rdi
+    movb %dl, (%rdi)
+    decq %rcx
+    jne .Lmap_fail_copy
+    movq %rdi, %rsi
+    leaq 96(%rsp), %rdx
+    subq %rsi, %rdx
+    movq $123, %rdi
+    jmp __fern_report
+    .section .rodata
+.Lmsg_arr_oob:
+    .ascii "fern: array index out of range\n"
+    .section .text
+__fern_oob_abort:
+    leaq .Lmsg_arr_oob(%rip), %rsi
+    movq $31, %rdx
+    movq $134, %rdi
+    jmp __fern_report
+    .section .rodata
+.Lmsg_str_oob:
+    .ascii "fern: string index out of range\n"
+    .section .text
+__fern_str_oob_abort:
+    leaq .Lmsg_str_oob(%rip), %rsi
+    movq $32, %rdx
+    movq $134, %rdi
+    jmp __fern_report
+    .section .rodata
+.Lmsg_slice:
+    .ascii "fern: slice range out of bounds\n"
+    .section .text
+__fern_slice_abort:
+    leaq .Lmsg_slice(%rip), %rsi
+    movq $32, %rdx
+    movq $134, %rdi
+    jmp __fern_report
+    .section .rodata
+.Lmsg_alloc_size:
+    .ascii "fern: allocation size out of range\n"
+    .section .text
+__fern_alloc_size_abort:
+    leaq .Lmsg_alloc_size(%rip), %rsi
+    movq $35, %rdx
+    movq $134, %rdi
+    jmp __fern_report
+    .section .rodata
+.Lmsg_free_range:
+    .ascii "fern: release of memory outside the heap\n"
+    .section .text
+__fern_free_range_abort:
+    leaq .Lmsg_free_range(%rip), %rsi
+    movq $41, %rdx
+    movq $134, %rdi
+    jmp __fern_report
+__fern_oob_abort.l5:
+    pushq 40(%rsp)
+    pushq %rbp
+    movq %rsp, %rbp
+    jmp __fern_oob_abort
+__fern_str_oob_abort.l5:
+    pushq 40(%rsp)
+    pushq %rbp
+    movq %rsp, %rbp
+    jmp __fern_str_oob_abort
+__fern_alloc_size_abort.l3:
+    pushq 24(%rsp)
+    pushq %rbp
+    movq %rsp, %rbp
+    jmp __fern_alloc_size_abort
+__fern_slice_abort.c:
+    pushq %rbp
+    movq %rsp, %rbp
+    jmp __fern_slice_abort
+__fern_alloc_size_abort.c:
+    pushq %rbp
+    movq %rsp, %rbp
+    jmp __fern_alloc_size_abort
+__fern_arr_box:
+    cmpq $268435455, %rdi
+    ja __fern_alloc_size_abort.c
+    pushq %rdi
+    leaq 24(,%rdi,8), %rdi
+    cmpq $2048, %rdi
+    ja .Larrbox_alloc
+    leaq __fern_freelist(%rip), %rax
+    addq %rax, %rdi
+    movq (%rdi), %rax
+    testq %rax, %rax
+    jz .Larrbox_miss
+    pushq (%rax)
+    popq (%rdi)
+.Larrbox_hdr:
+    popq %rdi
+    movq %rdi, (%rax)
+    movq $1, 8(%rax)
+    movq %rdi, 16(%rax)
+    addq $16, %rax
+    ret
+.Larrbox_miss:
+    leaq __fern_freelist(%rip), %rax
+    subq %rax, %rdi
+.Larrbox_alloc:
+    call __fern_alloc
+    jmp .Larrbox_hdr
+__fern_str_box:
+    pushq %rsi
+    pushq %rdi
+    movq $24, %rdi
+    call __fern_alloc
+    movq $1, (%rax)
+    popq %rdi
+    popq %rsi
+    movq %rdi, 8(%rax)
+    movq %rsi, 16(%rax)
+    addq $8, %rax
+    ret
+__fern_str_box_hdr:
+    leaq -24(%rdi), %rax
+    movl $1, (%rax)
+    movl $1934589965, 4(%rax)
+    movq %rdi, 8(%rax)
+    movq %rsi, 16(%rax)
+    addq $8, %rax
+    ret
+__fn___fern_rc_inc:
+    movq 8(%rsp), %rax
+    testb $1, %al
+    jnz .Lshrcinc_ret
+    cmpq $0x10000, %rax
+    jb .Lshrcinc_ret
+    andq $-3, %rax
+    movl -8(%rax), %ecx
+    testl %ecx, %ecx
+    js .Lshrcinc_ret
+    addl $1, %ecx
+    movl %ecx, -8(%rax)
+.Lshrcinc_ret:
+    movq 8(%rsp), %rax
+    ret
+__fn___fern_rc_underflow_count:
+    movl __fern_rc_underflow(%rip), %eax
+    ret
+__fern_large_push:
+    movabs $17179869184, %rax
+    cmpq %rax, %rsi
+    ja .Llpush_ret
+    movq %rsi, %rax
+    cmpq $524288, %rax
+    jae .L2
+    movl $524288, %eax
+.L2:
+    bsrq %rax, %rcx
+    subl $2, %ecx
+    movl $1, %edx
+    shlq %cl, %rdx
+    leaq -1(%rax,%rdx), %rax
+    negq %rdx
+    andq %rdx, %rax
+    bsrq %rax, %rcx
+    subl $2, %ecx
+    movq %rax, %rdx
+    shrq %cl, %rdx
+    shlq $2, %rcx
+    addq %rcx, %rdx
+    subq $72, %rdx
+    movq %rdx, %rax
+    leaq __fern_large_freelist(%rip), %rdx
+    movq (%rdx,%rax,8), %rcx
+    movq %rcx, (%r8)
+    movq %r8, (%rdx,%rax,8)
+.Llpush_ret:
+    ret
+__fern_capw:
+    pushq %rax
+    pushq %rcx
+    pushq %rdx
+    movq 32(%rsp), %rax
+    cmpq $256, %rax
+    jbe .Lcapw_ret
+    bsrq %rax, %rcx
+    subl $2, %ecx
+    movl $1, %edx
+    shlq %cl, %rdx
+    leaq -1(%rax,%rdx), %rax
+    negq %rdx
+    andq %rdx, %rax
+    cmpq $65536, %rax
+    jb .Lcapw_store
+    movl $65535, %eax
+.Lcapw_store:
+    movq %rax, 32(%rsp)
+.Lcapw_ret:
+    popq %rdx
+    popq %rcx
+    popq %rax
+    ret
+__fern_raw_free:
+    testq %rdi, %rdi
+    jz .Lrawfree_ret
+    cmpq __fern_heap_base(%rip), %rdi
+    jb .Lrawfree_bad
+    cmpq __fern_heap_end(%rip), %rdi
+    jae .Lrawfree_bad
+    addq $7, %rsi
+    andq $-8, %rsi
+    cmpq $8, %rsi
+    jb .Lrawfree_ret
+    movq %rsi, %rcx
+    shrq $3, %rcx
+    cmpq $65536, %rcx
+    jae .Lrawfree_large
+    cmpq $256, %rcx
+    jbe .L3
+    pushq %rcx
+    call __fern_capw
+    popq %rcx
+.L3:
+    leaq __fern_freelist(%rip), %r8
+    movq (%r8,%rcx,8), %rdx
+    movq %rdx, (%rdi)
+    movq %rdi, (%r8,%rcx,8)
+.Lrawfree_ret:
+    ret
+.Lrawfree_large:
+    movq %rdi, %r8
+    call __fern_large_push
+    ret
+.Lrawfree_bad:
+    pushq (%rsp)
+    pushq %rbp
+    movq %rsp, %rbp
+    jmp __fern_free_range_abort
+__fn___fern_arr_dec:
+    movq 8(%rsp), %rax
+__fn___fern_arr_dec.r:
+    cmpq $0x10000, %rax
+    jb .Larrdec_ret
+__fn___fern_arr_dec.u:
+    movl -8(%rax), %ecx
+    cmpl $1, %ecx
+    jne .Larrdec_shared
+    movl $0, -8(%rax)
+    movl -16(%rax), %ecx
+    addq $3, %rcx
+    leaq -16(%rax), %rdx
+    cmpq $256, %rcx
+    ja .Larrdec_big
+.Larrdec_push:
+    leaq __fern_freelist(%rip), %r8
+    movq (%r8,%rcx,8), %rdi
+    movq %rdi, (%rdx)
+    movq %rdx, (%r8,%rcx,8)
+.Larrdec_ret:
+    ret
+.Larrdec_shared:
+    testl %ecx, %ecx
+    js .Larrdec_ret
+    jg .Larrdec_dec
+    incl __fern_rc_underflow(%rip)
+    jmp .Larrdec_ret
+.Larrdec_dec:
+    subl $1, %ecx
+    movl %ecx, -8(%rax)
+    ret
+.Larrdec_big:
+    cmpq $65536, %rcx
+    jae .Larrdec_large
+    pushq %rcx
+    call __fern_capw
+    popq %rcx
+    jmp .Larrdec_push
+.Larrdec_large:
+    leaq -16(%rax), %r8
+    leaq 0(,%rcx,8), %rsi
+    call __fern_large_push
+    ret
+__fn___fern_str_free:
+    movq 8(%rsp), %rax
+__fn___fern_str_free.r:
+    testb $1, %al
+    jnz .Lstrfree_ret
+    cmpq $0x10000, %rax
+    jb .Lstrfree_ret
+__fn___fern_str_free.u:
+    movl -8(%rax), %ecx
+    cmpl $1, %ecx
+    jne .Lstrfree_shared
+    movl -4(%rax), %edx
+    cmpl $1934589965, %edx
+    je .Lstrfree_fused
+    cmpl $1196576599, %edx
+    je .Lstrfree_grown
+    cmpl $1112494674, %edx
+    je .Lstrfree_box
+    movq (%rax), %rcx
+    movq 8(%rax), %rdx
+    movq __fern_heap_base(%rip), %rsi
+    cmpq %rsi, %rcx
+    jb .Lstrfree_box
+    cmpq __fern_heap_end(%rip), %rcx
+    jae .Lstrfree_box
+    testq %rdx, %rdx
+    jle .Lstrfree_box
+    addq $7, %rdx
+    shrq $3, %rdx
+    cmpq $65536, %rdx
+    jae .Lstrfree_large
+    cmpq $256, %rdx
+    jbe .L4
+    pushq %rdx
+    call __fern_capw
+    popq %rdx
+.L4:
+    leaq __fern_freelist(%rip), %r8
+    movq (%r8,%rdx,8), %rsi
+    movq %rsi, (%rcx)
+    movq %rcx, (%r8,%rdx,8)
+.Lstrfree_box:
+    movl $0, -8(%rax)
+    leaq -8(%rax), %rdx
+    leaq __fern_freelist(%rip), %r8
+    movq 24(%r8), %rsi
+    movq %rsi, (%rdx)
+    movq %rdx, 24(%r8)
+    jmp .Lstrfree_ret
+.Lstrfree_large:
+    movq %rcx, %r8
+    leaq 0(,%rdx,8), %rsi
+    pushq %rax
+    call __fern_large_push
+    popq %rax
+    jmp .Lstrfree_box
+.Lstrfree_grown:
+    movq -16(%rax), %rdx
+    leaq -16(%rax), %rcx
+    jmp .Lstrfree_block
+.Lstrfree_fused:
+    movq 8(%rax), %rdx
+    addq $7, %rdx
+    shrq $3, %rdx
+    addq $3, %rdx
+    leaq -8(%rax), %rcx
+.Lstrfree_block:
+    movl $0, -8(%rax)
+    cmpq $256, %rdx
+    ja .Lstrfree_fused_big
+.Lstrfree_fused_push:
+    leaq __fern_freelist(%rip), %r8
+    movq (%r8,%rdx,8), %rsi
+    movq %rsi, (%rcx)
+    movq %rcx, (%r8,%rdx,8)
+    jmp .Lstrfree_ret
+.Lstrfree_fused_big:
+    cmpq $65536, %rdx
+    jae .Lstrfree_fused_large
+    pushq %rdx
+    call __fern_capw
+    popq %rdx
+    jmp .Lstrfree_fused_push
+.Lstrfree_fused_large:
+    movq %rcx, %r8
+    leaq 0(,%rdx,8), %rsi
+    call __fern_large_push
+    jmp .Lstrfree_ret
+.Lstrfree_shared:
+    testl %ecx, %ecx
+    js .Lstrfree_ret
+    je .Lstrfree_uf
+    subl $1, %ecx
+    movl %ecx, -8(%rax)
+    ret
+.Lstrfree_uf:
+    incl __fern_rc_underflow(%rip)
+.Lstrfree_ret:
+    ret
+__fn___fern_str_view_free:
+    movq 8(%rsp), %rax
+    testb $1, %al
+    jnz .Lstrvfree_ret
+    cmpq $0x10000, %rax
+    jb .Lstrvfree_ret
+    movl -8(%rax), %ecx
+    testl %ecx, %ecx
+    js .Lstrvfree_view
+    jmp __fn___fern_str_free
+.Lstrvfree_view:
+    leaq -8(%rax), %rdx
+    movq __fern_heap_base(%rip), %rsi
+    cmpq %rsi, %rdx
+    jb .Lstrvfree_ret
+    cmpq __fern_heap_end(%rip), %rdx
+    jae .Lstrvfree_ret
+    movl $0, -8(%rax)
+    leaq __fern_freelist(%rip), %r8
+    movq 24(%r8), %rsi
+    movq %rsi, (%rdx)
+    movq %rdx, 24(%r8)
+.Lstrvfree_ret:
+    ret
+__fn___fern_str_arr_free:
+    .cfi_startproc
+    movq 8(%rsp), %rax
+__fn___fern_str_arr_free.r:
+    pushq %rbx
+    .cfi_def_cfa_offset 16
+    .cfi_offset %rbx, -16
+    pushq %r12
+    .cfi_def_cfa_offset 24
+    .cfi_offset %r12, -24
+    pushq %r13
+    .cfi_def_cfa_offset 32
+    .cfi_offset %r13, -32
+    movq %rax, %rbx
+.Lssa___fern_str_arr_free_0:
+    cmpq $65536, %rbx
+    jb .Lssa___fern_str_arr_free_1
+.Lssa___fern_str_arr_free_6:
+    leaq -8(%rbx), %rsi
+    movslq (%rsi), %rsi
+    cmpq $1, %rsi
+    jne .Lssa___fern_str_arr_free_1
+.Lssa___fern_str_arr_free_5:
+    movslq (%rbx), %r12
+.Lssa___fern_str_arr_free_4:
+    xorl %esi, %esi
+.Lssa___fern_str_arr_free_15:
+    cmpq %r12, %rsi
+    jge .Lssa___fern_str_arr_free_1
+.Lssa___fern_str_arr_free_16:
+    leaq 1(%rsi), %r13
+    movq (%rbx,%r13,8), %rsi
+    testb $1, %sil
+    jnz .Lssa___fern_str_arr_free_rcdeck36
+    cmpq $0x10000, %rsi
+    jb .Lssa___fern_str_arr_free_rcdeck36
+    cmpl $1, -8(%rsi)
+    jg .Lssa___fern_str_arr_free_rcdecd36
+    cmpl $0, -8(%rsi)
+    js .Lssa___fern_str_arr_free_rcdeck36
+    movq %rsi, %rax
+    call __fn___fern_str_free.u
+    jmp .Lssa___fern_str_arr_free_rcdece36
+.Lssa___fern_str_arr_free_rcdecd36:
+    subl $1, -8(%rsi)
+.Lssa___fern_str_arr_free_rcdeck36:
+    movq %rsi, %rax
+.Lssa___fern_str_arr_free_rcdece36:
+    movq %r13, %rsi
+    cmpq %r12, %rsi
+    jl .Lssa___fern_str_arr_free_16
+.Lssa___fern_str_arr_free_1:
+    cmpq $0x10000, %rbx
+    jb .Lssa___fern_str_arr_free_rcdeck40
+    cmpl $1, -8(%rbx)
+    jg .Lssa___fern_str_arr_free_rcdecd40
+    cmpl $0, -8(%rbx)
+    js .Lssa___fern_str_arr_free_rcdeck40
+    movq %rbx, %rax
+    call __fn___fern_arr_dec.u
+    jmp .Lssa___fern_str_arr_free_rcdece40
+.Lssa___fern_str_arr_free_rcdecd40:
+    subl $1, -8(%rbx)
+.Lssa___fern_str_arr_free_rcdeck40:
+    movq %rbx, %rax
+.Lssa___fern_str_arr_free_rcdece40:
+    xorl %eax, %eax
+    .cfi_remember_state
+    popq %r13
+    .cfi_def_cfa_offset 24
+    popq %r12
+    .cfi_def_cfa_offset 16
+    popq %rbx
+    .cfi_def_cfa_offset 8
+    ret
+    .cfi_restore_state
+    .cfi_endproc
+__fn___fern_rc_is_unique:
+    movq 8(%rsp), %rcx
+    movq $0, %rax
+    testb $1, %cl
+    jnz .Lshuniq_ret
+    cmpq $0x10000, %rcx
+    jb .Lshuniq_ret
+    andq $-3, %rcx
+    movl -8(%rcx), %edx
+    testl %edx, %edx
+    js .Lshuniq_ret
+    cmpl $1, %edx
+    jne .Lshuniq_ret
+    movq $1, %rax
+.Lshuniq_ret:
+    ret
+__fn___fern_alloc_reuse:
+    movq 16(%rsp), %rax
+    movq 8(%rsp), %rsi
+__fn___fern_alloc_reuse.r:
+    testq %rax, %rax
+    jz .Lsarelo_fresh
+    cmpq %rsi, -16(%rax)
+    je .Lsarelo_ret
+    pushq %rsi
+    call __fn___fern_arr_dec.r
+    popq %rsi
+.Lsarelo_fresh:
+    movq %rsi, %rdi
+    jmp __fern_arr_box
+.Lsarelo_ret:
+    ret
+__fern_memcpy:
+    movq %rdi, %rax
+    cmpq $8, %rdx
+    jb .Lmcp_lt8
+    cmpq $16, %rdx
+    jb .Lmcp_8_15
+    cmpq $32, %rdx
+    jbe .Lmcp_16_32
+    leaq -32(%rdi,%rdx), %r8
+    leaq -32(%rsi,%rdx), %r9
+.Lmcp_bulk:
+    movdqu (%rsi), %xmm0
+    movdqu 16(%rsi), %xmm1
+    movdqu %xmm0, (%rdi)
+    movdqu %xmm1, 16(%rdi)
+    addq $32, %rsi
+    addq $32, %rdi
+    cmpq %r8, %rdi
+    jb .Lmcp_bulk
+    movdqu (%r9), %xmm0
+    movdqu 16(%r9), %xmm1
+    movdqu %xmm0, (%r8)
+    movdqu %xmm1, 16(%r8)
+    ret
+.Lmcp_16_32:
+    movdqu (%rsi), %xmm0
+    movdqu -16(%rsi,%rdx), %xmm1
+    movdqu %xmm0, (%rdi)
+    movdqu %xmm1, -16(%rdi,%rdx)
+    ret
+.Lmcp_8_15:
+    movq (%rsi), %r8
+    movq -8(%rsi,%rdx), %r9
+    movq %r8, (%rdi)
+    movq %r9, -8(%rdi,%rdx)
+    ret
+.Lmcp_lt8:
+    cmpq $4, %rdx
+    jb .Lmcp_lt4
+    movl (%rsi), %r8d
+    movl -4(%rsi,%rdx), %r9d
+    movl %r8d, (%rdi)
+    movl %r9d, -4(%rdi,%rdx)
+    ret
+.Lmcp_lt4:
+    testq %rdx, %rdx
+    je .Lmcp_done
+    movzbq (%rsi), %r8
+    movzbq -1(%rsi,%rdx), %r9
+    movb %r8b, (%rdi)
+    movb %r9b, -1(%rdi,%rdx)
+    cmpq $3, %rdx
+    jb .Lmcp_done
+    movzbq 1(%rsi), %r8
+    movb %r8b, 1(%rdi)
+.Lmcp_done:
+    ret
+    .section .data
+    .balign 8
+    .quad 0
+    .quad -1
+.Lfern_empty_bytes:
+    .quad 0
+    .section .text
+__fern_alloc_bytes:
+    testl %edi, %edi
+    js __fern_alloc_size_abort.c
+    jz .Lfern_alloc_bytes_empty
+    pushq %rbp
+    movq %rsp, %rbp
+    pushq %r12
+    pushq %r13
+    movq %rdi, %r12
+    leaq 7(%rdi), %rdi
+    shrq $3, %rdi
+    movq %rdi, %r13
+    call __fern_arr_box
+    movq %r12, (%rax)
+    movq %rax, %rdx
+    leaq 8(%rax), %rdi
+    movq %r13, %rcx
+    xorl %eax, %eax
+    rep stosq
+    movq %rdx, %rax
+    popq %r13
+    popq %r12
+    popq %rbp
+    ret
+.Lfern_alloc_bytes_empty:
+    leaq .Lfern_empty_bytes(%rip), %rax
+    ret
+    .text
+    .section .rodata
+.Lmsg_stack_overflow:
+    .ascii "fern: stack overflow\n"
+    .text
+__fern_segv:
+    movq 16(%rsi), %rax
+    movq __fern_stack_top(%rip), %rcx
+    testq %rcx, %rcx
+    jz .Lfern_segv_near_sp
+    subq $1073741808, %rcx
+    subq %rcx, %rax
+    cmpq $1048576, %rax
+    jb .Lfern_segv_overflow
+    jmp .Lfern_segv_other
+.Lfern_segv_near_sp:
+    subq 160(%rdx), %rax
+    addq $1048576, %rax
+    cmpq $2097152, %rax
+    jae .Lfern_segv_other
+.Lfern_segv_overflow:
+    movq 168(%rdx), %rax
+    movq 120(%rdx), %rcx
+    subq $16, %rsp
+    movq %rcx, (%rsp)
+    movq %rax, 8(%rsp)
+    movq %rsp, %rbp
+    movq $0, __fern_stack_top(%rip)
+    leaq .Lmsg_stack_overflow(%rip), %rsi
+    movq $21, %rdx
+    movq $134, %rdi
+    jmp __fern_report
+.Lfern_segv_other:
+    subq $32, %rsp
+    movq $0, (%rsp)
+    movq $0x04000000, 8(%rsp)
+    leaq .Lfern_segv_restorer(%rip), %rax
+    movq %rax, 16(%rsp)
+    movq $0, 24(%rsp)
+    movl $11, %edi
+    movq %rsp, %rsi
+    xorl %edx, %edx
+    movl $8, %r10d
+    movl $13, %eax
+    syscall
+    addq $32, %rsp
+    ret
+.Lfern_segv_restorer:
+    movl $15, %eax
+    syscall
+    .section .rodata
+.Lfern_stack_guard_failed_msg:
+    .ascii "fern: could not protect the stack guard\n"
+    .text
+.Lfern_stack_guard_failed:
+    leaq .Lfern_stack_guard_failed_msg(%rip), %rsi
+    movq $40, %rdx
+    movl $2, %edi
+    movl $1, %eax
+    syscall
+    movl $134, %edi
+    movl $231, %eax
+    syscall
+    .section .rodata
+.Lfern_signal_stack_map_failed_msg:
+    .ascii "fern: could not map the signal stack\n"
+    .text
+.Lfern_signal_stack_map_failed:
+    leaq .Lfern_signal_stack_map_failed_msg(%rip), %rsi
+    movq $37, %rdx
+    movl $2, %edi
+    movl $1, %eax
+    syscall
+    movl $134, %edi
+    movl $231, %eax
+    syscall
+    .section .rodata
+.Lfern_signal_stack_failed_msg:
+    .ascii "fern: could not install the signal stack\n"
+    .text
+.Lfern_signal_stack_failed:
+    leaq .Lfern_signal_stack_failed_msg(%rip), %rsi
+    movq $41, %rdx
+    movl $2, %edi
+    movl $1, %eax
+    syscall
+    movl $134, %edi
+    movl $231, %eax
+    syscall
+    .section .rodata
+.Lfern_fault_handler_failed_msg:
+    .ascii "fern: could not install the fault handler\n"
+    .text
+.Lfern_fault_handler_failed:
+    leaq .Lfern_fault_handler_failed_msg(%rip), %rsi
+    movq $42, %rdx
+    movl $2, %edi
+    movl $1, %eax
+    syscall
+    movl $134, %edi
+    movl $231, %eax
+    syscall
+    .section .rodata
+__fern_build:
+    .ascii "FERNBUILD1 target=x86-64-linux profile= harden=0 pie=0 sanitize=0 backtrace=1 size=0 shared=0 heap_limit=17179869184\n"
+    .text
+    .section .bss
+    .align 8
+    .globl __fern_stack_top
+__fern_stack_top: .quad 0
+    .section .text
+__fern_report:
+    movq %rdi, %r15
+    movq $2, %rdi
+    movq $1, %rax
+    syscall
+    jmp __fern_bt_exit
+    .section .rodata
+.Lmsg_bt:
+    .ascii "backtrace:\n"
+    .section .text
+    .globl __fern_bt_exit
+__fern_bt_exit:
+    andq $-16, %rsp
+    movq %rsp, %r13
+    leaq .Lmsg_bt(%rip), %rsi
+    movq $11, %rdx
+    movq $2, %rdi
+    movq $1, %rax
+    syscall
+    movq %rbp, %rbx
+    movl $64, %r14d
+.Lbt_loop:
+    testl %r14d, %r14d
+    jz .Lbt_done
+    cmpq %r13, %rbx
+    jb .Lbt_done
+    testq $7, %rbx
+    jnz .Lbt_done
+    movq __fern_stack_top(%rip), %rax
+    testq %rax, %rax
+    jz .Lbt_top_ok
+    cmpq %rax, %rbx
+    jae .Lbt_done
+.Lbt_top_ok:
+    movq 8(%rbx), %rsi
+    cmpq $0x10000, %rsi
+    jb .Lbt_done
+    call .Lbt_hex
+    movq %rbx, %r13
+    movq (%rbx), %rbx
+    decl %r14d
+    jmp .Lbt_loop
+.Lbt_done:
+    movq %r15, %rdi
+    movq $231, %rax
+    syscall
+.Lbt_hex:
+    subq $32, %rsp
+    movb $32, (%rsp)
+    movb $32, 1(%rsp)
+    movb $48, 2(%rsp)
+    movb $120, 3(%rsp)
+    movb $10, 20(%rsp)
+    movl $16, %ecx
+    leaq 19(%rsp), %rdi
+.Lbt_hloop:
+    movq %rsi, %rax
+    andl $15, %eax
+    cmpb $10, %al
+    jb .Lbt_hdec
+    addb $87, %al
+    jmp .Lbt_hput
+.Lbt_hdec:
+    addb $48, %al
+.Lbt_hput:
+    movb %al, (%rdi)
+    decq %rdi
+    shrq $4, %rsi
+    decl %ecx
+    jnz .Lbt_hloop
+    movq $1, %rax
+    movq $2, %rdi
+    movq %rsp, %rsi
+    movq $21, %rdx
+    syscall
+    addq $32, %rsp
+    ret
+    .text
+__fn___fern_string_from_bytes_u8:
+    .cfi_startproc
+    movq 8(%rsp), %rax
+__fn___fern_string_from_bytes_u8.r:
+    pushq %rbx
+    .cfi_def_cfa_offset 16
+    .cfi_offset %rbx, -16
+    pushq %r12
+    .cfi_def_cfa_offset 24
+    .cfi_offset %r12, -24
+    pushq %r13
+    .cfi_def_cfa_offset 32
+    .cfi_offset %r13, -32
+    movq %rax, %rbx
+.Lssa___fern_string_from_bytes_u8_0:
+    movq 0(%rbx), %r12
+    movq %r12, %rdi
+    testl %edi, %edi
+    js __fern_alloc_size_abort.l3
+    addq $24, %rdi
+    call __fern_alloc
+    addq $24, %rax
+    movq %rax, %r13
+    addq $8, %rbx
+    movq %r12, %rdx
+    movq %rbx, %rsi
+    movq %r13, %rdi
+    call __fern_memcpy
+    pushq $0
+    popq %rax
+    movq %r13, %r11
+    movq %r12, %rcx
+    movq %r11, %rdi
+    movq %rcx, %rsi
+    call __fern_str_box_hdr
+    .cfi_remember_state
+    popq %r13
+    .cfi_def_cfa_offset 24
+    popq %r12
+    .cfi_def_cfa_offset 16
+    popq %rbx
+    .cfi_def_cfa_offset 8
+    ret
+    .cfi_restore_state
+    .cfi_endproc
+    .text
+__fn___fern_arr_slice_u8:
+    .cfi_startproc
+    movq 8(%rsp), %rax
+    movq 16(%rsp), %rsi
+    movq 24(%rsp), %rdi
+__fn___fern_arr_slice_u8.r:
+    pushq %rbx
+    .cfi_def_cfa_offset 16
+    .cfi_offset %rbx, -16
+    pushq %r12
+    .cfi_def_cfa_offset 24
+    .cfi_offset %r12, -24
+    pushq %r13
+    .cfi_def_cfa_offset 32
+    .cfi_offset %r13, -32
+    pushq %r14
+    .cfi_def_cfa_offset 40
+    .cfi_offset %r14, -40
+    pushq %rcx
+    .cfi_def_cfa_offset 48
+    movq %rax, %rbx
+    movq %rsi, %r12
+.Lssa___fern_arr_slice_u8_0:
+    movq 0(%rbx), %rsi
+    xorl %r8d, %r8d
+    movl $1, %r9d
+    cmpq $0, %rdi
+    cmovgeq %r8, %r9
+.Lssa___fern_arr_slice_u8_13:
+    movl $1, %r10d
+    cmpq %rsi, %rdi
+    cmovleq %r9, %r10
+.Lssa___fern_arr_slice_u8_10:
+    movl $1, %esi
+    cmpq $0, %r12
+    cmovgeq %r10, %rsi
+.Lssa___fern_arr_slice_u8_7:
+    movl $1, %r9d
+    cmpq %rdi, %r12
+    cmovleq %rsi, %r9
+.Lssa___fern_arr_slice_u8_4:
+    cmpq $1, %r9
+    jne .Lssa___fern_arr_slice_u8_1
+.Lssa___fern_arr_slice_u8_3:
+    call __fern_slice_abort.c
+.Lssa___fern_arr_slice_u8_1:
+    subq %r12, %rdi
+    movslq %edi, %r13
+    leaq 7(%r13), %rdi
+    movslq %edi, %rdi
+    movq %rdi, %rax
+    movl %eax, %ecx
+    sarl $31, %ecx
+    shrl $29, %ecx
+    addl %eax, %ecx
+    movl %ecx, %eax
+    sarl $3, %eax
+    cltq
+    movq %rax, %r9
+    movq %r9, %rdi
+    call __fern_arr_box
+    movq %rax, %r14
+    movq %r13, 0(%r14)
+    leaq 8(%r14), %r9
+    addq $8, %rbx
+    movslq %r12d, %r12
+    addq %r12, %rbx
+    movq %r13, %rdx
+    movq %rbx, %rsi
+    movq %r9, %rdi
+    call __fern_memcpy
+    pushq $0
+    popq %rax
+    movq %r14, %rax
+    .cfi_remember_state
+    leaq 8(%rsp), %rsp
+    .cfi_def_cfa_offset 40
+    popq %r14
+    .cfi_def_cfa_offset 32
+    popq %r13
+    .cfi_def_cfa_offset 24
+    popq %r12
+    .cfi_def_cfa_offset 16
+    popq %rbx
+    .cfi_def_cfa_offset 8
+    ret
+    .cfi_restore_state
+    .cfi_endproc
+    .text
+__fn___fern_str_concat:
+    .cfi_startproc
+    movq 8(%rsp), %rax
+    movq 16(%rsp), %rsi
+__fn___fern_str_concat.r:
+    pushq %rbp
+    .cfi_def_cfa_offset 16
+    .cfi_offset %rbp, -16
+    movq %rsp, %rbp
+    .cfi_def_cfa_register %rbp
+    pushq %rbx
+    pushq %r12
+    pushq %r13
+    pushq %r14
+    pushq %r15
+    subq $8, %rsp
+    movq %rax, %rbx
+    movq %rsi, -48(%rbp)
+.Lssa___fern_str_concat_0:
+    movq 8(%rbx), %r13
+    movq -48(%rbp), %r11
+    movq 8(%r11), %r14
+    leaq (%r13,%r14), %rsi
+    movslq %esi, %r15
+    movq %r15, %rdi
+    testl %edi, %edi
+    js __fern_alloc_size_abort
+    addq $24, %rdi
+    call __fern_alloc
+    addq $24, %rax
+    movq %rax, %r12
+    movq 0(%rbx), %rsi
+    movq %r13, %rdx
+    movq %r12, %rdi
+    call __fern_memcpy
+    pushq $0
+    popq %rax
+    movslq %r13d, %r13
+    addq %r12, %r13
+    movq -48(%rbp), %r11
+    movq 0(%r11), %rsi
+    movq %r14, %rdx
+    movq %r13, %rdi
+    call __fern_memcpy
+    pushq $0
+    popq %rax
+    movq %r12, %r11
+    movq %r15, %rcx
+    movq %r11, %rdi
+    movq %rcx, %rsi
+    call __fern_str_box_hdr
+    .cfi_remember_state
+    leaq -40(%rbp), %rsp
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %rbx
+    popq %rbp
+    .cfi_def_cfa %rsp, 8
+    ret
+    .cfi_restore_state
+    .cfi_endproc
+    .text
+__fn___fern_print_str:
+    .cfi_startproc
+    movq 8(%rsp), %rax
+__fn___fern_print_str.r:
+    pushq %rcx
+    .cfi_def_cfa_offset 16
+.Lssa___fern_print_str_0:
+    movq 0(%rax), %rsi
+    movq 8(%rax), %rdi
+    movslq %edi, %rdi
+    movl $1, %r8d
+    movl $1, %r9d
+    pushq %r8
+    pushq %r9
+    pushq %rsi
+    pushq %rdi
+    popq %rdx
+    popq %rsi
+    popq %rdi
+    popq %rax
+    syscall
+    movslq %eax, %rax
+    .cfi_remember_state
+    leaq 8(%rsp), %rsp
+    .cfi_def_cfa_offset 8
+    ret
+    .cfi_restore_state
+    .cfi_endproc

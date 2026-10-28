@@ -1,0 +1,17 @@
+[
+  {
+    "fixture": "record-pair",
+    "sha256": "9ef14c74c4251b8ad54d23cb2b4872586b8df4a1f5a3935178b628db6ff26f06",
+    "byte_identical": true
+  },
+  {
+    "fixture": "guards",
+    "sha256": "158cd782a8e0532ba07efcdaecb5c35e8deff16a15b346dcb5a375788fc6be9d",
+    "byte_identical": true
+  },
+  {
+    "fixture": "heap-alias",
+    "sha256": "79fceb70ef0a571cfead6e9510c7e6cd6850a946766be87532bf94041d74a762",
+    "byte_identical": true
+  }
+]

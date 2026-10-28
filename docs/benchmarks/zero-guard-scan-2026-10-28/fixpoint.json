@@ -1,0 +1,18 @@
+{
+  "command": [
+    "/workspace/lang-issue-work/perf-4412/zero-guard-candidate/stage2",
+    "-O",
+    "-target",
+    "x86-64-linux",
+    "-o",
+    "/workspace/lang-issue-work/perf-4412/zero-guard-candidate/stage3",
+    "/workspace/lang-issue-work/perf-4412/zero-guard-candidate/compiler/fern.fern",
+    "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 43.89336512200134,
+  "producer_sha256": "b5f3a8529bdd5e6c3b1169b136c42511291536437a0d1bbe9056189228156d07",
+  "primary_e2e_completed_first": true,
+  "stage3_sha256": "b5f3a8529bdd5e6c3b1169b136c42511291536437a0d1bbe9056189228156d07",
+  "stage2_equals_stage3": true
+}

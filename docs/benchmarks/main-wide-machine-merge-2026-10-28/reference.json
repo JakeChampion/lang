@@ -1,0 +1,10 @@
+{
+  "command": [
+    "python3",
+    "scripts/gen-large-push-wide-machine-reference.py",
+    "--check"
+  ],
+  "exit": 0,
+  "seconds": 0.8963392400037264,
+  "source_head": "b8b83c0fffd5d8570c5d621636c49ee0a95095d1"
+}

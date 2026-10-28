@@ -1,0 +1,19 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^TestSelfHostSSAUnits($|IR|IndexedReplay)",
+    "-count=1",
+    "-json"
+  ],
+  "exit": 0,
+  "elapsed_seconds": 37.98629420499856,
+  "previous_log_reported_pass": true,
+  "previous_shell_wrapper_exit": 1,
+  "previous_status_accepted": false,
+  "test_passes": 89,
+  "test_failures": [],
+  "test_skips": []
+}

@@ -1,0 +1,16 @@
+{
+  "source_base": "c63e488b4ed21b7161417382b8e4f7f6f05a5da5",
+  "producer_sha256": "4948b305ce2012f2aa47704843e883566a14ac79274aac3b50becb0d9f966251",
+  "before_driver_sha256": "e43e4ae7e153699acab063c16cf2d113bd3a914815facc759b32979da78b1693",
+  "after_driver_sha256": "12db85874c0cffbba34ac13d62a0fa211633135b3cbebeacd1859799b14b891f",
+  "before_large_label_maxrss_kib": 2098212,
+  "after_large_label_maxrss_kib": 932,
+  "red_regression_seconds": 2.316,
+  "targeted_green_seconds": 33.238,
+  "three_target_seconds": 50.836,
+  "fuzz_seconds": 30,
+  "fuzz_executions": 18250,
+  "budgets_unchanged": true,
+  "ci_minimized_seed_available": false,
+  "ci_full_pass": false
+}

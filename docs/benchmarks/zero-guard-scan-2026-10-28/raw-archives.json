@@ -1,0 +1,100 @@
+[
+  {
+    "raw_name": "stage2.callgrind",
+    "archive_name": "stage2.callgrind.gz",
+    "raw_sha256": "8526490077323c5b1fba03134568a75cdc9c0c2926a42dd7ad5cf7c8b6294656",
+    "raw_bytes": 2236730,
+    "archive_sha256": "2e32ca54a2bd3d6e04c87c3312418c27796532795c3e9477d291a33fa5bf685b"
+  },
+  {
+    "raw_name": "stage2-g.nm",
+    "archive_name": "stage2-g.nm.gz",
+    "raw_sha256": "3ef8f61d124fd027202b4563fbfc58d16e6a5ff001e865b7aba0bd242a131081",
+    "raw_bytes": 436253,
+    "archive_sha256": "5fd413e55ec94b8ae972d02ace22f3f10b035a8a3616e29ba398113d9a00d1d6"
+  },
+  {
+    "raw_name": "before-contract-x86-64-linux.out",
+    "archive_name": "before-contract-x86-64-linux.out.gz",
+    "raw_sha256": "34a7c45dfe276dd75c829db26d5c13ffe55079466f2848bcc4a4ea037d72e75f",
+    "raw_bytes": 789804,
+    "archive_sha256": "b50533081f143cd3eb96f9ea549cf0a1b20e0c6d270c0c15be394605785bf3d3"
+  },
+  {
+    "raw_name": "before-contract-x86-64-linux.err",
+    "archive_name": "before-contract-x86-64-linux.err.gz",
+    "raw_sha256": "0bdcc2637b1e4e12f14860e8067767ad4c2d9d6122fca88143acee82cb2b2977",
+    "raw_bytes": 51,
+    "archive_sha256": "160cda2ff289136c76ac5b953aa8e120a7e6afa8cbca73064214a1450b0b1b9a"
+  },
+  {
+    "raw_name": "before-contract-arm64-linux.out",
+    "archive_name": "before-contract-arm64-linux.out.gz",
+    "raw_sha256": "34a7c45dfe276dd75c829db26d5c13ffe55079466f2848bcc4a4ea037d72e75f",
+    "raw_bytes": 789804,
+    "archive_sha256": "b50533081f143cd3eb96f9ea549cf0a1b20e0c6d270c0c15be394605785bf3d3"
+  },
+  {
+    "raw_name": "before-contract-arm64-linux.err",
+    "archive_name": "before-contract-arm64-linux.err.gz",
+    "raw_sha256": "0bdcc2637b1e4e12f14860e8067767ad4c2d9d6122fca88143acee82cb2b2977",
+    "raw_bytes": 51,
+    "archive_sha256": "160cda2ff289136c76ac5b953aa8e120a7e6afa8cbca73064214a1450b0b1b9a"
+  },
+  {
+    "raw_name": "before-contract-wasm32-wasi.out",
+    "archive_name": "before-contract-wasm32-wasi.out.gz",
+    "raw_sha256": "34a7c45dfe276dd75c829db26d5c13ffe55079466f2848bcc4a4ea037d72e75f",
+    "raw_bytes": 789804,
+    "archive_sha256": "b50533081f143cd3eb96f9ea549cf0a1b20e0c6d270c0c15be394605785bf3d3"
+  },
+  {
+    "raw_name": "before-contract-wasm32-wasi.err",
+    "archive_name": "before-contract-wasm32-wasi.err.gz",
+    "raw_sha256": "1e685b830d678399659b91adf81b803c71f4da88972efea8f481e01ef4558645",
+    "raw_bytes": 51,
+    "archive_sha256": "379e6353bb020d1c15e9781c276ac84655d5e233709b22cf27ef2425f3df7be1"
+  },
+  {
+    "raw_name": "after-contract-x86-64-linux.out",
+    "archive_name": "after-contract-x86-64-linux.out.gz",
+    "raw_sha256": "34a7c45dfe276dd75c829db26d5c13ffe55079466f2848bcc4a4ea037d72e75f",
+    "raw_bytes": 789804,
+    "archive_sha256": "b50533081f143cd3eb96f9ea549cf0a1b20e0c6d270c0c15be394605785bf3d3"
+  },
+  {
+    "raw_name": "after-contract-x86-64-linux.err",
+    "archive_name": "after-contract-x86-64-linux.err.gz",
+    "raw_sha256": "af5f20607ff884258fa5120784b52ec8bf6308cf6e6fb83e5718746786626c48",
+    "raw_bytes": 51,
+    "archive_sha256": "bb2a3443a52cdf970101d5536199cd2d4680a009299fbaf92c9b90e5f780551c"
+  },
+  {
+    "raw_name": "after-contract-arm64-linux.out",
+    "archive_name": "after-contract-arm64-linux.out.gz",
+    "raw_sha256": "34a7c45dfe276dd75c829db26d5c13ffe55079466f2848bcc4a4ea037d72e75f",
+    "raw_bytes": 789804,
+    "archive_sha256": "b50533081f143cd3eb96f9ea549cf0a1b20e0c6d270c0c15be394605785bf3d3"
+  },
+  {
+    "raw_name": "after-contract-arm64-linux.err",
+    "archive_name": "after-contract-arm64-linux.err.gz",
+    "raw_sha256": "af5f20607ff884258fa5120784b52ec8bf6308cf6e6fb83e5718746786626c48",
+    "raw_bytes": 51,
+    "archive_sha256": "bb2a3443a52cdf970101d5536199cd2d4680a009299fbaf92c9b90e5f780551c"
+  },
+  {
+    "raw_name": "after-contract-wasm32-wasi.out",
+    "archive_name": "after-contract-wasm32-wasi.out.gz",
+    "raw_sha256": "34a7c45dfe276dd75c829db26d5c13ffe55079466f2848bcc4a4ea037d72e75f",
+    "raw_bytes": 789804,
+    "archive_sha256": "b50533081f143cd3eb96f9ea549cf0a1b20e0c6d270c0c15be394605785bf3d3"
+  },
+  {
+    "raw_name": "after-contract-wasm32-wasi.err",
+    "archive_name": "after-contract-wasm32-wasi.err.gz",
+    "raw_sha256": "bc444fcc6c27eb365102c2156608a07acba5c84a8dfd996cf009224c83c8c6d4",
+    "raw_bytes": 51,
+    "archive_sha256": "4a818ac985c9b46b31c2a5834705b2c6aa23cbc90ea4649964020ec4524b0493"
+  }
+]

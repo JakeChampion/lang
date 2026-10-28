@@ -1,0 +1,70 @@
+__fern_segv:
+    ldr x9, [x1, #24]
+    adrp x14, __fern_stack_top
+    add x14, x14, :lo12:__fern_stack_top
+    ldr x14, [x14]
+    cbz x14, Lfern_segv_near_sp
+    mov x15, #1
+    lsl x15, x15, #30
+    sub x14, x14, x15
+    add x14, x14, #16
+    sub x15, x9, x14
+    mov x16, #1
+    lsl x16, x16, #20
+    cmp x15, x16
+    b.lo Lfern_segv_overflow
+    b Lfern_segv_other
+Lfern_segv_near_sp:
+    ldr x13, [x2, #48]
+    ldr x10, [x13, #264]
+    and x10, x10, #0x0000ffffffffffff
+    sub x9, x9, x10
+    mov x10, #1
+    lsl x10, x10, #20
+    add x9, x9, x10
+    lsl x10, x10, #1
+    cmp x9, x10
+    b.hs Lfern_segv_other
+Lfern_segv_overflow:
+    ldr x11, [x13, #272]
+    ldr x12, [x13, #248]
+    and x11, x11, #0x0000ffffffffffff
+    and x12, x12, #0x0000ffffffffffff
+    stp x12, x11, [sp, #-16]!
+    mov x29, sp
+    adrp x10, __fern_stack_top
+    add x10, x10, :lo12:__fern_stack_top
+    str xzr, [x10]
+    adrp x1, Lmsg_stack_overflow
+    add x1, x1, :lo12:Lmsg_stack_overflow
+    mov x2, #21
+    mov x0, #134
+    b __fern_report
+Lfern_segv_other:
+    adrp x10, __fern_segv_trampoline
+    add x10, x10, :lo12:__fern_segv_trampoline
+    stp x29, x30, [sp, #-16]!
+    sub sp, sp, #32
+    stp xzr, x10, [sp]
+    stp xzr, xzr, [sp, #16]
+    mov x0, #11
+    mov x1, sp
+    mov x2, #0
+    mov x3, #8
+    mov x16, #46
+    svc #0x80
+    b.cc Ldwsc_6
+    neg x0, x0
+Ldwsc_6:
+    mov x0, #10
+    mov x1, sp
+    mov x2, #0
+    mov x3, #8
+    mov x16, #46
+    svc #0x80
+    b.cc Ldwsc_7
+    neg x0, x0
+Ldwsc_7:
+    add sp, sp, #32
+    ldp x29, x30, [sp], #16
+    ret

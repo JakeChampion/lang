@@ -1,0 +1,76 @@
+=== RUN   TestSelfHostFeatureCensus
+    self_host_feature_census_test.go:282: self-host feature census over 342 modules, literals stripped:
+    self_host_feature_census_test.go:282:   generic functions              16  in 2 modules
+    self_host_feature_census_test.go:282:   generic structs                 0  in 0 modules
+    self_host_feature_census_test.go:282:   arrow lambdas                  16  in 5 modules
+    self_host_feature_census_test.go:282:   nested named fns               87  in 7 modules
+    self_host_feature_census_test.go:282:   for..in loops                4686  in 263 modules
+    self_host_feature_census_test.go:282:   try op                          0  in 0 modules
+    self_host_feature_census_test.go:282:   Map type spellings             10  in 6 modules
+    self_host_feature_census_test.go:282:   astwalk call sites            334  in 30 modules
+    self_host_feature_census_test.go:282:   wildcard match arms          1378  in 45 modules
+    self_host_feature_census_test.go:282:   arrow tokens                 6791  in 112 modules
+    self_host_feature_census_test.go:282:   while loops                  4897  in 239 modules
+    self_host_feature_census_test.go:282:   as casts                     2940  in 200 modules
+    self_host_feature_census_test.go:282:   minus-one sentinel returns    707  in 73 modules
+    self_host_feature_census_test.go:282:   method decls                  169  in 10 modules
+    self_host_feature_census_test.go:282:   annotated let decls         28204  in 276 modules
+    self_host_feature_census_test.go:282:   inferred let decls           4373  in 192 modules
+    self_host_feature_census_test.go:282:   increment by one             5179  in 281 modules
+--- PASS: TestSelfHostFeatureCensus (0.44s)
+=== RUN   TestSelfHostFixtureSourcesCheck
+=== RUN   TestSelfHostFixtureSourcesCheck/physical_rc
+=== RUN   TestSelfHostFixtureSourcesCheck/physical_rc_reject
+=== RUN   TestSelfHostFixtureSourcesCheck/rccertify_cases
+=== RUN   TestSelfHostFixtureSourcesCheck/units
+=== RUN   TestSelfHostFixtureSourcesCheck/semantic
+=== RUN   TestSelfHostFixtureSourcesCheck/lifetime_nested-projection
+=== RUN   TestSelfHostFixtureSourcesCheck/lifetime_phi-edges
+=== RUN   TestSelfHostFixtureSourcesCheck/lifetime_loop-anchor
+=== RUN   TestSelfHostFixtureSourcesCheck/lifetime_rebound-value
+=== RUN   TestSelfHostFixtureSourcesCheck/lifetime_wide
+=== RUN   TestSelfHostFixtureSourcesCheck/deps_nested-projection
+=== RUN   TestSelfHostFixtureSourcesCheck/deps_phi-edges
+=== RUN   TestSelfHostFixtureSourcesCheck/deps_loop-anchor
+=== RUN   TestSelfHostFixtureSourcesCheck/deps_rebound-value
+=== RUN   TestSelfHostFixtureSourcesCheck/deps_missing-transitive-root
+=== RUN   TestSelfHostFixtureSourcesCheck/deps_self-dependency
+=== RUN   TestSelfHostFixtureSourcesCheck/deps_cycle
+=== RUN   TestSelfHostFixtureSourcesCheck/deps_wrong-phi-edge
+=== RUN   TestSelfHostFixtureSourcesCheck/deps_branch-root-at-join
+=== RUN   TestSelfHostFixtureSourcesCheck/deps_forward-local-root
+=== RUN   TestSelfHostFixtureSourcesCheck/deps_duplicate-definition
+=== RUN   TestSelfHostFixtureSourcesCheck/deps_undefined-operand
+=== RUN   TestSelfHostFixtureSourcesCheck/deps_phi-after-use
+--- PASS: TestSelfHostFixtureSourcesCheck (50.05s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/physical_rc (6.97s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/physical_rc_reject (7.20s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/rccertify_cases (1.94s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/units (2.20s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/semantic (2.02s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/lifetime_nested-projection (1.53s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/lifetime_phi-edges (1.62s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/lifetime_loop-anchor (1.59s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/lifetime_rebound-value (1.63s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/lifetime_wide (1.62s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/deps_nested-projection (1.64s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/deps_phi-edges (1.59s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/deps_loop-anchor (1.63s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/deps_rebound-value (1.67s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/deps_missing-transitive-root (1.72s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/deps_self-dependency (1.66s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/deps_cycle (1.62s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/deps_wrong-phi-edge (1.56s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/deps_branch-root-at-join (1.58s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/deps_forward-local-root (1.60s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/deps_duplicate-definition (1.58s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/deps_undefined-operand (1.58s)
+    --- PASS: TestSelfHostFixtureSourcesCheck/deps_phi-after-use (1.55s)
+=== RUN   TestSelfHostRepoComplexityRatchet
+=== RUN   TestSelfHostRepoComplexityRatchet/self-host_compiler
+=== RUN   TestSelfHostRepoComplexityRatchet/stdlib
+--- PASS: TestSelfHostRepoComplexityRatchet (5.10s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/self-host_compiler (0.00s)
+    --- PASS: TestSelfHostRepoComplexityRatchet/stdlib (0.00s)
+PASS
+ok  	github.com/jakechampion/lang/internal/testing/e2ecompiler	55.601s

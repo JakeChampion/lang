@@ -1,0 +1,19 @@
+{
+  "command": [
+    "go",
+    "test",
+    "./internal/testing/e2ecompiler",
+    "-run",
+    "^(TestImportFreeModulesDoNotDrift|TestSelfHostLargeFreeWideClasses|TestSelfHostLargeFreeWideClassesWorker)$",
+    "-count=1",
+    "-timeout",
+    "20m",
+    "-json"
+  ],
+  "exit": 0,
+  "seconds": 24.036306403999333,
+  "source_head": "b72381ec50d4390a703d17096a4a61deae25cb2f",
+  "passes": 30,
+  "failures": [],
+  "skips": []
+}

@@ -100,8 +100,8 @@ pub function abis(c: Collection): rccertify.Abis {
       names = names.append(k.name);
       modes = modes.append(k.modes);
       results = results.append(ssasem.reference(k.result));
-      firsts = firsts.append(pair_first(k.result));
-      seconds = seconds.append(pair_second(m.enums, k.result));
+      firsts = firsts.append(pair_first(m, k.result));
+      seconds = seconds.append(pair_second(m, k.result));
       splits = splits.append([split_word(m, k.result, 0), split_word(m, k.result, 1)]);
       words = words.append(ssasem.is_usize(k.result));
     }
@@ -139,33 +139,39 @@ function split_word(m: Metadata, t: typeinfo.Type, slot: i32): i32 {
   return mask;
 }
 
-function pair_first(t: typeinfo.Type): boolean {
+function pair_parts(m: Metadata, t: typeinfo.Type): typeinfo.Type[] {
   if let typeinfo.TypeTuple(tup) = t {
-    return tup.elements.len() == 2 && ssasem.reference(tup.elements[0]);
+    return tup.elements;
   }
-  return false;
+  return sempair.split_parts(m.records, m.finalizers, t);
 }
 
-function pair_second(enums: semrecords.Enum[], t: typeinfo.Type): i32 {
+function pair_first(m: Metadata, t: typeinfo.Type): boolean {
+  let parts: typeinfo.Type[] = pair_parts(m, t);
+  return parts.len() == 2 && ssasem.reference(parts[0]);
+}
+
+function pair_second(m: Metadata, t: typeinfo.Type): i32 {
   if (ssasem.is_wide(t)) {
     return 0;
   }
-  if let typeinfo.TypeTuple(tup) = t {
-    if (tup.elements.len() == 2 && ssasem.reference(tup.elements[1])) {
+  let parts: typeinfo.Type[] = pair_parts(m, t);
+  if (parts.len() > 0) {
+    if (parts.len() == 2 && ssasem.reference(parts[1])) {
       return -1;
     }
     return 0;
   }
-  let at: i32 = semrecords.find_enum(enums, t);
+  let at: i32 = semrecords.find_enum(m.enums, t);
   if (at < 0) {
     return -2;
   }
-  if (semscalarreturn.variant_in_lanes(enums[at])) {
+  if (semscalarreturn.variant_in_lanes(m.enums[at])) {
     return 0;
   }
   let mask: i32 = 0;
   let tag: i32 = 0;
-  for v in enums[at].variants {
+  for v in m.enums[at].variants {
     if (v.fields.len() == 1 && ssasem.reference(v.fields[0].ty)) {
       if (tag >= 31) {
         return -2;
