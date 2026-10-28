@@ -5042,36 +5042,31 @@ function ssa_frame_words(nspill: i32, views: i32[], cold: ColdSaves): i32 {
 function ssa_cold_saves(f: ssa.SFunc, alloc: ssa.Alloc): ColdSaves {
   let by_pos: i32[] = __alloc_i32(ssa.position_count(f) + 1);
   let by_val: i32[] = __alloc_i32(f.nvals);
-  let any: boolean = false;
+  let at: i32[] = [];
+  let results: i32[] = [];
   let first: i32 = 0;
   for b in f.blocks {
     for k in 0..b.insts.len() {
-      let ins: ssa.SInst = b.insts[k];
       let pos: i32 = first + k;
       if (pos < alloc.cold.len() && (alloc.cold[pos] == ssa.COLD_SLOW || alloc.cold[pos] == ssa.COLD_BRANCH)) {
-        let mask: i32 = ssa_live_caller_regs(alloc, pos, ins.result);
-        any = any || mask != 0;
-        if (alloc.cold[pos] == ssa.COLD_SLOW) {
-          by_val = by_val.with(ins.result, mask);
-        } else {
-          by_pos = by_pos.with(pos, mask);
-        }
+        at = at.append(pos);
+        results = results.append(b.insts[k].result);
       }
     }
     first = first + b.insts.len() + 1;
   }
-  return ColdSaves { by_pos: by_pos, by_val: by_val, any: any };
-}
-
-function ssa_live_caller_regs(alloc: ssa.Alloc, at: i32, result: i32): i32 {
-  let mask: i32 = 0;
-  for v in 0..alloc.reg_of.len() {
-    let r: i32 = alloc.reg_of[v];
-    if (v != result && r >= 0 && r < ssa_nregs() && alloc.lo[v] < at && alloc.hi[v] > at) {
-      mask = mask | 1 << r;
+  let live: i32[] = ssa.live_masks(alloc, ssa_nregs(), at, results);
+  let any: boolean = false;
+  for j in 0..at.len() {
+    let mask: i32 = live[j] - (live[j] & COLD_CLOBBERS);
+    any = any || mask != 0;
+    if (alloc.cold[at[j]] == ssa.COLD_SLOW) {
+      by_val = by_val.with(results[j], mask);
+    } else {
+      by_pos = by_pos.with(at[j], mask);
     }
   }
-  return mask - (mask & COLD_CLOBBERS);
+  return ColdSaves { by_pos: by_pos, by_val: by_val, any: any };
 }
 
 function ssa_cold_mask(fr: SsaFrame, ins: ssa.SInst): i32 {

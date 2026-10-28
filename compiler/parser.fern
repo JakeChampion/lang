@@ -8638,6 +8638,8 @@ pub struct MFns {
   gat: i32[],
   pix: util.NameIndex,
   pat: i32[],
+  mix: util.NameIndex,
+  mat: i32[],
   smm: string[],
   array_concrete: i32[],
   structs: StructDecl[],
@@ -8676,6 +8678,8 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
   let array_concrete: i32[] = [];
   let pnames: string[] = [];
   let pat: i32[] = [];
+  let mnames: string[] = [];
+  let mat: i32[] = [];
   let i: i32 = 0;
   while (i < decls.len()) {
     if (is_free_bg_template(decls[i])) {
@@ -8685,6 +8689,10 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     if (decls[i].receiver_name.len() == 0 && decls[i].receiver_type.len() == 0) {
       pnames = pnames.append(decls[i].name);
       pat = pat.append(i);
+    }
+    if (decls[i].receiver_name.len() > 0 && decls[i].all_type_params.len() == 0) {
+      mnames = mnames.append(decls[i].name);
+      mat = mat.append(i);
     }
     if (decls[i].name.len() > 6 && slice_unchecked(decls[i].name, 0, 6) == "__smm_") {
       smm = smm.append(decls[i].name);
@@ -8707,7 +8715,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     ghead = ghead.with(bk, k);
     k = k - 1;
   }
-  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, pix: util.name_index(pnames), pat: pat, smm: smm, array_concrete: array_concrete, structs: structs, snames: util.name_index(struct_names(structs)), enums: enums, impls: impls, keep_vars: false, on_call: [], renamed: renamed_receivers(decls), lane_bounds: [] };
+  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, pix: util.name_index(pnames), pat: pat, mix: util.name_index(mnames), mat: mat, smm: smm, array_concrete: array_concrete, structs: structs, snames: util.name_index(struct_names(structs)), enums: enums, impls: impls, keep_vars: false, on_call: [], renamed: renamed_receivers(decls), lane_bounds: [] };
 }
 
 function renamed_receivers(decls: FuncDecl[]): string[] {
@@ -13855,13 +13863,12 @@ function method_decl_at(callee: ast.Expr, env: MEnv, funcs: MFns): i32 {
     if (rt.len() == 0) {
       return 0 - 1;
     }
-    let i: i32 = 0;
-    while (i < funcs.decls.len()) {
-      let d: FuncDecl = funcs.decls[i];
-      if (d.name == fa.field && d.receiver_name.len() > 0 && d.receiver_type == rt && d.all_type_params.len() == 0) {
-        return i;
+    let e: i32 = funcs.mix.chain(fa.field);
+    while (e >= 0) {
+      if (funcs.mix.names[e] == fa.field && funcs.decls[funcs.mat[e]].receiver_type == rt) {
+        return funcs.mat[e];
       }
-      i = i + 1;
+      e = funcs.mix.next[e];
     }
   }
   return 0 - 1;
