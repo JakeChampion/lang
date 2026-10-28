@@ -92,7 +92,7 @@ func TestSelfHostRcCallResultWasm(t *testing.T) {
 		{"callresult-aliased", genFn + "function main(): i32 { let a: i32[] = gen(5); let c = a; return a[0] + c[4] + __rc_underflow_count(); }", 4},
 		{"callresult-borrowed-return", "@noinline function pick(xs: i32[]): i32[] { return xs; } function main(): i32 { let src: i32[] = [1, 2, 3]; let got: i32[] = pick(src); return got[1] + src[0] + __rc_underflow_count(); }", 3},
 		{"self-append-not-double-freed", "function main(): i32 { let xs: i32[] = [1, 2]; let ys = xs.append(3); return ys[2] + __rc_underflow_count(); }", 3},
-		{"freshbuiltin-random-swept", "import \"std/rand\";\nfunction main(): i32 { let b: u8[] = rand.bytes(4); return b.len() + __rc_underflow_count(); }", 4},
+		{"freshbuiltin-random-swept", "function main(): i32 { let b: u8[] = random_bytes(4); return b.len() + __rc_underflow_count(); }", 4},
 		{"method-result-swept", "struct Box { n: i32 } function (b: Box) make(): i32[] { let xs: i32[] = []; let i = 0; while (i < b.n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { let box = Box { n: 5 }; let r: i32[] = box.make(); return r[4] + __rc_underflow_count(); }", 4},
 		{"method-result-loop", "struct Box { n: i32 } function (b: Box) make(): i32[] { let xs: i32[] = []; let i = 0; while (i < b.n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { let box = Box { n: 6 }; let s = 0; let k = 0; while (k < 50) { let r: i32[] = box.make(); s = s + r[5]; k = k + 1; } return (s % 7) + __rc_underflow_count(); }", 5},
 	}
