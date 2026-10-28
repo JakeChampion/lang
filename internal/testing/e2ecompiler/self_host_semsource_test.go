@@ -730,6 +730,19 @@ function poked(): i32 {
       return read;
   }
 }
+// A private helper whose whole body is an unsafe block is spliced into its
+// caller as a value block. The block is a scope, not a branch: the caller's
+// element rebuild stays in one block, and the array read feeds the with.
+struct Buf { bytes: u8[], n: i32 }
+function __cleared(b: Buf): Buf {
+  unsafe {
+    __arr_set_len(b.bytes, 0);
+    return Buf { ...b, n: 0 };
+  }
+}
+function recycled(xs: Buf[], i: i32): Buf[] {
+    return xs.with(i, __cleared(xs[i]));
+}
 // A guard is read after the payload bindings and a false one leaves for the
 // next arm's test; the end of a value-returning body the checker proved
 // unreachable aborts.

@@ -11401,7 +11401,7 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
       let cv: RExpr = mono_expr(f.cond, env, funcs, ins);
       let tb: RStmts = mono_stmts(f.then_body, env, funcs, cv.rins, ret_ty);
       let eb: RStmts = mono_stmts(f.else_body, env, funcs, tb.rins3, ret_ty);
-      return RStmtOne { rstmt: ast.StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: "" }, renv: env, rins2: eb.rins3 };
+      return RStmtOne { rstmt: ast.StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: f.origin }, renv: env, rins2: eb.rins3 };
     },
     ast.StmtWhile(w) => {
       let cv: RExpr = mono_expr(w.cond, env, funcs, ins);
@@ -14038,7 +14038,7 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
       let cv: RExpr = ms_expr(f.cond, env, gstructs, funcs, ins);
       let tb: RStmts = ms_stmts(f.then_body, env, gstructs, funcs, cv.rins, ret_ty);
       let eb: RStmts = ms_stmts(f.else_body, env, gstructs, funcs, tb.rins3, ret_ty);
-      return RStmtOne { rstmt: ast.StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: "" }, renv: env, rins2: eb.rins3 };
+      return RStmtOne { rstmt: ast.StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: f.origin }, renv: env, rins2: eb.rins3 };
     },
     ast.StmtWhile(w) => {
       let cv: RExpr = ms_expr(w.cond, env, gstructs, funcs, ins);
@@ -15641,7 +15641,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
       let cv: RExpr = me_expr(f.cond, "", env, enums, structs, funcs, ins);
       let tb: RStmts = me_stmts(f.then_body, env, ret_ty, enums, structs, funcs, cv.rins);
       let eb: RStmts = me_stmts(f.else_body, env, ret_ty, enums, structs, funcs, tb.rins3);
-      return RStmtOne { rstmt: ast.StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: "" }, renv: env, rins2: eb.rins3 };
+      return RStmtOne { rstmt: ast.StmtIf { cond: cv.rexpr, then_body: tb.rstmts, else_body: eb.rstmts, line: 0, else_chained: false, sugar: no_match_sugar(), origin: f.origin }, renv: env, rins2: eb.rins3 };
     },
     ast.StmtWhile(w) => {
       let cv: RExpr = me_expr(w.cond, "", env, enums, structs, funcs, ins);
