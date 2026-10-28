@@ -13,9 +13,11 @@ import "std/i32";
 @noinline function rounds(scratch: u8[], sizes: i32[]): i32 {
   let t: i32 = 0;
   for n in sizes {
-    __arr_set_len(scratch, 64);
-    t = t + total(scratch[0:n]);
-    __arr_set_len(scratch, n);
+    unsafe {
+      __arr_set_len(scratch, 64);
+      t = t + total(scratch[0:n]);
+      __arr_set_len(scratch, n);
+    }
   }
   return t;
 }
