@@ -764,13 +764,16 @@ function __has_fd(fds: i32[], fd: i32): boolean {
 }
 
 function __without_fd(fds: i32[], fd: i32): i32[] {
-  let out: i32[] = [];
-  for f in fds {
-    if (f != fd) {
-      out = out.append(f);
+  let kept: i32 = 0;
+  for i in 0..fds.len() {
+    if (fds[i] != fd) {
+      if (kept != i) {
+        fds = fds.with(kept, fds[i]);
+      }
+      kept = kept + 1;
     }
   }
-  return out;
+  return fds.truncate(kept);
 }
 ```
 
@@ -1252,15 +1255,11 @@ function __driven_at(rows: Driven[], fd: i32): i32 {
 }
 
 function __driven_without(rows: Driven[], skip: i32): Driven[] {
-  let out: Driven[] = [];
-  let i: i32 = 0;
-  while (i < rows.len()) {
-    if (i != skip) {
-      out = out.append(rows[i]);
-    }
-    i = i + 1;
+  let next: i32 = skip + 1;
+  for i in next..rows.len() {
+    rows = rows.with(i - 1, rows[i]);
   }
-  return out;
+  return rows.truncate(rows.len() - 1);
 }
 
 function __mail_at(mail: Mail[], id: i32): i32 {
@@ -1275,15 +1274,11 @@ function __mail_at(mail: Mail[], id: i32): i32 {
 }
 
 function __mail_without(mail: Mail[], skip: i32): Mail[] {
-  let out: Mail[] = [];
-  let i: i32 = 0;
-  while (i < mail.len()) {
-    if (i != skip) {
-      out = out.append(mail[i]);
-    }
-    i = i + 1;
+  let next: i32 = skip + 1;
+  for i in next..mail.len() {
+    mail = mail.with(i - 1, mail[i]);
   }
-  return out;
+  return mail.truncate(mail.len() - 1);
 }
 ```
 
@@ -1404,24 +1399,18 @@ function __kept_conn(k: Kept): __Conn {
 }
 
 function __kept_without(rows: Kept[], skip: i32): Kept[] {
-  let out: Kept[] = [];
-  let i: i32 = 0;
-  while (i < rows.len()) {
-    if (i != skip) {
-      out = out.append(rows[i]);
-    }
-    i = i + 1;
+  let next: i32 = skip + 1;
+  for i in next..rows.len() {
+    rows = rows.with(i - 1, rows[i]);
   }
-  return out;
+  return rows.truncate(rows.len() - 1);
 }
 
 function __kept_from(rows: Kept[], from: i32): Kept[] {
-  let out: Kept[] = [];
-  while (from < rows.len()) {
-    out = out.append(rows[from]);
-    from = from + 1;
+  for i in from..rows.len() {
+    rows = rows.with(i - from, rows[i]);
   }
-  return out;
+  return rows.truncate(rows.len() - from);
 }
 ```
 
@@ -3211,10 +3200,10 @@ function __host_name(h: string): string {
 
 function __canonical_ip(text: string): Option[net.IpAddr] {
   match (net.ip_parse(text)) {
-    Some(a) => {
+    Ok(a) => {
       return Some(a.to_canonical());
     },
-    None => {
+    Err(_) => {
       return None;
     }
   }

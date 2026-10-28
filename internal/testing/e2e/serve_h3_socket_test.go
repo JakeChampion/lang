@@ -117,8 +117,8 @@ import "std/string";
 
 function main(): i32 {
   let argv: string[] = args();
-  let Some(peer) = net.socket_addr_parse(argv[1]) else { return 2; };
-  let Some(local) = net.socket_addr_parse(argv[2]) else { return 2; };
+  let Ok(peer) = net.socket_addr_parse(argv[1]) else { return 2; };
+  let Ok(local) = net.socket_addr_parse(argv[2]) else { return 2; };
   let Ok(roots) = verify.roots_from_file(argv[3]) else { return 2; };
   let cfg: conn.Config = h3q.transport(conn.config([]).client_side("localhost", roots));
   let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), clock.instant(), clock.now()) else { return 2; };
