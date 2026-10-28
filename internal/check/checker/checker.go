@@ -4256,9 +4256,6 @@ func (c *checker) moduleSees(from, decl string) bool {
 	if from == "" || decl == "" || from == decl {
 		return true
 	}
-	if strings.HasPrefix(from, "stdlib://") && strings.HasPrefix(decl, "stdlib://") {
-		return true
-	}
 	if c.info.ModuleImports == nil {
 		return true
 	}
