@@ -6382,12 +6382,17 @@ function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_runtime(roots: string, s: asmcore.EmitState): asmcore.EmitState {
-  return emit_runtime_module(rtmodule.load(s.runtime_target, roots), s);
+  let at: i32 = s.runtime_units.roots.find(roots);
+  if (at >= 0) {
+    return emit_runtime_module(s.runtime_units.mods[at], s.runtime_units.lowered[at], s);
+  }
+  let m: parser.Module = rtmodule.load(s.runtime_target, roots);
+  let lowered: physicalbody.Lowered = s.rt_lower(m);
+  return emit_runtime_module(m, lowered, asmcore.with_runtime_unit(s, roots, m, lowered));
 }
 
-pub function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.EmitState {
+pub function emit_runtime_module(m: parser.Module, lowered: physicalbody.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let fns: parser.FuncDecl[] = m.funcs;
-  let lowered: physicalbody.Lowered = s.rt_lower(m);
   let bodies: irtables.LowerResult[] = irtables.lowered_results(lowered.bodies);
   let physical = physicalbody.collection(lowered);
   let previous_regs: irtables.SigReg = s.reg_entries;
@@ -10954,7 +10959,7 @@ function emit_ir_runtime_settled(s0: asmcore.EmitState, darwin: boolean): asmcor
       let back: asmcore.EmitState = asmcore.EmitState { ...t, capture: s0.capture };
       out = back.write(text);
     } else {
-      s = asmcore.EmitState { ...s0, needed: t.needed };
+      s = asmcore.EmitState { ...s0, needed: t.needed, runtime_units: t.runtime_units };
     }
   }
   return out;

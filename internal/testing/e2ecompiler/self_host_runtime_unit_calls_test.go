@@ -70,7 +70,8 @@ function main(): i32 {
     float_abi: irtables.sig_reg_of(["outside"]), float_abi_masks: ["f|f"] };
   let source: string = "@noinline function callee(x: f64): f64 { return x + 1.5; }\n"
     + "@noinline function caller(x: f64): f64 { return callee(x) * 2.0; }\n";
-  let out: asmcore.EmitState = asm_arm64_ir.emit_runtime_module(parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(source))), s);
+  let m: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(source)));
+  let out: asmcore.EmitState = asm_arm64_ir.emit_runtime_module(m, s.rt_lower(m), s);
   if (irtables.sig_reg_index(out.reg_entries, "outside") < 0) { return 1; }
   if (irtables.sig_reg_index(out.reg_entries, "callee") >= 0) { return 2; }
   if (out.float_mask("outside") != "f|f" || out.float_mask("callee") != "") { return 3; }

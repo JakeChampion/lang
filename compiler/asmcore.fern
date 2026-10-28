@@ -89,6 +89,7 @@ pub struct EmitState {
   recs: usize,
   nlab: i32,
   rt_lower: (parser.Module) => physicalbody.Lowered,
+  runtime_units: RuntimeUnits,
   runtime_target: string,
   named: string[],
   rc_free_debug: boolean,
@@ -188,6 +189,15 @@ pub function (s: EmitState) has_named(name: string): boolean {
 
 pub function (s: EmitState) with_named(name: string): EmitState {
   return EmitState { ...s, named: s.named.append(name) };
+}
+
+// RuntimeUnits keeps each runtime module that this emission loaded and lowered, by its roots.
+// The runtime fixpoint emits the runtime again when it finds a new need, and reuses them.
+pub struct RuntimeUnits { roots: util.NameIndex, mods: parser.Module[], lowered: physicalbody.Lowered[] }
+
+pub function with_runtime_unit(s: EmitState, roots: string, m: parser.Module, lowered: physicalbody.Lowered): EmitState {
+  let u: RuntimeUnits = s.runtime_units;
+  return EmitState { ...s, runtime_units: RuntimeUnits { roots: u.roots.added(roots), mods: u.mods.append(m), lowered: u.lowered.append(lowered) } };
 }
 
 pub function no_rt_lower(mod: parser.Module): physicalbody.Lowered {
@@ -438,6 +448,7 @@ pub function new_state(): EmitState {
     nlab: 0,
     recs: 0 as usize,
     rt_lower: no_rt_lower,
+    runtime_units: RuntimeUnits { roots: util.name_index([]), mods: [], lowered: [] },
     runtime_target: "arm64-linux",
     named: [],
     rc_free_debug: false,
