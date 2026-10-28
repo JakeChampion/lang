@@ -1,0 +1,159 @@
+{
+  "source": "7872a0970739ed6cfc100b48750f1bfb5716a4bb",
+  "PR": 13752,
+  "native_issue": 13750,
+  "source_commit_precedes_final_campaigns": true,
+  "reference_uncompressed_sha256": "d5db92375caa0e04d0baad003633988b9e1abecb77d81a6b2e305be8b0b1ac64",
+  "reference_gzip_sha256": "b4b295071acc37d8ef1d93a0d61c8fc095baaeecee976977a6211c4156e24e6e",
+  "case_count_per_target": 1566,
+  "workers_per_target": 196,
+  "total_workers": 588,
+  "records_exactly_equal": true,
+  "all_workers_nonzero_balanced_zero_live": true,
+  "partition_counts": {
+    "old": [
+      54,
+      87,
+      87
+    ],
+    "current": [
+      70,
+      103,
+      103
+    ]
+  },
+  "legacy_source_hashes": {
+    "compiler/ssacapacityvalue.fern": "28e16aefde526b130020f02b3a9d9811a655f0bc7363426de6042846c1670800",
+    "compiler/ssalargearrayvalue.fern": "a8fda4ca9ae517cd62c703bdb4bbead61d3c76f90e58a92864d8db1c636d151f",
+    "compiler/ssalargepushranges.fern": "bb62b48044043f347ec2ee549e3e7bffed748bf62958471913d177ea3d960feb",
+    "compiler/ssastringvalue.fern": "bb74e0f95963c68a5a9a71fa8e16af1477196b55a5ebb2f06e6914f66be83cc2"
+  },
+  "build": {
+    "source": "7872a0970739ed6cfc100b48750f1bfb5716a4bb",
+    "make_exit": 0,
+    "version_exit": 0,
+    "version": "fern 7872a0970739\nbuilt for x86-64-linux",
+    "seconds": 84.9820442199707,
+    "sources_unchanged": true,
+    "binaries": {
+      "bin/fern": "19e7c88db3015b2373d2c1e48175e91cd3a2bd8ea81ddeda454f9e6b0ffb974b",
+      "bin/fern-selfhost": "db42054a760c888b803ac61d1cdc625c79add769062463cb50878ce50097c544"
+    },
+    "worktree_clean": true
+  },
+  "checks": [
+    {
+      "name": "source-gate",
+      "exit": 0,
+      "seconds": 237.42945456504822,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "targets-complexity",
+      "exit": 0,
+      "seconds": 10.911577939987183,
+      "PASS": 32,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "Fern-format",
+      "exit": 0,
+      "seconds": 2.4373738765716553,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "Go-build",
+      "exit": 0,
+      "seconds": 2.7017133235931396,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "Go-vet",
+      "exit": 0,
+      "seconds": 9.57371735572815,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "aux",
+      "exit": 0,
+      "seconds": 8.188194274902344,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "source-audit",
+      "exit": 0,
+      "seconds": 10.003617763519287,
+      "PASS": 219,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "reference-exact",
+      "exit": 0,
+      "seconds": 0.24199867248535156,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    },
+    {
+      "name": "diff",
+      "exit": 0,
+      "seconds": 0.011077404022216797,
+      "PASS": 0,
+      "FAIL": 0,
+      "SKIP": 0
+    }
+  ],
+  "Go_oracle_actual_build": "7872a0970739ed6cfc100b48750f1bfb5716a4bb",
+  "Go_oracle_postrun_sha256": "05b739cb256bbb2daf2766495a698b1f49e654602f0a8476d34a5b9a0d9e3d6b",
+  "tools_sampled_before_final_campaigns_and_after": true,
+  "sourcegate_node_count_unclaimed": true,
+  "initial_source": "7aded8a6ca65677ee5b01db9dfe7ad95d3d50ebb + UNCOMMITTED",
+  "old_models_and_domains_unchanged": true,
+  "retained_driver_integration": false,
+  "machine_call_summary_integration": false,
+  "full_CI_recovery": false,
+  "M5_epic_gates": "OPEN",
+  "manifest": [
+    {
+      "original": "/tmp/image-wide-integration-evidence-secondary/final-corpus-x86-64-linux.json",
+      "published": "large-free-wide-classes-x86-64-linux.json.gz",
+      "original_sha256": "52476648e117d41beaf17c7968e4095d1b6543876e7613c551f74a192cc59795",
+      "published_sha256": "29301973d6ba58668f37d27d9bfd0379156004cce023c895459a1c7df455b271",
+      "published_bytes": 216056
+    },
+    {
+      "original": "/tmp/image-wide-integration-evidence-secondary/final-corpus-wasm32-wasi.json",
+      "published": "large-free-wide-classes-wasm32-wasi.json.gz",
+      "original_sha256": "69e97eaf7154df5fac2f35bbab64786741a705f28fa680fabd4019be3bf18bc8",
+      "published_sha256": "fa215b9bdaca5a0d60b72431e1a5e6e232f5d9d8170bb3719acd8a104132d6a0",
+      "published_bytes": 216496
+    },
+    {
+      "original": "/tmp/image-wide-integration-evidence-secondary/final-corpus-arm64-linux.json",
+      "published": "large-free-wide-classes-arm64-linux.json.gz",
+      "original_sha256": "ee319cb12f50fe3b8776d9af51f6836f2528be64d0c596a3be43288f460aa926",
+      "published_sha256": "0acf673102f0a717f14ec7dc284fccc4533e593558047ab16a548bd5e6dcac8e",
+      "published_bytes": 216101
+    },
+    {
+      "original": "Complete qualification logs, inputs, private overrides, failures, and corrections",
+      "published": "qualification-records.tar.gz",
+      "original_sha256": null,
+      "published_sha256": "0887d6f913df05ddca6def7d3d429535f1a3d8014eee039bf5835d9e816123a3",
+      "published_bytes": 4653256,
+      "member_count": 2486
+    }
+  ]
+}

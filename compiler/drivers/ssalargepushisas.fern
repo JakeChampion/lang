@@ -1,4 +1,5 @@
 import "../ssacapacityisa" as isa;
+import "../ssalargepushwideisa" as wide;
 import "../ssadecrementtext" as text;
 import "../ssainlineuniqueisa" as registers;
 import "std/string";
@@ -109,26 +110,31 @@ function boundaries(): void {
   require(empty.error == "" && empty.ops.len() == 0, "empty is data");
 }
 
-function actual_branch(p: isa.Program, body: text.Body, at: i32, op: isa.Op): void {
+function actual_branch(p: wide.WideProgram, body: text.Body, at: i32, op: isa.Op): void {
   if (op.kind == 17) {
-    require(op.target >= 0 && op.target < p.ops.len() && p.ops[op.target].kind == 1, "actual branch " + at.to_string());
+    require(op.target >= 0 && op.target < p.ops.len() && p.ops[op.target].instruction.kind == 1, "actual branch " + at.to_string());
     require(body.lines[at].ends_with(body.lines[op.target].split(":")[0]), "actual branch identity " + at.to_string());
   }
 }
 
 pub function run(output: string): void {
   let body = text.dependency(output, "__fern_large_push");
-  let p = isa.large_program(output);
-  let kinds = [16, 17, 2, 16, 17, 5, 1, 8, 9, 5, 13, 15, 12, 11, 8, 9, 2, 14, 20, 10, 9, 2, 19, 3, 4, 4, 1, 18];
+  let p = wide.large_program(output);
+  let kinds = [41, 28, 17, 2, 16, 17, 5, 1, 8, 9, 5, 13, 15, 12, 11, 8, 9, 2, 14, 20, 10, 9, 2, 19, 3, 4, 4, 1, 18];
   require(p.error == "" && body.error == "" && p.ops.len() == kinds.len() && p.ops.len() == body.lines.len(), "actual emission length");
   let at = 0;
   for op in p.ops {
-    require(op.kind == kinds[at], "actual kind " + at.to_string());
-    actual_branch(p, body, at, op);
+    require(op.instruction.kind == kinds[at], "actual kind " + at.to_string());
+    actual_branch(p, body, at, op.instruction);
     at = at + 1;
   }
-  require(p.ops[0].immediate == 1073741824 && p.ops[22].symbol == "__fern_large_freelist", "actual threshold/global");
-  require(p.ops[23].base == 2 && p.ops[23].index == 0 && p.ops[23].scale == 8 && p.ops[25].source == 8, "actual freelist operands");
+  require(p.ops[0].immediate == 17179869184 as i64 && p.ops[23].instruction.symbol == "__fern_large_freelist", "actual threshold/global");
+  require(p.ops[0].instruction.width == 64 && p.ops[0].instruction.destination == 0 && p.ops[1].instruction.width == 64 && p.ops[1].instruction.source == 0 && p.ops[1].instruction.destination == 6, "actual guard operands");
+  let load = p.ops[24].instruction;
+  let block = p.ops[25].instruction;
+  let slot = p.ops[26].instruction;
+  require(load.width == 64 && load.destination == 1 && load.base == 2 && load.index == 0 && load.scale == 8 && slot.source == 8, "actual freelist operands");
+  require(block.width == 64 && block.source == 1 && block.base == 8 && block.offset == 0 && slot.width == 64 && slot.base == 2 && slot.index == 0 && slot.scale == 8, "actual freelist stores");
   addresses();
   shifts();
   literals();

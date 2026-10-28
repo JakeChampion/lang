@@ -1,0 +1,69 @@
+import "./ssalargearrayvalue" as array;
+import "./ssastringvalue" as strings;
+import "./ssalargepushwideranges" as current;
+
+function class_at(words: i64, extra: i64, small: boolean, bins: i64[]): i32 {
+  if (small && words <= 65535 as i64 - extra) {
+    return -3;
+  }
+  for at in 0..bins.len() {
+    if (words <= bins[at] / (8 as i64) - extra) {
+      return at;
+    }
+  }
+  return -2;
+}
+
+pub function array_class(r: array.Interval): i32 {
+  if (!array.valid_interval(r)) {
+    return -1;
+  }
+  let bins = current.capacities();
+  let low = class_at(r.low, 3 as i64, false, bins);
+  return if (low == class_at(r.high, 3 as i64, false, bins)) { low } else { -1 };
+}
+
+pub function string_class(r: strings.Interval, fused: boolean): i32 {
+  if (!strings.valid_interval(r)) {
+    return -1;
+  }
+  let bins = current.capacities();
+  let extra = if (fused) { 3 as i64 } else { 0 as i64 };
+  let low = class_at(r.low, extra, true, bins);
+  return if (low == class_at(r.high, extra, true, bins)) { low } else { -1 };
+}
+
+pub function array_intervals(): array.Interval[] {
+  let result: array.Interval[] = [];
+  let bins = current.capacities();
+  for old in array.intervals() {
+    let low = old.low;
+    for cap in bins {
+      let high = cap / (8 as i64) - 3 as i64;
+      if (low <= high && high < old.high) {
+        result = result.append(array.Interval { low: low, high: high });
+        low = high + 1 as i64;
+      }
+    }
+    result = result.append(array.Interval { low: low, high: old.high });
+  }
+  return result;
+}
+
+pub function string_intervals(fused: boolean): strings.Interval[] {
+  let result: strings.Interval[] = [];
+  let bins = current.capacities();
+  let extra = if (fused) { 3 as i64 } else { 0 as i64 };
+  for old in strings.intervals(fused) {
+    let low = old.low;
+    for cap in bins {
+      let high = cap / (8 as i64) - extra;
+      if (low <= high && high < old.high) {
+        result = result.append(strings.Interval { ...old, low: low, high: high });
+        low = high + 1 as i64;
+      }
+    }
+    result = result.append(strings.Interval { ...old, low: low });
+  }
+  return result;
+}
