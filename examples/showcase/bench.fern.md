@@ -31,6 +31,7 @@ import "./measure";
 import "./handshake";
 import "./imaging";
 import "std/crypto";
+import "std/rand";
 
 pub struct State { last: Cell[i64] }
 
@@ -144,7 +145,7 @@ pub function exchange(req: HttpRequest): Result[HttpResponse, http.HttpError] {
     return Err(http.fail(400, "The X25519 key is not hexadecimal."));
   };
   let text = "Hello from native Fern. Only the holder of this session key can read this message.".bytes();
-  let answer = handshake.reply(ek, client_x, random_bytes(32), random_bytes(32), random_bytes(12), text).map_err((e: string): http.HttpError => http.fail(400, e))?;
+  let answer = handshake.reply(ek, client_x, rand.bytes(32), rand.bytes(32), rand.bytes(12), text).map_err((e: string): http.HttpError => http.fail(400, e))?;
   return Ok(http.json_of(Answer {
     ciphertext: hex.encode(answer.ciphertext),
     x: hex.encode(answer.server_x),

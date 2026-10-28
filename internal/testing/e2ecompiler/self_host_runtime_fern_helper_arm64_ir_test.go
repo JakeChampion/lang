@@ -18,9 +18,9 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	prog := "import \"std/array\";\n" +
+	prog := "import \"std/array\";\nimport \"std/rand\";\n" +
 		"function main(): i32 {\n" +
-		"    let b: u8[] = random_bytes(8);\n" +
+		"    let b: u8[] = rand.bytes(8);\n" +
 		"    match (write_file(\"/tmp/fern_lockin.txt\", \"x\")) { Ok(_) => {}, Err(_) => { return 1; } }\n" +
 		"    match (read_file(\"/tmp/fern_lockin.txt\")) { Ok(_) => {}, Err(_) => { return 2; } }\n" +
 		"    match (remove_file(\"/tmp/fern_lockin.txt\")) { Ok(_) => {}, Err(_) => { return 3; } }\n" +
@@ -37,7 +37,7 @@ func TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR(t *testing.T) {
 		"    match (read_dir(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 10; } }\n" +
 		"    match (remove_dir_all(\"/tmp/fern_lockin_nodir\")) { Ok(_) => {}, Err(_) => { return 11; } }\n" +
 		"    match (open_writer(\"/tmp/fern_lockin_w.txt\")) { Ok(_) => {}, Err(_) => { return 26; } }\n" +
-		"    if (random_i32() == 0) { return 12; }\n" +
+		"    if (rand.next_i32() == 0) { return 12; }\n" +
 		"    if (tcp_close(999) == 0) { return 13; }\n" +
 		"    if (tcp_accept(999) >= 0) { return 14; }\n" +
 		"    sleep_ms(1);\n" +
@@ -158,8 +158,8 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
 	mmc := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_load_run.fern", "mmc_darwin_rb")
 
-	prog := "function main(): i32 {\n" +
-		"    let b: u8[] = random_bytes(8);\n" +
+	prog := "import \"std/rand\";\nfunction main(): i32 {\n" +
+		"    let b: u8[] = rand.bytes(8);\n" +
 		"    match (write_file(\"/tmp/fern_lockin_d.txt\", \"x\")) { Ok(_) => {}, Err(_) => { return 1; } }\n" +
 		"    match (read_file(\"/tmp/fern_lockin_d.txt\")) { Ok(_) => {}, Err(_) => { return 2; } }\n" +
 		"    match (remove_file(\"/tmp/fern_lockin_d.txt\")) { Ok(_) => {}, Err(_) => { return 3; } }\n" +
@@ -175,7 +175,7 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		"    match (read_dir(\"/tmp\")) { Ok(_) => {}, Err(_) => { return 10; } }\n" +
 		"    match (remove_dir_all(\"/tmp/fern_lockin_nodir\")) { Ok(_) => {}, Err(_) => { return 11; } }\n" +
 		"    match (open_writer(\"/tmp/fern_lockin_w.txt\")) { Ok(_) => {}, Err(_) => { return 26; } }\n" +
-		"    if (random_i32() == 0) { return 12; }\n" +
+		"    if (rand.next_i32() == 0) { return 12; }\n" +
 		"    if (tcp_close(999) == 0) { return 13; }\n" +
 		"    if (tcp_accept(999) >= 0) { return 14; }\n" +
 		"    sleep_ms(1);\n" +
@@ -195,7 +195,11 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 		t.Fatalf("write probe: %v", err)
 	}
 
-	out, stderr, code := runDriverAllowFail(t, x86runner, mmc, "", srcFile, "-target", "arm64-darwin")
+	stdlibRoot, err := filepath.Abs("../../stdlib")
+	if err != nil {
+		t.Fatalf("abs stdlib root: %v", err)
+	}
+	out, stderr, code := runDriverAllowFail(t, x86runner, mmc, "", srcFile, stdlibRoot, "-target", "arm64-darwin")
 	if code != 0 {
 		t.Fatalf("self-host arm64-darwin emit failed: exit %d\n%s", code, stderr)
 	}

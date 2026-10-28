@@ -36,12 +36,12 @@ func TestSelfHostEntropyFailure(t *testing.T) {
 				}
 			}
 			for _, tc := range []struct{ name, body string }{
-				{"bytes", "let bs: u8[] = random_bytes(257); print((bs[256] as i32).to_string());"},
-				{"integer", "print(random_i32().to_string());"},
-				{"empty", "let bs: u8[] = random_bytes(0); print(bs.len().to_string());"},
+				{"bytes", "let bs: u8[] = rand.bytes(257); print((bs[256] as i32).to_string());"},
+				{"integer", "print(rand.next_i32().to_string());"},
+				{"empty", "let bs: u8[] = rand.bytes(0); print(bs.len().to_string());"},
 			} {
 				t.Run(tc.name, func(t *testing.T) {
-					bin := e2eharness.CompileSelfHostSource(t, target, "import \"std/i32\"; function main(): i32 { "+tc.body+" print(\"random returned\"); return 0; }", nil)
+					bin := e2eharness.CompileSelfHostSource(t, target, "import \"std/i32\"; import \"std/rand\"; function main(): i32 { "+tc.body+" print(\"random returned\"); return 0; }", nil)
 					argv := append(append([]string{}, runner...), bin)
 					run := func(cmd *exec.Cmd) (string, string, int) {
 						t.Helper()
@@ -79,7 +79,7 @@ func TestSelfHostSandboxEntropyFailure(t *testing.T) {
 		t.Skip("the seccomp sandbox requires native x86-64 Linux")
 	}
 	// No user output: the runtime must supply the diagnostic syscall dependency.
-	bin := buildSandboxed(t, "function main(): i32 { return random_i32() & 255; }", true)
+	bin := buildSandboxed(t, "import \"std/rand\";\nfunction main(): i32 { return rand.next_i32() & 255; }", true)
 	control := exec.Command(bin)
 	if out, err := control.CombinedOutput(); control.ProcessState == nil || !control.ProcessState.Exited() || len(out) != 0 {
 		t.Fatalf("positive control: %v\n%s", err, out)

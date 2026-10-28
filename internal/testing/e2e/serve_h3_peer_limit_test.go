@@ -75,6 +75,7 @@ import "std/string";
 import "std/option";
 import "std/result";
 
+import "std/rand";
 function added(cs: h3q.Conn[], socks: i32[], cfg: conn.Config, ip: string): Result[(h3q.Conn[], i32[]), string] {
   let Ok(addr) = net.socket_addr_parse(ip + ":0") else {
     return Err("bad bind address");
@@ -85,7 +86,7 @@ function added(cs: h3q.Conn[], socks: i32[], cfg: conn.Config, ip: string): Resu
   let Ok(_) = net.set_nonblocking(sock, true) else {
     return Err("nonblocking failed");
   };
-  let q: conn.Conn = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), clock.instant(), clock.now())?;
+  let q: conn.Conn = conn.client(cfg, rand.bytes(conn.client_entropy(cfg)), clock.instant(), clock.now())?;
   return Ok((cs.append(h3q.client(q, h3.config())), socks.append(sock)));
 }
 

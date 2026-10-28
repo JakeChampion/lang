@@ -180,6 +180,7 @@ import "std/hex";
 import "std/codec";
 import "std/tls/identity";
 import "std/tls/server";
+import "std/rand";
 %s
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/count") {
@@ -190,7 +191,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 function main(): i32 {
     let Ok(k) = identity.private_key_from_pem(ED_PKCS8) else { return 2; };
     let Ok(id) = identity.pair([__codec_bytes(hex.decode(ED_LEAF))], k) else { return 3; };
-    return serve.exit_code(serve.run(%d, serve.Config { ...serve.config().with_tls(server.config(id, random_bytes(32))).with_h3(), keep_alive_requests: %d }, handle));
+    return serve.exit_code(serve.run(%d, serve.Config { ...serve.config().with_tls(server.config(id, rand.bytes(32))).with_h3(), keep_alive_requests: %d }, handle));
 }
 
 // Decode a valid fixture. Report a malformed fixture before ending the test.
@@ -296,6 +297,7 @@ function count(k: Cli): (Cli, i64) {
 // counted as serveAllocsRounds counts them. It prints `allocs TOTAL SECONDS`.
 var ServeAllocsH3ClientSource = serveAllocsH3ClientCommon + `import "std/i32";
 
+import "std/rand";
 function main(): i32 {
   let argv: string[] = args();
   let Ok(peer) = net.socket_addr_parse("127.0.0.1:" + argv[1]) else {
@@ -306,7 +308,7 @@ function main(): i32 {
   };
   let Ok(root) = hex.decode(ROOT) else { return 2; };
   let cfg: conn.Config = h3q.transport(conn.config([]).client_side("tls.example", verify.roots([root])));
-  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
+  let Ok(q) = conn.client(cfg, rand.bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return 2;
   };
   let Ok(any) = net.socket_addr_parse("127.0.0.1:0") else {
@@ -375,6 +377,7 @@ function main(): i32 {
 // there.
 var ServeAllocsH3MuxClientSource = serveAllocsH3ClientCommon + `import "std/i32";
 
+import "std/rand";
 // drive keeps up to m hello requests in flight until rounds are answered,
 // pumping the socket between top-ups, and returns the peak held at once and
 // how many were answered. Fewer than rounds means the 30-second no-progress
@@ -439,7 +442,7 @@ function main(): i32 {
   };
   let Ok(root) = hex.decode(ROOT) else { return 2; };
   let cfg: conn.Config = h3q.transport(conn.config([]).client_side("tls.example", verify.roots([root])));
-  let Ok(q) = conn.client(cfg, random_bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
+  let Ok(q) = conn.client(cfg, rand.bytes(conn.client_entropy(cfg)), now(), clock.now()) else {
     return 2;
   };
   let Ok(any) = net.socket_addr_parse("127.0.0.1:0") else {

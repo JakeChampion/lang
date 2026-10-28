@@ -29,8 +29,9 @@ func TestWasmPreview2HelloWorld(t *testing.T) {
 
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "hello.fern")
-	if err := os.WriteFile(srcPath, []byte(`function main(): i32 {
-    let b = random_bytes(8);
+	if err := os.WriteFile(srcPath, []byte(`import "std/rand";
+function main(): i32 {
+    let b = rand.bytes(8);
     print("hello preview2");
     eprint("err preview2");
     return 0;

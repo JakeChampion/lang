@@ -2,6 +2,7 @@ import "std/string";
 import "std/array";
 import "std/io_buffered";
 import "./lib/gnu";
+import "std/rand";
 
 function opt_directory(): i32 {
   return 1;
@@ -168,7 +169,7 @@ function random_run(n: i32): string {
   let out: u8[] = [];
   let have: i32 = 0;
   while (have < n) {
-    let chunk: u8[] = random_bytes(n - have + 8);
+    let chunk: u8[] = rand.bytes(n - have + 8);
     let i: i32 = 0;
     while (i < chunk.len() && have < n) {
       let b: i32 = chunk[i] as i32;

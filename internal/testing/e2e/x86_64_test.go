@@ -580,8 +580,9 @@ function main(): i32 {
 }
 
 func TestX86_64RandomBytes(t *testing.T) {
-	out, code := compileAndRunX86_64(t, `function main(): i32 {
-    let s: u8[] = random_bytes(16);
+	out, code := compileAndRunX86_64(t, `import "std/rand";
+function main(): i32 {
+    let s: u8[] = rand.bytes(16);
     write(string_from_bytes_unchecked(s));
     return s.len();
 }`)
@@ -604,9 +605,10 @@ func TestX86_64RandomBytes(t *testing.T) {
 }
 
 func TestX86_64RandomI32(t *testing.T) {
-	_, code := compileAndRunX86_64(t, `function main(): i32 {
-    let a: i32 = random_i32();
-    let b: i32 = random_i32();
+	_, code := compileAndRunX86_64(t, `import "std/rand";
+function main(): i32 {
+    let a: i32 = rand.next_i32();
+    let b: i32 = rand.next_i32();
     if (a == 0) { return 0; }
     if (a == b) { return 1; }
     return 7;
