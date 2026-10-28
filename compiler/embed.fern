@@ -282,10 +282,10 @@ function content(c: ast.ExprCall, a: Assets, idx: i32, name: string): Content {
     return Content { lit: bytes_literal(bs, c.line, c.col), err: "" };
   }
   match (utf8.from_bytes(bs)) {
-    Some(text) => {
+    Ok(text) => {
       return Content { lit: ast.ExprString { value: text, line: c.line, col: c.col }, err: "" };
     },
-    None => {}
+    Err(_) => {}
   }
   let msg: string = name + ": embedded asset \"" + a.names[idx] + "\" under " + a.root;
   return Content { lit: ast.ExprCall { ...c }, err: msg + " is not valid UTF-8 — read it as u8[] with " + name + "_bytes" };

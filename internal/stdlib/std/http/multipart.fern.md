@@ -385,7 +385,7 @@ pub function fields(req: HttpRequest, limits: Limits): Result[Map[string, string
 <<17 function __put(m: Map[string, string[]], name: string, bytes: u8[]): Result[Map[string, string[]], Multipar...>>=
 function __put(m: Map[string, string[]], name: string, bytes: u8[]): Result[Map[string, string[]], MultipartError] {
   match (utf8.from_bytes(bytes)) {
-    Some(text) => {
+    Ok(text) => {
       match (m.get(name)) {
         Some(vs) => {
           return Ok(m.insert(name, vs.append(text)));
@@ -396,7 +396,7 @@ function __put(m: Map[string, string[]], name: string, bytes: u8[]): Result[Map[
         }
       }
     },
-    None => {
+    Err(_) => {
       return Err(MultipartBody(http.NotUtf8));
     }
   }

@@ -137,7 +137,7 @@ pub function (s: ByteStream) read_all(): (u8[], ByteStream) {
   return (out, cur);
 }
 
-pub function (s: ByteStream) read_all_string(): (Option[string], ByteStream) {
+pub function (s: ByteStream) read_all_string(): (Result[string, utf8.Utf8Error], ByteStream) {
   let (bytes, s2) = s.read_all();
   return (utf8.from_bytes(bytes), s2);
 }

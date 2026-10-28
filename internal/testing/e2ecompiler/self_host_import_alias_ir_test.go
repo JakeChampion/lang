@@ -27,8 +27,8 @@ function main(): i32 {
     let w = io.bytes_writer_new().write_string("ok");
     if (w.len() != 2) { return 1; }
     match (w.into_string()) {
-        Some(s) => { if (s != "ok") { return 2; } },
-        None => { return 3; },
+        Ok(s) => { if (s != "ok") { return 2; } },
+        Err(_) => { return 3; },
     }
     return 0;
 }`

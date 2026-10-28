@@ -394,8 +394,8 @@ function main(): i32 {
     match (fetch.send(fetch.get("http://example.com/"))) {
         Ok(resp) => {
             match (resp.body_text()) {
-                Some(text) => { print(text); },
-                None => { print("body is not valid UTF-8"); },
+                Ok(text) => { print(text); },
+                Err(_) => { print("body is not valid UTF-8"); },
             }
         },
         Err(e) => { print("fetch failed: " + e.message()); },

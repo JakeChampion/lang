@@ -20,12 +20,13 @@ one of two ways:
 import "std/fetch";
 import "std/http";
 import "std/option";
+import "std/result";
 
 function main(): i32 {
     match (fetch.send(fetch.get("https://example.com/"))) {
         Ok(resp) => {
             print(resp.status.to_string() + " " + resp.headers.get("content-type").unwrap_or("?"));
-            print(resp.body_text().unwrap_or("<not UTF-8>"));
+            print(resp.body_text().ok().unwrap_or("<not UTF-8>"));
             return 0;
         },
         Err(e) => {
@@ -36,7 +37,8 @@ function main(): i32 {
 }
 ```
 
-`resp.body_text()` is the body as checked UTF-8 (`None` when it is not);
+`resp.body_text()` is the body as checked UTF-8 (`Err` with the offset of
+the first bad byte when it is not);
 `body_bytes()` gives the bytes. A non-2xx status is not an error — the
 server answered. `resp.ok_or_status()` turns one into `Err(status)` when
 you want it to be.

@@ -778,10 +778,10 @@ pub function server_name(d: [u8]): Result[string, MsgError] {
     let name: Span = __vec(d, at + 1, 2, 1, 65535, "server_name")?;
     if (d[at] == 0) {
       match (utf8.from_bytes(__copy(d, name.from, name.to))) {
-        Some(s) => {
+        Ok(s) => {
           return Ok(s);
         },
-        None => {
+        Err(_) => {
           return Err(__decode_error("server_name"));
         }
       }
@@ -922,10 +922,10 @@ pub function alpn(d: [u8]): Result[string[], MsgError] {
   while (at < list.to) {
     let name: Span = __vec(d, at, 1, 1, 255, "application_layer_protocol_negotiation")?;
     match (utf8.from_bytes(__copy(d, name.from, name.to))) {
-      Some(s) => {
+      Ok(s) => {
         out = out.append(s);
       },
-      None => {
+      Err(_) => {
         return Err(__decode_error("application_layer_protocol_negotiation"));
       }
     }

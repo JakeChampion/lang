@@ -172,7 +172,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<72 function __lists_token(value: string, want: string): boolean>>
 
-<<73 pub function (r: HttpResponse) body_text(): Option[string]>>
+<<73 pub function (r: HttpResponse) body_text(): Result[string, utf8.Utf8Error]>>
 
 <<74 function __str_is_token(s: string): boolean>>
 
@@ -2620,10 +2620,10 @@ pub function (r: HttpRequest) body_string(): Result[string, BodyError] {
     return Err(EndedEarly(fault));
   }
   match (utf8.from_bytes(bytes)) {
-    Some(s) => {
+    Ok(s) => {
       return Ok(s);
     },
-    None => {
+    Err(_) => {
       return Err(NotUtf8);
     }
   }
@@ -3234,11 +3234,11 @@ function __lists_token(value: string, want: string): boolean {
 }
 ```
 
-### `73 pub function (r: HttpResponse) body_text(): Option[string]`
+### `73 pub function (r: HttpResponse) body_text(): Result[string, utf8.Utf8Error]`
 
 ```fern
-<<73 pub function (r: HttpResponse) body_text(): Option[string]>>=
-pub function (r: HttpResponse) body_text(): Option[string] {
+<<73 pub function (r: HttpResponse) body_text(): Result[string, utf8.Utf8Error]>>=
+pub function (r: HttpResponse) body_text(): Result[string, utf8.Utf8Error] {
   return utf8.from_bytes(r.body_bytes());
 }
 

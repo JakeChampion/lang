@@ -7,7 +7,7 @@ function test_empty(): test.TestOutcome {
   if (!w.is_empty() || w.len() != 0) {
     return test.fail("empty buffer state");
   }
-  return test.assert_is_some_eq_string(w.into_string(), "");
+  return test.assert_is_some_eq_string(w.into_string().ok(), "");
 }
 
 function test_write_string(): test.TestOutcome {
@@ -16,25 +16,25 @@ function test_write_string(): test.TestOutcome {
   if (w.len() != 3 || w.is_empty()) {
     return test.fail("written buffer state");
   }
-  return test.assert_is_some_eq_string(w.into_string(), "abc");
+  return test.assert_is_some_eq_string(w.into_string().ok(), "abc");
 }
 
 function test_write_byte(): test.TestOutcome {
   let w = io.bytes_writer_new();
   w = w.write_byte(72);
   w = w.write_byte(105);
-  return test.assert_is_some_eq_string(w.into_string(), "Hi");
+  return test.assert_is_some_eq_string(w.into_string().ok(), "Hi");
 }
 
 function test_write_bytes(): test.TestOutcome {
   let w = io.bytes_writer_new();
   w = w.write_bytes("BC".bytes());
-  return test.assert_is_some_eq_string(w.into_string(), "BC");
+  return test.assert_is_some_eq_string(w.into_string().ok(), "BC");
 }
 
 function test_chained_build(): test.TestOutcome {
   let w = io.bytes_writer_new().write_string("HTTP/1.1 ").write_string("200").write_byte(32).write_string("OK");
-  return test.assert_is_some_eq_string(w.into_string(), "HTTP/1.1 200 OK");
+  return test.assert_is_some_eq_string(w.into_string().ok(), "HTTP/1.1 200 OK");
 }
 
 function test_mixed_writes(): test.TestOutcome {
@@ -45,7 +45,7 @@ function test_mixed_writes(): test.TestOutcome {
   if (w.len() != 4) {
     return test.fail("mixed write length");
   }
-  return test.assert_is_some_eq_string(w.into_string(), "abcd");
+  return test.assert_is_some_eq_string(w.into_string().ok(), "abcd");
 }
 
 function test_into_bytes(): test.TestOutcome {
@@ -57,10 +57,10 @@ function test_into_bytes(): test.TestOutcome {
 function test_into_string_refuses_ill_formed(): test.TestOutcome {
   let w = io.bytes_writer_new().write_string("a").write_byte(255).write_string("b");
   match (w.into_string()) {
-    Some(s) => {
+    Ok(s) => {
       return test.fail("into_string accepted: " + s);
     },
-    None => {}
+    Err(_) => {}
   }
   let bs: u8[] = w.into_bytes();
   return test.assert_true(bs.len() == 3 && bs[1] as i32 == 255);
@@ -72,14 +72,14 @@ function test_reset(): test.TestOutcome {
   if (!w.is_empty()) {
     return test.fail("reset buffer state");
   }
-  return test.assert_is_some_eq_string(w.into_string(), "");
+  return test.assert_is_some_eq_string(w.into_string().ok(), "");
 }
 
 function test_reset_then_reuse(): test.TestOutcome {
   let w = io.bytes_writer_new().write_string("old");
   w = w.reset();
   w = w.write_string("new");
-  return test.assert_is_some_eq_string(w.into_string(), "new");
+  return test.assert_is_some_eq_string(w.into_string().ok(), "new");
 }
 
 function test_buf_writer_holds_below_cap(): test.TestOutcome {

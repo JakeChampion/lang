@@ -335,10 +335,10 @@ function read_names(file: string): Option[Job[]] {
     let origin: string = gnu.quotef(file) + ":" + n.to_string();
     let name: string = "";
     match (utf8.from_bytes(array.slice(data, start, end))) {
-      Some(text) => {
+      Ok(text) => {
         name = text;
       },
-      None => {
+      Err(_) => {
         gnu.error(origin + ": invalid UTF-8 file name");
         return None;
       }

@@ -82,6 +82,7 @@ import "std/string";
 import "std/utf8";
 import "std/array";
 import "std/option";
+import "std/result";
 import "std/deflate";
 import "std/error";
 import "core/cmp";
@@ -653,10 +654,10 @@ function __parse_close(payload: u8[]): (i32, string, i32) {
     return (0, "", 1002);
   }
   match (utf8.from_bytes(array.slice(payload, 2, payload.len()))) {
-    Some(reason) => {
+    Ok(reason) => {
       return (code, reason, 0);
     },
-    None => {
+    Err(_) => {
       return (0, "", 1007);
     }
   }
@@ -723,7 +724,7 @@ function __message_done(c: Conn, h: Handlers, r: __Reading, opcode: i32): (__Rea
       }
     }
     history = array.take_last(history.concat(data), 32768);
-    if (opcode == 1 && !utf8.from_bytes(data).is_some()) {
+    if (opcode == 1 && utf8.from_bytes(data).is_err()) {
       return __violated(c, r, 1007);
     }
   }

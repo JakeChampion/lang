@@ -419,6 +419,25 @@ function test_from_bytes_lossy(): test.TestOutcome {
   return test.assert_true(utf8.is_valid(utf8.from_bytes_lossy([237 as u8, 160 as u8, 128 as u8])));
 }
 
+function refused_at(b: u8[]): string {
+  match (utf8.from_bytes(b)) {
+    Ok(_) => {
+      return "accepted";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+}
+
+function test_from_bytes_names_the_first_bad_byte(): test.TestOutcome {
+  let lone: string = refused_at([65 as u8, 128 as u8]);
+  let cut: string = refused_at([65 as u8, 66 as u8, 195 as u8]);
+  let overlong: string = refused_at([192 as u8, 175 as u8]);
+  let surrogate: string = refused_at([97 as u8, 237 as u8, 160 as u8, 128 as u8]);
+  return test.assert_eq(lone + " | " + cut + " | " + overlong + " | " + surrogate, "invalid UTF-8 at byte 1 | invalid UTF-8 at byte 2 | invalid UTF-8 at byte 0 | invalid UTF-8 at byte 1");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/utf8");
   r = r.it("decode ascii", test_decode_ascii);
@@ -451,5 +470,6 @@ function main(): i32 {
   r = r.it("lossy valid neighbours", test_lossy_valid_neighbours);
   r = r.it("lossy codepoint indexing", test_lossy_indexing);
   r = r.it("from_bytes_lossy", test_from_bytes_lossy);
+  r = r.it("from_bytes names the first bad byte", test_from_bytes_names_the_first_bad_byte);
   return r.finish();
 }

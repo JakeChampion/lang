@@ -152,7 +152,7 @@ function __user_pass(encoded: string): Option[(string, string)] {
   match (base64.decode(encoded)) {
     Ok(bytes) => {
       match (utf8.from_bytes(bytes)) {
-        Some(text) => {
+        Ok(text) => {
           let Some(colon) = text.index_of(":") else {
             return None;
           };
@@ -161,7 +161,7 @@ function __user_pass(encoded: string): Option[(string, string)] {
           }
           return Some((text.slice_snap(0, colon), text.slice_snap(colon + 1, text.len())));
         },
-        None => {
+        Err(_) => {
           return None;
         }
       }

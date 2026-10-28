@@ -24,12 +24,12 @@ function main(): i32 {
   }
   let tail = first.1.read_all_string();
   match (tail.0) {
-    Some(text) => {
+    Ok(text) => {
       if (text != "bc") {
         return 3;
       }
     },
-    None => {
+    Err(_) => {
       return 8;
     }
   }

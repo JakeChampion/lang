@@ -1375,10 +1375,10 @@ function __rx_shorthand_matches(kind: i32, byte: i32): boolean {
 
 function __rx_text(bytes: u8[]): Result[string, TextError] {
   match (utf8.from_bytes(bytes)) {
-    Some(text) => {
+    Ok(text) => {
       return Ok(text);
     },
-    None => {
+    Err(_) => {
       return Err(InvalidUtf8Output);
     }
   }
