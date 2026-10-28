@@ -1,0 +1,98 @@
+[
+  {
+    "target": "x86-64-linux",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2-current",
+      "-O",
+      "-sanitize",
+      "-target",
+      "x86-64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/shape-empty-candidate/contract-x86-64-linux",
+      "/workspace/lang-issue-work/perf-4412/shape-plan-candidate/contract/shape_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "/workspace/lang-issue-work/perf-4412/shape-empty-candidate/contract-x86-64-linux"
+    ],
+    "exit": 0,
+    "output_bytes": 50282,
+    "output_lines": 6049,
+    "output_sha256": "993b66e53a7639dc4a5d9b92a880b566f760e33add91b1c1d146abfcc686df53",
+    "same_output": true,
+    "binary_sha256": "6ceaabf55c1435aceca74dfe9c2a836fbad847c83771de65d498f41453c6fdf1",
+    "census": [
+      438323,
+      438323,
+      0
+    ]
+  },
+  {
+    "target": "arm64-linux",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2-current",
+      "-O",
+      "-sanitize",
+      "-target",
+      "arm64-linux",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/shape-empty-candidate/contract-arm64-linux",
+      "/workspace/lang-issue-work/perf-4412/shape-plan-candidate/contract/shape_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "qemu-aarch64",
+      "-cpu",
+      "max",
+      "/workspace/lang-issue-work/perf-4412/shape-empty-candidate/contract-arm64-linux"
+    ],
+    "exit": 0,
+    "output_bytes": 50282,
+    "output_lines": 6049,
+    "output_sha256": "993b66e53a7639dc4a5d9b92a880b566f760e33add91b1c1d146abfcc686df53",
+    "same_output": true,
+    "binary_sha256": "dc27c7194323096420187ac654295120f409b67cb6d8f2fd9c961a0cf006deb5",
+    "census": [
+      438323,
+      438323,
+      0
+    ]
+  },
+  {
+    "target": "wasm32-wasi",
+    "build_command": [
+      "/workspace/lang-issue-work/perf-4412/successor-count-candidate/stage2-current",
+      "-O",
+      "-sanitize",
+      "-target",
+      "wasm32-wasi",
+      "-o",
+      "/workspace/lang-issue-work/perf-4412/shape-empty-candidate/contract-wasm32-wasi",
+      "/workspace/lang-issue-work/perf-4412/shape-plan-candidate/contract/shape_contract.fern",
+      "/workspace/lang-issue-work/perf-4412/fixed-source/internal/stdlib"
+    ],
+    "build_exit": 0,
+    "run_command": [
+      "wasmtime",
+      "run",
+      "--env",
+      "FERN_LEAKCHECK=1",
+      "--env",
+      "FERN_SANITIZE=1",
+      "/workspace/lang-issue-work/perf-4412/shape-empty-candidate/contract-wasm32-wasi"
+    ],
+    "exit": 0,
+    "output_bytes": 50282,
+    "output_lines": 6049,
+    "output_sha256": "993b66e53a7639dc4a5d9b92a880b566f760e33add91b1c1d146abfcc686df53",
+    "same_output": true,
+    "binary_sha256": "3e40e1c623d0c178430b44f1090f24800d0d6ced4e9ea99314d96d557ba45b22",
+    "census": [
+      454559,
+      454559,
+      0
+    ]
+  }
+]

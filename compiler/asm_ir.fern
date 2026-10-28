@@ -9091,13 +9091,19 @@ function ssa_shape_plan(f: ssa.SFunc, imm: ssa.Imms, shared: boolean): ShapePlan
   if (shared) {
     return plan;
   }
-  let shape: boolean[] = __alloc_bool(f.nvals);
+  let shape: boolean[] = [];
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 46) {
+        if (shape.len() == 0) {
+          shape = __alloc_bool(f.nvals);
+        }
         shape = shape.with(ins.result, true);
       }
     }
+  }
+  if (shape.len() == 0) {
+    return plan;
   }
   for blk in f.blocks {
     for ins in blk.insts {
