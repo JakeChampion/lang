@@ -66,10 +66,6 @@ function is_rc_dec(op: ir.Op): boolean {
   return releases_operand(op.str);
 }
 
-function is_kind(op: ir.Op, name: string): boolean {
-  return op.kind_tag == ir.kind_id(name);
-}
-
 struct IfSpan { ok: boolean, if_at: i32, else_at: i32, end_at: i32 }
 
 function match_if_backwards(ops: ir.Op[], end_at: i32): IfSpan {
@@ -103,10 +99,10 @@ function match_if_backwards(ops: ir.Op[], end_at: i32): IfSpan {
 struct SlotFind { ok: boolean, slot: i32, at: i32 }
 
 function scope_delta(op: ir.Op): i32 {
-  if (is_kind(op, "block") || is_kind(op, "loop") || is_kind(op, "if")) {
+  if (op.kind_tag == ir.K_BLOCK || op.kind_tag == ir.K_LOOP || op.kind_tag == ir.K_IF) {
     return 1;
   }
-  if (is_kind(op, "end")) {
+  if (op.kind_tag == ir.K_END) {
     return 0 - 1;
   }
   return 0;
@@ -123,7 +119,7 @@ function sole_token_source(ops: ir.Op[], from: i32, to: i32, token_slot: i32): S
       i = i + 1;
       continue;
     }
-    if (depth != 0 || !is_kind(ops[i], "store_local") || ops[i].i32_imm != token_slot) {
+    if (depth != 0 || ops[i].kind_tag != ir.K_STORE_LOCAL || ops[i].i32_imm != token_slot) {
       i = i + 1;
       continue;
     }
@@ -141,11 +137,11 @@ function sole_token_source(ops: ir.Op[], from: i32, to: i32, token_slot: i32): S
 }
 
 function read_token_operand(ops: ir.Op[], from: i32, at: i32): i32 {
-  if (at - 1 >= from && is_kind(ops[at - 1], "load_local")) {
+  if (at - 1 >= from && ops[at - 1].kind_tag == ir.K_LOAD_LOCAL) {
     return ops[at - 1].i32_imm;
   }
-  if (at - 3 >= from && is_kind(ops[at - 1], "sub")
-    && is_kind(ops[at - 2], "const_i32") && is_kind(ops[at - 3], "load_local")) {
+  if (at - 3 >= from && ops[at - 1].kind_tag == ir.K_SUB
+    && ops[at - 2].kind_tag == ir.K_CONST_I32 && ops[at - 3].kind_tag == ir.K_LOAD_LOCAL) {
     return ops[at - 3].i32_imm;
   }
   return 0 - 1;
@@ -168,7 +164,7 @@ function sole_decline(ops: ir.Op[], from: i32, to: i32): DeclineRead {
       i = i + 1;
       continue;
     }
-    if (found.found || i - 1 < from || !is_kind(ops[i - 1], "load_local")) {
+    if (found.found || i - 1 < from || ops[i - 1].kind_tag != ir.K_LOAD_LOCAL) {
       return DeclineRead { ok: false, found: false, slot: 0, at: 0 };
     }
     found = DeclineRead { ok: true, found: true, slot: ops[i - 1].i32_imm, at: i };
@@ -195,10 +191,10 @@ function site_skip(why: string): Site {
 
 function token_arg_slot(ops: ir.Op[], call: i32): i32 {
   let j: i32 = call - 1;
-  while (j >= 0 && is_kind(ops[j], "const_i32")) {
+  while (j >= 0 && ops[j].kind_tag == ir.K_CONST_I32) {
     j = j - 1;
   }
-  if (j < 0 || !is_kind(ops[j], "load_local")) {
+  if (j < 0 || ops[j].kind_tag != ir.K_LOAD_LOCAL) {
     return 0 - 1;
   }
   return j;
@@ -206,11 +202,11 @@ function token_arg_slot(ops: ir.Op[], call: i32): i32 {
 
 function select_end_at(ops: ir.Op[], token_at: i32): i32 {
   let k: i32 = token_at - 1;
-  if (k >= 1 && is_kind(ops[k], "store_local")
-    && is_kind(ops[k - 1], "const_i32") && ops[k - 1].i32_imm == 0) {
+  if (k >= 1 && ops[k].kind_tag == ir.K_STORE_LOCAL
+    && ops[k - 1].kind_tag == ir.K_CONST_I32 && ops[k - 1].i32_imm == 0) {
     k = k - 2;
   }
-  if (k < 0 || !is_kind(ops[k], "end")) {
+  if (k < 0 || ops[k].kind_tag != ir.K_END) {
     return 0 - 1;
   }
   return k;
@@ -226,7 +222,7 @@ function gate_slot(ops: ir.Op[], if_at: i32): GateRead {
   if (at < 1 || !is_is_unique(ops[at])) {
     return GateRead { code: 1, slot: 0 };
   }
-  if (!is_kind(ops[at - 1], "load_local") && !is_kind(ops[at - 1], "tee_local")) {
+  if (ops[at - 1].kind_tag != ir.K_LOAD_LOCAL && ops[at - 1].kind_tag != ir.K_TEE_LOCAL) {
     return GateRead { code: 1, slot: 0 };
   }
   return GateRead { code: 0, slot: ops[at - 1].i32_imm };
@@ -240,11 +236,11 @@ function flag_source(ops: ir.Op[], if_at: i32): i32 {
   if (is_is_unique(ops[at])) {
     return at;
   }
-  if (is_kind(ops[at], "tee_local")) {
+  if (ops[at].kind_tag == ir.K_TEE_LOCAL) {
     return at - 1;
   }
-  if (at >= 1 && is_kind(ops[at], "load_local")
-    && is_kind(ops[at - 1], "store_local") && ops[at - 1].i32_imm == ops[at].i32_imm) {
+  if (at >= 1 && ops[at].kind_tag == ir.K_LOAD_LOCAL
+    && ops[at - 1].kind_tag == ir.K_STORE_LOCAL && ops[at - 1].i32_imm == ops[at].i32_imm) {
     return at - 2;
   }
   return 0 - 1;
@@ -261,32 +257,32 @@ function read_keep_site(ops: ir.Op[], call: i32, token_slot: i32): Site {
   }
   let result: i32 = ops[at].i32_imm;
   let shape: i32 = at + 1;
-  if (is_kind(ops[at], "store_local")) {
-    if (shape >= ops.len() || !is_kind(ops[shape], "load_local") || ops[shape].i32_imm != result) {
+  if (ops[at].kind_tag == ir.K_STORE_LOCAL) {
+    if (shape >= ops.len() || ops[shape].kind_tag != ir.K_LOAD_LOCAL || ops[shape].i32_imm != result) {
       return no_keep();
     }
     shape = shape + 1;
-  } else if (!is_kind(ops[at], "tee_local")) {
+  } else if (ops[at].kind_tag != ir.K_TEE_LOCAL) {
     return no_keep();
   }
-  if (shape + 1 >= ops.len() || !is_kind(ops[shape], "struct_set_shape") || !is_kind(ops[shape + 1], "drop")) {
+  if (shape + 1 >= ops.len() || ops[shape].kind_tag != ir.kind_id("struct_set_shape") || ops[shape + 1].kind_tag != ir.K_DROP) {
     return no_keep();
   }
-  if (call < 6 || !is_kind(ops[call - 3], "if") || !is_kind(ops[call - 4], "eq")
-    || !is_kind(ops[call - 5], "const_i32") || ops[call - 5].i32_imm != 0
-    || !is_kind(ops[call - 6], "load_local") || ops[call - 6].i32_imm != token_slot) {
+  if (call < 6 || ops[call - 3].kind_tag != ir.K_IF || ops[call - 4].kind_tag != ir.K_EQ
+    || ops[call - 5].kind_tag != ir.K_CONST_I32 || ops[call - 5].i32_imm != 0
+    || ops[call - 6].kind_tag != ir.K_LOAD_LOCAL || ops[call - 6].i32_imm != token_slot) {
     return no_keep();
   }
   let fresh: IfSpan = match_if_forwards(ops, call - 3);
   if (!fresh.ok || fresh.else_at != fresh.end_at - 3
-    || !is_kind(ops[fresh.else_at + 1], "load_local") || ops[fresh.else_at + 1].i32_imm != token_slot
-    || !is_kind(ops[fresh.else_at + 2], "store_local") || ops[fresh.else_at + 2].i32_imm != result) {
+    || ops[fresh.else_at + 1].kind_tag != ir.K_LOAD_LOCAL || ops[fresh.else_at + 1].i32_imm != token_slot
+    || ops[fresh.else_at + 2].kind_tag != ir.K_STORE_LOCAL || ops[fresh.else_at + 2].i32_imm != result) {
     return no_keep();
   }
   at = fresh.end_at + 1;
-  if (at + 3 >= ops.len() || !is_kind(ops[at], "load_local") || ops[at].i32_imm != token_slot
-    || !is_kind(ops[at + 1], "const_i32") || ops[at + 1].i32_imm != 0 || !is_kind(ops[at + 2], "ne")
-    || !is_kind(ops[at + 3], "if")) {
+  if (at + 3 >= ops.len() || ops[at].kind_tag != ir.K_LOAD_LOCAL || ops[at].i32_imm != token_slot
+    || ops[at + 1].kind_tag != ir.K_CONST_I32 || ops[at + 1].i32_imm != 0 || ops[at + 2].kind_tag != ir.K_NE
+    || ops[at + 3].kind_tag != ir.K_IF) {
     return no_keep();
   }
   let span: IfSpan = match_if_forwards(ops, at + 3);
@@ -295,8 +291,8 @@ function read_keep_site(ops: ir.Op[], call: i32, token_slot: i32): Site {
   }
   let k: i32 = call - 1;
   while (k >= 2) {
-    if (is_kind(ops[k], "end") && is_kind(ops[k - 1], "store_local") && ops[k - 1].i32_imm == token_slot
-      && is_kind(ops[k - 2], "const_i32") && ops[k - 2].i32_imm == 0) {
+    if (ops[k].kind_tag == ir.K_END && ops[k - 1].kind_tag == ir.K_STORE_LOCAL && ops[k - 1].i32_imm == token_slot
+      && ops[k - 2].kind_tag == ir.K_CONST_I32 && ops[k - 2].i32_imm == 0) {
       let sel: IfSpan = match_if_backwards(ops, k);
       if (!sel.ok || sel.else_at < 0) {
         return no_keep();
@@ -328,14 +324,14 @@ function match_if_forwards(ops: ir.Op[], if_at: i32): IfSpan {
   let depth: i32 = 0;
   let i: i32 = if_at + 1;
   while (i < ops.len()) {
-    if (is_kind(ops[i], "block") || is_kind(ops[i], "loop") || is_kind(ops[i], "if")) {
+    if (ops[i].kind_tag == ir.K_BLOCK || ops[i].kind_tag == ir.K_LOOP || ops[i].kind_tag == ir.K_IF) {
       depth = depth + 1;
-    } else if (is_kind(ops[i], "end")) {
+    } else if (ops[i].kind_tag == ir.K_END) {
       if (depth == 0) {
         return IfSpan { ok: true, if_at: if_at, else_at: else_at, end_at: i };
       }
       depth = depth - 1;
-    } else if (is_kind(ops[i], "else") && depth == 0) {
+    } else if (ops[i].kind_tag == ir.K_ELSE && depth == 0) {
       else_at = i;
     }
     i = i + 1;
@@ -444,20 +440,20 @@ function flow_graph(ops: ir.Op[]): Flow {
     other = other.append(ops.len());
     ends = ends.append(ops.len());
     owner = owner.append(0 - 1);
-    if (is_kind(ops[i], "block") || is_kind(ops[i], "loop") || is_kind(ops[i], "if")) {
+    if (ops[i].kind_tag == ir.K_BLOCK || ops[i].kind_tag == ir.K_LOOP || ops[i].kind_tag == ir.K_IF) {
       if (depth < stack.len()) {
         stack = stack.with(depth, i);
       } else {
         stack = stack.append(i);
       }
       depth = depth + 1;
-    } else if (is_kind(ops[i], "end") && depth > 0) {
+    } else if (ops[i].kind_tag == ir.K_END && depth > 0) {
       depth = depth - 1;
       ends = ends.with(stack[depth], i);
-    } else if (is_kind(ops[i], "else") && depth > 0) {
+    } else if (ops[i].kind_tag == ir.K_ELSE && depth > 0) {
       other = other.with(stack[depth - 1], i + 1);
       owner = owner.with(i, stack[depth - 1]);
-    } else if (is_kind(ops[i], "br") || is_kind(ops[i], "brif")) {
+    } else if (ops[i].kind_tag == ir.K_BR || ops[i].kind_tag == ir.K_BRIF) {
       let label: i32 = depth - 1 - ops[i].i32_imm;
       if (label >= 0 && label < depth) {
         owner = owner.with(i, stack[label]);
@@ -467,23 +463,23 @@ function flow_graph(ops: ir.Op[]): Flow {
   }
   i = 0;
   while (i < ops.len()) {
-    if (is_kind(ops[i], "if") && other[i] == ops.len()) {
+    if (ops[i].kind_tag == ir.K_IF && other[i] == ops.len()) {
       other = other.with(i, ends[i] + 1);
-    } else if (is_kind(ops[i], "else") || is_kind(ops[i], "br") || is_kind(ops[i], "brif")) {
+    } else if (ops[i].kind_tag == ir.K_ELSE || ops[i].kind_tag == ir.K_BR || ops[i].kind_tag == ir.K_BRIF) {
       let target: i32 = ops.len();
       let at: i32 = owner[i];
       if (at >= 0) {
         target = ends[at] + 1;
-        if (is_kind(ops[at], "loop")) {
+        if (ops[at].kind_tag == ir.K_LOOP) {
           target = at + 1;
         }
       }
-      if (is_kind(ops[i], "brif")) {
+      if (ops[i].kind_tag == ir.K_BRIF) {
         other = other.with(i, target);
       } else {
         next = next.with(i, target);
       }
-    } else if (is_kind(ops[i], "return")) {
+    } else if (ops[i].kind_tag == ir.K_RETURN) {
       next = next.with(i, ops.len());
     }
     i = i + 1;
@@ -510,7 +506,7 @@ function reaches(ops: ir.Op[], flow: Flow, from: i32, to: i32, donor: i32): bool
       return true;
     }
     seen = seen.with(i, 1);
-    if ((is_kind(ops[i], "store_local") || is_kind(ops[i], "tee_local")) && ops[i].i32_imm == donor) {
+    if ((ops[i].kind_tag == ir.K_STORE_LOCAL || ops[i].kind_tag == ir.K_TEE_LOCAL) && ops[i].i32_imm == donor) {
       continue;
     }
     work = work.append(flow.next[i]);
