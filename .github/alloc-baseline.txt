@@ -1,3 +1,4 @@
+# 2026-10-28: scripts/selfhost-alloc-bench on #13820 at the head that carries this note measured 33,886,499 balanced events, +1.65%, merged with main at b3520921. The new unroll and constant-fold passes run on every function, and the CG3b expansion grew parser.fern and checker.fern, which the subject imports.
 # 2026-10-28: Perf run 40717781776 on main at 903c9a490 measured 33,337,938 balanced events, -11.16%. #13718 removes return allocations from the compiler.
 # 2026-10-28: Perf run 40651501783 on #13768 measured 37,524,739 balanced events. Main measured 37,521,377 at eb0e5fdc0, so the move is on main.
 # 2026-10-28: Exact reports from CI run 40624419024 at fa0eedfa5 on PR #13718.
@@ -75,5 +76,5 @@
 # Re-pinned 2026-10-22: main's merges since moved it 3.7% (26,298,117 on main
 # ddc5b110 on the dev container); const_propagate's known table starts on one
 # placeholder op, 0.5% fewer.
-x86_64/checker.allocs	33337938
-x86_64/checker.frees	33337938
+x86_64/checker.allocs	33886499
+x86_64/checker.frees	33886499
