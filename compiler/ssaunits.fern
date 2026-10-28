@@ -2733,7 +2733,11 @@ pub function grow_holds(f: ssasem.Func, p: Plan, grows: GrowTable): boolean[] {
   if (at_value.len() == 0) {
     return out;
   }
-  let bare: ssalive.Flow = ssalive.compute_checked(f.graph, empty_chains(f.graph.nvals));
+  let asked: boolean[] = __alloc_bool(f.graph.nvals);
+  for v in at_value {
+    asked = asked.with(v, true);
+  }
+  let bare: ssalive.Flow = ssalive.compute_checked_kept(f.graph, empty_chains(f.graph.nvals), asked);
   for k in 0..at_value.len() {
     let bi: i32 = at_block[k];
     let v: i32 = at_value[k];

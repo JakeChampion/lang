@@ -295,7 +295,7 @@ pub function compute_checked(f: ssa.SFunc, dependencies: i32[][]): Flow {
   return compute_checked_kept(f, dependencies, []);
 }
 
-function compute_checked_kept(f: ssa.SFunc, dependencies: i32[][], keep: boolean[]): Flow {
+pub function compute_checked_kept(f: ssa.SFunc, dependencies: i32[][], keep: boolean[]): Flow {
   let nb: i32 = f.blocks.len();
   let at: i32[] = position_of(f);
   let def_b: i32[] = __alloc_i32(f.nvals);
