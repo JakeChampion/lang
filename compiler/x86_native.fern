@@ -5393,6 +5393,10 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   if (k == GK_FIXED) {
     return x86_gas_emit_packed(a, l.ext);
   }
+  if (k == GK_ENDBR) {
+    buf_push_byte(a.code, 243);
+    return x86_gas_emit_packed(a, x86_pack3(15, 30, 250));
+  }
   if (k == GK_REP) {
     let rpfx: i32 = l.ext;
     if (!x86_gas_rep_ok(rest)) {
@@ -6360,6 +6364,8 @@ const GK_ANDN: i32 = 47;
 // BMI2 shlx, shrx and sarx; the extension holds the operand size and the VEX pp field.
 const GK_SHIFTX: i32 = 48;
 
+const GK_ENDBR: i32 = 49;
+
 const GP_TEXT: i32 = 0;
 
 const GP_BYTES: i32 = 1;
@@ -6732,6 +6738,9 @@ function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasL
   }
   if (rest.len() == 0 && v.fixed >= 0) {
     return GasLine { ...l, kind: GK_FIXED, ext: v.fixed };
+  }
+  if (rest.len() == 0 && mnem == "endbr64") {
+    return GasLine { ...l, kind: GK_ENDBR };
   }
   if (v.a_kind != GK_NONE) {
     return GasLine { ...l, kind: v.a_kind, ext: v.a_ext, sfx: v.a_sfx };

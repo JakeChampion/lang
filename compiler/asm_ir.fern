@@ -2410,7 +2410,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    pushq %r10\n");
   s = s.write("    pushq %r11\n");
   s = s.write("    movl $0x10000000, %edi\n");
-  s = s.write("    movabs $17179869184, %rsi\n");
+  s = s.write("    movabs $" + s.heap_limit.to_string() + ", %rsi\n");
   s = s.write("    movl $3, %edx\n");
   s = s.write("    movl $0x4022, %r10d\n");
   s = s.write("    movq $-1, %r8\n");
@@ -2421,7 +2421,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    jl .Lalloc_map_fail\n");
   s = s.write("    movq %rax, __fern_heap_ptr(%rip)\n");
   s = s.write("    movq %rax, __fern_heap_base(%rip)\n");
-  s = s.write("    movabs $17179869184, %rcx\n");
+  s = s.write("    movabs $" + s.heap_limit.to_string() + ", %rcx\n");
   s = s.write("    addq %rax, %rcx\n");
   s = s.write("    movq %rcx, __fern_heap_end(%rip)\n");
   s = s.write("    popq %r11\n");
@@ -5735,7 +5735,46 @@ function ssa_alu_ir(s: asmcore.EmitState, ext: i32, size: i32, imm: i64, dst: st
   return s.write("    " + ssa_alu_text(ext, size) + " $" + util.i64_to_string(imm) + ", " + ssa_wreg(size, dst) + "\n");
 }
 
+// A -pie image carries no absolute immediate: the compare reads a data word that
+// holds the symbol's address and that the startup relocation moves with the image.
+function sym_addr_label(sym: string): string {
+  let out: string = ".Lsa";
+  let i: i32 = 0;
+  while (i < sym.len()) {
+    if (sym[i] == b'.') {
+      out = out + "_";
+    } else {
+      out = out + slice_unchecked(sym, i, i + 1);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function with_sym_addr(s: asmcore.EmitState, sym: string): asmcore.EmitState {
+  if (util.has_str(s.sym_addrs, sym)) {
+    return s;
+  }
+  return asmcore.EmitState { ...s, sym_addrs: s.sym_addrs.append(sym) };
+}
+
+function emit_sym_addrs_from(s: asmcore.EmitState, first: i32): asmcore.EmitState {
+  if (s.sym_addrs.len() <= first) {
+    return s;
+  }
+  s = s.write("    .section .data\n    .align 8\n");
+  let i: i32 = first;
+  while (i < s.sym_addrs.len()) {
+    s = s.write(sym_addr_label(s.sym_addrs[i]) + ":\n    .quad " + s.sym_addrs[i] + "\n");
+    i = i + 1;
+  }
+  return s.write("    .text\n");
+}
+
 function ssa_alu_is(s: asmcore.EmitState, ext: i32, size: i32, sym: string, dst: string): asmcore.EmitState {
+  if (s.pie) {
+    return s.write("    " + ssa_alu_text(ext, size) + " " + sym_addr_label(sym) + "(%rip), " + ssa_wreg(size, dst) + "\n");
+  }
   if (s.records()) {
     let d: i32 = ssa_xreg(dst);
     if (d >= 0) {
@@ -5746,6 +5785,9 @@ function ssa_alu_is(s: asmcore.EmitState, ext: i32, size: i32, sym: string, dst:
 }
 
 function ssa_alu_ims(s: asmcore.EmitState, ext: i32, size: i32, sym: string, base: string, disp: i32): asmcore.EmitState {
+  if (s.pie) {
+    return s.write("    pushq %r11\n    movq " + sym_addr_label(sym) + "(%rip), %r11\n    " + ssa_alu_text(ext, size) + " " + ssa_wreg(size, "%r11") + ", " + ssa_mem(base, disp, false) + "\n    popq %r11\n");
+  }
   if (s.records()) {
     let b: i32 = ssa_xreg(base);
     if (b >= 0) {
@@ -5952,6 +5994,9 @@ function ssa_rhs(fr: SsaFrame, reg_of: i32[], v: i32, s: asmcore.EmitState): str
   if (fr.imm.is_imm[v]) {
     let sym: string = ssa.imm_sym(fr.imm, v);
     if (sym != "") {
+      if (s.pie) {
+        return sym_addr_label(sym) + "(%rip)";
+      }
       return "$" + sym;
     }
     return "$" + util.i64_to_string(fr.imm.value[v]);
@@ -8360,8 +8405,12 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     a = a + 1;
   }
   s = ssa_parallel_moves(srcs, dsts, s);
-  if (ssa.slot_call(ins)) {
+  if (ssa.slot_call(ins) && s.harden) {
+    s = s.write("    movq 8(%rax), %r11\n" + cfi_check_x86("%r11") + "    call *%r11\n");
+  } else if (ssa.slot_call(ins)) {
     s = s.write("    call *8(%rax)\n");
+  } else if (s.harden) {
+    s = s.write(cfi_check_x86("%rdx") + "    call *%rdx\n");
   } else {
     s = s.write("    call *%rdx\n");
   }
@@ -8369,6 +8418,25 @@ function ssa_call_ind(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     s = ssa_alu_ir(s, 0, 64, (argc * 8) as i64, "%rsp");
   }
   return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+}
+
+// The word at a valid target is endbr64 (f3 0f 1e fa), read little-endian.
+function cfi_check_x86(reg: string): string {
+  return "    cmpl $-98693133, (" + reg + ")\n    jne __fern_cfi_fail\n";
+}
+
+function emit_cfi_stubs_from(s: asmcore.EmitState, first: i32): asmcore.EmitState {
+  if (s.cfi_stubs.len() <= first) {
+    return s;
+  }
+  s = s.write("    .text\n");
+  let i: i32 = first;
+  while (i < s.cfi_stubs.len()) {
+    let target: string = s.cfi_stubs[i];
+    s = s.write(asmcore.cfi_stub_label(s, target) + ":\n    endbr64\n    jmp " + target + "\n");
+    i = i + 1;
+  }
+  return s;
 }
 
 function ssa_agg_lit(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState): asmcore.EmitState {
@@ -8387,6 +8455,10 @@ function ssa_addr_inst(ins: ssa.SInst, reg_of: i32[], own s: asmcore.EmitState):
   let label: string = "";
   if (k == 45) {
     label = "__fn_" + asmcore.sanitize_label(ins.str) + ".r";
+    if (s.harden) {
+      s = asmcore.with_cfi_stub(s, label);
+      label = asmcore.cfi_stub_label(s, label);
+    }
   } else if (k == 46) {
     let sh: asmcore.ShapeRefOut = asmcore.shape_ref(s, ins.str);
     s = sh.state;
@@ -9086,6 +9158,9 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   while (si < shapes.vals.len()) {
     s = asmcore.intern_shape(s, shapes.names[si]);
     imm = ssa.with_sym(imm, shapes.vals[si], asmcore.shape_label(s, shapes.names[si]));
+    if (s.pie) {
+      s = with_sym_addr(s, asmcore.shape_label(s, shapes.names[si]));
+    }
     si = si + 1;
   }
   let alloc: ssa.Alloc = ssa_allocate(f, imm, s);
@@ -9697,6 +9772,9 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
   } else if (o.kind_tag == 396) {
     s = s.write("    call __fn___fern_disable_core_dumps\n    pushq %rax\n");
     s = s.need("disable_core_dumps");
+  } else if (o.kind_tag == 483) {
+    s = s.write("    call __fn___fern_prctl_query\n    addq $8, %rsp\n    pushq %rax\n");
+    s = s.need("prctl_query");
   } else if (o.kind_tag == 399) {
     s = s.write("    call __fn___fern_" + asmcore.ct_mark_helper(o.i32_imm) + "\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("ct_mark");
@@ -10103,9 +10181,7 @@ function hex_digits(t: string, from: i32): boolean {
 
 function emit_ir_op_heap_bump_bytes(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
-  s = s.write("    movq __fern_heap_end(%rip), %rcx\n");
-  s = s.write("    movabs $17179869184, %rdx\n");
-  s = s.write("    subq %rdx, %rcx\n");
+  s = s.write("    movq __fern_heap_base(%rip), %rcx\n");
   s = s.write("    movq %rax, %rdx\n");
   s = s.write("    subq %rcx, %rdx\n");
   s = s.write("    xorq %rcx, %rcx\n");
@@ -10355,6 +10431,8 @@ function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.Em
   let lit0: i32 = s.string_lits.len();
   let agg0: i32 = s.const_aggs.len();
   let sh0: i32 = s.shape_lits.len();
+  let sa0: i32 = s.sym_addrs.len();
+  let cf0: i32 = s.cfi_stubs.len();
   let lowered: physicalbody.Lowered = s.rt_lower(m);
   let bodies: irtables.LowerResult[] = irtables.lowered_results(lowered.bodies);
   let physical = physicalbody.collection(lowered);
@@ -10375,6 +10453,7 @@ function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.Em
     i = i + 1;
   }
   s = emit_named_bodies(bodies, physical, unit.pre, fns.len(), s, vgate);
+  s = emit_cfi_stubs_from(s, cf0);
   if (s.shape_lits.len() > sh0) {
     s = asmcore.emit_shape_lits_from(s, sh0);
     s = s.write("    .text\n");
@@ -10393,6 +10472,7 @@ function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.Em
     s = asmcore.emit_const_agg_data_from(s, agg0);
     s = s.write("    .text\n");
   }
+  s = emit_sym_addrs_from(s, sa0);
   return asmcore.EmitState { ...s, reg_entries: previous_regs, leaves: previous_leaves, float_abi: previous_float.names, float_abi_masks: previous_float.masks };
 }
 
@@ -10424,6 +10504,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
     fi = fi + 1;
   }
   s = emit_named_bodies(cache, physical, unit.pre, mod.funcs.len(), s, vgate);
+  s = emit_cfi_stubs_from(s, 0);
   irverifygate.report(vgate);
   return s;
 }
@@ -10532,6 +10613,7 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
     s = asmcore.emit_str_box_data_from(s, 0);
   }
   s = asmcore.emit_const_agg_data(s);
+  s = emit_sym_addrs_from(s, 0);
   s = emit_lane_consts(s);
   s = asmcore.emit_shape_lits_from(s, 0);
   if (is_entry) {
@@ -10603,7 +10685,13 @@ function emit_entry_runtime_settled(s0: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_process_entry(mod: parser.Module, own s: asmcore.EmitState): asmcore.EmitState {
+  if (s.pie) {
+    s = s.write("    .section .data\n    .align 8\n.Lfern_relanchor:\n    .quad .Lfern_relanchor\n__fern_reloc_list:\n    .quad 0\n__fern_reloc_count:\n    .quad 0\n    .text\n");
+  }
   s = s.write("_start:\n");
+  if (s.pie) {
+    s = emit_self_relocation(s);
+  }
   if (asmcore.sandbox_on()) {
     s = s.write("    call __fern_seccomp_install\n");
   }
@@ -10625,6 +10713,7 @@ function emit_process_entry(mod: parser.Module, own s: asmcore.EmitState): asmco
     s = emit_stack_switch(s);
     if (s.harden) {
       s = emit_canary_init(s);
+      s = emit_shadow_stack_enable(s);
     }
   }
   if (s.profile > 0) {
@@ -10633,6 +10722,29 @@ function emit_process_entry(mod: parser.Module, own s: asmcore.EmitState): asmco
   s = s.write("    pushq %rbp\n");
   s = s.write("    movq %rsp, %rbp\n");
   return emit_process_finish(mod, s);
+}
+
+// The anchor holds its own link-time address, so the difference from its runtime
+// address is the load delta. Every listed word gains the delta, the anchor included.
+function emit_self_relocation(own s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    leaq .Lfern_relanchor(%rip), %rax\n");
+  s = s.write("    movq (%rax), %rcx\n");
+  s = s.write("    subq %rcx, %rax\n");
+  s = s.write("    jz .Lfern_reloc_done\n");
+  s = s.write("    movq __fern_reloc_count(%rip), %rcx\n");
+  s = s.write("    movq __fern_reloc_list(%rip), %rsi\n");
+  s = s.write("    addq %rax, %rsi\n");
+  s = s.write(".Lfern_reloc_loop:\n");
+  s = s.write("    cmpq $0, %rcx\n");
+  s = s.write("    je .Lfern_reloc_done\n");
+  s = s.write("    movq (%rsi), %rdi\n");
+  s = s.write("    addq %rax, %rdi\n");
+  s = s.write("    addq %rax, (%rdi)\n");
+  s = s.write("    addq $8, %rsi\n");
+  s = s.write("    subq $1, %rcx\n");
+  s = s.write("    jmp .Lfern_reloc_loop\n");
+  s = s.write(".Lfern_reloc_done:\n");
+  return s;
 }
 
 function emit_stack_switch(own s: asmcore.EmitState): asmcore.EmitState {
@@ -10661,7 +10773,10 @@ function emit_segv_install(own s: asmcore.EmitState): asmcore.EmitState {
 function emit_stack_overflow_runtime(s: asmcore.EmitState): asmcore.EmitState {
   let msg: string = aborts.stack_overflow();
   s = s.write("    .section .rodata\n.Lmsg_stack_overflow:\n    .ascii \"" + msg + "\\n\"\n    .text\n");
-  s = s.write("__fern_segv:\n    movq 16(%rsi), %rax\n    subq 160(%rdx), %rax\n    addq $1048576, %rax\n    cmpq $2097152, %rax\n    jae .Lfern_segv_other\n    movq 168(%rdx), %rax\n    movq 120(%rdx), %rcx\n    subq $16, %rsp\n    movq %rcx, (%rsp)\n    movq %rax, 8(%rsp)\n    movq %rsp, %rbp\n    movq $0, __fern_stack_top(%rip)\n    leaq .Lmsg_stack_overflow(%rip), %rsi\n    movq $" + util.i32_to_string(msg.len() + 1) + ", %rdx\n    movq $134, %rdi\n    jmp __fern_report\n.Lfern_segv_other:\n    subq $32, %rsp\n    movq $0, (%rsp)\n    movq $0x04000000, 8(%rsp)\n");
+  // A fault inside the guard of the runtime's own stack is an overflow. On
+  // the kernel's stack, kept when that mapping failed, a fault within 1 MiB
+  // of the stack pointer counts as one.
+  s = s.write("__fern_segv:\n    movq 16(%rsi), %rax\n    movq __fern_stack_top(%rip), %rcx\n    testq %rcx, %rcx\n    jz .Lfern_segv_near_sp\n    subq $1073741808, %rcx\n    subq %rcx, %rax\n    cmpq $1048576, %rax\n    jb .Lfern_segv_overflow\n    jmp .Lfern_segv_other\n.Lfern_segv_near_sp:\n    subq 160(%rdx), %rax\n    addq $1048576, %rax\n    cmpq $2097152, %rax\n    jae .Lfern_segv_other\n.Lfern_segv_overflow:\n    movq 168(%rdx), %rax\n    movq 120(%rdx), %rcx\n    subq $16, %rsp\n    movq %rcx, (%rsp)\n    movq %rax, 8(%rsp)\n    movq %rsp, %rbp\n    movq $0, __fern_stack_top(%rip)\n    leaq .Lmsg_stack_overflow(%rip), %rsi\n    movq $" + util.i32_to_string(msg.len() + 1) + ", %rdx\n    movq $134, %rdi\n    jmp __fern_report\n.Lfern_segv_other:\n    subq $32, %rsp\n    movq $0, (%rsp)\n    movq $0x04000000, 8(%rsp)\n");
   s = emit_segv_install(s);
   s = s.write("    addq $32, %rsp\n    ret\n.Lfern_segv_restorer:\n    movl $15, %eax\n");
   return s.syscall(15);
@@ -10675,6 +10790,7 @@ function emit_startup_failures(own s: asmcore.EmitState): asmcore.EmitState {
   if (s.harden) {
     s = emit_startup_failure(s, ".Lfern_canary_read_failed", aborts.canary_read());
     s = emit_startup_failure(s, "__fern_canary_fail", aborts.canary());
+    s = emit_startup_failure(s, "__fern_cfi_fail", aborts.cfi());
   }
   return s;
 }
@@ -10683,6 +10799,18 @@ function emit_canary_init(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    leaq __fern_canary(%rip), %rdi\n    movl $8, %esi\n    xorl %edx, %edx\n    movl $318, %eax\n");
   s = s.syscall(318);
   return s.write("    cmpq $8, %rax\n    jne .Lfern_canary_read_failed\n");
+}
+
+// arch_prctl(ARCH_SHSTK_ENABLE, ARCH_SHSTK_SHSTK) turns the shadow stack on
+// where the processor and the kernel have it, and ARCH_SHSTK_LOCK then keeps
+// it on. A kernel without the feature answers an error, which leaves the
+// process as it was. std/mitigations reports the outcome.
+function emit_shadow_stack_enable(own s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    movl $20481, %edi\n    movl $1, %esi\n    movl $158, %eax\n");
+  s = s.syscall(158);
+  s = s.write("    testq %rax, %rax\n    jnz .Lfern_shstk_off\n    movl $20483, %edi\n    movl $1, %esi\n    movl $158, %eax\n");
+  s = s.syscall(158);
+  return s.write(".Lfern_shstk_off:\n");
 }
 
 function emit_startup_failure(own s: asmcore.EmitState, label: string, msg: string): asmcore.EmitState {
@@ -10851,6 +10979,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (!s.shared) {
     s = emit_stack_overflow_runtime(s);
     s = emit_startup_failures(s);
+    s = asmcore.emit_build_manifest(s);
   }
   s = emit_report(s);
   if (s.shared) {
@@ -11332,6 +11461,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("disable_core_dumps")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_disable_core_dumps", s);
+  }
+  if (s.has_need("prctl_query")) {
+    s = s.write("    .text\n");
+    s = emit_runtime("__fern_prctl_query", s);
   }
   if (s.has_need("ct_mark")) {
     s = s.write("    .text\n");

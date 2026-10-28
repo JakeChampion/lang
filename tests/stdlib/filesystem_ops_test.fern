@@ -1,5 +1,6 @@
 import "core/cmp";
 import "std/test";
+import "std/io";
 
 function test_temp_dir_returns_abs_path(): test.TestOutcome {
   match (temp_dir("fs-ops")) {
@@ -16,6 +17,62 @@ function test_temp_dir_returns_abs_path(): test.TestOutcome {
     },
     Err(_) => {
       return test.fail("temp_dir returned Err");
+    }
+  }
+  return test.pass();
+}
+
+function test_temp_file_round_trip(): test.TestOutcome {
+  match (io.temp_file("fs-ops")) {
+    Ok(t) => {
+      let path: string = t.path;
+      match (t.file.write("abc")) {
+        Ok(_) => {},
+        Err(_) => {
+          return test.fail("write to the temp file failed");
+        }
+      }
+      match (t.file.close()) {
+        Ok(_) => {},
+        Err(_) => {
+          return test.fail("close of the temp file failed");
+        }
+      }
+      let got: string = "";
+      match (read_file(path)) {
+        Ok(text) => {
+          got = text;
+        },
+        Err(_) => {
+          return test.fail("read back of the temp file failed");
+        }
+      }
+      match (remove_file(path)) {
+        Ok(_) => {},
+        Err(_) => {
+          return test.fail("remove of the temp file failed");
+        }
+      }
+      return test.assert_eq(got, "abc");
+    },
+    Err(_) => {
+      return test.fail("temp_file returned Err");
+    }
+  }
+  return test.pass();
+}
+
+function test_temp_file_refuses_a_separator(): test.TestOutcome {
+  match (io.temp_file("a/b")) {
+    Ok(t) => {
+      match (remove_file(t.path)) {
+        Ok(_) => {},
+        Err(_) => {}
+      }
+      return test.fail("a prefix with a separator was accepted");
+    },
+    Err(_) => {
+      return test.pass();
     }
   }
   return test.pass();
@@ -258,6 +315,8 @@ function test_remove_dir_all_silently_ok_on_missing_target(): test.TestOutcome {
 function main(): i32 {
   let r: test.TestRunner = test.test_new("filesystem ops");
   r = r.it("temp_dir returns absolute path", test_temp_dir_returns_abs_path);
+  r = r.it("temp_file round trip", test_temp_file_round_trip);
+  r = r.it("temp_file refuses a separator", test_temp_file_refuses_a_separator);
   r = r.it("read_dir lists what we wrote", test_read_dir_lists_what_we_wrote);
   r = r.it("remove_file removes a single file", test_remove_file_removes_a_single_file);
   r = r.it("remove_file on missing target errors", test_remove_file_on_missing_target_is_an_error);

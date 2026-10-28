@@ -389,7 +389,7 @@ pub function all_runtime_need_roots(): string[] {
     "signal_catch", "signal_taken", "signal_raise",
     "trap_stubs",
     "process_alive", "signal_send", "set_process_group", "rlimit_nofile",
-    "disable_core_dumps", "proc_waitpid_status",
+    "disable_core_dumps", "prctl_query", "proc_waitpid_status",
     "ct_mark",
     "priority", "set_priority",
     "clock_resolution", "clock_set",

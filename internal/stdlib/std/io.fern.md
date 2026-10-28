@@ -27,6 +27,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<5 function read_stdin_buffer(): Result[usize, IoError]>>
 
 <<6 pub function read_all_stdin_bytes(): Result[u8[], IoError]>>
+
+<<7 pub function temp_file(prefix: string): Result[TempFile, IoError]>>
 ```
 
 ### `module introduction`
@@ -196,5 +198,67 @@ pub function read_input(path: string): Result[string, IoError] {
     return read_all_stdin();
   }
   return read_file(path);
+}
+```
+
+### `7 pub function temp_file(prefix: string): Result[TempFile, IoError]`
+
+A temporary file is created exclusively, with mode 0600, under a name that carries 16 hexadecimal digits of kernel entropy. The call skips a name that already exists as a file or as a symbolic link. A prepared link at a guessed name therefore cannot redirect the write. The prefix must not contain a path separator.
+
+```fern
+<<7 pub function temp_file(prefix: string): Result[TempFile, IoError]>>=
+pub struct TempFile { path: string, file: Writer }
+
+pub function temp_file(prefix: string): Result[TempFile, IoError] {
+  let i: i32 = 0;
+  while (i < prefix.len()) {
+    if (prefix[i] == 47 as u8) {
+      return Err(Other(prefix, "Invalid argument", 22));
+    }
+    i = i + 1;
+  }
+  let tries: i32 = 0;
+  while (tries < 64) {
+    let path: string = "/tmp/" + prefix + "-" + __hex_name(random_bytes(8));
+    match (open_exclusive(path)) {
+      Ok(w) => {
+        return Ok(TempFile { path: path, file: w });
+      },
+      Err(e) => {
+        match (e) {
+          AlreadyExists(_) => {},
+          _ => {
+            return Err(e);
+          }
+        }
+      }
+    }
+    tries = tries + 1;
+  }
+  return Err(AlreadyExists(prefix));
+}
+
+function __hex_name(bytes: u8[]): string {
+  let out: u8[] = [];
+  for b in bytes {
+    let v: i32 = b as i32;
+    out = out.append(__hex_digit(v >> 4));
+    out = out.append(__hex_digit(v & 15));
+  }
+  match (utf8.from_bytes(out)) {
+    Some(text) => {
+      return text;
+    },
+    None => {
+      return "";
+    }
+  }
+}
+
+function __hex_digit(d: i32): u8 {
+  if (d < 10) {
+    return (48 + d) as u8;
+  }
+  return (87 + d) as u8;
 }
 ```

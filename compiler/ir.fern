@@ -556,6 +556,11 @@ pub function op_count_below_u64(): Op {
   return op0(482);
 }
 
+// A read-only prctl query: the kernel's answer, or the negated errno.
+pub function op_prctl_query(): Op {
+  return op0(483);
+}
+
 pub function op_sum_bytes_array(): Op {
   return op0(368);
 }
@@ -3047,6 +3052,9 @@ function kind_id_len10_t(name: string): i32 {
 }
 
 function kind_id_len11(name: string): i32 {
+  if (name == "prctl_query") {
+    return 483;
+  }
   if (name == "arr_reserve") {
     return 383;
   }
@@ -4719,6 +4727,9 @@ pub function kind_name(id: i32): string {
   if (id == 482) {
     return "count_below_u64";
   }
+  if (id == 483) {
+    return "prctl_query";
+  }
   if (id == 358) {
     return "memchr_bytes";
   }
@@ -4831,7 +4842,7 @@ function pops1_io(t: i32): boolean {
     || t == 392 || t == 393 || t == 394
     || t == 395
     || t == 277 || t == 279
-    || t == 241 || t == 250 || t == 307
+    || t == 241 || t == 250 || t == 307 || t == 483
     || t == 299 || t == 300 || t == 301
     || t == 261 || t == 264 || t == 265
     || t == 283

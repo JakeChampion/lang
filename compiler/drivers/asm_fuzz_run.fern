@@ -1,0 +1,38 @@
+import "../x86_native";
+import "../arm64_native";
+import "../util";
+
+// Feeds a text file to one in-process assembler. The assemblers consume the
+// compiler's own output, so on foreign text the accepted outcomes are exit 0
+// with a summary on stdout, or an abort with a cause line. Exit 2 is a usage
+// or read error.
+
+function main(): i32 {
+  let av: string[] = args();
+  if (av.len() < 3) {
+    eprint("usage: asm_fuzz_run x86|arm64 FILE");
+    return 2;
+  }
+  let src: string = "";
+  match (read_file_bytes(av[2])) {
+    Ok(b) => {
+      src = string_from_bytes_unchecked(b);
+    },
+    Err(_) => {
+      eprint("asm_fuzz_run: cannot read " + av[2]);
+      return 2;
+    }
+  }
+  if (av[1] == "x86") {
+    let a: x86_native.X86Asm = x86_native.x86_gas_assemble(src);
+    print("x86 text " + util.i32_to_string(a.text.len()) + " unknown " + util.i32_to_string(a.unknown.len()));
+    return 0;
+  }
+  if (av[1] == "arm64") {
+    let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(src);
+    print("arm64 code_end " + util.i32_to_string(p.code_end) + " data " + util.i32_to_string(p.data.len()));
+    return 0;
+  }
+  eprint("asm_fuzz_run: unknown assembler " + av[1]);
+  return 2;
+}

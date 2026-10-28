@@ -75,7 +75,7 @@ func TestSelfHostDeclaredImportResolution(t *testing.T) {
 			t.Setenv("FERN_CACHE_DIR", filepath.Join(root, "cache"))
 			want := ""
 			if tc.lockError {
-				_, err := modload.LockedDepDir(root, "helper")
+				_, err := modload.LockedDepDir(root, "helper", "")
 				if err == nil {
 					t.Fatal("Go lock lookup accepted an invalid fixture")
 				}
@@ -140,7 +140,7 @@ func TestSelfHostDeclaredModuleTargets(t *testing.T) {
 		"bare/fern.toml":        "[package]\nname = \"app\"\n",
 		"bare/helper.fern":      good,
 	})
-	_, err := modload.LockedDepDir(filepath.Join(dir, "invalid"), "helper")
+	_, err := modload.LockedDepDir(filepath.Join(dir, "invalid"), "helper", "")
 	if err == nil {
 		t.Fatal("Go lock lookup accepted an incomplete entry")
 	}

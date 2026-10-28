@@ -1,0 +1,156 @@
+import "std/test";
+import "std/json";
+import "std/fuzz";
+import "std/format" as format;
+import "std/i32";
+import "std/utf8" as utf8;
+import "std/option";
+import "std/string";
+
+function nested(depth: i32): string {
+  let s: string = "";
+  let i: i32 = 0;
+  while (i < depth) {
+    s = s + "[";
+    i = i + 1;
+  }
+  i = 0;
+  while (i < depth) {
+    s = s + "]";
+    i = i + 1;
+  }
+  return s;
+}
+
+function test_json_depth_limit(): test.TestOutcome {
+  match (json.parse(nested(128))) {
+    Ok(_) => {},
+    Err(e) => {
+      return test.fail("128 levels refused: " + e.message());
+    }
+  }
+  match (json.parse(nested(129))) {
+    Ok(_) => {
+      return test.fail("129 levels accepted");
+    },
+    Err(_) => {}
+  }
+  match (json.parse(nested(100000))) {
+    Ok(_) => {
+      return test.fail("100000 levels accepted");
+    },
+    Err(_) => {
+      return test.pass();
+    }
+  }
+  return test.pass();
+}
+
+function test_invalid_utf8_is_refused(): test.TestOutcome {
+  let bad: u8[] = [0xc3 as u8, 0x28 as u8];
+  if (utf8.from_bytes(bad).is_some()) {
+    return test.fail("a truncated sequence was accepted");
+  }
+  let overlong: u8[] = [0xc0 as u8, 0xaf as u8];
+  if (utf8.from_bytes(overlong).is_some()) {
+    return test.fail("an overlong encoding was accepted");
+  }
+  let surrogate: u8[] = [0xed as u8, 0xa0 as u8, 0x80 as u8];
+  if (utf8.from_bytes(surrogate).is_some()) {
+    return test.fail("a surrogate was accepted");
+  }
+  let good: u8[] = [0xe2 as u8, 0x82 as u8, 0xac as u8];
+  match (utf8.from_bytes(good)) {
+    Some(s) => {
+      return test.assert_eq(s.len(), 3);
+    },
+    None => {
+      return test.fail("a valid three-byte sequence was refused");
+    }
+  }
+  return test.pass();
+}
+
+function test_number_parse_is_bounded(): test.TestOutcome {
+  match (i32.parse_i32("99999999999")) {
+    Ok(v) => {
+      return test.fail("an out-of-range number parsed as " + v.to_string());
+    },
+    Err(_) => {}
+  }
+  match (i32.parse_i32("2147483647")) {
+    Ok(v) => {
+      if (v != 2147483647) {
+        return test.fail("the maximum parsed as " + v.to_string());
+      }
+    },
+    Err(_) => {
+      return test.fail("the maximum was refused");
+    }
+  }
+  match (i32.parse_i32("-2147483649")) {
+    Ok(v) => {
+      return test.fail("below the minimum parsed as " + v.to_string());
+    },
+    Err(_) => {
+      return test.pass();
+    }
+  }
+  return test.pass();
+}
+
+function test_format_width_is_bounded(): test.TestOutcome {
+  let wide: string = format.format("{:2000000000}", ["x"]);
+  if (wide.len() != 1000000) {
+    return test.fail("a two-billion width padded to " + wide.len().to_string());
+  }
+  let wrapped: string = format.format("{:99999999999999}", ["x"]);
+  if (wrapped.len() != 1000000) {
+    return test.fail("a fourteen-digit width padded to " + wrapped.len().to_string());
+  }
+  let precise: string = format.format("{:.99999999999}", ["1.5"]);
+  if (precise.len() > 1000010) {
+    return test.fail("an eleven-digit precision produced " + precise.len().to_string() + " bytes");
+  }
+  if (format.format("{:5}", ["x"]).len() != 5) {
+    return test.fail("a small width changed");
+  }
+  return test.pass();
+}
+
+function json_never_crashes(input: u8[]): test.TestOutcome {
+  match (json.parse(string_from_bytes_unchecked(input))) {
+    Ok(_) => {
+      return test.pass();
+    },
+    Err(_) => {
+      return test.pass();
+    }
+  }
+  return test.pass();
+}
+
+function utf8_never_crashes(input: u8[]): test.TestOutcome {
+  match (utf8.from_bytes(input)) {
+    Some(s) => {
+      return test.assert_eq(s.len(), input.len());
+    },
+    None => {
+      return test.pass();
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std parse limits");
+  r = r.it("json depth limit", test_json_depth_limit);
+  r = r.it("invalid utf8 is refused", test_invalid_utf8_is_refused);
+  r = r.it("number parse is bounded", test_number_parse_is_bounded);
+  r = r.it("format width is bounded", test_format_width_is_bounded);
+  let seeds: u8[][] = ["{\"a\": [1, 2.5e3, \"x\\u00e9\", null, true], \"b\": {\"c\": []}}".bytes(), "[[[[1]]]]".bytes(), "\"\\ud83d\\ude00\"".bytes(), "-0.0e-0".bytes()];
+  r = r.fuzz("json never crashes", seeds, 2000, json_never_crashes);
+  let text_seeds: u8[][] = ["héllo wörld".bytes(), "😀".bytes(), "plain".bytes()];
+  r = r.fuzz("utf8 never crashes", text_seeds, 2000, utf8_never_crashes);
+  return r.finish();
+}

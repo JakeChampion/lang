@@ -488,7 +488,8 @@ treating genuine compiler regressions as infra.
   cgroup cap (`memory.limit_in_bytes` is effectively unlimited).
 
 **The native arena is 16 GiB** (0x400000000) in the current x86-64 and ARM64
-emitters, `asm_ir.fern` and `asm_arm64_ir.fern`. The former Go `heapBytes`
+emitters, `asm_ir.fern` and `asm_arm64_ir.fern`, unless `-heap-limit` sets a
+smaller reservation for one executable. The former Go `heapBytes`
 implementations are retired. The Linux mmap uses `MAP_NORESERVE`, so the
 reservation costs nothing until touched; only the exit-125 ceiling moves. The stage-2 self-compile
 (gen1/mmc2 in the fixpoint tests) is the usual victim: the self-host-built

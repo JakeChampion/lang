@@ -81,6 +81,5 @@ A user program or a standard library module that names one receives `E001`.
 Groups A and B must require an `unsafe` block at every call site.
 The standard library, `coreutils`, and the runtime helpers must accept that obligation in annotated blocks.
 The compiler imports `std/string`, `std/crypto`, `std/deflate`, `std/http`, and other modules that call group A.
-The pinned stage0 compiler, `stage0-20261025-433d93a`, predates the `unsafe` parser.
-Therefore those modules cannot carry `unsafe` blocks until a stage0 built from a parser-capable commit is pinned.
-That publication is the next prerequisite, and the enforcement change follows it in one coordinated PR.
+The pinned stage0 compiler, `stage0-20261028-9193717`, parses `unsafe` blocks.
+Therefore those modules can carry `unsafe` blocks now, and the enforcement change is one coordinated PR.

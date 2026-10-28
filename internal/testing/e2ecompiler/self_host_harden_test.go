@@ -121,8 +121,8 @@ func TestSelfHostHardenArm64(t *testing.T) {
 			t.Fatal(err)
 		}
 		pad := binary.LittleEndian.AppendUint32(nil, 0xd503245f)
-		if bytes.Count(img, pad) < 3 {
-			t.Fatalf("the -harden image has %d landing pads, want one per indirect-call target", bytes.Count(img, pad))
+		if bytes.Count(img, pad) != 2 {
+			t.Fatalf("the -harden image has %d landing pads, want one per address-taken function (the closure and twice)", bytes.Count(img, pad))
 		}
 		sign := binary.LittleEndian.AppendUint32(nil, 0xd503233f)
 		auth := binary.LittleEndian.AppendUint32(nil, 0xd50323bf)
@@ -133,8 +133,16 @@ func TestSelfHostHardenArm64(t *testing.T) {
 			t.Log("this host does not enforce BTI; the pads are not proved load-bearing here")
 			return
 		}
+		// The indirect-call check refuses a padless stub before the branch,
+		// so the BTI control also turns its compare into cmp w16, w16.
 		nopad := filepath.Join(dir, "nopad")
-		if err := os.WriteFile(nopad, bytes.ReplaceAll(img, pad, binary.LittleEndian.AppendUint32(nil, 0xd503201f)), 0o755); err != nil {
+		cmp := binary.LittleEndian.AppendUint32(nil, 0x6b11021f)
+		cmpSame := binary.LittleEndian.AppendUint32(nil, 0x6b10021f)
+		if bytes.Count(img, cmp) == 0 {
+			t.Fatal("the -harden image has no indirect-call compare")
+		}
+		unchecked := bytes.ReplaceAll(bytes.ReplaceAll(img, pad, binary.LittleEndian.AppendUint32(nil, 0xd503201f)), cmp, cmpSame)
+		if err := os.WriteFile(nopad, unchecked, 0o755); err != nil {
 			t.Fatal(err)
 		}
 		expectSIGILL(t, qemu, nopad)
@@ -173,6 +181,9 @@ func TestSelfHostHardenArm64(t *testing.T) {
 		if enforced {
 			var kept []string
 			for _, line := range strings.Split(string(text), "\n") {
+				if strings.TrimSpace(line) == "cmp w16, w17" {
+					line = "    cmp w16, w16"
+				}
 				if strings.TrimSpace(line) != "bti c" {
 					kept = append(kept, line)
 				}

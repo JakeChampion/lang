@@ -507,17 +507,38 @@ host. Android, wasm and `-shared` builds refuse it with exit 2.
 ### Binary hardening (`-harden`) is arm64-linux and x86-64-linux executables only
 
 On arm64-linux `-harden` adds BTI landing pads, the GNU property note that
-enforces them, return-address signing, and a stack canary in every framed
-function. On x86-64-linux it adds the stack canary. Every other target, and
-`-shared`, refuses the flag with exit 2.
+enforces them, and return-address signing. On both Linux targets it adds a
+stack canary in every framed function and a check on every indirect call
+(`docs/security/CFI.md`). On x86-64-linux it also asks the kernel for the
+shadow stack and continues without one where the kernel refuses
+(`docs/security/SHADOW-STACK.md`). Every
+other target, and `-shared`, refuses the flag with exit 2.
 What is left (x86-64 CET, the shared and Android images, the runtime's
 hand-written frames) is listed in `docs/HARDENING.md`.
+
+### Build profiles (`-profile`) follow their flags
+
+`-profile hardened` is `-harden -pie`, so the two Linux native targets accept
+it and every other target refuses it with exit 2. `safe`, `diagnostic` and
+`minimal` build wherever their flags build. The support table and the
+measured cost of each profile per target are in
+`docs/security/PROFILE-COSTS.md`.
+
+### Position-independent executables (`-pie`) are x86-64-linux and arm64-linux
+
+`-pie` writes an `ET_DYN` image at base 0 with no interpreter, which the
+kernel loads at a random base, and a startup loop relocates the absolute
+data words (`docs/security/PIE.md`). Android is position-independent
+without the flag. Darwin, wasm and `-shared` refuse it with exit 2.
 
 ### Heap exhaustion exits 125 on the natives, traps on wasm
 
 The native targets exit 125 when the arena runs out (`.Lalloc_oom` in
 `asm_ir.fern` and `asm_arm64_ir.fern`), and 123 with `fern: could not map the
-heap arena (errno N)` when its first mmap fails (`.Lalloc_map_fail`). On wasm the equivalent event is
+heap arena (errno N)` when its first mmap fails (`.Lalloc_map_fail`).
+`-heap-limit SIZE` sets the reservation of a native executable, from `1M` to
+`16G`, and the same exit 125 reports the smaller arena when it is full
+(`docs/security/ERASURE-AND-QUOTAS.md`). Wasm refuses the flag with exit 2. On wasm the equivalent event is
 `memory.grow` returning -1, and `$__fern_alloc` raises `unreachable` there —
 so the failure is attributable to the allocator, with its caller chain, but
 the process dies as a trap rather than carrying a status

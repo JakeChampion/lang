@@ -11,6 +11,7 @@ var perfLaneLabels = []string{
 	"append-cliff-x86_64",
 	"selfhost-size-x86_64",
 	"selfhost-alloc-x86_64",
+	"profile-costs-x86_64",
 }
 
 func TestPerfLaneLabelsAreStable(t *testing.T) {

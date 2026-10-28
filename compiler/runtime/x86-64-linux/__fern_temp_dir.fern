@@ -7,42 +7,46 @@ function __fern_temp_dir(prefix: string): Result[string, IoError] {
     }
     si = si + 1;
   }
-  let ns: i64 = monotonic_ns();
-  let ndig: i32 = 1;
-  let tt: i64 = ns;
-  while (tt >= 10 as i64) {
-    ndig = ndig + 1;
-    tt = tt / (10 as i64);
-  }
-  let total: i32 = 5 + plen + 1 + ndig;
-  let buf: usize = __raw_alloc(total + 1);
-  __raw_store8(buf, 0, 47);
-  __raw_store8(buf, 1, 116);
-  __raw_store8(buf, 2, 109);
-  __raw_store8(buf, 3, 112);
-  __raw_store8(buf, 4, 47);
-  let i: i32 = 0;
-  while (i < plen) {
-    __raw_store8(buf, 5 + i, prefix[i] as i32);
-    i = i + 1;
-  }
-  __raw_store8(buf, 5 + plen, 45);
-  let pos: i32 = total - 1;
-  let v: i64 = ns;
-  if (v == 0 as i64) {
-    __raw_store8(buf, pos, 48);
-  } else {
-    while (v > 0 as i64) {
-      __raw_store8(buf, pos, 48 + (v % (10 as i64)) as i32);
-      v = v / (10 as i64);
-      pos = pos - 1;
+  let total: i32 = 5 + plen + 1 + 16;
+  let tries: i32 = 0;
+  while (tries < 64) {
+    let rnd: u8[] = random_bytes(8);
+    let buf: usize = __raw_alloc(total + 1);
+    __raw_store8(buf, 0, 47);
+    __raw_store8(buf, 1, 116);
+    __raw_store8(buf, 2, 109);
+    __raw_store8(buf, 3, 112);
+    __raw_store8(buf, 4, 47);
+    let i: i32 = 0;
+    while (i < plen) {
+      __raw_store8(buf, 5 + i, prefix[i] as i32);
+      i = i + 1;
     }
+    __raw_store8(buf, 5 + plen, 45);
+    let k: i32 = 0;
+    while (k < 8) {
+      let v: i32 = rnd[k] as i32;
+      __raw_store8(buf, 6 + plen + 2 * k, __fern_hex_digit(v >> 4));
+      __raw_store8(buf, 7 + plen + 2 * k, __fern_hex_digit(v & 15));
+      k = k + 1;
+    }
+    __raw_store8(buf, total, 0);
+    let rc: i32 = __syscall3(258, -100, buf as i64, 448) as i32;
+    let buf_own: string = __raw_string(buf, total + 1);
+    if (rc >= 0) {
+      return Ok(__fern_path_copy(buf_own, total));
+    }
+    if (rc != 0 - 17) {
+      return Err(__fern_io_error(0 - rc, __fern_path_copy(prefix, plen)));
+    }
+    tries = tries + 1;
   }
-  __raw_store8(buf, total, 0);
-  let rc: i32 = __syscall3(258, -100, buf as i64, 448) as i32;
-  let buf_own: string = __raw_string(buf, total + 1);
-  if (rc < 0) {
-    return Err(__fern_io_error(0 - rc, __fern_path_copy(prefix, plen)));
+  return Err(__fern_io_error(17, __fern_path_copy(prefix, plen)));
+}
+
+function __fern_hex_digit(d: i32): i32 {
+  if (d < 10) {
+    return 48 + d;
   }
-  return Ok(__fern_path_copy(buf_own, total));
+  return 87 + d;
 }

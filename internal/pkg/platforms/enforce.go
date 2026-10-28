@@ -182,6 +182,7 @@ var gatedBuiltins = map[string]string{
 
 	"uname_field": "sysinfo",
 	"cpu_count":   "sysinfo",
+	"prctl_query": "sysinfo",
 	"sysctl":      "sysctl",
 
 	"getcwd": "cwd",
