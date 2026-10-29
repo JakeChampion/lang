@@ -47,6 +47,210 @@ function arm64_copy_words(s: asmcore.EmitState, src: string, dst: string, n: i32
   return s;
 }
 
+// A division or remainder by a constant k, on the dividend in x4: the result
+// is left in x4, and x5 and x6 are scratch. It keeps sdiv/udiv semantics, so
+// k == 0 gives 0 for a quotient and the dividend for a remainder.
+struct ArmDivRegs {
+  n: string,
+  t: string,
+  k: string,
+  bits: i32,
+}
+
+function arm_div_regs(w64: boolean): ArmDivRegs {
+  if (w64) {
+    return ArmDivRegs { n: "x4", t: "x5", k: "x6", bits: 64 };
+  }
+  return ArmDivRegs { n: "w4", t: "w5", k: "w6", bits: 32 };
+}
+
+function ssa_div_const(tag: i32, width: i32, k: i64, s: asmcore.EmitState): asmcore.EmitState {
+  let uns: boolean = tag == 25 || tag == 27;
+  s = ssa_div_const_body(arm_div_regs(width == 64), uns, tag == 26 || tag == 27, k, s);
+  if (width != 64 && !uns) {
+    s = s.write("    sxtw x4, w4\n");
+  }
+  return s;
+}
+
+function ssa_div_const_body(r: ArmDivRegs, uns: boolean, is_rem: boolean, k: i64, s: asmcore.EmitState): asmcore.EmitState {
+  let mag: i64 = k;
+  let neg: boolean = false;
+  if (uns) {
+    if (r.bits == 32) {
+      mag = (k as i32) as i64 & 4294967295i64;
+    }
+  } else {
+    let v: i64 = k;
+    if (r.bits == 32) {
+      v = (k as i32) as i64;
+    }
+    let min: i64 = -2147483648i64;
+    if (r.bits == 64) {
+      min = -9223372036854775808i64;
+    }
+    if (v == min) {
+      s = ssa_const_reg(util.i64_to_string(v), "x6", s);
+      return s.write(ssa_div_by(r, uns, is_rem));
+    }
+    if (v < 0i64) {
+      neg = true;
+      mag = 0i64 - v;
+    } else {
+      mag = v;
+    }
+  }
+  if (mag == 0i64) {
+    if (is_rem) {
+      return s;
+    }
+    return s.write("    mov x4, #0\n");
+  }
+  if (mag == 1i64) {
+    if (is_rem) {
+      return s.write("    mov x4, #0\n");
+    }
+    if (neg) {
+      return s.write("    neg " + r.n + ", " + r.n + "\n");
+    }
+    return s;
+  }
+  let sh: i32 = ir.pow2_shift_i64(mag);
+  let max_sh: i32 = r.bits - 2;
+  if (uns) {
+    max_sh = r.bits - 1;
+  }
+  if (sh >= 0 && sh <= max_sh) {
+    return s.write(ssa_div_const_pow2(r, uns, is_rem, neg, sh));
+  }
+  if (uns) {
+    s = ssa_div_magic_u(r, mag, s);
+  } else {
+    s = ssa_div_magic_s(r, k, s);
+  }
+  if (!is_rem) {
+    return s.write("    mov " + r.n + ", " + r.t + "\n");
+  }
+  let d: i64 = mag;
+  if (!uns && r.bits == 32) {
+    d = (k as i32) as i64;
+  } else if (!uns) {
+    d = k;
+  }
+  s = ssa_const_reg(util.i64_to_string(d), "x6", s);
+  return s.write("    msub " + r.n + ", " + r.t + ", " + r.k + ", " + r.n + "\n");
+}
+
+function ssa_div_by(r: ArmDivRegs, uns: boolean, is_rem: boolean): string {
+  let op: string = "sdiv";
+  if (uns) {
+    op = "udiv";
+  }
+  let q: string = "    " + op + " " + r.t + ", " + r.n + ", " + r.k + "\n";
+  if (is_rem) {
+    return q + "    msub " + r.n + ", " + r.t + ", " + r.k + ", " + r.n + "\n";
+  }
+  return q + "    mov " + r.n + ", " + r.t + "\n";
+}
+
+function ssa_div_const_pow2(r: ArmDivRegs, uns: boolean, is_rem: boolean, neg: boolean, sh: i32): string {
+  let shs: string = util.i32_to_string(sh);
+  if (uns && is_rem) {
+    return "    lsl " + r.n + ", " + r.n + ", #" + util.i32_to_string(r.bits - sh) + "\n    lsr " + r.n + ", " + r.n + ", #" + util.i32_to_string(r.bits - sh) + "\n";
+  }
+  if (uns) {
+    return "    lsr " + r.n + ", " + r.n + ", #" + shs + "\n";
+  }
+  let s: string = "    asr " + r.t + ", " + r.n + ", #" + util.i32_to_string(r.bits - 1) + "\n";
+  s = s + "    add " + r.t + ", " + r.n + ", " + r.t + ", lsr #" + util.i32_to_string(r.bits - sh) + "\n";
+  if (is_rem) {
+    s = s + "    asr " + r.t + ", " + r.t + ", #" + shs + "\n";
+    return s + "    sub " + r.n + ", " + r.n + ", " + r.t + ", lsl #" + shs + "\n";
+  }
+  s = s + "    asr " + r.n + ", " + r.t + ", #" + shs + "\n";
+  if (neg) {
+    s = s + "    neg " + r.n + ", " + r.n + "\n";
+  }
+  return s;
+}
+
+// The high half of n * t, left in t. A 32-bit product is formed in x5 and
+// shifted down by 32 + extra, so a following shift can fold into it.
+function ssa_mulh(r: ArmDivRegs, uns: boolean, src: string, extra: i32): string {
+  if (r.bits == 64) {
+    let op: string = "smulh";
+    if (uns) {
+      op = "umulh";
+    }
+    let s: string = "    " + op + " x5, " + src + ", x5\n";
+    if (extra > 0) {
+      let sop: string = "asr";
+      if (uns) {
+        sop = "lsr";
+      }
+      s = s + "    " + sop + " x5, x5, #" + util.i32_to_string(extra) + "\n";
+    }
+    return s;
+  }
+  if (uns) {
+    return "    umull x5, " + src + ", w5\n    lsr x5, x5, #" + util.i32_to_string(32 + extra) + "\n";
+  }
+  return "    smull x5, " + src + ", w5\n    asr x5, x5, #" + util.i32_to_string(32 + extra) + "\n";
+}
+
+function ssa_div_magic_s(r: ArmDivRegs, k: i64, s: asmcore.EmitState): asmcore.EmitState {
+  let d: i64 = k;
+  if (r.bits == 32) {
+    d = (k as i32) as i64;
+  }
+  let ms: ir.MagicS = ir.derive_magic_s(d, r.bits);
+  s = ssa_const_reg(util.i64_to_string(ms.m), "x5", s);
+  let fix: boolean = ms.add || ms.sub;
+  if (fix) {
+    s = s.write(ssa_mulh(r, false, r.n, 0));
+  } else {
+    s = s.write(ssa_mulh(r, false, r.n, ms.s));
+  }
+  if (ms.add) {
+    s = s.write("    add " + r.t + ", " + r.t + ", " + r.n + "\n");
+  }
+  if (ms.sub) {
+    s = s.write("    sub " + r.t + ", " + r.t + ", " + r.n + "\n");
+  }
+  if (fix && ms.s != 0) {
+    s = s.write("    asr " + r.t + ", " + r.t + ", #" + util.i32_to_string(ms.s) + "\n");
+  }
+  return s.write("    add " + r.t + ", " + r.t + ", " + r.t + ", lsr #" + util.i32_to_string(r.bits - 1) + "\n");
+}
+
+function ssa_div_magic_u(r: ArmDivRegs, du: i64, s: asmcore.EmitState): asmcore.EmitState {
+  let d: u64 = du as u64;
+  let mu: ir.MagicU = ir.derive_magic_u(d, r.bits);
+  let pre: i32 = 0;
+  if (mu.add && (d & 1u64) == 0u64) {
+    while ((d >> pre as u64 & 1u64) == 0u64) {
+      pre = pre + 1;
+    }
+    mu = ir.derive_magic_u_below(d >> pre as u64, r.bits, pre);
+  }
+  s = ssa_const_reg(util.i64_to_string(mu.m as i64), "x5", s);
+  let src: string = r.n;
+  if (pre > 0) {
+    s = s.write("    lsr " + r.k + ", " + r.n + ", #" + util.i32_to_string(pre) + "\n");
+    src = r.k;
+  }
+  if (!mu.add) {
+    return s.write(ssa_mulh(r, true, src, mu.s));
+  }
+  s = s.write(ssa_mulh(r, true, src, 0));
+  s = s.write("    sub " + r.k + ", " + r.n + ", " + r.t + "\n");
+  s = s.write("    add " + r.t + ", " + r.t + ", " + r.k + ", lsr #1\n");
+  if (mu.s > 1) {
+    s = s.write("    lsr " + r.t + ", " + r.t + ", #" + util.i32_to_string(mu.s - 1) + "\n");
+  }
+  return s;
+}
+
 function fr_ldr(s: asmcore.EmitState, reg: string, off: i32): asmcore.EmitState {
   if (off >= 0 - 256) {
     return ssa_ldst(s, true, reg, "x29", off);
@@ -2011,6 +2215,10 @@ function ssa_direct_bin(tag: i32): boolean {
   return tag == 21 || tag == 22 || tag == 23 || tag == 28 || tag == 29 || tag == 30 || tag == 430 || tag == 484 || ircore.is_int_cmp_kind(tag);
 }
 
+function ssa_div_tag(tag: i32): boolean {
+  return tag == 24 || tag == 25 || tag == 26 || tag == 27;
+}
+
 function ssa_shift_tag(tag: i32): boolean {
   return tag == 31 || tag == 32 || tag == 33;
 }
@@ -2053,7 +2261,7 @@ function ssa_bin3_asm(tag: i32, d: string, a: string, b: string): string {
 }
 
 function ssa_imm_right(): string[] {
-  return ["add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u"];
+  return ["add", "sub", "eq", "ne", "lt_s", "le_s", "gt_s", "ge_s", "lt_u", "le_u", "gt_u", "ge_u", "shl", "shr_s", "shr_u", "div_s", "div_u", "rem_s", "rem_u"];
 }
 
 function ssa_imm_left(): string[] {
@@ -4237,6 +4445,10 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     return ssa_bin_in_place(ins, reg_of, fr, s);
   } else if (k == 9 && ssa_shift_tag(ir.kind_id(ins.str)) && (fr.imm.is_imm[ins.args[1]] || ins.imm == 64)) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
+  } else if (k == 9 && ssa_div_tag(ir.kind_id(ins.str)) && fr.imm.konst[ins.args[1]]) {
+    d = "x4";
+    s = ssa_load(reg_of, ins.args[0], "x4", s);
+    s = ssa_div_const(ir.kind_id(ins.str), ins.imm, fr.imm.value[ins.args[1]], s);
   } else if (k == 9) {
     d = "x4";
     s = ssa_load(reg_of, ins.args[0], "x4", s);

@@ -5690,6 +5690,17 @@ pub function derive_magic_s(d: i64, w: i32): MagicS {
   return MagicS { m: m, s: p - w, add: d > 0i64 && m < 0i64, sub: d < 0i64 && m > 0i64 };
 }
 
+pub function pow2_shift_i64(mag: i64): i32 {
+  if (mag == 0i64 || (mag & mag - 1i64) != 0i64) {
+    return 0 - 1;
+  }
+  let sh: i32 = 0;
+  while (1i64 << sh != mag) {
+    sh = sh + 1;
+  }
+  return sh;
+}
+
 pub function derive_magic_u(d: u64, w: i32): MagicU {
   return derive_magic_u_below(d, w, 0);
 }
