@@ -4,10 +4,11 @@ import "./ssa";
 import "./util";
 import "std/envflag";
 
-pub struct Memo { on: boolean, path: string, known: util.NameIndex, adds: usize, hits: usize, misses: usize, call_kind: i32 }
+// stamp is a digest of the compiler's bytes, so an entry another build wrote is not a hit.
+pub struct Memo { on: boolean, path: string, known: util.NameIndex, adds: usize, hits: usize, misses: usize, call_kind: i32, stamp: string }
 
 function version(): string {
-  return "10";
+  return "11";
 }
 
 function keep(): i32 {
@@ -16,7 +17,7 @@ function keep(): i32 {
 
 pub function off(): Memo {
   let none: string[] = [];
-  return Memo { on: false, path: "", known: util.name_index(none), adds: 0 as usize, hits: 0 as usize, misses: 0 as usize, call_kind: 0 };
+  return Memo { on: false, path: "", known: util.name_index(none), adds: 0 as usize, hits: 0 as usize, misses: 0 as usize, call_kind: 0, stamp: "" };
 }
 
 function root(): string {
@@ -37,8 +38,88 @@ pub function open(target: string): Memo {
   if (dir == "") {
     return off();
   }
+  let Some(stamp) = build_stamp(dir) else {
+    return off();
+  };
   let path: string = dir + "/certified/" + version() + "-" + target + ".txt";
-  return Memo { on: true, path: path, known: util.name_index(lines_of(path)), adds: buf_new(4096), hits: buf_new(64), misses: buf_new(64), call_kind: ir.K_CALL_DIRECT };
+  return Memo { on: true, path: path, known: util.name_index(lines_of(path)), adds: buf_new(4096), hits: buf_new(64), misses: buf_new(64), call_kind: ir.K_CALL_DIRECT, stamp: stamp };
+}
+
+// A digest of the running compiler's bytes. Builds from the same sources are
+// byte for byte the same, so they share entries. The digest is read through a
+// file that maps the binary's device, inode, size and modification time to it,
+// so a compile hashes its binary only the first time it runs.
+function build_stamp(dir: string): Option[string] {
+  let path: string = own_binary();
+  if (path == "") {
+    return None;
+  }
+  let Ok(r) = open_reader(path) else {
+    return None;
+  };
+  let measured: Result[FileStat, IoError] = r.stat();
+  r.close();
+  let Ok(st) = measured else {
+    return None;
+  };
+  let at: i64 = util.roll_wide(util.roll_wide(util.digest_start(), st.dev), st.ino);
+  let meta: string = util.digest_text(util.roll_wide(util.roll_wide(util.roll_wide(at, st.size), st.mtime), st.mtime_nsec));
+  let file: string = dir + "/certified/stamps-" + version() + ".txt";
+  let lines: string[] = lines_of(file);
+  for line in lines {
+    if (line.len() > meta.len() + 1 && util.str_has_prefix(line, meta + " ")) {
+      return Some(slice_unchecked(line, meta.len() + 1, line.len()) + "");
+    }
+  }
+  let Ok(raw) = read_file_bytes(path) else {
+    return None;
+  };
+  let bytes: string = string_from_bytes_unchecked(raw);
+  let d: i64 = util.roll_wide(util.digest_start(), bytes.len() as i64);
+  let stamp: string = util.digest_text(util.roll(util.roll(d, __str_hash(bytes, 0)), __str_hash(bytes, 1)));
+  record_stamp(file, lines, meta + " " + stamp);
+  return Some(stamp);
+}
+
+// Keeps the newest stamps. A lost or torn line costs one hash, never a hit.
+function record_stamp(file: string, lines: string[], line: string): void {
+  let chunks: string[] = [];
+  let from: i32 = 0;
+  if (lines.len() >= 64) {
+    from = lines.len() - 63;
+  }
+  for i in from..lines.len() {
+    chunks = chunks.append(lines[i] + "\n");
+  }
+  chunks = chunks.append(line + "\n");
+  let cut: i32 = file.len();
+  while (cut > 0 && file[cut - 1] != b'/') {
+    cut = cut - 1;
+  }
+  let Ok(made) = create_dir_all(slice_unchecked(file, 0, cut) + "") else {
+    return;
+  };
+  let written: Result[void, IoError] = write_file(file, util.str_join_chunks(chunks));
+}
+
+function own_binary(): string {
+  if (target_os() == "linux" || target_os() == "android") {
+    return "/proc/self/exe";
+  }
+  let argv: string[] = args();
+  if (argv.len() > 0 && has_slash(argv[0])) {
+    return argv[0];
+  }
+  return "";
+}
+
+function has_slash(s: string): boolean {
+  for i in 0..s.len() {
+    if (s[i] == b'/') {
+      return true;
+    }
+  }
+  return false;
 }
 
 function lines_of(path: string): string[] {
@@ -85,7 +166,7 @@ function newest(lines: string[]): string[] {
 }
 
 pub function key(m: Memo, fn_name: string, f: ssa.SFunc, ops: ir.Op[], abis: rccertify.Abis): string {
-  let d: i64 = util.roll_text(util.digest_start(), fn_name);
+  let d: i64 = util.roll_text(util.roll_text(util.digest_start(), m.stamp), fn_name);
   d = roll_abi(d, abis.lookup(fn_name));
   d = util.roll(util.roll(util.roll_flag(util.roll(d, f.nparams), f.takes_env), f.nvals), f.blocks.len());
   for o in ops {
