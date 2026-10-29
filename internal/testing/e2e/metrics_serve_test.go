@@ -70,10 +70,11 @@ func writeMetricsServeSource(t *testing.T) string {
 func TestMetricsServeInterp(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := writeMetricsServeSource(t)
+	ln := e2eharness.ListenInherited(t)
 	port := freeLoopbackPort(t)
 	cmd := exec.Command(bin, "-interp", src)
 	cmd.Env = append(os.Environ(), fmt.Sprintf("METRICS_PORT=%d", port), "WORKERS=1")
-	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	addr, _ := ln.Start(t, cmd)
 	checkMetricsServe(t, addr, fmt.Sprintf("127.0.0.1:%d", port), 1)
 }
 
@@ -85,10 +86,11 @@ func TestMetricsSupervisedServeX86_64(t *testing.T) {
 	if o, err := exec.Command(bin, "-target", "x86-64-linux", "-o", out, src).CombinedOutput(); err != nil {
 		t.Fatalf("build failed: %v\n%s", err, o)
 	}
+	ln := e2eharness.ListenInherited(t)
 	port := freeLoopbackPort(t)
 	cmd := runX86Bin(qemu, out)
 	cmd.Env = append(os.Environ(), fmt.Sprintf("METRICS_PORT=%d", port), "WORKERS=2")
-	addr, stderrPath := e2eharness.StartInheritedServer(t, cmd)
+	addr, stderrPath := ln.Start(t, cmd)
 	checkMetricsServe(t, addr, fmt.Sprintf("127.0.0.1:%d", port), 2)
 	if b, _ := os.ReadFile(stderrPath); strings.Contains(string(b), "worker died") {
 		t.Fatalf("a worker died:\n%s", b)
