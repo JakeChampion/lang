@@ -1,0 +1,18 @@
+// spec: RH-12
+// An own parameter that a deferred call consumes is consumed nowhere else:
+// an explicit close after the defer is refused as a second consumption.
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function finish(own p: Handle): i32 {
+  defer p.close();
+  return p.close();
+}
+
+function main(): i32 {
+  return finish(Handle { fd: 3 });
+}

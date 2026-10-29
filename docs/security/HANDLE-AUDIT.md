@@ -70,26 +70,48 @@ These two probes are the use-after-close and double-close hazards that SEC-008 n
 Safe code reaches them today through `Reader`, `Writer`, `Dir`, and every `tcp_*` descriptor.
 
 The accepted design in `docs/SAFETY-CONTRACT.md` requires a refusal when a resource handle escapes after close or ownership transfer.
-The direct implementation gives the built-in `close` a consuming receiver in both checkers.
+The owner chose the direct implementation on 2026-10-29: the built-in `close` gets a consuming receiver in both checkers.
 The user-defined cases above show the discipline that follows.
-That discipline refuses five shapes the standard library uses today:
+That discipline needed two language rules first, and both checkers now carry them.
 
-| Shape | Sites |
-|---|---|
-| A close through `defer` | `examples/wasm/wc.fern` |
-| A close of a payload matched out of a stored array element | `__tail_drop` in `internal/stdlib/std/serve.fern.md` |
-| A close of each end of a `Pipe` held in a local or a borrowed parameter | `__snapshot_pipe_close`, `__snapshot_writer`, and the supervisor spawn in `serve.fern.md`, `tests/stdlib/async_combinators_test.fern` |
-| A close of a field of a borrowed receiver | `BufWriter.close` in `internal/stdlib/std/io_buffered.fern.md` |
-| A close of a borrowed `Reader` parameter that another branch stores | `__range_tail` in `serve.fern.md` |
+## The defer rule and the field-move rule
 
-A consuming built-in close therefore needs two language rules first.
-The first rule says how `defer` discharges a consuming call.
-The second rule says how a field moves out of a local or a borrowed container.
-`docs/MUST-CONSUME.md` lists both as deferred.
+A deferred consuming call runs at the function's exit, so it is the last use of the names it consumes.
+The handle stays readable after the `defer` statement, and a second consuming use anywhere in the function is refused.
+The rule admits a fresh local or an `own` parameter, mentioned once in the deferred call, outside a loop, and not captured by a closure.
+A deferred mention holds its path until the exit: a bare mention of `q` holds every field, and `q.g` holds `g` alone.
 
-This PR changes no built-in signature, and this record is the decision input.
-The alternative is a runtime closed state on each handle, which needs a generation check in every handle helper on every target.
-Neither alternative is in this PR.
+A field moves out of a fresh local or an `own` parameter when it is passed to an `own` parameter at the path's last use.
+Nothing after the call reads that path or uses the whole, and a sibling field stays owned.
+Inside a struct literal based on the same name, the superseded-field rule decides instead.
+A field of a borrowed parameter or receiver does not move, because the caller still holds the whole.
+
+| Pattern | Code | Case |
+|---|---|---|
+| A deferred consuming close, then a read of the handle | accepted | `handle_defer_closes_at_exit` |
+| Both fields of a fresh local closed, and both fields of an `own` parameter closed | accepted | `handle_field_closes_from_local` |
+| A close after a deferred close of the same handle | `E051` | `diag_e051_handle_closed_after_defer` |
+| A field closed twice | `E051` | `diag_e051_handle_field_closed_twice` |
+| A transfer of the whole after one of its fields moved out | `E051` | `diag_e051_handle_whole_used_after_field_close` |
+| A deferred consuming close inside a loop | `E051` | `diag_e051_handle_deferred_close_in_loop` |
+| An `own` parameter closed after a deferred close | `E050` | `diag_e050_owned_handle_consumed_after_defer` |
+| A deferred consuming close of a handle a closure captures | `E051` | `diag_e051_handle_captured_then_deferred` |
+
+Both checkers report the same code at the same position for each row.
+
+## The shapes the standard library still uses
+
+The consuming built-in close refuses these shapes until they change:
+
+| Shape | Sites | Change |
+|---|---|---|
+| A close of a payload matched out of a stored array element | `__tail_drop` in `internal/stdlib/std/serve.fern.md` | take the element out of the array first |
+| A close of each end of a `Pipe` held in a borrowed parameter | `__snapshot_pipe_close` and the supervisor spawn in `serve.fern.md`, `tests/stdlib/async_combinators_test.fern` | an `own` parameter |
+| A close of a field of a borrowed receiver | `BufWriter.close` in `internal/stdlib/std/io_buffered.fern.md` | an `own` receiver |
+| A close of a borrowed `Reader` parameter that another branch stores | `__range_tail` in `serve.fern.md` | an `own` parameter |
+
+The rules above accept a close through `defer` (`examples/wasm/wc.fern`) and a close of each end of a `Pipe` held in a fresh local.
+The built-in signatures change in the next step, with those sites.
 
 ## Commands
 

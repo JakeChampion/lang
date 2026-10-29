@@ -17763,7 +17763,7 @@ struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 
 struct OwnReturns { synthetic: boolean, moved: MovedEntry[] }
 
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], snames: util.NameIndex, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[], returns: Cell[OwnReturns] }
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], snames: util.NameIndex, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -17820,6 +17820,106 @@ function ow_moved_add(m: MovedEntry[], name: string, line: i32): MovedEntry[] {
   return m.append(MovedEntry { mname: name, mline: line });
 }
 
+function ow_fresh_deferred(): Cell[MovedEntry[]] {
+  let none: MovedEntry[] = [];
+  return cell_new(none);
+}
+
+// The moved entry whose name is a field path under name, or "" when none is.
+function ow_moved_prefix(m: MovedEntry[], name: string): string {
+  let head: string = name + ".";
+  for elem in m {
+    if (elem.mname.len() > head.len() && slice_unchecked(elem.mname, 0, head.len()) == head) {
+      return elem.mname;
+    }
+  }
+  return "";
+}
+
+function ow_path_field(path: string, name: string): string {
+  return slice_unchecked(path, name.len() + 1, path.len()) + "";
+}
+
+function ow_moved_del_prefix(m: MovedEntry[], name: string): MovedEntry[] {
+  let head: string = name + ".";
+  let out: MovedEntry[] = [];
+  for elem in m {
+    if (!(elem.mname.len() > head.len() && slice_unchecked(elem.mname, 0, head.len()) == head)) {
+      out = out.append(elem);
+    }
+  }
+  return out;
+}
+
+function ow_line_text(line: i32): string {
+  return util.i32_to_string(util.pos_line(line));
+}
+
+// The E050 for a bare use of an owned name: the whole was consumed, or one of
+// its fields was.
+function ow_bare_use_diags(moved: MovedEntry[], id: ast.ExprIdent): util.Diag[] {
+  let d: util.Diag[] = [];
+  if (ow_moved_has(moved, id.name)) {
+    return d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + ow_line_text(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
+  }
+  let path: string = ow_moved_prefix(moved, id.name);
+  if (path.len() > 0) {
+    return d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after its field \"" + ow_path_field(path, id.name) + "\" was consumed (moved at line " + ow_line_text(ow_moved_line(moved, path)) + ")", id.line, id.col));
+  }
+  return d;
+}
+
+// A consuming use of an owned name that a deferred call already consumes.
+function ow_deferred_use_diags(ctx: OwnCtx, id: ast.ExprIdent): util.Diag[] {
+  let d: util.Diag[] = [];
+  let seen: MovedEntry[] = ctx.deferred.get();
+  if (ow_moved_has(seen, id.name)) {
+    return d.append(dg_at("E050", "owned parameter \"" + id.name + "\" is consumed twice: a deferred call at line " + ow_line_text(ow_moved_line(seen, id.name)) + " consumes it", id.line, id.col));
+  }
+  let path: string = ow_moved_prefix(seen, id.name);
+  if (path.len() > 0) {
+    return d.append(dg_at("E050", "owned parameter \"" + id.name + "\" is consumed twice: a deferred call at line " + ow_line_text(ow_moved_line(seen, path)) + " consumes its field \"" + ow_path_field(path, id.name) + "\"", id.line, id.col));
+  }
+  return d;
+}
+
+// The target of a field read is a borrow of the whole: a consumed whole is
+// refused, a consumed sibling field is not.
+function ru_field_target(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+  if let ast.ExprIdent(id) = e {
+    let d: util.Diag[] = [];
+    if (!id.builtin && ow_is_owned(ctx, id.name) && ow_moved_has(moved, id.name)) {
+      d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + ow_line_text(ow_moved_line(moved, id.name)) + ")", id.line, id.col));
+    }
+    return OwnWalk { moved: moved, diags: d };
+  }
+  return ru_expr(e, moved, ctx);
+}
+
+// `p.f` handed to an own parameter: the path moves out of the own parameter p.
+function ru_consume_field(fa: ast.ExprFieldAccess, oid: ast.ExprIdent, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+  let path: string = oid.name + "." + fa.field;
+  let d: util.Diag[] = [];
+  if (ow_moved_has(moved, path)) {
+    d = d.append(dg_at("E050", "use of owned parameter \"" + oid.name + "\" after its field \"" + fa.field + "\" was consumed (moved at line " + ow_line_text(ow_moved_line(moved, path)) + ")", fa.line, fa.col));
+    return OwnWalk { moved: moved, diags: d };
+  }
+  let rt: OwnWalk = ru_field_target(fa.obj, moved, ctx);
+  if (rt.diags.len() > 0) {
+    return rt;
+  }
+  let seen: MovedEntry[] = ctx.deferred.get();
+  if (ow_moved_has(seen, path)) {
+    d = d.append(dg_at("E050", "field \"" + fa.field + "\" of owned parameter \"" + oid.name + "\" is consumed twice: a deferred call at line " + ow_line_text(ow_moved_line(seen, path)) + " consumes it", fa.line, fa.col));
+    return OwnWalk { moved: moved, diags: d };
+  }
+  if (ow_moved_has(seen, oid.name)) {
+    d = d.append(dg_at("E050", "owned parameter \"" + oid.name + "\" is consumed twice: a deferred call at line " + ow_line_text(ow_moved_line(seen, oid.name)) + " consumes it", fa.line, fa.col));
+    return OwnWalk { moved: moved, diags: d };
+  }
+  return OwnWalk { moved: ow_moved_add(moved, path, fa.line), diags: d };
+}
+
 function ow_moved_join(dst: MovedEntry[], branch: MovedEntry[], diverges: boolean): MovedEntry[] {
   if (diverges) {
     return dst;
@@ -17863,7 +17963,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda): OwnCtx {
       bound = bound.append(p.name);
     }
   }
-  let nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, snames: ctx.snames, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }) };
+  let nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, snames: ctx.snames, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop };
   return nested;
 }
 
@@ -18009,6 +18109,11 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
       if (ow_variant_known(ctx, fa.field, ow_ident_name(fa.obj))) {
         return true;
       }
+      if let ast.ExprIdent(oid) = fa.obj {
+        if (util.has_str(ctx.last_use, lu_field_key(fa, oid))) {
+          return true;
+        }
+      }
       return util.has_str(ctx.admit_fields, ow_ident_name(fa.obj) + "." + fa.field);
     },
     ast.ExprCall(c) => {
@@ -18042,13 +18147,13 @@ struct LuOcc { name: string, line: i32, col: i32 }
 
 struct LuVar { name: string, init: ast.Expr }
 
-struct LuSel { obj: string, field: string }
+struct LuSel { obj: string, field: string, line: i32, col: i32 }
 
-struct LuFacts { occ: LuOcc[], vars: LuVar[], escaping: string[], sels: LuSel[] }
+struct LuFacts { occ: LuOcc[], vars: LuVar[], escaping: string[], sels: LuSel[], captured: string[], defer_bare: string[], defer_fields: string[] }
 
 struct LuFn { facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs }
 
-struct LuSite { stmts: ast.Stmt[], idx: i32, in_loop: boolean, fresh: string[], in_iife: boolean }
+struct LuSite { stmts: ast.Stmt[], idx: i32, in_loop: boolean, fresh: string[], in_iife: boolean, in_defer: boolean }
 
 function lu_key(line: i32, col: i32): string {
   return util.i32_to_string(line) + ":" + util.i32_to_string(col);
@@ -18084,13 +18189,44 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
       return LuFacts { ...f, vars: f.vars.append(LuVar { name: v.name, init: v.init }) };
     },
     ast.StmtDefer(d) => {
-      return LuFacts { ...f, escaping: lu_all_names(d.action, f.escaping) };
+      let names: string[] = lu_all_names(d.action, []);
+      return lu_defer_facts(d.action, LuFacts { ...f, escaping: util.append_all(f.escaping, names) });
     },
     _ => {
       return f;
     }
   }
   return f;
+}
+
+// A deferred action runs at the exit, so a path it mentions is live until
+// then: a bare mention of q holds every field, and `q.g` holds g alone.
+function lu_defer_facts(action: ast.Stmt, own f: LuFacts): LuFacts {
+  let inner: LuFacts = astwalk.fold_stmt_nodes(action, LuFacts { occ: [], vars: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [] }, lu_skip_facts, lu_fact_expr, astwalk.descend_all);
+  let bare: string[] = f.defer_bare;
+  let fields: string[] = f.defer_fields;
+  for o in inner.occ {
+    let sel: string = lu_sel_at(inner, o.line, o.col);
+    if (sel.len() == 0) {
+      bare = bare.append(o.name);
+    } else {
+      fields = fields.append(o.name + "." + sel);
+    }
+  }
+  return LuFacts { ...f, defer_bare: bare, defer_fields: fields };
+}
+
+function lu_skip_facts(st: ast.Stmt, own f: LuFacts): LuFacts {
+  return f;
+}
+
+function lu_sel_at(f: LuFacts, line: i32, col: i32): string {
+  for sel in f.sels {
+    if (sel.line == line && sel.col == col) {
+      return sel.field;
+    }
+  }
+  return "";
 }
 
 function lu_destr_vars(v: ast.StmtVar, own vars: LuVar[]): LuVar[] {
@@ -18134,14 +18270,21 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
       for st in lm.body {
         esc = lu_all_names(st, esc);
       }
-      return LuFacts { ...f, escaping: esc };
+      let cap: string[] = f.captured;
+      for st in lm.body {
+        cap = lu_all_names(st, cap);
+      }
+      return LuFacts { ...f, escaping: esc, captured: cap };
     },
     ast.ExprFieldAccess(fa) => {
-      let obj: string = ow_ident_name(fa.obj);
-      if (obj.len() == 0) {
-        return f;
+      match (fa.obj) {
+        ast.ExprIdent(oid) => {
+          return LuFacts { ...f, sels: f.sels.append(LuSel { obj: oid.name, field: fa.field, line: oid.line, col: oid.col }) };
+        },
+        _ => {
+          return f;
+        }
       }
-      return LuFacts { ...f, sels: f.sels.append(LuSel { obj: obj, field: fa.field }) };
     },
     _ => {
       return f;
@@ -18365,10 +18508,16 @@ function lu_arr_position(fx: LuFn, callee: string, i: i32): boolean {
 
 function lu_dies(fx: LuFn, call: ast.Expr, arr: boolean, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, site: LuSite): boolean {
   let name: string = aid.name;
-  if (!lu_is_local(fx, name) || util.has_str(fx.facts.escaping, name)) {
+  if (!lu_is_local(fx, name)) {
     return false;
   }
   let once: boolean = astwalk.count_ident_expr(call, name) == 1;
+  if (site.in_defer) {
+    return !site.in_loop && once && !util.has_str(fx.facts.captured, name) && lu_decl_count(fx, name) == 1 && (lu_fresh_init(fx, name) || lu_unpack_init(fx, name));
+  }
+  if (util.has_str(fx.facts.escaping, name)) {
+    return false;
+  }
   if (lu_rebind_site(site, name)) {
     return true;
   }
@@ -18383,6 +18532,100 @@ function lu_dies(fx: LuFn, call: ast.Expr, arr: boolean, aid: ast.ExprIdent, out
     return false;
   }
   return lu_returns_before_reading(site, name);
+}
+
+// `q.f` passed to an own parameter moves the field out of q when q is a
+// fresh local or an own parameter, nothing later reads the path or the
+// whole, and no deferred action holds it. Inside a struct literal based on
+// q the superseded-field rule decides instead.
+function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast.ExprIdent, site: LuSite): boolean {
+  if (site.in_loop || util.has_str(fx.facts.captured, q.name)) {
+    return false;
+  }
+  let fresh_local: boolean = lu_is_local(fx, q.name) && lu_decl_count(fx, q.name) == 1 && lu_fresh_init(fx, q.name);
+  if (!fresh_local && !lu_own_param(fx, q.name)) {
+    return false;
+  }
+  if (astwalk.count_ident_expr(call, q.name) != 1) {
+    return false;
+  }
+  if (site.in_defer) {
+    return true;
+  }
+  if (util.has_str(fx.facts.defer_bare, q.name) || util.has_str(fx.facts.defer_fields, q.name + "." + fa.field)) {
+    return false;
+  }
+  if (lu_within_literal_base(site.stmts[site.idx], q.name, call)) {
+    return false;
+  }
+  return lu_path_is_last(fx, q, fa.field);
+}
+
+function lu_path_is_last(fx: LuFn, q: ast.ExprIdent, field: string): boolean {
+  for o in fx.facts.occ {
+    if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col)) {
+      let sel: string = lu_sel_at(fx.facts, o.line, o.col);
+      if (sel.len() == 0 || sel == field) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+struct LuLitBase { name: string, call: ast.Expr, found: boolean }
+
+function lu_lit_base_stmt(st: ast.Stmt, own a: LuLitBase): LuLitBase {
+  return a;
+}
+
+function lu_lit_base_expr(e: ast.Expr, own a: LuLitBase): LuLitBase {
+  if (a.found) {
+    return a;
+  }
+  if let ast.ExprStructLit(sl) = e {
+    if (sl.has_base && ow_ident_name(sl.base) == a.name) {
+      return LuLitBase { ...a, found: lu_holds_call(e, a.call) };
+    }
+  }
+  return a;
+}
+
+function lu_within_literal_base(st: ast.Stmt, name: string, call: ast.Expr): boolean {
+  let a: LuLitBase = astwalk.fold_stmt_nodes(st, LuLitBase { name: name, call: call, found: false }, lu_lit_base_stmt, lu_lit_base_expr, astwalk.descend_all);
+  return a.found;
+}
+
+// The call a search looks for, by its position, and whether it was found.
+struct LuHold { line: i32, col: i32, found: boolean }
+
+function lu_hold_at(call: ast.Expr): LuHold {
+  return LuHold { line: ast.expr_line(call), col: ast.expr_col(call), found: false };
+}
+
+function lu_hold_stmt(st: ast.Stmt, own h: LuHold): LuHold {
+  return h;
+}
+
+function lu_hold_expr(e: ast.Expr, own h: LuHold): LuHold {
+  if (h.found) {
+    return h;
+  }
+  if let ast.ExprCall(c) = e {
+    if (c.line == h.line && c.col == h.col) {
+      return LuHold { ...h, found: true };
+    }
+  }
+  return h;
+}
+
+function lu_holds_call(scope: ast.Expr, call: ast.Expr): boolean {
+  let h: LuHold = astwalk.fold_expr(scope, lu_hold_at(call), lu_hold_expr);
+  return h.found;
+}
+
+function lu_field_key(fa: ast.ExprFieldAccess, q: ast.ExprIdent): string {
+  return lu_key(q.line, q.col) + "." + fa.field;
 }
 
 function lu_rebind_site(site: LuSite, name: string): boolean {
@@ -18490,10 +18733,20 @@ function lu_call(c: ast.ExprCall, e: ast.Expr, outer: ast.Expr, has_outer: boole
   let i: i32 = 0;
   while (i < c.args.len() && i < flags.len()) {
     if (flags[i]) {
-      if let ast.ExprIdent(aid) = c.args[i] {
-        if (lu_dies(fx, e, lu_arr_position(fx, cname, i), aid, outer, has_outer, site)) {
-          acc = acc.append(lu_key(aid.line, aid.col));
-        }
+      match (c.args[i]) {
+        ast.ExprIdent(aid) => {
+          if (lu_dies(fx, e, lu_arr_position(fx, cname, i), aid, outer, has_outer, site)) {
+            acc = acc.append(lu_key(aid.line, aid.col));
+          }
+        },
+        ast.ExprFieldAccess(fa) => {
+          if let ast.ExprIdent(q) = fa.obj {
+            if (lu_field_dies(fx, e, fa, q, site)) {
+              acc = acc.append(lu_field_key(fa, q));
+            }
+          }
+        },
+        _ => {}
       }
     }
     i = i + 1;
@@ -18508,6 +18761,13 @@ function lu_method_arg(a: ast.Expr, e: ast.Expr, outer: ast.Expr, has_outer: boo
     }
     if (lu_dies(fx, e, false, id, outer, has_outer, site)) {
       return acc.append(lu_key(id.line, id.col) + "~");
+    }
+  }
+  if let ast.ExprFieldAccess(fa) = a {
+    if let ast.ExprIdent(q) = fa.obj {
+      if (lu_field_dies(fx, e, fa, q, site)) {
+        return acc.append(lu_field_key(fa, q));
+      }
     }
   }
   return acc;
@@ -18599,7 +18859,7 @@ function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite,
       if (lm.origin.len() == 0 || c.args.len() > 0) {
         return acc;
       }
-      return lu_stmts(lm.body, site.in_loop, site.fresh, true, outer, has_outer, fx, acc);
+      return lu_stmts(lm.body, site.in_loop, site.fresh, true, site.in_defer, outer, has_outer, fx, acc);
     }
     acc = lu_call(c, e, outer, has_outer, site, fx, acc);
     if (!ho) {
@@ -18620,11 +18880,11 @@ function lu_root(e: ast.Expr, site: LuSite, outer: ast.Expr, has_outer: boolean,
   return lu_expr(e, e, false, site, fx, acc);
 }
 
-function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, fresh0: string[], in_iife: boolean, outer: ast.Expr, has_outer: boolean, fx: LuFn, own acc: string[]): string[] {
+function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, fresh0: string[], in_iife: boolean, in_defer: boolean, outer: ast.Expr, has_outer: boolean, fx: LuFn, own acc: string[]): string[] {
   let fresh: string[] = fresh0;
   let i: i32 = 0;
   while (i < stmts.len()) {
-    let site: LuSite = LuSite { stmts: stmts, idx: i, in_loop: in_loop, fresh: fresh, in_iife: in_iife };
+    let site: LuSite = LuSite { stmts: stmts, idx: i, in_loop: in_loop, fresh: fresh, in_iife: in_iife, in_defer: in_defer };
     match (stmts[i]) {
       ast.StmtVar(v) => {
         acc = lu_root(v.init, site, outer, has_outer, fx, acc);
@@ -18641,16 +18901,16 @@ function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, fresh0: string[], in_iife
       },
       ast.StmtIf(f) => {
         acc = lu_root(f.cond, site, outer, has_outer, fx, acc);
-        acc = lu_stmts(f.then_body, in_loop, fresh, in_iife, outer, has_outer, fx, acc);
-        acc = lu_stmts(f.else_body, in_loop, fresh, in_iife, outer, has_outer, fx, acc);
+        acc = lu_stmts(f.then_body, in_loop, fresh, in_iife, in_defer, outer, has_outer, fx, acc);
+        acc = lu_stmts(f.else_body, in_loop, fresh, in_iife, in_defer, outer, has_outer, fx, acc);
       },
       ast.StmtWhile(w) => {
         acc = lu_root(w.cond, LuSite { ...site, in_loop: true, fresh: [] }, outer, has_outer, fx, acc);
-        acc = lu_stmts(w.body, true, [], in_iife, outer, has_outer, fx, acc);
+        acc = lu_stmts(w.body, true, [], in_iife, in_defer, outer, has_outer, fx, acc);
       },
       ast.StmtFor(fo) => {
         acc = lu_root(fo.iter, LuSite { ...site, in_loop: true, fresh: [] }, outer, has_outer, fx, acc);
-        acc = lu_stmts(fo.body, true, [], in_iife, outer, has_outer, fx, acc);
+        acc = lu_stmts(fo.body, true, [], in_iife, in_defer, outer, has_outer, fx, acc);
       },
       ast.StmtMatch(m) => {
         acc = lu_root(m.scrutinee, site, outer, has_outer, fx, acc);
@@ -18658,8 +18918,12 @@ function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, fresh0: string[], in_iife
           if (arm.has_guard) {
             acc = lu_root(arm.guard, site, outer, has_outer, fx, acc);
           }
-          acc = lu_stmts(arm.body, in_loop, fresh, in_iife, outer, has_outer, fx, acc);
+          acc = lu_stmts(arm.body, in_loop, fresh, in_iife, in_defer, outer, has_outer, fx, acc);
         }
+      },
+      ast.StmtDefer(d) => {
+        let one: ast.Stmt[] = [d.action];
+        acc = lu_stmts(one, in_loop, fresh, in_iife, true, outer, has_outer, fx, acc);
       },
       _ => {}
     }
@@ -18669,7 +18933,7 @@ function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, fresh0: string[], in_iife
 }
 
 function lu_declared(st: ast.Stmt, own names: string[]): string[] {
-  let facts: LuFacts = lu_fact_stmt(st, LuFacts { occ: [], vars: [], escaping: [], sels: [] });
+  let facts: LuFacts = lu_fact_stmt(st, LuFacts { occ: [], vars: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [] });
   for d in facts.vars {
     names = names.append(d.name);
   }
@@ -18677,7 +18941,7 @@ function lu_declared(st: ast.Stmt, own names: string[]): string[] {
 }
 
 function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs): string[] {
-  let facts: LuFacts = LuFacts { occ: [], vars: [], escaping: [], sels: [] };
+  let facts: LuFacts = LuFacts { occ: [], vars: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [] };
   let nested: ast.ExprLambda[] = [];
   for st in fn.body {
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
@@ -18685,7 +18949,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs): string[] {
   }
   let fx: LuFn = LuFn { facts: facts, params: ow_param_names(fn), owned: ow_own_param_names(fn), ofuncs: ofuncs };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
-  let out: string[] = lu_stmts(fn.body, false, [], false, none, false, fx, []);
+  let out: string[] = lu_stmts(fn.body, false, [], false, false, none, false, fx, []);
   for lm in nested {
     out = util.append_all(out, lu_last_use_args(parser.FuncDecl { ...fn, params: lm.params, body: lm.body }, ofuncs));
   }
@@ -18935,13 +19199,24 @@ function ow_walk_call(c: ast.ExprCall, moved: MovedEntry[], ctx: OwnCtx): OwnWal
   while (i < oc.args.len()) {
     let ra: OwnWalk = ru_borrow(oc.args[i], m, ctx);
     if (i < oc.flags.len() && oc.flags[i]) {
-      ra = ru_expr(oc.args[i], m, ctx);
+      ra = ow_consume_arg(oc.args[i], m, ctx);
     }
     m = ra.moved;
     d = util.append_diags(d, ra.diags);
     i = i + 1;
   }
   return OwnWalk { moved: m, diags: d };
+}
+
+function ow_consume_arg(a: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+  if let ast.ExprFieldAccess(fa) = a {
+    if let ast.ExprIdent(oid) = fa.obj {
+      if (!oid.builtin && ow_is_owned(ctx, oid.name) && ow_is_owned_expr(a, ctx)) {
+        return ru_consume_field(fa, oid, moved, ctx);
+      }
+    }
+  }
+  return ru_expr(a, moved, ctx);
 }
 
 function ow_call_arg_flags(callee: ast.Expr, ctx: OwnCtx): boolean[] {
@@ -18971,8 +19246,8 @@ function ru_borrow(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   match (e) {
     ast.ExprIdent(id) => {
       let d: util.Diag[] = [];
-      if (!id.builtin && ow_is_owned(ctx, id.name) && ow_moved_has(moved, id.name)) {
-        d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + util.i32_to_string(util.pos_line(ow_moved_line(moved, id.name))) + ")", id.line, id.col));
+      if (!id.builtin && ow_is_owned(ctx, id.name)) {
+        d = ow_bare_use_diags(moved, id);
       }
       return OwnWalk { moved: moved, diags: d };
     },
@@ -18988,15 +19263,28 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       let d: util.Diag[] = [];
       let m: MovedEntry[] = moved;
       if (ow_is_owned(ctx, id.name)) {
-        if (ow_moved_has(moved, id.name)) {
-          d = d.append(dg_at("E050", "use of owned parameter \"" + id.name + "\" after it was consumed (moved at line " + util.i32_to_string(util.pos_line(ow_moved_line(moved, id.name))) + ")", id.line, id.col));
-        } else {
+        d = ow_bare_use_diags(moved, id);
+        if (d.len() == 0) {
+          d = ow_deferred_use_diags(ctx, id);
+        }
+        if (d.len() == 0) {
           m = ow_moved_add(moved, id.name, id.line);
         }
       }
       return OwnWalk { moved: m, diags: d };
     },
     ast.ExprFieldAccess(fa) => {
+      if let ast.ExprIdent(oid) = fa.obj {
+        if (!oid.builtin && ow_is_owned(ctx, oid.name)) {
+          let path: string = oid.name + "." + fa.field;
+          if (ow_moved_has(moved, path)) {
+            let d: util.Diag[] = [];
+            d = d.append(dg_at("E050", "use of owned parameter \"" + oid.name + "\" after its field \"" + fa.field + "\" was consumed (moved at line " + ow_line_text(ow_moved_line(moved, path)) + ")", fa.line, fa.col));
+            return OwnWalk { moved: moved, diags: d };
+          }
+          return ru_field_target(fa.obj, moved, ctx);
+        }
+      }
       return ru_borrow(fa.obj, moved, ctx);
     },
     ast.ExprIndex(ix) => {
@@ -19152,7 +19440,7 @@ function ow_branch_stmts(body: ast.Stmt[]): ast.Stmt[] {
 }
 
 function ow_loop(body: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): util.Diag[] {
-  let r: OwnWalk = ow_stmts(body, moved, ctx);
+  let r: OwnWalk = ow_stmts(body, moved, OwnCtx { ...ctx, in_loop: true });
   let out: util.Diag[] = r.diags;
   for elem in r.moved {
     let nm: string = elem.mname;
@@ -19196,7 +19484,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       }
       let rv: OwnWalk = ru_expr(a.value, moved, actx);
       if (ow_is_owned(ctx, a.target)) {
-        return OwnWalk { moved: ow_moved_del(rv.moved, a.target), diags: rv.diags };
+        return OwnWalk { moved: ow_moved_del_prefix(ow_moved_del(rv.moved, a.target), a.target), diags: rv.diags };
       }
       return rv;
     },
@@ -19259,7 +19547,25 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
     },
     ast.StmtDefer(dd) => {
       let one: ast.Stmt[] = [dd.action];
-      return ow_stmts(one, moved, ctx);
+      if (ctx.in_loop) {
+        return ow_stmts(one, moved, ctx);
+      }
+      // The action runs at the function's exit: a name it consumes is still
+      // readable after the statement, and consumed nowhere else.
+      let r: OwnWalk = ow_stmts(one, moved, ctx);
+      let d: util.Diag[] = r.diags;
+      let seen: MovedEntry[] = ctx.deferred.get();
+      for elem in r.moved {
+        if (!ow_moved_has(moved, elem.mname)) {
+          if (ow_moved_has(seen, elem.mname)) {
+            d = d.append(dg_at("E050", "owned parameter \"" + elem.mname + "\" is consumed twice: a deferred call at line " + ow_line_text(ow_moved_line(seen, elem.mname)) + " consumes it", elem.mline, 0));
+          } else {
+            seen = ow_moved_add(seen, elem.mname, elem.mline);
+          }
+        }
+      }
+      ctx.deferred.set(seen);
+      return OwnWalk { moved: moved, diags: d };
     },
     _ => {
       return OwnWalk { moved: moved, diags: [] };
@@ -20038,7 +20344,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, snames: snames, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs), returns: cell_new(OwnReturns { synthetic: false, moved: [] }) };
+    let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, snames: snames, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false };
     let nomoved: MovedEntry[] = [];
     let r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, r.diags);

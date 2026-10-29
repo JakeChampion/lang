@@ -43,11 +43,23 @@ func (o IdentOrder) IsLast(id *ast.Ident) bool {
 }
 
 func DeferOrLambdaNames(body ast.Node) map[string]bool {
+	return escapingNames(body, true)
+}
+
+// LambdaNames is the subset of DeferOrLambdaNames that a lambda captures.
+func LambdaNames(body ast.Node) map[string]bool {
+	return escapingNames(body, false)
+}
+
+func escapingNames(body ast.Node, withDefer bool) map[string]bool {
 	esc := map[string]bool{}
 	ast.Walk(body, func(n ast.Node) bool {
 		var sub ast.Node
 		switch d := n.(type) {
 		case *ast.Defer:
+			if !withDefer {
+				return true
+			}
 			sub = d.Expr
 		case *ast.Lambda:
 			sub = n
@@ -105,9 +117,17 @@ func RenameRoots(body ast.Node) map[string]string {
 }
 
 type ArgDeaths struct {
-	Dies        map[*ast.Call]map[string]bool
-	Repeating   map[*ast.Call]bool
-	Escaping    map[string]bool
+	Dies      map[*ast.Call]map[string]bool
+	Repeating map[*ast.Call]bool
+	Escaping  map[string]bool
+	// Deferred holds the call of each defer statement whose argument dies
+	// there: the deferred call runs at the function's exit, so it is the last
+	// use of the names it consumes.
+	Deferred map[*ast.Call]bool
+	// FieldDies names the field reads that are the last use of their field
+	// path, with no later use of the whole: `q.r` passed to an own parameter
+	// moves the field out of the local or own parameter `q`.
+	FieldDies   map[*ast.Call]map[*ast.FieldAccess]bool
 	Occurrences map[string]int
 }
 
@@ -395,7 +415,181 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		return true
 	})
-	return ArgDeaths{Dies: out, Repeating: repeating, Escaping: escaping, Occurrences: occurrences}
+	deferred := map[*ast.Call]bool{}
+	lambdaCaptured := LambdaNames(body)
+	ast.Walk(body, func(n ast.Node) bool {
+		d, ok := n.(*ast.Defer)
+		if !ok {
+			return true
+		}
+		c, isCall := d.Expr.(*ast.Call)
+		if !isCall || repeating[c] {
+			return true
+		}
+		for _, a := range c.Args {
+			aid, ok := a.(*ast.Ident)
+			if !ok || lambdaCaptured[aid.Name] || !admitted(aid.Name) || declCount[aid.Name] > 1 {
+				continue
+			}
+			if !isParam[aid.Name] && !freshInitLocal[aid.Name] && !unpackInitLocal[aid.Name] {
+				continue
+			}
+			markOnce(c, aid.Name)
+			if out[c][aid.Name] {
+				deferred[c] = true
+			}
+		}
+		return true
+	})
+	fieldDies := map[*ast.Call]map[*ast.FieldAccess]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		d, ok := n.(*ast.Defer)
+		if !ok {
+			return true
+		}
+		c, isCall := d.Expr.(*ast.Call)
+		if !isCall || repeating[c] {
+			return true
+		}
+		for _, a := range c.Args {
+			fa, ok := a.(*ast.FieldAccess)
+			if !ok {
+				continue
+			}
+			q, ok := fa.Target.(*ast.Ident)
+			if !ok || lambdaCaptured[q.Name] {
+				continue
+			}
+			if !(freshInitLocal[q.Name] && declCount[q.Name] == 1) && !(ownParam[q.Name] && declCount[q.Name] == 0) {
+				continue
+			}
+			mentions := 0
+			ast.Walk(c, func(m ast.Node) bool {
+				if id, ok := m.(*ast.Ident); ok && id.Name == q.Name {
+					mentions++
+				}
+				return true
+			})
+			if mentions != 1 {
+				continue
+			}
+			if fieldDies[c] == nil {
+				fieldDies[c] = map[*ast.FieldAccess]bool{}
+			}
+			fieldDies[c][fa] = true
+			deferred[c] = true
+		}
+		return true
+	})
+	fieldOf := map[*ast.Ident]string{}
+	ast.Walk(body, func(n ast.Node) bool {
+		if fa, ok := n.(*ast.FieldAccess); ok {
+			if id, ok := fa.Target.(*ast.Ident); ok {
+				fieldOf[id] = fa.Field
+			}
+		}
+		return true
+	})
+	// A deferred action runs at the exit, so a path it mentions is live until
+	// then: a bare mention of q holds every field, and `q.g` holds g alone.
+	deferBare := map[string]bool{}
+	deferField := map[[2]string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		d, ok := n.(*ast.Defer)
+		if !ok {
+			return true
+		}
+		ast.Walk(d.Expr, func(m ast.Node) bool {
+			if id, ok := m.(*ast.Ident); ok {
+				if f, isField := fieldOf[id]; isField {
+					deferField[[2]string{id.Name, f}] = true
+				} else {
+					deferBare[id.Name] = true
+				}
+			}
+			return true
+		})
+		return true
+	})
+	ast.Walk(body, func(n ast.Node) bool {
+		c, ok := n.(*ast.Call)
+		if !ok || repeating[c] || deferred[c] {
+			return true
+		}
+		for _, a := range c.Args {
+			fa, ok := a.(*ast.FieldAccess)
+			if !ok {
+				continue
+			}
+			q, ok := fa.Target.(*ast.Ident)
+			if !ok || lambdaCaptured[q.Name] || deferBare[q.Name] || deferField[[2]string{q.Name, fa.Field}] {
+				continue
+			}
+			if !(freshInitLocal[q.Name] && declCount[q.Name] == 1) && !(ownParam[q.Name] && declCount[q.Name] == 0) {
+				continue
+			}
+			mentions := 0
+			ast.Walk(c, func(m ast.Node) bool {
+				if id, ok := m.(*ast.Ident); ok && id.Name == q.Name {
+					mentions++
+				}
+				return true
+			})
+			if mentions != 1 || !fieldPathIsLast(order, fieldOf, q, fa.Field) || withinLiteralOf(body, c, q.Name) {
+				continue
+			}
+			if fieldDies[c] == nil {
+				fieldDies[c] = map[*ast.FieldAccess]bool{}
+			}
+			fieldDies[c][fa] = true
+		}
+		return true
+	})
+	return ArgDeaths{Dies: out, Repeating: repeating, Escaping: escaping, Occurrences: occurrences, Deferred: deferred, FieldDies: fieldDies}
+}
+
+// withinLiteralOf reports whether c sits inside a struct literal whose base
+// is name: `S { ...q, f: g(q.f) }` is the superseded-field rule's shape, and
+// that rule decides it.
+func withinLiteralOf(body ast.Node, c *ast.Call, name string) bool {
+	found := false
+	ast.Walk(body, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		sl, ok := n.(*ast.StructLit)
+		if !ok || sl.Base == nil {
+			return true
+		}
+		if bid, ok := sl.Base.(*ast.Ident); !ok || bid.Name != name {
+			return true
+		}
+		ast.Walk(sl, func(m ast.Node) bool {
+			if mc, isCall := m.(*ast.Call); isCall && mc == c {
+				found = true
+			}
+			return !found
+		})
+		return !found
+	})
+	return found
+}
+
+// fieldPathIsLast reports whether every later occurrence of q reads a field
+// other than field: the read `q.field` at q is then the last use of that
+// path, and q as a whole is never used again.
+func fieldPathIsLast(order IdentOrder, fieldOf map[*ast.Ident]string, q *ast.Ident, field string) bool {
+	at := order.Idx[q]
+	for id, idx := range order.Idx {
+		if idx <= at || id.Name != q.Name {
+			continue
+		}
+		f, isField := fieldOf[id]
+		if !isField || f == field {
+			return false
+		}
+	}
+	return true
 }
 
 func freshInit(init ast.Expr) bool {
@@ -627,8 +821,12 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
 	})
 	d := CallArgDeaths(fn, info)
 	isParam := map[string]bool{}
+	ownParam := map[string]bool{}
 	for _, p := range fn.Params {
 		isParam[p.Name] = true
+		if p.Own {
+			ownParam[p.Name] = true
+		}
 	}
 	local := map[string]bool{}
 	nested := map[*ast.Call]bool{}
@@ -659,8 +857,18 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
 			continue
 		}
 		for _, a := range call.Args {
-			if id, ok := a.(*ast.Ident); ok && dies[id.Name] && local[id.Name] && !d.Escaping[id.Name] {
+			if id, ok := a.(*ast.Ident); ok && dies[id.Name] && local[id.Name] && (!d.Escaping[id.Name] || d.Deferred[call]) {
 				out[id] = true
+			}
+		}
+	}
+	for call, fields := range d.FieldDies {
+		if nested[call] {
+			continue
+		}
+		for fa := range fields {
+			if id, ok := fa.Target.(*ast.Ident); ok && (local[id.Name] || ownParam[id.Name]) {
+				out[fa] = true
 			}
 		}
 	}

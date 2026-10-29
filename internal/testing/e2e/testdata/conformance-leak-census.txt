@@ -322,8 +322,8 @@ generic_box                                          0
 generic_call_binds_through_closure_array_param       0
 generic_call_in_struct_field                         0
 generic_call_infers_from_variant_argument            0
-generic_call_typed_by_its_destination                0
 generic_call_through_fn_value                        0
+generic_call_typed_by_its_destination                0
 generic_char_ordering                                0
 generic_enum_bound_dispatch                          0
 generic_enum_method_at_two_instantiations            0
@@ -351,6 +351,8 @@ generic_struct_literal_in_append                     0
 generic_struct_method_at_tuple_type                  0
 generic_view_methods                                 0
 grow_past_capacity                                   0
+handle_defer_closes_at_exit                          0
+handle_field_closes_from_local                       0
 handle_transfer_closes_once                          0
 hash_struct_enum                                     0
 header_struct_literals                               0

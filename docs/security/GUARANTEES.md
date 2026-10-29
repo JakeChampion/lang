@@ -22,6 +22,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | An unsafe function is callable only inside an unsafe block, cannot become a value, and cannot implement a safe trait method | `conformance/cases/diag_e095`, `conformance/cases/diag_e095_unsafe_function_as_a_value`, `conformance/cases/diag_e095_safe_trait_method_unsafe_impl` | both checkers |
 | A raw builtin that forges an address, changes a count or a length, or calls foreign code is callable only inside an unsafe block | `conformance/cases/diag_e095_raw_builtin_outside_unsafe`, with the control `conformance/cases/unsafe_block_accepts_raw_builtins`, `TestUnsafeIntrinsicsMatchSelfHost` | both checkers |
 | A consumed owned value cannot be used again, through a closure or a handle | `conformance/cases/diag_e050_closure_consumes_captured_owned`, `conformance/cases/diag_e051_handle_closed_twice` | both checkers |
+| A deferred consuming close is a handle's last use, and a field moves out of a local or an `own` parameter only at the path's last use | `conformance/cases/handle_defer_closes_at_exit`, `conformance/cases/diag_e051_handle_closed_after_defer`, `conformance/cases/handle_field_closes_from_local`, `conformance/cases/diag_e051_handle_field_closed_twice` | both checkers |
 | Every compile verifies its IR unless `FERN_IR_VERIFY=0` | `TestSelfHostIRVerifyGateRefuses`, `TestVerifyGateRunsOnNativeCompile` | x86 |
 
 ## Memory

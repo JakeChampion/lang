@@ -1,0 +1,26 @@
+// spec: RH-07
+// A field of a fresh local moves out to a consuming close at the path's
+// last use. The sibling field is still owned by the local and closes too.
+
+import "std/i32";
+
+struct Handle { fd: i32 }
+struct Ends { r: Handle, w: Handle }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function both(own e: Ends): i32 {
+  let a: i32 = e.r.close();
+  return a + e.w.close();
+}
+
+function main(): i32 {
+  let q: Ends = Ends { r: Handle { fd: 3 }, w: Handle { fd: 4 } };
+  let a: i32 = q.r.close();
+  let b: i32 = q.w.close();
+  print((a + b).to_string());
+  print(both(Ends { r: Handle { fd: 5 }, w: Handle { fd: 6 } }).to_string());
+  return 0;
+}

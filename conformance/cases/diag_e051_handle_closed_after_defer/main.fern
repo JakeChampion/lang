@@ -1,0 +1,15 @@
+// spec: RH-08
+// A deferred close consumes the handle at the exit, so an explicit close
+// before the exit is a second consumption and is refused.
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function main(): i32 {
+  let h: Handle = Handle { fd: 3 };
+  defer h.close();
+  return h.close();
+}

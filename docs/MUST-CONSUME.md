@@ -158,5 +158,7 @@ only the results threaded back through the value
 - Obligation-carrying containers (marked-inside-unmarked) —
   rule 3 rejects instead of tracking.
 - `defer`-based discharge (`defer x.close();` as a consuming use)
-  — natural follow-up; requires modelling defer's exit-edge
-  semantics in the walk.
+  in the E067 obligation walk — requires modelling defer's exit-edge
+  semantics there. The `own`-parameter rule (E050/E051) already
+  treats a deferred consuming call as the last use
+  (`docs/security/HANDLE-AUDIT.md`, RH-06).
