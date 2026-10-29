@@ -143,6 +143,7 @@ var stdlibMethodIndex = map[string]map[string]string{
 		"to_string":        "std/f64",
 		"to_string_prec":   "std/f64",
 		"trunc":            "std/f64",
+		"with_lane":        "std/simd",
 	},
 	"f64": {
 		"abs":              "std/f64",
@@ -210,6 +211,7 @@ var stdlibMethodIndex = map[string]map[string]string{
 		"to_string":        "std/f64",
 		"to_string_prec":   "std/f64",
 		"trunc":            "std/f64",
+		"with_lane":        "std/simd",
 	},
 	"i32": {
 		"abs":                "std/i32",

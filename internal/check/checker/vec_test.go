@@ -23,6 +23,8 @@ func TestVecLaneSpelling(t *testing.T) {
 		"explicit":         `function f(): f64 { return head[2, f64](__f64x2_splat(1.0)); }`,
 		"one lane type":    `function g(v: Vec[2, f64]): i32 { return v.only(); } function h[const N: i32](v: Vec[N, f64]): i32 { return v.only(); }`,
 		"element type":     `function el[const N: i32, T](v: Vec[N, T], x: T): T { return x; } function f(): f32 { let y: f32 = 1.0; return el(__f32x4_splat(1.0), y); }`,
+		"generic impl":     `trait Total { function total(self: Self): f64; function twice(self: Self): f64 { return self.total() * 2.0; } } impl[const N: i32, T] Total for Vec[N, T] { function total(self: Vec[N, T]): f64 { return self.first() + (N as f64); } } function sum[X: Total](x: X): f64 { return x.total(); } function f(): f64 { let a: f64 = sum(__f32x4_splat(1.0)); return a + __f64x2_splat(1.0).twice(); }`,
+		"impl one lane":    `trait Count { function count(self: Self): i32; } impl[const N: i32] Count for Vec[N, f64] { function count(self: Vec[N, f64]): i32 { return N + self.only(); } } function f(): i32 { return __f64x2_splat(1.0).count(); }`,
 	} {
 		if err := checkSource(t, vecDecls+src); err != nil {
 			t.Errorf("%s: want accepted, got %v", name, err)
@@ -33,6 +35,9 @@ func TestVecLaneSpelling(t *testing.T) {
 		"no generic pair": {`function f[T](v: Vec[8, T]): i32 { return 0; }`, "E096", "Vec[8, T] names no lane type"},
 		"not common":      {`function f[const N: i32, T](v: Vec[N, T]): i32 { return v.only(); }`, "E021", `no method "only" on Vec[N, T]`},
 		"wrong lanes":     {`function f(): f64 { return head2(__f32x4_splat(1.0)); } function head2[const N: i32](v: Vec[N, f64]): f64 { return v.first(); }`, "E038", "got f32x4"},
+		"impl no pair":    {`trait Count { function count(self: Self): i32; } impl[T] Count for Vec[3, T] { function count(self: Vec[3, T]): i32 { return 0; } }`, "E096", "Vec[3, T] names no lane type"},
+		"impl one lane":   {`trait Count { function count(self: Self): i32; } impl[const N: i32, T] Count for Vec[N, T] { function count(self: Vec[N, T]): i32 { return self.only(); } }`, "E043", `no method "only" on f32x4`},
+		"not impl":        {`trait Count { function count(self: Self): i32; } impl[const N: i32] Count for Vec[N, f64] { function count(self: Vec[N, f64]): i32 { return N; } } function f(): i32 { return __f32x4_splat(1.0).count(); }`, "E043", `no method "count" on f32x4`},
 	} {
 		err := checkSource(t, vecDecls+tc.src)
 		if err == nil || !hasCode(err, tc.code) {
@@ -42,5 +47,13 @@ func TestVecLaneSpelling(t *testing.T) {
 		if !strings.Contains(err.Error(), tc.msg) {
 			t.Errorf("%s: want %q in the message, got %v", name, tc.msg, err)
 		}
+	}
+}
+
+func TestVecImplDropsUnfitMethods(t *testing.T) {
+	err := checkSource(t, `trait Count { function count(self: Self): i32; }
+impl[T] Count for Vec[3, T] { function count(self: Vec[3, T]): i32 { return 0; } }`)
+	if err == nil || !hasCode(err, "E096") || strings.Count(err.Error(), "names no lane type") != 1 || hasCode(err, "E021") {
+		t.Errorf("want one E096 and no E021, got %v", err)
 	}
 }

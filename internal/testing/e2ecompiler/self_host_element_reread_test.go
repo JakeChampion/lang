@@ -44,10 +44,14 @@ struct Run { conn: Conn, out: u8[], sent: i32 }
   return Run { ...r, conn: c, sent: r.sent + s.id };
 }
 
+@noinline function four(): i32 {
+  return 4;
+}
+
 function main(): i32 {
   let streams: Strm[] = [];
   let i: i32 = 0;
-  while (i < 4) {
+  while (i < four()) {
     streams = streams.append(Strm { id: i, pending: [1, 2, 3], window: 3, done: false });
     i = i + 1;
   }

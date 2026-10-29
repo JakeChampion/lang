@@ -24,16 +24,33 @@ an earlier one.
 | physical lowering | `ssarc.fern` | the graph, the modes, the plan | stack IR with retains, releases, reuse tokens, takes, steals and grow brackets |
 | certifier | `rccertify.fern` (through `irverifygate.fern`, memo in `rcmemo.fern`) | the lowered ops, lifted back to SSA | a clean report, or a refusal naming the unit that is leaked or over-spent |
 
+Before inlining, `semunroll.fern` replaces a counted loop with straight-line
+code. The blocks from the header to the test, and the blocks of the body, must
+each run straight through. A branch on a constant counts as a jump. The loop
+must have an `i32` induction variable with a constant start, step and bound.
+The test compares the variable, or the variable plus a constant, as the loop
+that a range gives does. The loop must run at most 16 times, and the copies
+must have at most 64 instructions. The body must read the induction variable
+for more than its step and its test, because each copy reads it as a
+constant. A loop whose variable overflows stays a loop. A read after the loop
+takes the last value of each phi directly, so an owned value is not copied.
+
 The seminline pass (`seminline.fern`) rewrites graphs before the plan: it
 inlines leaves, splits reads of known constructions into their parts, and
 runs tail recursion modulo cons. A spliced callee's field read of a
 parameter the caller passed narrowed out of a struct-union becomes a payload
 read of the union (`scrutinee_reads`), the form the source lowering gives a
-member binding's field read. It splices a function declared `@inline` at
-every call, as it splices a function called once. The function must not be
+member binding's field read. It splices a function or an impl method
+declared `@inline` at every call, as it splices a function called once. The function must not be
 recursive, must have at most 400 instructions, and must only read its view
 parameters (`seminline.forced_spliceable`). It is a graph-to-graph pass; the stages
-below never see what it removed. Four more run last. `semthread.fern` sends
+below never see what it removed.
+
+`semunroll.fold_constants` replaces an `i32` comparison, sum, difference or
+product of two constants with its value, when the value does not overflow. It
+also replaces a constant lane of a vector built from its lanes with that
+operand: `__f64x2_lane(__f64x2_of(a, b), 1)` is `b`.
+Four more passes run after it. `semthread.fern` sends
 a branch the path to it already decided straight to the side it takes: a
 branch on a constant (the done flag a nested pattern's arms test), and a
 variant test an earlier test on the same value, or the same payload of one,
@@ -54,7 +71,8 @@ its own block stays apart, because the plan can take it there
 `semcse.fern` then merges a block's repeated reads of one slot of one value,
 which the re-reads at a block's head most often make, so the slot has one
 holder for the plan to hold or take where its box is consumed. Last,
-`semdead.fern` drops constructions nothing reads. `ssasem`'s guard check
+`semdead.fern` drops constructions nothing reads, and the calls to a lane
+builtin that reads only its operands. `ssasem`'s guard check
 treats two reads of one slot of one box (an array's at one index) as one
 value, so a test of the first read settles the re-read.
 
@@ -356,7 +374,9 @@ or with type arguments) rather than falling through.
 ### 1.6 The certifier
 
 `rccertify.certify` reads the lowered ops back as SSA (`ssa_lift`) and
-nothing of the plan, and accounts per path the units the frame holds: an
+nothing of the plan. A branch that compares two constants goes only to the
+side it takes (`irverifygate.decided`). Thus the certifier walks no edge that
+no run takes. It accounts per path the units the frame holds: an
 allocation or owned call result is a fresh unit, a counted parameter a unit
 handed in, a load, a borrowed parameter or an address into a box nothing; a retain adds one; a
 release, a move into a callee or container and a return each spend one; at a

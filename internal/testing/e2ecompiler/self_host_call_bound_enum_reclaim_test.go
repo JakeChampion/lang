@@ -144,10 +144,11 @@ function main(): i32 {
     return x % 83;
 }`
 
-const cbeRcPayloadDirectNoMatchSrc = `function round(r: i32): i32 {
+const cbeRcPayloadDirectNoMatchSrc = `@noinline function four(): i32 { return 4; }
+function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) {
+    while (i < four()) {
         let v: Result[i32[], string] = Ok([i, i + 1, i + 2]);
         acc = acc + 1;
         i = i + 1;
@@ -233,10 +234,11 @@ function main(): i32 {
     return x % 83;
 }`
 
-const cbeOptArrLoopScopeSrc = `function round(r: i32): i32 {
+const cbeOptArrLoopScopeSrc = `@noinline function four(): i32 { return 4; }
+function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) {
+    while (i < four()) {
         let v: Option[i32[]] = Some([i, i + 1, i + 2]);
         acc = acc + 1;
         i = i + 1;

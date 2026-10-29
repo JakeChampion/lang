@@ -4784,10 +4784,11 @@ pub function drop_low_wraps(f: SFunc): Formed {
   let repl: i32[] = [];
   let dropped: boolean = false;
   let at: i32[] = block_positions(f);
+  let heads: i32[] = signed_compare_heads(f, def_b, def_k);
   let wj: i32 = 0;
   while (wj < wraps.len()) {
     let w: i32 = wraps[wj];
-    if (!high[w] || signed_extension(def_at(f, def_b, def_k, w)) && counter_step(f, at, def_b, def_k, wrap_arg[wj])) {
+    if (!high[w] || signed_extension(def_at(f, def_b, def_k, w)) && counter_step(f, at, heads, def_b, def_k, wrap_arg[wj])) {
       if (!dropped) {
         i = 0;
         while (i < f.nvals) {
@@ -4858,42 +4859,56 @@ function block_reads_replaced(blk: SBlock, repl: i32[]): boolean {
 }
 
 // x + 1 below a test that x is less than an i32, or x - 1 below a test that x is greater.
-function counter_step(f: SFunc, at: i32[], def_b: i32[], def_k: i32[], a: i32): boolean {
+function counter_step(f: SFunc, at: i32[], heads: i32[], def_b: i32[], def_k: i32[], a: i32): boolean {
   let st: SInst = def_at(f, def_b, def_k, a);
   if (st.kind_tag != 9 || st.imm == 64 || st.args.len() != 2) {
     return false;
   }
   if (st.str == "sub") {
-    return const_one(f, def_b, def_k, st.args[1]) && tested(f, at, def_b, def_k, st.args[0], def_b[a], false);
+    return const_one(f, def_b, def_k, st.args[1]) && tested(f, at, heads, def_b, def_k, st.args[0], def_b[a], false);
   }
   if (st.str != "add") {
     return false;
   }
   if (const_one(f, def_b, def_k, st.args[1])) {
-    return tested(f, at, def_b, def_k, st.args[0], def_b[a], true);
+    return tested(f, at, heads, def_b, def_k, st.args[0], def_b[a], true);
   }
-  return const_one(f, def_b, def_k, st.args[0]) && tested(f, at, def_b, def_k, st.args[1], def_b[a], true);
+  return const_one(f, def_b, def_k, st.args[0]) && tested(f, at, heads, def_b, def_k, st.args[1], def_b[a], true);
 }
 
 // Some branch on a signed compare of `v` reaches block `d` only on the edge where `v` is below (or above) the other operand.
-function tested(f: SFunc, at: i32[], def_b: i32[], def_k: i32[], v: i32, d: i32, below: boolean): boolean {
-  for h in f.blocks {
+function tested(f: SFunc, at: i32[], heads: i32[], def_b: i32[], def_k: i32[], v: i32, d: i32, below: boolean): boolean {
+  for hi in heads {
+    let h: SBlock = f.blocks[hi];
     let t: STerm = h.term;
-    if (t.kind_tag == 3 && t.t != t.f) {
-      let c: SInst = def_at(f, def_b, def_k, t.cond);
-      let pass: i32 = 0 - 1;
-      if (below && compares_below(c, v, "lt_s", "gt_s") || !below && compares_below(c, v, "gt_s", "lt_s")) {
-        pass = t.t;
-      } else if (below && compares_below(c, v, "ge_s", "le_s") || !below && compares_below(c, v, "le_s", "ge_s")) {
-        pass = t.f;
-      }
-      let b: i32 = position_of(at, pass);
-      if (b >= 0 && f.blocks[b].preds.len() == 1 && f.blocks[b].preds[0] == h.id && dominates_position(f, at, b, d)) {
-        return true;
-      }
+    let c: SInst = def_at(f, def_b, def_k, t.cond);
+    let pass: i32 = 0 - 1;
+    if (below && compares_below(c, v, "lt_s", "gt_s") || !below && compares_below(c, v, "gt_s", "lt_s")) {
+      pass = t.t;
+    } else if (below && compares_below(c, v, "ge_s", "le_s") || !below && compares_below(c, v, "le_s", "ge_s")) {
+      pass = t.f;
+    }
+    let b: i32 = position_of(at, pass);
+    if (b >= 0 && f.blocks[b].preds.len() == 1 && f.blocks[b].preds[0] == h.id && dominates_position(f, at, b, d)) {
+      return true;
     }
   }
   return false;
+}
+
+// signed_compare_heads lists, in block order, the blocks whose two-way branch tests a signed compare.
+function signed_compare_heads(f: SFunc, def_b: i32[], def_k: i32[]): i32[] {
+  let out: i32[] = [];
+  for hi in 0..f.blocks.len() {
+    let t: STerm = f.blocks[hi].term;
+    if (t.kind_tag == 3 && t.t != t.f) {
+      let c: SInst = def_at(f, def_b, def_k, t.cond);
+      if (c.kind_tag == 9 && c.imm != 64 && c.args.len() == 2 && (c.str == "lt_s" || c.str == "gt_s" || c.str == "ge_s" || c.str == "le_s")) {
+        out = out.append(hi);
+      }
+    }
+  }
+  return out;
 }
 
 function dominates_position(f: SFunc, at: i32[], b: i32, d: i32): boolean {

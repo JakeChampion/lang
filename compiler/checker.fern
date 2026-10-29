@@ -3905,6 +3905,9 @@ function method_namespace_of(t: typeinfo.Type): string {
     typeinfo.TypeFloat(f) => {
       return float_label(f);
     },
+    typeinfo.TypeLanes(l) => {
+      return typeinfo.lanes_spelling(l.width);
+    },
     _ => {
       return "";
     }
@@ -14091,6 +14094,13 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           }
           out = util.append_diags(out, declared_method_diags(c, recv, "boolean", mfa.field, s));
         },
+        typeinfo.TypeLanes(l) => {
+          let lanes: string = typeinfo.lanes_spelling(l.width);
+          if (s.method_missing(recv, mfa.field)) {
+            out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice(lanes, mfa.field, recv), mfa.line, mfa.col), mfa, recv));
+          }
+          out = util.append_diags(out, declared_method_diags(c, recv, lanes, mfa.field, s));
+        },
         typeinfo.TypeString(_) => {
           if (s.method_missing(recv, mfa.field)) {
             out = out.append(s.method_fix(dg_at("E043", s.unknown_method_advice("string", mfa.field, recv), mfa.line, mfa.col), mfa, recv));
@@ -15499,6 +15509,10 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
     return !s.has_visible_method(field, scalar) && is_unknown(builtin_method_sig(scalar, field));
   }
   match (recv) {
+    typeinfo.TypeLanes(l) => {
+      let lanes: string = typeinfo.lanes_spelling(l.width);
+      return !s.has_visible_method(field, lanes) && is_unknown(builtin_method_sig(lanes, field));
+    },
     typeinfo.TypeArray(array) => {
       let builtin: boolean = field == "len" || !array.view && (field == "append" || field == "with" || field == "truncate");
       return !builtin && !s.has_array_recv_method(field, array.view);
@@ -22283,8 +22297,13 @@ function e021_diags(mod: parser.Module): util.Diag[] {
       }
     }
   }
+  let own_vec: boolean = parser.declares_vec(mod.structs, mod.enums, mod.aliases, mod.trait_decls);
   for im in mod.impls {
     let ir: parser.TypeRef = parser.parse_type_ref(im.impl_type);
+    if (ir.base == "Vec" && ir.args.len() == 2 && !own_vec) {
+      out = out.append(dg_at("E096", im.impl_type + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", im.line, im.col));
+      continue;
+    }
     if (im.trait_name != "" && (ir.array_depth > 0 || ir.is_view)) {
       out = out.append(dg("E021", "`impl … for " + im.impl_type + "`: type must be a struct, enum, or built-in type"));
       continue;

@@ -125,7 +125,7 @@ function discarded_trial(): void {
 function renamed(g: ircore.Gated): void {
   let base = asmcore.new_state();
   base = asmcore.EmitState { ...base, retain_prepared: true, reg_entries: irtables.sig_reg_of(["Token.first"]) };
-  let gate = irverifygate.gate_unreported(irtables.fn_sig_index(g.im.funcs, g.im.funcs, g.cache), base.kinds.pops, rccertify.no_abis());
+  let gate = irverifygate.gate_unreported(irtables.fn_sig_index(g.im.funcs, g.im.funcs, g.cache), base.kinds, rccertify.no_abis());
   let fd = parser.FuncDecl { ...g.im.funcs[0], receiver_type: "Token" };
   let out = asm_arm64_ir.emit_function_via_ir_pre(g.cache[0], physicalbody.select(g.physical, 0), asmcore.no_prelift(), fd, base, gate);
   require(out.prepared.len() == 1 && out.prepared[0].label_name == "Token.first", 37);
@@ -141,7 +141,7 @@ function debug_body(g: ircore.Gated, arm: boolean, var_rows: boolean): void {
   if (arm) {
     let s = asmcore.new_state();
     s = asmcore.EmitState { ...s, recs: recs, retain_prepared: true, var_rows: var_rows };
-    let gate = irverifygate.gate_unreported(irtables.fn_sig_index(g.im.funcs, g.im.funcs, g.cache), s.kinds.pops, rccertify.no_abis());
+    let gate = irverifygate.gate_unreported(irtables.fn_sig_index(g.im.funcs, g.im.funcs, g.cache), s.kinds, rccertify.no_abis());
     let out = asm_arm64_ir.emit_function_via_ir_pre(r, physicalbody.select(g.physical, 0), asmcore.no_prelift(), g.im.funcs[0], s, gate);
     rows = out.prepared;
     s.release();

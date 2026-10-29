@@ -142,6 +142,162 @@ function quarantine_rc(addr: string, on: boolean): string {
   return "    movl $0, " + addr + "\n";
 }
 
+// A release under -sanitize hands its block to the quarantine instead of a
+// free list: `ptr` is the block base, `words` its size, and `poison_at` the
+// byte offset of its count word (0 or 8), or 16 for a block with no count.
+function quar_push(s: asmcore.EmitState, ptr: string, words: string, poison_at: i32): asmcore.EmitState {
+  if (words != "%rsi") {
+    s = s.write("    movq " + words + ", %rsi\n");
+  }
+  if (ptr != "%rdi") {
+    s = s.write("    movq " + ptr + ", %rdi\n");
+  }
+  s = s.write("    movq $" + util.i32_to_string(poison_at) + ", %rdx\n");
+  return s.write("    call __fern_quar_push\n");
+}
+
+// The -sanitize quarantine: a FIFO threaded through the released blocks.
+// Word 2 of a block links the next, the count word keeps its poison, and
+// the other of words 0 and 1 holds the size. A release past the budget
+// evicts the oldest block to its free list after its poison is checked.
+function emit_quarantine(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_quar_push:\n");
+  s = s.write("    cmpq $3, %rsi\n");
+  s = s.write("    jb .Lquar_ret\n");
+  s = s.write("    pushq %rax\n");
+  s = s.write("    pushq %rcx\n");
+  s = s.write("    pushq %r8\n");
+  s = s.write("    cmpq $8, %rdx\n");
+  s = s.write("    je .Lquar_meta0\n");
+  s = s.write("    movl $" + rc_poison() + ", (%rdi)\n");
+  s = s.write("    movq %rsi, 8(%rdi)\n");
+  s = s.write("    jmp .Lquar_link\n");
+  s = s.write(".Lquar_meta0:\n");
+  s = s.write("    movq %rsi, (%rdi)\n");
+  s = s.write(".Lquar_link:\n");
+  s = s.write("    movq $0, 16(%rdi)\n");
+  s = s.write("    movq __fern_quar_tail(%rip), %rax\n");
+  s = s.write("    testq %rax, %rax\n");
+  s = s.write("    jz .Lquar_first\n");
+  s = s.write("    movq %rdi, 16(%rax)\n");
+  s = s.write("    jmp .Lquar_tail\n");
+  s = s.write(".Lquar_first:\n");
+  s = s.write("    movq %rdi, __fern_quar_head(%rip)\n");
+  s = s.write(".Lquar_tail:\n");
+  s = s.write("    movq %rdi, __fern_quar_tail(%rip)\n");
+  s = s.write("    leaq 0(,%rsi,8), %rax\n");
+  s = s.write("    addq %rax, __fern_quar_bytes(%rip)\n");
+  if (s.quarantine > 0i64) {
+    s = s.write(".Lquar_evict:\n");
+    s = s.write("    movabs $" + util.i64_to_string(s.quarantine) + ", %rax\n");
+    s = s.write("    cmpq %rax, __fern_quar_bytes(%rip)\n");
+    s = s.write("    jbe .Lquar_done\n");
+    s = s.write("    movq __fern_quar_head(%rip), %rdi\n");
+    s = s.write("    movq 16(%rdi), %rax\n");
+    s = s.write("    movq %rax, __fern_quar_head(%rip)\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jnz .Lquar_unlinked\n");
+    s = s.write("    movq $0, __fern_quar_tail(%rip)\n");
+    s = s.write(".Lquar_unlinked:\n");
+    s = s.write("    cmpl $" + rc_poison() + ", (%rdi)\n");
+    s = s.write("    jne .Lquar_size0\n");
+    s = s.write("    movq 8(%rdi), %rsi\n");
+    s = s.write("    movl $0, (%rdi)\n");
+    s = s.write("    jmp .Lquar_recycle\n");
+    s = s.write(".Lquar_size0:\n");
+    s = s.write("    cmpl $" + rc_poison() + ", 8(%rdi)\n");
+    s = s.write("    jne __fern_san_abort_waf\n");
+    s = s.write("    movq (%rdi), %rsi\n");
+    s = s.write("    movl $0, 8(%rdi)\n");
+    s = s.write(".Lquar_recycle:\n");
+    s = s.write("    leaq 0(,%rsi,8), %rax\n");
+    s = s.write("    subq %rax, __fern_quar_bytes(%rip)\n");
+    s = s.write("    cmpq $65536, %rsi\n");
+    s = s.write("    jae .Lquar_large\n");
+    s = s.write("    movq %rsi, %rcx\n");
+    s = freelist_push(s, "%rdi", "%rcx", "%rax");
+    s = s.write("    jmp .Lquar_evict\n");
+    s = s.write(".Lquar_large:\n");
+    s = s.write("    movq %rdi, %r8\n");
+    s = s.write("    leaq 0(,%rsi,8), %rsi\n");
+    s = s.write("    call __fern_large_push_now\n");
+    s = s.write("    jmp .Lquar_evict\n");
+    s = s.write(".Lquar_done:\n");
+  }
+  s = s.write("    popq %r8\n");
+  s = s.write("    popq %rcx\n");
+  s = s.write("    popq %rax\n");
+  s = s.write(".Lquar_ret:\n");
+  return s.write("    ret\n");
+}
+
+function emit_san_waf_abort(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .section .rodata\n");
+  s = s.write(".Lsan_waf:\n    .ascii \"fern-sanitizer: write-after-free (a quarantined block was written)\\n\"\n");
+  s = s.write("    .section .text\n");
+  s = s.write("    .globl __fern_san_abort_waf\n");
+  s = s.write("__fern_san_abort_waf:\n");
+  s = s.write("    leaq .Lsan_waf(%rip), %rsi\n");
+  s = s.write("    movq $67, %rdx\n");
+  s = s.write("    movq $2, %rdi\n");
+  s = s.write("    movq $1, %rax\n");
+  s = s.syscall(1);
+  return san_report_exit(s);
+}
+
+// Under -harden a free list hands out one of its first eight blocks, chosen
+// by a xorshift step over the seed read at startup: %rdi is the address of
+// the list head, %rax the block taken, or zero when the list is empty.
+function emit_freelist_take(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_freelist_take:\n");
+  s = s.write("    pushq %rcx\n");
+  s = s.write("    pushq %rdx\n");
+  s = s.write("    pushq %rsi\n");
+  s = s.write("    movq __fern_rng_state(%rip), %rcx\n");
+  s = s.write("    movq %rcx, %rdx\n    shlq $13, %rdx\n    xorq %rdx, %rcx\n");
+  s = s.write("    movq %rcx, %rdx\n    shrq $7, %rdx\n    xorq %rdx, %rcx\n");
+  s = s.write("    movq %rcx, %rdx\n    shlq $17, %rdx\n    xorq %rdx, %rcx\n");
+  s = s.write("    movq %rcx, __fern_rng_state(%rip)\n");
+  s = s.write("    andl $7, %ecx\n");
+  s = s.write("    movq %rdi, %rsi\n");
+  s = s.write("    movq (%rsi), %rax\n");
+  s = s.write("    testq %rax, %rax\n");
+  s = s.write("    jz .Lfltake_done\n");
+  s = s.write(".Lfltake_walk:\n");
+  s = s.write("    testl %ecx, %ecx\n");
+  s = s.write("    jz .Lfltake_unlink\n");
+  s = s.write("    movq (%rax), %rdx\n");
+  s = s.write("    testq %rdx, %rdx\n");
+  s = s.write("    jz .Lfltake_unlink\n");
+  s = s.write("    movq %rax, %rsi\n");
+  s = s.write("    movq %rdx, %rax\n");
+  s = s.write("    decl %ecx\n");
+  s = s.write("    jmp .Lfltake_walk\n");
+  s = s.write(".Lfltake_unlink:\n");
+  s = s.write("    movq (%rax), %rdx\n");
+  s = s.write("    movq %rdx, (%rsi)\n");
+  s = s.write(".Lfltake_done:\n");
+  s = s.write("    popq %rsi\n");
+  s = s.write("    popq %rdx\n");
+  s = s.write("    popq %rcx\n");
+  return s.write("    ret\n");
+}
+
+// Takes the head of the free list whose slot address is in %rdi into %rax,
+// or the random one of its first eight under -harden; zero when empty.
+function freelist_take_head(s: asmcore.EmitState, miss: string): asmcore.EmitState {
+  if (s.harden) {
+    s = s.write("    call __fern_freelist_take\n");
+    s = s.write("    testq %rax, %rax\n");
+    return s.write("    jz " + miss + "\n");
+  }
+  s = s.write("    movq (%rdi), %rax\n");
+  s = s.write("    testq %rax, %rax\n");
+  s = s.write("    jz " + miss + "\n");
+  s = s.write("    pushq (%rax)\n");
+  return s.write("    popq (%rdi)\n");
+}
+
 function san_poison_check(reg: string, on: boolean): string {
   if (on) {
     return "    cmpl $" + rc_poison() + ", " + reg + "\n    je __fern_san_abort_uaf\n";
@@ -220,14 +376,66 @@ function buf_block_free(s: asmcore.EmitState, ptr: string, words: string, lbl: s
   s = hev_free(s, ptr, words);
   if (!s.rc_free_debug) {
     s = freelist_push(s, ptr, words, "%rsi");
+  } else {
+    s = quar_push(s, ptr, words, 16);
   }
   s = s.write("    jmp ." + lbl + "_done\n");
   s = s.write("." + lbl + "_large:\n");
-  s = s.write("    movq " + ptr + ", %r8\n");
-  s = s.write("    leaq 0(," + words + ",8), %rsi\n");
-  s = s.write("    call __fern_large_push\n");
+  if (s.rc_free_debug) {
+    s = hev_free(s, ptr, words);
+    s = quar_push(s, ptr, words, 16);
+  } else {
+    s = s.write("    movq " + ptr + ", %r8\n");
+    s = s.write("    leaq 0(," + words + ",8), %rsi\n");
+    s = s.write("    call __fern_large_push\n");
+  }
   s = s.write("." + lbl + "_done:\n");
   return s;
+}
+
+// Under -harden every 64th large block the bump hands out ends on a page
+// boundary and is followed by a page the process cannot touch. A failed
+// mprotect leaves the block without its guard.
+function emit_guard_bump(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    cmpq $524288, %rdi\n");
+  s = s.write("    jb .Lalloc_bump\n");
+  s = s.write("    incq __fern_guard_count(%rip)\n");
+  s = s.write("    testq $63, __fern_guard_count(%rip)\n");
+  s = s.write("    jnz .Lalloc_bump\n");
+  s = s.write("    pushq %rcx\n");
+  s = s.write("    pushq %rdx\n");
+  s = s.write("    pushq %rsi\n");
+  s = s.write("    pushq %r11\n");
+  s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
+  s = s.write("    addq $4095, %rax\n");
+  s = s.write("    andq $-4096, %rax\n");
+  s = s.write("    addq %rax, %rdi\n");
+  s = s.write("    jc .Lalloc_guard_abort\n");
+  s = s.write("    movq %rdi, %rcx\n");
+  s = s.write("    addq $4096, %rcx\n");
+  s = s.write("    jc .Lalloc_guard_abort\n");
+  s = s.write("    cmpq __fern_heap_end(%rip), %rcx\n");
+  s = s.write("    ja .Lalloc_guard_oom\n");
+  s = s.write("    movq %rcx, __fern_heap_ptr(%rip)\n");
+  s = s.write("    pushq %rax\n");
+  s = s.write("    movq $4096, %rsi\n");
+  s = s.write("    xorl %edx, %edx\n");
+  s = s.write("    movl $10, %eax\n");
+  s = s.syscall(10);
+  s = s.write("    popq %rax\n");
+  s = s.write("    popq %r11\n");
+  s = s.write("    popq %rsi\n");
+  s = s.write("    popq %rdx\n");
+  s = s.write("    popq %rcx\n");
+  s = s.write("    popq %rbp\n");
+  s = s.write("    ret\n");
+  s = s.write(".Lalloc_guard_oom:\n");
+  s = s.write("    popq %r11\n    popq %rsi\n    popq %rdx\n    popq %rcx\n");
+  s = s.write("    jmp .Lalloc_oom\n");
+  s = s.write(".Lalloc_guard_abort:\n");
+  s = s.write("    popq %r11\n    popq %rsi\n    popq %rdx\n    popq %rcx\n");
+  s = s.write("    jmp __fern_alloc_size_abort\n");
+  return s.write(".Lalloc_bump:\n");
 }
 
 function emit_alloc_bytes(s: asmcore.EmitState): asmcore.EmitState {
@@ -276,11 +484,7 @@ function apo_grow(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ja .Lapo_alloc\n");
   s = s.write("    leaq __fern_freelist(%rip), %rax\n");
   s = s.write("    addq %rax, %rdi\n");
-  s = s.write("    movq (%rdi), %rax\n");
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .Lapo_miss\n");
-  s = s.write("    movq (%rax), %rdx\n");
-  s = s.write("    movq %rdx, (%rdi)\n");
+  s = freelist_take_head(s, ".Lapo_miss");
   s = s.write(".Lapo_box:\n");
   s = s.write("    movq %rcx, (%rax)\n");
   s = s.write("    movq $1, 8(%rax)\n");
@@ -350,6 +554,8 @@ function apo_wrapped(s: asmcore.EmitState): asmcore.EmitState {
   s = hev_free(s, "%rdx", "%rcx");
   if (!s.rc_free_debug) {
     s = freelist_push(s, "%rdx", "%rcx", "%rdi");
+  } else {
+    s = quar_push(s, "%rdx", "%rcx", 8);
   }
   s = s.write(".Lapo_ret:\n");
   s = s.write("    popq %r13\n");
@@ -362,6 +568,12 @@ function apo_wrapped(s: asmcore.EmitState): asmcore.EmitState {
 function apo_large(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Lapo_large:\n");
   s = s.write(quarantine_rc("-8(%r12)", s.rc_free_debug));
+  if (s.rc_free_debug) {
+    s = s.write("    leaq -16(%r12), %rdi\n");
+    s = hev_free(s, "%rdi", "%rcx");
+    s = quar_push(s, "%rdi", "%rcx", 8);
+    return s.write("    jmp .Lapo_ret\n");
+  }
   s = s.write("    leaq -16(%r12), %r8\n");
   s = s.write("    leaq 0(,%rcx,8), %rsi\n");
   s = s.write("    pushq %rax\n");
@@ -416,11 +628,20 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   s = hev_free(s, "%rdx", "%rcx");
   if (!s.rc_free_debug) {
     s = freelist_push(s, "%rdx", "%rcx", "%rdi");
+  } else {
+    s = quar_push(s, "%rdx", "%rcx", 8);
   }
   s = s.write(".Lapou_ret:\n    popq %r13\n    popq %r12\n    leave\n    ret\n");
   s = s.write(".Lapou_large:\n");
   s = s.write(quarantine_rc("-8(%r12)", s.rc_free_debug));
-  s = s.write("    leaq -16(%r12), %r8\n    leaq 0(,%rcx,8), %rsi\n    pushq %rax\n    call __fern_large_push\n    popq %rax\n    jmp .Lapou_ret\n");
+  if (s.rc_free_debug) {
+    s = s.write("    leaq -16(%r12), %rdi\n");
+    s = hev_free(s, "%rdi", "%rcx");
+    s = quar_push(s, "%rdi", "%rcx", 8);
+    s = s.write("    jmp .Lapou_ret\n");
+  } else {
+    s = s.write("    leaq -16(%r12), %r8\n    leaq 0(,%rcx,8), %rsi\n    pushq %rax\n    call __fern_large_push\n    popq %rax\n    jmp .Lapou_ret\n");
+  }
   return s;
 }
 
@@ -2255,7 +2476,7 @@ function emit_map_fail_trap(s: asmcore.EmitState): asmcore.EmitState {
 function emit_report(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .section .bss\n    .align 8\n    .globl __fern_stack_top\n__fern_stack_top: .quad 0\n");
   if (s.harden) {
-    s = s.write("    .globl __fern_canary\n__fern_canary: .quad 0\n");
+    s = s.write("    .globl __fern_canary\n__fern_canary: .quad 0\n__fern_rng_state: .quad 0\n");
   }
   s = s.write("    .section .text\n");
   s = s.write("__fern_report:\n");
@@ -2298,6 +2519,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .globl __fern_arr_push_copied\n");
   s = s.write("__fern_arr_push_copied: .quad 0\n");
   s = s.write("    .align 8\n");
+  if (s.rc_free_debug) {
+    s = s.write("__fern_quar_head: .quad 0\n    .align 8\n__fern_quar_tail: .quad 0\n    .align 8\n__fern_quar_bytes: .quad 0\n    .align 8\n");
+  }
+  if (s.harden) {
+    s = s.write("__fern_guard_count: .quad 0\n    .align 8\n");
+  }
   s = s.write("__fern_freelist: .skip 524288\n");
   s = s.write("    .align 8\n");
   s = s.write("__fern_large_freelist: .skip 20480\n");
@@ -2338,11 +2565,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ja .Lalloc_full\n");
   s = s.write("    leaq __fern_freelist(%rip), %rax\n");
   s = s.write("    addq %rax, %rdi\n");
-  s = s.write("    movq (%rdi), %rax\n");
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .Lalloc_fast_miss\n");
-  s = s.write("    pushq (%rax)\n");
-  s = s.write("    popq (%rdi)\n");
+  s = freelist_take_head(s, ".Lalloc_fast_miss");
   s = s.write("    ret\n");
   s = s.write(".Lalloc_fast_miss:\n");
   s = s.write("    leaq __fern_freelist(%rip), %rax\n");
@@ -2367,11 +2590,20 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = capw_class(s, "%rcx");
   s = s.write("    leaq 0(,%rcx,8), %rdi\n");
   s = s.write("    leaq __fern_freelist(%rip), %rdx\n");
-  s = s.write("    movq (%rdx,%rcx,8), %rax\n");
-  s = s.write("    testq %rax, %rax\n");
-  s = s.write("    jz .Lalloc_nofl\n");
-  s = s.write("    movq (%rax), %rdi\n");
-  s = s.write("    movq %rdi, (%rdx,%rcx,8)\n");
+  if (s.harden) {
+    s = s.write("    pushq %rdi\n");
+    s = s.write("    leaq (%rdx,%rcx,8), %rdi\n");
+    s = s.write("    call __fern_freelist_take\n");
+    s = s.write("    popq %rdi\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lalloc_nofl\n");
+  } else {
+    s = s.write("    movq (%rdx,%rcx,8), %rax\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lalloc_nofl\n");
+    s = s.write("    movq (%rax), %rdi\n");
+    s = s.write("    movq %rdi, (%rdx,%rcx,8)\n");
+  }
   s = s.write("    popq %rdx\n");
   s = s.write("    popq %rcx\n");
   s = s.write("    popq %rbp\n");
@@ -2385,12 +2617,21 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    movq %rax, %rdi\n");
   s = s.write("    movq %rdx, %rax\n");
   s = s.write("    leaq __fern_large_freelist(%rip), %rdx\n");
-  s = s.write("    movq (%rdx,%rax,8), %rcx\n");
-  s = s.write("    testq %rcx, %rcx\n");
-  s = s.write("    jz .Lalloc_nofl\n");
-  s = s.write("    movq (%rcx), %rdi\n");
-  s = s.write("    movq %rdi, (%rdx,%rax,8)\n");
-  s = s.write("    movq %rcx, %rax\n");
+  if (s.harden) {
+    s = s.write("    pushq %rdi\n");
+    s = s.write("    leaq (%rdx,%rax,8), %rdi\n");
+    s = s.write("    call __fern_freelist_take\n");
+    s = s.write("    popq %rdi\n");
+    s = s.write("    testq %rax, %rax\n");
+    s = s.write("    jz .Lalloc_nofl\n");
+  } else {
+    s = s.write("    movq (%rdx,%rax,8), %rcx\n");
+    s = s.write("    testq %rcx, %rcx\n");
+    s = s.write("    jz .Lalloc_nofl\n");
+    s = s.write("    movq (%rcx), %rdi\n");
+    s = s.write("    movq %rdi, (%rdx,%rax,8)\n");
+    s = s.write("    movq %rcx, %rax\n");
+  }
   s = s.write("    popq %rdx\n");
   s = s.write("    popq %rcx\n");
   s = s.write("    popq %rbp\n");
@@ -2433,6 +2674,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    popq %rsi\n");
   s = s.write("    popq %rdi\n");
   s = s.write(".Lalloc_inited:\n");
+  if (s.harden) {
+    s = emit_guard_bump(s);
+  }
   s = s.write("    movq __fern_heap_ptr(%rip), %rax\n");
   s = s.write("    addq %rax, %rdi\n");
   s = s.write("    jc __fern_alloc_size_abort\n");
@@ -2467,11 +2711,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    ja .Larrbox_alloc\n");
     s = s.write("    leaq __fern_freelist(%rip), %rax\n");
     s = s.write("    addq %rax, %rdi\n");
-    s = s.write("    movq (%rdi), %rax\n");
-    s = s.write("    testq %rax, %rax\n");
-    s = s.write("    jz .Larrbox_miss\n");
-    s = s.write("    pushq (%rax)\n");
-    s = s.write("    popq (%rdi)\n");
+    s = freelist_take_head(s, ".Larrbox_miss");
     s = s.write(".Larrbox_hdr:\n");
   } else {
     s = s.write("    addq $3, %rdi\n");
@@ -2547,15 +2787,17 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    call __fern_hev_f\n");
     s = s.write("    addq $16, %rsp\n");
   }
-  if (!s.rc_free_debug) {
-    s = s.write("    movq %rsi, %rax\n");
-    s = large_class(s);
-    s = s.write("    movq %rdx, %rax\n");
-    s = s.write("    leaq __fern_large_freelist(%rip), %rdx\n");
-    s = s.write("    movq (%rdx,%rax,8), %rcx\n");
-    s = s.write("    movq %rcx, (%r8)\n");
-    s = s.write("    movq %r8, (%rdx,%rax,8)\n");
+  if (s.rc_free_debug) {
+    s = s.write("    ret\n");
+    s = s.write("__fern_large_push_now:\n");
   }
+  s = s.write("    movq %rsi, %rax\n");
+  s = large_class(s);
+  s = s.write("    movq %rdx, %rax\n");
+  s = s.write("    leaq __fern_large_freelist(%rip), %rdx\n");
+  s = s.write("    movq (%rdx,%rax,8), %rcx\n");
+  s = s.write("    movq %rcx, (%r8)\n");
+  s = s.write("    movq %r8, (%rdx,%rax,8)\n");
   s = s.write(".Llpush_ret:\n");
   s = s.write("    ret\n");
   s = s.write("__fern_capw:\n");
@@ -2582,6 +2824,12 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    popq %rcx\n");
   s = s.write("    popq %rax\n");
   s = s.write("    ret\n");
+  if (s.rc_free_debug) {
+    s = emit_quarantine(s);
+  }
+  if (s.harden) {
+    s = emit_freelist_take(s);
+  }
   s = s.write("__fern_raw_free:\n");
   s = s.write("    testq %rdi, %rdi\n");
   s = s.write("    jz .Lrawfree_ret\n");
@@ -2603,12 +2851,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = hev_free(s, "%rdi", "%rcx");
   if (!s.rc_free_debug) {
     s = freelist_push(s, "%rdi", "%rcx", "%rdx");
+  } else {
+    s = quar_push(s, "%rdi", "%rcx", 0);
   }
   s = s.write(".Lrawfree_ret:\n");
   s = s.write("    ret\n");
   s = s.write(".Lrawfree_large:\n");
-  s = s.write("    movq %rdi, %r8\n");
-  s = s.write("    call __fern_large_push\n");
+  if (s.rc_free_debug) {
+    s = hev_free(s, "%rdi", "%rcx");
+    s = quar_push(s, "%rdi", "%rcx", 0);
+  } else {
+    s = s.write("    movq %rdi, %r8\n");
+    s = s.write("    call __fern_large_push\n");
+  }
   s = s.write("    ret\n");
   s = s.write(".Lrawfree_bad:\n");
   s = s.write("    pushq (%rsp)\n    pushq %rbp\n    movq %rsp, %rbp\n    jmp __fern_free_range_abort\n");
@@ -2632,6 +2887,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (!s.rc_free_debug) {
     s = s.write(".Larrdec_push:\n");
     s = freelist_push_classed(s, "%rdx", "%rcx", "%rdi");
+  } else {
+    s = quar_push(s, "%rdx", "%rcx", 8);
   }
   s = s.write(".Larrdec_ret:\n");
   s = s.write("    ret\n");
@@ -2656,12 +2913,19 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq %rcx\n");
     s = s.write("    jmp .Larrdec_push\n");
   } else {
+    s = quar_push(s, "%rdx", "%rcx", 8);
     s = s.write("    ret\n");
   }
   s = s.write(".Larrdec_large:\n");
-  s = s.write("    leaq -16(%rax), %r8\n");
-  s = s.write("    leaq 0(,%rcx,8), %rsi\n");
-  s = s.write("    call __fern_large_push\n");
+  if (s.rc_free_debug) {
+    s = s.write("    leaq -16(%rax), %rdi\n");
+    s = hev_free(s, "%rdi", "%rcx");
+    s = quar_push(s, "%rdi", "%rcx", 8);
+  } else {
+    s = s.write("    leaq -16(%rax), %r8\n");
+    s = s.write("    leaq 0(,%rcx,8), %rsi\n");
+    s = s.write("    call __fern_large_push\n");
+  }
   s = s.write("    ret\n");
   s = s.write("__fn___fern_str_free:\n");
   s = s.write("    movq 8(%rsp), %rax\n");
@@ -2698,6 +2962,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = hev_free(s, "%rcx", "%rdx");
   if (!s.rc_free_debug) {
     s = freelist_push(s, "%rcx", "%rdx", "%rsi");
+  } else {
+    s = quar_push(s, "%rcx", "%rdx", 16);
   }
   s = s.write(".Lstrfree_box:\n");
   s = s.write(quarantine_rc("-8(%rax)", s.rc_free_debug));
@@ -2708,14 +2974,21 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq 24(%r8), %rsi\n");
     s = s.write("    movq %rsi, (%rdx)\n");
     s = s.write("    movq %rdx, 24(%r8)\n");
+  } else {
+    s = quar_push(s, "%rdx", "$3", 0);
   }
   s = s.write("    jmp .Lstrfree_ret\n");
   s = s.write(".Lstrfree_large:\n");
-  s = s.write("    movq %rcx, %r8\n");
-  s = s.write("    leaq 0(,%rdx,8), %rsi\n");
-  s = s.write("    pushq %rax\n");
-  s = s.write("    call __fern_large_push\n");
-  s = s.write("    popq %rax\n");
+  if (s.rc_free_debug) {
+    s = hev_free(s, "%rcx", "%rdx");
+    s = quar_push(s, "%rcx", "%rdx", 16);
+  } else {
+    s = s.write("    movq %rcx, %r8\n");
+    s = s.write("    leaq 0(,%rdx,8), %rsi\n");
+    s = s.write("    pushq %rax\n");
+    s = s.write("    call __fern_large_push\n");
+    s = s.write("    popq %rax\n");
+  }
   s = s.write("    jmp .Lstrfree_box\n");
   s = s.write(".Lstrfree_grown:\n");
   s = s.write("    movq -16(%rax), %rdx\n");
@@ -2735,6 +3008,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (!s.rc_free_debug) {
     s = s.write(".Lstrfree_fused_push:\n");
     s = freelist_push_classed(s, "%rcx", "%rdx", "%rsi");
+  } else {
+    s = s.write("    jmp .Lstrfree_quar\n");
   }
   s = s.write("    jmp .Lstrfree_ret\n");
   s = s.write(".Lstrfree_fused_big:\n");
@@ -2747,12 +3022,22 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    popq %rdx\n");
     s = s.write("    jmp .Lstrfree_fused_push\n");
   } else {
-    s = s.write("    jmp .Lstrfree_ret\n");
+    s = s.write("    jmp .Lstrfree_quar\n");
   }
   s = s.write(".Lstrfree_fused_large:\n");
-  s = s.write("    movq %rcx, %r8\n");
-  s = s.write("    leaq 0(,%rdx,8), %rsi\n");
-  s = s.write("    call __fern_large_push\n");
+  if (s.rc_free_debug) {
+    s = hev_free(s, "%rcx", "%rdx");
+    s = s.write(".Lstrfree_quar:\n");
+    s = s.write("    movq %rdx, %rsi\n");
+    s = s.write("    movq %rcx, %rdi\n");
+    s = s.write("    leaq -8(%rax), %rdx\n");
+    s = s.write("    subq %rcx, %rdx\n");
+    s = s.write("    call __fern_quar_push\n");
+  } else {
+    s = s.write("    movq %rcx, %r8\n");
+    s = s.write("    leaq 0(,%rdx,8), %rsi\n");
+    s = s.write("    call __fern_large_push\n");
+  }
   s = s.write("    jmp .Lstrfree_ret\n");
   s = s.write(".Lstrfree_shared:\n");
   s = s.write("    testl %ecx, %ecx\n");
@@ -2790,6 +3075,8 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq 24(%r8), %rsi\n");
     s = s.write("    movq %rsi, (%rdx)\n");
     s = s.write("    movq %rdx, 24(%r8)\n");
+  } else {
+    s = quar_push(s, "%rdx", "$3", 0);
   }
   s = s.write(".Lstrvfree_ret:\n");
   s = s.write("    ret\n");
@@ -3467,11 +3754,20 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
       s = s.write("    jne .Larr_push_frame\n");
       if (!s.has_need("alloc_count")) {
         s = s.write("    leaq __fern_freelist(%rip), %rcx\n");
-        s = s.write("    movq 56(%rcx), %rax\n");
-        s = s.write("    testq %rax, %rax\n");
-        s = s.write("    jz .Larr_push_fresh\n");
-        s = s.write("    movq (%rax), %rdx\n");
-        s = s.write("    movq %rdx, 56(%rcx)\n");
+        if (s.harden) {
+          s = s.write("    pushq %rdi\n");
+          s = s.write("    leaq 56(%rcx), %rdi\n");
+          s = s.write("    call __fern_freelist_take\n");
+          s = s.write("    popq %rdi\n");
+          s = s.write("    testq %rax, %rax\n");
+          s = s.write("    jz .Larr_push_fresh\n");
+        } else {
+          s = s.write("    movq 56(%rcx), %rax\n");
+          s = s.write("    testq %rax, %rax\n");
+          s = s.write("    jz .Larr_push_fresh\n");
+          s = s.write("    movq (%rax), %rdx\n");
+          s = s.write("    movq %rdx, 56(%rcx)\n");
+        }
         s = s.write("    movq $4, (%rax)\n");
         s = s.write("    movq $1, 8(%rax)\n");
         s = s.write("    movq $1, 16(%rax)\n");
@@ -10473,26 +10769,31 @@ function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_runtime(roots: string, s: asmcore.EmitState): asmcore.EmitState {
-  return emit_runtime_module(rtmodule.load("x86-64-linux", roots), s);
+  let at: i32 = s.runtime_units.roots.find(roots);
+  if (at >= 0) {
+    return emit_runtime_module(s.runtime_units.mods[at], s.runtime_units.lowered[at], s);
+  }
+  let m: parser.Module = rtmodule.load("x86-64-linux", roots);
+  let lowered: physicalbody.Lowered = s.rt_lower(m);
+  return emit_runtime_module(m, lowered, asmcore.with_runtime_unit(s, roots, m, lowered));
 }
 
-function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.EmitState {
+function emit_runtime_module(m: parser.Module, lowered: physicalbody.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let fns: parser.FuncDecl[] = m.funcs;
   let lit0: i32 = s.string_lits.len();
   let agg0: i32 = s.const_aggs.len();
   let sh0: i32 = s.shape_lits.len();
   let sa0: i32 = s.sym_addrs.len();
   let cf0: i32 = s.cfi_stubs.len();
-  let lowered: physicalbody.Lowered = s.rt_lower(m);
   let bodies: irtables.LowerResult[] = irtables.lowered_results(lowered.bodies);
   let physical = physicalbody.collection(lowered);
   let previous_regs: irtables.SigReg = s.reg_entries;
   let previous_leaves: ssa.Leaves = s.leaves;
   let previous_float: asmcore.FloatAbi = asmcore.FloatAbi { names: s.float_abi, masks: s.float_abi_masks };
-  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(m, 0, fns.len(), bodies);
+  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(m, 0, fns.len(), bodies, s.kinds);
   let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(m, 0, fns.len(), bodies);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(m, 0, fns.len(), bodies)), leaves: unit.leaves, float_abi: fabi.names, float_abi_masks: fabi.masks };
-  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns, m.funcs, bodies), s.kinds.pops, physicalbody.abis(physical)), s.memo);
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns, m.funcs, bodies), s.kinds, physicalbody.abis(physical)), s.memo);
   s = asmcore.export_runtime_fns(s, fns);
   let i: i32 = 0;
   while (i < fns.len()) {
@@ -10527,12 +10828,12 @@ function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.Em
 }
 
 function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: asmcore.EmitState, globl_defs: boolean, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection): asmcore.EmitState {
-  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs, mod.funcs, cache), s.kinds.pops, physicalbody.abis(physical)), s.memo);
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs, mod.funcs, cache), s.kinds, physicalbody.abis(physical)), s.memo);
   let hh: i32 = hi;
   if (hh < 0 || hh > mod.funcs.len()) {
     hh = mod.funcs.len();
   }
-  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, lo, hh, cache);
+  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, lo, hh, cache, s.kinds);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: unit.leaves };
   let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(mod, lo, hh, cache);
   s = asmcore.EmitState { ...s, float_abi: fabi.names, float_abi_masks: fabi.masks };
@@ -10728,7 +11029,7 @@ function emit_entry_runtime_settled(s0: asmcore.EmitState): asmcore.EmitState {
       let back: asmcore.EmitState = asmcore.EmitState { ...t, capture: s0.capture };
       out = back.write(text);
     } else {
-      s = asmcore.EmitState { ...s0, needed: t.needed };
+      s = asmcore.EmitState { ...s0, needed: t.needed, runtime_units: t.runtime_units };
     }
   }
   return out;
@@ -10846,9 +11147,10 @@ function emit_startup_failures(own s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_canary_init(own s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    leaq __fern_canary(%rip), %rdi\n    movl $8, %esi\n    xorl %edx, %edx\n    movl $318, %eax\n");
+  s = s.write("    leaq __fern_canary(%rip), %rdi\n    movl $16, %esi\n    xorl %edx, %edx\n    movl $318, %eax\n");
   s = s.syscall(318);
-  return s.write("    cmpq $8, %rax\n    jne .Lfern_canary_read_failed\n");
+  s = s.write("    cmpq $16, %rax\n    jne .Lfern_canary_read_failed\n");
+  return s.write("    orq $1, __fern_rng_state(%rip)\n");
 }
 
 // arch_prctl(ARCH_SHSTK_ENABLE, ARCH_SHSTK_SHSTK) turns the shadow stack on
@@ -11039,6 +11341,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.rc_free_debug) {
     s = s.write("    .text\n");
     s = emit_san_uaf_abort(s);
+    s = emit_san_waf_abort(s);
   }
   if (any_ccall_need(s)) {
     s = s.write("    .text\n");

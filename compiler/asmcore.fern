@@ -89,6 +89,7 @@ pub struct EmitState {
   recs: usize,
   nlab: i32,
   rt_lower: (parser.Module) => physicalbody.Lowered,
+  runtime_units: RuntimeUnits,
   runtime_target: string,
   named: string[],
   rc_free_debug: boolean,
@@ -102,6 +103,7 @@ pub struct EmitState {
   harden: boolean,
   pie: boolean,
   heap_limit: i64,
+  quarantine: i64,
   dw_first: boolean,
   dw_pos: i64,
   line_maps: util.LineMap[],
@@ -188,6 +190,15 @@ pub function (s: EmitState) has_named(name: string): boolean {
 
 pub function (s: EmitState) with_named(name: string): EmitState {
   return EmitState { ...s, named: s.named.append(name) };
+}
+
+// RuntimeUnits keeps each runtime module that this emission loaded and lowered, by its roots.
+// The runtime fixpoint emits the runtime again when it finds a new need, and reuses them.
+pub struct RuntimeUnits { roots: util.NameIndex, mods: parser.Module[], lowered: physicalbody.Lowered[] }
+
+pub function with_runtime_unit(s: EmitState, roots: string, m: parser.Module, lowered: physicalbody.Lowered): EmitState {
+  let u: RuntimeUnits = s.runtime_units;
+  return EmitState { ...s, runtime_units: RuntimeUnits { roots: u.roots.added(roots), mods: u.mods.append(m), lowered: u.lowered.append(lowered) } };
 }
 
 pub function no_rt_lower(mod: parser.Module): physicalbody.Lowered {
@@ -315,10 +326,9 @@ pub function lane_result(mask: string): boolean {
   return mask.len() > 0 && mask[mask.len() - 1] == b'v';
 }
 
-pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[]): UnitLeaves {
+pub function unit_leaves(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[], kt: ssa_lift.KindTable): UnitLeaves {
   let out: ssa.Leaf[] = [];
   let pre: Prelift[] = [];
-  let kt: ssa_lift.KindTable = ssa_lift.kind_table();
   let fi: i32 = 0;
   while (fi < cache.len()) {
     let p: Prelift = no_prelift();
@@ -439,6 +449,7 @@ pub function new_state(): EmitState {
     nlab: 0,
     recs: 0 as usize,
     rt_lower: no_rt_lower,
+    runtime_units: RuntimeUnits { roots: util.name_index([]), mods: [], lowered: [] },
     runtime_target: "arm64-linux",
     named: [],
     rc_free_debug: false,
@@ -451,6 +462,7 @@ pub function new_state(): EmitState {
     harden: false,
     pie: false,
     heap_limit: 17179869184i64,
+    quarantine: 0i64,
     var_rows: false,
     dw_first: false,
     dw_pos: 0,
@@ -498,7 +510,12 @@ pub function leak_check_on(): boolean {
   return envflag.on("FERN_LEAKCHECK");
 }
 
-pub struct Switches { backtrace: boolean, sanitize: boolean, leak_check: boolean, rc_free_debug: boolean, var_rows: boolean, shared: boolean, size: boolean, harden: boolean, heap_limit: i64, pie: boolean, profile: string, target: string, line_maps: util.LineMap[] }
+pub struct Switches { backtrace: boolean, sanitize: boolean, leak_check: boolean, rc_free_debug: boolean, var_rows: boolean, shared: boolean, size: boolean, harden: boolean, heap_limit: i64, quarantine: i64, pie: boolean, profile: string, target: string, line_maps: util.LineMap[] }
+
+// The -sanitize quarantine budget in bytes when no -quarantine was given: 64 MiB.
+pub function quarantine_default(): i64 {
+  return 67108864i64;
+}
 
 // The arena reservation in bytes: a -heap-limit when one was given, else 16 GiB.
 pub function arena_bytes(limit: i64): i64 {
@@ -509,11 +526,11 @@ pub function arena_bytes(limit: i64): i64 {
 }
 
 pub function env_switches(): Switches {
-  return Switches { backtrace: backtrace_on(), sanitize: sanitize_on(), leak_check: leak_check_on(), rc_free_debug: rc_free_debug_on(), var_rows: false, shared: false, size: size_on(), harden: false, heap_limit: 0i64, pie: false, profile: "", target: "", line_maps: [] };
+  return Switches { backtrace: backtrace_on(), sanitize: sanitize_on(), leak_check: leak_check_on(), rc_free_debug: rc_free_debug_on(), var_rows: false, shared: false, size: size_on(), harden: false, heap_limit: 0i64, quarantine: quarantine_default(), pie: false, profile: "", target: "", line_maps: [] };
 }
 
 pub function with_switches(s: EmitState, sw: Switches): EmitState {
-  return EmitState { ...s, backtrace: sw.backtrace, var_rows: sw.var_rows, shared: sw.shared, size: sw.size, harden: sw.harden, pie: sw.pie, heap_limit: arena_bytes(sw.heap_limit), build_profile: sw.profile, build_target: sw.target, line_maps: sw.line_maps, sanitize: sw.sanitize, leak_check: sw.sanitize || sw.leak_check, rc_free_debug: sw.sanitize || sw.rc_free_debug };
+  return EmitState { ...s, backtrace: sw.backtrace, var_rows: sw.var_rows, shared: sw.shared, size: sw.size, harden: sw.harden, pie: sw.pie, heap_limit: arena_bytes(sw.heap_limit), quarantine: sw.quarantine, build_profile: sw.profile, build_target: sw.target, line_maps: sw.line_maps, sanitize: sw.sanitize, leak_check: sw.sanitize || sw.leak_check, rc_free_debug: sw.sanitize || sw.rc_free_debug };
 }
 
 // A `.loc` row names the document line of a literate module, not its tangled line.
@@ -532,7 +549,7 @@ function flag01(on: boolean): string {
 // The build manifest stamped into every native executable, which
 // `fern -manifest` and std/mitigations read back.
 pub function build_manifest(s: EmitState): string {
-  return "FERNBUILD1 target=" + s.build_target + " profile=" + s.build_profile + " harden=" + flag01(s.harden) + " pie=" + flag01(s.pie) + " sanitize=" + flag01(s.sanitize) + " backtrace=" + flag01(s.backtrace) + " size=" + flag01(s.size) + " shared=" + flag01(s.shared) + " heap_limit=" + util.i64_to_string(s.heap_limit);
+  return "FERNBUILD1 target=" + s.build_target + " profile=" + s.build_profile + " harden=" + flag01(s.harden) + " pie=" + flag01(s.pie) + " sanitize=" + flag01(s.sanitize) + " backtrace=" + flag01(s.backtrace) + " size=" + flag01(s.size) + " shared=" + flag01(s.shared) + " heap_limit=" + util.i64_to_string(s.heap_limit) + " quarantine=" + util.i64_to_string(s.quarantine);
 }
 
 pub function emit_build_manifest(s: EmitState): EmitState {

@@ -1,0 +1,54 @@
+// A small function that returns a string inside an Option or a Result, and that
+// three or more places call, returns a tag and a payload word. Each caller owns
+// the string it reads back, whether or not it reads it.
+
+function mk(t: string): Option[string] {
+  return Some(t + "x");
+}
+
+function ok_or(t: string, n: i32): Result[string, i32] {
+  if (n < 0) {
+    return Err(n);
+  }
+  return Ok(t + "y");
+}
+
+function lens(t: string): i32 {
+  let a: Option[string] = mk(t);
+  let b: Option[string] = mk(t + "1");
+  let c: Option[string] = mk(t + "22");
+  let n: i32 = 0;
+  match (a) {
+    Some(s) => {
+      n = n + s.len();
+    },
+    None => {}
+  }
+  match (c) {
+    Some(s) => {
+      n = n + s.len();
+    },
+    None => {}
+  }
+  return n;
+}
+
+function shown(r: Result[string, i32]): string {
+  match (r) {
+    Ok(s) => {
+      return s;
+    },
+    Err(n) => {
+      return "err " + n.to_string();
+    }
+  }
+}
+
+function main(): i32 {
+  print(lens("ab"));
+  let unread: Option[string] = mk("z");
+  print(shown(ok_or("q", 1)));
+  print(shown(ok_or("qq", 0 - 2)));
+  print(shown(ok_or("qqq", 3)));
+  return 0;
+}

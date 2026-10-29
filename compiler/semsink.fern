@@ -205,7 +205,7 @@ function reads_of(f: ssasem.Func, at: i32[], lent: boolean): Reads {
   if (lent) {
     strict = spent_by(f, false, t.parent, deps, pos);
   }
-  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute(g, deps), pos: pos, spent: spent_by(f, lent, t.parent, deps, pos), strict: strict, kids: t.kids, grown: grown_by(g, deps), first: t.first };
+  return Reads { dom: ssadeps.dominates(g), par: t.par, at: at, flow: ssalive.compute_kept(g, deps, t.parent), pos: pos, spent: spent_by(f, lent, t.parent, deps, pos), strict: strict, kids: t.kids, grown: grown_by(g, deps), first: t.first };
 }
 
 function projection_tree(g: ssa.SFunc, values: typeinfo.Type[], deps: i32[][]): Tree {
