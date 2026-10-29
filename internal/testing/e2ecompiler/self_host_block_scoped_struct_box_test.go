@@ -38,10 +38,11 @@ func TestSelfHostBlockScopedStructBoxX86_64(t *testing.T) {
 
 	t.Run("struct_declared_in_a_loop", func(t *testing.T) {
 		src := `struct S { xs: i32[], n: i32 }
+@noinline function four(): i32 { return 4; }
 function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) {
+    while (i < four()) {
         let s: S = S { xs: [i, i + 1], n: i };
         acc = acc + s.n + s.xs.len();
         i = i + 1;
