@@ -49,6 +49,8 @@ var withoutCoreDump = e2eharness.WithoutCoreDump
 
 const uuidV4Program = e2eharness.UuidV4Program
 
+var uuidV4ProgramLoaderless = e2eharness.UuidV4ProgramLoaderless
+
 var withBuildMemoryMB = e2eharness.WithBuildMemoryMB
 var withPrintInt = e2eharness.WithPrintInt
 var writeSelfHostAsmProject = e2eharness.WriteSelfHostAsmProject
