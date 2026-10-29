@@ -84,7 +84,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<34 pub struct ResolvConf>>
 
-<<35 pub function dns_port(): i32>>
+<<35 pub const PORT: i32>>
 
 <<36 function with_nameserver(ns: net.SocketAddr[], text: string): net.SocketAddr[]>>
 
@@ -285,53 +285,29 @@ pub function (e: DnsError) to_string(): string {
   return e.message();
 }
 
-pub function type_a(): i32 {
-  return 1;
-}
+pub const TYPE_A: i32 = 1;
 
-pub function type_cname(): i32 {
-  return 5;
-}
+pub const TYPE_CNAME: i32 = 5;
 
-pub function type_ptr(): i32 {
-  return 12;
-}
+pub const TYPE_PTR: i32 = 12;
 
-pub function type_aaaa(): i32 {
-  return 28;
-}
+pub const TYPE_AAAA: i32 = 28;
 
-pub function type_opt(): i32 {
-  return 41;
-}
+pub const TYPE_OPT: i32 = 41;
 
-pub function class_in(): i32 {
-  return 1;
-}
+pub const CLASS_IN: i32 = 1;
 
-pub function rcode_ok(): i32 {
-  return 0;
-}
+pub const RCODE_OK: i32 = 0;
 
-pub function rcode_format_error(): i32 {
-  return 1;
-}
+pub const RCODE_FORMAT_ERROR: i32 = 1;
 
-pub function rcode_server_failure(): i32 {
-  return 2;
-}
+pub const RCODE_SERVER_FAILURE: i32 = 2;
 
-pub function rcode_name_error(): i32 {
-  return 3;
-}
+pub const RCODE_NAME_ERROR: i32 = 3;
 
-pub function rcode_not_implemented(): i32 {
-  return 4;
-}
+pub const RCODE_NOT_IMPLEMENTED: i32 = 4;
 
-pub function rcode_refused(): i32 {
-  return 5;
-}
+pub const RCODE_REFUSED: i32 = 5;
 ```
 
 ### `7 pub enum RData`
@@ -371,7 +347,7 @@ pub struct Message {
 ```fern
 <<8 pub function query(id: i32, name: string, qtype: i32): Message>>=
 pub function query(id: i32, name: string, qtype: i32): Message {
-  let qs: Question[] = [Question { name: name, qtype: qtype, qclass: class_in() }];
+  let qs: Question[] = [Question { name: name, qtype: qtype, qclass: CLASS_IN }];
   return Message {
     id: id & 65535, response: false, opcode: 0, authoritative: false, truncated: false,
     recursion_desired: true, recursion_available: false, rcode: 0,
@@ -379,13 +355,11 @@ pub function query(id: i32, name: string, qtype: i32): Message {
   };
 }
 
-pub function udp_payload(): i32 {
-  return 4096;
-}
+pub const UDP_PAYLOAD: i32 = 4096;
 
 pub function with_edns(m: Message): Message {
   let none: u8[] = [];
-  let opt: Record = Record { name: "", rtype: type_opt(), rclass: udp_payload(), ttl: 0, data: Raw(none) };
+  let opt: Record = Record { name: "", rtype: TYPE_OPT, rclass: UDP_PAYLOAD, ttl: 0, data: Raw(none) };
   return Message { ...m, additional: m.additional.append(opt) };
 }
 
@@ -719,20 +693,20 @@ function decode_rdata(msg: u8[], rtype: i32, rclass: i32, at: i32, rdlen: i32): 
     raw = raw.append(msg[at + k]);
     k = k + 1;
   }
-  if (rclass != class_in()) {
+  if (rclass != CLASS_IN) {
     return Ok(Raw(raw));
   }
-  if (rtype == type_cname() || rtype == type_ptr()) {
+  if (rtype == TYPE_CNAME || rtype == TYPE_PTR) {
     return decode_name_rdata(msg, rtype, at, rdlen);
   }
   return decode_address_rdata(rtype, raw);
 }
 
 function decode_address_rdata(rtype: i32, raw: u8[]): Result[RData, DnsError] {
-  if (rtype == type_a() && raw.len() == 4) {
+  if (rtype == TYPE_A && raw.len() == 4) {
     return Ok(A(net.ipv4(raw[0] as i32, raw[1] as i32, raw[2] as i32, raw[3] as i32)));
   }
-  if (rtype == type_aaaa() && raw.len() == 16) {
+  if (rtype == TYPE_AAAA && raw.len() == 16) {
     match (net.ipv6(raw)) {
       Some(ip) => {
         return Ok(AAAA(ip));
@@ -750,7 +724,7 @@ function decode_name_rdata(msg: u8[], rtype: i32, at: i32, rdlen: i32): Result[R
   if (n.next > at + rdlen) {
     return Err(Malformed);
   }
-  if (rtype == type_cname()) {
+  if (rtype == TYPE_CNAME) {
     return Ok(CNAME(n.name));
   }
   return Ok(PTR(n.name));
@@ -917,12 +891,12 @@ function scan_owner(m: Message, owner: string, rtype: i32): OwnerScan {
   while (i < m.answers.len()) {
     let r: Record = m.answers[i];
     i = i + 1;
-    if (r.rclass != class_in() || !names_equal(r.name, owner)) {
+    if (r.rclass != CLASS_IN || !names_equal(r.name, owner)) {
       continue;
     }
     if (r.rtype == rtype) {
       found = found.append(r);
-    } else if (r.rtype == type_cname() && alias.len() == 0) {
+    } else if (r.rtype == TYPE_CNAME && alias.len() == 0) {
       alias = cname_target(r.data);
     }
   }
@@ -1057,16 +1031,14 @@ pub struct ResolvConf {
 }
 ```
 
-### `35 pub function dns_port(): i32`
+### `35 pub const PORT: i32`
 
 ```fern
-<<35 pub function dns_port(): i32>>=
-pub function dns_port(): i32 {
-  return 53;
-}
+<<35 pub const PORT: i32>>=
+pub const PORT: i32 = 53;
 
 pub function resolv_defaults(host: string): ResolvConf {
-  let ns: net.SocketAddr[] = [net.socket_addr(net.ipv4_loopback(), dns_port())];
+  let ns: net.SocketAddr[] = [net.socket_addr(net.ipv4_loopback(), PORT)];
   return ResolvConf { nameservers: ns, search: host_domain(host), ndots: 1, timeout: time.duration_seconds(5 as i64), attempts: 2, rotate: false };
 }
 
@@ -1111,7 +1083,7 @@ function with_nameserver(ns: net.SocketAddr[], text: string): net.SocketAddr[] {
   }
   match (net.ip_parse(text)) {
     Ok(ip) => {
-      return ns.append(net.socket_addr(ip, dns_port()));
+      return ns.append(net.socket_addr(ip, PORT));
     },
     Err(_) => {
       return ns;
@@ -1458,7 +1430,7 @@ function first_readable(slots: Slot[], pending: i32[], wait_ms: i32): i32 {
 ```fern
 <<43 function take_reply(sock: i32, q: Message): Result[Option[Message], DnsError]>>=
 function take_reply(sock: i32, q: Message): Result[Option[Message], DnsError] {
-  let buf: u8[] = zero_bytes(udp_payload());
+  let buf: u8[] = zero_bytes(UDP_PAYLOAD);
   let n: i32 = 0;
   match (net.recv_from(sock, buf)) {
     Ok(got) => {
@@ -1685,7 +1657,7 @@ function ask_server(ns: net.SocketAddr, qs: Message[], asked: Asked[], timeout: 
 function noted(a: Asked, r: Result[Message, DnsError]): Asked {
   match (r) {
     Ok(reply) => {
-      if (reply.rcode != rcode_server_failure() && reply.rcode != rcode_refused()) {
+      if (reply.rcode != RCODE_SERVER_FAILURE && reply.rcode != RCODE_REFUSED) {
         return Asked { ...a, reply: Some(reply) };
       }
       return Asked { ...a, tally: noted_rcode(a.tally, reply.rcode) };
@@ -1710,7 +1682,7 @@ struct Tally { servfail: boolean, refused: boolean, silent: boolean, last: DnsEr
 ```fern
 <<50 function noted_rcode(t: Tally, rcode: i32): Tally>>=
 function noted_rcode(t: Tally, rcode: i32): Tally {
-  if (rcode == rcode_server_failure()) {
+  if (rcode == RCODE_SERVER_FAILURE) {
     return Tally { ...t, servfail: true };
   }
   return Tally { ...t, refused: true };
@@ -1747,16 +1719,16 @@ function tally_error(t: Tally): DnsError {
 ```fern
 <<51 pub function answer_records(reply: Message, qname: string, rtype: i32): Result[Answer, DnsError]>>=
 pub function answer_records(reply: Message, qname: string, rtype: i32): Result[Answer, DnsError] {
-  if (reply.rcode == rcode_name_error()) {
+  if (reply.rcode == RCODE_NAME_ERROR) {
     return Err(NoSuchName);
   }
-  if (reply.rcode == rcode_server_failure()) {
+  if (reply.rcode == RCODE_SERVER_FAILURE) {
     return Err(ServerFailure);
   }
-  if (reply.rcode == rcode_refused()) {
+  if (reply.rcode == RCODE_REFUSED) {
     return Err(Refused);
   }
-  if (reply.rcode != rcode_ok()) {
+  if (reply.rcode != RCODE_OK) {
     return Err(Malformed);
   }
   let a: Answer = records_for(reply, qname, rtype);
@@ -1913,17 +1885,17 @@ function ask_one(conf: ResolvConf, qname: string, rtype: i32): Result[Answer, Dn
 ```fern
 <<57 pub function lookup_a(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError]>>=
 pub function lookup_a(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
-  let a: Answer = lookup_records(conf, name, type_a())?;
+  let a: Answer = lookup_records(conf, name, TYPE_A)?;
   return Ok(addresses_of(a.records));
 }
 
 pub function lookup_aaaa(conf: ResolvConf, name: string): Result[net.IpAddr[], DnsError] {
-  let a: Answer = lookup_records(conf, name, type_aaaa())?;
+  let a: Answer = lookup_records(conf, name, TYPE_AAAA)?;
   return Ok(addresses_of(a.records));
 }
 
 pub function canonical_name(conf: ResolvConf, name: string): Result[string, DnsError] {
-  let a: Answer = lookup_records(conf, name, type_a())?;
+  let a: Answer = lookup_records(conf, name, TYPE_A)?;
   return Ok(a.canonical);
 }
 
@@ -1943,8 +1915,8 @@ function found_addresses(conf: ResolvConf, name: string): Result[net.IpAddr[], D
 }
 
 function ask_pair(conf: ResolvConf, qname: string): Result[Answer, DnsError] {
-  let replies: Result[Message, DnsError][] = ask_many(conf, [query(new_id(), qname, type_a()), query(new_id(), qname, type_aaaa())]);
-  return combine_pair(reply_records(replies[0], qname, type_a()), reply_records(replies[1], qname, type_aaaa()));
+  let replies: Result[Message, DnsError][] = ask_many(conf, [query(new_id(), qname, TYPE_A), query(new_id(), qname, TYPE_AAAA)]);
+  return combine_pair(reply_records(replies[0], qname, TYPE_A), reply_records(replies[1], qname, TYPE_AAAA));
 }
 
 function reply_records(r: Result[Message, DnsError], qname: string, rtype: i32): Result[Answer, DnsError] {

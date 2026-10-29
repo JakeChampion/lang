@@ -20,7 +20,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<dependencies 2>>
 
-<<3 pub function blocktype_empty(): u8>>
+<<3 pub const BLOCKTYPE_EMPTY: u8>>
 
 <<4 pub function inst_br_if(buf: u8[], labelidx: u32): u8[]>>
 ```
@@ -40,13 +40,11 @@ import "std/wasm/leb128";
 import "std/wasm/encode";
 ```
 
-### `3 pub function blocktype_empty(): u8`
+### `3 pub const BLOCKTYPE_EMPTY: u8`
 
 ```fern
-<<3 pub function blocktype_empty(): u8>>=
-pub function blocktype_empty(): u8 {
-  return 64u8;
-}
+<<3 pub const BLOCKTYPE_EMPTY: u8>>=
+pub const BLOCKTYPE_EMPTY: u8 = 64u8;
 
 pub function put_blocktype_typeidx(buf: u8[], idx: i32): u8[] {
   return leb128.sleb_i32(buf, idx);

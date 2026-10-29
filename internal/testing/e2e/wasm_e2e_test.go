@@ -5992,14 +5992,14 @@ function main(): i32 {
     if (n1[2] != 105u8) { return 13; }   // 'i'
 
     // Empty section body: id + uleb(0) = 2 bytes.
-    let s0: u8[] = encode.put_section(empty, encode.section_type(), empty);
+    let s0: u8[] = encode.put_section(empty, encode.SECTION_TYPE, empty);
     if (s0.len() != 2) { return 20; }
     if (s0[0] != 1u8) { return 21; }     // section_type id
     if (s0[1] != 0u8) { return 22; }     // size 0
 
     // Non-empty section body: id + uleb(2) + body.
     let body: u8[] = [170u8, 187u8];     // 0xAA 0xBB
-    let s1: u8[] = encode.put_section(empty, encode.section_function(), body);
+    let s1: u8[] = encode.put_section(empty, encode.SECTION_FUNCTION, body);
     if (s1.len() != 4) { return 30; }
     if (s1[0] != 3u8) { return 31; }     // section_function id
     if (s1[1] != 2u8) { return 32; }     // size 2
@@ -6007,13 +6007,13 @@ function main(): i32 {
     if (s1[3] != 187u8) { return 34; }
 
     // section_* IDs match the wasm spec table.
-    if (encode.section_type() != 1u8) { return 40; }
-    if (encode.section_import() != 2u8) { return 41; }
-    if (encode.section_function() != 3u8) { return 42; }
-    if (encode.section_memory() != 5u8) { return 43; }
-    if (encode.section_export() != 7u8) { return 44; }
-    if (encode.section_code() != 10u8) { return 45; }
-    if (encode.section_data() != 11u8) { return 46; }
+    if (encode.SECTION_TYPE != 1u8) { return 40; }
+    if (encode.SECTION_IMPORT != 2u8) { return 41; }
+    if (encode.SECTION_FUNCTION != 3u8) { return 42; }
+    if (encode.SECTION_MEMORY != 5u8) { return 43; }
+    if (encode.SECTION_EXPORT != 7u8) { return 44; }
+    if (encode.SECTION_CODE != 10u8) { return 45; }
+    if (encode.SECTION_DATA != 11u8) { return 46; }
 
     return 0;
 }`
@@ -6033,11 +6033,11 @@ function main(): i32 {
     // one functype "(i32) -> (i32)".
     let type_body: u8[] = [];
     type_body = leb128.uleb_u32(type_body, 1u32);
-    let params: u8[] = [encode.valtype_i32()];
-    let results: u8[] = [encode.valtype_i32()];
+    let params: u8[] = [encode.VALTYPE_I32];
+    let results: u8[] = [encode.VALTYPE_I32];
     type_body = encode.put_func_type(type_body, params, results);
 
-    bytes = encode.put_section(bytes, encode.section_type(), type_body);
+    bytes = encode.put_section(bytes, encode.SECTION_TYPE, type_body);
 
     // Expected: 16 bytes.
     if (bytes.len() != 16) { return 1; }
@@ -6066,7 +6066,7 @@ function main(): i32 {
 
     // A two-param / no-result functype: 0x60 02 7F 7E 00.
     let ft2: u8[] = [];
-    let ps: u8[] = [encode.valtype_i32(), encode.valtype_i64()];
+    let ps: u8[] = [encode.VALTYPE_I32, encode.VALTYPE_I64];
     let rs: u8[] = [];
     ft2 = encode.put_func_type(ft2, ps, rs);
     if (ft2.len() != 5) { return 40; }
@@ -6220,19 +6220,19 @@ function main(): i32 {
     if (inst.inst_select(empty)[0] != 27u8) { return 8; }
 
     // block bt=empty -> 0x02 0x40
-    let bk: u8[] = inst.inst_block_start(empty, inst.blocktype_empty());
+    let bk: u8[] = inst.inst_block_start(empty, inst.BLOCKTYPE_EMPTY);
     if (bk.len() != 2) { return 10; }
     if (bk[0] != 2u8) { return 11; }
     if (bk[1] != 64u8) { return 12; }
 
     // loop bt=i32 -> 0x03 0x7F
-    let lp: u8[] = inst.inst_loop_start(empty, encode.valtype_i32());
+    let lp: u8[] = inst.inst_loop_start(empty, encode.VALTYPE_I32);
     if (lp.len() != 2) { return 20; }
     if (lp[0] != 3u8) { return 21; }
     if (lp[1] != 127u8) { return 22; }
 
     // if bt=empty -> 0x04 0x40
-    let ifs: u8[] = inst.inst_if_start(empty, inst.blocktype_empty());
+    let ifs: u8[] = inst.inst_if_start(empty, inst.BLOCKTYPE_EMPTY);
     if (ifs[0] != 4u8) { return 30; }
     if (ifs[1] != 64u8) { return 31; }
 
@@ -6288,7 +6288,7 @@ function main(): i32 {
     if (entry[4] != 11u8) { return 6; }    // end
 
     // Locals: one group of 3 i32s.
-    let locals3: u8[] = inst.put_locals_one_group(empty, 3u32, encode.valtype_i32());
+    let locals3: u8[] = inst.put_locals_one_group(empty, 3u32, encode.VALTYPE_I32);
     if (locals3.len() != 3) { return 10; }
     if (locals3[0] != 1u8) { return 11; }      // num groups
     if (locals3[1] != 3u8) { return 12; }      // count
@@ -6757,7 +6757,7 @@ function main(): i32 {
     // One func export named "main" -> 0 + 0x00 + 0
     // body: count=1, "main"=[4, 0x6D, 0x61, 0x69, 0x6E], kind=0, idx=0
     let nms: string[] = ["main"];
-    let ks: u8[] = [sections.export_func()];
+    let ks: u8[] = [sections.EXPORT_FUNC];
     let ixs: u32[] = [0u32];
     let s1: u8[] = sections.encode_export_section(empty, nms, ks, ixs);
     // Expected: [0x07, 0x08, 0x01, 0x04, 'm', 'a', 'i', 'n', 0x00, 0x00]
@@ -6776,7 +6776,7 @@ function main(): i32 {
 
     // Two exports: ("memory", memory, 0) and ("g", global, 2).
     let nms2: string[] = ["memory", "g"];
-    let ks2: u8[] = [sections.export_memory(), sections.export_global()];
+    let ks2: u8[] = [sections.EXPORT_MEMORY, sections.EXPORT_GLOBAL];
     let ixs2: u32[] = [0u32, 2u32];
     let s2: u8[] = sections.encode_export_section(empty, nms2, ks2, ixs2);
     // Body: count=2,
@@ -6811,8 +6811,8 @@ function main(): i32 {
     let empty: u8[] = [];
 
     // Type section with one (i32) -> (i32) functype.
-    let p: u8[] = [encode.valtype_i32()];
-    let r: u8[] = [encode.valtype_i32()];
+    let p: u8[] = [encode.VALTYPE_I32];
+    let r: u8[] = [encode.VALTYPE_I32];
     let pp: u8[][] = [p];
     let rr: u8[][] = [r];
     let ts: u8[] = sections.encode_type_section(empty, pp, rr);
@@ -6900,7 +6900,7 @@ function main(): i32 {
     let e: u8[] = [];
 
     // Table: one funcref table, min 2, no max.
-    let tbl: u8[] = sections.encode_table_section(e, imports.reftype_funcref(), 2u32, 0 - 1);
+    let tbl: u8[] = sections.encode_table_section(e, imports.REFTYPE_FUNCREF, 2u32, 0 - 1);
     // [id=4, size=4, count=1, reftype=0x70, flag=0, min=2]
     if (tbl.len() != 6)  { return 1; }
     if (tbl[0] != 4u8)   { return 2; }   // section_table id
@@ -6943,7 +6943,7 @@ function main(): i32 {
     // One function import: ("env", "log", func, typeidx=0).
     let mods: string[] = ["env"];
     let nms: string[] = ["log"];
-    let ks: u8[] = [imports.import_func()];
+    let ks: u8[] = [imports.IMPORT_FUNC];
     let descs: u8[][] = [imports.import_desc_func(0u32)];
     let s1: u8[] = imports.encode_import_section(empty, mods, nms, ks, descs);
     // Body:
@@ -6969,9 +6969,9 @@ function main(): i32 {
     // and ("env", "g", global, i32 mut).
     let mods2: string[] = ["wasi", "env"];
     let nms2: string[] = ["fd_write", "g"];
-    let ks2: u8[] = [imports.import_func(), imports.import_global()];
+    let ks2: u8[] = [imports.IMPORT_FUNC, imports.IMPORT_GLOBAL];
     let d_func: u8[] = imports.import_desc_func(7u32);
-    let d_glob: u8[] = imports.import_desc_global(encode.valtype_i32(), imports.mut_var());
+    let d_glob: u8[] = imports.import_desc_global(encode.VALTYPE_I32, imports.MUT_VAR);
     let descs2: u8[][] = [d_func, d_glob];
     let s2: u8[] = imports.encode_import_section(empty, mods2, nms2, ks2, descs2);
     // Spot-check the global descriptor at the tail: valtype + mut
@@ -6999,7 +6999,7 @@ function main(): i32 {
     if (df[0] != 5u8) { return 2; }
 
     // import_desc_global(i32, const) -> [0x7F, 0x00]
-    let dg: u8[] = imports.import_desc_global(encode.valtype_i32(), imports.mut_const());
+    let dg: u8[] = imports.import_desc_global(encode.VALTYPE_I32, imports.MUT_CONST);
     if (dg.len() != 2)    { return 10; }
     if (dg[0] != 127u8)  { return 11; }
     if (dg[1] != 0u8)    { return 12; }
@@ -7018,7 +7018,7 @@ function main(): i32 {
     if (dm2[2] != 2u8) { return 33; }
 
     // import_desc_table(funcref, min=0, no max) -> [0x70, 0x00, 0x00]
-    let dt: u8[] = imports.import_desc_table(imports.reftype_funcref(), 0u32, 0 - 1);
+    let dt: u8[] = imports.import_desc_table(imports.REFTYPE_FUNCREF, 0u32, 0 - 1);
     if (dt.len() != 3)   { return 40; }
     if (dt[0] != 112u8) { return 41; }   // funcref 0x70
     if (dt[1] != 0u8)   { return 42; }   // flag no max
@@ -7043,8 +7043,8 @@ function main(): i32 {
     let init0: u8[] = inst.inst_i32_const(empty, 0);
     init0 = inst.inst_end(init0);
 
-    let vts: u8[] = [encode.valtype_i32()];
-    let ms: u8[] = [imports.mut_var()];
+    let vts: u8[] = [encode.VALTYPE_I32];
+    let ms: u8[] = [imports.MUT_VAR];
     let inits: u8[][] = [init0];
     let gs: u8[] = imports.encode_global_section(empty, vts, ms, inits);
     // Body: count=1 + valtype=0x7F + mut=0x01 + init(3) = 6 bytes
@@ -7097,14 +7097,14 @@ function main(): i32 {
 
     // Type: one functype () -> i32.
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
 
     // Function: one function with typeidx 0.
     m = m.with_functions([0u32]);
 
     // Export: ("main", func, 0).
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     // Code: body is i32.const 42 with no locals.
     let bodyExpr: u8[] = inst.inst_i32_const([], 42);
@@ -7182,7 +7182,7 @@ function main(): i32 {
     m = m.with_types([pe], [re]);
 
     // Import: one ("env", "h", func, typeidx=0).
-    m = m.with_imports(["env"], ["h"], [imports.import_func()], [imports.import_desc_func(0u32)]);
+    m = m.with_imports(["env"], ["h"], [imports.IMPORT_FUNC], [imports.import_desc_func(0u32)]);
 
     // Function: one with typeidx 0.
     m = m.with_functions([0u32]);
@@ -7193,10 +7193,10 @@ function main(): i32 {
     // Global: one const i32 = 0.
     let g0: u8[] = inst.inst_i32_const([], 0);
     g0 = inst.inst_end(g0);
-    m = m.with_globals([encode.valtype_i32()], [imports.mut_const()], [g0]);
+    m = m.with_globals([encode.VALTYPE_I32], [imports.MUT_CONST], [g0]);
 
     // Export: ("e", memory, 0).
-    m = m.with_exports(["e"], [sections.export_memory()], [0u32]);
+    m = m.with_exports(["e"], [sections.EXPORT_MEMORY], [0u32]);
 
     // Start: funcidx 1 (the imported func is 0, our func is 1).
     m = m.with_start(1u32);
@@ -7259,7 +7259,7 @@ function main(): i32 {
 
     // Type: one functype () -> i32.
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
 
     // Function: one function with typeidx 0.
@@ -7267,7 +7267,7 @@ function main(): i32 {
 
     // Export: ("main", func, 0). wasm-tools print uses the
     // export to label the function in its output.
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     // Code: body is i32.const 42 with no locals.
     let bodyExpr: u8[] = inst.inst_i32_const([], 42);
@@ -7396,10 +7396,10 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
     let bodyExpr: u8[] = inst.inst_i32_const([], 42);
     let localsBytes: u8[] = inst.put_locals_empty([]);
     let fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
@@ -7437,10 +7437,10 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     let body: u8[] = inst.inst_i32_const([], 3);
     body = inst.inst_i32_const(body, 4);
@@ -7481,17 +7481,17 @@ function main(): i32 {
     // Two types:
     //   type 0: (i32, i32) -> i32   for the add callee
     //   type 1: () -> i32           for main
-    let p_add: u8[] = [encode.valtype_i32(), encode.valtype_i32()];
-    let r_add: u8[] = [encode.valtype_i32()];
+    let p_add: u8[] = [encode.VALTYPE_I32, encode.VALTYPE_I32];
+    let r_add: u8[] = [encode.VALTYPE_I32];
     let p_main: u8[] = [];
-    let r_main: u8[] = [encode.valtype_i32()];
+    let r_main: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p_add, p_main], [r_add, r_main]);
 
     // Function 0 uses type 0 (add), function 1 uses type 1 (main).
     m = m.with_functions([0u32, 1u32]);
 
     // Export main as funcidx 1.
-    m = m.with_exports(["main"], [sections.export_func()], [1u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [1u32]);
 
     // add(a, b): local.get 0 ; local.get 1 ; i32.add.
     let add_body: u8[] = inst.inst_local_get([], 0u32);
@@ -7562,10 +7562,10 @@ function main(): i32 {
     // Build a "function returning 42" core module.
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
     let bodyExpr: u8[] = inst.inst_i32_const([], 42);
     let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
@@ -7642,10 +7642,10 @@ function main(): i32 {
     // Build a no-import core module: function "f" returns 7.
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["f"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["f"], [sections.EXPORT_FUNC], [0u32]);
     let bodyExpr: u8[] = inst.inst_i32_const([], 7);
     let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
@@ -7726,10 +7726,10 @@ function main(): i32 {
     // Build a core module: function "f" returns 9.
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["f"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["f"], [sections.EXPORT_FUNC], [0u32]);
     let bodyExpr: u8[] = inst.inst_i32_const([], 9);
     let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
@@ -7808,11 +7808,11 @@ function main(): i32 {
     // Core module: one func + one memory, both exported.
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_memory(1u32, 0 - 1);
-    m = m.with_exports(["f", "mem"], [sections.export_func(), sections.export_memory()], [0u32, 0u32]);
+    m = m.with_exports(["f", "mem"], [sections.EXPORT_FUNC, sections.EXPORT_MEMORY], [0u32, 0u32]);
     let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 1));
     m = m.with_code([fn]);
     let core_bytes: u8[] = module.build(m);
@@ -7822,7 +7822,7 @@ function main(): i32 {
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
 
     // Alias section with two entries of different core sorts.
-    let sorts: u8[] = [component.core_sort_func(), component.core_sort_memory()];
+    let sorts: u8[] = [component.CORE_SORT_FUNC, component.CORE_SORT_MEMORY];
     let instance_idxs: u32[] = [0u32, 0u32];
     let names: string[] = ["f", "mem"];
     comp = component.put_alias_section_core_exports(comp, sorts, instance_idxs, names);
@@ -7890,10 +7890,10 @@ import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
     let names: string[] = ["len"];
-    let vts: u8[] = [component.cvaltype_u64()];
+    let vts: u8[] = [component.CVALTYPE_U64];
     let comp: u8[] = component.put_component_header([]);
     // Type 0: instance { export get-info(len: u64) -> u32 }
-    comp = component.put_type_section_one_instance_one_func_with_result_export(comp, "get-info", names, vts, component.cvaltype_u32());
+    comp = component.put_type_section_one_instance_one_func_with_result_export(comp, "get-info", names, vts, component.CVALTYPE_U32);
     comp = component.put_import_section_one_instance(comp, "test:reader/iface", 0u32);
 
     let output: string = "";
@@ -7960,11 +7960,11 @@ function main(): i32 {
     // list, but the canon-lower-no-opts path used by the helper only
     // supports scalar funcs, so this test uses a stub-signature shape.
     let m: module.Module = module.module_new();
-    let p_exit: u8[] = [encode.valtype_i32()];
+    let p_exit: u8[] = [encode.VALTYPE_I32];
     let r_void: u8[] = [];
     let p_args: u8[] = [];
     m = m.with_types([p_exit, p_args], [r_void, r_void]);
-    m = m.with_imports(["wasi-exit", "wasi-env"], ["exit", "get-args"], [imports.import_func(), imports.import_func()], [imports.import_desc_func(0u32), imports.import_desc_func(1u32)]);
+    m = m.with_imports(["wasi-exit", "wasi-env"], ["exit", "get-args"], [imports.IMPORT_FUNC, imports.IMPORT_FUNC], [imports.import_desc_func(0u32), imports.import_desc_func(1u32)]);
     m = m.with_functions([]);
     m = m.with_code([]);
     let core_bytes: u8[] = module.build(m);
@@ -7973,7 +7973,7 @@ function main(): i32 {
     let interfaces: string[] = ["wasi:cli/exit@0.2.0", "wasi:cli/environment@0.2.0"];
     let funcs: string[] = ["exit", "get-args"];
     let p0: string[] = ["code"];
-    let v0: u8[] = [component.cvaltype_u32()];
+    let v0: u8[] = [component.CVALTYPE_U32];
     let p1: string[] = [];
     let v1: u8[] = [];
     let names_per: string[][] = [p0, p1];
@@ -9681,16 +9681,16 @@ import "std/wasm/encode";
 import "std/wasm/imports";
 function main(): i32 {
     let m: module.Module = module.module_new();
-    let p0: u8[] = [encode.valtype_i32()];
+    let p0: u8[] = [encode.VALTYPE_I32];
     let r0: u8[] = [];
     m = m.with_types([p0], [r0]);
-    m = m.with_imports(["wasi-exit"], ["exit"], [imports.import_func()], [imports.import_desc_func(0u32)]);
+    m = m.with_imports(["wasi-exit"], ["exit"], [imports.IMPORT_FUNC], [imports.import_desc_func(0u32)]);
     m = m.with_functions([]);
     m = m.with_code([]);
     let core_bytes: u8[] = module.build(m);
 
     let pnames: string[] = ["code"];
-    let pvals: u8[] = [component.cvaltype_u32()];
+    let pvals: u8[] = [component.CVALTYPE_U32];
     let comp: u8[] = component.build_wasi_imported_component(core_bytes, "wasi:cli/exit@0.2.0", "exit", pnames, pvals, "wasi-exit");
 
     let output: string = "";
@@ -9786,13 +9786,13 @@ import "std/wasm/imports";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32, 0u32]);
     m = m.with_memory(1u32, 0 - 1);
-    m = m.with_table(imports.reftype_funcref(), 1u32, 0 - 1);
+    m = m.with_table(imports.REFTYPE_FUNCREF, 1u32, 0 - 1);
     m = m.with_elements([0], [[0u32]]);
-    m = m.with_exports(["main"], [sections.export_func()], [1u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [1u32]);
 
     let f0: u8[] = inst.inst_i32_const([], 0);
     f0 = inst.inst_i32_const(f0, 9);
@@ -9853,16 +9853,16 @@ import "std/wasm/encode";
 import "std/wasm/imports";
 function main(): i32 {
     let m: module.Module = module.module_new();
-    let p0: u8[] = [encode.valtype_i32()];
+    let p0: u8[] = [encode.VALTYPE_I32];
     let r0: u8[] = [];
     m = m.with_types([p0], [r0]);
-    m = m.with_imports(["wasi"], ["exit"], [imports.import_func()], [imports.import_desc_func(0u32)]);
+    m = m.with_imports(["wasi"], ["exit"], [imports.IMPORT_FUNC], [imports.import_desc_func(0u32)]);
     m = m.with_functions([]);
     m = m.with_code([]);
     let core_bytes: u8[] = module.build(m);
 
     let pnames: string[] = ["code"];
-    let pvals: u8[] = [component.cvaltype_u32()];
+    let pvals: u8[] = [component.CVALTYPE_U32];
     let comp: u8[] = component.build_wasi_imported_component(core_bytes, "wasi:cli/exit@0.2.0", "exit", pnames, pvals, "wasi");
 
     let output: string = "";
@@ -9935,17 +9935,17 @@ function main(): i32 {
     // Core module: imports "wasi" "exit" : (i32) -> () then
     // calls it with 0 (or some constant).
     let m: module.Module = module.module_new();
-    let p0: u8[] = [encode.valtype_i32()];
+    let p0: u8[] = [encode.VALTYPE_I32];
     let r0: u8[] = [];
     m = m.with_types([p0], [r0]);
-    m = m.with_imports(["wasi"], ["exit"], [imports.import_func()], [imports.import_desc_func(0u32)]);
+    m = m.with_imports(["wasi"], ["exit"], [imports.IMPORT_FUNC], [imports.import_desc_func(0u32)]);
     m = m.with_functions([]);
     m = m.with_code([]);
     let core_bytes: u8[] = module.build(m);
 
     // Component build.
     let pnames: string[] = ["code"];
-    let pvals: u8[] = [component.cvaltype_u32()];
+    let pvals: u8[] = [component.CVALTYPE_U32];
 
     let comp: u8[] = component.put_component_header([]);
     // Type 0: instance { export exit(code: u32) }
@@ -10097,7 +10097,7 @@ function main(): i32 {
     let comp: u8[] = component.put_component_header([]);
     // Type 0: instance { export "exit" (func (param "code" u32)) }
     let names: string[] = ["code"];
-    let valtypes: u8[] = [component.cvaltype_u32()];
+    let valtypes: u8[] = [component.CVALTYPE_U32];
     comp = component.put_type_section_one_instance_one_func_export(comp, "exit", names, valtypes);
     // Import "wasi:cli/exit@0.2.0" of type 0 (the instance type).
     comp = component.put_import_section_one_instance(comp, "wasi:cli/exit@0.2.0", 0u32);
@@ -10159,8 +10159,8 @@ import "std/i32";
 import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
-    let params: u8[] = [encode.valtype_i32()];
-    let results: u8[] = [encode.valtype_i32()];
+    let params: u8[] = [encode.VALTYPE_I32];
+    let results: u8[] = [encode.VALTYPE_I32];
     let comp: u8[] = component.put_component_header([]);
     comp = component.put_core_type_section_one_func(comp, params, results);
 
@@ -10222,7 +10222,7 @@ import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
     let comp: u8[] = component.put_component_header([]);
-    comp = component.put_type_section_one_func_no_param(comp, component.cvaltype_u32());
+    comp = component.put_type_section_one_func_no_param(comp, component.CVALTYPE_U32);
 
     let output: string = "";
     let i: i32 = 0;
@@ -10282,9 +10282,9 @@ import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
     let names: string[] = ["x", "y"];
-    let valtypes: u8[] = [component.cvaltype_u32(), component.cvaltype_string()];
+    let valtypes: u8[] = [component.CVALTYPE_U32, component.CVALTYPE_STRING];
     let comp: u8[] = component.put_component_header([]);
-    comp = component.put_type_section_one_func(comp, names, valtypes, component.cvaltype_bool());
+    comp = component.put_type_section_one_func(comp, names, valtypes, component.CVALTYPE_BOOL);
 
     let output: string = "";
     let i: i32 = 0;
@@ -10354,10 +10354,10 @@ function main(): i32 {
     let names0: string[] = [];
     let valtypes0: u8[] = [];
     let names1: string[] = ["n"];
-    let valtypes1: u8[] = [component.cvaltype_u32()];
+    let valtypes1: u8[] = [component.CVALTYPE_U32];
     let names_per: string[][] = [names0, names1];
     let valtypes_per: u8[][] = [valtypes0, valtypes1];
-    let results_per: u8[] = [component.cvaltype_u32(), component.cvaltype_string()];
+    let results_per: u8[] = [component.CVALTYPE_U32, component.CVALTYPE_STRING];
 
     let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_funcs(comp, names_per, valtypes_per, results_per);
@@ -10489,7 +10489,7 @@ import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
     let comp: u8[] = component.put_component_header([]);
-    comp = component.put_type_section_one_func_no_param(comp, component.cvaltype_u32());
+    comp = component.put_type_section_one_func_no_param(comp, component.CVALTYPE_U32);
     comp = component.put_import_section_one_func(comp, "host-func", 0u32);
 
     let output: string = "";
@@ -10558,10 +10558,10 @@ function main(): i32 {
     let names0: string[] = [];
     let valtypes0: u8[] = [];
     let names1: string[] = ["n"];
-    let valtypes1: u8[] = [component.cvaltype_u32()];
+    let valtypes1: u8[] = [component.CVALTYPE_U32];
     let names_per: string[][] = [names0, names1];
     let valtypes_per: u8[][] = [valtypes0, valtypes1];
-    let results_per: u8[] = [component.cvaltype_u32(), component.cvaltype_string()];
+    let results_per: u8[] = [component.CVALTYPE_U32, component.CVALTYPE_STRING];
 
     let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_funcs(comp, names_per, valtypes_per, results_per);
@@ -10634,10 +10634,10 @@ import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
     let names: string[] = ["x"];
-    let valtypes: u8[] = [component.cvaltype_u32()];
+    let valtypes: u8[] = [component.CVALTYPE_U32];
 
     let comp: u8[] = component.put_component_header([]);
-    comp = component.put_type_section_one_func(comp, names, valtypes, component.cvaltype_u32());
+    comp = component.put_type_section_one_func(comp, names, valtypes, component.CVALTYPE_U32);
     comp = component.put_import_section_one_func(comp, "h", 0u32);
     comp = component.put_canon_section_lower_no_opts(comp, 0u32);
 
@@ -10709,7 +10709,7 @@ function main(): i32 {
     let imp_types: u32[] = [0u32, 0u32];
 
     let comp: u8[] = component.put_component_header([]);
-    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
+    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.CVALTYPE_U32);
     comp = component.put_import_section_funcs(comp, imp_names, imp_types);
 
     // Lower both imported funcs in one canon section.
@@ -10784,7 +10784,7 @@ function main(): i32 {
     let no_valtypes: u8[] = [];
     let names_per: string[][] = [no_names, no_names];
     let valtypes_per: u8[][] = [no_valtypes, no_valtypes];
-    let results_per: u8[] = [component.cvaltype_u32(), component.cvaltype_u32()];
+    let results_per: u8[] = [component.CVALTYPE_U32, component.CVALTYPE_U32];
 
     let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_funcs(comp, names_per, valtypes_per, results_per);
@@ -10870,9 +10870,9 @@ function main(): i32 {
     // Core module: imports host_a.f and host_b.f, both () -> i32.
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
-    m = m.with_imports(["host_a", "host_b"], ["f", "f"], [imports.import_func(), imports.import_func()], [imports.import_desc_func(0u32), imports.import_desc_func(0u32)]);
+    m = m.with_imports(["host_a", "host_b"], ["f", "f"], [imports.IMPORT_FUNC, imports.IMPORT_FUNC], [imports.import_desc_func(0u32), imports.import_desc_func(0u32)]);
     // No funcs of our own.
     m = m.with_functions([]);
     m = m.with_code([]);
@@ -10883,7 +10883,7 @@ function main(): i32 {
     let no_names: string[] = [];
     let no_valtypes: u8[] = [];
     let comp: u8[] = component.put_component_header([]);
-    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
+    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.CVALTYPE_U32);
 
     let imp_names: string[] = ["a", "b"];
     let imp_types: u32[] = [0u32, 0u32];
@@ -10970,14 +10970,14 @@ function main(): i32 {
     // returns whatever the import returns.
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     // Type 0 = () -> i32. Import "host"."f" of type 0.
-    m = m.with_imports(["host"], ["f"], [imports.import_func()], [imports.import_desc_func(0u32)]);
+    m = m.with_imports(["host"], ["f"], [imports.IMPORT_FUNC], [imports.import_desc_func(0u32)]);
     // Function 0 is the imported func (after imports). Function 1
     // is our own; type 0 too. Function 1 = "main", body: call 0.
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [1u32]);  // imports shift the export idx by 1
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [1u32]);  // imports shift the export idx by 1
     let bodyExpr: u8[] = inst.inst_call([], 0u32);
     let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
@@ -10987,7 +10987,7 @@ function main(): i32 {
     let names: string[] = [];
     let valtypes: u8[] = [];
     let comp: u8[] = component.put_component_header([]);
-    comp = component.put_type_section_one_func(comp, names, valtypes, component.cvaltype_u32());
+    comp = component.put_type_section_one_func(comp, names, valtypes, component.CVALTYPE_U32);
     comp = component.put_import_section_one_func(comp, "h", 0u32);
     comp = component.put_canon_section_lower_no_opts(comp, 0u32);
     comp = component.put_core_instance_section_from_one_func_export(comp, "f", 0u32);
@@ -11061,7 +11061,7 @@ function main(): i32 {
     let no_valtypes: u8[] = [];
 
     let comp: u8[] = component.put_component_header([]);
-    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
+    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.CVALTYPE_U32);
     comp = component.put_import_section_one_func(comp, "h", 0u32);
 
     // Re-export the imported func twice under different names.
@@ -11144,13 +11144,13 @@ function main(): i32 {
     //   exports: "f" -> func 0, "alloc" -> func 1, "mem" -> mem 0
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
-    let p1: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
-    let r1: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
+    let p1: u8[] = [encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32];
+    let r1: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0, p1], [r0, r1]);
     m = m.with_functions([0u32, 1u32]);
     m = m.with_memory(1u32, 0 - 1);
-    m = m.with_exports(["f", "alloc", "mem"], [sections.export_func(), sections.export_func(), sections.export_memory()], [0u32, 1u32, 0u32]);
+    m = m.with_exports(["f", "alloc", "mem"], [sections.EXPORT_FUNC, sections.EXPORT_FUNC, sections.EXPORT_MEMORY], [0u32, 1u32, 0u32]);
     let body_f: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 7));
     let body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
     m = m.with_code([body_f, body_alloc]);
@@ -11176,7 +11176,7 @@ function main(): i32 {
     // canonical-ABI lowering compatibility).
     let no_names: string[] = [];
     let no_valtypes: u8[] = [];
-    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
+    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.CVALTYPE_U32);
 
     // canon lift with mem + realloc opts. core-func 0 is the
     // aliased "f"; we use mem idx 0 and core-func idx 1 (the
@@ -11252,12 +11252,12 @@ function main(): i32 {
     // that takes a string under those opts.
     let m: module.Module = module.module_new();
     // type 0: (i32 i32 i32 i32) -> i32 (realloc signature)
-    let p0: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
-    let r0: u8[] = [encode.valtype_i32()];
+    let p0: u8[] = [encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_memory(1u32, 0 - 1);
-    m = m.with_exports(["mem", "alloc"], [sections.export_memory(), sections.export_func()], [0u32, 0u32]);
+    m = m.with_exports(["mem", "alloc"], [sections.EXPORT_MEMORY, sections.EXPORT_FUNC], [0u32, 0u32]);
     let body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
     m = m.with_code([body_alloc]);
     let core_bytes: u8[] = module.build(m);
@@ -11267,15 +11267,15 @@ function main(): i32 {
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
 
     // Alias both memory + alloc out of the instance.
-    let sorts: u8[] = [component.core_sort_memory(), component.core_sort_func()];
+    let sorts: u8[] = [component.CORE_SORT_MEMORY, component.CORE_SORT_FUNC];
     let instance_idxs: u32[] = [0u32, 0u32];
     let alias_names: string[] = ["mem", "alloc"];
     comp = component.put_alias_section_core_exports(comp, sorts, instance_idxs, alias_names);
 
     // Type: (s: string) -> u32. Then import "h" of that type.
     let p_names: string[] = ["s"];
-    let p_valtypes: u8[] = [component.cvaltype_string()];
-    comp = component.put_type_section_one_func(comp, p_names, p_valtypes, component.cvaltype_u32());
+    let p_valtypes: u8[] = [component.CVALTYPE_STRING];
+    comp = component.put_type_section_one_func(comp, p_names, p_valtypes, component.CVALTYPE_U32);
     comp = component.put_import_section_one_func(comp, "h", 0u32);
 
     // Lower the import under mem + realloc opts. mem idx 0
@@ -11352,15 +11352,15 @@ function main(): i32 {
     // cleanup (3xi32 -> ()), mem.
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
-    let p1: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
-    let r1: u8[] = [encode.valtype_i32()];
-    let p2: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
+    let p1: u8[] = [encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32];
+    let r1: u8[] = [encode.VALTYPE_I32];
+    let p2: u8[] = [encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32];
     let r2: u8[] = [];
     m = m.with_types([p0, p1, p2], [r0, r1, r2]);
     m = m.with_functions([0u32, 1u32, 2u32]);
     m = m.with_memory(1u32, 0 - 1);
-    m = m.with_exports(["f", "alloc", "cleanup", "mem"], [sections.export_func(), sections.export_func(), sections.export_func(), sections.export_memory()], [0u32, 1u32, 2u32, 0u32]);
+    m = m.with_exports(["f", "alloc", "cleanup", "mem"], [sections.EXPORT_FUNC, sections.EXPORT_FUNC, sections.EXPORT_FUNC, sections.EXPORT_MEMORY], [0u32, 1u32, 2u32, 0u32]);
     let body_f: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
     let body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
     let body_cleanup: u8[] = inst.put_function_body([], inst.put_locals_empty([]), []);
@@ -11372,14 +11372,14 @@ function main(): i32 {
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
 
     // Alias all four into the top-level core space.
-    let sorts: u8[] = [component.core_sort_func(), component.core_sort_memory(), component.core_sort_func(), component.core_sort_func()];
+    let sorts: u8[] = [component.CORE_SORT_FUNC, component.CORE_SORT_MEMORY, component.CORE_SORT_FUNC, component.CORE_SORT_FUNC];
     let instance_idxs: u32[] = [0u32, 0u32, 0u32, 0u32];
     let alias_names: string[] = ["f", "mem", "alloc", "cleanup"];
     comp = component.put_alias_section_core_exports(comp, sorts, instance_idxs, alias_names);
 
     let no_names: string[] = [];
     let no_valtypes: u8[] = [];
-    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
+    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.CVALTYPE_U32);
 
     // canon-lift with mem (idx 0) + realloc (core-func 1) +
     // post-return (core-func 2). Lift target is core-func 0.
@@ -11450,10 +11450,10 @@ function main(): i32 {
     // Core module: function "f" returns 11.
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["f"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["f"], [sections.EXPORT_FUNC], [0u32]);
     let bodyExpr: u8[] = inst.inst_i32_const([], 11);
     let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
@@ -11464,7 +11464,7 @@ function main(): i32 {
     comp = component.put_core_module_section(comp, core_bytes);
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
     comp = component.put_alias_section_core_export_func(comp, 0u32, "f");
-    comp = component.put_type_section_one_func_no_param(comp, component.cvaltype_u32());
+    comp = component.put_type_section_one_func_no_param(comp, component.CVALTYPE_U32);
     comp = component.put_canon_section_lift_no_opts(comp, 0u32, 0u32);
     comp = component.put_export_section_one_func(comp, "g", 0u32);
 
@@ -11539,13 +11539,13 @@ function main(): i32 {
     // Core module exports: f (() -> i32), alloc (4xi32 -> i32), mem.
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
-    let p1: u8[] = [encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32(), encode.valtype_i32()];
-    let r1: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
+    let p1: u8[] = [encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32];
+    let r1: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0, p1], [r0, r1]);
     m = m.with_functions([0u32, 1u32]);
     m = m.with_memory(1u32, 0 - 1);
-    m = m.with_exports(["f", "alloc", "mem"], [sections.export_func(), sections.export_func(), sections.export_memory()], [0u32, 1u32, 0u32]);
+    m = m.with_exports(["f", "alloc", "mem"], [sections.EXPORT_FUNC, sections.EXPORT_FUNC, sections.EXPORT_MEMORY], [0u32, 1u32, 0u32]);
     let body_f: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
     let body_alloc: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 0));
     m = m.with_code([body_f, body_alloc]);
@@ -11555,17 +11555,17 @@ function main(): i32 {
     comp = component.put_core_module_section(comp, core_bytes);
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
 
-    let sorts: u8[] = [component.core_sort_func(), component.core_sort_memory(), component.core_sort_func()];
+    let sorts: u8[] = [component.CORE_SORT_FUNC, component.CORE_SORT_MEMORY, component.CORE_SORT_FUNC];
     let instance_idxs: u32[] = [0u32, 0u32, 0u32];
     let alias_names: string[] = ["f", "mem", "alloc"];
     comp = component.put_alias_section_core_exports(comp, sorts, instance_idxs, alias_names);
 
     let no_names: string[] = [];
     let no_valtypes: u8[] = [];
-    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_string());
+    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.CVALTYPE_STRING);
 
     // canon-lift with utf16 string encoding + mem + realloc.
-    comp = component.put_canon_section_lift_mem_realloc_encoding(comp, 0u32, 0u32, 0u32, 1u32, component.canonopt_string_encoding_utf16());
+    comp = component.put_canon_section_lift_mem_realloc_encoding(comp, 0u32, 0u32, 0u32, 1u32, component.CANONOPT_STRING_ENCODING_UTF16);
 
     let output: string = "";
     let i: i32 = 0;
@@ -11626,7 +11626,7 @@ import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
     let names: string[] = ["status"];
-    let valtypes: u8[] = [component.cvaltype_u32()];
+    let valtypes: u8[] = [component.CVALTYPE_U32];
     let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_func_no_result(comp, names, valtypes);
 
@@ -11757,8 +11757,8 @@ import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
     let comp: u8[] = component.put_component_header([]);
-    comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
-    comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
+    comp = component.put_type_section_one_resource(comp, encode.VALTYPE_I32);
+    comp = component.put_type_section_one_resource(comp, encode.VALTYPE_I32);
     let idxs: u32[] = [0u32, 1u32];
     comp = component.put_canon_section_resource_news(comp, idxs);
     comp = component.put_canon_section_resource_reps(comp, idxs);
@@ -11823,8 +11823,8 @@ import "std/wasm/encode";
 function main(): i32 {
     let comp: u8[] = component.put_component_header([]);
     // Two resource types, both rep=i32, no dtor.
-    comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
-    comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
+    comp = component.put_type_section_one_resource(comp, encode.VALTYPE_I32);
+    comp = component.put_type_section_one_resource(comp, encode.VALTYPE_I32);
     // Drop both in one canon section.
     let idxs: u32[] = [0u32, 1u32];
     comp = component.put_canon_section_resource_drops(comp, idxs);
@@ -11885,7 +11885,7 @@ import "std/wasm/component";
 import "std/wasm/encode";
 function main(): i32 {
     let comp: u8[] = component.put_component_header([]);
-    comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
+    comp = component.put_type_section_one_resource(comp, encode.VALTYPE_I32);
     comp = component.put_canon_section_resource_new(comp, 0u32);
     comp = component.put_canon_section_resource_rep(comp, 0u32);
 
@@ -11948,7 +11948,7 @@ import "std/wasm/encode";
 function main(): i32 {
     let comp: u8[] = component.put_component_header([]);
     // Type 0: resource with i32 rep, no dtor.
-    comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
+    comp = component.put_type_section_one_resource(comp, encode.VALTYPE_I32);
     // Type 1: own<$0>.
     comp = component.put_type_section_one_own(comp, 0u32);
     // Type 2: borrow<$0>.
@@ -12012,7 +12012,7 @@ import "std/wasm/component";
 function main(): i32 {
     let names: string[] = ["ok", "err", "abort"];
     let has_payload: boolean[] = [true, true, false];
-    let payload_vts: u8[] = [component.cvaltype_u32(), component.cvaltype_string(), 0u8];
+    let payload_vts: u8[] = [component.CVALTYPE_U32, component.CVALTYPE_STRING, 0u8];
     let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_variant(comp, names, has_payload, payload_vts);
 
@@ -12076,7 +12076,7 @@ import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
     let names: string[] = ["name", "age"];
-    let valtypes: u8[] = [component.cvaltype_string(), component.cvaltype_u32()];
+    let valtypes: u8[] = [component.CVALTYPE_STRING, component.CVALTYPE_U32];
     let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_record(comp, names, valtypes);
 
@@ -12266,7 +12266,7 @@ import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
     let comp: u8[] = component.put_component_header([]);
-    comp = component.put_type_section_one_result_ok_err(comp, component.cvaltype_u32(), component.cvaltype_string());
+    comp = component.put_type_section_one_result_ok_err(comp, component.CVALTYPE_U32, component.CVALTYPE_STRING);
 
     let output: string = "";
     let i: i32 = 0;
@@ -12328,7 +12328,7 @@ func TestWASMComponentTupleStringU32(t *testing.T) {
 import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
-    let elems: u8[] = [component.cvaltype_string(), component.cvaltype_u32()];
+    let elems: u8[] = [component.CVALTYPE_STRING, component.CVALTYPE_U32];
     let comp: u8[] = component.put_component_header([]);
     comp = component.put_type_section_one_tuple(comp, elems);
 
@@ -12393,7 +12393,7 @@ import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
     let comp: u8[] = component.put_component_header([]);
-    comp = component.put_type_section_one_option(comp, component.cvaltype_u32());
+    comp = component.put_type_section_one_option(comp, component.CVALTYPE_U32);
 
     let output: string = "";
     let i: i32 = 0;
@@ -12450,7 +12450,7 @@ import "std/i32";
 import "std/wasm/component";
 function main(): i32 {
     let comp: u8[] = component.put_component_header([]);
-    comp = component.put_type_section_one_list(comp, component.cvaltype_u8());
+    comp = component.put_type_section_one_list(comp, component.CVALTYPE_U8);
 
     let output: string = "";
     let i: i32 = 0;
@@ -12509,7 +12509,7 @@ import "std/wasm/encode";
 function main(): i32 {
     let comp: u8[] = component.put_component_header([]);
     // Resource type 0: representation is i32, no dtor.
-    comp = component.put_type_section_one_resource(comp, encode.valtype_i32());
+    comp = component.put_type_section_one_resource(comp, encode.VALTYPE_I32);
     // canon resource.drop of type 0.
     comp = component.put_canon_section_resource_drop(comp, 0u32);
 
@@ -12582,11 +12582,11 @@ import "std/wasm/numeric";
 function main(): i32 {
     // Core module: function "add" takes two i32s and returns their sum.
     let m: module.Module = module.module_new();
-    let p0: u8[] = [encode.valtype_i32(), encode.valtype_i32()];
-    let r0: u8[] = [encode.valtype_i32()];
+    let p0: u8[] = [encode.VALTYPE_I32, encode.VALTYPE_I32];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["add"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["add"], [sections.EXPORT_FUNC], [0u32]);
     let body: u8[] = inst.inst_local_get([], 0u32);
     body = inst.inst_local_get(body, 1u32);
     body = numeric.inst_i32_add(body);
@@ -12596,8 +12596,8 @@ function main(): i32 {
 
     // Wrap as a component-level (u32, u32) -> u32.
     let names: string[] = ["a", "b"];
-    let valtypes: u8[] = [component.cvaltype_u32(), component.cvaltype_u32()];
-    let comp: u8[] = component.build_lifted_export_component_with_params(core_bytes, "add", "add", names, valtypes, component.cvaltype_u32());
+    let valtypes: u8[] = [component.CVALTYPE_U32, component.CVALTYPE_U32];
+    let comp: u8[] = component.build_lifted_export_component_with_params(core_bytes, "add", "add", names, valtypes, component.CVALTYPE_U32);
 
     let output: string = "";
     let i: i32 = 0;
@@ -12663,17 +12663,17 @@ function main(): i32 {
     // Core module: function "f" returns 99.
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["f"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["f"], [sections.EXPORT_FUNC], [0u32]);
     let bodyExpr: u8[] = inst.inst_i32_const([], 99);
     let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
     let core_bytes: u8[] = module.build(m);
 
     // The whole component recipe in one call.
-    let comp: u8[] = component.build_lifted_export_component(core_bytes, "f", "g", component.cvaltype_u32());
+    let comp: u8[] = component.build_lifted_export_component(core_bytes, "f", "g", component.CVALTYPE_U32);
 
     let output: string = "";
     let i: i32 = 0;
@@ -12739,10 +12739,10 @@ function main(): i32 {
     // Core module: function "f" returns 42.
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["f"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["f"], [sections.EXPORT_FUNC], [0u32]);
     let bodyExpr: u8[] = inst.inst_i32_const([], 42);
     let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
@@ -12755,7 +12755,7 @@ function main(): i32 {
     comp = component.put_core_module_section(comp, core_bytes);
     comp = component.put_core_instance_section_instantiate(comp, 0u32);
     comp = component.put_alias_section_core_export_func(comp, 0u32, "f");
-    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.cvaltype_u32());
+    comp = component.put_type_section_one_func(comp, no_names, no_valtypes, component.CVALTYPE_U32);
     comp = component.put_canon_section_lift_no_opts(comp, 0u32, 0u32);
     comp = component.put_export_section_one_func(comp, "g", 0u32);
 
@@ -12815,15 +12815,15 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     // Body: i32.const 1 ; if (result i32) { i32.const 100 }
     //       else { i32.const 200 } ; end
     let body: u8[] = inst.inst_i32_const([], 1);
-    body = inst.inst_if_start(body, encode.valtype_i32());
+    body = inst.inst_if_start(body, encode.VALTYPE_I32);
     body = inst.inst_i32_const(body, 100);
     body = inst.inst_else(body);
     body = inst.inst_i32_const(body, 200);
@@ -12859,13 +12859,13 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     // 1 local of type i32 (index 0).
-    let localsBytes: u8[] = inst.put_locals_one_group([], 1u32, encode.valtype_i32());
+    let localsBytes: u8[] = inst.put_locals_one_group([], 1u32, encode.VALTYPE_I32);
 
     // Body: i32.const 42 ; local.set 0 ; local.get 0
     let body: u8[] = inst.inst_i32_const([], 42);
@@ -12904,19 +12904,19 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     // 2 locals of type i32: index 0 = i (counter), index 1 = sum.
-    let localsBytes: u8[] = inst.put_locals_one_group([], 2u32, encode.valtype_i32());
+    let localsBytes: u8[] = inst.put_locals_one_group([], 2u32, encode.VALTYPE_I32);
 
-    let body: u8[] = inst.inst_loop_start([], inst.blocktype_empty());
+    let body: u8[] = inst.inst_loop_start([], inst.BLOCKTYPE_EMPTY);
     body = inst.inst_local_get(body, 0u32);
     body = inst.inst_i32_const(body, 10);
     body = numeric.inst_i32_lt_s(body);
-    body = inst.inst_if_start(body, inst.blocktype_empty());
+    body = inst.inst_if_start(body, inst.BLOCKTYPE_EMPTY);
     body = inst.inst_local_get(body, 1u32);
     body = inst.inst_local_get(body, 0u32);
     body = inst.inst_i32_const(body, 1);
@@ -13001,10 +13001,10 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
     let bodyExpr: u8[] = inst.inst_i32_const([], 42);
     let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), bodyExpr);
     m = m.with_code([fn]);
@@ -13069,11 +13069,11 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_memory(1u32, 0 - 1);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
     m = m.with_data([0], [[42u8, 7u8, 99u8, 5u8]]);
 
     let body: u8[] = inst.inst_i32_const([], 2);
@@ -13110,11 +13110,11 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_memory(1u32, 0 - 1);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     let body: u8[] = inst.inst_i32_const([], 16);
     body = inst.inst_i32_const(body, 77);
@@ -13155,19 +13155,19 @@ function main(): i32 {
 
     // One shared type: () -> i32 (both callees and main).
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
 
     // func0 / func1 are indirect-call targets; func2 is main.
     m = m.with_functions([0u32, 0u32, 0u32]);
 
     // Funcref table holding both targets.
-    m = m.with_table(imports.reftype_funcref(), 2u32, 0 - 1);
+    m = m.with_table(imports.REFTYPE_FUNCREF, 2u32, 0 - 1);
 
     // table[0] = func0, table[1] = func1.
     m = m.with_elements([0], [[0u32, 1u32]]);
 
-    m = m.with_exports(["main"], [sections.export_func()], [2u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [2u32]);
 
     // func0 -> 11, func1 -> 22.
     let f0: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_i32_const([], 11));
@@ -13209,11 +13209,11 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_memory(1u32, 0 - 1);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
     m = m.with_data([0], [[5u8, 6u8, 7u8, 8u8]]);
 
     // memory.copy dst=16, src=0, len=2  -> bytes [5,6] land at 16,17.
@@ -13256,11 +13256,11 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_memory(1u32, 0 - 1);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     // memory.fill dst=8, val=9, len=3 -> addrs 8,9,10 = 9.
     let body: u8[] = inst.inst_i32_const([], 8);
@@ -13302,14 +13302,14 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     let initExpr: u8[] = inst.inst_i32_const([], 314);
     initExpr = inst.inst_end(initExpr);
-    m = m.with_globals([encode.valtype_i32()], [imports.mut_const()], [initExpr]);
+    m = m.with_globals([encode.VALTYPE_I32], [imports.MUT_CONST], [initExpr]);
 
     let body: u8[] = inst.inst_global_get([], 0u32);
     let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
@@ -13344,10 +13344,10 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     let body: u8[] = inst.inst_i32_const([], 0 - 20);
     body = inst.inst_i32_const(body, 3);
@@ -13384,10 +13384,10 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     // i32.const 255 ; i32.extend8_s -> -1
     let body: u8[] = inst.inst_i32_const([], 255);
@@ -13425,10 +13425,10 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     let body: u8[] = inst.inst_i64_const([], 1000000000000i64);
     body = inst.inst_i64_const(body, 234567890123i64);
@@ -13466,10 +13466,10 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     let body: u8[] = inst.inst_i32_const([], 12);
     body = inst.inst_i32_const(body, 10);
@@ -13506,10 +13506,10 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     let body: u8[] = inst.inst_i32_const([], 0 - 1);
     body = inst.inst_i32_const(body, 1);
@@ -13546,10 +13546,10 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     // (1 << 5) = 32 ; then rotr by 1 -> 16.
     let body: u8[] = inst.inst_i32_const([], 1);
@@ -13590,10 +13590,10 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     // f32 1.0 bit pattern: 0x3F800000 = 1065353216.
     let body: u8[] = inst.inst_f32_const([], 1065353216u32);
@@ -13631,10 +13631,10 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     let body: u8[] = inst.inst_i32_const([], 7);
     body = inst.inst_i32_const(body, 9);
@@ -13672,20 +13672,20 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
 
-    let p_fact: u8[] = [encode.valtype_i32()];
-    let r_fact: u8[] = [encode.valtype_i32()];
+    let p_fact: u8[] = [encode.VALTYPE_I32];
+    let r_fact: u8[] = [encode.VALTYPE_I32];
     let p_main: u8[] = [];
-    let r_main: u8[] = [encode.valtype_i32()];
+    let r_main: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p_fact, p_main], [r_fact, r_main]);
 
     m = m.with_functions([0u32, 1u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [1u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [1u32]);
 
     // fact(n): if (n <= 1) 1 else n * fact(n - 1)
     let fact_body: u8[] = inst.inst_local_get([], 0u32);
     fact_body = inst.inst_i32_const(fact_body, 1);
     fact_body = numeric.inst_i32_le_s(fact_body);
-    fact_body = inst.inst_if_start(fact_body, encode.valtype_i32());
+    fact_body = inst.inst_if_start(fact_body, encode.VALTYPE_I32);
     fact_body = inst.inst_i32_const(fact_body, 1);
     fact_body = inst.inst_else(fact_body);
     fact_body = inst.inst_local_get(fact_body, 0u32);
@@ -13734,10 +13734,10 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     // f64 1.5 = 0x3FF8000000000000; f64 2.5 = 0x4004000000000000.
     let body: u8[] = inst.inst_f64_const([], 4609434218613702656u64);
@@ -13779,10 +13779,10 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
 
     let body: u8[] = inst.inst_i32_const([], 16);
     body = numeric.inst_i32_clz(body);
@@ -13819,20 +13819,20 @@ import "std/wasm/sections";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
     m = m.with_memory(1u32, 0 - 1);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
     m = m.with_data([0], [[10u8, 20u8, 30u8, 40u8]]);
 
-    let localsBytes: u8[] = inst.put_locals_one_group([], 2u32, encode.valtype_i32());
+    let localsBytes: u8[] = inst.put_locals_one_group([], 2u32, encode.VALTYPE_I32);
 
-    let body: u8[] = inst.inst_loop_start([], inst.blocktype_empty());
+    let body: u8[] = inst.inst_loop_start([], inst.BLOCKTYPE_EMPTY);
     body = inst.inst_local_get(body, 0u32);
     body = inst.inst_i32_const(body, 4);
     body = numeric.inst_i32_lt_s(body);
-    body = inst.inst_if_start(body, inst.blocktype_empty());
+    body = inst.inst_if_start(body, inst.BLOCKTYPE_EMPTY);
     body = inst.inst_local_get(body, 1u32);
     body = inst.inst_local_get(body, 0u32);
     body = memory.inst_i32_load8_u(body, 0u32, 0u32);
@@ -14081,10 +14081,10 @@ import "std/string";
 function main(): i32 {
     let m: module.Module = module.module_new();
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
     m = m.with_functions([0u32]);
-    m = m.with_exports(["main"], [sections.export_func()], [0u32]);
+    m = m.with_exports(["main"], [sections.EXPORT_FUNC], [0u32]);
     let body: u8[] = inst.inst_i32_const([], 42);
     let fn: u8[] = inst.put_function_body([], inst.put_locals_empty([]), body);
     m = m.with_code([fn]);

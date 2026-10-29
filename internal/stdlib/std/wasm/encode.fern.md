@@ -20,7 +20,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<dependencies 2>>
 
-<<3 pub function valtype_i32(): u8>>
+<<3 pub const VALTYPE_I32: u8>>
 ```
 
 ### `module introduction`
@@ -37,73 +37,41 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "std/wasm/leb128";
 ```
 
-### `3 pub function valtype_i32(): u8`
+### `3 pub const VALTYPE_I32: u8`
 
 ```fern
-<<3 pub function valtype_i32(): u8>>=
-pub function valtype_i32(): u8 {
-  return 127u8;
-}
+<<3 pub const VALTYPE_I32: u8>>=
+pub const VALTYPE_I32: u8 = 127u8;
 
-pub function valtype_i64(): u8 {
-  return 126u8;
-}
+pub const VALTYPE_I64: u8 = 126u8;
 
-pub function valtype_f32(): u8 {
-  return 125u8;
-}
+pub const VALTYPE_F32: u8 = 125u8;
 
-pub function valtype_f64(): u8 {
-  return 124u8;
-}
+pub const VALTYPE_F64: u8 = 124u8;
 
-pub function section_custom(): u8 {
-  return 0u8;
-}
+pub const SECTION_CUSTOM: u8 = 0u8;
 
-pub function section_type(): u8 {
-  return 1u8;
-}
+pub const SECTION_TYPE: u8 = 1u8;
 
-pub function section_import(): u8 {
-  return 2u8;
-}
+pub const SECTION_IMPORT: u8 = 2u8;
 
-pub function section_function(): u8 {
-  return 3u8;
-}
+pub const SECTION_FUNCTION: u8 = 3u8;
 
-pub function section_table(): u8 {
-  return 4u8;
-}
+pub const SECTION_TABLE: u8 = 4u8;
 
-pub function section_memory(): u8 {
-  return 5u8;
-}
+pub const SECTION_MEMORY: u8 = 5u8;
 
-pub function section_global(): u8 {
-  return 6u8;
-}
+pub const SECTION_GLOBAL: u8 = 6u8;
 
-pub function section_export(): u8 {
-  return 7u8;
-}
+pub const SECTION_EXPORT: u8 = 7u8;
 
-pub function section_start(): u8 {
-  return 8u8;
-}
+pub const SECTION_START: u8 = 8u8;
 
-pub function section_element(): u8 {
-  return 9u8;
-}
+pub const SECTION_ELEMENT: u8 = 9u8;
 
-pub function section_code(): u8 {
-  return 10u8;
-}
+pub const SECTION_CODE: u8 = 10u8;
 
-pub function section_data(): u8 {
-  return 11u8;
-}
+pub const SECTION_DATA: u8 = 11u8;
 
 pub function put_bytes(buf: u8[], src: u8[]): u8[] {
   let n: i32 = src.len();

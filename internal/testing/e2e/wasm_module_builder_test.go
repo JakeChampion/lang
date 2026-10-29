@@ -9,7 +9,7 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     let p0: u8[] = [];
-    let r0: u8[] = [encode.valtype_i32()];
+    let r0: u8[] = [encode.VALTYPE_I32];
     let bodyExpr: u8[] = inst.inst_i32_const([], 42);
     let localsBytes: u8[] = inst.put_locals_empty([]);
     let fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
@@ -18,7 +18,7 @@ function main(): i32 {
     let m: module.Module = module.module_new()
         .with_types([p0], [r0])
         .with_functions([0u32])
-        .with_exports(["main"], [sections.export_func()], [0u32])
+        .with_exports(["main"], [sections.EXPORT_FUNC], [0u32])
         .with_code([fn]);
 
     let bytes: u8[] = module.build(m);
