@@ -41,6 +41,18 @@ function main(): i32 {
   }
 }`
 
+// quarantineSplit returns the sanitizer's quarantine helper, from its
+// label to its return, and the rest of the asm without it.
+func quarantineSplit(t *testing.T, asm string) (evict, outside string) {
+	t.Helper()
+	start := strings.Index(asm, "__fern_quar_push:")
+	end := strings.Index(asm, ".Lquar_ret:")
+	if start < 0 || end < start {
+		t.Fatal("flag-on asm has no __fern_quar_push helper")
+	}
+	return asm[start:end], asm[:start] + asm[end:]
+}
+
 func arm64Target(t *testing.T, h ssaBackendHost) ssaBackendTarget {
 	t.Helper()
 	for _, tg := range h.targets {
@@ -109,11 +121,25 @@ func TestSelfHostUafQuarantineAsmContractArm64(t *testing.T) {
 			t.Errorf("flag-on asm is missing %q", want)
 		}
 	}
-	if mustMatch(t, `add x[356], x[356], :lo12:__fern_freelist`, on) {
-		t.Error("flag-on asm still pushes onto a freelist — a recycled block would overwrite its own poison")
+	// A release never recycles directly: the only pushes sit inside the
+	// quarantine's eviction, after its second look at the poison.
+	evict, outside := quarantineSplit(t, on)
+	if mustMatch(t, `add x[356], x[356], :lo12:__fern_freelist`, outside) {
+		t.Error("flag-on asm pushes onto a freelist outside the quarantine — a recycled block would overwrite its own poison")
 	}
-	if strings.Contains(on, "add x3, x3, :lo12:__fern_large_freelist") {
-		t.Error("flag-on asm still pushes onto the large freelist — a recycled >=512 KiB block would overwrite its own poison")
+	if !mustMatch(t, `add x[356], x[356], :lo12:__fern_freelist`, evict) {
+		t.Error("flag-on asm has no freelist push in the quarantine's eviction")
+	}
+	if mustMatch(t, `bl __fern_large_push\n`, on) {
+		t.Error("flag-on asm pushes onto the large freelist at a release — a recycled >=512 KiB block would overwrite its own poison")
+	}
+	if !strings.Contains(evict, "bl __fern_large_push_now") {
+		t.Error("flag-on asm has no large-tier push in the quarantine's eviction")
+	}
+	for _, want := range []string{"__fern_san_abort_waf:", "fern-sanitizer: write-after-free (a quarantined block was written)"} {
+		if !strings.Contains(on, want) {
+			t.Errorf("flag-on asm is missing %q", want)
+		}
 	}
 	if !strings.Contains(on, "add x1, x1, :lo12:__fern_large_freelist") {
 		t.Error("flag-on asm lost __fern_alloc's large-tier pop")
@@ -126,7 +152,7 @@ func TestSelfHostUafQuarantineAsmContractArm64(t *testing.T) {
 	if mustMatch(t, armPoisonPair, off) {
 		t.Error("flag-off asm materialises the poison — the detector is not fully gated")
 	}
-	for _, marker := range []string{"__fern_san_abort_uaf", ".Lsan_uaf"} {
+	for _, marker := range []string{"__fern_san_abort_uaf", ".Lsan_uaf", "__fern_quar_push", "__fern_san_abort_waf"} {
 		if strings.Contains(off, marker) {
 			t.Errorf("flag-off asm contains %q — the detector is not fully gated", marker)
 		}

@@ -24,7 +24,7 @@ An unknown profile name exits 2 and names the four profiles.
 
 ## The build manifest
 
-Every native executable carries one line in its read-only data: `FERNBUILD1 target=... profile=... harden=... pie=... sanitize=... backtrace=... size=... shared=... heap_limit=...`.
+Every native executable carries one line in its read-only data: `FERNBUILD1 target=... profile=... harden=... pie=... sanitize=... backtrace=... size=... shared=... heap_limit=... quarantine=...`.
 `fern -manifest IMAGE` prints it one field per line, and answers exit 1 with a cause for a file without one.
 The line is deterministic, so a reproducible build stays reproducible.
 

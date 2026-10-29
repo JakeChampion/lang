@@ -32,6 +32,7 @@ type Manifest struct {
 	Version  string
 	Lib      string
 	Index    string
+	IndexKey string
 	Deps     map[string]Dep
 	Members  []string
 	Excludes map[string][]string
@@ -149,6 +150,21 @@ func (e *Error) Error() string {
 
 func (e *Error) Code() string { return "E088" }
 
+// ValidateIndexKey checks the spelling of the key that signs the index:
+// `ed25519:` and 64 lowercase hex digits of the public key.
+func ValidateIndexKey(key string) error {
+	hexpart, ok := strings.CutPrefix(key, "ed25519:")
+	if !ok || len(hexpart) != 64 {
+		return fmt.Errorf("must be `ed25519:` + 64 lowercase hex digits of the public key, got %q", key)
+	}
+	for _, r := range hexpart {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return fmt.Errorf("must be `ed25519:` + 64 lowercase hex digits of the public key, got %q", key)
+		}
+	}
+	return nil
+}
+
 func lineError(line int, format string, args ...any) *Error {
 	return &Error{Line: line, Msg: fmt.Errorf(format, args...).Error()}
 }
@@ -212,8 +228,13 @@ func Parse(src string) (*Manifest, error) {
 				m.Lib = s
 			case "index":
 				m.Index = filepath.FromSlash(s)
+			case "index_key":
+				if err := ValidateIndexKey(s); err != nil {
+					return nil, lineError(ln+1, "index_key: %w", err)
+				}
+				m.IndexKey = s
 			default:
-				return nil, lineError(ln+1, "unknown [package] key %q (supported: name, version, lib, index)", key)
+				return nil, lineError(ln+1, "unknown [package] key %q (supported: name, version, lib, index, index_key)", key)
 			}
 		case "dependencies":
 			dep, err := parseDep(val)
