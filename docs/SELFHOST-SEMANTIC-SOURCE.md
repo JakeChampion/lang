@@ -54,6 +54,11 @@ Unsupported constructs refuse the whole function with a reason.
   dropped, together with its closure environment's row in the release
   tables. So `std/serve`'s HTTP/2 is not in a program that never calls
   `with_h2`.
+  - Variant facts cover `Option` and `Result` as well as declared enums. A
+    variant test is false when nothing builds the variant, and true when
+    nothing builds its siblings. An `Option` or a `Result` that a built-in
+    makes, such as the `Some` of a map lookup, has all its variants built.
+    So a server that never calls `with_tls` links no TLS.
   - Roots are the tree-shaker's (`main`, top-level statements, exports, Drop
     finalizers, derive-carrying types' methods, async entries), plus the
     runtime helpers and live map keys' `hash` and `eq`.

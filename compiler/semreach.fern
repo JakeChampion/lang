@@ -88,7 +88,9 @@ function tracked(t: typeinfo.Type): boolean {
   return ssasem.is_bool(t) || ssasem.is_i32(t);
 }
 
-struct Universe { fields: util.NameIndex, field_owner: string[], variants: util.NameIndex, variant_owner: string[], rec_ix: util.NameIndex, recs: semrecords.Record[], rec_fields: i32[][], enum_ix: util.NameIndex, enums: semrecords.Enum[] }
+// A variant key's siblings are the keys from variant_first to variant_last,
+// its own included.
+struct Universe { fields: util.NameIndex, field_owner: string[], variants: util.NameIndex, variant_owner: string[], variant_first: i32[], variant_last: i32[], rec_ix: util.NameIndex, recs: semrecords.Record[], rec_fields: i32[][], enum_ix: util.NameIndex, enums: semrecords.Enum[] }
 
 function field_key(t: typeinfo.Type, k: i32): string {
   return ssasem.type_key(t) + "#" + util.i32_to_string(k);
@@ -99,7 +101,7 @@ function variant_key(t: typeinfo.Type, name: string): string {
 }
 
 function universe(funcs: ssasem.Func[], usable: boolean[]): Universe {
-  let u: Universe = Universe { fields: util.name_index([]), field_owner: [], variants: util.name_index([]), variant_owner: [], rec_ix: util.name_index([]), recs: [], rec_fields: [], enum_ix: util.name_index([]), enums: [] };
+  let u: Universe = Universe { fields: util.name_index([]), field_owner: [], variants: util.name_index([]), variant_owner: [], variant_first: [], variant_last: [], rec_ix: util.name_index([]), recs: [], rec_fields: [], enum_ix: util.name_index([]), enums: [] };
   let i: i32 = 0;
   while (i < funcs.len()) {
     if (usable[i]) {
@@ -141,11 +143,13 @@ function with_enum(u: Universe, e: semrecords.Enum): Universe {
     return u;
   }
   u = Universe { ...u, enum_ix: u.enum_ix.added(owner), enums: u.enums.append(e) };
-  if (e.layout != semrecords.layout_variant()) {
+  if (e.layout != semrecords.layout_variant() && e.layout != semrecords.layout_option()) {
     return u;
   }
+  let first: i32 = u.variant_owner.len();
+  let last: i32 = first + e.variants.len() - 1;
   for v in e.variants {
-    u = Universe { ...u, variants: u.variants.added(variant_key(e.ty, v.name)), variant_owner: u.variant_owner.append(owner) };
+    u = Universe { ...u, variants: u.variants.added(variant_key(e.ty, v.name)), variant_owner: u.variant_owner.append(owner), variant_first: u.variant_first.append(first), variant_last: u.variant_last.append(last) };
   }
   return u;
 }
@@ -179,10 +183,19 @@ function arrives(ins: ssa.SInst, result: typeinfo.Type, ix: util.NameIndex, usab
   if (k == ssasem.call() || k == ssasem.closure_new() || k == 13) {
     return call_arrives(ins, ix, usable);
   }
+  if (is_option_enum(result, u) && !moves_option(k)) {
+    return true;
+  }
   if (k < 0) {
     return semantic_arrives(k, result, u);
   }
   return !(k >= 1 && k <= 10 || k == 35 || k == 36);
+}
+
+// An Option or a Result that a built-in makes, such as the Some of a map
+// lookup, has no variant_new.
+function moves_option(k: i32): boolean {
+  return k == ssasem.variant_new() || k == ssasem.call_value() || k == ssasem.record_get() || k == ssasem.tuple_get() || k == ssasem.array_get() || k == ssasem.variant_get() || k == ssasem.cell_get() || k == 6 || k == 7 || k == 8 || k == 36;
 }
 
 function call_arrives(ins: ssa.SInst, ix: util.NameIndex, usable: boolean[]): boolean {
@@ -203,6 +216,14 @@ function semantic_arrives(k: i32, result: typeinfo.Type, u: Universe): boolean {
 function is_record(t: typeinfo.Type): boolean {
   if let typeinfo.TypeStruct(_) = t {
     return true;
+  }
+  return false;
+}
+
+function is_option_enum(t: typeinfo.Type, u: Universe): boolean {
+  if let typeinfo.TypeUnion(_) = t {
+    let e: i32 = u.enum_ix.find(ssasem.type_key(t));
+    return e >= 0 && u.enums[e].layout == semrecords.layout_option();
   }
   return false;
 }
@@ -730,6 +751,9 @@ function semantic_value(ctx: Ctx, w: World, wk: Walk, ins: ssa.SInst): i64 {
     if (vk >= 0 && !w.built[vk]) {
       return konst(0);
     }
+    if (vk >= 0 && only_built(ctx.u, w, vk)) {
+      return konst(1);
+    }
     return any();
   }
   if (k == ssasem.call()) {
@@ -742,6 +766,17 @@ function semantic_value(ctx: Ctx, w: World, wk: Walk, ins: ssa.SInst): i64 {
     }
   }
   return any();
+}
+
+function only_built(u: Universe, w: World, vk: i32): boolean {
+  let j: i32 = u.variant_first[vk];
+  while (j <= u.variant_last[vk]) {
+    if (j != vk && w.built[j]) {
+      return false;
+    }
+    j = j + 1;
+  }
+  return true;
 }
 
 function call_value(ctx: Ctx, w: World, ins: ssa.SInst): i64 {
@@ -869,7 +904,13 @@ function absorb_inst(ctx: Ctx, w: World, f: ssasem.Func, wk: Walk, ins: ssa.SIns
   if (ins.kind_tag == ssasem.variant_new()) {
     let vk: i32 = wk.keys[ins.result];
     if (vk >= 0 && !w.built[vk]) {
-      return queued_all(World { ...w, built: w.built.with(vk, true) }, ctx.vtesters[vk]);
+      w = World { ...w, built: w.built.with(vk, true) };
+      let j: i32 = ctx.u.variant_first[vk];
+      while (j <= ctx.u.variant_last[vk]) {
+        w = queued_all(w, ctx.vtesters[j]);
+        j = j + 1;
+      }
+      return w;
     }
   }
   return w;
