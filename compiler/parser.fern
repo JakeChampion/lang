@@ -14883,6 +14883,17 @@ function genum_single_arg(ty: string): string {
   return parts[0];
 }
 
+// A const position that holds a name, not an integer, is generic: `E[N]` in
+// a function over `const N`.
+function names_const_param(parts: string[], ed: EnumDecl): boolean {
+  for i in 0..parts.len() {
+    if (util.has_str(ed.const_params, ed.type_params[i]) && !is_const_arg(parts[i])) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function genum_key_from_anno(ty: string, base: string, enums: EnumDecl[]): string {
   let lb: i32 = first_bracket(ty);
   if (lb <= 0) {
@@ -14903,6 +14914,9 @@ function genum_key_from_anno(ty: string, base: string, enums: EnumDecl[]): strin
     if (mono_ty_mentions_var(p)) {
       return "";
     }
+  }
+  if (gei >= 0 && names_const_param(parts, enums[gei])) {
+    return "";
   }
   if (parts.len() == 1) {
     return ge_targ_mangle(parts[0], enums);
@@ -16268,8 +16282,15 @@ function enum_self_ty(ty: string, name: string, recv: string): string {
 }
 
 function enum_method_template(m: FuncDecl, ed: EnumDecl): FuncDecl {
-  if (m.receiver_type != ed.name || ed.type_params.len() == 0) {
+  if (ed.type_params.len() == 0) {
     return m;
+  }
+  if (m.receiver_type != ed.name) {
+    let names: string[] = receiver_param_names(m.receiver_type, ed.type_params, ed.const_params);
+    if (names.len() == 0) {
+      names = ed.type_params;
+    }
+    return FuncDecl { ...m, all_type_params: names };
   }
   let recv: string = ed.name + "[" + subst_ty_join(ed.type_params, ",", [], []) + "]";
   let params: ast.ParamDecl[] = [];
@@ -16292,7 +16313,9 @@ function me_use_ref(r: TypeRef, own u: MeUses): MeUses {
   if (!r.is_tuple && !r.is_fn && r.args.len() > 0) {
     let t: string = me_ref_spelling(r);
     let base: string = slice_unchecked(t, 0, first_bracket(t)) + "";
-    if (genum_index(u.enums, base) >= 0 && !str_in(u.bases, base) && !mono_ty_mentions_var(t) && genum_key_from_anno(t, base, u.enums).len() == 0) {
+    let gi: i32 = genum_index(u.enums, base);
+    let generic: boolean = mono_ty_mentions_var(t) || gi >= 0 && names_const_param(split_top_commas(slice_unchecked(t, first_bracket(t) + 1, t.len() - 1)), u.enums[gi]);
+    if (gi >= 0 && !str_in(u.bases, base) && !generic && genum_key_from_anno(t, base, u.enums).len() == 0) {
       u = MeUses { ...u, bases: u.bases.append(base) };
     }
   }
