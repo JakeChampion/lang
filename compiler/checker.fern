@@ -18589,38 +18589,55 @@ function lu_path_is_last(fx: LuFn, q: ast.ExprIdent, field: string): boolean {
   return true;
 }
 
-function lu_within_literal_base(st: ast.Stmt, name: string, call: ast.Expr): boolean {
-  function visit(e: ast.Expr, own found: boolean): boolean {
-    if (found) {
-      return true;
-    }
-    if let ast.ExprStructLit(sl) = e {
-      if (sl.has_base && ow_ident_name(sl.base) == name) {
-        return lu_holds_call(e, call);
-      }
-    }
-    return false;
-  }
-  return astwalk.fold_stmt_nodes(st, false, lu_skip_bool, visit, astwalk.descend_all);
+struct LuLitBase { name: string, call: ast.Expr, found: boolean }
+
+function lu_lit_base_stmt(st: ast.Stmt, own a: LuLitBase): LuLitBase {
+  return a;
 }
 
-function lu_skip_bool(st: ast.Stmt, own acc: boolean): boolean {
-  return acc;
+function lu_lit_base_expr(e: ast.Expr, own a: LuLitBase): LuLitBase {
+  if (a.found) {
+    return a;
+  }
+  if let ast.ExprStructLit(sl) = e {
+    if (sl.has_base && ow_ident_name(sl.base) == a.name) {
+      return LuLitBase { ...a, found: lu_holds_call(e, a.call) };
+    }
+  }
+  return a;
+}
+
+function lu_within_literal_base(st: ast.Stmt, name: string, call: ast.Expr): boolean {
+  let a: LuLitBase = astwalk.fold_stmt_nodes(st, LuLitBase { name: name, call: call, found: false }, lu_lit_base_stmt, lu_lit_base_expr, astwalk.descend_all);
+  return a.found;
+}
+
+// The call a search looks for, by its position, and whether it was found.
+struct LuHold { line: i32, col: i32, found: boolean }
+
+function lu_hold_at(call: ast.Expr): LuHold {
+  return LuHold { line: ast.expr_line(call), col: ast.expr_col(call), found: false };
+}
+
+function lu_hold_stmt(st: ast.Stmt, own h: LuHold): LuHold {
+  return h;
+}
+
+function lu_hold_expr(e: ast.Expr, own h: LuHold): LuHold {
+  if (h.found) {
+    return h;
+  }
+  if let ast.ExprCall(c) = e {
+    if (c.line == h.line && c.col == h.col) {
+      return LuHold { ...h, found: true };
+    }
+  }
+  return h;
 }
 
 function lu_holds_call(scope: ast.Expr, call: ast.Expr): boolean {
-  let cl: i32 = ast.expr_line(call);
-  let cc: i32 = ast.expr_col(call);
-  function visit(e: ast.Expr, own found: boolean): boolean {
-    if (found) {
-      return true;
-    }
-    if let ast.ExprCall(c) = e {
-      return c.line == cl && c.col == cc;
-    }
-    return false;
-  }
-  return astwalk.fold_expr(scope, false, visit);
+  let h: LuHold = astwalk.fold_expr(scope, lu_hold_at(call), lu_hold_expr);
+  return h.found;
 }
 
 function lu_field_key(fa: ast.ExprFieldAccess, q: ast.ExprIdent): string {
