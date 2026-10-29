@@ -1,0 +1,31 @@
+// Constant divisions on a dependency chain: each timestamp is split into a
+// civil date and a clock time, and the decimal digits of the result feed the
+// next timestamp. The divider's latency is therefore not hidden.
+import "std/time";
+
+function digit_sum(n: i64): i64 {
+  let x: i64 = n;
+  let s: i64 = 0;
+  while (x != 0) {
+    s = s + x % 10;
+    x = x / 10;
+  }
+  return s;
+}
+
+function main(): i32 {
+  let sec: i64 = 0 - 4000000000;
+  let sum: i64 = 0;
+  let i: i32 = 0;
+  while (i < 4000000) {
+    let days: i64 = sec.div_euclid(86400);
+    let sid: i64 = sec.rem_euclid(86400);
+    let c: (i64, i32, i32) = time.civil_from_days(days);
+    let step: i64 = c.0 * 10000 + (c.1 * 100 + c.2) as i64 + sid / 3600 + sid / 60 % 60;
+    sum = sum + step;
+    sec = sec + 7919 * 61 + digit_sum(step);
+    i = i + 1;
+  }
+  print(sum.to_string());
+  return 0;
+}
