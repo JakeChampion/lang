@@ -67,12 +67,22 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | Hostile source, a hostile op stream, hostile assembly text and a hostile image never crash or hang the toolchain | `FuzzSelfHostFrontEnd`, `FuzzSelfHostIRVerify`, `FuzzSelfHostX86Assembler`, `FuzzSelfHostArm64Assembler`, `FuzzSelfHostManifest` | x86 |
 | An archive whose bytes do not match the declared hash, or whose entries escape the root, is refused before anything is unpacked | `TestShippedFernFetchRefusals`, `TestFetchRejectsHashMismatch`, `TestFetchRejectsEscapingEntries` | x86, host |
 | A lock below the manifest's demand is refused | `TestSelfHostStaleLockRefused`, `TestLoadStaleLockErrors` | x86, host |
+| An index whose signature does not verify against the manifest's `index_key` is refused before the index is read | `TestSelfHostSignedIndexResolve`, `TestResolveSignedIndex` | x86, host |
 | The pinned stage0 is refused when its bytes do not match the lock, and the self-built compiler reproduces itself byte for byte | `TestPinnedStage0WithWrongHashIsRejected`, `.github/workflows/bootstrap.yml` | host, three hosts in CI |
+
+## Policy
+
+The owner decided these on 2026-10-29. Each one bounds what a row above can claim.
+
+- **Speculation.** Speculation attacks are outside the threat model. A Fern process runs only the code it was compiled from. No boundary inside it separates two trust domains. No speculation barrier is emitted, and no row claims one. The policy changes when a Fern program loads code it did not compile, such as a plugin loader or a sandbox for untrusted code. That change is an owner decision, with its cost measured in `PROFILE-COSTS.md` first.
+- **Hardware claims.** A hardware claim needs a physical run. A hardware mitigation row (PAC, BTI, MTE, the user shadow stack) stays emulated or unverified until its fault test runs on a physical host. The host's kernel must enable the feature. PAC needs a core with ARMv8.3 (`paca` in the processor flags), and BTI and MTE need ARMv8.5 (`bti`, `mte`). The user shadow stack needs CET (`user_shstk`) and a kernel of 6.6 or newer. A row moves to native when the test log says its control passed natively, and the mitigation's record names the run. The native ARM shard gives that record for PAC today.
+- **Threads.** Share-nothing workers are the thread model. A thread never shares a heap. A worker owns its heap, and a value crosses a worker boundary by copy at spawn, send and join. Reference counts stay non-atomic. The design is `docs/MULTICORE-RESEARCH.md`, design (a). Until workers ship, a thread that shares the heap is not supported.
 
 ## Not guaranteed
 
 - Raw builtins (`__alloc`, `__store_*`, `__load_*`, `__free`, `__memcpy`, `__c_call*`, `__arr_set_len`) are callable from every source until the stage0 pin learns unsafe blocks (`UNSAFE-INVENTORY.md`).
 - A thread that shares the heap is not supported. Reference counts are not atomic.
-- No signature covers a package archive or an index file (`PACKAGE-INTEGRITY.md`).
-- The fault tests did not run on a physical host with PAC, BTI, MTE or the user shadow stack.
+- No signature covers a package archive. An index file is verified only when the manifest names `index_key` (`PACKAGE-INTEGRITY.md`).
+- The fault tests ran on a physical host for PAC only. BTI, MTE and the user shadow stack carry emulated evidence or none.
+- Nothing mitigates a speculation attack.
 - The seccomp sandbox exists on x86-64 only.

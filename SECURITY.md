@@ -28,6 +28,11 @@ raw builtins is responsible for its own obligations
 processor or kernel does not have is reported as absent by
 `std/mitigations`, never claimed.
 
+Speculation attacks are outside the threat model, because a Fern process
+runs only the code it was compiled from. The policy, and the rule that a
+hardware mitigation is claimed only after a physical run, are in
+`docs/security/GUARANTEES.md`.
+
 ## What the compiler guarantees
 
 `docs/security/GUARANTEES.md` lists each guarantee with the test that
