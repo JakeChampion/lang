@@ -480,6 +480,53 @@ pub function adjacent_diff[T: Sub](xs: T[]): T[] {
   return out;
 }
 
+// The element count as a T, built from One so no integer conversion is needed.
+function __count[T: Add + Zero + One](xs: T[]): T {
+  let n: T = T.zero();
+  for x in xs {
+    n = n.add(T.one());
+  }
+  return n;
+}
+
+// The mean, summed in T as sum does, so an integer sum wraps; None when empty.
+pub function avg[T: Add + Div + Zero + One](xs: T[]): Option[T] {
+  if (xs.len() == 0) {
+    return None;
+  }
+  return Some(sum(xs).div(__count(xs)));
+}
+
+// The population variance; None when empty.
+pub function variance[T: Num + Zero + One](xs: T[]): Option[T] {
+  if (xs.len() == 0) {
+    return None;
+  }
+  let n: T = __count(xs);
+  let mean: T = sum(xs).div(n);
+  let acc: T = T.zero();
+  for x in xs {
+    let d: T = x.sub(mean);
+    acc = acc.add(d.mul(d));
+  }
+  return Some(acc.div(n));
+}
+
+// The dot product over the shorter of the two arrays.
+pub function dot[T: Add + Mul + Zero](a: T[], b: T[]): T {
+  let n: i32 = a.len();
+  if (b.len() < n) {
+    n = b.len();
+  }
+  let acc: T = T.zero();
+  let i: i32 = 0;
+  while (i < n) {
+    acc = acc.add(a[i].mul(b[i]));
+    i = i + 1;
+  }
+  return acc;
+}
+
 // ---- u8 ----
 impl Add for u8 {
   function add(self: u8, o: u8): u8 {

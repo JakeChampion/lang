@@ -14,18 +14,19 @@ function main(): i32 {
     if (!approx(array.scale_f64(xs, 0.0)[1], 0.0)) { return 4; }        // scale by 0
     if (!approx(array.scale_f64(xs, 0.0 - 1.0)[2], 0.0 - 3.0)) { return 5; }  // negate
     let b: f64[] = [10.0, 20.0, 30.0];
-    let sum: f64[] = array.add_f64(xs, b);
+    let sum: f64[] = xs.add(b);
     if (!approx(sum[0], 11.0)) { return 6; }
     if (!approx(sum[2], 33.0)) { return 7; }
     // mismatched lengths -> shorter
     let c: f64[] = [100.0];
-    if (array.add_f64(xs, c).len() != 1) { return 8; }
-    if (!approx(array.add_f64(xs, c)[0], 101.0)) { return 9; }
+    if (xs.add(c).len() != 1) { return 8; }
+    if (!approx(xs.add(c)[0], 101.0)) { return 9; }
     // empty
     if (array.scale_f64([], 5.0).len() != 0) { return 10; }
-    if (array.add_f64([], []).len() != 0) { return 11; }
+    let none: f64[] = [];
+    if (none.add(none).len() != 0) { return 11; }
     // SAXPY: 2*xs + b
-    let saxpy: f64[] = array.add_f64(array.scale_f64(xs, 2.0), b);
+    let saxpy: f64[] = array.scale_f64(xs, 2.0).add(b);
     if (!approx(saxpy[0], 12.0)) { return 12; }
     if (!approx(saxpy[2], 36.0)) { return 13; }
     return 42;

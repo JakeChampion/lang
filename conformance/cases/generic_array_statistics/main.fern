@@ -1,0 +1,82 @@
+// avg, median, variance, dot and add are one generic method each, and
+// max_by_key / min_by_key take any ordered key.
+import "std/array";
+
+struct R { tag: i32, ts: i64 }
+
+function main(): i32 {
+  if ([2, 4, 6].avg().unwrap_or(0) != 4) {
+    return 1;
+  }
+  let e: i32[] = [];
+  if (e.avg().is_some()) {
+    return 2;
+  }
+  let fs: f64[] = [1.0, 2.0, 3.0, 4.0];
+  if (fs.avg().unwrap_or(0.0) != 2.5) {
+    return 3;
+  }
+  if (fs.median().unwrap_or(0.0) != 2.5) {
+    return 4;
+  }
+  if ([1, 2, 3, 4].median().unwrap_or(0) != 2) {
+    return 5;
+  }
+  if ([1, 10].median().unwrap_or(0) != 5) {
+    return 6;
+  }
+  if ([5, 1, 3].median().unwrap_or(0) != 3) {
+    return 7;
+  }
+  let vs: f64[] = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
+  if (vs.variance().unwrap_or(0.0) != 4.0) {
+    return 8;
+  }
+  let a: f64[] = [1.0, 2.0, 3.0];
+  if (a.dot([4.0, 5.0, 6.0]) != 32.0) {
+    return 9;
+  }
+  if ([1, 2, 3].dot([4, 5]) != 14) {
+    return 10;
+  }
+  let s: i64[] = [1 as i64, 2 as i64].add([10 as i64, 20 as i64, 30 as i64]);
+  if (s.len() != 2 || s[1] != 22 as i64) {
+    return 11;
+  }
+  let big: i64[] = [9000000000 as i64, 3000000000 as i64];
+  if (big.avg().unwrap_or(0 as i64) != 6000000000 as i64) {
+    return 12;
+  }
+  let rs: R[] = [R { tag: 1, ts: 30 as i64 }, R { tag: 2, ts: 10 as i64 }, R { tag: 3, ts: 50 as i64 }];
+  match (array.max_by_key(rs, (r: R): i64 => r.ts)) {
+    Some(r) => {
+      if (r.tag != 3) {
+        return 13;
+      }
+    },
+    None => {
+      return 14;
+    }
+  }
+  match (array.min_by_key(rs, (r: R): i64 => r.ts)) {
+    Some(r) => {
+      if (r.tag != 2) {
+        return 15;
+      }
+    },
+    None => {
+      return 16;
+    }
+  }
+  match (array.max_by_key(rs, (r: R): string => r.tag.to_string())) {
+    Some(r) => {
+      if (r.tag != 3) {
+        return 17;
+      }
+    },
+    None => {
+      return 18;
+    }
+  }
+  return 42;
+}

@@ -9,21 +9,21 @@ function unwrap(o: Option[f64]): f64 { match (o) { Some(v) => { return v; }, Non
 function main(): i32 {
     // odd length -> exact middle (unsorted input)
     let odd: f64[] = [5.0, 1.0, 3.0, 2.0, 4.0];
-    if (!approx(unwrap(array.median_f64(odd)), 3.0)) { return 1; }
+    if (!approx(unwrap(odd.median()), 3.0)) { return 1; }
     // even length -> average of the two middles
     let even: f64[] = [1.0, 2.0, 3.0, 4.0];
-    if (!approx(unwrap(array.median_f64(even)), 2.5)) { return 2; }
+    if (!approx(unwrap(even.median()), 2.5)) { return 2; }
     // even, unsorted, with a fractional result
     let even2: f64[] = [10.0, 2.0, 8.0, 4.0];
-    if (!approx(unwrap(array.median_f64(even2)), 6.0)) { return 3; }   // sorted 2,4,8,10 -> (4+8)/2
-    if (!approx(unwrap(array.median_f64([42.0])), 42.0)) { return 4; }
+    if (!approx(unwrap(even2.median()), 6.0)) { return 3; }   // sorted 2,4,8,10 -> (4+8)/2
+    if (!approx(unwrap([42.0].median()), 42.0)) { return 4; }
     // range = max - min
     if (!approx(unwrap(odd.spread()), 4.0)) { return 5; }
     if (!approx(unwrap([7.0].spread()), 0.0)) { return 6; }
     if (!approx(unwrap([0.0 - 3.0, 5.0, 1.0].spread()), 8.0)) { return 7; }
     // empty -> None
     let empty: f64[] = [];
-    match (array.median_f64(empty)) { Some(v) => { return 8; }, None => {} }
+    match (empty.median()) { Some(v) => { return 8; }, None => {} }
     match (empty.spread()) { Some(v) => { return 9; }, None => {} }
     return 42;
 }

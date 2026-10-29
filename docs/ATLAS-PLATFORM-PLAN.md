@@ -1050,7 +1050,7 @@ array of the same length. It is the first kernel with a buffer OUT: it
 allocates its own result, header and all, so the language needed no
 sized-array primitive before it could be called. It went first among the array
 candidates because a float reduction may not be reassociated
-(`ARRAY-ALGEBRA.md` §3, AA-02), which forbids a lane-parallel `dot_f64` as
+(`ARRAY-ALGEBRA.md` §3, AA-02), which forbids a lane-parallel `dot` as
 things stand, while an elementwise multiply has nothing to reassociate;
 `ARRAY-SHAPES.md` §9 records the choice.
 

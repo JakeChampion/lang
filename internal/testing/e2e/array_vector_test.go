@@ -8,21 +8,21 @@ function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d 
 function main(): i32 {
     let a: f64[] = [1.0, 2.0, 3.0];
     let b: f64[] = [4.0, 5.0, 6.0];
-    if (!approx(array.dot_f64(a, b), 32.0)) { return 1; }        // 4+10+18
+    if (!approx(a.dot(b), 32.0)) { return 1; }        // 4+10+18
     if (!approx(array.norm_f64([3.0, 4.0]), 5.0)) { return 2; }  // 3-4-5
     if (!approx(array.norm_f64([1.0, 2.0, 2.0]), 3.0)) { return 3; }
     // mismatched lengths -> shorter
     let c: f64[] = [1.0, 1.0];
-    if (!approx(array.dot_f64(a, c), 3.0)) { return 4; }         // 1*1 + 2*1
-    if (!approx(array.dot_f64(c, a), 3.0)) { return 5; }         // symmetric in length handling
+    if (!approx(a.dot(c), 3.0)) { return 4; }         // 1*1 + 2*1
+    if (!approx(c.dot(a), 3.0)) { return 5; }         // symmetric in length handling
     // negatives
-    if (!approx(array.dot_f64([1.0, 0.0 - 2.0], [3.0, 4.0]), 0.0 - 5.0)) { return 6; }  // 3 - 8
+    if (!approx([1.0, 0.0 - 2.0].dot([3.0, 4.0]), 0.0 - 5.0)) { return 6; }  // 3 - 8
     // empty
     let empty: f64[] = [];
-    if (!approx(array.dot_f64(empty, empty), 0.0)) { return 7; }
+    if (!approx(empty.dot(empty), 0.0)) { return 7; }
     if (!approx(array.norm_f64(empty), 0.0)) { return 8; }
     // identity: norm^2 == dot(self, self)
-    if (!approx(array.norm_f64(a) * array.norm_f64(a), array.dot_f64(a, a))) { return 9; }
+    if (!approx(array.norm_f64(a) * array.norm_f64(a), a.dot(a))) { return 9; }
     return 42;
 }
 `

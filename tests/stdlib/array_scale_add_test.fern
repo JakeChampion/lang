@@ -26,7 +26,7 @@ function test_scale_zero_negate(): test.TestOutcome {
 }
 
 function test_add(): test.TestOutcome {
-  let sum: f64[] = array.add_f64([1.0, 2.0, 3.0], [10.0, 20.0, 30.0]);
+  let sum: f64[] = [1.0, 2.0, 3.0].add([10.0, 20.0, 30.0]);
   if (!near(sum[0], 11.0)) {
     return test.fail("first");
   }
@@ -34,7 +34,7 @@ function test_add(): test.TestOutcome {
 }
 
 function test_add_mismatch(): test.TestOutcome {
-  let r: f64[] = array.add_f64([1.0, 2.0, 3.0], [100.0]);
+  let r: f64[] = [1.0, 2.0, 3.0].add([100.0]);
   if (r.len() != 1) {
     return test.fail("length");
   }
@@ -44,7 +44,7 @@ function test_add_mismatch(): test.TestOutcome {
 function test_saxpy(): test.TestOutcome {
   let xs: f64[] = [1.0, 2.0, 3.0];
   let b: f64[] = [10.0, 20.0, 30.0];
-  let saxpy: f64[] = array.add_f64(array.scale_f64(xs, 2.0), b);
+  let saxpy: f64[] = array.scale_f64(xs, 2.0).add(b);
   if (!near(saxpy[0], 12.0)) {
     return test.fail("saxpy 0");
   }
@@ -55,7 +55,8 @@ function test_empty(): test.TestOutcome {
   if (array.scale_f64([], 5.0).len() != 0) {
     return test.fail("scale empty");
   }
-  return test.assert_true(array.add_f64([], []).len() == 0);
+  let none: f64[] = [];
+  return test.assert_true(none.add(none).len() == 0);
 }
 
 function main(): i32 {

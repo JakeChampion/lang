@@ -158,8 +158,8 @@ strict and the opt-in is explicit and local.
 
 **The shipped rule is truncation, and it is uniform.** Every
 positionally-paired function in `internal/stdlib/std/array.fern.md` runs to
-the shorter input and drops the longer tail: `zip`, `dot_f64`,
-`distance_f64`, `add_f64`. None traps, none returns an `Option`, and
+the shorter input and drops the longer tail: `zip`, `dot`,
+`distance_f64`, `add`. None traps, none returns an `Option`, and
 each says so in its doc comment ("truncated to the shorter input (the
 usual zip-stops-at-shortest rule)").
 
@@ -415,7 +415,7 @@ be worse than no report.
 
 | | Claim |
 | --- | --- |
-| **AA-01** | Positional pairing truncates to the shorter input. `zip`, `dot_f64`, `distance_f64` and `add_f64` run to the shorter length and drop the longer tail; a length mismatch is not an error and not an `Option`. |
+| **AA-01** | Positional pairing truncates to the shorter input. `zip`, `dot`, `distance_f64` and `add` run to the shorter length and drop the longer tail; a length mismatch is not an error and not an `Option`. |
 | **AA-02** | A floating-point reduction evaluates in index order. `sum` over an `f64[]` gives the strictly left-to-right result, so a reassociating implementation is detectable and forbidden. |
 
 Both are pinned; see `spec/semantics.md`.
