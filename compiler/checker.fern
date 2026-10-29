@@ -1828,8 +1828,7 @@ function new_view_memo(): Cell[ViewMemo] {
 
 pub struct SigTable {
   sigs: FuncSig[],
-  head: i32[],
-  next: i32[],
+  index: util.NameIndex,
   raw: RawFloorSig[],
   raw_allowed: boolean,
 }
@@ -1843,17 +1842,11 @@ function sig_name_bucket(name: string): i32 {
 }
 
 function sig_table(sigs: FuncSig[]): SigTable {
-  let head: i32[] = util.minus_ones(sig_buckets());
-  let next: i32[] = util.minus_ones(sigs.len());
-  let k: i32 = sigs.len() - 1;
-  while (k >= 0) {
-    let nm: string = sigs[k].name;
-    let bk: i32 = sig_name_bucket(nm);
-    next = next.with(k, head[bk]);
-    head = head.with(bk, k);
-    k = k - 1;
+  let names: string[] = [];
+  for sig in sigs {
+    names = names.append(sig.name);
   }
-  return SigTable { sigs: sigs, head: head, next: next, raw: raw_floor_sigs(), raw_allowed: true };
+  return SigTable { sigs: sigs, index: util.name_index(names), raw: raw_floor_sigs(), raw_allowed: true };
 }
 
 pub struct StructTable {
@@ -2070,41 +2063,32 @@ function (ut: UnionTable) variant_chain_next(e: i32): i32 {
   return ut.next[e];
 }
 
+// names indexes the full method names, simple the names without their receiver.
 pub struct MethodTable {
   methods: MethodSig[],
-  head: i32[],
-  next: i32[],
-  shead: i32[],
-  snext: i32[],
+  names: util.NameIndex,
+  simple: util.NameIndex,
 }
 
 function method_table(methods: MethodSig[]): MethodTable {
-  let head: i32[] = util.minus_ones(sig_buckets());
-  let next: i32[] = util.minus_ones(methods.len());
-  let shead: i32[] = util.minus_ones(sig_buckets());
-  let snext: i32[] = util.minus_ones(methods.len());
-  let k: i32 = methods.len() - 1;
-  while (k >= 0) {
-    let bk: i32 = sig_name_bucket(methods[k].name);
-    next = next.with(k, head[bk]);
-    head = head.with(bk, k);
-    let sb: i32 = sig_name_bucket(method_simple_name(methods[k].name));
-    snext = snext.with(k, shead[sb]);
-    shead = shead.with(sb, k);
-    k = k - 1;
+  let names: string[] = [];
+  let simple: string[] = [];
+  for m in methods {
+    names = names.append(m.name);
+    simple = simple.append(method_simple_name(m.name));
   }
-  return MethodTable { methods: methods, head: head, next: next, shead: shead, snext: snext };
+  return MethodTable { methods: methods, names: util.name_index(names), simple: util.name_index(simple) };
 }
 
 function (s: Scope) trait_providers(name: string, recv_type: string): MethodSig[] {
   let out: MethodSig[] = [];
-  let i: i32 = s.methods.shead[sig_name_bucket(name)];
+  let i: i32 = s.methods.simple.chain(name);
   while (i >= 0) {
     let m: MethodSig = s.methods.methods[i];
     if (m.impl_trait.len() > 0 && method_simple_name(m.name) == name && (m.receiver_type == recv_type || parser.parse_type_ref(m.receiver_type).base == recv_type)) {
       out = out.append(m);
     }
-    i = s.methods.snext[i];
+    i = s.methods.simple.next[i];
   }
   return out;
 }
@@ -2743,9 +2727,9 @@ function (s: Scope) lookup_assoc_sig(tyname: string, field: string): Option[Func
 
 function (s: Scope) sig_at(name: string): i32 {
   let first: i32 = 0 - 1;
-  let i: i32 = s.sigs.head[sig_name_bucket(name)];
+  let i: i32 = s.sigs.index.chain(name);
   while (i >= 0) {
-    if (s.sigs.sigs[i].name == name) {
+    if (s.sigs.index.names[i] == name) {
       if (s.sigs.sigs[i].receiver.len() == 0) {
         return i;
       }
@@ -2753,7 +2737,7 @@ function (s: Scope) sig_at(name: string): i32 {
         first = i;
       }
     }
-    i = s.sigs.next[i];
+    i = s.sigs.index.next[i];
   }
   return first;
 }
@@ -3197,14 +3181,14 @@ function array_receiver_matches(rt: string, view: boolean): boolean {
 }
 
 function (s: Scope) array_recv_method(field: string, view: boolean): Option[MethodSig] {
-  let i: i32 = s.methods.head[sig_name_bucket(field)];
+  let i: i32 = s.methods.names.chain(field);
   while (i >= 0) {
     let method: MethodSig = s.methods.methods[i];
     let rt: string = method.receiver_type;
     if (method.name == field && array_receiver_matches(rt, view) && s.method_visible(method)) {
       return Some(method);
     }
-    i = s.methods.next[i];
+    i = s.methods.names.next[i];
   }
   return None;
 }
@@ -3515,16 +3499,16 @@ function (s: Scope) lookup_method(name: string, recv_type: string): Option[Metho
       return Some(provider);
     }
   }
-  let i: i32 = s.methods.head[sig_name_bucket(name)];
+  let i: i32 = s.methods.names.chain(name);
   while (i >= 0) {
     if (s.methods.methods[i].name != name) {
-      i = s.methods.next[i];
+      i = s.methods.names.next[i];
       continue;
     }
     if (s.receives(s.methods.methods[i], recv_type)) {
       return Some(s.methods.methods[i]);
     }
-    i = s.methods.next[i];
+    i = s.methods.names.next[i];
   }
   let at: i32 = s.trait_spelled_method(name, recv_type);
   if (at >= 0) {
@@ -3543,22 +3527,22 @@ function (s: Scope) trait_spelled_method(name: string, recv_type: string): i32 {
   }
   let tname: string = method_simple_name(slice_unchecked(name, 0, dot) + "");
   let simple: string = slice_unchecked(name, dot + 1, name.len()) + "";
-  let i: i32 = s.methods.shead[sig_name_bucket(simple)];
+  let i: i32 = s.methods.simple.chain(simple);
   while (i >= 0) {
     let m: MethodSig = s.methods.methods[i];
     if (method_simple_name(m.impl_trait) == tname && method_simple_name(m.name) == simple && (m.receiver_type == recv_type || parser.parse_type_ref(m.receiver_type).base == recv_type)) {
       return i;
     }
-    i = s.methods.snext[i];
+    i = s.methods.simple.next[i];
   }
   return -1;
 }
 
 function (s: Scope) has_method(name: string, recv_type: string): boolean {
-  let i: i32 = s.methods.head[sig_name_bucket(name)];
+  let i: i32 = s.methods.names.chain(name);
   while (i >= 0) {
     if (s.methods.methods[i].name != name) {
-      i = s.methods.next[i];
+      i = s.methods.names.next[i];
       continue;
     }
     if (s.methods.methods[i].receiver_type == recv_type) {
@@ -3570,7 +3554,7 @@ function (s: Scope) has_method(name: string, recv_type: string): boolean {
     if (is_variant_of(recv_type, s.methods.methods[i].receiver_type, s.unions.unions)) {
       return true;
     }
-    i = s.methods.next[i];
+    i = s.methods.names.next[i];
   }
   return s.trait_spelled_method(name, recv_type) >= 0;
 }
