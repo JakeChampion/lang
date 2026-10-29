@@ -1,3 +1,5 @@
+# 2026-10-29: aarch64 sort_inplace.ir from CI run 40972124279 at 352347547 on PR #13868.
+# Main moved this row. That PR changes only the Go oracle. Tolerances remain unchanged.
 # 2026-10-29: x86_64 rows from CI run 40893366540 at 50b7fe92f on PR #13846.
 # perceus_rbtree and the two sort programs run faster. perceus_cfold and perceus_deriv grow by 1% to 2%.
 # 2026-10-29: aarch64 rows from CI run 40896341239 at 981b76ca2 on PR #13846, with the same changes.
@@ -476,7 +478,7 @@ aarch64/pvec_with.ir	59221804
 aarch64/record_update.text	1608
 aarch64/record_update.ir	34494442
 aarch64/sort_inplace.text	1691
-aarch64/sort_inplace.ir	45949723
+aarch64/sort_inplace.ir	43684079
 aarch64/sort_ints.text	2184
 aarch64/sort_ints.ir	30178876
 aarch64/sort_strings.text	3597
