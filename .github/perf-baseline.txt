@@ -1,3 +1,8 @@
+# 2026-10-29: Perf run 40871299230 at 9da4c982 on PR #13837. An arm64 division by a constant
+# multiplies by the reciprocal and does not use sdiv. array_with.ir and record_update.ir
+# take a remainder by 251 in the inner loop: 31217639 to 34494442 (+10.5%). Native-pair run
+# 40844644316 timed dependent constant divisions at 0.901 of main on Apple Silicon.
+# All tolerances remain unchanged.
 # 2026-10-28: Native map_string.ir rows use main commit 1c8d476b9 (PR #13770).
 # The 81 updated rows retain data from CI run 40649279321.
 # Both tolerances remain 2%.
@@ -428,7 +433,7 @@ aarch64/array_index.ir	18388238
 aarch64/array_scale_f64.text	1446
 aarch64/array_scale_f64.ir	25340945
 aarch64/array_with.text	1508
-aarch64/array_with.ir	31217639
+aarch64/array_with.ir	34494442
 aarch64/ascii_scan.text	1668
 aarch64/ascii_scan.ir	68639570
 aarch64/byte_copy_append.text	1478
@@ -464,7 +469,7 @@ aarch64/pmap_insert.ir	63996220
 aarch64/pvec_with.text	3205
 aarch64/pvec_with.ir	59221804
 aarch64/record_update.text	1608
-aarch64/record_update.ir	31217639
+aarch64/record_update.ir	34494442
 aarch64/sort_inplace.text	1691
 aarch64/sort_inplace.ir	49143963
 aarch64/sort_ints.text	2184
