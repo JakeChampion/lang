@@ -12,20 +12,20 @@ function near(a: f64, b: f64): boolean {
 function test_dot(): test.TestOutcome {
   let a: f64[] = [1.0, 2.0, 3.0];
   let b: f64[] = [4.0, 5.0, 6.0];
-  return test.assert_eq_f64_near(array.dot_f64(a, b), 32.0, 0.0001);
+  return test.assert_eq_f64_near(a.dot(b), 32.0, 0.0001);
 }
 
 function test_dot_negatives(): test.TestOutcome {
-  return test.assert_eq_f64_near(array.dot_f64([1.0, 0.0 - 2.0], [3.0, 4.0]), 0.0 - 5.0, 0.0001);
+  return test.assert_eq_f64_near([1.0, 0.0 - 2.0].dot([3.0, 4.0]), 0.0 - 5.0, 0.0001);
 }
 
 function test_dot_mismatch(): test.TestOutcome {
   let a: f64[] = [1.0, 2.0, 3.0];
   let c: f64[] = [1.0, 1.0];
-  if (!near(array.dot_f64(a, c), 3.0)) {
+  if (!near(a.dot(c), 3.0)) {
     return test.fail("a,c");
   }
-  return test.assert_eq_f64_near(array.dot_f64(c, a), 3.0, 0.0001);
+  return test.assert_eq_f64_near(c.dot(a), 3.0, 0.0001);
 }
 
 function test_norm(): test.TestOutcome {
@@ -37,7 +37,7 @@ function test_norm(): test.TestOutcome {
 
 function test_empty(): test.TestOutcome {
   let empty: f64[] = [];
-  if (!near(array.dot_f64(empty, empty), 0.0)) {
+  if (!near(empty.dot(empty), 0.0)) {
     return test.fail("dot empty");
   }
   return test.assert_eq_f64_near(array.norm_f64(empty), 0.0, 0.0001);
@@ -45,7 +45,7 @@ function test_empty(): test.TestOutcome {
 
 function test_identity(): test.TestOutcome {
   let x: f64[] = [1.0, 2.0, 3.0];
-  return test.assert_eq_f64_near(array.norm_f64(x) * array.norm_f64(x), array.dot_f64(x, x), 0.0001);
+  return test.assert_eq_f64_near(array.norm_f64(x) * array.norm_f64(x), x.dot(x), 0.0001);
 }
 
 function main(): i32 {

@@ -35,17 +35,17 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<dependencies 2>>
 
-<<3 pub function (arr: i32[]) avg(): Option[i32]>>
+<<3 pub function (arr: i32[]) gcd_all(): i32>>
 
 <<4 pub function (arr: string[]) join(sep: string): string>>
 
 <<5 pub function (arr: string[]) all_starts_with(prefix: string): boolean>>
 
-<<6 pub function variance_f64(arr: f64[]): Option[f64]>>
+<<6 pub function stddev_f64(arr: f64[]): Option[f64]>>
 
 <<7 pub function first[T](xs: T[]): Option[T]>>
 
-<<8 pub function min_by_i32_key[T](xs: T[], key: (T)>>
+<<8 pub function min_by_key[T, K: cmp.Ord](xs: T[], key: (T)>>
 
 <<9 pub function rposition[T](xs: T[], pred: (T)>>
 
@@ -77,25 +77,10 @@ import "std/string";
 import "std/num";
 ```
 
-### `3 pub function (arr: i32[]) avg(): Option[i32]`
+### `3 pub function (arr: i32[]) gcd_all(): i32`
 
 ```fern
-<<3 pub function (arr: i32[]) avg(): Option[i32]>>=
-// avg returns the integer mean, or None for an empty array.
-pub function (arr: i32[]) avg(): Option[i32] {
-  let n: i32 = arr.len();
-  if (n == 0) {
-    return None;
-  }
-  let s: i64 = 0;
-  let i: i32 = 0;
-  while (i < n) {
-    s = s + arr[i] as i64;
-    i = i + 1;
-  }
-  return Some((s / (n as i64)) as i32);
-}
-
+<<3 pub function (arr: i32[]) gcd_all(): i32>>=
 pub function (arr: i32[]) gcd_all(): i32 {
   let g: i32 = 0;
   for x in arr {
@@ -164,15 +149,6 @@ pub function (arr: i32[]) sum_squared(): i32 {
     i = i + 1;
   }
   return s;
-}
-
-pub function (arr: i32[]) median(): Option[i32] {
-  let n: i32 = arr.len();
-  if (n == 0) {
-    return None;
-  }
-  let sorted: i32[] = cmp.sort(arr);
-  return Some(sorted[(n - 1) / 2]);
 }
 
 pub function (arr: i32[]) mode(): Option[i32] {
@@ -445,64 +421,14 @@ pub function (arr: string[]) all_eq_str(target: string): boolean {
   }
   return true;
 }
-
-pub function avg_i64(arr: i64[]): Option[i64] {
-  let n: i32 = arr.len();
-  if (n == 0) {
-    return None;
-  }
-  let total: i64 = 0;
-  let i: i32 = 0;
-  while (i < n) {
-    total = total + arr[i];
-    i = i + 1;
-  }
-  return Some(total / (n as i64));
-}
-
-pub function avg_f64(arr: f64[]): Option[f64] {
-  let n: i32 = arr.len();
-  if (n == 0) {
-    return None;
-  }
-  let total: f64 = 0.0;
-  let i: i32 = 0;
-  while (i < n) {
-    total = total + arr[i];
-    i = i + 1;
-  }
-  return Some(total / (n as f64));
-}
 ```
 
-### `6 pub function variance_f64(arr: f64[]): Option[f64]`
+### `6 pub function stddev_f64(arr: f64[]): Option[f64]`
 
 ```fern
-<<6 pub function variance_f64(arr: f64[]): Option[f64]>>=
-pub function variance_f64(arr: f64[]): Option[f64] {
-  let n: i32 = arr.len();
-  if (n == 0) {
-    return None;
-  }
-  let msum: f64 = 0.0;
-  let mi: i32 = 0;
-  while (mi < n) {
-    msum = msum + arr[mi];
-    mi = mi + 1;
-  }
-  let mean: f64 = msum / (n as f64);
-  let acc: f64 = 0.0;
-  let i: i32 = 0;
-  while (i < n) {
-    let d: f64 = arr[i] - mean;
-    acc = acc + d * d;
-    i = i + 1;
-  }
-  return Some(acc / (n as f64));
-}
-
+<<6 pub function stddev_f64(arr: f64[]): Option[f64]>>=
 pub function stddev_f64(arr: f64[]): Option[f64] {
-  match (variance_f64(arr)) {
+  match (num.variance(arr)) {
     Some(v) => {
       return Some(__sqrt_f64(v));
     },
@@ -510,34 +436,6 @@ pub function stddev_f64(arr: f64[]): Option[f64] {
       return None;
     }
   }
-}
-
-pub function median_f64(arr: f64[]): Option[f64] {
-  let n: i32 = arr.len();
-  if (n == 0) {
-    return None;
-  }
-  let sorted: f64[] = cmp.sort(arr);
-  if (n % 2 == 1) {
-    return Some(sorted[n / 2]);
-  }
-  let hi: i32 = n / 2;
-  return Some((sorted[hi - 1] + sorted[hi]) * 0.5);
-}
-
-pub function dot_f64(a: f64[], b: f64[]): f64 {
-  let n: i32 = a.len();
-  let m: i32 = b.len();
-  if (m < n) {
-    n = m;
-  }
-  let s: f64 = 0.0;
-  let i: i32 = 0;
-  while (i < n) {
-    s = s + a[i] * b[i];
-    i = i + 1;
-  }
-  return s;
 }
 
 pub function norm_f64(arr: f64[]): f64 {
@@ -592,21 +490,6 @@ pub function outer_mul_f64(a: f64[], b: f64[]): f64[] {
 
 pub function inner_mul_add_f64(a: f64[], b: f64[], rows: i32, extent: i32, columns: i32, init: f64): f64[] {
   return __inner_mul_add_f64(a, b, rows, extent, columns, init);
-}
-
-pub function add_f64(a: f64[], b: f64[]): f64[] {
-  let n: i32 = a.len();
-  let m: i32 = b.len();
-  if (m < n) {
-    n = m;
-  }
-  let out: f64[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(a[i] + b[i]);
-    i = i + 1;
-  }
-  return out;
 }
 
 pub function is_empty[T](xs: T[]): boolean {
@@ -725,16 +608,16 @@ pub function find_map[T, U](xs: T[], f: (T) => Option[U]): Option[U] {
   return None;
 }
 
-pub function max_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
+pub function max_by_key[T, K: cmp.Ord](xs: T[], key: (T) => K): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
   let best: T = xs[0];
-  let best_k: i32 = key(best);
+  let best_k: K = key(best);
   let i: i32 = 1;
   while (i < xs.len()) {
-    let k: i32 = key(xs[i]);
-    if (k > best_k) {
+    let k: K = key(xs[i]);
+    if (k.cmp(best_k) > 0) {
       best = xs[i];
       best_k = k;
     }
@@ -744,20 +627,20 @@ pub function max_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
 }
 ```
 
-### `8 pub function min_by_i32_key[T](xs: T[], key: (T)`
+### `8 pub function min_by_key[T, K: cmp.Ord](xs: T[], key: (T)`
 
 ```fern
-<<8 pub function min_by_i32_key[T](xs: T[], key: (T)>>=
-pub function min_by_i32_key[T](xs: T[], key: (T) => i32): Option[T] {
+<<8 pub function min_by_key[T, K: cmp.Ord](xs: T[], key: (T)>>=
+pub function min_by_key[T, K: cmp.Ord](xs: T[], key: (T) => K): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
   let best: T = xs[0];
-  let best_k: i32 = key(best);
+  let best_k: K = key(best);
   let i: i32 = 1;
   while (i < xs.len()) {
-    let k: i32 = key(xs[i]);
-    if (k < best_k) {
+    let k: K = key(xs[i]);
+    if (k.cmp(best_k) < 0) {
       best = xs[i];
       best_k = k;
     }
@@ -1515,6 +1398,49 @@ pub function (xs: T[]) windows[T](size: i32): T[][] {
 
 pub function (xs: T[]) sum[T: num.Add + num.Zero](): T {
   return num.sum(xs);
+}
+
+// The mean, summed in T as sum is, so an integer sum wraps; None when empty.
+pub function (xs: T[]) avg[T: num.Add + num.Div + num.Zero + num.One](): Option[T] {
+  return num.avg(xs);
+}
+
+pub function (xs: T[]) variance[T: num.Num + num.Zero + num.One](): Option[T] {
+  return num.variance(xs);
+}
+
+// The middle element of the sorted array, or the mean of the two middle
+// elements when the length is even; integers truncate.
+pub function (xs: T[]) median[T: cmp.Ord + num.Add + num.Div + num.One](): Option[T] {
+  let n: i32 = xs.len();
+  if (n == 0) {
+    return None;
+  }
+  let sorted: T[] = cmp.sort(xs);
+  if (n % 2 == 1) {
+    return Some(sorted[n / 2]);
+  }
+  let two: T = T.one().add(T.one());
+  return Some(sorted[n / 2 - 1].add(sorted[n / 2]).div(two));
+}
+
+pub function (xs: T[]) dot[T: num.Add + num.Mul + num.Zero](other: T[]): T {
+  return num.dot(xs, other);
+}
+
+// Elementwise sum, as long as the shorter array.
+pub function (xs: T[]) add[T: num.Add](other: T[]): T[] {
+  let n: i32 = xs.len();
+  if (other.len() < n) {
+    n = other.len();
+  }
+  let out: T[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(xs[i].add(other[i]));
+    i = i + 1;
+  }
+  return out;
 }
 
 pub function (xs: T[]) product[T: num.Mul + num.One](): T {

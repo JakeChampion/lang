@@ -25,7 +25,7 @@ function is_none(o: Option[f64]): boolean {
 
 function test_variance(): test.TestOutcome {
   let xs: f64[] = [2.0, 4.0, 4.0, 4.0, 5.0, 5.0, 7.0, 9.0];
-  return test.assert_eq_f64_near(unwrap(array.variance_f64(xs)), 4.0, 0.0001);
+  return test.assert_eq_f64_near(unwrap(xs.variance()), 4.0, 0.0001);
 }
 
 function test_stddev(): test.TestOutcome {
@@ -35,7 +35,7 @@ function test_stddev(): test.TestOutcome {
 
 function test_single(): test.TestOutcome {
   let single: f64[] = [42.0];
-  if (!is_zero(unwrap(array.variance_f64(single)))) {
+  if (!is_zero(unwrap(single.variance()))) {
     return test.fail("variance of one");
   }
   return test.assert_eq_f64_near(unwrap(array.stddev_f64(single)), 0.0, 0.0001);
@@ -43,12 +43,12 @@ function test_single(): test.TestOutcome {
 
 function test_constant(): test.TestOutcome {
   let flat: f64[] = [3.0, 3.0, 3.0];
-  return test.assert_eq_f64_near(unwrap(array.variance_f64(flat)), 0.0, 0.0001);
+  return test.assert_eq_f64_near(unwrap(flat.variance()), 0.0, 0.0001);
 }
 
 function test_empty_none(): test.TestOutcome {
   let empty: f64[] = [];
-  if (!is_none(array.variance_f64(empty))) {
+  if (!is_none(empty.variance())) {
     return test.fail("variance of empty");
   }
   return test.assert_true(is_none(array.stddev_f64(empty)));

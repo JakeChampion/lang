@@ -32,9 +32,9 @@ function main(): i32 {
   let xs: f64[] = [1.0, 2.0, 3.0, 4.0];
   let ys: f64[] = [10.0, 20.0];
 
-  print(array.dot_f64(xs, ys).to_string());
+  print(xs.dot(ys).to_string());
 
-  let sum: f64[] = array.add_f64(xs, ys);
+  let sum: f64[] = xs.add(ys);
   print(sum.len().to_string());
   print(sum[0].to_string());
   print(sum[1].to_string());
