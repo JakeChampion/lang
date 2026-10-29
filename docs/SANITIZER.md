@@ -61,14 +61,18 @@ the fold-down only ever turns checks on. Each is on or off by the rule in
 
 Real, and the reason this is opt-in:
 
-- **Nothing is ever recycled.** The quarantine is what makes use-after-free
-  detectable — a recycled block would overwrite its own poison — so
-  `__fern_free` accounts the release and declines to push the block onto a
-  freelist. The heap only grows. A loop that churns 200 rows through one
-  recycled block instead bumps 200 blocks' worth of arena.
-  `TestSelfHostSanitizeQuarantineGrowth` pins the growth, 88 bytes per
-  release of a 64-byte array, and `docs/security/QUARANTINE.md` records the
-  bounded-quarantine options that wait for a policy.
+- **A released block waits in a quarantine.** The quarantine is what makes
+  use-after-free detectable — a recycled block would overwrite its own
+  poison — so a release accounts the block and queues it instead of pushing
+  it onto a freelist. The queue holds 64 MiB of released blocks, or the
+  budget `-quarantine SIZE` gives (`0` for no bound). A release past the
+  budget evicts the oldest block to its freelist after a second look at its
+  poison: a block written after its release reports
+  `fern-sanitizer: write-after-free` with exit 124. A loop that churns 200
+  rows through one recycled block instead bumps 200 blocks' worth of arena,
+  up to the budget. `TestSelfHostSanitizeQuarantineGrowth` pins the growth,
+  88 bytes per release of a 64-byte array, and `docs/security/QUARANTINE.md`
+  records the policy.
 - Every `inc`/`dec` takes the out-of-line helper (the inline rc fast path is
   bypassed, since it is the helper that carries the poison check).
 

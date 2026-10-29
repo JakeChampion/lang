@@ -83,15 +83,32 @@ function main(): i32 {
 			t.Errorf("flag-on asm is missing %q", want)
 		}
 	}
-	if strings.Contains(on, "__fern_freelist(%rip), %r8") {
-		t.Error("flag-on asm still pushes onto a freelist — a recycled block would overwrite its own poison")
+	// A release never recycles directly: the only pushes sit inside the
+	// quarantine's eviction, after its second look at the poison.
+	evict, outside := quarantineSplit(t, on)
+	if strings.Contains(outside, "__fern_freelist(%rip), %r8") {
+		t.Error("flag-on asm pushes onto a freelist outside the quarantine — a recycled block would overwrite its own poison")
+	}
+	if !strings.Contains(evict, "__fern_freelist(%rip), %r8") {
+		t.Error("flag-on asm has no freelist push in the quarantine's eviction")
+	}
+	if strings.Contains(on, "call __fern_large_push\n") || strings.Contains(on, "jmp __fern_large_push\n") {
+		t.Error("flag-on asm pushes onto the large freelist at a release — a recycled >=512 KiB block would overwrite its own poison")
+	}
+	if !strings.Contains(evict, "call __fern_large_push_now") {
+		t.Error("flag-on asm has no large-tier push in the quarantine's eviction")
+	}
+	for _, want := range []string{"__fern_san_abort_waf:", "fern-sanitizer: write-after-free (a quarantined block was written)"} {
+		if !strings.Contains(on, want) {
+			t.Errorf("flag-on asm is missing %q", want)
+		}
 	}
 	if !strings.Contains(on, "__fern_freelist(%rip), %rdx") {
 		t.Error("flag-on asm lost __fern_alloc's pop — the allocator must still consult (empty) freelists")
 	}
 
 	off := hevCompile(t, runner, driverBin, src, nil)
-	for _, marker := range []string{uafPoisonDec, "__fern_san_abort_uaf", ".Lsan_uaf"} {
+	for _, marker := range []string{uafPoisonDec, "__fern_san_abort_uaf", ".Lsan_uaf", "__fern_quar_push", "__fern_san_abort_waf"} {
 		if strings.Contains(off, marker) {
 			t.Errorf("flag-off asm contains %q — the detector is not fully gated", marker)
 		}
