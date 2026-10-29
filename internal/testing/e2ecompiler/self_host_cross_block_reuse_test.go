@@ -73,7 +73,7 @@ function main(): i32 { return f(1) * 10 + __arr_push_shared_count(); }`, 120, 5}
 @noinline function grow(s: S, m: i32): S { return S { ...s, xs: s.xs.append(m), n: m }; }
 @noinline function hold(w: S): i32 { return w.n + w.xs.len() - 1; }
 function f(k: i32): i32 { let s: S = mk(room(), k); let keep: S[] = [s]; let m: i32 = 0; if (k % 2 == 0) { m = s.n; } else { m = s.n * 2; } let t: S = keep[0]; let r: S = grow(t, m); let w: S = S { xs: id([3]), n: r.n + r.xs.len() }; return hold(w); }
-function main(): i32 { return f(two()) * 10 + __arr_push_shared_count(); }`, 120, 4},
+function main(): i32 { return f(two()) * 10 + __arr_push_shared_count(); }`, 120, 3},
 		{"shared-donor", `struct P { x: i32, y: i32 }
 function main(): i32 { let sum: i32 = 0; let keep: P[] = []; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: i + 1 }; if (i == 1) { keep = keep.append(a); } let s: i32 = a.x + a.y; if (i > 0) { let b: P = P { x: i, y: 3 }; sum = sum + b.x + b.y; } sum = sum + s; i = i + 1; } return sum + keep[0].x * 10; }`, 41, 6},
 		{"record-into-both-arms", `struct P { x: i32, y: i32 }

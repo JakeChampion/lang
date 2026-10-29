@@ -4302,7 +4302,7 @@ function carried_pairs(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], off:
           let found: Searched = carry_routes(f, g, h.blocks, marks, slots, d);
           marks = found.marks;
           let before: i32 = c.to.len();
-          c = served_by(f, p, g, c, h, found.routes, d);
+          c = served_by(f, p, idx, g, c, h, found.routes, d);
           if (c.to.len() > before) {
             for id in h.blocks {
               holding = holding.with(g.at[id], true);
@@ -4317,7 +4317,7 @@ function carried_pairs(f: ssasem.Func, p: Plan, idx: i32[][], links: i32[], off:
   return c;
 }
 
-function served_by(f: ssasem.Func, p: Plan, g: RouteGraph, own c: Carry, h: Holds, r: Routes, d: i32): Carry {
+function served_by(f: ssasem.Func, p: Plan, idx: i32[][], g: RouteGraph, own c: Carry, h: Holds, r: Routes, d: i32): Carry {
   let targets: i32[] = [];
   let builds: i32[] = [];
   let inside: i32[] = [];
@@ -4325,7 +4325,8 @@ function served_by(f: ssasem.Func, p: Plan, g: RouteGraph, own c: Carry, h: Hold
   while (k < r.targets.len()) {
     let to: ssa.SBlock = f.graph.blocks[g.at[r.targets[k]]];
     let at_build: i32 = first_claim_of(f, p, to, h.slots);
-    if (util.index_of_i32(c.to, to.id) < 0 && util.index_of_i32(to.insts[at_build].args, d) < 0) {
+    if (util.index_of_i32(c.to, to.id) < 0 && util.index_of_i32(to.insts[at_build].args, d) < 0
+      && !served_in_block(f, p, idx, g.reads, to, at_build, h.slots)) {
       targets = targets.append(to.id);
       builds = builds.append(at_build);
       c = with_null_edges(c, r.nulls[k], to.id, d);
@@ -4364,6 +4365,19 @@ function served_by(f: ssasem.Func, p: Plan, g: RouteGraph, own c: Carry, h: Hold
     }
   }
   return c;
+}
+
+// When values that die in the block already serve every construction of the
+// slot count from at on, a carried token would only take one's place.
+function served_in_block(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b: ssa.SBlock, at: i32, slots: i32): boolean {
+  let local: ReusePairs = reuse_pairs(f, p, idx, vr, b, false, no_carry());
+  for pos in at..b.insts.len() {
+    let ins: ssa.SInst = b.insts[pos];
+    if (ins.kind_tag != 6 && ins.kind_tag != 8 && recipient_slots(f, p, ins) == slots && local.builds[pos] < 0 && local.selfs[pos] < 0) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function with_null_edges(own c: Carry, from: i32[], to: i32, d: i32): Carry {
