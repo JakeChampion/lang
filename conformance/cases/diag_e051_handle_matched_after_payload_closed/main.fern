@@ -1,0 +1,27 @@
+// spec: RH-21
+// A match that is not the local's last use lends its payload, so a
+// consuming close of the payload is refused.
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function main(): i32 {
+  let held: Option[Handle] = Some(Handle { fd: 1 });
+  let n: i32 = 0;
+  match (held) {
+    Some(h) => {
+      n = h.close();
+    },
+    None => {}
+  }
+  match (held) {
+    Some(h) => {
+      n = n + h.fd;
+    },
+    None => {}
+  }
+  return n;
+}

@@ -9943,7 +9943,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 				return true
 			}
-			if _, ok := x.Target.(*ast.Ident); ok && lastUse[e] {
+			if id, ok := x.Target.(*ast.Ident); ok && lastUse[e] && !borrowedParam[id.Name] {
 				return true
 			}
 			return selfMoveArgs[e] || c.scalarArgs[e]
@@ -10341,6 +10341,15 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.FuncDecl:
 			walkNested(x.Params, x.Body, moved)
 		case *ast.Var:
+			// A for-each over an own parameter's array takes it: each
+			// element is the loop's, and the array is not read again.
+			if strings.HasPrefix(x.Name, ast.ForEachIterPrefix) {
+				if id, ok := x.Init.(*ast.Ident); ok && owned[id.Name] {
+					recordExprUses(x.Init, moved)
+					moved[id.Name] = id.Pos()
+					return
+				}
+			}
 			recordExprUses(x.Init, moved)
 		case *ast.ExprStmt:
 			if asn, ok := x.Expr.(*ast.Assign); ok {
