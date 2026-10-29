@@ -164,6 +164,14 @@ of them.
 | `RH-03` | `docs/security/HANDLE-AUDIT.md` | A handle passed to an `own` parameter is not used after the transfer (`E051`) | `diag_e051_handle_used_after_transfer` |
 | `RH-04` | `docs/security/HANDLE-AUDIT.md` | A handle with a consuming close is closed exactly once at a local's last use, through an `own` parameter, and on each branch that closes or stores it | `handle_transfer_closes_once` |
 | `RH-05` | `docs/security/HANDLE-AUDIT.md` | A second close of a built-in handle, with no open between the closes, answers `Other` with "Bad file descriptor" and errno 9 | `io_error_other_double_close_reader` |
+| `RH-06` | `docs/security/HANDLE-AUDIT.md` | A deferred consuming close runs at the function's exit and is the handle's last use; the handle stays readable after the `defer` statement | `handle_defer_closes_at_exit` |
+| `RH-07` | `docs/security/HANDLE-AUDIT.md` | A field of a fresh local or of an `own` parameter moves out to a consuming call at the path's last use; a sibling field stays owned | `handle_field_closes_from_local` |
+| `RH-08` | `docs/security/HANDLE-AUDIT.md` | A close after a deferred close of the same handle is a second consumption (`E051`) | `diag_e051_handle_closed_after_defer` |
+| `RH-09` | `docs/security/HANDLE-AUDIT.md` | A field closed twice makes the first close a borrow (`E051`) | `diag_e051_handle_field_closed_twice` |
+| `RH-10` | `docs/security/HANDLE-AUDIT.md` | A transfer of the whole after one of its fields moved out makes the field close a borrow (`E051`) | `diag_e051_handle_whole_used_after_field_close` |
+| `RH-11` | `docs/security/HANDLE-AUDIT.md` | A deferred consuming close inside a loop of a handle declared outside it is refused (`E051`) | `diag_e051_handle_deferred_close_in_loop` |
+| `RH-12` | `docs/security/HANDLE-AUDIT.md` | An `own` parameter a deferred call consumes is consumed nowhere else (`E050`) | `diag_e050_owned_handle_consumed_after_defer` |
+| `RH-13` | `docs/security/HANDLE-AUDIT.md` | A handle a closure captures cannot be closed by a deferred consuming call (`E051`) | `diag_e051_handle_captured_then_deferred` |
 
 ## Every gap this index opened with is now closed
 

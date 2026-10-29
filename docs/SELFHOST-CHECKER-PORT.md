@@ -923,7 +923,13 @@ same code(s) the Go checker does — restricted to
   the self-host's own fixpoint are untouched (verified x86-64 + arm64).
   Captured params are emitted by codegen as borrows (no transfer lowering
   yet); this establishes the affine invariant. Ten new differential-corpus
-  cases cross-checked against the Go checker.
+  cases cross-checked against the Go checker. Two rules joined on
+  2026-10-29 (`docs/security/HANDLE-AUDIT.md`, RH-06 to RH-13): a deferred
+  consuming call is the last use of what it consumes (`lu_dies` with
+  `in_defer`, the `deferred` cell in `OwnCtx`), and a field moves out of
+  a fresh local or an `own` parameter at the path's last use
+  (`lu_field_dies`, the `name.field` entries in the moved set). Eight
+  conformance cases pin both checkers to the same code and position.
 - **Slice 56 (done): E024 — tuple destructure of a non-tuple / wrong
   arity.** The parser already lowers `let (a, b) = E` to a `StmtVar` whose
   `name` is `"a,b"`, so this is checker-only after all (not a missing

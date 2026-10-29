@@ -1,0 +1,20 @@
+// spec: RH-10
+// After a field moves out, the whole local is not usable again, so a later
+// transfer of the whole makes the field close a borrow, which is refused.
+
+struct Handle { fd: i32 }
+struct Ends { r: Handle, w: Handle }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function take(own e: Ends): i32 {
+  return e.w.close();
+}
+
+function main(): i32 {
+  let q: Ends = Ends { r: Handle { fd: 3 }, w: Handle { fd: 4 } };
+  let a: i32 = q.r.close();
+  return a + take(q);
+}

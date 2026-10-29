@@ -1,0 +1,16 @@
+// spec: RH-09
+// A field moves out of a local only at the path's last use: a second close
+// of the same field makes the first one a borrow, which is refused.
+
+struct Handle { fd: i32 }
+struct Ends { r: Handle, w: Handle }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function main(): i32 {
+  let q: Ends = Ends { r: Handle { fd: 3 }, w: Handle { fd: 4 } };
+  let a: i32 = q.r.close();
+  return a + q.r.close();
+}

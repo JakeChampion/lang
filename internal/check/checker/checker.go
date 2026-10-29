@@ -9943,6 +9943,9 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 				return true
 			}
+			if _, ok := x.Target.(*ast.Ident); ok && lastUse[e] {
+				return true
+			}
 			return selfMoveArgs[e] || c.scalarArgs[e]
 		case *ast.Call:
 			if id, ok := x.Callee.(*ast.Ident); ok {
@@ -9979,6 +9982,18 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 
 	type movedSet = map[string]ast.Position
 
+	// A deferred call consumes its arguments at the function's exit, after
+	// every other use. deferMoved holds those names and field paths.
+	deferMoved := movedSet{}
+	loopDepth := 0
+	movedPrefix := func(moved movedSet, name string) (string, ast.Position, bool) {
+		for k, at := range moved {
+			if len(k) > len(name) && k[:len(name)] == name && k[len(name)] == '.' {
+				return k, at, true
+			}
+		}
+		return "", ast.Position{}, false
+	}
 	var walkStmt func(st ast.Stmt, moved movedSet)
 	var walkStmts func(stmts []ast.Stmt, moved movedSet)
 
@@ -10123,6 +10138,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		}
 		borrow := map[*ast.Ident]bool{}
 		dynConsumed := map[*ast.Ident]bool{}
+		fieldTarget := map[*ast.Ident]bool{}
+		fieldMoves := map[*ast.FieldAccess]bool{}
 		var lambdas []*ast.Lambda
 		ast.Walk(e, func(n ast.Node) bool {
 			switch x := n.(type) {
@@ -10134,6 +10151,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			case *ast.FieldAccess:
 				if id, ok := x.Target.(*ast.Ident); ok {
 					borrow[id] = true
+					fieldTarget[id] = true
 				}
 			case *ast.Index:
 				if id, ok := x.Array.(*ast.Ident); ok {
@@ -10191,15 +10209,26 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 						continue
 					}
 					if ai < len(flags) && flags[ai] {
+						if fa, ok := arg.(*ast.FieldAccess); ok && isOwnedExpr(fa) {
+							if id, ok := fa.Target.(*ast.Ident); ok && owned[id.Name] {
+								fieldMoves[fa] = true
+							}
+						}
 						continue
 					}
 					if aid, ok := arg.(*ast.Ident); ok {
 						borrow[aid] = true
 					}
 				}
-				if x.Method != nil && len(x.Args) > 0 && !c.methodConsumesReceiver(x.Method) {
-					if id, ok := x.Args[0].(*ast.Ident); ok {
+				if x.Method != nil && len(x.Args) > 0 {
+					consumes := c.methodConsumesReceiver(x.Method)
+					if id, ok := x.Args[0].(*ast.Ident); ok && !consumes {
 						borrow[id] = true
+					}
+					if fa, ok := x.Args[0].(*ast.FieldAccess); ok && consumes && isOwnedExpr(fa) {
+						if id, ok := fa.Target.(*ast.Ident); ok && owned[id.Name] {
+							fieldMoves[fa] = true
+						}
 					}
 				}
 				if x.DynTrait != "" {
@@ -10229,6 +10258,32 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				walkStmts(x.Stmts, moved)
 				recordExprUses(x.Tail, moved)
 				return false
+			case *ast.FieldAccess:
+				id, ok := x.Target.(*ast.Ident)
+				if !ok || id.Builtin || !owned[id.Name] {
+					return true
+				}
+				path := id.Name + "." + x.Field
+				if at, isMoved := moved[path]; isMoved {
+					c.errfCode(x.Pos(), "E050", "use of owned parameter %q after its field %q was consumed (moved at line %d)", id.Name, x.Field, at.Line)
+					return true
+				}
+				if !fieldMoves[x] {
+					return true
+				}
+				if _, isMoved := moved[id.Name]; isMoved {
+					return true
+				}
+				if at, isDeferred := deferMoved[path]; isDeferred {
+					c.errfCode(x.Pos(), "E050", "field %q of owned parameter %q is consumed twice: a deferred call at line %d consumes it", x.Field, id.Name, at.Line)
+					return true
+				}
+				if at, isDeferred := deferMoved[id.Name]; isDeferred {
+					c.errfCode(x.Pos(), "E050", "owned parameter %q is consumed twice: a deferred call at line %d consumes it", id.Name, at.Line)
+					return true
+				}
+				moved[path] = x.Pos()
+				return true
 			}
 			id, ok := n.(*ast.Ident)
 			if !ok || id.Builtin || !owned[id.Name] {
@@ -10238,7 +10293,21 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				c.errfCode(id.Pos(), "E050", "use of owned parameter %q after it was consumed (moved at line %d)", id.Name, at.Line)
 				return true
 			}
+			if !fieldTarget[id] {
+				if path, at, isMoved := movedPrefix(moved, id.Name); isMoved {
+					c.errfCode(id.Pos(), "E050", "use of owned parameter %q after its field %q was consumed (moved at line %d)", id.Name, path[len(id.Name)+1:], at.Line)
+					return true
+				}
+			}
 			if !borrow[id] {
+				if at, isDeferred := deferMoved[id.Name]; isDeferred {
+					c.errfCode(id.Pos(), "E050", "owned parameter %q is consumed twice: a deferred call at line %d consumes it", id.Name, at.Line)
+					return true
+				}
+				if path, at, isDeferred := movedPrefix(deferMoved, id.Name); isDeferred {
+					c.errfCode(id.Pos(), "E050", "owned parameter %q is consumed twice: a deferred call at line %d consumes its field %q", id.Name, at.Line, path[len(id.Name)+1:])
+					return true
+				}
 				moved[id.Name] = id.Pos()
 			}
 			return true
@@ -10250,12 +10319,14 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 
 	loopBody := func(body ast.Stmt, step ast.Stmt, moved movedSet) {
 		inner := cloneMoved(moved)
+		loopDepth++
 		if body != nil {
 			walkStmt(body, inner)
 		}
 		if step != nil {
 			walkStmt(step, inner)
 		}
+		loopDepth--
 		for name, at := range inner {
 			if _, wasLive := moved[name]; !wasLive {
 				c.errfCode(at, "E050", "owned parameter %q is consumed inside a loop; a later iteration would use it after move", name)
@@ -10288,12 +10359,36 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				recordExprUses(asn.Value, moved)
 				if id, ok := asn.Target.(*ast.Ident); ok && owned[id.Name] {
 					delete(moved, id.Name)
+					for path := range moved {
+						if len(path) > len(id.Name) && path[:len(id.Name)] == id.Name && path[len(id.Name)] == '.' {
+							delete(moved, path)
+						}
+					}
 				} else {
 					recordExprUses(asn.Target, moved)
 				}
 				return
 			}
 			recordExprUses(x.Expr, moved)
+		case *ast.Defer:
+			// The action runs at the function's exit: a name it consumes is
+			// still readable after the statement, and consumed nowhere else.
+			if loopDepth > 0 {
+				recordExprUses(x.Expr, moved)
+				return
+			}
+			scratch := cloneMoved(moved)
+			recordExprUses(x.Expr, scratch)
+			for name, at := range scratch {
+				if _, had := moved[name]; had {
+					continue
+				}
+				if prev, dup := deferMoved[name]; dup {
+					c.errfCode(at, "E050", "owned parameter %q is consumed twice: a deferred call at line %d consumes it", name, prev.Line)
+					continue
+				}
+				deferMoved[name] = at
+			}
 		case *ast.Return:
 			if sl := FieldMoveLiteral(x.Value); sl != nil && sl.Base != nil {
 				if bid, ok := sl.Base.(*ast.Ident); ok && !borrowedParam[bid.Name] {
