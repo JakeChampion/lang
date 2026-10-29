@@ -1,0 +1,1032 @@
+// Each division by a literal must agree with the same division by a divisor
+// read at run time, which no backend can strength-reduce.
+function mix(h: u64, v: u64): u64 {
+  return (h ^ v) * 1099511628211u64;
+}
+
+function run_i32(xs: i32[], ds: i32[]): u64 {
+  let h: u64 = 14695981039346656037u64;
+  let bad: i32 = 0;
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    let x: i32 = xs[i];
+    if (x / 0 != x / ds[0] || x % 0 != x % ds[0]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 0");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 0) as u64), (x % 0) as u64);
+    if (x / 1 != x / ds[1] || x % 1 != x % ds[1]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 1");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1) as u64), (x % 1) as u64);
+    if (x / (0 - 1) != x / ds[2] || x % (0 - 1) != x % ds[2]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / -1");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0 - 1)) as u64), (x % (0 - 1)) as u64);
+    if (x / 2 != x / ds[3] || x % 2 != x % ds[3]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 2");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 2) as u64), (x % 2) as u64);
+    if (x / (0 - 2) != x / ds[4] || x % (0 - 2) != x % ds[4]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / -2");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0 - 2)) as u64), (x % (0 - 2)) as u64);
+    if (x / 3 != x / ds[5] || x % 3 != x % ds[5]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 3");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 3) as u64), (x % 3) as u64);
+    if (x / (0 - 3) != x / ds[6] || x % (0 - 3) != x % ds[6]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / -3");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0 - 3)) as u64), (x % (0 - 3)) as u64);
+    if (x / 5 != x / ds[7] || x % 5 != x % ds[7]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 5");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 5) as u64), (x % 5) as u64);
+    if (x / 6 != x / ds[8] || x % 6 != x % ds[8]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 6");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 6) as u64), (x % 6) as u64);
+    if (x / 7 != x / ds[9] || x % 7 != x % ds[9]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 7");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 7) as u64), (x % 7) as u64);
+    if (x / (0 - 7) != x / ds[10] || x % (0 - 7) != x % ds[10]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / -7");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0 - 7)) as u64), (x % (0 - 7)) as u64);
+    if (x / 9 != x / ds[11] || x % 9 != x % ds[11]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 9");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 9) as u64), (x % 9) as u64);
+    if (x / 10 != x / ds[12] || x % 10 != x % ds[12]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 10");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 10) as u64), (x % 10) as u64);
+    if (x / 12 != x / ds[13] || x % 12 != x % ds[13]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 12");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 12) as u64), (x % 12) as u64);
+    if (x / 14 != x / ds[14] || x % 14 != x % ds[14]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 14");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 14) as u64), (x % 14) as u64);
+    if (x / 25 != x / ds[15] || x % 25 != x % ds[15]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 25");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 25) as u64), (x % 25) as u64);
+    if (x / 60 != x / ds[16] || x % 60 != x % ds[16]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 60");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 60) as u64), (x % 60) as u64);
+    if (x / (0 - 60) != x / ds[17] || x % (0 - 60) != x % ds[17]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / -60");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0 - 60)) as u64), (x % (0 - 60)) as u64);
+    if (x / 100 != x / ds[18] || x % 100 != x % ds[18]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 100");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 100) as u64), (x % 100) as u64);
+    if (x / 641 != x / ds[19] || x % 641 != x % ds[19]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 641");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 641) as u64), (x % 641) as u64);
+    if (x / 1000 != x / ds[20] || x % 1000 != x % ds[20]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 1000");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1000) as u64), (x % 1000) as u64);
+    if (x / 3600 != x / ds[21] || x % 3600 != x % ds[21]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 3600");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 3600) as u64), (x % 3600) as u64);
+    if (x / 86400 != x / ds[22] || x % 86400 != x % ds[22]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 86400");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 86400) as u64), (x % 86400) as u64);
+    if (x / (0 - 86400) != x / ds[23] || x % (0 - 86400) != x % ds[23]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / -86400");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0 - 86400)) as u64), (x % (0 - 86400)) as u64);
+    if (x / 65537 != x / ds[24] || x % 65537 != x % ds[24]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 65537");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 65537) as u64), (x % 65537) as u64);
+    if (x / 1000000007 != x / ds[25] || x % 1000000007 != x % ds[25]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 1000000007");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1000000007) as u64), (x % 1000000007) as u64);
+    if (x / 2147483647 != x / ds[26] || x % 2147483647 != x % ds[26]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 2147483647");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 2147483647) as u64), (x % 2147483647) as u64);
+    if (x / (0 - 2147483647) != x / ds[27] || x % (0 - 2147483647) != x % ds[27]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / -2147483647");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0 - 2147483647)) as u64), (x % (0 - 2147483647)) as u64);
+    if (x / (-2147483647 - 1) != x / ds[28] || x % (-2147483647 - 1) != x % ds[28]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / -2147483648");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (-2147483647 - 1)) as u64), (x % (-2147483647 - 1)) as u64);
+    if (x / 1073741824 != x / ds[29] || x % 1073741824 != x % ds[29]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 1073741824");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1073741824) as u64), (x % 1073741824) as u64);
+    if (x / (0 - 1073741824) != x / ds[30] || x % (0 - 1073741824) != x % ds[30]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / -1073741824");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0 - 1073741824)) as u64), (x % (0 - 1073741824)) as u64);
+    if (x / 65536 != x / ds[31] || x % 65536 != x % ds[31]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 65536");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 65536) as u64), (x % 65536) as u64);
+    if (x / (0 - 65536) != x / ds[32] || x % (0 - 65536) != x % ds[32]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / -65536");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0 - 65536)) as u64), (x % (0 - 65536)) as u64);
+    if (x / 7168 != x / ds[33] || x % 7168 != x % ds[33]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / 7168");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 7168) as u64), (x % 7168) as u64);
+    if (x / (0 - 641) != x / ds[34] || x % (0 - 641) != x % ds[34]) {
+      if (bad < 8) {
+        print("i32 " + x.to_string() + " / -641");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0 - 641)) as u64), (x % (0 - 641)) as u64);
+    i = i + 1;
+  }
+  print("i32 mismatches " + bad.to_string() + "");
+  return h;
+}
+
+function run_u32(xs: u32[], ds: u32[]): u64 {
+  let h: u64 = 14695981039346656037u64;
+  let bad: i32 = 0;
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    let x: u32 = xs[i];
+    if (x / 0u32 != x / ds[0] || x % 0u32 != x % ds[0]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 0");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 0u32) as u64), (x % 0u32) as u64);
+    if (x / 1u32 != x / ds[1] || x % 1u32 != x % ds[1]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 1");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1u32) as u64), (x % 1u32) as u64);
+    if (x / 2u32 != x / ds[2] || x % 2u32 != x % ds[2]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 2");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 2u32) as u64), (x % 2u32) as u64);
+    if (x / 3u32 != x / ds[3] || x % 3u32 != x % ds[3]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 3");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 3u32) as u64), (x % 3u32) as u64);
+    if (x / 5u32 != x / ds[4] || x % 5u32 != x % ds[4]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 5");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 5u32) as u64), (x % 5u32) as u64);
+    if (x / 6u32 != x / ds[5] || x % 6u32 != x % ds[5]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 6");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 6u32) as u64), (x % 6u32) as u64);
+    if (x / 7u32 != x / ds[6] || x % 7u32 != x % ds[6]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 7");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 7u32) as u64), (x % 7u32) as u64);
+    if (x / 9u32 != x / ds[7] || x % 9u32 != x % ds[7]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 9");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 9u32) as u64), (x % 9u32) as u64);
+    if (x / 10u32 != x / ds[8] || x % 10u32 != x % ds[8]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 10");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 10u32) as u64), (x % 10u32) as u64);
+    if (x / 12u32 != x / ds[9] || x % 12u32 != x % ds[9]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 12");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 12u32) as u64), (x % 12u32) as u64);
+    if (x / 14u32 != x / ds[10] || x % 14u32 != x % ds[10]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 14");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 14u32) as u64), (x % 14u32) as u64);
+    if (x / 25u32 != x / ds[11] || x % 25u32 != x % ds[11]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 25");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 25u32) as u64), (x % 25u32) as u64);
+    if (x / 28u32 != x / ds[12] || x % 28u32 != x % ds[12]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 28");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 28u32) as u64), (x % 28u32) as u64);
+    if (x / 60u32 != x / ds[13] || x % 60u32 != x % ds[13]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 60");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 60u32) as u64), (x % 60u32) as u64);
+    if (x / 100u32 != x / ds[14] || x % 100u32 != x % ds[14]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 100");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 100u32) as u64), (x % 100u32) as u64);
+    if (x / 641u32 != x / ds[15] || x % 641u32 != x % ds[15]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 641");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 641u32) as u64), (x % 641u32) as u64);
+    if (x / 1000u32 != x / ds[16] || x % 1000u32 != x % ds[16]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 1000");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1000u32) as u64), (x % 1000u32) as u64);
+    if (x / 3600u32 != x / ds[17] || x % 3600u32 != x % ds[17]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 3600");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 3600u32) as u64), (x % 3600u32) as u64);
+    if (x / 86400u32 != x / ds[18] || x % 86400u32 != x % ds[18]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 86400");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 86400u32) as u64), (x % 86400u32) as u64);
+    if (x / 65537u32 != x / ds[19] || x % 65537u32 != x % ds[19]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 65537");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 65537u32) as u64), (x % 65537u32) as u64);
+    if (x / 1000000007u32 != x / ds[20] || x % 1000000007u32 != x % ds[20]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 1000000007");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1000000007u32) as u64), (x % 1000000007u32) as u64);
+    if (x / 2147483647u32 != x / ds[21] || x % 2147483647u32 != x % ds[21]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 2147483647");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 2147483647u32) as u64), (x % 2147483647u32) as u64);
+    if (x / 2147483648u32 != x / ds[22] || x % 2147483648u32 != x % ds[22]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 2147483648");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 2147483648u32) as u64), (x % 2147483648u32) as u64);
+    if (x / 2147483649u32 != x / ds[23] || x % 2147483649u32 != x % ds[23]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 2147483649");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 2147483649u32) as u64), (x % 2147483649u32) as u64);
+    if (x / 4294967295u32 != x / ds[24] || x % 4294967295u32 != x % ds[24]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 4294967295");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 4294967295u32) as u64), (x % 4294967295u32) as u64);
+    if (x / 4294967294u32 != x / ds[25] || x % 4294967294u32 != x % ds[25]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 4294967294");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 4294967294u32) as u64), (x % 4294967294u32) as u64);
+    if (x / 65536u32 != x / ds[26] || x % 65536u32 != x % ds[26]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 65536");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 65536u32) as u64), (x % 65536u32) as u64);
+    if (x / 7168u32 != x / ds[27] || x % 7168u32 != x % ds[27]) {
+      if (bad < 8) {
+        print("u32 " + x.to_string() + " / 7168");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 7168u32) as u64), (x % 7168u32) as u64);
+    i = i + 1;
+  }
+  print("u32 mismatches " + bad.to_string() + "");
+  return h;
+}
+
+function run_i64(xs: i64[], ds: i64[]): u64 {
+  let h: u64 = 14695981039346656037u64;
+  let bad: i32 = 0;
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    let x: i64 = xs[i];
+    if (x / 0i64 != x / ds[0] || x % 0i64 != x % ds[0]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 0");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 0i64) as u64), (x % 0i64) as u64);
+    if (x / 1i64 != x / ds[1] || x % 1i64 != x % ds[1]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 1");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1i64) as u64), (x % 1i64) as u64);
+    if (x / (0i64 - 1i64) != x / ds[2] || x % (0i64 - 1i64) != x % ds[2]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / -1");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0i64 - 1i64)) as u64), (x % (0i64 - 1i64)) as u64);
+    if (x / 2i64 != x / ds[3] || x % 2i64 != x % ds[3]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 2");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 2i64) as u64), (x % 2i64) as u64);
+    if (x / (0i64 - 2i64) != x / ds[4] || x % (0i64 - 2i64) != x % ds[4]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / -2");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0i64 - 2i64)) as u64), (x % (0i64 - 2i64)) as u64);
+    if (x / 3i64 != x / ds[5] || x % 3i64 != x % ds[5]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 3");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 3i64) as u64), (x % 3i64) as u64);
+    if (x / (0i64 - 3i64) != x / ds[6] || x % (0i64 - 3i64) != x % ds[6]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / -3");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0i64 - 3i64)) as u64), (x % (0i64 - 3i64)) as u64);
+    if (x / 5i64 != x / ds[7] || x % 5i64 != x % ds[7]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 5");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 5i64) as u64), (x % 5i64) as u64);
+    if (x / 6i64 != x / ds[8] || x % 6i64 != x % ds[8]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 6");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 6i64) as u64), (x % 6i64) as u64);
+    if (x / 7i64 != x / ds[9] || x % 7i64 != x % ds[9]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 7");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 7i64) as u64), (x % 7i64) as u64);
+    if (x / (0i64 - 7i64) != x / ds[10] || x % (0i64 - 7i64) != x % ds[10]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / -7");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0i64 - 7i64)) as u64), (x % (0i64 - 7i64)) as u64);
+    if (x / 9i64 != x / ds[11] || x % 9i64 != x % ds[11]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 9");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 9i64) as u64), (x % 9i64) as u64);
+    if (x / 10i64 != x / ds[12] || x % 10i64 != x % ds[12]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 10");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 10i64) as u64), (x % 10i64) as u64);
+    if (x / 12i64 != x / ds[13] || x % 12i64 != x % ds[13]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 12");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 12i64) as u64), (x % 12i64) as u64);
+    if (x / 14i64 != x / ds[14] || x % 14i64 != x % ds[14]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 14");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 14i64) as u64), (x % 14i64) as u64);
+    if (x / 25i64 != x / ds[15] || x % 25i64 != x % ds[15]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 25");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 25i64) as u64), (x % 25i64) as u64);
+    if (x / 60i64 != x / ds[16] || x % 60i64 != x % ds[16]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 60");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 60i64) as u64), (x % 60i64) as u64);
+    if (x / 100i64 != x / ds[17] || x % 100i64 != x % ds[17]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 100");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 100i64) as u64), (x % 100i64) as u64);
+    if (x / 641i64 != x / ds[18] || x % 641i64 != x % ds[18]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 641");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 641i64) as u64), (x % 641i64) as u64);
+    if (x / 1000i64 != x / ds[19] || x % 1000i64 != x % ds[19]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 1000");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1000i64) as u64), (x % 1000i64) as u64);
+    if (x / 3600i64 != x / ds[20] || x % 3600i64 != x % ds[20]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 3600");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 3600i64) as u64), (x % 3600i64) as u64);
+    if (x / 86400i64 != x / ds[21] || x % 86400i64 != x % ds[21]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 86400");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 86400i64) as u64), (x % 86400i64) as u64);
+    if (x / (0i64 - 86400i64) != x / ds[22] || x % (0i64 - 86400i64) != x % ds[22]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / -86400");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0i64 - 86400i64)) as u64), (x % (0i64 - 86400i64)) as u64);
+    if (x / 1000000000i64 != x / ds[23] || x % 1000000000i64 != x % ds[23]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 1000000000");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1000000000i64) as u64), (x % 1000000000i64) as u64);
+    if (x / (0i64 - 1000000000i64) != x / ds[24] || x % (0i64 - 1000000000i64) != x % ds[24]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / -1000000000");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0i64 - 1000000000i64)) as u64), (x % (0i64 - 1000000000i64)) as u64);
+    if (x / 1000000007i64 != x / ds[25] || x % 1000000007i64 != x % ds[25]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 1000000007");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1000000007i64) as u64), (x % 1000000007i64) as u64);
+    if (x / 146097i64 != x / ds[26] || x % 146097i64 != x % ds[26]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 146097");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 146097i64) as u64), (x % 146097i64) as u64);
+    if (x / 4294967297i64 != x / ds[27] || x % 4294967297i64 != x % ds[27]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 4294967297");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 4294967297i64) as u64), (x % 4294967297i64) as u64);
+    if (x / 4611686018427387904i64 != x / ds[28] || x % 4611686018427387904i64 != x % ds[28]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 4611686018427387904");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 4611686018427387904i64) as u64), (x % 4611686018427387904i64) as u64);
+    if (x / (0i64 - 4611686018427387904i64) != x / ds[29] || x % (0i64 - 4611686018427387904i64) != x % ds[29]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / -4611686018427387904");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0i64 - 4611686018427387904i64)) as u64), (x % (0i64 - 4611686018427387904i64)) as u64);
+    if (x / 9223372036854775807i64 != x / ds[30] || x % 9223372036854775807i64 != x % ds[30]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 9223372036854775807");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 9223372036854775807i64) as u64), (x % 9223372036854775807i64) as u64);
+    if (x / (0i64 - 9223372036854775807i64) != x / ds[31] || x % (0i64 - 9223372036854775807i64) != x % ds[31]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / -9223372036854775807");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0i64 - 9223372036854775807i64)) as u64), (x % (0i64 - 9223372036854775807i64)) as u64);
+    if (x / (-9223372036854775807i64 - 1i64) != x / ds[32] || x % (-9223372036854775807i64 - 1i64) != x % ds[32]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / -9223372036854775808");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (-9223372036854775807i64 - 1i64)) as u64), (x % (-9223372036854775807i64 - 1i64)) as u64);
+    if (x / 6148914691236517205i64 != x / ds[33] || x % 6148914691236517205i64 != x % ds[33]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 6148914691236517205");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 6148914691236517205i64) as u64), (x % 6148914691236517205i64) as u64);
+    if (x / (0i64 - 6148914691236517205i64) != x / ds[34] || x % (0i64 - 6148914691236517205i64) != x % ds[34]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / -6148914691236517205");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / (0i64 - 6148914691236517205i64)) as u64), (x % (0i64 - 6148914691236517205i64)) as u64);
+    if (x / 1099511627776i64 != x / ds[35] || x % 1099511627776i64 != x % ds[35]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 1099511627776");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1099511627776i64) as u64), (x % 1099511627776i64) as u64);
+    if (x / 7168i64 != x / ds[36] || x % 7168i64 != x % ds[36]) {
+      if (bad < 8) {
+        print("i64 " + x.to_string() + " / 7168");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 7168i64) as u64), (x % 7168i64) as u64);
+    i = i + 1;
+  }
+  print("i64 mismatches " + bad.to_string() + "");
+  return h;
+}
+
+function run_u64(xs: u64[], ds: u64[]): u64 {
+  let h: u64 = 14695981039346656037u64;
+  let bad: i32 = 0;
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    let x: u64 = xs[i];
+    if (x / 0u64 != x / ds[0] || x % 0u64 != x % ds[0]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 0");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 0u64) as u64), (x % 0u64) as u64);
+    if (x / 1u64 != x / ds[1] || x % 1u64 != x % ds[1]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 1");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1u64) as u64), (x % 1u64) as u64);
+    if (x / 2u64 != x / ds[2] || x % 2u64 != x % ds[2]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 2");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 2u64) as u64), (x % 2u64) as u64);
+    if (x / 3u64 != x / ds[3] || x % 3u64 != x % ds[3]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 3");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 3u64) as u64), (x % 3u64) as u64);
+    if (x / 5u64 != x / ds[4] || x % 5u64 != x % ds[4]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 5");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 5u64) as u64), (x % 5u64) as u64);
+    if (x / 6u64 != x / ds[5] || x % 6u64 != x % ds[5]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 6");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 6u64) as u64), (x % 6u64) as u64);
+    if (x / 7u64 != x / ds[6] || x % 7u64 != x % ds[6]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 7");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 7u64) as u64), (x % 7u64) as u64);
+    if (x / 9u64 != x / ds[7] || x % 9u64 != x % ds[7]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 9");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 9u64) as u64), (x % 9u64) as u64);
+    if (x / 10u64 != x / ds[8] || x % 10u64 != x % ds[8]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 10");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 10u64) as u64), (x % 10u64) as u64);
+    if (x / 12u64 != x / ds[9] || x % 12u64 != x % ds[9]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 12");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 12u64) as u64), (x % 12u64) as u64);
+    if (x / 14u64 != x / ds[10] || x % 14u64 != x % ds[10]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 14");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 14u64) as u64), (x % 14u64) as u64);
+    if (x / 25u64 != x / ds[11] || x % 25u64 != x % ds[11]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 25");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 25u64) as u64), (x % 25u64) as u64);
+    if (x / 28u64 != x / ds[12] || x % 28u64 != x % ds[12]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 28");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 28u64) as u64), (x % 28u64) as u64);
+    if (x / 60u64 != x / ds[13] || x % 60u64 != x % ds[13]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 60");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 60u64) as u64), (x % 60u64) as u64);
+    if (x / 100u64 != x / ds[14] || x % 100u64 != x % ds[14]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 100");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 100u64) as u64), (x % 100u64) as u64);
+    if (x / 641u64 != x / ds[15] || x % 641u64 != x % ds[15]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 641");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 641u64) as u64), (x % 641u64) as u64);
+    if (x / 1000u64 != x / ds[16] || x % 1000u64 != x % ds[16]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 1000");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1000u64) as u64), (x % 1000u64) as u64);
+    if (x / 3600u64 != x / ds[17] || x % 3600u64 != x % ds[17]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 3600");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 3600u64) as u64), (x % 3600u64) as u64);
+    if (x / 86400u64 != x / ds[18] || x % 86400u64 != x % ds[18]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 86400");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 86400u64) as u64), (x % 86400u64) as u64);
+    if (x / 1000000000u64 != x / ds[19] || x % 1000000000u64 != x % ds[19]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 1000000000");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1000000000u64) as u64), (x % 1000000000u64) as u64);
+    if (x / 1000000007u64 != x / ds[20] || x % 1000000007u64 != x % ds[20]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 1000000007");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1000000007u64) as u64), (x % 1000000007u64) as u64);
+    if (x / 4294967297u64 != x / ds[21] || x % 4294967297u64 != x % ds[21]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 4294967297");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 4294967297u64) as u64), (x % 4294967297u64) as u64);
+    if (x / 9223372036854775807u64 != x / ds[22] || x % 9223372036854775807u64 != x % ds[22]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 9223372036854775807");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 9223372036854775807u64) as u64), (x % 9223372036854775807u64) as u64);
+    if (x / 9223372036854775808u64 != x / ds[23] || x % 9223372036854775808u64 != x % ds[23]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 9223372036854775808");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 9223372036854775808u64) as u64), (x % 9223372036854775808u64) as u64);
+    if (x / 9223372036854775809u64 != x / ds[24] || x % 9223372036854775809u64 != x % ds[24]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 9223372036854775809");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 9223372036854775809u64) as u64), (x % 9223372036854775809u64) as u64);
+    if (x / 18446744073709551615u64 != x / ds[25] || x % 18446744073709551615u64 != x % ds[25]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 18446744073709551615");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 18446744073709551615u64) as u64), (x % 18446744073709551615u64) as u64);
+    if (x / 18446744073709551614u64 != x / ds[26] || x % 18446744073709551614u64 != x % ds[26]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 18446744073709551614");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 18446744073709551614u64) as u64), (x % 18446744073709551614u64) as u64);
+    if (x / 6148914691236517205u64 != x / ds[27] || x % 6148914691236517205u64 != x % ds[27]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 6148914691236517205");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 6148914691236517205u64) as u64), (x % 6148914691236517205u64) as u64);
+    if (x / 12297829382473034410u64 != x / ds[28] || x % 12297829382473034410u64 != x % ds[28]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 12297829382473034410");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 12297829382473034410u64) as u64), (x % 12297829382473034410u64) as u64);
+    if (x / 1099511627776u64 != x / ds[29] || x % 1099511627776u64 != x % ds[29]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 1099511627776");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 1099511627776u64) as u64), (x % 1099511627776u64) as u64);
+    if (x / 7168u64 != x / ds[30] || x % 7168u64 != x % ds[30]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 7168");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 7168u64) as u64), (x % 7168u64) as u64);
+    if (x / 7696581394432u64 != x / ds[31] || x % 7696581394432u64 != x % ds[31]) {
+      if (bad < 8) {
+        print("u64 " + x.to_string() + " / 7696581394432");
+      }
+      bad = bad + 1;
+    }
+    h = mix(mix(h, (x / 7696581394432u64) as u64), (x % 7696581394432u64) as u64);
+    i = i + 1;
+  }
+  print("u64 mismatches " + bad.to_string() + "");
+  return h;
+}
+
+function main(): i32 {
+  let seed: u64 = 88172645463325252u64;
+  let xs_i32: i32[] = [0, 1, 0 - 1, 2, 0 - 2, 3, 0 - 3, 7, 0 - 7, 2147483647, -2147483647 - 1, 2147483646, 0 - 2147483647, 86399, 0 - 86399, 86400, 0 - 86400, 1073741824, 0 - 1073741824];
+  let ds_i32: i32[] = [0, 1, 0 - 1, 2, 0 - 2, 3, 0 - 3, 5, 6, 7, 0 - 7, 9, 10, 12, 14, 25, 60, 0 - 60, 100, 641, 1000, 3600, 86400, 0 - 86400, 65537, 1000000007, 2147483647, 0 - 2147483647, -2147483647 - 1, 1073741824, 0 - 1073741824, 65536, 0 - 65536, 7168, 0 - 641];
+  let k_i32: i32 = 0;
+  while (k_i32 < 400) {
+    seed = seed ^ seed << 13u64;
+    seed = seed ^ seed >> 7u64;
+    seed = seed ^ seed << 17u64;
+    let r_i32: u64 = seed >> (seed & 63u64);
+    xs_i32 = xs_i32.append(r_i32 as i32);
+    xs_i32 = xs_i32.append(seed as i32);
+    k_i32 = k_i32 + 1;
+  }
+  let xs_u32: u32[] = [0u32, 1u32, 2u32, 3u32, 7u32, 2147483647u32, 2147483648u32, 4294967295u32, 4294967294u32, 86399u32, 86400u32];
+  let ds_u32: u32[] = [0u32, 1u32, 2u32, 3u32, 5u32, 6u32, 7u32, 9u32, 10u32, 12u32, 14u32, 25u32, 28u32, 60u32, 100u32, 641u32, 1000u32, 3600u32, 86400u32, 65537u32, 1000000007u32, 2147483647u32, 2147483648u32, 2147483649u32, 4294967295u32, 4294967294u32, 65536u32, 7168u32];
+  let k_u32: i32 = 0;
+  while (k_u32 < 400) {
+    seed = seed ^ seed << 13u64;
+    seed = seed ^ seed >> 7u64;
+    seed = seed ^ seed << 17u64;
+    let r_u32: u64 = seed >> (seed & 63u64);
+    xs_u32 = xs_u32.append(r_u32 as u32);
+    xs_u32 = xs_u32.append(seed as u32);
+    k_u32 = k_u32 + 1;
+  }
+  let xs_i64: i64[] = [0i64, 1i64, 0i64 - 1i64, 2i64, 0i64 - 2i64, 3i64, 0i64 - 3i64, 7i64, 0i64 - 7i64, 9223372036854775807i64, -9223372036854775807i64 - 1i64, 9223372036854775806i64, 0i64 - 9223372036854775807i64, 86399i64, 0i64 - 86399i64, 86400i64, 0i64 - 86400i64, 4611686018427387904i64, 0i64 - 4611686018427387904i64, 4294967296i64, 0i64 - 4294967296i64];
+  let ds_i64: i64[] = [0i64, 1i64, 0i64 - 1i64, 2i64, 0i64 - 2i64, 3i64, 0i64 - 3i64, 5i64, 6i64, 7i64, 0i64 - 7i64, 9i64, 10i64, 12i64, 14i64, 25i64, 60i64, 100i64, 641i64, 1000i64, 3600i64, 86400i64, 0i64 - 86400i64, 1000000000i64, 0i64 - 1000000000i64, 1000000007i64, 146097i64, 4294967297i64, 4611686018427387904i64, 0i64 - 4611686018427387904i64, 9223372036854775807i64, 0i64 - 9223372036854775807i64, -9223372036854775807i64 - 1i64, 6148914691236517205i64, 0i64 - 6148914691236517205i64, 1099511627776i64, 7168i64];
+  let k_i64: i32 = 0;
+  while (k_i64 < 400) {
+    seed = seed ^ seed << 13u64;
+    seed = seed ^ seed >> 7u64;
+    seed = seed ^ seed << 17u64;
+    let r_i64: u64 = seed >> (seed & 63u64);
+    xs_i64 = xs_i64.append(r_i64 as i64);
+    xs_i64 = xs_i64.append(seed as i64);
+    k_i64 = k_i64 + 1;
+  }
+  let xs_u64: u64[] = [0u64, 1u64, 2u64, 3u64, 7u64, 9223372036854775807u64, 9223372036854775808u64, 18446744073709551615u64, 18446744073709551614u64, 86399u64, 86400u64, 4294967296u64];
+  let ds_u64: u64[] = [0u64, 1u64, 2u64, 3u64, 5u64, 6u64, 7u64, 9u64, 10u64, 12u64, 14u64, 25u64, 28u64, 60u64, 100u64, 641u64, 1000u64, 3600u64, 86400u64, 1000000000u64, 1000000007u64, 4294967297u64, 9223372036854775807u64, 9223372036854775808u64, 9223372036854775809u64, 18446744073709551615u64, 18446744073709551614u64, 6148914691236517205u64, 12297829382473034410u64, 1099511627776u64, 7168u64, 7696581394432u64];
+  let k_u64: i32 = 0;
+  while (k_u64 < 400) {
+    seed = seed ^ seed << 13u64;
+    seed = seed ^ seed >> 7u64;
+    seed = seed ^ seed << 17u64;
+    let r_u64: u64 = seed >> (seed & 63u64);
+    xs_u64 = xs_u64.append(r_u64 as u64);
+    xs_u64 = xs_u64.append(seed as u64);
+    k_u64 = k_u64 + 1;
+  }
+  let h: u64 = run_i32(xs_i32, ds_i32) ^ run_u32(xs_u32, ds_u32) ^ run_i64(xs_i64, ds_i64) ^ run_u64(xs_u64, ds_u64);
+  print("hash " + h.to_string() + "");
+  return 0;
+}

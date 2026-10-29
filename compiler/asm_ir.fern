@@ -4060,17 +4060,6 @@ function ir_div_guarded(tag: i32, width: i32, lb: string): string {
   return s;
 }
 
-function pow2_shift_i64(mag: i64): i32 {
-  if (mag == 0i64 || (mag & mag - 1i64) != 0i64) {
-    return 0 - 1;
-  }
-  let sh: i32 = 0;
-  while (1i64 << sh != mag) {
-    sh = sh + 1;
-  }
-  return sh;
-}
-
 function ir_div_const(tag: i32, width: i32, k: i64): string {
   let w64: boolean = width == 64;
   let uns: boolean = tag == 25 || tag == 27;
@@ -4123,7 +4112,7 @@ function ir_div_const_body(w64: boolean, uns: boolean, is_rem: boolean, k: i64):
     }
     return "";
   }
-  let sh: i32 = pow2_shift_i64(mag);
+  let sh: i32 = ir.pow2_shift_i64(mag);
   let max_sh: i32 = r.bits - 2;
   if (uns) {
     max_sh = r.bits - 1;
