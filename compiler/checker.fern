@@ -9895,6 +9895,12 @@ function is_unsafe_intrinsic(name: string): boolean {
   return util.has_str(unsafe_intrinsics(), name);
 }
 
+// A builtin a program names without calling it; a local or a declared
+// function of the same name is the program's own value.
+function builtin_value_named(name: string, s: Scope): boolean {
+  return builtin_row(name).len() > 0 && !s.defines(name) && !s.has_sig(name);
+}
+
 function unsafe_value_diag(name: string, line: i32, col: i32): util.Diag {
   return dg_at("E095", "unsafe function \"" + name + "\" cannot be used as a value; a function value carries no unsafe obligation", line, col);
 }
@@ -10038,7 +10044,11 @@ function unsafe_visit(e: ast.Expr, own acc: UnsafeWalk): UnsafeWalk {
       return UnsafeWalk { scope: acc.scope, inside: acc.inside, diags: util.append_diags(acc.diags, body) };
     },
     ast.ExprIdent(id) => {
+      let reported: i32 = acc.diags.len();
       acc = stdlib_only_note(acc, id.name, id.line, id.col);
+      if (acc.diags.len() == reported && builtin_value_named(id.name, acc.scope)) {
+        return unsafe_note(acc, dg_at("E098", "builtin \"" + id.name + "\" can only be called, not used as a value", id.line, id.col));
+      }
       if (unsafe_sig_named(id.name, acc.scope)) {
         return unsafe_note(acc, unsafe_value_diag(id.name, id.line, id.col));
       }

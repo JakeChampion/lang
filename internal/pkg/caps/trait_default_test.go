@@ -13,16 +13,18 @@ type traitDefaultCase struct {
 	builtin    string
 	stmt       string
 	imports    string
+	// via is the stdlib wrapper between the default and the builtin, if any.
+	via []string
 }
 
 var traitDefaultCases = []traitDefaultCase{
-	{"env", "env", `env("HOME");`, ""},
-	{"env", "hostname", `hostname();`, ""},
-	{"fs", "read_file", `read_file("/etc/hostname");`, ""},
-	{"net", "tcp_close", `tcp_close(1);`, ""},
-	{"random", "random_i32", `rand.next_i32();`, "import \"std/rand\";\n"},
-	{"subprocess", "subprocess", `subprocess("/bin/true", [], "");`, ""},
-	{"time", "now_unix_ms", `now_unix_ms();`, ""},
+	{"env", "env", `env("HOME");`, "", nil},
+	{"env", "hostname", `hostname();`, "", nil},
+	{"fs", "read_file", `read_file("/etc/hostname");`, "", nil},
+	{"net", "tcp_close", `tcp_close(1);`, "", nil},
+	{"random", "random_i32", `rand.next_i32();`, "import \"std/rand\";\n", []string{"rand__next_i32"}},
+	{"subprocess", "subprocess", `subprocess("/bin/true", [], "");`, "", nil},
+	{"time", "now_unix_ms", `now_unix_ms();`, "", nil},
 }
 
 func pkgByDir(dirs ...string) func(string) string {
@@ -70,8 +72,9 @@ function main(): i32 {
 				t.Fatalf("declaring package must report %s alone, got %+v", tc.capability, b.Uses)
 			}
 			chain := b.Uses[0].Chain
-			if len(chain) < 2 || !strings.Contains(chain[0], "grab") || chain[len(chain)-1] != tc.builtin {
-				t.Errorf("b's chain must start at the synthesised default and reach %q, got %v", tc.builtin, chain)
+			want := append(append([]string{}, tc.via...), tc.builtin)
+			if len(chain) != 1+len(want) || !strings.Contains(chain[0], "grab") || strings.Join(chain[1:], " ") != strings.Join(want, " ") {
+				t.Errorf("b's chain must be the synthesised default reaching %v on its own, got %v", want, chain)
 			}
 
 			errs, _ := caps.Enforce(rows, map[string]caps.Grant{

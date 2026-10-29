@@ -1,19 +1,13 @@
 package e2eharness
 
-// UuidV4Program is for a driver that loads modules. A driver with no module
-// loader runs no checker either, so UuidV4BuiltinProgram calls the builtin.
+import "strings"
+
 const UuidV4Program = `
 import "std/rand";
-function entropy(n: i32): u8[] { return rand.bytes(n); }` + uuidV4Body
-
-const UuidV4BuiltinProgram = `
-function entropy(n: i32): u8[] { return random_bytes(n); }` + uuidV4Body
-
-const uuidV4Body = `
 function hexd(n: i32): string { return slice_unchecked("0123456789abcdef", n, n + 1) + ""; }
 function bh(b: i32): string { return hexd((b >> 4) & 15) + hexd(b & 15); }
 function v4(): string {
-  let b: u8[] = entropy(16);
+  let b: u8[] = rand.bytes(16);
   let b6: i32 = ((b[6] as i32) & 15) | 64;
   let b8: i32 = ((b[8] as i32) & 63) | 128;
   return bh((b[0] as i32)) + bh((b[1] as i32)) + bh((b[2] as i32)) + bh((b[3] as i32)) + "-" + bh((b[4] as i32)) + bh((b[5] as i32)) + "-" + bh(b6) + bh((b[7] as i32)) + "-" + bh(b8) + bh((b[9] as i32)) + "-" + bh((b[10] as i32)) + bh((b[11] as i32)) + bh((b[12] as i32)) + bh((b[13] as i32)) + bh((b[14] as i32)) + bh((b[15] as i32));
@@ -29,3 +23,7 @@ function main(): i32 {
   return 0;
 }
 `
+
+// UuidV4ProgramLoaderless is UuidV4Program for a driver with no module
+// loader: it runs no checker, so it names the entropy builtin directly.
+var UuidV4ProgramLoaderless = strings.NewReplacer("import \"std/rand\";\n", "", "rand.bytes(", "random_bytes(").Replace(UuidV4Program)

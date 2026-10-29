@@ -48,7 +48,8 @@ var selfHostImportClosure = e2eharness.SelfHostImportClosure
 var withoutCoreDump = e2eharness.WithoutCoreDump
 
 const uuidV4Program = e2eharness.UuidV4Program
-const uuidV4BuiltinProgram = e2eharness.UuidV4BuiltinProgram
+
+var uuidV4ProgramLoaderless = e2eharness.UuidV4ProgramLoaderless
 
 var withBuildMemoryMB = e2eharness.WithBuildMemoryMB
 var withPrintInt = e2eharness.WithPrintInt
