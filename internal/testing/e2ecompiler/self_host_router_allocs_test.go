@@ -18,9 +18,9 @@ func TestSelfHostRouterAllocs(t *testing.T) {
 		target string
 		want   routerAllocs
 	}{
-		{"x86-64-linux", routerAllocs{literal: 1, param: 7, bare: 1}},
-		{"arm64-linux", routerAllocs{literal: 1, param: 7, bare: 1}},
-		{"wasm32-wasi", routerAllocs{literal: 1, param: 8, bare: 1}},
+		{"x86-64-linux", routerAllocs{literal: 1, param: 7, bare: 0}},
+		{"arm64-linux", routerAllocs{literal: 1, param: 7, bare: 0}},
+		{"wasm32-wasi", routerAllocs{literal: 1, param: 8, bare: 0}},
 	} {
 		t.Run(tc.target, func(t *testing.T) {
 			out, code := cli.exitOfFile(t, src, tc.target, nil, "FERN_STRICT_IR=1")

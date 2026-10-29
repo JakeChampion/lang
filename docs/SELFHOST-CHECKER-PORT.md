@@ -929,7 +929,16 @@ same code(s) the Go checker does — restricted to
   `in_defer`, the `deferred` cell in `OwnCtx`), and a field moves out of
   a fresh local or an `own` parameter at the path's last use
   (`lu_field_dies`, the `name.field` entries in the moved set). Eight
-  conformance cases pin both checkers to the same code and position.
+  conformance cases pin both checkers to the same code and position. The
+  same day, the textual last-use test (`lu_is_last` plus a scan for a
+  return before any read) gave way to structural liveness: `lu_stmts`
+  carries the chain of enclosing blocks (`LuFrame`, `LuScope`), and
+  `lu_live_after` follows the statements after the call through returns,
+  breaks, continues and loop heads. The Go side's `liveAfter` does the
+  same. An
+  IIFE body and a deferred action add no frame, so they count as their
+  enclosing statement. Four more cases (RH-14 to RH-17) pin the loop
+  shapes.
 - **Slice 56 (done): E024 — tuple destructure of a non-tuple / wrong
   arity.** The parser already lowers `let (a, b) = E` to a `StmtVar` whose
   `name` is `"a,b"`, so this is checker-only after all (not a missing

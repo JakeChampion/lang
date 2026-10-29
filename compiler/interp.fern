@@ -6894,6 +6894,96 @@ function call_buf_take_bytes(h: usize): Value {
   return byte_array_value(buf_take_bytes(h));
 }
 
+function is_raw_mem_builtin(name: string): boolean {
+  if (name == "__alloc" || name == "__free" || name == "__memcpy" || name == "__memset" || name == "__ptr_width") {
+    return true;
+  }
+  if (name == "__load_u8" || name == "__load_i32" || name == "__load_i64" || name == "__load_ptr") {
+    return true;
+  }
+  return name == "__store_u8" || name == "__store_i32" || name == "__store_i64" || name == "__store_ptr";
+}
+
+// The interpreter is a compiled program, so the raw builtins act on its own
+// heap, as the buffer builtins do.
+function call_raw_mem_builtin(name: string, args: Value[]): Value {
+  let want: i32 = 1;
+  if (name == "__ptr_width") {
+    want = 0;
+  }
+  if (name == "__free" || util.str_has_prefix(name, "__store_")) {
+    want = 2;
+  }
+  if (name == "__memcpy" || name == "__memset") {
+    want = 3;
+  }
+  if (args.len() != want) {
+    return v_err(name + ": expected " + util.i32_to_string(want) + " args");
+  }
+  let w: i64[] = [];
+  let k: i32 = 0;
+  while (k < want) {
+    if (!is_int_like(args[k])) {
+      return v_err(name + ": arg " + util.i32_to_string(k + 1) + " must be an integer");
+    }
+    w = w.append(vint_as_i64(args[k]));
+    k = k + 1;
+  }
+  if (name == "__ptr_width") {
+    return v_int((ptr_bits() / 8i64) as i32);
+  }
+  if (name == "__alloc" || name == "__memcpy" || name == "__memset") {
+    let n: i64 = w[want - 1];
+    if (n < 0i64) {
+      return v_err(name + ": size " + util.i64_to_string(n) + " is below zero");
+    }
+  }
+  if (util.str_has_prefix(name, "__load_")) {
+    return raw_mem_load(name, w[0] as usize);
+  }
+  return raw_mem_effect(name, w);
+}
+
+function raw_mem_load(name: string, p: usize): Value {
+  unsafe {
+    if (name == "__load_u8") {
+      return v_int(__load_u8(p));
+    }
+    if (name == "__load_i32") {
+      return v_int(__load_i32(p));
+    }
+    if (name == "__load_i64") {
+      return v_int64(__load_i64(p));
+    }
+    return v_usize(__load_ptr(p) as i64);
+  }
+}
+
+function raw_mem_effect(name: string, w: i64[]): Value {
+  unsafe {
+    if (name == "__alloc") {
+      return v_usize(__alloc(w[0] as i32) as i64);
+    }
+    let p: usize = w[0] as usize;
+    if (name == "__free") {
+      __free(p, w[1] as i32);
+    } else if (name == "__memcpy") {
+      __memcpy(p, w[1] as usize, w[2] as i32);
+    } else if (name == "__memset") {
+      __memset(p, w[1] as i32, w[2] as i32);
+    } else if (name == "__store_u8") {
+      __store_u8(p, w[1] as i32);
+    } else if (name == "__store_i32") {
+      __store_i32(p, w[1] as i32);
+    } else if (name == "__store_i64") {
+      __store_i64(p, w[1]);
+    } else {
+      __store_ptr(p, w[1] as usize);
+    }
+  }
+  return v_void();
+}
+
 function call_buf_builtin(name: string, args: Value[]): Value {
   if (name == "buf_new") {
     return call_buf_new(args);
@@ -7097,6 +7187,9 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
   }
   if (is_buf_builtin(name)) {
     return call_buf_builtin(name, args);
+  }
+  if (is_raw_mem_builtin(name)) {
+    return call_raw_mem_builtin(name, args);
   }
   let rt: Value = call_runtime_intrinsic(name, args);
   if (!is_err(rt)) {

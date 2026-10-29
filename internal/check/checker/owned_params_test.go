@@ -1381,3 +1381,142 @@ function work(): i32 {
     return i;
 }`)
 }
+
+const readerLoopPrelude = `struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+`
+
+func TestOwnGuardLocalDiesOnDivergingLoopPaths(t *testing.T) {
+	wantOK(t, "close-then-return-in-loop", readerLoopPrelude+`
+function work(): i32 {
+    let h: Handle = Handle { fd: 3 };
+    let n: i32 = 0;
+    while (n < 3) {
+        n = n + 1;
+        if (n == 2) {
+            h.close();
+            return n;
+        }
+    }
+    return n + h.fd;
+}`)
+	wantOK(t, "close-then-break-nothing-after", readerLoopPrelude+`
+function work(): i32 {
+    let h: Handle = Handle { fd: 3 };
+    let n: i32 = 0;
+    while (n < 3) {
+        n = n + 1;
+        if (n == 2) {
+            h.close();
+            break;
+        }
+    }
+    return n;
+}`)
+	wantOK(t, "close-then-labelled-break", readerLoopPrelude+`
+function work(): i32 {
+    let h: Handle = Handle { fd: 3 };
+    let n: i32 = 0;
+    outer: while (n < 3) {
+        let k: i32 = 0;
+        while (k < 2) {
+            k = k + 1;
+            if (n == 1) {
+                h.close();
+                break outer;
+            }
+        }
+        n = n + 1;
+    }
+    return n;
+}`)
+	wantOK(t, "loop-fresh-local-closes-each-round", readerLoopPrelude+`
+function work(): i32 {
+    let n: i32 = 0;
+    while (n < 3) {
+        let h: Handle = Handle { fd: n };
+        n = n + 1;
+        h.close();
+    }
+    return n;
+}`)
+	wantE051(t, "close-then-continue", readerLoopPrelude+`
+function work(): i32 {
+    let h: Handle = Handle { fd: 3 };
+    let n: i32 = 0;
+    while (n < 3) {
+        n = n + 1;
+        if (n == 2) {
+            h.close();
+            continue;
+        }
+    }
+    return n;
+}`)
+	wantE051(t, "close-then-break-then-close", readerLoopPrelude+`
+function work(): i32 {
+    let h: Handle = Handle { fd: 3 };
+    let n: i32 = 0;
+    while (n < 3) {
+        n = n + 1;
+        if (n == 2) {
+            h.close();
+            break;
+        }
+    }
+    return h.close() + n;
+}`)
+	wantE051(t, "close-falls-through-the-loop", readerLoopPrelude+`
+function work(): i32 {
+    let h: Handle = Handle { fd: 3 };
+    let n: i32 = 0;
+    while (n < 3) {
+        n = n + 1;
+        h.close();
+    }
+    return n;
+}`)
+	wantE051(t, "close-in-the-loop-head", readerLoopPrelude+`
+function work(): i32 {
+    let h: Handle = Handle { fd: 3 };
+    let n: i32 = 0;
+    while (h.close() > n) {
+        n = n + 1;
+    }
+    return n;
+}`)
+	wantE051(t, "close-in-a-loop-inside-a-value-block", readerLoopPrelude+`
+function work(): i32 {
+    let h: Handle = Handle { fd: 3 };
+    let n: i32 = {
+        let k: i32 = 0;
+        while (k < 2) {
+            k = k + h.close();
+        }
+        k
+    };
+    return n;
+}`)
+	wantE051(t, "close-then-break-then-read", readerLoopPrelude+`
+function work(): i32 {
+    let h: Handle = Handle { fd: 3 };
+    let n: i32 = 0;
+    while (n < 3) {
+        n = n + 1;
+        if (n == 2) {
+            h.close();
+            break;
+        }
+    }
+    return n + h.fd;
+}`)
+}
+
+func TestOwnGuardLaterMentionInTheSameStatementKeepsItLive(t *testing.T) {
+	wantE051(t, "first-branch-of-an-if-expression", readerLoopPrelude+`
+function pick(own h: Handle, flag: boolean): i32 {
+    let h2: Handle = Handle { fd: 4 };
+    let n: i32 = if (flag) { h2.close() } else { h2.close() + 1 };
+    return n;
+}`)
+}
