@@ -170,7 +170,8 @@ x86_64/deflate_encode.ir	43182612
 x86_64/deflate_encode.text	7372
 x86_64/enum_match.text	1099
 x86_64/enum_match.ir	48825092
-x86_64/http_hello.text	17278
+# 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
+x86_64/http_hello.text	16323
 x86_64/http_hello.ir	23800450
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
@@ -454,7 +455,8 @@ aarch64/deflate_encode.ir	44105319
 aarch64/deflate_encode.text	8033
 aarch64/enum_match.text	1316
 aarch64/enum_match.ir	41175104
-aarch64/http_hello.text	18501
+# 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
+aarch64/http_hello.text	17447
 aarch64/http_hello.ir	25728698
 aarch64/int_loop.text	330
 aarch64/int_loop.ir	18000085

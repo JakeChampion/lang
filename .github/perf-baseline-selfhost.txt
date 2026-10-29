@@ -196,7 +196,8 @@ selfhost/arm64-linux/closure_call.emit	1196
 selfhost/arm64-linux/deflate_decode.emit	14230
 selfhost/arm64-linux/deflate_encode.emit	8033
 selfhost/arm64-linux/enum_match.emit	1316
-selfhost/arm64-linux/http_hello.emit	18501
+# 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
+selfhost/arm64-linux/http_hello.emit	17447
 selfhost/arm64-linux/int_loop.emit	330
 selfhost/arm64-linux/map_int.emit	6074
 selfhost/arm64-linux/map_probe_chain.emit	6084
@@ -230,7 +231,8 @@ selfhost/wasm32-wasi/closure_call.emit	482
 selfhost/wasm32-wasi/deflate_decode.emit	19729
 selfhost/wasm32-wasi/deflate_encode.emit	11328
 selfhost/wasm32-wasi/enum_match.emit	710
-selfhost/wasm32-wasi/http_hello.emit	20819
+# 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
+selfhost/wasm32-wasi/http_hello.emit	19395
 selfhost/wasm32-wasi/int_loop.emit	69
 selfhost/wasm32-wasi/map_int.emit	7183
 selfhost/wasm32-wasi/map_probe_chain.emit	7208
@@ -264,7 +266,8 @@ selfhost/x86-64-linux/closure_call.emit	973
 selfhost/x86-64-linux/deflate_decode.emit	13325
 selfhost/x86-64-linux/deflate_encode.emit	7372
 selfhost/x86-64-linux/enum_match.emit	1099
-selfhost/x86-64-linux/http_hello.emit	17278
+# 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
+selfhost/x86-64-linux/http_hello.emit	16323
 selfhost/x86-64-linux/int_loop.emit	250
 selfhost/x86-64-linux/map_int.emit	5793
 selfhost/x86-64-linux/map_probe_chain.emit	5797
