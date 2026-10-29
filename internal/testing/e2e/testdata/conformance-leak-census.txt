@@ -601,6 +601,7 @@ own_transfer                                         0
 own_tree_match                                       0
 package_scoped_stdlib_helpers                        0
 pad_multibyte_fill                                   0
+pair_string_from_many_call_sites                     0
 param_destructure                                    0
 param_destructure_struct                             0
 param_pattern_at_binding_struct                      0

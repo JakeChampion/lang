@@ -136,11 +136,12 @@ pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_lo
   return 0;
 }
 
-pub function certify_or_refuse(fn_name: string, f: ssa.SFunc, ops: ir.Op[], g: Gate): i32 {
+pub function certify_or_refuse(fn_name: string, lifted: ssa.SFunc, ops: ir.Op[], g: Gate): i32 {
   let mode: i32 = g.certify;
   if (mode == 0) {
     return 0;
   }
+  let f: ssa.SFunc = decided(lifted);
   let k: string = "";
   if (mode == 2 && g.memo.on) {
     k = rcmemo.key(g.memo, fn_name, f, ops, g.abis);
@@ -194,6 +195,59 @@ pub function certify_ops_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32,
       return 0;
     }
   }
+}
+
+// The graph with each branch on a comparison of two constants sent to the
+// side it takes, so the certifier walks no edge the program cannot take.
+function decided(f: ssa.SFunc): ssa.SFunc {
+  let defs: ssa.SInst[] = [];
+  for v in 0..f.nvals {
+    defs = defs.append(ssa.SInst { kind_tag: 0, result: v, args: [], imm: 0, str: "" });
+  }
+  for b in f.blocks {
+    for ins in b.insts {
+      if (ins.result >= 0 && ins.result < f.nvals) {
+        defs = defs.with(ins.result, ins);
+      }
+    }
+  }
+  let blocks: ssa.SBlock[] = [];
+  let changed: boolean = false;
+  for b in f.blocks {
+    let taken: i32 = branch_taken(defs, b.term);
+    if (taken >= 0) {
+      blocks = blocks.append(ssa.SBlock { ...b, term: ssa.STerm { kind_tag: 2, cond: 0, target: taken, t: 0, f: 0, value: 0 } });
+      changed = true;
+    } else {
+      blocks = blocks.append(b);
+    }
+  }
+  if (!changed) {
+    return f;
+  }
+  let out: ssa.SFunc = ssa.SFunc { ...f, blocks: blocks };
+  return ssa.SFunc { ...out, blocks: ssa.refreshed_preds(out) };
+}
+
+// The block a branch takes when its condition compares two constants, or -1.
+function branch_taken(defs: ssa.SInst[], t: ssa.STerm): i32 {
+  if (t.kind_tag != 3 || t.cond < 0 || t.cond >= defs.len()) {
+    return 0 - 1;
+  }
+  let c: ssa.SInst = defs[t.cond];
+  if (c.kind_tag != 9 || c.args.len() != 2 || c.str != "eq" && c.str != "ne") {
+    return 0 - 1;
+  }
+  let a: ssa.SInst = defs[c.args[0]];
+  let b: ssa.SInst = defs[c.args[1]];
+  if (a.kind_tag != 1 || b.kind_tag != 1 || a.str != "" || b.str != "") {
+    return 0 - 1;
+  }
+  let same: boolean = a.imm == b.imm;
+  if (same == (c.str == "eq")) {
+    return t.t;
+  }
+  return t.f;
 }
 
 function census_line(fn_name: string, r: rccertify.Report, g: Gate): void {
