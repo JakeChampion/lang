@@ -9931,7 +9931,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("lstat")) {
       fs_roots = fs_roots + " " + "__fern_lstat";
     }
-    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr") || s.has_need("reader") || s.has_need("read_dir") || s.has_need("read_dir_all") || s.has_need("read_dir_ino") || s.has_need("read_dir_ino_all") || s.has_need("dir_entries") || s.has_need("read_link") || s.has_need("getcwd") || s.has_need("hostname") || s.has_need("uname_field") || s.has_need("mounts")) {
+    if (s.has_need("utf8_valid")) {
       fs_roots = fs_roots + " " + "__fern_utf8_valid";
     }
     if (s.has_need("read_file")) {
@@ -11277,12 +11277,13 @@ function emit_ir_runtime_settled(s0: asmcore.EmitState, darwin: boolean): asmcor
   let out: asmcore.EmitState = s0;
   while (!settled) {
     let h: usize = buf_new(65536);
-    let t: asmcore.EmitState = emit_ir_runtime(asmcore.EmitState { ...s, capture: h }, darwin);
+    let m: usize = buf_new(256);
+    let t: asmcore.EmitState = emit_ir_runtime(asmcore.EmitState { ...s, capture: h, missed: m }, darwin);
     let text: string = buf_take(h);
     buf_free(h);
-    if (t.needed.len() == s.needed.len()) {
+    if (asmcore.settles(t, s.needed.len(), m)) {
       settled = true;
-      let back: asmcore.EmitState = asmcore.EmitState { ...t, capture: s0.capture };
+      let back: asmcore.EmitState = asmcore.EmitState { ...t, capture: s0.capture, missed: s0.missed };
       out = back.write(text);
     } else {
       s = asmcore.EmitState { ...s0, needed: t.needed, runtime_units: t.runtime_units };
