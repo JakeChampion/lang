@@ -1,3 +1,5 @@
+# 2026-10-29: Exact report from CI run 40890273181 at 0b1901adb on PR #13846.
+# semcse and the carry rule move 11 rows. All tolerances remain unchanged.
 # 2026-10-28: Exact reports from CI run 40620158743 at c63e488b4 on PR #13718.
 # Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
 # 2026-10-28: scripts/perf-bench-selfhost on #13726 (the branch merged with main at 5acfabebb). Two sources move the rows. #13677 merged after the last pin and added the startup checks, the box ceiling and the verifier changes, which moved every native row and six wasm rows. The build manifest (SEC-046) then adds 11 lines to every x86-64 program and 17 to every arm64 program.
@@ -225,8 +227,8 @@ selfhost/wasm32-wasi/byte_copy_append.emit	554
 selfhost/wasm32-wasi/byte_copy_with.emit	569
 selfhost/wasm32-wasi/call_overhead.emit	115
 selfhost/wasm32-wasi/closure_call.emit	482
-selfhost/wasm32-wasi/deflate_decode.emit	19961
-selfhost/wasm32-wasi/deflate_encode.emit	11501
+selfhost/wasm32-wasi/deflate_decode.emit	19729
+selfhost/wasm32-wasi/deflate_encode.emit	11328
 selfhost/wasm32-wasi/enum_match.emit	710
 selfhost/wasm32-wasi/http_hello.emit	20819
 selfhost/wasm32-wasi/int_loop.emit	69
@@ -235,10 +237,10 @@ selfhost/wasm32-wasi/map_probe_chain.emit	7208
 selfhost/wasm32-wasi/map_string.emit	8005
 selfhost/wasm32-wasi/ordmap_insert.emit	6746
 selfhost/wasm32-wasi/pmap_insert.emit	3138
-selfhost/wasm32-wasi/pvec_with.emit	2805
+selfhost/wasm32-wasi/pvec_with.emit	2774
 selfhost/wasm32-wasi/record_update.emit	525
-selfhost/wasm32-wasi/sort_inplace.emit	1019
-selfhost/wasm32-wasi/sort_ints.emit	2118
+selfhost/wasm32-wasi/sort_inplace.emit	979
+selfhost/wasm32-wasi/sort_ints.emit	2058
 selfhost/wasm32-wasi/sort_strings.emit	3381
 selfhost/wasm32-wasi/string_build.emit	1281
 selfhost/wasm32-wasi/string_count_byte.emit	532
@@ -286,18 +288,18 @@ selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8442
 selfhost/x86-64-linux/utf8_ingest_validated.emit	9106
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-selfhost/x86-64-linux/perceus_cfold.emit	1890
-selfhost/arm64-linux/perceus_cfold.emit	2152
+selfhost/x86-64-linux/perceus_cfold.emit	1915
+selfhost/arm64-linux/perceus_cfold.emit	2178
 selfhost/wasm32-wasi/perceus_cfold.emit	1735
-selfhost/x86-64-linux/perceus_deriv.emit	2671
-selfhost/arm64-linux/perceus_deriv.emit	2982
+selfhost/x86-64-linux/perceus_deriv.emit	2720
+selfhost/arm64-linux/perceus_deriv.emit	3026
 selfhost/wasm32-wasi/perceus_deriv.emit	2790
 selfhost/x86-64-linux/perceus_nqueens.emit	1555
 selfhost/arm64-linux/perceus_nqueens.emit	1805
 selfhost/wasm32-wasi/perceus_nqueens.emit	1267
 selfhost/x86-64-linux/perceus_rbtree.emit	2873
 selfhost/arm64-linux/perceus_rbtree.emit	3162
-selfhost/wasm32-wasi/perceus_rbtree.emit	3568
+selfhost/wasm32-wasi/perceus_rbtree.emit	3518
 selfhost/x86-64-linux/perceus_rbtree_ck.emit	3123
 selfhost/arm64-linux/perceus_rbtree_ck.emit	3399
-selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3984
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3934
