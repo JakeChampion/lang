@@ -6,11 +6,11 @@ import (
 	"testing"
 )
 
-const crossTypeReuseDeadDonor = `struct Point { x: i32, y: i32 } struct Pair { a: i32, b: i32 } function main(): i32 { let k = 1; let p = Point { x: 3 * k, y: 4 }; let s = p.x + p.y; let q = Pair { a: s, b: 9 }; return q.a + q.b; }`
-const crossTypeReuseLiveDonor = `struct Point { x: i32, y: i32 } struct Pair { a: i32, b: i32 } function main(): i32 { let k = 1; let p = Point { x: 3 * k, y: 4 }; let q = Pair { a: 5 * k, b: 9 }; return q.a + q.b + p.x + p.y; }`
+const crossTypeReuseDeadDonor = `struct Point { x: i32, y: i32 } struct Pair { a: i32, b: i32 } @noinline function one(): i32 { return 1; } function main(): i32 { let k = one(); let p = Point { x: 3 * k, y: 4 }; let s = p.x + p.y; let q = Pair { a: s, b: 9 }; return q.a + q.b; }`
+const crossTypeReuseLiveDonor = `struct Point { x: i32, y: i32 } struct Pair { a: i32, b: i32 } @noinline function one(): i32 { return 1; } function main(): i32 { let k = one(); let p = Point { x: 3 * k, y: 4 }; let q = Pair { a: 5 * k, b: 9 }; return q.a + q.b + p.x + p.y; }`
 
-const crossTypeReuseArrDeadDonor = `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } function main(): i32 { let k = 1; let h = Holder { id: 1 * k, items: [1, 2] }; let s = h.id + h.items[0]; let b = Bag { tag: s, data: [3, 4] }; return b.tag + b.data[0]; }`
-const crossTypeReuseArrLiveDonor = `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } function main(): i32 { let k = 1; let h = Holder { id: 1 * k, items: [1, 2] }; let b = Bag { tag: 5 * k, data: [3, 4] }; return b.tag + b.data[0] + h.id + h.items[1]; }`
+const crossTypeReuseArrDeadDonor = `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } @noinline function one(): i32 { return 1; } function main(): i32 { let k = one(); let h = Holder { id: 1 * k, items: [1, 2] }; let s = h.id + h.items[0]; let b = Bag { tag: s, data: [3, 4] }; return b.tag + b.data[0]; }`
+const crossTypeReuseArrLiveDonor = `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } @noinline function one(): i32 { return 1; } function main(): i32 { let k = one(); let h = Holder { id: 1 * k, items: [1, 2] }; let b = Bag { tag: 5 * k, data: [3, 4] }; return b.tag + b.data[0] + h.id + h.items[1]; }`
 
 var crossTypeReuseIRCases = []struct {
 	name string
