@@ -190,7 +190,7 @@ x86_64/pvec_with.ir	55174232
 x86_64/record_update.ir	37759160
 x86_64/record_update.text	1386
 x86_64/sort_inplace.text	1493
-x86_64/sort_inplace.ir	39463045
+x86_64/sort_inplace.ir	36583718
 x86_64/sort_ints.text	1971
 x86_64/sort_ints.ir	28152806
 x86_64/sort_strings.text	3233
@@ -476,7 +476,8 @@ aarch64/pvec_with.ir	59221804
 aarch64/record_update.text	1608
 aarch64/record_update.ir	34494442
 aarch64/sort_inplace.text	1691
-aarch64/sort_inplace.ir	45949723
+# 2026-10-29: main 0c591828 (Perf, perf-aarch64 and perf-x86_64) reports sort_inplace.ir 4.9% and 7.3% lower.
+aarch64/sort_inplace.ir	43684079
 aarch64/sort_ints.text	2184
 aarch64/sort_ints.ir	30178876
 aarch64/sort_strings.text	3597

@@ -663,43 +663,6 @@ func arrayArgPosition(info *Info, c *ast.Call, aid *ast.Ident) bool {
 	return true
 }
 
-func Mentions(n ast.Node, name string) int {
-	k := 0
-	ast.Walk(n, func(m ast.Node) bool {
-		if id, ok := m.(*ast.Ident); ok && id.Name == name {
-			k++
-		}
-		return true
-	})
-	return k
-}
-
-func JumpEscapes(st ast.Stmt) bool {
-	inLoop := map[ast.Node]bool{}
-	ast.Walk(st, func(n ast.Node) bool {
-		switch n.(type) {
-		case *ast.While, *ast.Loop, *ast.For, *ast.ForEach:
-			ast.Walk(n, func(m ast.Node) bool { inLoop[m] = true; return true })
-		}
-		return true
-	})
-	out := false
-	ast.Walk(st, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.Break:
-			if !inLoop[n] || x.Label != "" {
-				out = true
-			}
-		case *ast.Continue:
-			if !inLoop[n] || x.Label != "" {
-				out = true
-			}
-		}
-		return true
-	})
-	return out
-}
-
 func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, target string) {
 	if sl.Base == nil {
 		return
