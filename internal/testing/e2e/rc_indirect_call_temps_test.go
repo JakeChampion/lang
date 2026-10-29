@@ -12,20 +12,21 @@ struct R { name: string, run: (i32) => Result[C, string] }
 function val(c: C): i32 { return c.value; }
 function mk(n: i32): Result[C, string] { return Ok(C { value: n }); }
 function pick(): (C) => i32 { return val; }
+@noinline function trips(): i32 { return 4; }
 `
 	cases := []struct{ name, src string }{
 		{"field-arg", `function main(): i32 {
     let st: S = S { name: "s", run: val };
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) { acc = acc + st.run(C { value: i }); i = i + 1; }
+    while (i < trips()) { acc = acc + st.run(C { value: i }); i = i + 1; }
     return acc;
 }`},
 		{"field-result", `function main(): i32 {
     let r: R = R { name: "r", run: mk };
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) {
+    while (i < trips()) {
         match (r.run(i)) { Ok(n) => { acc = acc + n.value; }, Err(e) => { acc = acc + 100; } }
         i = i + 1;
     }
@@ -35,13 +36,13 @@ function pick(): (C) => i32 { return val; }
     let fs: ((C) => i32)[] = [val];
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) { acc = acc + fs[0](C { value: i }); i = i + 1; }
+    while (i < trips()) { acc = acc + fs[0](C { value: i }); i = i + 1; }
     return acc;
 }`},
 		{"chained-arg", `function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) { acc = acc + pick()(C { value: i }); i = i + 1; }
+    while (i < trips()) { acc = acc + pick()(C { value: i }); i = i + 1; }
     return acc;
 }`},
 		{"captured-arg", `function apply(g: (C) => i32, k: i32): i32 {
@@ -51,7 +52,7 @@ function pick(): (C) => i32 { return val; }
 function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) { acc = acc + apply(val, i); i = i + 1; }
+    while (i < trips()) { acc = acc + apply(val, i); i = i + 1; }
     return acc;
 }`},
 	}
