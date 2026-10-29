@@ -10907,7 +10907,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
             }
             let el: string = array_method_element(recvt);
             if (amgi >= 0 && el.len() > 0) {
-              let amrt: string = subst_ty(funcs.decls[amgi].ret_type, funcs.decls[amgi].type_params, [el + ""]);
+              let amrt: string = subst_ty(funcs.decls[amgi].ret_type, [funcs.decls[amgi].type_params[0]], [el + ""]);
               let amvars: string[] = type_str_vars(amrt, []);
               if (amvars.len() > 0) {
                 let amargs: ast.Expr[] = [cfa.obj];
@@ -12421,18 +12421,28 @@ function is_generic_array_method(fd: FuncDecl): boolean {
   if (fd.receiver_name.len() == 0) {
     return false;
   }
-  let elem: string = array_method_element(fd.receiver_type);
-  if (!looks_type_var(elem)) {
-    return false;
-  }
+  return looks_type_var(array_method_element(fd.receiver_type));
+}
+
+// The element type var leads, so a folded call's key starts with the element type.
+function array_fold_type_params(fd: FuncDecl, elem: string): (string[], string[]) {
+  let tps: string[] = [elem + ""];
+  let bounds: string[] = [""];
   let k: i32 = 0;
   while (k < fd.type_params.len()) {
-    if (fd.type_params[k] != elem) {
-      return false;
+    let bound: string = "";
+    if (k < fd.bound_traits.len()) {
+      bound = fd.bound_traits[k];
+    }
+    if (fd.type_params[k] == elem) {
+      bounds = bounds.with(0, bound);
+    } else {
+      tps = tps.append(fd.type_params[k]);
+      bounds = bounds.append(bound);
     }
     k = k + 1;
   }
-  return true;
+  return (tps, bounds);
 }
 
 pub function register_array_method_generics(mod: Module): Module {
@@ -12459,8 +12469,7 @@ pub function register_array_method_generics(mod: Module): Module {
       }
       out = out.append(FuncDecl { ...fd, name: concrete_array_method_name(fd.receiver_type, fd.name), receiver_name: "", receiver_type: "", params: params });
     } else if (is_generic_array_method(fd)) {
-      let elem: string = array_method_element(fd.receiver_type);
-      let tps: string[] = [elem + ""];
+      let (tps, bounds) = array_fold_type_params(fd, array_method_element(fd.receiver_type));
       let prefix: string = "__arrm_";
       if (spelling_is_view(fd.receiver_type)) {
         prefix = "__viewm_";
@@ -12480,7 +12489,7 @@ pub function register_array_method_generics(mod: Module): Module {
         params: nparams,
         ret_type: fd.ret_type,
         body: fd.body, line: fd.line, col: fd.col,
-        import_iface: fd.import_iface, import_wit: fd.import_wit, all_type_params: tps, bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false,
+        import_iface: fd.import_iface, import_wit: fd.import_wit, all_type_params: tps, bound_traits: bounds, fip: false, fbip: false, fip_allowance: 0, async: false,
         is_pub: true,
         is_const: false, ret_fn_ret: fd.ret_fn_ret, ret_fn_param_types: fd.ret_fn_param_types, is_package: false, module: fd.module, impl_trait: fd.impl_trait, dyn_traits: fd.dyn_traits, streams: fd.streams,
       });
@@ -13235,17 +13244,17 @@ function monomorphize_module(mod: Module, erased: string[]): Module {
   return Module { ...mod, funcs: util.append_all(rewritten, lane_map_decls(done)), top_stmts: tr.rstmts };
 }
 
-function folded_array_call(amn: string, elem: string, c: ast.ExprCall, fac: ast.ExprFieldAccess, raw: ast.Expr[], env: MEnv, funcs: MFns, ins: Insts): RExpr {
-  let lkey: string = lane_map_key(amn, elem, c, env, funcs);
+function folded_array_call(amn: string, key: string, c: ast.ExprCall, fac: ast.ExprFieldAccess, raw: ast.Expr[], env: MEnv, funcs: MFns, ins: Insts): RExpr {
+  let lkey: string = lane_map_key(amn, key, c, env, funcs);
   if (lkey.len() > 0) {
     let lr: RExpr = mono_expr(fac.obj, env, funcs, ins);
     let kernel: string = split_inst_key(lkey)[0];
-    let lins: Insts = lr.rins.iadd("__lanes_map", lkey).iadd(kernel, lane_type_of(elem)).iadd(kernel, elem);
+    let lins: Insts = lr.rins.iadd("__lanes_map", lkey).iadd(kernel, lane_type_of(key)).iadd(kernel, key);
     return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: "__lanes_map__" + sanitize_key(lkey), line: fac.line, col: fac.col, ty: "", builtin: false }, args: [lr.rexpr], line: c.line, col: c.col, type_args: [], ty: c.ty }, rins: lins };
   }
   let fcall = ast.ExprCall { callee: ast.ExprIdent { name: amn, line: fac.line, col: fac.col, ty: "", builtin: false }, args: raw, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
   let (folded, fins) = mono_call_args(fcall, env, funcs, ins);
-  return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: amn + "__" + sanitize_key(elem), line: fac.line, col: fac.col, ty: "", builtin: false }, args: folded, line: c.line, col: c.col, type_args: [], ty: c.ty }, rins: fins.iadd(amn, elem) };
+  return RExpr { rexpr: ast.ExprCall { callee: ast.ExprIdent { name: amn + "__" + sanitize_key(key), line: fac.line, col: fac.col, ty: "", builtin: false }, args: folded, line: c.line, col: c.col, type_args: [], ty: c.ty }, rins: fins.iadd(amn, key) };
 }
 
 function lane_bound_spellings(mod: Module): string[] {

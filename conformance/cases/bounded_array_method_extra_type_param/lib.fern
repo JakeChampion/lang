@@ -1,0 +1,52 @@
+import "core/cmp";
+
+pub function (xs: T[]) count_at_least[T, K: cmp.Ord](key: (T) => K, floor: K): i32 {
+    let n: i32 = 0;
+    for x in xs {
+        if (key(x).cmp(floor) >= 0) {
+            n = n + 1;
+        }
+    }
+    return n;
+}
+
+pub function (xs: [T]) count_at_least[T, K: cmp.Ord](key: (T) => K, floor: K): i32 {
+    let n: i32 = 0;
+    for x in xs {
+        if (key(x).cmp(floor) >= 0) {
+            n = n + 1;
+        }
+    }
+    return n;
+}
+
+pub function (xs: T[]) tag_of_max[T: cmp.Ord, K](tag: (T) => K): Option[K] {
+    if (xs.len() == 0) {
+        return None;
+    }
+    let best: T = xs[0];
+    for x in xs {
+        if (x.cmp(best) > 0) {
+            best = x;
+        }
+    }
+    return Some(tag(best));
+}
+
+pub function (xs: T[]) max_by_key[T, K: cmp.Ord](key: (T) => K): Option[T] {
+    if (xs.len() == 0) {
+        return None;
+    }
+    let best: T = xs[0];
+    let best_key: K = key(xs[0]);
+    let i: i32 = 1;
+    while (i < xs.len()) {
+        let k: K = key(xs[i]);
+        if (k.cmp(best_key) > 0) {
+            best = xs[i];
+            best_key = k;
+        }
+        i = i + 1;
+    }
+    return Some(best);
+}
