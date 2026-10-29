@@ -20,7 +20,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<dependencies 2>>
 
-<<3 pub function export_func(): u8>>
+<<3 pub const EXPORT_FUNC: u8>>
 
 <<4 pub function encode_data_section(buf: u8[], offsets: i32[], init_bytes: u8[][]): u8[]>>
 ```
@@ -40,30 +40,22 @@ import "std/wasm/leb128";
 import "std/wasm/encode";
 ```
 
-### `3 pub function export_func(): u8`
+### `3 pub const EXPORT_FUNC: u8`
 
 ```fern
-<<3 pub function export_func(): u8>>=
-pub function export_func(): u8 {
-  return 0u8;
-}
+<<3 pub const EXPORT_FUNC: u8>>=
+pub const EXPORT_FUNC: u8 = 0u8;
 
-pub function export_table(): u8 {
-  return 1u8;
-}
+pub const EXPORT_TABLE: u8 = 1u8;
 
-pub function export_memory(): u8 {
-  return 2u8;
-}
+pub const EXPORT_MEMORY: u8 = 2u8;
 
-pub function export_global(): u8 {
-  return 3u8;
-}
+pub const EXPORT_GLOBAL: u8 = 3u8;
 
 pub function encode_custom_section(buf: u8[], name: string, payload: u8[]): u8[] {
   let body: u8[] = encode.put_name([], name);
   body = encode.put_bytes(body, payload);
-  return encode.put_section(buf, encode.section_custom(), body);
+  return encode.put_section(buf, encode.SECTION_CUSTOM, body);
 }
 
 pub function encode_type_section(buf: u8[], params_per_type: u8[][], results_per_type: u8[][]): u8[] {
@@ -74,7 +66,7 @@ pub function encode_type_section(buf: u8[], params_per_type: u8[][], results_per
     body = encode.put_func_type(body, params_per_type[i], results_per_type[i]);
     i = i + 1;
   }
-  return encode.put_section(buf, encode.section_type(), body);
+  return encode.put_section(buf, encode.SECTION_TYPE, body);
 }
 
 pub function encode_function_section(buf: u8[], typeidxs: u32[]): u8[] {
@@ -85,7 +77,7 @@ pub function encode_function_section(buf: u8[], typeidxs: u32[]): u8[] {
     body = leb128.uleb_u32(body, typeidxs[i]);
     i = i + 1;
   }
-  return encode.put_section(buf, encode.section_function(), body);
+  return encode.put_section(buf, encode.SECTION_FUNCTION, body);
 }
 
 pub function encode_table_section(buf: u8[], reftype: u8, min: u32, max: i32): u8[] {
@@ -99,7 +91,7 @@ pub function encode_table_section(buf: u8[], reftype: u8, min: u32, max: i32): u
     body = leb128.uleb_u32(body, min);
     body = leb128.uleb_u32(body, max as u32);
   }
-  return encode.put_section(buf, encode.section_table(), body);
+  return encode.put_section(buf, encode.SECTION_TABLE, body);
 }
 
 pub function encode_memory_section(buf: u8[], min_pages: u32, max_pages: i32): u8[] {
@@ -112,7 +104,7 @@ pub function encode_memory_section(buf: u8[], min_pages: u32, max_pages: i32): u
     body = leb128.uleb_u32(body, min_pages);
     body = leb128.uleb_u32(body, max_pages as u32);
   }
-  return encode.put_section(buf, encode.section_memory(), body);
+  return encode.put_section(buf, encode.SECTION_MEMORY, body);
 }
 
 pub function encode_export_section(buf: u8[], names: string[], kinds: u8[], indices: u32[]): u8[] {
@@ -125,12 +117,12 @@ pub function encode_export_section(buf: u8[], names: string[], kinds: u8[], indi
     body = leb128.uleb_u32(body, indices[i]);
     i = i + 1;
   }
-  return encode.put_section(buf, encode.section_export(), body);
+  return encode.put_section(buf, encode.SECTION_EXPORT, body);
 }
 
 pub function encode_start_section(buf: u8[], funcidx: u32): u8[] {
   let body: u8[] = leb128.uleb_u32([], funcidx);
-  return encode.put_section(buf, encode.section_start(), body);
+  return encode.put_section(buf, encode.SECTION_START, body);
 }
 
 pub function encode_element_section(buf: u8[], offsets: i32[], funcidxs_per_seg: u32[][]): u8[] {
@@ -151,7 +143,7 @@ pub function encode_element_section(buf: u8[], offsets: i32[], funcidxs_per_seg:
     }
     i = i + 1;
   }
-  return encode.put_section(buf, encode.section_element(), body);
+  return encode.put_section(buf, encode.SECTION_ELEMENT, body);
 }
 
 pub function encode_code_section(buf: u8[], bodies: u8[][]): u8[] {
@@ -162,7 +154,7 @@ pub function encode_code_section(buf: u8[], bodies: u8[][]): u8[] {
     body = encode.put_bytes(body, bodies[i]);
     i = i + 1;
   }
-  return encode.put_section(buf, encode.section_code(), body);
+  return encode.put_section(buf, encode.SECTION_CODE, body);
 }
 ```
 
@@ -184,6 +176,6 @@ pub function encode_data_section(buf: u8[], offsets: i32[], init_bytes: u8[][]):
     body = encode.put_bytes(body, seg);
     i = i + 1;
   }
-  return encode.put_section(buf, encode.section_data(), body);
+  return encode.put_section(buf, encode.SECTION_DATA, body);
 }
 ```

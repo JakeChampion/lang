@@ -20,7 +20,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<dependencies 2>>
 
-<<3 pub function import_func(): u8>>
+<<3 pub const IMPORT_FUNC: u8>>
 ```
 
 ### `module introduction`
@@ -38,33 +38,21 @@ import "std/wasm/leb128";
 import "std/wasm/encode";
 ```
 
-### `3 pub function import_func(): u8`
+### `3 pub const IMPORT_FUNC: u8`
 
 ```fern
-<<3 pub function import_func(): u8>>=
-pub function import_func(): u8 {
-  return 0u8;
-}
+<<3 pub const IMPORT_FUNC: u8>>=
+pub const IMPORT_FUNC: u8 = 0u8;
 
-pub function import_table(): u8 {
-  return 1u8;
-}
+pub const IMPORT_TABLE: u8 = 1u8;
 
-pub function import_memory(): u8 {
-  return 2u8;
-}
+pub const IMPORT_MEMORY: u8 = 2u8;
 
-pub function import_global(): u8 {
-  return 3u8;
-}
+pub const IMPORT_GLOBAL: u8 = 3u8;
 
-pub function mut_const(): u8 {
-  return 0u8;
-}
+pub const MUT_CONST: u8 = 0u8;
 
-pub function mut_var(): u8 {
-  return 1u8;
-}
+pub const MUT_VAR: u8 = 1u8;
 
 pub function import_desc_func(typeidx: u32): u8[] {
   return leb128.uleb_u32([], typeidx);
@@ -90,13 +78,9 @@ pub function import_desc_memory(min_pages: u32, max_pages: i32): u8[] {
   return out;
 }
 
-pub function reftype_funcref(): u8 {
-  return 112u8;
-}
+pub const REFTYPE_FUNCREF: u8 = 112u8;
 
-pub function reftype_externref(): u8 {
-  return 111u8;
-}
+pub const REFTYPE_EXTERNREF: u8 = 111u8;
 
 pub function import_desc_table(reftype: u8, min: u32, max: i32): u8[] {
   let out: u8[] = [];
@@ -123,7 +107,7 @@ pub function encode_import_section(buf: u8[], modules: string[], names: string[]
     body = encode.put_bytes(body, desc_bodies[i]);
     i = i + 1;
   }
-  return encode.put_section(buf, encode.section_import(), body);
+  return encode.put_section(buf, encode.SECTION_IMPORT, body);
 }
 
 pub function encode_global_section(buf: u8[], valtypes: u8[], muts: u8[], init_exprs: u8[][]): u8[] {
@@ -136,6 +120,6 @@ pub function encode_global_section(buf: u8[], valtypes: u8[], muts: u8[], init_e
     body = encode.put_bytes(body, init_exprs[i]);
     i = i + 1;
   }
-  return encode.put_section(buf, encode.section_global(), body);
+  return encode.put_section(buf, encode.SECTION_GLOBAL, body);
 }
 ```

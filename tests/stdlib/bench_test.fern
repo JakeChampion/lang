@@ -129,7 +129,7 @@ function test_output_escapes_the_name(): test.TestOutcome {
 
 function test_csv_row_matches_its_header(): test.TestOutcome {
   let r: bench.Report = report_of("csv", ten_samples(), 0 as i64);
-  let cols: i32 = bench.csv_header().split(",").len();
+  let cols: i32 = bench.CSV_HEADER.split(",").len();
   let cells: i32 = r.to_csv_row().split(",").len();
   if (cols != cells) {
     return test.fail("header has " + cols.to_string() + " columns, row has " + cells.to_string());

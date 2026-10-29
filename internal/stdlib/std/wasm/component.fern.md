@@ -20,7 +20,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<dependencies 2>>
 
-<<3 pub function section_core_module(): u8>>
+<<3 pub const SECTION_CORE_MODULE: u8>>
 
 <<4 pub function put_core_instance_section_from_func_exports(buf: u8[], export_names: string[], core_func_idxs:...>>
 
@@ -52,49 +52,29 @@ import "std/wasm/leb128";
 import "std/wasm/encode";
 ```
 
-### `3 pub function section_core_module(): u8`
+### `3 pub const SECTION_CORE_MODULE: u8`
 
 ```fern
-<<3 pub function section_core_module(): u8>>=
-pub function section_core_module(): u8 {
-  return 1u8;
-}
+<<3 pub const SECTION_CORE_MODULE: u8>>=
+pub const SECTION_CORE_MODULE: u8 = 1u8;
 
-pub function section_core_instance(): u8 {
-  return 2u8;
-}
+pub const SECTION_CORE_INSTANCE: u8 = 2u8;
 
-pub function section_core_type(): u8 {
-  return 3u8;
-}
+pub const SECTION_CORE_TYPE: u8 = 3u8;
 
-pub function section_instance(): u8 {
-  return 5u8;
-}
+pub const SECTION_INSTANCE: u8 = 5u8;
 
-pub function section_alias(): u8 {
-  return 6u8;
-}
+pub const SECTION_ALIAS: u8 = 6u8;
 
-pub function section_type(): u8 {
-  return 7u8;
-}
+pub const SECTION_TYPE: u8 = 7u8;
 
-pub function section_canon(): u8 {
-  return 8u8;
-}
+pub const SECTION_CANON: u8 = 8u8;
 
-pub function section_start(): u8 {
-  return 9u8;
-}
+pub const SECTION_START: u8 = 9u8;
 
-pub function section_import(): u8 {
-  return 10u8;
-}
+pub const SECTION_IMPORT: u8 = 10u8;
 
-pub function section_export(): u8 {
-  return 11u8;
-}
+pub const SECTION_EXPORT: u8 = 11u8;
 
 pub function put_component_header(buf: u8[]): u8[] {
   let out: u8[] = buf;
@@ -111,7 +91,7 @@ pub function put_component_header(buf: u8[]): u8[] {
 
 pub function put_core_module_section(buf: u8[], core_bytes: u8[]): u8[] {
   let out: u8[] = buf;
-  out = out.append(section_core_module());
+  out = out.append(SECTION_CORE_MODULE);
   out = leb128.uleb_u32(out, core_bytes.len() as u32);
   return encode.put_bytes(out, core_bytes);
 }
@@ -136,7 +116,7 @@ pub function put_core_type_section_one_func(buf: u8[], param_valtypes: u8[], res
   }
 
   let out: u8[] = buf;
-  out = out.append(section_core_type());
+  out = out.append(SECTION_CORE_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -159,38 +139,24 @@ pub function put_core_instance_section_instantiate(buf: u8[], module_idx: u32): 
   body = leb128.uleb_u32(body, 0u32);
 
   let out: u8[] = buf;
-  out = out.append(section_core_instance());
+  out = out.append(SECTION_CORE_INSTANCE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
 
-pub function core_sort_func(): u8 {
-  return 0u8;
-}
+pub const CORE_SORT_FUNC: u8 = 0u8;
 
-pub function core_sort_table(): u8 {
-  return 1u8;
-}
+pub const CORE_SORT_TABLE: u8 = 1u8;
 
-pub function core_sort_memory(): u8 {
-  return 2u8;
-}
+pub const CORE_SORT_MEMORY: u8 = 2u8;
 
-pub function core_sort_global(): u8 {
-  return 3u8;
-}
+pub const CORE_SORT_GLOBAL: u8 = 3u8;
 
-pub function core_sort_type(): u8 {
-  return 16u8;
-}
+pub const CORE_SORT_TYPE: u8 = 16u8;
 
-pub function core_sort_module(): u8 {
-  return 17u8;
-}
+pub const CORE_SORT_MODULE: u8 = 17u8;
 
-pub function core_sort_instance(): u8 {
-  return 18u8;
-}
+pub const CORE_SORT_INSTANCE: u8 = 18u8;
 ```
 
 ### `4 pub function put_core_instance_section_from_func_exports(buf: u8[], export_names: string[], core_func_idxs:...`
@@ -206,13 +172,13 @@ pub function put_core_instance_section_from_func_exports(buf: u8[], export_names
   let i: i32 = 0;
   while (i < n) {
     body = encode.put_name(body, export_names[i]);
-    body = body.append(core_sort_func());
+    body = body.append(CORE_SORT_FUNC);
     body = leb128.uleb_u32(body, core_func_idxs[i]);
     i = i + 1;
   }
 
   let out: u8[] = buf;
-  out = out.append(section_core_instance());
+  out = out.append(SECTION_CORE_INSTANCE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -233,13 +199,13 @@ pub function put_core_instance_section_instantiate_with_instance_args(buf: u8[],
   let i: i32 = 0;
   while (i < n) {
     body = encode.put_name(body, arg_names[i]);
-    body = body.append(core_sort_instance());
+    body = body.append(CORE_SORT_INSTANCE);
     body = leb128.uleb_u32(body, instance_idxs[i]);
     i = i + 1;
   }
 
   let out: u8[] = buf;
-  out = out.append(section_core_instance());
+  out = out.append(SECTION_CORE_INSTANCE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -250,57 +216,31 @@ pub function put_core_instance_section_instantiate_with_one_instance_arg(buf: u8
   return put_core_instance_section_instantiate_with_instance_args(buf, module_idx, names, idxs);
 }
 
-pub function cvaltype_bool(): u8 {
-  return 127u8;
-}
+pub const CVALTYPE_BOOL: u8 = 127u8;
 
-pub function cvaltype_s8(): u8 {
-  return 126u8;
-}
+pub const CVALTYPE_S8: u8 = 126u8;
 
-pub function cvaltype_u8(): u8 {
-  return 125u8;
-}
+pub const CVALTYPE_U8: u8 = 125u8;
 
-pub function cvaltype_s16(): u8 {
-  return 124u8;
-}
+pub const CVALTYPE_S16: u8 = 124u8;
 
-pub function cvaltype_u16(): u8 {
-  return 123u8;
-}
+pub const CVALTYPE_U16: u8 = 123u8;
 
-pub function cvaltype_s32(): u8 {
-  return 122u8;
-}
+pub const CVALTYPE_S32: u8 = 122u8;
 
-pub function cvaltype_u32(): u8 {
-  return 121u8;
-}
+pub const CVALTYPE_U32: u8 = 121u8;
 
-pub function cvaltype_s64(): u8 {
-  return 120u8;
-}
+pub const CVALTYPE_S64: u8 = 120u8;
 
-pub function cvaltype_u64(): u8 {
-  return 119u8;
-}
+pub const CVALTYPE_U64: u8 = 119u8;
 
-pub function cvaltype_f32(): u8 {
-  return 118u8;
-}
+pub const CVALTYPE_F32: u8 = 118u8;
 
-pub function cvaltype_f64(): u8 {
-  return 117u8;
-}
+pub const CVALTYPE_F64: u8 = 117u8;
 
-pub function cvaltype_char(): u8 {
-  return 116u8;
-}
+pub const CVALTYPE_CHAR: u8 = 116u8;
 
-pub function cvaltype_string(): u8 {
-  return 115u8;
-}
+pub const CVALTYPE_STRING: u8 = 115u8;
 
 pub function put_type_section_funcs(buf: u8[], param_names_per_func: string[][], param_valtypes_per_func: u8[][], result_valtype_per_func: u8[]): u8[] {
   let body: u8[] = [];
@@ -325,7 +265,7 @@ pub function put_type_section_funcs(buf: u8[], param_names_per_func: string[][],
   }
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -364,7 +304,7 @@ pub function put_type_section_one_func_no_result(buf: u8[], param_names: string[
   body = leb128.uleb_u32(body, 0u32);
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -377,7 +317,7 @@ pub function put_type_section_one_resource(buf: u8[], rep_valtype: u8): u8[] {
   body = body.append(0u8);
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -389,7 +329,7 @@ pub function put_type_section_one_list(buf: u8[], elem_valtype: u8): u8[] {
   body = body.append(elem_valtype);
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -401,7 +341,7 @@ pub function put_type_section_one_option(buf: u8[], inner_valtype: u8): u8[] {
   body = body.append(inner_valtype);
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -419,7 +359,7 @@ pub function put_type_section_one_tuple(buf: u8[], elem_valtypes: u8[]): u8[] {
   }
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -434,7 +374,7 @@ pub function put_type_section_one_result_ok_err(buf: u8[], ok_valtype: u8, err_v
   body = body.append(err_valtype);
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -452,7 +392,7 @@ pub function put_type_section_one_enum(buf: u8[], labels: string[]): u8[] {
   }
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -475,7 +415,7 @@ pub function put_type_section_one_flags(buf: u8[], labels: string[]): u8[] {
   }
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -494,7 +434,7 @@ pub function put_type_section_one_record(buf: u8[], field_names: string[], field
   }
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -519,7 +459,7 @@ pub function put_type_section_one_variant(buf: u8[], case_names: string[], case_
   }
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -531,7 +471,7 @@ pub function put_type_section_one_own(buf: u8[], resource_typeidx: u32): u8[] {
   body = leb128.uleb_u32(body, resource_typeidx);
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -543,7 +483,7 @@ pub function put_type_section_one_borrow(buf: u8[], resource_typeidx: u32): u8[]
   body = leb128.uleb_u32(body, resource_typeidx);
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -581,7 +521,7 @@ pub function put_type_section_one_instance_one_func_with_result_export(buf: u8[]
   body = leb128.uleb_u32(body, 0u32);
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -625,7 +565,7 @@ pub function put_type_section_one_instance_with_func_exports(buf: u8[], export_n
   }
 
   let out: u8[] = buf;
-  out = out.append(section_type());
+  out = out.append(SECTION_TYPE);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -639,7 +579,7 @@ pub function put_import_section_one_instance(buf: u8[], name: string, instance_t
   body = leb128.uleb_u32(body, instance_typeidx);
 
   let out: u8[] = buf;
-  out = out.append(section_import());
+  out = out.append(SECTION_IMPORT);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -661,7 +601,7 @@ pub function put_canon_section_resource_drops(buf: u8[], resource_typeidxs: u32[
   }
 
   let out: u8[] = buf;
-  out = out.append(section_canon());
+  out = out.append(SECTION_CANON);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -683,7 +623,7 @@ pub function put_canon_section_resource_news(buf: u8[], resource_typeidxs: u32[]
   }
 
   let out: u8[] = buf;
-  out = out.append(section_canon());
+  out = out.append(SECTION_CANON);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -705,7 +645,7 @@ pub function put_canon_section_resource_reps(buf: u8[], resource_typeidxs: u32[]
   }
 
   let out: u8[] = buf;
-  out = out.append(section_canon());
+  out = out.append(SECTION_CANON);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -717,7 +657,7 @@ pub function put_start_section_no_args_no_results(buf: u8[], funcidx: u32): u8[]
   body = leb128.uleb_u32(body, 0u32);
 
   let out: u8[] = buf;
-  out = out.append(section_start());
+  out = out.append(SECTION_START);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -742,13 +682,13 @@ pub function put_alias_section_core_exports(buf: u8[], core_sorts: u8[], core_in
   }
 
   let out: u8[] = buf;
-  out = out.append(section_alias());
+  out = out.append(SECTION_ALIAS);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
 
 pub function put_alias_section_core_export_func(buf: u8[], core_instance_idx: u32, name: string): u8[] {
-  let sorts: u8[] = [core_sort_func()];
+  let sorts: u8[] = [CORE_SORT_FUNC];
   let instance_idxs: u32[] = [core_instance_idx];
   let names: string[] = [name];
   return put_alias_section_core_exports(buf, sorts, instance_idxs, names);
@@ -763,7 +703,7 @@ pub function put_alias_section_instance_export_func(buf: u8[], instance_idx: u32
   body = encode.put_name(body, name);
 
   let out: u8[] = buf;
-  out = out.append(section_alias());
+  out = out.append(SECTION_ALIAS);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -783,7 +723,7 @@ pub function put_canon_section_lifts_no_opts(buf: u8[], core_func_idxs: u32[], t
   }
 
   let out: u8[] = buf;
-  out = out.append(section_canon());
+  out = out.append(SECTION_CANON);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -794,29 +734,17 @@ pub function put_canon_section_lift_no_opts(buf: u8[], core_func_idx: u32, typei
   return put_canon_section_lifts_no_opts(buf, core_idxs, type_idxs);
 }
 
-pub function canonopt_string_encoding_utf8(): u8 {
-  return 0u8;
-}
+pub const CANONOPT_STRING_ENCODING_UTF8: u8 = 0u8;
 
-pub function canonopt_string_encoding_utf16(): u8 {
-  return 1u8;
-}
+pub const CANONOPT_STRING_ENCODING_UTF16: u8 = 1u8;
 
-pub function canonopt_string_encoding_latin1_utf16(): u8 {
-  return 2u8;
-}
+pub const CANONOPT_STRING_ENCODING_LATIN1_UTF16: u8 = 2u8;
 
-pub function canonopt_memory(): u8 {
-  return 3u8;
-}
+pub const CANONOPT_MEMORY: u8 = 3u8;
 
-pub function canonopt_realloc(): u8 {
-  return 4u8;
-}
+pub const CANONOPT_REALLOC: u8 = 4u8;
 
-pub function canonopt_post_return(): u8 {
-  return 5u8;
-}
+pub const CANONOPT_POST_RETURN: u8 = 5u8;
 
 pub function put_canon_section_lower_mem_realloc(buf: u8[], func_idx: u32, mem_idx: u32, realloc_func_idx: u32): u8[] {
   let body: u8[] = [];
@@ -825,13 +753,13 @@ pub function put_canon_section_lower_mem_realloc(buf: u8[], func_idx: u32, mem_i
   body = body.append(0u8);
   body = leb128.uleb_u32(body, func_idx);
   body = leb128.uleb_u32(body, 2u32);
-  body = body.append(canonopt_memory());
+  body = body.append(CANONOPT_MEMORY);
   body = leb128.uleb_u32(body, mem_idx);
-  body = body.append(canonopt_realloc());
+  body = body.append(CANONOPT_REALLOC);
   body = leb128.uleb_u32(body, realloc_func_idx);
 
   let out: u8[] = buf;
-  out = out.append(section_canon());
+  out = out.append(SECTION_CANON);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -843,16 +771,16 @@ pub function put_canon_section_lift_mem_realloc_post_return(buf: u8[], core_func
   body = body.append(0u8);
   body = leb128.uleb_u32(body, core_func_idx);
   body = leb128.uleb_u32(body, 3u32);
-  body = body.append(canonopt_memory());
+  body = body.append(CANONOPT_MEMORY);
   body = leb128.uleb_u32(body, mem_idx);
-  body = body.append(canonopt_realloc());
+  body = body.append(CANONOPT_REALLOC);
   body = leb128.uleb_u32(body, realloc_func_idx);
-  body = body.append(canonopt_post_return());
+  body = body.append(CANONOPT_POST_RETURN);
   body = leb128.uleb_u32(body, post_return_func_idx);
   body = leb128.uleb_u32(body, typeidx);
 
   let out: u8[] = buf;
-  out = out.append(section_canon());
+  out = out.append(SECTION_CANON);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -870,14 +798,14 @@ pub function put_canon_section_lift_mem_realloc_encoding(buf: u8[], core_func_id
   body = leb128.uleb_u32(body, core_func_idx);
   body = leb128.uleb_u32(body, 3u32);
   body = body.append(encoding_tag);
-  body = body.append(canonopt_memory());
+  body = body.append(CANONOPT_MEMORY);
   body = leb128.uleb_u32(body, mem_idx);
-  body = body.append(canonopt_realloc());
+  body = body.append(CANONOPT_REALLOC);
   body = leb128.uleb_u32(body, realloc_func_idx);
   body = leb128.uleb_u32(body, typeidx);
 
   let out: u8[] = buf;
-  out = out.append(section_canon());
+  out = out.append(SECTION_CANON);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -889,14 +817,14 @@ pub function put_canon_section_lift_mem_realloc(buf: u8[], core_func_idx: u32, t
   body = body.append(0u8);
   body = leb128.uleb_u32(body, core_func_idx);
   body = leb128.uleb_u32(body, 2u32);
-  body = body.append(canonopt_memory());
+  body = body.append(CANONOPT_MEMORY);
   body = leb128.uleb_u32(body, mem_idx);
-  body = body.append(canonopt_realloc());
+  body = body.append(CANONOPT_REALLOC);
   body = leb128.uleb_u32(body, realloc_func_idx);
   body = leb128.uleb_u32(body, typeidx);
 
   let out: u8[] = buf;
-  out = out.append(section_canon());
+  out = out.append(SECTION_CANON);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -915,7 +843,7 @@ pub function put_import_section_funcs(buf: u8[], names: string[], typeidxs: u32[
   }
 
   let out: u8[] = buf;
-  out = out.append(section_import());
+  out = out.append(SECTION_IMPORT);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -940,7 +868,7 @@ pub function put_canon_section_lowers_no_opts(buf: u8[], func_idxs: u32[]): u8[]
   }
 
   let out: u8[] = buf;
-  out = out.append(section_canon());
+  out = out.append(SECTION_CANON);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
@@ -965,7 +893,7 @@ pub function put_export_section_funcs(buf: u8[], names: string[], func_idxs: u32
   }
 
   let out: u8[] = buf;
-  out = out.append(section_export());
+  out = out.append(SECTION_EXPORT);
   out = leb128.uleb_u32(out, body.len() as u32);
   return encode.put_bytes(out, body);
 }
