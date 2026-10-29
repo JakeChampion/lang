@@ -394,9 +394,9 @@ walk without an assumption settled; what both walks settle is proved, and
 either walk's finding is one. A finding is a definite violation: a unit
 spent that the frame does not hold, or a unit it holds when it returns.
 Every compile certifies
-every function it emits, through a memo keyed by the function's ops, contract
-and callee contracts (`rcmemo`, under the user's cache root), so a steady
-compile pays only for lowerings it has not seen. `FERN_RC_CERTIFY=0` leaves it
+every function it emits, through a memo keyed by the function's ops, contract,
+callee contracts and the compiler build (`rcmemo`, under the user's cache
+root), so a steady compile pays only for lowerings it has not seen. `FERN_RC_CERTIFY=0` leaves it
 out, `FERN_RC_CERTIFY=report` turns refusals into a census, and a refusal
 exits 5 naming the function and the unit. Pinned by `TestSelfHostRcCertify*`
 and the `certifier-refuses-missing-retain` row of the physical-RC driver.

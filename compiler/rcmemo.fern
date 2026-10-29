@@ -3,11 +3,12 @@ import "./rccertify";
 import "./ssa";
 import "./util";
 import "std/envflag";
+import "std/hash";
 
-pub struct Memo { on: boolean, path: string, known: util.NameIndex, adds: usize, hits: usize, misses: usize, call_kind: i32 }
+pub struct Memo { on: boolean, path: string, build: i64, known: util.NameIndex, adds: usize, hits: usize, misses: usize, call_kind: i32 }
 
 function version(): string {
-  return "10";
+  return "11";
 }
 
 function keep(): i32 {
@@ -16,7 +17,7 @@ function keep(): i32 {
 
 pub function off(): Memo {
   let none: string[] = [];
-  return Memo { on: false, path: "", known: util.name_index(none), adds: 0 as usize, hits: 0 as usize, misses: 0 as usize, call_kind: 0 };
+  return Memo { on: false, path: "", build: 0i64, known: util.name_index(none), adds: 0 as usize, hits: 0 as usize, misses: 0 as usize, call_kind: 0 };
 }
 
 function root(): string {
@@ -37,8 +38,52 @@ pub function open(target: string): Memo {
   if (dir == "") {
     return off();
   }
+  let build: i64 = 0i64;
+  match (build_digest()) {
+    Some(b) => {
+      build = b;
+    },
+    None => {
+      return off();
+    }
+  }
   let path: string = dir + "/certified/" + version() + "-" + target + ".txt";
-  return Memo { on: true, path: path, known: util.name_index(lines_of(path)), adds: buf_new(4096), hits: buf_new(64), misses: buf_new(64), call_kind: ir.K_CALL_DIRECT };
+  return Memo { on: true, path: path, build: build, known: util.name_index(lines_of(path)), adds: buf_new(4096), hits: buf_new(64), misses: buf_new(64), call_kind: ir.K_CALL_DIRECT };
+}
+
+// A digest of the running compiler's executable. An entry is a hit only for
+// the build that wrote it, so a memo cannot vouch for another certifier.
+function build_digest(): Option[i64] {
+  for p in self_paths() {
+    match (read_file_bytes(p)) {
+      Ok(image) => {
+        if (image.len() > 0) {
+          return Some(hash.xxh64(image, 0) as i64);
+        }
+      },
+      Err(e) => {}
+    }
+  }
+  return None;
+}
+
+function self_paths(): string[] {
+  let out: string[] = ["/proc/self/exe"];
+  let av: string[] = args();
+  if (av.len() == 0 || av[0] == "") {
+    return out;
+  }
+  if (util.contains(av[0], "/")) {
+    return out.append(av[0]);
+  }
+  if let Some(dirs) = envflag.value("PATH") {
+    for d in util.split_char(dirs, b':') {
+      if (d != "") {
+        out = out.append(d + "/" + av[0]);
+      }
+    }
+  }
+  return out;
 }
 
 function lines_of(path: string): string[] {
@@ -85,7 +130,7 @@ function newest(lines: string[]): string[] {
 }
 
 pub function key(m: Memo, fn_name: string, f: ssa.SFunc, ops: ir.Op[], abis: rccertify.Abis): string {
-  let d: i64 = util.roll_text(util.digest_start(), fn_name);
+  let d: i64 = util.roll_text(util.roll_wide(util.digest_start(), m.build), fn_name);
   d = roll_abi(d, abis.lookup(fn_name));
   d = util.roll(util.roll(util.roll_flag(util.roll(d, f.nparams), f.takes_env), f.nvals), f.blocks.len());
   for o in ops {

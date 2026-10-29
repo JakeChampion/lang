@@ -758,6 +758,9 @@ the row in `docs/TEST-GATES.md`), through a memo of the functions each target
 has certified clean: `~/.cache/fern/certified/<version>-<target>.txt`, or
 under `$FERN_CACHE_DIR`, or `$XDG_CACHE_HOME/fern` off macOS, when set. A cold compile of
 the compiler pays about 15% for it; a warm one pays a digest per function.
+Each key also holds a digest of the compiler executable. Thus an entry is a hit
+only for the build that wrote it. When the compiler cannot read its own
+executable, the memo is off.
 `FERN_IR_VERIFY=1` prints `FERN_RC_CERTIFY: memo hits=… misses=…` at the end
 of a compile. To certify everything again, delete the directory or set
 `FERN_RC_CERTIFY_MEMO=0`; to keep a test's memo apart, point

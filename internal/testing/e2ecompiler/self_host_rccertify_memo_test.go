@@ -87,3 +87,43 @@ func TestSelfHostRcCertifyMemo(t *testing.T) {
 		t.Fatalf("FERN_RC_CERTIFY=0: exit %d, want 0\n%s", code, out)
 	}
 }
+
+func TestSelfHostRcCertifyMemoIsPerBuild(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	image, err := os.ReadFile(cli.bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := *cli
+	other.bin = filepath.Join(dir, "fern-other")
+	if err := os.WriteFile(other.bin, append(image, 0), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	memo := "FERN_RC_CERTIFY_MEMO=" + filepath.Join(dir, "memo")
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(sanSelfHostCleanSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	counts := func(c *selfHostCLI, who string) (int, int) {
+		t.Helper()
+		out, code := compileCapturing(t, c, src, memo, "FERN_IR_VERIFY=1")
+		if code != 0 {
+			t.Fatalf("%s: exit %d\n%s", who, code, out)
+		}
+		return memoCounts(t, out)
+	}
+	_, misses := counts(cli, "first build, cold")
+	if misses == 0 {
+		t.Fatal("first build, cold: no misses")
+	}
+	if hits, m := counts(&other, "second build"); hits != 0 || m != misses {
+		t.Fatalf("second build on the first build's memo: hits=%d misses=%d, want 0 hits and %d misses", hits, m, misses)
+	}
+	if hits, m := counts(cli, "first build, warm"); hits != misses || m != 0 {
+		t.Fatalf("first build after the second: hits=%d misses=%d, want %d hits and no misses", hits, m, misses)
+	}
+	if hits, m := counts(&other, "second build, warm"); hits != misses || m != 0 {
+		t.Fatalf("second build, warm: hits=%d misses=%d, want %d hits and no misses", hits, m, misses)
+	}
+}
