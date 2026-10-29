@@ -187,13 +187,14 @@ function main(): i32 {
 			src: `struct P { f: E, n: i32 }
 enum E { A(i32[]), B }
 function mkv(i: i32): E { return E.A([i, i + 1]); }
+@noinline function seed(): i32 { return 7; }
 
 function round(src: E, i: i32): i32 {
     let p: P = P { f: src, n: i };
     return ((match (p.f) { E.A(xs) => xs.len(), E.B => 0 }) + p.n) % 101;
 }
 function main(): i32 {
-    let keep: E = mkv(7);
+    let keep: E = mkv(seed());
     let t: i32 = 0;
     let r: i32 = 0;
     while (r < 100) { t = t + round(keep, r); t = t + 0; r = r + 1; }
@@ -207,7 +208,7 @@ function main(): i32 {
 			name: "callee_returns_enum",
 			src: `enum E { A(i32[]), B }
 function mkv(i: i32): E { return E.A([i, i + 1]); }
-function seed(): i32 { return 7; }
+@noinline function seed(): i32 { return 7; }
 struct P { f: E, n: i32 }
 @noinline function esc(src: E, i: i32): E { return src; }
 function main(): i32 {
