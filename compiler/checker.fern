@@ -2064,20 +2064,24 @@ function (ut: UnionTable) variant_chain_next(e: i32): i32 {
 }
 
 // names indexes the full method names, simple the names without their receiver.
+// bases holds the base of each receiver spelling.
 pub struct MethodTable {
   methods: MethodSig[],
   names: util.NameIndex,
   simple: util.NameIndex,
+  bases: string[],
 }
 
 function method_table(methods: MethodSig[]): MethodTable {
   let names: string[] = [];
   let simple: string[] = [];
+  let bases: string[] = [];
   for m in methods {
     names = names.append(m.name);
     simple = simple.append(method_simple_name(m.name));
+    bases = bases.append(parser.parse_type_ref(m.receiver_type).base);
   }
-  return MethodTable { methods: methods, names: util.name_index(names), simple: util.name_index(simple) };
+  return MethodTable { methods: methods, names: util.name_index(names), simple: util.name_index(simple), bases: bases };
 }
 
 function (s: Scope) trait_providers(name: string, recv_type: string): MethodSig[] {
@@ -2085,7 +2089,7 @@ function (s: Scope) trait_providers(name: string, recv_type: string): MethodSig[
   let i: i32 = s.methods.simple.chain(name);
   while (i >= 0) {
     let m: MethodSig = s.methods.methods[i];
-    if (m.impl_trait.len() > 0 && method_simple_name(m.name) == name && (m.receiver_type == recv_type || parser.parse_type_ref(m.receiver_type).base == recv_type)) {
+    if (m.impl_trait.len() > 0 && method_simple_name(m.name) == name && (m.receiver_type == recv_type || s.methods.bases[i] == recv_type)) {
       out = out.append(m);
     }
     i = s.methods.simple.next[i];
@@ -3489,8 +3493,9 @@ function bind_variant_payloads(arm: Scope, look: Scope, pvin0: ast.PatVariant, w
   return sc;
 }
 
-function (s: Scope) receives(ms: MethodSig, recv_type: string): boolean {
-  return ms.receiver_type == recv_type || parser.parse_type_ref(ms.receiver_type).base == recv_type || is_variant_of(recv_type, ms.receiver_type, s.unions.unions);
+function (s: Scope) receives(i: i32, recv_type: string): boolean {
+  let ms: MethodSig = s.methods.methods[i];
+  return ms.receiver_type == recv_type || s.methods.bases[i] == recv_type || is_variant_of(recv_type, ms.receiver_type, s.unions.unions);
 }
 
 function (s: Scope) lookup_method(name: string, recv_type: string): Option[MethodSig] {
@@ -3505,7 +3510,7 @@ function (s: Scope) lookup_method(name: string, recv_type: string): Option[Metho
       i = s.methods.names.next[i];
       continue;
     }
-    if (s.receives(s.methods.methods[i], recv_type)) {
+    if (s.receives(i, recv_type)) {
       return Some(s.methods.methods[i]);
     }
     i = s.methods.names.next[i];
@@ -3530,7 +3535,7 @@ function (s: Scope) trait_spelled_method(name: string, recv_type: string): i32 {
   let i: i32 = s.methods.simple.chain(simple);
   while (i >= 0) {
     let m: MethodSig = s.methods.methods[i];
-    if (method_simple_name(m.impl_trait) == tname && method_simple_name(m.name) == simple && (m.receiver_type == recv_type || parser.parse_type_ref(m.receiver_type).base == recv_type)) {
+    if (method_simple_name(m.impl_trait) == tname && method_simple_name(m.name) == simple && (m.receiver_type == recv_type || s.methods.bases[i] == recv_type)) {
       return i;
     }
     i = s.methods.simple.next[i];
@@ -3548,7 +3553,7 @@ function (s: Scope) has_method(name: string, recv_type: string): boolean {
     if (s.methods.methods[i].receiver_type == recv_type) {
       return true;
     }
-    if (parser.parse_type_ref(s.methods.methods[i].receiver_type).base == recv_type) {
+    if (s.methods.bases[i] == recv_type) {
       return true;
     }
     if (is_variant_of(recv_type, s.methods.methods[i].receiver_type, s.unions.unions)) {
@@ -24645,9 +24650,9 @@ pub function method_sig(s: Scope, name: string, recv: string): Option[MethodSig]
 
 pub function methods_on(s: Scope, recv: string): MethodSig[] {
   let out: MethodSig[] = [];
-  for ms in s.methods.methods {
-    if (s.receives(ms, recv)) {
-      out = out.append(ms);
+  for i in 0..s.methods.methods.len() {
+    if (s.receives(i, recv)) {
+      out = out.append(s.methods.methods[i]);
     }
   }
   return out;
