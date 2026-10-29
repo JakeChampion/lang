@@ -3501,8 +3501,8 @@ function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunit
     r = append_push(r, f, p, ins, defer0, link);
     return emit(r, ir.op_store_local(ins.result));
   }
-  if (ins.kind_tag == ssasem.call() && ins.str == "__sem_bytes_unique") {
-    r = bytes_unique(r, f, ins);
+  if (ins.kind_tag == ssasem.call() && ssasem.is_unique_check(ins.str)) {
+    r = array_unique(r, f, p, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
   if (ssaunits.string_append(f, ins) && !defer0 && !p.literal[ins.args[0]]) {
@@ -3876,7 +3876,10 @@ function append_push(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Pla
 }
 
 // The array itself when its count is 1, or a copy of it and a release.
-function bytes_unique(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst): irtables.LowerState {
+function array_unique(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerState {
+  if (p.unique_receivers[ins.result]) {
+    return emit(r, ir.op_load_local(ins.args[0]));
+  }
   let res: i32 = scratch_base(f);
   r = reserve(r, res + 1);
   r = emit(r, ir.op_load_local(ins.args[0]));
@@ -3885,9 +3888,14 @@ function bytes_unique(own r: irtables.LowerState, f: ssasem.Func, ins: ssa.SInst
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_store_local(res));
   r = emit(r, ir.op_else());
-  r = emit(r, ir.op_load_local(ins.args[0]));
-  r = emit(r, ir.op_call_direct("__fern_bytes_owned", 1));
-  r = emit(r, ir.op_store_local(res));
+  let elem: typeinfo.Type = elem_type(f.values[ins.args[0]]);
+  if (ssasem.is_u8(elem)) {
+    r = emit(r, ir.op_load_local(ins.args[0]));
+    r = emit(r, ir.op_call_direct("__fern_bytes_owned", 1));
+    r = emit(r, ir.op_store_local(res));
+  } else {
+    r = copied_base(r, elem, ins.args[0], res, 0 - 1);
+  }
   r = release(r, ins.args[0], f.values[ins.args[0]], f);
   r = emit(r, ir.op_end());
   return emit(r, ir.op_load_local(res));

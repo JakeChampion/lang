@@ -838,7 +838,7 @@ beat GNU on every row. The 139 rows that lose to GNU fall into a few families:
 |---|---|---|---|
 | `ls` / `dir` / `vdir` | 35 | 0.70x | the 4000-name rows, where neither side stats more than the other: the sort's comparator is called out of line and pays a full prologue for a two-load compare. `-F` and `-R` win now that `ls` stats only what GNU does |
 | the digests (`sha*sum`, `b2sum`, `cksum -a`) | 27 | 0.50x | GNU calls OpenSSL's assembly, and on x86-64 its SHA-256 uses the SHA extensions, which the baseline does not assume. Hashing 8 MiB was 372 M instructions to OpenSSL's 235 M on its AVX2 path; the x86-64 kernel (#12210) brings it to 296 M. `md5sum` wins every row now; `sha1sum` still loses its three large-file rows |
-| `fmt` | 9 | 0.67x | every row |
+| `fmt` | 9 | 0.67x | every row. The break chooser's inner loop keeps seven loop values in stack slots and bounds-checks every load, and each `__scan_set_bytes` call pays about 25 instructions on entry for a word of about four bytes (`docs/rc-log/2026-10-29-c-the-loop-uniqueness-check-takes-every-array.md`) |
 | `stat` | 8 | 0.80x | formatting 4000 operands, most rows within noise of 1 |
 | `base32` / `base64` / `basenc` | 8 | 0.59x | encoding the 64 MiB rows, and `base32 -d`; `base64 -d` and `--base16 -d` win now |
 | `pr` | 7 | 0.61x | `pr -m` at 0.61x; the other six are single-file rows at 0.79x to 0.89x |

@@ -4,21 +4,19 @@ import "./sourcepos";
 import "./typeinfo";
 import "./rtbytecopy";
 
-// A loop that grows a byte array it was handed checks the array's count at
-// every push, because the array may be shared on entry. One check before the
-// loop makes it sole there, and a push's result is sole when its receiver is,
-// so every push in the loop then tests only its capacity.
-
-pub function name(): string {
-  return "__sem_bytes_unique";
-}
+// A loop that writes an array it was handed checks the array's count at
+// every push or with, because the array may be shared on entry. One check
+// before the loop makes it sole there, and a write's result is sole when its
+// receiver is, so every write in the loop then tests only its bounds or
+// capacity.
 
 pub struct Hoisted { func: ssasem.Func, changed: boolean }
 
-pub function hoisted(f: ssasem.Func, contract: ssasem.Contract, modes: i32[]): Hoisted {
+pub function hoisted(f: ssasem.Func, modes: i32[]): Hoisted {
   let at: i32[] = positions(f.graph);
   let blocks: ssa.SBlock[] = f.graph.blocks;
   let values: typeinfo.Type[] = f.values;
+  let calls: ssasem.Contract[] = f.calls;
   let changed: boolean = false;
   for h in f.graph.blocks {
     let hi: i32 = at[h.id];
@@ -34,10 +32,15 @@ pub function hoisted(f: ssasem.Func, contract: ssasem.Contract, modes: i32[]): H
       let e: i32 = phi.args[entry];
       if (wanted(f, phi, e, hi) && owned_entry(f, modes, e) && !used_after(f.graph, at, h.preds[entry], e, phi.result)) {
         let v: i32 = values.len();
-        values = values.append(f.values[e]);
+        let t: typeinfo.Type = f.values[e];
+        values = values.append(t);
+        let check: string = ssasem.unique_check_name(t);
+        if (ssasem.find_contract_in(calls, check) < 0) {
+          calls = calls.append(ssasem.Contract { name: check, params: [t], modes: [ssasem.counted_mode()], result: t });
+        }
         let pi: i32 = at[h.preds[entry]];
         let pre: ssa.SBlock = blocks[pi];
-        blocks = blocks.with(pi, ssa.SBlock { ...pre, insts: pre.insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [e], imm: 0, str: name() }) });
+        blocks = blocks.with(pi, ssa.SBlock { ...pre, insts: pre.insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [e], imm: 0, str: check }) });
         let hb: ssa.SBlock = blocks[hi];
         blocks = blocks.with(hi, ssa.SBlock { ...hb, insts: hb.insts.with(k, ssa.SInst { ...phi, args: phi.args.with(entry, v) }) });
         changed = true;
@@ -46,10 +49,6 @@ pub function hoisted(f: ssasem.Func, contract: ssasem.Contract, modes: i32[]): H
   }
   if (!changed) {
     return Hoisted { func: f, changed: false };
-  }
-  let calls: ssasem.Contract[] = f.calls;
-  if (ssasem.find_contract_in(calls, name()) < 0) {
-    calls = calls.append(contract);
   }
   let graph: ssa.SFunc = ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() };
   return Hoisted { func: ssasem.Func { ...f, values: values, calls: calls, graph: graph, source_positions: padded(f.source_positions, values.len()) }, changed: true };
@@ -95,7 +94,7 @@ function jumps_only_to(b: ssa.SBlock, target: i32): boolean {
 }
 
 function wanted(f: ssasem.Func, phi: ssa.SInst, e: i32, hi: i32): boolean {
-  return owned_bytes(f.values[phi.result]) && !fresh(f, e) && grown_in_loop(f.graph, phi.result, hi);
+  return owned_array(f.values[phi.result]) && !fresh(f, e) && grown_in_loop(f.graph, phi.result, hi);
 }
 
 // The check consumes its array. An array the function only borrows would
@@ -175,9 +174,9 @@ function def_of(f: ssasem.Func, v: i32): ssa.SInst {
   return ssa.SInst { kind_tag: 0 - 1000, result: 0 - 1, args: [], imm: 0, str: "" };
 }
 
-function owned_bytes(t: typeinfo.Type): boolean {
+function owned_array(t: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(a) = t {
-    return !a.view && ssasem.is_u8(a.elem);
+    return !a.view;
   }
   return false;
 }
@@ -187,7 +186,7 @@ function fresh(f: ssasem.Func, v: i32): boolean {
     for ins in b.insts {
       if (ins.result == v) {
         return ins.kind_tag == ssasem.bytes_new() || ins.kind_tag == ssasem.array_new() || ins.kind_tag == ssasem.array_reserve()
-          || ins.kind_tag == ssasem.call() && (ins.str == name() || ins.str == "__alloc_u8" || ssasem.fresh_result_builtin(ins.str));
+          || ins.kind_tag == ssasem.call() && (ins.str == "__alloc_u8" || ssasem.fresh_result_builtin(ins.str));
       }
     }
   }

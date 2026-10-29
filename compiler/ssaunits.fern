@@ -2958,7 +2958,7 @@ function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[], fresh
   for st in steps {
     if (st.point >= 0) {
       let ins: ssa.SInst = f.graph.blocks[at[st.block]].insts[st.point];
-      if (box_update(ins) && sole[ins.args[0]] && moved_at(st, ins.args[0], 0)) {
+      if ((box_update(ins) || unique_check(ins)) && sole[ins.args[0]] && moved_at(st, ins.args[0], 0)) {
         out = out.with(ins.result, true);
       }
     }
@@ -3083,6 +3083,10 @@ pub function fresh_rows_agree(a: FreshRows, b: FreshRows, callees: string[]): bo
     }
   }
   return true;
+}
+
+function unique_check(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.call() && ssasem.is_unique_check(ins.str);
 }
 
 function box_update(ins: ssa.SInst): boolean {
