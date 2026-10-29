@@ -53,6 +53,11 @@ func fmtCases(t *testing.T) []invocation {
 	brim := fmtFile(t, dir, "brim", strings.Repeat("a ", 996)+"a\n")
 	over := fmtFile(t, dir, "over", strings.Repeat("a ", 998)+"a\n")
 	thrice := fmtFile(t, dir, "thrice", strings.Repeat("a ", 2500)+"a\n")
+	var chunkLines strings.Builder
+	for i := 250; i < 500; i++ {
+		fmt.Fprintf(&chunkLines, "line %d of text\n", i)
+	}
+	crownChunk := fmtFile(t, dir, "crown-chunk", chunkLines.String())
 	var wide, wideIndented, wideQuoted strings.Builder
 	for i := 0; i < 3000; i++ {
 		w := strings.Repeat("abcdefghijk"[i%11:i%11+1], 1+(i*7)%9)
@@ -230,6 +235,9 @@ func fmtCases(t *testing.T) []invocation {
 		{name: "no widow without the sentence", args: []string{"-w", "50", "-g", "30"}, stdin: strings.Repeat("x", 20) + " yyyyy " + strings.Repeat("z", 25) + "\n"},
 		{name: "punctuation outranks the widow", args: []string{"-w", "19", "-g", "10", "-c"}, stdin: "dog.\"\nab\" over zzzz\n"},
 		{name: "a plain word takes the widow", args: []string{"-w", "19", "-g", "10", "-c"}, stdin: "dog.\"\nabx over zzzz\n"},
+		{name: "a crown first line reaches past the other lines", args: []string{"-c", "-w", "25"}, stdin: "zz jump!\n            dog. ok ok jump!\n"},
+		{name: "a tagged first line reaches past the other lines", args: []string{"-t", "-w", "25"}, stdin: "zz jump!\n            dog. ok ok jump!\n"},
+		{name: "a crown chunk whose first line reaches past the other lines", args: []string{"-c", "-w", "60", crownChunk}},
 
 		{name: "break at a sentence end", args: []string{"-w", "20"}, stdin: "one two.  three four five six seven eight nine ten\n"},
 		{name: "no sentence without two spaces", args: []string{"-w", "20"}, stdin: "one two. three four five six seven eight nine ten\n"},

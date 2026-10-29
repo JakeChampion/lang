@@ -336,6 +336,7 @@ function choose(own ws: Words, n: i32, last: boolean, p: Para, st: Settings, lea
     while (r > s + 1 && from + at[r] > maxw) {
       r = r - 1;
     }
+    let window: i32 = r;
     while (r < n && from + at[r + 1] <= maxw) {
       r = r + 1;
     }
@@ -354,6 +355,13 @@ function choose(own ws: Words, n: i32, last: boolean, p: Para, st: Settings, lea
     while (top > bot && dq[bot] > r) {
       bot = bot + 1;
     }
+    // The least rest cost a break in reach can carry. The deque holds
+    // nothing past the window, and only a first line indented less than
+    // the other lines reaches past it.
+    let floor: i64 = 0 - COST_INFINITY;
+    if (r == window && top > bot) {
+      floor = best[dq[bot]];
+    }
     let bcost: i64 = COST_INFINITY;
     let bnext: i32 = n;
     let blen: i32 = 0;
@@ -365,7 +373,7 @@ function choose(own ws: Words, n: i32, last: boolean, p: Para, st: Settings, lea
       if (w != n) {
         let d: i64 = (goal - ln) as i64;
         let short: i64 = SHORT * d * d;
-        if (ln <= goal && top > bot && short + best[dq[bot]] > bcost) {
+        if (ln <= goal && short + floor > bcost) {
           break;
         }
         c = short;
