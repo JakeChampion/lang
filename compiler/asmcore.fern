@@ -86,6 +86,7 @@ pub struct EmitState {
   retain_sites: boolean,
   native_sites: ssaprepare.UniqueSite[],
   capture: usize,
+  missed: usize,
   recs: usize,
   nlab: i32,
   rt_lower: (parser.Module) => physicalbody.Lowered,
@@ -446,6 +447,7 @@ pub function new_state(): EmitState {
     retain_sites: false,
     native_sites: [],
     capture: 0 as usize,
+    missed: 0 as usize,
     nlab: 0,
     recs: 0 as usize,
     rt_lower: no_rt_lower,
@@ -4356,7 +4358,7 @@ pub function add_string_lit(own s: EmitState, v: string): StringLitOut {
 }
 
 pub function (s: EmitState) need(name: string): EmitState {
-  if (s.has_need(name)) {
+  if (s.holds(name)) {
     return s;
   }
   let i: i32 = s.needed.len();
@@ -4365,7 +4367,7 @@ pub function (s: EmitState) need(name: string): EmitState {
     let deps: string[] = runtime_need_deps(cur.needed[i]);
     let j: i32 = 0;
     while (j < deps.len()) {
-      if (!cur.has_need(deps[j])) {
+      if (!cur.holds(deps[j])) {
         cur = EmitState { ...cur, needed: cur.needed.append(deps[j]) };
       }
       j = j + 1;
@@ -4376,6 +4378,25 @@ pub function (s: EmitState) need(name: string): EmitState {
 }
 
 pub function runtime_need_deps(name: string): string[] {
+  let deps: string[] = direct_need_deps(name);
+  if (validates_utf8(name)) {
+    return deps.append("utf8_valid");
+  }
+  return deps;
+}
+
+function validates_utf8(name: string): boolean {
+  return name == "read_file" || name == "getxattr" || name == "lgetxattr" || name == "reader"
+    || name == "read_dir" || name == "read_dir_all" || name == "read_dir_ino" || name == "read_dir_ino_all"
+    || name == "dir_entries" || name == "read_link" || name == "getcwd" || name == "hostname"
+    || name == "uname_field" || name == "mounts";
+}
+
+function direct_need_deps(name: string): string[] {
+  if (name == "utf8_valid") {
+    let dutf8: string[] = ["utf8_blocks"];
+    return dutf8;
+  }
   if (name == "buf_text") {
     let deps: string[] = ["buf"];
     return deps;
@@ -4454,7 +4475,7 @@ pub function runtime_need_deps(name: string): string[] {
   return none;
 }
 
-pub function (s: EmitState) has_need(name: string): boolean {
+function (s: EmitState) holds(name: string): boolean {
   let i: i32 = 0;
   while (i < s.needed.len()) {
     if (s.needed[i] == name) {
@@ -4463,6 +4484,31 @@ pub function (s: EmitState) has_need(name: string): boolean {
     i = i + 1;
   }
   return false;
+}
+
+pub function (s: EmitState) has_need(name: string): boolean {
+  if (s.holds(name)) {
+    return true;
+  }
+  if (s.missed != 0 as usize) {
+    buf_push(s.missed, name);
+    buf_push(s.missed, "\n");
+  }
+  return false;
+}
+
+// A pass settles unless a need it added was asked for before it was added.
+pub function settles(t: EmitState, before: i32, missed: usize): boolean {
+  let names: string = "\n" + buf_take(missed);
+  buf_free(missed);
+  let i: i32 = before;
+  while (i < t.needed.len()) {
+    if (util.contains(names, "\n" + t.needed[i] + "\n")) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }
 
 pub function (s: EmitState) any_need(names: string[]): boolean {
