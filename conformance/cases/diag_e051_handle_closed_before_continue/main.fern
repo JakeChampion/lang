@@ -1,0 +1,22 @@
+// spec: RH-15
+// A path that continues the loop comes back to the loop's uses, so a close
+// before a continue is not the handle's last use.
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function main(): i32 {
+  let h: Handle = Handle { fd: 3 };
+  let n: i32 = 0;
+  while (n < 3) {
+    n = n + 1;
+    if (n == 2) {
+      h.close();
+      continue;
+    }
+  }
+  return n;
+}

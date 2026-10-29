@@ -351,6 +351,7 @@ generic_struct_literal_in_append                     0
 generic_struct_method_at_tuple_type                  0
 generic_view_methods                                 0
 grow_past_capacity                                   0
+handle_closes_on_loop_exit                           0
 handle_defer_closes_at_exit                          0
 handle_field_closes_from_local                       0
 handle_transfer_closes_once                          0

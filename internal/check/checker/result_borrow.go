@@ -150,9 +150,13 @@ func (c *checker) calleeResultBorrows(x *ast.Call) bool {
 	return c.signatureResultBorrows(id.Name)
 }
 
+// A handle an open builtin returns is a kernel descriptor: it borrows nothing
+// from the path it was opened with.
 var freshResultBuiltins = map[string]bool{
 	"__bytes_owned": true, "__bytes_range": true, "__bytes_into": true, "__aes_expand_key": true, "__aes_ctr32": true,
 	"__ghash": true, "__aes_gcm_seal_into": true, "__aes_gcm_open_into": true, "__sha256_hw_blocks": true, "__sha1_hw_blocks": true,
+	"open_reader": true, "open_writer": true, "open_appender": true, "open_exclusive": true,
+	"open_reader_with": true, "open_writer_with": true, "open_dir": true,
 }
 
 func (c *checker) signatureResultBorrows(name string) bool {

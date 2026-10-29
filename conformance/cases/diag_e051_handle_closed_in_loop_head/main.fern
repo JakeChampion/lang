@@ -1,0 +1,18 @@
+// spec: RH-17
+// A loop's head runs again each round, so a consuming close in it is not
+// the handle's last use.
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function main(): i32 {
+  let h: Handle = Handle { fd: 3 };
+  let n: i32 = 0;
+  while (h.close() > n) {
+    n = n + 1;
+  }
+  return n;
+}

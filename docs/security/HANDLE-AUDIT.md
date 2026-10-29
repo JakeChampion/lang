@@ -86,6 +86,15 @@ Nothing after the call reads that path or uses the whole, and a sibling field st
 Inside a struct literal based on the same name, the superseded-field rule decides instead.
 A field of a borrowed parameter or receiver does not move, because the caller still holds the whole.
 
+A local dies at a call when no path after the call reads it again.
+The checker follows the statements after the call, through the blocks that hold it.
+A `return` ends the path, and a `break` continues it after the loop it leaves.
+A `continue`, or the end of a loop body, comes back to every use in that loop.
+
+A loop's head runs again each round, and so does a loop inside a value block.
+A local the loop body declares is fresh each round.
+Both checkers compute the same answer: the Go side in `liveAfter` and the Fern side in `lu_live_after`.
+
 | Pattern | Code | Case |
 |---|---|---|
 | A deferred consuming close, then a read of the handle | accepted | `handle_defer_closes_at_exit` |
@@ -96,6 +105,10 @@ A field of a borrowed parameter or receiver does not move, because the caller st
 | A deferred consuming close inside a loop | `E051` | `diag_e051_handle_deferred_close_in_loop` |
 | An `own` parameter closed after a deferred close | `E050` | `diag_e050_owned_handle_consumed_after_defer` |
 | A deferred consuming close of a handle a closure captures | `E051` | `diag_e051_handle_captured_then_deferred` |
+| A close in a loop before a return, before a break, before a labelled break, and a close of a loop-local each round | accepted | `handle_closes_on_loop_exit` |
+| A close before a `continue` | `E051` | `diag_e051_handle_closed_before_continue` |
+| A close at the end of each round of a handle declared outside the loop | `E051` | `diag_e051_handle_closed_each_round` |
+| A close in a loop's head | `E051` | `diag_e051_handle_closed_in_loop_head` |
 
 Both checkers report the same code at the same position for each row.
 
@@ -111,6 +124,8 @@ The consuming built-in close refuses these shapes until they change:
 | A close of a borrowed `Reader` parameter that another branch stores | `__range_tail` in `serve.fern.md` | an `own` parameter |
 
 The rules above accept a close through `defer` (`examples/wasm/wc.fern`) and a close of each end of a `Pipe` held in a fresh local.
+They also accept a close on a loop path that leaves the loop.
+A handle an `open_*` builtin returns borrows nothing from its path argument, so it is a fresh local.
 The built-in signatures change in the next step, with those sites.
 
 ## Commands
