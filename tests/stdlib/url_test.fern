@@ -143,6 +143,17 @@ function test_parse_minimal(): test.TestOutcome {
   }
 }
 
+function test_parse_delimiter_order(): test.TestOutcome {
+  match (url.parse("http://h?q/x#f?g/h")) {
+    Ok(u) => {
+      return test.assert_true(u.host == "h" && u.path == "" && u.query == "q/x" && u.fragment == "f?g/h");
+    },
+    Err(_) => {
+      return test.fail("url.parse(delimiter order) expected Ok");
+    }
+  }
+}
+
 function test_parse_empty(): test.TestOutcome {
   match (url.parse("")) {
     Ok(u) => {
@@ -383,6 +394,7 @@ function main(): i32 {
   r = r.it("round-trip", test_roundtrip);
   r = r.it("parse full URL", test_parse_full);
   r = r.it("parse minimal URL", test_parse_minimal);
+  r = r.it("parse delimiter order", test_parse_delimiter_order);
   r = r.it("parse empty is None", test_parse_empty);
   r = r.it("form_decode plus", test_form_decode_plus);
   r = r.it("url.decode keeps plus", test_url_decode_keeps_plus);
