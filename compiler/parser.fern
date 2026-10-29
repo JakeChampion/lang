@@ -24964,6 +24964,7 @@ pub function rewrite_assoc_const_reads(mod: Module): Module {
       }
     }
   }
+  let index: util.NameIndex = util.name_index(types);
   let funcs: FuncDecl[] = [];
   for fd in mod.funcs {
     let bound: string[] = [];
@@ -24973,10 +24974,10 @@ pub function rewrite_assoc_const_reads(mod: Module): Module {
     if (fd.receiver_name.len() > 0) {
       bound = bound.append(fd.receiver_name);
     }
-    let fn_types: string[] = util.append_all(util.append_all(types, fd.type_params), fd.all_type_params);
+    let fn_types: astwalk.TypeNames = astwalk.TypeNames { index: index, params: util.append_all(fd.type_params, fd.all_type_params) };
     funcs = funcs.append(FuncDecl { ...fd, body: astwalk.rewrite_assoc_const_reads(fd.body, bound, fn_types, enums, enum_assoc) });
   }
-  return Module { ...mod, funcs: funcs, top_stmts: astwalk.rewrite_assoc_const_reads(mod.top_stmts, [], types, enums, enum_assoc) };
+  return Module { ...mod, funcs: funcs, top_stmts: astwalk.rewrite_assoc_const_reads(mod.top_stmts, [], astwalk.TypeNames { index: index, params: [] }, enums, enum_assoc) };
 }
 
 function const_table_within(t: ConstTable, names: string[]): ConstTable {

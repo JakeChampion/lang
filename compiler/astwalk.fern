@@ -1321,27 +1321,77 @@ pub function collect_qualrefs_stmt(st: ast.Stmt, quals: string[], own acc: QualR
   return acc;
 }
 
-pub struct ConstSubst { names: string[], values: ast.Expr[], bound: string[], types: string[], enums: string[], enum_assoc: string[] }
+pub struct ConstSubst { names: string[], values: ast.Expr[], bound: string[], types: TypeNames, enums: string[], enum_assoc: string[] }
+
+// The type names of a module, and the type parameters of one function.
+pub struct TypeNames { index: util.NameIndex, params: string[] }
+
+pub function (t: TypeNames) has(name: string): boolean {
+  return t.index.has(name) || util.has_str(t.params, name);
+}
+
+function no_type_names(): TypeNames {
+  let none: string[] = [];
+  return TypeNames { index: util.name_index(none), params: none };
+}
 
 pub function substitute_consts(stmts: ast.Stmt[], bound: string[], names: string[], values: ast.Expr[]): ast.Stmt[] {
   if (names.len() == 0) {
     return stmts;
   }
-  return cs_body(stmts, ConstSubst { names: names, values: values, bound: bound, types: [], enums: [], enum_assoc: [] });
+  return cs_body(stmts, ConstSubst { names: names, values: values, bound: bound, types: no_type_names(), enums: [], enum_assoc: [] });
 }
 
 pub function substitute_consts_expr(e: ast.Expr, names: string[], values: ast.Expr[]): ast.Expr {
   if (names.len() == 0) {
     return e;
   }
-  return cs_expr(e, ConstSubst { names: names, values: values, bound: [], types: [], enums: [], enum_assoc: [] });
+  return cs_expr(e, ConstSubst { names: names, values: values, bound: [], types: no_type_names(), enums: [], enum_assoc: [] });
 }
 
-pub function rewrite_assoc_const_reads(stmts: ast.Stmt[], bound: string[], types: string[], enums: string[], enum_assoc: string[]): ast.Stmt[] {
-  if (types.len() == 0) {
+pub function rewrite_assoc_const_reads(stmts: ast.Stmt[], bound: string[], types: TypeNames, enums: string[], enum_assoc: string[]): ast.Stmt[] {
+  if (!reads_type_field(stmts, types)) {
     return stmts;
   }
   return cs_body(stmts, ConstSubst { names: [], values: [], bound: bound, types: types, enums: enums, enum_assoc: enum_assoc });
+}
+
+// net counts the field reads on a type name that are not the callee of a call.
+struct TypeFieldScan { types: TypeNames, net: i32 }
+
+function reads_type_field(stmts: ast.Stmt[], types: TypeNames): boolean {
+  let scan: TypeFieldScan = TypeFieldScan { types: types, net: 0 };
+  for st in stmts {
+    scan = fold_stmt_nodes(st, scan, type_field_stmt, type_field_expr, descend_all);
+  }
+  return scan.net > 0;
+}
+
+function type_field_stmt(st: ast.Stmt, own scan: TypeFieldScan): TypeFieldScan {
+  return scan;
+}
+
+function type_field_expr(e: ast.Expr, own scan: TypeFieldScan): TypeFieldScan {
+  if let ast.ExprFieldAccess(fa) = e {
+    if (names_type(fa.obj, scan.types)) {
+      return TypeFieldScan { ...scan, net: scan.net + 1 };
+    }
+  }
+  if let ast.ExprCall(call) = e {
+    if let ast.ExprFieldAccess(cfa) = call.callee {
+      if (names_type(cfa.obj, scan.types)) {
+        return TypeFieldScan { ...scan, net: scan.net - 1 };
+      }
+    }
+  }
+  return scan;
+}
+
+function names_type(e: ast.Expr, types: TypeNames): boolean {
+  if let ast.ExprIdent(id) = e {
+    return types.has(id.name);
+  }
+  return false;
 }
 
 function cs_bind(c: ConstSubst, packed: string): ConstSubst {
@@ -1411,11 +1461,8 @@ function cs_call_at(e: ast.Expr, call: ast.ExprCall, c: ConstSubst): (ast.Expr, 
 }
 
 function cs_field_read_at(e: ast.Expr, fa: ast.ExprFieldAccess, c: ConstSubst): (ast.Expr, ConstSubst, boolean) {
-  if (c.types.len() == 0) {
-    return (e, c, false);
-  }
   if let ast.ExprIdent(oid) = fa.obj {
-    if (util.has_str(c.bound, oid.name) || !util.has_str(c.types, oid.name)) {
+    if (util.has_str(c.bound, oid.name) || !c.types.has(oid.name)) {
       return (e, c, false);
     }
     if (util.has_str(c.enums, oid.name) && !util.has_str(c.enum_assoc, oid.name + "." + fa.field)) {
