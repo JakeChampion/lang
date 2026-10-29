@@ -184,12 +184,15 @@ GZIP_TEXT="$(python3 -c 'print("hello gzip " * 30, end="")')"
 # $work/h2o.conf: "hello" on every path net-bench loads, and the targets
 # scripts/net-interop reads on paths of their own, so the hello path
 # stays the one net-bench measures. /gzip alone is coded on the fly.
+# max-connections lifts h2o's default of 1,024 to the cap the Fern hello
+# sets, so h2o serves every connection the load generator holds.
 h2o_config() {
   cat > "$work/h2o.conf" <<EOF
 listen:
   host: 127.0.0.1
   port: $1
 num-threads: $(nproc)
+max-connections: 16384
 hosts:
   default:
     paths:

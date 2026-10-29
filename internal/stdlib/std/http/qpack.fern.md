@@ -906,11 +906,7 @@ function (e: Encoder) __put_str(out: u8[], pattern: i32, prefix: i32, s: string)
       return huffman.encode(__put_int(out, pattern | 1 << prefix, prefix, coded as i64), bytes);
     }
   }
-  let o: u8[] = __put_int(out, pattern, prefix, bytes.len() as i64);
-  for b in bytes {
-    o = o.append(b);
-  }
-  return o;
+  return __put_int(out, pattern, prefix, bytes.len() as i64).concat(bytes);
 }
 
 function __without(xs: i64[], x: i64): i64[] {

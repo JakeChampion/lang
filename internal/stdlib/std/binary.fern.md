@@ -91,12 +91,7 @@ impl cmp.Display for DecodeError {}
 ```fern
 <<6 pub function append_bytes(own output: u8[], bytes: [u8]): u8[]>>=
 pub function append_bytes(own output: u8[], bytes: [u8]): u8[] {
-  let index: i32 = 0;
-  while (index < bytes.len()) {
-    output = output.append(bytes[index]);
-    index = index + 1;
-  }
-  return output;
+  return output.concat(bytes);
 }
 
 pub function append_u32_be(own output: u8[], value: u32): u8[] {
