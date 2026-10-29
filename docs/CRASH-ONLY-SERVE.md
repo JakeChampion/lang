@@ -140,36 +140,50 @@ the native supervised path and the interp fallback.
 ## Worker model and boundaries
 
 - fork-per-request — needs a real workload to justify. Prefork
-  workers exist (#9854): `serve.supervise` forks
-  `serve.Config.workers` workers, one per processing unit by default,
-  over the one inherited listener, each watching it with epoll's
-  `EPOLLEXCLUSIVE` (the driver's interest bit 4) so a connection wakes
-  one worker rather than all (the listener is non-blocking, so a worker
-  a wake-up reaches after another took the connection returns to its
-  wait instead of blocking in accept), and the supervisor reaps whichever dies
-  (`proc_waitpid(-1)`, the dead one found by a non-blocking probe of
-  each) and forks its replacement under the same backoff and
-  fast-death count. The accept distribution the one-listener shape
-  gives is measured (`TestSelfHostServeAcceptDistribution`,
-  `docs/benchmarks/net-hello-2026-09-29.md`): 4,096
-  connections dialled in a burst from one client over four workers land
-  on every worker, but unevenly, the busiest taking 44 to 48 percent
-  and the idlest 2 to 8 percent on the Go compiler's build, since the
-  worker a wake-up reaches keeps accepting from a queue that never
-  empties while the rest sleep. Every worker serves, which is what the
-  default needs. `serve.Config.reuse_port` opts into a listener per
-  worker instead: each child binds its own socket, and the kernel spreads
-  connections across the `SO_REUSEPORT` group. On Linux the group is
-  steered by the CPU on which a connection arrives. A listener supplied
-  through `LISTEN_FDS` stays shared even when `reuse_port` is true.
-  A dead worker's unaccepted connections are lost unless the kernel
-  migrates them (`net.ipv4.tcp_migrate_req`); the shared-listener default
-  preserves its backlog for the replacement worker. With `with_h3`, the
-  supervisor also binds one HTTP/3 UDP socket per worker before the first
-  fork and keeps every one open, handing a dead worker's to its
-  replacement: the kernel steers each datagram over the `SO_REUSEPORT`
-  group by its flow's hash, so a socket joining or leaving the group would
-  move a live QUIC connection to a worker holding no state for it.
+  workers exist (#9854). `serve.supervise` forks `serve.Config.workers`
+  workers, one for each CPU by default. The supervisor reaps a worker that
+  dies (`proc_waitpid(-1)`) and forks its replacement under a backoff and
+  a count of fast deaths.
+
+- On Linux and Android, with more than one worker, the supervisor binds
+  one `SO_REUSEPORT` listener for each worker before the first fork, in
+  order. A filter on the group sends a connection to the listener whose
+  index is the CPU the connection arrives on. A NIC spreads arrivals over
+  the CPUs. On loopback, the CPU is that of the thread that dials, so a
+  client on one CPU reaches one listener.
+
+- The supervisor keeps every listener open. It gives a dead worker's
+  listener to the replacement, so the connections in its queue wait and
+  are not lost.
+  A stalled or dead worker delays the new connections the kernel sends to
+  its listener. A shared listener gives them to the other workers.
+
+- `TestSelfHostServeAcceptDistributionOwnListeners` dials a burst of
+  4,096 connections from four CPUs, and four workers take 1,024 each.
+  Under oha at 4,096 connections, the hello server goes from 127k–129k to
+  143k–158k requests per second, and at 64 connections from 170k–191k to
+  325k–329k
+  (`docs/benchmarks/net-hello-2026-10-29.md`). Without the filter the
+  split is as even, but the rate stays at 122k–136k.
+
+- With one worker, on other targets, and for a listener from
+  `LISTEN_FDS`, the workers share one listener. Each worker watches it
+  with epoll's `EPOLLEXCLUSIVE` (the driver's interest bit 4), so a
+  connection wakes one worker. The listener does not block, so a worker
+  that wakes after another took the connection waits again.
+  `serve.Config.reuse_port` asks for a listener per worker on every
+  target. On a shared listener, the worker that wakes takes connections
+  from a queue that is never empty, while the others sleep.
+  `TestSelfHostServeAcceptDistribution` measures a burst from one client
+  landing 3,556, 444, 80 and 16.
+
+- With `with_h3`, the supervisor also binds one HTTP/3 UDP socket for
+  each worker before the first fork. It keeps every socket open and
+  gives a dead worker's socket to the replacement. The kernel steers each
+  datagram over the `SO_REUSEPORT` group by the hash of its flow. A socket
+  that joins or leaves the group moves live QUIC connections to a worker
+  that has no state for them.
+
 - Graceful drain exists (#9854): SIGTERM is a readiness event on the
   reactor, the supervisor forwards it to its workers and waits for them,
   and each worker keeps accepting for a grace, fails its readiness path,

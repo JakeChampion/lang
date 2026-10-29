@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -349,10 +350,29 @@ func TestSelfHostServeAcceptDistribution(t *testing.T) {
 	if held > 4096 {
 		held = 4096
 	}
-	bin, runner := selfHostServer(t, e2eharness.AcceptDistributionServerSource(4))
+	bin, runner := selfHostServer(t, e2eharness.AcceptDistributionServerSource(0, 4))
 	cmd := binCmd(runner, bin)
 	addr, _ := e2eharness.StartInheritedServer(t, cmd)
 	e2eharness.CheckAcceptDistribution(t, addr, 4, held)
+}
+
+// The supervisor binds a listener per worker on Linux, and the kernel
+// steers each connection to the listener of the CPU it arrives on.
+func TestSelfHostServeAcceptDistributionOwnListeners(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("a listener per worker is the default on Linux only")
+	}
+	if runtime.NumCPU() < 4 {
+		t.Skipf("the burst dials from four CPUs; this host has %d", runtime.NumCPU())
+	}
+	held := selfHostRaiseNofile(t, 4096+128) - 128
+	if held > 4096 {
+		held = 4096
+	}
+	port := e2eharness.ReservedPort(t)
+	bin, runner := selfHostServer(t, e2eharness.AcceptDistributionServerSource(port, 4))
+	e2eharness.StartServerProcess(t, binCmd(runner, bin))
+	e2eharness.CheckAcceptDistributionEven(t, fmt.Sprintf("127.0.0.1:%d", port), 4, held)
 }
 
 func selfHostRaiseNofile(t *testing.T, want uint64) int {

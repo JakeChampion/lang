@@ -5190,14 +5190,6 @@ pub function supervise_with_shutdown[S](port: i32, opts: Config, init: S, handle
 ```fern
 <<67 function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[Writer])>>=
 function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[Writer]) => Result[i32, ListenError]): Result[i32, ListenError] {
-  let shared: __Listen = __Listen { fd: 0 - 1, inherited: false };
-  if (!__per_worker_listeners(opts)) {
-    shared = __serve_listener(port, opts);
-    if (shared.fd < 0) {
-      return Err(__listen_error(port, shared.fd));
-    }
-  }
-  let listener: i32 = shared.fd;
   let workers: i32 = opts.workers;
   if (workers < 1) {
     workers = cpu_count();
@@ -5206,12 +5198,33 @@ function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[
     workers = 1;
   }
   let resolved: Config = Config { ...opts, workers: workers };
-  let sup: __Supervisor = __Supervisor { pids: [], spawned: [], pipes: [], partial: [], snaps: [], quic: [], h3_free: __h3_pool(listener, resolved), backoff_ms: 100 as i64, fork_after: 0 as i64, fast_deaths: 0, stopping: false, worst: 0, crashed: 0 };
+  let shared: __Listen = __Listen { fd: 0 - 1, inherited: false };
+  let pool: i32[] = [];
+  if (__per_worker_listeners(resolved)) {
+    match (__worker_pool(port, resolved)) {
+      Ok(bound) => {
+        pool = bound;
+      },
+      Err(code) => {
+        return Err(__listen_error(port, code));
+      }
+    }
+  } else {
+    shared = __serve_listener(port, opts);
+    if (shared.fd < 0) {
+      return Err(__listen_error(port, shared.fd));
+    }
+  }
+  let bound_fd: i32 = shared.fd;
+  if (pool.len() > 0) {
+    bound_fd = pool[0];
+  }
+  let sup: __Supervisor = __Supervisor { pids: [], spawned: [], pipes: [], partial: [], snaps: [], quic: [], h3_free: __h3_pool(bound_fd, resolved), tcp: [], tcp_free: pool, backoff_ms: 100 as i64, fork_after: 0 as i64, fast_deaths: 0, stopping: false, worst: 0, crashed: 0 };
   let drv: async.RealDriver = async.real_driver();
   let chld: i32 = drv.watch_signal(17);
   if (chld < 0) {
     drv.close();
-    __listen_release(shared);
+    __supervisor_release(shared, sup);
     return Ok(chld);
   }
   drv.watch_signal(15);
@@ -5222,10 +5235,11 @@ function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[
     if (!sup.stopping && sup.pids.len() < workers) {
       let wait_ms: i64 = sup.fork_after - now_unix_ms();
       if (wait_ms <= 0 as i64) {
-        let forked: (__Supervisor, Option[Result[i32, ListenError]]) = __supervisor_spawn(drv, port, shared, worker, resolved, sup, ex);
+        let forked: (__Supervisor, Option[Result[i32, ListenError]]) = __supervisor_fork(drv, __worker_listen(shared, sup), shared.fd, worker, resolved, sup);
         sup = forked.0;
         match (forked.1) {
           Some(ended) => {
+            __supervisor_release(shared, sup);
             return ended;
           },
           None => {}
@@ -5238,7 +5252,7 @@ function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[
             Err(e) => {
               __supervisor_abandon(drv, sup);
               drv.close();
-              __listen_release(shared);
+              __supervisor_release(shared, sup);
               return Err(e);
             }
           }
@@ -5250,7 +5264,7 @@ function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[
     if (sup.stopping && sup.pids.len() == 0) {
       __exporter_close(drv, ex);
       drv.close();
-      __listen_release(shared);
+      __supervisor_release(shared, sup);
       return Ok(sup.worst);
     }
     let events: i32[] = drv.wait(8, time.millis_timeout(refork_ms));
@@ -5260,7 +5274,7 @@ function __supervise(port: i32, opts: Config, worker: (__Listen, Config, Option[
       __supervisor_abandon(drv, sup);
       __exporter_close(drv, ex);
       drv.close();
-      __listen_release(shared);
+      __supervisor_release(shared, sup);
       return Ok(sup.crashed);
     }
   }
@@ -5334,17 +5348,6 @@ function __index_of_i32(xs: i32[], x: i32): i32 {
 
 ```fern
 <<68 function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, worker: (i32, Config, Opt...>>=
-function __supervisor_spawn(drv: async.RealDriver, port: i32, shared: __Listen, worker: (__Listen, Config, Option[Writer]) => Result[i32, ListenError], opts: Config, sup: __Supervisor, ex: Option[metrics.Exporter]): (__Supervisor, Option[Result[i32, ListenError]]) {
-  let own: __Listen = __worker_listener(port, shared, opts);
-  if (own.fd < 0) {
-    __supervisor_abandon(drv, sup);
-    __exporter_close(drv, ex);
-    drv.close();
-    return (sup, Some(Err(__listen_error(port, own.fd))));
-  }
-  return __supervisor_fork(drv, own, shared.fd, worker, opts, sup);
-}
-
 function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, worker: (__Listen, Config, Option[Writer]) => Result[i32, ListenError], opts: Config, sup: __Supervisor): (__Supervisor, Option[Result[i32, ListenError]]) {
   let snap: Option[Pipe] = __snapshot_pipe(opts);
   let h3_sock: i32 = 0 - 1;
@@ -5359,12 +5362,16 @@ function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, 
     drv.unwatch_signal(15);
     drv.unwatch_signal(2);
     drv.close();
-    __h3_pool_close(sup.h3_free, h3_sock);
-    return (sup, Some(worker(own, Config { ...opts, workers: 1, h3_sock: h3_sock }, None)));
+    __pool_close(sup.h3_free, h3_sock);
+    let alone: __Supervisor = sup;
+    if (listener < 0) {
+      __pool_close(sup.tcp_free, own.fd);
+      alone = __Supervisor { ...sup, tcp_free: [own.fd] };
+    }
+    return (alone, Some(worker(own, Config { ...opts, workers: 1, h3_sock: h3_sock }, None)));
   }
   if (pid < 0) {
     __snapshot_pipe_close(snap);
-    __listen_release(own);
     return (sup, Some(Ok(pid)));
   }
   if (pid == 0) {
@@ -5376,7 +5383,12 @@ function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, 
     exit(exit_code(worker(own, loop_opts, __snapshot_writer(snap))));
     return (sup, None);
   }
-  __worker_listener_close(own, listener);
+  let held: i32 = 0 - 1;
+  let free: i32[] = sup.tcp_free;
+  if (listener < 0) {
+    held = own.fd;
+    free = __without_index_i32(free, 0);
+  }
   let read_end: i32 = 0 - 1;
   match (snap) {
     Some(q) => {
@@ -5386,7 +5398,7 @@ function __supervisor_fork(drv: async.RealDriver, own: __Listen, listener: i32, 
     },
     None => {}
   }
-  return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()), pipes: sup.pipes.append(read_end), partial: sup.partial.append(""), snaps: sup.snaps.append(""), quic: sup.quic.append(h3_sock), h3_free: __without_index_i32(sup.h3_free, 0) }, None);
+  return (__Supervisor { ...sup, pids: sup.pids.append(pid), spawned: sup.spawned.append(now_unix_ms()), pipes: sup.pipes.append(read_end), partial: sup.partial.append(""), snaps: sup.snaps.append(""), quic: sup.quic.append(h3_sock), h3_free: __without_index_i32(sup.h3_free, 0), tcp: sup.tcp.append(held), tcp_free: free }, None);
 }
 
 function __snapshot_pipe(opts: Config): Option[Pipe] {
@@ -5543,37 +5555,47 @@ function __exporter_close(drv: async.RealDriver, ex: Option[metrics.Exporter]): 
   }
 }
 
+// A listener per worker on a Linux kernel, where SO_REUSEPORT spreads
+// connections: one shared queue hands most of a burst to whichever worker
+// wakes first. The supervisor binds them all and keeps them open, so a dead
+// worker's queued connections wait in its socket for the replacement.
 function __per_worker_listeners(opts: Config): boolean {
-  if (!opts.reuse_port) {
+  if (env("LISTEN_FDS").is_some()) {
     return false;
   }
-  match (env("LISTEN_FDS")) {
-    Some(n) => {
-      return false;
-    },
-    None => {
-      return true;
-    }
-  }
-  return true;
+  return opts.reuse_port || opts.workers > 1 && (target_os() == "linux" || target_os() == "android");
 }
 
-function __worker_listener(port: i32, shared: __Listen, opts: Config): __Listen {
-  if (shared.fd >= 0) {
+function __worker_pool(port: i32, opts: Config): Result[i32[], i32] {
+  let each: Config = Config { ...opts, reuse_port: true };
+  let pool: i32[] = [];
+  let at: i32 = port;
+  for i in 0..opts.workers {
+    let l: __Listen = __serve_listener(at, each);
+    if (l.fd < 0) {
+      __pool_close(pool, 0 - 1);
+      return Err(l.fd);
+    }
+    tcp_socket_ctl(l.fd, 8, 0);
+    if (i == 0) {
+      at = tcp_local_port(l.fd);
+    }
+    pool = pool.append(l.fd);
+  }
+  return Ok(pool);
+}
+
+function __worker_listen(shared: __Listen, sup: __Supervisor): __Listen {
+  if (shared.fd >= 0 || sup.tcp_free.len() == 0) {
     return shared;
   }
-  let own: __Listen = __serve_listener(port, opts);
-  if (own.fd >= 0) {
-    tcp_socket_ctl(own.fd, 8, 0);
-  }
-  return own;
+  return __Listen { fd: sup.tcp_free[0], inherited: false };
 }
 
-// A worker's own listener is the forked worker's; the supervisor's copy closes.
-function __worker_listener_close(own: __Listen, listener: i32): void {
-  if (listener < 0) {
-    tcp_close(own.fd);
-  }
+function __supervisor_release(shared: __Listen, sup: __Supervisor): void {
+  __listen_release(shared);
+  __pool_close(sup.tcp_free, 0 - 1);
+  __pool_close(sup.tcp, 0 - 1);
 }
 ```
 
@@ -5581,7 +5603,7 @@ function __worker_listener_close(own: __Listen, listener: i32): void {
 
 ```fern
 <<70 struct __Supervisor>>=
-struct __Supervisor { pids: i32[], spawned: i64[], pipes: i32[], partial: string[], snaps: string[], quic: i32[], h3_free: i32[], backoff_ms: i64, fork_after: i64, fast_deaths: i32, stopping: boolean, worst: i32, crashed: i32 }
+struct __Supervisor { pids: i32[], spawned: i64[], pipes: i32[], partial: string[], snaps: string[], quic: i32[], h3_free: i32[], tcp: i32[], tcp_free: i32[], backoff_ms: i64, fork_after: i64, fast_deaths: i32, stopping: boolean, worst: i32, crashed: i32 }
 ```
 
 ### `71 function (s: __Supervisor) gave_up(): boolean`
@@ -5647,7 +5669,11 @@ function __supervisor_reap(sup: __Supervisor): __Supervisor {
     if (sup.quic[i] >= 0) {
       freed = freed.append(sup.quic[i]);
     }
-    sup = __Supervisor { ...sup, pids: __without_index_i32(sup.pids, i), spawned: __without_index_i64(sup.spawned, i), pipes: __without_index_i32(sup.pipes, i), partial: __without_index_str(sup.partial, i), snaps: __without_index_str(sup.snaps, i), quic: __without_index_i32(sup.quic, i), h3_free: freed };
+    let listeners: i32[] = sup.tcp_free;
+    if (sup.tcp[i] >= 0) {
+      listeners = listeners.append(sup.tcp[i]);
+    }
+    sup = __Supervisor { ...sup, pids: __without_index_i32(sup.pids, i), spawned: __without_index_i64(sup.spawned, i), pipes: __without_index_i32(sup.pipes, i), partial: __without_index_str(sup.partial, i), snaps: __without_index_str(sup.snaps, i), quic: __without_index_i32(sup.quic, i), h3_free: freed, tcp: __without_index_i32(sup.tcp, i), tcp_free: listeners };
     if (sup.stopping) {
       if (code > sup.worst) {
         sup = __Supervisor { ...sup, worst: code };
@@ -5794,7 +5820,7 @@ function __h3_pool(listener: i32, opts: Config): i32[] {
   while (i < opts.workers) {
     let sock: i32 = __quic_socket(port);
     if (sock < 0) {
-      __h3_pool_close(pool, 0 - 1);
+      __pool_close(pool, 0 - 1);
       return [];
     }
     pool = pool.append(sock);
@@ -5803,7 +5829,7 @@ function __h3_pool(listener: i32, opts: Config): i32[] {
   return pool;
 }
 
-function __h3_pool_close(pool: i32[], keep: i32): void {
+function __pool_close(pool: i32[], keep: i32): void {
   let i: i32 = 0;
   while (i < pool.len()) {
     if (pool[i] != keep) {
