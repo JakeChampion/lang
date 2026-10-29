@@ -7,6 +7,7 @@ import (
 
 const rcenumBorrowedSrc = `import "core/int";
 enum Box { Val(i32[]), Empty }
+@noinline function four(): i32 { return 4; }
 function head(b: Box): i32 {
     match (b) { Val(xs) => { return xs[0]; }, Empty => { return 0; } }
 }
@@ -15,7 +16,7 @@ function main(): i32 {
     let r: i32 = 0;
     while (r < ROUNDS) {
         let k: i32 = 0;
-        while (k < 4) {
+        while (k < four()) {
             let b: Box = Val([k, k + 7]);
             acc = acc + head(b);
             k = k + 1;
@@ -28,12 +29,13 @@ function main(): i32 {
 
 const rcenumNeverUsedSrc = `import "core/int";
 enum Box { Val(i32[]), Empty }
+@noinline function four(): i32 { return 4; }
 function main(): i32 {
     let acc: i32 = 0;
     let r: i32 = 0;
     while (r < ROUNDS) {
         let k: i32 = 0;
-        while (k < 4) {
+        while (k < four()) {
             let b: Box = Val([k, k + 7]);
             acc = acc + k;
             k = k + 1;
