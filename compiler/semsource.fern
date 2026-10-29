@@ -8235,14 +8235,12 @@ function same_types(a: typeinfo.Type[], b: typeinfo.Type[]): boolean {
 }
 
 function unique_loops(all: Produced[]): Produced[] {
-  let bytes = typeinfo.TypeArray { elem: t_u8(), view: false };
-  let contract = ssasem.Contract { name: semunique.name(), params: [bytes], modes: [ssaunits.counted_mode()], result: bytes };
   let sw: optbisect.Switches = optbisect.switches();
   let out: Produced[] = [];
   for old in all {
     let p = old;
     if (p.ok && !p.template) {
-      let h = semunique.hoisted(p.func, contract, p.modes);
+      let h = semunique.hoisted(p.func, p.modes);
       if (h.changed && optbisect.allowed_by(sw, "unique-loops", p.func.graph.name)) {
         p = Produced { ...p, func: h.func, analysis: None };
       }

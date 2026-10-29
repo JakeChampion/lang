@@ -35,6 +35,20 @@ const uniqueLoopProgram = `@noinline function grow(own out: u8[], n: i32): u8[] 
   while (i < n) { out = out.append(i as u8); i = i + 1; }
   return out.len() + first.len();
 }
+@noinline function scale(own xs: i64[], n: i32): i64[] {
+  let i: i32 = 0;
+  while (i < n) {
+    xs = xs.with(i, xs[i] * 3i64);
+    if (i % 4 == 0) { xs = xs.with(0, xs[0] + 1i64); }
+    i = i + 1;
+  }
+  return xs;
+}
+@noinline function shout(own names: string[], n: i32): string[] {
+  let i: i32 = 0;
+  while (i < n) { names = names.with(i, names[i] + "!"); i = i + 1; }
+  return names;
+}
 @noinline function exercise(): i32 {
   let base: u8[] = [1u8, 2u8, 3u8];
   let kept: u8[] = base;
@@ -53,6 +67,19 @@ const uniqueLoopProgram = `@noinline function grow(own out: u8[], n: i32): u8[] 
   for k in 0..1000 { heads = put_head(heads, (k * 50) as i64); }
   if (__heap_alloc_count() - c0 >= 50i64) { return 7; }
   if (heads.len() != 3669 || heads[0] != 128u8 || heads[3668] != 3u8) { return 8; }
+  let nums: i64[] = [1i64, 2i64, 3i64, 4i64, 5i64];
+  let kept_nums: i64[] = nums;
+  let scaled: i64[] = scale(nums, 5);
+  if (kept_nums[0] != 1i64 || kept_nums[4] != 5i64) { return 9; }
+  if (scaled[0] != 5i64 || scaled[1] != 6i64 || scaled[4] != 15i64) { return 10; }
+  let solo: i64[] = scale([1i64, 1i64], 2);
+  if (solo[0] != 4i64 || solo[1] != 3i64) { return 11; }
+  let names: string[] = ["a", "b"];
+  let kept_names: string[] = names;
+  let loud: string[] = shout(names, 2);
+  if (kept_names[0] != "a" || kept_names[1] != "b" || loud[0] != "a!" || loud[1] != "b!") { return 12; }
+  let alone: string[] = shout(["c"], 1);
+  if (alone[0] != "c!") { return 13; }
   return 0;
 }
 function main(): i32 {
@@ -62,13 +89,13 @@ function main(): i32 {
 }
 `
 
-// A loop that grows a byte array it owns checks the count once before the
-// loop, not at each push, and a shared array is copied, not written. A loop
+// A loop that writes an array it owns checks the count once before the loop,
+// not at each push or with, and a shared array is copied, not written. A loop
 // over a borrowed array, or over a push onto one, keeps the push's own check,
 // which writes a sole borrowed array in place.
 func TestSelfHostUniqueLoop(t *testing.T) {
 	runSemanticProgram(t, "unique-loop", uniqueLoopProgram,
-		[]string{"grow", "lent", "put_head", "grow_and_keep", "exercise"}, semInlineWants("ok\n"))
+		[]string{"grow", "lent", "put_head", "grow_and_keep", "scale", "shout", "exercise"}, semInlineWants("ok\n"))
 
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()
@@ -90,6 +117,15 @@ func TestSelfHostUniqueLoop(t *testing.T) {
 	}
 	if !strings.Contains(grow, "call __fn___fern_bytes_owned") {
 		t.Errorf("grow does not copy a shared array before its loop:\n%s", grow)
+	}
+	for _, fn := range []string{"scale", "shout"} {
+		body := condBranchBody(t, string(asm), fn)
+		if n := strings.Count(body, "_uq"); n != 3 {
+			t.Errorf("%s has %d count-test labels, want the 3 of the one check before its loop:\n%s", fn, n, body)
+		}
+		if !strings.Contains(body, "call __fn___fern_arr_slice") {
+			t.Errorf("%s does not copy a shared array before its loop:\n%s", fn, body)
+		}
 	}
 	if lent := condBranchBody(t, string(asm), "lent"); strings.Contains(lent, "__fern_bytes_owned") {
 		t.Errorf("lent copies the array it borrows before its loop:\n%s", lent)

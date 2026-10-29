@@ -340,8 +340,18 @@ pub function call(): i32 {
   return 0 - 7;
 }
 
+// The call semunique places before a loop: the array itself when only this
+// frame holds it, else a copy.
+pub function unique_check_name(t: typeinfo.Type): string {
+  return "__sem_unique" + type_key(t);
+}
+
+pub function is_unique_check(name: string): boolean {
+  return name.starts_with("__sem_unique$");
+}
+
 pub function fresh_result_builtin(name: string): boolean {
-  return name == "__sem_bytes_unique" || name == "__bytes_owned" || name == "__bytes_range" || name == "__bytes_into" || name == "__aes_expand_key" || name == "__aes_ctr32"
+  return is_unique_check(name) || name == "__bytes_owned" || name == "__bytes_range" || name == "__bytes_into" || name == "__aes_expand_key" || name == "__aes_ctr32"
     || name == "__ghash" || name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into" || name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks";
 }
 
