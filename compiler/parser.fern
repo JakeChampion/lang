@@ -24683,21 +24683,25 @@ function settle_method_param_types(fns: SettleFns, recv_type: string, name: stri
   return [];
 }
 
-function settle_field_type(structs: StructDecl[], type_name: string, field: string): string {
-  let i: i32 = 0;
-  while (i < structs.len()) {
-    let sd: StructDecl = structs[i];
-    if (sd.name == type_name) {
-      let fi: i32 = 0;
-      while (fi < sd.fields.len()) {
-        if (sd.fields[fi].name == field) {
-          return sd.fields[fi].type_name;
-        }
-        fi = fi + 1;
-      }
-      return "";
+struct SettleStructs { decls: StructDecl[], index: util.NameIndex }
+
+function settle_structs_of(decls: StructDecl[]): SettleStructs {
+  let names: string[] = [];
+  for sd in decls {
+    names = names.append(sd.name);
+  }
+  return SettleStructs { decls: decls, index: util.name_index(names) };
+}
+
+function settle_field_type(structs: SettleStructs, type_name: string, field: string): string {
+  let i: i32 = structs.index.find(type_name);
+  if (i < 0) {
+    return "";
+  }
+  for fd in structs.decls[i].fields {
+    if (fd.name == field) {
+      return fd.type_name;
     }
-    i = i + 1;
   }
   return "";
 }
@@ -24713,7 +24717,7 @@ function settle_local_type(names: string[], types: string[], name: string): stri
   return "";
 }
 
-function settle_expr(e: ast.Expr, names: string[], types: string[], fns: SettleFns, structs: StructDecl[]): ast.Expr {
+function settle_expr(e: ast.Expr, names: string[], types: string[], fns: SettleFns, structs: SettleStructs): ast.Expr {
   match (e) {
     ast.ExprBinary(b) => {
       return ast.ExprBinary { op: b.op, left: settle_expr(b.left, names, types, fns, structs), right: settle_expr(b.right, names, types, fns, structs), line: b.line, col: b.col, ty: b.ty };
@@ -24815,7 +24819,7 @@ function settle_expr(e: ast.Expr, names: string[], types: string[], fns: SettleF
   return e;
 }
 
-function settle_stmt(st: ast.Stmt, ret_type: string, names: string[], types: string[], fns: SettleFns, structs: StructDecl[]): ast.Stmt {
+function settle_stmt(st: ast.Stmt, ret_type: string, names: string[], types: string[], fns: SettleFns, structs: SettleStructs): ast.Stmt {
   match (st) {
     ast.StmtVar(v) => {
       let init: ast.Expr = settle_to_name(settle_expr(v.init, names, types, fns, structs), v.type_name);
@@ -24860,7 +24864,7 @@ function settle_stmt(st: ast.Stmt, ret_type: string, names: string[], types: str
   return st;
 }
 
-function settle_block(stmts: ast.Stmt[], ret_type: string, names: string[], types: string[], fns: SettleFns, structs: StructDecl[]): ast.Stmt[] {
+function settle_block(stmts: ast.Stmt[], ret_type: string, names: string[], types: string[], fns: SettleFns, structs: SettleStructs): ast.Stmt[] {
   let out: ast.Stmt[] = [];
   let i: i32 = 0;
   while (i < stmts.len()) {
@@ -24881,6 +24885,7 @@ function settle_block(stmts: ast.Stmt[], ret_type: string, names: string[], type
 
 pub function settle_module(mod: Module): Module {
   let fns: SettleFns = settle_fns_of(mod.funcs);
+  let structs: SettleStructs = settle_structs_of(mod.structs);
   let funcs: FuncDecl[] = [];
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
@@ -24897,11 +24902,11 @@ pub function settle_module(mod: Module): Module {
       names = names.append(fd.receiver_name);
       types = types.append(fd.receiver_type);
     }
-    funcs = funcs.append(FuncDecl { ...fd, body: settle_block(fd.body, fd.ret_type, names, types, fns, mod.structs) });
+    funcs = funcs.append(FuncDecl { ...fd, body: settle_block(fd.body, fd.ret_type, names, types, fns, structs) });
     i = i + 1;
   }
   let nonames: string[] = [];
-  return Module { ...mod, funcs: funcs, top_stmts: settle_block(mod.top_stmts, "", nonames, nonames, fns, mod.structs) };
+  return Module { ...mod, funcs: funcs, top_stmts: settle_block(mod.top_stmts, "", nonames, nonames, fns, structs) };
 }
 
 pub struct ConstTable { names: string[], values: ast.Expr[] }
@@ -24973,6 +24978,7 @@ pub function rewrite_assoc_const_reads(mod: Module): Module {
       }
     }
   }
+  let index: util.NameIndex = util.name_index(types);
   let funcs: FuncDecl[] = [];
   for fd in mod.funcs {
     let bound: string[] = [];
@@ -24982,10 +24988,10 @@ pub function rewrite_assoc_const_reads(mod: Module): Module {
     if (fd.receiver_name.len() > 0) {
       bound = bound.append(fd.receiver_name);
     }
-    let fn_types: string[] = util.append_all(util.append_all(types, fd.type_params), fd.all_type_params);
+    let fn_types: astwalk.TypeNames = astwalk.TypeNames { index: index, params: util.append_all(fd.type_params, fd.all_type_params) };
     funcs = funcs.append(FuncDecl { ...fd, body: astwalk.rewrite_assoc_const_reads(fd.body, bound, fn_types, enums, enum_assoc) });
   }
-  return Module { ...mod, funcs: funcs, top_stmts: astwalk.rewrite_assoc_const_reads(mod.top_stmts, [], types, enums, enum_assoc) };
+  return Module { ...mod, funcs: funcs, top_stmts: astwalk.rewrite_assoc_const_reads(mod.top_stmts, [], astwalk.TypeNames { index: index, params: [] }, enums, enum_assoc) };
 }
 
 function const_table_within(t: ConstTable, names: string[]): ConstTable {
