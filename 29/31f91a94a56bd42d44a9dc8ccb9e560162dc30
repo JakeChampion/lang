@@ -516,3 +516,15 @@ profile/x86-64-linux/startup.minimal.ir	60
 profile/x86-64-linux/startup.safe.bytes	4096
 profile/x86-64-linux/startup.safe.emit	229
 profile/x86-64-linux/startup.safe.ir	60
+
+# lane: net-tls-interop
+tls/client/openssl.bulk_mbytes_per_s	138.7
+tls/client/openssl.handshakes_per_s	64.5
+tls/client/go.bulk_mbytes_per_s	128.1
+tls/client/go.handshakes_per_s	60.8
+tls/client/rustls.handshakes_per_s	62.7
+tls/client/bssl.handshakes_per_s	64.9
+tls/server/go.bulk_mbytes_per_s	190.7
+tls/server/curl.bulk_mbytes_per_s	260.4
+tls/server/handshakes_per_s	600.7
+tls/server/resumed_handshakes_per_s	704.5
