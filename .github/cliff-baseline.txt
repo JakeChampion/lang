@@ -1,3 +1,6 @@
+# 2026-10-29: #13863 (#13061) at 84b2ea38, from a local cliff-bench run. Main at 0c591828
+# measures 40,851,096 bytes and 341,725 crossings on the same subject. The clones that #13863 makes
+# for the parser's named visitors add 0.6% of the bytes.
 # 2026-10-28: Perf run 40717823865 on #13803 (merged with main at 903c9a49) measured 331,386 crossings, 14.8% fewer. The bytes stay within tolerance.
 # 2026-10-28: Exact reports from CI run 40620158743 at c63e488b4 on PR #13718.
 # Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
@@ -130,5 +133,5 @@
 # Re-pinned 2026-10-28 (#13768): 39,645,312 / 371,072 to 40,432,712 / 388,867.
 # Main measured these values at eb0e5fdc0, and the run on #13768 agrees.
 
-x86_64/checker.cliff_bytes	40432712
-x86_64/checker.cliff_count	331386
+x86_64/checker.cliff_bytes	41093552
+x86_64/checker.cliff_count	342984
