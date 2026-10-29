@@ -28,6 +28,8 @@
 # ran into its 28-minute budget: ceil of 1.5 times a measurement with a warm build cache.
 # Twenty-two rows raised or added on 2026-10-29 from run 40789933955's audit
 # (ceil of 1.5 times the measurement), after x86_64 shard 3 timed out.
+# One row raised on 2026-10-29 from run 40807184952's shard 2 durations, the run
+# that moved the x86_64 lane to eight shards (docs/ci-log/2026-10-29-eighth-x86-shard.md).
 
 TestSelfHostASCIIByteText 2
 TestSelfHostAbortBacktraceOffArm64 2
@@ -1181,7 +1183,7 @@ TestSelfHostRingBrokerDriver 5
 TestSelfHostRingEventLoop 3
 TestSelfHostRingEventLoopCapacity 2
 TestSelfHostRingQueueDriver 9
-TestSelfHostRoutedScalarMaps 25
+TestSelfHostRoutedScalarMaps 95
 TestSelfHostRunsCoreMapFunctions 4
 TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR 2
 TestSelfHostRuntimeHelpersAreFernIR 3
