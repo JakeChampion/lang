@@ -1952,20 +1952,12 @@ pub function (s: string) eq_ignore_ascii_case(other: string): boolean {
   if (n != other.len()) {
     return false;
   }
-  let i: i32 = 0;
-  while (i < n) {
+  for i in 0..n {
     let a: i32 = s[i] as i32;
-    let b: i32 = other[i] as i32;
-    if (a >= 65 && a <= 90) {
-      a = a + 32;
-    }
-    if (b >= 65 && b <= 90) {
-      b = b + 32;
-    }
-    if (a != b) {
+    let x: i32 = a ^ other[i] as i32;
+    if (x != 0 && (x != 32 || (a | 32) < 97 || (a | 32) > 122)) {
       return false;
     }
-    i = i + 1;
   }
   return true;
 }

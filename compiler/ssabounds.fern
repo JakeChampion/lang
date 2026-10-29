@@ -550,6 +550,9 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
     if (y >= 0 && nonneg(g, at, y, assume, steps - 1) && below_a_length(g, at, y)) {
       return true;
     }
+    if (y >= 0 && counts_up_from(g, x, y, assume, steps - 1)) {
+      return true;
+    }
     if (plus_fits(g, b, d, 0 - 1) && nonneg(g, b, plus_base(g, d), assume, steps - 1)) {
       return true;
     }
@@ -598,6 +601,31 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
     c = g.above[c];
   }
   return false;
+}
+
+// x = y + 1 is nonneg when y is a phi whose every operand is a constant of at
+// least -1 or a nonneg value below some bound on its edge, so the sum cannot
+// overflow. A range loop's counter is such a phi: -1 on entry, x on the back edge.
+function counts_up_from(g: Graph, x: i32, y: i32, assume: i32[], steps: i32): boolean {
+  y = root(g, y);
+  let d: ssa.SInst = g.defs[y];
+  if (steps <= 0 || d.kind_tag != 8 || !g.i32s[y] || d.args.len() == 0 || assumed(assume, x)) {
+    return false;
+  }
+  let inner: i32[] = assume.append(x);
+  for k in 0..d.args.len() {
+    let a: i32 = d.args[k];
+    let start: i64 = folded(g, a, steps);
+    let at: i32 = edge_block(g, y, k, a);
+    if (start != NOT_FOLDED) {
+      if (start < 0i64 - 1i64 || start >= 2147483647i64) {
+        return false;
+      }
+    } else if (!(same(g, a, x) || nonneg(g, at, a, inner, steps - 1)) || !below_a_length(g, at, a)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function nonneg_call(name: string): boolean {

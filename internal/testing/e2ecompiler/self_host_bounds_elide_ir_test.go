@@ -116,6 +116,32 @@ function main(): i32 {
     while (i < xs.len() && xs[i] != 0) { i = i + 1; }
     return i;
 }`},
+	{"range_sum", `function main(): i32 {
+    let xs: i32[] = [3, 5, 7, 11, 13];
+    let s: i32 = 0;
+    for i in 0..xs.len() { s = s + xs[i]; }
+    return s;
+}`},
+	{"range_cached_str_len", `function main(): i32 {
+    let t: string = "abc";
+    let n: i32 = t.len();
+    let s: i32 = 0;
+    for i in 0..n { s = s + (t[i] as i32); }
+    return s % 256;
+}`},
+	{"range_from_a_value", `function main(): i32 {
+    let xs: i32[] = [3, 5, 7, 11, 13];
+    let k: i32 = xs[0] - 1;
+    let s: i32 = 0;
+    for i in k..xs.len() { s = s + xs[i]; }
+    return s;
+}`},
+	{"range_break", `function main(): i32 {
+    let xs: i32[] = [4, 9, 2, 0, 6];
+    let at: i32 = 0;
+    for i in 0..xs.len() { if (xs[i] == 0) { at = i; break; } }
+    return at;
+}`},
 	{"field_root_reassigned_not_elided", `struct R { xs: i32[] }
 function main(): i32 {
     let r: R = R { xs: [3, 5, 7] };
@@ -181,6 +207,8 @@ func TestSelfHostBoundsElideIRX86_64(t *testing.T) {
 		{"field_path", `struct R { xs: i32[] } function main(): i32 { let r: R = R { xs: [3, 5, 7, 11, 13] }; let s: i32 = 0; let i: i32 = 0; while (i < r.xs.len()) { s = s + r.xs[i]; i = i + 1; } return s; }`},
 		{"conjunct", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let s: i32 = 0; let i: i32 = 0; while (i < xs.len() && s < 100) { s = s + xs[i]; i = i + 1; } return s; }`},
 		{"cond_read_after_guard", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let i: i32 = 0; while (i < xs.len() && xs[i] > 0) { i = i + 1; } return i + 34; }`},
+		{"range_len", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let s: i32 = 0; for i in 0..xs.len() { s = s + xs[i]; } return s; }`},
+		{"range_cached_len", `function main(): i32 { let xs: i32[] = [3, 5, 7, 11, 13]; let n: i32 = xs.len(); let s: i32 = 0; for i in 0..n { s = s + xs[i]; } return s; }`},
 	} {
 		t.Run("elision_fired_differential/"+d.name, func(t *testing.T) {
 			got := strings.Count(emit(d.src), "__fern_oob_abort")
