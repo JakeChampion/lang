@@ -521,15 +521,6 @@ pub function parse(s: string): Result[Url, UrlError] {
     return Err(UrlError { text: s, kind: EmptyUrl });
   }
 
-  let u: Url = Url {
-    scheme: "",
-    host: "",
-    port: 0,
-    path: "",
-    query: "",
-    fragment: "",
-  };
-
   let scheme_end: i32 = -1;
   let i: i32 = 0;
   while (i < n) {
@@ -546,52 +537,52 @@ pub function parse(s: string): Result[Url, UrlError] {
     }
   }
 
+  let scheme: string = "";
   let rest_start: i32 = 0;
   if (scheme_end > 0) {
-    u = Url { ...u, scheme: slice_unchecked(s, 0, scheme_end) + "" };
+    scheme = slice_unchecked(s, 0, scheme_end) + "";
     rest_start = scheme_end + 3;
   }
 
+  // The fragment starts at the first '#', the query at the first '?' before
+  // it, and the authority ends at the first '/' before the query.
   let frag_start: i32 = n;
-  i = rest_start;
-  while (i < n) {
-    if (s[i] == 35) {
-      frag_start = i;
+  let query_start: i32 = -1;
+  let slash: i32 = -1;
+  for k in rest_start..n {
+    let b: i32 = s[k] as i32;
+    if (b == 35) {
+      frag_start = k;
       break;
     }
-    i = i + 1;
+    if (b == 63 && query_start < 0) {
+      query_start = k;
+    } else if (b == 47 && slash < 0 && query_start < 0) {
+      slash = k;
+    }
   }
+  if (query_start < 0) {
+    query_start = frag_start;
+  }
+  let fragment: string = "";
   if (frag_start < n) {
-    u = Url { ...u, fragment: slice_unchecked(s, frag_start + 1, n) + "" };
+    fragment = slice_unchecked(s, frag_start + 1, n) + "";
   }
-
-  let query_start: i32 = frag_start;
-  i = rest_start;
-  while (i < frag_start) {
-    if (s[i] == 63) {
-      query_start = i;
-      break;
-    }
-    i = i + 1;
-  }
+  let query: string = "";
   if (query_start < frag_start) {
-    u = Url { ...u, query: slice_unchecked(s, query_start + 1, frag_start) + "" };
+    query = slice_unchecked(s, query_start + 1, frag_start) + "";
   }
 
-  let authority_end: i32 = query_start;
+  let authority_end: i32 = rest_start;
   if (scheme_end > 0) {
-    i = rest_start;
-    while (i < query_start) {
-      if (s[i] == 47) {
-        authority_end = i;
-        break;
-      }
-      i = i + 1;
+    authority_end = query_start;
+    if (slash >= 0) {
+      authority_end = slash;
     }
-  } else {
-    authority_end = rest_start;
   }
 
+  let host: string = "";
+  let port: i32 = 0;
   if (scheme_end > 0) {
     let host_start: i32 = rest_start;
     i = rest_start;
@@ -602,7 +593,6 @@ pub function parse(s: string): Result[Url, UrlError] {
       i = i + 1;
     }
 
-    let host: string = "";
     let colon: i32 = -1;
     if (host_start < authority_end && s[host_start] == 91) {
       let close: i32 = -1;
@@ -649,7 +639,6 @@ pub function parse(s: string): Result[Url, UrlError] {
       host = slice_unchecked(s, host_start, host_end) + "";
     }
 
-    let port: i32 = 0;
     if (colon >= 0) {
       i = colon + 1;
       while (i < authority_end) {
@@ -664,14 +653,14 @@ pub function parse(s: string): Result[Url, UrlError] {
         i = i + 1;
       }
     }
-    u = Url { ...u, host: host, port: port };
   }
 
+  let path: string = "";
   if (authority_end < query_start) {
-    u = Url { ...u, path: slice_unchecked(s, authority_end, query_start) + "" };
+    path = slice_unchecked(s, authority_end, query_start) + "";
   }
 
-  return Ok(u);
+  return Ok(Url { scheme: scheme, host: host, port: port, path: path, query: query, fragment: fragment });
 }
 ```
 
