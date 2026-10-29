@@ -2286,6 +2286,11 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.VoidType{},
 	}
 
+	c.builtinFuncs = make(map[string]bool, len(c.info.FuncSigs))
+	for name := range c.info.FuncSigs {
+		c.builtinFuncs[name] = true
+	}
+
 	for _, td := range prog.Traits {
 		if _, dup := c.info.Traits[td.Name]; dup {
 			c.errfCode(td.P, "E006", "trait %q redeclared", td.Name)
@@ -2428,6 +2433,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			owns[i] = p.Own
 		}
 		c.info.FuncSigs[fn.Name] = &ast.FuncType{Params: params, ParamOwn: ast.OwnFlags(owns, len(params)), Result: fn.ReturnType}
+		delete(c.builtinFuncs, fn.Name)
 		if fn.AssocConst {
 			c.info.AssocConsts[fn.Name] = true
 		}
@@ -5381,10 +5387,12 @@ type checker struct {
 	loopDepth         int
 	unsafeDepth       int
 	unsafeFuncs       map[string]bool
-	tryConvN          int
-	checkedN          int
-	inferReturns      *[]ast.Type
-	loopLabels        []string
+	// builtinFuncs holds the builtin functions, which a program may call but not name as a value.
+	builtinFuncs map[string]bool
+	tryConvN     int
+	checkedN     int
+	inferReturns *[]ast.Type
+	loopLabels   []string
 
 	ownFuncs       map[string][]bool
 	resultBorrows  map[string]bool
@@ -13300,7 +13308,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				}
 			}
 		}
-		if wrapper, reserved := StdlibOnlyBuiltins[n.Name]; reserved && !c.inStdlibContext() {
+		wrapper, reserved := StdlibOnlyBuiltins[n.Name]
+		reserved = reserved && !c.inStdlibContext()
+		if reserved {
 			c.errfCode(n.P, "E097", "builtin %q is reserved for the standard library; call %s instead", n.Name, wrapper)
 		}
 		if c.unsafeFuncs[n.Name] && c.callee != ast.Expr(n) && c.funcVisibleHere(n.Name) {
@@ -13314,6 +13324,10 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			return nil
 		}
 		if sig, ok := c.visibleFuncSig(n.Name); ok {
+			if c.builtinFuncs[n.Name] && c.callee != ast.Expr(n) && !reserved {
+				c.errfCode(n.P, "E098", "builtin %q can only be called, not used as a value", n.Name)
+				return nil
+			}
 			if lanesInside(sig) && c.callee != ast.Expr(n) {
 				c.errfCode(n.P, "E085", "function %s takes or returns a lane value and cannot be used as a value; a lane value crosses only a direct call", n.Name)
 			}
