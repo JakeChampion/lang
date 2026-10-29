@@ -505,6 +505,7 @@ func (e *Enum) String() string {
 type Interp struct {
 	Funcs           map[string]*ast.FuncDecl
 	Enums           map[string]*ast.EnumDecl
+	variants        map[string][]variantRef
 	Builtins        map[string]*Builtin
 	Stdout          io.Writer
 	Stderr          io.Writer
@@ -5649,7 +5650,15 @@ func (i *Interp) Register(fn *ast.FuncDecl) {
 	}
 }
 
-func (i *Interp) RegisterEnum(ed *ast.EnumDecl) { i.Enums[ed.Name] = ed }
+func (i *Interp) RegisterEnum(ed *ast.EnumDecl) {
+	i.Enums[ed.Name] = ed
+	i.variants = nil
+}
+
+type variantRef struct {
+	ed  *ast.EnumDecl
+	idx int
+}
 
 func (i *Interp) findVariantOn(name, enumName string) (*ast.EnumDecl, int, bool) {
 	if enumName != "" {
@@ -5662,12 +5671,17 @@ func (i *Interp) findVariantOn(name, enumName string) (*ast.EnumDecl, int, bool)
 		}
 		return nil, 0, false
 	}
-	for _, ed := range i.Enums {
-		for j, v := range ed.Variants {
-			if v.Name == name {
-				return ed, j, true
+	if i.variants == nil {
+		i.variants = map[string][]variantRef{}
+		for _, ed := range i.Enums {
+			for j, v := range ed.Variants {
+				i.variants[v.Name] = append(i.variants[v.Name], variantRef{ed, j})
 			}
 		}
+	}
+	// The checker names the enum of a variant that two enums declare.
+	if refs := i.variants[name]; len(refs) == 1 {
+		return refs[0].ed, refs[0].idx, true
 	}
 	return nil, 0, false
 }
