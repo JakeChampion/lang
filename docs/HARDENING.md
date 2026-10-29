@@ -185,6 +185,7 @@ An arbitrary nonzero exit does not satisfy these fault tests.
 
 QEMU Linux user mode emulates PAC and BTI.
 Successful QEMU fault tests establish emulated behavior only.
+A claim of physical enforcement follows the rule in `docs/security/GUARANTEES.md`: the fault test on a physical host whose kernel enables the feature.
 Native fault results apply to the tested process and image variants on that host.
 They do not certify handwritten runtime frames or every production host.
 
@@ -202,6 +203,9 @@ with it active. It reads the kernel's own records and infers nothing from the em
 
 ## Not covered yet
 
+- **Speculation barriers**: none are emitted. Speculation attacks are outside
+  the threat model (`docs/security/GUARANTEES.md`), because a Fern process
+  runs only the code it was compiled from.
 - **The runtime's hand-written frames** (the `__fern_*` helpers written as
   assembly text in `asm_arm64_ir.fern`) still store an unsigned return
   address. Compiled Fern functions, and the runtime helpers written in Fern,
