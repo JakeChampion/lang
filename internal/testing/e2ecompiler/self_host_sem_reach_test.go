@@ -110,6 +110,146 @@ func TestSelfHostSemReach(t *testing.T) {
 	}
 }
 
+const semReachOptionProg = `import "core/map";
+
+struct Key { bits: i32[] }
+struct Pt { x: i32 }
+struct Ref { y: i32 }
+struct Opts { key: Option[Key], level: i32 }
+
+function opts(): Opts {
+  return Opts { key: None, level: 3 };
+}
+
+function (o: Opts) with_key(k: Key): Opts {
+  return Opts { ...o, key: Some(k) };
+}
+
+@noinline function heavy_key(k: Key): i32 {
+  let t: i32 = 0;
+  for b in k.bits {
+    t = t + b * 7 + 1;
+  }
+  return t;
+}
+
+@noinline function heavy_first(p: Pt): i32 {
+  return p.x * 11 + 2;
+}
+
+@noinline function heavy_map(r: Ref): i32 {
+  return r.y * 13 + 3;
+}
+
+struct Bad { why: i32[] }
+
+@noinline function checked(n: i32): Result[i32, Bad] {
+  return Ok(n + 1);
+}
+
+@noinline function heavy_err(b: Bad): i32 {
+  return b.why.len() * 17;
+}
+
+@noinline function keyed(o: Opts): i32 {
+  match (o.key) {
+    Some(k) => {
+      return heavy_key(k);
+    },
+    None => {
+      return o.level;
+    }
+  }
+  return 0;
+}
+
+@noinline function firsts(ps: Pt[]): i32 {
+  match (ps.first()) {
+    Some(p) => {
+      return heavy_first(p);
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+@noinline function mapped(m: Map[string, Ref]): i32 {
+  match (m.get("a")) {
+    Some(r) => {
+      return heavy_map(r);
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  let o: Opts = OPTS;
+  let m: Map[string, Ref] = map_new(8);
+  m = m.insert("a", Ref { y: 1 });
+  let c: i32 = match (checked(o.level)) {
+    Ok(v) => v,
+    Err(b) => heavy_err(b),
+  };
+  return keyed(o) + firsts([Pt { x: 1 }]) + mapped(m) + c;
+}
+`
+
+// An Option or a Result has variant facts as a declared enum does. The Some
+// of a lookup or of an array's first element is made by a built-in, so its
+// arm stays.
+func TestSelfHostSemReachOption(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	fern := buildLangBinForInterp(t)
+	key := regexp.MustCompile(`(?m)^__fn_heavy_key:`)
+	kept := regexp.MustCompile(`(?m)^__fn_heavy_(first|map):`)
+	errArm := regexp.MustCompile(`(?m)^__fn_heavy_err:`)
+	for _, tc := range []struct {
+		name, opts string
+		want       int
+		keyed      bool
+	}{
+		{"no-key", "opts()", 36, false},
+		{"key", "opts().with_key(Key { bits: [1, 2] })", 56, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := strings.Replace(semReachOptionProg, "OPTS", tc.opts, 1)
+			if got := interpExitStdin(t, fern, src, ""); got != tc.want {
+				t.Fatalf("the interpreter exited %d, want %d", got, tc.want)
+			}
+			path := filepath.Join(t.TempDir(), "reach.fern")
+			if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+				asm := readFile(t, cli.emit(t, path, target))
+				if key.MatchString(asm) != tc.keyed {
+					t.Errorf("%s: heavy_key emitted %v, want %v", target, key.MatchString(asm), tc.keyed)
+				}
+				if n := len(kept.FindAllString(asm, -1)); n != 2 {
+					t.Errorf("%s: %d of heavy_first and heavy_map emitted, want both", target, n)
+				}
+				if errArm.MatchString(asm) {
+					t.Errorf("%s: heavy_err emitted, but nothing builds an Err", target)
+				}
+				off := readFile(t, cli.emit(t, path, target, "FERN_NO_SEM_REACH=1"))
+				if !key.MatchString(off) || !errArm.MatchString(off) {
+					t.Errorf("%s FERN_NO_SEM_REACH=1: heavy_key or heavy_err dropped", target)
+				}
+			}
+			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
+				if _, code := cli.exitOf(t, src, target); code != tc.want {
+					t.Errorf("%s: exit %d, want %d", target, code, tc.want)
+				}
+			}
+		})
+	}
+}
+
 const semReachCaptureProg = `@noinline function each(xs: i32[], f: (i32) => i32): i32 {
   let t: i32 = 0;
   for x in xs {
@@ -327,6 +467,37 @@ func TestSelfHostSemReachServeWithoutH3(t *testing.T) {
 	off := readFile(t, cli.emit(t, path, "x86-64-linux", "FERN_SIZE=1", "FERN_NO_SEM_REACH=1"))
 	if !h3.MatchString(off) {
 		t.Errorf("FERN_NO_SEM_REACH=1: the server links no HTTP/3 either, so this test shows nothing")
+	}
+}
+
+const serveWithoutTLSProg = `import "std/http";
+import "std/serve";
+import "std/platform";
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+  return http.ok("hello");
+}
+
+function main(): i32 {
+  return serve.exit_code(serve.run(8080, serve.config(), handle));
+}
+`
+
+// A server whose Config has no TLS identity links no TLS code (#12885).
+func TestSelfHostSemReachServeWithoutTLS(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	path := filepath.Join(t.TempDir(), "server.fern")
+	if err := os.WriteFile(path, []byte(serveWithoutTLSProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tls := regexp.MustCompile(`(?m)^__fn_(handshake|record|x509|ecdsa|p256|mlkem768)__\w+:`)
+	asm := readFile(t, cli.emit(t, path, "x86-64-linux", "FERN_SIZE=1"))
+	if fns := tls.FindAllString(asm, 4); len(fns) > 0 {
+		t.Errorf("the server links TLS: %v", fns)
+	}
+	off := readFile(t, cli.emit(t, path, "x86-64-linux", "FERN_SIZE=1", "FERN_NO_SEM_REACH=1"))
+	if !tls.MatchString(off) {
+		t.Errorf("FERN_NO_SEM_REACH=1: the server links no TLS either, so this test shows nothing")
 	}
 }
 
