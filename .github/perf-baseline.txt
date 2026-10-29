@@ -1,3 +1,6 @@
+# 2026-10-29: x86_64 rows from CI run 40893366540 at 50b7fe92f on PR #13846.
+# perceus_rbtree and the two sort programs run faster. perceus_cfold and perceus_deriv grow by 1% to 2%.
+# 2026-10-29: aarch64 rows from CI run 40896341239 at 981b76ca2 on PR #13846, with the same changes.
 # 2026-10-29: Perf run 40871299230 at 9da4c982 on PR #13837. An arm64 division by a constant
 # multiplies by the reciprocal and does not use sdiv. array_with.ir and record_update.ir
 # take a remainder by 251 in the inner loop: 31217639 to 34494442 (+10.5%). Native-pair run
@@ -186,9 +189,9 @@ x86_64/pvec_with.ir	55174232
 x86_64/record_update.ir	37759160
 x86_64/record_update.text	1386
 x86_64/sort_inplace.text	1493
-x86_64/sort_inplace.ir	41288325
+x86_64/sort_inplace.ir	39463045
 x86_64/sort_ints.text	1971
-x86_64/sort_ints.ir	29956231
+x86_64/sort_ints.ir	28152806
 x86_64/sort_strings.text	3233
 x86_64/sort_strings.ir	105033157
 x86_64/string_build.text	1994
@@ -471,9 +474,9 @@ aarch64/pvec_with.ir	59221804
 aarch64/record_update.text	1608
 aarch64/record_update.ir	34494442
 aarch64/sort_inplace.text	1691
-aarch64/sort_inplace.ir	49143963
+aarch64/sort_inplace.ir	45949723
 aarch64/sort_ints.text	2184
-aarch64/sort_ints.ir	33060144
+aarch64/sort_ints.ir	30178876
 aarch64/sort_strings.text	3597
 aarch64/sort_strings.ir	105486307
 aarch64/string_build.text	2364
@@ -498,23 +501,23 @@ aarch64/utf8_ingest_validated.text	9515
 aarch64/utf8_ingest_validated.ir	6229114
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
-x86_64/perceus_cfold.text	1890
+x86_64/perceus_cfold.text	1915
 x86_64/perceus_cfold.ir	54520496
-x86_64/perceus_deriv.text	2671
+x86_64/perceus_deriv.text	2720
 x86_64/perceus_deriv.ir	67372410
 x86_64/perceus_nqueens.text	1555
 x86_64/perceus_nqueens.ir	92759479
 x86_64/perceus_rbtree.text	2873
-x86_64/perceus_rbtree.ir	56394823
+x86_64/perceus_rbtree.ir	55350343
 x86_64/perceus_rbtree_ck.text	3123
-x86_64/perceus_rbtree_ck.ir	55974983
-aarch64/perceus_cfold.text	2152
+x86_64/perceus_rbtree_ck.ir	54938183
+aarch64/perceus_cfold.text	2178
 aarch64/perceus_cfold.ir	62299589
-aarch64/perceus_deriv.text	2982
+aarch64/perceus_deriv.text	3026
 aarch64/perceus_deriv.ir	83086981
 aarch64/perceus_nqueens.text	1805
 aarch64/perceus_nqueens.ir	106638432
 aarch64/perceus_rbtree.text	3162
-aarch64/perceus_rbtree.ir	61215313
+aarch64/perceus_rbtree.ir	59717393
 aarch64/perceus_rbtree_ck.text	3399
-aarch64/perceus_rbtree_ck.ir	60547315
+aarch64/perceus_rbtree_ck.ir	59058355
