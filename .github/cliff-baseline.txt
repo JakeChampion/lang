@@ -130,5 +130,6 @@
 # Re-pinned 2026-10-28 (#13768): 39,645,312 / 371,072 to 40,432,712 / 388,867.
 # Main measured these values at eb0e5fdc0, and the run on #13768 agrees.
 
-x86_64/checker.cliff_bytes	40432712
-x86_64/checker.cliff_count	331386
+# 2026-10-29: main 0c591828 (Perf, perf-x86_64) reports checker.cliff_bytes +1.03% and cliff_count +3.12%.
+x86_64/checker.cliff_bytes	40851096
+x86_64/checker.cliff_count	341725
