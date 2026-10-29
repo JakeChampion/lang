@@ -26,6 +26,10 @@
 # Replay details: docs/ci-log/2026-10-27-self-host-weight-raises.md.
 # Six rows raised or added on 2026-10-28 after x86_64 shard 3 of run 40748946900
 # ran into its 28-minute budget: ceil of 1.5 times a measurement with a warm build cache.
+# Twenty-two rows raised or added on 2026-10-29 from run 40789933955's audit
+# (ceil of 1.5 times the measurement), after x86_64 shard 3 timed out.
+# One row raised on 2026-10-29 from run 40807184952's shard 2 durations, the run
+# that moved the x86_64 lane to eight shards (docs/ci-log/2026-10-29-eighth-x86-shard.md).
 
 TestSelfHostASCIIByteText 2
 TestSelfHostAbortBacktraceOffArm64 2
@@ -297,7 +301,7 @@ TestSelfHostCheckAgreesWithGoOnTests 984
 TestSelfHostCheckWorkspaceDifferentialX86_64 2
 TestSelfHostCheckedStorageInvocation 172
 TestSelfHostCheckedWasmIR 2
-TestSelfHostCheckedWrapperContinuation 51
+TestSelfHostCheckedWrapperContinuation 216
 TestSelfHostCheckedX86IR 2
 TestSelfHostCheckerArm64 4
 TestSelfHostCheckerBundleDifferentialX86_64 154
@@ -639,8 +643,8 @@ TestSelfHostGuardedCreditAlgebra 2
 TestSelfHostGuardedPhysicalExtraction 147
 TestSelfHostGuardedPhysicalPhi 242
 TestSelfHostGuardedPhysicalReuse 160
-TestSelfHostHTTPByteSerialization 29
-TestSelfHostHTTPContentLength 22
+TestSelfHostHTTPByteSerialization 120
+TestSelfHostHTTPContentLength 123
 TestSelfHostHTTPCorpus 18
 TestSelfHostHTTPHandlerCensus 96
 TestSelfHostHTTPKeepAlive 131
@@ -709,7 +713,7 @@ TestSelfHostImportAsyncFunctionChecks 13
 TestSelfHostImportCycleX86_64 2
 TestSelfHostImportedGenericDrop 2
 TestSelfHostImportedMethodCollisionWasm 12
-TestSelfHostIncomingCapacityBoundary 40
+TestSelfHostIncomingCapacityBoundary 185
 TestSelfHostInferredReuseIsIdentical 13
 TestSelfHostInlineLeaf 16
 TestSelfHostInnerMulAddBits 3
@@ -1179,7 +1183,7 @@ TestSelfHostRingBrokerDriver 5
 TestSelfHostRingEventLoop 3
 TestSelfHostRingEventLoopCapacity 2
 TestSelfHostRingQueueDriver 9
-TestSelfHostRoutedScalarMaps 25
+TestSelfHostRoutedScalarMaps 95
 TestSelfHostRunsCoreMapFunctions 4
 TestSelfHostRuntimeHelperSyscallLeavesAreFernArm64IR 2
 TestSelfHostRuntimeHelpersAreFernIR 3
@@ -1200,13 +1204,13 @@ TestSelfHostSSALiftGivesEachBlockOneID 2
 TestSelfHostSSALiftNamesANegativeKind 2
 TestSelfHostSSALiftPtrWidthIsAConstant 2
 TestSelfHostSSAPhysicalRC 15
-TestSelfHostSSAPhysicalRCIRArm64 56
+TestSelfHostSSAPhysicalRCIRArm64 197
 TestSelfHostSSAPhysicalRCRejects 7
-TestSelfHostSSASemantic 113
+TestSelfHostSSASemantic 449
 TestSelfHostSSASemanticIRArm64 3
 TestSelfHostSSASemanticIRWasm 3
 TestSelfHostSSASemanticIRX86_64 3
-TestSelfHostSSAUnits 103
+TestSelfHostSSAUnits 400
 TestSelfHostSSAUnitsIRArm64 3
 TestSelfHostSSAUnitsIRWasm 3
 TestSelfHostSSAUnitsIRX86_64 3
@@ -1509,7 +1513,7 @@ TestSelfHostTupleFieldTypeLabelParity 12
 TestSelfHostTupleFnIRArm64 2
 TestSelfHostTupleFnZeroArgIRWasm 2
 TestSelfHostTupleFnZeroArgIRX86_64 2
-TestSelfHostTupleHandbackReclaimArm64 25
+TestSelfHostTupleHandbackReclaimArm64 92
 TestSelfHostTupleHandbackReclaimCLIX86_64 233
 TestSelfHostTupleHandbackReclaimSanitizeX86_64 31
 TestSelfHostTupleHandbackReclaimWasm 34
@@ -1578,7 +1582,7 @@ TestSelfHostWasiCliHandlerProgramBuilds 23
 TestSelfHostWasiHttpByteBodies 23
 TestSelfHostWasiHttpByteWriterCleanup 16
 TestSelfHostWasiHttpCoreTrapsOnExit 18
-TestSelfHostWasiHttpOutgoing 19
+TestSelfHostWasiHttpOutgoing 98
 TestSelfHostWasiHttpPlatformCapabilities 2
 TestSelfHostWasiHttpTargetBranchGate 2
 TestSelfHostWasiHttpTargetCoreModule 18
@@ -1673,7 +1677,7 @@ TestSelfHostWatbinUndefinedReference 2
 TestSelfHostWatchParentGone 3
 TestSelfHostWcBytes 4
 TestSelfHostWhileIR 2
-TestSelfHostWholeCompilerArm64SingleProcessEmit 21
+TestSelfHostWholeCompilerArm64SingleProcessEmit 97
 TestSelfHostWideLiteralSettle 12
 TestSelfHostWideToStringWasmIR 2
 TestSelfHostWitClassify 18
@@ -1758,3 +1762,15 @@ TestSelfHostSpillSlotMates 102
 TestSelfHostStandardLibraryDoctests 99
 TestShippedFernLiterateTakesOneDocument 112
 TestShippedFernResolveURL 116
+TestSelfHostRuntimePayloadContracts 132
+TestSelfHostSSADynDispatchArgumentInScratch 99
+TestSelfHostLSPLocationOptions 137
+TestSelfHostLSPSiteOptions 103
+TestSelfHostLargePushWideDecoder 337
+TestSelfHostArrayTruncate 101
+TestSelfHostFetchReadSizes 293
+TestSelfHostLargePushWideMachine 269
+TestSelfHostCountedStringView 111
+TestSelfHostQuarantinePolicy 382
+TestSelfHostCPUProfileRetainsLateSamples 96
+TestSelfHostRetainedWideHelperControls 281

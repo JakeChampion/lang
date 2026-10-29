@@ -1317,6 +1317,12 @@ function harden_refused(harden: boolean, target: string, shared: boolean): boole
   return true;
 }
 
+// The -harden, -pie, -heap-limit and -quarantine refusals as one answer; the
+// two size values are below zero after their own refusal.
+function switches_refused(harden: boolean, pie: boolean, target: string, shared: boolean, heap_limit: i64, quarantine: i64): boolean {
+  return harden_refused(harden, target, shared) || pie_refused(pie, target, shared) || heap_limit < 0i64 || quarantine < 0i64;
+}
+
 function pie_refused(pie: boolean, target: string, shared: boolean): boolean {
   if (!pie || (target == "arm64-linux" || target == "x86-64-linux") && !shared) {
     return false;
@@ -1341,6 +1347,27 @@ function heap_limit_bytes(text: string, target: string): i64 {
   let value: i64 = size_bytes(text);
   if (value < 1048576i64 || value > 17179869184i64) {
     eprint("fern: -heap-limit takes a size from 1M to 16G, as digits with an optional K, M or G suffix (got \"" + text + "\")");
+    return 0i64 - 1i64;
+  }
+  return value;
+}
+
+// The -quarantine value in bytes: the default without the flag, zero for an
+// unbounded quarantine, below zero after a refusal.
+function quarantine_bytes(text: string, sanitize: boolean): i64 {
+  if (text.len() == 0) {
+    return asmcore.quarantine_default();
+  }
+  if (!sanitize) {
+    eprint("fern: -quarantine is the -sanitize quarantine budget and needs -sanitize");
+    return 0i64 - 1i64;
+  }
+  if (text == "0") {
+    return 0i64;
+  }
+  let value: i64 = size_bytes(text);
+  if (value < 1048576i64 || value > 17179869184i64) {
+    eprint("fern: -quarantine takes 0 for no bound, or a size from 1M to 16G as digits with an optional K, M or G suffix (got \"" + text + "\")");
     return 0i64 - 1i64;
   }
   return value;
@@ -1415,9 +1442,10 @@ function flag_groups(): FlagGroup[] {
       cli_flag("-O", "", "release build: elide every assert() check"),
       cli_flag("-shared", "", "a shared object exporting the -export functions, not an executable"),
       cli_flag("-export", "NAMES", "with -shared: the comma-separated functions to export (default main)"),
-      cli_flag("-harden", "", "arm64-linux and x86-64-linux executables: stack canaries and a check on every indirect call; on arm64 also BTI landing pads and signed return addresses, on x86-64 the shadow stack where the kernel offers it"),
+      cli_flag("-harden", "", "arm64-linux and x86-64-linux executables: stack canaries, a check on every indirect call, a random pick among a free list's first eight blocks and a guard page after every 64th large block; on arm64 also BTI landing pads and signed return addresses, on x86-64 the shadow stack where the kernel offers it"),
       cli_flag("-pie", "", "x86-64-linux and arm64-linux executables: a position-independent image, loaded at a random base"),
       cli_flag("-heap-limit", "SIZE", "native executables: the heap arena size, 1M to 16G with a K, M or G suffix (default 16G); a full arena exits 125"),
+      cli_flag("-quarantine", "SIZE", "with -sanitize: the byte budget of released blocks held before reuse, 1M to 16G with a K, M or G suffix, or 0 for no bound (default 64M)"),
       cli_flag("-profile", "NAME", "a flag set: safe (the defaults), hardened (-harden -pie), diagnostic (-sanitize -backtrace -g) or minimal (-size)"),
     ] },
     FlagGroup { title: "run", flags: [
@@ -5035,6 +5063,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let export_list: string = "";
   let harden: boolean = false;
   let heap_limit_text: string = "";
+  let quarantine_text: string = "";
   let pie: boolean = false;
   let cover_on: boolean = envflag.on("FERN_COVER");
   let array_report: i32 = semarrayreport.from_env();
@@ -5113,6 +5142,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       harden = f.on;
     } else if (f.name == "-heap-limit") {
       heap_limit_text = f.value;
+    } else if (f.name == "-quarantine") {
+      quarantine_text = f.value;
     } else if (f.name == "-pie") {
       pie = f.on;
     } else if (f.name == "-profile") {
@@ -5323,14 +5354,9 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     return 2;
   }
   emit_syms = rtprofile.symbols(emit_syms, profile_mode);
-  if (harden_refused(harden, target, shared)) {
-    return 2;
-  }
   let heap_limit: i64 = heap_limit_bytes(heap_limit_text, target);
-  if (heap_limit < 0i64) {
-    return 2;
-  }
-  if (pie_refused(pie, target, shared)) {
+  let quarantine: i64 = quarantine_bytes(quarantine_text, sanitize_flag || asmcore.sanitize_on());
+  if (switches_refused(harden, pie, target, shared, heap_limit, quarantine)) {
     return 2;
   }
   if (backend != "" && backend != "ssa" && backend != "flat") {
@@ -5512,7 +5538,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let typed: parser.Module = parser.module_with_builtins_typed(merged);
   let full: parser.Module = parser.erase_view_module(typed);
   let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, pie: pie, profile: profile_name, target: target, line_maps: b.maps } };
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, semlower.build_opts(debug_lines, size, true, array_report)), switches: asmcore.Switches { backtrace: backtrace && (backtrace_set || !size), sanitize: sanitize_flag || asmcore.sanitize_on(), leak_check: asmcore.leak_check_on(), rc_free_debug: asmcore.rc_free_debug_on(), var_rows: debug_lines && emit != "asm", shared: shared, size: size, harden: harden, heap_limit: heap_limit, quarantine: quarantine, pie: pie, profile: profile_name, target: target, line_maps: b.maps } };
   if (array_report == semarrayreport.to_stdout()) {
     return 0;
   }
