@@ -3067,6 +3067,14 @@ function shape_error(f: Func): string {
   return ssadeps.limits_error(f.graph);
 }
 
+// The dominator tree of f, taken from a when its verifier checked the graph.
+pub function dominators(f: Func, a: Analysis): ssadeps.Dom {
+  if (a.facts.checked) {
+    return a.facts.dom;
+  }
+  return ssadeps.dominates(f.graph);
+}
+
 function schema_error(f: Func): string {
   if (!semtypes.concrete(f.result, true)) {
     return "unresolved result type";
