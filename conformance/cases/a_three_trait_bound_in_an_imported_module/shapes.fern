@@ -1,0 +1,20 @@
+pub trait Zero { function zero(): Self; }
+pub trait One { function one(): Self; }
+pub trait Plus { function plus(self: Self, x: Self): Self; }
+
+impl Zero for i32 { function zero(): i32 { return 0; } }
+impl One for i32 { function one(): i32 { return 1; } }
+impl Plus for i32 { function plus(self: i32, x: i32): i32 { return self + x; } }
+
+// Each trait of the bound supplies an associated function, wherever it sits.
+pub function count[T: Plus + Zero + One](xs: T[]): T {
+  let n: T = T.zero();
+  for x in xs {
+    n = n.plus(T.one());
+  }
+  return n;
+}
+
+pub function first_of[T: Zero + Plus + One](): T {
+  return T.zero().plus(T.one());
+}

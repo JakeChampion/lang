@@ -2696,7 +2696,6 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("str_grow") || s.has_need("buf")) {
     s = s.need("__fern_slice_abort.c");
   }
-  s = emit_trap_stubs(s);
   s = s.write("__fern_arr_box:\n");
   s = s.write("    cmpq $268435455, %rdi\n    ja __fern_alloc_size_abort.c\n");
   s = hev_shim_site(s, "arrbox");
@@ -11021,12 +11020,13 @@ function emit_entry_runtime_settled(s0: asmcore.EmitState): asmcore.EmitState {
   let out: asmcore.EmitState = s0;
   while (!settled) {
     let h: usize = buf_new(65536);
-    let t: asmcore.EmitState = emit_entry_runtime(asmcore.EmitState { ...s, capture: h });
+    let m: usize = buf_new(256);
+    let t: asmcore.EmitState = emit_entry_runtime(asmcore.EmitState { ...s, capture: h, missed: m });
     let text: string = buf_take(h);
     buf_free(h);
-    if (t.needed.len() == s.needed.len()) {
+    if (asmcore.settles(t, s.needed.len(), m)) {
       settled = true;
-      let back: asmcore.EmitState = asmcore.EmitState { ...t, capture: s0.capture };
+      let back: asmcore.EmitState = asmcore.EmitState { ...t, capture: s0.capture, missed: s0.missed };
       out = back.write(text);
     } else {
       s = asmcore.EmitState { ...s0, needed: t.needed, runtime_units: t.runtime_units };
@@ -11279,8 +11279,8 @@ function emit_vdso_scan(s: asmcore.EmitState): asmcore.EmitState {
 
 function emit_rt_clocks(s: asmcore.EmitState): asmcore.EmitState {
   let vdso: boolean = asmcore.vdso_wanted(s, "x86-64-linux");
-  if (vdso && !s.has_need("ccall:__c_call2")) {
-    s = emit_ccall_shim1(s.write("    .text\n").need("ccall:__c_call2"), "__c_call2", 2);
+  if (vdso) {
+    s = s.need("ccall:__c_call2");
   }
   for which in ["monotonic_ns", "now_unix_ms", "now_ns"] {
     if (s.has_need(which)) {
@@ -11342,6 +11342,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_san_uaf_abort(s);
     s = emit_san_waf_abort(s);
+  }
+  if (asmcore.vdso_wanted(s, "x86-64-linux")) {
+    s = s.need("ccall:__c_call2");
   }
   if (any_ccall_need(s)) {
     s = s.write("    .text\n");
@@ -11559,7 +11562,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("access")) {
       fs_roots = fs_roots + " " + "__fern_access";
     }
-    if (s.has_need("read_file") || s.has_need("getxattr") || s.has_need("lgetxattr") || s.has_need("reader") || s.has_need("read_dir") || s.has_need("read_dir_all") || s.has_need("read_dir_ino") || s.has_need("read_dir_ino_all") || s.has_need("dir_entries") || s.has_need("read_link") || s.has_need("getcwd") || s.has_need("hostname") || s.has_need("uname_field") || s.has_need("mounts")) {
+    if (s.has_need("utf8_valid")) {
       fs_roots = fs_roots + " " + "__fern_utf8_valid";
     }
     if (s.has_need("read_file")) {
@@ -12025,6 +12028,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("sleep_ns")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_sleep_ns", s);
+  }
+  if (needs_heap_runtime(s)) {
+    s = emit_trap_stubs(s.write("    .text\n"));
   }
   return s;
 }

@@ -12055,8 +12055,9 @@ pub function split_plus_bounds(bound: string): string[] {
       depth = depth - 1;
     }
     if (i == bound.len() || depth == 0 && bound[i] == b'+') {
-      if (i > start) {
-        out = out.append(slice_unchecked(bound, start, i) + "");
+      let entry: string = util.trim(slice_unchecked(bound, start, i) + "");
+      if (entry.len() > 0) {
+        out = out.append(entry);
       }
       start = i + 1;
     }

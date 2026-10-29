@@ -1,0 +1,7 @@
+// A bound naming three traits resolves every trait's associated functions
+// when the generic function lives in an imported module.
+import "./shapes";
+
+function main(): i32 {
+  return shapes.count([7, 8, 9]) * 10 + shapes.first_of[i32]() + 11;
+}

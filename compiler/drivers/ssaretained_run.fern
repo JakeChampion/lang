@@ -88,7 +88,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
   let at = find(on.bodies, "__fern_str_cmp");
   require(at >= 0, 22);
   let row = on.bodies[at];
-  require(util.has_str(row.context.needed, "heap"), 23);
+  require(util.has_str(row.context.needed, "str_cmp"), 23);
   require(row.body.selected.origin.symbol == "__fern_str_cmp" && row.body.selected.producers.len() == 1, 24);
   require(row.body.selected.producers[0].contracts.len() != g.physical.producers[0].contracts.len(), 25);
   for body in on.bodies {
