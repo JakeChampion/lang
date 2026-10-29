@@ -28,7 +28,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<6 pub function run(name: string, warmup: i32, iterations: i32, body: ()>>
 
-<<7 pub function csv_header(): string>>
+<<7 pub const CSV_HEADER: string>>
 
 <<8 pub struct Summary>>
 
@@ -253,15 +253,11 @@ pub function (r: Report) to_json(): string {
 }
 ```
 
-### `7 pub function csv_header(): string`
+### `7 pub const CSV_HEADER: string`
 
 ```fern
-<<7 pub function csv_header(): string>>=
-pub function csv_header(): string {
-  return "name,iterations,wall_ns,ops_per_sec,ns_per_op,min_ns,p50_ns,p95_ns,"
-    + "p99_ns,p999_ns,max_ns,mean_ns,allocs,allocs_per_op_milli,fresh_bytes,"
-    + "bytes_per_op_milli";
-}
+<<7 pub const CSV_HEADER: string>>=
+pub const CSV_HEADER: string = "name,iterations,wall_ns,ops_per_sec,ns_per_op,min_ns,p50_ns,p95_ns,p99_ns,p999_ns,max_ns,mean_ns,allocs,allocs_per_op_milli,fresh_bytes,bytes_per_op_milli";
 
 pub function (r: Report) to_csv_row(): string {
   return "\"" + r.name.replace("\"", "\"\"") + "\""

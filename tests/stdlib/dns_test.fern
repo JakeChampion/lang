@@ -100,7 +100,7 @@ function test_encode_name(): test.TestOutcome {
 }
 
 function test_query_on_the_wire(): test.TestOutcome {
-  let q: u8[] = encoded(dns.query(4660, "vm.example.com", dns.type_a()));
+  let q: u8[] = encoded(dns.query(4660, "vm.example.com", dns.TYPE_A));
   if (q.len() != 32) {
     return test.fail("12 header + 20 question bytes");
   }
@@ -110,14 +110,14 @@ function test_query_on_the_wire(): test.TestOutcome {
   if (!q.drop(12).equal(bytes([2, 118, 109, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1]))) {
     return test.fail("labels, then A IN");
   }
-  if (encoded(dns.query(1, "a..b", dns.type_a())).len() != 0) {
+  if (encoded(dns.query(1, "a..b", dns.TYPE_A)).len() != 0) {
     return test.fail("an empty label refuses the whole message");
   }
   return test.pass();
 }
 
 function test_edns_opt_record(): test.TestOutcome {
-  let q: dns.Message = dns.with_edns(dns.query(1, "vm.example.com", dns.type_aaaa()));
+  let q: dns.Message = dns.with_edns(dns.query(1, "vm.example.com", dns.TYPE_AAAA));
   let b: u8[] = encoded(q);
   if (b.len() != 32 + 11) {
     return test.fail("OPT is the root, a type, a class, a TTL and an empty rdata: 11 bytes");
@@ -130,10 +130,10 @@ function test_edns_opt_record(): test.TestOutcome {
   }
   match (decoded(b)) {
     Some(m) => {
-      if (m.additional.len() != 1 || m.additional[0].rtype != dns.type_opt() || m.additional[0].rclass != dns.udp_payload()) {
+      if (m.additional.len() != 1 || m.additional[0].rtype != dns.TYPE_OPT || m.additional[0].rclass != dns.UDP_PAYLOAD) {
         return test.fail("the OPT record decodes into the additional section");
       }
-      return test.assert_eq(m.questions[0].qtype, dns.type_aaaa());
+      return test.assert_eq(m.questions[0].qtype, dns.TYPE_AAAA);
     },
     None => {
       return test.fail("a query with OPT decodes");
@@ -155,16 +155,16 @@ function test_decode_reply(): test.TestOutcome {
       if (m.id != 4660 || !m.response || !m.recursion_desired || !m.recursion_available || m.truncated || m.authoritative) {
         return test.fail("header flags");
       }
-      if (m.rcode != dns.rcode_ok() || m.opcode != 0) {
+      if (m.rcode != dns.RCODE_OK || m.opcode != 0) {
         return test.fail("rcode and opcode");
       }
-      if (m.questions.len() != 1 || m.questions[0].name != "vm.example.com" || m.questions[0].qtype != dns.type_a()) {
+      if (m.questions.len() != 1 || m.questions[0].name != "vm.example.com" || m.questions[0].qtype != dns.TYPE_A) {
         return test.fail("the question");
       }
       if (m.answers.len() != 2) {
         return test.fail("two answers");
       }
-      if (m.answers[0].name != "vm.example.com" || m.answers[0].rtype != dns.type_cname() || m.answers[0].ttl != 60) {
+      if (m.answers[0].name != "vm.example.com" || m.answers[0].rtype != dns.TYPE_CNAME || m.answers[0].ttl != 60) {
         return test.fail("the CNAME's owner is the question, through a pointer");
       }
       match (m.answers[0].data) {
@@ -236,7 +236,7 @@ function test_decode_rejects(): test.TestOutcome {
     },
     None => {}
   }
-  match (decoded(encoded(dns.query(7, "vm.example.com", dns.type_a())))) {
+  match (decoded(encoded(dns.query(7, "vm.example.com", dns.TYPE_A)))) {
     Some(m) => {
       if (m.response) {
         return test.fail("QR clear is not a response");
@@ -251,14 +251,14 @@ function test_decode_rejects(): test.TestOutcome {
 
 function test_round_trip(): test.TestOutcome {
   let v6: net.IpAddr = net.ipv6_loopback();
-  let q: dns.Question = dns.Question { name: "host.example", qtype: dns.type_aaaa(), qclass: dns.class_in() };
-  let cname: dns.Record = dns.Record { name: "host.example", rtype: dns.type_cname(), rclass: dns.class_in(), ttl: 300, data: CNAME("real.example") };
-  let aaaa: dns.Record = dns.Record { name: "real.example", rtype: dns.type_aaaa(), rclass: dns.class_in(), ttl: 300, data: AAAA(v6) };
-  let txt: dns.Record = dns.Record { name: "real.example", rtype: 16, rclass: dns.class_in(), ttl: 1, data: Raw(bytes([2, 104, 105])) };
-  let ns: dns.Record = dns.Record { name: "example", rtype: dns.type_ptr(), rclass: dns.class_in(), ttl: 7, data: PTR("ns.example") };
+  let q: dns.Question = dns.Question { name: "host.example", qtype: dns.TYPE_AAAA, qclass: dns.CLASS_IN };
+  let cname: dns.Record = dns.Record { name: "host.example", rtype: dns.TYPE_CNAME, rclass: dns.CLASS_IN, ttl: 300, data: CNAME("real.example") };
+  let aaaa: dns.Record = dns.Record { name: "real.example", rtype: dns.TYPE_AAAA, rclass: dns.CLASS_IN, ttl: 300, data: AAAA(v6) };
+  let txt: dns.Record = dns.Record { name: "real.example", rtype: 16, rclass: dns.CLASS_IN, ttl: 1, data: Raw(bytes([2, 104, 105])) };
+  let ns: dns.Record = dns.Record { name: "example", rtype: dns.TYPE_PTR, rclass: dns.CLASS_IN, ttl: 7, data: PTR("ns.example") };
   let m: dns.Message = dns.Message {
     id: 65535, response: true, opcode: 0, authoritative: true, truncated: true,
-    recursion_desired: false, recursion_available: true, rcode: dns.rcode_name_error(),
+    recursion_desired: false, recursion_available: true, rcode: dns.RCODE_NAME_ERROR,
     questions: [q], answers: [cname, aaaa], authority: [ns], additional: [txt],
   };
   match (decoded(encoded(m))) {
@@ -266,7 +266,7 @@ function test_round_trip(): test.TestOutcome {
       if (back.id != 65535 || !back.response || !back.authoritative || !back.truncated || back.recursion_desired || !back.recursion_available) {
         return test.fail("flags survive");
       }
-      if (back.rcode != dns.rcode_name_error()) {
+      if (back.rcode != dns.RCODE_NAME_ERROR) {
         return test.fail("rcode survives");
       }
       if (back.answers.len() != 2 || back.authority.len() != 1 || back.additional.len() != 1) {
@@ -313,7 +313,7 @@ function test_round_trip(): test.TestOutcome {
 function test_records_after_cname(): test.TestOutcome {
   match (decoded(reply(0, 4660))) {
     Some(m) => {
-      let a: dns.Answer = dns.records_for(m, "VM.EXAMPLE.COM.", dns.type_a());
+      let a: dns.Answer = dns.records_for(m, "VM.EXAMPLE.COM.", dns.TYPE_A);
       if (a.canonical != "www.example.com") {
         return test.fail("the chain ends at the A record's owner");
       }
@@ -331,7 +331,7 @@ function test_answer_statuses(): test.TestOutcome {
   while (i < checks.len()) {
     match (decoded(reply(checks[i], 4660))) {
       Some(m) => {
-        match (dns.answer_records(m, "vm.example.com", dns.type_a())) {
+        match (dns.answer_records(m, "vm.example.com", dns.TYPE_A)) {
           Ok(_) => {
             return test.fail("an error rcode is no answer");
           },
@@ -361,7 +361,7 @@ function test_answer_statuses(): test.TestOutcome {
   m = m.concat([192, 12, 0, 28, 0, 1, 0, 0, 0, 60, 0, 16, 32, 1, 13, 184, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]);
   match (decoded(bytes(m))) {
     Some(only6) => {
-      match (dns.answer_records(only6, "vm.example.com", dns.type_a())) {
+      match (dns.answer_records(only6, "vm.example.com", dns.TYPE_A)) {
         Ok(_) => {
           return test.fail("no A record is no answer");
         },
@@ -371,7 +371,7 @@ function test_answer_statuses(): test.TestOutcome {
           }
         }
       }
-      match (dns.answer_records(only6, "vm.example.com", dns.type_aaaa())) {
+      match (dns.answer_records(only6, "vm.example.com", dns.TYPE_AAAA)) {
         Ok(a) => {
           return test.assert_eq(ips(dns.addresses_of(a.records)), "2001:db8::1");
         },
@@ -389,11 +389,11 @@ function test_answer_statuses(): test.TestOutcome {
 function test_answers_question(): test.TestOutcome {
   match (decoded(reply(0, 4660))) {
     Some(m) => {
-      let q: dns.Question = dns.Question { name: "Vm.Example.Com.", qtype: dns.type_a(), qclass: dns.class_in() };
+      let q: dns.Question = dns.Question { name: "Vm.Example.Com.", qtype: dns.TYPE_A, qclass: dns.CLASS_IN };
       if (!m.answers_question(q)) {
         return test.fail("the same question, whatever the case and the trailing dot");
       }
-      let other: dns.Question = dns.Question { name: "vm.example.com", qtype: dns.type_aaaa(), qclass: dns.class_in() };
+      let other: dns.Question = dns.Question { name: "vm.example.com", qtype: dns.TYPE_AAAA, qclass: dns.CLASS_IN };
       if (m.answers_question(other)) {
         return test.fail("another type is another question");
       }
@@ -679,7 +679,7 @@ function test_search_all_nxdomain(): test.TestOutcome {
 
 function test_lookup_records_with_walks_the_plan(): test.TestOutcome {
   let rc: dns.ResolvConf = conf_with(["servfail", "ok2"], 1);
-  match (dns.lookup_records_with(rc, "nx", dns.type_a(), (q: string): Result[dns.Answer, dns.DnsError] => scripted(suffix_of(q)))) {
+  match (dns.lookup_records_with(rc, "nx", dns.TYPE_A, (q: string): Result[dns.Answer, dns.DnsError] => scripted(suffix_of(q)))) {
     Ok(a) => {
       return test.assert_eq(a.canonical, "ok2");
     },
@@ -844,7 +844,7 @@ function test_order_unusable_and_stable(): test.TestOutcome {
 }
 
 function answer_of(name: string, data: dns.RData, rtype: i32): Result[dns.Answer, dns.DnsError] {
-  return Ok(dns.Answer { canonical: name, records: [dns.Record { name: name, rtype: rtype, rclass: dns.class_in(), ttl: 60, data: data }] });
+  return Ok(dns.Answer { canonical: name, records: [dns.Record { name: name, rtype: rtype, rclass: dns.CLASS_IN, ttl: 60, data: data }] });
 }
 
 function pair_fails_with(a: Result[dns.Answer, dns.DnsError], aaaa: Result[dns.Answer, dns.DnsError], want: dns.DnsError): boolean {
@@ -860,8 +860,8 @@ function pair_fails_with(a: Result[dns.Answer, dns.DnsError], aaaa: Result[dns.A
 }
 
 function test_combine_pair(): test.TestOutcome {
-  let a: Result[dns.Answer, dns.DnsError] = answer_of("www.example", A(addr("93.184.216.34")), dns.type_a());
-  let aaaa: Result[dns.Answer, dns.DnsError] = answer_of("www6.example", AAAA(addr("2001:db8::1")), dns.type_aaaa());
+  let a: Result[dns.Answer, dns.DnsError] = answer_of("www.example", A(addr("93.184.216.34")), dns.TYPE_A);
+  let aaaa: Result[dns.Answer, dns.DnsError] = answer_of("www6.example", AAAA(addr("2001:db8::1")), dns.TYPE_AAAA);
   match (dns.combine_pair(a, aaaa)) {
     Ok(both) => {
       if (both.canonical != "www.example" || both.records.len() != 2) {

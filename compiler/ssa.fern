@@ -4058,11 +4058,15 @@ pub function register_form(f: SFunc): Formed {
   }
   let fw: Threading = thread_forwarding(g);
   g = fw.f;
+  let trimmed: i32[] = [];
   if (fw.changed) {
-    g = prune_dead(g);
+    // A join that lost a predecessor can be left with one value on every edge.
+    let pruned: Formed = prune_trivial_phis(prune_dead(g));
+    g = pruned.f;
+    trimmed = pruned.repl;
   }
   g = zero_extended_indices(g);
-  return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl) };
+  return Formed { f: g, repl: compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(compose_repl(folded.repl, merged.repl), plain.repl), shared.repl), unwrapped.repl), extended.repl), bytes.repl), trimmed) };
 }
 
 // An index reads a sign- and a zero-extended i32 the same: no length reaches 2^31, so a negative index fails either way.

@@ -1,0 +1,19 @@
+// spec: RH-11
+// A defer inside a loop runs once per iteration at the exit, so a deferred
+// consuming close of a handle declared outside the loop is refused.
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function main(): i32 {
+  let h: Handle = Handle { fd: 3 };
+  let i: i32 = 0;
+  while (i < 2) {
+    defer h.close();
+    i = i + 1;
+  }
+  return i;
+}

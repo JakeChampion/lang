@@ -1,0 +1,1 @@
+is consumed twice: a deferred call at line 12 consumes it

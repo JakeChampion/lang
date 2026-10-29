@@ -4,6 +4,7 @@ import "./irverify";
 import "./irverifyrc";
 import "./irverifystack";
 import "./ssa";
+import "./ssadeps";
 import "./ssa_lift";
 import "./rcsigs";
 import "./rccertify";
@@ -225,8 +226,17 @@ function decided(f: ssa.SFunc): ssa.SFunc {
   if (!changed) {
     return f;
   }
-  let out: ssa.SFunc = ssa.SFunc { ...f, blocks: blocks };
-  return ssa.SFunc { ...out, blocks: ssa.refreshed_preds(out) };
+  let folded: ssa.SFunc = ssa.SFunc { ...f, blocks: blocks };
+  // A block no branch reaches now drops out, with its inputs to the phis it fed.
+  let live: boolean[] = ssadeps.reachable_blocks(folded);
+  let kept: ssa.SBlock[] = [];
+  for i in 0..folded.blocks.len() {
+    if (live[i]) {
+      kept = kept.append(folded.blocks[i]);
+    }
+  }
+  let out: ssa.SFunc = ssa.SFunc { ...folded, blocks: kept };
+  return ssa.prune_trivial_phis(ssa.SFunc { ...out, blocks: ssa.refreshed_preds(out) }).f;
 }
 
 // The block a branch takes when its condition compares two constants, or -1.

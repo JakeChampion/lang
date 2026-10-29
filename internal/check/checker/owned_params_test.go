@@ -1272,3 +1272,112 @@ function main(): i32 {
     return take(copy(v));
 }`)
 }
+
+const handleRulesPrelude = `struct Handle { fd: i32 }
+struct Ends { r: Handle, w: Handle }
+function (own h: Handle) close(): i32 { return h.fd; }
+function take(own e: Ends): i32 { return e.w.close(); }
+`
+
+func TestOwnGuardDeferredCloseIsTheLastUse(t *testing.T) {
+	wantOK(t, "defer-close-then-read", handleRulesPrelude+`
+function work(): i32 {
+    let h: Handle = Handle { fd: 3 };
+    defer h.close();
+    return h.fd;
+}`)
+	wantOK(t, "defer-close-own-param-then-read", handleRulesPrelude+`
+function work(own p: Handle): i32 {
+    defer p.close();
+    return p.fd;
+}`)
+	wantOK(t, "defer-close-field-then-close-sibling", handleRulesPrelude+`
+function work(own p: Ends): i32 {
+    defer p.r.close();
+    let a: i32 = p.w.close();
+    return a + p.r.fd;
+}`)
+	wantE051(t, "defer-close-then-close", handleRulesPrelude+`
+function work(): i32 {
+    let h: Handle = Handle { fd: 3 };
+    defer h.close();
+    return h.close();
+}`)
+	wantE051(t, "defer-close-in-loop", handleRulesPrelude+`
+function work(): i32 {
+    let h: Handle = Handle { fd: 3 };
+    let i: i32 = 0;
+    while (i < 2) {
+        defer h.close();
+        i = i + 1;
+    }
+    return i;
+}`)
+	wantE051(t, "defer-close-captured", handleRulesPrelude+`
+function work(): i32 {
+    let h: Handle = Handle { fd: 3 };
+    let get = (): i32 => h.fd;
+    defer h.close();
+    return get();
+}`)
+	wantE051(t, "defer-close-field-then-close-field", handleRulesPrelude+`
+function work(own p: Ends): i32 {
+    defer p.r.close();
+    return p.r.close();
+}`)
+}
+
+func TestOwnGuardOwnParamConsumedTwiceThroughDefer(t *testing.T) {
+	err := checkSource(t, handleRulesPrelude+`
+function work(own p: Handle): i32 {
+    defer p.close();
+    return p.close();
+}`)
+	if err == nil || !strings.Contains(err.Error(), "is consumed twice: a deferred call at line") {
+		t.Fatalf("expected the deferred second-consumption E050, got %v", err)
+	}
+}
+
+func TestOwnGuardFieldMovesOutOfLocalOrOwnParam(t *testing.T) {
+	wantOK(t, "field-close-both-ends-local", handleRulesPrelude+`
+function work(): i32 {
+    let q: Ends = Ends { r: Handle { fd: 3 }, w: Handle { fd: 4 } };
+    let a: i32 = q.r.close();
+    return a + q.w.close();
+}`)
+	wantOK(t, "field-close-both-ends-own-param", handleRulesPrelude+`
+function work(own e: Ends): i32 {
+    let a: i32 = e.r.close();
+    return a + e.w.close();
+}`)
+	wantE051(t, "field-closed-twice", handleRulesPrelude+`
+function work(): i32 {
+    let q: Ends = Ends { r: Handle { fd: 3 }, w: Handle { fd: 4 } };
+    let a: i32 = q.r.close();
+    return a + q.r.close();
+}`)
+	wantE051(t, "whole-used-after-field-close", handleRulesPrelude+`
+function work(): i32 {
+    let q: Ends = Ends { r: Handle { fd: 3 }, w: Handle { fd: 4 } };
+    let a: i32 = q.r.close();
+    return a + take(q);
+}`)
+	wantE051(t, "field-read-after-field-close-own-param", handleRulesPrelude+`
+function work(own e: Ends): i32 {
+    let a: i32 = e.r.close();
+    return a + e.r.fd;
+}`)
+	wantE051(t, "field-close-of-borrowed-param", handleRulesPrelude+`
+function work(e: Ends): i32 {
+    return e.r.close();
+}`)
+	wantE051(t, "field-close-in-loop", handleRulesPrelude+`
+function work(): i32 {
+    let q: Ends = Ends { r: Handle { fd: 3 }, w: Handle { fd: 4 } };
+    let i: i32 = 0;
+    while (i < 2) {
+        i = i + q.r.close();
+    }
+    return i;
+}`)
+}

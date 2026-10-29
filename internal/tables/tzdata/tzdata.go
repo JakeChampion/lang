@@ -328,9 +328,7 @@ func (t Table) Block() string {
 	return fmt.Sprintf(`// The table contains IANA tzdata %s from 1970 onward.
 // It has %d zone names and %d distinct records.
 // See internal/tables/tzdata for the binary format. Do not edit by hand.
-pub function iana_version(): string {
-  return %q;
-}
+pub const IANA_VERSION: string = %q;
 
 function iana_names(): string {
   return "%s";

@@ -1121,6 +1121,7 @@ TestSelfHostProgsX86_64 2
 TestSelfHostPtxBytes 9
 TestSelfHostQualifiedConstructorShadowing 2
 TestSelfHostQualifiedOptResultIR 2
+TestSelfHostQuicInteropProgramsCertify 60
 TestSelfHostQuoteBytes 2
 TestSelfHostRaceClosesTheLoser 4
 TestSelfHostRangeValueIR 4

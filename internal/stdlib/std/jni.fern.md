@@ -103,41 +103,23 @@ pub function call3_f64(env: usize, index: i32, a0: usize, a1: usize, a2: usize):
   }
 }
 
-pub function FIND_CLASS(): i32 {
-  return 6;
-}
+pub const FIND_CLASS: i32 = 6;
 
-pub function GET_METHOD_ID(): i32 {
-  return 33;
-}
+pub const GET_METHOD_ID: i32 = 33;
 
-pub function GET_FIELD_ID(): i32 {
-  return 94;
-}
+pub const GET_FIELD_ID: i32 = 94;
 
-pub function GET_STATIC_METHOD_ID(): i32 {
-  return 113;
-}
+pub const GET_STATIC_METHOD_ID: i32 = 113;
 
-pub function GET_STATIC_FIELD_ID(): i32 {
-  return 144;
-}
+pub const GET_STATIC_FIELD_ID: i32 = 144;
 
-pub function NEW_STRING_UTF(): i32 {
-  return 167;
-}
+pub const NEW_STRING_UTF: i32 = 167;
 
-pub function GET_STRING_UTF_LENGTH(): i32 {
-  return 168;
-}
+pub const GET_STRING_UTF_LENGTH: i32 = 168;
 
-pub function GET_STRING_UTF_CHARS(): i32 {
-  return 169;
-}
+pub const GET_STRING_UTF_CHARS: i32 = 169;
 
-pub function RELEASE_STRING_UTF_CHARS(): i32 {
-  return 170;
-}
+pub const RELEASE_STRING_UTF_CHARS: i32 = 170;
 
 pub function cstr(s: string): usize {
   unsafe {
@@ -167,7 +149,7 @@ pub function get_version(env: usize): i32 {
 }
 
 pub function find_class(env: usize, name: usize): usize {
-  return call1(env, FIND_CLASS(), name);
+  return call1(env, FIND_CLASS, name);
 }
 
 pub function get_object_class(env: usize, obj: usize): usize {
@@ -175,23 +157,23 @@ pub function get_object_class(env: usize, obj: usize): usize {
 }
 
 pub function get_method_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
-  return call3(env, GET_METHOD_ID(), clazz, name, sig);
+  return call3(env, GET_METHOD_ID, clazz, name, sig);
 }
 
 pub function get_field_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
-  return call3(env, GET_FIELD_ID(), clazz, name, sig);
+  return call3(env, GET_FIELD_ID, clazz, name, sig);
 }
 
 pub function get_static_method_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
-  return call3(env, GET_STATIC_METHOD_ID(), clazz, name, sig);
+  return call3(env, GET_STATIC_METHOD_ID, clazz, name, sig);
 }
 
 pub function get_static_field_id(env: usize, clazz: usize, name: usize, sig: usize): usize {
-  return call3(env, GET_STATIC_FIELD_ID(), clazz, name, sig);
+  return call3(env, GET_STATIC_FIELD_ID, clazz, name, sig);
 }
 
 pub function new_string_utf(env: usize, bytes: usize): usize {
-  return call1(env, NEW_STRING_UTF(), bytes);
+  return call1(env, NEW_STRING_UTF, bytes);
 }
 ```
 
@@ -200,15 +182,15 @@ pub function new_string_utf(env: usize, bytes: usize): usize {
 ```fern
 <<3 pub function get_string_utf_length(env: usize, jstr: usize): i32>>=
 pub function get_string_utf_length(env: usize, jstr: usize): i32 {
-  return call1(env, GET_STRING_UTF_LENGTH(), jstr) as i32;
+  return call1(env, GET_STRING_UTF_LENGTH, jstr) as i32;
 }
 
 pub function get_string_utf_chars(env: usize, jstr: usize, is_copy: usize): usize {
-  return call2(env, GET_STRING_UTF_CHARS(), jstr, is_copy);
+  return call2(env, GET_STRING_UTF_CHARS, jstr, is_copy);
 }
 
 pub function release_string_utf_chars(env: usize, jstr: usize, chars: usize): usize {
-  return call2(env, RELEASE_STRING_UTF_CHARS(), jstr, chars);
+  return call2(env, RELEASE_STRING_UTF_CHARS, jstr, chars);
 }
 
 pub function throw(env: usize, throwable: usize): i32 {

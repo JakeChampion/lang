@@ -1,0 +1,23 @@
+// spec: RH-06
+// A deferred consuming close runs at the function's exit, so it is the
+// handle's last use. The handle stays readable after the defer statement.
+
+import "std/i32";
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): void {
+  print("closed " + h.fd.to_string());
+}
+
+function work(): i32 {
+  let h: Handle = Handle { fd: 3 };
+  defer h.close();
+  print("read " + h.fd.to_string());
+  return h.fd + 1;
+}
+
+function main(): i32 {
+  print(work().to_string());
+  return 0;
+}
