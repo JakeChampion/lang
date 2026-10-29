@@ -21,7 +21,7 @@ function main(): i32 {
 }
 `
 
-func TestSelfHostArrayRecvMisdispatchRefuses(t *testing.T) {
+func TestSelfHostArrayRecvExtraTypeParamDispatches(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
 		t.Skip("self-host driver runs natively only")
@@ -44,13 +44,14 @@ func TestSelfHostArrayRecvMisdispatchRefuses(t *testing.T) {
 	}
 
 	route, _ := exec.Command(driver, entry, root, "-decide").Output()
-	got := strings.TrimSpace(string(route))
-	if got == "ir" {
-		t.Fatalf("-decide = \"ir\": the unrewritten array-method call lowered anyway, "+
-			"which means it dispatched as i32.pow and captured std/i32's integer pow "+
-			"instead of the receiver's method (oracle says %d)", want)
+	if got := strings.TrimSpace(string(route)); got != "ir" {
+		t.Fatalf("-decide = %q, want \"ir\"", got)
 	}
-	if got != "refused" {
-		t.Fatalf("-decide = %q, want \"refused\" (module refuses to lower)", got)
+	asm, _ := exec.Command(driver, entry, root).Output()
+	bin := buildBin(t, gcc, dir, "arr_recv_misdispatch_bin", string(asm))
+	cmd := exec.Command(bin)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != want {
+		t.Fatalf("self-host run = %d, want %d: the call reached std/i32's integer pow, not the receiver's method", code, want)
 	}
 }
