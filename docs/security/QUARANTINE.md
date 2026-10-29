@@ -81,6 +81,7 @@ Its `-harden` keeps the canary, the indirect-call check, the signed return addre
 - `placement`: 16 blocks of one class are released and taken again 32 times. The release build takes the last released block first on all 32 rounds. The `-harden` build did so on 4 rounds on x86-64 and 2 on arm64 in one run, and the test requires fewer than 32.
 - `guard-page`: 70 one-MiB raw blocks come from the bump. Under `-harden` a read one byte past the 64th block faults, and the same read past the 63rd and the 65th does not. The release build reads past the 64th.
 - `string-blocks`: 64 rounds of a split, a join and a grown string release every string shape under `-sanitize`, `-sanitize -quarantine 1M` and `-harden`. The census balances, 1218 allocations and 1218 frees.
+- `large-growth`: an i32 array and a u8 array grow past the large tier under `-sanitize`, `-harden` and the release build. The push-owned helpers return the grown array and release the old block, and the census balances.
 - `large-churn`: 200 one-MiB strings are built and released under `-sanitize -quarantine 4M`. The arena grows by 5242960 bytes and the census balances, 204 allocations and 204 frees.
 
 `TestSelfHostQuarantineFlag` pins the refusals: `-quarantine` without `-sanitize`, and a size below 1M, above 16G or that is not a size.

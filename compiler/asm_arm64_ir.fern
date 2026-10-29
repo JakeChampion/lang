@@ -7252,8 +7252,8 @@ function emit_arr_push_u8(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(quarantine_rc("[x19, #-8]", "w10", s.rc_free_debug));
   if (s.rc_free_debug) {
     s = lc_bump_free_words(s, "x1", "x3", "x9");
-    s = s.write("    sub x0, x19, #16\n");
-    s = quar_push(s, "x0", "x1", 8);
+    s = s.write("    sub x2, x19, #16\n");
+    s = quar_push(s, "x2", "x1", 8);
     s = s.write("    b .Lapou_ret\n");
   } else {
     s = s.write("    lsl x2, x1, #3\n    sub x1, x19, #16\n    bl __fern_large_push\n    b .Lapou_ret\n");
@@ -9085,8 +9085,7 @@ function emit_rt_large_tier_and_rc(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write(".Larrdec_large:\n");
   if (s.rc_free_debug) {
     s = lc_bump_free_words(s, "x1", "x3", "x9");
-    s = s.write("    sub x0, x0, #16\n");
-    s = quar_push(s, "x0", "x1", 8);
+    s = quar_push(s, "x2", "x1", 8);
     s = s.write("    ret\n");
   } else {
     s = s.write("    lsl x2, x1, #3\n");
@@ -9842,8 +9841,8 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = s.write(quarantine_rc("[x19, #-8]", "w10", s.rc_free_debug));
     if (s.rc_free_debug) {
       s = lc_bump_free_words(s, "x1", "x3", "x9");
-      s = s.write("    sub x0, x19, #16\n");
-      s = quar_push(s, "x0", "x1", 8);
+      s = s.write("    sub x2, x19, #16\n");
+      s = quar_push(s, "x2", "x1", 8);
     } else {
       s = s.write("    lsl x2, x1, #3\n");
       s = s.write("    sub x1, x19, #16\n");

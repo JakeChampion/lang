@@ -134,6 +134,32 @@ function main(): i32 {
 }
 `
 
+// Owned arrays that grow past the large tier release their old block on
+// the push path, and the push returns the grown array to its caller.
+const quarantineLargeGrowthSrc = `function main(): i32 {
+  let xs: i32[] = [];
+  let i: i32 = 0;
+  while (i < 300000) {
+    xs = xs.append(i);
+    i = i + 1;
+  }
+  let bs: u8[] = [];
+  let j: i32 = 0;
+  while (j < 700000) {
+    bs = bs.append((j & 255) as u8);
+    j = j + 1;
+  }
+  let sum: i64 = 0i64;
+  let k: i32 = 0;
+  while (k < xs.len()) {
+    sum = sum + (xs[k] as i64);
+    k = k + 1;
+  }
+  print(xs.len().to_string() + " " + bs.len().to_string() + " " + sum.to_string() + " " + (bs[699999] as i32).to_string());
+  return 0;
+}
+`
+
 type quarantineRun struct {
 	stdout, stderr string
 	code           int
@@ -227,6 +253,25 @@ func TestSelfHostQuarantinePolicy(t *testing.T) {
 						t.Fatalf("%v: exit %d, printed %q\n%s", flags, r.code, r.stdout, r.stderr)
 					}
 					if flags[0] != "-sanitize" {
+						continue
+					}
+					summary := leakSummaryLine(r.stderr)
+					var allocs, frees, live int64
+					if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
+						t.Fatalf("%v: parse %q: %v", flags, summary, err)
+					}
+					if allocs == 0 || allocs != frees || live != 0 {
+						t.Errorf("%v: unbalanced census: %s", flags, summary)
+					}
+				}
+			})
+			t.Run("large-growth", func(t *testing.T) {
+				for _, flags := range [][]string{{"-sanitize"}, {"-harden"}, nil} {
+					r := quarantineBuild(t, cli, qemu, target, quarantineLargeGrowthSrc, flags)
+					if r.code != 0 || strings.TrimSpace(r.stdout) != "300000 700000 44999850000 95" {
+						t.Fatalf("%v: exit %d, printed %q\n%s", flags, r.code, r.stdout, r.stderr)
+					}
+					if len(flags) == 0 || flags[0] != "-sanitize" {
 						continue
 					}
 					summary := leakSummaryLine(r.stderr)
