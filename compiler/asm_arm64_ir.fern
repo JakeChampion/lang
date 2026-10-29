@@ -6294,8 +6294,8 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
   s = asmcore.with_funcs(s, mod.funcs);
   s = s.write("    .globl _start\n");
   s = s.write("    .text\n");
-  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(mod.funcs, mod.funcs, cache), s.kinds.pops, physicalbody.abis(physical)), s.memo);
-  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache);
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(mod.funcs, mod.funcs, cache), s.kinds, physicalbody.abis(physical)), s.memo);
+  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache, s.kinds);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)), leaves: unit.leaves };
   let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(mod, 0, mod.funcs.len(), cache);
   s = asmcore.EmitState { ...s, float_abi: fabi.names, float_abi_masks: fabi.masks };
@@ -6384,22 +6384,27 @@ function emit_array_helpers(s: asmcore.EmitState): asmcore.EmitState {
 }
 
 function emit_runtime(roots: string, s: asmcore.EmitState): asmcore.EmitState {
-  return emit_runtime_module(rtmodule.load(s.runtime_target, roots), s);
+  let at: i32 = s.runtime_units.roots.find(roots);
+  if (at >= 0) {
+    return emit_runtime_module(s.runtime_units.mods[at], s.runtime_units.lowered[at], s);
+  }
+  let m: parser.Module = rtmodule.load(s.runtime_target, roots);
+  let lowered: physicalbody.Lowered = s.rt_lower(m);
+  return emit_runtime_module(m, lowered, asmcore.with_runtime_unit(s, roots, m, lowered));
 }
 
-pub function emit_runtime_module(m: parser.Module, s: asmcore.EmitState): asmcore.EmitState {
+pub function emit_runtime_module(m: parser.Module, lowered: physicalbody.Lowered, s: asmcore.EmitState): asmcore.EmitState {
   let fns: parser.FuncDecl[] = m.funcs;
-  let lowered: physicalbody.Lowered = s.rt_lower(m);
   let bodies: irtables.LowerResult[] = irtables.lowered_results(lowered.bodies);
   let physical = physicalbody.collection(lowered);
   let previous_regs: irtables.SigReg = s.reg_entries;
   let previous_leaves: ssa.Leaves = s.leaves;
   let previous_float: asmcore.FloatAbi = asmcore.FloatAbi { names: s.float_abi, masks: s.float_abi_masks };
   let cf0: i32 = s.cfi_stubs.len();
-  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(m, 0, fns.len(), bodies);
+  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(m, 0, fns.len(), bodies, s.kinds);
   let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(m, 0, fns.len(), bodies);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(m, 0, fns.len(), bodies)), leaves: unit.leaves, float_abi: fabi.names, float_abi_masks: fabi.masks };
-  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns, m.funcs, bodies), s.kinds.pops, physicalbody.abis(physical)), s.memo);
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns, m.funcs, bodies), s.kinds, physicalbody.abis(physical)), s.memo);
   s = asmcore.export_runtime_fns(s, fns);
   let i: i32 = 0;
   while (i < fns.len()) {
@@ -11280,7 +11285,7 @@ function emit_ir_runtime_settled(s0: asmcore.EmitState, darwin: boolean): asmcor
       let back: asmcore.EmitState = asmcore.EmitState { ...t, capture: s0.capture };
       out = back.write(text);
     } else {
-      s = asmcore.EmitState { ...s0, needed: t.needed };
+      s = asmcore.EmitState { ...s0, needed: t.needed, runtime_units: t.runtime_units };
     }
   }
   return out;
@@ -11364,12 +11369,12 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
       s = s.write(".globl " + name + "_leaf\n");
     }
   }
-  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs, mod.funcs, cache), s.kinds.pops, physicalbody.abis(physical)), s.memo);
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs, mod.funcs, cache), s.kinds, physicalbody.abis(physical)), s.memo);
   let hh: i32 = hi;
   if (hh < 0 || hh > mod.funcs.len()) {
     hh = mod.funcs.len();
   }
-  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, lo, hh, cache);
+  let unit: asmcore.UnitLeaves = asmcore.unit_leaves(mod, lo, hh, cache, s.kinds);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: unit.leaves };
   let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(mod, lo, hh, cache);
   s = asmcore.EmitState { ...s, float_abi: fabi.names, float_abi_masks: fabi.masks };

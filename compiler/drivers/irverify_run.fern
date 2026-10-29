@@ -5,6 +5,7 @@ import "../irfipverify";
 import "./irverifyprovided";
 import "../irverifyrc";
 import "../irverifygate";
+import "../ssa_lift";
 import "../rccertify";
 import "../util";
 
@@ -471,34 +472,34 @@ function provided_checks(): i32 {
 
 function gate_checks(): i32 {
   let clean: ir.Op[] = [ir.op_const_i32(1), ir.op_return()];
-  if (irverifygate.verify_problems("f", clean, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind(), rccertify.no_abis())).len() != 0) {
+  if (irverifygate.verify_problems("f", clean, 0, 1, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis())).len() != 0) {
     return 170;
   }
 
   let bad_slot: ir.Op[] = [ir.op_load_local(5), ir.op_return()];
-  if (irverifygate.verify_problems("f", bad_slot, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind(), rccertify.no_abis())).len() != 1) {
+  if (irverifygate.verify_problems("f", bad_slot, 0, 1, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis())).len() != 1) {
     return 171;
   }
   if (!util.contains(
-    irverify.problem_str(irverifygate.verify_problems("f", bad_slot, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind(), rccertify.no_abis()))[0]),
+    irverify.problem_str(irverifygate.verify_problems("f", bad_slot, 0, 1, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis()))[0]),
     "is outside the frame",
   )) {
     return 172;
   }
 
   let underflow: ir.Op[] = [ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_return()];
-  if (irverifygate.verify_problems("f", underflow, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind(), rccertify.no_abis())).len() != 1) {
+  if (irverifygate.verify_problems("f", underflow, 0, 1, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis())).len() != 1) {
     return 173;
   }
   if (!util.contains(
-    irverify.problem_str(irverifygate.verify_problems("f", underflow, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind(), rccertify.no_abis()))[0]),
+    irverify.problem_str(irverifygate.verify_problems("f", underflow, 0, 1, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis()))[0]),
     "operand stack underflow",
   )) {
     return 174;
   }
 
   let both: ir.Op[] = [ir.op_load_local(5), ir.op_bin("add", 0, false), ir.op_return()];
-  let bps: irverify.Problem[] = irverifygate.verify_problems("f", both, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind(), rccertify.no_abis()));
+  let bps: irverify.Problem[] = irverifygate.verify_problems("f", both, 0, 1, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis()));
   if (bps.len() != 2) {
     return 175;
   }
@@ -511,14 +512,14 @@ function gate_checks(): i32 {
 
   let sigs: irverify.NameIndex = irverify.sig_index([irverify.FnSig { name: "takes2", n_params: 2 }]);
   let arity: ir.Op[] = [ir.op_call_direct("takes2", 0), ir.op_return()];
-  let aps: irverify.Problem[] = irverifygate.verify_problems("f", arity, 0, 1, irverifygate.gate(sigs, ir.pops_by_kind(), rccertify.no_abis()));
+  let aps: irverify.Problem[] = irverifygate.verify_problems("f", arity, 0, 1, irverifygate.gate(sigs, ssa_lift.kind_table(), rccertify.no_abis()));
   if (aps.len() != 1) {
     return 178;
   }
   if (!util.contains(irverify.problem_str(aps[0]), "calls takes2 with 0 args")) {
     return 179;
   }
-  if (irverifygate.verify_problems("f", arity, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind(), rccertify.no_abis())).len() != 0) {
+  if (irverifygate.verify_problems("f", arity, 0, 1, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis())).len() != 0) {
     return 180;
   }
   return 0;
@@ -526,7 +527,7 @@ function gate_checks(): i32 {
 
 function refuse_probe(): i32 {
   let malformed: ir.Op[] = [ir.op_load_local(5), ir.op_return()];
-  irverifygate.verify_or_refuse("probe", malformed, 0, 1, irverifygate.gate(no_sigs(), ir.pops_by_kind(), rccertify.no_abis()));
+  irverifygate.verify_or_refuse("probe", malformed, 0, 1, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis()));
   print("irverifygate: inert (FERN_IR_VERIFY=0)");
   return 0;
 }
@@ -800,7 +801,7 @@ function rc_checks(): i32 {
     return 207;
   }
 
-  let gp: irverify.Problem[] = irverifygate.verify_problems("f", selfhost_reuse(1, 2), 0, 8, irverifygate.gate(no_sigs(), ir.pops_by_kind(), rccertify.no_abis()));
+  let gp: irverify.Problem[] = irverifygate.verify_problems("f", selfhost_reuse(1, 2), 0, 8, irverifygate.gate(no_sigs(), ssa_lift.kind_table(), rccertify.no_abis()));
   let seen: boolean = false;
   let gi: i32 = 0;
   while (gi < gp.len()) {

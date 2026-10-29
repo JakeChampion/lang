@@ -12,6 +12,7 @@ func TestSelfHostLoweredUnitSignatureGate(t *testing.T) {
 import "./irverify";
 import "./irverifygate";
 import "./rccertify";
+import "./ssa_lift";
 
 function calls(g: irverifygate.Gate, name: string, count: i32): irverify.Problem[] {
   let ops: ir.Op[] = [];
@@ -26,14 +27,14 @@ function main(): i32 {
     irverify.FnSig { name: "local", n_params: 3 },
   ]);
   let physical = rccertify.abis_of(["external"], [[1, 1, 1, 1, 1, 1]], [false], [false], [-2], [[-2, -2]], [false]);
-  let gate = irverifygate.gate_unreported(declared, ir.pops_by_kind(), physical);
+  let gate = irverifygate.gate_unreported(declared, ssa_lift.kind_table(), physical);
   if (calls(gate, "external", 6).len() != 0) { return 1; }
   if (irverify.index_params(gate.sigs, "external") != 6) { return 2; }
   if (calls(gate, "external", 3).len() != 1) { return 3; }
   if (calls(gate, "external", 8).len() != 1) { return 4; }
   if (calls(gate, "local", 3).len() != 0) { return 5; }
   if (calls(gate, "local", 6).len() != 1) { return 6; }
-  let fallback = irverifygate.gate_unreported(declared, ir.pops_by_kind(), rccertify.no_abis());
+  let fallback = irverifygate.gate_unreported(declared, ssa_lift.kind_table(), rccertify.no_abis());
   if (calls(fallback, "external", 3).len() != 0) { return 7; }
   if (calls(fallback, "external", 6).len() != 1) { return 8; }
   return 0;
