@@ -265,8 +265,10 @@ for every plan ownership inference tries):
   That array is linked when the call took the linked array at its last use.
 - **Reuse tokens** (`reuse_pairs`, `carried_pairs`, `block_keeps`,
   `Plan.reuse`): a value dying in a block, of the slot count a later
-  construction in the block claims, has its drop turned into a **token**
-  the construction spends (`ReusePairs.tokens` where it is taken,
+  construction in the block claims, has its drop turned into a **token**.
+  This includes a value that nothing reads, which dies where it is defined:
+  the element that an update writing every field replaces (#13334). The
+  construction spends the token (`ReusePairs.tokens` where it is taken,
   `.builds` where it is spent, `.selfs` for a value dying at the
   construction itself). A value dying after its block's last construction
   of its own slot count may be **carried** to a construction in a later block (`Carry`): the

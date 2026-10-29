@@ -4457,7 +4457,7 @@ function reuse_pairs(f: ssasem.Func, p: Plan, idx: i32[][], vr: VariantReads, b:
         let taken: boolean = false;
         for d in step.drops {
           let sl: i32 = donor_slots(f, vr, b, d);
-          if (!taken && d != selfs[pos] && d != ins.result && sl >= 0 && !static_box(p, d)
+          if (!taken && d != selfs[pos] && sl >= 0 && !static_box(p, d)
             && claimed_after(claims_tab, sl, pos) && util.index_of_i32(pending, d) < 0) {
             pending = pending.append(d);
             pending_at = pending_at.append(pos);
