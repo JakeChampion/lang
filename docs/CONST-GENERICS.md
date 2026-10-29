@@ -228,8 +228,10 @@ places each compiler has to change.
   A method on `Slot[N, T]` reads N. Each instance of an impl gets its own N,
   also through a trait bound. A variant payload takes its type arguments
   from the expected enum instance (#13767), so `Full(Ring { ... })` gets N
-  from `Slot[4, string]`. The gate is the conformance case
-  `const_param_enums_impls` on every engine.
+  from `Slot[4, string]`. A receiver can give the const parameters other
+  names (`Ring[K, T]`), and an enum whose only parameters are const has
+  methods (#13786). The gates are the conformance cases
+  `const_param_enums_impls` and `const_param_receiver_names` on every engine.
 
 - **CG1d (done).** A const parameter on a type alias and a trait:
   `type Slot[const N: i32] = Ring[N, i32] | Gone`, `trait Fixed[const N: i32]`.

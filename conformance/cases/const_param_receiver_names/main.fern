@@ -1,0 +1,66 @@
+// A method may name the const parameters of its receiver with any names. An
+// enum whose only parameters are const has methods too.
+import "std/i32";
+
+struct Ring[const N: i32, T] { items: T[] }
+
+function (r: Ring[K, T]) cap(): i32 {
+  return K;
+}
+
+trait Room {
+  function room(self: Self): i32;
+}
+
+impl[const M: i32, T] Room for Ring[M, T] {
+  function room(self: Ring[M, T]): i32 {
+    return M - self.items.len();
+  }
+}
+
+enum Slot[const N: i32] { Full(i32), Empty }
+
+function (s: Slot[N]) width(): i32 {
+  return N;
+}
+
+function (s: Slot[Q]) held(): i32 {
+  return match (s) {
+    Full(v) => v + Q,
+    Empty => Q,
+  };
+}
+
+enum Bin[const N: i32, T] { Has(T), Nil }
+
+function (c: Bin[W, T]) size(): i32 {
+  return W;
+}
+
+enum Wrap[const N: i32] {
+  A(Ring[N, i32]),
+  B,
+}
+
+function used[const N: i32](w: Wrap[N]): i32 {
+  return match (w) {
+    A(r) => r.items.len() + N,
+    B => N,
+  };
+}
+
+function main(): i32 {
+  let r: Ring[6, string] = Ring { items: ["x"] };
+  print(r.cap().to_string());
+  print(r.room().to_string());
+  let s: Slot[3] = Empty;
+  let t: Slot[5] = Full(10);
+  print(s.width().to_string());
+  print(s.held().to_string());
+  print(t.held().to_string());
+  let c: Bin[7, string] = Nil;
+  print(c.size().to_string());
+  let w: Wrap[4] = A(Ring { items: [1] });
+  print(used(w).to_string());
+  return 0;
+}
