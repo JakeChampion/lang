@@ -14,8 +14,13 @@ var memoLine = regexp.MustCompile(`FERN_RC_CERTIFY: memo hits=(\d+) misses=(\d+)
 
 func compileCapturing(t *testing.T, cli *selfHostCLI, src string, env ...string) (string, int) {
 	t.Helper()
+	return compileCapturingWith(t, cli, cli.bin, src, env...)
+}
+
+func compileCapturingWith(t *testing.T, cli *selfHostCLI, bin, src string, env ...string) (string, int) {
+	t.Helper()
 	out := filepath.Join(t.TempDir(), "out.s")
-	cmd := runX86_64Bin(cli.runner, cli.bin, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, cli.stdlib)
+	cmd := runX86_64Bin(cli.runner, bin, "-target", "x86-64-linux", "-emit", "asm", "-o", out, src, cli.stdlib)
 	cmd.Env = append(os.Environ(), env...)
 	msg, err := cmd.CombinedOutput()
 	code := 0
@@ -85,5 +90,54 @@ func TestSelfHostRcCertifyMemo(t *testing.T) {
 	out, code = compileCapturing(t, cli, broken, memo, "FERN_IR_VERIFY=", "FERN_RC_CERTIFY=0")
 	if code != 0 {
 		t.Fatalf("FERN_RC_CERTIFY=0: exit %d, want 0\n%s", code, out)
+	}
+}
+
+// A memo one compiler build wrote gives another build no hits: the key names
+// the bytes of the compiler that certified each function.
+func TestSelfHostRcCertifyMemoKeysTheBuild(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	dir := t.TempDir()
+	memo := "FERN_RC_CERTIFY_MEMO=" + filepath.Join(dir, "memo")
+	src := filepath.Join(dir, "main.fern")
+	if err := os.WriteFile(src, []byte(sanSelfHostCleanSrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, code := compileCapturing(t, cli, src, memo, "FERN_IR_VERIFY=1"); code != 0 {
+		t.Fatalf("warming compile: exit %d\n%s", code, out)
+	}
+	raw, err := os.ReadFile(cli.bin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	same := filepath.Join(dir, "same-fern")
+	if err := os.WriteFile(same, raw, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, code := compileCapturingWith(t, cli, same, src, memo, "FERN_IR_VERIFY=1")
+	if code != 0 {
+		t.Fatalf("a copy of the build: exit %d\n%s", code, out)
+	}
+	if hits, misses := memoCounts(t, out); hits == 0 || misses != 0 {
+		t.Fatalf("a copy of the build: hits=%d misses=%d, want hits and no misses", hits, misses)
+	}
+	// A byte past the end changes the build's digest and not what it runs.
+	other := filepath.Join(dir, "other-fern")
+	if err := os.WriteFile(other, append(raw, 0), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, code = compileCapturingWith(t, cli, other, src, memo, "FERN_IR_VERIFY=1")
+	if code != 0 {
+		t.Fatalf("other build: exit %d\n%s", code, out)
+	}
+	if hits, misses := memoCounts(t, out); hits != 0 || misses == 0 {
+		t.Fatalf("another build's memo: hits=%d misses=%d, want no hits", hits, misses)
+	}
+	out, code = compileCapturing(t, cli, src, memo, "FERN_IR_VERIFY=1")
+	if code != 0 {
+		t.Fatalf("first build again: exit %d\n%s", code, out)
+	}
+	if hits, misses := memoCounts(t, out); hits == 0 || misses != 0 {
+		t.Fatalf("its own memo: hits=%d misses=%d, want hits and no misses", hits, misses)
 	}
 }

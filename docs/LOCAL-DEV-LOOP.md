@@ -759,7 +759,10 @@ has certified clean: `~/.cache/fern/certified/<version>-<target>.txt`, or
 under `$FERN_CACHE_DIR`, or `$XDG_CACHE_HOME/fern` off macOS, when set. A cold compile of
 the compiler pays about 15% for it; a warm one pays a digest per function.
 `FERN_IR_VERIFY=1` prints `FERN_RC_CERTIFY: memo hits=… misses=…` at the end
-of a compile. To certify everything again, delete the directory or set
+of a compile. An entry names the bytes of the compiler that wrote it, so a compiler
+built from changed sources certifies every function again. `stamps-<version>.txt`
+beside the memo maps a binary's inode and modification time to that digest,
+so a compiler hashes its own bytes only on its first compile. To certify everything again, delete the directory or set
 `FERN_RC_CERTIFY_MEMO=0`; to keep a test's memo apart, point
 `FERN_RC_CERTIFY_MEMO` at a directory. `FERN_RC_CERTIFY=0` turns the
 certifier off for a bisect that suspects it. The benches under `scripts/`
