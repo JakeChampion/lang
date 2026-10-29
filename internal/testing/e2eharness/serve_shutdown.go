@@ -333,16 +333,34 @@ func CheckSupervisedShutdown(t *testing.T, cmd *exec.Cmd, addr, stderrPath strin
 
 func StartInheritedServer(t *testing.T, cmd *exec.Cmd) (addr, stderrPath string) {
 	t.Helper()
+	ln := ListenInherited(t)
+	return ln.Start(t, cmd)
+}
+
+// InheritedListener is a listening socket bound before the server starts,
+// so a test can pick any further port while it holds this one.
+type InheritedListener struct {
+	file *os.File
+	Port int
+}
+
+func ListenInherited(t *testing.T) *InheritedListener {
+	t.Helper()
 	fd, port := boundSocket(t, false)
 	if err := syscall.Listen(fd, 128); err != nil {
 		syscall.Close(fd)
 		t.Fatalf("listen: %v", err)
 	}
-	file := os.NewFile(uintptr(fd), "listener")
-	defer file.Close()
+	return &InheritedListener{file: os.NewFile(uintptr(fd), "listener"), Port: port}
+}
+
+// Start hands the listener to cmd as LISTEN_FDS=1 and starts it.
+func (ln *InheritedListener) Start(t *testing.T, cmd *exec.Cmd) (addr, stderrPath string) {
+	t.Helper()
+	defer ln.file.Close()
 	cmd.Env = append(cmd.Environ(), "LISTEN_FDS=1")
-	stderrPath = StartServerProcess(t, cmd, file)
-	return fmt.Sprintf("127.0.0.1:%d", port), stderrPath
+	stderrPath = StartServerProcess(t, cmd, ln.file)
+	return fmt.Sprintf("127.0.0.1:%d", ln.Port), stderrPath
 }
 
 func ReservedPort(t *testing.T) int {

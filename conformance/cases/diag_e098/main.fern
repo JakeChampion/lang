@@ -1,0 +1,10 @@
+// A builtin is a call, not a value: naming one without calling it is
+// refused. A closure that calls the builtin is an ordinary function value.
+
+function main(): i32 {
+    let log: (string) => void = (msg: string): void => eprint(msg);
+    log("closure");
+    let f: (string) => void = eprint;
+    f("direct");
+    return 0;
+}
