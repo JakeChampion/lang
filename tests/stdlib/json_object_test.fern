@@ -8,7 +8,7 @@ function test_from_pairs(): test.TestOutcome {
     return test.fail("empty pairs must produce an empty object");
   }
   let small: json.JsonObject = json.from([("a", JNumber("1")), ("b", JBool(true)), ("a", JString("last"))]);
-  if (json.json_encode(JObject(small)) != "{\"a\":\"last\",\"b\":true}") {
+  if (json.encode(JObject(small)) != "{\"a\":\"last\",\"b\":true}") {
     return test.fail("pairs must retain first key order and last values");
   }
   let pairs: (string, json.JsonValue)[] = [];
@@ -19,10 +19,10 @@ function test_from_pairs(): test.TestOutcome {
   }
   pairs = pairs.append(("key0", JString("replaced")));
   let large: json.JsonObject = json.from(pairs);
-  if (large.len() != 20 || large.keys()[0] != "key0" || json.json_encode(large.get_or("key0", JNull)) != "\"replaced\"") {
+  if (large.len() != 20 || large.keys()[0] != "key0" || json.encode(large.get_or("key0", JNull)) != "\"replaced\"") {
     return test.fail("indexed objects must retain duplicate key semantics");
   }
-  return test.assert_eq(json.json_encode(JObject(json.from(large.entries()))), json.json_encode(JObject(large)));
+  return test.assert_eq(json.encode(JObject(json.from(large.entries()))), json.encode(JObject(large)));
 }
 
 function parsed(text: string): json.JsonObject {
@@ -112,7 +112,7 @@ function test_insert_replaces_in_place(): test.TestOutcome {
   if (large.len() != 20 || large.keys()[11] != "k11" || num(large.get("k11")) != "100") {
     return test.fail("large");
   }
-  return test.assert_eq(json.json_encode(JObject(small)), "{\"k0\":0,\"k1\":100,\"k2\":2}");
+  return test.assert_eq(json.encode(JObject(small)), "{\"k0\":0,\"k1\":100,\"k2\":2}");
 }
 
 function test_insert_across_the_index_threshold(): test.TestOutcome {
@@ -138,8 +138,8 @@ function test_get_or(): test.TestOutcome {
 
 function test_parse_repeated_keys(): test.TestOutcome {
   let small: json.JsonObject = parsed("{\"a\":1,\"b\":2,\"a\":3}");
-  if (json.json_encode(JObject(small)) != "{\"a\":3,\"b\":2}") {
-    return test.fail("small: " + json.json_encode(JObject(small)));
+  if (json.encode(JObject(small)) != "{\"a\":3,\"b\":2}") {
+    return test.fail("small: " + json.encode(JObject(small)));
   }
   let large: json.JsonObject = parsed("{\"a\":1,\"b\":2,\"c\":3,\"d\":4,\"e\":5,\"f\":6,\"g\":7,\"h\":8,\"i\":9,\"b\":20,\"j\":10}");
   if (large.len() != 10 || large.index.len() == 0) {
@@ -150,12 +150,12 @@ function test_parse_repeated_keys(): test.TestOutcome {
 
 function test_object_of(): test.TestOutcome {
   let o: json.JsonObject = json.object_of(["x", "y", "x"], [JNumber("1"), JNumber("2"), JNumber("3")]);
-  return test.assert_eq(json.json_encode(JObject(o)), "{\"x\":3,\"y\":2}");
+  return test.assert_eq(json.encode(JObject(o)), "{\"x\":3,\"y\":2}");
 }
 
 function test_document_order(): test.TestOutcome {
   let text: string = "{\"z\":1,\"a\":2,\"m\":{\"q\":[],\"b\":{}}}";
-  return test.assert_eq(json.json_encode(json.parse(text).unwrap_or(JNull)), text);
+  return test.assert_eq(json.encode(json.parse(text).unwrap_or(JNull)), text);
 }
 
 function main(): i32 {

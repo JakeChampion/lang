@@ -5,7 +5,7 @@ function main(): i32 {
     Ok(v) => {
       let a: i32 = 0;
       let b: i32 = 0;
-      match (json.json_get_i32(v, "a")) {
+      match (json.get_i32(v, "a")) {
         Some(x) => {
           a = x;
         },
@@ -13,7 +13,7 @@ function main(): i32 {
           return 1;
         }
       }
-      match (json.json_get_i32(v, "b")) {
+      match (json.get_i32(v, "b")) {
         Some(x) => {
           b = x;
         },

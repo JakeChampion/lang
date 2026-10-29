@@ -12,15 +12,15 @@ var jsonCases = []struct {
 	main string
 	exit int
 }{
-	{"encode-number", `let v: json.JsonValue = JNumber("42"); return json.json_encode(v).len();`, 2},
-	{"encode-string", `let v: json.JsonValue = JString("hi"); return json.json_encode(v).len();`, 4},
+	{"encode-number", `let v: json.JsonValue = JNumber("42"); return json.encode(v).len();`, 2},
+	{"encode-string", `let v: json.JsonValue = JString("hi"); return json.encode(v).len();`, 4},
 	{"parse-object-ok", `match (json.parse("{\"a\":1}")) { Ok(v) => { return 7; }, Err(_) => { return 0; } }`, 7},
 	{"parse-bad", `match (json.parse("{bad")) { Ok(v) => { return 1; }, Err(_) => { return 9; } }`, 9},
-	{"get-i32", `match (json.parse("{\"n\":42}")) { Ok(v) => { match (json.json_get_i32(v, "n")) { Some(x) => { return x; }, None => { return 0; } } }, Err(_) => { return 0; } } return 0;`, 42},
+	{"get-i32", `match (json.parse("{\"n\":42}")) { Ok(v) => { match (json.get_i32(v, "n")) { Some(x) => { return x; }, None => { return 0; } } }, Err(_) => { return 0; } } return 0;`, 42},
 	{"parse-array", `match (json.parse("[1,2,3]")) { Ok(v) => { return 7; }, Err(_) => { return 0; } }`, 7},
-	{"nested-object", `match (json.parse("{\"x\":{\"y\":9}}")) { Ok(v) => { match (json.json_get(v, "x")) { Some(inner) => { match (json.json_get_i32(inner, "y")) { Some(n) => { return n; }, None => { return 0; } } }, None => { return 0; } } }, Err(_) => { return 0; } } return 0;`, 9},
-	{"get-f64-exp", `match (json.parse("{\"x\": 2.5e1}")) { Ok(v) => { match (json.json_get_f64(v, "x")) { Some(x) => { if (x > 24.999 && x < 25.001) { return 25; } return 1; }, None => { return 2; } } }, Err(_) => { return 3; } } return 4;`, 25},
-	{"get-f64-neg-frac", `match (json.parse("{\"x\": -0.5}")) { Ok(v) => { match (json.json_get_f64(v, "x")) { Some(x) => { if (x > 0.0 - 0.501 && x < 0.0 - 0.499) { return 6; } return 1; }, None => { return 2; } } }, Err(_) => { return 3; } } return 4;`, 6},
+	{"nested-object", `match (json.parse("{\"x\":{\"y\":9}}")) { Ok(v) => { match (json.get(v, "x")) { Some(inner) => { match (json.get_i32(inner, "y")) { Some(n) => { return n; }, None => { return 0; } } }, None => { return 0; } } }, Err(_) => { return 0; } } return 0;`, 9},
+	{"get-f64-exp", `match (json.parse("{\"x\": 2.5e1}")) { Ok(v) => { match (json.get_f64(v, "x")) { Some(x) => { if (x > 24.999 && x < 25.001) { return 25; } return 1; }, None => { return 2; } } }, Err(_) => { return 3; } } return 4;`, 25},
+	{"get-f64-neg-frac", `match (json.parse("{\"x\": -0.5}")) { Ok(v) => { match (json.get_f64(v, "x")) { Some(x) => { if (x > 0.0 - 0.501 && x < 0.0 - 0.499) { return 6; } return 1; }, None => { return 2; } } }, Err(_) => { return 3; } } return 4;`, 6},
 }
 
 func jsonProgram(mainBody string) string {

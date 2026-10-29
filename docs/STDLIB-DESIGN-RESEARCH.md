@@ -68,7 +68,7 @@ the solution.
   encoding (per the stdlib's documented scope). Doing the
   ambitious version *later* is cheaper than maintaining
   three half-finished versions now.
-- **JSON encoder + parser already in stdlib** (`json_encode`
+- **JSON encoder + parser already in stdlib** (`json.encode`
   / `json_parse`). Means downstream features like
   `wasi:http`-content-negotiation work today.
 - **`format(fmt, args[])` minimal sprintf** is already
@@ -183,7 +183,7 @@ let resp = plat.fetch(HttpRequest {
     method: "POST",
     path:   "https://auth/login",
     headers: headers!{ "content-type": "application/json" },
-    body:    Stream.from_string(json_encode(payload)),
+    body:    Stream.from_string(json.encode(payload)),
 }).await?;
 ```
 
@@ -231,7 +231,7 @@ Sources:
 #### Parser strategies
 
 The codebase has `json_parse` (returns some `Value`-shaped
-type) and `json_encode`. The question for serious workloads
+type) and `json.encode`. The question for serious workloads
 is whether to grow it into a full design with multiple
 parsing modes.
 
@@ -301,18 +301,18 @@ bytes and populates the struct fields by name.
 
 #### JSON encoder
 
-Symmetric: `json_encode(value)` works for any type
+Symmetric: `json.encode(value)` works for any type
 implementing a `to_json()` trait/protocol, *or* falls
 back to a struct-walking generic. The fallback works for
 any plain struct with primitives.
 
-Today's `json_encode` probably already does this for
+Today's `json.encode` probably already does this for
 plain structs. The question: does it round-trip with
 `json_parse[T]`?
 
 **Recommendation: round-trip property as a regression
 test.** For every struct type used as a JSON payload,
-assert `json_parse[T](json_encode(t)) == t`. Add to the
+assert `json_parse[T](json.encode(t)) == t`. Add to the
 test runner.
 
 #### Query language
@@ -331,7 +331,7 @@ handler code wants it. Not yet.
 file of parse + lookup), widely interoperable, used in
 patch operations (RFC 6902 JSON-Patch), service-bindings
 config, etc. Worth adding as a small helper:
-`json_get(doc, "/user/id") → Option[Value]`.
+`json.get(doc, "/user/id") → Option[Value]`.
 
 #### What translates from each source
 
@@ -855,15 +855,15 @@ sum type. Aligns with the rest of the language.
 
 **Cost: 1 week.** **Impact: medium. Round-trip with §3.**
 
-`json_encode(value)` works for any plain struct via a
+`json.encode(value)` works for any plain struct via a
 generic walker (analogous to §3 but in the encoding
 direction). Properties:
 
-- Pretty-printing flag (`json_encode_pretty`).
+- Pretty-printing flag (`json.encode_pretty`).
 - Optional field handling: `None` → omit key (vs serialise
   as `null` — debatable; pick one, document).
 - Round-trip with `json_parse[T]`: assert
-  `json_parse[T](json_encode(t)) == t` for every struct
+  `json_parse[T](json.encode(t)) == t` for every struct
   type appearing in test corpora.
 
 ### 8. `MemoryWriter` for in-memory building
@@ -883,7 +883,7 @@ log records into memory, send when done.
 parsing.**
 
 ```
-pub function json_get(doc: Value, pointer: string): Option[Value]
+pub function get(doc: Value, pointer: string): Option[Value]
 ```
 
 Walks `"/users/0/name"`-shape pointers. ~30 LOC. Useful

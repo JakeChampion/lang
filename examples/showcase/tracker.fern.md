@@ -187,7 +187,7 @@ The tracker reads only the fields that it routes. It copies an offer or an answe
 ```fern
 <<Announce>>=
 function reply(pairs: (string, json.JsonValue)[]): string {
-  return json.json_encode(json.JObject(json.from(pairs)));
+  return json.encode(json.JObject(json.from(pairs)));
 }
 
 function failure(text: json.JsonValue, reason: string): string {
@@ -282,36 +282,36 @@ function peer_of(state: State, hash: string, id: string): Option[Peer] {
 }
 
 function announce(state: State, conn: string, msg: json.JsonValue): string {
-  let hash_text = json.json_get(msg, "info_hash").unwrap_or(json.JNull);
-  let hash = binary_id(json.json_get_string(msg, "info_hash"));
-  let id = binary_id(json.json_get_string(msg, "peer_id"));
+  let hash_text = json.get(msg, "info_hash").unwrap_or(json.JNull);
+  let hash = binary_id(json.get_string(msg, "info_hash"));
+  let id = binary_id(json.get_string(msg, "peer_id"));
   if (hash.len() == 0 || id.len() == 0) {
     return failure(hash_text, "info_hash and peer_id must each be 20 bytes");
   }
   let Some(swarm) = find_swarm(state, hash) else {
     return failure(hash_text, "this tracker serves only torrents that the Fern showcase registered in the last hour");
   };
-  let peer_text = json.json_get(msg, "peer_id").unwrap_or(json.JNull);
-  if (json.json_get_string(msg, "event").unwrap_or("") == "stopped") {
+  let peer_text = json.get(msg, "peer_id").unwrap_or(json.JNull);
+  if (json.get_string(msg, "event").unwrap_or("") == "stopped") {
     leave(state, conn);
     return "";
   }
   if (!join(state, conn, id, swarm)) {
     return failure(hash_text, "this swarm already has 12 peers");
   }
-  if let Some(answer) = json.json_get(msg, "answer") {
-    let target = binary_id(json.json_get_string(msg, "to_peer_id"));
+  if let Some(answer) = json.get(msg, "answer") {
+    let target = binary_id(json.get_string(msg, "to_peer_id"));
     if let Some(to) = peer_of(state, hash, target) {
-      deliver(state, to.conn, reply([("action", json.JString("announce")), ("info_hash", hash_text), ("peer_id", peer_text), ("answer", answer), ("offer_id", json.json_get(msg, "offer_id").unwrap_or(json.JNull))]));
+      deliver(state, to.conn, reply([("action", json.JString("announce")), ("info_hash", hash_text), ("peer_id", peer_text), ("answer", answer), ("offer_id", json.get(msg, "offer_id").unwrap_or(json.JNull))]));
     }
     return "";
   }
   let current = find_swarm(state, hash).unwrap_or(swarm);
-  let offers = json.json_get_array(msg, "offers").unwrap_or([]);
+  let offers = json.get_array(msg, "offers").unwrap_or([]);
   let k = 0;
   for other in current.peers {
     if (other != conn && k < offers.len() && k < 10) {
-      deliver(state, other, reply([("action", json.JString("announce")), ("info_hash", hash_text), ("peer_id", peer_text), ("offer", json.json_get(offers[k], "offer").unwrap_or(json.JNull)), ("offer_id", json.json_get(offers[k], "offer_id").unwrap_or(json.JNull))]));
+      deliver(state, other, reply([("action", json.JString("announce")), ("info_hash", hash_text), ("peer_id", peer_text), ("offer", json.get(offers[k], "offer").unwrap_or(json.JNull)), ("offer_id", json.get(offers[k], "offer_id").unwrap_or(json.JNull))]));
       k = k + 1;
     }
   }
@@ -319,9 +319,9 @@ function announce(state: State, conn: string, msg: json.JsonValue): string {
 }
 
 function scrape(state: State, msg: json.JsonValue): string {
-  let hash_text = json.json_get(msg, "info_hash").unwrap_or(json.JNull);
+  let hash_text = json.get(msg, "info_hash").unwrap_or(json.JNull);
   let peers = 0;
-  if let Some(swarm) = find_swarm(state, binary_id(json.json_get_string(msg, "info_hash"))) {
+  if let Some(swarm) = find_swarm(state, binary_id(json.get_string(msg, "info_hash"))) {
     peers = swarm.peers.len();
   }
   return reply([("action", json.JString("scrape")), ("info_hash", hash_text), ("complete", json.JNumber(peers.to_string())), ("incomplete", json.JNumber("0"))]);
@@ -347,7 +347,7 @@ pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn ht
             connection.close(1008, "send JSON");
             return;
           };
-          let action = json.json_get_string(msg, "action").unwrap_or("");
+          let action = json.get_string(msg, "action").unwrap_or("");
           let answer = "";
           if (action == "announce") {
             answer = announce(state, conn, msg);

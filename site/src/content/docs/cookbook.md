@@ -223,8 +223,8 @@ function main(): i32 {
     let text: string = "{\"name\": \"fern\", \"stars\": 42}";
     match (json.parse(text)) {
         Ok(doc) => {
-            print(json.json_get_string(doc, "name").unwrap_or("(anonymous)"));
-            print(json.json_get_i32(doc, "stars").unwrap_or(0).to_string());
+            print(json.get_string(doc, "name").unwrap_or("(anonymous)"));
+            print(json.get_i32(doc, "stars").unwrap_or(0).to_string());
             return 0;
         },
         Err(_) => { eprint("malformed JSON"); return 1; }
@@ -245,7 +245,7 @@ function main(): i32 {
         ("stars", JNumber("42")),
         ("tags", JArray([JString("cli"), JString("wasm")]))
     ]));
-    print(json.json_encode(doc));
+    print(json.encode(doc));
     return 0;
 }
 ```

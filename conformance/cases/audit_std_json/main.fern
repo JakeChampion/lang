@@ -4,7 +4,7 @@ import "std/json";
 function main(): i32 {
   match (json.parse("{\"a\":1,\"b\":[2,3],\"c\":\"hi\"}")) {
     Ok(v) => {
-      match (json.json_get_i32(v, "a")) {
+      match (json.get_i32(v, "a")) {
         Some(n) => {
           if (n != 1) {
             print("FAIL geti");
@@ -16,7 +16,7 @@ function main(): i32 {
           return 12;
         }
       }
-      match (json.json_get_string(v, "c")) {
+      match (json.get_string(v, "c")) {
         Some(s) => {
           if (s != "hi") {
             print("FAIL gets");
@@ -28,7 +28,7 @@ function main(): i32 {
           return 14;
         }
       }
-      let enc: string = json.json_encode(v);
+      let enc: string = json.encode(v);
       match (json.parse(enc)) {
         Ok(v2) => {
           print("OK");

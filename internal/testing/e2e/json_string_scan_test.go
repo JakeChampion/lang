@@ -12,7 +12,7 @@ import "std/i32";
 function show(text: string): string {
   match (json.parse(text)) {
     Ok(v) => {
-      return json.json_encode(v);
+      return json.encode(v);
     },
     Err(e) => {
       return "err";
@@ -24,7 +24,7 @@ function show(text: string): string {
 function main(): i32 {
   let raw: string[] = ["", "plain", "\"", "\\", "a\"b", "\"ab\"", "\n\r\t", "x\x01y\x1fz", "nul\0mid", "end\\", "héllo ✓", "a\"\"\\\\b"];
   for r in raw {
-    let e: string = json.json_escape(r);
+    let e: string = json.escape(r);
     print("[" + e + "]");
     print(show("\"" + e + "\""));
   }

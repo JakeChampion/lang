@@ -305,7 +305,7 @@ pub function socket(state: State, req: HttpRequest): Result[HttpResponse, dyn ht
                       live.notify(state.live, joined.id, subscription.listener.id);
                     },
                     Err(message) => {
-                      let sent: websocket.SendResult = connection.send_text("{\"error\":\"" + json.json_escape(message) + "\"}");
+                      let sent: websocket.SendResult = connection.send_text("{\"error\":\"" + json.escape(message) + "\"}");
                       connection.close(1013, message);
                     }
                   }

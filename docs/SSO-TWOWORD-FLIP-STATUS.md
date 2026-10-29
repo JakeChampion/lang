@@ -257,7 +257,7 @@ Concrete IR / codegen changes:
     clause instead of emitting back-to-back `(result T1)
     (result T2)` declarations. `wasm-tools` rejected the
     latter as malformed and the `__json_escape` /
-    `json_encode` headers (both string-returning) were the
+    `json.encode` headers (both string-returning) were the
     surfacers.
   - **`$random_bytes` two-word migration**
     (`internal/codegen/wasm/wasm.go`, `emitRandomBytesHelper`):

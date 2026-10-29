@@ -11,7 +11,7 @@ const jsonWsScanSrc = `import "std/json";
 function show(text: string): string {
   match (json.parse(text)) {
     Ok(v) => {
-      return json.json_encode(v);
+      return json.encode(v);
     },
     Err(e) => {
       return "err";

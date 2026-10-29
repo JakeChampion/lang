@@ -5463,36 +5463,36 @@ func TestWASMJsonEncode(t *testing.T) {
 import "std/json";
 function main(): i32 {
 		// Primitives.
-		if (json.json_encode(JNull) != "null") { return 1; }
-		if (json.json_encode(JBool(true)) != "true") { return 2; }
-		if (json.json_encode(JBool(false)) != "false") { return 3; }
-		if (json.json_encode(JNumber("42")) != "42") { return 4; }
-		if (json.json_encode(JNumber("3.14")) != "3.14") { return 5; }
-		if (json.json_encode(JString("hi")) != "\"hi\"") { return 6; }
-		if (json.json_encode(JString("")) != "\"\"") { return 7; }
+		if (json.encode(JNull) != "null") { return 1; }
+		if (json.encode(JBool(true)) != "true") { return 2; }
+		if (json.encode(JBool(false)) != "false") { return 3; }
+		if (json.encode(JNumber("42")) != "42") { return 4; }
+		if (json.encode(JNumber("3.14")) != "3.14") { return 5; }
+		if (json.encode(JString("hi")) != "\"hi\"") { return 6; }
+		if (json.encode(JString("")) != "\"\"") { return 7; }
 
 		// String escapes.
-		if (json.json_encode(JString("a\"b")) != "\"a\\\"b\"") { return 10; }
-		if (json.json_encode(JString("a\\b")) != "\"a\\\\b\"") { return 11; }
-		if (json.json_encode(JString("line\nbreak")) != "\"line\\nbreak\"") { return 12; }
-		if (json.json_encode(JString("\t")) != "\"\\t\"") { return 13; }
-		if (json.json_encode(JString("\r")) != "\"\\r\"") { return 14; }
+		if (json.encode(JString("a\"b")) != "\"a\\\"b\"") { return 10; }
+		if (json.encode(JString("a\\b")) != "\"a\\\\b\"") { return 11; }
+		if (json.encode(JString("line\nbreak")) != "\"line\\nbreak\"") { return 12; }
+		if (json.encode(JString("\t")) != "\"\\t\"") { return 13; }
+		if (json.encode(JString("\r")) != "\"\\r\"") { return 14; }
 
 		// Empty object — empty array literal needs a type
 		// annotation that's awkward at construction site, so
 		// just exercise empty objects.
-		if (json.json_encode(JObject(json.object())) != "{}") { return 20; }
+		if (json.encode(JObject(json.object())) != "{}") { return 20; }
 
 		// Heterogeneous array.
 		let a: json.JsonValue[] = [JNumber("1"), JString("two"), JBool(true), JNull];
-		if (json.json_encode(JArray(a)) != "[1,\"two\",true,null]") { return 30; }
+		if (json.encode(JArray(a)) != "[1,\"two\",true,null]") { return 30; }
 
 		// Object — insertion order preserved.
 		let m: json.JsonObject = json.object();
 		m = m.insert("name", JString("alice"));
 		m = m.insert("age", JNumber("30"));
 		m = m.insert("admin", JBool(false));
-		if (json.json_encode(JObject(m)) != "{\"name\":\"alice\",\"age\":30,\"admin\":false}") {
+		if (json.encode(JObject(m)) != "{\"name\":\"alice\",\"age\":30,\"admin\":false}") {
 			return 40;
 		}
 
@@ -5500,12 +5500,12 @@ function main(): i32 {
 		let inner: json.JsonValue[] = [JNumber("1"), JNumber("2"), JNumber("3")];
 		let outer: json.JsonObject = json.object();
 		outer = outer.insert("nums", JArray(inner));
-		if (json.json_encode(JObject(outer)) != "{\"nums\":[1,2,3]}") { return 50; }
+		if (json.encode(JObject(outer)) != "{\"nums\":[1,2,3]}") { return 50; }
 
 		return 0;
 	}`
 	if got := runWasm(t, src); got != 0 {
-		t.Errorf("WASM json_encode: exit = %d, want 0", got)
+		t.Errorf("WASM json.encode: exit = %d, want 0", got)
 	}
 }
 

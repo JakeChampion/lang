@@ -131,6 +131,6 @@ function __seconds(ns: i64): string {
 }
 
 function __quoted(s: string): string {
-  return "\"" + json.json_escape(s) + "\"";
+  return "\"" + json.escape(s) + "\"";
 }
 ```

@@ -70,7 +70,7 @@ function json_cases(): i32 {
   }
   match (js.parse("{\"n\":-9223372036854775808}")) {
     Ok(v) => {
-      match (js.json_get_i64(v, "n")) {
+      match (js.get_i64(v, "n")) {
         Some(n) => {
           if (n + 1 as i64 != -(9223372036854775807 as i64)) {
             return 9;

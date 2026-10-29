@@ -33,7 +33,7 @@ What Fern's prelude / built-ins cover today, as a baseline:
   `is_ascii_white_space`, `is_hex_digit`.
 - **encoding**: `encode` / `_decode`, `encode` /
   `_decode`, `url.encode` / `_decode` / `url.parse`,
-  `query_parse`, `json_encode` / `json_parse`.
+  `query_parse`, `json.encode` / `json_parse`.
 - **maps**: `Map[K, V]` with `set` / `get` / `get_or` / `has`
   / `delete` / `iter` / `keys` / `values` / `len` / `clear`.
 - **i/o**: `read_file`, `write_file`, `open_reader/writer/appender`,

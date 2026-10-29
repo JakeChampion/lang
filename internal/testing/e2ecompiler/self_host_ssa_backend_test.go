@@ -263,7 +263,7 @@ import "core/cmp";
 import "std/json";
 function main(): i32 {
     match (json.parse("[1, [2, 3], [], {\"k\": [4]}]")) {
-        Ok(v) => { return json.json_encode(v).len(); },
+        Ok(v) => { return json.encode(v).len(); },
         Err(e) => { return 1; },
     }
 }

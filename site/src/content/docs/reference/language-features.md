@@ -420,8 +420,8 @@ transforms flows in the order it runs instead of nesting inside-out:
 
 ```fern
 // These two are identical — the pipe form just reads forward.
-let body: string = json.json_encode(describe(u.path, q));
-let body: string = describe(u.path, q) |> json.json_encode;
+let body: string = json.encode(describe(u.path, q));
+let body: string = describe(u.path, q) |> json.encode;
 ```
 
 When the value belongs somewhere other than the first argument, mark the
