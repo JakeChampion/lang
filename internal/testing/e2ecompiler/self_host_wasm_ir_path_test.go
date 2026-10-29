@@ -561,14 +561,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"i64arr-unannot-index", `function main(): i32 { let xs = [10 as i64, 20 as i64]; let q: i64 = xs[0] + xs[1]; return q as i32; }`, 30},
 		{"i64arr-unannot-while", `function main(): i32 { let xs = [1 as i64, 2 as i64, 3 as i64]; let s: i64 = 0 as i64; let i = 0; while (i < 3) { s = s + xs[i]; i = i + 1; } return s as i32; }`, 6},
 		{"i64arr-unannot-forin", `function main(): i32 { let xs = [10 as i64, 20 as i64]; let s: i64 = 0 as i64; for x in xs { s = s + x; } return s as i32; }`, 30},
-		{"random-bytes-len", `import "std/rand";
-function main(): i32 { return rand.bytes(8).len(); }`, 8},
-		{"random-bytes-byte-range", `import "std/rand";
-function main(): i32 { let s: u8[] = rand.bytes(4); let x: i32 = s[0] as i32; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
-		{"random-i32-varies", `import "std/rand";
-function main(): i32 { let a: i32 = rand.next_i32(); let b: i32 = rand.next_i32(); if (a == b) { return 1; } return 7; }`, 7},
+		{"random-bytes-len", `function main(): i32 { return random_bytes(8).len(); }`, 8},
+		{"random-bytes-byte-range", `function main(): i32 { let s: u8[] = random_bytes(4); let x: i32 = s[0] as i32; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},
+		{"random-i32-varies", `function main(): i32 { let a: i32 = random_i32(); let b: i32 = random_i32(); if (a == b) { return 1; } return 7; }`, 7},
 		{"as-bytes-vals", `function main(): i32 { let b = "ABC".as_bytes(); if (b.len() != 3) { return 20; } if (b[0] != 65) { return 21; } if (b[2] != 67) { return 22; } return 5; }`, 5},
-		{"uuid-v4", uuidV4Program, 0},
+		{"uuid-v4", uuidV4ProgramLoaderless, 0},
 		{"trim-both", `function main(): i32 { return "  hi  ".trim().len(); }`, 2},
 		{"trim-tabs-nl", `function main(): i32 { return "\t\n ab \r\n".trim().len(); }`, 2},
 		{"trim-none", `function main(): i32 { return "abc".trim().len(); }`, 3},
