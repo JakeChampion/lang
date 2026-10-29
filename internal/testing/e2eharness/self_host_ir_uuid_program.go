@@ -1,5 +1,7 @@
 package e2eharness
 
+import "strings"
+
 const UuidV4Program = `
 import "std/rand";
 function hexd(n: i32): string { return slice_unchecked("0123456789abcdef", n, n + 1) + ""; }
@@ -21,3 +23,7 @@ function main(): i32 {
   return 0;
 }
 `
+
+// UuidV4ProgramLoaderless is UuidV4Program for a driver with no module
+// loader: it runs no checker, so it names the entropy builtin directly.
+var UuidV4ProgramLoaderless = strings.NewReplacer("import \"std/rand\";\n", "", "rand.bytes(", "random_bytes(").Replace(UuidV4Program)
