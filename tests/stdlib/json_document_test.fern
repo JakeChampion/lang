@@ -96,12 +96,12 @@ function test_to_value_matches_parse(): test.TestOutcome {
   ];
   let i: i32 = 0;
   while (i < texts.len()) {
-    let want: string = json.json_encode(json.parse(texts[i]).unwrap_or(JString("<unparsed>")));
+    let want: string = json.encode(json.parse(texts[i]).unwrap_or(JString("<unparsed>")));
     let d: json.Document = doc(texts[i]);
     if (d.tape.len() == 0) {
       return test.fail("parse_document rejected " + texts[i]);
     }
-    let got: string = json.json_encode(d.to_value(d.root()));
+    let got: string = json.encode(d.to_value(d.root()));
     if (got != want) {
       return test.assert_eq(got, want);
     }

@@ -99,9 +99,9 @@ pub function parse_message(body: string): Option[Message] {
         return None;
       }
       let id: string = "";
-      match (json.json_get(v, "id")) {
+      match (json.get(v, "id")) {
         Some(iv) => {
-          id = json.json_encode(iv);
+          id = json.encode(iv);
         },
         None => {}
       }
@@ -115,7 +115,7 @@ pub function parse_message(body: string): Option[Message] {
 }
 
 pub function get_value(v: json.JsonValue, key: string): json.JsonValue {
-  match (json.json_get(v, key)) {
+  match (json.get(v, key)) {
     Some(m) => {
       return m;
     },
@@ -127,7 +127,7 @@ pub function get_value(v: json.JsonValue, key: string): json.JsonValue {
 }
 
 pub function get_string(v: json.JsonValue, key: string): string {
-  match (json.json_get_string(v, key)) {
+  match (json.get_string(v, key)) {
     Some(s) => {
       return s;
     },
@@ -147,9 +147,9 @@ pub function position(params: json.JsonValue): (i32, i32) {
 }
 
 function position_in(p: json.JsonValue): (i32, i32) {
-  match (json.json_get_i32(p, "line")) {
+  match (json.get_i32(p, "line")) {
     Some(line) => {
-      match (json.json_get_i32(p, "character")) {
+      match (json.get_i32(p, "character")) {
         Some(ch) => {
           return (line, ch);
         },
@@ -172,12 +172,12 @@ pub function request_range(params: json.JsonValue): (i32, i32, i32, i32) {
 }
 
 pub function changed_text(params: json.JsonValue): Option[string] {
-  match (json.json_get_array(params, "contentChanges")) {
+  match (json.get_array(params, "contentChanges")) {
     Some(cs) => {
       if (cs.len() == 0) {
         return None;
       }
-      return json.json_get_string(cs[cs.len() - 1], "text");
+      return json.get_string(cs[cs.len() - 1], "text");
     },
     None => {
       return None;
@@ -203,7 +203,7 @@ pub function notification(method: string, params: string): string {
 }
 
 function quote(s: string): string {
-  return "\"" + json.json_escape(s) + "\"";
+  return "\"" + json.escape(s) + "\"";
 }
 
 pub function initialize_result(): string {
@@ -386,16 +386,16 @@ pub function fix_data(range: string, new_text: string, title: string): string {
 pub function code_actions(params: json.JsonValue): string {
   let uri: string = document_uri(params);
   let out: string[] = [];
-  match (json.json_get_array(get_value(params, "context"), "diagnostics")) {
+  match (json.get_array(get_value(params, "context"), "diagnostics")) {
     Some(ds) => {
       for d in ds {
         let data: json.JsonValue = get_value(d, "data");
         let title: string = get_string(data, "title");
         let text: string = get_string(data, "newText");
         let range: json.JsonValue = get_value(data, "range");
-        if (title.len() > 0 && text.len() > 0 && !json.json_is_null(range)) {
-          let edit: string = text_edit(json.json_encode(range), text);
-          out = out.append("{\"title\":" + quote(title) + ",\"kind\":\"quickfix\",\"diagnostics\":[" + json.json_encode(d) + "],\"edit\":" + workspace_edit([uri], [[edit]]) + "}");
+        if (title.len() > 0 && text.len() > 0 && !json.is_null(range)) {
+          let edit: string = text_edit(json.encode(range), text);
+          out = out.append("{\"title\":" + quote(title) + ",\"kind\":\"quickfix\",\"diagnostics\":[" + json.encode(d) + "],\"edit\":" + workspace_edit([uri], [[edit]]) + "}");
         }
       }
     },
@@ -409,7 +409,7 @@ pub function text_edit(range: string, text: string): string {
 }
 
 pub function include_declaration(params: json.JsonValue): boolean {
-  match (json.json_get_bool(get_value(params, "context"), "includeDeclaration")) {
+  match (json.get_bool(get_value(params, "context"), "includeDeclaration")) {
     Some(b) => {
       return b;
     },

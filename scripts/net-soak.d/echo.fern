@@ -12,7 +12,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     Ok(text) => {
       match (json.parse(text)) {
         Ok(v) => {
-          return http.json(json.json_encode(v));
+          return http.json(json.encode(v));
         },
         Err(e) => {
           return http.text(400, e.to_string());

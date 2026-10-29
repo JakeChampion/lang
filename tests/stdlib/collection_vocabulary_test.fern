@@ -104,11 +104,11 @@ function test_json_object(): test.TestOutcome {
     return test.fail("remove");
   }
   let u: json.JsonObject = ab().update("c", json.JNumber("7"), plus_one);
-  if (u.len() != 3 || json.json_encode(u.get_or("c", json.JNull)) != "71") {
+  if (u.len() != 3 || json.encode(u.get_or("c", json.JNull)) != "71") {
     return test.fail("update absent");
   }
   let g: json.JsonObject = ab().merge(json.object().insert("b", json.JString("x")));
-  if (g.len() != 2 || json.json_encode(g.get_or("b", json.JNull)) != "\"x\"") {
+  if (g.len() != 2 || json.encode(g.get_or("b", json.JNull)) != "\"x\"") {
     return test.fail("merge");
   }
   return test.assert_true(o.entries().len() == 2 && o.values().len() == 2);

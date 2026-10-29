@@ -48,15 +48,15 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<10 const JSON_ESCAPES: u8[]>>
 
-<<11 pub function json_escape(s: string): string>>
+<<11 pub function escape(s: string): string>>
 
 <<12 function __json_escape_width(b: i32): i32>>
 
-<<13 pub function json_encode(v: JsonValue): string>>
+<<13 pub function encode(v: JsonValue): string>>
 
 <<14 function __json_spaces(n: i32): string>>
 
-<<15 pub function json_encode_pretty(v: JsonValue, indent: i32): string>>
+<<15 pub function encode_pretty(v: JsonValue, indent: i32): string>>
 
 <<16 const JSON_NOT_WS: u8[]>>
 
@@ -103,18 +103,18 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<38 function __json_t_elements(d: Document, n: i32): JsonValue[]>>
 
-<<39 pub function json_get(obj: JsonValue, key: string): Option[JsonValue]>>
+<<39 pub function get(obj: JsonValue, key: string): Option[JsonValue]>>
 
 
-<<41 pub function json_get_i64(obj: JsonValue, key: string): Option[i64]>>
+<<41 pub function get_i64(obj: JsonValue, key: string): Option[i64]>>
 
 <<42 function __json_number_i64(s: string): Option[i64]>>
 
-<<43 pub function json_get_f64(obj: JsonValue, key: string): Option[f64]>>
+<<43 pub function get_f64(obj: JsonValue, key: string): Option[f64]>>
 
 <<44 function __json_ptr_unescape(tok: string): string>>
 
-<<45 pub function json_pointer(doc: JsonValue, pointer: string): Option[JsonValue]>>
+<<45 pub function pointer(doc: JsonValue, path: string): Option[JsonValue]>>
 
 <<46 pub trait Json>>
 
@@ -125,7 +125,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<48 pub trait FromJson>>
 
 
-<<49 pub function json_kind(v: JsonValue): string>>
+<<49 pub function kind(v: JsonValue): string>>
 
 <<50 impl FromJson for i32>>
 
@@ -484,11 +484,11 @@ const JSON_ESCAPES: u8[] = [
 ];
 ```
 
-### `11 pub function json_escape(s: string): string`
+### `11 pub function escape(s: string): string`
 
 ```fern
-<<11 pub function json_escape(s: string): string>>=
-pub function json_escape(s: string): string {
+<<11 pub function escape(s: string): string>>=
+pub function escape(s: string): string {
   let n: i32 = s.len();
   let i: i32 = __scan_set(s, 0, JSON_ESCAPES);
   if (i == n) {
@@ -552,11 +552,11 @@ function __json_put_escape(buf: u8[], pos: i32, b: i32): u8[] {
 }
 ```
 
-### `13 pub function json_encode(v: JsonValue): string`
+### `13 pub function encode(v: JsonValue): string`
 
 ```fern
-<<13 pub function json_encode(v: JsonValue): string>>=
-pub function json_encode(v: JsonValue): string {
+<<13 pub function encode(v: JsonValue): string>>=
+pub function encode(v: JsonValue): string {
   let buf: u8[] = [];
   let i: i32 = 0;
   match (v) {
@@ -573,7 +573,7 @@ pub function json_encode(v: JsonValue): string {
       return s;
     },
     JString(s) => {
-      return "\"" + json_escape(s) + "\"";
+      return "\"" + escape(s) + "\"";
     },
     JArray(arr) => {
       buf = buf.append(91 as u8);
@@ -582,7 +582,7 @@ pub function json_encode(v: JsonValue): string {
         if (i > 0) {
           buf = buf.append(44 as u8);
         }
-        let enc: string = json_encode(arr[i]);
+        let enc: string = encode(arr[i]);
         let el: i32 = enc.len();
         let k: i32 = 0;
         while (k < el) {
@@ -602,7 +602,7 @@ pub function json_encode(v: JsonValue): string {
           buf = buf.append(44 as u8);
         }
         buf = buf.append(34 as u8);
-        let ek: string = json_escape(o.names[mi]);
+        let ek: string = escape(o.names[mi]);
         let ekl: i32 = ek.len();
         let kk: i32 = 0;
         while (kk < ekl) {
@@ -611,7 +611,7 @@ pub function json_encode(v: JsonValue): string {
         }
         buf = buf.append(34 as u8);
         buf = buf.append(58 as u8);
-        let ev: string = json_encode(o.items[mi]);
+        let ev: string = encode(o.items[mi]);
         let evl: i32 = ev.len();
         let vk: i32 = 0;
         while (vk < evl) {
@@ -666,7 +666,7 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
       return s;
     },
     JString(s) => {
-      return "\"" + json_escape(s) + "\"";
+      return "\"" + escape(s) + "\"";
     },
     JArray(arr) => {
       let n: i32 = arr.len();
@@ -708,7 +708,7 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
         }
         buf = __json_append_str(buf, inner);
         buf = buf.append(34 as u8);
-        buf = __json_append_str(buf, json_escape(o.names[mi]));
+        buf = __json_append_str(buf, escape(o.names[mi]));
         buf = buf.append(34 as u8);
         buf = __json_append_str(buf, ": ");
         buf = __json_append_str(buf, __json_pretty(o.items[mi], indent, depth + 1));
@@ -723,11 +723,11 @@ function __json_pretty(v: JsonValue, indent: i32, depth: i32): string {
 }
 ```
 
-### `15 pub function json_encode_pretty(v: JsonValue, indent: i32): string`
+### `15 pub function encode_pretty(v: JsonValue, indent: i32): string`
 
 ```fern
-<<15 pub function json_encode_pretty(v: JsonValue, indent: i32): string>>=
-pub function json_encode_pretty(v: JsonValue, indent: i32): string {
+<<15 pub function encode_pretty(v: JsonValue, indent: i32): string>>=
+pub function encode_pretty(v: JsonValue, indent: i32): string {
   return __json_pretty(v, indent, 0);
 }
 ```
@@ -1780,11 +1780,11 @@ function __json_t_members(d: Document, n: i32): JsonObject {
 }
 ```
 
-### `39 pub function json_get(obj: JsonValue, key: string): Option[JsonValue]`
+### `39 pub function get(obj: JsonValue, key: string): Option[JsonValue]`
 
 ```fern
-<<39 pub function json_get(obj: JsonValue, key: string): Option[JsonValue]>>=
-pub function json_get(obj: JsonValue, key: string): Option[JsonValue] {
+<<39 pub function get(obj: JsonValue, key: string): Option[JsonValue]>>=
+pub function get(obj: JsonValue, key: string): Option[JsonValue] {
   match (obj) {
     JObject(m) => {
       match (m.get(key)) {
@@ -1803,8 +1803,8 @@ pub function json_get(obj: JsonValue, key: string): Option[JsonValue] {
   return None;
 }
 
-pub function json_get_string(obj: JsonValue, key: string): Option[string] {
-  match (json_get(obj, key)) {
+pub function get_string(obj: JsonValue, key: string): Option[string] {
+  match (get(obj, key)) {
     Some(v) => {
       match (v) {
         JString(s) => {
@@ -1822,8 +1822,8 @@ pub function json_get_string(obj: JsonValue, key: string): Option[string] {
   return None;
 }
 
-pub function json_get_i32(obj: JsonValue, key: string): Option[i32] {
-  match (json_get(obj, key)) {
+pub function get_i32(obj: JsonValue, key: string): Option[i32] {
+  match (get(obj, key)) {
     Some(v) => {
       match (v) {
         JNumber(s) => {
@@ -1843,12 +1843,12 @@ pub function json_get_i32(obj: JsonValue, key: string): Option[i32] {
 ```
 
 
-### `41 pub function json_get_i64(obj: JsonValue, key: string): Option[i64]`
+### `41 pub function get_i64(obj: JsonValue, key: string): Option[i64]`
 
 ```fern
-<<41 pub function json_get_i64(obj: JsonValue, key: string): Option[i64]>>=
-pub function json_get_i64(obj: JsonValue, key: string): Option[i64] {
-  match (json_get(obj, key)) {
+<<41 pub function get_i64(obj: JsonValue, key: string): Option[i64]>>=
+pub function get_i64(obj: JsonValue, key: string): Option[i64] {
+  match (get(obj, key)) {
     Some(v) => {
       match (v) {
         JNumber(s) => {
@@ -1905,12 +1905,12 @@ function __json_range_i64(s: string, start: i32, end: i32): Option[i64] {
 }
 ```
 
-### `43 pub function json_get_f64(obj: JsonValue, key: string): Option[f64]`
+### `43 pub function get_f64(obj: JsonValue, key: string): Option[f64]`
 
 ```fern
-<<43 pub function json_get_f64(obj: JsonValue, key: string): Option[f64]>>=
-pub function json_get_f64(obj: JsonValue, key: string): Option[f64] {
-  match (json_get(obj, key)) {
+<<43 pub function get_f64(obj: JsonValue, key: string): Option[f64]>>=
+pub function get_f64(obj: JsonValue, key: string): Option[f64] {
+  match (get(obj, key)) {
     Some(v) => {
       match (v) {
         JNumber(s) => {
@@ -1928,8 +1928,8 @@ pub function json_get_f64(obj: JsonValue, key: string): Option[f64] {
   return None;
 }
 
-pub function json_get_bool(obj: JsonValue, key: string): Option[boolean] {
-  match (json_get(obj, key)) {
+pub function get_bool(obj: JsonValue, key: string): Option[boolean] {
+  match (get(obj, key)) {
     Some(v) => {
       match (v) {
         JBool(b) => {
@@ -1947,8 +1947,8 @@ pub function json_get_bool(obj: JsonValue, key: string): Option[boolean] {
   return None;
 }
 
-pub function json_get_array(obj: JsonValue, key: string): Option[JsonValue[]] {
-  match (json_get(obj, key)) {
+pub function get_array(obj: JsonValue, key: string): Option[JsonValue[]] {
+  match (get(obj, key)) {
     Some(v) => {
       match (v) {
         JArray(arr) => {
@@ -1966,8 +1966,8 @@ pub function json_get_array(obj: JsonValue, key: string): Option[JsonValue[]] {
   return None;
 }
 
-pub function json_get_object(obj: JsonValue, key: string): Option[JsonValue] {
-  match (json_get(obj, key)) {
+pub function get_object(obj: JsonValue, key: string): Option[JsonValue] {
+  match (get(obj, key)) {
     Some(v) => {
       match (v) {
         JObject(_) => {
@@ -2054,26 +2054,26 @@ function __json_ptr_index(tok: string): i32 {
 }
 ```
 
-### `45 pub function json_pointer(doc: JsonValue, pointer: string): Option[JsonValue]`
+### `45 pub function pointer(doc: JsonValue, path: string): Option[JsonValue]`
 
 ```fern
-<<45 pub function json_pointer(doc: JsonValue, pointer: string): Option[JsonValue]>>=
-pub function json_pointer(doc: JsonValue, pointer: string): Option[JsonValue] {
-  let n: i32 = pointer.len();
+<<45 pub function pointer(doc: JsonValue, path: string): Option[JsonValue]>>=
+pub function pointer(doc: JsonValue, path: string): Option[JsonValue] {
+  let n: i32 = path.len();
   if (n == 0) {
     return Some(doc);
   }
-  if (pointer[0] != 47) {
+  if (path[0] != 47) {
     return None;
   }
   let cur: JsonValue = doc;
   let i: i32 = 1;
   while (i <= n) {
     let j: i32 = i;
-    while (j < n && pointer[j] != 47) {
+    while (j < n && path[j] != 47) {
       j = j + 1;
     }
-    let tok: string = __json_ptr_unescape(slice_unchecked(pointer, i, j));
+    let tok: string = __json_ptr_unescape(slice_unchecked(path, i, j));
     match (cur) {
       JObject(m) => {
         match (m.get(tok)) {
@@ -2101,7 +2101,7 @@ pub function json_pointer(doc: JsonValue, pointer: string): Option[JsonValue] {
   return Some(cur);
 }
 
-pub function json_is_null(v: JsonValue): boolean {
+pub function is_null(v: JsonValue): boolean {
   match (v) {
     JNull => {
       return true;
@@ -2169,7 +2169,7 @@ impl Json for f32 {
 
 impl Json for string {
   function to_json(self: string): string {
-    return "\"" + json_escape(self) + "\"";
+    return "\"" + escape(self) + "\"";
   }
 }
 ```
@@ -2230,11 +2230,11 @@ pub trait FromJson {
 }
 ```
 
-### `49 pub function json_kind(v: JsonValue): string`
+### `49 pub function kind(v: JsonValue): string`
 
 ```fern
-<<49 pub function json_kind(v: JsonValue): string>>=
-pub function json_kind(v: JsonValue): string {
+<<49 pub function kind(v: JsonValue): string>>=
+pub function kind(v: JsonValue): string {
   match (v) {
     JNull => {
       return "null";
@@ -2277,7 +2277,7 @@ impl FromJson for i32 {
         }
       },
       _ => {
-        return Err(error("expected an integer, got " + json_kind(v)));
+        return Err(error("expected an integer, got " + kind(v)));
       }
     }
     return Err(error(""));
@@ -2298,7 +2298,7 @@ impl FromJson for i64 {
         }
       },
       _ => {
-        return Err(error("expected an integer, got " + json_kind(v)));
+        return Err(error("expected an integer, got " + kind(v)));
       }
     }
     return Err(error(""));
@@ -2319,7 +2319,7 @@ impl FromJson for u32 {
         }
       },
       _ => {
-        return Err(error("expected an integer, got " + json_kind(v)));
+        return Err(error("expected an integer, got " + kind(v)));
       }
     }
     return Err(error(""));
@@ -2340,7 +2340,7 @@ impl FromJson for u64 {
         }
       },
       _ => {
-        return Err(error("expected an integer, got " + json_kind(v)));
+        return Err(error("expected an integer, got " + kind(v)));
       }
     }
     return Err(error(""));
@@ -2361,7 +2361,7 @@ impl FromJson for f64 {
         }
       },
       _ => {
-        return Err(error("expected a number, got " + json_kind(v)));
+        return Err(error("expected a number, got " + kind(v)));
       }
     }
     return Err(error(""));
@@ -2382,7 +2382,7 @@ impl FromJson for f32 {
         }
       },
       _ => {
-        return Err(error("expected a number, got " + json_kind(v)));
+        return Err(error("expected a number, got " + kind(v)));
       }
     }
     return Err(error(""));
@@ -2401,7 +2401,7 @@ impl FromJson for boolean {
         return Ok(b);
       },
       _ => {
-        return Err(error("expected a boolean, got " + json_kind(v)));
+        return Err(error("expected a boolean, got " + kind(v)));
       }
     }
     return Err(error(""));
@@ -2415,7 +2415,7 @@ impl FromJson for string {
         return Ok(s);
       },
       _ => {
-        return Err(error("expected a string, got " + json_kind(v)));
+        return Err(error("expected a string, got " + kind(v)));
       }
     }
     return Err(error(""));
@@ -2462,7 +2462,7 @@ pub(package) function from_json_array[T: FromJson](v: JsonValue): Result[T[], Js
       return Ok(out);
     },
     _ => {
-      return Err(error("expected an array, got " + json_kind(v)));
+      return Err(error("expected an array, got " + kind(v)));
     }
   }
   return Err(error(""));
@@ -2503,7 +2503,7 @@ pub(package) function from_json_field(v: JsonValue, name: string): Result[JsonVa
       }
     },
     _ => {
-      return Err(error("expected an object, got " + json_kind(v)));
+      return Err(error("expected an object, got " + kind(v)));
     }
   }
   return Err(error(""));
@@ -2529,7 +2529,7 @@ pub(package) function from_json_optional_field(v: JsonValue, name: string): Resu
       }
     },
     _ => {
-      return Err(error("expected an object, got " + json_kind(v)));
+      return Err(error("expected an object, got " + kind(v)));
     }
   }
   return Err(error(""));
@@ -2555,7 +2555,7 @@ pub(package) function from_json_variant(v: JsonValue): Result[string, JsonError]
       return Ok(m.names[0]);
     },
     _ => {
-      return Err(error("expected a variant name or a one-key object, got " + json_kind(v)));
+      return Err(error("expected a variant name or a one-key object, got " + kind(v)));
     }
   }
   return Err(error(""));
@@ -2598,7 +2598,7 @@ pub(package) function from_json_item(p: JsonValue, i: i32, n: i32): Result[JsonV
       return Ok(xs[i]);
     },
     _ => {
-      return Err(error("expected an array, got " + json_kind(p)));
+      return Err(error("expected an array, got " + kind(p)));
     }
   }
   return Err(error(""));

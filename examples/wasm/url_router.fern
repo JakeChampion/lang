@@ -44,7 +44,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     },
     Ok(u) => {
       let q: Map[string, string[]] = url.query_parse(u.query);
-      let body: string = describe(u.path, q) |> json.json_encode;
+      let body: string = describe(u.path, q) |> json.encode;
       return http.ok(body);
     }
   }

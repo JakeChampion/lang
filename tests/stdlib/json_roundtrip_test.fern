@@ -9,7 +9,7 @@ function doc(): string {
 function test_get_string(): test.TestOutcome {
   match (json.parse(doc())) {
     Ok(obj) => {
-      match (json.json_get_string(obj, "name")) {
+      match (json.get_string(obj, "name")) {
         Some(v) => {
           return test.assert_eq(v, "fern");
         },
@@ -27,7 +27,7 @@ function test_get_string(): test.TestOutcome {
 function test_get_i32(): test.TestOutcome {
   match (json.parse(doc())) {
     Ok(obj) => {
-      match (json.json_get_i32(obj, "age")) {
+      match (json.get_i32(obj, "age")) {
         Some(v) => {
           return test.assert_eq(v, 3);
         },
@@ -45,7 +45,7 @@ function test_get_i32(): test.TestOutcome {
 function test_get_bool(): test.TestOutcome {
   match (json.parse(doc())) {
     Ok(obj) => {
-      match (json.json_get_bool(obj, "active")) {
+      match (json.get_bool(obj, "active")) {
         Some(v) => {
           return test.assert_true(v);
         },
@@ -63,7 +63,7 @@ function test_get_bool(): test.TestOutcome {
 function test_get_missing(): test.TestOutcome {
   match (json.parse(doc())) {
     Ok(obj) => {
-      match (json.json_get_string(obj, "nope")) {
+      match (json.get_string(obj, "nope")) {
         Some(v) => {
           return test.fail("expected None for missing key");
         },
@@ -79,10 +79,10 @@ function test_get_missing(): test.TestOutcome {
 }
 
 function test_get_wrong_type(): test.TestOutcome {
-  // "name" is a string → json_get_i32 must return None, not coerce.
+  // "name" is a string → json.get_i32 must return None, not coerce.
   match (json.parse(doc())) {
     Ok(obj) => {
-      match (json.json_get_i32(obj, "name")) {
+      match (json.get_i32(obj, "name")) {
         Some(v) => {
           return test.fail("expected None for non-number");
         },
@@ -100,9 +100,9 @@ function test_get_wrong_type(): test.TestOutcome {
 function test_is_null(): test.TestOutcome {
   match (json.parse(doc())) {
     Ok(obj) => {
-      match (json.json_get(obj, "meta")) {
+      match (json.get(obj, "meta")) {
         Some(v) => {
-          return test.assert_true(json.json_is_null(v));
+          return test.assert_true(json.is_null(v));
         },
         None => {
           return test.fail("expected meta key");
@@ -118,9 +118,9 @@ function test_is_null(): test.TestOutcome {
 function test_get_array(): test.TestOutcome {
   match (json.parse(doc())) {
     Ok(obj) => {
-      match (json.json_get_array(obj, "tags")) {
+      match (json.get_array(obj, "tags")) {
         Some(arr) => {
-          return test.assert_true(arr.len() == 2 && json.json_encode(arr[0]) == "\"a\"");
+          return test.assert_true(arr.len() == 2 && json.encode(arr[0]) == "\"a\"");
         },
         None => {
           return test.fail("expected tags array");
@@ -137,7 +137,7 @@ function test_encode_array_round_trip(): test.TestOutcome {
   // Array order is deterministic, so the round-trip is exact.
   match (json.parse("[1,2,3]")) {
     Ok(v) => {
-      return test.assert_eq(json.json_encode(v), "[1,2,3]");
+      return test.assert_eq(json.encode(v), "[1,2,3]");
     },
     Err(_) => {
       return test.fail("parse failed");
@@ -149,7 +149,7 @@ function test_encode_scalars(): test.TestOutcome {
   let ok: boolean = true;
   match (json.parse("true")) {
     Ok(v) => {
-      ok = ok && json.json_encode(v) == "true";
+      ok = ok && json.encode(v) == "true";
     },
     Err(_) => {
       return test.fail("parse true failed");
@@ -157,7 +157,7 @@ function test_encode_scalars(): test.TestOutcome {
   }
   match (json.parse("null")) {
     Ok(v) => {
-      ok = ok && json.json_encode(v) == "null";
+      ok = ok && json.encode(v) == "null";
     },
     Err(_) => {
       return test.fail("parse null failed");
@@ -165,7 +165,7 @@ function test_encode_scalars(): test.TestOutcome {
   }
   match (json.parse("42")) {
     Ok(v) => {
-      ok = ok && json.json_encode(v) == "42";
+      ok = ok && json.encode(v) == "42";
     },
     Err(_) => {
       return test.fail("parse 42 failed");
@@ -178,7 +178,7 @@ function test_encode_string_escape(): test.TestOutcome {
   // A quote inside the string must re-escape on encode.
   match (json.parse("\"a\\\"b\"")) {
     Ok(v) => {
-      return test.assert_eq(json.json_encode(v), "\"a\\\"b\"");
+      return test.assert_eq(json.encode(v), "\"a\\\"b\"");
     },
     Err(_) => {
       return test.fail("parse failed");
@@ -190,7 +190,7 @@ function test_encode_string_escape_all(): test.TestOutcome {
   let j: string = "\"a\\\"b\\\\c\\nd\\re\\tf\\u0001g\"";
   match (json.parse(j)) {
     Ok(v) => {
-      return test.assert_eq(json.json_encode(v), j);
+      return test.assert_eq(json.encode(v), j);
     },
     Err(_) => {
       return test.fail("parse failed");
@@ -201,7 +201,7 @@ function test_encode_string_escape_all(): test.TestOutcome {
 function __reencode(input: string): string {
   match (json.parse(input)) {
     Ok(v) => {
-      return json.json_encode(v);
+      return json.encode(v);
     },
     Err(_) => {
       return "PARSE_FAIL";
@@ -226,7 +226,7 @@ function test_encode_nested_round_trip(): test.TestOutcome {
   let j: string = "{\"items\":[{\"id\":1,\"tag\":\"a\\\"b\"},{\"id\":2,\"kids\":[3,4]}],\"ok\":true}";
   match (json.parse(j)) {
     Ok(v) => {
-      return test.assert_eq(json.json_encode(v), j);
+      return test.assert_eq(json.encode(v), j);
     },
     Err(_) => {
       return test.fail("parse failed");
@@ -286,7 +286,7 @@ function test_parse_unescaped_control(): test.TestOutcome {
   }
   match (json.parse("\"a\\tb\"")) {
     Ok(v) => {
-      return test.assert_eq(json.json_encode(v), "\"a\\tb\"");
+      return test.assert_eq(json.encode(v), "\"a\\tb\"");
     },
     Err(_) => {
       return test.fail("rejected an escaped tab");
@@ -334,7 +334,7 @@ function test_depth_limit(): test.TestOutcome {
 function test_get_f64(): test.TestOutcome {
   match (json.parse("{\"x\":3.5}")) {
     Ok(v) => {
-      match (json.json_get_f64(v, "x")) {
+      match (json.get_f64(v, "x")) {
         Some(f) => {
           let d: f64 = f - 3.5;
           if (d < 0.0) {
@@ -356,7 +356,7 @@ function test_get_f64(): test.TestOutcome {
 function test_get_f64_exp(): test.TestOutcome {
   match (json.parse("{\"x\":1.5e3}")) {
     Ok(v) => {
-      match (json.json_get_f64(v, "x")) {
+      match (json.get_f64(v, "x")) {
         Some(f) => {
           let d: f64 = f - 1500.0;
           if (d < 0.0) {
@@ -378,7 +378,7 @@ function test_get_f64_exp(): test.TestOutcome {
 function test_get_i32_overflow(): test.TestOutcome {
   match (json.parse("{\"x\":2147483648}")) {
     Ok(v) => {
-      match (json.json_get_i32(v, "x")) {
+      match (json.get_i32(v, "x")) {
         Some(x) => {
           return test.fail("expected None on i32 overflow");
         },
@@ -396,7 +396,7 @@ function test_get_i32_overflow(): test.TestOutcome {
 function test_get_i64_overflow(): test.TestOutcome {
   match (json.parse("{\"x\":99999999999999999999}")) {
     Ok(v) => {
-      match (json.json_get_i64(v, "x")) {
+      match (json.get_i64(v, "x")) {
         Some(x) => {
           return test.fail("expected None on i64 overflow");
         },
@@ -414,7 +414,7 @@ function test_get_i64_overflow(): test.TestOutcome {
 function __i64_get(lit: string): string {
   match (json.parse("{\"x\":" + lit + "}")) {
     Ok(v) => {
-      match (json.json_get_i64(v, "x")) {
+      match (json.get_i64(v, "x")) {
         Some(n) => {
           return n.to_string();
         },
@@ -456,20 +456,20 @@ function test_i64_bounds(): test.TestOutcome {
 }
 
 function test_pretty_scalars_and_empties(): test.TestOutcome {
-  if (json.json_encode_pretty(JNumber("42"), 2) != "42") {
+  if (json.encode_pretty(JNumber("42"), 2) != "42") {
     return test.fail("number");
   }
-  if (json.json_encode_pretty(JString("hi"), 2) != "\"hi\"") {
+  if (json.encode_pretty(JString("hi"), 2) != "\"hi\"") {
     return test.fail("string");
   }
-  if (json.json_encode_pretty(JBool(true), 2) != "true") {
+  if (json.encode_pretty(JBool(true), 2) != "true") {
     return test.fail("bool");
   }
-  if (json.json_encode_pretty(JNull, 2) != "null") {
+  if (json.encode_pretty(JNull, 2) != "null") {
     return test.fail("null");
   }
   let empty: json.JsonValue[] = [];
-  if (json.json_encode_pretty(JArray(empty), 2) != "[]") {
+  if (json.encode_pretty(JArray(empty), 2) != "[]") {
     return test.fail("empty array");
   }
   return test.pass();
@@ -478,7 +478,7 @@ function test_pretty_scalars_and_empties(): test.TestOutcome {
 function test_pretty_structure(): test.TestOutcome {
   match (json.parse("{\"a\":1,\"b\":[10,20]}")) {
     Ok(v) => {
-      let p: string = json.json_encode_pretty(v, 2);
+      let p: string = json.encode_pretty(v, 2);
       if (!p.contains("\n")) {
         return test.fail("no newline");
       }
@@ -500,9 +500,9 @@ function test_pretty_roundtrip(): test.TestOutcome {
   let src: string = "{\"name\":\"fern\",\"nums\":[1,2,3],\"nested\":{\"ok\":true},\"e\":{}}";
   match (json.parse(src)) {
     Ok(v) => {
-      match (json.parse(json.json_encode_pretty(v, 4))) {
+      match (json.parse(json.encode_pretty(v, 4))) {
         Ok(v2) => {
-          return test.assert_eq(json.json_encode(v2), json.json_encode(v));
+          return test.assert_eq(json.encode(v2), json.encode(v));
         },
         Err(_) => {
           return test.fail("pretty did not re-parse");
@@ -516,24 +516,24 @@ function test_pretty_roundtrip(): test.TestOutcome {
 }
 
 function test_escape_named(): test.TestOutcome {
-  return test.assert_eq(json.json_escape("a\"b\\c\nd\re\tf"), "a\\\"b\\\\c\\nd\\re\\tf");
+  return test.assert_eq(json.escape("a\"b\\c\nd\re\tf"), "a\\\"b\\\\c\\nd\\re\\tf");
 }
 
 function test_escape_control_bytes(): test.TestOutcome {
   let s: string = string_from_bytes_unchecked([1 as u8, 31 as u8]);
-  return test.assert_eq(json.json_escape(s), "\\u0001\\u001f");
+  return test.assert_eq(json.escape(s), "\\u0001\\u001f");
 }
 
 function test_escape_passthrough(): test.TestOutcome {
-  if (json.json_escape("") != "") {
+  if (json.escape("") != "") {
     return test.fail("empty string should escape to empty");
   }
-  return test.assert_eq(json.json_escape("héllo wörld"), "héllo wörld");
+  return test.assert_eq(json.escape("héllo wörld"), "héllo wörld");
 }
 
 function test_escape_matches_encoder(): test.TestOutcome {
   let raw: string = "x\x02\"y\\z\n";
-  return test.assert_eq("\"" + json.json_escape(raw) + "\"", json.json_encode(JString(raw)));
+  return test.assert_eq("\"" + json.escape(raw) + "\"", json.encode(JString(raw)));
 }
 
 function main(): i32 {

@@ -1258,7 +1258,7 @@ tests.
     array. Empty input yields an empty map. Trailing `&`
     is ignored. `+` is left alone — callers handling form-
     encoded data should pre-process.
-  - **`json_encode(v)` shipped.** Auto-injected `JsonValue`
+  - **`json.encode(v)` shipped.** Auto-injected `JsonValue`
     enum (variants `JNull`, `JBool(boolean)`,
     `JNumber(string)`, `JString(string)`,
     `JArray(JsonValue[])`, `JObject(Map[string,
@@ -1294,7 +1294,7 @@ tests.
     16-byte parser-state struct (`s`, `sLen`, `pos`,
     `error`). Numbers stored verbatim as JNumber's string
     payload — no double-parsing, perfect round-trip with
-    json_encode. String escapes decoded: `\"`, `\\`, `\/`,
+    json.encode. String escapes decoded: `\"`, `\\`, `\/`,
     `\b`, `\f`, `\n`, `\r`, `\t`, `\uXXXX` for BMP code
     points (UTF-8 1/2/3-byte encoding). Surrogate pairs
     are now combined: `😀` becomes the 4-byte

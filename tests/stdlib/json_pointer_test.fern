@@ -25,7 +25,7 @@ function str_of(v: json.JsonValue): string {
 }
 
 function ptr_num(doc: json.JsonValue, ptr: string): string {
-  match (json.json_pointer(doc, ptr)) {
+  match (json.pointer(doc, ptr)) {
     Some(v) => {
       return num_of(v);
     },
@@ -36,7 +36,7 @@ function ptr_num(doc: json.JsonValue, ptr: string): string {
 }
 
 function ptr_str(doc: json.JsonValue, ptr: string): string {
-  match (json.json_pointer(doc, ptr)) {
+  match (json.pointer(doc, ptr)) {
     Some(v) => {
       return str_of(v);
     },
@@ -51,7 +51,7 @@ function doc_main(): json.JsonValue {
 }
 
 function test_whole_doc(): test.TestOutcome {
-  match (json.json_pointer(doc_main(), "")) {
+  match (json.pointer(doc_main(), "")) {
     Some(v) => {
       match (v) {
         JObject(m) => {

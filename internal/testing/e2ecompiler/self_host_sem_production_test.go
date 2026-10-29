@@ -5471,7 +5471,7 @@ function main(): i32 { return width(S("abc")) + width(N); }
 	{name: "std-json-encode-is-produced", atLeast: 52, want: "2|42\n", src: `
 import "std/json";
 function main(): i32 {
-    let s: string = json.json_encode(JNumber("42"));
+    let s: string = json.encode(JNumber("42"));
     print(s);
     return s.len();
 }

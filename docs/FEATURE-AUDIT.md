@@ -795,7 +795,7 @@ without the monomorphiser fix).
 AST emitter handled them inline (`asm.fern:1258-1313`, `asm_arm64.fern:1243-1297`)
 keyed on `asmcore.is_map` / `is_mapiter`. The IR path intercepted none, so
 `m.iter()` lowered to a `Map.iter` `call_direct` that `calls_only_known` couldn't
-resolve → `BAIL call[Map.iter]` → AST, dragging `std/json`'s `json_encode`
+resolve → `BAIL call[Map.iter]` → AST, dragging `std/json`'s `json.encode`
 (`JObject` walk, `json.fern:109`) — and thus `json_roundtrip` — to the legacy
 emitter.
 
@@ -812,7 +812,7 @@ so a MapIter receiver never enters the map block and bails at its user-method
 fallthrough. `expr_is_str` recovers `it.key()` / `it.value()` as `string` when
 K / V is `string` (mirroring the `m.get_or(k,d)` map-value case), so a chained
 `it.key().len()` / `it.value().len()` lowers `.len()` as `str_len` rather than
-mis-reading the string box's data-ptr slot as an array length — `json_encode`'s
+mis-reading the string box's data-ptr slot as an array length — `json.encode`'s
 `__json_escape(it.key())` (a direct arg, not `.len()`) didn't surface this, but
 the `TestSelfHostMapIterX86_64` AST-driver cases (`key().len()` + string-value
 `value().len()`) did. wasm rejects the cluster (`wasm_eligible`) — wasm maps are
@@ -1351,8 +1351,8 @@ the i32 range — are the common case that gap blocked.
 
 `synthFromJson` now picks the accessor by integer width: an `i64` / `u64`
 (`ast.NumberType` with `Width == 64`) field extracts through a new
-**`std/json.json_get_i64`**, everything narrower stays on `json_get_i32`. The new
-accessor mirrors `json_get_i32` but accumulates in 64-bit (`n = n*10 + (digit as
+**`std/json.get_i64`**, everything narrower stays on `json.get_i32`. The new
+accessor mirrors `json.get_i32` but accumulates in 64-bit (`n = n*10 + (digit as
 i64)`), so values like `9000000000` and `1717000000000` round-trip instead of
 truncating. A non-numeric value or non-digit body still returns `None`.
 
@@ -2026,13 +2026,13 @@ New `tests/stdlib/json_roundtrip_test.fern` drives the **raw** std/json API
 directly — `json_detail_test` / `json_field_eq_test` exercise std/json only
 indirectly through std/test's `assert_json_*` helpers (has_key / eq_field /
 array_len / object_size). Covers `json_parse` (`string` → `Option[JsonValue]`),
-the typed getters `json_get_string` / `_bool` / `_i32` (→ `Option[T]`, incl. the
-missing-key and wrong-type → `None` paths), `json_get` + `json_is_null` (the
-`JNull` predicate), `json_get_array` (`JArray` navigation), and `json_encode`
+the typed getters `json.get_string` / `_bool` / `_i32` (→ `Option[T]`, incl. the
+missing-key and wrong-type → `None` paths), `json.get` + `json.is_null` (the
+`JNull` predicate), `json.get_array` (`JArray` navigation), and `json.encode`
 (`JsonValue` → string — array round-trip, scalars, string re-escaping). 11 tests.
 
 Significance for the IR frontier: this is the first migration suite to exercise
-`json_encode` walking the **`JArray` array-payload-enum variant** (`JArray(arr:
+`json.encode` walking the **`JArray` array-payload-enum variant** (`JArray(arr:
 JsonValue[])`) on the self-host path — the `assert_json_*` helpers never reach
 the encoder or `JArray` navigation. It **passes the differential gate on both
 x86 + arm64**, confirming the array-payload-enum recursion + the `JsonValue`
@@ -4344,8 +4344,8 @@ Author note: `join(parts: string[])` takes an array, not varargs.
 
 New native fixtures, all ✅ on interp / x86-64 / arm64 / wasm and clearing the
 wasm owned-vs-borrow differential gate:
-- `audit_std_json` — `json_parse` → `json_get_i32` / `json_get_string` →
-  `json_encode` → re-parse (also covers the §C `JsonValue` variants). Self-host
+- `audit_std_json` — `json_parse` → `json.get_i32` / `json.get_string` →
+  `json.encode` → re-parse (also covers the §C `JsonValue` variants). Self-host
   covered by the existing `self_host_json_test.go`.
 - `audit_std_time` — `is_leap_year` / `days_in_month` / `date_make` /
   `format_iso`.
@@ -4357,7 +4357,7 @@ No new bugs. `std/time` / `std/format` / `std/csv` self-host coverage is pending
 
 Author note: module-level free functions are called qualified
 (`json.json_parse`, `csv.parse_line`); `json_parse` returns `Option`
-(not `Result`); the integer getter is `json_get_i32`.
+(not `Result`); the integer getter is `json.get_i32`.
 
 ### 2026-06-12 — std/string core methods audited (native 4-backend differential)
 

@@ -1253,7 +1253,7 @@ Phase 3 CANNOT start with the freelist — it must start by
    on the use-case shapes (not just synthetic churns):
    `stdlib_query_parse_roundtrip` (std/url → `Map[string, string[]]`:
    map-structural free + the escape-out path + string[] values) and
-   `stdlib_json_roundtrip` (std/json `json_parse`/`json_encode` →
+   `stdlib_json_roundtrip` (std/json `json_parse`/`json.encode` →
    `JsonValue`: non-uniform enum box free + nested Map/array). Both
    fold `__rc_underflow_count()` into the result, so any over-release
    in the combined drop paths trips the detector.

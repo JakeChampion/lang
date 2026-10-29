@@ -8,16 +8,16 @@ import "std/string";
 function main(): i32 {
     match (json.parse("{\"name\":\"fern\",\"nums\":[1,2,3],\"nested\":{\"ok\":true},\"e\":{},\"a\":[]}")) {
         Ok(v) => {
-            let p: string = json.json_encode_pretty(v, 2);
+            let p: string = json.encode_pretty(v, 2);
             if (!p.contains("\n") || !p.contains("  \"name\": \"fern\"")) { return 1; }
             if (!p.contains("    1")) { return 2; }          // nested-array element indent
             if (!p.contains("{}") || !p.contains("[]")) { return 3; }  // empties compact
             match (json.parse(p)) {
-                Ok(v2) => { if (json.json_encode(v2) != json.json_encode(v)) { return 4; } },
+                Ok(v2) => { if (json.encode(v2) != json.encode(v)) { return 4; } },
                 Err(_) => { return 5; }
             }
-            if (json.json_encode_pretty(JNumber("7"), 4) != "7") { return 6; }
-            if (json.json_encode_pretty(JString("x"), 4) != "\"x\"") { return 7; }
+            if (json.encode_pretty(JNumber("7"), 4) != "7") { return 6; }
+            if (json.encode_pretty(JString("x"), 4) != "\"x\"") { return 7; }
             return 42;
         },
         Err(_) => { return 99; }

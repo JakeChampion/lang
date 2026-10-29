@@ -233,7 +233,7 @@ pub function (r: Report) bytes_per_op_milli(): i64 {
 }
 
 pub function (r: Report) to_json(): string {
-  return "{\"name\":\"" + json.json_escape(r.name) + "\""
+  return "{\"name\":\"" + json.escape(r.name) + "\""
     + ",\"iterations\":" + r.iterations.to_string()
     + ",\"wall_ns\":" + r.wall_ns.to_string()
     + ",\"ops_per_sec\":" + r.ops_per_sec().to_string()
@@ -387,7 +387,7 @@ pub function summarize(name: string, reports: Report[]): Summary {
 }
 
 pub function (s: Summary) to_json(): string {
-  return "{\"name\":\"" + json.json_escape(s.name) + "\""
+  return "{\"name\":\"" + json.escape(s.name) + "\""
     + ",\"runs\":" + s.runs.to_string()
     + ",\"best_ops_per_sec\":" + s.best_ops_per_sec.to_string()
     + ",\"median_ops_per_sec\":" + s.median_ops_per_sec.to_string()

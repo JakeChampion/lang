@@ -378,9 +378,9 @@ pub function problem(status: i32, title: string, detail: string): HttpResponse {
   if (t.len() == 0) {
     t = status_text(status);
   }
-  let body: string = "{\"type\":\"about:blank\",\"title\":\"" + json.json_escape(t) + "\",\"status\":" + int.int_to_string(status);
+  let body: string = "{\"type\":\"about:blank\",\"title\":\"" + json.escape(t) + "\",\"status\":" + int.int_to_string(status);
   if (detail.len() > 0) {
-    body = body + ",\"detail\":\"" + json.json_escape(detail) + "\"";
+    body = body + ",\"detail\":\"" + json.escape(detail) + "\"";
   }
   return __http_response_typed(status, body + "}", "application/problem+json");
 }

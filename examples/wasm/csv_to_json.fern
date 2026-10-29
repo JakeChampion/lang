@@ -39,6 +39,6 @@ function main(): i32 {
     }
     i = i + 1;
   }
-  print(json.json_encode(JArray(rows)));
+  print(json.encode(JArray(rows)));
   return 0;
 }

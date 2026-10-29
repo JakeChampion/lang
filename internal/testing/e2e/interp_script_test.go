@@ -1738,16 +1738,16 @@ func TestInterpScriptJsonGetters(t *testing.T) {
 		name, source, wantStdout string
 	}{
 		{
-			name: "json_get_string returns Some on match, None on miss",
+			name: "json.get_string returns Some on match, None on miss",
 			source: `import "std/json";
 function main(): i32 {
     match (json.parse("{\"name\":\"Alice\"}")) {
         Ok(v) => {
-            match (json.json_get_string(v, "name")) {
+            match (json.get_string(v, "name")) {
                 Some(n) => { print(n); },
                 None => { print("none"); }
             }
-            match (json.json_get_string(v, "missing")) {
+            match (json.get_string(v, "missing")) {
                 Some(_) => { print("FOUND"); },
                 None => { print("absent"); }
             }
@@ -1760,14 +1760,14 @@ function main(): i32 {
 			wantStdout: "Alice\nabsent\n",
 		},
 		{
-			name: "json_get_i32 parses positive + negative integers",
+			name: "json.get_i32 parses positive + negative integers",
 			source: `import "std/json";
 function main(): i32 {
     match (json.parse("{\"a\":42,\"b\":-7,\"c\":0}")) {
         Ok(v) => {
-            match (json.json_get_i32(v, "a")) { Some(n) => { print(n.to_string()); }, None => { print("none"); } }
-            match (json.json_get_i32(v, "b")) { Some(n) => { print(n.to_string()); }, None => { print("none"); } }
-            match (json.json_get_i32(v, "c")) { Some(n) => { print(n.to_string()); }, None => { print("none"); } }
+            match (json.get_i32(v, "a")) { Some(n) => { print(n.to_string()); }, None => { print("none"); } }
+            match (json.get_i32(v, "b")) { Some(n) => { print(n.to_string()); }, None => { print("none"); } }
+            match (json.get_i32(v, "c")) { Some(n) => { print(n.to_string()); }, None => { print("none"); } }
             return 0;
         },
         Err(_) => { return 1; }
@@ -1777,16 +1777,16 @@ function main(): i32 {
 			wantStdout: "42\n-7\n0\n",
 		},
 		{
-			name: "json_get_bool extracts true / false correctly",
+			name: "json.get_bool extracts true / false correctly",
 			source: `import "std/json";
 function main(): i32 {
     match (json.parse("{\"yes\":true,\"no\":false}")) {
         Ok(v) => {
-            match (json.json_get_bool(v, "yes")) {
+            match (json.get_bool(v, "yes")) {
                 Some(b) => { if (b) { print("YES"); } else { print("no"); } },
                 None => { print("none"); }
             }
-            match (json.json_get_bool(v, "no")) {
+            match (json.get_bool(v, "no")) {
                 Some(b) => { if (b) { print("YES"); } else { print("no"); } },
                 None => { print("none"); }
             }
@@ -1799,12 +1799,12 @@ function main(): i32 {
 			wantStdout: "YES\nno\n",
 		},
 		{
-			name: "json_get_array returns the element list",
+			name: "json.get_array returns the element list",
 			source: `import "std/json";
 function main(): i32 {
     match (json.parse("{\"tags\":[\"a\",\"b\",\"c\"]}")) {
         Ok(v) => {
-            match (json.json_get_array(v, "tags")) {
+            match (json.get_array(v, "tags")) {
                 Some(arr) => { print(arr.len().to_string()); },
                 None => { print("none"); }
             }
@@ -1817,14 +1817,14 @@ function main(): i32 {
 			wantStdout: "3\n",
 		},
 		{
-			name: "json_get_object chains into nested objects",
+			name: "json.get_object chains into nested objects",
 			source: `import "std/json";
 function main(): i32 {
     match (json.parse("{\"user\":{\"name\":\"Bob\"}}")) {
         Ok(v) => {
-            match (json.json_get_object(v, "user")) {
+            match (json.get_object(v, "user")) {
                 Some(inner) => {
-                    match (json.json_get_string(inner, "name")) {
+                    match (json.get_string(inner, "name")) {
                         Some(n) => { print(n); },
                         None => { print("none"); }
                     }
@@ -1845,8 +1845,8 @@ function main(): i32 {
 function main(): i32 {
     match (json.parse("{\"age\":\"forty\"}")) {
         Ok(v) => {
-            // age is a string in the JSON; json_get_i32 must return None.
-            match (json.json_get_i32(v, "age")) {
+            // age is a string in the JSON; json.get_i32 must return None.
+            match (json.get_i32(v, "age")) {
                 Some(_) => { print("WRONG"); },
                 None => { print("rejected"); }
             }
@@ -1859,17 +1859,17 @@ function main(): i32 {
 			wantStdout: "rejected\n",
 		},
 		{
-			name: "json_is_null distinguishes null from absent / non-null",
+			name: "json.is_null distinguishes null from absent / non-null",
 			source: `import "std/json";
 function main(): i32 {
     match (json.parse("{\"x\":null,\"y\":1}")) {
         Ok(v) => {
-            match (json.json_get(v, "x")) {
-                Some(xv) => { if (json.json_is_null(xv)) { print("null"); } else { print("not null"); } },
+            match (json.get(v, "x")) {
+                Some(xv) => { if (json.is_null(xv)) { print("null"); } else { print("not null"); } },
                 None => { print("missing"); }
             }
-            match (json.json_get(v, "y")) {
-                Some(yv) => { if (json.json_is_null(yv)) { print("null"); } else { print("not null"); } },
+            match (json.get(v, "y")) {
+                Some(yv) => { if (json.is_null(yv)) { print("null"); } else { print("not null"); } },
                 None => { print("missing"); }
             }
             return 0;

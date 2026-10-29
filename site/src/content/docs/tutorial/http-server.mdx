@@ -195,7 +195,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
                 None => {}
             }
             // `|>` pipes the left value into the right function.
-            let body: string = JObject(out) |> json.json_encode;
+            let body: string = JObject(out) |> json.encode;
             return http.ok(body);
         }
     }

@@ -424,7 +424,7 @@ pub function taped(req: fetch.Request, resp: HttpResponse): string {
       values = values.append(json.JString(hex.encode(body)));
     }
   }
-  return json.json_encode(json.JObject(json.object_of(keys, values))) + "\n";
+  return json.encode(json.JObject(json.object_of(keys, values))) + "\n";
 }
 ```
 
