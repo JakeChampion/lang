@@ -42,6 +42,12 @@ The caller must prove that the address is valid, aligned, owned, and in range fo
 | `__account_entry(k, p)` | `i32, usize -> usize` | `p` must be an allocator block header. |
 | `__fern_rc_inc(p)`, `__fern_arr_dec(p, n)`, `__fern_box_free(p, n)`, `__fern_drop_arr_ptr(p, n)`, `__fern_str_dec(s)` | box pointer and count | `p` must be a live box with a correct count. A wrong count double-frees or leaks. |
 
+The Go oracle runs `__alloc`, `__free`, the loads, the stores, `__memcpy` and `__memset` on a byte arena (`internal/oracle/interp/rawmem.go`).
+The arena checks each obligation above, and a broken obligation stops the run with an error.
+The arena holds only `__alloc` blocks, so it cannot read the layout of a value.
+Thus the oracle does not run `__alloc_reuse`, `__str_bytes`, `__account_entry` or the box helpers.
+`fern -interp` sends these calls to the runtime of its own process, and it does no checks.
+
 ## Group B: release, count, layout, FFI, and runtime hooks
 
 These take typed values, but they change ownership, layout, or control flow outside the language model.

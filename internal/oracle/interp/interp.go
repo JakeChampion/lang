@@ -511,6 +511,7 @@ type Interp struct {
 	arrayCOW        arrayCOWMode
 	envs            []*env
 	moving          []Value
+	raw             rawMemory
 }
 
 type arrayCOWMode int
@@ -662,6 +663,7 @@ func New() *Interp {
 	i.Builtins["__method_Map_values"] = &Builtin{Fn: builtinMapValues}
 	i.Builtins["__alloc_u8"] = &Builtin{Fn: builtinAllocFilled("__alloc_u8", Number(0))}
 	i.Builtins["__arr_set_len"] = &Builtin{Fn: builtinArrSetLen}
+	registerRawMemory(i)
 	i.Builtins["__alloc_i32"] = &Builtin{Fn: builtinAllocFilled("__alloc_i32", Number(0))}
 	i.Builtins["__alloc_i64"] = &Builtin{Fn: builtinAllocFilled("__alloc_i64", Number(0))}
 	i.Builtins["__alloc_bool"] = &Builtin{Fn: builtinAllocFilled("__alloc_bool", Bool(false))}

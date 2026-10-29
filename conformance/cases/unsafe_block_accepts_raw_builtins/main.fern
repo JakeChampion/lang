@@ -1,7 +1,7 @@
 // spec: SC-02
 // Every raw builtin a program can reach is accepted inside an unsafe block:
 // an allocation, a store, a load, a release, a copy, a fill and a length
-// change, in a function body, in a loop, and in a closure.
+// change, at each width, in a function body, in a loop, and in a closure.
 
 function fill(): i32 {
     let total: i32 = 0;
@@ -34,6 +34,21 @@ function shrink(): i32 {
     return xs.len();
 }
 
+function pointers(): i32 {
+    let n: i32 = 0;
+    unsafe {
+        let w: i32 = __ptr_width();
+        let p: usize = __alloc(w + 4);
+        __store_ptr(p, p);
+        __store_u8(p + w as usize, 300);
+        if (__load_ptr(p) == p) {
+            n = __load_u8(p + w as usize);
+        }
+        __free(p, w + 4);
+    }
+    return n;
+}
+
 function main(): i32 {
     let copied: () => i32 = (): i32 => {
         let n: i32 = 0;
@@ -48,5 +63,6 @@ function main(): i32 {
     print(fill());
     print(shrink());
     print(copied());
+    print(pointers());
     return 0;
 }
