@@ -564,7 +564,7 @@ an empty chunk skipped, and a bare head for HEAD.
 `TestHTTPCorpus` runs the request fixtures of llhttp and httparse and this
 repository's request-smuggling cases (`internal/testing/e2e/testdata/http-corpus`,
 522 requests, its README for the columns and the sources) through
-`http_parse_request_framed` on the
+`http.parse_request_framed` on the
 interpreter, checked against the verdict pinned beside each request, and on
 wasm, x86-64 and arm64, checked against the interpreter;
 `TestSelfHostHTTPCorpus` is the same program through the self-host compiler

@@ -187,14 +187,14 @@ SETTINGS timeout is optional and not enforced).
    where it lies in the inbox (`start_in`'s offsets; `__frame_taken`
    leaves the inbox on the connection and `read` cuts it at its end), a
    regular field's name and value checked by the `__scan_set` kernels
-   (`http.http_field_name_lower_ok`, `http_field_value_ok`), and the run
+   (`http.field_name_lower_ok`, `http.field_value_ok`), and the run
    rebuilt around its connection in one nested construction where a
    request opens, since the planner keeps a record's unchanged fields in
    place only while no other reuse token is live across the update
    (#12795). What is left, 20 a request: the two literal strings; the
    request handed over (its record, body, event and the events array,
    the stream's record and the streams array, the `host` map and its two
-   arrays, and `http_request_target`'s copy of the target); the decoder,
+   arrays, and `http.request_target`'s copy of the target); the decoder,
    copied at a block's start because the loop reading the block lies
    between taking the decoder out of the connection and putting it back,
    which keeps the planner from taking it (#12795); the encoding record,

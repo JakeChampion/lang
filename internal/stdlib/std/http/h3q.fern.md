@@ -494,7 +494,7 @@ function __response_section(enc: qpack.Encoder, resp: HttpResponse, length: i64,
   if (!has_date && date.len() > 0) {
     out = enc.put(out, "date", date);
   }
-  if (!has_length && length >= 0 && !http.http_bodiless(resp.status)) {
+  if (!has_length && length >= 0 && !http.bodiless(resp.status)) {
     out = enc.put_length(out, length);
   }
   return out;
@@ -551,7 +551,7 @@ pub function (c: Conn) respond(id: i64, resp: HttpResponse): Conn {
 
 function (c: Conn) __respond_with(id: i64, resp: HttpResponse, bytes: [u8]): Conn {
   let n: i32 = bytes.len();
-  if (http.http_bodiless(resp.status)) {
+  if (http.bodiless(resp.status)) {
     n = 0;
   }
   let whole: boolean = resp.trailers.names.len() == 0;

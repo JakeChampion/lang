@@ -29,12 +29,12 @@ function test_bytes_constructor_keeps_status(): test.TestOutcome {
 }
 
 function test_serialized_wire_length_matches_body(): test.TestOutcome {
-  let wire: string = http.http_serialize_response(http.ok("hello"));
+  let wire: string = http.serialize_response(http.ok("hello"));
   return test.assert_contains(wire, "Content-Length: 5");
 }
 
 function test_serialized_wire_ends_with_body(): test.TestOutcome {
-  let wire: string = http.http_serialize_response(http.ok("hello"));
+  let wire: string = http.serialize_response(http.ok("hello"));
   return test.assert_contains(wire, "\r\n\r\nhello");
 }
 

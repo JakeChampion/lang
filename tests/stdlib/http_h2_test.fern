@@ -445,11 +445,11 @@ function test_field_rules(): test.TestOutcome {
   let values: string[] = ["a\tb", "", "gzip, deflate", "a\nb", string_from_bytes_unchecked([97u8, 127u8]), "a b"];
   let got: string = "";
   for n in names {
-    got = got + int.int_to_string(__bool(http.http_field_name_lower_ok(n)));
+    got = got + int.int_to_string(__bool(http.field_name_lower_ok(n)));
   }
   got = got + "|";
   for v in values {
-    got = got + int.int_to_string(__bool(http.http_field_value_ok(v)));
+    got = got + int.int_to_string(__bool(http.field_value_ok(v)));
   }
   return test.assert_eq(got, "1100001|111001");
 }

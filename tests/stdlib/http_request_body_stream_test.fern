@@ -21,7 +21,7 @@ function wire(body: string): string {
 }
 
 function parsed(body: string): HttpRequest {
-  match (http.http_parse_request(wire(body))) {
+  match (http.parse_request(wire(body))) {
     Ok(req) => {
       return req;
     },
@@ -146,7 +146,7 @@ function test_body_bytes_matches_body_len(): test.TestOutcome {
 }
 
 function test_bodyless_request_reads_empty(): test.TestOutcome {
-  match (http.http_parse_request("GET / HTTP/1.0\r\n\r\n")) {
+  match (http.parse_request("GET / HTTP/1.0\r\n\r\n")) {
     Ok(req) => {
       return test.assert_eq(body_text(req) + "/" + req.body_len().to_string(), "/0");
     },

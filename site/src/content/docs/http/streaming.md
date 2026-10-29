@@ -23,7 +23,7 @@ import "std/serve";
 import "std/platform";
 
 function init(): serve.Config {
-    let limits: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 1024 * 1024 * 1024 };
+    let limits: http.HttpLimits = http.HttpLimits { ...http.limits(), body: 1024 * 1024 * 1024 };
     return serve.Config { ...serve.config(), stream_bodies: true, limits: limits };
 }
 

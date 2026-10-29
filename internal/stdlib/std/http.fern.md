@@ -16,8 +16,8 @@ Limits and frame rules determine how much input belongs to a message. Protocol e
 import "std/http";
 
 function main(): i32 {
-  if (!http.http_is_success(204) || http.http_is_success(404)) { return 1; }
-  if (http.http_status_text(404) != "Not Found") { return 2; }
+  if (!http.is_success(204) || http.is_success(404)) { return 1; }
+  if (http.status_text(404) != "Not Found") { return 2; }
   return 0;
 }
 ```
@@ -32,7 +32,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<dependencies 2>>
 
-<<3 pub function http_status_text(code: i32): string>>
+<<3 pub function status_text(code: i32): string>>
 
 <<4 function __http_response_typed(status: i32, body: string, ct: string): HttpResponse>>
 
@@ -62,13 +62,13 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<17 function __media_type_is_json(ct: string): boolean>>
 
-<<18 pub function http_path_segments(path: string): string[]>>
+<<18 pub function path_segments(path: string): string[]>>
 
 <<19 function __find_crlf(buf: u8[], from: i32, end: i32): i32>>
 
 <<20 pub struct HttpLimits>>
 
-<<21 pub function http_limits(): HttpLimits>>
+<<21 pub function limits(): HttpLimits>>
 
 <<22 const NOT_TCHAR: u8[]>>
 
@@ -76,7 +76,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<24 function __crlf_terminated(buf: u8[], from: i32, end: i32): boolean>>
 
-<<25 pub function http_header_block_complete(buf: u8[], from: i32, limits: HttpLimits): boolean>>
+<<25 pub function header_block_complete(buf: u8[], from: i32, limits: HttpLimits): boolean>>
 
 <<26 function __find_crlf_crlf(buf: u8[], from: i32, end: i32): i32>>
 
@@ -94,25 +94,25 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<33 function __chunk_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): (i32, ChunkDecoder, i32, u8[])>>
 
-<<34 pub function http_parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseError]>>
+<<34 pub function parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseError]>>
 
 <<35 pub struct HttpFramed>>
 
 <<36 function __expectation(h: HeaderMap, at: i32): i32>>
 
-<<37 pub function http_parse_request_framed(buf: u8[]): HttpFraming>>
+<<37 pub function parse_request_framed(buf: u8[]): HttpFraming>>
 
 <<38 function __framed_new(head: __Head, body: u8[], trailers: HeaderMap, len: i32): HttpFramed>>
 
 <<39 pub struct HttpHead>>
 
-<<40 pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): Htt...>>
+<<40 pub function parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): Htt...>>
 
 <<41 struct __Head>>
 
 <<42 function __request_head(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): Result[__Head, i32]>>
 
-<<43 pub function http_request_target(method: string, target: string): Result[string, i32]>>
+<<43 pub function request_target(method: string, target: string): Result[string, i32]>>
 
 <<44 function __target_path(buf: u8[], from: i32, end: i32, options: boolean, prev: string): Result[string, i32]>>
 
@@ -124,11 +124,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<48 function __version_status(buf: u8[], from: i32, end: i32): i32>>
 
-<<49 pub function http_parse_request(buf: string): Result[HttpRequest, RequestParseError]>>
+<<49 pub function parse_request(buf: string): Result[HttpRequest, RequestParseError]>>
 
 <<50 function __http_reason(code: i32): string>>
 
-<<51 pub function http_serialize_response(resp: HttpResponse): string>>
+<<51 pub function serialize_response(resp: HttpResponse): string>>
 
 <<52 function __push_head(b: usize, resp: HttpResponse): void>>
 
@@ -164,11 +164,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<68 pub struct HttpResponseFramed>>
 
-<<69 pub function http_parse_response_framed(buf: u8[], method: string, eof: boolean, limits: HttpLimits): HttpR...>>
+<<69 pub function parse_response_framed(buf: u8[], method: string, eof: boolean, limits: HttpLimits): HttpR...>>
 
 <<70 function __response_head_refused(buf: u8[], from: i32, first_crlf: i32, headers_end: i32, bare: boolean): i32>>
 
-<<71 pub function http_hop_by_hop(name: string): boolean>>
+<<71 pub function hop_by_hop(name: string): boolean>>
 
 <<72 function __lists_token(value: string, want: string): boolean>>
 
@@ -176,7 +176,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<74 function __str_is_token(s: string): boolean>>
 
-<<75 pub function http_method_idempotent(method: string): boolean>>
+<<75 pub function method_idempotent(method: string): boolean>>
 ```
 
 
@@ -199,11 +199,11 @@ import "std/utf8" as utf8;
 import "core/cmp";
 ```
 
-### `3 pub function http_status_text(code: i32): string`
+### `3 pub function status_text(code: i32): string`
 
 ```fern
-<<3 pub function http_status_text(code: i32): string>>=
-pub function http_status_text(code: i32): string {
+<<3 pub function status_text(code: i32): string>>=
+pub function status_text(code: i32): string {
   let codes: i32[] = [
     100, 101, 200, 201, 202, 203, 204, 205, 206, 300, 301, 302, 303, 304, 305, 307, 308,
     400, 401, 402, 403, 404, 405, 406, 407, 408, 409, 410, 411, 412, 413, 414, 415, 416, 417, 418, 421, 422, 426, 428, 429, 431,
@@ -228,27 +228,27 @@ pub function is_valid_http_status(code: i32): boolean {
   return code >= 100 && code <= 599;
 }
 
-pub function http_is_informational(code: i32): boolean {
+pub function is_informational(code: i32): boolean {
   return code >= 100 && code <= 199;
 }
 
-pub function http_is_success(code: i32): boolean {
+pub function is_success(code: i32): boolean {
   return code >= 200 && code <= 299;
 }
 
-pub function http_is_redirect(code: i32): boolean {
+pub function is_redirect(code: i32): boolean {
   return code >= 300 && code <= 399;
 }
 
-pub function http_is_client_error(code: i32): boolean {
+pub function is_client_error(code: i32): boolean {
   return code >= 400 && code <= 499;
 }
 
-pub function http_is_server_error(code: i32): boolean {
+pub function is_server_error(code: i32): boolean {
   return code >= 500 && code <= 599;
 }
 
-pub function http_is_error(code: i32): boolean {
+pub function is_error(code: i32): boolean {
   return code >= 400 && code <= 599;
 }
 
@@ -376,7 +376,7 @@ pub function respond_error_with[S](pair: (S, Result[HttpResponse, dyn error.Erro
 pub function problem(status: i32, title: string, detail: string): HttpResponse {
   let t: string = title;
   if (t.len() == 0) {
-    t = http_status_text(status);
+    t = status_text(status);
   }
   let body: string = "{\"type\":\"about:blank\",\"title\":\"" + json.json_escape(t) + "\",\"status\":" + int.int_to_string(status);
   if (detail.len() > 0) {
@@ -400,7 +400,7 @@ pub struct HttpError { status: i32, title: string, detail: string }
 pub function (e: HttpError) message(): string {
   let title: string = e.title;
   if (title.len() == 0) {
-    title = http_status_text(e.status);
+    title = status_text(e.status);
   }
   if (e.detail.len() > 0) {
     return title + ": " + e.detail;
@@ -427,7 +427,7 @@ impl cmp.Display for HttpError {}
 ```fern
 <<11 pub function fail(status: i32, detail: string): HttpError>>=
 pub function fail(status: i32, detail: string): HttpError {
-  return HttpError { status: status, title: http_status_text(status), detail: detail };
+  return HttpError { status: status, title: status_text(status), detail: detail };
 }
 ```
 
@@ -611,11 +611,11 @@ function __media_type_is_json(ct: string): boolean {
 }
 ```
 
-### `18 pub function http_path_segments(path: string): string[]`
+### `18 pub function path_segments(path: string): string[]`
 
 ```fern
-<<18 pub function http_path_segments(path: string): string[]>>=
-pub function http_path_segments(path: string): string[] {
+<<18 pub function path_segments(path: string): string[]>>=
+pub function path_segments(path: string): string[] {
   let n: i32 = path.len();
   if let Some(q) = path.index_of("?") {
     n = q;
@@ -638,14 +638,14 @@ pub function http_path_segments(path: string): string[] {
   return out;
 }
 
-pub function http_url_path_only(path: string): string {
+pub function url_path_only(path: string): string {
   let Some(q) = path.index_of("?") else {
     return path;
   };
   return slice_unchecked(path, 0, q) + "";
 }
 
-pub function http_user_agent_is_bot(ua: string): boolean {
+pub function user_agent_is_bot(ua: string): boolean {
   if (ua.contains_ci("bot")) {
     return true;
   }
@@ -661,9 +661,9 @@ pub function http_user_agent_is_bot(ua: string): boolean {
   return false;
 }
 
-pub function http_header_value(block: string, key: string): Option[string] {
+pub function header_value(block: string, key: string): Option[string] {
   let bs: u8[] = block.bytes();
-  match (__parse_header_bytes(bs, 0, bs.len(), http_limits().header_fields, headers.new())) {
+  match (__parse_header_bytes(bs, 0, bs.len(), limits().header_fields, headers.new())) {
     Ok(h) => {
       return h.get(key);
     },
@@ -728,15 +728,15 @@ function __shared_string(buf: u8[], from: i32, end: i32, prev: string): string {
 pub struct HttpLimits { request_line: i32, header_bytes: i32, header_fields: i32, body: i32 }
 ```
 
-### `21 pub function http_limits(): HttpLimits`
+### `21 pub function limits(): HttpLimits`
 
 ```fern
-<<21 pub function http_limits(): HttpLimits>>=
-pub function http_limits(): HttpLimits {
+<<21 pub function limits(): HttpLimits>>=
+pub function limits(): HttpLimits {
   return HttpLimits { request_line: 8192, header_bytes: 32768, header_fields: 100, body: 1048576 };
 }
 
-pub function http_request_bytes_cap(limits: HttpLimits): i32 {
+pub function request_bytes_cap(limits: HttpLimits): i32 {
   return limits.header_bytes + 4 + limits.body + limits.header_bytes;
 }
 ```
@@ -1050,11 +1050,11 @@ function __line_end_past(buf: u8[], i: i32, end: i32, line_limit: i32): i32 {
 }
 ```
 
-### `25 pub function http_header_block_complete(buf: u8[], from: i32, limits: HttpLimits): boolean`
+### `25 pub function header_block_complete(buf: u8[], from: i32, limits: HttpLimits): boolean`
 
 ```fern
-<<25 pub function http_header_block_complete(buf: u8[], from: i32, limits: HttpLimits): boolean>>=
-pub function http_header_block_complete(buf: u8[], from: i32, limits: HttpLimits): boolean {
+<<25 pub function header_block_complete(buf: u8[], from: i32, limits: HttpLimits): boolean>>=
+pub function header_block_complete(buf: u8[], from: i32, limits: HttpLimits): boolean {
   from = __past_empty_line(buf, from);
   let end: i32 = buf.len();
   if (from + limits.header_bytes + 4 < end) {
@@ -1628,10 +1628,10 @@ function __chunk_trailers_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): 
 }
 ```
 
-### `34 pub function http_parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseError]`
+### `34 pub function parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseError]`
 
 ```fern
-<<34 pub function http_parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseError]>>=
+<<34 pub function parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseError]>>=
 // Why a buffer is not yet, or never will be, one whole request.
 pub enum RequestParseError { RequestIncomplete, RequestNeedsContinue, RequestMalformed(i32) }
 
@@ -1657,8 +1657,8 @@ pub function (e: RequestParseError) to_string(): string {
   return e.message();
 }
 
-pub function http_parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseError] {
-  match (http_parse_request_framed(buf)) {
+pub function parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseError] {
+  match (parse_request_framed(buf)) {
     Framed(f) => {
       return Ok(f.request);
     },
@@ -1779,15 +1779,15 @@ function __request_line(buf: u8[], from: i32, end: i32, prev_path: string): (i32
 }
 ```
 
-### `37 pub function http_parse_request_framed(buf: u8[]): HttpFraming`
+### `37 pub function parse_request_framed(buf: u8[]): HttpFraming`
 
 ```fern
-<<37 pub function http_parse_request_framed(buf: u8[]): HttpFraming>>=
-pub function http_parse_request_framed(buf: u8[]): HttpFraming {
-  let limits: HttpLimits = http_limits();
-  match (__request_head(buf, 0, limits, http_framed_none().request)) {
+<<37 pub function parse_request_framed(buf: u8[]): HttpFraming>>=
+pub function parse_request_framed(buf: u8[]): HttpFraming {
+  let lim: HttpLimits = limits();
+  match (__request_head(buf, 0, lim, framed_none().request)) {
     Ok(head) => {
-      let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, head.len, head.framing, head.version, limits);
+      let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, head.len, head.framing, head.version, lim);
       if (body.0 != 2) {
         return __unframed(body.0, head);
       }
@@ -1800,11 +1800,11 @@ pub function http_parse_request_framed(buf: u8[]): HttpFraming {
   return Incomplete;
 }
 
-pub function http_framed_none(): HttpFramed {
+pub function framed_none(): HttpFramed {
   return HttpFramed { request: HttpRequest { method: "", path: "", body: ByteStream { data: [], pos: 0, source: None }, headers: headers.new(), trailers: headers.new() }, len: 0, keep_alive: false, version: "" };
 }
 
-pub function http_framed_kept(f: HttpFramed): HttpFramed {
+pub function framed_kept(f: HttpFramed): HttpFramed {
   if (__empty_body(f.request.body) && f.request.trailers.names.len() == 0) {
     return f;
   }
@@ -1812,7 +1812,7 @@ pub function http_framed_kept(f: HttpFramed): HttpFramed {
   return HttpFramed { ...f, request: HttpRequest { ...f.request, body: stream.stream_from_bytes(empty), trailers: headers.new() } };
 }
 
-pub function http_parse_request_framed_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpFramed): HttpFraming {
+pub function parse_request_framed_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpFramed): HttpFraming {
   match (__request_head(buf, from, limits, prev.request)) {
     Ok(head) => {
       let body: (i32, u8[], i32, HeaderMap) = __framed_body(buf, from + head.len, head.framing, head.version, limits);
@@ -1859,11 +1859,11 @@ pub struct HttpHead { request: HttpRequest, len: i32, keep_alive: boolean, versi
 pub enum HttpHeading { Headed(HttpHead), HeadIncomplete, HeadMalformed(i32) }
 ```
 
-### `40 pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): Htt...`
+### `40 pub function parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): Htt...`
 
 ```fern
-<<40 pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): Htt...>>=
-pub function http_parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): HttpHeading {
+<<40 pub function parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): Htt...>>=
+pub function parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): HttpHeading {
   match (__request_head(buf, from, limits, prev)) {
     Ok(head) => {
       let length: i32 = __declared(head.framing);
@@ -1985,11 +1985,11 @@ function __declared(f: __BodyFraming): i32 {
 }
 ```
 
-### `43 pub function http_request_target(method: string, target: string): Result[string, i32]`
+### `43 pub function request_target(method: string, target: string): Result[string, i32]`
 
 ```fern
-<<43 pub function http_request_target(method: string, target: string): Result[string, i32]>>=
-pub function http_request_target(method: string, target: string): Result[string, i32] {
+<<43 pub function request_target(method: string, target: string): Result[string, i32]>>=
+pub function request_target(method: string, target: string): Result[string, i32] {
   let buf: u8[] = target.bytes();
   let end: i32 = target.len();
   let path_from: i32 = __target_start(buf, 0, end, method == "OPTIONS");
@@ -2371,12 +2371,12 @@ function __persists(version: string, h: HeaderMap, at: i32): boolean {
 }
 ```
 
-### `49 pub function http_parse_request(buf: string): Result[HttpRequest, RequestParseError]`
+### `49 pub function parse_request(buf: string): Result[HttpRequest, RequestParseError]`
 
 ```fern
-<<49 pub function http_parse_request(buf: string): Result[HttpRequest, RequestParseError]>>=
-pub function http_parse_request(buf: string): Result[HttpRequest, RequestParseError] {
-  return http_parse_request_bytes(buf.bytes());
+<<49 pub function parse_request(buf: string): Result[HttpRequest, RequestParseError]>>=
+pub function parse_request(buf: string): Result[HttpRequest, RequestParseError] {
+  return parse_request_bytes(buf.bytes());
 }
 ```
 
@@ -2385,7 +2385,7 @@ pub function http_parse_request(buf: string): Result[HttpRequest, RequestParseEr
 ```fern
 <<50 function __http_reason(code: i32): string>>=
 function __http_reason(code: i32): string {
-  let text: string = http_status_text(code);
+  let text: string = status_text(code);
   if (text.len() == 0) {
     return "Status";
   }
@@ -2393,45 +2393,45 @@ function __http_reason(code: i32): string {
 }
 ```
 
-### `51 pub function http_serialize_response(resp: HttpResponse): string`
+### `51 pub function serialize_response(resp: HttpResponse): string`
 
 ```fern
-<<51 pub function http_serialize_response(resp: HttpResponse): string>>=
-pub function http_serialize_response(resp: HttpResponse): string {
-  return http_serialize_response_conn(resp, false);
+<<51 pub function serialize_response(resp: HttpResponse): string>>=
+pub function serialize_response(resp: HttpResponse): string {
+  return serialize_response_conn(resp, false);
 }
 
-pub function http_serialize_response_conn(resp: HttpResponse, keep_alive: boolean): string {
-  return http_serialize_response_to("GET", "HTTP/1.1", resp, keep_alive);
+pub function serialize_response_conn(resp: HttpResponse, keep_alive: boolean): string {
+  return serialize_response_to("GET", "HTTP/1.1", resp, keep_alive);
 }
 
-pub function http_serialize_response_to(method: string, version: string, resp: HttpResponse, keep_alive: boolean): string {
-  let bodiless: boolean = http_bodiless(resp.status);
+pub function serialize_response_to(method: string, version: string, resp: HttpResponse, keep_alive: boolean): string {
+  let no_body: boolean = bodiless(resp.status);
   let framing: string = "";
   let body: string = "";
-  if (!bodiless) {
+  if (!no_body) {
     body = resp.body_string();
     framing = "Content-Length: " + int.int_to_string(body.len()) + "\r\n";
   }
   let b: usize = buf_new(256);
-  http_serialize_response_head_into(b, version, resp, keep_alive, framing);
+  serialize_response_head_into(b, version, resp, keep_alive, framing);
   let head: string = buf_take(b);
   buf_free(b);
-  if (bodiless || method == "HEAD") {
+  if (no_body || method == "HEAD") {
     return head;
   }
   return head + body;
 }
 
-pub function http_serialize_response_bytes(resp: HttpResponse): u8[] {
-  return http_serialize_response_conn_bytes(resp, false);
+pub function serialize_response_bytes(resp: HttpResponse): u8[] {
+  return serialize_response_conn_bytes(resp, false);
 }
 
-pub function http_serialize_response_conn_bytes(resp: HttpResponse, keep_alive: boolean): u8[] {
-  return http_serialize_response_to_bytes("GET", "HTTP/1.1", resp, keep_alive);
+pub function serialize_response_conn_bytes(resp: HttpResponse, keep_alive: boolean): u8[] {
+  return serialize_response_to_bytes("GET", "HTTP/1.1", resp, keep_alive);
 }
 
-pub function http_serialize_response_to_bytes(method: string, version: string, resp: HttpResponse, keep_alive: boolean): u8[] {
+pub function serialize_response_to_bytes(method: string, version: string, resp: HttpResponse, keep_alive: boolean): u8[] {
   let cap: i32 = 256;
   match (resp.body) {
     BodyText(t) => {
@@ -2446,17 +2446,17 @@ pub function http_serialize_response_to_bytes(method: string, version: string, r
     cap = cap + 256;
   }
   let b: usize = buf_new(cap);
-  http_serialize_response_into(b, method, version, resp, keep_alive, "");
+  serialize_response_into(b, method, version, resp, keep_alive, "");
   return __take_wire(b);
 }
 
-pub function http_serialize_response_into(b: usize, method: string, version: string, resp: HttpResponse, keep_alive: boolean, fields: string): void {
-  if (http_bodiless(resp.status)) {
-    http_serialize_response_head_into(b, version, resp, keep_alive, fields);
+pub function serialize_response_into(b: usize, method: string, version: string, resp: HttpResponse, keep_alive: boolean, fields: string): void {
+  if (bodiless(resp.status)) {
+    serialize_response_head_into(b, version, resp, keep_alive, fields);
     return;
   }
   if (method == "HEAD") {
-    http_serialize_response_head_sized_into(b, version, resp, keep_alive, fields, resp.body_len());
+    serialize_response_head_sized_into(b, version, resp, keep_alive, fields, resp.body_len());
     return;
   }
   let text: string = "";
@@ -2470,17 +2470,17 @@ pub function http_serialize_response_into(b: usize, method: string, version: str
     }
   }
   let len: i32 = text.len() + body.len();
-  http_serialize_response_head_sized_into(b, version, resp, keep_alive, fields, len);
+  serialize_response_head_sized_into(b, version, resp, keep_alive, fields, len);
   assert(len <= 2147483647 - buf_len(b));
   buf_push(b, text);
   buf_push_bytes_range(b, body, 0, body.len());
 }
 
-pub function http_bodiless(status: i32): boolean {
+pub function bodiless(status: i32): boolean {
   return status < 200 || status == 204 || status == 304;
 }
 
-pub function http_serialize_fields(fields: HeaderMap): string {
+pub function serialize_fields(fields: HeaderMap): string {
   let out: string = "";
   let i: i32 = 0;
   while (i < fields.names.len()) {
@@ -2490,14 +2490,14 @@ pub function http_serialize_fields(fields: HeaderMap): string {
   return out;
 }
 
-pub function http_serialize_response_head_sized_into(b: usize, version: string, resp: HttpResponse, keep_alive: boolean, fields: string, len: i32): void {
+pub function serialize_response_head_sized_into(b: usize, version: string, resp: HttpResponse, keep_alive: boolean, fields: string, len: i32): void {
   __push_head(b, resp);
   buf_push(b, fields);
   __push_length(b, len);
   __push_close(b, version, keep_alive);
 }
 
-pub function http_serialize_response_head_into(b: usize, version: string, resp: HttpResponse, keep_alive: boolean, fields: string): void {
+pub function serialize_response_head_into(b: usize, version: string, resp: HttpResponse, keep_alive: boolean, fields: string): void {
   __push_head(b, resp);
   buf_push(b, fields);
   __push_conn(b, version, resp, keep_alive);
@@ -2801,7 +2801,7 @@ pub function (r: HttpResponse) body_len(): i32 {
   return 0;
 }
 
-pub function http_materialize(r: HttpResponse): HttpResponse {
+pub function materialize(r: HttpResponse): HttpResponse {
   match (r.body) {
     BodyFile(path) => {
       match (read_file_bytes(path)) {
@@ -3024,16 +3024,16 @@ pub struct HttpResponseFramed { response: HttpResponse, len: i32, version: strin
 pub enum HttpResponseFraming { Complete(HttpResponseFramed), Unfinished, Rejected(i32) }
 ```
 
-### `69 pub function http_parse_response_framed(buf: u8[], method: string, eof: boolean, limits: HttpLimits): HttpR...`
+### `69 pub function parse_response_framed(buf: u8[], method: string, eof: boolean, limits: HttpLimits): HttpR...`
 
 ```fern
-<<69 pub function http_parse_response_framed(buf: u8[], method: string, eof: boolean, limits: HttpLimits): HttpR...>>=
-pub function http_parse_response_framed(buf: u8[], method: string, eof: boolean, limits: HttpLimits): HttpResponseFraming {
-  return http_parse_response_framed_from(buf, 0, method, eof, limits, headers.new());
+<<69 pub function parse_response_framed(buf: u8[], method: string, eof: boolean, limits: HttpLimits): HttpR...>>=
+pub function parse_response_framed(buf: u8[], method: string, eof: boolean, limits: HttpLimits): HttpResponseFraming {
+  return parse_response_framed_from(buf, 0, method, eof, limits, headers.new());
 }
 
 // A field of prev that a response repeats is shared, not copied.
-pub function http_parse_response_framed_from(buf: u8[], from: i32, method: string, eof: boolean, limits: HttpLimits, prev: HeaderMap): HttpResponseFraming {
+pub function parse_response_framed_from(buf: u8[], from: i32, method: string, eof: boolean, limits: HttpLimits, prev: HeaderMap): HttpResponseFraming {
   let shape: (i32, i32, boolean) = __head_shape(buf, from, limits);
   let first_crlf: i32 = shape.0;
   let headers_end: i32 = shape.1;
@@ -3138,7 +3138,7 @@ function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32
 function __response_payload(buf: u8[], at: i32, h: HeaderMap, fields: (i32, i32, i32, i32, i32), status: i32, method: string, eof: boolean, version: string, limits: HttpLimits): (i32, u8[], i32, HeaderMap) {
   let empty: u8[] = [];
   let none: HeaderMap = headers.new();
-  if (method == "HEAD" || http_bodiless(status)) {
+  if (method == "HEAD" || bodiless(status)) {
     return (2, empty, at, none);
   }
   if (fields.1 == -1 && fields.0 == -1) {
@@ -3162,11 +3162,11 @@ function __response_payload(buf: u8[], at: i32, h: HeaderMap, fields: (i32, i32,
 }
 ```
 
-### `71 pub function http_hop_by_hop(name: string): boolean`
+### `71 pub function hop_by_hop(name: string): boolean`
 
 ```fern
-<<71 pub function http_hop_by_hop(name: string): boolean>>=
-pub function http_hop_by_hop(name: string): boolean {
+<<71 pub function hop_by_hop(name: string): boolean>>=
+pub function hop_by_hop(name: string): boolean {
   let n: i32 = name.len();
   if (n == 10) {
     return name.eq_ignore_ascii_case("connection") || name.eq_ignore_ascii_case("keep-alive");
@@ -3183,9 +3183,9 @@ pub function http_hop_by_hop(name: string): boolean {
   return n == 2 && name.eq_ignore_ascii_case("te");
 }
 
-pub function http_end_to_end(h: HeaderMap): HeaderMap {
+pub function end_to_end(h: HeaderMap): HeaderMap {
   let i: i32 = 0;
-  while (i < h.names.len() && !http_hop_by_hop(h.names[i])) {
+  while (i < h.names.len() && !hop_by_hop(h.names[i])) {
     i = i + 1;
   }
   if (i == h.names.len()) {
@@ -3194,7 +3194,7 @@ pub function http_end_to_end(h: HeaderMap): HeaderMap {
   let out: HeaderMap = headers.new();
   i = 0;
   while (i < h.names.len()) {
-    if (!http_hop_by_hop(h.names[i]) && !http_connection_names(h, h.names[i])) {
+    if (!hop_by_hop(h.names[i]) && !connection_names(h, h.names[i])) {
       out = out.append(h.names[i], h.values[i]);
     }
     i = i + 1;
@@ -3202,7 +3202,7 @@ pub function http_end_to_end(h: HeaderMap): HeaderMap {
   return out;
 }
 
-pub function http_connection_names(h: HeaderMap, name: string): boolean {
+pub function connection_names(h: HeaderMap, name: string): boolean {
   let at: i32 = __field_at(h, "connection", 0);
   while (at >= 0) {
     if (__lists_token(h.values[at], name)) {
@@ -3243,7 +3243,7 @@ pub function (r: HttpResponse) body_text(): Result[string, utf8.Utf8Error] {
   return utf8.from_bytes(r.body_bytes());
 }
 
-pub function http_method_ok(method: string): boolean {
+pub function method_ok(method: string): boolean {
   return __str_is_token(method);
 }
 ```
@@ -3257,15 +3257,15 @@ function __str_is_token(s: string): boolean {
 }
 ```
 
-### `75 pub function http_method_idempotent(method: string): boolean`
+### `75 pub function method_idempotent(method: string): boolean`
 
 ```fern
-<<75 pub function http_method_idempotent(method: string): boolean>>=
-pub function http_method_idempotent(method: string): boolean {
+<<75 pub function method_idempotent(method: string): boolean>>=
+pub function method_idempotent(method: string): boolean {
   return method == "GET" || method == "HEAD" || method == "PUT" || method == "DELETE" || method == "OPTIONS" || method == "TRACE";
 }
 
-pub function http_target_ok(target: string): boolean {
+pub function target_ok(target: string): boolean {
   if (target.len() == 0 || target[0] != 47 as u8) {
     return false;
   }
@@ -3277,18 +3277,18 @@ pub function http_target_ok(target: string): boolean {
   return __query_ok(bs, 0, q) && __query_ok(bs, q + 1, bs.len());
 }
 
-pub function http_field_name_ok(name: string): boolean {
+pub function field_name_ok(name: string): boolean {
   return __str_is_token(name);
 }
 
-pub function http_field_name_lower_ok(name: string): boolean {
+pub function field_name_lower_ok(name: string): boolean {
   return name.len() > 0 && __scan_set(name, 0, NOT_LOWER_TCHAR) == name.len();
 }
 
-pub function http_fields_ok(fields: HeaderMap): boolean {
+pub function fields_ok(fields: HeaderMap): boolean {
   let i: i32 = 0;
   while (i < fields.names.len()) {
-    if (!http_field_name_ok(fields.names[i]) || !http_field_value_ok(fields.values[i])) {
+    if (!field_name_ok(fields.names[i]) || !field_value_ok(fields.values[i])) {
       return false;
     }
     i = i + 1;
@@ -3296,7 +3296,7 @@ pub function http_fields_ok(fields: HeaderMap): boolean {
   return true;
 }
 
-pub function http_field_value_ok(value: string): boolean {
+pub function field_value_ok(value: string): boolean {
   return __scan_set(value, 0, FIELD_CTL) == value.len();
 }
 ```

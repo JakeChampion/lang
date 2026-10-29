@@ -92,7 +92,7 @@ function main(): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
     while (i < 10) {
-        match (http.http_parse_request(wire(i))) {
+        match (http.parse_request(wire(i))) {
             Ok(req) => { match (req.body_string()) { Ok(s) => { t = t + s.len(); }, Err(e) => { t = t + 100; } } },
             Err(_) => { t = t + 100; }
         }

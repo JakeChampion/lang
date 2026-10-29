@@ -5,7 +5,7 @@ const HEAD: string = "POST /up HTTP/1.1\r\nHost: h\r\nTransfer-Encoding: chunked
 
 function walked(body: string, limits: http.HttpLimits): string {
   let wire: string = HEAD + body;
-  match (http.http_parse_request_framed_from(wire.bytes(), 0, limits, http.http_framed_none())) {
+  match (http.parse_request_framed_from(wire.bytes(), 0, limits, http.framed_none())) {
     http.Framed(f) => {
       return "ok:" + string_from_bytes_unchecked(f.request.body_bytes()) + "|" + fields(f.request.trailers) + "|rest=" + (wire.len() - f.len).to_string();
     },
@@ -84,7 +84,7 @@ function agree(body: string, limits: http.HttpLimits): string {
 }
 
 function limits(): http.HttpLimits {
-  return http.http_limits();
+  return http.limits();
 }
 
 function test_extensions_trailers_and_a_pipelined_request(): test.TestOutcome {

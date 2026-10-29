@@ -97,7 +97,7 @@ pub struct Limits { parts: i32, part_bytes: i32, total_bytes: i32, header_bytes:
 ```fern
 <<4 pub function limits(): Limits>>=
 pub function limits(): Limits {
-  return limits_from(http.http_limits());
+  return limits_from(http.limits());
 }
 
 pub function limits_from(l: http.HttpLimits): Limits {

@@ -176,7 +176,7 @@ function millis_since(started: Instant): string {
 
 function bulk(base: string): string {
   let started: Instant = clock.instant();
-  let roomy: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 17 * 1048576 };
+  let roomy: http.HttpLimits = http.HttpLimits { ...http.limits(), body: 17 * 1048576 };
   match (fetch.send(fetch.get(base + "/bulk").with_limits(roomy))) {
     Ok(resp) => {
       return resp.body_bytes().len().to_string() + " bytes " + millis_since(started) + " ms";

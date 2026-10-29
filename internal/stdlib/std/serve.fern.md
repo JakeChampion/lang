@@ -274,7 +274,7 @@ pub struct Config {
 ```fern
 <<5 pub function config(): Config>>=
 pub function config(): Config {
-  return Config { backlog: 65535, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.http_limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false, h3_sock: 0 - 1 };
+  return Config { backlog: 65535, reuse_port: false, recv_deadline: __recv_deadline_default(), min_data_rate: 240, data_rate_grace: time.duration_seconds(5 as i64), response_min_data_rate: 240, response_data_rate_grace: time.duration_seconds(5 as i64), keep_alive_idle: time.duration_seconds(130 as i64), keep_alive_requests: 1000, max_connections: 1024, max_connections_per_ip: 100, max_in_flight: 1024, workers: 0, shutdown_grace: time.duration_seconds(2 as i64), readiness_path: "", drain_deadline: time.duration_seconds(30 as i64), limits: http.limits(), stop_with_parent: false, stream_bodies: false, tls: None, cookie_jar: false, http_allow: None, handler_deadline: time.duration_seconds(0 as i64), background_deadline: time.duration_seconds(30 as i64), trace: false, proxy_protocol: false, metrics: metrics.registry(), metrics_port: 0, h2: false, io_uring: false, io_uring_zc_bytes: 3072, ktls: false, h3: false, h3_sock: 0 - 1 };
 }
 
 pub function (c: Config) with_tls(cfg: server.Config): Config {
@@ -605,14 +605,14 @@ function __clock_tick(clk: __Clock): __Clock {
 }
 
 function __serve_wire(out: usize, method: string, version: string, answer: HttpResponse, keep_alive: boolean, clk: __Clock): __Tail {
-  if (!http.http_fields_ok(answer.headers) || !http.http_fields_ok(answer.trailers)) {
+  if (!http.fields_ok(answer.headers) || !http.fields_ok(answer.trailers)) {
     return __serve_wire(out, method, version, http.internal_error(""), keep_alive, clk);
   }
   let date: string = clk.line;
   if (answer.headers.has("date")) {
     date = "";
   }
-  let headless: boolean = http.http_bodiless(answer.status) || method == "HEAD";
+  let headless: boolean = http.bodiless(answer.status) || method == "HEAD";
   match (answer.body) {
     BodyFile(path) => {
       let whole: i64[] = [];
@@ -627,13 +627,13 @@ function __serve_wire(out: usize, method: string, version: string, answer: HttpR
     },
     BodyChunks(producer) => {
       if (answer.status == 101) {
-        http.http_serialize_response_head_into(out, version, answer, false, date);
+        http.serialize_response_head_into(out, version, answer, false, date);
         return ChunkTail(producer, 0, "");
       }
       return __wire_chunks(out, version, answer, producer, headless, keep_alive, date);
     },
     _ => {
-      http.http_serialize_response_into(out, method, version, answer, keep_alive, date);
+      http.serialize_response_into(out, method, version, answer, keep_alive, date);
       return NoTail;
     }
   }
@@ -657,12 +657,12 @@ function __wire_file(out: usize, method: string, version: string, resp: HttpResp
       let framing: string = date + "Content-Length: " + http.file_ranges_len(ranges, body.seams).to_string() + "\r\n";
       if (headless) {
         r.close();
-        http.http_serialize_response_head_into(out, version, resp, keep_alive, framing);
+        http.serialize_response_head_into(out, version, resp, keep_alive, framing);
         return NoTail;
       }
       match (__range_tail(r, __Spans { ranges: ranges, seams: __from(body.seams, 1) })) {
         Some(t) => {
-          http.http_serialize_response_head_into(out, version, resp, keep_alive, framing);
+          http.serialize_response_head_into(out, version, resp, keep_alive, framing);
           buf_push_bytes_range(out, body.seams[0], 0, body.seams[0].len());
           return t;
         },
@@ -727,7 +727,7 @@ function __file_measured(resp: HttpResponse, path: string, ranges: i64[], seams:
       }
       let f: __FileBody = __FileBody { path: path, id: st, ranges: held, seams: seams };
       let fields: HeaderMap = resp.headers;
-      if (!http.http_bodiless(resp.status)) {
+      if (!http.bodiless(resp.status)) {
         fields = fields.set("content-length", http.file_ranges_len(held, seams).to_string());
       }
       let none: u8[] = [];
@@ -865,19 +865,19 @@ function __read_n(r: Reader, n: i32): Option[u8[]] {
 
 function __wire_chunks(out: usize, version: string, resp: HttpResponse, producer: ChunkProducer, headless: boolean, keep_alive: boolean, date: string): __Tail {
   if (headless) {
-    http.http_serialize_response_head_into(out, version, resp, keep_alive, date);
+    http.serialize_response_head_into(out, version, resp, keep_alive, date);
     return NoTail;
   }
   if (version == "HTTP/1.0") {
-    http.http_serialize_response_head_into(out, version, resp, false, date);
+    http.serialize_response_head_into(out, version, resp, false, date);
     return ChunkTail(producer, 0, "");
   }
   let framing: string = date + "Transfer-Encoding: chunked\r\n";
   if (resp.trailers.names.len() > 0) {
     framing = framing + "Trailer: " + resp.trailers.names.join(", ") + "\r\n";
   }
-  http.http_serialize_response_head_into(out, version, resp, keep_alive, framing);
-  return ChunkTail(producer, 0, http.http_serialize_fields(resp.trailers) + "\r\n");
+  http.serialize_response_head_into(out, version, resp, keep_alive, framing);
+  return ChunkTail(producer, 0, http.serialize_fields(resp.trailers) + "\r\n");
 }
 
 function __in_flight(c: __Conns, at: i32): boolean {
@@ -1051,7 +1051,7 @@ function __chunk_end(producer: ChunkProducer, end: string): u8[] {
   if (end.len() == 0) {
     return [];
   }
-  return ("0\r\n" + http.http_serialize_fields(producer.trailers()) + end).bytes();
+  return ("0\r\n" + http.serialize_fields(producer.trailers()) + end).bytes();
 }
 
 function __chunk_framed(bytes: u8[], end: string): u8[] {
@@ -1586,7 +1586,7 @@ function __serve_read_plain[D: async.Driver](drv: D, c: __Conns, at: i32, scratc
         } else {
           buf = buf.concat(scratch);
         }
-        if (buf.len() > http.http_request_bytes_cap(opts.limits)) {
+        if (buf.len() > http.request_bytes_cap(opts.limits)) {
           more = false;
           done = true;
         } else {
@@ -1635,8 +1635,8 @@ function __serve_read_tls[D: async.Driver](drv: D, c: __Conns, at: i32, scratch:
         t = took.1;
         buf = __read_onto(buf, took.2);
         done = took.3;
-        more = !done && n == __recv_room() && buf.len() <= http.http_request_bytes_cap(opts.limits);
-        if (buf.len() > http.http_request_bytes_cap(opts.limits)) {
+        more = !done && n == __recv_room() && buf.len() <= http.request_bytes_cap(opts.limits);
+        if (buf.len() > http.request_bytes_cap(opts.limits)) {
           done = true;
         }
       }
@@ -1818,10 +1818,10 @@ function __serve_took(c: __Conns, at: i32, f: http.HttpFramed, opts: Config, eof
   let due: i64 = __backlog_due(c, at);
   let queued: i32[] = __unqueued(c.queued, c.fds[at], c.backlog[at]);
   let off: i32 = c.offs[at] + f.len;
-  let last: http.HttpFramed = http.http_framed_kept(f);
+  let last: http.HttpFramed = http.framed_kept(f);
   let parsed: (__Behind, http.HttpFramed) = (Idle, f);
   if (off < c.bufs[at].len()) {
-    parsed = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], off, opts.limits, last), f);
+    parsed = __serve_behind(http.parse_request_framed_from(c.bufs[at], off, opts.limits, last), f);
   }
   if (keep) {
     keep = __tail_persists(parsed.0, eof);
@@ -1858,7 +1858,7 @@ function __body_deadline(c: __Conns, at: i32, opts: Config, now: i64): __Conns {
   let base: i32 = c.rate_base[at];
   let buf: u8[] = c.bufs[at];
   if (since < 0 as i64) {
-    if (buf.len() <= c.offs[at] || !http.http_header_block_complete(buf, c.offs[at], opts.limits)) {
+    if (buf.len() <= c.offs[at] || !http.header_block_complete(buf, c.offs[at], opts.limits)) {
       return c;
     }
     since = now;
@@ -2044,7 +2044,7 @@ function __serve_drain[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Confi
   if (drv.watch(c.fds[at], __read_interest(c, c.tls[at])) < 0) {
     return (__serve_close(drv, c, at), -1);
   }
-  let parsed: (__Behind, http.HttpFramed) = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), c.last);
+  let parsed: (__Behind, http.HttpFramed) = __serve_behind(http.parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), c.last);
   let ready: (__Conns, boolean) = __serve_ready(drv, __Conns { ...c, pending: c.pending.with(at, []) }, at, opts, parsed.0, clk);
   if (!ready.1) {
     return (ready.0, -1);
@@ -3129,18 +3129,18 @@ function __serve_tail_wire(c: __Conns, at: i32, method: string, version: string,
 }
 
 function __zc_wire(c: __Conns, at: i32, method: string, version: string, resp: HttpResponse, keep_alive: boolean, clk: __Clock): Option[__Tail] {
-  if (c.zc_bytes <= 0 || method == "HEAD" || http.http_bodiless(resp.status) || !__zc_conn(c, at)) {
+  if (c.zc_bytes <= 0 || method == "HEAD" || http.bodiless(resp.status) || !__zc_conn(c, at)) {
     return None;
   }
   if let BodyBytes(body) = resp.body {
-    if (body.len() < c.zc_bytes || !http.http_fields_ok(resp.headers) || !http.http_fields_ok(resp.trailers)) {
+    if (body.len() < c.zc_bytes || !http.fields_ok(resp.headers) || !http.fields_ok(resp.trailers)) {
       return None;
     }
     let date: string = clk.line;
     if (resp.headers.has("date")) {
       date = "";
     }
-    http.http_serialize_response_head_sized_into(c.out, version, resp, keep_alive, date, body.len());
+    http.serialize_response_head_sized_into(c.out, version, resp, keep_alive, date, body.len());
     return Some(ZcTail(body, 0, 0 - 1));
   }
   return None;
@@ -3890,7 +3890,7 @@ function __serve_unframed[D: async.Driver](drv: D, c: __Conns, fls: __Flights, a
     }
     return (c, fls, false, Idle, c.last);
   }
-  match (http.http_parse_request_head_from(c.bufs[at], c.offs[at], opts.limits, c.last.request)) {
+  match (http.parse_request_head_from(c.bufs[at], c.offs[at], opts.limits, c.last.request)) {
     http.Headed(h) => {
       return __serve_stream(drv, c, fls, at, h, start, opts, stop, count, clk);
     },
@@ -3940,7 +3940,7 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flights, at:
       if (h.length == 0 - 2) {
         c = __Conns { ...c, keep: c.keep.with(at, keep) };
       }
-      let parsed: (__Behind, http.HttpFramed) = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), c.last);
+      let parsed: (__Behind, http.HttpFramed) = __serve_behind(http.parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), c.last);
       let answered: (__Conns, boolean) = __serve_respond(drv, c, at, h.request.method, h.version, resp, c.keep[at], opts, count + 1, parsed.0, clk);
       return (answered.0, fls, answered.1, parsed.0, parsed.1);
     },
@@ -4224,7 +4224,7 @@ function __serve_answer[D: async.Driver](drv: D, c: __Conns, fls: __Flights, fl:
         return (__serve_respond(drv, c, at, fl.method, fl.version, resp, false, opts, __pipeline_burst(), Idle, clk).0, fls);
       }
       c = __body_settled(drv, c, at, b);
-      behind = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), c.last).0;
+      behind = __serve_behind(http.parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), c.last).0;
     },
     None => {}
   }
@@ -4813,7 +4813,7 @@ function __serve_loop(l: __Listen, handler: (HttpRequest, platform.Host) => Http
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, true);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], request_host: plat, addresses: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: __out_new(), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
+  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], request_host: plat, addresses: [], tails: [], tls: [], framing: [], last: http.framed_none(), out: __out_new(), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
   let flights: __Flights = __flights_none();
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, date: "", line: "" };
@@ -4938,7 +4938,7 @@ function __serve_burst[D: async.Driver](drv: D, own c: __Conns, own fls: __Fligh
   let flights: __Flights = fls;
   let more: boolean = true;
   let count: i32 = 0;
-  let parsed: (__Behind, http.HttpFramed) = __serve_behind(http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits, conns.last), conns.last);
+  let parsed: (__Behind, http.HttpFramed) = __serve_behind(http.parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits, conns.last), conns.last);
   let behind: __Behind = parsed.0;
   let framed: http.HttpFramed = parsed.1;
   while (more) {
@@ -5016,7 +5016,7 @@ function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, pl
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, false);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], request_host: plat, addresses: [], tails: [], tls: [], framing: [], last: http.http_framed_none(), out: __out_new(), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
+  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], request_host: plat, addresses: [], tails: [], tls: [], framing: [], last: http.framed_none(), out: __out_new(), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
   let flights: __Flights = __flights_none();
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, date: "", line: "" };
@@ -5081,7 +5081,7 @@ function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, pl
       }
       let more: boolean = true;
       let count: i32 = 0;
-      let parsed: (__Behind, http.HttpFramed) = __serve_behind(http.http_parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits, conns.last), conns.last);
+      let parsed: (__Behind, http.HttpFramed) = __serve_behind(http.parse_request_framed_from(conns.bufs[at], conns.offs[at], opts.limits, conns.last), conns.last);
       let behind: __Behind = parsed.0;
       let framed: http.HttpFramed = parsed.1;
       while (more) {
@@ -6153,7 +6153,7 @@ function __h3_respond[D: async.Driver](drv: D, c: __Conns, fls: __Flights, seria
   resp = __file_chunks(resp);
   match (resp.body) {
     BodyChunks(producer) => {
-      if (method == "HEAD" || http.http_bodiless(resp.status)) {
+      if (method == "HEAD" || http.bodiless(resp.status)) {
         return (__Conns { ...cur, quic: __Quic { ...q, conns: q.conns.with(i, q.conns[i].with_date(cur.date).respond_head(id, resp, 0 - 1 as i64).end(id, HeaderMap { names: [], values: [] })) } }, fls);
       }
       let p: __H3Producer = __H3Producer { serial: serial, stream: id, producer: producer, index: 0, trailers: resp.trailers, running: false };

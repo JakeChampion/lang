@@ -449,12 +449,12 @@ function __gzip_thousand(): u8[] {
 function test_decoded_past_cap(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [__gzip_answer(__gzip_thousand())]);
-  let big: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 2000 };
+  let big: http.HttpLimits = http.HttpLimits { ...http.limits(), body: 2000 };
   let whole: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_limits(big), __open());
   if (__body(whole).len() != 1000) {
     return test.fail("decoded under a 2000-byte cap: " + __message(whole));
   }
-  let small: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 100 };
+  let small: http.HttpLimits = http.HttpLimits { ...http.limits(), body: 100 };
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_limits(small), __open());
   return test.assert_eq(__message(got), "response body past its limit");
 }
@@ -462,7 +462,7 @@ function test_decoded_past_cap(): test.TestOutcome {
 function test_body_past_cap(): test.TestOutcome {
   let d: sim.Sim = sim.new(1);
   let n: sim_fetch.Net = __net(d).route(ORIGIN, 80, "/", [sim_fetch.reply(200, "a body longer than eight bytes")]);
-  let small: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 8 };
+  let small: http.HttpLimits = http.HttpLimits { ...http.limits(), body: 8 };
   let got: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/").with_limits(small), __open());
   return test.assert_eq(__message(got), "response body past its limit");
 }

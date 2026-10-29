@@ -167,7 +167,7 @@ workers for CPU-bound work.
 | `response_min_data_rate` / `response_data_rate_grace` | 240 B/s after 5 s | A client that reads its response too slowly |
 | `keep_alive_idle` | 130 s | An idle keep-alive connection |
 | `keep_alive_requests` | 1000 | Requests on one connection |
-| `limits` | `http.http_limits()` | Request line 8 KiB, header block 32 KiB / 100 fields, body 1 MiB |
+| `limits` | `http.limits()` | Request line 8 KiB, header block 32 KiB / 100 fields, body 1 MiB |
 | `handler_deadline` | `0` = none | Time a handler may take before it is answered 503 and cancelled |
 | `background_deadline` | 30 s | Work scheduled with `with_background` |
 | `shutdown_grace` | 2 s | Time still accepting after `SIGTERM` |

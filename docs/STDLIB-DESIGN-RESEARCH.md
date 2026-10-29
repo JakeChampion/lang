@@ -61,7 +61,7 @@ the solution.
   methods, not a stream-of-events. Plain fields:
   `method`, `path`, `body`, `headers`. Right shape for the
   90% case; the streaming case wraps it.
-- **`http_parse_request` is bounded** (8 KiB headers, 1 MiB
+- **`http.parse_request` is bounded** (8 KiB headers, 1 MiB
   body). TigerStyle-aligned.
 - **Conservative HTTP subset**: HTTP/1.1, Content-Length,
   Connection: close, no keep-alive, no chunked transfer

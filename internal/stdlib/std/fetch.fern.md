@@ -386,7 +386,7 @@ pub function decoding(): Decoding {
 
 pub function request(method: string, url: string): Request {
   let none: u8[] = [];
-  return Request { method: method, url: url, headers: headers.new(), body: BodyBytes(none), timeouts: timeouts(), limits: http.http_limits(), redirects: 10, decoding: decoding(), ktls: false };
+  return Request { method: method, url: url, headers: headers.new(), body: BodyBytes(none), timeouts: timeouts(), limits: http.limits(), redirects: 10, decoding: decoding(), ktls: false };
 }
 
 pub function get(url: string): Request {
@@ -525,22 +525,22 @@ function __request_target(u: Url): Result[string, FetchError] {
   if (u.query.len() > 0) {
     target = target + "?" + u.query;
   }
-  if (!http.http_target_ok(target)) {
+  if (!http.target_ok(target)) {
     return Err(InvalidUrl("a path or query that cannot be written on a request line"));
   }
   return Ok(target);
 }
 
 function __request_ok(req: Request): Result[void, FetchError] {
-  if (!http.http_method_ok(req.method)) {
+  if (!http.method_ok(req.method)) {
     return Err(InvalidRequest("the method is not a token"));
   }
   let i: i32 = 0;
   while (i < req.headers.names.len()) {
-    if (!http.http_field_name_ok(req.headers.names[i])) {
+    if (!http.field_name_ok(req.headers.names[i])) {
       return Err(InvalidRequest("a header name is not a token"));
     }
-    if (!http.http_field_value_ok(req.headers.values[i])) {
+    if (!http.field_value_ok(req.headers.values[i])) {
       return Err(InvalidRequest("a header value has a byte that cannot be written"));
     }
     i = i + 1;
@@ -639,7 +639,7 @@ function __sent_fields(req: Request, t: __Target, body_len: i32): HeaderMap {
 
 function __sent(h: HeaderMap, i: i32): boolean {
   let name: string = h.names[i];
-  if (http.http_hop_by_hop(name) || http.http_connection_names(h, name)) {
+  if (http.hop_by_hop(name) || http.connection_names(h, name)) {
     return false;
   }
   let n: i32 = name.len();
@@ -1191,7 +1191,7 @@ function __mail_answered(sh: Shared, fd: i32, events: h2.Event[], streams: i32):
   for e in events {
     match (e) {
       h2.Answered(sid, resp) => {
-        streams = streams - __mail_deliver(sh, fd, sid, Ok(Answer { status: resp.status, headers: http.http_end_to_end(resp.headers), body: resp.body_bytes(), trailers: resp.trailers }));
+        streams = streams - __mail_deliver(sh, fd, sid, Ok(Answer { status: resp.status, headers: http.end_to_end(resp.headers), body: resp.body_bytes(), trailers: resp.trailers }));
       },
       h2.Reset(sid, code) => {
         streams = streams - __mail_deliver(sh, fd, sid, Err(Protocol("HTTP/2: the server reset the stream with code " + int.int_to_string(code))));
@@ -1887,7 +1887,7 @@ function __send_dialled[T: Transport](tr: T, req: Request, t: __Target, started:
   let first: Result[HttpResponse, FetchError] = __attempt(tr, req, t, started, guard, policy.roots, true);
   match (first) {
     Err(e) => {
-      if (__reset(e) && http.http_method_idempotent(req.method)) {
+      if (__reset(e) && http.method_idempotent(req.method)) {
         return __attempt(tr, req, t, started, guard, policy.roots, false);
       }
       return Err(e);
@@ -1931,7 +1931,7 @@ function __reset(e: FetchError): boolean {
 function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64, guard: boolean, roots: Option[verify.Roots], reuse: boolean): Result[HttpResponse, FetchError] {
   let place: __Place = __place_of(t, guard, roots);
   let conn: __Conn = __no_conn();
-  if (reuse && http.http_method_idempotent(req.method)) {
+  if (reuse && http.method_idempotent(req.method)) {
     conn = __take_idle(tr, place);
   }
   if (conn.fd < 0) {
@@ -2105,7 +2105,7 @@ function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i
       } else {
         __park(tr, place, __Conn { ...done.0.conn, h2: Some(done.0.h2) });
       }
-      return __decoded(HttpResponse { ...done.1, headers: http.http_end_to_end(done.1.headers) }, req);
+      return __decoded(HttpResponse { ...done.1, headers: http.end_to_end(done.1.headers) }, req);
     },
     Err(e) => {
       tr.close(conn.fd);
@@ -2551,7 +2551,7 @@ function __send_hosted(req: Request, t: __Target): Result[HttpResponse, FetchErr
   let o: wasi_http.Outgoing = wasi_http.Outgoing { method: req.method, authority: t.host_field, tls: t.tls, target: t.target, headers: __sent_fields(req, t, body.len()), body: body, connect: __connect_bound(req.timeouts), inactivity: req.timeouts.inactivity, body_cap: req.limits.body };
   match (wasi_http.outgoing(o)) {
     Ok(resp) => {
-      return __decoded(HttpResponse { ...resp, headers: http.http_end_to_end(resp.headers) }, req);
+      return __decoded(HttpResponse { ...resp, headers: http.end_to_end(resp.headers) }, req);
     },
     Err(e) => {
       return Err(__hosted_error(e));
@@ -2757,11 +2757,11 @@ function __read_response[T: Transport](tr: T, conn: __Conn, req: Request, starte
   let from: i32 = 0;
   let eof: boolean = false;
   while (true) {
-    match (http.http_parse_response_framed_from(buf, from, req.method, eof, req.limits, conn.heard)) {
+    match (http.parse_response_framed_from(buf, from, req.method, eof, req.limits, conn.heard)) {
       Complete(framed) => {
         let next: i32 = __after_interim(framed, from, req.limits)?;
         if (next < 0) {
-          let response: HttpResponse = HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) };
+          let response: HttpResponse = HttpResponse { ...framed.response, headers: http.end_to_end(framed.response.headers) };
           return Ok(__Read { response: response, keep: __reusable(framed, from, buf.len(), eof || conn.closed), conn: __Conn { ...conn, heard: framed.response.headers } });
         }
         from = next;

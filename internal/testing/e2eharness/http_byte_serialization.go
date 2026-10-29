@@ -27,32 +27,32 @@ function main(): i32 {
     let all: u8[] = [];
     for i in 0..256 { all = all.append(i as u8); }
     let binary = http.bytes(200, all);
-    emit(http.http_serialize_response_bytes(binary));
-    emit(http.http_serialize_response_conn_bytes(binary, true));
-    emit(http.http_serialize_response_to_bytes("GET", "HTTP/1.0", binary, true));
-    emit(http.http_serialize_response_to_bytes("HEAD", "HTTP/1.1", binary, false));
-    emit(http.http_serialize_response_bytes(http.ok("aé𐐷z")));
-    emit(http.http_serialize_response_bytes(http.stream(200, ByteStream { data: all, pos: 1, source: None })));
-    emit(http.http_serialize_response_bytes(producer(all)));
-    emit(http.http_serialize_response_to_bytes("HEAD", "HTTP/1.1", producer(all), false));
+    emit(http.serialize_response_bytes(binary));
+    emit(http.serialize_response_conn_bytes(binary, true));
+    emit(http.serialize_response_to_bytes("GET", "HTTP/1.0", binary, true));
+    emit(http.serialize_response_to_bytes("HEAD", "HTTP/1.1", binary, false));
+    emit(http.serialize_response_bytes(http.ok("aé𐐷z")));
+    emit(http.serialize_response_bytes(http.stream(200, ByteStream { data: all, pos: 1, source: None })));
+    emit(http.serialize_response_bytes(producer(all)));
+    emit(http.serialize_response_to_bytes("HEAD", "HTTP/1.1", producer(all), false));
     let empty: u8[] = [];
-    emit(http.http_serialize_response_bytes(http.bytes(200, empty)));
-    emit(http.http_serialize_response_bytes(http.file("/must-not-be-read")));
+    emit(http.serialize_response_bytes(http.bytes(200, empty)));
+    emit(http.serialize_response_bytes(http.file("/must-not-be-read")));
     let headers = binary.with_header("Content-Length", "999").with_header("Transfer-Encoding", "chunked").with_header("Connection", "wrong").with_header("X-Proof", "ok");
-    emit(http.http_serialize_response_bytes(headers));
+    emit(http.serialize_response_bytes(headers));
     for status in [101, 204, 304] {
         let no_body = HttpResponse { ...producer(all), status: status };
-        emit(http.http_serialize_response_bytes(no_body));
-        emit(http.http_serialize_response(no_body).bytes());
+        emit(http.serialize_response_bytes(no_body));
+        emit(http.serialize_response(no_body).bytes());
     }
     let bad = http.bytes(200, [255 as u8, 65 as u8, 128 as u8]);
-    emit(http.http_serialize_response(bad).bytes());
-    emit(http.http_serialize_response_conn(bad, true).bytes());
-    emit(http.http_serialize_response_to("HEAD", "HTTP/1.1", bad, false).bytes());
+    emit(http.serialize_response(bad).bytes());
+    emit(http.serialize_response_conn(bad, true).bytes());
+    emit(http.serialize_response_to("HEAD", "HTTP/1.1", bad, false).bytes());
     // Only one malformed byte per run, so the exact replacement oracle is
     // independent of how decoders group consecutive malformed sequences.
-    emit(http.http_serialize_response(producer([65 as u8])).bytes());
-    emit(http.http_serialize_response_to("HEAD", "HTTP/1.1", producer([65 as u8]), false).bytes());
+    emit(http.serialize_response(producer([65 as u8])).bytes());
+    emit(http.serialize_response_to("HEAD", "HTTP/1.1", producer([65 as u8]), false).bytes());
     return 0;
 }
 `

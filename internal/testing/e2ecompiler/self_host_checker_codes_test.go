@@ -3011,7 +3011,7 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"bare-variant-local-shadows-two-imported", "import \"std/dns\";\nimport \"std/deflate\";\nfunction main(): i32 { let Malformed: i32 = 4; return Malformed; }\n"},
 		{"bare-variant-pattern-settled-by-scrutinee", "import \"std/dns\";\nimport \"std/deflate\";\nfunction f(e: dns.DnsError): i32 { match (e) { Malformed => { return 1; }, _ => { return 0; } } }\nfunction main(): i32 { return f(dns.Malformed); }\n"},
 		{"bare-variant-modules-that-do-not-see-each-other", "import \"std/pmap\";\nimport \"std/pvec\";\nfunction main(): i32 { return 0; }\n"},
-		{"imported-struct-unqualified", "import \"std/http\";\nfunction main(): i32 {\n    let small: HttpLimits = http.http_limits();\n    let l: http.HttpLimits = HttpLimits { ...small, body: 1024 };\n    return l.body;\n}\n"},
+		{"imported-struct-unqualified", "import \"std/http\";\nfunction main(): i32 {\n    let small: HttpLimits = http.limits();\n    let l: http.HttpLimits = HttpLimits { ...small, body: 1024 };\n    return l.body;\n}\n"},
 		{"option-methods-imported", "import \"std/option\";\nfunction main(): i32 { let x: Option[i32] = Some(3); let y: Option[i32] = x.map((v: i32): i32 => v + 1); if (x.is_some()) { return y.unwrap_or(0); } return 0; }\n"},
 		{"result-methods-imported", "import \"std/result\";\nfunction main(): i32 { let r: Result[i32, string] = Ok(2); return r.unwrap_or(0); }\n"},
 		{"option-method-missing-imported", "import \"std/option\";\nfunction main(): i32 { let x: Option[i32] = Some(3); return x.nope(); }\n"},

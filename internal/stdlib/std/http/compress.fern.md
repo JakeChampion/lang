@@ -152,7 +152,7 @@ function __eligible(resp: HttpResponse, o: Options): boolean {
   if (!__whole(resp.body)) {
     return false;
   }
-  if (resp.status == 206 || http.http_bodiless(resp.status) || resp.headers.has("Content-Encoding")) {
+  if (resp.status == 206 || http.bodiless(resp.status) || resp.headers.has("Content-Encoding")) {
     return false;
   }
   if (cache.parse_cache_control(resp.headers).no_transform || resp.body_len() < o.min_size) {
