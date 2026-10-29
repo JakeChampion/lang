@@ -406,7 +406,7 @@ function main(): i32 {
         Ok(resp) => { print("big: " + resp.body_bytes().len().to_string()); },
         Err(e) => { print("big: error " + e.message()); }
     }
-    let small: http.HttpLimits = http.http_limits();
+    let small: http.HttpLimits = http.limits();
     show("limit", fetch.send(fetch.get(base() + "/big").with_limits(http.HttpLimits { ...small, body: 1024 })));
     show("garbage", fetch.send(fetch.get(base() + "/garbage")));
     show("bighead", fetch.send(fetch.get(base() + "/bighead")));
@@ -532,7 +532,7 @@ function size(name: string, answer: Result[HttpResponse, fetch.FetchError]): str
 }
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-    let small: http.HttpLimits = http.http_limits();
+    let small: http.HttpLimits = http.limits();
     let raw: u8[] = "raw".bytes();
     let out: string = "";
     out = out + line("plain", plat.http(fetch.get(base() + "/plain")));

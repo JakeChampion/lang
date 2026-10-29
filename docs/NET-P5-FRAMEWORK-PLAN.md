@@ -100,7 +100,7 @@ first among them.
    so the parser never holds a file part whole, and a handler writing one
    to disk never does either. Caps on the part count, the bytes of one
    part, the bytes of the body and the bytes of a part's headers come from
-   `http.http_limits()` by default; a handler names its own, since the
+   `http.limits()` by default; a handler names its own, since the
    serve loop's `Config` does not reach it. The builder makes such a body
    for a client, and `examples/upload.fern` drives a handler with one.
    Gate: both suites in the stdtest differential; `TestUploadServeInterp`
@@ -359,7 +359,7 @@ first among them.
    text, JSON, HEAD, 405, 302, problem, upload, compressed, static file,
    304, 206, `Cache-Control`) and fails on a note httplint rates BAD; the
    first run found the status line of a 206 and a 412 going out as
-   "Status", so `http_status_text` now names every RFC 9110 code. The
+   "Status", so `http.status_text` now names every RFC 9110 code. The
    load tool (landed): `tools/fernload/fernload.fern` sends at a fixed
    rate over kept connections, open-loop, and measures each request's
    latency from the moment the rate said it was due, so a stalled server

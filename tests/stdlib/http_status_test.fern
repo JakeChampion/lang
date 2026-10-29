@@ -2,52 +2,52 @@ import "std/test";
 import "std/http" as http;
 
 function test_status_text(): test.TestOutcome {
-  if (http.http_status_text(200) != "OK") {
+  if (http.status_text(200) != "OK") {
     return test.fail("200");
   }
-  if (http.http_status_text(404) != "Not Found") {
+  if (http.status_text(404) != "Not Found") {
     return test.fail("404");
   }
-  if (http.http_status_text(418) != "I'm a teapot") {
+  if (http.status_text(418) != "I'm a teapot") {
     return test.fail("418");
   }
-  if (http.http_status_text(206) != "Partial Content" || http.http_status_text(412) != "Precondition Failed" || http.http_status_text(416) != "Range Not Satisfiable") {
+  if (http.status_text(206) != "Partial Content" || http.status_text(412) != "Precondition Failed" || http.status_text(416) != "Range Not Satisfiable") {
     return test.fail("206, 412, 416");
   }
-  return test.assert_eq(http.http_status_text(299), "");
+  return test.assert_eq(http.status_text(299), "");
 }
 
 function test_classes(): test.TestOutcome {
-  if (!http.http_is_informational(100) || http.http_is_informational(200)) {
+  if (!http.is_informational(100) || http.is_informational(200)) {
     return test.fail("1xx");
   }
-  if (!http.http_is_success(200) || http.http_is_success(301)) {
+  if (!http.is_success(200) || http.is_success(301)) {
     return test.fail("2xx");
   }
-  if (!http.http_is_redirect(302) || http.http_is_redirect(200)) {
+  if (!http.is_redirect(302) || http.is_redirect(200)) {
     return test.fail("3xx");
   }
-  if (!http.http_is_client_error(404) || http.http_is_client_error(500)) {
+  if (!http.is_client_error(404) || http.is_client_error(500)) {
     return test.fail("4xx");
   }
-  return test.assert_true(http.http_is_server_error(503) && !http.http_is_server_error(404));
+  return test.assert_true(http.is_server_error(503) && !http.is_server_error(404));
 }
 
 function test_is_error(): test.TestOutcome {
-  if (!http.http_is_error(404) || !http.http_is_error(500)) {
+  if (!http.is_error(404) || !http.is_error(500)) {
     return test.fail("error codes");
   }
-  return test.assert_true(!http.http_is_error(200) && !http.http_is_error(302));
+  return test.assert_true(!http.is_error(200) && !http.is_error(302));
 }
 
 function test_boundaries_and_range(): test.TestOutcome {
-  if (!http.http_is_success(299) || http.http_is_success(300)) {
+  if (!http.is_success(299) || http.is_success(300)) {
     return test.fail("2xx boundary");
   }
-  if (!http.http_is_client_error(400) || !http.http_is_client_error(499)) {
+  if (!http.is_client_error(400) || !http.is_client_error(499)) {
     return test.fail("4xx boundary");
   }
-  return test.assert_true(!http.http_is_success(99) && !http.http_is_server_error(600));
+  return test.assert_true(!http.is_success(99) && !http.is_server_error(600));
 }
 
 function main(): i32 {

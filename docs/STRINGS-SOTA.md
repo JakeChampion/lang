@@ -1267,7 +1267,7 @@ the body as it came. An upstream serves whatever bytes it likes, so a
 text-typed response was a `string` this decision forbids.
 
 The HTTP MESSAGE layer followed. A serve loop holds its buffer as
-`u8[]` and parses it with `http_parse_request_bytes`; `HttpRequest.body`
+`u8[]` and parses it with `http.parse_request_bytes`; `HttpRequest.body`
 is a `ByteStream` over the body's bytes, on every target and in the
 wasi-http marshalling. The request line and header block are checked
 where they become text: a method and a header name are tokens, so

@@ -4,7 +4,7 @@ Status: [record] measured experiment for #9853; its e2e test still checks the cl
 
 What #9853 asked, measured: an HTTP/1.1 request parse plus a response
 serialise written as a `fip` codec over owned buffers, against the
-`http_parse_request` and `http_serialize_response` a handler goes through
+`http.parse_request` and `http.serialize_response` a handler goes through
 today. The programs are `examples/fip/http_baseline.fern` and
 `examples/fip/http_fip.fern`, and `internal/testing/e2e/fip_http_test.go` keeps their
 claims from rotting. Read `docs/ALLOCATION-OBSERVABLE.md` for what the
@@ -45,7 +45,7 @@ request gets `400 bad request`. Every response says `Connection: close`, as
 
 | variant | the request | the response | annotation |
 | --- | --- | --- | --- |
-| `http_baseline.fern` | the wire bytes become a `string`; `http_parse_request` gives an `HttpRequest` holding owned copies of the method, the path, a `HeaderMap` of every header, and the body as a `Stream` | an `HttpResponse` the route builds; `http_serialize_response` concatenates the reply | none |
+| `http_baseline.fern` | the wire bytes become a `string`; `http.parse_request` gives an `HttpRequest` holding owned copies of the method, the path, a `HeaderMap` of every header, and the body as a `Stream` | an `HttpResponse` the route builds; `http.serialize_response` concatenates the reply | none |
 | `http_fip.fern` | read in place out of the wire buffer; the parse's findings (the body's bounds, the request id's bounds, the length) are scalars in the function that uses them | framed into a second owned buffer, preallocated once | `fip` |
 
 The `fip` parser follows `std/http`'s acceptance rules on every shape the
@@ -120,7 +120,7 @@ self-host's output wins performance ties; here it is not a tie.
 When the table was taken, the self-host build of the baseline also
 allocated 7 more times per request than the native build (93.4 against
 86.4) for the same source and the same answers. `FERN_RC_TRACE` on both
-builds attributed it to `http_serialize_response`: its `hdr_block =
+builds attributed it to `http.serialize_response`: its `hdr_block =
 hdr_block + name + ": " + value + "\r\n"` chains are fifteen `+` per
 response, and native grew the uniquely-held accumulator in place through
 `__fern_str_append` (#5637), allocating about eight, while the self-host

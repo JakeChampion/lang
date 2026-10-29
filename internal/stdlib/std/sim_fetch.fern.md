@@ -527,7 +527,7 @@ function __exchange_of(o: json.JsonObject): Option[__Exchange] {
     return None;
   };
   let resp: HttpResponse = HttpResponse { status: status, body: BodyBytes(body), headers: __headers_member(o), trailers: headers.new(), background: None };
-  return Some(__Exchange { host: u.host, port: port, target: target, answer: raw_bytes(http.http_serialize_response_to_bytes(method, "HTTP/1.1", resp, false)) });
+  return Some(__Exchange { host: u.host, port: port, target: target, answer: raw_bytes(http.serialize_response_to_bytes(method, "HTTP/1.1", resp, false)) });
 }
 
 function __string_member(o: json.JsonObject, key: string): string {
@@ -829,7 +829,7 @@ function __served(n: Net, addr: string, port: i32, bytes: u8[]): i32 {
 }
 
 function __response_entry(s: Server, bytes: u8[]): string {
-  match (http.http_parse_request_framed(bytes)) {
+  match (http.parse_request_framed(bytes)) {
     http.Framed(f) => {
       let h: (HttpRequest) => HttpResponse = s.handler;
       let resp: HttpResponse = h(f.request);
@@ -837,7 +837,7 @@ function __response_entry(s: Server, bytes: u8[]): string {
       if (f.keep_alive) {
         flag = "k";
       }
-      return flag + hex.encode(http.http_serialize_response_to_bytes(f.request.method, f.version, resp, f.keep_alive));
+      return flag + hex.encode(http.serialize_response_to_bytes(f.request.method, f.version, resp, f.keep_alive));
     },
     http.Incomplete => {
       return __refused_entry();
@@ -853,7 +853,7 @@ function __response_entry(s: Server, bytes: u8[]): string {
 }
 
 function __refused_entry(): string {
-  return "c" + hex.encode(http.http_serialize_response_conn_bytes(http.text(400, "bad request"), false));
+  return "c" + hex.encode(http.serialize_response_conn_bytes(http.text(400, "bad request"), false));
 }
 
 // A negative `i` is the fault of flake `-1 - i`.

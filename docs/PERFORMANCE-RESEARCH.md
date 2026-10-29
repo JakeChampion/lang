@@ -568,7 +568,7 @@ with provably zero runtime panics. Transpiles to C.**
 The hot path for an edge HTTP handler is *parsing* — HTTP
 request lines, headers, JSON bodies, URL components. These
 are exactly WUFFS's target. The codebase already has
-`http_parse_request` in the prelude with hand-coded bounds.
+`http.parse_request` in the prelude with hand-coded bounds.
 
 **What translates:**
 

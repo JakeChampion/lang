@@ -315,7 +315,7 @@ function read(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): (Conn, Tally) 
     if (conn.state != BUSY) {
       return (reopen(drv, p, conn), tally);
     }
-    match (http.http_parse_response_framed(conn.buf, "GET", false, http.http_limits())) {
+    match (http.parse_response_framed(conn.buf, "GET", false, http.limits())) {
       http.Complete(f) => {
         let now: i64 = monotonic_ns();
         tally = recorded(tally, (now - conn.due_ns) / 1000, (now - conn.sent_ns) / 1000);

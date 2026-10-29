@@ -55,7 +55,7 @@ function real_fetch(b: machine.Backend, t: runtime.Txn): machine.FetchOut {
     },
     None => {}
   }
-  return machine.FetchOut { status: resp.status as i64, reason: http.http_status_text(resp.status), headers: h, body: body, ttl: ttl, ok: true, err: "" };
+  return machine.FetchOut { status: resp.status as i64, reason: http.status_text(resp.status), headers: h, body: body, ttl: ttl, ok: true, err: "" };
 }
 
 function client_ip_of(h: HeaderMap): string {

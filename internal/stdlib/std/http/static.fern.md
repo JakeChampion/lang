@@ -110,7 +110,7 @@ pub function dir(root: string): Dir {
 }
 
 pub function serve(req: HttpRequest, d: Dir, plat: platform.Platform): HttpResponse {
-  let path: string = http.http_url_path_only(req.path);
+  let path: string = http.url_path_only(req.path);
   return __serve(req, d, path.split("/"), path.ends_with("/"), plat);
 }
 
@@ -190,7 +190,7 @@ function __index(req: HttpRequest, d: Dir, path: string, plat: platform.Platform
 }
 
 function __add_slash(target: string): HttpResponse {
-  let path: string = http.http_url_path_only(target);
+  let path: string = http.url_path_only(target);
   let query: string = target.slice_snap(path.len(), target.len());
   let base: string = __last_segment(path);
   return HttpResponse { ...http.redirect(url.encode(base) + "/" + query), status: 301 };

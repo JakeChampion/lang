@@ -12,8 +12,8 @@ count half of exit criterion A, reached at §6.2's slice 11.
 ## 1. What the framing path allocates today
 
 A hello request, `GET /` with `Host`, `User-Agent` and `Accept`, parsed by
-`http_parse_request_framed_from`, and an `http.ok("hello")` response
-serialized by `http_serialize_response_to_bytes`. Allocations are
+`http.parse_request_framed_from`, and an `http.ok("hello")` response
+serialized by `http.serialize_response_to_bytes`. Allocations are
 `__heap_alloc_count()` deltas over 1,000 iterations, x86-64, at `origin/main`
 411e0f893.
 
@@ -179,11 +179,11 @@ The self-host parse is 13 kept, 2 wrapper and 25 scratch:
 | 3 | `HeaderMap.append` takes a fresh box for `HeaderMap { ...h, … }` and frees the old one: the spread does not reuse the box it consumes | `headers.fern` `append` |
 | 14 | `Option`, `Result`, tuple and `__Head` boxes returned between the head parse's helpers: `Some(v)` per field value, `Ok(h)`, `Ok(p)`, `Ok(joined)`, `Length(n)` and its `Ok`, `__Head` and its `Ok`, the request-line and `__framed_body` tuples, the `line` default tuple, the `Some(0)` length | `__field_value`, `__request_line`, `__head`, `__framed_body`, `__http_content_length` |
 | 2 | `headers.new()` for a default overwritten before it is read, and for the trailers of a request that has none | `__head`, `__framed_body` |
-| 6 | request-target scratch: the method and path strings built only to pass to `http_request_target`, the decoded `u8[]`, a string copy made only to check its UTF-8, the empty first segment, the segments array | `__request_line`, `__decoded_path`, `__joined_segments` |
+| 6 | request-target scratch: the method and path strings built only to pass to `http.request_target`, the decoded `u8[]`, a string copy made only to check its UTF-8, the empty first segment, the segments array | `__request_line`, `__decoded_path`, `__joined_segments` |
 
 The serialize's 4 are the builder's two blocks, the copy `buf_take_bytes`
 makes of its contents, and the `phrases` `string[]` literal in
-`http_status_text`, rebuilt per call because the static constant pool holds
+`http.status_text`, rebuilt per call because the static constant pool holds
 scalar arrays but not arrays of strings.
 
 The Go compiler's 43 on x86-64 are 8 kept, 2 wrapper and 33 scratch. It
@@ -193,7 +193,7 @@ reuses the `append` box and does not box `Some(v)`, but:
   all;
 - every empty `[]` allocates, 8 in all;
 - the default `Length(0)` is boxed;
-- `http_status_text`'s `codes` literal is not static.
+- `http.status_text`'s `codes` literal is not static.
 
 arm64 adds 10 and wasm adds 6, from strings the x86-64 backend keeps inline
 and from per-target boxing of `Some(v)`.
@@ -236,7 +236,7 @@ on #4451, as slice 2 was.
 4. **The request target decodes without scratch.** A target with no `%` and
    no dot segment is the range itself, one string. One that needs decoding
    checks its UTF-8 over the bytes, not over a copy. The two strings handed to
-   `http_request_target` are read as ranges of the buffer. Done: the request
+   `http.request_target` are read as ranges of the buffer. Done: the request
    line hands `__target_path` its range of the buffer, and a path that needs
    work is decoded and has its dot segments removed in one byte array, with
    UTF-8 checked only when an escape decoded past ASCII. Parse 35 to 28 on
@@ -280,7 +280,7 @@ on #4451, as slice 2 was.
    place needs strings and arrays a parse may rewrite, which Fern does not
    have, and a handler that keeps its request, or parks holding it, would
    make the donor shared anyway. The serve loop keeps the request it took
-   last, on any connection, less any body (`http_framed_kept`), and every
+   last, on any connection, less any body (`http.framed_kept`), and every
    parse takes it as `prev`: a string it would copy that holds the same text as `prev`'s at
    the same place is `prev`'s, a field block repeating `prev`'s is `prev`'s
    map, and a bodiless request repeating `prev` is `prev`, framing
@@ -293,7 +293,7 @@ on #4451, as slice 2 was.
    donor is one per loop rather than one per connection because a donor
    per connection is a head held by every idle keep-alive connection: 3.2
    KiB each in the held-connection gate, against its 1 KiB bound. A parse
-   with no request before it (`http_parse_request_framed`) builds its
+   with no request before it (`http.parse_request_framed`) builds its
    request fresh, so a caller it is spliced into still keeps the request in
    registers; the checks against an empty donor cost the `http_hello`
    bench, which parses that way, 2% more instructions on x86-64, and the
@@ -316,7 +316,7 @@ on #4451, as slice 2 was.
    builder cleared instead of freed, with the reply sent from it, removes
    its two blocks and the copy. Done: the serve loop keeps one builder,
    per loop rather than per connection for the reason the donor is, and
-   `http_serialize_response_into` writes each reply into it. Two builtins
+   `http.serialize_response_into` writes each reply into it. Two builtins
    carry it: `tcp_send_buf(fd, b, from)` sends the builder's bytes in
    place, and `buf_clear(b)` empties it and keeps its storage. A short
    write still copies what the kernel did not take into the connection's
@@ -467,7 +467,7 @@ is preferred where it covers a case, since every program gains.
    point nothing calls is no caller): the `Result` was paired (§5.3's
    slice 7), the head record it carried was not, and the `Length(n)`
    framing stored in the record was passed whole to `__framed_body`. Read
-   apart in `http_parse_request_framed_from`, neither is built. A record
+   apart in `http.parse_request_framed_from`, neither is built. A record
    read by its fields counts as taken apart now (`sempair.reads_apart`),
    for the pairing's own test as for this one. The task trampolines
    `run_task` and `run_task_call`, which the suspend pass knows by name,
@@ -485,7 +485,7 @@ is preferred where it covers a case, since every program gains.
    (`Pipelined`, `Idle`, `Expecting`, `Illformed(status)`) and the framed
    request beside it, carried in the loop's locals and in `__serve_took`'s
    tuple, with a request the loop already holds standing in where there is
-   none, since a fresh `http_framed_none()` is three boxes. Two compiler
+   none, since a fresh `http.framed_none()` is three boxes. Two compiler
    changes made that enough. A leaf may take a variant apart
    (`seminline.leaf_word`): a function under the leaf budget that reads a
    variant parameter's position and payload and builds a tuple or variant

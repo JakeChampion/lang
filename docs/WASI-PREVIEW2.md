@@ -206,7 +206,7 @@ Auto-injected struct shape:
   fields and leaves `trailers` empty: the body's trailers are a future
   the host settles after the body is finished, and nothing reads it
   yet. The body is read up to std/http's serve cap
-  (`http_limits().body`, 1 MiB); a longer one is answered 413 before
+  (`http.limits().body`, 1 MiB); a longer one is answered 413 before
   `handle` runs, as the socket server answers it.
 - `HttpResponse { status: number, body: string, headers: HeaderMap,
   trailers: HeaderMap, background: Option[() => void] }` — `status` is

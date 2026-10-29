@@ -544,16 +544,16 @@ function main(): i32 {
   let w: i32 = 0;
   while (w < batch) {
     wire = build_request(wire, w as i64);
-    match (http.http_parse_request(string_from_bytes_unchecked(wire.take(wire_len_of(wire))))) {
+    match (http.parse_request(string_from_bytes_unchecked(wire.take(wire_len_of(wire))))) {
       Ok(req) => {
         let d: Decision = route(counters, req);
         counters = update(counters, d);
         t = tally(t, d);
-        let warm: string = http.http_serialize_response(render(d, req, t, counters.len()));
+        let warm: string = http.serialize_response(render(d, req, t, counters.len()));
       },
       Err(_) => {
         t = tally(t, decision(400));
-        let warm: string = http.http_serialize_response(http.bad_request("bad request"));
+        let warm: string = http.serialize_response(http.bad_request("bad request"));
       }
     }
     w = w + 1;
@@ -570,16 +570,16 @@ function main(): i32 {
       let n: i64 = r as i64 * (batch as i64) + k as i64;
       wire = build_request(wire, n);
       let resp: string = "";
-      match (http.http_parse_request(string_from_bytes_unchecked(wire.take(wire_len_of(wire))))) {
+      match (http.parse_request(string_from_bytes_unchecked(wire.take(wire_len_of(wire))))) {
         Ok(req) => {
           let d: Decision = route(counters, req);
           counters = update(counters, d);
           t = tally(t, d);
-          resp = http.http_serialize_response(render(d, req, t, counters.len()));
+          resp = http.serialize_response(render(d, req, t, counters.len()));
         },
         Err(_) => {
           t = tally(t, decision(400));
-          resp = http.http_serialize_response(http.bad_request("bad request"));
+          resp = http.serialize_response(http.bad_request("bad request"));
         }
       }
       let i: i32 = 0;

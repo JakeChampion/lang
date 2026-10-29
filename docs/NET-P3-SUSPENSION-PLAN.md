@@ -353,7 +353,7 @@ programs) name the third field.
 (off by default), a request whose header block is complete and whose body
 framing is valid starts its handler at once, the body not yet arrived. The
 parser answers that state through a head-only entry beside the framed
-parse: `http_parse_request_head_from` is `Headed(HttpHead)` — the request
+parse: `http.parse_request_head_from` is `Headed(HttpHead)` — the request
 with an empty body, its length on the wire, persistence, version, declared
 body length (-1 chunked) and whether it expects `100 Continue` —
 `HeadIncomplete`, or `HeadMalformed(status)`, a declared length past the

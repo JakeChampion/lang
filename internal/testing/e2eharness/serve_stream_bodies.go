@@ -57,7 +57,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    let opts: serve.Config = serve.Config { ...serve.config(), workers: 1, stream_bodies: true, min_data_rate: 1000, data_rate_grace: time.duration_millis(300), limits: http.HttpLimits { ...http.http_limits(), body: 4096 } };
+    let opts: serve.Config = serve.Config { ...serve.config(), workers: 1, stream_bodies: true, min_data_rate: 1000, data_rate_grace: time.duration_millis(300), limits: http.HttpLimits { ...http.limits(), body: 4096 } };
     return serve.exit_code(serve.supervise(0, opts, handle));
 }
 `)

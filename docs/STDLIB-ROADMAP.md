@@ -39,7 +39,7 @@ What Fern's prelude / built-ins cover today, as a baseline:
 - **i/o**: `read_file`, `write_file`, `open_reader/writer/appender`,
   `read_line`, `read_chunk`, `exit`, `env`, `args`, `random_bytes`.
 - **net**: `tcp_listen / accept / recv / send / close`,
-  `http_parse_request`, `http_serialize_response`, `tcp_serve`.
+  `http.parse_request`, `http.serialize_response`, `tcp_serve`.
 - **misc**: `format(fmt, args)`, f-string literals.
 
 ## Per-language highlights (gaps Fern doesn't have)
@@ -545,7 +545,7 @@ think they're free additions to make.
   literals.
 - **`repeat_char(ch, n)`**: repeat a `char` value n times using
   its complete UTF-8 encoding. Nonpositive n returns empty.
-- **`http_status_text(code)`**: IANA reason phrase for the
+- **`http.status_text(code)`**: IANA reason phrase for the
   common HTTP status codes (RFC 9110). `""` for unknown.
 - **i32 saturating + checked arithmetic**: `saturating_add` /
   `saturating_sub` (clamp at MAX/MIN), `checked_add` /
@@ -669,7 +669,7 @@ think they're free additions to make.
 - **`s.hash_djb2()`**: Bernstein's djb2 hash. Alternate
   non-crypto hash to FNV-1a; sometimes a better mix for
   short keys.
-- **`http_path_segments(path)`**: split an HTTP path into
+- **`http.path_segments(path)`**: split an HTTP path into
   non-empty components. Strips query string and collapses
   duplicate slashes. Useful for simple routing.
 - **`s.center(width, ch)`**: equal padding on both sides;
@@ -683,7 +683,7 @@ think they're free additions to make.
   Handles quoted fields with embedded commas and doubled-
   quote escapes. Multi-line CSV (newlines inside quoted
   fields) deferred — needs a streaming parser.
-- **`http_header_value(headers, key)`**: case-insensitive
+- **`http.header_value(headers, key)`**: case-insensitive
   header lookup against a CRLF-separated header block.
   Returns the first matching value, trimmed.
 - **String-array length analytics**: `arr.max_by_len()`
@@ -712,9 +712,9 @@ think they're free additions to make.
 - **Byte digit/hex values**: `(b).digit_value()` / `(b).hex_value()`, each `Option[i32]`,
   `None` on a byte that is not a digit. Useful for hand-rolled parsers.
 - **`s.count_byte(b)`**: single-byte fast path on count.
-- **`http_url_path_only(path)`**: strip the `?query`
+- **`http.url_path_only(path)`**: strip the `?query`
   suffix.
-- **`http_user_agent_is_bot(ua)`**: heuristic check for
+- **`http.user_agent_is_bot(ua)`**: heuristic check for
   common bot tokens (bot / crawler / spider / slurp,
   case-insensitive). Hint, not a security control.
 - **`(n: i32).to_string_with_sep(sep)`**: decimal with

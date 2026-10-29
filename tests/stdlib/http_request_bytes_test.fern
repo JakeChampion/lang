@@ -19,7 +19,7 @@ function wire_post(): string {
 }
 
 function test_bytes_parse_keeps_the_request(): test.TestOutcome {
-  match (http.http_parse_request_bytes(wire_post().bytes())) {
+  match (http.parse_request_bytes(wire_post().bytes())) {
     Ok(req) => {
       if (req.method != "POST") {
         return test.fail("method: " + req.method);
@@ -44,9 +44,9 @@ function test_bytes_parse_keeps_the_request(): test.TestOutcome {
 
 function test_text_and_bytes_agree(): test.TestOutcome {
   let wire: string = wire_post();
-  match (http.http_parse_request(wire)) {
+  match (http.parse_request(wire)) {
     Ok(a) => {
-      match (http.http_parse_request_bytes(wire.bytes())) {
+      match (http.parse_request_bytes(wire.bytes())) {
         Ok(b) => {
           if (a.method != b.method || a.path != b.path) {
             return test.fail("request line differs");
@@ -69,7 +69,7 @@ function test_text_and_bytes_agree(): test.TestOutcome {
 }
 
 function test_bare_request_has_no_headers(): test.TestOutcome {
-  match (http.http_parse_request_bytes("GET / HTTP/1.0\r\n\r\n".bytes())) {
+  match (http.parse_request_bytes("GET / HTTP/1.0\r\n\r\n".bytes())) {
     Ok(req) => {
       if (req.headers.len() != 0) {
         return test.fail("headers on a bare request");
@@ -120,7 +120,7 @@ function block_of(block_len: i32): string {
 }
 
 function accepted(wire: string): boolean {
-  match (http.http_parse_request_bytes(wire.bytes())) {
+  match (http.parse_request_bytes(wire.bytes())) {
     Ok(_) => {
       return true;
     },
@@ -132,7 +132,7 @@ function accepted(wire: string): boolean {
 }
 
 function test_caps_admit_what_fits(): test.TestOutcome {
-  match (http.http_parse_request_bytes(("GET / HTTP/1.1\r\nHost: h\r\n" + fields(99) + "\r\n").bytes())) {
+  match (http.parse_request_bytes(("GET / HTTP/1.1\r\nHost: h\r\n" + fields(99) + "\r\n").bytes())) {
     Ok(req) => {
       if (req.headers.len() != 100) {
         return test.fail("100 fields kept as " + req.headers.len().to_string());
@@ -160,22 +160,22 @@ function test_caps_admit_what_fits(): test.TestOutcome {
   if (accepted("POST / HTTP/1.1\r\nHost: h\r\nContent-Length: 1048577\r\n\r\n" + repeat("b", 1048577))) {
     return test.fail("a body a byte over 1 MiB accepted");
   }
-  if (http.http_request_bytes_cap(http.http_limits()) != 32768 + 4 + 1048576 + 32768) {
-    return test.fail("request cap: " + http.http_request_bytes_cap(http.http_limits()).to_string());
+  if (http.request_bytes_cap(http.limits()) != 32768 + 4 + 1048576 + 32768) {
+    return test.fail("request cap: " + http.request_bytes_cap(http.limits()).to_string());
   }
   return test.pass();
 }
 
 function refused(wire: string): boolean {
   let text: boolean = true;
-  match (http.http_parse_request(wire)) {
+  match (http.parse_request(wire)) {
     Ok(_) => {
       text = false;
     },
     Err(_) => {}
   }
   let bytes: boolean = true;
-  match (http.http_parse_request_bytes(wire.bytes())) {
+  match (http.parse_request_bytes(wire.bytes())) {
     Ok(_) => {
       bytes = false;
     },
@@ -297,7 +297,7 @@ function test_refusals_agree(): test.TestOutcome {
 }
 
 function framing_of(wire: string): i32 {
-  match (http.http_parse_request_framed(wire.bytes())) {
+  match (http.parse_request_framed(wire.bytes())) {
     http.Framed(_) => {
       return 2;
     },
@@ -366,7 +366,7 @@ function chunked(body: string): string {
 }
 
 function body_of(wire: string): string {
-  match (http.http_parse_request_bytes(wire.bytes())) {
+  match (http.parse_request_bytes(wire.bytes())) {
     Ok(req) => {
       return body_text(req);
     },
@@ -378,7 +378,7 @@ function body_of(wire: string): string {
 }
 
 function test_chunked_body_is_decoded(): test.TestOutcome {
-  match (http.http_parse_request_bytes(wire_chunked().bytes())) {
+  match (http.parse_request_bytes(wire_chunked().bytes())) {
     Ok(req) => {
       if (body_text(req) != "hello world") {
         return test.fail("body: " + body_text(req));
@@ -415,7 +415,7 @@ function test_chunked_body_is_decoded(): test.TestOutcome {
       return test.fail("the chunked request was not framed");
     }
   }
-  match (http.http_parse_request_framed_from(wire.bytes(), wire_chunked().len(), http.http_limits(), http.http_framed_none())) {
+  match (http.parse_request_framed_from(wire.bytes(), wire_chunked().len(), http.limits(), http.framed_none())) {
     http.Framed(f) => {
       if (f.request.path != "/next") {
         return test.fail("behind the chunked request: " + f.request.path);
@@ -437,7 +437,7 @@ function test_chunked_body_is_decoded(): test.TestOutcome {
   if (body_of(chunked("0\r\n\r\n")) != "") {
     return test.fail("an empty chunked body refused");
   }
-  match (http.http_parse_request(wire_post())) {
+  match (http.parse_request(wire_post())) {
     Ok(req) => {
       if (req.trailers.len() != 0) {
         return test.fail("a Content-Length body has trailers");
@@ -561,7 +561,7 @@ function test_chunked_framing_tells_incomplete_from_malformed(): test.TestOutcom
 }
 
 function status_of(wire: string): i32 {
-  match (http.http_parse_request_framed(wire.bytes())) {
+  match (http.parse_request_framed(wire.bytes())) {
     http.Framed(_) => {
       return 0;
     },
@@ -660,7 +660,7 @@ function test_expect_continue(): test.TestOutcome {
 }
 
 function framed(wire: string): Option[http.HttpFramed] {
-  match (http.http_parse_request_framed(wire.bytes())) {
+  match (http.parse_request_framed(wire.bytes())) {
     http.Framed(f) => {
       return Some(f);
     },
@@ -678,7 +678,7 @@ function framed(wire: string): Option[http.HttpFramed] {
 }
 
 function refusal_of(text: string): string {
-  match (http.http_parse_request(text)) {
+  match (http.parse_request(text)) {
     Ok(_) => {
       return "parsed";
     },
@@ -713,7 +713,7 @@ function test_framed_length_covers_headers_and_body(): test.TestOutcome {
 
 function test_framed_from_reads_the_request_behind(): test.TestOutcome {
   let wire: string = wire_post() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
-  match (http.http_parse_request_framed_from(wire.bytes(), wire_post().len(), http.http_limits(), http.http_framed_none())) {
+  match (http.parse_request_framed_from(wire.bytes(), wire_post().len(), http.limits(), http.framed_none())) {
     http.Framed(f) => {
       if (f.request.path != "/next") {
         return test.fail("the request behind the offset was not the one parsed: " + f.request.path);
@@ -737,7 +737,7 @@ function test_framed_from_reads_the_request_behind(): test.TestOutcome {
 }
 
 function framed_after(wire: string, prev: http.HttpFramed): Option[http.HttpFramed] {
-  match (http.http_parse_request_framed_from(wire.bytes(), 0, http.http_limits(), prev)) {
+  match (http.parse_request_framed_from(wire.bytes(), 0, http.limits(), prev)) {
     http.Framed(f) => {
       return Some(f);
     },
@@ -799,8 +799,8 @@ function test_framed_after_a_request_is_framed_alone(): test.TestOutcome {
     "GET /other HTTP/1.0\r\nHost: localhost:8080\r\nConnection: close\r\n\r\n",
     "GET /other HTTP/1.0\r\nHost: localhost:8080\r\nConnection: close\r\n\r\n",
   ];
-  let whole: http.HttpFramed = http.http_framed_none();
-  let kept: http.HttpFramed = http.http_framed_none();
+  let whole: http.HttpFramed = http.framed_none();
+  let kept: http.HttpFramed = http.framed_none();
   let i: i32 = 0;
   while (i < wires.len()) {
     match (framed(wires[i])) {
@@ -823,7 +823,7 @@ function test_framed_after_a_request_is_framed_alone(): test.TestOutcome {
             if (d != "") {
               return test.fail("request " + i.to_string() + " after what a serve loop kept: " + d);
             }
-            kept = http.http_framed_kept(f);
+            kept = http.framed_kept(f);
           },
           None => {
             return test.fail("request " + i.to_string() + " did not frame after what a serve loop kept");
@@ -842,7 +842,7 @@ function test_framed_after_a_request_is_framed_alone(): test.TestOutcome {
 function test_framed_kept_drops_the_body(): test.TestOutcome {
   match (framed(wire_post())) {
     Some(f) => {
-      let k: http.HttpFramed = http.http_framed_kept(f);
+      let k: http.HttpFramed = http.framed_kept(f);
       if (k.request.body_len() != 0) {
         return test.fail("the kept request has a body of " + k.request.body_len().to_string());
       }
@@ -905,20 +905,20 @@ function test_framed_persistence_follows_the_version_and_connection(): test.Test
 
 function test_serialize_names_the_connection(): test.TestOutcome {
   let r: HttpResponse = http.ok("ok");
-  let kept: string = http.http_serialize_response_conn(r, true);
+  let kept: string = http.serialize_response_conn(r, true);
   if (kept.contains("Connection:")) {
     return test.fail("a persisting HTTP/1.1 response named Connection: " + kept);
   }
-  let closed: string = http.http_serialize_response_conn(r, false);
+  let closed: string = http.serialize_response_conn(r, false);
   if (!closed.contains("\r\nConnection: close\r\n")) {
     return test.fail("a closing response did not say close: " + closed);
   }
-  return test.assert_eq(http.http_serialize_response(r), closed);
+  return test.assert_eq(http.serialize_response(r), closed);
 }
 
 function test_parse_holds_no_view_into_the_wire(): test.TestOutcome {
   let wire: u8[] = wire_post().bytes();
-  match (http.http_parse_request_bytes(wire)) {
+  match (http.parse_request_bytes(wire)) {
     Ok(req) => {
       let i: i32 = 0;
       while (i < wire.len()) {
@@ -938,7 +938,7 @@ function test_parse_holds_no_view_into_the_wire(): test.TestOutcome {
 }
 
 function target_of(method: string, target: string): string {
-  match (http.http_request_target(method, target)) {
+  match (http.request_target(method, target)) {
     Ok(p) => {
       return p;
     },
@@ -1001,7 +1001,7 @@ function test_target_is_normalised(): test.TestOutcome {
   if (target_of("OPTIONS", "*") != "*") {
     return test.fail("asterisk-form: " + target_of("OPTIONS", "*"));
   }
-  match (http.http_parse_request_bytes("GET /a/%2e%2e/b?c=%2F HTTP/1.1\r\nHost: h\r\n\r\n".bytes())) {
+  match (http.parse_request_bytes("GET /a/%2e%2e/b?c=%2F HTTP/1.1\r\nHost: h\r\n\r\n".bytes())) {
     Ok(req) => {
       return test.assert_eq(req.path, "/b?c=%2F");
     },
@@ -1107,7 +1107,7 @@ function test_version_rules(): test.TestOutcome {
   if (status_of("GET / HTTP/1.5\r\n\r\n") != 400) {
     return test.fail("a higher minor version needs a Host like HTTP/1.1");
   }
-  match (http.http_parse_request_framed("GET / HTTP/1.5\r\nHost: h\r\n\r\n".bytes())) {
+  match (http.parse_request_framed("GET / HTTP/1.5\r\nHost: h\r\n\r\n".bytes())) {
     http.Framed(f) => {
       if (!f.keep_alive) {
         return test.fail("a higher minor version persists like HTTP/1.1");
@@ -1174,7 +1174,7 @@ function test_chunk_extension_grammar(): test.TestOutcome {
 
 function test_empty_line_before_the_request(): test.TestOutcome {
   let wire: string = "\r\nGET /a HTTP/1.1\r\nHost: h\r\n\r\n";
-  match (http.http_parse_request_framed(wire.bytes())) {
+  match (http.parse_request_framed(wire.bytes())) {
     http.Framed(f) => {
       if (f.request.path != "/a") {
         return test.fail("path: " + f.request.path);
@@ -1209,7 +1209,7 @@ function test_empty_line_before_the_request(): test.TestOutcome {
 }
 
 function header_of(wire: string, name: string): string {
-  match (http.http_parse_request(wire)) {
+  match (http.parse_request(wire)) {
     Ok(req) => {
       match (req.headers.get(name)) {
         Some(v) => {

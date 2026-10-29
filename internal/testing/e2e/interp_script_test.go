@@ -507,7 +507,7 @@ func TestInterpScriptHttpRequestHeaders(t *testing.T) {
 
 function main(): i32 {
     let wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
-    match (http.http_parse_request(wire)) {
+    match (http.parse_request(wire)) {
         Ok(req) => {
             match (req.headers.get("content-type")) {
                 Some(v) => { print(v); },
@@ -531,7 +531,7 @@ function main(): i32 {
 
 function main(): i32 {
     let wire: string = "GET / HTTP/1.1\r\nHost: h\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n";
-    match (http.http_parse_request(wire)) {
+    match (http.parse_request(wire)) {
         Ok(req) => {
             let all: string[] = req.headers.get_all("Set-Cookie");
             let i: i32 = 0;
@@ -553,7 +553,7 @@ function main(): i32 {
 
 function main(): i32 {
     let wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
-    match (http.http_parse_request(wire)) {
+    match (http.parse_request(wire)) {
         Ok(req) => {
             match (req.headers.get("X-Absent")) {
                 Some(v) => { print(v); return 1; },
@@ -606,7 +606,7 @@ function main(): i32 {
     let r: HttpResponse = http.ok("hello");
     r = r.with_header("X-Trace-Id", "abc123");
     r = r.with_header("Cache-Control", "no-store");
-    let wire: string = http.http_serialize_response(r);
+    let wire: string = http.serialize_response(r);
     print(wire);
     return 0;
 }`,
@@ -633,7 +633,7 @@ function main(): i32 {
 function main(): i32 {
     let r: HttpResponse = http.ok("hi");
     r = r.with_header("Content-Length", "9999");
-    let wire: string = http.http_serialize_response(r);
+    let wire: string = http.serialize_response(r);
     print(wire);
     return 0;
 }`,
@@ -647,7 +647,7 @@ function main(): i32 {
     let r: HttpResponse = http.ok("hi");
     r = r.with_appended_header("Set-Cookie", "a=1");
     r = r.with_appended_header("Set-Cookie", "b=2");
-    let wire: string = http.http_serialize_response(r);
+    let wire: string = http.serialize_response(r);
     print(wire);
     return 0;
 }`,
@@ -1486,7 +1486,7 @@ func TestInterpScriptHttpRequestBodyShim(t *testing.T) {
 
 function main(): i32 {
     let wire: string = "POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: 11\r\n\r\nhello world";
-    match (http.http_parse_request(wire)) {
+    match (http.parse_request(wire)) {
         Ok(req) => {
             match (req.body_string()) {
                 Ok(text) => { if (text != "hello world") { return 1; } },

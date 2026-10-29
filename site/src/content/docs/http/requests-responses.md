@@ -236,8 +236,8 @@ that removes one. On the client side a cookie jar is available too — see
 
 `http.redirect(location)` is a 302. For another code, set the header
 yourself: `http.text(308, "").with_header("location", "/new")`.
-`http.http_status_text(code)` gives the reason phrase, and
-`http.http_is_success`, `http_is_client_error` and friends classify a
+`http.status_text(code)` gives the reason phrase, and
+`http.is_success`, `http.is_client_error` and friends classify a
 code.
 
 Next: [Routing and middleware →](../routing-middleware/)

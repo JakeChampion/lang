@@ -8,8 +8,8 @@ function test_text_body(): test.TestOutcome {
   if (resp.body_len() != 5) {
     return test.fail("len: " + resp.body_len().to_string());
   }
-  if (!http.http_serialize_response(resp).ends_with("\r\n\r\nhello")) {
-    return test.fail("wire: " + http.http_serialize_response(resp));
+  if (!http.serialize_response(resp).ends_with("\r\n\r\nhello")) {
+    return test.fail("wire: " + http.serialize_response(resp));
   }
   return test.assert_body(resp, "hello");
 }
@@ -63,7 +63,7 @@ function test_file_body_is_read_by_the_loop(): test.TestOutcome {
   if (resp.body_string() != "") {
     return test.fail("a file body is not read by the handler");
   }
-  let whole: HttpResponse = http.http_materialize(resp);
+  let whole: HttpResponse = http.materialize(resp);
   if (whole.status != 200) {
     return test.fail("status: " + whole.status.to_string());
   }
@@ -74,7 +74,7 @@ function test_file_body_is_read_by_the_loop(): test.TestOutcome {
 }
 
 function test_a_missing_file_is_a_404(): test.TestOutcome {
-  let resp: HttpResponse = http.http_materialize(http.file(scratch("missing.txt")));
+  let resp: HttpResponse = http.materialize(http.file(scratch("missing.txt")));
   if (resp.status != 404) {
     return test.fail("status: " + resp.status.to_string());
   }
@@ -93,14 +93,14 @@ function test_a_chunks_body_reads_as_its_chunks_joined(): test.TestOutcome {
   if (resp.body_len() != 6) {
     return test.fail("len: " + resp.body_len().to_string());
   }
-  if (!http.http_serialize_response(resp).ends_with("\r\n\r\nc0c1c2")) {
-    return test.fail("wire: " + http.http_serialize_response(resp));
+  if (!http.serialize_response(resp).ends_with("\r\n\r\nc0c1c2")) {
+    return test.fail("wire: " + http.serialize_response(resp));
   }
   return test.assert_body(resp, "c0c1c2");
 }
 
 function test_other_bodies_pass_through_materialize(): test.TestOutcome {
-  let resp: HttpResponse = http.http_materialize(http.ok("as is"));
+  let resp: HttpResponse = http.materialize(http.ok("as is"));
   return test.assert_body(resp, "as is");
 }
 

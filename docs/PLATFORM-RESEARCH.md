@@ -689,7 +689,7 @@ native binaries. `tcp_serve` is roughly:
 loop {
     let conn = tcp_accept(socket);
     let arena = arena_save();
-    let req = http_parse_request(conn);
+    let req = http.parse_request(conn);
     let resp = handle(req);
     write_response(conn, resp);
     arena_restore(arena);

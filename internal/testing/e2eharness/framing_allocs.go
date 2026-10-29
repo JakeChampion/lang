@@ -20,21 +20,21 @@ import "std/http";
 // The parse is called from two places, as std/serve calls it from six, so
 // what it returns crosses a call rather than being spliced into its caller.
 function parse_once(buf: u8[], limits: http.HttpLimits, prev: http.HttpFramed): http.HttpFramed {
-  match (http.http_parse_request_framed_from(buf, 0, limits, prev)) {
+  match (http.parse_request_framed_from(buf, 0, limits, prev)) {
     http.Framed(f) => { return f; },
-    _ => { return http.http_framed_none(); }
+    _ => { return http.framed_none(); }
   }
 }
 
 function parse_first(buf: u8[], limits: http.HttpLimits): http.HttpFramed {
-  match (http.http_parse_request_framed_from(buf, 0, limits, http.http_framed_none())) {
+  match (http.parse_request_framed_from(buf, 0, limits, http.framed_none())) {
     http.Framed(f) => { return f; },
-    _ => { return http.http_framed_none(); }
+    _ => { return http.framed_none(); }
   }
 }
 
 function serialize_once(out: usize, resp: HttpResponse): i32 {
-  http.http_serialize_response_into(out, "GET", "HTTP/1.1", resp, true, "");
+  http.serialize_response_into(out, "GET", "HTTP/1.1", resp, true, "");
   let n: i32 = buf_len(out);
   buf_clear(out);
   return n;
@@ -42,7 +42,7 @@ function serialize_once(out: usize, resp: HttpResponse): i32 {
 
 function main(): i32 {
   let buf: u8[] = "GET / HTTP/1.1\r\nHost: localhost:8080\r\nUser-Agent: curl/8.5.0\r\nAccept: */*\r\n\r\n".bytes();
-  let limits: http.HttpLimits = http.http_limits();
+  let limits: http.HttpLimits = http.limits();
   let resp: HttpResponse = http.ok("hello");
   let out: usize = buf_new(16);
   let f: http.HttpFramed = parse_first(buf, limits);
@@ -51,7 +51,7 @@ function main(): i32 {
   let a0: i64 = bench.alloc_count();
   let i: i32 = 0;
   while (i < %[1]d) {
-    f = parse_once(buf, limits, http.http_framed_kept(f));
+    f = parse_once(buf, limits, http.framed_kept(f));
     parsed = parsed + keep(f);
     i = i + 1;
   }

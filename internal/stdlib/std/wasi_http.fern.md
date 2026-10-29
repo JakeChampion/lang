@@ -177,7 +177,7 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, platfo
     }
   }
   let path: string = "";
-  match (http.http_request_target(method, target)) {
+  match (http.request_target(method, target)) {
     Ok(p) => {
       path = p;
     },
@@ -250,7 +250,7 @@ function method_name(m: WasiHttpMethod): string {
 function read_body(request: i32): (u8[], i32) {
   match (req_consume(request)) {
     Ok(body) => {
-      return drain(body, Some(http.http_limits().body));
+      return drain(body, Some(http.limits().body));
     },
     Err(e) => {}
   }

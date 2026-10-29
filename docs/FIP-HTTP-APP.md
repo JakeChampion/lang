@@ -63,7 +63,7 @@ increments between them. The average response is 101 bytes.
 
 | variant | the request | the state | the response | annotation |
 | --- | --- | --- | --- | --- |
-| `httpapp_baseline.fern` | the wire bytes become a `string`; `http_parse_request` gives an `HttpRequest` with owned copies of everything | a `Map[string, i64]` keyed by the id's digits, beside a `Tallies` struct | an `HttpResponse` with a string body; `http_serialize_response` concatenates the reply | none |
+| `httpapp_baseline.fern` | the wire bytes become a `string`; `http.parse_request` gives an `HttpRequest` with owned copies of everything | a `Map[string, i64]` keyed by the id's digits, beside a `Tallies` struct | an `HttpResponse` with a string body; `http.serialize_response` concatenates the reply | none |
 | `httpapp_fbip.fern` | read in place out of the wire buffer | one `App` struct: the three table arrays, the tallies, the decision, AND the response buffer | written byte by byte through a rebuild of the whole `App` | `fbip` |
 | `httpapp_fip.fern` | read in place out of the wire buffer | one `App` struct: the three table arrays, the tallies and the decision | framed into a separate owned buffer by a second call | `fip` |
 
@@ -203,7 +203,7 @@ the baseline copies the whole table on every increment.
 ### `std/http` has no phrase for 507
 
 The natural status for "the counter table is full" is 507 Insufficient
-Storage; `http_status_text` does not know it and `__http_reason` would
+Storage; `http.status_text` does not know it and `__http_reason` would
 serialise `Status`. The service answers 503, which it does know. A table
 that covers every registered code is the fix; it is not this experiment's.
 

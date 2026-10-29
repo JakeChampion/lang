@@ -5,15 +5,15 @@ import "testing"
 const httpStatusClassProg = `
 import "std/http" as http;
 function main(): i32 {
-    if (!http.http_is_informational(100) || http.http_is_informational(200)) { return 1; }
-    if (!http.http_is_success(200) || !http.http_is_success(204) || http.http_is_success(301)) { return 2; }
-    if (!http.http_is_redirect(301) || !http.http_is_redirect(302) || http.http_is_redirect(200)) { return 3; }
-    if (!http.http_is_client_error(404) || http.http_is_client_error(500)) { return 4; }
-    if (!http.http_is_server_error(500) || !http.http_is_server_error(503) || http.http_is_server_error(404)) { return 5; }
-    if (!http.http_is_error(404) || !http.http_is_error(500) || http.http_is_error(200)) { return 6; }
-    if (http.http_is_success(99) || http.http_is_server_error(600) || http.http_is_informational(0)) { return 7; }
-    if (!http.http_is_success(299) || http.http_is_success(300)) { return 8; }
-    if (!http.http_is_client_error(400) || !http.http_is_client_error(499)) { return 9; }
+    if (!http.is_informational(100) || http.is_informational(200)) { return 1; }
+    if (!http.is_success(200) || !http.is_success(204) || http.is_success(301)) { return 2; }
+    if (!http.is_redirect(301) || !http.is_redirect(302) || http.is_redirect(200)) { return 3; }
+    if (!http.is_client_error(404) || http.is_client_error(500)) { return 4; }
+    if (!http.is_server_error(500) || !http.is_server_error(503) || http.is_server_error(404)) { return 5; }
+    if (!http.is_error(404) || !http.is_error(500) || http.is_error(200)) { return 6; }
+    if (http.is_success(99) || http.is_server_error(600) || http.is_informational(0)) { return 7; }
+    if (!http.is_success(299) || http.is_success(300)) { return 8; }
+    if (!http.is_client_error(400) || !http.is_client_error(499)) { return 9; }
     return 42;
 }
 `

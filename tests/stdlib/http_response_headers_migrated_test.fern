@@ -5,7 +5,7 @@ function test_user_headers_before_auto_block(): test.TestOutcome {
   let r: HttpResponse = http.ok("hello");
   r = r.with_header("X-Trace-Id", "abc123");
   r = r.with_header("Cache-Control", "no-store");
-  let wire: string = http.http_serialize_response(r);
+  let wire: string = http.serialize_response(r);
   return test.assert_eq(
     wire,
     "HTTP/1.1 200 OK\r\n"
@@ -29,7 +29,7 @@ function test_redirect_sets_location_header(): test.TestOutcome {
 function test_user_content_length_is_ignored(): test.TestOutcome {
   let r: HttpResponse = http.ok("hi");
   r = r.with_header("Content-Length", "9999");
-  let wire: string = http.http_serialize_response(r);
+  let wire: string = http.serialize_response(r);
   return test.assert_eq(
     wire,
     "HTTP/1.1 200 OK\r\n"
@@ -43,7 +43,7 @@ function test_user_content_length_is_ignored(): test.TestOutcome {
 function test_user_content_length_does_not_leak_into_wire(): test.TestOutcome {
   let r: HttpResponse = http.ok("hi");
   r = r.with_header("Content-Length", "9999");
-  let wire: string = http.http_serialize_response(r);
+  let wire: string = http.serialize_response(r);
   return test.assert_not_contains(wire, "9999");
 }
 
@@ -51,7 +51,7 @@ function test_duplicate_set_cookie_via_append(): test.TestOutcome {
   let r: HttpResponse = http.ok("hi");
   r = r.with_appended_header("Set-Cookie", "a=1");
   r = r.with_appended_header("Set-Cookie", "b=2");
-  let wire: string = http.http_serialize_response(r);
+  let wire: string = http.serialize_response(r);
   return test.assert_eq(
     wire,
     "HTTP/1.1 200 OK\r\n"
@@ -68,7 +68,7 @@ function test_duplicate_set_cookie_both_in_order(): test.TestOutcome {
   let r: HttpResponse = http.ok("hi");
   r = r.with_appended_header("Set-Cookie", "a=1");
   r = r.with_appended_header("Set-Cookie", "b=2");
-  let wire: string = http.http_serialize_response(r);
+  let wire: string = http.serialize_response(r);
   return test.assert_contains_in_order(
     wire,
     ["Set-Cookie: a=1", "Set-Cookie: b=2"],
@@ -76,47 +76,47 @@ function test_duplicate_set_cookie_both_in_order(): test.TestOutcome {
 }
 
 function test_status_reason_for_extended_codes(): test.TestOutcome {
-  let wire: string = http.http_serialize_response(http.text(429, "slow"));
+  let wire: string = http.serialize_response(http.text(429, "slow"));
   return test.assert_contains(wire, "429 Too Many Requests");
 }
 
 function test_status_reason_unknown_falls_back(): test.TestOutcome {
-  let wire: string = http.http_serialize_response(http.text(599, ""));
+  let wire: string = http.serialize_response(http.text(599, ""));
   return test.assert_contains(wire, "599 Status");
 }
 
 function test_head_response_has_no_body(): test.TestOutcome {
-  let wire: string = http.http_serialize_response_to("HEAD", "HTTP/1.1", http.ok("hello"), true);
+  let wire: string = http.serialize_response_to("HEAD", "HTTP/1.1", http.ok("hello"), true);
   return test.assert_eq(wire, "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n");
 }
 
 function test_no_content_has_no_length_or_body(): test.TestOutcome {
-  let wire: string = http.http_serialize_response_to("GET", "HTTP/1.1", http.text(204, "ignored"), true);
+  let wire: string = http.serialize_response_to("GET", "HTTP/1.1", http.text(204, "ignored"), true);
   return test.assert_eq(wire, "HTTP/1.1 204 No Content\r\n\r\n");
 }
 
 function test_connection_field_where_it_carries_meaning(): test.TestOutcome {
-  let kept_11: string = http.http_serialize_response_to("GET", "HTTP/1.1", http.ok("hello"), true);
+  let kept_11: string = http.serialize_response_to("GET", "HTTP/1.1", http.ok("hello"), true);
   if (kept_11.contains("Connection:")) {
     return test.fail("a persisting HTTP/1.1 response named Connection: " + kept_11);
   }
-  let kept_10: string = http.http_serialize_response_to("GET", "HTTP/1.0", http.ok("hello"), true);
+  let kept_10: string = http.serialize_response_to("GET", "HTTP/1.0", http.ok("hello"), true);
   if (!kept_10.contains("\r\nConnection: keep-alive\r\n")) {
     return test.fail("a kept HTTP/1.0 connection was not told so: " + kept_10);
   }
-  let closed_10: string = http.http_serialize_response_to("GET", "HTTP/1.0", http.ok("hello"), false);
+  let closed_10: string = http.serialize_response_to("GET", "HTTP/1.0", http.ok("hello"), false);
   if (!closed_10.contains("\r\nConnection: close\r\n")) {
     return test.fail("a closing HTTP/1.0 response did not say close: " + closed_10);
   }
-  return test.assert_eq(http.http_serialize_response_to("GET", "HTTP/1.1", http.ok("hello"), false), "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello");
+  return test.assert_eq(http.serialize_response_to("GET", "HTTP/1.1", http.ok("hello"), false), "HTTP/1.1 200 OK\r\nContent-Length: 5\r\nConnection: close\r\n\r\nhello");
 }
 
 function test_not_modified_and_informational_have_no_body(): test.TestOutcome {
-  let wire: string = http.http_serialize_response(http.text(304, "ignored"));
+  let wire: string = http.serialize_response(http.text(304, "ignored"));
   if (wire != "HTTP/1.1 304 Not Modified\r\nConnection: close\r\n\r\n") {
     return test.fail("304: " + wire);
   }
-  wire = http.http_serialize_response(http.text(100, ""));
+  wire = http.serialize_response(http.text(100, ""));
   return test.assert_eq(wire, "HTTP/1.1 100 Continue\r\nConnection: close\r\n\r\n");
 }
 

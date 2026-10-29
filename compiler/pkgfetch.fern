@@ -46,7 +46,7 @@ function failed(err: string): fern.Fetched {
 }
 
 function download(url: string): (u8[], string) {
-  let limits: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: MAX_ARCHIVE };
+  let limits: http.HttpLimits = http.HttpLimits { ...http.limits(), body: MAX_ARCHIVE };
   let req: fetch.Request = fetch.get(url).with_header("Accept-Encoding", "identity").with_limits(limits);
   match (fetch.send(req)) {
     Ok(resp) => {

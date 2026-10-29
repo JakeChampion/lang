@@ -768,7 +768,7 @@ function __answer(head: string, answer: (string) => HttpResponse): u8[] {
     },
     None => {}
   }
-  return http.http_serialize_response_conn(resp, false).bytes();
+  return http.serialize_response_conn(resp, false).bytes();
 }
 
 function __path_of(head: string): Option[string] {

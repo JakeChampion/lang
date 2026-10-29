@@ -1188,7 +1188,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    let limits: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 16, header_fields: 3 };
+    let limits: http.HttpLimits = http.HttpLimits { ...http.limits(), body: 16, header_fields: 3 };
     return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), limits: limits }, handle));
 }
 `)

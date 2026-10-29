@@ -7,7 +7,7 @@ function wire(date: string, body: string): string {
 }
 
 function framed(text: string, prev: HeaderMap): Option[http.HttpResponseFramed] {
-  match (http.http_parse_response_framed_from(text.bytes(), 0, "GET", false, http.http_limits(), prev)) {
+  match (http.parse_response_framed_from(text.bytes(), 0, "GET", false, http.limits(), prev)) {
     Complete(f) => {
       return Some(f);
     },

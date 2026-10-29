@@ -19,7 +19,7 @@ function serialized(c: cookie.SetCookie): string {
 function main(): i32 {
 
     let wire: string = "GET / HTTP/1.1\r\nHost: x\r\nCookie: a=1; session=abc; b=2\r\n\r\n";
-    match (http.http_parse_request(wire)) {
+    match (http.parse_request(wire)) {
         Ok(req) => {
             match (req.cookie("session")) {
                 Some(v) => { if (v != "abc") { return 1; } },
@@ -80,7 +80,7 @@ function main(): i32 {
         Ok(r) => { resp = r; },
         Err(e) => { return 17; }
     }
-    let out: string = http.http_serialize_response(resp);
+    let out: string = http.serialize_response(resp);
     if (!out.contains("Set-Cookie: a=1; Path=/; HttpOnly; SameSite=Lax")) { return 18; }
     if (!out.contains("Set-Cookie: b=2; Path=/; HttpOnly; SameSite=Lax")) { return 19; }
 

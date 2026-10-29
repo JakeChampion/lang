@@ -284,7 +284,7 @@ func TestWASMHttpParseRequest(t *testing.T) {
 import "std/http";
 function main(): i32 {
     let raw: string = "POST /todos HTTP/1.1\r\nHost: localhost\r\nContent-Length: 13\r\n\r\nhello, world!";
-    match (http.http_parse_request(raw)) {
+    match (http.parse_request(raw)) {
         Ok(req) => {
             if (req.method != "POST") { return 1; }
             if (req.path != "/todos") { return 2; }
@@ -307,7 +307,7 @@ func TestWASMHttpParseRequestNoBody(t *testing.T) {
 import "std/http";
 function main(): i32 {
     let raw: string = "GET /hello?name=world HTTP/1.1\r\nHost: localhost\r\n\r\n";
-    match (http.http_parse_request(raw)) {
+    match (http.parse_request(raw)) {
         Ok(req) => {
             if (req.method != "GET") { return 1; }
             if (req.path != "/hello?name=world") { return 2; }
@@ -327,7 +327,7 @@ func TestWASMHttpParseRequestPartial(t *testing.T) {
 import "std/http";
 function main(): i32 {
     let raw: string = "GET /partial HTTP/1.1\r\nHost: loca";
-    match (http.http_parse_request(raw)) {
+    match (http.parse_request(raw)) {
         Ok(_) => { return 1; },
         Err(_) => { return 42; }
     }
@@ -342,7 +342,7 @@ func TestWASMHttpSerializeResponse(t *testing.T) {
 import "std/http";
 function main(): i32 {
     let resp: HttpResponse = http.ok("hi");
-    let wire: string = http.http_serialize_response(resp);
+    let wire: string = http.serialize_response(resp);
     let expected: string = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nhi";
     if (wire != expected) { return 1; }
     return 42;
@@ -357,7 +357,7 @@ func TestWASMHttpSerializeResponse404(t *testing.T) {
 import "std/http";
 function main(): i32 {
     let resp: HttpResponse = http.text(404, "not found");
-    let wire: string = http.http_serialize_response(resp);
+    let wire: string = http.serialize_response(resp);
     if (!wire.starts_with("HTTP/1.1 404 Not Found\r\n")) { return 1; }
     return 42;
 }`

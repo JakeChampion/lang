@@ -1380,7 +1380,7 @@ guessing.
 
 **Already aligned (no action — call out so we don't drift):**
 
-- *Limits on everything.* `http_parse_request` caps at 8 KiB
+- *Limits on everything.* `http.parse_request` caps at 8 KiB
   headers + 1 MiB body and returns `None` past either;
   `__map_pow2_ceil` saturates at 2^30 instead of looping
   forever; `__fern_read_line` is gated on a 4 KiB .bss

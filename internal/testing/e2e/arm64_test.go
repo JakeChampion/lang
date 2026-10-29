@@ -6465,16 +6465,16 @@ function main(): i32 {
     if ("hello".count_byte(122) != 0) { return 9; }
     if ("aaaaa".count_byte(97) != 5) { return 10; }
 
-    // http_url_path_only
-    if (http.http_url_path_only("/api/users") != "/api/users") { return 11; }
-    if (http.http_url_path_only("/api/users?id=42") != "/api/users") { return 12; }
-    if (http.http_url_path_only("?foo=bar") != "") { return 13; }
+    // http.url_path_only
+    if (http.url_path_only("/api/users") != "/api/users") { return 11; }
+    if (http.url_path_only("/api/users?id=42") != "/api/users") { return 12; }
+    if (http.url_path_only("?foo=bar") != "") { return 13; }
 
-    // http_user_agent_is_bot
-    if (!http.http_user_agent_is_bot("Googlebot/2.1")) { return 14; }
-    if (!http.http_user_agent_is_bot("Mozilla/5.0 (compatible; bingbot/2.0)")) { return 15; }
-    if (http.http_user_agent_is_bot("Mozilla/5.0 (X11; Linux x86_64) Chrome/91")) { return 16; }
-    if (!http.http_user_agent_is_bot("yahoo slurp")) { return 17; }
+    // http.user_agent_is_bot
+    if (!http.user_agent_is_bot("Googlebot/2.1")) { return 14; }
+    if (!http.user_agent_is_bot("Mozilla/5.0 (compatible; bingbot/2.0)")) { return 15; }
+    if (http.user_agent_is_bot("Mozilla/5.0 (X11; Linux x86_64) Chrome/91")) { return 16; }
+    if (!http.user_agent_is_bot("yahoo slurp")) { return 17; }
 
     // to_string_with_sep
     if ((1000).to_string_with_sep(",") != "1,000") { return 18; }
@@ -6631,17 +6631,17 @@ function main(): i32 {
     let fmt: string[] = __csv_fields("a,,b");
     if (fmt.len() != 3 || fmt[1] != "") { return 18; }
 
-    // http_header_value
+    // http.header_value
     let hdrs: string = "Content-Type: text/html\r\nContent-Length: 42\r\nX-Foo: bar";
-    match (http.http_header_value(hdrs, "content-type")) {
+    match (http.header_value(hdrs, "content-type")) {
         Some(v) => { if (v != "text/html") { return 19; } },
         None => { return 20; },
     }
-    match (http.http_header_value(hdrs, "X-FOO")) {
+    match (http.header_value(hdrs, "X-FOO")) {
         Some(v) => { if (v != "bar") { return 21; } },
         None => { return 22; },
     }
-    match (http.http_header_value(hdrs, "x-missing")) { Some(_) => { return 23; }, None => { } }
+    match (http.header_value(hdrs, "x-missing")) { Some(_) => { return 23; }, None => { } }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -6683,12 +6683,12 @@ function main(): i32 {
     if ("a".hash_djb2() == "b".hash_djb2()) { return 17; }
     if ("hello".hash_djb2() != "hello".hash_djb2()) { return 18; }
 
-    // http_path_segments
-    let ps: string[] = http.http_path_segments("/api/users/42");
+    // http.path_segments
+    let ps: string[] = http.path_segments("/api/users/42");
     if (ps.len() != 3 || ps[0] != "api" || ps[2] != "42") { return 19; }
-    if ((http.http_path_segments("/")).len() != 0) { return 20; }
-    if ((http.http_path_segments("")).len() != 0) { return 21; }
-    if ((http.http_path_segments("/api?q=1")).len() != 1) { return 22; }
+    if ((http.path_segments("/")).len() != 0) { return 20; }
+    if ((http.path_segments("")).len() != 0) { return 21; }
+    if ((http.path_segments("/api?q=1")).len() != 1) { return 22; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -7087,12 +7087,12 @@ function main(): i32 {
     if ("".pad_start(5, '-') != "-----") { return 19; }
     if ("".pad_start(0, 'x') != "") { return 20; }
 
-    // http_status_text
-    if (http.http_status_text(200) != "OK") { return 21; }
-    if (http.http_status_text(404) != "Not Found") { return 22; }
-    if (http.http_status_text(500) != "Internal Server Error") { return 23; }
-    if (http.http_status_text(418) != "I'm a teapot") { return 24; }
-    if (http.http_status_text(999) != "") { return 25; }
+    // http.status_text
+    if (http.status_text(200) != "OK") { return 21; }
+    if (http.status_text(404) != "Not Found") { return 22; }
+    if (http.status_text(500) != "Internal Server Error") { return 23; }
+    if (http.status_text(418) != "I'm a teapot") { return 24; }
+    if (http.status_text(999) != "") { return 25; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)

@@ -158,7 +158,7 @@ function main(): i32 { return code(Interrupted); }
 		"    let s: string = \"a b\" + \" c\";\n"+
 		"    return s.fields().len() + s.to_array().len() + s.chunks(2).len()\n"+
 		"        + s.splitn(\" \", 2).len() + s.lines().len() + s.split(\" \").len()\n"+
-		"        + http.http_path_segments(\"/a/b\").len();\n"+
+		"        + http.path_segments(\"/a/b\").len();\n"+
 		"}\n")
 	out, err = exec.Command(bin, segments).CombinedOutput()
 	if err != nil {
