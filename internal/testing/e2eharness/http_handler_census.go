@@ -35,15 +35,15 @@ func HTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
 	}
 	src = strings.Replace(src, async, "import \"std/platform\";\nimport \"std/rand\";\n"+async, 1)
 	// The fixture is a user program, so the std/time conversions std/serve
-	// may use as a stdlib module are given local copies, and the entropy
-	// builtin only the stdlib may name becomes the std/rand call.
+	// may use as a stdlib module are given local copies, and its entropy
+	// goes through std/rand rather than the stdlib-only builtin.
+	if strings.Count(src, "random_bytes(") != 2 {
+		t.Fatal("std/serve's entropy reads changed; update its bounded census fixture")
+	}
+	src = strings.ReplaceAll(src, "random_bytes(", "rand.bytes(")
 	for _, fn := range []string{"millis_timeout", "instant_nanos", "instant_from_nanos"} {
 		src = strings.ReplaceAll(src, "time."+fn+"(", "census_"+fn+"(")
 	}
-	if strings.Count(src, "random_bytes(") == 0 {
-		t.Fatal("std/serve no longer names random_bytes; update its bounded census fixture")
-	}
-	src = strings.ReplaceAll(src, "random_bytes(", "rand.bytes(")
 	start := strings.Index(src, "function __serve_loop(")
 	if start < 0 {
 		t.Fatal("production accept loop not found")
