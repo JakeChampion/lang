@@ -176,7 +176,8 @@ block changes their scope.
 ### Bisecting a failure to one decision
 
 Each optimising pass asks `compiler/optbisect.fern` before it rewrites a
-function: inlining a callee, unrolling a counted loop, fusing a pipeline, a
+function: specialising a callee to a closure it is given, inlining a callee,
+unrolling a counted loop, fusing a pipeline, a
 byte-copy loop, an ndarray kernel, reuse in one function's rc lowering. The decision's key is the pass
 and the function's name. `FERN_OPT_TRACE=1` lists every decision with its key's
 hash, and `FERN_OPT_BISECT=h` declines each one hashing below `h`. Declining

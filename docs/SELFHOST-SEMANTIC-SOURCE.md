@@ -837,6 +837,33 @@ in turn, transitively, because a contract is only honoured by a body verified
 against it. The AST-lowered `main` still calls produced functions with scalar
 arguments only, so the caller-side finding below is unchanged.
 
+### A capture-free closure argument
+
+`compiler/semspecial.fern` runs after pipeline fusion and before the inliner.
+Fusion finds the `std/array` calls by name, so it must see them first. A call
+can pass a closure that captures nothing, for example a named function, to a
+parameter that the callee reads. Then the call goes to a clone of the callee
+without those parameters. One clone binds all such arguments of a call. The
+clone makes each closure in its entry block, so each `call_value` through it
+names its target, and `seminline.inline_made_closures` splices the target. That
+splice sees only the clones, the closures they make and the small functions
+those closures call, so its cost follows the clones and not the module. The
+caller loses the closures that only the rewritten calls read. The
+clone's name adds the index and the target of each bound parameter to the
+callee's name: `__cmp_sift_down__i32$3$cmp____cmp_ascending__i32$wrap`.
+A call in the clone that passes the closure on goes to a clone in turn, and a
+recursive call goes to the clone itself.
+
+The pass does not clone a function that takes an environment or whose result
+holds a view. It does not clone a `std/array` map either: the rc lowering
+writes a map in place from the combinator's call and its element function. It makes at most 64 clones per module. It does not clone a
+callee of more than 2,000 instructions. `optbisect` names the decision
+`specialize`. On `bench/sort_inplace.fern`, a heapsort that calls its
+comparator through a parameter runs the same 39,463,045 x86-64 instructions as
+a heapsort that calls `cmp` directly (#13061).
+`TestSelfHostCalleeSpecialisation` pins the clones and the indirect calls that
+stay.
+
 ## Physical loops
 
 `ssarc.lower` previously refused any cyclic graph. `ssalayout.fern` now
