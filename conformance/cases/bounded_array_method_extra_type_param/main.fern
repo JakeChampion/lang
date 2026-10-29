@@ -1,0 +1,36 @@
+import "core/cmp";
+import "./lib";
+
+struct Rev { v: i32 }
+
+impl cmp.Ord for Rev {
+    function cmp(self: Rev, other: Rev): i32 {
+        return other.v.cmp(self.v);
+    }
+}
+
+function main(): i32 {
+    let ns: i32[] = [3, 1, 4, 1, 5];
+    let words: string[] = ["bb", "a", "dddd", "ccc"];
+    let revs: Rev[] = [Rev { v: 2 }, Rev { v: 7 }, Rev { v: 1 }];
+
+    // The bound sits on K; one method at two keys, one native and one from an impl.
+    let at_least_three: i32 = ns.count_at_least((n: i32): i64 => n as i64, 3 as i64);
+    let at_most_three: i32 = ns.count_at_least((n: i32): Rev => Rev { v: n }, Rev { v: 3 });
+
+    // The same method on a view receiver.
+    let source: string = "abcde";
+    let from_c: i32 = source.as_bytes().count_at_least((b: u8): i64 => b as i64, 99 as i64);
+    let to_b: i32 = source.as_bytes().count_at_least((b: u8): Rev => Rev { v: b as i32 }, Rev { v: 98 });
+
+    // The bound sits on T and K is free.
+    let tag: i64 = ns.tag_of_max((n: i32): i64 => (n * 5 - 1) as i64).unwrap_or(0 as i64);
+    let rev_tag: i32 = revs.tag_of_max((r: Rev): i32 => r.v).unwrap_or(0);
+
+    let longest: string = words.max_by_key((w: string): i32 => w.len()).unwrap_or("");
+    let shortest: string = words.max_by_key((w: string): Rev => Rev { v: w.len() }).unwrap_or("");
+    let smallest: i32 = ns.max_by_key((n: i32): i32 => 0 - n).unwrap_or(0);
+
+    // 3 + 3 + 3 + 2 + 24 + 1 + 4 + 1 + 1
+    return at_least_three + at_most_three + from_c + to_b + tag as i32 + rev_tag + longest.len() + shortest.len() + smallest;
+}
