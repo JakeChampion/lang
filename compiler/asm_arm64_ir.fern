@@ -48,57 +48,36 @@ function arm64_copy_words(s: asmcore.EmitState, src: string, dst: string, n: i32
 }
 
 // A division or remainder by a constant k, on the dividend in x4: the result
-// is left in x4, and x5 and x6 are scratch. It keeps sdiv/udiv semantics, so
+// is left in x4, and x5 and x6 are scratch. A 32-bit dividend is held sign- or
+// zero-extended, so it divides as a 64-bit value. The sdiv/udiv semantics stay:
 // k == 0 gives 0 for a quotient and the dividend for a remainder.
-struct ArmDivRegs {
-  n: string,
-  t: string,
-  k: string,
-  bits: i32,
-}
-
-function arm_div_regs(w64: boolean): ArmDivRegs {
-  if (w64) {
-    return ArmDivRegs { n: "x4", t: "x5", k: "x6", bits: 64 };
-  }
-  return ArmDivRegs { n: "w4", t: "w5", k: "w6", bits: 32 };
-}
-
 function ssa_div_const(tag: i32, width: i32, k: i64, s: asmcore.EmitState): asmcore.EmitState {
   let uns: boolean = tag == 25 || tag == 27;
-  s = ssa_div_const_body(arm_div_regs(width == 64), uns, tag == 26 || tag == 27, k, s);
-  if (width != 64 && !uns) {
-    s = s.write("    sxtw x4, w4\n");
+  let is_rem: boolean = tag == 26 || tag == 27;
+  if (width == 64) {
+    return ssa_div_const_body(uns, is_rem, k, 0, s);
   }
-  return s;
+  if (uns) {
+    return ssa_div_const_body(true, is_rem, (k as i32) as i64 & 4294967295i64, 32, s);
+  }
+  let d: i64 = (k as i32) as i64;
+  if (d == -1i64 && !is_rem) {
+    return s.write("    neg w4, w4\n    sxtw x4, w4\n");
+  }
+  return ssa_div_const_body(false, is_rem, d, 0, s);
 }
 
-function ssa_div_const_body(r: ArmDivRegs, uns: boolean, is_rem: boolean, k: i64, s: asmcore.EmitState): asmcore.EmitState {
-  let mag: i64 = k;
+// lz is the count of high bits known to be zero in an unsigned dividend.
+function ssa_div_const_body(uns: boolean, is_rem: boolean, d: i64, lz: i32, s: asmcore.EmitState): asmcore.EmitState {
+  let mag: i64 = d;
   let neg: boolean = false;
-  if (uns) {
-    if (r.bits == 32) {
-      mag = (k as i32) as i64 & 4294967295i64;
-    }
-  } else {
-    let v: i64 = k;
-    if (r.bits == 32) {
-      v = (k as i32) as i64;
-    }
-    let min: i64 = -2147483648i64;
-    if (r.bits == 64) {
-      min = -9223372036854775808i64;
-    }
-    if (v == min) {
-      s = ssa_const_reg(util.i64_to_string(v), "x6", s);
-      return s.write(ssa_div_by(r, uns, is_rem));
-    }
-    if (v < 0i64) {
-      neg = true;
-      mag = 0i64 - v;
-    } else {
-      mag = v;
-    }
+  if (!uns && d == -9223372036854775808i64) {
+    s = ssa_const_reg(util.i64_to_string(d), "x6", s);
+    return s.write(ssa_div_by(is_rem));
+  }
+  if (!uns && d < 0i64) {
+    neg = true;
+    mag = 0i64 - d;
   }
   if (mag == 0i64) {
     if (is_rem) {
@@ -111,142 +90,100 @@ function ssa_div_const_body(r: ArmDivRegs, uns: boolean, is_rem: boolean, k: i64
       return s.write("    mov x4, #0\n");
     }
     if (neg) {
-      return s.write("    neg " + r.n + ", " + r.n + "\n");
+      return s.write("    neg x4, x4\n");
     }
     return s;
   }
   let sh: i32 = ir.pow2_shift_i64(mag);
-  let max_sh: i32 = r.bits - 2;
+  let max_sh: i32 = 62;
   if (uns) {
-    max_sh = r.bits - 1;
+    max_sh = 63;
   }
   if (sh >= 0 && sh <= max_sh) {
-    return s.write(ssa_div_const_pow2(r, uns, is_rem, neg, sh));
+    return s.write(ssa_div_const_pow2(uns, is_rem, neg, sh));
   }
   if (uns) {
-    s = ssa_div_magic_u(r, mag, s);
+    s = ssa_div_magic_u(mag as u64, lz, s);
   } else {
-    s = ssa_div_magic_s(r, k, s);
+    s = ssa_div_magic_s(d, s);
   }
   if (!is_rem) {
-    return s.write("    mov " + r.n + ", " + r.t + "\n");
-  }
-  let d: i64 = mag;
-  if (!uns && r.bits == 32) {
-    d = (k as i32) as i64;
-  } else if (!uns) {
-    d = k;
+    return s.write("    mov x4, x5\n");
   }
   s = ssa_const_reg(util.i64_to_string(d), "x6", s);
-  return s.write("    msub " + r.n + ", " + r.t + ", " + r.k + ", " + r.n + "\n");
+  return s.write("    msub x4, x5, x6, x4\n");
 }
 
-function ssa_div_by(r: ArmDivRegs, uns: boolean, is_rem: boolean): string {
-  let op: string = "sdiv";
-  if (uns) {
-    op = "udiv";
-  }
-  let q: string = "    " + op + " " + r.t + ", " + r.n + ", " + r.k + "\n";
+function ssa_div_by(is_rem: boolean): string {
   if (is_rem) {
-    return q + "    msub " + r.n + ", " + r.t + ", " + r.k + ", " + r.n + "\n";
+    return "    sdiv x5, x4, x6\n    msub x4, x5, x6, x4\n";
   }
-  return q + "    mov " + r.n + ", " + r.t + "\n";
+  return "    sdiv x4, x4, x6\n";
 }
 
-function ssa_div_const_pow2(r: ArmDivRegs, uns: boolean, is_rem: boolean, neg: boolean, sh: i32): string {
+function ssa_div_const_pow2(uns: boolean, is_rem: boolean, neg: boolean, sh: i32): string {
   let shs: string = util.i32_to_string(sh);
+  let back: string = util.i32_to_string(64 - sh);
   if (uns && is_rem) {
-    return "    lsl " + r.n + ", " + r.n + ", #" + util.i32_to_string(r.bits - sh) + "\n    lsr " + r.n + ", " + r.n + ", #" + util.i32_to_string(r.bits - sh) + "\n";
+    return "    lsl x4, x4, #" + back + "\n    lsr x4, x4, #" + back + "\n";
   }
   if (uns) {
-    return "    lsr " + r.n + ", " + r.n + ", #" + shs + "\n";
+    return "    lsr x4, x4, #" + shs + "\n";
   }
-  let s: string = "    asr " + r.t + ", " + r.n + ", #" + util.i32_to_string(r.bits - 1) + "\n";
-  s = s + "    add " + r.t + ", " + r.n + ", " + r.t + ", lsr #" + util.i32_to_string(r.bits - sh) + "\n";
+  let s: string = "    asr x5, x4, #63\n    add x5, x4, x5, lsr #" + back + "\n";
   if (is_rem) {
-    s = s + "    asr " + r.t + ", " + r.t + ", #" + shs + "\n";
-    return s + "    sub " + r.n + ", " + r.n + ", " + r.t + ", lsl #" + shs + "\n";
+    return s + "    asr x5, x5, #" + shs + "\n    sub x4, x4, x5, lsl #" + shs + "\n";
   }
-  s = s + "    asr " + r.n + ", " + r.t + ", #" + shs + "\n";
+  s = s + "    asr x4, x5, #" + shs + "\n";
   if (neg) {
-    s = s + "    neg " + r.n + ", " + r.n + "\n";
+    s = s + "    neg x4, x4\n";
   }
   return s;
 }
 
-// The high half of n * t, left in t. A 32-bit product is formed in x5 and
-// shifted down by 32 + extra, so a following shift can fold into it.
-function ssa_mulh(r: ArmDivRegs, uns: boolean, src: string, extra: i32): string {
-  if (r.bits == 64) {
-    let op: string = "smulh";
-    if (uns) {
-      op = "umulh";
-    }
-    let s: string = "    " + op + " x5, " + src + ", x5\n";
-    if (extra > 0) {
-      let sop: string = "asr";
-      if (uns) {
-        sop = "lsr";
-      }
-      s = s + "    " + sop + " x5, x5, #" + util.i32_to_string(extra) + "\n";
-    }
-    return s;
-  }
-  if (uns) {
-    return "    umull x5, " + src + ", w5\n    lsr x5, x5, #" + util.i32_to_string(32 + extra) + "\n";
-  }
-  return "    smull x5, " + src + ", w5\n    asr x5, x5, #" + util.i32_to_string(32 + extra) + "\n";
-}
-
-function ssa_div_magic_s(r: ArmDivRegs, k: i64, s: asmcore.EmitState): asmcore.EmitState {
-  let d: i64 = k;
-  if (r.bits == 32) {
-    d = (k as i32) as i64;
-  }
-  let ms: ir.MagicS = ir.derive_magic_s(d, r.bits);
+// The quotient of x4 by a signed divisor that is not a power of two, left in x5.
+function ssa_div_magic_s(d: i64, s: asmcore.EmitState): asmcore.EmitState {
+  let ms: ir.MagicS = ir.derive_magic_s(d, 64);
   s = ssa_const_reg(util.i64_to_string(ms.m), "x5", s);
-  let fix: boolean = ms.add || ms.sub;
-  if (fix) {
-    s = s.write(ssa_mulh(r, false, r.n, 0));
-  } else {
-    s = s.write(ssa_mulh(r, false, r.n, ms.s));
-  }
+  s = s.write("    smulh x5, x4, x5\n");
   if (ms.add) {
-    s = s.write("    add " + r.t + ", " + r.t + ", " + r.n + "\n");
+    s = s.write("    add x5, x5, x4\n");
   }
   if (ms.sub) {
-    s = s.write("    sub " + r.t + ", " + r.t + ", " + r.n + "\n");
+    s = s.write("    sub x5, x5, x4\n");
   }
-  if (fix && ms.s != 0) {
-    s = s.write("    asr " + r.t + ", " + r.t + ", #" + util.i32_to_string(ms.s) + "\n");
+  if (ms.s != 0) {
+    s = s.write("    asr x5, x5, #" + util.i32_to_string(ms.s) + "\n");
   }
-  return s.write("    add " + r.t + ", " + r.t + ", " + r.t + ", lsr #" + util.i32_to_string(r.bits - 1) + "\n");
+  return s.write("    add x5, x5, x5, lsr #63\n");
 }
 
-function ssa_div_magic_u(r: ArmDivRegs, du: i64, s: asmcore.EmitState): asmcore.EmitState {
-  let d: u64 = du as u64;
-  let mu: ir.MagicU = ir.derive_magic_u(d, r.bits);
+// The quotient of x4 by an unsigned divisor that is not a power of two, left in x5.
+function ssa_div_magic_u(d: u64, lz: i32, s: asmcore.EmitState): asmcore.EmitState {
+  let mu: ir.MagicU = ir.derive_magic_u_below(d, 64, lz);
   let pre: i32 = 0;
   if (mu.add && (d & 1u64) == 0u64) {
     while ((d >> pre as u64 & 1u64) == 0u64) {
       pre = pre + 1;
     }
-    mu = ir.derive_magic_u_below(d >> pre as u64, r.bits, pre);
+    mu = ir.derive_magic_u_below(d >> pre as u64, 64, lz + pre);
   }
   s = ssa_const_reg(util.i64_to_string(mu.m as i64), "x5", s);
-  let src: string = r.n;
+  let src: string = "x4";
   if (pre > 0) {
-    s = s.write("    lsr " + r.k + ", " + r.n + ", #" + util.i32_to_string(pre) + "\n");
-    src = r.k;
+    s = s.write("    lsr x6, x4, #" + util.i32_to_string(pre) + "\n");
+    src = "x6";
   }
+  s = s.write("    umulh x5, " + src + ", x5\n");
   if (!mu.add) {
-    return s.write(ssa_mulh(r, true, src, mu.s));
+    if (mu.s > 0) {
+      s = s.write("    lsr x5, x5, #" + util.i32_to_string(mu.s) + "\n");
+    }
+    return s;
   }
-  s = s.write(ssa_mulh(r, true, src, 0));
-  s = s.write("    sub " + r.k + ", " + r.n + ", " + r.t + "\n");
-  s = s.write("    add " + r.t + ", " + r.t + ", " + r.k + ", lsr #1\n");
+  s = s.write("    sub x6, x4, x5\n    add x5, x5, x6, lsr #1\n");
   if (mu.s > 1) {
-    s = s.write("    lsr " + r.t + ", " + r.t + ", #" + util.i32_to_string(mu.s - 1) + "\n");
+    s = s.write("    lsr x5, x5, #" + util.i32_to_string(mu.s - 1) + "\n");
   }
   return s;
 }
