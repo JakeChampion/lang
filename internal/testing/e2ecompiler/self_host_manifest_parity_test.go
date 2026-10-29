@@ -28,6 +28,8 @@ var manifestParityCases = []struct{ name, src string }{
 	{"crlf", "[package]\r\nname = \"app\"\r\n[dependencies]\r\nh = { path = \"h\" }\r\n"},
 	{"path with comma and bracket", "[package]\nname = \"app\"\n[dependencies]\nh = { path = \"a,b[c\", capabilities = [\"fs\"] }\n"},
 	{"empty optional strings", "[package]\nname = \"app\"\nlib = \"\"\nindex = \"\"\n"},
+	{"index key", "[package]\nname = \"app\"\nindex = \"index.toml\"\nindex_key = \"ed25519:" + strings.Repeat("0f", 32) + "\"\n"},
+	{"malformed index key", "[package]\nname = \"app\"\nindex_key = \"ed25519:" + strings.Repeat("0F", 32) + "\"\n"},
 	{"workspace member values", "[workspace]\nmembers = [\"\", \"a\", \"b#c\"]\n"},
 	{"empty arrays", "[package]\nname = \"app\"\n[dependencies]\nh = { path = \"h\", capabilities = [] }\n[exclude]\nh = []\n[workspace]\nmembers = []\n"},
 	{"multiple excluded packages", "[package]\nname = \"app\"\n[exclude]\nz = [\"2.0.0\", \"1.0.0\"]\na = [\"3.0.0\"]\n"},

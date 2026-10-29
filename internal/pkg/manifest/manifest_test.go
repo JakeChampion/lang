@@ -347,3 +347,20 @@ func TestParseLintErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestIndexKey(t *testing.T) {
+	key := "ed25519:" + strings.Repeat("ab", 32)
+	m, err := Parse("[package]\nname = \"a\"\nindex = \"reg.toml\"\nindex_key = \"" + key + "\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.IndexKey != key {
+		t.Errorf("index_key = %q", m.IndexKey)
+	}
+	for _, bad := range []string{"sha256:" + strings.Repeat("ab", 32), "ed25519:" + strings.Repeat("AB", 32), "ed25519:" + strings.Repeat("ab", 31), "ed25519:", ""} {
+		_, err := Parse("[package]\nname = \"a\"\nindex_key = \"" + bad + "\"\n")
+		if err == nil || !strings.Contains(err.Error(), "index_key: must be `ed25519:` + 64 lowercase hex digits of the public key") {
+			t.Errorf("index_key %q: err = %v", bad, err)
+		}
+	}
+}

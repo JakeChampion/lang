@@ -46,22 +46,60 @@ A lock at or above the minimum loads, because minimum version selection keeps th
 | Dependency absent from the lock, or no lock | `TestSelfHostDeclaredImportResolution` and its Go rows | refused, names `fern -resolve` |
 | Lock below the manifest's demand | `TestLoadStaleLockErrors/stale`, `TestSelfHostStaleLockRefused` | refused, names `fern -resolve` |
 | Lock at or above the demand (controls) | `TestLoadStaleLockErrors/at-demand`, `TestLoadStaleLockErrors/above-demand`, `TestSelfHostMvsCachedURLDependency` | loads |
+| Index with no signature file, altered index, signature by another key, malformed signature | `TestResolveSignedIndex`, `TestSelfHostSignedIndexResolve` | refused, no lock written |
+| Index key not `ed25519:` and 64 lowercase hex digits | `TestIndexKey`, `TestSelfHostManifestParity/malformed index key` | refused at the parse boundary |
 
 ## Signatures and rollback
 
 A hash pins the bytes and nothing more.
 It does not say who published the archive. It does not stop a mirror from serving an older archive whose hash a manifest still names.
-The owner decides the next step. The record lists the choices:
+The owner chose the signed index on 2026-10-28, from three choices: hash pinning only, a signed index, or a signature on every archive.
 
-1. Keep hash pinning only. The committed `fern.lock` and the committed hash are the provenance, and a review of the diff is the signature check.
-2. Sign the index file. A detached signature over `index.toml` with a key the manifest names binds every version-to-hash row to a publisher. `fern -resolve` verifies it before it reads the index. The build is unchanged.
-3. Sign every archive. Each archive carries a detached signature, and `fern -fetch` verifies it before the hash check.
+A detached signature over `index.toml` with a key the manifest names binds every version-to-hash row to a publisher.
+`fern -resolve` verifies it before it reads the index. The build is unchanged.
 
-Rollback is a resolve-time decision in every choice, because the build never reads the index.
+### The signed index
+
+The manifest names the publisher's key under `[package]`:
+
+```toml
+[package]
+name = "app"
+index = "index.toml"
+index_key = "ed25519:9f3c…"   # 64 lowercase hex digits of the public key
+```
+
+The signature lives beside the index, in `index.toml.sig`, as 128 hex digits of the Ed25519 signature over the exact bytes of `index.toml`.
+Whitespace around the digits is ignored.
+A publisher signs with any Ed25519 tool. With OpenSSL:
+
+```sh
+openssl pkeyutl -sign -rawin -inkey publisher.pem -in index.toml | od -An -v -tx1 | tr -d ' \n' > index.toml.sig
+```
+
+`fern -resolve` reads the index once, verifies the signature over those bytes, and then parses them.
+A manifest with no `index_key` resolves as before.
+
+The refusals name the file:
+
+| Condition | Message |
+|---|---|
+| The key is not `ed25519:` and 64 lowercase hex digits | `index_key: must be `ed25519:` + 64 lowercase hex digits of the public key, got "…"` at the manifest parse |
+| No `index.toml.sig` | `index IPATH: fern.toml names index_key but IPATH.sig cannot be read` |
+| The signature file is not 128 hex digits | `index IPATH.sig: must be 128 hex digits of the ed25519 signature over the index` |
+| The index changed, or another key signed it | `index IPATH: the signature in IPATH.sig does not verify against index_key` |
+
+Both loaders print the same words. `TestSelfHostSignedIndexResolve` runs the shipped compiler and the Go oracle over the same six trees and compares their output and their lock.
+`TestResolveSignedIndex` is the Go side alone, and `TestIndexKey` with the `index key` rows of `TestSelfHostManifestParity` pin the key spelling.
+
+Rollback is a resolve-time decision, because the build never reads the index.
 A lower version that a manifest demands is never selected over the lock without a new `fern -resolve`, and the stale-lock refusal stops the other direction.
+A signed index that a mirror rolls back to an older signed copy still verifies. The signature binds the rows to the publisher, not to a date.
 
 ## Limits
 
-- No signature scheme is implemented.
+- The signature covers the index, not the archives. The hash alone pins an archive.
+- No `fern` command signs an index. The publisher signs with an external Ed25519 tool.
+- A rolled-back index that the publisher signed verifies. A date or a counter in the index needs a format change.
 - The archive limits bound one archive. A manifest can declare many.
 - `fern -resolve` reads the index file from disk or fetches it over HTTPS. The TLS stack's own audit is `CRYPTO-AUDIT.md`.
