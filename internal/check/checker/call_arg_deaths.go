@@ -1,8 +1,6 @@
 package checker
 
 import (
-	"maps"
-
 	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
@@ -365,50 +363,38 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		return true
 	})
-	fresh := loopFreshNames(body, declCount, isParam)
-	repeats := func(c *ast.Call, name string) bool {
-		return repeating[c] && !fresh[c][name]
-	}
+	inLambda := map[*ast.Call]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		if _, ok := n.(*ast.Lambda); !ok {
+			return true
+		}
+		ast.Walk(n, func(m ast.Node) bool {
+			if c, ok := m.(*ast.Call); ok {
+				inLambda[c] = true
+			}
+			return true
+		})
+		return true
+	})
 	escaping := DeferOrLambdaNames(body)
 	order := IdentOrderOf(body)
 	ast.Walk(body, func(n ast.Node) bool {
 		c, ok := n.(*ast.Call)
-		if !ok {
+		if !ok || inLambda[c] {
 			return true
 		}
 		for _, a := range c.Args {
 			aid, ok := a.(*ast.Ident)
-			if !ok || repeats(c, aid.Name) || escaping[aid.Name] || !order.IsLast(aid) {
-				continue
-			}
-			if !admitted(aid.Name) {
+			if !ok || escaping[aid.Name] || !admitted(aid.Name) {
 				continue
 			}
 			if heldByEnclosingCall(body, c, aid.Name) {
 				continue
 			}
-			markOnce(c, aid.Name)
-		}
-		return true
-	})
-	stmtIdx := callBlockPositions(body)
-	ast.Walk(body, func(n ast.Node) bool {
-		c, ok := n.(*ast.Call)
-		if !ok {
-			return true
-		}
-		for _, a := range c.Args {
-			aid, ok := a.(*ast.Ident)
-			if !ok || repeats(c, aid.Name) || escaping[aid.Name] || order.IsLast(aid) {
+			if !order.IsLast(aid) && arrayArgPosition(info, c, aid) {
 				continue
 			}
-			if !admitted(aid.Name) {
-				continue
-			}
-			if arrayArgPosition(info, c, aid) {
-				continue
-			}
-			if !returnsBeforeReading(stmtIdx, c, aid.Name) {
+			if liveAfter(info, body, c, aid, order) {
 				continue
 			}
 			markOnce(c, aid.Name)
@@ -677,52 +663,6 @@ func arrayArgPosition(info *Info, c *ast.Call, aid *ast.Ident) bool {
 	return true
 }
 
-type blockPos struct {
-	blk *ast.Block
-	idx int
-}
-
-func callBlockPositions(body ast.Node) map[*ast.Call]blockPos {
-	var blocks []*ast.Block
-	ast.Walk(body, func(n ast.Node) bool {
-		if b, ok := n.(*ast.Block); ok {
-			blocks = append(blocks, b)
-		}
-		return true
-	})
-	out := map[*ast.Call]blockPos{}
-	for _, b := range blocks {
-		for i, st := range b.Stmts {
-			ast.Walk(st, func(n ast.Node) bool {
-				if c, ok := n.(*ast.Call); ok {
-					out[c] = blockPos{blk: b, idx: i}
-				}
-				return true
-			})
-		}
-	}
-	return out
-}
-
-func returnsBeforeReading(pos map[*ast.Call]blockPos, c *ast.Call, name string) bool {
-	bp, ok := pos[c]
-	if !ok {
-		return false
-	}
-	if Mentions(bp.blk.Stmts[bp.idx], name) != 1 {
-		return false
-	}
-	for i := bp.idx + 1; i < len(bp.blk.Stmts); i++ {
-		if Mentions(bp.blk.Stmts[i], name) != 0 || JumpEscapes(bp.blk.Stmts[i]) {
-			return false
-		}
-		if _, isRet := bp.blk.Stmts[i].(*ast.Return); isRet {
-			return true
-		}
-	}
-	return false
-}
-
 func Mentions(n ast.Node, name string) int {
 	k := 0
 	ast.Walk(n, func(m ast.Node) bool {
@@ -919,45 +859,330 @@ func holdsTry(n ast.Node) bool {
 	return found
 }
 
-func loopFreshNames(body ast.Node, declCount map[string]int, isParam map[string]bool) map[*ast.Call]map[string]bool {
-	out := map[*ast.Call]map[string]bool{}
-	ast.Walk(body, func(n ast.Node) bool {
-		if !repeatsBody(n) {
-			return true
+// liveFrame is one block on the path from a function body to a statement:
+// the block's statements, the index of the statement on the path, and the
+// loop whose body the block is, if any.
+type liveFrame struct {
+	stmts []ast.Stmt
+	idx   int
+	loop  ast.Stmt
+	label string
+}
+
+func nodeHolds(n ast.Node, target ast.Node) bool {
+	found := false
+	ast.Walk(n, func(m ast.Node) bool {
+		if found {
+			return false
 		}
-		declared := map[string]bool{}
-		declare := func(name string) {
-			if declCount[name] == 1 && !isParam[name] {
-				declared[name] = true
+		if m == target {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// enclosingFrames is the chain of blocks from body down to the innermost
+// statement that holds target. A statement inside an expression-level block
+// or a deferred action counts as its enclosing statement.
+func enclosingFrames(body *ast.Block, target ast.Node) []liveFrame {
+	if body == nil {
+		return nil
+	}
+	return framesIn(body.Stmts, nil, "", target)
+}
+
+func framesIn(stmts []ast.Stmt, loop ast.Stmt, label string, target ast.Node) []liveFrame {
+	for i, st := range stmts {
+		if !nodeHolds(st, target) {
+			continue
+		}
+		out := []liveFrame{{stmts: stmts, idx: i, loop: loop, label: label}}
+		var sub []liveFrame
+		switch x := st.(type) {
+		case *ast.Block:
+			sub = framesIn(x.Stmts, nil, "", target)
+		case *ast.If:
+			sub = framesInStmt(x.Then, target)
+			if sub == nil && x.Else != nil {
+				sub = framesInStmt(x.Else, target)
 			}
+		case *ast.Match:
+			for _, arm := range x.Arms {
+				if arm.Body != nil && nodeHolds(arm.Body, target) {
+					sub = framesIn(arm.Body.Stmts, nil, "", target)
+					break
+				}
+			}
+		case *ast.While:
+			sub = framesInLoopBody(x.Body, x, x.Label, target)
+		case *ast.Loop:
+			sub = framesInLoopBody(x.Body, x, x.Label, target)
+		case *ast.For:
+			sub = framesInLoopBody(x.Body, x, x.Label, target)
+		case *ast.ForEach:
+			sub = framesInLoopBody(x.Body, x, x.Label, target)
 		}
+		return append(out, sub...)
+	}
+	return nil
+}
+
+func framesInStmt(st ast.Stmt, target ast.Node) []liveFrame {
+	if blk, ok := st.(*ast.Block); ok {
+		return framesIn(blk.Stmts, nil, "", target)
+	}
+	if st == nil {
+		return nil
+	}
+	return framesIn([]ast.Stmt{st}, nil, "", target)
+}
+
+func framesInLoopBody(body ast.Stmt, loop ast.Stmt, label string, target ast.Node) []liveFrame {
+	if blk, ok := body.(*ast.Block); ok {
+		return framesIn(blk.Stmts, loop, label, target)
+	}
+	if body == nil {
+		return nil
+	}
+	return framesIn([]ast.Stmt{body}, loop, label, target)
+}
+
+// stmtJumps is the control that leaves a statement without completing it:
+// a return or an exit call, and the breaks and continues that escape it
+// with the label each one names ("" for the innermost loop).
+type stmtJumps struct {
+	returns   bool
+	breaks    []string
+	continues []string
+}
+
+func jumpsOf(info *Info, st ast.Stmt) stmtJumps {
+	var out stmtJumps
+	inner := map[string]bool{}
+	ast.Walk(st, func(m ast.Node) bool {
+		switch x := m.(type) {
+		case *ast.Lambda, *ast.FuncDecl, *ast.Defer:
+			return false
+		case *ast.Loop:
+			inner[x.Label] = true
+		case *ast.While:
+			inner[x.Label] = true
+		case *ast.For:
+			inner[x.Label] = true
+		case *ast.ForEach:
+			inner[x.Label] = true
+		}
+		return true
+	})
+	escapes := func(label string, nested bool) bool {
+		if label == "" {
+			return !nested
+		}
+		return !inner[label]
+	}
+	var walk func(n ast.Node, nested bool)
+	walk = func(n ast.Node, nested bool) {
 		ast.Walk(n, func(m ast.Node) bool {
-			if m != n && repeatsBody(m) {
-				return false
-			}
 			switch x := m.(type) {
-			case *ast.Var:
-				declare(x.Name)
-			case *ast.Destructure:
-				for _, name := range x.Names {
-					declare(name)
-				}
+			case *ast.Lambda, *ast.FuncDecl, *ast.Defer:
+				return false
+			case *ast.Return:
+				out.returns = true
 			case *ast.Call:
-				if len(declared) > 0 {
-					out[x] = maps.Clone(declared)
+				if info != nil && info.IntrinsicCalls[x].Kind == IntrinsicExit {
+					out.returns = true
 				}
+			case *ast.Break:
+				if escapes(x.Label, nested) {
+					out.breaks = append(out.breaks, x.Label)
+				}
+				return false
+			case *ast.Continue:
+				if escapes(x.Label, nested) {
+					out.continues = append(out.continues, x.Label)
+				}
+				return false
+			case *ast.Loop:
+				walk(x.Body, true)
+				return false
+			case *ast.While:
+				walk(x.Cond, nested)
+				walk(x.Body, true)
+				return false
+			case *ast.For:
+				if x.Init != nil {
+					walk(x.Init, nested)
+				}
+				if x.Cond != nil {
+					walk(x.Cond, nested)
+				}
+				if x.Step != nil {
+					walk(x.Step, nested)
+				}
+				walk(x.Body, true)
+				return false
+			case *ast.ForEach:
+				walk(x.Iter, nested)
+				walk(x.Body, true)
+				return false
 			}
 			return true
 		})
-		return true
-	})
+	}
+	walk(st, false)
 	return out
 }
 
-func repeatsBody(n ast.Node) bool {
-	switch n.(type) {
-	case *ast.While, *ast.Loop, *ast.For, *ast.ForEach, *ast.Lambda:
+// divergesStmt reports a statement that leaves on every path.
+func divergesStmt(info *Info, st ast.Stmt) bool {
+	switch x := st.(type) {
+	case *ast.Return, *ast.Break, *ast.Continue:
 		return true
+	case *ast.ExprStmt:
+		call, ok := x.Expr.(*ast.Call)
+		return ok && info != nil && info.IntrinsicCalls[call].Kind == IntrinsicExit
+	case *ast.Loop:
+		return !loopCanBreak(x.Body, x.Label)
+	case *ast.While:
+		if lit, ok := x.Cond.(*ast.BoolLit); ok && lit.Value {
+			return !loopCanBreak(x.Body, x.Label)
+		}
+		return false
+	case *ast.Block:
+		return len(x.Stmts) > 0 && divergesStmt(info, x.Stmts[len(x.Stmts)-1])
+	case *ast.If:
+		return x.Else != nil && divergesStmt(info, x.Then) && divergesStmt(info, x.Else)
+	case *ast.Match:
+		for i, arm := range x.Arms {
+			if letElseDivergentArm(x, i) {
+				continue
+			}
+			if arm.Body == nil || len(arm.Body.Stmts) == 0 || !divergesStmt(info, arm.Body.Stmts[len(arm.Body.Stmts)-1]) {
+				return false
+			}
+		}
+		return len(x.Arms) > 0
 	}
 	return false
+}
+
+func declaresName(n ast.Node, name string) bool {
+	found := false
+	ast.Walk(n, func(m ast.Node) bool {
+		if found {
+			return false
+		}
+		switch x := m.(type) {
+		case *ast.Lambda, *ast.FuncDecl:
+			return false
+		case *ast.Var:
+			found = x.Name == name
+		case *ast.Destructure:
+			for _, nm := range x.Names {
+				if nm == name {
+					found = true
+				}
+			}
+		}
+		return !found
+	})
+	return found
+}
+
+// loopFrameLevel is the level of the body frame of the loop a jump names:
+// the innermost loop for "", else the loop carrying the label. -1 when none.
+func loopFrameLevel(frames []liveFrame, level int, label string) int {
+	for l := level; l >= 0; l-- {
+		if frames[l].loop == nil {
+			continue
+		}
+		if label == "" || frames[l].label == label {
+			return l
+		}
+	}
+	return -1
+}
+
+// loopHeadLive reports whether the loop whose body is frames[l] reads name
+// on its next iteration: name is mentioned in the loop and is not a binding
+// the body declares afresh each time round.
+func loopHeadLive(frames []liveFrame, l int, name string) bool {
+	loop := frames[l].loop
+	if declaresName(loop, name) {
+		return false
+	}
+	return StmtReferencesName(loop, name)
+}
+
+// liveAfter reports whether name can be read again on some path after the
+// statement that holds c. A path that reaches the end of a loop body, or
+// continues, comes back to every use in that loop.
+func liveAfter(info *Info, body *ast.Block, c *ast.Call, aid *ast.Ident, order IdentOrder) bool {
+	frames := enclosingFrames(body, c)
+	if len(frames) == 0 {
+		return true
+	}
+	inner := frames[len(frames)-1]
+	st := inner.stmts[inner.idx]
+	// A loop inside the statement runs the call again each round: the call
+	// sits in a loop's head, or in a loop inside an expression-level block.
+	repeats := false
+	ast.Walk(st, func(m ast.Node) bool {
+		switch m.(type) {
+		case *ast.While, *ast.Loop, *ast.For, *ast.ForEach:
+			if nodeHolds(m, c) {
+				repeats = true
+			}
+		}
+		return !repeats
+	})
+	if repeats {
+		return true
+	}
+	later := false
+	ast.Walk(st, func(m ast.Node) bool {
+		if id, ok := m.(*ast.Ident); ok && id.Name == aid.Name && order.Idx[id] > order.Idx[aid] {
+			later = true
+		}
+		return !later
+	})
+	if later {
+		return true
+	}
+	return liveFrom(info, frames, len(frames)-1, aid.Name)
+}
+
+func liveFrom(info *Info, frames []liveFrame, level int, name string) bool {
+	f := frames[level]
+	for j := f.idx + 1; j < len(f.stmts); j++ {
+		st := f.stmts[j]
+		if StmtReferencesName(st, name) {
+			return true
+		}
+		jumps := jumpsOf(info, st)
+		for _, label := range jumps.continues {
+			l := loopFrameLevel(frames, level, label)
+			if l < 0 || loopHeadLive(frames, l, name) || liveFrom(info, frames, l-1, name) {
+				return true
+			}
+		}
+		for _, label := range jumps.breaks {
+			l := loopFrameLevel(frames, level, label)
+			if l < 0 || liveFrom(info, frames, l-1, name) {
+				return true
+			}
+		}
+		if divergesStmt(info, st) {
+			return false
+		}
+	}
+	if f.loop != nil && loopHeadLive(frames, level, name) {
+		return true
+	}
+	if level == 0 {
+		return false
+	}
+	return liveFrom(info, frames, level-1, name)
 }

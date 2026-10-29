@@ -1,0 +1,73 @@
+// spec: RH-14
+// A consuming close inside a loop is the handle's last use when every path
+// from the close leaves the loop: a return, a break, or a labelled break.
+// A local declared in the loop body closes once per round.
+
+import "std/i32";
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): void {
+  print("closed " + h.fd.to_string());
+}
+
+function close_then_return(): i32 {
+  let h: Handle = Handle { fd: 1 };
+  let n: i32 = 0;
+  while (n < 3) {
+    n = n + 1;
+    if (n == 2) {
+      h.close();
+      return n;
+    }
+  }
+  return n + 10;
+}
+
+function close_then_break(): i32 {
+  let h: Handle = Handle { fd: 2 };
+  let n: i32 = 0;
+  while (n < 3) {
+    n = n + 1;
+    if (n == 2) {
+      h.close();
+      break;
+    }
+  }
+  return n;
+}
+
+function close_then_labelled_break(): i32 {
+  let h: Handle = Handle { fd: 3 };
+  let n: i32 = 0;
+  outer: while (n < 3) {
+    let k: i32 = 0;
+    while (k < 2) {
+      k = k + 1;
+      if (n == 1) {
+        h.close();
+        break outer;
+      }
+    }
+    n = n + 1;
+  }
+  return n;
+}
+
+function close_each_round(): i32 {
+  let n: i32 = 0;
+  while (n < 2) {
+    let h: Handle = Handle { fd: 10 + n };
+    n = n + 1;
+    h.close();
+  }
+  return n;
+}
+
+function main(): i32 {
+  print(close_then_return().to_string());
+  print(close_then_break().to_string());
+  print(close_then_labelled_break().to_string());
+  print(close_each_round().to_string());
+  return 0;
+}

@@ -1,0 +1,19 @@
+// spec: RH-16
+// A path that reaches the end of the loop body comes back to the loop's
+// uses, so a close of a handle declared outside the loop is refused there.
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function main(): i32 {
+  let h: Handle = Handle { fd: 3 };
+  let n: i32 = 0;
+  while (n < 3) {
+    n = n + 1;
+    h.close();
+  }
+  return n;
+}

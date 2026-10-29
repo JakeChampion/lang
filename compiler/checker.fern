@@ -18153,7 +18153,18 @@ struct LuFacts { occ: LuOcc[], vars: LuVar[], escaping: string[], sels: LuSel[],
 
 struct LuFn { facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs }
 
-struct LuSite { stmts: ast.Stmt[], idx: i32, in_loop: boolean, fresh: string[], in_iife: boolean, in_defer: boolean }
+// A frame is one block on the path from the function body to a statement:
+// the block, the index of the statement on the path, and the loop statement
+// whose body the block is, when it is one.
+struct LuFrame { stmts: ast.Stmt[], idx: i32, head: ast.Stmt, is_loop: boolean, label: string }
+
+struct LuSite { stmts: ast.Stmt[], idx: i32, frames: LuFrame[], in_loop: boolean, in_iife: boolean, in_defer: boolean }
+
+// The scope a block is walked in: the frames above it, the frame it adds
+// when framed, and the flags of the statement that holds it.
+struct LuScope { frames: LuFrame[], head: LuFrame, framed: boolean, in_loop: boolean, in_iife: boolean, in_defer: boolean }
+
+struct LuJumps { breaks: string[], continues: string[] }
 
 function lu_key(line: i32, col: i32): string {
   return util.i32_to_string(line) + ":" + util.i32_to_string(col);
@@ -18202,7 +18213,7 @@ function lu_fact_stmt(st: ast.Stmt, own f: LuFacts): LuFacts {
 // A deferred action runs at the exit, so a path it mentions is live until
 // then: a bare mention of q holds every field, and `q.g` holds g alone.
 function lu_defer_facts(action: ast.Stmt, own f: LuFacts): LuFacts {
-  let inner: LuFacts = astwalk.fold_stmt_nodes(action, LuFacts { occ: [], vars: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [] }, lu_skip_facts, lu_fact_expr, astwalk.descend_all);
+  let inner: LuFacts = astwalk.fold_stmt_nodes(action, lu_empty_facts(), lu_skip_facts, lu_fact_expr, astwalk.descend_all);
   let bare: string[] = f.defer_bare;
   let fields: string[] = f.defer_fields;
   for o in inner.occ {
@@ -18435,33 +18446,55 @@ function lu_mentions(st: ast.Stmt, name: string): i32 {
   return n;
 }
 
-function lu_jump_escapes(st: ast.Stmt, depth: i32): boolean {
+function lu_no_stmt(): ast.Stmt {
+  return ast.StmtUnknown { kind: "", line: 0, col: 0 };
+}
+
+function lu_plain_frame(stmts: ast.Stmt[]): LuFrame {
+  return LuFrame { stmts: stmts, idx: 0, head: lu_no_stmt(), is_loop: false, label: "" };
+}
+
+function lu_loop_frame(stmts: ast.Stmt[], head: ast.Stmt, label: string): LuFrame {
+  return LuFrame { stmts: stmts, idx: 0, head: head, is_loop: true, label: label };
+}
+
+function lu_site_frames(sc: LuScope, stmts: ast.Stmt[], i: i32): LuFrame[] {
+  if (!sc.framed) {
+    return sc.frames;
+  }
+  return sc.frames.append(LuFrame { ...sc.head, stmts: stmts, idx: i });
+}
+
+function lu_stmt_holds(st: ast.Stmt, line: i32, col: i32): boolean {
+  let h: LuHold = astwalk.fold_stmt_nodes(st, LuHold { line: line, col: col, found: false }, lu_hold_stmt, lu_hold_expr, astwalk.descend_all);
+  return h.found;
+}
+
+function lu_hold_keep(e: ast.Expr, own h: LuHold): LuHold {
+  return h;
+}
+
+function lu_loop_hold_stmt(st: ast.Stmt, own h: LuHold): LuHold {
+  if (h.found || !lu_is_loop_stmt(st)) {
+    return h;
+  }
+  return LuHold { ...h, found: lu_stmt_holds(st, h.line, h.col) };
+}
+
+// A loop inside the statement runs the call again each round: the call sits
+// in a loop's head, or in a loop inside an expression-level block.
+function lu_loop_holds_call(st: ast.Stmt, call: ast.Expr): boolean {
+  let h: LuHold = astwalk.fold_stmt_nodes(st, lu_hold_at(call), lu_loop_hold_stmt, lu_hold_keep, astwalk.descend_all);
+  return h.found;
+}
+
+function lu_is_loop_stmt(st: ast.Stmt): boolean {
   match (st) {
-    ast.StmtBreak(b) => {
-      return depth == 0 || b.label.len() > 0;
+    ast.StmtWhile(_) => {
+      return true;
     },
-    ast.StmtContinue(c) => {
-      return depth == 0 || c.label.len() > 0;
-    },
-    ast.StmtIf(f) => {
-      return lu_jumps_escape(f.then_body, depth) || lu_jumps_escape(f.else_body, depth);
-    },
-    ast.StmtWhile(w) => {
-      return lu_jumps_escape(w.body, depth + 1);
-    },
-    ast.StmtFor(fo) => {
-      return lu_jumps_escape(fo.body, depth + 1);
-    },
-    ast.StmtMatch(m) => {
-      for arm in m.arms {
-        if (lu_jumps_escape(arm.body, depth)) {
-          return true;
-        }
-      }
-      return false;
-    },
-    ast.StmtDefer(d) => {
-      return lu_jump_escapes(d.action, depth);
+    ast.StmtFor(_) => {
+      return true;
     },
     _ => {
       return false;
@@ -18470,31 +18503,197 @@ function lu_jump_escapes(st: ast.Stmt, depth: i32): boolean {
   return false;
 }
 
-function lu_jumps_escape(stmts: ast.Stmt[], depth: i32): boolean {
-  for s in stmts {
-    if (lu_jump_escapes(s, depth)) {
+function lu_empty_facts(): LuFacts {
+  return LuFacts { occ: [], vars: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [] };
+}
+
+// A later mention of the name inside the statement that holds the call.
+function lu_later_in(st: ast.Stmt, aid: ast.ExprIdent): boolean {
+  let facts: LuFacts = astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
+  for o in facts.occ {
+    if (o.name == aid.name && (o.line > aid.line || o.line == aid.line && o.col > aid.col)) {
       return true;
     }
   }
   return false;
 }
 
-function lu_returns_before_reading(site: LuSite, name: string): boolean {
-  if (lu_mentions(site.stmts[site.idx], name) != 1) {
+function lu_declares(st: ast.Stmt, name: string): boolean {
+  let facts: LuFacts = astwalk.fold_stmt_nodes(st, lu_empty_facts(), lu_fact_stmt, lu_fact_expr, astwalk.not_lambda);
+  for v in facts.vars {
+    if (v.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function lu_loop_labels(st: ast.Stmt, own acc: string[]): string[] {
+  match (st) {
+    ast.StmtWhile(w) => {
+      acc = acc.append(w.label);
+      return lu_loop_labels_all(w.body, acc);
+    },
+    ast.StmtFor(fo) => {
+      acc = acc.append(fo.label);
+      return lu_loop_labels_all(fo.body, acc);
+    },
+    ast.StmtIf(f) => {
+      acc = lu_loop_labels_all(f.then_body, acc);
+      return lu_loop_labels_all(f.else_body, acc);
+    },
+    ast.StmtMatch(m) => {
+      for arm in m.arms {
+        acc = lu_loop_labels_all(arm.body, acc);
+      }
+      return acc;
+    },
+    _ => {
+      return acc;
+    }
+  }
+  return acc;
+}
+
+function lu_loop_labels_all(stmts: ast.Stmt[], own acc: string[]): string[] {
+  for st in stmts {
+    acc = lu_loop_labels(st, acc);
+  }
+  return acc;
+}
+
+function lu_jump_escapes(label: string, nested: boolean, inner: string[]): boolean {
+  if (label.len() == 0) {
+    return !nested;
+  }
+  return !util.has_str(inner, label);
+}
+
+// The breaks and continues that leave the statement, each with the label it
+// names. A jump to a loop inside the statement stays inside it.
+function lu_jumps(st: ast.Stmt): LuJumps {
+  let inner: string[] = lu_loop_labels(st, []);
+  return lu_jump_walk(st, false, inner, LuJumps { breaks: [], continues: [] });
+}
+
+function lu_jump_walk(st: ast.Stmt, nested: boolean, inner: string[], own j: LuJumps): LuJumps {
+  match (st) {
+    ast.StmtBreak(b) => {
+      if (lu_jump_escapes(b.label, nested, inner)) {
+        return LuJumps { ...j, breaks: j.breaks.append(b.label) };
+      }
+      return j;
+    },
+    ast.StmtContinue(c) => {
+      if (lu_jump_escapes(c.label, nested, inner)) {
+        return LuJumps { ...j, continues: j.continues.append(c.label) };
+      }
+      return j;
+    },
+    ast.StmtIf(f) => {
+      j = lu_jump_walk_all(f.then_body, nested, inner, j);
+      return lu_jump_walk_all(f.else_body, nested, inner, j);
+    },
+    ast.StmtWhile(w) => {
+      return lu_jump_walk_all(w.body, true, inner, j);
+    },
+    ast.StmtFor(fo) => {
+      return lu_jump_walk_all(fo.body, true, inner, j);
+    },
+    ast.StmtMatch(m) => {
+      for arm in m.arms {
+        j = lu_jump_walk_all(arm.body, nested, inner, j);
+      }
+      return j;
+    },
+    _ => {
+      return j;
+    }
+  }
+  return j;
+}
+
+function lu_jump_walk_all(stmts: ast.Stmt[], nested: boolean, inner: string[], own j: LuJumps): LuJumps {
+  for st in stmts {
+    j = lu_jump_walk(st, nested, inner, j);
+  }
+  return j;
+}
+
+// The level of the body frame of the loop a jump names: the innermost loop
+// for "", else the loop that carries the label. -1 when there is none.
+function lu_loop_level(frames: LuFrame[], level: i32, label: string): i32 {
+  let l: i32 = level;
+  while (l >= 0) {
+    if (frames[l].is_loop && (label.len() == 0 || frames[l].label == label)) {
+      return l;
+    }
+    l = l - 1;
+  }
+  return -1;
+}
+
+// The loop whose body is frames[l] reads the name on its next round when the
+// loop mentions it and the body does not declare it afresh each time.
+function lu_loop_head_live(frames: LuFrame[], l: i32, name: string): boolean {
+  if (lu_declares(frames[l].head, name)) {
     return false;
   }
-  let j: i32 = site.idx + 1;
-  while (j < site.stmts.len()) {
-    let st: ast.Stmt = site.stmts[j];
-    if (lu_mentions(st, name) != 0 || lu_jump_escapes(st, 0)) {
-      return false;
-    }
-    if let ast.StmtReturn(_) = st {
+  return lu_mentions(frames[l].head, name) > 0;
+}
+
+// Whether the name can be read again on some path after the statement that
+// holds the call. A path that reaches the end of a loop body, or continues,
+// comes back to every use in that loop.
+function lu_live_after(site: LuSite, call: ast.Expr, aid: ast.ExprIdent): boolean {
+  if (site.frames.len() == 0) {
+    return true;
+  }
+  let inner: LuFrame = site.frames[site.frames.len() - 1];
+  let st: ast.Stmt = inner.stmts[inner.idx];
+  if (lu_loop_holds_call(st, call) || lu_later_in(st, aid)) {
+    return true;
+  }
+  return lu_live_from(site.frames, site.frames.len() - 1, aid.name);
+}
+
+function lu_live_from(frames: LuFrame[], level: i32, name: string): boolean {
+  if (level < 0) {
+    return false;
+  }
+  let f: LuFrame = frames[level];
+  let j: i32 = f.idx + 1;
+  while (j < f.stmts.len()) {
+    let st: ast.Stmt = f.stmts[j];
+    if (lu_mentions(st, name) > 0) {
       return true;
+    }
+    let jumps: LuJumps = lu_jumps(st);
+    for label in jumps.continues {
+      let l: i32 = lu_loop_level(frames, level, label);
+      if (l < 0 || lu_loop_head_live(frames, l, name) || lu_live_from(frames, l - 1, name)) {
+        return true;
+      }
+    }
+    for label in jumps.breaks {
+      let l: i32 = lu_loop_level(frames, level, label);
+      if (l < 0 || lu_live_from(frames, l - 1, name)) {
+        return true;
+      }
+    }
+    let one: ast.Stmt[] = [st];
+    if (block_diverges(one, false)) {
+      return false;
     }
     j = j + 1;
   }
-  return false;
+  if (f.is_loop && lu_loop_head_live(frames, level, name)) {
+    return true;
+  }
+  if (level == 0) {
+    return false;
+  }
+  return lu_live_from(frames, level - 1, name);
 }
 
 function lu_arr_position(fx: LuFn, callee: string, i: i32): boolean {
@@ -18521,17 +18720,16 @@ function lu_dies(fx: LuFn, call: ast.Expr, arr: boolean, aid: ast.ExprIdent, out
   if (lu_rebind_site(site, name)) {
     return true;
   }
-  let repeats: boolean = site.in_loop && !(util.has_str(site.fresh, name) && lu_decl_count(fx, name) == 1);
-  if (repeats || !once || !lu_admitted(fx, name)) {
+  if (!once || !lu_admitted(fx, name)) {
     return false;
   }
-  if (lu_is_last(fx, aid)) {
-    return !(has_outer && astwalk.count_ident_expr(outer, name) > 1);
-  }
-  if (site.in_iife || arr) {
+  if (has_outer && astwalk.count_ident_expr(outer, name) > 1) {
     return false;
   }
-  return lu_returns_before_reading(site, name);
+  if (arr && !lu_is_last(fx, aid)) {
+    return false;
+  }
+  return !lu_live_after(site, call, aid);
 }
 
 // `q.f` passed to an own parameter moves the field out of q when q is a
@@ -18859,7 +19057,8 @@ function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite,
       if (lm.origin.len() == 0 || c.args.len() > 0) {
         return acc;
       }
-      return lu_stmts(lm.body, site.in_loop, site.fresh, true, site.in_defer, outer, has_outer, fx, acc);
+      let sc: LuScope = LuScope { frames: site.frames, head: lu_plain_frame(lm.body), framed: false, in_loop: site.in_loop, in_iife: true, in_defer: site.in_defer };
+      return lu_stmts(lm.body, sc, outer, has_outer, fx, acc);
     }
     acc = lu_call(c, e, outer, has_outer, site, fx, acc);
     if (!ho) {
@@ -18880,15 +19079,15 @@ function lu_root(e: ast.Expr, site: LuSite, outer: ast.Expr, has_outer: boolean,
   return lu_expr(e, e, false, site, fx, acc);
 }
 
-function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, fresh0: string[], in_iife: boolean, in_defer: boolean, outer: ast.Expr, has_outer: boolean, fx: LuFn, own acc: string[]): string[] {
-  let fresh: string[] = fresh0;
+// An IIFE body and a deferred action count as their enclosing statement, so
+// they and the blocks inside them add no frame of their own.
+function lu_stmts(stmts: ast.Stmt[], sc: LuScope, outer: ast.Expr, has_outer: boolean, fx: LuFn, own acc: string[]): string[] {
   let i: i32 = 0;
   while (i < stmts.len()) {
-    let site: LuSite = LuSite { stmts: stmts, idx: i, in_loop: in_loop, fresh: fresh, in_iife: in_iife, in_defer: in_defer };
+    let site: LuSite = LuSite { stmts: stmts, idx: i, frames: lu_site_frames(sc, stmts, i), in_loop: sc.in_loop, in_iife: sc.in_iife, in_defer: sc.in_defer };
     match (stmts[i]) {
       ast.StmtVar(v) => {
         acc = lu_root(v.init, site, outer, has_outer, fx, acc);
-        fresh = lu_declared(stmts[i], fresh);
       },
       ast.StmtAssign(a) => {
         acc = lu_root(a.value, site, outer, has_outer, fx, acc);
@@ -18901,16 +19100,16 @@ function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, fresh0: string[], in_iife
       },
       ast.StmtIf(f) => {
         acc = lu_root(f.cond, site, outer, has_outer, fx, acc);
-        acc = lu_stmts(f.then_body, in_loop, fresh, in_iife, in_defer, outer, has_outer, fx, acc);
-        acc = lu_stmts(f.else_body, in_loop, fresh, in_iife, in_defer, outer, has_outer, fx, acc);
+        acc = lu_stmts(f.then_body, LuScope { ...sc, frames: site.frames, head: lu_plain_frame(f.then_body) }, outer, has_outer, fx, acc);
+        acc = lu_stmts(f.else_body, LuScope { ...sc, frames: site.frames, head: lu_plain_frame(f.else_body) }, outer, has_outer, fx, acc);
       },
       ast.StmtWhile(w) => {
-        acc = lu_root(w.cond, LuSite { ...site, in_loop: true, fresh: [] }, outer, has_outer, fx, acc);
-        acc = lu_stmts(w.body, true, [], in_iife, in_defer, outer, has_outer, fx, acc);
+        acc = lu_root(w.cond, site, outer, has_outer, fx, acc);
+        acc = lu_stmts(w.body, LuScope { ...sc, frames: site.frames, head: lu_loop_frame(w.body, stmts[i], w.label), in_loop: true }, outer, has_outer, fx, acc);
       },
       ast.StmtFor(fo) => {
-        acc = lu_root(fo.iter, LuSite { ...site, in_loop: true, fresh: [] }, outer, has_outer, fx, acc);
-        acc = lu_stmts(fo.body, true, [], in_iife, in_defer, outer, has_outer, fx, acc);
+        acc = lu_root(fo.iter, site, outer, has_outer, fx, acc);
+        acc = lu_stmts(fo.body, LuScope { ...sc, frames: site.frames, head: lu_loop_frame(fo.body, stmts[i], fo.label), in_loop: true }, outer, has_outer, fx, acc);
       },
       ast.StmtMatch(m) => {
         acc = lu_root(m.scrutinee, site, outer, has_outer, fx, acc);
@@ -18918,12 +19117,12 @@ function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, fresh0: string[], in_iife
           if (arm.has_guard) {
             acc = lu_root(arm.guard, site, outer, has_outer, fx, acc);
           }
-          acc = lu_stmts(arm.body, in_loop, fresh, in_iife, in_defer, outer, has_outer, fx, acc);
+          acc = lu_stmts(arm.body, LuScope { ...sc, frames: site.frames, head: lu_plain_frame(arm.body) }, outer, has_outer, fx, acc);
         }
       },
       ast.StmtDefer(d) => {
         let one: ast.Stmt[] = [d.action];
-        acc = lu_stmts(one, in_loop, fresh, in_iife, true, outer, has_outer, fx, acc);
+        acc = lu_stmts(one, LuScope { ...sc, frames: site.frames, head: lu_plain_frame(one), framed: false, in_defer: true }, outer, has_outer, fx, acc);
       },
       _ => {}
     }
@@ -18932,16 +19131,8 @@ function lu_stmts(stmts: ast.Stmt[], in_loop: boolean, fresh0: string[], in_iife
   return acc;
 }
 
-function lu_declared(st: ast.Stmt, own names: string[]): string[] {
-  let facts: LuFacts = lu_fact_stmt(st, LuFacts { occ: [], vars: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [] });
-  for d in facts.vars {
-    names = names.append(d.name);
-  }
-  return names;
-}
-
 function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs): string[] {
-  let facts: LuFacts = LuFacts { occ: [], vars: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [] };
+  let facts: LuFacts = lu_empty_facts();
   let nested: ast.ExprLambda[] = [];
   for st in fn.body {
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
@@ -18949,7 +19140,8 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs): string[] {
   }
   let fx: LuFn = LuFn { facts: facts, params: ow_param_names(fn), owned: ow_own_param_names(fn), ofuncs: ofuncs };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
-  let out: string[] = lu_stmts(fn.body, false, [], false, false, none, false, fx, []);
+  let top: LuScope = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, in_loop: false, in_iife: false, in_defer: false };
+  let out: string[] = lu_stmts(fn.body, top, none, false, fx, []);
   for lm in nested {
     out = util.append_all(out, lu_last_use_args(parser.FuncDecl { ...fn, params: lm.params, body: lm.body }, ofuncs));
   }
@@ -20177,6 +20369,7 @@ function ow_fresh_builtins(): string[] {
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
     "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
     "hostname", "map_new", "mounts", "pipe", "random_bytes", "set_priority",
+    "open_reader", "open_writer", "open_appender", "open_exclusive", "open_reader_with", "open_writer_with", "open_dir",
     "setgid", "setuid",
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "target_arch", "target_os",

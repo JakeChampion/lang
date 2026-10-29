@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**91 of 94** claims are pinned by a conformance case. The remaining
+**95 of 98** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -172,6 +172,10 @@ of them.
 | `RH-11` | `docs/security/HANDLE-AUDIT.md` | A deferred consuming close inside a loop of a handle declared outside it is refused (`E051`) | `diag_e051_handle_deferred_close_in_loop` |
 | `RH-12` | `docs/security/HANDLE-AUDIT.md` | An `own` parameter a deferred call consumes is consumed nowhere else (`E050`) | `diag_e050_owned_handle_consumed_after_defer` |
 | `RH-13` | `docs/security/HANDLE-AUDIT.md` | A handle a closure captures cannot be closed by a deferred consuming call (`E051`) | `diag_e051_handle_captured_then_deferred` |
+| `RH-14` | `docs/security/HANDLE-AUDIT.md` | A consuming close inside a loop is the handle's last use when every path from the close leaves the loop by a return, a break or a labelled break; a local the loop body declares closes once per round | `handle_closes_on_loop_exit` |
+| `RH-15` | `docs/security/HANDLE-AUDIT.md` | A close before a `continue` is not the handle's last use (`E051`) | `diag_e051_handle_closed_before_continue` |
+| `RH-16` | `docs/security/HANDLE-AUDIT.md` | A close of a handle declared outside the loop on a path that reaches the end of the loop body is refused (`E051`) | `diag_e051_handle_closed_each_round` |
+| `RH-17` | `docs/security/HANDLE-AUDIT.md` | A consuming close in a loop's head is refused (`E051`) | `diag_e051_handle_closed_in_loop_head` |
 
 ## Every gap this index opened with is now closed
 
