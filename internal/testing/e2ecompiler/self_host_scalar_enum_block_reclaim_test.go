@@ -115,10 +115,11 @@ function main(): i32 {
 
 	t.Run("rebound_local", func(t *testing.T) {
 		src := `enum E { Box(i32, i32), Nil }
+@noinline function four(): i32 { return 4; }
 function round(): i32 {
     let e: E = Nil;
     let i: i32 = 0;
-    while (i < 4) { e = Box(i, i); i = i + 1; }
+    while (i < four()) { e = Box(i, i); i = i + 1; }
     let t: i32 = 0;
     match (e) { Box(a, b) => { t = a + b; }, Nil => { t = 0; } }
     return t;

@@ -1,0 +1,51 @@
+// An impl for a generic Vec[N, T] is one impl per lane type it can stand for.
+
+import "std/simd";
+
+trait Total {
+  function total(self: Self): f64;
+  function twice(self: Self): f64 {
+    return self.total() * 2.0;
+  }
+}
+
+impl[const N: i32, T] Total for Vec[N, T] {
+  @inline
+  function total(self: Vec[N, T]): f64 {
+    let s: f64 = 0.0;
+    let i: i32 = 0;
+    while (i < N) {
+      s = s + self.lane(i) * ((i + 1) as f64);
+      i = i + 1;
+    }
+    return s;
+  }
+}
+
+trait Count {
+  function count(self: Self): i32;
+}
+
+impl[const N: i32] Count for Vec[N, f64] {
+  function count(self: Vec[N, f64]): i32 {
+    return N * 10;
+  }
+}
+
+function sum[X: Total](x: X): f64 {
+  return x.total();
+}
+
+function main(): i32 {
+  let a: Vec[2, f64] = __f64x2_of(1.5, 2.0);
+  let b: f32x4 = __f32x4_of(1.0, 2.0, 3.0, 4.0);
+  print(a.total());
+  print(b.total());
+  print(a.twice());
+  print(b.twice());
+  let r: f64 = sum(b);
+  print(r);
+  print(sum(a));
+  print(a.count());
+  return 0;
+}

@@ -991,6 +991,18 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 			id.AssocTypeBindings[atName.Text] = ast.SubstSelf(atType, implType)
 			continue
 		}
+		hint := ast.InlineHintNone
+		if p.match(lexer.Punct, "@") {
+			at := p.peek()
+			attr, err := p.parseAttribute()
+			if err != nil {
+				return nil, nil, err
+			}
+			if attr.name != "inline" && attr.name != "noinline" {
+				return nil, nil, p.errorfCode(at.Pos, "P001", "an impl method takes only @inline or @noinline")
+			}
+			hint = attr.inlineHint
+		}
 		var fn *ast.FuncDecl
 		if p.match(lexer.Keyword, "const") {
 			ckw := p.advance()
@@ -1024,6 +1036,7 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 			}
 			fn = f
 		}
+		fn.InlineHint = hint
 		if fn.Receiver != nil {
 			return nil, nil, p.errorf(fn.P,
 				"impl method %q must not declare a receiver clause; its first parameter is `self: Self`", fn.Name)

@@ -5,10 +5,11 @@ import (
 	"testing"
 )
 
-const tupleRebindSrc = `function round(): i32 {
+const tupleRebindSrc = `@noinline function four(): i32 { return 4; }
+function round(): i32 {
     let p: (i32, i32[]) = (0, [1]);
     let i: i32 = 0;
-    while (i < 4) { p = (i, [i + 1]); i = i + 1; }
+    while (i < four()) { p = (i, [i + 1]); i = i + 1; }
     return p.0 + p.1[0] - p.1[0];
 }
 

@@ -216,8 +216,8 @@ function churn(n: i32): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
     while (i < n) {
-        match (mkarr(1)) { Some(a) => { t = t + a[0]; }, None => { }, }
-        match (mkstruct(1)) { Some(p) => { t = t + p.b; }, None => { }, }
+        match (mkarr(1 + i % 3)) { Some(a) => { t = t + a[0]; }, None => { }, }
+        match (mkstruct(1 + i % 3)) { Some(p) => { t = t + p.b; }, None => { }, }
         i = i + 1;
     }
     return t % 7;
@@ -247,10 +247,10 @@ function churn(n: i32): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
     while (i < n) {
-        match (mkt(1))  { Some(a) => { t = t + a.0; }, None => { }, }
-        match (mkta(1)) { Some(a) => { t = t + a.1; }, None => { }, }
-        match (mktn(1)) { Some(a) => { t = t + a.1; }, None => { }, }
-        match (mkr(1))  { Ok(a) => { t = t + a.0; }, Err(e) => { t = t + e.0; }, }
+        match (mkt(1 + i % 3))  { Some(a) => { t = t + a.0; }, None => { }, }
+        match (mkta(1 + i % 3)) { Some(a) => { t = t + a.1; }, None => { }, }
+        match (mktn(1 + i % 3)) { Some(a) => { t = t + a.1; }, None => { }, }
+        match (mkr(1 + i % 3))  { Ok(a) => { t = t + a.0; }, Err(e) => { t = t + e.0; }, }
         i = i + 1;
     }
     return t % 7;
@@ -311,10 +311,10 @@ function churn(n: i32): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
     while (i < n) {
-        t = t + fac(mk3(1));
-        t = t + fac(mk20(1));
-        t = t + facS(mkS(1));
-        let o: Option[i32[]] = mk3(1);
+        t = t + fac(mk3(1 + i % 3));
+        t = t + fac(mk20(1 + i % 3));
+        t = t + facS(mkS(1 + i % 3));
+        let o: Option[i32[]] = mk3(1 + i % 3);
         t = t + fac(o);
         i = i + 1;
     }
@@ -345,11 +345,11 @@ function churn(n: i32): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
     while (i < n) {
-        t = t + sink(mk_box(1).items);
-        t = t + sinks(mk_sbox(1).names);
-        t = t + mk_box(2).items[0].a;
-        t = t + mk_sbox(3).names[1].len();
-        t = t + mk_qbox(4).qs[0].vals[1];
+        t = t + sink(mk_box(1 + i % 3).items);
+        t = t + sinks(mk_sbox(1 + i % 3).names);
+        t = t + mk_box(2 + i % 3).items[0].a;
+        t = t + mk_sbox(3 + i % 3).names[1].len();
+        t = t + mk_qbox(4 + i % 3).qs[0].vals[1];
         i = i + 1;
     }
     return t % 7;

@@ -100,10 +100,11 @@ function main(): i32 {
 		{
 			name: "scalar_field_struct_array_declared_in_loop",
 			src: `struct S { a: i32, b: i32 }
+@noinline function four(): i32 { return 4; }
 function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) {
+    while (i < four()) {
         let xs: S[] = [S { a: i, b: 1 }, S { a: i, b: 2 }];
         acc = acc + xs.len();
         i = i + 1;

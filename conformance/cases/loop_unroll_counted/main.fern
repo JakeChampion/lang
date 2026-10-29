@@ -1,0 +1,204 @@
+// Counted loops with constant bounds, which the compiler unrolls when the body
+// reads the counter, and the loops past its limits, which it keeps.
+
+function up(): i32 {
+  let s: i32 = 0;
+  let i: i32 = 0;
+  while (i < 4) {
+    s = s * 10 + i;
+    i = i + 1;
+  }
+  return s;
+}
+
+function down_by_three(): i32 {
+  let s: i32 = 0;
+  let i: i32 = 10;
+  while (i > 0) {
+    s = s * 100 + i;
+    i = i - 3;
+  }
+  return s;
+}
+
+function bound_on_left(): i32 {
+  let s: i32 = 0;
+  let i: i32 = 1;
+  while (6 >= i) {
+    s = s + i * i;
+    i = i + 2;
+  }
+  return s;
+}
+
+function not_equal(): i32 {
+  let s: i32 = 1;
+  let i: i32 = 0;
+  while (i != 5) {
+    s = s * 2 + i;
+    i = i + 1;
+  }
+  return s;
+}
+
+function no_trips(): i32 {
+  let s: i32 = 7;
+  let i: i32 = 3;
+  while (i < 3) {
+    s = i;
+    i = i + 1;
+  }
+  return s + i;
+}
+
+function sixteen(): i32 {
+  let s: i32 = 0;
+  let i: i32 = 0;
+  while (i < 16) {
+    s = s + i;
+    i = i + 1;
+  }
+  return s;
+}
+
+function sixteen_wide(): i32 {
+  let s: i32 = 0;
+  let i: i32 = 0;
+  while (i < 16) {
+    s = s + i * i + (s >> 3) - i / 2;
+    i = i + 1;
+  }
+  return s;
+}
+
+function seventeen(): i32 {
+  let s: i32 = 0;
+  let i: i32 = 0;
+  while (i < 17) {
+    s = s + i;
+    i = i + 1;
+  }
+  return s;
+}
+
+function wraps(): i32 {
+  let s: i32 = 0;
+  let i: i32 = 2147483646;
+  while (i != 0 - 2147483647) {
+    s = s + 1;
+    i = i + 1;
+  }
+  return s;
+}
+
+function swapped(): i32 {
+  let a: i32 = 1;
+  let b: i32 = 2;
+  let i: i32 = 0;
+  while (i < 3) {
+    let t: i32 = a;
+    a = b;
+    b = t + b + i;
+    i = i + 1;
+  }
+  return a * 10 + b;
+}
+
+function lanes(v: f64x2): f64 {
+  let s: f64 = 0.0;
+  let i: i32 = 0;
+  while (i < 2) {
+    if (i == 0) {
+      s = s + __f64x2_lane(v, 0);
+    } else {
+      s = s + __f64x2_lane(v, 1) * 10.0;
+    }
+    i = i + 1;
+  }
+  return s;
+}
+
+function words(): string {
+  let s: string = "";
+  let i: i32 = 0;
+  while (i < 3) {
+    s = s + "ab" + i.to_string();
+    i = i + 1;
+  }
+  return s;
+}
+
+function range_up(): i32 {
+  let s: i32 = 0;
+  for i in 0..5 {
+    s = s * 10 + i;
+  }
+  return s;
+}
+
+function range_empty(): i32 {
+  let s: i32 = 4;
+  for i in 3..3 {
+    s = i;
+  }
+  return s;
+}
+
+function range_negative(): i32 {
+  let s: i32 = 0;
+  for i in -2..2 {
+    s = s * 10 + i + 2;
+  }
+  return s;
+}
+
+function range_seventeen(): i32 {
+  let s: i32 = 0;
+  for i in 0..17 {
+    s = s + i;
+  }
+  return s;
+}
+
+function range_break(): i32 {
+  let s: i32 = 0;
+  for i in 0..6 {
+    if (i == 4) {
+      break;
+    }
+    s = s * 10 + i;
+  }
+  return s;
+}
+
+function range_nested(): i32 {
+  let s: i32 = 0;
+  for i in 0..3 {
+    for j in 0..2 {
+      s = s * 10 + i + j;
+    }
+  }
+  return s;
+}
+
+function main(): i32 {
+  print(up());
+  print(down_by_three());
+  print(bound_on_left());
+  print(not_equal());
+  print(no_trips());
+  print(sixteen());
+  print(sixteen_wide());
+  print(seventeen());
+  print(wraps());
+  print(swapped());
+  print(lanes(__f64x2_of(1.5, 2.0)));
+  print(words());
+  print(range_up());
+  print(range_empty());
+  print(range_negative());
+  print(range_seventeen());
+  print(range_break());
+  print(range_nested());
+  return 0;
+}

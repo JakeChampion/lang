@@ -3099,6 +3099,11 @@ function print_impl_method(m: parser.FuncDecl, f: Fmt): (string, Fmt) {
     return print_const_member(m, f);
   }
   let out: string = indent_str(1);
+  if (m.always_inline) {
+    out = out + "@inline\n" + indent_str(1);
+  } else if (m.no_inline) {
+    out = out + "@noinline\n" + indent_str(1);
+  }
   if (m.is_unsafe) {
     out = out + "unsafe ";
   }

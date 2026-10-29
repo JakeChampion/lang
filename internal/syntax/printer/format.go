@@ -716,6 +716,14 @@ func (f *formatter) formatImplMethod(fn *ast.FuncDecl, parametric bool) {
 		f.b.WriteString(";\n")
 		return
 	}
+	switch fn.InlineHint {
+	case ast.InlineHintAlways:
+		f.b.WriteString("@inline\n")
+		f.indent(1)
+	case ast.InlineHintNever:
+		f.b.WriteString("@noinline\n")
+		f.indent(1)
+	}
 	if fn.Unsafe {
 		f.b.WriteString("unsafe ")
 	}

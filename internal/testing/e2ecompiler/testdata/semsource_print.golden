@@ -1065,7 +1065,7 @@ func opt_calls {
   b3:
     v5 = const_int 0
     v6 = const_int 1
-    v7 = binary - v5 v6
+    v7 = const_int -1
     ret v7
 }
 
@@ -1783,34 +1783,22 @@ func option_of_either {
     v4 = const_int 0
     v5 = const_int 1
     v6 = const_int 0
-    v7 = binary <= v6 v4
-    brif v7 b6 b4
+    v7 = const_bool 1
+    br b6
   b6:
-    v8 = binary <= v4 v5
-    brif v8 b7 b4
+    v8 = const_bool 1
+    br b7
   b7:
     v9 = binary <= v5 v3
     brif v9 b8 b4
   b8:
     v10 = const_int 0
-    v11 = binary > v4 v10
-    brif v11 b9 b12
-  b9:
-    v12 = binary < v4 v3
-    brif v12 b10 b12
-  b10:
-    v13 = str_index v0 v4
-    v14 = const_int 128
-    v15 = binary < v13 v14
-    brif v15 b12 b11
-  b11:
-    v16 = const_int 192
-    v17 = binary >= v13 v16
-    brif v17 b12 b4
+    v11 = const_bool 0
+    br b12
   b12:
     v18 = const_int 0
-    v19 = binary > v5 v18
-    brif v19 b13 b16
+    v19 = const_bool 1
+    br b13
   b13:
     v20 = binary < v5 v3
     brif v20 b14 b16
@@ -1840,34 +1828,22 @@ func option_of_either {
     v31 = const_int 0
     v32 = const_int 1
     v33 = const_int 0
-    v34 = binary <= v33 v31
-    brif v34 b19 b17
+    v34 = const_bool 1
+    br b19
   b19:
-    v35 = binary <= v31 v32
-    brif v35 b20 b17
+    v35 = const_bool 1
+    br b20
   b20:
     v36 = binary <= v32 v30
     brif v36 b21 b17
   b21:
     v37 = const_int 0
-    v38 = binary > v31 v37
-    brif v38 b22 b25
-  b22:
-    v39 = binary < v31 v30
-    brif v39 b23 b25
-  b23:
-    v40 = str_index v1 v31
-    v41 = const_int 128
-    v42 = binary < v40 v41
-    brif v42 b25 b24
-  b24:
-    v43 = const_int 192
-    v44 = binary >= v40 v43
-    brif v44 b25 b17
+    v38 = const_bool 0
+    br b25
   b25:
     v45 = const_int 0
-    v46 = binary > v32 v45
-    brif v46 b26 b29
+    v46 = const_bool 1
+    br b26
   b26:
     v47 = binary < v32 v30
     brif v47 b27 b29

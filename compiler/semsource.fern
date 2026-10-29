@@ -26,6 +26,7 @@ import "./semhoist";
 import "./semsink";
 import "./semcse";
 import "./semthread";
+import "./semunroll";
 import "./semfuse";
 import "./semoption";
 import "./semndarray";
@@ -8122,7 +8123,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   names = anchored.names;
   let laid: semrecords.Record[] = [];
   if (verify) {
-    let inlined: Spliced = inline_leaves(fuse_pipelines(reach_module(all, names, mod, opts.whole, false), names, mod.funcs, opts.array_report), names, mod, opts.size);
+    let inlined: Spliced = inline_leaves(fuse_pipelines(unroll_loops(reach_module(all, names, mod, opts.whole, false), names), names, mod.funcs, opts.array_report), names, mod, opts.size);
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
     all = prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole, true));
@@ -8621,12 +8622,32 @@ function fuse_pipelines(all: Produced[], names: string[], decls: parser.FuncDecl
   return result;
 }
 
+function unroll_loops(all: Produced[], names: string[]): Produced[] {
+  let sw: optbisect.Switches = optbisect.switches();
+  let out: Produced[] = [];
+  for i in 0..all.len() {
+    let p: Produced = all[i];
+    if (p.ok && !p.template && !p.bodyless && optbisect.allowed_by(sw, "unroll", names[i])) {
+      let u: semunroll.Unrolled = semunroll.unroll(p.func);
+      if (u.loops > 0) {
+        p = Produced { ...p, func: u.f, analysis: None };
+      }
+    }
+    out = out.append(p);
+  }
+  return out;
+}
+
 function prune_dead_constructions(all: Produced[]): Produced[] {
   let out: Produced[] = [];
   let i: i32 = 0;
   while (i < all.len()) {
     let p: Produced = all[i];
     if (p.ok && !p.template && !p.bodyless) {
+      let fc: semunroll.Constants = semunroll.fold_constants(p.func);
+      if (fc.folded > 0) {
+        p = Produced { ...p, func: fc.f, analysis: None };
+      }
       let th: semthread.Threaded = semthread.thread(p.func);
       if (th.changed > 0) {
         p = Produced { ...p, func: th.f, analysis: None };

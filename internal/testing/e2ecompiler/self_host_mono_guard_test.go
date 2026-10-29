@@ -25,8 +25,9 @@ function main(): i32 {
 `, "big small none"},
 	{"generic-struct-method", `struct Box[T] { v: T }
 function (b: Box[T]) get(): T { return b.v; }
+@noinline function three(): i32 { return 3; }
 function main(): i32 {
-    let o: Option[i32] = Some(3);
+    let o: Option[i32] = Some(three());
     match (o) {
         Some(n) when (Box { v: [n, n + 1] }.get()[1] == 4) => { print("four"); },
         Some(_) => { print("other"); },

@@ -38,10 +38,11 @@ func TestSelfHostBlockScopedStructBoxX86_64(t *testing.T) {
 
 	t.Run("struct_declared_in_a_loop", func(t *testing.T) {
 		src := `struct S { xs: i32[], n: i32 }
+@noinline function four(): i32 { return 4; }
 function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) {
+    while (i < four()) {
         let s: S = S { xs: [i, i + 1], n: i };
         acc = acc + s.n + s.xs.len();
         i = i + 1;
@@ -116,10 +117,11 @@ func TestSelfHostBlockScopedStructBoxHazardsX86_64(t *testing.T) {
 		{
 			name: "boxes_escape_into_an_outer_container",
 			body: `struct S { xs: i32[], n: i32 }
+@noinline function four(): i32 { return 4; }
 function round(r: i32): i32 {
     let keep: S[] = [];
     let i: i32 = 0;
-    while (i < 4) {
+    while (i < four()) {
         let s: S = S { xs: [i, i + 1], n: i };
         keep = keep.append(s);
         i = i + 1;
@@ -135,11 +137,12 @@ function round(r: i32): i32 {
 		{
 			name: "aliased_to_an_outer_local",
 			body: `struct S { xs: i32[], n: i32 }
+@noinline function four(): i32 { return 4; }
 function round(r: i32): i32 {
     let held: S = S { xs: [0], n: r };
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) {
+    while (i < four()) {
         let s: S = S { xs: [i, i + 1], n: i };
         held = s;
         acc = acc + s.n;
@@ -172,12 +175,13 @@ function round(r: i32): i32 {
 		{
 			name: "passed_to_a_callee_that_keeps_it",
 			body: `struct S { xs: i32[], n: i32 }
+@noinline function four(): i32 { return 4; }
 @noinline function keepit(s: S): S { return s; }
 function round(r: i32): i32 {
     let held: S = S { xs: [0], n: r };
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) {
+    while (i < four()) {
         let s: S = S { xs: [i, i + 1], n: i };
         held = keepit(s);
         acc = acc + s.n;
@@ -191,11 +195,12 @@ function round(r: i32): i32 {
 		{
 			name: "field_extracted_out_of_the_block",
 			body: `struct S { xs: i32[], n: i32 }
+@noinline function four(): i32 { return 4; }
 function round(r: i32): i32 {
     let held: i32[] = [];
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < 4) {
+    while (i < four()) {
         let s: S = S { xs: [i, i + 1], n: i };
         held = s.xs;
         acc = acc + s.n;

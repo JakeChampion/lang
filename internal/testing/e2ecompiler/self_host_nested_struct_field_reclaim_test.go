@@ -8,10 +8,11 @@ import (
 const nestedStructFieldSrc = `struct Inner { v: i32 }
 struct Outer { f: Inner, n: i32 }
 
+@noinline function four(): i32 { return 4; }
 function round(): i32 {
     let o: Outer = Outer { f: Inner { v: 0 }, n: 0 };
     let i: i32 = 0;
-    while (i < 4) { o = Outer { f: Inner { v: i }, n: i }; i = i + 1; }
+    while (i < four()) { o = Outer { f: Inner { v: i }, n: i }; i = i + 1; }
     return o.n;
 }
 
