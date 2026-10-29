@@ -1,0 +1,68 @@
+import "std/i64";
+import "std/u32";
+import "std/u64";
+
+function check_i64(): i32 {
+  let min: i64 = 0 as i64 - 9223372036854775807 as i64 - 1 as i64;
+  let (q, rem) = (17 as i64).divmod(5 as i64);
+  if (q != 3 as i64 || rem != 2 as i64) { return 1; }
+  if (min.digits() != 19) { return 2; }
+  if ((0 as i64).digits() != 1) { return 3; }
+  if (!(0 as i64 - 9075 as i64).has_digit(7)) { return 4; }
+  if ((0 as i64 - 9075 as i64).sum_of_digits() != 21) { return 5; }
+  if ((0 as i64 - 1230 as i64).reverse_digits() != 0 as i64 - 321 as i64) { return 6; }
+  if (!(12321 as i64).is_palindrome() || (0 as i64 - 121 as i64).is_palindrome()) { return 7; }
+  if (!(2147483647 as i64).is_prime() || (2147483649 as i64).is_prime()) { return 8; }
+  if ((20 as i64).factorial() != 2432902008176640000 as i64 || (21 as i64).factorial() != 0 as i64) { return 9; }
+  if ((0 as i64 - 112 as i64).ordinal() != "-112th" || (101 as i64).ordinal() != "101st") { return 10; }
+  if ((0 as i64 - 1 as i64).pluralize("item", "items") != "item") { return 11; }
+  if ((0 as i64 - 1 as i64).percent_of(3 as i64) != 0 as i64 - 33 as i64 || (0 as i64 - 2 as i64).percent_of(3 as i64) != 0 as i64 - 66 as i64) { return 12; }
+  if ((0 as i64 - 7 as i64).round_down_to(5 as i64) != 0 as i64 - 10 as i64 || (7 as i64).round_down_to(5 as i64) != 5 as i64) { return 13; }
+  if ((0 as i64 - 3 as i64).sign_str() != "-" || !(1 as i64).is_one() || !(0 as i64 - 1 as i64).is_minus_one()) { return 14; }
+  return 0;
+}
+
+function check_u32(): i32 {
+  let max: u32 = 4294967295;
+  if ((12 as u32).gcd(18 as u32) != 6 as u32 || (4 as u32).lcm(6 as u32) != 12 as u32) { return 21; }
+  if (!(4294836225 as u32).is_perfect_square() || max.is_perfect_square()) { return 22; }
+  if (!(4294967291 as u32).is_prime() || max.is_prime()) { return 23; }
+  if (max.digits() != 10 || max.sum_of_digits() != 57) { return 24; }
+  if ((12 as u32).factorial() != 479001600 as u32 || (13 as u32).factorial() != 0 as u32) { return 25; }
+  if (max.percent_of(max) != 100 as u32 || (1 as u32).percent_of(max) != 0 as u32) { return 26; }
+  if ((11 as u32).ordinal() != "11th" || (22 as u32).ordinal() != "22nd") { return 27; }
+  if (u32.gcd_all([12 as u32, 18 as u32, 30 as u32]) != 6 as u32 || u32.gcd_all([]) != 0 as u32) { return 28; }
+  let (q, rem) = (17 as u32).divmod(5 as u32);
+  if (q != 3 as u32 || rem != 2 as u32 || (17 as u32).round_down_to(5 as u32) != 15 as u32) { return 29; }
+  return 0;
+}
+
+function check_u64(): i32 {
+  let max: u64 = 18446744073709551615;
+  let big: u64 = 4294967311;
+  if (max.digits() != 20 || !max.has_digit(8) || max.has_digit(0) == false) { return 31; }
+  if (!big.is_prime() || (big + 2 as u64).is_prime()) { return 32; }
+  if ((20 as u64).factorial() != 2432902008176640000 as u64 || (21 as u64).factorial() != 0 as u64) { return 33; }
+  if ((max - 1 as u64).percent_of(max) != 99 as u64) { return 34; }
+  if ((max / 2 as u64).percent_of(max) != 49 as u64) { return 35; }
+  if ((max / 100 as u64 * 37 as u64).percent_of(max) != 36 as u64) { return 36; }
+  if (max.percent_of(max) != 100 as u64 || (1 as u64).percent_of(0 as u64) != 0 as u64) { return 37; }
+  let t: u64 = 184467440737095517;
+  if ((12912720851596686 as u64).percent_of(t) != 6 as u64 || (12912720851596687 as u64).percent_of(t) != 7 as u64) { return 41; }
+  let h: u64 = 9223372036854775809;
+  if ((2305843009213693952 as u64).percent_of(h) != 24 as u64 || (6917529027641081857 as u64).percent_of(h) != 75 as u64) { return 43; }
+  if (u64.lcm_all([4 as u64, 6 as u64, 10 as u64]) != 60 as u64 || u64.lcm_all([]) != 1 as u64) { return 38; }
+  if (!(12321 as u64).is_palindrome() || (1230 as u64).reverse_digits() != 321 as u64) { return 39; }
+  if ((1 as u64).pluralize("a", "b") != "a" || (2 as u64).pluralize("a", "b") != "b") { return 40; }
+  return 0;
+}
+
+function main(): i32 {
+  let r: i32 = check_i64();
+  if (r != 0) { return r; }
+  r = check_u32();
+  if (r != 0) { return r; }
+  r = check_u64();
+  if (r != 0) { return r; }
+  return 42;
+}
