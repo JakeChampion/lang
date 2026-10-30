@@ -140,6 +140,56 @@ function g(): void {
   // Nothing yet.
 }
 `},
+	{"lambda-body-comments", `struct P { x: i32, y: i32 }
+
+function apply(f: (i32) => i32, v: i32): i32 {
+  return f(v);
+}
+
+function main(): i32 {
+  let g = (): void => {
+    // Two statements.
+    print("x");
+    print("y");
+  };
+  let h = (): void => {
+    // One statement.
+    print("x");
+  };
+  let k = (x: i32): i32 => {
+    // A return.
+    return x + 1;
+  };
+  let t = (): void => {
+    print("x");  // Trailing.
+  };
+  let e = (): void => {
+    // Only a comment.
+  };
+  let o = (): void => {  // On the brace.
+    print("o");
+  };
+  let a = apply((x: i32): i32 => {
+    // In an argument.
+    return x * 2;
+  }, 3);  // After the call.
+  let n = (x: i32): i32 => apply((y: i32): i32 => {
+    // Nested.
+    return y + x;
+  }, x);
+  let d = (P { x, y }: P): i32 => {
+    // Destructured.
+    return x + y;
+  };
+  let s = (x: i32): i32 => x + 1;  // After a folded lambda.
+  g();
+  h();
+  t();
+  e();
+  o();
+  return k(0) + a + n(1) + d(P { x: 1, y: 2 }) + s(0);
+}
+`},
 	{"trait-and-impl-member-comments", `trait Shape {
     // The area, in whatever unit the shape was measured in.
     function area(self: Self): i32;

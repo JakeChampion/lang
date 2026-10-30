@@ -180,6 +180,12 @@ func (f *formatter) innerCommentPending(declLine, last int) bool {
 	return false
 }
 
+// holdsComment reports a comment between the braces of blk. Such a body stays
+// a block, so that the comment stays in the lambda.
+func (f *formatter) holdsComment(blk *ast.Block) bool {
+	return blk != nil && blk.End.Line > blk.P.Line && f.innerCommentPending(blk.P.Line-1, blk.End.Line-1)
+}
+
 func (f *formatter) keepListLines(open, last int) bool {
 	return open > 0 && last > open || f.innerCommentPending(open, last)
 }
@@ -260,12 +266,12 @@ func lastLine(e ast.Expr) int {
 		more(x.Callee)
 		more(x.Args...)
 		if n := len(x.Args); n > 0 && !x.IsPipe {
-			closer(x.P.Line, firstLine(x.Args[n-1]))
+			closer(x.P.Line, listLines(x.Args, nil)[n-1])
 		}
 	case *ast.ArrayLit:
 		more(x.Elems...)
 		if n := len(x.Elems); n > 0 {
-			closer(x.P.Line, firstLine(x.Elems[n-1]))
+			closer(x.P.Line, listLines(x.Elems, nil)[n-1])
 		}
 	case *ast.TupleLit:
 		more(x.Elems...)
@@ -2032,7 +2038,7 @@ func (f *formatter) formatExpr(e ast.Expr, parentPrec int) {
 			f.b.WriteString(arrowReturnType(x.ReturnType))
 		}
 		f.b.WriteString(" => ")
-		if ret, _, ok := arrowReturn(x); ok {
+		if ret, _, ok := arrowReturn(x); ok && !f.holdsComment(x.Body) {
 			f.formatExpr(ret.Value, precLowest)
 		} else {
 			f.formatArrowBody(x)
@@ -2097,7 +2103,7 @@ func (f *formatter) formatArrowBody(x *ast.Lambda) {
 	if n, ok := desugarPreludeLen(x.Params, x.Body); ok && n > 0 && x.Body != nil {
 		stmts = &ast.Block{Stmts: x.Body.Stmts[n:]}
 	}
-	if stmts != nil && len(stmts.Stmts) == 1 && isSingleLineStmt(stmts.Stmts[0]) {
+	if stmts != nil && len(stmts.Stmts) == 1 && isSingleLineStmt(stmts.Stmts[0]) && !f.holdsComment(x.Body) {
 		f.b.WriteString("{ ")
 		f.formatStmt(stmts.Stmts[0], f.depth)
 		f.b.WriteString(" }")
