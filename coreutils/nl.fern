@@ -296,11 +296,11 @@ function push_lineno(h: usize, n: i64, o: Opts): void {
   if (n < 0 as i64) {
     buf_push_byte(h, 45);
     buf_push_range(h, o.zeros, 0, need);
-    gnu.push_decimal(h, mag);
+    buf_push_decimal(h, mag);
     return;
   }
   buf_push_range(h, o.zeros, 0, need);
-  gnu.push_decimal(h, mag);
+  buf_push_decimal(h, mag);
 }
 
 struct State { section: i32, line_no: i64, blanks: i64, over: boolean, status: i32 }
