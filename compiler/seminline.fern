@@ -37,6 +37,10 @@ function only_constants(insts: ssa.SInst[]): boolean {
   return true;
 }
 
+function max_tiny_insts(): i32 {
+  return 4;
+}
+
 function max_once_insts(): i32 {
   return 400;
 }
@@ -188,6 +192,25 @@ function grown_unpackers(sofar: Inlined, sp: Spliceable, ctors: boolean[], own o
     }
   }
   return once;
+}
+
+// A body no larger than the call to it is spliced into each caller. This
+// runs after the other splices, so that its copies do not use the caller
+// budget a larger body needs. A body joins once no callee of its own is still
+// to be spliced into it.
+function grown_tiny(sofar: Inlined, sp: Spliceable, own tiny: boolean[]): boolean[] {
+  if (sp.size) {
+    return tiny;
+  }
+  let no_ctors: boolean[] = none_of(tiny.len());
+  for i in 0..sofar.funcs.len() {
+    let f: ssasem.Func = sofar.funcs[i];
+    if (!tiny[i] && sp.inlinable[i] && !sp.leaves[i] && sp.cycle[i] < 0 && !lends_view(f) && spliceable(f, max_tiny_insts()) && !loops(f.graph)
+      && !calls_spliceable(f, sp, no_ctors, tiny, i)) {
+      tiny = tiny.with(i, true);
+    }
+  }
+  return tiny;
 }
 
 function calls_spliceable(f: ssasem.Func, sp: Spliceable, ctors: boolean[], once: boolean[], self: i32): boolean {
@@ -378,10 +401,8 @@ function holds_construction(defs: Defs, d: ssa.SInst): boolean {
 
 function spliced_away(sp: Spliceable, ctors: boolean[], calls: i32[], left: i32[]): boolean[] {
   let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < calls.len()) {
+  for i in 0..calls.len() {
     out = out.append((sp.leaves[i] || sp.once[i] || ctors[i]) && calls[i] > 0 && left[i] == 0);
-    i = i + 1;
   }
   return out;
 }
@@ -393,11 +414,9 @@ struct Rounds { out: Inlined, sp: Spliceable }
 function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][], sp: Spliceable): Rounds {
   let out: Inlined = Inlined { funcs: funcs0, rewritten: [], spliced: [], modes: [], laid: [] };
   let alone: boolean[] = [];
-  let i: i32 = 0;
-  while (i < funcs0.len()) {
+  for i in 0..funcs0.len() {
     out = Inlined { ...out, rewritten: out.rewritten.append(false) };
     alone = alone.append(sp.once[i] && !sp.shared[i]);
-    i = i + 1;
   }
   let once: boolean[] = alone;
   let sizes: i32[] = sizes_of(funcs0);
@@ -432,7 +451,25 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
     out = next.out;
     round = round + 1;
   }
-  return Rounds { out: out, sp: s };
+  let tiny: boolean[] = none_of(out.funcs.len());
+  let none: boolean[] = none_of(out.funcs.len());
+  for _ in 0..4 {
+    tiny = grown_tiny(out, s, tiny);
+    let next: Round = splice_round(out, sizes, callees, rewrite, modes, s.ix, tiny, none, none, s.small);
+    sizes = next.sizes;
+    callees = next.callees;
+    out = next.out;
+    if (!next.changed) {
+      break;
+    }
+  }
+  let merged: boolean[] = s.once;
+  for j in 0..once.len() {
+    if ((once[j] || tiny[j]) && !merged[j]) {
+      merged = merged.with(j, true);
+    }
+  }
+  return Rounds { out: out, sp: Spliceable { ...s, once: merged } };
 }
 
 function grown_leaves(sofar: Inlined, sp: Spliceable): Spliceable {

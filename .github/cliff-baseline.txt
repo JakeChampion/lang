@@ -1,3 +1,5 @@
+# 2026-10-30: scripts/cliff-bench on #13888 at 3ca7b6c3. Main at b72ee5c9 measures 41,289,144 bytes / 346,519 crossings.
+# The tiny splices (seminline.grown_tiny) add 1,151 crossings and 2.5 MB, all inside inline_leaves: each splice copies the caller's blocks.
 # 2026-10-28: Perf run 40717823865 on #13803 (merged with main at 903c9a49) measured 331,386 crossings, 14.8% fewer. The bytes stay within tolerance.
 # 2026-10-28: Exact reports from CI run 40620158743 at c63e488b4 on PR #13718.
 # Raw reports and unchanged tolerances: docs/benchmarks/pair-return-ci-repair-2026-10-28/ci-perf/.
@@ -131,5 +133,5 @@
 # Main measured these values at eb0e5fdc0, and the run on #13768 agrees.
 
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64) reports checker.cliff_bytes +1.03% and cliff_count +3.12%.
-x86_64/checker.cliff_bytes	40851096
-x86_64/checker.cliff_count	341725
+x86_64/checker.cliff_bytes	43795688
+x86_64/checker.cliff_count	347670

@@ -1,3 +1,6 @@
+# 2026-10-30: #13888 at 3ca7b6c3. x86_64 rows and aarch64 .text rows from a local perf-bench run.
+# A body of at most 4 instructions is spliced into each caller (seminline.grown_tiny).
+# http_hello.ir -3.8% against main, string_count_byte.text -4.5% (x86_64) and -3.2% (aarch64).
 # 2026-10-29: #13863 (#13061) at 798f4251, merged with main at 50f353d9. x86_64 rows and aarch64 .text
 # rows from a local perf-bench run. aarch64 .ir rows from Perf run 40968040522.
 # A call that passes a capture-free closure goes to a clone of the callee that calls the closure
@@ -177,7 +180,7 @@ x86_64/enum_match.text	1099
 x86_64/enum_match.ir	48825092
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
 x86_64/http_hello.text	16323
-x86_64/http_hello.ir	23800450
+x86_64/http_hello.ir	22672408
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
 x86_64/map_int.text	8476
@@ -202,7 +205,7 @@ x86_64/sort_strings.text	3233
 x86_64/sort_strings.ir	105033157
 x86_64/string_build.text	1994
 x86_64/string_build.ir	43427016
-x86_64/string_count_byte.text	1235
+x86_64/string_count_byte.text	1180
 x86_64/string_count_byte.ir	135589355
 x86_64/string_find_byte.text	1590
 x86_64/string_find_byte.ir	43687425
@@ -216,9 +219,9 @@ x86_64/struct_drop.text	2416
 x86_64/struct_drop.ir	205020598
 x86_64/tokenize.text	1198
 x86_64/tokenize.ir	37860093
-x86_64/utf8_ingest_unchecked.text	8442
+x86_64/utf8_ingest_unchecked.text	8343
 x86_64/utf8_ingest_unchecked.ir	2207993
-x86_64/utf8_ingest_validated.text	9106
+x86_64/utf8_ingest_validated.text	9013
 x86_64/utf8_ingest_validated.ir	5262594
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -489,7 +492,7 @@ aarch64/sort_strings.text	3597
 aarch64/sort_strings.ir	105486307
 aarch64/string_build.text	2364
 aarch64/string_build.ir	47221466
-aarch64/string_count_byte.text	1490
+aarch64/string_count_byte.text	1445
 aarch64/string_count_byte.ir	295207223
 aarch64/string_find_byte.text	1898
 aarch64/string_find_byte.ir	55921279
@@ -503,9 +506,9 @@ aarch64/struct_drop.text	2673
 aarch64/struct_drop.ir	222380901
 aarch64/tokenize.text	1388
 aarch64/tokenize.ir	38350109
-aarch64/utf8_ingest_unchecked.text	8889
+aarch64/utf8_ingest_unchecked.text	8786
 aarch64/utf8_ingest_unchecked.ir	2689511
-aarch64/utf8_ingest_validated.text	9515
+aarch64/utf8_ingest_validated.text	9410
 aarch64/utf8_ingest_validated.ir	6229114
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.

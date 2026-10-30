@@ -51,7 +51,10 @@ Each caller then takes the value apart, so the function that made the value
 can return it in words (`sempair`). Such a function is spliced only after no
 callee of its own is still to be spliced into it (`calls_spliceable`). A copy
 made sooner keeps those calls whole in its callers, and a value it builds can
-then be boxed. It is a graph-to-graph pass. The stages
+then be boxed. After all of these splices, it splices a function of at most 4
+instructions and no loop into every caller, under the same condition
+(`seminline.grown_tiny`). These splices come last, so that their copies do not
+use the caller budget that a larger splice needs. It is a graph-to-graph pass. The stages
 below never see what it removed.
 
 `semunroll.fold_constants` replaces an `i32` comparison, sum, difference or
