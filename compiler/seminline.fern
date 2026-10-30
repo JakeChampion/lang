@@ -173,17 +173,32 @@ function grown_forced(sofar: Inlined, sp: Spliceable, own once: boolean[]): bool
 
 // A small body that only takes an enum parameter apart joins the once set.
 // Spliced into each caller, the caller takes the value apart instead, so the
-// call that made the value can return it in words (sempair).
-function grown_unpackers(sofar: Inlined, sp: Spliceable, own once: boolean[]): boolean[] {
+// call that made the value can return it in words (sempair). It joins only
+// once no callee of its own is still to be spliced into it. A copy made
+// sooner can keep those calls whole in its callers.
+function grown_unpackers(sofar: Inlined, sp: Spliceable, ctors: boolean[], own once: boolean[]): boolean[] {
   if (sp.size) {
     return once;
   }
   for i in 0..sofar.funcs.len() {
-    if (!once[i] && sp.inlinable[i] && sp.unnamed[i] && !sp.leaves[i] && sp.cycle[i] < 0 && unpacker(sofar.funcs[i])) {
+    if (!once[i] && sp.inlinable[i] && sp.unnamed[i] && !sp.leaves[i] && sp.cycle[i] < 0 && unpacker(sofar.funcs[i])
+      && !calls_spliceable(sofar.funcs[i], sp, ctors, once, i)) {
       once = once.with(i, true);
     }
   }
   return once;
+}
+
+function calls_spliceable(f: ssasem.Func, sp: Spliceable, ctors: boolean[], once: boolean[], self: i32): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      let j: i32 = called(ins, sp.ix);
+      if (j >= 0 && j != self && (sp.leaves[j] || ctors[j] || once[j])) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function unpacker(f: ssasem.Func): boolean {
@@ -352,8 +367,8 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
       s = grown_shared(out, s);
       once = s.once;
     }
-    once = grown_unpackers(out, s, grown_forced(out, s, once));
     let ctors: boolean[] = constructor_leaves(out.funcs, s);
+    once = grown_unpackers(out, s, ctors, grown_forced(out, s, once));
     let ready: boolean[] = [];
     let j: i32 = 0;
     while (j < out.funcs.len()) {
