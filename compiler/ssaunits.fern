@@ -3836,7 +3836,7 @@ function verify_analyzed(f: ssasem.Func, modes: i32[], p: Plan, semantic: ssasem
   if (count != p.steps.len()) {
     return "extra unit plan steps";
   }
-  return verify_reuse(f, p, reachable);
+  return verify_reuse(f, p, reachable, idx);
 }
 
 pub struct Reuse { pairs: ReusePairs[], keeps: Keeps[], carry: Carry, reads: VariantReads, disabled: boolean }
@@ -3876,7 +3876,14 @@ function static_box(p: Plan, d: i32): boolean {
 }
 
 function step_of(p: Plan, idx: i32[][], block: i32, point: i32, target: i32): Step {
-  let i: i32 = step_at(p, idx, block, point, target);
+  return indexed_step(p, step_at(p, idx, block, point, target), point);
+}
+
+function replayed_step(p: Plan, idx: ReplayIndex, b: ssa.SBlock, point: i32): Step {
+  return indexed_step(p, find_step(b, idx, point, 0 - 1), point);
+}
+
+function indexed_step(p: Plan, i: i32, point: i32): Step {
   if (i >= 0) {
     return p.steps[i];
   }
@@ -5199,8 +5206,7 @@ function same_root(a: i32, b: i32): boolean {
   return a == b || a == 0 - 2 || b == 0 - 2;
 }
 
-function verify_reuse(f: ssasem.Func, p: Plan, reachable: boolean[]): string {
-  let idx: i32[][] = step_index(p);
+function verify_reuse(f: ssasem.Func, p: Plan, reachable: boolean[], idx: ReplayIndex): string {
   let r: Reuse = p.reuse;
   if (r.pairs.len() == 0 && r.keeps.len() == 0 && r.carry.from.len() == 0 && r.carry.to.len() == 0) {
     return "";
@@ -5221,7 +5227,7 @@ function verify_reuse(f: ssasem.Func, p: Plan, reachable: boolean[]): string {
   return verify_carry(f, p, idx, r, reachable);
 }
 
-function verify_block_tokens(f: ssasem.Func, p: Plan, idx: i32[][], bi: i32, r: Reuse): string {
+function verify_block_tokens(f: ssasem.Func, p: Plan, idx: ReplayIndex, bi: i32, r: Reuse): string {
   let b: ssa.SBlock = f.graph.blocks[bi];
   let pr: ReusePairs = r.pairs[bi];
   if (pr.tokens.len() != b.insts.len() || pr.builds.len() != b.insts.len() || pr.selfs.len() != b.insts.len()) {
@@ -5236,7 +5242,7 @@ function verify_block_tokens(f: ssasem.Func, p: Plan, idx: i32[][], bi: i32, r: 
         return "a token at a parameter or a phi";
       }
     } else {
-      let step: Step = step_of(p, idx, b.id, pos, 0 - 1);
+      let step: Step = replayed_step(p, idx, b, pos);
       if (pr.builds[pos] >= 0) {
         let k: i32 = util.index_of_i32(held, pr.builds[pos]);
         if (k < 0) {
@@ -5377,7 +5383,7 @@ function tokens_over(c: Carry, from: i32, to: i32, out: i32[]): i32[] {
   return over;
 }
 
-function verify_carry(f: ssasem.Func, p: Plan, idx: i32[][], r: Reuse, reachable: boolean[]): string {
+function verify_carry(f: ssasem.Func, p: Plan, idx: ReplayIndex, r: Reuse, reachable: boolean[]): string {
   let c: Carry = r.carry;
   let at: i32[] = ssa.block_positions(f.graph);
   let i: i32 = 0;
@@ -5390,7 +5396,7 @@ function verify_carry(f: ssasem.Func, p: Plan, idx: i32[][], r: Reuse, reachable
     if (successor_count(b) == 0) {
       return "a block that leaves the function holds a token";
     }
-    if (util.index_of_i32(step_of(p, idx, b.id, c.drop_at[i], 0 - 1).drops, c.held[i]) < 0 || static_box(p, c.held[i])) {
+    if (util.index_of_i32(replayed_step(p, idx, b, c.drop_at[i]).drops, c.held[i]) < 0 || static_box(p, c.held[i])) {
       return "a carried token is taken from a value not dying there";
     }
     i = i + 1;
