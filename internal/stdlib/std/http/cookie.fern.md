@@ -722,11 +722,11 @@ function __parse_date(s: string): Option[time.Timestamp] {
   if (!__date_in_range(found, year)) {
     return None;
   }
-  let d: Date = time.date_make(year, found[4], found[3]);
+  let d: Date = time.date_of(year, found[4], found[3]);
   if (!d.is_valid()) {
     return None;
   }
-  let days: i32 = d.days_since(time.date_make(1970, 1, 1));
+  let days: i32 = d.days_since(time.date_of(1970, 1, 1));
   return Some(time.timestamp_from_unix(days as i64 * (86400 as i64) + (found[0] * 3600 + found[1] * 60 + found[2]) as i64));
 }
 ```

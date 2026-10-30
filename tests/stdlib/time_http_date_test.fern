@@ -108,10 +108,10 @@ function test_month_name(): test.TestOutcome {
 }
 
 function test_weekday_name(): test.TestOutcome {
-  if (time.date_make(1994, 11, 6).weekday_name() != "Sunday") {
+  if (time.date_of(1994, 11, 6).weekday_name() != "Sunday") {
     return test.fail("nov 6 1994");
   }
-  return test.assert_eq(time.date_make(1970, 1, 1).weekday_name(), "Thursday");
+  return test.assert_eq(time.date_of(1970, 1, 1).weekday_name(), "Thursday");
 }
 
 function show(r: Result[time.Timestamp, time.TimeParseError]): string {

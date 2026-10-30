@@ -2,11 +2,11 @@ import "std/test";
 import "std/time" as time;
 
 function test_format_iso(): test.TestOutcome {
-  return test.assert_eq(time.date_make(2024, 3, 7).format_iso(), "2024-03-07");
+  return test.assert_eq(time.date_of(2024, 3, 7).format_iso(), "2024-03-07");
 }
 
 function test_format_iso_pad_year(): test.TestOutcome {
-  return test.assert_eq(time.date_make(987, 1, 2).format_iso(), "0987-01-02");
+  return test.assert_eq(time.date_of(987, 1, 2).format_iso(), "0987-01-02");
 }
 
 function test_parse_iso_ok(): test.TestOutcome {
@@ -50,7 +50,7 @@ function test_parse_iso_error(): test.TestOutcome {
 }
 
 function test_iso_round_trip(): test.TestOutcome {
-  let s: string = time.date_make(2024, 12, 31).format_iso();
+  let s: string = time.date_of(2024, 12, 31).format_iso();
   match (time.date_parse_iso(s)) {
     Ok(d) => {
       return test.assert_true(d.year == 2024 && d.month == 12 && d.day == 31);
@@ -62,32 +62,32 @@ function test_iso_round_trip(): test.TestOutcome {
 }
 
 function test_add_span_days(): test.TestOutcome {
-  let d = time.date_make(2024, 1, 1).add_span(time.span_days(10));
+  let d = time.date_of(2024, 1, 1).add_span(time.span_days(10));
   return test.assert_true(d.year == 2024 && d.month == 1 && d.day == 11);
 }
 
 function test_add_span_weeks(): test.TestOutcome {
-  let d = time.date_make(2024, 1, 1).add_span(time.span_weeks(2));
+  let d = time.date_of(2024, 1, 1).add_span(time.span_weeks(2));
   return test.assert_true(d.year == 2024 && d.month == 1 && d.day == 15);
 }
 
 function test_add_span_months_clamp_leap(): test.TestOutcome {
-  let d = time.date_make(2024, 1, 31).add_span(time.span_months(1));
+  let d = time.date_of(2024, 1, 31).add_span(time.span_months(1));
   return test.assert_true(d.year == 2024 && d.month == 2 && d.day == 29);
 }
 
 function test_add_span_months_clamp_plain(): test.TestOutcome {
-  let d = time.date_make(2023, 1, 31).add_span(time.span_months(1));
+  let d = time.date_of(2023, 1, 31).add_span(time.span_months(1));
   return test.assert_true(d.year == 2023 && d.month == 2 && d.day == 28);
 }
 
 function test_add_span_years_clamp(): test.TestOutcome {
-  let d = time.date_make(2024, 2, 29).add_span(time.span_years(1));
+  let d = time.date_of(2024, 2, 29).add_span(time.span_years(1));
   return test.assert_true(d.year == 2025 && d.month == 2 && d.day == 28);
 }
 
 function test_add_span_months_rollover(): test.TestOutcome {
-  let d = time.date_make(2024, 11, 15).add_span(time.span_months(3));
+  let d = time.date_of(2024, 11, 15).add_span(time.span_months(3));
   return test.assert_true(d.year == 2025 && d.month == 2 && d.day == 15);
 }
 
