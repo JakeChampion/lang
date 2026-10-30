@@ -48,7 +48,7 @@ function float_near(a: f64, b: f64): boolean {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/f64 exp2/exp10");
+  let r: test.TestRunner = test.new("std/f64 exp2/exp10");
   r = r.it("exp2 power of two", test_exp2_pow2);
   r = r.it("exp2 large", test_exp2_large);
   r = r.it("exp2 zero", test_exp2_zero);

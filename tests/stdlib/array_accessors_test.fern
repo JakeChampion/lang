@@ -80,7 +80,7 @@ function test_get_negative(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/array accessors");
+  let r: test.TestRunner = test.new("std/array accessors");
   r = r.it("is_empty true", test_is_empty_true);
   r = r.it("is_empty false", test_is_empty_false);
   r = r.it("first", test_first);

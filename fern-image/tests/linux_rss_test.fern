@@ -26,7 +26,7 @@ function overflow(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("Linux RSS observation parser");
+  let r = test.new("Linux RSS observation parser");
   r = r.it("kernel fields convert KiB to checked byte counts", valid);
   r = r.it("missing, duplicate, malformed, and inconsistent fields fail", malformed);
   r = r.it("byte conversion rejects i64 overflow", overflow);

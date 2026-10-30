@@ -90,7 +90,7 @@ function test_rgb_is_dark(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/math");
+  let r: test.TestRunner = test.new("std/math");
   r = r.it("i32 bounds", test_i32_bounds);
   r = r.it("i64 bounds", test_i64_bounds);
   r = r.it("pack_rgb", test_pack_rgb);

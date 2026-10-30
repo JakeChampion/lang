@@ -80,7 +80,7 @@ function test_ellipsis_code_points(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/string snap helpers");
+  let r: test.TestRunner = test.new("std/string snap helpers");
   r = r.it("take snaps backward", test_take_snaps_backward);
   r = r.it("drop snaps backward", test_drop_snaps_backward);
   r = r.it("take+drop partition", test_take_drop_partition);

@@ -839,7 +839,7 @@ function test_dec_word_paths(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("coreutils/lib/ld");
+  let r: test.TestRunner = test.new("coreutils/lib/ld");
   r = r.it("x87 stores its integer bit", test_x87_stores_its_integer_bit);
   r = r.it("binary128 implies its leading one", test_binary128_implies_its_leading_one);
   r = r.it("binary64 is Darwin's long double", test_binary64_is_darwins_long_double);

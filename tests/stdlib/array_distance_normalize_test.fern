@@ -44,7 +44,7 @@ function test_normalize_empty(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/array f64 distance/normalize");
+  let r: test.TestRunner = test.new("std/array f64 distance/normalize");
   r = r.it("distance", test_distance);
   r = r.it("distance equal", test_distance_equal);
   r = r.it("normalize", test_normalize);

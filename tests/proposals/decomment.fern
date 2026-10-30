@@ -356,7 +356,7 @@ function main(): i32 {
   eprint("  offset " + bad.err.at.to_string() + ": " + bad.err.msg);
   eprint("  generated documents: " + combos().len().to_string());
 
-  let t: test.TestRunner = test.test_new("decomment");
+  let t: test.TestRunner = test.new("decomment");
   t = t.it("exactly the comments are removed", test_exactly_the_comments_are_removed);
   t = t.it("stripping is idempotent", test_stripping_is_idempotent);
   t = t.it("the output is a subsequence of the input", test_the_output_is_a_subsequence_of_the_input);

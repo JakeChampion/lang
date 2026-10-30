@@ -83,7 +83,7 @@ function test_starts_with_any_empty(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/string escape + count");
+  let r: test.TestRunner = test.new("std/string escape + count");
   r = r.it("escape_html", test_escape_html);
   r = r.it("escape_html all", test_escape_html_all);
   r = r.it("escape_html empty", test_escape_html_empty);

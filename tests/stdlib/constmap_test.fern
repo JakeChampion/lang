@@ -126,7 +126,7 @@ function test_length_mismatch(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/constmap");
+  let r: test.TestRunner = test.new("std/constmap");
   r = r.it("round trip 1000 keys", test_round_trip_1000);
   r = r.it("round trip small sets", test_round_trip_small);
   r = r.it("empty map", test_empty);

@@ -63,7 +63,7 @@ function is_zero(x: f64): boolean {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/array f64 stats");
+  let r: test.TestRunner = test.new("std/array f64 stats");
   r = r.it("variance", test_variance);
   r = r.it("stddev", test_stddev);
   r = r.it("single value", test_single);

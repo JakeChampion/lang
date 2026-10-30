@@ -645,7 +645,7 @@ function test_client_goaway_and_push(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/h2");
+  let r: test.TestRunner = test.new("std/http/h2");
   r = r.it("the preface and settings", test_preface_and_settings);
   r = r.it("frames across reads", test_frames_across_reads);
   r = r.it("a request and its response", test_request_and_response);

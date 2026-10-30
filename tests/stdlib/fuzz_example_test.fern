@@ -47,7 +47,7 @@ function check_trim_strips_spaces(input: u8[]): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("fuzz examples");
+  let r: test.TestRunner = test.new("fuzz examples");
 
   r = r.fuzz(
     "trivial",

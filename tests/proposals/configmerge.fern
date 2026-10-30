@@ -621,7 +621,7 @@ function main(): i32 {
   let log: IntGet = get_int(merged, "log", 0);
   eprint("  log as an integer: " + log.err);
 
-  let r: test.TestRunner = test.test_new("configmerge");
+  let r: test.TestRunner = test.new("configmerge");
   r = r.it("the merge agrees with top-down resolution", test_the_merge_agrees_with_top_down_resolution);
   r = r.it("the winning layer is the highest one that has the key", test_the_winning_layer_is_the_highest_one_that_has_the_key);
   r = r.it("overlay is associative", test_overlay_is_associative);

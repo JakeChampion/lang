@@ -27,7 +27,7 @@ function test_single(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/array dedup");
+  let r: test.TestRunner = test.new("std/array dedup");
   r = r.it("runs", test_runs);
   r = r.it("all equal", test_all_equal);
   r = r.it("no dups", test_no_dups);

@@ -375,7 +375,7 @@ function main(): i32 {
   eprint("  ts=8 `\tif (x) {` -> `" + wide + "`");
   eprint("  round trip at ts=4: `" + expand(unexpand(expand("  \tx", 4), 4), 4) + "`");
 
-  let t: test.TestRunner = test.test_new("tabstops");
+  let t: test.TestRunner = test.new("tabstops");
   t = t.it("a tab advances to the next stop", test_a_tab_advances_to_the_next_stop);
   t = t.it("expand moves nothing", test_expand_moves_nothing);
   t = t.it("expand leaves no tabs and is idempotent", test_expand_leaves_no_tabs_and_is_idempotent);

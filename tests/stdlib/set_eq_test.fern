@@ -72,7 +72,7 @@ function test_subset_empty_subset_always_passes(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("set eq");
+  let r: test.TestRunner = test.new("set eq");
   r = r.it("set_eq i32 same order", test_set_eq_i32_same_order);
   r = r.it("set_eq i32 reversed", test_set_eq_i32_reversed);
   r = r.it("set_eq i32 multiset matches", test_set_eq_i32_multiset);

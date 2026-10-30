@@ -193,7 +193,7 @@ function main(): i32 {
       + " mean_wait=" + mean_wait(st).to_string() + " ticks");
   }
 
-  let r: test.TestRunner = test.test_new("mm1_queue");
+  let r: test.TestRunner = test.new("mm1_queue");
   r = r.it("a light load never queues", test_a_light_load_never_queues);
   r = r.it("wait grows with utilisation", test_wait_grows_with_utilisation);
   r = r.it("Little's law holds", test_littles_law_holds);

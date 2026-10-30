@@ -232,7 +232,7 @@ function test_with_vary(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/cache");
+  let r: test.TestRunner = test.new("std/http/cache");
   r = r.it("writes entity tags", test_etag_written);
   r = r.it("reads entity tags", test_etag_read);
   r = r.it("compares entity tags as RFC 9110 tabulates", test_etag_compared);

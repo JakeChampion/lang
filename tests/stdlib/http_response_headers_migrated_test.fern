@@ -121,7 +121,7 @@ function test_not_modified_and_informational_have_no_body(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("HTTP response headers (migrated)");
+  let r: test.TestRunner = test.new("HTTP response headers (migrated)");
   r = r.it(
     "user-set headers before auto block",
     test_user_headers_before_auto_block,

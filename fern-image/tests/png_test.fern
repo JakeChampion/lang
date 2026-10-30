@@ -135,7 +135,7 @@ function chunk_budget(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("PNG RGB8/RGBA8");
+  let r = test.new("PNG RGB8/RGBA8");
   r = r.it("independent goldens for all five scanline filters", filters);
   r = r.it("native codec round trips and encoder output limit", roundtrips);
   r = r.it("malformed chunks and unsupported modes", malformed);

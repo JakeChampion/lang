@@ -107,7 +107,7 @@ function ownership(): test.TestOutcome {
 }
 
 pub function main(): i32 {
-  let runner = test.test_new("ICC matrix evaluation");
+  let runner = test.new("ICC matrix evaluation");
   runner = runner.it("ICC matrix exact projections", identity);
   runner = runner.it("ICC matrix columns and unclipped output", columns);
   runner = runner.it("ICC matrix cancellation", cancellation);

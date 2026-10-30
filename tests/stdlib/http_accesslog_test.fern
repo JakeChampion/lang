@@ -72,7 +72,7 @@ function test_a_failure_is_logged_as_its_answer(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/accesslog");
+  let r: test.TestRunner = test.new("std/http/accesslog");
   r = r.it("a record carries every field", test_a_record_carries_every_field);
   r = r.it("absent fields are left out and a 5xx is an error", test_absent_fields_are_left_out_and_a_5xx_is_an_error);
   r = r.it("a produced body is not counted", test_a_produced_body_is_not_counted);

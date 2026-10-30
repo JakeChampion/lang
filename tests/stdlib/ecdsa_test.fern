@@ -267,7 +267,7 @@ function test_ecdh(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/crypto/ecdsa");
+  let r: test.TestRunner = test.new("std/crypto/ecdsa");
   r = r.it("P-256 SHA-256", test_sha256);
   r = r.it("P-256 SHA-384", test_sha384);
   r = r.it("P-384", test_p384);

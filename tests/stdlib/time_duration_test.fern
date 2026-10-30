@@ -128,7 +128,7 @@ function test_to_string(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t: test.TestRunner = test.test_new("time duration");
+  let t: test.TestRunner = test.new("time duration");
   t = t.it("constructors normalize the nanosecond part", test_constructors_normalize);
   t = t.it("constructors saturate", test_constructors_saturate);
   t = t.it("conversions to every unit", test_conversions);

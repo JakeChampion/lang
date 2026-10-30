@@ -145,7 +145,7 @@ function check_split_and_trim(input: u8[]): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("utf8 validity is preserved by std/string");
+  let r: test.TestRunner = test.new("utf8 validity is preserved by std/string");
 
   let seeds: u8[][] = [
     "".bytes(),

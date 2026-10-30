@@ -694,7 +694,7 @@ function main(): i32 {
     }
   }
 
-  let r: test.TestRunner = test.test_new("unidiff");
+  let r: test.TestRunner = test.new("unidiff");
   r = r.it("the diff round trips", test_the_diff_round_trips);
   r = r.it("no difference prints nothing", test_no_difference_prints_nothing);
   r = r.it("hunk headers match their bodies", test_hunk_headers_match_their_bodies);

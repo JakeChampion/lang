@@ -144,7 +144,7 @@ function cancellation(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("scalar ICC curv evaluation");
+  let runner = test.new("scalar ICC curv evaluation");
   runner = runner.it("exact identities, endpoints, and Decimal gamma probes", identities_and_gamma);
   runner = runner.it("independent sampled interpolation values", sampled_values);
   runner = runner.it("large-table boundary retains the low product", position_low_part);

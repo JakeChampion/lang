@@ -426,7 +426,7 @@ function test_utmp_user_on_line(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("coreutils/lib/pwdb + lib/utmp");
+  let r: test.TestRunner = test.new("coreutils/lib/pwdb + lib/utmp");
   r = r.defer_cleanup(utmp_fixture_path());
   r = r.it("lookup by name takes the first entry", test_lookup_by_name);
   r = r.it("lookup by uid takes the first entry", test_lookup_by_uid);

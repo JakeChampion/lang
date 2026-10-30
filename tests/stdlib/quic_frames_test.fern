@@ -277,7 +277,7 @@ function test_permitted(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/quic/frames");
+  let r: test.TestRunner = test.new("std/quic/frames");
   r = r.it("variable-length integers (RFC 9000 A.1)", test_varints);
   r = r.it("every frame type round-trips", test_round_trips);
   r = r.it("ACK ranges both ways", test_ack);

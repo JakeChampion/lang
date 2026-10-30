@@ -11,7 +11,7 @@ function essentials(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("image essentials");
+  let r: test.TestRunner = test.new("image essentials");
   r = r.it("checked arithmetic, zero bytes, copy-on-write and slices", essentials);
   return r.finish();
 }

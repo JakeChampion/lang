@@ -1010,7 +1010,7 @@ function test_cassette_https_and_refusal(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/sim_fetch");
+  let r: test.TestRunner = test.new("std/sim_fetch");
   r = r.it("records a cassette and replays it", test_cassette_round_trip);
   r = r.it("tapes a binary body as hex", test_cassette_binary_body);
   r = r.it("replays https as http and refuses a line that is not an exchange", test_cassette_https_and_refusal);

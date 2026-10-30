@@ -145,7 +145,7 @@ function test_between_empty(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/rand");
+  let r: test.TestRunner = test.new("std/rand");
   r = r.it("between range", test_between_range);
   r = r.it("between empty", test_between_empty);
   r = r.it("shuffle permutation", test_shuffle_is_permutation);

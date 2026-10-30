@@ -296,7 +296,7 @@ function main(): i32 {
     eprint(f.describe() |> indent_by("  "));
   }
 
-  let r: test.TestRunner = test.test_new("traffic");
+  let r: test.TestRunner = test.new("traffic");
   r = r.it("a full ring has no flow", test_a_full_ring_has_no_flow);
   r = r.it("an empty ring has no flow", test_an_empty_ring_has_no_flow);
   r = r.it("cars are conserved and stay on the ring", test_cars_are_conserved_and_stay_on_the_ring);

@@ -244,7 +244,7 @@ function main(): i32 {
   }
   eprint("  (rule 110, 64 cells, single seed at the right edge)");
 
-  let r: test.TestRunner = test.test_new("rule110");
+  let r: test.TestRunner = test.new("rule110");
   r = r.it("rule table matches the number", test_rule_table_matches_the_number);
   r = r.it("degenerate rules", test_degenerate_rules);
   r = r.it("rule 90 is left XOR right", test_rule_90_is_left_xor_right);

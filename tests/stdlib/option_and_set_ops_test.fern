@@ -173,7 +173,7 @@ function test_disjoint_string_pass(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("Options + array set ops");
+  let r: test.TestRunner = test.new("Options + array set ops");
   r = r.it("is_some_i32 pass", test_is_some_i32_pass);
   r = r.it("is_some_i32 None fails", test_is_some_i32_none_fails);
   r = r.it("is_none_i32 pass", test_is_none_i32_pass);

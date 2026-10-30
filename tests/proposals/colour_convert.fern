@@ -464,7 +464,7 @@ function main(): i32 {
   eprint("  worst round-trip error over " + cs.len().to_string()
     + " swept colours: " + worst.to_string() + " per channel");
 
-  let t: test.TestRunner = test.test_new("colour_convert");
+  let t: test.TestRunner = test.new("colour_convert");
   t = t.it("the round trip is lossless to one unit", test_the_round_trip_is_lossless_to_one_unit);
   t = t.it("the reference colours are exact", test_the_reference_colours_are_exact);
   t = t.it("greys have no hue", test_greys_have_no_hue);

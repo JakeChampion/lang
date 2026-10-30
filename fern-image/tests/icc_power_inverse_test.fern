@@ -113,7 +113,7 @@ function ownership(): test.TestOutcome {
 }
 
 pub function main(): i32 {
-  let runner = test.test_new("ICC function-zero inverse");
+  let runner = test.new("ICC function-zero inverse");
   runner = runner.it("ICC power inverse exact identity and endpoints", identities);
   runner = runner.it("ICC power inverse arithmetic controls", powers);
   runner = runner.it("ICC power inverse exponent and IEEE domain", exponent_domain);

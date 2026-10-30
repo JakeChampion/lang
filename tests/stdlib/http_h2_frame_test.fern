@@ -212,7 +212,7 @@ function test_plain_headers(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/h2/frame");
+  let r: test.TestRunner = test.new("std/http/h2/frame");
   r = r.it("the plain HEADERS frame a request starts with", test_plain_headers);
   r = r.it("a HEADERS and a DATA frame in one buffer", test_headers_data);
   r = r.it("the client preface", test_preface);

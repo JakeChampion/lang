@@ -495,7 +495,7 @@ function main(): i32 {
   let g: Report = search(lines, compile("^al*a$", 1), 0, 0);
   eprint("  glob `^al*a$` matched " + g.matches.len().to_string() + " line(s)");
 
-  let t: test.TestRunner = test.test_new("grepish");
+  let t: test.TestRunner = test.new("grepish");
   t = t.it("anchors agree with the obvious predicates", test_anchors_agree_with_the_obvious_predicates);
   t = t.it("literal mode treats metacharacters as bytes", test_literal_mode_treats_metacharacters_as_bytes);
   t = t.it("glob wildcards behave as specified", test_glob_wildcards_behave_as_specified);

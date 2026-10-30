@@ -55,7 +55,7 @@ function test_interest_bits_strip_the_flags(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("fetch pool");
+  let r: test.TestRunner = test.new("fetch pool");
   r = r.it("a plain pool reads as readable", test_plain_pool_reads_as_readable);
   r = r.it("a loop's pool keeps a connection watched", test_loop_pool_keeps_a_connection_watched);
   r = r.it("disarm asks again", test_disarm_asks_again);

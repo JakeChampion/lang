@@ -407,7 +407,7 @@ function main(): i32 {
   let big: u8[] = repeated(88, 1000);
   eprint("  a run of 1000 encodes to " + encode(big).len().to_string() + " bytes");
 
-  let r: test.TestRunner = test.test_new("rle");
+  let r: test.TestRunner = test.new("rle");
   r = r.it("it round trips the whole corpus", test_it_round_trips_the_whole_corpus);
   r = r.it("every byte value survives", test_every_byte_value_survives);
   r = r.it("it actually compresses runs", test_it_actually_compresses_runs);

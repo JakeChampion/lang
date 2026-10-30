@@ -159,7 +159,7 @@ function test_in_range_f32_nan_fails(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("array_at + in_range_f32");
+  let r: test.TestRunner = test.new("array_at + in_range_f32");
   r = r.it("at_i32 middle", test_at_i32_pass);
   r = r.it("at_i32 first", test_at_i32_first);
   r = r.it("at_i32 last", test_at_i32_last);

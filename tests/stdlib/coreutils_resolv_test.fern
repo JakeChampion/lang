@@ -142,7 +142,7 @@ function test_live_canon_localhost(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("coreutils/lib/resolv");
+  let r: test.TestRunner = test.new("coreutils/lib/resolv");
   r = r.it("ipv4_word packs the in_addr word", test_ipv4_word);
   r = r.it("nsswitch: the default is files dns", test_nsswitch_default);
   r = r.it("nsswitch: a plain hosts line", test_nsswitch_plain);

@@ -185,7 +185,7 @@ function ownership(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("explicit Exif orientation");
+  let runner = test.new("explicit Exif orientation");
   runner = runner.it("all eight exact RGB and RGBA mappings", mappings);
   runner = runner.it("single axes and inverse mappings", shapes);
   runner = runner.it("public layout and exact admission", invalid);

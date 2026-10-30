@@ -357,7 +357,7 @@ function main(): i32 {
     + count_segmented(10000, 1000).to_string() + " primes)");
   eprint("  (bit-packed, N=10000: " + count_bits(10000).to_string() + " primes)");
 
-  let r: test.TestRunner = test.test_new("prime_gaps");
+  let r: test.TestRunner = test.new("prime_gaps");
   r = r.it("every route gives the same count", test_every_route_gives_the_same_count);
   r = r.it("largest gaps match the published values", test_largest_gaps_match_the_published_values);
   r = r.it("the sieves agree number by number", test_the_sieves_agree_number_by_number);

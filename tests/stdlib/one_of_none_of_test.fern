@@ -114,7 +114,7 @@ function test_none_of_string_match_reports(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("one_of / none_of");
+  let r: test.TestRunner = test.new("one_of / none_of");
   r = r.it("one_of_i32 middle element", test_one_of_i32_pass);
   r = r.it("one_of_i32 single-element set", test_one_of_i32_single_element);
   r = r.it("one_of_i32 first element", test_one_of_i32_first_element);

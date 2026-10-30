@@ -285,7 +285,7 @@ function test_sha384_traffic(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/tls/keyschedule");
+  let r: test.TestRunner = test.new("std/tls/keyschedule");
   r = r.it("transcript hashes", test_transcript_hashes);
   r = r.it("x25519 shared secret", test_shared_secret);
   r = r.it("hkdf_expand_label", test_hkdf_expand_label);

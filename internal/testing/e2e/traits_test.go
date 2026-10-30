@@ -326,7 +326,7 @@ func TestInterpGenericArrayAsserts(t *testing.T) {
 	src := filepath.Join(dir, "prog.fern")
 	if err := os.WriteFile(src, []byte(`import "std/test";
 function main(): i32 {
-    let r: test.TestRunner = test.test_new("arr");
+    let r: test.TestRunner = test.new("arr");
     r = r.it("eq i32[]", () => test.assert_eq_array([1, 2, 3], [1, 2, 3]));
     r = r.it("eq string[]", () => test.assert_eq_array(["a", "b"], ["a", "b"]));
     r = r.it("at", () => test.assert_at([10, 20, 30], 1, 20));
@@ -361,7 +361,7 @@ function main(): i32 {
     a = a.insert(1, 10); a = a.insert(2, 20);
     let s: Map[string, string] = map_new(4);
     s = s.insert("k", "v");
-    let r: test.TestRunner = test.test_new("map");
+    let r: test.TestRunner = test.new("map");
     r = r.it("len i32",       () => test.assert_map_len(a, 2));
     r = r.it("has i32",       () => test.assert_map_has(a, 1, 10));
     r = r.it("lacks i32",     () => test.assert_map_lacks(a, 9));

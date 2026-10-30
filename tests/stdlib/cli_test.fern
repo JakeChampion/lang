@@ -269,7 +269,7 @@ function test_usage_spec_quotes(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/cli");
+  let r: test.TestRunner = test.new("std/cli");
   r = r.it("option --long V", test_option_long);
   r = r.it("option --long=V", test_option_equals);
   r = r.it("option -short V", test_option_short);

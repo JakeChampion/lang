@@ -51,7 +51,7 @@ function test_ge(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("arithmetic");
+  let r: test.TestRunner = test.new("arithmetic");
   r = r.it("addition", test_addition);
   r = r.it("subtraction", test_subtraction);
   r = r.it("multiplication", test_multiplication);

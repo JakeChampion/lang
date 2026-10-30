@@ -136,26 +136,26 @@ function outcome(r: Result[x509.Certificate, verify.VerifyError]): string {
 }
 
 function ec_chain(name: string): string {
-  return outcome(verify.verify_server([ec_leaf(), ec_int()], ec_roots(), name, now()));
+  return outcome(verify.server([ec_leaf(), ec_int()], ec_roots(), name, now()));
 }
 
 function test_valid_chains(): test.TestOutcome {
   if (ec_chain("example.com") != "ok example.com") {
     return test.fail("P-256 chain: " + ec_chain("example.com"));
   }
-  if (outcome(verify.verify_server([rsa_leaf()], verify.roots([rsa_root()]), "rsa.example", now())) != "ok rsa.example") {
+  if (outcome(verify.server([rsa_leaf()], verify.roots([rsa_root()]), "rsa.example", now())) != "ok rsa.example") {
     return test.fail("RSA");
   }
-  if (outcome(verify.verify_server([ed_leaf()], verify.roots([ed_root()]), "ed.example", now())) != "ok ed.example") {
+  if (outcome(verify.server([ed_leaf()], verify.roots([ed_root()]), "ed.example", now())) != "ok ed.example") {
     return test.fail("Ed25519");
   }
-  if (outcome(verify.verify_server([ec_leaf_sha384(), ec_int()], ec_roots(), "example.com", now())) != "ok example.com") {
+  if (outcome(verify.server([ec_leaf_sha384(), ec_int()], ec_roots(), "example.com", now())) != "ok example.com") {
     return test.fail("SHA-384");
   }
-  if (outcome(verify.verify_server([ec_leaf(), rsa_root(), ec_int()], ec_roots(), "example.com", now())) != "ok example.com") {
+  if (outcome(verify.server([ec_leaf(), rsa_root(), ec_int()], ec_roots(), "example.com", now())) != "ok example.com") {
     return test.fail("order");
   }
-  return test.assert_eq(outcome(verify.verify_server([ec_leaf_no_eku(), ec_int()], ec_roots(), "example.com", now())), "ok example.com");
+  return test.assert_eq(outcome(verify.server([ec_leaf_no_eku(), ec_int()], ec_roots(), "example.com", now())), "ok example.com");
 }
 
 function test_names(): test.TestOutcome {
@@ -186,10 +186,10 @@ function test_names(): test.TestOutcome {
 }
 
 function test_time(): test.TestOutcome {
-  if (outcome(verify.verify_server([ec_leaf_expired(), ec_int()], ec_roots(), "example.com", now())) != "tls verify: certificate 0 has expired") {
+  if (outcome(verify.server([ec_leaf_expired(), ec_int()], ec_roots(), "example.com", now())) != "tls verify: certificate 0 has expired") {
     return test.fail("expired");
   }
-  return test.assert_eq(outcome(verify.verify_server([ec_leaf(), ec_int()], ec_roots(), "example.com", time.timestamp_from_unix(1700000000))), "tls verify: certificate 0 is not yet valid");
+  return test.assert_eq(outcome(verify.server([ec_leaf(), ec_int()], ec_roots(), "example.com", time.timestamp_from_unix(1700000000))), "tls verify: certificate 0 is not yet valid");
 }
 
 function test_distrust_after(): test.TestOutcome {
@@ -203,54 +203,54 @@ function test_distrust_after(): test.TestOutcome {
     }
   }
   let before: verify.Roots = ec_roots().distrusting(0, time.timestamp_from_unix(issued - 1 as i64));
-  if (outcome(verify.verify_server([ec_leaf(), ec_int()], before, "example.com", now())) != "tls verify: the leaf was issued after the date root 2 is distrusted from") {
-    return test.fail("a leaf issued after the date: " + outcome(verify.verify_server([ec_leaf(), ec_int()], before, "example.com", now())));
+  if (outcome(verify.server([ec_leaf(), ec_int()], before, "example.com", now())) != "tls verify: the leaf was issued after the date root 2 is distrusted from") {
+    return test.fail("a leaf issued after the date: " + outcome(verify.server([ec_leaf(), ec_int()], before, "example.com", now())));
   }
-  if (outcome(verify.verify_server([ec_leaf(), ec_int()], ec_roots().distrusting(0, time.timestamp_from_unix(issued)), "example.com", now())) != "ok example.com") {
+  if (outcome(verify.server([ec_leaf(), ec_int()], ec_roots().distrusting(0, time.timestamp_from_unix(issued)), "example.com", now())) != "ok example.com") {
     return test.fail("a leaf issued on the date");
   }
-  return test.assert_eq(outcome(verify.verify_client([ec_leaf_client(), ec_int()], before, now())).starts_with("ok "), true);
+  return test.assert_eq(outcome(verify.client([ec_leaf_client(), ec_int()], before, now())).starts_with("ok "), true);
 }
 
 function test_denied_keys(): test.TestOutcome {
   let at_leaf: string = "tls verify: certificate 0's key is known to be compromised";
-  if (outcome(verify.verify_client([emudhra_g3b()], verify.no_roots(), now())) != at_leaf) {
-    return test.fail("the intermediate as a leaf: " + outcome(verify.verify_client([emudhra_g3b()], verify.no_roots(), now())));
+  if (outcome(verify.client([emudhra_g3b()], verify.no_roots(), now())) != at_leaf) {
+    return test.fail("the intermediate as a leaf: " + outcome(verify.client([emudhra_g3b()], verify.no_roots(), now())));
   }
-  if (outcome(verify.verify_client([emudhra_g3b_sectigo()], verify.no_roots(), now())) != at_leaf) {
-    return test.fail("its Sectigo cross-sign as a leaf: " + outcome(verify.verify_client([emudhra_g3b_sectigo()], verify.no_roots(), now())));
+  if (outcome(verify.client([emudhra_g3b_sectigo()], verify.no_roots(), now())) != at_leaf) {
+    return test.fail("its Sectigo cross-sign as a leaf: " + outcome(verify.client([emudhra_g3b_sectigo()], verify.no_roots(), now())));
   }
   let trusted: verify.Roots = verify.roots([emudhra_g3b()]);
-  return test.assert_eq(outcome(verify.verify_server([emudhra_forged_leaf()], trusted, "example.com", now())), "tls verify: certificate 1's key is known to be compromised");
+  return test.assert_eq(outcome(verify.server([emudhra_forged_leaf()], trusted, "example.com", now())), "tls verify: certificate 1's key is known to be compromised");
 }
 
 function test_refusals(): test.TestOutcome {
-  if (outcome(verify.verify_server([ec_leaf(), ec_int()], verify.roots([rsa_root()]), "example.com", now())) != "tls verify: no path from the certificate reaches a trusted root") {
+  if (outcome(verify.server([ec_leaf(), ec_int()], verify.roots([rsa_root()]), "example.com", now())) != "tls verify: no path from the certificate reaches a trusted root") {
     return test.fail("unknown root");
   }
-  if (outcome(verify.verify_server([ec_leaf()], ec_roots(), "example.com", now())) != "tls verify: no path from the certificate reaches a trusted root") {
+  if (outcome(verify.server([ec_leaf()], ec_roots(), "example.com", now())) != "tls verify: no path from the certificate reaches a trusted root") {
     return test.fail("missing intermediate");
   }
-  if (outcome(verify.verify_server([ec_leaf_client(), ec_int()], ec_roots(), "example.com", now())) != "tls verify: the certificate is not for TLS servers") {
+  if (outcome(verify.server([ec_leaf_client(), ec_int()], ec_roots(), "example.com", now())) != "tls verify: the certificate is not for TLS servers") {
     return test.fail("client authentication only");
   }
-  if (outcome(verify.verify_server([ec_leaf_critical(), ec_int()], ec_roots(), "example.com", now())) != "tls verify: certificate 0 has an unknown critical extension 1.3.6.1.4.1.99999.1") {
+  if (outcome(verify.server([ec_leaf_critical(), ec_int()], ec_roots(), "example.com", now())) != "tls verify: certificate 0 has an unknown critical extension 1.3.6.1.4.1.99999.1") {
     return test.fail("unknown critical extension");
   }
-  if (outcome(verify.verify_server([ec_leaf(), ec_int_not_ca()], ec_roots(), "example.com", now())) != "tls verify: certificate 1 issues certificates but is not a CA") {
+  if (outcome(verify.server([ec_leaf(), ec_int_not_ca()], ec_roots(), "example.com", now())) != "tls verify: certificate 1 issues certificates but is not a CA") {
     return test.fail("not a CA");
   }
-  if (outcome(verify.verify_server([ec_leaf_under_int2(), ec_int2(), ec_int()], ec_roots(), "example.com", now())) != "tls verify: certificate 2 allows a shorter path") {
+  if (outcome(verify.server([ec_leaf_under_int2(), ec_int2(), ec_int()], ec_roots(), "example.com", now())) != "tls verify: certificate 2 allows a shorter path") {
     return test.fail("path length");
   }
-  if (outcome(verify.verify_server([], ec_roots(), "example.com", now())) != "tls verify: the chain is empty") {
+  if (outcome(verify.server([], ec_roots(), "example.com", now())) != "tls verify: the chain is empty") {
     return test.fail("empty");
   }
-  return test.assert_eq(outcome(verify.verify_server([[1 as u8, 2 as u8]], ec_roots(), "example.com", now())), "tls verify: certificate 0: x509: der: truncated");
+  return test.assert_eq(outcome(verify.server([[1 as u8, 2 as u8]], ec_roots(), "example.com", now())), "tls verify: certificate 0: x509: der: truncated");
 }
 
 function nc_chain(leaf: u8[], name: string): string {
-  return outcome(verify.verify_server([leaf, nc_int()], ec_roots(), name, now()));
+  return outcome(verify.server([leaf, nc_int()], ec_roots(), name, now()));
 }
 
 function test_name_constraints(): test.TestOutcome {
@@ -267,7 +267,7 @@ function test_name_constraints(): test.TestOutcome {
   if (nc_chain(nc_leaf_ip(), "example.com") != refused) {
     return test.fail("an address outside the permitted subtree");
   }
-  return test.assert_eq(outcome(verify.verify_server([dn_leaf(), dn_int()], ec_roots(), "example.com", now())), "tls verify: certificate 1 has an unknown critical extension 2.5.29.30");
+  return test.assert_eq(outcome(verify.server([dn_leaf(), dn_int()], ec_roots(), "example.com", now())), "tls verify: certificate 1 has an unknown critical extension 2.5.29.30");
 }
 
 function test_bad_signature(): test.TestOutcome {
@@ -276,7 +276,7 @@ function test_bad_signature(): test.TestOutcome {
   while (serial + 2 < b.len() && !(b[serial] == 0x02 && b[serial + 1] == 0x01 && b[serial + 2] == 0x03)) {
     serial = serial + 1;
   }
-  return test.assert_eq(outcome(verify.verify_server([b.with(serial + 2, 0x07 as u8), ec_int()], ec_roots(), "example.com", now())), "tls verify: certificate 0's signature does not verify");
+  return test.assert_eq(outcome(verify.server([b.with(serial + 2, 0x07 as u8), ec_int()], ec_roots(), "example.com", now())), "tls verify: certificate 0's signature does not verify");
 }
 
 function test_roots_from_pem(): test.TestOutcome {
@@ -286,7 +286,7 @@ function test_roots_from_pem(): test.TestOutcome {
       if (r.certs.len() != 2) {
         return test.fail("two roots");
       }
-      return test.assert_eq(outcome(verify.verify_server([ec_leaf(), ec_int()], r, "example.com", now())), "ok example.com");
+      return test.assert_eq(outcome(verify.server([ec_leaf(), ec_int()], r, "example.com", now())), "ok example.com");
     },
     Err(e) => {
       return test.fail(e.message());
@@ -319,16 +319,16 @@ const P384_LEAF: string = "308201ac30820131a003020102020120300a06082a8648ce3d040
 const P384_SIG: string = "3066023100bedbfc1be2135b143bd92b18c8f31a405b28e75e23b51ecc1129b74003d26862966f593eae1781a54d0de2f2428d535a0231009ab84380f4d902fddc090ebafa0a3f8909e34d6137b2501822a9d002c9bdff9dd7e4b965ade902dd79f46792749ca069";
 
 function test_p384(): test.TestOutcome {
-  if (outcome(verify.verify_server([__codec_bytes(hex.decode(P384_LEAF))], verify.roots([__codec_bytes(hex.decode(P384_ROOT))]), "p384.example", now())) != "ok p384.example") {
+  if (outcome(verify.server([__codec_bytes(hex.decode(P384_LEAF))], verify.roots([__codec_bytes(hex.decode(P384_ROOT))]), "p384.example", now())) != "ok p384.example") {
     return test.fail("a P-384 chain");
   }
   match (x509.parse(__codec_bytes(hex.decode(P384_LEAF)))) {
     Ok(c) => {
       let signed: u8[] = "fern p384 certificate verify".bytes();
-      if (!verify.verify_signed(c, 0x0503, signed, __codec_bytes(hex.decode(P384_SIG)))) {
+      if (!verify.signed(c, 0x0503, signed, __codec_bytes(hex.decode(P384_SIG)))) {
         return test.fail("ecdsa_secp384r1_sha384");
       }
-      return test.assert_true(!verify.verify_signed(c, 0x0403, signed, __codec_bytes(hex.decode(P384_SIG))));
+      return test.assert_true(!verify.signed(c, 0x0403, signed, __codec_bytes(hex.decode(P384_SIG))));
     },
     Err(e) => {
       return test.fail(e.message());
@@ -341,10 +341,10 @@ function test_certificate_verify(): test.TestOutcome {
   match (x509.parse(rfc8448_certificate())) {
     Ok(c) => {
       let sig: u8[] = trace_signature();
-      if (!verify.verify_signed(c, 0x0804, trace_signed(), sig)) {
+      if (!verify.signed(c, 0x0804, trace_signed(), sig)) {
         return test.fail("the trace's signature");
       }
-      if (verify.verify_signed(c, 0x0403, trace_signed(), sig) || verify.verify_signed(c, 0x0804, trace_signed().with(70, 0 as u8), sig)) {
+      if (verify.signed(c, 0x0403, trace_signed(), sig) || verify.signed(c, 0x0804, trace_signed().with(70, 0 as u8), sig)) {
         return test.fail("a wrong scheme or content accepted");
       }
       match (verify.signature_ok(c.key, c.algorithm, c.tbs, c.signature)) {
@@ -364,7 +364,7 @@ function test_certificate_verify(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/tls/verify");
+  let r: test.TestRunner = test.new("std/tls/verify");
   r = r.it("valid chains", test_valid_chains);
   r = r.it("P-384", test_p384);
   r = r.it("names", test_names);

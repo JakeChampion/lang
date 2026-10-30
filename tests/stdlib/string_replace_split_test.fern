@@ -60,7 +60,7 @@ function test_to_acronym_empty(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/string replace + split");
+  let r: test.TestRunner = test.new("std/string replace + split");
   r = r.it("replace", test_replace);
   r = r.it("replace overlap", test_replace_overlap);
   r = r.it("replace_first", test_replace_first);

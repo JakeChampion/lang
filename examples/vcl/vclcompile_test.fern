@@ -193,7 +193,7 @@ function test_string_literals_are_escaped(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("vcl-compile");
+  let r: test.TestRunner = test.new("vcl-compile");
   r = r.it("scalar read is a field access", test_scalar_read_is_a_field_access);
   r = r.it("header read is a map get", test_header_read_is_a_map_get);
   r = r.it("header write rebuilds the message", test_header_write_rebuilds_the_message);

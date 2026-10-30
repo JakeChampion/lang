@@ -254,7 +254,7 @@ function cancellation(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("restricted baseline JPEG component planes");
+  let runner = test.new("restricted baseline JPEG component planes");
   runner = runner.it("independent zero samples and header-only planning", zero_and_layout);
   runner = runner.it("raw component references and cropped 4:2:0 planes", reference_images);
   runner = runner.it("fractional sampling, frame identifiers, and quantizer selection", sampling_ids_and_tables);

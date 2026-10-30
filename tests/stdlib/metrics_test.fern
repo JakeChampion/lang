@@ -145,7 +145,7 @@ function test_scrape_answers(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/metrics");
+  let r: test.TestRunner = test.new("std/metrics");
   r = r.it("counter renders", test_counter_renders);
   r = r.it("copies share the count", test_copies_share_the_count);
   r = r.it("gauge goes both ways", test_gauge_goes_both_ways);

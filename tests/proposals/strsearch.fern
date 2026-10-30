@@ -460,7 +460,7 @@ function main(): i32 {
   }
   eprint("  failure table for \"abracadabra\": " + show(kmp_table("abracadabra")));
 
-  let r: test.TestRunner = test.test_new("strsearch");
+  let r: test.TestRunner = test.new("strsearch");
   r = r.it("all three agree exhaustively", test_all_three_agree_exhaustively);
   r = r.it("all three agree on the text pairs", test_all_three_agree_on_the_text_pairs);
   r = r.it("every reported position really matches", test_every_reported_position_really_matches);

@@ -81,7 +81,7 @@ function test_sort_by_key_stable(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("cmp comparator + ci sorts");
+  let r: test.TestRunner = test.new("cmp comparator + ci sorts");
   r = r.it("string cmp", test_string_order);
   r = r.it("string cmp_ignore_ascii_case", test_string_order_folded);
   r = r.it("sort_strings_desc", test_sort_strings_desc);

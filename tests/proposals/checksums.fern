@@ -542,7 +542,7 @@ function main(): i32 {
   eprint("  check digit for 7992739871: " + luhn_check_digit("7992739871").to_string());
   eprint("  check char for 080442957: " + isbn10_check_char("080442957"));
 
-  let r: test.TestRunner = test.test_new("checksums");
+  let r: test.TestRunner = test.new("checksums");
   r = r.it("the known good numbers are accepted", test_the_known_good_numbers_are_accepted);
   r = r.it("every single digit substitution is rejected", test_every_single_digit_substitution_is_rejected);
   r = r.it("isbn10 detects every transposition", test_isbn10_detects_every_transposition);

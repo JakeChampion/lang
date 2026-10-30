@@ -458,7 +458,7 @@ function main(): i32 {
     }
   }
 
-  let t: test.TestRunner = test.test_new("logparse");
+  let t: test.TestRunner = test.new("logparse");
   t = t.it("parsing then formatting returns the line", test_parsing_then_formatting_returns_the_line);
   t = t.it("grouped fields keep their spaces", test_grouped_fields_keep_their_spaces);
   t = t.it("a malformed line is rejected outright", test_a_malformed_line_is_rejected_outright);

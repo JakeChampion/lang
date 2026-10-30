@@ -1060,7 +1060,7 @@ function test_live_resolver(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/dns");
+  let r: test.TestRunner = test.new("std/dns");
   r = r.it("a name on the wire", test_encode_name);
   r = r.it("an A query on the wire", test_query_on_the_wire);
   r = r.it("EDNS0: the OPT record", test_edns_opt_record);

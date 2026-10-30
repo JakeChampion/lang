@@ -68,7 +68,7 @@ function test_windows_full_width(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/array batch");
+  let r: test.TestRunner = test.new("std/array batch");
   r = r.it("slice basic", test_slice_basic);
   r = r.it("slice clamped", test_slice_clamped);
   r = r.it("slice empty", test_slice_empty);

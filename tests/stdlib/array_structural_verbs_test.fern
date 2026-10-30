@@ -124,7 +124,7 @@ function test_concat_method(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("array structural verbs");
+  let r: test.TestRunner = test.new("array structural verbs");
   r = r.it("reverse", test_reverse);
   r = r.it("reverse empty", test_reverse_empty);
   r = r.it("reverse single", test_reverse_single);

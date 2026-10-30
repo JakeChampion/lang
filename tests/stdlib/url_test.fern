@@ -384,7 +384,7 @@ function test_decode_bytes_keeps_the_bytes(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/url");
+  let r: test.TestRunner = test.new("std/url");
   r = r.it("encode space", test_encode_space);
   r = r.it("encode unreserved", test_encode_unreserved);
   r = r.it("encode reserved", test_encode_reserved);

@@ -157,7 +157,7 @@ function fold_state(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("cached tile requests");
+  let r = test.new("cached tile requests");
   r = r.it("cropped tiles reuse parent rows and report exact budgets", reuse);
   r = r.it("invalid requests and aggregate budgets reject before execution", admission);
   r = r.it("padded RGB/RGBA crops agree with eager output across cache sizes", exact_crops);

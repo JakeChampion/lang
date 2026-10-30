@@ -163,7 +163,7 @@ function boundaries(): test.TestOutcome {
 }
 
 pub function main(): i32 {
-  let runner = test.test_new("ICC bounded affine inverses");
+  let runner = test.new("ICC bounded affine inverses");
   runner = runner.it("ICC affine inverse identity bits", identities);
   runner = runner.it("ICC affine inverse arithmetic controls", arithmetic);
   runner = runner.it("ICC affine inverse flat and range policy", flats_and_range);

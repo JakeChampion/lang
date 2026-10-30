@@ -190,7 +190,7 @@ function main(): i32 {
   eprint("all        len=" + dedup_all(sample).len().to_string()
     + "  (remembers every distinct value)");
 
-  let r: test.TestRunner = test.test_new("dedup_iter");
+  let r: test.TestRunner = test.new("dedup_iter");
   r = r.it("adjacent collapses runs only", test_adjacent_collapses_runs_only);
   r = r.it("all removes every repeat", test_all_removes_every_repeat);
   r = r.it("the two agree on sorted input", test_the_two_agree_on_sorted_input);

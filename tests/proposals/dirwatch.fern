@@ -453,7 +453,7 @@ function main(): i32 {
     }
   }
 
-  let t: test.TestRunner = test.test_new("dirwatch");
+  let t: test.TestRunner = test.new("dirwatch");
   t = t.it("applying the diff reconstructs the after state", test_applying_the_diff_reconstructs_the_after_state);
   t = t.it("every name is in exactly one bucket", test_every_name_is_in_exactly_one_bucket);
   t = t.it("nothing changed reports nothing", test_nothing_changed_reports_nothing);

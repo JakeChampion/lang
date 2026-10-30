@@ -40,7 +40,7 @@ function test_lines_empty_input(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("lines+log");
+  let r: test.TestRunner = test.new("lines+log");
 
   r = r.log("phase 1: positive cases");
   r = r.it("lines match", test_lines_match);

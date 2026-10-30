@@ -130,7 +130,7 @@ function test_multibyte_key_with_escape(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/json pointer");
+  let r: test.TestRunner = test.new("std/json pointer");
   r = r.it("whole doc (empty pointer)", test_whole_doc);
   r = r.it("nested object", test_nested_object);
   r = r.it("array index", test_array_index);

@@ -144,7 +144,7 @@ function test_weight(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("HeaderMap (migrated)");
+  let r: test.TestRunner = test.new("HeaderMap (migrated)");
   r = r.it(
     "case-insensitive get",
     test_case_insensitive_get,

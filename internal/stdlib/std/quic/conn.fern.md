@@ -1341,9 +1341,9 @@ function (c: Conn) __server_question(t: handshake.Server, e: handshake.Event, no
 }
 
 function __trusted(cfg: Config, v: handshake.Verification, unix_sec: i64): boolean {
-  match (verify.verify_server(v.chain, cfg.roots, cfg.server_name, time.timestamp_from_unix(unix_sec))) {
+  match (verify.server(v.chain, cfg.roots, cfg.server_name, time.timestamp_from_unix(unix_sec))) {
     Ok(leaf) => {
-      return verify.verify_signed(leaf, v.scheme, v.signed, v.signature);
+      return verify.signed(leaf, v.scheme, v.signed, v.signature);
     },
     Err(_) => {
       return false;

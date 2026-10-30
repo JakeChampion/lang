@@ -314,7 +314,7 @@ function test_print_is_a_fixed_point(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("vcl");
+  let r: test.TestRunner = test.new("vcl");
   r = r.it("dashed header is one token", test_dashed_header_is_one_token);
   r = r.it("spaced minus is an operator", test_spaced_minus_is_an_operator);
   r = r.it("property name is one token", test_property_name_is_one_token);

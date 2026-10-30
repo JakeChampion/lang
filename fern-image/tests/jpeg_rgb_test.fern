@@ -242,7 +242,7 @@ function wide_cancellation(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("restricted JFIF RGB8 assembly");
+  let runner = test.new("restricted JFIF RGB8 assembly");
   runner = runner.it("C raw-plane and Fraction goldens across both filters", goldens);
   runner = runner.it("independent exact logical plans and one-less admission", plans);
   runner = runner.it("invalid limits and aggregate logical hard ceiling", limits);

@@ -541,7 +541,7 @@ function scalar_math_f32(k: i32, x: f32, p: f32, y: f32): f32 {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("simd");
+  let r: test.TestRunner = test.new("simd");
   r = r.it("kernel on f64", test_kernel_on_f64);
   r = r.it("kernel on f32", test_kernel_on_f32);
   r = r.it("LANES through a bound", test_lanes_const);
