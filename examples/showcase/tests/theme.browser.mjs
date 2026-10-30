@@ -19,6 +19,7 @@ const routes = [
   "/notes/",
   "/pulse/",
   "/swarm/",
+  "/uxn/",
   "/gather/",
   "/blockyard/",
   "/foundry/",

@@ -1,4 +1,8 @@
 # The build compiles these modules from their Fern sources.
+/web/uxn/kernel.wasm
+/web/uxn/kernel.wasm.br
+/web/uxn/kernel.wasm.gz
+/web/uxn/kernel.wasm.zst
 /web/swarm/kernel.wasm
 /web/swarm/kernel.wasm.br
 /web/swarm/kernel.wasm.gz
