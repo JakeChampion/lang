@@ -1,3 +1,6 @@
+# 2026-10-30: #13899 at c658175e. aarch64/http_hello.ir from Perf run 41026281026: 25728698 to 24256615 (-5.7%).
+# It also holds #13888's tiny splices, whose aarch64 .ir rows only the lane measures. std/http writes the
+# status and the content length with one buf_push_decimal call each.
 # 2026-10-30: #13888 at 3ca7b6c3. x86_64 rows and aarch64 .text rows from a local perf-bench run.
 # A body of at most 4 instructions is spliced into each caller (seminline.grown_tiny).
 # http_hello.ir -3.8% against main, string_count_byte.text -4.5% (x86_64) and -3.2% (aarch64).
@@ -465,7 +468,7 @@ aarch64/enum_match.text	1316
 aarch64/enum_match.ir	41175104
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
 aarch64/http_hello.text	17447
-aarch64/http_hello.ir	25728698
+aarch64/http_hello.ir	24256615
 aarch64/int_loop.text	330
 aarch64/int_loop.ir	18000085
 aarch64/map_int.text	8502
