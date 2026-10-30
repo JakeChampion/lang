@@ -201,10 +201,11 @@ function grown_tiny(sofar: Inlined, sp: Spliceable, own tiny: boolean[]): boolea
   if (sp.size) {
     return tiny;
   }
+  let no_ctors: boolean[] = none_of(tiny.len());
   for i in 0..sofar.funcs.len() {
     let f: ssasem.Func = sofar.funcs[i];
     if (!tiny[i] && sp.inlinable[i] && !sp.leaves[i] && sp.cycle[i] < 0 && !lends_view(f) && spliceable(f, max_tiny_insts()) && !loops(f.graph)
-      && !calls_spliceable(f, sp, none_of(tiny.len()), tiny, i)) {
+      && !calls_spliceable(f, sp, no_ctors, tiny, i)) {
       tiny = tiny.with(i, true);
     }
   }
@@ -450,9 +451,10 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
     round = round + 1;
   }
   let tiny: boolean[] = none_of(out.funcs.len());
+  let none: boolean[] = none_of(out.funcs.len());
   for _ in 0..4 {
     tiny = grown_tiny(out, s, tiny);
-    let next: Round = splice_round(out, sizes, callees, rewrite, modes, s.ix, tiny, none_of(tiny.len()), none_of(tiny.len()), s.small);
+    let next: Round = splice_round(out, sizes, callees, rewrite, modes, s.ix, tiny, none, none, s.small);
     sizes = next.sizes;
     callees = next.callees;
     out = next.out;
@@ -460,12 +462,13 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
       break;
     }
   }
+  let merged: boolean[] = s.once;
   for j in 0..once.len() {
-    if ((once[j] || tiny[j]) && !s.once[j]) {
-      s = Spliceable { ...s, once: s.once.with(j, true) };
+    if ((once[j] || tiny[j]) && !merged[j]) {
+      merged = merged.with(j, true);
     }
   }
-  return Rounds { out: out, sp: s };
+  return Rounds { out: out, sp: Spliceable { ...s, once: merged } };
 }
 
 function grown_leaves(sofar: Inlined, sp: Spliceable): Spliceable {
