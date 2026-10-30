@@ -1,5 +1,7 @@
 # Preserve resource-word borrows through semantic splices
 
+This record describes commit 7c32f44. A later parent-owner control failed on that head. See [the follow-up record](2026-10-30-retain-transitive-word-owners.md) for the repair, current measurements, and remaining serve-allocation hold.
+
 A buffer handle can depend on the lifetime of its record. A call keeps its record argument alive until the call returns. A semantic splice can make the field read the last use of that record. Its finalizer then runs before a later call uses the handle.
 
 Check this dependency at `splice_calls`, before both splice paths. Keep the late `grown_tiny` check. Functions with one call site and forced `@inline` functions obey the same lifetime condition.

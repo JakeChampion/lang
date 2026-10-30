@@ -1,4 +1,8 @@
 # The build compiles these modules from their Fern sources.
+/web/contour/kernel.wasm
+/web/contour/kernel.wasm.br
+/web/contour/kernel.wasm.gz
+/web/contour/kernel.wasm.zst
 /web/swarm/kernel.wasm
 /web/swarm/kernel.wasm.br
 /web/swarm/kernel.wasm.gz

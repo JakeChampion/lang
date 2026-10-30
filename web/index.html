@@ -1712,11 +1712,7 @@ function renderProblemList(diags) {
 
 // ---- CodeMirror 6 editor ----
 //
-// Loaded from esm.sh; the playground is served over HTTP so the
-// CDN fetch works. Pinning major versions only — minor/patch
-// updates ship transparently. If you need offline operation,
-// vendor these modules under web/vendor/cm6/ and rewrite the
-// imports below.
+// web/editor/build.mjs bundles the pinned packages into editor-deps.js.
 import {
   EditorState, Compartment, EditorView, keymap, lineNumbers,
   highlightActiveLine, drawSelection, rectangularSelection, hoverTooltip, dropCursor,

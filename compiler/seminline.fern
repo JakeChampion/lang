@@ -107,7 +107,7 @@ function splice_plan(funcs0: ssasem.Func[], ix: util.NameIndex, calls: i32[], in
     once = once.append(is_shared || other && once_spliceable(f, calls[i]));
     i = i + 1;
   }
-  return Spliceable { ix: ix, leaves: leaves, once: once, shared: shared, small: small, inlinable: inlinable, calls: calls, unnamed: unnamed, always: always, cycle: cycle, size: size };
+  return Spliceable { ix: ix, owners: resource_owners(funcs0), leaves: leaves, once: once, shared: shared, small: small, inlinable: inlinable, calls: calls, unnamed: unnamed, always: always, cycle: cycle, size: size };
 }
 
 function dump_wanted(funcs: ssasem.Func[]): void {
@@ -203,29 +203,157 @@ function grown_tiny(sofar: Inlined, sp: Spliceable, own tiny: boolean[]): boolea
     return tiny;
   }
   let no_ctors: boolean[] = none_of(tiny.len());
-  let words: boolean[] = returned_words(sofar.funcs, sp.ix);
+  let words: boolean[] = returned_words(sofar.funcs, sp.ix, sp.owners);
   for i in 0..sofar.funcs.len() {
     let f: ssasem.Func = sofar.funcs[i];
     if (!tiny[i] && sp.inlinable[i] && !sp.leaves[i] && sp.cycle[i] < 0 && !lends_view(f) && spliceable(f, max_tiny_insts()) && !loops(f.graph)
-      && !calls_spliceable(f, sp, no_ctors, tiny, i) && !calls_with_read_word(f, sofar.funcs, sp.ix, words)) {
+      && !calls_spliceable(f, sp, no_ctors, tiny, i) && !calls_with_read_word(f, sofar.funcs, sp.ix, words, sp.owners)) {
       tiny = tiny.with(i, true);
     }
   }
   return tiny;
 }
 
+struct ResourceOwners { names: util.NameIndex, types: util.NameIndex }
+
+struct OwnerShape { key: string, fields: typeinfo.Type[] }
+
+function owns_resource(t: typeinfo.Type, owners: ResourceOwners): boolean {
+  if (owners.names.names.len() == 0) {
+    return false;
+  }
+  if let typeinfo.TypeStruct(r) = t {
+    if (semtypes.is_cell(t)) {
+      return owns_resource(semtypes.cell_elem(t), owners);
+    }
+    if (semtypes.is_env(t)) {
+      for capture in r.args {
+        if (owns_resource(capture, owners)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    return owners.names.has(r.name) || owners.types.has(ssasem.type_key(t));
+  }
+  if let typeinfo.TypeUnion(u) = t {
+    return owners.names.has(u.name) || owners.types.has(ssasem.type_key(t));
+  }
+  if let typeinfo.TypeArray(a) = t {
+    return owns_resource(a.elem, owners);
+  }
+  if let typeinfo.TypeTuple(tup) = t {
+    for elem in tup.elements {
+      if (owns_resource(elem, owners)) {
+        return true;
+      }
+    }
+  }
+  if let typeinfo.TypeMap(m) = t {
+    return owns_resource(m.key, owners) || owns_resource(m.value, owners);
+  }
+  if let typeinfo.TypeFunc(_) = t {
+    return owners.types.has(ssasem.type_key(t));
+  }
+  if let typeinfo.TypeDyn(_) = t {
+    return owners.types.has(ssasem.type_key(t));
+  }
+  if let typeinfo.TypeErased(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeUnknown(_) = t {
+    return true;
+  }
+  return false;
+}
+
+function resource_owners(funcs: ssasem.Func[]): ResourceOwners {
+  let owners: ResourceOwners = ResourceOwners { names: util.name_index([]), types: util.name_index([]) };
+  for f in funcs {
+    for finalizer in f.finalizers {
+      if (!owners.names.has(finalizer.receiver)) {
+        owners = ResourceOwners { ...owners, names: owners.names.added(finalizer.receiver) };
+      }
+    }
+  }
+  if (owners.names.names.len() == 0) {
+    return owners;
+  }
+  let shapes: OwnerShape[] = [];
+  let seen: util.NameIndex = util.name_index([]);
+  for f in funcs {
+    for r in f.records.list {
+      let key: string = ssasem.type_key(r.ty);
+      if (!seen.has(key)) {
+        seen = seen.added(key);
+        let fields: typeinfo.Type[] = [];
+        let declared: semrecords.Field[] = if (r.declared.len() > 0) { r.declared } else { r.fields };
+        for field in declared {
+          fields = fields.append(field.ty);
+        }
+        shapes = shapes.append(OwnerShape { key: key, fields: fields });
+      }
+    }
+    for e in f.enums {
+      let key: string = ssasem.type_key(e.ty);
+      if (!seen.has(key)) {
+        seen = seen.added(key);
+        let fields: typeinfo.Type[] = [];
+        for variant in e.variants {
+          for field in variant.fields {
+            fields = fields.append(field.ty);
+          }
+        }
+        shapes = shapes.append(OwnerShape { key: key, fields: fields });
+      }
+    }
+  }
+  let environments: util.NameIndex = util.name_index([]);
+  for f in funcs {
+    for rows in [f.envs, f.dyns] {
+      for row in rows {
+        let key: string = ssasem.type_key(row.fn_ty);
+        let edge: string = key + "=" + ssasem.type_key(row.env_ty);
+        if (!environments.has(edge)) {
+          environments = environments.added(edge);
+          shapes = shapes.append(OwnerShape { key: key, fields: [row.env_ty] });
+        }
+      }
+    }
+  }
+  let more: boolean = true;
+  while (more) {
+    more = false;
+    for shape in shapes {
+      if (!owners.types.has(shape.key)) {
+        for field in shape.fields {
+          if (owns_resource(field, owners)) {
+            owners = ResourceOwners { ...owners, types: owners.types.added(shape.key) };
+            more = true;
+            break;
+          }
+        }
+      }
+    }
+  }
+  return owners;
+}
+
 // A word read out of memory, such as a buffer handle in a field, is valid
 // only while the memory's owner lives. A call keeps its arguments alive until
 // it returns, but in a spliced body the caller can release the owner after
 // its last read, before a call that uses the word.
-function read_word_values(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[]): boolean[] {
+function read_word_values(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): boolean[] {
+  if (!has_word_seed(f, funcs, ix, words, owners)) {
+    return [];
+  }
   let read: boolean[] = none_of(f.values.len());
   let more: boolean = true;
   while (more) {
     more = false;
     for b in f.graph.blocks {
       for ins in b.insts {
-        if (ins.result >= 0 && !read[ins.result] && can_hold_word(f.values[ins.result]) && (memory_read(ins, f, funcs, ix, words) || reads_any(ins.args, read))) {
+        if (ins.result >= 0 && !read[ins.result] && can_hold_word(f.values[ins.result]) && !copied_load(ins, f) && (memory_read(ins, f, funcs, ix, words, owners) || reads_any(ins.args, read))) {
           read = read.with(ins.result, true);
           more = true;
         }
@@ -233,6 +361,55 @@ function read_word_values(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameInd
     }
   }
   return read;
+}
+
+function has_word_seed(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.result >= 0 && can_hold_word(f.values[ins.result]) && !copied_load(ins, f) && memory_read(ins, f, funcs, ix, words, owners)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// A numeric load copies its value from an address in managed array storage.
+function copied_load(ins: ssa.SInst, f: ssasem.Func): boolean {
+  return ins.kind_tag == ssasem.call() && !util.has_str(f.shadows, ins.str) && (ins.str == "__load_i32" || ins.str == "__load_i64")
+    && ins.args.len() > 0 && !ssasem.is_usize(f.values[ins.result]) && managed_address(f, ins.args[0], f.values.len());
+}
+
+function managed_address(f: ssasem.Func, value: i32, fuel: i32): boolean {
+  if (fuel <= 0) {
+    return false;
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.result == value) {
+        if (ins.kind_tag == ssasem.call() && (ins.str == "__raw_arr_ptr" || ins.str == "__raw_data") && !util.has_str(f.shadows, ins.str)
+          && ins.args.len() > 0 && !can_hold_word(f.values[ins.args[0]])) {
+          return true;
+        }
+        if (ins.kind_tag == 7 || ins.kind_tag == ssasem.cast()) {
+          return ins.args.len() == 1 && managed_address(f, ins.args[0], fuel - 1);
+        }
+        if (ins.kind_tag == 9 && (ins.str == "+" || ins.str == "-")) {
+          return ins.args.len() == 2 && (managed_address(f, ins.args[0], fuel - 1) || ins.str == "+" && managed_address(f, ins.args[1], fuel - 1));
+        }
+        if (ins.kind_tag == 8 && ins.args.len() > 0) {
+          for a in ins.args {
+            if (!managed_address(f, a, fuel - 1)) {
+              return false;
+            }
+          }
+          return true;
+        }
+        return false;
+      }
+    }
+  }
+  return false;
 }
 
 // A byte or boolean cannot hold a handle on any supported target.
@@ -243,18 +420,27 @@ function can_hold_word(t: typeinfo.Type): boolean {
   if let typeinfo.TypeVoid(_) = t {
     return false;
   }
+  if let typeinfo.TypeString(_) = t {
+    return false;
+  }
+  if let typeinfo.TypeArray(a) = t {
+    return can_hold_word(a.elem);
+  }
   return !ssasem.is_bool(t);
 }
 
 // Follow return values through known callees before the splice rounds.
-function returned_words(funcs: ssasem.Func[], ix: util.NameIndex): boolean[] {
+function returned_words(funcs: ssasem.Func[], ix: util.NameIndex, owners: ResourceOwners): boolean[] {
   let words: boolean[] = none_of(funcs.len());
   let more: boolean = true;
   while (more) {
     more = false;
     for i in 0..funcs.len() {
       if (!words[i]) {
-        let read: boolean[] = read_word_values(funcs[i], funcs, ix, words);
+        let read: boolean[] = read_word_values(funcs[i], funcs, ix, words, owners);
+        if (read.len() == 0) {
+          continue;
+        }
         for b in funcs[i].graph.blocks {
           let returned: boolean = b.term.kind_tag == 1 && b.term.value >= 0 && read[b.term.value];
           for ins in b.insts {
@@ -274,11 +460,14 @@ function returned_words(funcs: ssasem.Func[], ix: util.NameIndex): boolean[] {
   return words;
 }
 
-function calls_with_read_word(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[]): boolean {
-  let read: boolean[] = read_word_values(f, funcs, ix, words);
+function calls_with_read_word(f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): boolean {
+  let read: boolean[] = read_word_values(f, funcs, ix, words, owners);
+  if (read.len() == 0) {
+    return false;
+  }
   for b in f.graph.blocks {
     for ins in b.insts {
-      if ((ins.kind_tag == ssasem.call() && !ssasem.scalar_primitive(ins.str) || ins.kind_tag == ssasem.call_value()) && reads_any(ins.args, read)) {
+      if ((ins.kind_tag == ssasem.call() && (!ssasem.scalar_primitive(ins.str) || util.has_str(f.shadows, ins.str)) || ins.kind_tag == ssasem.call_value()) && reads_any(ins.args, read)) {
         return true;
       }
     }
@@ -286,20 +475,23 @@ function calls_with_read_word(f: ssasem.Func, funcs: ssasem.Func[], ix: util.Nam
   return false;
 }
 
-function memory_read(ins: ssa.SInst, f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[]): boolean {
+function memory_read(ins: ssa.SInst, f: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners): boolean {
   let k: i32 = ins.kind_tag;
-  if (k == ssasem.call() && word_read(ins.str)) {
+  if (k == ssasem.call() && raw_word_read(ins.str)) {
     return true;
   }
   // Pair operations transfer their input dependency without a new memory read.
   if (k == ssasem.call() && (sempair.pair_set_slot(ins.str) >= 0 || sempair.pair_word_slot(ins.str) >= 0 || sempair.pair_lane_slot(ins.str) >= 0 || util.str_has_prefix(ins.str, sempair.word_as_prefix()))) {
     return false;
   }
-  if (k == ssasem.call() && copied_scalar_result(ins.str)) {
+  if (k == ssasem.call() && !util.has_str(f.shadows, ins.str) && copied_scalar_result(ins.str)) {
     return false;
   }
   if (k == ssasem.call() || k == ssasem.call_value()) {
     let at: i32 = called(ins, ix);
+    if (at < 0 && k == ssasem.call_value()) {
+      at = closure_callee(f, ins, ix);
+    }
     if (at >= 0 && funcs[at].graph.blocks.len() > 0) {
       return words[at];
     }
@@ -311,13 +503,15 @@ function memory_read(ins: ssa.SInst, f: ssasem.Func, funcs: ssasem.Func[], ix: u
     }
     return false;
   }
-  return !ssasem.reference(f.values[ins.result]) && ins.args.len() > 0 && ssasem.has_finalizer(f, f.values[ins.args[0]])
+  return !ssasem.reference(f.values[ins.result]) && ins.args.len() > 0
+    && (ssasem.is_usize(f.values[ins.result]) || owns_resource(f.values[ins.args[0]], owners))
     && (k == ssasem.record_get() || k == ssasem.variant_get() || k == ssasem.tuple_get() || k == ssasem.array_get() || k == ssasem.cell_get());
 }
 
 // These kernels return counts, indices, or hashes, not borrowed addresses.
 function copied_scalar_result(name: string): boolean {
-  return name == "__sum_bytes" || name == "__crc32_cksum" || name == "__crc32_cksum_array"
+  return name == ssabytes.word_name(4) || name == ssabytes.word_name(8) || name == ssabytes.swap_name(4) || name == ssabytes.swap_name(8)
+    || name == "__sum_bytes" || name == "__crc32_cksum" || name == "__crc32_cksum_array"
     || name == "__crc32_ieee_array" || name == "__ascii_run" || name == "__scan_set"
     || name == "__scan_set_bytes" || name == "__bsd_sum" || name == "__str_hash"
     || name == "__count_runs" || name == "__count_runs_bytes" || name == "__count_byte"
@@ -530,7 +724,7 @@ function spliced_away(sp: Spliceable, ctors: boolean[], calls: i32[], left: i32[
   return out;
 }
 
-struct Spliceable { ix: util.NameIndex, leaves: boolean[], once: boolean[], shared: boolean[], small: boolean[], inlinable: boolean[], calls: i32[], unnamed: boolean[], always: boolean[], cycle: i32[], size: boolean }
+struct Spliceable { ix: util.NameIndex, owners: ResourceOwners, leaves: boolean[], once: boolean[], shared: boolean[], small: boolean[], inlinable: boolean[], calls: i32[], unnamed: boolean[], always: boolean[], cycle: i32[], size: boolean }
 
 struct Rounds { out: Inlined, sp: Spliceable }
 
@@ -562,7 +756,7 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
       ready = ready.append(s.leaves[j] || ctors[j] || once[j] && !awaits(out.funcs[j], s.ix, once, s.shared, s.small, j));
       j = j + 1;
     }
-    let next: Round = splice_round(out, sizes, callees, rewrite, modes, s.ix, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) }, s.small);
+    let next: Round = splice_round(out, sizes, callees, rewrite, modes, s.ix, s.owners, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) }, s.small);
     more = next.changed;
     sizes = next.sizes;
     callees = next.callees;
@@ -578,7 +772,7 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
   let none: boolean[] = none_of(out.funcs.len());
   for _ in 0..4 {
     tiny = grown_tiny(out, s, tiny);
-    let next: Round = splice_round(out, sizes, callees, rewrite, modes, s.ix, tiny, none, none, s.small);
+    let next: Round = splice_round(out, sizes, callees, rewrite, modes, s.ix, s.owners, tiny, none, none, s.small);
     sizes = next.sizes;
     callees = next.callees;
     out = next.out;
@@ -631,15 +825,15 @@ function grown_shared(sofar: Inlined, sp: Spliceable): Spliceable {
 
 struct Round { out: Inlined, changed: boolean, sizes: i32[], callees: i32[][] }
 
-function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rewrite: boolean[], modes: i32[][], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[]): Round {
+function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rewrite: boolean[], modes: i32[][], ix: util.NameIndex, owners: ResourceOwners, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[]): Round {
   let funcs: ssasem.Func[] = prev.funcs;
-  let words: boolean[] = returned_words(funcs, ix);
+  let words: boolean[] = returned_words(funcs, ix, owners);
   let rewritten: boolean[] = prev.rewritten;
   let changed: boolean = false;
   let i: i32 = 0;
   while (i < funcs.len()) {
     if (rewrite[i] && (sizes[i] <= max_caller_insts() || sizes[i] <= max_box_saving_caller_insts() && any_box_saving(funcs, sizes, callees[i], ready, shared)) && any_ready(callees[i], ready)) {
-      let spliced: Rewrite = splice_calls(funcs[i], sizes[i], i, funcs, sizes, ix, words, ready, ctors, shared, small, false);
+      let spliced: Rewrite = splice_calls(funcs[i], sizes[i], i, funcs, sizes, ix, words, owners, ready, ctors, shared, small, false);
       if (spliced.changed) {
         spliced = Rewrite { ...spliced, f: semdead.prune(split_constructions(spliced.f, modes[i]).f).f };
       }
@@ -943,7 +1137,8 @@ pub function inline_made_closures(funcs: ssasem.Func[], names: string[], modes: 
 // Splices into each rewritten function the capture-free closures it calls,
 // from candidates whose own leaves the inliner has already spliced.
 pub function splice_closures(funcs: ssasem.Func[], candidates: ssasem.Func[], ix: util.NameIndex, inlinable: boolean[], rewrite: boolean[]): ssasem.Func[] {
-  let words: boolean[] = returned_words(candidates, ix);
+  let owners: ResourceOwners = resource_owners(candidates);
+  let words: boolean[] = returned_words(candidates, ix, owners);
   let leaves: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
@@ -958,7 +1153,7 @@ pub function splice_closures(funcs: ssasem.Func[], candidates: ssasem.Func[], ix
     let f: ssasem.Func = funcs[i];
     let size: i32 = count_insts(f.graph);
     if (rewrite[i] && size <= max_caller_insts()) {
-      f = drop_unread(splice_calls(f, size, i, candidates, sizes, ix, words, leaves, none_of(candidates.len()), none_of(candidates.len()), none_of(candidates.len()), true).f).f;
+      f = drop_unread(splice_calls(f, size, i, candidates, sizes, ix, words, owners, leaves, none_of(candidates.len()), none_of(candidates.len()), none_of(candidates.len()), true).f).f;
     }
     out = out.append(f);
     i = i + 1;
@@ -1160,9 +1355,13 @@ function term_reads(t: ssa.STerm, v: i32): boolean {
   return t.value == v && t.kind_tag == 1 || t.cond == v && t.kind_tag == 3;
 }
 
+function raw_word_read(name: string): boolean {
+  return name == "__raw_arr_ptr" || name == "__load_i32" || name == "__load_i64";
+}
+
 function word_read(name: string): boolean {
   return name == ssabytes.word_name(4) || name == ssabytes.word_name(8) || name == ssabytes.swap_name(4) || name == ssabytes.swap_name(8)
-    || name == "__raw_arr_ptr" || name == "__load_i32" || name == "__load_i64";
+    || raw_word_read(name);
 }
 
 // Scalar fields carry no ownership units. Keep finalizers out of this rule.
@@ -1475,7 +1674,7 @@ function closure_callee(f: ssasem.Func, ins: ssa.SInst, ix: util.NameIndex): i32
   return 0 - 1;
 }
 
-function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[], sizes: i32[], ix: util.NameIndex, words: boolean[], ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[], closures: boolean): Rewrite {
+function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[], sizes: i32[], ix: util.NameIndex, words: boolean[], owners: ResourceOwners, ready: boolean[], ctors: boolean[], shared: boolean[], small: boolean[], closures: boolean): Rewrite {
   let f: ssasem.Func = f0;
   let fsize: i32 = size;
   let done: i32 = 0;
@@ -1500,7 +1699,7 @@ function splice_calls(f0: ssasem.Func, size: i32, self: i32, funcs: ssasem.Func[
         }
       }
       // Every splice path must keep an owner alive through a borrowed-word call.
-      if (at >= 0 && at != self && !calls_with_read_word(funcs[at], funcs, ix, words)
+      if (at >= 0 && at != self && !calls_with_read_word(funcs[at], funcs, ix, words, owners)
         && (fsize + sizes[at] <= max_caller_insts() || ctors[at] && funcs[at].params.len() == 0
         || fsize + sizes[at] <= max_box_saving_caller_insts() && saves_box(funcs, sizes, at, shared))) {
         done = done + 1;
