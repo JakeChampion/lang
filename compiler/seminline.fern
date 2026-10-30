@@ -38,7 +38,7 @@ function only_constants(insts: ssa.SInst[]): boolean {
 }
 
 function max_tiny_insts(): i32 {
-  return 8;
+  return 4;
 }
 
 function max_once_insts(): i32 {
