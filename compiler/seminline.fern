@@ -174,17 +174,32 @@ function grown_forced(sofar: Inlined, sp: Spliceable, own once: boolean[]): bool
 
 // A small body that only takes an enum parameter apart joins the once set.
 // Spliced into each caller, the caller takes the value apart instead, so the
-// call that made the value can return it in words (sempair).
-function grown_unpackers(sofar: Inlined, sp: Spliceable, own once: boolean[]): boolean[] {
+// call that made the value can return it in words (sempair). It joins only
+// once no callee of its own is still to be spliced into it. A copy made
+// sooner can keep those calls whole in its callers.
+function grown_unpackers(sofar: Inlined, sp: Spliceable, ctors: boolean[], own once: boolean[]): boolean[] {
   if (sp.size) {
     return once;
   }
   for i in 0..sofar.funcs.len() {
-    if (!once[i] && sp.inlinable[i] && sp.unnamed[i] && !sp.leaves[i] && sp.cycle[i] < 0 && unpacker(sofar.funcs[i])) {
+    if (!once[i] && sp.inlinable[i] && sp.unnamed[i] && !sp.leaves[i] && sp.cycle[i] < 0 && unpacker(sofar.funcs[i])
+      && !calls_spliceable(sofar.funcs[i], sp, ctors, once, i)) {
       once = once.with(i, true);
     }
   }
   return once;
+}
+
+function calls_spliceable(f: ssasem.Func, sp: Spliceable, ctors: boolean[], once: boolean[], self: i32): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      let j: i32 = called(ins, sp.ix);
+      if (j >= 0 && j != self && (sp.leaves[j] || ctors[j] || once[j])) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function unpacker(f: ssasem.Func): boolean {
@@ -403,8 +418,8 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
       s = grown_shared(out, s);
       once = s.once;
     }
-    once = grown_unpackers(out, s, grown_forced(out, s, once));
     let ctors: boolean[] = constructor_leaves(out.funcs, s);
+    once = grown_unpackers(out, s, ctors, grown_forced(out, s, once));
     let ready: boolean[] = [];
     let j: i32 = 0;
     while (j < out.funcs.len()) {
@@ -641,6 +656,74 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
     ci = ci + 1;
   }
   candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable, inlinable, none_of(funcs.len()), false).funcs;
+  return splice_closures(funcs, candidates, ix, inlinable, rewrite);
+}
+
+// inline_closures over the rewritten functions, the closures they make, and
+// the small functions those closures call: the only bodies a splice can use.
+// Its cost follows the rewritten functions, not the module.
+pub function inline_made_closures(funcs: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[]): ssasem.Func[] {
+  let ix: util.NameIndex = util.name_index(names);
+  let picked: boolean[] = rewrite;
+  let todo: i32[] = [];
+  for i in 0..funcs.len() {
+    if (rewrite[i]) {
+      for b in funcs[i].graph.blocks {
+        for ins in b.insts {
+          let j: i32 = 0 - 1;
+          if (ins.kind_tag == ssasem.closure_new() && ins.args.len() == 0) {
+            j = ix.find(ins.str);
+          }
+          if (j >= 0 && !picked[j]) {
+            picked = picked.with(j, true);
+            todo = todo.append(j);
+          }
+        }
+      }
+    }
+  }
+  let at: i32 = 0;
+  while (at < todo.len()) {
+    for b in funcs[todo[at]].graph.blocks {
+      for ins in b.insts {
+        let j: i32 = called(ins, ix);
+        if (j >= 0 && !picked[j] && count_insts(funcs[j].graph) <= max_leaf_insts()) {
+          picked = picked.with(j, true);
+          todo = todo.append(j);
+        }
+      }
+    }
+    at = at + 1;
+  }
+  let index: i32[] = [];
+  let sub: ssasem.Func[] = [];
+  let sub_names: string[] = [];
+  let sub_modes: i32[][] = [];
+  let sub_inlinable: boolean[] = [];
+  let sub_rewrite: boolean[] = [];
+  for i in 0..funcs.len() {
+    if (picked[i]) {
+      index = index.append(i);
+      sub = sub.append(funcs[i]);
+      sub_names = sub_names.append(names[i]);
+      sub_modes = sub_modes.append(modes[i]);
+      sub_inlinable = sub_inlinable.append(inlinable[i]);
+      sub_rewrite = sub_rewrite.append(rewrite[i]);
+    }
+  }
+  let made: ssasem.Func[] = inline_closures(sub, sub_names, sub_modes, sub_inlinable, sub_rewrite);
+  let out: ssasem.Func[] = funcs;
+  for k in 0..index.len() {
+    if (sub_rewrite[k]) {
+      out = out.with(index[k], made[k]);
+    }
+  }
+  return out;
+}
+
+// Splices into each rewritten function the capture-free closures it calls,
+// from candidates whose own leaves the inliner has already spliced.
+pub function splice_closures(funcs: ssasem.Func[], candidates: ssasem.Func[], ix: util.NameIndex, inlinable: boolean[], rewrite: boolean[]): ssasem.Func[] {
   let leaves: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {

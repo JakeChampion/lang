@@ -48,7 +48,10 @@ private function of at most 40 instructions and no loop with an enum parameter
 that it only takes apart, directly or through a phi or a copy, and that the
 parameter split cannot pass in parts (`seminline.unpacker`).
 Each caller then takes the value apart, so the function that made the value
-can return it in words (`sempair`). It is a graph-to-graph pass. The stages
+can return it in words (`sempair`). Such a function is spliced only after no
+callee of its own is still to be spliced into it (`calls_spliceable`). A copy
+made sooner keeps those calls whole in its callers, and a value it builds can
+then be boxed. It is a graph-to-graph pass. The stages
 below never see what it removed.
 
 `semunroll.fold_constants` replaces an `i32` comparison, sum, difference or

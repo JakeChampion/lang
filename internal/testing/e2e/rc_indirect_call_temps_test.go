@@ -52,7 +52,7 @@ function pick(): (C) => i32 { return val; }
 function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
-    while (i < trips()) { acc = acc + apply(val, i); i = i + 1; }
+    while (i < trips()) { acc = acc + apply(pick(), i); i = i + 1; }
     return acc;
 }`},
 	}

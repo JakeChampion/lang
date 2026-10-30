@@ -1,0 +1,323 @@
+import "./ssa";
+import "./ssasem";
+import "./sourcepos";
+import "./typeinfo";
+import "./util";
+
+// Callee specialisation. A call that passes capture-free closures to a
+// function goes to a clone of that function without those parameters: the
+// clone makes the closures itself, so a call through one names its target and
+// the inliner can splice it. The clones of one module are bounded.
+
+pub struct Specialized { funcs: ssasem.Func[], names: string[], modes: i32[][], from: i32[], changed: boolean[], contracts: ssasem.Contract[] }
+
+function max_clones(): i32 {
+  return 64;
+}
+
+function max_clone_insts(): i32 {
+  return 2000;
+}
+
+// A call to a function in kept stays as it is: a later pass reads that call
+// and its closure argument by name.
+pub function specialize(funcs: ssasem.Func[], names: string[], modes: i32[][], usable: boolean[], kept: util.NameIndex): Specialized {
+  let from: i32[] = [];
+  let changed: boolean[] = [];
+  for i in 0..funcs.len() {
+    from = from.append(i);
+    changed = changed.append(false);
+  }
+  let r: Round = Round { st: Specialized { funcs: funcs, names: names, modes: modes, from: from, changed: changed, contracts: [] }, ix: util.name_index(names), ok: usable, base: funcs.len(), kept: kept };
+  let i: i32 = 0;
+  while (i < r.st.funcs.len()) {
+    if (r.ok[i]) {
+      r = calls_bound(r, i);
+    }
+    i = i + 1;
+  }
+  return r.st;
+}
+
+struct Round { st: Specialized, ix: util.NameIndex, ok: boolean[], base: i32, kept: util.NameIndex }
+
+function calls_bound(r0: Round, at: i32): Round {
+  let r: Round = r0;
+  let f: ssasem.Func = r.st.funcs[at];
+  let blocks: ssa.SBlock[] = f.graph.blocks;
+  let calls: ssasem.Contract[] = f.calls;
+  let moved: boolean = false;
+  let known: string[] = static_closures(f);
+  if (known.len() == 0) {
+    return r;
+  }
+  for bi in 0..blocks.len() {
+    let insts: ssa.SInst[] = blocks[bi].insts;
+    for k in 0..insts.len() {
+      let ins: ssa.SInst = insts[k];
+      let js: i32[] = bound_args(known, r, ins);
+      if (js.len() > 0) {
+        let targets: string[] = [];
+        for j in js {
+          targets = targets.append(known[ins.args[j]]);
+        }
+        let c: Cloned = clone_for(r, ins.str, js, targets, calls);
+        r = c.r;
+        if (c.at >= 0) {
+          calls = with_contract(calls, c.contract);
+          insts = insts.with(k, ssa.SInst { ...ins, str: c.contract.name, args: without(ins.args, js) });
+          moved = true;
+        }
+      }
+    }
+    blocks = blocks.with(bi, ssa.SBlock { ...blocks[bi], insts: insts });
+  }
+  if (moved) {
+    let g: ssasem.Func = ssasem.Func { ...f, graph: ssa.SFunc { ...f.graph, blocks: unread_closures_dropped(f.graph, blocks) }, calls: calls };
+    r = Round { ...r, st: Specialized { ...r.st, funcs: r.st.funcs.with(at, g), changed: r.st.changed.with(at, true) } };
+  }
+  return r;
+}
+
+// The arguments of a call, in order, that are capture-free closures the
+// callee reads.
+function bound_args(known: string[], r: Round, ins: ssa.SInst): i32[] {
+  let none: i32[] = [];
+  if (ins.kind_tag != ssasem.call()) {
+    return none;
+  }
+  let gi: i32 = r.ix.find(ins.str);
+  if (gi < 0 || !r.ok[gi] || r.kept.has(ins.str)) {
+    return none;
+  }
+  let g: ssasem.Func = r.st.funcs[gi];
+  if (g.graph.takes_env || ins.args.len() != g.params.len() || ssasem.holds_view(g, g.result)) {
+    return none;
+  }
+  let out: i32[] = [];
+  for j in 0..ins.args.len() {
+    if (ins.args[j] >= 0 && ins.args[j] < known.len() && known[ins.args[j]] != "") {
+      let pv: i32 = param_value(g, j);
+      if (pv >= 0 && read(g.graph, pv)) {
+        out = out.append(j);
+      }
+    }
+  }
+  return out;
+}
+
+// The blocks without the capture-free closures that only the rewritten calls
+// read.
+function unread_closures_dropped(g: ssa.SFunc, blocks: ssa.SBlock[]): ssa.SBlock[] {
+  let rewritten: ssa.SFunc = ssa.SFunc { ...g, blocks: blocks };
+  let out: ssa.SBlock[] = [];
+  for b in blocks {
+    let insts: ssa.SInst[] = [];
+    for ins in b.insts {
+      if (ins.kind_tag != ssasem.closure_new() || ins.args.len() != 0 || read(rewritten, ins.result)) {
+        insts = insts.append(ins);
+      }
+    }
+    out = out.append(ssa.SBlock { ...b, insts: insts });
+  }
+  return out;
+}
+
+struct Cloned { r: Round, at: i32, contract: ssasem.Contract }
+
+function refused(r: Round): Cloned {
+  return Cloned { r: r, at: 0 - 1, contract: ssasem.Contract { name: "", params: [], modes: [], result: typeinfo.TypeVoid { tag: 0 } } };
+}
+
+// The clone of callee with each parameter js[i] bound to targets[i], made
+// once and shared by every call that binds the same closures.
+function clone_for(r: Round, callee: string, js: i32[], targets: string[], known: ssasem.Contract[]): Cloned {
+  let sig: i32 = ssasem.find_contract_in(known, callee);
+  if (sig < 0) {
+    return refused(r);
+  }
+  let name: string = callee;
+  for i in 0..js.len() {
+    if (ssasem.find_contract_in(known, targets[i]) < 0) {
+      return refused(r);
+    }
+    name = name + "$" + targets[i] + "$" + util.i32_to_string(js[i]);
+  }
+  let c: ssasem.Contract = known[sig];
+  let contract: ssasem.Contract = ssasem.Contract { ...c, name: name, params: without_types(c.params, js), modes: without(c.modes, js) };
+  let have: i32 = r.ix.find(name);
+  if (have >= 0) {
+    return Cloned { r: r, at: have, contract: contract };
+  }
+  let gi: i32 = r.ix.find(callee);
+  let g: ssasem.Func = r.st.funcs[gi];
+  if (r.st.funcs.len() - r.base >= max_clones() || size(g.graph) > max_clone_insts()) {
+    return refused(r);
+  }
+  let made: ssasem.Func = ssasem.Func { ...g, graph: ssa.SFunc { ...g.graph, name: name } };
+  let i: i32 = js.len() - 1;
+  while (i >= 0) {
+    made = bound(ssasem.Func { ...made, calls: with_contract(made.calls, known[ssasem.find_contract_in(known, targets[i])]) }, js[i], targets[i]);
+    i = i - 1;
+  }
+  let st: Specialized = Specialized {
+    funcs: r.st.funcs.append(made),
+    names: r.st.names.append(name),
+    modes: r.st.modes.append(without(r.st.modes[gi], js)),
+    from: r.st.from.append(r.st.from[gi]),
+    changed: r.st.changed.append(true),
+    contracts: r.st.contracts.append(contract),
+  };
+  return Cloned { r: Round { ...r, st: st, ix: r.ix.added(name), ok: r.ok.append(true) }, at: st.funcs.len() - 1, contract: contract };
+}
+
+// g without parameter j: the value it named is a closure of target, made
+// after the parameters. A parameter's value is its index, so the later
+// parameters move down one and the closure takes the last parameter's value.
+// A loop carries the parameter in a phi of itself, which is pruned so that
+// the calls through it see the closure.
+function bound(g: ssasem.Func, j: i32, target: string): ssasem.Func {
+  let last: i32 = g.graph.nparams - 1;
+  let map: i32[] = [];
+  for v in 0..g.graph.nvals {
+    if (v == j) {
+      map = map.append(last);
+    } else if (v > j && v <= last) {
+      map = map.append(v - 1);
+    } else {
+      map = map.append(v);
+    }
+  }
+  let blocks: ssa.SBlock[] = [];
+  for b in g.graph.blocks {
+    let params: ssa.SInst[] = [];
+    let rest: ssa.SInst[] = [];
+    for ins in b.insts {
+      let moved: ssa.SInst = ssa.SInst { ...ins, result: mapped(map, ins.result), args: mapped_all(map, ins.args) };
+      if (ins.kind_tag == ssasem.param() && ins.imm == j) {
+        rest = [ssa.SInst { kind_tag: ssasem.closure_new(), result: last, args: [], imm: 0, str: target }].concat(rest);
+      } else if (ins.kind_tag == ssasem.param()) {
+        params = params.append(ssa.SInst { ...moved, imm: moved.result });
+      } else {
+        rest = rest.append(moved);
+      }
+    }
+    let t: ssa.STerm = ssa.STerm { ...b.term, cond: mapped(map, b.term.cond), value: mapped(map, b.term.value) };
+    blocks = blocks.append(ssa.SBlock { ...b, insts: params.concat(rest), term: t });
+  }
+  let values: typeinfo.Type[] = g.values;
+  for v in 0..map.len() {
+    if (v < g.values.len() && map[v] < values.len()) {
+      values = values.with(map[v], g.values[v]);
+    }
+  }
+  let dbg_vals: i32[] = mapped_all(map, g.dbg_vals);
+  let pruned: ssa.Formed = ssa.prune_trivial_phis(ssa.SFunc { ...g.graph, blocks: blocks, nparams: last });
+  if (pruned.repl.len() > 0) {
+    dbg_vals = mapped_all(pruned.repl, dbg_vals);
+  }
+  return ssasem.Func {
+    ...g,
+    graph: pruned.f,
+    values: values,
+    params: without_types(g.params, [j]),
+    dbg_vals: dbg_vals,
+    source_positions: sourcepos.renamed(g.source_positions, map),
+  };
+}
+
+function mapped(map: i32[], v: i32): i32 {
+  if (v < 0 || v >= map.len()) {
+    return v;
+  }
+  return map[v];
+}
+
+function mapped_all(map: i32[], vs: i32[]): i32[] {
+  let out: i32[] = [];
+  for v in vs {
+    out = out.append(mapped(map, v));
+  }
+  return out;
+}
+
+function with_contract(calls: ssasem.Contract[], c: ssasem.Contract): ssasem.Contract[] {
+  if (ssasem.find_contract_in(calls, c.name) >= 0) {
+    return calls;
+  }
+  return calls.append(c);
+}
+
+function without(xs: i32[], js: i32[]): i32[] {
+  let out: i32[] = [];
+  for i in 0..xs.len() {
+    if (util.index_of_i32(js, i) < 0) {
+      out = out.append(xs[i]);
+    }
+  }
+  return out;
+}
+
+function without_types(xs: typeinfo.Type[], js: i32[]): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  for i in 0..xs.len() {
+    if (util.index_of_i32(js, i) < 0) {
+      out = out.append(xs[i]);
+    }
+  }
+  return out;
+}
+
+// The target of each value that is a capture-free closure, or "" for the
+// others. Empty when the function makes no such closure.
+function static_closures(f: ssasem.Func): string[] {
+  let out: string[] = [];
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.closure_new() && ins.args.len() == 0 && ins.result >= 0 && ins.result < f.graph.nvals) {
+        if (out.len() == 0) {
+          for v in 0..f.graph.nvals {
+            out = out.append("");
+          }
+        }
+        out = out.with(ins.result, ins.str);
+      }
+    }
+  }
+  return out;
+}
+
+function param_value(f: ssasem.Func, index: i32): i32 {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.param() && ins.imm == index) {
+        return ins.result;
+      }
+    }
+  }
+  return 0 - 1;
+}
+
+function read(g: ssa.SFunc, v: i32): boolean {
+  for b in g.blocks {
+    for ins in b.insts {
+      for a in ins.args {
+        if (a == v) {
+          return true;
+        }
+      }
+    }
+    if (b.term.kind_tag == 1 && b.term.value == v || b.term.kind_tag == 3 && b.term.cond == v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function size(g: ssa.SFunc): i32 {
+  let n: i32 = 0;
+  for b in g.blocks {
+    n = n + b.insts.len();
+  }
+  return n;
+}

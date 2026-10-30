@@ -18,7 +18,8 @@ function main(): i32 {
     let xs: i64[] = [5i64, 6i64, 7i64];
     let bs: u8[] = [3 as u8, 4 as u8];
     let ys: i64[] = put(xs);
-    return (third(xs) + ys[1]) as i32 + second_byte("ab") + packed(bs) + apply(inc, 10);
+    let one: i32 = xs.len() - 2;
+    return (third(xs) + ys[1]) as i32 + second_byte("ab") + packed(bs) + apply((x: i32): i32 => x + one, 10);
 }
 `
 

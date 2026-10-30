@@ -1321,15 +1321,47 @@ function main(): i32 {
 }
 `
 
+// time.timeout_millis only takes its Option apart, so it is spliced into
+// async.wait_any. It joins only after its own callees are spliced into it:
+// a copy made sooner leaves wait_any calling Duration.add with the result
+// whole, so add builds a Duration box at each wait.
+const pairUnpackedCalleesProg = `import "std/async";
+import "std/bench";
+import "std/time";
+
+function main(): i32 {
+  let t: Option[Duration] = Some(time.duration_millis(1));
+  let total: i32 = 0;
+  let a0: i64 = bench.alloc_count();
+  let i: i32 = 0;
+  while (i < 20) {
+    total = total + async.wait_any([], t);
+    i = i + 1;
+  }
+  let allocated: i64 = bench.alloc_count() - a0;
+  print(total.to_string() + " " + allocated.to_string());
+  if (total != 0 - 20) {
+    return 1;
+  }
+  if (allocated != 0) {
+    return 2;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return 0;
+}
+`
+
 func TestSelfHostPairReturn(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}, {"forward", pairForwardProg}, {"wide", pairWideProg}, {"tail-phi", pairTailPhiProg}, {"record", pairRecordProg}, {"record-guards", pairRecordGuardsProg}, {"record-heap-alias", pairRecordHeapAliasProg}, {"unpacked", pairUnpackedProg}}
+	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}, {"forward", pairForwardProg}, {"wide", pairWideProg}, {"tail-phi", pairTailPhiProg}, {"record", pairRecordProg}, {"record-guards", pairRecordGuardsProg}, {"record-heap-alias", pairRecordHeapAliasProg}, {"unpacked", pairUnpackedProg}, {"unpacked-callees", pairUnpackedCalleesProg}}
 	for _, prog := range progs {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 			t.Run(prog.name+"/"+target, func(t *testing.T) {
 				var stderr string
 				var code int
-				if target == "wasm32-wasi" && prog.name == "suspend" {
+				if target == "wasm32-wasi" && (prog.name == "suspend" || prog.name == "unpacked-callees") {
 					src := filepath.Join(t.TempDir(), "main.fern")
 					if err := os.WriteFile(src, []byte(prog.src), 0o644); err != nil {
 						t.Fatal(err)

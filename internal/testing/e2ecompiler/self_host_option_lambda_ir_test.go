@@ -2,6 +2,7 @@ package e2ecompiler
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"strings"
 	"testing"
@@ -28,18 +29,25 @@ function main(): i32 { let w: W = W { v: 5 }; match (w.applyo((x: i32): Option[i
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			var cmd *exec.Cmd
-			if len(runner) == 0 {
-				cmd = exec.Command(driverBin)
-			} else {
-				cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
+			emit := func(env ...string) []byte {
+				var cmd *exec.Cmd
+				if len(runner) == 0 {
+					cmd = exec.Command(driverBin)
+				} else {
+					cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
+				}
+				cmd.Env = append(os.Environ(), env...)
+				cmd.Stdin = bytes.NewReader([]byte(tc.src))
+				asm, err := cmd.Output()
+				if err != nil || len(asm) == 0 {
+					t.Fatalf("driver failed for %q: %v", tc.name, err)
+				}
+				return asm
 			}
-			cmd.Stdin = bytes.NewReader([]byte(tc.src))
-			asm, err := cmd.Output()
-			if err != nil || len(asm) == 0 {
-				t.Fatalf("driver failed for %q: %v", tc.name, err)
-			}
-			if !strings.Contains(string(asm), "$wrap") {
+			asm := emit()
+			// The callee is specialised to the lambda and spliced into main, so
+			// the wrapper shows only with the inliner off.
+			if !strings.Contains(string(emit("FERN_SEM_INLINE=0")), "$wrap") {
 				t.Errorf("%s: lambda did not reach the no-capture $wrap lift path", tc.name)
 			}
 			progBin := buildBin(t, gcc, dir, "optlam_"+tc.name, string(asm))
