@@ -1191,6 +1191,7 @@ vec_generic_impls                                    0
 vec_lane_kernels                                     0
 view_of_branch_value                                 0
 views_in_aggregates_stay_local                       0
+void_value_if_statement                              0
 wasi_http_error_code_names                           0
 while_sum                                            0
 wide_array_append_grow                               0
