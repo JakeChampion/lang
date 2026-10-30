@@ -202,12 +202,52 @@ function calls_spliceable(f: ssasem.Func, sp: Spliceable, ctors: boolean[], once
 }
 
 function unpacker(f: ssasem.Func): boolean {
-  if (lends_view(f) || !spliceable(f, max_leaf_insts())) {
+  if (lends_view(f) || !spliceable(f, max_leaf_insts()) || loops(f.graph)) {
     return false;
   }
   for ins in f.graph.blocks[f.graph.entry].insts {
     if (ins.kind_tag == ssasem.param() && ins.result >= 0 && semrecords.find_enum(f.enums, f.values[ins.result]) >= 0 && only_taken_apart(f.graph, ins.result)) {
       return true;
+    }
+  }
+  return false;
+}
+
+// Whether a block of g reaches itself, as a self-recursion turned into a loop does.
+function loops(g: ssa.SFunc): boolean {
+  let at: i32[] = ssa.block_positions(g);
+  let state: i32[] = __alloc_i32(g.blocks.len());
+  let stack: i32[] = [at[g.entry]];
+  let next: i32[] = [0];
+  let depth: i32 = 1;
+  state = state.with(at[g.entry], 1);
+  while (depth > 0) {
+    let top: i32 = depth - 1;
+    let bi: i32 = stack[top];
+    let which: i32 = next[top];
+    if (which >= 2) {
+      state = state.with(bi, 2);
+      depth = top;
+      continue;
+    }
+    next = next.with(top, which + 1);
+    let id: i32 = ssa.successor_id(g.blocks[bi].term, which);
+    if (id >= 0) {
+      let s: i32 = at[id];
+      if (state[s] == 1) {
+        return true;
+      }
+      if (state[s] == 0) {
+        state = state.with(s, 1);
+        if (depth < stack.len()) {
+          stack = stack.with(depth, s);
+          next = next.with(depth, 0);
+        } else {
+          stack = stack.append(s);
+          next = next.append(0);
+        }
+        depth = depth + 1;
+      }
     }
   }
   return false;
