@@ -235,7 +235,9 @@ reads (`units_of`):
   frame's own ever holds, from a fresh array, a `with` whose receiver no
   borrowed parameter carries (`lent_withs`), or a fresh row, kept
   sole through passes and phis that preserve it, so a `with` on it writes in
-  place without a copy guard. Pinned by `TestSelfHostSoleLoopWithX86_64` and
+  place without a copy guard. A read, and a builtin that keeps no reference
+  to its argument (`ssasem.holds_no_argument`, such as `__arr_set_len`), do
+  not make a box shared. Pinned by `TestSelfHostSoleLoopWithX86_64` and
   `TestSelfHostGrowSoleOccurrenceX86_64`.
 - **Grow rows and brackets** (`grow_rows`, `grow_table`, `Plan.grows`): per
   callee, the borrowed parameter positions whose buffer the callee may grow or

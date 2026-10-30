@@ -355,6 +355,12 @@ pub function fresh_result_builtin(name: string): boolean {
     || name == "__ghash" || name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into" || name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks";
 }
 
+// A builtin that reads or writes its borrowed arguments in place and keeps no
+// reference to them, so the call adds no holder.
+pub function holds_no_argument(name: string): boolean {
+  return name == "__arr_set_len" || name == "__str_bytes" || name == "__ct_secret" || name == "__ct_public";
+}
+
 pub function scalar_primitive(name: string): boolean {
   return name == "__mulhi_u64" || name == "__clz32" || name == "__ctz32" || name == "__popcount32" || name == "__clz64"
     || name == "__ctz64" || name == "__popcount64" || name == "__sqrt_f64" || name == "__floor_f64" || name == "__ceil_f64"

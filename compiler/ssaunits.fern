@@ -3156,7 +3156,7 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
       let i: i32 = 0;
       while (i < ins.args.len()) {
         let a: i32 = ins.args[i];
-        let reads: boolean = i == 0 && (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.length());
+        let reads: boolean = i == 0 && (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.length()) || ins.kind_tag == ssasem.call() && ssasem.holds_no_argument(ins.str);
         if (a >= 0 && !reads && !moved_at(st, a, i)) {
           sole = sole.with(a, false);
         }
