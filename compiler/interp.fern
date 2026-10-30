@@ -3160,7 +3160,7 @@ function call_host_fs_native(name: string, args: Value[]): Value {
 }
 
 function is_handle_method(kind: string, name: string): boolean {
-  if (util.has_str(["close", "stat"], name)) {
+  if (util.has_str(["close", "close_unchecked", "stat"], name)) {
     return true;
   }
   if (kind == "Dir") {
@@ -3204,7 +3204,7 @@ function reader_method(r: Reader, name: string, args: Value[]): Value {
   if (name == "read_chunk") {
     return read_chunk_value(r, arg_i32(args, 0));
   }
-  if (name == "close") {
+  if (name == "close" || name == "close_unchecked") {
     return void_result_value(r.close());
   }
   if (name == "splice_to" || name == "copy_range_to") {
@@ -3286,7 +3286,7 @@ function writer_method(w: Writer, name: string, args: Value[]): Value {
   if (name == "splice_forever") {
     return io_err_value(Unsupported);
   }
-  if (name == "close") {
+  if (name == "close" || name == "close_unchecked") {
     return void_result_value(w.close());
   }
   if (name == "truncate") {
@@ -3348,7 +3348,7 @@ function dir_method(d: Dir, name: string, args: Value[]): Value {
   if (name == "lstat") {
     return stat_result_value(d.lstat(entry));
   }
-  if (name == "close") {
+  if (name == "close" || name == "close_unchecked") {
     return void_result_value(d.close());
   }
   return dir_change_method(d, name, entry, args);

@@ -4576,6 +4576,7 @@ function builtin_sigs(): string[] {
     "__method_Dir_chmod(Dir, string, i32, boolean): Result[void, IoError]",
     "__method_Dir_chown(Dir, string, i32, i32, boolean): Result[void, IoError]",
     "__method_Dir_close(Dir): Result[void, IoError]",
+    "__method_Dir_close_unchecked(Dir): Result[void, IoError]",
     "__method_Dir_entries(Dir): Result[string[], IoError]",
     "__method_Dir_entries_bytes(Dir): Result[u8[][], IoError]",
     "__method_Dir_lstat(Dir, string): Result[FileStat, IoError]",
@@ -4584,6 +4585,7 @@ function builtin_sigs(): string[] {
     "__method_Dir_remove_file(Dir, string): Result[void, IoError]",
     "__method_Dir_stat(Dir, string): Result[FileStat, IoError]",
     "__method_Reader_close(Reader): Result[void, IoError]",
+    "__method_Reader_close_unchecked(Reader): Result[void, IoError]",
     "__method_Reader_copy_range_to(Reader, Writer, i32): Result[i64, IoError]",
     "__method_Reader_drop_cache(Reader, i64, i64): Result[void, IoError]",
     "__method_Reader_dup_onto(Reader, i32): Result[void, IoError]",
@@ -4603,6 +4605,7 @@ function builtin_sigs(): string[] {
     "__method_Reader_termios_set(Reader, i32, i64[]): Result[void, IoError]",
     "__method_Reader_window_size(Reader): Result[WinSize, IoError]",
     "__method_Writer_close(Writer): Result[void, IoError]",
+    "__method_Writer_close_unchecked(Writer): Result[void, IoError]",
     "__method_Writer_drop_cache(Writer, i64, i64): Result[void, IoError]",
     "__method_Writer_dup_onto(Writer, i32): Result[void, IoError]",
     "__method_Writer_fdatasync(Writer): Result[void, IoError]",
@@ -10024,6 +10027,17 @@ function stdlib_only_note(acc: UnsafeWalk, name: string, line: i32, col: i32): U
   return unsafe_note(acc, dg_at("E097", "builtin \"" + name + "\" is reserved for the standard library; call " + wrapper + " instead", line, col));
 }
 
+// The unsafe built-in methods. Each close_unchecked closes a handle through a
+// borrow, and lowers as close. internal/check/checker's UnsafeBuiltinMethods
+// holds the same set.
+pub function unsafe_builtin_methods(): string[] {
+  return ["__method_Reader_close_unchecked", "__method_Writer_close_unchecked", "__method_Dir_close_unchecked"];
+}
+
+function is_unsafe_builtin_method(key: string, field: string): boolean {
+  return util.has_str(unsafe_builtin_methods(), "__method_" + key + "_" + field);
+}
+
 // The raw builtins that forge an address, change a count or a length, or call
 // foreign code. docs/security/UNSAFE-INVENTORY.md lists each obligation, and
 // internal/check/checker's UnsafeIntrinsics holds the same set.
@@ -10125,6 +10139,9 @@ function unsafe_method_named(fa: ast.ExprFieldAccess, s: Scope): boolean {
   let recv: typeinfo.Type = check_expr(fa.obj, s);
   let key: string = receiver_key(recv);
   if (key.len() > 0) {
+    if (is_unsafe_builtin_method(key, fa.field)) {
+      return true;
+    }
     if let Some(m) = s.lookup_method(fa.field, key) {
       return m.is_unsafe;
     }
@@ -17598,10 +17615,15 @@ function same_method_decl(pe: parser.FuncDecl, f2: parser.FuncDecl): boolean {
   if (f2.receiver_type.len() == 0 || pe.receiver_type.len() == 0 || decl_key(pe) != decl_key(f2)) {
     return false;
   }
-  if (pe.impl_trait.len() == 0 && f2.impl_trait.len() == 0 && pe.module != f2.module) {
+  if (pe.impl_trait.len() == 0 && f2.impl_trait.len() == 0 && pe.module != f2.module && !iteration_protocol(pe) && !iteration_protocol(f2)) {
     return false;
   }
   return pe.impl_trait == f2.impl_trait && parser.receiver_namespace(pe.receiver_type) == parser.receiver_namespace(f2.receiver_type);
+}
+
+// Map's iteration protocol method stays one per program, like a built-in method.
+function iteration_protocol(fd: parser.FuncDecl): boolean {
+  return parser.receiver_namespace(fd.receiver_type) == "Map" && method_simple_name(fd.name) == "__iterator";
 }
 
 function method_ambiguity_diags(mod: parser.Module): util.Diag[] {
@@ -26214,6 +26236,11 @@ function annotate_callee(c: ast.ExprCall, ct: typeinfo.Type, s: Scope): ast.Expr
   if let ast.ExprLambda(lm) = c.callee {
     if (parser.is_value_block(c)) {
       return annotate_lambda_expr(lm, s, "", ct);
+    }
+  }
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    if (is_unsafe_builtin_method(receiver_key(check_expr(fa.obj, s)), fa.field)) {
+      return annotate_expr(ast.ExprFieldAccess { ...fa, field: "close" }, s);
     }
   }
   let typed = annotate_typed(c.callee, s);

@@ -206,11 +206,53 @@ function grown_tiny(sofar: Inlined, sp: Spliceable, own tiny: boolean[]): boolea
   for i in 0..sofar.funcs.len() {
     let f: ssasem.Func = sofar.funcs[i];
     if (!tiny[i] && sp.inlinable[i] && !sp.leaves[i] && sp.cycle[i] < 0 && !lends_view(f) && spliceable(f, max_tiny_insts()) && !loops(f.graph)
-      && !calls_spliceable(f, sp, no_ctors, tiny, i)) {
+      && !calls_spliceable(f, sp, no_ctors, tiny, i) && !calls_with_read_word(f)) {
       tiny = tiny.with(i, true);
     }
   }
   return tiny;
+}
+
+// A word read out of memory, such as a buffer handle in a field, is valid
+// only while the memory's owner lives. A call keeps its arguments alive until
+// it returns, but in a spliced body the caller can release the owner after
+// its last read, before a call that uses the word.
+function calls_with_read_word(f: ssasem.Func): boolean {
+  let read: boolean[] = none_of(f.values.len());
+  let more: boolean = true;
+  while (more) {
+    more = false;
+    for b in f.graph.blocks {
+      for ins in b.insts {
+        if (ins.result >= 0 && !read[ins.result] && ssasem.is_usize(f.values[ins.result]) && (memory_read(ins) || reads_any(ins.args, read))) {
+          read = read.with(ins.result, true);
+          more = true;
+        }
+      }
+    }
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if ((ins.kind_tag == ssasem.call() && !ssasem.scalar_primitive(ins.str) || ins.kind_tag == ssasem.call_value()) && reads_any(ins.args, read)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function memory_read(ins: ssa.SInst): boolean {
+  let k: i32 = ins.kind_tag;
+  return k == ssasem.record_get() || k == ssasem.variant_get() || k == ssasem.tuple_get() || k == ssasem.array_get() || k == ssasem.call() && word_read(ins.str);
+}
+
+function reads_any(args: i32[], read: boolean[]): boolean {
+  for a in args {
+    if (a >= 0 && read[a]) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function calls_spliceable(f: ssasem.Func, sp: Spliceable, ctors: boolean[], once: boolean[], self: i32): boolean {

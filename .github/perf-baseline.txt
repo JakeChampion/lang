@@ -465,7 +465,8 @@ aarch64/enum_match.text	1316
 aarch64/enum_match.ir	41175104
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
 aarch64/http_hello.text	17447
-aarch64/http_hello.ir	25728698
+# 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
+aarch64/http_hello.ir	24448615
 aarch64/int_loop.text	330
 aarch64/int_loop.ir	18000085
 aarch64/map_int.text	8502

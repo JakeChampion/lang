@@ -3748,6 +3748,9 @@ function branch_stmt_start(p: Par): boolean {
   if (p.peek_punct() == "{") {
     return true;
   }
+  if (p.peek_ident() == "unsafe" && p.advance().peek_punct() == "{") {
+    return true;
+  }
   let kw: string = p.peek_keyword();
   if (kw == "if" && !p.if_stmt_has_else()) {
     return true;
