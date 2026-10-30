@@ -397,11 +397,29 @@ function steal(own r: irtables.LowerState, f: ssasem.Func, v: i32, unique: i32):
   r = emit(r, ir.op_store_local(unique));
   r = emit(r, ir.op_load_local(unique));
   r = emit(r, ir.op_if(0));
+  r = cleared_slot(r, f, get);
+  r = emit(r, ir.op_end());
+  return unless_unique(r, unique, v, "__fern_rc_inc");
+}
+
+// A take in a tested run: the token slot holds the donor's one uniqueness read.
+function tested_take(own r: irtables.LowerState, f: ssasem.Func, v: i32): irtables.LowerState {
+  r = emit(r, ir.op_load_local(token_slot(f)));
+  r = emit(r, ir.op_const_i32(0));
+  r = emit(r, ir.op_bin("ne", 0, false));
+  r = emit(r, ir.op_if(0));
+  r = cleared_slot(r, f, definition(f, v));
+  r = emit(r, ir.op_else());
+  r = helper(r, v, "__fern_rc_inc");
+  return emit(r, ir.op_end());
+}
+
+function cleared_slot(own r: irtables.LowerState, f: ssasem.Func, get: ssa.SInst): irtables.LowerState {
   r = emit(r, ir.op_load_local(get.args[0]));
   if (get.kind_tag == ssasem.array_get()) {
     r = emit(r, ir.op_load_local(get.args[1]));
     r = emit(r, ir.op_const_i32(0));
-    r = emit(r, ir.in_bounds(arr_set_op(f.values[v])));
+    r = emit(r, ir.in_bounds(arr_set_op(f.values[get.result])));
   } else if (get.kind_tag == ssasem.tuple_get()) {
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_tuple_set(get.imm));
@@ -412,8 +430,7 @@ function steal(own r: irtables.LowerState, f: ssasem.Func, v: i32, unique: i32):
     r = emit(r, ir.op_const_i32(0));
     r = emit(r, ir.op_struct_set(get.imm, 0));
   }
-  r = emit(r, ir.op_end());
-  return unless_unique(r, unique, v, "__fern_rc_inc");
+  return r;
 }
 
 struct Held { arrays: i32[], records: i32[], fields: i32[], gated: i32[], gated_roots: i32[], gated_records: i32[], gated_fields: i32[] }
@@ -3431,13 +3448,13 @@ function constant_op(k: i32): boolean {
   return k == 1 || k == 2 || k == 5 || k == ssasem.zero();
 }
 
-function instruction(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irtables.StructTab, defer0: boolean, link: Link, kept: boolean): irtables.LowerState {
+function instruction(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irtables.StructTab, defer0: boolean, link: Link, kept: boolean, tested: boolean): irtables.LowerState {
   if (r.source_positions.entry.line == 0) {
-    return instruction_body(r, f, p, ins, structs, defer0, link, kept);
+    return instruction_body(r, f, p, ins, structs, defer0, link, kept, tested);
   }
   let begin = r.ops.len();
   let pos = source_position(r, ins.result);
-  return source_tagged(instruction_body(r, f, p, ins, structs, defer0, link, kept), begin, pos);
+  return source_tagged(instruction_body(r, f, p, ins, structs, defer0, link, kept, tested), begin, pos);
 }
 
 function source_position(r: irtables.LowerState, value: i32): sourcepos.SourcePos {
@@ -3462,7 +3479,7 @@ function source_tagged(own r: irtables.LowerState, begin: i32, pos: sourcepos.So
   return irtables.LowerState { ...r, ops: ops };
 }
 
-function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irtables.StructTab, defer0: boolean, link: Link, kept: boolean): irtables.LowerState {
+function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst, structs: irtables.StructTab, defer0: boolean, link: Link, kept: boolean, tested: boolean): irtables.LowerState {
   r = negation_zero(r, f, ins);
   if (ins.kind_tag == 35) {
     return r;
@@ -3576,6 +3593,8 @@ function instruction_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunit
   r = took(r, p, ins);
   if (kept && ssaunits.payload_taken(f, p, ins)) {
     r = unless_unique(r, token_slot(f), ins.result, "__fern_rc_inc");
+  } else if (tested && ssaunits.payload_taken(f, p, ins)) {
+    r = tested_take(r, f, ins.result);
   } else {
     r = took_payload(r, f, p, ins);
   }
@@ -6015,6 +6034,7 @@ function block_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
   let keeps: ssaunits.Keeps = p.reuse.keeps[bpos];
   let kept: i32[] = ssaunits.kept_values(keeps);
   let moved: i32[] = ssaunits.moved_values(keeps);
+  let tested: i32[] = ssaunits.tested_values(keeps);
   let late: i32[] = ssaunits.late_values(keeps);
   for ins in b.insts {
     if (ins.kind_tag != 6 && ins.kind_tag != 8) {
@@ -6055,8 +6075,11 @@ function block_body(own r: irtables.LowerState, f: ssasem.Func, p: ssaunits.Plan
         step = ssaunits.Step { ...step, drops: without(step.drops, ins.args[0]) };
       } else if (util.index_of_i32(late, ins.result) < 0) {
         let under_token: boolean = util.index_of_i32(kept, ins.result) >= 0 || util.index_of_i32(moved, ins.result) >= 0;
-        r = instruction(r, f, p, ins, structs, defer0, link_at(f, links, ins), under_token);
+        r = instruction(r, f, p, ins, structs, defer0, link_at(f, links, ins), under_token, util.index_of_i32(tested, ins.result) >= 0);
         r = settle_call_link(r, f, links, ins);
+      }
+      if (ssaunits.tested_ends(keeps, pos)) {
+        r = zero_local(r, token_slot(f));
       }
       r = bracket_give(r, f, held);
       let c: i32 = ssaunits.classified_at(keeps, pos);

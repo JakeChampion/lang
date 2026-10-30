@@ -288,7 +288,10 @@ for every plan ownership inference tries):
   from that donor follows the one uniqueness read the keep makes. A donor
   whose payloads a block takes and which dies in the block with no such
   construction is **classified** (a keep with no construction, `built` -1):
-  its takes and its death follow one uniqueness read. The
+  its takes and its death follow one uniqueness read. A donor that
+  outlives a run of two or more of its takes in a block is **tested**
+  (`tested`, `Keeps.lives`): the run's takes follow one uniqueness read in
+  the token slot, and the run frees the slot after its last take. The
   routes and the one-token-slot discipline are decided here, once (a
   carried construction inside a keep's or a classified donor's span reads
   its token from the donor's local, so it needs no slot); the
@@ -331,7 +334,8 @@ locals sit above `nvals`. It emits:
   `zero` (the null word the inliner passes for the payloads of a variant a
   path did not build) is dropped with no code at all (`null_unit`);
 - **takes and steals** as a uniqueness test, a slot store of zero and the
-  value in its local (`steal`); a kept or classified donor's takes read the
+  value in its local (`steal`); a tested run's takes read the token slot
+  for that test (`tested_take`); a kept or classified donor's takes read the
   token slot instead, and on its unique arm leave the slot as it is: its
   death releases only the fields nothing took (`keep_release`,
   `classified_death`), and a classified donor's box goes to the release
