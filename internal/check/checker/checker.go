@@ -2991,6 +2991,10 @@ func (c *checker) inherentModuleSuffix(typeName, name, trait, module string) str
 	if trait != "" || len(prior) == 0 || len(c.info.MethodOwners[typeName+"."+name]) > 0 {
 		return ""
 	}
+	// Map's iteration protocol method stays one per program, like a built-in method.
+	if typeName == "Map" && name == "iter" {
+		return ""
+	}
 	for _, d := range prior {
 		if d.Module == module {
 			return ""

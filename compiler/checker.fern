@@ -17542,10 +17542,15 @@ function same_method_decl(pe: parser.FuncDecl, f2: parser.FuncDecl): boolean {
   if (f2.receiver_type.len() == 0 || pe.receiver_type.len() == 0 || decl_key(pe) != decl_key(f2)) {
     return false;
   }
-  if (pe.impl_trait.len() == 0 && f2.impl_trait.len() == 0 && pe.module != f2.module) {
+  if (pe.impl_trait.len() == 0 && f2.impl_trait.len() == 0 && pe.module != f2.module && !iteration_protocol(pe) && !iteration_protocol(f2)) {
     return false;
   }
   return pe.impl_trait == f2.impl_trait && parser.receiver_namespace(pe.receiver_type) == parser.receiver_namespace(f2.receiver_type);
+}
+
+// Map's iteration protocol method stays one per program, like a built-in method.
+function iteration_protocol(fd: parser.FuncDecl): boolean {
+  return parser.receiver_namespace(fd.receiver_type) == "Map" && method_simple_name(fd.name) == "__iterator";
 }
 
 function method_ambiguity_diags(mod: parser.Module): util.Diag[] {
