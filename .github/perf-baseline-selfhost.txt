@@ -1,3 +1,5 @@
+# 2026-10-29: #13863 (#13061) at 84b2ea38, from a local perf-bench-selfhost run. The map
+# programs grow by 34% to 85%: each map operation has a clone per key kind. closure_call shrinks.
 # 2026-10-29: Exact report from CI run 40890273181 at 0b1901adb on PR #13846.
 # semcse and the carry rule move 11 rows. All tolerances remain unchanged.
 # 2026-10-28: Exact reports from CI run 40620158743 at c63e488b4 on PR #13718.
@@ -192,16 +194,16 @@ selfhost/arm64-linux/ascii_scan.emit	1668
 selfhost/arm64-linux/byte_copy_append.emit	1478
 selfhost/arm64-linux/byte_copy_with.emit	1424
 selfhost/arm64-linux/call_overhead.emit	388
-selfhost/arm64-linux/closure_call.emit	1196
+selfhost/arm64-linux/closure_call.emit	1149
 selfhost/arm64-linux/deflate_decode.emit	14230
 selfhost/arm64-linux/deflate_encode.emit	8033
 selfhost/arm64-linux/enum_match.emit	1316
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 selfhost/arm64-linux/http_hello.emit	17447
 selfhost/arm64-linux/int_loop.emit	330
-selfhost/arm64-linux/map_int.emit	6074
-selfhost/arm64-linux/map_probe_chain.emit	6084
-selfhost/arm64-linux/map_string.emit	7175
+selfhost/arm64-linux/map_int.emit	8502
+selfhost/arm64-linux/map_probe_chain.emit	8512
+selfhost/arm64-linux/map_string.emit	9602
 selfhost/arm64-linux/ordmap_insert.emit	5953
 selfhost/arm64-linux/pmap_insert.emit	3063
 selfhost/arm64-linux/pvec_with.emit	3205
@@ -227,21 +229,21 @@ selfhost/wasm32-wasi/ascii_scan.emit	1216
 selfhost/wasm32-wasi/byte_copy_append.emit	554
 selfhost/wasm32-wasi/byte_copy_with.emit	569
 selfhost/wasm32-wasi/call_overhead.emit	115
-selfhost/wasm32-wasi/closure_call.emit	482
+selfhost/wasm32-wasi/closure_call.emit	487
 selfhost/wasm32-wasi/deflate_decode.emit	19729
 selfhost/wasm32-wasi/deflate_encode.emit	11328
 selfhost/wasm32-wasi/enum_match.emit	710
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 selfhost/wasm32-wasi/http_hello.emit	19395
 selfhost/wasm32-wasi/int_loop.emit	69
-selfhost/wasm32-wasi/map_int.emit	7183
-selfhost/wasm32-wasi/map_probe_chain.emit	7208
-selfhost/wasm32-wasi/map_string.emit	8005
+selfhost/wasm32-wasi/map_int.emit	13304
+selfhost/wasm32-wasi/map_probe_chain.emit	13329
+selfhost/wasm32-wasi/map_string.emit	14126
 selfhost/wasm32-wasi/ordmap_insert.emit	6746
 selfhost/wasm32-wasi/pmap_insert.emit	3138
 selfhost/wasm32-wasi/pvec_with.emit	2774
 selfhost/wasm32-wasi/record_update.emit	525
-selfhost/wasm32-wasi/sort_inplace.emit	979
+selfhost/wasm32-wasi/sort_inplace.emit	996
 selfhost/wasm32-wasi/sort_ints.emit	2058
 selfhost/wasm32-wasi/sort_strings.emit	3381
 selfhost/wasm32-wasi/string_build.emit	1281
@@ -262,16 +264,16 @@ selfhost/x86-64-linux/ascii_scan.emit	1368
 selfhost/x86-64-linux/byte_copy_append.emit	1245
 selfhost/x86-64-linux/byte_copy_with.emit	1202
 selfhost/x86-64-linux/call_overhead.emit	305
-selfhost/x86-64-linux/closure_call.emit	973
+selfhost/x86-64-linux/closure_call.emit	916
 selfhost/x86-64-linux/deflate_decode.emit	13325
 selfhost/x86-64-linux/deflate_encode.emit	7372
 selfhost/x86-64-linux/enum_match.emit	1099
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
 selfhost/x86-64-linux/http_hello.emit	16323
 selfhost/x86-64-linux/int_loop.emit	250
-selfhost/x86-64-linux/map_int.emit	5793
-selfhost/x86-64-linux/map_probe_chain.emit	5797
-selfhost/x86-64-linux/map_string.emit	6738
+selfhost/x86-64-linux/map_int.emit	8476
+selfhost/x86-64-linux/map_probe_chain.emit	8480
+selfhost/x86-64-linux/map_string.emit	9421
 selfhost/x86-64-linux/ordmap_insert.emit	5568
 selfhost/x86-64-linux/pmap_insert.emit	2782
 selfhost/x86-64-linux/pvec_with.emit	2950
@@ -302,7 +304,7 @@ selfhost/arm64-linux/perceus_nqueens.emit	1805
 selfhost/wasm32-wasi/perceus_nqueens.emit	1267
 selfhost/x86-64-linux/perceus_rbtree.emit	2873
 selfhost/arm64-linux/perceus_rbtree.emit	3162
-selfhost/wasm32-wasi/perceus_rbtree.emit	3518
+selfhost/wasm32-wasi/perceus_rbtree.emit	3564
 selfhost/x86-64-linux/perceus_rbtree_ck.emit	3123
 selfhost/arm64-linux/perceus_rbtree_ck.emit	3399
-selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3934
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3977

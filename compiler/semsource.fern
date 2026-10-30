@@ -20,6 +20,7 @@ import "./semunique";
 import "./sembytecopy";
 import "./byteconst";
 import "./seminline";
+import "./semspecial";
 import "./sourcepos";
 import "./semdead";
 import "./semhoist";
@@ -8123,7 +8124,10 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
   names = anchored.names;
   let laid: semrecords.Record[] = [];
   if (verify) {
-    let inlined: Spliced = inline_leaves(fuse_pipelines(unroll_loops(reach_module(all, names, mod, opts.whole, false), names), names, mod.funcs, opts.array_report), names, mod, opts.size);
+    let sp: Specialised = specialize_calls(fuse_pipelines(unroll_loops(reach_module(all, names, mod, opts.whole, false), names), names, mod.funcs, opts.array_report), names, table, mod);
+    names = sp.names;
+    table = sp.table;
+    let inlined: Spliced = inline_leaves(sp.all, names, mod, opts.size);
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
     all = prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole, true));
@@ -8564,6 +8568,68 @@ function exported(fd: parser.FuncDecl, mod: parser.Module): boolean {
 
 function decl_unnamed(fd: parser.FuncDecl, mod: parser.Module): boolean {
   return fd.receiver_type.len() == 0 && fd.import_iface == "" && !exported(fd, mod);
+}
+
+struct Specialised { all: Produced[], names: string[], table: ssasem.Contracts }
+
+function specialize_calls(all: Produced[], names: string[], table: ssasem.Contracts, mod: parser.Module): Specialised {
+  if (!inline_on()) {
+    return Specialised { all: all, names: names, table: table };
+  }
+  let funcs: ssasem.Func[] = [];
+  let modes: i32[][] = [];
+  let usable: boolean[] = [];
+  let sw: optbisect.Switches = optbisect.switches();
+  for i in 0..all.len() {
+    let p: Produced = all[i];
+    funcs = funcs.append(p.func);
+    modes = modes.append(p.modes);
+    usable = usable.append(p.ok && !p.template && !p.bodyless && optbisect.allowed_by(sw, "specialize", names[i]));
+  }
+  let sp: semspecial.Specialized = semspecial.specialize(funcs, names, modes, usable, util.name_index(kernel_calls(all, names, mod)));
+  if (sp.funcs.len() == all.len()) {
+    return Specialised { all: all, names: names, table: table };
+  }
+  let keys: util.NameIndex = decl_keys(mod.funcs);
+  let inlinable: boolean[] = [];
+  let clone: boolean[] = [];
+  for i in 0..sp.funcs.len() {
+    let root: i32 = sp.from[i];
+    let d: i32 = decl_of(all[root], root, mod.funcs.len(), keys);
+    inlinable = inlinable.append(usable[root] && d >= 0 && inlinable_decl(mod.funcs[d]) && optbisect.allowed_by(sw, "inline", sp.names[i]));
+    clone = clone.append(i >= all.len());
+  }
+  let made: ssasem.Func[] = seminline.inline_made_closures(sp.funcs, sp.names, sp.modes, inlinable, clone);
+  let out: Produced[] = [];
+  for i in 0..sp.funcs.len() {
+    if (i < all.len()) {
+      let p: Produced = all[i];
+      if (sp.changed[i]) {
+        p = Produced { ...p, func: sp.funcs[i], analysis: None };
+      }
+      out = out.append(p);
+    } else {
+      let root: i32 = sp.from[i];
+      let key: string = all[root].key;
+      if (root < mod.funcs.len()) {
+        key = parser.decl_key(mod.funcs[root]);
+      }
+      out = out.append(Produced { ...all[root], func: made[i], modes: sp.modes[i], key: key, requests: [], analysis: None });
+    }
+  }
+  return Specialised { all: out, names: sp.names, table: ssasem.contracts_of(util.append_all(table.list, sp.contracts)) };
+}
+
+// The calls a later pass reads by name with their closure arguments: the
+// ndarray kernels, and the std/array map that the rc lowering writes in place.
+function kernel_calls(all: Produced[], names: string[], mod: parser.Module): string[] {
+  let out: string[] = stdlib_names(all, names, mod.funcs, "std/ndarray");
+  for name in stdlib_names(all, names, mod.funcs, "std/array") {
+    if (util.str_has_prefix(name, "__arrm_map__")) {
+      out = out.append(name);
+    }
+  }
+  return out;
 }
 
 function inline_on(): boolean {

@@ -33,7 +33,7 @@ func TestSelfHostArrayClosureMethodIR(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	runDriver := func(args ...string) (string, int) {
+	runDriverEnv := func(env []string, args ...string) (string, int) {
 		argv := append([]string{driver}, args...)
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
@@ -41,8 +41,12 @@ func TestSelfHostArrayClosureMethodIR(t *testing.T) {
 		} else {
 			cmd = exec.Command(runner[0], append(runner[1:], argv...)...)
 		}
+		cmd.Env = append(os.Environ(), env...)
 		out, _ := cmd.Output()
 		return string(out), cmd.ProcessState.ExitCode()
+	}
+	runDriver := func(args ...string) (string, int) {
+		return runDriverEnv(nil, args...)
 	}
 
 	for _, tc := range arrayClosureMethodIRCases {
@@ -60,7 +64,10 @@ func TestSelfHostArrayClosureMethodIR(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatalf("%s: driver emitted 0 bytes", tc.name)
 			}
-			if !strings.Contains(asm, "__arrm_"+tc.name+"__") {
+			// The method's instance is specialised to the lambda and spliced
+			// into main, so the instance shows only with the inliner off.
+			plain, _ := runDriverEnv([]string{"FERN_SEM_INLINE=0"}, entry, root)
+			if !strings.Contains(plain, "__arrm_"+tc.name+"__") {
 				t.Errorf("%s: no monomorphised __arrm_%s__ clone in asm (method did not ride the IR array-method path)", tc.name, tc.name)
 			}
 			bin := buildBin(t, gcc, dir, "acm_"+tc.name+"_bin", asm)

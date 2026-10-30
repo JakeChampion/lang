@@ -1,3 +1,8 @@
+# 2026-10-29: #13863 (#13061) at 798f4251, merged with main at 50f353d9. x86_64 rows and aarch64 .text
+# rows from a local perf-bench run. aarch64 .ir rows from Perf run 40968040522.
+# A call that passes a capture-free closure goes to a clone of the callee that calls the closure
+# directly. closure_call.ir -35%, map_int.ir -33%, map_probe_chain.ir -29%, map_string.ir -10%.
+# The map programs' .text grows 34% to 46%: each map operation has a clone per key kind.
 # 2026-10-29: x86_64 rows from CI run 40893366540 at 50b7fe92f on PR #13846.
 # perceus_rbtree and the two sort programs run faster. perceus_cfold and perceus_deriv grow by 1% to 2%.
 # 2026-10-29: aarch64 rows from CI run 40896341239 at 981b76ca2 on PR #13846, with the same changes.
@@ -162,8 +167,8 @@ x86_64/byte_copy_with.text	1202
 x86_64/byte_copy_with.ir	12841267
 x86_64/call_overhead.text	305
 x86_64/call_overhead.ir	8250814
-x86_64/closure_call.text	973
-x86_64/closure_call.ir	63030162
+x86_64/closure_call.text	916
+x86_64/closure_call.ir	41178167
 x86_64/deflate_decode.ir	34703269
 x86_64/deflate_decode.text	13325
 x86_64/deflate_encode.ir	43182612
@@ -175,12 +180,12 @@ x86_64/http_hello.text	16323
 x86_64/http_hello.ir	23800450
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
-x86_64/map_int.text	5793
-x86_64/map_int.ir	36432496
-x86_64/map_probe_chain.text	5797
-x86_64/map_probe_chain.ir	340655457
-x86_64/map_string.text	6738
-x86_64/map_string.ir	58646855	2
+x86_64/map_int.text	8476
+x86_64/map_int.ir	24563319
+x86_64/map_probe_chain.text	8480
+x86_64/map_probe_chain.ir	241010587
+x86_64/map_string.text	9421
+x86_64/map_string.ir	53037751	2
 x86_64/ordmap_insert.text	5568
 x86_64/ordmap_insert.ir	82943055
 x86_64/pmap_insert.text	2782
@@ -446,8 +451,8 @@ aarch64/byte_copy_with.text	1424
 aarch64/byte_copy_with.ir	31274981
 aarch64/call_overhead.text	388
 aarch64/call_overhead.ir	11250826
-aarch64/closure_call.text	1196
-aarch64/closure_call.ir	72648176
+aarch64/closure_call.text	1149
+aarch64/closure_call.ir	46002179
 # 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
 aarch64/deflate_decode.ir	36429262
 aarch64/deflate_decode.text	14230
@@ -460,13 +465,13 @@ aarch64/http_hello.text	17447
 aarch64/http_hello.ir	25728698
 aarch64/int_loop.text	330
 aarch64/int_loop.ir	18000085
-aarch64/map_int.text	6074
-aarch64/map_int.ir	35263992
-aarch64/map_probe_chain.text	6084
-aarch64/map_probe_chain.ir	334317575
-aarch64/map_string.text	7175
+aarch64/map_int.text	8502
+aarch64/map_int.ir	23869629
+aarch64/map_probe_chain.text	8512
+aarch64/map_probe_chain.ir	233221143
+aarch64/map_string.text	9602
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
-aarch64/map_string.ir	59261619	2
+aarch64/map_string.ir	53247468	2
 aarch64/ordmap_insert.text	5953
 aarch64/ordmap_insert.ir	98457462
 aarch64/pmap_insert.text	3063
@@ -511,9 +516,9 @@ x86_64/perceus_deriv.ir	67372410
 x86_64/perceus_nqueens.text	1555
 x86_64/perceus_nqueens.ir	92759479
 x86_64/perceus_rbtree.text	2873
-x86_64/perceus_rbtree.ir	55350343
+x86_64/perceus_rbtree.ir	54772423
 x86_64/perceus_rbtree_ck.text	3123
-x86_64/perceus_rbtree_ck.ir	54938183
+x86_64/perceus_rbtree_ck.ir	54358823
 aarch64/perceus_cfold.text	2178
 aarch64/perceus_cfold.ir	62299589
 aarch64/perceus_deriv.text	3026
