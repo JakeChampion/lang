@@ -302,7 +302,9 @@ function main(): i32 {
     if (depth(t) != 5) { return 4; }
     t = pick(t, Tip(9), 1);
     if (depth(t) != 5) { return 5; }
-    if (visit_depth(t, one_node) != 5) { return 8; }
+    let visit: (Tree) => i32 = one_node;
+    if (depth(t) > 99) { visit = depth; }
+    if (visit_depth(t, visit) != 5) { return 8; }
     if (names_of(t, []).len() != 3) { return 10; }
     t = hand_to(t, keep_tree);
     if (depth(t) != 5) { return 9; }

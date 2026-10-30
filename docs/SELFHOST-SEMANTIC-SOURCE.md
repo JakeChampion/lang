@@ -848,7 +848,10 @@ clone makes each closure in its entry block, so each `call_value` through it
 names its target, and `seminline.inline_made_closures` splices the target. That
 splice sees only the clones, the closures they make and the small functions
 those closures call, so its cost follows the clones and not the module. The
-caller loses the closures that only the rewritten calls read. The
+caller loses the closures that only the rewritten calls read. The inliner
+counts a call that a clone and its root both make once, and it gives a clone
+its root's callers too. So a clone is spliced only where its root would be,
+and the callees of the root keep their splices. The
 clone's name adds the target and the index of each bound parameter to the
 callee's name: `__cmp_sift_down__i32$cmp____cmp_ascending__i32$wrap$3`. The
 index comes last, so a clone's name does not end like its target's.

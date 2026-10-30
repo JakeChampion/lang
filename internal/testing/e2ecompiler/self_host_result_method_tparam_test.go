@@ -159,7 +159,7 @@ function main(): i32 {
     let n: i32 = 0;
     let i: i32 = 0;
     while (i < 50) {
-        let r: Result[string, string] = Ok("a" + "bcd");
+        let r: Result[string, string] = Ok("abc" + (i % 10).to_string());
         n = n + r.map_or(0, slen);
         i = i + 1;
     }
