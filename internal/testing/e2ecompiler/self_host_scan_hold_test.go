@@ -1,11 +1,15 @@
 package e2ecompiler
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // scan reads each element of a list field of a record it rebuilds in the
 // loop. An element that a match changes is read after the call that consumes
 // the record, so the element is held. The list itself is read only to reach
-// the element. main calls scan with a unique table and with a shared one.
+// the element. scan_len reads the element again after the call, in the
+// call's own block. main calls each with a unique table and with a shared one.
 const scanHoldSrc = `
 struct T { id: i64, state: i64, name: u8[] }
 
@@ -38,6 +42,19 @@ function scan(s: S): S {
   return cur;
 }
 
+@noinline
+function scan_len(s: S): S {
+  let cur: S = s;
+  for i in 0..cur.list.len() {
+    let st: T = cur.list[i];
+    if (st.state == 1) {
+      cur = cur.add(st.id);
+      cur = S { ...cur, n: cur.n + st.name.len() as i64 * 1000 };
+    }
+  }
+  return cur;
+}
+
 function table(): S {
   let s: S = S { list: [], fit: true, n: 0 };
   for k in 0..40 {
@@ -57,13 +74,23 @@ function main(): i32 {
   if (kept.list[1].state != 1 || kept.n != 0 || after.list[1].state != 2 || after.n != 400 || after.list[39].name[0] != 39) {
     bad = bad + 2;
   }
+  let l: S = scan_len(table());
+  if (l.n != 20400 || l.list[1].state != 1) {
+    bad = bad + 4;
+  }
+  let lk: S = table();
+  let la: S = scan_len(lk);
+  if (la.n != 20400 || lk.n != 0 || la.list[39].name[0] != 39) {
+    bad = bad + 8;
+  }
   return bad;
 }
 `
 
-// The loop holds only the element it reads. It holds no count on the list,
-// and so tests no uniqueness to take the element out of it. The one test
-// left is the reuse of the element's box for the rebuilt element.
+// The loop holds only the element it reads, and only on the arm that
+// consumes the record. It holds no count on the list, and so tests no
+// uniqueness to take the element out of it. The one test left is the reuse
+// of the element's box for the rebuilt element.
 func TestSelfHostScanHoldShapeX86_64(t *testing.T) {
 	emit, run := x86ShapeHarness(t)
 	asm := emit(t, scanHoldSrc)
@@ -74,8 +101,15 @@ func TestSelfHostScanHoldShapeX86_64(t *testing.T) {
 	if got := rcIncSites(text); got != 2 {
 		t.Errorf("scan: %d retains, want 2 (the element, and its name in the rebuilt element)", got)
 	}
+	state := strings.Index(text, "cmpq $1, %")
+	if state < 0 {
+		t.Fatalf("scan: no test of the element's state in:\n%s", text)
+	}
+	if got := rcIncSites(text[:state]); got != 0 {
+		t.Errorf("scan: %d retains before the test of the element's state, want 0: only the arm that consumes the record holds the element", got)
+	}
 	if got := run(t, "scan", asm); got != 0 {
-		t.Errorf("exit = %d, want 0 (bit 1: unique table, 2: shared table)", got)
+		t.Errorf("exit = %d, want 0 (bit 1: unique table, 2: shared table, 4 and 8: the same for scan_len)", got)
 	}
 	cli := newStrictCLI(t)
 	bin := buildBin(t, cli.gcc, t.TempDir(), "census", cli.emit(t, "x86-64-linux", scanHoldSrc, "FERN_LEAKCHECK=1"))
@@ -89,7 +123,7 @@ func TestSelfHostScanHoldShapeX86_64(t *testing.T) {
 func TestSelfHostScanHoldArm64(t *testing.T) {
 	emit, run := arm64ShapeHarness(t)
 	if got := run(t, "scan", emit(t, scanHoldSrc)); got != 0 {
-		t.Errorf("exit = %d, want 0 (bit 1: unique table, 2: shared table)", got)
+		t.Errorf("exit = %d, want 0 (bit 1: unique table, 2: shared table, 4 and 8: the same for scan_len)", got)
 	}
 }
 
