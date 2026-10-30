@@ -23,6 +23,7 @@ The mechanism below is implemented in `internal/oracle/interp/interp.go`:
   the value-flow hook points the table below lists: `let` bind + block-end
   scope exit, `=` reassignment of an ident / index / field slot
   (release-old + retain-new), and function param bind + return-escape.
+  The walk does not go into a value that reaches no Map (`holdsMap`).
 
 The validation gate is met: the differential cases
 `map_cow_alias_isolation`, `map_cow_func_arg`, `map_cow_returned`, and

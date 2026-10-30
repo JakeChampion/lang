@@ -132,15 +132,16 @@ slot after the first link has written, so it copies (#9702). A right-hand side t
 a `?` unwind or a `return` out of a value-position block, both of which
 arrive as errors — puts the reference back.
 
-The buffer's header carries a second number, `paths`: how many times
-`adjustRC` has counted this array into the **Map** rc, which is how many
-owning routes reach its elements through it. An in-place element write
-hands exactly that many paths from the element it replaces to the one it
-stores — the assignment that follows cannot, because it sees the same
-array going out as came in and its retain and release cancel. Without it,
-`a = a.with(0, m)` on an array of maps leaves `m` looking unshared and the
-next `m.insert` mutates the copy the array holds: 99 in the interpreter
-where every backend prints 59.
+An in-place element write is taken only when neither the array nor the
+stored value can reach a Map. A Map keeps its own count (`rc`), which is
+the number of owning routes to it. An in-place write must move routes from
+the old element to the new element. The assignment that follows cannot do
+that.
+
+Without the rule, `a = a.with(0, m)` on an array of maps leaves `m` with
+too low a count. The next `m.insert` then changes the copy that the array
+holds: 99 in the interpreter where every backend prints 59. Thus `with`
+copies an array that can reach a Map.
 
 The owner count is **not recursive**, unlike the map rc that `adjustRC`
 walks: a container's own count says nothing about its elements, so every container
@@ -153,19 +154,17 @@ is never given back and an array that has ever been in one is copied by
 `with` from then on. That is the status quo for those arrays, and it is an
 over-count, which is free.
 
-The map rc's walk had that per-call shape of its own: `declare` retains its
-value, and `retain` walks every element of an array looking for maps, so
-binding an n-element `i32[]` to a parameter cost 2n visits a call. A
-binding whose declared type cannot reach a Map (`holdsNoMap`: numbers,
-booleans, strings, floats, and arrays, slices and tuples of them) skips
-the walk on the way in and out (`declareTyped`), since over such a value
-it changes only array path counts, which nothing below it reads.
-Parameters and annotated `let`s take that path when the value is an array
-or tuple; a scalar binds as before, since its walk is free and recording
-the skip would cost a map per call. `TestTypedBindingSkipsWalk` counts the
-visits. std/deflate's encoder hands two 32 768-entry hash
-chains to a helper for every input byte: 8 KB of noise took 8.0 s and
-takes 0.6 s.
+The map rc's walk had that per-call shape of its own. `retain` and
+`release` go down into every value that they reach, to count the Maps below
+it. Each array box, struct and enum now keeps a flag (`holdsMap`). The flag
+tells if a Map is reachable from the value. The interpreter calculates the
+flag once, on the first walk. The walk does not go into a value with no Map.
+
+A struct and an enum never change after construction. An array is written
+in place only when no Map is on either side. Thus the flag stays correct. A
+persistent structure whose nodes hold arrays costs the size of the
+structure once, not on each retain (#13400). `TestArrayBindingWalksOnce`
+and `TestNestedArraysWalkOnce` count the visits.
 
 ## Why not a persistent vector
 
