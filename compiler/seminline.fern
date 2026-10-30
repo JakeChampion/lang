@@ -188,7 +188,7 @@ function grown_unpackers(sofar: Inlined, sp: Spliceable, own once: boolean[]): b
 }
 
 function unpacker(f: ssasem.Func): boolean {
-  if (lends_view(f) || !spliceable(f, max_leaf_insts())) {
+  if (lends_view(f) || !spliceable(f, max_leaf_insts()) || loops(f.graph)) {
     return false;
   }
   for ins in f.graph.blocks[f.graph.entry].insts {
@@ -197,6 +197,50 @@ function unpacker(f: ssasem.Func): boolean {
     }
   }
   return false;
+}
+
+// Whether the blocks hold a cycle, such as the loop tail recursion modulo
+// cons leaves. Blocks are not stored in control-flow order, so this walks the
+// successors depth first and looks for an edge back to a block on the path.
+function loops(g: ssa.SFunc): boolean {
+  let at: i32[] = ssa.block_positions(g);
+  let state: i32[] = __alloc_i32(g.blocks.len());
+  let path: i32[] = __alloc_i32(g.blocks.len());
+  let next: i32[] = __alloc_i32(g.blocks.len());
+  path = path.with(0, g.entry);
+  state = state.with(at[g.entry], 1);
+  let depth: i32 = 1;
+  while (depth > 0) {
+    let top: i32 = depth - 1;
+    let succ: i32[] = term_successors(g.blocks[at[path[top]]].term);
+    if (next[top] >= succ.len()) {
+      state = state.with(at[path[top]], 2);
+      depth = top;
+      continue;
+    }
+    let s: i32 = succ[next[top]];
+    next = next.with(top, next[top] + 1);
+    if (state[at[s]] == 1) {
+      return true;
+    }
+    if (state[at[s]] == 0) {
+      state = state.with(at[s], 1);
+      path = path.with(depth, s);
+      next = next.with(depth, 0);
+      depth = depth + 1;
+    }
+  }
+  return false;
+}
+
+function term_successors(t: ssa.STerm): i32[] {
+  if (t.kind_tag == 2) {
+    return [t.target];
+  }
+  if (t.kind_tag == 3) {
+    return [t.t, t.f];
+  }
+  return [];
 }
 
 // An enum the parameter split cannot pass as its parts. One it can already
