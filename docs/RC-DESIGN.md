@@ -45,8 +45,8 @@ declared `@inline` at every call, as it splices a function called once. The func
 recursive, must have at most 400 instructions, and must only read its view
 parameters (`seminline.forced_spliceable`). It also splices, at every call, a
 private function of at most 40 instructions and no loop with an enum parameter
-that it only takes apart, directly or through a phi or a copy, and that the
-parameter split cannot pass in parts (`seminline.unpacker`).
+that it only takes apart, directly or through a phi or a copy
+(`seminline.unpacker`).
 Each caller then takes the value apart, so the function that made the value
 can return it in words (`sempair`). Such a function is spliced only after no
 callee of its own is still to be spliced into it (`calls_spliceable`). A copy
