@@ -182,7 +182,7 @@ function test_assert_any_string_pass(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("map-eq + array predicates");
+  let r: test.TestRunner = test.new("map-eq + array predicates");
   r = r.it("map i32 eq pass (order-indep)", test_map_i32_eq_pass);
   r = r.it("map i32 eq length mismatch", test_map_i32_eq_length_mismatch);
   r = r.it("map i32 eq value mismatch + key", test_map_i32_eq_value_mismatch);

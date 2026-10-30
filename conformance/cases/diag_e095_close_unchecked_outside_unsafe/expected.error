@@ -1,0 +1,1 @@
+unsafe function "close_unchecked" is called outside an unsafe block

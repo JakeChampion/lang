@@ -59,7 +59,7 @@ function test_iter_f64(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/num reducers");
+  let r: test.TestRunner = test.new("std/num reducers");
   r = r.it("sum_with", test_sum_with);
   r = r.it("product_with", test_product_with);
   r = r.it("sum", test_sum);

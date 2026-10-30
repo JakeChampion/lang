@@ -15,6 +15,7 @@ The types come from `checker.intrinsic_params`, `checker.intrinsic_result`, and 
 | Memory intrinsics (groups A and B below) | Every source, inside an `unsafe` block | Both checkers refuse a call outside an `unsafe` block as `E095`. The bundle check path is an unsafe context, because the runtime helper sources are the raw floor. |
 | Bounded intrinsics (group C below) | Every source | `is_resolvable_callee` admits them. The operations carry a typed value and a length. |
 | `unsafe function` declarations | Every source | `E095` refuses a call outside an `unsafe` block, a function value, and an unsafe implementation of a safe trait method. |
+| Unsafe built-in methods (below) | Every source, inside an `unsafe` block | `E095` refuses a call outside an `unsafe` block. |
 
 The set is `unsafe_intrinsics` in `compiler/checker.fern` and `UnsafeIntrinsics` in `internal/check/checker`.
 `TestUnsafeIntrinsicsMatchSelfHost` pins the two equal.
@@ -61,6 +62,21 @@ These take typed values, but they change ownership, layout, or control flow outs
 | `__c_call0` to `__c_call4`, with `_f32` and `_f64` forms | A foreign call through a code address. The address and the argument contract are the caller's proof. |
 | `__task_new`, `__task_free`, `__task_enter`, `__task_leave`, `__task_park`, `__task_wait`, `__task_set_ready`, `__task_set_cancelled`, `__task_cancelled`, `__task_timeout`, `__task_cur` | Runtime scheduler hooks. A task id must be live and the state transition must be valid. |
 | `__syscall3` to `__syscall6` | Arbitrary kernel calls. Admitted only in runtime helper sources today. |
+
+## Unsafe built-in methods
+
+| Method | Signature | Obligation |
+|---|---|---|
+| `close_unchecked()` on `Reader`, `Writer` and `Dir` | `-> Result[void, IoError]` | The call closes the handle through a borrow. No copy of the handle can be used after the call, and no other copy can be closed. |
+
+SEC-042 makes `close` consume its handle.
+The interpreter in `compiler/interp.fern` keeps each handle in a shared value, so it cannot give that value to `close`.
+`close_unchecked` closes the handle and leaves the shared value in place.
+It lowers as `close`.
+
+The set is `unsafe_builtin_methods` in `compiler/checker.fern` and `UnsafeBuiltinMethods` in `internal/check/checker`.
+`conformance/cases/handle_close_unchecked_through_a_borrow` closes each kind of handle inside a block.
+`conformance/cases/diag_e095_close_unchecked_outside_unsafe` is the refusal.
 
 ## Group C: bounded intrinsics
 

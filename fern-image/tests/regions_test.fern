@@ -176,7 +176,7 @@ function large_plans(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("checked region requests");
+  let r = test.new("checked region requests");
   r = r.it("virtual ten-million-pixel graph returns a cropped tile", virtual_tile);
   r = r.it("padded RGB/RGBA mixed-filter crops agree with eager output", eager_agreement);
   r = r.it("direct nearest and bilinear dependency rows", dependencies);

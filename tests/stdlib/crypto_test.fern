@@ -309,7 +309,7 @@ function test_erase_accepts_owned_bytes(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/crypto");
+  let r: test.TestRunner = test.new("std/crypto");
   r = r.it("sha256 empty", test_sha256_empty);
   r = r.it("sha256 abc", test_sha256_abc);
   r = r.it("sha256 pangram", test_sha256_pangram);

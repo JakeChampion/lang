@@ -29,7 +29,7 @@ function test_value_unset(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/envflag");
+  let r: test.TestRunner = test.new("std/envflag");
   r = r.it("value_on off values", test_value_on_off_values);
   r = r.it("value_on other values", test_value_on_other_values);
   r = r.it("on unset", test_on_unset);

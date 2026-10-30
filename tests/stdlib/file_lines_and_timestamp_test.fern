@@ -153,7 +153,7 @@ function test_close_to_now_future_skew_fails(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("file-lines + timestamp recency");
+  let r: test.TestRunner = test.new("file-lines + timestamp recency");
   r = test_file_lines_pass(r);
   r = test_file_lines_no_trailing_newline(r);
   r = test_file_lines_mismatch_reports(r);

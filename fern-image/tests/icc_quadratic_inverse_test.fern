@@ -147,7 +147,7 @@ function boundaries(): test.TestOutcome {
 }
 
 pub function main(): i32 {
-  let runner = test.test_new("ICC bounded quadratic inverses");
+  let runner = test.new("ICC bounded quadratic inverses");
   runner = runner.it("ICC quadratic inverse identity bits", identities);
   runner = runner.it("ICC quadratic inverse arithmetic", arithmetic);
   runner = runner.it("ICC quadratic inverse range policy", range_policy);

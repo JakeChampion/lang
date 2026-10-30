@@ -131,7 +131,7 @@ function test_string_prefixes(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("core/cmp helpers");
+  let r: test.TestRunner = test.new("core/cmp helpers");
   r = r.it("min", test_min);
   r = r.it("max", test_max);
   r = r.it("clamp above hi", test_clamp_hi);

@@ -20,7 +20,7 @@ function workload_string_build(): void {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("bench harness");
+  let r: test.TestRunner = test.new("bench harness");
 
   r = r.bench("tiny arithmetic loop", 20, workload_tiny);
   r = r.bench("string build (50 chars)", 10, workload_string_build);

@@ -49,7 +49,7 @@ function test_between_outside(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/i64 range");
+  let r: test.TestRunner = test.new("std/i64 range");
   r = r.it("abs_diff wide", test_abs_diff_wide);
   r = r.it("abs_diff reversed", test_abs_diff_reversed);
   r = r.it("abs_diff mixed sign", test_abs_diff_mixed_sign);

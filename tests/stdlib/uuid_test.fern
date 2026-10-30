@@ -77,7 +77,7 @@ function has_version(s: string, want: i32): boolean {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/uuid");
+  let r: test.TestRunner = test.new("std/uuid");
   r = r.it("v4 length 36", test_v4_len);
   r = r.it("v4 is_valid shape", test_v4_is_valid);
   r = r.it("v4 hyphen positions", test_v4_hyphens);

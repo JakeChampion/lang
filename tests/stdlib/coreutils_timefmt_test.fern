@@ -46,7 +46,7 @@ function test_glibc_year(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t: test.TestRunner = test.test_new("coreutils/lib/timefmt");
+  let t: test.TestRunner = test.new("coreutils/lib/timefmt");
   t = t.it("Apple pads the year", test_apple_pads_the_year);
   t = t.it("Apple negative years", test_apple_negative_years);
   t = t.it("Apple century", test_apple_century);

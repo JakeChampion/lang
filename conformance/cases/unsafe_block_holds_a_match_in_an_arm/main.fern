@@ -1,0 +1,20 @@
+// An unsafe block is a statement. It can hold a match, and it can stand in
+// the arm of another match.
+
+function main(): i32 {
+  let o: Option[i32] = Some(1);
+  match (o) {
+    Some(v) => {
+      unsafe {
+        match (o) {
+          Some(w) => {
+            print("inner " + (v + w).to_string());
+          },
+          None => {}
+        }
+      }
+    },
+    None => {}
+  }
+  return 0;
+}

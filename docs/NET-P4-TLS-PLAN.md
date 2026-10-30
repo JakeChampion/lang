@@ -118,13 +118,13 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
    SAN checks, and the root store (Linux bundle paths, `SSL_CERT_FILE`, a
    bundled CCADB list as the fallback).
 
-   Landed: strict DER, PEM, certificate parsing, and `verify_server`, which
+   Landed: strict DER, PEM, certificate parsing, and `verify.server`, which
    builds a path through the server's intermediates to the caller's roots
    at the caller's time. It checks validity, CA and path-length
    constraints, key usage, the leaf's server extended key usage, unknown
    critical extensions and every signature (RSA PKCS #1 v1.5 and PSS,
    ECDSA P-256 and P-384, Ed25519), and matches names against the subject
-   alternative names only. `verify_signed` checks a CertificateVerify.
+   alternative names only. `verify.signed` checks a CertificateVerify.
    Gate: chains made with Python's `cryptography` covering every refusal,
    and RFC 8448's certificate and CertificateVerify. Then name constraints
    over DNS names and IP addresses (other forms still refuse a critical
@@ -136,7 +136,7 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
    that imports it carries the 220 KB, handed to `fetch` as
    `Policy.roots`. A root Mozilla distrusts for server certificates issued
    after a date is bundled with the date (`verify.Roots.distrust_after`,
-   which `verify_server` enforces against the leaf's notBefore) while a
+   which `verify.server` enforces against the leaf's notBefore) while a
    certificate issued before it can still be valid, and left out once none
    can; the refresh-data workflow regenerates the list weekly. Gate: every
    bundled root parses, and raw.githubusercontent.com's chain verifies
@@ -200,7 +200,7 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
     a resumed handshake), puts the client's chain and CertificateVerify to
     its caller (`VerifyClient`, `verdict`), and its client sends its chain
     and asks its caller for the signature; `std/tls/verify` gained
-    `verify_client`; `std/tls/server` requires a chain reaching
+    `verify.client`; `std/tls/server` requires a chain reaching
     `with_client_roots` (certificate_required for none, bad_certificate
     for a bad one) and `std/tls/client` presents `with_identity`. Gate: the
     handshake, client and server suites, and both Go interop tests with a

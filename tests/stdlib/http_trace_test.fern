@@ -167,7 +167,7 @@ function test_inject_writes_the_span_onward(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/trace");
+  let r: test.TestRunner = test.new("std/http/trace");
   r = r.it("the spec's example round-trips", test_the_spec_example_round_trips);
   r = r.it("malformed traceparents are refused", test_malformed_traceparents_are_refused);
   r = r.it("tracestate is kept only when well formed", test_tracestate_is_kept_only_when_well_formed);

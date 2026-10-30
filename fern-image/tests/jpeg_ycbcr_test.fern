@@ -156,7 +156,7 @@ function cancellation(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("explicit full-range YCbCr conversion");
+  let runner = test.new("explicit full-range YCbCr conversion");
   runner = runner.it("neutral endpoints, clipping, and exact half ties", scalar);
   runner = runner.it("equal-resolution packed RGB rows", rows);
   runner = runner.it("shape and exact output-byte admission", admission);

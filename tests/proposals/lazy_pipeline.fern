@@ -274,7 +274,7 @@ function main(): i32 {
   eprint("  taking 0 from an infinite source: " + show(nothing.out) + ", "
     + nothing.src.pulls.to_string() + " pulls");
 
-  let t: test.TestRunner = test.test_new("lazy_pipeline");
+  let t: test.TestRunner = test.new("lazy_pipeline");
   t = t.it("the source is pulled exactly as far as needed", test_the_source_is_pulled_exactly_as_far_as_needed);
   t = t.it("take 0 pulls nothing", test_take_zero_pulls_nothing);
   t = t.it("a stage after a rejecting filter never runs", test_a_stage_after_a_rejecting_filter_never_runs);

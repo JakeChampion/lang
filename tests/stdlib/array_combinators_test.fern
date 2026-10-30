@@ -207,7 +207,7 @@ function test_find_map_none(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("array combinators");
+  let r: test.TestRunner = test.new("array combinators");
   r = r.it("map", test_map);
   r = r.it("map empty", test_map_empty);
   r = r.it("map change type", test_map_change_type);

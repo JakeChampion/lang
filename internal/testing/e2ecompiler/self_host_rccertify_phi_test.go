@@ -15,7 +15,7 @@ var foldedJoinSrcs = map[string]string{
 struct G { v: S0 }
 @noinline function (g: G) get(): S0 { return g.v; }
 enum O { Nil, Has(S0) }
-@noinline function (o: O) or(d: S0): S0 { match (o) { Has(x) => { return x; }, Nil => { return d; } } }
+function (o: O) or(d: S0): S0 { match (o) { Has(x) => { return x; }, Nil => { return d; } } }
 @noinline function three(): i32[] { return [535, 330, 350]; }
 function main(): i32 {
   let a: G = G { v: S0 { f2: three() } };

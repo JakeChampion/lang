@@ -461,7 +461,7 @@ planned order:
   injection for `std/test`'s bare-name `TestRunner` / `assert_*`"
   blocker is **obsolete** — the auto-prelude is gone, so `std/test` is
   now used the same way as any module (`import "std/test"; t :=
-  test.test_new(...); test.assert_eq_i32(...)`), and the self-host's
+  test.new(...); test.assert_eq_i32(...)`), and the self-host's
   stdlib-import resolution (see the ✅ item below) already handles that.
   What remains is purely the **runtime-builtin surface** (next item).
 - ✅ **Stdlib import resolution in the file-loading driver.**
@@ -824,7 +824,7 @@ planned order:
     rewritten (`"x\n".lines().len()` is 1, not 2); `lines_log_test`
     now matches the interpreter byte-for-byte and joins the gate.
 - 🔧 **`std/test` runtime-builtin surface** (now complete). Used via
-  explicit `import "std/test"; test.test_new(...)`
+  explicit `import "std/test"; test.new(...)`
   (the prelude question is gone — see the update above). The batch,
   with progress:
   - ✅ `write_file(path, content): Option[IoError]` — emitted on both

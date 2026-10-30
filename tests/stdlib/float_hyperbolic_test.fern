@@ -57,7 +57,7 @@ function float_near(a: f64, b: f64): boolean {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/f64 sinh/cosh/tanh");
+  let r: test.TestRunner = test.new("std/f64 sinh/cosh/tanh");
   r = r.it("at zero", test_at_zero);
   r = r.it("at one", test_at_one);
   r = r.it("symmetry", test_symmetry);

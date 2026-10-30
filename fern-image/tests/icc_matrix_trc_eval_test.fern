@@ -164,7 +164,7 @@ function preferences(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("ICC matrix/TRC numerical composition");
+  let runner = test.new("ICC matrix/TRC numerical composition");
   runner = runner.it("ICC composition identity and projection bits", projections);
   runner = runner.it("ICC composition mixed curves and unclipped XYZ", mixed);
   runner = runner.it("ICC composition fresh public admission", admission);

@@ -196,7 +196,7 @@ function main(): i32 {
   eprint("  (5 bars = " + s.codepoint_count().to_string()
     + " codepoints, " + s.len().to_string() + " bytes)");
 
-  let r: test.TestRunner = test.test_new("sparkline");
+  let r: test.TestRunner = test.new("sparkline");
   r = r.it("one codepoint per sample", test_one_codepoint_per_sample);
   r = r.it("output is valid utf-8 blocks", test_output_is_valid_utf8_blocks);
   r = r.it("extremes map to extreme blocks", test_extremes_map_to_extreme_blocks);

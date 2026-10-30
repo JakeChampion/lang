@@ -41,7 +41,7 @@ function test_bad_base(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/i64 to_string_radix");
+  let r: test.TestRunner = test.new("std/i64 to_string_radix");
   r = r.it("hex", test_hex);
   r = r.it("binary", test_binary);
   r = r.it("zero", test_zero);

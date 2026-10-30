@@ -150,7 +150,7 @@ function test_chunks(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/string slice + extract");
+  let r: test.TestRunner = test.new("std/string slice + extract");
   r = r.it("before", test_before);
   r = r.it("before missing", test_before_missing);
   r = r.it("after", test_after);

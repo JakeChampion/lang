@@ -118,7 +118,7 @@ function test_max_by_single(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/array extremum-by");
+  let r: test.TestRunner = test.new("std/array extremum-by");
   r = r.it("max_by", test_max_by);
   r = r.it("min_by", test_min_by);
   r = r.it("max_by empty", test_max_by_empty);

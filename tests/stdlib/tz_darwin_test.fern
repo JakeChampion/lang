@@ -85,7 +85,7 @@ function test_junk_after_dst_offset_is_utc(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t: test.TestRunner = test.test_new("tz-darwin");
+  let t: test.TestRunner = test.new("tz-darwin");
   t = t.it("a bare name is UTC", test_bare_name_is_utc);
   t = t.it("an empty TZ is UTC", test_empty_is_utc);
   t = t.it("short quoted names", test_short_quoted_names);

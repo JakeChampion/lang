@@ -75,7 +75,7 @@ function test_strings(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/array binary_search");
+  let r: test.TestRunner = test.new("std/array binary_search");
   r = r.it("found middle", test_found_middle);
   r = r.it("found first", test_found_first);
   r = r.it("found last", test_found_last);

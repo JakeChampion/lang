@@ -45,7 +45,7 @@ function float_near(a: f64, b: f64): boolean {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/f64 round_to");
+  let r: test.TestRunner = test.new("std/f64 round_to");
   r = r.it("two places", test_two_places);
   r = r.it("zero places", test_zero_places);
   r = r.it("half away", test_half_away);

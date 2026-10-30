@@ -46,7 +46,7 @@ function test_bit_length_extremes(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/i64 bit ops");
+  let r: test.TestRunner = test.new("std/i64 bit ops");
   r = r.it("count_ones basic", test_count_ones_basic);
   r = r.it("count_ones all ones", test_count_ones_all);
   r = r.it("count_ones wide", test_count_ones_wide);

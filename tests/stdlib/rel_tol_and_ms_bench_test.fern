@@ -92,7 +92,7 @@ function workload_tiny(): void {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("rel-tol + ms-bench");
+  let r: test.TestRunner = test.new("rel-tol + ms-bench");
   r = r.it(
     "rel_tol passes within ratio",
     test_rel_tol_passes_within_ratio,

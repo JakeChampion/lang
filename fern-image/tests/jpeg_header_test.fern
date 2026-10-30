@@ -348,7 +348,7 @@ function ownership_and_scope(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("JPEG baseline headers only");
+  let runner = test.new("JPEG baseline headers only");
   runner = runner.it("independent grayscale and 444/422/420 reference headers", reference_headers);
   runner = runner.it("optimized sparse tables and genuine unsupported profiles", optimized_and_unsupported);
   runner = runner.it("every truncated header prefix", truncation);

@@ -155,7 +155,7 @@ function cancellation(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("centered JPEG component rows");
+  let runner = test.new("centered JPEG component rows");
   runner = runner.it("independent centered filters and one final half-tie rounding", centered);
   runner = runner.it("identity phase and padded source rows", padded_identity);
   runner = runner.it("fractional factors and odd-frame cropping", fractional_and_crop);

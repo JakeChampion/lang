@@ -95,7 +95,7 @@ function test_digest_lengths(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/crypto BLAKE2b");
+  let r: test.TestRunner = test.new("std/crypto BLAKE2b");
   r = r.it("empty", test_empty);
   r = r.it("abc", test_abc);
   r = r.it("multi-block", test_multiblock);

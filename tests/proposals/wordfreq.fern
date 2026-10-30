@@ -364,7 +364,7 @@ function main(): i32 {
     i = i + 1;
   }
 
-  let r: test.TestRunner = test.test_new("wordfreq");
+  let r: test.TestRunner = test.new("wordfreq");
   r = r.it("the ranking obeys the tie rule throughout", test_the_ranking_obeys_the_tie_rule_throughout);
   r = r.it("equal counts are alphabetical", test_equal_counts_are_alphabetical);
   r = r.it("top n is a prefix of the full ranking", test_top_n_is_a_prefix_of_the_full_ranking);

@@ -241,7 +241,7 @@ function cancellation(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("bounded Exif primary orientation");
+  let runner = test.new("bounded Exif primary orientation");
   runner = runner.it("little and big endian eight-value orientation mapping", orientations);
   runner = runner.it("absence and primary versus thumbnail orientation", primary_and_absence);
   runner = runner.it("truncated directories and unsigned offset bounds", framing);

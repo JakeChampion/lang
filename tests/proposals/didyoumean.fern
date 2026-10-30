@@ -286,7 +286,7 @@ function main(): i32 {
     eprint("  " + hint(typed[i], api()));
   }
 
-  let r: test.TestRunner = test.test_new("didyoumean");
+  let r: test.TestRunner = test.new("didyoumean");
   r = r.it("distance agrees with stdlib", test_distance_agrees_with_stdlib);
   r = r.it("known distances", test_known_distances);
   r = r.it("distance is a metric", test_distance_is_a_metric);

@@ -62,7 +62,7 @@ function test_public_suffix(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/publicsuffix");
+  let r: test.TestRunner = test.new("std/publicsuffix");
   r = r.it("mixed case and a leading dot", test_mixed_case_and_leading_dot);
   r = r.it("an unlisted TLD", test_unlisted_tld);
   r = r.it("listed TLDs", test_listed_tlds);

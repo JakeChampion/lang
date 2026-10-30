@@ -237,7 +237,7 @@ function test_public_keys_that_do_not_decode(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/crypto/ed25519");
+  let r: test.TestRunner = test.new("std/crypto/ed25519");
   r = r.it("RFC 8032 7.1 TEST 1", test_rfc_1);
   r = r.it("RFC 8032 7.1 TEST 2", test_rfc_2);
   r = r.it("RFC 8032 7.1 TEST 3", test_rfc_3);

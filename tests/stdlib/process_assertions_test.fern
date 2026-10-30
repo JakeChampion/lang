@@ -51,7 +51,7 @@ function test_temp_dir_writes_and_reads(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("process assertions");
+  let r: test.TestRunner = test.new("process assertions");
 
   let probe: ProcessResult = subprocess("sh", ["-c", "exit 0"], "");
   if (probe.exit_code == 127) {

@@ -113,7 +113,7 @@ function test_cuts(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/brotli");
+  let r: test.TestRunner = test.new("std/brotli");
   r = r.it("a small stream", test_text);
   r = r.it("dictionary words and their transforms", test_dictionary);
   r = r.it("qualities 0 to 9", test_qualities);

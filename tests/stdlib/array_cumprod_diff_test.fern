@@ -56,7 +56,7 @@ function test_edge_cases(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/array f64 cumprod/diff");
+  let r: test.TestRunner = test.new("std/array f64 cumprod/diff");
   r = r.it("cumprod", test_cumprod);
   r = r.it("diff", test_diff);
   r = r.it("diff negatives", test_diff_negatives);

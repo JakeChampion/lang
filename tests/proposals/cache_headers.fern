@@ -467,7 +467,7 @@ function main(): i32 {
   eprint("  freshness: shared=" + freshness_lifetime(cc, 1000, 0, true).to_string()
     + "s  private=" + freshness_lifetime(cc, 1000, 0, false).to_string() + "s");
 
-  let r: test.TestRunner = test.test_new("cache_headers");
+  let r: test.TestRunner = test.new("cache_headers");
   r = r.it("If-None-Match shadows If-Modified-Since", test_if_none_match_shadows_if_modified_since);
   r = r.it("the two comparisons differ on weak tags", test_the_two_comparisons_differ_on_weak_tags);
   r = r.it("the method decides 304 versus 412", test_the_method_decides_304_versus_412);

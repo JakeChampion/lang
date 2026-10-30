@@ -338,7 +338,7 @@ function int_text(n: i32): string {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/h3");
+  let r: test.TestRunner = test.new("std/http/h3");
   r = r.it("a request and its response", test_request_response);
   r = r.it("a response's header section and body go out as one write", test_send_section);
   r = r.it("a body and trailers a byte at a time, and an interim response", test_body_trailers_interim);

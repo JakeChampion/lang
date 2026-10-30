@@ -537,7 +537,7 @@ function test_escape_matches_encoder(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/json roundtrip");
+  let r: test.TestRunner = test.new("std/json roundtrip");
   r = r.it("escape named", test_escape_named);
   r = r.it("escape control bytes", test_escape_control_bytes);
   r = r.it("escape passthrough", test_escape_passthrough);

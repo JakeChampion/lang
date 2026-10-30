@@ -47,7 +47,7 @@ function test_string_from_bytes_roundtrip(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("string prelude (migrated)");
+  let r: test.TestRunner = test.new("string prelude (migrated)");
   r = r.it(
     "s.bytes() length is 5",
     test_bytes_len_is_5,

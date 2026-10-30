@@ -218,7 +218,7 @@ function consumer_error(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("PNG graph providers");
+  let r = test.new("PNG graph providers");
   r = r.it("fresh sessions preserve all filters, prefixes, repeated rows, and bounds", session_goldens);
   r = r.it("32 format, scale, and fusion schedules match eager rows and cropped tiles", graph_schedules);
   r = r.it("exact source payload, work, and cache admission", admission);

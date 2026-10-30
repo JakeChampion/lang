@@ -291,7 +291,7 @@ function main(): i32 {
   );
   show("1 + nope", Add(Num(1), Var("nope")));
 
-  let r: test.TestRunner = test.test_new("tinylang");
+  let r: test.TestRunner = test.new("tinylang");
   r = r.it("arithmetic and let", test_arithmetic_and_let);
   r = r.it("shadowing is innermost-wins", test_shadowing_is_innermost_wins);
   r = r.it("closures capture their defining scope", test_closures_capture_their_defining_scope);

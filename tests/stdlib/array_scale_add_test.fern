@@ -60,7 +60,7 @@ function test_empty(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/array f64 scale/add");
+  let r: test.TestRunner = test.new("std/array f64 scale/add");
   r = r.it("scale", test_scale);
   r = r.it("scale zero/neg", test_scale_zero_negate);
   r = r.it("add", test_add);

@@ -190,7 +190,7 @@ function test_corrupt_input_decodes_to_an_empty_cache(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("vcl-wire");
+  let r: test.TestRunner = test.new("vcl-wire");
   r = r.it("method and url", test_method_and_url);
   r = r.it("headers are forwarded", test_headers_are_forwarded);
   r = r.it("hop by hop headers are stripped", test_hop_by_hop_headers_are_stripped);

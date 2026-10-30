@@ -48,7 +48,7 @@ function test_u64_range_max(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/uint range");
+  let r: test.TestRunner = test.new("std/uint range");
   r = r.it("u32 abs_diff", test_u32_abs_diff);
   r = r.it("u32 abs_diff max", test_u32_abs_diff_max);
   r = r.it("u32 in_range", test_u32_in_range);

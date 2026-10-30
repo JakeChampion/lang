@@ -536,7 +536,7 @@ function main(): i32 {
     j = j + 1;
   }
 
-  let r: test.TestRunner = test.test_new("buildgraph");
+  let r: test.TestRunner = test.new("buildgraph");
   r = r.it("after building everything is up to date", test_after_building_everything_is_up_to_date);
   r = r.it("exactly the necessary targets are rebuilt", test_exactly_the_necessary_targets_are_rebuilt);
   r = r.it("a change propagates to every transitive dependent", test_a_change_propagates_to_every_transitive_dependent);

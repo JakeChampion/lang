@@ -99,7 +99,7 @@ function ownership(): test.TestOutcome {
 }
 
 pub function main(): i32 {
-  let runner = test.test_new("ICC matrix evaluation");
+  let runner = test.new("ICC matrix evaluation");
   runner.test("ICC matrix exact projections", identity);
   runner.test("ICC matrix columns and unclipped output", columns);
   runner.test("ICC matrix cancellation", cancellation);

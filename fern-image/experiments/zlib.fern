@@ -48,7 +48,7 @@ function corrupt(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("native PNG compression audit");
+  let r = test.new("native PNG compression audit");
   r = r.it("stored, fixed and dynamic zlib goldens", golden);
   r = r.it("exact decompression limit", limited);
   r = r.it("checksum, truncation and header rejection", corrupt);

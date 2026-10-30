@@ -159,7 +159,7 @@ function test_document_order(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/json object");
+  let r: test.TestRunner = test.new("std/json object");
   r = r.it("from pairs", test_from_pairs);
   r = r.it("lookup, linear", test_lookup_linear);
   r = r.it("lookup, indexed", test_lookup_indexed);

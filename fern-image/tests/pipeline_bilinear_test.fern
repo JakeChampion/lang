@@ -141,7 +141,7 @@ function validation(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("bilinear row pipeline");
+  let r = test.new("bilinear row pipeline");
   r = r.it("padded RGB/RGBA mixed-filter chains agree with eager output", eager_agreement);
   r = r.it("two-dimensional mixed-alpha golden", mixed_alpha);
   r = r.it("two-row scratch and recursive sample budgets", budgets);

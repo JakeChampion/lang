@@ -2023,6 +2023,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	registerStructMethod("Writer", "write_bytes", []ast.Type{bytes}, voidIoResult)
 	registerStructMethod("Writer", "write_some_bytes", []ast.Type{bytes}, writeSomeResult)
 	registerStructMethod("Writer", "close", nil, voidIoResult)
+	for _, h := range []string{"Reader", "Writer", "Dir"} {
+		registerStructMethod(h, "close_unchecked", nil, voidIoResult)
+	}
 	registerStructMethod("Writer", "truncate",
 		[]ast.Type{ast.NumberType{Width: 64, Signed: true}}, voidIoResult)
 	registerStructMethod("Reader", "fsync", nil, voidIoResult)
@@ -2458,6 +2461,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		}
 	}
 	c.unsafeFuncs = map[string]bool{}
+	for _, name := range UnsafeBuiltinMethods {
+		c.unsafeFuncs[name] = true
+	}
 	for _, fn := range prog.Funcs {
 		if fn.Unsafe {
 			c.unsafeFuncs[fn.Name] = true
@@ -2993,6 +2999,10 @@ type InherentMethod struct {
 func (c *checker) inherentModuleSuffix(typeName, name, trait, module string) string {
 	prior := c.info.InherentMethods[typeName+"."+name]
 	if trait != "" || len(prior) == 0 || len(c.info.MethodOwners[typeName+"."+name]) > 0 {
+		return ""
+	}
+	// Map's iteration protocol method stays one per program, like a built-in method.
+	if typeName == "Map" && name == "iter" {
 		return ""
 	}
 	for _, d := range prior {
@@ -8805,6 +8815,16 @@ func (c *checker) calleeBinding(id *ast.Ident, s *scope) (ast.Type, bool) {
 // only accepted inside an unsafe block. docs/security/UNSAFE-INVENTORY.md
 // lists each one with its obligation. compiler/checker.fern's
 // unsafe_intrinsics holds the same set.
+// UnsafeBuiltinMethods names the built-in methods that are unsafe. Each
+// close_unchecked closes a handle through a borrow, so the caller must make
+// sure that no copy of the handle is used after it. compiler/checker.fern's
+// unsafe_builtin_methods holds the same set.
+var UnsafeBuiltinMethods = []string{
+	"__method_Reader_close_unchecked",
+	"__method_Writer_close_unchecked",
+	"__method_Dir_close_unchecked",
+}
+
 var UnsafeIntrinsics = map[string]bool{
 	"__alloc": true, "__alloc_reuse": true, "__free": true,
 	"__load_u8": true, "__load_i32": true, "__load_i64": true, "__load_ptr": true,

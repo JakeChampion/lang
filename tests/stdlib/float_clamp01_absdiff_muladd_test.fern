@@ -47,7 +47,7 @@ function float_near(a: f64, b: f64): boolean {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/f64 clamp01/abs_diff/mul_add");
+  let r: test.TestRunner = test.new("std/f64 clamp01/abs_diff/mul_add");
   r = r.it("clamp01", test_clamp01);
   r = r.it("abs_diff", test_abs_diff);
   r = r.it("mul_add", test_mul_add);

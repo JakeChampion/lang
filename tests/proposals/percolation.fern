@@ -291,7 +291,7 @@ function main(): i32 {
   eprint("bump n=8  (" + a.to_string() + " opens): " + (m1 - base).to_string());
   eprint("bump n=16 (" + b.to_string() + " opens): " + (m2 - m1).to_string());
 
-  let r: test.TestRunner = test.test_new("percolation");
+  let r: test.TestRunner = test.new("percolation");
   r = r.it("empty and full grids", test_empty_and_full_grids);
   r = r.it("a single channel is enough and necessary", test_a_single_channel_is_enough_and_necessary);
   r = r.it("percolation is monotone", test_percolation_is_monotone);

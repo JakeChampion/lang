@@ -413,7 +413,8 @@ Two declarations at the same distance make the call ambiguous (E074). The
 caller's own method or a directly imported method takes precedence over a
 stdlib method that the caller reaches only transitively. Thus a new stdlib
 method does not break a user program that declares the same name. One module
-that declares a method twice on one type is still E006.
+that declares a method twice on one type is still E006. A second declaration of
+`iter` on `Map` is also E006 in any module, because `for` loops over a map use it.
 
 - The Go checker gives each later module's declaration a numbered mangled name
   (`InherentMethods`). `visibleInherent` selects one of them at the call.

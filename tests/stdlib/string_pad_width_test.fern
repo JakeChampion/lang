@@ -32,7 +32,7 @@ function test_codepoint_count(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/string widths");
+  let r: test.TestRunner = test.new("std/string widths");
   r = r.it("pad_end matches table", test_pad_end_matches_table);
   r = r.it("pad_start counts code points", test_pad_start_counts_code_points);
   r = r.it("multibyte fill", test_multibyte_fill);

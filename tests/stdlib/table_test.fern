@@ -28,7 +28,7 @@ function test_render_with_header(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/table");
+  let r: test.TestRunner = test.new("std/table");
   r = r.it("render basic", test_render_basic);
   r = r.it("single column", test_render_single_column);
   r = r.it("empty", test_render_empty);

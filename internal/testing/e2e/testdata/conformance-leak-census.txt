@@ -351,6 +351,7 @@ generic_struct_literal_in_append                     0
 generic_struct_method_at_tuple_type                  0
 generic_view_methods                                 0
 grow_past_capacity                                   0
+handle_close_unchecked_through_a_borrow              0
 handle_closes_on_loop_exit                           0
 handle_defer_closes_at_exit                          0
 handle_elements_close_in_for_each                    0
@@ -1160,6 +1161,7 @@ union_member_expected_type                           0
 union_member_widens_in_variant_payload               0
 unsafe_block_accepts_obligations                     0
 unsafe_block_accepts_raw_builtins                    0
+unsafe_block_holds_a_match_in_an_arm                 0
 url_codec                                            0
 url_roundtrip                                        0
 use_callback_bind                                    0

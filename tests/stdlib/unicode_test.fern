@@ -191,7 +191,7 @@ function test_invalid_utf8_replaced(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/unicode");
+  let r: test.TestRunner = test.new("std/unicode");
   r = r.it("ascii", test_ascii);
   r = r.it("latin-1", test_latin1);
   r = r.it("greek", test_greek);

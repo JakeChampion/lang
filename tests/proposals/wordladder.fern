@@ -472,7 +472,7 @@ function main(): i32 {
     i = i + 1;
   }
 
-  let r: test.TestRunner = test.test_new("wordladder");
+  let r: test.TestRunner = test.new("wordladder");
   r = r.it("every chain is a valid ladder", test_every_chain_is_a_valid_ladder);
   r = r.it("the distances satisfy the bellman condition", test_the_distances_satisfy_the_bellman_condition);
   r = r.it("no shorter chain exists", test_no_shorter_chain_exists);

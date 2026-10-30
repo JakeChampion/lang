@@ -137,7 +137,7 @@ function test_at_f32_outside_tolerance(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("assert_at wider widths");
+  let r: test.TestRunner = test.new("assert_at wider widths");
   r = r.it("at_u32 pass", test_at_u32_pass);
   r = r.it("at_u32 wrong value diag", test_at_u32_wrong_value);
   r = r.it("at_u32 out of bounds", test_at_u32_out_of_bounds);

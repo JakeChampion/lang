@@ -115,7 +115,7 @@ function test_avg_f64(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("array reductions");
+  let r: test.TestRunner = test.new("array reductions");
   r = r.it("sum_i64", test_sum_i64);
   r = r.it("sum_i64 empty returns 0", test_sum_i64_empty);
   r = r.it("max_i64", test_max_i64);

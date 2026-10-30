@@ -224,7 +224,7 @@ function test_for_each(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/pvec");
+  let r: test.TestRunner = test.new("std/pvec");
   r = r.it("new is empty", test_new_is_empty);
   r = r.it("append + get", test_append_get);
   r = r.it("with is persistent", test_with_is_persistent);

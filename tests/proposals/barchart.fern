@@ -380,7 +380,7 @@ function main(): i32 {
   }
   eprint(line);
 
-  let r: test.TestRunner = test.test_new("barchart");
+  let r: test.TestRunner = test.new("barchart");
   r = r.it("nice_max agrees with brute force", test_nice_max_agrees_with_brute_force);
   r = r.it("nice_max is idempotent", test_nice_max_is_idempotent);
   r = r.it("bar lengths are monotone", test_bar_lengths_are_monotone);

@@ -251,7 +251,7 @@ func TestCmdLangComponentStdTestSuiteRuns(t *testing.T) {
 	src := []byte(`import "std/test";
 function fabs(x: f64): f64 { if (x > 0.0) { return x; } return 0.0 - x; }
 function main(): i32 {
-    let r: test.TestRunner = test.test_new("wasm component suite");
+    let r: test.TestRunner = test.new("wasm component suite");
     r = r.it("abs positive", () => test.assert_eq_f64_near(fabs(3.5), 3.5, 0.001));
     r = r.it("abs negative", () => test.assert_eq_f64_near(fabs(0.0 - 2.25), 2.25, 0.001));
     return r.finish();

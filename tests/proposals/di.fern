@@ -421,7 +421,7 @@ function main(): i32 {
   let (s4, _) = resolve(miss, new_state(), "app", "");
   eprint("missing: " + s4.err);
 
-  let r: test.TestRunner = test.test_new("di");
+  let r: test.TestRunner = test.new("di");
   r = r.it("a shared dependency is built once", test_a_shared_dependency_is_built_once);
   r = r.it("dependencies are built before dependents", test_dependencies_are_built_before_dependents);
   r = r.it("cycles are reported with their path", test_cycles_are_reported_with_their_path);

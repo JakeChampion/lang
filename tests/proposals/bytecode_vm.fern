@@ -772,7 +772,7 @@ function main(): i32 {
     }
   }
 
-  let r: test.TestRunner = test.test_new("bytecode_vm");
+  let r: test.TestRunner = test.new("bytecode_vm");
   r = r.it("the vm agrees with the evaluator", test_the_vm_agrees_with_the_evaluator);
   r = r.it("known answers", test_known_answers);
   r = r.it("every jump target is in range", test_every_jump_target_is_in_range);

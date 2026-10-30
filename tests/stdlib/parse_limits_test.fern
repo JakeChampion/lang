@@ -144,7 +144,7 @@ function utf8_never_crashes(input: u8[]): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std parse limits");
+  let r: test.TestRunner = test.new("std parse limits");
   r = r.it("json depth limit", test_json_depth_limit);
   r = r.it("invalid utf8 is refused", test_invalid_utf8_is_refused);
   r = r.it("number parse is bounded", test_number_parse_is_bounded);

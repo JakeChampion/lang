@@ -429,7 +429,7 @@ function main(): i32 {
   eprint(report_line("{ \"a ) b\" }", "quoted closer"));
   eprint(report_line("(((", "run of openers"));
 
-  let r: test.TestRunner = test.test_new("brackets_pda");
+  let r: test.TestRunner = test.new("brackets_pda");
   r = r.it("corpus is balanced", test_corpus_is_balanced);
   r = r.it("concatenation is closed", test_concatenation_is_closed);
   r = r.it("wrapping lifts depth", test_wrapping_lifts_depth);

@@ -112,7 +112,7 @@ function test_duration_to_string_negative(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/time iso + span");
+  let r: test.TestRunner = test.new("std/time iso + span");
   r = r.it("format_iso", test_format_iso);
   r = r.it("format_iso pad year", test_format_iso_pad_year);
   r = r.it("parse_iso ok", test_parse_iso_ok);

@@ -48,7 +48,7 @@ function main(): i32 {
     return 12;
   }
   let rs: R[] = [R { tag: 1, ts: 30 as i64 }, R { tag: 2, ts: 10 as i64 }, R { tag: 3, ts: 50 as i64 }];
-  match (array.max_by_key(rs, (r: R): i64 => r.ts)) {
+  match (rs.max_by_key((r: R): i64 => r.ts)) {
     Some(r) => {
       if (r.tag != 3) {
         return 13;
@@ -58,7 +58,7 @@ function main(): i32 {
       return 14;
     }
   }
-  match (array.min_by_key(rs, (r: R): i64 => r.ts)) {
+  match (rs.min_by_key((r: R): i64 => r.ts)) {
     Some(r) => {
       if (r.tag != 2) {
         return 15;
@@ -68,7 +68,7 @@ function main(): i32 {
       return 16;
     }
   }
-  match (array.max_by_key(rs, (r: R): string => r.tag.to_string())) {
+  match (rs.max_by_key((r: R): string => r.tag.to_string())) {
     Some(r) => {
       if (r.tag != 3) {
         return 17;

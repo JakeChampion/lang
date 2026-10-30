@@ -224,7 +224,7 @@ function test_handler_closure(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/router");
+  let r: test.TestRunner = test.new("std/http/router");
   r = r.it("patterns refused", test_patterns_refused);
   r = r.it("conflicts", test_conflicts);
   r = r.it("a refusal is kept", test_a_refusal_is_kept);

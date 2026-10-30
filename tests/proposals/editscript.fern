@@ -420,7 +420,7 @@ function main(): i32 {
     i = i + 1;
   }
 
-  let r: test.TestRunner = test.test_new("editscript");
+  let r: test.TestRunner = test.new("editscript");
   r = r.it("applying the script reproduces the target", test_applying_the_script_reproduces_the_target);
   r = r.it("the script's cost equals the distance", test_the_scripts_cost_equals_the_distance);
   r = r.it("the table agrees with the recursive definition", test_the_table_agrees_with_the_recursive_definition);

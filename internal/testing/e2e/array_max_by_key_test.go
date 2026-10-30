@@ -58,11 +58,11 @@ function ts_of(r: Rec): i32 { return r.ts; }
 function main(): i32 {
     let r = 0;
     let rs: Rec[] = [Rec { id: 1, ts: 30 }, Rec { id: 2, ts: 10 }, Rec { id: 3, ts: 50 }, Rec { id: 4, ts: 20 }];
-    match (arr.max_by_key(rs, ts_of)) { Some(x) => { if (x.id == 3) { r = r + 1; } }, None => {} }
-    match (arr.min_by_key(rs, ts_of)) { Some(x) => { if (x.id == 2) { r = r + 2; } }, None => {} }
-    match (arr.min_by_key(rs, (x: Rec): i32 => { return 0 - x.ts; })) { Some(x) => { if (x.id == 3) { r = r + 4; } }, None => {} }
+    match (rs.max_by_key(ts_of)) { Some(x) => { if (x.id == 3) { r = r + 1; } }, None => {} }
+    match (rs.min_by_key(ts_of)) { Some(x) => { if (x.id == 2) { r = r + 2; } }, None => {} }
+    match (rs.min_by_key((x: Rec): i32 => { return 0 - x.ts; })) { Some(x) => { if (x.id == 3) { r = r + 4; } }, None => {} }
     let e: Rec[] = [];
-    match (arr.max_by_key(e, ts_of)) { Some(x) => {}, None => { r = r + 8; } }
+    match (e.max_by_key(ts_of)) { Some(x) => {}, None => { r = r + 8; } }
     return r;
 }
 `

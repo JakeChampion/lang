@@ -284,7 +284,7 @@ function test_in_place(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/crypto/chacha20poly1305");
+  let r: test.TestRunner = test.new("std/crypto/chacha20poly1305");
   r = r.it("chacha20 block, RFC 8439 2.3.2", test_block);
   r = r.it("chacha20 cipher, RFC 8439 2.4.2", test_cipher);
   r = r.it("poly1305, RFC 8439 2.5.2", test_poly1305);

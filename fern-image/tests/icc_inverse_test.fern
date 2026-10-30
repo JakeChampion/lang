@@ -161,7 +161,7 @@ function unchanged_components(): test.TestOutcome {
 }
 
 pub function main(): i32 {
-  let runner = test.test_new("ICC standalone inverse selection");
+  let runner = test.new("ICC standalone inverse selection");
   runner = runner.it("ICC inverse all routes", routing);
   runner = runner.it("ICC inverse selected identity bits", identities);
   runner = runner.it("ICC inverse common admission priority", precedence);

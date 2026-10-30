@@ -70,7 +70,7 @@ function test_timestamp_millis(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t: test.TestRunner = test.test_new("time instant");
+  let t: test.TestRunner = test.new("time instant");
   t = t.it("now is monotonic", test_now_is_monotonic);
   t = t.it("add, sub, and since", test_add_sub_since);
   t = t.it("compare", test_compare);

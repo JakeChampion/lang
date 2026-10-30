@@ -166,7 +166,7 @@ function test_parse_leap_second(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/time http-date");
+  let r: test.TestRunner = test.new("std/time http-date");
   r = r.it("format canonical", test_format_canonical);
   r = r.it("format epoch", test_format_epoch);
   r = r.it("format drops subsecond", test_format_drops_subsecond);

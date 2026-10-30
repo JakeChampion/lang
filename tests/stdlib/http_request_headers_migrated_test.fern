@@ -168,7 +168,7 @@ function test_no_headers_at_all_has_no_headers(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("HTTP request headers (migrated)");
+  let r: test.TestRunner = test.new("HTTP request headers (migrated)");
   r = r.it(
     "Content-Type reachable case-insensitively",
     test_parsed_headers_reachable_on_req,

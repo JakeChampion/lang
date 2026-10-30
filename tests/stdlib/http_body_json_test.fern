@@ -147,7 +147,7 @@ function test_decode_reads_text_directly(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("Typed JSON bodies");
+  let r: test.TestRunner = test.new("Typed JSON bodies");
   r = r.it("a JSON body decodes", test_a_json_body_decodes);
   r = r.it("the media type must be JSON", test_the_media_type_must_be_json);
   r = r.it("malformed JSON is 400", test_malformed_json_is_400);

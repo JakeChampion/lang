@@ -193,7 +193,7 @@ function final_filter(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("sequential PNG rows");
+  let r = test.new("sequential PNG rows");
   r = r.it("independent RGB/RGBA goldens for every filter", filters);
   r = r.it("selected rows preserve prefix dependencies through lent windows", selected);
   r = r.it("consumer mutation preserves predecessor rows and input", ownership);

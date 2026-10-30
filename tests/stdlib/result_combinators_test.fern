@@ -114,7 +114,7 @@ function test_flatten(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/result combinators");
+  let r: test.TestRunner = test.new("std/result combinators");
   r = r.it("is_ok / is_err", test_is_ok_is_err);
   r = r.it("unwrap_or", test_unwrap_or);
   r = r.it("unwrap_or_else", test_unwrap_or_else);

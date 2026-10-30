@@ -216,7 +216,7 @@ function test_sim_platform(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/static");
+  let r: test.TestRunner = test.new("std/http/static");
   r = r.it("a file whole, with its validators and media type", test_file_whole);
   r = r.it("HEAD answered, other methods refused", test_methods);
   r = r.it("paths that would leave the directory are 404s", test_paths_refused);

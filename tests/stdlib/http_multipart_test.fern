@@ -287,7 +287,7 @@ function test_builder_output(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/multipart");
+  let r: test.TestRunner = test.new("std/http/multipart");
   r = r.it("whole parts", test_whole_parts);
   r = r.it("a delimiter split between two pulls", test_split_delimiter);
   r = r.it("pieces of a part", test_pieces);

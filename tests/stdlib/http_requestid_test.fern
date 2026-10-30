@@ -47,7 +47,7 @@ function test_fresh_spells_hex(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/requestid");
+  let r: test.TestRunner = test.new("std/http/requestid");
   r = r.it("a fresh id", test_a_fresh_id);
   r = r.it("an inbound id is kept", test_an_inbound_id_is_kept);
   r = r.it("a bad inbound id is replaced", test_a_bad_inbound_id_is_replaced);

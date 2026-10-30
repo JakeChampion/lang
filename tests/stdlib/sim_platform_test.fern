@@ -346,7 +346,7 @@ function test_router_served_in_memory(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t: test.TestRunner = test.test_new("std/sim_platform");
+  let t: test.TestRunner = test.new("std/sim_platform");
   t = t.it("serves a router in memory", test_router_served_in_memory);
   t = t.it("config and secret answer what was set", test_config_and_secret_answer_what_was_set);
   t = t.it("env answers what was set", test_env_answers_what_was_set);

@@ -431,7 +431,7 @@ function framing(bytes: u8[]): string {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/websocket");
+  let r: test.TestRunner = test.new("std/http/websocket");
   r = r.it("computes the accept key", test_accept_key);
   r = r.it("refuses what is not a handshake", test_refusals);
   r = r.it("answers the 101 with the chosen protocol", test_handshake_response);
