@@ -710,10 +710,8 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
   let ix: util.NameIndex = util.name_index(names);
   let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable, inlinable, none_of(funcs.len()), false, own_roots(funcs.len())).funcs;
   let callbacks: boolean[] = [];
-  let ci: i32 = 0;
-  while (ci < candidates.len()) {
+  for ci in 0..candidates.len() {
     callbacks = callbacks.append(inlinable[ci] && unused_environment(candidates[ci]) >= 0);
-    ci = ci + 1;
   }
   candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable, inlinable, none_of(funcs.len()), false, own_roots(funcs.len())).funcs;
   return splice_closures(funcs, candidates, ix, inlinable, rewrite);
