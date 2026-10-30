@@ -45,7 +45,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<7 pub function first[T](xs: T[]): Option[T]>>
 
-<<8 pub function min_by_key[T, K: cmp.Ord](xs: T[], key: (T)>>
+<<8 pub function (xs: T[]) min_by_key[T, K: cmp.Ord](key: (T)>>
 
 <<9 pub function rposition[T](xs: T[], pred: (T)>>
 
@@ -608,7 +608,7 @@ pub function find_map[T, U](xs: T[], f: (T) => Option[U]): Option[U] {
   return None;
 }
 
-pub function max_by_key[T, K: cmp.Ord](xs: T[], key: (T) => K): Option[T] {
+pub function (xs: T[]) max_by_key[T, K: cmp.Ord](key: (T) => K): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
@@ -627,11 +627,11 @@ pub function max_by_key[T, K: cmp.Ord](xs: T[], key: (T) => K): Option[T] {
 }
 ```
 
-### `8 pub function min_by_key[T, K: cmp.Ord](xs: T[], key: (T)`
+### `8 pub function (xs: T[]) min_by_key[T, K: cmp.Ord](key: (T)`
 
 ```fern
-<<8 pub function min_by_key[T, K: cmp.Ord](xs: T[], key: (T)>>=
-pub function min_by_key[T, K: cmp.Ord](xs: T[], key: (T) => K): Option[T] {
+<<8 pub function (xs: T[]) min_by_key[T, K: cmp.Ord](key: (T)>>=
+pub function (xs: T[]) min_by_key[T, K: cmp.Ord](key: (T) => K): Option[T] {
   if (xs.len() == 0) {
     return None;
   }

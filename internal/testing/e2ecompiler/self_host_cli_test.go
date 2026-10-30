@@ -229,8 +229,8 @@ trait B { function scale(self: Self): i32; }
 
 @noinline function kept(x: i32): i32 { return x; }
 
-impl A for P { function scale(self: Self): i32 { return kept(self.x); } }
-impl B for P { function scale(self: Self): i32 { return kept(100); } }
+impl A for P { @noinline function scale(self: Self): i32 { return kept(self.x); } }
+impl B for P { @noinline function scale(self: Self): i32 { return kept(100); } }
 
 function twice[T: A](v: T): i32 { return v.scale() + v.scale(); }
 
