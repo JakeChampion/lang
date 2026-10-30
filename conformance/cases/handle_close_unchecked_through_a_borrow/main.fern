@@ -1,0 +1,64 @@
+// close_unchecked closes a handle through a borrow. The caller takes the
+// obligation in an unsafe block: no copy of the handle is used after it.
+
+function close_shared(w: Writer): Result[void, IoError] {
+  unsafe {
+    return w.close_unchecked();
+  }
+}
+
+function save(path: string): Result[void, IoError] {
+  let w: Writer = open_writer(path)?;
+  w.write("kept")?;
+  close_shared(w)?;
+  print("read back " + read_file(path)?);
+  let r: Reader = open_reader(path)?;
+  unsafe {
+    r.close_unchecked()?;
+  }
+  return remove_file(path);
+}
+
+function main(): i32 {
+  match (temp_dir("fern-close-unchecked")) {
+    Err(_) => {
+      return 1;
+    },
+    Ok(dir) => {
+      match (save(dir + "/kept.txt")) {
+        Ok(_) => {
+          print("saved");
+        },
+        Err(_) => {
+          print("failed");
+        }
+      }
+      match (open_dir(dir)) {
+        Ok(d) => {
+          unsafe {
+            match (d.close_unchecked()) {
+              Ok(_) => {
+                print("dir closed");
+              },
+              Err(_) => {
+                print("dir close failed");
+              }
+            }
+          }
+        },
+        Err(_) => {
+          print("open_dir failed");
+        }
+      }
+      match (remove_dir(dir)) {
+        Ok(_) => {
+          print("removed");
+        },
+        Err(_) => {
+          print("remove failed");
+        }
+      }
+      return 0;
+    }
+  }
+}
