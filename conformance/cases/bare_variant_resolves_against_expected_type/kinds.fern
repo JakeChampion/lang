@@ -1,0 +1,5 @@
+pub enum Mode { Fast, Slow }
+
+pub function speed(m: Mode): i32 {
+  return match (m) { Fast => 2, Slow => 1 };
+}

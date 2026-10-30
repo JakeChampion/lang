@@ -219,7 +219,11 @@ same code(s) the Go checker does — restricted to
   `flatten` resolves a bare value reference to an imported variant only when
   one enum the module sees declares it; otherwise the reference keeps its
   module's own spelling for the checker to report. Patterns are left to
-  the scrutinee, as in Go. `TestSelfHostCheckerVariantScopeDifferentialX86_64`
+  the scrutinee, as in Go. A bare reference at a position whose expected
+  type names one of the candidate enums is not ambiguous (#12701).
+  `qualify_variants_in` rewrites it to the qualified `Enum.Variant` form
+  before the check passes and again in `annotate_module`, so every later
+  pass reads the qualified form. `TestSelfHostCheckerVariantScopeDifferentialX86_64`
   covers it over a program's own modules, and the bundle differential over
   stdlib ones.
 - **Slice 22 (done): structural match-arm errors** (E026, E028).

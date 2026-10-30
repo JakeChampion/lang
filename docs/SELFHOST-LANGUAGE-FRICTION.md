@@ -822,16 +822,14 @@ because shaping the data is the only lever the language actually gives it.
 
 ### 4.6 The variant namespace is flat, and the self-host pays for it
 
-`Color.Red` and `Status.Red` coexist and the checker requires qualification
-(E036) — fine at the surface. But the desugar underneath declares each variant
+`Color.Red` and `Status.Red` coexist, and a bare `Red` resolves against the
+type its position expects (#12701) — fine at the surface. But the desugar underneath declares each variant
 as a `StructDecl` **under its bare name**, so two enums sharing a variant name
 produce two decls that name-based lookup cannot distinguish.
 `ir.fern:47`'s `Op.decl: i32` field exists solely to work around this: its
 comment records that "a backend resolving `str` by name gets whichever was
 declared first — reading the other enum's field types and widths". An
 integer index threaded through every op, to undo a namespace decision.
-`docs/IMPROVEMENTS.md` item 15 has this as an open language-design question; it
-already has a concrete cost.
 
 ---
 

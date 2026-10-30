@@ -3882,6 +3882,18 @@ func TestQualifiedVariantReferences(t *testing.T) {
 			}
 			return 0;
 		}`,
+		`enum A { Foo, Bar }
+		enum B { Foo, Baz }
+		function main(): i32 {
+			let x: A = Foo;
+			return 0;
+		}`,
+		`enum A { Foo(i32) }
+		enum B { Foo(i32) }
+		function main(): i32 {
+			let x: A = Foo(7);
+			return 0;
+		}`,
 		`enum Light { Red, Green, Yellow }
 		function main(): i32 {
 			let l: Light = Red;
@@ -3907,7 +3919,7 @@ func TestQualifiedVariantReferences(t *testing.T) {
 			`enum A { Foo, Bar }
 			enum B { Foo, Baz }
 			function main(): i32 {
-				let x: A = Foo;
+				let x = Foo;
 				return 0;
 			}`,
 			"declared in multiple enums",
@@ -3916,7 +3928,7 @@ func TestQualifiedVariantReferences(t *testing.T) {
 			`enum A { Foo(i32) }
 			enum B { Foo(i32) }
 			function main(): i32 {
-				let x: A = Foo(7);
+				let x = Foo(7);
 				return 0;
 			}`,
 			"declared in multiple enums",
@@ -3955,6 +3967,44 @@ func TestQualifiedVariantReferences(t *testing.T) {
 	}
 }
 
+func TestBareVariantResolvesAgainstExpectedType(t *testing.T) {
+	const enums = `enum A { Foo, Bar, Box(i32) }
+	enum B { Foo, Baz, Box(i32) }
+	struct Pair { a: A }
+	struct K { n: i32 }
+	function (k: K) take(a: A): i32 { return k.n; }
+	function take(a: A): i32 { return 0; }
+	function on(): boolean { return true; }
+	`
+	good := map[string]string{
+		"return":           `function f(): A { return Foo; }`,
+		"assignment":       `function f(): i32 { let a: A = Bar; a = Foo; return 0; }`,
+		"argument":         `function f(): i32 { return take(Foo); }`,
+		"method argument":  `function f(): i32 { return K { n: 1 }.take(Foo); }`,
+		"struct field":     `function f(): Pair { return Pair { a: Foo }; }`,
+		"array element":    `function f(): i32 { let xs: A[] = [Foo, Bar]; return 0; }`,
+		"Option payload":   `function f(): Option[A] { return Some(Foo); }`,
+		"variant payload":  `function f(): A { return Box(1); }`,
+		"if-expression":    `function f(): i32 { let a: A = if (on()) { Foo } else { Bar }; return 0; }`,
+		"match-expression": `function f(): i32 { let a: A = match (on()) { true => Foo, false => Bar }; return 0; }`,
+	}
+	for name, body := range good {
+		if err := checkSource(t, enums+body+"\nfunction main(): i32 { return 0; }"); err != nil {
+			t.Errorf("%s: want the expected type to pick A, got %v", name, err)
+		}
+	}
+	bad := map[string]string{
+		"no annotation": `function f(): i32 { let a = Foo; return 0; }`,
+		"comparison":    `function f(a: A): boolean { return a == Foo; }`,
+	}
+	for name, body := range bad {
+		err := checkSource(t, enums+body+"\nfunction main(): i32 { return 0; }")
+		if err == nil || !strings.Contains(err.Error(), "declared in multiple enums") {
+			t.Errorf("%s: want E036 with no expected type, got %v", name, err)
+		}
+	}
+}
+
 func TestAmbiguousVariantHintIsSpellable(t *testing.T) {
 	const libEnum = "pub enum Kind { Text, Number }\n"
 	const otherEnum = "pub enum Kind { Text, Blah }\n"
@@ -3964,7 +4014,7 @@ func TestAmbiguousVariantHintIsSpellable(t *testing.T) {
 			"main.fern": "import \"./lib\";\n" +
 				"function main(): i32 { return lib.pick(); }\n",
 			"lib.fern": "import \"./other\";\n" + libEnum + "pub function pick(): i32 {\n" +
-				"    let k: Kind = Text;\n    return 0;\n}\n",
+				"    let k = Text;\n    return 0;\n}\n",
 			"other.fern": otherEnum + "pub function n(): i32 { return 0; }\n",
 		}, "main.fern")
 		if err == nil {
@@ -3987,7 +4037,7 @@ func TestAmbiguousVariantHintIsSpellable(t *testing.T) {
 	t.Run("names imported enums as mod.Enum", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"main.fern": "import \"./lib\";\nimport \"./other\";\n" +
-				"function main(): i32 {\n    let k: lib.Kind = Text;\n    return 0;\n}\n",
+				"function main(): i32 {\n    let k = Text;\n    return 0;\n}\n",
 			"lib.fern":   libEnum,
 			"other.fern": otherEnum,
 		}, "main.fern")
@@ -8893,7 +8943,7 @@ function main(): i32 {
 	}
 }
 
-func TestAmbiguousUnionMemberVarInitReportsOnce(t *testing.T) {
+func TestUnionMemberVarInitResolvesAgainstItsAnnotation(t *testing.T) {
 	src := `struct Hold { v: i32 }
 	struct Blank { w: i32 }
 	type Slot = Hold | Blank;
@@ -8902,14 +8952,8 @@ func TestAmbiguousUnionMemberVarInitReportsOnce(t *testing.T) {
 		let f: Slot = Hold { v: 30 };
 		return 0;
 	}`
-	err := checkSource(t, src)
-	var errs diag.Errors
-	if !errors.As(err, &errs) || len(errs) != 1 {
-		t.Fatalf("want exactly one diagnostic, got: %v", err)
-	}
-	var ce *Error
-	if !errors.As(errs[0], &ce) || ce.Code() != "E036" || !strings.Contains(ce.Msg, "declared in multiple enums") {
-		t.Fatalf("want E036 naming both unions, got: %v", errs[0])
+	if err := checkSource(t, src); err != nil {
+		t.Fatalf("the annotation names Slot, so Hold is Slot's member: %v", err)
 	}
 }
 

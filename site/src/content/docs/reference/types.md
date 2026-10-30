@@ -197,6 +197,28 @@ to leave the remaining fields out (`Rect { w, .. }`). Without `..`, every
 field must be named. It is constructed positionally, arguments in
 declaration order: `Rect(3.0, 4.0)` sets `w` then `h`.
 
+Two enums can declare the same variant name. `Color.Red` names the
+variant of one enum. A bare `Red` resolves against the type its
+position expects: an annotation, an assignment target, a parameter, a
+return type, a struct field, an array element, a payload, or a match
+scrutinee. Where no type is expected, as in `let c = Red;` or
+`c == Red`, a bare `Red` is ambiguous and the checker reports E036.
+
+```fern
+enum Color { Red, Green }
+enum Signal { Red, Stop }
+
+function paint(c: Color): i32 {
+    return match (c) { Red => 1, Green => 2 };
+}
+
+function main(): i32 {
+    let s: Signal = Red;        // Signal.Red
+    let n: i32 = paint(Red);    // Color.Red
+    return n - 1;
+}
+```
+
 A tuple `(T, U)` reads its elements with `.0`, `.1`, … and destructures
 with `let (a, b) = t;`. The empty tuple `()` is the unit value, below.
 
