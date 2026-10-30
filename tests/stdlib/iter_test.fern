@@ -118,7 +118,7 @@ function test_map_filter(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("core/iter");
+  let r: test.TestRunner = test.new("core/iter");
   r = r.it("sum over a range", test_sum_range);
   r = r.it("len over a range", test_len_range);
   r = r.it("range collect", test_range_collect);

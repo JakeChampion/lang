@@ -861,7 +861,7 @@ function test_chacha_authentication_limit(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/quic/conn");
+  let r: test.TestRunner = test.new("std/quic/conn");
   r = r.it("a handshake in memory", test_handshake);
   r = r.it("the anti-amplification limit", test_amplification);
   r = r.it("a lost datagram, by time threshold", test_lost_datagram);

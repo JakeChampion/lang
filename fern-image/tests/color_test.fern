@@ -108,7 +108,7 @@ function image_errors(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("color M1");
+  let r = test.new("color M1");
   r = r.it("sRGB thresholds and exhaustive byte round trips", transfer);
   r = r.it("premultiply, unpremultiply, zero alpha and saturation", alpha);
   r = r.it("linear source over and transparent pixels", composite);

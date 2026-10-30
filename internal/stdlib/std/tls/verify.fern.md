@@ -52,7 +52,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<18 function __leaf_ok(leaf: x509.Certificate, name: string, now: i64): Result[boolean, VerifyError]>>
 
-<<19 pub function verify_server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Ce...>>
+<<19 pub function server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Ce...>>
 
 <<20 function __parsed(chain: u8[][]): Result[x509.Certificate[], VerifyError]>>
 
@@ -432,7 +432,7 @@ pub function scheme_fits(cert: x509.Certificate, scheme: i32): boolean {
   return false;
 }
 
-pub function verify_signed(cert: x509.Certificate, scheme: i32, signed: [u8], sig: [u8]): boolean {
+pub function signed(cert: x509.Certificate, scheme: i32, data: [u8], sig: [u8]): boolean {
   if (!scheme_fits(cert, scheme)) {
     return false;
   }
@@ -451,7 +451,7 @@ pub function verify_signed(cert: x509.Certificate, scheme: i32, signed: [u8], si
   } else if (scheme == 0x0807) {
     alg = x509.Ed25519;
   }
-  match (signature_ok(cert.key, alg, signed, sig)) {
+  match (signature_ok(cert.key, alg, data, sig)) {
     Ok(ok) => {
       return ok;
     },
@@ -671,17 +671,17 @@ function __has(v: string[], x: string): boolean {
 }
 ```
 
-### `19 pub function verify_server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Ce...`
+### `19 pub function server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Ce...`
 
 ```fern
-<<19 pub function verify_server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Ce...>>=
-pub function verify_server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Certificate, VerifyError] {
+<<19 pub function server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Ce...>>=
+pub function server(chain: u8[][], roots: Roots, name: string, now: time.Timestamp): Result[x509.Certificate, VerifyError] {
   let certs: x509.Certificate[] = __parsed(chain)?;
   __leaf_ok(certs[0], name, now.sec)?;
   return __rooted(certs, roots, now.sec, true);
 }
 
-pub function verify_client(chain: u8[][], roots: Roots, now: time.Timestamp): Result[x509.Certificate, VerifyError] {
+pub function client(chain: u8[][], roots: Roots, now: time.Timestamp): Result[x509.Certificate, VerifyError] {
   let certs: x509.Certificate[] = __parsed(chain)?;
   __signing_leaf(certs[0], now.sec)?;
   if (certs[0].has_ext_key_usage && !__has(certs[0].ext_key_usage, x509.EKU_CLIENT_AUTH) && !__has(certs[0].ext_key_usage, x509.EKU_ANY)) {

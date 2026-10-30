@@ -436,7 +436,7 @@ function test_bad_encapsulation_key(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/tls/keyshare");
+  let r: test.TestRunner = test.new("std/tls/keyshare");
   r = r.it("groups", test_groups);
   r = r.it("X25519 shares of RFC 8448", test_x25519_trace);
   r = r.it("X25519MLKEM768 client share", test_hybrid_client_share);

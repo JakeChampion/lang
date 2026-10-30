@@ -61,7 +61,7 @@ function test_empty(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/form");
+  let r: test.TestRunner = test.new("std/http/form");
   r = r.it("fields", test_fields);
   r = r.it("the media type", test_media_type);
   r = r.it("a body that is not UTF-8", test_not_utf8);

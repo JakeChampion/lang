@@ -253,7 +253,7 @@ function cancellation(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t = test.test_new("restricted JPEG grayscale images");
+  let t = test.new("restricted JPEG grayscale images");
   t = t.it("zero blocks, cropped edges, and header-only planning", zeros_and_plan);
   t = t.it("grayscale references and single-component sampling", real_gray_and_sampling);
   t = t.it("color, progressive, and CMYK profiles reject", unsupported);

@@ -103,7 +103,7 @@ function test_strings(): test.TestOutcome {
 }
 
 function main(): i32 {
-    let r: test.TestRunner = test.test_new("hello");
+    let r: test.TestRunner = test.new("hello");
     r = r.it("addition", test_addition);
     r = r.it("strings", test_strings);
     return r.finish();

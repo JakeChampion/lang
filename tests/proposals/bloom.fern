@@ -246,7 +246,7 @@ function main(): i32 {
       + " fp_measured=" + measured_fp_permille(b, probes).to_string() + "/1000");
   }
 
-  let r: test.TestRunner = test.test_new("bloom");
+  let r: test.TestRunner = test.new("bloom");
   r = r.it("no false negatives", test_no_false_negatives);
   r = r.it("empty filter contains nothing", test_empty_filter_contains_nothing);
   r = r.it("popcount agrees with a manual count", test_popcount_agrees_with_a_manual_count);

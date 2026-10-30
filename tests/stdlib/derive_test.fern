@@ -174,7 +174,7 @@ function test_json_array_scalar(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("derive");
+  let r: test.TestRunner = test.new("derive");
   r = r.it("eq reflexive", test_eq_reflexive);
   r = r.it("eq distinguishes", test_eq_distinguishes);
   r = r.it("display", test_display);

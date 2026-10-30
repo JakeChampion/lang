@@ -32,7 +32,7 @@ func TestSelfHostSemanticSourceCensusLoadsTheStdlib(t *testing.T) {
 	writeEntry(t, entry, `import "std/test";
 function t_one(): test.TestOutcome { return test.assert_eq(1, 1); }
 function main(): i32 {
-    let r: test.TestRunner = test.test_new("census");
+    let r: test.TestRunner = test.new("census");
     r = r.it("one", t_one());
     return r.finish();
 }

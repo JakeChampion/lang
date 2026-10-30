@@ -150,7 +150,7 @@ function test_i64_single(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("wider sorts");
+  let r: test.TestRunner = test.new("wider sorts");
   r = r.it("sort_i64_asc", test_i64_asc);
   r = r.it("sort_i64_desc", test_i64_desc);
   r = r.it("sort_u32_asc", test_u32_asc);

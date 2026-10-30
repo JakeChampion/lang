@@ -79,7 +79,7 @@ function test_format_iso_zero_pad(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/time calendar");
+  let r: test.TestRunner = test.new("std/time calendar");
   r = r.it("is_leap_year", test_is_leap_year);
   r = r.it("days_in_month feb", test_days_in_month_feb);
   r = r.it("days_in_month others", test_days_in_month_others);

@@ -54,7 +54,7 @@ function test_256_and_truecolor(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/ansi");
+  let r: test.TestRunner = test.new("std/ansi");
   r = r.it("strip roundtrip", test_strip_roundtrip);
   r = r.it("strip preserves text", test_strip_preserves_surrounding);
   r = r.it("styles", test_styles);

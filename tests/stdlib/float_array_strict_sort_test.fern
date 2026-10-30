@@ -133,7 +133,7 @@ function test_strict_asc_string_fails_on_dupe(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("float arrays + strict / desc sort");
+  let r: test.TestRunner = test.new("float arrays + strict / desc sort");
   r = r.it("f64 array near pass", test_f64_array_pass);
   r = r.it("f64 array within tolerance", test_f64_array_within_tolerance);
   r = r.it("f64 array outside tolerance + idx", test_f64_array_outside_tolerance);

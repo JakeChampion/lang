@@ -39,7 +39,7 @@ function test_serialized_wire_ends_with_body(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("HTTP response body shim");
+  let r: test.TestRunner = test.new("HTTP response body shim");
   r = r.it("body_string round-trips", test_body_string_round_trips);
   r = r.it("body_len matches the string length", test_body_len_matches_string);
   r = r.it("body_bytes matches the string bytes", test_body_bytes_matches_string_bytes);

@@ -21,7 +21,7 @@ function test_to_lower(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("skip-and-subsuites");
+  let r: test.TestRunner = test.new("skip-and-subsuites");
 
   r = r.it("top-level pass", test_pass);
 

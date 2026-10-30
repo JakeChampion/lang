@@ -309,7 +309,7 @@ function main(): i32 {
     eprint("  predicates(\"" + probes[i] + "\") -> " + verdict);
   }
 
-  let t: test.TestRunner = test.test_new("plugin_registry");
+  let t: test.TestRunner = test.new("plugin_registry");
   t = t.it("ties break by registration", test_ties_break_by_registration);
   t = t.it("the order is the composition order", test_the_order_is_the_composition_order);
   t = t.it("closures capture their own iteration", test_closures_capture_their_own_iteration);

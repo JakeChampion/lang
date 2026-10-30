@@ -193,7 +193,7 @@ function test_encoder_blocks(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/zstd");
+  let r: test.TestRunner = test.new("std/zstd");
   r = r.it("a small frame", test_small);
   r = r.it("described tables and FSE-compressed weights", test_described);
   r = r.it("direct Huffman weights", test_direct_weights);

@@ -416,12 +416,12 @@ function __client_trusted(config: Config, v: handshake.Verification, now: i64): 
   if (v.chain.len() == 0) {
     return Err(tls.CertificateMissing);
   }
-  match (verify.verify_client(v.chain, roots, time.timestamp_from_unix(now / 1000))) {
+  match (verify.client(v.chain, roots, time.timestamp_from_unix(now / 1000))) {
     Ok(leaf) => {
       if (!verify.scheme_fits(leaf, v.scheme)) {
         return Err(tls.SchemeMismatch);
       }
-      if (!verify.verify_signed(leaf, v.scheme, v.signed, v.signature)) {
+      if (!verify.signed(leaf, v.scheme, v.signed, v.signature)) {
         return Err(tls.SignatureInvalid);
       }
       return Ok(());

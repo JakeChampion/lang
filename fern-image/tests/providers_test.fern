@@ -345,7 +345,7 @@ function schedules(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("execution row providers");
+  let r = test.new("execution row providers");
   r = r.it("factory sessions are private across graph copies and executions", fresh_sessions);
   r = r.it("provider RGB/RGBA coordinates preserve every nearest step", coordinates);
   r = r.it("forward providers retain repeated bilinear dependencies in rows and tiles", forward_dependencies);

@@ -80,7 +80,7 @@ function alpha(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("pixels M0");
+  let r: test.TestRunner = test.new("pixels M0");
   r = r.it("invalid dimensions and strides", dimensions);
   r = r.it("row, pixel count and allocation overflow", overflow);
   r = r.it("pixel, byte and hard allocation limits", limits);

@@ -218,7 +218,7 @@ function test_record_roundtrip_corpus(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/csv");
+  let r: test.TestRunner = test.new("std/csv");
   r = r.it("escape plain", test_escape_plain);
   r = r.it("escape comma", test_escape_comma);
   r = r.it("escape quote", test_escape_quote);

@@ -392,7 +392,7 @@ function test_unknown_function_is_rejected(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("vcl-backend");
+  let r: test.TestRunner = test.new("vcl-backend");
   r = r.it("string plus bytes concatenates", test_string_plus_bytes_concatenates);
   r = r.it("byte units are binary", test_byte_units_are_binary);
   r = r.it("duration arithmetic", test_duration_arithmetic);

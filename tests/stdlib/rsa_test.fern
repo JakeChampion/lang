@@ -186,7 +186,7 @@ function test_bad_keys(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/crypto/rsa");
+  let r: test.TestRunner = test.new("std/crypto/rsa");
   r = r.it("pkcs1 2048-bit sha256", test_pkcs1_2048_sha256);
   r = r.it("pkcs1 2048-bit sha384", test_pkcs1_2048_sha384);
   r = r.it("pkcs1 2048-bit sha512", test_pkcs1_2048_sha512);

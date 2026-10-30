@@ -507,7 +507,7 @@ function main(): i32 {
   }
   eprint(line);
 
-  let r: test.TestRunner = test.test_new("skiplist");
+  let r: test.TestRunner = test.new("skiplist");
   r = r.it("level zero is the sorted key set", test_level_zero_is_the_sorted_key_set);
   r = r.it("membership agrees with a scan", test_membership_agrees_with_a_scan);
   r = r.it("every level is a subsequence of the one below", test_every_level_is_a_subsequence_of_the_one_below);

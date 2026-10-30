@@ -303,7 +303,7 @@ function pem_refusals(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/tls/x509");
+  let r: test.TestRunner = test.new("std/tls/x509");
   r = r.it("a leaf's fields", test_leaf);
   r = r.it("an intermediate and a root", test_authorities);
   r = r.it("RSA, Ed25519, SHA-384 and a critical extension", test_other_keys);

@@ -359,7 +359,7 @@ function test_posix_rule_rejected(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t: test.TestRunner = test.test_new("tz");
+  let t: test.TestRunner = test.new("tz");
   t = t.it("standard time before the spring gap", test_rule_standard_before_spring);
   t = t.it("daylight time from the spring gap", test_rule_daylight_after_spring);
   t = t.it("fall back", test_rule_fall_back);

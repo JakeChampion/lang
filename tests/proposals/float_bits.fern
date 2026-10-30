@@ -346,7 +346,7 @@ function main(): i32 {
     eprint("  " + ns[i] + ": " + describe(xs[i]));
   }
 
-  let t: test.TestRunner = test.test_new("float_bits");
+  let t: test.TestRunner = test.new("float_bits");
   t = t.it("the fields rebuild the original bits", test_the_fields_rebuild_the_original_bits);
   t = t.it("every single bit position round trips", test_every_single_bit_position_round_trips);
   t = t.it("the fields reproduce the value", test_the_fields_reproduce_the_value);

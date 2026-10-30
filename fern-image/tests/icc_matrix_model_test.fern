@@ -247,7 +247,7 @@ function order_and_sign(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("restricted ICC matrix data selection");
+  let runner = test.new("restricted ICC matrix data selection");
   runner = runner.it("frozen exact columns and owned shared curves", profiles);
   runner = runner.it("explicit intent and layered limits", admission);
   runner = runner.it("no forward LUT fallback", precedence);

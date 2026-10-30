@@ -134,7 +134,7 @@ function test_sets(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("collection vocabulary");
+  let r: test.TestRunner = test.new("collection vocabulary");
   r = r.it("Map", test_map);
   r = r.it("OrdMap", test_ordmap);
   r = r.it("PMap", test_pmap);

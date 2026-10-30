@@ -162,7 +162,7 @@ function test_cancelled_rows(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner: test.TestRunner = test.test_new("fractal acceleration");
+  let runner: test.TestRunner = test.new("fractal acceleration");
   runner = runner.it("lane refill, tails, and iteration deadlines", test_refill);
   runner = runner.it("shared orbit prefix", test_prefix);
   runner = runner.it("typed coordinate errors", test_invalid_tiles);

@@ -321,7 +321,7 @@ function main(): i32 {
   eprint("churn(128) total=" + b.to_string()
     + " bump=" + (after_2n - after_n).to_string());
 
-  let r: test.TestRunner = test.test_new("tombstone_store");
+  let r: test.TestRunner = test.new("tombstone_store");
   r = r.it("delete tombstones rather than removes", test_delete_tombstones_rather_than_removes);
   r = r.it("delete of a missing key is a no-op", test_delete_missing_is_a_noop);
   r = r.it("compaction preserves the live mapping", test_compaction_preserves_the_live_mapping);

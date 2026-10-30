@@ -148,7 +148,7 @@ function test_contains_value_empty(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("map verbs");
+  let r: test.TestRunner = test.new("map verbs");
   r = r.it("entries sum k+v", test_entries_sum);
   r = r.it("entries len (string keys)", test_entries_len);
   r = r.it("entries empty", test_entries_empty);

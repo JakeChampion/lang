@@ -65,7 +65,7 @@ function test_signum_lerp_f32(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/f64 convert");
+  let r: test.TestRunner = test.new("std/f64 convert");
   r = r.it("signum positive", test_signum_positive);
   r = r.it("signum negative", test_signum_negative);
   r = r.it("signum zero", test_signum_zero);

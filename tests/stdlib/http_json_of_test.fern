@@ -33,7 +33,7 @@ function test_a_scalar_is_json_too(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http json_of");
+  let r: test.TestRunner = test.new("std/http json_of");
   r = r.it("json_of answers 200 application/json", test_json_of_answers_200);
   r = r.it("json_of_status names its status", test_json_of_status_names_its_status);
   r = r.it("a scalar is JSON too", test_a_scalar_is_json_too);

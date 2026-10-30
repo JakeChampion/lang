@@ -378,7 +378,7 @@ function main(): i32 {
       + verdict(pw));
   }
 
-  let t: test.TestRunner = test.test_new("passcheck");
+  let t: test.TestRunner = test.new("passcheck");
   t = t.it("log2 is exact on powers and close elsewhere", test_log2_is_exact_on_powers_and_close_elsewhere);
   t = t.it("log2 is monotone and never flat across a doubling", test_log2_is_monotone_and_never_flat_across_a_doubling);
   t = t.it("the pool is the union of the classes present", test_the_pool_is_the_union_of_the_classes_present);

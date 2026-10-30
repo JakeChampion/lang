@@ -208,7 +208,7 @@ function test_problem_carries_a_position(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("vcl-check");
+  let r: test.TestRunner = test.new("vcl-check");
   r = r.it("clean program has no problems", test_clean_program_has_no_problems);
   r = r.it("out of scope read", test_out_of_scope_read);
   r = r.it("out of scope write", test_out_of_scope_write);

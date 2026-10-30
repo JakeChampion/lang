@@ -137,7 +137,7 @@ function ownership(): test.TestOutcome {
 }
 
 pub function main(): i32 {
-  let runner = test.test_new("ICC inverse matrix");
+  let runner = test.new("ICC inverse matrix");
   runner = runner.it("ICC inverse exact signed projections", projections);
   runner = runner.it("ICC inverse dyadic and small determinants", dyadic);
   runner = runner.it("ICC inverse admission before callbacks", admission);

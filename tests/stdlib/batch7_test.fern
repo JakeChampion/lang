@@ -115,7 +115,7 @@ function test_json_invalid_actual_fails(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("batch 7");
+  let r: test.TestRunner = test.new("batch 7");
 
   r = r.it("i64 lt", test_i64_lt);
   r = r.it("i64 le", test_i64_le);

@@ -92,7 +92,7 @@ function test_decode_checked_rejects(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/base32");
+  let r: test.TestRunner = test.new("std/base32");
   r = r.it("encode vectors", test_encode_vectors);
   r = r.it("decode vectors", test_decode_vectors);
   r = r.it("roundtrip", test_roundtrip);

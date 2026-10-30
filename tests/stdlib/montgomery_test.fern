@@ -106,7 +106,7 @@ function test_select(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/crypto/montgomery");
+  let r: test.TestRunner = test.new("std/crypto/montgomery");
   r = r.it("P-256's field", test_p256_field);
   r = r.it("P-384's order", test_p384_order);
   r = r.it("in_range", test_in_range);

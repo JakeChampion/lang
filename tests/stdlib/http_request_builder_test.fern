@@ -127,7 +127,7 @@ function test_query_reads_by_name(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("HTTP request builder");
+  let r: test.TestRunner = test.new("HTTP request builder");
   r = r.it("a JSON body is created", test_json_body_is_created);
   r = r.it("a body without its type is refused", test_body_without_its_type_is_refused);
   r = r.it("a header names the caller", test_header_names_the_caller);

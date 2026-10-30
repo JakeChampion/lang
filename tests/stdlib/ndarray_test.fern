@@ -360,7 +360,7 @@ function triple(c: ndarray.NdArray[i32]): ndarray.NdArray[i32] {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/ndarray");
+  let r: test.TestRunner = test.new("std/ndarray");
   r = r.it("from_flat indexes row-major", test_from_flat_indexes_row_major);
   r = r.it("get is None out of range", test_get_is_none_out_of_range);
   r = r.it("transpose swaps indices", test_transpose_swaps_indices);

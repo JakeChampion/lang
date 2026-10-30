@@ -129,7 +129,7 @@ function frozen_wire(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("bounded scalar ICC parametric evaluation");
+  let runner = test.new("bounded scalar ICC parametric evaluation");
   runner = runner.it("all five corrected formulas and branch selection", formulas);
   runner = runner.it("clipping, public domains, and explicit unsupported subset", clipping_and_domains);
   runner = runner.it("fixed-point gamma extremes and exact identity", gamma_extremes);

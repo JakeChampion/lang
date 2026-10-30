@@ -107,7 +107,7 @@ function test_a_preflight_through_the_router(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/cors");
+  let r: test.TestRunner = test.new("std/http/cors");
   r = r.it("no Origin passes through", test_no_origin_passes_through);
   r = r.it("an admitted origin is marked", test_an_admitted_origin_is_marked);
   r = r.it("a subdomain wildcard", test_a_subdomain_wildcard);

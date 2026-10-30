@@ -109,7 +109,7 @@ function test_status_and_responses(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/grpc");
+  let r: test.TestRunner = test.new("std/http/grpc");
   r = r.it("message framing", test_framing);
   r = r.it("partial and refused messages", test_partial_and_refused);
   r = r.it("grpc-timeout", test_timeout);

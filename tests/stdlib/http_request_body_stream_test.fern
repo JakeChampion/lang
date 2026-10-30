@@ -380,7 +380,7 @@ function test_read_some_answers_each_chunk(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("HttpRequest.body as a Stream");
+  let r: test.TestRunner = test.new("HttpRequest.body as a Stream");
   r = r.it("body_stream carries the body", test_body_stream_carries_the_body);
   r = r.it("body_stream starts at the beginning", test_body_stream_starts_at_the_beginning);
   r = r.it("an empty body is an empty stream", test_empty_body_is_an_empty_stream);

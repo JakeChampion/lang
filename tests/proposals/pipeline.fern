@@ -388,7 +388,7 @@ function main(): i32 {
     i = i + 1;
   }
 
-  let r: test.TestRunner = test.test_new("pipeline");
+  let r: test.TestRunner = test.new("pipeline");
   r = r.it("the try operator matches the explicit match", test_the_try_operator_matches_the_explicit_match);
   r = r.it("no stage runs after the failure", test_no_stage_runs_after_the_failure);
   r = r.it("the first failure wins", test_the_first_failure_wins);

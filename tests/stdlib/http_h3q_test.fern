@@ -546,7 +546,7 @@ function test_blocked_backpressure(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/h3q");
+  let r: test.TestRunner = test.new("std/http/h3q");
   r = r.it("a GET and its response", test_get);
   r = r.it("a response without a date is sent with the connection's", test_date);
   r = r.it("each response carries the date set when it is sent, and none once it is cleared", test_date_changes);

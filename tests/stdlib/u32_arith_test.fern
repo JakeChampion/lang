@@ -51,7 +51,7 @@ function test_rotr_roundtrip(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/u32 wrapping arithmetic");
+  let r: test.TestRunner = test.new("std/u32 wrapping arithmetic");
   r = r.it("wrap add", test_wrap_add);
   r = r.it("wrap add two high", test_wrap_add_two_high);
   r = r.it("wrap sub", test_wrap_sub);

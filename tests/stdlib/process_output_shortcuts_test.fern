@@ -106,7 +106,7 @@ function test_stderr_line_count_pass(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("process output shortcuts");
+  let r: test.TestRunner = test.new("process output shortcuts");
   r = r.it("exit_zero pass", test_exit_zero_pass);
   r = r.it("exit_zero on non-zero fails", test_exit_zero_fail_reports);
   r = r.it("exit_nonzero pass", test_exit_nonzero_pass);

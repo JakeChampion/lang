@@ -365,7 +365,7 @@ function main(): i32 {
   eprint("token:      " + match (first(cs, "token")) { Some(v) => v, None => "(none)" });
   eprint("missing:    " + match (first(cs, "nope")) { Some(v) => v, None => "(none)" });
 
-  let r: test.TestRunner = test.test_new("cookies");
+  let r: test.TestRunner = test.new("cookies");
   r = r.it("whitespace is tolerated everywhere", test_whitespace_is_tolerated_everywhere);
   r = r.it("whitespace inside a value is preserved", test_whitespace_inside_a_value_is_preserved);
   r = r.it("only the first equals separates", test_only_the_first_equals_separates);

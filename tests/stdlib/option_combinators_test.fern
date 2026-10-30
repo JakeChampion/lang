@@ -166,7 +166,7 @@ function test_flatten(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/option combinators");
+  let r: test.TestRunner = test.new("std/option combinators");
   r = r.it("is_some / is_none", test_is_some_is_none);
   r = r.it("unwrap_or", test_unwrap_or);
   r = r.it("unwrap_or_else", test_unwrap_or_else);

@@ -21,7 +21,7 @@ or compile it and run the binary. There is nothing else to install.
 A test function returns `Pass` when the assertion holds and
 `Fail(message)` when it fails. `import "std/test";` to bring the
 runner into scope, then call its functions qualified
-(`test.test_new`, `test.assert_eq`, …) with the runner type written
+(`test.new`, `test.assert_eq`, …) with the runner type written
 `test.TestRunner`. Receiver methods (`.it`, `.finish`) stay bare.
 
 <FernPlayground
@@ -36,7 +36,7 @@ function test_strings(): test.TestOutcome {
 }
 
 function main(): i32 {
-    let r: test.TestRunner = test.test_new("hello");
+    let r: test.TestRunner = test.new("hello");
     r = r.it("addition", test_addition);
     r = r.it("strings", test_strings);
     return r.finish();
@@ -115,7 +115,7 @@ function run_wasm_test(): test.TestOutcome {
 }
 
 function main(): i32 {
-    let r: test.TestRunner = test.test_new("backends");
+    let r: test.TestRunner = test.new("backends");
     r = r.skip_if(env("WASMTIME_PATH").is_none(),
                   "wasm e2e", "wasmtime not on $PATH",
                   run_wasm_test);
@@ -207,7 +207,7 @@ function check_to_upper_idempotent(input: u8[]): test.TestOutcome {
 }
 
 function main(): i32 {
-    let r: test.TestRunner = test.test_new("fuzz");
+    let r: test.TestRunner = test.new("fuzz");
     r = r.fuzz("to_upper idempotent",
                ["".bytes(), "abc".bytes(), "Hello".bytes()],
                fuzz.DEFAULT_ITERATIONS,
@@ -258,7 +258,7 @@ The example file lifts the pattern off `args()`:
 ```fern
 function main(): i32 {
     let f: string = test.parse_filter_from_args(args());
-    let r: test.TestRunner = test.test_new_filtered("my suite", f);
+    let r: test.TestRunner = test.new_filtered("my suite", f);
     r = r.it("addition basic",    test_a);
     r = r.it("subtraction basic", test_b);
     return r.finish();

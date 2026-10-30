@@ -94,7 +94,7 @@ function test_refusals(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/quic/params");
+  let r: test.TestRunner = test.new("std/quic/params");
   r = r.it("the client parameters of RFC 9001 A.2", test_rfc9001_client);
   r = r.it("a server's parameters round-trip", test_round_trip);
   r = r.it("unknown and reserved parameters are skipped", test_unknown_skipped);

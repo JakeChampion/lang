@@ -215,7 +215,7 @@ function test_xxh64(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/hash checksums");
+  let r: test.TestRunner = test.new("std/hash checksums");
   r = r.it("cksum vectors", test_cksum_vectors);
   r = r.it("cksum finish is a read", test_cksum_finish_is_a_read);
   r = r.it("cksum 7-byte updates", test_cksum_seven_byte_updates);

@@ -479,7 +479,7 @@ function main(): i32 {
       + " pts) -> " + ring.len().to_string() + ": " + render(ring));
   }
 
-  let r: test.TestRunner = test.test_new("convex_hull");
+  let r: test.TestRunner = test.new("convex_hull");
   r = r.it("the two algorithms agree", test_the_two_algorithms_agree);
   r = r.it("every input point is inside the hull", test_every_input_point_is_inside_the_hull);
   r = r.it("every vertex is an input point", test_every_vertex_is_an_input_point);

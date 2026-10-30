@@ -72,7 +72,7 @@ function test_more_fields_than_the_previous_block(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http response bytes");
+  let r: test.TestRunner = test.new("std/http response bytes");
   r = r.it("parses without a previous block", test_parses_without_a_previous_block);
   r = r.it("a repeated block reads the same", test_a_repeated_block_reads_the_same);
   r = r.it("a changed value is read", test_a_changed_value_is_read);

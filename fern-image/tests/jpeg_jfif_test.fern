@@ -222,7 +222,7 @@ function cancellation(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("JPEG JFIF profile");
+  let runner = test.new("JPEG JFIF profile");
   runner = runner.it("JFIF explicit version density thumbnail and component profiles", profiles);
   runner = runner.it("JFIF declaration lengths fields and versions", declarations);
   runner = runner.it("JFIF first marker and conflicting metadata policy", metadata_policy);

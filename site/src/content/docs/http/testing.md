@@ -38,7 +38,7 @@ function send(method: string, path: string): HttpResponse {
 }
 
 function main(): i32 {
-    let r: test.TestRunner = test.test_new("users");
+    let r: test.TestRunner = test.new("users");
     r = r.it("finds a user", (): test.TestOutcome => test.assert_body(send("GET", "/users/7"), "{\"id\":7}"));
     r = r.it("refuses a bad id", (): test.TestOutcome => test.assert_status(send("GET", "/users/x"), 400));
     r = r.it("405s a POST", (): test.TestOutcome => test.assert_header(send("POST", "/users/7"), "allow", "GET, HEAD"));
@@ -103,7 +103,7 @@ function test_upstream_down(): test.TestOutcome {
 }
 
 function main(): i32 {
-    let r: test.TestRunner = test.test_new("health");
+    let r: test.TestRunner = test.new("health");
     r = r.it("passes the upstream through", test_upstream_up);
     r = r.it("502s when the upstream is down", test_upstream_down);
     return r.finish();
@@ -178,7 +178,7 @@ function test_one_reset_is_retried(): test.TestOutcome {
 }
 
 function main(): i32 {
-    let r: test.TestRunner = test.test_new("price");
+    let r: test.TestRunner = test.new("price");
     r = r.it("answers a slow upstream in time", test_slow_but_in_time);
     r = r.it("504s past the deadline", test_too_slow);
     r = r.it("retries a reset GET once", test_one_reset_is_retried);

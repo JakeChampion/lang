@@ -205,7 +205,7 @@ function test_hash_check(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/crypto/mlkem768");
+  let r: test.TestRunner = test.new("std/crypto/mlkem768");
   r = r.it("keygen", test_keygen);
   r = r.it("encapsulate and decapsulate", test_round_trip);
   r = r.it("second key pair", test_second_pair);

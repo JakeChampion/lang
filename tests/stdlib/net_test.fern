@@ -134,7 +134,7 @@ function test_parse_errors(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/net");
+  let r: test.TestRunner = test.new("std/net");
   r = r.it("each parser reports what it refused", test_parse_errors);
   r = r.it("is_ipv4 agrees with the parser", test_is_ipv4_agrees_with_the_parser);
   r = r.it("public addresses are global", test_public_addresses);

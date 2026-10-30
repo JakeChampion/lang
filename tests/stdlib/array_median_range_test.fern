@@ -65,7 +65,7 @@ function test_empty_none(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/array f64 median/range");
+  let r: test.TestRunner = test.new("std/array f64 median/range");
   r = r.it("median odd", test_median_odd);
   r = r.it("median even", test_median_even);
   r = r.it("median single", test_median_single);

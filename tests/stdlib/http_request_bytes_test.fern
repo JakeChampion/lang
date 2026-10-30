@@ -1259,7 +1259,7 @@ function test_path_escapes_must_be_utf8(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("HTTP request bytes");
+  let r: test.TestRunner = test.new("HTTP request bytes");
   r = r.it("bytes parse keeps the request", test_bytes_parse_keeps_the_request);
   r = r.it("text and bytes agree", test_text_and_bytes_agree);
   r = r.it("bare request has no headers", test_bare_request_has_no_headers);

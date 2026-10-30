@@ -164,7 +164,7 @@ function test_data_is_answered_before_its_crlf(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("http.ChunkDecoder against the parser");
+  let r: test.TestRunner = test.new("http.ChunkDecoder against the parser");
   r = r.it("extensions, trailers and a pipelined request", test_extensions_trailers_and_a_pipelined_request);
   r = r.it("sizes with leading zeros", test_sizes_with_leading_zeros);
   r = r.it("an empty body", test_empty_body);

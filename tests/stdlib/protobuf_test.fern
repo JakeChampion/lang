@@ -97,7 +97,7 @@ function test_faults(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/protobuf");
+  let r: test.TestRunner = test.new("std/protobuf");
   r = r.it("varints", test_varints);
   r = r.it("the guide's message", test_guide_message);
   r = r.it("strings, embedded, repeated and fixed fields", test_fields);

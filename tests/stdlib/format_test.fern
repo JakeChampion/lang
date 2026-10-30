@@ -223,7 +223,7 @@ function test_format_mixed_long(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/format");
+  let r: test.TestRunner = test.new("std/format");
   r = r.it("format positional", test_format_positional);
   r = r.it("format no placeholders", test_format_no_placeholders);
   r = r.it("format escaped braces", test_format_escaped_braces);

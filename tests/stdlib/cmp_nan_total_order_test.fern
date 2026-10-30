@@ -110,7 +110,7 @@ function test_f32_sort(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("core/cmp NaN total order");
+  let r: test.TestRunner = test.new("core/cmp NaN total order");
   r = r.it("NaN sorts after every number", test_nan_after_every_number);
   r = r.it("every NaN is one value", test_nans_are_one_value);
   r = r.it("Eq agrees with cmp", test_eq_agrees_with_cmp);

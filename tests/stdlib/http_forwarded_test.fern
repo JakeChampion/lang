@@ -249,7 +249,7 @@ function test_proxy_v2(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/forwarded");
+  let r: test.TestRunner = test.new("std/http/forwarded");
   r = r.it("RFC 7239's examples", test_rfc_examples);
   r = r.it("quoted values and obfuscated ports", test_quoting);
   r = r.it("malformed elements leave the list unread", test_malformed);

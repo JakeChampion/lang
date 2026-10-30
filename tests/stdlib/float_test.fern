@@ -84,7 +84,7 @@ function test_to_string_paths(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("floats");
+  let r: test.TestRunner = test.new("floats");
   r = r.it("f64 addition", test_f64_addition);
   r = r.it("f64 multiplication", test_f64_multiplication);
   r = r.it("f64 division by negative", test_f64_division_by_negative);

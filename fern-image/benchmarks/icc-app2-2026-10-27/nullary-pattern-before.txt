@@ -190,7 +190,7 @@ function profile_separation(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("checked ICC APP2 payload assembly");
+  let runner = test.new("checked ICC APP2 payload assembly");
   runner = runner.it("absence and complete empty sequences are distinct", absence_and_empty);
   runner = runner.it("sequence order controls every concatenated byte", sequence_order);
   runner = runner.it("framing prefixes and every identifier byte", framing);

@@ -140,7 +140,7 @@ function checkerboard(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("resize M2");
+  let r = test.new("resize M2");
   r = r.it("solid images, odd dimensions, single rows and columns", edges);
   r = r.it("linear-light golden interpolation", interpolation);
   r = r.it("transparent color does not bleed", transparency);

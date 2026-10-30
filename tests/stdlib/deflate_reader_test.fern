@@ -278,7 +278,7 @@ function reentrancy(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("resumable DEFLATE output");
+  let r = test.new("resumable DEFLATE output");
   r = r.it("reader errors expose messages and display through the common interface", error_contracts);
   r = r.it("independent stored, fixed, and dynamic fixtures at six chunk sizes", goldens);
   r = r.it("history wrap and distance 32768 across chunk boundaries", history_wrap);

@@ -704,7 +704,7 @@ function test_select(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/crypto/field25519");
+  let r: test.TestRunner = test.new("std/crypto/field25519");
   r = r.it("mul", test_mul);
   r = r.it("add", test_add);
   r = r.it("sub", test_sub);

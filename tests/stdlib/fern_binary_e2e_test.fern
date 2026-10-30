@@ -44,7 +44,7 @@ function test_interp_reads_a_file(fern_bin: string, dir: string): test.TestOutco
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("fern binary e2e");
+  let r: test.TestRunner = test.new("fern binary e2e");
 
   let fern_bin: string = "";
   match (env("FERN_BIN")) {

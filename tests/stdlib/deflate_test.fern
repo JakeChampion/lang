@@ -299,7 +299,7 @@ function test_inflate_after(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/deflate");
+  let r: test.TestRunner = test.new("std/deflate");
   r = r.it("stored block", test_stored_block);
   r = r.it("fixed block", test_fixed_block);
   r = r.it("dynamic block", test_dynamic_block);

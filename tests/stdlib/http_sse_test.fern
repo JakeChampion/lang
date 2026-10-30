@@ -119,7 +119,7 @@ function test_last_event_id(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/sse");
+  let r: test.TestRunner = test.new("std/http/sse");
   r = r.it("encodes an event", test_encode_simple);
   r = r.it("encodes each line of the data", test_encode_lines);
   r = r.it("encodes the name, id and retry", test_encode_fields);

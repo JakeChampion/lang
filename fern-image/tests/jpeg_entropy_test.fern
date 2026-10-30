@@ -354,7 +354,7 @@ function input_window(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t = test.test_new("baseline JPEG quantized blocks");
+  let t = test.new("baseline JPEG quantized blocks");
   t = t.it("six independent zero blocks validate scheduling and framing", zeros);
   t = t.it("generated grayscale and three sampling fixtures reach EOI", initial_fixtures);
   t = t.it("signed amplitudes, natural coefficient positions, and DC prediction", signed_values);

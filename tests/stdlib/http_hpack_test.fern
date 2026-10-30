@@ -336,7 +336,7 @@ function test_static_entries(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/hpack");
+  let r: test.TestRunner = test.new("std/http/hpack");
   r = r.it("every static entry, and its name alone", test_static_entries);
   r = r.it("the literal representations", test_literals);
   r = r.it("three requests", test_requests_plain);

@@ -259,7 +259,7 @@ function test_fetch_with_jar(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/cookie");
+  let r: test.TestRunner = test.new("std/http/cookie");
   r = r.it("a SetCookie written", test_serialize);
   r = r.it("a SetCookie refused", test_refused);
   r = r.it("a request's cookies", test_request_cookie);

@@ -85,7 +85,7 @@ function invert_pass_b8(result: test.TestOutcome): test.TestOutcome {
 
 function main(): i32 {
   let filter: string = test.parse_filter_from_args(args());
-  let r: test.TestRunner = test.test_new_filtered("batch 8", filter);
+  let r: test.TestRunner = test.new_filtered("batch 8", filter);
 
   r = r.it("argv populated", test_argv_basic);
   r = r.it("map len string-string", test_map_len_string_string);

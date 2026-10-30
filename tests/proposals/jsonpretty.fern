@@ -691,7 +691,7 @@ function main(): i32 {
   }
   eprint("  two spellings agree: " + same);
 
-  let r: test.TestRunner = test.test_new("jsonpretty");
+  let r: test.TestRunner = test.new("jsonpretty");
   r = r.it("pretty printing is idempotent", test_pretty_printing_is_idempotent);
   r = r.it("equivalent spellings canonicalise identically", test_equivalent_spellings_canonicalise_identically);
   r = r.it("distinct documents stay distinct", test_distinct_documents_stay_distinct);

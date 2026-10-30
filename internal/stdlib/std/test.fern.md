@@ -22,7 +22,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 pub struct TestRunner>>
 
-<<4 pub function test_new(suite: string): TestRunner>>
+<<4 pub function new(suite: string): TestRunner>>
 
 <<5 pub function (r: TestRunner) subsuite(name: string): TestRunner>>
 
@@ -131,11 +131,11 @@ pub enum TestOutcome {
 }
 ```
 
-### `4 pub function test_new(suite: string): TestRunner`
+### `4 pub function new(suite: string): TestRunner`
 
 ```fern
-<<4 pub function test_new(suite: string): TestRunner>>=
-pub function test_new(suite: string): TestRunner {
+<<4 pub function new(suite: string): TestRunner>>=
+pub function new(suite: string): TestRunner {
   print("TAP version 13");
   print("# Suite: " + suite);
   return TestRunner {
@@ -156,8 +156,8 @@ pub function test_new(suite: string): TestRunner {
   };
 }
 
-pub function test_new_filtered(suite: string, filter: string): TestRunner {
-  let r: TestRunner = test_new(suite);
+pub function new_filtered(suite: string, filter: string): TestRunner {
+  let r: TestRunner = new(suite);
   return TestRunner { ...r, filter: filter };
 }
 
@@ -176,8 +176,8 @@ pub function parse_filter_from_args(argv: string[]): string {
   return "";
 }
 
-pub function test_new_fail_fast(suite: string): TestRunner {
-  let r: TestRunner = test_new(suite);
+pub function new_fail_fast(suite: string): TestRunner {
+  let r: TestRunner = new(suite);
   return r.with_fail_fast();
 }
 
@@ -196,8 +196,8 @@ pub function parse_fail_fast_from_args(argv: string[]): boolean {
   return false;
 }
 
-pub function test_new_quiet(suite: string): TestRunner {
-  let r: TestRunner = test_new(suite);
+pub function new_quiet(suite: string): TestRunner {
+  let r: TestRunner = new(suite);
   return r.with_quiet();
 }
 
@@ -216,8 +216,8 @@ pub function parse_quiet_from_args(argv: string[]): boolean {
   return false;
 }
 
-pub function test_new_verbose(suite: string): TestRunner {
-  let r: TestRunner = test_new(suite);
+pub function new_verbose(suite: string): TestRunner {
+  let r: TestRunner = new(suite);
   return TestRunner { ...r, verbose: true };
 }
 

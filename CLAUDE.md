@@ -426,7 +426,7 @@ it.
   line) is the most regression-prone surface**.
 - **Test runner** — `internal/stdlib/std/test.fern`, the pure-Fern TAP-13 runner
   the project migrates to once Go-side `*_test.go` files retire. Programs
-  `import "std/test";` and call qualified (`test.test_new`, `test.assert_eq`,
+  `import "std/test";` and call qualified (`test.new`, `test.assert_eq`,
   `test.fail`, …) with the type written `test.TestRunner`; receiver methods
   (`.it`, `.finish`) stay bare. Examples in `tests/stdlib/`; the Go-side gate is
   `internal/testing/e2e/test_runner_test.go`. **When adding an assertion helper, add a
