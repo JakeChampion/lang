@@ -1,0 +1,17 @@
+// close_unchecked closes a handle through a borrow, so only an unsafe block
+// accepts its obligation.
+
+function close_shared(w: Writer): Result[void, IoError] {
+  return w.close_unchecked();
+}
+
+function main(): i32 {
+  match (close_shared(stdout())) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(_) => {
+      return 1;
+    }
+  }
+}
