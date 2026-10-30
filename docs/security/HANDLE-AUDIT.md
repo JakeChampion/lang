@@ -95,7 +95,7 @@ A loop's head runs again each round, and so does a loop inside a value block.
 A local the loop body declares is fresh each round.
 Both checkers compute the same answer: the Go side in `liveAfter` and the Fern side in `lu_live_after`.
 
-A match on a local at its last use moves the payload into the arm.
+A match on a local at its last use moves the payload into the arm, and each binding is a fresh local.
 A match on a field path at the path's last use does the same.
 A pattern binding of an owned scrutinee owns its payload, so a field of the payload moves out at the path's last use.
 A pattern binding of a borrowed scrutinee lends its payload, and no field of it moves.

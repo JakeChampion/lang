@@ -1,0 +1,33 @@
+// spec: RH-24
+// A match on a local at its last use takes its payload. The binding is a
+// fresh local, not an owned name, so storing it and reading it again in the
+// same arm is accepted.
+
+import "std/i32";
+
+function round(i: i32): i32 {
+  let held: i32[] = [];
+  let acc: i32 = 0;
+  let o: Option[i32[]] = Some([i, i + 1]);
+  if (i >= 0) {
+    match (o) {
+      Some(a) => {
+        held = a;
+        acc = a[0];
+      },
+      None => {}
+    }
+  }
+  return acc + held[1];
+}
+
+function main(): i32 {
+  let t: i32 = 0;
+  let i: i32 = 0;
+  while (i < 5) {
+    t = t + round(i);
+    i = i + 1;
+  }
+  print(t.to_string());
+  return 0;
+}

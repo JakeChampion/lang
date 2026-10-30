@@ -891,7 +891,7 @@ func (f *formatter) formatBlockFrom(blk *ast.Block, depth, skip int) {
 
 func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 	if blk == nil || len(blk.Stmts) == 0 {
-		f.b.WriteString("{}")
+		f.formatEmptyBlock(blk, depth)
 		return
 	}
 	f.b.WriteByte('{')
@@ -905,6 +905,20 @@ func (f *formatter) formatBlock(blk *ast.Block, depth int) {
 	if blk.End.Line > 0 {
 		f.drainLeading(blk.End.Line, depth+1)
 	}
+	f.indent(depth)
+	f.b.WriteByte('}')
+}
+
+// An empty block keeps the comments between its braces.
+func (f *formatter) formatEmptyBlock(blk *ast.Block, depth int) {
+	if blk == nil || blk.End.Line <= blk.P.Line || f.ci >= len(f.comments) || f.comments[f.ci].Pos.Line >= blk.End.Line {
+		f.b.WriteString("{}")
+		return
+	}
+	f.b.WriteByte('{')
+	f.emitTrailing(blk.P.Line)
+	f.b.WriteByte('\n')
+	f.drainLeading(blk.End.Line, depth+1)
 	f.indent(depth)
 	f.b.WriteByte('}')
 }

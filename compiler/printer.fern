@@ -1014,14 +1014,15 @@ function indent_str(depth: i32): string {
   return out;
 }
 
-struct Fmt { comments: lexer.Comment[], ci: i32, blanks: boolean[], spans: parser.BlockSpans, si: i32 }
+// at is the line of the statement in print. own is the span of the last block printed, or -1.
+struct Fmt { comments: lexer.Comment[], ci: i32, blanks: boolean[], spans: parser.BlockSpans, si: i32, at: i32, own: i32 }
 
 function empty_fmt(): Fmt {
-  return Fmt { comments: [], ci: 0, blanks: [], spans: no_spans(), si: 0 };
+  return Fmt { comments: [], ci: 0, blanks: [], spans: no_spans(), si: 0, at: 0, own: -1 };
 }
 
 function no_spans(): parser.BlockSpans {
-  return parser.BlockSpans { opens: [], firsts: [], closes: [] };
+  return parser.BlockSpans { opens: [], firsts: [], closes: [], else_of: [] };
 }
 
 function take_span(f: Fmt, first: i32): (i32, i32, Fmt) {
@@ -1266,9 +1267,13 @@ function nested_block_owns_trailing(st: ast.Stmt, line: i32, f: Fmt): boolean {
 
 function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
   if (body.len() == 0) {
-    return ("{}", f);
+    return print_empty_block(depth, f);
   }
   let (open_line, close_line, g) = take_span(f, ast.stmt_line(body[0]));
+  let span: i32 = -1;
+  if (open_line > 0) {
+    span = g.si - 1;
+  }
   let out: string = "{";
   if (open_line > 0 && !nested_block_owns_trailing(body[0], open_line, g)) {
     let (tc, gt) = emit_trailing(g, open_line);
@@ -1298,7 +1303,59 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     g = gc;
   }
   out = out + indent_str(depth) + "}";
-  return (out, g);
+  return (out, Fmt { ...g, own: span });
+}
+
+// An empty block takes the first span that opens on or after the line of its
+// statement, when no token is between the braces of that span.
+function print_empty_block(depth: i32, f: Fmt): (string, Fmt) {
+  let i: i32 = f.si;
+  while (i < f.spans.opens.len() && f.spans.opens[i] < f.at) {
+    i = i + 1;
+  }
+  if (i >= f.spans.opens.len() || f.spans.firsts[i] != f.spans.closes[i]) {
+    return ("{}", Fmt { ...f, own: -1 });
+  }
+  return print_span_block(i, depth, Fmt { ...f, si: i + 1 });
+}
+
+// An empty block keeps the comments between its braces.
+function print_span_block(i: i32, depth: i32, f: Fmt): (string, Fmt) {
+  let open: i32 = f.spans.opens[i];
+  let close: i32 = f.spans.closes[i];
+  let g: Fmt = Fmt { ...f, own: i };
+  if (close <= open || g.ci >= g.comments.len() || g.comments[g.ci].line >= close) {
+    return ("{}", g);
+  }
+  let (tc, g1) = emit_trailing(g, open);
+  let (tail, g2) = drain_leading(g1, close, depth + 1);
+  return ("{" + tc + "\n" + tail + indent_str(depth) + "}", g2);
+}
+
+// The span of an empty `else` block after the block f.own, or -1.
+function else_span(f: Fmt): i32 {
+  if (f.own < 0) {
+    return -1;
+  }
+  let end: i32 = f.spans.closes[f.own];
+  let i: i32 = f.own + 1;
+  while (i < f.spans.opens.len()) {
+    if (f.spans.else_of[i] == f.own) {
+      return i;
+    }
+    if (f.spans.opens[i] > end) {
+      return -1;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+function anchored(f: Fmt, line: i32): Fmt {
+  if (line > 0) {
+    return Fmt { ...f, at: line };
+  }
+  return f;
 }
 
 function print_pattern(pat: ast.Pattern): string {
@@ -1763,7 +1820,7 @@ function print_match(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
   }
   let i: i32 = 0;
   while (i < arms.len()) {
-    let (arm_body, g1) = print_block(arms[i].body, depth + 1, g);
+    let (arm_body, g1) = print_block(arms[i].body, depth + 1, anchored(g, arms[i].line));
     g = g1;
     let head: string = print_pattern(arms[i].pattern);
     let guarded: ast.MatchArm = arms[i];
@@ -2246,10 +2303,15 @@ function print_if_chain(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
 
 function print_else(els: ast.Stmt[], chained: boolean, depth: i32, f: Fmt): (string, Fmt) {
   if (els.len() == 0) {
-    return ("", f);
+    let at: i32 = else_span(f);
+    if (at < 0) {
+      return ("", f);
+    }
+    let (empty_text, ge) = print_span_block(at, depth, Fmt { ...f, si: at + 1 });
+    return (" else " + empty_text, ge);
   }
   if (chained && els.len() == 1) {
-    let (nested_text, g) = print_stmt_body(els[0], depth, f);
+    let (nested_text, g) = print_stmt_body(els[0], depth, anchored(f, ast.stmt_line(els[0])));
     return (" else " + nested_text, g);
   }
   let (block_text, g2) = print_block(els, depth, f);
@@ -2308,7 +2370,7 @@ function print_stmt(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
 }
 
 function print_stmt_line(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
-  let (text, g) = print_stmt_body(st, depth, f);
+  let (text, g) = print_stmt_body(st, depth, anchored(f, ast.stmt_line(st)));
   let out: string = indent_str(depth) + text;
   if (stmt_is_single_line(st)) {
     let ln: i32 = ast.stmt_line(st);
@@ -2516,7 +2578,7 @@ function print_nested_func_decl(v: ast.StmtVar, depth: i32, f: Fmt): (string, Fm
       if (lm.ret_type.len() > 0) {
         out = out + ": " + lm.ret_type;
       }
-      let (body, g) = print_block(lm.body, depth, f);
+      let (body, g) = print_block(lm.body, depth, anchored(f, lm.line));
       return (out + " " + body, g);
     },
     _ => {}
@@ -2835,7 +2897,7 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
   if (fd.import_iface.len() > 0) {
     return (out + ";\n", f);
   }
-  let (body_text, g) = print_block(drop_prelude(fd.body, dpre), 0, f);
+  let (body_text, g) = print_block(drop_prelude(fd.body, dpre), 0, anchored(f, fd.line));
   return (out + " " + body_text + "\n", g);
 }
 
@@ -3293,7 +3355,7 @@ function print_annotated_function(fd: parser.FuncDecl, exports: parser.ExportBin
 }
 
 function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], flines: parser.FieldLines[], hints: parser.FunctionInlineHint[], spans: parser.BlockSpans, comments: lexer.Comment[], blanks: boolean[]): string {
-  let f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks, spans: spans, si: 0 };
+  let f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks, spans: spans, si: 0, at: 0, own: -1 };
   let chunks: string[] = [];
   let wrote: boolean = false;
   let kinds: i32[] = [];
