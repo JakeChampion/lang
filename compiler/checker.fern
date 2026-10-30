@@ -18798,19 +18798,15 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
 // match whose arm it is binds the name afresh each time that frame runs.
 function lu_repeats(frames: LuFrame[], name: string): boolean {
   let decl: i32 = 0 - 1;
-  let l: i32 = 0;
-  while (l < frames.len()) {
+  for l in 0..frames.len() {
     if (lu_frame_binds(frames, l, name)) {
       decl = l;
     }
-    l = l + 1;
   }
-  l = decl + 1;
-  while (l < frames.len()) {
+  for l in decl + 1..frames.len() {
     if (frames[l].is_loop) {
       return true;
     }
-    l = l + 1;
   }
   return false;
 }
@@ -18822,12 +18818,10 @@ function lu_frame_binds(frames: LuFrame[], l: i32, name: string): boolean {
       return true;
     }
   }
-  let j: i32 = 0;
-  while (j < f.idx) {
+  for j in 0..f.idx {
     if (lu_stmt_declares(f.stmts[j], name)) {
       return true;
     }
-    j = j + 1;
   }
   if (l > 0) {
     let parent: LuFrame = frames[l - 1];
