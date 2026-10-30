@@ -1,10 +1,11 @@
 # Fern, in action
 
-Twenty web applications share one native Fern server. The homepage links each application and its source lesson.
+Twenty-one web applications share one native Fern server. The homepage links each application and its source lesson.
 The application modules use literate Fern. Named sections explain the code that Fern compiles.
 
 | Application | URL | Server behavior |
 | --- | --- | --- |
+| Contour | `/contour/` | Two-colour terrain flyover, Fern Wasm heightfield, Canvas 2D, keyboard and touch flight |
 | Fractal explorer | `/fractal/` | Mandelbrot PNG tiles, perturbation, SIMD, HTTP and WebSocket delivery |
 | Rally | `/rally/` | Authoritative game physics, solo opponent, two-player WebSocket rooms |
 | Mosaic | `/mosaic/` | Shared pixel boards, atomic WebSocket strokes, immediate revision push, PNG export |
@@ -190,6 +191,23 @@ The torrent page shares a file between browsers with the BitTorrent wire protoco
 The tracker serves only swarms that the page registered through `POST /torrent/register`. It forgets a swarm one hour after the registration.
 A swarm takes at most 12 peers, the tracker keeps at most 64 swarms, and a file is at most 64 MiB.
 A WebTorrent client can open the page's magnet link while the swarm lives. `torrent-interop.browser.mjs` checks both directions with WebTorrent 2.5.1.
+
+## Contour
+
+Contour recreates the blue-and-yellow pixel terrain effect from
+[0xC0DE's flyover](https://x.com/0xC0DE6502/status/1784520071009677812).
+`contour.fern.md` compiles to a browser Wasm heightfield kernel. The Canvas host
+projects near-to-far samples and draws only newly visible ridge pixels.
+Drag or use the arrow keys to steer. Speed, altitude and resolution are adjustable.
+Pause stops the animation, hidden tabs suspend it, and reduced motion starts paused.
+
+The browser regression checks the two-colour output, flight controls, pause,
+reset, resolution, gallery link, source lesson, and phone-to-desktop layouts:
+
+```sh
+PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs CHROMIUM=/usr/bin/chromium \
+  node examples/showcase/tests/contour.browser.mjs http://localhost:8080
+```
 
 ## Browser Wasm
 
