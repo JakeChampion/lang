@@ -56,6 +56,27 @@ function test_drop_over_len(): test.TestOutcome {
   return test.assert_eq(array.drop(xs, 99).len(), 0);
 }
 
+function test_swap_at(): test.TestOutcome {
+  let xs: i32[] = [1, 2, 3];
+  let (old, rest) = array.swap_at(xs, 1, 9);
+  if (old != 2) {
+    return test.fail("swap_at should return the element it replaced");
+  }
+  if (rest.len() != 3 || rest[0] != 1 || rest[2] != 3) {
+    return test.fail("swap_at should keep the other elements in place");
+  }
+  return test.assert_eq(rest[1], 9);
+}
+
+function test_swap_at_method(): test.TestOutcome {
+  let xs: string[] = ["a", "b"];
+  let (old, rest) = xs.swap_at(0, "z");
+  if (old != "a") {
+    return test.fail("swap_at method should return the element it replaced");
+  }
+  return test.assert_eq(rest[0] + rest[1], "zb");
+}
+
 function test_drop_zero(): test.TestOutcome {
   let xs: i32[] = [1, 2, 3];
   return test.assert_eq(array.drop(xs, 0).len(), 3);
@@ -113,6 +134,8 @@ function main(): i32 {
   r = r.it("drop", test_drop);
   r = r.it("drop over length clamps", test_drop_over_len);
   r = r.it("drop zero", test_drop_zero);
+  r = r.it("swap_at", test_swap_at);
+  r = r.it("swap_at method", test_swap_at_method);
   r = r.it("take ++ drop complement", test_take_drop_complement);
   r = r.it("concat", test_concat);
   r = r.it("concat empty", test_concat_empty);

@@ -353,7 +353,10 @@ generic_view_methods                                 0
 grow_past_capacity                                   0
 handle_closes_on_loop_exit                           0
 handle_defer_closes_at_exit                          0
+handle_elements_close_in_for_each                    0
 handle_field_closes_from_local                       0
+handle_payload_closes_from_local_match               0
+handle_payload_field_closes                          0
 handle_transfer_closes_once                          0
 hash_struct_enum                                     0
 header_struct_literals                               0

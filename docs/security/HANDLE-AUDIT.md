@@ -95,6 +95,16 @@ A loop's head runs again each round, and so does a loop inside a value block.
 A local the loop body declares is fresh each round.
 Both checkers compute the same answer: the Go side in `liveAfter` and the Fern side in `lu_live_after`.
 
+A match on a local at its last use moves the payload into the arm.
+A match on a field path at the path's last use does the same.
+A pattern binding of an owned scrutinee owns its payload, so a field of the payload moves out at the path's last use.
+A pattern binding of a borrowed scrutinee lends its payload, and no field of it moves.
+
+A for-each over an owned array binds each element owned.
+The array is a fresh local or a field path at its last use, an `own` parameter, or a fresh call.
+A for-each over a borrowed array lends each element.
+A loop deeper than the binding of an owner runs a consuming call again on the same value, so the call is refused there.
+
 | Pattern | Code | Case |
 |---|---|---|
 | A deferred consuming close, then a read of the handle | accepted | `handle_defer_closes_at_exit` |
@@ -109,6 +119,12 @@ Both checkers compute the same answer: the Go side in `liveAfter` and the Fern s
 | A close before a `continue` | `E051` | `diag_e051_handle_closed_before_continue` |
 | A close at the end of each round of a handle declared outside the loop | `E051` | `diag_e051_handle_closed_each_round` |
 | A close in a loop's head | `E051` | `diag_e051_handle_closed_in_loop_head` |
+| A match on a local at its last use, and on a field path, closes the payload | accepted | `handle_payload_closes_from_local_match` |
+| A field of a pattern-bound payload closed, from an `own` parameter and from an `if let` on a fresh call | accepted | `handle_payload_field_closes` |
+| Each element of a fresh local array, of an `own` array parameter, and of an array field of an `own` parameter, and a field of each element, closed in a for-each | accepted | `handle_elements_close_in_for_each` |
+| A match that is not the local's last use, with the payload closed | `E051` | `diag_e051_handle_matched_after_payload_closed` |
+| A field of a payload bound from a borrowed scrutinee closed | `E051` | `diag_e051_handle_payload_field_of_borrowed` |
+| An element of a borrowed array closed in a for-each | `E051` | `diag_e051_handle_elements_closed_from_borrowed_array` |
 
 Both checkers report the same code at the same position for each row.
 
@@ -125,6 +141,7 @@ The consuming built-in close refuses these shapes until they change:
 
 The rules above accept a close through `defer` (`examples/wasm/wc.fern`) and a close of each end of a `Pipe` held in a fresh local.
 They also accept a close on a loop path that leaves the loop.
+A payload a match or a for-each takes can close, and so can an element `array.swap_at` takes out of an array it owns.
 A handle an `open_*` builtin returns borrows nothing from its path argument, so it is a fresh local.
 The built-in signatures change in the next step, with those sites.
 

@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**95 of 98** claims are pinned by a conformance case. The remaining
+**101 of 104** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -176,6 +176,12 @@ of them.
 | `RH-15` | `docs/security/HANDLE-AUDIT.md` | A close before a `continue` is not the handle's last use (`E051`) | `diag_e051_handle_closed_before_continue` |
 | `RH-16` | `docs/security/HANDLE-AUDIT.md` | A close of a handle declared outside the loop on a path that reaches the end of the loop body is refused (`E051`) | `diag_e051_handle_closed_each_round` |
 | `RH-17` | `docs/security/HANDLE-AUDIT.md` | A consuming close in a loop's head is refused (`E051`) | `diag_e051_handle_closed_in_loop_head` |
+| `RH-18` | `docs/security/HANDLE-AUDIT.md` | A match on a local at its last use, or on a field path of a local at the path's last use, moves the payload into the arm | `handle_payload_closes_from_local_match` |
+| `RH-19` | `docs/security/HANDLE-AUDIT.md` | A pattern binding of an owned scrutinee owns its payload, so a field of the payload moves out at the path's last use | `handle_payload_field_closes` |
+| `RH-20` | `docs/security/HANDLE-AUDIT.md` | A for-each over an owned array, a fresh local at its last use or an `own` parameter, binds each element owned | `handle_elements_close_in_for_each` |
+| `RH-21` | `docs/security/HANDLE-AUDIT.md` | A match that is not the local's last use lends its payload (`E051`) | `diag_e051_handle_matched_after_payload_closed` |
+| `RH-22` | `docs/security/HANDLE-AUDIT.md` | A pattern binding of a borrowed scrutinee lends its payload, so a field of it cannot move out (`E051`) | `diag_e051_handle_payload_field_of_borrowed` |
+| `RH-23` | `docs/security/HANDLE-AUDIT.md` | A for-each over a borrowed array lends each element (`E051`) | `diag_e051_handle_elements_closed_from_borrowed_array` |
 
 ## Every gap this index opened with is now closed
 

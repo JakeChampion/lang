@@ -1,0 +1,44 @@
+// spec: RH-18
+// A match on a local at its last use, or on a field path of a local at
+// the path's last use, moves the payload into the arm, so the arm can
+// close it.
+
+import "std/i32";
+
+struct Handle { fd: i32 }
+
+struct Frame { dir: Option[Handle], depth: i32 }
+
+function (own h: Handle) close(): void {
+  print("closed " + h.fd.to_string());
+}
+
+function from_local(): i32 {
+  let held: Option[Handle] = Some(Handle { fd: 1 });
+  let n: i32 = 0;
+  match (held) {
+    Some(h) => {
+      h.close();
+      n = 1;
+    },
+    None => {}
+  }
+  return n;
+}
+
+function from_field(): i32 {
+  let top: Frame = Frame { dir: Some(Handle { fd: 2 }), depth: 7 };
+  match (top.dir) {
+    Some(d) => {
+      d.close();
+    },
+    None => {}
+  }
+  return top.depth;
+}
+
+function main(): i32 {
+  print(from_local().to_string());
+  print(from_field().to_string());
+  return 0;
+}
