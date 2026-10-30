@@ -4761,30 +4761,28 @@ function classified(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs:
 // The run frees the token slot at its last take, before a token taken there.
 function tested(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, carry: Carry, links: i32[], own out: Keeps): Keeps {
   let carried: boolean[] = carried_builds(carry, b);
-  let pos: i32 = 0;
-  while (pos < b.insts.len()) {
+  let last: i32 = 0 - 1;
+  for pos in 0..b.insts.len() {
     let ins: ssa.SInst = b.insts[pos];
-    if (ins.args.len() == 1 && tested_member(f, p, ins, ins.args[0], ins)) {
+    if (pos > last && ins.args.len() == 1 && tested_member(f, p, ins, ins.args[0], ins)) {
       let d: i32 = ins.args[0];
       let end: i32 = tested_end(f, p, idx, b, d, pos, pairs, carry, links);
       if (end > pos && util.index_of_i32(out.donors, d) < 0 && !token_busy(pairs, carried, pos, end - 1, 0 - 1) && !keep_overlaps(out, pos, end)) {
         let moved: i32[] = [];
-        let i: i32 = pos;
-        while (i <= end) {
+        let past: i32 = end + 1;
+        for i in pos..past {
           if (classified_take(f, p, b.insts[i], d)) {
             moved = moved.append(b.insts[i].result);
           }
-          i = i + 1;
         }
         out = Keeps {
           donors: out.donors.append(d), slots: out.slots.append([]), values: out.values.append([]), late: out.late.append([]),
           moved: out.moved.append(moved), freed: out.freed.append([]),
           start: out.start.append(pos), taken: out.taken.append(end), built: out.built.append(0 - 1), lives: out.lives.append(true),
         };
-        pos = end;
+        last = end;
       }
     }
-    pos = pos + 1;
   }
   return out;
 }
@@ -4796,21 +4794,19 @@ function tested_member(f: ssasem.Func, p: Plan, ins: ssa.SInst, d: i32, first: s
 
 // The last take of d's run from the take at start. Every use of d up to it is
 // a take of the same shape or a read that changes no count, and d is not
-// dropped or made a token before it. A run has at least two takes.
+// dropped or made a token before it. A run has at least two takes, so an end
+// at start is no run.
 function tested_end(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, d: i32, start: i32, pairs: ReusePairs, carry: Carry, links: i32[]): i32 {
   if (d < links.len() && links[d] >= 0 || !ssasem.reference(f.values[d]) || ssasem.finalizer_of(f, f.values[d]) != "") {
     return 0 - 1;
   }
   let first: ssa.SInst = b.insts[start];
   let end: i32 = start;
-  let takes: i32 = 0;
-  let pos: i32 = start;
-  while (pos < b.insts.len()) {
+  for pos in start..b.insts.len() {
     let ins: ssa.SInst = b.insts[pos];
     if (util.index_of_i32(ins.args, d) >= 0) {
       if (tested_member(f, p, ins, d, first)) {
         end = pos;
-        takes = takes + 1;
       } else if (ins.kind_tag != ssasem.variant_is() && !(taken_read(ins.kind_tag) && !(ins.result < p.payloads.len() && p.payloads[ins.result]))) {
         break;
       }
@@ -4818,10 +4814,6 @@ function tested_end(f: ssasem.Func, p: Plan, idx: i32[][], b: ssa.SBlock, d: i32
     if (pairs.tokens[pos] == d || carry_held(carry, b.id, pos) == d || util.index_of_i32(step_of(p, idx, b.id, pos, 0 - 1).drops, d) >= 0) {
       break;
     }
-    pos = pos + 1;
-  }
-  if (takes < 2) {
-    return 0 - 1;
   }
   return end;
 }
@@ -4942,26 +4934,22 @@ pub function tested_values(k: Keeps): i32[] {
 
 function moved_where(k: Keeps, lives: boolean): i32[] {
   let out: i32[] = [];
-  let i: i32 = 0;
-  while (i < k.moved.len()) {
+  for i in 0..k.moved.len() {
     if (k.lives[i] == lives) {
       for v in k.moved[i] {
         out = out.append(v);
       }
     }
-    i = i + 1;
   }
   return out;
 }
 
 // Whether a tested run ends at pos, which frees the token slot it held.
 pub function tested_ends(k: Keeps, pos: i32): boolean {
-  let i: i32 = 0;
-  while (i < k.donors.len()) {
+  for i in 0..k.donors.len() {
     if (k.lives[i] && k.taken[i] == pos) {
       return true;
     }
-    i = i + 1;
   }
   return false;
 }
