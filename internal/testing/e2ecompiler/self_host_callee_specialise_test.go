@@ -129,9 +129,9 @@ func TestSelfHostCalleeSpecialisation(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, clone := range []string{
-		"__fn_map_all__i32$1$twice$wrap:", "__fn_map_all__i32$1$inc$wrap:",
-		"__fn_fold$3$twice$wrap:", "__fn_boxed$0$inc$wrap:",
-		"__fn_cmp____cmp_sift_down__string$3$by_len$wrap:",
+		"__fn_map_all__i32$twice$wrap$1:", "__fn_map_all__i32$inc$wrap$1:",
+		"__fn_fold$twice$wrap$3:", "__fn_boxed$inc$wrap$0:",
+		"__fn_cmp____cmp_sift_down__string$by_len$wrap$3:",
 	} {
 		if !strings.Contains(string(asm), "\n"+clone+"\n") {
 			t.Errorf("no clone %s in the listing", strings.TrimSuffix(clone, ":"))

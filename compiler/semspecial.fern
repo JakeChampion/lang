@@ -19,14 +19,16 @@ function max_clone_insts(): i32 {
   return 2000;
 }
 
-pub function specialize(funcs: ssasem.Func[], names: string[], modes: i32[][], usable: boolean[]): Specialized {
+// A call to a function in kept stays as it is: a later pass reads that call
+// and its closure argument by name.
+pub function specialize(funcs: ssasem.Func[], names: string[], modes: i32[][], usable: boolean[], kept: util.NameIndex): Specialized {
   let from: i32[] = [];
   let changed: boolean[] = [];
   for i in 0..funcs.len() {
     from = from.append(i);
     changed = changed.append(false);
   }
-  let r: Round = Round { st: Specialized { funcs: funcs, names: names, modes: modes, from: from, changed: changed, contracts: [] }, ix: util.name_index(names), ok: usable, base: funcs.len() };
+  let r: Round = Round { st: Specialized { funcs: funcs, names: names, modes: modes, from: from, changed: changed, contracts: [] }, ix: util.name_index(names), ok: usable, base: funcs.len(), kept: kept };
   let i: i32 = 0;
   while (i < r.st.funcs.len()) {
     if (r.ok[i]) {
@@ -37,7 +39,7 @@ pub function specialize(funcs: ssasem.Func[], names: string[], modes: i32[][], u
   return r.st;
 }
 
-struct Round { st: Specialized, ix: util.NameIndex, ok: boolean[], base: i32 }
+struct Round { st: Specialized, ix: util.NameIndex, ok: boolean[], base: i32, kept: util.NameIndex }
 
 function calls_bound(r0: Round, at: i32): Round {
   let r: Round = r0;
@@ -85,7 +87,7 @@ function bound_args(known: string[], r: Round, ins: ssa.SInst): i32[] {
     return none;
   }
   let gi: i32 = r.ix.find(ins.str);
-  if (gi < 0 || !r.ok[gi] || in_place_map(ins.str)) {
+  if (gi < 0 || !r.ok[gi] || r.kept.has(ins.str)) {
     return none;
   }
   let g: ssasem.Func = r.st.funcs[gi];
@@ -121,12 +123,6 @@ function unread_closures_dropped(g: ssa.SFunc, blocks: ssa.SBlock[]): ssa.SBlock
   return out;
 }
 
-// The rc lowering writes a map in place from the combinator's call and its
-// element function, so that call keeps its closure argument.
-function in_place_map(name: string): boolean {
-  return util.str_has_prefix(name, "__arrm_map__");
-}
-
 struct Cloned { r: Round, at: i32, contract: ssasem.Contract }
 
 function refused(r: Round): Cloned {
@@ -145,7 +141,7 @@ function clone_for(r: Round, callee: string, js: i32[], targets: string[], known
     if (ssasem.find_contract_in(known, targets[i]) < 0) {
       return refused(r);
     }
-    name = name + "$" + util.i32_to_string(js[i]) + "$" + targets[i];
+    name = name + "$" + targets[i] + "$" + util.i32_to_string(js[i]);
   }
   let c: ssasem.Contract = known[sig];
   let contract: ssasem.Contract = ssasem.Contract { ...c, name: name, params: without_types(c.params, js), modes: without(c.modes, js) };

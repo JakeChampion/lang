@@ -8586,7 +8586,7 @@ function specialize_calls(all: Produced[], names: string[], table: ssasem.Contra
     modes = modes.append(p.modes);
     usable = usable.append(p.ok && !p.template && !p.bodyless && optbisect.allowed_by(sw, "specialize", names[i]));
   }
-  let sp: semspecial.Specialized = semspecial.specialize(funcs, names, modes, usable);
+  let sp: semspecial.Specialized = semspecial.specialize(funcs, names, modes, usable, util.name_index(kernel_calls(all, names, mod)));
   if (sp.funcs.len() == all.len()) {
     return Specialised { all: all, names: names, table: table };
   }
@@ -8618,6 +8618,18 @@ function specialize_calls(all: Produced[], names: string[], table: ssasem.Contra
     }
   }
   return Specialised { all: out, names: sp.names, table: ssasem.contracts_of(util.append_all(table.list, sp.contracts)) };
+}
+
+// The calls a later pass reads by name with their closure arguments: the
+// ndarray kernels, and the std/array map that the rc lowering writes in place.
+function kernel_calls(all: Produced[], names: string[], mod: parser.Module): string[] {
+  let out: string[] = stdlib_names(all, names, mod.funcs, "std/ndarray");
+  for name in stdlib_names(all, names, mod.funcs, "std/array") {
+    if (util.str_has_prefix(name, "__arrm_map__")) {
+      out = out.append(name);
+    }
+  }
+  return out;
 }
 
 function inline_on(): boolean {

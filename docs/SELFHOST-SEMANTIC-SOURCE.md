@@ -849,14 +849,16 @@ names its target, and `seminline.inline_made_closures` splices the target. That
 splice sees only the clones, the closures they make and the small functions
 those closures call, so its cost follows the clones and not the module. The
 caller loses the closures that only the rewritten calls read. The
-clone's name adds the index and the target of each bound parameter to the
-callee's name: `__cmp_sift_down__i32$3$cmp____cmp_ascending__i32$wrap`.
+clone's name adds the target and the index of each bound parameter to the
+callee's name: `__cmp_sift_down__i32$cmp____cmp_ascending__i32$wrap$3`. The
+index comes last, so a clone's name does not end like its target's.
 A call in the clone that passes the closure on goes to a clone in turn, and a
 recursive call goes to the clone itself.
 
 The pass does not clone a function that takes an environment or whose result
-holds a view. It does not clone a `std/array` map either: the rc lowering
-writes a map in place from the combinator's call and its element function. It makes at most 64 clones per module. It does not clone a
+holds a view. It leaves a call to a `std/ndarray` function or to a `std/array`
+map as it is: the ndarray kernels and the rc lowering's in-place map read that
+call and its closure argument by name. It makes at most 64 clones per module. It does not clone a
 callee of more than 2,000 instructions. `optbisect` names the decision
 `specialize`. On `bench/sort_inplace.fern`, a heapsort that calls its
 comparator through a parameter runs the same 39,463,045 x86-64 instructions as
