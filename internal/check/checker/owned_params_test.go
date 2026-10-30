@@ -1690,3 +1690,28 @@ function work(o: Option[Handle]): i32 {
     }
 }`)
 }
+
+func TestOwnGuardAcceptsALocalFromACallWhoseResultHoldsNoHandle(t *testing.T) {
+	wantOK(t, "local-from-handle-free-call", ownConsumer+`
+function copy_row(xs: i32[]): i32[] {
+    if (xs.len() == 0) { return xs; }
+    return xs.with(0, xs[0]);
+}
+function main(): i32 {
+    let xs: i32[] = [1];
+    let first: i32[] = copy_row(xs);
+    return consume(first) + xs.len();
+}`)
+}
+
+func TestOwnGuardRejectsAHandleClosedThroughAnAliasFromACall(t *testing.T) {
+	wantE051(t, "handle-alias-from-call", `
+function pass(r: Reader): Reader { return r; }
+function main(): i32 {
+    let r: Reader = stdin();
+    let alias: Reader = pass(r);
+    match (alias.close()) { Ok(_) => {}, Err(_) => {} }
+    match (r.close()) { Ok(_) => {}, Err(_) => {} }
+    return 0;
+}`)
+}

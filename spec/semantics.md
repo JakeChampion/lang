@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**102 of 105** claims are pinned by a conformance case. The remaining
+**111 of 114** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -163,7 +163,7 @@ of them.
 | `RH-02` | `docs/security/HANDLE-AUDIT.md` | A handle is not read after a consuming close (`E051`) | `diag_e051_handle_read_after_close` |
 | `RH-03` | `docs/security/HANDLE-AUDIT.md` | A handle passed to an `own` parameter is not used after the transfer (`E051`) | `diag_e051_handle_used_after_transfer` |
 | `RH-04` | `docs/security/HANDLE-AUDIT.md` | A handle with a consuming close is closed exactly once at a local's last use, through an `own` parameter, and on each branch that closes or stores it | `handle_transfer_closes_once` |
-| `RH-05` | `docs/security/HANDLE-AUDIT.md` | A second close of a built-in handle, with no open between the closes, answers `Other` with "Bad file descriptor" and errno 9 | `io_error_other_double_close_reader` |
+| `RH-05` | `docs/security/HANDLE-AUDIT.md` | The built-in close consumes its handle, so a second close of a built-in `Reader` is refused (`E050`) | `diag_e050_builtin_reader_closed_twice` |
 | `RH-06` | `docs/security/HANDLE-AUDIT.md` | A deferred consuming close runs at the function's exit and is the handle's last use; the handle stays readable after the `defer` statement | `handle_defer_closes_at_exit` |
 | `RH-07` | `docs/security/HANDLE-AUDIT.md` | A field of a fresh local or of an `own` parameter moves out to a consuming call at the path's last use; a sibling field stays owned | `handle_field_closes_from_local` |
 | `RH-08` | `docs/security/HANDLE-AUDIT.md` | A close after a deferred close of the same handle is a second consumption (`E051`) | `diag_e051_handle_closed_after_defer` |
@@ -183,6 +183,15 @@ of them.
 | `RH-22` | `docs/security/HANDLE-AUDIT.md` | A pattern binding of a borrowed scrutinee lends its payload, so a field of it cannot move out (`E051`) | `diag_e051_handle_payload_field_of_borrowed` |
 | `RH-23` | `docs/security/HANDLE-AUDIT.md` | A for-each over a borrowed array lends each element (`E051`) | `diag_e051_handle_elements_closed_from_borrowed_array` |
 | `RH-24` | `docs/security/HANDLE-AUDIT.md` | A payload a match takes from a local at its last use is a fresh local: it is stored and read again in the same arm | `match_taken_payload_is_a_fresh_local` |
+| `RH-25` | `docs/security/HANDLE-AUDIT.md` | A write to a built-in `Writer` after its close is refused (`E051`) | `diag_e051_builtin_writer_written_after_close` |
+| `RH-26` | `docs/security/HANDLE-AUDIT.md` | A variant constructor carries its payload, so a result that wraps a borrowed value cannot pass to an `own` parameter (`E051`) | `diag_e051_variant_result_borrows_its_payload` |
+| `RH-27` | `docs/security/HANDLE-AUDIT.md` | A local initialised from a call whose result can hold a handle and borrows its argument is not a fresh value (`E051`) | `diag_e051_local_from_borrowing_call` |
+| `RH-28` | `docs/security/HANDLE-AUDIT.md` | A call to a function that never returns ends the path, so an own parameter it consumes in a loop is not used again | `handle_consumed_before_a_call_that_never_returns` |
+| `RH-29` | `docs/security/HANDLE-AUDIT.md` | A name a match arm binds is declared afresh each round, so a payload taken in a loop closes once each round | `handle_payload_closes_in_loop_from_unpack` |
+| `RH-30` | `docs/security/HANDLE-AUDIT.md` | A field moves to a consuming call while the same call reads other fields of its owner | `handle_field_closes_beside_other_field_reads` |
+| `RH-31` | `docs/security/HANDLE-AUDIT.md` | A call that moves a field cannot read the same field in another argument (`E051`) | `diag_e051_handle_field_moved_beside_same_field` |
+| `RH-32` | `docs/security/HANDLE-AUDIT.md` | An own parameter consumed in a loop body is refused at the consume (`E050`) | `diag_e050_owned_handle_consumed_inside_loop` |
+| `RH-33` | `docs/security/HANDLE-AUDIT.md` | A local initialised from a call whose result cannot hold a handle is a fresh value | `local_from_handle_free_call_is_fresh` |
 
 ## Every gap this index opened with is now closed
 

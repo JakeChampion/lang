@@ -587,7 +587,7 @@ function make_parent(cfg: copy.Cfg, st0: copy.State, src: string, dest: string):
   }
 }
 
-function finish(st: copy.State): i32 {
+function finish(own st: copy.State): i32 {
   gnu.finish(st.out);
   return st.status;
 }

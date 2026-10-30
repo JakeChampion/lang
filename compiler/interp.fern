@@ -3175,6 +3175,8 @@ function is_handle_method(kind: string, name: string): boolean {
   return util.has_str(["read_chunk", "read_chunk_bytes", "splice_to", "copy_range_to", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc"], name);
 }
 
+// The guest program owns each handle. Its checker refuses a use after close,
+// so the interpreter closes the shared host handle through a borrow.
 function handle_method(h: VHandle, name: string, args: Value[]): Value {
   match (h.r) {
     Some(r) => {
@@ -3205,7 +3207,9 @@ function reader_method(r: Reader, name: string, args: Value[]): Value {
     return read_chunk_value(r, arg_i32(args, 0));
   }
   if (name == "close" || name == "close_unchecked") {
-    return void_result_value(r.close());
+    unsafe {
+      return void_result_value(r.close_unchecked());
+    }
   }
   if (name == "splice_to" || name == "copy_range_to") {
     return io_err_value(Unsupported);
@@ -3287,7 +3291,9 @@ function writer_method(w: Writer, name: string, args: Value[]): Value {
     return io_err_value(Unsupported);
   }
   if (name == "close" || name == "close_unchecked") {
-    return void_result_value(w.close());
+    unsafe {
+      return void_result_value(w.close_unchecked());
+    }
   }
   if (name == "truncate") {
     return void_result_value(w.truncate(arg_i64(args, 0)));
@@ -3349,7 +3355,9 @@ function dir_method(d: Dir, name: string, args: Value[]): Value {
     return stat_result_value(d.lstat(entry));
   }
   if (name == "close" || name == "close_unchecked") {
-    return void_result_value(d.close());
+    unsafe {
+      return void_result_value(d.close_unchecked());
+    }
   }
   return dir_change_method(d, name, entry, args);
 }

@@ -309,7 +309,7 @@ function escape_push(h: usize, s: u8[], lo: i32, hi: i32): void {
 
 struct Input { bytes: u8[], ok: boolean }
 
-function read_stream(r: Reader, name: string): Input {
+function read_stream(own r: Reader, name: string): Input {
   let h: usize = buf_new(0);
   let ok: boolean = true;
   while (true) {
