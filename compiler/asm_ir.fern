@@ -1970,6 +1970,18 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
   ]);
 }
 
+// Copies rcx bytes, at least one, from rsi to rdi and returns. A count of up
+// to 16 is two overlapping loads and stores in r8 and r9, as __fern_memcpy
+// does after its size tests.
+function buf_copy_tail(s: asmcore.EmitState, label: string): asmcore.EmitState {
+  s = s.write("    cmpq $8, %rcx\n    jae " + label + "_c8\n    cmpq $4, %rcx\n    jae " + label + "_c4\n    cmpq $2, %rcx\n    jae " + label + "_c2\n");
+  s = s.write("    movzbl (%rsi), %r8d\n    movb %r8b, (%rdi)\n    ret\n");
+  s = s.write(label + "_c2:\n    movzwl (%rsi), %r8d\n    movzwl -2(%rsi,%rcx), %r9d\n    movw %r8w, (%rdi)\n    movw %r9w, -2(%rdi,%rcx)\n    ret\n");
+  s = s.write(label + "_c4:\n    movl (%rsi), %r8d\n    movl -4(%rsi,%rcx), %r9d\n    movl %r8d, (%rdi)\n    movl %r9d, -4(%rdi,%rcx)\n    ret\n");
+  s = s.write(label + "_c8:\n    cmpq $16, %rcx\n    ja " + label + "_long\n    movq (%rsi), %r8\n    movq -8(%rsi,%rcx), %r9\n    movq %r8, (%rdi)\n    movq %r9, -8(%rdi,%rcx)\n    ret\n");
+  return s.write(label + "_long:\n    movq %rcx, %rdx\n    jmp __fern_memcpy\n");
+}
+
 function emit_buf_push_bytes_range(s: asmcore.EmitState, packed: boolean): asmcore.EmitState {
   let suffix: string = asmcore.packed_suffix(packed);
   let sym: string = "__fern_buf_push_bytes_range" + suffix;
@@ -1992,7 +2004,8 @@ function emit_buf_push_bytes_range_packed(s: asmcore.EmitState, sym: string, lab
   s = s.write("    movslq %edx, %rdx\n    movslq %ecx, %rcx\n    xorl %eax, %eax\n    testq %rdx, %rdx\n    cmovsq %rax, %rdx\n");
   s = s.write("    movq (%rsi), %rax\n    cmpq %rax, %rcx\n    cmovgq %rax, %rcx\n    subq %rdx, %rcx\n    jle " + label + "_done\n");
   s = s.write("    movq 8(%rdi), %rax\n    leaq (%rax,%rcx), %r8\n    cmpq 16(%rdi), %r8\n    ja " + label + "_grow\n");
-  s = s.write(label + "_copy:\n    movq %r8, 8(%rdi)\n    leaq 8(%rsi,%rdx), %rsi\n    movq (%rdi), %rdi\n    addq %rax, %rdi\n    movq %rcx, %rdx\n    jmp __fern_memcpy\n");
+  s = s.write(label + "_copy:\n    movq %r8, 8(%rdi)\n    leaq 8(%rsi,%rdx), %rsi\n    movq (%rdi), %rdi\n    addq %rax, %rdi\n");
+  s = buf_copy_tail(s, label);
   s = s.write(label + "_grow:\n    pushq %rdi\n    pushq %rsi\n    pushq %rdx\n    pushq %rcx\n    subq $8, %rsp\n    movq %r8, %rsi\n    call __fern_buf_reserve\n");
   s = s.write("    addq $8, %rsp\n    popq %rcx\n    popq %rdx\n    popq %rsi\n    popq %rdi\n    movq 8(%rdi), %rax\n    leaq (%rax,%rcx), %r8\n    jmp " + label + "_copy\n");
   return s.write(label + "_done:\n    ret\n.size " + sym + ", .-" + sym + "\n");
@@ -3607,8 +3620,7 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    addq %rdx, %rsi\n");
     s = s.write("    movq (%rdi), %rdi\n");
     s = s.write("    addq %rax, %rdi\n");
-    s = s.write("    movq %rcx, %rdx\n");
-    s = s.write("    jmp __fern_memcpy\n");
+    s = buf_copy_tail(s, ".Lbufrange");
     s = s.write(".Lbufrange_grow:\n");
     s = s.write("    pushq %rdi\n");
     s = s.write("    pushq %rsi\n");
