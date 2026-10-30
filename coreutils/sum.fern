@@ -1,5 +1,6 @@
 import "std/i64";
-import "std/hash";
+import "std/hash/bsd_sum";
+import "std/hash/sysv_sum";
 import "std/io_buffered";
 import "./lib/gnu";
 
@@ -25,10 +26,10 @@ function help_text(): string {
   return out;
 }
 
-struct Ctx { sysv: boolean, bsd: hash.BsdSum, sv: hash.SysvSum }
+struct Ctx { sysv: boolean, bsd: bsd_sum.BsdSum, sv: sysv_sum.SysvSum }
 
 function ctx_new(sysv: boolean): Ctx {
-  return Ctx { sysv: sysv, bsd: hash.bsd_sum_new(), sv: hash.sysv_sum_new() };
+  return Ctx { sysv: sysv, bsd: bsd_sum.new(), sv: sysv_sum.new() };
 }
 
 function ctx_update(c: Ctx, chunk: u8[]): Ctx {

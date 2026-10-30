@@ -4,7 +4,11 @@ import "std/result";
 import "std/hex" as hex;
 import "std/base64" as b64;
 import "std/base32" as b32;
-import "std/hash" as hash;
+import "std/hash";
+import "std/hash/cksum";
+import "std/hash/crc32";
+import "std/hash/bsd_sum";
+import "std/hash/sysv_sum";
 import "std/crypto" as crypto;
 import "std/utf8" as utf8;
 import "std/stream" as stream;
@@ -42,7 +46,7 @@ function sums(text: string): i32 {
   if (__sum_bytes_array(bytes) != sum || __sum_bytes_array(owned) != sum || __sum_bytes_array(window) != sum) {
     return 3;
   }
-  if (hash.cksum_new().update(bytes).finish() != hash.cksum_new().update(owned).finish() || hash.bsd_sum_new().update(bytes).finish() != hash.bsd_sum_new().update(window).finish() || hash.sysv_sum_new().update(bytes).finish() != hash.sysv_sum_new().update(owned).finish()) {
+  if (cksum.new().update(bytes).finish() != cksum.new().update(owned).finish() || bsd_sum.new().update(bytes).finish() != bsd_sum.new().update(window).finish() || sysv_sum.new().update(bytes).finish() != sysv_sum.new().update(owned).finish()) {
     return 4;
   }
   return 0;
@@ -55,7 +59,7 @@ function codecs(bytes: [u8]): i32 {
   if (b64.encode(bytes) != "YWJj" || b64.encode_url(bytes) != "YWJj" || b32.encode(bytes) != "MFRGG===") {
     return 11;
   }
-  if (hash.xxh64(bytes, 0 as u64) != 0x44bc2cf5ad770999 || hash.cksum_of(bytes) != 1219131554 || hash.crc32_of(bytes) != 891568578 || hash.bsd_sum_of(bytes) != 16556 || hash.sysv_sum_of(bytes) != 294) {
+  if (hash.xxh64(bytes, 0 as u64) != 0x44bc2cf5ad770999 || cksum.of(bytes) != 1219131554 || crc32.of(bytes) != 891568578 || bsd_sum.of(bytes) != 16556 || sysv_sum.of(bytes) != 294) {
     return 12;
   }
 

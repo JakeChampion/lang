@@ -13,14 +13,14 @@ func TestDeflateGunzipNative(t *testing.T) {
 	bin := buildFernCLI(t)
 	src := `import "std/deflate";
 import "std/hex";
-import "std/hash";
+import "std/hash/crc32";
 import "core/int";
 
 function main(): i32 {
     let Ok(compressed) = hex.decode("` + deflateCorpusGzipHex + `") else { return 3; };
     match (deflate.gunzip(compressed, 1048576)) {
         Ok(out) => {
-            if (hash.crc32_new().update(out[:]).finish() == 524053769 as u32) {
+            if (crc32.new().update(out[:]).finish() == 524053769 as u32) {
                 print(int.int_to_string(out.len()) + " crc-ok");
                 return 0;
             }

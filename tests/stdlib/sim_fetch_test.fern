@@ -5,7 +5,7 @@ import "std/sim_fetch";
 import "std/fetch";
 import "std/time";
 import "std/http";
-import "std/hash";
+import "std/hash/crc32";
 import "std/string";
 import "std/utf8";
 import "std/net";
@@ -410,7 +410,7 @@ function __gzip_stored(body: string): u8[] {
   for b in body.bytes() {
     out = out.append(b);
   }
-  let crc: u32 = hash.crc32_of(body.as_bytes());
+  let crc: u32 = crc32.of(body.as_bytes());
   let i: i32 = 0;
   while (i < 4) {
     out = out.append((crc >> (8 * i) as u32 & 255 as u32) as u8);

@@ -1086,8 +1086,8 @@ recorded in [the byte-stream report](string-log/2026-10-02-byte-streams.md).
 `__sum_bytes_array(bytes)` and `__bsd_sum_bytes(bytes, seed)` reduce borrowed
 byte arrays without converting them to text. The first wraps at 32 bits;
 the second continues the 16-bit BSD checksum. Packed native arrays reuse
-the existing kernels. `hash.BsdSum.update` and
-`hash.SysvSum.update` borrow owned reader buffers and views through one method. Target, ownership, bootstrap, size and
+the existing kernels. `bsd_sum.BsdSum.update` and
+`sysv_sum.SysvSum.update` borrow owned reader buffers and views through one method. Target, ownership, bootstrap, size and
 native measurement evidence is recorded in
 [the reduction report](string-log/2026-10-03-byte-reductions.md).
 

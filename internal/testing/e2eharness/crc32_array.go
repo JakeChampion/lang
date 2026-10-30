@@ -9,7 +9,7 @@ import (
 type crcVariant struct {
 	builtin string
 	state   string
-	ctor    string
+	module  string
 	dense   int
 	update  func(crc uint32, data []byte) uint32
 	finish  string
@@ -35,14 +35,14 @@ func ieeeUpdate(crc uint32, data []byte) uint32 {
 
 // CRC32ArraySource checks __crc32_cksum_array, the MSB-first POSIX cksum register.
 func CRC32ArraySource(compiled bool) string {
-	return crc32ArraySource(compiled, crcVariant{builtin: "__crc32_cksum_array", state: "Cksum", ctor: "cksum_new", dense: 200, update: cksumUpdate})
+	return crc32ArraySource(compiled, crcVariant{builtin: "__crc32_cksum_array", state: "Cksum", module: "cksum", dense: 200, update: cksumUpdate})
 }
 
 // CRC32IEEEArraySource checks __crc32_ieee_array, the reflected gzip register, and
-// that hash.crc32_of agrees with Go's hash/crc32.
+// that crc32.of agrees with Go's hash/crc32.
 func CRC32IEEEArraySource(compiled bool) string {
-	return crc32ArraySource(compiled, crcVariant{builtin: "__crc32_ieee_array", state: "Crc32", ctor: "crc32_new", dense: 300, update: ieeeUpdate,
-		finish: `if ((hash.crc32_of(bytes) as i32) != (crc(0 - 1, bytes) ^ (0 - 1))) { return 8; }`})
+	return crc32ArraySource(compiled, crcVariant{builtin: "__crc32_ieee_array", state: "Crc32", module: "crc32", dense: 300, update: ieeeUpdate,
+		finish: `if ((crc32.of(bytes) as i32) != (crc(0 - 1, bytes) ^ (0 - 1))) { return 8; }`})
 }
 
 func crc32ArraySource(compiled bool, v crcVariant) string {
@@ -93,10 +93,10 @@ func crc32ArraySource(compiled bool, v crcVariant) string {
     if (__heap_alloc_count() != before) { return 11; }`
 	}
 	return strings.NewReplacer("LENGTHS", ns.String(), "SEEDS", ss.String(), "// Expected batches", batches.String(),
-		"// Compiled probe", probe, "// Finish check", v.finish, "CRC_BUILTIN", v.builtin, "CRC_STATE", v.state, "CRC_NEW", v.ctor).Replace(crc32ArrayProgram)
+		"// Compiled probe", probe, "// Finish check", v.finish, "CRC_BUILTIN", v.builtin, "CRC_STATE", v.state, "CRC_MODULE", v.module).Replace(crc32ArrayProgram)
 }
 
-const crc32ArrayProgram = `import "std/hash";
+const crc32ArrayProgram = `import "std/hash/CRC_MODULE";
 import "std/string";
 // Expected batches
 fip function crc(seed: i32, bytes: u8[]): i32 {
@@ -158,11 +158,11 @@ function main(): i32 {
             if (crc_view(crc_view(seed, text.as_bytes()[off:off + cut]), text.as_bytes()[off + cut:off + n]) != want) { return 7; }
             index = index + 1;
         }
-        let array: hash.CRC_STATE = hash.CRC_NEW().update(left).update(right);
-        let view: hash.CRC_STATE = hash.CRC_NEW().update(bytes);
+        let array: CRC_MODULE.CRC_STATE = CRC_MODULE.new().update(left).update(right);
+        let view: CRC_MODULE.CRC_STATE = CRC_MODULE.new().update(bytes);
         if (array.finish() != view.finish() || array.byte_count() != (n as u64)) { return 3; }
-        let window: hash.CRC_STATE = hash.CRC_NEW().update(wide[off:off + cut]).update(wide[off + cut:off + n]);
-        let text_window: hash.CRC_STATE = hash.CRC_NEW().update(text.as_bytes()[off:off + n]);
+        let window: CRC_MODULE.CRC_STATE = CRC_MODULE.new().update(wide[off:off + cut]).update(wide[off + cut:off + n]);
+        let text_window: CRC_MODULE.CRC_STATE = CRC_MODULE.new().update(text.as_bytes()[off:off + n]);
         if (window.finish() != array.finish() || text_window.finish() != array.finish() || window.byte_count() != (n as u64)) { return 12; }
         // Finish check
     }
