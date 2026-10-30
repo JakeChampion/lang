@@ -37,6 +37,10 @@ function only_constants(insts: ssa.SInst[]): boolean {
   return true;
 }
 
+function max_tiny_insts(): i32 {
+  return 8;
+}
+
 function max_once_insts(): i32 {
   return 400;
 }
@@ -187,6 +191,24 @@ function grown_unpackers(sofar: Inlined, sp: Spliceable, ctors: boolean[], own o
     }
   }
   return once;
+}
+
+// A body no larger than the call to it is spliced into each caller. This
+// runs after the other splices, so that its copies do not use the caller
+// budget a larger body needs. A body joins once no callee of its own is still
+// to be spliced into it.
+function grown_tiny(sofar: Inlined, sp: Spliceable, own tiny: boolean[]): boolean[] {
+  if (sp.size) {
+    return tiny;
+  }
+  for i in 0..sofar.funcs.len() {
+    let f: ssasem.Func = sofar.funcs[i];
+    if (!tiny[i] && sp.inlinable[i] && !sp.leaves[i] && sp.cycle[i] < 0 && !lends_view(f) && spliceable(f, max_tiny_insts()) && !loops(f.graph)
+      && !calls_spliceable(f, sp, none_of(tiny.len()), tiny, i)) {
+      tiny = tiny.with(i, true);
+    }
+  }
+  return tiny;
 }
 
 function calls_spliceable(f: ssasem.Func, sp: Spliceable, ctors: boolean[], once: boolean[], self: i32): boolean {
@@ -430,6 +452,23 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
     }
     out = next.out;
     round = round + 1;
+  }
+  let tiny: boolean[] = none_of(out.funcs.len());
+  more = true;
+  round = 0;
+  while (more && round < 4) {
+    tiny = grown_tiny(out, s, tiny);
+    let next: Round = splice_round(out, sizes, callees, rewrite, modes, s.ix, tiny, none_of(tiny.len()), none_of(tiny.len()), s.small);
+    more = next.changed;
+    sizes = next.sizes;
+    callees = next.callees;
+    out = next.out;
+    round = round + 1;
+  }
+  for j in 0..once.len() {
+    if ((once[j] || tiny[j]) && !s.once[j]) {
+      s = Spliceable { ...s, once: s.once.with(j, true) };
+    }
   }
   return Rounds { out: out, sp: s };
 }

@@ -23,7 +23,12 @@ function add_char(own xs: char[], x: char): char[] { return xs.append(x); }
 @noinline function kept_pair(own xs: u64[], x: u64): u64[] {
   return xs.append(x).append(x + 1u64);
 }
-function add_text(own xs: string[], x: string): string[] { return xs.append(x); }
+function add_text(own xs: string[], x: string): string[] {
+  if (xs.len() + x.len() > 1000000) {
+    return [];
+  }
+  return xs.append(x);
+}
 enum ArrayBox { Have(u64[]) }
 function append_tuple(pair: (u64[], i32), x: u64): u64[] { return pair.0.append(x); }
 function append_box(box: ArrayBox, x: u64): u64[] {
