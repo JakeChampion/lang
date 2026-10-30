@@ -87,6 +87,17 @@ builtin that reads only its operands. `ssasem`'s guard check
 treats two reads of one slot of one box (an array's at one index) as one
 value, so a test of the first read settles the re-read.
 
+After ownership inference, `semsink.sink_past_lent` re-reads a projection
+below a call that only borrows its parent. It then runs `semlatehold.fern`.
+That pass finds a read off a value that a later call consumes. The read is
+used past the call, and the call is in a lower block. The pass reads the
+value again just before the call, and the uses that the call dominates take
+the new read.
+
+Thus the first read is a borrow, and only the arm with the call holds a
+count. A value that a phi takes is left as it is, because the phi needs its
+count on every arm.
+
 ### 1.1 The semantic graph
 
 `semsource` lowers each function to `ssasem.Func`: blocks of `ssa.SInst`
