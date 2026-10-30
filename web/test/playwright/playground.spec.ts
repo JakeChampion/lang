@@ -20,6 +20,20 @@ async function gotoReady(page) {
   });
 }
 
+test("page boots with external requests blocked", async ({ page }) => {
+  await page.route(/^https?:\/\//, async route => {
+    const url = new URL(route.request().url());
+    if (url.hostname === "127.0.0.1" || url.hostname === "localhost") {
+      await route.continue();
+    } else {
+      await route.abort();
+    }
+  });
+  await gotoReady(page);
+  await expect(page.locator(".cm-content")).toBeVisible();
+  await expect(page.locator("#run")).toBeEnabled();
+});
+
 test("page boots and Run becomes enabled", async ({ page }) => {
   await gotoReady(page);
   await expect(page.locator("#run")).toBeEnabled();

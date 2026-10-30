@@ -32,6 +32,10 @@ stage=site/public/playground
 echo "==> $(go version)"
 echo "==> node $(node --version)"
 
+echo "==> building playground editor"
+npm --prefix web/editor ci --no-audit --no-fund
+npm --prefix web/editor run build
+
 echo "==> compiling playground wasm"
 rm -rf "$stage"
 mkdir -p "$stage"
