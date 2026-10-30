@@ -56,13 +56,15 @@ larger than 8 instructions, so the test still checks the leaf rule.
 
 A method is never in the once set, because `semsource.outside_unnamed`
 refuses each name that contains a `.`. A method that only direct calls reach
-is the same as a private function. With methods in that set,
-`BufWriter.settle` is spliced into `gnu.settle`, and `shuf -i` loses a further
-15M instructions.
+is the same as a private function. With this change applied, methods in that
+set make `cat -n` 1.9% faster and `nl` 1.3% faster. `shuf -i` does not change.
 
-But the HTTP framing probe then makes 2 allocations for each parse, not 0.
-`__framed_body` grows from 44 to 436 instructions as its own callees are
-spliced. That is more than the 400 that `saves_box` allows. Its caller had
-room for it under the 1500 budget only while the methods stayed calls. The
-limit for a splice that saves a box applies to the grown size, not to the size
-that made the body a once body. Fix that first, then let the methods in.
+Two things block it. First, the HTTP framing probe makes 2 allocations for
+each parse, not 0. `__framed_body` grows from 44 to 436 instructions as its
+own callees are spliced, and `saves_box` allows 400. Without that cap the
+probe makes 0 again.
+
+Second, `uniq` is 4% slower. The methods spliced into its
+`main` leave no room in the 1500 budget for `run`, which holds the hot loop.
+A once splice adds no code in total, so the caller budget is the limit to
+look at.
