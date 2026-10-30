@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**101 of 104** claims are pinned by a conformance case. The remaining
+**102 of 105** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -182,6 +182,7 @@ of them.
 | `RH-21` | `docs/security/HANDLE-AUDIT.md` | A match that is not the local's last use lends its payload (`E051`) | `diag_e051_handle_matched_after_payload_closed` |
 | `RH-22` | `docs/security/HANDLE-AUDIT.md` | A pattern binding of a borrowed scrutinee lends its payload, so a field of it cannot move out (`E051`) | `diag_e051_handle_payload_field_of_borrowed` |
 | `RH-23` | `docs/security/HANDLE-AUDIT.md` | A for-each over a borrowed array lends each element (`E051`) | `diag_e051_handle_elements_closed_from_borrowed_array` |
+| `RH-24` | `docs/security/HANDLE-AUDIT.md` | A payload a match takes from a local at its last use is a fresh local: it is stored and read again in the same arm | `match_taken_payload_is_a_fresh_local` |
 
 ## Every gap this index opened with is now closed
 

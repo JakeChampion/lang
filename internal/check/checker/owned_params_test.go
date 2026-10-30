@@ -1662,3 +1662,31 @@ function work(): i32 {
     return n;
 }`)
 }
+
+func TestOwnGuardTakenPayloadIsAFreshLocal(t *testing.T) {
+	wantOK(t, "taken-payload-stored-then-read", `
+function round(i: i32): i32 {
+    let held: i32[] = [];
+    let acc: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
+    if (i >= 0) {
+        match (o) { Some(a) => { held = a; acc = a[0]; }, None => {} }
+    }
+    return acc + held[1];
+}`)
+	wantOK(t, "taken-payload-closed-at-its-last-use", payloadPrelude+`
+function work(): i32 {
+    let r: Result[Pack, string] = mkp();
+    match (r) {
+        Ok(p) => { return p.file.close(); },
+        Err(e) => { return 0; }
+    }
+}`)
+	wantE051(t, "lent-payload-not-taken", payloadPrelude+`
+function work(o: Option[Handle]): i32 {
+    match (o) {
+        Some(h) => { return h.close(); },
+        None => { return 0; }
+    }
+}`)
+}

@@ -18050,6 +18050,26 @@ function ow_scalar_literal(e: ast.Expr): boolean {
   return false;
 }
 
+// A scrutinee that is a local or a field path at its last use: its payloads
+// leave it.
+function ow_takes_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return util.has_str(ctx.last_use, lu_key(id.line, id.col)) && !ow_is_owned(ctx, id.name);
+    },
+    ast.ExprFieldAccess(fa) => {
+      if let ast.ExprIdent(oid) = fa.obj {
+        return util.has_str(ctx.last_use, lu_field_key(fa, oid));
+      }
+      return false;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
 function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
   if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(cid) = c.callee {
@@ -18832,6 +18852,13 @@ function lu_stmt_declares(st: ast.Stmt, name: string): boolean {
   return false;
 }
 
+function lu_scrutinee_is_param(fx: LuFn, e: ast.Expr): boolean {
+  if let ast.ExprIdent(id) = e {
+    return util.has_str(fx.params, id.name);
+  }
+  return false;
+}
+
 // A for-each variable bound from an owned array is a fresh local each round.
 function lu_elem_fresh(fx: LuFn, site: LuSite, name: string): boolean {
   return util.has_str(site.fresh, name) && !util.has_str(fx.params, name) && lu_decl_count(fx, name) == 0;
@@ -19232,14 +19259,20 @@ function lu_stmts(stmts: ast.Stmt[], sc: LuScope, outer: ast.Expr, has_outer: bo
       },
       ast.StmtMatch(m) => {
         acc = lu_root(m.scrutinee, site, outer, has_outer, fx, acc);
-        acc = lu_move_site(fx, m.scrutinee, site, acc);
+        let taken: string[] = lu_move_site(fx, m.scrutinee, site, []);
+        acc = util.append_all(acc, taken);
         for arm in m.arms {
           if (arm.has_guard) {
             acc = lu_root(arm.guard, site, outer, has_outer, fx, acc);
           }
-          let bound: string[] = astwalk.pattern_binders(arm.pattern, []);
-          bound = util.append_all(sc.binders, bound);
-          acc = lu_stmts(arm.body, LuScope { ...sc, frames: site.frames, head: lu_plain_frame(arm.body), binders: bound }, outer, has_outer, fx, acc);
+          let names: string[] = astwalk.pattern_binders(arm.pattern, []);
+          let bound: string[] = util.append_all(sc.binders, names);
+          // A match that takes its scrutinee binds each payload as a fresh local.
+          let fresh: string[] = sc.fresh;
+          if (taken.len() > 0 && !lu_scrutinee_is_param(fx, m.scrutinee)) {
+            fresh = util.append_all(fresh, names);
+          }
+          acc = lu_stmts(arm.body, LuScope { ...sc, frames: site.frames, head: lu_plain_frame(arm.body), binders: bound, fresh: fresh }, outer, has_outer, fx, acc);
         }
       },
       ast.StmtDefer(d) => {
@@ -19846,10 +19879,13 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       }
       let mv: MovedEntry[] = rs.moved;
       let d: util.Diag[] = rs.diags;
+      let taken: boolean = ow_takes_scrutinee(m.scrutinee, ctx);
       for arm in m.arms {
         let actx: OwnCtx = ow_arm_bind_ctx(ctx, arm.pattern);
         actx = OwnCtx { ...actx, scope: annotate_arm_scope(arm, ctx.scope, whole) };
-        if (scrut_owned) {
+        if (taken) {
+          // Each binding is a fresh local, neither owned nor lent.
+        } else if (scrut_owned) {
           actx = ow_arm_payload_ctx(actx, arm.pattern, whole);
         } else {
           actx = ow_arm_lent_ctx(actx, arm.pattern);

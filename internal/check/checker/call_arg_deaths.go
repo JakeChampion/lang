@@ -361,6 +361,66 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		return true
 	})
+	moves := map[ast.Expr]bool{}
+	moveSite := func(holder ast.Node, e ast.Expr) {
+		switch t := e.(type) {
+		case *ast.Ident:
+			if escaping[t.Name] || !admitted(t.Name) || liveAfter(info, body, holder, t, order) {
+				return
+			}
+			moves[e] = true
+		case *ast.FieldAccess:
+			q, ok := t.Target.(*ast.Ident)
+			if !ok || lambdaCaptured[q.Name] || deferBare[q.Name] || deferField[[2]string{q.Name, t.Field}] || !fieldOwner(q.Name) {
+				return
+			}
+			if !loopRepeats(body, holder, declNode[q.Name]) && fieldPathIsLast(order, fieldOf, q, t.Field) {
+				moves[e] = true
+			}
+		}
+	}
+	ast.Walk(body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Match:
+			moveSite(x, x.Tag)
+		case *ast.MatchExpr:
+			moveSite(x, x.Tag)
+		case *ast.Var:
+			if strings.HasPrefix(x.Name, ast.ForEachIterPrefix) {
+				moveSite(x, x.Init)
+			}
+		}
+		return true
+	})
+	// A match on a local or a field path at its last use takes its payloads,
+	// so each name an arm binds is a fresh local.
+	ast.Walk(body, func(n ast.Node) bool {
+		var tag ast.Expr
+		var arms [][]string
+		switch x := n.(type) {
+		case *ast.Match:
+			tag = x.Tag
+			for _, arm := range x.Arms {
+				arms = append(arms, arm.Bindings)
+			}
+		case *ast.MatchExpr:
+			tag = x.Tag
+			for _, arm := range x.Arms {
+				arms = append(arms, arm.Bindings)
+			}
+		default:
+			return true
+		}
+		if id, ok := tag.(*ast.Ident); !moves[tag] || ok && isParam[id.Name] {
+			return true
+		}
+		for _, bindings := range arms {
+			for _, b := range bindings {
+				freshInitLocal[b] = true
+			}
+		}
+		return true
+	})
 	markOnce := func(scope ast.Expr, name string) {
 		total := 0
 		ast.Walk(scope, func(m ast.Node) bool {
@@ -632,37 +692,6 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		return true
 	})
-	moves := map[ast.Expr]bool{}
-	moveSite := func(holder ast.Node, e ast.Expr) {
-		switch t := e.(type) {
-		case *ast.Ident:
-			if escaping[t.Name] || !admitted(t.Name) || liveAfter(info, body, holder, t, order) {
-				return
-			}
-			moves[e] = true
-		case *ast.FieldAccess:
-			q, ok := t.Target.(*ast.Ident)
-			if !ok || lambdaCaptured[q.Name] || deferBare[q.Name] || deferField[[2]string{q.Name, t.Field}] || !fieldOwner(q.Name) {
-				return
-			}
-			if !loopRepeats(body, holder, declNode[q.Name]) && fieldPathIsLast(order, fieldOf, q, t.Field) {
-				moves[e] = true
-			}
-		}
-	}
-	ast.Walk(body, func(n ast.Node) bool {
-		switch x := n.(type) {
-		case *ast.Match:
-			moveSite(x, x.Tag)
-		case *ast.MatchExpr:
-			moveSite(x, x.Tag)
-		case *ast.Var:
-			if strings.HasPrefix(x.Name, ast.ForEachIterPrefix) {
-				moveSite(x, x.Init)
-			}
-		}
-		return true
-	})
 	return ArgDeaths{Dies: out, Repeating: repeating, Escaping: escaping, Occurrences: occurrences, Deferred: deferred, FieldDies: fieldDies, Moves: moves, Bound: bound}
 }
 
@@ -926,7 +955,7 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
 			continue
 		}
 		for _, a := range call.Args {
-			if id, ok := a.(*ast.Ident); ok && dies[id.Name] && local[id.Name] && (!d.Escaping[id.Name] || d.Deferred[call]) {
+			if id, ok := a.(*ast.Ident); ok && dies[id.Name] && (local[id.Name] || d.Bound[id.Name]) && (!d.Escaping[id.Name] || d.Deferred[call]) {
 				out[id] = true
 			}
 		}
@@ -961,7 +990,7 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
 		}
 		switch t := e.(type) {
 		case *ast.Ident:
-			if local[t.Name] && !d.Escaping[t.Name] {
+			if (local[t.Name] || d.Bound[t.Name]) && !d.Escaping[t.Name] {
 				out[e] = true
 			}
 		case *ast.FieldAccess:
