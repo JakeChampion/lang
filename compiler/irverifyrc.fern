@@ -423,7 +423,18 @@ function site_problems(fn_name: string, call: i32, s: Site): irverify.Problem[] 
   return out;
 }
 
-struct Claim { at: i32, donor: i32 }
+// from is the op after which the donor still holds the claimed box: the call,
+// or the op before the site's clear of the donor.
+struct Claim { at: i32, donor: i32, from: i32 }
+
+function claim_of(ops: ir.Op[], call: i32, donor: i32): Claim {
+  let tok: i32 = token_arg_slot(ops, call);
+  if (tok >= 2 && ops[tok - 1].kind_tag == ir.K_STORE_LOCAL && ops[tok - 1].i32_imm == donor
+    && ops[tok - 2].kind_tag == ir.K_CONST_I32 && ops[tok - 2].i32_imm == 0) {
+    return Claim { at: call, donor: donor, from: tok - 2 };
+  }
+  return Claim { at: call, donor: donor, from: call };
+}
 
 struct Flow { next: i32[], other: i32[] }
 
@@ -523,7 +534,7 @@ function double_claim_problems(fn_name: string, ops: ir.Op[], claims: Claim[]): 
     let j: i32 = i + 1;
     while (j < claims.len()) {
       if (claims[j].donor == claims[i].donor
-        && reaches(ops, flow, claims[i].at, claims[j].at, claims[i].donor)) {
+        && reaches(ops, flow, claims[i].from, claims[j].at, claims[i].donor)) {
         out = out.append(irverify.Problem {
           fn_name: fn_name,
           op: claims[j].at,
@@ -558,7 +569,7 @@ pub function verify_rc_fn(fn_name: string, ops: ir.Op[]): RcResult {
           j = j + 1;
         }
         r = RcResult { ...r, checked: r.checked + 1, problems: acc };
-        claims = claims.append(Claim { at: i, donor: s.gate });
+        claims = claims.append(claim_of(ops, i, s.gate));
       } else {
         r = RcResult { ...r, skips: r.skips.append(s.why) };
       }
