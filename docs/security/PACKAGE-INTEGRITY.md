@@ -23,6 +23,7 @@ It never reads the index and never opens the network (`docs/PACKAGES.md`).
 | Archive entries | `write_entries` refuses a name that escapes the root, a symbolic link, and every type but a file or a directory | `unpackInto` |
 | Store path | `modloader.store_dir` builds the path from a validated hash only | `pkgcache.Dir` |
 | Lock entry against the manifest | `modloader.locked_dir` | `modload.lockedDepDir` |
+| Index serial against the lock | `index_serial_error` in `compiler/fern.fern` | `checkIndexSerial` in `cmd/fern/resolve.go` |
 
 ## What the audit found
 
@@ -48,6 +49,11 @@ A lock at or above the minimum loads, because minimum version selection keeps th
 | Lock at or above the demand (controls) | `TestLoadStaleLockErrors/at-demand`, `TestLoadStaleLockErrors/above-demand`, `TestSelfHostMvsCachedURLDependency` | loads |
 | Index with no signature file, altered index, signature by another key, malformed signature | `TestResolveSignedIndex`, `TestSelfHostSignedIndexResolve` | refused, no lock written |
 | Index key not `ed25519:` and 64 lowercase hex digits | `TestIndexKey`, `TestSelfHostManifestParity/malformed index key` | refused at the parse boundary |
+| Signed index rolled back below the serial in the lock | `TestResolveIndexSerial/rolled_back`, `TestSelfHostIndexSerialResolve/signed-rollback` | refused, lock unchanged |
+| Index that lost its serial after a lock recorded one | `TestResolveIndexSerial/serial_removed`, `TestSelfHostIndexSerialResolve/serial-removed` | refused, lock unchanged |
+| Serial with more digits compared as text | `TestResolveIndexSerial/rolled_back,_fewer_digits`, `TestSelfHostIndexSerialResolve/rollback-fewer-digits` | refused, 9 is below 10 |
+| Serial or recorded serial misspelled, or given twice | `TestSelfHostMvsIndexResult`, `TestSelfHostLockParseParity`, `TestSelfHostIndexSerialResolve/malformed-serial` | refused at the parse boundary |
+| Same or newer serial, and first resolve (controls) | `TestResolveIndexSerial`, `TestSelfHostIndexSerialResolve` | loads, lock records the serial |
 
 ## Signatures and rollback
 
@@ -92,14 +98,44 @@ The refusals name the file:
 Both loaders print the same words. `TestSelfHostSignedIndexResolve` runs the shipped compiler and the Go oracle over the same six trees and compares their output and their lock.
 `TestResolveSignedIndex` is the Go side alone, and `TestIndexKey` with the `index key` rows of `TestSelfHostManifestParity` pin the key spelling.
 
+### The index serial
+
 Rollback is a resolve-time decision, because the build never reads the index.
 A lower version that a manifest demands is never selected over the lock without a new `fern -resolve`, and the stale-lock refusal stops the other direction.
-A signed index that a mirror rolls back to an older signed copy still verifies. The signature binds the rows to the publisher, not to a date.
+
+A signature binds the rows to the publisher, not to a time.
+An older index that the publisher signed still verifies.
+The serial is the counter that orders the copies of one index:
+
+```toml
+serial = 42
+[foo]
+"1.0.0" = { path = "foo-1.0.0" }
+```
+
+The serial is 1 to 18 decimal digits with no leading zero, above the first section.
+The publisher increases it with each release of the index, and the signature covers it.
+`fern -resolve` writes it to the top of `fern.lock` as `index_serial = 42`.
+A later `fern -resolve` compares the index serial with the serial that the lock records.
+It does this before it fetches a package:
+
+| Condition | Message |
+|---|---|
+| The index serial is below the recorded serial | `index IPATH: serial N is below index serial M that DIR/fern.lock records` |
+| The lock records a serial and the index has none | `index IPATH: has no serial but DIR/fern.lock records index serial M` |
+| The serial is misspelled or given twice | `index IPATH: line L: serial must be 1 to 18 decimal digits with no leading zero, got "…"` |
+| The recorded serial is misspelled or given twice | `DIR/fern.lock line L: index_serial must be 1 to 18 decimal digits with no leading zero, got "…"` |
+
+A refused resolve leaves the lock as it was.
+An index at the recorded serial or above it resolves, and the new lock records its serial.
+`TestSelfHostIndexSerialResolve` runs the shipped compiler and the Go oracle over the same trees, and compares their output and their lock.
 
 ## Limits
 
 - The signature covers the index, not the archives. The hash alone pins an archive.
 - No `fern` command signs an index. The publisher signs with an external Ed25519 tool.
-- A rolled-back index that the publisher signed verifies. A date or a counter in the index needs a format change.
+- The serial check starts at the first lock that records a serial. A first resolve, or a resolve after `fern.lock` is deleted, accepts any serial.
+- An index serial stops a rollback, not a freeze. A mirror can continue to supply the newest index that a lock saw, and hide a later release. An expiry date in the index can stop that, but it needs a clock at resolve time.
+- An index without a serial has no rollback check, signed or not.
 - The archive limits bound one archive. A manifest can declare many.
 - `fern -resolve` reads the index file from disk or fetches it over HTTPS. The TLS stack's own audit is `CRYPTO-AUDIT.md`.
