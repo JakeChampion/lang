@@ -13,9 +13,9 @@ var foldedJoinSrcs = map[string]string{
 	// see them as zero for the field take out of `e` to be the take it is.
 	"zero-phi-then-take": `struct S0 { f2: i32[] }
 struct G { v: S0 }
-function (g: G) get(): S0 { return g.v; }
+@noinline function (g: G) get(): S0 { return g.v; }
 enum O { Nil, Has(S0) }
-function (o: O) or(d: S0): S0 { match (o) { Has(x) => { return x; }, Nil => { return d; } } }
+@noinline function (o: O) or(d: S0): S0 { match (o) { Has(x) => { return x; }, Nil => { return d; } } }
 @noinline function three(): i32[] { return [535, 330, 350]; }
 function main(): i32 {
   let a: G = G { v: S0 { f2: three() } };
