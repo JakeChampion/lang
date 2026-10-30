@@ -399,10 +399,8 @@ function holds_construction(defs: Defs, d: ssa.SInst): boolean {
 
 function spliced_away(sp: Spliceable, ctors: boolean[], calls: i32[], left: i32[]): boolean[] {
   let out: boolean[] = [];
-  let i: i32 = 0;
-  while (i < calls.len()) {
+  for i in 0..calls.len() {
     out = out.append((sp.leaves[i] || sp.once[i] || ctors[i]) && calls[i] > 0 && left[i] == 0);
-    i = i + 1;
   }
   return out;
 }
@@ -414,11 +412,9 @@ struct Rounds { out: Inlined, sp: Spliceable }
 function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][], sp: Spliceable): Rounds {
   let out: Inlined = Inlined { funcs: funcs0, rewritten: [], spliced: [], modes: [], laid: [] };
   let alone: boolean[] = [];
-  let i: i32 = 0;
-  while (i < funcs0.len()) {
+  for i in 0..funcs0.len() {
     out = Inlined { ...out, rewritten: out.rewritten.append(false) };
     alone = alone.append(sp.once[i] && !sp.shared[i]);
-    i = i + 1;
   }
   let once: boolean[] = alone;
   let sizes: i32[] = sizes_of(funcs0);
@@ -454,16 +450,15 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], modes: i32[][]
     round = round + 1;
   }
   let tiny: boolean[] = none_of(out.funcs.len());
-  more = true;
-  round = 0;
-  while (more && round < 4) {
+  for _ in 0..4 {
     tiny = grown_tiny(out, s, tiny);
     let next: Round = splice_round(out, sizes, callees, rewrite, modes, s.ix, tiny, none_of(tiny.len()), none_of(tiny.len()), s.small);
-    more = next.changed;
     sizes = next.sizes;
     callees = next.callees;
     out = next.out;
-    round = round + 1;
+    if (!next.changed) {
+      break;
+    }
   }
   for j in 0..once.len() {
     if ((once[j] || tiny[j]) && !s.once[j]) {
