@@ -335,7 +335,7 @@ function main(): i32 {
   }
   eprint(line);
 
-  let t: test.TestRunner = test.test_new("scheduler");
+  let t: test.TestRunner = test.new("scheduler");
   t = t.it("fixed rate due times never drift", test_fixed_rate_due_times_never_drift);
   t = t.it("fixed delay adds the duration to every period", test_fixed_delay_adds_the_duration_to_every_period);
   t = t.it("drift is bounded under rate and grows under delay", test_drift_is_bounded_under_rate_and_grows_under_delay);

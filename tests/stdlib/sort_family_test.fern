@@ -115,7 +115,7 @@ function test_cmp_ignore_ascii_case_prefix(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("cmp sort family");
+  let r: test.TestRunner = test.new("cmp sort family");
   r = r.it("sort_in_place reversed 100", test_sort_in_place_reversed);
   r = r.it("sort_in_place duplicates", test_sort_in_place_duplicates);
   r = r.it("sort_in_place empty and single", test_sort_in_place_empty_and_single);

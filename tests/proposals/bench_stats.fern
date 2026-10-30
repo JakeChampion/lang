@@ -325,7 +325,7 @@ function main(): i32 {
   eprint("  " + render("clean ", summarise(demo)));
   eprint("  " + render("spiked", summarise(spiked)));
 
-  let r: test.TestRunner = test.test_new("bench_stats");
+  let r: test.TestRunner = test.new("bench_stats");
   r = r.it("the quantiles match hand-computed values", test_the_quantiles_match_hand_computed_values);
   r = r.it("the summary ignores an outlier", test_the_summary_ignores_an_outlier);
   r = r.it("order does not matter", test_order_does_not_matter);

@@ -41,7 +41,7 @@ function test_skips_malformed(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/dotenv");
+  let r: test.TestRunner = test.new("std/dotenv");
   r = r.it("basic + trim", test_basic);
   r = r.it("comments/blanks", test_comments_blanks);
   r = r.it("export prefix", test_export_prefix);

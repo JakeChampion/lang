@@ -32,7 +32,7 @@ function test_len_equals_count(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/string find_all");
+  let r: test.TestRunner = test.new("std/string find_all");
   r = r.it("multiple matches", test_multiple);
   r = r.it("non-overlapping", test_non_overlapping);
   r = r.it("no match", test_no_match);

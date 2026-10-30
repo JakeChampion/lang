@@ -520,7 +520,7 @@ function close_notify_record(): u8[] {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/tls/record");
+  let r: test.TestRunner = test.new("std/tls/record");
   r = r.it("frame the ClientHello", test_frame_client_hello);
   r = r.it("frame the ServerHello", test_frame_server_hello);
   r = r.it("frame splits at 2^14", test_frame_splits);

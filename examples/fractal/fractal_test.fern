@@ -1,5 +1,5 @@
 import "std/test";
-import "std/hash";
+import "std/hash/crc32";
 import "std/binary";
 import "./fractal";
 
@@ -44,14 +44,14 @@ function check_rendered(tile: fractal.Tile, iterations: i64, bytes: i32, checksu
   if (tile.iterations != iterations) {
     return test.fail("tile iteration total differs");
   }
-  if (tile.png.len() != bytes || hash.crc32_new().update(tile.png).finish() != checksum) {
+  if (tile.png.len() != bytes || crc32.new().update(tile.png).finish() != checksum) {
     return test.fail("tile PNG differs");
   }
   return test.pass();
 }
 
 function main(): i32 {
-  let runner: test.TestRunner = test.test_new("fractal tiles");
+  let runner: test.TestRunner = test.new("fractal tiles");
   runner = runner.it("coordinate bounds", test_coordinates);
   runner = runner.it("iteration limits", test_iteration_limits);
   runner = runner.it("big-endian binary fields", test_binary_fields);

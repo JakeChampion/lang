@@ -1,0 +1,45 @@
+// spec: RH-19
+// A pattern binding of an owned scrutinee owns its payload, so a field of
+// the payload moves out to a consuming call at the path's last use. The
+// scrutinee is an `own` parameter, or a fresh call behind an `if let`.
+
+import "std/i32";
+
+struct Handle { fd: i32 }
+
+struct Pack { file: Handle, path: string }
+
+function (own h: Handle) close(): void {
+  print("closed " + h.fd.to_string());
+}
+
+function open_pack(fd: i32): Result[Pack, string] {
+  return Ok(Pack { file: Handle { fd: fd }, path: "p" + fd.to_string() });
+}
+
+function close_held(own held: Option[Pack]): string {
+  match (held) {
+    Some(t) => {
+      t.file.close();
+      return t.path;
+    },
+    None => {
+      return "none";
+    }
+  }
+  return "none";
+}
+
+function close_fresh(): string {
+  if let Ok(t) = open_pack(4) {
+    t.file.close();
+    return t.path;
+  }
+  return "err";
+}
+
+function main(): i32 {
+  print(close_held(Some(Pack { file: Handle { fd: 3 }, path: "held" })));
+  print(close_fresh());
+  return 0;
+}

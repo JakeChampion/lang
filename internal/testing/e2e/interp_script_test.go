@@ -701,7 +701,7 @@ function main(): i32 {
 			name: "Date struct fields round-trip",
 			source: `import "std/time";
 function main(): i32 {
-    let d: Date = time.date_make(2026, 5, 19);
+    let d: Date = time.date_of(2026, 5, 19);
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
     return d.day;
 }`,
@@ -712,7 +712,7 @@ function main(): i32 {
 			name: "Time at second precision (nsec zero)",
 			source: `import "std/time";
 function main(): i32 {
-    let t: Time = time.time_make(14, 30, 45);
+    let t: Time = time.time_of(14, 30, 45);
     print(t.hour.to_string() + ":" + t.minute.to_string() + ":" + t.second.to_string());
     return t.nsec;
 }`,
@@ -722,7 +722,7 @@ function main(): i32 {
 			name: "DateTime composes Date + Time",
 			source: `import "std/time";
 function main(): i32 {
-    let dt: DateTime = time.datetime_make(time.date_make(2026, 1, 1), time.time_make(0, 0, 0));
+    let dt: DateTime = time.datetime_of(time.date_of(2026, 1, 1), time.time_of(0, 0, 0));
     print((dt.date.year - dt.time.hour).to_string());
     return 0;
 }`,
@@ -864,9 +864,9 @@ function show(d: Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
-    show(time.date_make(2026, 1, 31).add_days(1));
-    show(time.date_make(2026, 12, 31).add_days(1));
-    show(time.date_make(2026, 1, 1).add_days(-1));
+    show(time.date_of(2026, 1, 31).add_days(1));
+    show(time.date_of(2026, 12, 31).add_days(1));
+    show(time.date_of(2026, 1, 1).add_days(-1));
     return 0;
 }`,
 			wantStdout: "2026-2-1\n2027-1-1\n2025-12-31\n",
@@ -878,9 +878,9 @@ function show(d: Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
-    show(time.date_make(2024, 2, 28).add_days(1));
-    show(time.date_make(2024, 2, 29).add_days(1));
-    show(time.date_make(2025, 2, 28).add_days(1));
+    show(time.date_of(2024, 2, 28).add_days(1));
+    show(time.date_of(2024, 2, 29).add_days(1));
+    show(time.date_of(2025, 2, 28).add_days(1));
     return 0;
 }`,
 			wantStdout: "2024-2-29\n2024-3-1\n2025-3-1\n",
@@ -890,13 +890,13 @@ function main(): i32 {
 			source: `import "std/time";
 function main(): i32 {
     // 1970-01-01 was a Thursday.
-    print(time.date_make(1970, 1, 1).weekday().to_string());
+    print(time.date_of(1970, 1, 1).weekday().to_string());
     // 2024-01-01 was a Monday.
-    print(time.date_make(2024, 1, 1).weekday().to_string());
+    print(time.date_of(2024, 1, 1).weekday().to_string());
     // 2025-12-25 was a Thursday.
-    print(time.date_make(2025, 12, 25).weekday().to_string());
+    print(time.date_of(2025, 12, 25).weekday().to_string());
     // 2026-05-19 (today's date per CLAUDE.md) was a Tuesday.
-    print(time.date_make(2026, 5, 19).weekday().to_string());
+    print(time.date_of(2026, 5, 19).weekday().to_string());
     return 0;
 }`,
 			wantStdout: "4\n1\n4\n2\n",
@@ -905,13 +905,13 @@ function main(): i32 {
 			name: "day_of_year handles Jan / Feb / Mar / Dec in leap + non-leap",
 			source: `import "std/time";
 function main(): i32 {
-    print(time.date_make(2026, 1, 1).day_of_year().to_string());    // 1
-    print(time.date_make(2026, 2, 28).day_of_year().to_string());   // 59
-    print(time.date_make(2026, 3, 1).day_of_year().to_string());    // 60
-    print(time.date_make(2026, 12, 31).day_of_year().to_string());  // 365
-    print(time.date_make(2024, 2, 29).day_of_year().to_string());   // 60
-    print(time.date_make(2024, 3, 1).day_of_year().to_string());    // 61
-    print(time.date_make(2024, 12, 31).day_of_year().to_string());  // 366
+    print(time.date_of(2026, 1, 1).day_of_year().to_string());    // 1
+    print(time.date_of(2026, 2, 28).day_of_year().to_string());   // 59
+    print(time.date_of(2026, 3, 1).day_of_year().to_string());    // 60
+    print(time.date_of(2026, 12, 31).day_of_year().to_string());  // 365
+    print(time.date_of(2024, 2, 29).day_of_year().to_string());   // 60
+    print(time.date_of(2024, 3, 1).day_of_year().to_string());    // 61
+    print(time.date_of(2024, 12, 31).day_of_year().to_string());  // 366
     return 0;
 }`,
 			wantStdout: "1\n59\n60\n365\n60\n61\n366\n",
@@ -921,13 +921,13 @@ function main(): i32 {
 			source: `import "std/time";
 function main(): i32 {
     // Same day.
-    print(time.date_make(2026, 5, 19).days_since(time.date_make(2026, 5, 19)).to_string());
+    print(time.date_of(2026, 5, 19).days_since(time.date_of(2026, 5, 19)).to_string());
     // 2026 is non-leap, so one year = 365 days.
-    print(time.date_make(2027, 1, 1).days_since(time.date_make(2026, 1, 1)).to_string());
+    print(time.date_of(2027, 1, 1).days_since(time.date_of(2026, 1, 1)).to_string());
     // 2024 is leap, so one year = 366 days.
-    print(time.date_make(2025, 1, 1).days_since(time.date_make(2024, 1, 1)).to_string());
+    print(time.date_of(2025, 1, 1).days_since(time.date_of(2024, 1, 1)).to_string());
     // Negative (other is after).
-    print(time.date_make(2026, 1, 1).days_since(time.date_make(2026, 1, 8)).to_string());
+    print(time.date_of(2026, 1, 1).days_since(time.date_of(2026, 1, 8)).to_string());
     return 0;
 }`,
 			wantStdout: "0\n365\n366\n-7\n",
@@ -939,14 +939,14 @@ function show_v(d: Date): void {
     if (d.is_valid()) { print("valid"); } else { print("invalid"); }
 }
 function main(): i32 {
-    show_v(time.date_make(2026, 1, 1));
-    show_v(time.date_make(2026, 13, 1));     // bad month
-    show_v(time.date_make(2026, 2, 30));     // Feb 30
-    show_v(time.date_make(2024, 2, 29));     // Feb 29 in leap
-    show_v(time.date_make(2025, 2, 29));     // Feb 29 in non-leap
-    show_v(time.date_make(2026, 0, 1));      // month 0
-    show_v(time.date_make(2026, 5, 0));      // day 0
-    show_v(time.date_make(2026, 4, 31));     // Apr has 30 days
+    show_v(time.date_of(2026, 1, 1));
+    show_v(time.date_of(2026, 13, 1));     // bad month
+    show_v(time.date_of(2026, 2, 30));     // Feb 30
+    show_v(time.date_of(2024, 2, 29));     // Feb 29 in leap
+    show_v(time.date_of(2025, 2, 29));     // Feb 29 in non-leap
+    show_v(time.date_of(2026, 0, 1));      // month 0
+    show_v(time.date_of(2026, 5, 0));      // day 0
+    show_v(time.date_of(2026, 4, 31));     // Apr has 30 days
     return 0;
 }`,
 			wantStdout: "valid\ninvalid\ninvalid\nvalid\ninvalid\ninvalid\ninvalid\ninvalid\n",
@@ -976,9 +976,9 @@ function show(d: Date): void {
 }
 function main(): i32 {
     // Walk back 1 day from 1970-01-01 → 1969-12-31.
-    show(time.date_make(1970, 1, 1).add_days(-1));
+    show(time.date_of(1970, 1, 1).add_days(-1));
     // Walk back exactly one (non-leap) year from 1970-01-01.
-    show(time.date_make(1970, 1, 1).add_days(-365));
+    show(time.date_of(1970, 1, 1).add_days(-365));
     return 0;
 }`,
 			wantStdout: "1969-12-31\n1969-1-1\n",
@@ -1018,10 +1018,10 @@ func TestInterpScriptRfc3339(t *testing.T) {
 			name: "Date.format_iso zero-pads month + day",
 			source: `import "std/time";
 function main(): i32 {
-    print(time.date_make(2026, 5, 19).format_iso());
-    print(time.date_make(2024, 1, 1).format_iso());
-    print(time.date_make(2024, 12, 31).format_iso());
-    print(time.date_make(99, 3, 7).format_iso());
+    print(time.date_of(2026, 5, 19).format_iso());
+    print(time.date_of(2024, 1, 1).format_iso());
+    print(time.date_of(2024, 12, 31).format_iso());
+    print(time.date_of(99, 3, 7).format_iso());
     return 0;
 }`,
 			wantStdout: "2026-05-19\n2024-01-01\n2024-12-31\n0099-03-07\n",
@@ -1326,13 +1326,13 @@ function show(d: Date): void {
 }
 function main(): i32 {
     // Jan 31 + 1 month = Feb 28 (2026 non-leap) or Feb 29 (2024 leap).
-    show(time.date_make(2026, 1, 31).add_span(time.span_months(1)));
-    show(time.date_make(2024, 1, 31).add_span(time.span_months(1)));
+    show(time.date_of(2026, 1, 31).add_span(time.span_months(1)));
+    show(time.date_of(2024, 1, 31).add_span(time.span_months(1)));
     // Mar 31 + 1 month = Apr 30 (Apr has 30 days).
-    show(time.date_make(2026, 3, 31).add_span(time.span_months(1)));
+    show(time.date_of(2026, 3, 31).add_span(time.span_months(1)));
     // May 31 + 1 month = Jun 30. + 3 months = Aug 31 (Aug has 31).
-    show(time.date_make(2026, 5, 31).add_span(time.span_months(1)));
-    show(time.date_make(2026, 5, 31).add_span(time.span_months(3)));
+    show(time.date_of(2026, 5, 31).add_span(time.span_months(1)));
+    show(time.date_of(2026, 5, 31).add_span(time.span_months(3)));
     return 0;
 }`,
 			wantStdout: "2026-2-28\n2024-2-29\n2026-4-30\n2026-6-30\n2026-8-31\n",
@@ -1345,12 +1345,12 @@ function show(d: Date): void {
 }
 function main(): i32 {
     // Feb 29 2024 + 1 year = Feb 28 2025 (non-leap).
-    show(time.date_make(2024, 2, 29).add_span(time.span_years(1)));
+    show(time.date_of(2024, 2, 29).add_span(time.span_years(1)));
     // Feb 29 2024 + 4 years = Feb 29 2028 (next leap).
-    show(time.date_make(2024, 2, 29).add_span(time.span_years(4)));
+    show(time.date_of(2024, 2, 29).add_span(time.span_years(4)));
     // Feb 29 2024 + 100 years = Feb 28 2124 (every 4th year is
     // leap unless century without 400 — 2124 is leap).
-    show(time.date_make(2024, 2, 29).add_span(time.span_years(100)));
+    show(time.date_of(2024, 2, 29).add_span(time.span_years(100)));
     return 0;
 }`,
 			wantStdout: "2025-2-28\n2028-2-29\n2124-2-29\n",
@@ -1362,14 +1362,14 @@ function show(d: Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
-    show(time.date_make(2026, 1, 15).add_span(Span {
+    show(time.date_of(2026, 1, 15).add_span(Span {
         years: 1, months: 2, weeks: 0, days: 5,
         hours: 0, minutes: 0, seconds: 0, nanos: 0,
     }));
     // Weeks + days add as serial-day offset (no clamping).
-    show(time.date_make(2026, 3, 30).add_span(time.span_weeks(2)));
+    show(time.date_of(2026, 3, 30).add_span(time.span_weeks(2)));
     // Mixed weeks + days.
-    show(time.date_make(2026, 1, 1).add_span(Span {
+    show(time.date_of(2026, 1, 1).add_span(Span {
         years: 0, months: 0, weeks: 1, days: 3,
         hours: 0, minutes: 0, seconds: 0, nanos: 0,
     }));
@@ -1384,9 +1384,9 @@ function show(d: Date): void {
     print(d.year.to_string() + "-" + d.month.to_string() + "-" + d.day.to_string());
 }
 function main(): i32 {
-    show(time.date_make(2026, 3, 15).add_span(time.span_months(-1)));
-    show(time.date_make(2026, 1, 15).add_span(time.span_months(-1)));
-    show(time.date_make(2026, 1, 15).add_span(time.span_months(-13)));
+    show(time.date_of(2026, 3, 15).add_span(time.span_months(-1)));
+    show(time.date_of(2026, 1, 15).add_span(time.span_months(-1)));
+    show(time.date_of(2026, 1, 15).add_span(time.span_months(-13)));
     return 0;
 }`,
 			wantStdout: "2026-2-15\n2025-12-15\n2024-12-15\n",
@@ -1445,8 +1445,8 @@ function main(): i32 {
 			name: "days_until is the Span counterpart to days_since",
 			source: `import "std/time";
 function main(): i32 {
-    let a: Date = time.date_make(2026, 1, 1);
-    let b: Date = time.date_make(2026, 12, 31);
+    let a: Date = time.date_of(2026, 1, 1);
+    let b: Date = time.date_of(2026, 12, 31);
     let s: Span = a.days_until(b);
     print(s.days.to_string());          // 364
     print(b.days_until(a).days.to_string());  // -364
@@ -1528,7 +1528,7 @@ func TestInterpScriptStreamPrimitive(t *testing.T) {
 			name: "stream_from_string + read_all_string round-trips",
 			source: `import "std/stream";
 function main(): i32 {
-    let s: ByteStream = stream.stream_from_string("hello world");
+    let s: ByteStream = stream.from_string("hello world");
     print(s.len().to_string());
     let (text, s2) = s.read_all_string();
     match (text) { Ok(value) => { print(value); }, Err(_) => { return 1; }, }
@@ -1542,7 +1542,7 @@ function main(): i32 {
 			source: `import "std/stream";
 function main(): i32 {
     let bs: u8[] = "abc".bytes();
-    let s: ByteStream = stream.stream_from_bytes(bs);
+    let s: ByteStream = stream.from_bytes(bs);
     let (got, s2) = s.read_all();
     print(got.len().to_string());
     print((got[0] as i32).to_string());
@@ -1555,7 +1555,7 @@ function main(): i32 {
 			name: "remaining decrements as bytes are consumed",
 			source: `import "std/stream";
 function main(): i32 {
-    let s: ByteStream = stream.stream_from_string("abc");
+    let s: ByteStream = stream.from_string("abc");
     print(s.remaining().to_string());
     let (_, s2) = s.read_all();
     // cursor idiom: the advanced ByteStream is s2; original s is unchanged.
@@ -1569,7 +1569,7 @@ function main(): i32 {
 			name: "stream_empty is consistent",
 			source: `import "std/stream";
 function main(): i32 {
-    let s: ByteStream = stream.stream_empty();
+    let s: ByteStream = stream.empty();
     if (s.len() != 0) { return 1; }
     if (s.remaining() != 0) { return 2; }
     if (!s.is_empty()) { return 3; }
@@ -1693,7 +1693,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 function main(): i32 {
     let m: mock_platform.MockPlatform = mock_platform.new();
-    let req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.stream_empty(), headers: headers.new(), trailers: headers.new() };
+    let req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.empty(), headers: headers.new(), trailers: headers.new() };
     let resp: HttpResponse = handle(req, m);
     print(resp.body_string());
     let cs: mock_platform.MockCall[] = m.calls();
@@ -1915,7 +1915,7 @@ func TestInterpScriptStreamReader(t *testing.T) {
 			name: "read_byte returns Some until exhausted",
 			source: `import "std/stream";
 function main(): i32 {
-    let s: ByteStream = stream.stream_from_string("ab");
+    let s: ByteStream = stream.from_string("ab");
     let (b1, s2) = s.read_byte();
     match (b1) { Some(b) => { print(b.to_string()); }, None => { print("none"); } }
     let (b2, s3) = s2.read_byte();
@@ -1930,7 +1930,7 @@ function main(): i32 {
 			name: "read_n caps at available bytes",
 			source: `import "std/stream";
 function main(): i32 {
-    let s: ByteStream = stream.stream_from_string("hello");
+    let s: ByteStream = stream.from_string("hello");
     let (first, s2) = s.read_n(3);
     print(first.len().to_string());
     let (rest, s3) = s2.read_n(99);
@@ -1945,7 +1945,7 @@ function main(): i32 {
 			name: "read_line strips both LF and CRLF",
 			source: `import "std/stream";
 function main(): i32 {
-    let s: ByteStream = stream.stream_from_string("unix\nwindows\r\nfinal");
+    let s: ByteStream = stream.from_string("unix\nwindows\r\nfinal");
     let (l1, s2) = s.read_line();
     match (l1) { Some(l) => { print(l); }, None => { print("none"); } }
     let (l2, s3) = s2.read_line();

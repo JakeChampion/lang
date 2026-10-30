@@ -73,7 +73,7 @@ function wait_for(c: h3q.Conn): Option[Duration] {
 }
 
 function request(method: string, path: string, body: u8[]): HttpRequest {
-  return HttpRequest { method: method, path: path, body: stream.stream_from_bytes(body), headers: headers.new().append("host", "localhost"), trailers: headers.new() };
+  return HttpRequest { method: method, path: path, body: stream.from_bytes(body), headers: headers.new().append("host", "localhost"), trailers: headers.new() };
 }
 
 struct Fetches { todo: HttpRequest[], owed: i32, answered: i32, closing: boolean }

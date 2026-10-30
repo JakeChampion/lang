@@ -323,7 +323,7 @@ function test_in_place_refuses(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/crypto/aes_gcm");
+  let r: test.TestRunner = test.new("std/crypto/aes_gcm");
   r = r.it("aes-128 block, FIPS-197 C.1", test_block128);
   r = r.it("aes-256 block, FIPS-197 C.3", test_block256);
   r = r.it("seal, GCM test case 1", test_case1);

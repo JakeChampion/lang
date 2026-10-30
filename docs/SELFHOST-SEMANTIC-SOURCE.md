@@ -837,6 +837,38 @@ in turn, transitively, because a contract is only honoured by a body verified
 against it. The AST-lowered `main` still calls produced functions with scalar
 arguments only, so the caller-side finding below is unchanged.
 
+### A capture-free closure argument
+
+`compiler/semspecial.fern` runs after pipeline fusion and before the inliner.
+Fusion finds the `std/array` calls by name, so it must see them first. A call
+can pass a closure that captures nothing, for example a named function, to a
+parameter that the callee reads. Then the call goes to a clone of the callee
+without those parameters. One clone binds all such arguments of a call. The
+clone makes each closure in its entry block, so each `call_value` through it
+names its target, and `seminline.inline_made_closures` splices the target. That
+splice sees only the clones, the closures they make and the small functions
+those closures call, so its cost follows the clones and not the module. The
+caller loses the closures that only the rewritten calls read. The inliner
+counts a call that a clone and its root both make once, and it gives a clone
+its root's callers too. So a clone is spliced only where its root would be,
+and the callees of the root keep their splices. The
+clone's name adds the target and the index of each bound parameter to the
+callee's name: `__cmp_sift_down__i32$cmp____cmp_ascending__i32$wrap$3`. The
+index comes last, so a clone's name does not end like its target's.
+A call in the clone that passes the closure on goes to a clone in turn, and a
+recursive call goes to the clone itself.
+
+The pass does not clone a function that takes an environment or whose result
+holds a view. It leaves a call to a `std/ndarray` function or to a `std/array`
+map as it is: the ndarray kernels and the rc lowering's in-place map read that
+call and its closure argument by name. It makes at most 64 clones per module. It does not clone a
+callee of more than 2,000 instructions. `optbisect` names the decision
+`specialize`. On `bench/sort_inplace.fern`, a heapsort that calls its
+comparator through a parameter runs the same 39,463,045 x86-64 instructions as
+a heapsort that calls `cmp` directly (#13061).
+`TestSelfHostCalleeSpecialisation` pins the clones and the indirect calls that
+stay.
+
 ## Physical loops
 
 `ssarc.lower` previously refused any cyclic graph. `ssalayout.fern` now

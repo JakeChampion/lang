@@ -1,6 +1,6 @@
 import "../../pixels/pixels";
 import "./compression";
-import "std/hash";
+import "std/hash/crc32";
 import "std/deflate";
 import "core/cmp";
 
@@ -147,7 +147,7 @@ function prepare(input: [u8], limits: pixels.Limits): Result[Prepared, PngError]
     let kind = be32(input, pos + 4);
     let body = pos + 8;
     let end = body + length;
-    let actual = hash.crc32_new().update(input[pos + 4:end]).finish();
+    let actual = crc32.new().update(input[pos + 4:end]).finish();
     if (actual != be32(input, end)) {
       return Err(PngError.Crc);
     }
@@ -585,7 +585,7 @@ function append32(bytes: u8[], n: u32): u8[] {
 
 function chunk(output: u8[], kind: u32, body: [u8]): u8[] {
   let type_bytes = append32([], kind);
-  let crc = hash.crc32_new().update(type_bytes).update(body).finish();
+  let crc = crc32.new().update(type_bytes).update(body).finish();
   let bytes = append32(output, body.len() as u32);
   bytes = append32(bytes, kind);
   for b in body {

@@ -265,7 +265,7 @@ function test_text(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/tls/der");
+  let r: test.TestRunner = test.new("std/tls/der");
   r = r.it("lengths and tags", test_lengths);
   r = r.it("children", test_children);
   r = r.it("integers", test_integers);

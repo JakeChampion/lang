@@ -2559,7 +2559,7 @@ function __h2_streamed[D: async.Driver](drv: D, a: __H2Answered, at: i32, sid: i
   let body: __H2Body = __H2Body { data: cell_new(empty), ended: cell_new(0), consumed: cell_new(0), fault: cell_new(no_fault), done: cell_new(false) };
   let fd: i32 = a.conns.fds[at];
   let conns: __Conns = __Conns { ...a.conns, pulls: a.conns.pulls.append(__H2Pull { fd: fd, stream: sid, body: body }) };
-  let streamed: HttpRequest = HttpRequest { ...req, body: stream.stream_from_source(__h2_body_source(body, fd)) };
+  let streamed: HttpRequest = HttpRequest { ...req, body: stream.from_source(__h2_body_source(body, fd)) };
   return __h2_request(drv, __H2Answered { ...a, conns: conns }, at, sid, streamed, handler, opts, stop);
 }
 
@@ -3921,7 +3921,7 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flights, at:
     _ => {}
   }
   let src: BodySource = __body_source(fd, h, __bytes_from(buf, c.offs[at] + h.len), opts, body);
-  let req: HttpRequest = HttpRequest { ...h.request, body: stream.stream_from_source(src) };
+  let req: HttpRequest = HttpRequest { ...h.request, body: stream.from_source(src) };
   let served: i32 = c.served[at] + 1;
   let keep: boolean = h.keep_alive && served < opts.keep_alive_requests && !__serve_stopping(stop);
   let due: i64 = __backlog_due(c, at);

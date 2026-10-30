@@ -209,7 +209,7 @@ function padded_sources(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("bounded row cache");
+  let r = test.new("bounded row cache");
   r = r.it("cache reuses parent rows without changes to output", reuse);
   r = r.it("row ranges, total work, and logical scratch reject before callbacks", limits);
   r = r.it("FIFO eviction obeys byte and entry limits", eviction);

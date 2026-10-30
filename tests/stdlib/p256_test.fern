@@ -81,7 +81,7 @@ function test_scalar_reduce(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/crypto/p256");
+  let r: test.TestRunner = test.new("std/crypto/p256");
   r = r.it("[k]G", test_base_point);
   r = r.it("[k]Q", test_scalar_mul);
   r = r.it("scalar range", test_scalar_range);

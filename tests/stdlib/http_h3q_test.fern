@@ -454,6 +454,30 @@ function test_date(): test.TestOutcome {
   }
 }
 
+function test_date_changes(): test.TestOutcome {
+  let Ok(e0) = begin() else {
+    return test.fail("no client");
+  };
+  let Ok(e1) = asked(Ends { ...settled(e0, 12), log: "" }, get("/a")) else {
+    return test.fail("first request refused");
+  };
+  let Ok(e2) = asked(settled(e1, 6), get("/b")) else {
+    return test.fail("second request refused");
+  };
+  let Ok(e3) = asked(settled(e2, 6), get("/c")) else {
+    return test.fail("third request refused");
+  };
+  let e4: Ends = settled(e3, 6);
+  let Some(s) = e4.server else {
+    return test.fail("no server");
+  };
+  let first: h3q.Conn = s.with_date("Tue, 01 Jan 2030 00:00:00 GMT").respond(e4.ids[0], text(200, "a"));
+  let second: h3q.Conn = first.with_date("Tue, 01 Jan 2030 00:00:01 GMT").respond(e4.ids[1], text(200, "b"));
+  let third: h3q.Conn = second.with_date("").respond(e4.ids[2], text(200, "c"));
+  let e5: Ends = settled(Ends { ...e4, server: Some(third), log: "" }, 6);
+  return test.assert_eq(e5.log, "client response 0 200 a date=Tue, 01 Jan 2030 00:00:00 GMT; client response 4 200 b date=Tue, 01 Jan 2030 00:00:01 GMT; client response 8 200 c; ");
+}
+
 function test_limit(): test.TestOutcome {
   match (begin()) {
     Ok(e0) => {
@@ -522,9 +546,10 @@ function test_blocked_backpressure(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/h3q");
+  let r: test.TestRunner = test.new("std/http/h3q");
   r = r.it("a GET and its response", test_get);
   r = r.it("a response without a date is sent with the connection's", test_date);
+  r = r.it("each response carries the date set when it is sent, and none once it is cleared", test_date_changes);
   r = r.it("an upload through loss and reordering, answered with a trailer", test_upload_lossy);
   r = r.it("three requests answered out of order", test_concurrent);
   r = r.it("the stream limit grants back as streams close", test_limit);

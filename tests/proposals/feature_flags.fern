@@ -358,7 +358,7 @@ function main(): i32 {
   eprint("  user-7 (plan=pro, rule says on, force_off says off) -> "
     + evaluate(staged, pro));
 
-  let r: test.TestRunner = test.test_new("feature_flags");
+  let r: test.TestRunner = test.new("feature_flags");
   r = r.it("raising a rollout only ever adds users", test_raising_a_rollout_only_ever_adds_users);
   r = r.it("bucketing is stable", test_bucketing_is_stable);
   r = r.it("the extremes are exact", test_the_extremes_are_exact);

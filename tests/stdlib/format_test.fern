@@ -19,11 +19,11 @@ function test_format_escaped_braces(): test.TestOutcome {
 }
 
 function test_format_values_ints(): test.TestOutcome {
-  return test.assert_eq(format.format_values("{} + {} = {}", [40, 2, 42]), "40 + 2 = 42");
+  return test.assert_eq(format.values("{} + {} = {}", [40, 2, 42]), "40 + 2 = 42");
 }
 
 function test_format_values_floats(): test.TestOutcome {
-  return test.assert_eq(format.format_values("{} and {}", [0.5, 1.25]), "0.5 and 1.25");
+  return test.assert_eq(format.values("{} and {}", [0.5, 1.25]), "0.5 and 1.25");
 }
 
 function test_format1(): test.TestOutcome {
@@ -138,72 +138,72 @@ function test_precision_string_snaps_multibyte(): test.TestOutcome {
 }
 
 function test_bytes_below_kib(): test.TestOutcome {
-  return test.assert_eq(format.format_bytes(0), "0 B");
+  return test.assert_eq(format.bytes(0), "0 B");
 }
 
 function test_bytes_just_below_kib(): test.TestOutcome {
-  return test.assert_eq(format.format_bytes(1023), "1023 B");
+  return test.assert_eq(format.bytes(1023), "1023 B");
 }
 
 function test_bytes_one_kib(): test.TestOutcome {
-  return test.assert_eq(format.format_bytes(1024), "1 KiB");
+  return test.assert_eq(format.bytes(1024), "1 KiB");
 }
 
 function test_bytes_one_mib(): test.TestOutcome {
-  return test.assert_eq(format.format_bytes(1048576), "1 MiB");
+  return test.assert_eq(format.bytes(1048576), "1 MiB");
 }
 
 function test_bytes_negative(): test.TestOutcome {
-  return test.assert_eq(format.format_bytes(0 - 2048), "-2 KiB");
+  return test.assert_eq(format.bytes(0 - 2048), "-2 KiB");
 }
 
 function test_bytes_past_two_gib(): test.TestOutcome {
   let n: i64 = 5368709120;
-  return test.assert_eq(format.format_bytes(n), "5 GiB");
+  return test.assert_eq(format.bytes(n), "5 GiB");
 }
 
 function test_bytes_i64_min(): test.TestOutcome {
   let n: i64 = -9223372036854775807 - 1;
-  return test.assert_eq(format.format_bytes(n), "-8388608 TiB");
+  return test.assert_eq(format.bytes(n), "-8388608 TiB");
 }
 
 function test_bytes_tib(): test.TestOutcome {
   let n: i64 = 3298534883328;
-  return test.assert_eq(format.format_bytes(n), "3 TiB");
+  return test.assert_eq(format.bytes(n), "3 TiB");
 }
 
 function test_duration_zero(): test.TestOutcome {
-  return test.assert_eq(format.format_duration(time.duration_millis(0)), "0ms");
+  return test.assert_eq(format.duration(time.duration_millis(0)), "0ms");
 }
 
 function test_duration_sub_second(): test.TestOutcome {
-  return test.assert_eq(format.format_duration(time.duration_millis(500)), "500ms");
+  return test.assert_eq(format.duration(time.duration_millis(500)), "500ms");
 }
 
 function test_duration_seconds_and_ms(): test.TestOutcome {
-  return test.assert_eq(format.format_duration(time.duration_millis(1500)), "1s 500ms");
+  return test.assert_eq(format.duration(time.duration_millis(1500)), "1s 500ms");
 }
 
 function test_duration_minutes(): test.TestOutcome {
-  return test.assert_eq(format.format_duration(time.duration_millis(65000)), "1m 5s");
+  return test.assert_eq(format.duration(time.duration_millis(65000)), "1m 5s");
 }
 
 function test_duration_full(): test.TestOutcome {
-  return test.assert_eq(format.format_duration(time.duration_millis(3661001)), "1h 1m 1s 1ms");
+  return test.assert_eq(format.duration(time.duration_millis(3661001)), "1h 1m 1s 1ms");
 }
 
 function test_duration_past_i32(): test.TestOutcome {
-  return test.assert_eq(format.format_duration(time.duration_millis(2592000001)), "720h 1ms");
+  return test.assert_eq(format.duration(time.duration_millis(2592000001)), "720h 1ms");
 }
 
 function test_duration_negative(): test.TestOutcome {
-  return test.assert_eq(format.format_duration(time.duration_millis(0 - 1500)), "-1s 500ms");
+  return test.assert_eq(format.duration(time.duration_millis(0 - 1500)), "-1s 500ms");
 }
 
 function test_duration_round_trips_parse(): test.TestOutcome {
   match (format.parse_duration("30d 1s")) {
     Ok(d) => {
-      return test.assert_eq(format.format_duration(d), "720h 1s");
+      return test.assert_eq(format.duration(d), "720h 1s");
     },
     Err(_) => {
       return test.fail("parse_duration(\"30d 1s\") was refused");
@@ -223,7 +223,7 @@ function test_format_mixed_long(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/format");
+  let r: test.TestRunner = test.new("std/format");
   r = r.it("format positional", test_format_positional);
   r = r.it("format no placeholders", test_format_no_placeholders);
   r = r.it("format escaped braces", test_format_escaped_braces);

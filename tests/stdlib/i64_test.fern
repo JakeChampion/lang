@@ -108,7 +108,7 @@ function test_checked(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/i64");
+  let r: test.TestRunner = test.new("std/i64");
   r = r.it("abs", test_abs);
   r = r.it("min", test_min);
   r = r.it("max", test_max);

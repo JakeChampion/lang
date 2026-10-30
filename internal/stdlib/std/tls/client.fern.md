@@ -488,9 +488,9 @@ function __signature(s: Session, c: handshake.Client, sg: handshake.Signing): Re
 ```fern
 <<14 function __trusted(s: Session, v: handshake.Verification, now: time.Timestamp): Result[void, tls.TlsError]>>=
 function __trusted(s: Session, v: handshake.Verification, now: time.Timestamp): Result[void, tls.TlsError] {
-  match (verify.verify_server(v.chain, s.roots, s.name, now)) {
+  match (verify.server(v.chain, s.roots, s.name, now)) {
     Ok(leaf) => {
-      if (!verify.verify_signed(leaf, v.scheme, v.signed, v.signature)) {
+      if (!verify.signed(leaf, v.scheme, v.signed, v.signature)) {
         return Err(tls.SignatureInvalid);
       }
       return Ok(());

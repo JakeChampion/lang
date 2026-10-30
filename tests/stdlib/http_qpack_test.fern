@@ -470,7 +470,7 @@ function test_oversized_literal(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/qpack");
+  let r: test.TestRunner = test.new("std/http/qpack");
   r = r.it("B.1: a literal with a static name reference", test_b1);
   r = r.it("B.2 to B.5: the dynamic table", test_b2_to_b5);
   r = r.it("a blocked section, and the blocked-streams limit", test_blocked);

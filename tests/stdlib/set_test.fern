@@ -141,7 +141,7 @@ function test_symmetric_difference(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/set");
+  let r: test.TestRunner = test.new("std/set");
   r = r.it("set.of dedup + order", test_set_of_dedup);
   r = r.it("contains", test_contains);
   r = r.it("insert dedup", test_insert);

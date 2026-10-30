@@ -1,0 +1,10 @@
+import "far";
+import "shape";
+
+pub function far_score(xs: i32[]): i32 {
+    return xs.score();
+}
+
+pub function far_area(p: shape.P): i32 {
+    return p.area();
+}

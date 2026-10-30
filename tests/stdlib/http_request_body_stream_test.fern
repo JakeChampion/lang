@@ -26,10 +26,10 @@ function parsed(body: string): HttpRequest {
       return req;
     },
     Err(_) => {
-      return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder(), trailers: req_headers_placeholder() };
+      return HttpRequest { method: "", path: "", body: stream.empty(), headers: req_headers_placeholder(), trailers: req_headers_placeholder() };
     }
   }
-  return HttpRequest { method: "", path: "", body: stream.stream_empty(), headers: req_headers_placeholder(), trailers: req_headers_placeholder() };
+  return HttpRequest { method: "", path: "", body: stream.empty(), headers: req_headers_placeholder(), trailers: req_headers_placeholder() };
 }
 
 function req_headers_placeholder(): HeaderMap {
@@ -80,7 +80,7 @@ function sourced(src: BodySource, content_length: string): HttpRequest {
   if (content_length.len() > 0) {
     h = h.set("content-length", content_length);
   }
-  return HttpRequest { method: "POST", path: "/upload", body: stream.stream_from_source(src), headers: h, trailers: req_headers_placeholder() };
+  return HttpRequest { method: "POST", path: "/upload", body: stream.from_source(src), headers: h, trailers: req_headers_placeholder() };
 }
 
 function test_body_stream_carries_the_body(): test.TestOutcome {
@@ -195,12 +195,12 @@ function test_ill_formed_bytes_read_as_replacement(): test.TestOutcome {
 }
 
 function test_sourced_read_all_joins_the_chunks(): test.TestOutcome {
-  let (all, rest) = stream.stream_from_source(scripted(["ab", "cd", "e"])).read_all_string();
+  let (all, rest) = stream.from_source(scripted(["ab", "cd", "e"])).read_all_string();
   return test.assert_is_some_eq_string(all.ok(), "abcde");
 }
 
 function test_sourced_read_line_spans_chunks(): test.TestOutcome {
-  let s: ByteStream = stream.stream_from_source(scripted(["al", "pha\r\nbe", "ta\n", "gam", "ma"]));
+  let s: ByteStream = stream.from_source(scripted(["al", "pha\r\nbe", "ta\n", "gam", "ma"]));
   let seen: string = "";
   let n: i32 = 0;
   while (n < 5) {
@@ -220,7 +220,7 @@ function test_sourced_read_line_spans_chunks(): test.TestOutcome {
 }
 
 function test_sourced_read_n_spans_chunks(): test.TestOutcome {
-  let (head, rest) = stream.stream_from_source(scripted(["ab", "cd", "e"])).read_n(3);
+  let (head, rest) = stream.from_source(scripted(["ab", "cd", "e"])).read_n(3);
   let (tail, done) = rest.read_all_string();
   return test.assert_eq(string_from_bytes_unchecked(head) + "|" + option_text(tail.ok()), "abc|de");
 }
@@ -240,7 +240,7 @@ function counted(chunks: string[], pulls: Cell[i32]): BodySource {
 
 function test_sourced_read_n_pulls_only_what_it_owes(): test.TestOutcome {
   let pulls: Cell[i32] = cell_new(0);
-  let (head, rest) = stream.stream_from_source(counted(["ab", "cd"], pulls)).read_n(2);
+  let (head, rest) = stream.from_source(counted(["ab", "cd"], pulls)).read_n(2);
   let after_first: i32 = pulls.get();
   let (more, rest2) = rest.read_n(1);
   let after_second: i32 = pulls.get();
@@ -260,7 +260,7 @@ function option_text(o: Option[string]): string {
 }
 
 function test_sourced_read_byte_ends(): test.TestOutcome {
-  let s: ByteStream = stream.stream_from_source(scripted(["x"]));
+  let s: ByteStream = stream.from_source(scripted(["x"]));
   let (first, s2) = s.read_byte();
   let (second, s3) = s2.read_byte();
   let got: string = "";
@@ -341,7 +341,7 @@ function test_sourced_stream_reports_each_fault(): test.TestOutcome {
   let got: string = "";
   let want: string = "";
   for f in all_faults() {
-    let s: ByteStream = stream.stream_from_source(faulting(["par", "tial"], f));
+    let s: ByteStream = stream.from_source(faulting(["par", "tial"], f));
     let before: string = fault_text(s.fault());
     let (all, rest) = s.read_all();
     got = got + before + "|" + string_from_bytes_unchecked(all) + "|" + fault_text(rest.fault()) + "\n";
@@ -352,7 +352,7 @@ function test_sourced_stream_reports_each_fault(): test.TestOutcome {
 
 function test_in_memory_stream_has_no_fault(): test.TestOutcome {
   let (all, rest) = parsed("hello").body_stream().read_all();
-  let (whole, done) = stream.stream_from_source(scripted(["hel", "lo"])).read_all();
+  let (whole, done) = stream.from_source(scripted(["hel", "lo"])).read_all();
   return test.assert_eq(fault_text(rest.fault()) + "," + fault_text(done.fault()), "<none>,<none>");
 }
 
@@ -372,7 +372,7 @@ function test_read_some_answers_each_chunk(): test.TestOutcome {
     },
     fault: no_fault(), send: (bytes: u8[]): i32 => 0,
   };
-  let s: ByteStream = stream.stream_from_source(src);
+  let s: ByteStream = stream.from_source(src);
   let (first, s1) = s.read_some();
   let (second, s2) = s1.read_some();
   let (third, s3) = s2.read_some();
@@ -380,7 +380,7 @@ function test_read_some_answers_each_chunk(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("HttpRequest.body as a Stream");
+  let r: test.TestRunner = test.new("HttpRequest.body as a Stream");
   r = r.it("body_stream carries the body", test_body_stream_carries_the_body);
   r = r.it("body_stream starts at the beginning", test_body_stream_starts_at_the_beginning);
   r = r.it("an empty body is an empty stream", test_empty_body_is_an_empty_stream);

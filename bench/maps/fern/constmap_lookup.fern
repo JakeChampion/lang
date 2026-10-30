@@ -23,13 +23,13 @@ function main(): i32 {
   let probe: i32[] = shared.order(p.n);
   let builds: i32 = 0;
   let built: bench.Report = bench.run("constmap_build", 0, 1, () => {
-    let b: Result[constmap.ConstMap, string] = constmap.constmap_new(keys, values);
+    let b: Result[constmap.ConstMap, string] = constmap.new(keys, values);
     if (b.is_ok()) {
       builds = builds + 1;
     }
   });
   let m0: constmap.ConstMap = constmap.ConstMap { len: 0, seed: 0, segment_length: 0, segment_length_mask: 0, segment_count_length: 0, data: [] };
-  match (constmap.constmap_new(keys, values)) {
+  match (constmap.new(keys, values)) {
     Ok(built_map) => {
       m0 = built_map;
     },

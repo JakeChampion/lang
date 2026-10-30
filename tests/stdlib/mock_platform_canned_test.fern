@@ -312,7 +312,7 @@ function test_the_deadline_and_cancellation_answer_what_was_canned(): test.TestO
 }
 
 function main(): i32 {
-  let t: test.TestRunner = test.test_new("mock_platform.MockPlatform canned answers");
+  let t: test.TestRunner = test.new("mock_platform.MockPlatform canned answers");
   t = t.it("without canned answers the fixed values apply", test_defaults_without_canned_answers);
   t = t.it("canned answers reach the handler", test_canned_answers_reach_the_handler);
   t = t.it("a request of another URL still fails", test_a_request_of_another_url_still_fails);

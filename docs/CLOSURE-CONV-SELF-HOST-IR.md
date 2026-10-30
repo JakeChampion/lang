@@ -183,11 +183,19 @@ artifact: across 91 modules its sources declare exactly two fn-typed parameters
 calls — and bind no lambdas anywhere. The largest Fern program in existence
 would gain nothing.
 
+That census is out of date. On 2026-10-29 the parser passes its named visitor
+functions to `astwalk.fold_stmt_nodes`, `fold_expr_nodes`, `map_stmt_acc` and
+`map_expr_acc`, and the callee specialisation below makes 21 clones in the
+compiler.
+
 The remaining 73 `env_param` sites are the stdlib combinators (`array.map`,
 `option.map`, `result.map`, `sort`, `test`). Devirtualising those means
 specialising each combinator to its callback — callee specialisation or
 inlining, a different pass from defunctionalisation, and one whose case would
-have to be made on its own numbers.
+have to be made on its own numbers. #13061 measured 11% of the
+`sort_inplace` benchmark in such a call. `compiler/semspecial.fern` now does
+the specialisation for a capture-free closure ("A capture-free closure
+argument" in `docs/SELFHOST-SEMANTIC-SOURCE.md`).
 
 So the row is closed as measured-not-worth-building rather than deferred. The
 census driver mode and `internal/testing/e2ecompiler/self_host_closure_census_test.go`

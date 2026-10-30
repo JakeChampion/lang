@@ -1,6 +1,6 @@
 import "std/test";
 import "std/f64";
-import "std/hash";
+import "std/hash/crc32";
 import "./fractal";
 import "./kernel";
 import "./linear";
@@ -115,7 +115,7 @@ function test_invalid_tiles(): test.TestOutcome {
 function test_output_paths(): test.TestOutcome {
   match (fractal.render(42, 0, 0)) {
     Ok(tile) => {
-      if (hash.crc32_new().update(tile.png).finish() != 757427088 as u32) {
+      if (crc32.new().update(tile.png).finish() != 757427088 as u32) {
         return test.fail("short-orbit tile PNG differs");
       }
     },
@@ -125,7 +125,7 @@ function test_output_paths(): test.TestOutcome {
   }
   match (fractal.render(20, 195329, 524288)) {
     Ok(tile) => {
-      if (hash.crc32_new().update(tile.png).finish() != 4160868373 as u32) {
+      if (crc32.new().update(tile.png).finish() != 4160868373 as u32) {
         return test.fail("shared bounded tile PNG differs");
       }
     },
@@ -135,7 +135,7 @@ function test_output_paths(): test.TestOutcome {
   }
   match (fractal.render_exact(14, 7193, 7652)) {
     Ok(tile) => {
-      if (hash.crc32_new().update(tile.png).finish() != 124660481 as u32) {
+      if (crc32.new().update(tile.png).finish() != 124660481 as u32) {
         return test.fail("direct lane-refill tile PNG differs");
       }
     },
@@ -162,7 +162,7 @@ function test_cancelled_rows(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner: test.TestRunner = test.test_new("fractal acceleration");
+  let runner: test.TestRunner = test.new("fractal acceleration");
   runner = runner.it("lane refill, tails, and iteration deadlines", test_refill);
   runner = runner.it("shared orbit prefix", test_prefix);
   runner = runner.it("typed coordinate errors", test_invalid_tiles);

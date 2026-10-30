@@ -452,7 +452,7 @@ function test_line_reader_empty_and_nul(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/io_buffered BytesWriter");
+  let r: test.TestRunner = test.new("std/io_buffered BytesWriter");
   r = r.it("empty", test_empty);
   r = r.it("write_string", test_write_string);
   r = r.it("write_byte", test_write_byte);

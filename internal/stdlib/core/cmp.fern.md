@@ -56,7 +56,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<14 pub function is_sorted_by[T](arr: T[], order: (T, T)>>
 
-<<15 function __cmp_heap_sort_ord[T: Ord](own a: T[]): T[]>>
+<<15 function __cmp_ascending[T: Ord](a: T, b: T): i32>>
 
 <<16 pub function contains[T: Eq](xs: T[], target: T): boolean>>
 
@@ -1198,11 +1198,11 @@ pub function sort_by_key[T, K: Ord](arr: T[], key: (T) => K): T[] {
 }
 
 pub function sort_in_place[T: Ord](own arr: T[]): T[] {
-  return __cmp_heap_sort_ord(arr);
+  return __cmp_heap_sort(arr, __cmp_ascending);
 }
 
 pub function sort_desc_in_place[T: Ord](own arr: T[]): T[] {
-  return __cmp_reverse_in_place(__cmp_heap_sort_ord(arr));
+  return __cmp_reverse_in_place(__cmp_heap_sort(arr, __cmp_ascending));
 }
 
 pub function sort_by_in_place[T](own arr: T[], order: (T, T) => i32): T[] {
@@ -1213,44 +1213,12 @@ pub function sort_by_key_in_place[T, K: Ord](own arr: T[], key: (T) => K): T[] {
   return __cmp_heap_sort(arr, (a: T, b: T): i32 => key(a).cmp(key(b)));
 }
 ```
-### `15 function __cmp_heap_sort_ord[T: Ord](own a: T[]): T[]`
+### `15 function __cmp_ascending[T: Ord](a: T, b: T): i32`
 
 ```fern
-<<15 function __cmp_heap_sort_ord[T: Ord](own a: T[]): T[]>>=
-function __cmp_heap_sort_ord[T: Ord](own a: T[]): T[] {
-  let n: i32 = a.len();
-  let start: i32 = n / 2 - 1;
-  while (start >= 0) {
-    a = __cmp_sift_down_ord(a, start, n);
-    start = start - 1;
-  }
-  let end: i32 = n - 1;
-  while (end > 0) {
-    let t: T = a[0];
-    a = a.with(0, a[end]);
-    a = a.with(end, t);
-    a = __cmp_sift_down_ord(a, 0, end);
-    end = end - 1;
-  }
-  return a;
-}
-
-function __cmp_sift_down_ord[T: Ord](own a: T[], root: i32, n: i32): T[] {
-  let r: i32 = root;
-  while (2 * r + 1 < n) {
-    let child: i32 = 2 * r + 1;
-    if (child + 1 < n && a[child].cmp(a[child + 1]) < 0) {
-      child = child + 1;
-    }
-    if (a[r].cmp(a[child]) >= 0) {
-      return a;
-    }
-    let t: T = a[r];
-    a = a.with(r, a[child]);
-    a = a.with(child, t);
-    r = child;
-  }
-  return a;
+<<15 function __cmp_ascending[T: Ord](a: T, b: T): i32>>=
+function __cmp_ascending[T: Ord](a: T, b: T): i32 {
+  return a.cmp(b);
 }
 
 function __cmp_reverse_in_place[T](own a: T[]): T[] {

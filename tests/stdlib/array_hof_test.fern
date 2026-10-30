@@ -138,7 +138,7 @@ function test_scan_method(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/array higher-order");
+  let r: test.TestRunner = test.new("std/array higher-order");
   r = r.it("flat_map", test_flat_map);
   r = r.it("flat_map empty", test_flat_map_empty);
   r = r.it("reduce sum", test_reduce_sum);

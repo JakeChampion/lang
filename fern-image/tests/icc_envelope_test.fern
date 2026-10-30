@@ -189,7 +189,7 @@ function cancellation(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("restricted ICC v4.4 envelope");
+  let runner = test.new("restricted ICC v4.4 envelope");
   runner = runner.it("constructed and offline shared-curve profile metadata", profiles);
   runner = runner.it("explicit version, class, color space, and PCS scope", scope);
   runner = runner.it("header fields, reserved bits, and opaque vendor bits", header);

@@ -100,7 +100,7 @@ function test_truncate(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("strings");
+  let r: test.TestRunner = test.new("strings");
   r = r.it("to_upper", test_uppercase);
   r = r.it("to_lower", test_lowercase);
   r = r.it("contains substring", test_contains_substring);

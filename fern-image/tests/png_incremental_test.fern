@@ -293,7 +293,7 @@ function graph_admission(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("incremental PNG sessions");
+  let r = test.new("incremental PNG sessions");
   r = r.it("all filter and channel goldens with forward sessions", goldens);
   r = r.it("exact logical limits preserve the eager plan", admission);
   r = r.it("entire stream validation precedes selected output", malformed);

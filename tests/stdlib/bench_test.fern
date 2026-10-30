@@ -243,7 +243,7 @@ function test_delta_describes_both_halves(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/bench harness");
+  let r: test.TestRunner = test.new("std/bench harness");
   r = r.it("percentiles are nearest-rank", test_percentiles_are_nearest_rank);
   r = r.it("a percentile names a real sample", test_percentile_names_a_real_sample);
   r = r.it("an empty report is answerable", test_empty_report_is_answerable);

@@ -273,7 +273,7 @@ function test_error_kinds(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/quic/packet");
+  let r: test.TestRunner = test.new("std/quic/packet");
   r = r.it("Initial keys (RFC 9001 A.1)", test_initial_keys);
   r = r.it("the client Initial (A.2)", test_client_initial);
   r = r.it("the server Initial (A.3)", test_server_initial);

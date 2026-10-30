@@ -182,7 +182,7 @@ function test_middleware(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/compress");
+  let r: test.TestRunner = test.new("std/http/compress");
   r = r.it("gzip when the client accepts it", test_gzip_chosen);
   r = r.it("zstd preferred on a tie", test_zstd);
   r = r.it("Brotli preference and quality", test_brotli);

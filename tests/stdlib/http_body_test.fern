@@ -27,7 +27,7 @@ function test_bytes_body(): test.TestOutcome {
 }
 
 function test_stream_body_from_its_cursor(): test.TestOutcome {
-  let s: ByteStream = stream.stream_from_bytes("skip me".bytes());
+  let s: ByteStream = stream.from_bytes("skip me".bytes());
   let taken: (u8[], ByteStream) = s.read_n(5);
   let resp: HttpResponse = http.stream(200, taken.1);
   if (resp.body_len() != 2) {
@@ -105,7 +105,7 @@ function test_other_bodies_pass_through_materialize(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t: test.TestRunner = test.test_new("HttpResponse bodies");
+  let t: test.TestRunner = test.new("HttpResponse bodies");
   t = t.it("a text body", test_text_body);
   t = t.it("a bytes body", test_bytes_body);
   t = t.it("a stream body is its remainder", test_stream_body_from_its_cursor);

@@ -99,7 +99,7 @@ function test_sort_matches_operator(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("string ordering operators");
+  let r: test.TestRunner = test.new("string ordering operators");
   r = r.it("first differing byte", test_first_diff_byte);
   r = r.it("first differing byte >", test_first_diff_byte_gt);
   r = r.it("first differing byte off", test_first_diff_byte_false);

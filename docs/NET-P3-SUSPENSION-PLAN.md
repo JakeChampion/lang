@@ -317,7 +317,7 @@ bytes on demand.
 Option[BodySource]`, and `BodySource { next: () => Option[u8[]], fault:
 Cell[Option[StreamFault]] }` is a checker-injected record like `ChunkProducer` (both
 compilers' builtin tables; `Stream` literals go through
-`stream.stream_from_bytes`). A read that exhausts `data` asks `next()` for
+`stream.from_bytes`). A read that exhausts `data` asks `next()` for
 the next chunk and replaces `data` with it, so a streamed body is never
 held whole; `None` ends the stream, and `fault` says why when it ended
 early, as a builtin `StreamFault`: `StreamTooLarge` past the cap,

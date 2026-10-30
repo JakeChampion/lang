@@ -181,7 +181,7 @@ function cached(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("uncached nearest fusion");
+  let r = test.new("uncached nearest fusion");
   r = r.it("sequential 4-to-3-to-2 coordinates preserve padded RGB/RGBA bytes", coordinates);
   r = r.it("nearest chains preserve eager output across bilinear boundaries", mixed);
   r = r.it("existing work and scratch admission covers upsample fallback", admission);

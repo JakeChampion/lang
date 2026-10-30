@@ -77,7 +77,7 @@ function test_parks_agrees(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("async combinators");
+  let r: test.TestRunner = test.new("async combinators");
   r = r.it("gather all", test_gather_all);
   r = r.it("gather strings", test_gather_strings);
   r = r.it("race first ready", test_race_first_ready);

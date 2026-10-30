@@ -234,7 +234,7 @@ function depth(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("cached nearest fusion");
+  let r = test.new("cached nearest fusion");
   r = r.it("independent RGB/RGBA sequential coordinates with and without cache", coordinates);
   r = r.it("root reuse and actual lookup statistics preserve legacy batches", cache_hits);
   r = r.it("mixed filters preserve eager output across bilinear barriers", mixed);

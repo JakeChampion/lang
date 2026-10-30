@@ -87,7 +87,7 @@ function test_new_mutators_dont_crash(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("fuzz corpus");
+  let r: test.TestRunner = test.new("fuzz corpus");
   r = test_corpus_loads_and_runs(r);
   r = r.it(
     "missing corpus dir falls back",

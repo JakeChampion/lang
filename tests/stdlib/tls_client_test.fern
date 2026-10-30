@@ -486,9 +486,9 @@ function connect_asked(cfg: client.Config): Result[string, tls.TlsError] {
     Some(v) => {
       shown = "chain " + v.chain.len().to_string();
       if (v.chain.len() > 0) {
-        match (verify.verify_client(v.chain, roots(IDENTITY_ROOT), time.timestamp_from_unix(1700000000))) {
+        match (verify.client(v.chain, roots(IDENTITY_ROOT), time.timestamp_from_unix(1700000000))) {
           Ok(leaf) => {
-            if (verify.verify_signed(leaf, v.scheme, v.signed, v.signature)) {
+            if (verify.signed(leaf, v.scheme, v.signed, v.signature)) {
               shown = shown + " verified";
             }
           },
@@ -540,7 +540,7 @@ function pem_of(der_hex: string): string {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/tls/client");
+  let r: test.TestRunner = test.new("std/tls/client");
   r = r.it("a trusted server", test_trusted);
   r = r.it("names", test_names);
   r = r.it("an untrusted root", test_untrusted);

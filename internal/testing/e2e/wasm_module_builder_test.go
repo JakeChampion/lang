@@ -15,7 +15,7 @@ function main(): i32 {
     let fn: u8[] = inst.put_function_body([], localsBytes, bodyExpr);
 
     // Whole module in one immutable builder chain.
-    let m: module.Module = module.module_new()
+    let m: module.Module = module.new()
         .with_types([p0], [r0])
         .with_functions([0u32])
         .with_exports(["main"], [sections.EXPORT_FUNC], [0u32])
@@ -67,7 +67,7 @@ function main(): i32 {
     let r0: u8[] = [];
     let bodyExpr: u8[] = inst.put_function_body([], inst.put_locals_empty([]), inst.inst_nop([]));
     // Type () -> (); function 0; a memory; start = func 0.
-    let m: module.Module = module.module_new()
+    let m: module.Module = module.new()
         .with_types([p0], [r0])
         .with_functions([0u32])
         .with_memory(1u32, 0 - 1)

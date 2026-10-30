@@ -49,7 +49,7 @@ function test_bundle_file(dir: string): test.TestOutcome {
       if (r.certs.len() != 2) {
         return test.fail("two roots");
       }
-      return test.assert_eq(outcome(verify.verify_server([ec_leaf(), ec_int()], r, "example.com", time.timestamp_from_unix(1780000000))), "ok example.com");
+      return test.assert_eq(outcome(verify.server([ec_leaf(), ec_int()], r, "example.com", time.timestamp_from_unix(1780000000))), "ok example.com");
     },
     Err(e) => {
       return test.fail(e.message());
@@ -100,7 +100,7 @@ function test_system_roots(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/tls/verify roots");
+  let r: test.TestRunner = test.new("std/tls/verify roots");
   let (dir, rr) = test.must_temp_dir(r, "tls-roots");
   if (dir == "") {
     return rr.finish();

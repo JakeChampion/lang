@@ -173,7 +173,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 	failSrc := "import \"std/test\";\n" +
 		"function bad(): test.TestOutcome { return test.assert_eq(1, 2); }\n" +
 		"function main(): i32 {\n" +
-		"    let r: test.TestRunner = test.test_new(\"synthetic\");\n" +
+		"    let r: test.TestRunner = test.new(\"synthetic\");\n" +
 		"    r = r.it(\"one is two\", bad);\n" +
 		"    return r.finish();\n" +
 		"}\n"

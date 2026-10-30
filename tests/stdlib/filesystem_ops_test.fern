@@ -313,7 +313,7 @@ function test_remove_dir_all_silently_ok_on_missing_target(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("filesystem ops");
+  let r: test.TestRunner = test.new("filesystem ops");
   r = r.it("temp_dir returns absolute path", test_temp_dir_returns_abs_path);
   r = r.it("temp_file round trip", test_temp_file_round_trip);
   r = r.it("temp_file refuses a separator", test_temp_file_refuses_a_separator);

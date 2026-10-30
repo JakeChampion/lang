@@ -57,7 +57,7 @@ function float_near(a: f64, b: f64): boolean {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/f64 recip/copysign/midpoint");
+  let r: test.TestRunner = test.new("std/f64 recip/copysign/midpoint");
   r = r.it("recip", test_recip);
   r = r.it("recip negative", test_recip_negative);
   r = r.it("recip round-trip", test_recip_roundtrip);

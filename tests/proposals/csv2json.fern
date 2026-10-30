@@ -628,7 +628,7 @@ function main(): i32 {
   eprint("  round-trips: " + verdict);
   eprint("  generated tables in the sweep: " + generated_tables().len().to_string());
 
-  let r: test.TestRunner = test.test_new("csv2json");
+  let r: test.TestRunner = test.new("csv2json");
   r = r.it("every table round trips", test_every_table_round_trips);
   r = r.it("the sweep covers the nasty shapes", test_the_sweep_covers_the_nasty_shapes);
   r = r.it("the parsed shape matches", test_the_parsed_shape_matches);

@@ -438,7 +438,7 @@ function main(): i32 {
   );
   eprint("  1500 kg * 1 m/s^2 = " + render(mul(m, a)));
 
-  let r: test.TestRunner = test.test_new("units");
+  let r: test.TestRunner = test.new("units");
   r = r.it("every unit round trips", test_every_unit_round_trips);
   r = r.it("cross-dimension conversion is refused", test_cross_dimension_conversion_is_refused);
   r = r.it("addition respects dimensions", test_addition_respects_dimensions);

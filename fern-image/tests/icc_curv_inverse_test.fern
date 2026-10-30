@@ -199,7 +199,7 @@ function ownership_and_limits(): test.TestOutcome {
 }
 
 pub function main(): i32 {
-  let runner = test.test_new("ICC inverse curves");
+  let runner = test.new("ICC inverse curves");
   runner = runner.it("ICC inverse curve exact identity forms", identities);
   runner = runner.it("ICC inverse gamma controls", gammas);
   runner = runner.it("ICC inverse sampled directions", sampled);

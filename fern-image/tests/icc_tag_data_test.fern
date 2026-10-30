@@ -194,7 +194,7 @@ function cancellation(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("exact ICC XYZ and curve wire values");
+  let runner = test.new("exact ICC XYZ and curve wire values");
   runner = runner.it("signed XYZ extremes and frozen profile coefficients", xyz_values);
   runner = runner.it("identity, gamma, and sampled curve wire forms", curve_forms);
   runner = runner.it("all parametric functions and signed coefficient order", parametric_forms);

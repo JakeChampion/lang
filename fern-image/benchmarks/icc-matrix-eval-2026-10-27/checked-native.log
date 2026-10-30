@@ -1,6 +1,6 @@
 tests/icc_matrix_eval_test.fern:63:73: error[E047]: literal 0xfff0000000000000 does not fit in i64
       for v in [-0.1, 1.1, f64_from_bits(0x7ff0000000000000), f64_from_bits(0xfff0000000000000), f64_from_bits(0x7ff8000000000000)] {
                                                                             ^
-tests/icc_matrix_eval_test.fern:102:29: error[E004]: function "test.test_new" takes 1 argument but was given 0
-      let runner = test.test_new();
+tests/icc_matrix_eval_test.fern:102:29: error[E004]: function "test.new" takes 1 argument but was given 0
+      let runner = test.new();
                                 ^

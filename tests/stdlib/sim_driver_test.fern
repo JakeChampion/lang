@@ -205,7 +205,7 @@ function test_sweep_finds_first_failing_seed(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/sim driver");
+  let r: test.TestRunner = test.new("std/sim driver");
   r = r.it("with_deadline some and none", test_deadline_some_and_none);
   r = r.it("with_deadline all in time", test_deadline_all_in_time);
   r = r.it("race tie seeded", test_race_tie_seeded);

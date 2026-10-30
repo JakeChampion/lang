@@ -1809,7 +1809,7 @@ pub function framed_kept(f: HttpFramed): HttpFramed {
     return f;
   }
   let empty: u8[] = [];
-  return HttpFramed { ...f, request: HttpRequest { ...f.request, body: stream.stream_from_bytes(empty), trailers: headers.new() } };
+  return HttpFramed { ...f, request: HttpRequest { ...f.request, body: stream.from_bytes(empty), trailers: headers.new() } };
 }
 
 pub function parse_request_framed_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpFramed): HttpFraming {
@@ -1838,7 +1838,7 @@ pub function parse_request_framed_from(buf: u8[], from: i32, limits: HttpLimits,
 ```fern
 <<38 function __framed_new(head: __Head, body: u8[], trailers: HeaderMap, len: i32): HttpFramed>>=
 function __framed_new(head: __Head, body: u8[], trailers: HeaderMap, len: i32): HttpFramed {
-  let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.stream_from_bytes(body), headers: head.headers, trailers: trailers };
+  let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.from_bytes(body), headers: head.headers, trailers: trailers };
   return HttpFramed { request: req, len: len, keep_alive: head.keep_alive, version: head.version };
 }
 
@@ -1874,7 +1874,7 @@ pub function parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, p
         return HeadMalformed(400);
       }
       let empty: u8[] = [];
-      let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.stream_from_bytes(empty), headers: head.headers, trailers: headers.new() };
+      let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.from_bytes(empty), headers: head.headers, trailers: headers.new() };
       let expects: boolean = head.version != "HTTP/1.0" && head.expectation == 1;
       return Headed(HttpHead { request: req, len: head.len, keep_alive: head.keep_alive, version: head.version, length: length, expects_continue: expects });
     },
@@ -2570,7 +2570,7 @@ function __take_wire(b: usize): u8[] {
 <<53 pub function request(method: string, path: string): HttpRequest>>=
 pub function request(method: string, path: string): HttpRequest {
   let empty: u8[] = [];
-  return HttpRequest { method: method, path: path, body: stream.stream_from_bytes(empty), headers: headers.new(), trailers: headers.new() };
+  return HttpRequest { method: method, path: path, body: stream.from_bytes(empty), headers: headers.new(), trailers: headers.new() };
 }
 
 pub function (r: HttpRequest) with_header(name: string, value: string): HttpRequest {
@@ -2578,7 +2578,7 @@ pub function (r: HttpRequest) with_header(name: string, value: string): HttpRequ
 }
 
 pub function (r: HttpRequest) with_body(body: string): HttpRequest {
-  return HttpRequest { ...r, body: stream.stream_from_bytes(body.bytes()), headers: r.headers.set("Content-Length", int.int_to_string(body.len())) };
+  return HttpRequest { ...r, body: stream.from_bytes(body.bytes()), headers: r.headers.set("Content-Length", int.int_to_string(body.len())) };
 }
 
 pub function (r: HttpRequest) with_json(body: string): HttpRequest {

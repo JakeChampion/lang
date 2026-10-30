@@ -34,7 +34,7 @@ function test_min(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/i32 bit_length");
+  let r: test.TestRunner = test.new("std/i32 bit_length");
   r = r.it("zero", test_zero);
   r = r.it("one", test_one);
   r = r.it("five", test_five);

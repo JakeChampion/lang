@@ -53,7 +53,7 @@ function test_lit_negative(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("unions + match (migrated)");
+  let r: test.TestRunner = test.new("unions + match (migrated)");
   r = r.it(
     "Add(10, 32) = 42",
     test_add_two_positives,

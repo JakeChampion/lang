@@ -6522,12 +6522,12 @@ function main(): i32 {
     if ("file.txt".remove_suffix(".log") != "file.txt") { return 17; }
 
     // format_duration
-    if (format.format_duration(time.duration_millis(0)) != "0ms") { return 18; }
-    if (format.format_duration(time.duration_millis(500)) != "500ms") { return 19; }
-    if (format.format_duration(time.duration_millis(1500)) != "1s 500ms") { return 20; }
-    if (format.format_duration(time.duration_millis(90000)) != "1m 30s") { return 21; }
-    if (format.format_duration(time.duration_millis(3661000)) != "1h 1m 1s") { return 22; }
-    if (format.format_duration(time.duration_millis(0 - 1500)) != "-1s 500ms") { return 23; }
+    if (format.duration(time.duration_millis(0)) != "0ms") { return 18; }
+    if (format.duration(time.duration_millis(500)) != "500ms") { return 19; }
+    if (format.duration(time.duration_millis(1500)) != "1s 500ms") { return 20; }
+    if (format.duration(time.duration_millis(90000)) != "1m 30s") { return 21; }
+    if (format.duration(time.duration_millis(3661000)) != "1h 1m 1s") { return 22; }
+    if (format.duration(time.duration_millis(0 - 1500)) != "-1s 500ms") { return 23; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -6718,11 +6718,11 @@ function main(): i32 {
     if (rand.between(10, 1) != 10) { return 9; }
 
     // format_bytes — binary prefixes
-    if (format.format_bytes(0) != "0 B") { return 10; }
-    if (format.format_bytes(512) != "512 B") { return 11; }
-    if (format.format_bytes(1024) != "1 KiB") { return 12; }
-    if (format.format_bytes(1024 * 1024) != "1 MiB") { return 13; }
-    if (format.format_bytes(0 - 512) != "-512 B") { return 14; }
+    if (format.bytes(0) != "0 B") { return 10; }
+    if (format.bytes(512) != "512 B") { return 11; }
+    if (format.bytes(1024) != "1 KiB") { return 12; }
+    if (format.bytes(1024 * 1024) != "1 MiB") { return 13; }
+    if (format.bytes(0 - 512) != "-512 B") { return 14; }
 
     // csv.escape / csv.join — RFC 4180
     if (csv.escape("simple") != "simple") { return 15; }

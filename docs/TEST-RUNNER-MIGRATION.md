@@ -311,7 +311,7 @@ so `r = r.it(...)` is the house style and a subsuite is folded
 back with `r = r.merge(child)`. What a dropped handle cannot lose
 is the TAP line it already printed: `it()` bumps the `emitted` /
 `emitted_failed` cells shared by every handle derived from one
-`test_new` (subsuites included, which is also what keeps their
+`test.new` (subsuites included, which is also what keeps their
 numbering monotonic) in the same step it prints, and `finish()`
 takes the plan, the fail count and the exit code from those.
 

@@ -323,7 +323,7 @@ function test_background_work_runs_in_the_order_added(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t: test.TestRunner = test.test_new("HTTP respond");
+  let t: test.TestRunner = test.new("HTTP respond");
   t = t.it("an Ok response passes through", test_ok_passes_through);
   t = t.it("a failed lookup answers a problem", test_fail_answers_a_problem);
   t = t.it("an error keeps its own title, and the detail is quoted", test_error_keeps_its_own_title_and_escapes);

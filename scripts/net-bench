@@ -193,6 +193,7 @@ listen:
   <<: *tls
   type: quic
 num-threads: $(nproc)
+max-connections: 16384
 hosts:
   default:
     paths:

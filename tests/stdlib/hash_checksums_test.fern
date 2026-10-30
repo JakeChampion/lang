@@ -1,5 +1,8 @@
 import "std/test";
-import "std/hash" as hash;
+import "std/hash";
+import "std/hash/cksum";
+import "std/hash/bsd_sum";
+import "std/hash/sysv_sum";
 import "std/string";
 
 function __pseudo(): u8[] {
@@ -23,13 +26,13 @@ function __thousand_a(): string {
 }
 
 function test_cksum_vectors(): test.TestOutcome {
-  if (hash.cksum_of("".as_bytes()) != 4294967295) {
+  if (cksum.of("".as_bytes()) != 4294967295) {
     return test.fail("empty");
   }
-  if (hash.cksum_of("abc".as_bytes()) != 1219131554) {
+  if (cksum.of("abc".as_bytes()) != 1219131554) {
     return test.fail("abc");
   }
-  let c: hash.Cksum = hash.cksum_new().update("abc".as_bytes());
+  let c: cksum.Cksum = cksum.new().update("abc".as_bytes());
   if (c.byte_count() != 3 as u64) {
     return test.fail("len");
   }
@@ -37,7 +40,7 @@ function test_cksum_vectors(): test.TestOutcome {
 }
 
 function test_cksum_finish_is_a_read(): test.TestOutcome {
-  let c: hash.Cksum = hash.cksum_new().update("ab".as_bytes());
+  let c: cksum.Cksum = cksum.new().update("ab".as_bytes());
   let mid: u32 = c.finish();
   c = c.update("c".as_bytes());
   if (mid != 2072780115) {
@@ -48,7 +51,7 @@ function test_cksum_finish_is_a_read(): test.TestOutcome {
 
 function test_cksum_seven_byte_updates(): test.TestOutcome {
   let msg: u8[] = __pseudo();
-  let c: hash.Cksum = hash.cksum_new();
+  let c: cksum.Cksum = cksum.new();
   let i: i32 = 0;
   while (i + 7 <= 10003) {
     c = c.update(msg[i:i + 7]);
@@ -61,13 +64,13 @@ function test_cksum_seven_byte_updates(): test.TestOutcome {
   if (c.byte_count() != 10003 as u64) {
     return test.fail("len");
   }
-  return test.assert_eq(c.finish(), hash.cksum_of(msg));
+  return test.assert_eq(c.finish(), cksum.of(msg));
 }
 
 function test_cksum_string_chunks_match_the_table(): test.TestOutcome {
   let msg: string = string_from_bytes_unchecked(__pseudo());
   let cuts: i32[] = [1, 15, 16, 17, 31, 47, 63, 64, 65, 113, 191, 1009];
-  let c: hash.Cksum = hash.cksum_new();
+  let c: cksum.Cksum = cksum.new();
   let at: i32 = 0;
   let k: i32 = 0;
   while (at < 10003) {
@@ -82,22 +85,22 @@ function test_cksum_string_chunks_match_the_table(): test.TestOutcome {
   if (c.byte_count() != 10003 as u64) {
     return test.fail("len");
   }
-  let viabytes: hash.Cksum = hash.cksum_new().update(__pseudo());
+  let viabytes: cksum.Cksum = cksum.new().update(__pseudo());
   if (c.finish() != viabytes.finish()) {
     return test.fail("chunked string vs table");
   }
-  return test.assert_eq(c.finish(), hash.cksum_of(msg.as_bytes()));
+  return test.assert_eq(c.finish(), cksum.of(msg.as_bytes()));
 }
 
 function test_bsd_sum(): test.TestOutcome {
-  if (hash.bsd_sum_of("".as_bytes()) != 0) {
+  if (bsd_sum.of("".as_bytes()) != 0) {
     return test.fail("empty");
   }
-  if (hash.bsd_sum_of("abc".as_bytes()) != 16556) {
+  if (bsd_sum.of("abc".as_bytes()) != 16556) {
     return test.fail("abc");
   }
   let msg: u8[] = __pseudo();
-  let s: hash.BsdSum = hash.bsd_sum_new();
+  let s: bsd_sum.BsdSum = bsd_sum.new();
   let i: i32 = 0;
   while (i + 7 <= 10003) {
     s = s.update(msg[i:i + 7]);
@@ -107,11 +110,11 @@ function test_bsd_sum(): test.TestOutcome {
   if (s.finish() != 21454) {
     return test.fail("chunked");
   }
-  let array_sum: hash.BsdSum = hash.bsd_sum_new().update(msg);
+  let array_sum: bsd_sum.BsdSum = bsd_sum.new().update(msg);
   if (array_sum.finish() != s.finish() || array_sum.byte_count() != s.byte_count()) {
     return test.fail("owned-array BSD kernel");
   }
-  if (s.finish() != hash.bsd_sum_of(msg)) {
+  if (s.finish() != bsd_sum.of(msg)) {
     return test.fail("one-shot");
   }
   if (s.byte_count() != 10003 as u64) {
@@ -121,14 +124,14 @@ function test_bsd_sum(): test.TestOutcome {
 }
 
 function test_sysv_sum(): test.TestOutcome {
-  if (hash.sysv_sum_of("".as_bytes()) != 0) {
+  if (sysv_sum.of("".as_bytes()) != 0) {
     return test.fail("empty");
   }
-  if (hash.sysv_sum_of("abc".as_bytes()) != 294) {
+  if (sysv_sum.of("abc".as_bytes()) != 294) {
     return test.fail("abc");
   }
   let msg: u8[] = __pseudo();
-  let s: hash.SysvSum = hash.sysv_sum_new();
+  let s: sysv_sum.SysvSum = sysv_sum.new();
   let i: i32 = 0;
   while (i + 7 <= 10003) {
     s = s.update(msg[i:i + 7]);
@@ -138,11 +141,11 @@ function test_sysv_sum(): test.TestOutcome {
   if (s.finish() != 29049) {
     return test.fail("chunked");
   }
-  let array_sum: hash.SysvSum = hash.sysv_sum_new().update(msg);
+  let array_sum: sysv_sum.SysvSum = sysv_sum.new().update(msg);
   if (array_sum.finish() != s.finish() || array_sum.byte_count() != s.byte_count()) {
     return test.fail("owned-array System V kernel");
   }
-  if (s.finish() != hash.sysv_sum_of(msg)) {
+  if (s.finish() != sysv_sum.of(msg)) {
     return test.fail("one-shot");
   }
   if (s.byte_count() != 10003 as u64) {
@@ -163,7 +166,7 @@ function __chunk(msg: u8[], from: i32, n: i32): string {
 
 function test_sysv_sum_string_updates(): test.TestOutcome {
   let msg: u8[] = __pseudo();
-  let s: hash.SysvSum = hash.sysv_sum_new();
+  let s: sysv_sum.SysvSum = sysv_sum.new();
   let i: i32 = 0;
   while (i + 7 <= 10003) {
     s = s.update(__chunk(msg, i, 7).as_bytes());
@@ -176,7 +179,7 @@ function test_sysv_sum_string_updates(): test.TestOutcome {
   if (s.byte_count() != 10003 as u64) {
     return test.fail("len");
   }
-  let b: hash.SysvSum = hash.sysv_sum_new().update(msg);
+  let b: sysv_sum.SysvSum = sysv_sum.new().update(msg);
   return test.assert_eq(s.finish(), b.finish());
 }
 
@@ -187,18 +190,18 @@ function test_block_counts(): test.TestOutcome {
     b = b.with(i, 0 as u8);
     i = i + 1;
   }
-  let r: hash.BsdSum = hash.bsd_sum_new().update(b);
-  let s: hash.SysvSum = hash.sysv_sum_new().update(b);
+  let r: bsd_sum.BsdSum = bsd_sum.new().update(b);
+  let s: sysv_sum.SysvSum = sysv_sum.new().update(b);
   if (r.blocks() != 2 as u64) {
     return test.fail("bsd 1025 -> 2");
   }
   if (s.blocks() != 3 as u64) {
     return test.fail("sysv 1025 -> 3");
   }
-  if (hash.bsd_sum_new().blocks() != 0 as u64) {
+  if (bsd_sum.new().blocks() != 0 as u64) {
     return test.fail("bsd empty");
   }
-  return test.assert_eq(hash.sysv_sum_new().blocks(), 0 as u64);
+  return test.assert_eq(sysv_sum.new().blocks(), 0 as u64);
 }
 
 function test_xxh64(): test.TestOutcome {
@@ -215,7 +218,7 @@ function test_xxh64(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/hash checksums");
+  let r: test.TestRunner = test.new("std/hash checksums");
   r = r.it("cksum vectors", test_cksum_vectors);
   r = r.it("cksum finish is a read", test_cksum_finish_is_a_read);
   r = r.it("cksum 7-byte updates", test_cksum_seven_byte_updates);

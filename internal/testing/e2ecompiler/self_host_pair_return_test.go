@@ -947,6 +947,94 @@ function main(): i32 {
 }
 `
 
+// A small helper that only takes a Result apart is spliced into each of its
+// callers, so the callee that made the Result returns it in two words and
+// the loop builds no Result.
+const pairUnpackedProg = `import "std/bench";
+
+enum Fail { Full(string), Closed }
+
+struct Sink { held: i32[], cap: i32 }
+
+@noinline function flush(s: Sink): Result[Sink, Fail] {
+  if (s.cap == 0) {
+    return Err(Closed);
+  }
+  return Ok(Sink { held: [], cap: s.cap });
+}
+
+// Returns its argument on the fast path and a callee's result on the other,
+// as io_buffered's BufWriter.settle does.
+@noinline function settle(s: Sink): Result[Sink, Fail] {
+  if (s.held.len() < s.cap) {
+    return Ok(s);
+  }
+  return flush(s);
+}
+
+function kept(r: Result[Sink, Fail]): Result[Sink, Fail] {
+  if let Ok(s) = r {
+    if (s.cap < 0) {
+      return Err(Full("negative"));
+    }
+  }
+  return r;
+}
+
+// Takes the Result apart and nothing else, with three callers.
+function or_die(r: Result[Sink, Fail]): Sink {
+  match (kept(r)) {
+    Ok(s) => {
+      return s;
+    },
+    Err(e) => {
+      exit(3);
+    }
+  }
+  return Sink { held: [], cap: 0 };
+}
+
+@noinline function step(s: Sink): Sink {
+  return or_die(settle(s));
+}
+
+@noinline function drain(s: Sink): Sink {
+  return or_die(flush(s));
+}
+
+@noinline function close(s: Sink): Sink {
+  return or_die(Ok(Sink { held: s.held, cap: 0 }));
+}
+
+function main(): i32 {
+  let s: Sink = Sink { held: [1, 2], cap: 4 };
+  let total: i32 = 0;
+  let a0: i64 = bench.alloc_count();
+  let i: i32 = 0;
+  while (i < 20) {
+    s = step(s);
+    total = total + s.cap + s.held.len();
+    i = i + 1;
+  }
+  let allocated: i64 = bench.alloc_count() - a0;
+  s = drain(s);
+  total = total + s.cap + s.held.len();
+  s = close(s);
+  total = total + s.cap + s.held.len();
+  print(total.to_string() + " " + allocated.to_string());
+  if (total != 124) {
+    return 1;
+  }
+  if (allocated != 0) {
+    return 2;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return 0;
+}
+`
+
 // A 64-bit payload, alone or as either part of a split pair, beside an
 // error that holds a string: it goes back in its slot's 64-bit lane.
 const pairWideProg = `import "std/bench";
@@ -1233,15 +1321,47 @@ function main(): i32 {
 }
 `
 
+// time.timeout_millis only takes its Option apart, so it is spliced into
+// async.wait_any. It joins only after its own callees are spliced into it:
+// a copy made sooner leaves wait_any calling Duration.add with the result
+// whole, so add builds a Duration box at each wait.
+const pairUnpackedCalleesProg = `import "std/async";
+import "std/bench";
+import "std/time";
+
+function main(): i32 {
+  let t: Option[Duration] = Some(time.duration_millis(1));
+  let total: i32 = 0;
+  let a0: i64 = bench.alloc_count();
+  let i: i32 = 0;
+  while (i < 20) {
+    total = total + async.wait_any([], t);
+    i = i + 1;
+  }
+  let allocated: i64 = bench.alloc_count() - a0;
+  print(total.to_string() + " " + allocated.to_string());
+  if (total != 0 - 20) {
+    return 1;
+  }
+  if (allocated != 0) {
+    return 2;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return 0;
+}
+`
+
 func TestSelfHostPairReturn(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}, {"forward", pairForwardProg}, {"wide", pairWideProg}, {"tail-phi", pairTailPhiProg}, {"record", pairRecordProg}, {"record-guards", pairRecordGuardsProg}, {"record-heap-alias", pairRecordHeapAliasProg}}
+	progs := []struct{ name, src string }{{"variant", pairReturnProg}, {"pair", pairTupleProg}, {"suspend", pairSuspendProg}, {"method", pairMethodProg}, {"lanes", pairLanesProg}, {"split", pairSplitProg}, {"forward", pairForwardProg}, {"wide", pairWideProg}, {"tail-phi", pairTailPhiProg}, {"record", pairRecordProg}, {"record-guards", pairRecordGuardsProg}, {"record-heap-alias", pairRecordHeapAliasProg}, {"unpacked", pairUnpackedProg}, {"unpacked-callees", pairUnpackedCalleesProg}}
 	for _, prog := range progs {
 		for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 			t.Run(prog.name+"/"+target, func(t *testing.T) {
 				var stderr string
 				var code int
-				if target == "wasm32-wasi" && prog.name == "suspend" {
+				if target == "wasm32-wasi" && (prog.name == "suspend" || prog.name == "unpacked-callees") {
 					src := filepath.Join(t.TempDir(), "main.fern")
 					if err := os.WriteFile(src, []byte(prog.src), 0o644); err != nil {
 						t.Fatal(err)

@@ -67,7 +67,7 @@ function test_generic_bound(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("core/cmp u8 impls");
+  let r: test.TestRunner = test.new("core/cmp u8 impls");
   r = r.it("Display", test_display);
   r = r.it("Eq", test_eq);
   r = r.it("Ord unsigned order", test_ord);

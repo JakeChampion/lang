@@ -47,7 +47,27 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
 
 pub struct TodoSite { line: i32, col: i32 }
 
-pub struct ModuleSight { module: string, imports: string[], reaches: string[] }
+pub struct ModuleSight { module: string, imports: string[], direct: string[], reaches: string[] }
+
+// How near module decl is to module from: 0 for the same module, 1 for a
+// direct import, 2 for the rest of the import closure, 3 when not visible.
+pub function module_rank(sights: ModuleSight[], from: string, decl: string): i32 {
+  if (from == decl) {
+    return 0;
+  }
+  for sg in sights {
+    if (sg.module == from) {
+      if (util.has_str(sg.direct, decl)) {
+        return 1;
+      }
+      if (util.has_str(sg.reaches, decl)) {
+        return 2;
+      }
+      return 3;
+    }
+  }
+  return 2;
+}
 
 pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[], todo_sites: TodoSite[], sights: ModuleSight[] }
 
@@ -75,7 +95,8 @@ pub struct FunctionInlineHint { line: i32, col: i32, never: boolean }
 
 pub struct ParsedFmt { pmod: Module, ptraits: TraitDecl[], pimpls: ImplDecl[], pflines: FieldLines[], pinline: FunctionInlineHint[], pspans: BlockSpans }
 
-pub struct BlockSpans { opens: i32[], firsts: i32[], closes: i32[] }
+// else_of[i] is the span whose `}` comes just before `else` and span i, or -1.
+pub struct BlockSpans { opens: i32[], firsts: i32[], closes: i32[], else_of: i32[] }
 
 function token_line(t: lexer.Token): i32 {
   match (t) {
@@ -118,7 +139,9 @@ function block_spans(toks: lexer.Token[]): BlockSpans {
   let opens: i32[] = [];
   let firsts: i32[] = [];
   let closes: i32[] = [];
+  let else_of: i32[] = [];
   let stack: i32[] = [];
+  let closed: i32 = -1;
   let sp: i32 = 0;
   let nest: i32 = 0;
   let skip_at: i32 = -1;
@@ -147,6 +170,7 @@ function block_spans(toks: lexer.Token[]): BlockSpans {
           opens = opens.append(x.line);
           firsts = firsts.append(first);
           closes = closes.append(0);
+          else_of = else_of.append(else_owner(toks, i, closed));
         }
         if (sp < stack.len()) {
           stack = stack.with(sp, at);
@@ -159,11 +183,26 @@ function block_spans(toks: lexer.Token[]): BlockSpans {
         if (stack[sp] >= 0) {
           closes = closes.with(stack[sp], x.line);
         }
+        closed = stack[sp];
       }
     }
     i = i + 1;
   }
-  return BlockSpans { opens: opens, firsts: firsts, closes: closes };
+  return BlockSpans { opens: opens, firsts: firsts, closes: closes, else_of: else_of };
+}
+
+function else_owner(toks: lexer.Token[], i: i32, closed: i32): i32 {
+  if (i < 2) {
+    return -1;
+  }
+  if let lexer.TokKeyword(k) = toks[i - 1] {
+    if let lexer.TokPunct(x) = toks[i - 2] {
+      if (k.name == "else" && x.text == "}") {
+        return closed;
+      }
+    }
+  }
+  return -1;
 }
 
 pub struct ResourceDecl { name: string, iface: string, wit: string, line: i32, col: i32 }

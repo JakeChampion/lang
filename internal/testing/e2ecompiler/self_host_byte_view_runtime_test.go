@@ -281,11 +281,11 @@ function main(): i32 {
 }
 `
 
-const byteViewChecksumProgram = `import "std/hash";
+const byteViewChecksumProgram = `import "std/hash/crc32";
 import "std/string";
 function main(): i32 {
   let input: string = "abcdefghijklmnop".repeat(256);
-  let state = hash.crc32_new();
+  let state = crc32.new();
   let before: i64 = __heap_alloc_count();
   state = state.update(input.as_bytes());
   if (__heap_alloc_count() != before) { return 71; }

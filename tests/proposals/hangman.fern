@@ -394,7 +394,7 @@ function main(): i32 {
       + masked(w) + " (" + w.wrong.to_string() + " wrong)");
   }
 
-  let t: test.TestRunner = test.test_new("hangman");
+  let t: test.TestRunner = test.new("hangman");
   t = t.it("a repeated guess changes nothing", test_a_repeated_guess_changes_nothing);
   t = t.it("stepping agrees with deriving at every prefix", test_stepping_agrees_with_deriving_at_every_prefix);
   t = t.it("the win fires exactly on the last letter", test_the_win_fires_exactly_on_the_last_letter);

@@ -48,7 +48,7 @@ function test_cumsum_empty(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/array f64 product/cumsum");
+  let r: test.TestRunner = test.new("std/array f64 product/cumsum");
   r = r.it("product", test_product);
   r = r.it("product empty", test_product_empty);
   r = r.it("cumsum", test_cumsum);

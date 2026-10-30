@@ -16,7 +16,8 @@ function sum9(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i:
 function main(): i32 {
     let k: i32 = args().len() + 2;
     let add = (x: i32): i32 => x + k;
-    return apply(inc, 3) + apply(add, 10) + wide(sum9);
+    let sum = (a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32, i: i32): i32 => sum9(a, b, c, d, e, f, g, h, i) + k - 3;
+    return apply(inc, 3) + apply(add, 10) + wide(sum);
 }
 `
 

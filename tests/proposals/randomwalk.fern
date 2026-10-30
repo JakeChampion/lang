@@ -360,7 +360,7 @@ function main(): i32 {
   }
   eprint(line);
 
-  let r: test.TestRunner = test.test_new("randomwalk");
+  let r: test.TestRunner = test.new("randomwalk");
   r = r.it("enumeration matches the closed form", test_enumeration_matches_the_closed_form);
   r = r.it("every path is counted once", test_every_path_is_counted_once);
   r = r.it("parity forbids half the endpoints", test_parity_forbids_half_the_endpoints);

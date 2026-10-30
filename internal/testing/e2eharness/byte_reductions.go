@@ -29,7 +29,7 @@ func ByteReductionsSource(compiled bool) string {
     let large: u8[] = buf_take_bytes(h);
     buf_free(h);
     if (large.len() != 16843010 || sum(large) != 254) { return 12; }
-    let wrapped: hash.SysvSum = hash.sysv_sum_new().update(large).update(large);
+    let wrapped: sysv_sum.SysvSum = sysv_sum.new().update(large).update(large);
     if (wrapped.sum != 508 || wrapped.byte_count() != (33686020 as u64)) { return 14; }
     let prefix_builder: usize = buf_new(8421505);
     buf_push_bytes_range(prefix_builder, large, 0, 8421505);
@@ -40,7 +40,8 @@ func ByteReductionsSource(compiled bool) string {
 	return strings.Replace(byteReductionsProgram, "// Compiled probes", probe, 1)
 }
 
-const byteReductionsProgram = `import "std/hash";
+const byteReductionsProgram = `import "std/hash/bsd_sum";
+import "std/hash/sysv_sum";
 fip function sum(bytes: u8[]): i32 {
     return __sum_bytes_array(bytes);
 }
@@ -79,8 +80,8 @@ function main(): i32 {
         let split: i32 = n / 2;
         let left: u8[] = copy_range(bytes, 0, split);
         let right: u8[] = copy_range(bytes, split, n);
-        let bc: hash.BsdSum = hash.bsd_sum_new().update(left).update(right);
-        let sc: hash.SysvSum = hash.sysv_sum_new().update(left).update(right);
+        let bc: bsd_sum.BsdSum = bsd_sum.new().update(left).update(right);
+        let sc: sysv_sum.SysvSum = sysv_sum.new().update(left).update(right);
         if (bc.finish() != (bsd(bytes, 0) as u32) || bc.byte_count() != (n as u64)) { return 6; }
         if (sc.sum != (sum(bytes) as u32) || sc.byte_count() != (n as u64)) { return 7; }
         for seed in seeds {

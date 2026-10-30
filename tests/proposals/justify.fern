@@ -445,7 +445,7 @@ function main(): i32 {
   }
   eprint("  first line gaps: " + shown);
 
-  let t: test.TestRunner = test.test_new("justify");
+  let t: test.TestRunner = test.new("justify");
   t = t.it("every full line is exactly the width", test_every_full_line_is_exactly_the_width);
   t = t.it("gaps on a line differ by at most one", test_gaps_on_a_line_differ_by_at_most_one);
   t = t.it("the wider gaps come first", test_the_wider_gaps_come_first);

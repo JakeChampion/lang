@@ -158,7 +158,7 @@ function test_count_string_pass(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("wider-array eq + contains + count");
+  let r: test.TestRunner = test.new("wider-array eq + contains + count");
   r = r.it("eq_i64_array pass", test_eq_i64_array_pass);
   r = r.it("eq_i64_array length mismatch", test_eq_i64_array_length_mismatch);
   r = r.it("eq_i64_array reports index", test_eq_i64_array_mismatch_reports_index);

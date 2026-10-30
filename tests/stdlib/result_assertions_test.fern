@@ -185,7 +185,7 @@ function test_is_err_string_array_ok_embeds_length(r: test.TestRunner): test.Tes
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("Result assertions");
+  let r: test.TestRunner = test.new("Result assertions");
   r = test_is_ok_string_pass(r);
   r = r.it(
     "is_ok_string on Err fails",

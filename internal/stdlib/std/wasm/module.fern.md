@@ -22,7 +22,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 pub struct Module>>
 
-<<4 pub function module_new(): Module>>
+<<4 pub function new(): Module>>
 ```
 
 ### `module introduction`
@@ -76,11 +76,11 @@ pub struct Module {
 }
 ```
 
-### `4 pub function module_new(): Module`
+### `4 pub function new(): Module`
 
 ```fern
-<<4 pub function module_new(): Module>>=
-pub function module_new(): Module {
+<<4 pub function new(): Module>>=
+pub function new(): Module {
   return Module {
     type_params: [],
     type_results: [],

@@ -1,6 +1,9 @@
 import "std/string";
 import "std/array";
-import "std/hash";
+import "std/hash/cksum";
+import "std/hash/crc32";
+import "std/hash/bsd_sum";
+import "std/hash/sysv_sum";
 import "std/hex";
 import "std/base64";
 import "std/io_buffered";
@@ -87,19 +90,19 @@ function digest_algo(sel: i32, bits: i32): digest.Algo {
   return digest.algo_sm3();
 }
 
-enum Plain { PCrc(hash.Cksum), PCrc32(hash.Crc32), PBsd(hash.BsdSum), PSysv(hash.SysvSum) }
+enum Plain { PCrc(cksum.Cksum), PCrc32(crc32.Crc32), PBsd(bsd_sum.BsdSum), PSysv(sysv_sum.SysvSum) }
 
 function plain_new(sel: i32): Plain {
   if (sel == sel_bsd()) {
-    return PBsd(hash.bsd_sum_new());
+    return PBsd(bsd_sum.new());
   }
   if (sel == sel_sysv()) {
-    return PSysv(hash.sysv_sum_new());
+    return PSysv(sysv_sum.new());
   }
   if (sel == sel_crc32b()) {
-    return PCrc32(hash.crc32_new());
+    return PCrc32(crc32.new());
   }
-  return PCrc(hash.cksum_new());
+  return PCrc(cksum.new());
 }
 
 function plain_update(p: Plain, chunk: u8[]): Plain {

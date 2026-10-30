@@ -218,7 +218,7 @@ function streams_stay_lazy(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner = test.test_new("Fern showcase");
+  let runner = test.new("Fern showcase");
   runner = runner.it("authoritative physics and bounded time", game_physics);
   runner = runner.it("atomic strokes and resumable bounded journal", shared_board);
   runner = runner.it("validated pattern and PCM WAV", audio_format);

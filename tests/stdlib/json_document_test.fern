@@ -259,7 +259,7 @@ function test_kinds(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/json document");
+  let r: test.TestRunner = test.new("std/json document");
   r = r.it("to_value matches parse", test_to_value_matches_parse);
   r = r.it("errors match parse", test_errors_match_parse);
   r = r.it("walk an array", test_walk_array);

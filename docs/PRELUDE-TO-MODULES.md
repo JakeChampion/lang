@@ -401,6 +401,27 @@ modules whose closure reaches it (`EnumDecl.visible_from`), and the checker
 counts a bare reference's candidates from the module of the function it is in
 (#12467).
 
+**Two modules can declare the same inherent method on one type** (#13866).
+A call resolves to the nearest module that declares the method and that the
+caller sees:
+
+1. The caller's own module.
+2. A direct import of the caller.
+3. The rest of the caller's import closure.
+
+Two declarations at the same distance make the call ambiguous (E074). The
+caller's own method or a directly imported method takes precedence over a
+stdlib method that the caller reaches only transitively. Thus a new stdlib
+method does not break a user program that declares the same name. One module
+that declares a method twice on one type is still E006.
+
+- The Go checker gives each later module's declaration a numbered mangled name
+  (`InherentMethods`). `visibleInherent` selects one of them at the call.
+- The self-host compiler renames each later declaration to `<module>.<name>` in
+  `flatten.disambiguate_methods`. The checker selects one with
+  `nearest_inherent`. `annotate` writes the selected name into the call, and
+  the later passes find the declaration by that exact name.
+
 The qualified spelling depends on where the enum lives. An enum of the
 referring module and a built-in enum are qualified by the enum (`Kind.Text`,
 `IoError.Other(p, m, n)`). An imported module's enum is qualified by the MODULE

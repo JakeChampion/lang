@@ -83,7 +83,7 @@ function test_credential_and_token_eq(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/auth");
+  let r: test.TestRunner = test.new("std/http/auth");
   r = r.it("a bearer token accepted", test_bearer_accepted);
   r = r.it("a bearer token missing, refused and malformed", test_bearer_missing_refused_and_malformed);
   r = r.it("a basic credential with a colon in the password", test_basic_accepted_with_a_colon_in_the_password);

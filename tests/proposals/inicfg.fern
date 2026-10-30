@@ -605,7 +605,7 @@ function main(): i32 {
   let broken: ParseR = parse("[server]\nport = 8080\n# note\n\nthis is not a setting\n");
   eprint("  line " + broken.err.line.to_string() + ": " + broken.err.msg);
 
-  let t: test.TestRunner = test.test_new("inicfg");
+  let t: test.TestRunner = test.new("inicfg");
   t = t.it("the reported line is the malformed one", test_the_reported_line_is_the_malformed_one);
   t = t.it("comments and blanks do not shift the line", test_comments_and_blanks_do_not_shift_the_line);
   t = t.it("a valid document parses clean", test_a_valid_document_parses_clean);

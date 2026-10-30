@@ -497,7 +497,7 @@ function main(): i32 {
     i = i + 1;
   }
 
-  let r: test.TestRunner = test.test_new("reflow");
+  let r: test.TestRunner = test.new("reflow");
   r = r.it("the word sequence is unchanged", test_the_word_sequence_is_unchanged);
   r = r.it("no line is wider than asked unless it is one word", test_no_line_is_wider_than_asked_unless_it_is_one_word);
   r = r.it("every line is full", test_every_line_is_full);

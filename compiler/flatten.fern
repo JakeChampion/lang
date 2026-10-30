@@ -327,9 +327,9 @@ function module_sights(entry: parser.Module, imports: LoadedModule[], g: ImportG
   let out: parser.ModuleSight[] = [];
   for i in 0..imports.len() {
     let reaches: string[] = prefixes_at(import_closure(imports[i].mod, g, ids, pfxs), pfxs);
-    out = out.append(parser.ModuleSight { module: pfxs[i], imports: import_path_list(imports[i].mod), reaches: reaches });
+    out = out.append(parser.ModuleSight { module: pfxs[i], imports: import_path_list(imports[i].mod), direct: import_prefixes(imports[i].mod, ids, pfxs), reaches: reaches });
   }
-  return out.append(parser.ModuleSight { module: "", imports: import_path_list(entry), reaches: prefixes_at(import_closure(entry, g, ids, pfxs), pfxs) });
+  return out.append(parser.ModuleSight { module: "", imports: import_path_list(entry), direct: import_prefixes(entry, ids, pfxs), reaches: prefixes_at(import_closure(entry, g, ids, pfxs), pfxs) });
 }
 
 function import_path_list(mod: parser.Module): string[] {
@@ -1651,6 +1651,9 @@ function disambiguate_methods(mod: parser.Module, ns: string, claimed: string[])
       continue;
     }
     let base: string = util.base_type_name(fd.receiver_type);
+    if (fd.impl_trait.len() == 0) {
+      base = parser.receiver_namespace(fd.receiver_type);
+    }
     let key: string = base + "." + fd.name;
     if (util.index_of_str(claimed, key) < 0) {
       if (util.index_of_str(added, key) < 0) {

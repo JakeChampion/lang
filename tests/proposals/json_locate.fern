@@ -353,7 +353,7 @@ function main(): i32 {
     }
   }
 
-  let r: test.TestRunner = test.test_new("json_locate");
+  let r: test.TestRunner = test.new("json_locate");
   r = r.it("good documents agree", test_good_documents_agree);
   r = r.it("bad documents agree on the offset", test_bad_documents_agree_on_the_offset);
   r = r.it("line and column are derived from the offset", test_line_and_column_are_derived_from_the_offset);

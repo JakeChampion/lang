@@ -230,7 +230,7 @@ function main(): i32 {
   eprint("  A " + render(a) + "  C " + render(c)
     + "  -> " + ord_name(compare(a, c)));
 
-  let r: test.TestRunner = test.test_new("vector_clock");
+  let r: test.TestRunner = test.new("vector_clock");
   r = r.it("a local event advances one entry", test_a_local_event_advances_one_entry);
   r = r.it("independent events are concurrent", test_independent_events_are_concurrent);
   r = r.it("a message orders the two nodes", test_a_message_orders_the_two_nodes);

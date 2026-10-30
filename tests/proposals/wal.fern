@@ -396,7 +396,7 @@ function main(): i32 {
   eprint("  of " + (log.len() + 1).to_string() + " truncation points, "
     + torncuts.to_string() + " land inside a record");
 
-  let t: test.TestRunner = test.test_new("wal");
+  let t: test.TestRunner = test.new("wal");
   t = t.it("every truncation yields a valid prefix", test_every_truncation_yields_a_valid_prefix);
   t = t.it("a whole log replays exactly", test_a_whole_log_replays_exactly);
   t = t.it("corruption never invents a record", test_corruption_never_invents_a_record);

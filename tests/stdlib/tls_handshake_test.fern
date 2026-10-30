@@ -1302,7 +1302,7 @@ function refused_server(r: Result[handshake.ServerStep, handshake.HandshakeError
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/tls/handshake");
+  let r: test.TestRunner = test.new("std/tls/handshake");
   r = r.it("the client's side of RFC 8448", test_client_trace);
   r = r.it("the trace a byte at a time", test_client_trace_dribbled);
   r = r.it("the server's ServerHello of RFC 8448", test_server_trace);

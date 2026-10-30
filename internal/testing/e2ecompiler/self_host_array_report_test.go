@@ -47,7 +47,8 @@ const selfHostArrayReportSrc = `import "std/array";
   return xs.map((x: string): i64 => x.len() as i64).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
 }
 @noinline function lone(xs: i64[]): i64 {
-  return xs.fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+  let step: i64 = xs[0];
+  return xs.fold(0 as i64, (a: i64, b: i64): i64 => a + b * step);
 }
 @noinline function taken(xs: i64[]): i64 {
   return xs.map((x: i64): i64 => x + (1 as i64)).take(2).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
@@ -84,7 +85,8 @@ function main(): i32 {
   let donor: i64[] = xs;
   donor = own_map(donor);
   if (donor[2] != 4 as i64 || xs[2] != 3 as i64) { return 2; }
-  if (shared(xs) != 12 as i64 || unresolved(xs, (x: i64): i64 => x) != 6 as i64) { return 3; }
+  let step: i64 = xs[0];
+  if (shared(xs) != 12 as i64 || unresolved(xs, (x: i64): i64 => x * step) != 6 as i64) { return 3; }
   if (effectful(xs) != 6 as i64 || unsupported(xs) != 6 as i64) { return 4; }
   if (boundary(xs) != 6 as i64 || control(xs) != 6 as i64) { return 5; }
   if (nonscalar(["one", "two"]) != 6 as i64 || lone(xs) != 6 as i64 || length(xs) != 3) { return 6; }

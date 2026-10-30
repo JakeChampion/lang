@@ -146,7 +146,7 @@ function test_ends_with_any_no_match(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("all-substring + multi-option substring");
+  let r: test.TestRunner = test.new("all-substring + multi-option substring");
   r = r.it("all_starts_with pass", test_all_starts_with_pass);
   r = r.it("all_starts_with empty vacuous", test_all_starts_with_empty_array_vacuous);
   r = r.it("all_starts_with first violation", test_all_starts_with_first_violation_reports);

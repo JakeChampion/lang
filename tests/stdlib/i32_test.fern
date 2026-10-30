@@ -189,7 +189,7 @@ function test_ordinal_exceptions(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/i32");
+  let r: test.TestRunner = test.new("std/i32");
   r = r.it("ordinal suffixes", test_ordinal);
   r = r.it("ordinal exceptions", test_ordinal_exceptions);
   r = r.it("abs negative", test_abs_neg);

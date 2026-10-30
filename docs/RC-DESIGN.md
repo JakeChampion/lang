@@ -43,7 +43,18 @@ read of the union (`scrutinee_reads`), the form the source lowering gives a
 member binding's field read. It splices a function or an impl method
 declared `@inline` at every call, as it splices a function called once. The function must not be
 recursive, must have at most 400 instructions, and must only read its view
-parameters (`seminline.forced_spliceable`). It is a graph-to-graph pass; the stages
+parameters (`seminline.forced_spliceable`). It also splices, at every call, a
+private function of at most 40 instructions and no loop with an enum parameter
+that it only takes apart, directly or through a phi or a copy
+(`seminline.unpacker`).
+Each caller then takes the value apart, so the function that made the value
+can return it in words (`sempair`). Such a function is spliced only after no
+callee of its own is still to be spliced into it (`calls_spliceable`). A copy
+made sooner keeps those calls whole in its callers, and a value it builds can
+then be boxed. After all of these splices, it splices a function of at most 4
+instructions and no loop into every caller, under the same condition
+(`seminline.grown_tiny`). These splices come last, so that their copies do not
+use the caller budget that a larger splice needs. It is a graph-to-graph pass. The stages
 below never see what it removed.
 
 `semunroll.fold_constants` replaces an `i32` comparison, sum, difference or
@@ -281,7 +292,10 @@ for every plan ownership inference tries):
   from that donor follows the one uniqueness read the keep makes. A donor
   whose payloads a block takes and which dies in the block with no such
   construction is **classified** (a keep with no construction, `built` -1):
-  its takes and its death follow one uniqueness read. The
+  its takes and its death follow one uniqueness read. A donor that
+  outlives a run of two or more of its takes in a block is **tested**
+  (`tested`, `Keeps.lives`): the run's takes follow one uniqueness read in
+  the token slot, and the run frees the slot after its last take. The
   routes and the one-token-slot discipline are decided here, once (a
   carried construction inside a keep's or a classified donor's span reads
   its token from the donor's local, so it needs no slot); the
@@ -324,7 +338,8 @@ locals sit above `nvals`. It emits:
   `zero` (the null word the inliner passes for the payloads of a variant a
   path did not build) is dropped with no code at all (`null_unit`);
 - **takes and steals** as a uniqueness test, a slot store of zero and the
-  value in its local (`steal`); a kept or classified donor's takes read the
+  value in its local (`steal`); a tested run's takes read the token slot
+  for that test (`tested_take`); a kept or classified donor's takes read the
   token slot instead, and on its unique arm leave the slot as it is: its
   death releases only the fields nothing took (`keep_release`,
   `classified_death`), and a classified donor's box goes to the release

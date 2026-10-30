@@ -56,7 +56,8 @@ function main(): i32 {
   let a: ndarray.NdArray[f64] = ndarray.from_flat(xs, [2, 3]);
   if (packed(xs).get_unchecked([1, 2]) != 12.0 || strided(xs).get_unchecked([2, 1]) != 12.0) { return 1; }
   if (row_major(xs).get_unchecked([0]) != 8.0 || unknown(a.transpose()).get_unchecked([2, 1]) != 12.0) { return 2; }
-  if (captured(xs, 2.0).get_unchecked([1, 2]) != 12.0 || unresolved(xs, (x: f64): f64 => x * 2.0).get_unchecked([1, 2]) != 12.0) { return 3; }
+  let two: f64 = xs[1];
+  if (captured(xs, 2.0).get_unchecked([1, 2]) != 12.0 || unresolved(xs, (x: f64): f64 => x * two).get_unchecked([1, 2]) != 12.0) { return 3; }
   if (added(xs).get_unchecked([1, 2]) != 8.0 || integers([1 as i64, 2 as i64]).get_unchecked([1]) != 4 as i64) { return 4; }
   if (!algebra(xs) || axes(a, 1).get_unchecked([1]) != 15.0) { return 5; }
   if (xs[5] != 6.0 || a.get_unchecked([0, 1]) != 2.0) { return 6; }

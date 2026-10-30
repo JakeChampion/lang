@@ -258,7 +258,7 @@ function test_report_rows(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/mitigations");
+  let r: test.TestRunner = test.new("std/mitigations");
   r = r.it("auxv keys", test_auxv_keys);
   r = r.it("auxv stops at AT_NULL", test_auxv_stops_at_null);
   r = r.it("auxv truncated", test_auxv_truncated);

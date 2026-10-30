@@ -102,7 +102,7 @@ function test_sink_keeps_level_and_mode(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("leveled logger");
+  let r: test.TestRunner = test.new("leveled logger");
   r = r.it("text basic", test_text_basic);
   r = r.it("text fields", test_text_fields);
   r = r.it("threshold filters below", test_threshold_filters_below);

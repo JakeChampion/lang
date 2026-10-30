@@ -231,26 +231,50 @@ function drop_prelude(body: ast.Stmt[], n: i32): ast.Stmt[] {
 }
 
 function print_return_only(body: ast.Stmt[], depth: i32): string {
-  return print_return_only_c(body, depth, empty_fmt());
+  let (text, _) = print_return_only_c(body, depth, empty_fmt());
+  return text;
 }
 
-function print_return_only_c(body: ast.Stmt[], depth: i32, f: Fmt): string {
+function print_return_only_c(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
   if (body.len() != 1) {
-    return "";
+    return ("", f);
   }
   match (body[0]) {
     ast.StmtReturn(r) => {
       if (expr_is_missing(r.value) || match (as_use(r.value)) { Some(_) => true, None => false }) {
-        return "";
+        return ("", f);
       }
-      let (text, _) = print_expr_c(r.value, prec_lowest(), depth, f);
-      return text;
+      return print_expr_c(r.value, prec_lowest(), depth, f);
     },
     _ => {
-      return "";
+      return ("", f);
     }
   }
-  return "";
+  return ("", f);
+}
+
+// A body that holds a comment stays a block, so that the comment stays in the
+// lambda.
+function print_lambda_body(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
+  if (body.len() == 0 || holds_comment(f, ast.stmt_line(body[0]))) {
+    return print_block(body, depth, f);
+  }
+  let (av, g) = print_return_only_c(body, depth, f);
+  if (av.len() > 0) {
+    return (av, g);
+  }
+  if (body.len() == 1 && stmt_is_single_line(body[0])) {
+    let (text, h) = print_stmt_body(body[0], depth, f);
+    return ("{ " + text + " }", h);
+  }
+  return print_block(body, depth, f);
+}
+
+// Whether a comment is between the braces of the block whose first statement
+// is on line first.
+function holds_comment(f: Fmt, first: i32): boolean {
+  let (open, close, _) = take_span(f, first);
+  return open > 0 && inner_comment_pending(f, open - 1, close - 1);
 }
 
 function print_block_expr(c: ast.ExprCall, parent_prec: i32, depth: i32): string {
@@ -723,8 +747,8 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       let p: i32 = binary_prec(b.op);
       let (bl, bf) = print_expr_c(b.left, p, depth, f);
       let gap: string = " ";
-      if (written_break(b)) {
-        let (tr, tf) = emit_trailing(bf, last_line(b.left));
+      if (written_break(b, f.spans)) {
+        let (tr, tf) = emit_trailing(bf, last_line(b.left, bf.spans));
         let lead: string = "";
         if (tf.ci < tf.comments.len() && tf.comments[tf.ci].line > first_line(b.left)) {
           let (ld, lf) = drain_leading(tf, b.line, depth + 1);
@@ -851,22 +875,12 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
         out = out + ": " + arrow_return_type(lm.ret_type);
       }
       out = out + " => ";
-      let body: ast.Stmt[] = drop_prelude(lm.body, npre);
-      let layout: Fmt = Fmt { ...empty_fmt(), spans: f.spans, si: f.si };
-      let av: string = print_return_only_c(body, depth, layout);
-      if (av.len() > 0) {
-        out = out + av;
-      } else if (body.len() == 1 && stmt_is_single_line(body[0])) {
-        let (text, _) = print_stmt_body(body[0], depth, layout);
-        out = out + "{ " + text + " }";
-      } else {
-        let (lam_body, _) = print_block(body, depth, layout);
-        out = out + lam_body;
-      }
+      let (text, g) = print_lambda_body(drop_prelude(lm.body, npre), depth, f);
+      out = out + text;
       if (parent_prec > prec_assign()) {
-        return ("(" + out + ")", f);
+        return ("(" + out + ")", g);
       }
-      return (out, f);
+      return (out, g);
     },
     ast.ExprFString(fs) => {
       let out: string = "f\"";
@@ -920,21 +934,25 @@ function elem_lines(elems: ast.Expr[], open_line: i32): i32[] {
   return out;
 }
 
-// An element after a lambda closing brace on the same line stays in its group.
 function list_lines(elems: ast.Expr[], open_line: i32, f: Fmt): i32[] {
+  return grouped_lines(elems, open_line, f.spans, f.si);
+}
+
+// An element after a lambda closing brace on the same line stays in its group.
+// The lambda body spans are looked up from span index from.
+function grouped_lines(elems: ast.Expr[], open_line: i32, spans: parser.BlockSpans, from: i32): i32[] {
   let lines: i32[] = elem_lines(elems, open_line);
-  let i: i32 = 1;
-  while (i < elems.len()) {
+  for i in 1..elems.len() {
     if (first_line(elems[i]) == first_line(elems[i - 1])) {
       lines = lines.with(i, lines[i - 1]);
     } else if let ast.ExprLambda(lm) = elems[i - 1] {
       let (_, npre) = param_patterns_for(lm.params, lm.body);
       if (npre < lm.body.len()) {
         let first: i32 = ast.stmt_line(lm.body[npre]);
-        let j: i32 = f.si;
-        while (j < f.spans.firsts.len()) {
-          if (f.spans.firsts[j] == first && f.spans.opens[j] >= lm.line) {
-            if (f.spans.closes[j] == first_line(elems[i])) {
+        let j: i32 = from;
+        while (j < spans.firsts.len()) {
+          if (spans.firsts[j] == first && spans.opens[j] >= lm.line) {
+            if (spans.closes[j] == first_line(elems[i])) {
               lines = lines.with(i, lines[i - 1]);
             }
             break;
@@ -943,7 +961,6 @@ function list_lines(elems: ast.Expr[], open_line: i32, f: Fmt): i32[] {
         }
       }
     }
-    i = i + 1;
   }
   return lines;
 }
@@ -1014,14 +1031,15 @@ function indent_str(depth: i32): string {
   return out;
 }
 
-struct Fmt { comments: lexer.Comment[], ci: i32, blanks: boolean[], spans: parser.BlockSpans, si: i32 }
+// at is the line of the statement in print. own is the span of the last block printed, or -1.
+struct Fmt { comments: lexer.Comment[], ci: i32, blanks: boolean[], spans: parser.BlockSpans, si: i32, at: i32, own: i32 }
 
 function empty_fmt(): Fmt {
-  return Fmt { comments: [], ci: 0, blanks: [], spans: no_spans(), si: 0 };
+  return Fmt { comments: [], ci: 0, blanks: [], spans: no_spans(), si: 0, at: 0, own: -1 };
 }
 
 function no_spans(): parser.BlockSpans {
-  return parser.BlockSpans { opens: [], firsts: [], closes: [] };
+  return parser.BlockSpans { opens: [], firsts: [], closes: [], else_of: [] };
 }
 
 function take_span(f: Fmt, first: i32): (i32, i32, Fmt) {
@@ -1093,11 +1111,11 @@ function emit_trailing(f: Fmt, line: i32): (string, Fmt) {
   return ("", f);
 }
 
-function written_break(b: ast.ExprBinary): boolean {
+function written_break(b: ast.ExprBinary, spans: parser.BlockSpans): boolean {
   if (b.line == 0) {
     return false;
   }
-  let left: i32 = last_line(b.left);
+  let left: i32 = last_line(b.left, spans);
   return left > 0 && b.line > left || first_line(b.right) > b.line;
 }
 
@@ -1135,29 +1153,29 @@ function is_postfix_unary(op: string): boolean {
   return util.str_has_prefix(op, "as_") || util.str_has_prefix(op, "as?_") || op == "try_";
 }
 
-function last_line(e: ast.Expr): i32 {
+function last_line(e: ast.Expr, spans: parser.BlockSpans): i32 {
   let ln: i32 = ast.expr_line(e);
   match (e) {
     ast.ExprBinary(b) => {
-      return max_line(max_line(ln, last_line(b.left)), last_line(b.right));
+      return max_line(max_line(ln, last_line(b.left, spans)), last_line(b.right, spans));
     },
     ast.ExprUnary(u) => {
-      return max_line(ln, last_line(u.operand));
+      return max_line(ln, last_line(u.operand, spans));
     },
     ast.ExprCall(c) => {
-      return max_line(max_line(ln, last_line(c.callee)), last_line_of(c.args)) + list_closer(c.line, c.args);
+      return max_line(max_line(ln, last_line(c.callee, spans)), last_line_of(c.args, spans)) + list_closer(c.line, c.args, spans);
     },
     ast.ExprArray(a) => {
-      return max_line(ln, last_line_of(a.elements)) + list_closer(a.line, a.elements);
+      return max_line(ln, last_line_of(a.elements, spans)) + list_closer(a.line, a.elements, spans);
     },
     ast.ExprTuple(t) => {
-      return max_line(ln, last_line_of(t.elements));
+      return max_line(ln, last_line_of(t.elements, spans));
     },
     ast.ExprIndex(ix) => {
-      return max_line(max_line(ln, last_line(ix.array)), last_line(ix.index));
+      return max_line(max_line(ln, last_line(ix.array, spans)), last_line(ix.index, spans));
     },
     ast.ExprSlice(sl) => {
-      return max_line(max_line(max_line(ln, last_line(sl.array)), last_line(sl.start)), last_line(sl.end));
+      return max_line(max_line(max_line(ln, last_line(sl.array, spans)), last_line(sl.start, spans)), last_line(sl.end, spans));
     },
     ast.ExprStructLit(st) => {
       let vals: ast.Expr[] = [];
@@ -1167,13 +1185,13 @@ function last_line(e: ast.Expr): i32 {
       for v in st.field_values {
         vals = vals.append(v);
       }
-      return max_line(ln, last_line_of(vals)) + list_closer(st.line, vals);
+      return max_line(ln, last_line_of(vals, spans)) + list_closer(st.line, vals, spans);
     },
     ast.ExprFieldAccess(fa) => {
-      return max_line(ln, last_line(fa.obj));
+      return max_line(ln, last_line(fa.obj, spans));
     },
     ast.ExprMapLit(ml) => {
-      return max_line(max_line(ln, last_line_of(ml.keys)), last_line_of(ml.vals));
+      return max_line(max_line(ln, last_line_of(ml.keys, spans)), last_line_of(ml.vals, spans));
     },
     _ => {
       return ln;
@@ -1182,21 +1200,21 @@ function last_line(e: ast.Expr): i32 {
   return ln;
 }
 
-function list_closer(open: i32, es: ast.Expr[]): i32 {
+function list_closer(open: i32, es: ast.Expr[], spans: parser.BlockSpans): i32 {
   if (open <= 0 || es.len() == 0) {
     return 0;
   }
-  let lns: i32[] = elem_lines(es, open);
+  let lns: i32[] = grouped_lines(es, open, spans, 0);
   if (lns[lns.len() - 1] > open) {
     return 1;
   }
   return 0;
 }
 
-function last_line_of(es: ast.Expr[]): i32 {
+function last_line_of(es: ast.Expr[], spans: parser.BlockSpans): i32 {
   let m: i32 = 0;
   for x in es {
-    m = max_line(m, last_line(x));
+    m = max_line(m, last_line(x, spans));
   }
   return m;
 }
@@ -1266,9 +1284,13 @@ function nested_block_owns_trailing(st: ast.Stmt, line: i32, f: Fmt): boolean {
 
 function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
   if (body.len() == 0) {
-    return ("{}", f);
+    return print_empty_block(depth, f);
   }
   let (open_line, close_line, g) = take_span(f, ast.stmt_line(body[0]));
+  let span: i32 = -1;
+  if (open_line > 0) {
+    span = g.si - 1;
+  }
   let out: string = "{";
   if (open_line > 0 && !nested_block_owns_trailing(body[0], open_line, g)) {
     let (tc, gt) = emit_trailing(g, open_line);
@@ -1298,7 +1320,59 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
     g = gc;
   }
   out = out + indent_str(depth) + "}";
-  return (out, g);
+  return (out, Fmt { ...g, own: span });
+}
+
+// An empty block takes the first span that opens on or after the line of its
+// statement, when no token is between the braces of that span.
+function print_empty_block(depth: i32, f: Fmt): (string, Fmt) {
+  for i in f.si..f.spans.opens.len() {
+    if (f.spans.opens[i] >= f.at) {
+      if (f.spans.firsts[i] != f.spans.closes[i]) {
+        return ("{}", Fmt { ...f, own: -1 });
+      }
+      return print_span_block(i, depth, Fmt { ...f, si: i + 1 });
+    }
+  }
+  return ("{}", Fmt { ...f, own: -1 });
+}
+
+// An empty block keeps the comments between its braces.
+function print_span_block(i: i32, depth: i32, f: Fmt): (string, Fmt) {
+  let open: i32 = f.spans.opens[i];
+  let close: i32 = f.spans.closes[i];
+  let g: Fmt = Fmt { ...f, own: i };
+  if (close <= open || g.ci >= g.comments.len() || g.comments[g.ci].line >= close) {
+    return ("{}", g);
+  }
+  let (tc, g1) = emit_trailing(g, open);
+  let (tail, g2) = drain_leading(g1, close, depth + 1);
+  return ("{" + tc + "\n" + tail + indent_str(depth) + "}", g2);
+}
+
+// The span of an empty `else` block after the block f.own, or -1.
+function else_span(f: Fmt): i32 {
+  if (f.own < 0) {
+    return -1;
+  }
+  let end: i32 = f.spans.closes[f.own];
+  let from: i32 = f.own + 1;
+  for i in from..f.spans.opens.len() {
+    if (f.spans.else_of[i] == f.own) {
+      return i;
+    }
+    if (f.spans.opens[i] > end) {
+      return -1;
+    }
+  }
+  return -1;
+}
+
+function anchored(f: Fmt, line: i32): Fmt {
+  if (line > 0) {
+    return Fmt { ...f, at: line };
+  }
+  return f;
 }
 
 function print_pattern(pat: ast.Pattern): string {
@@ -1763,7 +1837,7 @@ function print_match(m: ast.StmtMatch, depth: i32, f: Fmt): (string, Fmt) {
   }
   let i: i32 = 0;
   while (i < arms.len()) {
-    let (arm_body, g1) = print_block(arms[i].body, depth + 1, g);
+    let (arm_body, g1) = print_block(arms[i].body, depth + 1, anchored(g, arms[i].line));
     g = g1;
     let head: string = print_pattern(arms[i].pattern);
     let guarded: ast.MatchArm = arms[i];
@@ -2246,10 +2320,15 @@ function print_if_chain(ifs: ast.StmtIf, depth: i32, f: Fmt): (string, Fmt) {
 
 function print_else(els: ast.Stmt[], chained: boolean, depth: i32, f: Fmt): (string, Fmt) {
   if (els.len() == 0) {
-    return ("", f);
+    let at: i32 = else_span(f);
+    if (at < 0) {
+      return ("", f);
+    }
+    let (empty_text, ge) = print_span_block(at, depth, Fmt { ...f, si: at + 1 });
+    return (" else " + empty_text, ge);
   }
   if (chained && els.len() == 1) {
-    let (nested_text, g) = print_stmt_body(els[0], depth, f);
+    let (nested_text, g) = print_stmt_body(els[0], depth, anchored(f, ast.stmt_line(els[0])));
     return (" else " + nested_text, g);
   }
   let (block_text, g2) = print_block(els, depth, f);
@@ -2308,32 +2387,32 @@ function print_stmt(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
 }
 
 function print_stmt_line(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
-  let (text, g) = print_stmt_body(st, depth, f);
+  let (text, g) = print_stmt_body(st, depth, anchored(f, ast.stmt_line(st)));
   let out: string = indent_str(depth) + text;
   if (stmt_is_single_line(st)) {
     let ln: i32 = ast.stmt_line(st);
     if (ln > 0) {
       let (tr, g2) = emit_trailing(g, ln);
-      let (tr2, g3) = emit_trailing(g2, stmt_last_line(st, ln));
+      let (tr2, g3) = emit_trailing(g2, stmt_last_line(st, ln, g2.spans));
       return (out + tr + tr2, g3);
     }
   }
   return (out, g);
 }
 
-function stmt_last_line(st: ast.Stmt, ln: i32): i32 {
+function stmt_last_line(st: ast.Stmt, ln: i32, spans: parser.BlockSpans): i32 {
   match (st) {
     ast.StmtReturn(r) => {
-      return max_line(ln, last_line(r.value));
+      return max_line(ln, last_line(r.value, spans));
     },
     ast.StmtVar(v) => {
-      return max_line(ln, last_line(v.init));
+      return max_line(ln, last_line(v.init, spans));
     },
     ast.StmtExpr(x) => {
-      return max_line(ln, last_line(x.value));
+      return max_line(ln, last_line(x.value, spans));
     },
     ast.StmtAssign(a) => {
-      return max_line(ln, last_line(a.value));
+      return max_line(ln, last_line(a.value, spans));
     },
     _ => {
       return ln;
@@ -2516,7 +2595,7 @@ function print_nested_func_decl(v: ast.StmtVar, depth: i32, f: Fmt): (string, Fm
       if (lm.ret_type.len() > 0) {
         out = out + ": " + lm.ret_type;
       }
-      let (body, g) = print_block(lm.body, depth, f);
+      let (body, g) = print_block(lm.body, depth, anchored(f, lm.line));
       return (out + " " + body, g);
     },
     _ => {}
@@ -2835,7 +2914,7 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
   if (fd.import_iface.len() > 0) {
     return (out + ";\n", f);
   }
-  let (body_text, g) = print_block(drop_prelude(fd.body, dpre), 0, f);
+  let (body_text, g) = print_block(drop_prelude(fd.body, dpre), 0, anchored(f, fd.line));
   return (out + " " + body_text + "\n", g);
 }
 
@@ -3293,7 +3372,7 @@ function print_annotated_function(fd: parser.FuncDecl, exports: parser.ExportBin
 }
 
 function format_module_with_inline(mod: parser.Module, traits: parser.TraitDecl[], impls: parser.ImplDecl[], flines: parser.FieldLines[], hints: parser.FunctionInlineHint[], spans: parser.BlockSpans, comments: lexer.Comment[], blanks: boolean[]): string {
-  let f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks, spans: spans, si: 0 };
+  let f: Fmt = Fmt { comments: comments, ci: 0, blanks: blanks, spans: spans, si: 0, at: 0, own: -1 };
   let chunks: string[] = [];
   let wrote: boolean = false;
   let kinds: i32[] = [];

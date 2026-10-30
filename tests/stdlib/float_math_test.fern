@@ -135,7 +135,7 @@ function test_f32_sqrt(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("float math");
+  let r: test.TestRunner = test.new("float math");
   r = r.it("abs(negative)", test_abs_negative);
   r = r.it("floor", test_floor);
   r = r.it("ceil", test_ceil);

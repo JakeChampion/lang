@@ -90,6 +90,11 @@ func TestSelfHostFrameViews(t *testing.T) {
 }
 
 func runSemanticProgram(t *testing.T, name, program string, produced []string, wants map[string]string, notSpliced ...string) {
+	runSemanticProgramSplicing(t, name, program, produced, nil, wants, notSpliced...)
+}
+
+// runSemanticProgramSplicing also requires each of spliced to lose its body.
+func runSemanticProgramSplicing(t *testing.T, name, program string, produced, spliced []string, wants map[string]string, notSpliced ...string) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
 	if err := os.WriteFile(filepath.Join(dir, "semsource_rc.fern"), []byte(semsourceRCDriver), 0o644); err != nil {
@@ -118,6 +123,11 @@ func runSemanticProgram(t *testing.T, name, program string, produced []string, w
 			for _, fn := range produced {
 				if !strings.Contains(diagnostics.String(), "produced "+fn+"\n") && !strings.Contains(diagnostics.String(), "spliced "+fn+"\n") {
 					t.Fatalf("%s was not produced:\n%s", fn, diagnostics.String())
+				}
+			}
+			for _, fn := range spliced {
+				if !strings.Contains(diagnostics.String(), "spliced "+fn+"\n") {
+					t.Fatalf("%s must be spliced into every caller:\n%s", fn, diagnostics.String())
 				}
 			}
 			for _, fn := range notSpliced {

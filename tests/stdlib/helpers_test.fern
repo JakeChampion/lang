@@ -121,7 +121,7 @@ function test_file_helpers(r: test.TestRunner): test.TestRunner {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("helpers");
+  let r: test.TestRunner = test.new("helpers");
 
   r = r.it("contains_all pass", test_contains_all_pass);
   r = r.it("contains_all names missing", test_contains_all_localises_missing);

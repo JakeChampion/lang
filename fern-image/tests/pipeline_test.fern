@@ -158,7 +158,7 @@ function depth_and_bounds(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("on-demand row pipeline");
+  let r = test.new("on-demand row pipeline");
   r = r.it("virtual ten-million-pixel graph renders one row", virtual_rows);
   r = r.it("RGB/RGBA row chains agree with eager nearest", eager_agreement);
   r = r.it("empty graphs, cycles, and dimensions fail safely", malformed_graphs);

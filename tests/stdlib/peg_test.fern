@@ -253,7 +253,7 @@ function test_pattern_ref_without_grammar(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("peg");
+  let r: test.TestRunner = test.new("peg");
   r = r.it("literal match", test_lit_match);
   r = r.it("furthest failure position", test_furthest_failure_pos);
   r = r.it("ordered choice first wins", test_ordered_choice_first_wins);

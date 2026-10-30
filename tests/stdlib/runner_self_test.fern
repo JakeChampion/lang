@@ -366,7 +366,7 @@ function test_fail_returns_fail(): test.TestOutcome {
 }
 
 function test_dropped_it_result_still_counts(): test.TestOutcome {
-  let sub: test.TestRunner = test.test_new_quiet("dropped-it");
+  let sub: test.TestRunner = test.new_quiet("dropped-it");
   sub.it("dropped pass", test_pass_returns_pass);
   sub.it("dropped fail", test_fail_returns_fail_case);
   if (sub.emitted.get() != 2) {
@@ -379,7 +379,7 @@ function test_dropped_it_result_still_counts(): test.TestOutcome {
 }
 
 function test_unused_subsuite_handle_still_counts(): test.TestOutcome {
-  let sub: test.TestRunner = test.test_new_quiet("unused-subsuite");
+  let sub: test.TestRunner = test.new_quiet("unused-subsuite");
   sub = sub.it("parent pass", test_pass_returns_pass);
   let child: test.TestRunner = sub.subsuite("child");
   child = child.it("child pass", test_pass_returns_pass);
@@ -394,17 +394,17 @@ function test_unused_subsuite_handle_still_counts(): test.TestOutcome {
 }
 
 function test_finish_exits_nonzero_for_dropped_result(): test.TestOutcome {
-  let kept: test.TestRunner = test.test_new_quiet("kept");
+  let kept: test.TestRunner = test.new_quiet("kept");
   kept = kept.it("kept pass", test_pass_returns_pass);
   if (kept.finish() != 0) {
     return test.fail("assigned all-passing child exited non-zero");
   }
-  let dropped: test.TestRunner = test.test_new_quiet("dropped-exit");
+  let dropped: test.TestRunner = test.new_quiet("dropped-exit");
   dropped.it("dropped pass", test_pass_returns_pass);
   if (dropped.finish() != 1) {
     return test.fail("a dropped passing result exited 0");
   }
-  let bad: test.TestRunner = test.test_new_quiet("dropped-exit-fail");
+  let bad: test.TestRunner = test.new_quiet("dropped-exit-fail");
   bad.it("dropped fail", test_fail_returns_fail_case);
   return test.assert_eq(bad.finish(), 1);
 }
@@ -500,7 +500,7 @@ function test_assert_body_fail(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("runner self-test");
+  let r: test.TestRunner = test.new("runner self-test");
   r = r.it("assert_status pass", test_assert_status_pass);
   r = r.it("assert_status fail names both", test_assert_status_fail);
   r = r.it("assert_header pass", test_assert_header_pass);

@@ -57,7 +57,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<dependencies 2>>=
 import "std/binary";
 import "std/deflate";
-import "std/hash";
+import "std/hash/crc32";
 import "core/cmp";
 import "std/error";
 ```
@@ -285,7 +285,7 @@ function best_filter(pixels: [u8], start: i32, stride: i32): i32 {
 }
 
 function chunk(own output: u8[], kind: string, data: u8[]): u8[] {
-  let checksum: u32 = hash.crc32_new().update(kind.as_bytes()).update(data).finish();
+  let checksum: u32 = crc32.new().update(kind.as_bytes()).update(data).finish();
   output = binary.append_u32_be(output, data.len() as u32);
   output = binary.append_bytes(output, kind.as_bytes());
   output = binary.append_bytes(output, data);

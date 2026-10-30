@@ -414,7 +414,7 @@ function main(): i32 {
   eprint("  flattened: " + stored_entries(f).to_string() + " entries in "
     + f.layers.len().to_string() + " layer");
 
-  let r: test.TestRunner = test.test_new("cow_snapshots");
+  let r: test.TestRunner = test.new("cow_snapshots");
   r = r.it("a write is invisible to older snapshots", test_a_write_is_invisible_to_older_snapshots);
   r = r.it("snapshots share the base", test_snapshots_share_the_base);
   r = r.it("a deletion is local to its layer", test_a_deletion_is_local_to_its_layer);

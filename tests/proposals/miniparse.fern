@@ -846,7 +846,7 @@ function main(): i32 {
   eprint("  \"let y = ;\" -> " + badp.error + " at " + badp.line.to_string()
     + ":" + badp.col.to_string());
 
-  let r: test.TestRunner = test.test_new("miniparse");
+  let r: test.TestRunner = test.new("miniparse");
   r = r.it("printing is a fixpoint", test_printing_is_a_fixpoint);
   r = r.it("the tree means what the source says", test_the_tree_means_what_the_source_says);
   r = r.it("layout does not reach the tree", test_layout_does_not_reach_the_tree);

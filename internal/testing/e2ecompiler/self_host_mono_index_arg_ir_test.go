@@ -62,11 +62,11 @@ function main(): i32 {
 }`},
 
 	{"method-result-args-imported", `import "core/cmp";
-import "std/hash" as hash;
+import "std/hash/sysv_sum";
 function bigger[T: cmp.Ord](x: T, y: T): boolean { return x.cmp(y) > 0; }
 function main(): i32 {
-    let s: hash.SysvSum = hash.sysv_sum_new().update("abc".as_bytes());
-    let e: hash.SysvSum = hash.sysv_sum_new();
+    let s: sysv_sum.SysvSum = sysv_sum.new().update("abc".as_bytes());
+    let e: sysv_sum.SysvSum = sysv_sum.new();
     if (bigger(s.finish(), e.finish())) { return 7; }
     return 3;
 }`},

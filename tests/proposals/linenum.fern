@@ -387,7 +387,7 @@ function main(): i32 {
   eprint("  10 lines -> width " + wide.width.to_string()
     + ", first field `" + wide.lines[0].take(2).to_owned() + "`");
 
-  let t: test.TestRunner = test.test_new("linenum");
+  let t: test.TestRunner = test.new("linenum");
   t = t.it("the width is the digit count of the last number", test_the_width_is_the_digit_count_of_the_last_number);
   t = t.it("the numbers are 1..k in a uniform field", test_the_numbers_are_one_to_k_in_a_uniform_field);
   t = t.it("blank lines are preserved unnumbered", test_blank_lines_are_preserved_unnumbered);

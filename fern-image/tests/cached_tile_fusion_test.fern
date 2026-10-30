@@ -227,7 +227,7 @@ function depth(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r = test.test_new("cached tile fusion");
+  let r = test.new("cached tile fusion");
   r = r.it("independent padded RGB/RGBA cropped coordinates across cache limits", coordinates);
   r = r.it("equal tile admission with actual fused and legacy work statistics", statistics);
   r = r.it("mixed-filter cropped tiles agree with eager output", mixed);

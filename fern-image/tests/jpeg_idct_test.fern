@@ -208,7 +208,7 @@ function cancellation(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let t = test.test_new("scalar JPEG inverse DCT");
+  let t = test.new("scalar JPEG inverse DCT");
   t = t.it("DC values, level shift, ties, and clipping", dc_and_rounding);
   t = t.it("natural coefficient order and transmitted quantizers", natural_and_zigzag);
   t = t.it("shapes, numeric domain, quantizers, and nonfinite samples", invalid_inputs);

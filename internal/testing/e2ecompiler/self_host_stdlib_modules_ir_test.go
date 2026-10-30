@@ -31,7 +31,7 @@ function main(): i32 {
 }`},
 	{"stream", `import "std/stream";
 function main(): i32 {
-    let s = stream.stream_from_string("hello world");
+    let s = stream.from_string("hello world");
     return s.len() * 3;
 }`},
 	{"cmp-eq-verbs", `import "core/cmp" as cmp;

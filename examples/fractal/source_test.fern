@@ -153,7 +153,7 @@ function test_version_and_cancel(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let runner: test.TestRunner = test.test_new("fractal source browser");
+  let runner: test.TestRunner = test.new("fractal source browser");
   runner = runner.it("Fern tokens", test_highlight);
   runner = runner.it("import links and aliases", test_imports);
   runner = runner.it("local and library targets", test_import_targets);

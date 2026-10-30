@@ -79,7 +79,7 @@ function test_update_bytes_and_oneshot(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/crypto SHA-256");
+  let r: test.TestRunner = test.new("std/crypto SHA-256");
   r = r.it("empty", test_empty);
   r = r.it("abc", test_abc);
   r = r.it("multi-block", test_multiblock);

@@ -109,7 +109,7 @@ function test_iteration(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/ordset");
+  let r: test.TestRunner = test.new("std/ordset");
   r = r.it("of dedups", test_of_dedup);
   r = r.it("insert is persistent", test_insert_is_persistent);
   r = r.it("remove", test_remove);

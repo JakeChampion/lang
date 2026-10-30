@@ -49,7 +49,7 @@ function test_identity(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/array f64 vector");
+  let r: test.TestRunner = test.new("std/array f64 vector");
   r = r.it("dot", test_dot);
   r = r.it("dot negatives", test_dot_negatives);
   r = r.it("dot mismatch", test_dot_mismatch);

@@ -505,7 +505,7 @@ function main(): i32 {
   eprint("hits=" + c.hits.to_string() + " misses=" + c.misses.to_string()
     + " rate=" + hit_rate_milli(c).to_string() + "/1000");
 
-  let r: test.TestRunner = test.test_new("lru");
+  let r: test.TestRunner = test.new("lru");
   r = r.it("a read promotes", test_a_read_promotes);
   r = r.it("matches the timestamp model", test_matches_the_timestamp_model);
   r = r.it("counters account for every read", test_counters_account_for_every_read);

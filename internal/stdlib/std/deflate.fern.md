@@ -90,7 +90,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 1>>=
 // This module decodes DEFLATE, zlib, and gzip data.
-import "std/hash";
+import "std/hash/crc32";
 import "std/array";
 import "core/cmp";
 import "core/int";
@@ -967,7 +967,7 @@ function __gzip_member(input: [u8], from: i32, max_out: i32): Result[Inflated, I
   }
   let crc: u32 = __le32(input, trailer);
   let isize: u32 = __le32(input, trailer + 4);
-  if (crc != hash.crc32_new().update(inflated.out[:]).finish() || isize != inflated.out.len() as u32) {
+  if (crc != crc32.new().update(inflated.out[:]).finish() || isize != inflated.out.len() as u32) {
     return Err(BadChecksum);
   }
   return Ok(Inflated { out: inflated.out, consumed: trailer + 8 - from });
@@ -1102,7 +1102,7 @@ pub function deflate_fast(input: [u8]): u8[] {
 }
 
 pub function gzip(input: [u8]): u8[] {
-  let crc: u32 = hash.crc32_new().update(input).finish();
+  let crc: u32 = crc32.new().update(input).finish();
   let head: u8[] = [31 as u8, 139 as u8, 8 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 255 as u8];
   return __put_le32(__put_le32(__joined(head, deflate(input)), crc), input.len() as u32);
 }

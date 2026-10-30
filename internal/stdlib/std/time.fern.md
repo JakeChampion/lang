@@ -168,15 +168,15 @@ pub function (a: Timestamp) cmp(b: Timestamp): i32 {
   return __cmp_parts(a.sec, a.nsec, b.sec, b.nsec);
 }
 
-pub function date_make(year: i32, month: i32, day: i32): Date {
+pub function date_of(year: i32, month: i32, day: i32): Date {
   return Date { year: year, month: month, day: day };
 }
 
-pub function time_make(hour: i32, minute: i32, second: i32): Time {
+pub function time_of(hour: i32, minute: i32, second: i32): Time {
   return Time { hour: hour, minute: minute, second: second, nsec: 0 };
 }
 
-pub function datetime_make(d: Date, t: Time): DateTime {
+pub function datetime_of(d: Date, t: Time): DateTime {
   return DateTime { date: d, time: t };
 }
 

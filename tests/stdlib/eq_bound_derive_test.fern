@@ -73,7 +73,7 @@ function test_set_remove(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("Eq-bound verbs on a derived element");
+  let r: test.TestRunner = test.new("Eq-bound verbs on a derived element");
   r = r.it("all_equal", test_all_equal);
   r = r.it("dedup", test_dedup);
   r = r.it("distinct", test_distinct);

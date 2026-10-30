@@ -110,7 +110,7 @@ function test_refusal_and_discard(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/quic/recovery");
+  let r: test.TestRunner = test.new("std/quic/recovery");
   r = r.it("the RTT estimate", test_rtt);
   r = r.it("packet and time thresholds", test_thresholds);
   r = r.it("the probe timeout", test_probe_timeout);

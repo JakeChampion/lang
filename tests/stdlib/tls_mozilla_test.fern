@@ -76,24 +76,24 @@ function test_public_chain(): test.TestOutcome {
   let now: time.Timestamp = time.timestamp_from_unix(1788220800);
   let chain: u8[][] = [leaf(), intermediate(), cross()];
   let r: verify.Roots = mozilla.roots();
-  if (outcome(verify.verify_server(chain, verify.roots([]), "raw.githubusercontent.com", now)) == "ok *.github.io") {
+  if (outcome(verify.server(chain, verify.roots([]), "raw.githubusercontent.com", now)) == "ok *.github.io") {
     return test.fail("verified against no roots");
   }
-  if (outcome(verify.verify_server(chain, r, "example.com", now)) == "ok *.github.io") {
+  if (outcome(verify.server(chain, r, "example.com", now)) == "ok *.github.io") {
     return test.fail("verified for a name the leaf does not cover");
   }
   let x1: i32 = index_of(r, "ISRG Root X1");
-  if (outcome(verify.verify_server(chain, r.distrusting(x1, time.timestamp_from_unix(1)), "raw.githubusercontent.com", now)) != "tls verify: the leaf was issued after the date root 3 is distrusted from") {
+  if (outcome(verify.server(chain, r.distrusting(x1, time.timestamp_from_unix(1)), "raw.githubusercontent.com", now)) != "tls verify: the leaf was issued after the date root 3 is distrusted from") {
     return test.fail("verified under a root distrusted before the leaf was issued");
   }
-  if (outcome(verify.verify_server(chain, r.distrusting(x1, now), "raw.githubusercontent.com", now)) != "ok *.github.io") {
+  if (outcome(verify.server(chain, r.distrusting(x1, now), "raw.githubusercontent.com", now)) != "ok *.github.io") {
     return test.fail("refused under a root distrusted after the leaf was issued");
   }
-  return test.assert_eq(outcome(verify.verify_server(chain, r, "raw.githubusercontent.com", now)), "ok *.github.io");
+  return test.assert_eq(outcome(verify.server(chain, r, "raw.githubusercontent.com", now)), "ok *.github.io");
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/tls/mozilla");
+  let r: test.TestRunner = test.new("std/tls/mozilla");
   r = r.it("every root parses", test_every_root_parses);
   r = r.it("Mozilla's list", test_mozillas_list);
   r = r.it("a public chain", test_public_chain);

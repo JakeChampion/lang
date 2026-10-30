@@ -883,6 +883,11 @@ pub function drop[T](xs: T[], n: i32): T[] {
   return out;
 }
 
+// Takes the array, so the element it returns leaves the array it was in.
+pub function swap_at[T](own xs: T[], i: i32, v: T): (T, T[]) {
+  return (xs[i], xs.with(i, v));
+}
+
 pub function take_last[T](xs: T[], n: i32): T[] {
   if (n <= 0) {
     return [];
@@ -1503,6 +1508,10 @@ pub function (xs: T[]) take(n: i32): T[] {
 
 pub function (xs: T[]) drop(n: i32): T[] {
   return drop(xs, n);
+}
+
+pub function (own xs: T[]) swap_at(i: i32, v: T): (T, T[]) {
+  return swap_at(xs, i, v);
 }
 
 pub function (xs: T[]) distinct[T: cmp.Eq](): T[] {

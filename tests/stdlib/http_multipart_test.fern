@@ -47,7 +47,7 @@ function scripted(bytes: u8[], k: i32): BodySource {
 
 function streamed(ct: string, bytes: u8[], k: i32): HttpRequest {
   let h: HeaderMap = headers.new().set("content-type", ct);
-  return HttpRequest { method: "POST", path: "/upload", body: stream.stream_from_source(scripted(bytes, k)), headers: h, trailers: headers.new() };
+  return HttpRequest { method: "POST", path: "/upload", body: stream.from_source(scripted(bytes, k)), headers: h, trailers: headers.new() };
 }
 
 function buffered(ct: string, body: string): HttpRequest {
@@ -55,7 +55,7 @@ function buffered(ct: string, body: string): HttpRequest {
   if (ct.len() > 0) {
     h = h.set("content-type", ct);
   }
-  return HttpRequest { method: "POST", path: "/upload", body: stream.stream_from_string(body), headers: h, trailers: headers.new() };
+  return HttpRequest { method: "POST", path: "/upload", body: stream.from_string(body), headers: h, trailers: headers.new() };
 }
 
 function show(bytes: u8[]): string {
@@ -287,7 +287,7 @@ function test_builder_output(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/http/multipart");
+  let r: test.TestRunner = test.new("std/http/multipart");
   r = r.it("whole parts", test_whole_parts);
   r = r.it("a delimiter split between two pulls", test_split_delimiter);
   r = r.it("pieces of a part", test_pieces);

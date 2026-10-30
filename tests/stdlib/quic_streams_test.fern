@@ -608,7 +608,7 @@ function test_late_fin_once(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/quic/streams");
+  let r: test.TestRunner = test.new("std/quic/streams");
   r = r.it("reassembly holds no byte twice", test_reassembly);
   r = r.it("the peer opens streams up to the limit", test_peer_opens);
   r = r.it("each frame needs its half", test_directions);

@@ -348,7 +348,7 @@ import "std/time";
 
 function main(): i32 {
     let start: Instant = clock.instant();
-    let d: Date = time.date_make(2028, 2, 27);
+    let d: Date = time.date_of(2028, 2, 27);
     print(d.add_days(3).format_iso());                // 2028-03-01
     print(d.weekday_name());                          // Sunday
     print(time.days_in_month(2028, 2).to_string());   // 29
@@ -463,7 +463,7 @@ function test_slugify(): test.TestOutcome {
 }
 
 function main(): i32 {
-    let r: test.TestRunner = test.test_new("slug");
+    let r: test.TestRunner = test.new("slug");
     r = r.it("lowercases and hyphenates", test_slugify);
     return r.finish();
 }

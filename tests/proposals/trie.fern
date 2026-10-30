@@ -734,7 +734,7 @@ function main(): i32 {
   eprint("churn(200) sum=" + a.to_string() + " bump=" + (after_n - base).to_string());
   eprint("churn(400) sum=" + b.to_string() + " bump=" + (after_2n - after_n).to_string());
 
-  let r: test.TestRunner = test.test_new("trie");
+  let r: test.TestRunner = test.new("trie");
   r = r.it("membership agrees with a scan", test_membership_agrees_with_a_scan);
   r = r.it("prefix queries agree with a scan", test_prefix_queries_agree_with_a_scan);
   r = r.it("keys come out sorted and deduped", test_keys_come_out_sorted_and_deduped);

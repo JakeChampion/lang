@@ -1041,7 +1041,7 @@ function __some_client(o: Option[client.Offloaded]): Result[client.Offloaded, st
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/tls/server");
+  let r: test.TestRunner = test.new("std/tls/server");
   r = r.it("keys from PKCS #8 and SEC 1", test_keys);
   r = r.it("key refusals", test_key_refusals);
   r = r.it("an identity and its leaf", test_identity);

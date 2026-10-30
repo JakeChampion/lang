@@ -482,7 +482,7 @@ function test_retry(): test.TestOutcome {
 }
 
 function main(): i32 {
-  let r: test.TestRunner = test.test_new("std/tls/message");
+  let r: test.TestRunner = test.new("std/tls/message");
   r = r.it("RFC 8448 messages round trip", test_round_trip);
   r = r.it("ClientHello fields", test_client_hello_fields);
   r = r.it("ServerHello fields", test_server_hello_fields);

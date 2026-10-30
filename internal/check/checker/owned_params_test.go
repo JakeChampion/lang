@@ -1520,3 +1520,173 @@ function pick(own h: Handle, flag: boolean): i32 {
     return n;
 }`)
 }
+
+const payloadPrelude = `struct Handle { fd: i32 }
+struct Pack { file: Handle, path: string }
+function (own h: Handle) close(): i32 { return h.fd; }
+function mkp(): Result[Pack, string] { return Ok(Pack { file: Handle { fd: 4 }, path: "p" }); }
+`
+
+func TestOwnGuardMatchOnALocalAtItsLastUse(t *testing.T) {
+	wantOK(t, "local-option-matched-once", payloadPrelude+`
+function work(): i32 {
+    let o: Option[Handle] = Some(Handle { fd: 1 });
+    let n: i32 = 0;
+    match (o) {
+        Some(h) => { n = h.close(); },
+        None => {}
+    }
+    return n;
+}`)
+	wantOK(t, "field-path-matched-at-its-last-use", payloadPrelude+`
+struct Frame { dir: Option[Handle], depth: i32 }
+function work(): i32 {
+    let top: Frame = Frame { dir: Some(Handle { fd: 2 }), depth: 1 };
+    let n: i32 = 0;
+    match (top.dir) {
+        Some(d) => { n = d.close(); },
+        None => {}
+    }
+    return n + top.depth;
+}`)
+	wantE051(t, "local-matched-again-after-the-payload-closed", payloadPrelude+`
+function work(): i32 {
+    let o: Option[Handle] = Some(Handle { fd: 1 });
+    let n: i32 = 0;
+    match (o) {
+        Some(h) => { n = h.close(); },
+        None => {}
+    }
+    match (o) {
+        Some(h) => { n = n + h.fd; },
+        None => {}
+    }
+    return n;
+}`)
+}
+
+func TestOwnGuardPatternBoundPayloadOwnsItsFields(t *testing.T) {
+	wantOK(t, "field-of-an-own-parameter-payload", payloadPrelude+`
+function work(own o: Option[Pack]): i32 {
+    match (o) {
+        Some(t) => { return t.file.close(); },
+        None => { return 0; }
+    }
+    return 0;
+}`)
+	wantOK(t, "field-of-a-fresh-call-payload-through-if-let", payloadPrelude+`
+function work(): i32 {
+    let n: i32 = 0;
+    if let Ok(t) = mkp() {
+        n = t.file.close();
+    }
+    return n;
+}`)
+	wantE051(t, "field-of-a-borrowed-parameter-payload", payloadPrelude+`
+function work(o: Option[Pack]): i32 {
+    match (o) {
+        Some(t) => { return t.file.close(); },
+        None => { return 0; }
+    }
+    return 0;
+}`)
+}
+
+func TestOwnGuardForEachOverAnOwnedArray(t *testing.T) {
+	wantOK(t, "fresh-local-array-at-its-last-use", payloadPrelude+`
+function work(): i32 {
+    let hs: Handle[] = [Handle { fd: 1 }, Handle { fd: 2 }];
+    let n: i32 = 0;
+    for h in hs {
+        n = n + h.close();
+    }
+    return n;
+}`)
+	wantOK(t, "own-array-parameter", payloadPrelude+`
+function work(own hs: Handle[]): i32 {
+    let n: i32 = 0;
+    for h in hs {
+        n = n + h.close();
+    }
+    return n;
+}`)
+	wantOK(t, "field-of-each-element", payloadPrelude+`
+function work(): i32 {
+    let ps: Pack[] = [Pack { file: Handle { fd: 1 }, path: "a" }];
+    let n: i32 = 0;
+    for p in ps {
+        if (p.path == "a") {
+            n = n + p.file.close();
+        }
+    }
+    return n;
+}`)
+	wantE051(t, "array-read-after-the-loop", payloadPrelude+`
+function work(): i32 {
+    let hs: Handle[] = [Handle { fd: 1 }];
+    let n: i32 = 0;
+    for h in hs {
+        n = n + h.close();
+    }
+    return n + hs.len();
+}`)
+	wantE051(t, "borrowed-array-parameter", payloadPrelude+`
+function work(hs: Handle[]): i32 {
+    let n: i32 = 0;
+    for h in hs {
+        n = n + h.close();
+    }
+    return n;
+}`)
+	wantE051(t, "element-read-after-its-close", payloadPrelude+`
+function work(): i32 {
+    let hs: Handle[] = [Handle { fd: 1 }];
+    let n: i32 = 0;
+    for h in hs {
+        n = n + h.close();
+        n = n + h.fd;
+    }
+    return n;
+}`)
+	wantE051(t, "field-closed-in-an-inner-loop", payloadPrelude+`
+function work(): i32 {
+    let ps: Pack[] = [Pack { file: Handle { fd: 1 }, path: "a" }];
+    let n: i32 = 0;
+    for p in ps {
+        let k: i32 = 0;
+        while (k < 2) {
+            k = k + 1;
+            n = n + p.file.close();
+        }
+    }
+    return n;
+}`)
+}
+
+func TestOwnGuardTakenPayloadIsAFreshLocal(t *testing.T) {
+	wantOK(t, "taken-payload-stored-then-read", `
+function round(i: i32): i32 {
+    let held: i32[] = [];
+    let acc: i32 = 0;
+    let o: Option[i32[]] = Some([i, i + 1]);
+    if (i >= 0) {
+        match (o) { Some(a) => { held = a; acc = a[0]; }, None => {} }
+    }
+    return acc + held[1];
+}`)
+	wantOK(t, "taken-payload-closed-at-its-last-use", payloadPrelude+`
+function work(): i32 {
+    let r: Result[Pack, string] = mkp();
+    match (r) {
+        Ok(p) => { return p.file.close(); },
+        Err(e) => { return 0; }
+    }
+}`)
+	wantE051(t, "lent-payload-not-taken", payloadPrelude+`
+function work(o: Option[Handle]): i32 {
+    match (o) {
+        Some(h) => { return h.close(); },
+        None => { return 0; }
+    }
+}`)
+}
