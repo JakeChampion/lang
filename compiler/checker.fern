@@ -8977,9 +8977,65 @@ function slc_call_name_at(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
-function slc_calls_any(calls: util.NameIndex, marked: util.NameIndex): boolean {
+function slc_callees(calls: util.NameIndex, names: util.NameIndex): i32[] {
+  let out: i32[] = [];
   for name in calls.names {
-    if (marked.has(name)) {
+    let k: i32 = names.chain(name);
+    while (k >= 0) {
+      if (names.names[k] == name) {
+        out = out.append(k);
+      }
+      k = names.next[k];
+    }
+  }
+  return out;
+}
+
+// slc_callee_order puts each function after the functions its call names reach, except in a cycle.
+function slc_callee_order(calls: util.NameIndex[], names: util.NameIndex): i32[] {
+  let edges: i32[][] = [];
+  for c in calls {
+    edges = edges.append(slc_callees(c, names));
+  }
+  let order: i32[] = [];
+  let seen: boolean[] = __alloc_bool(calls.len());
+  let stack: i32[] = __alloc_i32(calls.len());
+  let next: i32[] = __alloc_i32(calls.len());
+  let r: i32 = 0;
+  while (r < calls.len()) {
+    if (!seen[r]) {
+      seen = seen.with(r, true);
+      stack = stack.with(0, r);
+      next = next.with(0, 0);
+      let depth: i32 = 1;
+      while (depth > 0) {
+        let v: i32 = stack[depth - 1];
+        let e: i32 = next[depth - 1];
+        if (e < edges[v].len()) {
+          next = next.with(depth - 1, e + 1);
+          let w: i32 = edges[v][e];
+          if (!seen[w]) {
+            seen = seen.with(w, true);
+            stack = stack.with(depth, w);
+            next = next.with(depth, 0);
+            depth = depth + 1;
+          }
+        } else {
+          order = order.append(v);
+          depth = depth - 1;
+        }
+      }
+    }
+    r = r + 1;
+  }
+  return order;
+}
+
+// slc_stale says a callee name changed its summary after the walk at stamp `walked`.
+function slc_stale(calls: util.NameIndex, names: util.NameIndex, changed: i32[], walked: i32): boolean {
+  for name in calls.names {
+    let at: i32 = names.find(name);
+    if (at >= 0 && changed[at] > walked) {
       return true;
     }
   }
@@ -24322,17 +24378,24 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   for cfn in mod.funcs {
     slc_calls = slc_calls.append(util.name_index(slc_call_names(cfn)));
   }
-  let slc_no_names: string[] = [];
-  let slc_marked: util.NameIndex = util.name_index(slc_no_names);
-  let slc_first: boolean = true;
-  while (slc_first || slc_marked.names.len() > 0) {
-    let slc_now: string[] = [];
-    let sj: i32 = 0;
-    while (sj < mod.funcs.len()) {
-      if (!slc_first && !slc_calls_any(slc_calls[sj], slc_marked)) {
-        sj = sj + 1;
+  let slc_fn_names: string[] = [];
+  for cfn in mod.funcs {
+    slc_fn_names = slc_fn_names.append(cfn.name);
+  }
+  let slc_names: util.NameIndex = util.name_index(slc_fn_names);
+  let slc_changed_at: i32[] = util.minus_ones(mod.funcs.len());
+  let slc_walked: i32[] = util.minus_ones(mod.funcs.len());
+  let slc_order: i32[] = slc_callee_order(slc_calls, slc_names);
+  let slc_clock: i32 = 0;
+  let slc_again: boolean = true;
+  while (slc_again) {
+    slc_again = false;
+    for sj in slc_order {
+      if (slc_walked[sj] >= 0 && !slc_stale(slc_calls[sj], slc_names, slc_changed_at, slc_walked[sj])) {
         continue;
       }
+      slc_clock = slc_clock + 1;
+      slc_walked = slc_walked.with(sj, slc_clock);
       let sjw: SlcWalk = slice_escape_diags(mod.funcs[sj], slc_functions[sj], slc_sums, slc_ix);
       let slc_positions: string[] = slc_functions[sj].params;
       let slc_cur: ViewSum = slc_sums[sj];
@@ -24352,13 +24415,12 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
         slc_changed = true;
       }
       if (slc_changed) {
-        slc_now = slc_now.append(mod.funcs[sj].name);
+        slc_clock = slc_clock + 1;
+        slc_changed_at = slc_changed_at.with(slc_names.find(mod.funcs[sj].name), slc_clock);
+        slc_again = true;
       }
       slc_sums = slc_sums.with(sj, ViewSum { key: slc_cur.key, flags: slc_next, fresh: slc_fresh });
-      sj = sj + 1;
     }
-    slc_first = false;
-    slc_marked = util.name_index(slc_now);
   }
   let const_inits: ConstInit = const_init(mod);
   let i: i32 = 0;
