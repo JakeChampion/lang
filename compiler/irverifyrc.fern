@@ -529,10 +529,8 @@ function double_claim_problems(fn_name: string, ops: ir.Op[], claims: Claim[]): 
     return out;
   }
   let flow: Flow = flow_graph(ops);
-  let i: i32 = 0;
-  while (i < claims.len()) {
-    let j: i32 = i + 1;
-    while (j < claims.len()) {
+  for i in 0..claims.len() {
+    for j in i + 1..claims.len() {
       if (claims[j].donor == claims[i].donor
         && reaches(ops, flow, claims[i].from, claims[j].at, claims[i].donor)) {
         out = out.append(irverify.Problem {
@@ -544,9 +542,7 @@ function double_claim_problems(fn_name: string, ops: ir.Op[], claims: Claim[]): 
             + " already took and never rebound: one allocation handed to two recipients",
         });
       }
-      j = j + 1;
     }
-    i = i + 1;
   }
   return out;
 }
