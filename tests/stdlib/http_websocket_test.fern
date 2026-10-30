@@ -44,7 +44,7 @@ function wired(req: HttpRequest, bytes: u8[], k: i32): (HttpRequest, Cell[u8[]])
       return b.len();
     },
   };
-  return (HttpRequest { ...req, body: stream.stream_from_source(src) }, out);
+  return (HttpRequest { ...req, body: stream.from_source(src) }, out);
 }
 
 function mask(): u8[] {

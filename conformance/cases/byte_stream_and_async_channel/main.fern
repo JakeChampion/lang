@@ -10,7 +10,7 @@ function default(value: i32): Option[u8] {
 }
 
 function main(): i32 {
-  let reader: ByteStream = bytes.stream_from_string("abc");
+  let reader: ByteStream = bytes.from_string("abc");
   let first = reader.read_byte();
   match (first.0) {
     Some(value) => {

@@ -651,7 +651,7 @@ pub function (b: Builder) bytes(): u8[] {
 }
 
 pub function (b: Builder) request(method: string, path: string): HttpRequest {
-  return HttpRequest { method: method, path: path, body: stream.stream_from_bytes(b.bytes()), headers: headers.new().set("content-type", b.content_type()), trailers: headers.new() };
+  return HttpRequest { method: method, path: path, body: stream.from_bytes(b.bytes()), headers: headers.new().set("content-type", b.content_type()), trailers: headers.new() };
 }
 ```
 

@@ -74,7 +74,7 @@ function request(cookies: string[]): HttpRequest {
   for c in cookies {
     h = h.append("Cookie", c);
   }
-  return HttpRequest { method: "GET", path: "/", body: stream.stream_from_string(""), headers: h, trailers: headers.new() };
+  return HttpRequest { method: "GET", path: "/", body: stream.from_string(""), headers: h, trailers: headers.new() };
 }
 
 function read(req: HttpRequest, name: string): string {

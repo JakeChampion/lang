@@ -91,11 +91,11 @@ function test_timeout(): test.TestOutcome {
 }
 
 function request_with(ct: string): HttpRequest {
-  return HttpRequest { method: "POST", path: "/grpc.testing.TestService/EmptyCall", body: stream.stream_empty(), headers: headers.new().append("Content-Type", ct), trailers: headers.new() };
+  return HttpRequest { method: "POST", path: "/grpc.testing.TestService/EmptyCall", body: stream.empty(), headers: headers.new().append("Content-Type", ct), trailers: headers.new() };
 }
 
 function test_is_grpc(): test.TestOutcome {
-  let plain: HttpRequest = HttpRequest { method: "POST", path: "/x", body: stream.stream_empty(), headers: headers.new(), trailers: headers.new() };
+  let plain: HttpRequest = HttpRequest { method: "POST", path: "/x", body: stream.empty(), headers: headers.new(), trailers: headers.new() };
   let got: string = grpc.is_grpc(request_with("application/grpc")).to_string() + " " + grpc.is_grpc(request_with("application/grpc+proto")).to_string() + " " + grpc.is_grpc(request_with("Application/GRPC; charset=x")).to_string() + " " + grpc.is_grpc(request_with("application/json")).to_string() + " " + grpc.is_grpc(request_with("application/grpcx")).to_string() + " " + grpc.is_grpc(plain).to_string();
   return test.assert_eq(got, "true true true false false false");
 }

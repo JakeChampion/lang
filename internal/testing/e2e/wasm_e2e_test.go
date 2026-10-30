@@ -7069,7 +7069,7 @@ function main(): i32 {
 func TestWASMModuleEmpty(t *testing.T) {
 	src := `import "std/wasm/module";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let bytes: u8[] = module.build(m);
     if (bytes.len() != 8) { return 1; }
     if (bytes[0] != 0u8)   { return 2; }
@@ -7093,7 +7093,7 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
 
     // Type: one functype () -> i32.
     let p0: u8[] = [];
@@ -7174,7 +7174,7 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 import "std/wasm/imports";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
 
     // Type: one functype () -> ().
     let pe: u8[] = [];
@@ -7255,7 +7255,7 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
 
     // Type: one functype () -> i32.
     let p0: u8[] = [];
@@ -7394,7 +7394,7 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -7435,7 +7435,7 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -7476,7 +7476,7 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
 
     // Two types:
     //   type 0: (i32, i32) -> i32   for the add callee
@@ -7560,7 +7560,7 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Build a "function returning 42" core module.
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -7640,7 +7640,7 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Build a no-import core module: function "f" returns 7.
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -7724,7 +7724,7 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Build a core module: function "f" returns 9.
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -7806,7 +7806,7 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Core module: one func + one memory, both exported.
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -7959,7 +7959,7 @@ function main(): i32 {
     // and get-args (() → ()). Real WASI get-arguments returns a
     // list, but the canon-lower-no-opts path used by the helper only
     // supports scalar funcs, so this test uses a stub-signature shape.
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p_exit: u8[] = [encode.VALTYPE_I32];
     let r_void: u8[] = [];
     let p_args: u8[] = [];
@@ -9680,7 +9680,7 @@ import "std/wasm/component";
 import "std/wasm/encode";
 import "std/wasm/imports";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [encode.VALTYPE_I32];
     let r0: u8[] = [];
     m = m.with_types([p0], [r0]);
@@ -9784,7 +9784,7 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 import "std/wasm/imports";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -9852,7 +9852,7 @@ import "std/wasm/component";
 import "std/wasm/encode";
 import "std/wasm/imports";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [encode.VALTYPE_I32];
     let r0: u8[] = [];
     m = m.with_types([p0], [r0]);
@@ -9934,7 +9934,7 @@ import "std/wasm/imports";
 function main(): i32 {
     // Core module: imports "wasi" "exit" : (i32) -> () then
     // calls it with 0 (or some constant).
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [encode.VALTYPE_I32];
     let r0: u8[] = [];
     m = m.with_types([p0], [r0]);
@@ -10868,7 +10868,7 @@ import "std/wasm/sections";
 import "std/wasm/imports";
 function main(): i32 {
     // Core module: imports host_a.f and host_b.f, both () -> i32.
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -10968,7 +10968,7 @@ import "std/wasm/imports";
 function main(): i32 {
     // Core module: imports host.f : () -> i32, exports main that
     // returns whatever the import returns.
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -11142,7 +11142,7 @@ function main(): i32 {
     //   func 1: signature 1, body i32.const 0   (the realloc stub)
     //   memory 0: min=1
     //   exports: "f" -> func 0, "alloc" -> func 1, "mem" -> mem 0
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     let p1: u8[] = [encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32];
@@ -11250,7 +11250,7 @@ function main(): i32 {
     // Core module exporting a memory + a realloc stub. We alias
     // both out of its instance, then lower a host-imported func
     // that takes a string under those opts.
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     // type 0: (i32 i32 i32 i32) -> i32 (realloc signature)
     let p0: u8[] = [encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32];
     let r0: u8[] = [encode.VALTYPE_I32];
@@ -11350,7 +11350,7 @@ import "std/wasm/sections";
 function main(): i32 {
     // Core module exports: f (() -> i32), alloc (4xi32 -> i32),
     // cleanup (3xi32 -> ()), mem.
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     let p1: u8[] = [encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32];
@@ -11448,7 +11448,7 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Core module: function "f" returns 11.
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -11537,7 +11537,7 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Core module exports: f (() -> i32), alloc (4xi32 -> i32), mem.
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     let p1: u8[] = [encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32, encode.VALTYPE_I32];
@@ -12581,7 +12581,7 @@ import "std/wasm/sections";
 import "std/wasm/numeric";
 function main(): i32 {
     // Core module: function "add" takes two i32s and returns their sum.
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [encode.VALTYPE_I32, encode.VALTYPE_I32];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -12661,7 +12661,7 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Core module: function "f" returns 99.
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -12737,7 +12737,7 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
     // Core module: function "f" returns 42.
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -12813,7 +12813,7 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -12857,7 +12857,7 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -12902,7 +12902,7 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -12999,7 +12999,7 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13067,7 +13067,7 @@ import "std/wasm/memory";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13108,7 +13108,7 @@ import "std/wasm/memory";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13151,7 +13151,7 @@ import "std/wasm/encode";
 import "std/wasm/sections";
 import "std/wasm/imports";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
 
     // One shared type: () -> i32 (both callees and main).
     let p0: u8[] = [];
@@ -13207,7 +13207,7 @@ import "std/wasm/memory";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13254,7 +13254,7 @@ import "std/wasm/memory";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13300,7 +13300,7 @@ import "std/wasm/imports";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13342,7 +13342,7 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13382,7 +13382,7 @@ import "std/wasm/convert";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13423,7 +13423,7 @@ import "std/wasm/convert";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13464,7 +13464,7 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13504,7 +13504,7 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13544,7 +13544,7 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13588,7 +13588,7 @@ import "std/wasm/convert";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13629,7 +13629,7 @@ import "std/wasm/inst";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13670,7 +13670,7 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
 
     let p_fact: u8[] = [encode.VALTYPE_I32];
     let r_fact: u8[] = [encode.VALTYPE_I32];
@@ -13732,7 +13732,7 @@ import "std/wasm/convert";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13777,7 +13777,7 @@ import "std/wasm/numeric";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -13817,7 +13817,7 @@ import "std/wasm/memory";
 import "std/wasm/encode";
 import "std/wasm/sections";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);
@@ -14079,7 +14079,7 @@ import "std/wasm/sections";
 import "std/i32";
 import "std/string";
 function main(): i32 {
-    let m: module.Module = module.module_new();
+    let m: module.Module = module.new();
     let p0: u8[] = [];
     let r0: u8[] = [encode.VALTYPE_I32];
     m = m.with_types([p0], [r0]);

@@ -22,7 +22,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 pub struct ConstMap>>
 
-<<4 pub function constmap_new(keys: string[], values: u64[]): Result[ConstMap, string]>>
+<<4 pub function new(keys: string[], values: u64[]): Result[ConstMap, string]>>
 
 <<5 const __FIRST_SEED: u64>>
 
@@ -62,11 +62,11 @@ struct Peeled { ok: boolean, hashes: u64[], indices: i32[], found: i32[] }
 const ATTEMPTS: i32 = 64;
 ```
 
-### `4 pub function constmap_new(keys: string[], values: u64[]): Result[ConstMap, string]`
+### `4 pub function new(keys: string[], values: u64[]): Result[ConstMap, string]`
 
 ```fern
-<<4 pub function constmap_new(keys: string[], values: u64[]): Result[ConstMap, string]>>=
-pub function constmap_new(keys: string[], values: u64[]): Result[ConstMap, string] {
+<<4 pub function new(keys: string[], values: u64[]): Result[ConstMap, string]>>=
+pub function new(keys: string[], values: u64[]): Result[ConstMap, string] {
   match (__check(keys, values)) {
     Err(e) => {
       return Err(e);

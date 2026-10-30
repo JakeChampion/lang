@@ -26,7 +26,7 @@ function values_of(n: i32): u64[] {
 function round_trip(n: i32): string {
   let ks: string[] = keys_of(n);
   let vs: u64[] = values_of(n);
-  match (constmap.constmap_new(ks, vs)) {
+  match (constmap.new(ks, vs)) {
     Err(e) => {
       return "build failed: " + e;
     },
@@ -102,7 +102,7 @@ function test_verified(): test.TestOutcome {
 function test_duplicate_key(): test.TestOutcome {
   let ks: string[] = ["a", "b", "a"];
   let vs: u64[] = [1, 2, 3];
-  match (constmap.constmap_new(ks, vs)) {
+  match (constmap.new(ks, vs)) {
     Err(e) => {
       return test.assert_eq(e, "constmap: duplicate key \"a\"");
     },
