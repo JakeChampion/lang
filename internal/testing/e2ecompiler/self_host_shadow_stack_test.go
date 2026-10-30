@@ -37,7 +37,8 @@ function main(): i32 {
     },
     Err(_) => {}
   }
-  print("apply " + apply(twice, 21).to_string());
+  let k: i32 = features.len() * 0 + 1;
+  print("apply " + apply((x: i32): i32 => twice(x) * k, 21).to_string());
   print("features [" + features + "]");
   return 0;
 }

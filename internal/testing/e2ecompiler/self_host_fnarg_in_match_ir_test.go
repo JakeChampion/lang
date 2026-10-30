@@ -15,7 +15,7 @@ func TestSelfHostFnArgInMatchIR(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	emit := func(t *testing.T, src string) string {
+	emit := func(t *testing.T, src string, env ...string) string {
 		t.Helper()
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
@@ -23,6 +23,7 @@ func TestSelfHostFnArgInMatchIR(t *testing.T) {
 		} else {
 			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
+		cmd.Env = append(os.Environ(), env...)
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		out, err := cmd.Output()
 		if err != nil || len(out) == 0 {
@@ -71,7 +72,9 @@ function main(): i32 {
 }`
 
 	out := emit(t, src)
-	if !strings.Contains(out, "$wrap") {
+	// count_pred is specialised to each named function and the trampoline
+	// spliced, so the trampoline shows only with the inliner off.
+	if !strings.Contains(emit(t, src, "FERN_SEM_INLINE=0"), "$wrap") {
 		t.Errorf("fn-value in match scrutinee did not reach the $wrap lift path (no $wrap in asm)")
 	}
 	if got := run(t, out); got != 42 {

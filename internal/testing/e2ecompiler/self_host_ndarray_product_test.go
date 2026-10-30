@@ -83,7 +83,8 @@ function main(): i32 {
   if (reversed(xs).get_unchecked([0, 1, 0, 2]) != 6.0) { return 4; }
   if (added(xs).get_unchecked([0, 1, 0, 2]) != 7.0) { return 5; }
   if (captured(xs, 2.0).get_unchecked([0, 1, 0, 2]) != 12.0) { return 6; }
-  if (unresolved(xs, (x: f64, y: f64): f64 => x * y).get_unchecked([0, 1, 0, 2]) != 6.0) { return 7; }
+  let unit: f64 = xs[0];
+  if (unresolved(xs, (x: f64, y: f64): f64 => x * y * unit).get_unchecked([0, 1, 0, 2]) != 6.0) { return 7; }
   let scalar = ndarray.from_flat([2.0], []);
   let one = ndarray.from_flat([3.0], [1]);
   let out = scalar.outer(one, (x: f64, y: f64): f64 => x * y);

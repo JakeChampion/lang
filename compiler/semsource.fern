@@ -8127,7 +8127,7 @@ function produce_module(mod: parser.Module, verify: boolean, opts: BuildOpts): B
     let sp: Specialised = specialize_calls(fuse_pipelines(unroll_loops(reach_module(all, names, mod, opts.whole, false), names), names, mod.funcs, opts.array_report), names, table, mod);
     names = sp.names;
     table = sp.table;
-    let inlined: Spliced = inline_leaves(sp.all, names, mod, opts.size);
+    let inlined: Spliced = inline_leaves(sp.all, names, mod, opts.size, sp.roots);
     table = split_contracts(table, inlined.all, names);
     laid = inlined.laid;
     all = prune_dead_constructions(reach_module(scale_ndarray_maps(unique_loops(byte_copy_loops(without_unnamed(inlined.all, names, inlined.spliced, mod))), names, mod, opts.array_report), names, mod, opts.whole, true));
@@ -8271,7 +8271,7 @@ function byte_copy_loops(all: Produced[]): Produced[] {
   return out;
 }
 
-function inline_leaves(all: Produced[], names: string[], mod: parser.Module, size: boolean): Spliced {
+function inline_leaves(all: Produced[], names: string[], mod: parser.Module, size: boolean, roots: i32[]): Spliced {
   if (!inline_on()) {
     return Spliced { all: all, spliced: [], laid: [] };
   }
@@ -8299,7 +8299,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
     always = always.append(d >= 0 && mod.funcs[d].always_inline);
     i = i + 1;
   }
-  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, size);
+  let out: seminline.Inlined = seminline.inline_leaves(funcs, names, modes, inlinable, rewrite, unnamed, uncalled, always, size, roots);
   let result: Produced[] = [];
   i = 0;
   while (i < all.len()) {
@@ -8570,11 +8570,12 @@ function decl_unnamed(fd: parser.FuncDecl, mod: parser.Module): boolean {
   return fd.receiver_type.len() == 0 && fd.import_iface == "" && !exported(fd, mod);
 }
 
-struct Specialised { all: Produced[], names: string[], table: ssasem.Contracts }
+// roots[i] is the entry that all[i] is a clone of, or i.
+struct Specialised { all: Produced[], names: string[], table: ssasem.Contracts, roots: i32[] }
 
 function specialize_calls(all: Produced[], names: string[], table: ssasem.Contracts, mod: parser.Module): Specialised {
   if (!inline_on()) {
-    return Specialised { all: all, names: names, table: table };
+    return Specialised { all: all, names: names, table: table, roots: seminline.own_roots(all.len()) };
   }
   let funcs: ssasem.Func[] = [];
   let modes: i32[][] = [];
@@ -8588,7 +8589,7 @@ function specialize_calls(all: Produced[], names: string[], table: ssasem.Contra
   }
   let sp: semspecial.Specialized = semspecial.specialize(funcs, names, modes, usable, util.name_index(kernel_calls(all, names, mod)));
   if (sp.funcs.len() == all.len()) {
-    return Specialised { all: all, names: names, table: table };
+    return Specialised { all: all, names: names, table: table, roots: seminline.own_roots(all.len()) };
   }
   let keys: util.NameIndex = decl_keys(mod.funcs);
   let inlinable: boolean[] = [];
@@ -8617,7 +8618,7 @@ function specialize_calls(all: Produced[], names: string[], table: ssasem.Contra
       out = out.append(Produced { ...all[root], func: made[i], modes: sp.modes[i], key: key, requests: [], analysis: None });
     }
   }
-  return Specialised { all: out, names: sp.names, table: ssasem.contracts_of(util.append_all(table.list, sp.contracts)) };
+  return Specialised { all: out, names: sp.names, table: ssasem.contracts_of(util.append_all(table.list, sp.contracts)), roots: sp.from };
 }
 
 // The calls a later pass reads by name with their closure arguments: the

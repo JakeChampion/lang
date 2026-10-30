@@ -40,7 +40,8 @@ function body(): i32 {
   total = total + 10 * (1 + wait());
   total = total + twice(wait() + 50);
   total = total + apply((x: i32): i32 => x + 1, 1000);
-  total = total + through((): i32 => { return wait() + 2000; });
+  let base: i32 = total * 0 + 2000;
+  total = total + through((): i32 => { return wait() + base; });
   return total;
 }
 

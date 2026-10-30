@@ -69,9 +69,10 @@ pub struct Inlined { funcs: ssasem.Func[], rewritten: boolean[], spliced: boolea
 
 struct Rewrite { f: ssasem.Func, changed: boolean }
 
-pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[], uncalled: boolean[], always: boolean[], size: boolean): Inlined {
+// roots[i] is the function that funcs0[i] is a copy of, or i.
+pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][], inlinable: boolean[], rewrite: boolean[], unnamed: boolean[], uncalled: boolean[], always: boolean[], size: boolean, roots: i32[]): Inlined {
   let ix: util.NameIndex = util.name_index(names);
-  let calls: i32[] = call_counts(funcs0, ix);
+  let calls: i32[] = call_counts_by_root(funcs0, ix, roots);
   let sp: Spliceable = splice_plan(funcs0, ix, calls, inlinable, unnamed, always, size);
   let done: Rounds = splice_rounds(funcs0, rewrite, modes, sp);
   let rounds: Inlined = done.out;
@@ -590,6 +591,72 @@ function call_counts(funcs: ssasem.Func[], ix: util.NameIndex): i32[] {
   return out;
 }
 
+// The calls of each function when some functions are copies of others (a
+// callee specialised to a closure). A call that a copy and its root both make
+// counts once, and a copy counts its root's callers too. So a clone is
+// spliced only where its root would be, and its callees as before.
+function call_counts_by_root(funcs: ssasem.Func[], ix: util.NameIndex, roots: i32[]): i32[] {
+  let counts: i32[] = call_counts(funcs, ix);
+  for k in 0..funcs.len() {
+    let r: i32 = roots[k];
+    if (r != k) {
+      let mine: Sparse = sparse_calls(funcs[k], ix);
+      let theirs: Sparse = sparse_calls(funcs[r], ix);
+      for at in 0..mine.callees.len() {
+        let j: i32 = mine.callees[at];
+        let both: i32 = sparse_count(theirs, j);
+        if (mine.counts[at] < both) {
+          both = mine.counts[at];
+        }
+        counts = counts.with(j, counts[j] - both);
+      }
+    }
+  }
+  let out: i32[] = counts;
+  for k in 0..funcs.len() {
+    if (roots[k] != k) {
+      out = out.with(k, counts[k] + counts[roots[k]]);
+    }
+  }
+  return out;
+}
+
+struct Sparse { callees: i32[], counts: i32[] }
+
+function sparse_calls(f: ssasem.Func, ix: util.NameIndex): Sparse {
+  let out: Sparse = Sparse { callees: [], counts: [] };
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      let j: i32 = called(ins, ix);
+      if (j >= 0) {
+        let at: i32 = util.index_of_i32(out.callees, j);
+        if (at < 0) {
+          out = Sparse { callees: out.callees.append(j), counts: out.counts.append(1) };
+        } else {
+          out = Sparse { ...out, counts: out.counts.with(at, out.counts[at] + 1) };
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function sparse_count(s: Sparse, j: i32): i32 {
+  let at: i32 = util.index_of_i32(s.callees, j);
+  if (at < 0) {
+    return 0;
+  }
+  return s.counts[at];
+}
+
+pub function own_roots(n: i32): i32[] {
+  let out: i32[] = [];
+  for i in 0..n {
+    out = out.append(i);
+  }
+  return out;
+}
+
 function called(ins: ssa.SInst, ix: util.NameIndex): i32 {
   if (ins.kind_tag != ssasem.call()) {
     return 0 - 1;
@@ -641,14 +708,12 @@ pub function inline_closures(funcs: ssasem.Func[], names: string[], modes: i32[]
     return funcs;
   }
   let ix: util.NameIndex = util.name_index(names);
-  let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable, inlinable, none_of(funcs.len()), false).funcs;
+  let candidates: ssasem.Func[] = inline_leaves(funcs, names, modes, inlinable, inlinable, inlinable, inlinable, none_of(funcs.len()), false, own_roots(funcs.len())).funcs;
   let callbacks: boolean[] = [];
-  let ci: i32 = 0;
-  while (ci < candidates.len()) {
+  for ci in 0..candidates.len() {
     callbacks = callbacks.append(inlinable[ci] && unused_environment(candidates[ci]) >= 0);
-    ci = ci + 1;
   }
-  candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable, inlinable, none_of(funcs.len()), false).funcs;
+  candidates = inline_leaves(candidates, names, modes, inlinable, callbacks, inlinable, inlinable, none_of(funcs.len()), false, own_roots(funcs.len())).funcs;
   return splice_closures(funcs, candidates, ix, inlinable, rewrite);
 }
 
