@@ -293,7 +293,7 @@ func TestSelfHostTreeshakeKeepsDisplayToStringX86_64(t *testing.T) {
 import "std/i64";
 
 struct Q { a: i32 }
-function (q: Q) to_string(): string { return "Q!"; }
+@noinline function (q: Q) to_string(): string { return "Q!"; }
 
 function main(): i32 {
     let q: Q = Q { a: 7 };
