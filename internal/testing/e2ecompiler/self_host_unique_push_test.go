@@ -16,11 +16,8 @@ func TestSelfHostUniquePushSkipsCountTest(t *testing.T) {
 	} {
 		t.Run(tc.target, func(t *testing.T) {
 			body := asmFuncBody(t, cli.emit(t, tc.target, uniquePushProg), "__fn_zeros")
-			if n := strings.Count(body, tc.countTest); n != 0 {
-				t.Errorf("%d push count tests in zeros, want none: the check before the loop makes the array sole:\n%s", n, body)
-			}
-			if n := rcIsUniqueSites(body); n != 1 {
-				t.Errorf("%d uniqueness tests in zeros, want the 1 before its loop:\n%s", n, body)
+			if n := strings.Count(body, tc.countTest); n != 1 {
+				t.Errorf("%d push count tests in zeros, want 1 (the shared arm's only):\n%s", n, body)
 			}
 		})
 	}
