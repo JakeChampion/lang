@@ -1309,9 +1309,12 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
 // An empty block takes the first span that opens on or after the line of its
 // statement, when no token is between the braces of that span.
 function print_empty_block(depth: i32, f: Fmt): (string, Fmt) {
-  let i: i32 = f.si;
-  while (i < f.spans.opens.len() && f.spans.opens[i] < f.at) {
-    i = i + 1;
+  let i: i32 = f.spans.opens.len();
+  for k in f.si..f.spans.opens.len() {
+    if (f.spans.opens[k] >= f.at) {
+      i = k;
+      break;
+    }
   }
   if (i >= f.spans.opens.len() || f.spans.firsts[i] != f.spans.closes[i]) {
     return ("{}", Fmt { ...f, own: -1 });
@@ -1338,15 +1341,14 @@ function else_span(f: Fmt): i32 {
     return -1;
   }
   let end: i32 = f.spans.closes[f.own];
-  let i: i32 = f.own + 1;
-  while (i < f.spans.opens.len()) {
+  let first: i32 = f.own + 1;
+  for i in first..f.spans.opens.len() {
     if (f.spans.else_of[i] == f.own) {
       return i;
     }
     if (f.spans.opens[i] > end) {
       return -1;
     }
-    i = i + 1;
   }
   return -1;
 }
