@@ -1309,17 +1309,15 @@ function print_block(body: ast.Stmt[], depth: i32, f: Fmt): (string, Fmt) {
 // An empty block takes the first span that opens on or after the line of its
 // statement, when no token is between the braces of that span.
 function print_empty_block(depth: i32, f: Fmt): (string, Fmt) {
-  let i: i32 = f.spans.opens.len();
-  for k in f.si..f.spans.opens.len() {
-    if (f.spans.opens[k] >= f.at) {
-      i = k;
-      break;
+  for i in f.si..f.spans.opens.len() {
+    if (f.spans.opens[i] >= f.at) {
+      if (f.spans.firsts[i] != f.spans.closes[i]) {
+        return ("{}", Fmt { ...f, own: -1 });
+      }
+      return print_span_block(i, depth, Fmt { ...f, si: i + 1 });
     }
   }
-  if (i >= f.spans.opens.len() || f.spans.firsts[i] != f.spans.closes[i]) {
-    return ("{}", Fmt { ...f, own: -1 });
-  }
-  return print_span_block(i, depth, Fmt { ...f, si: i + 1 });
+  return ("{}", Fmt { ...f, own: -1 });
 }
 
 // An empty block keeps the comments between its braces.
@@ -1341,8 +1339,8 @@ function else_span(f: Fmt): i32 {
     return -1;
   }
   let end: i32 = f.spans.closes[f.own];
-  let first: i32 = f.own + 1;
-  for i in first..f.spans.opens.len() {
+  let from: i32 = f.own + 1;
+  for i in from..f.spans.opens.len() {
     if (f.spans.else_of[i] == f.own) {
       return i;
     }
