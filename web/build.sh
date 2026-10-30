@@ -21,6 +21,9 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$here/.."
 
+npm --prefix "$here/editor" ci --no-audit --no-fund
+npm --prefix "$here/editor" run build
+
 selfhost="${FERN_SELFHOST:-bin/fern-selfhost}"
 if [ ! -x "$selfhost" ]; then
   echo "building the self-host compiler (make selfhost-cli)" >&2
