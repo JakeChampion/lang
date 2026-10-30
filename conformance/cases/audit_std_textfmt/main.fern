@@ -25,7 +25,7 @@ function main(): i32 {
     print("FAIL csv-escape");
     return 14;
   }
-  if (format.format_bytes(1024).len() == 0) {
+  if (format.bytes(1024).len() == 0) {
     print("FAIL fmt-bytes");
     return 15;
   }

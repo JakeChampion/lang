@@ -3,7 +3,7 @@ import "std/i32";
 import "core/int";
 
 function main(): i32 {
-  let s: ByteStream = stream.stream_from_string("ab\r\ncd\nef");
+  let s: ByteStream = stream.from_string("ab\r\ncd\nef");
   print(s.len().to_string());
   let cur: ByteStream = s;
   let done: boolean = false;
@@ -21,7 +21,7 @@ function main(): i32 {
     }
   }
 
-  let b: ByteStream = stream.stream_from_string("XYZ123");
+  let b: ByteStream = stream.from_string("XYZ123");
   let (ob, b2) = b.read_byte();
   match (ob) {
     Some(v) => {

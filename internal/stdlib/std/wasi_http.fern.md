@@ -195,7 +195,7 @@ pub function serve(request: i32, response_out: i32, handle: (HttpRequest, platfo
     send(response_out, http.text(413, ""));
     return;
   }
-  let req: HttpRequest = HttpRequest { method: method, path: path, body: stream.stream_from_bytes(data), headers: headers, trailers: HeaderMap { names: [], values: [] } };
+  let req: HttpRequest = HttpRequest { method: method, path: path, body: stream.from_bytes(data), headers: headers, trailers: HeaderMap { names: [], values: [] } };
   let resp: HttpResponse = handle(req, platform.host());
   send(response_out, resp);
   match (resp.background) {

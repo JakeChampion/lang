@@ -18,7 +18,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<*>>=
 <<dependencies 1>>
 
-<<2 pub function stream_from_bytes(bs: u8[]): ByteStream>>
+<<2 pub function from_bytes(bs: u8[]): ByteStream>>
 
 <<3 function __fill(s: ByteStream): ByteStream>>
 
@@ -37,24 +37,24 @@ import "std/utf8" as utf8;
 import "core/int";
 ```
 
-### `2 pub function stream_from_bytes(bs: u8[]): ByteStream`
+### `2 pub function from_bytes(bs: u8[]): ByteStream`
 
 ```fern
-<<2 pub function stream_from_bytes(bs: u8[]): ByteStream>>=
-pub function stream_from_bytes(bs: u8[]): ByteStream {
+<<2 pub function from_bytes(bs: u8[]): ByteStream>>=
+pub function from_bytes(bs: u8[]): ByteStream {
   return ByteStream { data: bs, pos: 0, source: None };
 }
 
-pub function stream_from_string(s: string): ByteStream {
+pub function from_string(s: string): ByteStream {
   return ByteStream { data: s.bytes(), pos: 0, source: None };
 }
 
-pub function stream_empty(): ByteStream {
+pub function empty(): ByteStream {
   let empty: u8[] = [];
   return ByteStream { data: empty, pos: 0, source: None };
 }
 
-pub function stream_from_source(src: BodySource): ByteStream {
+pub function from_source(src: BodySource): ByteStream {
   let empty: u8[] = [];
   return ByteStream { data: empty, pos: 0, source: Some(src) };
 }

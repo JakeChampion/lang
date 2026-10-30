@@ -37,7 +37,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<5 function __round_to_places(s: string, places: i32): string>>
 
-<<6 pub function format_bytes(n: i64): string>>
+<<6 pub function bytes(n: i64): string>>
 ```
 
 ### `module introduction`
@@ -123,7 +123,7 @@ pub function format(fmt: string, args: string[]): string {
   return string_from_bytes_unchecked(out);
 }
 
-pub function format_values[T: cmp.Display](fmt: string, args: T[]): string {
+pub function values[T: cmp.Display](fmt: string, args: T[]): string {
   let strs: string[] = [];
   let i: i32 = 0;
   while (i < args.len()) {
@@ -391,11 +391,11 @@ function __repeat_char(s: string, count: i32): string {
 }
 ```
 
-### `6 pub function format_bytes(n: i64): string`
+### `6 pub function bytes(n: i64): string`
 
 ```fern
-<<6 pub function format_bytes(n: i64): string>>=
-pub function format_bytes(n: i64): string {
+<<6 pub function bytes(n: i64): string>>=
+pub function bytes(n: i64): string {
   let units: string[] = ["B", "KiB", "MiB", "GiB", "TiB"];
   let u: i32 = 0;
   let scale: i64 = 1;
@@ -407,7 +407,7 @@ pub function format_bytes(n: i64): string {
 }
 
 // Hours, minutes, seconds, and milliseconds, such as `1h 1m 1s 1ms`.
-pub function format_duration(d: Duration): string {
+pub function duration(d: Duration): string {
   let ms: i64 = d.as_millis();
   if (ms == 0) {
     return "0ms";

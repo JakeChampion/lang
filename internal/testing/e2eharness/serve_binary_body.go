@@ -25,7 +25,7 @@ function half(i: i32): Option[u8[]] {
 }
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/bytes") { return http.bytes(200, payload()); }
-    if (req.path == "/stream") { return http.stream(200, stream.stream_from_bytes(payload())); }
+    if (req.path == "/stream") { return http.stream(200, stream.from_bytes(payload())); }
     if (req.path == "/chunks") { return http.chunks(200, half); }
     return http.ok("ok");
 }

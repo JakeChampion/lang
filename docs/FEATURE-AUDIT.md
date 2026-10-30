@@ -4350,7 +4350,7 @@ wasm owned-vs-borrow differential gate:
 - `audit_std_time` — `is_leap_year` / `days_in_month` / `date_of` /
   `format_iso`.
 - `audit_std_textfmt` — `csv.parse_line` / `csv.join` / `csv.escape` +
-  `format.format_bytes`.
+  `format.bytes`.
 
 No new bugs. `std/time` / `std/format` / `std/csv` self-host coverage is pending
 (their bundles pull `std/string`/`std/array`); marked ⚠️ until added.
