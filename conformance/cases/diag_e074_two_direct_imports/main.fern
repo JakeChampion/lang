@@ -1,0 +1,7 @@
+import "a";
+import "b";
+
+function main(): i32 {
+    let xs: i32[] = [1];
+    return xs.score();
+}

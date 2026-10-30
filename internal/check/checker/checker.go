@@ -64,6 +64,9 @@ type Info struct {
 	MethodOwners    map[string][]string
 	MethodInsts     map[string][]string
 	MethodDeclSites map[string]ast.Position
+	// InherentMethods lists each module's inherent declaration of "Type.name"
+	// in registration order; a call resolves among the ones its module sees.
+	InherentMethods map[string][]InherentMethod
 	// the inline-IR `Array.push`, and the built-in string
 	MethodSources       map[string]string
 	ModuleImports       map[string]map[string]bool
@@ -625,6 +628,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			MethodOwners:        map[string][]string{},
 			MethodInsts:         map[string][]string{},
 			MethodDeclSites:     map[string]ast.Position{},
+			InherentMethods:     map[string][]InherentMethod{},
 			MethodSources:       map[string]string{},
 			ModuleImports:       prog.ModuleImports,
 			DirectImports:       prog.DirectImports,
@@ -2395,7 +2399,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			if typeName == "Map" && methodName == "__iterator" {
 				methodName = "iter"
 			}
-			if kind, other := c.methodDeclConflict(typeName, methodName, fn.ImplTrait); kind != declOK {
+			suffix := c.inherentModuleSuffix(typeName, methodName, fn.ImplTrait, fn.SourceModule)
+			if kind, other := c.methodDeclConflict(typeName, methodName, fn.ImplTrait); kind != declOK && suffix == "" {
 				if kind == declDup {
 					c.errfCode(fn.P, "E006", "method %q on %s redeclared", fn.Name, typeName)
 				} else {
@@ -2406,7 +2411,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				continue
 			}
 			simpleName := methodName
-			mangled := c.mangleMethodName("__method_", typeName, fn.Name, fn.ImplTrait)
+			mangled := c.mangleMethodName("__method_", typeName, fn.Name, fn.ImplTrait) + suffix
 			fn.Name = mangled
 			for _, n := range c.receiverConstParams(fn.Receiver.Type) {
 				if !slices.Contains(fn.ConstParams, n) {
@@ -2930,6 +2935,10 @@ func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule strin
 	if !slices.Contains(c.info.MethodInsts[site], mangled) {
 		c.info.MethodInsts[site] = append(c.info.MethodInsts[site], mangled)
 	}
+	if trait == "" {
+		c.info.InherentMethods[key] = append(c.info.InherentMethods[key], InherentMethod{Mangled: mangled, Module: srcModule, Pos: pos})
+		c.info.MethodSources[mangled] = srcModule
+	}
 	if _, exists := c.info.Methods[key]; !exists {
 		c.info.Methods[key] = mangled
 		c.info.MethodSources[mangled] = srcModule
@@ -2966,6 +2975,86 @@ func declSiteKey(typeName, name, trait string) string {
 		return typeName + "." + name
 	}
 	return trait + "." + typeName + "." + name
+}
+
+// InherentMethod is one module's inherent declaration of a method.
+type InherentMethod struct {
+	Mangled string
+	Module  string
+	Pos     ast.Position
+}
+
+// inherentModuleSuffix returns the mangled-name suffix for an inherent method
+// that another module already declares on the same type, or "" for the first.
+func (c *checker) inherentModuleSuffix(typeName, name, trait, module string) string {
+	prior := c.info.InherentMethods[typeName+"."+name]
+	if trait != "" || len(prior) == 0 || len(c.info.MethodOwners[typeName+"."+name]) > 0 {
+		return ""
+	}
+	for _, d := range prior {
+		if d.Module == module {
+			return ""
+		}
+	}
+	return fmt.Sprintf("__%d", len(prior)+1)
+}
+
+// visibleInherent narrows an inherent method to the declaration the current
+// module sees, nearest first: its own module, then a direct import, then the
+// rest of its import closure. A tie at the nearest rank is returned as
+// candidates.
+func (c *checker) visibleInherent(typeName, name, mangled string) (string, []methodCand) {
+	decls := c.info.InherentMethods[typeName+"."+name]
+	if len(decls) < 2 || !slices.ContainsFunc(decls, func(d InherentMethod) bool { return d.Mangled == mangled }) {
+		return mangled, nil
+	}
+	from := ""
+	if c.current != nil {
+		from = c.current.BodyModule()
+	}
+	best := -1
+	var near []InherentMethod
+	for _, d := range decls {
+		rank := c.moduleDistance(from, d.Module)
+		if rank < 0 || (best >= 0 && rank > best) {
+			continue
+		}
+		if rank < best || best < 0 {
+			best, near = rank, nil
+		}
+		near = append(near, d)
+	}
+	if len(near) == 0 {
+		return mangled, nil
+	}
+	if len(near) == 1 {
+		return near[0].Mangled, nil
+	}
+	cands := make([]methodCand, len(near))
+	for i, d := range near {
+		cands[i] = methodCand{Pos: d.Pos, Module: d.Module}
+	}
+	slices.SortFunc(cands, func(a, b methodCand) int {
+		if la, lb := moduleFileLabel(a.Module), moduleFileLabel(b.Module); la != lb {
+			return strings.Compare(la, lb)
+		}
+		return a.Pos.Line - b.Pos.Line
+	})
+	return near[0].Mangled, cands
+}
+
+// moduleDistance ranks how near decl is to from: 0 for the same module, 1 for
+// a direct import, 2 for the rest of the import closure, -1 when not visible.
+func (c *checker) moduleDistance(from, decl string) int {
+	switch {
+	case from == "" || decl == "" || from == decl:
+		return 0
+	case c.info.DirectImports[from][decl]:
+		return 1
+	case c.moduleSees(from, decl):
+		return 2
+	}
+	return -1
 }
 
 type methodCand struct {
@@ -3144,8 +3233,28 @@ func (in *Info) methodCands(typeName, name string, traits []string) []methodCand
 	return out
 }
 
+// resolveMethodFrom resolves a method call in the current module. tied holds
+// the candidates when more than one trait or module provides the method.
+func (c *checker) resolveMethodFrom(typeName, name string, prefer []string) (mangled, owner string, tied []methodCand, ok bool) {
+	mangled, owner, traits, ok := c.info.ResolveMethodFrom(c.currentModule(), typeName, name, prefer)
+	if !ok {
+		return "", "", nil, false
+	}
+	if len(traits) > 0 {
+		return mangled, owner, c.info.methodCands(typeName, name, traits), true
+	}
+	if owner == "" {
+		mangled, tied = c.visibleInherent(typeName, name, mangled)
+	}
+	return mangled, owner, tied, true
+}
+
 func (c *checker) resolveMethod(typeName, name string, prefer []string) (mangled, owner string, ok bool) {
-	return c.info.ResolveMethod(typeName, name, prefer)
+	mangled, owner, ok = c.info.ResolveMethod(typeName, name, prefer)
+	if ok && owner == "" {
+		mangled, _ = c.visibleInherent(typeName, name, mangled)
+	}
+	return mangled, owner, ok
 }
 
 func (c *checker) currentModule() string {
@@ -7969,6 +8078,7 @@ func (c *checker) methodsFor(typeName string, recv ast.Type) []string {
 			out = append(out, name)
 			continue
 		}
+		mangled, _ = c.visibleInherent(typeName, name, mangled)
 		if !c.methodVisibleHere(mangled) {
 			continue
 		}
@@ -13988,9 +14098,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				if prefer == nil && c.current != nil && c.current.TraitDefault != "" && typeName == c.current.MethodRecv {
 					prefer = []string{c.current.TraitDefault}
 				}
-				if mangled, ownerTrait, tied, ok := c.info.ResolveMethodFrom(c.currentModule(), typeName, fa.Field, prefer); ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(typeName, fa.Field)) {
+				if mangled, ownerTrait, tied, ok := c.resolveMethodFrom(typeName, fa.Field, prefer); ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(typeName, fa.Field)) {
 					if len(tied) > 0 {
-						c.errAmbiguousMethod(fa.FieldPos, typeName, fa.Field, c.info.methodCands(typeName, fa.Field, tied))
+						c.errAmbiguousMethod(fa.FieldPos, typeName, fa.Field, tied)
 					}
 					if fa.Field == "drop" && c.hasDropImpl(typeName) {
 						c.errfCode(fa.FieldPos, "E073",

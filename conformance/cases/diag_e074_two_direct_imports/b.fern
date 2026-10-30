@@ -1,0 +1,3 @@
+pub function (xs: i32[]) score(): i32 {
+    return 2;
+}

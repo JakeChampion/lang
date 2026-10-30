@@ -47,7 +47,27 @@ pub function warn_unresolved_imports(mod: Module, driver: string): boolean {
 
 pub struct TodoSite { line: i32, col: i32 }
 
-pub struct ModuleSight { module: string, imports: string[], reaches: string[] }
+pub struct ModuleSight { module: string, imports: string[], direct: string[], reaches: string[] }
+
+// How near module decl is to module from: 0 for the same module, 1 for a
+// direct import, 2 for the rest of the import closure, 3 when not visible.
+pub function module_rank(sights: ModuleSight[], from: string, decl: string): i32 {
+  if (from == decl) {
+    return 0;
+  }
+  for sg in sights {
+    if (sg.module == from) {
+      if (util.has_str(sg.direct, decl)) {
+        return 1;
+      }
+      if (util.has_str(sg.reaches, decl)) {
+        return 2;
+      }
+      return 3;
+    }
+  }
+  return 2;
+}
 
 pub struct Module { funcs: FuncDecl[], structs: StructDecl[], aliases: TypeAlias[], imports: Import[], top_stmts: ast.Stmt[], enums: EnumDecl[], resources: ResourceDecl[], exports: ExportBinding[], impls: ImplInfo[], trait_reqs: TraitReq[], trait_decls: TraitDecl[], inferred_consts: string[], todo_sites: TodoSite[], sights: ModuleSight[] }
 
