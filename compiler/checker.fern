@@ -3185,6 +3185,14 @@ function array_receiver_matches(rt: string, view: boolean): boolean {
 }
 
 function (s: Scope) array_recv_method(field: string, view: boolean): Option[MethodSig] {
+  let vk: i32 = 0;
+  if (view) {
+    vk = 1;
+  }
+  let near: MethodSig[] = s.nearest_inherent(field, "", vk);
+  if (near.len() > 0) {
+    return Some(near[0]);
+  }
   let i: i32 = s.methods.names.chain(field);
   while (i >= 0) {
     let method: MethodSig = s.methods.methods[i];
@@ -3504,6 +3512,10 @@ function (s: Scope) lookup_method(name: string, recv_type: string): Option[Metho
       return Some(provider);
     }
   }
+  let near: MethodSig[] = s.nearest_inherent(name, recv_type, 0 - 1);
+  if (near.len() > 0) {
+    return Some(near[0]);
+  }
   let i: i32 = s.methods.names.chain(name);
   while (i >= 0) {
     if (s.methods.methods[i].name != name) {
@@ -3520,6 +3532,103 @@ function (s: Scope) lookup_method(name: string, recv_type: string): Option[Metho
     return Some(s.methods.methods[at]);
   }
   return None;
+}
+
+// The inherent declarations of method `field` for a receiver when more than
+// one module declares it, narrowed to those nearest the current module: its
+// own, then a direct import, then the rest of its import closure. Empty when
+// at most one module declares it. view is -1 for a non-array receiver, else
+// 0 for an array and 1 for a view.
+function (s: Scope) nearest_inherent(field: string, recv_type: string, view: i32): MethodSig[] {
+  let none: MethodSig[] = [];
+  if (util.index_of_sub(field, ".") >= 0) {
+    return none;
+  }
+  let cands: MethodSig[] = [];
+  let i: i32 = s.methods.simple.chain(field);
+  while (i >= 0) {
+    let m: MethodSig = s.methods.methods[i];
+    if (m.impl_trait.len() == 0 && method_simple_name(m.name) == field && s.inherent_receives(i, recv_type, view)) {
+      cands = cands.append(m);
+    }
+    i = s.methods.simple.next[i];
+  }
+  if (cands.len() < 2) {
+    return none;
+  }
+  let best: i32 = 3;
+  let out: MethodSig[] = [];
+  for m in cands {
+    let rank: i32 = parser.module_rank(s.imports.sights, s.fn_module, m.module);
+    if (rank < best) {
+      best = rank;
+      out = none;
+    }
+    if (rank == best && rank < 3) {
+      out = out.append(m);
+    }
+  }
+  return util.sorted_by(out, sig_declared_after);
+}
+
+// The declaration name a call of member reaches when modules clash on it.
+function (s: Scope) resolved_member(member: string, recv: typeinfo.Type): string {
+  let near: MethodSig[] = [];
+  if let typeinfo.TypeArray(a) = recv {
+    let vk: i32 = 0;
+    if (a.view) {
+      vk = 1;
+    }
+    near = s.nearest_inherent(member, "", vk);
+  } else {
+    let key: string = receiver_key(recv);
+    if (key.len() > 0) {
+      near = s.nearest_inherent(member, key, 0 - 1);
+    }
+  }
+  if (near.len() > 0) {
+    return near[0].name;
+  }
+  return member;
+}
+
+function (s: Scope) inherent_receives(i: i32, recv_type: string, view: i32): boolean {
+  if (view >= 0) {
+    return array_receiver_matches(s.methods.methods[i].receiver_type, view == 1);
+  }
+  return s.receives(i, recv_type);
+}
+
+function sig_declared_after(a: MethodSig, b: MethodSig): boolean {
+  if (a.file != b.file) {
+    return a.file > b.file;
+  }
+  return a.line > b.line;
+}
+
+// E074 when two modules at the same distance from the caller both declare the
+// called inherent method.
+function inherent_tie_diags(fa: ast.ExprFieldAccess, recv_type: string, view: i32, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  let near: MethodSig[] = s.nearest_inherent(fa.field, recv_type, view);
+  if (near.len() < 2) {
+    return out;
+  }
+  let providers: string = "";
+  for m in near {
+    if (providers.len() > 0) {
+      providers = providers + " and ";
+    }
+    providers = providers + "an inherent method (declared at " + m.file + util.i32_to_string(util.pos_line(m.line)) + ":" + util.i32_to_string(m.col) + ")";
+  }
+  let on: string = util.demangle(recv_type);
+  if (view == 0) {
+    on = "Array";
+  } else if (view == 1) {
+    on = "slice";
+  }
+  let msg: string = "ambiguous method \"" + fa.field + "\" on " + on + ": provided by " + providers;
+  return out.append(dg_at("E074", msg, fa.line, fa.col + 1));
 }
 
 function (s: Scope) trait_spelled_method(name: string, recv_type: string): i32 {
@@ -14126,6 +14235,11 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
           if (ar.view) {
             arr_label = "slice";
           }
+          let avk: i32 = 0;
+          if (ar.view) {
+            avk = 1;
+          }
+          out = util.append_diags(out, inherent_tie_diags(mfa, "", avk, s));
           if let Some(asig) = s.array_recv_method(mfa.field, ar.view) {
             out = util.append_diags(out, uninferred_method_diags(c, arr_label, mfa.field, asig, s));
             if (c.args.len() == asig.param_types.len()) {
@@ -14166,6 +14280,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
             out = util.append_diags(out, cell_call_diags(c, mfa, recv, s));
           } else {
             out = util.append_diags(out, ambiguous_call_diags(mfa, sn.name, s));
+            out = util.append_diags(out, inherent_tie_diags(mfa, sn.name, 0 - 1, s));
             out = util.append_diags(out, finalizer_call_diags(mfa, sn.name, s));
             if let Some(msig) = s.lookup_method(mfa.field, sn.name) {
               if (c.args.len() != msig.param_types.len()) {
@@ -14205,6 +14320,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
         },
         typeinfo.TypeUnion(un) => {
           out = util.append_diags(out, ambiguous_call_diags(mfa, un.name, s));
+          out = util.append_diags(out, inherent_tie_diags(mfa, un.name, 0 - 1, s));
           out = util.append_diags(out, finalizer_call_diags(mfa, un.name, s));
           if let Some(umsig) = s.lookup_method(mfa.field, un.name) {
             if (c.args.len() == umsig.param_types.len()) {
@@ -17424,6 +17540,9 @@ function decl_key(fd: parser.FuncDecl): string {
 
 function same_method_decl(pe: parser.FuncDecl, f2: parser.FuncDecl): boolean {
   if (f2.receiver_type.len() == 0 || pe.receiver_type.len() == 0 || decl_key(pe) != decl_key(f2)) {
+    return false;
+  }
+  if (pe.impl_trait.len() == 0 && f2.impl_trait.len() == 0 && pe.module != f2.module) {
     return false;
   }
   return pe.impl_trait == f2.impl_trait && parser.receiver_namespace(pe.receiver_type) == parser.receiver_namespace(f2.receiver_type);
@@ -25900,6 +26019,7 @@ function annotate_typed(e: ast.Expr, s: Scope): Typed {
           member = "__iterator";
         }
       }
+      member = s.resolved_member(member, typed_type(oa, fa.obj, s));
       return Typed { e: ast.ExprFieldAccess { ...fa, obj: oa.e, field: member, ty: type_to_irtag(ft) }, ty: ft, known: true };
     },
     ast.ExprIndex(x) => {

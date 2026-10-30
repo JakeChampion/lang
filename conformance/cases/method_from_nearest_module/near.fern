@@ -1,0 +1,9 @@
+import "shape";
+
+pub function (xs: i32[]) score(): i32 {
+    return xs.len() * 10;
+}
+
+pub function (p: shape.P) area(): i32 {
+    return p.w * p.h;
+}
