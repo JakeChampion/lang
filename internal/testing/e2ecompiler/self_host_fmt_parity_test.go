@@ -22,6 +22,41 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"comment-only-blocks", `struct P { x: i32 }
+
+function f(a: boolean, b: boolean, o: Option[i32]): i32 {
+  let n: i32 = 0;
+  if (a) {} else if (b) {
+    // Only b.
+  } else {
+    // Neither.
+  }
+  if (a) {
+    if (b) {
+      n = 1;
+    }
+  } else {
+    // Outer else.
+  }
+  if (a) {
+    let p: P = P { x: 1 };
+    n = p.x;
+  } else {}
+  while (n > 9) {  // Spin.
+  }
+  match (o) {
+    Some(x) => {
+      // Ignore x.
+    },
+    None => {}
+  }
+  return n;
+}
+
+function g(): void {
+  // Nothing yet.
+}
+`},
 	{"match-value-with-divergent-arm", `enum ProbeError { Missing }
 function probe(value: Option[i32]): Result[i32, ProbeError] {
   let number: i32 = match (value) {

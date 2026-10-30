@@ -18050,6 +18050,26 @@ function ow_scalar_literal(e: ast.Expr): boolean {
   return false;
 }
 
+// A scrutinee that is a local or a field path at its last use: its payloads
+// leave it.
+function ow_takes_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
+  match (e) {
+    ast.ExprIdent(id) => {
+      return util.has_str(ctx.last_use, lu_key(id.line, id.col)) && !ow_is_owned(ctx, id.name);
+    },
+    ast.ExprFieldAccess(fa) => {
+      if let ast.ExprIdent(oid) = fa.obj {
+        return util.has_str(ctx.last_use, lu_field_key(fa, oid));
+      }
+      return false;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
 function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
   if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(cid) = c.callee {
@@ -18115,7 +18135,7 @@ function ow_is_owned_expr(e: ast.Expr, ctx: OwnCtx): boolean {
         return true;
       }
       if let ast.ExprIdent(oid) = fa.obj {
-        if (util.has_str(ctx.last_use, lu_field_key(fa, oid))) {
+        if (util.has_str(ctx.last_use, lu_field_key(fa, oid)) && !util.has_str(ctx.borrowed, oid.name)) {
           return true;
         }
       }
@@ -18163,11 +18183,13 @@ struct LuFn { facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFunc
 // whose body the block is, when it is one.
 struct LuFrame { stmts: ast.Stmt[], idx: i32, head: ast.Stmt, is_loop: boolean, label: string }
 
-struct LuSite { stmts: ast.Stmt[], idx: i32, frames: LuFrame[], in_loop: boolean, in_iife: boolean, in_defer: boolean }
+struct LuSite { stmts: ast.Stmt[], idx: i32, frames: LuFrame[], binders: string[], fresh: string[], in_loop: boolean, in_iife: boolean, in_defer: boolean }
 
 // The scope a block is walked in: the frames above it, the frame it adds
-// when framed, and the flags of the statement that holds it.
-struct LuScope { frames: LuFrame[], head: LuFrame, framed: boolean, in_loop: boolean, in_iife: boolean, in_defer: boolean }
+// when framed, the names match arms and for-each loops bound on the way
+// (binders), the for-each variables bound from an owned array (fresh), and
+// the flags of the statement that holds it.
+struct LuScope { frames: LuFrame[], head: LuFrame, framed: boolean, binders: string[], fresh: string[], in_loop: boolean, in_iife: boolean, in_defer: boolean }
 
 struct LuJumps { breaks: string[], continues: string[] }
 
@@ -18641,6 +18663,11 @@ function lu_loop_level(frames: LuFrame[], level: i32, label: string): i32 {
 // The loop whose body is frames[l] reads the name on its next round when the
 // loop mentions it and the body does not declare it afresh each time.
 function lu_loop_head_live(frames: LuFrame[], l: i32, name: string): boolean {
+  if let ast.StmtFor(fo) = frames[l].head {
+    if (fo.var_name == name) {
+      return false;
+    }
+  }
   if (lu_declares(frames[l].head, name)) {
     return false;
   }
@@ -18712,7 +18739,8 @@ function lu_arr_position(fx: LuFn, callee: string, i: i32): boolean {
 
 function lu_dies(fx: LuFn, call: ast.Expr, arr: boolean, aid: ast.ExprIdent, outer: ast.Expr, has_outer: boolean, site: LuSite): boolean {
   let name: string = aid.name;
-  if (!lu_is_local(fx, name)) {
+  let elem: boolean = lu_elem_fresh(fx, site, name);
+  if (!lu_is_local(fx, name) && !elem) {
     return false;
   }
   let once: boolean = astwalk.count_ident_expr(call, name) == 1;
@@ -18725,7 +18753,7 @@ function lu_dies(fx: LuFn, call: ast.Expr, arr: boolean, aid: ast.ExprIdent, out
   if (lu_rebind_site(site, name)) {
     return true;
   }
-  if (!once || !lu_admitted(fx, name)) {
+  if (!once || !(lu_admitted(fx, name) || elem)) {
     return false;
   }
   if (has_outer && astwalk.count_ident_expr(outer, name) > 1) {
@@ -18742,11 +18770,12 @@ function lu_dies(fx: LuFn, call: ast.Expr, arr: boolean, aid: ast.ExprIdent, out
 // whole, and no deferred action holds it. Inside a struct literal based on
 // q the superseded-field rule decides instead.
 function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast.ExprIdent, site: LuSite): boolean {
-  if (site.in_loop || util.has_str(fx.facts.captured, q.name)) {
+  if (util.has_str(fx.facts.captured, q.name) || lu_repeats(site.frames, q.name)) {
     return false;
   }
   let fresh_local: boolean = lu_is_local(fx, q.name) && lu_decl_count(fx, q.name) == 1 && lu_fresh_init(fx, q.name);
-  if (!fresh_local && !lu_own_param(fx, q.name)) {
+  let bound: boolean = !util.has_str(fx.params, q.name) && lu_decl_count(fx, q.name) == 0 && util.has_str(site.binders, q.name);
+  if (!fresh_local && !lu_own_param(fx, q.name) && !bound && !lu_elem_fresh(fx, site, q.name)) {
     return false;
   }
   if (astwalk.count_ident_expr(call, q.name) != 1) {
@@ -18762,6 +18791,111 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
     return false;
   }
   return lu_path_is_last(fx, q, fa.field);
+}
+
+// A loop deeper than the frame that binds the owner runs the call again on
+// the same value. A let at a frame, the for-each whose body it is, or the
+// match whose arm it is binds the name afresh each time that frame runs.
+function lu_repeats(frames: LuFrame[], name: string): boolean {
+  let decl: i32 = 0 - 1;
+  let l: i32 = 0;
+  while (l < frames.len()) {
+    if (lu_frame_binds(frames, l, name)) {
+      decl = l;
+    }
+    l = l + 1;
+  }
+  l = decl + 1;
+  while (l < frames.len()) {
+    if (frames[l].is_loop) {
+      return true;
+    }
+    l = l + 1;
+  }
+  return false;
+}
+
+function lu_frame_binds(frames: LuFrame[], l: i32, name: string): boolean {
+  let f: LuFrame = frames[l];
+  if let ast.StmtFor(fo) = f.head {
+    if (fo.var_name == name) {
+      return true;
+    }
+  }
+  let j: i32 = 0;
+  while (j < f.idx) {
+    if (lu_stmt_declares(f.stmts[j], name)) {
+      return true;
+    }
+    j = j + 1;
+  }
+  if (l > 0) {
+    let parent: LuFrame = frames[l - 1];
+    if let ast.StmtMatch(m) = parent.stmts[parent.idx] {
+      for arm in m.arms {
+        if (util.has_str(astwalk.pattern_binders(arm.pattern, []), name)) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+function lu_stmt_declares(st: ast.Stmt, name: string): boolean {
+  let facts: LuFacts = lu_fact_stmt(st, lu_empty_facts());
+  for v in facts.vars {
+    if (v.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function lu_scrutinee_is_param(fx: LuFn, e: ast.Expr): boolean {
+  if let ast.ExprIdent(id) = e {
+    return util.has_str(fx.params, id.name);
+  }
+  return false;
+}
+
+// A for-each variable bound from an owned array is a fresh local each round.
+function lu_elem_fresh(fx: LuFn, site: LuSite, name: string): boolean {
+  return util.has_str(site.fresh, name) && !util.has_str(fx.params, name) && lu_decl_count(fx, name) == 0;
+}
+
+// A for-each takes its array when the array is an own parameter or a fresh
+// call; a local at its last use is a move site and is decided there.
+function lu_iter_owned(fx: LuFn, iter: ast.Expr): boolean {
+  if let ast.ExprIdent(id) = iter {
+    return lu_own_param(fx, id.name);
+  }
+  return lu_fresh_expr(iter);
+}
+
+// A match scrutinee or a for-each iterator that is a local, or a field path
+// of one, at its last use: the match or the loop takes the payloads.
+function lu_move_site(fx: LuFn, e: ast.Expr, site: LuSite, own acc: string[]): string[] {
+  match (e) {
+    ast.ExprIdent(aid) => {
+      if (lu_dies(fx, e, false, aid, e, false, site)) {
+        return acc.append(lu_key(aid.line, aid.col));
+      }
+      return acc;
+    },
+    ast.ExprFieldAccess(fa) => {
+      if let ast.ExprIdent(q) = fa.obj {
+        if (lu_field_dies(fx, e, fa, q, site)) {
+          return acc.append(lu_field_key(fa, q));
+        }
+      }
+      return acc;
+    },
+    _ => {
+      return acc;
+    }
+  }
+  return acc;
 }
 
 function lu_path_is_last(fx: LuFn, q: ast.ExprIdent, field: string): boolean {
@@ -19062,7 +19196,7 @@ function lu_expr(e: ast.Expr, outer: ast.Expr, has_outer: boolean, site: LuSite,
       if (lm.origin.len() == 0 || c.args.len() > 0) {
         return acc;
       }
-      let sc: LuScope = LuScope { frames: site.frames, head: lu_plain_frame(lm.body), framed: false, in_loop: site.in_loop, in_iife: true, in_defer: site.in_defer };
+      let sc: LuScope = LuScope { frames: site.frames, head: lu_plain_frame(lm.body), framed: false, binders: site.binders, fresh: site.fresh, in_loop: site.in_loop, in_iife: true, in_defer: site.in_defer };
       return lu_stmts(lm.body, sc, outer, has_outer, fx, acc);
     }
     acc = lu_call(c, e, outer, has_outer, site, fx, acc);
@@ -19089,7 +19223,7 @@ function lu_root(e: ast.Expr, site: LuSite, outer: ast.Expr, has_outer: boolean,
 function lu_stmts(stmts: ast.Stmt[], sc: LuScope, outer: ast.Expr, has_outer: boolean, fx: LuFn, own acc: string[]): string[] {
   let i: i32 = 0;
   while (i < stmts.len()) {
-    let site: LuSite = LuSite { stmts: stmts, idx: i, frames: lu_site_frames(sc, stmts, i), in_loop: sc.in_loop, in_iife: sc.in_iife, in_defer: sc.in_defer };
+    let site: LuSite = LuSite { stmts: stmts, idx: i, frames: lu_site_frames(sc, stmts, i), binders: sc.binders, fresh: sc.fresh, in_loop: sc.in_loop, in_iife: sc.in_iife, in_defer: sc.in_defer };
     match (stmts[i]) {
       ast.StmtVar(v) => {
         acc = lu_root(v.init, site, outer, has_outer, fx, acc);
@@ -19114,15 +19248,31 @@ function lu_stmts(stmts: ast.Stmt[], sc: LuScope, outer: ast.Expr, has_outer: bo
       },
       ast.StmtFor(fo) => {
         acc = lu_root(fo.iter, site, outer, has_outer, fx, acc);
-        acc = lu_stmts(fo.body, LuScope { ...sc, frames: site.frames, head: lu_loop_frame(fo.body, stmts[i], fo.label), in_loop: true }, outer, has_outer, fx, acc);
+        let taken: string[] = lu_move_site(fx, fo.iter, site, []);
+        acc = util.append_all(acc, taken);
+        let bound: string[] = sc.binders.append(fo.var_name);
+        let fresh: string[] = sc.fresh;
+        if (taken.len() > 0 || lu_iter_owned(fx, fo.iter)) {
+          fresh = fresh.append(fo.var_name);
+        }
+        acc = lu_stmts(fo.body, LuScope { ...sc, frames: site.frames, head: lu_loop_frame(fo.body, stmts[i], fo.label), binders: bound, fresh: fresh, in_loop: true }, outer, has_outer, fx, acc);
       },
       ast.StmtMatch(m) => {
         acc = lu_root(m.scrutinee, site, outer, has_outer, fx, acc);
+        let taken: string[] = lu_move_site(fx, m.scrutinee, site, []);
+        acc = util.append_all(acc, taken);
         for arm in m.arms {
           if (arm.has_guard) {
             acc = lu_root(arm.guard, site, outer, has_outer, fx, acc);
           }
-          acc = lu_stmts(arm.body, LuScope { ...sc, frames: site.frames, head: lu_plain_frame(arm.body) }, outer, has_outer, fx, acc);
+          let names: string[] = astwalk.pattern_binders(arm.pattern, []);
+          let bound: string[] = util.append_all(sc.binders, names);
+          // A match that takes its scrutinee binds each payload as a fresh local.
+          let fresh: string[] = sc.fresh;
+          if (taken.len() > 0 && !lu_scrutinee_is_param(fx, m.scrutinee)) {
+            fresh = util.append_all(fresh, names);
+          }
+          acc = lu_stmts(arm.body, LuScope { ...sc, frames: site.frames, head: lu_plain_frame(arm.body), binders: bound, fresh: fresh }, outer, has_outer, fx, acc);
         }
       },
       ast.StmtDefer(d) => {
@@ -19145,7 +19295,7 @@ function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs): string[] {
   }
   let fx: LuFn = LuFn { facts: facts, params: ow_param_names(fn), owned: ow_own_param_names(fn), ofuncs: ofuncs };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
-  let top: LuScope = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, in_loop: false, in_iife: false, in_defer: false };
+  let top: LuScope = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], fresh: [], in_loop: false, in_iife: false, in_defer: false };
   let out: string[] = lu_stmts(fn.body, top, none, false, fx, []);
   for lm in nested {
     out = util.append_all(out, lu_last_use_args(parser.FuncDecl { ...fn, params: lm.params, body: lm.body }, ofuncs));
@@ -19702,8 +19852,15 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: rc.moved, diags: util.append_diags(rc.diags, ld) };
     },
     ast.StmtFor(fr) => {
+      let takes: boolean = !name_has_comma(fr.var_name) && ow_is_owned_scrutinee(fr.iter, ctx);
       let ri: OwnWalk = ru_borrow(fr.iter, moved, ctx);
+      if (takes) {
+        ri = ru_expr(fr.iter, moved, ctx);
+      }
       let fctx: OwnCtx = ow_bind_ctx(ctx, fr.var_name);
+      if (!takes && !name_has_comma(fr.var_name)) {
+        fctx = OwnCtx { ...fctx, borrowed: fctx.borrowed.append(fr.var_name) };
+      }
       let ld: util.Diag[] = ow_loop(fr.body, ri.moved, OwnCtx { ...fctx, scope: for_body_scope(fr, ctx.scope) });
       return OwnWalk { moved: ri.moved, diags: util.append_diags(ri.diags, ld) };
     },
@@ -19722,10 +19879,13 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       }
       let mv: MovedEntry[] = rs.moved;
       let d: util.Diag[] = rs.diags;
+      let taken: boolean = ow_takes_scrutinee(m.scrutinee, ctx);
       for arm in m.arms {
         let actx: OwnCtx = ow_arm_bind_ctx(ctx, arm.pattern);
         actx = OwnCtx { ...actx, scope: annotate_arm_scope(arm, ctx.scope, whole) };
-        if (scrut_owned) {
+        if (taken) {
+          // Each binding is a fresh local, neither owned nor lent.
+        } else if (scrut_owned) {
           actx = ow_arm_payload_ctx(actx, arm.pattern, whole);
         } else {
           actx = ow_arm_lent_ctx(actx, arm.pattern);

@@ -1,0 +1,58 @@
+// spec: RH-20
+// A for-each over an owned array binds each element owned: the array is a
+// fresh local at its last use, an `own` parameter, or a field of an `own`
+// parameter at its last use. The loop closes each element, or a field of
+// each element, once.
+
+import "std/i32";
+
+struct Handle { fd: i32 }
+
+struct Pack { file: Handle, path: string }
+
+struct Bag { hs: Handle[], tag: i32 }
+
+function (own h: Handle) close(): void {
+  print("closed " + h.fd.to_string());
+}
+
+function close_all(own hs: Handle[]): i32 {
+  let n: i32 = 0;
+  for h in hs {
+    h.close();
+    n = n + 1;
+  }
+  return n;
+}
+
+function close_bag(own b: Bag): i32 {
+  let n: i32 = b.tag;
+  for h in b.hs {
+    h.close();
+    n = n + 1;
+  }
+  return n;
+}
+
+function close_files(): i32 {
+  let ps: Pack[] = [Pack { file: Handle { fd: 3 }, path: "a" }, Pack { file: Handle { fd: 4 }, path: "b" }];
+  let n: i32 = 0;
+  for p in ps {
+    if (p.path == "b") {
+      p.file.close();
+      n = n + 1;
+    }
+  }
+  return n;
+}
+
+function main(): i32 {
+  let hs: Handle[] = [Handle { fd: 1 }, Handle { fd: 2 }];
+  for h in hs {
+    h.close();
+  }
+  print(close_all([Handle { fd: 5 }]).to_string());
+  print(close_files().to_string());
+  print(close_bag(Bag { hs: [Handle { fd: 6 }, Handle { fd: 7 }], tag: 10 }).to_string());
+  return 0;
+}

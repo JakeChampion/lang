@@ -9938,12 +9938,12 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if _, vrOk, _ := c.resolveVariant(x.Name, x.EnumName); vrOk {
 				return true
 			}
-			return owned[x.Name] || selfMoveArgs[e] || lastUse[e] || c.scalarArgs[e]
+			return owned[x.Name] || selfMoveArgs[e] || lastUse[e] && !borrowedParam[x.Name] || c.scalarArgs[e]
 		case *ast.FieldAccess:
 			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 				return true
 			}
-			if _, ok := x.Target.(*ast.Ident); ok && lastUse[e] {
+			if id, ok := x.Target.(*ast.Ident); ok && lastUse[e] && !borrowedParam[id.Name] {
 				return true
 			}
 			return selfMoveArgs[e] || c.scalarArgs[e]
@@ -10069,9 +10069,21 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		joinInto(dst, guard, false)
 	}
 
-	bindArm := func(bindings []string, types []ast.Type, scrutOwned bool) (added, lent []string) {
+	// takesTag reports a scrutinee that is a local or a field path at its
+	// last use: its payloads leave it, and each binding is a fresh local,
+	// neither owned nor lent.
+	takesTag := func(tag ast.Expr) bool {
+		switch t := tag.(type) {
+		case *ast.Ident:
+			return lastUse[tag] && !owned[t.Name]
+		case *ast.FieldAccess:
+			return lastUse[tag]
+		}
+		return false
+	}
+	bindArm := func(bindings []string, types []ast.Type, scrutOwned bool, taken bool) (added, lent []string) {
 		for i, bname := range bindings {
-			if bname == "" || bname == "_" || i >= len(types) || types[i] == nil || !ast.IsPointerType(types[i]) {
+			if taken || bname == "" || bname == "_" || i >= len(types) || types[i] == nil || !ast.IsPointerType(types[i]) {
 				continue
 			}
 			if scrutOwned {
@@ -10113,7 +10125,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		baseline, joined := cloneMoved(moved), cloneMoved(moved)
 		for _, arm := range m.Arms {
 			armMoved := cloneMoved(baseline)
-			added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned)
+			added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, takesTag(m.Tag))
 			recordExprUses(arm.Guard, armMoved)
 			if arm.Guard != nil {
 				joinGuardInto(baseline, armMoved, arm.Binders())
@@ -10341,6 +10353,15 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.FuncDecl:
 			walkNested(x.Params, x.Body, moved)
 		case *ast.Var:
+			// A for-each over an own parameter's array takes it: each
+			// element is the loop's, and the array is not read again.
+			if strings.HasPrefix(x.Name, ast.ForEachIterPrefix) {
+				if id, ok := x.Init.(*ast.Ident); ok && owned[id.Name] {
+					recordExprUses(x.Init, moved)
+					moved[id.Name] = id.Pos()
+					return
+				}
+			}
 			recordExprUses(x.Init, moved)
 		case *ast.ExprStmt:
 			if asn, ok := x.Expr.(*ast.Assign); ok {
@@ -10435,7 +10456,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			baseline, joined := cloneMoved(moved), cloneMoved(moved)
 			for _, arm := range x.Arms {
 				armMoved := cloneMoved(baseline)
-				added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned)
+				added, lent := bindArm(arm.Bindings, arm.BindingTypes, scrutOwned, takesTag(x.Tag))
 				recordExprUses(arm.Guard, armMoved)
 				if arm.Guard != nil {
 					joinGuardInto(baseline, armMoved, arm.Binders())

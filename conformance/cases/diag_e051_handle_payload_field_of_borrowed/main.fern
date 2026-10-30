@@ -1,0 +1,27 @@
+// spec: RH-22
+// A pattern binding of a borrowed scrutinee lends its payload, so a field
+// of the payload cannot move out to a consuming call.
+
+struct Handle { fd: i32 }
+
+struct Pack { file: Handle, path: string }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function close_held(held: Option[Pack]): i32 {
+  match (held) {
+    Some(t) => {
+      return t.file.close();
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function main(): i32 {
+  return close_held(Some(Pack { file: Handle { fd: 3 }, path: "held" }));
+}

@@ -51,6 +51,23 @@ function main(): i32 {
         r = r + 1;
     }
     if (at != big.len()) { return 5; }
+    let raw: u8[] = [];
+    for c in 0..alpha.len() { raw = raw.append(alpha[c]); }
+    let b: usize = buf_new(1);
+    k = 0;
+    while (k <= 40) {
+        buf_push_bytes_range(b, raw, k % 3, k % 3 + k);
+        k = k + 1;
+    }
+    let bytes: string = buf_take(b);
+    at = 0;
+    k = 0;
+    while (k <= 40) {
+        if (!matches(bytes, at, alpha, k % 3, k)) { return 6; }
+        at = at + k;
+        k = k + 1;
+    }
+    if (at != bytes.len()) { return 7; }
     return 42;
 }
 `
@@ -78,9 +95,18 @@ func TestSelfHostBufCopy(t *testing.T) {
 		}
 		for _, name := range helpers {
 			copyPattern := bulk[target]
-			m := regexp.MustCompile(`(?s)\n` + name + `:\n(.*?)\n\s+ret\n`).FindStringSubmatch(string(asm))
+			// x86-64 returns early from a short copy, so its routine is read up
+			// to the bulk copy rather than to the first ret.
+			end := `\n\s+ret\n`
+			if target == "x86-64-linux" && name != "__fern_buf_take" {
+				end = `\n\s+(call|jmp) __fern_memcpy\n`
+			}
+			m := regexp.MustCompile(`(?s)\n` + name + `:\n(.*?)` + end).FindStringSubmatch(string(asm))
 			if m == nil {
 				t.Fatalf("%s: %s not in the listing", target, name)
+			}
+			if target == "x86-64-linux" && name == "__fern_buf_push_range" && !regexp.MustCompile(`\n\s+movw %r9w, -2\(%rdi,%rcx\)\n`).MatchString(m[0]) {
+				t.Errorf("%s: %s does not copy a short range inline:\n%s", target, name, m[1])
 			}
 			if name == "__fern_buf_take" {
 				call := regexp.MustCompile(`\n\s+(call|bl) __fn___fern_buf_take_text\n`)
@@ -113,7 +139,7 @@ func TestSelfHostBufCopy(t *testing.T) {
 		}
 		_ = run.Run()
 		if got := run.ProcessState.ExitCode(); got != 42 {
-			t.Errorf("%s: exit %d, want 42 (1-3: a byte-buffer copy, 4-5: a string-builder copy)", tg.target, got)
+			t.Errorf("%s: exit %d, want 42 (1-3: a byte-buffer copy, 4-5: a string-builder copy, 6-7: a byte-array range copy)", tg.target, got)
 		}
 	}
 }

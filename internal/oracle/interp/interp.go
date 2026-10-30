@@ -81,14 +81,13 @@ type arrBox struct {
 	e      []Value
 	st     *arrStore
 	owners int32
-	paths  int32
 	held   int // the most elements the box has had; later slots are not its own
+	maps   uint8
 }
 
-// arrStore sums owners and paths over every box on one storage.
+// arrStore sums owners over every box on one storage.
 type arrStore struct {
 	owners int32
-	paths  int32
 	boxes  int32
 }
 
@@ -135,8 +134,7 @@ func (b *arrBox) privatise(capacity int) {
 	}
 	b.st.boxes--
 	b.st.owners -= b.owners
-	b.st.paths -= b.paths
-	b.st = &arrStore{owners: b.owners, paths: b.paths, boxes: 1}
+	b.st = &arrStore{owners: b.owners, boxes: 1}
 	b.e = s[:len(b.e)]
 }
 
@@ -159,6 +157,7 @@ func (d DynInt) String() string { return d.N.String() }
 type Struct struct {
 	TypeName string
 	Fields   map[string]Value
+	maps     uint8
 }
 
 type Enum struct {
@@ -166,31 +165,54 @@ type Enum struct {
 	VariantName string
 	Index       int
 	Payloads    []Value
-	counts      uint8
+	maps        uint8
 }
 
 const (
-	countsSome uint8 = 1
-	countsNone uint8 = 2
+	mapsSome uint8 = 1
+	mapsNone uint8 = 2
 )
 
-func reachesCounted(v Value) bool {
+// holdsMap reports whether a map is reachable from v. Only a map keeps a
+// count, so retain and release skip a value that reaches none. A struct or an
+// enum never changes, and an array is written in place only with no map on
+// either side, so the cached answer stays true.
+func holdsMap(v Value) bool {
 	switch x := v.(type) {
-	case *Map, Array, *Struct:
+	case *Map:
 		return true
-	case *Enum:
-		if x.counts == 0 {
-			x.counts = countsNone
-			for _, p := range x.Payloads {
-				if reachesCounted(p) {
-					x.counts = countsSome
+	case Array:
+		if x.b.maps == 0 {
+			x.b.maps = mapsIn(x.b.e[:x.b.held])
+		}
+		return x.b.maps == mapsSome
+	case *Struct:
+		if x.maps == 0 {
+			x.maps = mapsNone
+			for _, f := range x.Fields {
+				if holdsMap(f) {
+					x.maps = mapsSome
 					break
 				}
 			}
 		}
-		return x.counts == countsSome
+		return x.maps == mapsSome
+	case *Enum:
+		if x.maps == 0 {
+			x.maps = mapsIn(x.Payloads)
+		}
+		return x.maps == mapsSome
 	}
 	return false
+}
+
+func mapsIn(vs []Value) uint8 {
+	for _, v := range vs {
+		if holdsMap(v) {
+			return mapsSome
+		}
+	}
+	return mapsNone
 }
 
 type Map struct {
@@ -213,8 +235,6 @@ func release(v Value) { adjustRC(v, -1) }
 
 func retainReplacing(v, old Value) {
 	if tail, ok := appendedTail(old, v); ok {
-		v.(Array).b.paths++
-		old.(Array).b.paths--
 		for _, e := range tail {
 			retain(e)
 		}
@@ -267,19 +287,23 @@ func adjustRC(v Value, delta int) {
 			adjustRC(vv, delta)
 		}
 	case Array:
-		x.b.paths += int32(delta)
-		x.b.st.paths += int32(delta)
+		if !holdsMap(x) {
+			return
+		}
 		els := x.Elems()
 		rcWalked.Add(int64(len(els)))
 		for _, e := range els {
 			adjustRC(e, delta)
 		}
 	case *Struct:
+		if !holdsMap(x) {
+			return
+		}
 		for _, f := range x.Fields {
 			adjustRC(f, delta)
 		}
 	case *Enum:
-		if !reachesCounted(x) {
+		if !holdsMap(x) {
 			return
 		}
 		rcWalked.Add(int64(len(x.Payloads)))
@@ -2304,15 +2328,15 @@ func builtinArraySet(ip *Interp, args []Value) (Value, error) {
 		return nil, indexAbort(CauseArrOOB, strconv.Itoa(int(idx)), len(arr.Elems()))
 	}
 	storeArray(args[2])
-	inPlace, err := ip.arrayWriteInPlace(arr)
-	if err != nil {
-		return nil, err
-	}
-	if inPlace {
-		adjustRC(args[2], int(arr.b.st.paths))
-		adjustRC(arr.Elems()[int(idx)], -int(arr.b.st.paths))
-		arr.Elems()[int(idx)] = args[2]
-		return arr, nil
+	if !holdsMap(arr) && !holdsMap(args[2]) {
+		inPlace, err := ip.arrayWriteInPlace(arr)
+		if err != nil {
+			return nil, err
+		}
+		if inPlace {
+			arr.Elems()[int(idx)] = args[2]
+			return arr, nil
+		}
 	}
 	out := newArray(len(arr.Elems()))
 	copy(out.Elems(), arr.Elems())
@@ -5659,9 +5683,8 @@ func (i *Interp) CallByName(name string, args []Value) (Value, error) {
 }
 
 type env struct {
-	parent   *env
-	vars     map[string]Value
-	unwalked map[string]bool
+	parent *env
+	vars   map[string]Value
 }
 
 type binding struct {
@@ -5745,52 +5768,17 @@ func (e *env) bindValue(name string, v Value) {
 }
 
 func (e *env) declare(name string, v Value) {
-	delete(e.unwalked, name)
 	e.bindValue(name, v)
 	retain(v)
 	arrOwn(v)
 }
 
-func (e *env) declareTyped(name string, v Value, t ast.Type) {
-	if _, isArray := v.(Array); !isArray || !holdsNoMap(t) {
-		e.declare(name, v)
-		return
-	}
-	e.bindValue(name, v)
-	arrOwn(v)
-	if e.unwalked == nil {
-		e.unwalked = make(map[string]bool)
-	}
-	e.unwalked[name] = true
-}
-
-func holdsNoMap(t ast.Type) bool {
-	switch x := t.(type) {
-	case ast.NumberType, ast.BoolType, ast.StringType, ast.StrType, ast.CharType, ast.FloatType:
-		return true
-	case ast.ArrayType:
-		return holdsNoMap(x.Elem)
-	case ast.SliceType:
-		return holdsNoMap(x.Elem)
-	case ast.TupleType:
-		for _, el := range x.Elems {
-			if !holdsNoMap(el) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
-}
-
 func (e *env) releaseScope() {
-	for name, v := range e.vars {
+	for _, v := range e.vars {
 		if _, captured := v.(*binding); captured {
 			continue
 		}
-		if !e.unwalked[name] {
-			release(v)
-		}
+		release(v)
 		arrDisown(v)
 	}
 }
@@ -5824,7 +5812,7 @@ func (i *Interp) callFunc(fn *ast.FuncDecl, args []Value) (Value, error) {
 	}
 	e := newEnv(nil)
 	for k, p := range fn.Params {
-		e.declareTyped(p.Name, args[k], p.Type)
+		e.declare(p.Name, args[k])
 	}
 	defer e.releaseScope()
 	i.envs = append(i.envs, e)
@@ -6061,7 +6049,7 @@ func (i *Interp) execStmtInner(s ast.Stmt, e *env) (result, error) {
 		if err != nil {
 			return result{}, err
 		}
-		e.declareTyped(x.Name, v, x.Type)
+		e.declare(x.Name, v)
 		return result{flow: flowNormal}, nil
 	case *ast.Destructure:
 		v, err := i.evalExpr(x.Init, e)
@@ -7301,7 +7289,7 @@ func (i *Interp) callClosure(c *Closure, args []Value) (Value, error) {
 	}
 	e := newEnv(c.Env)
 	for k, p := range c.Decl.Params {
-		e.declareTyped(p.Name, args[k], p.Type)
+		e.declare(p.Name, args[k])
 	}
 	defer e.releaseScope()
 	i.envs = append(i.envs, e)
@@ -7711,25 +7699,6 @@ func (i *Interp) evalBinary(b *ast.Binary, env *env) (Value, error) {
 func (i *Interp) evalAssign(a *ast.Assign, env *env) (Value, error) {
 	if t, ok := a.Target.(*ast.Ident); ok {
 		return i.assignIdent(a, t.Name, env)
-	}
-	v, err := i.evalExpr(a.Value, env)
-	if err != nil {
-		return nil, err
-	}
-	switch t := a.Target.(type) {
-	case *ast.FieldAccess:
-		tv, err := i.evalExpr(t.Target, env)
-		if err != nil {
-			return nil, err
-		}
-		s, ok := tv.(*Struct)
-		if !ok {
-			return nil, fmt.Errorf("field assignment on non-struct %T", tv)
-		}
-		retainReplacing(v, s.Fields[t.Field])
-		storeArray(v)
-		s.Fields[t.Field] = v
-		return v, nil
 	}
 	return nil, fmt.Errorf("interp: invalid assignment target %T", a.Target)
 }

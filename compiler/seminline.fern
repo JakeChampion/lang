@@ -213,44 +213,48 @@ function unpacker(f: ssasem.Func): boolean {
   return false;
 }
 
-// Whether a block of g reaches itself, as a self-recursion turned into a loop does.
+// Whether the blocks hold a cycle, such as the loop tail recursion modulo
+// cons leaves. Blocks are not stored in control-flow order, so this walks the
+// successors depth first and looks for an edge back to a block on the path.
 function loops(g: ssa.SFunc): boolean {
   let at: i32[] = ssa.block_positions(g);
   let state: i32[] = __alloc_i32(g.blocks.len());
-  let stack: i32[] = [at[g.entry]];
-  let next: i32[] = [0];
-  let depth: i32 = 1;
+  let path: i32[] = __alloc_i32(g.blocks.len());
+  let next: i32[] = __alloc_i32(g.blocks.len());
+  path = path.with(0, g.entry);
   state = state.with(at[g.entry], 1);
+  let depth: i32 = 1;
   while (depth > 0) {
     let top: i32 = depth - 1;
-    let bi: i32 = stack[top];
-    let which: i32 = next[top];
-    if (which >= 2) {
-      state = state.with(bi, 2);
+    let succ: i32[] = term_successors(g.blocks[at[path[top]]].term);
+    if (next[top] >= succ.len()) {
+      state = state.with(at[path[top]], 2);
       depth = top;
       continue;
     }
-    next = next.with(top, which + 1);
-    let id: i32 = ssa.successor_id(g.blocks[bi].term, which);
-    if (id >= 0) {
-      let s: i32 = at[id];
-      if (state[s] == 1) {
-        return true;
-      }
-      if (state[s] == 0) {
-        state = state.with(s, 1);
-        if (depth < stack.len()) {
-          stack = stack.with(depth, s);
-          next = next.with(depth, 0);
-        } else {
-          stack = stack.append(s);
-          next = next.append(0);
-        }
-        depth = depth + 1;
-      }
+    let s: i32 = succ[next[top]];
+    next = next.with(top, next[top] + 1);
+    if (state[at[s]] == 1) {
+      return true;
+    }
+    if (state[at[s]] == 0) {
+      state = state.with(at[s], 1);
+      path = path.with(depth, s);
+      next = next.with(depth, 0);
+      depth = depth + 1;
     }
   }
   return false;
+}
+
+function term_successors(t: ssa.STerm): i32[] {
+  if (t.kind_tag == 2) {
+    return [t.target];
+  }
+  if (t.kind_tag == 3) {
+    return [t.t, t.f];
+  }
+  return [];
 }
 
 // Whether every use of v, and of each phi or copy of it, tests its variant or

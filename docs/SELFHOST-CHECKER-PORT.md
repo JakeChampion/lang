@@ -938,7 +938,14 @@ same code(s) the Go checker does — restricted to
   same. An
   IIFE body and a deferred action add no frame, so they count as their
   enclosing statement. Four more cases (RH-14 to RH-17) pin the loop
-  shapes.
+  shapes. Three rules followed for the standard library's handles
+  (RH-18 to RH-23). A match scrutinee or a for-each iterator at its last
+  use is a move site (`lu_move_site`). A pattern binding or a for-each
+  variable is a field owner (`binders` in `LuScope`, the `borrowed` guard
+  in `ow_is_owned_expr`). A for-each over an owned array binds its
+  variable owned (`ow_for_owns_elements`). A loop deeper than the frame
+  that binds an owner repeats a field move (`lu_repeats`), which replaced
+  the flat `in_loop` test for fields.
 - **Slice 56 (done): E024 — tuple destructure of a non-tuple / wrong
   arity.** The parser already lowers `let (a, b) = E` to a `StmtVar` whose
   `name` is `"a,b"`, so this is checker-only after all (not a missing
