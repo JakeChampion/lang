@@ -5,7 +5,7 @@
 // where the count left off, waiting on the reactor between attempts while the
 // peer drains, and every byte arrives in order.
 import "std/errno";
-import "std/hash";
+import "std/hash/crc32";
 import "std/string";
 
 function block(): u8[] {
@@ -32,12 +32,12 @@ function sent(s: Sender, n: i32): Sender {
   return Sender { ...s, failed: n };
 }
 
-struct Receiver { sock: i32, got: i32, crc: hash.Crc32 }
+struct Receiver { sock: i32, got: i32, crc: crc32.Crc32 }
 
 // Reads until the socket has nothing queued.
 function drain(r: Receiver, buf: u8[]): Receiver {
   let got: i32 = r.got;
-  let crc: hash.Crc32 = r.crc;
+  let crc: crc32.Crc32 = r.crc;
   while (true) {
     let n: i32 = tcp_recv_into(r.sock, buf);
     if (n <= 0) {
@@ -59,7 +59,7 @@ function main(): i32 {
   let total: i32 = 8388608;
   let b: u8[] = block();
   let payload: usize = buf_new(total);
-  let want: hash.Crc32 = hash.crc32_new();
+  let want: crc32.Crc32 = crc32.new();
   while (buf_len(payload) < total) {
     let n: i32 = total - buf_len(payload);
     if (n > b.len()) {
@@ -82,7 +82,7 @@ function main(): i32 {
   print(f"watch: {reactor_ctl(r, 1, c, 2)} {reactor_ctl(r, 1, s, 1)}");
   let events: i32[] = [0, 0, 0, 0];
   let buf: u8[] = __alloc_u8(65536);
-  let rx: Receiver = Receiver { sock: s, got: 0, crc: hash.crc32_new() };
+  let rx: Receiver = Receiver { sock: s, got: 0, crc: crc32.new() };
   let watching: boolean = true;
   while (rx.got < total && tx.failed == 0) {
     if (tx.sent < total) {

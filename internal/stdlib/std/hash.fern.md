@@ -1,14 +1,14 @@
-# Checksums and fast hashes
+# Fast hashes
 
-This module calculates CRC-32, BSD, and System V checksums.
+This module calculates the XXH64 hash. The checksums are in their own modules: `std/hash/cksum`, `std/hash/crc32`, `std/hash/bsd_sum` and `std/hash/sysv_sum`.
 
 ## Model
 
-Checksum states accept borrowed byte views and return updated states. Separate types preserve the CRC-32, POSIX, BSD, and System V rules.
+`xxh64` hashes a borrowed byte view with a seed and returns the 64-bit digest.
 
 ## Contracts
 
-The finish method applies the checksum-specific final step. Byte counts belong to the state. These checksums do not provide message authentication.
+The digest agrees with the reference XXH64. It is not a cryptographic hash and does not provide message authentication.
 
 ## Executable example
 
@@ -17,7 +17,7 @@ import "std/hash";
 import "std/string";
 
 function main(): i32 {
-  if (hash.crc32_of("123456789".as_bytes()) != 0xcbf43926 as u32) { return 1; }
+  if (hash.xxh64("".as_bytes(), 0 as u64) != 0xEF46DB3751D8E999 as u64) { return 1; }
   return 0;
 }
 ```
@@ -30,235 +30,22 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<*>>=
 <<module introduction>>
 
-<<2 pub struct Cksum>>
+<<2 pub function xxh64(bs: [u8], seed: u64): u64>>
 
-<<3 function __cksum_tables(): u32[]>>
-
-<<4 pub function cksum_new(): Cksum>>
-
-<<5 pub struct Crc32>>
-
-<<6 pub function crc32_new(): Crc32>>
-
-<<7 pub function (c: Crc32) update(chunk: [u8]): Crc32>>
-
-<<8 pub struct BsdSum>>
-
-<<9 pub function bsd_sum_new(): BsdSum>>
-
-<<10 pub struct SysvSum>>
-
-<<11 pub function sysv_sum_new(): SysvSum>>
-
-<<12 function __xxh_tail(bs: [u8], at: i32, h: u64): u64>>
+<<3 function __xxh_tail(bs: [u8], at: i32, h: u64): u64>>
 ```
 
 ### `module introduction`
 
 ```fern
 <<module introduction>>=
-// This module calculates CRC-32, BSD, and System V checksums.
+// This module calculates the XXH64 hash.
 ```
 
-### `2 pub struct Cksum`
+### `2 pub function xxh64(bs: [u8], seed: u64): u64`
 
 ```fern
-<<2 pub struct Cksum>>=
-pub struct Cksum {
-  crc: u32,
-  len: u64,
-  table: u32[],
-}
-```
-
-### `3 function __cksum_tables(): u32[]`
-
-```fern
-<<3 function __cksum_tables(): u32[]>>=
-function __cksum_tables(): u32[] {
-  let t: u32[] = [];
-  let i: u32 = 0;
-  while (i < 256) {
-    let c: u32 = i << 24;
-    let k: i32 = 0;
-    while (k < 8) {
-      if ((c & 0x80000000) != 0) {
-        c = c << 1 ^ 0x04c11db7;
-      } else {
-        c = c << 1;
-      }
-      k = k + 1;
-    }
-    t = t.append(c);
-    i = i + 1;
-  }
-  let j: i32 = 0;
-  let p: u32 = 0;
-  while (j < 1792) {
-    p = t[j];
-    t = t.append(p << 8 ^ t[(p >> 24 & 255) as i32]);
-    j = j + 1;
-  }
-  return t;
-}
-```
-
-### `4 pub function cksum_new(): Cksum`
-
-```fern
-<<4 pub function cksum_new(): Cksum>>=
-pub function cksum_new(): Cksum {
-  return Cksum { crc: 0, len: 0 as u64, table: __cksum_tables() };
-}
-
-pub function (c: Cksum) update(chunk: [u8]): Cksum {
-  return Cksum {
-    ...c, crc: __crc32_cksum_array(c.crc as i32, chunk) as u32,
-    len: c.len + chunk.len() as u64,
-  };
-}
-
-pub function (c: Cksum) byte_count(): u64 {
-  return c.len;
-}
-
-pub function (c: Cksum) finish(): u32 {
-  let t: u32[] = c.table;
-  let crc: u32 = c.crc;
-  let n: u64 = c.len;
-  while (n != 0 as u64) {
-    crc = crc << 8 ^ t[((crc >> 24 ^ (n & 255 as u64) as u32) & 255) as i32];
-    n = n >> 8 as u64;
-  }
-  return crc ^ 0xffffffff;
-}
-
-pub function cksum_of(s: [u8]): u32 {
-  return cksum_new().update(s).finish();
-}
-```
-
-### `5 pub struct Crc32`
-
-```fern
-<<5 pub struct Crc32>>=
-pub struct Crc32 {
-  crc: u32,
-  len: u64,
-}
-```
-
-### `6 pub function crc32_new(): Crc32`
-
-```fern
-<<6 pub function crc32_new(): Crc32>>=
-pub function crc32_new(): Crc32 {
-  return Crc32 { crc: 0xffffffff, len: 0 as u64 };
-}
-```
-
-### `7 pub function (c: Crc32) update(chunk: [u8]): Crc32`
-
-```fern
-<<7 pub function (c: Crc32) update(chunk: [u8]): Crc32>>=
-pub function (c: Crc32) update(chunk: [u8]): Crc32 {
-  return Crc32 {
-    crc: __crc32_ieee_array(c.crc as i32, chunk) as u32,
-    len: c.len + chunk.len() as u64,
-  };
-}
-
-pub function (c: Crc32) byte_count(): u64 {
-  return c.len;
-}
-
-pub function (c: Crc32) finish(): u32 {
-  return c.crc ^ 0xffffffff;
-}
-
-pub function crc32_of(s: [u8]): u32 {
-  return crc32_new().update(s).finish();
-}
-```
-
-### `8 pub struct BsdSum`
-
-```fern
-<<8 pub struct BsdSum>>=
-pub struct BsdSum {
-  sum: u32,
-  len: u64,
-}
-```
-
-### `9 pub function bsd_sum_new(): BsdSum`
-
-```fern
-<<9 pub function bsd_sum_new(): BsdSum>>=
-pub function bsd_sum_new(): BsdSum {
-  return BsdSum { sum: 0, len: 0 as u64 };
-}
-
-pub function (s: BsdSum) update(chunk: [u8]): BsdSum {
-  return BsdSum { sum: __bsd_sum_bytes(chunk, s.sum as i32) as u32, len: s.len + chunk.len() as u64 };
-}
-
-pub function (s: BsdSum) finish(): u32 {
-  return s.sum;
-}
-
-pub function (s: BsdSum) byte_count(): u64 {
-  return s.len;
-}
-
-pub function (s: BsdSum) blocks(): u64 {
-  return (s.len + 1023 as u64) / (1024 as u64);
-}
-
-pub function bsd_sum_of(s: [u8]): u32 {
-  return bsd_sum_new().update(s).finish();
-}
-```
-
-### `10 pub struct SysvSum`
-
-```fern
-<<10 pub struct SysvSum>>=
-pub struct SysvSum {
-  sum: u32,
-  len: u64,
-}
-```
-
-### `11 pub function sysv_sum_new(): SysvSum`
-
-```fern
-<<11 pub function sysv_sum_new(): SysvSum>>=
-pub function sysv_sum_new(): SysvSum {
-  return SysvSum { sum: 0, len: 0 as u64 };
-}
-
-pub function (s: SysvSum) update(chunk: [u8]): SysvSum {
-  return SysvSum { sum: s.sum + __sum_bytes_array(chunk) as u32, len: s.len + chunk.len() as u64 };
-}
-
-pub function (s: SysvSum) finish(): u32 {
-  let r: u32 = (s.sum & 0xffff) + (s.sum >> 16);
-  return (r & 0xffff) + (r >> 16);
-}
-
-pub function (s: SysvSum) byte_count(): u64 {
-  return s.len;
-}
-
-pub function (s: SysvSum) blocks(): u64 {
-  return (s.len + 511 as u64) / (512 as u64);
-}
-
-pub function sysv_sum_of(s: [u8]): u32 {
-  return sysv_sum_new().update(s).finish();
-}
-
+<<2 pub function xxh64(bs: [u8], seed: u64): u64>>=
 pub function xxh64(bs: [u8], seed: u64): u64 {
   let n: i32 = bs.len();
   let at: i32 = 0;
@@ -282,10 +69,10 @@ pub function xxh64(bs: [u8], seed: u64): u64 {
 }
 ```
 
-### `12 function __xxh_tail(bs: [u8], at: i32, h: u64): u64`
+### `3 function __xxh_tail(bs: [u8], at: i32, h: u64): u64`
 
 ```fern
-<<12 function __xxh_tail(bs: [u8], at: i32, h: u64): u64>>=
+<<3 function __xxh_tail(bs: [u8], at: i32, h: u64): u64>>=
 function __xxh_tail(bs: [u8], at: i32, h: u64): u64 {
   let n: i32 = bs.len();
   while (at + 8 <= n) {
