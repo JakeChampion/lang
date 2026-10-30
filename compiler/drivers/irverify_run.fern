@@ -554,6 +554,27 @@ function selfhost_reuse(gate: i32, token: i32): ir.Op[] {
   ];
 }
 
+// selfhost_reuse(1, 1) with local clear set to zero before the reuse call.
+function cleared_reuse(clear: i32): ir.Op[] {
+  return [
+    ir.op_load_local(1),
+    ir.op_call_direct("__fern_rc_is_unique", 1),
+    ir.op_tee_local(3),
+    ir.op_if(0),
+    ir.op_load_local(1),
+    ir.op_store_local(4),
+    ir.op_else(),
+    ir.op_const_i32(0),
+    ir.op_store_local(4),
+    ir.op_end(),
+    ir.op_const_i32(0),
+    ir.op_store_local(clear),
+    ir.op_load_local(4),
+    ir.op_const_i32(3),
+    ir.op_call_direct("__fern_alloc_reuse", 2),
+  ];
+}
+
 function keep_reuse(gate: i32, token: i32, dec: i32): ir.Op[] {
   return [
     ir.op_load_local(gate),
@@ -868,6 +889,14 @@ function rc_checks(): i32 {
   let ur: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", unknown);
   if (ur.checked != 2 || ur.problems.len() != 1) {
     return 223;
+  }
+  let lc: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", concat_ops(cleared_reuse(1), selfhost_reuse(1, 1)));
+  if (lc.checked != 2 || lc.problems.len() != 0) {
+    return 233;
+  }
+  let oc: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", concat_ops(cleared_reuse(5), selfhost_reuse(1, 1)));
+  if (oc.checked != 2 || oc.problems.len() != 1) {
+    return 234;
   }
 
   let kc: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", keep_reuse(1, 1, 1));
