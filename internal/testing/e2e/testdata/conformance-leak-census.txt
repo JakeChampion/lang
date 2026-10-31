@@ -30,7 +30,6 @@
 a_builtin_method_does_not_see_the_programs_variants  0
 a_generic_enum_kept_generic_recurses_through_its_own_method 0
 a_generic_enum_payload_keeps_template_closures       0
-a_handler_fans_out_on_its_scheduler                  0
 a_handler_fans_out_on_its_scheduler                  2
 a_map_key_eq_may_take_its_keys_owned                 0
 a_module_calls_methods_its_imports_reach             0
