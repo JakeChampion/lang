@@ -3995,13 +3995,18 @@ func TestBareVariantResolvesAgainstExpectedType(t *testing.T) {
 	}
 	bad := map[string]string{
 		"no annotation": `function f(): i32 { let a = Foo; return 0; }`,
-		"comparison":    `function f(a: A): boolean { return a == Foo; }`,
 	}
 	for name, body := range bad {
 		err := checkSource(t, enums+body+"\nfunction main(): i32 { return 0; }")
 		if err == nil || !strings.Contains(err.Error(), "declared in multiple enums") {
 			t.Errorf("%s: want E036 with no expected type, got %v", name, err)
 		}
+	}
+	// The left operand of a comparison gives the right one its expected type.
+	// A has no Eq, so the check can still fail, but not on the variant.
+	cmp := enums + "function f(a: A): boolean { return a == Foo; }\nfunction main(): i32 { return 0; }"
+	if err := checkSource(t, cmp); err != nil && strings.Contains(err.Error(), "declared in multiple enums") {
+		t.Errorf("comparison: want the left operand to pick A, got %v", err)
 	}
 }
 

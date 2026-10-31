@@ -22,6 +22,12 @@ It also rejects a scalar lane as an ownership transfer.
 The runtime controls cover aliases, nested finalizers, strings and every boolean combination on x86-64, ARM64 and Wasm.
 
 The focused suites pass 432 results, with no skips.
+
+Some CLI probes used the older harness library.
+The 432 results do not establish complete qualification against the tested compiler library.
+The later main integration binds these probes to the intended library.
+The protocol gates and fixed checker profiles used their recorded library paths.
+
 Stage 3 and stage 4 are byte-identical.
 All four index-serial controls pass.
 The baseline compiler fails both new zero-tuple-allocation controls on x86-64, with exit 92.
