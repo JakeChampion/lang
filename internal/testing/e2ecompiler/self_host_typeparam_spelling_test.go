@@ -7,6 +7,19 @@ var typeParamSpellingCases = []struct {
 	src  string
 	want int
 }{
+	{"nested-builtin-enum-arguments", `enum Pair[A, B] { Both(A, B), Empty }
+function main(): i32 {
+    let p: Pair[Option[Result[f64, i32]], i64] = Both(Some(Ok(1)), 2);
+    match (p) {
+        Both(o, n) => { match (o) { Some(r) => { match (r) {
+            Ok(v) => { if (v / 2.0 == 0.5 && n == 2i64) { return 69; } },
+            Err(_) => {}
+        } }, None => {} } },
+        Empty => {}
+    }
+    return 0;
+}
+`, 69},
 	{"struct-named-like-map-key-param", `import "std/pmap" as pmap;
 import "std/option";
 import "std/i32";

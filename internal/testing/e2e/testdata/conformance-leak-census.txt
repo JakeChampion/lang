@@ -1,3 +1,6 @@
+# 2026-10-31: Seven rows measured on PR #13966 at 0f678261 with RC trace.
+# The handler fan-out retains two task-pool blocks. The task deadline case
+# retains four blocks. The pool records and their backing storage survive task-id reuse.
 # Which conformance fixtures leak, and by how much.
 #
 # One row per runnable fixture: its name, then the number of allocations
@@ -20,15 +23,20 @@
 # (asmcore.rt_src_task): the task table, one record per task id in use at
 # once and each record's save area, which a freed id hands to the next task
 # rather than returning to the heap. Three tasks run at once there.
+# Measured 2026-10-31 on PR #13966: ten pool blocks, including one timer
+# record per task. RC traces and debug symbols identify all ten blocks.
 #
 # Measured 2026-10-04: 569 fixtures, 567 clean.
 a_builtin_method_does_not_see_the_programs_variants  0
-a_generic_enum_kept_generic_recurses_through_its_own_method0
+a_generic_enum_kept_generic_recurses_through_its_own_method 0
+a_generic_enum_payload_keeps_template_closures       0
+a_handler_fans_out_on_its_scheduler                  2
+a_map_key_eq_may_take_its_keys_owned                 0
 a_module_calls_methods_its_imports_reach             0
 a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            0
 a_three_trait_bound_in_an_imported_module            0
-a_two_parameter_enum_takes_generic_instances_as_arguments0
+a_two_parameter_enum_takes_generic_instances_as_arguments 0
 a_variant_pattern_names_the_scrutinees_enum          0
 ackermann                                            0
 add_sub_pair                                         0
@@ -53,6 +61,7 @@ alloc_grows_when_retained                            0
 an_import_named_like_a_scalar_type                   0
 an_imported_module_does_not_see_the_programs_variants 0
 an_io_error_pattern_beside_std_net                   0
+an_unannotated_variant_takes_an_array_of_its_enum    0
 args                                                 0
 arith_precedence                                     0
 arr_slice_block_copy                                 0
@@ -1122,7 +1131,8 @@ target_branch_hides_a_gated_builtin                  0
 target_os_linux                                      0
 target_os_named                                      0
 target_os_wasi                                       0
-tasks_agree_without_a_scheduler                      7
+task_deadline_builtins_answer_at_once_in_the_interpreter 4
+tasks_agree_without_a_scheduler                      10
 tco_sum                                              0
 tcp_recv_waits_for_data                              0
 tcp_send_nonblocking_partial                         0
