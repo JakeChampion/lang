@@ -69,8 +69,9 @@ func TestSelfHostWasmIRStructDropEmitted(t *testing.T) {
 			if !tc.heap && !strings.Contains(body, "global.get $__cagg_base") {
 				t.Errorf("no static aggregate in %s\n%s", name, body)
 			}
-			if !bytes.Contains(wat, def) {
-				t.Fatalf("WAT never defines $__sem_release_%s\n%s", tc.drop, wat)
+			// Static aggregates have no release call. Remove their unused helpers.
+			if bytes.Contains(wat, def) != tc.heap {
+				t.Fatalf("release helper for %s: want %t\n%s", tc.drop, tc.heap, wat)
 			}
 			watFile := filepath.Join(dir, "drop_"+tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
