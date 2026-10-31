@@ -1,3 +1,5 @@
+# 2026-10-31: PR #13897 at 54001e2. CI run 41153255512, perf-x86_64.
+# Record the lane's measured changes after the lifetime and shared-helper repairs.
 # 2026-10-31: PR #13897 at 16e65aa. CI run 41151971877, perf-aarch64.
 # Record the 20 emitted-size rows that exceeded their pins after the lifetime and shared-helper repairs.
 # 2026-10-30: #13888 at 3ca7b6c3. x86_64 rows and aarch64 .text rows from a local perf-bench run.
@@ -160,11 +162,11 @@ x86_64/array_append.text	1139
 x86_64/array_append.ir	13371022
 x86_64/array_index.text	1140
 x86_64/array_index.ir	16315371
-x86_64/array_scale_f64.text	1266
+x86_64/array_scale_f64.text	1342
 x86_64/array_scale_f64.ir	21309613
 x86_64/array_with.ir	37759160
 x86_64/array_with.text	1295
-x86_64/ascii_scan.text	1368
+x86_64/ascii_scan.text	1444
 x86_64/ascii_scan.ir	37315742
 x86_64/byte_copy_append.text	1245
 x86_64/byte_copy_append.ir	13442091
@@ -181,49 +183,49 @@ x86_64/deflate_encode.text	7372
 x86_64/enum_match.text	1099
 x86_64/enum_match.ir	48825092
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	16323
+x86_64/http_hello.text	17650
 x86_64/http_hello.ir	22672408
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
-x86_64/map_int.text	8476
+x86_64/map_int.text	8650
 x86_64/map_int.ir	24563319
-x86_64/map_probe_chain.text	8480
+x86_64/map_probe_chain.text	8654
 x86_64/map_probe_chain.ir	241010587
-x86_64/map_string.text	9421
+x86_64/map_string.text	9591
 x86_64/map_string.ir	53037751	2
-x86_64/ordmap_insert.text	5568
+x86_64/ordmap_insert.text	5739
 x86_64/ordmap_insert.ir	82943055
-x86_64/pmap_insert.text	2782
+x86_64/pmap_insert.text	2955
 x86_64/pmap_insert.ir	53294866
-x86_64/pvec_with.text	2950
+x86_64/pvec_with.text	3123
 x86_64/pvec_with.ir	55174232
 x86_64/record_update.ir	37759160
 x86_64/record_update.text	1386
-x86_64/sort_inplace.text	1493
+x86_64/sort_inplace.text	1572
 x86_64/sort_inplace.ir	36583718
-x86_64/sort_ints.text	1971
+x86_64/sort_ints.text	2039
 x86_64/sort_ints.ir	28152806
-x86_64/sort_strings.text	3233
+x86_64/sort_strings.text	3305
 x86_64/sort_strings.ir	105033157
-x86_64/string_build.text	1994
+x86_64/string_build.text	2066
 x86_64/string_build.ir	43427016
-x86_64/string_count_byte.text	1180
+x86_64/string_count_byte.text	1255
 x86_64/string_count_byte.ir	135589355
-x86_64/string_find_byte.text	1590
+x86_64/string_find_byte.text	1666
 x86_64/string_find_byte.ir	43687425
-x86_64/string_rfind_byte.text	1761
+x86_64/string_rfind_byte.text	1837
 x86_64/string_rfind_byte.ir	43695768
-x86_64/string_scan.text	2242
+x86_64/string_scan.text	2314
 x86_64/string_scan.ir	52670002
 x86_64/string_slice.text	895
 x86_64/string_slice.ir	38460093
-x86_64/struct_drop.text	2416
+x86_64/struct_drop.text	2488
 x86_64/struct_drop.ir	205020598
 x86_64/tokenize.text	1198
 x86_64/tokenize.ir	37860093
-x86_64/utf8_ingest_unchecked.text	8343
+x86_64/utf8_ingest_unchecked.text	8606
 x86_64/utf8_ingest_unchecked.ir	2207993
-x86_64/utf8_ingest_validated.text	9013
+x86_64/utf8_ingest_validated.text	9276
 x86_64/utf8_ingest_validated.ir	5262594
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
