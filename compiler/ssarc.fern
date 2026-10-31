@@ -5587,6 +5587,9 @@ function builder_builtin_site(own r: irtables.LowerState, ins: ssa.SInst): Lower
   if (ins.str == "buf_push_u64") {
     return Lowered { found: true, r: emit(r, ir.op_buf_push_u64()) };
   }
+  if (ins.str == "buf_push_decimal") {
+    return Lowered { found: true, r: emit(r, ir.op_buf_push_decimal()) };
+  }
   if (ins.str == "buf_len") {
     return Lowered { found: true, r: emit(r, ir.op_buf_len()) };
   }

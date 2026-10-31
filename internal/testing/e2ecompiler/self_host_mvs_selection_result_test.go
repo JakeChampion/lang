@@ -45,7 +45,7 @@ function main(): i32 {
   if(reason(absent)!="registry has no source for foo@1.0.0"){return 12;}
   let partial=mvs.State{...empty,ix:ix,names:["bar","missing"],vers:["2.0.0","1.0.0"]};
   if(reason(partial)!="registry has no source for missing@1.0.0"){return 13;}
-  let zero=mvs.Index{dir:"",entries:[mvs.Entry{pkg:"zero",ver:"1.0.0",src:mvs.Source{path:"",url:"",hash:""}}]};
+  let zero=mvs.Index{dir:"",serial:"",entries:[mvs.Entry{pkg:"zero",ver:"1.0.0",src:mvs.Source{path:"",url:"",hash:""}}]};
   match(mvs.index_source(zero,"zero","1.0.0")){
     Some(src)=>{if(src.path!="" || src.url!="" || src.hash!=""){return 14;}},
     None=>{return 15;}

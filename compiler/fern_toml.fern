@@ -673,7 +673,15 @@ pub struct LockEntry {
   hash: string,
 }
 
-pub function parse_lock(src: string): Result[LockEntry[], string] {
+// index_serial is the serial of the index the lock was resolved from,
+// "" when that index had none.
+pub struct Lock {
+  index_serial: string,
+  entries: LockEntry[],
+}
+
+pub function parse_lock(src: string): Result[Lock, string] {
+  let serial: string = "";
   let out: LockEntry[] = [];
   let cur: Option[LockEntry] = None;
   let lines: string[] = util.split_char(src, b'\n');
@@ -692,7 +700,7 @@ pub function parse_lock(src: string): Result[LockEntry[], string] {
       cur = Some(LockEntry { name: "", version: "", path: "", url: "", hash: "" });
       continue;
     }
-    let entry: LockEntry = match (cur) { Some(e) => e, None => { return Err(lock_line(li, docsummary.quote(line) + " outside a [[package]] entry")); } };
+    let entry: LockEntry = match (cur) { Some(e) => e, None => { serial = match (lock_top_level(line, serial)) { Ok(value) => value, Err(message) => { return Err(lock_line(li, message)); } }; continue; } };
     let eq: i32 = index_of(line, b'=', 0);
     if (eq < 0) {
       return Err(lock_line(li, "expected `key = value`"));
@@ -706,7 +714,42 @@ pub function parse_lock(src: string): Result[LockEntry[], string] {
     let complete: LockEntry = match (complete_lock_entry(entry)) { Ok(e) => e, Err(message) => { return Err(message); } };
     out = out.append(complete);
   }
-  return Ok(unique_lock_entries(out));
+  return Ok(Lock { index_serial: serial, entries: unique_lock_entries(out) });
+}
+
+// A line above the first entry: only `index_serial = N`.
+function lock_top_level(line: string, serial: string): Result[string, string] {
+  let eq: i32 = index_of(line, b'=', 0);
+  if (eq < 0 || util.trim(slice_unchecked(line, 0, eq)) != "index_serial") {
+    return Err(docsummary.quote(line) + " outside a [[package]] entry");
+  }
+  if (serial.len() > 0) {
+    return Err("index_serial given twice");
+  }
+  let v: string = util.trim(slice_unchecked(line, eq + 1, line.len()));
+  if let Err(message) = validate_serial(v) {
+    return Err("index_serial " + message);
+  }
+  return Ok(v);
+}
+
+// The spelling of an index serial: 1 to 18 decimal digits, no leading zero.
+pub function validate_serial(s: string): Result[string, string] {
+  let ok: boolean = s.len() >= 1 && s.len() <= 18 && (s == "0" || s[0] != b'0');
+  let i: i32 = 0;
+  while (ok && i < s.len()) {
+    ok = s[i] >= b'0' && s[i] <= b'9';
+    i = i + 1;
+  }
+  if (!ok) {
+    return Err("must be 1 to 18 decimal digits with no leading zero, got " + docsummary.quote(s));
+  }
+  return Ok(s);
+}
+
+// a < b for two valid serials.
+pub function serial_below(a: string, b: string): boolean {
+  return a.len() < b.len() || a.len() == b.len() && util.str_less(a, b);
 }
 
 function lock_line(line: i32, message: string): string {

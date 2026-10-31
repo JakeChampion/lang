@@ -44,6 +44,9 @@ func runResolve(start string) error {
 	if err != nil {
 		return err
 	}
+	if err := checkIndexSerial(indexPath, ix.Serial, root.Dir); err != nil {
+		return err
+	}
 
 	depsOf := func(pkg string, v mvs.Version, src mvs.Source) (map[string]string, error) {
 		d, err := materialize(pkg, v, src)
@@ -64,7 +67,7 @@ func runResolve(start string) error {
 	if err != nil {
 		return err
 	}
-	if err := mvs.WriteLock(root.Dir, sel); err != nil {
+	if err := mvs.WriteLock(root.Dir, ix.Serial, sel); err != nil {
 		return err
 	}
 	fmt.Fprintf(os.Stderr, "resolve: %d package(s) pinned in %s\n", len(sel), filepath.Join(root.Dir, mvs.LockFileName))
@@ -83,6 +86,26 @@ func materialize(pkg string, v mvs.Version, src mvs.Source) (string, error) {
 		return "", fmt.Errorf("%s@%s: %w", pkg, v, err)
 	}
 	return dir, nil
+}
+
+// checkIndexSerial refuses an index older than the one the existing lock
+// was resolved from.
+func checkIndexSerial(path, serial, dir string) error {
+	lock, err := mvs.ReadLock(dir)
+	if err != nil {
+		return err
+	}
+	if lock == nil || lock.IndexSerial == "" {
+		return nil
+	}
+	lockPath := filepath.Join(dir, mvs.LockFileName)
+	if serial == "" {
+		return fmt.Errorf("index %s: has no serial but %s records index serial %s", path, lockPath, lock.IndexSerial)
+	}
+	if mvs.SerialBelow(serial, lock.IndexSerial) {
+		return fmt.Errorf("index %s: serial %s is below index serial %s that %s records", path, serial, lock.IndexSerial, lockPath)
+	}
+	return nil
 }
 
 // loadIndex reads the index and, when the manifest names an index_key,

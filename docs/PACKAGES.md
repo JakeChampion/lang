@@ -252,6 +252,14 @@ available versions to a source:
 "2.0.0" = { path = "bar-2.0.0" }
 ```
 
+An index can start with a **serial**, `serial = 42`, above the first
+section: 1 to 18 decimal digits with no leading zero. The publisher
+increases it with each release of the index. `fern -resolve` writes it
+to `fern.lock` as `index_serial = 42`, and a later resolve refuses an
+index whose serial is below the recorded serial, or that has no serial.
+With `index_key`, the signature covers the serial, so a mirror cannot
+serve an older signed index after a lock records a newer one.
+
 `fern -resolve [DIR]` runs MVS over the index (expanding each selected
 version's own versioned deps to a fixpoint), fetches + verifies any
 url-sourced versions into the content-addressed store, and writes the

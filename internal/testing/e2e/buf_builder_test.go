@@ -135,6 +135,54 @@ const bufPushU64Probe = `function main(): i32 {
 }
 `
 
+const bufPushDecimalProbe = `function reference(n: u64): string {
+    if (n == 0 as u64) { return "0"; }
+    let out: string = "";
+    let v: u64 = n;
+    while (v > 0 as u64) {
+        let d: u64 = v % 10 as u64;
+        out = slice_unchecked("0123456789", d as i32, d as i32 + 1) + out;
+        v = v / 10 as u64;
+    }
+    return out;
+}
+function check(b: usize, n: u64): i32 {
+    buf_push_decimal(b, n);
+    if (buf_take(b) != reference(n)) { return 1; }
+    return 0;
+}
+function main(): i32 {
+    let b: usize = buf_new(1);
+    if (check(b, 0 as u64) != 0) { return 1; }
+    let p: u64 = 1;
+    let k: i32 = 0;
+    while (k < 19) {
+        p = p * 10 as u64;
+        if (check(b, p) != 0) { return 10 + k; }
+        if (check(b, p - 1 as u64) != 0) { return 40 + k; }
+        if (check(b, p + 1 as u64) != 0) { return 70 + k; }
+        k = k + 1;
+    }
+    if (check(b, 18446744073709551615 as u64) != 0) { return 2; }
+    if (check(b, 9223372036854775808 as u64) != 0) { return 3; }
+    buf_push_byte(b, 65);
+    buf_push_decimal(b, 4096 as u64);
+    buf_push(b, "z");
+    if (buf_take(b) != "A4096z") { return 4; }
+    let want: string = "";
+    let n: i32 = 0;
+    while (n < 2000) {
+        buf_push_decimal(b, n as u64 * 7919 as u64);
+        buf_push_byte(b, 44);
+        want = want + reference(n as u64 * 7919 as u64) + ",";
+        n = n + 1;
+    }
+    if (buf_take(b) != want) { return 5; }
+    buf_free(b);
+    return 0;
+}
+`
+
 func TestBufBuilder(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 	probes := []struct {
@@ -145,6 +193,7 @@ func TestBufBuilder(t *testing.T) {
 		{"two-builders", bufTwoBuildersProbe},
 		{"nested", bufNestedProbe},
 		{"push-u64", bufPushU64Probe},
+		{"push-decimal", bufPushDecimalProbe},
 	}
 	for _, p := range probes {
 		t.Run(p.name, func(t *testing.T) {

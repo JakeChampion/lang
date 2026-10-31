@@ -896,6 +896,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{bufH, ast.NumberType{Width: 64, Signed: false}},
 		Result: ast.VoidType{},
 	}
+	c.info.FuncSigs["buf_push_decimal"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.NumberType{Width: 64, Signed: false}},
+		Result: ast.VoidType{},
+	}
 	c.info.FuncSigs["buf_len"] = &ast.FuncType{
 		Params: []ast.Type{bufH},
 		Result: ast.NumberType{},
