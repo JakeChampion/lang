@@ -80,7 +80,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "core/int";
 import "std/http/huffman";
 import "std/string";
 import "std/error";
@@ -756,7 +755,7 @@ pub function (e: Encoder) put_status(own out: u8[], code: i32): u8[] {
       return __put_int(out, 192, 6, STATUS_AT[i] as i64);
     }
   }
-  return e.__put_line(out, ":status", int.int_to_string(code), false);
+  return e.__put_line(out, ":status", code.to_string(), false);
 }
 
 // put_length appends the content-length line for n >= 0, spelling n's

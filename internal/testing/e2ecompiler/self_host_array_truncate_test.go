@@ -5,7 +5,7 @@ import "testing"
 const truncateProlog = `struct P { name: string, n: i32 }
 struct Holder { ps: P[], tag: string }
 function digits(i: i32): string {
-  return "d" + int.int_to_string(i);
+  return "d" + i.to_string();
 }
 function people(n: i32): P[] {
   let ps: P[] = [];

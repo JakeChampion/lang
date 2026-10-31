@@ -31,7 +31,6 @@ import "std/async";
 import "std/time";
 import "std/url";
 import "std/string";
-import "core/int";
 
 const CONNECTING: i32 = 0;
 
@@ -105,7 +104,7 @@ function plan(raw: string, parsed: cli.CliArgs): Result[Plan, string] {
   let rate: i64 = option_i64(parsed, "rate", 100)?;
   let connections: i64 = option_i64(parsed, "connections", 16)?;
   let duration: i64 = option_i64(parsed, "duration", 10)?;
-  let request: string = "GET " + target + " HTTP/1.1\r\nHost: " + u.host + ":" + int.int_to_string(port) + "\r\nUser-Agent: fernload\r\n\r\n";
+  let request: string = "GET " + target + " HTTP/1.1\r\nHost: " + u.host + ":" + port.to_string() + "\r\nUser-Agent: fernload\r\n\r\n";
   return Ok(Plan { addr: net.socket_addr(ip, port), request: request.bytes(), rate: rate, connections: connections as i32, duration_ns: duration * 1000000000 });
 }
 

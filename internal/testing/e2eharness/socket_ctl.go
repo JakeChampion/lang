@@ -4,7 +4,7 @@ func SocketCtlProbe() string {
 	return `import "core/int";
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 
@@ -87,7 +87,7 @@ import "std/async";
 import "std/time";
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 

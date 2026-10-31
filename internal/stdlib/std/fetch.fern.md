@@ -193,7 +193,6 @@ import "std/crypto";
 import "std/hex";
 import "std/envflag";
 import "std/http/h2";
-import "core/int";
 import "core/cmp";
 ```
 
@@ -456,7 +455,7 @@ function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] 
   let target: string = __request_target(u)?;
   let authority: string = "";
   if (tls) {
-    authority = u.host + ":" + int.int_to_string(port);
+    authority = u.host + ":" + port.to_string();
   }
   match (__proxy_for_url(policy.proxies, u)) {
     Some(spec) => {
@@ -567,7 +566,7 @@ function __host_field(host: string, port: i32, tls: boolean): string {
     default_port = 443;
   }
   if (port != default_port) {
-    return h + ":" + int.int_to_string(port);
+    return h + ":" + port.to_string();
   }
   return h;
 }
@@ -598,7 +597,7 @@ function __wire(req: Request, t: __Target, body: u8[]): u8[] {
   }
   if (__carries_length(req, body.len())) {
     buf_push(b, "Content-Length: ");
-    buf_push(b, int.int_to_string(body.len()));
+    buf_push(b, body.len().to_string());
     buf_push(b, "\r\n");
   }
   if (__asks_codings(req)) {
@@ -626,7 +625,7 @@ function __sent_fields(req: Request, t: __Target, body_len: i32): HeaderMap {
     i = i + 1;
   }
   if (__carries_length(req, body_len)) {
-    out = out.append("Content-Length", int.int_to_string(body_len));
+    out = out.append("Content-Length", body_len.to_string());
   }
   if (__asks_codings(req)) {
     out = out.append("Accept-Encoding", "gzip, zstd, br");
@@ -1194,7 +1193,7 @@ function __mail_answered(sh: Shared, fd: i32, events: h2.Event[], streams: i32):
         streams = streams - __mail_deliver(sh, fd, sid, Ok(Answer { status: resp.status, headers: http.end_to_end(resp.headers), body: resp.body_bytes(), trailers: resp.trailers }));
       },
       h2.Reset(sid, code) => {
-        streams = streams - __mail_deliver(sh, fd, sid, Err(Protocol("HTTP/2: the server reset the stream with code " + int.int_to_string(code))));
+        streams = streams - __mail_deliver(sh, fd, sid, Err(Protocol("HTTP/2: the server reset the stream with code " + code.to_string())));
       },
       _ => {}
     }
@@ -1318,7 +1317,7 @@ function __place_key(p: __Place): string {
   if (p.guard) {
     route = "global ";
   }
-  let key: string = route + p.host + " " + int.int_to_string(p.port);
+  let key: string = route + p.host + " " + p.port.to_string();
   if (p.tls.len() > 0) {
     key = key + " tls " + p.tls;
   }
@@ -1696,7 +1695,7 @@ function __permitted(policy: Policy, host: string, port: i32): Result[i32, Fetch
           return Ok(port);
         }
       }
-      return Err(Blocked(host + ":" + int.int_to_string(port) + " is not on the allow-list"));
+      return Err(Blocked(host + ":" + port.to_string() + " is not on the allow-list"));
     }
   }
   return Ok(port);
@@ -1719,7 +1718,7 @@ pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[
       return Ok(resp);
     }
     if (hops >= req.redirects) {
-      return Err(Redirect("more than " + int.int_to_string(req.redirects) + " redirects"));
+      return Err(Redirect("more than " + req.redirects.to_string() + " redirects"));
     }
     hops = hops + 1;
     cur = __next_hop(cur, resp)?;
@@ -1778,7 +1777,7 @@ function __next_hop(cur: Request, resp: HttpResponse): Result[Request, FetchErro
       location = l;
     },
     None => {
-      return Err(Redirect("a " + int.int_to_string(resp.status) + " without a Location"));
+      return Err(Redirect("a " + resp.status.to_string() + " without a Location"));
     }
   }
   let target: string = "";
@@ -2160,7 +2159,7 @@ function __h2_answer(events: h2.Event[], stream: i32): Option[Result[HttpRespons
       },
       h2.Reset(sid, code) => {
         if (sid == stream) {
-          return Some(Err(Protocol("HTTP/2: the server reset the stream with code " + int.int_to_string(code))));
+          return Some(Err(Protocol("HTTP/2: the server reset the stream with code " + code.to_string())));
         }
       },
       h2.Closed(code, reason) => {
@@ -2820,7 +2819,7 @@ function __decoded(resp: HttpResponse, req: Request): Result[HttpResponse, Fetch
     return Ok(resp);
   }
   if (codings.len() > req.decoding.depth) {
-    return Err(Decode("content codings past the depth of " + int.int_to_string(req.decoding.depth)));
+    return Err(Decode("content codings past the depth of " + req.decoding.depth.to_string()));
   }
   let encoded: i32 = body.len();
   let left: i32 = codings.len();
@@ -2830,7 +2829,7 @@ function __decoded(resp: HttpResponse, req: Request): Result[HttpResponse, Fetch
   }
   let allowed: i64 = __allowed(encoded, req.decoding.ratio);
   if (body.len() as i64 > allowed) {
-    return Err(Decode("a body of " + int.int_to_string(body.len()) + " bytes from " + int.int_to_string(encoded) + " encoded, past the " + int.int_to_string(allowed as i32) + " allowed"));
+    return Err(Decode("a body of " + body.len().to_string() + " bytes from " + encoded.to_string() + " encoded, past the " + (allowed as i32).to_string() + " allowed"));
   }
   return Ok(HttpResponse { ...resp, body: BodyBytes(body), headers: __without(resp.headers, ["content-encoding", "content-length"]) });
 }

@@ -4,7 +4,6 @@ import "std/tls/keyschedule";
 import "std/hex";
 import "std/codec";
 import "std/i64";
-import "core/int";
 
 function dcid(): u8[] {
   return __codec_bytes(hex.decode("8394c8f03e515708"));
@@ -42,7 +41,7 @@ function opened(wire: u8[], k: packet.Keys, largest: i64): string {
     Ok(h) => {
       match (packet.open(wire, h, k, largest)) {
         Ok(o) => {
-          return "dcid " + hex.encode(h.dcid) + " scid " + hex.encode(h.scid) + " end " + int.int_to_string(h.end) + " pn " + o.pn.to_string() + " payload " + int.int_to_string(o.payload.len()) + " reserved " + o.reserved_ok.to_string();
+          return "dcid " + hex.encode(h.dcid) + " scid " + hex.encode(h.scid) + " end " + h.end.to_string() + " pn " + o.pn.to_string() + " payload " + o.payload.len().to_string() + " reserved " + o.reserved_ok.to_string();
         },
         Err(e) => {
           return "open: " + e.message();
@@ -61,7 +60,7 @@ function test_client_initial(): test.TestOutcome {
   let sealed: u8[] = packet.seal_long(packet.Long { kind: packet.Initial, dcid: dcid(), scid: [], token: [], pn: 2 as i64, pn_len: 4 }, client_payload(), k);
   let same: boolean = hex.encode(sealed) == client_packet();
   let back: string = opened(__codec_bytes(hex.decode(client_packet())), k, 0 - 1 as i64);
-  return test.assert_eq(same.to_string() + " " + int.int_to_string(sealed.len()) + " | " + back, "true 1200 | dcid 8394c8f03e515708 scid  end 1200 pn 2 payload 1162 reserved true");
+  return test.assert_eq(same.to_string() + " " + sealed.len().to_string() + " | " + back, "true 1200 | dcid 8394c8f03e515708 scid  end 1200 pn 2 payload 1162 reserved true");
 }
 
 function test_server_initial(): test.TestOutcome {
@@ -109,7 +108,7 @@ function test_retry(): test.TestOutcome {
 }
 
 function test_packet_numbers(): test.TestOutcome {
-  let got: string = int.int_to_string(packet.pn_len(11291906 as i64, 11266227 as i64)) + " " + int.int_to_string(packet.pn_len(11331838 as i64, 11266227 as i64)) + " " + int.int_to_string(packet.pn_len(0 as i64, 0 - 1 as i64)) + " " + packet.decode_pn(2821665002 as i64, 39730 as i64, 16).to_string() + " " + packet.decode_pn(0 - 1 as i64, 0 as i64, 8).to_string() + " " + packet.decode_pn(255 as i64, 1 as i64, 8).to_string();
+  let got: string = packet.pn_len(11291906 as i64, 11266227 as i64).to_string() + " " + packet.pn_len(11331838 as i64, 11266227 as i64).to_string() + " " + packet.pn_len(0 as i64, 0 - 1 as i64).to_string() + " " + packet.decode_pn(2821665002 as i64, 39730 as i64, 16).to_string() + " " + packet.decode_pn(0 - 1 as i64, 0 as i64, 8).to_string() + " " + packet.decode_pn(255 as i64, 1 as i64, 8).to_string();
   return test.assert_eq(got, "2 3 1 2821692210 0 257");
 }
 
@@ -152,12 +151,12 @@ function test_coalesced(): test.TestOutcome {
   let got: string = "";
   match (packet.parse(datagram, 0, 8)) {
     Ok(h1) => {
-      got = int.int_to_string(h1.end);
+      got = h1.end.to_string();
       match (packet.parse(datagram, h1.end, 8)) {
         Ok(h2) => {
           match (packet.open(datagram, h2, kh, 6 as i64)) {
             Ok(o) => {
-              got = got + " handshake pn " + o.pn.to_string() + " " + hex.encode(o.payload) + " end " + int.int_to_string(h2.end);
+              got = got + " handshake pn " + o.pn.to_string() + " " + hex.encode(o.payload) + " end " + h2.end.to_string();
             },
             Err(e) => {
               got = got + " " + e.message();
@@ -173,7 +172,7 @@ function test_coalesced(): test.TestOutcome {
       got = e.message();
     }
   }
-  return test.assert_eq(got + " of " + int.int_to_string(datagram.len()), int.int_to_string(a.len()) + " handshake pn 7 010100 end " + int.int_to_string(datagram.len()) + " of " + int.int_to_string(datagram.len()));
+  return test.assert_eq(got + " of " + datagram.len().to_string(), a.len().to_string() + " handshake pn 7 010100 end " + datagram.len().to_string() + " of " + datagram.len().to_string());
 }
 
 function test_key_update(): test.TestOutcome {
@@ -216,7 +215,7 @@ function test_malformed(): test.TestOutcome {
   for c in cases {
     match (packet.parse(__codec_bytes(hex.decode(c)), 0, 8)) {
       Ok(h) => {
-        got = got + "ok end " + int.int_to_string(h.end) + ";";
+        got = got + "ok end " + h.end.to_string() + ";";
       },
       Err(e) => {
         got = got + e.message() + ";";

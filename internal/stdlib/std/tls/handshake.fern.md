@@ -156,7 +156,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "core/int";
 import "std/crypto";
 import "std/tls/keyschedule";
 import "std/tls/keyshare";
@@ -337,13 +336,13 @@ pub function (e: HandshakeError) message(): string {
       return k.message();
     },
     Level(l) => {
-      return "tls handshake: handshake bytes at encryption level " + int.int_to_string(l) + " out of turn";
+      return "tls handshake: handshake bytes at encryption level " + l.to_string() + " out of turn";
     },
     OutOfOrder(t) => {
-      return "tls handshake: unexpected handshake message " + int.int_to_string(t);
+      return "tls handshake: unexpected handshake message " + t.to_string();
     },
     UnexpectedRecord(t) => {
-      return "tls handshake: unexpected record of type " + int.int_to_string(t);
+      return "tls handshake: unexpected record of type " + t.to_string();
     },
     Illegal(w) => {
       return "tls handshake: illegal " + w;
@@ -352,7 +351,7 @@ pub function (e: HandshakeError) message(): string {
       return "tls handshake: missing " + w;
     },
     UnsupportedExtension(k) => {
-      return "tls handshake: extension " + int.int_to_string(k) + " was not offered";
+      return "tls handshake: extension " + k.to_string() + " was not offered";
     },
     NotTls13 => {
       return "tls handshake: the peer does not speak TLS 1.3";
@@ -373,10 +372,10 @@ pub function (e: HandshakeError) message(): string {
       return "tls handshake: the peer's Finished does not verify";
     },
     PeerAlert(d) => {
-      return "tls handshake: the peer sent alert " + int.int_to_string(d);
+      return "tls handshake: the peer sent alert " + d.to_string();
     },
     Entropy(n, want) => {
-      return "tls handshake: " + int.int_to_string(n) + " bytes of entropy, want " + int.int_to_string(want);
+      return "tls handshake: " + n.to_string() + " bytes of entropy, want " + want.to_string();
     },
     BadConfig(w) => {
       return "tls handshake: " + w;

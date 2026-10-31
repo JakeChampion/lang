@@ -14,12 +14,11 @@ import (
 func StreamingBodyServerSource(path string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
-import "core/int";
 import "std/platform";
 
 function chunk(i: i32): Option[u8[]] {
     if (i >= 5) { return None; }
-    return Some(("chunk " + int.int_to_string(i) + "\n").bytes());
+    return Some(("chunk " + i.to_string() + "\n").bytes());
 }
 
 function sparse(i: i32): Option[u8[]] {

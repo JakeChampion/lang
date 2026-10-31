@@ -185,7 +185,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "std/i32";
-import "core/int";
 import "core/map";
 import "std/string";
 import "std/headers";
@@ -378,7 +377,7 @@ pub function problem(status: i32, title: string, detail: string): HttpResponse {
   if (t.len() == 0) {
     t = status_text(status);
   }
-  let body: string = "{\"type\":\"about:blank\",\"title\":\"" + json.escape(t) + "\",\"status\":" + int.int_to_string(status);
+  let body: string = "{\"type\":\"about:blank\",\"title\":\"" + json.escape(t) + "\",\"status\":" + status.to_string();
   if (detail.len() > 0) {
     body = body + ",\"detail\":\"" + json.escape(detail) + "\"";
   }
@@ -443,7 +442,7 @@ impl ToResponse for HttpError {
 
 impl ToResponse for json.JsonError {
   function to_response(self: json.JsonError): HttpResponse {
-    return problem(400, "Malformed JSON", self.message + " at line " + int.int_to_string(self.line) + ", column " + int.int_to_string(self.col));
+    return problem(400, "Malformed JSON", self.message + " at line " + self.line.to_string() + ", column " + self.col.to_string());
   }
 }
 
@@ -2411,7 +2410,7 @@ pub function serialize_response_to(method: string, version: string, resp: HttpRe
   let body: string = "";
   if (!no_body) {
     body = resp.body_string();
-    framing = "Content-Length: " + int.int_to_string(body.len()) + "\r\n";
+    framing = "Content-Length: " + body.len().to_string() + "\r\n";
   }
   let b: usize = buf_new(256);
   serialize_response_head_into(b, version, resp, keep_alive, framing);
@@ -2578,7 +2577,7 @@ pub function (r: HttpRequest) with_header(name: string, value: string): HttpRequ
 }
 
 pub function (r: HttpRequest) with_body(body: string): HttpRequest {
-  return HttpRequest { ...r, body: stream.from_bytes(body.bytes()), headers: r.headers.set("Content-Length", int.int_to_string(body.len())) };
+  return HttpRequest { ...r, body: stream.from_bytes(body.bytes()), headers: r.headers.set("Content-Length", body.len().to_string()) };
 }
 
 pub function (r: HttpRequest) with_json(body: string): HttpRequest {
