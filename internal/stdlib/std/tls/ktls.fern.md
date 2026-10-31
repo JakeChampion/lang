@@ -28,7 +28,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<6 pub enum Read>>
 
-<<7 pub function recv(fd: i32, wait: Duration): Read>>
+<<7 pub function read(fd: i32, wait: Duration): Read>>
 
 <<8 function __ktls(fd: i32, op: i32, arg: i32, data: u8[]): i32>>
 ```
@@ -139,11 +139,11 @@ function __send_all(fd: i32, data: u8[]): i32 {
 pub enum Read { Opened(i32, u8[]), StreamEnded, NothingYet, WaitCancelled, ReadFailed(i32) }
 ```
 
-### `7 pub function recv(fd: i32, wait: Duration): Read`
+### `7 pub function read(fd: i32, wait: Duration): Read`
 
 ```fern
-<<7 pub function recv(fd: i32, wait: Duration): Read>>=
-pub function recv(fd: i32, wait: Duration): Read {
+<<7 pub function read(fd: i32, wait: Duration): Read>>=
+pub function read(fd: i32, wait: Duration): Read {
   let limit: Duration = wait;
   if (limit.cmp(time.duration_millis(1)) < 0) {
     limit = time.duration_millis(1);
