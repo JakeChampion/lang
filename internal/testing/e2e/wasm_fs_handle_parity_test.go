@@ -14,7 +14,7 @@ function main(): i32 {
     match (open_reader("closed.txt")) {
         Err(_) => { return 2; },
         Ok(r) => {
-            match (r.close()) { Err(_) => { return 3; }, Ok(_) => {} }
+            unsafe { match (r.close_unchecked()) { Err(_) => { return 3; }, Ok(_) => {} } }
             match (io.read_line(r)) { Ok(_) => { return 4; }, Err(_) => {} }
             match (r.read_chunk(4)) { Ok(_) => { return 5; }, Err(_) => {} }
             match (r.read_chunk_bytes(4)) { Ok(_) => { return 6; }, Err(_) => {} }
@@ -30,7 +30,7 @@ function main(): i32 {
     match (open_writer("closed.txt")) {
         Err(_) => { return 20; },
         Ok(w) => {
-            match (w.close()) { Err(_) => { return 21; }, Ok(_) => {} }
+            unsafe { match (w.close_unchecked()) { Err(_) => { return 21; }, Ok(_) => {} } }
             match (w.write("x")) { Ok(_) => { return 22; }, Err(_) => {} }
             match (w.write_some("x")) { Ok(_) => { return 23; }, Err(_) => {} }
             match (w.write_bytes(bs)) { Ok(_) => { return 24; }, Err(_) => {} }

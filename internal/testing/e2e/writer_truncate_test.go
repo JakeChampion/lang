@@ -31,7 +31,7 @@ func writerTruncateSource(dir string, perms bool, closed bool) string {
 		shut = `    match (open_writer(` + at("closed.txt") + `)) {
         Ok(w) => {
             match (w.write("abc")) { Err(e) => { return 13; }, Ok(_) => {} }
-            w.close();
+            unsafe { w.close_unchecked(); }
             match (w.truncate(0 as i64)) { Err(e) => { }, Ok(_) => { return 14; } }
         },
         Err(e) => { return 15; }

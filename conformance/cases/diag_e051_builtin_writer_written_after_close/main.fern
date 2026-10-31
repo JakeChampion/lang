@@ -1,0 +1,22 @@
+// spec: RH-25
+// The built-in close consumes its Writer, so a close is not the Writer's last
+// use when a write follows it. The close is refused at compile time.
+
+function write_after_close(path: string): Result[void, IoError] {
+  let w: Writer = open_writer(path)?;
+  w.close()?;
+  w.write("late")?;
+  return Ok(());
+}
+
+function main(): i32 {
+  match (write_after_close("late.txt")) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(_) => {
+      return 1;
+    }
+  }
+  return 2;
+}

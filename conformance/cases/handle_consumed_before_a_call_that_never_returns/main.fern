@@ -1,0 +1,37 @@
+// spec: RH-28
+// A call to a function that never returns ends the path. An own parameter
+// consumed by such a call inside a loop is not used again on a later round,
+// and a read after the call on another path is not a use after the move.
+
+import "std/i32";
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): void {
+  print("closed " + h.fd.to_string());
+}
+
+function fatal(own h: Handle, msg: string): void {
+  h.close();
+  print(msg);
+  exit(0);
+}
+
+function fill(own h: Handle, stop: i32): Handle {
+  let i: i32 = 0;
+  while (i < 3) {
+    if (i == stop) {
+      fatal(h, "stop");
+    }
+    i = i + 1;
+  }
+  return h;
+}
+
+function main(): i32 {
+  let h: Handle = fill(Handle { fd: 3 }, 5);
+  h.close();
+  let g: Handle = fill(Handle { fd: 4 }, 1);
+  g.close();
+  return 0;
+}

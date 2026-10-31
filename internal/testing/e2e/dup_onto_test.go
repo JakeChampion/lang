@@ -21,13 +21,15 @@ func dupOntoSource(dir string, wasm bool) string {
 
 	readerArm := `match (r.dup_onto(7))    { Ok(_) => {}, Err(_) => { return 11; } }
             match (r.dup_onto(0 - 1)) { Ok(_) => { return 12; }, Err(_) => {} }`
-	closedArm := `match (r.dup_onto(7))    { Ok(_) => { return 13; }, Err(_) => {} }`
+	closedArm := `unsafe { r.close_unchecked(); }
+            match (r.dup_onto(7))    { Ok(_) => { return 13; }, Err(_) => {} }`
 	writerArm := `match (w.dup_onto(1))    { Ok(_) => {}, Err(_) => { return 21; } }
             print("redirected");`
 	if wasm {
 		readerArm = `match (r.dup_onto(7))    { Ok(_) => { return 11; }, Err(_) => {} }
             match (r.dup_onto(0 - 1)) { Ok(_) => { return 12; }, Err(_) => {} }`
-		closedArm = "// a dropped preview-2 descriptor traps rather than answering EBADF"
+		closedArm = `r.close();
+            // a dropped preview-2 descriptor traps rather than answering EBADF`
 		writerArm = `match (w.dup_onto(1))    { Ok(_) => { return 21; }, Err(_) => {} }`
 	}
 
@@ -39,7 +41,6 @@ func dupOntoSource(dir string, wasm bool) string {
     match (open_reader(%[1]q)) {
         Ok(r) => {
             %[2]s
-            r.close();
             %[3]s
         },
         Err(_) => { return 14; }
