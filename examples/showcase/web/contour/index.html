@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      name="description"
+      content="A two-colour terrain flyover powered by Fern WebAssembly. Fly through yellow pixel mountains on a blue sky."
+    />
+    <title>Contour · Fern, in action</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/assets/showcase.css" />
+    <script src="/assets/theme.js"></script>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body class="app-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="app-nav">
+      <a class="brand" href="/"
+        ><span class="brand-mark" aria-hidden="true"></span
+        ><span class="brand-name">Fern</span
+        ><span class="brand-suffix">in action</span></a
+      >
+      <nav>
+        <a href="/">All examples</a
+        ><a href="/_src/showcase/contour.fern">View source ↗</a>
+      </nav>
+    </header>
+    <main id="main">
+      <div class="app-heading">
+        <section class="app-intro">
+          <div class="eyebrow"><span>21</span>A TWO-COLOUR FLIGHT</div>
+          <h1>A landscape in <em>two colours.</em></h1>
+          <p>
+            Yellow ridges. Blue sky. An endless flight through a landscape made
+            of pixels, computed by Fern in your browser.
+          </p>
+          <div class="tech-chips">
+            <span>Fern → Wasm</span><span>Procedural terrain</span
+            ><span>Canvas 2D</span>
+          </div>
+        </section>
+        <span class="status" id="status" role="status"
+          >Loading Fern terrain…</span
+        >
+      </div>
+      <section class="flight" aria-label="Terrain flyover">
+        <div class="stage" id="stage">
+          <canvas
+            id="terrain"
+            width="320"
+            height="240"
+            tabindex="0"
+            aria-label="Yellow pixel mountains against a blue sky. Left and right arrows steer; up and down change altitude; Space pauses. Drag to steer."
+            >Canvas is required to view the terrain.</canvas
+          >
+          <div class="telemetry" aria-hidden="true">
+            <span>CONTOUR / FERN</span
+            ><span id="readout">320 × 240 · TWO COLOURS</span>
+          </div>
+        </div>
+        <div class="toolbar">
+          <div class="button-group">
+            <button class="button primary" id="pause" disabled>
+              Pause flight</button
+            ><button class="button" id="reset" disabled>Reset view</button
+            ><button class="button" id="fullscreen">Fullscreen</button>
+          </div>
+          <label
+            >Speed
+            <input
+              id="speed"
+              type="range"
+              min="0"
+              max="100"
+              value="35"
+            /><output id="speed-value" for="speed">35</output></label
+          >
+          <label
+            >Altitude
+            <input
+              id="altitude"
+              type="range"
+              min="110"
+              max="220"
+              value="130"
+            /><output id="altitude-value" for="altitude">130</output></label
+          >
+          <label
+            >Detail
+            <select id="detail">
+              <option value="256">256 × 192</option>
+              <option value="320" selected>320 × 240</option>
+              <option value="480">480 × 360</option>
+            </select></label
+          >
+        </div>
+      </section>
+      <p class="fine-print">
+        Drag or use ← → to steer. ↑ ↓ changes altitude. Space pauses when the
+        canvas is focused. On touch screens, drag to turn and use the sliders to
+        fly.
+      </p>
+      <details class="how-it-works">
+        <summary>How it works</summary>
+        <p>
+          Fern WebAssembly generates a heightfield with three layers of smooth
+          noise. The browser walks from near to far, drawing only the newly
+          visible edge of each ridge. A low-resolution canvas keeps the pixels
+          crisp.
+        </p>
+        <p>
+          Inspired by
+          <a href="https://x.com/0xC0DE6502/status/1784520071009677812"
+            >0xC0DE’s two-colour terrain demo ↗</a
+          >. This is an independent recreation of the visual effect.
+        </p>
+        <a href="/_src/showcase/contour.fern">Read the Fern kernel ↗</a>
+      </details>
+    </main>
+    <footer class="app-footer">
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
+    </footer>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

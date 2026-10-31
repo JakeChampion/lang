@@ -96,8 +96,8 @@ function main(): i32 {
 var unionConstructorLeafProduced = []string{"unknown", "weigh", "lit_rounds", "dyn_rounds"}
 
 func TestSelfHostConstructorLeafUnionMember(t *testing.T) {
-	runSemanticProgram(t, "ctorleaf-union", unionConstructorLeafProgram, unionConstructorLeafProduced,
-		semInlineWants("700000\n150100\n"), "unknown")
+	runSemanticProgramSplicing(t, "ctorleaf-union", unionConstructorLeafProgram, unionConstructorLeafProduced, []string{"unknown"},
+		semInlineWants("700000\n150100\n"))
 }
 
 func TestSelfHostConstructorLeafUnionMemberOff(t *testing.T) {

@@ -188,7 +188,7 @@ func TestSelfHostScaleReuseDecisions(t *testing.T) {
 			t.Fatalf("scale reuse disabled=%s: %v\n%s", disabled, err, out)
 		}
 	}
-	shadow := `function __scale_f64(xs: f64[], k: f64): f64[] { return [99.0]; }
+	shadow := `@noinline function __scale_f64(xs: f64[], k: f64): f64[] { return [99.0]; }
 @noinline function consumed(own xs: f64[]): f64[] { return __scale_f64(xs, 2.0); }
 function main(): i32 {
   let xs: f64[] = [1.0, 2.0];
