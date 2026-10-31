@@ -8,6 +8,7 @@ import "./decltypes";
 import "./semtypes";
 import "./stdlib_methods";
 import "./consteval";
+import "std/option";
 
 function t_i32(): typeinfo.Type {
   return typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
