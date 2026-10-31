@@ -1,0 +1,12 @@
+// The last expression statement of a block may omit its ";", and an if
+// statement may end in ";" as a match statement can.
+function main(): i32 {
+  if (true) { print("a") } else { print("b") };
+  let n: i32 = 2;
+  while (n > 0) {
+    n = n - 1;
+    print("w")
+  }
+  if let 0 = n { print("zero") }
+  return 0;
+}

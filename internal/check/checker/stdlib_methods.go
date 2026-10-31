@@ -12,8 +12,11 @@ var stdlibMethodIndex = map[string]map[string]string{
 	"Option": {
 		"and":            "std/option",
 		"and_then":       "std/option",
+		"cmp":            "core/cmp",
+		"eq":             "core/cmp",
 		"filter":         "std/option",
 		"flatten":        "std/option",
+		"hash":           "core/cmp",
 		"is_none":        "std/option",
 		"is_none_or":     "std/option",
 		"is_some":        "std/option",
@@ -36,8 +39,11 @@ var stdlibMethodIndex = map[string]map[string]string{
 	"Result": {
 		"and":            "std/result",
 		"and_then":       "std/result",
+		"cmp":            "core/cmp",
+		"eq":             "core/cmp",
 		"err":            "std/result",
 		"flatten":        "std/result",
+		"hash":           "core/cmp",
 		"is_err":         "std/result",
 		"is_err_and":     "std/result",
 		"is_ok":          "std/result",

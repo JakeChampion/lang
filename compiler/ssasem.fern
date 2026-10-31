@@ -46,6 +46,15 @@ pub struct Func {
   dbg_vals: i32[],
   dbg_names: string[],
   source_positions: sourcepos.SourceInfo,
+  schema_checked: boolean,
+}
+
+// schema_checked says the verifier passed records and enums; a change to either clears it.
+pub function checked_schema(f: Func, a: Analysis): Func {
+  if (!a.ok) {
+    return f;
+  }
+  return Func { ...f, schema_checked: true };
 }
 
 pub struct Anchor { name: string, params: i32[] }
@@ -353,6 +362,12 @@ pub function is_unique_check(name: string): boolean {
 pub function fresh_result_builtin(name: string): boolean {
   return is_unique_check(name) || name == "__bytes_owned" || name == "__bytes_range" || name == "__bytes_into" || name == "__aes_expand_key" || name == "__aes_ctr32"
     || name == "__ghash" || name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into" || name == "__sha256_hw_blocks" || name == "__sha1_hw_blocks";
+}
+
+// A builtin that reads or writes its borrowed arguments in place and keeps no
+// reference to them, so the call adds no holder.
+pub function holds_no_argument(name: string): boolean {
+  return name == "__arr_set_len" || name == "__str_bytes" || name == "__ct_secret" || name == "__ct_public";
 }
 
 pub function scalar_primitive(name: string): boolean {
@@ -3107,7 +3122,7 @@ function schema_error(f: Func): string {
   if (why != "") {
     return why;
   }
-  if (!util.verify_on()) {
+  if (!util.verify_on() || f.schema_checked) {
     return "";
   }
   return semrecords.verify(f.records, f.enums);

@@ -4,29 +4,13 @@ import "std/io";
 import "std/io_buffered";
 import "std/errno";
 
-pub function push_decimal(h: usize, n: u64): void {
-  if (n < 100 as u64) {
-    if (n < 10 as u64) {
-      buf_push_byte(h, 48 + n as i32);
-      return;
-    }
-    let k: i32 = n as i32 * 2;
-    buf_push_range(h, decimal_pairs(), k, k + 2);
-    return;
-  }
-  let q: u64 = n / (100 as u64);
-  push_decimal(h, q);
-  let r: i32 = (n - q * (100 as u64)) as i32 * 2;
-  buf_push_range(h, decimal_pairs(), r, r + 2);
-}
-
 pub function push_signed_decimal(h: usize, n: i64): void {
   if (n < 0 as i64) {
     buf_push_byte(h, 45);
-    push_decimal(h, 0 as u64 - n as u64);
+    buf_push_decimal(h, 0 as u64 - n as u64);
     return;
   }
-  push_decimal(h, n as u64);
+  buf_push_decimal(h, n as u64);
 }
 
 pub function decimal_pairs(): string {

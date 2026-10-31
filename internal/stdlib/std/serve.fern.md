@@ -493,7 +493,11 @@ function __recv_scratch(): u8[] {
 
 ```fern
 <<15 struct __Conns>>=
-struct __Conns { open: i32, free: i32, fds: i32[], slots: u8[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], due: i64, keep: boolean[], served: i32[], backlog: boolean[], queued: i32[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], request_host: platform.Host, addresses: Option[net.SocketAddr][], tails: __Tail[], tls: __Tls[], framing: __Framing[], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[], metrics: metrics.ServerMetrics, pulls: __H2Pull[], producers: __H2Producer[], tls_reads: i32, zc_bytes: i32, zc_held: u8[][], zc_slots: i32[], zc_free: boolean[], quic: __Quic, date: string }
+struct __Conns { open: i32, free: i32, fds: i32[], slots: u8[], bufs: u8[][], offs: i32[], pending: u8[][], deadlines: i64[], due: i64, keep: boolean[], served: i32[], backlog: boolean[], queued: i32[], continued: boolean[], rate_since: i64[], rate_base: i32[], send_since: i64[], send_base: i32[], peers: i32[], request_host: platform.Host, addresses: Option[net.SocketAddr][], tails: __Tail[], tls: __Tls[], framing: __Framing[], last: http.HttpFramed, out: usize, lent: i32, parked: __Flight[], later: (() => void)[], metrics: metrics.ServerMetrics, pulls: __H2Pull[], producers: __H2Producer[], tls_reads: i32, zc_bytes: i32, zc_held: u8[][], zc_slots: i32[], zc_free: boolean[], quic: __Quic, date: string, peer_counts: __PeerCounts }
+
+// The open connections of each peer key, in an open-addressing table whose
+// size is a power of two. A zero key marks an empty slot, and no peer key is 0.
+struct __PeerCounts { keys: i32[], counts: i32[], used: i32 }
 
 enum __Tls { Plain, Secured(server.Session), Lent, Awaiting(Option[server.Session], u8[]), InKernel(server.Session) }
 
@@ -1306,29 +1310,111 @@ function __conns_add(c: __Conns, fd: i32, deadline: i64, peer: i32, addr: Option
   let k: i32 = c.free;
   if (k >= 0) {
     let next: i32 = c.offs[k];
-    return __Conns { ...c, open: c.open + 1, free: next, fds: c.fds.with(k, fd), slots: __slot_set(c.slots, fd, k + 1), bufs: c.bufs.with(k, empty), offs: c.offs.with(k, 0), pending: c.pending.with(k, empty), deadlines: c.deadlines.with(k, deadline), due: __sooner(c.due, deadline), keep: c.keep.with(k, keep), served: c.served.with(k, 0), backlog: c.backlog.with(k, false), continued: c.continued.with(k, false), rate_since: c.rate_since.with(k, 0 - 1 as i64), rate_base: c.rate_base.with(k, 0), send_since: c.send_since.with(k, 0 - 1 as i64), send_base: c.send_base.with(k, 0), peers: c.peers.with(k, peer), addresses: c.addresses.with(k, addr), tails: c.tails.with(k, NoTail), tls: c.tls.with(k, tls), framing: c.framing.with(k, Http1) };
+    return __Conns { ...c, open: c.open + 1, free: next, fds: c.fds.with(k, fd), slots: __slot_set(c.slots, fd, k + 1), bufs: c.bufs.with(k, empty), offs: c.offs.with(k, 0), pending: c.pending.with(k, empty), deadlines: c.deadlines.with(k, deadline), due: __sooner(c.due, deadline), keep: c.keep.with(k, keep), served: c.served.with(k, 0), backlog: c.backlog.with(k, false), continued: c.continued.with(k, false), rate_since: c.rate_since.with(k, 0 - 1 as i64), rate_base: c.rate_base.with(k, 0), send_since: c.send_since.with(k, 0 - 1 as i64), send_base: c.send_base.with(k, 0), peers: c.peers.with(k, peer), addresses: c.addresses.with(k, addr), tails: c.tails.with(k, NoTail), tls: c.tls.with(k, tls), framing: c.framing.with(k, Http1), peer_counts: __peer_raise(c.peer_counts, peer) };
   }
-  return __Conns { open: c.open + 1, free: c.free, fds: c.fds.append(fd), slots: __slot_set(c.slots, fd, c.fds.len() + 1), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), due: __sooner(c.due, deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), queued: c.queued, continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), request_host: c.request_host, addresses: c.addresses.append(addr), tails: c.tails.append(NoTail), tls: c.tls.append(tls), framing: c.framing.append(Http1), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics, pulls: c.pulls, producers: c.producers, tls_reads: c.tls_reads, zc_bytes: c.zc_bytes, zc_held: c.zc_held, zc_slots: c.zc_slots, zc_free: c.zc_free, quic: c.quic, date: c.date };
+  return __Conns { open: c.open + 1, free: c.free, fds: c.fds.append(fd), slots: __slot_set(c.slots, fd, c.fds.len() + 1), bufs: c.bufs.append(empty), offs: c.offs.append(0), pending: c.pending.append(empty), deadlines: c.deadlines.append(deadline), due: __sooner(c.due, deadline), keep: c.keep.append(keep), served: c.served.append(0), backlog: c.backlog.append(false), queued: c.queued, continued: c.continued.append(false), rate_since: c.rate_since.append(0 - 1 as i64), rate_base: c.rate_base.append(0), send_since: c.send_since.append(0 - 1 as i64), send_base: c.send_base.append(0), peers: c.peers.append(peer), request_host: c.request_host, addresses: c.addresses.append(addr), tails: c.tails.append(NoTail), tls: c.tls.append(tls), framing: c.framing.append(Http1), last: c.last, out: c.out, lent: c.lent, parked: c.parked, later: c.later, metrics: c.metrics, pulls: c.pulls, producers: c.producers, tls_reads: c.tls_reads, zc_bytes: c.zc_bytes, zc_held: c.zc_held, zc_slots: c.zc_slots, zc_free: c.zc_free, quic: c.quic, date: c.date, peer_counts: __peer_raise(c.peer_counts, peer) };
 }
 
 function __with_connection_host(c: __Conns, at: i32): __Conns {
   return __Conns { ...c, request_host: c.request_host.with_peer(c.addresses[at]) };
 }
 
-function __conns_from_peer(c: __Conns, peer: i32): i32 {
-  let n: i32 = 0;
+function __peer_home(peer: i32, size: i32): i32 {
+  let h: i32 = peer * -1640531535;
+  return (h ^ h >> 16) & size - 1;
+}
+
+function __peer_slot(keys: i32[], peer: i32): i32 {
+  let i: i32 = __peer_home(peer, keys.len());
+  while (keys[i] != 0 && keys[i] != peer) {
+    i = i + 1 & keys.len() - 1;
+  }
+  return i;
+}
+
+function __peer_count(t: __PeerCounts, peer: i32): i32 {
+  if (t.keys.len() == 0) {
+    return 0;
+  }
+  let i: i32 = __peer_slot(t.keys, peer);
+  if (t.keys[i] != peer) {
+    return 0;
+  }
+  return t.counts[i];
+}
+
+function __peer_raise(t: __PeerCounts, peer: i32): __PeerCounts {
+  if (peer == 0) {
+    return t;
+  }
+  if ((t.used + 1) * 2 > t.keys.len()) {
+    t = __peer_grow(t);
+  }
+  let i: i32 = __peer_slot(t.keys, peer);
+  if (t.keys[i] == peer) {
+    let n: i32 = t.counts[i];
+    return __PeerCounts { ...t, counts: t.counts.with(i, n + 1) };
+  }
+  return __PeerCounts { keys: t.keys.with(i, peer), counts: t.counts.with(i, 1), used: t.used + 1 };
+}
+
+function __peer_grow(t: __PeerCounts): __PeerCounts {
+  let size: i32 = t.keys.len() * 2;
+  if (size < 16) {
+    size = 16;
+  }
+  let keys: i32[] = [];
+  let counts: i32[] = [];
+  while (keys.len() < size) {
+    keys = keys.append(0);
+    counts = counts.append(0);
+  }
   let i: i32 = 0;
-  while (i < c.fds.len()) {
-    if (c.fds[i] >= 0 && c.peers[i] == peer) {
-      n = n + 1;
+  while (i < t.keys.len()) {
+    let peer: i32 = t.keys[i];
+    if (peer != 0) {
+      let at: i32 = __peer_slot(keys, peer);
+      keys = keys.with(at, peer);
+      counts = counts.with(at, t.counts[i]);
     }
     i = i + 1;
   }
-  return n;
+  return __PeerCounts { keys: keys, counts: counts, used: t.used };
+}
+
+// The last connection of a peer empties its slot, and later keys of the same
+// probe run shift back so that no lookup stops early.
+function __peer_lower(t: __PeerCounts, peer: i32): __PeerCounts {
+  if (peer == 0 || t.keys.len() == 0) {
+    return t;
+  }
+  let i: i32 = __peer_slot(t.keys, peer);
+  if (t.keys[i] != peer) {
+    return t;
+  }
+  let n: i32 = t.counts[i];
+  if (n > 1) {
+    return __PeerCounts { ...t, counts: t.counts.with(i, n - 1) };
+  }
+  let mask: i32 = t.keys.len() - 1;
+  let hole: i32 = i;
+  let k: i32 = i + 1 & mask;
+  while (t.keys[k] != 0) {
+    let key: i32 = t.keys[k];
+    let home: i32 = __peer_home(key, t.keys.len());
+    if ((k - home & mask) >= (k - hole & mask)) {
+      let count: i32 = t.counts[k];
+      t = __PeerCounts { ...t, keys: t.keys.with(hole, key), counts: t.counts.with(hole, count) };
+      hole = k;
+    }
+    k = k + 1 & mask;
+  }
+  return __PeerCounts { keys: t.keys.with(hole, 0), counts: t.counts.with(hole, 0), used: t.used - 1 };
 }
 
 function __conns_remove(c: __Conns, at: i32): __Conns {
   let fd: i32 = c.fds[at];
+  let peer: i32 = c.peers[at];
   let was: boolean = c.backlog[at];
   let next: i32 = c.free;
   let lent: i32 = c.lent;
@@ -1336,7 +1422,7 @@ function __conns_remove(c: __Conns, at: i32): __Conns {
     lent = 0 - 1;
   }
   let empty: u8[] = [];
-  let r: __Conns = __Conns { ...c, open: c.open - 1, free: at, fds: c.fds.with(at, 0 - 1), slots: __slot_set(c.slots, fd, 0), addresses: c.addresses.with(at, None), bufs: c.bufs.with(at, empty), offs: c.offs.with(at, next), pending: c.pending.with(at, empty), backlog: c.backlog.with(at, false), tails: c.tails.with(at, NoTail), tls: c.tls.with(at, Plain), framing: c.framing.with(at, Http1), lent: lent };
+  let r: __Conns = __Conns { ...c, open: c.open - 1, free: at, fds: c.fds.with(at, 0 - 1), slots: __slot_set(c.slots, fd, 0), addresses: c.addresses.with(at, None), bufs: c.bufs.with(at, empty), offs: c.offs.with(at, next), pending: c.pending.with(at, empty), backlog: c.backlog.with(at, false), tails: c.tails.with(at, NoTail), tls: c.tls.with(at, Plain), framing: c.framing.with(at, Http1), lent: lent, peer_counts: __peer_lower(c.peer_counts, peer) };
   return __Conns { ...r, queued: __unqueued(r.queued, fd, was), pulls: __pulls_without(r.pulls, fd), producers: __producers_without(r.producers, fd) };
 }
 
@@ -1399,7 +1485,7 @@ function __serve_accept[D: async.Driver](drv: D, listener: i32, c: __Conns, opts
   let peer: i32 = 0;
   if (opts.max_connections_per_ip > 0) {
     peer = tcp_socket_ctl(fd, 7, 0);
-    if (peer != 0 && __conns_from_peer(c, peer) >= opts.max_connections_per_ip) {
+    if (peer != 0 && __peer_count(c.peer_counts, peer) >= opts.max_connections_per_ip) {
       tcp_close(fd);
       return c;
     }
@@ -3893,10 +3979,10 @@ function __serve_unframed[D: async.Driver](drv: D, c: __Conns, fls: __Flights, a
     http.Headed(h) => {
       return __serve_stream(drv, c, fls, at, h, start, opts, stop, count, clk);
     },
-    http.HeadIncomplete => {
+    http.Incomplete => {
       return (__body_deadline(c, at, opts, monotonic_ns()), fls, false, Idle, c.last);
     },
-    http.HeadMalformed(status) => {
+    http.Malformed(status) => {
       return (__serve_refuse(drv, c, at, status, opts, clk), fls, false, Idle, c.last);
     }
   }
@@ -4812,7 +4898,7 @@ function __serve_loop(l: __Listen, handler: (HttpRequest, platform.Host) => Http
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, true);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], request_host: plat, addresses: [], tails: [], tls: [], framing: [], last: http.framed_none(), out: __out_new(), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
+  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], request_host: plat, addresses: [], tails: [], tls: [], framing: [], last: http.framed_none(), out: __out_new(), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "", peer_counts: __PeerCounts { keys: [], counts: [], used: 0 } };
   let flights: __Flights = __flights_none();
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, date: "", line: "" };
@@ -5015,7 +5101,7 @@ function __serve_loop_with[S](l: __Listen, init: S, handler: (S, HttpRequest, pl
   let stop: __Stop = __serve_stop_sources(drv, opts);
   let plat: platform.Host = __host_platform(drv.handle(), opts, false);
   let host_for: (Option[net.SocketAddr]) => platform.Host = (peer: Option[net.SocketAddr]): platform.Host => plat.with_peer(peer);
-  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], request_host: plat, addresses: [], tails: [], tls: [], framing: [], last: http.framed_none(), out: __out_new(), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "" };
+  let conns: __Conns = __Conns { open: 0, free: 0 - 1, fds: [], slots: [], bufs: [], offs: [], pending: [], deadlines: [], due: 0 - 1 as i64, keep: [], served: [], backlog: [], queued: [], continued: [], rate_since: [], rate_base: [], send_since: [], send_base: [], peers: [], request_host: plat, addresses: [], tails: [], tls: [], framing: [], last: http.framed_none(), out: __out_new(), lent: 0 - 1, parked: [], later: [], metrics: metrics.server_metrics(), pulls: [], producers: [], tls_reads: __tls_reads(opts), zc_bytes: opts.io_uring_zc_bytes, zc_held: [], zc_slots: [], zc_free: [], quic: __quic_none(), date: "", peer_counts: __PeerCounts { keys: [], counts: [], used: 0 } };
   let flights: __Flights = __flights_none();
   let scratch: u8[] = __recv_scratch();
   let clk: __Clock = __Clock { sec: 0 as i64, date: "", line: "" };

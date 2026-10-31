@@ -119,6 +119,7 @@ audit_strings_arrays_maps                            0
 audit_types_match                                    0
 bare_enum_map_payloads                               0
 bare_variant_beside_enum_instantiations               0
+bare_variant_resolves_against_expected_type           0
 base64_roundtrip                                     0
 binding_site_pattern_grammar                         0
 bool_in_tuple_with_i64                               0
@@ -593,6 +594,7 @@ opt_f32_payload                                      0
 option_is_none_or                                    0
 option_match                                         0
 option_result_and_then                               0
+option_result_cmp_traits                             0
 option_result_combinators                            0
 option_str                                           0
 optresult_transpose                                  0
@@ -1054,6 +1056,7 @@ sso_slice_len_1_inline                               0
 sso_slice_len_7_inline                               0
 sso_slice_len_8_heap                                 0
 sso_triple_concat_via_inline                         0
+statement_block_tail_expression                      0
 static_variant_of_an_unsettled_generic_enum          0
 stdin_double                                         0
 stdin_line                                           0
@@ -1191,6 +1194,7 @@ vec_generic_impls                                    0
 vec_lane_kernels                                     0
 view_of_branch_value                                 0
 views_in_aggregates_stay_local                       0
+void_value_if_statement                              0
 wasi_http_error_code_names                           0
 while_sum                                            0
 wide_array_append_grow                               0

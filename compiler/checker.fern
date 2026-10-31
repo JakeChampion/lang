@@ -1634,6 +1634,37 @@ function cmp_method_receiver(t: typeinfo.Type): string {
   return "";
 }
 
+function core_cmp_enum(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnion(u) = t {
+    return u.name == "Option" || u.name == "Result";
+  }
+  return false;
+}
+
+// cmp_hint says where a cmp trait for t can come from. core/cmp implements Eq,
+// Ord and Hash for Option and Result when their type arguments do, so the hint
+// moves to the first type argument that is a struct or an enum. Display has no
+// impl for those, nor for an array or a tuple, so the hint says to format the
+// parts instead of offering an impl that the orphan rule would refuse.
+function cmp_hint(t: typeinfo.Type, trait_name: string): string {
+  let short: string = slice_unchecked(trait_name, 4, trait_name.len()) + "";
+  let label: string = util.demangle(type_label(t));
+  if (core_cmp_enum(t) && trait_name != "cmp.Display") {
+    if let typeinfo.TypeUnion(u) = t {
+      for a in u.args {
+        if (cmp_method_receiver(a) != "") {
+          return label + " implements `" + short + "` when its type arguments do: " + cmp_hint(a, trait_name);
+        }
+      }
+    }
+  }
+  let recv: string = cmp_method_receiver(t);
+  if (recv == "" || core_cmp_enum(t)) {
+    return label + " cannot implement `" + short + "`: convert its parts to strings first";
+  }
+  return util.derive_hint(recv, trait_name, trait_name);
+}
+
 function (s: Scope) has_ord_cmp(t: typeinfo.Type): boolean {
   let recv: string = cmp_method_receiver(t);
   return recv != "" && s.has_method("cmp", recv);
@@ -4646,6 +4677,7 @@ function builtin_sigs(): string[] {
     "buf_push_bytes_filtered(usize, u8[], u8[]): void",
     "buf_push_bytes_mapped(usize, u8[], u8[]): void",
     "buf_push_bytes_range(usize, u8[], i32, i32): void",
+    "buf_push_decimal(usize, u64): void",
     "buf_push_expanded(usize, string, u8[]): void",
     "buf_push_filtered(usize, string, u8[]): void",
     "buf_push_mapped(usize, string, u8[]): void",
@@ -8977,9 +9009,65 @@ function slc_call_name_at(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
-function slc_calls_any(calls: util.NameIndex, marked: util.NameIndex): boolean {
+function slc_callees(calls: util.NameIndex, names: util.NameIndex): i32[] {
+  let out: i32[] = [];
   for name in calls.names {
-    if (marked.has(name)) {
+    let k: i32 = names.chain(name);
+    while (k >= 0) {
+      if (names.names[k] == name) {
+        out = out.append(k);
+      }
+      k = names.next[k];
+    }
+  }
+  return out;
+}
+
+// slc_callee_order puts each function after the functions its call names reach, except in a cycle.
+function slc_callee_order(calls: util.NameIndex[], names: util.NameIndex): i32[] {
+  let edges: i32[][] = [];
+  for c in calls {
+    edges = edges.append(slc_callees(c, names));
+  }
+  let order: i32[] = [];
+  let seen: boolean[] = __alloc_bool(calls.len());
+  let stack: i32[] = __alloc_i32(calls.len());
+  let next: i32[] = __alloc_i32(calls.len());
+  let r: i32 = 0;
+  while (r < calls.len()) {
+    if (!seen[r]) {
+      seen = seen.with(r, true);
+      stack = stack.with(0, r);
+      next = next.with(0, 0);
+      let depth: i32 = 1;
+      while (depth > 0) {
+        let v: i32 = stack[depth - 1];
+        let e: i32 = next[depth - 1];
+        if (e < edges[v].len()) {
+          next = next.with(depth - 1, e + 1);
+          let w: i32 = edges[v][e];
+          if (!seen[w]) {
+            seen = seen.with(w, true);
+            stack = stack.with(depth, w);
+            next = next.with(depth, 0);
+            depth = depth + 1;
+          }
+        } else {
+          order = order.append(v);
+          depth = depth - 1;
+        }
+      }
+    }
+    r = r + 1;
+  }
+  return order;
+}
+
+// slc_stale says a callee name changed its summary after the walk at stamp `walked`.
+function slc_stale(calls: util.NameIndex, names: util.NameIndex, changed: i32[], walked: i32): boolean {
+  for name in calls.names {
+    let at: i32 = names.find(name);
+    if (at >= 0 && changed[at] > walked) {
       return true;
     }
   }
@@ -13846,9 +13934,12 @@ function display_arg_diags(c: ast.ExprCall, s: Scope): util.Diag[] {
     return [];
   }
   let label: string = type_label(at);
+  let advice: string = "give " + label + " a `to_string(): string` method, or " + util.derive_hint(display_dispatch_name(at), "cmp.Display", "cmp.Display");
+  if (cmp_method_receiver(at) == "" || core_cmp_enum(at)) {
+    advice = cmp_hint(at, "cmp.Display");
+  }
   return [dg_at(
-    "E038", "argument 1 to \"" + name + "\": " + label + " does not implement `Display` (no `to_string(): string` in scope) — give "
-      + label + " a `to_string(): string` method, or " + util.derive_hint(display_dispatch_name(at), "cmp.Display", "cmp.Display"),
+    "E038", "argument 1 to \"" + name + "\": " + label + " does not implement `Display` (no `to_string(): string` in scope) — " + advice,
     expr_line(c.args[0]), expr_col(c.args[0]),
   )];
 }
@@ -14534,7 +14625,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
       if (eqrecv == "") {
         out = out.append(dg_at("E041", "cannot compare values of type " + type_label(blt) + " with \"" + b.op + "\": structural equality for arrays / slices / tuples is not supported — compare elements individually", b.line, b.col));
       } else if (!s.has_method("eq", eqrecv)) {
-        out = out.append(dg_at("E041", "cannot compare values of type " + util.demangle(type_label(blt)) + " with \"" + b.op + "\": type does not implement `Eq` — " + util.derive_hint(eqrecv, "cmp.Eq", "cmp.Eq") + ", so `==` can use structural equality", b.line, b.col));
+        out = out.append(dg_at("E041", "cannot compare values of type " + util.demangle(type_label(blt)) + " with \"" + b.op + "\": type does not implement `Eq` — " + cmp_hint(blt, "cmp.Eq") + ", so `==` can use structural equality", b.line, b.col));
       }
     }
   }
@@ -14617,7 +14708,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
           if (ordrecv == "") {
             out = out.append(dg_at("E041", "cannot order values of type " + type_label(olt) + " with \"" + b.op + "\": structural ordering for arrays / slices / tuples is not supported", b.line, b.col));
           } else if (!s.has_ord_cmp(olt)) {
-            out = out.append(dg_at("E041", "cannot order values of type " + util.demangle(type_label(olt)) + " with \"" + b.op + "\": type does not implement `Ord` — " + util.derive_hint(ordrecv, "cmp.Ord", "cmp.Ord") + ", so ordering can use structural comparison", b.line, b.col));
+            out = out.append(dg_at("E041", "cannot order values of type " + util.demangle(type_label(olt)) + " with \"" + b.op + "\": type does not implement `Ord` — " + cmp_hint(olt, "cmp.Ord") + ", so ordering can use structural comparison", b.line, b.col));
           }
         } else if (o_both_int) {
           out = out.append(mixed_int_diag(b.op, olt, ort, b.line, b.col));
@@ -24256,6 +24347,7 @@ function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: b
     return ModuleTypes { sigs: no_sigs, top_tys: no_tys, all_well_typed: false, diags: reserved };
   }
   let env: ModuleEnv = admission_env(mod, entry_file, raw_floor);
+  mod = qualify_variants_in(mod, env, whole_focus(mod));
   let mt: ModuleTypes = check_module_pass(mod, env, fda_diags, []);
   if (mt.diags.len() > 0) {
     return mt;
@@ -24321,17 +24413,24 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   for cfn in mod.funcs {
     slc_calls = slc_calls.append(util.name_index(slc_call_names(cfn)));
   }
-  let slc_no_names: string[] = [];
-  let slc_marked: util.NameIndex = util.name_index(slc_no_names);
-  let slc_first: boolean = true;
-  while (slc_first || slc_marked.names.len() > 0) {
-    let slc_now: string[] = [];
-    let sj: i32 = 0;
-    while (sj < mod.funcs.len()) {
-      if (!slc_first && !slc_calls_any(slc_calls[sj], slc_marked)) {
-        sj = sj + 1;
+  let slc_fn_names: string[] = [];
+  for cfn in mod.funcs {
+    slc_fn_names = slc_fn_names.append(cfn.name);
+  }
+  let slc_names: util.NameIndex = util.name_index(slc_fn_names);
+  let slc_changed_at: i32[] = util.minus_ones(mod.funcs.len());
+  let slc_walked: i32[] = util.minus_ones(mod.funcs.len());
+  let slc_order: i32[] = slc_callee_order(slc_calls, slc_names);
+  let slc_clock: i32 = 0;
+  let slc_again: boolean = true;
+  while (slc_again) {
+    slc_again = false;
+    for sj in slc_order {
+      if (slc_walked[sj] >= 0 && !slc_stale(slc_calls[sj], slc_names, slc_changed_at, slc_walked[sj])) {
         continue;
       }
+      slc_clock = slc_clock + 1;
+      slc_walked = slc_walked.with(sj, slc_clock);
       let sjw: SlcWalk = slice_escape_diags(mod.funcs[sj], slc_functions[sj], slc_sums, slc_ix);
       let slc_positions: string[] = slc_functions[sj].params;
       let slc_cur: ViewSum = slc_sums[sj];
@@ -24351,13 +24450,12 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
         slc_changed = true;
       }
       if (slc_changed) {
-        slc_now = slc_now.append(mod.funcs[sj].name);
+        slc_clock = slc_clock + 1;
+        slc_changed_at = slc_changed_at.with(slc_names.find(mod.funcs[sj].name), slc_clock);
+        slc_again = true;
       }
       slc_sums = slc_sums.with(sj, ViewSum { key: slc_cur.key, flags: slc_next, fresh: slc_fresh });
-      sj = sj + 1;
     }
-    slc_first = false;
-    slc_marked = util.name_index(slc_now);
   }
   let const_inits: ConstInit = const_init(mod);
   let i: i32 = 0;
@@ -26550,7 +26648,7 @@ function whole_focus(mod: parser.Module): Focus {
 }
 
 function annotate_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
-  let rmod: parser.Module = pretype_module_in(settle_literal_locals_in(mod, env, focus), env, focus);
+  let rmod: parser.Module = pretype_module_in(settle_literal_locals_in(qualify_variants_in(mod, env, focus), env, focus), env, focus);
   let nfuncs: parser.FuncDecl[] = [];
   let i: i32 = 0;
   while (i < rmod.funcs.len()) {
@@ -27649,6 +27747,347 @@ function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): pa
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
 }
 
+// qualify_variants_in rewrites a bare variant that two visible enums declare to
+// `E.A` where the type its position expects names one of them (#12701).
+function qualify_variants_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
+  let coll: util.NameIndex = shared_variant_names(mod);
+  if (coll.names.len() == 0) {
+    return mod;
+  }
+  let nfuncs: parser.FuncDecl[] = [];
+  for i in 0..mod.funcs.len() {
+    let func: parser.FuncDecl = mod.funcs[i];
+    if (focus.funcs[i] && names_colliding_variant(func.body, coll)) {
+      let fs: Scope = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
+      nfuncs = nfuncs.append(parser.FuncDecl { ...func, body: qualify_stmts(func.body, fs, coll) });
+    } else {
+      nfuncs = nfuncs.append(func);
+    }
+  }
+  let ntop: ast.Stmt[] = mod.top_stmts;
+  if (focus.top && names_colliding_variant(mod.top_stmts, coll)) {
+    ntop = qualify_stmts(mod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), coll);
+  }
+  return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
+}
+
+// shared_variant_names is the bare variant names two enums declare.
+function shared_variant_names(mod: parser.Module): util.NameIndex {
+  let no_names: string[] = [];
+  let seen: util.NameIndex = util.name_index(no_names);
+  let out: util.NameIndex = util.name_index(no_names);
+  for ed in mod.enums {
+    for vn in ed.variant_names {
+      let b: string = variant_bare_name(vn);
+      if (!seen.has(b) && parser.builtin_enum_of(b).len() == 0) {
+        seen = seen.added(b);
+      } else if (!out.has(b)) {
+        out = out.added(b);
+      }
+    }
+  }
+  return out;
+}
+
+struct SharedScan { coll: util.NameIndex, found: boolean }
+
+function shared_scan_at(e: ast.Expr, own a: SharedScan): SharedScan {
+  if let ast.ExprIdent(id) = e {
+    if (!a.found && a.coll.has(variant_bare_name(id.name))) {
+      return SharedScan { ...a, found: true };
+    }
+  }
+  return a;
+}
+
+function names_colliding_variant(stmts: ast.Stmt[], coll: util.NameIndex): boolean {
+  let a: SharedScan = SharedScan { coll: coll, found: false };
+  for st in stmts {
+    a = astwalk.fold_stmt(st, a, shared_scan_at);
+  }
+  return a.found;
+}
+
+function qualify_stmts(stmts: ast.Stmt[], s: Scope, coll: util.NameIndex): ast.Stmt[] {
+  let out: ast.Stmt[] = [];
+  let cur: Scope = s;
+  for stmt in stmts {
+    let q: ast.Stmt = qualify_stmt(stmt, cur, coll);
+    out = out.append(q);
+    cur = bind_stmt(q, cur);
+  }
+  return out;
+}
+
+function qualify_stmt(st: ast.Stmt, s: Scope, coll: util.NameIndex): ast.Stmt {
+  let none: typeinfo.Type = t_unknown("no expected type");
+  match (st) {
+    ast.StmtVar(v) => {
+      let want: typeinfo.Type = none;
+      if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name) && !vb_placeholder_decl(v)) {
+        want = var_declared_type(v, s);
+      }
+      return ast.StmtVar { ...v, init: qualify_expr(v.init, want, s, coll) };
+    },
+    ast.StmtReturn(r) => {
+      return ast.StmtReturn { ...r, value: qualify_expr(r.value, s.ret_type, s, coll) };
+    },
+    ast.StmtExpr(x) => {
+      return ast.StmtExpr { ...x, value: qualify_expr(x.value, none, s, coll) };
+    },
+    ast.StmtAssign(a) => {
+      let want: typeinfo.Type = none;
+      if (s.defines(a.target)) {
+        want = s.lookup(a.target);
+      }
+      return ast.StmtAssign { ...a, value: qualify_expr(a.value, want, s, coll) };
+    },
+    ast.StmtIf(f) => {
+      return ast.StmtIf { ...f, cond: qualify_expr(f.cond, none, s, coll), then_body: qualify_stmts(f.then_body, s, coll), else_body: qualify_stmts(f.else_body, s, coll) };
+    },
+    ast.StmtWhile(w) => {
+      return ast.StmtWhile { ...w, cond: qualify_expr(w.cond, none, s, coll), body: qualify_stmts(w.body, s, coll) };
+    },
+    ast.StmtFor(fr) => {
+      return ast.StmtFor { ...fr, iter: qualify_expr(fr.iter, none, s, coll), body: qualify_stmts(fr.body, for_body_scope(fr, s), coll) };
+    },
+    ast.StmtMatch(m) => {
+      let arms: ast.MatchArm[] = [];
+      for arm in m.arms {
+        arms = arms.append(ast.MatchArm { ...arm, body: qualify_stmts(arm.body, s, coll) });
+      }
+      return ast.StmtMatch { ...m, scrutinee: qualify_expr(m.scrutinee, none, s, coll), arms: arms };
+    },
+    ast.StmtDefer(d) => {
+      return ast.StmtDefer { ...d, action: qualify_stmt(d.action, s, coll) };
+    },
+    _ => {
+      return st;
+    }
+  }
+  return st;
+}
+
+function expr_names_shared(e: ast.Expr, coll: util.NameIndex): boolean {
+  return astwalk.fold_expr(e, SharedScan { coll: coll, found: false }, shared_scan_at).found;
+}
+
+struct QualifyAcc { want: typeinfo.Type, s: Scope, coll: util.NameIndex }
+
+function qualify_expr(e: ast.Expr, want: typeinfo.Type, s: Scope, coll: util.NameIndex): ast.Expr {
+  if (!expr_names_shared(e, coll)) {
+    return e;
+  }
+  let (out, _, _) = astwalk.map_expr_acc(e, QualifyAcc { want: want, s: s, coll: coll }, qualify_at_stmt, qualify_at);
+  return out;
+}
+
+function qualify_at_stmt(st: ast.Stmt, q: QualifyAcc): (ast.Stmt, QualifyAcc, boolean) {
+  return (st, q, false);
+}
+
+// qualify_at rewrites one node for the type its position expects; the
+// nodes below it expect nothing unless the node passes a type down itself.
+function qualify_at(n: ast.Expr, q: QualifyAcc): (ast.Expr, QualifyAcc, boolean) {
+  let none: typeinfo.Type = t_unknown("no expected type");
+  let child: QualifyAcc = QualifyAcc { ...q, want: none };
+  let s: Scope = q.s;
+  let coll: util.NameIndex = q.coll;
+  match (n) {
+    ast.ExprIdent(id) => {
+      return (qualified_variant_ref(id, q.want, s), child, true);
+    },
+    ast.ExprCall(c) => {
+      return (qualify_call(c, q.want, s, coll), child, true);
+    },
+    ast.ExprStructLit(sl) => {
+      return (qualify_struct_lit(sl, q.want, s, coll), child, true);
+    },
+    ast.ExprArray(a) => {
+      let elem: typeinfo.Type = none;
+      if let typeinfo.TypeArray(arr) = q.want {
+        elem = arr.elem;
+      }
+      let elems: ast.Expr[] = [];
+      for x in a.elements {
+        elems = elems.append(qualify_expr(x, elem, s, coll));
+      }
+      return (ast.ExprArray { ...a, elements: elems }, child, true);
+    },
+    ast.ExprTuple(t) => {
+      let slots: typeinfo.Type[] = [];
+      if let typeinfo.TypeTuple(tt) = q.want {
+        slots = tt.elements;
+      }
+      let elems: ast.Expr[] = [];
+      for k in 0..t.elements.len() {
+        elems = elems.append(qualify_expr(t.elements[k], dest_slot(slots, k), s, coll));
+      }
+      return (ast.ExprTuple { ...t, elements: elems }, child, true);
+    },
+    ast.ExprLambda(lm) => {
+      return (ast.ExprLambda { ...lm, body: qualify_stmts(lm.body, lambda_body_scope(lm, s), coll) }, child, true);
+    },
+    ast.ExprFieldAccess(fa) => {
+      return (n, child, qual_enum_name(fa.obj, s).len() > 0);
+    },
+    ast.ExprBinary(b) => {
+      if (b.op != "==" && b.op != "!=") {
+        return (n, child, false);
+      }
+      let left: ast.Expr = qualify_expr(b.left, none, s, coll);
+      return (ast.ExprBinary { ...b, left: left, right: qualify_expr(b.right, check_expr(left, s), s, coll) }, child, true);
+    },
+    _ => {
+      return (n, child, false);
+    }
+  }
+}
+
+function dest_slot(slots: typeinfo.Type[], k: i32): typeinfo.Type {
+  if (k < slots.len()) {
+    return slots[k];
+  }
+  return t_unknown("no expected type");
+}
+
+// dest_variant is the member of the enum `want` names that the bare variant
+// `name` stands for, when two visible enums declare `name`; or "".
+function dest_variant(name: string, want: typeinfo.Type, s: Scope): string {
+  let typeinfo.TypeUnion(du) = want else {
+    return "";
+  };
+  if (s.known(name) || s.has_sig(name) || !s.variant_ambiguous(name)) {
+    return "";
+  }
+  if (parser.builtin_enum_of(name) == du.name) {
+    return name;
+  }
+  let Some(u) = s.lookup_union(du.name) else {
+    return "";
+  };
+  if (!u.is_enum) {
+    return "";
+  }
+  let bare: string = variant_bare_name(name);
+  for v in u.variants {
+    if (v == name || variant_bare_name(v) == bare) {
+      return v;
+    }
+  }
+  return "";
+}
+
+function qualified_variant_ref(id: ast.ExprIdent, want: typeinfo.Type, s: Scope): ast.Expr {
+  let member: string = dest_variant(id.name, want, s);
+  let typeinfo.TypeUnion(du) = want else {
+    return ast.ExprIdent { ...id };
+  };
+  if (member.len() == 0) {
+    return ast.ExprIdent { ...id };
+  }
+  return ast.ExprFieldAccess { obj: ast.ExprIdent { ...id, name: du.name, ty: "" }, field: member, line: id.line, col: id.col, ty: "", const_read: false };
+}
+
+function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util.NameIndex): ast.Expr {
+  let none: typeinfo.Type = t_unknown("no expected type");
+  if (parser.is_value_block(c)) {
+    if let ast.ExprLambda(lm) = c.callee {
+      let bs: Scope = lambda_body_scope(lm, s);
+      if (!is_unknown(want)) {
+        bs = bs.with_block_ret(want);
+      }
+      return ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: qualify_stmts(lm.body, bs, coll) } };
+    }
+  }
+  let callee: ast.Expr = c.callee;
+  let dests: typeinfo.Type[] = [];
+  match (c.callee) {
+    ast.ExprIdent(id) => {
+      let member: string = dest_variant(id.name, want, s);
+      if (member.len() > 0) {
+        callee = qualified_variant_ref(id, want, s);
+        dests = member_payload_dests(member, want, c, s);
+      } else if (s.ident_binding(id) < 0) {
+        dests = match (s.lookup_sig(id.name)) { Some(sig) => sig.param_types, None => variant_payload_dests(c, want, s, []) };
+      }
+    },
+    ast.ExprFieldAccess(fa) => {
+      callee = qualify_expr(c.callee, none, s, coll);
+      if (args_name_shared(c.args, coll) && qual_enum_name(fa.obj, s).len() == 0) {
+        if let Some(ms) = s.lookup_method(fa.field, cmp_method_receiver(check_expr(fa.obj, s))) {
+          dests = ms.param_types;
+        }
+      }
+    },
+    _ => {
+      callee = qualify_expr(c.callee, none, s, coll);
+    }
+  }
+  let args: ast.Expr[] = [];
+  for k in 0..c.args.len() {
+    args = args.append(qualify_expr(c.args[k], dest_slot(dests, k), s, coll));
+  }
+  return ast.ExprCall { ...c, callee: callee, args: args };
+}
+
+function args_name_shared(args: ast.Expr[], coll: util.NameIndex): boolean {
+  for a in args {
+    if (expr_names_shared(a, coll)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// member_payload_dests is the payload types of the variant `member` of the
+// enum `want` names, with the enum's type arguments filled in.
+function member_payload_dests(member: string, want: typeinfo.Type, c: ast.ExprCall, s: Scope): typeinfo.Type[] {
+  let typeinfo.TypeUnion(du) = want else {
+    return [];
+  };
+  if (parser.builtin_enum_of(member) == du.name) {
+    return variant_payload_dests(c, want, s, []);
+  }
+  let Some(u) = s.lookup_union(du.name) else {
+    return [];
+  };
+  let Some(vs) = s.lookup_owned_struct(member, u.name) else {
+    return [];
+  };
+  if (u.type_params.len() == 0) {
+    return vs.field_types;
+  }
+  if (u.type_params.len() != du.args.len()) {
+    return [];
+  }
+  let out: typeinfo.Type[] = [];
+  for n in vs.field_type_names {
+    out = out.append(type_from_ref_subst(parser.parse_type_ref(n), u.type_params, du.args, s.type_names()));
+  }
+  return out;
+}
+
+function qualify_struct_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Scope, coll: util.NameIndex): ast.Expr {
+  let none: typeinfo.Type = t_unknown("no expected type");
+  let found: Option[StructSig] = s.lookup_struct(sl.type_name);
+  let args: typeinfo.Type[] = [];
+  if let typeinfo.TypeStruct(ws) = want {
+    args = ws.args;
+  }
+  let values: ast.Expr[] = [];
+  for k in 0..sl.field_values.len() {
+    let fdest: typeinfo.Type = none;
+    if let Some(fsig) = found {
+      if (k < sl.field_names.len() && field_index(fsig, sl.field_names[k]) >= 0) {
+        fdest = lit_field_type(fsig, field_index(fsig, sl.field_names[k]), args, s);
+      }
+    }
+    values = values.append(qualify_expr(sl.field_values[k], fdest, s, coll));
+  }
+  return ast.ExprStructLit { ...sl, field_values: values, base: qualify_expr(sl.base, none, s, coll) };
+}
+
 struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[], eargs: string[], eids: i32[], tkeys: string[], ttypes: typeinfo.Type[], pargs: string[], ptypes: typeinfo.Type[] }
 
 struct LitRewrite { keys: string[], tags: string[], cargs: string[], ctags: string[], pargs: string[], ptypes: typeinfo.Type[] }
@@ -27682,13 +28121,11 @@ const LIT_STRUCT_MARK: string = "literal struct #";
 
 function lit_struct_marker(name: string, ids: i32[]): typeinfo.Type {
   let spelled: string = LIT_STRUCT_MARK + name + "|";
-  let i: i32 = 0;
-  while (i < ids.len()) {
+  for i in 0..ids.len() {
     if (i > 0) {
       spelled = spelled + ",";
     }
     spelled = spelled + util.i32_to_string(ids[i]);
-    i = i + 1;
   }
   return t_unknown(spelled);
 }

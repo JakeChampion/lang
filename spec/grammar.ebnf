@@ -149,11 +149,11 @@ TypeArg     = IDENT '=' Type | Type | NUMBER ;
 
 # --------------------------------------------------------------- statements
 
-Block       = '{' { Stmt } '}' ;
-# A block in expression position may end in an unterminated expression,
-# which is its value. Statement blocks may not, so the two are distinct
-# rules rather than one permissive one. A trailing `match` or `if … else`
-# whose branches give no value remains a statement in a lambda body.
+# Any block may end in an unterminated expression. In a statement block the
+# value is discarded. In a block in expression position it is the block's
+# value. A trailing `match` or `if … else` whose branches give no value
+# remains a statement in a lambda body.
+Block       = '{' { Stmt } [ Expr ] '}' ;
 ValueBlock  = '{' ValueBlockItems ;
 # Check the complete value tail before a statement can take its prefix.
 ValueBlockItems
@@ -181,8 +181,8 @@ LabeledLoop = IDENT ':' ( WhileStmt | LoopStmt | ForStmt ) ;
 # The one place that accepts an unsafe function's obligations.
 UnsafeBlock = 'unsafe' Block ;
 
-IfStmt      = 'if' 'let' ArmPatterns '=' NoStructExpr Stmt [ 'else' Stmt ]
-            | 'if' '(' Expr ')' Stmt [ 'else' Stmt ]
+IfStmt      = 'if' 'let' ArmPatterns '=' NoStructExpr Stmt [ 'else' Stmt ] [ ';' ]
+            | 'if' '(' Expr ')' Stmt [ 'else' Stmt ] [ ';' ]
             ;
 WhileStmt   = 'while' '(' Expr ')' Block ;
 LoopStmt    = 'loop' Block ;

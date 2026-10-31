@@ -100,7 +100,7 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"other.fern": "pub enum Kind { Text, Blob }\n",
 			"lib.fern": "import \"./other\";\nenum Kind { Text, Binary }\n" +
-				"pub function pick(): i32 { let k: Kind = Text; return 0; }\n",
+				"pub function pick(): i32 { let k = Text; return 0; }\n",
 			"main.fern": "import \"./lib\";\nfunction main(): i32 { return lib.pick(); }\n",
 		}, "main.fern")
 		if err == nil {
@@ -114,7 +114,7 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 	t.Run("builtin enums stay visible everywhere", func(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"lib.fern": "enum O { Some(i32), None }\n" +
-				"pub function get(): O { return None; }\n",
+				"pub function get(): i32 { let o = None; return 0; }\n",
 			"main.fern": "import \"./lib\";\nfunction main(): i32 { return 0; }\n",
 		}, "main.fern")
 		if err == nil {

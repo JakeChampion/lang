@@ -1,0 +1,59 @@
+import "./kinds";
+
+enum Pace { Fast, Idle }
+enum Step { Fast, Halt, Jump(i32) }
+enum Hop { Halt, Jump(i32) }
+enum Slot { None, Full(i32) }
+
+struct Pair { pace: Pace, step: Step }
+struct Gait { n: i32 }
+
+function pace(p: Pace): i32 {
+  return match (p) { Fast => 3, Idle => 0 };
+}
+
+function step(s: Step): i32 {
+  return match (s) { Fast => 4, Halt => 0, Jump(n) => n };
+}
+
+function hop(h: Hop): i32 {
+  return match (h) { Halt => 0, Jump(n) => n };
+}
+
+function slot(s: Slot): i32 {
+  return match (s) { None => 1, Full(n) => n };
+}
+
+function (g: Gait) walk(s: Step): i32 {
+  return g.n + step(s);
+}
+
+function first(): Step {
+  return Fast;
+}
+
+function main(): i32 {
+  let p: Pace = Fast;
+  let s: Step = Halt;
+  s = Fast;
+  let pair: Pair = Pair { pace: Fast, step: Jump(5) };
+  let steps: Step[] = [Halt, Fast];
+  let maybe: Option[Hop] = Some(Jump(6));
+  let none: Option[i32] = None;
+  let empty: Slot = None;
+  let chosen: Step = if (pace(p) == 3) { Fast } else { Halt };
+  let flipped: Pace = match (chosen) { Fast => Idle, _ => Fast };
+  let mode: kinds.Mode = Fast;
+  let total: i32 = pace(p) + step(s) + pace(pair.pace) + step(pair.step) + step(steps[1]);
+  total = total + step(first()) + hop(Jump(4)) + slot(empty) + pace(flipped);
+  total = total + Gait { n: 1 }.walk(Fast) + kinds.speed(mode) + kinds.speed(Slow);
+  match (maybe) {
+    Some(h) => { total = total + hop(h); },
+    None => {}
+  }
+  match (none) {
+    Some(_) => { return 0; },
+    None => {}
+  }
+  return total;
+}

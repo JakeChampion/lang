@@ -1244,9 +1244,9 @@ function __net_error_at_high(i: i32, n: i32): NetError {
     return HostUnreachable;
   }
   if (i == 10) {
-    return NetError.Interrupted;
+    return Interrupted;
   }
-  return NetError.Other(n);
+  return Other(n);
 }
 ```
 
@@ -1264,7 +1264,7 @@ pub function error_from_host(n: i32): NetError {
     }
     i = i + 1;
   }
-  return NetError.Other(e);
+  return Other(e);
 }
 ```
 
@@ -1304,10 +1304,10 @@ function __net_error_index(e: NetError): i32 {
     HostUnreachable => {
       return 9;
     },
-    NetError.Interrupted => {
+    Interrupted => {
       return 10;
     },
-    NetError.Other(n) => {
+    Other(n) => {
       return -1;
     }
   }
@@ -1320,7 +1320,7 @@ function __net_error_index(e: NetError): i32 {
 <<28 pub function (e: NetError) errno(): i32>>=
 pub function (e: NetError) errno(): i32 {
   match (e) {
-    NetError.Other(n) => {
+    Other(n) => {
       return n;
     },
     _ => {
@@ -1374,10 +1374,10 @@ function __net_error_message_high(e: NetError): string {
     HostUnreachable => {
       return "No route to host";
     },
-    NetError.Interrupted => {
+    Interrupted => {
       return "Interrupted system call";
     },
-    NetError.Other(n) => {
+    Other(n) => {
       return "Network error (errno " + n.to_string() + ")";
     },
     _ => {

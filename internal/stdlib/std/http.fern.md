@@ -1632,7 +1632,7 @@ function __chunk_trailers_step(d: ChunkDecoder, buf: u8[], at: i32, out: u8[]): 
 ```fern
 <<34 pub function parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseError]>>=
 // Why a buffer is not yet, or never will be, one whole request.
-pub enum RequestParseError { RequestIncomplete, RequestNeedsContinue, RequestMalformed(i32) }
+pub enum RequestParseError { Incomplete, NeedsContinue, Malformed(i32) }
 
 impl error.Error for RequestParseError {}
 
@@ -1640,13 +1640,13 @@ impl cmp.Display for RequestParseError {}
 
 pub function (e: RequestParseError) message(): string {
   match (e) {
-    RequestIncomplete => {
+    Incomplete => {
       return "the request is incomplete";
     },
-    RequestNeedsContinue => {
+    NeedsContinue => {
       return "the request waits for 100 Continue before sending its body";
     },
-    RequestMalformed(status) => {
+    Malformed(status) => {
       return "the request is malformed (status " + status.to_string() + ")";
     }
   }
@@ -1662,13 +1662,13 @@ pub function parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseErr
       return Ok(f.request);
     },
     Incomplete => {
-      return Err(RequestIncomplete);
+      return Err(Incomplete);
     },
     Continue => {
-      return Err(RequestNeedsContinue);
+      return Err(NeedsContinue);
     },
     Malformed(status) => {
-      return Err(RequestMalformed(status));
+      return Err(Malformed(status));
     }
   }
 }
@@ -1855,7 +1855,7 @@ function __head_refused(status: i32): HttpFraming {
 <<39 pub struct HttpHead>>=
 pub struct HttpHead { request: HttpRequest, len: i32, keep_alive: boolean, version: string, length: i32, expects_continue: boolean }
 
-pub enum HttpHeading { Headed(HttpHead), HeadIncomplete, HeadMalformed(i32) }
+pub enum HttpHeading { Headed(HttpHead), Incomplete, Malformed(i32) }
 ```
 
 ### `40 pub function parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): Htt...`
@@ -1867,10 +1867,10 @@ pub function parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, p
     Ok(head) => {
       let length: i32 = __declared(head.framing);
       if (length > limits.body) {
-        return HeadMalformed(413);
+        return Malformed(413);
       }
       if (length < 0 && head.version != "HTTP/1.1") {
-        return HeadMalformed(400);
+        return Malformed(400);
       }
       let empty: u8[] = [];
       let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.from_bytes(empty), headers: head.headers, trailers: headers.new() };
@@ -1879,12 +1879,12 @@ pub function parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, p
     },
     Err(status) => {
       if (status == 1) {
-        return HeadIncomplete;
+        return Incomplete;
       }
-      return HeadMalformed(status);
+      return Malformed(status);
     }
   }
-  return HeadIncomplete;
+  return Incomplete;
 }
 ```
 

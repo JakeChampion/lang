@@ -356,7 +356,7 @@ parser answers that state through a head-only entry beside the framed
 parse: `http.parse_request_head_from` is `Headed(HttpHead)` — the request
 with an empty body, its length on the wire, persistence, version, declared
 body length (-1 chunked) and whether it expects `100 Continue` —
-`HeadIncomplete`, or `HeadMalformed(status)`, a declared length past the
+`Incomplete`, or `Malformed(status)`, a declared length past the
 cap refused 413 there; the framed parse reads its body behind the same
 head, and `HttpFraming`'s four arms keep their meanings (the loop consults
 the head only on `Incomplete` and `Continue`, where `Continue` no longer

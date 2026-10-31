@@ -12,6 +12,7 @@ import (
 	"github.com/jakechampion/lang/internal/oracle/monomorph"
 	"github.com/jakechampion/lang/internal/pkg/modload"
 	"github.com/jakechampion/lang/internal/testing/fernsmith"
+	"github.com/jakechampion/lang/internal/tools/gates"
 )
 
 // diffLeg is how one self-host differential leg builds a program and judges the
@@ -94,4 +95,17 @@ func checksClean(src string) bool {
 	}
 	info, err := checker.Check(prog)
 	return err == nil && monomorph.Run(prog, info) == nil
+}
+
+// checksCleanOn is checksClean for one target. It also refuses a program
+// that reaches a builtin the target does not provide (E066).
+func checksCleanOn(target string) func(string) bool {
+	return func(src string) bool {
+		prog, _, err := modload.LoadSource(src)
+		if err != nil {
+			return false
+		}
+		_, err = gates.Check("-", prog, target, nil)
+		return err == nil
+	}
 }

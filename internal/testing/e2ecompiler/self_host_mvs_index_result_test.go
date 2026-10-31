@@ -38,6 +38,17 @@ func indexResultContractSource() (string, string) {
 		{"bad-header-control", "[foo\x00", "foo"},
 		{"bad-header-quote", "[fo\"o", "foo"},
 		{"bad-header-backslash", "[fo\\o", "foo"},
+		{"serial", "serial = 42\n[foo]\n\"1.0.0\"={path=\"foo\"}\n", "foo"},
+		{"serial-zero-comment", "# registry\nserial = 0 # first\n[foo]\n\"1.0.0\"={path=\"foo\"}\n", "foo"},
+		{"serial-largest", "serial=999999999999999999\n", "foo"},
+		{"serial-leading-zero", "serial = 042\n", "foo"},
+		{"serial-quoted", "serial = \"42\"\n", "foo"},
+		{"serial-negative", "serial = -1\n", "foo"},
+		{"serial-too-long", "serial = 1000000000000000000\n", "foo"},
+		{"serial-empty", "serial =\n", "foo"},
+		{"serial-twice", "serial = 1\nserial = 2\n", "foo"},
+		{"serial-in-section", "[foo]\nserial = 1\n", "foo"},
+		{"other-top-level-key", "name = \"x\"\n", "foo"},
 		{"section-key-separator", "[foo\x00bar]\n\"1.0.0\"={path=\"pair\"}\n[foo]\n\"1.0.0\"={path=\"single\"}", "foo\x00bar"},
 	}
 	var source, want strings.Builder
@@ -59,7 +70,7 @@ function record(text: string, pkg: string): string {
         Some(src) => src.path+"|"+src.url+"|"+src.hash,
         None => "||"
       };
-      return "OK|"+util.i32_to_string(ix.entries.len())+"|"+versions+"|"+present+"|"+fields;
+      return "OK|"+ix.serial+"|"+util.i32_to_string(ix.entries.len())+"|"+versions+"|"+present+"|"+fields;
     }
   }
 }
@@ -83,7 +94,7 @@ function main(): i32 {
 			versions = append(versions, version.String())
 		}
 		src, present := ix.SourceFor(tc.pkg, mvs.Version{Major: 1})
-		fmt.Fprintf(&want, "%s|OK|%d|%s|%t|%s|%s|%s\n", tc.name, count, strings.Join(versions, ";"), present, src.Path, src.URL, src.Hash)
+		fmt.Fprintf(&want, "%s|OK|%s|%d|%s|%t|%s|%s|%s\n", tc.name, ix.Serial, count, strings.Join(versions, ";"), present, src.Path, src.URL, src.Hash)
 	}
 	source.WriteString("return 0;\n}\n")
 	return source.String(), want.String()

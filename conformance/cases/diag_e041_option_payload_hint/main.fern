@@ -1,0 +1,7 @@
+struct S { a: i32 }
+function main(): i32 {
+  let x: Option[S] = None;
+  let y: Option[S] = None;
+  print((x == y).to_string());
+  return 0;
+}
