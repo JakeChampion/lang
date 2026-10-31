@@ -64,11 +64,12 @@ function ssa_div_const(tag: i32, width: i32, k: i64, s: asmcore.EmitState): asmc
   if (d == -1i64 && !is_rem) {
     return s.write("    neg w4, w4\n    sxtw x4, w4\n");
   }
-  return ssa_div_const_body(false, is_rem, d, 0, s);
+  return ssa_div_const_body(false, is_rem, d, 32, s);
 }
 
-// lz is the count of high bits known to be zero in an unsigned dividend.
-function ssa_div_const_body(uns: boolean, is_rem: boolean, d: i64, lz: i32, s: asmcore.EmitState): asmcore.EmitState {
+// ext is the count of high bits that only extend the dividend: zeros when it
+// is unsigned, copies of the sign bit when it is signed.
+function ssa_div_const_body(uns: boolean, is_rem: boolean, d: i64, ext: i32, s: asmcore.EmitState): asmcore.EmitState {
   let mag: i64 = d;
   let neg: boolean = false;
   if (!uns && d == -9223372036854775808i64) {
@@ -103,7 +104,9 @@ function ssa_div_const_body(uns: boolean, is_rem: boolean, d: i64, lz: i32, s: a
     return s.write(ssa_div_const_pow2(uns, is_rem, neg, sh));
   }
   if (uns) {
-    s = ssa_div_magic_u(mag as u64, lz, s);
+    s = ssa_div_magic_u(mag as u64, ext, s);
+  } else if (ext == 32) {
+    s = ssa_div_magic_s32(d, s);
   } else {
     s = ssa_div_magic_s(d, s);
   }
@@ -143,7 +146,7 @@ function ssa_div_const_pow2(uns: boolean, is_rem: boolean, neg: boolean, sh: i32
 
 // The quotient of x4 by a signed divisor that is not a power of two, left in x5.
 function ssa_div_magic_s(d: i64, s: asmcore.EmitState): asmcore.EmitState {
-  let ms: ir.MagicS = ir.derive_magic_s(d, 64);
+  let ms: ir.MagicS = ir.derive_magic_s(d);
   s = ssa_const_reg(util.i64_to_string(ms.m), "x5", s);
   s = s.write("    smulh x5, x4, x5\n");
   if (ms.add) {
@@ -155,6 +158,15 @@ function ssa_div_magic_s(d: i64, s: asmcore.EmitState): asmcore.EmitState {
   if (ms.s != 0) {
     s = s.write("    asr x5, x5, #" + util.i32_to_string(ms.s) + "\n");
   }
+  return s.write("    add x5, x5, x5, lsr #63\n");
+}
+
+// The quotient of the sign-extended i32 in x4 by a signed divisor that is not
+// a power of two, left in x5. The product cannot overflow 64 bits.
+function ssa_div_magic_s32(d: i64, s: asmcore.EmitState): asmcore.EmitState {
+  let mg: ir.MagicS32 = ir.derive_magic_s32(d);
+  s = ssa_const_reg(util.i64_to_string(mg.m), "x5", s);
+  s = s.write("    mul x5, x4, x5\n    asr x5, x5, #" + util.i32_to_string(mg.s) + "\n");
   return s.write("    add x5, x5, x5, lsr #63\n");
 }
 

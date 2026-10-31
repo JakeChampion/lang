@@ -197,7 +197,7 @@ func magicParityLines() string {
 	var b strings.Builder
 	for _, d := range []int32{3, 7, -7, 97, 4093, -4093, 641, 1000000, 715827883, -1234567, 10, 100, 2147483647, -2147483647, 5, -5} {
 		mg := deriveMagicS32(d)
-		fmt.Fprintf(&b, "magic_s %d: m=%d s=%d add=%v sub=%v\n", d, mg.M, mg.S, mg.Add, mg.Sub)
+		fmt.Fprintf(&b, "magic_s32 %d: m=%d s=%d\n", d, mg.M, mg.S)
 	}
 	for _, d := range []uint32{3, 7, 97, 641, 1000000, 2147483649, 2863311531, 4294967291, 4294967295, 10, 100, 5, 4093} {
 		mg := deriveMagicU32(d)
