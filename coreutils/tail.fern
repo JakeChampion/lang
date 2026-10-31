@@ -999,8 +999,7 @@ function changed(f: File, st: FileStat): boolean {
   return f.mtime != st.mtime || f.mtime_nsec != st.mtime_nsec;
 }
 
-function tail_forever(files: File[], own o: gnu.Stream, s: Settings, show: boolean): gnu.Stream {
-  let fs: File[] = files;
+function tail_forever(own fs: File[], own o: gnu.Stream, s: Settings, show: boolean): gnu.Stream {
   let out: gnu.Stream = o;
   let last: i32 = fs.len() - 1;
   let blocking: boolean = s.pids.len() == 0 && !s.by_name && fs.len() == 1 && fs[0].has_fd && !is_regular(fs[0].mode);
@@ -1048,7 +1047,9 @@ function tail_forever(files: File[], own o: gnu.Stream, s: Settings, show: boole
           Err(e) => {
             read_it = false;
             out = note(out, gnu.quotef(f.pretty) + ": " + gnu.io_error_text(e));
-            let closed: File = close_file(f);
+            let (taken, rest) = fs.swap_at(i, File { ...f, r: stdin(), has_fd: false });
+            fs = rest;
+            let closed: File = close_file(taken);
             f = File { ...closed, errnum: errno.of(e), err_text: gnu.io_error_text(e) };
           }
         }
