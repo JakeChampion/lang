@@ -2346,6 +2346,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// prepended to the parameter list, so codegen never has to know
 	// about methods.
 	declaredFunctions := make(map[string]bool, len(prog.Funcs))
+	c.consumingTypes = map[string]bool{}
 	for _, fn := range prog.Funcs {
 		if fn.Name == "main" && fn.Receiver == nil && fn.AssocType == "" && fn.Body != nil {
 			c.checkMainSignature(fn)
@@ -2432,6 +2433,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			}
 			fn.MethodRecv = typeName
 			fn.MethodSimpleName = simpleName
+			if fn.Receiver.Own {
+				c.consumingTypes[typeName] = true
+			}
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
 			fn.Receiver = nil
 			c.registerMethod(typeName, simpleName, fn.ImplTrait, mangled, fn.SourceModule, fn.P)
@@ -5566,8 +5570,11 @@ type checker struct {
 	declaredMethods map[string]bool
 	// handleFreeResults names the functions whose result type cannot hold a handle.
 	handleFreeResults map[string]bool
-	callOwnFlags      map[*ast.Call][]bool
-	scalarArgs        map[ast.Expr]bool
+	// consumingTypes names the types with a method that consumes its
+	// receiver. Such a type is a user-defined handle.
+	consumingTypes map[string]bool
+	callOwnFlags   map[*ast.Call][]bool
+	scalarArgs     map[ast.Expr]bool
 
 	shadowedGenericCalls map[*ast.Call]bool
 

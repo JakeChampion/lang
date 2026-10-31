@@ -20858,25 +20858,106 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
   return out;
 }
 
-// A type that cannot hold a handle: a number, a boolean, a char, a string,
-// or an array, option, result or tuple of such types.
-function ow_holds_no_handle(tn: string): boolean {
-  let n: i32 = tn.len();
-  if (n > 2 && tn[n - 2] == b'[' && tn[n - 1] == b']') {
-    return ow_holds_no_handle(slice_unchecked(tn, 0, n - 2) + "");
+// The struct declarations a type name resolves against, and the types with
+// a method that consumes its receiver.
+struct OwnDecls { structs: parser.StructDecl[], snames: util.NameIndex, consuming: util.NameIndex }
+
+function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
+  let names: string[] = [];
+  for fn in mod.funcs {
+    if (fn.receiver_own) {
+      let open: i32 = util.index_of_sub(fn.receiver_type, "[");
+      if (open > 0) {
+        names = names.append(slice_unchecked(fn.receiver_type, 0, open) + "");
+      } else {
+        names = names.append(fn.receiver_type);
+      }
+    }
   }
-  if (n > 2 && tn[0] == b'(' && tn[n - 1] == b')') {
-    return ow_all_hold_no_handle(parser.split_top_commas(slice_unchecked(tn, 1, n - 1) + ""));
-  }
-  if (n > 8 && tn[n - 1] == b']' && (util.str_has_prefix(tn, "Option[") || util.str_has_prefix(tn, "Result["))) {
-    return ow_all_hold_no_handle(parser.split_top_commas(slice_unchecked(tn, 7, n - 1) + ""));
-  }
-  return util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "string", "str", "void"], tn);
+  return OwnDecls { structs: mod.structs, snames: snames, consuming: util.name_index(names) };
 }
 
-function ow_all_hold_no_handle(ts: string[]): boolean {
+// A type that cannot hold a handle: a number, a boolean, a char, a string,
+// a function, or an array, option, result, tuple, struct or enum whose parts
+// are all such types. Reader, Writer and Dir are handles, and so is a type
+// with a method that consumes its receiver. A function cannot consume what
+// it captures, so it cannot close a handle.
+function ow_holds_no_handle(tn: string, dx: OwnDecls): boolean {
+  return ow_no_handle_in(tn, dx, [], []);
+}
+
+// The type parameters in free stand for arguments that hold no handle. seen
+// holds the declarations on the path, so a recursive type is decided by its
+// other parts.
+function ow_no_handle_in(tn: string, dx: OwnDecls, free: string[], seen: string[]): boolean {
+  let n: i32 = tn.len();
+  if (tn == "fn" || util.index_of_sub(tn, "=>") >= 0) {
+    return true;
+  }
+  if (n > 2 && tn[n - 2] == b'[' && tn[n - 1] == b']') {
+    return ow_no_handle_in(slice_unchecked(tn, 0, n - 2) + "", dx, free, seen);
+  }
+  if (n > 2 && tn[0] == b'[' && tn[n - 1] == b']') {
+    return ow_no_handle_in(slice_unchecked(tn, 1, n - 1) + "", dx, free, seen);
+  }
+  if (n > 2 && tn[0] == b'(' && tn[n - 1] == b')') {
+    return ow_all_no_handle_in(parser.split_top_commas(slice_unchecked(tn, 1, n - 1) + ""), dx, free, seen);
+  }
+  if (util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "string", "str", "void"], tn) || util.has_str(free, tn)) {
+    return true;
+  }
+  let name: string = tn;
+  let open: i32 = util.index_of_sub(tn, "[");
+  if (open > 0 && tn[n - 1] == b']') {
+    name = slice_unchecked(tn, 0, open) + "";
+    if (!ow_all_no_handle_in(parser.split_top_commas(slice_unchecked(tn, open + 1, n - 1) + ""), dx, free, seen)) {
+      return false;
+    }
+  }
+  if (name == "Option" || name == "Result" || util.has_str(seen, name)) {
+    return true;
+  }
+  if (dx.consuming.has(name) || util.has_str(["Reader", "Writer", "Dir"], name)) {
+    return false;
+  }
+  return ow_decl_holds_no_handle(name, dx, seen.append(name));
+}
+
+// A declared struct, or every variant of a declared enum, whose fields hold
+// no handle. A name with no declaration can hold one.
+function ow_decl_holds_no_handle(name: string, dx: OwnDecls, seen: string[]): boolean {
+  let i: i32 = dx.snames.chain(name);
+  while (i >= 0) {
+    let sd: parser.StructDecl = dx.structs[i];
+    if (sd.name == name && sd.enum_owner == "") {
+      return ow_fields_hold_no_handle(sd, dx, seen);
+    }
+    i = dx.snames.next[i];
+  }
+  let found: boolean = false;
+  for sd in dx.structs {
+    if (sd.enum_owner == name) {
+      if (!ow_fields_hold_no_handle(sd, dx, seen)) {
+        return false;
+      }
+      found = true;
+    }
+  }
+  return found;
+}
+
+function ow_fields_hold_no_handle(sd: parser.StructDecl, dx: OwnDecls, seen: string[]): boolean {
+  for f in sd.fields {
+    if (!ow_no_handle_in(util.trim(f.type_name), dx, sd.type_params, seen)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function ow_all_no_handle_in(ts: string[], dx: OwnDecls, free: string[], seen: string[]): boolean {
   for t in ts {
-    if (!ow_holds_no_handle(util.trim(t))) {
+    if (!ow_no_handle_in(util.trim(t), dx, free, seen)) {
       return false;
     }
   }
@@ -20885,10 +20966,10 @@ function ow_all_hold_no_handle(ts: string[]): boolean {
 
 // The functions whose result can borrow and can hold a handle. A local set
 // from a call to any other function is fresh.
-function ow_handle_borrows(mod: parser.Module, borrows: util.NameIndex): util.NameIndex {
+function ow_handle_borrows(mod: parser.Module, borrows: util.NameIndex, dx: OwnDecls): util.NameIndex {
   let names: string[] = [];
   for fn in mod.funcs {
-    if (borrows.has(fn.name) && !ow_holds_no_handle(fn.ret_type)) {
+    if (borrows.has(fn.name) && !ow_holds_no_handle(fn.ret_type, dx)) {
       names = names.append(fn.name);
     }
   }
@@ -21086,6 +21167,14 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
         name = a.target;
         init = a.value;
       }
+      // The element a `for` binds borrows from what the loop walks. A range
+      // and a pattern bind no such element.
+      if let ast.StmtFor(f) = st {
+        if (!util.contains(f.var_name, ",") && !for_iter_is_range(f.iter)) {
+          name = f.var_name;
+          init = f.iter;
+        }
+      }
       if (name.len() == 0 || util.has_str(locals, name)) {
         continue;
       }
@@ -21272,8 +21361,9 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let fresh_methods: string[] = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   let fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins);
   let noret: util.NameIndex = lu_no_return_funcs(mod);
-  let handle_borrows: util.NameIndex = ow_handle_borrows(mod, borrows);
   let snames: util.NameIndex = util.name_index(ow_struct_names(mod.structs));
+  let decls: OwnDecls = ow_decls(mod, snames);
+  let handle_borrows: util.NameIndex = ow_handle_borrows(mod, borrows, decls);
   let out: util.Diag[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
