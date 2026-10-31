@@ -2983,10 +2983,25 @@ func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule strin
 }
 
 func (c *checker) instForReceiver(typeName, name, trait, mangled string, recv ast.Type) string {
-	if et, ok := recv.(ast.EnumType); ok && len(et.Args) == 0 {
+	switch r := recv.(type) {
+	case ast.EnumType:
+		if len(r.Args) == 0 {
+			return mangled
+		}
+	case ast.ArrayType, ast.SliceType, ast.TupleType:
+		// Only a generic impl method has an instance per receiver; an
+		// inherent method keeps the declaration that resolution picked.
+		if _, generic := c.info.GenericFuncs[mangled]; !generic {
+			return mangled
+		}
+	default:
 		return mangled
 	}
 	for _, inst := range c.info.MethodInsts[declSiteKey(typeName, name, trait)] {
+		// Receiver specialization must preserve the module selected by visibility.
+		if trait == "" && c.info.MethodSources[inst] != c.info.MethodSources[mangled] {
+			continue
+		}
 		if sig := c.info.FuncSigs[inst]; sig != nil && len(sig.Params) > 0 && ast.Equal(sig.Params[0], recv) {
 			return inst
 		}
