@@ -8847,8 +8847,48 @@ func TestWasiHTTPStatefulHandlerIsE075(t *testing.T) {
 	}
 	_, err = check(`function init(port: i32): i32 { return port; }
 function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }`)
-	if err == nil || !strings.Contains(err.Error(), "`init` takes 1 parameters") {
-		t.Errorf("mispaired init on wasm32-wasi-http: got %v, want the pairing E075", err)
+	if err == nil || !hasCode(err, "E075") || !strings.Contains(err.Error(), "a wasi:http proxy does not run `init`") {
+		t.Errorf("mispaired init on wasm32-wasi-http: got %v, want the proxy lifecycle E075", err)
+	}
+}
+
+func TestWasiHTTPLifecycleHooksAreE075(t *testing.T) {
+	const handler = `function handle(req: HttpRequest, plat: platform__Host): HttpResponse {
+    return HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] }, background: None };
+}`
+	for _, tc := range []struct{ name, decl, hook string }{
+		{"void init", `function init(): void { print("starting"); }`, "init"},
+		{"platform init", `function init(plat: platform__Host): void { print("starting"); }`, "init"},
+		{"shutdown", `function shutdown(reason: string): void { print(reason); }`, "shutdown"},
+		{"explicit main cannot run a proxy hook", `function init(): void { print("starting"); }
+function main(): i32 { init(); return 0; }`, "init"},
+		{"source order", `function shutdown(reason: string): void { print(reason); }
+function init(): void { print("starting"); }`, "shutdown"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.Parse(serveStubDecls + handler + "\n" + tc.decl)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = CheckTarget(prog, "wasm32-wasi-http")
+			want := "a wasi:http proxy does not run `" + tc.hook + "`; its entry point is `handle(req, plat)`"
+			if err == nil || !hasCode(err, "E075") || !strings.Contains(err.Error(), want) || strings.Contains(err.Error(), "\n") {
+				t.Fatalf("want one E075 %q, got %v", want, err)
+			}
+		})
+	}
+	prog, err := parser.Parse(serveStubDecls + handler + `
+struct Helper { n: i32 }
+function (h: Helper) init(): void {}
+function (h: Helper) shutdown(): void {}
+function helper__init(): void {}
+function helper__shutdown(): void {}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CheckTarget(prog, "wasm32-wasi-http"); err != nil {
+		t.Fatalf("methods and qualified helpers are not proxy lifecycle entries: %v", err)
 	}
 }
 

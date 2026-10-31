@@ -1588,6 +1588,7 @@ TestSelfHostWasiHttpOutgoing 98
 TestSelfHostWasiHttpPlatformCapabilities 2
 TestSelfHostWasiHttpTargetBranchGate 2
 TestSelfHostWasiHttpTargetCoreModule 18
+TestSelfHostWasiHttpTargetLifecycleHooks 3
 TestSelfHostWasiHttpTargetMatchesNative 104
 TestSelfHostWasiHttpTargetNeedsHandle 18
 TestSelfHostWasiHttpTargetServes 3

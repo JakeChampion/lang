@@ -63,6 +63,19 @@ The proxy-state diagnostic test verifies E075 for the stateful shape and accepts
 These results cover the Go registry and checker.
 Self-host and target runtime execution remain separate validation steps for future code changes.
 
+## Proxy hook guard in this draft
+
+The proxy adapter calls `handle` and does not call `init` or `shutdown`.
+This draft rejects those top-level hooks with E075 for `wasm32-wasi-http`.
+The diagnostic names the unsupported hook at its declaration.
+It applies to check mode, component output, and core-module output.
+Methods and hooks in imported modules remain ordinary functions.
+
+The [proxy lifecycle tests](../internal/testing/e2ecompiler/self_host_wasi_http_lifecycle_test.go) check this boundary and the absence of an output artifact after refusal.
+The native init and shutdown contracts retain their current behavior.
+The guard prevents silent omission of a declared proxy lifecycle hook.
+It does not implement proxy initialization or complete the lifecycle work in issue #4414.
+
 ## Remaining acceptance criteria
 
 The remaining descriptor and lifecycle contracts require implementation and target-specific evidence.
