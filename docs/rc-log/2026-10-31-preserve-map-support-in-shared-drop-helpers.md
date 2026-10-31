@@ -39,7 +39,9 @@ The three targeted reachability tests pass.
 Stage 3 and stage 4 are byte-identical:
 `4786d8bebb2f91b4d555b8581223e60901979860626ad76f5afc6f09caf05128`.
 
-The fixed-checker Callgrind comparison remains active at publication preparation.
+The fixed-checker Callgrind comparison is complete.
+It uses 39,967,273,663 baseline instructions and 38,595,525,990 candidate instructions.
+The decrease is 3.4322 percent.
 Its source, library, stage-1 producer, and baseline profile remain fixed.
 This correctness fix does not include the separate ownership experiment.
 That experiment increased compiler instructions by 10.05 percent and remains unpublished.

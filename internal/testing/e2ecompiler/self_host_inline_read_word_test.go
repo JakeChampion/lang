@@ -169,6 +169,8 @@ func TestSelfHostInlineKeepsReadWordOwner(t *testing.T) {
 		{"parent-wide-owner", inlineParentWideOwnerProgram},
 		{"parent-closure-owner", inlineParentClosureOwnerProgram},
 		{"unused-finalizer-argument", inlineUnusedFinalizerArgumentProgram},
+		{"unused-record-owner", inlineUnusedRecordWordOwnerProgram},
+		{"unused-tuple-owner", inlineUnusedTupleWordOwnerProgram},
 		{"managed-last-read", inlineManagedLastReadProgram},
 		{"direct-once", inlineReadDirectWordProgram},
 		{"opaque-getter", inlineOpaqueWordProgram},
@@ -491,5 +493,35 @@ function main(): i32 {
  if (n != 0 || got != 1) { return got; }
  print("ok");
  return 0;
+}
+`
+
+const inlineUnusedRecordWordOwnerProgram = `import "core/mem";
+struct Blk { h: usize }
+struct Holder { b: Blk }
+impl mem.Drop for Blk { function drop(self: Blk): void { buf_push_byte(self.h, 9); } }
+@noinline function read_handle(b: Blk): u64 { return b.h as u64; }
+@noinline function consume(h: u64): i32 { return buf_len(h as usize); }
+@noinline function make(h: usize): Blk { return Blk { h: h }; }
+function count(b: Blk): i32 { let h: u64 = read_handle(b); let unused: Holder = Holder { b: b }; return consume(h); }
+function main(): i32 {
+  let h: usize = buf_new(8); buf_push_byte(h, 1);
+  let b: Blk = make(h); let n: i32 = count(b); buf_free(h);
+  if (n != 1) { return n; } print("ok"); return 0;
+}
+`
+
+const inlineUnusedTupleWordOwnerProgram = `import "core/mem";
+struct Blk { h: usize }
+struct Holder { b: Blk }
+impl mem.Drop for Blk { function drop(self: Blk): void { buf_push_byte(self.h, 9); } }
+@noinline function read_handle(b: Blk): u64 { return b.h as u64; }
+@noinline function consume(h: u64): i32 { return buf_len(h as usize); }
+@noinline function make(h: usize): Blk { return Blk { h: h }; }
+function count(b: Blk): i32 { let h: u64 = read_handle(b); let unused: (Blk, i32) = (b, 0); return consume(h); }
+function main(): i32 {
+  let h: usize = buf_new(8); buf_push_byte(h, 1);
+  let b: Blk = make(h); let n: i32 = count(b); buf_free(h);
+  if (n != 1) { return n; } print("ok"); return 0;
 }
 `
