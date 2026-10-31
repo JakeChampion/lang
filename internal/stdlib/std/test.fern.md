@@ -1936,7 +1936,7 @@ pub function assert_no_header(resp: HttpResponse, name: string): TestOutcome {
 }
 
 pub function assert_body(resp: HttpResponse, expected: string): TestOutcome {
-  let got: string = resp.body_string();
+  let got: string = resp.body_text_lossy();
   if (got == expected) {
     return Pass;
   }

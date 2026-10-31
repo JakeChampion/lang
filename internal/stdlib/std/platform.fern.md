@@ -184,7 +184,7 @@ impl Platform for Host {
 
   function sleep(self: Host, d: Duration): void {
     let none: i32[] = [];
-    let woke: i32 = async.wait_any(none, Some(d));
+    let woke: async.Wake = async.wait_any(none, Some(clock.instant().add(d)));
   }
 
   function http(self: Host, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {

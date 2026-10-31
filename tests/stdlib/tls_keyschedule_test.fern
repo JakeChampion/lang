@@ -1,5 +1,4 @@
 import "std/test";
-import "core/int";
 import "std/hex";
 import "std/codec";
 import "std/crypto/x25519";
@@ -184,7 +183,7 @@ function test_chacha20_poly1305_traffic_keys(): test.TestOutcome {
 }
 
 function suite_shape(s: keyschedule.CipherSuite): string {
-  return int.int_to_string(s.hash().size()) + "/" + int.int_to_string(s.aead().key_len());
+  return s.hash().size().to_string() + "/" + s.aead().key_len().to_string();
 }
 
 function round_trip(code: i32): i32 {

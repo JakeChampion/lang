@@ -2,7 +2,6 @@ package e2eharness
 
 func SocketV6Probe() string {
 	return `import "std/time";
-import "core/int";
 import "std/net";
 
 // recv reads once from fd within five seconds: the bytes, none at the end
@@ -17,7 +16,7 @@ function recv(fd: i32, max: i32): u8[] {
 }
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 
@@ -68,6 +67,10 @@ function main(): i32 {
     if (c < 0) { return fail(3); }
     let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(4); }
+    // Both ends of a ::1 connection are ::1, family 6.
+    let rec: u8[] = zeros(19);
+    if (tcp_addr_into(a, false, rec) != 19 || !is_lo6(rec) || port_of(rec) != port) { return fail(46); }
+    if (tcp_addr_into(a, true, rec) != 19 || !is_lo6(rec) || port_of(rec) != tcp_local_port(c)) { return fail(47); }
     if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(5); }
     let got: u8[] = recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(6); }
@@ -85,6 +88,7 @@ function main(): i32 {
     if (t < 0) { return fail(11); }
     let pt: i32 = tcp_local_port(t);
     if (pt <= 0 || pt == ps) { return fail(12); }
+    if (tcp_addr_into(s, false, rec) != 19 || !is_lo6(rec) || port_of(rec) != ps) { return fail(48); }
     if (udp_sendto(s, lo6, pt, "ping") != 4) { return fail(13); }
     let buf: u8[] = zeros(16);
     let from: u8[] = zeros(19);
@@ -95,10 +99,9 @@ function main(): i32 {
     if (udp_recvfrom(s, buf, from) != 4 || buf[0] != 112u8 || buf[3] != 103u8) { return fail(18); }
     if (!is_lo6(from) || port_of(from) != pt) { return fail(19); }
     if (tcp_close(s) != 0 || tcp_close(t) != 0) { return fail(20); }
-    // A :: listener takes an IPv4 peer too, which op 10 reports as the
-    // v4-mapped address: family 6, groups 5 to 7 ffff:7f00:1, at the
-    // dialler's port. Not on wasi:sockets, whose IPv6 socket stays
-    // IPv6-only.
+    // A :: listener takes an IPv4 peer too, which tcp_addr_into reports
+    // as the v4-mapped address ::ffff:127.0.0.1 at the dialler's port. Not
+    // on wasi:sockets, whose IPv6 socket stays IPv6-only.
     if (target_os() != "wasi") {
         let dl: i32 = tcp_listen_with(zeros(16), 0, 4, false);
         if (dl < 0) { return fail(30); }
@@ -106,12 +109,9 @@ function main(): i32 {
         if (dc < 0) { return fail(31); }
         let da: i32 = tcp_accept(dl);
         if (da < 0) { return fail(32); }
-        if (tcp_socket_ctl(da, 10, 8) != 6) { return fail(33); }
-        if (tcp_socket_ctl(da, 10, 4) != 0) { return fail(34); }
-        if (tcp_socket_ctl(da, 10, 5) != 65535) { return fail(35); }
-        if (tcp_socket_ctl(da, 10, 6) != 32512) { return fail(36); }
-        if (tcp_socket_ctl(da, 10, 7) != 1) { return fail(37); }
-        if (tcp_socket_ctl(da, 10, 9) != tcp_local_port(dc)) { return fail(38); }
+        if (tcp_addr_into(da, true, rec) != 19) { return fail(49); }
+        if (rec[0] != 6u8 || rec[10] != 0u8 || rec[11] != 255u8 || rec[12] != 255u8 || rec[13] != 127u8 || rec[16] != 1u8) { return fail(50); }
+        if (port_of(rec) != tcp_local_port(dc)) { return fail(51); }
         tcp_close(da);
         tcp_close(dc);
         tcp_close(dl);
@@ -136,7 +136,6 @@ function main(): i32 {
 
 func NetV6Probe() string {
 	return `import "std/time";
-import "core/int";
 import "std/net";
 import "std/errno";
 
@@ -152,7 +151,7 @@ function recv(fd: i32, max: i32): u8[] {
 }
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 

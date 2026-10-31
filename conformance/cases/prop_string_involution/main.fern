@@ -40,7 +40,7 @@ function main(): i32 {
     let n: i32 = state % 48;
     let s: string = string_from_bytes_unchecked(gen_bytes(state, n));
 
-    if (!s.reverse_bytes().reverse().equal(s.bytes())) {
+    if (!s.reverse_bytes().reverse().eq(s.bytes())) {
       print("reverse_bytes involution FAILED at trial " + trial.to_string());
       return 1;
     }

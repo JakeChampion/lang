@@ -174,7 +174,7 @@ function page(): HttpResponse {
 
 function test_respond_not_modified(): test.TestOutcome {
   let r: HttpResponse = cache.respond(req("GET", ["If-None-Match", "\"v1\""]), current(), now(), page());
-  let out: string = r.status.to_string() + "|" + r.body_string() + "|" + field(r, "ETag") + "|" + field(r, "Cache-Control") + "|" + field(r, "Vary") + "|" + field(r, "Content-Type") + "|" + field(r, "Last-Modified");
+  let out: string = r.status.to_string() + "|" + r.body_text_lossy() + "|" + field(r, "ETag") + "|" + field(r, "Cache-Control") + "|" + field(r, "Vary") + "|" + field(r, "Content-Type") + "|" + field(r, "Last-Modified");
   let untagged: cache.Validators = cache.Validators { etag: None, last_modified: Some(changed()) };
   let t: HttpResponse = cache.respond(req("GET", ["If-Modified-Since", "Sun, 06 Nov 1994 08:49:37 GMT"]), untagged, now(), page());
   out = out + " " + t.status.to_string() + "|" + field(t, "Last-Modified");
@@ -187,9 +187,9 @@ function test_respond_otherwise(): test.TestOutcome {
   let sent: HttpResponse = cache.respond(req("GET", []), current(), now(), page());
   let ahead: cache.Validators = cache.Validators { etag: None, last_modified: Some(at(1791768999 as i64)) };
   let clamped: HttpResponse = cache.respond(req("GET", []), ahead, now(), page());
-  let out: string = failed.status.to_string() + "|" + failed.body_string() + " ";
+  let out: string = failed.status.to_string() + "|" + failed.body_text_lossy() + " ";
   out = out + missing.status.to_string() + "|" + field(missing, "ETag") + " ";
-  out = out + sent.status.to_string() + "|" + sent.body_string() + "|" + field(sent, "ETag") + "|" + field(sent, "Last-Modified") + " ";
+  out = out + sent.status.to_string() + "|" + sent.body_text_lossy() + "|" + field(sent, "ETag") + "|" + field(sent, "Last-Modified") + " ";
   out = out + field(clamped, "Last-Modified");
   return test.assert_eq(out, "412| 404|- 200|body|\"v1\"|Sun, 06 Nov 1994 08:49:37 GMT Mon, 12 Oct 2026 01:20:00 GMT");
 }

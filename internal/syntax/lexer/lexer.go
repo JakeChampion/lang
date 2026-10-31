@@ -725,9 +725,12 @@ func (l *lexer) scanFString(start ast.Position) ([]FStringPart, error) {
 					}
 				case '\n':
 					return nil, &Error{Pos: start, Msg: "newline inside f-string interpolation"}
-				case '"':
+				case '\\':
+					return nil, &Error{Pos: start, Msg: "a backslash is not allowed inside an f-string interpolation: a string there takes plain quotes, as in f\"{s == \"e\"}\""}
+				case '"', '\'':
+					q := l.src[l.i]
 					l.advance()
-					for l.i < len(l.src) && l.src[l.i] != '"' {
+					for l.i < len(l.src) && l.src[l.i] != q {
 						if l.src[l.i] == '\\' && l.i+1 < len(l.src) {
 							l.advance()
 						}

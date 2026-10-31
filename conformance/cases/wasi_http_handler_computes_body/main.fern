@@ -1,0 +1,34 @@
+import "std/mock_platform";
+import "std/platform";
+import "std/http";
+
+// main drives the handler through the mock platform on every target, and
+// the wasm32-wasi-http leg serves the same handler and sends `GET /`.
+
+struct Row { name: string, score: i32 }
+
+function rank(rows: Row[]): string {
+    let best: Row = rows[0];
+    let total: i32 = 0;
+    let names: string[] = [];
+    for r in rows {
+        if (r.score > best.score) { best = r; }
+        total = total + r.score;
+        names = names.append(r.name.to_upper());
+    }
+    return f"best={best.name} total={total} all={names.join(",")}";
+}
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    let rows: Row[] = [Row { name: "ada", score: 3 }, Row { name: "bo", score: 9 }, Row { name: "cy", score: 4 }];
+    let scale = (n: i32): i32 => n * (req.path.len() + 1);
+    return http.ok(f"{req.method} {req.path} {rank(rows)} scaled={scale(7)}");
+}
+
+function main(): i32 {
+    let m: mock_platform.MockPlatform = mock_platform.new();
+    let resp: HttpResponse = handle(http.request("GET", "/"), m);
+    print(resp.status.to_string());
+    print(resp.body_text_lossy());
+    return 0;
+}

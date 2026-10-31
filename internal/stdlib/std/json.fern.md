@@ -136,6 +136,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<53 pub(package) function from_json_payload(v: JsonValue): JsonValue>>
 <<typed decode errors>>
 <<array and optional decoding>>
+
+<<cmp impls>>
 ```
 
 ### `dependencies 1`
@@ -1231,6 +1233,7 @@ function __json_line_col(s: string, off: i32): (i32, i32) {
 
 ```fern
 <<24 pub struct JsonError>>=
+@derive(cmp.Eq, cmp.Hash)
 pub struct JsonError {
   message: string,
   offset: i32,
@@ -2698,6 +2701,151 @@ impl[T: FromJson] FromJson for Option[T] {
       }
     }
     return Err(error(""));
+  }
+}
+```
+
+### `cmp impls`
+
+Two values are equal when they have the same kind and equal contents. Numbers compare by their text, so `1` and `1.0` are not equal. Objects compare without regard to the order of their members. The text of a value is the compact JSON that `encode` gives.
+
+```fern
+<<cmp impls>>=
+impl cmp.Eq for JsonValue {
+  function eq(self: JsonValue, other: JsonValue): boolean {
+    match (self) {
+      JNull => {
+        return is_null(other);
+      },
+      JBool(a) => {
+        match (other) {
+          JBool(b) => {
+            return a == b;
+          },
+          _ => {
+            return false;
+          }
+        }
+      },
+      JNumber(a) => {
+        match (other) {
+          JNumber(b) => {
+            return a == b;
+          },
+          _ => {
+            return false;
+          }
+        }
+      },
+      JString(a) => {
+        match (other) {
+          JString(b) => {
+            return a == b;
+          },
+          _ => {
+            return false;
+          }
+        }
+      },
+      JArray(xs) => {
+        match (other) {
+          JArray(ys) => {
+            return (xs == ys);
+          },
+          _ => {
+            return false;
+          }
+        }
+      },
+      JObject(a) => {
+        match (other) {
+          JObject(b) => {
+            return a == b;
+          },
+          _ => {
+            return false;
+          }
+        }
+      }
+    }
+    return false;
+  }
+}
+
+impl cmp.Eq for JsonObject {
+  function eq(self: JsonObject, other: JsonObject): boolean {
+    if (self.len() != other.len()) {
+      return false;
+    }
+    let i: i32 = 0;
+    while (i < self.names.len()) {
+      match (other.get(self.names[i])) {
+        Some(v) => {
+          if (v != self.items[i]) {
+            return false;
+          }
+        },
+        None => {
+          return false;
+        }
+      }
+      i = i + 1;
+    }
+    return true;
+  }
+}
+
+impl cmp.Hash for JsonValue {
+  function hash(self: JsonValue): i32 {
+    match (self) {
+      JNull => {
+        return 1;
+      },
+      JBool(b) => {
+        if (b) {
+          return 3;
+        }
+        return 2;
+      },
+      JNumber(s) => {
+        return 5 * 31 + s.hash();
+      },
+      JString(s) => {
+        return 7 * 31 + s.hash();
+      },
+      JArray(xs) => {
+        let h: i32 = 11;
+        let i: i32 = 0;
+        while (i < xs.len()) {
+          h = h * 31 + xs[i].hash();
+          i = i + 1;
+        }
+        return h;
+      },
+      JObject(o) => {
+        return o.hash();
+      }
+    }
+    return 0;
+  }
+}
+
+// The sum does not depend on the order of the members, so equal objects give equal hashes.
+impl cmp.Hash for JsonObject {
+  function hash(self: JsonObject): i32 {
+    return self.fold(13, (h: i32, k: string, v: JsonValue) => h + (k.hash() * 31 + v.hash()));
+  }
+}
+
+impl cmp.Display for JsonValue {
+  function to_string(self: JsonValue): string {
+    return encode(self);
+  }
+}
+
+impl cmp.Display for JsonObject {
+  function to_string(self: JsonObject): string {
+    return encode(JObject(self));
   }
 }
 ```

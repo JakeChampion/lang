@@ -27,8 +27,8 @@ function main(): i32 {
     let b: string[] = ["x", "y"];
     let c: string[] = ["x", "z"];
     let r: i32 = 0;
-    if (a.equal(b)) { r = r + 1; }
-    if (!a.equal(c)) { r = r + 2; }
+    if (a.eq(b)) { r = r + 1; }
+    if (!a.eq(c)) { r = r + 2; }
     return r;
 }`},
 	{"starts_with", `import "std/array";

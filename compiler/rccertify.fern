@@ -302,10 +302,10 @@ struct Walk {
   kept: boolean[],
 }
 
-function returns_pair(f: ssa.SFunc): boolean {
+function returns_pair(f: ssa.SFunc, irops: ir.Op[]): boolean {
   for b in f.blocks {
     for ins in b.insts {
-      if (ins.kind_tag == 59 && ins.str == "ret_word") {
+      if (ins.kind_tag == 59 && ins.str == "ret_word" && !scalar_lane(irops, ins)) {
         return true;
       }
     }
@@ -313,12 +313,23 @@ function returns_pair(f: ssa.SFunc): boolean {
   return false;
 }
 
-function paired_call(b: ssa.SBlock, pos: i32): boolean {
-  if (pos + 1 >= b.insts.len()) {
-    return false;
+function scalar_lane(irops: ir.Op[], ins: ssa.SInst): boolean {
+  return ins.imm >= 0 && ins.imm < irops.len() && irops[ins.imm].width == 64;
+}
+
+function paired_call(w: Walk, b: ssa.SBlock, pos: i32): boolean {
+  let at: i32 = pos + 1;
+  while (at < b.insts.len()) {
+    let next: ssa.SInst = b.insts[at];
+    if (next.kind_tag != 59 || next.str != "call_word") {
+      return false;
+    }
+    if (!scalar_lane(w.irops, next)) {
+      return true;
+    }
+    at = at + 1;
   }
-  let next: ssa.SInst = b.insts[pos + 1];
-  return next.kind_tag == 59 && next.str == "call_word";
+  return false;
 }
 
 function word_origin(a: Abi, second: boolean): i32 {
@@ -998,7 +1009,7 @@ function load_origin(w: Walk, c: Context, bi: i32, pos: i32, ins: ssa.SInst): Fo
 }
 
 function call_origin_at(w: Walk, c: Context, bi: i32, pos: i32, ins: ssa.SInst): Found {
-  if (paired_call(w.f.blocks[bi], pos) && !w.sigs.lookup(ins.str).known) {
+  if (paired_call(w, w.f.blocks[bi], pos) && !w.sigs.lookup(ins.str).known) {
     return plain(word_origin(w.abis.lookup(ins.str), false));
   }
   return plain(call_origin(w, ins));
@@ -2981,7 +2992,7 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
   let paired: boolean = base.paired;
   if (!base.on) {
     uses = use_counts(f);
-    paired = returns_pair(f);
+    paired = returns_pair(f, irops);
   }
   let w: Walk = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: paired, why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: uses, dom: dom, regions: [], openers: [], held: hold.box, reused: hold.reused, phis: phis_of(f), outer: outer_of(base), firsts: firsts_of(f, rt.root), carried: [], children: [], takes: no_takes(), params_at_entry: !base.on, debt: [], kept: [] };
   w = Walk { ...w, carried: carried_of(w) };

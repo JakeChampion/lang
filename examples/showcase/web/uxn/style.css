@@ -1,0 +1,240 @@
+.workbench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  border: var(--rule);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.editor-panel,
+.machine-panel {
+  min-width: 0;
+  padding: clamp(1rem, 2vw, 1.6rem);
+}
+.editor-panel {
+  display: flex;
+  flex-direction: column;
+  border-right: var(--rule);
+  background: var(--bg-raised);
+}
+.panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+.panel-heading h2 {
+  font-size: 1.35rem;
+}
+.demo-label,
+.memory-heading label {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+#demo {
+  flex: 1;
+  min-width: 0;
+}
+#demo-description {
+  min-height: 3.7em;
+  margin: 1rem 0;
+}
+#source {
+  flex: 1;
+  width: 100%;
+  min-height: 410px;
+  resize: vertical;
+  padding: 1rem;
+  border: var(--rule);
+  border-radius: var(--radius);
+  background: var(--bg);
+  color: var(--gray-1);
+  font: 12px/1.7 var(--font-mono);
+  tab-size: 2;
+  white-space: pre;
+  overflow: auto;
+}
+.workbench .toolbar {
+  margin: 1rem 0;
+  gap: 0.5rem;
+}
+.workbench .button {
+  padding: 0.55rem 0.8rem;
+  font-size: 0.72rem;
+}
+.screen-surround {
+  padding: 1.5rem;
+  background: var(--plate);
+  border-radius: var(--radius);
+}
+#screen {
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  image-rendering: pixelated;
+  touch-action: none;
+  background: #101018;
+  outline-offset: 4px;
+}
+.screen-caption {
+  display: block;
+  text-align: center;
+  margin-top: 0.8rem;
+  font: 10px var(--font-mono);
+  color: var(--plate-muted);
+}
+.machine-readings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font: 11px var(--font-mono);
+  padding: 0.7rem 0;
+  border-top: var(--rule);
+  border-bottom: var(--rule);
+  color: var(--gray-2);
+}
+.machine-readings b {
+  color: var(--text-accent);
+}
+.small-heading {
+  font: 11px var(--font-mono);
+  margin: 1rem 0 0.5rem;
+}
+.console {
+  min-height: 95px;
+  max-height: 180px;
+  overflow: auto;
+  padding: 0.8rem;
+  border: var(--rule);
+  background: var(--bg-raised);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--gray-1);
+  font: 12px/1.6 var(--font-mono);
+}
+#console-form label,
+.rom-upload {
+  display: block;
+  font: 11px var(--font-mono);
+  margin: 0.75rem 0;
+  color: var(--gray-2);
+}
+.input-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.input-row input {
+  min-width: 0;
+  flex: 1;
+  border: var(--rule);
+  padding: 0.5rem;
+  border-radius: 4px;
+  background: var(--bg);
+}
+.rom-upload input {
+  display: block;
+  max-width: 100%;
+  margin-top: 0.5rem;
+  font-size: 11px;
+}
+.diagnostic {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-left: 3px solid var(--fern-rust);
+  color: var(--gray-1);
+  padding: 1rem;
+  background: var(--bg);
+  font: 12px/1.6 var(--font-mono);
+}
+.inspector {
+  margin-top: 1.5rem;
+  padding: clamp(1rem, 2vw, 1.6rem);
+  border: var(--rule);
+  border-radius: var(--radius);
+}
+.stack-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+}
+.stack-grid > div {
+  min-width: 0;
+}
+.stack-grid h3 {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font: 12px var(--font-mono);
+}
+.stack-grid h3 span {
+  color: var(--gray-3);
+}
+.stack-grid pre {
+  min-height: 3rem;
+  max-height: 8rem;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  padding: 0.7rem;
+  background: var(--bg-raised);
+  color: var(--text-accent);
+  font: 12px/1.7 var(--font-mono);
+}
+.memory-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+#memory-page {
+  width: 5rem;
+  background: var(--bg);
+  border: var(--rule);
+  border-radius: 4px;
+  padding: 0.4rem;
+  font: 12px var(--font-mono);
+}
+.memory {
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre;
+  background: var(--bg-raised);
+  padding: 1rem;
+  color: var(--gray-2);
+  font: 12px/1.8 var(--font-mono);
+}
+.memory mark {
+  background: var(--accent-low);
+  color: var(--text-accent);
+  font-weight: 700;
+}
+.inspector details {
+  margin-top: 1rem;
+}
+.inspector summary {
+  cursor: pointer;
+  font: 12px var(--font-mono);
+}
+@media (max-width: 850px) {
+  .workbench {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .editor-panel {
+    border-right: 0;
+    border-bottom: var(--rule);
+  }
+  #source {
+    min-height: 300px;
+  }
+  .stack-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.8rem;
+  }
+  .panel-heading {
+    flex-wrap: wrap;
+  }
+}

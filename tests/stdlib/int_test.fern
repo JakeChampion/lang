@@ -1,46 +1,45 @@
 import "std/i32";
 import "std/test";
-import "core/int" as int;
 
 function test_to_string_zero(): test.TestOutcome {
   let i: i32 = 0;
   while (i < 120) {
-    let s: string = int.int_to_string(i);
+    let s: string = i.to_string();
     match (i32.parse_i32_radix(s, 10)) {
       Ok(n) => {
         if (n != i || s[s.len() - 1] != (48 + i % 10) as u8) {
-          return test.fail("int_to_string " + s);
+          return test.fail("to_string " + s);
         }
       },
       Err(_) => {
-        return test.fail("int_to_string " + s);
+        return test.fail("to_string " + s);
       }
     }
     i = i + 1;
   }
-  return test.assert_eq(int.int_to_string(0), "0");
+  return test.assert_eq(0.to_string(), "0");
 }
 
 function test_to_string_pos(): test.TestOutcome {
-  return test.assert_eq(int.int_to_string(42), "42");
+  return test.assert_eq(42.to_string(), "42");
 }
 
 function test_to_string_neg(): test.TestOutcome {
-  return test.assert_eq(int.int_to_string(0 - 7), "-7");
+  return test.assert_eq((0 - 7).to_string(), "-7");
 }
 
 function test_to_string_max(): test.TestOutcome {
-  return test.assert_eq(int.int_to_string(2147483647), "2147483647");
+  return test.assert_eq(2147483647.to_string(), "2147483647");
 }
 
 function test_to_string_min(): test.TestOutcome {
-  return test.assert_eq(int.int_to_string(0 - 2147483647 - 1), "-2147483648");
+  return test.assert_eq((0 - 2147483647 - 1).to_string(), "-2147483648");
 }
 
 function parsed(s: string, base: i32): string {
   match (i32.parse_i32_radix(s, base)) {
     Ok(v) => {
-      return int.int_to_string(v);
+      return v.to_string();
     },
     Err(_) => {
       return "None";
@@ -144,27 +143,27 @@ function test_parse_sign_only_none(): test.TestOutcome {
 }
 
 function test_radix_hex(): test.TestOutcome {
-  return test.assert_eq(int.int_to_string_radix(255, 16), "ff");
+  return test.assert_eq(255.to_string_radix(16), "ff");
 }
 
 function test_radix_binary(): test.TestOutcome {
-  return test.assert_eq(int.int_to_string_radix(10, 2), "1010");
+  return test.assert_eq(10.to_string_radix(2), "1010");
 }
 
 function test_radix_zero(): test.TestOutcome {
-  return test.assert_eq(int.int_to_string_radix(0, 16), "0");
+  return test.assert_eq(0.to_string_radix(16), "0");
 }
 
 function test_radix_neg(): test.TestOutcome {
-  return test.assert_eq(int.int_to_string_radix(0 - 255, 16), "-ff");
+  return test.assert_eq((0 - 255).to_string_radix(16), "-ff");
 }
 
 function test_radix_min(): test.TestOutcome {
-  return test.assert_eq(int.int_to_string_radix(0 - 2147483647 - 1, 16), "-80000000");
+  return test.assert_eq((0 - 2147483647 - 1).to_string_radix(16), "-80000000");
 }
 
 function test_roundtrip(): test.TestOutcome {
-  match (i32.parse_i32_radix(int.int_to_string_radix(48879, 16), 16)) {
+  match (i32.parse_i32_radix(48879.to_string_radix(16), 16)) {
     Ok(v) => {  // 0xBEEF
       return test.assert_eq(v, 48879);
     },

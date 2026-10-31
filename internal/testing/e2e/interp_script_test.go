@@ -283,16 +283,6 @@ function main(): i32 {
 }`,
 		},
 		{
-			name: "qualified int.int_to_string call",
-			source: `import "core/int";
-
-function main(): i32 {
-    let s: string = int.int_to_string(11);
-    print(s);
-    return 0;
-}`,
-		},
-		{
 			name: "auto-prelude flat-load path (regression sanity)",
 			source: `
 import "std/i32";
@@ -1488,7 +1478,7 @@ function main(): i32 {
     let wire: string = "POST /upload HTTP/1.1\r\nHost: h\r\nContent-Length: 11\r\n\r\nhello world";
     match (http.parse_request(wire)) {
         Ok(req) => {
-            match (req.body_string()) {
+            match (req.body_text()) {
                 Ok(text) => { if (text != "hello world") { return 1; } },
                 Err(e) => { return 5; }
             }
@@ -1695,7 +1685,7 @@ function main(): i32 {
     let m: mock_platform.MockPlatform = mock_platform.new();
     let req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.empty(), headers: headers.new(), trailers: headers.new() };
     let resp: HttpResponse = handle(req, m);
-    print(resp.body_string());
+    print(resp.body_text_lossy());
     let cs: mock_platform.MockCall[] = m.calls();
     let i: i32 = 0;
     while (i < cs.len()) {

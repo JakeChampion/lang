@@ -1168,6 +1168,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		"__task_park":          {Params: []ast.Type{ast.ArrayType{Elem: i32T}, i32T}, Result: i32T},
 		"__task_wait":          {Params: []ast.Type{i32T}, Result: ast.ArrayType{Elem: i32T}},
 		"__task_timeout":       {Params: []ast.Type{i32T}, Result: i32T},
+		"__task_park_until":    {Params: []ast.Type{ast.ArrayType{Elem: i32T}, ast.NumberType{Width: 64, Signed: true}}, Result: i32T},
+		"__task_until":         {Params: []ast.Type{i32T}, Result: ast.NumberType{Width: 64, Signed: true}},
 		"__task_set_ready":     {Params: []ast.Type{i32T, i32T}, Result: ast.VoidType{}},
 		"__task_set_cancelled": {Params: []ast.Type{i32T}, Result: ast.VoidType{}},
 		"__task_cancelled":     {Params: []ast.Type{}, Result: i32T},
@@ -1228,6 +1230,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.FuncSigs["tcp_socket_ctl"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_addr_into(fd, peer, out): number — one getsockname, or getpeername
+	// when peer, written into out as the 19-byte sender record that
+	// udp_recvfrom fills. 19, or -errno.
+	c.info.FuncSigs["tcp_addr_into"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.BoolType{}, u8s},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["tcp_sendfile"] = &ast.FuncType{
@@ -3904,7 +3913,7 @@ func (c *checker) typeImplsEqAndHash(typeName string) bool {
 	return hasEq && hasHash
 }
 
-const MapVoidValue = "map value type void is not supported — a set of keys is std/set's `Set`"
+const MapVoidValue = "map value type void is not supported — a set of keys is std/pset's `PSet`"
 
 func (c *checker) mapKeyTypeError(k ast.Type) string {
 	switch kt := k.(type) {
@@ -8995,6 +9004,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__task_new": true, "__task_free": true, "__task_enter": true, "__task_leave": true,
 	"__task_park": true, "__task_wait": true, "__task_set_ready": true, "__task_set_cancelled": true,
 	"__task_cancelled": true, "__task_timeout": true, "__task_cur": true,
+	"__task_park_until": true, "__task_until": true,
 	"__syscall3": true, "__syscall4": true, "__syscall5": true, "__syscall6": true,
 }
 

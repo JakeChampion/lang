@@ -1,3 +1,5 @@
+# 2026-10-31: PR #13897 at 54001e2. CI run 41153255512, perf-x86_64.
+# Record the lane's measured changes after the lifetime and shared-helper repairs.
 # 2026-10-29: #13863 (#13061) at 798f4251, from a local profile-costs run. A callback that a
 # program passes by name is now a direct call: closure_call.ir is 35% to 52% lower. The map_string
 # programs grow: each map operation has a clone per key kind.
@@ -55,14 +57,14 @@ profile/arm64-linux/enum_match.minimal.emit	1163
 profile/arm64-linux/enum_match.safe.bytes	66304
 profile/arm64-linux/enum_match.safe.emit	1316
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64). http_hello links no TLS (#12885); int_loop.minimal.emit +3 instructions.
-profile/arm64-linux/http_hello.diagnostic.bytes	133656
-profile/arm64-linux/http_hello.diagnostic.emit	16915
+profile/arm64-linux/http_hello.diagnostic.bytes	202400
+profile/arm64-linux/http_hello.diagnostic.emit	17870
 profile/arm64-linux/http_hello.hardened.bytes	140472
-profile/arm64-linux/http_hello.hardened.emit	18961
+profile/arm64-linux/http_hello.hardened.emit	20689
 profile/arm64-linux/http_hello.minimal.bytes	74936
-profile/arm64-linux/http_hello.minimal.emit	13904
+profile/arm64-linux/http_hello.minimal.emit	14913
 profile/arm64-linux/http_hello.safe.bytes	140472
-profile/arm64-linux/http_hello.safe.emit	17447
+profile/arm64-linux/http_hello.safe.emit	18861
 profile/arm64-linux/int_loop.diagnostic.bytes	67768
 profile/arm64-linux/int_loop.diagnostic.emit	502
 profile/arm64-linux/int_loop.hardened.bytes	65792
@@ -72,13 +74,13 @@ profile/arm64-linux/int_loop.minimal.emit	270
 profile/arm64-linux/int_loop.safe.bytes	65792
 profile/arm64-linux/int_loop.safe.emit	330
 profile/arm64-linux/map_string.diagnostic.bytes	166856
-profile/arm64-linux/map_string.diagnostic.emit	10816
+profile/arm64-linux/map_string.diagnostic.emit	10946
 profile/arm64-linux/map_string.hardened.bytes	70688
-profile/arm64-linux/map_string.hardened.emit	11214
+profile/arm64-linux/map_string.hardened.emit	11458
 profile/arm64-linux/map_string.minimal.bytes	70688
-profile/arm64-linux/map_string.minimal.emit	9329
+profile/arm64-linux/map_string.minimal.emit	9470
 profile/arm64-linux/map_string.safe.bytes	70688
-profile/arm64-linux/map_string.safe.emit	9602
+profile/arm64-linux/map_string.safe.emit	9790
 profile/arm64-linux/startup.diagnostic.bytes	67376
 profile/arm64-linux/startup.diagnostic.emit	484
 profile/arm64-linux/startup.hardened.bytes	65792
@@ -147,18 +149,18 @@ profile/x86-64-linux/enum_match.minimal.ir	57825092
 profile/x86-64-linux/enum_match.safe.bytes	8240
 profile/x86-64-linux/enum_match.safe.emit	1099
 profile/x86-64-linux/enum_match.safe.ir	48825092
-profile/x86-64-linux/http_hello.diagnostic.bytes	121536
-profile/x86-64-linux/http_hello.diagnostic.emit	15557
-profile/x86-64-linux/http_hello.diagnostic.ir	38336340
-profile/x86-64-linux/http_hello.hardened.bytes	76000
-profile/x86-64-linux/http_hello.hardened.emit	16599
-profile/x86-64-linux/http_hello.hardened.ir	26988293
-profile/x86-64-linux/http_hello.minimal.bytes	56448
-profile/x86-64-linux/http_hello.minimal.emit	13321
+profile/x86-64-linux/http_hello.diagnostic.bytes	128800
+profile/x86-64-linux/http_hello.diagnostic.emit	16411
+profile/x86-64-linux/http_hello.diagnostic.ir	35644340
+profile/x86-64-linux/http_hello.hardened.bytes	80352
+profile/x86-64-linux/http_hello.hardened.emit	17937
+profile/x86-64-linux/http_hello.hardened.ir	25664871
+profile/x86-64-linux/http_hello.minimal.bytes	60688
+profile/x86-64-linux/http_hello.minimal.emit	14286
 profile/x86-64-linux/http_hello.minimal.ir	25120450
-profile/x86-64-linux/http_hello.safe.bytes	68736
-profile/x86-64-linux/http_hello.safe.emit	16323
-profile/x86-64-linux/http_hello.safe.ir	23728450
+profile/x86-64-linux/http_hello.safe.bytes	72960
+profile/x86-64-linux/http_hello.safe.emit	17650
+profile/x86-64-linux/http_hello.safe.ir	22672408
 profile/x86-64-linux/int_loop.diagnostic.bytes	6320
 profile/x86-64-linux/int_loop.diagnostic.emit	473
 profile/x86-64-linux/int_loop.diagnostic.ir	12000209
@@ -174,14 +176,14 @@ profile/x86-64-linux/int_loop.safe.ir	12000077
 profile/x86-64-linux/map_string.diagnostic.bytes	135064
 profile/x86-64-linux/map_string.diagnostic.emit	10888
 profile/x86-64-linux/map_string.diagnostic.ir	58790275
-profile/x86-64-linux/map_string.hardened.bytes	41936
-profile/x86-64-linux/map_string.hardened.emit	9883
+profile/x86-64-linux/map_string.hardened.bytes	46032
+profile/x86-64-linux/map_string.hardened.emit	10053
 profile/x86-64-linux/map_string.hardened.ir	54272894
-profile/x86-64-linux/map_string.minimal.bytes	36176
-profile/x86-64-linux/map_string.minimal.emit	9076
+profile/x86-64-linux/map_string.minimal.bytes	40272
+profile/x86-64-linux/map_string.minimal.emit	9203
 profile/x86-64-linux/map_string.minimal.ir	54838506
 profile/x86-64-linux/map_string.safe.bytes	40272
-profile/x86-64-linux/map_string.safe.emit	9421
+profile/x86-64-linux/map_string.safe.emit	9591
 profile/x86-64-linux/map_string.safe.ir	53044115
 profile/x86-64-linux/startup.diagnostic.bytes	5920
 profile/x86-64-linux/startup.diagnostic.emit	448

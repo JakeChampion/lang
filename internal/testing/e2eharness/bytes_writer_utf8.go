@@ -33,7 +33,7 @@ function main(): i32 {
     for bytes in bad {
         let w = empty.write_bytes(bytes);
         match (w.into_string()) { Ok(_) => { return 13; }, Err(_) => { } }
-        if (!w.into_bytes().equal(bytes)) { return 14; }
+        if (!w.into_bytes().eq(bytes)) { return 14; }
         match (w.reset().into_string()) { Ok(s) => { if (s != "") { return 15; } }, Err(_) => { return 16; }, }
     }
     let max = empty.write_bytes([244 as u8, 143 as u8, 191 as u8, 191 as u8]);

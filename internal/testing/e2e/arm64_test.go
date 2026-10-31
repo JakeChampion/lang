@@ -5840,10 +5840,10 @@ function main(): i32 {
     if ((100).is_prime()) { return 67; }
     if ((0 - 7).is_prime()) { return 68; }
 
-    if (!"abc".shift_byte(1).equal("bcd".bytes())) { return 70; }
-    if (!"xyz".shift_byte(0 - 1).equal("wxy".bytes())) { return 71; }
+    if (!"abc".shift_byte(1).eq("bcd".bytes())) { return 70; }
+    if (!"xyz".shift_byte(0 - 1).eq("wxy".bytes())) { return 71; }
     if ("".shift_byte(5).len() != 0) { return 72; }
-    if (!"a".shift_byte(0).equal("a".bytes())) { return 73; }
+    if (!"a".shift_byte(0).eq("a".bytes())) { return 73; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -6025,10 +6025,10 @@ function main(): i32 {
     if (!((0 - 6)).is_multiple_of(3)) { return 24; }
 
     // replace_byte
-    if (!"a-b-c".replace_byte(45, 95).equal("a_b_c".bytes())) { return 30; }
-    if (!"xxx".replace_byte(120, 121).equal("yyy".bytes())) { return 31; }
+    if (!"a-b-c".replace_byte(45, 95).eq("a_b_c".bytes())) { return 30; }
+    if (!"xxx".replace_byte(120, 121).eq("yyy".bytes())) { return 31; }
     if ("".replace_byte(65, 66).len() != 0) { return 32; }
-    if (!"abc".replace_byte(122, 65).equal("abc".bytes())) { return 33; }
+    if (!"abc".replace_byte(122, 65).eq("abc".bytes())) { return 33; }
 
     // join_with_last
     if (["a", "b", "c", "d"].join_with_last(", ", " and ") != "a, b, c and d") { return 40; }
@@ -6116,9 +6116,9 @@ function main(): i32 {
 
     // http builders
     let r1: HttpResponse = http.redirect("/login");
-    if (r1.status != 302 || r1.body_string() != "/login") { return 60; }
+    if (r1.status != 302 || r1.body_text_lossy() != "/login") { return 60; }
     let r2: HttpResponse = http.no_content();
-    if (r2.status != 204 || r2.body_string() != "") { return 61; }
+    if (r2.status != 204 || r2.body_text_lossy() != "") { return 61; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -6226,9 +6226,9 @@ function main(): i32 {
 
     // HTTP response builders
     let r1: HttpResponse = http.bad_request("missing field");
-    if (r1.status != 400 || r1.body_string() != "missing field") { return 50; }
+    if (r1.status != 400 || r1.body_text_lossy() != "missing field") { return 50; }
     let r2: HttpResponse = http.internal_error("server boom");
-    if (r2.status != 500 || r2.body_string() != "server boom") { return 51; }
+    if (r2.status != 500 || r2.body_text_lossy() != "server boom") { return 51; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -6823,11 +6823,11 @@ function main(): i32 {
 
     // HTTP response builders
     let r1: HttpResponse = http.ok("hello");
-    if (r1.status != 200 || r1.body_string() != "hello") { return 21; }
+    if (r1.status != 200 || r1.body_text_lossy() != "hello") { return 21; }
     let r2: HttpResponse = http.not_found();
-    if (r2.status != 404 || r2.body_string() != "Not Found") { return 22; }
+    if (r2.status != 404 || r2.body_text_lossy() != "Not Found") { return 22; }
     let r3: HttpResponse = http.text(500, "boom");
-    if (r3.status != 500 || r3.body_string() != "boom") { return 23; }
+    if (r3.status != 500 || r3.body_text_lossy() != "boom") { return 23; }
 
     // Log helpers — sanity-check they don't crash; output
     // goes to stderr so the e2e harness exit-code check still
@@ -7309,8 +7309,8 @@ function main(): i32 {
     if ("aé😀".bytes().len() != 7) { return 26; }
 
     // String reverse_bytes returns bytes even for ASCII.
-    if (!"hello".reverse_bytes().equal("olleh".bytes())) { return 21; }
-    if (!"a".reverse_bytes().equal("a".bytes())) { return 22; }
+    if (!"hello".reverse_bytes().eq("olleh".bytes())) { return 21; }
+    if (!"a".reverse_bytes().eq("a".bytes())) { return 22; }
     if ("".reverse_bytes().len() != 0) { return 23; }
     return 0;
 }`
@@ -7480,7 +7480,6 @@ function main(): i32 {
 func TestArm64Radix(t *testing.T) {
 	src := `
 import "std/i32";
-import "core/int";
 import "std/format";
 function main(): i32 {
     // Parse — bases 2 / 8 / 10 / 16 / 36.
@@ -7503,16 +7502,16 @@ function main(): i32 {
     match (i32.parse_i32_radix("12", 37))   { Ok(_) => { return 21; }, Err(_) => { } }
 
     // Format — same base spread, plus sign + zero + negative.
-    if (int.int_to_string_radix(255, 16) != "ff") { return 22; }
-    if (int.int_to_string_radix(10, 2) != "1010") { return 23; }
-    if (int.int_to_string_radix(511, 8) != "777") { return 24; }
-    if (int.int_to_string_radix(12345, 10) != "12345") { return 25; }
-    if (int.int_to_string_radix(35, 36) != "z") { return 26; }
-    if (int.int_to_string_radix(0, 16) != "0") { return 27; }
-    if (int.int_to_string_radix(0 - 255, 16) != "-ff") { return 28; }
+    if (255.to_string_radix(16) != "ff") { return 22; }
+    if (10.to_string_radix(2) != "1010") { return 23; }
+    if (511.to_string_radix(8) != "777") { return 24; }
+    if (12345.to_string_radix(10) != "12345") { return 25; }
+    if (35.to_string_radix(36) != "z") { return 26; }
+    if (0.to_string_radix(16) != "0") { return 27; }
+    if ((0 - 255).to_string_radix(16) != "-ff") { return 28; }
 
     // Round-trip — parse(format.format(n)) == Some(n).
-    match (i32.parse_i32_radix(int.int_to_string_radix(0 - 12345, 16), 16)) {
+    match (i32.parse_i32_radix((0 - 12345).to_string_radix(16), 16)) {
         Ok(v) => { if (v != (0 - 12345)) { return 29; } },
         Err(_) => { return 30; },
     }
@@ -9639,10 +9638,9 @@ function main(): i32 {
     return 1;
 }`},
 		{"qualified_int_call", `
-import "core/int";
+import "std/i32";
 function main(): i32 {
-    let s: string = int.int_to_string_radix(255, 16);
-    if (s == "ff") { return 0; }
+    match (i32.parse_i32_radix("ff", 16)) { Ok(v) => { if (v == 255) { return 0; } }, Err(_) => { } }
     return 1;
 }`},
 		{"mixed_stdlib", `

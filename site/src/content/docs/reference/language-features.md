@@ -609,20 +609,23 @@ you can sketch a module's shape and fill it in afterwards.
 
 ## Concurrency — tasks that park
 
-Fern has no `async`/`await` and no threads. Code that waits — on a
-socket, a timer, an HTTP response — is written as straight-line code,
-and runs concurrently when it is run as a **task**. A task that reaches a
-wait parks: it saves where it was and the event loop runs other tasks
-until its wait is answered. The compiler makes every function that can
-reach a wait resumable, so nothing is marked at the call site.
+Fern has no `async`/`await` function colouring and no threads. Code that
+waits, on a socket, a timer or an HTTP response, is straight-line code.
+It runs concurrently when it runs as a **task**. A task that reaches a
+wait parks: it keeps its place, and its scheduler runs other work until
+the wait is answered. The compiler makes every function that can reach a
+wait resumable, so nothing marks the call site. (The `async` keyword
+exists, but it only marks a WebAssembly component export for WASI
+Preview 3. See the [syntax overview](../syntax/#function-modifiers).)
 
-`std/async`'s task combinators take plain closures and run each as a
-task:
+`std/async` expresses concurrency with futures. `async.spawn` starts a
+closure as a task and gives a `Future[T]` for its result. The
+combinators build one future from many, and `async.block_on` waits for
+a future in a plain program:
 
 ```fern
 import "std/async";
 import "std/fetch";
-import "std/http";
 
 function status(url: string): string {
     match (fetch.send(fetch.get(url))) {
@@ -632,37 +635,42 @@ function status(url: string): string {
 }
 
 function main(): i32 {
-    let calls: (() => string)[] = [
-        () => status("https://example.com/"),
-        () => status("https://example.org/"),
-        () => status("https://example.net/"),
+    let calls: async.Future[string][] = [
+        async.spawn(() => status("https://example.com/")),
+        async.spawn(() => status("https://example.org/")),
+        async.spawn(() => status("https://example.net/")),
     ];
     // All three requests are in flight at once; the results come back in order.
-    for line in async.gather_tasks(calls, "cancelled") {
-        print(line);
+    match (async.block_on(async.gather(calls))) {
+        Some(lines) => {
+            for line in lines {
+                print(line);
+            }
+        },
+        None => { print("cancelled"); }
     }
     return 0;
 }
 ```
 
-| Combinator | Answers |
+| Combinator | Is ready with |
 |---|---|
-| `async.gather_tasks(entries, on_incomplete)` | Every result, in input order |
-| `async.race_tasks(entries, none)` | `(index, value)` of the first to finish; the rest are cancelled |
-| `async.with_deadline_tasks(d, entries)` | `Some(value)` for each that finished within `d`, `None` for each cancelled |
+| `async.gather(fs)` | Every value, in input order |
+| `async.race(fs)` | `(index, value)` of the first to be ready; the others are cancelled |
+| `async.with_deadline(until, fs)` | `Some(value)` for each that is ready by the instant `until`, `None` for each that is cancelled |
 
-A cancelled task is not abandoned: its waits answer "cancelled" and it
-leaves through its own control flow, so its `defer`s run. The HTTP
-server is a scheduler of the same kind — a handler waiting on an
-upstream parks while its worker serves other requests (see the [HTTP
-guide](../../http/server/#concurrency-inside-a-worker)). Calling the
-task combinators from inside a handler is not yet accepted
-([#12456](https://github.com/JakeChampion/lang/issues/12456)).
+Two functions wait for a future. `async.block_on` waits on the
+machine's reactor and clock, for a program's `main`. `async.wait` parks
+the calling task on its scheduler, and so it is the one to use in an
+HTTP handler: the server is the scheduler, and a handler that waits on
+two upstreams parks once for both. Both answer `None` when the waiting
+task is cancelled. A cancelled task is not abandoned: its waits answer
+`Cancelled` and it leaves through its own control flow, so its `defer`s
+run (see the [HTTP guide](../../http/server/#concurrency-inside-a-worker)).
 
-`std/sim` runs tasks in virtual time, so concurrent code can be tested
-deterministically, and `std/async` also has `Future[T]` combinators
-(`gather`, `race`, `with_deadline`) for lower-level readiness-driven
-code.
+`std/sim` drives futures and tasks on a virtual clock, so concurrent
+code can be tested deterministically: `sim.block_on` and
+`sim.run_tasks`.
 
 ## See also
 

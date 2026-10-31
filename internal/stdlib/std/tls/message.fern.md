@@ -74,7 +74,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 1>>=
 // This module reads and writes TLS records and handshake messages.
-import "core/int";
 import "std/utf8";
 import "std/error";
 import "core/cmp";
@@ -170,13 +169,13 @@ pub function (e: MsgError) message(): string {
       return "tls message: illegal " + what;
     },
     ProtocolVersion(v) => {
-      return "tls message: legacy_version " + int.int_to_string(v) + " is not TLS 1.2's";
+      return "tls message: legacy_version " + v.to_string() + " is not TLS 1.2's";
     },
     UnexpectedMessage(t) => {
-      return "tls message: unknown handshake message type " + int.int_to_string(t);
+      return "tls message: unknown handshake message type " + t.to_string();
     },
     TooLarge(t, n) => {
-      return "tls message: a type " + int.int_to_string(t) + " message of " + int.int_to_string(n) + " bytes is over the limit";
+      return "tls message: a type " + t.to_string() + " message of " + n.to_string() + " bytes is over the limit";
     }
   }
   return "";
@@ -511,7 +510,7 @@ function __read_exts(b: [u8]): Result[Extension[], MsgError] {
     let i: i32 = 0;
     while (i < out.len()) {
       if (out[i].kind == kind) {
-        return Err(IllegalParameter("repeated extension " + int.int_to_string(kind)));
+        return Err(IllegalParameter("repeated extension " + kind.to_string()));
       }
       i = i + 1;
     }
@@ -871,7 +870,7 @@ pub function key_shares(d: [u8]): Result[KeyShareEntry[], MsgError] {
     let i: i32 = 0;
     while (i < out.len()) {
       if (out[i].group == group) {
-        return Err(IllegalParameter("repeated key share " + int.int_to_string(group)));
+        return Err(IllegalParameter("repeated key share " + group.to_string()));
       }
       i = i + 1;
     }

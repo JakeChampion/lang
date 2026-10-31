@@ -5,7 +5,7 @@ func PeerKeyProbe() string {
 import "std/net";
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 

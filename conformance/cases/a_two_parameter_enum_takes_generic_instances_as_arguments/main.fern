@@ -1,0 +1,22 @@
+import "./bag";
+
+function main(): i32 {
+  let inner: bag.Bag[i32, i32] = bag.Many([bag.One(1, 2), bag.One(3, 4)]);
+  let outer: bag.Bag[bag.Bag[i32, i32], i32] = bag.Many([bag.One(inner, 5), bag.One(inner, 6)]);
+  if (outer.len() != 2) {
+    return 1;
+  }
+  let again: bag.Bag[bag.Bag[i32, i32], i32] = bag.Many([bag.One(inner, 5), bag.One(inner, 6)]);
+  if (outer.hash() != again.hash()) {
+    return 2;
+  }
+  let single = bag.One(inner, 5);
+  if (single.len() != 1 || single.hash() == outer.hash()) {
+    return 3;
+  }
+  let wrapped: bag.Bag[bag.Wrap[i32], i32] = bag.Many([bag.One(bag.Wrap { x: 7 }, 8)]);
+  if (wrapped.len() != 1 || wrapped.hash() == 0) {
+    return 4;
+  }
+  return 0;
+}

@@ -7047,6 +7047,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "ring_recv", params: [t_i64(), t_i32(), bytes], modes: [v, v, b], result: t_i32() },
     ssasem.Contract { name: "ring_send_zc", params: [t_i64(), t_i32(), bytes, t_i32()], modes: [v, v, b, v], result: t_i32() },
     ssasem.Contract { name: "tcp_recv_into", params: [t_i32(), bytes], modes: [v, b], result: t_i32() },
+    ssasem.Contract { name: "tcp_addr_into", params: [t_i32(), t_bool(), bytes], modes: [v, v, b], result: t_i32() },
     ssasem.Contract { name: "tcp_ktls", params: [t_i32(), t_i32(), t_i32(), bytes], modes: [v, v, v, b], result: t_i32() },
     ssasem.Contract { name: "signal_ignore", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_default", params: [t_i32()], modes: [v], result: t_i32() },
@@ -7382,8 +7383,10 @@ function memory_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__task_enter", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
     ssasem.Contract { name: "__task_leave", params: [], modes: [], result: t_i32() },
     ssasem.Contract { name: "__task_park", params: [fds, t_i32()], modes: [b, v], result: t_i32() },
+    ssasem.Contract { name: "__task_park_until", params: [fds, t_i64()], modes: [b, v], result: t_i32() },
     ssasem.Contract { name: "__task_wait", params: [t_i32()], modes: [v], result: fds },
     ssasem.Contract { name: "__task_timeout", params: [t_i32()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "__task_until", params: [t_i32()], modes: [v], result: t_i64() },
     ssasem.Contract { name: "__task_set_ready", params: [t_i32(), t_i32()], modes: [v, v], result: t_void() },
     ssasem.Contract { name: "__task_set_cancelled", params: [t_i32()], modes: [v], result: t_void() },
     ssasem.Contract { name: "__task_cancelled", params: [], modes: [], result: t_i32() },
@@ -7977,6 +7980,15 @@ function any_true(xs: boolean[]): boolean {
   return false;
 }
 
+function inferred_modes_change(p: Produced): boolean {
+  for i in 0..p.func.params.len() {
+    if (i >= p.modes.len() || inferred_mode(p.modes[i], p.func.params[i], true) != inferred_mode(p.modes[i], p.func.params[i], false)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function infer_rows(all: Produced[], names: string[], pinned: string[]): ownership.Escapes[] {
   let taken: string[] = pinned;
   let k: i32 = 0;
@@ -7989,8 +8001,10 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
   let taken_ix: util.NameIndex = util.name_index(taken);
   let rows: ownership.Escapes[] = [];
   let analyses: ssasem.Analysis[] = [];
+  let modes_change: boolean[] = [];
   let i: i32 = 0;
   while (i < all.len() && i < names.len()) {
+    modes_change = modes_change.append(inferred_modes_change(all[i]));
     if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !taken_ix.has(names[i])) {
       rows = rows.append(ownership.Escapes { name: names[i], bits: mode_bits(all[i], []), lends: false, cycle: 0 - 1, quiet: [] });
       analyses = analyses.append(row_analysis(all[i]));
@@ -8032,8 +8046,9 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     queued = queued.with(i, false);
     let at: i32 = own_row[i];
     if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
-      let next: boolean[] = mode_bits(all[i], ownership.escaping(all[i].func, analyses[i], rows, ix));
-      let lends: boolean = rows[at].lends || ownership.lends(all[i].func, analyses[i], rows, ix);
+      let transfers = ownership.transfers(all[i].func, analyses[i], rows, ix, modes_change[i]);
+      let next: boolean[] = mode_bits(all[i], transfers.escapes);
+      let lends: boolean = rows[at].lends || transfers.lends;
       if (!same_bits(rows[at].bits, next) || lends != rows[at].lends) {
         rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next, lends: lends });
         for j in readers[at] {
