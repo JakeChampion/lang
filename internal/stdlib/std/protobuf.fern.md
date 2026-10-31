@@ -34,7 +34,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 1>>=
 import "core/cmp";
-import "std/error";
+import "core/error";
 // This module reads and writes Protocol Buffers fields without a schema.
 import "std/string";
 ```

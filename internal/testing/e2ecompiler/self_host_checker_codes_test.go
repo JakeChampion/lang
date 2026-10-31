@@ -3120,10 +3120,10 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"bound-dest-array-element-ok", "trait C[T] { function c(self: Self): T; }\nstruct A { n: i32 }\nimpl C[i32] for A { function c(self: Self): i32 { return self.n; } }\nfunction f[T, I: C[T]](i: I): T { return i.c(); }\nfunction main(): i32 { let ys: i32[] = [f(A { n: 2 }), 3]; let zs: i32[][] = [iter_free()]; return ys[0]; }\nfunction iter_free(): i32[] { return [1]; }\n"},
 		{"bound-dest-array-element-scalar-e021", "trait C[T] { function c(self: Self): T; }\nstruct A { n: i32 }\nimpl C[i32] for A { function c(self: Self): i32 { return self.n; } }\nfunction f[T, I: C[T]](i: I): T { return i.c(); }\nfunction main(): i32 { let xs: string[] = [f(A { n: 1 })]; return 0; }\n"},
 		{"bound-dest-agrees-ok", "import \"core/iter\";\nfunction rest[T, I: iter.Iterator[T]](it: I): T[] { return it.collect(); }\nfunction main(): i32 { let xs: i32[] = rest(iter.range(0, 5)); let m: Option[i32] = iter.nth(iter.range(0, 5), 1); return xs[0]; }\n"},
-		{"num-sum-assoc-tp-ok", "import \"std/num\";\nfunction main(): i32 { let xs: i32[] = [1, 2, 3]; return num.sum(xs); }\n"},
-		{"num-product-assoc-tp-ok", "import \"std/num\";\nfunction main(): i32 { let xs: i32[] = [2, 3]; return num.product(xs); }\n"},
-		{"assoc-tp-user-generic-ok", "import \"std/num\";\npub function total[T: num.Add + num.Zero](xs: T[]): T { let acc: T = T.zero(); for x in xs { acc = acc.add(x); } return acc; }\nfunction main(): i32 { let xs: i32[] = [1, 2, 3]; return total(xs); }\n"},
-		{"assoc-tp-unbound-e001", "import \"std/num\";\npub function total[T: num.Add + num.Zero](xs: T[]): T { let acc: T = T.nope(); for x in xs { acc = acc.add(x); } return acc; }\nfunction main(): i32 { let xs: i32[] = [1, 2, 3]; return total(xs); }\n"},
+		{"num-sum-assoc-tp-ok", "import \"std/num\"; import \"core/ops\";\nfunction main(): i32 { let xs: i32[] = [1, 2, 3]; return num.sum(xs); }\n"},
+		{"num-product-assoc-tp-ok", "import \"std/num\"; import \"core/ops\";\nfunction main(): i32 { let xs: i32[] = [2, 3]; return num.product(xs); }\n"},
+		{"assoc-tp-user-generic-ok", "import \"std/num\"; import \"core/ops\";\npub function total[T: ops.Add + ops.Zero](xs: T[]): T { let acc: T = T.zero(); for x in xs { acc = acc.add(x); } return acc; }\nfunction main(): i32 { let xs: i32[] = [1, 2, 3]; return total(xs); }\n"},
+		{"assoc-tp-unbound-e001", "import \"std/num\"; import \"core/ops\";\npub function total[T: ops.Add + ops.Zero](xs: T[]): T { let acc: T = T.nope(); for x in xs { acc = acc.add(x); } return acc; }\nfunction main(): i32 { let xs: i32[] = [1, 2, 3]; return total(xs); }\n"},
 		{"assoc-tp-single-bound-missing", "trait Zero { function zero(): Self; }\nfunction f[T: Zero](x: T): i32 { T.nope(); return 0; }\nfunction main(): i32 { return 0; }\n"},
 		{"assoc-tp-other-parameter-bound", "trait Zero { function zero(): Self; }\ntrait One { function one(): Self; }\nfunction f[T: Zero, U: One](x: T, y: U): i32 { T.one(); return 0; }\nfunction main(): i32 { return 0; }\n"},
 		{"assoc-tp-receiver-is-not-associated", "trait Value { function value(self: Self): i32; }\nfunction f[T: Value](x: T): i32 { return T.value(); }\nfunction main(): i32 { return 0; }\n"},
@@ -3132,7 +3132,7 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"assoc-tp-default-ok", "trait Answer { function answer(): i32 { return 42; } }\nfunction f[T: Answer](x: T): i32 { return T.answer(); }\nfunction main(): i32 { return 0; }\n"},
 		{"assoc-tp-supertrait-default-ok", "trait Answer { function answer(): i32 { return 42; } }\ntrait More: Answer { function extra(): i32; }\nfunction f[T: More](x: T): i32 { return T.answer(); }\nfunction main(): i32 { return 0; }\n"},
 		{"assoc-tp-generated-generic-default-ok", "trait Default { function default(): Self; }\n@derive(Default) struct Inner { n: i32 }\n@derive(Default) struct Pair[T] { a: T, b: i32 }\nfunction main(): i32 { let p: Pair[Inner] = Pair.default(); return p.a.n + p.b; }\n"},
-		{"assoc-concrete-primitive-ok", "import \"std/num\";\nfunction main(): i32 { let z: i32 = i32.zero(); return z; }\n"},
+		{"assoc-concrete-primitive-ok", "import \"std/num\"; import \"core/ops\";\nfunction main(): i32 { let z: i32 = i32.zero(); return z; }\n"},
 		// #10120: the entry's unit variant `Ok` is invisible inside std/json,
 		// whose `return Ok(v)` is Result's; in the entry both are visible, so
 		// a bare `Ok(1)` there is only the E036 ambiguity.
@@ -3142,7 +3142,7 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// them any more than the entry's enums.
 		{"entry-alias-invisible-in-import-ok", "import \"std/json\";\nstruct Ok { n: i32 }\nstruct Full { n: i32 }\ntype Reply = Ok | Full;\nfunction main(): i32 {\n    let r: Reply = Full { n: 2 };\n    match (json.parse(\"1\")) { Ok(_) => { }, Err(_) => { return 1; } }\n    return 0;\n}\n"},
 		{"entry-variant-shadows-result-e036", "enum Reply { Ok, Full }\nfunction f(): Result[i32, string] { return Ok(1); }\nfunction main(): i32 { let r: Reply = Reply.Full; return match (r) { Reply.Ok => 0, Reply.Full => 2 }; }\n"},
-		{"assoc-concrete-user-impl-ok", "import \"std/num\";\nstruct P { x: i32 }\nimpl num.Zero for P { function zero(): Self { return P { x: 0 }; } }\nfunction main(): i32 { let p: P = P.zero(); return p.x; }\n"},
+		{"assoc-concrete-user-impl-ok", "import \"std/num\"; import \"core/ops\";\nstruct P { x: i32 }\nimpl ops.Zero for P { function zero(): Self { return P { x: 0 }; } }\nfunction main(): i32 { let p: P = P.zero(); return p.x; }\n"},
 		{"map-bundled-no-import", "function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		{"map-bundled-direct-import", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},
 		{"map-bundled-transitive-import", "import \"std/json\";\nfunction main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); return m.get_or(1, 0) - 2; }\n"},

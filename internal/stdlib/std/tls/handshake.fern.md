@@ -162,7 +162,7 @@ import "std/tls/keyshare";
 import "std/tls/message";
 import "std/tls/record";
 import "std/utf8";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

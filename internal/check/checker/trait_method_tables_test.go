@@ -325,8 +325,8 @@ func TestResolveMethodOwnerRoundTripsToSameImpl(t *testing.T) {
 
 func TestAmbiguousDeclReportedAtTheProgramsImpl(t *testing.T) {
 	err := checkModuleSource(t, `import "std/i32";
-trait Display { function to_string(self: Self): string; }
-impl Display for i32 { function to_string(self: Self): string { return "x"; } }
+trait Parity { function is_even(self: Self): boolean; }
+impl Parity for i32 { function is_even(self: Self): boolean { return true; } }
 function main(): i32 { return 0; }`)
 	var errs diag.Errors
 	if !errors.As(err, &errs) || len(errs) == 0 {

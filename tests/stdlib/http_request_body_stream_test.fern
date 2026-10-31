@@ -84,7 +84,7 @@ function sourced(src: BodySource, content_length: string): HttpRequest {
 
 function test_body_stream_carries_the_body(): test.TestOutcome {
   let (all, rest) = parsed("hello").body_stream().read_all_string();
-  return test.assert_is_some_eq_string(all.ok(), "hello");
+  return test.assert_is_some_eq(all.ok(), "hello");
 }
 
 function test_body_stream_starts_at_the_beginning(): test.TestOutcome {
@@ -127,7 +127,7 @@ function test_read_n_takes_a_prefix(): test.TestOutcome {
 function test_read_n_leaves_the_remainder(): test.TestOutcome {
   let (head, rest) = parsed("hello world").body_stream().read_n(5);
   let (tail, done) = rest.read_all_string();
-  return test.assert_is_some_eq_string(tail.ok(), " world");
+  return test.assert_is_some_eq(tail.ok(), " world");
 }
 
 function test_body_text_ignores_a_partial_walk(): test.TestOutcome {
@@ -196,7 +196,7 @@ function test_ill_formed_line_is_refused(): test.TestOutcome {
 
 function test_sourced_read_all_joins_the_chunks(): test.TestOutcome {
   let (all, rest) = stream.from_source(scripted(["ab", "cd", "e"])).read_all_string();
-  return test.assert_is_some_eq_string(all.ok(), "abcde");
+  return test.assert_is_some_eq(all.ok(), "abcde");
 }
 
 function test_sourced_read_line_spans_chunks(): test.TestOutcome {

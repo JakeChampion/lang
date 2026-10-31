@@ -86,7 +86,7 @@ import "std/net";
 import "std/string";
 import "std/tls/pem";
 import "std/tls/x509";
-import "std/error";
+import "core/error";
 import "core/cmp";
 import "std/time";
 ```

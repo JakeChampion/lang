@@ -115,7 +115,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "std/deflate";
 import "std/hash";
 import "core/cmp";
-import "std/error";
+import "core/error";
 ```
 
 ### `2 pub enum ZstdError`

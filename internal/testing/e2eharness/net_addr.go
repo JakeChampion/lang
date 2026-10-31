@@ -11,7 +11,7 @@ func NetAddrProbe() string {
 	var src strings.Builder
 	src.WriteString(`import "std/net";
 import "std/errno";
-import "std/error";
+import "core/error";
 import "std/option";
 import "std/result";
 import "core/cmp";

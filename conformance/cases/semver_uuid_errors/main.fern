@@ -1,6 +1,6 @@
 import "std/semver";
 import "std/uuid";
-import "std/error";
+import "core/error";
 import "core/cmp";
 
 function sv_invalid(text: string, offset: i32, kind: semver.ParseErrorKind): boolean {

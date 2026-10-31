@@ -8,6 +8,7 @@ import "./decltypes";
 import "./semtypes";
 import "./stdlib_methods";
 import "./consteval";
+import "std/option";
 
 function t_i32(): typeinfo.Type {
   return typeinfo.TypeI32 { is_char: false, width: 32, unsigned: false, polymorphic: false };
@@ -1648,16 +1649,22 @@ function cmp_parts(t: typeinfo.Type): Option[typeinfo.Type[]] {
         return Some(u.args);
       }
     },
+    typeinfo.TypeArray(a) => {
+      return Some([a.elem]);
+    },
+    typeinfo.TypeTuple(tup) => {
+      return Some(tup.elements);
+    },
     _ => {}
   }
   return None;
 }
 
 // cmp_hint says where a cmp trait for t can come from. core/cmp implements Eq,
-// Ord and Hash for Option and Result when their parts do, so the hint moves
-// to the first part that is not a scalar, or else asks for the import. A type
-// that no module can implement the trait for gets advice on its parts, not an
-// impl that the orphan rule refuses.
+// Ord and Hash for Option, Result, arrays, slices and tuples when their parts
+// do, so the hint moves to the first part that is not a scalar, or else asks
+// for the import. A type that no module can implement the trait for gets
+// advice on its parts, not an impl that the orphan rule refuses.
 function cmp_hint(t: typeinfo.Type, trait_name: string): string {
   let short: string = slice_unchecked(trait_name, 4, trait_name.len()) + "";
   let label: string = util.demangle(type_label(t));
@@ -4100,7 +4107,7 @@ function (s: Scope) method_fix_candidates(ns: string, recv: typeinfo.Type): stri
     }
   }
   if (!s.namespace_is_exact(ns)) {
-    return [];
+    return preregistered_methods(ns);
   }
   let out: string[] = preregistered_methods(ns);
   for method in s.methods.methods {
@@ -15004,7 +15011,7 @@ function try_residual_diags(s: Scope, src: typeinfo.Type, u: ast.ExprUnary): uti
   if (from_converts(s, sr, rr)) {
     return out;
   }
-  return out.append(dg_at("E042", "`?` on Result carrying " + sl + " but the surrounding function carries " + rl + ", and " + rl + " has no `from(" + sl + ")` constructor to convert it (std/convert's `impl From[" + sl + "] for " + rl + "`)", u.line, u.col));
+  return out.append(dg_at("E042", "`?` on Result carrying " + sl + " but the surrounding function carries " + rl + ", and " + rl + " has no `from(" + sl + ")` constructor to convert it (core/convert's `impl From[" + sl + "] for " + rl + "`)", u.line, u.col));
 }
 
 function unimplemented_traits(s: Scope, src: typeinfo.Type, traits: string): string {
@@ -18443,6 +18450,15 @@ function ow_takes_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
   return false;
 }
 
+// A for-each takes an owned name only at its last use; any other iterator
+// the loop owns is a fresh value.
+function ow_iter_at_last_use(e: ast.Expr, ctx: OwnCtx): boolean {
+  if let ast.ExprIdent(id) = e {
+    return util.has_str(ctx.last_use, lu_key(id.line, id.col));
+  }
+  return true;
+}
+
 function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
   if let ast.ExprCall(c) = e {
     if let ast.ExprIdent(cid) = c.callee {
@@ -19541,11 +19557,11 @@ function lu_elem_fresh(fx: LuFn, site: LuSite, name: string): boolean {
   return util.has_str(site.fresh, name) && !util.has_str(fx.params, name) && lu_decl_count(fx, name) == 0;
 }
 
-// A for-each takes its array when the array is an own parameter or a fresh
-// call; a local at its last use is a move site and is decided there.
+// A for-each takes its array when the array is a fresh call; a local or an
+// own parameter at its last use is a move site and is decided there.
 function lu_iter_owned(fx: LuFn, iter: ast.Expr): boolean {
-  if let ast.ExprIdent(id) = iter {
-    return lu_own_param(fx, id.name);
+  if let ast.ExprIdent(_) = iter {
+    return false;
   }
   return lu_fresh_expr(iter) && !lu_init_borrows(fx, iter);
 }
@@ -19556,6 +19572,9 @@ function lu_move_site(fx: LuFn, e: ast.Expr, site: LuSite, own acc: string[]): s
   match (e) {
     ast.ExprIdent(aid) => {
       if (lu_dies(fx, e, false, aid, e, false, site) && lu_loose_tag(fx, site, aid.name).len() == 0) {
+        return acc.append(lu_key(aid.line, aid.col));
+      }
+      if (lu_own_param(fx, aid.name) && !util.has_str(fx.facts.escaping, aid.name) && !lu_live_after(fx, site, e, aid)) {
         return acc.append(lu_key(aid.line, aid.col));
       }
       return acc;
@@ -20584,7 +20603,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       return OwnWalk { moved: rc.moved, diags: util.append_diags(rc.diags, ld) };
     },
     ast.StmtFor(fr) => {
-      let takes: boolean = !name_has_comma(fr.var_name) && ow_is_owned_scrutinee(fr.iter, ctx);
+      let takes: boolean = !name_has_comma(fr.var_name) && ow_is_owned_scrutinee(fr.iter, ctx) && ow_iter_at_last_use(fr.iter, ctx);
       let ri: OwnWalk = ru_borrow(fr.iter, moved, ctx);
       if (takes) {
         ri = ru_expr(fr.iter, moved, ctx);
@@ -20802,7 +20821,7 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type)
       } else {
         let i: i32 = 0;
         while (i < binds.len() && i < sd.fields.len()) {
-          if (binds[i].len() > 0 && binds[i] != "_" && ow_type_is_pointer_name(sd.fields[i].type_name, ctx.ofuncs)
+          if (binds[i].len() > 0 && binds[i] != "_" && ow_type_is_pointer(sd.fields[i].type_name, ctx.ofuncs)
             && !util.has_str(names, binds[i])) {
             names = names.append(binds[i]);
           }
@@ -20811,7 +20830,7 @@ function ow_arm_payload_ctx(ctx: OwnCtx, pat: ast.Pattern, whole: typeinfo.Type)
       }
     }
     if (!declared && ow_builtin_payload_variant(vname) && binds[0] != "_" && !util.has_str(names, binds[0])
-      && ow_type_is_pointer_name(typeinfo.spelling(ctx.scope.lookup(binds[0])), ctx.ofuncs)) {
+      && ow_type_is_pointer(typeinfo.spelling(ctx.scope.lookup(binds[0])), ctx.ofuncs)) {
       names = names.append(binds[0]);
     }
     return OwnCtx { ...ctx, owned: names };
@@ -21427,7 +21446,9 @@ function ow_fresh_builtins(): string[] {
   return out;
 }
 
-function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex): string[] {
+// The functions whose result is fresh by signature: no borrowed pointer
+// parameter that can hold a handle.
+function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtins: util.NameIndex, dx: OwnDecls): string[] {
   let out: string[] = builtins.names;
   for fn in mod.funcs {
     if (fn.receiver_name.len() > 0 || !ow_sig_type_is_pointer(fn, fn.ret_type, ofuncs)) {
@@ -21440,7 +21461,7 @@ function ow_signature_fresh_owners(mod: parser.Module, ofuncs: OwnFuncs, builtin
     while (i < fn.params.len()) {
       if (ow_sig_type_is_pointer(fn, fn.params[i].type_name, ofuncs)) {
         any_ptr = true;
-        if (i >= flags.len() || !flags[i]) {
+        if ((i >= flags.len() || !flags[i]) && !ow_holds_no_handle(util.trim(fn.params[i].type_name), dx)) {
           all_own = false;
         }
       }
@@ -21566,10 +21587,10 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let borrows: util.NameIndex = ow_result_borrows(mod, ofuncs, builtins);
   let fresh: string[] = ow_fresh_owners(mod, ofuncs, builtins, borrows);
   let fresh_methods: string[] = ow_fresh_methods(mod, ofuncs, builtins, borrows);
-  let fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins);
   let noret: util.NameIndex = lu_no_return_funcs(mod);
   let snames: util.NameIndex = util.name_index(ow_struct_names(mod.structs));
   let decls: OwnDecls = ow_decls(mod, snames);
+  let fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins, decls);
   let handle_borrows: util.NameIndex = ow_handle_borrows(mod, borrows, decls);
   let out: util.Diag[] = [];
   for fn in mod.funcs {

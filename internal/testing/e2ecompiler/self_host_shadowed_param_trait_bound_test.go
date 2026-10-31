@@ -2,7 +2,7 @@ package e2ecompiler
 
 import "testing"
 
-const shadowedParamTraitBoundSrc = `import "std/convert";
+const shadowedParamTraitBoundSrc = `import "core/convert";
 
 trait From[T] { function make(v: T): Self; }
 

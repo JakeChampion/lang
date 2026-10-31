@@ -232,12 +232,13 @@ function test_error_kinds(): test.TestOutcome {
       got = "parsed";
     },
     Err(e) => {
+      let message = e.message();
       match (e) {
         packet.PacketCutShort(what) => {
           got = what;
         },
         _ => {
-          got = e.message();
+          got = message;
         }
       }
     }

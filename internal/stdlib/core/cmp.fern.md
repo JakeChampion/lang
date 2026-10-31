@@ -60,11 +60,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<16 pub function contains[T: Eq](xs: T[], target: T): boolean>>
 
-<<17 impl Display for bigint.BigInt>>
-
 <<time impls>>
-
-<<18 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean>>
 ```
 ### `module introduction`
 
@@ -76,16 +72,10 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "core/error";
+import "core/f64_text";
+import "core/int";
 import "core/utf8_scalar";
-import "std/i32";
-import "std/i64";
-import "std/u32";
-import "std/u64";
-import "std/f64";
-import "std/string";
-import "core/bigint";
-import "std/time";
-import "std/error";
 ```
 ### `3 pub trait Display`
 
@@ -128,21 +118,56 @@ pub trait Debug {
   function to_debug(self: Self): string;
 }
 
-impl Display for i32 {}
+impl Display for i32 {
+  function to_string(self: i32): string {
+    return int.int_to_string(self);
+  }
+}
 
-impl Display for i64 {}
+impl Display for i64 {
+  function to_string(self: i64): string {
+    if (self < 0) {
+      return int.__int_to_string_u64(0 - self, 1);
+    }
+    return int.__int_to_string_u64(self, 0);
+  }
+}
 
-impl Display for u32 {}
+impl Display for u32 {
+  function to_string(self: u32): string {
+    return int.__int_to_string_u64(self as i64 & 4294967295 as i64, 0);
+  }
+}
 
-impl Display for u64 {}
+impl Display for u64 {
+  function to_string(self: u64): string {
+    return int.__int_to_string_u64(self as i64, 0);
+  }
+}
 
-impl Display for usize {}
+impl Display for usize {
+  function to_string(self: usize): string {
+    return int.__int_to_string_u64(self as i64, 0);
+  }
+}
 
-impl Display for f64 {}
+impl Display for f64 {
+  function to_string(self: f64): string {
+    return f64_text.__primitive_f64_to_string(self);
+  }
+}
 
-impl Display for f32 {}
+impl Display for f32 {
+  function to_string(self: f32): string {
+    return f64_text.__primitive_f32_to_string(self);
+  }
+}
 
-impl Display for string {}
+impl Display for string {
+  function to_string(self: string): string {
+    return self;
+  }
+}
 
 impl Display for IoError {}
 
@@ -277,7 +302,10 @@ impl[T: Eq] Eq for Option[T] {
         return false;
       },
       None => {
-        return other.is_none();
+        if let Some(_) = other {
+          return false;
+        }
+        return true;
       }
     }
   }
@@ -293,10 +321,10 @@ impl[T: Ord] Ord for Option[T] {
         return 1;
       },
       None => {
-        if (other.is_none()) {
-          return 0;
+        if let Some(_) = other {
+          return -1;
         }
-        return -1;
+        return 0;
       }
     }
   }
@@ -367,6 +395,128 @@ impl[T: Hash, E: Hash] Hash for Result[T, E] {
         return __hash_mix_i32(e.hash() * 2 + 1);
       }
     }
+  }
+}
+
+// ---- Arrays and tuples ------------------------------------------
+// An array orders lexicographically, so a prefix comes first. A tuple orders
+// by its first element, then by the next.
+
+impl[T: Eq] Eq for T[] {
+  function eq(self: T[], other: T[]): boolean {
+    if (self.len() != other.len()) {
+      return false;
+    }
+    for i in 0..self.len() {
+      if (!self[i].eq(other[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+impl[T: Ord] Ord for T[] {
+  function cmp(self: T[], other: T[]): i32 {
+    let n: i32 = self.len();
+    if (other.len() < n) {
+      n = other.len();
+    }
+    for i in 0..n {
+      let c: i32 = self[i].cmp(other[i]);
+      if (c != 0) {
+        return c;
+      }
+    }
+    return self.len().cmp(other.len());
+  }
+}
+
+impl[T: Hash] Hash for T[] {
+  function hash(self: T[]): i32 {
+    let h: i32 = self.len();
+    for x in self {
+      h = h * 31 + x.hash();
+    }
+    return __hash_mix_i32(h);
+  }
+}
+
+impl[A: Eq, B: Eq] Eq for (A, B) {
+  function eq(self: (A, B), other: (A, B)): boolean {
+    return self.0.eq(other.0) && self.1.eq(other.1);
+  }
+}
+
+impl[A: Ord, B: Ord] Ord for (A, B) {
+  function cmp(self: (A, B), other: (A, B)): i32 {
+    let c: i32 = self.0.cmp(other.0);
+    if (c != 0) {
+      return c;
+    }
+    return self.1.cmp(other.1);
+  }
+}
+
+impl[A: Hash, B: Hash] Hash for (A, B) {
+  function hash(self: (A, B)): i32 {
+    return __hash_mix_i32(self.0.hash() * 31 + self.1.hash());
+  }
+}
+
+impl[A: Eq, B: Eq, C: Eq] Eq for (A, B, C) {
+  function eq(self: (A, B, C), other: (A, B, C)): boolean {
+    return self.0.eq(other.0) && self.1.eq(other.1) && self.2.eq(other.2);
+  }
+}
+
+impl[A: Ord, B: Ord, C: Ord] Ord for (A, B, C) {
+  function cmp(self: (A, B, C), other: (A, B, C)): i32 {
+    let c: i32 = self.0.cmp(other.0);
+    if (c != 0) {
+      return c;
+    }
+    c = self.1.cmp(other.1);
+    if (c != 0) {
+      return c;
+    }
+    return self.2.cmp(other.2);
+  }
+}
+
+impl[A: Hash, B: Hash, C: Hash] Hash for (A, B, C) {
+  function hash(self: (A, B, C)): i32 {
+    return __hash_mix_i32((self.0.hash() * 31 + self.1.hash()) * 31 + self.2.hash());
+  }
+}
+
+impl[A: Eq, B: Eq, C: Eq, D: Eq] Eq for (A, B, C, D) {
+  function eq(self: (A, B, C, D), other: (A, B, C, D)): boolean {
+    return self.0.eq(other.0) && self.1.eq(other.1) && self.2.eq(other.2) && self.3.eq(other.3);
+  }
+}
+
+impl[A: Ord, B: Ord, C: Ord, D: Ord] Ord for (A, B, C, D) {
+  function cmp(self: (A, B, C, D), other: (A, B, C, D)): i32 {
+    let c: i32 = self.0.cmp(other.0);
+    if (c != 0) {
+      return c;
+    }
+    c = self.1.cmp(other.1);
+    if (c != 0) {
+      return c;
+    }
+    c = self.2.cmp(other.2);
+    if (c != 0) {
+      return c;
+    }
+    return self.3.cmp(other.3);
+  }
+}
+
+impl[A: Hash, B: Hash, C: Hash, D: Hash] Hash for (A, B, C, D) {
+  function hash(self: (A, B, C, D)): i32 {
+    return __hash_mix_i32(((self.0.hash() * 31 + self.1.hash()) * 31 + self.2.hash()) * 31 + self.3.hash());
   }
 }
 ```
@@ -672,7 +822,12 @@ impl Hash for boolean {
 
 impl Hash for string {
   function hash(self: string): i32 {
-    return self.hash_fnv32() as i32;
+    // FNV-1a over the bytes.
+    let h: u32 = 2166136261u32;
+    for i in 0..self.len() {
+      h = (h ^ self[i] as u32) * 16777619u32;
+    }
+    return h as i32;
   }
 }
 
@@ -1410,64 +1565,79 @@ pub function distinct[T: Eq](xs: T[]): T[] {
   return out;
 }
 ```
-### `17 impl Display for bigint.BigInt`
-
-```fern
-<<17 impl Display for bigint.BigInt>>=
-impl Display for bigint.BigInt {}
-
-impl Eq for bigint.BigInt {}
-
-impl Ord for bigint.BigInt {}
-
-impl Hash for bigint.BigInt {}
-
-impl Default for bigint.BigInt {
-  function default(): bigint.BigInt {
-    return bigint.zero();
-  }
-}
-
-impl Debug for bigint.BigInt {
-  function to_debug(self: bigint.BigInt): string {
-    return self.to_string();
-  }
-}
-```
 ### `time impls`
 
 ```fern
 <<time impls>>=
-impl Display for Duration {}
-
-impl Eq for Duration {}
-
-impl Ord for Duration {}
-
-impl Eq for Instant {}
-
-impl Ord for Instant {}
-
-impl Eq for time.Timestamp {}
-
-impl Ord for time.Timestamp {}
-```
-### `18 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean`
-
-```fern
-<<18 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean>>=
-pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean {
-  let n = a.len();
-  if (n != b.len()) {
-    return false;
-  }
-  let i = 0;
-  while (i < n) {
-    if (!a[i].eq(b[i])) {
-      return false;
+impl Display for Duration {
+  function to_string(self: Duration): string {
+    let ms: i64 = __duration_millis(self);
+    if (ms == 0) {
+      return "0s";
     }
-    i = i + 1;
+    let out: string = "";
+    if (ms < 0) {
+      out = "-";
+      ms = 0 - ms;
+    }
+    let units: i64[] = [3600000, 60000, 1000, 1];
+    let names: string[] = ["h", "m", "s", "ms"];
+    for i in 0..4 {
+      let n: i64 = ms / units[i];
+      ms = ms % units[i];
+      if (n > 0) {
+        out = out + n.to_string() + names[i];
+      }
+    }
+    return out;
   }
-  return true;
+}
+
+// The duration in whole milliseconds, truncated toward zero.
+function __duration_millis(d: Duration): i64 {
+  if (d.sec < 0 && d.nsec > 0) {
+    return (d.sec + 1) *| 1000 -| ((1000000000 - d.nsec) / 1000000) as i64;
+  }
+  return d.sec *| 1000 +| (d.nsec / 1000000) as i64;
+}
+
+function __cmp_sec_nsec(a_sec: i64, a_nsec: i32, b_sec: i64, b_nsec: i32): i32 {
+  if (a_sec != b_sec) {
+    if (a_sec < b_sec) {
+      return -1;
+    }
+    return 1;
+  }
+  if (a_nsec != b_nsec) {
+    if (a_nsec < b_nsec) {
+      return -1;
+    }
+    return 1;
+  }
+  return 0;
+}
+
+impl Eq for Duration {
+  function eq(self: Duration, other: Duration): boolean {
+    return self.sec == other.sec && self.nsec == other.nsec;
+  }
+}
+
+impl Ord for Duration {
+  function cmp(self: Duration, other: Duration): i32 {
+    return __cmp_sec_nsec(self.sec, self.nsec, other.sec, other.nsec);
+  }
+}
+
+impl Eq for Instant {
+  function eq(self: Instant, other: Instant): boolean {
+    return self.sec == other.sec && self.nsec == other.nsec;
+  }
+}
+
+impl Ord for Instant {
+  function cmp(self: Instant, other: Instant): i32 {
+    return __cmp_sec_nsec(self.sec, self.nsec, other.sec, other.nsec);
+  }
 }
 ```

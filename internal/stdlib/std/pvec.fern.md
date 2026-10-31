@@ -643,7 +643,7 @@ pub function (v: PVec[T]) is_valid(): boolean {
 
 impl[T: cmp.Eq] cmp.Eq for PVec[T] {
   function eq(self: PVec[T], other: PVec[T]): boolean {
-    return self.len == other.len && cmp.eq_arrays(self.to_array(), other.to_array());
+    return self.len == other.len && self.to_array() == other.to_array();
   }
 }
 

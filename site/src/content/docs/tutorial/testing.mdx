@@ -80,13 +80,13 @@ strings, booleans — and `assert_lt` and friends on any `cmp.Ord` type.
 | Ordering     | `assert_lt`, `assert_le`, `assert_gt`, `assert_ge`                                                                    |
 | Boolean      | `assert_true`, `assert_false`                                                                                         |
 | Floats       | `assert_eq_f64_near`, `assert_eq_f64_rel`, `assert_eq_f64_exact`, `assert_is_nan_f64`, and the `_f32` forms           |
-| Range        | `assert_in_range_i32`, `assert_in_range_i64`, `assert_in_range_f64`, `assert_in_range_f32`                            |
+| Range        | `assert_in_range`, `assert_in_range`, `assert_in_range`, `assert_in_range`                            |
 | Strings      | `assert_contains`, `assert_not_contains`, `assert_starts_with`, `assert_ends_with`, the `_ci` (case-insensitive) forms, `assert_empty_string`, `assert_non_empty_string`, `assert_string_count` |
 | Multi-substr | `assert_contains_all`, `assert_contains_any`, `assert_contains_in_order`                                              |
 | Text diff    | `assert_eq_string_diff` (reports the first differing line), `assert_lines_eq`                                         |
 | Arrays       | `assert_eq_array`, `assert_at`, `assert_array_contains`, `assert_sorted_asc`, `assert_unique`, `assert_subset`, `assert_set_eq`, `assert_len_i32`, `assert_len_string` |
 | Maps         | `assert_map_len`, `assert_map_has`, `assert_map_lacks`, `assert_eq_map`                                               |
-| Option       | `assert_is_some_i32`, `assert_is_none_i32`, `assert_is_some_eq_i32`, and the `_string` forms                          |
+| Option       | `assert_is_some`, `assert_is_none`, `assert_is_some_eq`, and the `_string` forms                          |
 | JSON         | `assert_json_eq` (parses both sides; object key order does not matter), `assert_json_has_key`, `assert_json_eq_field_string` |
 | HTTP         | `assert_status`, `assert_header`, `assert_no_header`, `assert_body` on an `HttpResponse`                              |
 | File state   | `assert_file_exists`, `assert_file_not_exists`, `assert_file_contains`, `assert_file_contents`, `assert_is_file`, `assert_is_dir`, `assert_file_size` |

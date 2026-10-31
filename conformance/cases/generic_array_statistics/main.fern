@@ -1,6 +1,7 @@
 // avg, median, variance, dot and add are one generic method each, and
 // max_by_key / min_by_key take any ordered key.
 import "std/array";
+import "std/option";
 
 struct R { tag: i32, ts: i64 }
 

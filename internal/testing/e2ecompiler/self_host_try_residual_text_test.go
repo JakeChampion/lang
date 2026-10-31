@@ -15,7 +15,7 @@ func TestSelfHostTryResidualNamesImportedTypes(t *testing.T) {
 	}{
 		{
 			name: "dyn std trait, imported error type",
-			src: `import "std/error";
+			src: `import "core/error";
 import "custom";
 function f(): Result[i32, dyn error.Error] { let v: i32 = custom.fail()?; return Ok(v); }
 function main(): i32 { return 0; }

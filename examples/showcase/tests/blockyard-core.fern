@@ -121,10 +121,10 @@ function edit_authority(): test.TestOutcome {
   if (model.validate(world, world.blocks.get(), overlap).is_ok()) {
     return test.fail("a block could trap a participant");
   }
-  if (model.queue_edit(world, seat, edit(1, 0, 256, 13, 256), 0).is_err()) {
+  if (model.queue_edit(world, overlap.seat, edit(1, 0, 256, 13, 256), 0).is_err()) {
     return test.fail("valid edit was rejected");
   }
-  if (model.queue_edit(world, seat, edit(2, 0, 256, 13, 256), 1).is_ok()) {
+  if (model.queue_edit(world, overlap.seat, edit(2, 0, 256, 13, 256), 1).is_ok()) {
     return test.fail("edit rate limit did not apply");
   }
   model.advance(world, 0);
@@ -137,7 +137,7 @@ function edit_authority(): test.TestOutcome {
   if (world.history.get().len() != 1 || model.event_start(world.history.get(), 1) != 1) {
     return test.fail("event cursor differs");
   }
-  model.release(world, seat);
+  model.release(world, overlap.seat);
   return test.pass();
 }
 

@@ -108,26 +108,26 @@ function test_in_range_f32_pass(): test.TestOutcome {
   let v: f32 = 1.5 as f32;
   let lo: f32 = 1.0 as f32;
   let hi: f32 = 2.0 as f32;
-  return test.assert_in_range_f32(v, lo, hi);
+  return test.assert_in_range(v, lo, hi);
 }
 
 function test_in_range_f32_inclusive_bounds(): test.TestOutcome {
   let lo: f32 = 1.0 as f32;
   let hi: f32 = 2.0 as f32;
-  match (test.assert_in_range_f32(lo, lo, hi)) {
+  match (test.assert_in_range(lo, lo, hi)) {
     Fail(msg) => {
       return test.fail("lo should be in range: " + msg);
     },
     Pass => {}
   }
-  return test.assert_in_range_f32(hi, lo, hi);
+  return test.assert_in_range(hi, lo, hi);
 }
 
 function test_in_range_f32_below(): test.TestOutcome {
   let v: f32 = 0.5 as f32;
   let lo: f32 = 1.0 as f32;
   let hi: f32 = 2.0 as f32;
-  match (test.assert_in_range_f32(v, lo, hi)) {
+  match (test.assert_in_range(v, lo, hi)) {
     Pass => {
       return test.fail("below-range should fail");
     },
@@ -145,7 +145,7 @@ function test_in_range_f32_nan_fails(): test.TestOutcome {
   let nan: f32 = z / z;
   let lo: f32 = 0.0 as f32;
   let hi: f32 = 1.0 as f32;
-  match (test.assert_in_range_f32(nan, lo, hi)) {
+  match (test.assert_in_range(nan, lo, hi)) {
     Pass => {
       return test.fail("NaN should fail range check");
     },

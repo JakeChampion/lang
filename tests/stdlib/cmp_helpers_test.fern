@@ -77,12 +77,12 @@ function test_distinct(): test.TestOutcome {
   return test.assert_true(d.len() == 3 && d[0] == 1 && d[1] == 2 && d[2] == 3);
 }
 
-function test_eq_arrays(): test.TestOutcome {
-  return test.assert_true(cmp.eq_arrays([1, 2], [1, 2]));
+function test_array_eq(): test.TestOutcome {
+  return test.assert_true([1, 2] == [1, 2]);
 }
 
-function test_eq_arrays_false(): test.TestOutcome {
-  return test.assert_false(cmp.eq_arrays([1, 2], [1]));
+function test_array_eq_false(): test.TestOutcome {
+  return test.assert_false([1, 2] == [1]);
 }
 
 function test_string_sort(): test.TestOutcome {
@@ -147,8 +147,8 @@ function main(): i32 {
   r = r.it("index_of", test_index_of);
   r = r.it("index_of absent", test_index_of_absent);
   r = r.it("distinct", test_distinct);
-  r = r.it("eq_arrays", test_eq_arrays);
-  r = r.it("eq_arrays false", test_eq_arrays_false);
+  r = r.it("array ==", test_array_eq);
+  r = r.it("array == false", test_array_eq_false);
   r = r.it("string sort", test_string_sort);
   r = r.it("string debug multibyte", test_string_debug_multibyte);
   r = r.it("integer prefixes", test_integer_prefixes);

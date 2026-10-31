@@ -68,7 +68,7 @@ import "std/crypto/ed25519";
 import "std/tls/der";
 import "std/tls/pem";
 import "std/tls/x509";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

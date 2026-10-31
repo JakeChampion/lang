@@ -15,7 +15,11 @@ func TestSelfHostSocketCtl(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux native targets")
 	}
-	checkSelfHostSocketCtl(t, []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"})
+	checkSelfHostSocketCtl(t, []string{"x86-64-linux", "arm64-linux"})
+}
+
+func TestSelfHostWasmSocketCtl(t *testing.T) {
+	checkSelfHostSocketCtl(t, []string{"wasm32-wasi"})
 }
 
 func TestSelfHostArm64DarwinSocketCtl(t *testing.T) {
@@ -78,12 +82,10 @@ func checkSelfHostSocketProbe(t *testing.T, driver, stdlib, target, probe string
 	var cmd *exec.Cmd
 	switch target {
 	case "wasm32-wasi":
-		for _, tool := range []string{"wasm-tools", "wasmtime"} {
-			if _, err := exec.LookPath(tool); err != nil {
-				t.Fatalf("%s not on PATH", tool)
-			}
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Fatal("wasmtime not on PATH")
 		}
-		args = append([]string{"-emit", "asm"}, args...)
+		cmd = exec.Command("wasmtime", "run", "-S", "inherit-network", out)
 	case "arm64-darwin":
 		cmd = exec.Command(out)
 	case "arm64-linux":
@@ -101,7 +103,7 @@ func checkSelfHostSocketProbe(t *testing.T, driver, stdlib, target, probe string
 	}
 	e2eharness.RequireCompleteSemanticLowering(t, report)
 	if target == "wasm32-wasi" {
-		got, err := composeSelfHostWat(t, out).CombinedOutput()
+		got, err := cmd.CombinedOutput()
 		if _, exited := err.(*exec.ExitError); err != nil && !exited {
 			t.Fatalf("wasmtime run: %v\n%s", err, got)
 		}
@@ -114,34 +116,6 @@ func checkSelfHostSocketProbe(t *testing.T, driver, stdlib, target, probe string
 	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() != 42 {
 		t.Fatalf("run: %v, want exit 42; first failing check: %s", err, got)
 	}
-}
-
-func composeSelfHostWat(t *testing.T, watPath string) *exec.Cmd {
-	t.Helper()
-	adapter := os.Getenv("FERN_WASI_ADAPTER")
-	if adapter == "" {
-		t.Fatal("FERN_WASI_ADAPTER unset")
-	}
-	witDir, err := filepath.Abs("../../../cmd/fern/wit")
-	if err != nil {
-		t.Fatal(err)
-	}
-	core := watPath + ".core.wasm"
-	if out, err := exec.Command("wasm-tools", "parse", watPath, "-o", core).CombinedOutput(); err != nil {
-		t.Fatalf("wasm-tools parse: %v\n%s", err, out)
-	}
-	embed := watPath + ".embed.wasm"
-	if out, err := exec.Command("wasm-tools", "component", "embed", witDir, "-w", "fern", core, "-o", embed).CombinedOutput(); err != nil {
-		t.Fatalf("wasm-tools component embed: %v\n%s", err, out)
-	}
-	comp := watPath + ".component.wasm"
-	if out, err := exec.Command("wasm-tools", "component", "new", embed, "--adapt", "wasi_snapshot_preview1="+adapter, "-o", comp).CombinedOutput(); err != nil {
-		t.Fatalf("wasm-tools component new: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("wasm-tools", "validate", comp).CombinedOutput(); err != nil {
-		t.Fatalf("wasm-tools validate: %v\n%s", err, out)
-	}
-	return exec.Command("wasmtime", "run", "-S", "inherit-network", comp)
 }
 
 func TestSelfHostUnixSocket(t *testing.T) {

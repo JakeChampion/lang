@@ -7,7 +7,7 @@ This module reads and writes CSV fields, records, and documents under RFC 4180.
 // This module reads and writes CSV fields, records, and documents under RFC 4180.
 
 import "std/string";
-import "std/error";
+import "core/error";
 import "core/cmp";
 import "std/i32";
 

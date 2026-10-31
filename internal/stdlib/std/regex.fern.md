@@ -94,7 +94,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "core/cmp";
-import "std/error";
+import "core/error";
 import "std/i32";
 import "std/string";
 import "std/utf8" as utf8;

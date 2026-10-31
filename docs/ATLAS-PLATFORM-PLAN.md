@@ -1618,7 +1618,7 @@ Two of the open questions this document opened are now **closed**, both by the
 same route — someone decided, and the decision turned a "needs a decision" row
 into an ordinary build item:
 
-- **Does Fern want a bigint type?** Yes (2026-08-06). `core/bigint` shipped:
+- **Does Fern want a bigint type?** Yes (2026-08-06). `std/bigint` shipped:
   sign-magnitude, base 2^32 limbs in u64 slots, schoolbook multiply only, with
   its trait impls in `core/cmp` to keep the module import-free. The Karatsuba /
   Toom-Cook / NTT ladder stays unbuilt until there is a workload to measure.

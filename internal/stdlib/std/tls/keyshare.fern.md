@@ -68,7 +68,7 @@ import "std/crypto/ecdsa";
 import "std/crypto/mlkem768";
 import "std/crypto/montgomery";
 import "std/crypto/x25519";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

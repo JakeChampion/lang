@@ -4,9 +4,9 @@
 
 
 import "std/f64";
-import "std/num" as num;
+import "core/ops";
 
-function poly[T: num.Mul + num.Sub](x: T): T {
+function poly[T: ops.Mul + ops.Sub](x: T): T {
   return x.mul(x).sub(x);
 }
 

@@ -71,7 +71,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "std/http";
 import "std/platform";
 import "std/stream";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

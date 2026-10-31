@@ -1,0 +1,6 @@
+// core/cmp implements Eq for arrays, so == on an array needs its import.
+function main(): i32 {
+  let a: i32[] = [1];
+  print((a == a).to_string());
+  return 0;
+}

@@ -56,7 +56,7 @@ import "std/string";
 import "std/time";
 import "std/utf8" as utf8;
 import "core/cmp" as cmp;
-import "std/error";
+import "core/error";
 ```
 
 ### `3 pub function format(fmt: string, args: string[]): string`

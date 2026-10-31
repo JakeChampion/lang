@@ -37,8 +37,8 @@ function main(): i32 { return run(Product { value: 0 }); }`, ""},
   if (T.echo("hello").len() != 5) { return 1; } return 0;
 }
 function main(): i32 { if (Marker.echo("hi").len() != 2) { return 2; } return run(Marker {}); }`, ""},
-		{"imported-trait", `import "std/convert" as convert;
-import "std/error";
+		{"imported-trait", `import "core/convert" as convert;
+import "core/error";
 import "core/cmp";
 struct Product { value: i32 }
 struct Problem { value: i32 }

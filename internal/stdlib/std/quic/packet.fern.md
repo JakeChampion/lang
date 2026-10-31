@@ -75,7 +75,7 @@ import "std/crypto/chacha20poly1305";
 import "std/array";
 import "std/i64";
 import "std/u32";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

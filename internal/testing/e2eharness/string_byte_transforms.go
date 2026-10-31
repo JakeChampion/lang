@@ -12,14 +12,14 @@ function found_at(o: Option[i32]): i32 {
 }
 function main(): i32 {
     let reversed: u8[] = "é".reverse_bytes();
-    if (!reversed.equal([169 as u8, 195 as u8])) { return 1; }
+    if (!reversed.eq([169 as u8, 195 as u8])) { return 1; }
     match (utf8.from_bytes(reversed)) { Ok(_) => { return 2; }, Err(_) => { } }
     let removed: u8[] = "éê".without_byte(195);
-    if (!removed.equal([169 as u8, 170 as u8])) { return 3; }
+    if (!removed.eq([169 as u8, 170 as u8])) { return 3; }
     let replaced: u8[] = "éê".replace_byte(195, 255);
-    if (!replaced.equal([255 as u8, 169 as u8, 255 as u8, 170 as u8])) { return 4; }
+    if (!replaced.eq([255 as u8, 169 as u8, 255 as u8, 170 as u8])) { return 4; }
     let shifted: u8[] = "é".shift_byte(0 - 196);
-    if (!shifted.equal([255 as u8, 229 as u8])) { return 5; }
+    if (!shifted.eq([255 as u8, 229 as u8])) { return 5; }
     let b: i32 = 0;
     while (b < 256) {
         let one: u8[] = "A".shift_byte(b - 65);
@@ -30,8 +30,8 @@ function main(): i32 {
     }
     let samples: string[] = ["", "a", "é", "€", "𐀀", "é", "éê€𐀀-longer-than-inline"];
     for s in samples {
-        if (!s.reverse_bytes().reverse().equal(s.bytes())) { return 8; }
-        if (!s.shift_byte(256).equal(s.bytes())) { return 9; }
+        if (!s.reverse_bytes().reverse().eq(s.bytes())) { return 8; }
+        if (!s.shift_byte(256).eq(s.bytes())) { return 9; }
         let dropped: u8[] = s.without_byte(195);
         for x in dropped { if (x == 195) { return 12; } }
     }

@@ -107,7 +107,7 @@ A trait can take type parameters — `trait Sink[T] { function put(self:
 Self, v: T): i32; }` — and an impl names its argument:
 `impl Sink[i32] for Counter { … }`. A type implements a given trait once,
 so a second `impl Sink[string] for Counter` is a redeclaration (`E006`).
-[`std/convert`](../../stdlib/convert/)'s `From[T]` and `Into[T]` are
+[`core/convert`](../../stdlib/convert/)'s `From[T]` and `Into[T]` are
 generic traits.
 
 ### Impls for every instantiation — `impl[T: Bound]`
@@ -447,6 +447,14 @@ IEEE comparisons, while its `cmp` and `eq` methods are a total order.
 | `+` `-` `*` `/` `%` | `add` `sub` `mul` `div` `rem` |
 | `&` `\|` `^` `<<` `>>` | `bitand` `bitor` `bitxor` `shl` `shr` |
 | unary `-` | `neg()` |
+
+[`core/ops`](../../stdlib/ops/) declares one trait for each arithmetic and
+bit operator: `Add`, `Sub`, `Mul`, `Div`, `Rem`, `Neg`, `BitAnd`, `BitOr`,
+`BitXor`, `Shl` and `Shr`. Each trait has the method from the table. A
+generic function that is bounded on one of these traits can use its operator:
+`function wrap[T: ops.Rem](a: T, m: T): T { return a % m; }`. Every integer
+type implements all of the traits. The float types implement all of them
+except `Rem` and the bit traits.
 
 ```fern
 import "std/i32";

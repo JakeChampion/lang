@@ -54,9 +54,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "core/bigint";
+import "std/bigint";
 import "std/crypto/sha2";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 
