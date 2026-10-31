@@ -712,7 +712,8 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
   }
   if (cfg.attributes_only) {
     if (!existed) {
-      match (create_new(dest)) {
+      let made: Result[Writer, IoError] = create_new(dest);
+      match (made) {
         Err(e) => {
           return fail(st, "cannot create regular file " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
         },

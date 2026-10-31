@@ -11,7 +11,7 @@ import (
 
 const stdoutCloseSource = `function main(): i32 {
     let w = stdout();
-    match (w.close()) { Err(_) => { eprint("fail 1"); return 1; }, Ok(_) => {} }
+    unsafe { match (w.close_unchecked()) { Err(_) => { eprint("fail 1"); return 1; }, Ok(_) => {} } }
     match (w.write("LEAK-a\n")) { Ok(_) => { eprint("fail 2"); return 2; }, Err(_) => {} }
     match (stdout().write("LEAK-b\n")) { Ok(_) => { eprint("fail 3"); return 3; }, Err(_) => {} }
     match (stdout().close()) { Ok(_) => { eprint("fail 4"); return 4; }, Err(_) => {} }
@@ -25,7 +25,7 @@ const stdoutCloseSource = `function main(): i32 {
 
 const stderrCloseSource = `function main(): i32 {
     let w = stderr();
-    match (w.close()) { Err(_) => { print("fail 1"); return 1; }, Ok(_) => {} }
+    unsafe { match (w.close_unchecked()) { Err(_) => { print("fail 1"); return 1; }, Ok(_) => {} } }
     match (w.write("LEAK-a\n")) { Ok(_) => { print("fail 2"); return 2; }, Err(_) => {} }
     match (stderr().write("LEAK-b\n")) { Ok(_) => { print("fail 3"); return 3; }, Err(_) => {} }
     match (stderr().close()) { Ok(_) => { print("fail 4"); return 4; }, Err(_) => {} }
@@ -39,7 +39,7 @@ const stdinCloseSource = `import "std/io";
 
 function main(): i32 {
     let r = stdin();
-    match (r.close()) { Err(_) => { print("fail 1"); return 1; }, Ok(_) => {} }
+    unsafe { match (r.close_unchecked()) { Err(_) => { print("fail 1"); return 1; }, Ok(_) => {} } }
     match (io.read_line(r)) { Ok(_) => { print("fail 2"); return 2; }, Err(_) => {} }
     match (io.read_line(stdin())) { Ok(_) => { print("fail 3"); return 3; }, Err(_) => {} }
     match (stdin().read_chunk(4)) { Ok(_) => { print("fail 4"); return 4; }, Err(_) => {} }

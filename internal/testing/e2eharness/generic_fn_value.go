@@ -28,7 +28,7 @@ function skip[T](n: i32, v: T): T { return v; }
 function outer[T](acc: T): T { return inner(acc, skip); }
 function meas_in[T: Shape](s: T): i32 { return apply_to(measure, s); }
 struct Reg[P] { p: P, n: i32 }
-function (r: Reg[P]) with_h[P](h: (P) => i32): Reg[P] { return Reg[P] { p: r.p, n: r.n + h(r.p) }; }
+function (r: Reg[P]) with_h(h: (P) => i32): Reg[P] { return Reg[P] { p: r.p, n: r.n + h(r.p) }; }
 function one[P](p: P): i32 { return 1; }
 function via_both[P](seed: P): i32 { let r: Reg[P] = Reg[P] { p: seed, n: 2 }; return r.with_h(one).n; }
 struct Plain { n: i32 }

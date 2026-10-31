@@ -561,7 +561,9 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       let top: Frame = stack[sp - 1];
       if (top.idx >= top.names.len()) {
         sp = sp - 1;
-        match (top.dir) {
+        let (frame, kept) = stack.swap_at(sp, Frame { ...top, dir: None });
+        stack = kept;
+        match (frame.dir) {
           Some(d) => {
             d.close();
           },

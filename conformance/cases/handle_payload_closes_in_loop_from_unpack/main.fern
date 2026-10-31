@@ -1,0 +1,40 @@
+// spec: RH-29
+// A name a match arm binds is declared afresh each round of the loop that
+// holds the match. So a payload taken from a field of an unpacked local
+// closes once in each round.
+
+import "std/array";
+import "std/i32";
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): void {
+  print("closed " + h.fd.to_string());
+}
+
+struct Frame { dir: Option[Handle], depth: i32 }
+
+function close_all(own frames: Frame[]): i32 {
+  let stack: Frame[] = frames;
+  let sp: i32 = stack.len();
+  let n: i32 = 0;
+  while (sp > 0) {
+    sp = sp - 1;
+    let (frame, kept) = stack.swap_at(sp, Frame { dir: None, depth: 0 });
+    stack = kept;
+    match (frame.dir) {
+      Some(d) => {
+        d.close();
+        n = n + 1;
+      },
+      None => {}
+    }
+  }
+  return n;
+}
+
+function main(): i32 {
+  let n: i32 = close_all([Frame { dir: Some(Handle { fd: 1 }), depth: 0 }, Frame { dir: None, depth: 1 }, Frame { dir: Some(Handle { fd: 2 }), depth: 2 }]);
+  print(n.to_string());
+  return 0;
+}

@@ -2,7 +2,7 @@ import "core/cmp";
 
 pub enum Bag[K, V] { Nil, One(K, V), Many(Bag[K, V][]) }
 
-pub function (b: Bag[K, V]) fold[K, V, A](init: A, f: (A, K, V) => A): A {
+pub function (b: Bag[K, V]) fold[A](init: A, f: (A, K, V) => A): A {
   match (b) {
     One(k, v) => {
       return f(init, k, v);

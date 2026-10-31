@@ -28,7 +28,7 @@ func dirHandleSource(root string, deep bool) string {
 	return fmt.Sprintf(`// rm_tree removes the directory `+"`name`"+` inside d, answering how many
 // directories deep the longest chain under it ran, or a negative step code.
 function rm_tree(d: Dir, name: string): i32 {
-    let c: Dir = match (d.open_dir(name)) { Ok(c) => c, Err(_) => { return 0 - 1000; } };
+    let Ok(c) = d.open_dir(name) else { return 0 - 1000; };
     let n: i32 = 0;
     match (c.entries()) {
         Ok(names) => {
@@ -55,7 +55,7 @@ function rm_tree(d: Dir, name: string): i32 {
 }
 
 function main(): i32 {
-    let top: Dir = match (open_dir(%[1]q)) { Ok(d) => d, Err(_) => { return 10; } };
+    let Ok(top) = open_dir(%[1]q) else { return 10; };
     match (top.lstat("f")) {
         Ok(st) => { if (!st.is_file) { return 11; } if (st.size != 5i64) { return 12; } },
         Err(_) => { return 13; }
@@ -74,7 +74,7 @@ function main(): i32 {
         Ok(_) => { return 20; },
         Err(e) => { match (e) { NotFound(p) => { if (p != "nope") { return 21; } }, _ => { return 22; } } }
     }
-    let sub: Dir = match (top.open_dir("sub")) { Ok(d) => d, Err(_) => { return 23; } };
+    let Ok(sub) = top.open_dir("sub") else { return 23; };
     match (sub.entries()) {
         Ok(names) => { if (names.len() != 1) { return 24; } if (names[0] != "g") { return 25; } },
         Err(_) => { return 26; }
@@ -98,7 +98,7 @@ function main(): i32 {
     match (sub.close()) { Ok(_) => {}, Err(_) => { return 39; } }
     match (top.remove_dir("sub")) { Ok(_) => {}, Err(_) => { return 40; } }
     match (open_dir(%[2]q)) { Ok(_) => { return 41; }, Err(_) => {} }%[3]s
-    match (top.close()) { Ok(_) => {}, Err(_) => { return 43; } }
+    unsafe { match (top.close_unchecked()) { Ok(_) => {}, Err(_) => { return 43; } } }
     match (top.close()) { Ok(_) => { return 44; }, Err(_) => {} }
     return 0;
 }

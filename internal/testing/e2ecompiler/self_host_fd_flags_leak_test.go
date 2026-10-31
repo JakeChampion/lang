@@ -25,7 +25,7 @@ func TestSelfHostWasmFdFlagsReleasesScratch(t *testing.T) {
         match (r.splice_to(stdout(), 1)) { Ok(_) => { return 7; }, Err(e) => { match (e) { Unsupported => {}, _ => { return 8; } } } }
         i = i + 1;
       }
-      r.close();
+      unsafe { r.close_unchecked(); }
       i = 0;
       while (i < 100) {
         match (r.flags()) { Ok(_) => { return 3; }, Err(_) => {} }

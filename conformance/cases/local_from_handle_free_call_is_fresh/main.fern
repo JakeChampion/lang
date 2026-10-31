@@ -1,0 +1,22 @@
+// spec: RH-33
+// A result that cannot hold a handle never gives a handle two names. So a
+// local set from such a call is a fresh value, even when the result can be
+// the borrowed argument.
+
+function consume(own xs: i32[]): i32 {
+  return xs[0];
+}
+
+function copy_row(xs: i32[]): i32[] {
+  if (xs.len() == 0) {
+    return xs;
+  }
+  return xs.with(0, xs[0] + 1);
+}
+
+function main(): i32 {
+  let xs: i32[] = [1];
+  let first: i32[] = copy_row(xs);
+  print((consume(first) + xs.len()).to_string());
+  return 0;
+}

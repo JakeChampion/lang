@@ -30,17 +30,20 @@ func syncSource(prefix string, wasm bool, chardev bool) string {
         },
         Err(_) => { return 34; }
     }`
-	closedWriter := `match (w.fsync())     { Ok(_) => { return 14; }, Err(_) => {} }
+	closedWriter := `unsafe { w.close_unchecked(); }
+            match (w.fsync())     { Ok(_) => { return 14; }, Err(_) => {} }
             match (w.fdatasync()) { Ok(_) => { return 15; }, Err(_) => {} }`
-	closedReader := `match (r.syncfs())    { Ok(_) => { return 22; }, Err(_) => {} }`
+	closedReader := `unsafe { r.close_unchecked(); }
+            match (r.syncfs())    { Ok(_) => { return 22; }, Err(_) => {} }`
 	if !chardev {
 		chardevBlock = ""
 	}
 	if wasm {
 		syncfsOnFile = `match (w.syncfs()) { Ok(_) => { return 12; }, Err(_) => {} }`
 		chardevBlock = ""
-		closedWriter = "// a dropped preview-2 descriptor traps rather than answering EBADF"
-		closedReader = closedWriter
+		closedWriter = `w.close();
+            // a dropped preview-2 descriptor traps rather than answering EBADF`
+		closedReader = `r.close();`
 	}
 
 	return fmt.Sprintf(`function main(): i32 {
@@ -51,7 +54,6 @@ func syncSource(prefix string, wasm bool, chardev bool) string {
             match (w.fsync())     { Ok(_) => {}, Err(_) => { return 11; } }
             %[3]s
             match (w.fdatasync()) { Ok(_) => {}, Err(_) => { return 13; } }
-            w.close();
             %[6]s
         },
         Err(_) => { return 16; }
@@ -63,7 +65,6 @@ func syncSource(prefix string, wasm bool, chardev bool) string {
         Ok(r) => {
             match (r.fsync())     { Ok(_) => {}, Err(_) => { return 20; } }
             match (r.fdatasync()) { Ok(_) => {}, Err(_) => { return 21; } }
-            r.close();
             %[7]s
         },
         Err(_) => { return 23; }

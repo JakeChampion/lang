@@ -167,6 +167,28 @@ function (p: Point) sum(): i32 { return p.x + p.y; }
 `impl Type { … }` with no `for Trait` is a P001 that shows the receiver
 spelling (#12699).
 
+### Type parameters of a receiver method
+
+The receiver introduces the type parameters that its type names. A bound
+on one of them is written in the receiver, where the name occurs first,
+in the same `Name: Bound` shape as `impl[T: Ord]`:
+
+```fern
+function (b: Box[T]) get(): T { return b.v; }
+function (m: OrdMap[K: cmp.Ord, V]) insert(k: K, v: V): OrdMap[K, V] { … }
+function (xs: (T: num.Num)[]) total(): T { … }
+function (xs: [T: cmp.Eq]) first_dup(): Option[T] { … }
+function (m: Map[K, V]) fold[A](init: A, f: (A, K, V) => A): A { … }
+```
+
+A bound can open a type argument, a slice element or a group. An array
+element takes the group, because `T: B[]` would read `[]` as part of the
+bound. The method's own list declares only the type parameters that the
+receiver does not name, as `A` in `fold`. A name in that list that also
+occurs in the receiver type is P007. Each parser lowers a receiver bound
+to the bounded type-parameter list of the method, so the checkers and
+the lowering see one shape (#12702).
+
 ### Default methods
 
 A trait method may carry a `{ … }` body instead of ending at `;`. That

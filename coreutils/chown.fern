@@ -478,7 +478,8 @@ function process(st0: St, s: Settings, t: Target, ent: Ent, top: boolean): St {
     return refuse_root(st, path);
   }
   if (s.recursive && seen.is_dir) {
-    match (ent_open(ent, seen.is_link)) {
+    let opened: Result[Dir, IoError] = ent_open(ent, seen.is_link);
+    match (opened) {
       Ok(d) => {
         match (d.entries()) {
           Ok(names) => {
