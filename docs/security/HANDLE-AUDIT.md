@@ -85,6 +85,15 @@ That rule applies only to a result that can hold a handle.
 A number, a string, or an array of them cannot hold one, so two names for such a value cannot close a handle twice.
 A match on a call follows the same rule as a local initialised from that call.
 
+## Admitted locals
+
+Both checkers admit a local before it passes to an `own` parameter at its last use.
+A name with more than one declaration is a fresh local when each of its declarations is fresh.
+An unpack still needs an owner with one declaration, because the checkers count the field reads by name.
+A local set from an `own` parameter at the parameter's last use is admitted when it is declared once and outside a loop.
+Each later assignment to that local must be a fresh value.
+The cases are `own_arg_redeclared_fresh_local_and_owned_alias` and `diag_e051_stale_redeclaration_and_reassigned_alias`.
+
 ## The defer rule and the field-move rule
 
 A deferred consuming call runs at the function's exit, so it is the last use of the names it consumes.

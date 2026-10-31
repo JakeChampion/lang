@@ -164,7 +164,9 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		return true
 	})
+	// A name is a fresh local when each of its declarations is fresh.
 	freshInitLocal := map[string]bool{}
+	staleDecl := map[string]bool{}
 	declCount := map[string]int{}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch v := n.(type) {
@@ -172,6 +174,8 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			declCount[v.Name]++
 			if freshInit(info, v.Init) {
 				freshInitLocal[v.Name] = true
+			} else {
+				staleDecl[v.Name] = true
 			}
 		case *ast.Destructure:
 			fresh := v.AtName == "" && freshInit(info, v.Init)
@@ -179,15 +183,15 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 				declCount[name]++
 				if fresh && (i >= len(v.Nested) || v.Nested[i] == nil) {
 					freshInitLocal[name] = true
+				} else {
+					staleDecl[name] = true
 				}
 			}
 		}
 		return true
 	})
-	for name, n := range declCount {
-		if n > 1 {
-			delete(freshInitLocal, name)
-		}
+	for name := range staleDecl {
+		delete(freshInitLocal, name)
 	}
 	escaping := DeferOrLambdaNames(body)
 	order := IdentOrderOf(body)
@@ -261,7 +265,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		hid, isID := fa.Target.(*ast.Ident)
 		// An own parameter holds its fields as a fresh local does.
-		if !isID || !freshInitLocal[hid.Name] && !(ownParam[hid.Name] && declCount[hid.Name] == 0) {
+		if !isID || !(freshInitLocal[hid.Name] && declCount[hid.Name] == 1) && !(ownParam[hid.Name] && declCount[hid.Name] == 0) {
 			return true
 		}
 		if fieldSelections == nil {
@@ -293,6 +297,9 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		if isParam[root] || freshInitLocal[root] || unpackInitLocal[root] {
 			aliasInitLocal[name] = true
 		}
+	}
+	for name := range ownedAliases(info, body, ownParam, declCount, order) {
+		aliasInitLocal[name] = true
 	}
 	admitted := func(name string) bool {
 		return isParam[name] || freshInitLocal[name] || unpackInitLocal[name] || aliasInitLocal[name]
@@ -836,6 +843,45 @@ func freshInit(info *Info, init ast.Expr) bool {
 		return init.Base == nil
 	}
 	return false
+}
+
+// ownedAliases names the locals declared once, outside a loop, from an own
+// parameter at its last use, and given only fresh values after that.
+func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder) map[string]bool {
+	looped := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		switch n.(type) {
+		case *ast.While, *ast.Loop, *ast.For, *ast.ForEach:
+			ast.Walk(n, func(m ast.Node) bool {
+				if v, ok := m.(*ast.Var); ok {
+					looped[v.Name] = true
+				}
+				return true
+			})
+		}
+		return true
+	})
+	stale := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		if asn, ok := n.(*ast.Assign); ok {
+			if t, ok := asn.Target.(*ast.Ident); ok && !freshInit(info, asn.Value) {
+				stale[t.Name] = true
+			}
+		}
+		return true
+	})
+	out := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		v, ok := n.(*ast.Var)
+		if !ok || declCount[v.Name] != 1 || looped[v.Name] || stale[v.Name] {
+			return true
+		}
+		if src, ok := v.Init.(*ast.Ident); ok && ownParam[src.Name] && declCount[src.Name] == 0 && order.IsLast(src) {
+			out[v.Name] = true
+		}
+		return true
+	})
+	return out
 }
 
 func heldByEnclosingCall(body ast.Node, c *ast.Call, name string) bool {

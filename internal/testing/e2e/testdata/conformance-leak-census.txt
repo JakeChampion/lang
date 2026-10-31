@@ -602,6 +602,7 @@ option_str                                           0
 optresult_transpose                                  0
 ord_struct_enum                                      0
 override_scalar                                      0
+own_arg_redeclared_fresh_local_and_owned_alias       0
 own_consume_borrowed_tail                            0
 own_consuming_match                                  0
 own_fresh_result_from_a_borrowing_callee             0
