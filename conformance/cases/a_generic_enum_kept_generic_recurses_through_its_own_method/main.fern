@@ -1,0 +1,7 @@
+import "./vbag";
+
+function main(): i32 {
+  let inner: vbag.Bag[i32[], i32] = vbag.One([1], 2);
+  let outer: vbag.Bag[i32[], vbag.Bag[i32[], i32]] = vbag.One([3], inner);
+  return (outer.hash() & 0) + 7;
+}

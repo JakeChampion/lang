@@ -2,7 +2,6 @@ package e2eharness
 
 func UnixSocketProbe() string {
 	return `import "std/time";
-import "core/int";
 import "std/string";
 import "std/net";
 
@@ -18,7 +17,7 @@ function recv(fd: i32, max: i32): u8[] {
 }
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 
@@ -28,7 +27,7 @@ function enametoolong(): i32 {
 }
 
 function main(): i32 {
-    let path: string = "/tmp/fern-unix-" + int.int_to_string((now_unix_ms() % (1000000 as i64)) as i32);
+    let path: string = "/tmp/fern-unix-" + ((now_unix_ms() % (1000000 as i64)) as i32).to_string();
     let ln: i32 = unix_listen(path, 4);
     if (ln < 0) { return fail(1); }
     let c: i32 = unix_connect(path);
@@ -61,7 +60,6 @@ function main(): i32 {
 
 func NetUnixProbe() string {
 	return `import "std/time";
-import "core/int";
 import "std/net";
 import "std/errno";
 import "std/string";
@@ -78,7 +76,7 @@ function recv(fd: i32, max: i32): u8[] {
 }
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 
@@ -90,7 +88,7 @@ function errno_of(r: Result[i32, net.NetError]): i32 {
 }
 
 function main(): i32 {
-    let path: string = "/tmp/fern-net-unix-" + int.int_to_string((now_unix_ms() % (1000000 as i64)) as i32);
+    let path: string = "/tmp/fern-net-unix-" + ((now_unix_ms() % (1000000 as i64)) as i32).to_string();
     let ln: i32 = 0;
     match (net.listen_unix(path, 4)) {
         Ok(fd) => { ln = fd; },

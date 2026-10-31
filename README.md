@@ -152,9 +152,9 @@ target. `-backend flat` is refused there. Per-backend support and known gaps:
   `System.loadLibrary`. `docs/EMBED.md`.
 - **Editor support.** `fern -lsp`, a language server, plus a VS Code
   extension in `editors/`.
-- **Async.** Colourless concurrency through `std/async` combinators over
-  `Future[T]`, with real overlapping socket I/O on the native backends.
-  `docs/ASYNC.md`.
+- **Async.** Colourless concurrency through `std/async`: tasks that park,
+  and `gather`, `race` and `with_deadline` over `Future[T]`, with real
+  overlapping socket I/O on every compiled target. `docs/ASYNC.md`.
 
 ## The compiler
 

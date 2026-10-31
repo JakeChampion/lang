@@ -1,0 +1,7 @@
+// A char literal with an escape may appear inside an f-string interpolation.
+function main(): i32 {
+  let c: char = '\n';
+  let q: char = '\'';
+  print(f"{c == '\n'} {q == '\''} {"a" + "b"}");
+  return 0;
+}

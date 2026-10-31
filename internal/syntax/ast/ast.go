@@ -855,6 +855,23 @@ func IsPointerType(t Type) bool {
 	return false
 }
 
+// ReceiverNamespace names the namespace that holds t's methods and impls:
+// Array, slice, tupleN for an N-element tuple, or the ReceiverTypeName.
+func ReceiverNamespace(t Type) (string, bool) {
+	switch t := t.(type) {
+	case ArrayType:
+		return "Array", true
+	case SliceType:
+		return "slice", true
+	case TupleType:
+		return TupleNamespace(len(t.Elems)), true
+	}
+	return ReceiverTypeName(t)
+}
+
+// TupleNamespace is the method namespace of a tuple with arity elements.
+func TupleNamespace(arity int) string { return "tuple" + strconv.Itoa(arity) }
+
 func ReceiverTypeName(t Type) (string, bool) {
 	switch rt := t.(type) {
 	case StructType:

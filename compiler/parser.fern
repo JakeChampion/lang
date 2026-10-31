@@ -8395,7 +8395,7 @@ pub function builtin_function_names(): string[] {
     "cell_new",
     "f64_bits", "f64_from_bits", "f32_bits", "f32_from_bits",
     "tcp_listen", "tcp_accept", "tcp_local_port", "tcp_send_bytes", "tcp_close",
-    "tcp_pollable", "tcp_listen_with", "tcp_socket_ctl",
+    "tcp_pollable", "tcp_listen_with", "tcp_socket_ctl", "tcp_addr_into",
     "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect",
     "udp_sendto_bytes",
     "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv", "ring_send_zc", "tcp_recv_into", "tcp_ktls", "tcp_sendfile", "tcp_send_buf",
@@ -10791,10 +10791,32 @@ function mono_named_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: M
   if (result.len() == 0) {
     result = fn_spelling_ret(env.elook(name));
   }
+  if (result.len() == 0) {
+    result = variant_call_type(c, name, env, funcs);
+  }
   if (result.len() == 0 || hides_bare_var(result, funcs)) {
     return stamped_type(c.ty);
   }
   return result;
+}
+
+// A generic variant constructor has the enum instance its arguments bind.
+function variant_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: MFns): string {
+  let owner: i32 = genum_owner_of_variant(funcs.enums, name);
+  if (owner < 0) {
+    return "";
+  }
+  let ed: EnumDecl = funcs.enums[owner];
+  let binds: MEnv = me_variant_binds(ed, name, c.args, env, funcs.structs, funcs);
+  let parts: string[] = [];
+  for tp in ed.type_params {
+    let b: string = binds.elook(tp);
+    if (b.len() == 0) {
+      return "";
+    }
+    parts = parts.append(b);
+  }
+  return ed.name + "[" + subst_ty_join(parts, ", ", [], []) + "]";
 }
 
 // A generic function's written result names its own type parameters, which are not this call's types.
@@ -11062,6 +11084,14 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
     }
   }
   return "";
+}
+
+// An instance keyed by type variables reads those variables in its own body too.
+function instance_fns(funcs: MFns, key: string): MFns {
+  if (mono_ty_mentions_var(key)) {
+    return MFns { ...funcs, keep_vars: true };
+  }
+  return funcs;
 }
 
 function hides_var(t: string, funcs: MFns): boolean {
@@ -13283,7 +13313,7 @@ function monomorphize_module(mod: Module, erased: string[]): Module {
     if (gi >= 0) {
       let cl: FuncDecl = clone_bg(funcs[gi], ct, mod.impls, mod.trait_reqs, fns);
       let cenv: MEnv = env_from_params(cl.params);
-      let crb: RStmts = mono_stmts(cl.body, cenv, fns, ins, fn_tag_spelling(cl.ret_type, cl.ret_fn_ret, cl.ret_fn_param_types));
+      let crb: RStmts = mono_stmts(cl.body, cenv, instance_fns(fns, ct), ins, fn_tag_spelling(cl.ret_type, cl.ret_fn_ret, cl.ret_fn_param_types));
       ins = crb.rins3;
       rewritten = rewritten.append(FuncDecl { ...cl, receiver_name: "", receiver_type: "", body: crb.rstmts });
     }
@@ -14528,8 +14558,10 @@ pub function monomorphize_structs(mod: Module): Module {
   return ms_module(mod);
 }
 
+// The last pass: a template that a deferred enum kept has no later pass to clone it.
 pub function monomorphize_enum_structs(mod: Module): Module {
-  return ms_module(mod);
+  let out: Module = ms_module(mod);
+  return Module { ...out, funcs: drop_bg_templates(out.funcs, genum_bg_refs(out.funcs, out.enums)) };
 }
 
 function ms_deferred_enums(mod: Module, gstructs: StructDecl[]): string[] {
@@ -14836,7 +14868,7 @@ function ms_module(mod: Module): Module {
       let bgi: i32 = bg_find(sfns, base);
       if (bgi >= 0 && !has_func_named(mod.funcs, nfuncs, base + "__" + sanitize_key(key))) {
         let bcl: FuncDecl = clone_bg(sfns.decls[bgi], key, mod.impls, mod.trait_reqs, sfns);
-        let bcr: RStmts = mono_stmts(bcl.body, env_from_params(bcl.params), sfns, ins, fn_tag_spelling(bcl.ret_type, bcl.ret_fn_ret, bcl.ret_fn_param_types));
+        let bcr: RStmts = mono_stmts(bcl.body, env_from_params(bcl.params), instance_fns(sfns, key), ins, fn_tag_spelling(bcl.ret_type, bcl.ret_fn_ret, bcl.ret_fn_param_types));
         ins = bcr.rins3;
         let bfr: FRes = ms_func(FuncDecl { ...bcl, body: bcr.rstmts }, gstructs, sfns, ins);
         ins = bfr.fins;
@@ -14970,29 +15002,43 @@ function genum_key_from_anno(ty: string, base: string, enums: EnumDecl[]): strin
   if (parts.len() == 1) {
     return ge_targ_mangle(parts[0], enums);
   }
+  return ge_parts_key(parts, enums);
+}
+
+// The key of an instance with several type arguments, or "" when one part has no key form.
+function ge_parts_key(parts: string[], enums: EnumDecl[]): string {
   let key: string = "";
-  let j: i32 = 0;
-  while (j < parts.len()) {
-    if (j > 0) {
+  for p in parts {
+    let piece: string = p;
+    if (first_bracket(p) >= 0) {
+      piece = ge_nested_key_part(p, enums);
+    } else if (util.contains(p, " ") || util.contains(p, "(")) {
+      piece = "";
+    }
+    if (piece.len() == 0) {
+      return "";
+    }
+    if (key.len() > 0) {
       key = key + "__";
     }
-    let p: string = parts[j];
-    if (first_bracket(p) >= 0) {
-      return "";
-    }
-    if (util.contains(p, " ")) {
-      return "";
-    }
-    if (util.contains(p, "(")) {
-      return "";
-    }
-    key = key + p;
-    j = j + 1;
+    key = key + piece;
   }
   return key;
 }
 
 struct GEInst { ok: boolean, base: string, key: string, mang: string }
+
+// The key part of a generic instance among several type arguments: the name its clone gets.
+function ge_nested_key_part(p: string, enums: EnumDecl[]): string {
+  let gi: GEInst = ge_inst_of(p, enums);
+  if (gi.ok) {
+    return gi.mang;
+  }
+  if (util.contains(p, "[]") || util.contains(p, "(") || util.contains(p, "=>")) {
+    return "";
+  }
+  return sanitize_plain_key(p);
+}
 
 function ge_inst_of(ty: string, enums: EnumDecl[]): GEInst {
   let lb: i32 = first_bracket(ty);
@@ -15283,26 +15329,24 @@ function me_infer_variant_key(ed: EnumDecl, vname: string, args: ast.Expr[], exp
     return "";
   }
   let binds: MEnv = me_variant_binds(ed, vname, args, env, structs, funcs);
-  let key: string = "";
-  let j: i32 = 0;
-  while (j < ed.type_params.len()) {
-    let b: string = binds.elook(ed.type_params[j]);
+  let parts: string[] = [];
+  for tp in ed.type_params {
+    let b: string = binds.elook(tp);
     if (b.len() == 0 || mono_ty_mentions_var(b)) {
       return "";
     }
-    if (j > 0) {
-      key = key + "__";
-    }
-    key = key + b;
-    j = j + 1;
+    parts = parts.append(b);
   }
-  if (ed.type_params.len() == 1 && keyed_by_mangle(key)) {
-    return ge_targ_mangle(key, enums);
+  if (parts.len() > 1) {
+    return ge_parts_key(parts, enums);
   }
-  if (!is_simple_key(key)) {
+  if (keyed_by_mangle(parts[0])) {
+    return ge_targ_mangle(parts[0], enums);
+  }
+  if (!is_simple_key(parts[0])) {
     return "";
   }
-  return key;
+  return parts[0];
 }
 
 function me_variant_binds(ed: EnumDecl, vname: string, args: ast.Expr[], env: MEnv, structs: StructDecl[], funcs: MFns): MEnv {
@@ -15926,6 +15970,16 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
         return te;
       }
       return me_field_type_of(structs, ot, fa.field);
+    },
+    ast.ExprArray(a) => {
+      if (a.elements.len() == 0) {
+        return "";
+      }
+      let et: string = me_scrutinee_type(a.elements[0], env, enums, structs, funcs, ins);
+      if (et.len() == 0) {
+        return "";
+      }
+      return et + "[]";
     },
     _ => {
       return "";
@@ -21299,7 +21353,28 @@ function erase_str_names(ty: string): string {
 }
 
 pub function receiver_base(receiver: string): string {
+  let tuple: string = tuple_namespace(receiver);
+  if (tuple.len() > 0) {
+    return tuple;
+  }
   return util.base_type_name(erase_view_spelling(receiver));
+}
+
+// tuple_namespace names the method namespace of a tuple spelling, `tuple2`
+// for `(A, B)`, and is empty for any other spelling.
+pub function tuple_namespace(spelling: string): string {
+  if (!util.is_tuple_type_name(spelling)) {
+    return "";
+  }
+  let r: TypeRef = parse_type_ref(spelling);
+  if (!r.is_tuple || r.array_depth > 0) {
+    return "";
+  }
+  return tuple_arity_namespace(r.args.len());
+}
+
+pub function tuple_arity_namespace(arity: i32): string {
+  return "tuple" + util.i32_to_string(arity);
 }
 
 pub function decl_key(fd: FuncDecl): string {

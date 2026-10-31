@@ -1,0 +1,30 @@
+import "std/mock_platform";
+import "std/platform";
+import "std/http";
+
+// A handler that answers with a status other than 200. main drives it
+// through the mock platform, and the wasm32-wasi-http leg serves it.
+
+enum Route { Home, Missing(string) }
+
+function route(path: string): Route {
+    let parts: string[] = http.path_segments(path);
+    if (parts.len() == 0) { return Route.Missing("root"); }
+    if (parts[0] == "home") { return Route.Home; }
+    return Route.Missing(parts[0]);
+}
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    match (route(req.path)) {
+        Home => { return http.ok("home"); },
+        Missing(what) => { return http.text(404, f"no route for {what} ({http.status_text(404)})"); }
+    }
+}
+
+function main(): i32 {
+    let m: mock_platform.MockPlatform = mock_platform.new();
+    let resp: HttpResponse = handle(http.request("GET", "/"), m);
+    print(resp.status.to_string());
+    print(resp.body_string());
+    return 0;
+}

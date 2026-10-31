@@ -29,44 +29,41 @@ import "std/sim";
 function tie_winner(seed: i64): i32 {
     let d: sim.Sim = sim.new(seed);
     let fs: async.Future[i32][] = [
-        sim.future_at(d, sim.at(time.duration_nanos(5000000)), 100),
-        sim.future_at(d, sim.at(time.duration_nanos(5000000)), 200)
+        sim.future_at(sim.at(time.duration_nanos(5000000)), 100),
+        sim.future_at(sim.at(time.duration_nanos(5000000)), 200)
     ];
-    let (w, v) = async.race_on(d, fs, -1);
-    if (w == 0 && v != 100) { return -2; }
-    if (w == 1 && v != 200) { return -3; }
-    return w;
+    let won: (i32, i32) = sim.block_on(d, async.race(fs)).unwrap_or((0 - 4, 0));
+    if (won.0 == 0 && won.1 != 100) { return -2; }
+    if (won.0 == 1 && won.1 != 200) { return -3; }
+    return won.0;
 }
 
 function main(): i32 {
     let d: sim.Sim = sim.new(7);
     let fs: async.Future[string][] = [
-        sim.future_at(d, sim.at(time.duration_nanos(40000000)), "late"),
-        sim.future_at(d, sim.at(time.duration_nanos(10000000)), "early")
+        sim.future_at(sim.at(time.duration_nanos(40000000)), "late"),
+        sim.future_at(sim.at(time.duration_nanos(10000000)), "early")
     ];
-    let got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
+    let got: Option[string][] = sim.block_on(d, async.with_deadline(sim.at(time.duration_millis(25)), fs)).unwrap_or([Some("x"), None]);
     match (got[0]) { Some(v) => { return 1; }, None => { } }
     match (got[1]) { Some(v) => { if (v != "early") { return 2; } }, None => { return 3; } }
     if (d.elapsed().as_nanos() != 25000000) { return 4; }
     if (tie_winner(1) != tie_winner(1)) { return 5; }
-    // Two seeds picking opposite sides of a tie -- the pair is what proves the
-    // tie-break is a real draw and not a fixed order. Re-recorded when sim's
-    // generator moved to std/rand's PCG32 + Lemire rejection (#6193): the two
-    // seeds swapped sides. Same-seed reproducibility (check 5) is unchanged.
+    // Inside one race a tie goes to the lower index, whatever the seed.
     if (tie_winner(1) != 0) { return 6; }
-    if (tie_winner(2) != 1) { return 7; }
+    if (tie_winner(2) != 0) { return 7; }
     let g: sim.Sim = sim.new(1);
     let gf: async.Future[i32][] = [
-        sim.future_at(g, sim.at(time.duration_nanos(30000000)), 10),
-        sim.future_at(g, sim.at(time.duration_nanos(10000000)), 20),
-        sim.future_at(g, sim.at(time.duration_nanos(20000000)), 30)
+        sim.future_at(sim.at(time.duration_nanos(30000000)), 10),
+        sim.future_at(sim.at(time.duration_nanos(10000000)), 20),
+        sim.future_at(sim.at(time.duration_nanos(20000000)), 30)
     ];
-    let order: i32[] = async.gather_on(g, gf, -1);
+    let order: i32[] = sim.block_on(g, async.gather(gf)).unwrap_or([0, 0, 0]);
     if (order[0] != 10 || order[1] != 20 || order[2] != 30) { return 8; }
     if (g.elapsed().as_nanos() != 30000000) { return 9; }
     let c: sim.Sim = sim.new(1);
-    let cf: async.Future[i32][] = [sim.future_chain(c, sim.at(time.duration_nanos(10000000)), time.duration_nanos(5000000), 3, 9)];
-    let res: i32[] = async.gather_on(c, cf, -1);
+    let cf: async.Future[i32][] = [sim.future_chain(sim.at(time.duration_nanos(10000000)), time.duration_nanos(5000000), 3, 9)];
+    let res: i32[] = sim.block_on(c, async.gather(cf)).unwrap_or([0]);
     if (res[0] != 9) { return 10; }
     if (c.elapsed().as_nanos() != 25000000) { return 11; }
     return 42;
@@ -105,14 +102,19 @@ function main(): i32 {
     let d: sim.Sim = sim.new(1);
     let woke: Cell[i32] = cell_new(0);
     let done: async.Future[i32] = Ready(7);
-    let lost: async.Future[i32] = Pending(0 - 1, (w: i32) => {
-        woke.set(w);
+    let none: i32[] = [];
+    let lost: async.Future[i32] = Pending(async.Wait { set: none, until: None }, (w: async.Wake) => {
+        if let async.Wake.Cancelled = w {
+            woke.set(1);
+        }
         let r: async.Future[i32] = Ready(0);
         return r;
     });
-    let got: i32[] = async.gather_on(d, [done, lost], 0 - 9);
-    if (got[0] != 7 || got[1] != 0 - 9) { return 1; }
-    if (woke.get() != async.cancelled()) { return 2; }
+    match (sim.block_on(d, async.gather([done, lost]))) {
+        Some(got) => { return 1; },
+        None => {}
+    }
+    if (woke.get() != 1) { return 2; }
     return 0;
 }
 `

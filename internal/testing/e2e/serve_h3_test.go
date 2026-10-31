@@ -271,7 +271,7 @@ function main(): i32 {
       let r: Result[i32, net.NetError] = net.send_to(sock, d, peer);
     }
     let wait: i32 = 50;
-    let woke: i32 = async.wait_any([sock, 1], Some(time.duration_millis(wait)));
+    let woke: async.Wake = async.wait_any([sock, 1], Some(now().add(time.duration_millis(wait))));
     let going: boolean = true;
     while (going) {
       match (net.recv_from(sock, buf)) {

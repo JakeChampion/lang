@@ -1774,17 +1774,34 @@ function wide_literal(e: ast.Expr): boolean {
 }
 
 function composite_key(op: string, left: typeinfo.Type, s: State): string {
-  return nominal_method_key(comparison_verb(op), left, s);
+  let verb: string = comparison_verb(op);
+  if (verb != "" && array_method_prefix(left) != "") {
+    let at: i32 = array_method_contract(left, verb, s.contracts);
+    if (at < 0) {
+      return "";
+    }
+    return s.contracts.list[at].name;
+  }
+  return nominal_method_key(verb, left, s);
+}
+
+// method_owner names the namespace of a struct, an enum or a tuple receiver.
+function method_owner(t: typeinfo.Type): string {
+  if let typeinfo.TypeTuple(tup) = t {
+    return parser.tuple_arity_namespace(tup.elements.len());
+  }
+  let owner: string = struct_name(t);
+  if (owner == "") {
+    return union_name(t);
+  }
+  return owner;
 }
 
 function nominal_method_key(verb: string, t: typeinfo.Type, s: State): string {
   if (verb == "") {
     return "";
   }
-  let owner: string = struct_name(t);
-  if (owner == "") {
-    owner = union_name(t);
-  }
+  let owner: string = method_owner(t);
   if (owner == "") {
     return "";
   }
@@ -2531,26 +2548,40 @@ function map_read(c: ast.ExprCall, recv: i32, s: State, t: typeinfo.Type, kind: 
   return define(s, kind, ids, 0, "", result);
 }
 
+function array_method_prefix(t: typeinfo.Type): string {
+  if let typeinfo.TypeArray(a) = t {
+    if (a.view) {
+      return "__viewm_";
+    }
+    return "__arrm_";
+  }
+  return "";
+}
+
+// array_method_contract finds the contract of an array or a slice method:
+// the instance for the element type first, then the generic fold.
+function array_method_contract(receiver: typeinfo.Type, field: string, contracts: ssasem.Contracts): i32 {
+  let at: i32 = ssasem.find_contract(contracts, parser.concrete_array_method_name(typeinfo.spelling(receiver), field));
+  if (at < 0) {
+    at = ssasem.find_contract(contracts, array_method_prefix(receiver) + field);
+  }
+  return at;
+}
+
 function folded_method(c: ast.ExprCall, fa: ast.ExprFieldAccess, recv: i32, s: State, statement: boolean): Value {
   if (c.type_args.len() > 0) {
     return refused(s, "unsupported call target");
   }
-  let prefix: string = "";
   let receiver_type: typeinfo.Type = checked(fa.obj, s);
-  if let typeinfo.TypeArray(a) = receiver_type {
-    prefix = "__arrm_";
-    if (a.view) {
-      prefix = "__viewm_";
-    }
-  }
+  let prefix: string = array_method_prefix(receiver_type);
   if (ssasem.is_map(s.values[recv])) {
     prefix = "__mapm_";
   }
   if (prefix == "") {
     return primitive_method(c, fa, recv, s, statement);
   }
-  let at: i32 = ssasem.find_contract(s.contracts, parser.concrete_array_method_name(typeinfo.spelling(receiver_type), fa.field));
-  if (at < 0) {
+  let at: i32 = array_method_contract(receiver_type, fa.field, s.contracts);
+  if (prefix == "__mapm_") {
     at = ssasem.find_contract(s.contracts, prefix + fa.field);
   }
   if (at < 0) {
@@ -2701,10 +2732,7 @@ function method_call(c: ast.ExprCall, fa: ast.ExprFieldAccess, s: State, stateme
   if (ssasem.is_dyn(s.values[recv])) {
     return dyn_method(c, fa, recv, s, statement);
   }
-  let owner: string = struct_name(s.values[recv]);
-  if (owner == "") {
-    owner = union_name(s.values[recv]);
-  }
+  let owner: string = method_owner(s.values[recv]);
   if let Some(fsig) = record_sig(s.values[recv], s) {
     let fat: i32 = record_field_index(fsig, fa.field);
     if (fat >= 0 && ssasem.is_func(fsig.field_types[fat])) {
@@ -7019,6 +7047,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "ring_recv", params: [t_i64(), t_i32(), bytes], modes: [v, v, b], result: t_i32() },
     ssasem.Contract { name: "ring_send_zc", params: [t_i64(), t_i32(), bytes, t_i32()], modes: [v, v, b, v], result: t_i32() },
     ssasem.Contract { name: "tcp_recv_into", params: [t_i32(), bytes], modes: [v, b], result: t_i32() },
+    ssasem.Contract { name: "tcp_addr_into", params: [t_i32(), t_bool(), bytes], modes: [v, v, b], result: t_i32() },
     ssasem.Contract { name: "tcp_ktls", params: [t_i32(), t_i32(), t_i32(), bytes], modes: [v, v, v, b], result: t_i32() },
     ssasem.Contract { name: "signal_ignore", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "signal_default", params: [t_i32()], modes: [v], result: t_i32() },
@@ -7949,6 +7978,15 @@ function any_true(xs: boolean[]): boolean {
   return false;
 }
 
+function inferred_modes_change(p: Produced): boolean {
+  for i in 0..p.func.params.len() {
+    if (i >= p.modes.len() || inferred_mode(p.modes[i], p.func.params[i], true) != inferred_mode(p.modes[i], p.func.params[i], false)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function infer_rows(all: Produced[], names: string[], pinned: string[]): ownership.Escapes[] {
   let taken: string[] = pinned;
   let k: i32 = 0;
@@ -7961,8 +7999,10 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
   let taken_ix: util.NameIndex = util.name_index(taken);
   let rows: ownership.Escapes[] = [];
   let analyses: ssasem.Analysis[] = [];
+  let modes_change: boolean[] = [];
   let i: i32 = 0;
   while (i < all.len() && i < names.len()) {
+    modes_change = modes_change.append(inferred_modes_change(all[i]));
     if (all[i].ok && !all[i].template && !closure_body_produced(all[i]) && !taken_ix.has(names[i])) {
       rows = rows.append(ownership.Escapes { name: names[i], bits: mode_bits(all[i], []), lends: false, cycle: 0 - 1, quiet: [] });
       analyses = analyses.append(row_analysis(all[i]));
@@ -8004,8 +8044,9 @@ function infer_rows(all: Produced[], names: string[], pinned: string[]): ownersh
     queued = queued.with(i, false);
     let at: i32 = own_row[i];
     if (all[i].ok && !all[i].template && at >= 0 && !closure_body_produced(all[i])) {
-      let next: boolean[] = mode_bits(all[i], ownership.escaping(all[i].func, analyses[i], rows, ix));
-      let lends: boolean = rows[at].lends || ownership.lends(all[i].func, analyses[i], rows, ix);
+      let transfers = ownership.transfers(all[i].func, analyses[i], rows, ix, modes_change[i]);
+      let next: boolean[] = mode_bits(all[i], transfers.escapes);
+      let lends: boolean = rows[at].lends || transfers.lends;
       if (!same_bits(rows[at].bits, next) || lends != rows[at].lends) {
         rows = rows.with(at, ownership.Escapes { ...rows[at], bits: next, lends: lends });
         for j in readers[at] {
