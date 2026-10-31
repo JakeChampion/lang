@@ -359,7 +359,7 @@ func TestSelfHostLSPHoverLiterateAndStdlibX86_64(t *testing.T) {
 	writeTree(t, dir, map[string]string{
 		"t.fern.md":      "```fern\n<<*>>=\nfunction greeting(): i32 { return 7; }\nfunction main(): i32 { return greeting(); }\n```\n",
 		"chunks.fern.md": "# Doc\n\n```fern\n<<*>>=\nfunction helper(n: i32): i32 { return n + 1; }\nfunction main(): i32 {\n  <<body>>\n}\n```\n\nThe body.\n\n```fern\n<<body>>=\nlet v: i32 = helper(41);\nreturn v;\n```\n",
-		"array.fern":     "import \"std/array\";\nfunction main(): i32 {\n  let xs: i32[] = [1, 2];\n  let m: Option[i32] = xs.avg();\n  return xs.len();\n}\n",
+		"array.fern":     "import \"std/array\";\nfunction main(): i32 {\n  let xs: i32[] = [1, 2];\n  let m: Option[i32] = xs.first();\n  return xs.len();\n}\n",
 		"option.fern":    "import \"std/option\";\nfunction main(): i32 {\n  let value: Option[i32] = Some(42);\n  return value.unwrap_or(0);\n}\n",
 		"std.fern":       "import \"std/string\";\nfunction main(): i32 {\n  let s: string = \"abc\";\n  let r: string = string.repeat_char(1 as char, 2);\n  if (s.starts_with(\"a\")) {\n    return r.len();\n  }\n  return 0;\n}\n",
 	})
@@ -410,8 +410,8 @@ func TestSelfHostLSPHoverLiterateAndStdlibX86_64(t *testing.T) {
 		defAsk("stdlib-method", "std.fern", 4, 10, stringFern, declAt(stringFern, "pub function (s: string) starts_with(", "starts_with")),
 		documented(hoverAsk("stdlib-function", "std.fern", 3, 28, "(from string) function repeat_char(char, i32): string", rng(3, 18, 36)), stringFern, "pub function repeat_char("),
 		defAsk("stdlib-function", "std.fern", 3, 28, stringFern, declAt(stringFern, "pub function repeat_char(", "repeat_char")),
-		documented(hoverAsk("array-method", "array.fern", 3, 27, "(method on Array) function avg(): Option[T]", rng(3, 26, 29)), arrayFern, "pub function (xs: T[]) avg["),
-		defAsk("array-method", "array.fern", 3, 27, arrayFern, declAt(arrayFern, "pub function (xs: T[]) avg[", "avg")),
+		documented(hoverAsk("array-method", "array.fern", 3, 27, "(method on Array) function first(): Option[T]", rng(3, 26, 31)), arrayFern, "pub function (xs: T[]) first("),
+		defAsk("array-method", "array.fern", 3, 27, arrayFern, declAt(arrayFern, "pub function (xs: T[]) first(", "first")),
 		hoverAsk("array-len", "array.fern", 4, 13, "(method on Array) function len(): i32", rng(4, 12, 15)),
 		defAsk("array-len", "array.fern", 4, 13, "", lspRange{}),
 		documented(hoverAsk("literate-stdlib-method", "option.fern", 3, 18, "(method on Option) function unwrap_or(T): T", rng(3, 15, 24)), optionFern, "pub function (o: Option[T]) unwrap_or("),
