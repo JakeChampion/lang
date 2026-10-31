@@ -1,6 +1,7 @@
 package e2eharness
 
 const TaskCombinatorsProgram = `import "std/async";
+import "std/clock";
 import "std/i32";
 import "std/time";
 
@@ -9,12 +10,15 @@ import "std/time";
 function nap(label: string, ms: i32, v: i32): i32 {
   defer print("done " + label);
   let set: i32[] = [timer_fd(ms), 1];
-  let r: i32 = async.wait_any(set, None);
-  if (r == async.cancelled()) {
+  if let async.Wake.Cancelled = async.wait_any(set, None) {
     print("cancelled " + label);
     return 0 - 1;
   }
   return v;
+}
+
+function napping(label: string, ms: i32, v: i32): async.Future[i32] {
+  return async.spawn((): i32 => nap(label, ms, v));
 }
 
 function mk(v: i32): async.Future[i32] {
@@ -23,7 +27,8 @@ function mk(v: i32): async.Future[i32] {
 
 // later is a future that resolves to v once its timer fires.
 function later(ms: i32, v: i32): async.Future[i32] {
-  return Pending(timer_fd(ms), (woken: i32) => mk(v));
+  let set: i32[] = [timer_fd(ms), 1];
+  return Pending(async.Wait { set: set, until: None }, (wake: async.Wake): async.Future[i32] => mk(v));
 }
 
 function show_opt(o: Option[i32]): string {
@@ -38,26 +43,53 @@ function show_opt(o: Option[i32]): string {
 }
 
 function body(): i32 {
-  let race: (() => i32)[] = [() => nap("slow", 400, 1), () => nap("fast", 20, 2)];
-  let (w, v) = async.race_tasks(race, 0 - 1);
-  print("race " + w.to_string() + " " + v.to_string());
-  let all: (() => i32)[] = [() => nap("a", 60, 1), () => nap("b", 20, 2), () => nap("c", 40, 3)];
-  let g: i32[] = async.gather_tasks(all, 0 - 1);
-  print("gather " + g[0].to_string() + " " + g[1].to_string() + " " + g[2].to_string());
-  let timed: (() => i32)[] = [() => nap("x", 20, 7), () => nap("y", 500, 8)];
-  let d: Option[i32][] = async.with_deadline_tasks(time.duration_millis(100), timed);
-  print("deadline " + show_opt(d[0]) + " " + show_opt(d[1]));
-  let fs: async.Future[i32][] = [later(60, 4), later(20, 5)];
-  let f: i32[] = async.gather(fs, 0 - 1);
-  print("futures " + f[0].to_string() + " " + f[1].to_string());
+  match (async.wait(async.race([napping("slow", 400, 1), napping("fast", 20, 2)]))) {
+    Some(won) => {
+      print("race " + won.0.to_string() + " " + won.1.to_string());
+    },
+    None => {
+      print("race none");
+    }
+  }
+  match (async.wait(async.gather([napping("a", 60, 1), napping("b", 20, 2), napping("c", 40, 3)]))) {
+    Some(g) => {
+      print("gather " + g[0].to_string() + " " + g[1].to_string() + " " + g[2].to_string());
+    },
+    None => {
+      print("gather none");
+    }
+  }
+  let until: Instant = clock.instant().add(time.duration_millis(100));
+  match (async.wait(async.with_deadline(until, [napping("x", 20, 7), napping("y", 500, 8)]))) {
+    Some(d) => {
+      print("deadline " + show_opt(d[0]) + " " + show_opt(d[1]));
+    },
+    None => {
+      print("deadline none");
+    }
+  }
+  match (async.wait(async.gather([later(60, 4), later(20, 5)]))) {
+    Some(f) => {
+      print("futures " + f[0].to_string() + " " + f[1].to_string());
+    },
+    None => {
+      print("futures none");
+    }
+  }
   return 0;
 }
 
 function outer(): i32 {
-  let race: (() => i32)[] = [() => nap("p1", 400, 1), () => nap("p2", 400, 2)];
-  let (w, v) = async.race_tasks(race, 0 - 1);
-  print("outer " + w.to_string() + " " + v.to_string());
-  return w;
+  match (async.wait(async.race([napping("p1", 400, 1), napping("p2", 400, 2)]))) {
+    Some(won) => {
+      print("outer " + won.0.to_string() + " " + won.1.to_string());
+      return won.0;
+    },
+    None => {
+      print("outer none");
+    }
+  }
+  return 0 - 1;
 }
 
 // drive runs a task by hand: each park's wait is the scheduler's own wait.
@@ -72,12 +104,7 @@ function drive(t: async.Task[i32]): i32 {
       },
       Suspended(w) => {
         parks = parks + 1;
-        let woke: i32 = async.wait_any(w.set, w.timeout);
-        st = async.task_resume(t, woke);
-      },
-      Cancelled => {
-        print("parks " + parks.to_string());
-        return 0 - 2;
+        st = async.task_resume(t, async.wait_any(w.set, w.until));
       }
     }
   }
@@ -85,24 +112,19 @@ function drive(t: async.Task[i32]): i32 {
 }
 
 function main(): i32 {
-  let t: async.Task[i32] = async.task_new(() => body());
-  let r: i32 = drive(t);
-  async.task_free(t);
+  let r: i32 = drive(async.task_new(() => body()));
   // A task cancelled from outside while its race is parked cancels both
   // of the race's children.
   let o: async.Task[i32] = async.task_new(() => outer());
-  let st: async.TaskStatus[i32] = async.task_start(o);
-  match (st) {
+  match (async.task_start(o)) {
     Suspended(w) => {
-      let c: async.TaskStatus[i32] = async.task_cancel(o);
+      let c: async.TaskStatus[i32] = async.task_resume(o, async.Wake.Cancelled);
       print("outer cancelled");
     },
     Done(v) => {
       print("outer done");
-    },
-    Cancelled => {}
+    }
   }
-  async.task_free(o);
   return 0;
 }
 `
@@ -125,5 +147,5 @@ const TaskCombinatorsWant = "done fast\n" +
 	"done p1\n" +
 	"cancelled p2\n" +
 	"done p2\n" +
-	"outer -1 -1\n" +
+	"outer none\n" +
 	"outer cancelled\n"

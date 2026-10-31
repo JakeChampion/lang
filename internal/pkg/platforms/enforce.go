@@ -83,6 +83,7 @@ var gatedBuiltins = map[string]string{
 	"udp_recvfrom":     "tcp",
 	"tcp_listen_with":  "tcp",
 	"tcp_socket_ctl":   "tcp",
+	"tcp_addr_into":    "tcp",
 	"tcp_connect_with": "tcp",
 
 	"unix_listen":  "unix",
@@ -240,6 +241,7 @@ var coreBuiltins = map[string]bool{
 	"buf_push_expanded":       true,
 	"buf_push_byte":           true,
 	"buf_push_u64":            true,
+	"buf_push_decimal":        true,
 	"buf_len":                 true,
 	"buf_take":                true,
 	"buf_take_bytes":          true,

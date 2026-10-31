@@ -2,10 +2,14 @@ package e2e
 
 import (
 	"bytes"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -16,14 +20,9 @@ import (
 
 func TestFernFixturesSelfHostWasm(t *testing.T) {
 	requireSelfHostFixtureLeg(t)
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH")
-	}
-	gcc, runner := x86_64Tooling(t)
+	wasmtime := e2eharness.Wasmtime(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
 		backend:   "wasm",
-		gcc:       gcc,
-		runner:    runner,
 		knownFile: "selfhost-wasm-known-divergences.txt",
 		skipStdin: true,
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
@@ -33,7 +32,7 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 				failf("self-host compile failed: %v\n%s", err, out)
 				return
 			}
-			run := exec.Command("wasmtime", "run", watPath)
+			run := exec.Command(wasmtime, "run", watPath)
 			if wat, err := os.ReadFile(watPath); err == nil && bytes.Contains(wat, []byte("wasi:sockets/")) {
 				// Sockets are reachable only from a component, which reports
 				// just success or failure, so these cases must exit 0.
@@ -42,26 +41,60 @@ func TestFernFixturesSelfHostWasm(t *testing.T) {
 					failf("self-host component compile failed: %v\n%s", err, out)
 					return
 				}
-				run = exec.Command("wasmtime", "run", "-S", "inherit-network", compPath)
+				run = exec.Command(wasmtime, "run", "-S", "inherit-network", compPath)
 			}
-			out, _ := run.CombinedOutput()
-			exit := run.ProcessState.ExitCode()
+			checkSelfHostWasmRun(t, f, runSelfHostBin(run, ""), f.wantExit, failf)
+		},
+	})
+}
 
-			rejected, why := wasmRejected(string(out))
+// The default wasm32-wasi output: a wasi:cli/run component, which reports
+// only ok or err, so any nonzero exit reaches the host as 1.
+func TestFernFixturesSelfHostWasmComponent(t *testing.T) {
+	requireSelfHostFixtureLeg(t)
+	wasmtime := e2eharness.Wasmtime(t)
+	runSelfHostFixtureLeg(t, selfHostLeg{
+		backend:   "wasm",
+		knownFile: "selfhost-wasm-component-known-divergences.txt",
+		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
+			compPath := filepath.Join(t.TempDir(), "prog.wasm")
+			if out, err := fixtureCompile(fernBin, "-target", "wasm32-wasi", "-o", compPath, f.mainPath, stdlibRoot).CombinedOutput(); err != nil {
+				failf("self-host compile failed: %v\n%s", err, out)
+				return
+			}
+			wantExit := 0
+			if f.wantExit != 0 {
+				wantExit = 1
+			}
+			r := runSelfHostBin(exec.Command(wasmtime, "run", "-S", "inherit-network", compPath), f.stdin)
+			checkSelfHostWasmRun(t, f, r, wantExit, failf)
+		},
+	})
+}
+
+// wasm32-wasi-http accepts only a handler program. This leg serves each
+// case that carries expected.http and compares `GET /` with that file.
+func TestFernFixturesSelfHostWasiHttp(t *testing.T) {
+	requireSelfHostFixtureLeg(t)
+	wasmtime := e2eharness.Wasmtime(t)
+	runSelfHostFixtureLeg(t, selfHostLeg{
+		backend:   "wasm",
+		knownFile: "selfhost-wasi-http-known-divergences.txt",
+		selects:   func(f *fixtureSpec) bool { return f.hasHTTP },
+		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
+			compPath := filepath.Join(t.TempDir(), "handler.wasm")
+			if out, err := fixtureCompile(fernBin, "-target", "wasm32-wasi-http", "-o", compPath, f.mainPath, stdlibRoot).CombinedOutput(); err != nil {
+				failf("self-host compile failed: %v\n%s", err, out)
+				return
+			}
+			status, body, log, err := serveFixtureOnce(t, wasmtime, compPath)
 			switch {
-			case rejected:
-				failf("wasmtime REJECTED the self-host module — not a wrong answer, the artifact is invalid or incomplete (%s):\n%s", why, out)
-			case strings.Contains(string(out), "wasm trap:"):
-				failf("self-host wasm TRAPPED:\n%s", out)
-			case f.wantExit >= 126:
-				t.Logf("ran clean; exit value unmeasurable (expected %d, WASI caps at 125)", f.wantExit)
-			default:
-				if exit != f.wantExit {
-					failf("self-host wasm exit = %d, want %d\n%s", exit, f.wantExit, out)
-				}
-				if f.exact && f.wantOut != "" && !strings.Contains(string(out), f.wantOut) {
-					failf("stdout missing expected output\n got: %q\nwant: %q", out, f.wantOut)
-				}
+			case err != nil:
+				failf("GET / failed: %v\nwasmtime serve:\n%s", err, log)
+			case strings.Contains(log, "wasm trap:"):
+				failf("the handler TRAPPED:\n%s", log)
+			case status != f.httpStatus || body != f.httpBody:
+				failf("GET / = %d %q, want %d %q\nwasmtime serve:\n%s", status, body, f.httpStatus, f.httpBody, log)
 			}
 		},
 	})
@@ -77,27 +110,16 @@ func TestFernFixturesSelfHostX86_64Quarantine(t *testing.T) {
 
 func runSelfHostFixtureLegX86_64(t *testing.T, env []string) {
 	requireSelfHostFixtureLeg(t)
-	gcc, runner := x86_64Tooling(t)
+	runner := e2eharness.X86_64Runner(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
 		backend:   "x86_64",
-		gcc:       gcc,
-		runner:    runner,
 		knownFile: "selfhost-x86_64-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
-			binPath := filepath.Join(t.TempDir(), "prog")
-			cmd := fixtureCompile(fernBin, "-target", "x86-64-linux", "-o", binPath, f.mainPath, stdlibRoot)
-			if env != nil {
-				cmd.Env = append(os.Environ(), env...)
-			}
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "x86-64-linux", nil, nil, f.mainPath, stdlibRoot, out))
+			binPath, ok := compileSelfHostNative(t, fernBin, "x86-64-linux", env, f, stdlibRoot, failf)
+			if !ok {
 				return
 			}
-			if err := os.Chmod(binPath, 0o755); err != nil {
-				t.Fatalf("chmod: %v", err)
-			}
-			r := runSelfHostBin(exec.Command(binPath), f.stdin)
+			r := runSelfHostBin(e2eharness.RunX86_64Bin(runner, binPath), f.stdin)
 			if strings.Contains(r.stderr, "fern-sanitizer:") {
 				failf("the sanitizer reported a finding:\n%s", r.stderr)
 				return
@@ -113,38 +135,135 @@ func runSelfHostFixtureLegX86_64(t *testing.T, env []string) {
 }
 
 func TestFernFixturesSelfHostArm64(t *testing.T) {
+	runSelfHostFixtureLegArm64(t, "arm64-linux", "selfhost-arm64-known-divergences.txt")
+}
+
+// arm64-android is a static PIE over the Linux syscalls, so it runs where
+// an arm64-linux binary runs.
+func TestFernFixturesSelfHostArm64Android(t *testing.T) {
+	runSelfHostFixtureLegArm64(t, "arm64-android", "selfhost-arm64-android-known-divergences.txt")
+}
+
+func runSelfHostFixtureLegArm64(t *testing.T, target, knownFile string) {
 	requireSelfHostFixtureLeg(t)
-	gcc, runner := x86_64Tooling(t)
-	_, qemu := arm64Tooling(t)
+	qemu := e2eharness.Arm64Runner(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
 		backend:   "arm64",
-		gcc:       gcc,
-		runner:    runner,
-		knownFile: "selfhost-arm64-known-divergences.txt",
+		knownFile: knownFile,
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
-			binPath := filepath.Join(t.TempDir(), "prog")
-			cmd := fixtureCompile(fernBin, "-target", "arm64-linux", "-o", binPath, f.mainPath, stdlibRoot)
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, "arm64-linux", nil, nil, f.mainPath, stdlibRoot, out))
+			binPath, ok := compileSelfHostNative(t, fernBin, target, nil, f, stdlibRoot, failf)
+			if !ok {
 				return
-			}
-			if err := os.Chmod(binPath, 0o755); err != nil {
-				t.Fatalf("chmod: %v", err)
 			}
 			checkSelfHostNativeRun(t, f, runSelfHostBin(runArm64Bin(qemu, binPath), f.stdin), failf)
 		},
 	})
 }
 
+func TestFernFixturesSelfHostArm64Darwin(t *testing.T) {
+	requireSelfHostFixtureLeg(t)
+	if e2eharness.HostSelfHostTarget() != e2eharness.TargetArm64Darwin {
+		t.Skip("arm64-darwin binaries run only on an Apple Silicon macOS host")
+	}
+	runSelfHostFixtureLeg(t, selfHostLeg{
+		backend:   "arm64",
+		knownFile: "selfhost-arm64-darwin-known-divergences.txt",
+		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
+			binPath, ok := compileSelfHostNative(t, fernBin, e2eharness.TargetArm64Darwin, nil, f, stdlibRoot, failf)
+			if !ok {
+				return
+			}
+			checkSelfHostNativeRun(t, f, runSelfHostBin(exec.Command(binPath), f.stdin), failf)
+		},
+	})
+}
+
+func compileSelfHostNative(t *testing.T, fernBin, target string, env []string, f *fixtureSpec, stdlibRoot string, failf failFunc) (string, bool) {
+	t.Helper()
+	binPath := filepath.Join(t.TempDir(), "prog")
+	cmd := fixtureCompile(fernBin, "-target", target, "-o", binPath, f.mainPath, stdlibRoot)
+	if env != nil {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		failf("self-host compile failed: %v\n%s%s", err, out, strictIRBailSite(fernBin, target, nil, env, f.mainPath, stdlibRoot, out))
+		return "", false
+	}
+	if err := os.Chmod(binPath, 0o755); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+	return binPath, true
+}
+
+func checkSelfHostWasmRun(t *testing.T, f *fixtureSpec, r selfHostRun, wantExit int, failf failFunc) {
+	t.Helper()
+	out := r.stdout + r.stderr
+	rejected, why := wasmRejected(r.stderr)
+	switch {
+	case r.timedOut:
+		failf("the self-host wasm HUNG — killed at %s\nstdout so far: %q\nstderr: %s", selfHostRunTimeout, r.stdout, r.stderr)
+	case rejected:
+		failf("wasmtime REJECTED the self-host module — not a wrong answer, the artifact is invalid or incomplete (%s):\n%s", why, out)
+	case strings.Contains(r.stderr, "wasm trap:"):
+		failf("self-host wasm TRAPPED:\n%s", out)
+	case wantExit >= 126:
+		t.Logf("ran clean; exit value unmeasurable (expected %d, WASI caps at 125)", wantExit)
+	default:
+		if r.exit != wantExit {
+			failf("self-host wasm exit = %d, want %d\n%s", r.exit, wantExit, out)
+		}
+		checkSelfHostStdout(f, r, failf)
+	}
+}
+
+func checkSelfHostStdout(f *fixtureSpec, r selfHostRun, failf failFunc) {
+	if f.exact {
+		if r.stdout != f.wantOut {
+			failf("stdout mismatch\n got: %q\nwant: %q\nstderr: %s", r.stdout, f.wantOut, r.stderr)
+		}
+		return
+	}
+	for _, sub := range f.contains {
+		if !strings.Contains(r.stdout, sub) {
+			failf("stdout missing %q\nfull stdout:\n%s\nstderr: %s", sub, r.stdout, r.stderr)
+		}
+	}
+}
+
+func serveFixtureOnce(t *testing.T, wasmtime, component string) (status int, body, log string, err error) {
+	t.Helper()
+	addr := net.JoinHostPort("127.0.0.1", strconv.Itoa(freeLoopbackPort(t)))
+	srv := exec.Command(wasmtime, "serve", "--addr", addr, component)
+	var slog bytes.Buffer
+	srv.Stdout, srv.Stderr = &slog, &slog
+	if err := srv.Start(); err != nil {
+		return 0, "", "", err
+	}
+	client := &http.Client{Timeout: selfHostRunTimeout}
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		var resp *http.Response
+		if resp, err = client.Get("http://" + addr + "/"); err == nil {
+			var raw []byte
+			raw, err = io.ReadAll(resp.Body)
+			resp.Body.Close()
+			status, body = resp.StatusCode, string(raw)
+			break
+		}
+		if time.Now().After(deadline) {
+			break
+		}
+	}
+	_ = srv.Process.Kill()
+	_ = srv.Wait()
+	return status, body, slog.String(), err
+}
+
 func TestFernFixturesSelfHostInterp(t *testing.T) {
 	requireSelfHostFixtureLeg(t)
-	gcc, runner := x86_64Tooling(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
 		backend:   "interp",
 		shipped:   true,
-		gcc:       gcc,
-		runner:    runner,
 		knownFile: "selfhost-interp-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			cmd := exec.Command(fernBin, "-interp", f.mainPath)
@@ -155,11 +274,8 @@ func TestFernFixturesSelfHostInterp(t *testing.T) {
 
 func TestFernFixturesSelfHostCheck(t *testing.T) {
 	requireSelfHostFixtureLeg(t)
-	gcc, runner := x86_64Tooling(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
 		backend:    "check",
-		gcc:        gcc,
-		runner:     runner,
 		knownFile:  "selfhost-check-known-divergences.txt",
 		errorCases: true,
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
@@ -178,11 +294,10 @@ type failFunc func(format string, args ...any)
 type selfHostLeg struct {
 	shipped    bool
 	backend    string
-	gcc        string
-	runner     []string
 	knownFile  string
 	skipStdin  bool
 	errorCases bool
+	selects    func(f *fixtureSpec) bool
 	check      func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc)
 }
 
@@ -195,21 +310,14 @@ func requireSelfHostFixtureLeg(t *testing.T) {
 
 func runSelfHostFixtureLeg(t *testing.T, leg selfHostLeg) {
 	t.Helper()
-	if len(leg.runner) != 0 {
-		t.Skip("self-host CLI driver runs only natively (argv paths)")
-	}
 	stdlibRoot, err := filepath.Abs("../../stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	var fernBin string
+	fernBin := e2eharness.SelfHostCLI(t)
 	if leg.shipped {
 		fernBin = e2eharness.ShippedFern(t)
-	} else {
-		dir := writeSelfHostAsmProject(t)
-		copySelfHostDriver(t, dir, "fern.fern")
-		fernBin = buildSelfHostBin(t, leg.gcc, dir, "fern.fern", "fern")
 	}
 
 	root := conformanceCases
@@ -240,6 +348,9 @@ func runSelfHostFixtureLeg(t *testing.T, leg selfHostLeg) {
 		if leg.errorCases {
 			selected = f.compileError
 		}
+		if selected && leg.selects != nil {
+			selected = leg.selects(f)
+		}
 		if !selected {
 			skipped++
 			continue
@@ -268,6 +379,9 @@ func runSelfHostFixtureLeg(t *testing.T, leg selfHostLeg) {
 	skipReasons := "compile-error / " + leg.backend + "-excluded"
 	if leg.skipStdin {
 		skipReasons += " / stdin"
+	}
+	if leg.selects != nil {
+		skipReasons += " / not selected by this leg"
 	}
 	if ran == 0 {
 		t.Fatalf("the self-host %s leg selected 0 of %d fixtures — the `backend` selector matches "+
@@ -342,17 +456,7 @@ func checkSelfHostNativeRun(t *testing.T, f *fixtureSpec, r selfHostRun, failf f
 		}
 		failf("exit = %d, want %d%s\nstdout: %q\nstderr: %s", r.exit, f.wantExit, hint, r.stdout, r.stderr)
 	}
-	if f.exact {
-		if r.stdout != f.wantOut {
-			failf("stdout mismatch\n got: %q\nwant: %q\nstderr: %s", r.stdout, f.wantOut, r.stderr)
-		}
-		return
-	}
-	for _, sub := range f.contains {
-		if !strings.Contains(r.stdout, sub) {
-			failf("stdout missing %q\nfull stdout:\n%s\nstderr: %s", sub, r.stdout, r.stderr)
-		}
-	}
+	checkSelfHostStdout(f, r, failf)
 }
 
 func loadKnownDivergences(t *testing.T, file string) map[string]string {

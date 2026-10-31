@@ -76,13 +76,7 @@ pub(package) enum PkgNode { PkgEmpty, PkgLeaf(i32) }
 
 	check(t, "float-log", `import "std/f64"; function main(): i32 { let n = f64.pow10_log2(0); return 0; }`, 1, "pub(package)")
 
-	check(t, "buffer-u64", `import "std/io_buffered"; function main(): i32 { io_buffered.buf_push_u64(0 as usize, 1u64); return 0; }`, 1, "pub(package)")
-
 	check(t, "buffer-i64", `import "std/io_buffered"; function main(): i32 { io_buffered.buf_push_i64(0 as usize, 1i64); return 0; }`, 1, "pub(package)")
-
-	check(t, "buffer-length", `import "std/io_buffered"; function main(): i32 { let n = io_buffered.buf_u64_len(1u64); return 0; }`, 1, "pub(package)")
-
-	check(t, "digit-pairs", `import "std/io_buffered"; function main(): i32 { let digits = io_buffered.digit_pairs(); return 0; }`, 1, "pub(package)")
 
 	check(t, "buffer-block", `import "std/io_buffered"; function inspect(b: io_buffered.BufBlock): void {} function main(): i32 { return 0; }`, 1, "pub(package)")
 
@@ -250,6 +244,7 @@ function hidden(): i32 { return 42; }
 	for name, source := range map[string]string{
 		"utf8_scalar_helper": `import "core/utf8_scalar"; function main(): i32 { return utf8_scalar.step("a", 0, 1); }`,
 		"integer_helper":     `import "core/int"; function main(): i32 { return int.__radix_digit(48); }`,
+		"integer_to_string":  `import "core/int"; function main(): i32 { return int.int_to_string(4).len(); }`,
 		"map_helper":         `import "core/map"; function main(): i32 { return map.__map_pow2_ceil(3); }`,
 		"json_helper":        `import "std/json"; function main(): i32 { let x = json.from_json_field(json.JNull, "x"); return 0; }`,
 		"node_type":          `import "std/pvec"; function inspect(n: pvec.VNode[i32]): i32 { return 0; } function main(): i32 { return 0; }`,

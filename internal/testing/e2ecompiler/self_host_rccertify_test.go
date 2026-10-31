@@ -442,6 +442,30 @@ function pick(name: string): Case {
         let b12: ssa.SBlock = block(12, [5, 13, 14], [inst(8, 15, [14, 11, 11], 0, ""), const_int(16, 2), call(17, "__fern_alloc_reuse", [15, 16]), fresh_box(18), store(17, 8, 18)], ret(17));
         return Case { f: func(2, 23, [b0, b1, b2, b3, b4, b6, b7, b8, b9, b10, b13, b14, b5, b12]), modes: [counted, value], returns_unit: true };
     }
+    if (name == "scalar-lanes-return-owned-primary") {
+        let b = block(0, [], [param(0), const_int(1, 7), inst(59, 2, [1], 3, "ret_word")], ret(0));
+        return Case { f: func(1, 3, [b]), modes: [rccertify.counted_mode()], returns_unit: true };
+    }
+    if (name == "scalar-lanes-leaked-primary") {
+        let b = block(0, [], [param(0), const_int(1, 7), inst(59, 2, [1], 3, "ret_word")], ret(1));
+        return Case { f: func(1, 3, [b]), modes: [rccertify.counted_mode()], returns_unit: false };
+    }
+    if (name == "scalar-lanes-call-owned-primary") {
+        let b = block(0, [], [call(0, "case", []), inst(59, 1, [], 1, "call_word")], ret(0));
+        return Case { f: func(0, 2, [b]), modes: [], returns_unit: true };
+    }
+    if (name == "scalar-lanes-call-primary-leaked") {
+        let b = block(0, [], [call(0, "primary", []), inst(59, 1, [], 1, "call_word"), const_int(2, 0)], ret(2));
+        return Case { f: func(0, 3, [b]), modes: [], returns_unit: false };
+    }
+    if (name == "scalar-lanes-call-primary-released") {
+        let b = block(0, [], [call(0, "primary", []), inst(59, 1, [], 1, "call_word"), call(2, "__fern_rc_dec", [0]), const_int(3, 0)], ret(3));
+        return Case { f: func(0, 4, [b]), modes: [], returns_unit: false };
+    }
+    if (name == "mixed-lanes-primary-tag") {
+        let b = block(0, [], [call(0, "mixed", []), inst(59, 1, [], 1, "call_word"), inst(59, 2, [], 0, "call_word"), call(3, "__fern_rc_dec", [2]), const_int(4, 0)], ret(4));
+        return Case { f: func(0, 5, [b]), modes: [], returns_unit: false };
+    }
     eprint("rccertify_cases: no case named " + name);
     exit(2);
     return Case { f: one_block(0, 0, [], ret(0 - 1)), modes: [], returns_unit: false };
@@ -453,10 +477,10 @@ function main(): i32 {
     // pair1, pair3 and pair7 return a variant in two words whose payload is
     // a reference under tag 0, under tags 0 and 1, and under every tag of
     // 0..2.
-    let abis: rccertify.Abis = rccertify.abis_of(["case", "pair1", "pair3", "pair7", "take"], [c.modes, [], [], [], [rccertify.counted_mode()]], [c.returns_unit, false, false, false, false], [false, false, false, false, false], [0, 1, 3, 7, 0], [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0]], [false, false, false, false, false]);
+    let abis: rccertify.Abis = rccertify.abis_of(["case", "pair1", "pair3", "pair7", "take", "primary", "mixed"], [c.modes, [], [], [], [rccertify.counted_mode()], [], []], [c.returns_unit, false, false, false, false, true, true], [false, false, false, false, false, false, false], [0, 1, 3, 7, 0, -2, -1], [[0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0], [0, 0]], [false, false, false, false, false, false, false]);
     // A case's call_word names op 0, the first pair word, or op 1, the
     // first slot's lane.
-    let irops: ir.Op[] = [ir.op_call_pair_word(0), ir.op_call_scalar_word(0)];
+    let irops: ir.Op[] = [ir.op_call_pair_word(0), ir.op_call_scalar_word(0), ir.op_ret_pair_word(0), ir.op_ret_scalar_word(0)];
     let r: rccertify.Report = rccertify.certify(c.f, irops, abis.lookup("case"), abis, rcsigs.table(), rcsigs.op_table());
     for x in r.findings {
         print(rccertify.render("case", x));
@@ -480,6 +504,12 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		unproved int
 		skipped  string
 	}{
+		{"scalar-lanes-call-primary-leaked", []string{"leaked at return of v0"}, 0, ""},
+		{"scalar-lanes-call-primary-released", nil, 0, ""},
+		{"mixed-lanes-primary-tag", nil, 0, ""},
+		{"scalar-lanes-return-owned-primary", nil, 0, ""},
+		{"scalar-lanes-leaked-primary", []string{"leaked at return of v0"}, 0, ""},
+		{"scalar-lanes-call-owned-primary", nil, 0, ""},
 		{"balanced", nil, 0, ""},
 		{"leak", []string{"leaked at return of v0"}, 0, ""},
 		{"sparse-leak", []string{"leaked at return of v256"}, 0, ""},

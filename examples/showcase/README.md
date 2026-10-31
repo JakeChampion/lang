@@ -1,11 +1,12 @@
 # Fern, in action
 
-Twenty-one web applications share one native Fern server. The homepage links each application and its source lesson.
+Twenty-two web applications share one native Fern server. The homepage links each application and its source lesson.
 The application modules use literate Fern. Named sections explain the code that Fern compiles.
 
 | Application | URL | Server behavior |
 | --- | --- | --- |
 | Contour | `/contour/` | Two-colour terrain flyover, Fern Wasm heightfield, Canvas 2D, keyboard and touch flight |
+| Uxn workbench | `/uxn/` | Fern Uxn 0K VM, Uxntal assembler, screen/console devices, ROM loader, step debugger |
 | Fractal explorer | `/fractal/` | Mandelbrot PNG tiles, perturbation, SIMD, HTTP and WebSocket delivery |
 | Rally | `/rally/` | Authoritative game physics, solo opponent, two-player WebSocket rooms |
 | Mosaic | `/mosaic/` | Shared pixel boards, atomic WebSocket strokes, immediate revision push, PNG export |
@@ -208,6 +209,47 @@ reset, resolution, gallery link, source lesson, and phone-to-desktop layouts:
 PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs CHROMIUM=/usr/bin/chromium \
   node examples/showcase/tests/contour.browser.mjs http://localhost:8080
 ```
+## Uxn workbench
+
+`/uxn/` runs an independent [Uxn](https://wiki.xxiivv.com/site/uxn.html) 0K VM
+and Uxntal assembler written in `uxn.fern.md`. All 256 instruction bytes support
+short, return, and keep modes; both stacks and all address spaces wrap.
+The source compiles natively and to the browser's Wasm kernel. A worker executes
+bounded slices and returns a serialized machine image to the screen, console,
+and stack/RAM inspector. Uploads and source remain in the browser.
+
+The five editable demos show screen vectors, console output, factorial arithmetic,
+mouse-driven sprites, and console input. Visitors can assemble, run, pause, step,
+reset, load a ROM, or download assembled bytes. Reduced motion starts paused;
+hidden tabs suspend scheduling. The screen vector runs at most 60 times a second.
+
+Supported Varvara devices are System palette and stack indexes, Console input
+and output, Screen pixels/fills/1bpp and 2bpp sprites, Controller, Mouse, and
+Datetime. The screen is limited to 512 × 512 and console output to 8192 bytes.
+Audio, files, subprocesses, and expansion banks are unavailable; attempted writes
+are reported. This is not a complete Varvara emulator. The assembler supports
+Uxntal's standard labels, macros, anonymous labels, address runes and padding,
+but excludes includes and multi-bank output. Source and expansion limits are
+listed in the lesson.
+
+The committed reference fixture records four deterministic single-step snapshots
+for every instruction byte from the upstream `uxnmin.c` reference, identified by
+its URL and SHA-256. The kernel gate compares all 1,024 cases and checks complete
+programs, wrapping, devices, and assembler errors. The native gate runs the same
+public Fern API. During implementation, the upstream opcode test and Uxntal 54K
+acid test also completed successfully; those upstream programs are not vendored.
+
+```sh
+bin/fern -target x86-64-linux -O -o build/uxn-test examples/showcase/tests/uxn.fern
+build/uxn-test
+node examples/showcase/tests/uxn-kernels.test.mjs
+PLAYWRIGHT_MODULE=/path/to/playwright/index.mjs CHROMIUM=/usr/bin/chromium \
+  node examples/showcase/tests/uxn.browser.mjs http://localhost:8080
+```
+
+`tests/ci-browser.sh` includes these gates. The browser regression covers assembly,
+stepping, stacks and RAM, ROM upload/download, screen and mouse events, console
+input/output, pause/reset, reduced motion, and phone-to-desktop layouts.
 
 ## Browser Wasm
 

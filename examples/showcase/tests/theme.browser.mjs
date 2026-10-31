@@ -20,6 +20,7 @@ const routes = [
   "/pulse/",
   "/swarm/",
   "/contour/",
+  "/uxn/",
   "/gather/",
   "/blockyard/",
   "/foundry/",

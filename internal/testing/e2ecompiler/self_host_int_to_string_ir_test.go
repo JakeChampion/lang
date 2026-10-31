@@ -13,11 +13,11 @@ var intToStringIRCases = []struct {
 	src  string
 }{
 	{"i32-len", `import "core/int";
-function main(): i32 { return int.int_to_string(425).len(); }`},
+function main(): i32 { return 425.to_string().len(); }`},
 	{"i32-neg", `import "core/int";
-function main(): i32 { if (int.int_to_string(0 - 12345) == "-12345") { return 42; } return 0; }`},
+function main(): i32 { if ((0 - 12345).to_string() == "-12345") { return 42; } return 0; }`},
 	{"i32-zero", `import "core/int";
-function main(): i32 { if (int.int_to_string(0) == "0") { return 7; } return 0; }`},
+function main(): i32 { if (0.to_string() == "0") { return 7; } return 0; }`},
 	{"u32-max-len", `import "std/u32";
 function main(): i32 { let n: u32 = 4294967295 as u32; return n.to_string().len(); }`},
 	{"u32-content", `import "std/u32";

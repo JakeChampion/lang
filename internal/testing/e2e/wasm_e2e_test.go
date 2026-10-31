@@ -34,6 +34,9 @@ import (
 var (
 	preview2Once sync.Once
 	preview2Err  error
+	// A wasmtime that is present but not the pin fails the test, so a
+	// version drift cannot pass as a skip.
+	preview2Drift error
 )
 
 const wasmtimePin = "46.0.1"
@@ -62,13 +65,16 @@ func skipIfPreview2Missing(t *testing.T) {
 			return
 		}
 		if v, err := wasmtimeVersion(); err != nil {
-			preview2Err = err
+			preview2Drift = err
 		} else if v != wasmtimePin {
-			preview2Err = fmt.Errorf("wasmtime %s on PATH, but this suite is pinned to %s "+
+			preview2Drift = fmt.Errorf("wasmtime %s on PATH, but this suite is pinned to %s "+
 				"(see mise.toml; `eval \"$(scripts/toolchain-env)\"` installs it); the "+
 				"component-model-async ABI differs between them", v, wasmtimePin)
 		}
 	})
+	if preview2Drift != nil {
+		t.Fatalf("preview-2 toolchain: %v", preview2Drift)
+	}
 	if preview2Err != nil {
 		t.Skipf("preview-2 prerequisites missing: %v", preview2Err)
 	}
@@ -1849,7 +1855,6 @@ function near(actual: f64, expected: f64, eps: f64): boolean {
 func TestWASMMapStringKeysInlineSSO(t *testing.T) {
 	src := `
 import "core/map";
-import "core/int";
 function main(): i32 {
     let m: Map[string, i32] = map_new(8);
 
@@ -1858,7 +1863,7 @@ function main(): i32 {
     m = m.insert("ok", 2);
     m = m.insert("GET", 3);
     m = m.insert("404", 4);
-    m = m.insert(int.int_to_string(42), 5);   // "42" inline via cascade
+    m = m.insert(42.to_string(), 5);   // "42" inline via cascade
 
     // Heap-form key alongside, same map.
     m = m.insert("longer", 99);
@@ -1882,7 +1887,7 @@ function main(): i32 {
     if let Some(v) = m.get("42") {
         if (v != 5) { return 10; }
     } else { return 11; }
-    if let Some(v) = m.get(int.int_to_string(42)) {
+    if let Some(v) = m.get(42.to_string()) {
         if (v != 5) { return 12; }
     } else { return 13; }
     if let Some(v) = m.get("longer") {
@@ -2314,7 +2319,6 @@ function main(): i32 {
 
 func TestWASMBase64(t *testing.T) {
 	src := `
-import "core/int";
 import "std/base64";
 import "std/codec";
 import "std/string";
@@ -5208,7 +5212,6 @@ func TestWASMTupleDestructure(t *testing.T) {
 
 func TestWASMHex(t *testing.T) {
 	src := `
-import "core/int";
 import "std/hex";
 import "std/codec";
 import "std/string";
@@ -5251,7 +5254,6 @@ function __codec_bytes(value: Result[u8[], codec.DecodeError]): u8[] {
 
 func TestWASMUrlParse(t *testing.T) {
 	src := `
-import "core/int";
 import "std/url";
 function main(): i32 {
 		// Full URL with every section.
@@ -5327,7 +5329,6 @@ function main(): i32 {
 
 func TestWASMUrlCoder(t *testing.T) {
 	src := `
-import "core/int";
 import "std/url";
 function main(): i32 {
 		// All-unreserved input round-trips byte-for-byte.
@@ -5371,7 +5372,6 @@ function main(): i32 {
 
 func TestWASMQueryParse(t *testing.T) {
 	src := `
-import "core/int";
 import "core/map";
 import "std/url";
 function main(): i32 {
@@ -5757,10 +5757,9 @@ function main(): i32 {
     return 1;
 }`},
 		{"qualified_int_call", `
-import "core/int";
+import "std/i32";
 function main(): i32 {
-    let s: string = int.int_to_string_radix(255, 16);
-    if (s == "ff") { return 0; }
+    match (i32.parse_i32_radix("ff", 16)) { Ok(v) => { if (v == 255) { return 0; } }, Err(_) => { } }
     return 1;
 }`},
 		{"mixed_stdlib", `

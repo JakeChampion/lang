@@ -20,7 +20,7 @@ The fixpoint runs in CI on x86-64 Linux, arm64 Linux and Apple Silicon.
 | `TestPinnedStage0ThatIsNotGzipIsRejectedAndCleanedUp` | a substituted asset fails and leaves nothing behind |
 | `TestStage0RefusingTheSourceFails`, `TestBuildRejectsACompilerWhoseOutputDoesNotRun`, `TestBuildRejectsBrokenMultiModuleSmoke` | a stage that cannot build or run the smoke programs stops the chain |
 | `TestDistcheckReachesFixedPoint`, `TestDistcheckDivergentStagesFail` | the fixpoint holds, and a divergence fails |
-| `TestSelfHostReproducibleAcrossPaths` | the plain, `-pie` and `-harden` images are byte-identical across directories and environments |
+| `TestSelfHostReproducibleAcrossPaths` | the images are byte-identical across source roots, directories, locales and environments, and a `-g` image is identical with `-remap-path-prefix` |
 
 ## The limit of self-consistency
 

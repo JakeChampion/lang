@@ -70,18 +70,14 @@ func TestPollableWrappersBuildEverywhere(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	src := filepath.Join(dir, "prog.fern")
-	prog := `import "std/time";
-import "std/async";
+	prog := `import "std/async";
+import "std/clock";
 function main(): i32 {
-    let d: async.RealDriver = async.real_driver();
-    let timer: i32 = d.timer(time.duration_millis(1));
-    let dropped: i32 = d.drop_token(timer);
-    let ready: i32 = async.wait_any([0, 1], Some(time.duration_millis(0)));
-    if (target_os() == "wasi") {
-        return 0;
-    }
-    if (timer != -1 || dropped != 0) {
-        return 1;
+    match (async.wait_any([0, 1], Some(clock.instant()))) {
+        Cancelled => {
+            return 1;
+        },
+        _ => {}
     }
     return 0;
 }
@@ -98,7 +94,7 @@ function main(): i32 {
 		}
 		if target == host {
 			if o, err := exec.Command(out).CombinedOutput(); err != nil {
-				t.Errorf("%s: a native driver's timer is not -1 or its drop not 0: %v\n%s", target, err, o)
+				t.Errorf("%s: a wait with no task answered Cancelled: %v\n%s", target, err, o)
 			}
 		}
 	}

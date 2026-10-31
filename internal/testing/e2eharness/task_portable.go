@@ -2,14 +2,17 @@ package e2eharness
 
 const TaskPortableProgram = `import "std/time";
 import "std/async";
+import "std/clock";
 import "std/i32";
 
-// leaf parks on a bound alone: the park answers -1, as the plain wait does
-// once the bound passes.
+// leaf parks on a deadline alone: the park times out, as the plain wait does
+// once the deadline passes.
 function leaf(n: i32): i32 {
   let none: i32[] = [];
-  let r: i32 = async.wait_any(none, Some(time.duration_millis(1)));
-  return r + n;
+  if let async.Wake.TimedOut = async.wait_any(none, Some(clock.instant().add(time.duration_millis(1)))) {
+    return n - 1;
+  }
+  return n;
 }
 
 function mid(n: i32): i64 {
@@ -41,14 +44,11 @@ function main(): i32 {
       Done(v) => { out = v; going = false; },
       Suspended(w) => {
         parks = parks + 1;
-        let woke: i32 = async.wait_any(w.set, w.timeout);
-        st = async.task_resume(t, woke);
-      },
-      Cancelled => { out = 0 - 2; going = false; }
+        st = async.task_resume(t, async.wait_any(w.set, w.until));
+      }
     }
   }
-  async.task_free(t);
-  // parks=2; leaf answers n-1 twice and big carries n: (5 + 4 + 5) * 100 +
+  // parks=2; leaf times out and answers n-1 twice and big carries n: (5 + 4 + 5) * 100 +
   // len("held5") + 5 = 1410
   print("parks " + parks.to_string() + " out " + out.to_string());
   print("plain " + top(5).to_string());

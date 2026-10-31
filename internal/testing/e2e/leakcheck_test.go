@@ -975,13 +975,12 @@ function main(): i32 {
 }`
 
 const radixReclaimSrc = `import "std/i32";
-import "core/int";
 function main(): i32 {
     let acc: i32 = 0;
     let k: i32 = 1;
     while (k < 60) {
-        let h: string = int.int_to_string_radix(k * 7919, 16);
-        let b: string = int.int_to_string_radix(0 - (k * 7919), 2);
+        let h: string = (k * 7919).to_string_radix(16);
+        let b: string = (0 - (k * 7919)).to_string_radix(2);
         let i: i32 = 0;
         while (i < h.len()) { acc = (acc * 31 + (h[i] as i32)) % 100003; i = i + 1; }
         i = 0;
@@ -1011,7 +1010,7 @@ var toStringReclaimCases = []struct {
 	fullReclaim bool
 }{
 	{"to_string-i32-i64-u64-binary", toStringReclaimSrc, 0, true},
-	{"int_to_string_radix", radixReclaimSrc, 143, true},
+	{"to_string_radix", radixReclaimSrc, 143, true},
 	{"to_rgb_hex", rgbHexReclaimSrc, 29, false},
 }
 

@@ -1,0 +1,47 @@
+function __fern_tcp_addr_into_u8(fd: i32, peer: boolean, out: i32[]): i32 {
+  if (out.len() < 19) {
+    return 0 - 22;
+  }
+  let sa: usize = __raw_scratch(32);
+  let z: i32 = 0;
+  while (z < 32) {
+    __raw_store8(sa, z, 0);
+    z = z + 1;
+  }
+  __raw_store8(sa, 28, 28);
+  let r: i32 = 0;
+  if (peer) {
+    r = __syscall3(31, fd as i64, sa as i64, (sa + 28) as i64) as i32;
+  } else {
+    r = __syscall3(32, fd as i64, sa as i64, (sa + 28) as i64) as i32;
+  }
+  if (r < 0) {
+    return r;
+  }
+  let fam: i32 = __raw_load8(sa, 1);
+  let tag: i32 = 4;
+  let n: i32 = 4;
+  let at: i32 = 4;
+  if (fam == 30) {
+    tag = 6;
+    n = 16;
+    at = 8;
+  } else if (fam != 2) {
+    return 0 - 47;
+  }
+  let o: usize = __raw_arr_ptr(out);
+  z = 0;
+  while (z < 19) {
+    __raw_store8(o, 8 + z, 0);
+    z = z + 1;
+  }
+  __raw_store8(o, 8 + 0, tag);
+  let k: i32 = 0;
+  while (k < n) {
+    __raw_store8(o, 8 + (1 + k), __raw_load8(sa, at + k));
+    k = k + 1;
+  }
+  __raw_store8(o, 8 + 17, __raw_load8(sa, 2));
+  __raw_store8(o, 8 + 18, __raw_load8(sa, 3));
+  return 19;
+}

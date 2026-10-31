@@ -5,7 +5,6 @@ import "std/i32";
 import "std/http";
 import "std/serve";
 import "std/platform";
-import "core/int";
 import "core/map";
 
 struct Recent { hits: Map[string, i32], order: string[] }
@@ -37,7 +36,7 @@ function handle(r: Recent, req: HttpRequest, plat: platform.Platform): (Recent, 
   } else {
     next = Recent { ...next, hits: next.hits.insert(key, seen + 1) };
   }
-  return (next, http.ok(int.int_to_string(seen + 1) + " of " + int.int_to_string(next.order.len())));
+  return (next, http.ok((seen + 1).to_string() + " of " + next.order.len().to_string()));
 }
 
 function port(): i32 {

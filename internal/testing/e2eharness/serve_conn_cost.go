@@ -23,8 +23,10 @@ const connCostCycles = 2000
 
 const connCostRatio = 1.5
 
-func PerConnectionCostServerSource() string {
-	return `import "std/http";
+// PerConnectionCostServerSource serves with a per-client cap of perIP, and 0
+// turns the cap off.
+func PerConnectionCostServerSource(perIP int) string {
+	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
@@ -34,9 +36,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("hello");
 }
 function main(): i32 {
-    return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0, keep_alive_requests: 1000000000 }, handle));
+    return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: %d, keep_alive_requests: 1000000000 }, handle));
 }
-`
+`, perIP)
 }
 
 type connCost struct {
@@ -58,7 +60,10 @@ func RaiseConnCostLimit(t *testing.T) {
 	}
 }
 
-func CheckPerConnectionCostFlat(t *testing.T, pid int, addr string) {
+// CheckPerConnectionCostFlat holds connCostHeld idle connections. With peers
+// above 0, they come from that many loopback addresses, so a per-client cap
+// sees that many peer keys.
+func CheckPerConnectionCostFlat(t *testing.T, pid int, addr string, peers int) {
 	t.Helper()
 	WaitServerReady(t, addr)
 	ka, err := net.DialTimeout("tcp", addr, 5*time.Second)
@@ -88,7 +93,11 @@ func CheckPerConnectionCostFlat(t *testing.T, pid int, addr string) {
 		}
 	}()
 	for len(held) < connCostHeld {
-		c, err := net.DialTimeout("tcp", addr, 5*time.Second)
+		d := net.Dialer{Timeout: 5 * time.Second}
+		if peers > 0 {
+			d.LocalAddr = &net.TCPAddr{IP: net.IPv4(127, 0, 0, byte(2+len(held)%peers))}
+		}
+		c, err := d.Dial("tcp", addr)
 		if err != nil {
 			t.Fatalf("holding connection %d: %v", len(held), err)
 		}

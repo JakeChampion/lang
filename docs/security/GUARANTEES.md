@@ -50,7 +50,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | Under `-harden` on arm64, every function value's stub is a BTI landing pad and every framed function signs its return address | `TestSelfHostHardenArm64` | arm64 emulated; native unverified |
 | No load segment is writable and executable, the stack is not executable, and a shared object's tables are read-only after relocation | `TestSelfHostImagePermissions`, `TestSharedObjectLayout` | x86, arm64 |
 | A `-pie` image loads at a base the kernel chooses | `TestSelfHostPIE` | x86, arm64 |
-| A build is reproducible across directories and environments, except under `-g` | `TestSelfHostReproducibleAcrossPaths` | x86, arm64 |
+| A build is reproducible across source roots, directories, locales, time zones and environments. A `-g` build is reproducible with `-remap-path-prefix` | `TestSelfHostReproducibleAcrossPaths`, `TestSelfHostRemapPathPrefix` | x86, arm64, Darwin and Android images, WASI component |
 | Every native executable carries a build manifest that `fern -manifest` reads back | `TestSelfHostProfiles` | x86, arm64 |
 
 ## Runtime, standard library and isolation
@@ -86,6 +86,7 @@ The owner decided these on 2026-10-29. Each one bounds what a row above can clai
 - Raw builtins (`__alloc`, `__store_*`, `__load_*`, `__free`, `__memcpy`, `__c_call*`, `__arr_set_len`) are callable from every source until the stage0 pin learns unsafe blocks (`UNSAFE-INVENTORY.md`).
 - A thread that shares the heap is not supported. Reference counts are not atomic.
 - No signature covers a package archive. An index file is verified only when the manifest names `index_key` (`PACKAGE-INTEGRITY.md`).
+- An index rollback is refused only after a lock records the index serial. Nothing refuses a frozen index.
 - The fault tests ran on a physical host for PAC only. BTI, MTE and the user shadow stack carry emulated evidence or none.
 - Nothing mitigates a speculation attack.
 - The seccomp sandbox exists on x86-64 only.

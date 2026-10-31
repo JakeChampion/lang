@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -11,11 +12,13 @@ import (
 )
 
 var (
-	runSidecars = []string{"expected.stdout", "expected.exit", "stdin", "match", "backends"}
+	runSidecars = []string{"expected.stdout", "expected.exit", "stdin", "match", "backends", "expected.http"}
 	allSidecars = append([]string{
 		"expected.error", "expected.lowering-error", "meta", "reclaim-observable",
 	}, runSidecars...)
 )
+
+var wasiHTTPHandlerSig = regexp.MustCompile(`function\s+handle\s*\(\s*\w+\s*:\s*HttpRequest\s*,\s*\w+\s*:\s*platform\.Platform\s*\)\s*:\s*HttpResponse`)
 
 var waiverKinds = []string{
 	"implementation-gap",
@@ -133,6 +136,16 @@ func checkCaseFormat(dir string) ([]string, error) {
 			report("expected.exit %q is not an integer", raw)
 		} else if n < 0 || n > 255 {
 			report("expected.exit %d is outside 0..255", n)
+		}
+	}
+
+	if present["expected.http"] {
+		if !wasiHTTPHandlerSig.MatchString(read("main.fern")) {
+			report("expected.http on a case whose main.fern declares no `handle(req: HttpRequest, plat: platform.Platform): HttpResponse`, so the wasm32-wasi-http leg cannot serve it")
+		}
+		status, _, _ := strings.Cut(read("expected.http"), "\n")
+		if n, cerr := strconv.Atoi(strings.TrimSpace(status)); cerr != nil || n < 100 || n > 599 {
+			report("expected.http must start with an HTTP status line, got %q", status)
 		}
 	}
 
