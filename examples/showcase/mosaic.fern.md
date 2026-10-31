@@ -36,6 +36,7 @@ import "std/number_parse";
 import "std/png";
 import "std/time";
 import "std/async";
+import "std/clock";
 import "./common";
 import "./live";
 import "std/http/websocket";
@@ -180,7 +181,7 @@ pub function events(room: Room, req: HttpRequest): HttpResponse {
         },
         None => {}
       }
-      let ready: i32 = async.wait_any([], Some(time.duration_millis(100)));
+      let ready: async.Wake = async.wait_any([], Some(clock.instant().add(time.duration_millis(100))));
     }
     return None;
   }).with_header("X-Accel-Buffering", "no");

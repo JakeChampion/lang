@@ -99,7 +99,7 @@ function census_burn(n: i32, plat: platform.Platform): i32 {
 }
 function census_handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/chunked" || req.path == "/expect") {
-        match (req.body_string()) {
+        match (req.body_text()) {
             Ok(text) => { return http.ok(text); },
             Err(e) => { return e.to_response(); }
         }
@@ -537,7 +537,7 @@ func WasiHTTPHandlerCensusSource(t *testing.T, root string, rounds int) string {
     if (listener < 0) { return 90; }
     let port: i32 = tcp_local_port(listener);
     if (port <= 0) { return 91; }
-    print(int.int_to_string(port));
+    print(port.to_string());
     let result: i32 = exit_code(__serve_loop(__Listen { fd: listener, inherited: true }, (req: HttpRequest, plat: platform.Host): HttpResponse => census_handle(req, plat), Config { ...config(), recv_deadline: time.duration_millis(300 as i64), data_rate_grace: time.duration_millis(100 as i64), keep_alive_requests: 200, max_connections: 2 }, (reason: string): void => {}, None));
     if (tcp_close(listener) != 0) { return 92; }
     return result;`

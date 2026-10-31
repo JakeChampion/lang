@@ -125,7 +125,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		}
 		c := instantiateFunc(gen, k.mang, sub)
 		before := len(instantiations)
-		for mk, margs := range boundEnumImplMethods(prog, info, gen, args) {
+		for mk, margs := range boundImplMethods(prog, info, gen, args) {
 			if _, seen := instantiations[mk]; !seen {
 				instantiations[mk] = margs
 			}
@@ -356,7 +356,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 					inst = ast.EnumType{Name: baseName, Args: structInsts[sk]}
 				}
 				psub := map[string]ast.Type{}
-				if !unifyImplType(impl.Type, inst, pset, psub) {
+				if !checker.UnifyImplType(impl.Type, inst, pset, psub) || !implBoundsHold(info, impl, psub) {
 					continue
 				}
 				implK := impl.Trait + "/" + sk.mang
@@ -580,18 +580,13 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	return nil
 }
 
-func boundEnumImplMethods(prog *ast.Program, info *checker.Info, gen *ast.FuncDecl, args []ast.Type) map[instKey][]ast.Type {
+func boundImplMethods(prog *ast.Program, info *checker.Info, gen *ast.FuncDecl, args []ast.Type) map[instKey][]ast.Type {
 	out := map[instKey][]ast.Type{}
 	for i, tp := range gen.TypeParams {
 		if i >= len(args) {
 			break
 		}
-		et, isEnum := args[i].(ast.EnumType)
-		if !isEnum || len(et.Args) == 0 || hasParamType(et.Args) {
-			continue
-		}
-		ed, ok := info.Enums[et.Name]
-		if !ok || len(ed.TypeParams) == 0 || enumNeedsClone(ed, info) {
+		if !boundImplReceiver(info, args[i]) {
 			continue
 		}
 		for _, trait := range gen.Bounds[tp] {
@@ -600,7 +595,7 @@ func boundEnumImplMethods(prog *ast.Program, info *checker.Info, gen *ast.FuncDe
 					continue
 				}
 				for _, mn := range impl.MethodNames {
-					if k, margs, ok := enumImplMethod(info, impl, et, mn); ok {
+					if k, margs, ok := implMethodInst(info, impl, args[i], mn); ok {
 						out[k] = margs
 					}
 				}
@@ -608,6 +603,23 @@ func boundEnumImplMethods(prog *ast.Program, info *checker.Info, gen *ast.FuncDe
 		}
 	}
 	return out
+}
+
+// boundImplReceiver reports whether a generic impl's methods for t keep one
+// declaration per instance: t is a kept generic enum, an array, a slice or a
+// tuple, with no type parameter left in it.
+func boundImplReceiver(info *checker.Info, t ast.Type) bool {
+	if containsParamType(t) {
+		return false
+	}
+	switch t := t.(type) {
+	case ast.EnumType:
+		ed, ok := info.Enums[t.Name]
+		return len(t.Args) > 0 && ok && len(ed.TypeParams) > 0 && !enumNeedsClone(ed, info)
+	case ast.ArrayType, ast.SliceType, ast.TupleType:
+		return true
+	}
+	return false
 }
 
 func genericsReachedFrom(prog *ast.Program, info *checker.Info, kept map[string]bool) map[string]bool {
@@ -642,8 +654,9 @@ func genericsReachedFrom(prog *ast.Program, info *checker.Info, kept map[string]
 	return out
 }
 
-func enumImplMethod(info *checker.Info, impl *ast.ImplDecl, et ast.EnumType, mn string) (instKey, []ast.Type, bool) {
-	if len(impl.TypeParams) == 0 {
+func implMethodInst(info *checker.Info, impl *ast.ImplDecl, recv ast.Type, mn string) (instKey, []ast.Type, bool) {
+	ns, ok := ast.ReceiverNamespace(recv)
+	if !ok || len(impl.TypeParams) == 0 {
 		return instKey{}, nil, false
 	}
 	pset := map[string]bool{}
@@ -651,16 +664,16 @@ func enumImplMethod(info *checker.Info, impl *ast.ImplDecl, et ast.EnumType, mn 
 		pset[itp] = true
 	}
 	psub := map[string]ast.Type{}
-	if !unifyImplType(impl.Type, et, pset, psub) {
+	if !checker.UnifyImplType(impl.Type, recv, pset, psub) {
 		return instKey{}, nil, false
 	}
-	genName, _, _ := info.ResolveMethod(et.Name, mn, []string{impl.Trait})
+	genName, _, _ := info.ResolveMethod(ns, mn, []string{impl.Trait})
 	mgen, isGen := info.GenericFuncs[genName]
 	for _, pre := range []string{"__method_", "__assoc_"} {
 		if isGen {
 			break
 		}
-		genName = pre + et.Name + "_" + mn
+		genName = pre + ns + "_" + mn
 		mgen, isGen = info.GenericFuncs[genName]
 	}
 	if !isGen {
@@ -703,7 +716,7 @@ func enumAssocCallee(prog *ast.Program, info *checker.Info, c *ast.Call) (string
 		if !slices.Contains(impl.MethodNames, fa.Field) {
 			continue
 		}
-		if k, margs, ok := enumImplMethod(info, impl, et, fa.Field); ok {
+		if k, margs, ok := implMethodInst(info, impl, et, fa.Field); ok {
 			return k.name, margs, true
 		}
 	}
@@ -1158,65 +1171,21 @@ func baseTypeName(t ast.Type) (string, bool) {
 	return "", false
 }
 
-func unifyImplType(pattern, concrete ast.Type, params map[string]bool, sub map[string]ast.Type) bool {
-	switch p := pattern.(type) {
-	case ast.ParamType:
-		if params[p.Name] {
-			if ex, ok := sub[p.Name]; ok {
-				return ast.Equal(ex, concrete)
-			}
-			sub[p.Name] = concrete
-			return true
-		}
-		return ast.Equal(pattern, concrete)
-	case ast.StructType:
-		if len(p.Args) == 0 && params[p.Name] {
-			if ex, ok := sub[p.Name]; ok {
-				return ast.Equal(ex, concrete)
-			}
-			sub[p.Name] = concrete
-			return true
-		}
-		c, ok := concrete.(ast.StructType)
-		if !ok || c.Name != p.Name || len(c.Args) != len(p.Args) {
-			return false
-		}
-		for i := range p.Args {
-			if !unifyImplType(p.Args[i], c.Args[i], params, sub) {
-				return false
-			}
-		}
-		return true
-	case ast.EnumType:
-		c, ok := concrete.(ast.EnumType)
-		if !ok || c.Name != p.Name || len(c.Args) != len(p.Args) {
-			return false
-		}
-		for i := range p.Args {
-			if !unifyImplType(p.Args[i], c.Args[i], params, sub) {
-				return false
-			}
-		}
-		return true
-	case ast.ArrayType:
-		c, ok := concrete.(ast.ArrayType)
-		return ok && unifyImplType(p.Elem, c.Elem, params, sub)
-	case ast.SliceType:
-		c, ok := concrete.(ast.SliceType)
-		return ok && unifyImplType(p.Elem, c.Elem, params, sub)
-	case ast.TupleType:
-		c, ok := concrete.(ast.TupleType)
-		if !ok || len(c.Elems) != len(p.Elems) {
-			return false
-		}
-		for i := range p.Elems {
-			if !unifyImplType(p.Elems[i], c.Elems[i], params, sub) {
-				return false
-			}
-		}
+// implBoundsHold reports whether sub satisfies the bounds of a parametric impl.
+func implBoundsHold(info *checker.Info, impl *ast.ImplDecl, sub map[string]ast.Type) bool {
+	if len(impl.Bounds) == 0 {
 		return true
 	}
-	return ast.Equal(pattern, concrete)
+	args := make([]ast.Type, len(impl.TypeParams))
+	for i, tp := range impl.TypeParams {
+		v, ok := sub[tp]
+		if !ok {
+			return true
+		}
+		args[i] = v
+	}
+	bounds := &ast.FuncDecl{Name: impl.Trait, TypeParams: impl.TypeParams, Bounds: impl.Bounds, BoundArgs: impl.BoundArgs}
+	return len(checker.BoundErrors(info, bounds, args, impl.P)) == 0
 }
 
 func containsParamType(t ast.Type) bool {

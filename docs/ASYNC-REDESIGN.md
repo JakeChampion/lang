@@ -9,6 +9,8 @@ component-model-async import path) are kept — see *Keep / cut* below.
 Written with no users in the field, so we were free to remove the
 `concurrent` / `await` / `race` surface rather than evolve it.
 
+Note: #12725 changed the `std/async` API that this record names: one future family over `Future[T]`, typed wakes, and deadlines as instants. `docs/ASYNC.md` describes the current surface.
+
 This record cites historical source paths. Some files no longer exist in the current tree.
 
 ## TL;DR

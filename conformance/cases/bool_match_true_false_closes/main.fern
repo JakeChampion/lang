@@ -1,6 +1,5 @@
 
 
-import "core/int";
 
 function pick(b: boolean): i32 {
   match (b) {
@@ -18,8 +17,8 @@ function name(b: boolean): string {
 }
 
 function main(): i32 {
-  print(int.int_to_string(pick(true)));
-  print(int.int_to_string(pick(false)));
+  print(pick(true).to_string());
+  print(pick(false).to_string());
   print(name(true));
   print(name(false));
   return pick(true) + pick(false);

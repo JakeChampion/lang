@@ -1,0 +1,33 @@
+import "../uxn";
+import "std/array";
+
+function main(): i32 {
+  let code = uxn.assemble("%twice { DUP ADD } |0100 #03 twice #0200 STA BRK");
+  if (code[0] != 0) {
+    return 1;
+  }
+  let s = uxn.run(uxn.boot(code.drop(1)), 100, 0 - 1);
+  if (s[512] != 6 || s[uxn.META + 4] != 0) {
+    return 2;
+  }
+  code = uxn.assemble("|0100 #1234 #ff STZ2 #ff LDZ2 #abcd #ffff STA2 #ffff LDA2 BRK");
+  s = uxn.run(uxn.boot(code.drop(1)), 100, 0 - 1);
+  if (s[uxn.WST] != 0x12 || s[uxn.WST + 1] != 0x34 || s[uxn.WST + 2] != 0xab || s[0] != 0xcd) {
+    return 3;
+  }
+  code = uxn.assemble("|0100 #41 #18 DEO #03 #2e DEO BRK");
+  s = uxn.run(uxn.boot(code.drop(1)), 100, 0 - 1);
+  if (s[uxn.CONSOLE] != 65 || s[uxn.SCREEN] != 3) {
+    return 4;
+  }
+  code = uxn.assemble("|0100 @loop INC !loop");
+  s = uxn.run(uxn.boot(code.drop(1)), 123, 0 - 1);
+  if (s[uxn.META + 4] != 1 || s[uxn.META + 11] != 123) {
+    return 5;
+  }
+  code = uxn.assemble("|0100 ;missing BRK");
+  if (code[0] != 1) {
+    return 6;
+  }
+  return 0;
+}

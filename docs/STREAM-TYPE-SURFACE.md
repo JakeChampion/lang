@@ -1,6 +1,6 @@
 # `Stream[T]` (and why not `future[T]`) in the Fern language surface
 
-Status: [record] decision shipped: `Stream[T]` is in the self-host surface (#11530) and `future[T]` stays internal.
+Status: [record] decision shipped: `Stream[T]` is in the self-host surface (#11530) and the component-model `future[T]` stays internal.
 
 `Stream[T]` names the generic async channel.
 `ByteStream` names the byte reader from `std/stream`.
@@ -29,7 +29,14 @@ and no "deferred value" surface object (`docs/WASI-PREVIEW3-ASYNC-PLAN.md`).
   auto-await already subsumes it: a host function that returns a
   `future[T]` on the wire is consumed colorlessly as a `T`. So `future[T]`
   stays an **internal ABI detail** (the lowering already handles a deferred
-  single value via the pending-await loop); it is never written in Fern source.
+  single value via the pending-await loop). No Fern import or export
+  declares the component-model `future[T]`.
+
+  The library type `async.Future[T]` (`docs/ASYNC.md`) is a different
+  thing with a similar name. It is a value that is ready, pending on a wait
+  of the program's own, or cancelled, and `async.wait` or `async.block_on`
+  drives it. It does not cross the component boundary, and the compiler does
+  not lower a component-model `future[T]` to it.
 
 - **`Stream[T]` is a genuinely distinct shape** — a *sequence* delivered
   incrementally — so it earns a surface type. The coherent way to deliver it
@@ -333,8 +340,9 @@ The rest of this section records the native backend's history.
   - slice 3b (runnable composer collect proof → 42, #3929),
   - slice 4 (real-Fern from-source e2e → 42, #3931:
     `TestWasmP3StreamImportFromFern`).
-- `future[T]` Fern surface: **intentionally not exposed** (colorless auto-await
-  subsumes a single deferred value).
+- Component-model `future[T]` in the Fern surface: **intentionally not
+  exposed** (colorless auto-await subsumes a single deferred value). The
+  library type `async.Future[T]` is not this type.
 
 Done since: `Stream[T]` **parameters** (produce side from Fern source — P1/P2,
 `TestWasmP3StreamParamFromFern`); `u8`+`i32` **stride** coverage in both

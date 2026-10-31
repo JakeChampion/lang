@@ -60,7 +60,7 @@ function test_file_body_is_read_by_the_loop(): test.TestOutcome {
   if (resp.body_len() != 0) {
     return test.fail("a file body has no length before the loop reads it");
   }
-  if (resp.body_string() != "") {
+  if (resp.body_text_lossy() != "") {
     return test.fail("a file body is not read by the handler");
   }
   let whole: HttpResponse = http.materialize(resp);

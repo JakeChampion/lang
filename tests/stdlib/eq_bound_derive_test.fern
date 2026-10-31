@@ -1,9 +1,9 @@
 import "core/cmp";
 import "std/array";
-import "std/set";
+import "std/pset";
 import "std/test";
 
-@derive(cmp.Eq, cmp.Display)
+@derive(cmp.Eq, cmp.Hash, cmp.Display)
 struct Point { x: i32, y: i32 }
 
 function p(x: i32, y: i32): Point {
@@ -60,15 +60,15 @@ function test_ends_with(): test.TestOutcome {
 }
 
 function test_set_membership(): test.TestOutcome {
-  let s: set.Set[Point] = set.of([p(1, 2), p(3, 4), p(1, 2)]);
+  let s: pset.PSet[Point] = pset.of([p(1, 2), p(3, 4), p(1, 2)]);
   if (s.len() != 2) {
-    return test.fail("set.of kept a duplicate");
+    return test.fail("pset.of kept a duplicate");
   }
   return test.assert_true(s.contains(p(1, 2)) && !s.contains(p(9, 9)));
 }
 
 function test_set_remove(): test.TestOutcome {
-  let s: set.Set[Point] = set.of([p(1, 2), p(3, 4)]);
+  let s: pset.PSet[Point] = pset.of([p(1, 2), p(3, 4)]);
   return test.assert_eq_array(s.remove(p(1, 2)).to_array(), [p(3, 4)]);
 }
 

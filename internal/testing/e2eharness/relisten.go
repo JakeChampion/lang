@@ -17,7 +17,7 @@ function recv(fd: i32, max: i32): u8[] {
 }
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 

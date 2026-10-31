@@ -14,17 +14,16 @@ func TestDeflateGunzipNative(t *testing.T) {
 	src := `import "std/deflate";
 import "std/hex";
 import "std/hash/crc32";
-import "core/int";
 
 function main(): i32 {
     let Ok(compressed) = hex.decode("` + deflateCorpusGzipHex + `") else { return 3; };
     match (deflate.gunzip(compressed, 1048576)) {
         Ok(out) => {
             if (crc32.new().update(out[:]).finish() == 524053769 as u32) {
-                print(int.int_to_string(out.len()) + " crc-ok");
+                print(out.len().to_string() + " crc-ok");
                 return 0;
             }
-            print(int.int_to_string(out.len()) + " crc-bad");
+            print(out.len().to_string() + " crc-bad");
             return 1;
         },
         Err(e) => {

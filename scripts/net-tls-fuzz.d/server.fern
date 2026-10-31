@@ -55,7 +55,7 @@ function serve_one(fd: i32, cfg: server.Config, echo: boolean): string {
 }
 
 function answer(c: server.Connection, echo: boolean, answered: i32): string {
-  match (c.recv(time.duration_seconds(5 as i64))) {
+  match (c.read(time.duration_seconds(5 as i64))) {
     Ok(got) => {
       if (got.ended && got.data.len() == 0) {
         got.conn.close();
@@ -65,7 +65,7 @@ function answer(c: server.Connection, echo: boolean, answered: i32): string {
       if (echo) {
         reply = got.data;
       }
-      match (got.conn.send(reply)) {
+      match (got.conn.write(reply)) {
         Ok(sent) => {
           if (got.ended) {
             sent.close();

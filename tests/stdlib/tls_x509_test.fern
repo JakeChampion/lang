@@ -1,5 +1,4 @@
 import "std/test";
-import "core/int";
 import "std/hex";
 import "std/codec";
 import "std/crypto/ecdsa";
@@ -131,20 +130,20 @@ function refusal(b: u8[]): string {
 function key_shape(k: x509.PublicKey): string {
   match (k) {
     x509.RsaKey(n, e) => {
-      return "rsa " + int.int_to_string(n.len()) + " " + hex.encode(e);
+      return "rsa " + n.len().to_string() + " " + hex.encode(e);
     },
     x509.EcKey(curve, p) => {
       match (curve) {
         ecdsa.P256 => {
-          return "p256 " + int.int_to_string(p.len()) + " " + hex.encode(p.take(1));
+          return "p256 " + p.len().to_string() + " " + hex.encode(p.take(1));
         },
         ecdsa.P384 => {
-          return "p384 " + int.int_to_string(p.len()) + " " + hex.encode(p.take(1));
+          return "p384 " + p.len().to_string() + " " + hex.encode(p.take(1));
         }
       }
     },
     x509.Ed25519Key(k) => {
-      return "ed25519 " + int.int_to_string(k.len());
+      return "ed25519 " + k.len().to_string();
     },
     x509.OtherKey(oid) => {
       return "other " + oid;
@@ -162,7 +161,7 @@ function joined(v: string[]): string {
 }
 
 function summary(c: x509.Certificate): string {
-  return "v" + int.int_to_string(c.version) + " #" + hex.encode(c.serial) + " " + x509.algorithm_name(c.algorithm) + " " + c.issuer.common_name + " > " + c.subject.common_name + " " + c.not_before.to_string() + ".." + c.not_after.to_string() + " " + key_shape(c.key);
+  return "v" + c.version.to_string() + " #" + hex.encode(c.serial) + " " + x509.algorithm_name(c.algorithm) + " " + c.issuer.common_name + " > " + c.subject.common_name + " " + c.not_before.to_string() + ".." + c.not_after.to_string() + " " + key_shape(c.key);
 }
 
 function test_leaf(): test.TestOutcome {

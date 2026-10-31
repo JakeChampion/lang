@@ -18,30 +18,22 @@ function work(n: i32): i32 {
 
 function main(): i32 {
   let ts: async.Task[i32][] = [];
-  let i: i32 = 0;
-  while (i < 100) {
+  for i in 0..100 {
     let k: i32 = i;
     ts = ts.append(async.task_new(() => work(k)));
-    i = i + 1;
   }
   let sum: i32 = 0;
   for t in ts {
     match (async.task_start(t)) {
       Done(v) => { sum = sum + v; },
-      Suspended(w) => {},
-      Cancelled => {}
+      Suspended(w) => {}
     }
-  }
-  for t in ts {
-    async.task_free(t);
   }
   let again: async.Task[i32] = async.task_new(() => work(21));
   match (async.task_start(again)) {
     Done(v) => { sum = sum + v; },
-    Suspended(w) => {},
-    Cancelled => {}
+    Suspended(w) => {}
   }
-  async.task_free(again);
   print(sum.to_string());
   return 0;
 }
@@ -55,7 +47,12 @@ import "std/i32";
 // both, and takes a second argument so it runs as a call of two parts.
 function leaf(n: i32): i32 {
   let set: i32[] = [timer_fd(1), 1];
-  let r: i32 = async.wait_any(set, None);
+  let r: i32 = 0 - 1;
+  match (async.wait_any(set, None)) {
+    Woke(i) => { r = i; },
+    TimedOut => {},
+    Cancelled => { r = 0 - 2; }
+  }
   return r + n;
 }
 
@@ -87,46 +84,43 @@ function main(): i32 {
   // Driven by hand as the serve loop drives a handler: the first park hands
   // back the wait that names the record, and every resume goes through the
   // same trampoline the start used.
-  let st: async.TaskStatus[i32] = async.call_start(top, 5, 100);
-  let c: async.Call[i32, i32, i32] = async.Call { id: 0, f: top, a: 5, b: 100 };
   let parks: i32 = 0;
   let out: i32 = 0 - 1;
-  let going: boolean = true;
-  while (going) {
-    match (st) {
-      Done(v) => { out = v; going = false; },
-      Suspended(w) => {
-        if (parks == 0) {
-          c = async.call_of(w, top, 5, 100);
+  match (async.call_start(top, 5, 100)) {
+    Returned(v) => { out = v; },
+    Parked(c, first) => {
+      parks = 1;
+      let woke: async.Wake = async.wait_any(first.set, first.until);
+      let st: async.TaskStatus[i32] = async.call_resume(c, Woke(7));
+      let going: boolean = true;
+      while (going) {
+        match (st) {
+          Done(v) => { out = v; going = false; },
+          Suspended(w) => {
+            parks = parks + 1;
+            let again: async.Wake = async.wait_any(w.set, w.until);
+            st = async.call_resume(c, Woke(7));
+          }
         }
-        parks = parks + 1;
-        let woke: i32 = async.wait_any(w.set, w.timeout);
-        st = async.call_resume(c, 7);
-      },
-      Cancelled => { out = 0 - 2; going = false; }
+      }
     }
-  }
-  if (parks > 0) {
-    async.call_free(c);
   }
   // parks=2, out = ((7+5) + (7+15)) * 100 + len("held5") = 3405
   print("parks " + parks.to_string() + " out " + out.to_string());
-  // A call cancelled at its first park runs on to its end and is Cancelled.
+  // A call cancelled at its first park runs on to its end and is Done.
   match (async.call_start(top, 5, 100)) {
-    Suspended(w) => {
-      let c2: async.Call[i32, i32, i32] = async.call_of(w, top, 5, 100);
-      match (async.call_cancel(c2)) {
-        Cancelled => { print("cancelled"); },
-        _ => { print("not cancelled"); }
+    Parked(c2, w) => {
+      match (async.call_resume(c2, async.Wake.Cancelled)) {
+        Done(v) => { print("cancelled"); },
+        Suspended(again) => { print("not cancelled"); }
       }
-      async.call_free(c2);
     },
-    _ => { print("no park"); }
+    Returned(v) => { print("no park"); }
   }
   // A call that returns at once has nothing to hold and nothing to free.
   match (async.call_start(add, 2, 3)) {
-    Done(v) => { print("done " + v.to_string()); },
-    _ => { print("parked"); }
+    Returned(v) => { print("done " + v.to_string()); },
+    Parked(c3, w) => { print("parked"); }
   }
   return 0;
 }

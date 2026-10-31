@@ -443,7 +443,6 @@ func TestWasmPreview2TcpEcho(t *testing.T) {
 	dir := t.TempDir()
 	srcPath := filepath.Join(dir, "echo.fern")
 	src := `import "std/time";
-import "core/int";
 import "std/net";
 
 function main(): i32 {
@@ -451,7 +450,7 @@ function main(): i32 {
     if (sock < 0) { return 1; }
     let port: i32 = tcp_local_port(sock);
     if (port <= 0) { return 4; }
-    print(int.int_to_string(port));
+    print(port.to_string());
     let conn = tcp_accept(sock);
     if (conn < 0) { return 2; }
     let msg: u8[] = match (net.read_watched(conn, 1024, time.duration_millis(5000), 1)) {
@@ -1321,7 +1320,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
         return http.ok("world");
     }
     if (req.method == "POST") {
-        match (req.body_string()) {
+        match (req.body_text()) {
             Ok(text) => { return http.ok(text); },
             Err(e) => { return e.to_response(); }
         }
@@ -1823,7 +1822,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
         return http.ok("world");
     }
     if (req.method == "POST") {
-        match (req.body_string()) {
+        match (req.body_text()) {
             Ok(text) => { return http.ok(text); },
             Err(e) => { return e.to_response(); }
         }

@@ -43,13 +43,12 @@ func TestZstdEncodeAgainstGo(t *testing.T) {
 
 const zstdEncodeSource = `import "std/zstd";
 import "std/hex";
-import "core/int";
 
 function lines(n: i32): u8[] {
   let out: u8[] = [];
   let i: i32 = 0;
   while (i < n) {
-    for b in ("line " + int.int_to_string(i) + " of the corpus\n").bytes() {
+    for b in ("line " + i.to_string() + " of the corpus\n").bytes() {
       out = out.append(b);
     }
     i = i + 1;
