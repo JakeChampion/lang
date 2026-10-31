@@ -3894,10 +3894,10 @@ function __serve_unframed[D: async.Driver](drv: D, c: __Conns, fls: __Flights, a
     http.Headed(h) => {
       return __serve_stream(drv, c, fls, at, h, start, opts, stop, count, clk);
     },
-    http.HeadIncomplete => {
+    http.Incomplete => {
       return (__body_deadline(c, at, opts, monotonic_ns()), fls, false, Idle, c.last);
     },
-    http.HeadMalformed(status) => {
+    http.Malformed(status) => {
       return (__serve_refuse(drv, c, at, status, opts, clk), fls, false, Idle, c.last);
     }
   }

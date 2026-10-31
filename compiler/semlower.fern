@@ -564,7 +564,7 @@ function module_helpers(built: semsource.Built): ssarc.Helpers {
     map_module = map_module || p.func.map_module;
   }
   let f = ssasem.Func {
-    ...built.decls[0].func, records: built.records, enums: built.enums,
+    ...built.decls[0].func, records: built.records, enums: built.enums, schema_checked: false,
     envs: envs, dyns: dyns, finalizers: built.finalizers, map_module: map_module,
   };
   return ssarc.with_drop_helpers(ssarc.no_helpers(), f);

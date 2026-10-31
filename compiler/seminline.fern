@@ -2043,7 +2043,7 @@ function with_tables(f: ssasem.Func, callee: ssasem.Func, vmap: i32[]): ssasem.F
     dbg_names = dbg_names.append(callee.dbg_names[i]);
     i = i + 1;
   }
-  return ssasem.Func { ...f, calls: calls, records: table, enums: enums, envs: with_rows(f.envs, callee.envs), anchors: anchors, dyns: with_rows(f.dyns, callee.dyns), dbg_vals: dbg_vals, dbg_names: dbg_names, source_positions: sourcepos.merge(f.source_positions, callee.source_positions, vmap) };
+  return ssasem.Func { ...f, calls: calls, records: table, enums: enums, schema_checked: f.schema_checked && fresh.len() == 0 && enums.len() == f.enums.len(), envs: with_rows(f.envs, callee.envs), anchors: anchors, dyns: with_rows(f.dyns, callee.dyns), dbg_vals: dbg_vals, dbg_names: dbg_names, source_positions: sourcepos.merge(f.source_positions, callee.source_positions, vmap) };
 }
 
 function with_rows(rows: ssasem.EnvRow[], more: ssasem.EnvRow[]): ssasem.EnvRow[] {
