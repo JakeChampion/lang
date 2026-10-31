@@ -170,7 +170,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<77 function __h3_touched(b: __H3Burst, serial: i32): __H3Burst>>
 
-<<78 function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flights, burst: __H3Burst, handler: (H...>>
+<<78 function __h3_start_all[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, burst: __H3Burst, handler...>>
 
 <<79 function __h3_chunk(c: __Conns, pi: i32, chunk: Option[u8[]]): (__Conns, boolean)>>
 
@@ -2234,9 +2234,8 @@ function __serve_h2[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, at:
   return __h2_flushed(drv, c, flights, at, out, opts, closing);
 }
 
-function __h2_settled[D: async.Driver](drv: D, a: __H2Answered, at: i32, opts: Config): (__Conns, __Flights) {
-  let c: __Conns = __Conns { ...a.conns, framing: a.conns.framing.with(at, Http2(a.conn)) };
-  return __h2_flushed(drv, c, a.fls, at, a.out, opts, a.conn.closed());
+function __h2_settled[D: async.Driver](drv: D, own a: __H2Answered, at: i32, opts: Config): (__Conns, __Flights) {
+  return __h2_flushed(drv, __Conns { ...a.conns, framing: a.conns.framing.with(at, Http2(a.conn)) }, a.fls, at, a.out, opts, a.conn.closed());
 }
 
 function __h2_event[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, fd: i32, scratch: u8[], handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop, clk: __Clock): (__Conns, __Flights) {
@@ -2673,7 +2672,7 @@ function __joined(a: u8[], b: u8[]): u8[] {
   return a.concat(b);
 }
 
-function __h2_respond[D: async.Driver](drv: D, a: __H2Answered, at: i32, sid: i32, resp: HttpResponse): __H2Answered {
+function __h2_respond[D: async.Driver](drv: D, own a: __H2Answered, at: i32, sid: i32, resp: HttpResponse): __H2Answered {
   resp = __with_alt_svc(a.conns, resp);
   let conn: h2.Conn = a.conn;
   let conns: __Conns = a.conns;
@@ -2700,7 +2699,7 @@ function __h2_respond[D: async.Driver](drv: D, a: __H2Answered, at: i32, sid: i3
   return a;
 }
 
-function __h2_produce[D: async.Driver](drv: D, a: __H2Answered, at: i32, sid: i32): __H2Answered {
+function __h2_produce[D: async.Driver](drv: D, own a: __H2Answered, at: i32, sid: i32): __H2Answered {
   while (true) {
     let fd: i32 = a.conns.fds[at];
     let pi: i32 = __producer_at(a.conns, fd, sid);
@@ -2760,7 +2759,7 @@ function __trailers_joined(a: HeaderMap, b: HeaderMap): HeaderMap {
   return a;
 }
 
-function __h2_producer_failed(a: __H2Answered, at: i32, pi: i32): __H2Answered {
+function __h2_producer_failed(own a: __H2Answered, at: i32, pi: i32): __H2Answered {
   let p: __H2Producer = a.conns.producers[pi];
   let step: h2.Step = a.conn.reset(p.stream, frame.CANCEL);
   let conns: __Conns = __Conns { ...a.conns, producers: __producer_removed(a.conns.producers, pi) };
@@ -2802,7 +2801,7 @@ function __h2_producer_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flights,
   return (c, fls);
 }
 
-function __h2_consumed(a: __H2Answered, at: i32): __H2Answered {
+function __h2_consumed(own a: __H2Answered, at: i32): __H2Answered {
   let fd: i32 = a.conns.fds[at];
   for p in a.conns.pulls {
     if (p.fd == fd) {
@@ -2817,7 +2816,7 @@ function __h2_consumed(a: __H2Answered, at: i32): __H2Answered {
   return a;
 }
 
-function __h2_more[D: async.Driver](drv: D, a: __H2Answered, at: i32): __H2Answered {
+function __h2_more[D: async.Driver](drv: D, own a: __H2Answered, at: i32): __H2Answered {
   if (a.conns.producers.len() == 0) {
     return a;
   }
@@ -6201,40 +6200,38 @@ function __h3_events(c: __Conns, i: i32, burst: __H3Burst): (__Conns, __H3Burst)
 }
 ```
 
-### `78 function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flights, burst: __H3Burst, handler: (H...`
+### `78 function __h3_start_all[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, burst: __H3Burst, handler...`
 
 ```fern
-<<78 function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flights, burst: __H3Burst, handler: (H...>>=
-function __h3_start_all[D: async.Driver](drv: D, c: __Conns, fls: __Flights, burst: __H3Burst, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop): (__Conns, __Flights) {
+<<78 function __h3_start_all[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, burst: __H3Burst, handler...>>=
+function __h3_start_all[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, burst: __H3Burst, handler: (HttpRequest, platform.Host) => HttpResponse, opts: Config, stop: __Stop): (__Conns, __Flights) {
   if (burst.reqs.len() == 0 && burst.touched.len() == 0) {
     return (c, fls);
   }
-  let cur: __Conns = c;
   let fs: __Flights = fls;
   for r in burst.reqs {
     let started: __Started = __serve_start(handler, r.host, r.req, "HTTP/3", true, Idle, opts, stop);
-    let done: (__Conns, __Flights) = __h3_request(drv, cur, fs, r.serial, r.id, r.req, started);
-    cur = done.0;
+    let done: (__Conns, __Flights) = __h3_request(drv, c, fs, r.serial, r.id, r.req, started);
+    c = done.0;
     fs = done.1;
   }
-  return (__h3_flush_all(cur, burst.touched), fs);
+  return (__h3_flush_all(c, burst.touched), fs);
 }
 
-function __h3_start_all_with[D: async.Driver, S](drv: D, c: __Conns, fls: __Flights, burst: __H3Burst, st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse)): (__Conns, __Flights, S) {
+function __h3_start_all_with[D: async.Driver, S](drv: D, own c: __Conns, fls: __Flights, burst: __H3Burst, st: S, handler: (S, HttpRequest, platform.Host) => (S, HttpResponse)): (__Conns, __Flights, S) {
   if (burst.reqs.len() == 0 && burst.touched.len() == 0) {
     return (c, fls, st);
   }
-  let cur: __Conns = c;
   let fs: __Flights = fls;
   let state: S = st;
   for r in burst.reqs {
     let (next, resp) = handler(state, r.req, r.host);
     state = next;
-    let done: (__Conns, __Flights) = __h3_request(drv, cur, fs, r.serial, r.id, r.req, HandlerDone(resp));
-    cur = done.0;
+    let done: (__Conns, __Flights) = __h3_request(drv, c, fs, r.serial, r.id, r.req, HandlerDone(resp));
+    c = done.0;
     fs = done.1;
   }
-  return (__h3_flush_all(cur, burst.touched), fs, state);
+  return (__h3_flush_all(c, burst.touched), fs, state);
 }
 
 function __h3_flush_all(own c: __Conns, serials: i32[]): __Conns {
