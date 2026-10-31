@@ -1,3 +1,4 @@
+import "std/array";
 import "std/i64";
 import "std/u32";
 import "std/u64";
@@ -31,7 +32,9 @@ function check_u32(): i32 {
   if ((12 as u32).factorial() != 479001600 as u32 || (13 as u32).factorial() != 0 as u32) { return 25; }
   if (max.percent_of(max) != 100 as u32 || (1 as u32).percent_of(max) != 0 as u32) { return 26; }
   if ((11 as u32).ordinal() != "11th" || (22 as u32).ordinal() != "22nd") { return 27; }
-  if (u32.gcd_all([12 as u32, 18 as u32, 30 as u32]) != 6 as u32 || u32.gcd_all([]) != 0 as u32) { return 28; }
+  let gs: u32[] = [12 as u32, 18 as u32, 30 as u32];
+  let none32: u32[] = [];
+  if (gs.gcd_all() != 6 as u32 || none32.gcd_all() != 0 as u32) { return 28; }
   let (q, rem) = (17 as u32).divmod(5 as u32);
   if (q != 3 as u32 || rem != 2 as u32 || (17 as u32).round_down_to(5 as u32) != 15 as u32) { return 29; }
   return 0;
@@ -51,7 +54,9 @@ function check_u64(): i32 {
   if ((12912720851596686 as u64).percent_of(t) != 6 as u64 || (12912720851596687 as u64).percent_of(t) != 7 as u64) { return 41; }
   let h: u64 = 9223372036854775809;
   if ((2305843009213693952 as u64).percent_of(h) != 24 as u64 || (6917529027641081857 as u64).percent_of(h) != 75 as u64) { return 43; }
-  if (u64.lcm_all([4 as u64, 6 as u64, 10 as u64]) != 60 as u64 || u64.lcm_all([]) != 1 as u64) { return 38; }
+  let ls: u64[] = [4 as u64, 6 as u64, 10 as u64];
+  let none64: u64[] = [];
+  if (ls.lcm_all() != 60 as u64 || none64.lcm_all() != 1 as u64) { return 38; }
   if (!(12321 as u64).is_palindrome() || (1230 as u64).reverse_digits() != 321 as u64) { return 39; }
   if ((1 as u64).pluralize("a", "b") != "a" || (2 as u64).pluralize("a", "b") != "b") { return 40; }
   return 0;
