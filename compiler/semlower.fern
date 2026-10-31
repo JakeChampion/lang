@@ -533,8 +533,43 @@ function field_spelling(t: typeinfo.Type): string {
 
 struct DeclarationBodies { helpers: ssarc.Helpers, bodies: Result[Option[irtables.Lowered], irtables.LowerState][], count: i32 }
 
+function helper_rows(rows: ssasem.EnvRow[], more: ssasem.EnvRow[]): ssasem.EnvRow[] {
+  let out = rows;
+  for row in more {
+    let found = false;
+    for old in out {
+      if (semtypes.equal(old.fn_ty, row.fn_ty) && semtypes.equal(old.env_ty, row.env_ty)) {
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      out = out.append(row);
+    }
+  }
+  return out;
+}
+
+// Shared drop helpers need the complete set of concrete dynamic values.
+function module_helpers(built: semsource.Built): ssarc.Helpers {
+  if (built.decls.len() == 0) {
+    return ssarc.no_helpers();
+  }
+  let envs: ssasem.EnvRow[] = [];
+  let dyns: ssasem.EnvRow[] = [];
+  for p in util.append_all(built.decls, built.instances) {
+    envs = helper_rows(envs, p.func.envs);
+    dyns = helper_rows(dyns, p.func.dyns);
+  }
+  let f = ssasem.Func {
+    ...built.decls[0].func, records: built.records, enums: built.enums,
+    envs: envs, dyns: dyns, finalizers: built.finalizers,
+  };
+  return ssarc.with_drop_helpers(ssarc.no_helpers(), f);
+}
+
 function declaration_bodies(built: semsource.Built, r: Rows): DeclarationBodies {
-  let helpers: ssarc.Helpers = ssarc.no_helpers();
+  let helpers: ssarc.Helpers = module_helpers(built);
   let bodies: Result[Option[irtables.Lowered], irtables.LowerState][] = [];
   let n: i32 = 0;
   let i: i32 = 0;
