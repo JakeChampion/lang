@@ -1,3 +1,4 @@
+# 2026-10-31 (#13932): perf-aarch64 measures pmap_insert.text 5.84% larger (PMap now carries the cmp trait impls) and utf8_ingest_unchecked.text and utf8_ingest_validated.text 1.4% and 1.3% larger. The rows are pinned at the measured sizes.
 # 2026-10-30: #13888 at 3ca7b6c3. x86_64 rows and aarch64 .text rows from a local perf-bench run.
 # A body of at most 4 instructions is spliced into each caller (seminline.grown_tiny).
 # http_hello.ir -3.8% against main, string_count_byte.text -4.5% (x86_64) and -3.2% (aarch64).
@@ -478,7 +479,7 @@ aarch64/map_string.text	9602
 aarch64/map_string.ir	53247468	2
 aarch64/ordmap_insert.text	5953
 aarch64/ordmap_insert.ir	98457462
-aarch64/pmap_insert.text	3063
+aarch64/pmap_insert.text	3242
 aarch64/pmap_insert.ir	63996220
 aarch64/pvec_with.text	3205
 aarch64/pvec_with.ir	59221804
@@ -507,9 +508,9 @@ aarch64/struct_drop.text	2673
 aarch64/struct_drop.ir	222380901
 aarch64/tokenize.text	1388
 aarch64/tokenize.ir	38350109
-aarch64/utf8_ingest_unchecked.text	8786
+aarch64/utf8_ingest_unchecked.text	8910
 aarch64/utf8_ingest_unchecked.ir	2689511
-aarch64/utf8_ingest_validated.text	9410
+aarch64/utf8_ingest_validated.text	9534
 aarch64/utf8_ingest_validated.ir	6229114
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
