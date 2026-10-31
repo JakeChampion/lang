@@ -103,7 +103,7 @@ func selfHostEMISweep(t *testing.T, flags []string) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			src, kept := fernsmith.EMI(string(orig), seed, selfHostEMISteps, checksClean)
+			src, kept := fernsmith.EMI(string(orig), seed, selfHostEMISteps, checksCleanOn("x86-64-linux"))
 			if kept == 0 {
 				t.Skip("no EMI step type-checks in this case")
 			}
@@ -144,5 +144,38 @@ func selfHostEMISweep(t *testing.T, flags []string) {
 				recordFinding(t, selfHostFinding{Test: legName(t), Seed: seed, Class: class})
 			}
 		})
+	}
+}
+
+// TestChecksCleanOnRefusesAnUnguardedGatedBuiltin pins the EMI validity hook
+// to the target the sweep compiles for. A dead block that copies a darwin-only
+// call out of its target_os guard is refused, so no mutant fails with E066.
+func TestChecksCleanOnRefusesAnUnguardedGatedBuiltin(t *testing.T) {
+	guarded := `function boot_word(): i32 {
+    if (target_os() == "darwin") {
+        match (sysctl([1, 1])) { Ok(bs) => { return bs.len(); }, Err(_) => { return 0; } }
+    }
+    return 0;
+}
+@noinline function emi_false(): boolean { return false; }
+function main(): i32 {
+    if (boot_word() >= 0) { print("built"); }
+    return 0;
+}
+`
+	unguarded := strings.Replace(guarded, "    return 0;\n}\n@noinline",
+		"    if (emi_false()) {\n        match (sysctl([1, 1])) { Ok(bs) => { return bs.len(); }, Err(_) => { return 0; } }\n    }\n    return 0;\n}\n@noinline", 1)
+	if unguarded == guarded {
+		t.Fatal("the unguarded copy was not inserted")
+	}
+	check := checksCleanOn("x86-64-linux")
+	if !check(guarded) {
+		t.Error("the guarded program was refused")
+	}
+	if check(unguarded) {
+		t.Error("the program with an unguarded sysctl was accepted")
+	}
+	if !checksClean(unguarded) {
+		t.Error("checksClean refused the unguarded program, so this test does not show the target check")
 	}
 }

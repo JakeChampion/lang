@@ -1055,6 +1055,7 @@ sso_slice_len_1_inline                               0
 sso_slice_len_7_inline                               0
 sso_slice_len_8_heap                                 0
 sso_triple_concat_via_inline                         0
+statement_block_tail_expression                      0
 static_variant_of_an_unsettled_generic_enum          0
 stdin_double                                         0
 stdin_line                                           0
