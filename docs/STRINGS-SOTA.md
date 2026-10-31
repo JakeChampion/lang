@@ -29,8 +29,8 @@ record; a closed epic alone is not validation evidence.
 | `HttpRequest.body_string` | the peer | `Err(BodyError.NotUtf8)`, 400 as a response; `body_bytes` is raw |
 | `dns.decode_name` | the wire | `Err(Malformed)` |
 | `url.decode` / `form_decode` | an escape | U+FFFD per ill-formed unit; `*_decode_bytes` are raw |
-| `ByteStream.read_all_string` | a byte cursor | `None` (#10950); `read_all` is raw |
-| `ByteStream.read_line` | a byte cursor | U+FFFD, since its `None` means end of input |
+| `ByteStream.read_all_string` | a byte cursor | `Err(Utf8Error)`; `read_all` is raw |
+| `ByteStream.read_line` | a byte cursor | `Err(Utf8Error)`; `Ok(None)` is the end of input |
 | `BytesWriter.into_string` | the program's own `write_byte` | `None` (#10950); `into_bytes` is raw |
 | `HttpResponse.body_string` | the program's own `BodyBytes` | U+FFFD; `body_bytes` is raw |
 | Regex replacements, splits and captures | byte-oriented matches | `None` when text would be invalid; explicit byte variants preserve raw output |
@@ -83,17 +83,14 @@ path bytes without passing through text validation.
 
 The OS text contract remains a deliberate exception:
 
-- **`args()`, `environ()`, `env(name)` and `read_line()` are assumed
-  UTF-8, not validated** — the D10 position, extended from paths to the
-  other values the OS hands a process. None of them has an error arm to
-  refuse into (`read_line` is `Option[string]` and `None` means
-  end-of-file), and a CLI that trapped on a stray byte in its own
-  arguments would be worse than one that passed it through. Their
-  builtin signatures say so.
-  Both bare and `Reader.read_line()` return complete lines, including a
-  trailing newline when present. Storage grows across internal capacity
-  boundaries, so valid input is not split inside a UTF-8 scalar. This does
-  not add validation of malformed OS input.
+- **`args()`, `environ()` and `env(name)` are assumed UTF-8, not
+  validated** — the D10 position, extended from paths to the other values
+  the OS hands a process. None of them has an error arm to refuse into,
+  and a CLI that trapped on a stray byte in its own arguments would be
+  worse than one that passed it through. Their builtin signatures say so.
+  A line reader is not part of this exception: `io.read_line`,
+  `LineReader.next_line` and `ByteStream.read_line` each return
+  `Ok(None)` at the end of input and `Err` for a line that is not UTF-8.
 - **Byte sinks have raw forms**
   (#10948): `tcp_send_bytes`, `udp_sendto_bytes` and `write_file_bytes` are
   available; wasi's `stream_write` takes `u8[]`, and Writer's byte methods
