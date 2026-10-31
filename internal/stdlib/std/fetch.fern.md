@@ -1903,6 +1903,9 @@ function __origin_checked[T: Transport](tr: T, t: __Target, policy: Policy): Res
     return Ok(());
   }
   // Every transport names and judges an IPv4 literal as itself.
+  if (net.is_global_ipv4(t.origin)) {
+    return Ok(());
+  }
   if (!t.origin.contains(":")) {
     match (net.ipv4_parse(t.origin)) {
       Ok(a) => {
@@ -3156,8 +3159,9 @@ function __proxy_for_url(p: ProxyEnv, u: Url): Option[string] {
     return None;
   }
   let host: string = __host_name(u.host);
+  let global_ipv4: boolean = net.is_global_ipv4(host);
   let ip: Option[net.IpAddr] = None;
-  if (__address_shaped(host)) {
+  if (!global_ipv4 && __address_shaped(host)) {
     ip = __canonical_ip(host);
   }
   if (__never_proxied(host, ip)) {
@@ -3165,11 +3169,33 @@ function __proxy_for_url(p: ProxyEnv, u: Url): Option[string] {
   }
   let port: i32 = __effective_port(u);
   for rule in p.rules {
+    if (global_ipv4 && __global_rule_needs_address(rule, port) && ip.is_none()) {
+      ip = __canonical_ip(host);
+    }
     if (__no_proxy_matches(rule, host, port, ip)) {
       return None;
     }
   }
   return Some(proxy);
+}
+
+// A global IPv4 literal cannot match a private or loopback address rule.
+// Name rules need only text; address and CIDR rules may need its value.
+function __global_rule_needs_address(rule: __Rule, port: i32): boolean {
+  if (rule.port != 0 && rule.port != port) {
+    return false;
+  }
+  match (rule.what) {
+    Addr(a) => {
+      return a.is_global();
+    },
+    Block(_, _) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
 }
 
 function __address_shaped(host: string): boolean {

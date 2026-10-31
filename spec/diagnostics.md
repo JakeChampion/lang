@@ -53,7 +53,7 @@ source plus expected output and any implementation can be run against it
 `fern -check`). So a diagnostic rule with only Go-side coverage is a rule
 the compiler is never checked against.
 
-**84 of 105** codes are pinned by a conformance case. The table
+**85 of 105** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -152,7 +152,7 @@ language does not have. It is deleted.
 | `E077` | invalid named argument | `diag_e077` |
 | `E078` | an `@try` enum does not have the shape `?` requires | — |
 | `E079` | `?` inside a `defer` / `errdefer` action | `diag_e079` |
-| `E080` | a handler reaches a host effect around its `Platform` bag | — |
+| `E080` | a handler reaches a host effect around its `Platform` bag | `a_handler_cannot_block_on_the_machine` |
 | `E081` | a named function or `const` declares no type | — |
 | `E082` | a closure captures a borrowed view | `diag_e082` |
 | `E083` | a `for` subject is not iterable | `diag_e083` |

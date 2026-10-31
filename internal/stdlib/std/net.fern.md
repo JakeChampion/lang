@@ -10,6 +10,8 @@ IP address values distinguish IPv4 from IPv6. A socket address combines an IP ad
 
 Text parsers return optional or error results for invalid addresses. Network failures retain a concrete error kind instead of only an operating-system message.
 
+`is_global_ipv4` accepts a strict IPv4 literal only when its address is global. It returns false for invalid text and IPv6, and checks the text without constructing an address value.
+
 ## Executable example
 
 ```fern test name=std-net-example
@@ -432,30 +434,34 @@ function __nat64_laid_out(b: u8[], bits: i32): boolean {
 }
 
 function __v4_special(b: u8[]): boolean {
-  return __v4_low_blocks(b) || __v4_doc_blocks(b) || (b[0] & 240) >= 224;
+  return __v4_special_octets(b[0] as i32, b[1] as i32, b[2] as i32);
 }
 
-function __v4_low_blocks(b: u8[]): boolean {
-  if (b[0] == 0 || b[0] == 10 || b[0] == 127) {
-    return true;
-  }
-  if (b[0] == 100 && (b[1] & 192) == 64) {
-    return true;
-  }
-  if (b[0] == 169 && b[1] == 254) {
-    return true;
-  }
-  return b[0] == 172 && (b[1] & 240) == 16;
+function __v4_special_octets(a: i32, b: i32, c: i32): boolean {
+  return __v4_low_blocks(a, b) || __v4_doc_blocks(a, b, c) || (a & 240) >= 224;
 }
 
-function __v4_doc_blocks(b: u8[]): boolean {
-  if (b[0] == 192) {
-    return b[1] == 168 || b[1] == 0 && (b[2] == 0 || b[2] == 2);
+function __v4_low_blocks(a: i32, b: i32): boolean {
+  if (a == 0 || a == 10 || a == 127) {
+    return true;
   }
-  if (b[0] == 198) {
-    return (b[1] & 254) == 18 || b[1] == 51 && b[2] == 100;
+  if (a == 100 && (b & 192) == 64) {
+    return true;
   }
-  return b[0] == 203 && b[1] == 0 && b[2] == 113;
+  if (a == 169 && b == 254) {
+    return true;
+  }
+  return a == 172 && (b & 240) == 16;
+}
+
+function __v4_doc_blocks(a: i32, b: i32, c: i32): boolean {
+  if (a == 192) {
+    return b == 168 || b == 0 && (c == 0 || c == 2);
+  }
+  if (a == 198) {
+    return (b & 254) == 18 || b == 51 && c == 100;
+  }
+  return a == 203 && b == 0 && c == 113;
 }
 
 function __v6_special(b: u8[]): boolean {
@@ -840,24 +846,38 @@ pub function ipv4_parse(s: string): Result[IpAddr, AddrParseError] {
   }
 }
 
-function __ipv4(s: string): Option[IpAddr] {
+function __ipv4_bits(s: string): i64 {
   let a: i32 = __octet(s, 0, 46);
   if (a < 0 || a >> 8 >= s.len()) {
-    return None;
+    return -1i64;
   }
   let b: i32 = __octet(s, (a >> 8) + 1, 46);
   if (b < 0 || b >> 8 >= s.len()) {
-    return None;
+    return -1i64;
   }
   let c: i32 = __octet(s, (b >> 8) + 1, 46);
   if (c < 0 || c >> 8 >= s.len()) {
-    return None;
+    return -1i64;
   }
   let d: i32 = __octet(s, (c >> 8) + 1, 46);
   if (d < 0 || d >> 8 != s.len()) {
+    return -1i64;
+  }
+  return (a & 255) as i64 << 24 | (b & 255) as i64 << 16 | (c & 255) as i64 << 8 | (d & 255) as i64;
+}
+
+function __ipv4(s: string): Option[IpAddr] {
+  let bits: i64 = __ipv4_bits(s);
+  if (bits < 0i64) {
     return None;
   }
-  return Some(V4([(a & 255) as u8, (b & 255) as u8, (c & 255) as u8, (d & 255) as u8]));
+  return Some(V4([(bits >> 24 & 255i64) as u8, (bits >> 16 & 255i64) as u8, (bits >> 8 & 255i64) as u8, (bits & 255i64) as u8]));
+}
+
+// Test a literal without constructing an IpAddr and its byte array.
+pub function is_global_ipv4(s: string): boolean {
+  let bits: i64 = __ipv4_bits(s);
+  return bits >= 0i64 && !__v4_special_octets((bits >> 24) as i32, (bits >> 16 & 255i64) as i32, (bits >> 8 & 255i64) as i32);
 }
 
 pub function is_ipv4(s: string): boolean {

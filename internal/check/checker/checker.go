@@ -2998,6 +2998,10 @@ func (c *checker) instForReceiver(typeName, name, trait, mangled string, recv as
 		return mangled
 	}
 	for _, inst := range c.info.MethodInsts[declSiteKey(typeName, name, trait)] {
+		// Receiver specialization must preserve the module selected by visibility.
+		if trait == "" && c.info.MethodSources[inst] != c.info.MethodSources[mangled] {
+			continue
+		}
 		if sig := c.info.FuncSigs[inst]; sig != nil && len(sig.Params) > 0 && ast.Equal(sig.Params[0], recv) {
 			return inst
 		}
