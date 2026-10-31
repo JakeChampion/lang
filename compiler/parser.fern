@@ -7723,20 +7723,9 @@ function parse_receiver_type(p: Par): (string, RecvType) {
     names = names.append(name);
     type_toks = type_toks.append(p.toks[i]);
     tp_toks = tp_toks.append(p.toks[i]).append(p.toks[i + 1]);
-    resume = i + 2;
-    let bd: i32 = 0;
-    for k in i + 2..stop {
-      let bu: string = p.punct_at(k);
-      if (bd == 0 && closes_recv_slot(bu)) {
-        break;
-      }
-      if (bu == "[" || bu == "(") {
-        bd = bd + 1;
-      } else if (bu == "]" || bu == ")") {
-        bd = bd - 1;
-      }
+    resume = level_end(p, i + 2, ",])");
+    for k in i + 2..resume {
       tp_toks = tp_toks.append(p.toks[k]);
-      resume = k + 1;
     }
     tp_toks = tp_toks.append(lexer.punct_tok(",", p.peek_line(), p.peek_col()));
   }
@@ -7753,21 +7742,27 @@ function parse_receiver_type(p: Par): (string, RecvType) {
 
 // recv_type_end is the index of the ")" that closes a receiver clause.
 function recv_type_end(p: Par): i32 {
-  let depth: i32 = 0;
-  let q: Par = p;
-  while (!q.at_end()) {
-    let pu: string = q.peek_punct();
-    if (pu == "(" || pu == "[") {
-      depth = depth + 1;
-    } else if (pu == ")" || pu == "]") {
-      if (depth == 0) {
-        return q.pos;
-      }
-      depth = depth - 1;
+  return level_end(p, p.pos, ")]");
+}
+
+// level_end is the index of the first token from `from` that is one of
+// the closers and is not inside a nested group, or the end of the input.
+function level_end(p: Par, from: i32, closers: string): i32 {
+  let resume: i32 = from;
+  for k in from..p.toks.len() {
+    if (k < resume) {
+      continue;
     }
-    q = q.advance();
+    let here: Par = Par { ...p, pos: k };
+    let pu: string = p.punct_at(k);
+    if (here.at_end() || pu.len() == 1 && util.index_of_sub(closers, pu) >= 0) {
+      return k;
+    }
+    if (pu == "(" || pu == "[") {
+      resume = level_end(p, k + 1, ")]") + 1;
+    }
   }
-  return q.pos;
+  return p.toks.len();
 }
 
 function recv_has_bound(p: Par, stop: i32): boolean {
@@ -7871,10 +7866,6 @@ pub function spaced_bounds(bounds: string): string {
     i = i + 1;
   }
   return out;
-}
-
-function closes_recv_slot(punct: string): boolean {
-  return punct == "," || punct == "]" || punct == ")";
 }
 
 function opens_recv_slot(punct: string): boolean {
