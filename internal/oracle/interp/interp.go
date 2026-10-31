@@ -1899,18 +1899,8 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected number arg, got %T", args[2])
 	}
-	if op < 1 || op > 10 {
+	if op < 1 || op > 8 {
 		return Number(-22), nil
-	}
-	if op == 9 || op == 10 {
-		if r, ok := i.udpSocketCtl(int64(id), int64(op), int64(arg)); ok {
-			return r, nil
-		}
-		fd, ok := i.rawFd(int64(id))
-		if !ok {
-			return Number(-1), nil
-		}
-		return nameGroup(fd, int64(op), int64(arg)), nil
 	}
 	if op == 8 {
 		fd, ok := i.rawFd(int64(id))
@@ -2035,43 +2025,6 @@ func builtinTcpAddrInto(i *Interp, args []Value) (Value, error) {
 	}
 	senderInto(out, sa)
 	return Number(19), nil
-}
-
-func nameGroup(fd int, op, which int64) Value {
-	if which < 0 || which > 9 {
-		return Number(-int64(syscall.EINVAL))
-	}
-	var sa syscall.Sockaddr
-	var err error
-	if op == 9 {
-		sa, err = getsockname(fd)
-	} else {
-		sa, err = getpeername(fd)
-	}
-	if err != nil {
-		return negErrno(err)
-	}
-	switch a := sa.(type) {
-	case *syscall.SockaddrInet4:
-		switch {
-		case which == 9:
-			return Number(a.Port)
-		case which == 8:
-			return Number(4)
-		case which < 2:
-			return Number(int64(a.Addr[2*which])<<8 | int64(a.Addr[2*which+1]))
-		}
-		return Number(0)
-	case *syscall.SockaddrInet6:
-		switch {
-		case which == 9:
-			return Number(a.Port)
-		case which == 8:
-			return Number(6)
-		}
-		return Number(int64(a.Addr[2*which])<<8 | int64(a.Addr[2*which+1]))
-	}
-	return Number(-int64(syscall.EAFNOSUPPORT))
 }
 
 func builtinWasmPollableDrop(_ *Interp, args []Value) (Value, error) {

@@ -54,26 +54,10 @@ function main(): i32 {
     if (tcp_recv_into(c, got) != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(13); }
     if (tcp_recv_into(c, got) != 0) { return fail(14); }
     if (tcp_socket_ctl(a, 11, 0) >= 0) { return fail(15); }
-    // Op 9 is the local address as 16-bit groups and the port: the
-    // accepted side is 127.0.0.1, so family 4, 127 << 8 then 1, nothing
-    // past group 1, and the listener's port.
-    if (tcp_socket_ctl(a, 9, 8) != 4) { return fail(17); }
-    if (tcp_socket_ctl(a, 9, 0) != 32512) { return fail(18); }
-    if (tcp_socket_ctl(a, 9, 1) != 1) { return fail(19); }
-    if (tcp_socket_ctl(a, 9, 7) != 0) { return fail(20); }
-    if (tcp_socket_ctl(a, 9, 9) != port) { return fail(21); }
-    if (tcp_socket_ctl(a, 9, 10) >= 0) { return fail(22); }
-    // Op 10 is the peer's, the same way: the dialling side, 127.0.0.1 at
-    // its own port; a listener has no peer.
-    if (tcp_socket_ctl(a, 10, 8) != 4) { return fail(23); }
-    if (tcp_socket_ctl(a, 10, 0) != 32512) { return fail(24); }
-    if (tcp_socket_ctl(a, 10, 1) != 1) { return fail(25); }
-    if (tcp_socket_ctl(a, 10, 7) != 0) { return fail(26); }
-    if (tcp_socket_ctl(a, 10, 9) != tcp_local_port(c)) { return fail(27); }
-    if (tcp_socket_ctl(ln, 10, 8) >= 0) { return fail(28); }
-    // tcp_addr_into answers the same addresses in one call each, as the
-    // 19-byte sender record. A listener has no peer, and a record shorter
-    // than 19 bytes is refused.
+    // tcp_addr_into answers the local address, or the peer's, as the
+    // 19-byte sender record: the accepted side is 127.0.0.1 at the
+    // listener's port, its peer 127.0.0.1 at the dialler's port. A
+    // listener has no peer, and a record shorter than 19 bytes is refused.
     let rec: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
     if (tcp_addr_into(a, false, rec) != 19 || !lo4_at(rec, port)) { return fail(29); }
     if (tcp_addr_into(a, true, rec) != 19 || !lo4_at(rec, tcp_local_port(c))) { return fail(30); }

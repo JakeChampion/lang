@@ -3193,42 +3193,10 @@ pub function tcp_addr_into_func(udp: boolean): string {
   return o;
 }
 
-function name_group_arm(op: i32, tcp_fn: string, udp_fn: string, udp: boolean): string {
-  let o: string = "";
-  o = o + "    (if (i32.eq (local.get $op) (i32.const " + util.i32_to_string(op) + ")) (then\n";
-  o = o + "      (if (i32.gt_u (local.get $arg) (i32.const 9)) (then (return (i32.const -28))))\n";
-  o = o + "      (local.set $ret (call $__fern_alloc (i32.const 36)))\n";
-  if (udp) {
-    o = o + "      (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2))\n";
-    o = o + "        (then (call " + udp_fn + " (i32.load (local.get $c)) (local.get $ret)))\n";
-    o = o + "        (else (call " + tcp_fn + " (i32.load (local.get $c)) (local.get $ret))))\n";
-  } else {
-    o = o + "      (call " + tcp_fn + " (i32.load (local.get $c)) (local.get $ret))\n";
-  }
-  o = o + "      (if (i32.load8_u (local.get $ret)) (then\n";
-  o = o + "        (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
-  o = o + "        (call $__fern_raw_free (local.get $ret) (i32.const 36))\n";
-  o = o + "        (return (local.get $e))))\n";
-  o = o + "      (local.set $e (i32.const 0))\n";
-  o = o + "      (if (i32.eq (local.get $arg) (i32.const 9))\n";
-  o = o + "        (then (local.set $e (i32.load16_u offset=8 (local.get $ret))))\n";
-  o = o + "        (else (if (i32.eq (local.get $arg) (i32.const 8))\n";
-  o = o + "          (then (local.set $e (select (i32.const 6) (i32.const 4) (i32.load8_u offset=4 (local.get $ret)))))\n";
-  o = o + "          (else\n";
-  o = o + "            (if (i32.load8_u offset=4 (local.get $ret))\n";
-  o = o + "              (then (local.set $e (i32.load16_u offset=16 (i32.add (local.get $ret) (i32.shl (local.get $arg) (i32.const 1))))))\n";
-  o = o + "              (else (if (i32.lt_u (local.get $arg) (i32.const 2)) (then (local.set $e (i32.or (i32.shl (i32.load8_u offset=10 (i32.add (local.get $ret) (i32.shl (local.get $arg) (i32.const 1)))) (i32.const 8)) (i32.load8_u offset=11 (i32.add (local.get $ret) (i32.shl (local.get $arg) (i32.const 1))))))))))))))\n";
-  o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 36))\n";
-  o = o + "      (return (local.get $e))))\n";
-  return o;
-}
-
-pub function tcp_socket_ctl_func(udp: boolean): string {
+pub function tcp_socket_ctl_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_tcp_socket_ctl (param $c i32) (param $op i32) (param $arg i32) (result i32)\n";
   o = o + "    (local $ret i32) (local $e i32)\n";
-  o = o + name_group_arm(9, "$__fern_wasi_tcp_local_address", "$__fern_wasi_udp_local_address", udp);
-  o = o + name_group_arm(10, "$__fern_wasi_tcp_remote_address", "$__fern_wasi_udp_remote_address", udp);
   o = o + "    (if (i32.or (i32.eq (local.get $op) (i32.const 1)) (i32.or (i32.eq (local.get $op) (i32.const 6)) (i32.eq (local.get $op) (i32.const 8)))) (then (return (i32.const -58))))\n";
   o = o + "    (if (i32.eq (local.get $op) (i32.const 7)) (then\n";
   o = o + "      (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (i32.const 0))))\n";
@@ -9363,13 +9331,13 @@ function preview2_wasi_imports(needs: string[], sleep_p2: boolean): string {
   if (need_any(needs, ["tcp_socket_ctl", "tcp_addr_into"])) {
     parts = parts.append(wasi_sockets_remote_address_import());
   }
-  if (need_any(needs, ["tcp_local_port", "tcp_socket_ctl", "tcp_addr_into"])) {
+  if (need_any(needs, ["tcp_local_port", "tcp_addr_into"])) {
     parts = parts.append(wasi_sockets_local_address_import());
   }
-  if (need_any(needs, ["tcp_local_port", "tcp_socket_ctl", "tcp_addr_into"]) && need(needs, "udp_bind")) {
+  if (need_any(needs, ["tcp_local_port", "tcp_addr_into"]) && need(needs, "udp_bind")) {
     parts = parts.append(wasi_udp_local_address_import());
   }
-  if (need_any(needs, ["tcp_socket_ctl", "tcp_addr_into"]) && need(needs, "udp_bind")) {
+  if (need(needs, "tcp_addr_into") && need(needs, "udp_bind")) {
     parts = parts.append(wasi_udp_remote_address_import());
   }
   if (need_udp_socket(needs)) {
@@ -9872,7 +9840,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(tcp_listen_with_func());
   }
   if (need(needs, "tcp_socket_ctl")) {
-    parts = parts.append(tcp_socket_ctl_func(need(needs, "udp_bind")));
+    parts = parts.append(tcp_socket_ctl_func());
   }
   if (need(needs, "tcp_addr_into")) {
     parts = parts.append(tcp_addr_into_func(need(needs, "udp_bind")));

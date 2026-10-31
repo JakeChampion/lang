@@ -2892,53 +2892,10 @@ function call_host_net(name: string, args: Value[]): Value {
   if (util.has_str(["tcp_listen_with", "tcp_connect_with", "tcp_listen"], name)) {
     return call_host_tcp_open(name, args);
   }
-  if (name == "tcp_addr_into") {
-    return host_addr_into(arg_i32(args, 0), arg_bool(args, 1), arg_at(args, 2));
-  }
-  if (util.has_str(["tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_recv_into"], name)) {
+  if (util.has_str(["tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_recv_into", "tcp_addr_into"], name)) {
     return call_host_tcp_io(name, args);
   }
   return call_host_tcp_fd(name, args);
-}
-
-// host_addr_into writes the 19-byte sender record from tcp_socket_ctl's
-// ops 9 and 10, because the stage0 pin does not know tcp_addr_into.
-function host_addr_into(fd: i32, peer: boolean, out: Value): Value {
-  if let VArr(a) = out {
-    if (arr_len(a) < 19) {
-      return v_int(0 - 22);
-    }
-  }
-  let op: i32 = 9;
-  if (peer) {
-    op = 10;
-  }
-  let fam: i32 = tcp_socket_ctl(fd, op, 8);
-  if (fam < 0) {
-    return v_int(fam);
-  }
-  let rec: i64[] = [fam as i64];
-  let g: i32 = 0;
-  while (g < 8) {
-    let w: i32 = 0;
-    if (fam == 6 || g < 2) {
-      w = tcp_socket_ctl(fd, op, g);
-    }
-    if (w < 0) {
-      return v_int(w);
-    }
-    rec = rec.append((w >> 8) as i64);
-    rec = rec.append((w & 255) as i64);
-    g = g + 1;
-  }
-  let port: i32 = tcp_socket_ctl(fd, op, 9);
-  if (port < 0) {
-    return v_int(port);
-  }
-  rec = rec.append((port >> 8) as i64);
-  rec = rec.append((port & 255) as i64);
-  arr_fill(out, rec);
-  return v_int(19);
 }
 
 function call_host_udp_send(name: string, args: Value[]): Value {
@@ -2988,6 +2945,12 @@ function call_host_tcp_io(name: string, args: Value[]): Value {
     let buf: u8[] = arg_bytes(args, 1);
     let n: i32 = tcp_recv_into(fd, buf);
     arr_fill(arg_at(args, 1), bytes_as_i64s(buf));
+    return v_int(n);
+  }
+  if (name == "tcp_addr_into") {
+    let rec: u8[] = arg_bytes(args, 2);
+    let n: i32 = tcp_addr_into(fd, arg_bool(args, 1), rec);
+    arr_fill(arg_at(args, 2), bytes_as_i64s(rec));
     return v_int(n);
   }
   return v_int(tcp_sendfile(fd, arg_i32(args, 1), arg_i32(args, 2)));
