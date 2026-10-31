@@ -14884,7 +14884,7 @@ function try_residual_diags(s: Scope, src: typeinfo.Type, u: ast.ExprUnary): uti
   if (from_converts(s, sr, rr)) {
     return out;
   }
-  return out.append(dg_at("E042", "`?` on Result carrying " + sl + " but the surrounding function carries " + rl + ", and " + rl + " has no `from(" + sl + ")` constructor to convert it (std/convert's `impl From[" + sl + "] for " + rl + "`)", u.line, u.col));
+  return out.append(dg_at("E042", "`?` on Result carrying " + sl + " but the surrounding function carries " + rl + ", and " + rl + " has no `from(" + sl + ")` constructor to convert it (core/convert's `impl From[" + sl + "] for " + rl + "`)", u.line, u.col));
 }
 
 function unimplemented_traits(s: Scope, src: typeinfo.Type, traits: string): string {

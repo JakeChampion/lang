@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const bigintChainSrc = `import "core/bigint";
+const bigintChainSrc = `import "std/bigint";
 
 struct LD { m: bigint.BigInt, e: i32 }
 

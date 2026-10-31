@@ -60,8 +60,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<16 pub function contains[T: Eq](xs: T[], target: T): boolean>>
 
-<<17 impl Display for bigint.BigInt>>
-
 <<time impls>>
 
 <<18 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean>>
@@ -76,16 +74,10 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "core/error";
+import "core/f64_text";
+import "core/int";
 import "core/utf8_scalar";
-import "std/i32";
-import "std/i64";
-import "std/u32";
-import "std/u64";
-import "std/f64";
-import "std/string";
-import "core/bigint";
-import "std/time";
-import "std/error";
 ```
 ### `3 pub trait Display`
 
@@ -128,21 +120,56 @@ pub trait Debug {
   function to_debug(self: Self): string;
 }
 
-impl Display for i32 {}
+impl Display for i32 {
+  function to_string(self: i32): string {
+    return int.int_to_string(self);
+  }
+}
 
-impl Display for i64 {}
+impl Display for i64 {
+  function to_string(self: i64): string {
+    if (self < 0) {
+      return int.__int_to_string_u64(0 - self, 1);
+    }
+    return int.__int_to_string_u64(self, 0);
+  }
+}
 
-impl Display for u32 {}
+impl Display for u32 {
+  function to_string(self: u32): string {
+    return int.__int_to_string_u64(self as i64 & 4294967295 as i64, 0);
+  }
+}
 
-impl Display for u64 {}
+impl Display for u64 {
+  function to_string(self: u64): string {
+    return int.__int_to_string_u64(self as i64, 0);
+  }
+}
 
-impl Display for usize {}
+impl Display for usize {
+  function to_string(self: usize): string {
+    return int.__int_to_string_u64(self as i64, 0);
+  }
+}
 
-impl Display for f64 {}
+impl Display for f64 {
+  function to_string(self: f64): string {
+    return f64_text.__primitive_f64_to_string(self);
+  }
+}
 
-impl Display for f32 {}
+impl Display for f32 {
+  function to_string(self: f32): string {
+    return f64_text.__primitive_f32_to_string(self);
+  }
+}
 
-impl Display for string {}
+impl Display for string {
+  function to_string(self: string): string {
+    return self;
+  }
+}
 
 impl Display for IoError {}
 
@@ -277,7 +304,10 @@ impl[T: Eq] Eq for Option[T] {
         return false;
       },
       None => {
-        return other.is_none();
+        if let Some(_) = other {
+          return false;
+        }
+        return true;
       }
     }
   }
@@ -293,10 +323,10 @@ impl[T: Ord] Ord for Option[T] {
         return 1;
       },
       None => {
-        if (other.is_none()) {
-          return 0;
+        if let Some(_) = other {
+          return -1;
         }
-        return -1;
+        return 0;
       }
     }
   }
@@ -672,7 +702,12 @@ impl Hash for boolean {
 
 impl Hash for string {
   function hash(self: string): i32 {
-    return self.hash_fnv32() as i32;
+    // FNV-1a over the bytes.
+    let h: u32 = 2166136261u32;
+    for i in 0..self.len() {
+      h = (h ^ self[i] as u32) * 16777619u32;
+    }
+    return h as i32;
   }
 }
 
@@ -1410,47 +1445,81 @@ pub function distinct[T: Eq](xs: T[]): T[] {
   return out;
 }
 ```
-### `17 impl Display for bigint.BigInt`
-
-```fern
-<<17 impl Display for bigint.BigInt>>=
-impl Display for bigint.BigInt {}
-
-impl Eq for bigint.BigInt {}
-
-impl Ord for bigint.BigInt {}
-
-impl Hash for bigint.BigInt {}
-
-impl Default for bigint.BigInt {
-  function default(): bigint.BigInt {
-    return bigint.zero();
-  }
-}
-
-impl Debug for bigint.BigInt {
-  function to_debug(self: bigint.BigInt): string {
-    return self.to_string();
-  }
-}
-```
 ### `time impls`
 
 ```fern
 <<time impls>>=
-impl Display for Duration {}
+impl Display for Duration {
+  function to_string(self: Duration): string {
+    let ms: i64 = __duration_millis(self);
+    if (ms == 0) {
+      return "0s";
+    }
+    let out: string = "";
+    if (ms < 0) {
+      out = "-";
+      ms = 0 - ms;
+    }
+    let units: i64[] = [3600000, 60000, 1000, 1];
+    let names: string[] = ["h", "m", "s", "ms"];
+    for i in 0..4 {
+      let n: i64 = ms / units[i];
+      ms = ms % units[i];
+      if (n > 0) {
+        out = out + n.to_string() + names[i];
+      }
+    }
+    return out;
+  }
+}
 
-impl Eq for Duration {}
+// The duration in whole milliseconds, truncated toward zero.
+function __duration_millis(d: Duration): i64 {
+  if (d.sec < 0 && d.nsec > 0) {
+    return (d.sec + 1) *| 1000 -| ((1000000000 - d.nsec) / 1000000) as i64;
+  }
+  return d.sec *| 1000 +| (d.nsec / 1000000) as i64;
+}
 
-impl Ord for Duration {}
+function __cmp_sec_nsec(a_sec: i64, a_nsec: i32, b_sec: i64, b_nsec: i32): i32 {
+  if (a_sec != b_sec) {
+    if (a_sec < b_sec) {
+      return -1;
+    }
+    return 1;
+  }
+  if (a_nsec != b_nsec) {
+    if (a_nsec < b_nsec) {
+      return -1;
+    }
+    return 1;
+  }
+  return 0;
+}
 
-impl Eq for Instant {}
+impl Eq for Duration {
+  function eq(self: Duration, other: Duration): boolean {
+    return self.sec == other.sec && self.nsec == other.nsec;
+  }
+}
 
-impl Ord for Instant {}
+impl Ord for Duration {
+  function cmp(self: Duration, other: Duration): i32 {
+    return __cmp_sec_nsec(self.sec, self.nsec, other.sec, other.nsec);
+  }
+}
 
-impl Eq for time.Timestamp {}
+impl Eq for Instant {
+  function eq(self: Instant, other: Instant): boolean {
+    return self.sec == other.sec && self.nsec == other.nsec;
+  }
+}
 
-impl Ord for time.Timestamp {}
+impl Ord for Instant {
+  function cmp(self: Instant, other: Instant): i32 {
+    return __cmp_sec_nsec(self.sec, self.nsec, other.sec, other.nsec);
+  }
+}
 ```
 ### `18 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean`
 

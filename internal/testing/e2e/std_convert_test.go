@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-const stdConvertSrc = `import "std/convert" as convert;
+const stdConvertSrc = `import "core/convert" as convert;
 struct Celsius { deg: i32 }
 struct Fahrenheit { deg: i32 }
 impl convert.From[i32] for Celsius { function from(v: i32): Self { return Celsius { deg: v }; } }

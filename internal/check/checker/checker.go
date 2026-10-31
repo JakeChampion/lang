@@ -6549,7 +6549,7 @@ func (c *checker) tryResidualMsg(srcEnum ast.EnumType, srcRes, retRes ast.Type) 
 	if dt, ok := retRes.(ast.DynTraitType); ok {
 		return fmt.Sprintf("`?` cannot box %s into %s: %s does not implement %s", sl, rl, sl, c.missingDynTraits(dt, srcRes))
 	}
-	return fmt.Sprintf("`?` on %s carrying %s but the surrounding function carries %s, and %s has no `from(%s)` constructor to convert it (std/convert's `impl From[%s] for %s`)",
+	return fmt.Sprintf("`?` on %s carrying %s but the surrounding function carries %s, and %s has no `from(%s)` constructor to convert it (core/convert's `impl From[%s] for %s`)",
 		demangle(srcEnum.Name), sl, rl, rl, sl, sl, rl)
 }
 

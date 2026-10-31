@@ -179,7 +179,7 @@ import "std/url";
 import "std/dns";
 import "std/net";
 import "std/errno";
-import "std/error";
+import "core/error";
 import "std/base64";
 import "std/brotli";
 import "std/deflate";

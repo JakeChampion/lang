@@ -1,4 +1,4 @@
-import "std/error";
+import "core/error";
 import "core/cmp";
 import "std/brotli";
 import "std/deflate";

@@ -41,7 +41,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "core/int";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

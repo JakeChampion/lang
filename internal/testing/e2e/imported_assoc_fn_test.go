@@ -9,7 +9,7 @@ import (
 )
 
 const importedAssocFnZeroSrc = `import "std/num" as num;
-function (a: T[]) total[T: num.Num + num.Zero](): T {
+function (a: T[]) total[T: ops.Num + ops.Zero](): T {
     let s: T = T.zero();
     let i: i32 = 0;
     while (i < a.len()) { s = s.add(a[i]); i = i + 1; }

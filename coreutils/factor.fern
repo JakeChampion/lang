@@ -1,4 +1,4 @@
-import "core/bigint";
+import "std/bigint";
 import "std/errno";
 import "./lib/gnu";
 

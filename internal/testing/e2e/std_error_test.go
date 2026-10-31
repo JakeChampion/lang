@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-const stdErrorSrc = `import "std/error" as error;
+const stdErrorSrc = `import "core/error" as error;
 struct NotFound { what: string }
 impl error.Error for NotFound { function message(self: Self): string { return self.what; } }
 function find(ok: boolean): Result[i32, NotFound] {

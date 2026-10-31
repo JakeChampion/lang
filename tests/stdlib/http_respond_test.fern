@@ -2,7 +2,7 @@ import "std/test";
 import "std/http";
 import "std/json";
 import "std/mock_platform";
-import "std/error";
+import "core/error";
 import "std/fetch";
 import "std/net";
 import "std/platform";

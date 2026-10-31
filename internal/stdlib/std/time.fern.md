@@ -95,7 +95,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<dependencies 2>>=
 import "core/cmp";
 import "core/int";
-import "std/error";
+import "core/error";
 import "std/i64";
 import "std/option";
 import "std/string";
@@ -167,6 +167,10 @@ pub function (a: Timestamp) eq(b: Timestamp): boolean {
 pub function (a: Timestamp) cmp(b: Timestamp): i32 {
   return __cmp_parts(a.sec, a.nsec, b.sec, b.nsec);
 }
+
+impl cmp.Eq for Timestamp {}
+
+impl cmp.Ord for Timestamp {}
 
 pub function date_of(year: i32, month: i32, day: i32): Date {
   return Date { year: year, month: month, day: day };
@@ -282,14 +286,6 @@ function __duration_count(d: Duration, units_per_sec: i64, nanos_per_unit: i32):
   return d.sec *| units_per_sec +| (d.nsec / nanos_per_unit) as i64;
 }
 
-pub function (a: Duration) eq(b: Duration): boolean {
-  return a.sec == b.sec && a.nsec == b.nsec;
-}
-
-pub function (a: Duration) cmp(b: Duration): i32 {
-  return __cmp_parts(a.sec, a.nsec, b.sec, b.nsec);
-}
-
 function __cmp_parts(a_sec: i64, a_nsec: i32, b_sec: i64, b_nsec: i32): i32 {
   if (a_sec != b_sec) {
     if (a_sec < b_sec) {
@@ -393,39 +389,6 @@ function __duration_bound(sign: i64): Duration {
   }
   return DURATION_MAX;
 }
-
-pub function (d: Duration) to_string(): string {
-  let total_ms: i64 = d.as_millis();
-  if (total_ms == 0) {
-    return "0s";
-  }
-  let neg: boolean = total_ms < 0;
-  let ms: i64 = total_ms;
-  if (neg) {
-    ms = 0 - ms;
-  }
-  let h: i64 = ms / 3600000;
-  let m: i64 = ms % 3600000 / 60000;
-  let s: i64 = ms % 60000 / 1000;
-  let msec: i64 = ms % 1000;
-  let out: string = "";
-  if (neg) {
-    out = "-";
-  }
-  if (h > 0) {
-    out = out + h.to_string() + "h";
-  }
-  if (m > 0) {
-    out = out + m.to_string() + "m";
-  }
-  if (s > 0) {
-    out = out + s.to_string() + "s";
-  }
-  if (msec > 0) {
-    out = out + msec.to_string() + "ms";
-  }
-  return out;
-}
 ```
 
 ### `monotonic instants`
@@ -445,14 +408,6 @@ pub function (i: Instant) sub(d: Duration): Instant {
 // Negative when `earlier` is later than `i`.
 pub function (i: Instant) since(earlier: Instant): Duration {
   return Duration { sec: i.sec, nsec: i.nsec }.sub(Duration { sec: earlier.sec, nsec: earlier.nsec });
-}
-
-pub function (a: Instant) eq(b: Instant): boolean {
-  return a.sec == b.sec && a.nsec == b.nsec;
-}
-
-pub function (a: Instant) cmp(b: Instant): i32 {
-  return __cmp_parts(a.sec, a.nsec, b.sec, b.nsec);
 }
 
 // The clock reading in nanoseconds, for the library's own integer bookkeeping.

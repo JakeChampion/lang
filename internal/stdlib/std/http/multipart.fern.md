@@ -81,7 +81,7 @@ import "std/array";
 import "std/hex";
 import "std/utf8" as utf8;
 import "core/int";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

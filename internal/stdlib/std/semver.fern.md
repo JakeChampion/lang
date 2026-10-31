@@ -51,7 +51,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 // This module implements the `Semantic Versioning 2.0.0` rules.
 import "std/result";
 import "std/string";
-import "std/error";
+import "core/error";
 import "core/cmp";
 import "std/i32";
 ```

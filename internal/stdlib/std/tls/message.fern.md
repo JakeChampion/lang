@@ -76,7 +76,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 // This module reads and writes TLS records and handshake messages.
 import "core/int";
 import "std/utf8";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

@@ -1824,7 +1824,7 @@ pub function bundle_with_prefixes(entry0: parser.Module, imports0: LoadedModule[
     }
     i = i + 1;
   }
-  let flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets, imported_enums(imports, pfxs)), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
+  let flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets, imported_enums(imports, pfxs)), loaded_prefix(imports, pfxs, "core/error"), loaded_prefix(imports, pfxs, "std/http"));
   let e: parser.Module = disambiguate_methods(inherit_trait_defaults(flat, "", renamed.defaults), "__entry", mclaims).mod;
   funcs = util.append_all(funcs, e.funcs);
   structs = util.append_all(structs, e.structs);
@@ -1986,7 +1986,7 @@ pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], 
     all_funcs = util.append_all(all_funcs, md.mod.funcs);
     i = i + 1;
   }
-  let flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets, imported_enums(imports, pfxs)), loaded_prefix(imports, pfxs, "std/error"), loaded_prefix(imports, pfxs, "std/http"));
+  let flat: parser.Module = with_result_handler(flatten_qualified(entry, ids, pfxs, variant_scope(entry, graph, ids, pfxs), ivar_names, ivar_mangled, rx.keys, rx.targets, imported_enums(imports, pfxs)), loaded_prefix(imports, pfxs, "core/error"), loaded_prefix(imports, pfxs, "std/http"));
   let e: parser.Module = disambiguate_methods(inherit_trait_defaults(flat, "", renamed.defaults), "__entry", mclaims).mod;
   all_funcs = util.append_all(all_funcs, e.funcs);
   let table: parser.ConstTable = merged_const_table(all_funcs, inferred);

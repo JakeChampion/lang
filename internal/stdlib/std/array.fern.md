@@ -75,6 +75,7 @@ import "core/cmp";
 import "std/i32";
 import "std/string";
 import "std/num";
+import "core/ops";
 ```
 
 ### `3 pub function (arr: i32[]) gcd_all(): i32`
@@ -1401,22 +1402,22 @@ pub function (xs: T[]) windows[T](size: i32): T[][] {
   return windows(xs, size);
 }
 
-pub function (xs: T[]) sum[T: num.Add + num.Zero](): T {
+pub function (xs: T[]) sum[T: ops.Add + ops.Zero](): T {
   return num.sum(xs);
 }
 
 // The mean, summed in T as sum is, so an integer sum wraps; None when empty.
-pub function (xs: T[]) avg[T: num.Add + num.Div + num.Zero + num.One](): Option[T] {
+pub function (xs: T[]) avg[T: ops.Add + ops.Div + ops.Zero + ops.One](): Option[T] {
   return num.avg(xs);
 }
 
-pub function (xs: T[]) variance[T: num.Num + num.Zero + num.One](): Option[T] {
+pub function (xs: T[]) variance[T: ops.Num + ops.Zero + ops.One](): Option[T] {
   return num.variance(xs);
 }
 
 // The middle element of the sorted array, or the mean of the two middle
 // elements when the length is even; integers truncate.
-pub function (xs: T[]) median[T: cmp.Ord + num.Add + num.Div + num.One](): Option[T] {
+pub function (xs: T[]) median[T: cmp.Ord + ops.Add + ops.Div + ops.One](): Option[T] {
   let n: i32 = xs.len();
   if (n == 0) {
     return None;
@@ -1429,12 +1430,12 @@ pub function (xs: T[]) median[T: cmp.Ord + num.Add + num.Div + num.One](): Optio
   return Some(sorted[n / 2 - 1].add(sorted[n / 2]).div(two));
 }
 
-pub function (xs: T[]) dot[T: num.Add + num.Mul + num.Zero](other: T[]): T {
+pub function (xs: T[]) dot[T: ops.Add + ops.Mul + ops.Zero](other: T[]): T {
   return num.dot(xs, other);
 }
 
 // Elementwise sum, as long as the shorter array.
-pub function (xs: T[]) add[T: num.Add](other: T[]): T[] {
+pub function (xs: T[]) add[T: ops.Add](other: T[]): T[] {
   let n: i32 = xs.len();
   if (other.len() < n) {
     n = other.len();
@@ -1448,19 +1449,19 @@ pub function (xs: T[]) add[T: num.Add](other: T[]): T[] {
   return out;
 }
 
-pub function (xs: T[]) product[T: num.Mul + num.One](): T {
+pub function (xs: T[]) product[T: ops.Mul + ops.One](): T {
   return num.product(xs);
 }
 
-pub function (xs: T[]) cumsum[T: num.Add + num.Zero](): T[] {
+pub function (xs: T[]) cumsum[T: ops.Add + ops.Zero](): T[] {
   return num.cumsum(xs);
 }
 
-pub function (xs: T[]) cumproduct[T: num.Mul + num.One](): T[] {
+pub function (xs: T[]) cumproduct[T: ops.Mul + ops.One](): T[] {
   return num.cumproduct(xs);
 }
 
-pub function (xs: T[]) adjacent_diff[T: num.Sub](): T[] {
+pub function (xs: T[]) adjacent_diff[T: ops.Sub](): T[] {
   return num.adjacent_diff(xs);
 }
 
@@ -1472,7 +1473,7 @@ pub function (xs: T[]) min[T: cmp.Ord](): Option[T] {
   return cmp.min_of(xs);
 }
 
-pub function (xs: T[]) spread[T: cmp.Ord + num.Sub](): Option[T] {
+pub function (xs: T[]) spread[T: cmp.Ord + ops.Sub](): Option[T] {
   if (xs.len() == 0) {
     return None;
   }

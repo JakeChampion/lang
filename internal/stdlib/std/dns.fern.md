@@ -212,7 +212,7 @@ import "std/async";
 import "std/i32";
 import "std/string";
 import "std/array";
-import "std/error";
+import "core/error";
 import "std/utf8" as utf8;
 import "core/cmp";
 ```

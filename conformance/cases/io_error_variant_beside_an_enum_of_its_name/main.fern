@@ -1,7 +1,7 @@
 
 
 
-import "std/error";
+import "core/error";
 import "std/i32";
 
 enum Other { Thing(i32[]), Nothing }

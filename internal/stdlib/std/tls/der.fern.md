@@ -65,7 +65,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "core/int";
 import "std/i64";
 import "std/utf8";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

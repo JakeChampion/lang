@@ -46,7 +46,7 @@ import "std/envflag";
 import "std/hex";
 import "std/crypto/ed25519";
 import "std/io";
-import "std/error";
+import "core/error";
 import "std/rand";
 
 function blank_line_map(src: string): boolean[] {

@@ -98,10 +98,10 @@ Without `?`, that's a `match` with an explicit error-propagating arm.
 ### Converting the error type
 
 When the function's error type differs from the one `?` meets, `?`
-converts it through a `From` impl from [`std/convert`](../../stdlib/convert/):
+converts it through a `From` impl from [`core/convert`](../../stdlib/convert/):
 
 ```fern
-import "std/convert";
+import "core/convert";
 import "std/i32";
 
 struct ParseError { msg: string }

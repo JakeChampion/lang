@@ -50,7 +50,7 @@ import "std/dns";
 import "std/net";
 import "std/tls/handshake";
 import "std/tls/verify";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

@@ -2,7 +2,7 @@ import "std/deflate";
 import "std/hex";
 import "std/codec";
 import "std/test";
-import "std/error";
+import "core/error";
 
 function error_message(value: dyn error.Error): string {
   return value.message();

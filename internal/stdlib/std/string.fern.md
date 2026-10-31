@@ -119,7 +119,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "std/number_parse";
 import "core/int";
 import "core/utf8_scalar";
-import "core/bigint";
+import "std/bigint";
 import "std/i32";
 import "std/array";
 ```
@@ -129,10 +129,6 @@ import "std/array";
 <<2 pub function (s: string) is_empty(): boolean>>=
 pub function (s: string) is_empty(): boolean {
   return s.len() == 0;
-}
-
-pub function (s: string) to_string(): string {
-  return s;
 }
 
 pub function (s: string) repeat(n: i32): string {

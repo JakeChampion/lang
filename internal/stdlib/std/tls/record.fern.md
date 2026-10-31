@@ -77,7 +77,7 @@ import "std/crypto/aead";
 import "std/crypto/aes_gcm";
 import "std/crypto/chacha20poly1305";
 import "std/tls/keyschedule";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

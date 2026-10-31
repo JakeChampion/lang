@@ -74,3 +74,32 @@ func TestIsStdlibPath(t *testing.T) {
 		}
 	}
 }
+
+// core/ is the layer under std/, so no core module may import a std module.
+// core/_test_empty imports std/_test_empty on purpose: it is the cycle fixture of the module loader tests.
+func TestCoreImportsNoStd(t *testing.T) {
+	modules, err := Modules()
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, name := range modules {
+		if !strings.HasPrefix(name, "core/") || name == "core/_test_empty" {
+			continue
+		}
+		m, err := ReadModule(name)
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		checked++
+		for i, line := range strings.Split(m.Code, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 && fields[0] == "import" && strings.HasPrefix(fields[1], `"std/`) {
+				t.Errorf("%s: line %d imports %s: core modules must not import std modules", name, i+1, strings.TrimSuffix(fields[1], ";"))
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("found no core modules to check")
+	}
+}

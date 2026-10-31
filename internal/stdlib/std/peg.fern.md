@@ -57,7 +57,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "core/map";
 import "core/int";
 import "core/cmp";
-import "std/error";
+import "core/error";
 import "std/utf8";
 ```
 

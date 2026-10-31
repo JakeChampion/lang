@@ -9,7 +9,7 @@ import "./literate";
 import "./util";
 import "./visibility";
 import "core/map";
-import "std/error";
+import "core/error";
 
 // Primitive display implementations load as runtime dependencies, without
 // source import edges that expose unrelated library methods.

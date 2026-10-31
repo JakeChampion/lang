@@ -83,7 +83,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "core/int";
 import "std/http/huffman";
 import "std/string";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

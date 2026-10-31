@@ -9,7 +9,7 @@ import (
 )
 
 const numTraitsMoreSrc = `import "std/num" as num;
-function (a: T[]) total[T: num.Num](init: T): T {
+function (a: T[]) total[T: ops.Num](init: T): T {
     let s = init;
     let i = 0;
     while (i < a.len()) { s = s.add(a[i]); i = i + 1; }

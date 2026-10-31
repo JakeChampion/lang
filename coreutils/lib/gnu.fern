@@ -3,6 +3,7 @@ import "std/array";
 import "std/io";
 import "std/io_buffered";
 import "std/errno";
+import "std/u64";
 
 pub function push_signed_decimal(h: usize, n: i64): void {
   if (n < 0 as i64) {
