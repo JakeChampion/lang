@@ -9088,8 +9088,7 @@ pub function import_qualifier(im: Import): string {
 pub function std_qualifier(mod: Module, name: string): string {
   let want: string = "std/" + name;
   for imp in mod.imports {
-    let p: string = util.without_fern_ext(imp.path);
-    if (p == want || p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()) + "" == "/" + want) {
+    if (library_path_is(imp.path, want)) {
       if (imp.alias.len() > 0) {
         return imp.alias;
       }
@@ -9097,6 +9096,11 @@ pub function std_qualifier(mod: Module, name: string): string {
     }
   }
   return "";
+}
+
+function library_path_is(path: string, want: string): boolean {
+  let p = util.without_fern_ext(path);
+  return p == want || p.len() > want.len() + 1 && slice_unchecked(p, p.len() - want.len() - 1, p.len()) + "" == "/" + want;
 }
 
 pub function is_serve_config_type(t: string, qual: string): boolean {
@@ -13540,10 +13544,15 @@ function lane_bound_spellings(mod: Module): string[] {
     }
     if (im.trait_module.len() == 0) {
       out = out.append(im.impl_type + " " + im.trait_name);
-    } else if (im.trait_module == "num" || im.trait_module == "simd") {
-      let q: string = std_qualifier(mod, im.trait_module);
-      if (q.len() > 0) {
-        out = out.append(im.impl_type + " " + q + "." + im.trait_name);
+    } else if (im.trait_module == "ops" || im.trait_module == "simd") {
+      let want = "std/simd";
+      if (im.trait_module == "ops") {
+        want = "core/ops";
+      }
+      for imp in mod.imports {
+        if (library_path_is(imp.path, want)) {
+          out = out.append(im.impl_type + " " + import_qualifier(imp) + "." + im.trait_name);
+        }
       }
     }
   }
