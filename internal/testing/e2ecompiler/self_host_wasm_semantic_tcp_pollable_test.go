@@ -9,18 +9,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	e2eharness "github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 func TestSelfHostWasmSemanticTCPPollable(t *testing.T) {
-	for _, tool := range []string{"wasm-tools", "wasmtime"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Skip(tool + " not on PATH")
-		}
-	}
-	adapter := os.Getenv("FERN_WASI_ADAPTER")
-	if adapter == "" {
-		t.Skip("FERN_WASI_ADAPTER unset")
-	}
+	wasmtime := e2eharness.Wasmtime(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "fern.fern")
 	host := "x86-64-linux"
@@ -57,24 +51,13 @@ func TestSelfHostWasmSemanticTCPPollable(t *testing.T) {
 	if !strings.Contains(string(text), "call $__fern_tcp_pollable") {
 		t.Fatal("semantic tcp_pollable call was not emitted")
 	}
-	wit, err := filepath.Abs("../../../cmd/fern/wit")
-	if err != nil {
-		t.Fatal(err)
-	}
-	core, embedded, component := filepath.Join(dir, "core.wasm"), filepath.Join(dir, "embedded.wasm"), filepath.Join(dir, "component.wasm")
-	for _, args := range [][]string{
-		{"parse", wat, "-o", core},
-		{"component", "embed", wit, "-w", "fern", core, "-o", embedded},
-		{"component", "new", embedded, "--adapt", "wasi_snapshot_preview1=" + adapter, "-o", component},
-		{"validate", component},
-	} {
-		if out, err := exec.Command("wasm-tools", args...).CombinedOutput(); err != nil {
-			t.Fatalf("wasm-tools %v: %v\n%s", args, err, out)
-		}
+	component := filepath.Join(dir, "main.wasm")
+	if out, err := exec.Command(driver, "-target", "wasm32-wasi", "-o", component, src).CombinedOutput(); err != nil {
+		t.Fatalf("compile to a component: %v\n%s", err, out)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if out, err := exec.CommandContext(ctx, "wasmtime", "run", "-S", "inherit-network", component).CombinedOutput(); err != nil {
+	if out, err := exec.CommandContext(ctx, wasmtime, "run", "-S", "inherit-network", component).CombinedOutput(); err != nil {
 		t.Fatalf("live socket subscription: %v\n%s", err, out)
 	}
 }

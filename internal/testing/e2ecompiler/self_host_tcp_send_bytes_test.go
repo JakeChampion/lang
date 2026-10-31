@@ -55,9 +55,6 @@ func TestSelfHostTCPSendBytes(t *testing.T) {
 			t.Run(compiler.name+"/"+target.target, func(t *testing.T) {
 				compile := func(src, bin string) *exec.Cmd {
 					args := []string{"-target", target.target, "-o", bin}
-					if compiler.name == "primary" && target.target == "wasm32-wasi" {
-						args = append(args, "-emit", "core-module")
-					}
 					args = append(args, src)
 					if compiler.name == "primary" {
 						args = append(args, stdlib)
@@ -68,9 +65,6 @@ func TestSelfHostTCPSendBytes(t *testing.T) {
 						t.Fatalf("compile: %v\n%s", err, out)
 					}
 					if target.target == "wasm32-wasi" {
-						if compiler.name == "primary" {
-							return composeSelfHostWat(t, bin)
-						}
 						return exec.Command("wasmtime", "run", "-S", "inherit-network", bin)
 					}
 					return runX86_64Bin(target.runner, bin)
