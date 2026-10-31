@@ -1,7 +1,6 @@
 // spec: RH-05
-// A built-in Reader is a descriptor. A second close with no open between the
-// two closes answers Other with "Bad file descriptor" and errno 9 on every
-// engine, and the second close reaches no other file.
+// The built-in close consumes its Reader, so a second close of the same
+// Reader is refused at compile time.
 
 import "std/i32";
 

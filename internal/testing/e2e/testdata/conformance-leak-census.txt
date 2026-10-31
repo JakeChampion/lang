@@ -257,6 +257,7 @@ destructure_repeated_discards                        0
 destructure_repeated_discards_in_param               0
 destructure_tuple_and_struct_forms                   0
 digit_separators_and_usize_suffix                    0
+display_user_type_print                             0
 div_modulo                                           0
 divmod_inline                                        0
 dyn_bound_satisfied                                  0
@@ -367,10 +368,13 @@ generic_view_methods                                 0
 grow_past_capacity                                   0
 handle_close_unchecked_through_a_borrow              0
 handle_closes_on_loop_exit                           0
+handle_consumed_before_a_call_that_never_returns     0
 handle_defer_closes_at_exit                          0
 handle_elements_close_in_for_each                    0
+handle_field_closes_beside_other_field_reads         0
 handle_field_closes_from_local                       0
 handle_payload_closes_from_local_match               0
+handle_payload_closes_in_loop_from_unpack            0
 handle_payload_field_closes                          0
 handle_transfer_closes_once                          0
 hash_struct_enum                                     0
@@ -447,7 +451,6 @@ integer_literals_beside_an_f32                       0
 integer_widths_share_methods                         0
 io_and_fetch_errors_box_into_dyn_error               0
 io_error_other_closed_stdout                         0
-io_error_other_double_close_reader                   0
 io_error_other_is_a_directory                        0
 io_error_other_not_a_directory                       0
 io_error_variant_beside_a_struct_of_its_name         0
@@ -491,6 +494,7 @@ literal_local_takes_its_use_width                    0
 literal_payload_pattern                              0
 literal_tree_takes_its_destination_width             0
 local_array_views_keep_their_storage                  0
+local_from_handle_free_call_is_fresh                 0
 log_leveled                                          0
 loop_form                                            0
 loop_rotation_shapes                                 0
@@ -601,6 +605,7 @@ oob_write_wrapped_index                              1
 op_overload_nested                                   0
 op_trait_generic                                     0
 open_slice_evaluates_base_once                       0
+ops_rem_and_bit_traits                              0
 opt_arr_alias_match_reclaim                          0
 opt_array_struct_field                               0
 opt_f32_payload                                      0
@@ -1002,6 +1007,7 @@ rc_corpus_with_struct_elem_functional_update_loop    0
 rc_corpus_with_struct_string_elem_functional_update_loop 0
 read_all_stdin_chunks                                0
 read_line                                            0
+receiver_writes_its_bounds                           0
 recursive_tree                                       0
 regex_basic                                          0
 regex_captures                                       0

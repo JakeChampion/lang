@@ -30,14 +30,6 @@ function save_and_remove(path: string, body: string): Result[void, IoError] {
 
 
 
-function write_after_close(path: string): Result[void, IoError] {
-  let w: Writer = open_writer(path)?;
-  w.close()?;
-  w.write("late")?;
-  remove_file(path)?;
-  return Ok(());
-}
-
 function report(label: string, r: Result[void, IoError]): void {
   match (r) {
     Ok(_) => {
@@ -58,9 +50,6 @@ function main(): i32 {
     Ok(dir) => {
       report("save and remove", save_and_remove(dir + "/saved.txt", "hello"));
       report("saved.txt removed again", remove_file(dir + "/saved.txt"));
-      report("write after close", write_after_close(dir + "/late.txt"));
-
-      report("late.txt left behind", remove_file(dir + "/late.txt"));
       report("remove dir", remove_dir(dir));
       return 0;
     }

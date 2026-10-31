@@ -435,7 +435,7 @@ function out_new(s: Settings, sfx: Suffix, to_stdout: boolean): Out {
   return Out { s: s, sfx: sfx, w: so, open: false, name: "", so: so, to_stdout: to_stdout, pid: 0 };
 }
 
-function out_name(o: Out): (string, Out) {
+function out_name(own o: Out): (string, Out) {
   if (o.sfx.done) {
     gnu.flush(o.so);
     gnu.error("output file suffixes exhausted");
@@ -445,7 +445,7 @@ function out_name(o: Out): (string, Out) {
   return (name, Out { ...o, sfx: suffix_next(o.sfx) });
 }
 
-function out_begin(o: Out): Out {
+function out_begin(own o: Out): Out {
   if (o.to_stdout) {
     return o;
   }
@@ -458,11 +458,11 @@ function out_begin(o: Out): Out {
   return Out { ...next, w: io_buffered.buf_writer_new(pc.w, 65536), open: true, name: name, pid: pc.pid };
 }
 
-function out_put(o: Out, data: u8[]): Out {
+function out_put(own o: Out, data: u8[]): Out {
   return out_put_range(o, data, 0, data.len());
 }
 
-function out_put_range(o: Out, data: u8[], lo: i32, hi: i32): Out {
+function out_put_range(own o: Out, data: u8[], lo: i32, hi: i32): Out {
   if (hi <= lo) {
     return o;
   }
@@ -480,18 +480,20 @@ function out_put_range(o: Out, data: u8[], lo: i32, hi: i32): Out {
   return o;
 }
 
-function out_end(o: Out): Out {
+// The ended output keeps an unused writer in the closed writer's place.
+function out_end(own o: Out): Out {
   if (!o.open) {
     return o;
   }
+  let ended: Out = Out { ...o, w: io_buffered.buf_writer_new(stdout(), 0), open: false, pid: 0 };
   if let Err(e) = o.w.close() {
     write_failed(o.s, o.so, o.name, e);
   }
   piece_wait(o.s, o.so, o.name, o.pid);
-  return Out { ...o, open: false, pid: 0 };
+  return ended;
 }
 
-function out_finish(o: Out): void {
+function out_finish(own o: Out): void {
   let done: Out = out_end(o);
   gnu.finish(done.so);
 }
@@ -1102,7 +1104,9 @@ function split_round(s: Settings, o: Out, src: Src): Out {
   let c: i32 = 0;
   while (c < n) {
     if (live[c]) {
-      if let Err(e) = ws[c].close() {
+      let (w, rest) = ws.swap_at(c, stdout());
+      ws = rest;
+      if let Err(e) = w.close() {
         write_failed(s, out.so, names[c], e);
       }
       piece_wait(s, out.so, names[c], pids[c]);
@@ -1149,7 +1153,7 @@ function split_round_one(s: Settings, o: Out, src: Src): Out {
   return out;
 }
 
-function out_verbose(o: Out, name: string): Out {
+function out_verbose(own o: Out, name: string): Out {
   if (!o.s.verbose) {
     return o;
   }

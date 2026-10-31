@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-const importedAssocFnZeroSrc = `import "std/num" as num;
-function (a: T[]) total[T: ops.Num + ops.Zero](): T {
+const importedAssocFnZeroSrc = `import "core/ops" as ops;
+function (a: (T: ops.Num + ops.Zero)[]) total(): T {
     let s: T = T.zero();
     let i: i32 = 0;
     while (i < a.len()) { s = s.add(a[i]); i = i + 1; }

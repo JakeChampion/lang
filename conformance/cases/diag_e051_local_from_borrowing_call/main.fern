@@ -1,0 +1,25 @@
+// spec: RH-27
+// A local is a fresh value only when its initialiser borrows nothing. A call
+// whose result is its borrowed argument does not give a fresh local, so the
+// local cannot pass to an own parameter while the argument is still held.
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function eat(own x: Handle): i32 {
+  return x.close();
+}
+
+function same(h: Handle): Handle {
+  return h;
+}
+
+function main(): i32 {
+  let h: Handle = Handle { fd: 1 };
+  let w: Handle = same(h);
+  let n: i32 = eat(w);
+  return n + h.close();
+}

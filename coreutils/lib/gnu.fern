@@ -84,9 +84,27 @@ function stdout_open(): boolean {
   }
 }
 
+// The writer is borrowed, so die flushes it and leaves the close to the
+// kernel at exit. It reports a write error as close_stdout_with does.
 pub function die(o: io_buffered.BufWriter, msg: string, status: i32): void {
   let w: io_buffered.BufWriter = error_out(o, msg);
-  close_stdout_with(w, false, status);
+  let pending: boolean = w.buffered() > 0;
+  let failed: boolean = false;
+  match (w.error()) {
+    Some(_) => {
+      failed = true;
+    },
+    None => {}
+  }
+  if (pending) {
+    if let Err(e) = w.flush() {
+      error("write error: " + io_error_text(e));
+      exit(status);
+    }
+  }
+  if (failed) {
+    error("write error");
+  }
   exit(status);
 }
 
@@ -525,11 +543,11 @@ pub function stream_flush(o: Stream): Stream {
   return Stream { ...o, w: flush(o.w) };
 }
 
-pub function stream_finish(o: Stream): void {
+pub function stream_finish(own o: Stream): void {
   finish(o.w);
 }
 
-pub function stream_finish_with(o: Stream, status: i32): void {
+pub function stream_finish_with(own o: Stream, status: i32): void {
   finish_with(o.w, status);
   exit(status);
 }
@@ -883,19 +901,19 @@ pub function flush(o: io_buffered.BufWriter): io_buffered.BufWriter {
   return written_or_die(o.flush(), 1);
 }
 
-pub function finish(o: io_buffered.BufWriter): void {
+pub function finish(own o: io_buffered.BufWriter): void {
   close_stdout(o, false);
 }
 
-pub function finish_with(o: io_buffered.BufWriter, status: i32): void {
+pub function finish_with(own o: io_buffered.BufWriter, status: i32): void {
   close_stdout_with(o, false, status);
 }
 
-pub function close_stdout(o: io_buffered.BufWriter, prev_fail: boolean): void {
+pub function close_stdout(own o: io_buffered.BufWriter, prev_fail: boolean): void {
   close_stdout_with(o, prev_fail, 1);
 }
 
-pub function close_stdout_with(o: io_buffered.BufWriter, prev_fail: boolean, status: i32): void {
+pub function close_stdout_with(own o: io_buffered.BufWriter, prev_fail: boolean, status: i32): void {
   let some_pending: boolean = o.buffered() > 0;
   let prev: boolean = prev_fail;
   match (o.error()) {
@@ -1031,7 +1049,7 @@ pub function (s: Stdio) report(msg: string): Stdio {
   return flushed;
 }
 
-pub function (s: Stdio) close_stdout(): void {
+pub function (own s: Stdio) close_stdout(): void {
   let some_pending: boolean = s.buf.len() > 0;
   let prev_fail: boolean = false;
   match (s.err) {

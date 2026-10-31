@@ -1,0 +1,32 @@
+// spec: RH-26
+// A variant constructor carries its payload, so a function that returns
+// Some(h) of a borrowed h returns a borrow. Its result cannot pass to an own
+// parameter while the caller still holds h.
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function eat(own o: Option[Handle]): i32 {
+  match (o) {
+    Some(x) => {
+      return x.close();
+    },
+    None => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function wrap(h: Handle): Option[Handle] {
+  return Some(h);
+}
+
+function main(): i32 {
+  let h: Handle = Handle { fd: 1 };
+  let n: i32 = eat(wrap(h));
+  return n + h.close();
+}

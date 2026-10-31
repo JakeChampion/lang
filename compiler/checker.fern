@@ -11505,14 +11505,20 @@ function sugar_arm_bodies(sugar: ast.MatchSugar): ast.Stmt[][] {
 
 // exit_bound: a local named `exit` is in scope, so a call to `exit` is not the builtin.
 function block_exits(stmts: ast.Stmt[], exit_bound: boolean): boolean {
-  return block_leaves(stmts, false, exit_bound);
+  return block_leaves(stmts, false, exit_bound, util.name_index([]));
 }
 
 function block_diverges(stmts: ast.Stmt[], exit_bound: boolean): boolean {
-  return block_leaves(stmts, true, exit_bound);
+  return block_leaves(stmts, true, exit_bound, util.name_index([]));
 }
 
-function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean): boolean {
+// ow_block_diverges is block_diverges where a call to a function noret names
+// also leaves.
+function ow_block_diverges(stmts: ast.Stmt[], exit_bound: boolean, noret: util.NameIndex): boolean {
+  return block_leaves(stmts, true, exit_bound, noret);
+}
+
+function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean, noret: util.NameIndex): boolean {
   if (stmts.len() == 0) {
     return false;
   }
@@ -11520,7 +11526,7 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean): b
   let bound: boolean = exit_bound || lets_bind_exit(stmts);
   match (last) {
     ast.StmtExpr(x) => {
-      return parser.calls_exit(x.value, bound);
+      return parser.calls_exit(x.value, bound) || lu_call_never_returns(x.value, noret, true);
     },
     ast.StmtBreak(_) => {
       return jumps;
@@ -11532,7 +11538,7 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean): b
       return true;
     },
     ast.StmtIf(f) => {
-      return if_leaves(f, jumps, bound);
+      return if_leaves(f, jumps, bound, noret);
     },
     ast.StmtWhile(w) => {
       match (w.cond) {
@@ -11545,7 +11551,7 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean): b
       }
     },
     ast.StmtMatch(m) => {
-      return match_leaves(m, jumps, bound);
+      return match_leaves(m, jumps, bound, noret);
     },
     _ => {
       return false;
@@ -11554,44 +11560,44 @@ function block_leaves(stmts: ast.Stmt[], jumps: boolean, exit_bound: boolean): b
   return false;
 }
 
-function if_leaves(f: ast.StmtIf, jumps: boolean, bound: boolean): boolean {
+function if_leaves(f: ast.StmtIf, jumps: boolean, bound: boolean, noret: util.NameIndex): boolean {
   let bodies: ast.Stmt[][] = sugar_arm_bodies(f.sugar);
   if (bodies.len() > 0) {
-    return sugar_leaves(f.sugar, bodies, jumps, bound || util.has_str(sugar_binders(f.sugar), "exit"));
+    return sugar_leaves(f.sugar, bodies, jumps, bound || util.has_str(sugar_binders(f.sugar), "exit"), noret);
   }
   match (f.cond) {
     ast.ExprBool(b) => {
       if (b.value) {
-        return block_leaves(f.then_body, jumps, bound);
+        return block_leaves(f.then_body, jumps, bound, noret);
       }
-      return block_leaves(f.else_body, jumps, bound);
+      return block_leaves(f.else_body, jumps, bound, noret);
     },
     _ => {}
   }
-  return block_leaves(f.then_body, jumps, bound) && block_leaves(f.else_body, jumps, bound);
+  return block_leaves(f.then_body, jumps, bound, noret) && block_leaves(f.else_body, jumps, bound, noret);
 }
 
-function sugar_leaves(sugar: ast.MatchSugar, bodies: ast.Stmt[][], jumps: boolean, bound: boolean): boolean {
+function sugar_leaves(sugar: ast.MatchSugar, bodies: ast.Stmt[][], jumps: boolean, bound: boolean, noret: util.NameIndex): boolean {
   if (sugar.origin == "let_else") {
-    return block_leaves(bodies[0], jumps, bound);
+    return block_leaves(bodies[0], jumps, bound, noret);
   }
   for body in bodies {
-    if (!block_leaves(body, jumps, bound)) {
+    if (!block_leaves(body, jumps, bound, noret)) {
       return false;
     }
   }
   return true;
 }
 
-function match_leaves(m: ast.StmtMatch, jumps: boolean, bound: boolean): boolean {
+function match_leaves(m: ast.StmtMatch, jumps: boolean, bound: boolean, noret: util.NameIndex): boolean {
   if (m.arms.len() == 0) {
     return false;
   }
   if (m.origin == "let_else") {
-    return block_leaves(m.arms[0].body, jumps, bound || pattern_binds_exit(m.arms[0].pattern));
+    return block_leaves(m.arms[0].body, jumps, bound || pattern_binds_exit(m.arms[0].pattern), noret);
   }
   for arm in m.arms {
-    if (!block_leaves(arm.body, jumps, bound || pattern_binds_exit(arm.pattern))) {
+    if (!block_leaves(arm.body, jumps, bound || pattern_binds_exit(arm.pattern), noret)) {
       return false;
     }
   }
@@ -18119,15 +18125,15 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
 
 pub struct OwnFunc { name: string, flags: boolean[], arr: boolean[] }
 
-pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex, methods: util.NameIndex, funcs: util.NameIndex }
+pub struct OwnFuncs { rows: OwnFunc[], names: util.NameIndex, structs: util.NameIndex, decls: util.NameIndex, ctors: util.NameIndex, methods: util.NameIndex, funcs: util.NameIndex, all_methods: util.NameIndex }
 
-struct MovedEntry { mname: string, mline: i32 }
+struct MovedEntry { mname: string, mline: i32, mcol: i32 }
 
 struct OwnWalk { moved: MovedEntry[], diags: util.Diag[] }
 
 struct OwnReturns { synthetic: boolean, moved: MovedEntry[] }
 
-struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], snames: util.NameIndex, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean }
+struct OwnCtx { owned: string[], borrowed: string[], ofuncs: OwnFuncs, structs: parser.StructDecl[], snames: util.NameIndex, admit: string, admit_fields: string[], fresh: string[], fresh_methods: string[], fresh_scrut: string[], bound: string[], scope: Scope, last_use: string[], returns: Cell[OwnReturns], deferred: Cell[MovedEntry[]], in_loop: boolean, noret: util.NameIndex }
 
 function ow_expr_is_scalar(e: ast.Expr, ctx: OwnCtx): boolean {
   if (ow_scalar_literal(e)) {
@@ -18177,11 +18183,20 @@ function ow_moved_line(m: MovedEntry[], name: string): i32 {
   return 0;
 }
 
-function ow_moved_add(m: MovedEntry[], name: string, line: i32): MovedEntry[] {
+function ow_moved_col(m: MovedEntry[], name: string): i32 {
+  for elem in m {
+    if (elem.mname == name) {
+      return elem.mcol;
+    }
+  }
+  return 0;
+}
+
+function ow_moved_add(m: MovedEntry[], name: string, line: i32, col: i32): MovedEntry[] {
   if (ow_moved_has(m, name)) {
     return m;
   }
-  return m.append(MovedEntry { mname: name, mline: line });
+  return m.append(MovedEntry { mname: name, mline: line, mcol: col });
 }
 
 function ow_fresh_deferred(): Cell[MovedEntry[]] {
@@ -18281,7 +18296,7 @@ function ru_consume_field(fa: ast.ExprFieldAccess, oid: ast.ExprIdent, moved: Mo
     d = d.append(dg_at("E050", "owned parameter \"" + oid.name + "\" is consumed twice: a deferred call at line " + ow_line_text(ow_moved_line(seen, oid.name)) + " consumes it", fa.line, fa.col));
     return OwnWalk { moved: moved, diags: d };
   }
-  return OwnWalk { moved: ow_moved_add(moved, path, fa.line), diags: d };
+  return OwnWalk { moved: ow_moved_add(moved, path, fa.line, fa.col), diags: d };
 }
 
 function ow_moved_join(dst: MovedEntry[], branch: MovedEntry[], diverges: boolean): MovedEntry[] {
@@ -18290,7 +18305,7 @@ function ow_moved_join(dst: MovedEntry[], branch: MovedEntry[], diverges: boolea
   }
   let out: MovedEntry[] = dst;
   for elem in branch {
-    out = ow_moved_add(out, elem.mname, elem.mline);
+    out = ow_moved_add(out, elem.mname, elem.mline, elem.mcol);
   }
   return out;
 }
@@ -18327,7 +18342,7 @@ function ow_nested_ctx(ctx: OwnCtx, lm: ast.ExprLambda): OwnCtx {
       bound = bound.append(p.name);
     }
   }
-  let nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, snames: ctx.snames, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop };
+  let nested: OwnCtx = OwnCtx { owned: names, borrowed: borrowed, ofuncs: ctx.ofuncs, structs: ctx.structs, snames: ctx.snames, admit: ctx.admit, admit_fields: ctx.admit_fields, fresh: ctx.fresh, fresh_methods: ctx.fresh_methods, fresh_scrut: ctx.fresh_scrut, bound: bound, scope: lambda_body_scope(lm, ctx.scope), last_use: ctx.last_use, returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: ctx.in_loop, noret: ctx.noret };
   return nested;
 }
 
@@ -18355,7 +18370,7 @@ function ow_lambda_moved_out(outer: MovedEntry[], inner: MovedEntry[], params: a
   let out: MovedEntry[] = ow_nested_moved(inner, params);
   for param in params {
     if (ow_moved_has(outer, param.name)) {
-      out = ow_moved_add(out, param.name, ow_moved_line(outer, param.name));
+      out = ow_moved_add(out, param.name, ow_moved_line(outer, param.name), ow_moved_col(outer, param.name));
     }
   }
   return out;
@@ -18437,9 +18452,26 @@ function ow_is_owned_scrutinee(e: ast.Expr, ctx: OwnCtx): boolean {
       }
       return util.has_str(ctx.fresh_scrut, cid.name);
     }
-    return ow_qualified_ctor(c.callee, ctx);
+    return ow_qualified_ctor(c.callee, ctx) || ow_fresh_method_result(c, ctx);
   }
   return ow_is_owned_expr(e, ctx);
+}
+
+// A method call whose result is a kernel descriptor: a directory opened
+// under another directory.
+function ow_fresh_method_result(c: ast.ExprCall, ctx: OwnCtx): boolean {
+  if let ast.ExprFieldAccess(mfa) = c.callee {
+    for ns in ow_type_namespaces(check_expr(mfa.obj, ctx.scope)) {
+      if (util.has_str(ow_fresh_builtin_methods(), ns + "." + mfa.field)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function ow_fresh_builtin_methods(): string[] {
+  return ["Dir.open_dir"];
 }
 
 function ow_qualified_ctor(callee: ast.Expr, ctx: OwnCtx): boolean {
@@ -18533,9 +18565,11 @@ struct LuVar { name: string, init: ast.Expr }
 
 struct LuSel { obj: string, field: string, line: i32, col: i32 }
 
-struct LuFacts { occ: LuOcc[], vars: LuVar[], escaping: string[], sels: LuSel[], captured: string[], defer_bare: string[], defer_fields: string[] }
+// updates holds, for the base of each update literal `S { ...q, f: v }`, one
+// entry per field the literal replaces.
+struct LuFacts { occ: LuOcc[], vars: LuVar[], escaping: string[], sels: LuSel[], captured: string[], defer_bare: string[], defer_fields: string[], updates: LuSel[] }
 
-struct LuFn { facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs }
+struct LuFn { facts: LuFacts, params: string[], owned: string[], ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex, noret: util.NameIndex }
 
 // A frame is one block on the path from the function body to a statement:
 // the block, the index of the statement on the path, and the loop statement
@@ -18683,6 +18717,19 @@ function lu_fact_expr(e: ast.Expr, own f: LuFacts): LuFacts {
         }
       }
     },
+    ast.ExprStructLit(sl) => {
+      if (!sl.has_base) {
+        return f;
+      }
+      if let ast.ExprIdent(bid) = sl.base {
+        let ups: LuSel[] = f.updates;
+        for fname in sl.field_names {
+          ups = ups.append(LuSel { obj: bid.name, field: fname, line: bid.line, col: bid.col });
+        }
+        return LuFacts { ...f, updates: ups };
+      }
+      return f;
+    },
     _ => {
       return f;
     }
@@ -18728,7 +18775,83 @@ function lu_is_local(fx: LuFn, name: string): boolean {
 }
 
 function lu_fresh_init(fx: LuFn, name: string): boolean {
-  return match (lu_init_of(fx, name)) { Some(init) => lu_fresh_expr(init), None => false };
+  return match (lu_init_of(fx, name)) { Some(init) => lu_fresh_expr(init) && !lu_init_borrows(fx, init), None => false };
+}
+
+// A plain named call whose result can borrow from one of its arguments.
+function lu_init_borrows(fx: LuFn, e: ast.Expr): boolean {
+  if let ast.ExprUnary(u) = e {
+    return u.op == "try_" && lu_init_borrows(fx, u.operand);
+  }
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(_) = c.callee {
+      return lu_call_site_borrows(fx, c);
+    }
+  }
+  return false;
+}
+
+function lu_call_site_borrows(fx: LuFn, c: ast.ExprCall): boolean {
+  if (!ow_call_may_borrow(c, fx.ofuncs, fx.borrows, fx.builtins)) {
+    return false;
+  }
+  for a in c.args {
+    if (lu_arg_may_borrow(fx, a)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function lu_arg_may_borrow(fx: LuFn, e: ast.Expr): boolean {
+  match (e) {
+    ast.ExprNumber(_) => {
+      return false;
+    },
+    ast.ExprString(_) => {
+      return false;
+    },
+    ast.ExprBool(_) => {
+      return false;
+    },
+    ast.ExprBytes(_) => {
+      return false;
+    },
+    ast.ExprFString(_) => {
+      return false;
+    },
+    ast.ExprZero(_) => {
+      return false;
+    },
+    ast.ExprStructLit(_) => {
+      return false;
+    },
+    ast.ExprArray(_) => {
+      return false;
+    },
+    ast.ExprTuple(_) => {
+      return false;
+    },
+    ast.ExprMapLit(_) => {
+      return false;
+    },
+    ast.ExprBinary(_) => {
+      return false;
+    },
+    ast.ExprUnary(u) => {
+      return u.op == "try_";
+    },
+    ast.ExprCall(c) => {
+      if let ast.ExprIdent(_) = c.callee {
+        return lu_call_site_borrows(fx, c);
+      }
+      return true;
+    },
+    _ => {
+      return true;
+    }
+  }
+  return true;
 }
 
 // An own parameter holds its fields as a fresh local does, so a field unpacked from it is owned the same way.
@@ -18890,7 +19013,7 @@ function lu_is_loop_stmt(st: ast.Stmt): boolean {
 }
 
 function lu_empty_facts(): LuFacts {
-  return LuFacts { occ: [], vars: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [] };
+  return LuFacts { occ: [], vars: [], escaping: [], sels: [], captured: [], defer_bare: [], defer_fields: [], updates: [] };
 }
 
 // A later mention of the name inside the statement that holds the call.
@@ -18911,7 +19034,20 @@ function lu_declares(st: ast.Stmt, name: string): boolean {
       return true;
     }
   }
-  return false;
+  return util.has_str(astwalk.fold_stmt_nodes(st, [], lu_arm_binders, lu_no_binders, astwalk.not_lambda), name);
+}
+
+function lu_arm_binders(st: ast.Stmt, own acc: string[]): string[] {
+  if let ast.StmtMatch(m) = st {
+    for arm in m.arms {
+      acc = astwalk.pattern_binders(arm.pattern, acc);
+    }
+  }
+  return acc;
+}
+
+function lu_no_binders(e: ast.Expr, own acc: string[]): string[] {
+  return acc;
 }
 
 function lu_loop_labels(st: ast.Stmt, own acc: string[]): string[] {
@@ -19036,19 +19172,109 @@ function lu_loop_head_live(frames: LuFrame[], l: i32, name: string): boolean {
 // Whether the name can be read again on some path after the statement that
 // holds the call. A path that reaches the end of a loop body, or continues,
 // comes back to every use in that loop.
-function lu_live_after(site: LuSite, call: ast.Expr, aid: ast.ExprIdent): boolean {
+function lu_live_after(fx: LuFn, site: LuSite, call: ast.Expr, aid: ast.ExprIdent): boolean {
   if (site.frames.len() == 0) {
     return true;
   }
   let inner: LuFrame = site.frames[site.frames.len() - 1];
   let st: ast.Stmt = inner.stmts[inner.idx];
+  if (lu_never_returns(fx.noret, st)) {
+    return false;
+  }
   if (lu_loop_holds_call(st, call) || lu_later_in(st, aid)) {
     return true;
   }
-  return lu_live_from(site.frames, site.frames.len() - 1, aid.name);
+  return lu_live_from(fx.noret, site.frames, site.frames.len() - 1, aid.name);
 }
 
-function lu_live_from(frames: LuFrame[], level: i32, name: string): boolean {
+// A statement that calls a function which never returns.
+function lu_never_returns(noret: util.NameIndex, st: ast.Stmt): boolean {
+  if let ast.StmtExpr(x) = st {
+    return lu_call_never_returns(x.value, noret, true);
+  }
+  return false;
+}
+
+// The plain functions whose body never returns: on every path it ends in a
+// call to exit, in a call to another such function, or in a loop that never
+// breaks.
+function lu_no_return_funcs(mod: parser.Module): util.NameIndex {
+  let out: string[] = [];
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    let idx: util.NameIndex = util.name_index(out);
+    for fn in mod.funcs {
+      if (fn.receiver_name.len() > 0 || idx.has(fn.name) || util.has_str(out, fn.name)) {
+        continue;
+      }
+      if (lu_stmts_exit(fn.body, idx, util.has_str(ow_param_names(fn), "exit"))) {
+        out = out.append(fn.name);
+        changed = true;
+      }
+    }
+  }
+  return util.name_index(out);
+}
+
+function lu_stmts_exit(stmts: ast.Stmt[], noret: util.NameIndex, bound: boolean): boolean {
+  return stmts.len() > 0 && lu_stmt_exits(stmts[stmts.len() - 1], noret, bound);
+}
+
+function lu_stmt_exits(st: ast.Stmt, noret: util.NameIndex, bound: boolean): boolean {
+  match (st) {
+    ast.StmtExpr(x) => {
+      return lu_call_never_returns(x.value, noret, bound);
+    },
+    ast.StmtIf(f) => {
+      if (f.origin == "block" || f.origin == "unsafe") {
+        return lu_stmts_exit(f.then_body, noret, bound);
+      }
+      return f.else_body.len() > 0 && lu_stmts_exit(f.then_body, noret, bound) && lu_stmts_exit(f.else_body, noret, bound);
+    },
+    ast.StmtMatch(m) => {
+      for arm in m.arms {
+        if (!lu_stmts_exit(arm.body, noret, bound)) {
+          return false;
+        }
+      }
+      return m.arms.len() > 0;
+    },
+    ast.StmtWhile(w) => {
+      if let ast.ExprBool(b) = w.cond {
+        return b.value && !loop_can_break(w.body, w.label, false);
+      }
+      return false;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// bound: a parameter named exit hides the builtin, so the check names only
+// the functions noret holds.
+function lu_call_never_returns(e: ast.Expr, noret: util.NameIndex, bound: boolean): boolean {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprIdent(id) = c.callee {
+      if (id.name == "exit" && !bound) {
+        return true;
+      }
+      return noret.has(id.name);
+    }
+  }
+  return false;
+}
+
+function lu_assigns_whole(st: ast.Stmt, name: string): boolean {
+  if let ast.StmtAssign(a) = st {
+    return a.target == name && astwalk.count_ident_expr(a.value, name) == 0;
+  }
+  return false;
+}
+
+function lu_live_from(noret: util.NameIndex, frames: LuFrame[], level: i32, name: string): boolean {
   if (level < 0) {
     return false;
   }
@@ -19056,24 +19282,28 @@ function lu_live_from(frames: LuFrame[], level: i32, name: string): boolean {
   let j: i32 = f.idx + 1;
   while (j < f.stmts.len()) {
     let st: ast.Stmt = f.stmts[j];
+    if (lu_assigns_whole(st, name)) {
+      // A new value replaces the local before any read of the old one.
+      return false;
+    }
     if (lu_mentions(st, name) > 0) {
       return true;
     }
     let jumps: LuJumps = lu_jumps(st);
     for label in jumps.continues {
       let l: i32 = lu_loop_level(frames, level, label);
-      if (l < 0 || lu_loop_head_live(frames, l, name) || lu_live_from(frames, l - 1, name)) {
+      if (l < 0 || lu_loop_head_live(frames, l, name) || lu_live_from(noret, frames, l - 1, name)) {
         return true;
       }
     }
     for label in jumps.breaks {
       let l: i32 = lu_loop_level(frames, level, label);
-      if (l < 0 || lu_live_from(frames, l - 1, name)) {
+      if (l < 0 || lu_live_from(noret, frames, l - 1, name)) {
         return true;
       }
     }
     let one: ast.Stmt[] = [st];
-    if (block_diverges(one, false)) {
+    if (block_diverges(one, false) || lu_never_returns(noret, st)) {
       return false;
     }
     j = j + 1;
@@ -19084,7 +19314,7 @@ function lu_live_from(frames: LuFrame[], level: i32, name: string): boolean {
   if (level == 0) {
     return false;
   }
-  return lu_live_from(frames, level - 1, name);
+  return lu_live_from(noret, frames, level - 1, name);
 }
 
 function lu_arr_position(fx: LuFn, callee: string, i: i32): boolean {
@@ -19121,7 +19351,7 @@ function lu_dies(fx: LuFn, call: ast.Expr, arr: boolean, aid: ast.ExprIdent, out
   if (arr && !lu_is_last(fx, aid)) {
     return false;
   }
-  return !lu_live_after(site, call, aid);
+  return !lu_live_after(fx, site, call, aid);
 }
 
 // `q.f` passed to an own parameter moves the field out of q when q is a
@@ -19132,12 +19362,12 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
   if (util.has_str(fx.facts.captured, q.name) || lu_repeats(site.frames, q.name)) {
     return false;
   }
-  let fresh_local: boolean = lu_is_local(fx, q.name) && lu_decl_count(fx, q.name) == 1 && lu_fresh_init(fx, q.name);
+  let fresh_local: boolean = lu_is_local(fx, q.name) && lu_decl_count(fx, q.name) == 1 && (lu_fresh_init(fx, q.name) || lu_unpack_init(fx, q.name));
   let bound: boolean = !util.has_str(fx.params, q.name) && lu_decl_count(fx, q.name) == 0 && util.has_str(site.binders, q.name);
   if (!fresh_local && !lu_own_param(fx, q.name) && !bound && !lu_elem_fresh(fx, site, q.name)) {
     return false;
   }
-  if (astwalk.count_ident_expr(call, q.name) != 1) {
+  if (astwalk.count_ident_expr(call, q.name) - lu_other_field_reads(call, q.name, fa.field) != 1) {
     return false;
   }
   if (site.in_defer) {
@@ -19150,6 +19380,25 @@ function lu_field_dies(fx: LuFn, call: ast.Expr, fa: ast.ExprFieldAccess, q: ast
     return false;
   }
   return lu_path_is_last(fx, q, fa.field);
+}
+
+struct LuFieldReads { name: string, field: string, n: i32 }
+
+// The reads in call of a field of name other than field. A move of
+// name.field leaves those fields to the caller.
+function lu_other_field_reads(call: ast.Expr, name: string, field: string): i32 {
+  return astwalk.fold_expr_pruned(call, LuFieldReads { name: name, field: field, n: 0 }, lu_count_other_field, astwalk.not_lambda).n;
+}
+
+function lu_count_other_field(e: ast.Expr, own r: LuFieldReads): LuFieldReads {
+  if let ast.ExprFieldAccess(fa) = e {
+    if let ast.ExprIdent(id) = fa.obj {
+      if (id.name == r.name && fa.field != r.field) {
+        return LuFieldReads { ...r, n: r.n + 1 };
+      }
+    }
+  }
+  return r;
 }
 
 // A loop deeper than the frame that binds the owner runs the call again on
@@ -19223,7 +19472,7 @@ function lu_iter_owned(fx: LuFn, iter: ast.Expr): boolean {
   if let ast.ExprIdent(id) = iter {
     return lu_own_param(fx, id.name);
   }
-  return lu_fresh_expr(iter);
+  return lu_fresh_expr(iter) && !lu_init_borrows(fx, iter);
 }
 
 // A match scrutinee or a for-each iterator that is a local, or a field path
@@ -19251,16 +19500,27 @@ function lu_move_site(fx: LuFn, e: ast.Expr, site: LuSite, own acc: string[]): s
   return acc;
 }
 
+// A later update `S { ...q, field: v }` replaces the path, so it does not
+// read it.
 function lu_path_is_last(fx: LuFn, q: ast.ExprIdent, field: string): boolean {
   for o in fx.facts.occ {
     if (o.name == q.name && (o.line > q.line || o.line == q.line && o.col > q.col)) {
       let sel: string = lu_sel_at(fx.facts, o.line, o.col);
-      if (sel.len() == 0 || sel == field) {
+      if (sel.len() == 0 && !lu_replaces(fx.facts, o.line, o.col, field) || sel == field) {
         return false;
       }
     }
   }
   return true;
+}
+
+function lu_replaces(f: LuFacts, line: i32, col: i32, field: string): boolean {
+  for u in f.updates {
+    if (u.line == line && u.col == col && u.field == field) {
+      return true;
+    }
+  }
+  return false;
 }
 
 struct LuLitBase { name: string, call: ast.Expr, found: boolean }
@@ -19639,19 +19899,36 @@ function lu_stmts(stmts: ast.Stmt[], sc: LuScope, outer: ast.Expr, has_outer: bo
   return acc;
 }
 
-function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs): string[] {
+// The receiver is a parameter to the last-use facts, own when declared so.
+function lu_param_names(fn: parser.FuncDecl): string[] {
+  let out: string[] = ow_param_names(fn);
+  if (fn.receiver_name.len() > 0) {
+    out = out.append(fn.receiver_name);
+  }
+  return out;
+}
+
+function lu_own_names(fn: parser.FuncDecl): string[] {
+  let out: string[] = ow_own_param_names(fn);
+  if (fn.receiver_name.len() > 0 && fn.receiver_own) {
+    out = out.append(fn.receiver_name);
+  }
+  return out;
+}
+
+function lu_last_use_args(fn: parser.FuncDecl, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex, noret: util.NameIndex): string[] {
   let facts: LuFacts = lu_empty_facts();
   let nested: ast.ExprLambda[] = [];
   for st in fn.body {
     facts = astwalk.fold_stmt_nodes(st, facts, lu_fact_stmt, lu_fact_expr, astwalk.descend_all);
     nested = astwalk.fold_stmt_nodes(st, nested, lu_skip_stmt, lu_nested_fn, lu_outside_nested_fn);
   }
-  let fx: LuFn = LuFn { facts: facts, params: ow_param_names(fn), owned: ow_own_param_names(fn), ofuncs: ofuncs };
+  let fx: LuFn = LuFn { facts: facts, params: lu_param_names(fn), owned: lu_own_names(fn), ofuncs: ofuncs, borrows: borrows, builtins: builtins, noret: noret };
   let none: ast.Expr = ast.ExprUnknown { kind: "", line: 0, col: 0 };
   let top: LuScope = LuScope { frames: [], head: lu_plain_frame(fn.body), framed: true, binders: [], fresh: [], in_loop: false, in_iife: false, in_defer: false };
   let out: string[] = lu_stmts(fn.body, top, none, false, fx, []);
   for lm in nested {
-    out = util.append_all(out, lu_last_use_args(parser.FuncDecl { ...fn, params: lm.params, body: lm.body }, ofuncs));
+    out = util.append_all(out, lu_last_use_args(parser.FuncDecl { ...fn, params: lm.params, body: lm.body }, ofuncs, borrows, builtins, noret));
   }
   return out;
 }
@@ -19942,6 +20219,32 @@ function ow_call_arg_flags(callee: ast.Expr, ctx: OwnCtx): boolean[] {
   }
 }
 
+// An update literal reads the fields of its base that it does not replace.
+function ru_update_base(s: ast.ExprStructLit, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
+  if let ast.ExprIdent(id) = s.base {
+    let d: util.Diag[] = [];
+    if (!id.builtin && ow_is_owned(ctx, id.name)) {
+      let kept: MovedEntry[] = [];
+      for elem in moved {
+        if (!util.has_str(s.field_names, ow_path_field_or_empty(elem.mname, id.name))) {
+          kept = kept.append(elem);
+        }
+      }
+      d = ow_bare_use_diags(kept, id);
+    }
+    return OwnWalk { moved: moved, diags: d };
+  }
+  return ru_borrow(s.base, moved, ctx);
+}
+
+function ow_path_field_or_empty(path: string, name: string): string {
+  let head: string = name + ".";
+  if (path.len() > head.len() && slice_unchecked(path, 0, head.len()) == head) {
+    return ow_path_field(path, name);
+  }
+  return "";
+}
+
 function ru_borrow(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
   match (e) {
     ast.ExprIdent(id) => {
@@ -19968,7 +20271,7 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
           d = ow_deferred_use_diags(ctx, id);
         }
         if (d.len() == 0) {
-          m = ow_moved_add(moved, id.name, id.line);
+          m = ow_moved_add(moved, id.name, id.line, id.col);
         }
       }
       return OwnWalk { moved: m, diags: d };
@@ -20044,7 +20347,7 @@ function ru_expr(e: ast.Expr, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       let m: MovedEntry[] = moved;
       let d: util.Diag[] = [];
       if (s.has_base) {
-        let rb: OwnWalk = ru_borrow(s.base, m, ctx);
+        let rb: OwnWalk = ru_update_base(s, m, ctx);
         m = rb.moved;
         d = util.append_diags(d, rb.diags);
       }
@@ -20145,7 +20448,7 @@ function ow_loop(body: ast.Stmt[], moved: MovedEntry[], ctx: OwnCtx): util.Diag[
   for elem in r.moved {
     let nm: string = elem.mname;
     if (!ow_moved_has(moved, nm)) {
-      out = out.append(dg_at("E050", "owned parameter \"" + nm + "\" is consumed inside a loop; a later iteration would use it after move", elem.mline, 0));
+      out = out.append(dg_at("E050", "owned parameter \"" + nm + "\" is consumed inside a loop; a later iteration would use it after move", elem.mline, elem.mcol));
     }
   }
   return out;
@@ -20195,8 +20498,8 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
       let rc: OwnWalk = ru_expr(f.cond, moved, ctx);
       let rt: OwnWalk = ow_stmts(f.then_body, rc.moved, ctx);
       let re: OwnWalk = ow_stmts(f.else_body, rc.moved, ctx);
-      let m: MovedEntry[] = ow_moved_join(rc.moved, rt.moved, block_diverges(f.then_body, util.has_str(ctx.bound, "exit")));
-      m = ow_moved_join(m, re.moved, f.else_body.len() > 0 && block_diverges(f.else_body, util.has_str(ctx.bound, "exit")));
+      let m: MovedEntry[] = ow_moved_join(rc.moved, rt.moved, ow_block_diverges(f.then_body, util.has_str(ctx.bound, "exit"), ctx.noret));
+      m = ow_moved_join(m, re.moved, f.else_body.len() > 0 && ow_block_diverges(f.else_body, util.has_str(ctx.bound, "exit"), ctx.noret));
       return OwnWalk { moved: m, diags: util.append_diags(util.append_diags(rc.diags, rt.diags), re.diags) };
     },
     ast.StmtWhile(w) => {
@@ -20251,7 +20554,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
             arm_moved = ow_unmove(arm_moved, rs.moved, name);
           }
         }
-        mv = ow_moved_join(mv, arm_moved, block_diverges(arm.body, ow_exit_bound(ctx, arm.pattern)));
+        mv = ow_moved_join(mv, arm_moved, ow_block_diverges(arm.body, ow_exit_bound(ctx, arm.pattern), ctx.noret));
       }
       return OwnWalk { moved: mv, diags: d };
     },
@@ -20270,7 +20573,7 @@ function ow_stmt(st: ast.Stmt, moved: MovedEntry[], ctx: OwnCtx): OwnWalk {
           if (ow_moved_has(seen, elem.mname)) {
             d = d.append(dg_at("E050", "owned parameter \"" + elem.mname + "\" is consumed twice: a deferred call at line " + ow_line_text(ow_moved_line(seen, elem.mname)) + " consumes it", elem.mline, 0));
           } else {
-            seen = ow_moved_add(seen, elem.mname, elem.mline);
+            seen = ow_moved_add(seen, elem.mname, elem.mline, elem.mcol);
           }
         }
       }
@@ -20477,10 +20780,13 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   let out: OwnFunc[] = [];
   let names: string[] = [];
   let methods: string[] = [];
+  let all_methods: string[] = [];
   let funcs: string[] = [];
   for func in mod.funcs {
     if (func.receiver_name.len() == 0) {
       funcs = funcs.append(func.name);
+    } else {
+      all_methods = all_methods.append(func.name);
     }
     let any_own: boolean = func.receiver_own;
     let flags: boolean[] = [];
@@ -20507,6 +20813,14 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
       methods = methods.append(func.name);
     }
   }
+  // The built-in close consumes its handle: a descriptor closed once is
+  // not a value the program reads again.
+  for h in ["Reader", "Writer", "Dir"] {
+    let key: string = h + ".close";
+    out = out.append(OwnFunc { name: key, flags: [true], arr: [false] });
+    names = names.append(key);
+  }
+  methods = methods.append("close");
   for td in mod.trait_decls {
     for m in td.methods {
       if (ow_takes_own_self(m)) {
@@ -20533,7 +20847,7 @@ function collect_own_funcs(mod: parser.Module): OwnFuncs {
   for alias in mod.aliases {
     decls = decls.append(alias.name);
   }
-  return OwnFuncs { rows: out, names: util.name_index(names), structs: util.name_index(structs), decls: util.name_index(decls), ctors: util.name_index(ctors), methods: util.name_index(methods), funcs: util.name_index(funcs) };
+  return OwnFuncs { rows: out, names: util.name_index(names), structs: util.name_index(structs), decls: util.name_index(decls), ctors: util.name_index(ctors), methods: util.name_index(methods), funcs: util.name_index(funcs), all_methods: util.name_index(all_methods) };
 }
 
 function ow_takes_own_self(m: parser.FuncDecl): boolean {
@@ -20671,6 +20985,124 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
   return out;
 }
 
+// The struct declarations a type name resolves against, and the types with
+// a method that consumes its receiver.
+struct OwnDecls { structs: parser.StructDecl[], snames: util.NameIndex, consuming: util.NameIndex }
+
+function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
+  let names: string[] = [];
+  for fn in mod.funcs {
+    if (fn.receiver_own) {
+      let open: i32 = util.index_of_sub(fn.receiver_type, "[");
+      if (open > 0) {
+        names = names.append(slice_unchecked(fn.receiver_type, 0, open) + "");
+      } else {
+        names = names.append(fn.receiver_type);
+      }
+    }
+  }
+  return OwnDecls { structs: mod.structs, snames: snames, consuming: util.name_index(names) };
+}
+
+// A type that cannot hold a handle: a number, a boolean, a char, a string,
+// a function, or an array, option, result, tuple, struct or enum whose parts
+// are all such types. Reader, Writer and Dir are handles, and so is a type
+// with a method that consumes its receiver. A function cannot consume what
+// it captures, so it cannot close a handle.
+function ow_holds_no_handle(tn: string, dx: OwnDecls): boolean {
+  return ow_no_handle_in(tn, dx, [], []);
+}
+
+// The type parameters in free stand for arguments that hold no handle. seen
+// holds the declarations on the path, so a recursive type is decided by its
+// other parts.
+function ow_no_handle_in(tn: string, dx: OwnDecls, free: string[], seen: string[]): boolean {
+  let n: i32 = tn.len();
+  if (tn == "fn" || util.index_of_sub(tn, "=>") >= 0) {
+    return true;
+  }
+  if (n > 2 && tn[n - 2] == b'[' && tn[n - 1] == b']') {
+    return ow_no_handle_in(slice_unchecked(tn, 0, n - 2) + "", dx, free, seen);
+  }
+  if (n > 2 && tn[0] == b'[' && tn[n - 1] == b']') {
+    return ow_no_handle_in(slice_unchecked(tn, 1, n - 1) + "", dx, free, seen);
+  }
+  if (n > 2 && tn[0] == b'(' && tn[n - 1] == b')') {
+    return ow_all_no_handle_in(parser.split_top_commas(slice_unchecked(tn, 1, n - 1) + ""), dx, free, seen);
+  }
+  if (util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "string", "str", "void"], tn) || util.has_str(free, tn)) {
+    return true;
+  }
+  let name: string = tn;
+  let open: i32 = util.index_of_sub(tn, "[");
+  if (open > 0 && tn[n - 1] == b']') {
+    name = slice_unchecked(tn, 0, open) + "";
+    if (!ow_all_no_handle_in(parser.split_top_commas(slice_unchecked(tn, open + 1, n - 1) + ""), dx, free, seen)) {
+      return false;
+    }
+  }
+  if (name == "Option" || name == "Result" || util.has_str(seen, name)) {
+    return true;
+  }
+  if (dx.consuming.has(name) || util.has_str(["Reader", "Writer", "Dir"], name)) {
+    return false;
+  }
+  return ow_decl_holds_no_handle(name, dx, seen.append(name));
+}
+
+// A declared struct, or every variant of a declared enum, whose fields hold
+// no handle. A name with no declaration can hold one.
+function ow_decl_holds_no_handle(name: string, dx: OwnDecls, seen: string[]): boolean {
+  let i: i32 = dx.snames.chain(name);
+  while (i >= 0) {
+    let sd: parser.StructDecl = dx.structs[i];
+    if (sd.name == name && sd.enum_owner == "") {
+      return ow_fields_hold_no_handle(sd, dx, seen);
+    }
+    i = dx.snames.next[i];
+  }
+  let found: boolean = false;
+  for sd in dx.structs {
+    if (sd.enum_owner == name) {
+      if (!ow_fields_hold_no_handle(sd, dx, seen)) {
+        return false;
+      }
+      found = true;
+    }
+  }
+  return found;
+}
+
+function ow_fields_hold_no_handle(sd: parser.StructDecl, dx: OwnDecls, seen: string[]): boolean {
+  for f in sd.fields {
+    if (!ow_no_handle_in(util.trim(f.type_name), dx, sd.type_params, seen)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function ow_all_no_handle_in(ts: string[], dx: OwnDecls, free: string[], seen: string[]): boolean {
+  for t in ts {
+    if (!ow_no_handle_in(util.trim(t), dx, free, seen)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// The functions whose result can borrow and can hold a handle. A local set
+// from a call to any other function is fresh.
+function ow_handle_borrows(mod: parser.Module, borrows: util.NameIndex, dx: OwnDecls): util.NameIndex {
+  let names: string[] = [];
+  for fn in mod.funcs {
+    if (borrows.has(fn.name) && !ow_holds_no_handle(fn.ret_type, dx)) {
+      names = names.append(fn.name);
+    }
+  }
+  return util.name_index(names);
+}
+
 function ow_decl_type_is_pointer(fn: parser.FuncDecl, tn: string, ofuncs: OwnFuncs): boolean {
   return util.has_str(fn.all_type_params, tn) || ow_type_is_pointer(tn, ofuncs);
 }
@@ -20701,17 +21133,27 @@ function ow_value_elem_params(fn: parser.FuncDecl, borrowed: string[], ofuncs: O
   return out;
 }
 
+// A variant constructor carries its payload, so its result borrows what the
+// payload borrows.
 function ow_call_may_borrow(c: ast.ExprCall, ofuncs: OwnFuncs, borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   if let ast.ExprIdent(cid) = c.callee {
     if (ofuncs.ctors.has(cid.name)) {
-      return false;
+      return true;
     }
     if (builtins.has(cid.name)) {
       return false;
     }
     return borrows.has(cid.name) || !ofuncs.funcs.has(cid.name);
   }
+  if let ast.ExprFieldAccess(fa) = c.callee {
+    // A fresh built-in method, when no method of the module shares its name.
+    return !(util.has_str(ow_fresh_builtin_method_names(), fa.field) && !ofuncs.all_methods.has(fa.field));
+  }
   return true;
+}
+
+function ow_fresh_builtin_method_names(): string[] {
+  return ["open_dir"];
 }
 
 function ow_value_block_call(c: ast.ExprCall, lm: ast.ExprLambda): boolean {
@@ -20851,6 +21293,14 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
       if let ast.StmtAssign(a) = st {
         name = a.target;
         init = a.value;
+      }
+      // The element a `for` binds borrows from what the loop walks. A range
+      // and a pattern bind no such element.
+      if let ast.StmtFor(f) = st {
+        if (!util.contains(f.var_name, ",") && !for_iter_is_range(f.iter)) {
+          name = f.var_name;
+          init = f.iter;
+        }
       }
       if (name.len() == 0 || util.has_str(locals, name)) {
         continue;
@@ -21037,7 +21487,10 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let fresh: string[] = ow_fresh_owners(mod, ofuncs, builtins, borrows);
   let fresh_methods: string[] = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   let fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins);
+  let noret: util.NameIndex = lu_no_return_funcs(mod);
   let snames: util.NameIndex = util.name_index(ow_struct_names(mod.structs));
+  let decls: OwnDecls = ow_decls(mod, snames);
+  let handle_borrows: util.NameIndex = ow_handle_borrows(mod, borrows, decls);
   let out: util.Diag[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
@@ -21055,7 +21508,7 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
         borrowed = borrowed.append(param.name);
       }
     }
-    let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, snames: snames, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false };
+    let ctx: OwnCtx = OwnCtx { owned: owned, borrowed: borrowed, ofuncs: ofuncs, structs: mod.structs, snames: snames, admit: "", admit_fields: [], fresh: fresh, fresh_methods: fresh_methods, fresh_scrut: fresh_scrut, bound: ow_param_names(fn), scope: build_func_scope(fn, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), last_use: lu_last_use_args(fn, ofuncs, handle_borrows, builtins, noret), returns: cell_new(OwnReturns { synthetic: false, moved: [] }), deferred: ow_fresh_deferred(), in_loop: false, noret: noret };
     let nomoved: MovedEntry[] = [];
     let r: OwnWalk = ow_stmts(fn.body, nomoved, ctx);
     out = util.append_diags(out, r.diags);

@@ -888,7 +888,7 @@ function out_write(o: Out, piece: string): void {
   }
 }
 
-function out_finish(o: Out, status: i32): i32 {
+function out_finish(own o: Out, status: i32): i32 {
   let s: string = buf_take(o.h);
   buf_free(o.h);
   if (s.len() > 0) {
@@ -1047,5 +1047,6 @@ pub function main(): i32 {
       i = i + 1;
     }
   }
-  return out_finish(st.o, st.status);
+  let status: i32 = st.status;
+  return out_finish(st.o, status);
 }

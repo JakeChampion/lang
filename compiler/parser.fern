@@ -7692,6 +7692,186 @@ function receiver_clause(p: Par): boolean {
   return false;
 }
 
+struct RecvType { par: Par, tps: TpList }
+
+// parse_receiver_type parses a receiver type and takes out the bounds it
+// writes on its type parameters: K in `(m: OrdMap[K: cmp.Ord, V])`.
+// A bound opens a type argument, a slice element or a group.
+function parse_receiver_type(p: Par): (string, RecvType) {
+  let stop: i32 = recv_type_end(p);
+  if (!recv_has_bound(p, stop)) {
+    let (plain, plain_ret, plain_p) = parse_type_name(p);
+    return (plain, RecvType { par: plain_p, tps: TpList { tnames: [], tbounds: [] } });
+  }
+  let type_toks: lexer.Token[] = [];
+  let tp_toks: lexer.Token[] = [lexer.punct_tok("[", p.peek_line(), p.peek_col())];
+  let names: string[] = [];
+  let errs: ast.Stmt[] = p.type_errs;
+  let resume: i32 = p.pos;
+  for i in p.pos..stop {
+    if (i < resume) {
+      continue;
+    }
+    if (!recv_slot_bound(p, i)) {
+      type_toks = type_toks.append(p.toks[i]);
+      continue;
+    }
+    let name: string = p.ident_at(i);
+    if (util.has_str(names, name)) {
+      errs = errs.append(s_unknown(Par { ...p, pos: i }, "decl:type parameter " + name + " has a bound at two places in the receiver; write all its bounds at one place: " + name + ": A + B"));
+    }
+    names = names.append(name);
+    type_toks = type_toks.append(p.toks[i]);
+    tp_toks = tp_toks.append(p.toks[i]).append(p.toks[i + 1]);
+    resume = level_end(p, i + 2, ",])");
+    for k in i + 2..resume {
+      tp_toks = tp_toks.append(p.toks[k]);
+    }
+    tp_toks = tp_toks.append(lexer.punct_tok(",", p.peek_line(), p.peek_col()));
+  }
+  let end: Par = Par { ...p, pos: stop, type_errs: errs };
+  let eof: lexer.Token = lexer.TokEof { line: end.peek_line(), col: end.peek_col() };
+  let (rname, rret, tp) = parse_type_name(Par { ...end, toks: type_toks.append(eof), pos: 0 });
+  if (!tp.at_end()) {
+    tp = tp.refused_type("expected \")\", got " + tok_desc(tp.peek()));
+  }
+  tp_toks = tp_toks.append(lexer.punct_tok("]", end.peek_line(), end.peek_col())).append(eof);
+  let (tps, bp) = parse_type_param_list(Par { ...tp, toks: tp_toks, pos: 0 });
+  return (rname, RecvType { par: Par { ...end, type_errs: bp.type_errs, todos: bp.todos }, tps: tps });
+}
+
+// recv_type_end is the index of the ")" that closes a receiver clause.
+function recv_type_end(p: Par): i32 {
+  return level_end(p, p.pos, ")]");
+}
+
+// level_end is the index of the first token from `from` that is one of
+// the closers and is not inside a nested group, or the end of the input.
+function level_end(p: Par, from: i32, closers: string): i32 {
+  let resume: i32 = from;
+  for k in from..p.toks.len() {
+    if (k < resume) {
+      continue;
+    }
+    let here: Par = Par { ...p, pos: k };
+    let pu: string = p.punct_at(k);
+    if (here.at_end() || pu.len() == 1 && util.index_of_sub(closers, pu) >= 0) {
+      return k;
+    }
+    if (pu == "(" || pu == "[") {
+      resume = level_end(p, k + 1, ")]") + 1;
+    }
+  }
+  return p.toks.len();
+}
+
+function recv_has_bound(p: Par, stop: i32): boolean {
+  for i in p.pos..stop {
+    if (recv_slot_bound(p, i)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function recv_slot_bound(p: Par, i: i32): boolean {
+  return p.ident_at(i).len() > 0 && p.punct_at(i + 1) == ":" && opens_recv_slot(p.punct_at(i - 1));
+}
+
+function idents_between(p: Par, stop: i32): string[] {
+  let out: string[] = [];
+  for i in p.pos..stop {
+    let name: string = p.ident_at(i);
+    if (name.len() > 0 && !util.has_str(out, name)) {
+      out = out.append(name);
+    }
+  }
+  return out;
+}
+
+pub struct RecvPrint { recv: string, names: string[], bounds: string[] }
+
+// receiver_with_bounds writes the bound of each type parameter that the
+// receiver type names into the receiver type, and keeps the parameters
+// that only the method declares.
+pub function receiver_with_bounds(fd: FuncDecl): RecvPrint {
+  let recv: string = fd.receiver_type;
+  let names: string[] = [];
+  let bounds: string[] = [];
+  for i in 0..fd.type_params.len() {
+    let tp: string = fd.type_params[i];
+    let bound: string = "";
+    if (i < fd.bound_traits.len()) {
+      bound = fd.bound_traits[i];
+    }
+    let at: i32 = type_word_at(recv, tp);
+    if (at < 0) {
+      names = names.append(tp);
+      bounds = bounds.append(bound);
+    } else if (bound.len() > 0) {
+      recv = bound_into(recv, at, tp, spaced_bounds(bound));
+    }
+  }
+  return RecvPrint { recv: recv, names: names, bounds: bounds };
+}
+
+function bound_into(recv: string, at: i32, tp: string, bound: string): string {
+  let k: i32 = at - 1;
+  while (k >= 0 && recv[k] == b' ') {
+    k = k - 1;
+  }
+  let end: i32 = at + tp.len();
+  let tail: string = slice_unchecked(recv, end, recv.len()) + "";
+  if (k >= 0 && (recv[k] == b'[' || recv[k] == b'(' || recv[k] == b',')) {
+    return slice_unchecked(recv, 0, end) + ": " + bound + tail;
+  }
+  return slice_unchecked(recv, 0, at) + "(" + tp + ": " + bound + ")" + tail;
+}
+
+// type_word_at is the index of the first unqualified name in a type
+// spelling, or -1.
+function type_word_at(spelling: string, name: string): i32 {
+  let start: i32 = 0 - 1;
+  for i in 0..spelling.len() + 1 {
+    let in_word: boolean = i < spelling.len() && type_word_byte(spelling[i]);
+    if (in_word && start < 0) {
+      start = i;
+    } else if (!in_word && start >= 0) {
+      if (slice_unchecked(spelling, start, i) == name && (start == 0 || spelling[start - 1] != b'.')) {
+        return start;
+      }
+      start = 0 - 1;
+    }
+  }
+  return 0 - 1;
+}
+
+function type_word_byte(c: u8): boolean {
+  return c == b'_' || c >= b'0' && c <= b'9' || c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z';
+}
+
+// spaced_bounds writes a bound list `A+B` as `A + B`.
+pub function spaced_bounds(bounds: string): string {
+  let out: string = "";
+  let start: i32 = 0;
+  let i: i32 = 0;
+  while (i <= bounds.len()) {
+    if (i == bounds.len() || bounds[i] == b'+') {
+      if (out.len() > 0) {
+        out = out + " + ";
+      }
+      out = out + slice_unchecked(bounds, start, i);
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function opens_recv_slot(punct: string): boolean {
+  return punct == "[" || punct == "(" || punct == ",";
+}
+
 function parse_func_decl(p: Par): (FuncDecl, Par) {
   let decl_unsafe: boolean = unsafe_function_head(p);
   if (decl_unsafe) {
@@ -7707,22 +7887,16 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   let bound_names: string[] = [];
   let unbounded_tps: string[] = [];
   let all_tps: string[] = [];
-  let (pre_tps, pre_p) = parse_type_param_list(p);
-  p = pre_p;
-  let tpi1: i32 = 0;
-  while (tpi1 < pre_tps.tnames.len()) {
-    all_tps = all_tps.append(pre_tps.tnames[tpi1]);
-    if (p.verbatim || pre_tps.tbounds[tpi1].len() > 0) {
-      bounded_tps = bounded_tps.append(pre_tps.tnames[tpi1]);
-      bound_names = bound_names.append(pre_tps.tbounds[tpi1]);
-    } else {
-      unbounded_tps = unbounded_tps.append(pre_tps.tnames[tpi1]);
-    }
-    tpi1 = tpi1 + 1;
+  if (p.peek_punct() == "[") {
+    let refused: Par = Par { ...p, type_errs: p.type_errs.append(s_unknown(p, coded_kind("P008", "a function's type parameters come after its name: write function name[T](...), or function (r: R) name[T](...) for a method"))) };
+    let (lead_tps, skipped) = parse_type_param_list(refused);
+    p = skipped;
   }
   let receiver_name: string = "";
   let receiver_type: string = "";
   let receiver_own: boolean = false;
+  let recv_tps: TpList = TpList { tnames: [], tbounds: [] };
+  let recv_names: string[] = [];
   if (receiver_clause(p)) {
     p = p.advance();
     receiver_name = p.peek_ident();
@@ -7738,9 +7912,11 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
       p = p.advance();
       if (p.peek_punct() == ":") {
         p = p.advance();
-        let (rtr_name, rtr_fn_ret, rtr_p) = parse_type_name(p);
-        p = rtr_p;
+        let (rtr_name, rtr_p) = parse_receiver_type(p);
+        recv_names = idents_between(p, rtr_p.par.pos);
+        p = rtr_p.par;
         receiver_type = rtr_name;
+        recv_tps = rtr_p.tps;
       }
     }
     if (p.peek_punct() == ")") {
@@ -7757,7 +7933,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   let (post_tps, post_p) = parse_type_param_list(p);
   p = post_p;
   if (receiver_name.len() > 0) {
-    p = refuse_const_tparams(refuse_const_tparams(p, name_p, pre_tps), name_p, post_tps);
+    p = refuse_const_tparams(p, name_p, post_tps);
   }
   let tpi0: i32 = 0;
   while (tpi0 < post_tps.tnames.len()) {
@@ -7769,6 +7945,18 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
       unbounded_tps = unbounded_tps.append(post_tps.tnames[tpi0]);
     }
     tpi0 = tpi0 + 1;
+  }
+  for tp in all_tps {
+    if (util.has_str(recv_names, tp)) {
+      p = Par { ...p, type_errs: p.type_errs.append(s_unknown(name_p, coded_kind("P007", "the receiver introduces type parameter " + tp + ", so the method must not declare it again: write a bound for " + tp + " in the receiver type, as " + tp + ": Bound"))) };
+      break;
+    }
+  }
+  for rti in 0..recv_tps.tnames.len() {
+    let rtn: string = recv_tps.tnames[rti];
+    all_tps = all_tps.append(rtn);
+    bounded_tps = bounded_tps.append(rtn);
+    bound_names = bound_names.append(recv_tps.tbounds[rti]);
   }
   if (p.peek_punct() != "(") {
     return (FuncDecl { stdlib: "", no_inline: false, always_inline: false, name: name, receiver_name: receiver_name, receiver_type: receiver_type, receiver_own: receiver_own, type_params: bounded_tps, params: empty_params, ret_type: "", body: empty_body, line: fline, col: fcol, import_iface: "", import_wit: "", all_type_params: all_tps, bound_traits: bound_names, fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: false, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "", dyn_traits: [], streams: [], is_unsafe: decl_unsafe }, p);

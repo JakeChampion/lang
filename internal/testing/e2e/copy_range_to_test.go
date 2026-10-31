@@ -56,16 +56,16 @@ function main(): i32 {
     }
     match (write_file(%[1]q, data)) { Ok(_) => {}, Err(_) => { return 10; } }
 
-    let r: Reader = match (open_reader(%[1]q)) { Ok(h) => h, Err(_) => { return 11; } };
-    let w: Writer = match (open_writer(%[2]q)) { Ok(h) => h, Err(_) => { return 12; } };
+    let Ok(r) = open_reader(%[1]q) else { return 11; };
+    let Ok(w) = open_writer(%[2]q) else { return 12; };
     let how: i32 = copy(r, w);
     r.close();
     w.close();
     if (how < 0) { return 13; }
     if (how != %[3]d) { return 14; }
 
-    let r2: Reader = match (open_reader(%[1]q)) { Ok(h) => h, Err(_) => { return 20; } };
-    let a: Writer = match (open_appender(%[2]q)) { Ok(h) => h, Err(_) => { return 21; } };
+    let Ok(r2) = open_reader(%[1]q) else { return 20; };
+    let Ok(a) = open_appender(%[2]q) else { return 21; };
     match (r2.copy_range_to(a, 4096)) {
         Ok(_) => { return 22; },
         Err(e) => {
@@ -82,7 +82,7 @@ function main(): i32 {
     r2.close();
     a.close();
 
-    let r3: Reader = match (open_reader(%[1]q)) { Ok(h) => h, Err(_) => { return 30; } };
+    let Ok(r3) = open_reader(%[1]q) else { return 30; };
     let how3: i32 = copy(r3, stdout());
     r3.close();
     if (how3 != 0) { return 31; }

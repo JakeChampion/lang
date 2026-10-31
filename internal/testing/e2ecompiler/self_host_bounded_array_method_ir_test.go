@@ -13,7 +13,7 @@ var boundedArrayMethodIRCases = []struct {
 	src  string
 }{
 	{"i32-peak", `import "core/cmp";
-pub function (xs: T[]) peak[T: cmp.Ord](): Option[T] {
+pub function (xs: (T: cmp.Ord)[]) peak(): Option[T] {
     if (xs.len() == 0) { return None; }
     let m: T = xs[0];
     let i: i32 = 1;
@@ -22,7 +22,7 @@ pub function (xs: T[]) peak[T: cmp.Ord](): Option[T] {
 }
 function main(): i32 { let a: i32[] = [3, 7, 2]; match (a.peak()) { Some(v) => { return v; }, None => { return 0; } } }`},
 	{"f64-peak", `import "core/cmp";
-pub function (xs: T[]) peak[T: cmp.Ord](): Option[T] {
+pub function (xs: (T: cmp.Ord)[]) peak(): Option[T] {
     if (xs.len() == 0) { return None; }
     let m: T = xs[0];
     let i: i32 = 1;
@@ -31,7 +31,7 @@ pub function (xs: T[]) peak[T: cmp.Ord](): Option[T] {
 }
 function main(): i32 { let b: f64[] = [1.5, 2.5, 0.5]; match (b.peak()) { Some(v) => { return 1; }, None => { return 0; } } }`},
 	{"string-peak", `import "core/cmp";
-pub function (xs: T[]) peak[T: cmp.Ord](): Option[T] {
+pub function (xs: (T: cmp.Ord)[]) peak(): Option[T] {
     if (xs.len() == 0) { return None; }
     let m: T = xs[0];
     let i: i32 = 1;
@@ -40,7 +40,7 @@ pub function (xs: T[]) peak[T: cmp.Ord](): Option[T] {
 }
 function main(): i32 { let s: string[] = ["pear", "apple", "zed"]; match (s.peak()) { Some(v) => { return v.len(); }, None => { return 0; } } }`},
 	{"empty-none", `import "core/cmp";
-pub function (xs: T[]) peak[T: cmp.Ord](): Option[T] {
+pub function (xs: (T: cmp.Ord)[]) peak(): Option[T] {
     if (xs.len() == 0) { return None; }
     let m: T = xs[0];
     let i: i32 = 1;

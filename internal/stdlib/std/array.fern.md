@@ -35,7 +35,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<dependencies 2>>
 
-<<3 pub function (xs: T[]) gcd_all[T: ops.Gcd + ops.Zero](): T>>
+<<3 pub function (xs: (T: ops.Gcd + ops.Zero)[]) gcd_all(): T>>
 
 <<4 pub function (arr: string[]) join(sep: string): string>>
 
@@ -45,7 +45,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<7 pub function first[T](xs: T[]): Option[T]>>
 
-<<8 pub function (xs: T[]) min_by_key[T, K: cmp.Ord](key: (T)>>
+<<8 pub function (xs: T[]) min_by_key[K: cmp.Ord](key: (T)>>
 
 <<9 pub function rposition[T](xs: T[], pred: (T)>>
 
@@ -57,7 +57,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<13 pub function (xs: T[]) rotate_left(n: i32): T[]>>
 
-<<14 pub function (xs: T[]) count[T: cmp.Eq](target: T): i32>>
+<<14 pub function (xs: (T: cmp.Eq)[]) count(target: T): i32>>
 ```
 
 ### `module introduction`
@@ -78,11 +78,11 @@ import "std/num";
 import "core/ops";
 ```
 
-### `3 pub function (xs: T[]) gcd_all[T: ops.Gcd + ops.Zero](): T`
+### `3 pub function (xs: (T: ops.Gcd + ops.Zero)[]) gcd_all(): T`
 
 ```fern
-<<3 pub function (xs: T[]) gcd_all[T: ops.Gcd + ops.Zero](): T>>=
-pub function (xs: T[]) gcd_all[T: ops.Gcd + ops.Zero](): T {
+<<3 pub function (xs: (T: ops.Gcd + ops.Zero)[]) gcd_all(): T>>=
+pub function (xs: (T: ops.Gcd + ops.Zero)[]) gcd_all(): T {
   let g: T = T.zero();
   for x in xs {
     g = g.gcd(x);
@@ -90,7 +90,7 @@ pub function (xs: T[]) gcd_all[T: ops.Gcd + ops.Zero](): T {
   return g;
 }
 
-pub function (xs: T[]) lcm_all[T: ops.Gcd + ops.One](): T {
+pub function (xs: (T: ops.Gcd + ops.One)[]) lcm_all(): T {
   let l: T = T.one();
   for x in xs {
     l = l.lcm(x);
@@ -609,7 +609,7 @@ pub function find_map[T, U](xs: T[], f: (T) => Option[U]): Option[U] {
   return None;
 }
 
-pub function (xs: T[]) max_by_key[T, K: cmp.Ord](key: (T) => K): Option[T] {
+pub function (xs: T[]) max_by_key[K: cmp.Ord](key: (T) => K): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
@@ -628,11 +628,11 @@ pub function (xs: T[]) max_by_key[T, K: cmp.Ord](key: (T) => K): Option[T] {
 }
 ```
 
-### `8 pub function (xs: T[]) min_by_key[T, K: cmp.Ord](key: (T)`
+### `8 pub function (xs: T[]) min_by_key[K: cmp.Ord](key: (T)`
 
 ```fern
-<<8 pub function (xs: T[]) min_by_key[T, K: cmp.Ord](key: (T)>>=
-pub function (xs: T[]) min_by_key[T, K: cmp.Ord](key: (T) => K): Option[T] {
+<<8 pub function (xs: T[]) min_by_key[K: cmp.Ord](key: (T)>>=
+pub function (xs: T[]) min_by_key[K: cmp.Ord](key: (T) => K): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
@@ -1334,90 +1334,90 @@ pub function (xs: T[]) min_by(cmp: (T, T) => i32): Option[T] {
   return min_by(xs, cmp);
 }
 
-pub function (xs: T[]) is_sorted[T: cmp.Ord](): boolean {
+pub function (xs: (T: cmp.Ord)[]) is_sorted(): boolean {
   return cmp.is_sorted(xs);
 }
 
-pub function (xs: T[]) binary_search[T: cmp.Ord](target: T): Option[i32] {
+pub function (xs: (T: cmp.Ord)[]) binary_search(target: T): Option[i32] {
   return binary_search(xs, target);
 }
 
-pub function (xs: T[]) max_index[T: cmp.Ord](): Option[i32] {
+pub function (xs: (T: cmp.Ord)[]) max_index(): Option[i32] {
   return max_index(xs);
 }
 
-pub function (xs: T[]) min_index[T: cmp.Ord](): Option[i32] {
+pub function (xs: (T: cmp.Ord)[]) min_index(): Option[i32] {
   return min_index(xs);
 }
 
-pub function (xs: T[]) equal[T: cmp.Eq](other: T[]): boolean {
+pub function (xs: (T: cmp.Eq)[]) equal(other: T[]): boolean {
   return cmp.eq_arrays(xs, other);
 }
 
-pub function (xs: T[]) dedup[T: cmp.Eq](): T[] {
+pub function (xs: (T: cmp.Eq)[]) dedup(): T[] {
   return dedup(xs);
 }
 
-pub function (xs: T[]) all_equal[T: cmp.Eq](): boolean {
+pub function (xs: (T: cmp.Eq)[]) all_equal(): boolean {
   return all_equal(xs);
 }
 
-pub function (xs: T[]) starts_with[T: cmp.Eq](prefix: T[]): boolean {
+pub function (xs: (T: cmp.Eq)[]) starts_with(prefix: T[]): boolean {
   return starts_with(xs, prefix);
 }
 
-pub function (xs: T[]) ends_with[T: cmp.Eq](suffix: T[]): boolean {
+pub function (xs: (T: cmp.Eq)[]) ends_with(suffix: T[]): boolean {
   return ends_with(xs, suffix);
 }
 
-pub function (xs: T[]) index_of[T: cmp.Eq](target: T): Option[i32] {
+pub function (xs: (T: cmp.Eq)[]) index_of(target: T): Option[i32] {
   return cmp.index_of(xs, target);
 }
 
-pub function (xs: T[]) contains[T: cmp.Eq](target: T): boolean {
+pub function (xs: (T: cmp.Eq)[]) contains(target: T): boolean {
   return cmp.contains(xs, target);
 }
 
-pub function (xs: T[]) index_of_last[T: cmp.Eq](target: T): Option[i32] {
+pub function (xs: (T: cmp.Eq)[]) index_of_last(target: T): Option[i32] {
   return index_of_last(xs, target);
 }
 
-pub function (xs: T[]) partition[T](pred: (T) => boolean): (T[], T[]) {
+pub function (xs: T[]) partition(pred: (T) => boolean): (T[], T[]) {
   return partition(xs, pred);
 }
 
-pub function (xs: T[]) scan[T, A](init: A, f: (A, T) => A): A[] {
+pub function (xs: T[]) scan[A](init: A, f: (A, T) => A): A[] {
   return scan(xs, init, f);
 }
 
-pub function (xs: T[]) chunks[T](size: i32): T[][] {
+pub function (xs: T[]) chunks(size: i32): T[][] {
   return chunks(xs, size);
 }
 
-pub function (xs: T[]) chunks_exact[T](size: i32): T[][] {
+pub function (xs: T[]) chunks_exact(size: i32): T[][] {
   return chunks_exact(xs, size);
 }
 
-pub function (xs: T[]) windows[T](size: i32): T[][] {
+pub function (xs: T[]) windows(size: i32): T[][] {
   return windows(xs, size);
 }
 
-pub function (xs: T[]) sum[T: ops.Add + ops.Zero](): T {
+pub function (xs: (T: ops.Add + ops.Zero)[]) sum(): T {
   return num.sum(xs);
 }
 
 // The mean, summed in T as sum is, so an integer sum wraps; None when empty.
-pub function (xs: T[]) avg[T: ops.Add + ops.Div + ops.Zero + ops.One](): Option[T] {
+pub function (xs: (T: ops.Add + ops.Div + ops.Zero + ops.One)[]) avg(): Option[T] {
   return num.avg(xs);
 }
 
-pub function (xs: T[]) variance[T: ops.Num + ops.Zero + ops.One](): Option[T] {
+pub function (xs: (T: ops.Num + ops.Zero + ops.One)[]) variance(): Option[T] {
   return num.variance(xs);
 }
 
 // The middle element of the sorted array, or the mean of the two middle
 // elements when the length is even; integers truncate.
-pub function (xs: T[]) median[T: cmp.Ord + ops.Add + ops.Div + ops.One](): Option[T] {
+pub function (xs: (T: cmp.Ord + ops.Add + ops.Div + ops.One)[]) median(): Option[T] {
   let n: i32 = xs.len();
   if (n == 0) {
     return None;
@@ -1430,12 +1430,12 @@ pub function (xs: T[]) median[T: cmp.Ord + ops.Add + ops.Div + ops.One](): Optio
   return Some(sorted[n / 2 - 1].add(sorted[n / 2]).div(two));
 }
 
-pub function (xs: T[]) dot[T: ops.Add + ops.Mul + ops.Zero](other: T[]): T {
+pub function (xs: (T: ops.Add + ops.Mul + ops.Zero)[]) dot(other: T[]): T {
   return num.dot(xs, other);
 }
 
 // Elementwise sum, as long as the shorter array.
-pub function (xs: T[]) add[T: ops.Add](other: T[]): T[] {
+pub function (xs: (T: ops.Add)[]) add(other: T[]): T[] {
   let n: i32 = xs.len();
   if (other.len() < n) {
     n = other.len();
@@ -1449,31 +1449,31 @@ pub function (xs: T[]) add[T: ops.Add](other: T[]): T[] {
   return out;
 }
 
-pub function (xs: T[]) product[T: ops.Mul + ops.One](): T {
+pub function (xs: (T: ops.Mul + ops.One)[]) product(): T {
   return num.product(xs);
 }
 
-pub function (xs: T[]) cumsum[T: ops.Add + ops.Zero](): T[] {
+pub function (xs: (T: ops.Add + ops.Zero)[]) cumsum(): T[] {
   return num.cumsum(xs);
 }
 
-pub function (xs: T[]) cumproduct[T: ops.Mul + ops.One](): T[] {
+pub function (xs: (T: ops.Mul + ops.One)[]) cumproduct(): T[] {
   return num.cumproduct(xs);
 }
 
-pub function (xs: T[]) adjacent_diff[T: ops.Sub](): T[] {
+pub function (xs: (T: ops.Sub)[]) adjacent_diff(): T[] {
   return num.adjacent_diff(xs);
 }
 
-pub function (xs: T[]) max[T: cmp.Ord](): Option[T] {
+pub function (xs: (T: cmp.Ord)[]) max(): Option[T] {
   return cmp.max_of(xs);
 }
 
-pub function (xs: T[]) min[T: cmp.Ord](): Option[T] {
+pub function (xs: (T: cmp.Ord)[]) min(): Option[T] {
   return cmp.min_of(xs);
 }
 
-pub function (xs: T[]) spread[T: cmp.Ord + ops.Sub](): Option[T] {
+pub function (xs: (T: cmp.Ord + ops.Sub)[]) spread(): Option[T] {
   if (xs.len() == 0) {
     return None;
   }
@@ -1491,11 +1491,11 @@ pub function (xs: T[]) spread[T: cmp.Ord + ops.Sub](): Option[T] {
 }
 ```
 
-### `14 pub function (xs: T[]) count[T: cmp.Eq](target: T): i32`
+### `14 pub function (xs: (T: cmp.Eq)[]) count(target: T): i32`
 
 ```fern
-<<14 pub function (xs: T[]) count[T: cmp.Eq](target: T): i32>>=
-pub function (xs: T[]) count[T: cmp.Eq](target: T): i32 {
+<<14 pub function (xs: (T: cmp.Eq)[]) count(target: T): i32>>=
+pub function (xs: (T: cmp.Eq)[]) count(target: T): i32 {
   return count(xs, target);
 }
 
@@ -1515,7 +1515,7 @@ pub function (own xs: T[]) swap_at(i: i32, v: T): (T, T[]) {
   return swap_at(xs, i, v);
 }
 
-pub function (xs: T[]) distinct[T: cmp.Eq](): T[] {
+pub function (xs: (T: cmp.Eq)[]) distinct(): T[] {
   return cmp.distinct(xs);
 }
 

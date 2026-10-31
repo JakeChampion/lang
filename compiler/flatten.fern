@@ -1187,8 +1187,7 @@ function pattern_has_record(p: ast.Pattern): boolean {
 function rewrite_match_arms(arms: ast.MatchArm[], ctx: RewriteCtx): ast.MatchArm[] {
   let out: ast.MatchArm[] = [];
   for arm in arms {
-    let base: string[] = util.append_all([], ctx.locals);
-    let locals: string[] = astwalk.pattern_binders(arm.pattern, base);
+    let locals: string[] = util.append_all(ctx.locals, astwalk.pattern_binders(arm.pattern, []));
     let actx: RewriteCtx = RewriteCtx { ...ctx, locals: locals };
     out = out.append(ast.MatchArm { ...arm, pattern: rewrite_pattern(arm.pattern, ctx), body: rewrite_block(arm.body, actx), guard: rewrite_expr(arm.guard, actx) });
   }

@@ -491,7 +491,7 @@ function append_input(bytes: u8[], chunk: u8[]): u8[] {
   return result;
 }
 
-function fill(st: St, complete_line: boolean): St {
+function fill(own st: St, complete_line: boolean): St {
   match (st.r.read_chunk_bytes(read_size())) {
     Ok(chunk) => {
       if (chunk.len() == 0) {
@@ -527,7 +527,7 @@ function fill(st: St, complete_line: boolean): St {
   return st;
 }
 
-function line_end(st: St): (i32, St) {
+function line_end(own st: St): (i32, St) {
   let s: St = st;
   let from: i32 = s.soff;
   while (true) {
@@ -549,7 +549,7 @@ function line_end(st: St): (i32, St) {
   return (0 - 1, s);
 }
 
-function drain(st: St): St {
+function drain(own st: St): St {
   if (st.soff - st.wpos < drain_bytes()) {
     return st;
   }
@@ -557,7 +557,8 @@ function drain(st: St): St {
   if (keep <= st.wline) {
     return st;
   }
-  let s: St = release(st, keep, line_start(st, keep));
+  let cut: i32 = line_start(st, keep);
+  let s: St = release(st, keep, cut);
   return compact(s);
 }
 
@@ -577,25 +578,26 @@ function line_start(st: St, n: i64): i32 {
   return pos + 1;
 }
 
-function release(st: St, n: i64, cut: i32): St {
+function release(own st: St, n: i64, cut: i32): St {
   if (cut <= st.wpos) {
     return St { ...st, wline: n };
   }
   let s: St = st;
   if (s.open) {
-    s = out_put(s, s.wpos, cut);
+    let lo: i32 = s.wpos;
+    s = out_put(s, lo, cut);
   }
   return St { ...s, wpos: cut, wline: n };
 }
 
-function compact(st: St): St {
+function compact(own st: St): St {
   if (st.wpos < drain_bytes() || st.wpos * 2 < st.buf.len()) {
     return st;
   }
   return St { ...st, buf: copy_range(st.buf, st.wpos, st.buf.len()), soff: st.soff - st.wpos, wpos: 0 };
 }
 
-function scan_to(st: St, n: i64): (boolean, St) {
+function scan_to(own st: St, n: i64): (boolean, St) {
   let s: St = st;
   while (s.sline < n) {
     let off: i32 = s.soff;
@@ -626,8 +628,9 @@ function scan_to(st: St, n: i64): (boolean, St) {
   return (true, s);
 }
 
-function skip_line(st: St): St {
-  let r: (boolean, St) = scan_to(st, st.sline + 1 as i64);
+function skip_line(own st: St): St {
+  let next: i64 = st.sline + 1 as i64;
+  let r: (boolean, St) = scan_to(st, next);
   return r.1;
 }
 
@@ -635,7 +638,7 @@ function piece_name(st: St): string {
   return st.s.prefix + fmt_apply(st.s.fmt, st.created);
 }
 
-function out_open(st: St): St {
+function out_open(own st: St): St {
   let name: string = piece_name(st);
   match (open_writer(name)) {
     Ok(f) => {
@@ -649,7 +652,7 @@ function out_open(st: St): St {
   return st;
 }
 
-function out_put(st: St, lo: i32, hi: i32): St {
+function out_put(own st: St, lo: i32, hi: i32): St {
   match (st.out.write_bytes_range(st.buf, lo, hi)) {
     Ok(w) => {
       return St { ...st, out: w, written: st.written + (hi - lo) as i64 };
@@ -662,12 +665,18 @@ function out_put(st: St, lo: i32, hi: i32): St {
   return st;
 }
 
-function out_close(st: St): St {
+// The closed output keeps an unused writer in the closed writer's place.
+function close_state(own st: St): (Result[void, IoError], St) {
+  let closed: Result[void, IoError] = st.out.close();
+  return (closed, St { ...st, out: io_buffered.buf_writer_new(stdout(), 0), open: false });
+}
+
+function out_close(own st: St): St {
   if (!st.open) {
     return st;
   }
-  let s: St = St { ...st, open: false };
-  if let Err(e) = s.out.close() {
+  let (closed, s) = close_state(st);
+  if let Err(e) = closed {
     gnu.error(gnu.quotef(s.name) + ": " + gnu.io_error_text(e));
     cleanup_exit(s);
   }
@@ -698,12 +707,14 @@ function delete_all(st: St): void {
   }
 }
 
-function dump_rest(st: St): St {
+function dump_rest(own st: St): St {
   let s: St = st;
   while (true) {
     if (s.wpos < s.buf.len()) {
       if (s.open) {
-        s = out_put(s, s.wpos, s.buf.len());
+        let lo: i32 = s.wpos;
+        let hi: i32 = s.buf.len();
+        s = out_put(s, lo, hi);
       }
       s = St { ...s, buf: empty_bytes(), wpos: 0, soff: 0 };
     }
@@ -715,19 +726,23 @@ function dump_rest(st: St): St {
   return s;
 }
 
-function cleanup_exit(st: St): void {
+function finish_state(own st: St): void {
+  gnu.finish(st.so);
+}
+
+function cleanup_exit(own st: St): void {
   let s: St = out_close(st);
   delete_all(s);
   gnu.finish(s.so);
   exit(1);
 }
 
-function fatal(st: St, msg: string): void {
+function fatal(own st: St, msg: string): void {
   gnu.error(msg);
   cleanup_exit(st);
 }
 
-function fatal_dump(st: St, msg: string): void {
+function fatal_dump(own st: St, msg: string): void {
   gnu.error(msg);
   cleanup_exit(dump_rest(st));
 }
@@ -739,7 +754,7 @@ function repetition_suffix(rep: i64): string {
   return " on repetition " + rep.to_string();
 }
 
-function run_line(st: St, p: Pat, rep: i64): St {
+function run_line(own st: St, p: Pat, rep: i64): St {
   let s: St = out_open(st);
   let out_of_range: string = gnu.quote(p.num.to_string()) + ": line number out of range" + repetition_suffix(rep);
   let target: i64 = p.num * (rep + 1 as i64);
@@ -759,7 +774,8 @@ function run_line(st: St, p: Pat, rep: i64): St {
     }
   }
   if (target > s.wline) {
-    s = release(s, target, line_start(s, target));
+    let cut: i32 = line_start(s, target);
+    s = release(s, target, cut);
   }
   let e: (boolean, St) = head_empty(s);
   s = e.1;
@@ -770,7 +786,7 @@ function run_line(st: St, p: Pat, rep: i64): St {
   return suppress_line(compact(s));
 }
 
-function head_empty(st: St): (boolean, St) {
+function head_empty(own st: St): (boolean, St) {
   let s: St = st;
   while (s.wpos >= s.buf.len()) {
     if (s.eof) {
@@ -781,7 +797,7 @@ function head_empty(st: St): (boolean, St) {
   return (false, s);
 }
 
-function suppress_line(st: St): St {
+function suppress_line(own st: St): St {
   if (!st.s.suppress) {
     return st;
   }
@@ -801,7 +817,7 @@ function suppress_line(st: St): St {
   return compact(St { ...s, soff: r.0, sline: s.sline + 1 as i64, wpos: r.0, wline: s.wline + 1 as i64 });
 }
 
-function run_regexp(st: St, p: Pat, rep: i64): St {
+function run_regexp(own st: St, p: Pat, rep: i64): St {
   let s: St = st;
   if (!p.ignore) {
     s = out_open(s);
@@ -813,7 +829,7 @@ function run_regexp(st: St, p: Pat, rep: i64): St {
       if (!p.ignore) {
         s = out_close(dump_rest(s));
       }
-      gnu.finish(s.so);
+      finish_state(s);
       exit(0);
     }
     if (p.ignore) {
@@ -833,12 +849,13 @@ function run_regexp(st: St, p: Pat, rep: i64): St {
       fatal_dump(s, gnu.quote(p.arg) + ": line number out of range");
     }
   }
-  s = release(s, target, line_start(s, target));
+  let cut: i32 = line_start(s, target);
+  s = release(s, target, cut);
   s = out_close(s);
   return suppress_line(skip_line(compact(s)));
 }
 
-function find_match(st: St, p: Pat): (boolean, St) {
+function find_match(own st: St, p: Pat): (boolean, St) {
   let s: St = st;
   while (true) {
     let off: i32 = s.soff;
@@ -869,7 +886,7 @@ function find_match(st: St, p: Pat): (boolean, St) {
   return (false, s);
 }
 
-function run_pattern(st: St, p: Pat, rep: i64): St {
+function run_pattern(own st: St, p: Pat, rep: i64): St {
   if (p.line) {
     return run_line(st, p, rep);
   }
@@ -983,7 +1000,6 @@ pub function main(): i32 {
     }
     i = i + 1;
   }
-  st = out_close(dump_rest(out_open(st)));
-  gnu.finish(st.so);
+  finish_state(out_close(dump_rest(out_open(st))));
   return 0;
 }

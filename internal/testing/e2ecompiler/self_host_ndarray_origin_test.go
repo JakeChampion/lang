@@ -17,7 +17,7 @@ pub function join(a: i32[], b: i32[]): i32[] {
   return out;
 }
 pub function check_shape(shape: i32[]): void {}
-pub function (a: NdArray[T]) map[T, U](f: (T) => U): NdArray[U] {
+pub function (a: NdArray[T]) map[U](f: (T) => U): NdArray[U] {
   let out: U[] = [];
   let i: i32 = a.data.len();
   while (i > 0) {
@@ -26,7 +26,7 @@ pub function (a: NdArray[T]) map[T, U](f: (T) => U): NdArray[U] {
   }
   return from_flat(out, a.shape);
 }
-pub function (a: NdArray[T]) outer[T, U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
+pub function (a: NdArray[T]) outer[U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
   let out: V[] = [];
   let i: i32 = a.data.len();
   while (i > 0) {
@@ -35,7 +35,7 @@ pub function (a: NdArray[T]) outer[T, U, V](b: NdArray[U], f: (T, U) => V): NdAr
   }
   return from_flat(out, join(a.shape, b.shape));
 }
-pub function (a: NdArray[T]) inner[T, U](b: NdArray[T], init: U, mul: (T, T) => U, add: (U, U) => U): NdArray[U] {
+pub function (a: NdArray[T]) inner[U](b: NdArray[T], init: U, mul: (T, T) => U, add: (U, U) => U): NdArray[U] {
   let out = init;
   let i: i32 = 0;
   while (i < a.data.len()) {

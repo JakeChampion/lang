@@ -53,7 +53,7 @@ source plus expected output and any implementation can be run against it
 `fern -check`). So a diagnostic rule with only Go-side coverage is a rule
 the compiler is never checked against.
 
-**85 of 105** codes are pinned by a conformance case. The table
+**87 of 107** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -177,6 +177,8 @@ language does not have. It is deleted.
 | `P004` | At most one `_` placeholder in a piped call | `diag_p004` |
 | `P005` | Input nests deeper than the parser's recursion bound | `diag_p005` |
 | `P006` | `function` in expression position | `diag_p006` |
+| `P007` | a method declares a receiver type parameter again | `diag_p007` |
+| `P008` | type parameters before a function name | `diag_p008` |
 | `W001` | a `todo` stub remains | — |
 | `W002` | an ungoverned dependency reaches a capability | — |
 | `W003` | a literate chunk is defined but never used | — |
@@ -187,7 +189,7 @@ names each stage and a closed reason tag, including guarded reuse and why R7
 declined a map. See [`ARRAY-ALGEBRA.md`](../docs/ARRAY-ALGEBRA.md) for the
 interface.
 
-## The 22 unpinned codes
+## The 20 unpinned codes
 
 These have Go-side coverage but no conformance case. Most resisted the
 mechanical derivation used for the rest — their catalogue examples are

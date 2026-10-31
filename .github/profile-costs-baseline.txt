@@ -1,3 +1,4 @@
+# 2026-10-31: PR #13910, measured by CI job 124561576376.
 # 2026-10-31: PR #13963, measured by CI job 124591987794.
 # 2026-10-31: PR #13897 at 54001e2. CI run 41153255512, perf-x86_64.
 # Record the lane's measured changes after the lifetime and shared-helper repairs.
@@ -59,7 +60,7 @@ profile/arm64-linux/enum_match.safe.bytes	66304
 profile/arm64-linux/enum_match.safe.emit	1316
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64). http_hello links no TLS (#12885); int_loop.minimal.emit +3 instructions.
 profile/arm64-linux/http_hello.diagnostic.bytes	202400
-profile/arm64-linux/http_hello.diagnostic.emit	18066
+profile/arm64-linux/http_hello.diagnostic.emit	18065
 profile/arm64-linux/http_hello.hardened.bytes	140472
 profile/arm64-linux/http_hello.hardened.emit	20980
 profile/arm64-linux/http_hello.minimal.bytes	74936
@@ -150,8 +151,8 @@ profile/x86-64-linux/enum_match.minimal.ir	57825092
 profile/x86-64-linux/enum_match.safe.bytes	8240
 profile/x86-64-linux/enum_match.safe.emit	1099
 profile/x86-64-linux/enum_match.safe.ir	48825092
-profile/x86-64-linux/http_hello.diagnostic.bytes	130576
-profile/x86-64-linux/http_hello.diagnostic.emit	16650
+profile/x86-64-linux/http_hello.diagnostic.bytes	130568
+profile/x86-64-linux/http_hello.diagnostic.emit	16649
 profile/x86-64-linux/http_hello.diagnostic.ir	35644340
 profile/x86-64-linux/http_hello.hardened.bytes	80352
 profile/x86-64-linux/http_hello.hardened.emit	18208
