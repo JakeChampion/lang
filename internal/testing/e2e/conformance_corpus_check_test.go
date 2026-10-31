@@ -34,6 +34,16 @@ func TestCheckCaseFormatRejections(t *testing.T) {
 			want:  `also carries "expected.stdout"`,
 		},
 		{
+			name:  "expected.http without a handler",
+			files: map[string]string{"main.fern": "function main(): i32 { return 0; }", "expected.http": "200\nok"},
+			want:  "declares no `handle(",
+		},
+		{
+			name:  "expected.http without a status line",
+			files: map[string]string{"main.fern": wasiHTTPHandlerCase, "expected.http": "ok\n"},
+			want:  "must start with an HTTP status line",
+		},
+		{
 			name: "both rejection kinds at once",
 			files: map[string]string{
 				"main.fern":               "",
@@ -188,6 +198,8 @@ func TestCheckCaseFormatRejections(t *testing.T) {
 	}
 }
 
+const wasiHTTPHandlerCase = "function handle(req: HttpRequest, plat: platform.Platform): HttpResponse { return http.ok(\"\"); }"
+
 const waiverOK = "waiver: harness-limit\nreason: the runner cannot observe this\n"
 
 func TestCheckCaseFormatAccepts(t *testing.T) {
@@ -205,6 +217,10 @@ func TestCheckCaseFormatAccepts(t *testing.T) {
 				"stdin":           "",
 				"match":           "exact\n",
 			},
+		},
+		{
+			name:  "handler case with expected.http",
+			files: map[string]string{"main.fern": wasiHTTPHandlerCase, "expected.http": "404\nnot here"},
 		},
 		{
 			name: "lowering-error case",

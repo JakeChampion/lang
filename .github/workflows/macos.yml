@@ -400,6 +400,16 @@ jobs:
         run: |
           gotestsum --format standard-verbose -- -run TestArm64Darwin ./internal/testing/e2e/
 
+      # The arm64-darwin leg of the fixture corpus. The Linux legs run in
+      # test-e2e-selfhost.yml. Shard 1 runs it because shard 1 is the shorter.
+      - name: go test (fixture corpus on arm64-darwin)
+        if: "!cancelled() && matrix.shard == 1 && steps.gate.outputs.signed != 'true'"
+        timeout-minutes: 30
+        env:
+          FERN_SELFHOST_FIXTURES: "1"
+        run: |
+          gotestsum --format standard-verbose -- -timeout 25m -run '^TestFernFixturesSelfHostArm64Darwin$' ./internal/testing/e2e/
+
       - name: go test (SELF-HOST arm64-darwin native execution)
         if: "!cancelled() && matrix.shard == 0 && steps.gate.outputs.signed != 'true'"
         # The sibling of the step above for the SELF-HOST arm64-darwin path,
