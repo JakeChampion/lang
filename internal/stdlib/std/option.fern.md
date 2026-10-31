@@ -325,7 +325,7 @@ pub function (o: Option[T]) zip[U](other: Option[U]): Option[(T, U)] {
 ```fern
 <<unzip>>=
 // unzip separates an optional tuple into two options.
-pub function (o: Option[(T, U)]) unzip[T, U](): (Option[T], Option[U]) {
+pub function (o: Option[(T, U)]) unzip(): (Option[T], Option[U]) {
   match (o) {
     Some(p) => {
       return (Some(p.0), Some(p.1));
@@ -413,7 +413,7 @@ pub function (o: Option[T]) ok_or_else[E](f: () => E): Result[T, E] {
 ```fern
 <<transpose>>=
 // transpose exchanges Option and Result, with None as Ok(None).
-pub function (o: Option[Result[T, E]]) transpose[T, E](): Result[Option[T], E] {
+pub function (o: Option[Result[T, E]]) transpose(): Result[Option[T], E] {
   match (o) {
     Some(r) => {
       match (r) {

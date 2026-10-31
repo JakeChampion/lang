@@ -384,7 +384,7 @@ function slack_bytes(): i32 {
   return 4096;
 }
 
-function put_bytes(o: io_buffered.BufWriter, buf: u8[], n: i32): io_buffered.BufWriter {
+function put_bytes(own o: io_buffered.BufWriter, buf: u8[], n: i32): io_buffered.BufWriter {
   if (n == 0) {
     return o;
   }
@@ -423,14 +423,14 @@ function push_str(b: Block, s: string): Block {
   return out;
 }
 
-function drain(o: io_buffered.BufWriter, b: Block): (io_buffered.BufWriter, Block) {
+function drain(own o: io_buffered.BufWriter, b: Block): (io_buffered.BufWriter, Block) {
   if (b.n < block_bytes()) {
     return (o, b);
   }
   return flush_block(o, b);
 }
 
-function flush_block(o: io_buffered.BufWriter, b: Block): (io_buffered.BufWriter, Block) {
+function flush_block(own o: io_buffered.BufWriter, b: Block): (io_buffered.BufWriter, Block) {
   return (put_bytes(o, b.buf, b.n), Block { ...b, n: 0 });
 }
 
@@ -441,8 +441,9 @@ function terminate(b: Block, written: boolean): Block {
   return push_byte(b, 10);
 }
 
-function block_finish(o: io_buffered.BufWriter, b: Block): void {
-  gnu.finish(flush_block(o, b).0);
+function block_finish(own o: io_buffered.BufWriter, b: Block): void {
+  let (w, _) = flush_block(o, b);
+  gnu.finish(w);
 }
 
 function digits_of(v: u64): u8[] {
@@ -702,7 +703,7 @@ function block_step(step: u64): boolean {
   return step <= 10 as u64 && block_span() as u64 % step == 0 as u64;
 }
 
-function digit_seq(o: io_buffered.BufWriter, first: u8[], step: u64, bound: Option[u8[]], prec: i32, width: i32, sep: string, lead: boolean): io_buffered.BufWriter {
+function digit_seq(own o: io_buffered.BufWriter, first: u8[], step: u64, bound: Option[u8[]], prec: i32, width: i32, sep: string, lead: boolean): io_buffered.BufWriter {
   let w: io_buffered.BufWriter = o;
   let h: usize = w.handle();
   let cur: u8[] = first;
@@ -813,7 +814,7 @@ function block_fits(q: u8[], z: i32, qmax: Option[u8[]]): boolean {
   }
 }
 
-function blocks(o: io_buffered.BufWriter, q: u8[], r: i32, step: i32, qmax: Option[u8[]], prec: i32, width: i32, sep: string): (io_buffered.BufWriter, u8[]) {
+function blocks(own o: io_buffered.BufWriter, q: u8[], r: i32, step: i32, qmax: Option[u8[]], prec: i32, width: i32, sep: string): (io_buffered.BufWriter, u8[]) {
   let w: io_buffered.BufWriter = o;
   let k: i32 = block_digits();
   let m: i32 = block_span() / step;
@@ -929,7 +930,7 @@ function patch(own t: u8[], col: i32, rec: i32, m: i32, v: u8): u8[] {
   return t;
 }
 
-function seq_fast(o: io_buffered.BufWriter, first: u8[], step: u64, bound: Option[u8[]], sep: string): io_buffered.BufWriter {
+function seq_fast(own o: io_buffered.BufWriter, first: u8[], step: u64, bound: Option[u8[]], sep: string): io_buffered.BufWriter {
   match (bound) {
     Some(hi) => {
       if (cmp_digits(first, hi) > 0) {
@@ -1036,12 +1037,11 @@ function lower(b: i32): i32 {
   return b;
 }
 
-function print_numbers(o: io_buffered.BufWriter, b: Block, f: Fmt, first: ld.LD, step: ld.LD, last: ld.LD, sep: string): (io_buffered.BufWriter, Block) {
+function print_numbers(own o: io_buffered.BufWriter, b: Block, f: Fmt, first: ld.LD, step: ld.LD, last: ld.LD, sep: string): (io_buffered.BufWriter, Block) {
   if (out_of_range(first, step, last)) {
     return (o, b);
   }
-  let w: io_buffered.BufWriter = o;
-  let out: Block = emit_term(w, b, f, first);
+  let (w, out) = emit_term(o, b, f, first);
   let i: i64 = 1 as i64;
   while (true) {
     let x: ld.LD = f.ldbl.add(first, f.ldbl.mul(f.ldbl.from_i64(i), step));
@@ -1051,14 +1051,14 @@ function print_numbers(o: io_buffered.BufWriter, b: Block, f: Fmt, first: ld.LD,
         prev = f.ldbl.add(first, f.ldbl.mul(f.ldbl.from_i64(i - 1 as i64), step));
       }
       if (prints_as_last(f, x, prev, last)) {
-        out = push_str(out, sep);
-        out = emit_term(w, out, f, x);
+        let last_term: (io_buffered.BufWriter, Block) = emit_term(w, push_str(out, sep), f, x);
+        w = last_term.0;
+        out = last_term.1;
       }
       return (w, terminate(out, true));
     }
-    out = push_str(out, sep);
-    out = emit_term(w, out, f, x);
-    let d: (io_buffered.BufWriter, Block) = drain(w, out);
+    let term: (io_buffered.BufWriter, Block) = emit_term(w, push_str(out, sep), f, x);
+    let d: (io_buffered.BufWriter, Block) = drain(term.0, term.1);
     w = d.0;
     out = d.1;
     i = i + 1 as i64;
@@ -1099,20 +1099,21 @@ function out_of_range(x: ld.LD, step: ld.LD, last: ld.LD): boolean {
   return last.cmp(x) < 0;
 }
 
-function emit_term(o: io_buffered.BufWriter, b: Block, f: Fmt, v: ld.LD): Block {
+function emit_term(own o: io_buffered.BufWriter, b: Block, f: Fmt, v: ld.LD): (io_buffered.BufWriter, Block) {
   let out: Block = push_str(b, f.pre);
   match (render(f.ldbl, f.spec, v)) {
     Some(s) => {
       out = push_str(out, s);
     },
     None => {
-      write_overflow(flush_block(o, out).0);
+      let (w, _) = flush_block(o, out);
+      write_overflow(w);
     }
   }
-  return push_str(out, f.post);
+  return (o, push_str(out, f.post));
 }
 
-function write_overflow(o: io_buffered.BufWriter): void {
+function write_overflow(own o: io_buffered.BufWriter): void {
   gnu.finish(o);
   gnu.error("write error: " + gnu.eoverflow_text());
   exit(1);
@@ -1209,7 +1210,7 @@ function zero_term_neg(f: ld.Format, first: ld.LD, step: ld.LD, fi: i64, si: i64
   return f.add(first, f.mul(f.from_i64(k), step)).neg;
 }
 
-function dec_seq(o: io_buffered.BufWriter, first: i64, step: i64, last: i64, prec: i32, width: i32, sep: string, zero_neg: boolean): io_buffered.BufWriter {
+function dec_seq(own o: io_buffered.BufWriter, first: i64, step: i64, last: i64, prec: i32, width: i32, sep: string, zero_neg: boolean): io_buffered.BufWriter {
   if (step > 0 as i64 && first > last || step < 0 as i64 && first < last) {
     return o;
   }
@@ -1239,7 +1240,7 @@ function dec_seq(o: io_buffered.BufWriter, first: i64, step: i64, last: i64, pre
   return gnu.put(w, "\n");
 }
 
-function dec_terms(o: io_buffered.BufWriter, first: i64, last: i64, step: i64, prec: i32, width: i32, sep: string, zero_neg: boolean, lead: boolean): io_buffered.BufWriter {
+function dec_terms(own o: io_buffered.BufWriter, first: i64, last: i64, step: i64, prec: i32, width: i32, sep: string, zero_neg: boolean, lead: boolean): io_buffered.BufWriter {
   let w: io_buffered.BufWriter = o;
   let h: usize = w.handle();
   let count: i64 = (last - first) / step + 1 as i64;

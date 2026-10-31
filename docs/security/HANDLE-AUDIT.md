@@ -20,7 +20,7 @@ A read after the close, and a use after a transfer to an `own` parameter, are re
 A built-in handle is a descriptor.
 `Reader`, `Writer`, and `Dir` are handle types in the typed IR (`t_handle` in `compiler/semsource.fern`).
 The reference-count lowering treats them as scalars (`semtypes.is_handle` in `compiler/ssarc.fern`).
-Each one exposes its descriptor as the field `fd`, and `close` borrows its receiver.
+Each one exposes its descriptor as the field `fd`, and `close` consumes its receiver.
 
 The socket API (`tcp_listen`, `tcp_accept`, `tcp_close`, and the other `tcp_*` builtins) takes and returns a plain `i32`.
 A `resource R` declaration is the WIT import surface only.
@@ -48,15 +48,11 @@ Both checkers report the same code at the same position.
 | Pattern | Case |
 |---|---|
 | A close at a local's last use, a transfer to an `own` sink, and an `own` parameter that one branch closes and the other branch stores | `handle_transfer_closes_once` |
-| A second close of a built-in `Reader` with no open between the closes | `io_error_other_double_close_reader` |
 
-The second case answers `Other("", "Bad file descriptor", 9)` on the Go oracle, the self-host interpreter, x86-64, and arm64.
-The Wasm runner preopens no directory, so the case carries a harness-limit waiver.
+## The consuming built-in close
 
-## Divergence left for a language decision
-
-Both checkers accept a program that uses a built-in handle after its close.
-The engines then disagree.
+Before 2026-10-29, both checkers accepted a program that used a built-in handle after its close.
+The engines then disagreed.
 
 | Probe | Go oracle | Self-host interpreter, x86-64, arm64 |
 |---|---|---|
@@ -70,9 +66,24 @@ These two probes are the use-after-close and double-close hazards that SEC-008 n
 Safe code reaches them today through `Reader`, `Writer`, `Dir`, and every `tcp_*` descriptor.
 
 The accepted design in `docs/SAFETY-CONTRACT.md` requires a refusal when a resource handle escapes after close or ownership transfer.
-The owner chose the direct implementation on 2026-10-29: the built-in `close` gets a consuming receiver in both checkers.
-The user-defined cases above show the discipline that follows.
-That discipline needed two language rules first, and both checkers now carry them.
+The owner chose the direct implementation on 2026-10-29: the built-in `close` consumes its receiver in both checkers.
+Both probes above are now refused at compile time for `Reader`, `Writer`, and `Dir`.
+The `tcp_*` descriptors are plain `i32` values and still reach the hazard.
+
+| Pattern | Code | Case |
+|---|---|---|
+| A second close of a built-in `Reader` | `E050` | `diag_e050_builtin_reader_closed_twice` |
+| A write to a built-in `Writer` after its close | `E051` | `diag_e051_builtin_writer_written_after_close` |
+| A function that returns `Some(h)` of a borrowed `h`, its result passed to an `own` parameter | `E051` | `diag_e051_variant_result_borrows_its_payload` |
+| A local initialised from a call that returns its borrowed argument, passed to an `own` parameter | `E051` | `diag_e051_local_from_borrowing_call` |
+| A local initialised from a call whose result cannot hold a handle, passed to an `own` parameter | accepted | `local_from_handle_free_call_is_fresh` |
+
+The two `E051` rows above the last row close two holes that the consuming close exposed.
+A variant constructor carries its payload, so its result borrows what the payload borrows.
+A local initialised from a plain call is fresh only when the call's result borrows nothing at that site.
+That rule applies only to a result that can hold a handle.
+A number, a string, or an array of them cannot hold one, so two names for such a value cannot close a handle twice.
+A match on a call follows the same rule as a local initialised from that call.
 
 ## The defer rule and the field-move rule
 
@@ -105,6 +116,13 @@ The array is a fresh local or a field path at its last use, an `own` parameter, 
 A for-each over a borrowed array lends each element.
 A loop deeper than the binding of an owner runs a consuming call again on the same value, so the call is refused there.
 
+A call to a function that never returns ends the path.
+A move on that path does not reach a later round of a loop.
+It also does not reach a join after a branch.
+A name a match arm binds is declared afresh each round of the loop that holds the match.
+A call that moves a field can read other fields of the same owner in its other arguments.
+The move takes only the one field.
+
 | Pattern | Code | Case |
 |---|---|---|
 | A deferred consuming close, then a read of the handle | accepted | `handle_defer_closes_at_exit` |
@@ -125,25 +143,25 @@ A loop deeper than the binding of an owner runs a consuming call again on the sa
 | A match that is not the local's last use, with the payload closed | `E051` | `diag_e051_handle_matched_after_payload_closed` |
 | A field of a payload bound from a borrowed scrutinee closed | `E051` | `diag_e051_handle_payload_field_of_borrowed` |
 | An element of a borrowed array closed in a for-each | `E051` | `diag_e051_handle_elements_closed_from_borrowed_array` |
+| A close in a loop by a call to a function that never returns, and a read after it on another path | accepted | `handle_consumed_before_a_call_that_never_returns` |
+| A payload taken in a loop from a field of an unpacked local | accepted | `handle_payload_closes_in_loop_from_unpack` |
+| A field closed by a call that reads other fields of its owner | accepted | `handle_field_closes_beside_other_field_reads` |
+| A field moved by a call that reads the same field in another argument | `E051` | `diag_e051_handle_field_moved_beside_same_field` |
+| An own parameter closed each round of a loop | `E050` | `diag_e050_owned_handle_consumed_inside_loop` |
 
 Both checkers report the same code at the same position for each row.
 
-## The shapes the standard library still uses
+## How the code that closes handles changed
 
-The consuming built-in close refuses these shapes until they change:
-
-| Shape | Sites | Change |
+| Shape | Change | Sites |
 |---|---|---|
-| A close of a payload matched out of a stored array element | `__tail_drop` in `internal/stdlib/std/serve.fern.md` | take the element out of the array first |
-| A close of each end of a `Pipe` held in a borrowed parameter | `__snapshot_pipe_close` and the supervisor spawn in `serve.fern.md`, `tests/stdlib/async_combinators_test.fern` | an `own` parameter |
-| A close of a field of a borrowed receiver | `BufWriter.close` in `internal/stdlib/std/io_buffered.fern.md` | an `own` receiver |
-| A close of a borrowed `Reader` parameter that another branch stores | `__range_tail` in `serve.fern.md` | an `own` parameter |
+| A helper that closes a handle it was given | the parameter is `own` | the range helpers and the snapshot pipe helpers in `std/serve`, `BufWriter.close`, and the coreutils reader, writer and output helpers |
+| A close of a handle stored in an array | `swap_at` takes it out first | `__tail_drop` and `__tail_advance` in `std/serve`, du, paste, split, sort |
+| A struct whose handle field closes while the struct stays in use | the update that replaces the field comes first, then the close | od, tail, split, csplit |
+| A reader variable that a loop reopens | the variable takes the standard-input placeholder after its close | cut, expand, fold, unexpand, tail |
 
-The rules above accept a close through `defer` (`examples/wasm/wc.fern`) and a close of each end of a `Pipe` held in a fresh local.
-They also accept a close on a loop path that leaves the loop.
-A payload a match or a for-each takes can close, and so can an element `array.swap_at` takes out of an array it owns.
 A handle an `open_*` builtin returns borrows nothing from its path argument, so it is a fresh local.
-The built-in signatures change in the next step, with those sites.
+A directory opened under another directory (`Dir.open_dir`) is fresh the same way.
 
 ## Commands
 

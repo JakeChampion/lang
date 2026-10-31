@@ -390,7 +390,9 @@ function run_parallel(files: string[], delims: u8[], term: i32): i32 {
           live = live.with(i, false);
           open_count = open_count - 1;
           if (!stdins[i]) {
-            rs[k].close();
+            let (done, rest) = rs.swap_at(k, stdin());
+            rs = rest;
+            done.close();
           }
         }
         if (i + 1 == files.len()) {

@@ -269,6 +269,7 @@ function run(files: string[], width: u64, mode: i32, break_spaces: boolean): i32
           } else {
             if (!is_stdin) {
               r.close();
+              r = stdin();
             }
             have_reader = false;
             if (buf_len(carry) > 0) {

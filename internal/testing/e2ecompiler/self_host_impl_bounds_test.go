@@ -29,7 +29,7 @@ struct Plain { n: i32 }
 impl[T: Ord] Boxy for Box[T] {
     function rank(self: Self, o: T): i32 { return 0; }
     function make(v: T): Box[T] { return Box { v: v }; }
-    function [U: Show] tag(self: Self, u: U): string { return "t"; }
+    function tag[U: Show](self: Self, u: U): string { return "t"; }
 }
 
 impl[T: Ord] Show for Box[T] {

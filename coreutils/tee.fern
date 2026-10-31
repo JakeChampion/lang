@@ -111,13 +111,11 @@ function put(c: Copy, chunk: u8[]): Copy {
   return s;
 }
 
-function close_files(c: Copy): void {
-  let i: i32 = 0;
-  while (i < c.outs.len()) {
-    if (c.outs[i].is_file) {
-      c.outs[i].w.close();
+function close_files(own c: Copy): void {
+  for o in c.outs {
+    if (o.is_file) {
+      o.w.close();
     }
-    i = i + 1;
   }
 }
 
@@ -211,8 +209,9 @@ pub function main(): i32 {
       }
     }
   }
+  let ok: boolean = c.ok;
   close_files(c);
-  if (!c.ok) {
+  if (!ok) {
     return 1;
   }
   return 0;

@@ -4282,8 +4282,8 @@ Two gaps surfaced (both held out of this test, x86-IR-only for now):
 
 ### 2026-06-13 — `@derive(Json)` array fields via the self-host IR path ([#2766](https://github.com/JakeChampion/lang/issues/2766))
 
-Added the element-polymorphic array serialiser `pub function (xs: T[])
-to_json[T: Json](): string` to `std/json`, so a `T[]` (and a `T[]` struct
+Added the element-polymorphic array serialiser `pub function (xs: (T: Json)[])
+to_json(): string` to `std/json`, so a `T[]` (and a `T[]` struct
 field) renders as a JSON array. The native compiler already supported it via
 monomorphisation (#2774); this closes the **self-host** side.
 

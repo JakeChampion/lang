@@ -582,7 +582,7 @@ function link_into(cfg: Cfg, operands: string[], count: i32, dir: string, o: io_
   return LinkOut { status: status, out: w };
 }
 
-function finish(o: io_buffered.BufWriter, status: i32): i32 {
+function finish(own o: io_buffered.BufWriter, status: i32): i32 {
   gnu.finish(o);
   return status;
 }

@@ -23,7 +23,8 @@ function test_temp_dir_returns_abs_path(): test.TestOutcome {
 }
 
 function test_temp_file_round_trip(): test.TestOutcome {
-  match (io.temp_file("fs-ops")) {
+  let made: Result[io.TempFile, IoError] = io.temp_file("fs-ops");
+  match (made) {
     Ok(t) => {
       let path: string = t.path;
       match (t.file.write("abc")) {

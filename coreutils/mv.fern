@@ -763,7 +763,7 @@ function move_into(cfg: Cfg, operands: string[], count: i32, dir: string, o: io_
   return MoveOut { status: status, out: w };
 }
 
-function finish(r: MoveOut): i32 {
+function finish(own r: MoveOut): i32 {
   gnu.finish(r.out);
   return r.status;
 }

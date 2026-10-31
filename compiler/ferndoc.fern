@@ -334,10 +334,13 @@ function doc_block(doc: string): string {
 
 function render_func(fd: parser.FuncDecl, doc: string): string {
   let out: string = "## `" + fd.name + "`\n\n```fern\npub function ";
+  let tps: string[] = fd.type_params;
   if (fd.receiver_type.len() > 0) {
-    out = out + "(" + fd.receiver_name + ": " + type_str(fd.receiver_type) + ") ";
+    let rp: parser.RecvPrint = parser.receiver_with_bounds(fd);
+    tps = rp.names;
+    out = out + "(" + fd.receiver_name + ": " + rp.recv + ") ";
   }
-  out = out + fd.name + join_type_params(fd.type_params) + "(";
+  out = out + fd.name + join_type_params(tps) + "(";
   let i: i32 = 0;
   while (i < fd.params.len()) {
     if (i > 0) {

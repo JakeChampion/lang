@@ -53,6 +53,10 @@ func TestGrammarDerivesConstruct(t *testing.T) {
 		{"match qualified empty body", `function f(): i32 { match (record.value) {} return 0; }`},
 		{"match struct literal source", `function f(): i32 { match (Box {}) { _ => { return 1; } } return 0; }`},
 		{"struct literal outside header", `function f(): i32 { let value = Box {}; return 0; }`},
+		{"receiver bound on a type argument", `function (m: OrdMap[K: cmp.Ord, V]) get(k: K): V { return m.v; }`},
+		{"receiver bounds joined with plus", `function (b: Box[T: cmp.Ord + Show]) get(): T { return b.v; }`},
+		{"receiver bound on an array element", `function (xs: (T: num.Num)[]) total(): T { return xs[0]; }`},
+		{"receiver bound on a slice element", `function (xs: [T: Eq]) first(): T { return xs[0]; }`},
 		{"explicit type args", `function main(): i32 { return pick[i32](xs, 0); }`},
 		{"type args, trailing comma", `function main(): i32 { return pick[i32,](xs, 0,); }`},
 

@@ -37,7 +37,7 @@ function main(): i32 {
     }
   }
   match (io.read_line(r)) { Ok(None()) => {}, _ => { return 1; } }
-  match (r.close()) { Err(_) => { return 3; }, Ok(_) => {} }
+  unsafe { match (r.close_unchecked()) { Err(_) => { return 3; }, Ok(_) => {} } }
   match (io.read_line(r)) { Err(_) => {}, _ => { return 4; } }
   print("retained");
   emit(held);

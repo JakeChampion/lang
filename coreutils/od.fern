@@ -1151,7 +1151,7 @@ function read_size(): i32 {
   return 65536;
 }
 
-function src_ensure(s0: Src): Src {
+function src_ensure(own s0: Src): Src {
   let s: Src = s0;
   while (!s.open && s.at < s.files.len()) {
     let name: string = s.files[s.at];
@@ -1173,14 +1173,15 @@ function src_ensure(s0: Src): Src {
   return s;
 }
 
-function src_close(s: Src): Src {
+function src_close(own s: Src): Src {
+  let closed: Src = Src { ...s, r: stdin(), open: false };
   if (s.open && !s.is_stdin) {
     s.r.close();
   }
-  return Src { ...s, open: false };
+  return closed;
 }
 
-function skip_buffered(s0: Src, left0: u64): (u64, Src) {
+function skip_buffered(own s0: Src, left0: u64): (u64, Src) {
   let s: Src = s0;
   let left: u64 = left0;
   let have: u64 = (s.buf.len() - s.pos) as u64;
@@ -1201,7 +1202,7 @@ function copy_bytes(bytes: u8[], lo: i32, hi: i32): u8[] {
   return out;
 }
 
-function src_read(s0: Src, want: i32): (u8[], Src) {
+function src_read(own s0: Src, want: i32): (u8[], Src) {
   let s: Src = s0;
   let held: usize = 0 as usize;
   let got: i32 = 0;
@@ -1244,7 +1245,9 @@ function src_read(s0: Src, want: i32): (u8[], Src) {
       },
       Err(e) => {
         gnu.error(gnu.quotef(s.files[s.at - 1]) + ": " + gnu.io_error_text(e));
-        s = Src { ...src_close(s), fails: s.fails + 1 };
+        let fails: i32 = s.fails + 1;
+        let closed: Src = src_close(s);
+        s = Src { ...closed, fails: fails };
       }
     }
   }
@@ -1256,7 +1259,7 @@ function src_read(s0: Src, want: i32): (u8[], Src) {
   return (out, s);
 }
 
-function skip_input(s0: Src, n: u64): Src {
+function skip_input(own s0: Src, n: u64): Src {
   let s: Src = s0;
   let left: u64 = n;
   while (left > 0 as u64) {
@@ -1275,7 +1278,7 @@ function skip_input(s0: Src, n: u64): Src {
   return s;
 }
 
-function skip_in_file(s0: Src, left0: u64): (u64, Src) {
+function skip_in_file(own s0: Src, left0: u64): (u64, Src) {
   let b: (u64, Src) = skip_buffered(s0, left0);
   let s: Src = b.1;
   let left: u64 = b.0;
@@ -1336,7 +1339,7 @@ function skip_in_file(s0: Src, left0: u64): (u64, Src) {
   return (0 as u64, s);
 }
 
-function dump(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io_buffered.BufWriter, Src) {
+function dump(own w0: io_buffered.BufWriter, t: Tables, s: Settings, own src0: Src): (io_buffered.BufWriter, Src) {
   let w: io_buffered.BufWriter = w0;
   let h: usize = w.handle();
   let src: Src = src0;
@@ -1423,7 +1426,14 @@ function pad_block(chunk: u8[], at: i32, n: i32): u8[] {
   return out;
 }
 
-function dump_strings(w0: io_buffered.BufWriter, t: Tables, s: Settings, src0: Src): (io_buffered.BufWriter, Src) {
+function dump_any(strings: boolean, own w: io_buffered.BufWriter, t: Tables, s: Settings, own src: Src): (io_buffered.BufWriter, Src) {
+  if (strings) {
+    return dump_strings(w, t, s, src);
+  }
+  return dump(w, t, s, src);
+}
+
+function dump_strings(own w0: io_buffered.BufWriter, t: Tables, s: Settings, own src0: Src): (io_buffered.BufWriter, Src) {
   let w: io_buffered.BufWriter = w0;
   let h: usize = w.handle();
   let src: Src = src0;
@@ -1823,18 +1833,9 @@ pub function main(): i32 {
     src = skip_input(src, skip);
   }
   let t: Tables = tables_new();
-  let w: io_buffered.BufWriter = gnu.out_with(65536);
-  if (strings) {
-    let ds: (io_buffered.BufWriter, Src) = dump_strings(w, t, s, src);
-    w = ds.0;
-    src = ds.1;
-  } else {
-    let dd: (io_buffered.BufWriter, Src) = dump(w, t, s, src);
-    w = dd.0;
-    src = dd.1;
-  }
-  gnu.finish(w);
-  if (src.fails > 0) {
+  let (out, rest) = dump_any(strings, gnu.out_with(65536), t, s, src);
+  gnu.finish(out);
+  if (rest.fails > 0) {
     return 1;
   }
   return 0;

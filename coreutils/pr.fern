@@ -316,6 +316,12 @@ function src_closed(): Src {
   return Src { r: stdin(), name: "", is_stdin: false, open: false, buf: [], pos: 0, eof: true, fatal: false, nlat: 0 - 1, ffat: 0 - 1, mtime: 0 as i64, mnsec: 0 as i64 };
 }
 
+function src_release(own s: Src): void {
+  if (!s.is_stdin && s.open) {
+    s.r.close();
+  }
+}
+
 function src_fill(s: Src): Src {
   match (s.r.read_chunk_bytes(read_size())) {
     Ok(chunk) => {
@@ -1082,9 +1088,7 @@ function run_serial(c: Cfg, name: string, o0: io_buffered.BufWriter, ok0: boolea
       break;
     }
   }
-  if (!s.is_stdin && s.open) {
-    s.r.close();
-  }
+  src_release(s);
   if (!fatal) {
     if (eof && boundary_end && c.first_page > pages) {
       pages = pages + 1 as u64;
@@ -1245,12 +1249,8 @@ function run_merge(c: Cfg, names: string[], o0: io_buffered.BufWriter, ok0: bool
     line_no = wrap32(line_no + filled as i64);
     page = page + 1 as u64;
   }
-  let q: i32 = 0;
-  while (q < srcs.len()) {
-    if (!srcs[q].is_stdin && srcs[q].open) {
-      srcs[q].r.close();
-    }
-    q = q + 1;
+  for s in srcs {
+    src_release(s);
   }
   if (!fatal) {
     o = page_warning(c, pages, o);
