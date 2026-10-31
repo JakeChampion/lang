@@ -116,6 +116,15 @@ type parser struct {
 	useN            int
 	nestN           int
 	depth           int
+	recvParams      *recvTypeParams
+}
+
+// recvTypeParams holds the bounds a receiver type writes on its type
+// parameters: K in `function (m: OrdMap[K: cmp.Ord, V]) insert(...)`.
+type recvTypeParams struct {
+	names     []string
+	bounds    map[string][]string
+	boundArgs map[string][][]ast.Type
 }
 
 const maxNestDepth = 5000
@@ -1424,6 +1433,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		constParams, p.constParams = p.constParams, nil
 	}
 	var receiver *ast.Param
+	var recvParams recvTypeParams
 	if p.match(lexer.Punct, "(") && p.looksLikeReceiverClause() {
 		p.advance()
 		rOwn := false
@@ -1438,7 +1448,9 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		if _, err := p.expect(lexer.Punct, ":"); err != nil {
 			return nil, err
 		}
+		p.recvParams = &recvParams
 		rtype, err := p.parseType()
+		p.recvParams = nil
 		if err != nil {
 			return nil, err
 		}
@@ -1458,6 +1470,16 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 			return nil, err
 		}
 		constParams, p.constParams = p.constParams, nil
+	}
+	if len(recvParams.names) > 0 {
+		for _, tp := range typeParams {
+			if _, dup := recvParams.bounds[tp]; dup {
+				return nil, p.errorfCode(funcNamePos, "P001", "type parameter %s has a bound in the receiver, so the method must not declare it again", tp)
+			}
+		}
+		typeParams = append(recvParams.names, typeParams...)
+		bounds = mergeBounds(recvParams.bounds, bounds)
+		boundArgs = mergeBounds(recvParams.boundArgs, boundArgs)
 	}
 	if _, err := p.expect(lexer.Punct, "("); err != nil {
 		return nil, err
@@ -1564,6 +1586,20 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		Body:              body,
 		Receiver:          receiver,
 	}, nil
+}
+
+func mergeBounds[V any](recv, own map[string]V) map[string]V {
+	if len(recv) == 0 {
+		return own
+	}
+	out := make(map[string]V, len(recv)+len(own))
+	for k, v := range recv {
+		out[k] = v
+	}
+	for k, v := range own {
+		out[k] = v
+	}
+	return out
 }
 
 func (p *parser) looksLikeReceiverClause() bool {
@@ -1889,11 +1925,59 @@ func (p *parser) parseType() (ast.Type, error) {
 	return p.parseTypeArrow(true)
 }
 
+// atRecvTypeParam reports a bounded type parameter in a receiver type: a
+// name and a colon that open a type argument, a slice element or a group.
+func (p *parser) atRecvTypeParam() bool {
+	if p.i == 0 || p.peek().Kind != lexer.Ident {
+		return false
+	}
+	prev, next := p.tokens[p.i-1], p.peekAt(1)
+	if prev.Kind != lexer.Punct || (prev.Text != "[" && prev.Text != "(" && prev.Text != ",") {
+		return false
+	}
+	return next.Kind == lexer.Punct && next.Text == ":"
+}
+
+func (p *parser) parseRecvTypeParam() (ast.Type, error) {
+	nameTok := p.advance()
+	p.typeRefs = append(p.typeRefs, ast.TypeRef{P: nameTok.Pos, Name: nameTok.Text})
+	rp := p.recvParams
+	p.recvParams = nil
+	bs, ba, err := p.parseOptBoundsWithArgs()
+	p.recvParams = rp
+	if err != nil {
+		return nil, err
+	}
+	for _, n := range rp.names {
+		if n == nameTok.Text {
+			return nil, p.errorfCode(nameTok.Pos, "P001", "type parameter %s has a bound at two places in the receiver; write all its bounds at one place: %s: A + B", n, n)
+		}
+	}
+	rp.names = append(rp.names, nameTok.Text)
+	if rp.bounds == nil {
+		rp.bounds = map[string][]string{}
+	}
+	rp.bounds[nameTok.Text] = bs
+	for _, a := range ba {
+		if len(a) > 0 {
+			if rp.boundArgs == nil {
+				rp.boundArgs = map[string][][]ast.Type{}
+			}
+			rp.boundArgs[nameTok.Text] = ba
+			break
+		}
+	}
+	return ast.StructType{Name: nameTok.Text}, nil
+}
+
 func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 	if err := p.enter(); err != nil {
 		return nil, err
 	}
 	defer p.leave()
+	if p.recvParams != nil && p.atRecvTypeParam() {
+		return p.parseRecvTypeParam()
+	}
 	t := p.peek()
 	var base ast.Type
 	switch {
