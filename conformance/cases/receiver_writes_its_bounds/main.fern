@@ -1,0 +1,60 @@
+import "core/cmp";
+
+// The receiver introduces its type parameters. A bound on one is written in
+// the receiver: on a type argument, on a slice element, or in a group.
+
+struct Pair[A, B] { a: A, b: B }
+
+function (p: Pair[A: cmp.Ord, B]) left_or(o: A): A {
+    if (p.a.cmp(o) > 0) {
+        return p.a;
+    }
+    return o;
+}
+
+function (p: Pair[A, B: cmp.Ord]) right_or(o: B): B {
+    if (p.b.cmp(o) > 0) {
+        return p.b;
+    }
+    return o;
+}
+
+function (xs: (T: cmp.Ord)[]) peak(): T {
+    let best: T = xs[0];
+    for x in xs {
+        if (x.cmp(best) > 0) {
+            best = x;
+        }
+    }
+    return best;
+}
+
+function (xs: [T: cmp.Ord]) low(): T {
+    let best: T = xs[0];
+    for x in xs {
+        if (x.cmp(best) < 0) {
+            best = x;
+        }
+    }
+    return best;
+}
+
+// A method still declares the type parameters that only it uses.
+function (p: Pair[A: cmp.Ord, B]) tag[K](k: K): (A, K) {
+    return (p.a, k);
+}
+
+function main(): i32 {
+    let p: Pair[i32, string] = Pair { a: 3, b: "m" };
+    print(p.left_or(1).to_string());
+    print(p.left_or(8).to_string());
+    print(p.right_or("z"));
+    let xs: i32[] = [4, 9, 2];
+    print(xs.peak().to_string());
+    print(xs[0:3].low().to_string());
+    let words: string[] = ["pear", "apple", "fig"];
+    print(words.peak());
+    let (a, k) = p.tag("key");
+    print(a.to_string() + " " + k);
+    return 0;
+}
