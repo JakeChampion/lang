@@ -14528,8 +14528,11 @@ pub function monomorphize_structs(mod: Module): Module {
   return ms_module(mod);
 }
 
+// The last pass: a generic enum still deferred here keeps no free template
+// that no generic method refers to.
 pub function monomorphize_enum_structs(mod: Module): Module {
-  return ms_module(mod);
+  let done: Module = ms_module(mod);
+  return Module { ...done, funcs: drop_bg_templates(done.funcs, genum_bg_refs(done.funcs, done.enums)) };
 }
 
 function ms_deferred_enums(mod: Module, gstructs: StructDecl[]): string[] {

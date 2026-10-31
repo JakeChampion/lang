@@ -1,0 +1,19 @@
+struct C[T] { f: T }
+
+enum S[T] { Pk(C[T]) }
+
+function call(f: () => i32): i32 {
+  return f();
+}
+
+function g[P](p: P, n: i32): i32 {
+  return call((): i32 => {
+    let q: P = p;
+    return n;
+  });
+}
+
+function main(): i32 {
+  print(g("x", 4).to_string());
+  return 0;
+}
