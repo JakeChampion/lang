@@ -53,6 +53,17 @@ func TestSelfHostLockParseParity(t *testing.T) {
 		{"duplicate-name-last-wins", valid + header + fields + "url = \"https://example.invalid/new\"\n"},
 		{"duplicate-field-last-wins", header + fields + "path = \"old\"\npath = \"new\"\n"},
 		{"incomplete-duplicate", valid + header + "name = \"lib\"\n"},
+		{"index-serial", "index_serial = 42\n" + valid},
+		{"index-serial-zero", "index_serial = 0 # first\n" + valid},
+		{"index-serial-largest", "index_serial = 999999999999999999\n" + valid},
+		{"index-serial-only", "index_serial = 7\n"},
+		{"index-serial-leading-zero", "index_serial = 07\n" + valid},
+		{"index-serial-quoted", "index_serial = \"7\"\n" + valid},
+		{"index-serial-negative", "index_serial = -7\n" + valid},
+		{"index-serial-too-long", "index_serial = 1000000000000000000\n" + valid},
+		{"index-serial-empty", "index_serial =\n" + valid},
+		{"index-serial-twice", "index_serial = 1\nindex_serial = 2\n" + valid},
+		{"index-serial-in-entry", valid + "index_serial = 7\n"},
 	}
 	var large strings.Builder
 	for i := range 200 {
@@ -70,9 +81,9 @@ import "./util";
 function after(a: fern_toml.LockEntry, b: fern_toml.LockEntry): boolean { return util.str_less(b.name, a.name); }
 function render(src: string): string {
   match (fern_toml.parse_lock(src)) {
-    Ok(entries) => {
-      let out: string = "OK";
-      for e in util.sorted_by(entries, after) {
+    Ok(lock) => {
+      let out: string = "OK|" + docsummary.quote(lock.index_serial);
+      for e in util.sorted_by(lock.entries, after) {
         out = out + "|" + docsummary.quote(e.name) + "|" + docsummary.quote(e.version) + "|" + docsummary.quote(e.path) + "|" + docsummary.quote(e.url) + "|" + docsummary.quote(e.hash);
       }
       return out;
@@ -91,18 +102,18 @@ function main(): i32 {
 		if err := os.WriteFile(filepath.Join(fixture, mvs.LockFileName), []byte(tc.source), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		entries, err := mvs.ReadLock(fixture)
+		lock, err := mvs.ReadLock(fixture)
 		if err != nil {
 			want[i] = "ERR|" + strings.TrimPrefix(err.Error(), fixture+string(filepath.Separator))
 		} else {
-			want[i] = "OK"
+			want[i] = "OK|" + strconv.Quote(lock.IndexSerial)
 			var names []string
-			for name := range entries {
+			for name := range lock.Packages {
 				names = append(names, name)
 			}
 			sort.Strings(names)
 			for _, name := range names {
-				e := entries[name]
+				e := lock.Packages[name]
 				want[i] += "|" + strconv.Quote(name) + "|" + strconv.Quote(e.Version.String()) + "|" + strconv.Quote(e.Source.Path) + "|" + strconv.Quote(e.Source.URL) + "|" + strconv.Quote(e.Source.Hash)
 			}
 		}

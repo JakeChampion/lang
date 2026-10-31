@@ -379,7 +379,7 @@ pub function all_runtime_need_roots(): string[] {
     "writer_write", "write_some", "splice_forever", "writer_truncate", "subprocess", "crc32_cksum", "crc32_ieee", "sum_bytes", "utf8_blocks", "aes_gcm", "sha256", "sha1",
     "alloc_bytes", "arr_push_u8", "buf_u8", "buf_take_bytes", "buf_take_bytes_u8", "str_bytes_u8", "str_from_bytes_u8", "arr_slice_u8",
     "str_from_bytes_range", "str_from_bytes_range_u8",
-    "buf_push_bytes_range", "buf_push_bytes_range_u8", "buf_text",
+    "buf_push_bytes_range", "buf_push_bytes_range_u8", "buf_text", "buf_decimal",
     "buf_bytes", "buf_bytes_u8", "random_bytes_u8", "read_file_bytes_u8", "tcp_recv_into_u8", "tcp_addr_into_u8", "tcp_ktls_u8", "ring_recv_u8", "ring_send_zc_u8", "tcp_listen_with_u8",
     "udp_bind_u8", "udp_bind_with_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8",
     "hostname", "environ",

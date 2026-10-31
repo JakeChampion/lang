@@ -5381,7 +5381,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("tcp_socket_ctl");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_tcp_socket_ctl\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag == 353 || o.kind_tag == 355 || o.kind_tag == 387 || o.kind_tag >= 434 && o.kind_tag <= 439 || o.kind_tag == 442 || o.kind_tag == 485) {
+  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag == 353 || o.kind_tag == 355 || o.kind_tag == 387 || o.kind_tag >= 434 && o.kind_tag <= 439 || o.kind_tag == 442 || o.kind_tag == 486) {
     let udp_name: string = ir.kind_name(o.kind_tag) + asmcore.packed_suffix(ir.is_packed(o));
     let udp_argc: i32 = ir.op_pops(o);
     let udp_regs: string[] = ["x0", "x1", "x2", "x3"];
@@ -5631,7 +5631,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("writer_truncate");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_writer_truncate\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 485 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
     s = emit_arm64_op_buf(o, s);
   } else if (o.kind_tag == 181) {
     s = s.need("sleep_ms");
@@ -5847,6 +5847,8 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
     s = s.need("buf_push_bytes_range");
   } else if (sym == "__fern_buf_push_bytes_range_u8") {
     s = s.need("buf_push_bytes_range_u8");
+  } else if (sym == "__fern_buf_push_decimal") {
+    s = s.need("buf_decimal");
   } else if (util.str_has_prefix(sym, "__fern_buf_push_bytes_")) {
     if (util.str_has_suffix(sym, "_u8")) {
       s = s.need("buf_bytes_u8");
@@ -5969,6 +5971,9 @@ function emit_arm64_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   }
   if (o.kind_tag == 351) {
     s = s.need("buf_push_bytes_range" + asmcore.packed_suffix(ir.is_packed(o)));
+  }
+  if (o.kind_tag == 485) {
+    s = s.need("buf_decimal");
   }
   s = s.need("heap");
   s = s.need("buf");
@@ -7753,6 +7758,82 @@ function emit_buf_mapped_neon(s: asmcore.EmitState, lm: string): asmcore.EmitSta
   return s.write("    cbz x2, " + lm + "_len\n");
 }
 
+// __fern_buf_push_decimal(h, n) appends the decimal digits of the u64 n. It
+// writes them back to front into a stack scratch, two at a time from a table
+// of digit pairs, and divides by 100 with a multiply.
+function emit_buf_push_decimal(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write(".globl __fern_buf_push_decimal\n");
+  s = s.write(".type __fern_buf_push_decimal, %function\n");
+  s = s.write("__fern_buf_push_decimal:\n");
+  s = s.write("    stp x29, x30, [sp, #-64]!\n");
+  s = s.write("    mov x29, sp\n");
+  s = s.write("    add x8, sp, #40\n");
+  s = s.write("    adrp x11, .Ldecimal_pairs\n");
+  s = s.write("    add x11, x11, :lo12:.Ldecimal_pairs\n");
+  s = s.write("    mov x9, #0xf5c3\n");
+  s = s.write("    movk x9, #0x5c28, lsl #16\n");
+  s = s.write("    movk x9, #0xc28f, lsl #32\n");
+  s = s.write("    movk x9, #0x28f5, lsl #48\n");
+  s = s.write("    mov x12, #100\n");
+  s = s.write(".Ldecimal_loop:\n");
+  s = s.write("    cmp x1, #100\n");
+  s = s.write("    b.lo .Ldecimal_tail\n");
+  s = s.write("    lsr x10, x1, #2\n");
+  s = s.write("    umulh x10, x10, x9\n");
+  s = s.write("    lsr x10, x10, #2\n");
+  s = s.write("    msub x13, x10, x12, x1\n");
+  s = s.write("    ldrh w13, [x11, x13, lsl #1]\n");
+  s = s.write("    sub x8, x8, #2\n");
+  s = s.write("    strh w13, [x8]\n");
+  s = s.write("    mov x1, x10\n");
+  s = s.write("    b .Ldecimal_loop\n");
+  s = s.write(".Ldecimal_tail:\n");
+  s = s.write("    cmp x1, #10\n");
+  s = s.write("    b.lo .Ldecimal_one\n");
+  s = s.write("    ldrh w13, [x11, x1, lsl #1]\n");
+  s = s.write("    sub x8, x8, #2\n");
+  s = s.write("    strh w13, [x8]\n");
+  s = s.write("    b .Ldecimal_copy\n");
+  s = s.write(".Ldecimal_one:\n");
+  s = s.write("    add w13, w1, #48\n");
+  s = s.write("    sub x8, x8, #1\n");
+  s = s.write("    strb w13, [x8]\n");
+  s = s.write(".Ldecimal_copy:\n");
+  s = s.write("    add x2, sp, #40\n");
+  s = s.write("    sub x2, x2, x8\n");
+  s = s.write("    ldr x3, [x0, #8]\n");
+  s = s.write("    add x4, x3, x2\n");
+  s = s.write("    ldr x5, [x0, #16]\n");
+  s = s.write("    cmp x4, x5\n");
+  s = s.write("    b.hi .Ldecimal_grow\n");
+  s = s.write(".Ldecimal_fits:\n");
+  s = s.write("    str x4, [x0, #8]\n");
+  s = s.write("    ldr x5, [x0]\n");
+  s = s.write("    add x5, x5, x3\n");
+  s = s.write(".Ldecimal_byte:\n");
+  s = s.write("    ldrb w6, [x8], #1\n");
+  s = s.write("    strb w6, [x5], #1\n");
+  s = s.write("    subs x2, x2, #1\n");
+  s = s.write("    b.ne .Ldecimal_byte\n");
+  s = s.write("    ldp x29, x30, [sp], #64\n");
+  s = s.write("    ret\n");
+  s = s.write(".Ldecimal_grow:\n");
+  s = s.write("    str x0, [sp, #40]\n");
+  s = s.write("    stp x2, x8, [sp, #48]\n");
+  s = s.write("    mov x1, x4\n");
+  s = s.write("    bl __fern_buf_reserve\n");
+  s = s.write("    ldr x0, [sp, #40]\n");
+  s = s.write("    ldp x2, x8, [sp, #48]\n");
+  s = s.write("    ldr x3, [x0, #8]\n");
+  s = s.write("    add x4, x3, x2\n");
+  s = s.write("    b .Ldecimal_fits\n");
+  s = s.write(".size __fern_buf_push_decimal, .-__fern_buf_push_decimal\n");
+  s = s.write("    .section .rodata\n");
+  s = s.write(".Ldecimal_pairs:\n");
+  s = s.write("    .ascii \"" + asmcore.decimal_pairs() + "\"\n");
+  return s.write("    .text\n");
+}
+
 function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: boolean): asmcore.EmitState {
   let sfx: string = asmcore.packed_suffix(packed);
   let prefix: string = "__fern_buf_push_";
@@ -8550,6 +8631,9 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    add x5, x4, #8\n");
     s = s.write("    b .Lbufu64_fits\n");
     s = s.write(".size __fern_buf_push_u64, .-__fern_buf_push_u64\n");
+    if (s.has_need("buf_decimal")) {
+      s = emit_buf_push_decimal(s);
+    }
     s = s.write(".globl __fern_buf_len\n");
     s = s.write(".type __fern_buf_len, %function\n");
     s = s.write("__fern_buf_len:\n");

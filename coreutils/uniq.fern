@@ -492,7 +492,7 @@ function push_count(h: usize, v: u64): void {
     buf_push_byte(h, 32);
     nd = nd + 1;
   }
-  gnu.push_decimal(h, v);
+  buf_push_decimal(h, v);
   buf_push_byte(h, 32);
 }
 

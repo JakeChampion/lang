@@ -16,8 +16,10 @@ type Source struct {
 	Hash string
 }
 
+// Serial is the index's rollback counter, "" when the index has none.
 type Index struct {
 	Dir      string
+	Serial   string
 	Packages map[string]map[string]Source
 }
 
@@ -90,7 +92,10 @@ func ParseIndex(src string) (*Index, error) {
 			continue
 		}
 		if pkg == "" {
-			return nil, fmt.Errorf("line %d: version entry outside a [package] section", ln+1)
+			if err := ix.topLevel(line); err != nil {
+				return nil, fmt.Errorf("line %d: %w", ln+1, err)
+			}
+			continue
 		}
 		eq := strings.Index(line, "=")
 		if eq < 0 {
@@ -110,6 +115,40 @@ func ParseIndex(src string) (*Index, error) {
 		ix.Packages[pkg][ver] = src
 	}
 	return ix, nil
+}
+
+// topLevel reads a line above the first section: only `serial = N`.
+func (ix *Index) topLevel(line string) error {
+	k, v, ok := strings.Cut(line, "=")
+	if !ok || strings.TrimSpace(k) != "serial" {
+		return fmt.Errorf("version entry outside a [package] section")
+	}
+	if ix.Serial != "" {
+		return fmt.Errorf("serial given twice")
+	}
+	v = strings.TrimSpace(v)
+	if err := ValidateSerial(v); err != nil {
+		return fmt.Errorf("serial %w", err)
+	}
+	ix.Serial = v
+	return nil
+}
+
+// ValidateSerial accepts the spelling of an index serial.
+func ValidateSerial(s string) error {
+	ok := len(s) >= 1 && len(s) <= 18 && (s == "0" || s[0] != '0')
+	for i := 0; ok && i < len(s); i++ {
+		ok = s[i] >= '0' && s[i] <= '9'
+	}
+	if !ok {
+		return fmt.Errorf("must be 1 to 18 decimal digits with no leading zero, got %q", s)
+	}
+	return nil
+}
+
+// SerialBelow reports a < b for two valid serials.
+func SerialBelow(a, b string) bool {
+	return len(a) < len(b) || len(a) == len(b) && a < b
 }
 
 func parseSource(val string) (Source, error) {

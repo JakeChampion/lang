@@ -75,7 +75,10 @@ func runFetch(start string) error {
 	if err != nil {
 		return err
 	}
-	for name, sel := range locked {
+	if locked == nil {
+		locked = &mvs.Lock{}
+	}
+	for name, sel := range locked.Packages {
 		if sel.Source.URL == "" {
 			continue
 		}

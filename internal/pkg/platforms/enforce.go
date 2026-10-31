@@ -241,6 +241,7 @@ var coreBuiltins = map[string]bool{
 	"buf_push_expanded":       true,
 	"buf_push_byte":           true,
 	"buf_push_u64":            true,
+	"buf_push_decimal":        true,
 	"buf_len":                 true,
 	"buf_take":                true,
 	"buf_take_bytes":          true,

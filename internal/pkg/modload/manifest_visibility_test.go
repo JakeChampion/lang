@@ -118,10 +118,7 @@ func TestStdlibPackageHelpersArePrivate(t *testing.T) {
 		`import "std/f64"; function main(): i32 { let n = f64.pow10_hi(0); return 0; }`,
 		`import "std/f64"; function main(): i32 { let n = f64.pow10_lo(0); return 0; }`,
 		`import "std/f64"; function main(): i32 { let n = f64.pow10_log2(0); return 0; }`,
-		`import "std/io_buffered"; function main(): i32 { io_buffered.buf_push_u64(0 as usize, 1u64); return 0; }`,
 		`import "std/io_buffered"; function main(): i32 { io_buffered.buf_push_i64(0 as usize, 1i64); return 0; }`,
-		`import "std/io_buffered"; function main(): i32 { let n = io_buffered.buf_u64_len(1u64); return 0; }`,
-		`import "std/io_buffered"; function main(): i32 { let digits = io_buffered.digit_pairs(); return 0; }`,
 		`import "std/io_buffered"; function inspect(b: io_buffered.BufBlock): void {} function main(): i32 { return 0; }`,
 
 		`import "std/string"; function main(): i32 { let b = string.__is_ascii_ws(32); return 0; }`,

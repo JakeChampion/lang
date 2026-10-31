@@ -600,6 +600,7 @@ func New() *Interp {
 	i.Builtins["buf_push_expanded"] = &Builtin{Fn: builtinBufPushExpanded}
 	i.Builtins["buf_push_byte"] = &Builtin{Fn: builtinBufPushByte}
 	i.Builtins["buf_push_u64"] = &Builtin{Fn: builtinBufPushU64}
+	i.Builtins["buf_push_decimal"] = &Builtin{Fn: builtinBufPushDecimal}
 	i.Builtins["buf_len"] = &Builtin{Fn: builtinBufLen}
 	i.Builtins["buf_take"] = &Builtin{Fn: builtinBufTake}
 	i.Builtins["buf_take_bytes"] = &Builtin{Fn: builtinBufTakeBytes}
@@ -5573,6 +5574,22 @@ func builtinBufPushU64(i *Interp, args []Value) (Value, error) {
 	var eight [8]byte
 	binary.LittleEndian.PutUint64(eight[:], u)
 	i.bufs[h] = append(b, eight[:]...)
+	return Void{}, nil
+}
+
+func builtinBufPushDecimal(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("buf_push_decimal: expected 2 args (b, n), got %d", len(args))
+	}
+	h, b, err := bufHandle(i, "buf_push_decimal", args[0])
+	if err != nil {
+		return nil, err
+	}
+	v, ok := args[1].(Number)
+	if !ok {
+		return nil, fmt.Errorf("buf_push_decimal: expected number, got %T", args[1])
+	}
+	i.bufs[h] = strconv.AppendUint(b, uint64(int64(v)), 10)
 	return Void{}, nil
 }
 
