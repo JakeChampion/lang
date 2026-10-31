@@ -332,7 +332,7 @@ function main(): i32 { let m: Map[string, i32] = map_new(4); let z = m.get(); re
 	},
 	{
 		name: "E042 dyn residual names the missing impl",
-		src: `import "std/error";
+		src: `import "core/error";
 struct Oops { code: i32 }
 function g(): Result[i32, Oops] { return Err(Oops { code: 1 }); }
 function f(): Result[i32, dyn error.Error] { let v: i32 = g()?; return Ok(v); }

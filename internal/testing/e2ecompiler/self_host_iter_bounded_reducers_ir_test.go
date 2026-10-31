@@ -31,8 +31,8 @@ function main(): i32 { return iter.sum(iter.range(1, 5)); }`},
 	{"sum-i64-unannotated", `import "core/iter";
 function main(): i32 { let xs: i64[] = [3000000000, 3000000000]; let s = iter.sum(iter.of(xs)); if (s == 6000000000) { return 7; } return 1; }`},
 	{"user-qualified-bound", `import "core/iter";
-import "std/num" as num;
-function first_of[T: num.Add, I: iter.Iterator[T]](it: I): Option[T] {
+import "core/ops";
+function first_of[T: ops.Add, I: iter.Iterator[T]](it: I): Option[T] {
   match (it.next()) { Some(t) => { return Some(t.0); }, None => { return None; } }
 }
 function main(): i32 { let xs: i64[] = [9, 2]; let f = first_of(iter.of(xs)); match (f) { Some(v) => { if (v == 9) { return 9; } return 1; }, None => { return 2; } } }`},

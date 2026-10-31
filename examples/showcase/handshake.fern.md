@@ -24,6 +24,8 @@ import "std/crypto";
 import "std/crypto/mlkem768";
 import "std/crypto/x25519";
 import "std/crypto/chacha20poly1305" as chacha;
+import "std/array";
+import "std/string";
 ```
 
 ## Key schedule

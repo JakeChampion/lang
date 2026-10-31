@@ -72,7 +72,7 @@ The generated reference describes each collection's iteration and update methods
 `Result[T, E]` represents success or an error value.
 Import `std/option` or `std/result` for their combinators.
 
-`std/error` defines the shared `error.Error` trait and its `message()` method.
+`core/error` defines the shared `error.Error` trait and its `message()` method.
 A `dyn error.Error` can hold different concrete error types that implement that trait.
 See [error propagation](TRY.md) for the `?` operator and its conversion rules.
 

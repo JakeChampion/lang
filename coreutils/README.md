@@ -98,7 +98,7 @@ rather than hanging the bench; `FERN_BENCH_PROBE_TIMEOUT` sets the bound
 | `expr` | done — the full grammar, arbitrary-precision integers, `:` / `match` over POSIX basic regexps with glibc's diagnostics, exit 0/1/2/3 |
 | `numfmt` | done — every option, the long-double arithmetic GNU scales and rounds in, the field and padding rules |
 | `seq` | done — `-f` `-s` `-w`, the exact-digit engine for whole numbers, and the long-double one with the rule that prints a term past LAST when its own output reads back inside the range |
-| `factor` | done — Montgomery arithmetic to 2^64, `core/bigint` beyond it, `-h`, numbers from stdin, and GNU's unbuffered line for a number at or above 2^127 |
+| `factor` | done — Montgomery arithmetic to 2^64, `std/bigint` beyond it, `-h`, numbers from stdin, and GNU's unbuffered line for a number at or above 2^127 |
 | `sleep` | done — `s` `m` `h` `d`, floats and hex floats, `inf`, the sum of the operands, every operand validated before it pauses (intervals are rounded up to the millisecond until #8528) |
 | `head` | done — `-c` `-n` with the leading-minus elisions and gnulib's multiplier suffixes, `-q` `-v` `-z`, the obsolete `-NUM[bkmclqvz]` form, and the hidden `---presume-input-pipe` |
 | `cat` | done — `-A` `-b` `-e` `-E` `-n` `-s` `-t` `-T` `-u` `-v`, line state carried across files, and the two fstat checks GNU makes before a byte moves: a closed stdout is reported even with nothing to copy, and an input that is also the output is `input file is output file` |

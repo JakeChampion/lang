@@ -12,8 +12,8 @@ Arithmetic methods return a new value. `parse` refuses invalid text with the `Pa
 
 ## Executable example
 
-```fern test name=core-bigint-example
-import "core/bigint";
+```fern test name=bigint-example
+import "std/bigint";
 
 function main(): i32 {
   let n = bigint.from_i64(40).add(bigint.from_i64(2));
@@ -45,6 +45,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<8 function __bi_divmod_mag(a: u64[], b: u64[]): (u64[], u64[])>>
 
 <<9 pub function (a: BigInt) to_string(): string>>
+
+<<comparison traits>>
 ```
 
 ### `module introduction`
@@ -52,6 +54,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module provides arbitrary-precision integers.
+import "core/cmp";
 import "std/number_parse";
 ```
 
@@ -805,5 +808,30 @@ pub function (a: BigInt) to_string(): string {
     k = k + 1;
   }
   return string_from_bytes_unchecked(out);
+}
+```
+
+### `comparison traits`
+
+```fern
+<<comparison traits>>=
+impl cmp.Display for BigInt {}
+
+impl cmp.Eq for BigInt {}
+
+impl cmp.Ord for BigInt {}
+
+impl cmp.Hash for BigInt {}
+
+impl cmp.Default for BigInt {
+  function default(): BigInt {
+    return zero();
+  }
+}
+
+impl cmp.Debug for BigInt {
+  function to_debug(self: BigInt): string {
+    return self.to_string();
+  }
 }
 ```

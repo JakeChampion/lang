@@ -1,0 +1,61 @@
+import "core/ops";
+
+struct Bits { v: i32 }
+
+impl ops.Rem for Bits {
+  function rem(self: Bits, o: Bits): Bits { return Bits { v: self.v % o.v }; }
+}
+
+impl ops.BitAnd for Bits {
+  function bitand(self: Bits, o: Bits): Bits { return Bits { v: self.v & o.v }; }
+}
+
+impl ops.BitOr for Bits {
+  function bitor(self: Bits, o: Bits): Bits { return Bits { v: self.v | o.v }; }
+}
+
+impl ops.BitXor for Bits {
+  function bitxor(self: Bits, o: Bits): Bits { return Bits { v: self.v ^ o.v }; }
+}
+
+impl ops.Shl for Bits {
+  function shl(self: Bits, o: Bits): Bits { return Bits { v: self.v << o.v }; }
+}
+
+impl ops.Shr for Bits {
+  function shr(self: Bits, o: Bits): Bits { return Bits { v: self.v >> o.v }; }
+}
+
+function wrap[T: ops.Rem](a: T, m: T): T {
+  return a % m;
+}
+
+function mask[T: ops.BitAnd + ops.BitOr + ops.BitXor](a: T, b: T, c: T): T {
+  return (a & b) | (c ^ b);
+}
+
+function scale[T: ops.Shl + ops.Shr](a: T, up: T, down: T): T {
+  return (a << up) >> down;
+}
+
+function main(): i32 {
+  let a: Bits = Bits { v: 29 };
+  let b: Bits = Bits { v: 12 };
+  print((a % b).v);
+  print((a & b).v);
+  print((a | b).v);
+  print((a ^ b).v);
+  print((a << Bits { v: 2 }).v);
+  print((a >> Bits { v: 2 }).v);
+  print(wrap(a, b).v);
+  print(wrap(29, 12));
+  print(wrap(29u64, 12u64));
+  print(mask(a, b, Bits { v: 3 }).v);
+  print(mask(29, 12, 3));
+  print(scale(a, Bits { v: 3 }, Bits { v: 1 }).v);
+  print(scale(29 as u8, 2 as u8, 1 as u8));
+  let n: i32 = 17;
+  print(n.rem(5));
+  print(n.bitxor(3));
+  return 0;
+}

@@ -20,7 +20,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<dependencies 2>>
 
-<<3 pub trait Lanes: num.Num + num.Neg>>
+<<3 pub trait Lanes: ops.Num + ops.Neg>>
 
 <<4 function pow2_f64(k: f64): f64>>
 
@@ -36,13 +36,13 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<9 pub function seed[T: Lanes](x: f64): Dual[T]>>
 
-<<10 impl[T: Lanes] num.Add for Dual[T]>>
+<<10 impl[T: Lanes] ops.Add for Dual[T]>>
 
 <<11 pub function dd[T: Lanes](hi: T, lo: T): DoubleDouble[T]>>
 
 <<12 function two_sum[T: Lanes](a: T, b: T): DoubleDouble[T]>>
 
-<<13 impl[T: Lanes] num.Add for DoubleDouble[T]>>
+<<13 impl[T: Lanes] ops.Add for DoubleDouble[T]>>
 
 <<14 pub function dd_of[T: Lanes](x: T): DoubleDouble[T]>>
 
@@ -70,15 +70,15 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "std/num" as num;
+import "core/ops";
 import "std/f64";
 ```
 
-### `3 pub trait Lanes: num.Num + num.Neg`
+### `3 pub trait Lanes: ops.Num + ops.Neg`
 
 ```fern
-<<3 pub trait Lanes: num.Num + num.Neg>>=
-pub trait Lanes: num.Num + num.Neg {
+<<3 pub trait Lanes: ops.Num + ops.Neg>>=
+pub trait Lanes: ops.Num + ops.Neg {
   const LANES: i32;
   const SPLIT: f64;
   function splat(x: f64): Self;
@@ -457,41 +457,41 @@ pub function dual[T: Lanes](v: T, d: T): Dual[T] {
 }
 ```
 
-### `10 impl[T: Lanes] num.Add for Dual[T]`
+### `10 impl[T: Lanes] ops.Add for Dual[T]`
 
 ```fern
-<<10 impl[T: Lanes] num.Add for Dual[T]>>=
-impl[T: Lanes] num.Add for Dual[T] {
+<<10 impl[T: Lanes] ops.Add for Dual[T]>>=
+impl[T: Lanes] ops.Add for Dual[T] {
   function add(self: Dual[T], o: Dual[T]): Dual[T] {
     return Dual { v: self.v + o.v, d: self.d + o.d };
   }
 }
 
-impl[T: Lanes] num.Sub for Dual[T] {
+impl[T: Lanes] ops.Sub for Dual[T] {
   function sub(self: Dual[T], o: Dual[T]): Dual[T] {
     return Dual { v: self.v - o.v, d: self.d - o.d };
   }
 }
 
-impl[T: Lanes] num.Mul for Dual[T] {
+impl[T: Lanes] ops.Mul for Dual[T] {
   function mul(self: Dual[T], o: Dual[T]): Dual[T] {
     return Dual { v: self.v * o.v, d: self.d * o.v + self.v * o.d };
   }
 }
 
-impl[T: Lanes] num.Div for Dual[T] {
+impl[T: Lanes] ops.Div for Dual[T] {
   function div(self: Dual[T], o: Dual[T]): Dual[T] {
     return Dual { v: self.v / o.v, d: (self.d * o.v - self.v * o.d) / (o.v * o.v) };
   }
 }
 
-impl[T: Lanes] num.Neg for Dual[T] {
+impl[T: Lanes] ops.Neg for Dual[T] {
   function neg(self: Dual[T]): Dual[T] {
     return Dual { v: -self.v, d: -self.d };
   }
 }
 
-impl[T: Lanes] num.Num for Dual[T] {}
+impl[T: Lanes] ops.Num for Dual[T] {}
 
 impl[T: Lanes] Lanes for Dual[T] {
   const LANES: i32 = T.LANES;
@@ -623,11 +623,11 @@ function two_prod[T: Lanes](a: T, b: T): DoubleDouble[T] {
 }
 ```
 
-### `13 impl[T: Lanes] num.Add for DoubleDouble[T]`
+### `13 impl[T: Lanes] ops.Add for DoubleDouble[T]`
 
 ```fern
-<<13 impl[T: Lanes] num.Add for DoubleDouble[T]>>=
-impl[T: Lanes] num.Add for DoubleDouble[T] {
+<<13 impl[T: Lanes] ops.Add for DoubleDouble[T]>>=
+impl[T: Lanes] ops.Add for DoubleDouble[T] {
   function add(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
     let s: DoubleDouble[T] = two_sum(self.hi, o.hi);
     let t: DoubleDouble[T] = two_sum(self.lo, o.lo);
@@ -636,20 +636,20 @@ impl[T: Lanes] num.Add for DoubleDouble[T] {
   }
 }
 
-impl[T: Lanes] num.Sub for DoubleDouble[T] {
+impl[T: Lanes] ops.Sub for DoubleDouble[T] {
   function sub(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
     return self + -o;
   }
 }
 
-impl[T: Lanes] num.Mul for DoubleDouble[T] {
+impl[T: Lanes] ops.Mul for DoubleDouble[T] {
   function mul(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
     let p: DoubleDouble[T] = two_prod(self.hi, o.hi);
     return quick_two_sum(p.hi, p.lo + (self.hi * o.lo + self.lo * o.hi));
   }
 }
 
-impl[T: Lanes] num.Div for DoubleDouble[T] {
+impl[T: Lanes] ops.Div for DoubleDouble[T] {
   function div(self: DoubleDouble[T], o: DoubleDouble[T]): DoubleDouble[T] {
     let q1: T = self.hi / o.hi;
     let r: DoubleDouble[T] = self - o * dd_of(q1);
@@ -661,13 +661,13 @@ impl[T: Lanes] num.Div for DoubleDouble[T] {
   }
 }
 
-impl[T: Lanes] num.Neg for DoubleDouble[T] {
+impl[T: Lanes] ops.Neg for DoubleDouble[T] {
   function neg(self: DoubleDouble[T]): DoubleDouble[T] {
     return DoubleDouble { hi: -self.hi, lo: -self.lo };
   }
 }
 
-impl[T: Lanes] num.Num for DoubleDouble[T] {}
+impl[T: Lanes] ops.Num for DoubleDouble[T] {}
 ```
 
 ### `14 pub function dd_of[T: Lanes](x: T): DoubleDouble[T]`

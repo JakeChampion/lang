@@ -101,7 +101,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<module introduction>>=
 // This module reports which hardware mitigations the processor offers, the kernel enables, and this process uses.
 import "core/cmp";
-import "std/error";
+import "core/error";
 import "std/option";
 import "std/string";
 import "std/utf8";

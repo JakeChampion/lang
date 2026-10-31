@@ -1,12 +1,12 @@
 import "core/cmp";
-import "std/num";
+import "core/ops";
 import "std/array";
 
 function lawful[T: cmp.Eq + cmp.Ord + cmp.Hash + cmp.Display](a: T, b: T, text: string): boolean {
   return a.eq(b) && a.cmp(b) == 0 && a.hash() == b.hash() && a.to_string() == text;
 }
 
-function arithmetic[T: num.Num + num.Zero + num.One](a: T, b: T): T {
+function arithmetic[T: ops.Num + ops.Zero + ops.One](a: T, b: T): T {
   return a.add(b).sub(T.zero()).mul(T.one()).div(T.one());
 }
 

@@ -1,0 +1,35 @@
+import "core/cmp";
+
+struct Point { x: i32, y: i32 }
+
+impl cmp.Display for Point {
+  function to_string(self: Point): string {
+    return "(" + self.x.to_string() + ", " + self.y.to_string() + ")";
+  }
+}
+
+enum Light { Red, Green }
+
+impl cmp.Display for Light {
+  function to_string(self: Light): string {
+    match (self) {
+      Red => { return "red"; },
+      Green => { return "green"; }
+    }
+  }
+}
+
+function show[T: cmp.Display](v: T): string {
+  return "<" + v.to_string() + ">";
+}
+
+function main(): i32 {
+  let p: Point = Point { x: 3, y: -4 };
+  print(p);
+  print(f"p is {p}");
+  print(Green);
+  print(f"{Red} then {Green}");
+  print(show(p));
+  print(show(7));
+  return 0;
+}

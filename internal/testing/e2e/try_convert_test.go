@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-const tryConvertSrc = `import "std/convert" as convert;
-import "std/error";
+const tryConvertSrc = `import "core/convert" as convert;
+import "core/error";
 import "core/cmp";
 struct RangeError { value: i32 }
 impl error.Error for RangeError {}

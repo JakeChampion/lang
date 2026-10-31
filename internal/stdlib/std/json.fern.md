@@ -155,7 +155,7 @@ import "std/u64";
 // Float `to_string` for the `impl Json for f32 / f64` serialisers.
 import "std/f32";
 import "std/f64";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

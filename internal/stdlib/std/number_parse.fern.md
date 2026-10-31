@@ -33,8 +33,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<errors and integer parsing>>=
 // std/number_parse — typed numeric parse errors and shared parser kernels.
 
-import "std/error";
-import "core/bigint";
+import "core/error";
+import "std/bigint";
 import "core/int";
 import "core/cmp";
 

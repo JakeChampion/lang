@@ -88,7 +88,7 @@ import "std/url";
 import "std/time";
 import "std/i64";
 import "std/publicsuffix";
-import "std/error";
+import "core/error";
 import "core/cmp";
 import "std/option";
 ```

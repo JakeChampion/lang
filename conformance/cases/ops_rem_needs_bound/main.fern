@@ -1,0 +1,9 @@
+import "core/ops";
+
+function wrap[T: ops.Add](a: T, m: T): T {
+  return a % m;
+}
+
+function main(): i32 {
+  return wrap(7, 5);
+}

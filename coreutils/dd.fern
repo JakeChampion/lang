@@ -2,6 +2,7 @@ import "std/string";
 import "std/i32";
 import "std/i64";
 import "std/u64";
+import "std/f64";
 import "core/mem";
 import "std/signal";
 import "std/errno";

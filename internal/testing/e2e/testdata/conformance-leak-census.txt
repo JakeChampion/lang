@@ -258,6 +258,7 @@ destructure_repeated_discards                        0
 destructure_repeated_discards_in_param               0
 destructure_tuple_and_struct_forms                   0
 digit_separators_and_usize_suffix                    0
+display_user_type_print                             0
 div_modulo                                           0
 divmod_inline                                        0
 dyn_bound_satisfied                                  0
@@ -606,6 +607,7 @@ oob_write_wrapped_index                              1
 op_overload_nested                                   0
 op_trait_generic                                     0
 open_slice_evaluates_base_once                       0
+ops_rem_and_bit_traits                              0
 opt_arr_alias_match_reclaim                          0
 opt_array_struct_field                               0
 opt_f32_payload                                      0

@@ -3,7 +3,7 @@ import "std/i64";
 import "std/u32";
 import "std/u64";
 import "std/number_parse";
-import "std/error";
+import "core/error";
 import "core/cmp";
 import "std/f32";
 import "std/f64";

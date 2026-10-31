@@ -1,6 +1,6 @@
 import "std/json" as js;
 import "std/protobuf";
-import "std/error";
+import "core/error";
 import "core/cmp";
 import "std/string";
 import "std/i64";

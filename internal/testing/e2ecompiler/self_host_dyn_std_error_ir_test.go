@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-const dynStdErrorSrc = `import "std/error" as error;
+const dynStdErrorSrc = `import "core/error" as error;
 import "std/i32";
 struct NotFound { what: string }
 impl error.Error for NotFound { function message(self: Self): string { return self.what; } }

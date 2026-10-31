@@ -67,7 +67,7 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
    decapsulation together on x86-64. The X25519MLKEM768 hybrid share is
    `std/tls/keyshare`.
 6. **P-256 and Ed25519** for certificate signatures. P-256 verification
-   landed first on `core/bigint`, about 13 ms per verification, since it
+   landed first on `std/bigint`, about 13 ms per verification, since it
    handles only public values. Signing, for the server, needs constant-time
    32-bit limbs, which replace the bigint path. Ed25519 signing and
    verification landed over slice 3's field, moved to
@@ -83,10 +83,10 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
    a constant-time Montgomery field in 26-bit limbs, with complete
    projective addition, a masked 4-bit window and RFC 6979 nonces. Gate:
    RFC 6979's A.2.5 and A.2.6 signatures and a reference that reproduces
-   them, every result verified, the field against `core/bigint`, and an
+   them, every result verified, the field against `std/bigint`, and an
    `ecdsa` case in `TestSelfHostCtGateX86_64` signing on both curves under
    a secret scalar.
-7. **RSA-PSS and PKCS#1 v1.5 verify** over `core/bigint`. Verification
+7. **RSA-PSS and PKCS#1 v1.5 verify** over `std/bigint`. Verification
    handles only public values, so it does not need to be constant time,
    and it landed ahead of slices 4 to 6 for that reason: every public
    certificate chain needs it. About 1 ms per verification on x86-64.

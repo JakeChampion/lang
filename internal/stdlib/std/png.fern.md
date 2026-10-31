@@ -59,7 +59,7 @@ import "std/binary";
 import "std/deflate";
 import "std/hash/crc32";
 import "core/cmp";
-import "std/error";
+import "core/error";
 ```
 
 ### `3 pub enum EncodeError`

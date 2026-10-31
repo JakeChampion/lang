@@ -4664,9 +4664,9 @@ function respond_error(r: Result[HttpResponse, dyn Error], plat: platform__Host)
 		{"stateless", decls + `function handle(req: HttpRequest, plat: platform__Host): Result[HttpResponse, string] { return Err("no"); }`, "respond", 2, 1, false},
 		{"stateful", decls + `function init(): i32 { return 0; }
 function handle(n: i32, req: HttpRequest, plat: platform__Host): (i32, Result[HttpResponse, string]) { return (n + 1, Err("no")); }`, "respond_with", 3, 1, false},
-		{"dyn-error", `import "std/error" as err;
+		{"dyn-error", `import "core/error" as err;
 ` + dynDecls + `function handle(req: HttpRequest, plat: platform__Host): Result[HttpResponse, dyn err.Error] { return Err(Oops { why: "no" }); }`, "respond_error", 2, 2, true},
-		{"dyn-error-stateful", `import "std/error" as err;
+		{"dyn-error-stateful", `import "core/error" as err;
 ` + dynDecls + `function init(): i32 { return 0; }
 function handle(n: i32, req: HttpRequest, plat: platform__Host): (i32, Result[HttpResponse, dyn err.Error]) { return (n + 1, Err(Oops { why: "no" })); }`, "respond_error_with", 3, 2, true},
 		{"a program's own Error trait is not std/error's", ownErrorDecls + `function handle(req: HttpRequest, plat: platform__Host): Result[HttpResponse, dyn Error] { return Err(Oops { why: "no" }); }`, "respond", 2, 1, false},
