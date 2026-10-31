@@ -1,3 +1,4 @@
+# 2026-10-31: PR #13928, measured by CI job 124561628039.
 # 2026-10-31: PR #13897 at 54001e2. CI run 41153255512, perf-x86_64.
 # Record the lane's measured changes after the lifetime and shared-helper repairs.
 # 2026-10-29: #13863 (#13061) at 798f4251, from a local profile-costs run. A callback that a
@@ -58,13 +59,13 @@ profile/arm64-linux/enum_match.safe.bytes	66304
 profile/arm64-linux/enum_match.safe.emit	1316
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64). http_hello links no TLS (#12885); int_loop.minimal.emit +3 instructions.
 profile/arm64-linux/http_hello.diagnostic.bytes	202400
-profile/arm64-linux/http_hello.diagnostic.emit	17870
+profile/arm64-linux/http_hello.diagnostic.emit	18065
 profile/arm64-linux/http_hello.hardened.bytes	140472
-profile/arm64-linux/http_hello.hardened.emit	20689
+profile/arm64-linux/http_hello.hardened.emit	20980
 profile/arm64-linux/http_hello.minimal.bytes	74936
 profile/arm64-linux/http_hello.minimal.emit	14913
 profile/arm64-linux/http_hello.safe.bytes	140472
-profile/arm64-linux/http_hello.safe.emit	18861
+profile/arm64-linux/http_hello.safe.emit	19090
 profile/arm64-linux/int_loop.diagnostic.bytes	67768
 profile/arm64-linux/int_loop.diagnostic.emit	502
 profile/arm64-linux/int_loop.hardened.bytes	65792
@@ -149,17 +150,17 @@ profile/x86-64-linux/enum_match.minimal.ir	57825092
 profile/x86-64-linux/enum_match.safe.bytes	8240
 profile/x86-64-linux/enum_match.safe.emit	1099
 profile/x86-64-linux/enum_match.safe.ir	48825092
-profile/x86-64-linux/http_hello.diagnostic.bytes	128800
-profile/x86-64-linux/http_hello.diagnostic.emit	16411
+profile/x86-64-linux/http_hello.diagnostic.bytes	130568
+profile/x86-64-linux/http_hello.diagnostic.emit	16649
 profile/x86-64-linux/http_hello.diagnostic.ir	35644340
 profile/x86-64-linux/http_hello.hardened.bytes	80352
-profile/x86-64-linux/http_hello.hardened.emit	17937
+profile/x86-64-linux/http_hello.hardened.emit	18208
 profile/x86-64-linux/http_hello.hardened.ir	25664871
 profile/x86-64-linux/http_hello.minimal.bytes	60688
-profile/x86-64-linux/http_hello.minimal.emit	14286
-profile/x86-64-linux/http_hello.minimal.ir	25120450
-profile/x86-64-linux/http_hello.safe.bytes	72960
-profile/x86-64-linux/http_hello.safe.emit	17650
+profile/x86-64-linux/http_hello.minimal.emit	14463
+profile/x86-64-linux/http_hello.minimal.ir	24088401
+profile/x86-64-linux/http_hello.safe.bytes	77024
+profile/x86-64-linux/http_hello.safe.emit	17921
 profile/x86-64-linux/http_hello.safe.ir	22672408
 profile/x86-64-linux/int_loop.diagnostic.bytes	6320
 profile/x86-64-linux/int_loop.diagnostic.emit	473
