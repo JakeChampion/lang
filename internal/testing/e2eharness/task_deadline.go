@@ -25,23 +25,21 @@ function report(name: string, entry: () => i32): void {
   match (async.task_start(t)) {
     Suspended(w) => {
       unsafe {
-        print(name + " until " + __task_until(t.id).to_string() + " set " + w.set.len().to_string());
+        print(name + " until " + __task_until(t.id).to_string() + " set " + __task_wait(t.id).len().to_string());
       }
-      match (async.task_resume(t, 0)) {
+      match (async.task_resume(t, Woke(0))) {
         Done(v) => {
           print(name + " woke " + v.to_string());
         },
-        _ => {
+        Suspended(again) => {
           print(name + " parked again");
         }
       }
     },
     Done(v) => {
       print(name + " ran " + v.to_string());
-    },
-    Cancelled => {}
+    }
   }
-  async.task_free(t);
 }
 
 function main(): i32 {
