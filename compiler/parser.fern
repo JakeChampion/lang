@@ -7773,6 +7773,103 @@ function recv_slot_bound(p: Par, i: i32): boolean {
   return p.ident_at(i).len() > 0 && p.punct_at(i + 1) == ":" && opens_recv_slot(p.punct_at(i - 1));
 }
 
+function idents_between(p: Par, stop: i32): string[] {
+  let out: string[] = [];
+  let i: i32 = p.pos;
+  while (i < stop) {
+    let name: string = p.ident_at(i);
+    if (name.len() > 0 && !util.has_str(out, name)) {
+      out = out.append(name);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+pub struct RecvPrint { recv: string, names: string[], bounds: string[] }
+
+// receiver_with_bounds writes the bound of each type parameter that the
+// receiver type names into the receiver type, and keeps the parameters
+// that only the method declares.
+pub function receiver_with_bounds(fd: FuncDecl): RecvPrint {
+  let recv: string = fd.receiver_type;
+  let names: string[] = [];
+  let bounds: string[] = [];
+  let i: i32 = 0;
+  while (i < fd.type_params.len()) {
+    let tp: string = fd.type_params[i];
+    let bound: string = "";
+    if (i < fd.bound_traits.len()) {
+      bound = fd.bound_traits[i];
+    }
+    let at: i32 = type_word_at(recv, tp);
+    if (at < 0) {
+      names = names.append(tp);
+      bounds = bounds.append(bound);
+    } else if (bound.len() > 0) {
+      recv = bound_into(recv, at, tp, spaced_bounds(bound));
+    }
+    i = i + 1;
+  }
+  return RecvPrint { recv: recv, names: names, bounds: bounds };
+}
+
+function bound_into(recv: string, at: i32, tp: string, bound: string): string {
+  let k: i32 = at - 1;
+  while (k >= 0 && recv[k] == b' ') {
+    k = k - 1;
+  }
+  let end: i32 = at + tp.len();
+  let tail: string = slice_unchecked(recv, end, recv.len()) + "";
+  if (k >= 0 && (recv[k] == b'[' || recv[k] == b'(' || recv[k] == b',')) {
+    return slice_unchecked(recv, 0, end) + ": " + bound + tail;
+  }
+  return slice_unchecked(recv, 0, at) + "(" + tp + ": " + bound + ")" + tail;
+}
+
+// type_word_at is the index of the first unqualified name in a type
+// spelling, or -1.
+function type_word_at(spelling: string, name: string): i32 {
+  let i: i32 = 0;
+  while (i < spelling.len()) {
+    if (!type_word_byte(spelling[i])) {
+      i = i + 1;
+      continue;
+    }
+    let j: i32 = i;
+    while (j < spelling.len() && type_word_byte(spelling[j])) {
+      j = j + 1;
+    }
+    if (slice_unchecked(spelling, i, j) == name && (i == 0 || spelling[i - 1] != b'.')) {
+      return i;
+    }
+    i = j;
+  }
+  return 0 - 1;
+}
+
+function type_word_byte(c: u8): boolean {
+  return c == b'_' || c >= b'0' && c <= b'9' || c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z';
+}
+
+// spaced_bounds writes a bound list `A+B` as `A + B`.
+pub function spaced_bounds(bounds: string): string {
+  let out: string = "";
+  let start: i32 = 0;
+  let i: i32 = 0;
+  while (i <= bounds.len()) {
+    if (i == bounds.len() || bounds[i] == b'+') {
+      if (out.len() > 0) {
+        out = out + " + ";
+      }
+      out = out + slice_unchecked(bounds, start, i);
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
 function closes_recv_slot(punct: string): boolean {
   return punct == "," || punct == "]" || punct == ")";
 }
@@ -7813,6 +7910,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   let receiver_type: string = "";
   let receiver_own: boolean = false;
   let recv_tps: TpList = TpList { tnames: [], tbounds: [] };
+  let recv_names: string[] = [];
   if (receiver_clause(p)) {
     p = p.advance();
     receiver_name = p.peek_ident();
@@ -7829,6 +7927,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
       if (p.peek_punct() == ":") {
         p = p.advance();
         let (rtr_name, rtr_p) = parse_receiver_type(p);
+        recv_names = idents_between(p, rtr_p.par.pos);
         p = rtr_p.par;
         receiver_type = rtr_name;
         recv_tps = rtr_p.tps;
@@ -7861,13 +7960,15 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
     }
     tpi0 = tpi0 + 1;
   }
-  let method_tps: string[] = all_tps;
+  for tp in all_tps {
+    if (util.has_str(recv_names, tp)) {
+      p = Par { ...p, type_errs: p.type_errs.append(s_unknown(name_p, coded_kind("P007", "the receiver introduces type parameter " + tp + ", so the method must not declare it again: write a bound for " + tp + " in the receiver type, as " + tp + ": Bound"))) };
+      break;
+    }
+  }
   let rti: i32 = 0;
   while (rti < recv_tps.tnames.len()) {
     let rtn: string = recv_tps.tnames[rti];
-    if (util.has_str(method_tps, rtn)) {
-      p = Par { ...p, type_errs: p.type_errs.append(s_unknown(name_p, "decl:type parameter " + rtn + " has a bound in the receiver, so the method must not declare it again")) };
-    }
     all_tps = all_tps.append(rtn);
     bounded_tps = bounded_tps.append(rtn);
     bound_names = bound_names.append(recv_tps.tbounds[rti]);

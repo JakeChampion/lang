@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"math"
 	"strconv"
 	"strings"
@@ -1432,6 +1433,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	}
 	var receiver *ast.Param
 	var recvParams recvTypeParams
+	var recvNames map[string]bool
 	if p.match(lexer.Punct, "(") && p.looksLikeReceiverClause() {
 		p.advance()
 		rOwn := false
@@ -1447,10 +1449,17 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 			return nil, err
 		}
 		p.recvParams = &recvParams
+		recvStart := p.i
 		rtype, err := p.parseType()
 		p.recvParams = nil
 		if err != nil {
 			return nil, err
+		}
+		recvNames = map[string]bool{}
+		for _, t := range p.tokens[recvStart:p.i] {
+			if t.Kind == lexer.Ident {
+				recvNames[t.Text] = true
+			}
 		}
 		if _, err := p.expect(lexer.Punct, ")"); err != nil {
 			return nil, err
@@ -1469,12 +1478,12 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		}
 		constParams, p.constParams = p.constParams, nil
 	}
-	if len(recvParams.names) > 0 {
-		for _, tp := range typeParams {
-			if _, dup := recvParams.bounds[tp]; dup {
-				return nil, p.errorfCode(funcNamePos, "P001", "type parameter %s has a bound in the receiver, so the method must not declare it again", tp)
-			}
+	for _, tp := range typeParams {
+		if recvNames[tp] {
+			return nil, p.errorfCode(funcNamePos, "P007", "the receiver introduces type parameter %s, so the method must not declare it again: write a bound for %s in the receiver type, as %s: Bound", tp, tp, tp)
 		}
+	}
+	if len(recvParams.names) > 0 {
 		typeParams = append(recvParams.names, typeParams...)
 		bounds = mergeBounds(recvParams.bounds, bounds)
 		boundArgs = mergeBounds(recvParams.boundArgs, boundArgs)
@@ -1590,13 +1599,8 @@ func mergeBounds[V any](recv, own map[string]V) map[string]V {
 	if len(recv) == 0 {
 		return own
 	}
-	out := make(map[string]V, len(recv)+len(own))
-	for k, v := range recv {
-		out[k] = v
-	}
-	for k, v := range own {
-		out[k] = v
-	}
+	out := maps.Clone(recv)
+	maps.Copy(out, own)
 	return out
 }
 

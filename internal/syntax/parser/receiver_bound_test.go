@@ -72,8 +72,6 @@ func TestReceiverBoundRefusals(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"bound at two places", `struct P[A, B] { a: A, b: B }
 function (p: P[T: Eq, T: Show]) f(): i32 { return 0; }`, "type parameter T has a bound at two places in the receiver"},
-		{"bound in the receiver and in the method", `struct B[T] { v: T }
-function (b: B[T: Eq]) f[T: Eq](): i32 { return 0; }`, "type parameter T has a bound in the receiver, so the method must not declare it again"},
 		{"missing bound", `struct B[T] { v: T }
 function (b: B[T: ]) f(): i32 { return 0; }`, "expected"},
 	}
@@ -104,6 +102,45 @@ function (b: B[T]) f(): B[U: Eq] { return b; }`,
 	} {
 		if _, err := Parse(src); err == nil {
 			t.Errorf("accepted a bound outside a receiver type:\n%s", src)
+		}
+	}
+}
+
+func TestReceiverTypeParamRedeclaredIsP007(t *testing.T) {
+	for _, src := range []string{
+		`struct B[T] { v: T }
+function (b: B[T]) f[T](): T { return b.v; }`,
+		`struct B[T] { v: T }
+function (b: B[T]) f[T: Eq](): T { return b.v; }`,
+		`struct B[T] { v: T }
+function (b: B[T: Eq]) f[T: Eq](): T { return b.v; }`,
+		`struct M[K, V] { k: K, v: V }
+function (m: M[K, V]) f[A, V](a: A): V { return m.v; }`,
+		`function (xs: T[]) f[T, K: Ord](k: K): T { return xs[0]; }`,
+		`struct B[T] { v: T }
+function [T] (b: B[T]) f(): T { return b.v; }`,
+	} {
+		_, err := Parse(src)
+		if err == nil {
+			t.Errorf("accepted a receiver type parameter declared again:\n%s", src)
+			continue
+		}
+		if code := firstCode(err); code != "P007" {
+			t.Errorf("want P007, got %q: %v\n%s", code, err, src)
+		}
+		if !strings.Contains(err.Error(), "the receiver introduces type parameter") {
+			t.Errorf("want the P007 message, got %v", err)
+		}
+	}
+	for _, src := range []string{
+		`struct M[K, V] { k: K, v: V }
+function (m: M[K, V]) fold[A](a: A): A { return a; }`,
+		`function (xs: T[]) max_by[K: Ord](k: (T) => K): T { return xs[0]; }`,
+		`struct B[T] { v: T }
+function [U] (b: B[T]) f(u: U): U { return u; }`,
+	} {
+		if _, err := Parse(src); err != nil {
+			t.Errorf("refused a method that declares only its own type parameters: %v\n%s", err, src)
 		}
 	}
 }

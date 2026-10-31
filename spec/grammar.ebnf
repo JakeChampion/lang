@@ -46,7 +46,8 @@ FuncDecl    = { FuncMod } [ UnsafeMod ] 'function' [ Receiver ] IDENT [ TypePara
 # A method is written `function (self: T) name(...)`. The receiver
 # introduces the type parameters that its type names. A RecvBound writes the
 # bound of one of them, and only a receiver type can hold a RecvBound:
-# `(m: OrdMap[K: cmp.Ord, V])`, `(xs: (T: cmp.Ord)[])`.
+# `(m: OrdMap[K: cmp.Ord, V])`, `(xs: (T: cmp.Ord)[])`. The method's own
+# TypeParams must not name a parameter that the receiver introduces (P007).
 Receiver    = '(' [ 'own' ] IDENT ':' Type ')' ;
 RecvBound   = IDENT ':' Bounds ;
 
