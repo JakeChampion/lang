@@ -27721,8 +27721,7 @@ function qualify_variants_in(mod: parser.Module, env: ModuleEnv, focus: Focus): 
     return mod;
   }
   let nfuncs: parser.FuncDecl[] = [];
-  let i: i32 = 0;
-  while (i < mod.funcs.len()) {
+  for i in 0..mod.funcs.len() {
     let func: parser.FuncDecl = mod.funcs[i];
     if (focus.funcs[i] && names_colliding_variant(func.body, coll)) {
       let fs: Scope = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
@@ -27730,7 +27729,6 @@ function qualify_variants_in(mod: parser.Module, env: ModuleEnv, focus: Focus): 
     } else {
       nfuncs = nfuncs.append(func);
     }
-    i = i + 1;
   }
   let ntop: ast.Stmt[] = mod.top_stmts;
   if (focus.top && names_colliding_variant(mod.top_stmts, coll)) {
@@ -27888,10 +27886,8 @@ function qualify_at(n: ast.Expr, q: QualifyAcc): (ast.Expr, QualifyAcc, boolean)
         slots = tt.elements;
       }
       let elems: ast.Expr[] = [];
-      let k: i32 = 0;
-      while (k < t.elements.len()) {
+      for k in 0..t.elements.len() {
         elems = elems.append(qualify_expr(t.elements[k], dest_slot(slots, k), s, coll));
-        k = k + 1;
       }
       return (ast.ExprTuple { ...t, elements: elems }, child, true);
     },
@@ -27988,10 +27984,8 @@ function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util
     }
   }
   let args: ast.Expr[] = [];
-  let k: i32 = 0;
-  while (k < c.args.len()) {
+  for k in 0..c.args.len() {
     args = args.append(qualify_expr(c.args[k], dest_slot(dests, k), s, coll));
-    k = k + 1;
   }
   return ast.ExprCall { ...c, callee: callee, args: args };
 }
@@ -28041,8 +28035,7 @@ function qualify_struct_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Scope
     args = ws.args;
   }
   let values: ast.Expr[] = [];
-  let k: i32 = 0;
-  while (k < sl.field_values.len()) {
+  for k in 0..sl.field_values.len() {
     let fdest: typeinfo.Type = none;
     if let Some(fsig) = found {
       if (k < sl.field_names.len() && field_index(fsig, sl.field_names[k]) >= 0) {
@@ -28050,7 +28043,6 @@ function qualify_struct_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Scope
       }
     }
     values = values.append(qualify_expr(sl.field_values[k], fdest, s, coll));
-    k = k + 1;
   }
   return ast.ExprStructLit { ...sl, field_values: values, base: qualify_expr(sl.base, none, s, coll) };
 }
@@ -28088,13 +28080,11 @@ const LIT_STRUCT_MARK: string = "literal struct #";
 
 function lit_struct_marker(name: string, ids: i32[]): typeinfo.Type {
   let spelled: string = LIT_STRUCT_MARK + name + "|";
-  let i: i32 = 0;
-  while (i < ids.len()) {
+  for i in 0..ids.len() {
     if (i > 0) {
       spelled = spelled + ",";
     }
     spelled = spelled + util.i32_to_string(ids[i]);
-    i = i + 1;
   }
   return t_unknown(spelled);
 }
