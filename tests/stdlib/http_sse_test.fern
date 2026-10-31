@@ -109,7 +109,7 @@ function test_respond(): test.TestOutcome {
 
 function test_respond_with(): test.TestOutcome {
   let r: HttpResponse = sse.respond_with(time.duration_seconds(1 as i64), ticks);
-  return test.assert_eq(r.body_string(), "id: 0\ndata: tick 0\n\nid: 1\ndata: tick 1\n\nid: 2\ndata: tick 2\n\n");
+  return test.assert_eq(r.body_text_lossy(), "id: 0\ndata: tick 0\n\nid: 1\ndata: tick 1\n\nid: 2\ndata: tick 2\n\n");
 }
 
 function test_last_event_id(): test.TestOutcome {

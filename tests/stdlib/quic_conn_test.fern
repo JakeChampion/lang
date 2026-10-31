@@ -13,7 +13,6 @@ import "std/hex";
 import "std/codec";
 import "std/i64";
 import "std/option";
-import "core/int";
 import "std/time";
 
 const ROOT: string = "3082011c3081cfa00302010202020201300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320536572766572205465737420526f6f74302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341007353a91b5ad2e713d51d2fa08f3e800b99afa9e5725cfd746269d03210b1faadccfc942258bb8151da41be07943a4e8a14bd615e96692c8b896872460e827c0a";
@@ -294,7 +293,7 @@ function test_amplification(): test.TestOutcome {
       for d in sout {
         total = total + d.len();
       }
-      return test.assert_eq(int.int_to_string(out[0].len()) + " in, at most " + (total <= 3 * out[0].len()).to_string(), "1200 in, at most true");
+      return test.assert_eq(out[0].len().to_string() + " in, at most " + (total <= 3 * out[0].len()).to_string(), "1200 in, at most true");
     },
     Err(e) => {
       return test.fail(e);
@@ -507,7 +506,7 @@ function echo_report(r: Result[Echo, string]): string {
         same = e.got[i] == want[i];
         i = i + 1;
       }
-      return int.int_to_string(e.got.len()) + " back, same " + same.to_string() + ", fin " + e.fin.to_string() + ", streams left " + e.p.client.buffered(0 as i64).to_string();
+      return e.got.len().to_string() + " back, same " + same.to_string() + ", fin " + e.fin.to_string() + ", streams left " + e.p.client.buffered(0 as i64).to_string();
     },
     Err(why) => {
       return why;

@@ -34,6 +34,7 @@ import "std/result";
 import "std/array";
 import "std/time";
 import "std/async";
+import "std/clock";
 import "./common";
 import "./mosaic";
 import "./rally";
@@ -271,7 +272,7 @@ The Prometheus endpoint exposes gauges only when measurements exist. Counters re
 pub function events(state: State): HttpResponse {
   return sse.respond_with(time.duration_seconds(15), (index: i32): Option[sse.Event] => {
     if (index > 0) {
-      let ready: i32 = async.wait_any([], Some(time.duration_millis(1000)));
+      let ready: async.Wake = async.wait_any([], Some(clock.instant().add(time.duration_millis(1000))));
     }
     if (async.task_cancelled()) {
       return None;

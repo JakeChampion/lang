@@ -40,6 +40,7 @@ import "std/result";
 import "std/binary";
 import "std/rand";
 import "std/async";
+import "std/clock";
 import "std/array";
 import "std/crypto";
 import "std/hex";
@@ -369,7 +370,7 @@ function forget_cancel(state: Stats, key: Option[string]): void {
 function request_stopped(state: Stats, key: Option[string], next_yield: Cell[i64]): boolean {
   if (async.in_task() && now_ns() >= next_yield.get()) {
     next_yield.set(now_ns() + 4000000);
-    let ready: i32 = async.wait_any([], Some(time.duration_millis(1)));
+    let ready: async.Wake = async.wait_any([], Some(clock.instant().add(time.duration_millis(1))));
   }
   if (async.task_cancelled()) {
     return true;

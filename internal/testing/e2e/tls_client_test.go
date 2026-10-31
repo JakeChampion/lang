@@ -185,9 +185,9 @@ function socket(roots: verify.Roots): string {
   let first: client.Config = client.config("localhost", roots).with_alpn(["fern-echo"]);
   match (connected(first)) {
     Ok(c) => {
-      match (c.send("ping\n".bytes())) {
+      match (c.write("ping\n".bytes())) {
         Ok(sent) => {
-          match (sent.recv(time.duration_seconds(10 as i64))) {
+          match (sent.read(time.duration_seconds(10 as i64))) {
             Ok(got) => {
               got.conn.close();
               let line: string = sent.session.alpn() + " " + string_from_bytes_unchecked(got.data).trim();
@@ -251,9 +251,9 @@ function mtls(roots: verify.Roots): string {
 function echoed(cfg: client.Config): string {
   match (client.connect("localhost", @MTLS@, cfg, time.duration_seconds(10 as i64))) {
     Ok(c) => {
-      match (c.send("hello\n".bytes())) {
+      match (c.write("hello\n".bytes())) {
         Ok(sent) => {
-          match (sent.recv(time.duration_seconds(10 as i64))) {
+          match (sent.read(time.duration_seconds(10 as i64))) {
             Ok(got) => {
               got.conn.close();
               return string_from_bytes_unchecked(got.data).trim();
@@ -286,9 +286,9 @@ function resumed_line(cfg: client.Config, tickets: client.Ticket[]): string {
       if (c.session.resumed()) {
         mode = "resumed";
       }
-      match (c.send("again\n".bytes())) {
+      match (c.write("again\n".bytes())) {
         Ok(sent) => {
-          match (sent.recv(time.duration_seconds(10 as i64))) {
+          match (sent.read(time.duration_seconds(10 as i64))) {
             Ok(got) => {
               got.conn.close();
               return mode + " " + string_from_bytes_unchecked(got.data).trim();

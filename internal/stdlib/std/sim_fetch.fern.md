@@ -64,7 +64,6 @@ import "std/http";
 import "std/net";
 import "std/dns";
 import "std/i64";
-import "core/int";
 import "std/hex";
 import "std/utf8";
 import "std/url";
@@ -86,11 +85,11 @@ pub struct Answer { bytes: u8[], delay: Duration, every: Duration, chunk: i32, c
 ```fern
 <<3 pub function reply(status: i32, body: string): Answer>>=
 pub function reply(status: i32, body: string): Answer {
-  return raw("HTTP/1.1 " + int.int_to_string(status) + " Status\r\nContent-Length: " + int.int_to_string(body.len()) + CLOSING + body);
+  return raw("HTTP/1.1 " + status.to_string() + " Status\r\nContent-Length: " + body.len().to_string() + CLOSING + body);
 }
 
 pub function redirect(status: i32, location: string): Answer {
-  return raw("HTTP/1.1 " + int.int_to_string(status) + " Status\r\nLocation: " + location + "\r\nContent-Length: 0" + CLOSING);
+  return raw("HTTP/1.1 " + status.to_string() + " Status\r\nLocation: " + location + "\r\nContent-Length: 0" + CLOSING);
 }
 ```
 
@@ -321,7 +320,7 @@ impl fetch.Transport for Net {
       return 0 - 9;
     }
     let encoded: string = hex.encode(bytes);
-    self.sent.set(self.sent.get() + int.int_to_string(encoded.len()) + ":" + encoded);
+    self.sent.set(self.sent.get() + encoded.len().to_string() + ":" + encoded);
     if (__busy(self, row)) {
       return bytes.len();
     }
@@ -412,7 +411,7 @@ pub function taped(req: fetch.Request, resp: HttpResponse): string {
     i = i + 1;
   }
   let keys: string[] = ["method", "url", "status", "headers"];
-  let values: json.JsonValue[] = [json.JString(req.method), json.JString(req.url), json.JNumber(int.int_to_string(resp.status)), json.JArray(pairs)];
+  let values: json.JsonValue[] = [json.JString(req.method), json.JString(req.url), json.JNumber(resp.status.to_string()), json.JArray(pairs)];
   let body: u8[] = resp.body_bytes();
   match (utf8.from_bytes(body)) {
     Ok(text) => {
@@ -464,7 +463,7 @@ pub function (n: Net) replay(cassette: string): Result[Net, string] {
           out = __replayed(out, e);
         },
         None => {
-          return Err("sim_fetch: cassette line " + int.int_to_string(line_no) + " is not an exchange");
+          return Err("sim_fetch: cassette line " + line_no.to_string() + " is not an exchange");
         }
       }
     }
@@ -635,7 +634,7 @@ function __replay_addr(n: Net, host: string): string {
   }
   let last: i32 = 34;
   while (last < 255) {
-    let candidate: string = "93.184.216." + int.int_to_string(last);
+    let candidate: string = "93.184.216." + last.to_string();
     if (!__addr_named(n, candidate)) {
       return candidate;
     }
@@ -809,7 +808,7 @@ function __took(n: Net, route: i32): i32 {
       before = c;
       c = c + 1;
     }
-    out = out + int.int_to_string(c) + ",";
+    out = out + c.to_string() + ",";
     i = i + 1;
   }
   n.hits.set(out);
@@ -821,7 +820,7 @@ function __served(n: Net, addr: string, port: i32, bytes: u8[]): i32 {
     if (s.addr == addr && s.port == port) {
       let k: i32 = __journal_all(n.made.get()).len();
       let entry: string = __response_entry(s, bytes);
-      n.made.set(n.made.get() + int.int_to_string(entry.len()) + ":" + entry);
+      n.made.set(n.made.get() + entry.len().to_string() + ":" + entry);
       return 0 - 3 - k;
     }
   }
@@ -830,7 +829,7 @@ function __served(n: Net, addr: string, port: i32, bytes: u8[]): i32 {
 
 function __response_entry(s: Server, bytes: u8[]): string {
   match (http.parse_request_framed(bytes)) {
-    http.Framed(f) => {
+    http.Complete(f) => {
       let h: (HttpRequest) => HttpResponse = s.handler;
       let resp: HttpResponse = h(f.request);
       let flag: string = "c";
@@ -879,7 +878,7 @@ function __answer(n: Net, route: i32, i: i32): Answer {
 }
 
 function __row(id: i32, addr: string, port: i32, route: i32, answer: i32, offset: i32, ready_ns: i64, open: i32): string {
-  return int.int_to_string(id) + "|" + addr + "|" + int.int_to_string(port) + "|" + int.int_to_string(route) + "|" + int.int_to_string(answer) + "|" + int.int_to_string(offset) + "|" + ready_ns.to_string() + "|" + int.int_to_string(open) + ";";
+  return id.to_string() + "|" + addr + "|" + port.to_string() + "|" + route.to_string() + "|" + answer.to_string() + "|" + offset.to_string() + "|" + ready_ns.to_string() + "|" + open.to_string() + ";";
 }
 
 function __rows(table: string): string[][] {

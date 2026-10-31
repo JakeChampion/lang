@@ -138,7 +138,7 @@ function main(): i32 {
     next = next.sent();
     c = next;
     for d in out { let r: Result[i32, net.NetError] = net.send_to(sock, d, peer); }
-    let woke: i32 = async.wait_any([sock, 1], Some(time.duration_millis(10)));
+    let woke: async.Wake = async.wait_any([sock, 1], Some(clock.instant().add(time.duration_millis(10))));
     let reading: boolean = true;
     while (reading) {
       match (net.recv_from(sock, buf)) {
@@ -173,7 +173,7 @@ function main(): i32 {
     }
     if (c.ready() && sent == got) {
       let req: HttpRequest = HttpRequest { method: "GET", path: "/hello", body: ByteStream { data: [], pos: 0, source: None }, headers: headers.new().append("host", "localhost"), trailers: headers.new() };
-      let Ok(asked) = c.request(req, "https") else { return 6; };
+      let Ok(asked) = c.request(req.outgoing("https")) else { return 6; };
       c = asked.0;
       sent = sent + 1;
     }

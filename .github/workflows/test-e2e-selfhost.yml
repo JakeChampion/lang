@@ -423,6 +423,48 @@ jobs:
           set -euo pipefail
           go test ./internal/testing/e2e/ -run '^TestDifferential_SelfHostWasm$' -v -timeout 43m
 
+  # THE FIXTURE CORPUS, once per shipped target (#12728). Each leg compiles
+  # every selected conformance/cases program with the self-host compiler and
+  # runs it. Each leg measured three to five minutes, so a leg is one job
+  # step and related legs share a job. The arm64-darwin leg runs in macos.yml.
+  # The rows of a leg's testdata/selfhost-<target>-known-divergences.txt are
+  # the only cases it permits to fail.
+  fixtures:
+    needs: [driver-sizes]
+    name: fixtures-selfhost-${{ matrix.leg }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { leg: x86-64, test: "TestFernFixturesSelfHostX86_64", wasmtime: "false", qemu: "false" }
+          - { leg: x86-64-quarantine, test: "TestFernFixturesSelfHostX86_64Quarantine", wasmtime: "false", qemu: "false" }
+          - { leg: arm64-linux-android, test: "TestFernFixturesSelfHostArm64|TestFernFixturesSelfHostArm64Android", wasmtime: "false", qemu: "true" }
+          - { leg: wasm-core-component-http, test: "TestFernFixturesSelfHostWasm|TestFernFixturesSelfHostWasmComponent|TestFernFixturesSelfHostWasiHttp", wasmtime: "true", qemu: "false" }
+          - { leg: front-end, test: "TestFernFixturesSelfHostInterp|TestFernFixturesSelfHostCheck|TestGrammarDerivesSelfHostParsedSources", wasmtime: "false", qemu: "false" }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+        with:
+          wasmtime: ${{ matrix.wasmtime }}
+      - uses: ./.github/actions/selfhost-driver-cache
+      - name: qemu-aarch64 (the arm64 legs execute their output)
+        if: matrix.qemu == 'true'
+        uses: ./.github/actions/apt-cross-toolchain
+        with:
+          qemu-package: qemu-user
+          cross-gcc: "false"
+      - name: run the fixture corpus through the self-host compiler
+        env:
+          FERN_SELFHOST_FIXTURES: "1"
+          FERN_REQUIRE_WASMTIME: "${{ matrix.wasmtime == 'true' && '1' || '' }}"
+          FERN_REQUIRE_ARM64_TOOLING: "${{ matrix.qemu == 'true' && '1' || '' }}"
+        run: gotestsum --format standard-verbose -- ./internal/testing/e2e/ -run '^(${{ matrix.test }})$' -timeout 43m
+      - name: name the failed tests as annotations
+        if: failure()
+        run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"
+
   # THE SHARDS. Each builds both test binaries, restores the drivers
   # driver-sizes built, and runs its LPT slice of the union list in four
   # isolated worker processes.

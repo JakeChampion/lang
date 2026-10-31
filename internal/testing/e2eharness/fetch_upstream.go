@@ -46,7 +46,7 @@ import "std/fetch";
 
 function body_of(url: string): string {
     match (fetch.send(fetch.get(url))) {
-        Ok(resp) => { return resp.body_string(); },
+        Ok(resp) => { return resp.body_text_lossy(); },
         Err(e) => { return e.message(); }
     }
     return "";
@@ -54,8 +54,8 @@ function body_of(url: string): string {
 
 function main(): i32 {
     let up: string = "http://127.0.0.1:%d";
-    let both: (() => string)[] = [() => body_of(up + "/1"), () => body_of(up + "/2")];
-    let bodies: string[] = async.gather_tasks(both, "incomplete");
+    let both: async.Future[string][] = [async.spawn((): string => body_of(up + "/1")), async.spawn((): string => body_of(up + "/2"))];
+    let Some(bodies) = async.block_on(async.gather(both)) else { return 86; };
     if (bodies[0] == "hello-world" && bodies[1] == "hello-world") { return 42; }
     return 85;
 }`, port)
@@ -74,8 +74,8 @@ function size_of(url: string): i32 {
 }
 
 function main(): i32 {
-    let fetches: (() => i32)[] = [() => size_of("http://127.0.0.1:%d/big")];
-    let sizes: i32[] = async.gather_tasks(fetches, 0 - 2);
+    let fetches: async.Future[i32][] = [async.spawn((): i32 => size_of("http://127.0.0.1:%d/big"))];
+    let sizes: i32[] = async.block_on(async.gather(fetches)).unwrap_or([0 - 2]);
     if (sizes[0] == %d) { return 42; }
     return sizes[0] & 127;  // distinct small code on a truncated read
 }`, port, bodyLen)

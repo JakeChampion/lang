@@ -28,7 +28,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<6 function (c: Conn) __session_event(e: h3.Event): Conn>>
 
-<<7 function __request_fields(req: HttpRequest, scheme: string): qpack.Field[]>>
+<<7 function __request_fields(out: http.Outgoing): qpack.Field[]>>
 
 <<8 pub function (c: Conn) respond(id: i64, resp: HttpResponse): Conn>>
 
@@ -512,18 +512,17 @@ function __connection_specific(name: string): boolean {
 }
 ```
 
-### `7 function __request_fields(req: HttpRequest, scheme: string): qpack.Field[]`
+### `7 function __request_fields(out: http.Outgoing): qpack.Field[]`
 
 ```fern
-<<7 function __request_fields(req: HttpRequest, scheme: string): qpack.Field[]>>=
-function __request_fields(req: HttpRequest, scheme: string): qpack.Field[] {
-  let authority: string = req.headers.get("host").unwrap_or("");
-  let fs: qpack.Field[] = [qpack.field(":method", req.method), qpack.field(":scheme", scheme), qpack.field(":authority", authority), qpack.field(":path", req.path)];
+<<7 function __request_fields(out: http.Outgoing): qpack.Field[]>>=
+function __request_fields(out: http.Outgoing): qpack.Field[] {
+  let fs: qpack.Field[] = [qpack.field(":method", out.method), qpack.field(":scheme", out.scheme), qpack.field(":authority", out.authority), qpack.field(":path", out.target)];
   let i: i32 = 0;
-  while (i < req.headers.names.len()) {
-    let name: string = req.headers.names[i].to_lower();
+  while (i < out.headers.names.len()) {
+    let name: string = out.headers.names[i].to_lower();
     if (name != "host" && !__connection_specific(name)) {
-      fs = fs.append(qpack.field(name, req.headers.values[i]));
+      fs = fs.append(qpack.field(name, out.headers.values[i]));
     }
     i = i + 1;
   }
@@ -591,16 +590,15 @@ pub function (c: Conn) abort(id: i64, code: i64): Conn {
   return Conn { ...c, session: c.session.abort(id, code), partials: __without(c.partials, id) }.__applied(time.instant_from_nanos(0));
 }
 
-pub function (c: Conn) request(req: HttpRequest, scheme: string): Result[(Conn, i64), string] {
+pub function (c: Conn) request(out: http.Outgoing): Result[(Conn, i64), string] {
   if (!c.ready()) {
     return Err("h3: the connection takes no requests");
   }
   let (q, id) = c.quic.open_stream(false)?;
-  let body: u8[] = req.body.data;
-  let s: h3.Session = c.session.send_headers(id, __request_fields(req, scheme), body.len() == 0 && req.trailers.names.len() == 0);
+  let s: h3.Session = c.session.send_headers(id, __request_fields(out), out.body.len() == 0 && out.trailers.names.len() == 0);
   let cur: Conn = Conn { ...c, quic: q, session: s };
-  if (body.len() > 0 || req.trailers.names.len() > 0) {
-    cur = cur.write(id, body).end(id, req.trailers);
+  if (out.body.len() > 0 || out.trailers.names.len() > 0) {
+    cur = cur.write(id, out.body).end(id, out.trailers);
   }
   return Ok((cur.__applied(time.instant_from_nanos(0)), id));
 }

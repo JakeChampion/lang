@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -11,11 +12,13 @@ import (
 )
 
 var (
-	runSidecars = []string{"expected.stdout", "expected.exit", "stdin", "match", "backends"}
+	runSidecars = []string{"expected.stdout", "expected.exit", "stdin", "match", "backends", "expected.http"}
 	allSidecars = append([]string{
 		"expected.error", "expected.lowering-error", "meta", "reclaim-observable",
 	}, runSidecars...)
 )
+
+var wasiHTTPHandlerSig = regexp.MustCompile(`function\s+handle\s*\(\s*\w+\s*:\s*HttpRequest\s*,\s*\w+\s*:\s*platform\.Platform\s*\)\s*:\s*HttpResponse`)
 
 var waiverKinds = []string{
 	"implementation-gap",
@@ -136,6 +139,16 @@ func checkCaseFormat(dir string) ([]string, error) {
 		}
 	}
 
+	if present["expected.http"] {
+		if !wasiHTTPHandlerSig.MatchString(read("main.fern")) {
+			report("expected.http on a case whose main.fern declares no `handle(req: HttpRequest, plat: platform.Platform): HttpResponse`, so the wasm32-wasi-http leg cannot serve it")
+		}
+		status, _, _ := strings.Cut(read("expected.http"), "\n")
+		if n, cerr := strconv.Atoi(strings.TrimSpace(status)); cerr != nil || n < 100 || n > 599 {
+			report("expected.http must start with an HTTP status line, got %q", status)
+		}
+	}
+
 	weakened := false
 
 	if present["match"] {
@@ -188,7 +201,7 @@ func checkMeta(dir string, haveMeta, weakened bool, read func(string) string) []
 
 	if !haveMeta {
 		if weakened {
-			report("asserts less than byte-exact output on all four backends (contains mode and/or a backends subset) but has no meta file saying why — add one with a waiver: %s", strings.Join(waiverKinds, " | "))
+			report("asserts less than byte-exact output on every backend (contains mode and/or a backends subset) but has no meta file saying why — add one with a waiver: %s", strings.Join(waiverKinds, " | "))
 		}
 		return problems
 	}
@@ -205,7 +218,7 @@ func checkMeta(dir string, haveMeta, weakened bool, read func(string) string) []
 		report("meta: unknown waiver %q — want one of %s", m.waiver, strings.Join(waiverKinds, " | "))
 	}
 	if !weakened {
-		report("meta claims waiver %q but the case already asserts byte-exact output on all four backends — delete the meta file", m.waiver)
+		report("meta claims waiver %q but the case already asserts byte-exact output on every backend — delete the meta file", m.waiver)
 	}
 	if strings.TrimSpace(m.reason) == "" {
 		report("meta: waiver %q has no reason: — a waiver without a stated reason is indistinguishable from an oversight", m.waiver)

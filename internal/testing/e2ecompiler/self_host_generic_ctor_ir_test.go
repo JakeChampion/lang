@@ -38,8 +38,8 @@ function main(): i32 { let b: Box[i32] = mk(); let ys = b.xs.append(7); return y
 function mk[T](): Box[T] { return Box { xs: [] }; }
 function two(): Box[i32] { return mk(); }
 function main(): i32 { let b = two(); return b.xs.len() + 20; }`},
-	{"std_set_of", `import "std/set";
-function main(): i32 { let s = set.of([1, 2, 2, 3, 3, 3]); return s.len(); }`},
+	{"std_pset_of", `import "std/pset";
+function main(): i32 { let s = pset.of([1, 2, 2, 3, 3, 3]); return s.len(); }`},
 	{"nullary_variant_payload_arg", `enum Tree[K, V] { Leaf, Node(Tree[K, V], K, V, Tree[K, V], i32) }
 function one[K, V](k: K, v: V): Tree[K, V] { return Node(Leaf, k, v, Leaf, 1); }
 function main(): i32 { let t: Tree[i32, string] = one(1, "a"); match (t) { Node(l, k, v, r, s) => { return s + 40; }, Leaf => { return 0; } } }`},

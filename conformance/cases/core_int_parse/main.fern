@@ -1,10 +1,9 @@
 import "std/i32";
-import "core/int";
 
 function main(): i32 {
   match (i32.parse_i32_radix("ff", 16)) {
     Ok(v) => {
-      print(int.int_to_string(v));
+      print(v.to_string());
     },
     Err(_) => {
       print("none");
@@ -12,7 +11,7 @@ function main(): i32 {
   }
   match (i32.parse_i32_radix("-42", 10)) {
     Ok(v) => {
-      print(int.int_to_string(v));
+      print(v.to_string());
     },
     Err(_) => {
       print("none");
@@ -20,7 +19,7 @@ function main(): i32 {
   }
   match (i32.parse_i32_radix("101", 2)) {
     Ok(v) => {
-      print(int.int_to_string(v));
+      print(v.to_string());
     },
     Err(_) => {
       print("none");
@@ -28,7 +27,7 @@ function main(): i32 {
   }
   match (i32.parse_i32_radix("zz", 36)) {
     Ok(v) => {
-      print(int.int_to_string(v));
+      print(v.to_string());
     },
     Err(_) => {
       print("none");
@@ -50,6 +49,6 @@ function main(): i32 {
       print("none");
     }
   }
-  print(int.int_to_string_radix(255, 16));
+  print(255.to_string_radix(16));
   return 0;
 }

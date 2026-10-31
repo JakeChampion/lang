@@ -22,6 +22,7 @@ The producer owns the descriptor lifetime and closes it after cancellation. A cl
 import "std/time";
 import "std/net";
 import "std/async";
+import "std/clock";
 import "std/http";
 import "std/result";
 import "std/option";
@@ -112,7 +113,11 @@ pub function wait_for(subscription: Subscription, timeout: Option[Duration]): bo
   if (!subscription.alive.get() || async.task_cancelled()) {
     return false;
   }
-  let ready: i32 = async.wait_any([subscription.listener.fd, 1], timeout);
+  let until: Option[Instant] = None;
+  if let Some(d) = timeout {
+    until = Some(clock.instant().add(d));
+  }
+  let ready: async.Wake = async.wait_any([subscription.listener.fd, 1], until);
   if (!subscription.alive.get() || async.task_cancelled()) {
     return false;
   }

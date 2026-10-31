@@ -6,7 +6,7 @@ function cmp(x: string, y: string): i32 {
     Ok(a) => {
       match (semver.parse(y)) {
         Ok(b) => {
-          return a.compare(b);
+          return a.cmp(b);
         },
         Err(_) => {
           return 99;

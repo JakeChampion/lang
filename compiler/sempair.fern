@@ -307,7 +307,38 @@ function shaped(f: ssasem.Func): boolean {
 
 function pair_type(f: ssasem.Func, t: typeinfo.Type): boolean {
   let parts: typeinfo.Type[] = pair_types(f, t);
+  if (three_reference_tuple(t)) {
+    return carried(f, parts[0]) && word(f, parts[1]) && word(f, parts[2]) && !ssasem.has_finalizer(f, t) && !ssasem.has_finalizer(f, parts[0]) && !ssasem.has_finalizer(f, parts[1]) && !ssasem.has_finalizer(f, parts[2]);
+  }
+  if (two_reference_tail(t)) {
+    return carried(f, parts[0]) && word(f, parts[1]) && !ssasem.has_finalizer(f, t) && !ssasem.has_finalizer(f, parts[0]) && !ssasem.has_finalizer(f, parts[1]);
+  }
   return parts.len() == 2 && carried(f, parts[0]) && word(f, parts[1]);
+}
+
+pub function three_reference_tuple(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeTuple(tup) = t {
+    let ts: typeinfo.Type[] = tup.elements;
+    return ts.len() == 3 && ssasem.reference(ts[0]) && ssasem.reference(ts[1]) && ssasem.reference(ts[2]);
+  }
+  return false;
+}
+
+pub function two_reference_tail(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeTuple(tup) = t {
+    let ts: typeinfo.Type[] = tup.elements;
+    if (ts.len() != 3 && ts.len() != 4) {
+      return false;
+    }
+    if (!ssasem.reference(ts[0]) || !ssasem.reference(ts[1])) {
+      return false;
+    }
+    if (ts.len() == 4) {
+      return ssasem.is_bool(ts[2]) && ssasem.is_bool(ts[3]);
+    }
+    return ssasem.is_integer(ts[2]) || ssasem.is_bool(ts[2]) || ssasem.is_char(ts[2]) || ssasem.is_float(ts[2]);
+  }
+  return false;
 }
 
 function pair_types(f: ssasem.Func, t: typeinfo.Type): typeinfo.Type[] {
@@ -402,7 +433,7 @@ function carried(f: ssasem.Func, t: typeinfo.Type): boolean {
 
 function shape_of(f: ssasem.Func, ty: typeinfo.Type, split: boolean): Shape {
   let pair: typeinfo.Type[] = pair_types(f, ty);
-  if (pair.len() == 2) {
+  if (pair.len() == 2 || two_reference_tail(ty) || three_reference_tuple(ty)) {
     return Shape { ty: ty, names: [], payloads: pair, has: [true, true], pair: true, lanes: false, split: false, parts: [] };
   }
   let e: semrecords.Enum = f.enums[semrecords.find_enum(f.enums, ty)];
@@ -460,6 +491,9 @@ function pair_callee(f0: ssasem.Func, sh: Shape): ssasem.Func {
   let calls: ssasem.Contract[] = f.calls;
   if (sh.pair) {
     calls = with_contract(calls, pair_set_contract(sh.payloads[1], 0));
+    if (three_reference_tuple(sh.ty)) {
+      calls = with_contract(calls, pair_set_contract(sh.payloads[2], 1));
+    }
   } else if (!sh.lanes) {
     for i in 0..sh.payloads.len() {
       let ts: typeinfo.Type[] = word_types(sh, i);
@@ -490,6 +524,22 @@ function pair_return(f0: ssasem.Func, bi: i32, sh: Shape, defs: ssa.SInst[]): ss
   let set: i32 = f.values.len();
   f = with_value(f, t_i32());
   let insts: ssa.SInst[] = a.a.insts.append(ssa.SInst { kind_tag: ssasem.call(), result: set, args: [a.words[1]], imm: 0, str: pair_set_name(sh.payloads[1], 0) });
+  if (sh.payloads.len() == 3) {
+    if (ssasem.reference(sh.payloads[2])) {
+      let set_third: i32 = f.values.len();
+      f = with_value(f, t_i32());
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: set_third, args: [a.words[2]], imm: 0, str: pair_set_name(sh.payloads[2], 1) });
+    } else {
+      let lane: semscalarreturn.Lanes = semscalarreturn.lane_set(f, insts, a.words[2], sh.payloads[2], 1);
+      f = lane.f;
+      insts = lane.insts;
+    }
+  }
+  if (sh.payloads.len() == 4) {
+    let lane: semscalarreturn.Lanes = semscalarreturn.flag_pair(f, insts, a.words[2], a.words[3], 1);
+    f = lane.f;
+    insts = lane.insts;
+  }
   return with_block(f, bi, ssa.SBlock { ...b, insts: insts, term: ret(a.words[0]) });
 }
 
@@ -841,6 +891,9 @@ function with_callee_enum(f0: ssasem.Func, callee: ssasem.Func, sh: Shape): ssas
 }
 
 function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func {
+  if (sh.payloads.len() >= 3) {
+    return rebuild_reference_tail(f0, bi, k, sh);
+  }
   let f: ssasem.Func = f0;
   let b: ssa.SBlock = f.graph.blocks[bi];
   let call: ssa.SInst = b.insts[k];
@@ -873,6 +926,94 @@ function rebuild_pair(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func 
   calls = calls.with(at, ssasem.Contract { ...calls[at], result: sh.payloads[0] });
   calls = with_contract(calls, word_contract(0));
   calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
+  return ssasem.Func { ...f, calls: calls };
+}
+
+function rebuild_reference_tail(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func {
+  if (three_reference_tuple(sh.ty)) {
+    return rebuild_three_references(f0, bi, k, sh);
+  }
+  let b: ssa.SBlock = f0.graph.blocks[bi];
+  let call: ssa.SInst = b.insts[k];
+  let first: i32 = f0.values.len();
+  let zero: i32 = first + 1;
+  let w: i32 = first + 2;
+  let lane: i32 = first + 3;
+  let second: i32 = first + 4;
+  let f: ssasem.Func = with_value(with_value(with_value(with_value(with_value(f0, sh.payloads[0]), t_i32()), t_usize()), semscalarreturn.word_type()), sh.payloads[1]);
+  let pre: ssa.SInst[] = [
+    ssa.SInst { ...call, result: first, imm: ssasem.pair_capture_imm(w, 1, 2) },
+    ssa.SInst { kind_tag: 1, result: zero, args: [], imm: 0, str: "" },
+    ssa.SInst { kind_tag: ssasem.call(), result: w, args: [zero], imm: 0, str: pair_word_name(0) },
+    ssa.SInst { kind_tag: ssasem.call(), result: lane, args: [zero], imm: 0, str: pair_lane_name(1) },
+    ssa.SInst { kind_tag: ssasem.call(), result: second, args: [w], imm: 0, str: word_as_name(sh.payloads[1]) },
+  ];
+  let fields: i32[] = [first, second];
+  if (sh.payloads.len() == 4) {
+    let lo: semscalarreturn.Lanes = semscalarreturn.flag_part(f, pre, lane, 0);
+    let hi: semscalarreturn.Lanes = semscalarreturn.flag_part(lo.f, lo.insts, lane, 1);
+    f = hi.f;
+    pre = hi.insts;
+    fields = fields.append(lo.value).append(hi.value);
+  } else {
+    let l: semscalarreturn.Lanes = semscalarreturn.lane_as(f, pre, lane, sh.payloads[2]);
+    f = l.f;
+    pre = l.insts;
+    fields = fields.append(l.value);
+  }
+  pre = pre.append(ssa.SInst { kind_tag: ssasem.tuple_new(), result: call.result, args: fields, imm: 0, str: "" });
+  let insts: ssa.SInst[] = [];
+  for pos in 0..b.insts.len() {
+    if (pos == k) {
+      insts = util.append_all(insts, pre);
+    } else {
+      insts = insts.append(b.insts[pos]);
+    }
+  }
+  f = with_block(f, bi, ssa.SBlock { ...b, insts: insts });
+  let calls: ssasem.Contract[] = f.calls;
+  let at: i32 = ssasem.find_contract_in(calls, call.str);
+  calls = calls.with(at, ssasem.Contract { ...calls[at], result: sh.payloads[0] });
+  calls = with_contract(calls, word_contract(0));
+  calls = with_contract(calls, lane_contract(1));
+  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
+  return ssasem.Func { ...f, calls: calls };
+}
+
+function rebuild_three_references(f0: ssasem.Func, bi: i32, k: i32, sh: Shape): ssasem.Func {
+  let b: ssa.SBlock = f0.graph.blocks[bi];
+  let call: ssa.SInst = b.insts[k];
+  let first: i32 = f0.values.len();
+  let zero: i32 = first + 1;
+  let w0: i32 = first + 2;
+  let w1: i32 = first + 3;
+  let second: i32 = first + 4;
+  let third: i32 = first + 5;
+  let f: ssasem.Func = with_value(with_value(with_value(with_value(with_value(with_value(f0, sh.payloads[0]), t_i32()), t_usize()), t_usize()), sh.payloads[1]), sh.payloads[2]);
+  let pre: ssa.SInst[] = [
+    ssa.SInst { ...call, result: first, imm: ssasem.pair_capture_imm(w0, 2, 0) },
+    ssa.SInst { kind_tag: 1, result: zero, args: [], imm: 0, str: "" },
+    ssa.SInst { kind_tag: ssasem.call(), result: w0, args: [zero], imm: 0, str: pair_word_name(0) },
+    ssa.SInst { kind_tag: ssasem.call(), result: w1, args: [zero], imm: 0, str: pair_word_name(1) },
+    ssa.SInst { kind_tag: ssasem.call(), result: second, args: [w0], imm: 0, str: word_as_name(sh.payloads[1]) },
+    ssa.SInst { kind_tag: ssasem.call(), result: third, args: [w1], imm: 0, str: word_as_name(sh.payloads[2]) },
+    ssa.SInst { kind_tag: ssasem.tuple_new(), result: call.result, args: [first, second, third], imm: 0, str: "" },
+  ];
+  let insts: ssa.SInst[] = [];
+  for pos in 0..b.insts.len() {
+    if (pos == k) {
+      insts = util.append_all(insts, pre);
+    } else {
+      insts = insts.append(b.insts[pos]);
+    }
+  }
+  f = with_block(f, bi, ssa.SBlock { ...b, insts: insts });
+  let calls: ssasem.Contract[] = f.calls;
+  let at: i32 = ssasem.find_contract_in(calls, call.str);
+  calls = calls.with(at, ssasem.Contract { ...calls[at], result: sh.payloads[0] });
+  calls = with_contract(with_contract(calls, word_contract(0)), word_contract(1));
+  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[1]), params: [t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[1] });
+  calls = with_contract(calls, ssasem.Contract { name: word_as_name(sh.payloads[2]), params: [t_usize()], modes: [ssasem.value_mode()], result: sh.payloads[2] });
   return ssasem.Func { ...f, calls: calls };
 }
 

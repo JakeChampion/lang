@@ -75,7 +75,7 @@ the definitions in `util.fern`.
 
 The standard library lives at `std/*` — `std/io`, `std/string`,
 `std/json`, `std/http`, and so on — with a few low-level modules under
-`core/*` (`core/map`, `core/int`). Import them the same way:
+`core/*` (`core/map`, `core/cmp`). Import them the same way:
 
 ```fern
 import "std/path";

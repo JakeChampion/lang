@@ -6,7 +6,7 @@ const semverProg = `
 import "std/semver" as semver;
 function cmp(x: string, y: string): i32 {
     match (semver.parse(x)) {
-        Ok(a) => { match (semver.parse(y)) { Ok(b) => { return a.compare(b); }, Err(_) => { return 99; } } },
+        Ok(a) => { match (semver.parse(y)) { Ok(b) => { return a.cmp(b); }, Err(_) => { return 99; } } },
         Err(_) => { return 99; }
     }
 }

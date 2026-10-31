@@ -57,7 +57,7 @@ function show(req: HttpRequest, params: router.Params, plat: platform.Host): Res
 }
 
 function create(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
-  let b: string = req.body_string()?;
+  let b: string = req.body_text()?;
   return Ok(http.created("made " + b));
 }
 

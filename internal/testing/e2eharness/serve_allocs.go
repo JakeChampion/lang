@@ -238,7 +238,7 @@ function pump(k: Cli, ms: i32): Cli {
   for d in out {
     let r: Result[i32, net.NetError] = net.send_to(k.sock, d, k.peer);
   }
-  let woke: i32 = async.wait_any([k.sock, 1], Some(time.duration_millis(ms)));
+  let woke: async.Wake = async.wait_any([k.sock, 1], Some(clock.instant().add(time.duration_millis(ms))));
   let going: boolean = true;
   while (going) {
     match (net.recv_from(k.sock, k.buf)) {
@@ -260,7 +260,7 @@ function pump(k: Cli, ms: i32): Cli {
 
 // get sends one request and pumps until its response arrives.
 function get(k0: Cli, path: string): (Cli, string) {
-  let Ok(sent) = k0.c.request(request(path), "https") else {
+  let Ok(sent) = k0.c.request(request(path).outgoing("https")) else {
     return (k0, "ERR request");
   };
   let k: Cli = Cli { ...k0, c: sent.0 };
@@ -395,7 +395,7 @@ function drive(k0: Cli, rounds: i32, m: i32): (Cli, i32, i32) {
       if (inflight >= m || completed + inflight >= rounds || !k.c.quic().can_open(false)) {
         topping = false;
       } else {
-        match (k.c.request(request("/"), "https")) {
+        match (k.c.request(request("/").outgoing("https"))) {
           Ok(sent) => {
             k = Cli { ...k, c: sent.0 };
             inflight = inflight + 1;
