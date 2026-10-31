@@ -5,7 +5,7 @@
 
 pub trait Render { function render(self: Self): string; }
 
-pub function (xs: T[]) render_all[T: Render](): string {
+pub function (xs: (T: Render)[]) render_all(): string {
     let out: string = "";
     let i: i32 = 0;
     while (i < xs.len()) {

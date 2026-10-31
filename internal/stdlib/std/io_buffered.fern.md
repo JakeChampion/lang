@@ -278,7 +278,7 @@ pub function (b: BufWriter) flush(): Result[BufWriter, IoError] {
   return __buf_writer_put_bytes(b, buf_take_bytes(b.buf.h));
 }
 
-pub function (b: BufWriter) close(): Result[void, IoError] {
+pub function (own b: BufWriter) close(): Result[void, IoError] {
   let pending: i32 = buf_len(b.buf.h);
   let flushed: Result[BufWriter, IoError] = b.flush();
   if let Err(e) = b.w.close() {
@@ -290,6 +290,10 @@ pub function (b: BufWriter) close(): Result[void, IoError] {
     }
   }
   return Ok(());
+}
+
+pub function (own b: BufWriter) into_writer(): Writer {
+  return b.w;
 }
 
 pub function (b: BufWriter) error(): Option[IoError] {

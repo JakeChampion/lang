@@ -381,30 +381,36 @@ function crosses_device(path: string, info: FileStat): boolean {
   }
 }
 
+// The directory rm descends into, its entries, and the error that kept them
+// unread.
+function rm_open(s: Settings, ent: Ent): (Option[Dir], string[], Option[IoError]) {
+  let none: string[] = [];
+  if (!(s.recursive || s.dir)) {
+    return (None, none, None);
+  }
+  let opened: Result[Dir, IoError] = ent_open(ent);
+  match (opened) {
+    Ok(d) => {
+      match (d.entries()) {
+        Ok(es) => {
+          return (Some(d), es, None);
+        },
+        Err(e) => {
+          return (Some(d), none, Some(e));
+        }
+      }
+    },
+    Err(e) => {
+      return (None, none, Some(e));
+    }
+  }
+  return (None, none, None);
+}
+
 function rm_dir(st0: St, s: Settings, ent: Ent, top: boolean, cl_dev: i64, info: FileStat): (St, i32) {
   let st: St = st0;
   let path: string = ent.path;
-  let unread: Option[IoError] = None;
-  let names: string[] = [];
-  let held: Option[Dir] = None;
-  if (s.recursive || s.dir) {
-    match (ent_open(ent)) {
-      Ok(d) => {
-        held = Some(d);
-        match (d.entries()) {
-          Ok(es) => {
-            names = es;
-          },
-          Err(e) => {
-            unread = Some(e);
-          }
-        }
-      },
-      Err(e) => {
-        unread = Some(e);
-      }
-    }
-  }
+  let (held, names, unread) = rm_open(s, ent);
   let empty: boolean = names.len() == 0;
   match (refuse_dir(st, s, path, top, cl_dev, info)) {
     Some(next) => {
@@ -458,7 +464,7 @@ function rm_dir(st0: St, s: Settings, ent: Ent, top: boolean, cl_dev: i64, info:
   return (st, res_ok());
 }
 
-function release(held: Option[Dir]): void {
+function release(own held: Option[Dir]): void {
   match (held) {
     Some(d) => {
       d.close();

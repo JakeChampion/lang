@@ -145,7 +145,7 @@ func IOByteLineCases() []IOByteLineCase {
 func IOByteLineReadErrorProgram(closed bool, chunk, length, value int) string {
 	setup, closeAtEnd := "", "true"
 	if closed {
-		setup = "match (r.close()) { Err(_) => { return 1; }, Ok(_) => {} }"
+		setup = "unsafe { match (r.close_unchecked()) { Err(_) => { return 1; }, Ok(_) => {} } }"
 		closeAtEnd = "false"
 	}
 	return strings.NewReplacer("SETUP", setup, "CHUNK", strconv.Itoa(chunk), "LENGTH", strconv.Itoa(length),

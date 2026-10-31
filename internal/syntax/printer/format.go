@@ -487,31 +487,83 @@ func (f *formatter) writeTypeParams(names []string, bounds map[string][]string, 
 			continue
 		}
 		f.b.WriteString(name)
-		bs := bounds[name]
-		if len(bs) == 0 {
-			continue
-		}
-		f.b.WriteString(": ")
-		for j, bt := range bs {
-			if j > 0 {
-				f.b.WriteString(" + ")
-			}
-			f.b.WriteString(bt)
-			if boundArgs != nil {
-				if args := boundArgs[name]; j < len(args) && len(args[j]) > 0 {
-					f.b.WriteByte('[')
-					for k, at := range args[j] {
-						if k > 0 {
-							f.b.WriteString(", ")
-						}
-						f.b.WriteString(formatType(at))
-					}
-					f.b.WriteByte(']')
-				}
-			}
+		if bt := boundText(name, bounds, boundArgs); bt != "" {
+			f.b.WriteString(": " + bt)
 		}
 	}
 	f.b.WriteByte(']')
+}
+
+func boundText(name string, bounds map[string][]string, boundArgs map[string][][]ast.Type) string {
+	var b strings.Builder
+	for j, bt := range bounds[name] {
+		if j > 0 {
+			b.WriteString(" + ")
+		}
+		b.WriteString(bt)
+		if args := boundArgs[name]; j < len(args) && len(args[j]) > 0 {
+			b.WriteByte('[')
+			for k, at := range args[j] {
+				if k > 0 {
+					b.WriteString(", ")
+				}
+				b.WriteString(formatType(at))
+			}
+			b.WriteByte(']')
+		}
+	}
+	return b.String()
+}
+
+// receiverWithBounds writes the bound of each type parameter that the
+// receiver type names into the receiver type, and returns the parameters
+// that only the method declares.
+func receiverWithBounds(recv string, fn *ast.FuncDecl) (string, []string) {
+	var own []string
+	for _, tp := range fn.TypeParams {
+		at := typeWordAt(recv, tp)
+		if at < 0 {
+			own = append(own, tp)
+			continue
+		}
+		bt := boundText(tp, fn.Bounds, fn.BoundArgs)
+		if bt == "" {
+			continue
+		}
+		k := at - 1
+		for k >= 0 && recv[k] == ' ' {
+			k--
+		}
+		if k >= 0 && strings.IndexByte("[(,", recv[k]) >= 0 {
+			recv = recv[:at+len(tp)] + ": " + bt + recv[at+len(tp):]
+		} else {
+			recv = recv[:at] + "(" + tp + ": " + bt + ")" + recv[at+len(tp):]
+		}
+	}
+	return recv, own
+}
+
+// typeWordAt is the index of the first unqualified name in a type
+// spelling, or -1.
+func typeWordAt(spelling, name string) int {
+	isWord := func(c byte) bool {
+		return c == '_' || c >= '0' && c <= '9' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+	}
+	for i := 0; i < len(spelling); {
+		if !isWord(spelling[i]) {
+			i++
+			continue
+		}
+		j := i
+		for j < len(spelling) && isWord(spelling[j]) {
+			j++
+		}
+		if spelling[i:j] == name && (i == 0 || spelling[i-1] != '.') {
+			return i
+		}
+		i = j
+	}
+	return -1
 }
 
 func (f *formatter) formatStructDecl(sd *ast.StructDecl) {
@@ -836,18 +888,21 @@ func (f *formatter) formatFunc(fn *ast.FuncDecl, depth int) {
 		f.b.WriteString("unsafe ")
 	}
 	f.b.WriteString("function ")
+	typeParams := fn.TypeParams
 	if fn.Receiver != nil {
+		recv := ""
+		recv, typeParams = receiverWithBounds(formatType(fn.Receiver.Type), fn)
 		f.b.WriteByte('(')
 		if fn.Receiver.Own {
 			f.b.WriteString("own ")
 		}
 		f.b.WriteString(fn.Receiver.Name)
 		f.b.WriteString(": ")
-		f.b.WriteString(formatType(fn.Receiver.Type))
+		f.b.WriteString(recv)
 		f.b.WriteString(") ")
 	}
 	f.b.WriteString(fn.Name)
-	f.writeTypeParams(fn.TypeParams, fn.Bounds, fn.BoundArgs, fn.ConstParams)
+	f.writeTypeParams(typeParams, fn.Bounds, fn.BoundArgs, fn.ConstParams)
 	f.b.WriteByte('(')
 	for i, p := range fn.Params {
 		if i > 0 {

@@ -43,8 +43,13 @@ UnsafeMod   = 'unsafe' ;
 
 FuncDecl    = { FuncMod } [ UnsafeMod ] 'function' [ Receiver ] IDENT [ TypeParams ]
               '(' [ ParamList ] ')' [ ':' Type ] ( Block | ';' ) ;
-# A method is written `function (self: T) name(...)`.
+# A method is written `function (self: T) name(...)`. The receiver
+# introduces the type parameters that its type names. A RecvBound writes the
+# bound of one of them, and only a receiver type can hold a RecvBound:
+# `(m: OrdMap[K: cmp.Ord, V])`, `(xs: (T: cmp.Ord)[])`. The method's own
+# TypeParams must not name a parameter that the receiver introduces (P007).
 Receiver    = '(' [ 'own' ] IDENT ':' Type ')' ;
+RecvBound   = IDENT ':' Bounds ;
 
 TypeParams  = '[' TypeParam { ',' TypeParam } [ ',' ] ']' ;
 # A const parameter (`const N: i32`) is a function's only. Its argument is
@@ -121,12 +126,13 @@ DynType     = 'dyn' Bound { '+' Bound }
 # `(A, B) => C` is a function type; `(A, B)` a tuple; `(A)` a grouping.
 FnOrTupleType
             = '(' [ FnParam { ',' FnParam } [ ',' ] ] ')' '=>' Type
-            | '(' Type { ',' Type } [ ',' ] ')' { TypeSuffix }
+            | '(' TypeSlot { ',' TypeSlot } [ ',' ] ')' { TypeSuffix }
             | SliceType
             ;
+TypeSlot    = RecvBound | Type ;
 # `own` opening a function type's parameter slot marks it consuming.
 FnParam     = 'own' Type | Type ;
-SliceType   = '[' Type ']' { TypeSuffix }
+SliceType   = '[' TypeSlot ']' { TypeSuffix }
             | PrimaryType { TypeSuffix }
             ;
 TypeSuffix  = '[' ']' ;
@@ -145,7 +151,7 @@ PrimitiveType
 # `str`, `char`, `Self` are contextual type names, not keywords.
 NamedType   = IDENT [ '.' IDENT ] [ TypeArgs ] ;
 TypeArgs    = '[' TypeArg { ',' TypeArg } [ ',' ] ']' ;
-TypeArg     = IDENT '=' Type | Type | NUMBER ;
+TypeArg     = IDENT '=' Type | TypeSlot | NUMBER ;
 
 # --------------------------------------------------------------- statements
 

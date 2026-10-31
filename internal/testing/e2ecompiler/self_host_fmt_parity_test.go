@@ -999,8 +999,28 @@ pub function sort_key[T, K: cmp.Ord](arr: T[], key: (T) => K): T[] {
 return arr;
 }
 
-pub function [U] (o: Opt[T]) map(f: (T) => U): Opt[U] {
+pub function (o: Opt[T]) map[U](f: (T) => U): Opt[U] {
 return None;
+}
+`},
+	{"receiver-bounds", `import "core/cmp";
+
+struct Pair[A, B] { a: A, b: B }
+
+pub function (p: Pair[A: cmp.Ord + cmp.Eq, B]) left(): A {
+return p.a;
+}
+
+pub function (p: Pair[A, B: cmp.Ord]) tag[K: cmp.Eq, U](k: K, u: U): K {
+return k;
+}
+
+pub function (xs: (T: cmp.Ord)[]) peak(): T {
+return xs[0];
+}
+
+pub function (xs: [T: cmp.Eq]) first(): T {
+return xs[0];
 }
 `},
 	{"for-range", `function hi(): i32 {

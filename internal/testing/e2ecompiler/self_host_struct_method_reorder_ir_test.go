@@ -9,7 +9,7 @@ var structMethodReorderCases = []struct {
 }{
 	{"swap-receiver-params",
 		`struct Pair[A, B] { first: A, second: B }
-function (p: Pair[A, B]) swap[A, B](): Pair[B, A] {
+function (p: Pair[A, B]) swap(): Pair[B, A] {
     return Pair { first: p.second, second: p.first };
 }
 function main(): i32 {
@@ -32,7 +32,7 @@ function main(): i32 {
 }`, "t\n"},
 	{"receiver-spells-own-names",
 		`struct Pair[A, B] { first: A, second: B }
-function (p: Pair[X, Y]) swap[X, Y](): Pair[Y, X] {
+function (p: Pair[X, Y]) swap(): Pair[Y, X] {
     return Pair { first: p.second, second: p.first };
 }
 function (p: Pair[X, Y]) second_of(): Y { return p.second; }
