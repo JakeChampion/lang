@@ -305,8 +305,6 @@ func (i *Interp) udpSocketCtl(id, op, arg int64) (Value, bool) {
 		err = syscall.Shutdown(fd, int(arg))
 	case 5:
 		err = connectResult(fd)
-	case 9, 10:
-		return nameGroup(fd, op, arg), true
 	}
 	if err != nil {
 		return negErrno(err), true

@@ -2892,7 +2892,7 @@ function call_host_net(name: string, args: Value[]): Value {
   if (util.has_str(["tcp_listen_with", "tcp_connect_with", "tcp_listen"], name)) {
     return call_host_tcp_open(name, args);
   }
-  if (util.has_str(["tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_recv_into"], name)) {
+  if (util.has_str(["tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_recv_into", "tcp_addr_into"], name)) {
     return call_host_tcp_io(name, args);
   }
   return call_host_tcp_fd(name, args);
@@ -2945,6 +2945,12 @@ function call_host_tcp_io(name: string, args: Value[]): Value {
     let buf: u8[] = arg_bytes(args, 1);
     let n: i32 = tcp_recv_into(fd, buf);
     arr_fill(arg_at(args, 1), bytes_as_i64s(buf));
+    return v_int(n);
+  }
+  if (name == "tcp_addr_into") {
+    let rec: u8[] = arg_bytes(args, 2);
+    let n: i32 = tcp_addr_into(fd, arg_bool(args, 1), rec);
+    arr_fill(arg_at(args, 2), bytes_as_i64s(rec));
     return v_int(n);
   }
   return v_int(tcp_sendfile(fd, arg_i32(args, 1), arg_i32(args, 2)));

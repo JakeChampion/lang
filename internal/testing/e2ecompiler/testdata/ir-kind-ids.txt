@@ -423,3 +423,4 @@ count_below_u64=482
 prctl_query=483
 mulhi_s=484
 buf_push_decimal=485
+tcp_addr_into=486
