@@ -304,6 +304,7 @@ fresh_array_through_a_pass_through_callee            0
 fresh_local_return                                   0
 fresh_result_payload_is_owned                        0
 from_empty_bytes                                     0
+fstring_interpolation_char_escape                    0
 fstring_reassign_releases_old                        0
 function_array_element_returned                      0
 functional_base_unchanged                            0
