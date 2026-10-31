@@ -1,0 +1,1 @@
+(i32, S) implements `Ord` when its parts do: add `@derive(cmp.Ord)` (or `impl cmp.Ord for S`)

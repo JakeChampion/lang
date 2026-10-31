@@ -103,7 +103,7 @@ function main(): i32 {
     let has = 0;
     if (cmp.contains([10, 20, 30], 30)) { has = 1; }                              // 1
     let eqa = 0;
-    if (cmp.eq_arrays([1, 2], [1, 2])) { eqa = 1; }                               // 1
+    if ([1, 2] == [1, 2]) { eqa = 1; }                                           // 1
     return a + b + c + p.v + d + arr[0] * 100 + arr[2] + srt + ix + has + eqa;    // 128 + 1+1+1 = 131
 }
 `

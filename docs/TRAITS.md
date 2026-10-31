@@ -121,6 +121,37 @@ impl Eq for Point {
 - `trait` may be `pub`. Impls inherit visibility from the type/trait;
   there is no `pub impl`.
 
+### Impl targets
+
+The `for` type of an impl is a struct, an enum, a built-in scalar, an
+array `T[]`, a slice `[T]` or a tuple. An array, a slice and a tuple
+can also be the receiver of a method. Each kind has one method
+namespace: `Array`, `slice`, and `tupleN` for a tuple of N elements. So
+`impl Eq for (A, B)` and `impl Eq for (A, B, C)` are two impls.
+
+```fern
+impl[T: Eq] Eq for T[] {
+    function eq(self: T[], other: T[]): boolean { ... }
+}
+
+impl[A: Ord, B: Ord] Ord for (A, B) {
+    function cmp(self: (A, B), other: (A, B)): i32 { ... }
+}
+```
+
+No module declares an array, a slice or a tuple. Thus the orphan rule
+lets only the module of the trait implement it for them.
+
+`core/cmp` implements `Eq`, `Ord` and `Hash` for arrays and for tuples of
+2 to 4 elements, when their parts do. An array orders lexicographically, so
+a prefix comes first. A tuple orders by its first element, then by the next.
+
+A parametric impl covers a type only when the parts that its type
+parameters bind meet their bounds. `impl[T: Eq] Eq for T[]` covers
+`i32[][]`, because `i32[]` is `Eq` in turn. It does not cover `S[]` for
+a struct `S` without `Eq`. The bound check of a generic call (E021) and
+the `==` and `<` dispatch (E041) both apply this rule, in both checkers.
+
 ### Methods and constructors without a trait
 
 Every `impl` names a trait. A method that belongs to no trait is a receiver
@@ -619,8 +650,10 @@ runtime.
   `T` has bound `Tr` declaring method `m`, type-check against the trait
   signature and **do not rewrite** the callee.
 - Checker: at each generic call site, verify each concrete `TypeArg`
-  satisfies the bound (`Info.Impls[Tr][typeName]`); else
-  `E0xx "T = i32 does not implement Display"`.
+  satisfies the bound (`checker.implements`: `Info.Impls[Tr][typeName]`,
+  then the bounds of the impl in `Info.ImplDecls` on the parts of the
+  type); else `E021 "type argument T = i32 does not implement trait
+  Display"`.
 - The monomorph recheck (already present) finishes dispatch. No new
   runtime lowering.
 

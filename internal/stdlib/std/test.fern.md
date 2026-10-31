@@ -62,9 +62,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<23 pub function assert_eq_map[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](actual: Map[K, V], expected: M...>>
 
-<<24 pub function assert_one_of_i32(actual: i32, allowed: i32[]): TestOutcome>>
+<<24 pub function assert_one_of[T: cmp.Eq + cmp.Display](actual: T, allowed: T[]): TestOutcome>>
 
-<<25 pub function assert_is_some_eq_string(opt: Option[string], expected: string): TestOutcome>>
+<<25 pub function assert_status(resp: HttpResponse, expected: i32): TestOutcome>>
 
 <<26 pub function assert_array_intersects_string(a: string[], b: string[]): TestOutcome>>
 
@@ -1227,84 +1227,18 @@ pub function assert_lines_eq(actual: string, expected_lines: string[]): TestOutc
   return Pass;
 }
 
-pub function assert_in_range_i32(v: i32, lo: i32, hi: i32): TestOutcome {
-  if (lo > hi) {
-    return Fail("assert_in_range_i32: inverted range - lower bound "
-      + lo.to_string() + " > upper bound " + hi.to_string());
+pub function assert_in_range[T: cmp.Ord + cmp.Display](v: T, lo: T, hi: T): TestOutcome {
+  if (lo.cmp(hi) > 0) {
+    return Fail("assert_in_range: inverted range - lower bound "
+      + __quoted(lo.to_string()) + " > upper bound " + __quoted(hi.to_string()));
   }
-  if (v < lo) {
-    return Fail("assert_in_range_i32: " + v.to_string()
-      + " < lower bound " + lo.to_string());
+  if (v.cmp(lo) < 0) {
+    return Fail("assert_in_range: " + __quoted(v.to_string())
+      + " < lower bound " + __quoted(lo.to_string()));
   }
-  if (v > hi) {
-    return Fail("assert_in_range_i32: " + v.to_string()
-      + " > upper bound " + hi.to_string());
-  }
-  return Pass;
-}
-
-pub function assert_in_range_i64(v: i64, lo: i64, hi: i64): TestOutcome {
-  if (lo > hi) {
-    return Fail("assert_in_range_i64: inverted range - lower bound "
-      + lo.to_string() + " > upper bound " + hi.to_string());
-  }
-  if (v < lo) {
-    return Fail("assert_in_range_i64: " + v.to_string()
-      + " < lower bound " + lo.to_string());
-  }
-  if (v > hi) {
-    return Fail("assert_in_range_i64: " + v.to_string()
-      + " > upper bound " + hi.to_string());
-  }
-  return Pass;
-}
-
-pub function assert_in_range_f64(v: f64, lo: f64, hi: f64): TestOutcome {
-  if (v != v) {
-    return Fail("assert_in_range_f64: value is NaN");
-  }
-  if (lo != lo) {
-    return Fail("assert_in_range_f64: lower bound is NaN");
-  }
-  if (hi != hi) {
-    return Fail("assert_in_range_f64: upper bound is NaN");
-  }
-  if (lo > hi) {
-    return Fail("assert_in_range_f64: inverted range - lower bound "
-      + lo.to_string() + " > upper bound " + hi.to_string());
-  }
-  if (v < lo) {
-    return Fail("assert_in_range_f64: " + v.to_string()
-      + " < lower bound " + lo.to_string());
-  }
-  if (v > hi) {
-    return Fail("assert_in_range_f64: " + v.to_string()
-      + " > upper bound " + hi.to_string());
-  }
-  return Pass;
-}
-
-pub function assert_in_range_f32(v: f32, lo: f32, hi: f32): TestOutcome {
-  if (v != v) {
-    return Fail("assert_in_range_f32: value is NaN");
-  }
-  if (lo != lo) {
-    return Fail("assert_in_range_f32: lower bound is NaN");
-  }
-  if (hi != hi) {
-    return Fail("assert_in_range_f32: upper bound is NaN");
-  }
-  if (lo > hi) {
-    return Fail("assert_in_range_f32: inverted range - lower bound "
-      + lo.to_string() + " > upper bound " + hi.to_string());
-  }
-  if (v < lo) {
-    return Fail("assert_in_range_f32: " + v.to_string()
-      + " < lower bound " + lo.to_string());
-  }
-  if (v > hi) {
-    return Fail("assert_in_range_f32: " + v.to_string()
-      + " > upper bound " + hi.to_string());
+  if (v.cmp(hi) > 0) {
+    return Fail("assert_in_range: " + __quoted(v.to_string())
+      + " > upper bound " + __quoted(hi.to_string()));
   }
   return Pass;
 }
@@ -1870,248 +1804,105 @@ pub function assert_eq_map[K: cmp.Eq + cmp.Display, V: cmp.Eq + cmp.Display](act
   return Pass;
 }
 
-pub function assert_all_i32(arr: i32[], pred: (i32) => boolean): TestOutcome {
-  let i: i32 = 0;
-  while (i < arr.len()) {
+pub function assert_all[T: cmp.Display](arr: T[], pred: (T) => boolean): TestOutcome {
+  for i in 0..arr.len() {
     if (!pred(arr[i])) {
-      return Fail("assert_all_i32: predicate failed at index "
-        + i.to_string() + ": value " + arr[i].to_string());
+      return Fail("assert_all: predicate failed at index "
+        + i.to_string() + ": value " + __quoted(arr[i].to_string()));
     }
-    i = i + 1;
   }
   return Pass;
 }
 
-pub function assert_all_string(arr: string[], pred: (string) => boolean): TestOutcome {
-  let i: i32 = 0;
-  while (i < arr.len()) {
-    if (!pred(arr[i])) {
-      return Fail("assert_all_string: predicate failed at index "
-        + i.to_string() + ": value \"" + arr[i] + "\"");
-    }
-    i = i + 1;
-  }
-  return Pass;
-}
-
-pub function assert_any_i32(arr: i32[], pred: (i32) => boolean): TestOutcome {
-  let n: i32 = arr.len();
-  let i: i32 = 0;
-  while (i < n) {
-    if (pred(arr[i])) {
+pub function assert_any[T](arr: T[], pred: (T) => boolean): TestOutcome {
+  for x in arr {
+    if (pred(x)) {
       return Pass;
     }
-    i = i + 1;
   }
-  return Fail("assert_any_i32: no element of "
-    + n.to_string() + " matched");
+  return Fail("assert_any: no element of "
+    + arr.len().to_string() + " matched");
 }
 
-pub function assert_any_string(arr: string[], pred: (string) => boolean): TestOutcome {
-  let n: i32 = arr.len();
-  let i: i32 = 0;
-  while (i < n) {
-    if (pred(arr[i])) {
-      return Pass;
-    }
-    i = i + 1;
-  }
-  return Fail("assert_any_string: no element of "
-    + n.to_string() + " matched");
-}
-
-pub function assert_count_i32(arr: i32[], pred: (i32) => boolean, expected_count: i32): TestOutcome {
+pub function assert_count[T](arr: T[], pred: (T) => boolean, expected_count: i32): TestOutcome {
   let hits: i32 = 0;
-  let i: i32 = 0;
-  while (i < arr.len()) {
-    if (pred(arr[i])) {
+  for x in arr {
+    if (pred(x)) {
       hits = hits + 1;
     }
-    i = i + 1;
   }
   if (hits == expected_count) {
     return Pass;
   }
-  return Fail("assert_count_i32: expected "
-    + expected_count.to_string() + " matches, got "
-    + hits.to_string());
-}
-
-pub function assert_count_string(arr: string[], pred: (string) => boolean, expected_count: i32): TestOutcome {
-  let hits: i32 = 0;
-  let i: i32 = 0;
-  while (i < arr.len()) {
-    if (pred(arr[i])) {
-      hits = hits + 1;
-    }
-    i = i + 1;
-  }
-  if (hits == expected_count) {
-    return Pass;
-  }
-  return Fail("assert_count_string: expected "
+  return Fail("assert_count: expected "
     + expected_count.to_string() + " matches, got "
     + hits.to_string());
 }
 ```
 
-### `24 pub function assert_one_of_i32(actual: i32, allowed: i32[]): TestOutcome`
+### `24 pub function assert_one_of[T: cmp.Eq + cmp.Display](actual: T, allowed: T[]): TestOutcome`
 
 ```fern
-<<24 pub function assert_one_of_i32(actual: i32, allowed: i32[]): TestOutcome>>=
-pub function assert_one_of_i32(actual: i32, allowed: i32[]): TestOutcome {
-  let i: i32 = 0;
-  while (i < allowed.len()) {
-    if (allowed[i] == actual) {
-      return Pass;
-    }
-    i = i + 1;
+<<24 pub function assert_one_of[T: cmp.Eq + cmp.Display](actual: T, allowed: T[]): TestOutcome>>=
+pub function assert_one_of[T: cmp.Eq + cmp.Display](actual: T, allowed: T[]): TestOutcome {
+  if (cmp.contains(allowed, actual)) {
+    return Pass;
   }
   let rendered: string = "[";
-  let j: i32 = 0;
-  while (j < allowed.len()) {
-    if (j > 0) {
+  for i in 0..allowed.len() {
+    if (i > 0) {
       rendered = rendered + ", ";
     }
-    rendered = rendered + allowed[j].to_string();
-    j = j + 1;
+    rendered = rendered + __quoted(allowed[i].to_string());
   }
-  rendered = rendered + "]";
-  return Fail("assert_one_of_i32: " + actual.to_string()
-    + " not in allowed set " + rendered);
+  return Fail("assert_one_of: " + __quoted(actual.to_string())
+    + " not in allowed set " + rendered + "]");
 }
 
-pub function assert_one_of_string(actual: string, allowed: string[]): TestOutcome {
-  let i: i32 = 0;
-  while (i < allowed.len()) {
-    if (allowed[i] == actual) {
-      return Pass;
-    }
-    i = i + 1;
-  }
-  let rendered: string = "[";
-  let j: i32 = 0;
-  while (j < allowed.len()) {
-    if (j > 0) {
-      rendered = rendered + ", ";
-    }
-    rendered = rendered + "\"" + allowed[j] + "\"";
-    j = j + 1;
-  }
-  rendered = rendered + "]";
-  return Fail("assert_one_of_string: \"" + actual
-    + "\" not in allowed set " + rendered);
-}
-
-pub function assert_none_of_i32(actual: i32, forbidden: i32[]): TestOutcome {
-  let i: i32 = 0;
-  while (i < forbidden.len()) {
-    if (forbidden[i] == actual) {
-      return Fail("assert_none_of_i32: " + actual.to_string()
-        + " matched forbidden value");
-    }
-    i = i + 1;
+pub function assert_none_of[T: cmp.Eq + cmp.Display](actual: T, forbidden: T[]): TestOutcome {
+  if (cmp.contains(forbidden, actual)) {
+    return Fail("assert_none_of: " + __quoted(actual.to_string())
+      + " matched forbidden value");
   }
   return Pass;
 }
 
-pub function assert_none_of_string(actual: string, forbidden: string[]): TestOutcome {
-  let i: i32 = 0;
-  while (i < forbidden.len()) {
-    if (forbidden[i] == actual) {
-      return Fail("assert_none_of_string: \"" + actual
-        + "\" matched forbidden value");
-    }
-    i = i + 1;
+pub function assert_is_some[T](opt: Option[T]): TestOutcome {
+  if (opt.is_some()) {
+    return Pass;
+  }
+  return Fail("assert_is_some: got None");
+}
+
+pub function assert_is_none[T: cmp.Display](opt: Option[T]): TestOutcome {
+  if let Some(v) = opt {
+    return Fail("assert_is_none: got Some(" + __quoted(v.to_string()) + ")");
   }
   return Pass;
 }
 
-pub function assert_is_some_i32(opt: Option[i32]): TestOutcome {
-  match (opt) {
-    Some(_) => {
-      return Pass;
-    },
-    None => {
-      return Fail("assert_is_some_i32: got None");
-    }
-  }
-}
-
-pub function assert_is_some_string(opt: Option[string]): TestOutcome {
-  match (opt) {
-    Some(_) => {
-      return Pass;
-    },
-    None => {
-      return Fail("assert_is_some_string: got None");
-    }
-  }
-}
-
-pub function assert_is_none_i32(opt: Option[i32]): TestOutcome {
+pub function assert_is_some_eq[T: cmp.Eq + cmp.Display](opt: Option[T], expected: T): TestOutcome {
   match (opt) {
     Some(v) => {
-      return Fail("assert_is_none_i32: got Some("
-        + v.to_string() + ")");
-    },
-    None => {
-      return Pass;
-    }
-  }
-}
-
-pub function assert_is_none_string(opt: Option[string]): TestOutcome {
-  match (opt) {
-    Some(v) => {
-      return Fail("assert_is_none_string: got Some(\""
-        + v + "\")");
-    },
-    None => {
-      return Pass;
-    }
-  }
-}
-
-pub function assert_is_some_eq_i32(opt: Option[i32], expected: i32): TestOutcome {
-  match (opt) {
-    Some(v) => {
-      if (v == expected) {
+      if (v.eq(expected)) {
         return Pass;
       }
-      return Fail("assert_is_some_eq_i32: got Some("
-        + v.to_string() + "), expected Some("
-        + expected.to_string() + ")");
+      return Fail("assert_is_some_eq: got Some("
+        + __quoted(v.to_string()) + "), expected Some("
+        + __quoted(expected.to_string()) + ")");
     },
     None => {
-      return Fail("assert_is_some_eq_i32: got None, expected Some("
-        + expected.to_string() + ")");
+      return Fail("assert_is_some_eq: got None, expected Some("
+        + __quoted(expected.to_string()) + ")");
     }
   }
 }
 ```
 
-### `25 pub function assert_is_some_eq_string(opt: Option[string], expected: string): TestOutcome`
+### `25 pub function assert_status(resp: HttpResponse, expected: i32): TestOutcome`
 
 ```fern
-<<25 pub function assert_is_some_eq_string(opt: Option[string], expected: string): TestOutcome>>=
-pub function assert_is_some_eq_string(opt: Option[string], expected: string): TestOutcome {
-  match (opt) {
-    Some(v) => {
-      if (v == expected) {
-        return Pass;
-      }
-      return Fail("assert_is_some_eq_string: got Some(\""
-        + v + "\"), expected Some(\""
-        + expected + "\")");
-    },
-    None => {
-      return Fail("assert_is_some_eq_string: got None, expected Some(\""
-        + expected + "\")");
-    }
-  }
-}
-
+<<25 pub function assert_status(resp: HttpResponse, expected: i32): TestOutcome>>=
 pub function assert_status(resp: HttpResponse, expected: i32): TestOutcome {
   if (resp.status == expected) {
     return Pass;
@@ -2152,15 +1943,11 @@ pub function assert_body(resp: HttpResponse, expected: string): TestOutcome {
   return Fail("assert_body: got \"" + got + "\", expected \"" + expected + "\"");
 }
 
-pub function assert_is_ok_string(res: Result[string, IoError]): TestOutcome {
-  match (res) {
-    Ok(_) => {
-      return Pass;
-    },
-    Err(_) => {
-      return Fail("assert_is_ok_string: got Err");
-    }
+pub function assert_is_ok[T, E](res: Result[T, E]): TestOutcome {
+  if (res.is_ok()) {
+    return Pass;
   }
+  return Fail("assert_is_ok: got Err");
 }
 
 pub function assert_is_err_string(res: Result[string, IoError]): TestOutcome {
@@ -2174,30 +1961,19 @@ pub function assert_is_err_string(res: Result[string, IoError]): TestOutcome {
   }
 }
 
-pub function assert_is_ok_eq_string(res: Result[string, IoError], expected: string): TestOutcome {
+pub function assert_is_ok_eq[T: cmp.Eq + cmp.Display, E](res: Result[T, E], expected: T): TestOutcome {
   match (res) {
     Ok(v) => {
-      if (v == expected) {
+      if (v.eq(expected)) {
         return Pass;
       }
-      return Fail("assert_is_ok_eq_string: got Ok(\""
-        + v + "\"), expected Ok(\""
-        + expected + "\")");
+      return Fail("assert_is_ok_eq: got Ok("
+        + __quoted(v.to_string()) + "), expected Ok("
+        + __quoted(expected.to_string()) + ")");
     },
     Err(_) => {
-      return Fail("assert_is_ok_eq_string: got Err, expected Ok(\""
-        + expected + "\")");
-    }
-  }
-}
-
-pub function assert_is_ok_string_array(res: Result[string[], IoError]): TestOutcome {
-  match (res) {
-    Ok(_) => {
-      return Pass;
-    },
-    Err(_) => {
-      return Fail("assert_is_ok_string_array: got Err");
+      return Fail("assert_is_ok_eq: got Err, expected Ok("
+        + __quoted(expected.to_string()) + ")");
     }
   }
 }

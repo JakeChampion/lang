@@ -4563,16 +4563,33 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   if (is_checked_op(b.op)) {
     return eval_checked(b.op, lv, rv, checked_operand_type(b, lv));
   }
-  if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
-    if let VStruct(sv) = lv {
-      let c: Value = call_method(lv, "cmp", [rv], env.funcs, env.aliases, env.type_decls);
-      if (is_err(c)) {
-        return c;
-      }
-      return eval_binary(b.op, c, v_int(0));
+  if ((b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") && orders_by_cmp(lv)) {
+    let c: Value = call_method(lv, "cmp", [rv], env.funcs, env.aliases, env.type_decls);
+    if (is_err(c)) {
+      return c;
     }
+    return eval_binary(b.op, c, v_int(0));
   }
   return eval_typed_binary(b.op, lv, rv, b.ty);
+}
+
+// orders_by_cmp says whether an order on v calls its `cmp` method.
+function orders_by_cmp(v: Value): boolean {
+  match (v) {
+    VStruct(_) => {
+      return true;
+    },
+    VTuple(_) => {
+      return true;
+    },
+    VArr(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
 }
 
 // An integer literal beside a typed float operand is a float of its width, as
@@ -5730,6 +5747,10 @@ function runtime_receiver_name(spelling: string): string {
   if (spelling == "str") {
     return "string";
   }
+  let tuple: string = parser.tuple_namespace(spelling);
+  if (tuple.len() > 0) {
+    return tuple;
+  }
   return util.base_type_name(spelling);
 }
 
@@ -5746,6 +5767,9 @@ function dispatch_type_name(v: Value): string {
     if (sv.owner.len() > 0) {
       return sv.owner;
     }
+  }
+  if let VTuple(tv) = v {
+    return parser.tuple_arity_namespace(tv.elements.len());
   }
   return value_type_name(v);
 }

@@ -9,49 +9,34 @@ func TestStdArrayEqual(t *testing.T) {
 		want int
 	}{
 		{
-			name: "cmp.eq_arrays i32 + length mismatch",
-			src: `import "core/cmp" as cmp;
+			name: "== on i32 arrays + length mismatch",
+			src: `import "core/cmp";
 function main(): i32 {
     let a: i32[] = [1, 2, 3];
     let b: i32[] = [1, 2, 3];
     let c: i32[] = [1, 2, 4];
     let r: i32 = 0;
-    if (cmp.eq_arrays(a, b)) { r = r + 1; }
-    if (!cmp.eq_arrays(a, c)) { r = r + 2; }
-    if (!cmp.eq_arrays(a, [1, 2])) { r = r + 4; }
+    if (a == b) { r = r + 1; }
+    if (a != c) { r = r + 2; }
+    if (a != [1, 2]) { r = r + 4; }
     return r;
 }`,
 			want: 7,
 		},
 		{
-			name: "cmp.eq_arrays string + empty",
-			src: `import "core/cmp" as cmp;
+			name: "== on string arrays + empty",
+			src: `import "core/cmp";
 function main(): i32 {
     let ss: string[] = ["x", "y", "x"];
     let empty: i32[] = [];
     let empty2: i32[] = [];
     let r: i32 = 0;
-    if (cmp.eq_arrays(ss, ["x", "y", "x"])) { r = r + 10; }
-    if (!cmp.eq_arrays(ss, ["x", "y", "z"])) { r = r + 5; }
-    if (cmp.eq_arrays(empty, empty2)) { r = r + 1; }
+    if (ss == ["x", "y", "x"]) { r = r + 10; }
+    if (ss != ["x", "y", "z"]) { r = r + 5; }
+    if (empty == empty2) { r = r + 1; }
     return r;
 }`,
 			want: 16,
-		},
-		{
-			name: "xs.equal method form via std/array",
-			src: `import "std/array";
-function main(): i32 {
-    let a: i32[] = [1, 2, 3];
-    let b: i32[] = [1, 2, 3];
-    let c: i32[] = [1, 2, 4];
-    let r: i32 = 0;
-    if (a.equal(b)) { r = r + 1; }
-    if (!a.equal(c)) { r = r + 2; }
-    if (!a.equal([1, 2])) { r = r + 4; }
-    return r;
-}`,
-			want: 7,
 		},
 		{
 			name: "index_of_last last vs first",
