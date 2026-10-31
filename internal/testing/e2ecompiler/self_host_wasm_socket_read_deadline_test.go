@@ -46,11 +46,7 @@ function main(): i32 {
 			if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			args := []string{"-target", "wasm32-wasi", "-o", bin}
-			if compiler.name == "primary" {
-				args = append(args, "-emit", "core-module")
-			}
-			args = append(args, src)
+			args := []string{"-target", "wasm32-wasi", "-o", bin, src}
 			if compiler.name == "primary" {
 				args = append(args, stdlib)
 			}
@@ -58,9 +54,6 @@ function main(): i32 {
 				t.Fatalf("compile: %v\n%s", err, out)
 			}
 			run := exec.Command("wasmtime", "run", "-S", "inherit-network", bin)
-			if compiler.name == "primary" {
-				run = composeSelfHostWat(t, bin)
-			}
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			if out, err := exec.CommandContext(ctx, run.Path, run.Args[1:]...).CombinedOutput(); err != nil {

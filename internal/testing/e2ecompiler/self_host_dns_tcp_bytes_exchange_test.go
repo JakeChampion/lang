@@ -25,9 +25,6 @@ func TestSelfHostDnsTCPBytesExchange(t *testing.T) {
 					t.Fatal(err)
 				}
 				args := []string{"-target", target.target, "-o", bin}
-				if compiler.name == "primary" && target.target == "wasm32-wasi" {
-					args = append(args, "-emit", "core-module")
-				}
 				args = append(args, src)
 				if compiler.name == "primary" {
 					args = append(args, stdlib)
@@ -39,11 +36,7 @@ func TestSelfHostDnsTCPBytesExchange(t *testing.T) {
 				}
 				run := runX86_64Bin(target.runner, bin)
 				if target.target == "wasm32-wasi" {
-					if compiler.name == "primary" {
-						run = composeSelfHostWat(t, bin)
-					} else {
-						run = exec.Command("wasmtime", "run", "-S", "inherit-network", bin)
-					}
+					run = exec.Command("wasmtime", "run", "-S", "inherit-network", bin)
 				}
 				var diagnostic bytes.Buffer
 				run.Stderr = &diagnostic

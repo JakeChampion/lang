@@ -15,7 +15,11 @@ func TestSelfHostSocketV6(t *testing.T) {
 	if runtime.GOOS != "linux" {
 		t.Skip("requires Linux native targets")
 	}
-	checkSelfHostSocketV6(t, []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"})
+	checkSelfHostSocketV6(t, []string{"x86-64-linux", "arm64-linux"})
+}
+
+func TestSelfHostWasmSocketV6(t *testing.T) {
+	checkSelfHostSocketV6(t, []string{"wasm32-wasi"})
 }
 
 func TestSelfHostArm64DarwinSocketV6(t *testing.T) {
@@ -69,12 +73,10 @@ func checkSelfHostSocketV6Probe(t *testing.T, driver, stdlib, target, probe stri
 	var cmd *exec.Cmd
 	switch target {
 	case "wasm32-wasi":
-		for _, tool := range []string{"wasm-tools", "wasmtime"} {
-			if _, err := exec.LookPath(tool); err != nil {
-				t.Fatalf("%s not on PATH", tool)
-			}
+		if _, err := exec.LookPath("wasmtime"); err != nil {
+			t.Fatal("wasmtime not on PATH")
 		}
-		args = append([]string{"-emit", "asm"}, args...)
+		cmd = exec.Command("wasmtime", "run", "-S", "inherit-network", out)
 	case "arm64-darwin":
 		cmd = exec.Command(out)
 	case "arm64-linux":
@@ -93,7 +95,7 @@ func checkSelfHostSocketV6Probe(t *testing.T, driver, stdlib, target, probe stri
 	e2eharness.RequireCompleteSemanticLowering(t, report)
 	has := e2eharness.HostHasIPv6()
 	if target == "wasm32-wasi" {
-		got, err := composeSelfHostWat(t, out).CombinedOutput()
+		got, err := cmd.CombinedOutput()
 		if _, exited := err.(*exec.ExitError); err != nil && !exited {
 			t.Fatalf("wasmtime run: %v\n%s", err, got)
 		}
