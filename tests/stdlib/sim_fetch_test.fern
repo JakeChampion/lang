@@ -772,7 +772,7 @@ function test_binary_sent_snapshot(): test.TestOutcome {
   }
   let changed: u8[] = held.with(0, 0 as u8);
   let second = fetch.send_on(n, fetch.get("http://example.test/"), __open());
-  if (__body(second) != "posted" || n.sent_count() != 2 || !held.equal(n.sent(0)) || changed[0] != 0 || held[0] != 80 as u8) {
+  if (__body(second) != "posted" || n.sent_count() != 2 || !held.eq(n.sent(0)) || changed[0] != 0 || held[0] != 80 as u8) {
     return test.fail("captured snapshot changed");
   }
   if (n.sent(0 - 1).len() != 0 || n.sent(2).len() != 0) {
@@ -785,12 +785,12 @@ function test_kept_binary_answer(): test.TestOutcome {
   let body: u8[] = __all_bytes().concat("\r\nConnection: close\r\n\r\n".bytes());
   let head: string = "HTTP/1.1 200 OK\r\nContent-Length: " + body.len().to_string();
   let a: sim_fetch.Answer = sim_fetch.raw_bytes((head + "\r\nConnection: close\r\n\r\n").bytes().concat(body)).kept();
-  if (a.close || !a.bytes.equal((head + "\r\n\r\n").bytes().concat(body))) {
+  if (a.close || !a.bytes.eq((head + "\r\n\r\n").bytes().concat(body))) {
     return test.fail("kept changed binary body");
   }
   let already_kept: u8[] = (head + "\r\n\r\n").bytes().concat(body);
   let b: sim_fetch.Answer = sim_fetch.raw_bytes(already_kept).kept();
-  if (b.close || !b.bytes.equal(already_kept)) {
+  if (b.close || !b.bytes.eq(already_kept)) {
     return test.fail("kept mistook body bytes for a header");
   }
   let d: sim.Sim = sim.new(1);
@@ -798,7 +798,7 @@ function test_kept_binary_answer(): test.TestOutcome {
   let Ok(resp) = fetch.send_on(n, fetch.get("http://example.test/"), __open()) else {
     return test.fail("binary response failed");
   };
-  if (!resp.body_bytes().equal(body)) {
+  if (!resp.body_bytes().eq(body)) {
     return test.fail("response bytes changed");
   }
   return test.pass();
@@ -818,7 +818,7 @@ function test_raw_write_journal(): test.TestOutcome {
   if (n.write(conn, none) != 0 || n.write(conn, invalid) != invalid.len()) {
     return test.fail("write result");
   }
-  if (n.sent_count() != 2 || n.sent(0).len() != 0 || !n.sent(1).equal(invalid)) {
+  if (n.sent_count() != 2 || n.sent(0).len() != 0 || !n.sent(1).eq(invalid)) {
     return test.fail("journal lost a write");
   }
   if (!utf8.is_valid(n.sent.get())) {
@@ -969,7 +969,7 @@ function test_cassette_binary_body(): test.TestOutcome {
   };
   match (fetch.send_on(replayed, fetch.get("http://example.test/bin"), __open())) {
     Ok(resp) => {
-      if (!resp.body_bytes().equal(payload)) {
+      if (!resp.body_bytes().eq(payload)) {
         return test.fail("bytes changed");
       }
       return test.pass();

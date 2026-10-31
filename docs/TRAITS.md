@@ -142,6 +142,10 @@ impl[A: Ord, B: Ord] Ord for (A, B) {
 No module declares an array, a slice or a tuple. Thus the orphan rule
 lets only the module of the trait implement it for them.
 
+`core/cmp` implements `Eq`, `Ord` and `Hash` for arrays and for tuples of
+2 to 4 elements, when their parts do. An array orders lexicographically, so
+a prefix comes first. A tuple orders by its first element, then by the next.
+
 A parametric impl covers a type only when the parts that its type
 parameters bind meet their bounds. `impl[T: Eq] Eq for T[]` covers
 `i32[][]`, because `i32[]` is `Eq` in turn. It does not cover `S[]` for

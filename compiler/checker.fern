@@ -1648,16 +1648,22 @@ function cmp_parts(t: typeinfo.Type): Option[typeinfo.Type[]] {
         return Some(u.args);
       }
     },
+    typeinfo.TypeArray(a) => {
+      return Some([a.elem]);
+    },
+    typeinfo.TypeTuple(tup) => {
+      return Some(tup.elements);
+    },
     _ => {}
   }
   return None;
 }
 
 // cmp_hint says where a cmp trait for t can come from. core/cmp implements Eq,
-// Ord and Hash for Option and Result when their parts do, so the hint moves
-// to the first part that is not a scalar, or else asks for the import. A type
-// that no module can implement the trait for gets advice on its parts, not an
-// impl that the orphan rule refuses.
+// Ord and Hash for Option, Result, arrays, slices and tuples when their parts
+// do, so the hint moves to the first part that is not a scalar, or else asks
+// for the import. A type that no module can implement the trait for gets
+// advice on its parts, not an impl that the orphan rule refuses.
 function cmp_hint(t: typeinfo.Type, trait_name: string): string {
   let short: string = slice_unchecked(trait_name, 4, trait_name.len()) + "";
   let label: string = util.demangle(type_label(t));
@@ -4100,7 +4106,7 @@ function (s: Scope) method_fix_candidates(ns: string, recv: typeinfo.Type): stri
     }
   }
   if (!s.namespace_is_exact(ns)) {
-    return [];
+    return preregistered_methods(ns);
   }
   let out: string[] = preregistered_methods(ns);
   for method in s.methods.methods {

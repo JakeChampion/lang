@@ -224,7 +224,7 @@ function main(): i32 {
 
     print(show(big("12345")));
     print(show(biggest(big("7"), big("99"))));
-    print(cmp.eq_arrays([big("1")], [big("1")]).to_string());
+    print(([big("1")] == [big("1")]).to_string());
     print(big("-7").to_debug());
 
     let z: bigint.BigInt = mk();

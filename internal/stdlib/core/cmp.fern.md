@@ -63,8 +63,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<17 impl Display for bigint.BigInt>>
 
 <<time impls>>
-
-<<18 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean>>
 ```
 ### `module introduction`
 
@@ -367,6 +365,128 @@ impl[T: Hash, E: Hash] Hash for Result[T, E] {
         return __hash_mix_i32(e.hash() * 2 + 1);
       }
     }
+  }
+}
+
+// ---- Arrays and tuples ------------------------------------------
+// An array orders lexicographically, so a prefix comes first. A tuple orders
+// by its first element, then by the next.
+
+impl[T: Eq] Eq for T[] {
+  function eq(self: T[], other: T[]): boolean {
+    if (self.len() != other.len()) {
+      return false;
+    }
+    for i in 0..self.len() {
+      if (!self[i].eq(other[i])) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+impl[T: Ord] Ord for T[] {
+  function cmp(self: T[], other: T[]): i32 {
+    let n: i32 = self.len();
+    if (other.len() < n) {
+      n = other.len();
+    }
+    for i in 0..n {
+      let c: i32 = self[i].cmp(other[i]);
+      if (c != 0) {
+        return c;
+      }
+    }
+    return self.len().cmp(other.len());
+  }
+}
+
+impl[T: Hash] Hash for T[] {
+  function hash(self: T[]): i32 {
+    let h: i32 = self.len();
+    for x in self {
+      h = h * 31 + x.hash();
+    }
+    return __hash_mix_i32(h);
+  }
+}
+
+impl[A: Eq, B: Eq] Eq for (A, B) {
+  function eq(self: (A, B), other: (A, B)): boolean {
+    return self.0.eq(other.0) && self.1.eq(other.1);
+  }
+}
+
+impl[A: Ord, B: Ord] Ord for (A, B) {
+  function cmp(self: (A, B), other: (A, B)): i32 {
+    let c: i32 = self.0.cmp(other.0);
+    if (c != 0) {
+      return c;
+    }
+    return self.1.cmp(other.1);
+  }
+}
+
+impl[A: Hash, B: Hash] Hash for (A, B) {
+  function hash(self: (A, B)): i32 {
+    return __hash_mix_i32(self.0.hash() * 31 + self.1.hash());
+  }
+}
+
+impl[A: Eq, B: Eq, C: Eq] Eq for (A, B, C) {
+  function eq(self: (A, B, C), other: (A, B, C)): boolean {
+    return self.0.eq(other.0) && self.1.eq(other.1) && self.2.eq(other.2);
+  }
+}
+
+impl[A: Ord, B: Ord, C: Ord] Ord for (A, B, C) {
+  function cmp(self: (A, B, C), other: (A, B, C)): i32 {
+    let c: i32 = self.0.cmp(other.0);
+    if (c != 0) {
+      return c;
+    }
+    c = self.1.cmp(other.1);
+    if (c != 0) {
+      return c;
+    }
+    return self.2.cmp(other.2);
+  }
+}
+
+impl[A: Hash, B: Hash, C: Hash] Hash for (A, B, C) {
+  function hash(self: (A, B, C)): i32 {
+    return __hash_mix_i32((self.0.hash() * 31 + self.1.hash()) * 31 + self.2.hash());
+  }
+}
+
+impl[A: Eq, B: Eq, C: Eq, D: Eq] Eq for (A, B, C, D) {
+  function eq(self: (A, B, C, D), other: (A, B, C, D)): boolean {
+    return self.0.eq(other.0) && self.1.eq(other.1) && self.2.eq(other.2) && self.3.eq(other.3);
+  }
+}
+
+impl[A: Ord, B: Ord, C: Ord, D: Ord] Ord for (A, B, C, D) {
+  function cmp(self: (A, B, C, D), other: (A, B, C, D)): i32 {
+    let c: i32 = self.0.cmp(other.0);
+    if (c != 0) {
+      return c;
+    }
+    c = self.1.cmp(other.1);
+    if (c != 0) {
+      return c;
+    }
+    c = self.2.cmp(other.2);
+    if (c != 0) {
+      return c;
+    }
+    return self.3.cmp(other.3);
+  }
+}
+
+impl[A: Hash, B: Hash, C: Hash, D: Hash] Hash for (A, B, C, D) {
+  function hash(self: (A, B, C, D)): i32 {
+    return __hash_mix_i32(((self.0.hash() * 31 + self.1.hash()) * 31 + self.2.hash()) * 31 + self.3.hash());
   }
 }
 ```
@@ -1451,23 +1571,4 @@ impl Ord for Instant {}
 impl Eq for time.Timestamp {}
 
 impl Ord for time.Timestamp {}
-```
-### `18 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean`
-
-```fern
-<<18 pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean>>=
-pub function eq_arrays[T: Eq](a: T[], b: T[]): boolean {
-  let n = a.len();
-  if (n != b.len()) {
-    return false;
-  }
-  let i = 0;
-  while (i < n) {
-    if (!a[i].eq(b[i])) {
-      return false;
-    }
-    i = i + 1;
-  }
-  return true;
-}
 ```

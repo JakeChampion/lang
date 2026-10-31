@@ -1203,14 +1203,14 @@ function test_quic_handshake(): test.TestOutcome {
       if (p.client.alpn() != "h3" || p.server.alpn != "h3") {
         return test.fail("alpn: " + p.client.alpn() + " " + p.server.alpn);
       }
-      if (!extension_data(p.client.peer_extensions(), message.EXT_QUIC_TRANSPORT_PARAMETERS).equal([9 as u8]) || !extension_data(p.server.peer_extensions(), message.EXT_QUIC_TRANSPORT_PARAMETERS).equal([1 as u8, 2 as u8])) {
+      if (!extension_data(p.client.peer_extensions(), message.EXT_QUIC_TRANSPORT_PARAMETERS).eq([9 as u8]) || !extension_data(p.server.peer_extensions(), message.EXT_QUIC_TRANSPORT_PARAMETERS).eq([1 as u8, 2 as u8])) {
         return test.fail("transport parameters did not cross");
       }
       let levels: i32[] = [1, 2];
       for level in levels {
         let cw: u8[] = secret_at(p.client_events, level, true);
         let cr: u8[] = secret_at(p.client_events, level, false);
-        if (cw.len() == 0 || cr.len() == 0 || !cw.equal(secret_at(p.server_events, level, false)) || !cr.equal(secret_at(p.server_events, level, true))) {
+        if (cw.len() == 0 || cr.len() == 0 || !cw.eq(secret_at(p.server_events, level, false)) || !cr.eq(secret_at(p.server_events, level, true))) {
           return test.fail("secrets at level " + level.to_string() + " do not match crosswise");
         }
       }

@@ -56,7 +56,7 @@ function decoded(b: u8[]): Option[dns.Message] {
 function test_encode_name(): test.TestOutcome {
   match (dns.encode_name("vm.example.com")) {
     Ok(b) => {
-      if (!b.equal(bytes([2, 118, 109, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0]))) {
+      if (!b.eq(bytes([2, 118, 109, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0]))) {
         return test.fail("labels behind their lengths, then the root");
       }
     },
@@ -76,7 +76,7 @@ function test_encode_name(): test.TestOutcome {
   }
   match (dns.encode_name("")) {
     Ok(b) => {
-      if (!b.equal(bytes([0]))) {
+      if (!b.eq(bytes([0]))) {
         return test.fail("the root is one zero byte");
       }
     },
@@ -104,10 +104,10 @@ function test_query_on_the_wire(): test.TestOutcome {
   if (q.len() != 32) {
     return test.fail("12 header + 20 question bytes");
   }
-  if (!q.take(12).equal(bytes([18, 52, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0]))) {
+  if (!q.take(12).eq(bytes([18, 52, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0]))) {
     return test.fail("id 0x1234, RD, one question");
   }
-  if (!q.drop(12).equal(bytes([2, 118, 109, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1]))) {
+  if (!q.drop(12).eq(bytes([2, 118, 109, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111, 109, 0, 0, 1, 0, 1]))) {
     return test.fail("labels, then A IN");
   }
   if (encoded(dns.query(1, "a..b", dns.TYPE_A)).len() != 0) {
@@ -122,7 +122,7 @@ function test_edns_opt_record(): test.TestOutcome {
   if (b.len() != 32 + 11) {
     return test.fail("OPT is the root, a type, a class, a TTL and an empty rdata: 11 bytes");
   }
-  if (!b.drop(32).equal(bytes([0, 0, 41, 16, 0, 0, 0, 0, 0, 0, 0]))) {
+  if (!b.drop(32).eq(bytes([0, 0, 41, 16, 0, 0, 0, 0, 0, 0, 0]))) {
     return test.fail("OPT at the root, type 41, class 4096, TTL 0, rdlen 0");
   }
   if (b[11] != 1u8) {
@@ -294,7 +294,7 @@ function test_round_trip(): test.TestOutcome {
       }
       match (back.additional[0].data) {
         Raw(b) => {
-          if (!b.equal(bytes([2, 104, 105])) || back.additional[0].rtype != 16) {
+          if (!b.eq(bytes([2, 104, 105])) || back.additional[0].rtype != 16) {
             return test.fail("an unknown type keeps its bytes");
           }
         },

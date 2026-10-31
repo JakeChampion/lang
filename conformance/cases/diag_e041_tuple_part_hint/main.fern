@@ -1,0 +1,10 @@
+// A tuple orders only when each of its parts implements Ord.
+import "core/cmp";
+
+struct S { a: i32 }
+
+function main(): i32 {
+  let t: (i32, S) = (1, S { a: 1 });
+  print((t < t).to_string());
+  return 0;
+}

@@ -5840,10 +5840,10 @@ function main(): i32 {
     if ((100).is_prime()) { return 67; }
     if ((0 - 7).is_prime()) { return 68; }
 
-    if (!"abc".shift_byte(1).equal("bcd".bytes())) { return 70; }
-    if (!"xyz".shift_byte(0 - 1).equal("wxy".bytes())) { return 71; }
+    if (!"abc".shift_byte(1).eq("bcd".bytes())) { return 70; }
+    if (!"xyz".shift_byte(0 - 1).eq("wxy".bytes())) { return 71; }
     if ("".shift_byte(5).len() != 0) { return 72; }
-    if (!"a".shift_byte(0).equal("a".bytes())) { return 73; }
+    if (!"a".shift_byte(0).eq("a".bytes())) { return 73; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -6025,10 +6025,10 @@ function main(): i32 {
     if (!((0 - 6)).is_multiple_of(3)) { return 24; }
 
     // replace_byte
-    if (!"a-b-c".replace_byte(45, 95).equal("a_b_c".bytes())) { return 30; }
-    if (!"xxx".replace_byte(120, 121).equal("yyy".bytes())) { return 31; }
+    if (!"a-b-c".replace_byte(45, 95).eq("a_b_c".bytes())) { return 30; }
+    if (!"xxx".replace_byte(120, 121).eq("yyy".bytes())) { return 31; }
     if ("".replace_byte(65, 66).len() != 0) { return 32; }
-    if (!"abc".replace_byte(122, 65).equal("abc".bytes())) { return 33; }
+    if (!"abc".replace_byte(122, 65).eq("abc".bytes())) { return 33; }
 
     // join_with_last
     if (["a", "b", "c", "d"].join_with_last(", ", " and ") != "a, b, c and d") { return 40; }
@@ -7309,8 +7309,8 @@ function main(): i32 {
     if ("aé😀".bytes().len() != 7) { return 26; }
 
     // String reverse_bytes returns bytes even for ASCII.
-    if (!"hello".reverse_bytes().equal("olleh".bytes())) { return 21; }
-    if (!"a".reverse_bytes().equal("a".bytes())) { return 22; }
+    if (!"hello".reverse_bytes().eq("olleh".bytes())) { return 21; }
+    if (!"a".reverse_bytes().eq("a".bytes())) { return 22; }
     if ("".reverse_bytes().len() != 0) { return 23; }
     return 0;
 }`
