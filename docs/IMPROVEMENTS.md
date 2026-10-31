@@ -278,16 +278,13 @@ replacement. The second half of the sketch — `fn` for the named decl —
 was not taken: renaming the surviving keyword is a whole-surface
 migration and a separate proposal.
 
-## 15. 🎨 Variant names are globally unique
+## 15. ✅ Variant names are globally unique — RESOLVED (#12701)
 
-`Color { Red, Green, Blue }` and `Status { Red, Green, Blue }`
-can't coexist — the checker resolves variants by bare name.
-Langsmith's dynamic enums use a `__E<i>_V<j>` prefix purely to
-sidestep this.
-
-**Sketch**: Scoped variant lookup (`Color::Red` / `Color.Red`),
-or per-enum disambiguation when the context clarifies which
-enum a bare variant resolves to.
+`Color { Red, Green, Blue }` and `Status { Red, Green, Blue }` can
+coexist. `Color.Red` names one of them. A bare `Red` resolves against
+the type its position expects: an annotation, an assignment target, a
+parameter, a return type, a struct field, an element, a payload, or a
+match scrutinee. Without an expected type, a bare `Red` is E036.
 
 ## 16. 🎨 `f32` half-wired
 

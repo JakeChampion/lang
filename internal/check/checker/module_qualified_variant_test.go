@@ -127,7 +127,7 @@ func TestModuleQualifiedVariant(t *testing.T) {
 		err, _ := checkFiles(t, map[string]string{
 			"lib.fern": lib,
 			"main.fern": "import \"./lib\";\n" +
-				"function main(): i32 { let o: lib.Shape = Other(1); return 0; }\n",
+				"function main(): i32 { let o = Other(1); return 0; }\n",
 		}, "main.fern")
 		if err == nil {
 			t.Fatal("expected E036 for the ambiguous bare variant")

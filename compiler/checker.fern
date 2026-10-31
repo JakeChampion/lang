@@ -24619,6 +24619,7 @@ function checked_module(raw_mod: parser.Module, entry_file: string, raw_floor: b
     return ModuleTypes { sigs: no_sigs, top_tys: no_tys, all_well_typed: false, diags: reserved };
   }
   let env: ModuleEnv = admission_env(mod, entry_file, raw_floor);
+  mod = qualify_variants_in(mod, env, whole_focus(mod));
   let mt: ModuleTypes = check_module_pass(mod, env, fda_diags, []);
   if (mt.diags.len() > 0) {
     return mt;
@@ -26913,7 +26914,7 @@ function whole_focus(mod: parser.Module): Focus {
 }
 
 function annotate_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
-  let rmod: parser.Module = pretype_module_in(settle_literal_locals_in(mod, env, focus), env, focus);
+  let rmod: parser.Module = pretype_module_in(settle_literal_locals_in(qualify_variants_in(mod, env, focus), env, focus), env, focus);
   let nfuncs: parser.FuncDecl[] = [];
   let i: i32 = 0;
   while (i < rmod.funcs.len()) {
@@ -28010,6 +28011,348 @@ function pretype_module_in(mod: parser.Module, env: ModuleEnv, focus: Focus): pa
     ntop = pretype_stmts(mod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs));
   }
   return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
+}
+
+// qualify_variants_in rewrites a bare variant that two visible enums declare to
+// `E.A` where the type its position expects names one of them (#12701).
+function qualify_variants_in(mod: parser.Module, env: ModuleEnv, focus: Focus): parser.Module {
+  let coll: util.NameIndex = shared_variant_names(mod);
+  if (coll.names.len() == 0) {
+    return mod;
+  }
+  let nfuncs: parser.FuncDecl[] = [];
+  let i: i32 = 0;
+  while (i < mod.funcs.len()) {
+    let func: parser.FuncDecl = mod.funcs[i];
+    if (focus.funcs[i] && names_colliding_variant(func.body, coll)) {
+      let fs: Scope = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
+      nfuncs = nfuncs.append(parser.FuncDecl { ...func, body: qualify_stmts(func.body, fs, coll) });
+    } else {
+      nfuncs = nfuncs.append(func);
+    }
+    i = i + 1;
+  }
+  let ntop: ast.Stmt[] = mod.top_stmts;
+  if (focus.top && names_colliding_variant(mod.top_stmts, coll)) {
+    ntop = qualify_stmts(mod.top_stmts, new_scope_full(env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs), coll);
+  }
+  return parser.Module { ...mod, funcs: nfuncs, top_stmts: ntop };
+}
+
+// shared_variant_names is the bare variant names two enums declare.
+function shared_variant_names(mod: parser.Module): util.NameIndex {
+  let no_names: string[] = [];
+  let seen: util.NameIndex = util.name_index(no_names);
+  let out: util.NameIndex = util.name_index(no_names);
+  for ed in mod.enums {
+    for vn in ed.variant_names {
+      let b: string = variant_bare_name(vn);
+      if (!seen.has(b) && parser.builtin_enum_of(b).len() == 0) {
+        seen = seen.added(b);
+      } else if (!out.has(b)) {
+        out = out.added(b);
+      }
+    }
+  }
+  return out;
+}
+
+struct SharedScan { coll: util.NameIndex, found: boolean }
+
+function shared_scan_at(e: ast.Expr, own a: SharedScan): SharedScan {
+  if let ast.ExprIdent(id) = e {
+    if (!a.found && a.coll.has(variant_bare_name(id.name))) {
+      return SharedScan { ...a, found: true };
+    }
+  }
+  return a;
+}
+
+function names_colliding_variant(stmts: ast.Stmt[], coll: util.NameIndex): boolean {
+  let a: SharedScan = SharedScan { coll: coll, found: false };
+  for st in stmts {
+    a = astwalk.fold_stmt(st, a, shared_scan_at);
+  }
+  return a.found;
+}
+
+function qualify_stmts(stmts: ast.Stmt[], s: Scope, coll: util.NameIndex): ast.Stmt[] {
+  let out: ast.Stmt[] = [];
+  let cur: Scope = s;
+  for stmt in stmts {
+    let q: ast.Stmt = qualify_stmt(stmt, cur, coll);
+    out = out.append(q);
+    cur = bind_stmt(q, cur);
+  }
+  return out;
+}
+
+function qualify_stmt(st: ast.Stmt, s: Scope, coll: util.NameIndex): ast.Stmt {
+  let none: typeinfo.Type = t_unknown("no expected type");
+  match (st) {
+    ast.StmtVar(v) => {
+      let want: typeinfo.Type = none;
+      if (v.type_name.len() > 0 && !parser.is_destr_marker(v.type_name) && !vb_placeholder_decl(v)) {
+        want = var_declared_type(v, s);
+      }
+      return ast.StmtVar { ...v, init: qualify_expr(v.init, want, s, coll) };
+    },
+    ast.StmtReturn(r) => {
+      return ast.StmtReturn { ...r, value: qualify_expr(r.value, s.ret_type, s, coll) };
+    },
+    ast.StmtExpr(x) => {
+      return ast.StmtExpr { ...x, value: qualify_expr(x.value, none, s, coll) };
+    },
+    ast.StmtAssign(a) => {
+      let want: typeinfo.Type = none;
+      if (s.defines(a.target)) {
+        want = s.lookup(a.target);
+      }
+      return ast.StmtAssign { ...a, value: qualify_expr(a.value, want, s, coll) };
+    },
+    ast.StmtIf(f) => {
+      return ast.StmtIf { ...f, cond: qualify_expr(f.cond, none, s, coll), then_body: qualify_stmts(f.then_body, s, coll), else_body: qualify_stmts(f.else_body, s, coll) };
+    },
+    ast.StmtWhile(w) => {
+      return ast.StmtWhile { ...w, cond: qualify_expr(w.cond, none, s, coll), body: qualify_stmts(w.body, s, coll) };
+    },
+    ast.StmtFor(fr) => {
+      return ast.StmtFor { ...fr, iter: qualify_expr(fr.iter, none, s, coll), body: qualify_stmts(fr.body, for_body_scope(fr, s), coll) };
+    },
+    ast.StmtMatch(m) => {
+      let arms: ast.MatchArm[] = [];
+      for arm in m.arms {
+        arms = arms.append(ast.MatchArm { ...arm, body: qualify_stmts(arm.body, s, coll) });
+      }
+      return ast.StmtMatch { ...m, scrutinee: qualify_expr(m.scrutinee, none, s, coll), arms: arms };
+    },
+    ast.StmtDefer(d) => {
+      return ast.StmtDefer { ...d, action: qualify_stmt(d.action, s, coll) };
+    },
+    _ => {
+      return st;
+    }
+  }
+  return st;
+}
+
+function expr_names_shared(e: ast.Expr, coll: util.NameIndex): boolean {
+  return astwalk.fold_expr(e, SharedScan { coll: coll, found: false }, shared_scan_at).found;
+}
+
+struct QualifyAcc { want: typeinfo.Type, s: Scope, coll: util.NameIndex }
+
+function qualify_expr(e: ast.Expr, want: typeinfo.Type, s: Scope, coll: util.NameIndex): ast.Expr {
+  if (!expr_names_shared(e, coll)) {
+    return e;
+  }
+  let (out, _, _) = astwalk.map_expr_acc(e, QualifyAcc { want: want, s: s, coll: coll }, qualify_at_stmt, qualify_at);
+  return out;
+}
+
+function qualify_at_stmt(st: ast.Stmt, q: QualifyAcc): (ast.Stmt, QualifyAcc, boolean) {
+  return (st, q, false);
+}
+
+// qualify_at rewrites one node for the type its position expects; the
+// nodes below it expect nothing unless the node passes a type down itself.
+function qualify_at(n: ast.Expr, q: QualifyAcc): (ast.Expr, QualifyAcc, boolean) {
+  let none: typeinfo.Type = t_unknown("no expected type");
+  let child: QualifyAcc = QualifyAcc { ...q, want: none };
+  let s: Scope = q.s;
+  let coll: util.NameIndex = q.coll;
+  match (n) {
+    ast.ExprIdent(id) => {
+      return (qualified_variant_ref(id, q.want, s), child, true);
+    },
+    ast.ExprCall(c) => {
+      return (qualify_call(c, q.want, s, coll), child, true);
+    },
+    ast.ExprStructLit(sl) => {
+      return (qualify_struct_lit(sl, q.want, s, coll), child, true);
+    },
+    ast.ExprArray(a) => {
+      let elem: typeinfo.Type = none;
+      if let typeinfo.TypeArray(arr) = q.want {
+        elem = arr.elem;
+      }
+      let elems: ast.Expr[] = [];
+      for x in a.elements {
+        elems = elems.append(qualify_expr(x, elem, s, coll));
+      }
+      return (ast.ExprArray { ...a, elements: elems }, child, true);
+    },
+    ast.ExprTuple(t) => {
+      let slots: typeinfo.Type[] = [];
+      if let typeinfo.TypeTuple(tt) = q.want {
+        slots = tt.elements;
+      }
+      let elems: ast.Expr[] = [];
+      let k: i32 = 0;
+      while (k < t.elements.len()) {
+        elems = elems.append(qualify_expr(t.elements[k], dest_slot(slots, k), s, coll));
+        k = k + 1;
+      }
+      return (ast.ExprTuple { ...t, elements: elems }, child, true);
+    },
+    ast.ExprLambda(lm) => {
+      return (ast.ExprLambda { ...lm, body: qualify_stmts(lm.body, lambda_body_scope(lm, s), coll) }, child, true);
+    },
+    ast.ExprFieldAccess(fa) => {
+      return (n, child, qual_enum_name(fa.obj, s).len() > 0);
+    },
+    _ => {
+      return (n, child, false);
+    }
+  }
+}
+
+function dest_slot(slots: typeinfo.Type[], k: i32): typeinfo.Type {
+  if (k < slots.len()) {
+    return slots[k];
+  }
+  return t_unknown("no expected type");
+}
+
+// dest_variant is the member of the enum `want` names that the bare variant
+// `name` stands for, when two visible enums declare `name`; or "".
+function dest_variant(name: string, want: typeinfo.Type, s: Scope): string {
+  let typeinfo.TypeUnion(du) = want else {
+    return "";
+  };
+  if (s.known(name) || s.has_sig(name) || !s.variant_ambiguous(name)) {
+    return "";
+  }
+  if (parser.builtin_enum_of(name) == du.name) {
+    return name;
+  }
+  let Some(u) = s.lookup_union(du.name) else {
+    return "";
+  };
+  if (!u.is_enum) {
+    return "";
+  }
+  let bare: string = variant_bare_name(name);
+  for v in u.variants {
+    if (v == name || variant_bare_name(v) == bare) {
+      return v;
+    }
+  }
+  return "";
+}
+
+function qualified_variant_ref(id: ast.ExprIdent, want: typeinfo.Type, s: Scope): ast.Expr {
+  let member: string = dest_variant(id.name, want, s);
+  let typeinfo.TypeUnion(du) = want else {
+    return ast.ExprIdent { ...id };
+  };
+  if (member.len() == 0) {
+    return ast.ExprIdent { ...id };
+  }
+  return ast.ExprFieldAccess { obj: ast.ExprIdent { ...id, name: du.name, ty: "" }, field: member, line: id.line, col: id.col, ty: "", const_read: false };
+}
+
+function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util.NameIndex): ast.Expr {
+  let none: typeinfo.Type = t_unknown("no expected type");
+  if (parser.is_value_block(c)) {
+    if let ast.ExprLambda(lm) = c.callee {
+      let bs: Scope = lambda_body_scope(lm, s);
+      if (!is_unknown(want)) {
+        bs = bs.with_block_ret(want);
+      }
+      return ast.ExprCall { ...c, callee: ast.ExprLambda { ...lm, body: qualify_stmts(lm.body, bs, coll) } };
+    }
+  }
+  let callee: ast.Expr = c.callee;
+  let dests: typeinfo.Type[] = [];
+  match (c.callee) {
+    ast.ExprIdent(id) => {
+      let member: string = dest_variant(id.name, want, s);
+      if (member.len() > 0) {
+        callee = qualified_variant_ref(id, want, s);
+        dests = member_payload_dests(member, want, c, s);
+      } else if (s.ident_binding(id) < 0) {
+        dests = match (s.lookup_sig(id.name)) { Some(sig) => sig.param_types, None => variant_payload_dests(c, want, s, []) };
+      }
+    },
+    ast.ExprFieldAccess(fa) => {
+      callee = qualify_expr(c.callee, none, s, coll);
+      if (args_name_shared(c.args, coll) && qual_enum_name(fa.obj, s).len() == 0) {
+        if let Some(ms) = s.lookup_method(fa.field, cmp_method_receiver(check_expr(fa.obj, s))) {
+          dests = ms.param_types;
+        }
+      }
+    },
+    _ => {
+      callee = qualify_expr(c.callee, none, s, coll);
+    }
+  }
+  let args: ast.Expr[] = [];
+  let k: i32 = 0;
+  while (k < c.args.len()) {
+    args = args.append(qualify_expr(c.args[k], dest_slot(dests, k), s, coll));
+    k = k + 1;
+  }
+  return ast.ExprCall { ...c, callee: callee, args: args };
+}
+
+function args_name_shared(args: ast.Expr[], coll: util.NameIndex): boolean {
+  for a in args {
+    if (expr_names_shared(a, coll)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// member_payload_dests is the payload types of the variant `member` of the
+// enum `want` names, with the enum's type arguments filled in.
+function member_payload_dests(member: string, want: typeinfo.Type, c: ast.ExprCall, s: Scope): typeinfo.Type[] {
+  let typeinfo.TypeUnion(du) = want else {
+    return [];
+  };
+  if (parser.builtin_enum_of(member) == du.name) {
+    return variant_payload_dests(c, want, s, []);
+  }
+  let Some(u) = s.lookup_union(du.name) else {
+    return [];
+  };
+  let Some(vs) = s.lookup_owned_struct(member, u.name) else {
+    return [];
+  };
+  if (u.type_params.len() == 0) {
+    return vs.field_types;
+  }
+  if (u.type_params.len() != du.args.len()) {
+    return [];
+  }
+  let out: typeinfo.Type[] = [];
+  for n in vs.field_type_names {
+    out = out.append(type_from_ref_subst(parser.parse_type_ref(n), u.type_params, du.args, s.type_names()));
+  }
+  return out;
+}
+
+function qualify_struct_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Scope, coll: util.NameIndex): ast.Expr {
+  let none: typeinfo.Type = t_unknown("no expected type");
+  let found: Option[StructSig] = s.lookup_struct(sl.type_name);
+  let args: typeinfo.Type[] = [];
+  if let typeinfo.TypeStruct(ws) = want {
+    args = ws.args;
+  }
+  let values: ast.Expr[] = [];
+  let k: i32 = 0;
+  while (k < sl.field_values.len()) {
+    let fdest: typeinfo.Type = none;
+    if let Some(fsig) = found {
+      if (k < sl.field_names.len() && field_index(fsig, sl.field_names[k]) >= 0) {
+        fdest = lit_field_type(fsig, field_index(fsig, sl.field_names[k]), args, s);
+      }
+    }
+    values = values.append(qualify_expr(sl.field_values[k], fdest, s, coll));
+    k = k + 1;
+  }
+  return ast.ExprStructLit { ...sl, field_values: values, base: qualify_expr(sl.base, none, s, coll) };
 }
 
 struct LitInfer { parent: i32[], width: typeinfo.Type[], keys: string[], cargs: string[], ctags: string[], pend: ast.Expr[], pend_id: i32[], pend_scope: Scope[], skeys: string[], snames: string[], sfirst: i32[], sargs: string[], sids: i32[], wkeys: string[], wtags: string[], eargs: string[], eids: i32[], tkeys: string[], ttypes: typeinfo.Type[], pargs: string[], ptypes: typeinfo.Type[] }

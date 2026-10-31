@@ -6300,12 +6300,14 @@ func (c *checker) resolveVariant(name, enumName string) (variantRef, bool, bool)
 	return variantRef{}, false, len(cands) > 1
 }
 
-func (c *checker) monomorphCloneEnumName(dest ast.Type) string {
+// expectedEnumName is the enum a destination type names, or "". A bare
+// variant at that destination resolves against this enum first.
+func (c *checker) expectedEnumName(dest ast.Type) string {
 	et, ok := dest.(ast.EnumType)
 	if !ok {
 		return ""
 	}
-	if ed, ok := c.info.Enums[et.Name]; ok && ed.Monomorphized {
+	if _, ok := c.info.Enums[et.Name]; ok {
 		return et.Name
 	}
 	return ""
@@ -12421,7 +12423,7 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 	}
 }
 
-func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scope) ast.Type {
+func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scope, want ast.Type) ast.Type {
 	tagT = c.settlePolymorphicScrutinee(n.Tag, tagT, literalPatternExprs(n.Arms))
 	sawWildcard := false
 	var closing []ast.Expr
@@ -12472,7 +12474,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
-			unify(c.checkExpr(arm.Body, s), arm.P)
+			unify(c.checkExprAt(arm.Body, s, want), arm.P)
 			continue
 		}
 		if arm.Literal == nil {
@@ -12517,7 +12519,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 			}
 		}
-		unify(c.checkExpr(arm.Body, armScope), arm.P)
+		unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
 	}
 	if !sawWildcard && !closesBool(tagT, closing) {
 		c.errfCode(n.P, "E030", "%s", literalMatchNotExhaustive(tagT))
@@ -12525,7 +12527,7 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 	return result
 }
 
-func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *scope) ast.Type {
+func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *scope, want ast.Type) ast.Type {
 	sawIrrefutable := false
 	var tupleArms []structArmPat
 	var result ast.Type
@@ -12575,7 +12577,7 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
-			unify(c.checkExpr(arm.Body, s), arm.P)
+			unify(c.checkExprAt(arm.Body, s, want), arm.P)
 			continue
 		}
 		if arm.TupleElems == nil {
@@ -12609,7 +12611,7 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 		if irrefutable {
 			sawIrrefutable = true
 		}
-		unify(c.checkExpr(arm.Body, armScope), arm.P)
+		unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
 	}
 	if !sawIrrefutable && !c.payloadsExhaustive(tupleArms) {
 		c.errfCode(n.P, "E030", "match on tuple is not exhaustive — add an unguarded `_` or all-binder arm")
@@ -12617,7 +12619,7 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 	return result
 }
 
-func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *scope) ast.Type {
+func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *scope, want ast.Type) ast.Type {
 	sd := c.info.Structs[st.Name]
 	if sd == nil {
 		c.errfCode(n.Tag.Pos(), "E043", "cannot find struct %q in this scope", demangle(st.Name))
@@ -12674,7 +12676,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
-			unify(c.checkExpr(arm.Body, s), arm.P)
+			unify(c.checkExprAt(arm.Body, s, want), arm.P)
 			continue
 		}
 		if !arm.NamedFields {
@@ -12747,7 +12749,7 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 		if irrefutable {
 			sawIrrefutable = true
 		}
-		unify(c.checkExpr(arm.Body, armScope), arm.P)
+		unify(c.checkExprAt(arm.Body, armScope, want), arm.P)
 	}
 	if !sawIrrefutable && !c.payloadsExhaustive(structArms) {
 		c.errfCode(n.P, "E030", "match on struct is not exhaustive — add an unguarded struct-pattern or `_` arm")
@@ -12758,11 +12760,11 @@ func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *s
 	return result
 }
 
-func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
+func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope, want ast.Type) ast.Type {
 	tagT := c.checkExpr(n.Tag, s)
 	if tagT == nil {
 		for _, arm := range n.Arms {
-			c.checkExpr(arm.Body, c.poisonedMatchScope(s, arm.Binders(), arm.Guard))
+			c.checkExprAt(arm.Body, c.poisonedMatchScope(s, arm.Binders(), arm.Guard), want)
 		}
 		return nil
 	}
@@ -12770,14 +12772,14 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 	et, ok := tagT.(ast.EnumType)
 	if !ok {
 		if tup, isTup := tagT.(ast.TupleType); isTup {
-			return c.checkTupleMatchExpr(n, tup, s)
+			return c.checkTupleMatchExpr(n, tup, s, want)
 		}
 		if st, isStruct := tagT.(ast.StructType); isStruct {
 			if _, known := c.info.Structs[st.Name]; known {
-				return c.checkStructMatchExpr(n, st, s)
+				return c.checkStructMatchExpr(n, st, s, want)
 			}
 		}
-		return c.checkLiteralMatchExpr(n, tagT, s)
+		return c.checkLiteralMatchExpr(n, tagT, s, want)
 	}
 	ed, ok := c.info.Enums[et.Name]
 	if !ok {
@@ -12824,7 +12826,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 				}
 			}
-			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
+			unify(c.checkExprAt(arm.Body, s, want), arm.Body.Pos())
 			continue
 		}
 		if arm.TupleElems != nil {
@@ -12846,7 +12848,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 				c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
 					c.variantHintName(ed, arm.VariantName), c.enumHintName(ed.Name), c.unknownVariantHint(arm.VariantName, ed))
 			}
-			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
+			unify(c.checkExprAt(arm.Body, s, want), arm.Body.Pos())
 			continue
 		}
 		arm.EnumName = ed.Name
@@ -12876,7 +12878,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
 			}
 		}
-		unify(c.checkExpr(arm.Body, armScope), arm.Body.Pos())
+		unify(c.checkExprAt(arm.Body, armScope, want), arm.Body.Pos())
 	}
 	if !sawWildcard {
 		for name, group := range refutableByVariant {
@@ -13366,6 +13368,15 @@ func (c *checker) constType(cd *ast.ConstDecl) ast.Type {
 	return t
 }
 
+// checkExprAt checks e in a position that expects a value of type want.
+func (c *checker) checkExprAt(e ast.Expr, s *scope, want ast.Type) ast.Type {
+	saved := c.expectedType
+	c.expectedType = want
+	t := c.checkExpr(e, s)
+	c.expectedType = saved
+	return t
+}
+
 func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	t := c.checkExprInner(e, s)
 	switch t.(type) {
@@ -13612,7 +13623,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			return c.constType(cd)
 		}
 		if n.EnumName == "" {
-			if en := c.monomorphCloneEnumName(c.expectedType); en != "" {
+			if en := c.expectedEnumName(c.expectedType); en != "" {
 				if _, ok, _ := c.resolveVariant(n.Name, en); ok {
 					n.EnumName = en
 				}
@@ -13938,7 +13949,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			nameTaken := c.isUserFuncOrLocal(id.Name, s)
 			qualified := id.EnumName != ""
 			if vrMulti && id.EnumName == "" && !nameTaken {
-				if en := c.monomorphCloneEnumName(callExpected); en != "" {
+				if en := c.expectedEnumName(callExpected); en != "" {
 					if vr2, ok2, _ := c.resolveVariant(id.Name, en); ok2 {
 						vr, vrOk, vrMulti = vr2, true, false
 						id.EnumName = en
@@ -13982,7 +13993,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 				for i, a := range n.Args {
 					if i < len(vr.payloads) && destSub != nil {
 						c.expectedType = substituteType(vr.payloads[i], destSub)
-					} else if i < len(vr.payloads) && c.monomorphCloneEnumName(substituteType(vr.payloads[i], sub)) != "" {
+					} else if i < len(vr.payloads) && c.expectedEnumName(substituteType(vr.payloads[i], sub)) != "" {
 						c.expectedType = substituteType(vr.payloads[i], sub)
 					}
 					at := c.checkExpr(a, s)
@@ -14351,9 +14362,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					if sub != nil {
 						pt = substituteType(pt, sub)
 					}
-					if c.monomorphCloneEnumName(pt) != "" {
-						c.expectedType = pt
-					} else if et, isEnum := pt.(ast.EnumType); isEnum && (sub != nil || len(et.Args) > 0) {
+					if _, isEnum := pt.(ast.EnumType); isEnum {
 						c.expectedType = pt
 					} else if st, isStruct := pt.(ast.StructType); isStruct && len(st.Args) > 0 {
 						c.expectedType = pt
@@ -15000,12 +15009,14 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 	case *ast.BlockExpr:
 		return c.checkBlockExpr(n, s)
 	case *ast.IfExpr:
+		want := c.expectedType
+		c.expectedType = nil
 		ct := c.checkExpr(n.Cond, s)
 		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {
 			c.errfCode(n.Cond.Pos(), "E008", "if-expression condition must be boolean, got %s", ct)
 		}
-		tt := c.checkExpr(n.Then, s)
-		et := c.checkExpr(n.Else, s)
+		tt := c.checkExprAt(n.Then, s, want)
+		et := c.checkExprAt(n.Else, s, want)
 		result := unifyIfArms(tt, et)
 		if result == nil {
 			result = scalarNumericJoin(tt, et)
@@ -15026,7 +15037,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		c.settleNumeric(n, result)
 		return result
 	case *ast.MatchExpr:
-		result := c.checkMatchExpr(n, s)
+		want := c.expectedType
+		c.expectedType = nil
+		result := c.checkMatchExpr(n, s, want)
 		c.settleNumeric(n, result)
 		return result
 	case *ast.TryOp:

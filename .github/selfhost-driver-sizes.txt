@@ -580,6 +580,9 @@
 # 2026-10-26: Wasm drivers measured after the runtime bundle split.
 # 2026-10-29 (#13838): checker_modload_run measured by CI 40850967207 after
 # the defer rule and the field-move rule joined the self-host checker.
+# 2026-10-30 (#13903): fern.fern/stage2 measured by CI 41041703129 after
+# the self-host checker's variant rewrite (qualify_variants_in). Main at
+# 33b216675 measured 15832048 (+4.8%); this change adds 49408 bytes.
 # 2026-10-30 (#13910): all 11 rows measured by CI 41084272131 with
 # stage0-20261030-7cf0706, after the pin refresh and the consuming close.
 fern.fern/stage2 15853232

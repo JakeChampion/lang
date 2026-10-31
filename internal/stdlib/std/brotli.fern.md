@@ -49,7 +49,7 @@ import "std/error";
 
 ```fern
 <<Errors>>=
-pub enum BrotliError { BrotliTruncated, BrotliMalformed(string), BrotliTooLarge }
+pub enum BrotliError { Truncated, Malformed(string), TooLarge }
 
 pub function (e: BrotliError) to_string(): string {
   return e.message();
@@ -61,13 +61,13 @@ impl cmp.Display for BrotliError {}
 
 pub function (e: BrotliError) message(): string {
   match (e) {
-    BrotliTruncated => {
+    Truncated => {
       return "brotli: truncated";
     },
-    BrotliMalformed(what) => {
+    Malformed(what) => {
       return "brotli: malformed: " + what;
     },
-    BrotliTooLarge => {
+    TooLarge => {
       return "brotli: output past the limit";
     }
   }
@@ -89,10 +89,10 @@ pub function decompress(input: [u8], max_out: i32): Result[u8[], BrotliError] {
   while (!d.failed && !d.last) {
     d = __mb_header(d, input);
     if (!d.failed && __past(d.pos, d.cnt, input.len())) {
-      return Err(BrotliTruncated);
+      return Err(Truncated);
     }
     if (!d.failed && d.out.len() + d.v > max_out) {
-      return Err(BrotliTooLarge);
+      return Err(TooLarge);
     }
     d = __mb_body(d, input, window, max_out);
   }
@@ -100,7 +100,7 @@ pub function decompress(input: [u8], max_out: i32): Result[u8[], BrotliError] {
     return Err(__error(d, input));
   }
   if (__past(d.pos, d.cnt, input.len())) {
-    return Err(BrotliTruncated);
+    return Err(Truncated);
   }
   return Ok(d.out);
 }
@@ -123,9 +123,9 @@ function __fail(own d: __D, what: string): __D {
 
 function __error(d: __D, input: [u8]): BrotliError {
   if (__past(d.pos, d.cnt, input.len())) {
-    return BrotliTruncated;
+    return Truncated;
   }
-  return BrotliMalformed(d.what);
+  return Malformed(d.what);
 }
 
 // True when the reader used more bits than the input holds.
