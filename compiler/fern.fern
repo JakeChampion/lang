@@ -1907,6 +1907,29 @@ function index_signature_error(ipath: string, isrc: string, key: string): string
   return "";
 }
 
+// The refusal when the existing lock records an index serial that the
+// index's serial is below or that the index has lost. Empty otherwise.
+function index_serial_error(ipath: string, serial: string, mdir: string): string {
+  let lock: string = mdir + "/fern.lock";
+  let recorded: string = "";
+  match (read_file(lock)) {
+    Ok(src) => {
+      recorded = match (fern_toml.parse_lock(src)) { Ok(l) => l.index_serial, Err(message) => { return mdir + "/" + message; } };
+    },
+    Err(e) => {}
+  }
+  if (recorded.len() == 0) {
+    return "";
+  }
+  if (serial.len() == 0) {
+    return "index " + ipath + ": has no serial but " + lock + " records index serial " + recorded;
+  }
+  if (fern_toml.serial_below(serial, recorded)) {
+    return "index " + ipath + ": serial " + serial + " is below index serial " + recorded + " that " + lock + " records";
+  }
+  return "";
+}
+
 // The text without the spaces, tabs and line ends at either end.
 function strip_lines(s: string): string {
   let a: i32 = 0;
@@ -2081,6 +2104,12 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
   }
   let ix: mvs.Index = match (mvs.parse_index(isrc)) { Ok(index) => index, Err(message) => { eprint("index " + ipath + ": " + message); return 1; } };
   ix = mvs.with_dir(ix, mvs.join_path(util.dir_of(ipath), "."));
+  let lock: string = mdir + "/fern.lock";
+  let stale: string = index_serial_error(ipath, ix.serial, mdir);
+  if (stale.len() > 0) {
+    eprint(stale);
+    return 1;
+  }
 
   let bans: mvs.Ban[] = [];
   let bi: i32 = 0;
@@ -2125,8 +2154,7 @@ function run_resolve(start: string, fetcher: Fetcher): i32 {
   }
 
   let sel: mvs.Sel[] = match (mvs.selected(st)) { Ok(value) => value, Err(message) => { eprint(message); return 1; } };
-  let lock: string = mdir + "/fern.lock";
-  match (write_file(lock, mvs.lock_text(sel))) {
+  match (write_file(lock, mvs.lock_text(ix.serial, sel))) {
     Ok(u) => {},
     Err(e) => {
       eprint("resolve: cannot write " + lock + ": " + e.message());
@@ -2411,7 +2439,7 @@ function fetch_locked(fetcher: Fetcher, w: FetchWalk, mdir: string): FetchWalk {
       return w;
     }
   }
-  let entries: fern_toml.LockEntry[] = match (fern_toml.parse_lock(lsrc)) { Ok(es) => es, Err(message) => { return FetchWalk { ...w, err: mdir + "/" + message }; } };
+  let entries: fern_toml.LockEntry[] = match (fern_toml.parse_lock(lsrc)) { Ok(lock) => lock.entries, Err(message) => { return FetchWalk { ...w, err: mdir + "/" + message }; } };
   let out: FetchWalk = w;
   for e in entries {
     if (e.url.len() > 0 && store_dir(e.hash).len() == 0) {
@@ -2586,7 +2614,7 @@ function vendor_locked_dir(mdir: string, name: string): VendorSrc {
     return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is versioned but " + mdir
       + " has no fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };
   }
-  let entries: fern_toml.LockEntry[] = match (fern_toml.parse_lock(lsrc)) { Ok(es) => es, Err(message) => { return VendorSrc { dir: "", err: mdir + "/" + message }; } };
+  let entries: fern_toml.LockEntry[] = match (fern_toml.parse_lock(lsrc)) { Ok(lock) => lock.entries, Err(message) => { return VendorSrc { dir: "", err: mdir + "/" + message }; } };
   if (!fern_toml.lock_has(entries, name)) {
     return VendorSrc { dir: "", err: "dependency " + mvs.quoted(name) + " is not in " + mdir
       + "/fern.lock — run `fern -resolve " + mdir + "/fern.toml`" };

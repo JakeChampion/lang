@@ -659,15 +659,23 @@ function physical_contracts(built: semsource.Built): ssasem.Contract[] {
   let out: ssasem.Contract[] = built.contracts.list;
   let i: i32 = 0;
   for p in util.append_all(built.decls, built.instances) {
-    if (p.ok && ssasem.is_wide(p.func.result) && i < built.names.len()) {
+    if (p.ok && i < built.names.len()) {
       let at: i32 = built.contracts.names.find(built.names[i]);
-      if (at >= 0 && semscalarreturn.eligible(p.func, out[at].result) && semrecords.find(built.records, out[at].result) >= 0) {
+      if (at >= 0 && !semtypes.equal(p.func.result, out[at].result) && scalar_result(p.func, out[at].result)) {
         out = out.with(at, ssasem.Contract { ...out[at], result: p.func.result });
       }
     }
     i = i + 1;
   }
   return out;
+}
+
+function scalar_result(f: ssasem.Func, original: typeinfo.Type): boolean {
+  if (semscalarreturn.eligible(f, original)) {
+    return true;
+  }
+  let at: i32 = semrecords.find_enum(f.enums, original);
+  return at >= 0 && semscalarreturn.variant_in_lanes(f.enums[at]);
 }
 
 struct SelectedHelpers { rows: Result[irtables.Lowered, irtables.LowerState][], origins: physicalbody.Origin[], producers: physicalbody.Metadata[] }

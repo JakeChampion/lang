@@ -78,6 +78,21 @@ function main(): i32 {
     let a: i32[] = build(30);
     return (a.len() + a[29]) % 101;
 }`},
+	{"append-after-set-len", "fill_bytes", true, `@noinline
+function fill_bytes(n: i32): u8[] {
+    unsafe {
+        let out: u8[] = __alloc_u8(n + 4);
+        __arr_set_len(out, 0);
+        for i in 0..n {
+            out = out.append((i * 7) as u8);
+        }
+        return out;
+    }
+}
+function main(): i32 {
+    let a: u8[] = fill_bytes(30);
+    return (a.len() + a[29] as i32) % 101;
+}`},
 	{"append-then-with", "grow_set", true, `@noinline
 function grow_set(n: i32): i32[] {
     let out: i32[] = [n, n + 1];

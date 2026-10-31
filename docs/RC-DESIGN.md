@@ -87,6 +87,17 @@ builtin that reads only its operands. `ssasem`'s guard check
 treats two reads of one slot of one box (an array's at one index) as one
 value, so a test of the first read settles the re-read.
 
+After ownership inference, `semsink.sink_past_lent` re-reads a projection
+below a call that only borrows its parent. It then runs `semlatehold.fern`.
+That pass finds a read off a value that a later call consumes. The read is
+used past the call, and the call is in a lower block. The pass reads the
+value again just before the call, and the uses that the call dominates take
+the new read.
+
+Thus the first read is a borrow, and only the arm with the call holds a
+count. A value that a phi takes is left as it is, because the phi needs its
+count on every arm.
+
 ### 1.1 The semantic graph
 
 `semsource` lowers each function to `ssasem.Func`: blocks of `ssa.SInst`
@@ -211,13 +222,19 @@ reads (`units_of`):
   the read (or a read anchored to it) is consumed later, is retained at the
   read and released at its own death, and its chain to the source is cut, so
   the source moves instead of being retained. A read only borrowed to its
-  death stays a borrow. A read that is a take already has its unit and is
+  death stays a borrow. The holds are found twice. The second pass counts a
+  read in hand only through its own uses. It also counts the reads anchored
+  to it that the first pass did not hold. Thus a list read only to reach a held
+  element is not held itself. A read that is a take already has its unit and is
   not held as well. An update consumes its donor, so a read of the donor
   used past the update is held, and only that read: the donor is not a
   source that dies unconsumed there. A hold cuts a chain, so the payload
   takes are then asked again over the cut chains (`takes_past_holds`). A
   take from that ask goes in only when its source is owned or held, and a
-  held struct-union counts as likely the frame's alone for it. There
+  held struct-union counts as likely the frame's alone for it. No take goes
+  in from a held source when a container the source is anchored to is live
+  past the take (`anchor_live_at`): that container still counts the source
+  there, so the take could never find it unique. There
   the plan can take a second read of a record field. Each read off the first
   read of that field that is still in hand is held for it (`twin_holds`).
   Pinned by `TestSelfHostKeptReadPastUpdate`, `TestSelfHostCrossBlockReuse`'s
@@ -235,7 +252,9 @@ reads (`units_of`):
   frame's own ever holds, from a fresh array, a `with` whose receiver no
   borrowed parameter carries (`lent_withs`), or a fresh row, kept
   sole through passes and phis that preserve it, so a `with` on it writes in
-  place without a copy guard. Pinned by `TestSelfHostSoleLoopWithX86_64` and
+  place without a copy guard. A read, and a builtin that keeps no reference
+  to its argument (`ssasem.holds_no_argument`, such as `__arr_set_len`), do
+  not make a box shared. Pinned by `TestSelfHostSoleLoopWithX86_64` and
   `TestSelfHostGrowSoleOccurrenceX86_64`.
 - **Grow rows and brackets** (`grow_rows`, `grow_table`, `Plan.grows`): per
   callee, the borrowed parameter positions whose buffer the callee may grow or

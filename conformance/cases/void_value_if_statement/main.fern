@@ -1,0 +1,18 @@
+// A value `if` whose arms are void is a statement in a match arm.
+function show(r: Result[i32, i32], flag: boolean): void {
+  match (r) {
+    Ok(v) => {
+      print("ok " + v.to_string());
+    },
+    Err(_) => {
+      if (flag) { print("a") } else { print("b") };
+    }
+  }
+}
+
+function main(): i32 {
+  show(Ok(1), true);
+  show(Err(2), true);
+  show(Err(3), false);
+  return 0;
+}

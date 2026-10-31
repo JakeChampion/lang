@@ -2069,6 +2069,108 @@ function emit_buf_mapped_avx2(s: asmcore.EmitState, lm: string): asmcore.EmitSta
   return s.write("    jae " + lm + "_len\n");
 }
 
+// __fern_buf_push_decimal(h, n) appends the decimal digits of the u64 n. It
+// writes them back to front into a stack scratch, two at a time from a table
+// of digit pairs, and divides by 100 with a multiply.
+function emit_buf_push_decimal(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("__fern_buf_push_decimal:\n");
+  s = s.write("    subq $40, %rsp\n");
+  s = s.write("    leaq 32(%rsp), %r8\n");
+  s = s.write("    movq %rsi, %rax\n");
+  s = s.write("    leaq .Ldecimal_pairs(%rip), %r11\n");
+  s = s.write("    movabsq $2951479051793528259, %r10\n");
+  s = s.write(".Ldecimal_loop:\n");
+  s = s.write("    cmpq $100, %rax\n");
+  s = s.write("    jb .Ldecimal_tail\n");
+  s = s.write("    movq %rax, %r9\n");
+  s = s.write("    shrq $2, %rax\n");
+  s = s.write("    mulq %r10\n");
+  s = s.write("    shrq $2, %rdx\n");
+  s = s.write("    imulq $100, %rdx, %rax\n");
+  s = s.write("    subq %rax, %r9\n");
+  s = s.write("    movzwl (%r11,%r9,2), %eax\n");
+  s = s.write("    subq $2, %r8\n");
+  s = s.write("    movw %ax, (%r8)\n");
+  s = s.write("    movq %rdx, %rax\n");
+  s = s.write("    jmp .Ldecimal_loop\n");
+  s = s.write(".Ldecimal_tail:\n");
+  s = s.write("    cmpq $10, %rax\n");
+  s = s.write("    jb .Ldecimal_one\n");
+  s = s.write("    movzwl (%r11,%rax,2), %eax\n");
+  s = s.write("    subq $2, %r8\n");
+  s = s.write("    movw %ax, (%r8)\n");
+  s = s.write("    jmp .Ldecimal_copy\n");
+  s = s.write(".Ldecimal_one:\n");
+  s = s.write("    addl $48, %eax\n");
+  s = s.write("    subq $1, %r8\n");
+  s = s.write("    movb %al, (%r8)\n");
+  s = s.write(".Ldecimal_copy:\n");
+  s = s.write("    leaq 32(%rsp), %rcx\n");
+  s = s.write("    subq %r8, %rcx\n");
+  s = s.write("    movq 8(%rdi), %rax\n");
+  s = s.write("    leaq (%rax,%rcx), %r9\n");
+  s = s.write("    cmpq 16(%rdi), %r9\n");
+  s = s.write("    ja .Ldecimal_grow\n");
+  s = s.write(".Ldecimal_fits:\n");
+  s = s.write("    movq %r9, 8(%rdi)\n");
+  s = s.write("    movq (%rdi), %rdx\n");
+  s = s.write("    addq %rax, %rdx\n");
+  s = s.write("    cmpq $8, %rcx\n");
+  s = s.write("    jae .Ldecimal_c8\n");
+  s = s.write("    cmpq $4, %rcx\n");
+  s = s.write("    jae .Ldecimal_c4\n");
+  s = s.write("    cmpq $2, %rcx\n");
+  s = s.write("    jae .Ldecimal_c2\n");
+  s = s.write("    movzbl (%r8), %eax\n");
+  s = s.write("    movb %al, (%rdx)\n");
+  s = s.write("    addq $40, %rsp\n");
+  s = s.write("    ret\n");
+  s = s.write(".Ldecimal_c2:\n");
+  s = s.write("    movzwl (%r8), %eax\n");
+  s = s.write("    movzwl -2(%r8,%rcx), %r9d\n");
+  s = s.write("    movw %ax, (%rdx)\n");
+  s = s.write("    movw %r9w, -2(%rdx,%rcx)\n");
+  s = s.write("    addq $40, %rsp\n");
+  s = s.write("    ret\n");
+  s = s.write(".Ldecimal_c4:\n");
+  s = s.write("    movl (%r8), %eax\n");
+  s = s.write("    movl -4(%r8,%rcx), %r9d\n");
+  s = s.write("    movl %eax, (%rdx)\n");
+  s = s.write("    movl %r9d, -4(%rdx,%rcx)\n");
+  s = s.write("    addq $40, %rsp\n");
+  s = s.write("    ret\n");
+  s = s.write(".Ldecimal_c8:\n");
+  s = s.write("    movq (%r8), %rax\n");
+  s = s.write("    movq 8(%r8), %r10\n");
+  s = s.write("    movq -8(%r8,%rcx), %r9\n");
+  s = s.write("    movq %rax, (%rdx)\n");
+  s = s.write("    cmpq $16, %rcx\n");
+  s = s.write("    jbe .Ldecimal_c8_tail\n");
+  s = s.write("    movq %r10, 8(%rdx)\n");
+  s = s.write(".Ldecimal_c8_tail:\n");
+  s = s.write("    movq %r9, -8(%rdx,%rcx)\n");
+  s = s.write("    addq $40, %rsp\n");
+  s = s.write("    ret\n");
+  s = s.write(".Ldecimal_grow:\n");
+  s = s.write("    pushq %rdi\n");
+  s = s.write("    pushq %rcx\n");
+  s = s.write("    pushq %r8\n");
+  s = s.write("    subq $8, %rsp\n");
+  s = s.write("    movq %r9, %rsi\n");
+  s = s.write("    call __fern_buf_reserve\n");
+  s = s.write("    addq $8, %rsp\n");
+  s = s.write("    popq %r8\n");
+  s = s.write("    popq %rcx\n");
+  s = s.write("    popq %rdi\n");
+  s = s.write("    movq 8(%rdi), %rax\n");
+  s = s.write("    leaq (%rax,%rcx), %r9\n");
+  s = s.write("    jmp .Ldecimal_fits\n");
+  s = s.write("    .section .rodata\n");
+  s = s.write(".Ldecimal_pairs:\n");
+  s = s.write("    .ascii \"" + asmcore.decimal_pairs() + "\"\n");
+  return s.write("    .section .text\n");
+}
+
 function emit_buf_table_helpers(s: asmcore.EmitState, packed: boolean, raw: boolean): asmcore.EmitState {
   let sfx: string = asmcore.packed_suffix(packed);
   let prefix: string = "__fern_buf_push_";
@@ -3693,6 +3795,9 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq 8(%rdi), %rax\n");
     s = s.write("    leaq 8(%rax), %rcx\n");
     s = s.write("    jmp .Lbufu64_fits\n");
+    if (s.has_need("buf_decimal")) {
+      s = emit_buf_push_decimal(s);
+    }
     s = s.write("__fern_buf_len:\n");
     s = s.write("    movq 8(%rdi), %rax\n");
     s = s.write("    ret\n");
@@ -8113,6 +8218,8 @@ function ssa_buf_call(ins: ssa.SInst, reg_of: i32[], sym: string, s: asmcore.Emi
     s = s.need("buf_push_bytes_range");
   } else if (sym == "__fern_buf_push_bytes_range_u8") {
     s = s.need("buf_push_bytes_range_u8");
+  } else if (sym == "__fern_buf_push_decimal") {
+    s = s.need("buf_decimal");
   } else if (util.str_has_prefix(sym, "__fern_buf_push_bytes_")) {
     if (util.str_has_suffix(sym, "_u8")) {
       s = s.need("buf_bytes_u8");
@@ -10453,7 +10560,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("writer_truncate");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 485 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {
     s = emit_ir_op_buf(o, s);
   } else if (o.kind_tag == 181) {
     s = s.write("    call __fn___fern_sleep_ms\n    addq $8, %rsp\n    pushq %rax\n");
@@ -10478,6 +10585,9 @@ function emit_ir_op_buf(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   }
   if (o.kind_tag == 351) {
     s = s.need("buf_push_bytes_range" + asmcore.packed_suffix(ir.is_packed(o)));
+  }
+  if (o.kind_tag == 485) {
+    s = s.need("buf_decimal");
   }
   let k: i32 = asmcore.buf_arity(o.kind_tag);
   while (k > 0) {

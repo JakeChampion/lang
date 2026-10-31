@@ -10,12 +10,27 @@ pub function eligible(f: ssasem.Func, ty: typeinfo.Type): boolean {
   if (parts.types.len() == 0 || parts.types.len() > 4 || ssasem.has_finalizer(f, ty)) {
     return false;
   }
-  for t in parts.types {
-    if (!scalar(t)) {
+  for i in 0..parts.types.len() {
+    let t: typeinfo.Type = parts.types[i];
+    if (!scalar(t) && !(parts.tuple && i == 0 && primary_reference(f, t))) {
       return false;
     }
   }
   return true;
+}
+
+function primary_reference(f: ssasem.Func, t: typeinfo.Type): boolean {
+  let managed: boolean = false;
+  if let typeinfo.TypeString(_) = t {
+    managed = true;
+  }
+  if let typeinfo.TypeArray(_) = t {
+    managed = true;
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    managed = true;
+  }
+  return managed && ssasem.reference(t) && !ssasem.holds_view(f, t) && !ssasem.has_finalizer(f, t);
 }
 
 // The fields of a record, or the elements of a tuple the two-word pair
@@ -90,7 +105,8 @@ function value(f: ssasem.Func, t: typeinfo.Type): ssasem.Func {
 }
 
 function contract(f: ssasem.Func, name: string, from: typeinfo.Type, to: typeinfo.Type): ssasem.Func {
-  let row: ssasem.Contract = ssasem.Contract { name: name, params: [from], modes: [ssasem.value_mode()], result: to };
+  let mode: i32 = if (ssasem.reference(from)) { ssasem.borrow_mode() } else { ssasem.value_mode() };
+  let row: ssasem.Contract = ssasem.Contract { name: name, params: [from], modes: [mode], result: to };
   let at: i32 = ssasem.find_contract_in(f.calls, name);
   if (at >= 0) {
     return f;
@@ -117,7 +133,11 @@ function lower_return(f: ssasem.Func, b: ssa.SBlock, parts: Parts): Build {
     let t: typeinfo.Type = parts.types[i];
     let v: i32 = out.f.values.len();
     out = Build { ...out, f: value(out.f, t), insts: out.insts.append(part_get(parts, v, b.term.value, i)) };
-    out = call(out, conversion(bits_name(), t), v, t, word_type());
+    if (i == 0 && ssasem.reference(t)) {
+      out = Build { ...out, result: v };
+    } else {
+      out = call(out, conversion(bits_name(), t), v, t, word_type());
+    }
     if (i == 0) {
       primary = out.result;
     } else {
@@ -140,7 +160,14 @@ pub function callee(f0: ssasem.Func): ssasem.Func {
     }
     bi = bi + 1;
   }
-  return ssasem.Func { ...f, result: word_type() };
+  return ssasem.Func { ...f, result: primary_type(parts) };
+}
+
+function primary_type(parts: Parts): typeinfo.Type {
+  if (parts.types.len() > 0 && ssasem.reference(parts.types[0])) {
+    return parts.types[0];
+  }
+  return word_type();
 }
 
 pub function capture_base(imm: i32): i32 {
@@ -154,8 +181,9 @@ pub function capture_count(imm: i32): i32 {
 function rebuilt(f: ssasem.Func, call_ins: ssa.SInst, parts: Parts): Build {
   let first: i32 = f.values.len();
   let out: Build = Build { f: f, insts: [], result: first };
-  for t in parts.types {
-    out = Build { ...out, f: value(out.f, word_type()) };
+  for i in 0..parts.types.len() {
+    let t: typeinfo.Type = if (i == 0) { primary_type(parts) } else { word_type() };
+    out = Build { ...out, f: value(out.f, t) };
   }
   let count: i32 = parts.types.len() - 1;
   out = Build { ...out, insts: [ssa.SInst { ...call_ins, result: first, imm: 0 - ((first + 1) * 4 + count) }] };
@@ -163,10 +191,16 @@ function rebuilt(f: ssasem.Func, call_ins: ssa.SInst, parts: Parts): Build {
   for i in 0..parts.types.len() {
     let lane: i32 = first + i;
     if (i > 0) {
-      let name: string = word_prefix() + util.i32_to_string(i - 1);
-      out = Build { ...out, f: contract(out.f, name, word_type(), word_type()), insts: out.insts.append(ssa.SInst { kind_tag: ssasem.call(), result: lane, args: [first], imm: 0, str: name }) };
+      let primary: typeinfo.Type = primary_type(parts);
+      let suffix: string = if (ssasem.reference(primary)) { ":" + typeinfo.spelling(primary) } else { "" };
+      let name: string = word_prefix() + util.i32_to_string(i - 1) + suffix;
+      out = Build { ...out, f: contract(out.f, name, primary, word_type()), insts: out.insts.append(ssa.SInst { kind_tag: ssasem.call(), result: lane, args: [first], imm: 0, str: name }) };
     }
-    out = call(out, conversion(as_name(), parts.types[i]), lane, word_type(), parts.types[i]);
+    if (i == 0 && ssasem.reference(parts.types[i])) {
+      out = Build { ...out, result: lane };
+    } else {
+      out = call(out, conversion(as_name(), parts.types[i]), lane, word_type(), parts.types[i]);
+    }
     args = args.append(out.result);
   }
   return Build { ...out, insts: out.insts.append(ssa.SInst { kind_tag: built(parts), result: call_ins.result, args: args, imm: 0, str: "" }) };
@@ -187,7 +221,7 @@ pub function caller(f: ssasem.Func, bi: i32, k: i32, callee: ssasem.Func): ssase
     p = p + 1;
   }
   let at: i32 = ssasem.find_contract_in(out.f.calls, ins.str);
-  let calls: ssasem.Contract[] = out.f.calls.with(at, ssasem.Contract { ...out.f.calls[at], result: word_type() });
+  let calls: ssasem.Contract[] = out.f.calls.with(at, ssasem.Contract { ...out.f.calls[at], result: primary_type(parts_of(callee, callee.result)) });
   let graph: ssa.SFunc = ssa.SFunc { ...out.f.graph, blocks: out.f.graph.blocks.with(bi, ssa.SBlock { ...b, insts: insts }) };
   return ssasem.Func { ...out.f, calls: calls, graph: graph };
 }
