@@ -1081,6 +1081,13 @@ pub function op_tcp_recv_into(): Op {
   return op0(344);
 }
 
+// `tcp_addr_into` [fd, peer, out] -> 19, or -errno: one getsockname, or
+// getpeername when peer, written into out as the 19-byte sender record
+// udp_recvfrom fills.
+pub function op_tcp_addr_into(): Op {
+  return op0(486);
+}
+
 pub function op_tcp_ktls(): Op {
   return op0(437);
 }
@@ -3297,6 +3304,9 @@ function kind_id_len13(name: string): i32 {
   if (c == b't' && name == "tcp_recv_into") {
     return 344;
   }
+  if (c == b't' && name == "tcp_addr_into") {
+    return 486;
+  }
   if (c == b'u' && name == "udp_bind_with") {
     return 442;
   }
@@ -4169,6 +4179,9 @@ function kind_name_4(id: i32): string {
   if (id == 344) {
     return "tcp_recv_into";
   }
+  if (id == 486) {
+    return "tcp_addr_into";
+  }
   if (id == 345) {
     return "str_data";
   }
@@ -4931,7 +4944,7 @@ function pops3(t: i32): boolean {
     || t == 89 || t == 96 || t == 102 || t == 111
     || t == 177 || t == 225 || t == 234
     || t == 333 || t == 335 || t == 337 || t == 338
-    || t == 442
+    || t == 442 || t == 486
     || t == 346
     || t == 387
     || t == 343 || t == 436

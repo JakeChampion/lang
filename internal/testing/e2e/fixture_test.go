@@ -30,6 +30,10 @@ type fixtureSpec struct {
 	wantErrors    []string
 
 	reclaimObservable bool
+
+	httpStatus int
+	httpBody   string
+	hasHTTP    bool
 }
 
 var allBackends = []string{"interp", "x86_64", "arm64", "wasm"}
@@ -94,6 +98,15 @@ func loadFixture(t *testing.T, dir string) *fixtureSpec {
 
 	if _, ok := readOptionalFile(dir, "reclaim-observable"); ok {
 		f.reclaimObservable = true
+	}
+
+	if raw, ok := readOptionalFile(dir, "expected.http"); ok {
+		status, body, _ := strings.Cut(raw, "\n")
+		n, err := strconv.Atoi(strings.TrimSpace(status))
+		if err != nil {
+			t.Fatalf("%s: expected.http must start with a status code line, got %q", f.name, status)
+		}
+		f.hasHTTP, f.httpStatus, f.httpBody = true, n, body
 	}
 
 	if raw, ok := readOptionalFile(dir, "backends"); ok {

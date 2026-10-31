@@ -58,7 +58,7 @@ func TestSelfHostWasmComponentWaits(t *testing.T) {
 
 function main(): i32 {
     let fds: i32[] = [];
-    print(int.int_to_string(poll(fds, 0)));
+    print(poll(fds, 0).to_string());
     return 0;
 }
 `
@@ -111,7 +111,7 @@ func tcpBytesProbe() string {
 	return `import "core/int";
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 
@@ -140,7 +140,7 @@ func reactorGrowProbe() string {
 	return `import "core/int";
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 

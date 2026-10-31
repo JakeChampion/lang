@@ -212,7 +212,7 @@ which ones.
 
 | Doc | Status | What it is |
 | --- | --- | --- |
-| `ASYNC.md` | [reference] | User guide to the std/async combinators (`Future[T]`, gather, race, with_deadline) and the WASI Preview-3 async export and stream surface. |
+| `ASYNC.md` | [reference] | User guide to std/async: futures, the gather/race/with_deadline combinators, tasks and their schedulers, std/sim, and the WASI Preview-3 async export and stream surface. |
 | `ASYNC-IMPLEMENTATION-RESEARCH.md` | [research] | How Koka, Lean 4 and Roc implement async and what that compiles to, recommending a stackless state machine plus a single-threaded reactor. |
 | `CONCURRENCY-RESEARCH.md` | [research] | Survey of concurrency models (Erlang, Go, Rust, Trio, Zig, OCaml 5 and others) that led to colorless structured concurrency; predates std/async. |
 | `ASYNC-FUTURE-UNIFICATION.md` | [record] | The fifth async-redesign slice: `Future[T]` resolving on wasm via pollables; std/task, std/reactor and std/wasm_reactor deleted. |

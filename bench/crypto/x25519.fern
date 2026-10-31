@@ -1,7 +1,6 @@
 import "std/crypto/x25519";
 import "std/hex";
 import "std/codec";
-import "core/int";
 
 function main(): i32 {
   let key = __codec_bytes(hex.decode("77076d0a7318a57d3c16c17251b26645df4c2f87ebc0992ab177fba51db92c2a"));
@@ -18,7 +17,7 @@ function main(): i32 {
     }
     i = i + 1;
   }
-  print(int.int_to_string(sum));
+  print(sum.to_string());
   return 0;
 }
 

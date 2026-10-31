@@ -12,101 +12,54 @@ not a flake you shrug at.
 
 ## Why Fern gets this almost free
 
-DST is usually a heroic retrofit because runtimes scatter ambient
-syscalls. Fern's async surface has exactly one seam:
+DST is usually a large retrofit because runtimes call the OS from many
+places. Fern's async surface has two seams, and neither reads a clock
+of its own:
 
-- `Future[T]` is a plain library enum (`Ready` / `Pending(token,
-  resume)`) — anything can construct one; nothing about it is
-  fd-specific except how the combinators wait.
-- All waiting funnels through the combinator loops in
-  `internal/stdlib/std/async.fern.md`, which touch precisely four
-  builtins: `poll(fds, timeout_ms)`, `monotonic_ns()`,
-  `wasm_timer_pollable(ns)`, `wasm_pollable_drop(tok)`.
-- `std/mock_platform` already establishes the test-double convention.
+- A wait is a value: `async.Wait { set, until }`, where `until` is an
+  instant on the clock of whatever waits. A `Future[T]` is a plain
+  library enum (`Ready`, `Pending(Wait, resume)`, `Cancelled`) that
+  anything can construct.
+- The combinators `gather`, `race` and `with_deadline` only build
+  futures. The code that drives a future, or the scheduler that resumes
+  a parked task, decides what "now" is.
 
-Substituting those four calls with a virtual implementation makes
-`gather` / `race` / `with_deadline` fully deterministic — on every
-backend, including the interpreter, where fd-backed `Pending` futures
-today never resolve at all (`ASYNC.md` limitation). DST therefore
-also *closes a backend gap*: async programs become testable under
-`-interp`, the fastest feedback loop in the toolchain.
+So a simulation supplies the clock where a program would supply the
+machine's clock, and the same combinators and tasks run on it. This
+also closes a backend gap: `sim.block_on` needs no task support, so
+async programs are testable under `-interp`, the fastest feedback loop
+in the toolchain.
 
 ## Design
 
-### The driver seam
+The design as shipped is in `docs/ASYNC.md` sections 6, 7 and 9. In
+short:
 
-A `Driver` value bundles the four waiting primitives, and since #9853 the
-reactor: a readiness set that outlives one wait, which the serve loops run
-on (`watch`, `unwatch`, `wait`, `close`; the sim leg scripts readiness with
-`ready_at`).
+- `sim.Sim` holds a virtual clock (`i64` ns, starts at 0) and a seeded
+  PRNG (`sim.new(seed)`; `std/math.random_int`'s CSPRNG is
+  deliberately not used, because determinism is the point).
+- `sim.block_on(d, f)` drives a future with no task. It moves the clock
+  to each deadline that `f` waits for and resumes `f` with
+  `Wake.TimedOut`.
+- `sim.run_tasks(d, entries, cancel_at)` is a scheduler. It resumes the
+  task whose wait is due soonest, moves the clock to that instant, and
+  the seed breaks a tie between tasks. `cancel_at` scripts a
+  cancellation at a virtual instant.
+- `sim.future_at(at, v)` and `sim.future_chain(at, step, n, v)` are
+  futures that are ready at virtual instants, for tests of the
+  combinators.
+- Time never moves except when the simulation drives a wait, so a busy
+  loop that never waits is a hang in simulation as it is in production.
+- `sim.Sim` also implements `async.Driver`, the reactor that the
+  `std/serve` loop watches descriptors with, and scripts readiness with
+  `ready_at`.
 
-```fern
-pub trait Driver {
-    function poll_ready(self: Self, toks: i32[], timeout: Option[Duration]): i32;
-    function now(self: Self): Instant;
-    function timer(self: Self, after: Duration): i32;
-    function drop_token(self: Self, tok: i32): i32;
-    function watch(self: Self, fd: i32, interest: i32): i32;
-    function unwatch(self: Self, fd: i32): i32;
-    function wait_into(self: Self, own events: i32[], timeout: Option[Duration]): i32[];
-    function wait(self: Self, max: i32, timeout: Option[Duration]): i32[] { … }
-    function close(self: Self): i32;
-}
-```
+### What slice 1 was
 
-`std/async` keeps its exact public surface; each combinator gains a
-`*_on(drv, …)` sibling carrying the loop body, and the existing
-`gather`/`race`/`with_deadline` delegate to it with the **real
-driver** (whose methods call the builtins — behaviour-identical,
-verified by the existing `async_combinators` suites). The real driver
-is the only user of the builtins afterwards; the loops themselves go
-driver-generic. One copy of the combinator logic, no drift.
-
-Design choice — `dyn Driver` vs generic `[D: Driver]`: generic. The
-combinators are already generic over `T` and monomorphised; adding
-`D` keeps static dispatch and avoids committing `dyn` to the hottest
-stdlib loops. (`dyn` remains available to a user who wants to pass
-drivers around dynamically.)
-
-### The sim driver (`std/sim`)
-
-State: a virtual clock (`i64` ns, starts at 0), a token table
-(token → ready-at virtual time, or "ready when fired"), and a seeded
-PRNG (`sim.new(seed)` — a small explicit-state LCG/xorshift in Fern;
-`std/math.random_int`'s CSPRNG is deliberately NOT used, determinism
-is the point).
-
-- `timer(after)` allocates a token that becomes ready at `now + after`.
-- `sim.future_at(drv, at, v)` — a `Future[T]` that resolves to `v` at
-  the virtual `Instant` `at`, written `sim.at(offset)` (token + resume
-  closure returning `Ready(v)`).
-- `sim.future_chain(...)` — multi-step pending chains, for testing
-  re-suspension shapes like a read loop that parks on each chunk.
-- `poll_ready(toks, timeout)`: find the earliest ready-at among
-  `toks` (and the timeout, when `Some`); **advance the virtual clock
-  to it**; return its index (or the timeout sentinel per the real
-  `poll` contract). Ties broken by the seeded PRNG — so interleaving
-  order is exercised but reproducible from the seed.
-- `now()` returns the virtual clock. Time never advances except
-  through `poll_ready` — a busy loop that never waits is a hang in
-  simulation exactly as in production.
-
-Faithfulness rule: the sim driver must honour the SAME contract the
-real `poll` builtin has (return-value meaning, timeout sentinel, the
-with_deadline timer-slot convention), pinned by running the portable
-combinator test corpus against both drivers and asserting identical
-results.
-
-### What slice 1 is (the shippable core)
-
-1. The `Driver` trait + `*_on` refactor in `std/async` (real driver
-   extracted, zero behaviour change, existing suites green).
-2. `std/sim` with clock, tokens, seeded PRNG, `future_at`/chains.
-3. Tests: virtual-time `with_deadline` (winners under the deadline,
-   `None` past it — exact, not sleep-flaky); `race` tie broken
-   deterministically by seed; `gather` over out-of-order readiness;
-   same corpus green under `-interp` and native; a seed-sweep case
-   (N seeds, all green) as the property-test seed.
+The first slice put a driver seam (`*_on` siblings of each combinator)
+into `std/async`, and `std/sim` with its clock, tokens and seeded PRNG.
+The seam is gone: deadlines are now instants, and the code that waits
+supplies the clock, as the section above describes.
 
 ### Later slices (not slice 1)
 
@@ -138,8 +91,9 @@ results.
   builds a seeded `Sim` with 1–3 scripted upstream futures (random
   latencies / chunk schedules, ~half faulted — fail, stall or partial,
   some flaky with random p drawn from the sim PRNG), runs 1–3 random
-  `gather_on` / `race_on` / `with_deadline_on` stages over mixes of
-  `future_at` / `future_chain` / those upstreams, and prints a digest
+  `gather` / `race` / `with_deadline` stages over mixes of
+  `future_at` / `future_chain` / those upstreams, driven by
+  `sim.block_on`, and prints a digest
   of everything observable (results, winner indices, `None` slots,
   final virtual clock, `rng_state`). Interp, native x86-64, and wasm must produce byte-identical
   stdout — any divergence is a miscompile or a nondeterminism leak,

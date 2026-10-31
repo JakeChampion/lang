@@ -11,11 +11,12 @@ import (
 )
 
 const suspendFoldProgram = `import "std/time";
+import "std/clock";
 import "std/async";
 
 function wait(): i32 {
   let none: i32[] = [];
-  let woke: i32 = async.wait_any(none, Some(time.duration_millis(2 as i64)));
+  let woke: async.Wake = async.wait_any(none, Some(clock.instant().add(time.duration_millis(2 as i64))));
   return 0;
 }
 
@@ -53,10 +54,7 @@ function drive(t: async.Task[i32]): i32 {
       },
       Suspended(w) => {
         parks = parks + 1;
-        st = async.task_resume(t, async.wait_any(w.set, w.timeout));
-      },
-      Cancelled => {
-        return 0 - 2;
+        st = async.task_resume(t, async.wait_any(w.set, w.until));
       }
     }
   }
@@ -68,7 +66,6 @@ function main(): i32 {
   let t: async.Task[i32] = async.task_new(() => scan(xs));
   let a: i32 = drive(t);
   print("task " + a.to_string());
-  async.task_free(t);
   let b: i32 = scan(xs);
   print("plain " + b.to_string());
   if (a != 111 || b != 111) {

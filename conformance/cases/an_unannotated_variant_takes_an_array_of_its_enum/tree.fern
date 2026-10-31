@@ -1,0 +1,35 @@
+pub enum Tree[K] { Leaf(K), Node(Tree[K][]) }
+
+pub function (t: Tree[K]) count[K](): i32 {
+  match (t) {
+    Leaf(k) => {
+      return 1;
+    },
+    Node(kids) => {
+      let n: i32 = 0;
+      for kid in kids {
+        n = n + kid.count();
+      }
+      return n;
+    }
+  }
+  return 0;
+}
+
+pub enum Pairs[K, V] { Pair(K, V), Group(Pairs[K, V][]) }
+
+pub function (p: Pairs[K, V]) size[K, V](): i32 {
+  match (p) {
+    Pair(k, v) => {
+      return 1;
+    },
+    Group(xs) => {
+      let n: i32 = 0;
+      for x in xs {
+        n = n + x.size();
+      }
+      return n;
+    }
+  }
+  return 0;
+}

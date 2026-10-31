@@ -73,7 +73,6 @@ import "std/platform";
 import "std/stream";
 import "std/error";
 import "core/cmp";
-import "core/int";
 ```
 
 ### `3 enum WasiHttpMethod`
@@ -705,7 +704,7 @@ function __name_late(c: ErrorCode): string {
       return "internal-error";
     },
     ErrorCode.Unknown(n) => {
-      return "error-code " + int.int_to_string(n);
+      return "error-code " + n.to_string();
     },
     _ => {
       return "";

@@ -5,7 +5,6 @@ import "std/quic/params";
 import "std/quic/recovery";
 import "std/option";
 import "std/i64";
-import "core/int";
 
 function limits(bidi: i64, uni: i64, stream_window: i64, conn_window: i64): params.Params {
   return params.Params { ...params.defaults(), initial_max_streams_bidi: bidi, initial_max_streams_uni: uni, initial_max_stream_data_bidi_local: stream_window, initial_max_stream_data_bidi_remote: stream_window, initial_max_stream_data_uni: stream_window, initial_max_data: conn_window };
@@ -134,7 +133,7 @@ function frame_text(f: frames.Frame): string {
       if (d.fin) {
         fin = " fin";
       }
-      return "STREAM " + d.stream.to_string() + "@" + d.offset.to_string() + "+" + int.int_to_string(d.data.len()) + fin;
+      return "STREAM " + d.stream.to_string() + "@" + d.offset.to_string() + "+" + d.data.len().to_string() + fin;
     },
     frames.MaxData(v) => {
       return "MAX_DATA " + v.to_string();
@@ -177,7 +176,7 @@ function test_reassembly(): test.TestOutcome {
     ordered = ordered && out[i] == i as u8;
     i = i + 1;
   }
-  return test.assert_eq(held + " " + int.int_to_string(out.len()) + " " + ordered.to_string() + " " + r2.held_bytes.to_string() + " " + r2.delivered().to_string(), "15 25 true 0 25");
+  return test.assert_eq(held + " " + out.len().to_string() + " " + ordered.to_string() + " " + r2.held_bytes.to_string() + " " + r2.delivered().to_string(), "15 25 true 0 25");
 }
 
 function test_peer_opens(): test.TestOutcome {
@@ -296,7 +295,7 @@ function test_window_updates(): test.TestOutcome {
     Ok(r) => {
       let t5: streams.Streams = r.0.fill([], 1200);
       let after: u8[] = t5.filled;
-      return test.assert_eq("[" + sent(before) + "] " + int.int_to_string(r.1.len()) + " " + r.2.to_string() + " " + sent(after), "[] 60 false MAX_STREAM_DATA 0 160 ");
+      return test.assert_eq("[" + sent(before) + "] " + r.1.len().to_string() + " " + r.2.to_string() + " " + sent(after), "[] 60 false MAX_STREAM_DATA 0 160 ");
     },
     Err(e) => {
       return test.fail(e);
@@ -582,7 +581,7 @@ function test_consumed_fin_replay(): test.TestOutcome {
   };
   let moved: string = outcome(fed(replayed, [data(0 as i64, 0 as i64, 4, true)]));
   let past: string = outcome(fed(replayed, [data(0 as i64, 3 as i64, 1, false)]));
-  return test.assert_eq("[" + events(replayed) + "] " + int.int_to_string(read.1.len()) + " " + read.2.to_string() + " " + int.int_to_string(again.1.len()) + " " + again.2.to_string() + " " + old.recv_taken.to_string() + " " + replayed.recv_taken.to_string() + " " + old.list[0].data.taken.to_string() + " " + moved + " " + past, "[] 3 true 0 true 3 3 3 6/8 6/8");
+  return test.assert_eq("[" + events(replayed) + "] " + read.1.len().to_string() + " " + read.2.to_string() + " " + again.1.len().to_string() + " " + again.2.to_string() + " " + old.recv_taken.to_string() + " " + replayed.recv_taken.to_string() + " " + old.list[0].data.taken.to_string() + " " + moved + " " + past, "[] 3 true 0 true 3 3 3 6/8 6/8");
 }
 
 function test_late_fin_once(): test.TestOutcome {
@@ -604,7 +603,7 @@ function test_late_fin_once(): test.TestOutcome {
   let Ok(replayed) = fed(fin.0, [data(0 as i64, 3 as i64, 0, true)]) else {
     return test.fail("replayed late FIN");
   };
-  return test.assert_eq(read.2.to_string() + " " + first + " " + int.int_to_string(fin.1.len()) + " " + fin.2.to_string() + " [" + events(replayed) + "] " + replayed.recv_taken.to_string(), "false read 0, 0 true [] 3");
+  return test.assert_eq(read.2.to_string() + " " + first + " " + fin.1.len().to_string() + " " + fin.2.to_string() + " [" + events(replayed) + "] " + replayed.recv_taken.to_string(), "false read 0, 0 true [] 3");
 }
 
 function main(): i32 {

@@ -244,6 +244,7 @@ function hidden(): i32 { return 42; }
 	for name, source := range map[string]string{
 		"utf8_scalar_helper": `import "core/utf8_scalar"; function main(): i32 { return utf8_scalar.step("a", 0, 1); }`,
 		"integer_helper":     `import "core/int"; function main(): i32 { return int.__radix_digit(48); }`,
+		"integer_to_string":  `import "core/int"; function main(): i32 { return int.int_to_string(4).len(); }`,
 		"map_helper":         `import "core/map"; function main(): i32 { return map.__map_pow2_ceil(3); }`,
 		"json_helper":        `import "std/json"; function main(): i32 { let x = json.from_json_field(json.JNull, "x"); return 0; }`,
 		"node_type":          `import "std/pvec"; function inspect(n: pvec.VNode[i32]): i32 { return 0; } function main(): i32 { return 0; }`,

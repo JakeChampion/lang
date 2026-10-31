@@ -50,7 +50,7 @@ A hardware mitigation row says where the fault test ran. A host without the feat
 | Under `-harden` on arm64, every function value's stub is a BTI landing pad and every framed function signs its return address | `TestSelfHostHardenArm64` | arm64 emulated; native unverified |
 | No load segment is writable and executable, the stack is not executable, and a shared object's tables are read-only after relocation | `TestSelfHostImagePermissions`, `TestSharedObjectLayout` | x86, arm64 |
 | A `-pie` image loads at a base the kernel chooses | `TestSelfHostPIE` | x86, arm64 |
-| A build is reproducible across directories and environments, except under `-g` | `TestSelfHostReproducibleAcrossPaths` | x86, arm64 |
+| A build is reproducible across source roots, directories, locales, time zones and environments. A `-g` build is reproducible with `-remap-path-prefix` | `TestSelfHostReproducibleAcrossPaths`, `TestSelfHostRemapPathPrefix` | x86, arm64, Darwin and Android images, WASI component |
 | Every native executable carries a build manifest that `fern -manifest` reads back | `TestSelfHostProfiles` | x86, arm64 |
 
 ## Runtime, standard library and isolation

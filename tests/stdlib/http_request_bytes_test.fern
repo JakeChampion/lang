@@ -298,7 +298,7 @@ function test_refusals_agree(): test.TestOutcome {
 
 function framing_of(wire: string): i32 {
   match (http.parse_request_framed(wire.bytes())) {
-    http.Framed(_) => {
+    http.Complete(_) => {
       return 2;
     },
     http.Incomplete => {
@@ -416,7 +416,7 @@ function test_chunked_body_is_decoded(): test.TestOutcome {
     }
   }
   match (http.parse_request_framed_from(wire.bytes(), wire_chunked().len(), http.limits(), http.framed_none())) {
-    http.Framed(f) => {
+    http.Complete(f) => {
       if (f.request.path != "/next") {
         return test.fail("behind the chunked request: " + f.request.path);
       }
@@ -562,7 +562,7 @@ function test_chunked_framing_tells_incomplete_from_malformed(): test.TestOutcom
 
 function status_of(wire: string): i32 {
   match (http.parse_request_framed(wire.bytes())) {
-    http.Framed(_) => {
+    http.Complete(_) => {
       return 0;
     },
     http.Incomplete => {
@@ -661,7 +661,7 @@ function test_expect_continue(): test.TestOutcome {
 
 function framed(wire: string): Option[http.HttpFramed] {
   match (http.parse_request_framed(wire.bytes())) {
-    http.Framed(f) => {
+    http.Complete(f) => {
       return Some(f);
     },
     http.Incomplete => {
@@ -714,7 +714,7 @@ function test_framed_length_covers_headers_and_body(): test.TestOutcome {
 function test_framed_from_reads_the_request_behind(): test.TestOutcome {
   let wire: string = wire_post() + "GET /next HTTP/1.1\r\nHost: h\r\n\r\n";
   match (http.parse_request_framed_from(wire.bytes(), wire_post().len(), http.limits(), http.framed_none())) {
-    http.Framed(f) => {
+    http.Complete(f) => {
       if (f.request.path != "/next") {
         return test.fail("the request behind the offset was not the one parsed: " + f.request.path);
       }
@@ -738,7 +738,7 @@ function test_framed_from_reads_the_request_behind(): test.TestOutcome {
 
 function framed_after(wire: string, prev: http.HttpFramed): Option[http.HttpFramed] {
   match (http.parse_request_framed_from(wire.bytes(), 0, http.limits(), prev)) {
-    http.Framed(f) => {
+    http.Complete(f) => {
       return Some(f);
     },
     _ => {
@@ -1108,7 +1108,7 @@ function test_version_rules(): test.TestOutcome {
     return test.fail("a higher minor version needs a Host like HTTP/1.1");
   }
   match (http.parse_request_framed("GET / HTTP/1.5\r\nHost: h\r\n\r\n".bytes())) {
-    http.Framed(f) => {
+    http.Complete(f) => {
       if (!f.keep_alive) {
         return test.fail("a higher minor version persists like HTTP/1.1");
       }
@@ -1175,7 +1175,7 @@ function test_chunk_extension_grammar(): test.TestOutcome {
 function test_empty_line_before_the_request(): test.TestOutcome {
   let wire: string = "\r\nGET /a HTTP/1.1\r\nHost: h\r\n\r\n";
   match (http.parse_request_framed(wire.bytes())) {
-    http.Framed(f) => {
+    http.Complete(f) => {
       if (f.request.path != "/a") {
         return test.fail("path: " + f.request.path);
       }

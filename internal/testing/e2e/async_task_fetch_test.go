@@ -40,7 +40,7 @@ func TestAsyncTaskFetchFanout(t *testing.T) {
 			cmd := be.run(qemu, out)
 			_ = cmd.Run()
 			if code := cmd.ProcessState.ExitCode(); code != 42 {
-				t.Errorf("%s: gather_tasks over fetch.send exit = %d, want 42", be.target, code)
+				t.Errorf("%s: gather of spawned fetch.send tasks exit = %d, want 42", be.target, code)
 			}
 		})
 	}

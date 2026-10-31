@@ -151,16 +151,15 @@ func CheckWorkersStopWithSupervisor(t *testing.T, cmd *exec.Cmd, addr string) {
 
 func ParentGoneProbe() string {
 	return `import "std/async";
-import "core/int";
 function main(): i32 {
     let pid: i32 = proc_fork();
     if (pid != 0) {
-        print(int.int_to_string(pid));
+        print(pid.to_string());
         return 0;
     }
     sleep_ms(500 as i64);
     let drv: async.RealDriver = async.real_driver();
-    print(int.int_to_string(drv.watch_parent()));
+    print(drv.watch_parent().to_string());
     return 0;
 }
 `

@@ -72,7 +72,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "core/int";
 import "std/crypto/aead";
 import "std/crypto/aes_gcm";
 import "std/crypto/chacha20poly1305";
@@ -156,10 +155,10 @@ impl cmp.Display for RecordError {}
 pub function (e: RecordError) message(): string {
   match (e) {
     RecordOverflow(n) => {
-      return "tls record: " + int.int_to_string(n) + " bytes is over the record size limit";
+      return "tls record: " + n.to_string() + " bytes is over the record size limit";
     },
     UnexpectedContentType(t) => {
-      return "tls record: unexpected content type " + int.int_to_string(t);
+      return "tls record: unexpected content type " + t.to_string();
     },
     EmptyFragment => {
       return "tls record: a handshake or alert record with no content";
@@ -174,7 +173,7 @@ pub function (e: RecordError) message(): string {
       return "tls record: the sequence number is exhausted";
     },
     BadKeys(key, iv) => {
-      return "tls record: a " + int.int_to_string(key) + "-byte key and a " + int.int_to_string(iv) + "-byte iv do not fit the cipher suite";
+      return "tls record: a " + key.to_string() + "-byte key and a " + iv.to_string() + "-byte iv do not fit the cipher suite";
     }
   }
   return "";

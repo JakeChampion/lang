@@ -12,7 +12,6 @@ import "std/time";
 import "std/option";
 import "std/i64";
 import "std/string";
-import "core/int";
 import "std/rand";
 
 function now(): Instant {
@@ -27,20 +26,20 @@ function passed(deadline: Option[Instant]): boolean {
   return now().cmp(at) >= 0;
 }
 
-// How long to wait for a datagram: until the deadline, between 1 and 100 ms.
-function wait_until(deadline: Option[Instant]): Option[Duration] {
+// When to stop waiting for a datagram: at the deadline, but 1 to 100 ms from now.
+function wait_until(deadline: Option[Instant]): Option[Instant] {
   let most: Duration = time.duration_millis(100);
   let Some(at) = deadline else {
-    return Some(most);
+    return Some(now().add(most));
   };
   let left: Duration = at.since(now()).add(time.duration_millis(1));
   if (left.cmp(time.duration_millis(1)) < 0) {
-    return Some(time.duration_millis(1));
+    return Some(now().add(time.duration_millis(1)));
   }
   if (left.cmp(most) > 0) {
-    return Some(most);
+    return Some(now().add(most));
   }
-  return Some(left);
+  return Some(now().add(left));
 }
 
 function pump(c: conn.Conn, sock: i32, peer: net.SocketAddr): conn.Conn {
@@ -81,7 +80,7 @@ function drain(c: conn.Conn, sock: i32, buf: u8[]): conn.Conn {
   return cur;
 }
 
-function wait_for(c: conn.Conn): Option[Duration] {
+function wait_for(c: conn.Conn): Option[Instant] {
   return wait_until(c.deadline());
 }
 
@@ -136,7 +135,7 @@ function echoed(c: conn.Conn, e: Echo): (conn.Conn, Echo) {
   if (matched) {
     verdict = "matches";
   }
-  print("fern client: echo of " + int.int_to_string(got.len()) + " bytes " + verdict);
+  print("fern client: echo of " + got.len().to_string() + " bytes " + verdict);
   return (r.0.close(0 as i64, "fern done", true, now()), Echo { ...e, got: got, matched: matched, closing: true });
 }
 
@@ -147,7 +146,7 @@ function ran(c0: conn.Conn, sock: i32, peer: net.SocketAddr, size: i32): boolean
   let started: Instant = now();
   while (!c.done() && now().since(started).cmp(time.duration_seconds(20)) < 0) {
     c = pump(c, sock, peer);
-    let woke: i32 = async.wait_any([sock, 1], wait_for(c));
+    let woke: async.Wake = async.wait_any([sock, 1], wait_for(c));
     c = drain(c, sock, buf);
     if (passed(c.deadline())) {
       c = c.tick(now());

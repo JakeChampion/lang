@@ -8,8 +8,8 @@ language, and should be reviewed as one.
 program plus a few declarative sidecar files describing what running it
 must produce. Every Fern implementation is measured against it: the
 oracle, `internal/oracle/interp` (`bin/fern-oracle -interp`), and the
-compiler users run, `fern`, through its interpreter, its front end and its
-three targets (x86-64, arm64, wasm).
+compiler users run, `fern`, through its interpreter, its front end and each
+shipped target.
 
 ## Why this lives outside `internal/`
 
@@ -46,7 +46,8 @@ A case is a directory `cases/<name>/`. Contents:
 | `expected.exit` | no | Expected process exit code, `0`–`255`. Defaults to `0`. |
 | `stdin` | no | Bytes fed to the program's stdin. |
 | `match` | no | `exact` (default) or `contains`. |
-| `backends` | no | Whitespace-separated subset of `interp x86_64 arm64 wasm`; `#` starts a comment. Defaults to all four. |
+| `backends` | no | Whitespace-separated subset of `interp x86_64 arm64 wasm`; `#` starts a comment. Defaults to all four. `arm64` selects the arm64-linux, arm64-android and arm64-darwin legs. `wasm` selects the core-module, component and wasi:http legs. |
+| `expected.http` | no | The response that the `wasm32-wasi-http` leg must get for `GET /`: the status code on the first line, then the body byte for byte. Permitted only when `main.fern` declares `handle(req: HttpRequest, plat: platform.Platform): HttpResponse`. That leg runs only the cases that carry this file. |
 | `expected.error` | no | Marks a **compile-error case** — the front end must reject it. See below. |
 | `expected.lowering-error` | no | Marks a **lowering-error case** — the front end must ACCEPT it and lowering must reject it. See below. |
 | `meta` | no | Justifies a case that asserts less than the maximum — see below. Required exactly when the case does. |

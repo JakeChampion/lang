@@ -1,0 +1,229 @@
+// Every integer width has the same method set. This suite calls the
+// methods that i64, u32 and u64 share with i32 on each width, and pins
+// the negative-operand results of div_ceil and next_multiple_of to Rust.
+import "std/test";
+import "std/array";
+import "std/i32";
+import "std/i64";
+import "std/u32";
+import "std/u64";
+
+function test_i32_div_ceil_signs(): test.TestOutcome {
+  if (7.div_ceil(2) != 4 || (0 - 7).div_ceil(2) != 0 - 3) {
+    return test.fail("positive divisor");
+  }
+  if (7.div_ceil(0 - 2) != 0 - 3) {
+    return test.fail("(7).div_ceil(-2) is -3, as in Rust");
+  }
+  return test.assert_eq((0 - 7).div_ceil(0 - 2), 4);
+}
+
+function test_i32_next_multiple_of_signs(): test.TestOutcome {
+  if ((0 - 7).next_multiple_of(5) != 0 - 5) {
+    return test.fail("(-7).next_multiple_of(5) is -5, as in Rust");
+  }
+  if (23.next_multiple_of(0 - 8) != 16 || 16.next_multiple_of(0 - 8) != 16) {
+    return test.fail("a negative divisor rounds down");
+  }
+  return test.assert_eq((0 - 23).next_multiple_of(0 - 8), 0 - 24);
+}
+
+function test_i64_div_ceil_signs(): test.TestOutcome {
+  if ((7 as i64).div_ceil(0 - 2 as i64) != 0 - 3 as i64) {
+    return test.fail("(7).div_ceil(-2) is -3");
+  }
+  if ((0 - 7 as i64).div_ceil(2 as i64) != 0 - 3 as i64) {
+    return test.fail("(-7).div_ceil(2) is -3");
+  }
+  return test.assert_eq((0 - 7 as i64).div_ceil(0 - 2 as i64), 4 as i64);
+}
+
+function test_i64_next_multiple_of_signs(): test.TestOutcome {
+  if ((0 - 7 as i64).next_multiple_of(5 as i64) != 0 - 5 as i64) {
+    return test.fail("(-7).next_multiple_of(5) is -5");
+  }
+  if ((23 as i64).next_multiple_of(0 - 8 as i64) != 16 as i64) {
+    return test.fail("23.next_multiple_of(-8) is 16");
+  }
+  return test.assert_eq((0 - 23 as i64).next_multiple_of(0 - 8 as i64), 0 - 24 as i64);
+}
+
+function test_unsigned_div_ceil(): test.TestOutcome {
+  if ((7 as u32).div_ceil(2 as u32) != 4 as u32 || (8 as u32).next_multiple_of(4 as u32) != 8 as u32) {
+    return test.fail("u32");
+  }
+  let max: u64 = 18446744073709551615;
+  if (max.div_ceil(2 as u64) != 9223372036854775808 as u64) {
+    return test.fail("u64 MAX div_ceil 2");
+  }
+  return test.assert_eq((9 as u64).next_multiple_of(4 as u64), 12 as u64);
+}
+
+function test_gcd_lcm(): test.TestOutcome {
+  if ((0 - 12).gcd(18) != 6 || 4.lcm(0 - 6) != 12) {
+    return test.fail("i32");
+  }
+  if ((0 - 100000000000 as i64).gcd(250000000000 as i64) != 50000000000 as i64) {
+    return test.fail("i64");
+  }
+  if ((12 as u32).gcd(18 as u32) != 6 as u32 || (4 as u32).lcm(6 as u32) != 12 as u32) {
+    return test.fail("u32");
+  }
+  return test.assert_eq((4000000000 as u64).lcm(6000000000 as u64), 12000000000 as u64);
+}
+
+function test_gcd_all_lcm_all(): test.TestOutcome {
+  let a: i32[] = [12, 0 - 18, 24];
+  let b: i64[] = [100000000000 as i64, 250000000000 as i64];
+  let c: u32[] = [12 as u32, 18 as u32, 30 as u32];
+  let d: u64[] = [4 as u64, 6 as u64, 10 as u64];
+  if (a.gcd_all() != 6 || b.gcd_all() != 50000000000 as i64) {
+    return test.fail("signed gcd_all");
+  }
+  if (c.gcd_all() != 6 as u32 || d.lcm_all() != 60 as u64) {
+    return test.fail("unsigned gcd_all / lcm_all");
+  }
+  return test.assert_eq(b.lcm_all(), 500000000000 as i64);
+}
+
+function test_gcd_all_lcm_all_empty(): test.TestOutcome {
+  let a: i32[] = [];
+  let b: i64[] = [];
+  let c: u32[] = [];
+  let d: u64[] = [];
+  if (a.gcd_all() != 0 || b.gcd_all() != 0 as i64 || c.gcd_all() != 0 as u32 || d.gcd_all() != 0 as u64) {
+    return test.fail("gcd_all of [] is 0");
+  }
+  if (a.lcm_all() != 1 || b.lcm_all() != 1 as i64 || c.lcm_all() != 1 as u32) {
+    return test.fail("lcm_all of [] is 1");
+  }
+  return test.assert_eq(d.lcm_all(), 1 as u64);
+}
+
+function test_divmod(): test.TestOutcome {
+  let (q1, r1) = (17 as i64).divmod(5 as i64);
+  let (q2, r2) = (17 as u32).divmod(5 as u32);
+  let (q3, r3) = (17 as u64).divmod(5 as u64);
+  if (q1 != 3 as i64 || r1 != 2 as i64 || q2 != 3 as u32 || r2 != 2 as u32) {
+    return test.fail("i64 / u32");
+  }
+  return test.assert_true(q3 == 3 as u64 && r3 == 2 as u64);
+}
+
+function test_digits(): test.TestOutcome {
+  if ((0 - 9075 as i64).digits() != 4 || (0 - 9075 as i64).sum_of_digits() != 21 || !(0 - 9075 as i64).has_digit(7)) {
+    return test.fail("i64");
+  }
+  let max32: u32 = 4294967295;
+  if (max32.digits() != 10 || max32.sum_of_digits() != 57 || max32.has_digit(1)) {
+    return test.fail("u32");
+  }
+  let max64: u64 = 18446744073709551615;
+  return test.assert_true(max64.digits() == 20 && max64.has_digit(8) && (0 as u64).digits() == 1);
+}
+
+function test_reverse_digits_palindrome(): test.TestOutcome {
+  if ((0 - 1230 as i64).reverse_digits() != 0 - 321 as i64 || !(12321 as i64).is_palindrome()) {
+    return test.fail("i64");
+  }
+  if ((1230 as u32).reverse_digits() != 321 as u32 || (1230 as u32).is_palindrome()) {
+    return test.fail("u32");
+  }
+  return test.assert_true((1230 as u64).reverse_digits() == 321 as u64 && (12321 as u64).is_palindrome());
+}
+
+function test_is_prime_perfect_square(): test.TestOutcome {
+  if (!(2147483647 as i64).is_prime() || (2147483649 as i64).is_prime()) {
+    return test.fail("i64 is_prime");
+  }
+  if (!(4294967291 as u32).is_prime() || !(4294836225 as u32).is_perfect_square()) {
+    return test.fail("u32");
+  }
+  if ((4294967295 as u32).is_perfect_square()) {
+    return test.fail("u32 MAX is not a square");
+  }
+  return test.assert_true((4294967311 as u64).is_prime() && (10000000000 as u64).is_perfect_square());
+}
+
+function test_factorial(): test.TestOutcome {
+  if ((20 as i64).factorial() != 2432902008176640000 as i64 || (21 as i64).factorial() != 0 as i64) {
+    return test.fail("i64");
+  }
+  if ((12 as u32).factorial() != 479001600 as u32 || (13 as u32).factorial() != 0 as u32) {
+    return test.fail("u32");
+  }
+  return test.assert_eq((20 as u64).factorial(), 2432902008176640000 as u64);
+}
+
+function test_ordinal_pluralize(): test.TestOutcome {
+  if ((0 - 112 as i64).ordinal() != "-112th" || (101 as i64).ordinal() != "101st") {
+    return test.fail("i64 ordinal");
+  }
+  if ((22 as u32).ordinal() != "22nd" || (13 as u64).ordinal() != "13th") {
+    return test.fail("unsigned ordinal");
+  }
+  if ((0 - 1 as i64).pluralize("item", "items") != "item" || (2 as u32).pluralize("a", "b") != "b") {
+    return test.fail("pluralize");
+  }
+  return test.assert_eq((1 as u64).pluralize("a", "b"), "a");
+}
+
+function test_percent_of_round_down_to(): test.TestOutcome {
+  if ((0 - 1 as i64).percent_of(3 as i64) != 0 - 33 as i64 || (50 as u32).percent_of(200 as u32) != 25 as u32) {
+    return test.fail("percent_of");
+  }
+  let max64: u64 = 18446744073709551615;
+  if (max64.percent_of(max64) != 100 as u64) {
+    return test.fail("u64 percent_of at MAX");
+  }
+  if ((0 - 7 as i64).round_down_to(5 as i64) != 0 - 10 as i64 || (17 as u32).round_down_to(5 as u32) != 15 as u32) {
+    return test.fail("round_down_to");
+  }
+  return test.assert_eq((17 as u64).round_down_to(5 as u64), 15 as u64);
+}
+
+function test_signed_only(): test.TestOutcome {
+  if ((0 - 3 as i64).sign_str() != "-" || (3 as i64).sign_str() != "+") {
+    return test.fail("sign_str");
+  }
+  return test.assert_true((1 as i64).is_one() && (0 - 1 as i64).is_minus_one() && (1 as u32).is_one() && (1 as u64).is_one());
+}
+
+function test_formatting(): test.TestOutcome {
+  if ((255 as i64).to_hex() != "ff" || (5 as i64).to_binary() != "101" || (8 as i64).to_oct() != "10") {
+    return test.fail("i64 radix");
+  }
+  if ((0 - 42 as i64).to_string_padded(5) != "-0042" || (1234567 as i64).to_string_with_sep(",") != "1,234,567") {
+    return test.fail("i64 padded / sep");
+  }
+  if ((255 as u32).to_hex() != "ff" || (42 as u32).to_string_padded(4) != "0042" || (5 as u32).to_binary() != "101") {
+    return test.fail("u32");
+  }
+  let max64: u64 = 18446744073709551615;
+  if (max64.to_hex() != "ffffffffffffffff" || (8 as u64).to_oct() != "10") {
+    return test.fail("u64 radix");
+  }
+  return test.assert_eq((1234567 as u64).to_string_with_sep("_"), "1_234_567");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("integer width parity");
+  r = r.it("i32 div_ceil signs", test_i32_div_ceil_signs);
+  r = r.it("i32 next_multiple_of signs", test_i32_next_multiple_of_signs);
+  r = r.it("i64 div_ceil signs", test_i64_div_ceil_signs);
+  r = r.it("i64 next_multiple_of signs", test_i64_next_multiple_of_signs);
+  r = r.it("unsigned div_ceil", test_unsigned_div_ceil);
+  r = r.it("gcd / lcm", test_gcd_lcm);
+  r = r.it("gcd_all / lcm_all", test_gcd_all_lcm_all);
+  r = r.it("gcd_all / lcm_all empty", test_gcd_all_lcm_all_empty);
+  r = r.it("divmod", test_divmod);
+  r = r.it("digits", test_digits);
+  r = r.it("reverse_digits / is_palindrome", test_reverse_digits_palindrome);
+  r = r.it("is_prime / is_perfect_square", test_is_prime_perfect_square);
+  r = r.it("factorial", test_factorial);
+  r = r.it("ordinal / pluralize", test_ordinal_pluralize);
+  r = r.it("percent_of / round_down_to", test_percent_of_round_down_to);
+  r = r.it("sign_str / is_one", test_signed_only);
+  r = r.it("formatting", test_formatting);
+  return r.finish();
+}

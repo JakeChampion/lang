@@ -47,13 +47,10 @@ function main(): i32 {
         if (parks == 1) {
           plain_first = status(fetch.send(fetch.get(base() + "/plain"))) == 200;
         }
-        let woke: i32 = async.wait_any(w.set, w.timeout);
-        st = async.task_resume(t, woke);
-      },
-      Cancelled => { out = 0 - 2; going = false; }
+        st = async.task_resume(t, async.wait_any(w.set, w.until));
+      }
     }
   }
-  async.task_free(t);
   print("slow " + out.to_string() + " parked " + word(parks > 0) + " plain first " + word(plain_first));
   return 0;
 }

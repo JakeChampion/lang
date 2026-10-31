@@ -9,19 +9,24 @@
 
 
 import "std/async";
+import "std/clock";
 import "std/i32";
 import "std/time";
+
+function after(ms: i32): Option[Instant] {
+  return Some(clock.instant().add(time.duration_millis(ms as i64)));
+}
 
 function nap(label: string, ms: i32, v: i32): i32 {
   defer print("done " + label);
   let none: i32[] = [];
-  let r: i32 = async.wait_any(none, Some(time.duration_millis(ms)));
+  let r: async.Wake = async.wait_any(none, after(ms));
   return v;
 }
 
 function quiet(ms: i32, v: i32): i32 {
   let none: i32[] = [];
-  let r: i32 = async.wait_any(none, Some(time.duration_millis(ms)));
+  let r: async.Wake = async.wait_any(none, after(ms));
   return v;
 }
 
@@ -38,8 +43,10 @@ function show_opt(o: Option[i32]): string {
 
 function leaf(n: i32): i32 {
   let none: i32[] = [];
-  let r: i32 = async.wait_any(none, Some(time.duration_millis(1)));
-  return r + n;
+  if let async.Wake.TimedOut = async.wait_any(none, after(1)) {
+    return n - 1;
+  }
+  return n;
 }
 
 function mid(n: i32): i64 {
@@ -75,29 +82,29 @@ function held(): i32 {
         going = false;
       },
       Suspended(w) => {
-        let woke: i32 = async.wait_any(w.set, w.timeout);
-        st = async.task_resume(t, woke);
-      },
-      Cancelled => {
-        out = 0 - 2;
-        going = false;
+        st = async.task_resume(t, async.wait_any(w.set, w.until));
       }
     }
   }
-  async.task_free(t);
   return out;
 }
 
 function main(): i32 {
-  let all: (() => i32)[] = [() => nap("a", 20, 1), () => nap("b", 40, 2), () => nap("c", 60, 3)];
-  let g: i32[] = async.gather_tasks(all, 0 - 1);
+  let all: async.Future[i32][] = [async.spawn(() => nap("a", 20, 1)), async.spawn(() => nap("b", 40, 2)), async.spawn(() => nap("c", 60, 3))];
+  let g: i32[] = async.block_on(async.gather(all)).unwrap_or([0, 0, 0]);
   print("gather " + g[0].to_string() + " " + g[1].to_string() + " " + g[2].to_string());
-  let timed: (() => i32)[] = [() => quiet(20, 7), () => quiet(40, 8)];
-  let d: Option[i32][] = async.with_deadline_tasks(time.duration_millis(2000), timed);
+  let timed: async.Future[i32][] = [async.spawn(() => quiet(20, 7)), async.spawn(() => quiet(40, 8))];
+  let d: Option[i32][] = async.block_on(async.with_deadline(clock.instant().add(time.duration_millis(2000)), timed)).unwrap_or([None, None]);
   print("deadline " + show_opt(d[0]) + " " + show_opt(d[1]));
-  let race: (() => i32)[] = [() => quiet(20, 2), () => quiet(300, 1)];
-  let (w, v) = async.race_tasks(race, 0 - 1);
-  print("race " + w.to_string() + " " + v.to_string());
+  let race: async.Future[i32][] = [async.spawn(() => quiet(20, 2)), async.spawn(() => quiet(300, 1))];
+  match (async.block_on(async.race(race))) {
+    Some(won) => {
+      print("race " + won.0.to_string() + " " + won.1.to_string());
+    },
+    None => {
+      print("race none");
+    }
+  }
   print("held " + held().to_string());
   return 0;
 }

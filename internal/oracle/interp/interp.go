@@ -1529,6 +1529,7 @@ func New() *Interp {
 	i.Builtins["tcp_local_port"] = &Builtin{Fn: builtinTcpLocalPort}
 	i.Builtins["tcp_listen_with"] = &Builtin{Fn: builtinTcpListenWith}
 	i.Builtins["tcp_socket_ctl"] = &Builtin{Fn: builtinTcpSocketCtl}
+	i.Builtins["tcp_addr_into"] = &Builtin{Fn: builtinTcpAddrInto}
 	i.Builtins["tcp_send_bytes"] = &Builtin{Fn: builtinTcpSendBytes}
 	i.Builtins["tcp_sendfile"] = &Builtin{Fn: builtinTcpSendfile}
 	i.Builtins["tcp_send_buf"] = &Builtin{Fn: builtinTcpSendBuf}
@@ -1901,18 +1902,8 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("tcp_socket_ctl: expected number arg, got %T", args[2])
 	}
-	if op < 1 || op > 10 {
+	if op < 1 || op > 8 {
 		return Number(-22), nil
-	}
-	if op == 9 || op == 10 {
-		if r, ok := i.udpSocketCtl(int64(id), int64(op), int64(arg)); ok {
-			return r, nil
-		}
-		fd, ok := i.rawFd(int64(id))
-		if !ok {
-			return Number(-1), nil
-		}
-		return nameGroup(fd, int64(op), int64(arg)), nil
 	}
 	if op == 8 {
 		fd, ok := i.rawFd(int64(id))
@@ -1992,41 +1983,51 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 	return Number(0), nil
 }
 
-func nameGroup(fd int, op, which int64) Value {
-	if which < 0 || which > 9 {
-		return Number(-int64(syscall.EINVAL))
+// builtinTcpAddrInto answers tcp_addr_into(fd, peer, out) with one
+// getsockname, or getpeername when peer, written into out as the sender
+// record udp_recvfrom fills.
+func builtinTcpAddrInto(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("tcp_addr_into: expected 3 args, got %d", len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_addr_into: expected number fd arg, got %T", args[0])
+	}
+	peer, ok := args[1].(Bool)
+	if !ok {
+		return nil, fmt.Errorf("tcp_addr_into: expected boolean peer arg, got %T", args[1])
+	}
+	out, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("tcp_addr_into: expected u8[] out arg, got %T", args[2])
+	}
+	if len(out.Elems()) < 19 {
+		return Number(-int64(syscall.EINVAL)), nil
+	}
+	fd, ok := i.udpSocks[int64(id)]
+	if !ok {
+		if fd, ok = i.rawFd(int64(id)); !ok {
+			return Number(-int64(syscall.EBADF)), nil
+		}
 	}
 	var sa syscall.Sockaddr
 	var err error
-	if op == 9 {
-		sa, err = getsockname(fd)
-	} else {
+	if peer {
 		sa, err = getpeername(fd)
+	} else {
+		sa, err = getsockname(fd)
 	}
 	if err != nil {
-		return negErrno(err)
+		return negErrno(err), nil
 	}
-	switch a := sa.(type) {
-	case *syscall.SockaddrInet4:
-		switch {
-		case which == 9:
-			return Number(a.Port)
-		case which == 8:
-			return Number(4)
-		case which < 2:
-			return Number(int64(a.Addr[2*which])<<8 | int64(a.Addr[2*which+1]))
-		}
-		return Number(0)
-	case *syscall.SockaddrInet6:
-		switch {
-		case which == 9:
-			return Number(a.Port)
-		case which == 8:
-			return Number(6)
-		}
-		return Number(int64(a.Addr[2*which])<<8 | int64(a.Addr[2*which+1]))
+	switch sa.(type) {
+	case *syscall.SockaddrInet4, *syscall.SockaddrInet6:
+	default:
+		return Number(-int64(syscall.EAFNOSUPPORT)), nil
 	}
-	return Number(-int64(syscall.EAFNOSUPPORT))
+	senderInto(out, sa)
+	return Number(19), nil
 }
 
 func builtinWasmPollableDrop(_ *Interp, args []Value) (Value, error) {

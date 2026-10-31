@@ -4,7 +4,7 @@ func UdpSocketProbe() string {
 	return `import "core/int";
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 
@@ -81,7 +81,7 @@ func UdpReuseProbe() string {
 	return `import "core/int";
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 
@@ -160,7 +160,7 @@ import "std/net";
 import "std/errno";
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 
@@ -271,7 +271,6 @@ function main(): i32 {
 
 func ConnectProbe() string {
 	return `import "std/time";
-import "core/int";
 import "std/net";
 
 // recv reads once from fd within five seconds: the bytes, none at the end
@@ -286,7 +285,7 @@ function recv(fd: i32, max: i32): u8[] {
 }
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 
@@ -355,7 +354,6 @@ function main(): i32 {
 
 func NetConnectProbe() string {
 	return `import "std/time";
-import "core/int";
 import "std/net";
 import "std/errno";
 
@@ -371,7 +369,7 @@ function recv(fd: i32, max: i32): u8[] {
 }
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 

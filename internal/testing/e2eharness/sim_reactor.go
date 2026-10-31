@@ -2,12 +2,11 @@ package e2eharness
 
 func SimReactorProbe() string {
 	return `import "std/time";
-import "core/int";
 import "std/async";
 import "std/sim";
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 

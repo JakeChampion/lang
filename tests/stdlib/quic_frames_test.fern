@@ -3,7 +3,6 @@ import "std/quic/frames";
 import "std/hex";
 import "std/codec";
 import "std/i64";
-import "core/int";
 
 function varint_of(block: string): string {
   let bytes: u8[] = __codec_bytes(hex.decode(block));
@@ -11,7 +10,7 @@ function varint_of(block: string): string {
   if (v < 0) {
     return "short";
   }
-  return v.to_string() + " [" + int.int_to_string(frames.varint_end(bytes, 0)) + "]";
+  return v.to_string() + " [" + frames.varint_end(bytes, 0).to_string() + "]";
 }
 
 function test_varints(): test.TestOutcome {
@@ -38,7 +37,7 @@ function ranges(a: frames.Ack): string {
 function describe(f: frames.Frame): string {
   match (f) {
     frames.Padding(n) => {
-      return "PADDING " + int.int_to_string(n);
+      return "PADDING " + n.to_string();
     },
     frames.Ping => {
       return "PING";
@@ -120,7 +119,7 @@ function describe_rest(f: frames.Frame): string {
 function shown(block: string): string {
   match (frames.read(__codec_bytes(hex.decode(block)), 0)) {
     Ok(got) => {
-      return describe(got.0) + " [" + int.int_to_string(got.1) + "]";
+      return describe(got.0) + " [" + got.1.to_string() + "]";
     },
     Err(e) => {
       return e.message();

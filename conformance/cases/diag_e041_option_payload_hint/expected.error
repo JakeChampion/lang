@@ -1,1 +1,1 @@
-Option[S] implements `Eq` when its type arguments do: add `@derive(cmp.Eq)` (or `impl cmp.Eq for S`)
+Option[S] implements `Eq` when its parts do: add `@derive(cmp.Eq)` (or `impl cmp.Eq for S`)

@@ -1,0 +1,1 @@
+type argument T = S[] does not implement trait Eq required by same

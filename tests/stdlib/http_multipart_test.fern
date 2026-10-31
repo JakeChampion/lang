@@ -4,7 +4,6 @@ import "std/http/multipart";
 import "std/headers";
 import "std/stream";
 import "std/string";
-import "core/int";
 
 function no_fault(): Cell[Option[StreamFault]] {
   let none: Option[StreamFault] = None;
@@ -61,7 +60,7 @@ function buffered(ct: string, body: string): HttpRequest {
 function show(bytes: u8[]): string {
   let out: string = "";
   for b in bytes {
-    out = out + int.int_to_string(b as i32) + ".";
+    out = out + (b as i32).to_string() + ".";
   }
   return out;
 }
@@ -115,10 +114,10 @@ function test_split_delimiter(): test.TestOutcome {
     }
     let want: string = "pad|pad.bin|application/octet-stream|" + show(pad) + "\n" + EXPECTED;
     if (dump(streamed(b.content_type(), b.bytes(), j), multipart.limits()) != want) {
-      got = got + "read " + int.int_to_string(j) + " ";
+      got = got + "read " + j.to_string() + " ";
     }
     if (field_names(streamed(b.content_type(), b.bytes(), j)) != "ann,bob absent") {
-      got = got + "skip " + int.int_to_string(j) + " ";
+      got = got + "skip " + j.to_string() + " ";
     }
     j = j + 1;
   }
@@ -214,7 +213,7 @@ function pieces_result(req: HttpRequest): Result[string, multipart.MultipartErro
     },
     NoMoreParts => {}
   }
-  return Ok(first + "|read " + int.int_to_string(reads) + " done|" + second + "|" + third + "|" + fourth);
+  return Ok(first + "|read " + reads.to_string() + " done|" + second + "|" + third + "|" + fourth);
 }
 
 function test_preamble_and_padding(): test.TestOutcome {

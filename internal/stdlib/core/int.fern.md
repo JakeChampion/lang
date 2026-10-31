@@ -8,16 +8,15 @@ Decimal and radix conversion share digit helpers. The conversion code separates 
 
 ## Contracts
 
-Typed numeric parsers belong to the scalar modules. This module contains shared integer format kernels.
+Typed numeric parsers belong to the scalar modules. This module contains shared integer format kernels. All of its functions are `pub(package)`: programs call `n.to_string()` and `n.to_string_radix(base)` instead.
 
 ## Executable example
 
 ```fern test name=core-int-example
-import "core/int";
 import "std/i32";
 
 function main(): i32 {
-  if (int.int_to_string(42) != "42") { return 1; }
+  if ((0 - 42).to_string() != "-42" || (42).to_string_radix(16) != "2a") { return 1; }
   match (i32.parse_i32_radix("2a", 16)) { Ok(n) => { if (n != 42) { return 2; } }, Err(_) => { return 3; } }
   return 0;
 }
@@ -35,10 +34,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<3 function __int_pair_table(): string>>
 
-<<4 pub function int_to_string(n: i32): string>>
+<<4 pub(package) function int_to_string(n: i32): string>>
 
-
-<<6 pub function int_to_string_radix(n: i32, base: i32): string>>
 <<numeric parser and format additions>>
 ```
 
@@ -98,11 +95,11 @@ function __int_u32_digits(u: u32): i32 {
 }
 ```
 
-### `4 pub function int_to_string(n: i32): string`
+### `4 pub(package) function int_to_string(n: i32): string`
 
 ```fern
-<<4 pub function int_to_string(n: i32): string>>=
-pub function int_to_string(n: i32): string {
+<<4 pub(package) function int_to_string(n: i32): string>>=
+pub(package) function int_to_string(n: i32): string {
   if (n >= 0 && n < 100) {
     return SMALL_INTS[n];
   }
@@ -203,18 +200,6 @@ pub(package) function __radix_char(d: i32): i32 {
 }
 ```
 
-
-### `6 pub function int_to_string_radix(n: i32, base: i32): string`
-
-```fern
-<<6 pub function int_to_string_radix(n: i32, base: i32): string>>=
-pub function int_to_string_radix(n: i32, base: i32): string {
-  if (base == 10) {
-    return int_to_string(n);
-  }
-  return _format_integer(_magnitude(n as i64), n < 0, base);
-}
-```
 
 ### Numeric parsers and formats
 
