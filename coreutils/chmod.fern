@@ -441,7 +441,8 @@ function visit(st0: St, s: Settings, t: Target, ent: Ent, info: FileStat, link: 
     },
     None => {}
   }
-  match (ent_open(ent, via_link)) {
+  let opened: Result[Dir, IoError] = ent_open(ent, via_link);
+  match (opened) {
     Ok(d) => {
       match (d.entries()) {
         Ok(names) => {

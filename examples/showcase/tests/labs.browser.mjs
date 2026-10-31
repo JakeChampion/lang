@@ -86,7 +86,7 @@ try {
   assert.equal(await a.locator(".example").count(), 22);
   await overflow(a);
   await a.getByRole("button", { name: "Make something", exact: true }).tap();
-  assert.equal(await a.locator(".example:visible").count(), 12);
+  assert.equal(await a.locator(".example:visible").count(), 13);
   await a.getByRole("button", { name: "All twenty-two", exact: true }).tap();
   assert.equal(await a.locator(".example:visible").count(), 22);
   await visit("foundry");

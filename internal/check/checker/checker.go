@@ -56,6 +56,11 @@ type Info struct {
 	Locals          map[*ast.FuncDecl][]*ast.Var
 	FuncSigs        map[string]*ast.FuncType
 	OwnFuncs        map[string][]bool
+	// CallBorrows reports a plain call whose result can borrow from one of
+	// its arguments at this site.
+	CallBorrows func(*ast.Call) bool
+	// NoReturn names the functions whose body never returns.
+	NoReturn        map[string]bool
 	Structs         map[string]*ast.StructDecl
 	Enums           map[string]*ast.EnumDecl
 	Resources       map[string]*ast.ResourceDecl
@@ -2352,6 +2357,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// prepended to the parameter list, so codegen never has to know
 	// about methods.
 	declaredFunctions := make(map[string]bool, len(prog.Funcs))
+	c.consumingTypes = map[string]bool{}
 	for _, fn := range prog.Funcs {
 		if fn.Name == "main" && fn.Receiver == nil && fn.AssocType == "" && fn.Body != nil {
 			c.checkMainSignature(fn)
@@ -2440,6 +2446,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			}
 			fn.MethodRecv = typeName
 			fn.MethodSimpleName = simpleName
+			if fn.Receiver.Own {
+				c.consumingTypes[typeName] = true
+			}
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
 			fn.Receiver = nil
 			c.registerMethod(typeName, simpleName, fn.ImplTrait, mangled, fn.SourceModule, fn.P)
@@ -2835,8 +2844,15 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			c.ownFuncs[fn.Name] = flags
 		}
 	}
+	// The built-in close consumes its handle: a descriptor closed once is
+	// not a value the program reads again.
+	for _, h := range []string{"Reader", "Writer", "Dir"} {
+		c.ownFuncs["__method_"+h+"_close"] = []bool{true}
+	}
 	c.info.OwnFuncs = c.ownFuncs
 	c.computeResultBorrows(prog)
+	c.info.CallBorrows = c.callSiteBorrows
+	c.info.NoReturn = NoReturnFuncs(prog)
 
 	c.rewriteAssocConstReads(prog)
 	c.checkConsts(prog)
@@ -2985,10 +3001,25 @@ func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule strin
 }
 
 func (c *checker) instForReceiver(typeName, name, trait, mangled string, recv ast.Type) string {
-	if et, ok := recv.(ast.EnumType); ok && len(et.Args) == 0 {
+	switch r := recv.(type) {
+	case ast.EnumType:
+		if len(r.Args) == 0 {
+			return mangled
+		}
+	case ast.ArrayType, ast.SliceType, ast.TupleType:
+		// Only a generic impl method has an instance per receiver; an
+		// inherent method keeps the declaration that resolution picked.
+		if _, generic := c.info.GenericFuncs[mangled]; !generic {
+			return mangled
+		}
+	default:
 		return mangled
 	}
 	for _, inst := range c.info.MethodInsts[declSiteKey(typeName, name, trait)] {
+		// Receiver specialization must preserve the module selected by visibility.
+		if trait == "" && c.info.MethodSources[inst] != c.info.MethodSources[mangled] {
+			continue
+		}
 		if sig := c.info.FuncSigs[inst]; sig != nil && len(sig.Params) > 0 && ast.Equal(sig.Params[0], recv) {
 			return inst
 		}
@@ -5582,6 +5613,13 @@ type checker struct {
 	ownFuncs       map[string][]bool
 	resultBorrows  map[string]bool
 	resultAnalysed map[string]bool
+	// declaredMethods names the methods the program declares.
+	declaredMethods map[string]bool
+	// handleFreeResults names the functions whose result type cannot hold a handle.
+	handleFreeResults map[string]bool
+	// consumingTypes names the types with a method that consumes its
+	// receiver. Such a type is a user-defined handle.
+	consumingTypes map[string]bool
 	callOwnFlags   map[*ast.Call][]bool
 	scalarArgs     map[ast.Expr]bool
 
@@ -5741,10 +5779,16 @@ func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
 }
 
 func (c *checker) blockDiverges(b *ast.Block) bool {
+	return c.blockLeaves(b, nil)
+}
+
+// blockLeaves is blockDiverges where a call to a function noReturn names
+// also leaves.
+func (c *checker) blockLeaves(b *ast.Block, noReturn map[string]bool) bool {
 	if b == nil || len(b.Stmts) == 0 {
 		return false
 	}
-	return c.stmtDiverges(b.Stmts[len(b.Stmts)-1])
+	return c.stmtLeaves(b.Stmts[len(b.Stmts)-1], noReturn)
 }
 
 func letElseDivergentArm(m *ast.Match, i int) bool {
@@ -5801,11 +5845,15 @@ func loopCanBreak(body ast.Stmt, label string) bool {
 }
 
 func (c *checker) stmtDiverges(s ast.Stmt) bool {
+	return c.stmtLeaves(s, nil)
+}
+
+func (c *checker) stmtLeaves(s ast.Stmt, noReturn map[string]bool) bool {
 	switch x := s.(type) {
 	case *ast.Return, *ast.Break, *ast.Continue:
 		return true
 	case *ast.ExprStmt:
-		return c.callsExit(x.Expr)
+		return c.callsExit(x.Expr) || noReturn != nil && callNeverReturns(x.Expr, noReturn, true)
 	case *ast.Loop:
 		return !loopCanBreak(x.Body, x.Label)
 	case *ast.While:
@@ -5814,18 +5862,18 @@ func (c *checker) stmtDiverges(s ast.Stmt) bool {
 		}
 		return false
 	case *ast.Block:
-		return c.blockDiverges(x)
+		return c.blockLeaves(x, noReturn)
 	case *ast.If:
 		if x.Else == nil {
 			return false
 		}
-		return c.stmtDiverges(x.Then) && c.stmtDiverges(x.Else)
+		return c.stmtLeaves(x.Then, noReturn) && c.stmtLeaves(x.Else, noReturn)
 	case *ast.Match:
 		for i, arm := range x.Arms {
 			if letElseDivergentArm(x, i) {
 				continue
 			}
-			if !c.blockDiverges(arm.Body) {
+			if !c.blockLeaves(arm.Body, noReturn) {
 				return false
 			}
 		}
@@ -10278,14 +10326,17 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	// every other use. deferMoved holds those names and field paths.
 	deferMoved := movedSet{}
 	loopDepth := 0
-	movedPrefix := func(moved movedSet, name string) (string, ast.Position, bool) {
+	// replaced names the fields an update literal writes over, which the
+	// literal does not read from its base.
+	movedPrefix := func(moved movedSet, name string, replaced map[string]bool) (string, ast.Position, bool) {
 		for k, at := range moved {
-			if len(k) > len(name) && k[:len(name)] == name && k[len(name)] == '.' {
+			if len(k) > len(name) && k[:len(name)] == name && k[len(name)] == '.' && !replaced[k[len(name)+1:]] {
 				return k, at, true
 			}
 		}
 		return "", ast.Position{}, false
 	}
+	updates := UpdateBases(fn.Body)
 	var walkStmt func(st ast.Stmt, moved movedSet)
 	var walkStmts func(stmts []ast.Stmt, moved movedSet)
 
@@ -10598,7 +10649,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 				return true
 			}
 			if !fieldTarget[id] {
-				if path, at, isMoved := movedPrefix(moved, id.Name); isMoved {
+				if path, at, isMoved := movedPrefix(moved, id.Name, updates[id]); isMoved {
 					c.errfCode(id.Pos(), "E050", "use of owned parameter %q after its field %q was consumed (moved at line %d)", id.Name, path[len(id.Name)+1:], at.Line)
 					return true
 				}
@@ -10608,7 +10659,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					c.errfCode(id.Pos(), "E050", "owned parameter %q is consumed twice: a deferred call at line %d consumes it", id.Name, at.Line)
 					return true
 				}
-				if path, at, isDeferred := movedPrefix(deferMoved, id.Name); isDeferred {
+				if path, at, isDeferred := movedPrefix(deferMoved, id.Name, nil); isDeferred {
 					c.errfCode(id.Pos(), "E050", "owned parameter %q is consumed twice: a deferred call at line %d consumes its field %q", id.Name, at.Line, path[len(id.Name)+1:])
 					return true
 				}
@@ -10719,8 +10770,8 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if x.Else != nil {
 				walkStmt(x.Else, elseMoved)
 			}
-			joinInto(moved, thenMoved, c.stmtDiverges(x.Then))
-			joinInto(moved, elseMoved, x.Else != nil && c.stmtDiverges(x.Else))
+			joinInto(moved, thenMoved, c.stmtLeaves(x.Then, c.info.NoReturn))
+			joinInto(moved, elseMoved, x.Else != nil && c.stmtLeaves(x.Else, c.info.NoReturn))
 		case *ast.While:
 			recordExprUses(x.Cond, moved)
 			loopBody(x.Body, nil, moved)
@@ -10757,7 +10808,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 					walkStmts(arm.Body.Stmts, armMoved)
 				}
 				unbindArm(added, lent, armMoved)
-				joinInto(joined, armMoved, arm.Body != nil && c.blockDiverges(arm.Body))
+				joinInto(joined, armMoved, arm.Body != nil && c.blockLeaves(arm.Body, c.info.NoReturn))
 			}
 			joinInto(moved, joined, false)
 		default:

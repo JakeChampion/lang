@@ -508,7 +508,8 @@ function shred_one(path: string, s: Settings, rnd: Rand): (boolean, boolean) {
     }
     return shred_handle(d.0, "-", s, rnd, true);
   }
-  match (open_for_shred(path, s)) {
+  let opened: Result[Writer, IoError] = open_for_shred(path, s);
+  match (opened) {
     Err(e) => {
       gnu.error(path + ": failed to open for writing: " + gnu.io_error_text(e));
       return (false, false);
@@ -559,7 +560,7 @@ function shred_type_ok(w: Writer, path: string): boolean {
   return true;
 }
 
-function shred_handle(w: Writer, path: string, s: Settings, rnd: Rand, is_dash: boolean): (boolean, boolean) {
+function shred_handle(own w: Writer, path: string, s: Settings, rnd: Rand, is_dash: boolean): (boolean, boolean) {
   if (!shred_type_ok(w, path)) {
     if (!is_dash) {
       w.close();

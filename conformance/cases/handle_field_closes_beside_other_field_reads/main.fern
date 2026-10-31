@@ -1,0 +1,30 @@
+// spec: RH-30
+// A field moves out to a consuming call while the same call reads other
+// fields of its owner. The move takes only the one field, so the caller
+// still holds the fields the other arguments read.
+
+import "std/i32";
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+struct Out { status: i32, out: Handle, name: string }
+
+function finish(status: i32, own h: Handle, name: string): i32 {
+  print(name + " " + h.close().to_string());
+  return status;
+}
+
+function open_out(fd: i32): Out {
+  return Out { status: fd - 3, out: Handle { fd: fd }, name: "out" };
+}
+
+function main(): i32 {
+  let one: Out = open_out(3);
+  let n: i32 = finish(one.status, one.out, one.name);
+  print(n.to_string());
+  return 0;
+}

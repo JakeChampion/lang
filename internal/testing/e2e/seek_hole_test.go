@@ -35,12 +35,12 @@ function show(r: Result[i64, IoError]): string {
 }
 
 function main(): i32 {
-    let w: Writer = match (open_writer(%[1]q)) { Ok(h) => h, Err(_) => { return 10; } };
+    let Ok(w) = open_writer(%[1]q) else { return 10; };
     match (w.seek(1048576i64, 0)) { Ok(_) => {}, Err(_) => { return 11; } }
     match (w.write("x")) { Ok(_) => {}, Err(_) => { return 12; } }
     match (w.truncate(4194304i64)) { Ok(_) => {}, Err(_) => { return 13; } }
     w.close();
-    let r: Reader = match (open_reader(%[1]q)) { Ok(h) => h, Err(_) => { return 20; } };
+    let Ok(r) = open_reader(%[1]q) else { return 20; };
     let from: i64 = 0i64;
     match (r.seek(0i64, 3)) { Ok(d) => { from = d; }, Err(_) => {} }
     let line: string = show(r.seek(0i64, 3)) + " " + show(r.seek(0i64, 4)) + " " + show(r.seek(from, 4)) + " " + show(r.seek(4194304i64, 3));

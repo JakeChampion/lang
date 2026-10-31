@@ -21,7 +21,10 @@ const closeIoErrorSrc = `function code_of(o: Result[void, IoError]): i32 {
 }
 function main(): i32 {
     let w: Writer = stdout();
-    let first: i32 = code_of(w.close());
+    let first: i32 = 0;
+    unsafe {
+        first = code_of(w.close_unchecked());
+    }
     let second: i32 = code_of(w.close());
     return first * 10 + second;
 }`

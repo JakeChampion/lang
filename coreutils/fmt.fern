@@ -228,6 +228,10 @@ function byte_set(members: boolean): u8[] {
 
 struct Out { w: io_buffered.BufWriter, col: i32, tabs: boolean }
 
+function finish_out(own o: Out): void {
+  gnu.finish(o.w);
+}
+
 function push_spacing(h: usize, col: i32, n: i32, tabs: boolean): void {
   if (n <= 0) {
     return;
@@ -1146,7 +1150,7 @@ function run(files: string[], st: Settings): i32 {
     }
   }
 
-  gnu.finish(s.o.w);
+  finish_out(s.o);
   if (!s.ok) {
     return 1;
   }

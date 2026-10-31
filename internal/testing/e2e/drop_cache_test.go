@@ -17,7 +17,7 @@ func dropCacheSource(prefix string, kernel bool) string {
 	if kernel {
 		writerChecks = `match (w.drop_cache(0i64, 0i64 - 1i64)) { Ok(_) => { return 13; }, Err(_) => {} }`
 		readerChecks = `match (r.drop_cache(0i64, 0i64 - 1i64)) { Ok(_) => { return 23; }, Err(_) => {} }
-            r.close();
+            unsafe { r.close_unchecked(); }
             match (r.drop_cache(0i64, 0i64)) { Ok(_) => { return 24; }, Err(_) => {} }`
 	}
 	return fmt.Sprintf(`function main(): i32 {

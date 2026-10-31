@@ -1,3 +1,6 @@
+# 2026-10-31: Seven rows measured on PR #13966 at 0f678261 with RC trace.
+# The handler fan-out retains two task-pool blocks. The task deadline case
+# retains four blocks. The pool records and their backing storage survive task-id reuse.
 # Which conformance fixtures leak, and by how much.
 #
 # One row per runnable fixture: its name, then the number of allocations
@@ -20,15 +23,20 @@
 # (asmcore.rt_src_task): the task table, one record per task id in use at
 # once and each record's save area, which a freed id hands to the next task
 # rather than returning to the heap. Three tasks run at once there.
+# Measured 2026-10-31 on PR #13966: ten pool blocks, including one timer
+# record per task. RC traces and debug symbols identify all ten blocks.
 #
 # Measured 2026-10-04: 569 fixtures, 567 clean.
 a_builtin_method_does_not_see_the_programs_variants  0
-a_generic_enum_kept_generic_recurses_through_its_own_method0
+a_generic_enum_kept_generic_recurses_through_its_own_method 0
+a_generic_enum_payload_keeps_template_closures       0
+a_handler_fans_out_on_its_scheduler                  2
+a_map_key_eq_may_take_its_keys_owned                 0
 a_module_calls_methods_its_imports_reach             0
 a_module_does_not_see_a_sibling_imports_variants     0
 a_module_names_variants_its_imports_reach            0
 a_three_trait_bound_in_an_imported_module            0
-a_two_parameter_enum_takes_generic_instances_as_arguments0
+a_two_parameter_enum_takes_generic_instances_as_arguments 0
 a_variant_pattern_names_the_scrutinees_enum          0
 ackermann                                            0
 add_sub_pair                                         0
@@ -53,6 +61,7 @@ alloc_grows_when_retained                            0
 an_import_named_like_a_scalar_type                   0
 an_imported_module_does_not_see_the_programs_variants 0
 an_io_error_pattern_beside_std_net                   0
+an_unannotated_variant_takes_an_array_of_its_enum    0
 args                                                 0
 arith_precedence                                     0
 arr_slice_block_copy                                 0
@@ -358,10 +367,13 @@ generic_view_methods                                 0
 grow_past_capacity                                   0
 handle_close_unchecked_through_a_borrow              0
 handle_closes_on_loop_exit                           0
+handle_consumed_before_a_call_that_never_returns     0
 handle_defer_closes_at_exit                          0
 handle_elements_close_in_for_each                    0
+handle_field_closes_beside_other_field_reads         0
 handle_field_closes_from_local                       0
 handle_payload_closes_from_local_match               0
+handle_payload_closes_in_loop_from_unpack            0
 handle_payload_field_closes                          0
 handle_transfer_closes_once                          0
 hash_struct_enum                                     0
@@ -438,7 +450,6 @@ integer_literals_beside_an_f32                       0
 integer_widths_share_methods                         0
 io_and_fetch_errors_box_into_dyn_error               0
 io_error_other_closed_stdout                         0
-io_error_other_double_close_reader                   0
 io_error_other_is_a_directory                        0
 io_error_other_not_a_directory                       0
 io_error_variant_beside_a_struct_of_its_name         0
@@ -482,6 +493,7 @@ literal_local_takes_its_use_width                    0
 literal_payload_pattern                              0
 literal_tree_takes_its_destination_width             0
 local_array_views_keep_their_storage                  0
+local_from_handle_free_call_is_fresh                 0
 log_leveled                                          0
 loop_form                                            0
 loop_rotation_shapes                                 0
@@ -1116,7 +1128,8 @@ target_branch_hides_a_gated_builtin                  0
 target_os_linux                                      0
 target_os_named                                      0
 target_os_wasi                                       0
-tasks_agree_without_a_scheduler                      7
+task_deadline_builtins_answer_at_once_in_the_interpreter 4
+tasks_agree_without_a_scheduler                      10
 tco_sum                                              0
 tcp_recv_waits_for_data                              0
 tcp_send_nonblocking_partial                         0
