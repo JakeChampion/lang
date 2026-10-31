@@ -318,5 +318,11 @@ It remains below the unchanged 15881456-byte baseline.
 Strict checks model all 8419 image functions with zero skips.
 current-contracts.json records these source identities and measurements.
 
+The existing composite-cell suite also passes in 55.153 seconds with no skips.
+It covers maps, strings, nested records and enums, tuples, snapshots, and updates.
+Both source programs run on x86 Linux, ARM Linux, and WASI with balanced allocation counts.
+The primary interpreter, Go oracle, and self-built x86 interpreter checks also pass.
+The cycle case retains its required E057 rejection.
+
 Raw logs use /tmp/fern-managed-current-*.
 Full PR CI remains required before merge.

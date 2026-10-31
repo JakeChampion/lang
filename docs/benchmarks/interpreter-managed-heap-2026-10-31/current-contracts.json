@@ -19,5 +19,14 @@
   ],
   "compiler_image_verification": {"verified_functions": 8419, "modelled_functions": 8419, "skipped_functions": 0},
   "compiler_image_baseline_bytes": 15881456,
-  "selfhost_static_metrics": {"measured": 117, "strict_comparator": "pass", "baseline_changed": false}
+  "selfhost_static_metrics": {"measured": 117, "strict_comparator": "pass", "baseline_changed": false},
+  "existing_composite_cell_regressions": {
+    "package_elapsed_seconds": 55.153,
+    "failures": 0,
+    "skips": 0,
+    "compiled_targets": ["x86-64-linux", "arm64-linux", "wasm32-wasi"],
+    "programs": ["server-session-table", "arrays-structs-enums"],
+    "interpreter_checks": ["primary", "Go oracle", "self-built x86 interpreter"],
+    "cycle_rejection": "E057"
+  }
 }
