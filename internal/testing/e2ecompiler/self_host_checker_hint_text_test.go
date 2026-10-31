@@ -382,7 +382,7 @@ function main(): i32 { let d: dyn Mk = P { v: 0 }; return d.make(Box { v: 3 }); 
 		src: `function (x: bool) foo(): i32 { return 0; }
 function main(): i32 { return 0; }`,
 		code:     "E021",
-		spelling: "must be a struct, enum, array, slice, or built-in type",
+		spelling: "must be a struct, enum, array, slice, tuple, or built-in type",
 	},
 }
 

@@ -9680,6 +9680,11 @@ function take_piece(tokens: string[], at: i32, spare: i32, structs: StructDecl[]
     if (params > 0 && spare - k - params >= 0) {
       let args: Grouped = group_tokens(tokens, end, params, spare - k - params, structs, enums);
       if (args.pieces.len() == params) {
+        // Built-in enums keep their arguments in the spelling rather than
+        // getting a nominal clone with a mangled name.
+        if (is_reserved_enum_name(cand)) {
+          return Grouped { pieces: [cand + "[" + subst_ty_join(args.pieces, ",", [], []) + "]"], at: args.at };
+        }
         return Grouped { pieces: [cand + "__" + sanitize_key(join_dunder(args.pieces, 0, params))], at: args.at };
       }
     }
@@ -9715,6 +9720,9 @@ function take_tuple(tokens: string[], at: i32, structs: StructDecl[], enums: Enu
 }
 
 function declared_params(name: string, structs: StructDecl[], enums: EnumDecl[]): i32 {
+  if (is_reserved_enum_name(name)) {
+    return reserved_enum_tparams(name).len();
+  }
   for sd in structs {
     if (sd.name == name) {
       return sd.type_params.len();
