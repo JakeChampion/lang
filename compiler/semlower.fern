@@ -534,7 +534,7 @@ function field_spelling(t: typeinfo.Type): string {
 struct DeclarationBodies { helpers: ssarc.Helpers, bodies: Result[Option[irtables.Lowered], irtables.LowerState][], count: i32 }
 
 function declaration_bodies(built: semsource.Built, r: Rows): DeclarationBodies {
-  let helpers: ssarc.Helpers = ssarc.no_helpers();
+  let helpers: ssarc.Helpers = ssarc.no_helpers(built.contracts);
   let bodies: Result[Option[irtables.Lowered], irtables.LowerState][] = [];
   let n: i32 = 0;
   let i: i32 = 0;
@@ -798,7 +798,7 @@ pub function runtime_module_lowering(source: parser.Module): physicalbody.Lowere
     return runtime_refused(first_name(im), "instantiates a generic");
   }
   let out: irtables.Lowered[] = [];
-  let helpers: ssarc.Helpers = ssarc.no_helpers();
+  let helpers: ssarc.Helpers = ssarc.no_helpers(inf.built.contracts);
   let i: i32 = 0;
   while (i < im.funcs.len()) {
     match (inf.rows.body[i]) {
