@@ -1251,9 +1251,11 @@ function scan_fstring(own l: Lex, start_line: i32, start_col: i32): NumResult {
           }
         } else if (d == 10) {
           return NumResult { lex: l, tok: error_tok("newline inside f-string interpolation", start_line, start_col) };
-        } else if (d == 34) {
+        } else if (d == 92) {
+          return NumResult { lex: l, tok: error_tok("a backslash is not allowed inside an f-string interpolation: a string there takes plain quotes, as in f\"{s == \"e\"}\"", start_line, start_col) };
+        } else if (d == 34 || d == 39) {
           l = l.advance();
-          while (!l.at_end() && l.peek_byte() != 34) {
+          while (!l.at_end() && l.peek_byte() != d) {
             if (l.peek_byte() == 92 && l.i + 1 < l.n) {
               l = l.advance();
             }

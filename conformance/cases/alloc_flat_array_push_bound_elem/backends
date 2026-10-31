@@ -1,1 +1,1 @@
-x86_64 arm64 wasm
+x86_64 arm64 arm64_android arm64_darwin wasm wasm_component wasi_http

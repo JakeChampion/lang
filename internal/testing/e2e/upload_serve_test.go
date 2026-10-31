@@ -56,7 +56,6 @@ import "std/http/form";
 import "std/http/multipart";
 import "std/platform";
 import "std/serve";
-import "core/int";
 
 function upload(req: HttpRequest): Result[HttpResponse, multipart.MultipartError] {
   let out: string = "";
@@ -97,7 +96,7 @@ function sized(part: multipart.Part, r: multipart.Reader): Result[(string, multi
     done = piece.1;
     cur = piece.2;
   }
-  return Ok((part.name + "=" + part.filename + "/" + part.content_type + "/" + int.int_to_string(bytes) + "/" + int.int_to_string(sum) + ";", cur));
+  return Ok((part.name + "=" + part.filename + "/" + part.content_type + "/" + bytes.to_string() + "/" + sum.to_string() + ";", cur));
 }
 
 function login(req: HttpRequest): Result[HttpResponse, form.FormError] {

@@ -315,8 +315,8 @@ function test_router_served_in_memory(): test.TestOutcome {
   let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
   match (plat.http(fetch.get("http://api.test/users/7"))) {
     Ok(resp) => {
-      if (resp.status != 200 || resp.body_string() != "user 7") {
-        return test.fail(resp.status.to_string() + " " + resp.body_string());
+      if (resp.status != 200 || resp.body_text_lossy() != "user 7") {
+        return test.fail(resp.status.to_string() + " " + resp.body_text_lossy());
       }
     },
     Err(e) => {

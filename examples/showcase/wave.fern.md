@@ -36,6 +36,7 @@ import "std/f64";
 import "std/crypto";
 import "std/hex";
 import "std/async";
+import "std/clock";
 import "./common";
 
 pub const RATE: i32 = 24000;
@@ -147,7 +148,7 @@ pub function render(pattern: Pattern): u8[] {
     }
     bytes = little16(bytes, 44 + at * 2, (value * 32767.0) as i32);
     if (at % 4096 == 0 && async.in_task()) {
-      let ready: i32 = async.wait_any([], Some(time.duration_millis(1)));
+      let ready: async.Wake = async.wait_any([], Some(clock.instant().add(time.duration_millis(1))));
     }
     at = at + 1;
   }

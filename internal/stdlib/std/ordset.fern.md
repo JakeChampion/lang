@@ -142,8 +142,49 @@ pub function (s: OrdSet[T: cmp.Ord]) is_subset(other: OrdSet[T]): boolean {
   return s.root.difference(other.root).is_empty();
 }
 
-pub function (s: OrdSet[T: cmp.Ord]) equals(other: OrdSet[T]): boolean {
-  return s.len() == other.len() && s.is_subset(other);
+impl[T: cmp.Ord] cmp.Eq for OrdSet[T] {
+  function eq(self: OrdSet[T], other: OrdSet[T]): boolean {
+    return self.len() == other.len() && self.cmp(other) == 0;
+  }
+}
+
+// Sets compare as their sorted element sequences, in lexicographic order.
+impl[T: cmp.Ord] cmp.Ord for OrdSet[T] {
+  function cmp(self: OrdSet[T], other: OrdSet[T]): i32 {
+    let xs: T[] = self.to_array();
+    let ys: T[] = other.to_array();
+    let i: i32 = 0;
+    while (i < xs.len() && i < ys.len()) {
+      let c: i32 = xs[i].cmp(ys[i]);
+      if (c != 0) {
+        return c;
+      }
+      i = i + 1;
+    }
+    return xs.len().cmp(ys.len());
+  }
+}
+
+impl[T: cmp.Hash] cmp.Hash for OrdSet[T] {
+  function hash(self: OrdSet[T]): i32 {
+    return self.fold(17, (h: i32, x: T) => h * 31 + x.hash());
+  }
+}
+
+impl[T: cmp.Display] cmp.Display for OrdSet[T] {
+  function to_string(self: OrdSet[T]): string {
+    let out: string = "{";
+    let xs: T[] = self.to_array();
+    let i: i32 = 0;
+    while (i < xs.len()) {
+      if (i > 0) {
+        out = out + ", ";
+      }
+      out = out + xs[i].to_string();
+      i = i + 1;
+    }
+    return out + "}";
+  }
 }
 
 pub function (s: OrdSet[T]) filter(pred: (T) => boolean): OrdSet[T] {

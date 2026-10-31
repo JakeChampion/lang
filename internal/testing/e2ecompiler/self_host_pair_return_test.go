@@ -312,6 +312,7 @@ function main(): i32 {
 `
 
 const pairSuspendProg = `import "std/time";
+import "std/clock";
 import "std/async";
 import "std/bench";
 
@@ -322,7 +323,10 @@ struct Box2 { n: i32, s: string }
   let k: i32 = n;
   if (park) {
     let none: i32[] = [];
-    k = k + async.wait_any(none, Some(time.duration_millis(1))) + 2;
+    if let async.Wake.TimedOut = async.wait_any(none, Some(clock.instant().add(time.duration_millis(1)))) {
+      k = k - 1;
+    }
+    k = k + 2;
   }
   return (b, k % 2 == 0);
 }
@@ -332,7 +336,10 @@ struct Box2 { n: i32, s: string }
   let k: i32 = n;
   if (park) {
     let none: i32[] = [];
-    k = k + async.wait_any(none, Some(time.duration_millis(1))) + 2;
+    if let async.Wake.TimedOut = async.wait_any(none, Some(clock.instant().add(time.duration_millis(1)))) {
+      k = k - 1;
+    }
+    k = k + 2;
   }
   if (k % 2 == 0) {
     return Ok(b);
@@ -409,11 +416,7 @@ function drive(t: async.Task[i32]): i32 {
       },
       Suspended(w) => {
         parks = parks + 1;
-        let woke: i32 = async.wait_any(w.set, w.timeout);
-        st = async.task_resume(t, woke);
-      },
-      Cancelled => {
-        return 0 - 4;
+        st = async.task_resume(t, async.wait_any(w.set, w.until));
       }
     }
   }
@@ -425,7 +428,6 @@ function main(): i32 {
   let b: Box2 = Box2 { n: 7, s: s };
   let t: async.Task[i32] = async.task_new(() => body(b));
   let total: i32 = drive(t);
-  async.task_free(t);
   print(total.to_string());
   if (total == 0 - 2) {
     return 2;
@@ -1327,16 +1329,17 @@ function main(): i32 {
 // whole, so add builds a Duration box at each wait.
 const pairUnpackedCalleesProg = `import "std/async";
 import "std/bench";
+import "std/clock";
 import "std/time";
 
 function main(): i32 {
-  let t: Option[Duration] = Some(time.duration_millis(1));
+  let t: Option[Instant] = Some(clock.instant().add(time.duration_millis(1)));
   let total: i32 = 0;
   let a0: i64 = bench.alloc_count();
-  let i: i32 = 0;
-  while (i < 20) {
-    total = total + async.wait_any([], t);
-    i = i + 1;
+  for i in 0..20 {
+    if let async.Wake.TimedOut = async.wait_any([], t) {
+      total = total - 1;
+    }
   }
   let allocated: i64 = bench.alloc_count() - a0;
   print(total.to_string() + " " + allocated.to_string());

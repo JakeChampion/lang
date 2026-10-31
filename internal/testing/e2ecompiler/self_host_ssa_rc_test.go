@@ -354,7 +354,7 @@ function main(): i32 {
     let selfLowered = legacy_lower(ssarc.lower(selfFunc, [2], selfPlan, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none()));
     if (!selfLowered.ok) { eprint(selfLowered.why); return 18; }
     let selfHelpers: irtables.Lowered[] = [];
-    for outcome in ssarc.drop_helpers(selfFunc) {
+    for outcome in ssarc.drop_helpers(selfFunc, ssasem.contracts_of([])) {
         let helper = match (outcome) { Ok(r) => r, Err(r) => { eprint(r.why); return 19; } };
         selfHelpers = selfHelpers.append(helper);
     }
@@ -378,12 +378,12 @@ function main(): i32 {
     let flatType: typeinfo.Type = typeinfo.TypeStruct { name: "Flat", args: [] };
     let flatSchema = semrecords.Record { declared: [], views: false, nests_func: false, ty: flatType, fields: [semrecords.Field { name: "n", ty: typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false } }] };
     let flatFunc = ssasem.Func { schema_checked: false, source_positions: ssasem.no_source(),  envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: selfGraph, values: [flatType], params: [flatType], result: flatType, records: semrecords.records_of([flatSchema]), enums: [], calls: [] };
-    if (ssarc.drop_helpers(flatFunc).len() != 0) { return 24; }
+    if (ssarc.drop_helpers(flatFunc, ssasem.contracts_of([])).len() != 0) { return 24; }
     // Two functions that both name one type produce its helpers once: the
     // module's collection skips a symbol it already carries, and the merge
     // keeps the first of a symbol handed to it twice rather than two.
     let cycle2 = ssasem.Func { ...selfFunc, graph: ssa.SFunc { ...selfGraph, name: "cycle2" } };
-    let collected = ssarc.with_drop_helpers(ssarc.with_drop_helpers(ssarc.no_helpers(), selfFunc), cycle2);
+    let collected = ssarc.with_drop_helpers(ssarc.with_drop_helpers(ssarc.no_helpers(ssasem.contracts_of([])), selfFunc), cycle2);
     if (collected.rows.len() != 2) { return 25; }
     if (irtables.helper_name(collected.rows[0]) != "__sem_drop_Node" || irtables.helper_name(collected.rows[1]) != "__sem_release_Node") { eprint(irtables.helper_name(collected.rows[0])); return 26; }
     if (ssarc.with_drop_helpers(collected, flatFunc).rows.len() != 2) { return 27; }
@@ -775,7 +775,7 @@ function main(): i32 {
     if (!wideLowered.ok) { eprint(wideLowered.why); return 55; }
     let sawField1: boolean = false;
     let sawField0: boolean = false;
-    for outcome in ssarc.drop_helpers(wideFunc) {
+    for outcome in ssarc.drop_helpers(wideFunc, ssasem.contracts_of([])) {
         let h = match (outcome) { Ok(r) => r, Err(r) => { eprint(r.why); return 56; } };
         for o in h.ops {
             if (ir.render_op(o) == "struct_get 1") { sawField1 = true; }
@@ -1092,7 +1092,7 @@ function main(): i32 {
     if (!sawArrFree || !sawArrRelease) { return 188; }
     let sawHelper: boolean = false;
     let sawEnvHelper: boolean = false;
-    for outcome in ssarc.drop_helpers(dropArrMap) {
+    for outcome in ssarc.drop_helpers(dropArrMap, ssasem.contracts_of([])) {
         let h = match (outcome) { Ok(r) => r, Err(r) => { eprint(r.why); return 189; } };
         if (h.name == releaseName && h.n_params == 1) { sawHelper = true; }
         if (h.name == releaseName + "$env" && h.n_params == 2) { sawEnvHelper = true; }

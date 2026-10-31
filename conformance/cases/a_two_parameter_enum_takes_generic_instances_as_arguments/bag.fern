@@ -1,0 +1,40 @@
+import "core/cmp";
+
+pub enum Bag[K, V] { Nil, One(K, V), Many(Bag[K, V][]) }
+
+pub function (b: Bag[K, V]) fold[K, V, A](init: A, f: (A, K, V) => A): A {
+  match (b) {
+    One(k, v) => {
+      return f(init, k, v);
+    },
+    Many(xs) => {
+      let acc: A = init;
+      let i: i32 = 0;
+      while (i < xs.len()) {
+        acc = xs[i].fold(acc, f);
+        i = i + 1;
+      }
+      return acc;
+    },
+    Nil => {}
+  }
+  return init;
+}
+
+pub function (b: Bag[K, V]) len(): i32 {
+  return b.fold(0, (n: i32, k: K, v: V) => n + 1);
+}
+
+impl[K: cmp.Hash, V: cmp.Hash] cmp.Hash for Bag[K, V] {
+  function hash(self: Bag[K, V]): i32 {
+    return self.fold(17, (h: i32, k: K, v: V) => (h * 31 + k.hash()) * 31 + v.hash());
+  }
+}
+
+pub struct Wrap[T] { x: T }
+
+impl[T: cmp.Hash] cmp.Hash for Wrap[T] {
+  function hash(self: Wrap[T]): i32 {
+    return self.x.hash() + 1;
+  }
+}

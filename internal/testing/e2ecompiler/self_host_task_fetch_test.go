@@ -14,7 +14,7 @@ func TestSelfHostTaskFetchFanoutX86_64(t *testing.T) {
 	cmd := binCmd(runner, buildBin(t, gcc, progDir, "taskfetchfanout", asm))
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 42 {
-		t.Fatalf("gather_tasks over fetch.send exit = %d, want 42", code)
+		t.Fatalf("gather of spawned fetch.send tasks exit = %d, want 42", code)
 	}
 }
 

@@ -20,40 +20,40 @@ import "std/sim";
 import "std/i32";
 import "std/i64";
 
-function stall(): async.Future[string] {
-    function resume(woken: i32): async.Future[string] {
-        return stall();
-    }
-    return Pending(0 - 1, resume);
+function at_ms(ms: i32): Option[Instant] {
+    return Some(sim.at(time.duration_millis(ms as i64)));
 }
 
-function drip(at_ms: i32[], i: i32, k: i32): async.Future[string] {
+function stall(): async.Future[string] {
+    let none: i32[] = [];
+    return Pending(async.Wait { set: none, until: None }, (wake: async.Wake): async.Future[string] => stall());
+}
+
+function drip(at: i32[], i: i32, k: i32): async.Future[string] {
     if (i >= k) {
         return stall();
     }
-    function resume(woken: i32): async.Future[string] {
-        return drip(at_ms, i + 1, k);
-    }
-    return Pending(at_ms[i], resume);
+    let none: i32[] = [];
+    return Pending(async.Wait { set: none, until: at_ms(at[i]) }, (wake: async.Wake): async.Future[string] => drip(at, i + 1, k));
 }
 
-function drain(at_ms: i32[], body: string, i: i32): async.Future[string] {
-    function resume(woken: i32): async.Future[string] {
-        if (i + 1 >= at_ms.len()) {
-            return Ready(body);
-        }
-        return drain(at_ms, body, i + 1);
+function drained(at: i32[], body: string, i: i32): async.Future[string] {
+    if (i + 1 >= at.len()) {
+        return Ready(body);
     }
-    return Pending(at_ms[i], resume);
+    return drain(at, body, i + 1);
+}
+
+function drain(at: i32[], body: string, i: i32): async.Future[string] {
+    let none: i32[] = [];
+    return Pending(async.Wait { set: none, until: at_ms(at[i]) }, (wake: async.Wake): async.Future[string] => drained(at, body, i));
 }
 
 function schedule(d: sim.Sim, first_ms: i32, chunk_ms: i32, chunks: i32): i32[] {
     let now: i32 = (d.elapsed().as_nanos() / 1000000) as i32;
     let at: i32[] = [];
-    let c: i32 = 0;
-    while (c < chunks) {
+    for c in 0..chunks {
         at = at.append(now + first_ms + c * chunk_ms);
-        c = c + 1;
     }
     return at;
 }
@@ -139,10 +139,10 @@ func genSimProgram(r *rand.Rand) string {
 			}
 			switch r.Intn(8) {
 			case 0, 1:
-				fmt.Fprintf(&b, "        sim.future_at(d, sim.at(time.duration_nanos(%d)), \"a%d_%d\")%s\n",
+				fmt.Fprintf(&b, "        sim.future_at(sim.at(time.duration_nanos(%d)), \"a%d_%d\")%s\n",
 					(1+r.Intn(60))*1000000, s, k, sep)
 			case 2, 3:
-				fmt.Fprintf(&b, "        sim.future_chain(d, sim.at(time.duration_nanos(%d)), time.duration_nanos(%d), %d, \"c%d_%d\")%s\n",
+				fmt.Fprintf(&b, "        sim.future_chain(sim.at(time.duration_nanos(%d)), time.duration_nanos(%d), %d, \"c%d_%d\")%s\n",
 					(1+r.Intn(40))*1000000, (1+r.Intn(8))*1000000, r.Intn(4), s, k, sep)
 			case 4:
 				fmt.Fprintf(&b, "        Ready(\"\")%s\n", sep)
@@ -153,25 +153,25 @@ func genSimProgram(r *rand.Rand) string {
 		b.WriteString("    ];\n")
 		switch r.Intn(3) {
 		case 0:
-			fmt.Fprintf(&b, "    let g%d: string[] = async.gather_on(d, fs%d, \"!\");\n", s, s)
-			fmt.Fprintf(&b, "    print(\"g%d.len=\" + g%d.len().to_string());\n", s, s)
-			fmt.Fprintf(&b, "    let i%d: i32 = 0;\n", s)
-			fmt.Fprintf(&b, "    while (i%d < g%d.len()) {\n", s, s)
-			fmt.Fprintf(&b, "        print(\"g%d[\" + i%d.to_string() + \"]=\" + g%d[i%d]);\n", s, s, s, s)
-			fmt.Fprintf(&b, "        i%d = i%d + 1;\n    }\n", s, s)
+			fmt.Fprintf(&b, "    match (sim.block_on(d, async.gather(fs%d))) {\n", s)
+			fmt.Fprintf(&b, "        Some(g%d) => {\n", s)
+			fmt.Fprintf(&b, "            print(\"g%d.len=\" + g%d.len().to_string());\n", s, s)
+			fmt.Fprintf(&b, "            for i%d in 0..g%d.len() {\n", s, s)
+			fmt.Fprintf(&b, "                print(\"g%d[\" + i%d.to_string() + \"]=\" + g%d[i%d]);\n", s, s, s, s)
+			fmt.Fprintf(&b, "            }\n        },\n")
+			fmt.Fprintf(&b, "        None => { print(\"g%d=None\"); }\n    }\n", s)
 		case 1:
-			fmt.Fprintf(&b, "    let (w%d, v%d) = async.race_on(d, fs%d, \"!\");\n", s, s, s)
-			fmt.Fprintf(&b, "    print(\"r%d=\" + w%d.to_string() + \":\" + v%d);\n", s, s, s)
+			fmt.Fprintf(&b, "    match (sim.block_on(d, async.race(fs%d))) {\n", s)
+			fmt.Fprintf(&b, "        Some(w%d) => { print(\"r%d=\" + w%d.0.to_string() + \":\" + w%d.1); },\n", s, s, s, s)
+			fmt.Fprintf(&b, "        None => { print(\"r%d=None\"); }\n    }\n", s)
 		default:
-			fmt.Fprintf(&b, "    let o%d: Option[string][] = async.with_deadline_on(d, time.duration_millis(%d), fs%d);\n",
+			fmt.Fprintf(&b, "    let o%d: Option[string][] = sim.block_on(d, async.with_deadline(d.now().add(time.duration_millis(%d)), fs%d)).unwrap_or([]);\n",
 				s, pick(r, []int{5, 15, 30, 60}), s)
-			fmt.Fprintf(&b, "    let j%d: i32 = 0;\n", s)
-			fmt.Fprintf(&b, "    while (j%d < o%d.len()) {\n", s, s)
+			fmt.Fprintf(&b, "    for j%d in 0..o%d.len() {\n", s, s)
 			fmt.Fprintf(&b, "        match (o%d[j%d]) {\n", s, s)
 			fmt.Fprintf(&b, "            Some(v) => { print(\"d%d[\" + j%d.to_string() + \"]=Some:\" + v); },\n", s, s)
 			fmt.Fprintf(&b, "            None => { print(\"d%d[\" + j%d.to_string() + \"]=None\"); },\n", s, s)
-			fmt.Fprintf(&b, "        }\n")
-			fmt.Fprintf(&b, "        j%d = j%d + 1;\n    }\n", s, s)
+			fmt.Fprintf(&b, "        }\n    }\n")
 		}
 	}
 
@@ -282,37 +282,35 @@ function main(): i32 {
     let d: sim.Sim = sim.new(538118593 as i64);
     let fs0: async.Future[string][] = [
         Ready(""),
-        sim.future_chain(d, sim.at(time.duration_nanos(8000000)), time.duration_nanos(6000000), 2, "c0_1")
+        sim.future_chain(sim.at(time.duration_nanos(8000000)), time.duration_nanos(6000000), 2, "c0_1")
     ];
-    let o0: Option[string][] = async.with_deadline_on(d, time.duration_millis(60), fs0);
-    let j0: i32 = 0;
-    while (j0 < o0.len()) {
+    let o0: Option[string][] = sim.block_on(d, async.with_deadline(d.now().add(time.duration_millis(60)), fs0)).unwrap_or([]);
+    for j0 in 0..o0.len() {
         match (o0[j0]) {
             Some(v) => { print("d0[" + j0.to_string() + "]=Some:" + v); },
             None => { print("d0[" + j0.to_string() + "]=None"); },
         }
-        j0 = j0 + 1;
     }
     let fs1: async.Future[string][] = [
         up1(d),
         up1(d),
         up0(d)
     ];
-    let (w1, v1) = async.race_on(d, fs1, "!");
-    print("r1=" + w1.to_string() + ":" + v1);
+    match (sim.block_on(d, async.race(fs1))) {
+        Some(w1) => { print("r1=" + w1.0.to_string() + ":" + w1.1); },
+        None => { print("r1=None"); }
+    }
     let fs2: async.Future[string][] = [
-        sim.future_at(d, sim.at(time.duration_nanos(3000000)), "a2_0"),
-        sim.future_at(d, sim.at(time.duration_nanos(58000000)), "a2_1"),
+        sim.future_at(sim.at(time.duration_nanos(3000000)), "a2_0"),
+        sim.future_at(sim.at(time.duration_nanos(58000000)), "a2_1"),
         up1(d)
     ];
-    let o2: Option[string][] = async.with_deadline_on(d, time.duration_millis(30), fs2);
-    let j2: i32 = 0;
-    while (j2 < o2.len()) {
+    let o2: Option[string][] = sim.block_on(d, async.with_deadline(d.now().add(time.duration_millis(30)), fs2)).unwrap_or([]);
+    for j2 in 0..o2.len() {
         match (o2[j2]) {
             Some(v) => { print("d2[" + j2.to_string() + "]=Some:" + v); },
             None => { print("d2[" + j2.to_string() + "]=None"); },
         }
-        j2 = j2 + 1;
     }
     print("now=" + d.elapsed().as_nanos().to_string());
     print("rng=" + d.rng_state().to_string());
@@ -330,25 +328,29 @@ const simRegressionFlakyChunkedGather = simPrelude + `function up0(d: sim.Sim): 
 function main(): i32 {
     let d: sim.Sim = sim.new(88997876 as i64);
     let fs0: async.Future[string][] = [
-        sim.future_chain(d, sim.at(time.duration_nanos(32000000)), time.duration_nanos(1000000), 0, "c0_0"),
+        sim.future_chain(sim.at(time.duration_nanos(32000000)), time.duration_nanos(1000000), 0, "c0_0"),
         up0(d),
         up0(d),
-        sim.future_chain(d, sim.at(time.duration_nanos(4000000)), time.duration_nanos(8000000), 1, "c0_3")
+        sim.future_chain(sim.at(time.duration_nanos(4000000)), time.duration_nanos(8000000), 1, "c0_3")
     ];
-    let g0: string[] = async.gather_on(d, fs0, "!");
-    print("g0.len=" + g0.len().to_string());
-    let i0: i32 = 0;
-    while (i0 < g0.len()) {
-        print("g0[" + i0.to_string() + "]=" + g0[i0]);
-        i0 = i0 + 1;
+    match (sim.block_on(d, async.gather(fs0))) {
+        Some(g0) => {
+            print("g0.len=" + g0.len().to_string());
+            for i0 in 0..g0.len() {
+                print("g0[" + i0.to_string() + "]=" + g0[i0]);
+            }
+        },
+        None => { print("g0=None"); }
     }
     let fs1: async.Future[string][] = [
-        sim.future_at(d, sim.at(time.duration_nanos(14000000)), "a1_0"),
+        sim.future_at(sim.at(time.duration_nanos(14000000)), "a1_0"),
         up0(d),
         up0(d)
     ];
-    let (w1, v1) = async.race_on(d, fs1, "!");
-    print("r1=" + w1.to_string() + ":" + v1);
+    match (sim.block_on(d, async.race(fs1))) {
+        Some(w1) => { print("r1=" + w1.0.to_string() + ":" + w1.1); },
+        None => { print("r1=None"); }
+    }
     print("now=" + d.elapsed().as_nanos().to_string());
     print("rng=" + d.rng_state().to_string());
     return 0;
@@ -366,36 +368,38 @@ function main(): i32 {
     let d: sim.Sim = sim.new(338788670 as i64);
     let fs0: async.Future[string][] = [
         up0(d),
-        sim.future_at(d, sim.at(time.duration_nanos(60000000)), "a0_1")
+        sim.future_at(sim.at(time.duration_nanos(60000000)), "a0_1")
     ];
-    let g0: string[] = async.gather_on(d, fs0, "!");
-    print("g0.len=" + g0.len().to_string());
-    let i0: i32 = 0;
-    while (i0 < g0.len()) {
-        print("g0[" + i0.to_string() + "]=" + g0[i0]);
-        i0 = i0 + 1;
+    match (sim.block_on(d, async.gather(fs0))) {
+        Some(g0) => {
+            print("g0.len=" + g0.len().to_string());
+            for i0 in 0..g0.len() {
+                print("g0[" + i0.to_string() + "]=" + g0[i0]);
+            }
+        },
+        None => { print("g0=None"); }
     }
     let fs1: async.Future[string][] = [
-        sim.future_at(d, sim.at(time.duration_nanos(21000000)), "a1_0"),
+        sim.future_at(sim.at(time.duration_nanos(21000000)), "a1_0"),
         up0(d)
     ];
-    let o1: Option[string][] = async.with_deadline_on(d, time.duration_millis(5), fs1);
-    let j1: i32 = 0;
-    while (j1 < o1.len()) {
+    let o1: Option[string][] = sim.block_on(d, async.with_deadline(d.now().add(time.duration_millis(5)), fs1)).unwrap_or([]);
+    for j1 in 0..o1.len() {
         match (o1[j1]) {
             Some(v) => { print("d1[" + j1.to_string() + "]=Some:" + v); },
             None => { print("d1[" + j1.to_string() + "]=None"); },
         }
-        j1 = j1 + 1;
     }
     let fs2: async.Future[string][] = [
         up0(d),
         up0(d),
-        sim.future_chain(d, sim.at(time.duration_nanos(24000000)), time.duration_nanos(7000000), 2, "c2_2"),
+        sim.future_chain(sim.at(time.duration_nanos(24000000)), time.duration_nanos(7000000), 2, "c2_2"),
         up0(d)
     ];
-    let (w2, v2) = async.race_on(d, fs2, "!");
-    print("r2=" + w2.to_string() + ":" + v2);
+    match (sim.block_on(d, async.race(fs2))) {
+        Some(w2) => { print("r2=" + w2.0.to_string() + ":" + w2.1); },
+        None => { print("r2=None"); }
+    }
     print("now=" + d.elapsed().as_nanos().to_string());
     print("rng=" + d.rng_state().to_string());
     return 0;
@@ -405,12 +409,14 @@ function main(): i32 {
 const simRegressionRaceFailWins = simPrelude + `function main(): i32 {
     let d: sim.Sim = sim.new(477987043 as i64);
     let fs0: async.Future[string][] = [
-        sim.future_at(d, sim.at(time.duration_nanos(47000000)), "a0_0"),
-        sim.future_at(d, sim.at(time.duration_nanos(9000000)), "a0_1"),
+        sim.future_at(sim.at(time.duration_nanos(47000000)), "a0_0"),
+        sim.future_at(sim.at(time.duration_nanos(9000000)), "a0_1"),
         Ready("")
     ];
-    let (w0, v0) = async.race_on(d, fs0, "!");
-    print("r0=" + w0.to_string() + ":" + v0);
+    match (sim.block_on(d, async.race(fs0))) {
+        Some(w0) => { print("r0=" + w0.0.to_string() + ":" + w0.1); },
+        None => { print("r0=None"); }
+    }
     print("now=" + d.elapsed().as_nanos().to_string());
     print("rng=" + d.rng_state().to_string());
     return 0;
@@ -427,17 +433,19 @@ const simRegressionGatherResuspendClosure = simPrelude + `function up0(d: sim.Si
 function main(): i32 {
     let d: sim.Sim = sim.new(193102384 as i64);
     let fs0: async.Future[string][] = [
-        sim.future_chain(d, sim.at(time.duration_nanos(26000000)), time.duration_nanos(1000000), 0, "c0_0"),
-        sim.future_chain(d, sim.at(time.duration_nanos(36000000)), time.duration_nanos(1000000), 1, "c0_1"),
+        sim.future_chain(sim.at(time.duration_nanos(26000000)), time.duration_nanos(1000000), 0, "c0_0"),
+        sim.future_chain(sim.at(time.duration_nanos(36000000)), time.duration_nanos(1000000), 1, "c0_1"),
         up0(d),
-        sim.future_chain(d, sim.at(time.duration_nanos(14000000)), time.duration_nanos(3000000), 2, "c0_3")
+        sim.future_chain(sim.at(time.duration_nanos(14000000)), time.duration_nanos(3000000), 2, "c0_3")
     ];
-    let g0: string[] = async.gather_on(d, fs0, "!");
-    print("g0.len=" + g0.len().to_string());
-    let i0: i32 = 0;
-    while (i0 < g0.len()) {
-        print("g0[" + i0.to_string() + "]=" + g0[i0]);
-        i0 = i0 + 1;
+    match (sim.block_on(d, async.gather(fs0))) {
+        Some(g0) => {
+            print("g0.len=" + g0.len().to_string());
+            for i0 in 0..g0.len() {
+                print("g0[" + i0.to_string() + "]=" + g0[i0]);
+            }
+        },
+        None => { print("g0=None"); }
     }
     print("now=" + d.elapsed().as_nanos().to_string());
     print("rng=" + d.rng_state().to_string());

@@ -2284,8 +2284,11 @@ function call_runtime_intrinsic(name: string, args: Value[]): Value {
   if (util.has_str(["__task_cur", "__task_leave", "__task_cancelled"], name)) {
     return v_int(0);
   }
-  if (util.has_str(["__task_park", "__task_timeout"], name)) {
+  if (util.has_str(["__task_park", "__task_park_until", "__task_timeout"], name)) {
     return v_int(0 - 1);
+  }
+  if (name == "__task_until") {
+    return v_int64(0 - 1 as i64);
   }
   if (name == "__task_new") {
     return v_int(1);
@@ -2892,7 +2895,7 @@ function call_host_net(name: string, args: Value[]): Value {
   if (util.has_str(["tcp_listen_with", "tcp_connect_with", "tcp_listen"], name)) {
     return call_host_tcp_open(name, args);
   }
-  if (util.has_str(["tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_recv_into"], name)) {
+  if (util.has_str(["tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_recv_into", "tcp_addr_into"], name)) {
     return call_host_tcp_io(name, args);
   }
   return call_host_tcp_fd(name, args);
@@ -2945,6 +2948,12 @@ function call_host_tcp_io(name: string, args: Value[]): Value {
     let buf: u8[] = arg_bytes(args, 1);
     let n: i32 = tcp_recv_into(fd, buf);
     arr_fill(arg_at(args, 1), bytes_as_i64s(buf));
+    return v_int(n);
+  }
+  if (name == "tcp_addr_into") {
+    let rec: u8[] = arg_bytes(args, 2);
+    let n: i32 = tcp_addr_into(fd, arg_bool(args, 1), rec);
+    arr_fill(arg_at(args, 2), bytes_as_i64s(rec));
     return v_int(n);
   }
   return v_int(tcp_sendfile(fd, arg_i32(args, 1), arg_i32(args, 2)));
@@ -4563,16 +4572,33 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   if (is_checked_op(b.op)) {
     return eval_checked(b.op, lv, rv, checked_operand_type(b, lv));
   }
-  if (b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") {
-    if let VStruct(sv) = lv {
-      let c: Value = call_method(lv, "cmp", [rv], env.funcs, env.aliases, env.type_decls);
-      if (is_err(c)) {
-        return c;
-      }
-      return eval_binary(b.op, c, v_int(0));
+  if ((b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") && orders_by_cmp(lv)) {
+    let c: Value = call_method(lv, "cmp", [rv], env.funcs, env.aliases, env.type_decls);
+    if (is_err(c)) {
+      return c;
     }
+    return eval_binary(b.op, c, v_int(0));
   }
   return eval_typed_binary(b.op, lv, rv, b.ty);
+}
+
+// orders_by_cmp says whether an order on v calls its `cmp` method.
+function orders_by_cmp(v: Value): boolean {
+  match (v) {
+    VStruct(_) => {
+      return true;
+    },
+    VTuple(_) => {
+      return true;
+    },
+    VArr(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
 }
 
 // An integer literal beside a typed float operand is a float of its width, as
@@ -5730,6 +5756,10 @@ function runtime_receiver_name(spelling: string): string {
   if (spelling == "str") {
     return "string";
   }
+  let tuple: string = parser.tuple_namespace(spelling);
+  if (tuple.len() > 0) {
+    return tuple;
+  }
   return util.base_type_name(spelling);
 }
 
@@ -5746,6 +5776,9 @@ function dispatch_type_name(v: Value): string {
     if (sv.owner.len() > 0) {
       return sv.owner;
     }
+  }
+  if let VTuple(tv) = v {
+    return parser.tuple_arity_namespace(tv.elements.len());
   }
   return value_type_name(v);
 }

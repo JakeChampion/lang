@@ -1390,4 +1390,69 @@ pub function (m: OrdMap[K: cmp.Ord, V]) split_gt(k: K): OrdMap[K, V] {
 pub function (m: OrdMap[K: cmp.Ord, V]) is_valid(): boolean {
   return node_valid(m.root, node_height(m.root), true, None, None);
 }
+
+impl[K: cmp.Ord, V: cmp.Eq] cmp.Eq for OrdMap[K, V] {
+  function eq(self: OrdMap[K, V], other: OrdMap[K, V]): boolean {
+    if (self.len() != other.len()) {
+      return false;
+    }
+    let ak: K[] = self.keys();
+    let bk: K[] = other.keys();
+    let av: V[] = self.values();
+    let bv: V[] = other.values();
+    let i: i32 = 0;
+    while (i < ak.len()) {
+      if (ak[i].cmp(bk[i]) != 0 || av[i] != bv[i]) {
+        return false;
+      }
+      i = i + 1;
+    }
+    return true;
+  }
+}
+
+// Maps compare as their sorted (key, value) sequences, in lexicographic order.
+impl[K: cmp.Ord, V: cmp.Ord] cmp.Ord for OrdMap[K, V] {
+  function cmp(self: OrdMap[K, V], other: OrdMap[K, V]): i32 {
+    let ak: K[] = self.keys();
+    let bk: K[] = other.keys();
+    let av: V[] = self.values();
+    let bv: V[] = other.values();
+    let i: i32 = 0;
+    while (i < ak.len() && i < bk.len()) {
+      let c: i32 = ak[i].cmp(bk[i]);
+      if (c == 0) {
+        c = av[i].cmp(bv[i]);
+      }
+      if (c != 0) {
+        return c;
+      }
+      i = i + 1;
+    }
+    return ak.len().cmp(bk.len());
+  }
+}
+
+impl[K: cmp.Hash, V: cmp.Hash] cmp.Hash for OrdMap[K, V] {
+  function hash(self: OrdMap[K, V]): i32 {
+    return self.fold(17, (h: i32, k: K, v: V) => (h * 31 + k.hash()) * 31 + v.hash());
+  }
+}
+
+impl[K: cmp.Display, V: cmp.Display] cmp.Display for OrdMap[K, V] {
+  function to_string(self: OrdMap[K, V]): string {
+    let out: string = "{";
+    let ks: K[] = self.keys();
+    let vs: V[] = self.values();
+    let i: i32 = 0;
+    while (i < ks.len()) {
+      if (i > 0) {
+        out = out + ", ";
+      }
+      out = out + ks[i].to_string() + ": " + vs[i].to_string();
+      i = i + 1;
+    }
+    return out + "}";
+  }
+}
 ```

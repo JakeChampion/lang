@@ -1,57 +1,60 @@
-# Async & concurrency in Fern (user guide)
+# Async and concurrency in Fern (user guide)
 
-Status: [reference] user guide to the shipped `std/async` combinator surface.
+Status: [reference] user guide to the shipped `std/async` surface: futures, tasks and their schedulers.
 
-Fern's concurrency is **colorless**: no function coloring in the surface you
-write. Concurrency is expressed with plain library combinators — `gather` /
-`race` / `with_deadline` — over a `Future[T]` (a not-yet-ready value). You write
-straight-line code and make the concurrency points **explicit** at the
-`gather`/`race` call. No stackful green threads, no parse-time CPS transform —
-just functions and values.
+Fern has no function colouring. A function that waits is written and
+called like any other function. Concurrency comes from two library
+concepts in `std/async`:
 
-The `async function` modifier this guide's own examples use is **not** function
-coloring: it colors a component-model **export**, not a call graph. It marks a
-function for the WASI Preview-3 `canon lift async` surface and changes nothing
-about how the body is written, type-checked, or run — the interpreter executes
-an `async function` exactly as a plain one. See `docs/WASI-PREVIEW3-ASYNC-PLAN.md`.
+- A **task** is a call chain that can park. When code in a task reaches a
+  wait, the whole chain keeps its place and returns to the scheduler of
+  the task. The scheduler resumes the chain when the wait is answered.
+- A **future** is a value that is ready, pending on a wait, or cancelled.
+  The combinators `gather`, `race` and `with_deadline` build one future
+  from many. `wait` and `block_on` drive a future to its end.
 
-This is the user-facing guide. For the design and internals see
-`docs/ASYNC-REDESIGN.md` (the model + rationale), `docs/STREAM-TYPE-SURFACE.md`,
-and `docs/WASI-PREVIEW3-ASYNC-PLAN.md`.
+This guide describes both, and the schedulers that drive them: the
+`std/serve` loop, `block_on`, `sim.block_on` and `sim.run_tasks`. The
+design records are `docs/NET-P3-SUSPENSION-PLAN.md` (tasks) and
+`docs/DST-PLATFORM-BRIEF.md` (the simulation).
 
-> Backend support: the combinator surface (`std/async`) drives REAL overlapping socket
-> I/O on the native backends (x86-64 / arm64) via the OS reactor; the portable
-> `Ready`-future path runs on every backend (interp / wasm / native). The WASI
-> Preview-3 `Stream[T]` import surface below does real wire I/O on wasm. The next
-> milestone is promoting `Future[T]` to a first-class IR type so wasm futures use
-> the component-model-async host scheduler (`docs/ASYNC-REDESIGN.md` PR5).
-
-The patterns shown here are exercised by `tests/stdlib/async_combinators_test.fern`
-and the Go e2e suite (`async_combinators_test.go`, `async_task_fetch_test.go`).
+`tests/stdlib/async_combinators_test.fern`, `tests/stdlib/sim_driver_test.fern`,
+and the e2e tests `TestSelfHostTaskCombinators` and `TestSelfHostSimTasks`
+run the patterns in this guide.
 
 ---
 
-## 1. Streams: `Stream[T]`
+## 1. The `async` export modifier is a different thing
 
-An async host import can return a `Stream[T]` — a sequence delivered incrementally
-over the wire. Under the colorless model the call site sees a plain value:
+The `async` keyword before `function` marks a WebAssembly component
+export for the WASI Preview 3 `canon lift async` surface
+(`docs/WASI-PREVIEW3-ASYNC-PLAN.md`). It does not make a function a task
+or give it a future. It changes nothing about how the body is written,
+type-checked or run. The interpreter runs an `async function` as a plain
+function. The examples in section 2 use it because they are component
+exports.
+
+## 2. Streams: `Stream[T]`
+
+An async host import can return a `Stream[T]`, a sequence that arrives
+over the wire in parts. The call site sees a plain value:
 
 ```fern
 @import("wasi:http/types", "body-stream")
 async function body(): Stream[u8];
 ```
 
-**Collect it eagerly** — the whole stream into a `u8[]`:
+**Collect it eagerly.** The whole stream goes into a `u8[]`:
 
 ```fern
 async function handle(): i32 {
-    let bytes: u8[] = body();   // drains the stream to EOF, returns the array
+    let bytes: u8[] = body();   // reads the stream to EOF, returns the array
     return bytes.len();
 }
 ```
 
-**Iterate it lazily** — one element at a time, off the wire, before EOF (O(1)
-memory, no full buffer):
+**Iterate it lazily.** The loop pulls one element at a time off the
+wire, before EOF, with no full buffer:
 
 ```fern
 async function sum(): i32 {
@@ -63,116 +66,245 @@ async function sum(): i32 {
 }
 ```
 
-Lazy `for x in stream` works for any scalar element type (`u8` / `i32` / `i64` /
-`f64`, …). A `Stream[T]` **parameter** is the mirror: you pass an eager `T[]` and
-the wrapper streams its elements out over the wire.
+Lazy `for x in stream` works for any scalar element type (`u8`, `i32`,
+`i64`, `f64`). A `Stream[T]` **parameter** is the mirror: you pass a
+`T[]`, and the wrapper sends its elements out over the wire.
 
 ---
 
-## 2. `Future[T]` — a not-yet-ready value
+## 3. Waits and wakes
 
-`std/async` defines:
+Every wait in Fern is one value:
+
+```fern
+pub struct Wait { set: i32[], until: Option[Instant] }
+
+pub enum Wake { Woke(i32), TimedOut, Cancelled }
+```
+
+`set` holds (fd, interest) pairs: interest 1 is readable and 2 is
+writable. `until` is a deadline: an **instant on the clock of whatever
+waits**, not a duration. A wait ends with a `Wake`: `Woke(i)` names the
+pair that became ready, `TimedOut` says that the clock reached `until`,
+and `Cancelled` says that the waiting task was cancelled.
+
+`async.wait_any(set, until)` is the leaf wait that sockets, DNS, TLS and
+`fetch` use. Inside a task it parks the task. Outside a task it blocks:
+one `poll` for a read-only set, or a reactor made for the call, and the
+machine's monotonic clock decides `until`. Nothing outside a task
+answers `Cancelled`.
+
+A deadline is an instant. So only the code that makes a deadline from a
+duration reads a clock, and it reads the clock that it was given.
+A handler takes the instant from its platform (`plat.instant()`, or the
+request's `plat.deadline()`). A plain program takes it from
+`clock.instant()`. A simulated program takes it from the `sim.Sim`
+(`d.now()`, `sim.at(offset)`). The combinators and the schedulers do not
+convert durations, so the same code runs on the real clock and on the
+virtual one.
+
+## 4. `Future[T]`
 
 ```fern
 pub enum Future[T] {
-    Ready(T),                          // already resolved
-    Pending(i32, (i32) => Future[T]),  // suspended on an fd; resume(fd) -> next
+    Ready(T),
+    Pending(Wait, (Wake) => Future[T]),
+    Cancelled,
 }
 ```
 
-A `Pending` future wraps one wait of your own — a socket read, a timer — and
-resolves when its file descriptor becomes readable, driven by the OS `poll` on
-native. `Ready(v)` is a value that's already available (and it resolves on every
-backend, including interp / wasm). HTTP is not a future: `fetch.send` waits on
-DNS, the connect, TLS and each read under its own timeouts, and runs
-concurrently under the task combinators instead (§7).
+A `Pending` future holds its wait and a continuation. Whatever drives
+the future waits on the `Wait` and calls the continuation with the
+`Wake` that ended it. The continuation gives the next state. A future of
+your own over a socket looks like this:
 
-`Future[T]` is **generic over `T`** — `Future[string]`, `Future[i32]`, etc.
+```fern
+function readable(fd: i32, v: i32): async.Future[i32] {
+    let set: i32[] = [fd, 1];
+    return Pending(async.Wait { set: set, until: None }, (wake: async.Wake): async.Future[i32] => Ready(v));
+}
+```
 
----
+A pending future that is resumed with `Cancelled` releases what it holds,
+for example it closes its socket. What it gives back then is not used.
+`Cancelled` as a state is a future that ended without a value.
 
-## 3. `gather` — fan out and await all
+`async.spawn(entry)` makes a task into a future. It starts `entry` as a
+task at once. The future is ready with the task's result when the task
+finishes, and pending on the task's wait while the task is parked. When
+the spawned future is resumed with `Cancelled`, the task runs on to its
+end, as section 7 describes, and the future ends cancelled.
 
-`gather` waits on every future at once and returns all results in input
-order.
+## 5. The combinators
+
+The combinators build a future from futures. They do not wait and they
+read no clock. The wait of a combined future is the union of the pending
+inputs' waits: every pair of each input, in input order, and the soonest
+of their deadlines. A wake goes to the input that owns the pair, and a
+timeout goes to each input whose deadline is that soonest one.
+
+| Combinator | Is ready with |
+|---|---|
+| `async.gather(fs)` | every value, in input order. It ends cancelled when one input ends cancelled, and cancels the others. |
+| `async.race(fs)` | `(index, value)` of the first input to be ready; a tie goes to the lower index. It cancels the others, and ends cancelled when every input ends cancelled (so for no input). |
+| `async.with_deadline(until, fs)` | `Some(value)` for each input that is ready by the instant `until`, and `None` for each other input. It cancels the inputs that are pending at `until`. A deadline equal to an input's own deadline wins. |
+
+When a combined future is resumed with `Cancelled`, it cancels every
+pending input.
+
+## 6. Driving a future
+
+Three functions drive a future to its end. Each answers `Option[T]`:
+`Some` with the value, or `None` when the future ends cancelled.
+
+- **`async.wait(f)`** parks the task that calls it on the scheduler of
+  that task: the `std/serve` loop, `sim.run_tasks`, or a combinator's
+  own wait. It reaches no clock and no reactor, so a handler can call it
+  (E080 does not refuse it).
+- **`async.block_on(f)`** waits on the machine's reactor and monotonic
+  clock when no task is current, and parks as `wait` does inside one.
+  This is the call for a program's `main`. E080 refuses it in a
+  handler, because it reaches the reactor.
+- **`sim.block_on(d, f)`** drives `f` on the virtual clock of the
+  `sim.Sim` `d`, with no task. The clock moves to each deadline that
+  `f` waits for. This path needs no task support, so the interpreter
+  gives the same result.
+
+`wait` answers `None` when the task that calls it is cancelled. With no
+task current, `wait` cannot park, so it cancels a pending `f` and
+answers `None`. Under `sim.block_on`, a wait with no deadline never
+ends, so `sim.block_on` cancels `f` and answers `None`.
+
+A plain program that fetches two URLs at once:
 
 ```fern
 import "std/async";
+import "std/fetch";
 
-// later resolves to v once its timer fires.
-function later(ms: i32, v: i32): async.Future[i32] {
-    return Pending(timer_fd(ms), (woken: i32) => mk(v));
-}
-
-function mk(v: i32): async.Future[i32] {
-    return Ready(v);
+function status_of(url: string): i32 {
+    match (fetch.send(fetch.get(url))) {
+        Ok(resp) => { return resp.status; },
+        Err(e) => { return 0 - 1; }
+    }
 }
 
 function main(): i32 {
-    let got: i32[] = async.gather([later(60, 4), later(20, 5)], 0 - 1);
-    return got[0] + got[1];       // 9, after ~60ms: both timers waited at once
+    let both: async.Future[i32][] = [
+        async.spawn(() => status_of("http://cache.internal/key")),
+        async.spawn(() => status_of("http://primary.internal/key")),
+    ];
+    match (async.block_on(async.gather(both))) {
+        Some(statuses) => { return statuses.len(); },   // both fetches overlapped on one thread
+        None => { return 0 - 2; }
+    }
 }
 ```
 
-`gather(fs, on_incomplete)` — the `on_incomplete` value fills any slot whose
-future never resolves (a `poll` error, or the `-1` `poll` stub on interp/wasm).
-With a blocking native `poll`, live futures always make progress.
+Each fetch keeps the whole client: DNS, TLS, redirects, the request's
+timeouts, content decoding, and a typed `FetchError` for each failure.
+A fetch that `race` cancels closes its socket and answers
+`FetchError.Cancelled`.
 
----
+## 7. Tasks and schedulers
 
-## 4. `race` — first to finish wins
+A function that calls `wait_any`, or calls a function that does, is
+lowered to a resumable form by reachability (`compiler/suspend.fern`).
+Nothing is written at the call site. When such a function parks, the
+whole call chain above the wait keeps its live locals and returns to
+the scheduler. When the scheduler resumes the task, the chain runs on
+from the wait.
 
-`race` runs the futures until the **first** resolves, returns `(winnerIndex,
-value)`, and cancels the rest (happy-eyeballs / first-wins). A loser is
-resumed once more, with `async.cancelled()`, and releases what it holds: a
-future over a socket closes it. A future of your own handles `cancelled()` by
-cleaning up and returning `Ready` without waiting on anything. Under a task, a
-wait in that path could rewind into it and release the same resource twice.
+A parked frame keeps what it holds. A `str` or byte view
+read after the park still sees its owner. A closure that shares a
+changed scalar with the frame still shares it (`TestSelfHostTaskFrame`).
 
-```fern
-let (winner, v) = async.race([later(400, 1), later(20, 2)], 0 - 1);
-// `winner` is the index that finished first (1); `v` its result (2).
-```
-
-(It's spelled `race`; the older `race { … }` keyword block was removed in favour
-of this combinator.)
-
----
-
-## 5. `with_deadline` — await all within a budget
-
-`with_deadline(deadline, fs)` is `gather` with an SLA: fan out, take
-whatever answers within `deadline` (a `Duration`, built with
-`time.duration_millis` and friends) of wall-clock time, and drop the
-stragglers (their slots come back `None`).
+The scheduler side of `std/async`:
 
 ```fern
-let got: Option[i32][] = async.with_deadline(time.duration_millis(250), [
-    later(20, 1),
-    later(900, 2),
-]);   // [Some(1), None]: the 900ms timer missed the budget
+pub enum TaskStatus[T] { Done(T), Suspended(Wait) }
+
+let t: async.Task[i32] = async.task_new(() => handler());
+let st: async.TaskStatus[i32] = async.task_start(t);
+while (true) {
+    match (st) {
+        Done(v) => { break; },
+        Suspended(w) => {
+            // This scheduler waits on w itself; serve watches w.set on its
+            // reactor and compares w.until with its clock.
+            st = async.task_resume(t, async.wait_any(w.set, w.until));
+        }
+    }
+}
 ```
 
----
+`task_resume(t, wake)` makes the parked `wait_any` answer `wake`. A task
+that finishes releases its runtime record, so a scheduler only drops its
+handle. `async.call_start(f, a, b)` is the same for a two-argument
+function: it answers `Returned(v)` with no task record when `f` does not
+park, or `Parked(call, w)`, which the scheduler resumes with
+`call_resume`. `std/serve` holds a parked handler this way.
 
-## 6. Deterministic simulation: the `Driver` seam and `std/sim`
+**Cancellation.** `task_resume(t, Wake.Cancelled)` runs the task on with
+every wait answering `Cancelled`, and no wait parks again. So a
+cancelled task leaves through its own control flow, its `defer`s run,
+and the scheduler always gets `Done`. A disconnected client's handler
+winds down this way. `async.task_cancelled()` tells code in a task that
+the task is cancelled.
 
-Everything nondeterministic the combinators do funnels through one seam: the
-`async.Driver` trait (`poll_ready` / `now` / `timer` / `drop_token`). Each
-combinator has an `*_on(drv, …)` sibling — `gather_on` / `race_on` /
-`with_deadline_on` — carrying the loop; the plain forms delegate to it with the
-real driver (whose methods are exactly the `poll` / `monotonic_ns` /
-`wasm_timer_pollable` / `wasm_pollable_drop` builtins, the last two on the
-wasi targets only: elsewhere a timer is the wait's timeout and a drop does
-nothing).
+**The interpreter** has no tasks. No task is ever current, so
+`task_start` runs its entry to completion, `spawn` gives a ready future,
+and `wait_any` blocks. A future that must wait under `async.wait` gives
+`None` there. `sim.block_on` and `block_on` behave as they do in
+compiled code.
 
-`std/sim` substitutes a virtual driver (`docs/DST-PLATFORM-BRIEF.md`): a
-virtual clock starting at 0 ns that advances only inside `poll_ready`, tokens
-that encode their ready-at time, and a seeded PRNG breaking readiness ties —
-so a whole fan-out is a pure function of the seed, on every backend
-**including the interpreter** (where fd-backed futures never resolve on the
-real driver). Deadlines become exact virtual-time assertions instead of
-sleeps:
+## 8. Fan-out in a handler
+
+A handler takes its effects from its platform (E080), and its scheduler
+is the serve loop. So it starts each upstream call as a task, combines
+the futures, and waits with `async.wait`. It parks once for all of them:
+
+```fern
+import "std/async";
+import "std/fetch";
+import "std/http";
+import "std/platform";
+import "std/serve";
+import "std/time";
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    let calls: async.Future[Result[HttpResponse, fetch.FetchError]][] = [
+        async.spawn(() => plat.http(fetch.get("https://example.com/"))),
+        async.spawn(() => plat.http(fetch.get("https://example.org/"))),
+    ];
+    let until: Instant = plat.instant().add(time.duration_millis(200));
+    match (async.wait(async.with_deadline(until, calls))) {
+        Some(answers) => {
+            let n: i32 = 0;
+            for a in answers {
+                if (a.is_some()) {
+                    n = n + 1;
+                }
+            }
+            return http.ok(n.to_string() + " answered in time");
+        },
+        None => { return http.text(503, "cancelled"); }
+    }
+}
+```
+
+`plat.deadline()`, when it is set, is the request's own deadline as an
+instant, so `async.with_deadline(at, calls)` can take it directly. Under
+a `sim_platform.SimPlatform` and `sim.run_tasks` the same handler parks
+on the scripted network's latencies, and its deadline is an instant on
+the virtual clock. The run is then the same on every target.
+
+## 9. Deterministic simulation: `std/sim`
+
+`std/sim` gives a virtual clock that starts at 0 ns and moves only when
+the simulation drives a wait, and a seeded generator
+(`docs/DST-PLATFORM-BRIEF.md`). A whole run is then a function of the
+seed, on every target. Deadlines become exact virtual-time assertions in
+place of sleeps:
 
 ```fern
 import "std/async";
@@ -181,27 +313,36 @@ import "std/time";
 
 let d: sim.Sim = sim.new(7);
 let fs: async.Future[string][] = [
-    sim.future_at(d, sim.at(time.duration_millis(40)), "late"),   // ready at 40ms of virtual time
-    sim.future_at(d, sim.at(time.duration_millis(10)), "early")   // ready at 10ms
+    sim.future_at(sim.at(time.duration_millis(40)), "late"),    // ready at 40 ms of virtual time
+    sim.future_at(sim.at(time.duration_millis(10)), "early"),   // ready at 10 ms
 ];
-let got: Option[string][] = async.with_deadline_on(d, time.duration_millis(25), fs);
-// got == [None, Some("early")], and d.elapsed() is exactly 25ms
+let got: Option[Option[string][]] = sim.block_on(d, async.with_deadline(sim.at(time.duration_millis(25)), fs));
+// got == Some([None, Some("early")]), and d.elapsed() is exactly 25 ms
 ```
 
 `sim.at(offset)` is the virtual `Instant` `offset` after the simulation
-starts. `sim.future_at(d, at, v)` resolves to `v` at that instant;
-`sim.future_chain(d, at, step, n, v)` re-suspends `n` times (the
-shape of a read loop that parks on each chunk) before resolving. See
-`tests/stdlib/sim_driver_test.fern`.
+starts. `sim.future_at(at, v)` is ready with `v` at that instant.
+`sim.future_chain(at, step, n, v)` waits `n` more times, `step` apart,
+before it is ready: the shape of a read loop that parks on each chunk.
+
+`sim.run_tasks(d, entries, cancel_at)` runs its entries as tasks in
+virtual time. It resumes the task whose wait is due soonest, and the seed
+breaks a tie between tasks.
+
+A task waits for a deadline or a
+cancellation: a pair in a wait set never becomes ready under the
+simulation. `cancel_at[i]`, when it is `Some`, is the virtual instant at
+which task `i` is cancelled: a scripted disconnect. `Sim.advance_to(at)`
+inside a task parks until `at`. Code in a task that calls `async.wait`
+parks on `run_tasks` the same way.
 
 ### Scripted upstreams: `std/sim_fetch`
 
-`sim_fetch.Net` is a `fetch.Transport` under the sim clock: names, listeners
-and routes whose scripted answers carry a first-byte latency, a chunking
-schedule and a close policy. The real client runs against it unchanged
-(`fetch.send_on`, or `plat.http` over a `sim_platform.SimPlatform`), and
-`sim.run_tasks(drv, entries, cancel_at)` (§8) drives a fan-out of such
-fetches in virtual time.
+`sim_fetch.Net` is a `fetch.Transport` on the sim clock: names,
+listeners and routes whose scripted answers carry a first-byte latency, a
+chunk schedule and a close policy. The real client runs against it
+unchanged (`fetch.send_on`, or `plat.http` over a
+`sim_platform.SimPlatform`):
 
 ```fern
 // UP is the upstream's address; fetch_via(plat, path) answers the body of
@@ -213,194 +354,41 @@ let n: sim_fetch.Net = sim_fetch.new(d).host("up.test", [UP]).listen(UP, 80, tim
 let plat: sim_platform.SimPlatform = sim_platform.new(d, n);
 let entries: (() => string)[] = [() => fetch_via(plat, "/a"), () => fetch_via(plat, "/b")];
 let got: async.TaskStatus[string][] = sim.run_tasks(d, entries, [None, None]);
-// /b answers at 15ms of virtual time and /a at 35ms
+// /b answers at 15 ms of virtual time and /a at 35 ms
 ```
 
-Faults are scripted answers: `sim_fetch.reset()` closes the connection with
-nothing sent, `silent()` never answers (the client's timeout or a
-cancellation ends the fetch), `cut(n)` delivers only the first `n` bytes,
-and `held()` keeps the connection open and quiet after them.
+Faults are scripted answers:
+
+- `sim_fetch.reset()` closes the connection with nothing sent.
+- `silent()` never answers: the client's timeout or a cancellation ends
+  the fetch.
+- `cut(n)` sends only the first `n` bytes.
+- `held()` keeps the connection open and quiet after those bytes.
 `n.flaky(addr, port, path, percent, fault)` answers that share of the
-requests with `fault`, chosen by the sim's seeded generator. `sim.sweep_seeds(n, prop)` runs
-`prop(seed)` over seeds `1..n` and returns the first failing seed (0 if all
-pass), with `Sim.rng_state()` available for lockstep assertions. See
-`tests/stdlib/sim_fetch_test.fern` and `tests/stdlib/sim_platform_test.fern`.
+requests with `fault`, chosen by the sim's seeded generator.
+`sim.sweep_seeds(n, prop)` runs `prop(seed)` over seeds `1..n` and
+answers the first seed that fails (0 if all pass), and `Sim.rng_state()`
+is there for lockstep assertions. See `tests/stdlib/sim_fetch_test.fern`
+and `tests/stdlib/sim_platform_test.fern`.
 
-That purity claim is itself property-tested: the harness in
-`internal/testing/e2e/sim_property_test.go` generates random sim programs —
-scripted upstream futures with random latencies, chunk schedules, and
-faults (fail, stall, partial, and flaky ones that draw on the sim PRNG),
-driven through random `gather_on` / `race_on` / `with_deadline_on`
-pipelines — and requires interp, native x86-64, and wasm to print
-byte-identical digests (results, winners, `None` slots, the virtual clock,
-`rng_state`). Any backend divergence on a sim
-program is a real bug, never a flake; a failure prints the whole
-program and its generator seed for replay
-(`TestSimProperty` / `TestSimProperty_Regressions` /
-`FuzzSimProperty`).
+## 10. The reactor: `async.Driver`
 
-## 7. HTTP fan-out: `fetch.send` under the task combinators
-
-There is one HTTP client, `fetch.send`, and it is how concurrent fetches are
-written too. Each entry of `async.gather_tasks` / `race_tasks` /
-`with_deadline_tasks` runs as a task, the client's waits park it (§8), and
-the combinator waits on all of them at once:
-
-```fern
-import "std/async";
-import "std/fetch";
-
-function status_of(url: string): i32 {
-    match (fetch.send(fetch.get(url))) {
-        Ok(resp) => { return resp.status; },
-        Err(e) => { return 0 - 1; }
-    }
-    return 0 - 1;
-}
-
-function main(): i32 {
-    let both: (() => i32)[] = [
-        () => status_of("http://cache.internal/key"),
-        () => status_of("http://primary.internal/key"),
-    ];
-    let statuses: i32[] = async.gather_tasks(both, 0 - 2);
-    return statuses.len();        // both fetches overlapped on one thread
-}
-```
-
-Every fetch keeps the whole client: DNS, TLS, redirects, the request's
-timeouts, content decoding, a `Host` header naming the URL's authority, and a
-typed `FetchError` for each failure. `race_tasks` answers the first to finish
-and cancels the rest, whose fetches end as `FetchError.Cancelled` after
-closing their sockets.
-
----
-
-## 8. Tasks: parking a call chain
-
-`async.wait_any(set, timeout)` waits for any of the (fd, interest) pairs
-in `set` (1 readable, 2 writable), bounded by `timeout`, an
-`Option[Duration]` (`None` waits without limit),
-and answers the index of the pair that became ready or -1 at the timeout.
-With no task current it blocks: one `poll` for a read-only set, a reactor
-made for the call otherwise. Under a scheduler it *parks*: the compiler
-lowers every function that reaches the park to a resumable form, so
-the whole call chain above the wait saves its live locals and returns to the
-scheduler, and runs on from the wait when the scheduler resumes it. Nothing
-is written at the call site: a function that calls `wait_any`, or calls one
-that does, is lowered that way by reachability (`compiler/suspend.fern`).
-The fetch client's waits are such calls: `net.read_deadline`, the DNS
-exchange's receive waits and `dns.connect_race`'s connect wait all go
-through `wait_any`, so a `fetch.send` inside a task parks at each of them.
-
-```fern
-let t: async.Task[i32] = async.task_new(() => handler());
-let st: async.TaskStatus[i32] = async.task_start(t);
-match (st) {
-    Done(v) => { … },
-    Suspended(w) => {
-        // w.set and w.timeout are what the task waits for; here the
-        // scheduler waits on them itself.
-        let woke: i32 = async.wait_any(w.set, w.timeout);
-        st = async.task_resume(t, woke);
-    },
-    Cancelled => { … }
-}
-async.task_free(t);
-```
-
-`task_resume(t, woke)` makes the parked `wait_any` answer `woke`;
-`task_cancel(t)` runs the task on with every wait answering
-`async.cancelled()` and never parking again, which is how a disconnected
-client's handler winds down through its own control flow (`defer`s
-included). The interpreter keeps the blocking fallback: no task is ever
-current, so `task_start` runs its entry to completion and both paths behave
-as a plain program does. `std/serve`'s stateless loop is the scheduler for
-handlers: a handler that parks becomes a flight the loop watches on its
-reactor, and the loop serves other connections until the flight runs on
-and answers.
-
-Inside a task, fan out with the task combinators. Each runs its entries as
-tasks of the calling task and parks on the union of their waits, so a
-handler that fetches from two upstreams parks once for both (once #12456
-lets a handler call them):
-
-```fern
-let both: (() => Result[HttpResponse, fetch.FetchError])[] = [() => plat.http(a), () => plat.http(b)];
-let rs: Result[HttpResponse, fetch.FetchError][] = async.gather_tasks(both, fallback);
-let (won, first) = async.race_tasks(both, fallback);
-let timed: Option[Result[HttpResponse, fetch.FetchError]][] = async.with_deadline_tasks(time.duration_millis(200), both);
-```
-
-`gather_tasks(entries, on_incomplete)` answers every result in order;
-`race_tasks(entries, none_val)` answers `(index, value)` of the first to
-finish and cancels the rest; `with_deadline_tasks(deadline, entries)`
-answers `Some(value)` for each that finished in time and `None` for each
-cancelled at the deadline. A cancelled child is not abandoned: `task_cancel`
-runs it on with its waits answering `cancelled()`, so it leaves through its
-own exit paths and its `defer`s run, and a task that is itself cancelled
-cancels its children the same way. The `Future` combinators (`gather`,
-`race`, `with_deadline`, §3) park too when called inside a task, since the
-driver's wait is a `wait_any`. With no task current a combinator's own wait
-blocks; under the blocking fallback each entry runs to its end inside
-`task_start`, in order, so the first entry wins every race.
-A parked frame keeps what it holds: a `str` or byte view read after the
-park still sees its owner, and a closure sharing a mutated scalar with the
-frame still shares it (`TestSelfHostTaskFrame`).
-The simulation drives tasks too: `sim.run_tasks(drv, entries, cancel_at)`
-runs its entries as tasks in virtual time, each move of the clock
-(`Sim.advance_to`, a `poll_ready`, any `wait_any`) a park the driver answers
-when that moment is the earliest any task is due, and `cancel_at[i]`, when
-`Some`, is the virtual instant task `i` is cancelled at, a scripted disconnect. A handler's
-`plat.http` over a `SimPlatform` parks on the scripted network's latencies
-and, cancelled while it waits, answers `FetchError.Cancelled` — the same bytes
-on every target (`TestSelfHostSimTasks`).
-A streamed request body parks the same way: with `serve.Config.stream_bodies`
-a handler starts on its request's header block, and `req.body_stream()`
-pulls the bytes as the handler reads them, each pull a `wait_any` on the
-connection under the body's data-rate deadline (`std/stream`'s source,
-`docs/NET-P3-SUSPENSION-PLAN.md` §3.9). The pull is a closure the stream
-calls, so this is the indirect call that reaches a park.
-`docs/NET-P3-SUSPENSION-PLAN.md` is the design.
-
-## 9. How it works (one paragraph)
-
-A `Future[T]` is either a ready value or an fd plus a continuation. The
-combinators gather the pending futures' fds, block once in the universal `poll`
-builtin (poll(2) / ppoll(2) on native; a `-1` stub on interp/wasm), resume the
-future whose fd is ready (its continuation does the actual non-blocking read),
-and repeat until done. One thread, overlapping I/O, no function coloring, no
-green-thread stacks, no compiler transform — it rides enums, closures, and loops
-that every backend already lowers. See `docs/ASYNC-REDESIGN.md`.
+`async.Driver` is the reactor that a scheduler watches descriptors
+with: `watch`, `unwatch`, `wait_into`, signals, the parent watch, and the
+io_uring receive and zero-copy send paths. `async.real_driver()` is
+epoll, kqueue or wasi:io/poll, and `real_driver_io_uring()` uses
+io_uring on Linux. `std/serve`'s loop is generic over it, and `sim.Sim`
+implements it for tests of the loop. Futures and tasks do not use it
+directly.
 
 ## Current limitations
 
-- `Pending` futures resolve on **native** (fd-backed, via poll(2)/ppoll(2)),
-  on **wasm** (pollable-backed, via wasi:io/poll — `poll` forwards to it) and
-  on the **interpreter** (a reactor over the handles). The wait token is
-  portable: `tcp_pollable(c)` is the raw fd on native and a real wasi:io/poll
-  pollable handle on wasm, so a future over a socket overlaps under `gather`
-  everywhere.
-- A task parks only in compiled code (§8), on x86-64, arm64 and wasm alike.
-  Under the interpreter the task combinators and `sim.run_tasks` run their
-  entries one after another.
-- A task cancelled while the fetch client resolves a name sees the resolver's
-  `NoReply` (as `FetchError.Dns`), not `Cancelled`: the DNS exchange's waits
-  answer `cancelled()` as a passed deadline. Its connect and read waits
-  report the cancellation (`net.Abandoned`, `net.Interrupted`), which
-  the client maps to `FetchError.Cancelled`.
-- `with_deadline` enforces its deadline on **both** native and wasm: native via
-  `poll(2)`'s timeout arg; wasm by appending a real timer pollable
-  (`monotonic-clock` `subscribe-duration`) to the poll set each round, so the
-  timer firing is the deadline. (This needed the composer to export both `now`
-  and `subscribe-duration` on one `monotonic-clock` import instance — see
-  `docs/ASYNC-FUTURE-UNIFICATION.md`.)
-- `race`, `with_deadline`, and `gather` when its wait fails cancel every
-  future they abandon (`__drop_losers`): the future's pollable is dropped
-  first, since on wasm it is a child of its socket and wasmtime traps with
-  "resource has children" otherwise, and then its continuation is resumed with
-  `cancelled()` and closes the socket.
-- `std/async` is now the **single** reactor — the legacy `std/task`, `std/reactor`,
-  and `std/wasm_reactor` modules it was distilled from have all been deleted.
-  `gather` / `race` / `with_deadline` over `Future[T]` cover the native (fd) and
-  wasm (pollable) paths alike.
+- A task parks only in compiled code, on x86-64, arm64 and wasm alike.
+  The interpreter runs a spawned task to its end in place (section 7).
+- A task cancelled while the fetch client resolves a name sees the
+  resolver's `NoReply` (as `FetchError.Dns`), not `Cancelled`: the DNS
+  exchange takes a cancelled wait as a passed deadline. Its connect and
+  read waits report the cancellation (`net.Interrupted`,
+  `net.Abandoned`), which the client maps to `FetchError.Cancelled`.
+- On wasm a wait's pairs are made into wasi:io pollables for each wait,
+  and a deadline is a `monotonic-clock` timer pollable in the same poll.

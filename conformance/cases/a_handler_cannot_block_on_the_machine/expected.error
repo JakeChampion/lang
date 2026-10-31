@@ -1,0 +1,2 @@
+E080
+handler `handle` reaches `tcp_pollable` (`tcp`) around its platform `plat`: handle -> async__block_on -> async__wait_any -> async____block -> async____wait_readable -> tcp_pollable

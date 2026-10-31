@@ -19,12 +19,12 @@ function plat(): mock_platform.MockPlatform {
 
 function test_a_fresh_id(): test.TestOutcome {
   let resp: HttpResponse = http.respond(echo(http.request("GET", "/"), plat()));
-  return test.assert_eq(resp.body_string() + "|" + header(resp, "x-request-id"), "0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d|0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d");
+  return test.assert_eq(resp.body_text_lossy() + "|" + header(resp, "x-request-id"), "0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d|0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d");
 }
 
 function test_an_inbound_id_is_kept(): test.TestOutcome {
   let resp: HttpResponse = http.respond(echo(http.request("GET", "/").with_header("X-Request-Id", " req-7.b "), plat()));
-  return test.assert_eq(resp.body_string() + "|" + header(resp, "x-request-id"), "req-7.b|req-7.b");
+  return test.assert_eq(resp.body_text_lossy() + "|" + header(resp, "x-request-id"), "req-7.b|req-7.b");
 }
 
 function test_a_bad_inbound_id_is_replaced(): test.TestOutcome {
@@ -35,7 +35,7 @@ function test_a_bad_inbound_id_is_replaced(): test.TestOutcome {
   let spaced: HttpResponse = http.respond(echo(http.request("GET", "/").with_header("X-Request-Id", "a b"), plat()));
   let too_long: HttpResponse = http.respond(echo(http.request("GET", "/").with_header("X-Request-Id", long), plat()));
   let twice: HttpResponse = http.respond(echo(HttpRequest { ...http.request("GET", "/"), headers: http.request("GET", "/").headers.append("X-Request-Id", "one").append("X-Request-Id", "two") }, plat()));
-  let got: string = spaced.body_string() + "|" + too_long.body_string() + "|" + twice.body_string();
+  let got: string = spaced.body_text_lossy() + "|" + too_long.body_text_lossy() + "|" + twice.body_text_lossy();
   return test.assert_eq(got, "0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d|0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d|0a1b2c3d0a1b2c3d0a1b2c3d0a1b2c3d");
 }
 

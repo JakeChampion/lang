@@ -160,7 +160,6 @@ They are outside the public library inventory below.
 | `std/result` | [Results and errors](../internal/stdlib/std/result.fern.md) |
 | `std/semver` | [Semantic version values](../internal/stdlib/std/semver.fern.md) |
 | `std/serve` | [HTTP server execution](../internal/stdlib/std/serve.fern.md) |
-| `std/set` | [Generic distinct-value sets](../internal/stdlib/std/set.fern.md) |
 | `std/signal` | [Process signal policy](../internal/stdlib/std/signal.fern.md) |
 | `std/sim` | [Deterministic asynchronous execution](../internal/stdlib/std/sim.fern.md) |
 | `std/sim_fetch` | [Scripted HTTP network responses](../internal/stdlib/std/sim_fetch.fern.md) |

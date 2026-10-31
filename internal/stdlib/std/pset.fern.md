@@ -177,8 +177,33 @@ pub function (s: PSet[T: cmp.Hash + cmp.Eq]) is_subset(other: PSet[T]): boolean 
   return true;
 }
 
-pub function (s: PSet[T: cmp.Hash + cmp.Eq]) equals(other: PSet[T]): boolean {
-  return s.len() == other.len() && s.is_subset(other);
+impl[T: cmp.Hash + cmp.Eq] cmp.Eq for PSet[T] {
+  function eq(self: PSet[T], other: PSet[T]): boolean {
+    return self.len() == other.len() && self.is_subset(other);
+  }
+}
+
+// The sum does not depend on the order of the elements, so equal sets give equal hashes.
+impl[T: cmp.Hash] cmp.Hash for PSet[T] {
+  function hash(self: PSet[T]): i32 {
+    return self.fold(17, (h: i32, x: T) => h + x.hash());
+  }
+}
+
+impl[T: cmp.Display] cmp.Display for PSet[T] {
+  function to_string(self: PSet[T]): string {
+    let out: string = "{";
+    let xs: T[] = self.to_array();
+    let i: i32 = 0;
+    while (i < xs.len()) {
+      if (i > 0) {
+        out = out + ", ";
+      }
+      out = out + xs[i].to_string();
+      i = i + 1;
+    }
+    return out + "}";
+  }
 }
 
 pub function (s: PSet[T: cmp.Hash + cmp.Eq]) filter(pred: (T) => boolean): PSet[T] {

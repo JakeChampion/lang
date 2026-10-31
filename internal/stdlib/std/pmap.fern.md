@@ -838,4 +838,53 @@ pub function (m: PMap[K: cmp.Hash + cmp.Eq, V]) difference(other: PMap[K, V]): P
 pub function (m: PMap[K, V]) is_valid(): boolean {
   return node_valid(m, 0, 0);
 }
+
+impl[K: cmp.Hash + cmp.Eq, V: cmp.Eq] cmp.Eq for PMap[K, V] {
+  function eq(self: PMap[K, V], other: PMap[K, V]): boolean {
+    if (self.len() != other.len()) {
+      return false;
+    }
+    let ks: K[] = self.keys();
+    let vs: V[] = self.values();
+    let i: i32 = 0;
+    while (i < ks.len()) {
+      match (other.get(ks[i])) {
+        Some(v) => {
+          if (v != vs[i]) {
+            return false;
+          }
+        },
+        None => {
+          return false;
+        }
+      }
+      i = i + 1;
+    }
+    return true;
+  }
+}
+
+// The sum does not depend on the order of the entries, so equal maps give equal hashes.
+impl[K: cmp.Hash, V: cmp.Hash] cmp.Hash for PMap[K, V] {
+  function hash(self: PMap[K, V]): i32 {
+    return self.fold(17, (h: i32, k: K, v: V) => h + (k.hash() * 31 + v.hash()));
+  }
+}
+
+impl[K: cmp.Display, V: cmp.Display] cmp.Display for PMap[K, V] {
+  function to_string(self: PMap[K, V]): string {
+    let out: string = "{";
+    let ks: K[] = self.keys();
+    let vs: V[] = self.values();
+    let i: i32 = 0;
+    while (i < ks.len()) {
+      if (i > 0) {
+        out = out + ", ";
+      }
+      out = out + ks[i].to_string() + ": " + vs[i].to_string();
+      i = i + 1;
+    }
+    return out + "}";
+  }
+}
 ```

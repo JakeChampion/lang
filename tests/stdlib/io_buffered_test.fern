@@ -451,7 +451,20 @@ function test_line_reader_empty_and_nul(): test.TestOutcome {
   return test.assert_true(empty.len() == 0 && nul.len() == 2 && nul[0] == "x\x00" && nul[1] == "yy\x00");
 }
 
+// Darwin has no /dev/full, the device that refuses every write.
+function has_dev_full(): boolean {
+  match (open_writer("/dev/full")) {
+    Ok(_) => {
+      return true;
+    },
+    Err(_) => {
+      return false;
+    }
+  }
+}
+
 function main(): i32 {
+  let no_full: boolean = !has_dev_full();
   let r: test.TestRunner = test.new("std/io_buffered BytesWriter");
   r = r.it("empty", test_empty);
   r = r.it("write_string", test_write_string);
@@ -467,10 +480,10 @@ function main(): i32 {
   r = r.it("BufWriter write_u64 digit widths", test_buf_writer_write_u64);
   r = r.it("BufWriter write_i64 sign and minimum", test_buf_writer_write_i64);
   r = r.it("BufWriter close writes what is held", test_buf_writer_close_writes);
-  r = r.it("BufWriter close reports the refused write", test_buf_writer_close_refused);
-  r = r.it("BufWriter close with nothing held", test_buf_writer_close_empty);
-  r = r.it("BufWriter write answers a refused flush", test_buf_writer_write_reports_failed_flush);
-  r = r.it("BufWriter failure is answered again and kept", test_buf_writer_failure_is_sticky);
+  r = r.skip_if(no_full, "BufWriter close reports the refused write", "the host has no /dev/full", test_buf_writer_close_refused);
+  r = r.skip_if(no_full, "BufWriter close with nothing held", "the host has no /dev/full", test_buf_writer_close_empty);
+  r = r.skip_if(no_full, "BufWriter write answers a refused flush", "the host has no /dev/full", test_buf_writer_write_reports_failed_flush);
+  r = r.skip_if(no_full, "BufWriter failure is answered again and kept", "the host has no /dev/full", test_buf_writer_failure_is_sticky);
   r = r.it("line readers answer a read failure as Err", test_readers_answer_read_failure);
   r = r.it("LineReader answers invalid UTF-8 as Err", test_line_reader_answers_invalid_text);
   r = r.it("LineReader keeps terminators", test_line_reader_keeps_terminators);

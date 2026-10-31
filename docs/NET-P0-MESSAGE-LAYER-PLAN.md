@@ -2,6 +2,8 @@
 
 Status: [record] done; #9853 is closed, and the framing path and the serve loop allocate nothing per hello request.
 
+Note: #12725 changed the `std/async` API that this record names: one future family over `Future[T]`, typed wakes, and deadlines as instants. `docs/ASYNC.md` describes the current surface.
+
 What is left of #9853's byte-based message layer and its exit criterion B
 (zero allocations per request in the framing path for the hello handler),
 planned from a measurement of what the path allocates today. It also records

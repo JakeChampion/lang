@@ -1496,7 +1496,7 @@ impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self ==
 function main(): i32 { let a: P = P{x:1}; let b: P = P{x:1}; if (a == b) { return 1; } return 0; }`,
 			"does not implement `Eq`"},
 		{`function main(): i32 { let a: i32[] = [1,2]; let b: i32[] = [1,2]; if (a == b) { return 1; } return 0; }`,
-			"structural equality for arrays"},
+			"i32[] cannot implement `Eq`: compare its parts instead"},
 	}
 	for _, c := range reject {
 		err := checkSource(t, c.src)
@@ -1539,6 +1539,41 @@ function main(): i32 {
 }`
 	if err := checkSource(t, ok); err != nil {
 		t.Errorf("composite == with derived Eq should type-check, got: %v", err)
+	}
+}
+
+func TestArrayAndTupleImpls(t *testing.T) {
+	const traits = `trait Eq { function eq(self: Self, other: Self): boolean; }
+trait Ord { function cmp(self: Self, other: Self): i32; }
+impl Eq for i32 { function eq(self: i32, other: i32): boolean { return self - other == 0; } }
+impl Ord for i32 { function cmp(self: i32, other: i32): i32 { return self - other; } }
+impl[T: Eq] Eq for T[] { function eq(self: T[], other: T[]): boolean { return self.len() == other.len(); } }
+impl[T: Eq] Eq for [T] { function eq(self: [T], other: [T]): boolean { return self.len() == other.len(); } }
+impl[A: Ord, B: Ord] Ord for (A, B) { function cmp(self: (A, B), other: (A, B)): i32 { return self.0.cmp(other.0); } }
+function same[T: Eq](a: T, b: T): boolean { return a.eq(b); }
+struct S { a: i32 }
+`
+	cases := []struct {
+		name, body, want string
+	}{
+		{"array ==", `let a: i32[] = [1]; if (a == [1]) { return 1; }`, ""},
+		{"nested array bound", `if (same([[1]], [[1]])) { return 1; }`, ""},
+		{"slice ==", `let a: i32[] = [1]; let v: [i32] = a[:]; if (v == v) { return 1; }`, ""},
+		{"tuple <", `let p: (i32, i32) = (1, 2); if (p < (1, 3)) { return 1; }`, ""},
+		{"tuple method", `let p: (i32, i32) = (1, 2); return p.cmp((1, 2));`, ""},
+		{"unmet element bound", `if (same([S { a: 1 }], [S { a: 1 }])) { return 1; }`,
+			"type argument T = S[] does not implement trait Eq required by same"},
+		{"unmet == bound", `let a: S[] = [S { a: 1 }]; if (a == a) { return 1; }`, "does not implement `Eq`"},
+		{"tuple with no impl", `let t: (i32, i32, i32) = (1, 2, 3); if (t < t) { return 1; }`, "does not implement `Ord`"},
+	}
+	for _, c := range cases {
+		err := checkSource(t, traits+"function main(): i32 { "+c.body+" return 0; }")
+		switch {
+		case c.want == "" && err != nil:
+			t.Errorf("%s: want no error, got %v", c.name, err)
+		case c.want != "" && (err == nil || !strings.Contains(err.Error(), c.want)):
+			t.Errorf("%s: want an error containing %q, got %v", c.name, c.want, err)
+		}
 	}
 }
 
@@ -3995,13 +4030,18 @@ func TestBareVariantResolvesAgainstExpectedType(t *testing.T) {
 	}
 	bad := map[string]string{
 		"no annotation": `function f(): i32 { let a = Foo; return 0; }`,
-		"comparison":    `function f(a: A): boolean { return a == Foo; }`,
 	}
 	for name, body := range bad {
 		err := checkSource(t, enums+body+"\nfunction main(): i32 { return 0; }")
 		if err == nil || !strings.Contains(err.Error(), "declared in multiple enums") {
 			t.Errorf("%s: want E036 with no expected type, got %v", name, err)
 		}
+	}
+	// The left operand of a comparison gives the right one its expected type.
+	// A has no Eq, so the check can still fail, but not on the variant.
+	cmp := enums + "function f(a: A): boolean { return a == Foo; }\nfunction main(): i32 { return 0; }"
+	if err := checkSource(t, cmp); err != nil && strings.Contains(err.Error(), "declared in multiple enums") {
+		t.Errorf("comparison: want the left operand to pick A, got %v", err)
 	}
 }
 

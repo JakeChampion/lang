@@ -161,10 +161,9 @@ const serveH2StateSource = `import "std/http";
 import "std/platform";
 import "std/serve";
 import "std/time";
-import "core/int";
 
 function handle(n: i32, req: HttpRequest, plat: platform.Host): (i32, HttpResponse) {
-  return (n + 1, http.ok(req.path + "=" + int.int_to_string(n + 1)));
+  return (n + 1, http.ok(req.path + "=" + (n + 1).to_string()));
 }
 
 function main(): i32 {

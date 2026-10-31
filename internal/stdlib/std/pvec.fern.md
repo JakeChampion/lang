@@ -66,6 +66,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
+import "core/cmp";
 import "core/iter";
 ```
 
@@ -638,5 +639,50 @@ pub function (v: PVec[T]) is_valid(): boolean {
     return false;
   }
   return __pv_valid_root(v.root, v.shift, off);
+}
+
+impl[T: cmp.Eq] cmp.Eq for PVec[T] {
+  function eq(self: PVec[T], other: PVec[T]): boolean {
+    return self.len == other.len && cmp.eq_arrays(self.to_array(), other.to_array());
+  }
+}
+
+// Vectors compare element by element, in lexicographic order.
+impl[T: cmp.Ord] cmp.Ord for PVec[T] {
+  function cmp(self: PVec[T], other: PVec[T]): i32 {
+    let xs: T[] = self.to_array();
+    let ys: T[] = other.to_array();
+    let i: i32 = 0;
+    while (i < xs.len() && i < ys.len()) {
+      let c: i32 = xs[i].cmp(ys[i]);
+      if (c != 0) {
+        return c;
+      }
+      i = i + 1;
+    }
+    return xs.len().cmp(ys.len());
+  }
+}
+
+impl[T: cmp.Hash] cmp.Hash for PVec[T] {
+  function hash(self: PVec[T]): i32 {
+    return self.fold(17, (h: i32, x: T) => h * 31 + x.hash());
+  }
+}
+
+impl[T: cmp.Display] cmp.Display for PVec[T] {
+  function to_string(self: PVec[T]): string {
+    let out: string = "[";
+    let xs: T[] = self.to_array();
+    let i: i32 = 0;
+    while (i < xs.len()) {
+      if (i > 0) {
+        out = out + ", ";
+      }
+      out = out + xs[i].to_string();
+      i = i + 1;
+    }
+    return out + "]";
+  }
 }
 ```
