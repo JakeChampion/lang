@@ -24,16 +24,16 @@ record; a closed epic alone is not validation evidence.
 | Directory listing APIs | directory-entry names | `Err(InvalidUtf8(path))`; `Dir.entries` uses an empty error path |
 | `read_link`, `getcwd`, `mounts` | link targets, current path, mount fields | `Err(InvalidUtf8)` |
 | `hostname`, `uname_field` | kernel identity fields | empty text, as for a failed OS request |
-| `utf8.from_bytes` | anywhere | `None` |
+| `utf8.from_bytes` | anywhere | `Err(Utf8Error)` with the offset of the first bad byte |
 | `http` header values, request path | the peer | refused, 400 |
 | `HttpRequest.body_string` | the peer | `Err(BodyError.NotUtf8)`, 400 as a response; `body_bytes` is raw |
 | `dns.decode_name` | the wire | `Err(Malformed)` |
 | `url.decode` / `form_decode` | an escape | U+FFFD per ill-formed unit; `*_decode_bytes` are raw |
-| `ByteStream.read_all_string` | a byte cursor | `None` (#10950); `read_all` is raw |
+| `ByteStream.read_all_string` | a byte cursor | `Err(Utf8Error)`; `read_all` is raw |
 | `ByteStream.read_line` | a byte cursor | U+FFFD, since its `None` means end of input |
-| `BytesWriter.into_string` | the program's own `write_byte` | `None` (#10950); `into_bytes` is raw |
+| `BytesWriter.into_string` | the program's own `write_byte` | `Err(Utf8Error)`; `into_bytes` is raw |
 | `HttpResponse.body_string` | the program's own `BodyBytes` | U+FFFD; `body_bytes` is raw |
-| Regex replacements, splits and captures | byte-oriented matches | `None` when text would be invalid; explicit byte variants preserve raw output |
+| Regex replacements, splits and captures | byte-oriented matches | `Err(TextError)` when text would be invalid; explicit byte variants preserve raw output |
 | `u8.to_ascii_string` | a byte value | empty text for bytes above 127; ASCII, including NUL, is preserved |
 | `rng_bytes` / `random_bytes` | pseudorandom or system random bytes | owned `u8[]`, with no text conversion |
 | `Reader.read_chunk` | one physical read | `Err(InvalidUtf8(""))`; the consumed bytes are not retried or carried into the next call; `read_chunk_bytes` is raw |
@@ -60,7 +60,7 @@ Reader and builder publication now enforce their text contracts. PEG checks
 committed capture boundaries before constructing any result text, including
 earlier captures overwritten under the same name. Regex keeps byte-oriented
 matching: replacing `.` in `é` can
-split its encoding, so the checked text result is `None` while the byte
+split its encoding, so the checked text result is `Err(TextError)` while the byte
 variant returns the exact output.
 
 Streamed HTTP request bodies now retain private buffers in `Cell[u8[]]`.
