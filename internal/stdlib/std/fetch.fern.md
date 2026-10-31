@@ -2767,12 +2767,12 @@ function __read_response[T: Transport](tr: T, conn: __Conn, req: Request, starte
         from = next;
         continue;
       },
-      Unfinished => {
+      Incomplete => {
         if (eof) {
           return Err(__closed_early(buf.len() - from));
         }
       },
-      Rejected(code) => {
+      Malformed(code) => {
         return Err(__rejected(code));
       }
     }

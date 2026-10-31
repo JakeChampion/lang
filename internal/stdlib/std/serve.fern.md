@@ -1864,7 +1864,7 @@ enum __Behind { Pipelined, Idle, Expecting, Illformed(i32) }
 <<33 function __serve_behind(fr: http.HttpFraming, none: http.HttpFramed): (__Behind, http.HttpFramed)>>=
 function __serve_behind(fr: http.HttpFraming, none: http.HttpFramed): (__Behind, http.HttpFramed) {
   match (fr) {
-    http.Framed(f) => {
+    http.Complete(f) => {
       return (Pipelined, f);
     },
     http.Incomplete => {
@@ -3977,7 +3977,7 @@ function __serve_unframed[D: async.Driver](drv: D, c: __Conns, fls: __Flights, a
     return (c, fls, false, Idle, c.last);
   }
   match (http.parse_request_head_from(c.bufs[at], c.offs[at], opts.limits, c.last.request)) {
-    http.Headed(h) => {
+    http.Complete(h) => {
       return __serve_stream(drv, c, fls, at, h, start, opts, stop, count, clk);
     },
     http.Incomplete => {
