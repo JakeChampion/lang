@@ -105,7 +105,7 @@ function test_json_error_answers_400(): test.TestOutcome {
     },
     Pass => {}
   }
-  let body: string = resp.body_string();
+  let body: string = resp.body_text_lossy();
   if (!body.contains("\"title\":\"Malformed JSON\"")) {
     return test.fail("body: " + body);
   }
@@ -262,8 +262,8 @@ function test_produced_body_trailers(): test.TestOutcome {
     },
     (): HeaderMap => headers.new().append("x-parts", parts.get().to_string()),
   );
-  if (resp.body_string() != "abab") {
-    return test.fail("body " + resp.body_string());
+  if (resp.body_text_lossy() != "abab") {
+    return test.fail("body " + resp.body_text_lossy());
   }
   match (resp.body) {
     BodyChunks(p) => {

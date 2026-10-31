@@ -62,7 +62,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "core/int";
 import "std/i64";
 import "std/utf8";
 import "core/error";
@@ -163,7 +162,7 @@ pub function (e: DerError) message(): string {
       return "der: a high tag number";
     },
     UnexpectedTag(want, got) => {
-      return "der: tag " + int.int_to_string(got) + " where " + int.int_to_string(want) + " was wanted";
+      return "der: tag " + got.to_string() + " where " + want.to_string() + " was wanted";
     },
     BadValue(what) => {
       return "der: malformed " + what;

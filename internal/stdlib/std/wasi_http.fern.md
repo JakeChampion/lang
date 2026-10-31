@@ -40,7 +40,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<12 function future_get(fut: i32): FutureGot>>
 
-<<13 pub struct Outgoing>>
+<<13 pub struct Limits>>
 
 <<14 pub function error_code(n: i32): ErrorCode>>
 
@@ -52,9 +52,9 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<18 impl error.Error for OutgoingError>>
 
-<<19 pub function outgoing(o: Outgoing): Result[HttpResponse, OutgoingError]>>
+<<19 pub function outgoing(o: http.Outgoing, limits: Limits): Result[HttpResponse, OutgoingError]>>
 
-<<20 function build_request(o: Outgoing): Result[i32, OutgoingError]>>
+<<20 function build_request(o: http.Outgoing): Result[i32, OutgoingError]>>
 ```
 
 ### `module introduction`
@@ -73,7 +73,6 @@ import "std/platform";
 import "std/stream";
 import "core/error";
 import "core/cmp";
-import "core/int";
 ```
 
 ### `3 enum WasiHttpMethod`
@@ -482,11 +481,11 @@ function response_consume(resp: i32): Result[i32, i32];
 function response_drop(resp: i32): void;
 ```
 
-### `13 pub struct Outgoing`
+### `13 pub struct Limits`
 
 ```fern
-<<13 pub struct Outgoing>>=
-pub struct Outgoing { method: string, authority: string, tls: boolean, target: string, headers: HeaderMap, body: u8[], connect: Duration, inactivity: Duration, body_cap: i32 }
+<<13 pub struct Limits>>=
+pub struct Limits { connect: Duration, inactivity: Duration, body_cap: i32 }
 
 pub enum ErrorCode {
   DnsTimeout,
@@ -705,7 +704,7 @@ function __name_late(c: ErrorCode): string {
       return "internal-error";
     },
     ErrorCode.Unknown(n) => {
-      return "error-code " + int.int_to_string(n);
+      return "error-code " + n.to_string();
     },
     _ => {
       return "";
@@ -761,11 +760,11 @@ impl error.Error for OutgoingError {}
 impl cmp.Display for OutgoingError {}
 ```
 
-### `19 pub function outgoing(o: Outgoing): Result[HttpResponse, OutgoingError]`
+### `19 pub function outgoing(o: http.Outgoing, limits: Limits): Result[HttpResponse, OutgoingError]`
 
 ```fern
-<<19 pub function outgoing(o: Outgoing): Result[HttpResponse, OutgoingError]>>=
-pub function outgoing(o: Outgoing): Result[HttpResponse, OutgoingError] {
+<<19 pub function outgoing(o: http.Outgoing, limits: Limits): Result[HttpResponse, OutgoingError]>>=
+pub function outgoing(o: http.Outgoing, limits: Limits): Result[HttpResponse, OutgoingError] {
   let req: i32 = build_request(o)?;
   let body: i32 = 0;
   match (request_body(req)) {
@@ -778,7 +777,7 @@ pub function outgoing(o: Outgoing): Result[HttpResponse, OutgoingError] {
     }
   }
   let fut: i32 = 0;
-  match (outgoing_handle(req, 1, options_of(o))) {
+  match (outgoing_handle(req, 1, options_of(limits))) {
     Ok(h) => {
       fut = h as i32;
     },
@@ -789,15 +788,15 @@ pub function outgoing(o: Outgoing): Result[HttpResponse, OutgoingError] {
   }
   write_body(body, o.body);
   let resp: i32 = await_response(fut)?;
-  return read_response(resp, o.body_cap);
+  return read_response(resp, limits.body_cap);
 }
 ```
 
-### `20 function build_request(o: Outgoing): Result[i32, OutgoingError]`
+### `20 function build_request(o: http.Outgoing): Result[i32, OutgoingError]`
 
 ```fern
-<<20 function build_request(o: Outgoing): Result[i32, OutgoingError]>>=
-function build_request(o: Outgoing): Result[i32, OutgoingError] {
+<<20 function build_request(o: http.Outgoing): Result[i32, OutgoingError]>>=
+function build_request(o: http.Outgoing): Result[i32, OutgoingError] {
   let fields: i32 = fields_new();
   let i: i32 = 0;
   while (i < o.headers.names.len()) {
@@ -818,7 +817,7 @@ function build_request(o: Outgoing): Result[i32, OutgoingError] {
   }
   request_set_method(req, method, other);
   let scheme: i32 = 0;
-  if (o.tls) {
+  if (o.scheme == "https") {
     scheme = 1;
   }
   request_set_scheme(req, 1, scheme, "");
@@ -839,11 +838,11 @@ function method_index(method: string): i32 {
   return 9;
 }
 
-function options_of(o: Outgoing): i32 {
+function options_of(limits: Limits): i32 {
   let opts: i32 = options_new();
-  options_set_connect_timeout(opts, 1, o.connect.as_nanos());
-  options_set_first_byte_timeout(opts, 1, o.inactivity.as_nanos());
-  options_set_between_bytes_timeout(opts, 1, o.inactivity.as_nanos());
+  options_set_connect_timeout(opts, 1, limits.connect.as_nanos());
+  options_set_first_byte_timeout(opts, 1, limits.inactivity.as_nanos());
+  options_set_between_bytes_timeout(opts, 1, limits.inactivity.as_nanos());
   return opts;
 }
 

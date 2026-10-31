@@ -54,6 +54,7 @@ to compile with E066 instead of failing at run time.
 | `-qemu` | `qemu-aarch64` | User-mode emulator for `-run` on a foreign ISA. For `-target x86-64-linux` the default becomes `qemu-x86_64`. |
 | `-O` | off | Release build: drop every `assert()` after type-checking, without evaluating its condition. `-check` and `-interp` always keep asserts. |
 | `-g` | off | Emit a symbol table and DWARF so debuggers, `nm`, backtraces and profilers can name functions and source lines. |
+| `-remap-path-prefix FROM=TO` | none | With `-g`: write `TO` for the `FROM` prefix of the compile directory and each source path, so the image does not depend on where it was built. `FROM` matches whole path components. Repeat the flag for more prefixes; the last match wins. |
 | `-size` | off | Build for size over speed, and leave the backtrace walk out unless `-backtrace` asks for it. `FERN_SIZE=1` makes it the default. |
 | `-harden` | off | `arm64-linux` and `x86-64-linux` executables: stack canaries. ARM64 also uses BTI landing pads and signed return addresses. |
 | `-backtrace` | on | Print a frame-pointer backtrace under a fatal abort's cause line. `-backtrace=false` leaves the walk out of the binary. |

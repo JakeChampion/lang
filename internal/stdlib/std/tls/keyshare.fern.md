@@ -64,7 +64,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "core/int";
 import "std/crypto/ecdsa";
 import "std/crypto/mlkem768";
 import "std/crypto/montgomery";
@@ -235,10 +234,10 @@ impl cmp.Display for KeyShareError {}
 pub function (e: KeyShareError) message(): string {
   match (e) {
     EntropyLength(n, want) => {
-      return "tls keyshare: " + int.int_to_string(n) + " bytes of entropy, want " + int.int_to_string(want);
+      return "tls keyshare: " + n.to_string() + " bytes of entropy, want " + want.to_string();
     },
     ShareLength(n, want) => {
-      return "tls keyshare: the peer's share is " + int.int_to_string(n) + " bytes, want " + int.int_to_string(want);
+      return "tls keyshare: the peer's share is " + n.to_string() + " bytes, want " + want.to_string();
     },
     LowOrder => {
       return "tls keyshare: the peer's X25519 key is of low order";

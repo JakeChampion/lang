@@ -6,6 +6,8 @@ This module provides generic reductions over arrays of numbers.
 
 Each function takes the operator traits of `core/ops` as bounds. `sum` and `product` start from `Zero` and `One`, and `sum_with` and `product_with` take an explicit start value.
 
+The `core/ops.Gcd` trait gives `gcd` and `lcm` to i32, i64, u32 and u64. The integer modules import `core/ops`, so `import "std/i32"` also makes `n.gcd(m)` available. `xs.gcd_all()` and `xs.lcm_all()` in `std/array` use this trait for each width.
+
 ## Contracts
 
 A reduction does not change the overflow or precision rules of the element type. An integer sum wraps as the element type wraps. `avg` and `variance` return `None` for an empty array.

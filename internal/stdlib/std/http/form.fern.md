@@ -131,7 +131,7 @@ pub function parse(req: HttpRequest): Result[Form, FormError] {
   if (!__is_form(ct)) {
     return Err(NotAForm(ct));
   }
-  match (req.body_string()) {
+  match (req.body_text()) {
     Ok(text) => {
       return Ok(Form { fields: url.query_parse(text) });
     },

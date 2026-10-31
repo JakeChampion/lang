@@ -10,7 +10,7 @@ import (
 )
 
 func fnLabels(asm string) []string {
-	re := regexp.MustCompile(`(?m)^(__fn_[A-Za-z_0-9]+|__method_[A-Za-z_0-9]+):`)
+	re := regexp.MustCompile(`(?m)^(__fn_[A-Za-z_0-9$]+|__method_[A-Za-z_0-9$]+):`)
 	var out []string
 	for _, m := range re.FindAllStringSubmatch(asm, -1) {
 		out = append(out, m[1])
@@ -188,7 +188,7 @@ function main(): i32 {
 		}
 	}
 
-	callRe := regexp.MustCompile(`(?m)^[ \t]+call[ \t]+(__fn_[A-Za-z_0-9]+|__method_[A-Za-z_0-9]+)\b`)
+	callRe := regexp.MustCompile(`(?m)^[ \t]+call[ \t]+(__fn_[A-Za-z_0-9$]+|__method_[A-Za-z_0-9$]+)(?:\.[ru])?[ \t]*$`)
 	defined := map[string]bool{}
 	for _, l := range fnLabels(asm) {
 		defined[l] = true

@@ -66,7 +66,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "core/int";
 import "std/array";
 import "std/string";
 import "core/error";
@@ -214,9 +213,9 @@ impl cmp.Display for FrameError {}
 <<8 pub function (e: FrameError) message(): string>>=
 pub function (e: FrameError) message(): string {
   if (e.stream == 0) {
-    return "h2 frame: connection error " + int.int_to_string(e.code) + ": " + e.reason;
+    return "h2 frame: connection error " + e.code.to_string() + ": " + e.reason;
   }
-  return "h2 frame: stream " + int.int_to_string(e.stream) + " error " + int.int_to_string(e.code) + ": " + e.reason;
+  return "h2 frame: stream " + e.stream.to_string() + " error " + e.code.to_string() + ": " + e.reason;
 }
 ```
 
@@ -249,7 +248,7 @@ pub function read(buf: u8[], from: i32, max_frame: i32): Result[Read, FrameError
   let flags: i32 = buf[from + 4] as i32;
   let stream: i32 = __be32(buf, from + 5) & MAX_WINDOW;
   if (len > max_frame) {
-    return Err(__connection(FRAME_SIZE_ERROR, "frame of " + int.int_to_string(len) + " bytes over the " + int.int_to_string(max_frame) + " allowed"));
+    return Err(__connection(FRAME_SIZE_ERROR, "frame of " + len.to_string() + " bytes over the " + max_frame.to_string() + " allowed"));
   }
   if (buf.len() - from - HEADER_LEN < len) {
     return Ok(More);
@@ -333,7 +332,7 @@ function __unpadded(flags: i32, stream: i32, payload: u8[]): Result[u8[], FrameE
   }
   let pad: i32 = payload[0] as i32;
   if (pad >= payload.len()) {
-    return Err(__connection(PROTOCOL_ERROR, "padding of " + int.int_to_string(pad) + " bytes in a payload of " + int.int_to_string(payload.len())));
+    return Err(__connection(PROTOCOL_ERROR, "padding of " + pad.to_string() + " bytes in a payload of " + payload.len().to_string()));
   }
   return Ok(__bytes_range(payload, 1, payload.len() - pad));
 }
@@ -375,7 +374,7 @@ function __priority_frame(stream: i32, payload: u8[]): Result[Frame, FrameError]
     return Err(__connection(PROTOCOL_ERROR, "PRIORITY on stream 0"));
   }
   if (payload.len() != 5) {
-    return Err(FrameError { code: FRAME_SIZE_ERROR, stream: stream, reason: "PRIORITY of " + int.int_to_string(payload.len()) + " bytes" });
+    return Err(FrameError { code: FRAME_SIZE_ERROR, stream: stream, reason: "PRIORITY of " + payload.len().to_string() + " bytes" });
   }
   return Ok(PriorityFrame(stream, __priority(payload, 0)));
 }
@@ -385,21 +384,21 @@ function __rst_stream(stream: i32, payload: u8[]): Result[Frame, FrameError] {
     return Err(__connection(PROTOCOL_ERROR, "RST_STREAM on stream 0"));
   }
   if (payload.len() != 4) {
-    return Err(__connection(FRAME_SIZE_ERROR, "RST_STREAM of " + int.int_to_string(payload.len()) + " bytes"));
+    return Err(__connection(FRAME_SIZE_ERROR, "RST_STREAM of " + payload.len().to_string() + " bytes"));
   }
   return Ok(RstStream(stream, __be32(payload, 0)));
 }
 
 function __settings(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
   if (stream != 0) {
-    return Err(__connection(PROTOCOL_ERROR, "SETTINGS on stream " + int.int_to_string(stream)));
+    return Err(__connection(PROTOCOL_ERROR, "SETTINGS on stream " + stream.to_string()));
   }
   let ack: boolean = (flags & 1) != 0;
   if (ack && payload.len() != 0) {
     return Err(__connection(FRAME_SIZE_ERROR, "SETTINGS ACK with a payload"));
   }
   if (payload.len() % 6 != 0) {
-    return Err(__connection(FRAME_SIZE_ERROR, "SETTINGS of " + int.int_to_string(payload.len()) + " bytes"));
+    return Err(__connection(FRAME_SIZE_ERROR, "SETTINGS of " + payload.len().to_string() + " bytes"));
   }
   let settings: Setting[] = [];
   let at: i32 = 0;
@@ -417,16 +416,16 @@ function __settings(flags: i32, stream: i32, payload: u8[]): Result[Frame, Frame
 <<13 function __setting(id: i32, value: i32): Result[Setting, FrameError]>>=
 function __setting(id: i32, value: i32): Result[Setting, FrameError] {
   if (id == SETTINGS_ENABLE_PUSH && value != 0 && value != 1) {
-    return Err(__connection(PROTOCOL_ERROR, "SETTINGS_ENABLE_PUSH of " + int.int_to_string(value)));
+    return Err(__connection(PROTOCOL_ERROR, "SETTINGS_ENABLE_PUSH of " + value.to_string()));
   }
   if (id == SETTINGS_INITIAL_WINDOW_SIZE && value < 0) {
     return Err(__connection(FLOW_CONTROL_ERROR, "SETTINGS_INITIAL_WINDOW_SIZE over 2^31-1"));
   }
   if (id == SETTINGS_MAX_FRAME_SIZE && (value < MIN_FRAME_SIZE || value > MAX_FRAME_SIZE)) {
-    return Err(__connection(PROTOCOL_ERROR, "SETTINGS_MAX_FRAME_SIZE of " + int.int_to_string(value)));
+    return Err(__connection(PROTOCOL_ERROR, "SETTINGS_MAX_FRAME_SIZE of " + value.to_string()));
   }
   if (value < 0) {
-    return Err(__connection(PROTOCOL_ERROR, "setting " + int.int_to_string(id) + " over 2^31-1"));
+    return Err(__connection(PROTOCOL_ERROR, "setting " + id.to_string() + " over 2^31-1"));
   }
   return Ok(Setting { id: id, value: value });
 }
@@ -444,27 +443,27 @@ function __push_promise(flags: i32, stream: i32, payload: u8[]): Result[Frame, F
 
 function __ping(flags: i32, stream: i32, payload: u8[]): Result[Frame, FrameError] {
   if (stream != 0) {
-    return Err(__connection(PROTOCOL_ERROR, "PING on stream " + int.int_to_string(stream)));
+    return Err(__connection(PROTOCOL_ERROR, "PING on stream " + stream.to_string()));
   }
   if (payload.len() != 8) {
-    return Err(__connection(FRAME_SIZE_ERROR, "PING of " + int.int_to_string(payload.len()) + " bytes"));
+    return Err(__connection(FRAME_SIZE_ERROR, "PING of " + payload.len().to_string() + " bytes"));
   }
   return Ok(Ping((flags & 1) != 0, payload));
 }
 
 function __goaway(stream: i32, payload: u8[]): Result[Frame, FrameError] {
   if (stream != 0) {
-    return Err(__connection(PROTOCOL_ERROR, "GOAWAY on stream " + int.int_to_string(stream)));
+    return Err(__connection(PROTOCOL_ERROR, "GOAWAY on stream " + stream.to_string()));
   }
   if (payload.len() < 8) {
-    return Err(__connection(FRAME_SIZE_ERROR, "GOAWAY of " + int.int_to_string(payload.len()) + " bytes"));
+    return Err(__connection(FRAME_SIZE_ERROR, "GOAWAY of " + payload.len().to_string() + " bytes"));
   }
   return Ok(GoAway(GoAwayFrame { last_stream: __be32(payload, 0) & MAX_WINDOW, code: __be32(payload, 4), debug: __bytes_range(payload, 8, payload.len()) }));
 }
 
 function __window_update(stream: i32, payload: u8[]): Result[Frame, FrameError] {
   if (payload.len() != 4) {
-    return Err(__connection(FRAME_SIZE_ERROR, "WINDOW_UPDATE of " + int.int_to_string(payload.len()) + " bytes"));
+    return Err(__connection(FRAME_SIZE_ERROR, "WINDOW_UPDATE of " + payload.len().to_string() + " bytes"));
   }
   let increment: i32 = __be32(payload, 0) & MAX_WINDOW;
   if (increment == 0) {

@@ -8,8 +8,10 @@ import "std/i32";
 // top holds a string across the whole thing.
 function leaf(n: i32): i32 {
   let set: i32[] = [timer_fd(1), 1];
-  let r: i32 = async.wait_any(set, None);
-  return r + n;
+  if let Woke(r) = async.wait_any(set, None) {
+    return r + n;
+  }
+  return n - 1;
 }
 
 function mid(n: i32): i32 {
@@ -34,7 +36,7 @@ function top(n: i32): i32 {
 
 function main(): i32 {
   // Driven by hand: each park hands back its wait; the same wait outside
-  // the task is the scheduler's, and the word 7 is what wait_any answers.
+  // the task is the scheduler's, and Woke(7) is what wait_any answers.
   let t: async.Task[i32] = async.task_new(() => top(5));
   let st: async.TaskStatus[i32] = async.task_start(t);
   let parks: i32 = 0;
@@ -45,16 +47,14 @@ function main(): i32 {
       Done(v) => { out = v; going = false; },
       Suspended(w) => {
         parks = parks + 1;
-        let woke: i32 = async.wait_any(w.set, w.timeout);
-        st = async.task_resume(t, 7);
-      },
-      Cancelled => { out = 0 - 2; going = false; }
+        let woke: async.Wake = async.wait_any(w.set, w.until);
+        st = async.task_resume(t, Woke(7));
+      }
     }
   }
-  async.task_free(t);
   // parks=2, out = ((7+5) + (7+15)) * 100 + len("held5") = 3405
   print("parks " + parks.to_string() + " out " + out.to_string());
-  // The same functions with no task: wait_any blocks on the timer and answers 0.
+  // The same functions with no task: wait_any blocks on the timer and answers Woke(0).
   print("plain " + top(5).to_string());
   return 0;
 }

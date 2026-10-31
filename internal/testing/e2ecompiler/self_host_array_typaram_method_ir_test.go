@@ -38,7 +38,7 @@ func TestSelfHostArrayTyparamMethodIR(t *testing.T) {
 		t.Fatalf("abs stdlib root: %v", err)
 	}
 
-	runDriver := func(args ...string) (string, int) {
+	runDriver := func(env []string, args ...string) (string, int) {
 		argv := append([]string{driver}, args...)
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
@@ -46,6 +46,7 @@ func TestSelfHostArrayTyparamMethodIR(t *testing.T) {
 		} else {
 			cmd = exec.Command(runner[0], append(runner[1:], argv...)...)
 		}
+		cmd.Env = append(os.Environ(), env...)
 		out, _ := cmd.Output()
 		return string(out), cmd.ProcessState.ExitCode()
 	}
@@ -58,15 +59,19 @@ func TestSelfHostArrayTyparamMethodIR(t *testing.T) {
 				t.Fatalf("write entry: %v", err)
 			}
 			_, want := runFixtureInterp(t, entry, "")
-			if out, _ := runDriver(entry, root, "-decide"); strings.TrimSpace(out) != "ir" {
+			if out, _ := runDriver(nil, entry, root, "-decide"); strings.TrimSpace(out) != "ir" {
 				t.Errorf("%s decide = %q, want \"ir\"", tc.name, strings.TrimSpace(out))
 			}
-			asm, _ := runDriver(entry, root)
+			asm, _ := runDriver(nil, entry, root)
 			if len(asm) == 0 {
 				t.Fatalf("%s: driver emitted 0 bytes", tc.name)
 			}
 			if !strings.Contains(asm, "__arrm_") && !monomorphisedArrayFn.MatchString(asm) {
 				t.Errorf("%s: no monomorphised __arrm_ clone or std/array instance in asm (method did not ride the IR array-method path)", tc.name)
+			}
+			// A small clone is spliced into its caller, so look for it with splicing off.
+			if unspliced, _ := runDriver([]string{"FERN_SEM_INLINE=0"}, entry, root); !strings.Contains(unspliced, "__arrm_") {
+				t.Errorf("%s: no monomorphised __arrm_ clone in asm (method did not ride the IR array-method path)", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, "atm_"+tc.name+"_bin", asm)
 			var cmd *exec.Cmd

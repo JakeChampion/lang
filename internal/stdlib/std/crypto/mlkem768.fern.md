@@ -50,7 +50,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "core/int";
 import "std/crypto";
 import "core/error";
 import "core/cmp";
@@ -96,19 +95,19 @@ impl cmp.Display for MlKemError {}
 pub function (e: MlKemError) message(): string {
   match (e) {
     SeedLength(n) => {
-      return "mlkem768: the seed is " + int.int_to_string(n) + " bytes, want 32";
+      return "mlkem768: the seed is " + n.to_string() + " bytes, want 32";
     },
     MessageLength(n) => {
-      return "mlkem768: the message is " + int.int_to_string(n) + " bytes, want 32";
+      return "mlkem768: the message is " + n.to_string() + " bytes, want 32";
     },
     EncapsulationKeyLength(n) => {
-      return "mlkem768: the encapsulation key is " + int.int_to_string(n) + " bytes, want 1184";
+      return "mlkem768: the encapsulation key is " + n.to_string() + " bytes, want 1184";
     },
     DecapsulationKeyLength(n) => {
-      return "mlkem768: the decapsulation key is " + int.int_to_string(n) + " bytes, want 2400";
+      return "mlkem768: the decapsulation key is " + n.to_string() + " bytes, want 2400";
     },
     CiphertextLength(n) => {
-      return "mlkem768: the ciphertext is " + int.int_to_string(n) + " bytes, want 1088";
+      return "mlkem768: the ciphertext is " + n.to_string() + " bytes, want 1088";
     },
     EncapsulationKeyModulus => {
       return "mlkem768: the encapsulation key has a coefficient not below q";

@@ -73,7 +73,6 @@ var stdModuleReach = map[string]string{
 	"std/result":        "",
 	"std/semver":        "",
 	"std/serve":         "config,env,fs,host,ktls,log,now,pollable,proc,random,reactor,sysinfo,tcp,unix,uring",
-	"std/set":           "",
 	"std/signal":        "signal",
 	"std/sim":           "now,pollable,random,reactor,tcp,uring",
 	"std/sim_fetch":     "config,env,fs,host,ktls,log,now,pollable,random,reactor,tcp,unix,uring",

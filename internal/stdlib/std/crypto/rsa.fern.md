@@ -55,7 +55,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "std/bigint";
-import "core/int";
 import "std/crypto/sha2";
 import "core/error";
 import "core/cmp";
@@ -97,10 +96,10 @@ impl cmp.Display for RsaError {}
 pub function (e: RsaError) message(): string {
   match (e) {
     ModulusTooSmall(bits) => {
-      return "rsa: the modulus is " + int.int_to_string(bits) + " bits, want at least 1024";
+      return "rsa: the modulus is " + bits.to_string() + " bits, want at least 1024";
     },
     ModulusTooLarge(bits) => {
-      return "rsa: the modulus is " + int.int_to_string(bits) + " bits, want at most 16384";
+      return "rsa: the modulus is " + bits.to_string() + " bits, want at most 16384";
     },
     BadExponent => {
       return "rsa: the exponent must be odd, at least 3 and at most 64 bits";

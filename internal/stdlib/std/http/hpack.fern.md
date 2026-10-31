@@ -80,7 +80,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "core/int";
 import "std/array";
 import "std/http/huffman";
 import "std/string";
@@ -151,7 +150,7 @@ pub function (e: HpackError) message(): string {
       return "hpack: header block ends inside a field";
     },
     BadIndex(i) => {
-      return "hpack: no table entry " + int.int_to_string(i);
+      return "hpack: no table entry " + i.to_string();
     },
     BadInteger => {
       return "hpack: integer over 28 bits";
@@ -160,13 +159,13 @@ pub function (e: HpackError) message(): string {
       return "hpack: bad Huffman string";
     },
     BadSizeUpdate(n) => {
-      return "hpack: dynamic table size update to " + int.int_to_string(n) + " not allowed here";
+      return "hpack: dynamic table size update to " + n.to_string() + " not allowed here";
     },
     TooLarge(n) => {
-      return "hpack: header list over " + int.int_to_string(n) + " bytes";
+      return "hpack: header list over " + n.to_string() + " bytes";
     },
     TooMany(n) => {
-      return "hpack: more than " + int.int_to_string(n) + " header fields";
+      return "hpack: more than " + n.to_string() + " header fields";
     }
   }
   return "hpack: error";

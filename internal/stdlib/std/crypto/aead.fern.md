@@ -40,7 +40,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "core/int";
 import "core/error";
 import "core/cmp";
 ```
@@ -81,10 +80,10 @@ impl cmp.Display for AeadError {}
 pub function (e: AeadError) message(): string {
   match (e) {
     KeyLength(n) => {
-      return "aead: the key is " + int.int_to_string(n) + " bytes, the wrong length for this cipher";
+      return "aead: the key is " + n.to_string() + " bytes, the wrong length for this cipher";
     },
     NonceLength(n) => {
-      return "aead: the nonce is " + int.int_to_string(n) + " bytes, want 12";
+      return "aead: the nonce is " + n.to_string() + " bytes, want 12";
     },
     Forged => {
       return "aead: the message does not verify";

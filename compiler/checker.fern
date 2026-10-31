@@ -664,7 +664,7 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 0 && name == "__task_leave") {
     return t_i32();
   }
-  if (argc == 2 && name == "__task_park") {
+  if (argc == 2 && (name == "__task_park" || name == "__task_park_until")) {
     return t_i32();
   }
   if (argc == 1 && name == "__task_wait") {
@@ -672,6 +672,9 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   }
   if (argc == 1 && name == "__task_timeout") {
     return t_i32();
+  }
+  if (argc == 1 && name == "__task_until") {
+    return t_i64();
   }
   if (argc == 2 && name == "__task_set_ready") {
     return t_void();
@@ -916,10 +919,13 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__task_park") {
     return ([t_array(t_i32()), t_i32()], true);
   }
+  if (name == "__task_park_until") {
+    return ([t_array(t_i32()), t_i64()], true);
+  }
   if (name == "__task_wait") {
     return ([t_i32()], true);
   }
-  if (name == "__task_timeout") {
+  if (name == "__task_timeout" || name == "__task_until") {
     return ([t_i32()], true);
   }
   if (name == "__task_set_ready") {
@@ -1634,40 +1640,61 @@ function cmp_method_receiver(t: typeinfo.Type): string {
   return "";
 }
 
-function core_cmp_enum(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeUnion(u) = t {
-    return u.name == "Option" || u.name == "Result";
+// cmp_parts gives the parts of a type that core/cmp compares structurally.
+function cmp_parts(t: typeinfo.Type): Option[typeinfo.Type[]] {
+  match (t) {
+    typeinfo.TypeUnion(u) => {
+      if (u.name == "Option" || u.name == "Result") {
+        return Some(u.args);
+      }
+    },
+    _ => {}
   }
-  return false;
+  return None;
 }
 
 // cmp_hint says where a cmp trait for t can come from. core/cmp implements Eq,
-// Ord and Hash for Option and Result when their type arguments do, so the hint
-// moves to the first type argument that is a struct or an enum. Display has no
-// impl for those, nor for an array or a tuple, so the hint says to format the
-// parts instead of offering an impl that the orphan rule would refuse.
+// Ord and Hash for Option and Result when their parts do, so the hint moves
+// to the first part that is not a scalar, or else asks for the import. A type
+// that no module can implement the trait for gets advice on its parts, not an
+// impl that the orphan rule refuses.
 function cmp_hint(t: typeinfo.Type, trait_name: string): string {
   let short: string = slice_unchecked(trait_name, 4, trait_name.len()) + "";
   let label: string = util.demangle(type_label(t));
-  if (core_cmp_enum(t) && trait_name != "cmp.Display") {
-    if let typeinfo.TypeUnion(u) = t {
-      for a in u.args {
-        if (cmp_method_receiver(a) != "") {
-          return label + " implements `" + short + "` when its type arguments do: " + cmp_hint(a, trait_name);
+  let parts: Option[typeinfo.Type[]] = cmp_parts(t);
+  if (trait_name != "cmp.Display") {
+    if let Some(ps) = parts {
+      for a in ps {
+        if (cmp_method_receiver(a) != "" || cmp_parts(a).is_some()) {
+          return label + " implements `" + short + "` when its parts do: " + cmp_hint(a, trait_name);
         }
       }
+      return label + " implements `" + short + "` in core/cmp: add `import \"core/cmp\";`";
     }
   }
   let recv: string = cmp_method_receiver(t);
-  if (recv == "" || core_cmp_enum(t)) {
+  if ((recv == "" || parts.is_some()) && trait_name != "cmp.Display") {
+    return label + " cannot implement `" + short + "`: compare its parts instead";
+  }
+  if (recv == "" || parts.is_some()) {
     return label + " cannot implement `" + short + "`: convert its parts to strings first";
   }
   return util.derive_hint(recv, trait_name, trait_name);
 }
 
-function (s: Scope) has_ord_cmp(t: typeinfo.Type): boolean {
-  let recv: string = cmp_method_receiver(t);
-  return recv != "" && s.has_method("cmp", recv);
+// has_cmp_method says whether t has the `eq` or the `cmp` method that `==` or
+// an order calls.
+function (s: Scope) has_cmp_method(verb: string, t: typeinfo.Type): boolean {
+  let found: Option[MethodSig] = None;
+  if let typeinfo.TypeArray(a) = t {
+    found = s.array_recv_method(verb, a.view);
+  } else if (receiver_key(t) != "") {
+    found = s.lookup_method(verb, receiver_key(t));
+  }
+  if let Some(m) = found {
+    return impl_of_holds(s, t, m.impl_trait);
+  }
+  return false;
 }
 
 function (s: Scope) binop_overload_ret(op: string, lt: typeinfo.Type): typeinfo.Type {
@@ -2110,9 +2137,17 @@ function method_table(methods: MethodSig[]): MethodTable {
   for m in methods {
     names = names.append(m.name);
     simple = simple.append(method_simple_name(m.name));
-    bases = bases.append(parser.parse_type_ref(m.receiver_type).base);
+    bases = bases.append(method_base(m.receiver_type));
   }
   return MethodTable { methods: methods, names: util.name_index(names), simple: util.name_index(simple), bases: bases };
+}
+
+function method_base(receiver: string): string {
+  let tuple: string = parser.tuple_namespace(receiver);
+  if (tuple.len() > 0) {
+    return tuple;
+  }
+  return parser.parse_type_ref(receiver).base;
 }
 
 function (s: Scope) trait_providers(name: string, recv_type: string): MethodSig[] {
@@ -3017,7 +3052,7 @@ function map_shape_msgs(s: Scope, mt: typeinfo.TypeMap): string[] {
     out = out.append(msg);
   }
   if (is_void(mt.value)) {
-    out = out.append("map value type void is not supported — a set of keys is std/set's `Set`");
+    out = out.append("map value type void is not supported — a set of keys is std/pset's `PSet`");
   }
   return out;
 }
@@ -3067,20 +3102,82 @@ function type_implements(s: Scope, t: typeinfo.Type, base: string, module: strin
     }
     return false;
   }
+  if (is_type_variable(t)) {
+    return true;
+  }
   let tn: string = impl_type_name(t);
   if (tn.len() == 0) {
     return false;
   }
   for imp in s.impls {
     if (impl_receiver(imp) == tn && bound_names_trait(base, module, imp.trait_name, imp.trait_module)) {
-      return true;
+      return impl_bounds_hold(s, imp, t);
     }
   }
   return derives_bound(s, tn, base, module);
 }
 
+// impl_bounds_hold says whether the parts of t meet the bounds of the
+// parametric impl imp: impl[T: Eq] Eq for T[] covers i32[][] but not S[] for
+// an S without Eq.
+function impl_bounds_hold(s: Scope, imp: parser.ImplInfo, t: typeinfo.Type): boolean {
+  let pattern: parser.TypeRef = parser.parse_type_ref(imp.impl_type);
+  let names: parser.TypeRef[] = pattern.args;
+  if (pattern.array_depth > 0) {
+    names = [parser.elem_type_ref(pattern)];
+  }
+  let parts: typeinfo.Type[] = impl_parts(t);
+  for i in 0..names.len() {
+    let at: i32 = util.index_of_str(imp.type_params, names[i].base);
+    let leaf: boolean = names[i].args.len() == 0 && names[i].array_depth == 0 && !names[i].is_tuple;
+    if (i < parts.len() && leaf && at >= 0 && at < imp.bounds.len()) {
+      for entry in parser.split_plus_bounds(imp.bounds[at]) {
+        if (!type_implements(s, parts[i], util.base_type_name(entry), imp.module)) {
+          return false;
+        }
+      }
+    }
+  }
+  return true;
+}
+
+// impl_parts gives the parts of t that an impl's type parameters bind: the
+// element of an array, the elements of a tuple, the arguments of a named type.
+function impl_parts(t: typeinfo.Type): typeinfo.Type[] {
+  match (t) {
+    typeinfo.TypeArray(a) => {
+      return [a.elem];
+    },
+    typeinfo.TypeTuple(tup) => {
+      return tup.elements;
+    },
+    typeinfo.TypeUnion(u) => {
+      return u.args;
+    },
+    typeinfo.TypeStruct(st) => {
+      return st.args;
+    },
+    _ => {
+      return [];
+    }
+  }
+  return [];
+}
+
+// impl_of_holds says whether the impl of trait_name that t takes its method
+// from has its bounds met by the parts of t.
+function impl_of_holds(s: Scope, t: typeinfo.Type, trait_name: string): boolean {
+  let tn: string = impl_type_name(t);
+  for imp in s.impls {
+    if (impl_receiver(imp) == tn && imp.trait_name == trait_name) {
+      return impl_bounds_hold(s, imp, t);
+    }
+  }
+  return true;
+}
+
 function impl_receiver(imp: parser.ImplInfo): string {
-  return receiver_namespace(util.base_type_name(imp.impl_type));
+  return receiver_namespace(parser.receiver_namespace(imp.impl_type));
 }
 
 function impl_type_name(t: typeinfo.Type): string {
@@ -3093,6 +3190,12 @@ function impl_type_name(t: typeinfo.Type): string {
     typeinfo.TypeStruct(_) => {},
     typeinfo.TypeUnion(_) => {},
     typeinfo.TypeMap(_) => {},
+    typeinfo.TypeArray(a) => {
+      return if (a.view) { "slice" } else { "Array" };
+    },
+    typeinfo.TypeTuple(tup) => {
+      return parser.tuple_arity_namespace(tup.elements.len());
+    },
     _ => {
       return "";
     }
@@ -4812,6 +4915,7 @@ function builtin_sigs(): string[] {
     "target_arch(): string",
     "target_os(): string",
     "tcp_accept(i32): i32",
+    "tcp_addr_into(i32, boolean, u8[]): i32",
     "tcp_close(i32): i32",
     "tcp_connect_with(u8[], i32, boolean): i32",
     "tcp_ktls(i32, i32, i32, u8[]): i32",
@@ -5023,6 +5127,9 @@ pub function receiver_key(t: typeinfo.Type): string {
     typeinfo.TypeLanes(l) => {
       return typeinfo.lanes_spelling(l.width);
     },
+    typeinfo.TypeTuple(tup) => {
+      return parser.tuple_arity_namespace(tup.elements.len());
+    },
     _ => {
       return "";
     }
@@ -5131,6 +5238,9 @@ function check_call_expr(c: ast.ExprCall, s: Scope): typeinfo.Type {
           return arr_mt;
         }
         recv_type_name = receiver_key(recv_ty);
+        if (tuple_element_field(recv_ty, name)) {
+          recv_type_name = "";
+        }
         if (recv_type_name.len() == 0) {
           if let typeinfo.TypeDyn(d) = recv_ty {
             return dyn_method_type(d.traits, name, s);
@@ -10088,8 +10198,8 @@ pub function unsafe_intrinsics(): string[] {
     "__c_call3", "__c_call3_f32", "__c_call3_f64",
     "__c_call4", "__c_call4_f32", "__c_call4_f64",
     "__task_new", "__task_free", "__task_enter", "__task_leave",
-    "__task_park", "__task_wait", "__task_set_ready", "__task_set_cancelled",
-    "__task_cancelled", "__task_timeout", "__task_cur",
+    "__task_park", "__task_park_until", "__task_wait", "__task_set_ready", "__task_set_cancelled",
+    "__task_cancelled", "__task_timeout", "__task_until", "__task_cur",
     "__syscall3", "__syscall4", "__syscall5", "__syscall6",
   ];
 }
@@ -13935,7 +14045,7 @@ function display_arg_diags(c: ast.ExprCall, s: Scope): util.Diag[] {
   }
   let label: string = type_label(at);
   let advice: string = "give " + label + " a `to_string(): string` method, or " + util.derive_hint(display_dispatch_name(at), "cmp.Display", "cmp.Display");
-  if (cmp_method_receiver(at) == "" || core_cmp_enum(at)) {
+  if (cmp_method_receiver(at) == "" || cmp_parts(at).is_some()) {
     advice = cmp_hint(at, "cmp.Display");
   }
   return [dg_at(
@@ -14152,6 +14262,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
       match (check_expr(mfa.obj, s)) {
         typeinfo.TypeTuple(mtt) => {
           let tdg: util.Diag[] = tuple_field_diags(mfa.field, mtt, mfa.line, mfa.col);
+          if (s.lookup_method(mfa.field, parser.tuple_arity_namespace(mtt.elements.len())).is_some()) {
+            tdg = [];
+          }
           if (tdg.len() > 0) {
             return util.append_diags(out, tdg);
           }
@@ -14279,8 +14392,17 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[], dest: type
     ast.ExprFieldAccess(mfa) => {
       let recv: typeinfo.Type = check_expr(mfa.obj, s);
       match (recv) {
-        typeinfo.TypeTuple(_) => {
-          out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
+        typeinfo.TypeTuple(tup) => {
+          if (tuple_element_field(recv, mfa.field)) {
+            out = util.append_diags(out, callable_arg_diags(c, check_expr(c.callee, s), s));
+          } else if let Some(tmsig) = s.lookup_method(mfa.field, parser.tuple_arity_namespace(tup.elements.len())) {
+            if (c.args.len() != tmsig.param_types.len()) {
+              out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", tmsig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
+            } else {
+              out = util.append_diags(out, method_arg_diags(c, mfa.field, tmsig, recv, s));
+              out = util.append_diags(out, method_type_arg_diags(c, mfa.field, tmsig, recv, s));
+            }
+          }
         },
         typeinfo.TypeI32(it) => {
           if (s.method_missing(recv, mfa.field)) {
@@ -14620,13 +14742,8 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
       || settles_to(b.left, brt, s) || settles_to(b.right, blt, s);
     if (!is_unknown(blt) && !is_unknown(brt) && !eq_widths) {
       out = out.append(dg_at("E041", "cannot compare " + type_label(blt) + " with " + type_label(brt) + ": both sides of \"" + b.op + "\" must have the same type", b.line, b.col));
-    } else if (!is_unknown(blt) && eq_widths && is_composite_type(blt)) {
-      let eqrecv: string = cmp_method_receiver(blt);
-      if (eqrecv == "") {
-        out = out.append(dg_at("E041", "cannot compare values of type " + type_label(blt) + " with \"" + b.op + "\": structural equality for arrays / slices / tuples is not supported — compare elements individually", b.line, b.col));
-      } else if (!s.has_method("eq", eqrecv)) {
-        out = out.append(dg_at("E041", "cannot compare values of type " + util.demangle(type_label(blt)) + " with \"" + b.op + "\": type does not implement `Eq` — " + cmp_hint(blt, "cmp.Eq") + ", so `==` can use structural equality", b.line, b.col));
-      }
+    } else if (!is_unknown(blt) && eq_widths && is_composite_type(blt) && !s.has_cmp_method("eq", blt)) {
+      out = out.append(dg_at("E041", "cannot compare values of type " + util.demangle(type_label(blt)) + " with \"" + b.op + "\": type does not implement `Eq` — " + cmp_hint(blt, "cmp.Eq") + ", so `==` can use structural equality", b.line, b.col));
     }
   }
   if (b.op == "+") {
@@ -14704,10 +14821,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
       let okc_o: boolean = type_eq(olt, t_char()) && type_eq(ort, t_char());
       if (!oki_o && !okf_o && !oks_o && !okc_o) {
         if (type_eq(olt, ort) && is_composite_type(olt)) {
-          let ordrecv: string = cmp_method_receiver(olt);
-          if (ordrecv == "") {
-            out = out.append(dg_at("E041", "cannot order values of type " + type_label(olt) + " with \"" + b.op + "\": structural ordering for arrays / slices / tuples is not supported", b.line, b.col));
-          } else if (!s.has_ord_cmp(olt)) {
+          if (!s.has_cmp_method("cmp", olt)) {
             out = out.append(dg_at("E041", "cannot order values of type " + util.demangle(type_label(olt)) + " with \"" + b.op + "\": type does not implement `Ord` — " + cmp_hint(olt, "cmp.Ord") + ", so ordering can use structural comparison", b.line, b.col));
           }
         } else if (o_both_int) {
@@ -15162,6 +15276,13 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
   }
 
   return out;
+}
+
+function tuple_element_field(t: typeinfo.Type, field: string): boolean {
+  if let typeinfo.TypeTuple(_) = t {
+    return digit_string_to_i32(field) >= 0;
+  }
+  return false;
 }
 
 function tuple_field_diags(field: string, tt: typeinfo.TypeTuple, line: i32, col: i32): util.Diag[] {
@@ -15796,6 +15917,11 @@ function (s: Scope) call_param_types(c: ast.ExprCall): typeinfo.Type[] {
       }
       if let typeinfo.TypeUnion(un) = rt {
         if let Some(msig) = s.lookup_method(mfa.field, un.name) {
+          return s.bound_method_param_types(c, msig, rt);
+        }
+      }
+      if let typeinfo.TypeTuple(tup) = rt {
+        if let Some(msig) = s.lookup_method(mfa.field, parser.tuple_arity_namespace(tup.elements.len())) {
           return s.bound_method_param_types(c, msig, rt);
         }
       }
@@ -17271,7 +17397,7 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
       return true;
     }
   }
-  if (rt.len() >= 4 && slice_unchecked(rt, 0, 4) == "dyn ") {
+  if (rt.len() >= 4 && slice_unchecked(rt, 0, 4) == "dyn " || parser.tuple_namespace(rt).len() > 0) {
     return true;
   }
   let base: string = util.base_type_name(rt);
@@ -17590,7 +17716,7 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
 function registered_intrinsics(): string[] {
   return [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
-    "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_wait",
+    "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
     "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
@@ -17937,7 +18063,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
       }
     }
     if (f2.receiver_name.len() > 0 && !receiver_type_ok(f2.receiver_type, mod)) {
-      out = out.append(dg_at("E021", "method receiver type must be a struct, enum, array, slice, or built-in type, got " + util.base_type_name(f2.receiver_type), f2.line, f2.col));
+      out = out.append(dg_at("E021", "method receiver type must be a struct, enum, array, slice, tuple, or built-in type, got " + util.base_type_name(f2.receiver_type), f2.line, f2.col));
     }
     di = di + 1;
   }
@@ -23176,10 +23302,6 @@ function e021_diags(mod: parser.Module): util.Diag[] {
     let ir: parser.TypeRef = parser.parse_type_ref(im.impl_type);
     if (ir.base == "Vec" && ir.args.len() == 2 && !own_vec) {
       out = out.append(dg_at("E096", im.impl_type + " names no lane type: the portable tier has Vec[2, f64] and Vec[4, f32]", im.line, im.col));
-      continue;
-    }
-    if (im.trait_name != "" && (ir.array_depth > 0 || ir.is_view)) {
-      out = out.append(dg("E021", "`impl … for " + im.impl_type + "`: type must be a struct, enum, or built-in type"));
       continue;
     }
     for trait_req in mod.trait_reqs {

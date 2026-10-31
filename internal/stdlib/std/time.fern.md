@@ -94,7 +94,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "core/cmp";
-import "core/int";
 import "core/error";
 import "std/i64";
 import "std/option";
@@ -610,9 +609,9 @@ pub function (d: Date) day_of_year(): i32 {
 <<7 function __pad2(n: i32): string>>=
 function __pad2(n: i32): string {
   if (n < 10) {
-    return "0" + int.int_to_string(n);
+    return "0" + n.to_string();
   }
-  return int.int_to_string(n);
+  return n.to_string();
 }
 
 function __pad4(n: i32): string {

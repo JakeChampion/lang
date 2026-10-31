@@ -88,7 +88,6 @@ import "std/url";
 import "std/time";
 import "std/i64";
 import "std/publicsuffix";
-import "core/int";
 import "core/error";
 import "core/cmp";
 import "std/option";
@@ -171,7 +170,7 @@ pub function (e: CookieError) message(): string {
       return "a cookie's " + attr + " attribute is not one a browser keeps";
     },
     TooLong(n) => {
-      return "a cookie's name and value are past " + int.int_to_string(n) + " bytes";
+      return "a cookie's name and value are past " + n.to_string() + " bytes";
     },
     Lifetime(cap) => {
       return "a cookie's Max-Age is past " + cap.as_seconds().to_string() + " seconds, 400 days";

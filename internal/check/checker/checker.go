@@ -77,6 +77,7 @@ type Info struct {
 	Generics            map[string]ast.GenericDecl
 	Traits              map[string]*ast.TraitDecl
 	Impls               map[string]map[string]bool
+	ImplDecls           map[string]map[string]*ast.ImplDecl // the declaration of each Impls entry
 	ImplTraitArgs       map[string]map[string][]ast.Type
 	ImplForPattern      map[string]map[string]ast.Type
 	AssocBindings       map[string]map[string]ast.Type
@@ -637,6 +638,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			Generics:            map[string]ast.GenericDecl{},
 			Traits:              map[string]*ast.TraitDecl{},
 			Impls:               map[string]map[string]bool{},
+			ImplDecls:           map[string]map[string]*ast.ImplDecl{},
 			ImplTraitArgs:       map[string]map[string][]ast.Type{},
 			ImplForPattern:      map[string]map[string]ast.Type{},
 			AssocBindings:       map[string]map[string]ast.Type{},
@@ -1166,6 +1168,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		"__task_park":          {Params: []ast.Type{ast.ArrayType{Elem: i32T}, i32T}, Result: i32T},
 		"__task_wait":          {Params: []ast.Type{i32T}, Result: ast.ArrayType{Elem: i32T}},
 		"__task_timeout":       {Params: []ast.Type{i32T}, Result: i32T},
+		"__task_park_until":    {Params: []ast.Type{ast.ArrayType{Elem: i32T}, ast.NumberType{Width: 64, Signed: true}}, Result: i32T},
+		"__task_until":         {Params: []ast.Type{i32T}, Result: ast.NumberType{Width: 64, Signed: true}},
 		"__task_set_ready":     {Params: []ast.Type{i32T, i32T}, Result: ast.VoidType{}},
 		"__task_set_cancelled": {Params: []ast.Type{i32T}, Result: ast.VoidType{}},
 		"__task_cancelled":     {Params: []ast.Type{}, Result: i32T},
@@ -1226,6 +1230,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	}
 	c.info.FuncSigs["tcp_socket_ctl"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_addr_into(fd, peer, out): number — one getsockname, or getpeername
+	// when peer, written into out as the 19-byte sender record that
+	// udp_recvfrom fills. 19, or -errno.
+	c.info.FuncSigs["tcp_addr_into"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.BoolType{}, u8s},
 		Result: ast.NumberType{},
 	}
 	c.info.FuncSigs["tcp_sendfile"] = &ast.FuncType{
@@ -2393,10 +2404,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 					continue
 				}
 				typeName = "slice"
+			case ast.TupleType:
+				typeName = ast.TupleNamespace(len(rt.Elems))
 			default:
 				n, ok := methodTypeName(fn.Receiver.Type)
 				if !ok {
-					c.errfCode(fn.P, "E021", "method receiver type must be a struct, enum, array, slice, or built-in type, got %s", fn.Receiver.Type)
+					c.errfCode(fn.P, "E021", "method receiver type must be a struct, enum, array, slice, tuple, or built-in type, got %s", fn.Receiver.Type)
 					hoistReceiver(fn)
 					continue
 				}
@@ -2487,9 +2500,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		if name, args := namedApplication(impl.Type); c.isBuiltinVec(name, args) {
 			continue
 		}
-		typeName, ok := methodTypeName(impl.Type)
+		typeName, ok := receiverNamespace(impl.Type)
 		if !ok {
-			c.errfCode(impl.TypePos, "E021", "`impl … for %s`: type must be a struct, enum, or built-in type", impl.Type)
+			c.errfCode(impl.TypePos, "E021", "`impl … for %s`: type must be a struct, enum, array, slice, tuple, or built-in type", impl.Type)
 			continue
 		}
 		td, ok := c.info.Traits[impl.Trait]
@@ -2683,6 +2696,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		}
 		if conforms {
 			c.info.Impls[impl.Trait][typeName] = true
+			if c.info.ImplDecls[impl.Trait] == nil {
+				c.info.ImplDecls[impl.Trait] = map[string]*ast.ImplDecl{}
+			}
+			c.info.ImplDecls[impl.Trait][typeName] = impl
 			if len(impl.TraitArgs) > 0 {
 				if c.info.ImplTraitArgs[impl.Trait] == nil {
 					c.info.ImplTraitArgs[impl.Trait] = map[string][]ast.Type{}
@@ -2968,8 +2985,7 @@ func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule strin
 }
 
 func (c *checker) instForReceiver(typeName, name, trait, mangled string, recv ast.Type) string {
-	et, ok := recv.(ast.EnumType)
-	if !ok || len(et.Args) == 0 {
+	if et, ok := recv.(ast.EnumType); ok && len(et.Args) == 0 {
 		return mangled
 	}
 	for _, inst := range c.info.MethodInsts[declSiteKey(typeName, name, trait)] {
@@ -3751,30 +3767,46 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 const cmpImport = "`import \"core/cmp\";`"
 
 // cmpHint says where a cmp trait for t can come from. core/cmp implements Eq,
-// Ord and Hash for Option and Result when their type arguments do, so the hint
-// moves to the first type argument that is a struct or an enum. Display has no
-// impl for those, nor for an array or a tuple, so the hint says to format the
-// parts instead of offering an impl that the orphan rule would refuse.
+// Ord and Hash for Option and Result when their parts do, so the hint moves
+// to the first part that is not a scalar, or else asks for the import. A type
+// that no module can implement the trait for gets advice on its parts, not an
+// impl that the orphan rule refuses.
 func cmpHint(t ast.Type, derive, trait string) string {
-	if e, ok := t.(ast.EnumType); ok && (e.Name == "Option" || e.Name == "Result") && trait != "cmp.Display" {
-		for _, a := range e.Args {
+	short := strings.TrimPrefix(trait, "cmp.")
+	if parts, ok := cmpParts(t); ok && trait != "cmp.Display" {
+		for _, a := range parts {
 			switch a.(type) {
-			case ast.StructType, ast.EnumType:
-				return fmt.Sprintf("%s implements `%s` when its type arguments do: %s", t, strings.TrimPrefix(trait, "cmp."), cmpHint(a, derive, trait))
+			case ast.StructType, ast.EnumType, ast.ArrayType, ast.SliceType, ast.TupleType:
+				return fmt.Sprintf("%s implements `%s` when its parts do: %s", t, short, cmpHint(a, derive, trait))
 			}
 		}
+		return fmt.Sprintf("%s implements `%s` in core/cmp: add %s", t, short, cmpImport)
 	}
 	tn, _ := methodTypeName(t)
-	if e, ok := t.(ast.EnumType); tn == "" || ok && (e.Name == "Option" || e.Name == "Result") {
-		return fmt.Sprintf("%s cannot implement `%s`: convert its parts to strings first", t, strings.TrimPrefix(trait, "cmp."))
+	if _, ok := cmpParts(t); ok || tn == "" {
+		if trait != "cmp.Display" {
+			return fmt.Sprintf("%s cannot implement `%s`: compare its parts instead", t, short)
+		}
+		return fmt.Sprintf("%s cannot implement `%s`: convert its parts to strings first", t, short)
 	}
 	return deriveHint(tn, derive, trait)
+}
+
+// cmpParts gives the parts of a type that core/cmp compares structurally.
+func cmpParts(t ast.Type) ([]ast.Type, bool) {
+	switch t := t.(type) {
+	case ast.EnumType:
+		if t.Name == "Option" || t.Name == "Result" {
+			return t.Args, true
+		}
+	}
+	return nil, false
 }
 
 // displayHint is the advice of an E038 for a print of t.
 func displayHint(t ast.Type) string {
 	tn, _ := methodTypeName(t)
-	if e, ok := t.(ast.EnumType); tn == "" || ok && (e.Name == "Option" || e.Name == "Result") {
+	if _, ok := cmpParts(t); ok || tn == "" {
 		return cmpHint(t, "cmp.Display", "cmp.Display")
 	}
 	return fmt.Sprintf("give %s a `to_string(): string` method, or %s", t, deriveHint(tn, "cmp.Display", "cmp.Display"))
@@ -3875,7 +3907,7 @@ func (c *checker) typeImplsEqAndHash(typeName string) bool {
 	return hasEq && hasHash
 }
 
-const MapVoidValue = "map value type void is not supported — a set of keys is std/set's `Set`"
+const MapVoidValue = "map value type void is not supported — a set of keys is std/pset's `PSet`"
 
 func (c *checker) mapKeyTypeError(k ast.Type) string {
 	switch kt := k.(type) {
@@ -6983,7 +7015,7 @@ func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, s
 			continue
 		}
 		for bi, traitName := range genericFn.Bounds[tp] {
-			tn, ok := methodTypeName(args[i])
+			tn, ok := receiverNamespace(args[i])
 			site := demangle(genericFn.Name)
 			if genericFn.MethodRecv != "" {
 				site = demangle(genericFn.MethodRecv) + "." + genericFn.MethodSimpleName
@@ -6996,7 +7028,7 @@ func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, s
 					}
 				}
 			}
-			if dynAt < 0 && (!ok || !c.info.Impls[traitName][tn]) {
+			if dynAt < 0 && (!ok || !c.implements(args[i], traitName)) {
 				c.errfCode(pos, "E021",
 					"type argument %s = %s does not implement trait %s required by %s",
 					tp, demangle(args[i].String()), demangle(traitName), site)
@@ -7027,6 +7059,107 @@ func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, s
 			}
 		}
 	}
+}
+
+// implements reports whether t implements trait. A parametric impl such as
+// impl[T: Eq] Eq for T[] covers t only when the parts of t bound to its type
+// parameters implement their bounds in turn.
+func (c *checker) implements(t ast.Type, trait string) bool {
+	if _, isParam := t.(ast.ParamType); isParam {
+		return true
+	}
+	tn, ok := receiverNamespace(t)
+	return ok && c.info.Impls[trait][tn] && c.implBoundsHold(t, trait)
+}
+
+// implBoundsHold reports whether the parts of t meet the bounds of t's impl of
+// trait. It holds for an impl with no bounds.
+func (c *checker) implBoundsHold(t ast.Type, trait string) bool {
+	tn, _ := receiverNamespace(t)
+	impl := c.info.ImplDecls[trait][tn]
+	if impl == nil || len(impl.Bounds) == 0 {
+		return true
+	}
+	params := make(map[string]bool, len(impl.TypeParams))
+	for _, tp := range impl.TypeParams {
+		params[tp] = true
+	}
+	sub := map[string]ast.Type{}
+	if !UnifyImplType(impl.Type, t, params, sub) {
+		return true
+	}
+	for tp, traits := range impl.Bounds {
+		part, bound := sub[tp]
+		for _, bt := range traits {
+			if bound && !c.implements(part, bt) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// UnifyImplType binds the type parameters params of an impl's type pattern
+// to the parts of concrete, and reports whether the two match.
+func UnifyImplType(pattern, concrete ast.Type, params map[string]bool, sub map[string]ast.Type) bool {
+	switch p := pattern.(type) {
+	case ast.ParamType:
+		if params[p.Name] {
+			if ex, ok := sub[p.Name]; ok {
+				return ast.Equal(ex, concrete)
+			}
+			sub[p.Name] = concrete
+			return true
+		}
+		return ast.Equal(pattern, concrete)
+	case ast.StructType:
+		if len(p.Args) == 0 && params[p.Name] {
+			if ex, ok := sub[p.Name]; ok {
+				return ast.Equal(ex, concrete)
+			}
+			sub[p.Name] = concrete
+			return true
+		}
+		c, ok := concrete.(ast.StructType)
+		if !ok || c.Name != p.Name || len(c.Args) != len(p.Args) {
+			return false
+		}
+		for i := range p.Args {
+			if !UnifyImplType(p.Args[i], c.Args[i], params, sub) {
+				return false
+			}
+		}
+		return true
+	case ast.EnumType:
+		c, ok := concrete.(ast.EnumType)
+		if !ok || c.Name != p.Name || len(c.Args) != len(p.Args) {
+			return false
+		}
+		for i := range p.Args {
+			if !UnifyImplType(p.Args[i], c.Args[i], params, sub) {
+				return false
+			}
+		}
+		return true
+	case ast.ArrayType:
+		c, ok := concrete.(ast.ArrayType)
+		return ok && UnifyImplType(p.Elem, c.Elem, params, sub)
+	case ast.SliceType:
+		c, ok := concrete.(ast.SliceType)
+		return ok && UnifyImplType(p.Elem, c.Elem, params, sub)
+	case ast.TupleType:
+		c, ok := concrete.(ast.TupleType)
+		if !ok || len(c.Elems) != len(p.Elems) {
+			return false
+		}
+		for i := range p.Elems {
+			if !UnifyImplType(p.Elems[i], c.Elems[i], params, sub) {
+				return false
+			}
+		}
+		return true
+	}
+	return ast.Equal(pattern, concrete)
 }
 
 func (c *checker) implTraitArgsFor(traitName, tn string, ct ast.Type) []ast.Type {
@@ -8090,15 +8223,7 @@ var retiredCollectionSpellings = map[string]string{
 	"Map.clear":   "cleared",
 }
 
-func collectionNamespace(t ast.Type) (string, bool) {
-	switch t.(type) {
-	case ast.ArrayType:
-		return "Array", true
-	case ast.SliceType:
-		return "slice", true
-	}
-	return methodTypeName(t)
-}
+func receiverNamespace(t ast.Type) (string, bool) { return ast.ReceiverNamespace(t) }
 
 func (c *checker) methodsOn(typeName string) []string {
 	prefix := typeName + "."
@@ -8873,6 +8998,7 @@ var UnsafeIntrinsics = map[string]bool{
 	"__task_new": true, "__task_free": true, "__task_enter": true, "__task_leave": true,
 	"__task_park": true, "__task_wait": true, "__task_set_ready": true, "__task_set_cancelled": true,
 	"__task_cancelled": true, "__task_timeout": true, "__task_cur": true,
+	"__task_park_until": true, "__task_until": true,
 	"__syscall3": true, "__syscall4": true, "__syscall5": true, "__syscall6": true,
 }
 
@@ -14149,6 +14275,8 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			case ast.SliceType:
 				_ = t
 				typeName = "slice"
+			case ast.TupleType:
+				typeName = ast.TupleNamespace(len(t.Elems))
 			default:
 				if n, ok := methodTypeName(tt); ok {
 					typeName = n
@@ -14712,9 +14840,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 			if lt != nil && rt != nil && ast.Equal(lt, rt) {
 				switch lt.(type) {
-				case ast.StructType, ast.EnumType:
-					tn, _ := methodTypeName(lt)
-					if mangled, _, ok := c.resolveMethod(tn, "cmp", []string{"Ord"}); ok && c.methodVisibleHere(mangled) {
+				case ast.StructType, ast.EnumType, ast.ArrayType, ast.SliceType, ast.TupleType:
+					tn, _ := receiverNamespace(lt)
+					if mangled, owner, ok := c.resolveMethod(tn, "cmp", []string{"Ord"}); ok && c.methodVisibleHere(mangled) && c.implBoundsHold(lt, owner) {
 						cmpCall := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "cmp"}, Args: []ast.Expr{n.Right}}
 						if rt2 := c.checkExpr(cmpCall, s); rt2 != nil {
 							if nt, isNum := rt2.(ast.NumberType); !isNum || nt.NormalWidth() != 32 {
@@ -14725,9 +14853,6 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 						return ast.BoolType{}
 					}
 					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: type does not implement `Ord` — %s, so ordering can use structural comparison", lt, n.Op, cmpHint(lt, "cmp.Ord", "cmp.Ord"))
-					return ast.BoolType{}
-				case ast.ArrayType, ast.SliceType, ast.TupleType:
-					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: structural ordering for arrays / slices / tuples is not supported", lt, n.Op)
 					return ast.BoolType{}
 				}
 			}
@@ -14812,9 +14937,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 			}
 			if lt != nil && rt != nil && ast.Equal(lt, rt) {
 				switch lt.(type) {
-				case ast.StructType, ast.EnumType:
-					tn, _ := methodTypeName(lt)
-					if mangled, _, ok := c.resolveMethod(tn, "eq", []string{"Eq"}); ok && c.methodVisibleHere(mangled) {
+				case ast.StructType, ast.EnumType, ast.ArrayType, ast.SliceType, ast.TupleType:
+					tn, _ := receiverNamespace(lt)
+					if mangled, owner, ok := c.resolveMethod(tn, "eq", []string{"Eq"}); ok && c.methodVisibleHere(mangled) && c.implBoundsHold(lt, owner) {
 						eqCall := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "eq"}, Args: []ast.Expr{n.Right}}
 						if rt2 := c.checkExpr(eqCall, s); rt2 != nil {
 							if _, isBool := rt2.(ast.BoolType); !isBool {
@@ -14826,9 +14951,6 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 						return ast.BoolType{}
 					}
 					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: type does not implement `Eq` — %s, so `==` can use structural equality", lt, n.Op, cmpHint(lt, "cmp.Eq", "cmp.Eq"))
-					return ast.BoolType{}
-				case ast.ArrayType, ast.SliceType, ast.TupleType:
-					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: structural equality for arrays / slices / tuples is not supported — compare elements individually", lt, n.Op)
 					return ast.BoolType{}
 				}
 			}
@@ -15398,7 +15520,7 @@ func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast
 	st, ok := tt.(ast.StructType)
 	if !ok {
 		if tt != nil {
-			if tn, ok := collectionNamespace(tt); ok && (len(c.methodsOn(tn)) > 0 || len(stdlibMethodIndex[tn]) > 0) {
+			if tn, ok := receiverNamespace(tt); ok && (len(c.methodsOn(tn)) > 0 || len(stdlibMethodIndex[tn]) > 0) {
 				c.errUnknownMethod(n, tn, tt)
 				return nil
 			}

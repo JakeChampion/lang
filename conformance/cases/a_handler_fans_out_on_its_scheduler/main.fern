@@ -1,0 +1,46 @@
+// A handler fans out with async.spawn, async.gather and async.wait (#12456).
+// The combinators read no clock and wait takes its parks from whatever
+// schedules the task, so E080 accepts the handler. With no scheduler each
+// spawned task runs to its end at once, here against canned answers.
+import "std/http";
+import "std/serve";
+import "std/fetch";
+import "std/async";
+import "std/platform";
+import "std/mock_platform";
+
+function body(answer: Result[HttpResponse, fetch.FetchError]): string {
+  match (answer) {
+    Ok(resp) => {
+      return resp.body_text_lossy();
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+  let calls: async.Future[string][] = [
+    async.spawn((): string => body(plat.http(fetch.get("https://example.com/")))),
+    async.spawn((): string => body(plat.http(fetch.get("https://example.org/")))),
+  ];
+  match (async.wait(async.gather(calls))) {
+    Some(bodies) => {
+      return http.ok(bodies[0] + "+" + bodies[1]);
+    },
+    None => {
+      return http.text(503, "cancelled");
+    }
+  }
+  return http.text(500, "");
+}
+
+function main(): i32 {
+  let plat: mock_platform.MockPlatform = mock_platform.new()
+    .with_http("GET", "https://example.com/", Ok(http.ok("com")))
+    .with_http("GET", "https://example.org/", Ok(http.ok("org")));
+  print(handle(http.request("GET", "/"), plat).body_text_lossy());
+  return 0;
+}

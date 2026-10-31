@@ -688,7 +688,7 @@ function comp_dir(): string {
   }
 }
 
-function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, harden: boolean, pie: boolean): string {
+function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, harden: boolean, pie: boolean): string {
   let p: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program_words(asm, words);
   if (p.unknown.len() > 0) {
     return arm64_refusals("arm64-linux", "assembler", p.unknown);
@@ -733,7 +733,7 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
     elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
     elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
     elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
-    cu_name, comp_dir(),
+    cu_name, dir,
     pa2.files, pa2.loc_offs, pa2.loc_files, pa2.loc_lines, pa2.loc_cols, pa2.loc_flags,
     arm64_native.arm64_debug_frame(p, tv),
     arm64_var_ranges(p, tv, dv),
@@ -741,7 +741,7 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
   return string_from_bytes_unchecked(util.to_u8(wide));
 }
 
-function darwin_dwarf(p: arm64_native.Arm64GasProg, tv: i64, dv: i64, cu_name: string): i32[][] {
+function darwin_dwarf(p: arm64_native.Arm64GasProg, tv: i64, dv: i64, cu_name: string, dir: string): i32[][] {
   let a: arm64_native.Arm64Asm = p.asm;
   let names: string[] = [];
   for n in a.lab_names {
@@ -758,7 +758,7 @@ function darwin_dwarf(p: arm64_native.Arm64GasProg, tv: i64, dv: i64, cu_name: s
     elf.elf_func_sym_names(names, a.lab_offs, nosec, 0 - 1, end),
     elf.elf_func_sym_offs(names, a.lab_offs, nosec, 0 - 1, end),
     elf.elf_func_sym_sizes(names, a.lab_offs, nosec, 0 - 1, end),
-    cu_name, comp_dir(),
+    cu_name, dir,
     a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
     arm64_var_ranges(p, tv, dv),
   );
@@ -785,7 +785,7 @@ function arm64_elf_binary_pie(asm: string, words: u8[]): string {
   return string_from_bytes_unchecked(elf.elf_image_pie(pa2.text, p.data, elf.elf_em_aarch64(), eoff, p.bss_size));
 }
 
-function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, pie: boolean): string {
+function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: string, dir: string, pie: boolean): string {
   util.arr_push_cliff_report("x86:emitted", 0);
   let a: x86_native.X86Asm = x86_native.x86_gas_assemble_words_unlinked(asm, words);
   util.arr_push_cliff_report("x86:assembled", 0);
@@ -840,7 +840,7 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
     elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
-    cu_name, comp_dir(),
+    cu_name, dir,
     a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
     x86_native.x86_debug_frame(a, tv),
     x86_var_ranges(a, tv as i32),
@@ -1297,14 +1297,64 @@ function sanitize_warning(target: string): string {
   return "fern: warning: -sanitize has no effect on -target " + target + " (the detectors are native x86-64 and arm64, the leak census also wasm); this build carries no checks";
 }
 
-function dw_file_table(entry: string, files: string[]): string {
-  let o: string = "    .file 1 \"" + entry + "\"\n";
+function dw_file_table(entry: string, files: string[], remaps: PathRemap[]): string {
+  let o: string = "    .file 1 \"" + remap_path(remaps, entry) + "\"\n";
   let k: i32 = 0;
   while (k < files.len()) {
-    o = o + "    .file " + util.i32_to_string(k + 2) + " \"" + files[k] + "\"\n";
+    o = o + "    .file " + util.i32_to_string(k + 2) + " \"" + remap_path(remaps, files[k]) + "\"\n";
     k = k + 1;
   }
   return o;
+}
+
+// One -remap-path-prefix FROM=TO pair, FROM without a trailing slash.
+struct PathRemap { from: string, to: string }
+
+// The -remap-path-prefix pairs, and false after a refusal for a malformed one.
+function path_remaps(specs: string[]): (PathRemap[], boolean) {
+  let out: PathRemap[] = [];
+  for spec in specs {
+    let eq: i32 = util.index_of_sub(spec, "=");
+    if (eq <= 0) {
+      eprint("fern: -remap-path-prefix takes FROM=TO with a non-empty FROM (got \"" + spec + "\")");
+      return (out, false);
+    }
+    let from: string = slice_unchecked(spec, 0, eq) + "";
+    while (from.len() > 1 && util.str_has_suffix(from, "/")) {
+      from = slice_unchecked(from, 0, from.len() - 1) + "";
+    }
+    out = out.append(PathRemap { from: from, to: slice_unchecked(spec, eq + 1, spec.len()) + "" });
+  }
+  return (out, true);
+}
+
+// The path with the prefix of the last matching remap replaced. A FROM
+// matches whole path components only, so /a does not match /ab.
+function remap_path(remaps: PathRemap[], path: string): string {
+  let k: i32 = remaps.len() - 1;
+  while (k >= 0) {
+    let from: string = remaps[k].from;
+    let to: string = remaps[k].to;
+    if (path == from) {
+      return to;
+    }
+    let dir: string = from;
+    if (!util.str_has_suffix(from, "/")) {
+      dir = from + "/";
+    }
+    if (util.str_has_prefix(path, dir)) {
+      let rest: string = slice_unchecked(path, dir.len(), path.len()) + "";
+      if (to.len() == 0) {
+        return rest;
+      }
+      if (util.str_has_suffix(to, "/")) {
+        return to + rest;
+      }
+      return to + "/" + rest;
+    }
+    k = k - 1;
+  }
+  return path;
 }
 
 function harden_refused(harden: boolean, target: string, shared: boolean): boolean {
@@ -1504,6 +1554,7 @@ function flag_groups(): FlagGroup[] {
     ] },
     FlagGroup { title: "debug, size and sanitizers", flags: [
       cli_flag("-g", "", "a symbol table and DWARF for debuggers and profilers"),
+      cli_flag("-remap-path-prefix", "FROM=TO", "with -g: write TO for the FROM prefix of each source path and the compile directory; repeatable, the last match wins"),
       cli_flag("-backtrace", "", "walk the frames under a fatal abort's cause line (default FERN_BACKTRACE)"),
       cli_flag("-size", "", "build for size over speed (default FERN_SIZE)"),
       cli_flag("-sanitize", "", "the heap memory-safety detectors (also FERN_SANITIZE=1)"),
@@ -5142,6 +5193,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   let heap_limit_text: string = "";
   let quarantine_text: string = "";
   let pie: boolean = false;
+  let remap_specs: string[] = [];
   let cover_on: boolean = envflag.on("FERN_COVER");
   let array_report: i32 = semarrayreport.from_env();
   let have_entry: boolean = false;
@@ -5223,6 +5275,8 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       quarantine_text = f.value;
     } else if (f.name == "-pie") {
       pie = f.on;
+    } else if (f.name == "-remap-path-prefix") {
+      remap_specs = remap_specs.append(f.value);
     } else if (f.name == "-profile") {
       profile_name = f.value;
     } else if (f.name == "-manifest") {
@@ -5436,6 +5490,10 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
   if (switches_refused(harden, pie, target, shared, heap_limit, quarantine)) {
     return 2;
   }
+  let (remaps, remaps_ok) = path_remaps(remap_specs);
+  if (!remaps_ok) {
+    return 2;
+  }
   if (backend != "" && backend != "ssa" && backend != "flat") {
     eprint("fern: unknown -backend: " + backend + " (want flat or ssa, or omit it for the target's default emitter)");
     return 2;
@@ -5632,7 +5690,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       return 2;
     }
     if (debug_lines) {
-      out_asm = dw_file_table(entry_path, b.files) + out_asm;
+      out_asm = dw_file_table(entry_path, b.files, remaps) + out_asm;
     }
     if (shared) {
       out_asm = export_entries(merged, shared_roots, true) + out_asm;
@@ -5644,7 +5702,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
         return 2;
       }
     } else if (!emit_text) {
-      out_asm = arm64_elf_binary(out_asm, words_of(recs), emit_syms, entry_path, harden, pie);
+      out_asm = arm64_elf_binary(out_asm, words_of(recs), emit_syms, remap_path(remaps, entry_path), remap_path(remaps, comp_dir()), harden, pie);
       util.arr_push_cliff_report("arm64:image", 0);
       if (out_asm.len() == 0) {
         return 2;
@@ -5679,7 +5737,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       return 2;
     }
     if (debug_lines) {
-      out_asm = dw_file_table(entry_path, b.files) + out_asm;
+      out_asm = dw_file_table(entry_path, b.files, remaps) + out_asm;
     }
     if (!emit_text) {
       let prog: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(out_asm);
@@ -5710,7 +5768,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
       if (emit_syms) {
         dsym_names = pa2.lab_names;
         dsym_offs = pa2.lab_offs;
-        dwarf = darwin_dwarf(prog, tv, dv, entry_path);
+        dwarf = darwin_dwarf(prog, tv, dv, remap_path(remaps, entry_path), remap_path(remaps, comp_dir()));
       }
       out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable_binds(pa2.text, arm64_native.arm64_code_len(prog), deh, prog.data, "fern", deoff, prog.bss_size, dreb, prog.bind_offs, prog.bind_syms, dsym_names, dsym_offs, dwarf)));
       util.arr_push_cliff_report("darwin:image", 0);
@@ -5749,7 +5807,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
     let recs: usize = word_buf(emit_text);
     out_asm = asm_ir.emit_module_or_error_sub(full, sub, recs);
     if (debug_lines && out_asm.len() > 0) {
-      out_asm = dw_file_table(entry_path, b.files) + out_asm;
+      out_asm = dw_file_table(entry_path, b.files, remaps) + out_asm;
     }
     if (shared && out_asm.len() > 0) {
       out_asm = export_entries(merged, shared_roots, false) + out_asm;
@@ -5760,7 +5818,7 @@ function run_with_gate(av: string[], embedded_root: string, fetcher: Fetcher, ga
         return 2;
       }
     } else if (!emit_text) {
-      out_asm = x86_elf_binary(out_asm, words_of(recs), emit_syms, entry_path, pie);
+      out_asm = x86_elf_binary(out_asm, words_of(recs), emit_syms, remap_path(remaps, entry_path), remap_path(remaps, comp_dir()), pie);
       if (out_asm.len() == 0) {
         return 2;
       }

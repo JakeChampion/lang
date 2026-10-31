@@ -42,7 +42,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<13 pub struct Decoder>>
 
-<<14 pub function decoder(max_capacity: i64, max_blocked: i32, max_list: i64): Decoder>>
+<<14 pub function decoder(max_capacity: i64, max_blocked: i64, max_list: i64): Decoder>>
 
 <<15 function (d: Decoder) __increment(): Decoder>>
 
@@ -80,7 +80,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "core/int";
 import "std/http/huffman";
 import "std/string";
 import "core/error";
@@ -336,14 +335,14 @@ function __static(i: i64): Result[Field, QpackError] {
 
 ```fern
 <<13 pub struct Decoder>>=
-pub struct Decoder { table: Table, max_blocked: i32, blocked: i64[], max_list: i64, pending: u8[], out: u8[], reported: i64, fields: Field[], waiting: boolean, failed: Option[QpackError] }
+pub struct Decoder { table: Table, max_blocked: i64, blocked: i64[], max_list: i64, pending: u8[], out: u8[], reported: i64, fields: Field[], waiting: boolean, failed: Option[QpackError] }
 ```
 
-### `14 pub function decoder(max_capacity: i64, max_blocked: i32, max_list: i64): Decoder`
+### `14 pub function decoder(max_capacity: i64, max_blocked: i64, max_list: i64): Decoder`
 
 ```fern
-<<14 pub function decoder(max_capacity: i64, max_blocked: i32, max_list: i64): Decoder>>=
-pub function decoder(max_capacity: i64, max_blocked: i32, max_list: i64): Decoder {
+<<14 pub function decoder(max_capacity: i64, max_blocked: i64, max_list: i64): Decoder>>=
+pub function decoder(max_capacity: i64, max_blocked: i64, max_list: i64): Decoder {
   let t: Table = Table { names: [], values: [], dropped: 0 as i64, size: 0 as i64, capacity: 0 as i64, max_capacity: max_capacity };
   return Decoder { table: t, max_blocked: max_blocked, blocked: [], max_list: max_list, pending: [], out: [], reported: 0 as i64, fields: [], waiting: false, failed: None };
 }
@@ -560,7 +559,7 @@ function (d: Decoder) __blocked_on(stream: i64): Decoder {
   if (d.blocked.contains(stream)) {
     return Decoder { ...d, waiting: true };
   }
-  if (d.blocked.len() >= d.max_blocked) {
+  if (d.blocked.len() as i64 >= d.max_blocked) {
     return Decoder { ...d, failed: Some(DecompressionFailed("more streams blocked than allowed")) };
   }
   return Decoder { ...d, blocked: d.blocked.append(stream), waiting: true };
@@ -756,7 +755,7 @@ pub function (e: Encoder) put_status(own out: u8[], code: i32): u8[] {
       return __put_int(out, 192, 6, STATUS_AT[i] as i64);
     }
   }
-  return e.__put_line(out, ":status", int.int_to_string(code), false);
+  return e.__put_line(out, ":status", code.to_string(), false);
 }
 
 // put_length appends the content-length line for n >= 0, spelling n's

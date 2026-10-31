@@ -18,7 +18,7 @@ import "std/semver";
 function main(): i32 {
   let Ok(a) = semver.parse("1.2.3-alpha") else { return 1; };
   let Ok(b) = semver.parse("1.2.3") else { return 2; };
-  if (a.compare(b) >= 0) { return 3; }
+  if (a >= b) { return 3; }
   return 0;
 }
 ```
@@ -288,70 +288,79 @@ pub function parse(s: string): Result[SemVer, ParseError] {
   return Ok(SemVer { major: major, minor: minor, patch: patch, prerelease: pre, build: build });
 }
 
-pub function (a: SemVer) compare(b: SemVer): i32 {
-  if (a.major != b.major) {
-    if (a.major < b.major) {
+impl cmp.Ord for SemVer {
+  function cmp(self: SemVer, other: SemVer): i32 {
+    if (self.major != other.major) {
+      if (self.major < other.major) {
+        return 0 - 1;
+      }
+      return 1;
+    }
+    if (self.minor != other.minor) {
+      if (self.minor < other.minor) {
+        return 0 - 1;
+      }
+      return 1;
+    }
+    if (self.patch != other.patch) {
+      if (self.patch < other.patch) {
+        return 0 - 1;
+      }
+      return 1;
+    }
+    let ap: boolean = self.prerelease.len() > 0;
+    let bp: boolean = other.prerelease.len() > 0;
+    if (!ap && !bp) {
+      return 0;
+    }
+    if (!ap && bp) {
+      return 1;
+    }
+    if (ap && !bp) {
       return 0 - 1;
     }
-    return 1;
-  }
-  if (a.minor != b.minor) {
-    if (a.minor < b.minor) {
+    let ai: string[] = self.prerelease.split(".");
+    let bi: string[] = other.prerelease.split(".");
+    let n: i32 = ai.len();
+    if (bi.len() < n) {
+      n = bi.len();
+    }
+    let i: i32 = 0;
+    while (i < n) {
+      let c: i32 = __sv_cmp_ident(ai[i], bi[i]);
+      if (c != 0) {
+        return c;
+      }
+      i = i + 1;
+    }
+    if (ai.len() < bi.len()) {
       return 0 - 1;
     }
-    return 1;
-  }
-  if (a.patch != b.patch) {
-    if (a.patch < b.patch) {
-      return 0 - 1;
+    if (ai.len() > bi.len()) {
+      return 1;
     }
-    return 1;
-  }
-  let ap: boolean = a.prerelease.len() > 0;
-  let bp: boolean = b.prerelease.len() > 0;
-  if (!ap && !bp) {
     return 0;
   }
-  if (!ap && bp) {
-    return 1;
-  }
-  if (ap && !bp) {
-    return 0 - 1;
-  }
-  let ai: string[] = a.prerelease.split(".");
-  let bi: string[] = b.prerelease.split(".");
-  let n: i32 = ai.len();
-  if (bi.len() < n) {
-    n = bi.len();
-  }
-  let i: i32 = 0;
-  while (i < n) {
-    let c: i32 = __sv_cmp_ident(ai[i], bi[i]);
-    if (c != 0) {
-      return c;
-    }
-    i = i + 1;
-  }
-  if (ai.len() < bi.len()) {
-    return 0 - 1;
-  }
-  if (ai.len() > bi.len()) {
-    return 1;
-  }
-  return 0;
 }
 
-pub function (a: SemVer) eq(b: SemVer): boolean {
-  return a.compare(b) == 0;
+impl cmp.Eq for SemVer {
+  function eq(self: SemVer, other: SemVer): boolean {
+    return self.cmp(other) == 0;
+  }
 }
 
-pub function (a: SemVer) lt(b: SemVer): boolean {
-  return a.compare(b) < 0;
+// Build metadata does not take part, because it does not take part in equality.
+impl cmp.Hash for SemVer {
+  function hash(self: SemVer): i32 {
+    let h: i32 = 17;
+    h = h * 31 + self.major;
+    h = h * 31 + self.minor;
+    h = h * 31 + self.patch;
+    return h * 31 + self.prerelease.hash();
+  }
 }
 
-pub function (a: SemVer) gt(b: SemVer): boolean {
-  return a.compare(b) > 0;
-}
+impl cmp.Display for SemVer {}
 
 pub function (v: SemVer) to_string(): string {
   let out: string = v.major.to_string() + "." + v.minor.to_string() + "." + v.patch.to_string();

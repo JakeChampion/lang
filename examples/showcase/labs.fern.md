@@ -273,7 +273,7 @@ pub function socket(state: State, application: string, req: HttpRequest): Result
       if (input.post == mutates) {
         response = http.respond(handle(state, application, action, request));
       }
-      let reply = Reply { seq: input.seq, status: response.status, body: response.body_string() };
+      let reply = Reply { seq: input.seq, status: response.status, body: response.body_text_lossy() };
       if let websocket.Dropped = connection.send_text(reply.to_json()) {
         connection.close(1013, "Command receiver is too slow.");
       }

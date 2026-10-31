@@ -52,7 +52,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<17 function __handshake_by(fd: i32, config: Config, deadline: i64): Result[Connection, tls.TlsError]>>
 
-<<18 pub function (c: Connection) send(data: [u8]): Result[Connection, tls.TlsError]>>
+<<18 pub function (c: Connection) write(data: [u8]): Result[Connection, tls.TlsError]>>
 
 <<19 function __received(c: Connection, s: Session, data: u8[], ended: boolean): Received>>
 
@@ -60,7 +60,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<21 function __kernel_next(c: Connection, read: ktls.Read): Result[Kerneled, tls.TlsError]>>
 
-<<22 pub function (c: Connection) close(): void>>
+<<22 pub function (c: Connection) close(): Result[void, tls.TlsError]>>
 
 <<23 function __send_fd(fd: i32, data: [u8]): Result[void, tls.TlsError]>>
 ```
@@ -613,11 +613,11 @@ function __more_tickets(own a: Ticket[], b: Ticket[]): Ticket[] {
 }
 ```
 
-### `18 pub function (c: Connection) send(data: [u8]): Result[Connection, tls.TlsError]`
+### `18 pub function (c: Connection) write(data: [u8]): Result[Connection, tls.TlsError]`
 
 ```fern
-<<18 pub function (c: Connection) send(data: [u8]): Result[Connection, tls.TlsError]>>=
-pub function (c: Connection) send(data: [u8]): Result[Connection, tls.TlsError] {
+<<18 pub function (c: Connection) write(data: [u8]): Result[Connection, tls.TlsError]>>=
+pub function (c: Connection) write(data: [u8]): Result[Connection, tls.TlsError] {
   if (c.session.offloaded()) {
     __send_fd(c.fd, data)?;
     return Ok(c);
@@ -660,10 +660,10 @@ pub function (c: Connection) update_keys(request: boolean): Result[Connection, t
   return Ok(Connection { ...c, session: step.session });
 }
 
-pub function (c: Connection) recv(wait: Duration): Result[Received, tls.TlsError] {
+pub function (c: Connection) read(wait: Duration): Result[Received, tls.TlsError] {
   let deadline: i64 = monotonic_ns() + wait.as_nanos();
   if (c.session.offloaded()) {
-    return __recv_kernel(c, deadline);
+    return __read_kernel(c, deadline);
   }
   let conn: Connection = c;
   let s: Session = c.session;
@@ -699,14 +699,14 @@ function __received(c: Connection, s: Session, data: u8[], ended: boolean): Rece
   return Received { conn: Connection { ...c, session: s }, data: data, ended: ended };
 }
 
-function __recv_kernel(c: Connection, deadline: i64): Result[Received, tls.TlsError] {
+function __read_kernel(c: Connection, deadline: i64): Result[Received, tls.TlsError] {
   let conn: Connection = c;
   while (true) {
     let left: i64 = deadline - monotonic_ns();
     if (left <= 0) {
       return Ok(__received(conn, conn.session, [], false));
     }
-    let next: Kerneled = __kernel_next(conn, ktls.recv(c.fd, time.duration_nanos(left)))?;
+    let next: Kerneled = __kernel_next(conn, ktls.read(c.fd, time.duration_nanos(left)))?;
     conn = Connection { ...conn, tickets: __more_tickets(conn.tickets, next.tickets) };
     if (next.done) {
       return Ok(__received(conn, next.session, next.data, next.ended));
@@ -819,19 +819,27 @@ function __send_out(fd: i32, s: Session, out: [u8]): Result[void, tls.TlsError] 
 }
 ```
 
-### `22 pub function (c: Connection) close(): void`
+### `22 pub function (c: Connection) close(): Result[void, tls.TlsError]`
 
 ```fern
-<<22 pub function (c: Connection) close(): void>>=
-pub function (c: Connection) close(): void {
+<<22 pub function (c: Connection) close(): Result[void, tls.TlsError]>>=
+pub function (c: Connection) close(): Result[void, tls.TlsError] {
   if (!c.open.get()) {
-    return;
+    return Ok(());
   }
   c.open.set(false);
-  if let Ok(step) = c.session.close() {
-    __send_out(c.fd, c.session, step.output);
+  let notified: Result[void, tls.TlsError] = __close_notify(c);
+  let r: i32 = tcp_close(c.fd);
+  notified?;
+  if (r < 0) {
+    return Err(tls.NetFailed(net.error_from_host(0 - r)));
   }
-  tcp_close(c.fd);
+  return Ok(());
+}
+
+function __close_notify(c: Connection): Result[void, tls.TlsError] {
+  let step: Step = c.session.close()?;
+  return __send_out(c.fd, c.session, step.output);
 }
 ```
 

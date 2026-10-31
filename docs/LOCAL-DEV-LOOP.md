@@ -171,7 +171,7 @@ compiler:
 
 ```
 FERN_SELFHOST_FIXTURES=1 go test ./internal/testing/e2e/ \
-  -run 'TestFernFixturesSelfHost(Wasm|X86_64|Arm64)'
+  -run 'TestFernFixturesSelfHost(Wasm|WasmComponent|WasiHttp|X86_64|Arm64|Arm64Android|Arm64Darwin)$'
 ```
 
 One leg per target, each with its own

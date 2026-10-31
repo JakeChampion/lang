@@ -4,7 +4,6 @@ import "testing"
 
 const numGcdLcmAllProg = `
 import "std/array";
-import "std/i64" as i64m;
 function main(): i32 {
     let none: i32[] = [];
     if ([12, 18, 24].gcd_all() != 6) { return 1; }
@@ -16,8 +15,10 @@ function main(): i32 {
     if ([5].lcm_all() != 5) { return 7; }
     if ([0 - 6, 10, 15].gcd_all() != 1) { return 8; }
     // i64 width, past the i32 range.
-    if (i64m.gcd_all([100000000000 as i64, 250000000000 as i64]) != 50000000000) { return 9; }
-    if (i64m.lcm_all([1000000 as i64, 1500000 as i64]) != 3000000) { return 10; }
+    let wide: i64[] = [100000000000 as i64, 250000000000 as i64];
+    if (wide.gcd_all() != 50000000000) { return 9; }
+    let mid: i64[] = [1000000 as i64, 1500000 as i64];
+    if (mid.lcm_all() != 3000000) { return 10; }
     return 42;
 }
 `

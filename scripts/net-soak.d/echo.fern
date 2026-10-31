@@ -8,7 +8,7 @@ import "std/json";
 import "core/int";
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
-  match (req.body_string()) {
+  match (req.body_text()) {
     Ok(text) => {
       match (json.parse(text)) {
         Ok(v) => {

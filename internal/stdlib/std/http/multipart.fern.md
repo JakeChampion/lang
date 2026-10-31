@@ -80,7 +80,6 @@ import "std/string";
 import "std/array";
 import "std/hex";
 import "std/utf8" as utf8;
-import "core/int";
 import "core/error";
 import "core/cmp";
 ```
@@ -158,16 +157,16 @@ pub function (e: MultipartError) message(): string {
       return "malformed multipart body: " + why;
     },
     TooManyParts(n) => {
-      return "more than " + int.int_to_string(n) + " parts";
+      return "more than " + n.to_string() + " parts";
     },
     PartTooLarge(n) => {
-      return "a part is past " + int.int_to_string(n) + " bytes";
+      return "a part is past " + n.to_string() + " bytes";
     },
     MultipartTooLarge(n) => {
-      return "the body is past " + int.int_to_string(n) + " bytes";
+      return "the body is past " + n.to_string() + " bytes";
     },
     PartHeadersTooLarge(n) => {
-      return "a part's headers are past " + int.int_to_string(n) + " bytes";
+      return "a part's headers are past " + n.to_string() + " bytes";
     },
     MultipartBody(e) => {
       return "the body did not arrive whole";

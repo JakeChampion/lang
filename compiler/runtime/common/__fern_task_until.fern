@@ -1,0 +1,4 @@
+function __fern_task_until(id: i32): i64 {
+  let rec: usize = __fern_task_rec(id);
+  return __raw_load_ptr(rec, 1) as i64;
+}

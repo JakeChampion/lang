@@ -35,7 +35,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<dependencies 2>>
 
-<<3 pub function (arr: i32[]) gcd_all(): i32>>
+<<3 pub function (xs: T[]) gcd_all[T: ops.Gcd + ops.Zero](): T>>
 
 <<4 pub function (arr: string[]) join(sep: string): string>>
 
@@ -78,21 +78,21 @@ import "std/num";
 import "core/ops";
 ```
 
-### `3 pub function (arr: i32[]) gcd_all(): i32`
+### `3 pub function (xs: T[]) gcd_all[T: ops.Gcd + ops.Zero](): T`
 
 ```fern
-<<3 pub function (arr: i32[]) gcd_all(): i32>>=
-pub function (arr: i32[]) gcd_all(): i32 {
-  let g: i32 = 0;
-  for x in arr {
+<<3 pub function (xs: T[]) gcd_all[T: ops.Gcd + ops.Zero](): T>>=
+pub function (xs: T[]) gcd_all[T: ops.Gcd + ops.Zero](): T {
+  let g: T = T.zero();
+  for x in xs {
     g = g.gcd(x);
   }
   return g;
 }
 
-pub function (arr: i32[]) lcm_all(): i32 {
-  let l: i32 = 1;
-  for x in arr {
+pub function (xs: T[]) lcm_all[T: ops.Gcd + ops.One](): T {
+  let l: T = T.one();
+  for x in xs {
     l = l.lcm(x);
   }
   return l;

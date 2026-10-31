@@ -1,6 +1,5 @@
 import "std/i32";
 import "std/string";
-import "core/int";
 
 
 
@@ -16,7 +15,7 @@ import "core/int";
 
 
 
-function d(n: i32): string { return int.int_to_string_radix(n, 10); }
+function d(n: i32): string { return n.to_string_radix(10); }
 
 function main(): i32 {
     let mn: i32 = 0 - 2147483647 - 1;
@@ -31,8 +30,8 @@ function main(): i32 {
 
     let dm = (10).divmod(0);
     print(d(dm.0) + "," + d(dm.1));
-    print("[" + int.int_to_string_radix(42, 99) + "]");
-    print("[" + int.int_to_string_radix(42, 1) + "]");
-    print(int.int_to_string_radix(0 - 255, 16));
+    print("[" + 42.to_string_radix(99) + "]");
+    print("[" + 42.to_string_radix(1) + "]");
+    print((0 - 255).to_string_radix(16));
     return 0;
 }

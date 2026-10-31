@@ -66,7 +66,6 @@ func readFileString(path string) string {
 func ThreadedStateServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
-import "core/int";
 import "std/platform";
 
 function handle(hits: Map[string, i32], req: HttpRequest, plat: platform.Platform): (Map[string, i32], HttpResponse) {
@@ -76,7 +75,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: platform.Platfor
         None => {}
     }
     return (hits.insert(req.path, n),
-            http.ok(req.path + "=" + int.int_to_string(n)));
+            http.ok(req.path + "=" + n.to_string()));
 }
 
 function main(): i32 {
@@ -228,14 +227,13 @@ func CheckIncompleteRequestAtEOF(t *testing.T, addr string) {
 func TrappingServerSource(port int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
-import "core/int";
 import "std/platform";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/boom") {
         let a: i32[] = [1, 2, 3];
         let i: i32 = a.len() + 5;
         let x: i32 = a[i];
-        return http.ok("unreachable " + int.int_to_string(x));
+        return http.ok("unreachable " + x.to_string());
     }
     return http.ok("ok");
 }
@@ -493,7 +491,6 @@ func WorkersServerSource() string {
 import "std/serve";
 import "std/platform";
 import "std/time";
-import "core/int";
 function burn(plat: platform.Platform, ns: i64): i32 {
     let x: i32 = 12345;
     let until: Instant = plat.instant().add(time.duration_nanos(ns));
@@ -511,7 +508,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
         let a: i32[] = [1, 2, 3];
         let i: i32 = a.len() + 5;
         let x: i32 = a[i];
-        return http.ok("unreachable " + int.int_to_string(x));
+        return http.ok("unreachable " + x.to_string());
     }
     if (req.path == "/slow") {
         if (burn(plat, 1500000000 as i64) == 0 - 1) { return http.ok("never"); }
@@ -687,7 +684,6 @@ func InitStateAliasedServerSource() string {
 func initStateServerSource(importLine, qual string) string {
 	return strings.NewReplacer("IMPORT", importLine, "QUAL", qual).Replace(`import "std/http";
 IMPORT
-import "core/int";
 import "std/platform";
 
 function init(plat: platform.Platform): (QUAL.Config, Map[string, i32]) {
@@ -701,7 +697,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: platform.Platfor
         None => {}
     }
     return (hits.insert(req.path, n),
-            http.ok(req.path + "=" + int.int_to_string(n)));
+            http.ok(req.path + "=" + n.to_string()));
 }
 `)
 }
@@ -816,7 +812,6 @@ func CheckDynErrorHandler(t *testing.T, addr, stderrPath string) {
 func StatefulResultHandlerServerSource() string {
 	return `import "std/http";
 import "std/serve";
-import "core/int";
 import "std/platform";
 
 function init(plat: platform.Platform): (serve.Config, Map[string, i32]) {
@@ -830,7 +825,7 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: platform.Platfor
         Some(prev) => { n = prev + 1; },
         None => {}
     }
-    return (hits.insert(req.path, n), Ok(http.ok(req.path + "=" + int.int_to_string(n))));
+    return (hits.insert(req.path, n), Ok(http.ok(req.path + "=" + n.to_string())));
 }
 `
 }
@@ -867,7 +862,6 @@ func CheckStatefulResultHandler(t *testing.T, addr string) {
 func ShutdownHookServerSource() string {
 	return `import "std/http";
 import "std/serve";
-import "core/int";
 import "std/platform";
 
 function init(plat: platform.Platform): (serve.Config, i32) {
@@ -875,11 +869,11 @@ function init(plat: platform.Platform): (serve.Config, i32) {
 }
 
 function handle(hits: i32, req: HttpRequest, plat: platform.Platform): (i32, HttpResponse) {
-    return (hits + 1, http.ok("hit " + int.int_to_string(hits + 1)));
+    return (hits + 1, http.ok("hit " + (hits + 1).to_string()));
 }
 
 function shutdown(reason: string, hits: i32): void {
-    eprint("shutdown reason=" + reason + " hits=" + int.int_to_string(hits));
+    eprint("shutdown reason=" + reason + " hits=" + hits.to_string());
 }
 `
 }
@@ -984,7 +978,6 @@ func ListenErrorTypedSource(port int) string {
 import "std/serve";
 import "std/platform";
 import "std/net";
-import "core/int";
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
@@ -1000,7 +993,7 @@ function refused(r: Result[i32, serve.ListenError], port: i32): i32 {
             if (!e.error.eq(net.AddrInUse)) {
                 return 3;
             }
-            if (e.message() != "cannot listen on port " + int.int_to_string(port) + ": " + net.AddrInUse.message()) {
+            if (e.message() != "cannot listen on port " + port.to_string() + ": " + net.AddrInUse.message()) {
                 return 4;
             }
             return 0;

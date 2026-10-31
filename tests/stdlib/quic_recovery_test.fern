@@ -2,7 +2,6 @@ import "std/test";
 import "std/quic/recovery";
 import "std/quic/frames";
 import "std/i64";
-import "core/int";
 import "std/time";
 
 const MS: i64 = 1000000;
@@ -80,7 +79,7 @@ function test_probe_timeout(): test.TestOutcome {
   let o: recovery.Recovery = r.on_timeout(at_ns(t1));
   let t2: i64 = due_ns(o);
   let early: recovery.Recovery = r.on_timeout(at_ns(t1 - 1));
-  return test.assert_eq((t1 / MS).to_string() + "ms probe " + int.int_to_string(o.probe) + ", then " + (t2 / MS).to_string() + "ms; early " + int.int_to_string(early.probe), "999ms probe 0, then 1998ms; early -1");
+  return test.assert_eq((t1 / MS).to_string() + "ms probe " + o.probe.to_string() + ", then " + (t2 / MS).to_string() + "ms; early " + early.probe.to_string(), "999ms probe 0, then 1998ms; early -1");
 }
 
 function test_window(): test.TestOutcome {

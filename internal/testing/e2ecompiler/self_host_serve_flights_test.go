@@ -26,7 +26,7 @@ import "std/fetch";
 function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, fetch.FetchError] {
     let first: HttpResponse = plat.http(fetch.get("http://8.8.8.8" + req.path + "a"))?;
     let second: HttpResponse = plat.http(fetch.get("http://8.8.8.8" + req.path + "b"))?;
-    return Ok(http.ok(first.body_string() + second.body_string()));
+    return Ok(http.ok(first.body_text_lossy() + second.body_text_lossy()));
 }
 function main(): i32 {
     return serve.exit_code(serve.run(0, serve.Config { ...serve.config().with_h2(), max_connections_per_ip: 0 }, handle));
@@ -141,7 +141,7 @@ import "std/platform";
 import "std/fetch";
 function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, fetch.FetchError] {
     let got: HttpResponse = plat.http(fetch.get("http://8.8.8.8" + req.path))?;
-    return Ok(http.ok(got.body_string()));
+    return Ok(http.ok(got.body_text_lossy()));
 }
 function main(): i32 {
     return serve.exit_code(serve.run(0, serve.Config { ...serve.config(), max_connections_per_ip: 0 }, handle));

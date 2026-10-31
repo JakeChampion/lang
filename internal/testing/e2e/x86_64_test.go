@@ -1864,10 +1864,9 @@ function main(): i32 {
     return 1;
 }`},
 		{"qualified_int_call", `
-import "core/int";
+import "std/i32";
 function main(): i32 {
-    let s: string = int.int_to_string_radix(255, 16);
-    if (s == "ff") { return 0; }
+    match (i32.parse_i32_radix("ff", 16)) { Ok(v) => { if (v == 255) { return 0; } }, Err(_) => { } }
     return 1;
 }`},
 		{"mixed_stdlib", `

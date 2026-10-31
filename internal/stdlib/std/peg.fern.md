@@ -55,7 +55,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "core/map";
-import "core/int";
 import "core/cmp";
 import "core/error";
 import "std/utf8";
@@ -119,7 +118,7 @@ impl cmp.Display for GrammarError {}
 ```fern
 <<6 pub function (e: PegError) message(): string>>=
 pub function (e: PegError) message(): string {
-  return "peg: no match (reached byte " + int.int_to_string(e.furthest) + ")";
+  return "peg: no match (reached byte " + e.furthest.to_string() + ")";
 }
 
 pub function (e: GrammarError) message(): string {

@@ -11,7 +11,6 @@
 
 
 
-import "core/int";
 
 const OPEN: u8 = b'[';
 const NEWLINE: char = '\n';
@@ -105,7 +104,7 @@ function main(): i32 {
     if (s[1] != OPEN) { return 34; }
     if ((NEWLINE as i32) != 10) { return 35; }
 
-    print("depth=" + int.int_to_string(bracket_depth("[a[b]]")));
-    print("cls=" + int.int_to_string(classify(s[1])));
+    print("depth=" + bracket_depth("[a[b]]").to_string());
+    print("cls=" + classify(s[1]).to_string());
     return 0;
 }

@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      name="description"
+      content="A Uxn virtual machine and Uxntal assembler implemented in Fern. Edit programs, run ROMs, and inspect the two stacks, RAM, and device ports."
+    />
+    <title>Uxn workbench · Fern, in action</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/assets/showcase.css" />
+    <script src="/assets/theme.js"></script>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body class="app-page uxn-page">
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="app-nav">
+      <a class="brand" href="/"
+        ><span class="brand-mark" aria-hidden="true"></span
+        ><span class="brand-name">Fern</span
+        ><span class="brand-suffix">in action</span></a
+      >
+      <nav>
+        <a href="/">All examples</a
+        ><a href="/_src/showcase/uxn.fern">View Fern source ↗</a>
+      </nav>
+    </header>
+    <main id="main">
+      <div class="app-heading">
+        <section class="app-intro">
+          <div class="eyebrow"><span>21</span>A LITTLE COMPUTER</div>
+          <h1>Small machine. <em>Open possibilities.</em></h1>
+          <p>
+            Meet <a href="https://wiki.xxiivv.com/site/uxn.html">Uxn</a>: 64 KiB
+            of memory, two stacks, and a world of tiny programs. The CPU,
+            assembler, and drawing devices here are implemented in Fern.
+          </p>
+          <div class="tech-chips">
+            <span>Fern → Wasm</span><span>Uxn 0K · all 256 instructions</span
+            ><span>Uxntal editor</span>
+          </div>
+        </section>
+        <span class="status" id="status" role="status"
+          >Loading the Fern machine…</span
+        >
+      </div>
+      <div class="workbench">
+        <section class="editor-panel" aria-labelledby="editor-title">
+          <div class="panel-heading">
+            <h2 id="editor-title">Write a little program.</h2>
+            <span class="eyebrow">UXNTAL / HEX</span>
+          </div>
+          <label class="demo-label"
+            >Example
+            <select id="demo" disabled>
+              <option value="garden">Pixel garden</option>
+              <option value="hello">Hello, Uxn</option>
+              <option value="arithmetic">Stack arithmetic</option>
+              <option value="paint">Mouse painter</option>
+              <option value="echo">Console echo</option>
+            </select></label
+          >
+          <p id="demo-description" class="fine-print"></p>
+          <textarea
+            id="source"
+            aria-label="Uxntal source"
+            spellcheck="false"
+            autocapitalize="off"
+            autocomplete="off"
+            wrap="off"
+          ></textarea>
+          <div class="toolbar">
+            <button class="button primary" id="assemble" disabled>
+              Assemble &amp; run</button
+            ><button class="button" id="assemble-step" disabled>
+              Assemble for stepping</button
+            ><button class="button" id="download" disabled>Download ROM</button>
+          </div>
+          <p class="fine-print">
+            Ctrl/⌘ + Enter assembles and runs. Numbers are hexadecimal. Editing
+            source takes effect when you assemble.
+          </p>
+          <pre id="diagnostic" class="diagnostic" role="alert" hidden></pre>
+        </section>
+        <section class="machine-panel" aria-labelledby="machine-title">
+          <div class="panel-heading">
+            <h2 id="machine-title">Watch it come alive.</h2>
+            <span class="eyebrow" id="rom-size">NO ROM</span>
+          </div>
+          <div class="screen-surround">
+            <canvas
+              id="screen"
+              width="256"
+              height="192"
+              tabindex="0"
+              aria-label="Uxn screen. Drag to interact with the mouse device; focus the screen to send keyboard input."
+              >Canvas is required for the screen device.</canvas
+            ><span class="screen-caption" id="screen-size"
+              >VARVARA SCREEN / 256 × 192</span
+            >
+          </div>
+          <div class="toolbar">
+            <button class="button primary" id="run" disabled>Run</button
+            ><button class="button" id="pause" disabled>Pause</button
+            ><button class="button" id="step" disabled>Step</button
+            ><button class="button" id="reset" disabled>Reset ROM</button>
+          </div>
+          <div class="machine-readings" aria-live="off">
+            <span>PC <b id="pc">0100</b></span
+            ><span>NEXT <b id="next-op">—</b></span
+            ><span>OPS <b id="steps">0</b></span
+            ><span id="mode">PAUSED</span>
+          </div>
+          <h3 class="small-heading">Console / stdout + stderr</h3>
+          <pre
+            id="console"
+            class="console"
+            aria-label="Uxn console output"
+          ></pre>
+          <form id="console-form">
+            <label for="console-input">Send a line to Console/read</label>
+            <div class="input-row">
+              <input
+                id="console-input"
+                maxlength="1024"
+                autocomplete="off"
+              /><button class="button" id="send" disabled>Send</button>
+            </div>
+          </form>
+          <label class="rom-upload"
+            >Load a local .rom
+            <input
+              id="upload"
+              type="file"
+              accept=".rom,application/octet-stream"
+              disabled
+          /></label>
+        </section>
+      </div>
+      <section class="inspector" aria-labelledby="inspector-title">
+        <div class="panel-heading">
+          <h2 id="inspector-title">Inside the machine.</h2>
+          <span class="eyebrow">LIVE STATE</span>
+        </div>
+        <div class="stack-grid">
+          <div>
+            <h3>Working stack <span id="wst-count">0 bytes</span></h3>
+            <pre id="wst">(empty)</pre>
+          </div>
+          <div>
+            <h3>Return stack <span id="rst-count">0 bytes</span></h3>
+            <pre id="rst">(empty)</pre>
+          </div>
+        </div>
+        <div class="memory-heading">
+          <label
+            >Memory page
+            <input
+              id="memory-page"
+              type="text"
+              value="0100"
+              maxlength="4"
+              pattern="[0-9a-fA-F]{1,4}"
+              inputmode="text"
+              aria-label="Memory page address in hexadecimal" /></label
+          ><span class="fine-print"
+            >256 bytes · next instruction highlighted</span
+          >
+        </div>
+        <pre id="memory" class="memory" aria-label="Uxn RAM page"></pre>
+        <details>
+          <summary>Device ports</summary>
+          <pre id="devices" class="memory" aria-label="Uxn device ports"></pre>
+        </details>
+        <p id="device-warning" class="fine-print" role="status" hidden></p>
+      </section>
+      <details class="how-it-works">
+        <summary>What is running here?</summary>
+        <p>
+          The Fern kernel implements every Uxn opcode, including short, return,
+          and keep modes, immediate jumps, circular stacks, and wrapped memory.
+          The Uxntal assembler also runs in Fern. JavaScript supplies browser
+          events and displays the framebuffer, console, and machine state.
+        </p>
+        <p>
+          Supported devices: System palette and stack indexes, Console
+          input/output, Screen pixels and 1bpp/2bpp sprites, Controller, Mouse,
+          and Datetime. Screen dimensions are capped at 512 × 512. Audio, files,
+          subprocesses, and memory expansion banks are unavailable. ROMs using
+          those devices may not work; attempted writes appear above.
+        </p>
+        <p>
+          The assembler supports labels, child labels, literals, padding,
+          address runes, immediate calls/jumps, nested anonymous labels,
+          comments, ASCII strings, and macros. It does not support includes or
+          multi-bank ROMs. ROMs and source stay in this browser. Execution runs
+          in bounded slices; pause and hidden tabs stop scheduling.
+          Reduced-motion starts paused.
+        </p>
+        <p>
+          Uxn and Varvara were created by
+          <a href="https://100r.co/">Hundred Rabbits</a>. This is an independent
+          implementation. Read the
+          <a href="https://wiki.xxiivv.com/site/uxntal.html"
+            >Uxntal reference ↗</a
+          >
+          or the <a href="/_src/showcase/uxn.fern">Fern implementation ↗</a>.
+        </p>
+      </details>
+    </main>
+    <footer class="app-footer">
+      <span>Built with Fern.</span><a href="/_src/">Read the source ↗</a>
+    </footer>
+    <script type="module" src="./app.mjs"></script>
+  </body>
+</html>

@@ -76,7 +76,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "core/int";
 import "std/crypto";
 import "std/crypto/ed25519";
 import "std/crypto/ecdsa";
@@ -152,34 +151,34 @@ pub function (e: VerifyError) message(): string {
       return "tls verify: the chain is empty";
     },
     Parse(i, x) => {
-      return "tls verify: certificate " + int.int_to_string(i) + ": " + x.message();
+      return "tls verify: certificate " + i.to_string() + ": " + x.message();
     },
     Pem(p) => {
       return p.message();
     },
     Expired(i) => {
-      return "tls verify: certificate " + int.int_to_string(i) + " has expired";
+      return "tls verify: certificate " + i.to_string() + " has expired";
     },
     NotYetValid(i) => {
-      return "tls verify: certificate " + int.int_to_string(i) + " is not yet valid";
+      return "tls verify: certificate " + i.to_string() + " is not yet valid";
     },
     Distrusted(i) => {
-      return "tls verify: the leaf was issued after the date root " + int.int_to_string(i) + " is distrusted from";
+      return "tls verify: the leaf was issued after the date root " + i.to_string() + " is distrusted from";
     },
     UnknownCritical(i, oid) => {
-      return "tls verify: certificate " + int.int_to_string(i) + " has an unknown critical extension " + oid;
+      return "tls verify: certificate " + i.to_string() + " has an unknown critical extension " + oid;
     },
     UnknownIssuer => {
       return "tls verify: no path from the certificate reaches a trusted root";
     },
     NotACa(i) => {
-      return "tls verify: certificate " + int.int_to_string(i) + " issues certificates but is not a CA";
+      return "tls verify: certificate " + i.to_string() + " issues certificates but is not a CA";
     },
     PathTooLong(i) => {
-      return "tls verify: certificate " + int.int_to_string(i) + " allows a shorter path";
+      return "tls verify: certificate " + i.to_string() + " allows a shorter path";
     },
     KeyUsage(i) => {
-      return "tls verify: certificate " + int.int_to_string(i) + "'s key usage does not allow this";
+      return "tls verify: certificate " + i.to_string() + "'s key usage does not allow this";
     },
     NotForServers => {
       return "tls verify: the certificate is not for TLS servers";
@@ -191,19 +190,19 @@ pub function (e: VerifyError) message(): string {
       return "tls verify: the certificate is not valid for " + name;
     },
     BadSignature(i) => {
-      return "tls verify: certificate " + int.int_to_string(i) + "'s signature does not verify";
+      return "tls verify: certificate " + i.to_string() + "'s signature does not verify";
     },
     RootsUnreadable(path) => {
       return "tls verify: no certificates could be read from " + path;
     },
     NameConstraint(i) => {
-      return "tls verify: certificate " + int.int_to_string(i) + "'s name constraints exclude a name below it";
+      return "tls verify: certificate " + i.to_string() + "'s name constraints exclude a name below it";
     },
     UnsupportedAlgorithm(what) => {
       return "tls verify: unsupported " + what;
     },
     DeniedKey(i) => {
-      return "tls verify: certificate " + int.int_to_string(i) + "'s key is known to be compromised";
+      return "tls verify: certificate " + i.to_string() + "'s key is known to be compromised";
     }
   }
   return "";

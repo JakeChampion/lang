@@ -3,6 +3,10 @@
 /web/contour/kernel.wasm.br
 /web/contour/kernel.wasm.gz
 /web/contour/kernel.wasm.zst
+/web/uxn/kernel.wasm
+/web/uxn/kernel.wasm.br
+/web/uxn/kernel.wasm.gz
+/web/uxn/kernel.wasm.zst
 /web/swarm/kernel.wasm
 /web/swarm/kernel.wasm.br
 /web/swarm/kernel.wasm.gz
