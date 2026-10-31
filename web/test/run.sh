@@ -46,7 +46,7 @@ fi
 port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("",0)); print(s.getsockname()[1]); s.close()')"
 
 # Start a static HTTP server bound to localhost so the wasm fetch +
-# the ESM imports (CodeMirror from esm.sh) work; file:// origins
+# the ESM imports work; file:// origins
 # block both. --bind 127.0.0.1 keeps it off any external interface.
 echo "==> starting http server on http://127.0.0.1:$port"
 python3 -m http.server --bind 127.0.0.1 --directory "$web" "$port" >"$output_dir/server.log" 2>&1 &
