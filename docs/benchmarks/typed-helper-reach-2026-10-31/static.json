@@ -1,0 +1,824 @@
+{
+  "main": "31cdefec4ca005bf0c7db3a6dad8b1bc0b983616",
+  "rows": [
+    {
+      "metric": "selfhost/wasm32-wasi/map_int.emit",
+      "baseline": 13304,
+      "main": 13350,
+      "candidate": 13307,
+      "delta": -43
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/map_probe_chain.emit",
+      "baseline": 13329,
+      "main": 13375,
+      "candidate": 13332,
+      "delta": -43
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/array_append.emit",
+      "baseline": 443,
+      "main": 443,
+      "candidate": 443,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/array_index.emit",
+      "baseline": 448,
+      "main": 448,
+      "candidate": 448,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/array_scale_f64.emit",
+      "baseline": 529,
+      "main": 529,
+      "candidate": 503,
+      "delta": -26
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/array_with.emit",
+      "baseline": 493,
+      "main": 493,
+      "candidate": 493,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/ascii_scan.emit",
+      "baseline": 1242,
+      "main": 1242,
+      "candidate": 1216,
+      "delta": -26
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/byte_copy_append.emit",
+      "baseline": 554,
+      "main": 554,
+      "candidate": 554,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/byte_copy_with.emit",
+      "baseline": 569,
+      "main": 569,
+      "candidate": 569,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/call_overhead.emit",
+      "baseline": 115,
+      "main": 115,
+      "candidate": 115,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/closure_call.emit",
+      "baseline": 487,
+      "main": 487,
+      "candidate": 487,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/deflate_decode.emit",
+      "baseline": 19729,
+      "main": 19768,
+      "candidate": 19608,
+      "delta": -160
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/deflate_encode.emit",
+      "baseline": 11328,
+      "main": 11358,
+      "candidate": 11300,
+      "delta": -58
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/enum_match.emit",
+      "baseline": 710,
+      "main": 710,
+      "candidate": 622,
+      "delta": -88
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/http_hello.emit",
+      "baseline": 20309,
+      "main": 20311,
+      "candidate": 18896,
+      "delta": -1415
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/int_loop.emit",
+      "baseline": 69,
+      "main": 69,
+      "candidate": 69,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/map_string.emit",
+      "baseline": 14126,
+      "main": 14192,
+      "candidate": 14123,
+      "delta": -69
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/ordmap_insert.emit",
+      "baseline": 6746,
+      "main": 6755,
+      "candidate": 6680,
+      "delta": -75
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/perceus_cfold.emit",
+      "baseline": 1735,
+      "main": 1749,
+      "candidate": 1749,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/perceus_deriv.emit",
+      "baseline": 2790,
+      "main": 2814,
+      "candidate": 2814,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/perceus_nqueens.emit",
+      "baseline": 1267,
+      "main": 1267,
+      "candidate": 1267,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/perceus_rbtree.emit",
+      "baseline": 3564,
+      "main": 3564,
+      "candidate": 3564,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/perceus_rbtree_ck.emit",
+      "baseline": 3977,
+      "main": 3971,
+      "candidate": 3898,
+      "delta": -73
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/pmap_insert.emit",
+      "baseline": 3368,
+      "main": 3365,
+      "candidate": 3296,
+      "delta": -69
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/pvec_with.emit",
+      "baseline": 2843,
+      "main": 2806,
+      "candidate": 2763,
+      "delta": -43
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/record_update.emit",
+      "baseline": 525,
+      "main": 525,
+      "candidate": 493,
+      "delta": -32
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/sort_inplace.emit",
+      "baseline": 996,
+      "main": 996,
+      "candidate": 996,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/sort_ints.emit",
+      "baseline": 2058,
+      "main": 2058,
+      "candidate": 2058,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/sort_strings.emit",
+      "baseline": 3381,
+      "main": 3401,
+      "candidate": 3375,
+      "delta": -26
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/string_build.emit",
+      "baseline": 1301,
+      "main": 1301,
+      "candidate": 1275,
+      "delta": -26
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/string_count_byte.emit",
+      "baseline": 553,
+      "main": 553,
+      "candidate": 527,
+      "delta": -26
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/string_find_byte.emit",
+      "baseline": 1796,
+      "main": 1810,
+      "candidate": 1784,
+      "delta": -26
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/string_rfind_byte.emit",
+      "baseline": 1825,
+      "main": 1825,
+      "candidate": 1799,
+      "delta": -26
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/string_scan.emit",
+      "baseline": 1439,
+      "main": 1439,
+      "candidate": 1413,
+      "delta": -26
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/string_slice.emit",
+      "baseline": 526,
+      "main": 526,
+      "candidate": 526,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/struct_drop.emit",
+      "baseline": 1666,
+      "main": 1663,
+      "candidate": 1637,
+      "delta": -26
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/tokenize.emit",
+      "baseline": 875,
+      "main": 875,
+      "candidate": 875,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/utf8_ingest_unchecked.emit",
+      "baseline": 9447,
+      "main": 9444,
+      "candidate": 9209,
+      "delta": -235
+    },
+    {
+      "metric": "selfhost/wasm32-wasi/utf8_ingest_validated.emit",
+      "baseline": 10421,
+      "main": 10418,
+      "candidate": 10171,
+      "delta": -247
+    },
+    {
+      "metric": "selfhost/arm64-linux/array_append.emit",
+      "baseline": 1354,
+      "main": 1357,
+      "candidate": 1357,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/array_append.emit",
+      "baseline": 1139,
+      "main": 1140,
+      "candidate": 1140,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/array_index.emit",
+      "baseline": 1352,
+      "main": 1355,
+      "candidate": 1355,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/array_index.emit",
+      "baseline": 1140,
+      "main": 1141,
+      "candidate": 1141,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/array_scale_f64.emit",
+      "baseline": 1536,
+      "main": 1536,
+      "candidate": 1453,
+      "delta": -83
+    },
+    {
+      "metric": "selfhost/x86-64-linux/array_scale_f64.emit",
+      "baseline": 1342,
+      "main": 1342,
+      "candidate": 1267,
+      "delta": -75
+    },
+    {
+      "metric": "selfhost/arm64-linux/array_with.emit",
+      "baseline": 1508,
+      "main": 1513,
+      "candidate": 1513,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/array_with.emit",
+      "baseline": 1295,
+      "main": 1296,
+      "candidate": 1296,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/ascii_scan.emit",
+      "baseline": 1754,
+      "main": 1754,
+      "candidate": 1671,
+      "delta": -83
+    },
+    {
+      "metric": "selfhost/x86-64-linux/ascii_scan.emit",
+      "baseline": 1444,
+      "main": 1444,
+      "candidate": 1369,
+      "delta": -75
+    },
+    {
+      "metric": "selfhost/arm64-linux/byte_copy_append.emit",
+      "baseline": 1478,
+      "main": 1478,
+      "candidate": 1478,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/byte_copy_append.emit",
+      "baseline": 1245,
+      "main": 1246,
+      "candidate": 1246,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/byte_copy_with.emit",
+      "baseline": 1424,
+      "main": 1424,
+      "candidate": 1424,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/byte_copy_with.emit",
+      "baseline": 1202,
+      "main": 1203,
+      "candidate": 1203,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/call_overhead.emit",
+      "baseline": 388,
+      "main": 391,
+      "candidate": 391,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/call_overhead.emit",
+      "baseline": 305,
+      "main": 305,
+      "candidate": 305,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/closure_call.emit",
+      "baseline": 1149,
+      "main": 1149,
+      "candidate": 1149,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/closure_call.emit",
+      "baseline": 916,
+      "main": 916,
+      "candidate": 916,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/deflate_decode.emit",
+      "baseline": 14230,
+      "main": 14252,
+      "candidate": 13839,
+      "delta": -413
+    },
+    {
+      "metric": "selfhost/x86-64-linux/deflate_decode.emit",
+      "baseline": 13325,
+      "main": 13366,
+      "candidate": 12993,
+      "delta": -373
+    },
+    {
+      "metric": "selfhost/arm64-linux/deflate_encode.emit",
+      "baseline": 8033,
+      "main": 8081,
+      "candidate": 7910,
+      "delta": -171
+    },
+    {
+      "metric": "selfhost/x86-64-linux/deflate_encode.emit",
+      "baseline": 7372,
+      "main": 7429,
+      "candidate": 7275,
+      "delta": -154
+    },
+    {
+      "metric": "selfhost/arm64-linux/enum_match.emit",
+      "baseline": 1316,
+      "main": 1319,
+      "candidate": 1227,
+      "delta": -92
+    },
+    {
+      "metric": "selfhost/x86-64-linux/enum_match.emit",
+      "baseline": 1099,
+      "main": 1100,
+      "candidate": 1017,
+      "delta": -83
+    },
+    {
+      "metric": "selfhost/arm64-linux/http_hello.emit",
+      "baseline": 19090,
+      "main": 19090,
+      "candidate": 15945,
+      "delta": -3145
+    },
+    {
+      "metric": "selfhost/x86-64-linux/http_hello.emit",
+      "baseline": 17921,
+      "main": 17921,
+      "candidate": 15029,
+      "delta": -2892
+    },
+    {
+      "metric": "selfhost/arm64-linux/int_loop.emit",
+      "baseline": 330,
+      "main": 333,
+      "candidate": 333,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/int_loop.emit",
+      "baseline": 250,
+      "main": 250,
+      "candidate": 250,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/map_int.emit",
+      "baseline": 8504,
+      "main": 8612,
+      "candidate": 8504,
+      "delta": -108
+    },
+    {
+      "metric": "selfhost/x86-64-linux/map_int.emit",
+      "baseline": 8478,
+      "main": 8575,
+      "candidate": 8478,
+      "delta": -97
+    },
+    {
+      "metric": "selfhost/arm64-linux/map_probe_chain.emit",
+      "baseline": 8514,
+      "main": 8622,
+      "candidate": 8514,
+      "delta": -108
+    },
+    {
+      "metric": "selfhost/x86-64-linux/map_probe_chain.emit",
+      "baseline": 8482,
+      "main": 8579,
+      "candidate": 8482,
+      "delta": -97
+    },
+    {
+      "metric": "selfhost/arm64-linux/map_string.emit",
+      "baseline": 9790,
+      "main": 9790,
+      "candidate": 9599,
+      "delta": -191
+    },
+    {
+      "metric": "selfhost/x86-64-linux/map_string.emit",
+      "baseline": 9591,
+      "main": 9591,
+      "candidate": 9419,
+      "delta": -172
+    },
+    {
+      "metric": "selfhost/arm64-linux/ordmap_insert.emit",
+      "baseline": 6141,
+      "main": 6058,
+      "candidate": 5873,
+      "delta": -185
+    },
+    {
+      "metric": "selfhost/x86-64-linux/ordmap_insert.emit",
+      "baseline": 5739,
+      "main": 5664,
+      "candidate": 5498,
+      "delta": -166
+    },
+    {
+      "metric": "selfhost/arm64-linux/perceus_cfold.emit",
+      "baseline": 2178,
+      "main": 2181,
+      "candidate": 2181,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/perceus_cfold.emit",
+      "baseline": 1915,
+      "main": 1915,
+      "candidate": 1915,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/perceus_deriv.emit",
+      "baseline": 3026,
+      "main": 3029,
+      "candidate": 3029,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/perceus_deriv.emit",
+      "baseline": 2720,
+      "main": 2720,
+      "candidate": 2720,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/perceus_nqueens.emit",
+      "baseline": 1805,
+      "main": 1808,
+      "candidate": 1808,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/perceus_nqueens.emit",
+      "baseline": 1555,
+      "main": 1556,
+      "candidate": 1556,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/perceus_rbtree.emit",
+      "baseline": 3162,
+      "main": 3158,
+      "candidate": 3158,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/perceus_rbtree.emit",
+      "baseline": 2873,
+      "main": 2872,
+      "candidate": 2872,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/perceus_rbtree_ck.emit",
+      "baseline": 3399,
+      "main": 3377,
+      "candidate": 3251,
+      "delta": -126
+    },
+    {
+      "metric": "selfhost/x86-64-linux/perceus_rbtree_ck.emit",
+      "baseline": 3123,
+      "main": 3097,
+      "candidate": 2976,
+      "delta": -121
+    },
+    {
+      "metric": "selfhost/arm64-linux/pmap_insert.emit",
+      "baseline": 3433,
+      "main": 3433,
+      "candidate": 3242,
+      "delta": -191
+    },
+    {
+      "metric": "selfhost/x86-64-linux/pmap_insert.emit",
+      "baseline": 3145,
+      "main": 3145,
+      "candidate": 2973,
+      "delta": -172
+    },
+    {
+      "metric": "selfhost/arm64-linux/pvec_with.emit",
+      "baseline": 3393,
+      "main": 3310,
+      "candidate": 3202,
+      "delta": -108
+    },
+    {
+      "metric": "selfhost/x86-64-linux/pvec_with.emit",
+      "baseline": 3123,
+      "main": 3048,
+      "candidate": 2951,
+      "delta": -97
+    },
+    {
+      "metric": "selfhost/arm64-linux/record_update.emit",
+      "baseline": 1608,
+      "main": 1613,
+      "candidate": 1513,
+      "delta": -100
+    },
+    {
+      "metric": "selfhost/x86-64-linux/record_update.emit",
+      "baseline": 1386,
+      "main": 1387,
+      "candidate": 1296,
+      "delta": -91
+    },
+    {
+      "metric": "selfhost/arm64-linux/sort_inplace.emit",
+      "baseline": 1686,
+      "main": 1686,
+      "candidate": 1686,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/sort_inplace.emit",
+      "baseline": 1497,
+      "main": 1497,
+      "candidate": 1497,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/sort_ints.emit",
+      "baseline": 2175,
+      "main": 2175,
+      "candidate": 2175,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/sort_ints.emit",
+      "baseline": 1964,
+      "main": 1964,
+      "candidate": 1964,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/sort_strings.emit",
+      "baseline": 3677,
+      "main": 3677,
+      "candidate": 3594,
+      "delta": -83
+    },
+    {
+      "metric": "selfhost/x86-64-linux/sort_strings.emit",
+      "baseline": 3305,
+      "main": 3305,
+      "candidate": 3230,
+      "delta": -75
+    },
+    {
+      "metric": "selfhost/arm64-linux/string_build.emit",
+      "baseline": 2444,
+      "main": 2444,
+      "candidate": 2361,
+      "delta": -83
+    },
+    {
+      "metric": "selfhost/x86-64-linux/string_build.emit",
+      "baseline": 2066,
+      "main": 2066,
+      "candidate": 1991,
+      "delta": -75
+    },
+    {
+      "metric": "selfhost/arm64-linux/string_count_byte.emit",
+      "baseline": 1528,
+      "main": 1528,
+      "candidate": 1445,
+      "delta": -83
+    },
+    {
+      "metric": "selfhost/x86-64-linux/string_count_byte.emit",
+      "baseline": 1255,
+      "main": 1255,
+      "candidate": 1180,
+      "delta": -75
+    },
+    {
+      "metric": "selfhost/arm64-linux/string_find_byte.emit",
+      "baseline": 1984,
+      "main": 1984,
+      "candidate": 1901,
+      "delta": -83
+    },
+    {
+      "metric": "selfhost/x86-64-linux/string_find_byte.emit",
+      "baseline": 1666,
+      "main": 1666,
+      "candidate": 1591,
+      "delta": -75
+    },
+    {
+      "metric": "selfhost/arm64-linux/string_rfind_byte.emit",
+      "baseline": 2107,
+      "main": 2107,
+      "candidate": 2024,
+      "delta": -83
+    },
+    {
+      "metric": "selfhost/x86-64-linux/string_rfind_byte.emit",
+      "baseline": 1837,
+      "main": 1837,
+      "candidate": 1762,
+      "delta": -75
+    },
+    {
+      "metric": "selfhost/arm64-linux/string_scan.emit",
+      "baseline": 2648,
+      "main": 2648,
+      "candidate": 2565,
+      "delta": -83
+    },
+    {
+      "metric": "selfhost/x86-64-linux/string_scan.emit",
+      "baseline": 2314,
+      "main": 2314,
+      "candidate": 2239,
+      "delta": -75
+    },
+    {
+      "metric": "selfhost/arm64-linux/string_slice.emit",
+      "baseline": 1132,
+      "main": 1135,
+      "candidate": 1135,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/string_slice.emit",
+      "baseline": 895,
+      "main": 896,
+      "candidate": 896,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/struct_drop.emit",
+      "baseline": 2754,
+      "main": 2754,
+      "candidate": 2671,
+      "delta": -83
+    },
+    {
+      "metric": "selfhost/x86-64-linux/struct_drop.emit",
+      "baseline": 2488,
+      "main": 2488,
+      "candidate": 2413,
+      "delta": -75
+    },
+    {
+      "metric": "selfhost/arm64-linux/tokenize.emit",
+      "baseline": 1388,
+      "main": 1391,
+      "candidate": 1391,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/x86-64-linux/tokenize.emit",
+      "baseline": 1198,
+      "main": 1199,
+      "candidate": 1199,
+      "delta": 0
+    },
+    {
+      "metric": "selfhost/arm64-linux/utf8_ingest_unchecked.emit",
+      "baseline": 9277,
+      "main": 9277,
+      "candidate": 8656,
+      "delta": -621
+    },
+    {
+      "metric": "selfhost/x86-64-linux/utf8_ingest_unchecked.emit",
+      "baseline": 8808,
+      "main": 8808,
+      "candidate": 8244,
+      "delta": -564
+    },
+    {
+      "metric": "selfhost/arm64-linux/utf8_ingest_validated.emit",
+      "baseline": 9901,
+      "main": 9901,
+      "candidate": 9261,
+      "delta": -640
+    },
+    {
+      "metric": "selfhost/x86-64-linux/utf8_ingest_validated.emit",
+      "baseline": 9478,
+      "main": 9478,
+      "candidate": 8897,
+      "delta": -581
+    }
+  ]
+}
