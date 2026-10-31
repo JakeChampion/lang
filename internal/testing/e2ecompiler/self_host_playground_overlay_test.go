@@ -137,7 +137,7 @@ func playgroundLSPStdlibAnswers(t *testing.T, bin string) {
 	if err := json.Unmarshal(response(t, frames, "2").Result, &hover); err != nil {
 		t.Fatal(err)
 	}
-	if want := "```fern\n(method on i32) function to_string(): string\n```\n\nThe decimal text of `n`, with a leading `-` when it is negative."; hover.Contents.Value != want || hover.Range != span(3, 12, 3, 21) {
+	if want := "```fern\n(method on i32) function to_string(): string\n```\n\nThe decimal text of `self`, with a leading `-` when it is negative."; hover.Contents.Value != want || hover.Range != span(3, 12, 3, 21) {
 		t.Errorf("hover = %+v, want %q at 3:12-3:21", hover, want)
 	}
 	var completion struct {
@@ -151,14 +151,14 @@ func playgroundLSPStdlibAnswers(t *testing.T, bin string) {
 		found = found || it.Label == "to_string" && it.Detail == "function to_string(): string"
 	}
 	if !found {
-		t.Errorf("completion after `f.` offered %d items, none of them std/i32's to_string: %+v", len(completion.Items), completion.Items)
+		t.Errorf("completion after `f.` offered %d items, none of them core/cmp's to_string: %+v", len(completion.Items), completion.Items)
 	}
 	var def lspLocation
 	if err := json.Unmarshal(response(t, frames, "4").Result, &def); err != nil {
 		t.Fatal(err)
 	}
-	if def.URI != "file:///stdlib/std/i32.fern.md" || def.Range.Start.Line == 0 {
-		t.Errorf("definition of to_string = %+v, want a line of file:///stdlib/std/i32.fern.md", def)
+	if def.URI != "file:///stdlib/core/cmp.fern.md" || def.Range.Start.Line == 0 {
+		t.Errorf("definition of to_string = %+v, want a line of file:///stdlib/core/cmp.fern.md", def)
 	}
 }
 

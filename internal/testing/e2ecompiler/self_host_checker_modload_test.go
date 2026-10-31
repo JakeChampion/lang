@@ -173,9 +173,9 @@ func TestSelfHostCheckerModloadEmptyImplMangledX86_64(t *testing.T) {
 			"pub struct Tag { v: i32 }\n" +
 			"pub function (t: Tag) to_string(): string { return \"t\"; }\n" +
 			"impl Show for Tag { }\n" +
-			"impl Show for ops.Num { }\n",
+			"impl Show for num.Num { }\n",
 		"main.fern": "import \"./num\";\nimport \"./cross\";\n" +
-			"function main(): i32 { let n: ops.Num = ops.Num { v: 1 }; return n.v; }\n",
+			"function main(): i32 { let n: num.Num = num.Num { v: 1 }; return n.v; }\n",
 	}
 	for name, src := range files {
 		if err := os.WriteFile(filepath.Join(progDir, name), []byte(src), 0o644); err != nil {

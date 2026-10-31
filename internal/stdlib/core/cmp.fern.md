@@ -119,6 +119,7 @@ pub trait Debug {
 }
 
 impl Display for i32 {
+  // The decimal text of `self`, with a leading `-` when it is negative.
   function to_string(self: i32): string {
     return int.int_to_string(self);
   }
