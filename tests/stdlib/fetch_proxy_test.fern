@@ -78,6 +78,11 @@ function test_an_address_entry_matches_that_address(): test.TestOutcome {
   return test.assert_eq(routes(skipping("192.168.1.5,[fe80::1%eth0],[fe80::2]:8080"), ["http://192.168.1.5/", "http://192.168.1.6/", "http://[fe80::1]/", "http://[::ffff:192.168.1.5]/", "http://[fe80::2]:8080/", "http://[fe80::2]/"]), "direct proxy direct direct direct proxy");
 }
 
+function test_global_literals_still_match_address_rules(): test.TestOutcome {
+  let p: fetch.ProxyEnv = skipping("127.0.0.1,8.8.8.8:8080,1.1.1.0/24");
+  return test.assert_eq(routes(p, ["http://8.8.8.8:8080/", "http://8.8.8.8/", "http://1.1.1.1/", "http://[::ffff:1.1.1.1]/", "http://8.8.4.4/", "http://[2606:4700::1111]/"]), "direct proxy direct direct proxy proxy");
+}
+
 function test_a_block_matches_the_addresses_in_it(): test.TestOutcome {
   return test.assert_eq(routes(skipping("10.0.0.0/8, fd00::/8, 172.16.0.0/12"), ["http://10.1.2.3/", "http://11.0.0.1/", "http://[::ffff:10.9.9.9]/", "http://[fd12::1]/", "http://[fe80::1]/", "http://172.31.0.1/", "http://172.32.0.1/", "http://ten.example/"]), "direct proxy direct direct proxy direct proxy proxy");
 }
@@ -133,7 +138,9 @@ function test_a_no_proxy_list_is_read_once(): test.TestOutcome {
     return test.fail("the long list routes wrongly");
   }
   let name: i64 = allocations(long, "http://www.example.com/", 50) - allocations(skipping(""), "http://www.example.com/", 50);
-  let address: i64 = allocations(long, "http://11.0.0.1/", 50) - allocations(skipping(""), "http://11.0.0.1/", 50);
+  // Both lists need an address value for a CIDR rule. An empty list can
+  // avoid that allocation, so it is not a control for reading the list.
+  let address: i64 = allocations(long, "http://11.0.0.1/", 50) - allocations(skipping("0.0.0.0/32"), "http://11.0.0.1/", 50);
   return test.assert_eq(name.to_string() + " " + address.to_string(), "0 0");
 }
 
@@ -150,6 +157,7 @@ function main(): i32 {
   r = r.it("names compare folded without a trailing dot", test_names_compare_folded_without_a_trailing_dot);
   r = r.it("a port limits an entry", test_a_port_limits_an_entry);
   r = r.it("an address entry matches that address", test_an_address_entry_matches_that_address);
+  r = r.it("global literals still match address rules", test_global_literals_still_match_address_rules);
   r = r.it("a block matches the addresses in it", test_a_block_matches_the_addresses_in_it);
   r = r.it("a zone before a block keeps the block", test_a_zone_before_a_block_keeps_the_block);
   r = r.it("entries are trimmed and empty ones skipped", test_entries_are_trimmed_and_empty_ones_skipped);

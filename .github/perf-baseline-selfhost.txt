@@ -1,3 +1,4 @@
+# 2026-10-31: PR #13959, measured by CI job 124534642082.
 # 2026-10-31: PR #13897 at 54001e2. CI run 41153255512, perf-x86_64.
 # Record the lane's measured changes after the lifetime and shared-helper repairs.
 # 2026-10-29: #13863 (#13061) at 84b2ea38, from a local perf-bench-selfhost run. The map
@@ -201,13 +202,13 @@ selfhost/arm64-linux/deflate_decode.emit	14230
 selfhost/arm64-linux/deflate_encode.emit	8033
 selfhost/arm64-linux/enum_match.emit	1316
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/arm64-linux/http_hello.emit	18861
+selfhost/arm64-linux/http_hello.emit	19090
 selfhost/arm64-linux/int_loop.emit	330
 selfhost/arm64-linux/map_int.emit	8695
 selfhost/arm64-linux/map_probe_chain.emit	8705
 selfhost/arm64-linux/map_string.emit	9790
 selfhost/arm64-linux/ordmap_insert.emit	6141
-selfhost/arm64-linux/pmap_insert.emit	3256
+selfhost/arm64-linux/pmap_insert.emit	3433
 selfhost/arm64-linux/pvec_with.emit	3393
 selfhost/arm64-linux/record_update.emit	1608
 selfhost/arm64-linux/sort_inplace.emit	1769
@@ -221,8 +222,8 @@ selfhost/arm64-linux/string_scan.emit	2648
 selfhost/arm64-linux/string_slice.emit	1132
 selfhost/arm64-linux/struct_drop.emit	2754
 selfhost/arm64-linux/tokenize.emit	1388
-selfhost/arm64-linux/utf8_ingest_unchecked.emit	9077
-selfhost/arm64-linux/utf8_ingest_validated.emit	9701
+selfhost/arm64-linux/utf8_ingest_unchecked.emit	9277
+selfhost/arm64-linux/utf8_ingest_validated.emit	9901
 selfhost/wasm32-wasi/array_append.emit	443
 selfhost/wasm32-wasi/array_index.emit	448
 selfhost/wasm32-wasi/array_scale_f64.emit	529
@@ -236,13 +237,13 @@ selfhost/wasm32-wasi/deflate_decode.emit	19729
 selfhost/wasm32-wasi/deflate_encode.emit	11328
 selfhost/wasm32-wasi/enum_match.emit	710
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/wasm32-wasi/http_hello.emit	20032
+selfhost/wasm32-wasi/http_hello.emit	20309
 selfhost/wasm32-wasi/int_loop.emit	69
 selfhost/wasm32-wasi/map_int.emit	13304
 selfhost/wasm32-wasi/map_probe_chain.emit	13329
 selfhost/wasm32-wasi/map_string.emit	14126
 selfhost/wasm32-wasi/ordmap_insert.emit	6746
-selfhost/wasm32-wasi/pmap_insert.emit	3207
+selfhost/wasm32-wasi/pmap_insert.emit	3368
 selfhost/wasm32-wasi/pvec_with.emit	2843
 selfhost/wasm32-wasi/record_update.emit	525
 selfhost/wasm32-wasi/sort_inplace.emit	1022
@@ -256,8 +257,8 @@ selfhost/wasm32-wasi/string_scan.emit	1439
 selfhost/wasm32-wasi/string_slice.emit	526
 selfhost/wasm32-wasi/struct_drop.emit	1666
 selfhost/wasm32-wasi/tokenize.emit	875
-selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	9254
-selfhost/wasm32-wasi/utf8_ingest_validated.emit	10228
+selfhost/wasm32-wasi/utf8_ingest_unchecked.emit	9447
+selfhost/wasm32-wasi/utf8_ingest_validated.emit	10421
 selfhost/x86-64-linux/array_append.emit	1139
 selfhost/x86-64-linux/array_index.emit	1140
 selfhost/x86-64-linux/array_scale_f64.emit	1342
@@ -271,13 +272,13 @@ selfhost/x86-64-linux/deflate_decode.emit	13325
 selfhost/x86-64-linux/deflate_encode.emit	7372
 selfhost/x86-64-linux/enum_match.emit	1099
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. Measured with scripts/perf-bench-selfhost.
-selfhost/x86-64-linux/http_hello.emit	17650
+selfhost/x86-64-linux/http_hello.emit	17921
 selfhost/x86-64-linux/int_loop.emit	250
 selfhost/x86-64-linux/map_int.emit	8650
 selfhost/x86-64-linux/map_probe_chain.emit	8654
 selfhost/x86-64-linux/map_string.emit	9591
 selfhost/x86-64-linux/ordmap_insert.emit	5739
-selfhost/x86-64-linux/pmap_insert.emit	2955
+selfhost/x86-64-linux/pmap_insert.emit	3145
 selfhost/x86-64-linux/pvec_with.emit	3123
 selfhost/x86-64-linux/record_update.emit	1386
 selfhost/x86-64-linux/sort_inplace.emit	1572
@@ -291,8 +292,8 @@ selfhost/x86-64-linux/string_scan.emit	2314
 selfhost/x86-64-linux/string_slice.emit	895
 selfhost/x86-64-linux/struct_drop.emit	2488
 selfhost/x86-64-linux/tokenize.emit	1198
-selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8606
-selfhost/x86-64-linux/utf8_ingest_validated.emit	9276
+selfhost/x86-64-linux/utf8_ingest_unchecked.emit	8808
+selfhost/x86-64-linux/utf8_ingest_validated.emit	9478
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
 selfhost/x86-64-linux/perceus_cfold.emit	1915
