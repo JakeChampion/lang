@@ -13,7 +13,10 @@ function hold_views(s: string): i32 {
   let w: str = own.trim();
   let b: [u8] = s.as_bytes();
   let set: i32[] = [timer_fd(10), 1];
-  let r: i32 = async.wait_any(set, None);
+  let r: i32 = 0 - 1;
+  if let Woke(at) = async.wait_any(set, None) {
+    r = at;
+  }
   return v.len() * 100 + w.len() * 10 + b.len() + r;
 }
 
@@ -22,7 +25,10 @@ function counter(): i32 {
   let n: i32 = 0;
   let bump: () => i32 = (): i32 => { n = n + 1; return n; };
   let set: i32[] = [timer_fd(10), 1];
-  let r: i32 = async.wait_any(set, None);
+  let r: i32 = 0 - 1;
+  if let Woke(at) = async.wait_any(set, None) {
+    r = at;
+  }
   bump();
   bump();
   n = n + 10;
@@ -40,7 +46,10 @@ function counter(): i32 {
   let i: i32 = 0;
   while (i < 3) {
     let set: i32[] = [timer_fd(5), 1];
-    let r: i32 = async.wait_any(set, None);
+    let r: i32 = 0 - 1;
+    if let Woke(at) = async.wait_any(set, None) {
+      r = at;
+    }
     if (i == 1) {
       total = total + near + r;
     } else {
@@ -69,11 +78,7 @@ function drive(t: async.Task[i32]): i32 {
       },
       Suspended(w) => {
         parks = parks + 1;
-        let woke: i32 = async.wait_any(w.set, w.timeout);
-        st = async.task_resume(t, woke);
-      },
-      Cancelled => {
-        return 0 - 2;
+        st = async.task_resume(t, async.wait_any(w.set, w.until));
       }
     }
   }
@@ -81,9 +86,7 @@ function drive(t: async.Task[i32]): i32 {
 }
 
 function main(): i32 {
-  let t: async.Task[i32] = async.task_new(() => body());
-  print("task " + drive(t).to_string());
-  async.task_free(t);
+  print("task " + drive(async.task_new(() => body())).to_string());
   print("plain " + body().to_string());
   return 0;
 }

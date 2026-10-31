@@ -36,9 +36,9 @@ function main(): i32 {
     let before: i32 = open_fds();
     let k: i32 = 0;
     while (k < 5) {
-        let both: (() => string)[] = [() => body_at("PA", "/a"), () => body_at("PB", "/b")];
-        let (winner, body) = async.race_tasks(both, "none");
-        if (winner != 0 || body != "AAA") { return 90; }
+        let both: async.Future[string][] = [async.spawn(() => body_at("PA", "/a")), async.spawn(() => body_at("PB", "/b"))];
+        let won: (i32, string) = async.block_on(async.race(both)).unwrap_or((0 - 1, "none"));
+        if (won.0 != 0 || won.1 != "AAA") { return 90; }
         k = k + 1;
     }
     return open_fds() - before;

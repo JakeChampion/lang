@@ -27,20 +27,20 @@ function passed(deadline: Option[Instant]): boolean {
   return now().cmp(at) >= 0;
 }
 
-// How long to wait for a datagram: until the deadline, between 1 and 100 ms.
-function wait_until(deadline: Option[Instant]): Option[Duration] {
+// When to stop waiting for a datagram: at the deadline, but 1 to 100 ms from now.
+function wait_until(deadline: Option[Instant]): Option[Instant] {
   let most: Duration = time.duration_millis(100);
   let Some(at) = deadline else {
-    return Some(most);
+    return Some(now().add(most));
   };
   let left: Duration = at.since(now()).add(time.duration_millis(1));
   if (left.cmp(time.duration_millis(1)) < 0) {
-    return Some(time.duration_millis(1));
+    return Some(now().add(time.duration_millis(1)));
   }
   if (left.cmp(most) > 0) {
-    return Some(most);
+    return Some(now().add(most));
   }
-  return Some(left);
+  return Some(now().add(left));
 }
 
 function answer(req: HttpRequest): HttpResponse {
@@ -78,9 +78,9 @@ function copied(buf: u8[], n: i32): u8[] {
   return out;
 }
 
-function wait_for(s: Server): Option[Duration] {
+function wait_for(s: Server): Option[Instant] {
   let Some(c) = s.current else {
-    return Some(time.duration_millis(100));
+    return Some(now().add(time.duration_millis(100)));
   };
   return wait_until(c.deadline());
 }
@@ -167,7 +167,7 @@ function main(): i32 {
   let s: Server = s0;
   let started: Instant = now();
   while (now().since(started).cmp(time.duration_seconds(20)) < 0) {
-    let woke: i32 = async.wait_any([s.sock, 1], wait_for(s));
+    let woke: async.Wake = async.wait_any([s.sock, 1], wait_for(s));
     s = drained(s, buf);
     if let Some(c) = s.current {
       s = sent(s, c);

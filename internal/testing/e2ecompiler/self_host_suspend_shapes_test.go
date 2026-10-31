@@ -13,7 +13,18 @@ import "std/async";
 
 function wait(): i32 {
   let set: i32[] = [timer_fd(5), 1];
-  return async.wait_any(set, None);
+  match (async.wait_any(set, None)) {
+    Woke(i) => {
+      return i;
+    },
+    TimedOut => {
+      return 0 - 1;
+    },
+    Cancelled => {
+      return 0 - 2;
+    }
+  }
+  return 0 - 3;
 }
 
 function ready(): boolean {
@@ -56,10 +67,7 @@ function drive(t: async.Task[i32]): i32 {
       },
       Suspended(w) => {
         parks = parks + 1;
-        st = async.task_resume(t, async.wait_any(w.set, w.timeout));
-      },
-      Cancelled => {
-        return 0 - 2;
+        st = async.task_resume(t, async.wait_any(w.set, w.until));
       }
     }
   }
@@ -69,7 +77,6 @@ function drive(t: async.Task[i32]): i32 {
 function main(): i32 {
   let t: async.Task[i32] = async.task_new(() => body());
   print("task " + drive(t).to_string());
-  async.task_free(t);
   print("plain " + body().to_string());
   return 0;
 }

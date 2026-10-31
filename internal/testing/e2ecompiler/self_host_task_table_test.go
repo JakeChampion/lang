@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// A task id comes off a free list, so a new task costs the same with 40,000
-// tasks alive as with none. The program exits with the ratio of the two
+// A task id comes off a free list, and a finished task goes back on it, so a
+// new task costs the same with 40,000 tasks alive as with none. The program exits with the ratio of the two
 // costs, capped at 100.
 const taskTableProgram = `import "std/async";
 
@@ -17,8 +17,7 @@ function work(n: i32): i32 {
 function churn(rounds: i32): i64 {
   let start: i64 = monotonic_ns();
   for i in 0..rounds {
-    let t: async.Task[i32] = async.task_new(() => work(i));
-    async.task_free(t);
+    let st: async.TaskStatus[i32] = async.task_start(async.task_new(() => work(i)));
   }
   return monotonic_ns() - start;
 }
@@ -31,7 +30,7 @@ function main(): i32 {
   }
   let busy: i64 = churn(20000);
   for t in live {
-    async.task_free(t);
+    let st: async.TaskStatus[i32] = async.task_start(t);
   }
   let ratio: i64 = busy / (idle + 1);
   eprint("idle " + idle.to_string() + " ns, busy " + busy.to_string() + " ns");

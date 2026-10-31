@@ -84,6 +84,7 @@ func NetSocketOptsProbe() string {
 import "std/net";
 import "std/errno";
 import "std/async";
+import "std/clock";
 import "std/time";
 
 function fail(n: i32): i32 {
@@ -109,7 +110,7 @@ function unsupported(r: Result[void, net.NetError]): boolean {
 // the bytes read, or -1 for an error.
 function read_ready(sock: i32): u8[] {
     let set: i32[] = [sock, 1];
-    let woke: i32 = async.wait_any(set, Some(time.duration_millis(5000)));
+    let woke: async.Wake = async.wait_any(set, Some(clock.instant().add(time.duration_millis(5000))));
     let buf: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
     match (net.read(sock, buf)) {
         Ok(n) => {

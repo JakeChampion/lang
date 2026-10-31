@@ -4,11 +4,11 @@ This module combines futures with structured concurrency.
 
 ## Model
 
-A future either contains a result or describes a wait. Drivers connect those waits to readiness events. Task status distinguishes completion, suspension, and cancellation.
+A future is ready with a value, pending on a wait, or cancelled. A wait is a set of (fd, interest) pairs and an optional deadline. The deadline is an instant on the clock of whatever waits. A task is a call chain that parks on a wait and continues when its scheduler resumes it. `spawn` makes a task into a future.
 
 ## Contracts
 
-Task and call handles carry explicit resume, cancel, and free operations. The gather, race, and deadline helpers coordinate groups of tasks through the same driver model.
+The combinators `gather`, `race` and `with_deadline` build futures from futures and read no clock. `wait` drives a future on the scheduler of the calling task. `block_on` drives it on the machine's reactor and clock. A `Driver` is the reactor that a scheduler such as `std/serve` watches descriptors with.
 
 ## Module assembly
 
@@ -42,17 +42,11 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<13 impl Driver for RealDriver>>
 
-<<14 function __all_ready[T](fs: Future[T][]): boolean>>
-
-<<15 pub function gather[T](fs_in: Future[T][], on_incomplete: T): T[]>>
-
-<<16 function __drop_losers[D: Driver, T](drv: D, fs: Future[T][], winner: i32): i32>>
-
-<<17 pub function race[T](fs_in: Future[T][], none_val: T): (i32, T)>>
+<<14 future combinators>>
 
 <<18 pub enum TaskStatus[T]>>
 
-<<19 pub function cancelled(): i32>>
+<<19 pub function task_new[T](entry: () => T): Task[T]>>
 
 <<20 function run_task[T](t: Task[T], mode: i32): TaskStatus[T]>>
 
@@ -62,17 +56,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<23 function run_task_call[A, B, T](id: i32, f: (A, B)>>
 
-<<24 pub function park_tokens(toks: i32[], timeout: Option[Duration]): i32>>
-
-<<25 struct __Child[T]>>
-
-<<26 function __no_due(): i64>>
-
-<<27 struct __Union>>
-
-<<28 function __children_union[T](kids: __Child[T][]): __Union>>
-
-<<29 pub function gather_tasks[T](entries: (()>>
+<<24 waiting>>
 
 <<30 function __wait_readable(set: i32[], n: i32, timeout_ms: i32): i32>>
 
@@ -94,23 +78,27 @@ import "std/i32";
 import "core/int";
 import "std/string";
 import "std/time";
-import "std/clock";
 ```
 
 ### `3 pub enum Future[T]`
 
 ```fern
 <<3 pub enum Future[T]>>=
+// A pending future resumed with Cancelled releases what it holds.
 pub enum Future[T] {
   Ready(T),
-  Pending(i32, (i32) => Future[T]),
+  Pending(Wait, (Wake) => Future[T]),
+  Cancelled,
 }
 
+// `set` holds (fd, interest) pairs. `until` is an instant on the clock of
+// whatever waits for the set.
+pub struct Wait { set: i32[], until: Option[Instant] }
+
+// `Woke` holds the index of the pair that became ready.
+pub enum Wake { Woke(i32), TimedOut, Cancelled }
+
 pub trait Driver {
-  function poll_ready(self: Self, toks: i32[], timeout: Option[Duration]): i32;
-  function now(self: Self): Instant;
-  function timer(self: Self, after: Duration): i32;
-  function drop_token(self: Self, tok: i32): i32;
   function watch(self: Self, fd: i32, interest: i32): i32;
   function unwatch(self: Self, fd: i32): i32;
   function oneshot(self: Self): boolean {
@@ -347,23 +335,6 @@ pub function (d: RealDriver) handle(): i32 {
 ```fern
 <<13 impl Driver for RealDriver>>=
 impl Driver for RealDriver {
-  function poll_ready(self: RealDriver, toks: i32[], timeout: Option[Duration]): i32 {
-    unsafe {
-      if (__task_cur() != 0) {
-        return park_tokens(toks, timeout);
-      }
-      return poll(toks, time.timeout_millis(timeout));
-    }
-  }
-  function now(self: RealDriver): Instant {
-    return clock.instant();
-  }
-  function timer(self: RealDriver, after: Duration): i32 {
-    return __timer_pollable(after.as_nanos());
-  }
-  function drop_token(self: RealDriver, tok: i32): i32 {
-    return drop_pollable(tok);
-  }
   function watch(self: RealDriver, fd: i32, interest: i32): i32 {
     return __real_ctl(self, 1, fd, interest);
   }
@@ -474,261 +445,236 @@ impl Driver for RealDriver {
 }
 ```
 
-### `14 function __all_ready[T](fs: Future[T][]): boolean`
+### `14 future combinators`
+
+A combinator builds a new future from its inputs and waits for nothing
+itself. The union of the pending inputs' waits is the combined future's wait:
+every (fd, interest) pair of each input, in input order, and the soonest of
+their deadlines. A wake goes to the input that owns the pair, and a timeout
+goes to each input whose deadline is that soonest one. So a combinator never
+reads a clock, and the code that waits on its future supplies the time.
 
 ```fern
-<<14 function __all_ready[T](fs: Future[T][]): boolean>>=
-function __all_ready[T](fs: Future[T][]): boolean {
-  let i: i32 = 0;
-  while (i < fs.len()) {
-    match (fs[i]) {
-      Ready(v) => {},
-      Pending(fd, c) => {
-        return false;
-      }
-    }
-    i = i + 1;
+<<14 future combinators>>=
+// Ready with every value, in input order, when all of `fs` are ready.
+// Cancelled when one of them ends cancelled: the others are cancelled with it.
+pub function gather[T](fs: Future[T][]): Future[T[]] {
+  if (__any_cancelled(fs)) {
+    let dropped: i32 = __cancel_all(fs);
+    return Future.Cancelled;
   }
-  return true;
-}
-```
-
-### `15 pub function gather[T](fs_in: Future[T][], on_incomplete: T): T[]`
-
-```fern
-<<15 pub function gather[T](fs_in: Future[T][], on_incomplete: T): T[]>>=
-pub function gather[T](fs_in: Future[T][], on_incomplete: T): T[] {
-  return gather_on(real_driver(), fs_in, on_incomplete);
-}
-
-pub function gather_on[D: Driver, T](drv: D, fs_in: Future[T][], on_incomplete: T): T[] {
-  let fs: Future[T][] = fs_in;
-  while (true) {
-    if (__all_ready(fs)) {
-      break;
-    }
-    let fds: i32[] = [];
-    let idxs: i32[] = [];
-    let i: i32 = 0;
-    while (i < fs.len()) {
-      match (fs[i]) {
-        Ready(v) => {},
-        Pending(fd, c) => {
-          fds = fds.append(fd);
-          idxs = idxs.append(i);
-        }
-      }
-      i = i + 1;
-    }
-    let ready: i32 = drv.poll_ready(fds, None);
-    if (ready < 0) {
-      let dl: i32 = __drop_losers(drv, fs, -1);
-      break;
-    }
-    let ti: i32 = idxs[ready];
-    match (fs[ti]) {
-      Ready(v) => {},
-      Pending(fd, resume) => {
-        fs = fs.with(ti, resume(fd));
-      }
-    }
+  if (__any_pending(fs)) {
+    return Pending(__union(fs, None), (wake: Wake): Future[T[]] => __gather_woken(fs, wake));
   }
   let out: T[] = [];
-  let k: i32 = 0;
-  while (k < fs.len()) {
-    match (fs[k]) {
+  for f in fs {
+    if let Ready(v) = f {
+      out = out.append(v);
+    }
+  }
+  return Ready(out);
+}
+
+function __gather_woken[T](fs: Future[T][], wake: Wake): Future[T[]] {
+  if let Wake.Cancelled = wake {
+    let dropped: i32 = __cancel_all(fs);
+    return Future.Cancelled;
+  }
+  return gather(__step(fs, wake));
+}
+
+// Ready with the index and value of the first of `fs` to be ready; a tie goes
+// to the lower index. The others are cancelled. Cancelled when every one of
+// them ends cancelled, and so when `fs` is empty.
+pub function race[T](fs: Future[T][]): Future[(i32, T)] {
+  for i in 0..fs.len() {
+    if let Ready(v) = fs[i] {
+      let dropped: i32 = __cancel_all(fs);
+      return Ready((i, v));
+    }
+  }
+  if (!__any_pending(fs)) {
+    return Future.Cancelled;
+  }
+  return Pending(__union(fs, None), (wake: Wake): Future[(i32, T)] => __race_woken(fs, wake));
+}
+
+function __race_woken[T](fs: Future[T][], wake: Wake): Future[(i32, T)] {
+  if let Wake.Cancelled = wake {
+    let dropped: i32 = __cancel_all(fs);
+    return Future.Cancelled;
+  }
+  return race(__step(fs, wake));
+}
+
+// Ready with `Some(value)` for each of `fs` that is ready by `until`, and None
+// for each that is cancelled or still pending then. The pending ones are
+// cancelled at `until`. A deadline equal to an input's own deadline wins.
+pub function with_deadline[T](until: Instant, fs: Future[T][]): Future[Option[T][]] {
+  if (!__any_pending(fs)) {
+    return Ready(__slots(fs));
+  }
+  return Pending(__union(fs, Some(until)), (wake: Wake): Future[Option[T][]] => __deadline_woken(until, fs, wake));
+}
+
+function __deadline_woken[T](until: Instant, fs: Future[T][], wake: Wake): Future[Option[T][]] {
+  if let Wake.Cancelled = wake {
+    let dropped: i32 = __cancel_all(fs);
+    return Future.Cancelled;
+  }
+  if let TimedOut = wake {
+    let passed: boolean = true;
+    if let Some(due) = __soonest(fs) {
+      passed = until.cmp(due) <= 0;
+    }
+    if (passed) {
+      let slots: Option[T][] = __slots(fs);
+      let dropped: i32 = __cancel_all(fs);
+      return Ready(slots);
+    }
+  }
+  return with_deadline(until, __step(fs, wake));
+}
+
+function __any_pending[T](fs: Future[T][]): boolean {
+  for f in fs {
+    if let Pending(w, k) = f {
+      return true;
+    }
+  }
+  return false;
+}
+
+function __any_cancelled[T](fs: Future[T][]): boolean {
+  for f in fs {
+    if let Future.Cancelled = f {
+      return true;
+    }
+  }
+  return false;
+}
+
+function __slots[T](fs: Future[T][]): Option[T][] {
+  let out: Option[T][] = [];
+  for f in fs {
+    match (f) {
       Ready(v) => {
-        out = out.append(v);
+        out = out.append(Some(v));
       },
-      Pending(fd, c) => {
-        out = out.append(on_incomplete);
+      _ => {
+        out = out.append(None);
       }
     }
-    k = k + 1;
   }
   return out;
 }
-```
 
-### `16 function __drop_losers[D: Driver, T](drv: D, fs: Future[T][], winner: i32): i32`
+// A future resumed with Cancelled releases what it holds. What it answers is
+// not used.
+function __cancel_all[T](fs: Future[T][]): i32 {
+  let n: i32 = 0;
+  for f in fs {
+    if let Pending(w, k) = f {
+      let gone: Future[T] = k(Wake.Cancelled);
+      n = n + 1;
+    }
+  }
+  return n;
+}
 
-```fern
-<<16 function __drop_losers[D: Driver, T](drv: D, fs: Future[T][], winner: i32): i32>>=
-function __drop_losers[D: Driver, T](drv: D, fs: Future[T][], winner: i32): i32 {
-  let i: i32 = 0;
-  while (i < fs.len()) {
-    if (i != winner) {
-      match (fs[i]) {
-        Ready(v) => {},
-        Pending(tok, c) => {
-          let d: i32 = drv.drop_token(tok);
-          match (c(cancelled())) {
-            Ready(v) => {},
-            Pending(rest, rc) => {
-              let dr: i32 = drv.drop_token(rest);
+function __sooner(a: Option[Instant], b: Option[Instant]): Option[Instant] {
+  let Some(x) = a else {
+    return b;
+  };
+  let Some(y) = b else {
+    return a;
+  };
+  if (y.cmp(x) < 0) {
+    return b;
+  }
+  return a;
+}
+
+function __soonest[T](fs: Future[T][]): Option[Instant] {
+  let due: Option[Instant] = None;
+  for f in fs {
+    if let Pending(w, k) = f {
+      due = __sooner(due, w.until);
+    }
+  }
+  return due;
+}
+
+function __union[T](fs: Future[T][], until: Option[Instant]): Wait {
+  let set: i32[] = [];
+  let due: Option[Instant] = until;
+  for f in fs {
+    if let Pending(w, k) = f {
+      for x in w.set {
+        set = set.append(x);
+      }
+      due = __sooner(due, w.until);
+    }
+  }
+  return Wait { set: set, until: due };
+}
+
+// Hands `wake`, a wake of `__union(fs, …)`, to the inputs it concerns.
+function __step[T](fs: Future[T][], wake: Wake): Future[T][] {
+  match (wake) {
+    Woke(at) => {
+      let base: i32 = 0;
+      for i in 0..fs.len() {
+        if let Pending(w, k) = fs[i] {
+          let pairs: i32 = w.set.len() / 2;
+          if (at < base + pairs) {
+            return fs.with(i, k(Woke(at - base)));
+          }
+          base = base + pairs;
+        }
+      }
+    },
+    TimedOut => {
+      let Some(due) = __soonest(fs) else {
+        return fs;
+      };
+      let out: Future[T][] = fs;
+      for i in 0..fs.len() {
+        if let Pending(w, k) = fs[i] {
+          if let Some(at) = w.until {
+            if (at.cmp(due) == 0) {
+              out = out.with(i, k(TimedOut));
             }
           }
         }
       }
-    }
-    i = i + 1;
-  }
-  return 0;
-}
-```
-
-### `17 pub function race[T](fs_in: Future[T][], none_val: T): (i32, T)`
-
-```fern
-<<17 pub function race[T](fs_in: Future[T][], none_val: T): (i32, T)>>=
-pub function race[T](fs_in: Future[T][], none_val: T): (i32, T) {
-  return race_on(real_driver(), fs_in, none_val);
-}
-
-pub function race_on[D: Driver, T](drv: D, fs_in: Future[T][], none_val: T): (i32, T) {
-  let fs: Future[T][] = fs_in;
-  let j: i32 = 0;
-  while (j < fs.len()) {
-    match (fs[j]) {
-      Ready(v) => {
-        let d0: i32 = __drop_losers(drv, fs, j);
-        return (j, v);
-      },
-      Pending(fd, c) => {}
-    }
-    j = j + 1;
-  }
-  while (true) {
-    let fds: i32[] = [];
-    let idxs: i32[] = [];
-    let i: i32 = 0;
-    while (i < fs.len()) {
-      match (fs[i]) {
-        Ready(v) => {},
-        Pending(fd, c) => {
-          fds = fds.append(fd);
-          idxs = idxs.append(i);
-        }
-      }
-      i = i + 1;
-    }
-    if (fds.len() == 0) {
-      return (-1, none_val);
-    }
-    let ready: i32 = drv.poll_ready(fds, None);
-    if (ready < 0) {
-      let de: i32 = __drop_losers(drv, fs, -1);
-      return (-1, none_val);
-    }
-    let ti: i32 = idxs[ready];
-    match (fs[ti]) {
-      Ready(v) => {
-        return (ti, v);
-      },
-      Pending(fd, resume) => {
-        let nx: Future[T] = resume(fd);
-        match (nx) {
-          Ready(v) => {
-            let dw: i32 = __drop_losers(drv, fs, ti);
-            return (ti, v);
-          },
-          Pending(nfd, nc) => {
-            fs = fs.with(ti, nx);
-          }
-        }
-      }
+      return out;
+    },
+    Cancelled => {
+      let dropped: i32 = __cancel_all(fs);
     }
   }
-  return (-1, none_val);
-}
-
-pub function with_deadline[T](deadline: Duration, fs_in: Future[T][]): Option[T][] {
-  return with_deadline_on(real_driver(), deadline, fs_in);
-}
-
-pub function with_deadline_on[D: Driver, T](drv: D, deadline: Duration, fs_in: Future[T][]): Option[T][] {
-  let fs: Future[T][] = fs_in;
-  let until: Instant = drv.now().add(deadline);
-  while (true) {
-    if (__all_ready(fs)) {
-      break;
-    }
-    let fds: i32[] = [];
-    let idxs: i32[] = [];
-    let i: i32 = 0;
-    while (i < fs.len()) {
-      match (fs[i]) {
-        Ready(v) => {},
-        Pending(fd, c) => {
-          fds = fds.append(fd);
-          idxs = idxs.append(i);
-        }
-      }
-      i = i + 1;
-    }
-    let remaining: Duration = until.since(drv.now());
-    if (remaining.is_negative() || remaining.is_zero()) {
-      break;
-    }
-    let nfds: i32 = fds.len();
-    let timer: i32 = drv.timer(remaining);
-    let pollset: i32[] = fds.append(timer);
-    let ready: i32 = drv.poll_ready(pollset, Some(remaining));
-    if (ready < 0) {
-      let dpe: i32 = drv.drop_token(timer);
-      break;
-    }
-    if (ready == nfds) {
-      let dpt: i32 = drv.drop_token(timer);
-      break;
-    }
-    let dpr: i32 = drv.drop_token(timer);
-    let ti: i32 = idxs[ready];
-    match (fs[ti]) {
-      Ready(v) => {},
-      Pending(fd, resume) => {
-        fs = fs.with(ti, resume(fd));
-      }
-    }
-  }
-  let dd: i32 = __drop_losers(drv, fs, -1);
-  let out: Option[T][] = [];
-  let k: i32 = 0;
-  while (k < fs.len()) {
-    match (fs[k]) {
-      Ready(v) => {
-        out = out.append(Some(v));
-      },
-      Pending(fd, c) => {
-        out = out.append(None);
-      }
-    }
-    k = k + 1;
-  }
-  return out;
+  return fs;
 }
 ```
 
 ### `18 pub enum TaskStatus[T]`
 
+A task is a call chain that can park. The scheduler that starts a task is the
+one that resumes it, with the wake its wait came to. A task that finishes
+releases its runtime record, so the scheduler only drops its handle.
+
 ```fern
 <<18 pub enum TaskStatus[T]>>=
-pub enum TaskStatus[T] { Done(T), Suspended(Wait), Cancelled }
-
-// `timeout` is how long the task waits for `set` before it resumes anyway; None waits without a limit.
-pub struct Wait { task: i32, set: i32[], timeout: Option[Duration] }
+pub enum TaskStatus[T] { Done(T), Suspended(Wait) }
 
 pub struct Task[T] { id: i32, entry: () => T }
 ```
 
-### `19 pub function cancelled(): i32`
+### `19 pub function task_new[T](entry: () => T): Task[T]`
 
 ```fern
-<<19 pub function cancelled(): i32>>=
-pub function cancelled(): i32 {
-  return 0 - 2;
-}
-
+<<19 pub function task_new[T](entry: () => T): Task[T]>>=
 pub function task_new[T](entry: () => T): Task[T] {
   unsafe {
     return Task { id: __task_new(), entry: entry };
@@ -736,7 +682,14 @@ pub function task_new[T](entry: () => T): Task[T] {
 }
 
 pub function task_start[T](t: Task[T]): TaskStatus[T] {
-  return run_task(t, 0);
+  return __settled(t.id, run_task(t, 0));
+}
+
+// Cancelled runs the task on to its end with every wait answering Cancelled
+// and none parking, so a cancelled task always answers Done.
+pub function task_resume[T](t: Task[T], wake: Wake): TaskStatus[T] {
+  __task_wake(t.id, wake);
+  return __settled(t.id, run_task(t, 2));
 }
 
 pub function in_task(): boolean {
@@ -746,35 +699,15 @@ pub function in_task(): boolean {
 }
 
 pub function parks(): boolean {
-  unsafe {
-    let t: Task[boolean] = task_new((): boolean => __task_cur() != 0);
-    match (task_start(t)) {
-      Done(ran) => {
-        task_free(t);
-        return ran;
-      },
-      _ => {
-        task_free(t);
-        return true;
-      }
+  match (task_start(task_new((): boolean => in_task()))) {
+    Done(ran) => {
+      return ran;
+    },
+    Suspended(w) => {
+      return true;
     }
-    return false;
   }
-}
-
-pub function task_resume[T](t: Task[T], ready: i32): TaskStatus[T] {
-  unsafe {
-    __task_set_ready(t.id, ready);
-    return run_task(t, 2);
-  }
-}
-
-pub function task_cancel[T](t: Task[T]): TaskStatus[T] {
-  unsafe {
-    __task_set_cancelled(t.id);
-    let st: TaskStatus[T] = run_task(t, 2);
-    return Cancelled;
-  }
+  return false;
 }
 
 pub function task_cancelled(): boolean {
@@ -783,14 +716,65 @@ pub function task_cancelled(): boolean {
   }
 }
 
-pub function task_free[T](t: Task[T]): void {
-  unsafe {
-    __task_free(t.id);
+// Starts `entry` as a task at once. The future is ready when the task
+// finishes. Resumed with Cancelled, the task runs on to its end and the
+// future ends cancelled.
+pub function spawn[T](entry: () => T): Future[T] {
+  let t: Task[T] = task_new(entry);
+  return __task_future(t, task_start(t));
+}
+
+function __task_future[T](t: Task[T], st: TaskStatus[T]): Future[T] {
+  match (st) {
+    Done(v) => {
+      return Ready(v);
+    },
+    Suspended(w) => {
+      return Pending(w, (wake: Wake): Future[T] => __task_woken(t, wake));
+    }
   }
+  return Future.Cancelled;
+}
+
+function __task_woken[T](t: Task[T], wake: Wake): Future[T] {
+  let st: TaskStatus[T] = task_resume(t, wake);
+  if let Wake.Cancelled = wake {
+    return Future.Cancelled;
+  }
+  return __task_future(t, st);
+}
+
+function __task_wake(id: i32, wake: Wake): void {
+  unsafe {
+    match (wake) {
+      Woke(at) => {
+        __task_set_ready(id, at);
+      },
+      TimedOut => {
+        __task_set_ready(id, 0 - 1);
+      },
+      Cancelled => {
+        __task_set_cancelled(id);
+      }
+    }
+  }
+}
+
+function __settled[T](id: i32, st: TaskStatus[T]): TaskStatus[T] {
+  if let Done(v) = st {
+    unsafe {
+      __task_free(id);
+    }
+  }
+  return st;
 }
 ```
 
 ### `20 function run_task[T](t: Task[T], mode: i32): TaskStatus[T]`
+
+A park keeps its deadline after the pairs of its set, as the deadline's
+seconds and nanoseconds, and marks that with a timeout of 1. The runtime's
+timeout slot holds 32-bit milliseconds, which cannot hold an instant.
 
 ```fern
 <<20 function run_task[T](t: Task[T], mode: i32): TaskStatus[T]>>=
@@ -801,66 +785,59 @@ function run_task[T](t: Task[T], mode: i32): TaskStatus[T] {
     let v: T = t.entry();
     let m: i32 = __task_leave();
     if (m == 1) {
-      return Suspended(Wait { task: t.id, set: __task_wait(t.id), timeout: time.millis_timeout(__task_timeout(t.id)) });
+      return Suspended(__parked(t.id));
     }
     return Done(v);
+  }
+}
+
+function __parked(id: i32): Wait {
+  unsafe {
+    let set: i32[] = __task_wait(id);
+    let n: i32 = set.len();
+    if (__task_timeout(id) < 0 || n < 2) {
+      return Wait { set: set, until: None };
+    }
+    return Wait { set: set.take(n - 2), until: Some(Instant { sec: set[n - 2] as i64, nsec: set[n - 1] }) };
   }
 }
 ```
 
 ### `21 pub struct Call[A, B, T]`
 
+A call is a task over a two-argument function. A call that answers without a
+wait costs no closure and no handle.
+
 ```fern
 <<21 pub struct Call[A, B, T]>>=
 pub struct Call[A, B, T] { id: i32, f: (A, B) => T, a: A, b: B }
+
+pub enum CallStatus[A, B, T] { Returned(T), Parked(Call[A, B, T], Wait) }
 ```
 
 ### `22 pub function call_start[A, B, T](f: (A, B)`
 
 ```fern
 <<22 pub function call_start[A, B, T](f: (A, B)>>=
-pub function call_start[A, B, T](f: (A, B) => T, a: A, b: B): TaskStatus[T] {
+pub function call_start[A, B, T](f: (A, B) => T, a: A, b: B): CallStatus[A, B, T] {
   unsafe {
     let id: i32 = __task_new();
     match (run_task_call(id, f, a, b, 0)) {
       Done(v) => {
         __task_free(id);
-        return Done(v);
+        return Returned(v);
       },
       Suspended(w) => {
-        return Suspended(w);
-      },
-      Cancelled => {
-        __task_free(id);
+        return Parked(Call { id: id, f: f, a: a, b: b }, w);
       }
     }
-    return Cancelled;
+    return Parked(Call { id: id, f: f, a: a, b: b }, Wait { set: [], until: None });
   }
 }
 
-pub function call_of[A, B, T](w: Wait, f: (A, B) => T, a: A, b: B): Call[A, B, T] {
-  return Call { id: w.task, f: f, a: a, b: b };
-}
-
-pub function call_resume[A, B, T](c: Call[A, B, T], ready: i32): TaskStatus[T] {
-  unsafe {
-    __task_set_ready(c.id, ready);
-    return run_task_call(c.id, c.f, c.a, c.b, 2);
-  }
-}
-
-pub function call_cancel[A, B, T](c: Call[A, B, T]): TaskStatus[T] {
-  unsafe {
-    __task_set_cancelled(c.id);
-    let st: TaskStatus[T] = run_task_call(c.id, c.f, c.a, c.b, 2);
-    return Cancelled;
-  }
-}
-
-pub function call_free[A, B, T](c: Call[A, B, T]): void {
-  unsafe {
-    __task_free(c.id);
-  }
+pub function call_resume[A, B, T](c: Call[A, B, T], wake: Wake): TaskStatus[T] {
+  __task_wake(c.id, wake);
+  return __settled(c.id, run_task_call(c.id, c.f, c.a, c.b, 2));
 }
 ```
 
@@ -875,327 +852,139 @@ function run_task_call[A, B, T](id: i32, f: (A, B) => T, a: A, b: B, mode: i32):
     let v: T = f(a, b);
     let m: i32 = __task_leave();
     if (m == 1) {
-      return Suspended(Wait { task: id, set: __task_wait(id), timeout: time.millis_timeout(__task_timeout(id)) });
+      return Suspended(__parked(id));
     }
     return Done(v);
   }
 }
 ```
 
-### `24 pub function park_tokens(toks: i32[], timeout: Option[Duration]): i32`
+### `24 waiting`
+
+`wait` and `block_on` drive a future to its end. `wait` parks the calling task
+on whatever schedules it: the serve loop, `sim.run_tasks`, or a combinator's
+own wait. It reaches no clock and no reactor, so a handler can call it. With
+no task current it has nothing to wait on. `block_on` waits on the machine's
+reactor and clock when no task is current, and parks as `wait` does inside
+one.
 
 ```fern
-<<24 pub function park_tokens(toks: i32[], timeout: Option[Duration]): i32>>=
-pub function park_tokens(toks: i32[], timeout: Option[Duration]): i32 {
-  unsafe {
-    let set: i32[] = [];
-    let idxs: i32[] = [];
-    let i: i32 = 0;
-    while (i < toks.len()) {
-      if (toks[i] >= 0) {
-        set = set.append(toks[i]);
-        set = set.append(1);
-        idxs = idxs.append(i);
+<<24 waiting>>=
+// None when the calling task is cancelled, and when no task is current and
+// `f` must wait. `f` is cancelled in both cases.
+pub function wait[T](f: Future[T]): Option[T] {
+  let cur: Future[T] = f;
+  while (true) {
+    match (cur) {
+      Ready(v) => {
+        return Some(v);
+      },
+      Cancelled => {
+        return None;
+      },
+      Pending(w, k) => {
+        let wake: Wake = __park(w.set, w.until);
+        cur = k(wake);
+        if let Wake.Cancelled = wake {
+          return None;
+        }
       }
-      i = i + 1;
-    }
-    let r: i32 = __task_park(set, time.timeout_millis(timeout));
-    if (r < 0) {
-      return r;
-    }
-    return idxs[r];
-  }
-}
-```
-
-### `25 struct __Child[T]`
-
-```fern
-<<25 struct __Child[T]>>=
-struct __Child[T] { task: Task[T], st: TaskStatus[T], due: i64 }
-```
-
-### `26 function __no_due(): i64`
-
-```fern
-<<26 function __no_due(): i64>>=
-function __no_due(): i64 {
-  let g: i64 = 1000000000 as i64;
-  return g * g * 9;
-}
-
-function __child_due[T](st: TaskStatus[T], now: i64): i64 {
-  match (st) {
-    Suspended(w) => {
-      let Some(t) = w.timeout else {
-        return __no_due();
-      };
-      return now + t.as_nanos();
-    },
-    Done(v) => {
-      return __no_due();
-    },
-    Cancelled => {
-      return __no_due();
     }
   }
+  return None;
 }
 
-function __children_start[T](entries: (() => T)[]): __Child[T][] {
-  let kids: __Child[T][] = [];
-  for e in entries {
-    let t: Task[T] = task_new(e);
-    let st: TaskStatus[T] = task_start(t);
-    kids = kids.append(__Child { task: t, st: st, due: __child_due(st, monotonic_ns()) });
-  }
-  return kids;
-}
-
-function __children_parked[T](kids: __Child[T][]): boolean {
-  for k in kids {
-    match (k.st) {
-      Suspended(w) => {
-        return true;
+// None when the calling task is cancelled, which `f` then is too.
+pub function block_on[T](f: Future[T]): Option[T] {
+  let cur: Future[T] = f;
+  while (true) {
+    match (cur) {
+      Ready(v) => {
+        return Some(v);
       },
-      Done(v) => {},
-      Cancelled => {}
-    }
-  }
-  return false;
-}
-
-function __children_done[T](kids: __Child[T][]): i32 {
-  let i: i32 = 0;
-  while (i < kids.len()) {
-    let k: __Child[T] = kids[i];
-    match (k.st) {
-      Done(v) => {
-        return i;
+      Cancelled => {
+        return None;
       },
-      Suspended(w) => {},
-      Cancelled => {}
-    }
-    i = i + 1;
-  }
-  return 0 - 1;
-}
-
-function __children_due[T](kids: __Child[T][]): i64 {
-  let due: i64 = __no_due();
-  for k in kids {
-    if (k.due < due) {
-      due = k.due;
+      Pending(w, k) => {
+        let wake: Wake = wait_any(w.set, w.until);
+        cur = k(wake);
+        if let Wake.Cancelled = wake {
+          return None;
+        }
+      }
     }
   }
-  return due;
+  return None;
 }
 
-function __ms_until(due: i64, now: i64): i32 {
-  if (due >= __no_due()) {
-    return 0 - 1;
+// Waits for any (fd, interest) pair of `set` to become ready (1 readable, 2
+// writable), or for the clock to reach `until`. Inside a task the task parks
+// and its scheduler's clock decides `until`. Outside one the machine's
+// monotonic clock does, and nothing answers Cancelled.
+pub function wait_any(set: i32[], until: Option[Instant]): Wake {
+  if (in_task()) {
+    return __park(set, until);
   }
-  if (due <= now) {
+  let timeout_ms: i32 = 0 - 1;
+  if let Some(at) = until {
+    timeout_ms = __ms_until(time.instant_nanos(at) - monotonic_ns());
+  }
+  let woke: i32 = __block(set, timeout_ms);
+  if (woke >= 0) {
+    return Woke(woke);
+  }
+  return TimedOut;
+}
+
+function __park(set: i32[], until: Option[Instant]): Wake {
+  unsafe {
+    if (__task_cur() == 0) {
+      return Wake.Cancelled;
+    }
+    let stored: i32[] = set;
+    let marked: i32 = 0 - 1;
+    if let Some(at) = until {
+      stored = set.append(at.sec as i32).append(at.nsec);
+      marked = 1;
+    }
+    let word: i32 = __task_park(stored, marked);
+    if (word >= 0) {
+      return Woke(word);
+    }
+    if (word == 0 - 2) {
+      return Wake.Cancelled;
+    }
+    return TimedOut;
+  }
+}
+
+// `ns` in whole milliseconds for a wait: a partial millisecond rounds up, and a
+// deadline already past waits for nothing.
+function __ms_until(ns: i64): i32 {
+  if (ns <= 0) {
     return 0;
   }
-  let ms: i64 = (due - now + 999999 as i64) / (1000000 as i64);
-  if (ms > 2147483647 as i64) {
+  let ms: i64 = (ns + 999999) / 1000000;
+  if (ms > 2147483647) {
     return 2147483647;
   }
   return ms as i32;
 }
 
-function __child_resume[T](kids: __Child[T][], i: i32, word: i32): __Child[T][] {
-  let k: __Child[T] = kids[i];
-  let st: TaskStatus[T] = task_resume(k.task, word);
-  return kids.with(i, __Child { task: k.task, st: st, due: __child_due(st, monotonic_ns()) });
-}
-
-function __children_cancel[T](kids: __Child[T][]): __Child[T][] {
-  let out: __Child[T][] = [];
-  for k in kids {
-    match (k.st) {
-      Suspended(w) => {
-        let c: TaskStatus[T] = task_cancel(k.task);
-        out = out.append(__Child { task: k.task, st: c, due: __no_due() });
-      },
-      Done(v) => {
-        out = out.append(k);
-      },
-      Cancelled => {
-        out = out.append(k);
-      }
+function __block(set: i32[], timeout_ms: i32): i32 {
+  let n: i32 = set.len() / 2;
+  if (n <= 0) {
+    if (timeout_ms > 0) {
+      sleep_ms(timeout_ms as i64);
+    }
+    return 0 - 1;
+  }
+  for i in 0..n {
+    if (interest_bits(set[i * 2 + 1]) != 1) {
+      return __wait_watched(set, n, timeout_ms);
     }
   }
-  return out;
-}
-
-function __children_free[T](kids: __Child[T][]): i32 {
-  for k in kids {
-    task_free(k.task);
-  }
-  return 0;
-}
-```
-
-### `27 struct __Union`
-
-```fern
-<<27 struct __Union>>=
-struct __Union { set: i32[], owner: i32[], at: i32[] }
-```
-
-### `28 function __children_union[T](kids: __Child[T][]): __Union`
-
-```fern
-<<28 function __children_union[T](kids: __Child[T][]): __Union>>=
-function __children_union[T](kids: __Child[T][]): __Union {
-  let u: __Union = __Union { set: [], owner: [], at: [] };
-  let i: i32 = 0;
-  while (i < kids.len()) {
-    let k: __Child[T] = kids[i];
-    match (k.st) {
-      Suspended(w) => {
-        let j: i32 = 0;
-        while (j + 1 < w.set.len()) {
-          u = __Union { set: u.set.append(w.set[j]).append(w.set[j + 1]), owner: u.owner.append(i), at: u.at.append(j / 2) };
-          j = j + 2;
-        }
-      },
-      Done(v) => {},
-      Cancelled => {}
-    }
-    i = i + 1;
-  }
-  return u;
-}
-
-function __children_expire[T](kids_in: __Child[T][], now: i64): __Child[T][] {
-  let kids: __Child[T][] = kids_in;
-  let i: i32 = 0;
-  while (i < kids.len()) {
-    if (kids[i].due <= now) {
-      kids = __child_resume(kids, i, 0 - 1);
-    }
-    i = i + 1;
-  }
-  return kids;
-}
-
-function __children_drive[T](kids_in: __Child[T][], until_ns: i64, first: boolean): __Child[T][] {
-  let kids: __Child[T][] = kids_in;
-  while (__children_parked(kids) && !(first && __children_done(kids) >= 0)) {
-    let now: i64 = monotonic_ns();
-    let due: i64 = __children_due(kids);
-    if (due > until_ns) {
-      due = until_ns;
-    }
-    let u: __Union = __children_union(kids);
-    let woke: i32 = wait_any(u.set, time.millis_timeout(__ms_until(due, now)));
-    if (woke == cancelled()) {
-      return __children_cancel(kids);
-    }
-    if (woke >= 0) {
-      kids = __child_resume(kids, u.owner[woke], u.at[woke]);
-    } else {
-      now = monotonic_ns();
-      if (now >= until_ns) {
-        return __children_cancel(kids);
-      }
-      kids = __children_expire(kids, now);
-    }
-  }
-  return kids;
-}
-```
-
-### `29 pub function gather_tasks[T](entries: (()`
-
-```fern
-<<29 pub function gather_tasks[T](entries: (()>>=
-pub function gather_tasks[T](entries: (() => T)[], on_incomplete: T): T[] {
-  let kids: __Child[T][] = __children_drive(__children_start(entries), __no_due(), false);
-  let out: T[] = [];
-  for k in kids {
-    match (k.st) {
-      Done(v) => {
-        out = out.append(v);
-      },
-      Suspended(w) => {
-        out = out.append(on_incomplete);
-      },
-      Cancelled => {
-        out = out.append(on_incomplete);
-      }
-    }
-  }
-  let f: i32 = __children_free(kids);
-  return out;
-}
-
-pub function race_tasks[T](entries: (() => T)[], none_val: T): (i32, T) {
-  let kids: __Child[T][] = __children_drive(__children_start(entries), __no_due(), true);
-  let won: i32 = __children_done(kids);
-  let v: T = none_val;
-  if (won >= 0) {
-    let k: __Child[T] = kids[won];
-    match (k.st) {
-      Done(x) => {
-        v = x;
-      },
-      Suspended(w) => {},
-      Cancelled => {}
-    }
-  }
-  let f: i32 = __children_free(__children_cancel(kids));
-  return (won, v);
-}
-
-pub function with_deadline_tasks[T](deadline: Duration, entries: (() => T)[]): Option[T][] {
-  let kids: __Child[T][] = __children_drive(__children_start(entries), monotonic_ns() + deadline.as_nanos(), false);
-  let out: Option[T][] = [];
-  for k in kids {
-    match (k.st) {
-      Done(v) => {
-        out = out.append(Some(v));
-      },
-      Suspended(w) => {
-        out = out.append(None);
-      },
-      Cancelled => {
-        out = out.append(None);
-      }
-    }
-  }
-  let f: i32 = __children_free(kids);
-  return out;
-}
-
-pub function wait_any(set: i32[], timeout: Option[Duration]): i32 {
-  unsafe {
-    let timeout_ms: i32 = time.timeout_millis(timeout);
-    if (__task_cur() != 0) {
-      return __task_park(set, timeout_ms);
-    }
-    let n: i32 = set.len() / 2;
-    if (n <= 0) {
-      if (timeout_ms > 0) {
-        sleep_ms(timeout_ms as i64);
-      }
-      return 0 - 1;
-    }
-    let reads: boolean = true;
-    let i: i32 = 0;
-    while (i < n) {
-      if (interest_bits(set[i * 2 + 1]) != 1) {
-        reads = false;
-      }
-      i = i + 1;
-    }
-    if (reads) {
-      return __wait_readable(set, n, timeout_ms);
-    }
-    return __wait_watched(set, n, timeout_ms);
-  }
+  return __wait_readable(set, n, timeout_ms);
 }
 ```
 
@@ -1218,11 +1007,11 @@ function __wait_readable(set: i32[], n: i32, timeout_ms: i32): i32 {
   let ready: i32 = poll(toks, timeout_ms);
   i = 0;
   while (i < n) {
-    let dropped: i32 = drop_pollable(toks[i]);
+    let dropped: i32 = __drop_pollable(toks[i]);
     i = i + 1;
   }
   if (timer >= 0) {
-    let dtimer: i32 = drop_pollable(timer);
+    let dtimer: i32 = __drop_pollable(timer);
   }
   if (ready >= 0 && ready < n) {
     return ready;
@@ -1276,7 +1065,7 @@ function __timer_pollable(ns: i64): i32 {
   return 0 - 1;
 }
 
-pub(package) function drop_pollable(tok: i32): i32 {
+function __drop_pollable(tok: i32): i32 {
   if (target_os() == "wasi" || target_os() == "wasi-http") {
     return wasm_pollable_drop(tok);
   }

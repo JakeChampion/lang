@@ -1512,16 +1512,18 @@ pub function read_watched(sock: i32, max: i32, wait: Duration, interest: i32): R
   let until: i64 = monotonic_ns() + wait.as_nanos();
   let set: i32[] = [sock, interest];
   while (true) {
-    let wait_ms: i32 = ((until - monotonic_ns()) / 1000000i64) as i32;
-    if (wait_ms < 1) {
-      wait_ms = 1;
+    let at: i64 = until;
+    if (at - monotonic_ns() < 1000000i64) {
+      at = monotonic_ns() + 1000000i64;
     }
-    let woke: i32 = async.wait_any(set, time.millis_timeout(wait_ms));
-    if (woke == async.cancelled()) {
-      return Ok(Abandoned);
-    }
-    if (woke != 0) {
-      return Ok(Elapsed);
+    match (async.wait_any(set, Some(time.instant_from_nanos(at)))) {
+      Woke(i) => {},
+      TimedOut => {
+        return Ok(Elapsed);
+      },
+      Cancelled => {
+        return Ok(Abandoned);
+      }
     }
     match (read_up_to(sock, max)) {
       Ok(got) => {
