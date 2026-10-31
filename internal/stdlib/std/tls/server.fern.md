@@ -389,7 +389,8 @@ function __answered(s: Session, srv: handshake.Server, e: handshake.Event, now: 
           return __failed(srv, srv.verdict(true));
         },
         Err(err) => {
-          return Err(tls.Failure { error: err, alert: srv.alert(__client_alert(err)) });
+          let alert: u8[] = srv.alert(__client_alert(err));
+          return Err(tls.Failure { error: err, alert: alert });
         }
       }
     },
