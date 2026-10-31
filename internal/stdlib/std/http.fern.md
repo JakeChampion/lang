@@ -185,7 +185,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "std/i32";
-import "core/int";
 import "core/map";
 import "std/string";
 import "std/headers";
@@ -378,7 +377,7 @@ pub function problem(status: i32, title: string, detail: string): HttpResponse {
   if (t.len() == 0) {
     t = status_text(status);
   }
-  let body: string = "{\"type\":\"about:blank\",\"title\":\"" + json.escape(t) + "\",\"status\":" + int.int_to_string(status);
+  let body: string = "{\"type\":\"about:blank\",\"title\":\"" + json.escape(t) + "\",\"status\":" + status.to_string();
   if (detail.len() > 0) {
     body = body + ",\"detail\":\"" + json.escape(detail) + "\"";
   }
@@ -443,7 +442,7 @@ impl ToResponse for HttpError {
 
 impl ToResponse for json.JsonError {
   function to_response(self: json.JsonError): HttpResponse {
-    return problem(400, "Malformed JSON", self.message + " at line " + int.int_to_string(self.line) + ", column " + int.int_to_string(self.col));
+    return problem(400, "Malformed JSON", self.message + " at line " + self.line.to_string() + ", column " + self.col.to_string());
   }
 }
 
@@ -1659,7 +1658,7 @@ pub function (e: RequestParseError) to_string(): string {
 
 pub function parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseError] {
   match (parse_request_framed(buf)) {
-    Framed(f) => {
+    Complete(f) => {
       return Ok(f.request);
     },
     Incomplete => {
@@ -1681,7 +1680,7 @@ pub function parse_request_bytes(buf: u8[]): Result[HttpRequest, RequestParseErr
 <<35 pub struct HttpFramed>>=
 pub struct HttpFramed { request: HttpRequest, len: i32, keep_alive: boolean, version: string }
 
-pub enum HttpFraming { Framed(HttpFramed), Incomplete, Continue, Malformed(i32) }
+pub enum HttpFraming { Complete(HttpFramed), Incomplete, Continue, Malformed(i32) }
 ```
 
 ### `36 function __expectation(h: HeaderMap, at: i32): i32`
@@ -1791,7 +1790,7 @@ pub function parse_request_framed(buf: u8[]): HttpFraming {
       if (body.0 != 2) {
         return __unframed(body.0, head);
       }
-      return Framed(__framed_new(head, body.1, body.3, body.2));
+      return Complete(__framed_new(head, body.1, body.3, body.2));
     },
     Err(status) => {
       return __head_refused(status);
@@ -1821,9 +1820,9 @@ pub function parse_request_framed_from(buf: u8[], from: i32, limits: HttpLimits,
       }
       let len: i32 = body.2 - from;
       if (len == prev.len && head.keep_alive == prev.keep_alive && head.version == prev.version && __repeats(prev.request, head, body.1, body.3)) {
-        return Framed(prev);
+        return Complete(prev);
       }
-      return Framed(__framed_new(head, body.1, body.3, len));
+      return Complete(__framed_new(head, body.1, body.3, len));
     },
     Err(status) => {
       return __head_refused(status);
@@ -1856,7 +1855,7 @@ function __head_refused(status: i32): HttpFraming {
 <<39 pub struct HttpHead>>=
 pub struct HttpHead { request: HttpRequest, len: i32, keep_alive: boolean, version: string, length: i32, expects_continue: boolean }
 
-pub enum HttpHeading { Headed(HttpHead), Incomplete, Malformed(i32) }
+pub enum HttpHeading { Complete(HttpHead), Incomplete, Malformed(i32) }
 ```
 
 ### `40 pub function parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, prev: HttpRequest): Htt...`
@@ -1876,7 +1875,7 @@ pub function parse_request_head_from(buf: u8[], from: i32, limits: HttpLimits, p
       let empty: u8[] = [];
       let req: HttpRequest = HttpRequest { method: head.method, path: head.path, body: stream.from_bytes(empty), headers: head.headers, trailers: headers.new() };
       let expects: boolean = head.version != "HTTP/1.0" && head.expectation == 1;
-      return Headed(HttpHead { request: req, len: head.len, keep_alive: head.keep_alive, version: head.version, length: length, expects_continue: expects });
+      return Complete(HttpHead { request: req, len: head.len, keep_alive: head.keep_alive, version: head.version, length: length, expects_continue: expects });
     },
     Err(status) => {
       if (status == 1) {
@@ -2411,7 +2410,7 @@ pub function serialize_response_to(method: string, version: string, resp: HttpRe
   let body: string = "";
   if (!no_body) {
     body = resp.body_string();
-    framing = "Content-Length: " + int.int_to_string(body.len()) + "\r\n";
+    framing = "Content-Length: " + body.len().to_string() + "\r\n";
   }
   let b: usize = buf_new(256);
   serialize_response_head_into(b, version, resp, keep_alive, framing);
@@ -2578,7 +2577,7 @@ pub function (r: HttpRequest) with_header(name: string, value: string): HttpRequ
 }
 
 pub function (r: HttpRequest) with_body(body: string): HttpRequest {
-  return HttpRequest { ...r, body: stream.from_bytes(body.bytes()), headers: r.headers.set("Content-Length", int.int_to_string(body.len())) };
+  return HttpRequest { ...r, body: stream.from_bytes(body.bytes()), headers: r.headers.set("Content-Length", body.len().to_string()) };
 }
 
 pub function (r: HttpRequest) with_json(body: string): HttpRequest {
@@ -3021,7 +3020,7 @@ pub function (r: HttpResponse) with_content_type(ct: string): HttpResponse {
 <<68 pub struct HttpResponseFramed>>=
 pub struct HttpResponseFramed { response: HttpResponse, len: i32, version: string, keep_alive: boolean }
 
-pub enum HttpResponseFraming { Complete(HttpResponseFramed), Unfinished, Rejected(i32) }
+pub enum HttpResponseFraming { Complete(HttpResponseFramed), Incomplete, Malformed(i32) }
 ```
 
 ### `69 pub function parse_response_framed(buf: u8[], method: string, eof: boolean, limits: HttpLimits): HttpR...`
@@ -3039,10 +3038,10 @@ pub function parse_response_framed_from(buf: u8[], from: i32, method: string, eo
   let headers_end: i32 = shape.1;
   let refused: i32 = __response_head_refused(buf, from, first_crlf, headers_end, shape.2);
   if (refused != 0) {
-    return Rejected(refused);
+    return Malformed(refused);
   }
   if (first_crlf < 0 || headers_end < 0) {
-    return Unfinished;
+    return Incomplete;
   }
   return __response_body(buf, from, first_crlf, headers_end, __status_code(buf, from), method, eof, limits, prev);
 }
@@ -3118,7 +3117,7 @@ function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32
       h = parsed;
     },
     Err(code) => {
-      return Rejected(code);
+      return Malformed(code);
     }
   }
   let version: string = __version_of(buf, from);
@@ -3126,10 +3125,10 @@ function __response_body(buf: u8[], from: i32, first_crlf: i32, headers_end: i32
   let fields: (i32, i32, i32, i32, i32) = __fields_of(h);
   let body: (i32, u8[], i32, HeaderMap) = __response_payload(buf, at, h, fields, status, method, eof, version, limits);
   if (body.0 == 1) {
-    return Unfinished;
+    return Incomplete;
   }
   if (body.0 != 2) {
-    return Rejected(body.0);
+    return Malformed(body.0);
   }
   let resp: HttpResponse = HttpResponse { status: status, body: BodyBytes(body.1), headers: h, trailers: body.3, background: None };
   return Complete(HttpResponseFramed { response: resp, len: body.2 - from, version: version, keep_alive: __persists(version, h, fields.4) });

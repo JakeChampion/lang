@@ -7480,7 +7480,6 @@ function main(): i32 {
 func TestArm64Radix(t *testing.T) {
 	src := `
 import "std/i32";
-import "core/int";
 import "std/format";
 function main(): i32 {
     // Parse — bases 2 / 8 / 10 / 16 / 36.
@@ -7503,16 +7502,16 @@ function main(): i32 {
     match (i32.parse_i32_radix("12", 37))   { Ok(_) => { return 21; }, Err(_) => { } }
 
     // Format — same base spread, plus sign + zero + negative.
-    if (int.int_to_string_radix(255, 16) != "ff") { return 22; }
-    if (int.int_to_string_radix(10, 2) != "1010") { return 23; }
-    if (int.int_to_string_radix(511, 8) != "777") { return 24; }
-    if (int.int_to_string_radix(12345, 10) != "12345") { return 25; }
-    if (int.int_to_string_radix(35, 36) != "z") { return 26; }
-    if (int.int_to_string_radix(0, 16) != "0") { return 27; }
-    if (int.int_to_string_radix(0 - 255, 16) != "-ff") { return 28; }
+    if (255.to_string_radix(16) != "ff") { return 22; }
+    if (10.to_string_radix(2) != "1010") { return 23; }
+    if (511.to_string_radix(8) != "777") { return 24; }
+    if (12345.to_string_radix(10) != "12345") { return 25; }
+    if (35.to_string_radix(36) != "z") { return 26; }
+    if (0.to_string_radix(16) != "0") { return 27; }
+    if ((0 - 255).to_string_radix(16) != "-ff") { return 28; }
 
     // Round-trip — parse(format.format(n)) == Some(n).
-    match (i32.parse_i32_radix(int.int_to_string_radix(0 - 12345, 16), 16)) {
+    match (i32.parse_i32_radix((0 - 12345).to_string_radix(16), 16)) {
         Ok(v) => { if (v != (0 - 12345)) { return 29; } },
         Err(_) => { return 30; },
     }
@@ -9639,10 +9638,9 @@ function main(): i32 {
     return 1;
 }`},
 		{"qualified_int_call", `
-import "core/int";
+import "std/i32";
 function main(): i32 {
-    let s: string = int.int_to_string_radix(255, 16);
-    if (s == "ff") { return 0; }
+    match (i32.parse_i32_radix("ff", 16)) { Ok(v) => { if (v == 255) { return 0; } }, Err(_) => { } }
     return 1;
 }`},
 		{"mixed_stdlib", `

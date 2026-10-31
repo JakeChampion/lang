@@ -214,6 +214,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"float_recip_copysign_midpoint", langSrcAbs(t, "tests/stdlib/float_recip_copysign_midpoint_test.fern"), ""},
 		{"i64_roots", langSrcAbs(t, "tests/stdlib/i64_roots_test.fern"), ""},
 		{"i64_intdiv", langSrcAbs(t, "tests/stdlib/i64_intdiv_test.fern"), ""},
+		{"int_width_parity", langSrcAbs(t, "tests/stdlib/int_width_parity_test.fern"), ""},
 		{"i32_roots_prime", langSrcAbs(t, "tests/stdlib/i32_roots_prime_test.fern"), ""},
 		{"u64_roots", langSrcAbs(t, "tests/stdlib/u64_roots_test.fern"), ""},
 		{"float_clamp01_absdiff_muladd", langSrcAbs(t, "tests/stdlib/float_clamp01_absdiff_muladd_test.fern"), ""},

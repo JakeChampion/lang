@@ -1,5 +1,4 @@
 import "std/test";
-import "core/int";
 import "std/hex";
 import "std/codec";
 import "std/crypto";
@@ -66,7 +65,7 @@ function sealed(r: Result[record.Sealed, record.RecordError]): string {
 function opened(r: Result[record.Opened, record.RecordError]): string {
   match (r) {
     Ok(o) => {
-      return int.int_to_string(o.content_type.code()) + " " + hex.encode(o.content);
+      return o.content_type.code().to_string() + " " + hex.encode(o.content);
     },
     Err(e) => {
       return e.message();
@@ -82,10 +81,10 @@ function deframed(r: Result[record.Deframed, record.RecordError]): string {
       let i: i32 = 0;
       while (i < d.records.len()) {
         let rec: record.Record = d.records[i];
-        out = out + int.int_to_string(rec.content_type.code()) + "/" + int.int_to_string(rec.version) + "/" + int.int_to_string(rec.fragment.len()) + " ";
+        out = out + rec.content_type.code().to_string() + "/" + rec.version.to_string() + "/" + rec.fragment.len().to_string() + " ";
         i = i + 1;
       }
-      return out + "rest " + int.int_to_string(d.rest.len());
+      return out + "rest " + d.rest.len().to_string();
     },
     Err(e) => {
       return e.message();
@@ -243,8 +242,8 @@ function test_open(): test.TestOutcome {
   while (i < 3) {
     match (p.open(one(__codec_bytes(hex.decode(records[i]))))) {
       Ok(o) => {
-        if (int.int_to_string(o.content_type.code()) + " " + hex.encode(o.content) != want[i]) {
-          return test.fail("record " + int.int_to_string(i));
+        if (o.content_type.code().to_string() + " " + hex.encode(o.content) != want[i]) {
+          return test.fail("record " + i.to_string());
         }
         p = o.next;
       },
@@ -330,7 +329,7 @@ function test_largest_record(): test.TestOutcome {
   match (client_write().seal(record.ApplicationData, content, 0)) {
     Ok(s) => {
       if (s.record.len() != 5 + 16385 + 16) {
-        return test.fail("record is " + int.int_to_string(s.record.len()) + " bytes");
+        return test.fail("record is " + s.record.len().to_string() + " bytes");
       }
       return test.assert_eq(opened(client_write().open(one(s.record))), "23 " + hex.encode(content));
     },
@@ -493,7 +492,7 @@ function test_record_at(): test.TestOutcome {
   match (record.framed_end(wire)) {
     Ok(end) => {
       if (end != 5 + 2 + 72) {
-        return test.fail("framed_end " + int.int_to_string(end));
+        return test.fail("framed_end " + end.to_string());
       }
     },
     Err(e) => {

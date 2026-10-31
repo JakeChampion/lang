@@ -2,7 +2,6 @@
 
 
 
-import "core/int";
 
 struct Point { x: i32, y: i32 }
 
@@ -19,13 +18,13 @@ function sum(p: Point): i32 {
 }
 
 function main(): i32 {
-  print(int.int_to_string(ORIGIN.x));
-  print(int.int_to_string(sum(ORIGIN)));
-  print(int.int_to_string(ORIGIN.y));
+  print(ORIGIN.x.to_string());
+  print(sum(ORIGIN).to_string());
+  print(ORIGIN.y.to_string());
   print(CFG.name);
-  print(int.int_to_string(CFG.origin.y));
+  print(CFG.origin.y.to_string());
   let c: Cfg = CFG;
-  print(int.int_to_string(sum(c.origin) * c.scale));
+  print((sum(c.origin) * c.scale).to_string());
   print(CFG.name);
   return sum(ORIGIN) + CFG.scale;
 }

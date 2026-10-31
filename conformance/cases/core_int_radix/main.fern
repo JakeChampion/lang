@@ -1,4 +1,5 @@
-import "core/int";
+import "std/i32";
+
 
 
 
@@ -6,11 +7,11 @@ import "core/int";
 
 
 function main(): i32 {
-    print(int.int_to_string_radix(255, 16));
-    print(int.int_to_string_radix(10, 2));
-    print(int.int_to_string_radix(0, 16));
-    print(int.int_to_string_radix(0 - 255, 16));
-    print(int.int_to_string_radix(35, 36));
-    print(int.int_to_string_radix(1234, 16));
+    print(255.to_string_radix(16));
+    print(10.to_string_radix(2));
+    print(0.to_string_radix(16));
+    print((0 - 255).to_string_radix(16));
+    print(35.to_string_radix(36));
+    print(1234.to_string_radix(16));
     return 0;
 }

@@ -7,6 +7,8 @@ stays colorless, the worker's reactor drives them. This document says what
 that cost, where each piece lives, and in what order it landed. §4 is the
 record per slice; §5 holds the one question left open.
 
+Note: #12725 changed the `std/async` API that this record names: one future family over `Future[T]`, typed wakes, and deadlines as instants. `docs/ASYNC.md` describes the current surface.
+
 This record cites historical source paths. Some files no longer exist in the current tree.
 
 ## 1. What P3 has to deliver

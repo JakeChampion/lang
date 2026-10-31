@@ -16,12 +16,11 @@ import "std/http";
 import "std/serve";
 import "std/platform";
 import "std/fetch";
-import "core/int";
 
 function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, fetch.FetchError] {
   let first: HttpResponse = plat.http(fetch.get("http://8.8.8.8/"))?;
   let second: HttpResponse = plat.http(fetch.get("http://8.8.8.8/"))?;
-  return Ok(http.ok(int.int_to_string(first.status) + " " + int.int_to_string(second.status)));
+  return Ok(http.ok(first.status.to_string() + " " + second.status.to_string()));
 }
 
 function port(): i32 {

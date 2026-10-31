@@ -1,0 +1,5 @@
+function main(): i32 {
+  let s: string = "e";
+  print(f"{s == \"e\"}");
+  return 0;
+}

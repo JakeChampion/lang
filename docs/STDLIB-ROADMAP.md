@@ -26,7 +26,7 @@ What Fern's prelude / built-ins cover today, as a baseline:
 - **arrays**: `push` (generic), and on `string[]`: `join`,
   `index_of`, `contains`, `reverse`. `sort_i32_asc / desc`
   for `i32[]`.
-- **numbers**: `int_to_string`, method-style `to_string` for
+- **numbers**: method-style `to_string` for
   `i32` / `u32` / `i64` / `u64` / `f32` / `f64`, plus
   `i32.parse_i32`, `f64.parse_f64`.
 - **bytes**: `is_digit`, `is_alpha`, `is_alnum`, `is_ascii`,
@@ -544,8 +544,7 @@ think they're free additions to make.
   widening trick exposed an arm64/x86-64 i64 comparison bug
   across the i32::MAX threshold that this implementation
   sidesteps.
-- **`(n: i32) to_hex()`**: sugar for `int_to_string_radix(n,
-  16)`. Signed (negatives emit a leading `-`); callers
+- **`(n: i32) to_hex()`**: sugar for `n.to_string_radix(16)`. Signed (negatives emit a leading `-`); callers
   wanting the two's-complement bit pattern should widen to
   u32 first.
 - **`(s: string) parse_bool()`**: accepts the canonical
@@ -848,10 +847,10 @@ think they're free additions to make.
 
 ## Cross-cutting decisions
 
-- **Naming**: drop type-suffixed names (`sort_i32_asc`,
-  `int_to_string`) once generics + `Ord` traits are in.
-  Migration story: keep old names as aliases for one
-  release.
+- **Naming**: no type-suffixed names where a generic method
+  or a method on the type can do the work. `int_to_string`
+  is `n.to_string()`, and the statistics and `gcd_all` are
+  generic over `std/num` traits (#12715).
 - **Pipe ergonomics**: several of these (string transforms,
   array combinators, Result chains) become unpleasant
   without a pipe operator or UFCS. Worth designing #1, #2,

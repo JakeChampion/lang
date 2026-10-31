@@ -146,7 +146,7 @@ pub function need_ops(): string[] {
     "remove_dir", "create_link", "create_symlink", "rename", "read_link", "read_link_bytes", "set_file_times",
     "truncate", "sleep_ms", "sleep_ns", "stat", "lstat", "str_bytes", "str_from_bytes", "str_from_bytes_range",
     "str_split", "tcp_accept", "tcp_close", "tcp_listen", "tcp_listen_with",
-    "tcp_local_port", "tcp_pollable", "tcp_send_bytes", "tcp_socket_ctl", "temp_dir",
+    "tcp_local_port", "tcp_pollable", "tcp_send_bytes", "tcp_socket_ctl", "tcp_addr_into", "temp_dir",
     "udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_sendto", "udp_sendto_bytes", "tcp_connect_with", "wasm_block",
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile", "tcp_send_buf",
     "wasm_poll", "wasm_pollable_drop", "wasm_timer_pollable", "write_file", "write_file_bytes", "open_file",
@@ -3084,8 +3084,11 @@ pub function wasi_sockets_socket_ctl_imports(): string {
   let o: string = "";
   o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.set-keep-alive-enabled\" (func $__fern_wasi_tcp_set_keep_alive_enabled (param i32 i32 i32)))\n";
   o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.shutdown\" (func $__fern_wasi_tcp_shutdown (param i32 i32 i32)))\n";
-  o = o + "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.remote-address\" (func $__fern_wasi_tcp_remote_address (param i32 i32)))\n";
   return o;
+}
+
+pub function wasi_sockets_remote_address_import(): string {
+  return "  (import \"wasi:sockets/tcp@0.2.0\" \"[method]tcp-socket.remote-address\" (func $__fern_wasi_tcp_remote_address (param i32 i32)))\n";
 }
 
 pub function tcp_listen_func(): string {
@@ -3151,42 +3154,49 @@ function tcp_listen_wat(name: string, params: string, with_backlog: boolean): st
   return o;
 }
 
-function name_group_arm(op: i32, tcp_fn: string, udp_fn: string, udp: boolean): string {
+// tcp_addr_into_func fills out with the 19-byte sender record udp_recvfrom
+// writes: the family, the address in network order, then the port.
+pub function tcp_addr_into_func(udp: boolean): string {
   let o: string = "";
-  o = o + "    (if (i32.eq (local.get $op) (i32.const " + util.i32_to_string(op) + ")) (then\n";
-  o = o + "      (if (i32.gt_u (local.get $arg) (i32.const 9)) (then (return (i32.const -28))))\n";
-  o = o + "      (local.set $ret (call $__fern_alloc (i32.const 36)))\n";
+  o = o + "  (func $__fern_tcp_addr_into (param $c i32) (param $peer i32) (param $out i32) (result i32)\n";
+  o = o + "    (local $ret i32) (local $e i32) (local $k i32)\n";
+  o = o + "    (if (i32.lt_u (i32.load (local.get $out)) (i32.const 19)) (then (return (i32.const -28))))\n";
+  o = o + "    (local.set $ret (call $__fern_alloc (i32.const 36)))\n";
+  let remote: string = "(call $__fern_wasi_tcp_remote_address (i32.load (local.get $c)) (local.get $ret))";
+  let local: string = "(call $__fern_wasi_tcp_local_address (i32.load (local.get $c)) (local.get $ret))";
   if (udp) {
-    o = o + "      (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2))\n";
-    o = o + "        (then (call " + udp_fn + " (i32.load (local.get $c)) (local.get $ret)))\n";
-    o = o + "        (else (call " + tcp_fn + " (i32.load (local.get $c)) (local.get $ret))))\n";
-  } else {
-    o = o + "      (call " + tcp_fn + " (i32.load (local.get $c)) (local.get $ret))\n";
+    let is_udp: string = "(i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2))";
+    remote = "(if " + is_udp + " (then (call $__fern_wasi_udp_remote_address (i32.load (local.get $c)) (local.get $ret))) (else " + remote + "))";
+    local = "(if " + is_udp + " (then (call $__fern_wasi_udp_local_address (i32.load (local.get $c)) (local.get $ret))) (else " + local + "))";
   }
-  o = o + "      (if (i32.load8_u (local.get $ret)) (then\n";
-  o = o + "        (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
-  o = o + "        (call $__fern_raw_free (local.get $ret) (i32.const 36))\n";
-  o = o + "        (return (local.get $e))))\n";
-  o = o + "      (local.set $e (i32.const 0))\n";
-  o = o + "      (if (i32.eq (local.get $arg) (i32.const 9))\n";
-  o = o + "        (then (local.set $e (i32.load16_u offset=8 (local.get $ret))))\n";
-  o = o + "        (else (if (i32.eq (local.get $arg) (i32.const 8))\n";
-  o = o + "          (then (local.set $e (select (i32.const 6) (i32.const 4) (i32.load8_u offset=4 (local.get $ret)))))\n";
-  o = o + "          (else\n";
-  o = o + "            (if (i32.load8_u offset=4 (local.get $ret))\n";
-  o = o + "              (then (local.set $e (i32.load16_u offset=16 (i32.add (local.get $ret) (i32.shl (local.get $arg) (i32.const 1))))))\n";
-  o = o + "              (else (if (i32.lt_u (local.get $arg) (i32.const 2)) (then (local.set $e (i32.or (i32.shl (i32.load8_u offset=10 (i32.add (local.get $ret) (i32.shl (local.get $arg) (i32.const 1)))) (i32.const 8)) (i32.load8_u offset=11 (i32.add (local.get $ret) (i32.shl (local.get $arg) (i32.const 1))))))))))))))\n";
+  o = o + "    (if (local.get $peer) (then " + remote + ") (else " + local + "))\n";
+  o = o + "    (if (i32.load8_u (local.get $ret)) (then\n";
+  o = o + "      (local.set $e (i32.sub (i32.const 0) (call $__fern_wasi_socket_errno (i32.load8_u offset=4 (local.get $ret)))))\n";
   o = o + "      (call $__fern_raw_free (local.get $ret) (i32.const 36))\n";
   o = o + "      (return (local.get $e))))\n";
+  o = o + "    (memory.fill (i32.add (local.get $out) (i32.const 8)) (i32.const 0) (i32.const 19))\n";
+  o = o + "    (if (i32.load8_u offset=4 (local.get $ret))\n";
+  o = o + "      (then\n";
+  o = o + "        (i32.store8 offset=8 (local.get $out) (i32.const 6))\n";
+  o = o + "        (loop $group\n";
+  o = o + "          (i32.store8 offset=9 (i32.add (local.get $out) (i32.shl (local.get $k) (i32.const 1))) (i32.load8_u offset=17 (i32.add (local.get $ret) (i32.shl (local.get $k) (i32.const 1)))))\n";
+  o = o + "          (i32.store8 offset=10 (i32.add (local.get $out) (i32.shl (local.get $k) (i32.const 1))) (i32.load8_u offset=16 (i32.add (local.get $ret) (i32.shl (local.get $k) (i32.const 1)))))\n";
+  o = o + "          (local.set $k (i32.add (local.get $k) (i32.const 1)))\n";
+  o = o + "          (br_if $group (i32.lt_u (local.get $k) (i32.const 8)))))\n";
+  o = o + "      (else\n";
+  o = o + "        (i32.store8 offset=8 (local.get $out) (i32.const 4))\n";
+  o = o + "        (i32.store offset=9 (local.get $out) (i32.load offset=10 (local.get $ret)))))\n";
+  o = o + "    (i32.store8 offset=25 (local.get $out) (i32.load8_u offset=9 (local.get $ret)))\n";
+  o = o + "    (i32.store8 offset=26 (local.get $out) (i32.load8_u offset=8 (local.get $ret)))\n";
+  o = o + "    (call $__fern_raw_free (local.get $ret) (i32.const 36))\n";
+  o = o + "    (i32.const 19))\n";
   return o;
 }
 
-pub function tcp_socket_ctl_func(udp: boolean): string {
+pub function tcp_socket_ctl_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_tcp_socket_ctl (param $c i32) (param $op i32) (param $arg i32) (result i32)\n";
   o = o + "    (local $ret i32) (local $e i32)\n";
-  o = o + name_group_arm(9, "$__fern_wasi_tcp_local_address", "$__fern_wasi_udp_local_address", udp);
-  o = o + name_group_arm(10, "$__fern_wasi_tcp_remote_address", "$__fern_wasi_udp_remote_address", udp);
   o = o + "    (if (i32.or (i32.eq (local.get $op) (i32.const 1)) (i32.or (i32.eq (local.get $op) (i32.const 6)) (i32.eq (local.get $op) (i32.const 8)))) (then (return (i32.const -58))))\n";
   o = o + "    (if (i32.eq (local.get $op) (i32.const 7)) (then\n";
   o = o + "      (if (i32.lt_u (i32.sub (i32.load offset=12 (local.get $c)) (i32.const 2)) (i32.const 2)) (then (return (i32.const 0))))\n";
@@ -4604,6 +4614,8 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = parts.append("    call $__fern_tcp_listen_with\n");
   } else if (o.kind_tag == 333) {
     parts = parts.append("    call $__fern_tcp_socket_ctl\n");
+  } else if (o.kind_tag == 486) {
+    parts = parts.append("    call $__fern_tcp_addr_into\n");
   } else if (o.kind_tag == 346) {
     parts = parts.append("    call $__fern_tcp_sendfile\n");
   } else if (o.kind_tag == 201) {
@@ -9336,13 +9348,16 @@ function preview2_wasi_imports(needs: string[], sleep_p2: boolean): string {
   if (need(needs, "tcp_socket_ctl")) {
     parts = parts.append(wasi_sockets_socket_ctl_imports());
   }
-  if (need(needs, "tcp_local_port") || need(needs, "tcp_socket_ctl")) {
+  if (need_any(needs, ["tcp_socket_ctl", "tcp_addr_into"])) {
+    parts = parts.append(wasi_sockets_remote_address_import());
+  }
+  if (need_any(needs, ["tcp_local_port", "tcp_addr_into"])) {
     parts = parts.append(wasi_sockets_local_address_import());
   }
-  if ((need(needs, "tcp_local_port") || need(needs, "tcp_socket_ctl")) && need(needs, "udp_bind")) {
+  if (need_any(needs, ["tcp_local_port", "tcp_addr_into"]) && need(needs, "udp_bind")) {
     parts = parts.append(wasi_udp_local_address_import());
   }
-  if (need(needs, "tcp_socket_ctl") && need(needs, "udp_bind")) {
+  if (need(needs, "tcp_addr_into") && need(needs, "udp_bind")) {
     parts = parts.append(wasi_udp_remote_address_import());
   }
   if (need_udp_socket(needs)) {
@@ -9727,7 +9742,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (mode == 2 || module_extern_needs_heap(mod) || needs_fd_sync(needs) || need_open_file(needs) || need_any(needs, [
     "@allocates", "@uses_i32_to_string", "@uses_i64_to_string", "@uses_u64_to_string", "@uses_u32_to_string", "@uses_buf",
     "env", "stat", "lstat", "remove_file", "create_dir_all", "read_dir", "read_dir_bytes", "read_dir_all", "read_dir_ino", "read_dir_ino_all", "remove_dir_all", "temp_dir", "read_chunk", "read_chunk_bytes", "reader_close", "fd_stat", "reader_seek", "writer_truncate",
-    "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect_with", "tcp_send_bytes", "tcp_send_buf", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
+    "writer_write", "write_some", "write_bytes", "write_some_bytes", "wasm_poll", "tcp_connect_with", "tcp_send_bytes", "tcp_send_buf", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_addr_into", "tcp_accept", "tcp_local_port", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom", "poll", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into",
   ])) {
     parts = parts.append(heap_alloc_helpers(heap_base_for_strs(sv, cv, shadow), fl_base_for_strs(sv, cv), fl_cells(), large_fl_base_for_strs(sv, cv), need(needs, "@heap_alloc_count"), lc));
     parts = parts.append(rc_runtime_helpers(heap_base_for_strs(sv, cv, shadow)));
@@ -9822,7 +9837,7 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need_any(needs, ["tcp_connect_with", "tcp_listen", "tcp_listen_with", "udp_bind"])) {
     parts = parts.append(network_handle_func());
   }
-  if (need_any(needs, ["tcp_connect_with", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_accept", "tcp_local_port", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom"])) {
+  if (need_any(needs, ["tcp_connect_with", "tcp_listen", "tcp_listen_with", "tcp_socket_ctl", "tcp_addr_into", "tcp_accept", "tcp_local_port", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes", "udp_recvfrom"])) {
     parts = parts.append(wasi_socket_errno_func());
   }
   if (need_any(needs, ["tcp_connect_with", "tcp_listen_with", "udp_bind", "udp_connect", "udp_sendto", "udp_sendto_bytes"])) {
@@ -9845,7 +9860,10 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     parts = parts.append(tcp_listen_with_func());
   }
   if (need(needs, "tcp_socket_ctl")) {
-    parts = parts.append(tcp_socket_ctl_func(need(needs, "udp_bind")));
+    parts = parts.append(tcp_socket_ctl_func());
+  }
+  if (need(needs, "tcp_addr_into")) {
+    parts = parts.append(tcp_addr_into_func(need(needs, "udp_bind")));
   }
   if (need(needs, "tcp_sendfile")) {
     parts = parts.append(tcp_sendfile_func());
@@ -12815,7 +12833,7 @@ function fs_builtins(): string[] {
 function socket_builtins(): string[] {
   return [
     "tcp_accept", "tcp_close", "tcp_connect_with", "tcp_listen", "tcp_listen_with",
-    "tcp_local_port", "tcp_pollable", "tcp_recv_into", "tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_socket_ctl",
+    "tcp_local_port", "tcp_pollable", "tcp_recv_into", "tcp_send_bytes", "tcp_send_buf", "tcp_sendfile", "tcp_socket_ctl", "tcp_addr_into",
     "udp_bind", "udp_bind_with", "udp_connect", "udp_recvfrom", "udp_sendto", "udp_sendto_bytes",
   ];
 }

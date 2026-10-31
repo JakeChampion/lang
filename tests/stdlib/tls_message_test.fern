@@ -1,5 +1,4 @@
 import "std/test";
-import "core/int";
 import "std/hex";
 import "std/codec";
 import "std/tls/message";
@@ -89,7 +88,7 @@ function hexes(v: i32[]): string {
   let out: string = "";
   let i: i32 = 0;
   while (i < v.len()) {
-    out = out + " " + int.int_to_string(v[i]);
+    out = out + " " + v[i].to_string();
     i = i + 1;
   }
   return out;
@@ -102,14 +101,14 @@ function test_round_trip(): test.TestOutcome {
     match (message.decode(one(all[i]))) {
       Ok(m) => {
         if (hex.encode(message.encode(m)) != hex.encode(all[i])) {
-          return test.fail("message " + int.int_to_string(i) + " re-encodes differently");
+          return test.fail("message " + i.to_string() + " re-encodes differently");
         }
         if (m.kind() != all[i][0] as i32) {
-          return test.fail("message " + int.int_to_string(i) + " kind");
+          return test.fail("message " + i.to_string() + " kind");
         }
       },
       Err(e) => {
-        return test.fail("message " + int.int_to_string(i) + ": " + e.message());
+        return test.fail("message " + i.to_string() + ": " + e.message());
       }
     }
     i = i + 1;
@@ -325,7 +324,7 @@ function test_pre_shared_key(): test.TestOutcome {
   let offer: message.OfferedPsks = message.OfferedPsks { identities: [message.PskIdentity { identity: "t1".bytes(), obfuscated_age: 0x01020304 as u32 }, message.PskIdentity { identity: "ticket-2".bytes(), obfuscated_age: 7 as u32 }], binders: [__codec_bytes(hex.decode("3add4fb2d8fdf822a0ca3cf7678ef5e88dae990141c5924d57bb6fa31b9e5f9d")), __codec_bytes(hex.decode("00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"))] };
   let e: message.Extension = message.ext_pre_shared_key(offer);
   if (e.kind != message.EXT_PRE_SHARED_KEY || message.binders_length(offer.binders) != 68 || e.data.len() != 2 + 8 + 14 + 68) {
-    return test.fail("offer encoding " + int.int_to_string(e.data.len()));
+    return test.fail("offer encoding " + e.data.len().to_string());
   }
   match (message.pre_shared_key(e.data)) {
     Ok(o) => {
@@ -398,7 +397,7 @@ function test_split(): test.TestOutcome {
   }
   match (message.split(flight.take(100))) {
     Ok(s) => {
-      return test.assert_eq(int.int_to_string(s.messages.len()) + " " + int.int_to_string(s.rest.len()), "1 60");
+      return test.assert_eq(s.messages.len().to_string() + " " + s.rest.len().to_string(), "1 60");
     },
     Err(e) => {
       return test.fail(e.message());

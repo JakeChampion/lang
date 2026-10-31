@@ -111,7 +111,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<42 pub function listen_unix(path: string, backlog: i32): Result[i32, NetError]>>
 
-<<43 function __name_of(sock: i32, op: i32): Result[SocketAddr, NetError]>>
+<<43 function __name_of(sock: i32, peer: boolean): Result[SocketAddr, NetError]>>
 
 <<44 pub function local_port(sock: i32): Result[i32, NetError]>>
 
@@ -1512,16 +1512,18 @@ pub function read_watched(sock: i32, max: i32, wait: Duration, interest: i32): R
   let until: i64 = monotonic_ns() + wait.as_nanos();
   let set: i32[] = [sock, interest];
   while (true) {
-    let wait_ms: i32 = ((until - monotonic_ns()) / 1000000i64) as i32;
-    if (wait_ms < 1) {
-      wait_ms = 1;
+    let at: i64 = until;
+    if (at - monotonic_ns() < 1000000i64) {
+      at = monotonic_ns() + 1000000i64;
     }
-    let woke: i32 = async.wait_any(set, time.millis_timeout(wait_ms));
-    if (woke == async.cancelled()) {
-      return Ok(Abandoned);
-    }
-    if (woke != 0) {
-      return Ok(Elapsed);
+    match (async.wait_any(set, Some(time.instant_from_nanos(at)))) {
+      Woke(i) => {},
+      TimedOut => {
+        return Ok(Elapsed);
+      },
+      Cancelled => {
+        return Ok(Abandoned);
+      }
     }
     match (read_up_to(sock, max)) {
       Ok(got) => {
@@ -1647,7 +1649,7 @@ pub function send(sock: i32, data: u8[]): Result[i32, NetError] {
 
 ```fern
 <<39 pub function sender(from: [u8]): SocketAddr>>=
-// sender reads the address recv_into wrote into its 19 bytes.
+// sender reads the 19-byte address that recv_into or tcp_addr_into wrote.
 pub function sender(from: [u8]): SocketAddr {
   let n: i32 = 4;
   if (from[0] == 6u8) {
@@ -1735,11 +1737,11 @@ pub function connect_unix(path: string): Result[i32, NetError] {
 }
 
 pub function local_addr(sock: i32): Result[SocketAddr, NetError] {
-  return __name_of(sock, 9);
+  return __name_of(sock, false);
 }
 
 pub function peer_addr(sock: i32): Result[SocketAddr, NetError] {
-  match (__name_of(sock, 10)) {
+  match (__name_of(sock, true)) {
     Ok(a) => {
       return Ok(socket_addr(a.ip.to_canonical(), a.port));
     },
@@ -1750,38 +1752,17 @@ pub function peer_addr(sock: i32): Result[SocketAddr, NetError] {
 }
 ```
 
-### `43 function __name_of(sock: i32, op: i32): Result[SocketAddr, NetError]`
+### `43 function __name_of(sock: i32, peer: boolean): Result[SocketAddr, NetError]`
 
 ```fern
-<<43 function __name_of(sock: i32, op: i32): Result[SocketAddr, NetError]>>=
-function __name_of(sock: i32, op: i32): Result[SocketAddr, NetError] {
-  let fam: i32 = tcp_socket_ctl(sock, op, 8);
-  if (fam < 0) {
-    return Err(error_from_host(fam));
+<<43 function __name_of(sock: i32, peer: boolean): Result[SocketAddr, NetError]>>=
+function __name_of(sock: i32, peer: boolean): Result[SocketAddr, NetError] {
+  let rec: u8[] = __alloc_u8(SENDER_BYTES);
+  let r: i32 = tcp_addr_into(sock, peer, rec);
+  if (r < 0) {
+    return Err(error_from_host(r));
   }
-  let groups: i32 = 2;
-  if (fam == 6) {
-    groups = 8;
-  }
-  let b: u8[] = [];
-  let i: i32 = 0;
-  while (i < groups) {
-    let g: i32 = tcp_socket_ctl(sock, op, i);
-    if (g < 0) {
-      return Err(error_from_host(g));
-    }
-    b = b.append((g >> 8) as u8);
-    b = b.append((g & 255) as u8);
-    i = i + 1;
-  }
-  let port: i32 = tcp_socket_ctl(sock, op, 9);
-  if (port < 0) {
-    return Err(error_from_host(port));
-  }
-  if (fam == 6) {
-    return Ok(socket_addr(V6(b), port));
-  }
-  return Ok(socket_addr(V4(b), port));
+  return Ok(sender(rec));
 }
 ```
 

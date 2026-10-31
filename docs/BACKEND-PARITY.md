@@ -110,7 +110,7 @@ the errno of a bad descriptor, and round-trips bytes through the byte store.
 The Darwin legs run in the Apple Silicon lane.
 
 `tcp_listen`, `tcp_listen_with`, `tcp_connect_with`, `tcp_accept`,
-`tcp_local_port`, `tcp_close`, `tcp_socket_ctl`, `tcp_recv_into`,
+`tcp_local_port`, `tcp_close`, `tcp_socket_ctl`, `tcp_addr_into`, `tcp_recv_into`,
 `tcp_send_bytes`, `udp_bind`, `udp_bind_with`, `udp_connect`, `udp_sendto`
 and `udp_recvfrom` are one Fern body each in `asmcore.fern` over this floor, on x86-64-linux,
 arm64-linux and arm64-darwin (the sockaddr's leading `sin_len` byte, the
@@ -131,6 +131,15 @@ The IPv6 leg (`TestSocketV6*` and the self-host twin) runs where Go can
 listen on `::1` and skips, with the probe's own "nov6" answer required,
 where it cannot.
 
+`tcp_addr_into(fd, peer, out)` reads the socket's own address, or the
+address of its peer when `peer` is true, with one getsockname(2) or
+getpeername(2). It writes the address into `out` as the 19-byte sender
+record that `udp_recvfrom` fills: the family as 4 or 6, sixteen address
+bytes in network order with an IPv4 address in the first four, then the
+port. It answers 19, -EINVAL when `out` is shorter than 19 bytes, or
+-errno. std/net reads the record with `net.sender` for `local_addr` and
+`peer_addr`.
+
 `tcp_listen_with(addr, port, backlog, reuse_port)` and `tcp_socket_ctl(fd,
 op, arg)` (op 1 `TCP_NODELAY`, 2 `SO_KEEPALIVE`, 3 `O_NONBLOCK`, 4
 `shutdown(2)` with `arg` its how, 5 the result of a connect under way, 6
@@ -139,10 +148,8 @@ on Linux and `SO_NWRITE` on Darwin, 7 the peer's address as one 32-bit
 key: an IPv4 address packed as `net.packed_v4` packs it, a v4-mapped IPv6
 address its IPv4 one, any other IPv6 address the two words of its first
 eight bytes XORed and never 0, and 0 for a socket with no peer, so a key
-is never mistaken for an error, 9 the socket's own address and 10 its
-peer's as 16-bit groups: arg 0..7 the group in network order, an IPv4
-address filling 0 and 1 and the rest 0, 8 the family as 4 or 6, 9 the
-port, -EINVAL past that) are the socket controls of #9853;
+is never mistaken for an error, -EINVAL past that) are the socket
+controls of #9853;
 std/net wraps them. On wasm, ops 1 and 6 answer `-ENOTSUP` (58 in the
 WASI numbering) because wasi:sockets 0.2 has neither a Nagle switch nor a
 reading of the send queue (op 7 reads
@@ -299,7 +306,8 @@ of these at check time there.
 | --- | --- | --- | --- | --- | --- |
 | `tcp_listen`, `tcp_accept`, `tcp_local_port`, `tcp_close`, `tcp_pollable`, `tcp_send_bytes` | Fern body; `tcp_pollable` answers the descriptor itself | Fern body; `tcp_pollable` answers the descriptor itself | wasi:sockets/tcp bodies (`wasm_ir.fern`); a "fd" is the 20-byte record (a datagram socket's is 16 bytes) | E066 | net package |
 | `tcp_listen_with`, `tcp_connect_with` (byte address) | Fern body | Fern body | `__fern_ip_flat` then start-bind or start-connect; a started connect is kind 4 | E066 | net package, `JoinHostPort`; a started connect is finished before answering |
-| `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5, 7, 9 and 10 through wasi:sockets, op 3 a flag in the record; 1 and 6 `-ENOTSUP`; every op but 9 and 10 `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv_into` and `tcp_send_bytes` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket; ops 9 and 10 read the descriptor's own sockaddr |
+| `tcp_socket_ctl` | Fern body; op 7 answers 0 on a datagram socket | Fern body; op 7 answers 0 on a datagram socket | ops 2, 4, 5 and 7 through wasi:sockets, op 3 a flag in the record; 1 and 6 `-ENOTSUP`; every op `-ENOTSUP` on a datagram record, op 7 0 | E066 | net package controls; op 3 makes `tcp_recv_into` and `tcp_send_bytes` one read(2) or write(2) on the descriptor, so a send answers what the kernel took or -EAGAIN; op 5 answers 0 at once; op 6 reads the host's send queue; op 7 keys `RemoteAddr`, 0 on a datagram socket |
+| `tcp_addr_into` | Fern body: one `getsockname(2)` or `getpeername(2)` | Fern body | `local-address` or `remote-address` of the tcp or udp socket, -EINVAL as 28 | E066 | `getsockname` or `getpeername` on the descriptor |
 | `tcp_recv_into` | Fern body, `read(2)`, -errno on failure | Fern body | non-blocking read on the input stream; while it is empty, a wait on the stream and another read, or `-EAGAIN` on a non-blocking socket; `-EIO` on a stream error | E066 | a read through the descriptor |
 | `tcp_ktls` | Fern body: `setsockopt` for the `tls` upper-layer protocol and each direction's keys, `sendmsg` and `recvmsg` with the record type as a control message | E066: no `ktls` | E066: no `ktls` | E066 | `-ENOSYS` |
 | `tcp_sendfile` | Fern body, `sendfile(2)`, the file advanced by what the socket took | Fern body, the position read and moved around Darwin's offset-and-length form | `-ENOTSUP`: the serve loop reads the file and sends the piece | E066 | a read of the open file then one socket write, the file moved back over what the socket did not take |
