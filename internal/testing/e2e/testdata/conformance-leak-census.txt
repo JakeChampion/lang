@@ -494,6 +494,7 @@ literal_payload_pattern                              0
 literal_tree_takes_its_destination_width             0
 local_array_views_keep_their_storage                  0
 local_from_handle_free_call_is_fresh                 0
+local_read_from_borrowed_struct_moves_at_last_use    0
 log_leveled                                          0
 loop_form                                            0
 loop_rotation_shapes                                 0

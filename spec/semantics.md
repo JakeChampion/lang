@@ -54,7 +54,7 @@ The cases themselves are run by `TestFernFixtures` like any other, so
 "pinned" means the behaviour is checked on every backend the case opts
 into, not merely that a file exists.
 
-**111 of 114** claims are pinned by a conformance case. The remaining
+**113 of 116** claims are pinned by a conformance case. The remaining
 **three are freedoms** — see below. There are no gaps left.
 
 ## Freedoms are not gaps
@@ -192,6 +192,8 @@ of them.
 | `RH-31` | `docs/security/HANDLE-AUDIT.md` | A call that moves a field cannot read the same field in another argument (`E051`) | `diag_e051_handle_field_moved_beside_same_field` |
 | `RH-32` | `docs/security/HANDLE-AUDIT.md` | An own parameter consumed in a loop body is refused at the consume (`E050`) | `diag_e050_owned_handle_consumed_inside_loop` |
 | `RH-33` | `docs/security/HANDLE-AUDIT.md` | A local initialised from a call whose result cannot hold a handle is a fresh value | `local_from_handle_free_call_is_fresh` |
+| `RH-34` | `docs/security/HANDLE-AUDIT.md` | A local read out of a borrowed structure passes to an `own` parameter at its last use, in a `let`, an assignment or a `return`, when its type cannot hold a handle | `local_read_from_borrowed_struct_moves_at_last_use` |
+| `RH-35` | `docs/security/HANDLE-AUDIT.md` | A handle read out of a borrowed structure cannot pass to an `own` parameter, not even at its last use (`E051`) | `diag_e051_handle_local_read_from_borrowed_struct` |
 
 ## Every gap this index opened with is now closed
 
