@@ -110,7 +110,7 @@ QEMU establishes emulated behaviour only.
 | The processor, the kernel and the process state of PAC, BTI, MTE, the shadow stack and IBT | `TestSelfHostMitigationsReport`, `tests/stdlib/mitigations_test.fern` | every cell comes from the kernel's records; the Go test reads the same files | x86, arm64 |
 | The compiled, requested and enabled state of each mitigation in a built program | `TestSelfHostProfiles` | the manifest is read from the image, the rows from the process | x86, arm64 |
 | A hardware fault test | `TestSelfHostHardenArm64`, `TestSelfHostShadowStack` | the log names native or emulated execution; an unsupported feature stays unverified | x86, arm64 |
-| A reproducible image | `TestSelfHostReproducibleAcrossPaths` | two directories and environments, byte compared | x86, arm64 |
+| A reproducible image | `TestSelfHostReproducibleAcrossPaths`, `TestSelfHostRemapPathPrefix` | two source roots, directories, locales and environments, byte compared. A `-g` image must differ without a remap. A malformed remap is refused | x86, arm64 |
 
 ## Gaps
 
