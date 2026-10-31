@@ -3007,10 +3007,12 @@ func (c *checker) instForReceiver(typeName, name, trait, mangled string, recv as
 			return mangled
 		}
 	case ast.ArrayType, ast.SliceType, ast.TupleType:
-		// Only a generic impl method has an instance per receiver; an
-		// inherent method keeps the declaration that resolution picked.
-		if _, generic := c.info.GenericFuncs[mangled]; !generic {
-			return mangled
+		// Trait instances remain after monomorphization removes their generic
+		// declaration. A concrete inherent method keeps its selected declaration.
+		if trait == "" {
+			if _, generic := c.info.GenericFuncs[mangled]; !generic {
+				return mangled
+			}
 		}
 	default:
 		return mangled
