@@ -1,0 +1,40 @@
+// spec: RH-35
+// A handle read out of a borrowed structure cannot pass to an `own` parameter,
+// not even at its last use. The callee can close a handle that the
+// structure still holds. A `let`, an assignment and a `return` all refuse.
+
+struct H { w: Writer, n: i32 }
+
+function finish(own w: Writer): i32 {
+  match (w.close()) {
+    Ok(_) => {
+      return 0;
+    },
+    Err(_) => {
+      return 1;
+    }
+  }
+  return 2;
+}
+
+function (h: H) by_let(): i32 {
+  let w: Writer = h.w;
+  let r: i32 = finish(w);
+  return r;
+}
+
+function (h: H) by_assign(): i32 {
+  let w: Writer = h.w;
+  let r: i32 = 0;
+  r = finish(w);
+  return r;
+}
+
+function (h: H) by_return(): i32 {
+  let w: Writer = h.w;
+  return finish(w);
+}
+
+function main(): i32 {
+  return 0;
+}

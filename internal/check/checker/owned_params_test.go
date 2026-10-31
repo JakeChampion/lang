@@ -294,19 +294,6 @@ function f(): i32 {
     let n: i32 = consume(xs);
     return n + xs.len() + k;
 }`},
-		{"destructured-whole-named", `
-function step(): (i32[], i32) { return ([1], 2); }
-function f(): i32 {
-    let t @ (xs, k) = step();
-    let n: i32 = consume(xs);
-    return n + t.1;
-}`},
-		{"destructured-borrowed-param", `
-function f(p: Pair): i32 {
-    let Pair { items, n } = p;
-    let r: i32 = consume(items);
-    return r + n;
-}`},
 		{"captured-by-a-lambda", `
 function mk(): i32[] { return [1, 2]; }
 function f(): i32 {
@@ -829,19 +816,19 @@ function f(own p: Pair): i32 {
 }
 
 func TestOwnGuardRejectsAFieldOfAnOwnParamReadTwice(t *testing.T) {
-	wantE051(t, "own-param-field-read-twice", ownConsumer+`
-function f(own p: Pair): i32 {
-    let xs: i32[] = p.items;
-    let k: i32 = consume(xs);
-    return k + p.items.len();
+	wantE051(t, "own-param-field-read-twice", ownHandleConsumer+`
+function f(own p: HPair): i32 {
+    let h: Handle = p.h;
+    let k: i32 = sinkh(h);
+    return k + p.h.fd;
 }`)
 }
 
 func TestOwnGuardRejectsAFieldOfABorrowedParam(t *testing.T) {
-	wantE051(t, "borrowed-param-field-unpack", ownConsumer+`
-function f(p: Pair): i32 {
-    let xs: i32[] = p.items;
-    let k: i32 = consume(xs);
+	wantE051(t, "borrowed-param-field-unpack", ownHandleConsumer+`
+function f(p: HPair): i32 {
+    let h: Handle = p.h;
+    let k: i32 = sinkh(h);
     return k;
 }`)
 }
@@ -1148,9 +1135,14 @@ function takes(own s: string): i32 { return s.len() as i32; }
     let r: i32 = takes(s);
     return r;
 }`)
-	wantE051(t, "spread-literal", prelude+`function f(v: W): i32 {
+	wantOK(t, "spread-literal", prelude+`function f(v: W): i32 {
     let w: W = W { ...v, tag: "u" };
     let r: i32 = eat(w);
+    return r;
+}`)
+	wantE051(t, "spread-literal-with-a-handle", ownHandleConsumer+`function f(v: HPair): i32 {
+    let w: HPair = HPair { ...v, n: 2 };
+    let r: i32 = sinkp(w);
     return r;
 }`)
 }
@@ -1791,4 +1783,128 @@ function f(own p: Acc, k: i32): i32 {
     }
     return n + first;
 }`)
+}
+
+// Issue #13350: a local read out of a borrowed structure gets one answer in
+// a let, an assignment and a return.
+const borrowedReadPrelude = `struct P { payload: u8[], n: i32 }
+struct S { filled: u8[], k: i32 }
+struct C { ps: P[], s: S }
+struct Row { cells: i32[], name: string }
+struct Grid { rows: Row[] }
+struct H { w: Writer, n: i32 }
+function (s: S) fill(own out: u8[]): S { return S { ...s, filled: out.append(1) }; }
+function width(own r: Row): i32 { return r.cells.len(); }
+function finish(own w: Writer): i32 { return 0; }
+`
+
+// A struct with a method that consumes its receiver is a user-defined handle.
+const ownHandleConsumer = `struct Handle { fd: i32 }
+function (own h: Handle) close(): i32 { return h.fd; }
+struct HPair { h: Handle, n: i32 }
+function sinkh(own h: Handle): i32 { return h.close(); }
+function sinkp(own p: HPair): i32 { return p.n; }
+function hstep(): (Handle, i32) { return (Handle { fd: 1 }, 2); }
+`
+
+func TestOwnGuardRejectsHandleAliasOfADestructuredWhole(t *testing.T) {
+	wantE051(t, "destructured-whole-named", ownHandleConsumer+`
+function f(): i32 {
+    let t @ (h, k) = hstep();
+    let n: i32 = sinkh(h);
+    return n + t.1;
+}`)
+	wantE051(t, "destructured-borrowed-param", ownHandleConsumer+`
+function f(p: HPair): i32 {
+    let HPair { h, n } = p;
+    let r: i32 = sinkh(h);
+    return r + n;
+}`)
+}
+
+func TestOwnGuardAllowsHandleFreeLocalReadFromBorrowed(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"assign", `
+function (c: C) a(i: i32): C {
+    let payload: u8[] = c.ps[i].payload;
+    let cur: C = C { ...c, ps: c.ps.with(i, P { ...c.ps[i], payload: [] }) };
+    cur = C { ...cur, s: cur.s.fill(payload) };
+    return cur;
+}`},
+		{"let", `
+function (c: C) a(i: i32): C {
+    let payload: u8[] = c.ps[i].payload;
+    let cur: C = C { ...c, ps: c.ps.with(i, P { ...c.ps[i], payload: [] }) };
+    let next: C = C { ...cur, s: cur.s.fill(payload) };
+    return next;
+}`},
+		{"return", `
+function (c: C) a(i: i32): C {
+    let payload: u8[] = c.ps[i].payload;
+    let cur: C = C { ...c, ps: c.ps.with(i, P { ...c.ps[i], payload: [] }) };
+    return C { ...cur, s: cur.s.fill(payload) };
+}`},
+		{"declared-record", `
+function (g: Grid) first(): i32 {
+    let r: Row = g.rows[0];
+    let w: i32 = width(r);
+    return w;
+}`},
+	} {
+		wantOK(t, tc.name, borrowedReadPrelude+tc.body)
+	}
+	for _, tc := range []struct{ name, body string }{
+		{"destructured-whole-named", `
+function step(): (i32[], i32) { return ([1], 2); }
+function f(): i32 {
+    let t @ (xs, k) = step();
+    let n: i32 = consume(xs);
+    return n + t.1;
+}`},
+		{"own-param-field-read-twice", `
+function f(own p: Pair): i32 {
+    let xs: i32[] = p.items;
+    let k: i32 = consume(xs);
+    return k + p.items.len();
+}`},
+		{"borrowed-param-field-unpack", `
+function f(p: Pair): i32 {
+    let xs: i32[] = p.items;
+    let k: i32 = consume(xs);
+    return k;
+}`},
+		{"destructured-borrowed-param", `
+function f(p: Pair): i32 {
+    let Pair { items, n } = p;
+    let r: i32 = consume(items);
+    return r + n;
+}`},
+	} {
+		wantOK(t, tc.name, ownConsumer+tc.body)
+	}
+}
+
+func TestOwnGuardRejectsHandleLocalReadFromBorrowed(t *testing.T) {
+	for _, tc := range []struct{ name, body string }{
+		{"let", `
+function (h: H) done(): i32 {
+    let w: Writer = h.w;
+    let r: i32 = finish(w);
+    return r;
+}`},
+		{"assign", `
+function (h: H) done(): i32 {
+    let w: Writer = h.w;
+    let r: i32 = 0;
+    r = finish(w);
+    return r;
+}`},
+		{"return", `
+function (h: H) done(): i32 {
+    let w: Writer = h.w;
+    return finish(w);
+}`},
+	} {
+		wantE051(t, tc.name, borrowedReadPrelude+tc.body)
+	}
 }

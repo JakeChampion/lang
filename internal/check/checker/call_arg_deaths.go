@@ -134,7 +134,11 @@ type ArgDeaths struct {
 	// of one of its field paths: the match or the loop takes the payloads.
 	Moves map[ast.Expr]bool
 	// Bound names what a match arm or a for-each binds in the function.
-	Bound       map[string]bool
+	Bound map[string]bool
+	// Unadmitted names the locals in Dies that are not a fresh local, an
+	// unpack or an alias of one: they can be a read out of a borrowed
+	// structure, so only a type that cannot hold a handle may move.
+	Unadmitted  map[string]bool
 	Occurrences map[string]int
 }
 
@@ -589,7 +593,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		for _, a := range c.Args {
 			aid, ok := a.(*ast.Ident)
-			if !ok || escaping[aid.Name] || !admitted(aid.Name) {
+			if !ok || escaping[aid.Name] || !admitted(aid.Name) && declCount[aid.Name] == 0 {
 				continue
 			}
 			if heldByEnclosingCall(body, c, aid.Name) {
@@ -687,7 +691,15 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		return true
 	})
-	return ArgDeaths{Dies: out, Repeating: repeating, Escaping: escaping, Occurrences: occurrences, Deferred: deferred, FieldDies: fieldDies, Moves: moves, Bound: bound}
+	unadmitted := map[string]bool{}
+	for _, dies := range out {
+		for name := range dies {
+			if !admitted(name) {
+				unadmitted[name] = true
+			}
+		}
+	}
+	return ArgDeaths{Dies: out, Repeating: repeating, Escaping: escaping, Occurrences: occurrences, Deferred: deferred, FieldDies: fieldDies, Moves: moves, Bound: bound, Unadmitted: unadmitted}
 }
 
 // mentionsBesideFields counts the mentions of name in c that are not reads
@@ -999,15 +1011,22 @@ func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, 
 	}
 }
 
-func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
+// lastUseArgs returns the arguments at their last use, and the subset of
+// them that are unadmitted locals (see ArgDeaths.Unadmitted).
+func lastUseArgs(fn *ast.FuncDecl, info *Info) (map[ast.Expr]bool, map[ast.Expr]bool) {
 	out := map[ast.Expr]bool{}
+	loose := map[ast.Expr]bool{}
 	if fn.Body == nil {
-		return out
+		return out, loose
 	}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		if inner, ok := n.(*ast.FuncDecl); ok && inner != fn {
-			for e := range lastUseArgs(inner, info) {
+			innerOut, innerLoose := lastUseArgs(inner, info)
+			for e := range innerOut {
 				out[e] = true
+			}
+			for e := range innerLoose {
+				loose[e] = true
 			}
 			return false
 		}
@@ -1053,6 +1072,9 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
 		for _, a := range call.Args {
 			if id, ok := a.(*ast.Ident); ok && dies[id.Name] && (local[id.Name] || d.Bound[id.Name]) && (!d.Escaping[id.Name] || d.Deferred[call]) {
 				out[id] = true
+				if d.Unadmitted[id.Name] {
+					loose[id] = true
+				}
 			}
 		}
 	}
@@ -1095,7 +1117,7 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
 			}
 		}
 	}
-	return out
+	return out, loose
 }
 
 func storeTarget(st ast.Stmt) (string, *ast.Assign) {

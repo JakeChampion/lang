@@ -2342,6 +2342,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// prepended to the parameter list, so codegen never has to know
 	// about methods.
 	declaredFunctions := make(map[string]bool, len(prog.Funcs))
+	c.consumingTypes = map[string]bool{}
 	for _, fn := range prog.Funcs {
 		if fn.Name == "main" && fn.Receiver == nil && fn.AssocType == "" && fn.Body != nil {
 			c.checkMainSignature(fn)
@@ -2428,6 +2429,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			}
 			fn.MethodRecv = typeName
 			fn.MethodSimpleName = simpleName
+			if fn.Receiver.Own {
+				c.consumingTypes[typeName] = true
+			}
 			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
 			fn.Receiver = nil
 			c.registerMethod(typeName, simpleName, fn.ImplTrait, mangled, fn.SourceModule, fn.P)
@@ -5532,8 +5536,13 @@ type checker struct {
 	declaredMethods map[string]bool
 	// handleFreeResults names the functions whose result type cannot hold a handle.
 	handleFreeResults map[string]bool
-	callOwnFlags      map[*ast.Call][]bool
-	scalarArgs        map[ast.Expr]bool
+	// consumingTypes names the types with a method that consumes its
+	// receiver. Such a type is a user-defined handle.
+	consumingTypes map[string]bool
+	callOwnFlags   map[*ast.Call][]bool
+	scalarArgs     map[ast.Expr]bool
+	// handleFreeArgs holds the name arguments whose type cannot hold a handle.
+	handleFreeArgs map[ast.Expr]bool
 
 	shadowedGenericCalls map[*ast.Call]bool
 
@@ -10079,7 +10088,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	}
 
 	selfMoveArgs := map[ast.Expr]bool{}
-	lastUse := lastUseArgs(fn, c.info)
+	lastUse, looseUse := lastUseArgs(fn, c.info)
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
 		if c.scalarArgs[e] {
@@ -10096,7 +10105,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if _, vrOk, _ := c.resolveVariant(x.Name, x.EnumName); vrOk {
 				return true
 			}
-			return owned[x.Name] || selfMoveArgs[e] || lastUse[e] && !borrowedParam[x.Name] || c.scalarArgs[e]
+			return owned[x.Name] || selfMoveArgs[e] || lastUse[e] && !borrowedParam[x.Name] && (!looseUse[e] || c.handleFreeArgs[e]) || c.scalarArgs[e]
 		case *ast.FieldAccess:
 			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 				return true
@@ -14385,6 +14394,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					c.scalarArgs = map[ast.Expr]bool{}
 				}
 				c.scalarArgs[n.Args[i]] = true
+			}
+			if _, isName := n.Args[i].(*ast.Ident); isName && at != nil && c.holdsNoHandle(at) {
+				if c.handleFreeArgs == nil {
+					c.handleFreeArgs = map[ast.Expr]bool{}
+				}
+				c.handleFreeArgs[n.Args[i]] = true
 			}
 			if i < len(ft.Params) && at != nil {
 				expected := ft.Params[i]

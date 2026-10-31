@@ -11,7 +11,7 @@ func (c *checker) computeResultBorrows(prog *ast.Program) {
 		if fn.MethodSimpleName != "" {
 			c.declaredMethods[fn.MethodSimpleName] = true
 		}
-		if fn.ReturnType != nil && holdsNoHandle(fn.ReturnType) {
+		if fn.ReturnType != nil && c.holdsNoHandle(fn.ReturnType) {
 			c.handleFreeResults[fn.Name] = true
 		}
 	}
@@ -263,29 +263,91 @@ func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) b
 }
 
 // holdsNoHandle reports a type that cannot hold a handle: a number, a
-// boolean, a char, a string, or an array, slice, tuple, option or result of
-// such types.
-func holdsNoHandle(t ast.Type) bool {
+// boolean, a char, a string, a function, or an array, slice, tuple, option,
+// result, struct or enum whose parts are all such types. Reader, Writer and
+// Dir are handles, and so is a type with a method that consumes its
+// receiver. A function cannot consume what it captures, so it cannot close
+// a handle.
+func (c *checker) holdsNoHandle(t ast.Type) bool {
+	return c.noHandleIn(t, nil, map[string]bool{})
+}
+
+// noHandleIn decides t inside a declaration whose type parameters in free
+// stand for arguments that hold no handle. seen holds the declarations on
+// the path, so a recursive type is decided by its other parts.
+func (c *checker) noHandleIn(t ast.Type, free map[string]bool, seen map[string]bool) bool {
 	switch x := t.(type) {
 	case ast.NumberType, ast.FloatType, ast.BoolType, ast.VoidType, ast.StringType, ast.StrType, ast.CharType, ast.NeverType, ast.LanesType:
 		return true
+	case ast.ParamType:
+		return free[x.Name]
+	case *ast.FuncType:
+		return true
 	case ast.ArrayType:
-		return holdsNoHandle(x.Elem)
+		return c.noHandleIn(x.Elem, free, seen)
 	case ast.SliceType:
-		return holdsNoHandle(x.Elem)
+		return c.noHandleIn(x.Elem, free, seen)
 	case ast.TupleType:
-		return allHoldNoHandle(x.Elems)
+		return c.allNoHandleIn(x.Elems, free, seen)
 	case ast.EnumType:
-		return (x.Name == "Option" || x.Name == "Result") && allHoldNoHandle(x.Args)
+		if !c.allNoHandleIn(x.Args, free, seen) {
+			return false
+		}
+		if x.Name == "Option" || x.Name == "Result" {
+			return true
+		}
+		ed, ok := c.info.Enums[x.Name]
+		if !ok || c.consumingTypes[x.Name] {
+			return false
+		}
+		if seen[x.Name] {
+			return true
+		}
+		seen[x.Name] = true
+		inner := paramSet(ed.TypeParams)
+		for _, v := range ed.Variants {
+			if !c.allNoHandleIn(v.Payloads, inner, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.StructType:
+		sd, ok := c.info.Structs[x.Name]
+		if !ok || builtinHandle(x.Name) || c.consumingTypes[x.Name] || !c.allNoHandleIn(x.Args, free, seen) {
+			return false
+		}
+		if seen[x.Name] {
+			return true
+		}
+		seen[x.Name] = true
+		inner := paramSet(sd.TypeParams)
+		for _, f := range sd.Fields {
+			if !c.noHandleIn(f.Type, inner, seen) {
+				return false
+			}
+		}
+		return true
 	}
 	return false
 }
 
-func allHoldNoHandle(ts []ast.Type) bool {
+func (c *checker) allNoHandleIn(ts []ast.Type, free map[string]bool, seen map[string]bool) bool {
 	for _, t := range ts {
-		if t == nil || !holdsNoHandle(t) {
+		if t == nil || !c.noHandleIn(t, free, seen) {
 			return false
 		}
 	}
 	return true
+}
+
+func builtinHandle(name string) bool {
+	return name == "Reader" || name == "Writer" || name == "Dir"
+}
+
+func paramSet(names []string) map[string]bool {
+	out := make(map[string]bool, len(names))
+	for _, n := range names {
+		out[n] = true
+	}
+	return out
 }
