@@ -1,5 +1,4 @@
 import "std/test";
-import "core/int";
 import "std/hex";
 import "std/codec";
 import "std/i64";
@@ -12,7 +11,7 @@ function h(s: string): u8[] {
 function element(r: Result[der.Element, der.DerError]): string {
   match (r) {
     Ok(e) => {
-      return int.int_to_string(e.tag) + " " + int.int_to_string(e.start) + " " + int.int_to_string(e.from) + " " + int.int_to_string(e.to);
+      return e.tag.to_string() + " " + e.start.to_string() + " " + e.from.to_string() + " " + e.to.to_string();
     },
     Err(e) => {
       return e.message();

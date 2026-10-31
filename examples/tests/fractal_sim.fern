@@ -16,10 +16,10 @@ function main(): i32 {
   if (r.handle(http.request("GET", "/tile/sim-version/2/4/0"), plat).status != 400 || r.handle(http.request("GET", "/tile/sim-version/43/0/0"), plat).status != 400) {
     return 2;
   }
-  if (!r.handle(http.request("GET", "/api/stats"), plat).body_string().contains("\"tiles\":1,")) {
+  if (!r.handle(http.request("GET", "/api/stats"), plat).body_text_lossy().contains("\"tiles\":1,")) {
     return 3;
   }
-  if (r.handle(http.request("GET", "/healthz"), plat).body_string() != "ok") {
+  if (r.handle(http.request("GET", "/healthz"), plat).body_text_lossy() != "ok") {
     return 4;
   }
   if (r.handle(http.request("POST", "/tile/sim-version/2/1/1"), plat).status != 405) {

@@ -1,5 +1,4 @@
 import "std/test";
-import "core/int";
 import "std/hex";
 import "std/codec";
 import "std/crypto/ed25519";
@@ -148,10 +147,10 @@ function event_names(events: handshake.Event[]): string {
         out = out + " client";
       },
       handshake.Crypto(k) => {
-        out = out + " crypto" + int.int_to_string(k.level);
+        out = out + " crypto" + k.level.to_string();
       },
       handshake.Secret(t) => {
-        out = out + " secret" + int.int_to_string(t.level);
+        out = out + " secret" + t.level.to_string();
       }
     }
     i = i + 1;
@@ -304,7 +303,7 @@ function test_client_trace_dribbled(): test.TestOutcome {
             names = names + event_names(step.events);
           },
           Err(e) => {
-            return test.fail("byte " + int.int_to_string(i) + ": " + e.message());
+            return test.fail("byte " + i.to_string() + ": " + e.message());
           }
         }
         i = i + 1;
@@ -486,7 +485,7 @@ function refused(r: Result[Pair, handshake.HandshakeError]): string {
       return "connected";
     },
     Err(e) => {
-      return int.int_to_string(e.alert()) + " " + e.message();
+      return e.alert().to_string() + " " + e.message();
     }
   }
   return "";
@@ -608,7 +607,7 @@ function second_hello_shape(rec: u8[]): string {
           if (shares.len() != 1 || shares[0].group != 0x001d) {
             return "shares";
           }
-          return "x25519 " + int.int_to_string(shares[0].key.len()) + " cookie " + cookie;
+          return "x25519 " + shares[0].key.len().to_string() + " cookie " + cookie;
         },
         _ => {
           return "not a ClientHello";
@@ -628,7 +627,7 @@ function client_outcome(r: Result[handshake.ClientStep, handshake.HandshakeError
       return "accepted" + event_names(step.events);
     },
     Err(e) => {
-      return int.int_to_string(e.alert()) + " " + e.message();
+      return e.alert().to_string() + " " + e.message();
     }
   }
   return "";
@@ -706,7 +705,7 @@ function test_refused_certificate(): test.TestOutcome {
             },
             Err(e) => {
               let rec: u8[] = step.client.alert(e);
-              return test.assert_eq(int.int_to_string(e.alert()) + " " + int.int_to_string(rec.len()) + " " + int.int_to_string(rec[0] as i32), "42 24 23");
+              return test.assert_eq(e.alert().to_string() + " " + rec.len().to_string() + " " + (rec[0] as i32).to_string(), "42 24 23");
             }
           }
         },
@@ -730,7 +729,7 @@ function client_refusal(input: u8[]): string {
           return "accepted" + event_names(step.events);
         },
         Err(e) => {
-          return int.int_to_string(e.alert()) + " " + e.message();
+          return e.alert().to_string() + " " + e.message();
         }
       }
     },
@@ -779,7 +778,7 @@ function server_refusal(input: u8[]): string {
           return "accepted" + event_names(step.events);
         },
         Err(e) => {
-          return int.int_to_string(e.alert()) + " " + e.message();
+          return e.alert().to_string() + " " + e.message();
         }
       }
     },
@@ -910,7 +909,7 @@ function resumed_pair(cc: handshake.ClientConfig, sc: handshake.ServerConfig, an
       return how + " " + p.server.server_name + " " + p.server.alpn + " " + exchange(p);
     },
     Err(e) => {
-      return int.int_to_string(e.alert()) + " " + e.message();
+      return e.alert().to_string() + " " + e.message();
     }
   }
   return "";
@@ -986,7 +985,7 @@ function hello_refusal(exts: message.Extension[]): string {
           return "accepted";
         },
         Err(e) => {
-          return int.int_to_string(e.alert()) + " " + e.message();
+          return e.alert().to_string() + " " + e.message();
         }
       }
     },
@@ -1021,7 +1020,7 @@ function client_auth(cc: handshake.ClientConfig, sc: handshake.ServerConfig, acc
   let shown: string = "unsigned";
   if (event_names(c2.events) == " sign") {
     let sg: handshake.Signing = signing(c2.events);
-    shown = "signed " + int.int_to_string(sg.scheme);
+    shown = "signed " + sg.scheme.to_string();
     c2 = c2.client.signature(signed(sg.signed))?;
     out = cat(out, c2.output);
   }
@@ -1032,7 +1031,7 @@ function client_auth(cc: handshake.ClientConfig, sc: handshake.ServerConfig, acc
     Some(v) => {
       asked = true;
       chain_len = v.chain.len();
-      shown = shown + " chain " + int.int_to_string(v.chain.len());
+      shown = shown + " chain " + v.chain.len().to_string();
       if (v.chain.len() > 0 && verified_by(ed_public(), v.signed, v.signature)) {
         shown = shown + " verified";
       }
@@ -1057,7 +1056,7 @@ function client_auth_outcome(cc: handshake.ClientConfig, sc: handshake.ServerCon
       return t.report + " " + exchange(t.pair);
     },
     Err(e) => {
-      return int.int_to_string(e.alert()) + " " + e.message();
+      return e.alert().to_string() + " " + e.message();
     }
   }
   return "";
@@ -1199,7 +1198,7 @@ function test_quic_handshake(): test.TestOutcome {
   match (quic_between(quic_client(["h3"], [transport_parameters([1 as u8, 2 as u8])]), quic_server(["h3"], [transport_parameters([9 as u8])]))) {
     Ok(p) => {
       if (p.output != 0) {
-        return test.fail("bytes went out as records: " + int.int_to_string(p.output));
+        return test.fail("bytes went out as records: " + p.output.to_string());
       }
       if (p.client.alpn() != "h3" || p.server.alpn != "h3") {
         return test.fail("alpn: " + p.client.alpn() + " " + p.server.alpn);
@@ -1212,7 +1211,7 @@ function test_quic_handshake(): test.TestOutcome {
         let cw: u8[] = secret_at(p.client_events, level, true);
         let cr: u8[] = secret_at(p.client_events, level, false);
         if (cw.len() == 0 || cr.len() == 0 || !cw.equal(secret_at(p.server_events, level, false)) || !cr.equal(secret_at(p.server_events, level, true))) {
-          return test.fail("secrets at level " + int.int_to_string(level) + " do not match crosswise");
+          return test.fail("secrets at level " + level.to_string() + " do not match crosswise");
         }
       }
       if (secret_at(p.client_events, 0, true).len() != 0 || crypto_at(p.client_events, 2).len() != 0 || crypto_at(p.server_events, 2).len() != 0) {
@@ -1242,7 +1241,7 @@ function test_quic_refusals(): test.TestOutcome {
       }
       match (p.client.close()) {
         Ok(step) => {
-          got = got + "|closed " + int.int_to_string(step.output.len()) + " " + int.int_to_string(step.events.len());
+          got = got + "|closed " + step.output.len().to_string() + " " + step.events.len().to_string();
         },
         Err(e) => {
           got = got + "|" + e.message();
@@ -1268,7 +1267,7 @@ function refused_quic(cc: handshake.ClientConfig, sc: handshake.ServerConfig): s
       return "connected";
     },
     Err(e) => {
-      return int.int_to_string(e.alert()) + " " + e.message();
+      return e.alert().to_string() + " " + e.message();
     }
   }
   return "";
@@ -1295,7 +1294,7 @@ function refused_server(r: Result[handshake.ServerStep, handshake.HandshakeError
       return "accepted";
     },
     Err(e) => {
-      return int.int_to_string(e.alert()) + " " + e.message();
+      return e.alert().to_string() + " " + e.message();
     }
   }
   return "";

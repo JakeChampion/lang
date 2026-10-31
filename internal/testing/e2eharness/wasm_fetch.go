@@ -45,7 +45,7 @@ function parse(s: string): i32 {
 function port(key: string): i32 { match (env(key)) { Some(s) => { return parse(s); }, None => { return 0; } } }
 function body_at(key: string, path: string): string {
     match (fetch.send(fetch.get("http://127.0.0.1:" + port(key).to_string() + path))) {
-        Ok(resp) => { return resp.body_string(); },
+        Ok(resp) => { return resp.body_text_lossy(); },
         Err(e) => { return e.message(); }
     }
     return "";
@@ -54,9 +54,8 @@ function body_at(key: string, path: string): string {
 
 const WasmFetchFanoutSource = wasmFetchPrelude + `
 function main(): i32 {
-    let both: (() => string)[] = [() => body_at("PSLOW", "/a"), () => body_at("PFAST", "/b")];
-    let bodies: string[] = async.gather_tasks(both, "incomplete");
-    if (bodies.len() != 2) { return 90; }
+    let both: async.Future[string][] = [async.spawn((): string => body_at("PSLOW", "/a")), async.spawn((): string => body_at("PFAST", "/b"))];
+    let Some(bodies) = async.block_on(async.gather(both)) else { return 90; };
     print(bodies[0]);   // task 0 (slow upstream) → "AAA"
     print(bodies[1]);   // task 1 (fast upstream) → "BBB"
     return 0;
@@ -64,9 +63,8 @@ function main(): i32 {
 
 const WasmRaceFetchSource = wasmFetchPrelude + `
 function main(): i32 {
-    let both: (() => string)[] = [() => body_at("PA", "/a"), () => body_at("PB", "/b")];
-    let (winner, body) = async.race_tasks(both, "none");
-    if (winner < 0) { print("nowinner\n"); return 1; }
-    print(body);   // the winner's body ("AAA" or "BBB")
+    let both: async.Future[string][] = [async.spawn((): string => body_at("PA", "/a")), async.spawn((): string => body_at("PB", "/b"))];
+    let Some(won) = async.block_on(async.race(both)) else { print("nowinner\n"); return 1; };
+    print(won.1);   // the winner's body ("AAA" or "BBB")
     return 0;
 }`

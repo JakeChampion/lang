@@ -14,16 +14,20 @@ import (
 func TestAsyncCombinatorsPortable(t *testing.T) {
 	bin := buildFernCLI(t)
 	const src = `import "std/async";
+import "std/clock";
 import "std/time";
 function main(): i32 {
     let fs: async.Future[i32][] = [Ready(5), Ready(7), Ready(30)];
-    let summed: i32[] = async.gather(fs, -1);
+    let summed: i32[] = async.block_on(async.gather(fs)).unwrap_or([0, 0, 0]);
     let sum: i32 = summed[0] + summed[1] + summed[2];   // 42
-    let (w, v) = async.race(fs, -1);                    // (0, 5)
-    let d: Option[i32][] = async.with_deadline(time.duration_millis(50), fs); // [Some(5),Some(7),Some(30)]
+    let won: (i32, i32) = async.block_on(async.race(fs)).unwrap_or((0 - 1, 0 - 1));  // (0, 5)
+    let until: Instant = clock.instant().add(time.duration_millis(50));
+    let d: Option[i32][] = async.block_on(async.with_deadline(until, fs)).unwrap_or([]); // [Some(5),Some(7),Some(30)]
     let d2: i32 = 0;
-    match (d[2]) { Some(x) => { d2 = x; }, None => { } }
-    if (sum == 42 && w == 0 && v == 5 && d2 == 30) { return 42; }
+    if (d.len() == 3) {
+        match (d[2]) { Some(x) => { d2 = x; }, None => { } }
+    }
+    if (sum == 42 && won.0 == 0 && won.1 == 5 && d2 == 30) { return 42; }
     return 1;
 }`
 
@@ -76,13 +80,17 @@ func TestAsyncCombinatorsRealFd(t *testing.T) {
 
 	gatherSrc := fmt.Sprintf(`import "std/async";
 
-function read_future(conn: i32): async.Future[i32] {
-    function resume(woken_fd: i32): async.Future[i32] {
+function read_once(conn: i32, wake: async.Wake): async.Future[i32] {
+    if let Woke(i) = wake {
         let resp: u8[] = __alloc_u8(4096);
-        if (tcp_recv_into(woken_fd, resp) > 0) { return Ready(1); }
-        return Ready(0);
+        if (tcp_recv_into(conn, resp) > 0) { return Ready(1); }
     }
-    return Pending(conn, resume);
+    return Ready(0);
+}
+
+function read_future(conn: i32): async.Future[i32] {
+    let set: i32[] = [conn, 1];
+    return Pending(async.Wait { set: set, until: None }, (wake: async.Wake): async.Future[i32] => read_once(conn, wake));
 }
 
 function main(): i32 {
@@ -93,21 +101,24 @@ function main(): i32 {
     if (tcp_send_bytes(c1, [71u8, 69u8, 84u8, 32u8, 47u8, 49u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 83; }
     if (tcp_send_bytes(c2, [71u8, 69u8, 84u8, 32u8, 47u8, 50u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 84; }
     let fs: async.Future[i32][] = [read_future(c1), read_future(c2)];
-    let r: i32[] = async.gather(fs, -1);
+    let r: i32[] = async.block_on(async.gather(fs)).unwrap_or([0, 0]);
     if (r[0] == 1 && r[1] == 1) { return 42; }
     return 85;
 }`, port, port)
 
 	raceSrc := fmt.Sprintf(`import "std/async";
 
-function read_future(conn: i32): async.Future[i32] {
-    function resume(woken_fd: i32): async.Future[i32] {
-        if (woken_fd == async.cancelled()) { return Ready(0); }
+function read_once(conn: i32, wake: async.Wake): async.Future[i32] {
+    if let Woke(i) = wake {
         let resp: u8[] = __alloc_u8(4096);
-        if (tcp_recv_into(woken_fd, resp) > 0) { return Ready(1); }
-        return Ready(0);
+        if (tcp_recv_into(conn, resp) > 0) { return Ready(1); }
     }
-    return Pending(conn, resume);
+    return Ready(0);
+}
+
+function read_future(conn: i32): async.Future[i32] {
+    let set: i32[] = [conn, 1];
+    return Pending(async.Wait { set: set, until: None }, (wake: async.Wake): async.Future[i32] => read_once(conn, wake));
 }
 
 function main(): i32 {
@@ -118,8 +129,8 @@ function main(): i32 {
     if (tcp_send_bytes(c1, [71u8, 69u8, 84u8, 32u8, 47u8, 49u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 83; }
     if (tcp_send_bytes(c2, [71u8, 69u8, 84u8, 32u8, 47u8, 50u8, 32u8, 72u8, 84u8, 84u8, 80u8, 47u8, 49u8, 46u8, 49u8, 13u8, 10u8, 72u8, 111u8, 115u8, 116u8, 58u8, 32u8, 120u8, 13u8, 10u8, 13u8, 10u8]) < 0) { return 84; }
     let fs: async.Future[i32][] = [read_future(c1), read_future(c2)];
-    let (winner, result) = async.race(fs, -1);
-    if (winner >= 0 && result == 1) { return 42; }
+    let won: (i32, i32) = async.block_on(async.race(fs)).unwrap_or((0 - 1, 0));
+    if (won.0 >= 0 && won.1 == 1) { return 42; }
     return 86;
 }`, port, port)
 

@@ -208,7 +208,6 @@ import "std/tls/server";
 import "std/tls/ktls";
 import "std/i64";
 import "std/envflag";
-import "core/int";
 import "std/http/grpc";
 import "std/http/h2";
 import "std/http/h3";
@@ -383,7 +382,7 @@ impl cmp.Display for ListenError {}
 impl error.Error for ListenError {}
 
 pub function (e: ListenError) message(): string {
-  return "cannot listen on port " + int.int_to_string(e.port) + ": " + e.error.message();
+  return "cannot listen on port " + e.port.to_string() + ": " + e.error.message();
 }
 
 pub function (e: ListenError) to_string(): string {
@@ -1031,7 +1030,6 @@ function __chunk_piece[D: async.Driver](drv: D, own c: __Conns, at: i32, produce
     let t: async.Task[Option[u8[]]] = async.task_new((): Option[u8[]] => next(i));
     match (async.task_start(t)) {
       Done(chunk) => {
-        async.task_free(t);
         let step: (__Tail, u8[], boolean) = __chunk_step(producer, i, end, chunk);
         if (step.2) {
           return (__Conns { ...c, tails: c.tails.with(at, step.0) }, step.1, true);
@@ -1039,10 +1037,6 @@ function __chunk_piece[D: async.Driver](drv: D, own c: __Conns, at: i32, produce
       },
       Suspended(w) => {
         return (__tail_park(drv, c, at, producer, i, end, t, w), none, true);
-      },
-      Cancelled => {
-        async.task_free(t);
-        return (__tail_drop(c, at), none, false);
       }
     }
     i = i + 1;
@@ -1082,7 +1076,7 @@ function __chunk_framed(bytes: u8[], end: string): u8[] {
   if (end.len() == 0) {
     return bytes;
   }
-  return (int.int_to_string_radix(bytes.len(), 16) + "\r\n").bytes().concat(bytes).concat("\r\n".bytes());
+  return (bytes.len().to_string_radix(16) + "\r\n").bytes().concat(bytes).concat("\r\n".bytes());
 }
 
 function __idle_due(producer: ChunkProducer, now: i64): i64 {
@@ -1127,7 +1121,7 @@ function __flight_filler[D: async.Driver](drv: D, own c: __Conns, fls: __Flights
 function __tail_park[D: async.Driver](drv: D, own c: __Conns, at: i32, producer: ChunkProducer, index: i32, end: string, t: async.Task[Option[u8[]]], w: async.Wait): __Conns {
   let none: i32[] = [];
   let now: i64 = monotonic_ns();
-  let fl: __Flight = __flight_watch(drv, __Flight { job: Producer(t), wait: w, fd: c.fds[at], set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: __pulling(c, at), idle: __idle_due(producer, now), ends: 0 - 1 as i64, stream: 0, since: 0 - 1 as i64, grpc: false, quic: 0 }, now);
+  let fl: __Flight = __flight_watch(drv, __Flight { job: Producer(t), wait: w, fd: c.fds[at], set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: __pulling(c, at), idle: __idle_due(producer, now), ends: 0 - 1 as i64, stream: 0, since: 0 - 1 as i64, grpc: false, quic: 0 });
   match (c.framing[at]) {
     Pulling(b) => {},
     _ => {
@@ -1206,11 +1200,9 @@ function __background_start[D: async.Driver](drv: D, fls: __Flights, work: () =>
     Suspended(w) => {
       let none: i32[] = [];
       let now: i64 = monotonic_ns();
-      return __flights_add(fls, __flight_watch(drv, __Flight { job: Background(t), wait: w, fd: 0 - 1, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: __bound_ends(opts.background_deadline, now), stream: 0, since: 0 - 1 as i64, grpc: false, quic: 0 }, now));
+      return __flights_add(fls, __flight_watch(drv, __Flight { job: Background(t), wait: w, fd: 0 - 1, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: __bound_ends(opts.background_deadline, now), stream: 0, since: 0 - 1 as i64, grpc: false, quic: 0 }));
     },
-    _ => {
-      async.task_free(t);
-    }
+    Done(v) => {}
   }
   return fls;
 }
@@ -1555,7 +1547,7 @@ function __tls_session(opts: Config): Result[__Tls, tls.TlsError] {
       if (opts.h2) {
         offered = cfg.with_alpn(["h2", "http/1.1"]);
       }
-      let sess: server.Session = server.start(offered, random_bytes(server.entropy(offered)))?;
+      let sess: server.Session = server.start(offered, random_bytes(server.entropy(offered)))?.session;
       return Ok(Secured(sess));
     },
     None => {
@@ -1885,7 +1877,7 @@ enum __Behind { Pipelined, Idle, Expecting, Illformed(i32) }
 <<33 function __serve_behind(fr: http.HttpFraming, none: http.HttpFramed): (__Behind, http.HttpFramed)>>=
 function __serve_behind(fr: http.HttpFraming, none: http.HttpFramed): (__Behind, http.HttpFramed) {
   match (fr) {
-    http.Framed(f) => {
+    http.Complete(f) => {
       return (Pipelined, f);
     },
     http.Incomplete => {
@@ -2599,7 +2591,7 @@ function __h2_body_next(body: __H2Body, fd: i32): Option[u8[]] {
       return None;
     }
     let set: i32[] = [fd, 1];
-    async.wait_any(set, None);
+    let woke: async.Wake = async.wait_any(set, None);
   }
   return None;
 }
@@ -2723,7 +2715,6 @@ function __h2_produce[D: async.Driver](drv: D, own a: __H2Answered, at: i32, sid
     let t: async.Task[Option[u8[]]] = async.task_new((): Option[u8[]] => next(i));
     match (async.task_start(t)) {
       Done(chunk) => {
-        async.task_free(t);
         let stepped: (__H2Answered, boolean) = __h2_chunk(a, at, pi, chunk);
         a = stepped.0;
         if (stepped.1) {
@@ -2735,11 +2726,7 @@ function __h2_produce[D: async.Driver](drv: D, own a: __H2Answered, at: i32, sid
         let conns: __Conns = __Conns { ...a.conns, producers: a.conns.producers.with(pi, running) };
         let none: i32[] = [];
         let fl: __Flight = __Flight { job: Producer(t), wait: w, fd: fd, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: 0 - 1 as i64, stream: sid, since: 0 - 1 as i64, grpc: false, quic: 0 };
-        return __H2Answered { ...a, conns: conns, fls: __flights_add(a.fls, __flight_watch(drv, fl, monotonic_ns())) };
-      },
-      Cancelled => {
-        async.task_free(t);
-        return __h2_producer_failed(a, at, pi);
+        return __H2Answered { ...a, conns: conns, fls: __flights_add(a.fls, __flight_watch(drv, fl)) };
       }
     }
   }
@@ -2784,20 +2771,18 @@ function __h2_producer_failed(own a: __H2Answered, at: i32, pi: i32): __H2Answer
 
 ```fern
 <<43 function __h2_producer_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flights, fl: __Flight, t: async.Ta...>>=
-function __h2_producer_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flights, fl: __Flight, t: async.Task[Option[u8[]]], ready: i32, opts: Config): (__Conns, __Flights) {
+function __h2_producer_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flights, fl: __Flight, t: async.Task[Option[u8[]]], wake: async.Wake, opts: Config): (__Conns, __Flights) {
   let at: i32 = __conns_index(c, fl.fd);
   let pi: i32 = __producer_at(c, fl.fd, fl.stream);
   if (at < 0 || pi < 0) {
-    let gone: async.TaskStatus[Option[u8[]]] = async.task_cancel(t);
-    async.task_free(t);
+    let gone: async.TaskStatus[Option[u8[]]] = async.task_resume(t, async.Wake.Cancelled);
     return (c, fls);
   }
   match (c.framing[at]) {
     Http2(conn) => {
       let a: __H2Answered = __H2Answered { conn: conn, conns: c, fls: fls, out: [] };
-      match (async.task_resume(t, ready)) {
+      match (async.task_resume(t, wake)) {
         Done(chunk) => {
-          async.task_free(t);
           let stepped: (__H2Answered, boolean) = __h2_chunk(a, at, pi, chunk);
           a = stepped.0;
           if (!stepped.1) {
@@ -2806,18 +2791,13 @@ function __h2_producer_wake[D: async.Driver](drv: D, c: __Conns, fls: __Flights,
           return __h2_settled(drv, a, at, opts);
         },
         Suspended(w) => {
-          return (c, __flights_add(fls, __flight_watch(drv, __Flight { ...fl, wait: w }, monotonic_ns())));
-        },
-        Cancelled => {
-          async.task_free(t);
-          return __h2_settled(drv, __h2_producer_failed(a, at, pi), at, opts);
+          return (c, __flights_add(fls, __flight_watch(drv, __Flight { ...fl, wait: w })));
         }
       }
     },
     _ => {}
   }
-  let dropped: async.TaskStatus[Option[u8[]]] = async.task_cancel(t);
-  async.task_free(t);
+  let dropped: async.TaskStatus[Option[u8[]]] = async.task_resume(t, async.Wake.Cancelled);
   return (c, fls);
 }
 
@@ -2892,7 +2872,7 @@ function __h2_request[D: async.Driver](drv: D, a: __H2Answered, at: i32, stream:
     },
     HandlerParked(fl) => {
       let parked: __Flight = __Flight { ...fl, fd: conns.fds[at], stream: stream, since: conns.rate_since[at] };
-      return __H2Answered { conn: conn, conns: conns, fls: __flights_add(fls, __flight_watch(drv, parked, monotonic_ns())), out: out };
+      return __H2Answered { conn: conn, conns: conns, fls: __flights_add(fls, __flight_watch(drv, parked)), out: out };
     }
   }
   return __H2Answered { conn: conn, conns: conns, fls: fls, out: out };
@@ -3698,15 +3678,22 @@ function __pull_write(p: __Pull, bytes: u8[]): i32 {
       return n;
     }
     let set: i32[] = [p.fd, 2];
-    let woke: i32 = async.wait_any(set, time.millis_timeout(__idle_ms(p.opts)));
-    if (woke == async.cancelled()) {
-      return 0 - 125;
-    }
-    if (woke < 0) {
-      return 0 - 110;
+    match (async.wait_any(set, __within_ms(__idle_ms(p.opts)))) {
+      Woke(i) => {},
+      TimedOut => {
+        return 0 - 110;
+      },
+      Cancelled => {
+        return 0 - 125;
+      }
     }
   }
   return bytes.len();
+}
+
+// The instant `ms` milliseconds from now on the monotonic clock, which is the clock this loop schedules by.
+function __within_ms(ms: i32): Option[Instant] {
+  return Some(time.instant_from_nanos(monotonic_ns() + ms as i64 * 1000000i64));
 }
 
 function __idle_ms(opts: Config): i32 {
@@ -3753,12 +3740,14 @@ function __body_take(p: __Pull): u8[] {
       return __body_fault(p, StreamTimeout);
     }
     let set: i32[] = [p.fd, 1];
-    let woke: i32 = async.wait_any(set, time.millis_timeout(wait_ms));
-    if (woke == async.cancelled()) {
-      return __body_fault(p, StreamCancelled);
-    }
-    if (woke < 0) {
-      return __body_fault(p, StreamTimeout);
+    match (async.wait_any(set, __within_ms(wait_ms))) {
+      Woke(i) => {},
+      TimedOut => {
+        return __body_fault(p, StreamTimeout);
+      },
+      Cancelled => {
+        return __body_fault(p, StreamCancelled);
+      }
     }
     match (__pull_chunk(p)) {
       Some(bytes) => {
@@ -4014,7 +4003,7 @@ function __serve_unframed[D: async.Driver](drv: D, own c: __Conns, fls: __Flight
   }
   let last: http.HttpFramed = c.last;
   match (http.parse_request_head_from(c.bufs[at], c.offs[at], opts.limits, last.request)) {
-    http.Headed(h) => {
+    http.Complete(h) => {
       return __serve_stream(drv, c, fls, at, h, start, opts, stop, count, clk);
     },
     http.Incomplete => {
@@ -4071,7 +4060,7 @@ function __serve_stream[D: async.Driver](drv: D, own c: __Conns, fls: __Flights,
     },
     HandlerParked(fl) => {
       let last: http.HttpFramed = c.last;
-      let parked: (__Conns, __Flights) = __serve_park(drv, c, fls, at, __flight_watch(drv, __Flight { ...fl, body: Some(body) }, monotonic_ns()), opts);
+      let parked: (__Conns, __Flights) = __serve_park(drv, c, fls, at, __flight_watch(drv, __Flight { ...fl, body: Some(body) }), opts);
       return (parked.0, parked.1, false, Idle, last);
     }
   }
@@ -4122,14 +4111,13 @@ function __serve_start(handler: (HttpRequest, platform.Host) => HttpResponse, pl
   plat = held.0;
   let ends: i64 = held.1;
   match (async.call_start(handler, req, plat)) {
-    Done(resp) => {
+    Returned(resp) => {
       return HandlerDone(__in_time(resp, ends, time.instant_nanos(plat.instant()), grpc.is_grpc(req)));
     },
-    Suspended(w) => {
+    Parked(call, w) => {
       let none: i32[] = [];
-      return HandlerParked(__Flight { job: Handler(async.call_of(w, handler, req, plat)), wait: w, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: version, kept: kept, behind: behind, body: None, idle: 0 - 1 as i64, ends: ends, stream: 0, since: 0 - 1 as i64, grpc: grpc.is_grpc(req), quic: 0 });
-    },
-    Cancelled => {}
+      return HandlerParked(__Flight { job: Handler(call), wait: w, fd: 0, set: none, due: 0 - 1 as i64, method: req.method, version: version, kept: kept, behind: behind, body: None, idle: 0 - 1 as i64, ends: ends, stream: 0, since: 0 - 1 as i64, grpc: grpc.is_grpc(req), quic: 0 });
+    }
   }
   return HandlerDone(http.text(503, ""));
 }
@@ -4264,71 +4252,59 @@ function __flight_wake[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, 
   let fl: __Flight = fls.all[fi];
   __flight_unwatch(drv, fl, ready);
   fls = __flights_remove(fls, fi);
+  let wake: async.Wake = async.Wake.TimedOut;
+  if (ready >= 0) {
+    wake = Woke(ready);
+  }
   match (fl.job) {
     Handler(call) => {
-      return __handler_wake(drv, c, fls, fl, call, ready, opts, clk);
+      return __handler_wake(drv, c, fls, fl, call, wake, opts, clk);
     },
     Producer(t) => {
       if (fl.quic > 0) {
-        return __h3_producer_wake(drv, c, fls, fl, t, ready);
+        return __h3_producer_wake(drv, c, fls, fl, t, wake);
       }
       if (fl.stream > 0) {
-        return __h2_producer_wake(drv, c, fls, fl, t, ready, opts);
+        return __h2_producer_wake(drv, c, fls, fl, t, wake, opts);
       }
       if (__conns_index(c, fl.fd) < 0) {
-        let gone: async.TaskStatus[Option[u8[]]] = async.task_cancel(t);
-        async.task_free(t);
+        let gone: async.TaskStatus[Option[u8[]]] = async.task_resume(t, async.Wake.Cancelled);
         return (c, fls);
       }
-      match (async.task_resume(t, ready)) {
+      match (async.task_resume(t, wake)) {
         Done(chunk) => {
-          async.task_free(t);
           return (__producer_done(drv, c, fl.fd, chunk, opts, clk), fls);
         },
         Suspended(w) => {
-          return (c, __flights_add(fls, __flight_watch(drv, __Flight { ...fl, wait: w }, monotonic_ns())));
-        },
-        Cancelled => {
-          async.task_free(t);
-          return (__serve_abandon(drv, c, fl.fd), fls);
+          return (c, __flights_add(fls, __flight_watch(drv, __Flight { ...fl, wait: w })));
         }
       }
     },
     Background(t) => {
-      return (c, __background_wake(drv, fls, fl, t, ready));
+      return (c, __background_wake(drv, fls, fl, t, wake));
     }
   }
   return (c, fls);
 }
 
-function __handler_wake[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, fl: __Flight, call: async.Call[HttpRequest, platform.Host, HttpResponse], ready: i32, opts: Config, clk: __Clock): (__Conns, __Flights) {
-  match (async.call_resume(call, ready)) {
+function __handler_wake[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, fl: __Flight, call: async.Call[HttpRequest, platform.Host, HttpResponse], wake: async.Wake, opts: Config, clk: __Clock): (__Conns, __Flights) {
+  match (async.call_resume(call, wake)) {
     Done(resp) => {
-      async.call_free(call);
       return __serve_answer(drv, c, fls, fl, __in_time(resp, fl.ends, monotonic_ns(), fl.grpc), opts, clk);
     },
     Suspended(w) => {
-      return (c, __flights_add(fls, __flight_watch(drv, __Flight { ...fl, wait: w }, monotonic_ns())));
-    },
-    Cancelled => {
-      async.call_free(call);
-      if (fl.quic > 0) {
-        return (__h3_abandon(c, fl), fls);
-      }
-      return (__serve_abandon(drv, c, fl.fd), fls);
+      return (c, __flights_add(fls, __flight_watch(drv, __Flight { ...fl, wait: w })));
     }
   }
   return (c, fls);
 }
 
-function __background_wake[D: async.Driver](drv: D, fls: __Flights, fl: __Flight, t: async.Task[i32], ready: i32): __Flights {
-  match (async.task_resume(t, ready)) {
+function __background_wake[D: async.Driver](drv: D, fls: __Flights, fl: __Flight, t: async.Task[i32], wake: async.Wake): __Flights {
+  match (async.task_resume(t, wake)) {
     Suspended(w) => {
-      return __flights_add(fls, __flight_watch(drv, __Flight { ...fl, wait: w }, monotonic_ns()));
+      return __flights_add(fls, __flight_watch(drv, __Flight { ...fl, wait: w }));
     },
-    _ => {
-      async.task_free(t);
-    }
+    Done(v) => {}
   }
   return fls;
 }
@@ -4402,7 +4378,7 @@ function __serve_abandon[D: async.Driver](drv: D, own c: __Conns, fd: i32): __Co
   return __serve_close(drv, c, at);
 }
 
-function __flight_watch[D: async.Driver](drv: D, fl: __Flight, now: i64): __Flight {
+function __flight_watch[D: async.Driver](drv: D, fl: __Flight): __Flight {
   let w: async.Wait = fl.wait;
   let once: i32 = 0;
   if (drv.oneshot()) {
@@ -4422,8 +4398,8 @@ function __flight_watch[D: async.Driver](drv: D, fl: __Flight, now: i64): __Flig
     i = i + 2;
   }
   let due: i64 = 0 - 1 as i64;
-  if let Some(t) = w.timeout {
-    due = now + t.as_nanos();
+  if let Some(at) = w.until {
+    due = time.instant_nanos(at);
   }
   return __Flight { ...fl, set: w.set, due: due };
 }
@@ -4462,16 +4438,13 @@ function __flight_cancel[D: async.Driver](drv: D, fl: __Flight): void {
   __flight_unwatch(drv, fl, 0 - 1);
   match (fl.job) {
     Handler(call) => {
-      let st: async.TaskStatus[HttpResponse] = async.call_cancel(call);
-      async.call_free(call);
+      let st: async.TaskStatus[HttpResponse] = async.call_resume(call, async.Wake.Cancelled);
     },
     Producer(t) => {
-      let st: async.TaskStatus[Option[u8[]]] = async.task_cancel(t);
-      async.task_free(t);
+      let st: async.TaskStatus[Option[u8[]]] = async.task_resume(t, async.Wake.Cancelled);
     },
     Background(t) => {
-      let st: async.TaskStatus[i32] = async.task_cancel(t);
-      async.task_free(t);
+      let st: async.TaskStatus[i32] = async.task_resume(t, async.Wake.Cancelled);
     }
   }
 }
@@ -5095,7 +5068,7 @@ function __serve_burst[D: async.Driver](drv: D, own c: __Conns, own fls: __Fligh
             next_framed = took.3;
           },
           HandlerParked(fl) => {
-            let parked: (__Conns, __Flights) = __serve_park(drv, conns, flights, at, __flight_watch(drv, fl, monotonic_ns()), opts);
+            let parked: (__Conns, __Flights) = __serve_park(drv, conns, flights, at, __flight_watch(drv, fl), opts);
             conns = parked.0;
             flights = parked.1;
             more = false;
@@ -5808,7 +5781,7 @@ function __supervisor_reap(sup: __Supervisor): __Supervisor {
       }
       continue;
     }
-    eprint("serve: worker died with exit code " + int.int_to_string(code) + "; restarting");
+    eprint("serve: worker died with exit code " + code.to_string() + "; restarting");
     sup = __Supervisor { ...sup, crashed: code };
     if (lived_ms < 100 as i64) {
       sup = __Supervisor { ...sup, fast_deaths: sup.fast_deaths + 1 };
@@ -6033,7 +6006,7 @@ function __with_alt_svc(c: __Conns, resp: HttpResponse): HttpResponse {
   if (!__quic_on(c) || resp.headers.has("alt-svc")) {
     return resp;
   }
-  return HttpResponse { ...resp, headers: resp.headers.append("alt-svc", "h3=\":" + int.int_to_string(c.quic.port) + "\"; ma=86400") };
+  return HttpResponse { ...resp, headers: resp.headers.append("alt-svc", "h3=\":" + c.quic.port.to_string() + "\"; ma=86400") };
 }
 ```
 
@@ -6278,7 +6251,7 @@ function __h3_request[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, s
     },
     HandlerParked(fl) => {
       let parked: __Flight = __Flight { ...fl, fd: 0 - 1, stream: id as i32, quic: serial, since: now };
-      return (c, __flights_add(fls, __flight_watch(drv, parked, now)));
+      return (c, __flights_add(fls, __flight_watch(drv, parked)));
     }
   }
   return (c, fls);
@@ -6336,7 +6309,6 @@ function __h3_produce[D: async.Driver](drv: D, c: __Conns, fls: __Flights, pi: i
     let t: async.Task[Option[u8[]]] = async.task_new((): Option[u8[]] => next(index));
     match (async.task_start(t)) {
       Done(chunk) => {
-        async.task_free(t);
         let r: (__Conns, boolean) = __h3_chunk(cur, k, chunk);
         cur = r.0;
         if (r.1) {
@@ -6348,11 +6320,7 @@ function __h3_produce[D: async.Driver](drv: D, c: __Conns, fls: __Flights, pi: i
         let none: i32[] = [];
         let fl: __Flight = __Flight { job: Producer(t), wait: w, fd: 0 - 1, set: none, due: 0 - 1 as i64, method: "", version: "", kept: false, behind: Idle, body: None, idle: 0 - 1 as i64, ends: 0 - 1 as i64, stream: p.stream as i32, since: 0 - 1 as i64, grpc: false, quic: p.serial };
         let running: __Conns = __Conns { ...cur, quic: __Quic { ...q, producers: q.producers.with(k, __H3Producer { ...p, running: true }) } };
-        return (running, __flights_add(fls, __flight_watch(drv, fl, monotonic_ns())));
-      },
-      Cancelled => {
-        async.task_free(t);
-        return (__h3_producer_failed(cur, k), fls);
+        return (running, __flights_add(fls, __flight_watch(drv, fl)));
       }
     }
   }
@@ -6445,16 +6413,14 @@ function __h3_more[D: async.Driver](drv: D, c: __Conns, fls: __Flights, serial: 
   return (cur, fs);
 }
 
-function __h3_producer_wake[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, fl: __Flight, t: async.Task[Option[u8[]]], ready: i32): (__Conns, __Flights) {
+function __h3_producer_wake[D: async.Driver](drv: D, own c: __Conns, fls: __Flights, fl: __Flight, t: async.Task[Option[u8[]]], wake: async.Wake): (__Conns, __Flights) {
   let k: i32 = __h3_producer_at(c.quic, fl.quic, fl.stream as i64);
   if (k < 0) {
-    let gone: async.TaskStatus[Option[u8[]]] = async.task_cancel(t);
-    async.task_free(t);
+    let gone: async.TaskStatus[Option[u8[]]] = async.task_resume(t, async.Wake.Cancelled);
     return (c, fls);
   }
-  match (async.task_resume(t, ready)) {
+  match (async.task_resume(t, wake)) {
     Done(chunk) => {
-      async.task_free(t);
       let (chunked, ended) = __h3_chunk(c, k, chunk);
       if (ended) {
         return (__h3_flush(chunked, fl.quic), fls);
@@ -6463,11 +6429,7 @@ function __h3_producer_wake[D: async.Driver](drv: D, own c: __Conns, fls: __Flig
       return (__h3_flush(more.0, fl.quic), more.1);
     },
     Suspended(w) => {
-      return (c, __flights_add(fls, __flight_watch(drv, __Flight { ...fl, wait: w }, monotonic_ns())));
-    },
-    Cancelled => {
-      async.task_free(t);
-      return (__h3_flush(__h3_producer_failed(c, k), fl.quic), fls);
+      return (c, __flights_add(fls, __flight_watch(drv, __Flight { ...fl, wait: w })));
     }
   }
   return (c, fls);

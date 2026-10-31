@@ -143,12 +143,12 @@ result back, as above.
 
 ```fern
 import "core/cmp";
-import "std/set";
+import "std/pset";
 import "std/string";
 
 function main(): i32 {
     let names: string[] = ["elm", "ash", "elm", "beech"];
-    let unique: string[] = set.of(names).to_array();
+    let unique: string[] = pset.of(names).to_array();
     let sorted: string[] = cmp.sort(unique);
     print(sorted.join(", "));   // ash, beech, elm
     return 0;
@@ -412,10 +412,11 @@ a PNG or a truncated UTF-8 sequence, so `body_text()` is a decode that
 can fail. Inside an HTTP handler, send through the platform value
 instead, `plat.http(req)`, so a test can pass a
 `mock_platform.MockPlatform` whose `with_http` sets the response or
-`FetchError` to return. To overlap several requests on one thread, run each `fetch.send`
-as an entry of `async.gather_tasks` (or `race_tasks`, `with_deadline_tasks`):
-`async.gather_tasks([() => fetch.send(a), () => fetch.send(b)], fallback)`
-answers every result in order.
+`FetchError` to return. To overlap several requests on one thread, start each `fetch.send`
+as a task and combine the futures:
+`async.block_on(async.gather([async.spawn(() => fetch.send(a)), async.spawn(() => fetch.send(b))]))`
+answers every result in order (`async.race` and `async.with_deadline`
+are the other combinators). In a handler, wait with `async.wait`.
 
 ## Serve HTTP
 

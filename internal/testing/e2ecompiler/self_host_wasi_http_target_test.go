@@ -30,7 +30,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
         }
     }
     if (req.method == "POST") {
-        match (req.body_string()) {
+        match (req.body_text()) {
             Ok(text) => { return http.ok(req.method + ":" + text); },
             Err(e) => { return e.to_response(); }
         }

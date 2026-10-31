@@ -25,15 +25,16 @@ func TestSelfHostAsyncCombinatorsModloadIRX86_64(t *testing.T) {
 		{"race", `import "std/async";
 function main(): i32 {
     let fs: async.Future[i32][] = [Ready(40), Ready(2)];
-    let r: (i32, i32) = async.race(fs, -1);
+    let r: (i32, i32) = async.block_on(async.race(fs)).unwrap_or((0 - 1, 0 - 1));
     return r.0 + r.1;
 }
 `},
 		{"with_deadline", `import "std/async";
+import "std/clock";
 import "std/time";
 function main(): i32 {
     let fs: async.Future[i32][] = [Ready(7)];
-    let ds: Option[i32][] = async.with_deadline(time.duration_millis(100), fs);
+    let ds: Option[i32][] = async.block_on(async.with_deadline(clock.instant().add(time.duration_millis(100)), fs)).unwrap_or([None]);
     match (ds[0]) { Some(v) => { return v; }, None => { return 0; } }
     return 9;
 }

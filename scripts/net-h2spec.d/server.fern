@@ -7,12 +7,11 @@ import "std/platform";
 import "std/serve";
 import "std/tls/identity";
 import "std/tls/server";
-import "core/int";
 import "std/rand";
 
 function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   if (req.method == "POST") {
-    return http.text(200, "took " + int.int_to_string(req.body_bytes().len()) + " bytes");
+    return http.text(200, "took " + req.body_bytes().len().to_string() + " bytes");
   }
   return http.ok("hello");
 }

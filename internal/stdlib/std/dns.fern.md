@@ -1234,9 +1234,20 @@ function now_ms(): i64 {
   return monotonic_ns() / 1000000i64;
 }
 
+// The instant `wait_ms` from now on the monotonic clock. None when `wait_ms` is negative.
+function within(wait_ms: i32): Option[Instant] {
+  if (wait_ms < 0) {
+    return None;
+  }
+  return Some(time.instant_from_nanos(monotonic_ns() + wait_ms as i64 * 1000000i64));
+}
+
 function readable_within(fd: i32, wait_ms: i32): boolean {
   let set: i32[] = [fd, 1];
-  return async.wait_any(set, time.millis_timeout(wait_ms)) == 0;
+  if let Woke(i) = async.wait_any(set, within(wait_ms)) {
+    return true;
+  }
+  return false;
 }
 
 function local_for(ns: net.SocketAddr): net.SocketAddr {
@@ -1421,7 +1432,10 @@ function first_readable(slots: Slot[], pending: i32[], wait_ms: i32): i32 {
     set = set.append(1);
     i = i + 1;
   }
-  return async.wait_any(set, time.millis_timeout(wait_ms));
+  if let Woke(i) = async.wait_any(set, within(wait_ms)) {
+    return i;
+  }
+  return 0 - 1;
 }
 ```
 
@@ -2350,8 +2364,7 @@ pub function connect_race(addrs: net.IpAddr[], port: i32, opts: DialOptions): Re
     if (race.open.len() == 0) {
       return Err(race.last);
     }
-    let woke: i32 = async.wait_any(writable(race.open), time.millis_timeout(wait_window(race, addrs.len(), now, deadline)));
-    if (woke == async.cancelled()) {
+    if let async.Wake.Cancelled = async.wait_any(writable(race.open), within(wait_window(race, addrs.len(), now, deadline))) {
       close_attempts(race.open);
       return Err(net.Interrupted);
     }

@@ -5,7 +5,6 @@ import "std/http/qpack";
 import "std/hex";
 import "std/codec";
 import "std/option";
-import "core/int";
 import "std/i64";
 
 struct Got { decoder: qpack.Decoder, fields: qpack.Field[], blocked: boolean }
@@ -74,7 +73,7 @@ function owed(d: qpack.Decoder): (qpack.Decoder, string) {
 }
 
 function test_b1(): test.TestOutcome {
-  match (section(qpack.decoder(220 as i64, 2, 16384 as i64), 0 as i64, "0000510b2f696e6465782e68746d6c")) {
+  match (section(qpack.decoder(220 as i64, 2 as i64, 16384 as i64), 0 as i64, "0000510b2f696e6465782e68746d6c")) {
     Ok(r) => {
       return test.assert_eq(r.1, ":path=/index.html; | ");
     },
@@ -86,7 +85,7 @@ function test_b1(): test.TestOutcome {
 
 function test_b2_to_b5(): test.TestOutcome {
   let log: string = "";
-  let d: qpack.Decoder = qpack.decoder(220 as i64, 2, 16384 as i64);
+  let d: qpack.Decoder = qpack.decoder(220 as i64, 2 as i64, 16384 as i64);
   let steps: string[] = [
     "e 3fbd01c00f7777772e6578616d706c652e636f6dc10c2f73616d706c652f70617468",
     "s 4 03811011",
@@ -130,7 +129,7 @@ function b_step(d: qpack.Decoder, step: string): Result[(qpack.Decoder, string),
 }
 
 function test_blocked(): test.TestOutcome {
-  let d: qpack.Decoder = qpack.decoder(220 as i64, 1, 16384 as i64);
+  let d: qpack.Decoder = qpack.decoder(220 as i64, 1 as i64, 16384 as i64);
   let first: string = "";
   let second: string = "";
   match (section(d, 4 as i64, "0381" + "1011")) {
@@ -169,7 +168,7 @@ function test_blocked(): test.TestOutcome {
 }
 
 function test_split_instruction(): test.TestOutcome {
-  let d: qpack.Decoder = qpack.decoder(220 as i64, 2, 16384 as i64);
+  let d: qpack.Decoder = qpack.decoder(220 as i64, 2 as i64, 16384 as i64);
   let parts: string[] = ["3f", "bd01c0", "0f7777772e6578", "616d706c652e636f6d"];
   let counts: string = "";
   for p in parts {
@@ -190,7 +189,7 @@ function test_encoder(): test.TestOutcome {
   let fs: qpack.Field[] = [qpack.field(":method", "GET"), qpack.field(":path", "/index.html"), qpack.field("x-fern", "yes"), qpack.sensitive("authorization", "secret"), qpack.field("content-type", "text/plain")];
   let plain: u8[] = qpack.encoder().without_huffman().encode(fs);
   let coded: u8[] = qpack.encoder().encode(fs);
-  let d: qpack.Decoder = qpack.decoder(0 as i64, 0, 16384 as i64);
+  let d: qpack.Decoder = qpack.decoder(0 as i64, 0 as i64, 16384 as i64);
   let back: string = "";
   for bytes in [plain, coded] {
     match (decode_on(d, 0 as i64, bytes)) {
@@ -202,8 +201,8 @@ function test_encoder(): test.TestOutcome {
       }
     }
   }
-  return test.assert_eq(hex.encode(plain) + " " + int.int_to_string(coded.len()) + " " + back, "0000d1510b2f696e6465782e68746d6c26782d6665726e03796573"
-    + "7f4506736563726574f5 " + int.int_to_string(coded.len()) + " :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | ");
+  return test.assert_eq(hex.encode(plain) + " " + coded.len().to_string() + " " + back, "0000d1510b2f696e6465782e68746d6c26782d6665726e03796573"
+    + "7f4506736563726574f5 " + coded.len().to_string() + " :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | ");
 }
 
 function test_status_and_length(): test.TestOutcome {
@@ -211,8 +210,8 @@ function test_status_and_length(): test.TestOutcome {
   let mismatched: string = "";
   for code in [200, 404, 425, 418, 999] {
     let direct: u8[] = enc.put_status(enc.section(0), code);
-    if (hex.encode(direct) != hex.encode(enc.encode([qpack.field(":status", int.int_to_string(code))]))) {
-      mismatched = mismatched + " status " + int.int_to_string(code);
+    if (hex.encode(direct) != hex.encode(enc.encode([qpack.field(":status", code.to_string())]))) {
+      mismatched = mismatched + " status " + code.to_string();
     }
   }
   for n in [0 as i64, 5 as i64, 12 as i64, 100 as i64, 12345 as i64, 9999999999 as i64] {
@@ -232,11 +231,11 @@ function test_status_and_length(): test.TestOutcome {
 }
 
 function test_errors(): test.TestOutcome {
-  let d: qpack.Decoder = qpack.decoder(220 as i64, 2, 40 as i64);
+  let d: qpack.Decoder = qpack.decoder(220 as i64, 2 as i64, 40 as i64);
   let too_big: string = result_text(section(d, 0 as i64, "0000510b2f696e6465782e68746d6c"));
   let capacity: string = result_text_d(fed(d, "3fde01"));
   let past_ric: string = "-";
-  match (fed(qpack.decoder(220 as i64, 2, 16384 as i64), "3fbd01c00f7777772e6578616d706c652e636f6d")) {
+  match (fed(qpack.decoder(220 as i64, 2 as i64, 16384 as i64), "3fbd01c00f7777772e6578616d706c652e636f6d")) {
     Ok(d1) => {
       past_ric = result_text(section(d1, 0 as i64, "020011"));
     },
@@ -338,7 +337,7 @@ const LSQPACK_FIELDS: string[] = [
 ];
 
 function test_lsqpack_trace(): test.TestOutcome {
-  let d: qpack.Decoder = qpack.decoder(512 as i64, 16, 65536 as i64);
+  let d: qpack.Decoder = qpack.decoder(512 as i64, 16 as i64, 65536 as i64);
   let got: string = "";
   for line in LSQPACK_TRACE {
     if (line.starts_with("E ")) {
@@ -394,7 +393,7 @@ function largest_integer(first: u8, prefix: i64): u8[] {
 }
 
 function test_integer_overflow(): test.TestOutcome {
-  let d: qpack.Decoder = qpack.decoder(220 as i64, 2, 16384 as i64);
+  let d: qpack.Decoder = qpack.decoder(220 as i64, 2 as i64, 16384 as i64);
   let capacity: string = result_text_d(fed(d, hex.encode(overflowing_integer(63u8))));
   let want: string = "513 qpack: encoder stream: an integer over 2^62";
   if (capacity != want) {
@@ -425,7 +424,7 @@ function test_integer_overflow(): test.TestOutcome {
 }
 
 function test_largest_integer(): test.TestOutcome {
-  let d: qpack.Decoder = qpack.decoder(4611686018427387903 as i64, 0, 16384 as i64);
+  let d: qpack.Decoder = qpack.decoder(4611686018427387903 as i64, 0 as i64, 16384 as i64);
   let capacity: string = result_text_d(fed(d, hex.encode(largest_integer(63u8, 31 as i64))));
   let short: string = "accepted";
   match (decode_on(d, 0 as i64, [0u8, 0u8, 81u8].concat(largest_integer(127u8, 127 as i64)))) {
@@ -445,12 +444,12 @@ function test_largest_integer(): test.TestOutcome {
 }
 
 function test_cancellation(): test.TestOutcome {
-  match (section(qpack.decoder(220 as i64, 1, 16384 as i64), 4 as i64, "03811011")) {
+  match (section(qpack.decoder(220 as i64, 1 as i64, 16384 as i64), 4 as i64, "03811011")) {
     Ok(r) => {
       let (d1, first) = instructions(r.0.cancel(4 as i64));
       let (d2, second) = instructions(d1.cancel(132 as i64));
       let again: string = result_text(section(d2, 8 as i64, "03811011"));
-      let (_, empty) = instructions(qpack.decoder(0 as i64, 0, 16384 as i64).cancel(4 as i64));
+      let (_, empty) = instructions(qpack.decoder(0 as i64, 0 as i64, 16384 as i64).cancel(4 as i64));
       return test.assert_eq(hex.encode(first) + " " + hex.encode(second) + " " + again + "[" + hex.encode(empty) + "]", "44 7f45 ok blocked| []");
     },
     Err(e) => {
@@ -463,7 +462,7 @@ function test_oversized_literal(): test.TestOutcome {
   let cases: string[] = ["5f808080808010", "3fbd015f9e01", "3fbd015f9d01", "3fbd017fa305", "3fbd017fa205", "3fbd01c07f34", "3fbd01c07f33"];
   let out: string = "";
   for c in cases {
-    out = out + result_text_d(fed(qpack.decoder(220 as i64, 2, 16384 as i64), c)) + "; ";
+    out = out + result_text_d(fed(qpack.decoder(220 as i64, 2 as i64, 16384 as i64), c)) + "; ";
   }
   let e: string = "513 qpack: encoder stream: an entry larger than the table's capacity";
   return test.assert_eq(out, e + "; " + e + "; ok; " + e + "; ok; " + e + "; ok; ");

@@ -1,0 +1,11 @@
+// async.block_on waits on the machine's reactor and clock when no task is
+// current, so a handler that calls it reaches them around its platform.
+import "std/http";
+import "std/serve";
+import "std/async";
+import "std/platform";
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+  let one: Option[i32] = async.block_on(async.spawn((): i32 => 1));
+  return http.ok("");
+}

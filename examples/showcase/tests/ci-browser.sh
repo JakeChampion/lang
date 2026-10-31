@@ -17,6 +17,10 @@ echo "==> compiling the server and the browser assets"
 "$fern" -target x86-64-linux -O -o "$out/showcase" examples/showcase/server.fern.md
 examples/showcase/build-assets.sh "$fern"
 
+"$fern" -target x86-64-linux -O -o "$out/uxn-test" examples/showcase/tests/uxn.fern
+"$out/uxn-test"
+node examples/showcase/tests/uxn-kernels.test.mjs
+
 echo "==> preparing assets"
 mkdir -p "$out/root"
 ln -s "$PWD/examples/fractal" "$out/root/fractal"
@@ -31,7 +35,7 @@ for _ in $(seq 120); do
 done
 
 export CHROMIUM="${CHROMIUM:-$(cd examples/showcase/tests && node -e 'import("playwright").then((p) => console.log(p.chromium.executablePath()))')}"
-for suite in contour.browser theme.browser browser interaction.browser labs.browser blockyard.browser editor.browser bench.browser torrent.browser torrent-interop.browser; do
+for suite in contour.browser uxn.browser theme.browser browser interaction.browser labs.browser blockyard.browser editor.browser bench.browser torrent.browser torrent-interop.browser; do
   echo "==> $suite"
   if ! node "examples/showcase/tests/$suite.mjs" http://localhost:8080; then
     echo "--- server log" >&2

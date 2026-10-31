@@ -23,7 +23,7 @@ func TestSelfHostAsyncGatherModloadIRX86_64(t *testing.T) {
 
 function main(): i32 {
     let fs: async.Future[i32][] = [Ready(5), Ready(7), Ready(30)];
-    let summed: i32[] = async.gather(fs, -1);
+    let summed: i32[] = async.block_on(async.gather(fs)).unwrap_or([0, 0, 0]);
     return summed[0] + summed[1] + summed[2];
 }
 `

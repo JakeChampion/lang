@@ -6,6 +6,8 @@ pollables, and `std/task`, `std/reactor` and `std/wasm_reactor` are deleted,
 leaving `std/async` the single reactor. This doc decided *how* to finish the
 job and deliberately picked the **lighter** of two architectures.
 
+Note: #12725 changed the `std/async` API that this record names: one future family over `Future[T]`, typed wakes, and deadlines as instants. `docs/ASYNC.md` describes the current surface.
+
 This record cites historical source paths. Some files no longer exist in the current tree.
 
 ## What's still split
