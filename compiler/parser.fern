@@ -14977,24 +14977,20 @@ function genum_key_from_anno(ty: string, base: string, enums: EnumDecl[]): strin
 // The key of an instance with several type arguments, or "" when one part has no key form.
 function ge_parts_key(parts: string[], enums: EnumDecl[]): string {
   let key: string = "";
-  let j: i32 = 0;
-  while (j < parts.len()) {
-    if (j > 0) {
+  for p in parts {
+    let piece: string = p;
+    if (first_bracket(p) >= 0) {
+      piece = ge_nested_key_part(p, enums);
+    } else if (util.contains(p, " ") || util.contains(p, "(")) {
+      piece = "";
+    }
+    if (piece.len() == 0) {
+      return "";
+    }
+    if (key.len() > 0) {
       key = key + "__";
     }
-    let p: string = parts[j];
-    if (first_bracket(p) >= 0) {
-      let nested: string = ge_nested_key_part(p, enums);
-      if (nested.len() == 0) {
-        return "";
-      }
-      key = key + nested;
-    } else if (util.contains(p, " ") || util.contains(p, "(")) {
-      return "";
-    } else {
-      key = key + p;
-    }
-    j = j + 1;
+    key = key + piece;
   }
   return key;
 }
