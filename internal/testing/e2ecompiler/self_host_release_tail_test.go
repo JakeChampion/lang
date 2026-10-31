@@ -16,6 +16,11 @@ const releaseTailProg = `struct P { name: string, xs: i32[] }
     return P { name: "p" + "q", xs: xs };
 }
 
+// Keep P boxed so its release helper remains reachable.
+@noinline function boxed(i: i32): P[] {
+    return [make(i), make(i + 1)];
+}
+
 function main(): i32 {
     let total: i32 = 0;
     let i: i32 = 0;
@@ -24,7 +29,9 @@ function main(): i32 {
         total = total + p.xs[2] + p.name.len();
         i = i + 1;
     }
-    if (total != 50 * 2 + 49 * 50 / 2 + 50 * 2) { return 1; }
+    let pairs: P[] = boxed(7);
+    total = total + pairs[0].xs[0] + pairs[1].xs[0];
+    if (total != 50 * 2 + 49 * 50 / 2 + 50 * 2 + 15) { return 1; }
     return 42;
 }
 `
