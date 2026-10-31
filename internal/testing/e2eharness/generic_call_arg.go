@@ -13,7 +13,7 @@ function mk[T](): Box[T] { return Box[T] { xs: [] }; }
 function size(b: Box[i32]): i32 { return b.xs.len(); }
 function size_s(b: Box[string]): i32 { return b.xs.len() + 1; }
 struct Keep[T] { b: Box[T] }
-function (k: Keep[T]) swap[T](b: Box[T]): i32 { return k.b.xs.len() + b.xs.len() + 2; }
+function (k: Keep[T]) swap(b: Box[T]): i32 { return k.b.xs.len() + b.xs.len() + 2; }
 
 function main(): i32 {
     let r: Result[Box[i32], string] = Err("x");

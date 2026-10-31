@@ -21,7 +21,7 @@ function main(): i32 {
                 Err(_) => { return 3; },
                 Ok(end) => { if (end.len() != 0) { return 4; } },
             }
-            match (r.close()) { Err(_) => { return 5; }, Ok(_) => {} }
+            unsafe { match (r.close_unchecked()) { Err(_) => { return 5; }, Ok(_) => {} } }
             match (io.read_all_bytes(r)) { Ok(_) => { return 6; }, Err(_) => {} }
             let i: i32 = 0;
             while (i < bytes.len()) {

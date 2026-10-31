@@ -118,7 +118,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<46 pub trait Json>>
 
-<<47 pub function (xs: T[]) to_json[T: Json](): string>>
+<<47 pub function (xs: (T: Json)[]) to_json(): string>>
 
 <<Optional JSON values>>
 
@@ -2177,11 +2177,11 @@ impl Json for string {
 }
 ```
 
-### `47 pub function (xs: T[]) to_json[T: Json](): string`
+### `47 pub function (xs: (T: Json)[]) to_json(): string`
 
 ```fern
-<<47 pub function (xs: T[]) to_json[T: Json](): string>>=
-pub function (xs: T[]) to_json[T: Json](): string {
+<<47 pub function (xs: (T: Json)[]) to_json(): string>>=
+pub function (xs: (T: Json)[]) to_json(): string {
   let out: u8[] = [];
   out = out.append(91 as u8);
   let i: i32 = 0;

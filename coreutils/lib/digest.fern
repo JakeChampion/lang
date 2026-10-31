@@ -445,7 +445,7 @@ function unescape(name: u8[]): (boolean, u8[]) {
 
 pub struct Sum { hex: string, bin: u8[], err: Option[IoError], failed: boolean }
 
-function digest_reader(r: Reader, kind: i32, bits: i32, owned: boolean): Sum {
+function digest_reader(own r: Reader, kind: i32, bits: i32, owned: boolean): Sum {
   let c: Ctx = ctx_new(kind, bits);
   while (true) {
     match (r.read_chunk_bytes(read_size())) {

@@ -2733,7 +2733,8 @@ pub function (s: Server) read_alerting(input: [u8]): Result[ServerStep, Refusal]
       return Ok(step);
     },
     Err(e) => {
-      return Err(Refusal { error: e, alert: __sealed_alert(keys, plain, quic, e) });
+      let alert: u8[] = __sealed_alert(keys, plain, quic, e);
+      return Err(Refusal { error: e, alert: alert });
     }
   }
   return Err(Refusal { error: Misuse("read"), alert: [] });

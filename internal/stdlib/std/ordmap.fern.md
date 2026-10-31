@@ -1060,15 +1060,15 @@ pub function (m: OrdMap[K, V]) is_empty(): boolean {
   return node_size(m.root) == 0;
 }
 
-pub function (m: OrdMap[K, V]) insert[K: cmp.Ord, V](k: K, v: V): OrdMap[K, V] {
+pub function (m: OrdMap[K: cmp.Ord, V]) insert(k: K, v: V): OrdMap[K, V] {
   return OrdMap { root: grown_root(node_insert(m.root, k, v)) };
 }
 
-pub function (m: OrdMap[K, V]) remove[K: cmp.Ord, V](k: K): OrdMap[K, V] {
+pub function (m: OrdMap[K: cmp.Ord, V]) remove(k: K): OrdMap[K, V] {
   return OrdMap { root: shrunk_root(node_remove(m.root, k)) };
 }
 
-pub function (m: OrdMap[K, V]) get[K: cmp.Ord, V](k: K): Option[V] {
+pub function (m: OrdMap[K: cmp.Ord, V]) get(k: K): Option[V] {
   let f: (Node[K, V], i32) = find_leaf(m.root, k);
   if (f.1 < 0) {
     return None;
@@ -1083,7 +1083,7 @@ pub function (m: OrdMap[K, V]) get[K: cmp.Ord, V](k: K): Option[V] {
   }
 }
 
-pub function (m: OrdMap[K, V]) get_or[K: cmp.Ord, V](k: K, fallback: V): V {
+pub function (m: OrdMap[K: cmp.Ord, V]) get_or(k: K, fallback: V): V {
   let f: (Node[K, V], i32) = find_leaf(m.root, k);
   if (f.1 < 0) {
     return fallback;
@@ -1098,12 +1098,12 @@ pub function (m: OrdMap[K, V]) get_or[K: cmp.Ord, V](k: K, fallback: V): V {
   }
 }
 
-pub function (m: OrdMap[K, V]) contains[K: cmp.Ord, V](k: K): boolean {
+pub function (m: OrdMap[K: cmp.Ord, V]) contains(k: K): boolean {
   let f: (Node[K, V], i32) = find_leaf(m.root, k);
   return f.1 >= 0;
 }
 
-pub function (m: OrdMap[K, V]) update[K: cmp.Ord, V](k: K, init: V, f: (V) => V): OrdMap[K, V] {
+pub function (m: OrdMap[K: cmp.Ord, V]) update(k: K, init: V, f: (V) => V): OrdMap[K, V] {
   let v: V = m.get_or(k, init);
   return m.insert(k, f(v));
 }
@@ -1136,7 +1136,7 @@ pub function (m: OrdMap[K, V]) max_key(): Option[K] {
   }
 }
 
-pub function (m: OrdMap[K, V]) remove_min[K: cmp.Ord, V](): OrdMap[K, V] {
+pub function (m: OrdMap[K: cmp.Ord, V]) remove_min(): OrdMap[K, V] {
   match (m.min_key()) {
     Some(k) => {
       return m.remove(k);
@@ -1147,7 +1147,7 @@ pub function (m: OrdMap[K, V]) remove_min[K: cmp.Ord, V](): OrdMap[K, V] {
   }
 }
 
-pub function (m: OrdMap[K, V]) remove_max[K: cmp.Ord, V](): OrdMap[K, V] {
+pub function (m: OrdMap[K: cmp.Ord, V]) remove_max(): OrdMap[K, V] {
   match (m.max_key()) {
     Some(k) => {
       return m.remove(k);
@@ -1188,7 +1188,7 @@ pub function (m: OrdMap[K, V]) value_at(i: i32): Option[V] {
   }
 }
 
-pub function (m: OrdMap[K, V]) index_of[K: cmp.Ord, V](k: K): Option[i32] {
+pub function (m: OrdMap[K: cmp.Ord, V]) index_of(k: K): Option[i32] {
   let i: i32 = node_rank(m.root, k);
   if (i < 0) {
     return None;
@@ -1212,7 +1212,7 @@ pub function (m: OrdMap[K, V]) iter(): OrdIter[K, V] {
   return iter_down(path, at, m.root);
 }
 
-pub function (m: OrdMap[K, V]) fold[K, V, A](init: A, f: (A, K, V) => A): A {
+pub function (m: OrdMap[K, V]) fold[A](init: A, f: (A, K, V) => A): A {
   return node_fold(m.root, init, f);
 }
 
@@ -1220,11 +1220,11 @@ pub function (m: OrdMap[K, V]) for_each(f: (K, V) => void): void {
   node_for_each(m.root, f);
 }
 
-pub function (m: OrdMap[K, V]) map_values[K, V, W](f: (V) => W): OrdMap[K, W] {
+pub function (m: OrdMap[K, V]) map_values[W](f: (V) => W): OrdMap[K, W] {
   return OrdMap { root: node_map_values(m.root, f) };
 }
 
-pub function (m: OrdMap[K, V]) filter[K: cmp.Ord, V](pred: (K, V) => boolean): OrdMap[K, V] {
+pub function (m: OrdMap[K: cmp.Ord, V]) filter(pred: (K, V) => boolean): OrdMap[K, V] {
   let ks: K[] = [];
   let vs: V[] = [];
   for e in m.iter() {
@@ -1242,7 +1242,7 @@ function much_smaller(a: i32, b: i32): boolean {
 }
 
 // The entries of both maps; a key in both takes its value from other.
-pub function (m: OrdMap[K, V]) merge[K: cmp.Ord, V](other: OrdMap[K, V]): OrdMap[K, V] {
+pub function (m: OrdMap[K: cmp.Ord, V]) merge(other: OrdMap[K, V]): OrdMap[K, V] {
   if (much_smaller(other.len(), m.len())) {
     let out: OrdMap[K, V] = m;
     for e in other.iter() {
@@ -1300,7 +1300,7 @@ pub function (m: OrdMap[K, V]) entries(): (K, V)[] {
 }
 
 // The entries of m whose keys are in other, with their values from m.
-pub function (m: OrdMap[K, V]) intersection[K: cmp.Ord, V](other: OrdMap[K, V]): OrdMap[K, V] {
+pub function (m: OrdMap[K: cmp.Ord, V]) intersection(other: OrdMap[K, V]): OrdMap[K, V] {
   let ks: K[] = [];
   let vs: V[] = [];
   if (much_smaller(other.len(), m.len())) {
@@ -1340,7 +1340,7 @@ pub function (m: OrdMap[K, V]) intersection[K: cmp.Ord, V](other: OrdMap[K, V]):
 }
 
 // The entries of m whose keys are not in other.
-pub function (m: OrdMap[K, V]) difference[K: cmp.Ord, V](other: OrdMap[K, V]): OrdMap[K, V] {
+pub function (m: OrdMap[K: cmp.Ord, V]) difference(other: OrdMap[K, V]): OrdMap[K, V] {
   if (much_smaller(other.len(), m.len())) {
     let out: OrdMap[K, V] = m;
     for e in other.iter() {
@@ -1377,17 +1377,17 @@ pub function (m: OrdMap[K, V]) difference[K: cmp.Ord, V](other: OrdMap[K, V]): O
   return of_entries(ks, vs);
 }
 
-pub function (m: OrdMap[K, V]) split_lt[K: cmp.Ord, V](k: K): OrdMap[K, V] {
+pub function (m: OrdMap[K: cmp.Ord, V]) split_lt(k: K): OrdMap[K, V] {
   let t: Tree[K, V] = split_side(m.root, node_height(m.root), k, false);
   return OrdMap { root: shrunk_root(t.root) };
 }
 
-pub function (m: OrdMap[K, V]) split_gt[K: cmp.Ord, V](k: K): OrdMap[K, V] {
+pub function (m: OrdMap[K: cmp.Ord, V]) split_gt(k: K): OrdMap[K, V] {
   let t: Tree[K, V] = split_side(m.root, node_height(m.root), k, true);
   return OrdMap { root: shrunk_root(t.root) };
 }
 
-pub function (m: OrdMap[K, V]) is_valid[K: cmp.Ord, V](): boolean {
+pub function (m: OrdMap[K: cmp.Ord, V]) is_valid(): boolean {
   return node_valid(m.root, node_height(m.root), true, None, None);
 }
 

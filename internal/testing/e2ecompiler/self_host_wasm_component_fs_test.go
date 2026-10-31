@@ -54,8 +54,8 @@ var fsComponentCases = []struct {
             match (w.stat()) { Ok(s) => { print(f"writer stat size {s.size}"); }, Err(e) => { print("stat " + kind(e)); } }
             unit("fsync", w.fsync());
             unit("fdatasync", w.fdatasync());
-            unit("close", w.close());
-            unit("close again", w.close());
+            unsafe { unit("close", w.close_unchecked()); }
+            unsafe { unit("close again", w.close_unchecked()); }
             unit("write after close", w.write("x"));
         }
     }
@@ -82,7 +82,7 @@ var fsComponentCases = []struct {
             match (r.read_chunk(10)) { Ok(c) => { print("eof [" + c + "]"); }, Err(e) => { print("eof " + kind(e)); } }
             match (r.seek(-100 as i64, 1)) { Ok(p) => { print(f"seek negative {p}"); }, Err(e) => { print("seek negative " + kind(e)); } }
             match (r.stat()) { Ok(s) => { print(f"reader stat size {s.size} file {s.is_file}"); }, Err(e) => { print("stat " + kind(e)); } }
-            unit("close", r.close());
+            unsafe { unit("close", r.close_unchecked()); }
             match (r.read_chunk(10)) { Ok(c) => { print("read after close [" + c + "]"); }, Err(e) => { print("read after close " + kind(e)); } }
         }
     }
@@ -154,7 +154,7 @@ missing NotFound
     match (si.flags()) { Ok(b) => { print(f"stdin flags {b}"); }, Err(e) => { print("stdin flags " + kind(e)); } }
     unit("stdin close", si.close());
     let se = stderr();
-    unit("stderr close", se.close());
+    unsafe { unit("stderr close", se.close_unchecked()); }
     unit("stderr write", se.write("lost"));
     unit("stderr close again", se.close());
     return 0;
@@ -368,8 +368,8 @@ temp_dir slash Other(Invalid argument)
         i = i + 1;
     }
     i = 0;
-    while (i < 20) {
-        match (ws[i].close()) { Err(e) => { print(f"close {i} " + kind(e)); return 1; }, Ok(_) => {} }
+    for w in ws {
+        match (w.close()) { Err(e) => { print(f"close {i} " + kind(e)); return 1; }, Ok(_) => {} }
         i = i + 1;
     }
     let intact: i32 = 0;

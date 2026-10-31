@@ -180,6 +180,7 @@ function run(files: string[], stops: tabs.Tabs, initial: boolean): i32 {
           } else {
             if (!is_stdin) {
               r.close();
+              r = stdin();
             }
             have_reader = false;
           }
