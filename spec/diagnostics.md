@@ -177,6 +177,8 @@ language does not have. It is deleted.
 | `P004` | At most one `_` placeholder in a piped call | `diag_p004` |
 | `P005` | Input nests deeper than the parser's recursion bound | `diag_p005` |
 | `P006` | `function` in expression position | `diag_p006` |
+| `P007` | a method declares a receiver type parameter again | `diag_p007` |
+| `P008` | type parameters before a function name | `diag_p008` |
 | `W001` | a `todo` stub remains | — |
 | `W002` | an ungoverned dependency reaches a capability | — |
 | `W003` | a literate chunk is defined but never used | — |

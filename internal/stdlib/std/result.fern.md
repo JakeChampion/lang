@@ -334,7 +334,7 @@ pub function (r: Result[T, E]) err(): Option[E] {
 ```fern
 <<transpose>>=
 // transpose exchanges Result and Option, with Ok(None) as None.
-pub function (r: Result[Option[T], E]) transpose[T, E](): Option[Result[T, E]] {
+pub function (r: Result[Option[T], E]) transpose(): Option[Result[T, E]] {
   match (r) {
     Ok(inner) => {
       match (inner) {

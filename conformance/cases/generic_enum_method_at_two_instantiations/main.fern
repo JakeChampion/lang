@@ -8,7 +8,7 @@ enum Tree[T] {
   Node(Tree[T], T, Tree[T]),
 }
 
-function (t: Tree[T]) size[T](): i32 {
+function (t: Tree[T]) size(): i32 {
   match (t) {
     Leaf => { return 0; },
     Node(l, _, r) => { return l.size() + 1 + r.size(); },

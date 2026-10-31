@@ -37,7 +37,7 @@ function (t: Tree[K]) below(k: K): Tree[K] {
   return sp.lt;
 }
 
-function (t: Tree[K]) rank[K: cmp.Ord](k: K): i32 {
+function (t: Tree[K: cmp.Ord]) rank(k: K): i32 {
   return pick(t, k);
 }
 
