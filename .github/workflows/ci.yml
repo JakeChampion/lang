@@ -3,7 +3,8 @@ name: CI
 # Every pull request runs Lint, lane selection and the full suite through
 # ci-suite.yml's FIFO. Main and merge queue batches use the same suite.
 # Existing path filters decide which lanes apply to the change.
-# `CI verdict` is the required check: lint and the suite must both pass.
+# The verdict requires lane selection and lint to pass. A skipped suite is
+# valid only when no lane is selected.
 #
 # MERGE QUEUE. A merge_group run is a full suite on the batch that GitHub is
 # about to merge. One suite covers every pull request in the batch, and main
@@ -502,19 +503,39 @@ jobs:
   # lane selection skips the suite and must fail the verdict too.
   verdict:
     name: CI verdict
-    needs: [lint, suite]
+    needs: [changes, lint, suite]
     if: ${{ !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Every tier that ran passed
+        uses: actions/github-script@v9
         env:
+          CHANGES: ${{ needs.changes.result }}
+          LANES: ${{ needs.changes.outputs.lanes }}
           LINT: ${{ needs.lint.result }}
           SUITE: ${{ needs.suite.result }}
-        run: |
-          echo "lint=$LINT suite=$SUITE"
-          test "$LINT" = success
-          test "$SUITE" = success
+        with:
+          script: |
+            const { CHANGES, LANES, LINT, SUITE } = process.env;
+            core.info(`changes=${CHANGES} lint=${LINT} suite=${SUITE}`);
+            if (CHANGES !== "success" || LINT !== "success") {
+              return core.setFailed("Lane selection and lint must succeed.");
+            }
+            let lanes;
+            try {
+              lanes = JSON.parse(LANES);
+            } catch {
+              return core.setFailed("Lane selection must be valid JSON.");
+            }
+            if (!lanes || typeof lanes !== "object" || Array.isArray(lanes) ||
+                Object.keys(lanes).length === 0 || Object.values(lanes).some((value) => typeof value !== "boolean")) {
+              return core.setFailed("Lane selection must contain boolean lane decisions.");
+            }
+            const selected = Object.values(lanes).some(Boolean);
+            if (SUITE !== "success" && (SUITE !== "skipped" || selected)) {
+              core.setFailed("The suite did not complete with an accepted result.");
+            }
 
   reap-lint:
     needs: [lint]
