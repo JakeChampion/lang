@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -23,6 +24,10 @@ function main(): i32 { let xs: i32[] = [1, 2, 3]; let s: string = xs.fold("", (a
 	{"zip", `import "std/array";
 function main(): i32 { let a: i32[] = [1, 2, 3]; let b: i32[] = [9, 8]; let z: (i32, i32)[] = a.zip(b); return z.len() * 10 + z[0].0; }`},
 }
+
+// A receiver method that only forwards to its std/array function is spliced
+// into its caller, which then calls the monomorphised function instead.
+var monomorphisedArrayFn = regexp.MustCompile(`__fn_array__[A-Za-z0-9_]+\$`)
 
 func TestSelfHostArrayTyparamMethodIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -60,8 +65,8 @@ func TestSelfHostArrayTyparamMethodIR(t *testing.T) {
 			if len(asm) == 0 {
 				t.Fatalf("%s: driver emitted 0 bytes", tc.name)
 			}
-			if !strings.Contains(asm, "__arrm_") {
-				t.Errorf("%s: no monomorphised __arrm_ clone in asm (method did not ride the IR array-method path)", tc.name)
+			if !strings.Contains(asm, "__arrm_") && !monomorphisedArrayFn.MatchString(asm) {
+				t.Errorf("%s: no monomorphised __arrm_ clone or std/array instance in asm (method did not ride the IR array-method path)", tc.name)
 			}
 			bin := buildBin(t, gcc, dir, "atm_"+tc.name+"_bin", asm)
 			var cmd *exec.Cmd
