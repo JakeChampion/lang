@@ -1,3 +1,5 @@
+# 2026-10-31: PR #13897 at 16e65aa. CI run 41151971877, driver-sizes-x86_64.
+# The stage-2 compiler image measured 15858592 bytes after the lifetime and shared-helper repairs.
 # Sizes, in BYTES, of the self-host driver binaries CI already builds, plus
 # the compiler's own output for itself — checked against every run by
 # scripts/ci-check-driver-sizes (#6826).
@@ -580,7 +582,7 @@
 # 2026-10-26: Wasm drivers measured after the runtime bundle split.
 # 2026-10-29 (#13838): checker_modload_run measured by CI 40850967207 after
 # the defer rule and the field-move rule joined the self-host checker.
-fern.fern/stage2 15100176
+fern.fern/stage2 15858592
 fern.fern 15186720
 drivers/asm_load_run.fern 12166512
 drivers/asm_modload_run.fern 10813488
