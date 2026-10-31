@@ -553,8 +553,9 @@ pub function main(): i32 {
     out = head_file(files[i], out, s, show);
     i = i + 1;
   }
+  let ok: boolean = out.ok;
   gnu.stream_finish(out);
-  if (!out.ok) {
+  if (!ok) {
     return 1;
   }
   return 0;

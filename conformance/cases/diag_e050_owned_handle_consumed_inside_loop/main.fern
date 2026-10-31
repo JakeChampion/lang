@@ -1,0 +1,23 @@
+// spec: RH-32
+// An own parameter consumed in a loop body is used again on the next round.
+// The checker refuses the consume at its own line and column.
+
+struct Handle { fd: i32 }
+
+function (own h: Handle) close(): i32 {
+  return h.fd;
+}
+
+function drain(own h: Handle, n: i32): i32 {
+  let t: i32 = 0;
+  let i: i32 = 0;
+  while (i < n) {
+    t = t + h.close();
+    i = i + 1;
+  }
+  return t;
+}
+
+function main(): i32 {
+  return drain(Handle { fd: 1 }, 2);
+}

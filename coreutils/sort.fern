@@ -1464,10 +1464,10 @@ function out_name(o: Out): string {
   return gnu.quotef(o.file);
 }
 
-function out_die(o: Out, stage: string, e: IoError): void {
+function out_die(own o: Out, stage: string, e: IoError): void {
   gnu.error(stage + ": " + out_name(o) + ": " + gnu.io_error_text(e));
   if (target_os() == "darwin" && o.to_stdout) {
-    if let Err(close_error) = o.w.w.close() {
+    if let Err(close_error) = stdout().close() {
       gnu.error("write error: " + gnu.io_error_text(close_error));
       exit(sort_failure());
     }
@@ -1476,19 +1476,22 @@ function out_die(o: Out, stage: string, e: IoError): void {
   exit(sort_failure());
 }
 
-function out_put(o: Out, s: string): Out {
-  return out_written(o, o.w.write_string(s), "write failed");
+function out_put(own o: Out, s: string): Out {
+  let written: Result[io_buffered.BufWriter, IoError] = o.w.write_string(s);
+  return out_written(o, written, "write failed");
 }
 
-function out_put_bytes(o: Out, bytes: u8[]): Out {
-  return out_written(o, o.w.write_bytes(bytes), "write failed");
+function out_put_bytes(own o: Out, bytes: u8[]): Out {
+  let written: Result[io_buffered.BufWriter, IoError] = o.w.write_bytes(bytes);
+  return out_written(o, written, "write failed");
 }
 
-function out_settle(o: Out): Out {
-  return out_written(o, o.w.settle(), "write failed");
+function out_settle(own o: Out): Out {
+  let written: Result[io_buffered.BufWriter, IoError] = o.w.settle();
+  return out_written(o, written, "write failed");
 }
 
-function out_written(o: Out, written: Result[io_buffered.BufWriter, IoError], what: string): Out {
+function out_written(own o: Out, own written: Result[io_buffered.BufWriter, IoError], what: string): Out {
   match (written) {
     Ok(w) => {
       return Out { ...o, w: w };
@@ -1500,9 +1503,10 @@ function out_written(o: Out, written: Result[io_buffered.BufWriter, IoError], wh
   return o;
 }
 
-function out_finish(o: Out): void {
-  let w: io_buffered.BufWriter = out_written(o, o.w.flush(), "fflush failed").w;
-  gnu.close_stdout_with(w, false, sort_failure());
+function out_finish(own o: Out): void {
+  let flushed: Result[io_buffered.BufWriter, IoError] = o.w.flush();
+  let done: Out = out_written(o, flushed, "fflush failed");
+  gnu.close_stdout_with(done.w, false, sort_failure());
 }
 
 function split_lines(text: u8[], term: i32): i64[] {
@@ -1761,7 +1765,7 @@ function debug_width(text: u8[], from: i32, to: i32): i32 {
   return w;
 }
 
-function mark_key(o: Out, offset: i32, width: i32): Out {
+function mark_key(own o: Out, offset: i32, width: i32): Out {
   let out: Out = o;
   if (offset > 0) {
     out = out_put(out, " ".repeat(offset));
@@ -1796,7 +1800,7 @@ function raw_number_end(text: u8[], beg: i32, lim: i32, human: boolean): i32 {
   return p;
 }
 
-function debug_key(o: Out, c: Conf, text: u8[], lo: i32, hi: i32, k: Key, has_key: boolean): Out {
+function debug_key(own o: Out, c: Conf, text: u8[], lo: i32, hi: i32, k: Key, has_key: boolean): Out {
   let beg: i32 = lo;
   let lim: i32 = hi;
   if (has_key) {
@@ -1831,7 +1835,7 @@ function debug_key(o: Out, c: Conf, text: u8[], lo: i32, hi: i32, k: Key, has_ke
   return mark_key(o, debug_width(text, lo, beg), debug_width(text, beg, lim));
 }
 
-function debug_line(o: Out, c: Conf, text: u8[], lo: i32, hi: i32): Out {
+function debug_line(own o: Out, c: Conf, text: u8[], lo: i32, hi: i32): Out {
   let bs: u8[] = [];
   let i: i32 = lo;
   while (i < hi) {
@@ -2455,22 +2459,25 @@ function random_seed(a: Args): u8[] {
   match (open_reader(src)) {
     Ok(r) => {
       let got: u8[] = [];
-      while (got.len() < 16) {
+      let failed: string = "";
+      while (got.len() < 16 && failed.len() == 0) {
         match (r.read_chunk_bytes(16 - got.len())) {
           Ok(chunk) => {
             if (chunk.len() == 0) {
-              r.close();
-              die(gnu.quote(src) + ": end of file");
+              failed = ": end of file";
+            } else {
+              got = concat_bytes(got, chunk);
             }
-            got = concat_bytes(got, chunk);
           },
           Err(e) => {
-            r.close();
-            die(gnu.quote(src) + ": read error: " + gnu.io_error_text(e));
+            failed = ": read error: " + gnu.io_error_text(e);
           }
         }
       }
       r.close();
+      if (failed.len() > 0) {
+        die(gnu.quote(src) + failed);
+      }
       return got;
     },
     Err(e) => {
@@ -2699,9 +2706,9 @@ function merge_files(c: Conf, a: Args, files: string[]): i32 {
     }
   }
   f = 0;
-  while (f < n) {
-    if (files[f] != "-") {
-      m.rs[f].close();
+  for fed in m.rs {
+    if (f < n && files[f] != "-") {
+      fed.close();
     }
     f = f + 1;
   }

@@ -38,7 +38,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<5 function __ps_insert_all[T: cmp.Hash + cmp.Eq](s: PSet[T], xs: T[]): PSet[T]>>
 
-<<6 pub function (s: PSet[T]) intersection[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T]>>
+<<6 pub function (s: PSet[T: cmp.Hash + cmp.Eq]) intersection(other: PSet[T]): PSet[T]>>
 ```
 
 ### `module introduction`
@@ -91,15 +91,15 @@ pub function (s: PSet[T]) is_empty(): boolean {
   return s.root.is_empty();
 }
 
-pub function (s: PSet[T]) insert[T: cmp.Hash + cmp.Eq](x: T): PSet[T] {
+pub function (s: PSet[T: cmp.Hash + cmp.Eq]) insert(x: T): PSet[T] {
   return PSet { root: s.root.insert(x, 0) };
 }
 
-pub function (s: PSet[T]) remove[T: cmp.Hash + cmp.Eq](x: T): PSet[T] {
+pub function (s: PSet[T: cmp.Hash + cmp.Eq]) remove(x: T): PSet[T] {
   return PSet { root: s.root.remove(x) };
 }
 
-pub function (s: PSet[T]) contains[T: cmp.Hash + cmp.Eq](x: T): boolean {
+pub function (s: PSet[T: cmp.Hash + cmp.Eq]) contains(x: T): boolean {
   return s.root.contains(x);
 }
 
@@ -111,7 +111,7 @@ pub function (s: PSet[T]) to_array(): T[] {
   return s.root.keys();
 }
 
-pub function (s: PSet[T]) union[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T] {
+pub function (s: PSet[T: cmp.Hash + cmp.Eq]) union(other: PSet[T]): PSet[T] {
   if (s.len() >= other.len()) {
     return __ps_insert_all(s, other.to_array());
   }
@@ -134,11 +134,11 @@ function __ps_insert_all[T: cmp.Hash + cmp.Eq](s: PSet[T], xs: T[]): PSet[T] {
 }
 ```
 
-### `6 pub function (s: PSet[T]) intersection[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T]`
+### `6 pub function (s: PSet[T: cmp.Hash + cmp.Eq]) intersection(other: PSet[T]): PSet[T]`
 
 ```fern
-<<6 pub function (s: PSet[T]) intersection[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T]>>=
-pub function (s: PSet[T]) intersection[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T] {
+<<6 pub function (s: PSet[T: cmp.Hash + cmp.Eq]) intersection(other: PSet[T]): PSet[T]>>=
+pub function (s: PSet[T: cmp.Hash + cmp.Eq]) intersection(other: PSet[T]): PSet[T] {
   let out: PSet[T] = new();
   let xs: T[] = s.to_array();
   let i: i32 = 0;
@@ -151,7 +151,7 @@ pub function (s: PSet[T]) intersection[T: cmp.Hash + cmp.Eq](other: PSet[T]): PS
   return out;
 }
 
-pub function (s: PSet[T]) difference[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T] {
+pub function (s: PSet[T: cmp.Hash + cmp.Eq]) difference(other: PSet[T]): PSet[T] {
   let out: PSet[T] = s;
   let xs: T[] = other.to_array();
   let i: i32 = 0;
@@ -162,7 +162,7 @@ pub function (s: PSet[T]) difference[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet
   return out;
 }
 
-pub function (s: PSet[T]) is_subset[T: cmp.Hash + cmp.Eq](other: PSet[T]): boolean {
+pub function (s: PSet[T: cmp.Hash + cmp.Eq]) is_subset(other: PSet[T]): boolean {
   if (s.len() > other.len()) {
     return false;
   }
@@ -206,7 +206,7 @@ impl[T: cmp.Display] cmp.Display for PSet[T] {
   }
 }
 
-pub function (s: PSet[T]) filter[T: cmp.Hash + cmp.Eq](pred: (T) => boolean): PSet[T] {
+pub function (s: PSet[T: cmp.Hash + cmp.Eq]) filter(pred: (T) => boolean): PSet[T] {
   let out: PSet[T] = new();
   let xs: T[] = s.to_array();
   let i: i32 = 0;
@@ -219,7 +219,7 @@ pub function (s: PSet[T]) filter[T: cmp.Hash + cmp.Eq](pred: (T) => boolean): PS
   return out;
 }
 
-pub function (s: PSet[T]) fold[T, A](init: A, f: (A, T) => A): A {
+pub function (s: PSet[T]) fold[A](init: A, f: (A, T) => A): A {
   return s.root.fold(init, (a: A, k: T, v: i32) => f(a, k));
 }
 
@@ -231,15 +231,15 @@ pub function (s: PSet[T]) is_valid(): boolean {
   return s.root.is_valid();
 }
 
-pub function (s: PSet[T]) is_superset[T: cmp.Hash + cmp.Eq](other: PSet[T]): boolean {
+pub function (s: PSet[T: cmp.Hash + cmp.Eq]) is_superset(other: PSet[T]): boolean {
   return other.is_subset(s);
 }
 
-pub function (s: PSet[T]) is_disjoint[T: cmp.Hash + cmp.Eq](other: PSet[T]): boolean {
+pub function (s: PSet[T: cmp.Hash + cmp.Eq]) is_disjoint(other: PSet[T]): boolean {
   return s.intersection(other).is_empty();
 }
 
-pub function (s: PSet[T]) symmetric_difference[T: cmp.Hash + cmp.Eq](other: PSet[T]): PSet[T] {
+pub function (s: PSet[T: cmp.Hash + cmp.Eq]) symmetric_difference(other: PSet[T]): PSet[T] {
   return s.difference(other).union(other.difference(s));
 }
 ```

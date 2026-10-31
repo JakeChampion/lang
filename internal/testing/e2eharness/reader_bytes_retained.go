@@ -29,7 +29,7 @@ func ReaderBytesRetainedProgram(request, slotBytes, reads int, sanitize bool) st
   // for reusable scratch, allocator rounding, metadata and ownership boxes.
   %s
   match (r.seek(0 as i64, -1)) { Ok(_) => { return 8; }, Err(_) => {} }
-  match (r.close()) { Ok(_) => {}, Err(_) => { return 7; } }
+  unsafe { match (r.close_unchecked()) { Ok(_) => {}, Err(_) => { return 7; } } }
   match (r.seek(0 as i64, 0)) { Ok(_) => { return 9; }, Err(_) => {} }
   return 0;
 }`, reads, request, bound)

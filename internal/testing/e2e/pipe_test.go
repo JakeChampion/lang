@@ -16,10 +16,7 @@ func pipeSource(forks bool) string {
 	child := ""
 	if forks {
 		child = `
-    let q: Pipe = match (pipe()) {
-        Ok(q) => q,
-        Err(_) => { return 20; },
-    };
+    let Ok(q) = pipe() else { return 20; };
     let pid: i32 = proc_fork();
     if (pid < 0) {
         return 21;
@@ -35,10 +32,7 @@ func pipeSource(forks bool) string {
     return proc_waitpid(pid);`
 	}
 	return `function main(): i32 {
-    let p: Pipe = match (pipe()) {
-        Ok(p) => p,
-        Err(_) => { return 10; },
-    };
+    let Ok(p) = pipe() else { return 10; };
     match (p.w.write("through\n")) { Ok(_) => {}, Err(_) => { return 11; } }
     p.w.close();
     match (p.r.read_chunk(64)) {

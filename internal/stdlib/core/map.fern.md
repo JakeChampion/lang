@@ -1452,7 +1452,7 @@ pub function (m: Map[K, V]) is_empty(): boolean {
   return m.len() == 0;
 }
 
-pub function (m: Map[K, V]) fold[K, V, A](init: A, f: (A, K, V) => A): A {
+pub function (m: Map[K, V]) fold[A](init: A, f: (A, K, V) => A): A {
   let acc: A = init;
   for (k, v) in m {
     acc = f(acc, k, v);
@@ -1466,7 +1466,7 @@ pub function (m: Map[K, V]) for_each(f: (K, V) => void): void {
   }
 }
 
-pub function (m: Map[K, V]) map_values[K, V, W](f: (V) => W): Map[K, W] {
+pub function (m: Map[K, V]) map_values[W](f: (V) => W): Map[K, W] {
   let out: Map[K, W] = map_new(m.len());
   for (k, v) in m {
     out = out.insert(k, f(v));

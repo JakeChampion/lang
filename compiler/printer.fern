@@ -2770,20 +2770,24 @@ function print_stmt_body(st: ast.Stmt, depth: i32, f: Fmt): (string, Fmt) {
 }
 
 function print_type_params(fd: parser.FuncDecl): string {
-  if (fd.type_params.len() == 0) {
+  return print_tparam_list(fd.type_params, fd.bound_traits);
+}
+
+function print_tparam_list(names: string[], bounds: string[]): string {
+  if (names.len() == 0) {
     return "";
   }
   let out: string = "[";
   let i: i32 = 0;
-  while (i < fd.type_params.len()) {
+  while (i < names.len()) {
     if (i > 0) {
       out = out + ", ";
     }
     let bound: string = "";
-    if (i < fd.bound_traits.len()) {
-      bound = fd.bound_traits[i];
+    if (i < bounds.len()) {
+      bound = bounds[i];
     }
-    out = out + print_tparam(fd.type_params[i], bound);
+    out = out + print_tparam(names[i], bound);
     i = i + 1;
   }
   return out + "]";
@@ -2813,24 +2817,7 @@ function print_tparam(name: string, bound: string): string {
   if (bound.len() == 0) {
     return name;
   }
-  return name + ": " + join_plus(bound);
-}
-
-function join_plus(bounds: string): string {
-  let out: string = "";
-  let start: i32 = 0;
-  let i: i32 = 0;
-  while (i <= bounds.len()) {
-    if (i == bounds.len() || bounds[i] == b'+') {
-      if (out.len() > 0) {
-        out = out + " + ";
-      }
-      out = out + slice_unchecked(bounds, start, i);
-      start = i + 1;
-    }
-    i = i + 1;
-  }
-  return out;
+  return name + ": " + parser.spaced_bounds(bound);
 }
 
 function print_resource_decl(rd: parser.ResourceDecl): string {
@@ -2879,9 +2866,11 @@ function print_func_decl(fd: parser.FuncDecl, has_inline_hint: boolean, inline_n
   out = out + "function ";
   let tps: string = print_type_params(fd);
   if (fd.receiver_name.len() > 0) {
+    let rp: parser.RecvPrint = parser.receiver_with_bounds(fd);
+    tps = print_tparam_list(rp.names, rp.bounds);
     out = out + "(" + receiver_mode(fd) + fd.receiver_name;
-    if (fd.receiver_type.len() > 0) {
-      out = out + ": " + fd.receiver_type;
+    if (rp.recv.len() > 0) {
+      out = out + ": " + rp.recv;
     }
     out = out + ") ";
   }
@@ -4649,7 +4638,7 @@ function check_visibility_and_destructuring(): i32 {
     }
   }
 
-  let srcMt: string = "enum Opt[T] { Some(T), None } pub function [U] (o: Opt[T]) map(f: (T) => U): Opt[U] { return None; } function main(): i32 { return 0; }";
+  let srcMt: string = "enum Opt[T] { Some(T), None } pub function (o: Opt[T]) map[U](f: (T) => U): Opt[U] { return None; } function main(): i32 { return 0; }";
   let rtMt: parser.Module = roundtrip_module(srcMt);
   let mmi: i32 = func_index(rtMt.funcs, "map");
   if (mmi < 0) {
