@@ -999,7 +999,7 @@ pub function sort_key[T, K: cmp.Ord](arr: T[], key: (T) => K): T[] {
 return arr;
 }
 
-pub function [U] (o: Opt[T]) map(f: (T) => U): Opt[U] {
+pub function (o: Opt[T]) map[U](f: (T) => U): Opt[U] {
 return None;
 }
 `},

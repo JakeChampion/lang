@@ -4638,7 +4638,7 @@ function check_visibility_and_destructuring(): i32 {
     }
   }
 
-  let srcMt: string = "enum Opt[T] { Some(T), None } pub function [U] (o: Opt[T]) map(f: (T) => U): Opt[U] { return None; } function main(): i32 { return 0; }";
+  let srcMt: string = "enum Opt[T] { Some(T), None } pub function (o: Opt[T]) map[U](f: (T) => U): Opt[U] { return None; } function main(): i32 { return 0; }";
   let rtMt: parser.Module = roundtrip_module(srcMt);
   let mmi: i32 = func_index(rtMt.funcs, "map");
   if (mmi < 0) {

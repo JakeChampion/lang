@@ -117,8 +117,6 @@ function (b: B[T: Eq]) f[T: Eq](): T { return b.v; }`,
 		`struct M[K, V] { k: K, v: V }
 function (m: M[K, V]) f[A, V](a: A): V { return m.v; }`,
 		`function (xs: T[]) f[T, K: Ord](k: K): T { return xs[0]; }`,
-		`struct B[T] { v: T }
-function [T] (b: B[T]) f(): T { return b.v; }`,
 	} {
 		_, err := Parse(src)
 		if err == nil {
@@ -137,10 +135,35 @@ function [T] (b: B[T]) f(): T { return b.v; }`,
 function (m: M[K, V]) fold[A](a: A): A { return a; }`,
 		`function (xs: T[]) max_by[K: Ord](k: (T) => K): T { return xs[0]; }`,
 		`struct B[T] { v: T }
-function [U] (b: B[T]) f(u: U): U { return u; }`,
+function (b: B[T]) f[U](u: U): U { return u; }`,
 	} {
 		if _, err := Parse(src); err != nil {
 			t.Errorf("refused a method that declares only its own type parameters: %v\n%s", err, src)
+		}
+	}
+}
+
+func TestTypeParamsBeforeFunctionNameIsP008(t *testing.T) {
+	for _, src := range []string{
+		`function [T] id(x: T): T { return x; }`,
+		`struct B[T] { v: T }
+function [U] (b: B[T]) f(u: U): U { return u; }`,
+		`struct B[T] { v: T }
+function [T] (b: B[T]) f(): T { return b.v; }`,
+		`trait Show { function show(self: Self): string; }
+struct B { n: i32 }
+impl Show for B { function [U] show(self: Self): string { return "b"; } }`,
+	} {
+		_, err := Parse(src)
+		if err == nil {
+			t.Errorf("accepted type parameters before the function name:\n%s", src)
+			continue
+		}
+		if code := firstCode(err); code != "P008" {
+			t.Errorf("want P008, got %q: %v\n%s", code, err, src)
+		}
+		if !strings.Contains(err.Error(), "a function's type parameters come after its name") {
+			t.Errorf("want the P008 message, got %v", err)
 		}
 	}
 }

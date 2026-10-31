@@ -7887,18 +7887,10 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   let bound_names: string[] = [];
   let unbounded_tps: string[] = [];
   let all_tps: string[] = [];
-  let (pre_tps, pre_p) = parse_type_param_list(p);
-  p = pre_p;
-  let tpi1: i32 = 0;
-  while (tpi1 < pre_tps.tnames.len()) {
-    all_tps = all_tps.append(pre_tps.tnames[tpi1]);
-    if (p.verbatim || pre_tps.tbounds[tpi1].len() > 0) {
-      bounded_tps = bounded_tps.append(pre_tps.tnames[tpi1]);
-      bound_names = bound_names.append(pre_tps.tbounds[tpi1]);
-    } else {
-      unbounded_tps = unbounded_tps.append(pre_tps.tnames[tpi1]);
-    }
-    tpi1 = tpi1 + 1;
+  if (p.peek_punct() == "[") {
+    let refused: Par = Par { ...p, type_errs: p.type_errs.append(s_unknown(p, coded_kind("P008", "a function's type parameters come after its name: write function name[T](...), or function (r: R) name[T](...) for a method"))) };
+    let (lead_tps, skipped) = parse_type_param_list(refused);
+    p = skipped;
   }
   let receiver_name: string = "";
   let receiver_type: string = "";
@@ -7941,7 +7933,7 @@ function parse_func_decl(p: Par): (FuncDecl, Par) {
   let (post_tps, post_p) = parse_type_param_list(p);
   p = post_p;
   if (receiver_name.len() > 0) {
-    p = refuse_const_tparams(refuse_const_tparams(p, name_p, pre_tps), name_p, post_tps);
+    p = refuse_const_tparams(p, name_p, post_tps);
   }
   let tpi0: i32 = 0;
   while (tpi0 < post_tps.tnames.len()) {

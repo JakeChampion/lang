@@ -649,7 +649,7 @@ func TestFormatGenericMethodRoundTrip(t *testing.T) {
 			"function (xs: (T: Eq)[]) first(): T"},
 		{"function (xs: [T: Eq]) first(): T { return xs[0]; }",
 			"function (xs: [T: Eq]) first(): T"},
-		{"struct Box[T] { xs: T[] }\nfunction [U] (b: Box[T]) tag(u: U): U { return u; }",
+		{"struct Box[T] { xs: T[] }\nfunction (b: Box[T]) tag[U](u: U): U { return u; }",
 			"function (b: Box[T]) tag[U](u: U): U"},
 	}
 	for _, c := range cases {

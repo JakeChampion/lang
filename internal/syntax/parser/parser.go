@@ -1426,12 +1426,8 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 	var bounds map[string][]string
 	var boundArgs map[string][][]ast.Type
 	var constParams []string
-	if p.match(lexer.Punct, "[") {
-		typeParams, bounds, boundArgs, err = p.parseTypeParamListWithArgs()
-		if err != nil {
-			return nil, err
-		}
-		constParams, p.constParams = p.constParams, nil
+	if t := p.peek(); t.Kind == lexer.Punct && t.Text == "[" {
+		return nil, p.errorfCode(t.Pos, "P008", "a function's type parameters come after its name: write function name[T](...), or function (r: R) name[T](...) for a method")
 	}
 	var receiver *ast.Param
 	var recvParams recvTypeParams
@@ -1473,7 +1469,7 @@ func (p *parser) parseFunction() (*ast.FuncDecl, error) {
 		return nil, err
 	}
 	funcNamePos := name.Pos
-	if p.match(lexer.Punct, "[") && len(typeParams) == 0 {
+	if p.match(lexer.Punct, "[") {
 		typeParams, bounds, boundArgs, err = p.parseTypeParamListWithArgs()
 		if err != nil {
 			return nil, err
