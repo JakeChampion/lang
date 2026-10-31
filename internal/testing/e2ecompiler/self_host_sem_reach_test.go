@@ -111,6 +111,8 @@ func TestSelfHostSemReach(t *testing.T) {
 }
 
 const semReachOptionProg = `import "core/map";
+import "std/option";
+import "std/array";
 
 struct Key { bits: i32[] }
 struct Pt { x: i32 }

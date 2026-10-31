@@ -54,7 +54,7 @@ func TestSelfHostStdlibErrorTraits(t *testing.T) {
 		t.Fatal("no public error types found")
 	}
 	t.Logf("check %d public error types", count)
-	src := "import \"std/error\";\nimport \"core/cmp\";\n" + imports.String() +
+	src := "import \"core/error\";\nimport \"core/cmp\";\n" + imports.String() +
 		"function display[T: cmp.Display](e: T): string { return e.to_string(); }\n" + probes.String() +
 		"function main(): i32 { return 0; }\n"
 	path := filepath.Join(t.TempDir(), "main.fern")
