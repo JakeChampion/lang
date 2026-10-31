@@ -11,6 +11,8 @@ Future changes start from the interfaces below.
 A stateless handler takes a request and a platform value.
 A native stateful handler also takes the state from `init` and returns the next state with its response.
 The platform parameter can use the `Platform` trait or the concrete `Host` type.
+The trait is shared across targets.
+It is not generated from an external target descriptor.
 
 ```fern
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse
@@ -24,9 +26,12 @@ An explicit user `main` controls its own lifecycle.
 The current memory model uses reference counts for this state.
 The historical permanent-arena proposal requires a new design assessment.
 
+The current proxy wrapper assumes a fresh instance for each request and rejects stateful handlers.
+Any proxy init contract must respect that instance lifetime.
+
 | Recommendation | Current source evidence | Remaining scope |
 |---|---|---|
-| 1. Platform parameter | `std/platform` defines `Platform` and `Host`. Native wrappers and stateless proxy handlers accept the platform parameter. | Preserve the current interface and target-specific tests. |
+| 1. Platform parameter | `std/platform` defines `Platform` and `Host`. Native wrappers and stateless proxy handlers accept the platform parameter. | Preserve the handler parameter. Connect target-specific capability types and glue to the descriptor contract. |
 | 2. Platform descriptors | The compiler and Go registry provide typed descriptions of built-in targets and capabilities. | Define the external descriptor contract, signatures, glue, and named bindings. |
 | 3. Init and invoke | Native wrappers support init results, server options, state, and shutdown. The checkers diagnose mismatched state shapes. | Stateful `wasm32-wasi-http` handlers remain unsupported. The Go checker reports E075. |
 | 4. Stream-default response | Streamed response forms and `ByteStream` request bodies already exist. | Specify the remaining stream-default contract. Coordinate body API work with #12726. |
@@ -43,6 +48,7 @@ They do not establish complete acceptance of issue #4414.
 - [Platform trait and host](../internal/stdlib/std/platform.fern.md)
 - [Mock platform and call log](../internal/stdlib/std/mock_platform.fern.md)
 - [Native handler wrapper](../compiler/flatten.fern)
+- [Proxy handler boundary and refusal](../compiler/emitforms.fern)
 - [Self-host handler state diagnostics](../compiler/checker.fern)
 - [Compiler target registry](../compiler/platforms.fern)
 - [Go target registry](../internal/pkg/platforms/platforms.go)
