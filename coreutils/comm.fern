@@ -514,11 +514,11 @@ function merge(own r1: Reader, own r2: Reader, name1: string, name2: string, cfg
     }
   }
   if (cfg.total) {
-    gnu.push_decimal(h, t0);
+    buf_push_decimal(h, t0);
     buf_push(h, cfg.sep);
-    gnu.push_decimal(h, t1);
+    buf_push_decimal(h, t1);
     buf_push(h, cfg.sep);
-    gnu.push_decimal(h, t2);
+    buf_push_decimal(h, t2);
     buf_push(h, cfg.sep);
     buf_push(h, "total");
     buf_push_byte(h, term);

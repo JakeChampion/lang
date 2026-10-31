@@ -206,10 +206,20 @@ func TestSelfHostServeDefaultBacklogHoldsBurst(t *testing.T) {
 
 func TestSelfHostServePerConnectionCostFlat(t *testing.T) {
 	e2eharness.RaiseConnCostLimit(t)
-	bin, runner := selfHostServer(t, e2eharness.PerConnectionCostServerSource())
+	bin, runner := selfHostServer(t, e2eharness.PerConnectionCostServerSource(0))
 	cmd := binCmd(runner, bin)
 	addr, _ := e2eharness.StartInheritedServer(t, cmd)
-	e2eharness.CheckPerConnectionCostFlat(t, cmd.Process.Pid, addr)
+	e2eharness.CheckPerConnectionCostFlat(t, cmd.Process.Pid, addr, 0)
+}
+
+// With the per-client cap on, an accept looks up its peer's count instead of
+// walking the connection table.
+func TestSelfHostServePerConnectionCostFlatPerIPCap(t *testing.T) {
+	e2eharness.RaiseConnCostLimit(t)
+	bin, runner := selfHostServer(t, e2eharness.PerConnectionCostServerSource(100))
+	cmd := binCmd(runner, bin)
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	e2eharness.CheckPerConnectionCostFlat(t, cmd.Process.Pid, addr, 64)
 }
 
 func TestSelfHostServeMaxConnectionsFloor(t *testing.T) {
@@ -307,6 +317,16 @@ func TestSelfHostServePerIPCap(t *testing.T) {
 	cmd := binCmd(runner, bin)
 	addr, _ := e2eharness.StartInheritedServer(t, cmd)
 	e2eharness.CheckPerIPCap(t, addr)
+}
+
+func TestSelfHostServePerIPCapManyPeers(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("the peers dial from 127.0.0.2 and up, which only Linux routes to loopback by default")
+	}
+	bin, runner := selfHostServer(t, e2eharness.PerIPCapServerSource())
+	cmd := binCmd(runner, bin)
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	e2eharness.CheckPerIPCapManyPeers(t, addr)
 }
 
 func TestSelfHostServeFileBody(t *testing.T) {

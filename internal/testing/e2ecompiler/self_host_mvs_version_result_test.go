@@ -106,7 +106,7 @@ function main():i32 {
 	}
 	fmt.Fprintf(&source, "print(\"INDEXERR|\"+index_error(%s));\n", strconv.Quote(bad))
 	fmt.Fprintf(&want, "INDEXERR|%s\n", err)
-	source.WriteString(`let manual=mvs.Index{dir:"",entries:[mvs.Entry{pkg:"foo",ver:"broken",src:mvs.Source{path:"/bad",url:"",hash:""}},mvs.Entry{pkg:"foo",ver:"1.0.0",src:mvs.Source{path:"/pkg",url:"",hash:""}}]};print("MANUAL|"+joined(mvs.index_versions(manual,"foo")));
+	source.WriteString(`let manual=mvs.Index{dir:"",serial:"",entries:[mvs.Entry{pkg:"foo",ver:"broken",src:mvs.Source{path:"/bad",url:"",hash:""}},mvs.Entry{pkg:"foo",ver:"1.0.0",src:mvs.Source{path:"/pkg",url:"",hash:""}}]};print("MANUAL|"+joined(mvs.index_versions(manual,"foo")));
 `)
 	want.WriteString("MANUAL|1.0.0\n")
 	requests := []struct {

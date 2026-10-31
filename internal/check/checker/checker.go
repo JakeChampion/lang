@@ -901,6 +901,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{bufH, ast.NumberType{Width: 64, Signed: false}},
 		Result: ast.VoidType{},
 	}
+	c.info.FuncSigs["buf_push_decimal"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.NumberType{Width: 64, Signed: false}},
+		Result: ast.VoidType{},
+	}
 	c.info.FuncSigs["buf_len"] = &ast.FuncType{
 		Params: []ast.Type{bufH},
 		Result: ast.NumberType{},
@@ -3761,6 +3765,36 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 }
 
 const cmpImport = "`import \"core/cmp\";`"
+
+// cmpHint says where a cmp trait for t can come from. core/cmp implements Eq,
+// Ord and Hash for Option and Result when their type arguments do, so the hint
+// moves to the first type argument that is a struct or an enum. Display has no
+// impl for those, nor for an array or a tuple, so the hint says to format the
+// parts instead of offering an impl that the orphan rule would refuse.
+func cmpHint(t ast.Type, derive, trait string) string {
+	if e, ok := t.(ast.EnumType); ok && (e.Name == "Option" || e.Name == "Result") && trait != "cmp.Display" {
+		for _, a := range e.Args {
+			switch a.(type) {
+			case ast.StructType, ast.EnumType:
+				return fmt.Sprintf("%s implements `%s` when its type arguments do: %s", t, strings.TrimPrefix(trait, "cmp."), cmpHint(a, derive, trait))
+			}
+		}
+	}
+	tn, _ := methodTypeName(t)
+	if e, ok := t.(ast.EnumType); tn == "" || ok && (e.Name == "Option" || e.Name == "Result") {
+		return fmt.Sprintf("%s cannot implement `%s`: convert its parts to strings first", t, strings.TrimPrefix(trait, "cmp."))
+	}
+	return deriveHint(tn, derive, trait)
+}
+
+// displayHint is the advice of an E038 for a print of t.
+func displayHint(t ast.Type) string {
+	tn, _ := methodTypeName(t)
+	if e, ok := t.(ast.EnumType); tn == "" || ok && (e.Name == "Option" || e.Name == "Result") {
+		return cmpHint(t, "cmp.Display", "cmp.Display")
+	}
+	return fmt.Sprintf("give %s a `to_string(): string` method, or %s", t, deriveHint(tn, "cmp.Display", "cmp.Display"))
+}
 
 func deriveHint(tn, derive, trait string) string {
 	mod, simple, foreign := strings.Cut(tn, "__")
@@ -13824,10 +13858,9 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					return ast.VoidType{}
 				}
 				if !c.typeImplementsDisplay(at) {
-					atn, _ := methodTypeName(at)
 					c.errfCode(n.Args[0].Pos(), "E038",
-						"argument 1 to %q: %s does not implement `Display` (no `to_string(): string` in scope) — give %s a `to_string(): string` method, or %s",
-						id.Name, at, at, deriveHint(atn, "cmp.Display", "cmp.Display"))
+						"argument 1 to %q: %s does not implement `Display` (no `to_string(): string` in scope) — %s",
+						id.Name, at, displayHint(at))
 					return ast.VoidType{}
 				}
 				arg := n.Args[0]
@@ -14527,7 +14560,21 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 		return ft.Result
 	case *ast.Binary:
 		lt := c.checkExpr(n.Left, s)
-		rt := c.checkExpr(n.Right, s)
+		var rt ast.Type
+		if (n.Op == "==" || n.Op == "!=") && lt != nil {
+			// The left operand's type fills what the right leaves open: `o == None`.
+			c.expectedType = lt
+			rt = c.checkExpr(n.Right, s)
+			c.expectedType = nil
+			c.refineCallTypeArgsFromDest(n.Right, lt)
+			if re, ok := rt.(ast.EnumType); ok && len(re.Args) == 0 {
+				if le, ok := lt.(ast.EnumType); ok && le.Name == re.Name {
+					rt = lt
+				}
+			}
+		} else {
+			rt = c.checkExpr(n.Right, s)
+		}
 		if lt == nil || rt == nil {
 			return nil
 		}
@@ -14721,7 +14768,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 						n.CmpCall = cmpCall
 						return ast.BoolType{}
 					}
-					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: type does not implement `Ord` — %s, so ordering can use structural comparison", lt, n.Op, deriveHint(tn, "cmp.Ord", "cmp.Ord"))
+					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: type does not implement `Ord` — %s, so ordering can use structural comparison", lt, n.Op, cmpHint(lt, "cmp.Ord", "cmp.Ord"))
 					return ast.BoolType{}
 				case ast.ArrayType, ast.SliceType, ast.TupleType:
 					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: structural ordering for arrays / slices / tuples is not supported", lt, n.Op)
@@ -14822,7 +14869,7 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 						n.EqNegate = n.Op == "!="
 						return ast.BoolType{}
 					}
-					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: type does not implement `Eq` — %s, so `==` can use structural equality", lt, n.Op, deriveHint(tn, "cmp.Eq", "cmp.Eq"))
+					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: type does not implement `Eq` — %s, so `==` can use structural equality", lt, n.Op, cmpHint(lt, "cmp.Eq", "cmp.Eq"))
 					return ast.BoolType{}
 				case ast.ArrayType, ast.SliceType, ast.TupleType:
 					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: structural equality for arrays / slices / tuples is not supported — compare elements individually", lt, n.Op)

@@ -1248,7 +1248,7 @@ function keep_flag(e: ast.Expr, own acc: boolean): boolean {
   return acc;
 }
 
-struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], verbatim: boolean, depth: i32, type_errs: ast.Stmt[], todos: TodoSite[], tail_at: i32[], tail_is: boolean[] }
+struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], verbatim: boolean, depth: i32, type_errs: ast.Stmt[], todos: TodoSite[], tail_at: i32[], tail_is: boolean[], strict_semi: boolean }
 
 function scan_struct_names(toks: lexer.Token[]): string[] {
   let out: string[] = [];
@@ -1361,7 +1361,7 @@ function (p: Par) peek_col(): i32 {
 }
 
 function (p: Par) advance(): Par {
-  return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is };
+  return Par { toks: p.toks, pos: p.pos + 1, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi };
 }
 
 function (p: Par) expected_type(): Par {
@@ -1518,11 +1518,11 @@ function (p: Par) end_of(e: ast.Expr): Par {
 }
 
 function (p: Par) with_no_struct(v: boolean): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is };
+  return Par { toks: p.toks, pos: p.pos, no_struct: v, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi };
 }
 
 function (p: Par) with_map_kind(v: i32): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is };
+  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: v, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi };
 }
 
 pub const MAX_NEST_DEPTH: i32 = 5000;
@@ -1532,7 +1532,7 @@ pub const BLOCK_VALUE_REQUIRED_MESSAGE: string = "block-expression has no traili
 const BLOCK_NEST_UNITS: i32 = 8;
 
 function (p: Par) with_depth(v: i32): Par {
-  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: v, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is };
+  return Par { toks: p.toks, pos: p.pos, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: v, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi };
 }
 
 function (p: Par) too_deep(): boolean {
@@ -1548,7 +1548,7 @@ function (p: Par) bail(): Par {
   if (last < p.pos) {
     last = p.pos;
   }
-  return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is };
+  return Par { toks: p.toks, pos: last, no_struct: p.no_struct, map_kind: p.map_kind, structnames: p.structnames, verbatim: p.verbatim, depth: p.depth, type_errs: p.type_errs, todos: p.todos, tail_at: p.tail_at, tail_is: p.tail_is, strict_semi: p.strict_semi };
 }
 
 function (p: Par) peek_punct(): string {
@@ -2535,7 +2535,7 @@ function parse_expr_from_text(p: Par, text: string, base_line: i32, base_col: i3
   if let Some(le) = stream_lex_error(toks) {
     return (e_unknown_at(lex_error_kind(le), le.line, le.col), p, true);
   }
-  let sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: p.verbatim, depth: 0, type_errs: p.type_errs, todos: p.todos, tail_at: [], tail_is: [] };
+  let sub: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: p.verbatim, depth: 0, type_errs: p.type_errs, todos: p.todos, tail_at: [], tail_is: [], strict_semi: false };
   let (r_expr, r_p) = parse_expr(sub);
   let outer: Par = Par { ...p, type_errs: r_p.type_errs, todos: r_p.todos };
   if (!r_p.at_end()) {
@@ -3960,9 +3960,10 @@ function valueless_branch_tail(p: Par): (boolean, ast.Stmt, Par) {
   if (kw != "match" && kw != "if" || kw == "match" && !match_arms_braced(p)) {
     return (false, s_unknown(p, ""), p);
   }
-  let (st, q) = parse_stmt(p);
+  // A branch that ends in an unterminated expression gives the value.
+  let (st, q) = parse_stmt(Par { ...p, strict_semi: true });
   if (q.type_errs.len() == p.type_errs.len() && q.peek_punct() == "}") {
-    return (true, st, q);
+    return (true, st, Par { ...q, strict_semi: p.strict_semi });
   }
   return (false, st, p);
 }
@@ -6281,7 +6282,9 @@ function parse_expression_stmt(p: Par): (ast.Stmt, Par) {
     }
     return (assign_to(e_expr, rhs, aline, acol), p);
   }
-  p = p.end_of(e_expr);
+  if (p.strict_semi || p.peek_punct() != "}") {
+    p = p.end_of(e_expr);
+  }
   return (s_expr(e_expr), p);
 }
 
@@ -6411,7 +6414,11 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     return (mr_stmt, mr_p);
   }
   if (kw == "if") {
-    return parse_if_stmt(p);
+    let (if_stmt, if_p) = parse_if_stmt(p);
+    if (if_p.peek_punct() == ";") {
+      return (if_stmt, if_p.advance());
+    }
+    return (if_stmt, if_p);
   }
   if (kw == "while") {
     let (wc_expr, wc_p) = parse_paren_head(p.advance());
@@ -6535,7 +6542,7 @@ pub function parse_program(toks: lexer.Token[]): ast.Stmt[] {
   if let Some(le) = stream_lex_error(toks) {
     return [s_unknown_at(lex_error_kind(le), le.line, le.col)];
   }
-  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [] };
+  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: false, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false };
   let out: ast.Stmt[] = [];
   while (!p.at_end()) {
     let (r_stmt, r_p) = parse_stmt(p);
@@ -8383,7 +8390,7 @@ pub function builtin_function_names(): string[] {
     "clock_resolution", "clock_set",
     "wasm_pollable_drop", "wasm_block", "wasm_poll",
     "map_new", "__map_new_i32", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked", "slice_unchecked",
-    "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_len",
+    "buf_new", "buf_push", "buf_push_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64", "buf_push_decimal", "buf_len",
     "buf_take", "buf_take_bytes", "buf_push_bytes_range", "buf_clear", "buf_free",
     "cell_new",
     "f64_bits", "f64_from_bits", "f32_bits", "f32_from_bits",
@@ -25128,7 +25135,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
   if let Some(le) = stream_lex_error(toks) {
     return lex_error_module(le);
   }
-  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [] };
+  let p: Par = Par { toks: toks, pos: 0, no_struct: false, map_kind: 0 - 1, structnames: scan_struct_names(toks), verbatim: verbatim, depth: 0, type_errs: [], todos: [], tail_at: [], tail_is: [], strict_semi: false };
   let funcs: FuncDecl[] = [];
   let trait_defaults: TraitDefault[] = [];
   let trait_reqs: TraitReq[] = [];

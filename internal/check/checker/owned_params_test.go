@@ -1696,6 +1696,45 @@ function main(): i32 {
 }`)
 }
 
+// The element a `for` binds borrows from what the loop walks, so a result
+// that returns it borrows too. A struct of numbers cannot hold a handle, and
+// a local set from such a call stays fresh.
+func TestOwnGuardAcceptsALocalFromACallWhoseStructResultHoldsNoHandle(t *testing.T) {
+	wantOK(t, "local-from-handle-free-struct-call", `
+struct Mark { i: i32, kind: i32 }
+function first_row(rows: Mark[][]): Mark[] {
+    for row in rows {
+        return row;
+    }
+    return [];
+}
+function keep(rows: Mark[][], own ms: Mark[]): i32 { return rows.len() + ms.len(); }
+function main(): i32 {
+    let rows: Mark[][] = [[Mark { i: 1, kind: 0 }]];
+    let got: Mark[] = first_row(rows);
+    let n: i32 = keep(rows, got);
+    return n + rows.len();
+}`)
+}
+
+func TestOwnGuardRejectsAForElementReturnedThroughACall(t *testing.T) {
+	wantE051(t, "for-element-alias-from-call", `
+struct Held { r: Reader }
+function first_row(rows: Held[][]): Held[] {
+    for row in rows {
+        return row;
+    }
+    return [];
+}
+function keep(rows: Held[][], own hs: Held[]): i32 { return rows.len() + hs.len(); }
+function main(): i32 {
+    let rows: Held[][] = [[Held { r: stdin() }]];
+    let got: Held[] = first_row(rows);
+    let n: i32 = keep(rows, got);
+    return n + rows.len();
+}`)
+}
+
 func TestOwnGuardRejectsAHandleClosedThroughAnAliasFromACall(t *testing.T) {
 	wantE051(t, "handle-alias-from-call", `
 function pass(r: Reader): Reader { return r; }

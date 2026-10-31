@@ -17,7 +17,7 @@ func selfHostDupOntoSource(data string, out string) string {
         Ok(r) => {
             match (r.dup_onto(7))    { Ok(_) => {}, Err(_) => { return 11; } }
             match (r.dup_onto(0 - 1)) { Ok(_) => { return 12; }, Err(_) => {} }
-            r.close();
+            unsafe { r.close_unchecked(); }
             match (r.dup_onto(7))    { Ok(_) => { return 13; }, Err(_) => {} }
         }
     }
