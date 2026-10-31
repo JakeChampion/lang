@@ -150,6 +150,36 @@ thousands of parked handlers, up to `max_in_flight`.
 A handler that computes does hold its worker until it returns, so add
 workers for CPU-bound work.
 
+To wait on several upstreams at once, start each call as a task with
+`async.spawn`, combine the futures, and wait with `async.wait`. The
+handler parks once for all of them:
+
+```fern
+import "std/async";
+import "std/fetch";
+import "std/http";
+import "std/platform";
+import "std/serve";
+
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    let calls: async.Future[Result[HttpResponse, fetch.FetchError]][] = [
+        async.spawn(() => plat.http(fetch.get("https://example.com/"))),
+        async.spawn(() => plat.http(fetch.get("https://example.org/"))),
+    ];
+    match (async.wait(async.gather(calls))) {
+        Some(answers) => { return http.ok(answers.len().to_string()); },
+        None => { return http.text(503, "cancelled"); }
+    }
+}
+```
+
+`async.race` takes the first answer and cancels the others.
+`async.with_deadline(plat.instant().add(time.duration_millis(200)), calls)`
+takes the answers that arrive in 200 ms, and `None` for the others. Use
+`async.wait` in a handler, not `async.block_on`: `wait` takes its clock
+and its wait from the server, so the same handler also runs under
+`std/sim`.
+
 ## Configuration
 
 `serve.config()` gives the defaults; override fields with a spread.

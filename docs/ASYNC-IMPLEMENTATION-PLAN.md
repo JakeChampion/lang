@@ -10,6 +10,8 @@ import path — was **kept** and became the implementation of
 `Future[T]`. Read the redesign doc first; treat the CPS-surface parts
 of this plan as historical.
 
+Note: #12725 changed the `std/async` API that this record names: one future family over `Future[T]`, typed wakes, and deadlines as instants. `docs/ASYNC.md` describes the current surface.
+
 This record cites historical source paths. Some files no longer exist in the current tree.
 
 Companion to the research docs `ASYNC-IMPLEMENTATION-RESEARCH.md`
