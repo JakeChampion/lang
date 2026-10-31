@@ -24,24 +24,25 @@ The signatures illustrate separate stateless and stateful programs.
 The native wrapper calls `init`, supplies its result to the server, and supports a `shutdown` hook.
 An explicit user `main` controls its own lifecycle.
 The current memory model uses reference counts for this state.
-The historical permanent-arena proposal requires a new design assessment.
+The permanent-arena proposal is historical.
 
 The current proxy wrapper assumes a fresh instance for each request and rejects stateful handlers.
 Any proxy init contract must respect that instance lifetime.
 
 | Recommendation | Current source evidence | Remaining scope |
 |---|---|---|
-| 1. Platform parameter | `std/platform` defines `Platform` and `Host`. Native wrappers and stateless proxy handlers accept the platform parameter. | Preserve the handler parameter. Connect target-specific capability types and glue to the descriptor contract. |
-| 2. Platform descriptors | The compiler and Go registry provide typed descriptions of built-in targets and capabilities. | Define the external descriptor contract, signatures, glue, and named bindings. |
-| 3. Init and invoke | Native wrappers support init results, server options, state, and shutdown. The checkers diagnose mismatched state shapes. | Stateful `wasm32-wasi-http` handlers remain unsupported. The Go checker reports E075. |
+| 1. Platform parameter | `std/platform` defines `Platform` and `Host`. Native wrappers and stateless proxy handlers accept the platform parameter. | Preserve the shared ABI and E066 checks after tree-shaking. The per-target generated struct proposal is superseded. |
+| 2. Platform descriptors | The compiler and Go registry provide typed descriptions of built-in targets and capabilities. | Implement a loader for user-defined platforms with capability signatures and glue. Preserve the shared Platform surface and existing capability enforcement. |
+| 3. Init and invoke | Native wrappers support init results, server options, state, and shutdown. The checkers diagnose mismatched state shapes. The issue records this foundation as complete. | Preserve the native lifecycle. The proxy target has a separate stateless contract and reports E075 for stateful handlers. |
 | 4. Stream-default response | Streamed response forms and `ByteStream` request bodies already exist. | Specify the remaining stream-default contract. Coordinate body API work with #12726. |
 | 6. Mock platform | `MockPlatform` implements `platform.Platform`, supplies canned results, and records operations in a shared call log. | Preserve parity as the platform trait changes. |
-| 7 and 8. Named and service bindings | The registry has binding metadata. Host configuration and mock values already exist. | Implement deploy-time named and service bindings when their deployment trigger applies. |
+| 7 and 8. Named and service bindings | The registry has binding metadata. Host configuration and mock values already exist. | A host must supply the bindings before the deployment trigger applies. Preserve that prerequisite. |
 | 5. Other handler kinds | Target descriptors name `handle` and `main` where supported. | Scheduled, alarm, and other handler entries retain their separate triggers. |
-| 10. Effect rows | Target capability checks reject unavailable builtins through reachable calls. | A source-level effect row remains open work. |
+| 10. Effect rows | Effect inference and `fern -effects` ship. E070 and E066 enforce package and target capabilities. The declared `uses [...]` prototype was deliberately removed. | Superseded. Preserve the decision in [Effect rows: prototype and findings](EFFECT-ROWS-BRIEF.md). Do not restore the removed syntax. |
 
 These rows describe the current implementation and its gaps.
 They do not establish complete acceptance of issue #4414.
+The issue discussion records the [completed foundation](https://github.com/JakeChampion/lang/issues/4414#issuecomment-5509146958) and the [superseded designs and remaining triggers](https://github.com/JakeChampion/lang/issues/4414#issuecomment-5519144454).
 
 ## Source and test evidence
 
@@ -74,15 +75,15 @@ Methods and hooks in imported modules remain ordinary functions.
 The [proxy lifecycle tests](../internal/testing/e2ecompiler/self_host_wasi_http_lifecycle_test.go) check this boundary and the absence of an output artifact after refusal.
 The native init and shutdown contracts retain their current behavior.
 The guard prevents silent omission of a declared proxy lifecycle hook.
-It does not implement proxy initialization or complete the lifecycle work in issue #4414.
+It does not implement proxy initialization or complete issue #4414.
 
 ## Remaining acceptance criteria
 
-The remaining descriptor and lifecycle contracts require implementation and target-specific evidence.
-A complete lifecycle change must define state ownership, startup failure, cleanup, and the behavior of each target.
-It must cover native execution and proxy components.
-The descriptor work must connect its declared capabilities and bindings to the compiler's current capability checks.
-The stream, bindings, handler-kind, and effect-row work must retain their stated scope and triggers.
+The user-defined platform loader and remaining stream contract require implementation and target-specific evidence.
+The loader must connect its declared capabilities to the compiler's current capability checks.
+The stream work must cover the proxy resource ABI and coordinate with #12726.
+Named bindings, service bindings, and other handler kinds retain their host prerequisites and stated triggers.
+Explicit effect-row syntax is superseded and is outside this remaining work.
 
 The handler parameter, native init, and mock platform already form part of the baseline.
 Their migration must not repeat as new work.
