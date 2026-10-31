@@ -28,10 +28,10 @@ func TestCallArgDeathsFieldReads(t *testing.T) {
 			deaths := CallArgDeaths(prog.Funcs[0], nil)
 			got := false
 			for _, names := range deaths.Dies {
-				got = got || names["a"]
+				got = got || names["a"] && !deaths.Unadmitted["a"]
 			}
 			if got != tc.want {
-				t.Fatalf("field alias is transferable = %v, want %v", got, tc.want)
+				t.Fatalf("field alias is admitted = %v, want %v", got, tc.want)
 			}
 		})
 	}

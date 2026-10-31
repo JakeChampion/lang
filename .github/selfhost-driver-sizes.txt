@@ -1,4 +1,3 @@
-# 2026-10-31: PR #13966 at 0f678261, measured by CI run 41202170159.
 # 2026-10-31: PR #13897 at 16e65aa. CI run 41151971877, driver-sizes-x86_64.
 # The stage-2 compiler image measured 15858592 bytes after the lifetime and shared-helper repairs.
 # Sizes, in BYTES, of the self-host driver binaries CI already builds, plus

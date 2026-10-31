@@ -1,0 +1,59 @@
+// spec: RH-34
+// A local read out of a borrowed structure passes to an `own` parameter at
+// its last use when its type cannot hold a handle. A `let`, an assignment and
+// a `return` get the same answer. The move costs a retain, so the borrowed
+// structure keeps its value.
+
+struct P { payload: u8[], n: i32 }
+struct S { filled: u8[], k: i32 }
+struct C { ps: P[], s: S }
+struct Row { cells: i32[], name: string }
+struct Grid { rows: Row[] }
+
+function (s: S) fill(own out: u8[]): S {
+  return S { ...s, filled: out.append(1) };
+}
+
+function (c: C) by_assign(i: i32): C {
+  let payload: u8[] = c.ps[i].payload;
+  let cur: C = C { ...c, ps: c.ps.with(i, P { ...c.ps[i], payload: [] }) };
+  cur = C { ...cur, s: cur.s.fill(payload) };
+  return C { ...cur, ps: cur.ps.with(i, P { ...cur.ps[i], payload: cur.s.filled }) };
+}
+
+function (c: C) by_let(i: i32): C {
+  let payload: u8[] = c.ps[i].payload;
+  let cur: C = C { ...c, ps: c.ps.with(i, P { ...c.ps[i], payload: [] }) };
+  let next: C = C { ...cur, s: cur.s.fill(payload) };
+  return C { ...next, ps: next.ps.with(i, P { ...next.ps[i], payload: next.s.filled }) };
+}
+
+function (c: C) by_return(i: i32): S {
+  let payload: u8[] = c.ps[i].payload;
+  return c.s.fill(payload);
+}
+
+function width(own r: Row): i32 {
+  return r.cells.append(0).len() + r.name.len();
+}
+
+function (g: Grid) first_width(): i32 {
+  let r: Row = g.rows[0];
+  let w: i32 = width(r);
+  return w;
+}
+
+function main(): i32 {
+  let c: C = C { ps: [P { payload: [7, 8], n: 1 }], s: S { filled: [], k: 0 } };
+  let a: C = c.by_assign(0);
+  let b: C = c.by_let(0);
+  let s: S = c.by_return(0);
+  print(a.s.filled.len().to_string());
+  print(b.ps[0].payload.len().to_string());
+  print(s.filled.len().to_string());
+  print(c.ps[0].payload.len().to_string());
+  let g: Grid = Grid { rows: [Row { cells: [1, 2], name: "ab" }] };
+  print(g.first_width().to_string());
+  print(g.rows[0].cells.len().to_string());
+  return 0;
+}

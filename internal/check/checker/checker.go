@@ -5633,6 +5633,8 @@ type checker struct {
 	consumingTypes map[string]bool
 	callOwnFlags   map[*ast.Call][]bool
 	scalarArgs     map[ast.Expr]bool
+	// handleFreeArgs holds the name arguments whose type cannot hold a handle.
+	handleFreeArgs map[ast.Expr]bool
 
 	shadowedGenericCalls map[*ast.Call]bool
 
@@ -10297,7 +10299,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 	}
 
 	selfMoveArgs := map[ast.Expr]bool{}
-	lastUse := lastUseArgs(fn, c.info)
+	lastUse, looseUse := lastUseArgs(fn, c.info)
 	var isOwnedExpr func(e ast.Expr) bool
 	isOwnedExpr = func(e ast.Expr) bool {
 		if c.scalarArgs[e] {
@@ -10314,7 +10316,7 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 			if _, vrOk, _ := c.resolveVariant(x.Name, x.EnumName); vrOk {
 				return true
 			}
-			return owned[x.Name] || selfMoveArgs[e] || lastUse[e] && !borrowedParam[x.Name] || c.scalarArgs[e]
+			return owned[x.Name] || selfMoveArgs[e] || lastUse[e] && !borrowedParam[x.Name] && (!looseUse[e] || c.handleFreeArgs[e]) || c.scalarArgs[e]
 		case *ast.FieldAccess:
 			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
 				return true
@@ -14609,6 +14611,12 @@ func (c *checker) checkExprInner(e ast.Expr, s *scope) ast.Type {
 					c.scalarArgs = map[ast.Expr]bool{}
 				}
 				c.scalarArgs[n.Args[i]] = true
+			}
+			if _, isName := n.Args[i].(*ast.Ident); isName && at != nil && c.holdsNoHandle(at) {
+				if c.handleFreeArgs == nil {
+					c.handleFreeArgs = map[ast.Expr]bool{}
+				}
+				c.handleFreeArgs[n.Args[i]] = true
 			}
 			if i < len(ft.Params) && at != nil {
 				expected := ft.Params[i]
