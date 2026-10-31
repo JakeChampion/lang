@@ -93,6 +93,7 @@ array_rotate_module                                  0
 array_rotate_right_basic                             0
 array_rotate_wrap_and_negative                       0
 array_sort                                           0
+array_tuple_trait_impls                              0
 array_views_see_builtin_writes                       0
 array_with_rc_elem_drop                              0
 arrow_lambda_block_body                              0
