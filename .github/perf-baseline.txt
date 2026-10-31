@@ -1,3 +1,5 @@
+# 2026-10-31: Unreferenced typed drop helpers no longer reach emission.
+# All 78 native text rows measured from the primary compiler. Pins only decrease.
 # 2026-10-31: PR #13910, measured by CI job 124561576307.
 # 2026-10-31: PR #13910, measured by CI job 124561576376.
 # 2026-10-31: PR #13923, measured by CI job 124561596792.
@@ -166,12 +168,12 @@ x86_64/array_append.text	1139
 x86_64/array_append.ir	13371022
 x86_64/array_index.text	1140
 x86_64/array_index.ir	16315371
-x86_64/array_scale_f64.text	1342
+x86_64/array_scale_f64.text	1267
 x86_64/array_scale_f64.ir	21309613
-# 2026-11-01 (#13981): CI41256013281 (perf-x86_64) reports map_int.text and map_probe_chain.text 1.14% higher, as main 31cdefec emits, and array_with.ir and record_update.ir 4.34% lower.
+# 2026-11-01 (#13981): CI41256013281 reports array_with.ir and record_update.ir 4.34% lower.
 x86_64/array_with.ir	36120760
 x86_64/array_with.text	1295
-x86_64/ascii_scan.text	1444
+x86_64/ascii_scan.text	1369
 x86_64/ascii_scan.ir	37315742
 x86_64/byte_copy_append.text	1245
 x86_64/byte_copy_append.ir	13442091
@@ -182,55 +184,55 @@ x86_64/call_overhead.ir	8250814
 x86_64/closure_call.text	916
 x86_64/closure_call.ir	41178167
 x86_64/deflate_decode.ir	34703269
-x86_64/deflate_decode.text	13325
+x86_64/deflate_decode.text	12993
 x86_64/deflate_encode.ir	43182612
-x86_64/deflate_encode.text	7372
-x86_64/enum_match.text	1099
+x86_64/deflate_encode.text	7275
+x86_64/enum_match.text	1017
 x86_64/enum_match.ir	48825092
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-x86_64/http_hello.text	17921
+x86_64/http_hello.text	15029
 x86_64/http_hello.ir	22672408
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
-x86_64/map_int.text	8575
+x86_64/map_int.text	8478
 x86_64/map_int.ir	24563319
-x86_64/map_probe_chain.text	8579
+x86_64/map_probe_chain.text	8482
 x86_64/map_probe_chain.ir	241010587
-x86_64/map_string.text	9591
+x86_64/map_string.text	9419
 x86_64/map_string.ir	53037751	2
-x86_64/ordmap_insert.text	5664
+x86_64/ordmap_insert.text	5498
 x86_64/ordmap_insert.ir	82943055
-x86_64/pmap_insert.text	3145
+x86_64/pmap_insert.text	2973
 x86_64/pmap_insert.ir	53294866
-x86_64/pvec_with.text	3048
+x86_64/pvec_with.text	2951
 x86_64/pvec_with.ir	55174232
 x86_64/record_update.ir	36120760
-x86_64/record_update.text	1386
+x86_64/record_update.text	1296
 x86_64/sort_inplace.text	1497
 x86_64/sort_inplace.ir	36583718
 x86_64/sort_ints.text	1964
 x86_64/sort_ints.ir	28152806
-x86_64/sort_strings.text	3305
+x86_64/sort_strings.text	3230
 x86_64/sort_strings.ir	105033157
-x86_64/string_build.text	2066
+x86_64/string_build.text	1991
 x86_64/string_build.ir	43427016
-x86_64/string_count_byte.text	1255
+x86_64/string_count_byte.text	1180
 x86_64/string_count_byte.ir	135589355
-x86_64/string_find_byte.text	1666
+x86_64/string_find_byte.text	1591
 x86_64/string_find_byte.ir	43687425
-x86_64/string_rfind_byte.text	1837
+x86_64/string_rfind_byte.text	1762
 x86_64/string_rfind_byte.ir	43695768
-x86_64/string_scan.text	2314
+x86_64/string_scan.text	2239
 x86_64/string_scan.ir	52670002
 x86_64/string_slice.text	895
 x86_64/string_slice.ir	38460093
-x86_64/struct_drop.text	2488
+x86_64/struct_drop.text	2413
 x86_64/struct_drop.ir	205020598
 x86_64/tokenize.text	1198
 x86_64/tokenize.ir	37860093
-x86_64/utf8_ingest_unchecked.text	8808
+x86_64/utf8_ingest_unchecked.text	8244
 x86_64/utf8_ingest_unchecked.ir	2207993
-x86_64/utf8_ingest_validated.text	9478
+x86_64/utf8_ingest_validated.text	8897
 x86_64/utf8_ingest_validated.ir	5262594
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -451,11 +453,11 @@ aarch64/array_append.text	1354
 aarch64/array_append.ir	17880204
 aarch64/array_index.text	1352
 aarch64/array_index.ir	18388238
-aarch64/array_scale_f64.text	1536
+aarch64/array_scale_f64.text	1453
 aarch64/array_scale_f64.ir	25340945
 aarch64/array_with.text	1508
 aarch64/array_with.ir	34494442
-aarch64/ascii_scan.text	1754
+aarch64/ascii_scan.text	1671
 aarch64/ascii_scan.ir	68639570
 aarch64/byte_copy_append.text	1478
 aarch64/byte_copy_append.ir	31926661
@@ -467,13 +469,13 @@ aarch64/closure_call.text	1149
 aarch64/closure_call.ir	46002179
 # 2026-10-26 (#13496): CI40296315314 reports seven lower ARM64 instruction counts.
 aarch64/deflate_decode.ir	36429262
-aarch64/deflate_decode.text	14230
+aarch64/deflate_decode.text	13839
 aarch64/deflate_encode.ir	44105319
-aarch64/deflate_encode.text	8033
-aarch64/enum_match.text	1316
+aarch64/deflate_encode.text	7910
+aarch64/enum_match.text	1227
 aarch64/enum_match.ir	41175104
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	19090
+aarch64/http_hello.text	15945
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
 aarch64/http_hello.ir	24448615
 aarch64/int_loop.text	330
@@ -483,43 +485,43 @@ aarch64/map_int.text	8612
 aarch64/map_int.ir	23869629
 aarch64/map_probe_chain.text	8622
 aarch64/map_probe_chain.ir	233221143
-aarch64/map_string.text	9790
+aarch64/map_string.text	9599
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 aarch64/map_string.ir	53247468	2
-aarch64/ordmap_insert.text	6058
+aarch64/ordmap_insert.text	5873
 aarch64/ordmap_insert.ir	98457462
-aarch64/pmap_insert.text	3433
+aarch64/pmap_insert.text	3242
 aarch64/pmap_insert.ir	63996220
-aarch64/pvec_with.text	3310
+aarch64/pvec_with.text	3202
 aarch64/pvec_with.ir	59221804
-aarch64/record_update.text	1608
+aarch64/record_update.text	1513
 aarch64/record_update.ir	34494442
 aarch64/sort_inplace.text	1686
 # 2026-10-29: main 0c591828 (Perf, perf-aarch64 and perf-x86_64) reports sort_inplace.ir 4.9% and 7.3% lower.
 aarch64/sort_inplace.ir	43684079
 aarch64/sort_ints.text	2175
 aarch64/sort_ints.ir	30178876
-aarch64/sort_strings.text	3677
+aarch64/sort_strings.text	3594
 aarch64/sort_strings.ir	105486307
-aarch64/string_build.text	2444
+aarch64/string_build.text	2361
 aarch64/string_build.ir	47221466
-aarch64/string_count_byte.text	1528
+aarch64/string_count_byte.text	1445
 aarch64/string_count_byte.ir	295207223
-aarch64/string_find_byte.text	1984
+aarch64/string_find_byte.text	1901
 aarch64/string_find_byte.ir	55921279
-aarch64/string_rfind_byte.text	2107
+aarch64/string_rfind_byte.text	2024
 aarch64/string_rfind_byte.ir	55941911
-aarch64/string_scan.text	2648
+aarch64/string_scan.text	2565
 aarch64/string_scan.ir	59787692
 aarch64/string_slice.text	1132
 aarch64/string_slice.ir	43620107
-aarch64/struct_drop.text	2754
+aarch64/struct_drop.text	2671
 aarch64/struct_drop.ir	222380901
 aarch64/tokenize.text	1388
 aarch64/tokenize.ir	38350109
-aarch64/utf8_ingest_unchecked.text	9277
+aarch64/utf8_ingest_unchecked.text	8656
 aarch64/utf8_ingest_unchecked.ir	2689511
-aarch64/utf8_ingest_validated.text	9901
+aarch64/utf8_ingest_validated.text	9261
 aarch64/utf8_ingest_validated.ir	6229114
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
@@ -529,9 +531,9 @@ x86_64/perceus_deriv.text	2720
 x86_64/perceus_deriv.ir	67372410
 x86_64/perceus_nqueens.text	1555
 x86_64/perceus_nqueens.ir	92759479
-x86_64/perceus_rbtree.text	2873
+x86_64/perceus_rbtree.text	2872
 x86_64/perceus_rbtree.ir	54772423
-x86_64/perceus_rbtree_ck.text	3123
+x86_64/perceus_rbtree_ck.text	2976
 x86_64/perceus_rbtree_ck.ir	54358823
 aarch64/perceus_cfold.text	2178
 aarch64/perceus_cfold.ir	62299589
@@ -539,7 +541,7 @@ aarch64/perceus_deriv.text	3026
 aarch64/perceus_deriv.ir	83086981
 aarch64/perceus_nqueens.text	1805
 aarch64/perceus_nqueens.ir	106638432
-aarch64/perceus_rbtree.text	3162
+aarch64/perceus_rbtree.text	3158
 aarch64/perceus_rbtree.ir	59717393
-aarch64/perceus_rbtree_ck.text	3399
+aarch64/perceus_rbtree_ck.text	3251
 aarch64/perceus_rbtree_ck.ir	59058355
