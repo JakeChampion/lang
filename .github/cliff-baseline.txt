@@ -1,3 +1,4 @@
+# 2026-10-31: PR #13926, measured by CI job 124561605529.
 # 2026-10-31: PR #13897 at 54001e2. CI run 41153255512, perf-x86_64.
 # Record the lane's measured changes after the lifetime and shared-helper repairs.
 # 2026-10-30: scripts/cliff-bench on #13888 at 3ca7b6c3. Main at b72ee5c9 measures 41,289,144 bytes / 346,519 crossings.
@@ -135,5 +136,5 @@
 # Main measured these values at eb0e5fdc0, and the run on #13768 agrees.
 
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64) reports checker.cliff_bytes +1.03% and cliff_count +3.12%.
-x86_64/checker.cliff_bytes	42857896
-x86_64/checker.cliff_count	347670
+x86_64/checker.cliff_bytes	45543104
+x86_64/checker.cliff_count	337143

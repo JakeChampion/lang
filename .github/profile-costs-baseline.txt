@@ -1,3 +1,4 @@
+# 2026-10-31: PR #13926, measured by CI job 124561605529.
 # 2026-10-31: PR #13897 at 54001e2. CI run 41153255512, perf-x86_64.
 # Record the lane's measured changes after the lifetime and shared-helper repairs.
 # 2026-10-29: #13863 (#13061) at 798f4251, from a local profile-costs run. A callback that a
@@ -57,14 +58,14 @@ profile/arm64-linux/enum_match.minimal.emit	1163
 profile/arm64-linux/enum_match.safe.bytes	66304
 profile/arm64-linux/enum_match.safe.emit	1316
 # 2026-10-29: main 0c591828 (Perf, perf-x86_64). http_hello links no TLS (#12885); int_loop.minimal.emit +3 instructions.
-profile/arm64-linux/http_hello.diagnostic.bytes	202400
-profile/arm64-linux/http_hello.diagnostic.emit	17870
+profile/arm64-linux/http_hello.diagnostic.bytes	204592
+profile/arm64-linux/http_hello.diagnostic.emit	18097
 profile/arm64-linux/http_hello.hardened.bytes	140472
-profile/arm64-linux/http_hello.hardened.emit	20689
+profile/arm64-linux/http_hello.hardened.emit	21012
 profile/arm64-linux/http_hello.minimal.bytes	74936
 profile/arm64-linux/http_hello.minimal.emit	14913
 profile/arm64-linux/http_hello.safe.bytes	140472
-profile/arm64-linux/http_hello.safe.emit	18861
+profile/arm64-linux/http_hello.safe.emit	19122
 profile/arm64-linux/int_loop.diagnostic.bytes	67768
 profile/arm64-linux/int_loop.diagnostic.emit	502
 profile/arm64-linux/int_loop.hardened.bytes	65792
@@ -129,12 +130,12 @@ profile/x86-64-linux/deflate_decode.diagnostic.bytes	115016
 profile/x86-64-linux/deflate_decode.diagnostic.emit	13109
 profile/x86-64-linux/deflate_decode.diagnostic.ir	46682910
 profile/x86-64-linux/deflate_decode.hardened.bytes	58912
-profile/x86-64-linux/deflate_decode.hardened.emit	13639
+profile/x86-64-linux/deflate_decode.hardened.emit	13783
 profile/x86-64-linux/deflate_decode.hardened.ir	34763444
 profile/x86-64-linux/deflate_decode.minimal.bytes	49280
 profile/x86-64-linux/deflate_decode.minimal.emit	11699
 profile/x86-64-linux/deflate_decode.minimal.ir	43446703
-profile/x86-64-linux/deflate_decode.safe.bytes	53376
+profile/x86-64-linux/deflate_decode.safe.bytes	57520
 profile/x86-64-linux/deflate_decode.safe.emit	13325
 profile/x86-64-linux/deflate_decode.safe.ir	34703269
 profile/x86-64-linux/enum_match.diagnostic.bytes	12704
@@ -149,17 +150,17 @@ profile/x86-64-linux/enum_match.minimal.ir	57825092
 profile/x86-64-linux/enum_match.safe.bytes	8240
 profile/x86-64-linux/enum_match.safe.emit	1099
 profile/x86-64-linux/enum_match.safe.ir	48825092
-profile/x86-64-linux/http_hello.diagnostic.bytes	128800
-profile/x86-64-linux/http_hello.diagnostic.emit	16411
+profile/x86-64-linux/http_hello.diagnostic.bytes	130944
+profile/x86-64-linux/http_hello.diagnostic.emit	16689
 profile/x86-64-linux/http_hello.diagnostic.ir	35644340
 profile/x86-64-linux/http_hello.hardened.bytes	80352
-profile/x86-64-linux/http_hello.hardened.emit	17937
+profile/x86-64-linux/http_hello.hardened.emit	18237
 profile/x86-64-linux/http_hello.hardened.ir	25664871
-profile/x86-64-linux/http_hello.minimal.bytes	60688
-profile/x86-64-linux/http_hello.minimal.emit	14286
-profile/x86-64-linux/http_hello.minimal.ir	25120450
-profile/x86-64-linux/http_hello.safe.bytes	72960
-profile/x86-64-linux/http_hello.safe.emit	17650
+profile/x86-64-linux/http_hello.minimal.bytes	64640
+profile/x86-64-linux/http_hello.minimal.emit	14490
+profile/x86-64-linux/http_hello.minimal.ir	24088401
+profile/x86-64-linux/http_hello.safe.bytes	77072
+profile/x86-64-linux/http_hello.safe.emit	17948
 profile/x86-64-linux/http_hello.safe.ir	22672408
 profile/x86-64-linux/int_loop.diagnostic.bytes	6320
 profile/x86-64-linux/int_loop.diagnostic.emit	473
@@ -174,7 +175,7 @@ profile/x86-64-linux/int_loop.safe.bytes	4096
 profile/x86-64-linux/int_loop.safe.emit	250
 profile/x86-64-linux/int_loop.safe.ir	12000077
 profile/x86-64-linux/map_string.diagnostic.bytes	135064
-profile/x86-64-linux/map_string.diagnostic.emit	10888
+profile/x86-64-linux/map_string.diagnostic.emit	11035
 profile/x86-64-linux/map_string.diagnostic.ir	58790275
 profile/x86-64-linux/map_string.hardened.bytes	46032
 profile/x86-64-linux/map_string.hardened.emit	10053
