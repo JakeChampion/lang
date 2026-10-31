@@ -2584,6 +2584,17 @@ pub function (r: HttpRequest) with_json(body: string): HttpRequest {
   return r.with_body(body).with_header("Content-Type", "application/json");
 }
 
+pub struct Outgoing { method: string, scheme: string, authority: string, target: string, headers: HeaderMap, body: u8[], trailers: HeaderMap }
+
+pub function outgoing(method: string, scheme: string, authority: string, target: string): Outgoing {
+  let none: u8[] = [];
+  return Outgoing { method: method, scheme: scheme, authority: authority, target: target, headers: headers.new(), body: none, trailers: headers.new() };
+}
+
+pub function (r: HttpRequest) outgoing(scheme: string): Outgoing {
+  return Outgoing { method: r.method, scheme: scheme, authority: r.headers.get("host").unwrap_or(""), target: r.path, headers: r.headers, body: r.body_bytes(), trailers: r.trailers };
+}
+
 pub function (r: HttpRequest) query(name: string): Option[string] {
   return url.query_get(__query_of(r.path), name);
 }

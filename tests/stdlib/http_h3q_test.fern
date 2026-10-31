@@ -243,7 +243,7 @@ function get(path: string): HttpRequest {
 }
 
 function asked(e: Ends, req: HttpRequest): Result[Ends, string] {
-  let (c, id) = e.client.request(req, "https")?;
+  let (c, id) = e.client.request(req.outgoing("https"))?;
   return Ok(Ends { ...e, client: c });
 }
 
@@ -353,7 +353,7 @@ function test_close(): test.TestOutcome {
         return test.fail("no server");
       };
       e = settled(Ends { ...e, server: Some(s.shutdown()) }, 6);
-      let after_goaway: string = e.client.ready().to_string() + " " + e.client.request(get("/late"), "https").is_err().to_string();
+      let after_goaway: string = e.client.ready().to_string() + " " + e.client.request(get("/late").outgoing("https")).is_err().to_string();
       let Some(s2) = e.server else {
         return test.fail("no server");
       };

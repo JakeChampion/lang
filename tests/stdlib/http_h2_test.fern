@@ -582,8 +582,8 @@ function exchanged(p: Pair, to_server: u8[], to_client: u8[]): Pair {
   return Pair { client: client, server: server, events: events };
 }
 
-function outgoing(method: string, path: string, body: string, trailers: HeaderMap): h2.Outgoing {
-  return h2.Outgoing { method: method, scheme: "https", authority: "example.test", path: path, headers: headers.new().append("Accept", "text/plain").append("Host", "wrong.test").append("Connection", "close"), body: body.bytes(), trailers: trailers };
+function outgoing(method: string, path: string, body: string, trailers: HeaderMap): http.Outgoing {
+  return http.Outgoing { method: method, scheme: "https", authority: "example.test", target: path, headers: headers.new().append("Accept", "text/plain").append("Host", "wrong.test").append("Connection", "close"), body: body.bytes(), trailers: trailers };
 }
 
 function test_client_round_trip(): test.TestOutcome {
