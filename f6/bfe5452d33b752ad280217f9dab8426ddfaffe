@@ -179,3 +179,7 @@ bootstrap/arm64-darwin/stage2.size_bytes	17364561
 bootstrap/arm64-darwin/stage3.wall_s	47
 bootstrap/arm64-darwin/stage3.peak_rss_mb	2940
 bootstrap/arm64-darwin/stage3.size_bytes	17364561
+
+# lane: append-cliff-x86_64
+x86_64/checker.cliff_bytes	45486408
+x86_64/checker.cliff_count	337122
