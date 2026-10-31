@@ -84,8 +84,9 @@ function integer_cases(): i32 {
       if (rendered(e) != e.message()) {
         return 14;
       }
+      let message: string = e.message();
       let boxed: dyn error.Error = e;
-      if (boxed.message() != e.message()) {
+      if (boxed.message() != message) {
         return 15;
       }
     },

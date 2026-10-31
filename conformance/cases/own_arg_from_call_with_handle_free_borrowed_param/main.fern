@@ -1,0 +1,39 @@
+// A borrowed parameter that cannot hold a handle cannot lend one to the
+// call's result. So a value matched out of the result is owned, and it
+// passes to an `own` parameter, although its type holds a handle.
+
+struct A { items: i32[], w: Writer }
+struct B { w: Writer }
+type V = A | B;
+
+function step(own a: A, name: string): Option[V] {
+  if (name == "x") {
+    return None;
+  }
+  return Some(A { ...a, items: a.items.append(name.len()) });
+}
+
+function size(own v: V): i32 {
+  match (v) {
+    A(a) => {
+      return a.items.len();
+    },
+    B(_) => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function run(own a: A, name: string): i32 {
+  let Some(out) = step(a, name) else {
+    return 0 - 1;
+  };
+  return size(out);
+}
+
+function main(): i32 {
+  print(run(A { items: [1], w: stdout() }, "yz").to_string());
+  print(run(A { items: [], w: stdout() }, "x").to_string());
+  return 0;
+}

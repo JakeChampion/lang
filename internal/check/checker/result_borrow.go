@@ -232,7 +232,8 @@ func (c *checker) signatureResultBorrows(name string) bool {
 		if pt == nil || !ast.IsPointerType(pt) {
 			continue
 		}
-		if i >= len(flags) || !flags[i] {
+		// A parameter that cannot hold a handle cannot lend one to the result.
+		if (i >= len(flags) || !flags[i]) && !c.holdsNoHandle(pt) {
 			return true
 		}
 	}
@@ -240,7 +241,8 @@ func (c *checker) signatureResultBorrows(name string) bool {
 }
 
 // A call scrutinee is owned when its result is fresh by signature: a
-// variant, a fresh method, or a function with no borrowed pointer parameter.
+// variant, a fresh method, or a function with no borrowed pointer parameter
+// that can hold a handle.
 func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) bool {
 	if call, ok := tag.(*ast.Call); ok {
 		id, isIdent := call.Callee.(*ast.Ident)

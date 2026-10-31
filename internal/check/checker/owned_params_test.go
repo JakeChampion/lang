@@ -740,6 +740,13 @@ function f(own o: Option[i32[]]): i32 {
 
 func TestOwnGuardRejectsAResultPayloadThatMayBorrow(t *testing.T) {
 	wantE051(t, "result-payload-through-a-borrowing-callee", freshResultPrelude+`
+function finish(own w: Writer): i32 { return 0; }
+function relay(r: Result[Writer, string]): Result[Writer, string] { return r; }
+function f(r: Result[Writer, string]): i32 {
+    let Ok(w) = relay(r) else { return 0; };
+    return finish(w);
+}`)
+	wantOK(t, "handle-free-payload-through-a-borrowing-callee", freshResultPrelude+`
 function relay(r: Result[i32[], string]): Result[i32[], string] { return r; }
 function f(r: Result[i32[], string]): i32 {
     let Ok(xs) = relay(r) else { return 0; };
@@ -1907,4 +1914,55 @@ function (h: H) done(): i32 {
 	} {
 		wantE051(t, tc.name, borrowedReadPrelude+tc.body)
 	}
+}
+
+// Issue #13935: a borrowed parameter that cannot hold a handle does not lend
+// one to the call's result.
+const handleFreeParamPrelude = `struct A { items: i32[], w: Writer }
+struct B { w: Writer }
+type V = A | B;
+function size(own v: V): i32 { return 0; }
+`
+
+func TestOwnGuardCallResultIgnoresHandleFreeBorrowedParams(t *testing.T) {
+	wantOK(t, "string-param", handleFreeParamPrelude+`
+function step(own a: A, name: string): Option[V] {
+    if (name == "x") { return None; }
+    return Some(A { ...a, items: a.items.append(1) });
+}
+function f(own a: A): i32 {
+    let Some(out) = step(a, "y") else { return 1; };
+    return size(out);
+}`)
+	wantE051(t, "handle-param", handleFreeParamPrelude+`
+function pick(own a: A, h: B): Option[V] {
+    if (a.items.len() == 0) { return Some(h); }
+    return Some(a);
+}
+function f(own a: A, h: B): i32 {
+    let Some(out) = pick(a, h) else { return 1; };
+    return size(out);
+}`)
+}
+
+// A for-each over an owned array borrows it when the array is read again
+// after the loop, and takes it at its last use.
+func TestOwnedForEachTakesOnlyAtLastUse(t *testing.T) {
+	wantOK(t, "read-after-the-loop", `
+function count(own xs: string[]): i32 { return xs.len(); }
+function g(own names: string[]): i32 {
+    for name in names {
+        if (name == "bad") { return 0; }
+    }
+    return count(names);
+}`)
+	wantE050(t, "consumed-before-the-loop", `
+function count(own xs: string[]): i32 { return xs.len(); }
+function g(own names: string[]): i32 {
+    let n: i32 = count(names);
+    for name in names {
+        if (name == "bad") { return 0; }
+    }
+    return n;
+}`)
 }

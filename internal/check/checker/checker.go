@@ -10523,10 +10523,16 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.FuncDecl:
 			walkNested(x.Params, x.Body, moved)
 		case *ast.Var:
-			// A for-each over an own parameter's array takes it: each
-			// element is the loop's, and the array is not read again.
+			// A for-each over an owned array takes it at its last use, and
+			// borrows it when the array is read again after the loop.
 			if strings.HasPrefix(x.Name, ast.ForEachIterPrefix) {
 				if id, ok := x.Init.(*ast.Ident); ok && owned[id.Name] {
+					if !lastUse[x.Init] {
+						if at, isMoved := moved[id.Name]; isMoved {
+							c.errfCode(id.Pos(), "E050", "use of owned parameter %q after it was consumed (moved at line %d)", id.Name, at.Line)
+						}
+						return
+					}
 					recordExprUses(x.Init, moved)
 					moved[id.Name] = id.Pos()
 					return

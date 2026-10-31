@@ -1473,7 +1473,8 @@ pub function assert_file_contains(path: string, needle: string): TestOutcome {
 pub function must_temp_dir(r: TestRunner, prefix: string): (string, TestRunner) {
   match (temp_dir(prefix)) {
     Ok(dir) => {
-      return (dir, r.defer_cleanup(dir));
+      let cleaned: TestRunner = r.defer_cleanup(dir);
+      return (dir, cleaned);
     },
     Err(_) => {
       return ("", r.skip("temp_dir " + prefix, "tempdir creation failed"));
