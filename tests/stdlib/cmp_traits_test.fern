@@ -1,4 +1,5 @@
 import "core/cmp";
+import "core/map";
 import "std/json";
 import "std/ndarray";
 import "std/ordmap";
@@ -55,6 +56,21 @@ function test_pset_nested(): test.TestOutcome {
   return test.assert_true(outer.len() == 2 && outer.contains(pset.of([2, 1])) && !outer.contains(pset.of([1])));
 }
 
+function test_pset_map_keys(): test.TestOutcome {
+  let byset: pmap.PMap[pset.PSet[i32], string] = pmap.new();
+  byset = byset.insert(pset.of([1, 2]), "pair");
+  if (byset.get_or(pset.of([2, 1]), "none") != "pair") {
+    return test.fail("a pset is a key of a pmap");
+  }
+  let m: Map[pset.PSet[i32], string] = map_new(4);
+  m = m.insert(pset.of([1, 2]), "pair");
+  m = m.insert(pset.of([3]), "one");
+  if (m.len() != 2 || m.contains(pset.of([4]))) {
+    return test.fail("a pset is a key of a builtin Map");
+  }
+  return test.assert_eq(m.get_or(pset.of([2, 1]), "none"), "pair");
+}
+
 function test_pset_display(): test.TestOutcome {
   return test.assert_eq(pset.of([7]).to_string() + pset.of(["x"]).to_string(), "{7}{x}");
 }
@@ -84,6 +100,18 @@ function test_pmap(): test.TestOutcome {
     return test.fail("pmap equality compares values and keys");
   }
   return test.assert_eq(pmap.from([(1, "x")]).to_string(), "{1: x}");
+}
+
+function test_pmap_nested(): test.TestOutcome {
+  let a: pmap.PMap[string, i32] = pmap.from([("a", 1), ("b", 2)]);
+  let b: pmap.PMap[string, i32] = pmap.from([("b", 2), ("a", 1)]);
+  let outer: pset.PSet[pmap.PMap[string, i32]] = pset.of([a, b, a.remove("a")]);
+  if (outer.len() != 2 || !outer.contains(b)) {
+    return test.fail("a pmap is an element of a pset");
+  }
+  let keyed: pmap.PMap[pmap.PMap[string, i32], i32] = pmap.new();
+  keyed = keyed.insert(a, 5);
+  return test.assert_eq(keyed.get_or(b, 0), 5);
 }
 
 function test_ordmap(): test.TestOutcome {
@@ -179,9 +207,11 @@ function main(): i32 {
   r = r.it("SemVer Display", test_semver_display);
   r = r.it("PSet Eq and Hash", test_pset);
   r = r.it("PSet in a PSet", test_pset_nested);
+  r = r.it("PSet as a PMap key and a Map key", test_pset_map_keys);
   r = r.it("PSet Display", test_pset_display);
   r = r.it("OrdSet Eq, Ord, Hash and Display", test_ordset);
   r = r.it("PMap Eq, Hash and Display", test_pmap);
+  r = r.it("PMap in a PSet and as a PMap key", test_pmap_nested);
   r = r.it("OrdMap Eq, Ord and Hash", test_ordmap);
   r = r.it("OrdMap Display", test_ordmap_display);
   r = r.it("PVec Eq, Ord and Hash", test_pvec);
