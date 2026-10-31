@@ -178,13 +178,17 @@ func TestLockRoundTrip(t *testing.T) {
 		{Name: "bar", Version: Version{2, 0, 0}, Source: Source{Path: filepath.FromSlash("/pkgs/bar")}},
 		{Name: "zero", Version: Version{}, Source: Source{Path: filepath.FromSlash("/pkgs/zero")}},
 	}
-	if err := WriteLock(dir, sel); err != nil {
+	if err := WriteLock(dir, "12", sel); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ReadLock(dir)
+	lock, err := ReadLock(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if lock.IndexSerial != "12" {
+		t.Errorf("index serial round-trip = %q, want 12", lock.IndexSerial)
+	}
+	got := lock.Packages
 	if len(got) != 3 || got["foo"].Version.String() != "1.2.0" || got["foo"].Source.Hash != "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" {
 		t.Errorf("foo round-trip wrong: %+v", got["foo"])
 	}
@@ -220,10 +224,11 @@ func TestReadLockTrailingComments(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, LockFileName), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ReadLock(dir)
+	lock, err := ReadLock(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	got := lock.Packages
 	if got["foo"].Version.String() != "1.2.0" || got["foo"].Source.Path != "/pkgs/foo" {
 		t.Errorf("foo = %+v", got["foo"])
 	}

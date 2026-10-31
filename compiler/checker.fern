@@ -1634,6 +1634,37 @@ function cmp_method_receiver(t: typeinfo.Type): string {
   return "";
 }
 
+function core_cmp_enum(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnion(u) = t {
+    return u.name == "Option" || u.name == "Result";
+  }
+  return false;
+}
+
+// cmp_hint says where a cmp trait for t can come from. core/cmp implements Eq,
+// Ord and Hash for Option and Result when their type arguments do, so the hint
+// moves to the first type argument that is a struct or an enum. Display has no
+// impl for those, nor for an array or a tuple, so the hint says to format the
+// parts instead of offering an impl that the orphan rule would refuse.
+function cmp_hint(t: typeinfo.Type, trait_name: string): string {
+  let short: string = slice_unchecked(trait_name, 4, trait_name.len()) + "";
+  let label: string = util.demangle(type_label(t));
+  if (core_cmp_enum(t) && trait_name != "cmp.Display") {
+    if let typeinfo.TypeUnion(u) = t {
+      for a in u.args {
+        if (cmp_method_receiver(a) != "") {
+          return label + " implements `" + short + "` when its type arguments do: " + cmp_hint(a, trait_name);
+        }
+      }
+    }
+  }
+  let recv: string = cmp_method_receiver(t);
+  if (recv == "" || core_cmp_enum(t)) {
+    return label + " cannot implement `" + short + "`: convert its parts to strings first";
+  }
+  return util.derive_hint(recv, trait_name, trait_name);
+}
+
 function (s: Scope) has_ord_cmp(t: typeinfo.Type): boolean {
   let recv: string = cmp_method_receiver(t);
   return recv != "" && s.has_method("cmp", recv);
@@ -4646,6 +4677,7 @@ function builtin_sigs(): string[] {
     "buf_push_bytes_filtered(usize, u8[], u8[]): void",
     "buf_push_bytes_mapped(usize, u8[], u8[]): void",
     "buf_push_bytes_range(usize, u8[], i32, i32): void",
+    "buf_push_decimal(usize, u64): void",
     "buf_push_expanded(usize, string, u8[]): void",
     "buf_push_filtered(usize, string, u8[]): void",
     "buf_push_mapped(usize, string, u8[]): void",
@@ -8977,9 +9009,65 @@ function slc_call_name_at(e: ast.Expr, own acc: string[]): string[] {
   return acc;
 }
 
-function slc_calls_any(calls: util.NameIndex, marked: util.NameIndex): boolean {
+function slc_callees(calls: util.NameIndex, names: util.NameIndex): i32[] {
+  let out: i32[] = [];
   for name in calls.names {
-    if (marked.has(name)) {
+    let k: i32 = names.chain(name);
+    while (k >= 0) {
+      if (names.names[k] == name) {
+        out = out.append(k);
+      }
+      k = names.next[k];
+    }
+  }
+  return out;
+}
+
+// slc_callee_order puts each function after the functions its call names reach, except in a cycle.
+function slc_callee_order(calls: util.NameIndex[], names: util.NameIndex): i32[] {
+  let edges: i32[][] = [];
+  for c in calls {
+    edges = edges.append(slc_callees(c, names));
+  }
+  let order: i32[] = [];
+  let seen: boolean[] = __alloc_bool(calls.len());
+  let stack: i32[] = __alloc_i32(calls.len());
+  let next: i32[] = __alloc_i32(calls.len());
+  let r: i32 = 0;
+  while (r < calls.len()) {
+    if (!seen[r]) {
+      seen = seen.with(r, true);
+      stack = stack.with(0, r);
+      next = next.with(0, 0);
+      let depth: i32 = 1;
+      while (depth > 0) {
+        let v: i32 = stack[depth - 1];
+        let e: i32 = next[depth - 1];
+        if (e < edges[v].len()) {
+          next = next.with(depth - 1, e + 1);
+          let w: i32 = edges[v][e];
+          if (!seen[w]) {
+            seen = seen.with(w, true);
+            stack = stack.with(depth, w);
+            next = next.with(depth, 0);
+            depth = depth + 1;
+          }
+        } else {
+          order = order.append(v);
+          depth = depth - 1;
+        }
+      }
+    }
+    r = r + 1;
+  }
+  return order;
+}
+
+// slc_stale says a callee name changed its summary after the walk at stamp `walked`.
+function slc_stale(calls: util.NameIndex, names: util.NameIndex, changed: i32[], walked: i32): boolean {
+  for name in calls.names {
+    let at: i32 = names.find(name);
+    if (at >= 0 && changed[at] > walked) {
       return true;
     }
   }
@@ -13852,9 +13940,12 @@ function display_arg_diags(c: ast.ExprCall, s: Scope): util.Diag[] {
     return [];
   }
   let label: string = type_label(at);
+  let advice: string = "give " + label + " a `to_string(): string` method, or " + util.derive_hint(display_dispatch_name(at), "cmp.Display", "cmp.Display");
+  if (cmp_method_receiver(at) == "" || core_cmp_enum(at)) {
+    advice = cmp_hint(at, "cmp.Display");
+  }
   return [dg_at(
-    "E038", "argument 1 to \"" + name + "\": " + label + " does not implement `Display` (no `to_string(): string` in scope) — give "
-      + label + " a `to_string(): string` method, or " + util.derive_hint(display_dispatch_name(at), "cmp.Display", "cmp.Display"),
+    "E038", "argument 1 to \"" + name + "\": " + label + " does not implement `Display` (no `to_string(): string` in scope) — " + advice,
     expr_line(c.args[0]), expr_col(c.args[0]),
   )];
 }
@@ -14540,7 +14631,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
       if (eqrecv == "") {
         out = out.append(dg_at("E041", "cannot compare values of type " + type_label(blt) + " with \"" + b.op + "\": structural equality for arrays / slices / tuples is not supported — compare elements individually", b.line, b.col));
       } else if (!s.has_method("eq", eqrecv)) {
-        out = out.append(dg_at("E041", "cannot compare values of type " + util.demangle(type_label(blt)) + " with \"" + b.op + "\": type does not implement `Eq` — " + util.derive_hint(eqrecv, "cmp.Eq", "cmp.Eq") + ", so `==` can use structural equality", b.line, b.col));
+        out = out.append(dg_at("E041", "cannot compare values of type " + util.demangle(type_label(blt)) + " with \"" + b.op + "\": type does not implement `Eq` — " + cmp_hint(blt, "cmp.Eq") + ", so `==` can use structural equality", b.line, b.col));
       }
     }
   }
@@ -14623,7 +14714,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
           if (ordrecv == "") {
             out = out.append(dg_at("E041", "cannot order values of type " + type_label(olt) + " with \"" + b.op + "\": structural ordering for arrays / slices / tuples is not supported", b.line, b.col));
           } else if (!s.has_ord_cmp(olt)) {
-            out = out.append(dg_at("E041", "cannot order values of type " + util.demangle(type_label(olt)) + " with \"" + b.op + "\": type does not implement `Ord` — " + util.derive_hint(ordrecv, "cmp.Ord", "cmp.Ord") + ", so ordering can use structural comparison", b.line, b.col));
+            out = out.append(dg_at("E041", "cannot order values of type " + util.demangle(type_label(olt)) + " with \"" + b.op + "\": type does not implement `Ord` — " + cmp_hint(olt, "cmp.Ord") + ", so ordering can use structural comparison", b.line, b.col));
           }
         } else if (o_both_int) {
           out = out.append(mixed_int_diag(b.op, olt, ort, b.line, b.col));
@@ -20831,25 +20922,106 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
   return out;
 }
 
-// A type that cannot hold a handle: a number, a boolean, a char, a string,
-// or an array, option, result or tuple of such types.
-function ow_holds_no_handle(tn: string): boolean {
-  let n: i32 = tn.len();
-  if (n > 2 && tn[n - 2] == b'[' && tn[n - 1] == b']') {
-    return ow_holds_no_handle(slice_unchecked(tn, 0, n - 2) + "");
+// The struct declarations a type name resolves against, and the types with
+// a method that consumes its receiver.
+struct OwnDecls { structs: parser.StructDecl[], snames: util.NameIndex, consuming: util.NameIndex }
+
+function ow_decls(mod: parser.Module, snames: util.NameIndex): OwnDecls {
+  let names: string[] = [];
+  for fn in mod.funcs {
+    if (fn.receiver_own) {
+      let open: i32 = util.index_of_sub(fn.receiver_type, "[");
+      if (open > 0) {
+        names = names.append(slice_unchecked(fn.receiver_type, 0, open) + "");
+      } else {
+        names = names.append(fn.receiver_type);
+      }
+    }
   }
-  if (n > 2 && tn[0] == b'(' && tn[n - 1] == b')') {
-    return ow_all_hold_no_handle(parser.split_top_commas(slice_unchecked(tn, 1, n - 1) + ""));
-  }
-  if (n > 8 && tn[n - 1] == b']' && (util.str_has_prefix(tn, "Option[") || util.str_has_prefix(tn, "Result["))) {
-    return ow_all_hold_no_handle(parser.split_top_commas(slice_unchecked(tn, 7, n - 1) + ""));
-  }
-  return util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "string", "str", "void"], tn);
+  return OwnDecls { structs: mod.structs, snames: snames, consuming: util.name_index(names) };
 }
 
-function ow_all_hold_no_handle(ts: string[]): boolean {
+// A type that cannot hold a handle: a number, a boolean, a char, a string,
+// a function, or an array, option, result, tuple, struct or enum whose parts
+// are all such types. Reader, Writer and Dir are handles, and so is a type
+// with a method that consumes its receiver. A function cannot consume what
+// it captures, so it cannot close a handle.
+function ow_holds_no_handle(tn: string, dx: OwnDecls): boolean {
+  return ow_no_handle_in(tn, dx, [], []);
+}
+
+// The type parameters in free stand for arguments that hold no handle. seen
+// holds the declarations on the path, so a recursive type is decided by its
+// other parts.
+function ow_no_handle_in(tn: string, dx: OwnDecls, free: string[], seen: string[]): boolean {
+  let n: i32 = tn.len();
+  if (tn == "fn" || util.index_of_sub(tn, "=>") >= 0) {
+    return true;
+  }
+  if (n > 2 && tn[n - 2] == b'[' && tn[n - 1] == b']') {
+    return ow_no_handle_in(slice_unchecked(tn, 0, n - 2) + "", dx, free, seen);
+  }
+  if (n > 2 && tn[0] == b'[' && tn[n - 1] == b']') {
+    return ow_no_handle_in(slice_unchecked(tn, 1, n - 1) + "", dx, free, seen);
+  }
+  if (n > 2 && tn[0] == b'(' && tn[n - 1] == b')') {
+    return ow_all_no_handle_in(parser.split_top_commas(slice_unchecked(tn, 1, n - 1) + ""), dx, free, seen);
+  }
+  if (util.has_str(["i8", "i16", "i32", "i64", "u8", "u16", "u32", "u64", "usize", "isize", "f32", "f64", "boolean", "char", "string", "str", "void"], tn) || util.has_str(free, tn)) {
+    return true;
+  }
+  let name: string = tn;
+  let open: i32 = util.index_of_sub(tn, "[");
+  if (open > 0 && tn[n - 1] == b']') {
+    name = slice_unchecked(tn, 0, open) + "";
+    if (!ow_all_no_handle_in(parser.split_top_commas(slice_unchecked(tn, open + 1, n - 1) + ""), dx, free, seen)) {
+      return false;
+    }
+  }
+  if (name == "Option" || name == "Result" || util.has_str(seen, name)) {
+    return true;
+  }
+  if (dx.consuming.has(name) || util.has_str(["Reader", "Writer", "Dir"], name)) {
+    return false;
+  }
+  return ow_decl_holds_no_handle(name, dx, seen.append(name));
+}
+
+// A declared struct, or every variant of a declared enum, whose fields hold
+// no handle. A name with no declaration can hold one.
+function ow_decl_holds_no_handle(name: string, dx: OwnDecls, seen: string[]): boolean {
+  let i: i32 = dx.snames.chain(name);
+  while (i >= 0) {
+    let sd: parser.StructDecl = dx.structs[i];
+    if (sd.name == name && sd.enum_owner == "") {
+      return ow_fields_hold_no_handle(sd, dx, seen);
+    }
+    i = dx.snames.next[i];
+  }
+  let found: boolean = false;
+  for sd in dx.structs {
+    if (sd.enum_owner == name) {
+      if (!ow_fields_hold_no_handle(sd, dx, seen)) {
+        return false;
+      }
+      found = true;
+    }
+  }
+  return found;
+}
+
+function ow_fields_hold_no_handle(sd: parser.StructDecl, dx: OwnDecls, seen: string[]): boolean {
+  for f in sd.fields {
+    if (!ow_no_handle_in(util.trim(f.type_name), dx, sd.type_params, seen)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function ow_all_no_handle_in(ts: string[], dx: OwnDecls, free: string[], seen: string[]): boolean {
   for t in ts {
-    if (!ow_holds_no_handle(util.trim(t))) {
+    if (!ow_no_handle_in(util.trim(t), dx, free, seen)) {
       return false;
     }
   }
@@ -20858,10 +21030,10 @@ function ow_all_hold_no_handle(ts: string[]): boolean {
 
 // The functions whose result can borrow and can hold a handle. A local set
 // from a call to any other function is fresh.
-function ow_handle_borrows(mod: parser.Module, borrows: util.NameIndex): util.NameIndex {
+function ow_handle_borrows(mod: parser.Module, borrows: util.NameIndex, dx: OwnDecls): util.NameIndex {
   let names: string[] = [];
   for fn in mod.funcs {
-    if (borrows.has(fn.name) && !ow_holds_no_handle(fn.ret_type)) {
+    if (borrows.has(fn.name) && !ow_holds_no_handle(fn.ret_type, dx)) {
       names = names.append(fn.name);
     }
   }
@@ -21059,6 +21231,14 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
         name = a.target;
         init = a.value;
       }
+      // The element a `for` binds borrows from what the loop walks. A range
+      // and a pattern bind no such element.
+      if let ast.StmtFor(f) = st {
+        if (!util.contains(f.var_name, ",") && !for_iter_is_range(f.iter)) {
+          name = f.var_name;
+          init = f.iter;
+        }
+      }
       if (name.len() == 0 || util.has_str(locals, name)) {
         continue;
       }
@@ -21245,8 +21425,9 @@ pub function own_diags(mod: parser.Module, env: ModuleEnv, focus: util.NameIndex
   let fresh_methods: string[] = ow_fresh_methods(mod, ofuncs, builtins, borrows);
   let fresh_scrut: string[] = ow_signature_fresh_owners(mod, ofuncs, builtins);
   let noret: util.NameIndex = lu_no_return_funcs(mod);
-  let handle_borrows: util.NameIndex = ow_handle_borrows(mod, borrows);
   let snames: util.NameIndex = util.name_index(ow_struct_names(mod.structs));
+  let decls: OwnDecls = ow_decls(mod, snames);
+  let handle_borrows: util.NameIndex = ow_handle_borrows(mod, borrows, decls);
   let out: util.Diag[] = [];
   for fn in mod.funcs {
     if (!in_focus(focus, fn)) {
@@ -24749,17 +24930,24 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   for cfn in mod.funcs {
     slc_calls = slc_calls.append(util.name_index(slc_call_names(cfn)));
   }
-  let slc_no_names: string[] = [];
-  let slc_marked: util.NameIndex = util.name_index(slc_no_names);
-  let slc_first: boolean = true;
-  while (slc_first || slc_marked.names.len() > 0) {
-    let slc_now: string[] = [];
-    let sj: i32 = 0;
-    while (sj < mod.funcs.len()) {
-      if (!slc_first && !slc_calls_any(slc_calls[sj], slc_marked)) {
-        sj = sj + 1;
+  let slc_fn_names: string[] = [];
+  for cfn in mod.funcs {
+    slc_fn_names = slc_fn_names.append(cfn.name);
+  }
+  let slc_names: util.NameIndex = util.name_index(slc_fn_names);
+  let slc_changed_at: i32[] = util.minus_ones(mod.funcs.len());
+  let slc_walked: i32[] = util.minus_ones(mod.funcs.len());
+  let slc_order: i32[] = slc_callee_order(slc_calls, slc_names);
+  let slc_clock: i32 = 0;
+  let slc_again: boolean = true;
+  while (slc_again) {
+    slc_again = false;
+    for sj in slc_order {
+      if (slc_walked[sj] >= 0 && !slc_stale(slc_calls[sj], slc_names, slc_changed_at, slc_walked[sj])) {
         continue;
       }
+      slc_clock = slc_clock + 1;
+      slc_walked = slc_walked.with(sj, slc_clock);
       let sjw: SlcWalk = slice_escape_diags(mod.funcs[sj], slc_functions[sj], slc_sums, slc_ix);
       let slc_positions: string[] = slc_functions[sj].params;
       let slc_cur: ViewSum = slc_sums[sj];
@@ -24779,13 +24967,12 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
         slc_changed = true;
       }
       if (slc_changed) {
-        slc_now = slc_now.append(mod.funcs[sj].name);
+        slc_clock = slc_clock + 1;
+        slc_changed_at = slc_changed_at.with(slc_names.find(mod.funcs[sj].name), slc_clock);
+        slc_again = true;
       }
       slc_sums = slc_sums.with(sj, ViewSum { key: slc_cur.key, flags: slc_next, fresh: slc_fresh });
-      sj = sj + 1;
     }
-    slc_first = false;
-    slc_marked = util.name_index(slc_now);
   }
   let const_inits: ConstInit = const_init(mod);
   let i: i32 = 0;
@@ -28085,8 +28272,7 @@ function qualify_variants_in(mod: parser.Module, env: ModuleEnv, focus: Focus): 
     return mod;
   }
   let nfuncs: parser.FuncDecl[] = [];
-  let i: i32 = 0;
-  while (i < mod.funcs.len()) {
+  for i in 0..mod.funcs.len() {
     let func: parser.FuncDecl = mod.funcs[i];
     if (focus.funcs[i] && names_colliding_variant(func.body, coll)) {
       let fs: Scope = build_func_scope(func, env.sigs, env.structs, env.unions, env.methods, env.imports, env.impls, env.trait_reqs);
@@ -28094,7 +28280,6 @@ function qualify_variants_in(mod: parser.Module, env: ModuleEnv, focus: Focus): 
     } else {
       nfuncs = nfuncs.append(func);
     }
-    i = i + 1;
   }
   let ntop: ast.Stmt[] = mod.top_stmts;
   if (focus.top && names_colliding_variant(mod.top_stmts, coll)) {
@@ -28252,10 +28437,8 @@ function qualify_at(n: ast.Expr, q: QualifyAcc): (ast.Expr, QualifyAcc, boolean)
         slots = tt.elements;
       }
       let elems: ast.Expr[] = [];
-      let k: i32 = 0;
-      while (k < t.elements.len()) {
+      for k in 0..t.elements.len() {
         elems = elems.append(qualify_expr(t.elements[k], dest_slot(slots, k), s, coll));
-        k = k + 1;
       }
       return (ast.ExprTuple { ...t, elements: elems }, child, true);
     },
@@ -28264,6 +28447,13 @@ function qualify_at(n: ast.Expr, q: QualifyAcc): (ast.Expr, QualifyAcc, boolean)
     },
     ast.ExprFieldAccess(fa) => {
       return (n, child, qual_enum_name(fa.obj, s).len() > 0);
+    },
+    ast.ExprBinary(b) => {
+      if (b.op != "==" && b.op != "!=") {
+        return (n, child, false);
+      }
+      let left: ast.Expr = qualify_expr(b.left, none, s, coll);
+      return (ast.ExprBinary { ...b, left: left, right: qualify_expr(b.right, check_expr(left, s), s, coll) }, child, true);
     },
     _ => {
       return (n, child, false);
@@ -28352,10 +28542,8 @@ function qualify_call(c: ast.ExprCall, want: typeinfo.Type, s: Scope, coll: util
     }
   }
   let args: ast.Expr[] = [];
-  let k: i32 = 0;
-  while (k < c.args.len()) {
+  for k in 0..c.args.len() {
     args = args.append(qualify_expr(c.args[k], dest_slot(dests, k), s, coll));
-    k = k + 1;
   }
   return ast.ExprCall { ...c, callee: callee, args: args };
 }
@@ -28405,8 +28593,7 @@ function qualify_struct_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Scope
     args = ws.args;
   }
   let values: ast.Expr[] = [];
-  let k: i32 = 0;
-  while (k < sl.field_values.len()) {
+  for k in 0..sl.field_values.len() {
     let fdest: typeinfo.Type = none;
     if let Some(fsig) = found {
       if (k < sl.field_names.len() && field_index(fsig, sl.field_names[k]) >= 0) {
@@ -28414,7 +28601,6 @@ function qualify_struct_lit(sl: ast.ExprStructLit, want: typeinfo.Type, s: Scope
       }
     }
     values = values.append(qualify_expr(sl.field_values[k], fdest, s, coll));
-    k = k + 1;
   }
   return ast.ExprStructLit { ...sl, field_values: values, base: qualify_expr(sl.base, none, s, coll) };
 }
@@ -28452,13 +28638,11 @@ const LIT_STRUCT_MARK: string = "literal struct #";
 
 function lit_struct_marker(name: string, ids: i32[]): typeinfo.Type {
   let spelled: string = LIT_STRUCT_MARK + name + "|";
-  let i: i32 = 0;
-  while (i < ids.len()) {
+  for i in 0..ids.len() {
     if (i > 0) {
       spelled = spelled + ",";
     }
     spelled = spelled + util.i32_to_string(ids[i]);
-    i = i + 1;
   }
   return t_unknown(spelled);
 }
