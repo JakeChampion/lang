@@ -1,0 +1,32 @@
+import "std/test";
+import "std/http";
+import "std/headers";
+import "std/stream";
+
+// http.Outgoing is the one request shape that h2, h3q and wasi_http send.
+
+function test_outgoing_starts_empty(): test.TestOutcome {
+  let o: http.Outgoing = http.outgoing("GET", "https", "example.test", "/a?b=1");
+  let got: string = o.method + " " + o.scheme + " " + o.authority + " " + o.target + " " + o.headers.len().to_string() + " " + o.body.len().to_string() + " " + o.trailers.len().to_string();
+  return test.assert_eq(got, "GET https example.test /a?b=1 0 0 0");
+}
+
+function test_request_gives_its_outgoing(): test.TestOutcome {
+  let base: HttpRequest = http.request("POST", "/up?x=1").with_header("Host", "example.test").with_header("Content-Length", "3");
+  let req: HttpRequest = HttpRequest { ...base, body: stream.from_bytes("abc".bytes()) };
+  let o: http.Outgoing = req.outgoing("https");
+  let got: string = o.method + " " + o.scheme + " " + o.authority + " " + o.target + " " + string_from_bytes_unchecked(o.body) + " " + o.headers.get("content-length").unwrap_or("-");
+  return test.assert_eq(got, "POST https example.test /up?x=1 abc 3");
+}
+
+function test_request_without_host_has_no_authority(): test.TestOutcome {
+  return test.assert_eq(http.request("GET", "/").outgoing("http").authority, "");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("http.Outgoing");
+  r = r.it("outgoing starts with no headers, body or trailers", test_outgoing_starts_empty);
+  r = r.it("a request gives its outgoing form", test_request_gives_its_outgoing);
+  r = r.it("a request without Host has no authority", test_request_without_host_has_no_authority);
+  return r.finish();
+}
