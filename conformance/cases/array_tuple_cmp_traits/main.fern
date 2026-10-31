@@ -1,6 +1,7 @@
 // core/cmp gives arrays and tuples the Eq, Ord and Hash of their parts.
 // An array orders lexicographically, a tuple by its first element first.
 import "core/cmp";
+import "std/option";
 
 @derive(cmp.Eq, cmp.Ord, cmp.Hash)
 struct P { x: i32 }
