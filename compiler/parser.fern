@@ -10784,10 +10784,32 @@ function mono_named_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: M
   if (result.len() == 0) {
     result = fn_spelling_ret(env.elook(name));
   }
+  if (result.len() == 0) {
+    result = variant_call_type(c, name, env, funcs);
+  }
   if (result.len() == 0 || hides_bare_var(result, funcs)) {
     return stamped_type(c.ty);
   }
   return result;
+}
+
+// A generic variant constructor has the enum instance its arguments bind.
+function variant_call_type(c: ast.ExprCall, name: string, env: MEnv, funcs: MFns): string {
+  let owner: i32 = genum_owner_of_variant(funcs.enums, name);
+  if (owner < 0) {
+    return "";
+  }
+  let ed: EnumDecl = funcs.enums[owner];
+  let binds: MEnv = me_variant_binds(ed, name, c.args, env, funcs.structs, funcs);
+  let parts: string[] = [];
+  for tp in ed.type_params {
+    let b: string = binds.elook(tp);
+    if (b.len() == 0) {
+      return "";
+    }
+    parts = parts.append(b);
+  }
+  return ed.name + "[" + subst_ty_join(parts, ", ", [], []) + "]";
 }
 
 // A generic function's written result names its own type parameters, which are not this call's types.
@@ -15919,6 +15941,16 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
         return te;
       }
       return me_field_type_of(structs, ot, fa.field);
+    },
+    ast.ExprArray(a) => {
+      if (a.elements.len() == 0) {
+        return "";
+      }
+      let et: string = me_scrutinee_type(a.elements[0], env, enums, structs, funcs, ins);
+      if (et.len() == 0) {
+        return "";
+      }
+      return et + "[]";
     },
     _ => {
       return "";
