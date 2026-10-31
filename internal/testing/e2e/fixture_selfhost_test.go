@@ -54,7 +54,7 @@ func TestFernFixturesSelfHostWasmComponent(t *testing.T) {
 	requireSelfHostFixtureLeg(t)
 	wasmtime := e2eharness.Wasmtime(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
-		backend:   "wasm",
+		backend:   "wasm_component",
 		knownFile: "selfhost-wasm-component-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			compPath := filepath.Join(t.TempDir(), "prog.wasm")
@@ -78,7 +78,7 @@ func TestFernFixturesSelfHostWasiHttp(t *testing.T) {
 	requireSelfHostFixtureLeg(t)
 	wasmtime := e2eharness.Wasmtime(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
-		backend:   "wasm",
+		backend:   "wasi_http",
 		knownFile: "selfhost-wasi-http-known-divergences.txt",
 		selects:   func(f *fixtureSpec) bool { return f.hasHTTP },
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
@@ -135,21 +135,21 @@ func runSelfHostFixtureLegX86_64(t *testing.T, env []string) {
 }
 
 func TestFernFixturesSelfHostArm64(t *testing.T) {
-	runSelfHostFixtureLegArm64(t, "arm64-linux", "selfhost-arm64-known-divergences.txt")
+	runSelfHostFixtureLegArm64(t, "arm64-linux", "arm64")
 }
 
 // arm64-android is a static PIE over the Linux syscalls, so it runs where
 // an arm64-linux binary runs.
 func TestFernFixturesSelfHostArm64Android(t *testing.T) {
-	runSelfHostFixtureLegArm64(t, "arm64-android", "selfhost-arm64-android-known-divergences.txt")
+	runSelfHostFixtureLegArm64(t, "arm64-android", "arm64_android")
 }
 
-func runSelfHostFixtureLegArm64(t *testing.T, target, knownFile string) {
+func runSelfHostFixtureLegArm64(t *testing.T, target, backend string) {
 	requireSelfHostFixtureLeg(t)
 	qemu := e2eharness.Arm64Runner(t)
 	runSelfHostFixtureLeg(t, selfHostLeg{
-		backend:   "arm64",
-		knownFile: knownFile,
+		backend:   backend,
+		knownFile: "selfhost-" + strings.ReplaceAll(backend, "_", "-") + "-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			binPath, ok := compileSelfHostNative(t, fernBin, target, nil, f, stdlibRoot, failf)
 			if !ok {
@@ -166,7 +166,7 @@ func TestFernFixturesSelfHostArm64Darwin(t *testing.T) {
 		t.Skip("arm64-darwin binaries run only on an Apple Silicon macOS host")
 	}
 	runSelfHostFixtureLeg(t, selfHostLeg{
-		backend:   "arm64",
+		backend:   "arm64_darwin",
 		knownFile: "selfhost-arm64-darwin-known-divergences.txt",
 		check: func(t *testing.T, fernBin, stdlibRoot string, f *fixtureSpec, failf failFunc) {
 			binPath, ok := compileSelfHostNative(t, fernBin, e2eharness.TargetArm64Darwin, nil, f, stdlibRoot, failf)

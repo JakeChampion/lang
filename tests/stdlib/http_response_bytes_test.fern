@@ -29,7 +29,7 @@ function fields(h: HeaderMap): string {
 function parsed_fields(text: string, prev: HeaderMap): string {
   match (framed(text, prev)) {
     Some(f) => {
-      return f.response.status.to_string() + " " + fields(f.response.headers) + " " + f.response.body_string();
+      return f.response.status.to_string() + " " + fields(f.response.headers) + " " + f.response.body_text_lossy();
     },
     None => {
       return "<not framed>";

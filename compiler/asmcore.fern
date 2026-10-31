@@ -15,7 +15,7 @@ import "./rcmemo";
 import "std/envflag";
 
 pub function task_runtime_roots(): string {
-  return "__fern_task_tab __fern_task_rec __fern_task_blank __fern_task_new __fern_task_free __fern_task_cur __fern_task_enter __fern_task_leave __fern_task_mode __fern_task_park __fern_task_wait __fern_task_timeout __fern_task_set_ready __fern_task_set_cancelled __fern_task_cancelled __fern_task_reserve __fern_task_take __fern_task_pop_w";
+  return "__fern_task_tab __fern_task_rec __fern_task_blank __fern_task_new __fern_task_free __fern_task_cur __fern_task_enter __fern_task_leave __fern_task_mode __fern_task_park __fern_task_park_until __fern_task_wait __fern_task_timeout __fern_task_until __fern_task_set_ready __fern_task_set_cancelled __fern_task_cancelled __fern_task_reserve __fern_task_take __fern_task_pop_w";
 }
 
 pub function sanitize_label(name: string): string {

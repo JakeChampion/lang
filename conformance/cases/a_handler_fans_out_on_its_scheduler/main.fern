@@ -12,7 +12,7 @@ import "std/mock_platform";
 function body(answer: Result[HttpResponse, fetch.FetchError]): string {
   match (answer) {
     Ok(resp) => {
-      return resp.body_string();
+      return resp.body_text_lossy();
     },
     Err(e) => {
       return e.message();
@@ -41,6 +41,6 @@ function main(): i32 {
   let plat: mock_platform.MockPlatform = mock_platform.new()
     .with_http("GET", "https://example.com/", Ok(http.ok("com")))
     .with_http("GET", "https://example.org/", Ok(http.ok("org")));
-  print(handle(http.request("GET", "/"), plat).body_string());
+  print(handle(http.request("GET", "/"), plat).body_text_lossy());
   return 0;
 }

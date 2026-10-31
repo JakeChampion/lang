@@ -37,9 +37,9 @@ function main(): i32 {
 }
 ```
 
-`resp.body_text()` is the body as checked UTF-8 (`Err` with the offset of
-the first bad byte when it is not);
-`body_bytes()` gives the bytes. A non-2xx status is not an error — the
+`resp.body_text()` is the body as checked UTF-8 (`Err(BodyError.NotUtf8)`
+when it is not). `resp.body_text_lossy()` puts U+FFFD in place of each bad
+byte, and `body_bytes()` gives the bytes. A non-2xx status is not an error — the
 server answered. `resp.ok_or_status()` turns one into `Err(status)` when
 you want it to be.
 
@@ -105,7 +105,7 @@ import "std/platform";
 function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, fetch.FetchError] {
     let upstream: HttpResponse = plat.http(fetch.get("https://api.github.com/zen")
         .with_header("user-agent", "fern-example"))?;
-    return Ok(http.plain("GitHub says: " + upstream.body_string() + "\n"));
+    return Ok(http.plain("GitHub says: " + upstream.body_text_lossy() + "\n"));
 }
 ```
 

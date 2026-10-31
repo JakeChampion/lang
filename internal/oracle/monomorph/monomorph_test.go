@@ -629,6 +629,33 @@ function main(): i32 { let b: Box[i32] = Full(Pk { items: [1, 2] }); return size
 	t.Errorf("no instance __method_Box__i32_size of the enum impl method")
 }
 
+// A parametric impl applies only to the instances whose type arguments satisfy
+// its bounds. An element without the bound trait gets no instance of the impl.
+func TestRunSkipsParametricImplWhoseBoundFails(t *testing.T) {
+	prog, err := parser.Parse(`trait Show { function show(self: Self): i32; }
+struct Plain { n: i32 }
+struct Box[T] { x: T }
+impl[T: Show] Show for Box[T] {
+  function show(self: Box[T]): i32 { return 1; }
+}
+function main(): i32 { let b: Box[Plain] = Box { x: Plain { n: 1 } }; return 0; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+	for _, fn := range prog.Funcs {
+		if fn.Name == "__method_Box__Plain_show" {
+			t.Errorf("instance %s exists, but Plain does not implement Show", fn.Name)
+		}
+	}
+}
+
 // An instance of a function generic over a const parameter puts its argument
 // into a bound that names that parameter (`F: Fixed[M]` becomes Fixed[4]).
 func TestRunSubstitutesConstBoundArgs(t *testing.T) {

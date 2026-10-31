@@ -1320,7 +1320,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
         return http.ok("world");
     }
     if (req.method == "POST") {
-        match (req.body_string()) {
+        match (req.body_text()) {
             Ok(text) => { return http.ok(text); },
             Err(e) => { return e.to_response(); }
         }
@@ -1822,7 +1822,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
         return http.ok("world");
     }
     if (req.method == "POST") {
-        match (req.body_string()) {
+        match (req.body_text()) {
             Ok(text) => { return http.ok(text); },
             Err(e) => { return e.to_response(); }
         }

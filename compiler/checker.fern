@@ -664,7 +664,7 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   if (argc == 0 && name == "__task_leave") {
     return t_i32();
   }
-  if (argc == 2 && name == "__task_park") {
+  if (argc == 2 && (name == "__task_park" || name == "__task_park_until")) {
     return t_i32();
   }
   if (argc == 1 && name == "__task_wait") {
@@ -672,6 +672,9 @@ function intrinsic_result_task(name: string, argc: i32): typeinfo.Type {
   }
   if (argc == 1 && name == "__task_timeout") {
     return t_i32();
+  }
+  if (argc == 1 && name == "__task_until") {
+    return t_i64();
   }
   if (argc == 2 && name == "__task_set_ready") {
     return t_void();
@@ -916,10 +919,13 @@ function intrinsic_params(name: string, t: SigTable): (typeinfo.Type[], boolean)
   if (name == "__task_park") {
     return ([t_array(t_i32()), t_i32()], true);
   }
+  if (name == "__task_park_until") {
+    return ([t_array(t_i32()), t_i64()], true);
+  }
   if (name == "__task_wait") {
     return ([t_i32()], true);
   }
-  if (name == "__task_timeout") {
+  if (name == "__task_timeout" || name == "__task_until") {
     return ([t_i32()], true);
   }
   if (name == "__task_set_ready") {
@@ -3046,7 +3052,7 @@ function map_shape_msgs(s: Scope, mt: typeinfo.TypeMap): string[] {
     out = out.append(msg);
   }
   if (is_void(mt.value)) {
-    out = out.append("map value type void is not supported — a set of keys is std/set's `Set`");
+    out = out.append("map value type void is not supported — a set of keys is std/pset's `PSet`");
   }
   return out;
 }
@@ -10192,8 +10198,8 @@ pub function unsafe_intrinsics(): string[] {
     "__c_call3", "__c_call3_f32", "__c_call3_f64",
     "__c_call4", "__c_call4_f32", "__c_call4_f64",
     "__task_new", "__task_free", "__task_enter", "__task_leave",
-    "__task_park", "__task_wait", "__task_set_ready", "__task_set_cancelled",
-    "__task_cancelled", "__task_timeout", "__task_cur",
+    "__task_park", "__task_park_until", "__task_wait", "__task_set_ready", "__task_set_cancelled",
+    "__task_cancelled", "__task_timeout", "__task_until", "__task_cur",
     "__syscall3", "__syscall4", "__syscall5", "__syscall6",
   ];
 }
@@ -17710,7 +17716,7 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
 function registered_intrinsics(): string[] {
   return [
     "__primitive_char_to_string", "__primitive_f32_to_string", "__primitive_f64_to_string", "__primitive_i32_to_string", "__primitive_i64_to_string", "__primitive_string_to_string", "__primitive_u32_to_string", "__primitive_u64_to_string", "__primitive_u8_to_string", "__primitive_usize_to_string",
-    "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_wait",
+    "__task_cancelled", "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_park_until", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_until", "__task_wait",
     "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__aes_gcm_open_into", "__aes_gcm_seal_into", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__sha1_hw", "__sha1_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",

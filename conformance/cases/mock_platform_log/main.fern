@@ -25,7 +25,7 @@ function main(): i32 {
     let m: mock_platform.MockPlatform = mock_platform.new();
     let req: HttpRequest = HttpRequest { method: "GET", path: "/a", body: stream.empty(), headers: headers.new(), trailers: headers.new() };
     let resp: HttpResponse = handle(req, m);
-    print(resp.body_string());
+    print(resp.body_text_lossy());
     print(m.call_count().to_string());
     let cs: mock_platform.MockCall[] = m.calls();
     print(cs[0].name);

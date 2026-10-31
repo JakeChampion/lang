@@ -63,9 +63,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
             .with_header("x-served-by", "fern");
     }
     if (req.method == "POST") {
-        // body_string() is a Result: a body that is not UTF-8 is
+        // body_text() is a Result: a body that is not UTF-8 is
         // refused, and the error knows its own 400 response.
-        match (req.body_string()) {
+        match (req.body_text()) {
             Ok(body) => { return http.ok(body); },
             Err(e) => { return e.to_response(); }
         }
@@ -99,7 +99,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
       <td>Path <strong>and</strong> query, e.g. <code>/s?q=hi</code></td>
     </tr>
     <tr>
-      <td><code>req.body_string()</code></td>
+      <td><code>req.body_text()</code></td>
       <td><code>Result[string, BodyError]</code></td>
       <td>The request body as text; <code>Err</code> when it is not UTF-8</td>
     </tr>
@@ -316,7 +316,7 @@ function user[P: platform.Platform](req: HttpRequest, params: router.Params, pla
   use logged <- accesslog.logged(req, plat);
   let id: string = params.param("id")?;
   let resp: HttpResponse = plat.http(fetch.get("http://directory.internal/users/" + id))?;
-  return Ok(http.json_status(resp.status, resp.body_string()));
+  return Ok(http.json_status(resp.status, resp.body_text_lossy()));
 }
 
 function main(): i32 {

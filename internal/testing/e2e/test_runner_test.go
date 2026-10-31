@@ -483,7 +483,7 @@ func TestRunnerHttpResponseBodyShimExample(t *testing.T) {
 	}
 	for _, w := range []string{
 		"# Suite: HTTP response body shim",
-		"ok 1 - body_string round-trips",
+		"ok 1 - body_text_lossy round-trips",
 		"ok 2 - body_len matches the string length",
 		"ok 5 - bytes constructor agrees with text",
 		"ok 7 - wire Content-Length matches the body",
@@ -511,14 +511,14 @@ func TestRunnerHttpStatusExamplePasses(t *testing.T) {
 	}
 }
 
-func TestRunnerSetExamplePasses(t *testing.T) {
+func TestRunnerCmpTraitsExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	src := langSrcAbs(t, "tests/stdlib/set_test.fern")
+	src := langSrcAbs(t, "tests/stdlib/cmp_traits_test.fern")
 	code, out, errOut := runLangInterp(t, bin, src)
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/set", "ok 4 - insert is pure", "1..14", "# pass 14", "# fail 0"} {
+	for _, w := range []string{"# Suite: cmp traits on stdlib types", "ok 4 - PSet in a PSet", "1..18", "# pass 18", "# fail 0"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

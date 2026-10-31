@@ -25,7 +25,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 function __fetched(plat: platform.Platform, url: string): string {
   match (plat.http(fetch.get(url))) {
     Ok(resp) => {
-      return resp.status.to_string() + " " + resp.body_string();
+      return resp.status.to_string() + " " + resp.body_text_lossy();
     },
     Err(e) => {
       return e.message();
@@ -58,7 +58,7 @@ function test_a_full_response_arrives_whole(): test.TestOutcome {
     Ok(resp) => {
       let ct: string = resp.headers.get("content-type").unwrap_or("-");
       let id: string = resp.headers.get("x-id").unwrap_or("-");
-      return test.assert_eq(resp.status.to_string() + " " + ct + " " + id + " " + resp.body_string(), "201 application/json 7 {\"id\":7}");
+      return test.assert_eq(resp.status.to_string() + " " + ct + " " + id + " " + resp.body_text_lossy(), "201 application/json 7 {\"id\":7}");
     },
     Err(e) => {
       return test.fail(e.message());

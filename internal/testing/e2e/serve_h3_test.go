@@ -226,7 +226,7 @@ function asked(c: h3q.Conn, a: Asked): (h3q.Conn, Asked) {
     return (cur, next);
   }
   for r in next.reqs {
-    let Ok(sent) = cur.request(r, "https") else {
+    let Ok(sent) = cur.request(r.outgoing("https")) else {
       return (cur, next);
     };
     cur = sent.0;

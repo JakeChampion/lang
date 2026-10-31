@@ -120,7 +120,7 @@ function serve(decls: ast.Decl[], port: i32): i32 {
     let names: string[] = req.headers.names;
     let values: string[] = req.headers.values;
     let body: string = "";
-    match (req.body_string()) {
+    match (req.body_text()) {
       Ok(text) => {
         body = text;
       },

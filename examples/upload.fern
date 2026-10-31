@@ -49,7 +49,7 @@ function sized(part: multipart.Part, r: multipart.Reader): Result[(string, multi
 function main(): i32 {
   let body: multipart.Builder = multipart.builder_with("example").field("title", "holiday").file("photo", "beach.png", "image/png", "PNG image".bytes()).field("tags", "sea, sand");
   let resp: HttpResponse = handle(body.request("POST", "/upload"), platform.host());
-  print(resp.body_string());
+  print(resp.body_text_lossy());
   if (resp.status != 200) {
     return 1;
   }
