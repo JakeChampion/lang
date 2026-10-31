@@ -87,6 +87,7 @@ The owner decided these on 2026-10-29. Each one bounds what a row above can clai
 - Raw builtins (`__alloc`, `__store_*`, `__load_*`, `__free`, `__memcpy`, `__c_call*`, `__arr_set_len`) are callable from every source until the stage0 pin learns unsafe blocks (`UNSAFE-INVENTORY.md`).
 - A thread that shares the heap is not supported. Reference counts are not atomic.
 - No signature covers a package archive. An index file is verified only when the manifest names `index_key` (`PACKAGE-INTEGRITY.md`).
+- An index rollback is refused only after a lock records the index serial. Nothing refuses a frozen index.
 - The fault tests ran on a physical host for PAC only. BTI, MTE and the user shadow stack carry emulated evidence or none.
 - Nothing mitigates a speculation attack.
 - The seccomp sandbox exists on x86-64 only.

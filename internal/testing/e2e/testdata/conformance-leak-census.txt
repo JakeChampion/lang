@@ -304,6 +304,7 @@ fresh_array_through_a_pass_through_callee            0
 fresh_local_return                                   0
 fresh_result_payload_is_owned                        0
 from_empty_bytes                                     0
+fstring_interpolation_char_escape                    0
 fstring_reassign_releases_old                        0
 function_array_element_returned                      0
 functional_base_unchanged                            0
@@ -597,6 +598,7 @@ opt_f32_payload                                      0
 option_is_none_or                                    0
 option_match                                         0
 option_result_and_then                               0
+option_result_cmp_traits                             0
 option_result_combinators                            0
 option_str                                           0
 optresult_transpose                                  0
@@ -1058,6 +1060,7 @@ sso_slice_len_1_inline                               0
 sso_slice_len_7_inline                               0
 sso_slice_len_8_heap                                 0
 sso_triple_concat_via_inline                         0
+statement_block_tail_expression                      0
 static_variant_of_an_unsettled_generic_enum          0
 stdin_double                                         0
 stdin_line                                           0
@@ -1195,6 +1198,7 @@ vec_generic_impls                                    0
 vec_lane_kernels                                     0
 view_of_branch_value                                 0
 views_in_aggregates_stay_local                       0
+void_value_if_statement                              0
 wasi_http_error_code_names                           0
 while_sum                                            0
 wide_array_append_grow                               0

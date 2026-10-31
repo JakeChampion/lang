@@ -1,0 +1,34 @@
+// core/cmp gives Option and Result the Eq, Ord and Hash of their payloads.
+// The orders follow declaration order: None < Some, Ok < Err.
+import "core/cmp";
+
+function show(xs: Option[i32][]): string {
+  let out: string = "";
+  for x in xs {
+    match (x) {
+      Some(v) => {
+        out = out + v.to_string() + " ";
+      },
+      None => {
+        out = out + "none ";
+      }
+    }
+  }
+  return out;
+}
+
+function main(): i32 {
+  let a: Option[i32] = Some(1);
+  let none: Option[i32] = None;
+  print(f"{a == Some(1)} {a == Some(2)} {a == none} {none == None}");
+  print(show(cmp.sort([Some(3), None, Some(1)])));
+  let ok: Result[i32, string] = Ok(1);
+  let err: Result[i32, string] = Err("e");
+  print(f"{ok == Ok(1)} {ok == err} {err == Err("e")}");
+  print(f"{ok.cmp(err)} {err.cmp(ok)} {ok.cmp(Ok(0))}");
+  print(f"{a.hash() == Some(1).hash()} {a.hash() == none.hash()}");
+  let one: Result[i32, i32] = Ok(1);
+  let bad: Result[i32, i32] = Err(1);
+  print(f"{ok.hash() == one.hash()} {one.hash() == bad.hash()}");
+  return 0;
+}

@@ -5014,6 +5014,9 @@ function prefix_loops(xs: Loop[], n: i32): Loop[] {
 
 function discard(e: ast.Expr, s: State): State {
   if let ast.ExprCall(c) = e {
+    if (parser.is_value_block(c) && is_void(block_type(e, c, s, t_void()))) {
+      return stmts(parser.vb_body(c), s);
+    }
     return call(e, c, s, true, t_void()).s;
   }
   return expr(e, s, typeinfo.unchecked()).s;
@@ -5250,7 +5253,7 @@ function renumber(blocks: ssa.SBlock[], map: i32[], values: typeinfo.Type[], dbg
     out = out.append(renumber_block(b, map, ids));
   }
   let graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: kept.len(), blocks: out, entry: 0, takes_env: false };
-  let f: ssasem.Func = ssasem.Func { source_positions: ssasem.no_source(), graph: graph, values: kept, params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [] };
+  let f: ssasem.Func = ssasem.Func { source_positions: ssasem.no_source(), graph: graph, values: kept, params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false };
   if (has_lines) {
     f = ssasem.Func { ...f, source_positions: renumber_source(blocks, map, ids, kept.len()) };
   }
@@ -5537,7 +5540,7 @@ function parameters(fd: parser.FuncDecl, s: State): State {
 
 function refuse(why: string): Produced {
   let graph: ssa.SFunc = ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
-  return Produced { ok: false, why: why, func: ssasem.Func { source_positions: ssasem.no_source(), graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [] }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
+  return Produced { ok: false, why: why, func: ssasem.Func { source_positions: ssasem.no_source(), graph: graph, values: [], params: [], result: t_void(), records: semrecords.no_records(), enums: [], calls: [], envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: false, dbg_vals: [], dbg_names: [], schema_checked: false }, modes: [], template: false, key: "", requests: [], bodyless: false, analysis: None, view_escape: 0, dropped: false };
 }
 
 function initial(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], debug_lines: boolean): State {
@@ -6553,7 +6556,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
     return Made { p: refuse(table.why), memo: table.memo };
   }
   let graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
-  f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalizers, map_module: s.scope.module_imported("core/map") };
+  f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, schema_checked: false, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalizers, map_module: s.scope.module_imported("core/map") };
   f = ssasem.tail_recursion(f, name);
   f = ssabounds.word_loads(ssabounds.grouped_reads(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(4), ssabytes.word_name(8)], [ssabytes.swap_name(4), ssabytes.swap_name(8)]);
   f = ssaquotient.shared_quotients(ssabounds.nonneg_quotients(f));
@@ -7471,6 +7474,7 @@ function builder_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "buf_push_bytes_expanded", params: [t_usize(), typeinfo.TypeArray { elem: t_u8(), view: false }, typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [ssaunits.value_mode(), ssaunits.borrow_mode(), ssaunits.borrow_mode()], result: t_void() },
     ssasem.Contract { name: "buf_push_byte", params: [t_usize(), t_i32()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
     ssasem.Contract { name: "buf_push_u64", params: [t_usize(), t_u64()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
+    ssasem.Contract { name: "buf_push_decimal", params: [t_usize(), t_u64()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_void() },
     ssasem.Contract { name: "buf_len", params: [t_usize()], modes: handle, result: t_i32() },
     ssasem.Contract { name: "buf_take", params: [t_usize()], modes: handle, result: t_string() },
     ssasem.Contract { name: "buf_take_bytes", params: [t_usize()], modes: handle, result: typeinfo.TypeArray { elem: t_u8(), view: false } },
@@ -7629,7 +7633,7 @@ function anchor_module(all: Produced[], names: string[], verify: boolean): Ancho
         if (!analysis.ok) {
           p = Produced { ...refuse("produced graph fails semantic verification: " + analysis.why), key: p.key };
         } else {
-          p = Produced { ...p, analysis: Some(analysis) };
+          p = Produced { ...p, func: ssasem.checked_schema(p.func, analysis), analysis: Some(analysis) };
         }
       }
     }
@@ -7651,7 +7655,7 @@ function helper_rows(out: Produced[], names: string[], helpers: CopyHelpers, anc
     if (!analysis.ok) {
       p = refuse("copy helper fails semantic verification: " + analysis.why);
     } else {
-      p = Produced { ...p, analysis: Some(analysis) };
+      p = Produced { ...p, func: ssasem.checked_schema(f, analysis), analysis: Some(analysis) };
     }
     out = out.append(p);
     names = names.append(ssasem.copy_helper(helpers.types[h]));
@@ -7856,7 +7860,8 @@ function analysed_rows(rows: Produced[]): Produced[] {
     if (rows[i].ok && !rows[i].template) {
       match (rows[i].analysis) {
         None => {
-          rows = rows.with(i, Produced { ...rows[i], analysis: Some(ssasem.analyze(rows[i].func)) });
+          let analysis: ssasem.Analysis = ssasem.analyze(rows[i].func);
+          rows = rows.with(i, Produced { ...rows[i], func: ssasem.checked_schema(rows[i].func, analysis), analysis: Some(analysis) });
         },
         _ => {}
       }

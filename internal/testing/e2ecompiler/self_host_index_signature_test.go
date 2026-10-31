@@ -14,14 +14,7 @@ import (
 // detached ed25519 signature in index.toml.sig before it reads the
 // index. Both loaders refuse the same trees with the same words.
 func TestSelfHostSignedIndexResolve(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("resolve differential runs only natively (argv paths)")
-	}
-	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "fern.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
-	nativeBin := buildFernCLIBin(t)
+	nativeBin, driverBin := resolveBins(t)
 
 	pub, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
@@ -41,12 +34,7 @@ func TestSelfHostSignedIndexResolve(t *testing.T) {
 		"pkgs/foo-1.0.0/fern.toml": "[package]\nname = \"foo\"\n",
 		"pkgs/foo-1.1.0/fern.toml": "[package]\nname = \"foo\"\n",
 	}
-	for _, c := range []struct {
-		name   string
-		files  map[string]string
-		wantOK bool
-		want   string
-	}{
+	for _, c := range []resolveCase{
 		{"signed", map[string]string{"fern.toml": manifest(keyOf(pub)), "index.toml": index, "index.toml.sig": signature}, true, ""},
 		{"no-signature", map[string]string{"fern.toml": manifest(keyOf(pub)), "index.toml": index}, false, "fern.toml names index_key but <ROOT>/index.toml.sig cannot be read"},
 		{"altered-index", map[string]string{"fern.toml": manifest(keyOf(pub)), "index.toml": index + "\"1.1.0\" = { path = \"pkgs/foo-1.1.0\" }\n", "index.toml.sig": signature}, false, "the signature in <ROOT>/index.toml.sig does not verify against index_key"},
@@ -54,48 +42,126 @@ func TestSelfHostSignedIndexResolve(t *testing.T) {
 		{"malformed-signature", map[string]string{"fern.toml": manifest(keyOf(pub)), "index.toml": index, "index.toml.sig": "not hex\n"}, false, "index <ROOT>/index.toml.sig: must be 128 hex digits of the ed25519 signature over the index"},
 		{"malformed-key", map[string]string{"fern.toml": manifest("ed25519:nope"), "index.toml": index, "index.toml.sig": signature}, false, "index_key: must be `ed25519:` + 64 lowercase hex digits of the public key"},
 	} {
-		t.Run(c.name, func(t *testing.T) {
-			root := t.TempDir()
-			nativeDir := filepath.Join(root, "native")
-			selfDir := filepath.Join(root, "selfhost")
-			for _, d := range []string{nativeDir, selfDir} {
-				writeResolveProject(t, d, pkgs)
-				writeResolveProject(t, d, c.files)
-			}
-			nativeCmd := exec.Command(nativeBin, "-resolve", nativeDir)
-			nativeOut, _ := nativeCmd.CombinedOutput()
-			nativeOK := nativeCmd.ProcessState.ExitCode() == 0
-			shCmd := exec.Command(driverBin, "-resolve", selfDir)
-			shOut, _ := shCmd.CombinedOutput()
-			shOK := shCmd.ProcessState.ExitCode() == 0
+		t.Run(c.name, func(t *testing.T) { runResolveBoth(t, nativeBin, driverBin, pkgs, c) })
+	}
+}
 
-			if nativeOK != c.wantOK {
-				t.Fatalf("native resolved = %v, want %v\n%s", nativeOK, c.wantOK, nativeOut)
-			}
-			if shOK != nativeOK {
-				t.Fatalf("native resolved = %v, self-host resolved = %v\n--- native ---\n%s\n--- self-host ---\n%s", nativeOK, shOK, nativeOut, shOut)
-			}
-			want := strings.ReplaceAll(string(nativeOut), nativeDir, "<ROOT>")
-			got := strings.ReplaceAll(string(shOut), selfDir, "<ROOT>")
-			if want != got {
-				t.Errorf("resolve output differs:\n--- native ---\n%s\n--- self-host ---\n%s", want, got)
-			}
-			if c.wantOK {
-				for _, d := range []string{nativeDir, selfDir} {
-					if _, err := os.Stat(filepath.Join(d, "fern.lock")); err != nil {
-						t.Errorf("%s: no lock written: %v", d, err)
-					}
-				}
-				return
-			}
-			if !strings.Contains(got, c.want) {
-				t.Errorf("refusal lacks %q:\n%s", c.want, got)
-			}
-			for _, d := range []string{nativeDir, selfDir} {
-				if _, err := os.Stat(filepath.Join(d, "fern.lock")); err == nil {
-					t.Errorf("%s: a refused resolve wrote fern.lock", d)
-				}
-			}
-		})
+// fern -resolve records the index serial in fern.lock. Both loaders refuse
+// an index below the recorded serial, signed or not, with the same words.
+func TestSelfHostIndexSerialResolve(t *testing.T) {
+	nativeBin, driverBin := resolveBins(t)
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const entries = "[foo]\n\"1.0.0\" = { path = \"pkgs/foo-1.0.0\" }\n"
+	signed := func(serial string) map[string]string {
+		index := "serial = " + serial + "\n" + entries
+		return map[string]string{
+			"fern.toml":      "[package]\nname = \"app\"\nindex = \"index.toml\"\nindex_key = \"ed25519:" + hex.EncodeToString(pub) + "\"\n[dependencies]\nfoo = \"1.0.0\"\n",
+			"index.toml":     index,
+			"index.toml.sig": hex.EncodeToString(ed25519.Sign(priv, []byte(index))) + "\n",
+		}
+	}
+	unsigned := func(index string) map[string]string {
+		return map[string]string{
+			"fern.toml":  "[package]\nname = \"app\"\nindex = \"index.toml\"\n[dependencies]\nfoo = \"1.0.0\"\n",
+			"index.toml": index,
+		}
+	}
+	withLock := func(files map[string]string, serial string) map[string]string {
+		files["fern.lock"] = "# generated by `fern -resolve`; do not edit by hand\nindex_serial = " + serial + "\n"
+		return files
+	}
+	pkgs := map[string]string{"pkgs/foo-1.0.0/fern.toml": "[package]\nname = \"foo\"\n"}
+	for _, c := range []resolveCase{
+		{"first-resolve", signed("5"), true, ""},
+		{"same-serial", withLock(signed("5"), "5"), true, ""},
+		{"newer-serial", withLock(signed("10"), "9"), true, ""},
+		{"no-serial-no-record", unsigned(entries), true, ""},
+		{"signed-rollback", withLock(signed("4"), "5"), false, "index <ROOT>/index.toml: serial 4 is below index serial 5 that <ROOT>/fern.lock records"},
+		{"rollback-fewer-digits", withLock(unsigned("serial = 9\n"+entries), "10"), false, "serial 9 is below index serial 10"},
+		{"serial-removed", withLock(unsigned(entries), "5"), false, "index <ROOT>/index.toml: has no serial but <ROOT>/fern.lock records index serial 5"},
+		{"malformed-serial", unsigned("serial = 05\n" + entries), false, "index <ROOT>/index.toml: line 1: serial must be 1 to 18 decimal digits with no leading zero, got \"05\""},
+		{"serial-twice", unsigned("serial = 5\nserial = 6\n" + entries), false, "line 2: serial given twice"},
+		{"serial-in-section", unsigned(entries + "serial = 5\n"), false, "line 3: version key"},
+		{"malformed-lock-serial", withLock(signed("5"), "x"), false, "<ROOT>/fern.lock line 2: index_serial must be 1 to 18 decimal digits"},
+	} {
+		t.Run(c.name, func(t *testing.T) { runResolveBoth(t, nativeBin, driverBin, pkgs, c) })
+	}
+}
+
+func resolveBins(t *testing.T) (nativeBin, driverBin string) {
+	t.Helper()
+	gcc, runner := x86_64Tooling(t)
+	if len(runner) != 0 {
+		t.Skip("resolve differential runs only natively (argv paths)")
+	}
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	return buildFernCLIBin(t), buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+}
+
+type resolveCase struct {
+	name   string
+	files  map[string]string
+	wantOK bool
+	want   string
+}
+
+// runResolveBoth runs both loaders over the same tree. A refused resolve
+// writes no lock and leaves an existing one as it was.
+func runResolveBoth(t *testing.T, nativeBin, driverBin string, pkgs map[string]string, c resolveCase) {
+	t.Helper()
+	root := t.TempDir()
+	nativeDir := filepath.Join(root, "native")
+	selfDir := filepath.Join(root, "selfhost")
+	for _, d := range []string{nativeDir, selfDir} {
+		writeResolveProject(t, d, pkgs)
+		writeResolveProject(t, d, c.files)
+	}
+	nativeCmd := exec.Command(nativeBin, "-resolve", nativeDir)
+	nativeOut, _ := nativeCmd.CombinedOutput()
+	nativeOK := nativeCmd.ProcessState.ExitCode() == 0
+	shCmd := exec.Command(driverBin, "-resolve", selfDir)
+	shOut, _ := shCmd.CombinedOutput()
+	shOK := shCmd.ProcessState.ExitCode() == 0
+
+	if nativeOK != c.wantOK {
+		t.Fatalf("native resolved = %v, want %v\n%s", nativeOK, c.wantOK, nativeOut)
+	}
+	if shOK != nativeOK {
+		t.Fatalf("native resolved = %v, self-host resolved = %v\n--- native ---\n%s\n--- self-host ---\n%s", nativeOK, shOK, nativeOut, shOut)
+	}
+	want := strings.ReplaceAll(string(nativeOut), nativeDir, "<ROOT>")
+	got := strings.ReplaceAll(string(shOut), selfDir, "<ROOT>")
+	if want != got {
+		t.Errorf("resolve output differs:\n--- native ---\n%s\n--- self-host ---\n%s", want, got)
+	}
+	nativeLock, nativeErr := os.ReadFile(filepath.Join(nativeDir, "fern.lock"))
+	selfLock, selfErr := os.ReadFile(filepath.Join(selfDir, "fern.lock"))
+	if c.wantOK {
+		if nativeErr != nil || selfErr != nil {
+			t.Fatalf("no lock written: native %v, self-host %v", nativeErr, selfErr)
+		}
+		if n, s := strings.ReplaceAll(string(nativeLock), nativeDir, "<ROOT>"), strings.ReplaceAll(string(selfLock), selfDir, "<ROOT>"); n != s {
+			t.Errorf("locks differ:\n--- native ---\n%s\n--- self-host ---\n%s", n, s)
+		}
+		return
+	}
+	if !strings.Contains(got, c.want) {
+		t.Errorf("refusal lacks %q:\n%s", c.want, got)
+	}
+	before, had := c.files["fern.lock"]
+	for _, l := range []struct {
+		body []byte
+		err  error
+	}{{nativeLock, nativeErr}, {selfLock, selfErr}} {
+		switch {
+		case !had && l.err == nil:
+			t.Errorf("a refused resolve wrote fern.lock:\n%s", l.body)
+		case had && string(l.body) != before:
+			t.Errorf("a refused resolve changed fern.lock:\n%s", l.body)
+		}
 	}
 }
