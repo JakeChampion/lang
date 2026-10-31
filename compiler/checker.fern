@@ -4106,7 +4106,7 @@ function (s: Scope) method_fix_candidates(ns: string, recv: typeinfo.Type): stri
     }
   }
   if (!s.namespace_is_exact(ns)) {
-    return [];
+    return preregistered_methods(ns);
   }
   let out: string[] = preregistered_methods(ns);
   for method in s.methods.methods {
