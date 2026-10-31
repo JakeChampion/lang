@@ -40,7 +40,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<5 pub function buf_writer_new(w: Writer, cap: i32): BufWriter>>
 
-<<6 pub(package) function buf_u64_len(n: u64): i32>>
+<<6 pub function (b: BufWriter) flush(): Result[BufWriter, IoError]>>
 
 <<7 function __buf_writer_put(b: BufWriter, s: string): Result[BufWriter, IoError]>>
 
@@ -242,7 +242,7 @@ pub function (b: BufWriter) write_byte(byte: i32): Result[BufWriter, IoError] {
 }
 
 pub function (b: BufWriter) write_u64(n: u64): Result[BufWriter, IoError] {
-  buf_push_u64(b.buf.h, n);
+  buf_push_decimal(b.buf.h, n);
   if (buf_len(b.buf.h) < b.cap) {
     return Ok(b);
   }
@@ -257,53 +257,20 @@ pub function (b: BufWriter) write_i64(n: i64): Result[BufWriter, IoError] {
   return b.write_u64(n as u64);
 }
 
-pub(package) function buf_push_u64(h: usize, n: u64): void {
-  if (n < 100 as u64) {
-    if (n < 10 as u64) {
-      buf_push_byte(h, 48 + n as i32);
-      return;
-    }
-    let k: i32 = n as i32 * 2;
-    buf_push_range(h, digit_pairs(), k, k + 2);
-    return;
-  }
-  let q: u64 = n / (100 as u64);
-  buf_push_u64(h, q);
-  let r: i32 = (n - q * (100 as u64)) as i32 * 2;
-  buf_push_range(h, digit_pairs(), r, r + 2);
-}
-
 pub(package) function buf_push_i64(h: usize, n: i64): void {
   if (n < 0 as i64) {
     buf_push_byte(h, 45);
-    buf_push_u64(h, 0 as u64 - n as u64);
+    buf_push_decimal(h, 0 as u64 - n as u64);
     return;
   }
-  buf_push_u64(h, n as u64);
+  buf_push_decimal(h, n as u64);
 }
 ```
 
-### `6 pub(package) function buf_u64_len(n: u64): i32`
+### `6 pub function (b: BufWriter) flush(): Result[BufWriter, IoError]`
 
 ```fern
-<<6 pub(package) function buf_u64_len(n: u64): i32>>=
-pub(package) function buf_u64_len(n: u64): i32 {
-  let d: i32 = 1;
-  let p: u64 = 10 as u64;
-  while (n >= p) {
-    d = d + 1;
-    if (d == 20) {
-      return d;
-    }
-    p = p * (10 as u64);
-  }
-  return d;
-}
-
-pub(package) function digit_pairs(): string {
-  return "0001020304050607080910111213141516171819202122232425262728293031323334353637383940414243444546474849505152535455565758596061626364656667686970717273747576777879808182838485868788899091929394959697989900";
-}
-
+<<6 pub function (b: BufWriter) flush(): Result[BufWriter, IoError]>>=
 pub function (b: BufWriter) flush(): Result[BufWriter, IoError] {
   if (buf_len(b.buf.h) == 0) {
     return __buf_writer_failed(b);

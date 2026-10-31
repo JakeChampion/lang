@@ -653,7 +653,7 @@ function emit(o0: io_buffered.BufWriter, a: Args, src: Lines, perm: u64[], head:
   let i: i32 = 0;
   if (a.range) {
     while (i as u64 < head) {
-      gnu.push_decimal(h, a.lo + perm[i]);
+      buf_push_decimal(h, a.lo + perm[i]);
       buf_push(h, term);
       o = gnu.settle(o);
       i = i + 1;
@@ -697,7 +697,7 @@ function run_repeat(o0: io_buffered.BufWriter, rs0: Rand, a: Args, src: Lines): 
     }
     let j: u64 = got.0;
     if (a.range) {
-      gnu.push_decimal(h, a.lo + j);
+      buf_push_decimal(h, a.lo + j);
       buf_push(h, term);
     } else if (a.echo) {
       buf_push(h, src.echo[j as i32]);
