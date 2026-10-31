@@ -1569,7 +1569,7 @@ function projection_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], d
     return none;
   }
   let root: i32 = get.args[0];
-  if (!is_record(f.values[root]) || semtypes.is_env(f.values[root])) {
+  if (!is_record(f.values[root]) || semtypes.is_env(f.values[root]) || ssasem.has_finalizer(f, f.values[root])) {
     return none;
   }
   if (defs[root].kind_tag != 6 && !owned[root]) {
@@ -2198,6 +2198,9 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], spec
 
 function slot_takeable(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], got: typeinfo.Type, root: i32, field: boolean, element: boolean, slot: boolean): boolean {
   let box: typeinfo.Type = f.values[root];
+  if (ssasem.has_finalizer(f, box)) {
+    return false;
+  }
   if (field) {
     return field_takeable(got) && is_record(box) && !semtypes.is_env(box);
   }

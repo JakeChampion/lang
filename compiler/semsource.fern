@@ -8945,7 +8945,11 @@ function dispatched_arms(all: Produced[]): string[] {
 
 pub function with_inferred_modes(b: Built): Built {
   let all: Produced[] = util.append_all(b.decls, b.instances);
-  let inferred: Inferred = infer_ownership(all, b.names, b.contracts, b.dyn_arms);
+  let pinned: string[] = b.dyn_arms;
+  for finalizer in b.finalizers {
+    pinned = pinned.append(finalizer.symbol);
+  }
+  let inferred: Inferred = infer_ownership(all, b.names, b.contracts, pinned);
   let decls: Produced[] = [];
   let instances: Produced[] = [];
   let i: i32 = 0;
