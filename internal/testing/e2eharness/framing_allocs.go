@@ -21,14 +21,14 @@ import "std/http";
 // what it returns crosses a call rather than being spliced into its caller.
 function parse_once(buf: u8[], limits: http.HttpLimits, prev: http.HttpFramed): http.HttpFramed {
   match (http.parse_request_framed_from(buf, 0, limits, prev)) {
-    http.Framed(f) => { return f; },
+    http.Complete(f) => { return f; },
     _ => { return http.framed_none(); }
   }
 }
 
 function parse_first(buf: u8[], limits: http.HttpLimits): http.HttpFramed {
   match (http.parse_request_framed_from(buf, 0, limits, http.framed_none())) {
-    http.Framed(f) => { return f; },
+    http.Complete(f) => { return f; },
     _ => { return http.framed_none(); }
   }
 }

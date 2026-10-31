@@ -327,8 +327,8 @@ function read(drv: async.RealDriver, p: Plan, c: Conn, t: Tally): (Conn, Tally) 
         let none: u8[] = [];
         conn = Conn { ...conn, state: IDLE, buf: none };
       },
-      http.Unfinished => {},
-      http.Rejected(status) => {
+      http.Incomplete => {},
+      http.Malformed(status) => {
         tally = Tally { ...tally, errors: tally.errors + 1 };
         return (reopen(drv, p, conn), tally);
       }

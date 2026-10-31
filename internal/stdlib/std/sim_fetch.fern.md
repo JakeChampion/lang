@@ -829,7 +829,7 @@ function __served(n: Net, addr: string, port: i32, bytes: u8[]): i32 {
 
 function __response_entry(s: Server, bytes: u8[]): string {
   match (http.parse_request_framed(bytes)) {
-    http.Framed(f) => {
+    http.Complete(f) => {
       let h: (HttpRequest) => HttpResponse = s.handler;
       let resp: HttpResponse = h(f.request);
       let flag: string = "c";

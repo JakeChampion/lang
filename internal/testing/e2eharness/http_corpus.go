@@ -118,7 +118,7 @@ function shown(path: string): string {
 
 function answer(wire: u8[]): string {
     match (http.parse_request_framed(wire)) {
-        Framed(f) => {
+        Complete(f) => {
             return "ok " + f.request.method + " " + shown(f.request.path)
                 + " h=" + f.request.headers.len().to_string()
                 + " b=" + f.request.body_len().to_string()
