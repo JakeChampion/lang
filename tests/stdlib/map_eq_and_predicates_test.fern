@@ -126,8 +126,8 @@ function test_assert_all_i32_fails_with_index(): test.TestOutcome {
       return test.fail("expected predicate fail");
     },
     Fail(msg) => {
-      if (!msg.contains("index 2") || !msg.contains("value 5")) {
-        return test.fail("expected 'index 2' + 'value 5': " + msg);
+      if (msg != "assert_all: predicate failed at index 2: value \"5\"") {
+        return test.fail("unexpected predicate diagnostic: " + msg);
       }
       return test.pass();
     }
