@@ -1,3 +1,4 @@
+# 2026-10-31: ARM64 emitted-text sizes also measured by CI job 124591987794.
 # 2026-10-31: PR #13963, measured by CI job 124591987794.
 # 2026-10-31: PR #13897 at 54001e2. CI run 41153255512, perf-x86_64.
 # Record the lane's measured changes after the lifetime and shared-helper repairs.
@@ -469,30 +470,30 @@ aarch64/deflate_encode.text	8033
 aarch64/enum_match.text	1316
 aarch64/enum_match.ir	41175104
 # 2026-10-29 (#12885): a server with no TLS identity links no TLS. CI40951357023 (aarch64), scripts/perf-bench (x86_64).
-aarch64/http_hello.text	18861
+aarch64/http_hello.text	19090
 # 2026-10-30 (#13900): CI41026748018 measures aarch64/http_hello.ir 4.98% lower on main 33b21667. #13900 does not change the serve path.
 aarch64/http_hello.ir	24448615
 aarch64/int_loop.text	330
 aarch64/int_loop.ir	18000085
-aarch64/map_int.text	8695
+aarch64/map_int.text	8504
 aarch64/map_int.ir	23869629
-aarch64/map_probe_chain.text	8705
+aarch64/map_probe_chain.text	8514
 aarch64/map_probe_chain.ir	233221143
 aarch64/map_string.text	9790
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 aarch64/map_string.ir	53247468	2
-aarch64/ordmap_insert.text	6141
+aarch64/ordmap_insert.text	6058
 aarch64/ordmap_insert.ir	98457462
-aarch64/pmap_insert.text	3256
+aarch64/pmap_insert.text	3433
 aarch64/pmap_insert.ir	63996220
-aarch64/pvec_with.text	3393
+aarch64/pvec_with.text	3310
 aarch64/pvec_with.ir	59221804
 aarch64/record_update.text	1608
 aarch64/record_update.ir	34494442
-aarch64/sort_inplace.text	1769
+aarch64/sort_inplace.text	1686
 # 2026-10-29: main 0c591828 (Perf, perf-aarch64 and perf-x86_64) reports sort_inplace.ir 4.9% and 7.3% lower.
 aarch64/sort_inplace.ir	43684079
-aarch64/sort_ints.text	2258
+aarch64/sort_ints.text	2175
 aarch64/sort_ints.ir	30178876
 aarch64/sort_strings.text	3677
 aarch64/sort_strings.ir	105486307
@@ -512,9 +513,9 @@ aarch64/struct_drop.text	2754
 aarch64/struct_drop.ir	222380901
 aarch64/tokenize.text	1388
 aarch64/tokenize.ir	38350109
-aarch64/utf8_ingest_unchecked.text	9077
+aarch64/utf8_ingest_unchecked.text	9277
 aarch64/utf8_ingest_unchecked.ir	2689511
-aarch64/utf8_ingest_validated.text	9701
+aarch64/utf8_ingest_validated.text	9901
 aarch64/utf8_ingest_validated.ir	6229114
 
 # Standard Perceus kernels: native calibration run 37716073565 at 226b5d716.
