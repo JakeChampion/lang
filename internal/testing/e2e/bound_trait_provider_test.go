@@ -8,7 +8,7 @@ import (
 
 const boundTraitProviderSrc = `import "core/cmp" as cmp;
 import "std/f64";
-import "std/num";
+import "core/ops";
 
 struct P { x: i32 }
 
@@ -32,7 +32,7 @@ function via_b_lambda[T: B](vs: T[]): i32 {
 }
 
 function mine[T: MyAdd](a: T, b: T): T { return a.add(b); }
-function theirs[T: num.Add](a: T, b: T): T { return a.add(b); }
+function theirs[T: ops.Add](a: T, b: T): T { return a.add(b); }
 
 trait Show { function show(self: Self): i32; }
 
@@ -128,7 +128,7 @@ func TestWasmBoundTraitProvider(t *testing.T) {
 }
 
 const boundTraitProviderAssocSrc = `import "std/i32";
-import "std/num";
+import "core/ops";
 
 struct P { x: i32 }
 
@@ -161,7 +161,7 @@ function via_b_lambda[T: B](): T {
 function shadowed[T: B](T: T): i32 { return T.val(); }
 
 function mine[T: MyZero](): T { return T.zero(); }
-function theirs[T: num.Zero](): T { return T.zero(); }
+function theirs[T: ops.Zero](): T { return T.zero(); }
 
 trait Mk { function mk(): Self; }
 

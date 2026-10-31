@@ -10,14 +10,14 @@ var monomorphSubstCases = []struct {
 	name string
 	src  string
 }{
-	{"plain", "import \"std/num\" as num;\n" +
-		"function (a: (T: num.Num + num.Zero)[]) total(): T { let s: T = T.zero(); let i: i32 = 0; while (i < a.len()) { s = s.add(a[i]); i = i + 1; } return s; }\n" +
+	{"plain", "import \"core/ops\" as ops;\n" +
+		"function (a: (T: ops.Num + ops.Zero)[]) total(): T { let s: T = T.zero(); let i: i32 = 0; while (i < a.len()) { s = s.add(a[i]); i = i + 1; } return s; }\n" +
 		"function main(): i32 { let xs: i32[] = [40, 2]; return xs.total(); }\n"},
-	{"in-array-literal", "import \"std/num\" as num;\n" +
-		"function (a: (T: num.Num + num.Zero)[]) total(): T { let seed: T[] = [T.zero()]; let s: T = seed[0]; let i: i32 = 0; while (i < a.len()) { s = s.add(a[i]); i = i + 1; } return s; }\n" +
+	{"in-array-literal", "import \"core/ops\" as ops;\n" +
+		"function (a: (T: ops.Num + ops.Zero)[]) total(): T { let seed: T[] = [T.zero()]; let s: T = seed[0]; let i: i32 = 0; while (i < a.len()) { s = s.add(a[i]); i = i + 1; } return s; }\n" +
 		"function main(): i32 { let xs: i32[] = [40, 2]; return xs.total(); }\n"},
-	{"in-slice", "import \"std/num\" as num;\n" +
-		"function (a: (T: num.Num + num.Zero)[]) total(): T { let seed: T[] = [T.zero(), T.zero()]; let s: T = seed[0:1][0]; let i: i32 = 0; while (i < a.len()) { s = s.add(a[i]); i = i + 1; } return s; }\n" +
+	{"in-slice", "import \"core/ops\" as ops;\n" +
+		"function (a: (T: ops.Num + ops.Zero)[]) total(): T { let seed: T[] = [T.zero(), T.zero()]; let s: T = seed[0:1][0]; let i: i32 = 0; while (i < a.len()) { s = s.add(a[i]); i = i + 1; } return s; }\n" +
 		"function main(): i32 { let xs: i32[] = [40, 2]; return xs.total(); }\n"},
 }
 

@@ -51,25 +51,27 @@ They are outside the public library inventory below.
 
 | Module | Source document |
 | --- | --- |
-| `core/bigint` | [Arbitrary-precision integers](../internal/stdlib/core/bigint.fern.md) |
 | `core/cmp` | [Comparison and display traits](../internal/stdlib/core/cmp.fern.md) |
+| `core/convert` | [Value conversion traits](../internal/stdlib/core/convert.fern.md) |
+| `core/error` | [The common error interface](../internal/stdlib/core/error.fern.md) |
 | `core/int` | [Integer text and radix conversion](../internal/stdlib/core/int.fern.md) |
 | `core/iter` | [Value iterators and lazy adapters](../internal/stdlib/core/iter.fern.md) |
 | `core/map` | [The map runtime](../internal/stdlib/core/map.fern.md) |
 | `core/mem` | [Value lifetime hooks](../internal/stdlib/core/mem.fern.md) |
+| `core/ops` | [Operator traits](../internal/stdlib/core/ops.fern.md) |
 | `std/ansi` | [ANSI terminal styles](../internal/stdlib/std/ansi.fern.md) |
 | `std/array` | [Array operations and statistics](../internal/stdlib/std/array.fern.md) |
 | `std/async` | [Futures and structured concurrency](../internal/stdlib/std/async.fern.md) |
 | `std/base32` | [Base32 text and byte data](../internal/stdlib/std/base32.fern.md) |
 | `std/base64` | [Base64 text and byte data](../internal/stdlib/std/base64.fern.md) |
 | `std/bench` | [Time and allocation measurements](../internal/stdlib/std/bench.fern.md) |
+| `std/bigint` | [Arbitrary-precision integers](../internal/stdlib/std/bigint.fern.md) |
 | `std/binary` | [Network-order integer fields](../internal/stdlib/std/binary.fern.md) |
 | `std/brotli` | [Brotli decompression](../internal/stdlib/std/brotli.fern.md) |
 | `std/cli` | [Command-line specifications](../internal/stdlib/std/cli.fern.md) |
 | `std/clock` | [Wall and monotonic clocks](../internal/stdlib/std/clock.fern.md) |
 | `std/codec` | [Shared codec errors](../internal/stdlib/std/codec.fern.md) |
 | `std/constmap` | [Immutable maps for known string keys](../internal/stdlib/std/constmap.fern.md) |
-| `std/convert` | [Value conversion traits](../internal/stdlib/std/convert.fern.md) |
 | `std/crypto` | [Digests, authentication codes, and key derivation](../internal/stdlib/std/crypto.fern.md) |
 | `std/crypto/aead` | [Authenticated-encryption errors](../internal/stdlib/std/crypto/aead.fern.md) |
 | `std/crypto/aes_gcm` | [AES-GCM authenticated encryption](../internal/stdlib/std/crypto/aes_gcm.fern.md) |
@@ -89,7 +91,6 @@ They are outside the public library inventory below.
 | `std/dotenv` | [Environment-file values](../internal/stdlib/std/dotenv.fern.md) |
 | `std/envflag` | [Boolean environment flags](../internal/stdlib/std/envflag.fern.md) |
 | `std/errno` | [Portable runtime error numbers](../internal/stdlib/std/errno.fern.md) |
-| `std/error` | [The common error interface](../internal/stdlib/std/error.fern.md) |
 | `std/f32` | [Binary32 parsing](../internal/stdlib/std/f32.fern.md) |
 | `std/f64` | [Floating-point operations and text](../internal/stdlib/std/f64.fern.md) |
 | `std/fetch` | [HTTP client requests](../internal/stdlib/std/fetch.fern.md) |
@@ -137,7 +138,7 @@ They are outside the public library inventory below.
 | `std/ndarray` | [Multidimensional array views](../internal/stdlib/std/ndarray.fern.md) |
 | `std/net` | [Network address values](../internal/stdlib/std/net.fern.md) |
 | `std/number_parse` | [Numeric parse errors and kernels](../internal/stdlib/std/number_parse.fern.md) |
-| `std/num` | [Arithmetic trait contracts](../internal/stdlib/std/num.fern.md) |
+| `std/num` | [Numeric reductions](../internal/stdlib/std/num.fern.md) |
 | `std/option` | [Optional values](../internal/stdlib/std/option.fern.md) |
 | `std/ordmap` | [Persistent ordered maps](../internal/stdlib/std/ordmap.fern.md) |
 | `std/ordset` | [Persistent ordered sets](../internal/stdlib/std/ordset.fern.md) |

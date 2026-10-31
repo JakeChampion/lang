@@ -971,7 +971,7 @@ Two arrays are equal when they have the same shape and the same elements in row-
 <<22 cmp impls>>=
 impl[T: cmp.Eq] cmp.Eq for NdArray[T] {
   function eq(self: NdArray[T], other: NdArray[T]): boolean {
-    return cmp.eq_arrays(self.shape, other.shape) && cmp.eq_arrays(self.to_flat(), other.to_flat());
+    return self.shape == other.shape && self.to_flat() == other.to_flat();
   }
 }
 

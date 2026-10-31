@@ -94,7 +94,7 @@ import "std/hash/crc32";
 import "std/array";
 import "core/cmp";
 import "core/int";
-import "std/error";
+import "core/error";
 ```
 
 ### `2 pub enum InflateError`

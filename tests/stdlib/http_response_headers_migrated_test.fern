@@ -20,7 +20,7 @@ function test_user_headers_before_auto_block(): test.TestOutcome {
 
 function test_redirect_sets_location_header(): test.TestOutcome {
   let r: HttpResponse = http.redirect("/login");
-  return test.assert_is_some_eq_string(
+  return test.assert_is_some_eq(
     r.headers.get("location"),
     "/login",
   );

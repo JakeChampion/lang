@@ -73,7 +73,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 import "core/cmp";
 import "std/string";
 import "std/array";
-import "std/error";
+import "core/error";
 import "std/option";
 import "std/result";
 import "std/time";

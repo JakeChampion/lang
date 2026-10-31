@@ -1,0 +1,37 @@
+// A borrowed parameter that can hold a handle can lend it to the call's
+// result. A value matched out of that result is borrowed, so it cannot pass
+// to an `own` parameter.
+
+struct A { items: i32[], w: Writer }
+struct B { w: Writer }
+type V = A | B;
+
+function pick(own a: A, h: B): Option[V] {
+  if (a.items.len() == 0) {
+    return Some(h);
+  }
+  return Some(a);
+}
+
+function size(own v: V): i32 {
+  match (v) {
+    A(a) => {
+      return a.items.len();
+    },
+    B(_) => {
+      return 0;
+    }
+  }
+  return 0;
+}
+
+function run(own a: A, h: B): i32 {
+  let Some(out) = pick(a, h) else {
+    return 0 - 1;
+  };
+  return size(out);
+}
+
+function main(): i32 {
+  return 0;
+}

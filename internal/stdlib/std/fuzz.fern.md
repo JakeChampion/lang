@@ -395,7 +395,7 @@ pub function run_shrink(seeds: u8[][], iterations: i32, target: (u8[]) => test.T
 ```fern
 <<8 function __fuzz_format_failure(origin: string, raw: u8[], minimised: u8[], msg: string): string>>=
 function __fuzz_format_failure(origin: string, raw: u8[], minimised: u8[], msg: string): string {
-  if (cmp.eq_arrays(raw, minimised)) {
+  if (raw == minimised) {
     return origin + " input \"" + __fuzz_escape(raw) + "\" ("
       + raw.len().to_string() + " bytes): " + msg;
   }

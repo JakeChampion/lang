@@ -12,17 +12,17 @@ var opTraitGenericIRCases = []struct {
 	name string
 	src  string
 }{
-	{"sum3", `import "std/num";
-function sum3[T: num.Num](a: T, b: T, c: T): T { return a + b + c; }
+	{"sum3", `import "core/ops";
+function sum3[T: ops.Num](a: T, b: T, c: T): T { return a + b + c; }
 function main(): i32 { return sum3(10, 20, 12); }`},
-	{"diff-of-squares", `import "std/num";
-function dsq[T: num.Num](a: T, b: T): T { return (a + b) * (a - b); }
+	{"diff-of-squares", `import "core/ops";
+function dsq[T: ops.Num](a: T, b: T): T { return (a + b) * (a - b); }
 function main(): i32 { return dsq(5, 3); }`},
-	{"unary-neg", `import "std/num";
-function ng[T: num.Neg](a: T): T { return -a; }
+	{"unary-neg", `import "core/ops";
+function ng[T: ops.Neg](a: T): T { return -a; }
 function main(): i32 { return ng(0 - 5); }`},
-	{"accumulate", `import "std/num";
-function tot[T: num.Num](xs: T[], z: T): T { let acc: T = z; for x in xs { acc = acc + x; } return acc; }
+	{"accumulate", `import "core/ops";
+function tot[T: ops.Num](xs: T[], z: T): T { let acc: T = z; for x in xs { acc = acc + x; } return acc; }
 function main(): i32 { let xs: i32[] = [3, 4, 5, 6]; return tot(xs, 0); }`},
 }
 

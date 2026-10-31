@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-const numTraitsMoreSrc = `import "std/num" as num;
-function (a: (T: num.Num)[]) total(init: T): T {
+const numTraitsMoreSrc = `import "core/ops" as ops;
+function (a: (T: ops.Num)[]) total(init: T): T {
     let s = init;
     let i = 0;
     while (i < a.len()) { s = s.add(a[i]); i = i + 1; }

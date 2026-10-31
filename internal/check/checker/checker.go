@@ -3007,10 +3007,12 @@ func (c *checker) instForReceiver(typeName, name, trait, mangled string, recv as
 			return mangled
 		}
 	case ast.ArrayType, ast.SliceType, ast.TupleType:
-		// Only a generic impl method has an instance per receiver; an
-		// inherent method keeps the declaration that resolution picked.
-		if _, generic := c.info.GenericFuncs[mangled]; !generic {
-			return mangled
+		// Trait instances remain after monomorphization removes their generic
+		// declaration. A concrete inherent method keeps its selected declaration.
+		if trait == "" {
+			if _, generic := c.info.GenericFuncs[mangled]; !generic {
+				return mangled
+			}
 		}
 	default:
 		return mangled
@@ -3798,10 +3800,10 @@ func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
 const cmpImport = "`import \"core/cmp\";`"
 
 // cmpHint says where a cmp trait for t can come from. core/cmp implements Eq,
-// Ord and Hash for Option and Result when their parts do, so the hint moves
-// to the first part that is not a scalar, or else asks for the import. A type
-// that no module can implement the trait for gets advice on its parts, not an
-// impl that the orphan rule refuses.
+// Ord and Hash for Option, Result, arrays, slices and tuples when their parts
+// do, so the hint moves to the first part that is not a scalar, or else asks
+// for the import. A type that no module can implement the trait for gets
+// advice on its parts, not an impl that the orphan rule refuses.
 func cmpHint(t ast.Type, derive, trait string) string {
 	short := strings.TrimPrefix(trait, "cmp.")
 	if parts, ok := cmpParts(t); ok && trait != "cmp.Display" {
@@ -3830,6 +3832,12 @@ func cmpParts(t ast.Type) ([]ast.Type, bool) {
 		if t.Name == "Option" || t.Name == "Result" {
 			return t.Args, true
 		}
+	case ast.ArrayType:
+		return []ast.Type{t.Elem}, true
+	case ast.SliceType:
+		return []ast.Type{t.Elem}, true
+	case ast.TupleType:
+		return t.Elems, true
 	}
 	return nil, false
 }
@@ -6631,7 +6639,7 @@ func (c *checker) tryResidualMsg(srcEnum ast.EnumType, srcRes, retRes ast.Type) 
 	if dt, ok := retRes.(ast.DynTraitType); ok {
 		return fmt.Sprintf("`?` cannot box %s into %s: %s does not implement %s", sl, rl, sl, c.missingDynTraits(dt, srcRes))
 	}
-	return fmt.Sprintf("`?` on %s carrying %s but the surrounding function carries %s, and %s has no `from(%s)` constructor to convert it (std/convert's `impl From[%s] for %s`)",
+	return fmt.Sprintf("`?` on %s carrying %s but the surrounding function carries %s, and %s has no `from(%s)` constructor to convert it (core/convert's `impl From[%s] for %s`)",
 		demangle(srcEnum.Name), sl, rl, rl, sl, sl, rl)
 }
 
@@ -10723,10 +10731,16 @@ func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
 		case *ast.FuncDecl:
 			walkNested(x.Params, x.Body, moved)
 		case *ast.Var:
-			// A for-each over an own parameter's array takes it: each
-			// element is the loop's, and the array is not read again.
+			// A for-each over an owned array takes it at its last use, and
+			// borrows it when the array is read again after the loop.
 			if strings.HasPrefix(x.Name, ast.ForEachIterPrefix) {
 				if id, ok := x.Init.(*ast.Ident); ok && owned[id.Name] {
+					if !lastUse[x.Init] {
+						if at, isMoved := moved[id.Name]; isMoved {
+							c.errfCode(id.Pos(), "E050", "use of owned parameter %q after it was consumed (moved at line %d)", id.Name, at.Line)
+						}
+						return
+					}
 					recordExprUses(x.Init, moved)
 					moved[id.Name] = id.Pos()
 					return

@@ -75,7 +75,7 @@ import "std/i64";
 import "std/array";
 import "std/option";
 import "std/utf8";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

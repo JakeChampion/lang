@@ -34,19 +34,19 @@ impl Lanes for f64 {
     function splat(x: f64): f64 { return x; }
 }
 struct P { v: f64 }
-impl num.Mul for P { function mul(self: P, o: P): P { return P { v: self.v * o.v }; } }
-impl num.Neg for P { function neg(self: P): P { return P { v: -self.v }; } }
+impl ops.Mul for P { function mul(self: P, o: P): P { return P { v: self.v * o.v }; } }
+impl ops.Neg for P { function neg(self: P): P { return P { v: -self.v }; } }
 struct G[T] { v: T }
-impl[T: Lanes + num.Num] num.Add for G[T] {
+impl[T: Lanes + ops.Num] ops.Add for G[T] {
     function add(self: G[T], o: G[T]): G[T] { return G { v: self.v + o.v }; }
 }
-impl[T: Lanes + num.Num] Lanes for G[T] {
+impl[T: Lanes + ops.Num] Lanes for G[T] {
     const LANES: i32 = T.LANES + 1;
     function splat(x: f64): G[T] { return G { v: T.splat(x) }; }
 }
 function lanes_of[T: Lanes](x: T): i32 { return T.LANES; }
 function wrap[T: Lanes](x: f64): G[T] { return G { v: T.splat(x) }; }
-function twice[T: Lanes + num.Num](g: G[T], h: G[T]): G[T] { return g + h; }
+function twice[T: Lanes + ops.Num](g: G[T], h: G[T]): G[T] { return g + h; }
 function main(): i32 {
     let p: P = P { v: 3.0 };
     let q: P = -(p * p);

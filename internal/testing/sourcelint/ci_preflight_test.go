@@ -42,8 +42,8 @@ func TestCILintRunsOutsideTheFullSuiteQueue(t *testing.T) {
 	}
 	// The verdict is the one check a ruleset requires, so it must follow every
 	// tier and still report when a dependency failed.
-	if verdict.keys["name"] != "CI verdict" || verdict.keys["needs"] != "[lint, suite]" || verdict.keys["if"] != "${{ !cancelled() }}" {
-		t.Errorf("verdict must be named `CI verdict`, follow lint and suite, and run unless cancelled: %+v", verdict.keys)
+	if verdict.keys["name"] != "CI verdict" || verdict.keys["needs"] != "[changes, lint, suite]" || verdict.keys["if"] != "${{ !cancelled() }}" {
+		t.Errorf("verdict must be named `CI verdict`, follow changes, lint and suite, and run unless cancelled: %+v", verdict.keys)
 	}
 	if on, _ := onBlock(workflowSource(t, ciFile)); !strings.Contains(on, "merge_group:") {
 		t.Errorf("%s does not trigger on merge_group, so a merge queue batch gets no suite and no verdict", ciFile)

@@ -52,15 +52,15 @@ function test_contains_in_order_rejects_wrong_order(): test.TestOutcome {
 }
 
 function test_in_range_i32_pass(): test.TestOutcome {
-  return test.assert_in_range_i32(50, 0, 100);
+  return test.assert_in_range(50, 0, 100);
 }
 
 function test_in_range_i32_boundary_pass(): test.TestOutcome {
-  return test.assert_in_range_i32(0, 0, 100);
+  return test.assert_in_range(0, 0, 100);
 }
 
 function test_in_range_i32_below_fails(): test.TestOutcome {
-  match (test.assert_in_range_i32(0 - 1, 0, 100)) {
+  match (test.assert_in_range(0 - 1, 0, 100)) {
     Fail(msg) => {
       if (!msg.contains("< lower bound")) {
         return test.fail("failure msg should name lower-bound side");
@@ -75,7 +75,7 @@ function test_in_range_i32_below_fails(): test.TestOutcome {
 }
 
 function test_in_range_i64_pass(): test.TestOutcome {
-  return test.assert_in_range_i64(
+  return test.assert_in_range(
     5000000000 as i64,
     1000000000 as i64,
     9999999999 as i64,

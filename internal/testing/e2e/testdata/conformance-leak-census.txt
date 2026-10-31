@@ -104,6 +104,7 @@ array_rotate_module                                  0
 array_rotate_right_basic                             0
 array_rotate_wrap_and_negative                       0
 array_sort                                           0
+array_tuple_cmp_traits                               0
 array_tuple_trait_impls                              0
 array_views_see_builtin_writes                       0
 array_with_rc_elem_drop                              0
@@ -257,6 +258,7 @@ destructure_repeated_discards                        0
 destructure_repeated_discards_in_param               0
 destructure_tuple_and_struct_forms                   0
 digit_separators_and_usize_suffix                    0
+display_user_type_print                             0
 div_modulo                                           0
 divmod_inline                                        0
 dyn_bound_satisfied                                  0
@@ -605,6 +607,7 @@ oob_write_wrapped_index                              1
 op_overload_nested                                   0
 op_trait_generic                                     0
 open_slice_evaluates_base_once                       0
+ops_rem_and_bit_traits                              0
 opt_arr_alias_match_reclaim                          0
 opt_array_struct_field                               0
 opt_f32_payload                                      0
@@ -617,6 +620,7 @@ option_str                                           0
 optresult_transpose                                  0
 ord_struct_enum                                      0
 override_scalar                                      0
+own_arg_from_call_with_handle_free_borrowed_param    0
 own_arg_redeclared_fresh_local_and_owned_alias       0
 own_consume_borrowed_tail                            0
 own_consuming_match                                  0

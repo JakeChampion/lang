@@ -50,7 +50,7 @@ import "std/unicode";
 import "std/http";
 import "std/url";
 import "std/string";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

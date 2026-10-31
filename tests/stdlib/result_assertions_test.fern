@@ -14,12 +14,12 @@ function test_is_ok_string_pass(r: test.TestRunner): test.TestRunner {
   }
   return rr.it(
     "is_ok_string after successful read",
-    () => test.assert_is_ok_string(read_file(path)),
+    () => test.assert_is_ok(read_file(path)),
   );
 }
 
 function test_is_ok_string_err_fails(): test.TestOutcome {
-  match (test.assert_is_ok_string(read_file(
+  match (test.assert_is_ok(read_file(
     "/tmp/lang-no-such-file-batch30-zztop",
   ))) {
     Pass => {
@@ -82,7 +82,7 @@ function test_is_ok_eq_string_pass(r: test.TestRunner): test.TestRunner {
   }
   return rr.it(
     "is_ok_eq_string matches",
-    () => test.assert_is_ok_eq_string(read_file(path), "exact-value"),
+    () => test.assert_is_ok_eq(read_file(path), "exact-value"),
   );
 }
 
@@ -98,7 +98,7 @@ function test_is_ok_eq_string_wrong_value(r: test.TestRunner): test.TestRunner {
     },
     Ok(_) => {}
   }
-  match (test.assert_is_ok_eq_string(read_file(path), "expected")) {
+  match (test.assert_is_ok_eq(read_file(path), "expected")) {
     Pass => {
       return rr.it(
         "wrong-value should fail",
@@ -119,7 +119,7 @@ function test_is_ok_eq_string_wrong_value(r: test.TestRunner): test.TestRunner {
 }
 
 function test_is_ok_eq_string_err_distinct_diag(): test.TestOutcome {
-  match (test.assert_is_ok_eq_string(
+  match (test.assert_is_ok_eq(
     read_file(
       "/tmp/lang-no-such-file-batch30-zztop",
     ),
@@ -144,7 +144,7 @@ function test_is_ok_string_array_pass(r: test.TestRunner): test.TestRunner {
   }
   return rr.it(
     "is_ok_string_array on empty dir",
-    () => test.assert_is_ok_string_array(read_dir(dir)),
+    () => test.assert_is_ok(read_dir(dir)),
   );
 }
 

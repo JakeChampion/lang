@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-// Runs the `changes` job's script out of .github/workflows/ci.yml against
-// stubbed API responses, so the JS copy of GitHub's filter grammar and the
+// Runs the changes and verdict scripts from .github/workflows/ci.yml against
+// API stubs and job results, so the JS copy of GitHub's filter grammar and the
 // job's fail-open rules are pinned the way TestGlobMatchesFollowsGitHubGrammar
 // pins the Go copy. The lint lane runs it (`make ci-selftest`); it needs only
 // node, which the runner image has.
@@ -288,8 +288,48 @@ check("error inside the filter fails open", [r.lanes.L, r.warnings.some((w) => w
 r = await decide({ files: ["x"], lanes: "{ not json" });
 check("unparsable table fails loudly", [r.lanes, r.failed.some((m) => m.includes("not valid JSON"))], [null, true]);
 
+const verdict = new AsyncFunction("core", block("- name: Every tier that ran passed", "script"));
+async function accepted({ changes = "success", lint = "success", suite = "success", lanes = { units: true } } = {}) {
+  const env = { CHANGES: changes, LINT: lint, SUITE: suite, LANES: typeof lanes === "string" ? lanes : JSON.stringify(lanes) };
+  const before = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+  const failed = [];
+  Object.assign(process.env, env);
+  try {
+    await verdict({ info() {}, setFailed(message) { failed.push(message); } });
+    return failed.length === 0;
+  } finally {
+    for (const [key, value] of Object.entries(before)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+check("verdict: selected suite succeeds", await accepted(), true);
+check("verdict: no lane selected and suite skipped", await accepted({ suite: "skipped", lanes: { units: false } }), true);
+check("verdict: no lane selected and suite succeeds", await accepted({ lanes: { units: false } }), true);
+const docLanes = (await decide({ files: ["docs/x.md"] })).lanes;
+check("verdict: actual doc-only selection skips the suite", await accepted({ suite: "skipped", lanes: docLanes }), true);
+check("verdict: a selected lane cannot skip", await accepted({ suite: "skipped" }), false);
+for (const result of ["failure", "cancelled", "skipped", ""]) {
+  for (const suite of ["success", "skipped"]) {
+    check(`verdict: lane selection ${result} with suite ${suite}`, await accepted({ changes: result, suite, lanes: { units: false } }), false);
+    check(`verdict: lint ${result} with suite ${suite}`, await accepted({ lint: result, suite, lanes: { units: false } }), false);
+  }
+}
+for (const suite of ["failure", "cancelled", "timed_out", ""]) {
+  for (const selected of [true, false]) {
+    check(`verdict: suite ${suite} with selected=${selected}`, await accepted({ suite, lanes: { units: selected } }), false);
+  }
+}
+for (const lanes of ["{", "null", "[]", "{}", '{"units":"false"}', '{"units":0}', '{"units":null}']) {
+  for (const suite of ["success", "skipped"]) {
+    check(`verdict: malformed selection ${lanes} with suite ${suite}`, await accepted({ suite, lanes }), false);
+  }
+}
+
 if (failures) {
   console.error(`ci-changes-selftest: ${failures} failure(s)`);
   process.exit(1);
 }
-console.log(`ci-changes-selftest: ${cases} cases pass against the changes script in ci.yml`);
+console.log(`ci-changes-selftest: ${cases} cases pass against the changes and verdict scripts in ci.yml`);

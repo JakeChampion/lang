@@ -62,7 +62,7 @@ import "std/i32";
 import "std/http";
 import "std/string";
 import "core/int";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

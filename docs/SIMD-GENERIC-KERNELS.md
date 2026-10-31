@@ -41,7 +41,7 @@ deliberately not copied:
 | Parametric impls with bounds (`impl[I: Iterator[T], T] Iterator[T] for Filtered[I, T]`) | shipped (`core/iter.fern`) |
 | Associated types, supertraits | shipped (`ASSOCIATED-TYPES.md`) |
 | Operator overloading on structs: `+ - * / %` and unary `-` desugar to `add` / `sub` / `mul` / `div` / `rem` / `neg` by name | shipped (#2706) |
-| `Add` / `Sub` / `Mul` / `Div` / `Neg` / `Zero` / `One` and the `Num` supertrait, implemented for every built-in number | shipped (`std/num`) |
+| `Add` / `Sub` / `Mul` / `Div` / `Neg` / `Zero` / `One` and the `Num` supertrait, implemented for every built-in number | shipped (`core/ops`) |
 | `exp`, `log`, `sin`, `cos`, `tan`, `atan2`, `expm1`, `log1p`, `cbrt`, `pow`, … on `f64` in pure Fern, bit-identical on every backend | shipped (`std/f64`), concrete in `f64` |
 | SIMD in the compiler | fused whole-loop kernels only: `__memchr`, `__count_byte`, `__ascii_run`, `__inner_mul_add_f64`, … (`ATLAS-PLATFORM-PLAN.md` §3) |
 | A SIMD value type | none |
@@ -57,7 +57,7 @@ compiler half (§6) is the lane type.
 ### 3.1 Associated constants (ships in this series)
 
 ```fern
-trait Lanes: num.Num + num.Neg {
+trait Lanes: ops.Num + ops.Neg {
     type Elem;
     const LANES: i32;
     function splat(x: Self::Elem): Self;
@@ -157,11 +157,11 @@ widening §1.2 said it leaves available.
 
 ## 5. `std/simd`
 
-One module, `internal/stdlib/std/simd.fern`, importing `std/num` and
+One module, `internal/stdlib/std/simd.fern`, importing `core/ops` and
 `std/f64`.
 
 ```fern
-pub trait Lanes: num.Num + num.Neg {
+pub trait Lanes: ops.Num + ops.Neg {
     type Elem;
     const LANES: i32;
     function splat(x: Self::Elem): Self;        // every lane = x
@@ -200,7 +200,7 @@ separate change to the contract of `Math`.
 
 - **Scalar impls**: `impl Lanes for f64` and `impl Lanes for f32`, one lane,
   delegating to `std/f64`. Every generic kernel runs today through these.
-- **`Dual[T: Lanes]`** `{ v: T, d: T }`: `impl[T: Lanes] num.Add for
+- **`Dual[T: Lanes]`** `{ v: T, d: T }`: `impl[T: Lanes] ops.Add for
   Dual[T]` and the rest, so `a * b + c` on duals is plain source, and
   `impl[T: Lanes] Lanes for Dual[T]` so a kernel takes a dual. A `Dual` of
   an `f64x2` differentiates two points at once.
@@ -214,7 +214,7 @@ separate change to the contract of `Math`.
   rule to the inner type's functions; `DoubleDouble` reduces the argument
   and sums a series at its own precision, seeded by the inner type's own
   result where a Newton step doubles it (log, atan, sqrt).
-- **`f64x2` and `f32x4`** (slice 5a): `impl Lanes` and the `std/num`
+- **`f64x2` and `f32x4`** (slice 5a): `impl Lanes` and the `core/ops`
   operator traits, so a generic kernel takes a lane type as its type
   argument. Both get `Math` from one `impl Math for Vec[N, T]`
   (`CONST-GENERICS.md` CG3c).

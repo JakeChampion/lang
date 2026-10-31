@@ -64,7 +64,7 @@ pub function main(): i32 {
           Some(v) => {
             let shown: string = v;
             if (quoted_out) {
-              shown = gnu.quote_style(v, qstyle);
+              shown = gnu.quote_style(shown, qstyle);
             }
             o = gnu.put_with(o, shown + term, 2);
             found = true;

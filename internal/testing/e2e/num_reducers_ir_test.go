@@ -76,7 +76,7 @@ func TestNativeNumReducersArm64(t *testing.T) {
 func TestNativeNumReducersModule(t *testing.T) {
 	src := `import "std/num" as num;
 struct V2 { x: i32, y: i32 }
-impl num.Add for V2 { function add(self: Self, o: Self): Self { return V2 { x: self.x + o.x, y: self.y + o.y }; } }
+impl ops.Add for V2 { function add(self: Self, o: Self): Self { return V2 { x: self.x + o.x, y: self.y + o.y }; } }
 function main(): i32 {
     let s = num.sum_with([10, 20, 5, 7], 0);                 // 42
     let p = num.product_with([1, 2, 3, 4], 1);               // 24

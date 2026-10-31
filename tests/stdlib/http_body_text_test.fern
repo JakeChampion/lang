@@ -20,7 +20,7 @@ function failed(why: StreamFault): BodySource {
 }
 
 function test_request_body_text_reads_utf8(): test.TestOutcome {
-  return test.assert_is_some_eq_string(http.request("POST", "/").with_text("héllo").body_text().ok(), "héllo");
+  return test.assert_is_some_eq(http.request("POST", "/").with_text("héllo").body_text().ok(), "héllo");
 }
 
 function test_request_body_text_refuses_bad_utf8(): test.TestOutcome {
@@ -40,7 +40,7 @@ function test_request_body_text_lossy_replaces_bad_utf8(): test.TestOutcome {
 }
 
 function test_response_body_text_reads_utf8(): test.TestOutcome {
-  return test.assert_is_some_eq_string(http.ok("héllo").body_text().ok(), "héllo");
+  return test.assert_is_some_eq(http.ok("héllo").body_text().ok(), "héllo");
 }
 
 function test_response_body_text_refuses_bad_utf8(): test.TestOutcome {

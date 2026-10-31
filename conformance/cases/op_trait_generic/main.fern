@@ -4,10 +4,10 @@
 
 
 
-import "std/num";
-function sum3[T: num.Num](a: T, b: T, c: T): T { return a + b + c; }
-function dsq[T: num.Num](a: T, b: T): T { return (a + b) * (a - b); }
-function negate[T: num.Neg](a: T): T { return -a; }
+import "core/ops";
+function sum3[T: ops.Num](a: T, b: T, c: T): T { return a + b + c; }
+function dsq[T: ops.Num](a: T, b: T): T { return (a + b) * (a - b); }
+function negate[T: ops.Neg](a: T): T { return -a; }
 function main(): i32 {
     let s: i32 = sum3(10, 20, 12);
     s = s + dsq(5, 3);

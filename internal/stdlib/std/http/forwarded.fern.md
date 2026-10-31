@@ -71,7 +71,7 @@ import "std/platform";
 import "std/utf8" as utf8;
 import "std/array";
 import "std/option";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

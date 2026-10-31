@@ -20,7 +20,8 @@ A stream that ends before the decoder has the bits it needs is truncated. This r
 import "std/brotli/dictionary";
 import "std/brotli/encoder";
 import "core/cmp";
-import "std/error";
+import "core/error";
+import "std/array";
 
 <<Compress a stream>>
 

@@ -1,6 +1,6 @@
 import "std/array" as array;
 import "std/i64";
-import "std/num";
+import "core/ops";
 import "core/cmp";
 
 function identity[T](x: T): T {
@@ -19,15 +19,15 @@ function (xs: [T]) transform[U](f: (T) => U): U {
   return f(xs[0]);
 }
 
-function one_plus[T: num.Add + num.One](x: T): T {
+function one_plus[T: ops.Add + ops.One](x: T): T {
   return T.one().add(x);
 }
 
-function zero_plus[T: num.Add + num.Zero](x: T): T {
+function zero_plus[T: ops.Add + ops.Zero](x: T): T {
   return T.zero().add(x);
 }
 
-function default_plus[T: num.Add + cmp.Default](x: T): T {
+function default_plus[T: ops.Add + cmp.Default](x: T): T {
   return T.default().add(x);
 }
 

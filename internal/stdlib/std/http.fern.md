@@ -191,7 +191,7 @@ import "std/headers";
 import "std/io_buffered" as io_buffered;
 import "std/json";
 import "std/stream";
-import "std/error";
+import "core/error";
 import "std/platform";
 import "std/url";
 import "std/utf8" as utf8;
