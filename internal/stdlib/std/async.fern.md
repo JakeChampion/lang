@@ -91,7 +91,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "std/i32";
-import "core/int";
 import "std/string";
 import "std/time";
 import "std/clock";
@@ -302,7 +301,7 @@ function __real_wait(d: RealDriver, events: i32[], timeout_ms: i32): i32 {
 function __real_signal_fd(d: RealDriver, sig: i32): i32 {
   for row in d.signals.get().split(";") {
     let parts: string[] = row.split(":");
-    if (parts.len() == 2 && parts[0] == int.int_to_string(sig)) {
+    if (parts.len() == 2 && parts[0] == sig.to_string()) {
       match (i32.parse_i32_radix(parts[1], 10)) {
         Ok(v) => {
           return v;
@@ -410,7 +409,7 @@ impl Driver for RealDriver {
     if (sfd < 0) {
       return sfd;
     }
-    self.signals.set(self.signals.get() + int.int_to_string(sig) + ":" + int.int_to_string(sfd) + ";");
+    self.signals.set(self.signals.get() + sig.to_string() + ":" + sfd.to_string() + ";");
     return 0;
   }
   function unwatch_signal(self: RealDriver, sig: i32): i32 {
@@ -420,7 +419,7 @@ impl Driver for RealDriver {
     }
     let kept: string = "";
     for row in self.signals.get().split(";") {
-      if (row.len() > 0 && !row.starts_with(int.int_to_string(sig) + ":")) {
+      if (row.len() > 0 && !row.starts_with(sig.to_string() + ":")) {
         kept = kept + row + ";";
       }
     }

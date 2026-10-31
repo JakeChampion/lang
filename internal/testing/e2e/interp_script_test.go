@@ -283,16 +283,6 @@ function main(): i32 {
 }`,
 		},
 		{
-			name: "qualified int.int_to_string call",
-			source: `import "core/int";
-
-function main(): i32 {
-    let s: string = int.int_to_string(11);
-    print(s);
-    return 0;
-}`,
-		},
-		{
 			name: "auto-prelude flat-load path (regression sanity)",
 			source: `
 import "std/i32";

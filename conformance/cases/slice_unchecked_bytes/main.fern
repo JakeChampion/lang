@@ -9,12 +9,11 @@
 
 
 
-import "core/int";
 
 function main(): i32 {
     let m: string = "héllo";
-    print(int.int_to_string(slice_unchecked(m, 1, 2).len()));
-    print(int.int_to_string(slice_unchecked(m, 2, 4).len()));
-    print(int.int_to_string(slice_unchecked(m, 0, 6).len()));
+    print(slice_unchecked(m, 1, 2).len().to_string());
+    print(slice_unchecked(m, 2, 4).len().to_string());
+    print(slice_unchecked(m, 0, 6).len().to_string());
     return 0;
 }

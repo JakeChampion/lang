@@ -5,7 +5,6 @@ import "std/http/qpack";
 import "std/hex";
 import "std/codec";
 import "std/option";
-import "core/int";
 import "std/i64";
 
 struct Got { decoder: qpack.Decoder, fields: qpack.Field[], blocked: boolean }
@@ -202,8 +201,8 @@ function test_encoder(): test.TestOutcome {
       }
     }
   }
-  return test.assert_eq(hex.encode(plain) + " " + int.int_to_string(coded.len()) + " " + back, "0000d1510b2f696e6465782e68746d6c26782d6665726e03796573"
-    + "7f4506736563726574f5 " + int.int_to_string(coded.len()) + " :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | ");
+  return test.assert_eq(hex.encode(plain) + " " + coded.len().to_string() + " " + back, "0000d1510b2f696e6465782e68746d6c26782d6665726e03796573"
+    + "7f4506736563726574f5 " + coded.len().to_string() + " :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | :method=GET; :path=/index.html; x-fern=yes; authorization=secret (never); content-type=text/plain; | ");
 }
 
 function test_status_and_length(): test.TestOutcome {
@@ -211,8 +210,8 @@ function test_status_and_length(): test.TestOutcome {
   let mismatched: string = "";
   for code in [200, 404, 425, 418, 999] {
     let direct: u8[] = enc.put_status(enc.section(0), code);
-    if (hex.encode(direct) != hex.encode(enc.encode([qpack.field(":status", int.int_to_string(code))]))) {
-      mismatched = mismatched + " status " + int.int_to_string(code);
+    if (hex.encode(direct) != hex.encode(enc.encode([qpack.field(":status", code.to_string())]))) {
+      mismatched = mismatched + " status " + code.to_string();
     }
   }
   for n in [0 as i64, 5 as i64, 12 as i64, 100 as i64, 12345 as i64, 9999999999 as i64] {

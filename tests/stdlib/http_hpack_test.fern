@@ -2,7 +2,6 @@ import "std/test";
 import "std/http/hpack";
 import "std/hex";
 import "std/codec";
-import "core/int";
 
 function fields_text(fs: hpack.Field[]): string {
   let out: string = "";
@@ -19,7 +18,7 @@ function fields_text(fs: hpack.Field[]): string {
 function decoded(d: hpack.Decoder, block: string): string {
   match (d.decode(__codec_bytes(hex.decode(block)))) {
     Ok(got) => {
-      return fields_text(got.fields) + "table " + int.int_to_string(got.decoder.table_size());
+      return fields_text(got.fields) + "table " + got.decoder.table_size().to_string();
     },
     Err(e) => {
       return e.message();
@@ -65,15 +64,15 @@ function three_requests(blocks: string[], huffman: boolean): string {
     let enc: hpack.Encoded = e.encode(request_fields(i + 1));
     e = enc.encoder;
     if (hex.encode(enc.bytes) != blocks[i]) {
-      return "request " + int.int_to_string(i + 1) + " encoded as " + hex.encode(enc.bytes);
+      return "request " + (i + 1).to_string() + " encoded as " + hex.encode(enc.bytes);
     }
     match (d.decode(enc.bytes)) {
       Ok(got) => {
         d = got.decoder;
         if (fields_text(got.fields) != fields_text(request_fields(i + 1))) {
-          return "request " + int.int_to_string(i + 1) + " decoded as " + fields_text(got.fields);
+          return "request " + (i + 1).to_string() + " decoded as " + fields_text(got.fields);
         }
-        out = out + int.int_to_string(d.table_size()) + " ";
+        out = out + d.table_size().to_string() + " ";
       },
       Err(err) => {
         return err.message();
@@ -81,7 +80,7 @@ function three_requests(blocks: string[], huffman: boolean): string {
     }
     i = i + 1;
   }
-  return out + int.int_to_string(e.table_size());
+  return out + e.table_size().to_string();
 }
 
 function test_requests_plain(): test.TestOutcome {
@@ -114,15 +113,15 @@ function three_responses(blocks: string[], huffman: boolean): string {
     let enc: hpack.Encoded = e.encode(response_fields(i + 1));
     e = enc.encoder;
     if (hex.encode(enc.bytes) != blocks[i]) {
-      return "response " + int.int_to_string(i + 1) + " encoded as " + hex.encode(enc.bytes);
+      return "response " + (i + 1).to_string() + " encoded as " + hex.encode(enc.bytes);
     }
     match (d.decode(enc.bytes)) {
       Ok(got) => {
         d = got.decoder;
         if (fields_text(got.fields) != fields_text(response_fields(i + 1))) {
-          return "response " + int.int_to_string(i + 1) + " decoded as " + fields_text(got.fields);
+          return "response " + (i + 1).to_string() + " decoded as " + fields_text(got.fields);
         }
-        out = out + int.int_to_string(d.table_size()) + " ";
+        out = out + d.table_size().to_string() + " ";
       },
       Err(err) => {
         return err.message();
@@ -130,7 +129,7 @@ function three_responses(blocks: string[], huffman: boolean): string {
     }
     i = i + 1;
   }
-  return out + int.int_to_string(e.table_size());
+  return out + e.table_size().to_string();
 }
 
 function test_responses_plain(): test.TestOutcome {
@@ -196,7 +195,7 @@ function test_round_trip(): test.TestOutcome {
       if (got.fields.len() != 2 || got.fields[0].value != value || !got.fields[1].sensitive || got.fields[1].value != "Bearer 0123456789") {
         return test.fail(fields_text(got.fields));
       }
-      return test.assert_eq(int.int_to_string(got.decoder.table_size()) + " " + int.int_to_string(enc.encoder.table_size()), "293 293");
+      return test.assert_eq(got.decoder.table_size().to_string() + " " + enc.encoder.table_size().to_string(), "293 293");
     },
     Err(err) => {
       return test.fail(err.message());
@@ -242,7 +241,7 @@ function read_fields(d: hpack.Decoder, block: u8[]): string {
     },
     None => {}
   }
-  return out + "table " + int.int_to_string(st.table_size());
+  return out + "table " + st.table_size().to_string();
 }
 
 function read_fields_in(d: hpack.Decoder, bytes: u8[], from: i32, end: i32): string {
@@ -260,7 +259,7 @@ function read_fields_in(d: hpack.Decoder, bytes: u8[], from: i32, end: i32): str
     },
     None => {}
   }
-  return out + "table " + int.int_to_string(st.table_size());
+  return out + "table " + st.table_size().to_string();
 }
 
 function test_in_place(): test.TestOutcome {
@@ -281,7 +280,7 @@ function test_field_at_a_time(): test.TestOutcome {
     e = enc.encoder;
     let one: string = read_fields(d, enc.bytes);
     if (one != decoded(d, hex.encode(enc.bytes))) {
-      return test.fail("request " + int.int_to_string(i + 1) + " read as " + one);
+      return test.fail("request " + (i + 1).to_string() + " read as " + one);
     }
     match (d.decode(enc.bytes)) {
       Ok(got) => {

@@ -208,7 +208,6 @@ import "std/tls/server";
 import "std/tls/ktls";
 import "std/i64";
 import "std/envflag";
-import "core/int";
 import "std/http/grpc";
 import "std/http/h2";
 import "std/http/h3";
@@ -382,7 +381,7 @@ impl cmp.Display for ListenError {}
 impl error.Error for ListenError {}
 
 pub function (e: ListenError) message(): string {
-  return "cannot listen on port " + int.int_to_string(e.port) + ": " + e.error.message();
+  return "cannot listen on port " + e.port.to_string() + ": " + e.error.message();
 }
 
 pub function (e: ListenError) to_string(): string {
@@ -1062,7 +1061,7 @@ function __chunk_framed(bytes: u8[], end: string): u8[] {
   if (end.len() == 0) {
     return bytes;
   }
-  return (int.int_to_string_radix(bytes.len(), 16) + "\r\n").bytes().concat(bytes).concat("\r\n".bytes());
+  return (bytes.len().to_string_radix(16) + "\r\n").bytes().concat(bytes).concat("\r\n".bytes());
 }
 
 function __idle_due(producer: ChunkProducer, now: i64): i64 {
@@ -5766,7 +5765,7 @@ function __supervisor_reap(sup: __Supervisor): __Supervisor {
       }
       continue;
     }
-    eprint("serve: worker died with exit code " + int.int_to_string(code) + "; restarting");
+    eprint("serve: worker died with exit code " + code.to_string() + "; restarting");
     sup = __Supervisor { ...sup, crashed: code };
     if (lived_ms < 100 as i64) {
       sup = __Supervisor { ...sup, fast_deaths: sup.fast_deaths + 1 };
@@ -5991,7 +5990,7 @@ function __with_alt_svc(c: __Conns, resp: HttpResponse): HttpResponse {
   if (!__quic_on(c) || resp.headers.has("alt-svc")) {
     return resp;
   }
-  return HttpResponse { ...resp, headers: resp.headers.append("alt-svc", "h3=\":" + int.int_to_string(c.quic.port) + "\"; ma=86400") };
+  return HttpResponse { ...resp, headers: resp.headers.append("alt-svc", "h3=\":" + c.quic.port.to_string() + "\"; ma=86400") };
 }
 ```
 

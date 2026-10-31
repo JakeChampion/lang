@@ -697,13 +697,13 @@ planned order:
     compiler. Now `[T]` desugars to `T[]` in the parser — reusing
     the existing postfix-array type path. `string_prelude_migrated_test`
     now compiles, runs, and joins the differential gate.
-  - ✅ **`int.int_to_string(n)` routes to `__fern_i32_to_string`.**
-    The qualified call `int.int_to_string(n)` modload-mangles to
+  - ✅ **`n.to_string()` routes to `__fern_i32_to_string`.**
+    The qualified call `n.to_string()` modload-mangles to
     `int__int_to_string`; the self-host had no dispatch for that
     name, so core/int's pure-Fern body ran (raw __alloc_u8 + __memcpy
     + string_from_bytes path) and produced empty strings on the
     self-host's u8[] layout. std/http's response serializer chains
-    `... + int.int_to_string(resp.status) + ...`, producing
+    `... + resp.status.to_string() + ...`, producing
     `HTTP/1.1  OK` (status dropped) and `Content-Length: ` (length
     dropped). Both backends now special-case the mangled name and
     route to `__fern_i32_to_string`. `http_response_headers_migrated_test`

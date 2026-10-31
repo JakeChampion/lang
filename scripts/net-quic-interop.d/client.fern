@@ -12,7 +12,6 @@ import "std/time";
 import "std/option";
 import "std/i64";
 import "std/string";
-import "core/int";
 import "std/rand";
 
 function now(): Instant {
@@ -136,7 +135,7 @@ function echoed(c: conn.Conn, e: Echo): (conn.Conn, Echo) {
   if (matched) {
     verdict = "matches";
   }
-  print("fern client: echo of " + int.int_to_string(got.len()) + " bytes " + verdict);
+  print("fern client: echo of " + got.len().to_string() + " bytes " + verdict);
   return (r.0.close(0 as i64, "fern done", true, now()), Echo { ...e, got: got, matched: matched, closing: true });
 }
 

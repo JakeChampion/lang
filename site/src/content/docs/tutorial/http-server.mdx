@@ -216,7 +216,6 @@ the state. This one asks for a single worker, so there is one counter:
 ```fern
 import "std/http";
 import "std/serve";
-import "core/int";
 import "std/platform";
 
 function init(plat: platform.Platform): (serve.Config, Map[string, i32]) {
@@ -232,7 +231,7 @@ function handle(hits: Map[string, i32], req: HttpRequest,
         None => {}
     }
     return (hits.insert(req.path, n),
-            http.ok(int.int_to_string(n)));
+            http.ok(n.to_string()));
 }
 ```
 

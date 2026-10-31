@@ -2,7 +2,6 @@ import "std/test";
 import "std/http/h2/frame";
 import "std/hex";
 import "std/codec";
-import "core/int";
 
 function shown(block: string): string {
   return read_at(__codec_bytes(hex.decode(block)), 0, frame.MIN_FRAME_SIZE);
@@ -13,7 +12,7 @@ function read_at(buf: u8[], from: i32, max_frame: i32): string {
     Ok(r) => {
       match (r) {
         frame.Got(f, n) => {
-          return describe(f) + " [" + int.int_to_string(n) + "]";
+          return describe(f) + " [" + n.to_string() + "]";
         },
         frame.More => {
           return "partial";
@@ -37,48 +36,48 @@ function flag(on: boolean, name: string): string {
 function describe(f: frame.Frame): string {
   match (f) {
     frame.Data(d) => {
-      return "DATA " + int.int_to_string(d.stream) + flag(d.end_stream, "END_STREAM") + " " + hex.encode(d.data) + " pad " + int.int_to_string(d.padding);
+      return "DATA " + d.stream.to_string() + flag(d.end_stream, "END_STREAM") + " " + hex.encode(d.data) + " pad " + d.padding.to_string();
     },
     frame.Headers(h) => {
       let p: string = "";
       match (h.priority) {
         Some(pr) => {
-          p = " dep " + int.int_to_string(pr.dependency) + " w " + int.int_to_string(pr.weight) + flag(pr.exclusive, "exclusive");
+          p = " dep " + pr.dependency.to_string() + " w " + pr.weight.to_string() + flag(pr.exclusive, "exclusive");
         },
         None => {}
       }
-      return "HEADERS " + int.int_to_string(h.stream) + flag(h.end_stream, "END_STREAM") + flag(h.end_headers, "END_HEADERS") + p + " " + hex.encode(h.block) + " pad " + int.int_to_string(h.padding);
+      return "HEADERS " + h.stream.to_string() + flag(h.end_stream, "END_STREAM") + flag(h.end_headers, "END_HEADERS") + p + " " + hex.encode(h.block) + " pad " + h.padding.to_string();
     },
     frame.PriorityFrame(stream, pr) => {
-      return "PRIORITY " + int.int_to_string(stream) + " dep " + int.int_to_string(pr.dependency) + " w " + int.int_to_string(pr.weight) + flag(pr.exclusive, "exclusive");
+      return "PRIORITY " + stream.to_string() + " dep " + pr.dependency.to_string() + " w " + pr.weight.to_string() + flag(pr.exclusive, "exclusive");
     },
     frame.RstStream(stream, code) => {
-      return "RST_STREAM " + int.int_to_string(stream) + " " + int.int_to_string(code);
+      return "RST_STREAM " + stream.to_string() + " " + code.to_string();
     },
     frame.Settings(ack, settings) => {
       let out: string = "SETTINGS" + flag(ack, "ACK");
       for s in settings {
-        out = out + " " + int.int_to_string(s.id) + "=" + int.int_to_string(s.value);
+        out = out + " " + s.id.to_string() + "=" + s.value.to_string();
       }
       return out;
     },
     frame.PushPromise(p) => {
-      return "PUSH_PROMISE " + int.int_to_string(p.stream) + " promised " + int.int_to_string(p.promised) + flag(p.end_headers, "END_HEADERS") + " " + hex.encode(p.block);
+      return "PUSH_PROMISE " + p.stream.to_string() + " promised " + p.promised.to_string() + flag(p.end_headers, "END_HEADERS") + " " + hex.encode(p.block);
     },
     frame.Ping(ack, data) => {
       return "PING" + flag(ack, "ACK") + " " + hex.encode(data);
     },
     frame.GoAway(g) => {
-      return "GOAWAY last " + int.int_to_string(g.last_stream) + " " + int.int_to_string(g.code) + " " + hex.encode(g.debug);
+      return "GOAWAY last " + g.last_stream.to_string() + " " + g.code.to_string() + " " + hex.encode(g.debug);
     },
     frame.WindowUpdate(stream, increment) => {
-      return "WINDOW_UPDATE " + int.int_to_string(stream) + " +" + int.int_to_string(increment);
+      return "WINDOW_UPDATE " + stream.to_string() + " +" + increment.to_string();
     },
     frame.Continuation(stream, end_headers, block) => {
-      return "CONTINUATION " + int.int_to_string(stream) + flag(end_headers, "END_HEADERS") + " " + hex.encode(block);
+      return "CONTINUATION " + stream.to_string() + flag(end_headers, "END_HEADERS") + " " + hex.encode(block);
     },
     frame.Unknown(u) => {
-      return "UNKNOWN " + int.int_to_string(u.kind) + " flags " + int.int_to_string(u.flags) + " stream " + int.int_to_string(u.stream) + " " + hex.encode(u.payload);
+      return "UNKNOWN " + u.kind.to_string() + " flags " + u.flags.to_string() + " stream " + u.stream.to_string() + " " + hex.encode(u.payload);
     }
   }
   return "";
@@ -174,7 +173,7 @@ function test_headers_data(): test.TestOutcome {
   for block in cases {
     for data in ["hello".bytes(), [], long] {
       if (in_one_buffer(7, block, data) != framed_whole(7, block, data)) {
-        got = got + "block " + int.int_to_string(block.len()) + " data " + int.int_to_string(data.len()) + " differs\n";
+        got = got + "block " + block.len().to_string() + " data " + data.len().to_string() + " differs\n";
       }
     }
   }
@@ -189,7 +188,7 @@ function plain(block: string): string {
   let Some(len) = frame.plain_headers_at(buf, 2, frame.MIN_FRAME_SIZE) else {
     return "-";
   };
-  let out: string = int.int_to_string(len) + " on " + int.int_to_string(frame.stream_at(buf, 2));
+  let out: string = len.to_string() + " on " + frame.stream_at(buf, 2).to_string();
   if (frame.end_stream_at(buf, 2)) {
     return out + " END_STREAM";
   }
@@ -198,7 +197,7 @@ function plain(block: string): string {
 
 function __len_or_dash(len: Option[i32]): string {
   if let Some(n) = len {
-    return int.int_to_string(n);
+    return n.to_string();
   }
   return "-";
 }

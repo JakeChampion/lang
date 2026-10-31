@@ -26,7 +26,6 @@ import "std/string";
 import "std/tls/identity";
 import "std/tls/server";
 import "std/tls/verify";
-import "core/int";
 import "std/rand";
 
 function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
@@ -41,10 +40,10 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   }
   match (req.body_string()) {
     Ok(text) => {
-      return http.ok("len=" + int.int_to_string(text.len()) + " " + text);
+      return http.ok("len=" + text.len().to_string() + " " + text);
     },
     Err(e) => {
-      return http.ok("len=" + int.int_to_string(req.body_len()) + " <not text>");
+      return http.ok("len=" + req.body_len().to_string() + " <not text>");
     }
   }
   return http.ok("");

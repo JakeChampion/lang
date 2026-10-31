@@ -63,7 +63,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "std/i32";
-import "core/int";
 import "std/async";
 import "std/rand";
 import "std/time";
@@ -95,7 +94,7 @@ pub function (s: Sim) elapsed(): Duration {
 }
 
 pub function (s: Sim) ready_at(fd: i32, at: Instant, bits: i32): i32 {
-  s.readiness.set(s.readiness.get() + int.int_to_string(fd) + ":" + int.int_to_string(__ms_of(at)) + ":" + int.int_to_string(bits) + ";");
+  s.readiness.set(s.readiness.get() + fd.to_string() + ":" + __ms_of(at).to_string() + ":" + bits.to_string() + ";");
   return 0;
 }
 
@@ -246,7 +245,7 @@ impl async.Driver for Sim {
     return 0;
   }
   function watch(self: Sim, fd: i32, interest: i32): i32 {
-    return __sim_rewatch(self, fd, int.int_to_string(fd) + ":" + int.int_to_string(interest & 3) + ";");
+    return __sim_rewatch(self, fd, fd.to_string() + ":" + (interest & 3).to_string() + ";");
   }
   function unwatch(self: Sim, fd: i32): i32 {
     __sim_rewatch(self, fd, "");

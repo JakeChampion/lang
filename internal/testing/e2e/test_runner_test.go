@@ -111,6 +111,20 @@ func TestRunnerUintRangeExamplePasses(t *testing.T) {
 	}
 }
 
+func TestRunnerIntWidthParityExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/int_width_parity_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: integer width parity", "# pass 17", "# fail 0", "1..17"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 func TestRunnerStringFindAllExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/string_find_all_test.fern")

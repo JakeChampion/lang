@@ -1,6 +1,5 @@
 
 
-import "core/int";
 
 struct Pair { a: i32, b: string }
 
@@ -15,9 +14,9 @@ function twice[S](init: S, f: (S) => i32): i32 {
 }
 
 function main(): i32 {
-    print(int.int_to_string(apply(7, (n: i32): i32 => n + 1)));
-    print(int.int_to_string(apply("abcd", (s: string): i32 => s.len())));
-    print(int.int_to_string(apply(Pair { a: 3, b: "xy" }, (p: Pair): i32 => p.a + p.b.len())));
-    print(int.int_to_string(twice([1, 2, 3], (xs: i32[]): i32 => xs.len())));
+    print(apply(7, (n: i32): i32 => n + 1).to_string());
+    print(apply("abcd", (s: string): i32 => s.len()).to_string());
+    print(apply(Pair { a: 3, b: "xy" }, (p: Pair): i32 => p.a + p.b.len()).to_string());
+    print(twice([1, 2, 3], (xs: i32[]): i32 => xs.len()).to_string());
     return 0;
 }

@@ -10,7 +10,6 @@ import "std/clock";
 import "std/time";
 import "std/option";
 import "std/i64";
-import "core/int";
 import "std/rand";
 
 struct Server { cfg: conn.Config, sock: i32, current: Option[h3q.Conn], peer: Option[net.SocketAddr], answered: i32 }
@@ -44,7 +43,7 @@ function wait_until(deadline: Option[Instant]): Option[Duration] {
 }
 
 function answer(req: HttpRequest): HttpResponse {
-  let body: string = req.method + " " + req.path + " " + int.int_to_string(req.body.data.len());
+  let body: string = req.method + " " + req.path + " " + req.body.data.len().to_string();
   print("fern h3 server: answered " + body);
   return HttpResponse { status: 200, body: BodyText(body), headers: headers.new().append("content-type", "text/plain"), trailers: headers.new().append("x-served-by", "fern"), background: None };
 }
