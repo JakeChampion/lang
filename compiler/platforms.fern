@@ -230,6 +230,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "tcp_pollable", capability: "tcp" },
     Gate { builtin: "tcp_listen_with", capability: "tcp" },
     Gate { builtin: "tcp_socket_ctl", capability: "tcp" },
+    Gate { builtin: "tcp_addr_into", capability: "tcp" },
     Gate { builtin: "tcp_sendfile", capability: "tcp" },
     Gate { builtin: "tcp_send_buf", capability: "tcp" },
     Gate { builtin: "udp_bind", capability: "tcp" },

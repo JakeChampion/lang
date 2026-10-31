@@ -4780,6 +4780,7 @@ function builtin_sigs(): string[] {
     "target_arch(): string",
     "target_os(): string",
     "tcp_accept(i32): i32",
+    "tcp_addr_into(i32, boolean, u8[]): i32",
     "tcp_close(i32): i32",
     "tcp_connect_with(u8[], i32, boolean): i32",
     "tcp_ktls(i32, i32, i32, u8[]): i32",

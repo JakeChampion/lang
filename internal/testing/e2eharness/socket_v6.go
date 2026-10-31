@@ -68,6 +68,10 @@ function main(): i32 {
     if (c < 0) { return fail(3); }
     let a: i32 = tcp_accept(ln);
     if (a < 0) { return fail(4); }
+    // Both ends of a ::1 connection are ::1, family 6.
+    let rec: u8[] = zeros(19);
+    if (tcp_addr_into(a, false, rec) != 19 || !is_lo6(rec) || port_of(rec) != port) { return fail(46); }
+    if (tcp_addr_into(a, true, rec) != 19 || !is_lo6(rec) || port_of(rec) != tcp_local_port(c)) { return fail(47); }
     if (tcp_send_bytes(c, [104u8, 105u8]) != 2) { return fail(5); }
     let got: u8[] = recv(a, 16);
     if (got.len() != 2 || got[0] != 104u8 || got[1] != 105u8) { return fail(6); }
@@ -85,6 +89,7 @@ function main(): i32 {
     if (t < 0) { return fail(11); }
     let pt: i32 = tcp_local_port(t);
     if (pt <= 0 || pt == ps) { return fail(12); }
+    if (tcp_addr_into(s, false, rec) != 19 || !is_lo6(rec) || port_of(rec) != ps) { return fail(48); }
     if (udp_sendto(s, lo6, pt, "ping") != 4) { return fail(13); }
     let buf: u8[] = zeros(16);
     let from: u8[] = zeros(19);
@@ -112,6 +117,10 @@ function main(): i32 {
         if (tcp_socket_ctl(da, 10, 6) != 32512) { return fail(36); }
         if (tcp_socket_ctl(da, 10, 7) != 1) { return fail(37); }
         if (tcp_socket_ctl(da, 10, 9) != tcp_local_port(dc)) { return fail(38); }
+        // tcp_addr_into gives the same peer in one call: ::ffff:127.0.0.1.
+        if (tcp_addr_into(da, true, rec) != 19) { return fail(49); }
+        if (rec[0] != 6u8 || rec[10] != 0u8 || rec[11] != 255u8 || rec[12] != 255u8 || rec[13] != 127u8 || rec[16] != 1u8) { return fail(50); }
+        if (port_of(rec) != tcp_local_port(dc)) { return fail(51); }
         tcp_close(da);
         tcp_close(dc);
         tcp_close(dl);

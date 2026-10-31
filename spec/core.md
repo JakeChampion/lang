@@ -501,6 +501,7 @@ is the number of slots it leaves.
 | `count_below_u64` | 482 | 2 | 1 |
 | `prctl_query` | 483 | 1 | 1 |
 | `mulhi_s` | 484 | 2 | 1 |
+| `tcp_addr_into` | 485 | 3 | 1 |
 <!-- END ir_effects_run -->
 
 ## How this is kept true

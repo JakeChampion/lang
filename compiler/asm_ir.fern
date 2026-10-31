@@ -10192,7 +10192,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_tcp_socket_ctl\n    addq $24, %rsp\n    pushq %rax\n");
     s = s.need("tcp_socket_ctl");
-  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag == 353 || o.kind_tag == 355 || o.kind_tag == 387 || o.kind_tag >= 434 && o.kind_tag <= 439 || o.kind_tag == 442) {
+  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag == 353 || o.kind_tag == 355 || o.kind_tag == 387 || o.kind_tag >= 434 && o.kind_tag <= 439 || o.kind_tag == 442 || o.kind_tag == 485) {
     let udp_name: string = ir.kind_name(o.kind_tag) + asmcore.packed_suffix(ir.is_packed(o));
     let udp_argc: i32 = ir.op_pops(o);
     let udp_regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx"];
@@ -11401,6 +11401,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_tcp_recv_into_u8", s);
   }
+  if (s.has_need("tcp_addr_into_u8")) {
+    s = s.write("    .text\n");
+    s = emit_runtime("__fern_tcp_addr_into_u8", s);
+  }
   if (s.has_need("random_bytes")) {
     s = s.write("    .text\n");
     s = emit_runtime("__fern_random_bytes", s);
@@ -11485,7 +11489,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     "timer_fd", "tcp_listen", "tcp_local_port", "putchar",
     "udp_sendto_bytes", "udp_sendto_bytes_u8",
     "eprint", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8", "tcp_recv_into", "tcp_ktls_u8", "tcp_sendfile",
-    "tcp_listen_with_u8", "udp_bind_u8", "udp_bind_with_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8",
+    "tcp_listen_with_u8", "udp_bind_u8", "udp_bind_with_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8", "tcp_addr_into_u8",
     "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe",
     "rlimit_nofile", "signal_ignore", "signal_default", "signal_catch", "signal_mask",
     "signal_disposition", "access",

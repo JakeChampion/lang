@@ -5381,7 +5381,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.Lowered, s: asm
     s = s.need("tcp_socket_ctl");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_tcp_socket_ctl\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag == 353 || o.kind_tag == 355 || o.kind_tag == 387 || o.kind_tag >= 434 && o.kind_tag <= 439 || o.kind_tag == 442) {
+  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag == 353 || o.kind_tag == 355 || o.kind_tag == 387 || o.kind_tag >= 434 && o.kind_tag <= 439 || o.kind_tag == 442 || o.kind_tag == 485) {
     let udp_name: string = ir.kind_name(o.kind_tag) + asmcore.packed_suffix(ir.is_packed(o));
     let udp_argc: i32 = ir.op_pops(o);
     let udp_regs: string[] = ["x0", "x1", "x2", "x3"];
@@ -6684,7 +6684,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     "timer_fd", "tcp_listen", "tcp_local_port", "putchar",
     "udp_sendto_bytes", "udp_sendto_bytes_u8",
     "eprint", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_bind_with", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "ring_new", "ring_ctl", "ring_wait", "ring_recv_u8", "ring_send_zc_u8", "tcp_recv_into", "tcp_ktls_u8", "tcp_sendfile",
-    "tcp_listen_with_u8", "udp_bind_u8", "udp_bind_with_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8",
+    "tcp_listen_with_u8", "udp_bind_u8", "udp_bind_with_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8", "tcp_addr_into_u8",
     "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "pipe",
     "rlimit_nofile", "signal_ignore", "signal_default", "signal_catch", "signal_mask",
     "signal_disposition", "access",
@@ -10053,6 +10053,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   if (s.has_need("tcp_recv_into_u8")) {
     s = emit_runtime("__fern_tcp_recv_into_u8", s);
+  }
+  if (s.has_need("tcp_addr_into_u8")) {
+    s = emit_runtime("__fern_tcp_addr_into_u8", s);
   }
   if (needs_fs_runtime(s)) {
     let fs_roots: string = "__fern_path_copy __fern_io_error";

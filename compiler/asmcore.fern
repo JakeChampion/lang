@@ -3572,6 +3572,7 @@ function builtin_i32_names(): string[] {
     "tcp_local_port",
     "tcp_listen_with",
     "tcp_socket_ctl",
+    "tcp_addr_into",
     "tcp_sendfile",
     "udp_bind",
     "udp_bind_with",

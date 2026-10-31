@@ -8,6 +8,18 @@ function fail(n: i32): i32 {
     return n;
 }
 
+// lo4_at reads the sender record tcp_addr_into writes: family 4, then
+// 127.0.0.1 and twelve zero bytes, then the port.
+function lo4_at(rec: u8[], port: i32): boolean {
+    if (rec.len() != 19 || rec[0] != 4u8 || rec[1] != 127u8 || rec[4] != 1u8) { return false; }
+    let i: i32 = 2;
+    while (i < 17) {
+        if (i != 4 && rec[i] != 0u8) { return false; }
+        i = i + 1;
+    }
+    return ((rec[17] as i32) << 8 | rec[18] as i32) == port;
+}
+
 function main(): i32 {
     let any: u8[] = [0u8, 0u8, 0u8, 0u8];
     let ln: i32 = tcp_listen_with(any, 0, 4, true);
@@ -59,6 +71,14 @@ function main(): i32 {
     if (tcp_socket_ctl(a, 10, 7) != 0) { return fail(26); }
     if (tcp_socket_ctl(a, 10, 9) != tcp_local_port(c)) { return fail(27); }
     if (tcp_socket_ctl(ln, 10, 8) >= 0) { return fail(28); }
+    // tcp_addr_into answers the same addresses in one call each, as the
+    // 19-byte sender record. A listener has no peer, and a record shorter
+    // than 19 bytes is refused.
+    let rec: u8[] = [0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8];
+    if (tcp_addr_into(a, false, rec) != 19 || !lo4_at(rec, port)) { return fail(29); }
+    if (tcp_addr_into(a, true, rec) != 19 || !lo4_at(rec, tcp_local_port(c))) { return fail(30); }
+    if (tcp_addr_into(ln, true, rec) >= 0) { return fail(31); }
+    if (tcp_addr_into(a, false, [0u8, 0u8]) >= 0) { return fail(32); }
     // Op 8 steers the listener's SO_REUSEPORT group by CPU: attached on
     // Linux (-ENOPROTOOPT where the host lacks the option, as qemu-user
     // does), -ENOTSUP on Darwin and on wasm.

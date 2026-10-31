@@ -83,6 +83,7 @@ var gatedBuiltins = map[string]string{
 	"udp_recvfrom":     "tcp",
 	"tcp_listen_with":  "tcp",
 	"tcp_socket_ctl":   "tcp",
+	"tcp_addr_into":    "tcp",
 	"tcp_connect_with": "tcp",
 
 	"unix_listen":  "unix",

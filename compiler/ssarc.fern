@@ -5487,6 +5487,9 @@ function os_floor_process_site(own r: irtables.LowerState, ins: ssa.SInst): Lowe
   if (ins.str == "tcp_recv_into") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_recv_into())) };
   }
+  if (ins.str == "tcp_addr_into") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_addr_into())) };
+  }
   if (ins.str == "tcp_ktls") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_tcp_ktls())) };
   }

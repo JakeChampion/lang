@@ -1224,6 +1224,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// tcp_addr_into(fd, peer, out): number — one getsockname, or getpeername
+	// when peer, written into out as the 19-byte sender record that
+	// udp_recvfrom fills. 19, or -errno.
+	c.info.FuncSigs["tcp_addr_into"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.BoolType{}, u8s},
+		Result: ast.NumberType{},
+	}
 	c.info.FuncSigs["tcp_sendfile"] = &ast.FuncType{
 		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
 		Result: ast.NumberType{},

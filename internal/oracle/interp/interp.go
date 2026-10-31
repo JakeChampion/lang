@@ -1526,6 +1526,7 @@ func New() *Interp {
 	i.Builtins["tcp_local_port"] = &Builtin{Fn: builtinTcpLocalPort}
 	i.Builtins["tcp_listen_with"] = &Builtin{Fn: builtinTcpListenWith}
 	i.Builtins["tcp_socket_ctl"] = &Builtin{Fn: builtinTcpSocketCtl}
+	i.Builtins["tcp_addr_into"] = &Builtin{Fn: builtinTcpAddrInto}
 	i.Builtins["tcp_send_bytes"] = &Builtin{Fn: builtinTcpSendBytes}
 	i.Builtins["tcp_sendfile"] = &Builtin{Fn: builtinTcpSendfile}
 	i.Builtins["tcp_send_buf"] = &Builtin{Fn: builtinTcpSendBuf}
@@ -1987,6 +1988,53 @@ func builtinTcpSocketCtl(i *Interp, args []Value) (Value, error) {
 		return Number(-1), nil
 	}
 	return Number(0), nil
+}
+
+// builtinTcpAddrInto answers tcp_addr_into(fd, peer, out) with one
+// getsockname, or getpeername when peer, written into out as the sender
+// record udp_recvfrom fills.
+func builtinTcpAddrInto(i *Interp, args []Value) (Value, error) {
+	if len(args) != 3 {
+		return nil, fmt.Errorf("tcp_addr_into: expected 3 args, got %d", len(args))
+	}
+	id, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("tcp_addr_into: expected number fd arg, got %T", args[0])
+	}
+	peer, ok := args[1].(Bool)
+	if !ok {
+		return nil, fmt.Errorf("tcp_addr_into: expected boolean peer arg, got %T", args[1])
+	}
+	out, ok := args[2].(Array)
+	if !ok {
+		return nil, fmt.Errorf("tcp_addr_into: expected u8[] out arg, got %T", args[2])
+	}
+	if len(out.Elems()) < 19 {
+		return Number(-int64(syscall.EINVAL)), nil
+	}
+	fd, ok := i.udpSocks[int64(id)]
+	if !ok {
+		if fd, ok = i.rawFd(int64(id)); !ok {
+			return Number(-int64(syscall.EBADF)), nil
+		}
+	}
+	var sa syscall.Sockaddr
+	var err error
+	if peer {
+		sa, err = getpeername(fd)
+	} else {
+		sa, err = getsockname(fd)
+	}
+	if err != nil {
+		return negErrno(err), nil
+	}
+	switch sa.(type) {
+	case *syscall.SockaddrInet4, *syscall.SockaddrInet6:
+	default:
+		return Number(-int64(syscall.EAFNOSUPPORT)), nil
+	}
+	senderInto(out, sa)
+	return Number(19), nil
 }
 
 func nameGroup(fd int, op, which int64) Value {
