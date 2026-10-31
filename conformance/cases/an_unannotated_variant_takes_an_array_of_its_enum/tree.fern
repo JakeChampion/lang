@@ -1,6 +1,6 @@
 pub enum Tree[K] { Leaf(K), Node(Tree[K][]) }
 
-pub function (t: Tree[K]) count[K](): i32 {
+pub function (t: Tree[K]) count(): i32 {
   match (t) {
     Leaf(k) => {
       return 1;
@@ -18,7 +18,7 @@ pub function (t: Tree[K]) count[K](): i32 {
 
 pub enum Pairs[K, V] { Pair(K, V), Group(Pairs[K, V][]) }
 
-pub function (p: Pairs[K, V]) size[K, V](): i32 {
+pub function (p: Pairs[K, V]) size(): i32 {
   match (p) {
     Pair(k, v) => {
       return 1;
