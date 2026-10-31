@@ -99,7 +99,7 @@ try {
     await page.locator('.example[href="/contour/"]:visible').count(),
     1,
   );
-  assert.equal(await page.locator(".example:visible").count(), 12);
+  assert.equal(await page.locator(".example:visible").count(), 13);
   await page.goto(base + "/_src/showcase/contour.fern");
   assert.ok(
     await page

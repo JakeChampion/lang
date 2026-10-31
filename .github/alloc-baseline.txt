@@ -1,3 +1,4 @@
+# 2026-10-31: PR #13923, measured by CI job 124561596792.
 # 2026-10-31: PR #13897 at 54001e2. CI run 41153255512, perf-x86_64.
 # Record the lane's measured changes after the lifetime and shared-helper repairs.
 # 2026-10-29: #13863 (#13061) at 84b2ea38, from a local selfhost-alloc-bench run: 35,192,548
@@ -81,5 +82,5 @@
 # Re-pinned 2026-10-22: main's merges since moved it 3.7% (26,298,117 on main
 # ddc5b110 on the dev container); const_propagate's known table starts on one
 # placeholder op, 0.5% fewer.
-x86_64/checker.allocs	35592264
-x86_64/checker.frees	35592264
+x86_64/checker.allocs	36298048
+x86_64/checker.frees	36298048
