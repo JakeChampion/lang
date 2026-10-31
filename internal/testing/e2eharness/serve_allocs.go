@@ -238,7 +238,7 @@ function pump(k: Cli, ms: i32): Cli {
   for d in out {
     let r: Result[i32, net.NetError] = net.send_to(k.sock, d, k.peer);
   }
-  let woke: i32 = async.wait_any([k.sock, 1], Some(time.duration_millis(ms)));
+  let woke: async.Wake = async.wait_any([k.sock, 1], Some(clock.instant().add(time.duration_millis(ms))));
   let going: boolean = true;
   while (going) {
     match (net.recv_from(k.sock, k.buf)) {

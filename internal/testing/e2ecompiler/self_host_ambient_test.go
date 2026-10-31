@@ -78,6 +78,20 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 			want: nil,
 		},
 		{
+			name: "a fan-out that waits on its scheduler",
+			src: `import "std/http";
+import "std/platform";
+import "std/fetch";
+import "std/async";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    let calls: async.Future[Result[HttpResponse, fetch.FetchError]][] = [
+        async.spawn(() => plat.http(fetch.get("https://example.com/"))),
+        async.spawn(() => plat.http(fetch.get("https://example.org/"))),
+    ];
+    let all: Option[Result[HttpResponse, fetch.FetchError][]] = async.wait(async.gather(calls));` + tail,
+			want: nil,
+		},
+		{
 			name: "a method reached by a method call",
 			src: `import "std/http";
 import "std/platform";

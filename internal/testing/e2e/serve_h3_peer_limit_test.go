@@ -159,7 +159,7 @@ function main(): i32 {
       print("first=true second=" + cs[1].ready().to_string());
       return 0;
     }
-    let woke: i32 = async.wait_any([socks[0], 1], Some(time.duration_millis(10)));
+    let woke: async.Wake = async.wait_any([socks[0], 1], Some(clock.instant().add(time.duration_millis(10))));
   }
   eprint("first handshake did not complete");
   return 1;

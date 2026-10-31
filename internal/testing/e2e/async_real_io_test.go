@@ -21,9 +21,14 @@ func TestAsyncGatherFileFds(t *testing.T) {
 
 	src := fmt.Sprintf(`import "std/async";
 
+function woken(fd: i32, wake: async.Wake): async.Future[i32] {
+    if let Woke(i) = wake { return Ready(fd); }
+    return Ready(0 - 1);
+}
+
 function start_io(fd: i32): async.Future[i32] {
-    function resume(woken_fd: i32): async.Future[i32] { return Ready(woken_fd); }
-    return Pending(fd, resume);
+    let set: i32[] = [fd, 1];
+    return Pending(async.Wait { set: set, until: None }, (wake: async.Wake): async.Future[i32] => woken(fd, wake));
 }
 
 function main(): i32 {
@@ -32,7 +37,7 @@ function main(): i32 {
             match (open_reader("%s")) {
                 Ok(rb) => {
                     let tasks: async.Future[i32][] = [start_io(ra.fd), start_io(rb.fd)];
-                    let results: i32[] = async.gather(tasks, -1);
+                    let results: i32[] = async.block_on(async.gather(tasks)).unwrap_or([]);
                     if (results.len() != 2) { return 90; }
                     if (results[0] < 0) { return 91; }
                     if (results[1] < 0) { return 92; }
@@ -55,14 +60,13 @@ func TestAsyncGatherTimers(t *testing.T) {
 	src := `import "std/async";
 
 function start_timer(ms: i32): async.Future[i32] {
-    let fd: i32 = timer_fd(ms);
-    function resume(woken_fd: i32): async.Future[i32] { return Ready(ms); }
-    return Pending(fd, resume);
+    let set: i32[] = [timer_fd(ms), 1];
+    return Pending(async.Wait { set: set, until: None }, (wake: async.Wake): async.Future[i32] => Ready(ms));
 }
 
 function main(): i32 {
     let tasks: async.Future[i32][] = [start_timer(10), start_timer(15)];
-    let results: i32[] = async.gather(tasks, -1);
+    let results: i32[] = async.block_on(async.gather(tasks)).unwrap_or([]);
     if (results.len() != 2) { return 90; }
     if (results[0] != 10) { return 91; }
     if (results[1] != 15) { return 92; }
@@ -79,16 +83,15 @@ func TestAsyncRaceTimers(t *testing.T) {
 	src := `import "std/async";
 
 function start_timer(ms: i32): async.Future[i32] {
-    let fd: i32 = timer_fd(ms);
-    function resume(woken_fd: i32): async.Future[i32] { return Ready(ms); }
-    return Pending(fd, resume);
+    let set: i32[] = [timer_fd(ms), 1];
+    return Pending(async.Wait { set: set, until: None }, (wake: async.Wake): async.Future[i32] => Ready(ms));
 }
 
 function main(): i32 {
     let tasks: async.Future[i32][] = [start_timer(5000), start_timer(10)];
-    let (winner, value) = async.race(tasks, -1);
-    if (value != 10) { return 91; }
-    if (winner != 1) { return 92; }
+    let won: (i32, i32) = async.block_on(async.race(tasks)).unwrap_or((0 - 1, 0 - 1));
+    if (won.1 != 10) { return 91; }
+    if (won.0 != 1) { return 92; }
     return 42;
 }`
 
@@ -100,12 +103,12 @@ func TestAsyncWithDeadline(t *testing.T) {
 	dir := t.TempDir()
 
 	helper := `import "std/async";
+import "std/clock";
 import "std/time";
 
 function start_timer(ms: i32): async.Future[i32] {
-    let fd: i32 = timer_fd(ms);
-    function resume(w: i32): async.Future[i32] { return Ready(ms); }
-    return Pending(fd, resume);
+    let set: i32[] = [timer_fd(ms), 1];
+    return Pending(async.Wait { set: set, until: None }, (wake: async.Wake): async.Future[i32] => Ready(ms));
 }
 `
 	cases := []struct {
@@ -116,7 +119,7 @@ function start_timer(ms: i32): async.Future[i32] {
 			name: "completes_in_time",
 			body: `function main(): i32 {
     let tasks: async.Future[i32][] = [start_timer(5)];
-    let r: Option[i32][] = async.with_deadline(time.duration_millis(5000), tasks);
+    let r: Option[i32][] = async.block_on(async.with_deadline(clock.instant().add(time.duration_millis(5000)), tasks)).unwrap_or([None]);
     match (r[0]) { Some(v) => { return v; }, None => { return 99; } }
 }`,
 			want: 5,
@@ -125,7 +128,7 @@ function start_timer(ms: i32): async.Future[i32] {
 			name: "times_out",
 			body: `function main(): i32 {
     let tasks: async.Future[i32][] = [start_timer(5000)];
-    let r: Option[i32][] = async.with_deadline(time.duration_millis(20), tasks);
+    let r: Option[i32][] = async.block_on(async.with_deadline(clock.instant().add(time.duration_millis(20)), tasks)).unwrap_or([Some(0)]);
     match (r[0]) { Some(v) => { return 99; }, None => { return 42; } }
 }`,
 			want: 42,

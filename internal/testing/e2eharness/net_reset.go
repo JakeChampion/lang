@@ -4,6 +4,7 @@ func NetReadResetProbe() string {
 	return `import "core/int";
 import "std/net";
 import "std/async";
+import "std/clock";
 import "std/time";
 
 function fail(n: i32): i32 {
@@ -60,7 +61,7 @@ function main(): i32 {
         Err(e) => { return fail(10); }
     }
     let set: i32[] = [a2, 1];
-    if (async.wait_any(set, Some(time.duration_millis(5000))) != 0) { return fail(11); }
+    match (async.wait_any(set, Some(clock.instant().add(time.duration_millis(5000))))) { Woke(i) => {}, _ => { return fail(11); } }
     closed = net.close(a2);
     match (net.read_deadline(c2, 16, wait)) {
         Ok(net.Chunk(b)) => { return fail(12); },

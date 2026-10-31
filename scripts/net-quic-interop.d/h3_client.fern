@@ -30,20 +30,20 @@ function passed(deadline: Option[Instant]): boolean {
   return now().cmp(at) >= 0;
 }
 
-// How long to wait for a datagram: until the deadline, between 1 and 100 ms.
-function wait_until(deadline: Option[Instant]): Option[Duration] {
+// When to stop waiting for a datagram: at the deadline, but 1 to 100 ms from now.
+function wait_until(deadline: Option[Instant]): Option[Instant] {
   let most: Duration = time.duration_millis(100);
   let Some(at) = deadline else {
-    return Some(most);
+    return Some(now().add(most));
   };
   let left: Duration = at.since(now()).add(time.duration_millis(1));
   if (left.cmp(time.duration_millis(1)) < 0) {
-    return Some(time.duration_millis(1));
+    return Some(now().add(time.duration_millis(1)));
   }
   if (left.cmp(most) > 0) {
-    return Some(most);
+    return Some(now().add(most));
   }
-  return Some(left);
+  return Some(now().add(left));
 }
 
 function pump(c: h3q.Conn, sock: i32, peer: net.SocketAddr): h3q.Conn {
@@ -67,7 +67,7 @@ function drain(c: h3q.Conn, sock: i32, buf: u8[]): h3q.Conn {
   return cur;
 }
 
-function wait_for(c: h3q.Conn): Option[Duration] {
+function wait_for(c: h3q.Conn): Option[Instant] {
   return wait_until(c.deadline());
 }
 
@@ -168,7 +168,7 @@ function main(): i32 {
   let started: Instant = now();
   while (!c.done() && now().since(started).cmp(time.duration_seconds(20)) < 0) {
     c = pump(c, sock, peer);
-    let woke: i32 = async.wait_any([sock, 1], wait_for(c));
+    let woke: async.Wake = async.wait_any([sock, 1], wait_for(c));
     c = drain(c, sock, buf);
     if (passed(c.deadline())) {
       c = c.tick(now());

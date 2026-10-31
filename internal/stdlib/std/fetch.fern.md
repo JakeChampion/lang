@@ -2044,14 +2044,16 @@ function __shared_wait[T: Transport](tr: T, req: Request, started: i64, sh: Shar
       sh.abandon(id);
       return Err(Timeout(bound));
     }
-    let woke: i32 = async.wait_any([id, MAIL_INTEREST], Some(time.duration_millis(wait_ms)));
-    if (woke == async.cancelled()) {
-      sh.abandon(id);
-      return Err(FetchError.Cancelled);
-    }
-    if (woke != 0) {
-      sh.abandon(id);
-      return Err(Timeout(bound));
+    match (async.wait_any([id, MAIL_INTEREST], Some(tr.now().add(time.duration_millis(wait_ms))))) {
+      Woke(i) => {},
+      TimedOut => {
+        sh.abandon(id);
+        return Err(Timeout(bound));
+      },
+      Cancelled => {
+        sh.abandon(id);
+        return Err(FetchError.Cancelled);
+      }
     }
     match (sh.take(id)) {
       Some(answer) => {

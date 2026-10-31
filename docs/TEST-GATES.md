@@ -400,10 +400,10 @@ task, fetches `/plain` from the program's own loop while the task is parked,
 and waits on the task's wait set itself; the self-host's x86-64 and arm64
 output must show the task parked and the plain fetch answered first.
 `TestSelfHostTaskCombinators` is slice 6's gate: `e2eharness.TaskCombinatorsProgram`
-runs a `race_tasks`, a `gather_tasks` and a `with_deadline_tasks` over
-entries that park on timers, and a `gather` over futures, inside a task
-driven by hand, then cancels a second task from outside while its race is
-parked; every entry has a `defer`. The self-host's x86-64 and arm64 output
+waits with `async.wait` on a `race`, a `gather` and a `with_deadline` of
+spawned tasks that park on timers, and on a `gather` of plain futures,
+inside a task driven by hand. Then it cancels a second task from outside
+while its race is parked. Every entry has a `defer`. The self-host's x86-64 and arm64 output
 must show the race's loser and the deadline's late entry cancelled through
 their defers, the parks the task made, and the outer cancellation reaching
 both children.
