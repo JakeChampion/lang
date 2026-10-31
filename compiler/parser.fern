@@ -14528,8 +14528,10 @@ pub function monomorphize_structs(mod: Module): Module {
   return ms_module(mod);
 }
 
+// The last pass: a template that a deferred enum kept has no later pass to clone it.
 pub function monomorphize_enum_structs(mod: Module): Module {
-  return ms_module(mod);
+  let out: Module = ms_module(mod);
+  return Module { ...out, funcs: drop_bg_templates(out.funcs, genum_bg_refs(out.funcs, out.enums)) };
 }
 
 function ms_deferred_enums(mod: Module, gstructs: StructDecl[]): string[] {
