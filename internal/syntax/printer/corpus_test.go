@@ -54,7 +54,7 @@ func TestFormatCorpusOutputTypeChecks(t *testing.T) {
 	files := corpusFiles(t, root)
 	mirror := mirrorCorpus(t, root)
 
-	checked := 0
+	checked, unchanged := 0, 0
 	for _, rel := range files {
 		src, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
@@ -69,6 +69,12 @@ func TestFormatCorpusOutputTypeChecks(t *testing.T) {
 			t.Errorf("%s: parses in place but not through the formatter: %v", rel, err)
 			continue
 		}
+		// The source already passed its check. Identical output needs no second check.
+		if formatted == string(src) {
+			checked++
+			unchanged++
+			continue
+		}
 		if err := os.WriteFile(path, []byte(formatted), 0o644); err != nil {
 			t.Fatal(err)
 		}
@@ -80,7 +86,7 @@ func TestFormatCorpusOutputTypeChecks(t *testing.T) {
 		}
 		checked++
 	}
-	t.Logf("checked %d formatted programs", checked)
+	t.Logf("checked %d formatted programs (%d unchanged, %d rewritten)", checked, unchanged, checked-unchanged)
 	if checked < printerCorpusShard(t).minimumChecked() {
 		t.Errorf("only %d of %d corpus files compiled as written; the gate is asserting far less than it looks like", checked, len(files))
 	}
