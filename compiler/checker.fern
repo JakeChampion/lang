@@ -1634,6 +1634,37 @@ function cmp_method_receiver(t: typeinfo.Type): string {
   return "";
 }
 
+function core_cmp_enum(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnion(u) = t {
+    return u.name == "Option" || u.name == "Result";
+  }
+  return false;
+}
+
+// cmp_hint says where a cmp trait for t can come from. core/cmp implements Eq,
+// Ord and Hash for Option and Result when their type arguments do, so the hint
+// moves to the first type argument that is a struct or an enum. Display has no
+// impl for those, nor for an array or a tuple, so the hint says to format the
+// parts instead of offering an impl that the orphan rule would refuse.
+function cmp_hint(t: typeinfo.Type, trait_name: string): string {
+  let short: string = slice_unchecked(trait_name, 4, trait_name.len()) + "";
+  let label: string = util.demangle(type_label(t));
+  if (core_cmp_enum(t) && trait_name != "cmp.Display") {
+    if let typeinfo.TypeUnion(u) = t {
+      for a in u.args {
+        if (cmp_method_receiver(a) != "") {
+          return label + " implements `" + short + "` when its type arguments do: " + cmp_hint(a, trait_name);
+        }
+      }
+    }
+  }
+  let recv: string = cmp_method_receiver(t);
+  if (recv == "" || core_cmp_enum(t)) {
+    return label + " cannot implement `" + short + "`: convert its parts to strings first";
+  }
+  return util.derive_hint(recv, trait_name, trait_name);
+}
+
 function (s: Scope) has_ord_cmp(t: typeinfo.Type): boolean {
   let recv: string = cmp_method_receiver(t);
   return recv != "" && s.has_method("cmp", recv);
@@ -13846,9 +13877,12 @@ function display_arg_diags(c: ast.ExprCall, s: Scope): util.Diag[] {
     return [];
   }
   let label: string = type_label(at);
+  let advice: string = "give " + label + " a `to_string(): string` method, or " + util.derive_hint(display_dispatch_name(at), "cmp.Display", "cmp.Display");
+  if (cmp_method_receiver(at) == "" || core_cmp_enum(at)) {
+    advice = cmp_hint(at, "cmp.Display");
+  }
   return [dg_at(
-    "E038", "argument 1 to \"" + name + "\": " + label + " does not implement `Display` (no `to_string(): string` in scope) — give "
-      + label + " a `to_string(): string` method, or " + util.derive_hint(display_dispatch_name(at), "cmp.Display", "cmp.Display"),
+    "E038", "argument 1 to \"" + name + "\": " + label + " does not implement `Display` (no `to_string(): string` in scope) — " + advice,
     expr_line(c.args[0]), expr_col(c.args[0]),
   )];
 }
@@ -14534,7 +14568,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
       if (eqrecv == "") {
         out = out.append(dg_at("E041", "cannot compare values of type " + type_label(blt) + " with \"" + b.op + "\": structural equality for arrays / slices / tuples is not supported — compare elements individually", b.line, b.col));
       } else if (!s.has_method("eq", eqrecv)) {
-        out = out.append(dg_at("E041", "cannot compare values of type " + util.demangle(type_label(blt)) + " with \"" + b.op + "\": type does not implement `Eq` — " + util.derive_hint(eqrecv, "cmp.Eq", "cmp.Eq") + ", so `==` can use structural equality", b.line, b.col));
+        out = out.append(dg_at("E041", "cannot compare values of type " + util.demangle(type_label(blt)) + " with \"" + b.op + "\": type does not implement `Eq` — " + cmp_hint(blt, "cmp.Eq") + ", so `==` can use structural equality", b.line, b.col));
       }
     }
   }
@@ -14617,7 +14651,7 @@ function binary_diags_typed(b: ast.ExprBinary, s: Scope): (util.Diag[], typeinfo
           if (ordrecv == "") {
             out = out.append(dg_at("E041", "cannot order values of type " + type_label(olt) + " with \"" + b.op + "\": structural ordering for arrays / slices / tuples is not supported", b.line, b.col));
           } else if (!s.has_ord_cmp(olt)) {
-            out = out.append(dg_at("E041", "cannot order values of type " + util.demangle(type_label(olt)) + " with \"" + b.op + "\": type does not implement `Ord` — " + util.derive_hint(ordrecv, "cmp.Ord", "cmp.Ord") + ", so ordering can use structural comparison", b.line, b.col));
+            out = out.append(dg_at("E041", "cannot order values of type " + util.demangle(type_label(olt)) + " with \"" + b.op + "\": type does not implement `Ord` — " + cmp_hint(olt, "cmp.Ord") + ", so ordering can use structural comparison", b.line, b.col));
           }
         } else if (o_both_int) {
           out = out.append(mixed_int_diag(b.op, olt, ort, b.line, b.col));
@@ -27837,6 +27871,13 @@ function qualify_at(n: ast.Expr, q: QualifyAcc): (ast.Expr, QualifyAcc, boolean)
     },
     ast.ExprFieldAccess(fa) => {
       return (n, child, qual_enum_name(fa.obj, s).len() > 0);
+    },
+    ast.ExprBinary(b) => {
+      if (b.op != "==" && b.op != "!=") {
+        return (n, child, false);
+      }
+      let left: ast.Expr = qualify_expr(b.left, none, s, coll);
+      return (ast.ExprBinary { ...b, left: left, right: qualify_expr(b.right, check_expr(left, s), s, coll) }, child, true);
     },
     _ => {
       return (n, child, false);

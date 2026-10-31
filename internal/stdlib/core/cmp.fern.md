@@ -263,6 +263,112 @@ impl Ord for boolean {
     return 0u64;
   }
 }
+
+// ---- Option and Result ------------------------------------------
+// The orders follow declaration order, as in Rust: None < Some, Ok < Err.
+
+impl[T: Eq] Eq for Option[T] {
+  function eq(self: Option[T], other: Option[T]): boolean {
+    match (self) {
+      Some(a) => {
+        if let Some(b) = other {
+          return a.eq(b);
+        }
+        return false;
+      },
+      None => {
+        return other.is_none();
+      }
+    }
+  }
+}
+
+impl[T: Ord] Ord for Option[T] {
+  function cmp(self: Option[T], other: Option[T]): i32 {
+    match (self) {
+      Some(a) => {
+        if let Some(b) = other {
+          return a.cmp(b);
+        }
+        return 1;
+      },
+      None => {
+        if (other.is_none()) {
+          return 0;
+        }
+        return -1;
+      }
+    }
+  }
+}
+
+impl[T: Hash] Hash for Option[T] {
+  function hash(self: Option[T]): i32 {
+    if let Some(a) = self {
+      return __hash_mix_i32(a.hash() + 1);
+    }
+    return __hash_mix_i32(0);
+  }
+}
+
+impl[T: Eq, E: Eq] Eq for Result[T, E] {
+  function eq(self: Result[T, E], other: Result[T, E]): boolean {
+    match (self) {
+      Ok(a) => {
+        if let Ok(b) = other {
+          return a.eq(b);
+        }
+        return false;
+      },
+      Err(a) => {
+        if let Err(b) = other {
+          return a.eq(b);
+        }
+        return false;
+      }
+    }
+  }
+}
+
+impl[T: Ord, E: Ord] Ord for Result[T, E] {
+  function cmp(self: Result[T, E], other: Result[T, E]): i32 {
+    match (self) {
+      Ok(a) => {
+        match (other) {
+          Ok(b) => {
+            return a.cmp(b);
+          },
+          Err(_) => {
+            return -1;
+          }
+        }
+      },
+      Err(a) => {
+        match (other) {
+          Ok(_) => {
+            return 1;
+          },
+          Err(b) => {
+            return a.cmp(b);
+          }
+        }
+      }
+    }
+  }
+}
+
+impl[T: Hash, E: Hash] Hash for Result[T, E] {
+  function hash(self: Result[T, E]): i32 {
+    match (self) {
+      Ok(a) => {
+        return __hash_mix_i32(a.hash() * 2);
+      },
+      Err(e) => {
+        return __hash_mix_i32(e.hash() * 2 + 1);
+      }
+    }
+  }
+}
 ```
 ### `4 impl Ord for i32`
 
