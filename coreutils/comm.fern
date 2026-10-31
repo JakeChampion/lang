@@ -268,7 +268,7 @@ pub function main(): i32 {
   return merge(r1, r2, name1, name2, cfg);
 }
 
-function merge(r1: Reader, r2: Reader, name1: string, name2: string, cfg: Cfg): i32 {
+function merge(own r1: Reader, own r2: Reader, name1: string, name2: string, cfg: Cfg): i32 {
   let out: io_buffered.BufWriter = gnu.out_with(write_block());
   let h: usize = out.handle();
   let block: i32 = write_block();

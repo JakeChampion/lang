@@ -807,14 +807,15 @@ function record(f: File, r: Reader, pos: i64, st: FileStat): File {
   return File { ...f, r: r, has_fd: true, size: pos, mtime: st.mtime, mtime_nsec: st.mtime_nsec, mode: st.mode, dev: st.dev, ino: st.ino, errnum: 0, unchanged: 0 as u64 };
 }
 
-function close_file(f: File): File {
+function close_file(own f: File): File {
+  let closed: File = File { ...f, r: stdin(), has_fd: false };
   if (f.has_fd && !f.is_stdin) {
     f.r.close();
   }
-  return File { ...f, has_fd: false };
+  return closed;
 }
 
-function tail_file(f: File, o: gnu.Stream, s: Settings, show: boolean): (File, gnu.Stream) {
+function tail_file(f: File, own o: gnu.Stream, s: Settings, show: boolean): (File, gnu.Stream) {
   let spec: File = f;
   let r: Reader = stdin();
   if (!spec.is_stdin) {
@@ -879,7 +880,7 @@ function tail_file(f: File, o: gnu.Stream, s: Settings, show: boolean): (File, g
   return (spec, out);
 }
 
-function note(o: gnu.Stream, msg: string): gnu.Stream {
+function note(own o: gnu.Stream, msg: string): gnu.Stream {
   return gnu.Stream { ...o, w: gnu.error_out(o.w, msg) };
 }
 
@@ -941,6 +942,7 @@ function recheck(f: File, s: Settings): File {
   if (!ok) {
     if (opened && !spec.is_stdin) {
       nr.close();
+      nr = stdin();
     }
     spec = close_file(spec);
   } else if (prev_errnum != 0 && prev_errnum != errno.ENOENT) {
@@ -960,6 +962,7 @@ function recheck(f: File, s: Settings): File {
   } else {
     if (!spec.is_stdin) {
       nr.close();
+      nr = stdin();
     }
   }
   if (new_file) {
@@ -996,7 +999,7 @@ function changed(f: File, st: FileStat): boolean {
   return f.mtime != st.mtime || f.mtime_nsec != st.mtime_nsec;
 }
 
-function tail_forever(files: File[], o: gnu.Stream, s: Settings, show: boolean): gnu.Stream {
+function tail_forever(files: File[], own o: gnu.Stream, s: Settings, show: boolean): gnu.Stream {
   let fs: File[] = files;
   let out: gnu.Stream = o;
   let last: i32 = fs.len() - 1;
@@ -1045,7 +1048,8 @@ function tail_forever(files: File[], o: gnu.Stream, s: Settings, show: boolean):
           Err(e) => {
             read_it = false;
             out = note(out, gnu.quotef(f.pretty) + ": " + gnu.io_error_text(e));
-            f = File { ...close_file(f), errnum: errno.of(e), err_text: gnu.io_error_text(e) };
+            let closed: File = close_file(f);
+            f = File { ...closed, errnum: errno.of(e), err_text: gnu.io_error_text(e) };
           }
         }
       }
@@ -1242,8 +1246,9 @@ pub function main(): i32 {
       out = tail_forever(files, out, s, show);
     }
   }
+  let ok: boolean = out.ok;
   gnu.stream_finish(out);
-  if (!out.ok) {
+  if (!ok) {
     return 1;
   }
   return 0;

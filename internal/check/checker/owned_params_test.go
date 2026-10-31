@@ -1690,3 +1690,105 @@ function work(o: Option[Handle]): i32 {
     }
 }`)
 }
+
+func TestOwnGuardAcceptsALocalFromACallWhoseResultHoldsNoHandle(t *testing.T) {
+	wantOK(t, "local-from-handle-free-call", ownConsumer+`
+function copy_row(xs: i32[]): i32[] {
+    if (xs.len() == 0) { return xs; }
+    return xs.with(0, xs[0]);
+}
+function main(): i32 {
+    let xs: i32[] = [1];
+    let first: i32[] = copy_row(xs);
+    return consume(first) + xs.len();
+}`)
+}
+
+func TestOwnGuardRejectsAHandleClosedThroughAnAliasFromACall(t *testing.T) {
+	wantE051(t, "handle-alias-from-call", `
+function pass(r: Reader): Reader { return r; }
+function main(): i32 {
+    let r: Reader = stdin();
+    let alias: Reader = pass(r);
+    match (alias.close()) { Ok(_) => {}, Err(_) => {} }
+    match (r.close()) { Ok(_) => {}, Err(_) => {} }
+    return 0;
+}`)
+}
+
+// A handle-holding struct, so the old return rule cannot hide an admission.
+const admissionPrelude = `struct Acc { items: i32[], w: Writer }
+struct Box { a: Acc }
+function sink(own a: Acc): i32 { return a.items.len(); }
+function push(own a: Acc, v: i32): Acc { return Acc { ...a, items: a.items.append(v) }; }
+function mk(n: i32): Acc { return Acc { items: [n], w: stdout() }; }
+`
+
+func TestOwnGuardAdmitsEachFreshDeclaration(t *testing.T) {
+	wantOK(t, "redeclared-fresh", admissionPrelude+`
+function f(k: i32): i32 {
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < k) {
+        let a: Acc = mk(i);
+        t = t + a.items.len();
+        i = i + 1;
+    }
+    let a: Acc = mk(7);
+    let n: i32 = sink(a);
+    return t + n;
+}`)
+	wantE051(t, "one-declaration-borrowed", admissionPrelude+`
+function f(b: Box, k: i32): i32 {
+    if (k > 0) {
+        let a: Acc = b.a;
+        print(a.items.len().to_string());
+    }
+    let a: Acc = mk(7);
+    let n: i32 = sink(a);
+    return n;
+}`)
+}
+
+func TestOwnGuardAdmitsAnAliasGivenOnlyOwnedValues(t *testing.T) {
+	wantOK(t, "alias-of-own-param", admissionPrelude+`
+function f(own p: Acc, k: i32): i32 {
+    let first: i32 = p.items.len();
+    let q: Acc = p;
+    q = push(q, k);
+    q = push(q, first);
+    let n: i32 = sink(q);
+    return n;
+}`)
+	wantE051(t, "alias-given-a-borrowed-value", admissionPrelude+`
+function f(own p: Acc, b: Box): i32 {
+    let first: i32 = p.items.len();
+    let q: Acc = p;
+    q = b.a;
+    let n: i32 = sink(q);
+    return n + first;
+}`)
+	wantE051(t, "alias-of-a-borrowed-param", admissionPrelude+`
+function f(p: Acc): i32 {
+    let first: i32 = p.items.len();
+    let q: Acc = p;
+    let n: i32 = sink(q);
+    return n + first;
+}`)
+	wantE050(t, "source-read-after-the-alias", admissionPrelude+`
+function f(own p: Acc): i32 {
+    let q: Acc = p;
+    let n: i32 = sink(q);
+    return n + p.items.len();
+}`)
+	wantE050(t, "alias-in-a-loop", admissionPrelude+`
+function f(own p: Acc, k: i32): i32 {
+    let first: i32 = p.items.len();
+    let n: i32 = 0;
+    while (n < k) {
+        let q: Acc = p;
+        n = n + sink(q);
+    }
+    return n + first;
+}`)
+}

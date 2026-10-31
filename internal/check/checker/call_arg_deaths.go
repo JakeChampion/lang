@@ -1,6 +1,7 @@
 package checker
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/syntax/ast"
@@ -163,30 +164,34 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		return true
 	})
+	// A name is a fresh local when each of its declarations is fresh.
 	freshInitLocal := map[string]bool{}
+	staleDecl := map[string]bool{}
 	declCount := map[string]int{}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch v := n.(type) {
 		case *ast.Var:
 			declCount[v.Name]++
-			if freshInit(v.Init) {
+			if freshInit(info, v.Init) {
 				freshInitLocal[v.Name] = true
+			} else {
+				staleDecl[v.Name] = true
 			}
 		case *ast.Destructure:
-			fresh := v.AtName == "" && freshInit(v.Init)
+			fresh := v.AtName == "" && freshInit(info, v.Init)
 			for i, name := range v.Names {
 				declCount[name]++
 				if fresh && (i >= len(v.Nested) || v.Nested[i] == nil) {
 					freshInitLocal[name] = true
+				} else {
+					staleDecl[name] = true
 				}
 			}
 		}
 		return true
 	})
-	for name, n := range declCount {
-		if n > 1 {
-			delete(freshInitLocal, name)
-		}
+	for name := range staleDecl {
+		delete(freshInitLocal, name)
 	}
 	escaping := DeferOrLambdaNames(body)
 	order := IdentOrderOf(body)
@@ -246,12 +251,6 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		return true
 	})
-	fieldOwner := func(name string) bool {
-		if isParam[name] {
-			return ownParam[name] && declCount[name] == 0
-		}
-		return freshInitLocal[name] && declCount[name] == 1 || bound[name] && declCount[name] == 0
-	}
 	var fieldSelections map[string]int
 	var fieldReads map[[2]string]int
 	unpackInitLocal := map[string]bool{}
@@ -266,7 +265,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		hid, isID := fa.Target.(*ast.Ident)
 		// An own parameter holds its fields as a fresh local does.
-		if !isID || !freshInitLocal[hid.Name] && !(ownParam[hid.Name] && declCount[hid.Name] == 0) {
+		if !isID || !(freshInitLocal[hid.Name] && declCount[hid.Name] == 1) && !(ownParam[hid.Name] && declCount[hid.Name] == 0) {
 			return true
 		}
 		if fieldSelections == nil {
@@ -287,17 +286,27 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		return true
 	})
+	fieldOwner := func(name string) bool {
+		if isParam[name] {
+			return ownParam[name] && declCount[name] == 0
+		}
+		return (freshInitLocal[name] || unpackInitLocal[name]) && declCount[name] == 1 || bound[name] && declCount[name] == 0
+	}
 	aliasInitLocal := map[string]bool{}
 	for name, root := range RenameRoots(body) {
 		if isParam[root] || freshInitLocal[root] || unpackInitLocal[root] {
 			aliasInitLocal[name] = true
 		}
 	}
+	for name := range ownedAliases(info, body, ownParam, declCount, order) {
+		aliasInitLocal[name] = true
+	}
 	admitted := func(name string) bool {
 		return isParam[name] || freshInitLocal[name] || unpackInitLocal[name] || aliasInitLocal[name]
 	}
 	lambdaCaptured := LambdaNames(body)
 	fieldOf := map[*ast.Ident]string{}
+	updates := UpdateBases(body)
 	ast.Walk(body, func(n ast.Node) bool {
 		if fa, ok := n.(*ast.FieldAccess); ok {
 			if id, ok := fa.Target.(*ast.Ident); ok {
@@ -345,11 +354,11 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		case *ast.FieldAccess:
 			q, ok := it.Target.(*ast.Ident)
 			if ok && !lambdaCaptured[q.Name] && !deferBare[q.Name] && !deferField[[2]string{q.Name, it.Field}] && fieldOwner(q.Name) &&
-				!loopRepeats(body, v, declNode[q.Name]) && fieldPathIsLast(order, fieldOf, q, it.Field) {
+				!loopRepeats(body, v, declNode[q.Name]) && fieldPathIsLast(order, fieldOf, updates, q, it.Field) {
 				iterOwned[v.Name] = true
 			}
 		default:
-			if freshInit(v.Init) {
+			if freshInit(info, v.Init) {
 				iterOwned[v.Name] = true
 			}
 		}
@@ -374,7 +383,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			if !ok || lambdaCaptured[q.Name] || deferBare[q.Name] || deferField[[2]string{q.Name, t.Field}] || !fieldOwner(q.Name) {
 				return
 			}
-			if !loopRepeats(body, holder, declNode[q.Name]) && fieldPathIsLast(order, fieldOf, q, t.Field) {
+			if !loopRepeats(body, holder, declNode[q.Name]) && fieldPathIsLast(order, fieldOf, updates, q, t.Field) {
 				moves[e] = true
 			}
 		}
@@ -640,14 +649,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			if !ok || lambdaCaptured[q.Name] || !fieldOwner(q.Name) {
 				continue
 			}
-			mentions := 0
-			ast.Walk(c, func(m ast.Node) bool {
-				if id, ok := m.(*ast.Ident); ok && id.Name == q.Name {
-					mentions++
-				}
-				return true
-			})
-			if mentions != 1 {
+			if mentionsBesideFields(c, q.Name, fa.Field) != 1 {
 				continue
 			}
 			if fieldDies[c] == nil {
@@ -675,14 +677,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			if loopRepeats(body, c, declNode[q.Name]) {
 				continue
 			}
-			mentions := 0
-			ast.Walk(c, func(m ast.Node) bool {
-				if id, ok := m.(*ast.Ident); ok && id.Name == q.Name {
-					mentions++
-				}
-				return true
-			})
-			if mentions != 1 || !fieldPathIsLast(order, fieldOf, q, fa.Field) || withinLiteralOf(body, c, q.Name) {
+			if mentionsBesideFields(c, q.Name, fa.Field) != 1 || !fieldPathIsLast(order, fieldOf, updates, q, fa.Field) || withinLiteralOf(body, c, q.Name) {
 				continue
 			}
 			if fieldDies[c] == nil {
@@ -693,6 +688,41 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		return true
 	})
 	return ArgDeaths{Dies: out, Repeating: repeating, Escaping: escaping, Occurrences: occurrences, Deferred: deferred, FieldDies: fieldDies, Moves: moves, Bound: bound}
+}
+
+// mentionsBesideFields counts the mentions of name in c that are not reads
+// of a field other than field. A move of name.field leaves those fields to
+// the caller.
+func mentionsBesideFields(c *ast.Call, name, field string) int {
+	n := 0
+	ast.Walk(c, func(m ast.Node) bool {
+		switch x := m.(type) {
+		case *ast.FieldAccess:
+			if id, ok := x.Target.(*ast.Ident); ok && id.Name == name && x.Field != field {
+				return false
+			}
+		case *ast.Ident:
+			if x.Name == name {
+				n++
+			}
+		}
+		return true
+	})
+	return n
+}
+
+// assignsWhole reports `name = value` where value does not read name.
+func assignsWhole(st ast.Stmt, name string) bool {
+	es, ok := st.(*ast.ExprStmt)
+	if !ok {
+		return false
+	}
+	asn, ok := es.Expr.(*ast.Assign)
+	if !ok {
+		return false
+	}
+	id, ok := asn.Target.(*ast.Ident)
+	return ok && id.Name == name && !StmtReferencesName(asn.Value, name)
 }
 
 // loopRepeats reports a loop that runs c again on the same owner: one that
@@ -758,34 +788,100 @@ func withinLiteralOf(body ast.Node, c *ast.Call, name string) bool {
 
 // fieldPathIsLast reports whether every later occurrence of q reads a field
 // other than field: the read `q.field` at q is then the last use of that
-// path, and q as a whole is never used again.
-func fieldPathIsLast(order IdentOrder, fieldOf map[*ast.Ident]string, q *ast.Ident, field string) bool {
+// path. A later update `S { ...q, field: v }` replaces the path, so it does
+// not read it.
+func fieldPathIsLast(order IdentOrder, fieldOf map[*ast.Ident]string, updates map[*ast.Ident]map[string]bool, q *ast.Ident, field string) bool {
 	at := order.Idx[q]
 	for id, idx := range order.Idx {
 		if idx <= at || id.Name != q.Name {
 			continue
 		}
 		f, isField := fieldOf[id]
-		if !isField || f == field {
-			return false
+		if isField && f != field || !isField && updates[id][field] {
+			continue
 		}
+		return false
 	}
 	return true
 }
 
-func freshInit(init ast.Expr) bool {
+// UpdateBases maps the base of each update literal `S { ...q, f: v }` to the
+// fields the literal replaces.
+func UpdateBases(body ast.Node) map[*ast.Ident]map[string]bool {
+	out := map[*ast.Ident]map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		sl, ok := n.(*ast.StructLit)
+		if !ok || sl.Base == nil {
+			return true
+		}
+		if id, ok := sl.Base.(*ast.Ident); ok {
+			fields := map[string]bool{}
+			for _, f := range sl.Fields {
+				fields[f.Name] = true
+			}
+			out[id] = fields
+		}
+		return true
+	})
+	return out
+}
+
+// freshInit reports an initialiser whose value no other name holds. A plain
+// named call qualifies unless its result can borrow from an argument.
+func freshInit(info *Info, init ast.Expr) bool {
 	switch init := init.(type) {
 	case *ast.TryOp:
-		return freshInit(init.Inner)
+		return freshInit(info, init.Inner)
 	case *ast.Call:
-		_, named := init.Callee.(*ast.Ident)
-		return named
+		if _, named := init.Callee.(*ast.Ident); !named {
+			return false
+		}
+		return init.Method != nil || info == nil || info.CallBorrows == nil || !info.CallBorrows(init)
 	case *ast.ArrayLit, *ast.StringLit:
 		return true
 	case *ast.StructLit:
 		return init.Base == nil
 	}
 	return false
+}
+
+// ownedAliases names the locals declared once, outside a loop, from an own
+// parameter at its last use, and given only fresh values after that.
+func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder) map[string]bool {
+	looped := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		switch n.(type) {
+		case *ast.While, *ast.Loop, *ast.For, *ast.ForEach:
+			ast.Walk(n, func(m ast.Node) bool {
+				if v, ok := m.(*ast.Var); ok {
+					looped[v.Name] = true
+				}
+				return true
+			})
+		}
+		return true
+	})
+	stale := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		if asn, ok := n.(*ast.Assign); ok {
+			if t, ok := asn.Target.(*ast.Ident); ok && !freshInit(info, asn.Value) {
+				stale[t.Name] = true
+			}
+		}
+		return true
+	})
+	out := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		v, ok := n.(*ast.Var)
+		if !ok || declCount[v.Name] != 1 || looped[v.Name] || stale[v.Name] {
+			return true
+		}
+		if src, ok := v.Init.(*ast.Ident); ok && ownParam[src.Name] && declCount[src.Name] == 0 && order.IsLast(src) {
+			out[v.Name] = true
+		}
+		return true
+	})
+	return out
 }
 
 func heldByEnclosingCall(body ast.Node, c *ast.Call, name string) bool {
@@ -1222,6 +1318,82 @@ func jumpsOf(info *Info, st ast.Stmt) stmtJumps {
 	return out
 }
 
+// neverReturns reports a statement that calls a function which never
+// returns.
+func neverReturns(info *Info, st ast.Stmt) bool {
+	es, ok := st.(*ast.ExprStmt)
+	return ok && info != nil && callNeverReturns(es.Expr, info.NoReturn, true)
+}
+
+// NoReturnFuncs names the plain functions whose body never returns: on every
+// path it ends in a call to exit, in a call to another such function, or in
+// a loop that never breaks.
+func NoReturnFuncs(prog *ast.Program) map[string]bool {
+	out := map[string]bool{}
+	for changed := true; changed; {
+		changed = false
+		for _, fn := range prog.Funcs {
+			if fn.Body == nil || fn.Receiver != nil || fn.MethodRecv != "" || out[fn.Name] {
+				continue
+			}
+			bound := false
+			for _, p := range fn.Params {
+				bound = bound || p.Name == "exit"
+			}
+			if stmtsExit(fn.Body.Stmts, out, bound) {
+				out[fn.Name] = true
+				changed = true
+			}
+		}
+	}
+	return out
+}
+
+func stmtsExit(stmts []ast.Stmt, noReturn map[string]bool, bound bool) bool {
+	return len(stmts) > 0 && stmtExits(stmts[len(stmts)-1], noReturn, bound)
+}
+
+func stmtExits(st ast.Stmt, noReturn map[string]bool, bound bool) bool {
+	switch x := st.(type) {
+	case *ast.ExprStmt:
+		return callNeverReturns(x.Expr, noReturn, bound)
+	case *ast.Block:
+		return stmtsExit(x.Stmts, noReturn, bound)
+	case *ast.If:
+		return x.Else != nil && stmtExits(x.Then, noReturn, bound) && stmtExits(x.Else, noReturn, bound)
+	case *ast.Match:
+		for _, arm := range x.Arms {
+			if arm.Body == nil || !stmtsExit(arm.Body.Stmts, noReturn, bound) {
+				return false
+			}
+		}
+		return len(x.Arms) > 0
+	case *ast.Loop:
+		return !loopCanBreak(x.Body, x.Label)
+	case *ast.While:
+		lit, ok := x.Cond.(*ast.BoolLit)
+		return ok && lit.Value && !loopCanBreak(x.Body, x.Label)
+	}
+	return false
+}
+
+// bound: a parameter named exit hides the builtin, so the check names only
+// the functions noReturn holds.
+func callNeverReturns(e ast.Expr, noReturn map[string]bool, bound bool) bool {
+	c, ok := e.(*ast.Call)
+	if !ok {
+		return false
+	}
+	id, ok := c.Callee.(*ast.Ident)
+	if !ok {
+		return false
+	}
+	if id.Name == "exit" && !bound {
+		return true
+	}
+	return noReturn[id.Name]
+}
+
 // divergesStmt reports a statement that leaves on every path.
 func divergesStmt(info *Info, st ast.Stmt) bool {
 	switch x := st.(type) {
@@ -1267,10 +1439,14 @@ func declaresName(n ast.Node, name string) bool {
 		case *ast.Var:
 			found = x.Name == name
 		case *ast.Destructure:
-			for _, nm := range x.Names {
-				if nm == name {
-					found = true
-				}
+			found = slices.Contains(x.Names, name)
+		case *ast.Match:
+			for _, arm := range x.Arms {
+				found = found || slices.Contains(arm.Binders(), name)
+			}
+		case *ast.MatchExpr:
+			for _, arm := range x.Arms {
+				found = found || slices.Contains(arm.Binders(), name)
 			}
 		}
 		return !found
@@ -1314,6 +1490,9 @@ func liveAfter(info *Info, body *ast.Block, c ast.Node, aid *ast.Ident, order Id
 	}
 	inner := frames[len(frames)-1]
 	st := inner.stmts[inner.idx]
+	if neverReturns(info, st) {
+		return false
+	}
 	// A loop inside the statement runs the call again each round: the call
 	// sits in a loop's head, or in a loop inside an expression-level block.
 	repeats := false
@@ -1346,6 +1525,10 @@ func liveFrom(info *Info, frames []liveFrame, level int, name string) bool {
 	f := frames[level]
 	for j := f.idx + 1; j < len(f.stmts); j++ {
 		st := f.stmts[j]
+		if assignsWhole(st, name) {
+			// A new value replaces the local before any read of the old one.
+			return false
+		}
 		if StmtReferencesName(st, name) {
 			return true
 		}
@@ -1362,7 +1545,7 @@ func liveFrom(info *Info, frames []liveFrame, level int, name string) bool {
 				return true
 			}
 		}
-		if divergesStmt(info, st) {
+		if divergesStmt(info, st) || neverReturns(info, st) {
 			return false
 		}
 	}

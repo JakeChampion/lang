@@ -1,4 +1,0 @@
-waiver: harness-limit
-reason: the Wasm runner preopens no directory, so open_reader("/dev/null")
-  fails before the program reaches its first close. The descriptor rule the
-  case pins is the kernel's, which the Wasm component model does not share.

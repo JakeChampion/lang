@@ -39,7 +39,7 @@ function open_nohup_out(path: string): Result[Writer, IoError] {
   return r;
 }
 
-function redirect(w: Writer, fd: i32, what: string): void {
+function redirect(own w: Writer, fd: i32, what: string): void {
   match (w.dup_onto(fd)) {
     Ok(_) => {},
     Err(e) => {
@@ -65,7 +65,8 @@ function ignore_input(): void {
 struct Appended { name: string }
 
 function append_output(): Appended {
-  match (open_nohup_out("nohup.out")) {
+  let here: Result[Writer, IoError] = open_nohup_out("nohup.out");
+  match (here) {
     Ok(w) => {
       redirect(w, 1, "output");
       return Appended { name: "nohup.out" };
@@ -79,7 +80,8 @@ function append_output(): Appended {
         },
         Some(home) => {
           let path: string = gnu.join_path(home, "nohup.out");
-          match (open_nohup_out(path)) {
+          let home_out: Result[Writer, IoError] = open_nohup_out(path);
+          match (home_out) {
             Ok(w2) => {
               redirect(w2, 1, "output");
               return Appended { name: path };

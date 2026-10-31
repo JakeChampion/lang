@@ -611,7 +611,7 @@ function engine_cfg(s: Scan): copy.Cfg {
   return copy.Cfg { ...copy.cfg_new(), attrs: attrs, recursive: false, deref: copy.deref_always(), forced_mode: 384, backups: s.backups, control: s.control, suffix: s.suffix, verbose: s.verbose, debug: s.debug, remove_destination: true };
 }
 
-function install_file(s: Scan, src: string, dest: string, want: i32, ids: Ids, o: io_buffered.BufWriter): FileOut {
+function install_file(s: Scan, src: string, dest: string, want: i32, ids: Ids, own o: io_buffered.BufWriter): FileOut {
   let w: io_buffered.BufWriter = o;
   match (lstat(src)) {
     Ok(info) => {
@@ -680,7 +680,7 @@ function from_environment(s0: Scan): Scan {
   return Scan { ...s, control: control };
 }
 
-function finish(status: i32, o: io_buffered.BufWriter): i32 {
+function finish(status: i32, own o: io_buffered.BufWriter): i32 {
   gnu.finish(o);
   return status;
 }
