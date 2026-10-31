@@ -2,6 +2,7 @@ import "./ssa";
 import "./ssadeps";
 import "./ssalive";
 import "./semcse";
+import "./semlatehold";
 import "./ssasem";
 import "./typeinfo";
 import "./util";
@@ -23,7 +24,9 @@ pub function sink(f: ssasem.Func): Sunk {
 // which `sink` runs before: a record or variant parameter declared
 // borrowed that a callee consumes is counted by then.
 pub function sink_past_lent(f: ssasem.Func): Sunk {
-  return sink_rereads(f, None, true);
+  let sk: Sunk = sink_rereads(f, None, true);
+  let late: semlatehold.Late = semlatehold.reread_before_spends(sk.f);
+  return Sunk { f: late.f, reread: sk.reread + late.reread };
 }
 
 struct Reused { s: Sunk, reads: Option[Reads] }
