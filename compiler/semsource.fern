@@ -8284,6 +8284,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
   let always: boolean[] = [];
   let arms: util.NameIndex = util.name_index(dispatched_arms(all));
   let keys: util.NameIndex = decl_keys(mod.funcs);
+  let lowered: util.NameIndex = lowered_names();
   let sw: optbisect.Switches = optbisect.switches();
   let i: i32 = 0;
   while (i < all.len()) {
@@ -8293,7 +8294,7 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module, siz
     funcs = funcs.append(p.func);
     modes = modes.append(p.modes);
     rewrite = rewrite.append(usable);
-    inlinable = inlinable.append(usable && d >= 0 && inlinable_decl(mod.funcs[d]) && optbisect.allowed_by(sw, "inline", names[i]));
+    inlinable = inlinable.append(usable && d >= 0 && inlinable_decl(mod.funcs[d]) && !lowered.has(names[i]) && optbisect.allowed_by(sw, "inline", names[i]));
     unnamed = unnamed.append(outside_unnamed(p, names[i], i, mod));
     uncalled = uncalled.append(outside_uncalled(p, names[i], i, mod, arms));
     always = always.append(d >= 0 && mod.funcs[d].always_inline);
@@ -8539,6 +8540,13 @@ function inlinable_decl(fd: parser.FuncDecl): boolean {
   return !fd.no_inline && !fd.fip && !fd.fbip;
 }
 
+// The lowering replaces a call to a contract's name with the contract's op,
+// such as string.to_ascii_upper with the runtime kernel. Splicing the
+// function's own body would replace that call before the lowering sees it.
+function lowered_names(): util.NameIndex {
+  return util.name_index(contract_names(builtin_contracts()));
+}
+
 function outside_unnamed(p: Produced, name: string, i: i32, mod: parser.Module): boolean {
   if (p.template || p.bodyless || !p.ok || name == "main" || util.str_has_prefix(name, "__") || util.contains(name, ".")) {
     return false;
@@ -8592,12 +8600,13 @@ function specialize_calls(all: Produced[], names: string[], table: ssasem.Contra
     return Specialised { all: all, names: names, table: table, roots: seminline.own_roots(all.len()) };
   }
   let keys: util.NameIndex = decl_keys(mod.funcs);
+  let lowered: util.NameIndex = lowered_names();
   let inlinable: boolean[] = [];
   let clone: boolean[] = [];
   for i in 0..sp.funcs.len() {
     let root: i32 = sp.from[i];
     let d: i32 = decl_of(all[root], root, mod.funcs.len(), keys);
-    inlinable = inlinable.append(usable[root] && d >= 0 && inlinable_decl(mod.funcs[d]) && optbisect.allowed_by(sw, "inline", sp.names[i]));
+    inlinable = inlinable.append(usable[root] && d >= 0 && inlinable_decl(mod.funcs[d]) && !lowered.has(sp.names[i]) && optbisect.allowed_by(sw, "inline", sp.names[i]));
     clone = clone.append(i >= all.len());
   }
   let made: ssasem.Func[] = seminline.inline_made_closures(sp.funcs, sp.names, sp.modes, inlinable, clone);

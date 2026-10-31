@@ -682,14 +682,7 @@
 </div>
 
 <script>
-// #4590: boot the wasm runtime in its OWN script, with NO dependency on the
-// CodeMirror ES module below (which statically imports from the esm.sh CDN).
-// The boot used to live inside that module, so a slow or unreachable esm.sh
-// discarded the whole module before the boot ran — and #status hung on
-// "loading runtime…" forever, an opaque failure in CI and offline. Booting
-// here brings the runtime up (and flips #status to "ready") regardless of the
-// CDN; the editor module below consumes this shared boot via
-// window.__fernDriverReady instead of instantiating its own.
+// Compile the runtime independently of the editor module.
 (function () {
   // The self-host compiler (web/playground.wasm), compiled once here and
   // instantiated afresh for every run by web/wasi-shim.js, so nothing one
@@ -1719,19 +1712,14 @@ function renderProblemList(diags) {
 
 // ---- CodeMirror 6 editor ----
 //
-// Loaded from esm.sh; the playground is served over HTTP so the
-// CDN fetch works. Pinning major versions only — minor/patch
-// updates ship transparently. If you need offline operation,
-// vendor these modules under web/vendor/cm6/ and rewrite the
-// imports below.
-import {EditorState, Compartment} from "https://esm.sh/@codemirror/state@6";
-import {EditorView, keymap, lineNumbers, highlightActiveLine, drawSelection,
-        rectangularSelection, hoverTooltip, dropCursor} from "https://esm.sh/@codemirror/view@6";
-import {history, defaultKeymap, historyKeymap, indentWithTab} from "https://esm.sh/@codemirror/commands@6";
-import {bracketMatching, indentOnInput} from "https://esm.sh/@codemirror/language@6";
-import {autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap} from "https://esm.sh/@codemirror/autocomplete@6";
-import {linter, lintGutter, forceLinting} from "https://esm.sh/@codemirror/lint@6";
-import {oneDark} from "https://esm.sh/@codemirror/theme-one-dark@6";
+// web/editor/build.mjs bundles the pinned packages into editor-deps.js.
+import {
+  EditorState, Compartment, EditorView, keymap, lineNumbers,
+  highlightActiveLine, drawSelection, rectangularSelection, hoverTooltip, dropCursor,
+  history, defaultKeymap, historyKeymap, indentWithTab, bracketMatching, indentOnInput,
+  autocompletion, completionKeymap, closeBrackets, closeBracketsKeymap,
+  linter, lintGutter, forceLinting, oneDark
+} from "./editor-deps.js";
 // Local (same-origin) WASI hosts for the "Run (wasm)" button. No
 // CDN — see web/wasi-shim.js (cli/run) and web/wasi-http-shim.js
 // (wasi:http/incoming-handler).
@@ -1967,12 +1955,7 @@ editorView = new EditorView({
   parent: srcMount,
 });
 
-// Wire the UI to the wasm runtime booted by the standalone boot script above
-// (window.__fernDriverReady) — NOT a second instantiate. #status was already
-// flipped to "ready" there, independent of this CodeMirror module; here we
-// enable the controls, run the first check, and autorun once the shared boot
-// resolves. Decoupling the boot from this module's esm.sh import is the #4590
-// fix: a CDN stall can no longer strand the runtime at "loading runtime…".
+// The editor and the controls share the compiled runtime.
 window.__fernDriverReady
   .then((driver) => {
     driverModule = driver;
