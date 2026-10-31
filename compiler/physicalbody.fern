@@ -112,6 +112,9 @@ pub function abis(c: Collection): rccertify.Abis {
 // The variants whose pair word `slot` holds a unit when the variant returns
 // in three words, a two-word payload split across both pair words.
 function split_word(m: Metadata, t: typeinfo.Type, slot: i32): i32 {
+  if (sempair.three_reference_tuple(t)) {
+    return -1;
+  }
   let at: i32 = semrecords.find_enum(m.enums, t);
   if (at < 0 || semscalarreturn.variant_in_lanes(m.enums[at])) {
     return 0;
@@ -148,7 +151,7 @@ function pair_parts(m: Metadata, t: typeinfo.Type): typeinfo.Type[] {
 
 function pair_first(m: Metadata, t: typeinfo.Type): boolean {
   let parts: typeinfo.Type[] = pair_parts(m, t);
-  return (parts.len() == 2 || sempair.two_reference_tail(t)) && ssasem.reference(parts[0]);
+  return (parts.len() == 2 || sempair.two_reference_tail(t) || sempair.three_reference_tuple(t)) && ssasem.reference(parts[0]);
 }
 
 function pair_second(m: Metadata, t: typeinfo.Type): i32 {
@@ -157,7 +160,7 @@ function pair_second(m: Metadata, t: typeinfo.Type): i32 {
   }
   let parts: typeinfo.Type[] = pair_parts(m, t);
   if (parts.len() > 0) {
-    if ((parts.len() == 2 || sempair.two_reference_tail(t)) && ssasem.reference(parts[1])) {
+    if ((parts.len() == 2 || sempair.two_reference_tail(t) || sempair.three_reference_tuple(t)) && ssasem.reference(parts[1])) {
       return -1;
     }
     return 0;
