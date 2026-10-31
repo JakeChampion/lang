@@ -1,0 +1,47 @@
+// The task deadline builtins in an interpreter. This is TaskDeadlineProgram
+// (internal/testing/e2eharness), which parks when it is compiled.
+import "std/async";
+
+const FAR: i64 = 4611686018427387904i64;
+
+function far(): i32 {
+  unsafe {
+    return __task_park_until([5, 1], FAR);
+  }
+}
+
+function forever(): i32 {
+  unsafe {
+    return __task_park_until([6, 1], 0 - 1 as i64);
+  }
+}
+
+function report(name: string, entry: () => i32): void {
+  let t: async.Task[i32] = async.task_new(entry);
+  match (async.task_start(t)) {
+    Suspended(w) => {
+      unsafe {
+        print(name + " until " + __task_until(t.id).to_string() + " set " + w.set.len().to_string());
+      }
+      match (async.task_resume(t, 0)) {
+        Done(v) => {
+          print(name + " woke " + v.to_string());
+        },
+        _ => {
+          print(name + " parked again");
+        }
+      }
+    },
+    Done(v) => {
+      print(name + " ran " + v.to_string());
+    },
+    Cancelled => {}
+  }
+  async.task_free(t);
+}
+
+function main(): i32 {
+  report("far", far);
+  report("forever", forever);
+  return 0;
+}

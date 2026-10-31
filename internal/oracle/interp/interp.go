@@ -1417,6 +1417,8 @@ func New() *Interp {
 	i.Builtins["__task_park"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
 	i.Builtins["__task_wait"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return newArray(0), nil }}
 	i.Builtins["__task_timeout"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
+	i.Builtins["__task_park_until"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
+	i.Builtins["__task_until"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(-1), nil }}
 	i.Builtins["__task_set_ready"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
 	i.Builtins["__task_set_cancelled"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return nil, nil }}
 	i.Builtins["__task_cancelled"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
