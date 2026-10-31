@@ -46,7 +46,7 @@ A case is a directory `cases/<name>/`. Contents:
 | `expected.exit` | no | Expected process exit code, `0`–`255`. Defaults to `0`. |
 | `stdin` | no | Bytes fed to the program's stdin. |
 | `match` | no | `exact` (default) or `contains`. |
-| `backends` | no | Whitespace-separated subset of `interp x86_64 arm64 wasm`; `#` starts a comment. Defaults to all four. `arm64` selects the arm64-linux, arm64-android and arm64-darwin legs. `wasm` selects the core-module, component and wasi:http legs. |
+| `backends` | no | Whitespace-separated subset of `interp x86_64 arm64 arm64_android arm64_darwin wasm wasm_component wasi_http`, one name for each leg. `#` starts a comment. Defaults to all of them. `arm64` is the arm64-linux leg, `wasm` the preview-1 core module, and `wasm_component` the default wasi:cli/run component. |
 | `expected.http` | no | The response that the `wasm32-wasi-http` leg must get for `GET /`: the status code on the first line, then the body byte for byte. Permitted only when `main.fern` declares `handle(req: HttpRequest, plat: platform.Platform): HttpResponse`. That leg runs only the cases that carry this file. |
 | `expected.error` | no | Marks a **compile-error case** — the front end must reject it. See below. |
 | `expected.lowering-error` | no | Marks a **lowering-error case** — the front end must ACCEPT it and lowering must reject it. See below. |
@@ -58,7 +58,7 @@ subdirectories. Both are enforced (`TestConformanceCorpusFormat`),
 because an unrecognised sidecar is otherwise read as an absent one: a
 `expected.exitcode` typo silently asserts exit `0` rather than failing.
 
-A `backends` file that names all four backends is rejected: that is
+A `backends` file that names every backend is rejected: that is
 already what omitting the file means, so the list says nothing and only
 its comment carries information — and a comment belongs in `main.fern`
 with the rest of the case's rationale. The rule keeps "has a `backends`
@@ -91,7 +91,7 @@ Such a case must carry none of `expected.stdout`, `expected.exit`,
 `stdin`, `match` or `backends`; those are ignored on this path, and a
 case that sets one is asserting something that is not being checked.
 It must not carry a `meta` waiver either: a waiver justifies asserting
-less than byte-exact output on all four backends, and a rejection case
+less than byte-exact output on every backend, and a rejection case
 asserts no output at all.
 
 ### Lowering-error cases
@@ -137,8 +137,8 @@ therefore keeps its trap and rejection checks and loses its value check.
 
 ## Justifying a weaker assertion
 
-The strongest thing a case can say is "this exact stdout, on all four
-backends". There are two ways to say less — `match: contains`, and a
+The strongest thing a case can say is "this exact stdout, on every
+backend". There are two ways to say less — `match: contains`, and a
 `backends` subset — and both are claims about the language, so a case
 that uses either **must** carry a `meta` file saying why. A case that
 uses neither must **not** carry one. Both directions are enforced.
@@ -191,7 +191,7 @@ Drop in a directory. No Go code is required, and nothing needs
 registering — the runners discover directories.
 
 Prefer the strongest assertion the behaviour supports: byte-exact stdout
-on all four backends, no `meta`. Reach for a waiver when that is
+on every backend, no `meta`. Reach for a waiver when that is
 genuinely not available, not when it is inconvenient — the gap between
 what a case asserts and what the language guarantees is exactly the kind
 of unspecified behaviour this corpus exists to pin down.
