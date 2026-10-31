@@ -143,12 +143,12 @@ result back, as above.
 
 ```fern
 import "core/cmp";
-import "std/set";
+import "std/pset";
 import "std/string";
 
 function main(): i32 {
     let names: string[] = ["elm", "ash", "elm", "beech"];
-    let unique: string[] = set.of(names).to_array();
+    let unique: string[] = pset.of(names).to_array();
     let sorted: string[] = cmp.sort(unique);
     print(sorted.join(", "));   // ash, beech, elm
     return 0;

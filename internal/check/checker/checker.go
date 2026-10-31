@@ -3841,7 +3841,7 @@ func (c *checker) typeImplsEqAndHash(typeName string) bool {
 	return hasEq && hasHash
 }
 
-const MapVoidValue = "map value type void is not supported — a set of keys is std/set's `Set`"
+const MapVoidValue = "map value type void is not supported — a set of keys is std/pset's `PSet`"
 
 func (c *checker) mapKeyTypeError(k ast.Type) string {
 	switch kt := k.(type) {
