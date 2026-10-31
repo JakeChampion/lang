@@ -23,6 +23,8 @@
 # (asmcore.rt_src_task): the task table, one record per task id in use at
 # once and each record's save area, which a freed id hands to the next task
 # rather than returning to the heap. Three tasks run at once there.
+# Measured 2026-10-31 on PR #13966: ten pool blocks, including one timer
+# record per task. RC traces and debug symbols identify all ten blocks.
 #
 # Measured 2026-10-04: 569 fixtures, 567 clean.
 a_builtin_method_does_not_see_the_programs_variants  0
@@ -1124,7 +1126,7 @@ target_os_linux                                      0
 target_os_named                                      0
 target_os_wasi                                       0
 task_deadline_builtins_answer_at_once_in_the_interpreter 4
-tasks_agree_without_a_scheduler                      7
+tasks_agree_without_a_scheduler                      10
 tco_sum                                              0
 tcp_recv_waits_for_data                              0
 tcp_send_nonblocking_partial                         0

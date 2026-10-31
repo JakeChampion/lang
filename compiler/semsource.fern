@@ -8423,7 +8423,9 @@ function with_reached(all: Produced[], usable: boolean[], r: semreach.Reached): 
   let i: i32 = 0;
   while (i < all.len()) {
     let p: Produced = all[i];
-    if (usable[i] && !r.live[i]) {
+    // A refused body can be an unused specialization of a bounded method.
+    // reach() has already rejected every reachable refused body.
+    if (!r.live[i] && !p.template && !p.bodyless && !p.dropped) {
       p = Produced { ...p, ok: false, why: "reached by nothing", func: refuse("").func, analysis: None, dropped: true };
     } else if (r.rewritten[i]) {
       p = Produced { ...p, func: r.funcs[i], analysis: None };
