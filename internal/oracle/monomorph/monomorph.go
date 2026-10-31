@@ -356,7 +356,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 					inst = ast.EnumType{Name: baseName, Args: structInsts[sk]}
 				}
 				psub := map[string]ast.Type{}
-				if !unifyImplType(impl.Type, inst, pset, psub) {
+				if !unifyImplType(impl.Type, inst, pset, psub) || !implBoundsHold(info, impl, psub) {
 					continue
 				}
 				implK := impl.Trait + "/" + sk.mang
@@ -1156,6 +1156,23 @@ func baseTypeName(t ast.Type) (string, bool) {
 		return x.Name, true
 	}
 	return "", false
+}
+
+// implBoundsHold reports whether sub satisfies the bounds of a parametric impl.
+func implBoundsHold(info *checker.Info, impl *ast.ImplDecl, sub map[string]ast.Type) bool {
+	if len(impl.Bounds) == 0 {
+		return true
+	}
+	args := make([]ast.Type, len(impl.TypeParams))
+	for i, tp := range impl.TypeParams {
+		v, ok := sub[tp]
+		if !ok {
+			return true
+		}
+		args[i] = v
+	}
+	bounds := &ast.FuncDecl{Name: impl.Trait, TypeParams: impl.TypeParams, Bounds: impl.Bounds, BoundArgs: impl.BoundArgs}
+	return len(checker.BoundErrors(info, bounds, args, impl.P)) == 0
 }
 
 func unifyImplType(pattern, concrete ast.Type, params map[string]bool, sub map[string]ast.Type) bool {
