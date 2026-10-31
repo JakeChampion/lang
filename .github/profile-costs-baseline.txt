@@ -131,12 +131,12 @@ profile/x86-64-linux/deflate_decode.diagnostic.bytes	115016
 profile/x86-64-linux/deflate_decode.diagnostic.emit	13109
 profile/x86-64-linux/deflate_decode.diagnostic.ir	46682910
 profile/x86-64-linux/deflate_decode.hardened.bytes	58912
-profile/x86-64-linux/deflate_decode.hardened.emit	13783
+profile/x86-64-linux/deflate_decode.hardened.emit	13639
 profile/x86-64-linux/deflate_decode.hardened.ir	34763444
 profile/x86-64-linux/deflate_decode.minimal.bytes	49280
 profile/x86-64-linux/deflate_decode.minimal.emit	11699
 profile/x86-64-linux/deflate_decode.minimal.ir	43446703
-profile/x86-64-linux/deflate_decode.safe.bytes	57520
+profile/x86-64-linux/deflate_decode.safe.bytes	53376
 profile/x86-64-linux/deflate_decode.safe.emit	13325
 profile/x86-64-linux/deflate_decode.safe.ir	34703269
 profile/x86-64-linux/enum_match.diagnostic.bytes	12704
@@ -176,7 +176,7 @@ profile/x86-64-linux/int_loop.safe.bytes	4096
 profile/x86-64-linux/int_loop.safe.emit	250
 profile/x86-64-linux/int_loop.safe.ir	12000077
 profile/x86-64-linux/map_string.diagnostic.bytes	135064
-profile/x86-64-linux/map_string.diagnostic.emit	11035
+profile/x86-64-linux/map_string.diagnostic.emit	10888
 profile/x86-64-linux/map_string.diagnostic.ir	58790275
 profile/x86-64-linux/map_string.hardened.bytes	46032
 profile/x86-64-linux/map_string.hardened.emit	10053

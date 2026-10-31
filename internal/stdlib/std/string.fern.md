@@ -2609,11 +2609,28 @@ pub function (s: string) parse_bool(): Result[boolean, ParseBoolError] {
   return Err(InvalidBool);
 }
 
-@derive(cmp.Eq)
 pub enum ParseBoolError {
   EmptyBool,
   InvalidBool,
 }
+
+pub function (e: ParseBoolError) eq(other: ParseBoolError): boolean {
+  match (e) {
+    EmptyBool => {
+      if let EmptyBool = other {
+        return true;
+      }
+    },
+    InvalidBool => {
+      if let InvalidBool = other {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+impl cmp.Eq for ParseBoolError {}
 
 pub function (e: ParseBoolError) message(): string {
   match (e) {

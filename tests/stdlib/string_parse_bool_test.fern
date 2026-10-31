@@ -1,6 +1,11 @@
 import "std/test";
 import "std/error";
 import "std/string";
+import "core/cmp";
+
+function equal_error[E: cmp.Eq](a: E, b: E): boolean {
+  return a == b;
+}
 
 function describe[E: error.Error](e: E): string {
   return e.message();
@@ -46,11 +51,17 @@ function test_error_display(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+function test_error_equality(): test.TestOutcome {
+  return test.assert_true(equal_error(EmptyBool, EmptyBool) && equal_error(InvalidBool, InvalidBool)
+    && !equal_error(EmptyBool, InvalidBool) && !equal_error(InvalidBool, EmptyBool));
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.new("std/string parse_bool");
   r = r.it("canonical spellings", test_canonical_spellings);
   r = r.it("empty input", test_empty_input);
   r = r.it("invalid text", test_invalid_text);
   r = r.it("error to_string", test_error_display);
+  r = r.it("error equality", test_error_equality);
   return r.finish();
 }
