@@ -829,7 +829,7 @@ function test_raw_write_journal(): test.TestOutcome {
 }
 
 function __echo(req: HttpRequest): HttpResponse {
-  match (req.body_string()) {
+  match (req.body_text()) {
     Ok(body) => {
       return http.text(200, req.method + " " + req.path + " " + body);
     },

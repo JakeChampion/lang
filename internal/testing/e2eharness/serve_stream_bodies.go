@@ -44,7 +44,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/sum") { return sum_body(req); }
     if (req.path == "/echo") { return http.bytes(200, req.body_bytes()); }
     if (req.path == "/text") {
-        match (req.body_string()) {
+        match (req.body_text()) {
             Ok(text) => { return http.ok("text " + text.len().to_string()); },
             Err(e) => { return e.to_response(); }
         }

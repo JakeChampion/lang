@@ -260,7 +260,7 @@ function pump(k: Cli, ms: i32): Cli {
 
 // get sends one request and pumps until its response arrives.
 function get(k0: Cli, path: string): (Cli, string) {
-  let Ok(sent) = k0.c.request(request(path), "https") else {
+  let Ok(sent) = k0.c.request(request(path).outgoing("https")) else {
     return (k0, "ERR request");
   };
   let k: Cli = Cli { ...k0, c: sent.0 };
@@ -395,7 +395,7 @@ function drive(k0: Cli, rounds: i32, m: i32): (Cli, i32, i32) {
       if (inflight >= m || completed + inflight >= rounds || !k.c.quic().can_open(false)) {
         topping = false;
       } else {
-        match (k.c.request(request("/"), "https")) {
+        match (k.c.request(request("/").outgoing("https"))) {
           Ok(sent) => {
             k = Cli { ...k, c: sent.0 };
             inflight = inflight + 1;

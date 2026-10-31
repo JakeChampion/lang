@@ -39,7 +39,7 @@ pub function classify(keys: string[], funcs: ssasem.Func[]): Set {
         } else if (ins.kind_tag == ssasem.call() && ssasem.is_dyn_call(ins.str)) {
           dyn_calls = dyn_calls.with(i, true);
         } else if (ins.kind_tag == ssasem.call()) {
-          if (ins.str == "__task_park") {
+          if (ins.str == "__task_park" || ins.str == "__task_park_until") {
             marks = marks.with(i, true);
           }
           let callee: i32 = rows.find(ins.str);
@@ -204,7 +204,7 @@ function spread(seed: boolean[], callers: i32[][], keys: string[]): boolean[] {
 
 function is_site(o: ir.Op, set: Set): boolean {
   if (o.kind_tag == 149) {
-    return o.str == "__task_park" || o.str == "__fern_task_park" || set.rows.has(o.str);
+    return o.str == "__task_park" || o.str == "__fern_task_park" || o.str == "__task_park_until" || o.str == "__fern_task_park_until" || set.rows.has(o.str);
   }
   if (o.kind_tag == 150 || o.kind_tag == 151 || o.kind_tag == 147) {
     return set.indirect;

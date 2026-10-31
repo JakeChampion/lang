@@ -863,7 +863,7 @@ pub function (sh: Shared) pick(key: string): Option[i32] {
   return None;
 }
 
-pub function (sh: Shared) submit(fd: i32, out: h2.Outgoing): i32 {
+pub function (sh: Shared) submit(fd: i32, out: http.Outgoing): i32 {
   let rows: Driven[] = sh.rows.get();
   let at: i32 = __driven_at(rows, fd);
   if (at < 0) {
@@ -1967,8 +1967,7 @@ function __attempt_shared[T: Transport](tr: T, req: Request, t: __Target, starte
       return __attempt_opened(tr, req, t, started, place, conn);
     }
   }
-  let body: u8[] = req.body.bytes();
-  let id: i32 = sh.submit(fd, h2.Outgoing { method: req.method, scheme: "https", authority: t.host_field, path: t.target, headers: __sent_fields(req, t, body.len()), body: body, trailers: headers.new() });
+  let id: i32 = sh.submit(fd, __outgoing(req, t));
   if (id == 0) {
     return Err(Io(net.ConnectionReset));
   }
@@ -2096,8 +2095,7 @@ function __attempt_h1[T: Transport](tr: T, req: Request, t: __Target, started: i
 }
 
 function __attempt_h2[T: Transport](tr: T, req: Request, t: __Target, started: i64, place: __Place, conn: __Conn, hc: h2.Conn): Result[HttpResponse, FetchError] {
-  let body: u8[] = req.body.bytes();
-  let (sent, stream) = hc.request(h2.Outgoing { method: req.method, scheme: "https", authority: t.host_field, path: t.target, headers: __sent_fields(req, t, body.len()), body: body, trailers: headers.new() });
+  let (sent, stream) = hc.request(__outgoing(req, t));
   if (stream < 0) {
     tr.close(conn.fd);
     return Err(Io(net.ConnectionReset));
@@ -2543,6 +2541,15 @@ function __global_only(found: Lookup): Result[void, FetchError] {
   return Ok(());
 }
 
+function __outgoing(req: Request, t: __Target): http.Outgoing {
+  let body: u8[] = req.body.bytes();
+  let scheme: string = "http";
+  if (t.tls) {
+    scheme = "https";
+  }
+  return http.Outgoing { method: req.method, scheme: scheme, authority: t.host_field, target: t.target, headers: __sent_fields(req, t, body.len()), body: body, trailers: headers.new() };
+}
+
 function __global_addr(named: net.IpAddr, judged: net.IpAddr): Result[void, FetchError] {
   if (!judged.is_global()) {
     return Err(Blocked(named.to_string() + " is not a global address"));
@@ -2551,9 +2558,8 @@ function __global_addr(named: net.IpAddr, judged: net.IpAddr): Result[void, Fetc
 }
 
 function __send_hosted(req: Request, t: __Target): Result[HttpResponse, FetchError] {
-  let body: u8[] = req.body.bytes();
-  let o: wasi_http.Outgoing = wasi_http.Outgoing { method: req.method, authority: t.host_field, tls: t.tls, target: t.target, headers: __sent_fields(req, t, body.len()), body: body, connect: __connect_bound(req.timeouts), inactivity: req.timeouts.inactivity, body_cap: req.limits.body };
-  match (wasi_http.outgoing(o)) {
+  let limits: wasi_http.Limits = wasi_http.Limits { connect: __connect_bound(req.timeouts), inactivity: req.timeouts.inactivity, body_cap: req.limits.body };
+  match (wasi_http.outgoing(__outgoing(req, t), limits)) {
     Ok(resp) => {
       return __decoded(HttpResponse { ...resp, headers: http.end_to_end(resp.headers) }, req);
     },

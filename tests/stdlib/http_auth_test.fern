@@ -21,7 +21,7 @@ function whoami(req: HttpRequest): Result[HttpResponse, dyn http.ToResponse] {
 }
 
 function summary(resp: HttpResponse): string {
-  return resp.status.to_string() + " " + header(resp, "www-authenticate") + " " + resp.body_string();
+  return resp.status.to_string() + " " + header(resp, "www-authenticate") + " " + resp.body_text_lossy();
 }
 
 function test_bearer_accepted(): test.TestOutcome {

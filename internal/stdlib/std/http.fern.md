@@ -144,7 +144,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<58 function __declared_length(h: HeaderMap): i32>>
 
-<<59 pub function (r: HttpResponse) body_string(): string>>
+<<59 pub function (r: HttpResponse) body_text_lossy(): string>>
 
 <<60 function __chunks_joined(producer: ChunkProducer): u8[]>>
 
@@ -172,7 +172,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<72 function __lists_token(value: string, want: string): boolean>>
 
-<<73 pub function (r: HttpResponse) body_text(): Result[string, utf8.Utf8Error]>>
+<<73 pub function (r: HttpResponse) body_text(): Result[string, BodyError]>>
 
 <<74 function __str_is_token(s: string): boolean>>
 
@@ -573,7 +573,7 @@ pub function body_json[T: json.FromJson](req: HttpRequest): Result[T, BodyError]
       return Err(UnsupportedMediaType(""));
     }
   }
-  let text: string = req.body_string()?;
+  let text: string = req.body_text()?;
   match (json.parse(text)) {
     Ok(v) => {
       match (T.from_json_value(v)) {
@@ -2409,7 +2409,7 @@ pub function serialize_response_to(method: string, version: string, resp: HttpRe
   let framing: string = "";
   let body: string = "";
   if (!no_body) {
-    body = resp.body_string();
+    body = resp.body_text_lossy();
     framing = "Content-Length: " + body.len().to_string() + "\r\n";
   }
   let b: usize = buf_new(256);
@@ -2576,12 +2576,27 @@ pub function (r: HttpRequest) with_header(name: string, value: string): HttpRequ
   return HttpRequest { ...r, headers: r.headers.set(name, value) };
 }
 
-pub function (r: HttpRequest) with_body(body: string): HttpRequest {
-  return HttpRequest { ...r, body: stream.from_bytes(body.bytes()), headers: r.headers.set("Content-Length", body.len().to_string()) };
+pub function (r: HttpRequest) with_bytes(body: u8[]): HttpRequest {
+  return HttpRequest { ...r, body: stream.from_bytes(body), headers: r.headers.set("Content-Length", body.len().to_string()) };
+}
+
+pub function (r: HttpRequest) with_text(body: string): HttpRequest {
+  return r.with_bytes(body.bytes());
 }
 
 pub function (r: HttpRequest) with_json(body: string): HttpRequest {
-  return r.with_body(body).with_header("Content-Type", "application/json");
+  return r.with_text(body).with_header("Content-Type", "application/json");
+}
+
+pub struct Outgoing { method: string, scheme: string, authority: string, target: string, headers: HeaderMap, body: u8[], trailers: HeaderMap }
+
+pub function outgoing(method: string, scheme: string, authority: string, target: string): Outgoing {
+  let none: u8[] = [];
+  return Outgoing { method: method, scheme: scheme, authority: authority, target: target, headers: headers.new(), body: none, trailers: headers.new() };
+}
+
+pub function (r: HttpRequest) outgoing(scheme: string): Outgoing {
+  return Outgoing { method: r.method, scheme: scheme, authority: r.headers.get("host").unwrap_or(""), target: r.path, headers: r.headers, body: r.body_bytes(), trailers: r.trailers };
 }
 
 pub function (r: HttpRequest) query(name: string): Option[string] {
@@ -2613,11 +2628,19 @@ pub function (r: HttpRequest) body_stream(): ByteStream {
   return r.body;
 }
 
-pub function (r: HttpRequest) body_string(): Result[string, BodyError] {
+pub function (r: HttpRequest) body_text(): Result[string, BodyError] {
   let (bytes, rest) = __whole_body(r.body);
   if let Some(fault) = rest.fault() {
     return Err(EndedEarly(fault));
   }
+  return __body_utf8(bytes);
+}
+
+pub function (r: HttpRequest) body_text_lossy(): string {
+  return utf8.from_bytes_lossy(r.body_bytes());
+}
+
+function __body_utf8(bytes: u8[]): Result[string, BodyError] {
   match (utf8.from_bytes(bytes)) {
     Ok(s) => {
       return Ok(s);
@@ -2686,34 +2709,15 @@ function __declared_length(h: HeaderMap): i32 {
 }
 ```
 
-### `59 pub function (r: HttpResponse) body_string(): string`
+### `59 pub function (r: HttpResponse) body_text_lossy(): string`
 
 ```fern
-<<59 pub function (r: HttpResponse) body_string(): string>>=
-pub function (r: HttpResponse) body_string(): string {
-  match (r.body) {
-    BodyText(s) => {
-      return s;
-    },
-    BodyBytes(bs) => {
-      return utf8.from_bytes_lossy(bs);
-    },
-    BodyStream(st) => {
-      let rest: (u8[], ByteStream) = st.read_all();
-      return utf8.from_bytes_lossy(rest.0);
-    },
-    BodyFile(path) => {
-      return "";
-    },
-    BodyFileRanges(path, ranges, seams) => {
-      return "";
-    },
-    BodyChunks(producer) => {
-      let joined: u8[] = __chunks_joined(producer);
-      return utf8.from_bytes_lossy(joined);
-    }
+<<59 pub function (r: HttpResponse) body_text_lossy(): string>>=
+pub function (r: HttpResponse) body_text_lossy(): string {
+  if let BodyText(s) = r.body {
+    return s;
   }
-  return "";
+  return utf8.from_bytes_lossy(r.body_bytes());
 }
 
 pub function (r: HttpResponse) body_bytes(): u8[] {
@@ -3234,12 +3238,19 @@ function __lists_token(value: string, want: string): boolean {
 }
 ```
 
-### `73 pub function (r: HttpResponse) body_text(): Result[string, utf8.Utf8Error]`
+### `73 pub function (r: HttpResponse) body_text(): Result[string, BodyError]`
 
 ```fern
-<<73 pub function (r: HttpResponse) body_text(): Result[string, utf8.Utf8Error]>>=
-pub function (r: HttpResponse) body_text(): Result[string, utf8.Utf8Error] {
-  return utf8.from_bytes(r.body_bytes());
+<<73 pub function (r: HttpResponse) body_text(): Result[string, BodyError]>>=
+pub function (r: HttpResponse) body_text(): Result[string, BodyError] {
+  if let BodyStream(st) = r.body {
+    let (bytes, rest) = st.read_all();
+    if let Some(fault) = rest.fault() {
+      return Err(EndedEarly(fault));
+    }
+    return __body_utf8(bytes);
+  }
+  return __body_utf8(r.body_bytes());
 }
 
 pub function method_ok(method: string): boolean {

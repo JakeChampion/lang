@@ -28,7 +28,7 @@ function missing(req: HttpRequest, params: router.Params, plat: platform.Host): 
 }
 
 function echo(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
-  let body: string = req.body_string()?;
+  let body: string = req.body_text()?;
   return Ok(http.text(200, body));
 }
 

@@ -99,7 +99,7 @@ function census_burn(n: i32, plat: platform.Platform): i32 {
 }
 function census_handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/chunked" || req.path == "/expect") {
-        match (req.body_string()) {
+        match (req.body_text()) {
             Ok(text) => { return http.ok(text); },
             Err(e) => { return e.to_response(); }
         }

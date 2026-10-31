@@ -3,7 +3,6 @@ import "std/test";
 import "std/option";
 import "std/ordmap" as ordmap;
 import "std/pmap" as pmap;
-import "std/set" as set;
 import "std/ordset" as ordset;
 import "std/pset" as pset;
 import "std/json" as json;
@@ -115,8 +114,8 @@ function test_json_object(): test.TestOutcome {
 }
 
 function test_sets(): test.TestOutcome {
-  let a: set.Set[i32] = set.of([1, 2, 3]).insert(4).remove(1);
-  let b: set.Set[i32] = set.of([3, 4, 5]);
+  let a: pset.PSet[i32] = pset.of([1, 2, 3]).insert(4).remove(1);
+  let b: pset.PSet[i32] = pset.of([3, 4, 5]);
   if (a.intersection(b).len() != 2 || a.symmetric_difference(b).len() != 2 || !a.union(b).is_superset(b)) {
     return test.fail("set algebra");
   }
