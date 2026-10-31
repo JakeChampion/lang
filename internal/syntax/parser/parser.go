@@ -101,6 +101,8 @@ func offsetPos(base, in ast.Position) ast.Position {
 }
 
 type parser struct {
+	// strictSemi requires the ";" of a block's last expression statement.
+	strictSemi      bool
 	tokens          []lexer.Token
 	i               int
 	errors          []error
@@ -2379,7 +2381,11 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 	if t.Kind == lexer.Keyword {
 		switch t.Text {
 		case "if":
-			return p.parseIf()
+			st, err := p.parseIf()
+			if err == nil && p.match(lexer.Punct, ";") {
+				p.advance()
+			}
+			return st, err
 		case "while":
 			return p.parseWhile("")
 		case "loop":
@@ -2406,8 +2412,11 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 	if err != nil {
 		return nil, err
 	}
-	if _, err := p.expect(lexer.Punct, ";"); err != nil {
-		return nil, err
+	// The last expression statement of a block may omit its ";".
+	if _, assign := e.(*ast.Assign); assign || p.strictSemi || !p.match(lexer.Punct, "}") {
+		if _, err := p.expect(lexer.Punct, ";"); err != nil {
+			return nil, err
+		}
 	}
 	return &ast.ExprStmt{P: e.Pos(), Expr: e}, nil
 }
@@ -2826,7 +2835,11 @@ func (p *parser) valuelessBranchTail() (ast.Stmt, bool) {
 		return nil, false
 	}
 	mark, nRefs, nTodo, nErr := p.i, len(p.typeRefs), len(p.todoSites), len(p.errors)
+	// A branch that ends in an unterminated expression gives the value.
+	strict := p.strictSemi
+	p.strictSemi = true
 	s, err := p.parseStmt()
+	p.strictSemi = strict
 	if err == nil && len(p.errors) == nErr && p.match(lexer.Punct, "}") {
 		return s, true
 	}

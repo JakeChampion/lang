@@ -34,6 +34,9 @@ import (
 var (
 	preview2Once sync.Once
 	preview2Err  error
+	// A wasmtime that is present but not the pin fails the test, so a
+	// version drift cannot pass as a skip.
+	preview2Drift error
 )
 
 const wasmtimePin = "46.0.1"
@@ -62,13 +65,16 @@ func skipIfPreview2Missing(t *testing.T) {
 			return
 		}
 		if v, err := wasmtimeVersion(); err != nil {
-			preview2Err = err
+			preview2Drift = err
 		} else if v != wasmtimePin {
-			preview2Err = fmt.Errorf("wasmtime %s on PATH, but this suite is pinned to %s "+
+			preview2Drift = fmt.Errorf("wasmtime %s on PATH, but this suite is pinned to %s "+
 				"(see mise.toml; `eval \"$(scripts/toolchain-env)\"` installs it); the "+
 				"component-model-async ABI differs between them", v, wasmtimePin)
 		}
 	})
+	if preview2Drift != nil {
+		t.Fatalf("preview-2 toolchain: %v", preview2Drift)
+	}
 	if preview2Err != nil {
 		t.Skipf("preview-2 prerequisites missing: %v", preview2Err)
 	}
