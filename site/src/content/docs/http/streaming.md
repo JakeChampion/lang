@@ -60,7 +60,7 @@ arrived whole. `http.EndedEarly(why)` answers it with the matching status
 (413, 408, 400). The body limit still applies when streaming, which
 is why the example raises it to 1 GiB; memory stays at one chunk however
 large the upload. `read_some()` returns whatever has arrived, `read_line()` a line
-at a time, and `req.body_string()` or `body_bytes()` still read the whole
+at a time (`Ok(None)` at the end, `Err` for a line that is not UTF-8), and `req.body_string()` or `body_bytes()` still read the whole
 thing when that is what you want.
 
 ## Uploads

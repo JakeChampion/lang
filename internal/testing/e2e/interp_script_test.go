@@ -1947,13 +1947,13 @@ function main(): i32 {
 function main(): i32 {
     let s: ByteStream = stream.from_string("unix\nwindows\r\nfinal");
     let (l1, s2) = s.read_line();
-    match (l1) { Some(l) => { print(l); }, None => { print("none"); } }
+    match (l1) { Ok(Some(l)) => { print(l); }, Ok(None()) => { print("none"); }, Err(_) => { print("bad"); } }
     let (l2, s3) = s2.read_line();
-    match (l2) { Some(l) => { print(l); }, None => { print("none"); } }
+    match (l2) { Ok(Some(l)) => { print(l); }, Ok(None()) => { print("none"); }, Err(_) => { print("bad"); } }
     let (l3, s4) = s3.read_line();
-    match (l3) { Some(l) => { print(l); }, None => { print("none"); } }
+    match (l3) { Ok(Some(l)) => { print(l); }, Ok(None()) => { print("none"); }, Err(_) => { print("bad"); } }
     let (l4, _) = s4.read_line();
-    match (l4) { Some(_) => { print("UNEXPECTED"); }, None => { print("eof"); } }
+    match (l4) { Ok(Some(_)) => { print("UNEXPECTED"); }, Ok(None()) => { print("eof"); }, Err(_) => { print("bad"); } }
     return 0;
 }`,
 			wantStdout: "unix\nwindows\nfinal\neof\n",

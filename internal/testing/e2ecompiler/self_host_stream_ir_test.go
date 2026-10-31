@@ -20,8 +20,8 @@ var streamIRCases = []struct {
 	{"read-byte-none", `let e: u8[] = []; let b: ByteStream = stream.from_bytes(e); let (ob, b2) = b.read_byte(); match (ob) { Some(v) => { return 0; }, None => { return 7; }, } return 0;`, 7},
 	{"read-n", `let b: ByteStream = stream.from_bytes([10 as u8, 20 as u8, 30 as u8]); let (out, b2) = b.read_n(2); return out[0] as i32 + out[1] as i32;`, 30},
 	{"read-all-string", `let b: ByteStream = stream.from_bytes([104 as u8, 105 as u8]); let (s, b2) = b.read_all_string(); match (s) { Ok(text) => { return text.len(); }, Err(_) => { return 1; }, }`, 2},
-	{"read-line", `let b: ByteStream = stream.from_bytes([97 as u8, 98 as u8, 10 as u8, 99 as u8, 100 as u8]); let (line, b2) = b.read_line(); match (line) { Some(l) => { return l.len(); }, None => { return 0; }, } return 0;`, 2},
-	{"read-line-crlf", `let b: ByteStream = stream.from_bytes([120 as u8, 13 as u8, 10 as u8]); let (line, b2) = b.read_line(); match (line) { Some(l) => { return l.len(); }, None => { return 0; }, } return 0;`, 1},
+	{"read-line", `let b: ByteStream = stream.from_bytes([97 as u8, 98 as u8, 10 as u8, 99 as u8, 100 as u8]); let (line, b2) = b.read_line(); match (line) { Ok(Some(l)) => { return l.len(); }, Ok(None()) => { return 0; }, Err(_) => { return 0 - 1; }, } return 0;`, 2},
+	{"read-line-crlf", `let b: ByteStream = stream.from_bytes([120 as u8, 13 as u8, 10 as u8]); let (line, b2) = b.read_line(); match (line) { Ok(Some(l)) => { return l.len(); }, Ok(None()) => { return 0; }, Err(_) => { return 0 - 1; }, } return 0;`, 1},
 }
 
 func streamIRSrc(mainBody string) string {
