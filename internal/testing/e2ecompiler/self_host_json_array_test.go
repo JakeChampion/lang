@@ -5,7 +5,7 @@ import "testing"
 const jsonArrayPrelude = `trait Json { function to_json(self: Self): string; }
 impl Json for i32 { function to_json(self: Self): string { return self.to_string(); } }
 impl Json for string { function to_json(self: Self): string { return "\"" + self + "\""; } }
-pub function (xs: T[]) to_json[T: Json](): string {
+pub function (xs: (T: Json)[]) to_json(): string {
     let out: string = "[";
     let i: i32 = 0;
     while (i < xs.len()) { if (i > 0) { out = out + ","; } out = out + xs[i].to_json(); i = i + 1; }

@@ -1006,6 +1006,7 @@ rc_corpus_with_struct_elem_functional_update_loop    0
 rc_corpus_with_struct_string_elem_functional_update_loop 0
 read_all_stdin_chunks                                0
 read_line                                            0
+receiver_writes_its_bounds                           0
 recursive_tree                                       0
 regex_basic                                          0
 regex_captures                                       0
