@@ -106,11 +106,10 @@ export const problemCountMatchesItems = always(() => {
 // post-boot state would fire on the initial HTML and report false
 // violations.
 //
-// Since #4590 the boot runs in its own script, decoupled from the
-// esm.sh CodeMirror import: "ready" means the RUNTIME is up, NOT that
-// CodeMirror (and thus the editor + its button wiring) has loaded. So a
-// booted page can legitimately have no editor when the CDN is
-// unreachable — the properties below key off `editorMounted` for the
+// The boot runs in its own script, decoupled from the CodeMirror
+// import: "ready" means the RUNTIME is up, NOT that CodeMirror (and
+// thus the editor + its button wiring) has loaded. So a booted page
+// can have no editor yet — the properties below key off `editorMounted` for the
 // editor-dependent guarantees rather than off the boot sentinel alone.
 function notBooted(): boolean {
   return statusText.current.startsWith("loading");
