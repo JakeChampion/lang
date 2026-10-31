@@ -2284,8 +2284,11 @@ function call_runtime_intrinsic(name: string, args: Value[]): Value {
   if (util.has_str(["__task_cur", "__task_leave", "__task_cancelled"], name)) {
     return v_int(0);
   }
-  if (util.has_str(["__task_park", "__task_timeout"], name)) {
+  if (util.has_str(["__task_park", "__task_park_until", "__task_timeout"], name)) {
     return v_int(0 - 1);
+  }
+  if (name == "__task_until") {
+    return v_int64(0 - 1 as i64);
   }
   if (name == "__task_new") {
     return v_int(1);
