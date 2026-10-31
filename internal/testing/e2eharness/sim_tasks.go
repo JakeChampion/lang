@@ -15,8 +15,8 @@ const UP: string = "93.184.216.34";
 function fetch_via(plat: platform.Platform, path: string, log: Cell[string]): string {
     match (plat.http(fetch.get("http://up.test" + path))) {
         Ok(resp) => {
-            log.set(log.get() + path + " " + resp.body_string() + " at " + plat.now().unix_millis().to_string() + "\n");
-            return resp.body_string();
+            log.set(log.get() + path + " " + resp.body_text_lossy() + " at " + plat.now().unix_millis().to_string() + "\n");
+            return resp.body_text_lossy();
         },
         Err(e) => {
             log.set(log.get() + path + " " + e.message() + " at " + plat.now().unix_millis().to_string() + "\n");
@@ -28,7 +28,7 @@ function fetch_via(plat: platform.Platform, path: string, log: Cell[string]): st
 
 function body_via(plat: platform.Platform, path: string): string {
     match (plat.http(fetch.get("http://up.test" + path))) {
-        Ok(resp) => { return resp.body_string(); },
+        Ok(resp) => { return resp.body_text_lossy(); },
         Err(e) => { return e.message(); }
     }
     return "";
@@ -80,7 +80,7 @@ function main(): i32 {
         .route(UP, 80, "/b", [sim_fetch.reply(200, "beta").after(time.duration_millis(10))])
         .route(UP, 80, "/c", [sim_fetch.reply(200, "gamma").after(time.duration_millis(50))]);
     let hp: sim_platform.SimPlatform = sim_platform.new(h, hn);
-    let handled: (() => string)[] = [() => fan_out(http.request("GET", "/"), hp).body_string()];
+    let handled: (() => string)[] = [() => fan_out(http.request("GET", "/"), hp).body_text_lossy()];
     for st in sim.run_tasks(h, handled, [None]) {
         match (st) {
             Done(v) => { print("handler " + v); },

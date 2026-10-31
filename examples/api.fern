@@ -13,7 +13,7 @@ function user[P: platform.Platform](req: HttpRequest, params: router.Params, pla
   use logged <- accesslog.logged(req, plat);
   let id: string = params.param("id")?;
   let resp: HttpResponse = plat.http(fetch.get("http://directory.internal/users/" + id))?;
-  return Ok(http.json_status(resp.status, resp.body_string()));
+  return Ok(http.json_status(resp.status, resp.body_text_lossy()));
 }
 
 function main(): i32 {

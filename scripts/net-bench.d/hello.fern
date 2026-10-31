@@ -38,7 +38,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
   if (req.body_len() == 0) {
     return http.ok("hello");
   }
-  match (req.body_string()) {
+  match (req.body_text()) {
     Ok(text) => {
       return http.ok("len=" + text.len().to_string() + " " + text);
     },

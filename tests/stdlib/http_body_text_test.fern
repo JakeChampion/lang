@@ -1,0 +1,97 @@
+import "std/test";
+import "std/http";
+import "std/stream";
+
+// Each body accessor has one UTF-8 rule: body_text refuses bytes that are
+// not UTF-8, body_text_lossy puts U+FFFD in their place, and body_bytes
+// gives the bytes. The rule is the same on a request and a response.
+
+function bad_utf8(): u8[] {
+  return [104 as u8, 105 as u8, 255 as u8];
+}
+
+function failed(why: StreamFault): BodySource {
+  let fault: Cell[Option[StreamFault]] = cell_new(Some(why));
+  return BodySource {
+    next: (): Option[u8[]] => None,
+    fault: fault,
+    send: (bytes: u8[]): i32 => 0 - 95,
+  };
+}
+
+function test_request_body_text_reads_utf8(): test.TestOutcome {
+  return test.assert_is_some_eq_string(http.request("POST", "/").with_text("héllo").body_text().ok(), "héllo");
+}
+
+function test_request_body_text_refuses_bad_utf8(): test.TestOutcome {
+  match (http.request("POST", "/").with_bytes(bad_utf8()).body_text()) {
+    Ok(text) => {
+      return test.fail("read " + text);
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), "body is not valid UTF-8");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_request_body_text_lossy_replaces_bad_utf8(): test.TestOutcome {
+  return test.assert_eq(http.request("POST", "/").with_bytes(bad_utf8()).body_text_lossy(), "hi�");
+}
+
+function test_response_body_text_reads_utf8(): test.TestOutcome {
+  return test.assert_is_some_eq_string(http.ok("héllo").body_text().ok(), "héllo");
+}
+
+function test_response_body_text_refuses_bad_utf8(): test.TestOutcome {
+  match (http.bytes(200, bad_utf8()).body_text()) {
+    Ok(text) => {
+      return test.fail("read " + text);
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), "body is not valid UTF-8");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_response_body_text_reports_a_stream_fault(): test.TestOutcome {
+  let resp: HttpResponse = HttpResponse { ...http.ok(""), body: BodyStream(stream.from_source(failed(StreamTooLarge))) };
+  match (resp.body_text()) {
+    Ok(text) => {
+      return test.fail("read " + text);
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), "the body is past the limit");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_response_body_text_lossy_replaces_bad_utf8(): test.TestOutcome {
+  return test.assert_eq(http.bytes(200, bad_utf8()).body_text_lossy(), "hi�");
+}
+
+function test_with_bytes_sets_the_length(): test.TestOutcome {
+  let req: HttpRequest = http.request("POST", "/").with_bytes(bad_utf8());
+  return test.assert_eq(req.headers.get("content-length").unwrap_or("-") + " " + req.body_bytes().len().to_string(), "3 3");
+}
+
+function test_with_text_sets_the_length_in_bytes(): test.TestOutcome {
+  let req: HttpRequest = http.request("POST", "/").with_text("é");
+  return test.assert_eq(req.headers.get("content-length").unwrap_or("-"), "2");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("HTTP body text");
+  r = r.it("request body_text reads UTF-8", test_request_body_text_reads_utf8);
+  r = r.it("request body_text refuses bad UTF-8", test_request_body_text_refuses_bad_utf8);
+  r = r.it("request body_text_lossy replaces bad UTF-8", test_request_body_text_lossy_replaces_bad_utf8);
+  r = r.it("response body_text reads UTF-8", test_response_body_text_reads_utf8);
+  r = r.it("response body_text refuses bad UTF-8", test_response_body_text_refuses_bad_utf8);
+  r = r.it("response body_text reports a stream fault", test_response_body_text_reports_a_stream_fault);
+  r = r.it("response body_text_lossy replaces bad UTF-8", test_response_body_text_lossy_replaces_bad_utf8);
+  r = r.it("with_bytes sets Content-Length", test_with_bytes_sets_the_length);
+  r = r.it("with_text sets Content-Length in bytes", test_with_text_sets_the_length_in_bytes);
+  return r.finish();
+}

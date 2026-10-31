@@ -294,7 +294,7 @@ function main(): i32 {
         Ok(req) => {
             if (req.method != "POST") { return 1; }
             if (req.path != "/todos") { return 2; }
-            match (req.body_string()) {
+            match (req.body_text()) {
                 Ok(text) => { if (text != "hello, world!") { return 3; } },
                 Err(e) => { return 4; }
             }

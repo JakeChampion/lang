@@ -68,8 +68,8 @@ function test_routes(): test.TestOutcome {
   let missing: HttpResponse = routes.handle(http.request("GET", "/_src/missing.fern"), platform.host());
   let redirect: HttpResponse = routes.handle(http.request("GET", "/_src"), platform.host());
   return test.assert_true(
-    index.status == 200 && index.body_string().contains("Application source")
-      && file.status == 200 && file.body_string().contains("<span class=\"k\">const</span>")
+    index.status == 200 && index.body_text_lossy().contains("Application source")
+      && file.status == 200 && file.body_text_lossy().contains("<span class=\"k\">const</span>")
       && file.headers.get("Content-Type").unwrap_or("") == "text/html; charset=utf-8"
       && file.headers.get("Cache-Control").unwrap_or("") == "no-cache"
       && missing.status == 404 && redirect.headers.get("Location").unwrap_or("") == "/_src/",
@@ -116,7 +116,7 @@ function test_version_and_cancel(): test.TestOutcome {
   let config: HttpResponse = routes.handle(http.request("GET", "/api/config"), platform.host());
   let old: HttpResponse = routes.handle(http.request("GET", "/tile/42/0/0"), platform.host());
   let wrong: HttpResponse = routes.handle(http.request("GET", "/tile/old-version/42/0/0"), platform.host());
-  if (config.status != 200 || !config.body_string().contains("test-version") || config.headers.get("Cache-Control").unwrap_or("") != "no-store") {
+  if (config.status != 200 || !config.body_text_lossy().contains("test-version") || config.headers.get("Cache-Control").unwrap_or("") != "no-store") {
     return test.fail("renderer configuration is missing or cacheable");
   }
   if (old.headers.get("Location").unwrap_or("") != "/tile/test-version/42/0/0" || old.headers.get("Cache-Control").unwrap_or("") != "no-store" || wrong.status != 404) {

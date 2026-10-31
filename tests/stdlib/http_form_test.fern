@@ -5,7 +5,7 @@ import "std/headers";
 import "std/stream";
 
 function posted(ct: string, body: string): HttpRequest {
-  let r: HttpRequest = http.request("POST", "/login").with_body(body);
+  let r: HttpRequest = http.request("POST", "/login").with_text(body);
   if (ct.len() == 0) {
     return r;
   }
@@ -32,7 +32,7 @@ function outcome(r: Result[form.Form, form.FormError]): string {
     },
     Err(e) => {
       let resp: HttpResponse = e.to_response();
-      return resp.status.to_string() + " " + resp.body_string();
+      return resp.status.to_string() + " " + resp.body_text_lossy();
     }
   }
   return "";

@@ -52,7 +52,7 @@ function shown(r: HttpResponse, names: string[]): string {
   for n in names {
     out = out + " | " + field(r, n);
   }
-  return out + " | " + r.body_string();
+  return out + " | " + r.body_text_lossy();
 }
 
 function test_file_whole(): test.TestOutcome {
@@ -71,11 +71,11 @@ function test_paths_refused(): test.TestOutcome {
     got = got + fetch("GET", p, []).status.to_string() + " ";
   }
   let dotted: static.Dir = static.Dir { ...static.dir("www"), options: static.Options { ...static.options(), dotfiles: true } };
-  return test.assert_eq(got + fetch_with(dotted, "GET", "/.env", []).body_string(), "404 404 404 404 404 404 404 404 SECRET=1");
+  return test.assert_eq(got + fetch_with(dotted, "GET", "/.env", []).body_text_lossy(), "404 404 404 404 404 404 404 404 SECRET=1");
 }
 
 function test_paths_cleaned(): test.TestOutcome {
-  return test.assert_eq(fetch("GET", "//./a.txt?x=1", []).body_string() + " " + fetch("GET", "/100%.txt", []).body_string(), "hello world percent");
+  return test.assert_eq(fetch("GET", "//./a.txt?x=1", []).body_text_lossy() + " " + fetch("GET", "/100%.txt", []).body_text_lossy(), "hello world percent");
 }
 
 function test_directories(): test.TestOutcome {
@@ -125,7 +125,7 @@ function test_max_ranges(): test.TestOutcome {
   let two: static.Dir = static.Dir { ...static.dir("www"), options: static.Options { ...static.options(), max_ranges: 2 } };
   let a: HttpResponse = fetch_with(two, "GET", "/a.txt", ["Range", "bytes=0-0, 2-2"]);
   let b: HttpResponse = fetch_with(two, "GET", "/a.txt", ["Range", "bytes=0-0, 2-2, 4-4"]);
-  return test.assert_eq(a.status.to_string() + " " + b.status.to_string() + " " + b.body_string(), "206 200 hello world");
+  return test.assert_eq(a.status.to_string() + " " + b.status.to_string() + " " + b.body_text_lossy(), "206 200 hello world");
 }
 
 function test_if_range(): test.TestOutcome {
@@ -140,8 +140,8 @@ function test_precompressed(): test.TestOutcome {
   let names: string[] = ["Content-Encoding", "Content-Type", "ETag"];
   let got: string = shown(fetch("GET", "/a.txt", ["Accept-Encoding", "gzip"]), names);
   got = got + " / " + shown(fetch("GET", "/a.txt", ["Accept-Encoding", "gzip, br"]), names);
-  got = got + " / " + fetch("GET", "/a.txt", ["Accept-Encoding", "zstd"]).body_string();
-  got = got + " / " + fetch("GET", "/a.txt", ["Accept-Encoding", "br;q=0, gzip;q=0"]).body_string();
+  got = got + " / " + fetch("GET", "/a.txt", ["Accept-Encoding", "zstd"]).body_text_lossy();
+  got = got + " / " + fetch("GET", "/a.txt", ["Accept-Encoding", "br;q=0, gzip;q=0"]).body_text_lossy();
   return test.assert_eq(got, "200 | gzip | text/plain; charset=utf-8 | \"784111777.0-8-gzip\" | GZ-BYTES / 200 | br | text/plain; charset=utf-8 | \"784111777.0-9-br\" | BR-BYTES! / hello world / hello world");
 }
 
@@ -162,9 +162,9 @@ function test_cache_control(): test.TestOutcome {
 function test_serve_path(): test.TestOutcome {
   let m: mock_platform.MockPlatform = site();
   let d: static.Dir = static.dir("www");
-  let got: string = m.materialize(static.serve_path(req("GET", "/assets/docs/index.html", []), d, "docs/index.html", m)).body_string();
+  let got: string = m.materialize(static.serve_path(req("GET", "/assets/docs/index.html", []), d, "docs/index.html", m)).body_text_lossy();
   got = got + " " + static.serve_path(req("GET", "/assets/x", []), d, "../a.txt", m).status.to_string();
-  got = got + " " + m.materialize(static.serve_path(req("GET", "/assets/", []), d, "docs/", m)).body_string();
+  got = got + " " + m.materialize(static.serve_path(req("GET", "/assets/", []), d, "docs/", m)).body_text_lossy();
   return test.assert_eq(got, "<h1>docs</h1> 404 <h1>docs</h1>");
 }
 

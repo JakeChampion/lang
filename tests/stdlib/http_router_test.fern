@@ -43,7 +43,7 @@ function fixture(): router.Router[platform.Host] {
 function status_of(r: router.Router[platform.Host], method: string, path: string): string {
   let resp: HttpResponse = r.handle(http.request(method, path), platform.host());
   if (resp.status == 200) {
-    return resp.body_string();
+    return resp.body_text_lossy();
   }
   match (resp.headers.get("allow")) {
     Some(allow) => {
@@ -93,7 +93,7 @@ function test_conflicts(): test.TestOutcome {
 function test_a_refusal_is_kept(): test.TestOutcome {
   let r: router.Router[platform.Host] = router.new[platform.Host]().get("/ok", answer("ok")).route("/a//b", answer("x")).route("/a//b", answer("y")).get("/ok", answer("again"));
   let resp: HttpResponse = r.handle(http.request("GET", "/ok"), platform.host());
-  let got: string = checked(r) + "|" + resp.status.to_string() + " " + resp.body_string() + "|" + checked(fixture());
+  let got: string = checked(r) + "|" + resp.status.to_string() + " " + resp.body_text_lossy() + "|" + checked(fixture());
   return test.assert_eq(got, "http router: pattern /a//b: empty segment|500 {\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500,\"detail\":\"http router: pattern /a//b: empty segment\"}|accepted");
 }
 
@@ -121,13 +121,13 @@ function test_typed_params(): test.TestOutcome {
   let bad: HttpResponse = r.handle(http.request("GET", "/users/x1"), platform.host());
   let wide: HttpResponse = r.handle(http.request("GET", "/users/99999999999999999999"), platform.host());
   let unbound: HttpResponse = r.handle(http.request("GET", "/users/7"), platform.host());
-  let got: string = bad.status.to_string() + " " + bad.body_string() + "|" + wide.status.to_string() + "|" + unbound.status.to_string() + " " + unbound.body_string();
+  let got: string = bad.status.to_string() + " " + bad.body_text_lossy() + "|" + wide.status.to_string() + "|" + unbound.status.to_string() + " " + unbound.body_text_lossy();
   return test.assert_eq(got, "400 {\"type\":\"about:blank\",\"title\":\"Bad Request\",\"status\":400,\"detail\":\"path parameter id is not an integer: x1\"}|400|500 {\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500,\"detail\":\"the route binds no path parameter nope\"}");
 }
 
 function test_errors_of_two_types(): test.TestOutcome {
   let r: router.Router[platform.Host] = router.new[platform.Host]().post("/notes", note_create);
-  let untyped: HttpResponse = r.handle(http.request("POST", "/notes").with_body("{}"), platform.host());
+  let untyped: HttpResponse = r.handle(http.request("POST", "/notes").with_text("{}"), platform.host());
   let negative: HttpResponse = r.handle(http.request("POST", "/notes").with_json("{\"id\":-1,\"text\":\"x\"}"), platform.host());
   let made: HttpResponse = r.handle(http.request("POST", "/notes").with_json("{\"id\":7,\"text\":\"hi\"}"), platform.host());
   let ct: string = "";
@@ -137,7 +137,7 @@ function test_errors_of_two_types(): test.TestOutcome {
     },
     None => {}
   }
-  let got: string = untyped.status.to_string() + "|" + negative.status.to_string() + " " + negative.body_string() + "|" + made.status.to_string() + " " + ct + " " + made.body_string();
+  let got: string = untyped.status.to_string() + "|" + negative.status.to_string() + " " + negative.body_text_lossy() + "|" + made.status.to_string() + " " + ct + " " + made.body_text_lossy();
   return test.assert_eq(got, "415|422 {\"type\":\"about:blank\",\"title\":\"Unprocessable Entity\",\"status\":422,\"detail\":\"a note's id is not negative\"}|201 application/json {\"id\":7,\"text\":\"hi\"}");
 }
 
@@ -183,7 +183,7 @@ function test_middleware_chain(): test.TestOutcome {
     },
     None => {}
   }
-  let got: string = denied.status.to_string() + " " + denied.body_string() + " " + denied_stamp + "|" + allowed.status.to_string() + " " + allowed.body_string() + " " + stamp;
+  let got: string = denied.status.to_string() + " " + denied.body_text_lossy() + " " + denied_stamp + "|" + allowed.status.to_string() + " " + allowed.body_text_lossy() + " " + stamp;
   return test.assert_eq(got, "401 {\"type\":\"about:blank\",\"title\":\"Unauthorized\",\"status\":401,\"detail\":\"no token\"} r-1|200 request r-1 r-1");
 }
 
@@ -214,13 +214,13 @@ function test_wrapped(): test.TestOutcome {
   let missed: HttpResponse = r.handle(http.request("GET", "/nope"), platform.host());
   let wrong: HttpResponse = r.handle(http.request("POST", "/seen"), platform.host());
   let pre: HttpResponse = r.handle(http.request("OPTIONS", "/seen"), platform.host());
-  let got: string = hit.status.to_string() + " " + hit.body_string() + " " + hit.headers.get("x-order").unwrap_or("-") + "|" + missed.status.to_string() + " " + missed.headers.get("x-order").unwrap_or("-") + "|" + wrong.status.to_string() + " " + wrong.headers.get("allow").unwrap_or("-") + " " + wrong.headers.get("x-order").unwrap_or("-") + "|" + pre.status.to_string() + " " + pre.headers.get("x-preflight").unwrap_or("-") + " " + pre.headers.get("x-order").unwrap_or("-");
+  let got: string = hit.status.to_string() + " " + hit.body_text_lossy() + " " + hit.headers.get("x-order").unwrap_or("-") + "|" + missed.status.to_string() + " " + missed.headers.get("x-order").unwrap_or("-") + "|" + wrong.status.to_string() + " " + wrong.headers.get("allow").unwrap_or("-") + " " + wrong.headers.get("x-order").unwrap_or("-") + "|" + pre.status.to_string() + " " + pre.headers.get("x-preflight").unwrap_or("-") + " " + pre.headers.get("x-order").unwrap_or("-");
   return test.assert_eq(got, "200 tc ct|404 ct|405 GET, HEAD ct|204 /seen ct");
 }
 
 function test_handler_closure(): test.TestOutcome {
   let h: (HttpRequest, platform.Host) => HttpResponse = fixture().handler();
-  return test.assert_eq(h(http.request("GET", "/users/me"), platform.host()).body_string(), "me");
+  return test.assert_eq(h(http.request("GET", "/users/me"), platform.host()).body_text_lossy(), "me");
 }
 
 function main(): i32 {
