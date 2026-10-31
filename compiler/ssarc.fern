@@ -1867,17 +1867,13 @@ function key_closure(k: typeinfo.Type, which: string, nparams: i32, contracts: s
     n_params: nparams, n_locals: nparams, name: key_closure_name(k, which),
   };
   let at: i32 = ssasem.find_contract(contracts, callee);
-  let p: i32 = 1;
-  while (p < nparams) {
+  for p in 1..nparams {
     if (at >= 0 && p - 1 < contracts.list[at].modes.len() && contracts.list[at].modes[p - 1] == ssasem.counted_mode()) {
       r = helper(r, p, "__fern_rc_inc");
     }
-    p = p + 1;
   }
-  p = 1;
-  while (p < nparams) {
+  for p in 1..nparams {
     r = emit(r, ir.op_load_local(p));
-    p = p + 1;
   }
   r = emit(r, ir.op_call_direct(callee, nparams - 1));
   return emit(r, ir.op_return());
