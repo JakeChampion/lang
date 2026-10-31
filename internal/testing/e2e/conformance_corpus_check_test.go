@@ -110,7 +110,7 @@ func TestCheckCaseFormatRejections(t *testing.T) {
 		},
 		{
 			name:  "backends file selecting everything",
-			files: map[string]string{"main.fern": "", "backends": "interp x86_64 arm64 wasm\n"},
+			files: map[string]string{"main.fern": "", "backends": strings.Join(allBackends, " ") + "\n"},
 			want:  "which is what omitting it means — delete it",
 		},
 
@@ -137,7 +137,7 @@ func TestCheckCaseFormatRejections(t *testing.T) {
 		{
 			name:  "waiver on a case that does not weaken",
 			files: map[string]string{"main.fern": "", "meta": waiverOK},
-			want:  "already asserts byte-exact output on all four backends — delete the meta file",
+			want:  "already asserts byte-exact output on every backend — delete the meta file",
 		},
 		{
 			name:  "waiver with no reason",
