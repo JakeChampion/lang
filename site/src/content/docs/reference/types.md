@@ -327,7 +327,7 @@ function id[T](x: T): T {
 struct Pair[A, B] { first: A, second: B }
 enum Tree[T] { Leaf(T), Node(Tree[T], Tree[T]) }
 
-function (p: Pair[A, B]) swap[A, B](): Pair[B, A] {
+function (p: Pair[A, B]) swap(): Pair[B, A] {
     return Pair { first: p.second, second: p.first };
 }
 ```
@@ -341,6 +341,13 @@ A function's type parameter can carry a **trait bound** (`[T: Display]`)
 to constrain it to types implementing a trait — see [Traits](../traits/).
 A struct, enum or union declaration cannot: a bound belongs on the
 `impl[T: Display] … for Pair[T]` that needs it.
+
+A method's receiver introduces the type parameters that its type names,
+as `A` and `B` in `swap` above. A bound on one of them is written in the
+receiver: `function (p: Pair[A: Display, B]) show(): string`. To bound
+the element of an array receiver, write the element as a group:
+`function (xs: (T: Display)[]) join(): string`. The method's own `[...]`
+declares only the type parameters that the receiver does not name.
 
 ## Union types
 

@@ -10,18 +10,18 @@ import "./lib/ld";
 // keeps it, stream_failed reads it, and close_stdout reports it.
 struct Pf { o: io_buffered.BufWriter, status: i32, werr: boolean, posix: boolean, ldbl: ld.Format }
 
-function emit(p: Pf, s: string): Pf {
+function emit(own p: Pf, s: string): Pf {
   p.o.write_string(s);
   return p;
 }
 
-function emit_byte(p: Pf, b: i32): Pf {
+function emit_byte(own p: Pf, b: i32): Pf {
   buf_push_byte(p.o.handle(), b);
   p.o.settle();
   return p;
 }
 
-function emit_range(p: Pf, s: string, lo: i32, hi: i32): Pf {
+function emit_range(own p: Pf, s: string, lo: i32, hi: i32): Pf {
   if (hi <= lo) {
     return p;
   }
@@ -32,13 +32,13 @@ function emit_range(p: Pf, s: string, lo: i32, hi: i32): Pf {
   return p;
 }
 
-function diag(p: Pf, msg: string): Pf {
+function diag(own p: Pf, msg: string): Pf {
   p.o.flush();
   gnu.error(msg);
   return p;
 }
 
-function diag_range(p: Pf, prefix: string, s: string, lo: i32, hi: i32, suffix: string): Pf {
+function diag_range(own p: Pf, prefix: string, s: string, lo: i32, hi: i32, suffix: string): Pf {
   p.o.flush();
   let h: usize = buf_new(prefix.len() + hi - lo + suffix.len());
   buf_push(h, gnu.prog());
@@ -54,12 +54,12 @@ function diag_range(p: Pf, prefix: string, s: string, lo: i32, hi: i32, suffix: 
   return p;
 }
 
-function close_stdout(p: Pf, code: i32): void {
+function close_stdout(own p: Pf, code: i32): void {
   gnu.close_stdout(p.o, p.werr);
   exit(code);
 }
 
-function fatal(p: Pf, msg: string): void {
+function fatal(own p: Pf, msg: string): void {
   close_stdout(diag(p, msg), 1);
 }
 
@@ -269,7 +269,7 @@ function shell_quote(s: string): string {
   return string_from_bytes_unchecked(out);
 }
 
-function print_esc(p: Pf, s: string, i: i32, octal_0: boolean): (Pf, i32, boolean) {
+function print_esc(own p: Pf, s: string, i: i32, octal_0: boolean): (Pf, i32, boolean) {
   let n: i32 = s.len();
   let j: i32 = i + 1;
   if (j >= n) {
@@ -383,7 +383,7 @@ function hex_padded(v: i64, width: i32, upper: boolean): string {
   return string_from_bytes_unchecked(out);
 }
 
-function print_b(p: Pf, s: string): (Pf, boolean) {
+function print_b(own p: Pf, s: string): (Pf, boolean) {
   let q: Pf = p;
   let n: i32 = s.len();
   let i: i32 = 0;
@@ -485,14 +485,14 @@ function char_constant(s: string): i32 {
   return 0 - 1;
 }
 
-function warn_char_rest(p: Pf, s: string): Pf {
+function warn_char_rest(own p: Pf, s: string): Pf {
   if (s.len() > 2 && !p.posix) {
     return diag_range(p, "warning: ", s, 2, s.len(), ": character(s) following character constant have been ignored");
   }
   return p;
 }
 
-function verify_numeric(p: Pf, s: string, erange: boolean, end: i32): Pf {
+function verify_numeric(own p: Pf, s: string, erange: boolean, end: i32): Pf {
   if (end == 0) {
     return Pf { ...diag(p, gnu.quote(s) + ": expected a numeric value"), status: 1 };
   }
@@ -505,7 +505,7 @@ function verify_numeric(p: Pf, s: string, erange: boolean, end: i32): Pf {
   return p;
 }
 
-function arg_int(p: Pf, s: string, unsigned: boolean): (Pf, u64) {
+function arg_int(own p: Pf, s: string, unsigned: boolean): (Pf, u64) {
   let cc: i32 = char_constant(s);
   if (cc >= 0) {
     return (warn_char_rest(p, s), cc as u64);
@@ -514,10 +514,11 @@ function arg_int(p: Pf, s: string, unsigned: boolean): (Pf, u64) {
   return (verify_numeric(p, s, r.erange, r.end), r.bits);
 }
 
-function arg_float(p: Pf, s: string): (Pf, ld.LD) {
+function arg_float(own p: Pf, s: string): (Pf, ld.LD) {
   let cc: i32 = char_constant(s);
   if (cc >= 0) {
-    return (warn_char_rest(p, s), p.ldbl.from_i64(cc as i64));
+    let v: ld.LD = p.ldbl.from_i64(cc as i64);
+    return (warn_char_rest(p, s), v);
   }
   let r: ld.Parse = p.ldbl.strtold(s);
   return (verify_numeric(p, s, r.erange, r.end), r.v);
@@ -550,7 +551,7 @@ function stream_failed(p: Pf): boolean {
   }
 }
 
-function put_part(p: Pf, was: boolean, s: string): Pf {
+function put_part(own p: Pf, was: boolean, s: string): Pf {
   if (s.len() == 0) {
     return p;
   }
@@ -560,7 +561,7 @@ function put_part(p: Pf, was: boolean, s: string): Pf {
   return emit(p, s);
 }
 
-function fill_part(p: Pf, was: boolean, ch: string, n: i64): Pf {
+function fill_part(own p: Pf, was: boolean, ch: string, n: i64): Pf {
   let q: Pf = p;
   let left: i64 = n;
   if (left >= fill_block() as i64) {
@@ -579,7 +580,7 @@ function fill_part(p: Pf, was: boolean, ch: string, n: i64): Pf {
   return q;
 }
 
-function pad(p: Pf, spec: Spec, f: Field, zero_ok: boolean): Pf {
+function pad(own p: Pf, spec: Spec, f: Field, zero_ok: boolean): Pf {
   let len: i64 = f.prefix.len() as i64 + f.head.len() as i64 + f.zeros + f.tail.len() as i64;
   let total: i64 = len;
   if (spec.width > total) {
@@ -610,7 +611,7 @@ function pad(p: Pf, spec: Spec, f: Field, zero_ok: boolean): Pf {
   return put_part(q, was, f.tail);
 }
 
-function pad_range(p: Pf, spec: Spec, s: string, lo: i32, hi: i32): Pf {
+function pad_range(own p: Pf, spec: Spec, s: string, lo: i32, hi: i32): Pf {
   let len: i64 = (hi - lo) as i64;
   let total: i64 = len;
   if (spec.width > total) {
@@ -670,7 +671,7 @@ function top_bit(): u64 {
   return 9223372036854775808 as u64;
 }
 
-function fmt_int(p: Pf, spec: Spec, bits: u64): Pf {
+function fmt_int(own p: Pf, spec: Spec, bits: u64): Pf {
   let conv: i32 = spec.conv;
   let neg: boolean = false;
   let mag: u64 = bits;
@@ -713,7 +714,7 @@ function fmt_int(p: Pf, spec: Spec, bits: u64): Pf {
   return pad(p, spec, Field { prefix: prefix, head: "", zeros: zeros, tail: digits }, spec.prec < 0 as i64);
 }
 
-function fmt_float(p: Pf, spec: Spec, v: ld.LD): Pf {
+function fmt_float(own p: Pf, spec: Spec, v: ld.LD): Pf {
   let conv: i32 = spec.conv;
   let upper: boolean = conv == 70 || conv == 69 || conv == 71 || conv == 65;
   let prefix: string = sign_prefix(spec, v.neg);
@@ -746,14 +747,14 @@ function fmt_float(p: Pf, spec: Spec, v: ld.LD): Pf {
   return emit_body(p, spec, prefix, ld.general(d, prec, spec.hash, upper, extra));
 }
 
-function emit_body(p: Pf, spec: Spec, prefix: string, b: ld.Body): Pf {
+function emit_body(own p: Pf, spec: Spec, prefix: string, b: ld.Body): Pf {
   if (b.refused) {
     return Pf { ...p, werr: true };
   }
   return pad(p, spec, Field { prefix: prefix, head: b.head, zeros: b.zeros, tail: b.tail }, true);
 }
 
-function fmt_hex_float(p: Pf, spec: Spec, v: ld.LD, prefix: string, upper: boolean): Pf {
+function fmt_hex_float(own p: Pf, spec: Spec, v: ld.LD, prefix: string, upper: boolean): Pf {
   let radix: string = "0x";
   let b: ld.Body = p.ldbl.hex_parts(v, spec.prec, spec.hash);
   if (upper) {
@@ -873,7 +874,7 @@ function read_number(s: string, i: i32): (i64, i32) {
   return (v, j);
 }
 
-function bad_spec(p: Pf, s: string, from: i32, to: i32): void {
+function bad_spec(own p: Pf, s: string, from: i32, to: i32): void {
   let stop: i32 = to + 1;
   if (stop > s.len()) {
     stop = s.len();
@@ -881,36 +882,36 @@ function bad_spec(p: Pf, s: string, from: i32, to: i32): void {
   close_stdout(diag_range(p, "", s, from, stop, ": invalid conversion specification"), 1);
 }
 
-function star_width(p: Pf, a: Args): (Pf, i64) {
+function star_width(own p: Pf, a: Args): (Pf, i64) {
   if (!arg_present(a)) {
     return (p, 0 as i64);
   }
   let text: string = arg_text(a);
-  let r: (Pf, u64) = arg_int(p, text, false);
-  let v: i64 = r.1 as i64;
+  let (q, n) = arg_int(p, text, false);
+  let v: i64 = n as i64;
   if (v > 2147483647 as i64 || v < 0 as i64 - 2147483648 as i64) {
-    fatal(r.0, "invalid field width: " + gnu.quote(text));
+    fatal(q, "invalid field width: " + gnu.quote(text));
   }
-  return (r.0, v);
+  return (q, v);
 }
 
-function star_precision(p: Pf, a: Args): (Pf, i64) {
+function star_precision(own p: Pf, a: Args): (Pf, i64) {
   if (!arg_present(a)) {
     return (p, 0 as i64);
   }
   let text: string = arg_text(a);
-  let r: (Pf, u64) = arg_int(p, text, false);
-  let v: i64 = r.1 as i64;
+  let (q, n) = arg_int(p, text, false);
+  let v: i64 = n as i64;
   if (v < 0 as i64) {
-    return (r.0, none());
+    return (q, none());
   }
   if (v > 2147483647 as i64) {
-    fatal(r.0, "invalid precision: " + gnu.quote(text));
+    fatal(q, "invalid precision: " + gnu.quote(text));
   }
-  return (r.0, v);
+  return (q, v);
 }
 
-function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) {
+function directive(own p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) {
   let n: i32 = s.len();
   let j: i32 = i + 1;
   let q: Pf = p;
@@ -1021,7 +1022,8 @@ function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) 
   let lc: i32 = lower(conv);
   if (lc == 102 || lc == 101 || lc == 103 || lc == 97) {
     if (!given) {
-      return (fmt_float(q, spec, q.ldbl.from_i64(0 as i64)), j + 1, args, false);
+      let zero: ld.LD = q.ldbl.from_i64(0 as i64);
+      return (fmt_float(q, spec, zero), j + 1, args, false);
     }
     let fr: (Pf, ld.LD) = arg_float(q, arg);
     return (fmt_float(fr.0, spec, fr.1), j + 1, args, false);
@@ -1034,7 +1036,7 @@ function directive(p: Pf, s: string, i: i32, a: Args): (Pf, i32, Args, boolean) 
   return (fmt_int(ir.0, spec, ir.1), j + 1, args, false);
 }
 
-function print_formatted(p: Pf, s: string, a: Args): (Pf, Args, boolean) {
+function print_formatted(own p: Pf, s: string, a: Args): (Pf, Args, boolean) {
   let q: Pf = p;
   let args: Args = a;
   let n: i32 = s.len();
@@ -1090,13 +1092,14 @@ pub function main(): i32 {
   }
   let p: Pf = Pf { o: gnu.out_new(), status: 0, werr: false, posix: posix, ldbl: ld.format() };
   let base: i32 = first + 1;
+  let stopped: boolean = false;
   while (true) {
     let a: Args = args_new(argv, base);
     let r: (Pf, Args, boolean) = print_formatted(p, format, a);
     p = r.0;
     if (r.2) {
-      gnu.close_stdout(p.o, p.werr);
-      return 0;
+      stopped = true;
+      break;
     }
     let used: i32 = args_consumed(r.1);
     base = base + used;
@@ -1104,9 +1107,13 @@ pub function main(): i32 {
       break;
     }
   }
-  if (base < argv.len()) {
+  if (!stopped && base < argv.len()) {
     p = diag(p, "warning: ignoring excess arguments, starting with " + gnu.quote(argv[base]));
   }
+  let status: i32 = p.status;
+  if (stopped) {
+    status = 0;
+  }
   gnu.close_stdout(p.o, p.werr);
-  return p.status;
+  return status;
 }

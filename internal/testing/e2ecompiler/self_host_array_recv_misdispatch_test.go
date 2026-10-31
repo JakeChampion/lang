@@ -11,7 +11,7 @@ import (
 const arrayRecvMisdispatchSrc = `import "std/i32";
 import "core/cmp";
 
-function (xs: T[]) pow[T: cmp.Ord, U: cmp.Ord](u: U): i32 {
+function (xs: (T: cmp.Ord)[]) pow[U: cmp.Ord](u: U): i32 {
     return xs.len() + 100;
 }
 

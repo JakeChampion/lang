@@ -638,14 +638,28 @@ func TestFormatGenericFreeFunctionRoundTrip(t *testing.T) {
 }
 
 func TestFormatGenericMethodRoundTrip(t *testing.T) {
-	src := `struct Box[T] { xs: T[] }
-pub function [T: Eq] (b: Box[T]) has(x: T): boolean { return false; }`
-	got := formatSrc(t, src)
-	if !strings.Contains(got, "function (b: Box[T]) has[T: Eq](x: T): boolean") {
-		t.Errorf("expected the method's type params after its name; got:\n%s", got)
+	cases := []struct{ src, want string }{
+		{"struct Box[T] { xs: T[] }\npub function (b: Box[T: Eq]) has(x: T): boolean { return false; }",
+			"function (b: Box[T: Eq]) has(x: T): boolean"},
+		{"struct Box[T] { xs: T[] }\nfunction (b: Box[T: Eq + Show]) pick[U: Show](u: U): U { return u; }",
+			"function (b: Box[T: Eq + Show]) pick[U: Show](u: U): U"},
+		{"struct M[K, V] { k: K, v: V }\nfunction (m: M[K, V: Into[string]]) fold[A](a: A): A { return a; }",
+			"function (m: M[K, V: Into[string]]) fold[A](a: A): A"},
+		{"function (xs: (T: Eq)[]) first(): T { return xs[0]; }",
+			"function (xs: (T: Eq)[]) first(): T"},
+		{"function (xs: [T: Eq]) first(): T { return xs[0]; }",
+			"function (xs: [T: Eq]) first(): T"},
+		{"struct Box[T] { xs: T[] }\nfunction (b: Box[T]) tag[U](u: U): U { return u; }",
+			"function (b: Box[T]) tag[U](u: U): U"},
 	}
-	if again := formatSrc(t, got); got != again {
-		t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+	for _, c := range cases {
+		got := formatSrc(t, c.src)
+		if !strings.Contains(got, c.want) {
+			t.Errorf("want %q; got:\n%s", c.want, got)
+		}
+		if again := formatSrc(t, got); got != again {
+			t.Errorf("format not idempotent:\nfirst:\n%s\nsecond:\n%s", got, again)
+		}
 	}
 }
 

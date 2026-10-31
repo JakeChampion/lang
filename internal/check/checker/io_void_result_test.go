@@ -6,7 +6,7 @@ import (
 )
 
 func TestHandleVoidOperationsComposeWithQuestionMark(t *testing.T) {
-	src := `function f(r: Reader, d: Dir): Result[i32, IoError] {
+	src := `function f(own r: Reader, own d: Dir): Result[i32, IoError] {
 		let w: Writer = stdout();
 		w.write("hi\n")?;
 		w.write_bytes([104 as u8])?;

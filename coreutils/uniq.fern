@@ -307,7 +307,7 @@ function write_block(): i32 {
   return 65536;
 }
 
-function run(r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
+function run(own r: Reader, cfg: Cfg, w: Writer, name: string): i32 {
   let out: io_buffered.BufWriter = io_buffered.buf_writer_new(w, write_block());
   let h: usize = out.handle();
   let block: i32 = write_block();

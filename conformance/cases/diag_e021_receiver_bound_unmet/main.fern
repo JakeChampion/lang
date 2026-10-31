@@ -1,0 +1,16 @@
+import "core/cmp";
+
+// A bound written in the receiver is checked at each call.
+
+struct Box[T] { v: T }
+
+struct Plain { n: i32 }
+
+function (b: Box[T: cmp.Ord]) get(): T {
+    return b.v;
+}
+
+function main(): i32 {
+    let b: Box[Plain] = Box { v: Plain { n: 1 } };
+    return b.get().n;
+}

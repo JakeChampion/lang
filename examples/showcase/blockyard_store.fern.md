@@ -93,7 +93,7 @@ function text(path: string): Result[Option[string], string] {
   return Err("Cannot inspect world file.");
 }
 
-function sync_close(writer: Writer, result: Result[void, IoError]): Result[void, string] {
+function sync_close(own writer: Writer, result: Result[void, IoError]): Result[void, string] {
   if let Err(error) = result {
     let closed = writer.close();
     return Err(error.message());
@@ -114,14 +114,16 @@ function sync_directory(directory: string): Result[void, string] {
 
 function atomic(path: string, directory: string, value: string): Result[void, string] {
   let writer = open_writer(path + ".tmp").map_err((e: IoError): string => e.message())?;
-  sync_close(writer, writer.write(value))?;
+  let written = writer.write(value);
+  sync_close(writer, written)?;
   rename(path + ".tmp", path).map_err((e: IoError): string => e.message())?;
   return sync_directory(directory);
 }
 
 function trim_journal(path: string, length: i64): Result[void, string] {
   let writer = open_appender(path).map_err((e: IoError): string => e.message())?;
-  return sync_close(writer, writer.truncate(length));
+  let truncated = writer.truncate(length);
+  return sync_close(writer, truncated);
 }
 ```
 
@@ -219,7 +221,8 @@ pub function commit(store: Store, blocks: Map[i32, i32], changes: model.Change[]
   let base = store.directory + "/" + store.name;
   let record = envelope(Batch { version: 1, revision: revision, changes: changes }.to_json());
   let writer = open_appender(base + ".journal").map_err((e: IoError): string => e.message())?;
-  sync_close(writer, writer.write(record))?;
+  let written = writer.write(record);
+  sync_close(writer, written)?;
   if (store.bytes.get() == 0) {
     sync_directory(store.directory)?;
   }
