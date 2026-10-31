@@ -3046,7 +3046,7 @@ function map_shape_msgs(s: Scope, mt: typeinfo.TypeMap): string[] {
     out = out.append(msg);
   }
   if (is_void(mt.value)) {
-    out = out.append("map value type void is not supported — a set of keys is std/set's `Set`");
+    out = out.append("map value type void is not supported — a set of keys is std/pset's `PSet`");
   }
   return out;
 }

@@ -376,34 +376,23 @@ repetitive `to_lower` allocations.
 
 ### 16. `Set[T]` · small · ☑
 
-**Surface**: `std/set` — a generic, value-semantic
-`Set[T: cmp.Eq]`: `set.new` / `set.of`, `add` / `remove` /
-`contains` / `len` / `is_empty` / `to_array`, and the algebra
-`union` / `intersect` / `difference` / `is_subset` / `equals`
-(order-insensitive).
+**Surface**: two persistent sets. `std/pset` is a hash set over
+`std/pmap` and needs `cmp.Hash + cmp.Eq`. `std/ordset` is an ordered
+set over `std/ordmap` and needs `cmp.Ord`. Both have `new` / `of`,
+`insert` / `remove` / `contains` / `len` / `is_empty` / `to_array`, and
+the algebra `union` / `intersection` / `difference` /
+`symmetric_difference` / `is_subset` / `is_superset` / `is_disjoint`.
 
-**Why**: The most-cited missing container (Roc `Set`); dedup /
-membership / seen-id working sets are constant in CLI tools.
+**Why**: The most-cited missing container (Roc `Set`). CLI tools use
+sets for dedup, membership, and the set of IDs that a loop saw.
 
-**Inspiration**: Roc `Set`, Rust `HashSet` API shape.
+**Inspiration**: Roc `Set`, Rust `HashSet` and `BTreeSet`.
 
-**Status**: shipped in `internal/stdlib/std/set.fern`, backed by
-an insertion-ordered array (membership by `==`). Every mutating
-op returns a NEW set and copies the backing array rather than
-appending onto the receiver's field in place — that in-place
-form passes the interpreter but silently mutates a shared
-receiver once compiled (the copy-on-write aliasing hazard), so
-the copy is load-bearing, not incidental. Covered by
-`tests/stdlib/set_test.fern` (pure-Fern runner, `add is pure`
-being the value-semantics guard) and
-`internal/testing/e2e/set_module_test.go` (differential across interp /
-x86-64 / wasm / arm64). **Complexity**: linear-scan store, so
-`contains` / `add` are O(n) and an n-element build is O(n²) —
-right-sized for CLI-scale sets, a trap past ~10⁴ elements. The
-O(1)-membership hash-backed version awaits a native codegen fix
-for returning a `Map`-wrapping struct from a function (a
-value-semantic `Set` re-wraps its map on every `add`); the
-public API is designed to carry over unchanged.
+**Status**: shipped. Both sets implement `cmp.Eq`, `cmp.Hash` and
+`cmp.Display` when their elements do, so a set can be an element of a
+set or a map key. `OrdSet` also implements `cmp.Ord`. The earlier
+`std/set` was a linear scan over an array. It is deleted, and
+`std/pset` replaces it.
 
 ### 17. `std/unicode` — Unicode case mapping · small · ☑
 

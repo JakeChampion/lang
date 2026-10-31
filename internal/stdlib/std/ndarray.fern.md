@@ -30,6 +30,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<*>>=
 <<module introduction>>
 
+<<dependencies>>
+
 <<2 pub struct NdArray[T]>>
 
 <<3 function shape_error(): void>>
@@ -69,6 +71,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<20 pub function (a: NdArray[T]) reduce_axis[T, A](axis: i32, init: A, f: (A, T)>>
 
 <<21 function copy_flat[T](a: NdArray[T]): T[]>>
+
+<<22 cmp impls>>
 ```
 
 ### `module introduction`
@@ -76,6 +80,13 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<module introduction>>=
 // This module provides multidimensional arrays with flat storage.
+```
+
+### `dependencies`
+
+```fern
+<<dependencies>>=
+import "core/cmp";
 ```
 
 ### `2 pub struct NdArray[T]`
@@ -949,5 +960,59 @@ function bump(own idx: i32[], shape: i32[]): i32[] {
     k = k - 1;
   }
   return idx;
+}
+```
+
+### `22 cmp impls`
+
+Two arrays are equal when they have the same shape and the same elements in row-major order. The strides and the offset of a view do not take part.
+
+```fern
+<<22 cmp impls>>=
+impl[T: cmp.Eq] cmp.Eq for NdArray[T] {
+  function eq(self: NdArray[T], other: NdArray[T]): boolean {
+    return cmp.eq_arrays(self.shape, other.shape) && cmp.eq_arrays(self.to_flat(), other.to_flat());
+  }
+}
+
+impl[T: cmp.Hash] cmp.Hash for NdArray[T] {
+  function hash(self: NdArray[T]): i32 {
+    let h: i32 = 17;
+    let k: i32 = 0;
+    while (k < self.shape.len()) {
+      h = h * 31 + self.shape[k];
+      k = k + 1;
+    }
+    return self.fold_all(h, (acc: i32, x: T) => acc * 31 + x.hash());
+  }
+}
+
+// The text nests one bracket pair for each axis, so a 2 by 2 array gives [[1, 2], [3, 4]].
+impl[T: cmp.Display] cmp.Display for NdArray[T] {
+  function to_string(self: NdArray[T]): string {
+    return display_axis(self.to_flat(), self.shape, 0, 0);
+  }
+}
+
+function display_axis[T: cmp.Display](xs: T[], shape: i32[], axis: i32, at: i32): string {
+  if (axis == shape.len()) {
+    return xs[at].to_string();
+  }
+  let step: i32 = 1;
+  let k: i32 = axis + 1;
+  while (k < shape.len()) {
+    step = step * shape[k];
+    k = k + 1;
+  }
+  let out: string = "[";
+  let i: i32 = 0;
+  while (i < shape[axis]) {
+    if (i > 0) {
+      out = out + ", ";
+    }
+    out = out + display_axis(xs, shape, axis + 1, at + i * step);
+    i = i + 1;
+  }
+  return out + "]";
 }
 ```

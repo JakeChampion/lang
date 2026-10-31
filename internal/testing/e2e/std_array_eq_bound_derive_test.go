@@ -134,32 +134,32 @@ func TestStdArrayEqBoundDeriveElement(t *testing.T) {
 	}
 }
 
-const setDeriveEqProg = `import "std/set";
+const setDeriveEqProg = `import "std/pset";
 import "core/cmp" as cmp;
-@derive(cmp.Eq)
+@derive(cmp.Eq, cmp.Hash)
 struct Point { x: i32, y: i32 }
 function main(): i32 {
-    let s: set.Set[Point] = set.of([Point { x: 1, y: 2 }, Point { x: 3, y: 4 }, Point { x: 1, y: 2 }]);
+    let s: pset.PSet[Point] = pset.of([Point { x: 1, y: 2 }, Point { x: 3, y: 4 }, Point { x: 1, y: 2 }]);
     if (s.len() != 2) { return 1; }
     if (!s.contains(Point { x: 1, y: 2 })) { return 2; }
     if (s.contains(Point { x: 9, y: 9 })) { return 3; }
-    let r: set.Set[Point] = s.remove(Point { x: 1, y: 2 });
+    let r: pset.PSet[Point] = s.remove(Point { x: 1, y: 2 });
     if (r.len() != 1) { return 4; }
     if (r.contains(Point { x: 1, y: 2 })) { return 5; }
     if (s.len() != 2) { return 6; }
-    let other: set.Set[Point] = set.of([Point { x: 3, y: 4 }, Point { x: 5, y: 6 }]);
+    let other: pset.PSet[Point] = pset.of([Point { x: 3, y: 4 }, Point { x: 5, y: 6 }]);
     if (s.union(other).len() != 3) { return 7; }
     if (s.intersection(other).len() != 1) { return 8; }
     if (s.difference(other).len() != 1) { return 9; }
     if (s.is_disjoint(other)) { return 10; }
     if (!r.is_subset(s)) { return 11; }
-    if (s.equals(other)) { return 12; }
+    if (s == other) { return 12; }
     if (s.symmetric_difference(other).len() != 2) { return 13; }
     return 42;
 }
 `
 
-func TestStdSetEqBoundDeriveElement(t *testing.T) {
+func TestStdPSetEqHashDeriveElement(t *testing.T) {
 	if got := runInterpByte(t, setDeriveEqProg); got != 42 {
 		t.Errorf("interp: got exit %d, want 42", got)
 	}

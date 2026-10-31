@@ -6,7 +6,6 @@ import "std/ordset";
 import "std/pmap";
 import "std/pset";
 import "std/pvec";
-import "std/set";
 
 function main(): i32 {
   let om: ordmap.OrdMap[string, i32] = ordmap.new();
@@ -38,10 +37,6 @@ function main(): i32 {
   ps = ps.insert("only");
   for x in ps {
     print(f"pset {x}");
-  }
-  let s: set.Set[string] = set.of(["b", "a", "b"]);
-  for x in s {
-    print(f"set {x}");
   }
   return 0;
 }
