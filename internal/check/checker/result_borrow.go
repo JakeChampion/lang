@@ -90,11 +90,29 @@ func (c *checker) borrowedLocals(fn *ast.FuncDecl, b borrowScope) map[string]boo
 				if id, ok := s.Target.(*ast.Ident); ok {
 					changed = mark(id.Name, s.Value) || changed
 				}
+			case *ast.ForEach:
+				changed = markForEach(mark, s) || changed
+			case *ast.Block:
+				// The checker lowers a `for` into a block, and the block
+				// keeps the loop as its Sugar. The answer must not depend
+				// on whether the lowering already ran.
+				if s.Sugar != nil {
+					changed = markForEach(mark, s.Sugar) || changed
+				}
 			}
 			return true
 		})
 	}
 	return b.locals
+}
+
+// markForEach marks the element a `for` binds as a borrow of what the loop
+// walks. A range and a pattern bind no such element.
+func markForEach(mark func(string, ast.Expr) bool, fe *ast.ForEach) bool {
+	if fe.Pattern != nil || fe.RangeHigh != nil {
+		return false
+	}
+	return mark(fe.Var, fe.Iter)
 }
 
 type borrowScope struct {

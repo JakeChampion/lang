@@ -25,7 +25,8 @@ function main(): i32 {
   }
   i = 0;
   while (i < 2) {
-    match (io.temp_file("sec")) {
+    let made: Result[io.TempFile, IoError] = io.temp_file("sec");
+    match (made) {
       Ok(t) => {
         print("file " + t.path);
         match (t.file.write("secret")) { Ok(_) => { }, Err(_) => { print("write err"); } }
@@ -46,7 +47,7 @@ function main(): i32 {
 // The directory holds a link to a file, a dangling link, and the file.
 // An exclusive open must refuse both links, a no-follow read must refuse
 // the link to the file, and a plain read follows it, which is the control.
-const symlinkSrc = `function kind(r: Result[Reader, IoError]): string {
+const symlinkSrc = `function kind(own r: Result[Reader, IoError]): string {
   match (r) {
     Ok(reader) => { match (reader.close()) { Ok(_) => { }, Err(_) => { } } return "ok"; },
     Err(e) => {
@@ -59,7 +60,7 @@ const symlinkSrc = `function kind(r: Result[Reader, IoError]): string {
     }
   }
 }
-function wkind(r: Result[Writer, IoError]): string {
+function wkind(own r: Result[Writer, IoError]): string {
   match (r) {
     Ok(w) => { match (w.close()) { Ok(_) => { }, Err(_) => { } } return "ok"; },
     Err(e) => {
