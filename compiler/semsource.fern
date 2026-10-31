@@ -5014,6 +5014,9 @@ function prefix_loops(xs: Loop[], n: i32): Loop[] {
 
 function discard(e: ast.Expr, s: State): State {
   if let ast.ExprCall(c) = e {
+    if (parser.is_value_block(c) && is_void(block_type(e, c, s, t_void()))) {
+      return stmts(parser.vb_body(c), s);
+    }
     return call(e, c, s, true, t_void()).s;
   }
   return expr(e, s, typeinfo.unchecked()).s;
