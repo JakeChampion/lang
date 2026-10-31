@@ -32,7 +32,17 @@ function socket_allocs(): i64 {
   if (kept != 808000) { return 0 - 2i64; }
   return (__heap_alloc_count() - before) / 100i64;
 }
+function global_allocs(): i64 {
+  let before: i64 = __heap_alloc_count();
+  for i in 0..100 {
+    if (!net.is_global_ipv4("8.8.8.8") || net.is_global_ipv4("127.0.0.1") || net.is_global_ipv4("1.2.3.256")) {
+      return -1i64;
+    }
+  }
+  return __heap_alloc_count() - before;
+}
 function main(): i32 {
+  if (global_allocs() != 0i64) { return 99; }
   return (ip_allocs() * 10i64 + socket_allocs()) as i32;
 }
 `
