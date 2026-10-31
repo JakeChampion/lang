@@ -136,9 +136,10 @@ function persist(state: State, at: i32, name: string, value: string): Result[voi
       return Ok(());
     },
     Err(error) => {
+      let response = failure(error);
       let rooms = state.rooms.get();
       state.rooms.set(rooms.with(at, Room { ...rooms[at], fault: error }));
-      return Err(failure(error));
+      return Err(response);
     }
   }
 }
