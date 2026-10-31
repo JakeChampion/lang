@@ -11,7 +11,7 @@ function route(req: HttpRequest): HttpResponse {
   if (req.path == "/") {
     resp = http.ok("ok");
   } else if (req.path == "/echo" && req.method == "POST") {
-    match (req.body_string()) {
+    match (req.body_text()) {
       Ok(text) => {
         resp = http.ok(text);
       },

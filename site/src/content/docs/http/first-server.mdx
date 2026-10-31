@@ -59,7 +59,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
             .with_header("x-served-by", "fern");
     }
     if (req.method == "POST") {
-        match (req.body_string()) {
+        match (req.body_text()) {
             Ok(body) => { return http.ok("you sent: " + body); },
             Err(e) => { return e.to_response(); }
         }
@@ -122,7 +122,7 @@ on `HEAD`, 1xx, 204 and 304.
 | `req.path` | `string` | Path **and** query, e.g. `/s?q=hi` |
 | `req.headers.get(name)` | `Option[string]` | First value of a header, matched without regard to case |
 | `req.headers.get_all(name)` | `string[]` | Every value of a repeated header |
-| `req.body_string()` | `Result[string, http.BodyError]` | The body as UTF-8 text |
+| `req.body_text()` | `Result[string, http.BodyError]` | The body as UTF-8 text |
 | `req.body_bytes()` | `u8[]` | The body as bytes |
 | `req.body_len()` | `i32` | Body length; `-1` for a chunked body still arriving |
 | `req.body` | `Stream` | The body as a stream to read in pieces |

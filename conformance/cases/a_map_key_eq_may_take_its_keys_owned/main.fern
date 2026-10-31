@@ -1,0 +1,33 @@
+import "core/cmp";
+import "core/map";
+
+struct Key { xs: i32[] }
+
+impl cmp.Eq for Key {
+  function eq(self: Key, other: Key): boolean {
+    let both: Key[] = [self, other];
+    return both[0].xs.len() == both[1].xs.len();
+  }
+}
+
+impl cmp.Hash for Key {
+  function hash(self: Key): i32 {
+    return self.xs.len();
+  }
+}
+
+function main(): i32 {
+  let m: Map[Key, i32] = Map { };
+  m = m.insert(Key { xs: [1, 2] }, 5);
+  m = m.insert(Key { xs: [3] }, 6);
+  if (m.len() != 2) {
+    return 90;
+  }
+  if (m.get_or(Key { xs: [7, 8] }, 0) != 5) {
+    return 91;
+  }
+  if (m.contains(Key { xs: [] })) {
+    return 92;
+  }
+  return 0;
+}

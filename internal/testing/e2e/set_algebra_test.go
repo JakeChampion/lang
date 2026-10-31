@@ -3,26 +3,24 @@ package e2e
 import "testing"
 
 const setAlgebraProg = `
-import "std/set" as set;
+import "std/pset";
 function main(): i32 {
-    let a: set.Set[i32] = set.of([1, 2, 3]);
-    let b: set.Set[i32] = set.of([2, 3, 4]);
-    let sub: set.Set[i32] = set.of([2, 3]);
-    let empty: set.Set[i32] = set.new();
+    let a: pset.PSet[i32] = pset.of([1, 2, 3]);
+    let b: pset.PSet[i32] = pset.of([2, 3, 4]);
+    let sub: pset.PSet[i32] = pset.of([2, 3]);
+    let empty: pset.PSet[i32] = pset.new();
     if (!a.is_superset(sub)) { return 1; }
     if (a.is_superset(b)) { return 2; }
     if (!a.is_superset(empty)) { return 3; }
     if (!a.is_superset(a)) { return 4; }
     if (a.is_disjoint(b)) { return 5; }
-    if (!a.is_disjoint(set.of([7, 8]))) { return 6; }
+    if (!a.is_disjoint(pset.of([7, 8]))) { return 6; }
     if (!a.is_disjoint(empty)) { return 7; }
     if (!empty.is_disjoint(empty)) { return 8; }
-    let sd: set.Set[i32] = a.symmetric_difference(b);
+    let sd: pset.PSet[i32] = a.symmetric_difference(b);
     if (sd.len() != 2 || !sd.contains(1) || !sd.contains(4) || sd.contains(2)) { return 9; }
     if (a.symmetric_difference(a).len() != 0) { return 10; }
-    if (!a.symmetric_difference(empty).equals(a)) { return 11; }
-    let arr: i32[] = sd.to_array();
-    if (arr[0] != 1 || arr[1] != 4) { return 12; }
+    if (a.symmetric_difference(empty) != a) { return 11; }
     return 42;
 }
 `

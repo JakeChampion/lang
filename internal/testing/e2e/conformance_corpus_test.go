@@ -201,7 +201,7 @@ func checkMeta(dir string, haveMeta, weakened bool, read func(string) string) []
 
 	if !haveMeta {
 		if weakened {
-			report("asserts less than byte-exact output on all four backends (contains mode and/or a backends subset) but has no meta file saying why — add one with a waiver: %s", strings.Join(waiverKinds, " | "))
+			report("asserts less than byte-exact output on every backend (contains mode and/or a backends subset) but has no meta file saying why — add one with a waiver: %s", strings.Join(waiverKinds, " | "))
 		}
 		return problems
 	}
@@ -218,7 +218,7 @@ func checkMeta(dir string, haveMeta, weakened bool, read func(string) string) []
 		report("meta: unknown waiver %q — want one of %s", m.waiver, strings.Join(waiverKinds, " | "))
 	}
 	if !weakened {
-		report("meta claims waiver %q but the case already asserts byte-exact output on all four backends — delete the meta file", m.waiver)
+		report("meta claims waiver %q but the case already asserts byte-exact output on every backend — delete the meta file", m.waiver)
 	}
 	if strings.TrimSpace(m.reason) == "" {
 		report("meta: waiver %q has no reason: — a waiver without a stated reason is indistinguishable from an oversight", m.waiver)

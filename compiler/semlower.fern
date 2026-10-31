@@ -553,7 +553,7 @@ function helper_rows(rows: ssasem.EnvRow[], more: ssasem.EnvRow[]): ssasem.EnvRo
 // Shared drop helpers need the complete set of concrete dynamic values.
 function module_helpers(built: semsource.Built): ssarc.Helpers {
   if (built.decls.len() == 0) {
-    return ssarc.no_helpers();
+    return ssarc.no_helpers(built.contracts);
   }
   let envs: ssasem.EnvRow[] = [];
   let dyns: ssasem.EnvRow[] = [];
@@ -567,7 +567,7 @@ function module_helpers(built: semsource.Built): ssarc.Helpers {
     ...built.decls[0].func, records: built.records, enums: built.enums, schema_checked: false,
     envs: envs, dyns: dyns, finalizers: built.finalizers, map_module: map_module,
   };
-  return ssarc.with_drop_helpers(ssarc.no_helpers(), f);
+  return ssarc.with_drop_helpers(ssarc.no_helpers(built.contracts), f);
 }
 
 function declaration_bodies(built: semsource.Built, r: Rows): DeclarationBodies {
@@ -843,7 +843,7 @@ pub function runtime_module_lowering(source: parser.Module): physicalbody.Lowere
     return runtime_refused(first_name(im), "instantiates a generic");
   }
   let out: irtables.Lowered[] = [];
-  let helpers: ssarc.Helpers = ssarc.no_helpers();
+  let helpers: ssarc.Helpers = ssarc.no_helpers(inf.built.contracts);
   let i: i32 = 0;
   while (i < im.funcs.len()) {
     match (inf.rows.body[i]) {
