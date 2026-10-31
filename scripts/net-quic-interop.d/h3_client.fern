@@ -97,7 +97,7 @@ function stepped(c: h3q.Conn, f: Fetches): (h3q.Conn, Fetches) {
   if (next.todo.len() == 0) {
     return (cur.close(now()), Fetches { ...next, closing: true });
   }
-  let Ok(sent) = cur.request(next.todo[0], "https") else {
+  let Ok(sent) = cur.request(next.todo[0].outgoing("https")) else {
     return (cur, next);
   };
   let rest: HttpRequest[] = [];

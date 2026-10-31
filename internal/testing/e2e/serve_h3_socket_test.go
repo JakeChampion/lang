@@ -173,7 +173,7 @@ function main(): i32 {
     }
     if (c.ready() && sent == got) {
       let req: HttpRequest = HttpRequest { method: "GET", path: "/hello", body: ByteStream { data: [], pos: 0, source: None }, headers: headers.new().append("host", "localhost"), trailers: headers.new() };
-      let Ok(asked) = c.request(req, "https") else { return 6; };
+      let Ok(asked) = c.request(req.outgoing("https")) else { return 6; };
       c = asked.0;
       sent = sent + 1;
     }
