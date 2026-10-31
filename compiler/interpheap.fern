@@ -1,0 +1,233 @@
+import "core/mem";
+
+// References belong to one Heap. Interpreter environments share that heap.
+pub struct Ref { slot: i32, generation: i64 }
+
+// Payloads contain data and internal references, without host cells or root handles.
+pub struct Payload { text: string, words: i64[], edges: Ref[] }
+
+struct Node { generation: i64, active: boolean, payload: Payload, next_free: i32 }
+
+struct State { nodes: Node[], first_free: i32, next_collection: i32, collections: i64, scanned: i64 }
+
+struct Counts { generations: i64[], values: i32[] }
+
+pub struct Heap { state: Cell[State], counts: Cell[Counts] }
+
+pub struct Root { heap: Heap, reference: Ref }
+
+pub struct Stats { slots: i32, live: i32, text_bytes: i64, words: i64, edges: i64, collections: i64, scanned: i64 }
+
+function require(ok: boolean): void {
+  if (!ok) {
+    eprint("interpreter heap invariant failed");
+    exit(1);
+  }
+}
+
+function empty_state(): State {
+  return State { nodes: [], first_free: -1, next_collection: 1, collections: 0i64, scanned: 0i64 };
+}
+
+function empty_counts(): Counts {
+  return Counts { generations: [], values: [] };
+}
+
+function empty_payload(): Payload {
+  return Payload { text: "", words: [], edges: [] };
+}
+
+pub function create(): Heap {
+  return Heap { state: cell_new(empty_state()), counts: cell_new(empty_counts()) };
+}
+
+// A count transaction has no Root values. A finalizer cannot interrupt it.
+@noinline
+function change_count(counter: Cell[Counts], r: Ref, delta: i32, fresh: boolean): void {
+  let counts = counter.get();
+  counter.set(empty_counts());
+  if (fresh && r.slot == counts.values.len()) {
+    counts = Counts { generations: counts.generations.append(r.generation), values: counts.values.append(1) };
+  } else {
+    require(r.slot >= 0 && r.slot < counts.values.len());
+    if (fresh) {
+      require(counts.values[r.slot] == 0);
+      counts = Counts { generations: counts.generations.with(r.slot, r.generation), values: counts.values.with(r.slot, 1) };
+    } else {
+      require(counts.generations[r.slot] == r.generation);
+      require(delta == -1 && counts.values[r.slot] > 0 || delta == 1 && counts.values[r.slot] < 2147483647);
+      counts = Counts { ...counts, values: counts.values.with(r.slot, counts.values[r.slot] + delta) };
+    }
+  }
+  counter.set(counts);
+}
+
+impl mem.Drop for Root {
+  @noinline
+  function drop(self: Self): void {
+    change_count(self.heap.counts, self.reference, -1, false);
+  }
+}
+
+function live(s: State, r: Ref): boolean {
+  return r.slot >= 0 && r.slot < s.nodes.len() && s.nodes[r.slot].active && s.nodes[r.slot].generation == r.generation;
+}
+
+function reclaimed(own s: State, counts: Counts): State {
+  let marked: boolean[] = [];
+  let work: i32[] = [];
+  for i in 0..s.nodes.len() {
+    let root = s.nodes[i].active && counts.values[i] > 0;
+    marked = marked.append(root);
+    if (root) {
+      require(s.nodes[i].generation == counts.generations[i]);
+      work = work.append(i);
+    }
+  }
+  let at: i32 = 0;
+  while (at < work.len()) {
+    for edge in s.nodes[work[at]].payload.edges {
+      require(live(s, edge));
+      if (!marked[edge.slot]) {
+        marked = marked.with(edge.slot, true);
+        work = work.append(edge.slot);
+      }
+    }
+    at = at + 1;
+  }
+  let first_free: i32 = -1;
+  let live_count: i32 = 0;
+  for i in 0..s.nodes.len() {
+    if (s.nodes[i].active && !marked[i]) {
+      require(counts.values[i] == 0);
+      s = State { ...s, nodes: s.nodes.with(i, Node { generation: s.nodes[i].generation, active: false, payload: empty_payload(), next_free: -1 }) };
+    }
+    if (s.nodes[i].active) {
+      live_count = live_count + 1;
+    } else {
+      s = State { ...s, nodes: s.nodes.with(i, Node { ...s.nodes[i], next_free: first_free }) };
+      first_free = i;
+    }
+  }
+  // Collect after the live graph can double. Reuse free slots before growth.
+  let threshold: i32 = 2147483647;
+  if (live_count <= 1073741823) {
+    threshold = live_count * 2;
+  }
+  if (threshold < 1) {
+    threshold = 1;
+  }
+  return State {
+    ...s, first_free: first_free, next_collection: threshold,
+    collections: s.collections + 1i64, scanned: s.scanned + s.nodes.len() as i64,
+  };
+}
+
+@noinline
+pub function reference(root: Root): Ref {
+  return root.reference;
+}
+
+function references(s: State, edges: Root[]): Ref[] {
+  let refs: Ref[] = [];
+  for edge in edges {
+    let r = reference(edge);
+    require(live(s, r));
+    refs = refs.append(r);
+  }
+  return refs;
+}
+
+pub function allocate(h: Heap, text: string, words: i64[], edges: Root[]): Root {
+  let s = h.state.get();
+  h.state.set(empty_state());
+  if (s.first_free < 0 && s.nodes.len() >= s.next_collection) {
+    s = reclaimed(s, h.counts.get());
+  }
+  let slot = s.first_free;
+  let generation: i64 = 1;
+  if (slot >= 0) {
+    require(s.nodes[slot].generation < 9223372036854775807);
+    generation = s.nodes[slot].generation + 1;
+    s = State { ...s, first_free: s.nodes[slot].next_free };
+  } else {
+    require(s.nodes.len() < 2147483647);
+    slot = s.nodes.len();
+  }
+  let payload = Payload { text: text, words: words, edges: references(s, edges) };
+  let node = Node { generation: generation, active: true, payload: payload, next_free: -1 };
+  let r = Ref { slot: slot, generation: generation };
+  if (slot == s.nodes.len()) {
+    s = State { ...s, nodes: s.nodes.append(node) };
+  } else {
+    s = State { ...s, nodes: s.nodes.with(slot, node) };
+  }
+  change_count(h.counts, r, 1, true);
+  h.state.set(s);
+  return Root { heap: h, reference: r };
+}
+
+pub function collect(h: Heap): void {
+  let s = h.state.get();
+  h.state.set(empty_state());
+  h.state.set(reclaimed(s, h.counts.get()));
+}
+
+pub function get(root: Root): Payload {
+  let s = root.heap.state.get();
+  let r = reference(root);
+  require(live(s, r));
+  return s.nodes[r.slot].payload;
+}
+
+pub function replace(root: Root, text: string, words: i64[], edges: Root[]): void {
+  let h = root.heap;
+  let r = reference(root);
+  let s = h.state.get();
+  h.state.set(empty_state());
+  require(live(s, r));
+  let payload = Payload { text: text, words: words, edges: references(s, edges) };
+  h.state.set(State { ...s, nodes: s.nodes.with(r.slot, Node { ...s.nodes[r.slot], payload: payload }) });
+}
+
+pub function retain(h: Heap, r: Ref): Option[Root] {
+  if (!live(h.state.get(), r)) {
+    return None;
+  }
+  change_count(h.counts, r, 1, false);
+  return Some(Root { heap: h, reference: r });
+}
+
+pub function children(root: Root): Root[] {
+  let h = root.heap;
+  let payload = get(root);
+  let out: Root[] = [];
+  for edge in payload.edges {
+    match (retain(h, edge)) {
+      Some(kept) => {
+        out = out.append(kept);
+      },
+      None => {
+        require(false);
+      }
+    }
+  }
+  return out;
+}
+
+pub function stats(h: Heap): Stats {
+  let state = h.state.get();
+  let out = Stats {
+    slots: state.nodes.len(), live: 0, text_bytes: 0, words: 0, edges: 0,
+    collections: state.collections, scanned: state.scanned,
+  };
+  for node in h.state.get().nodes {
+    if (node.active) {
+      out = Stats {
+        ...out, live: out.live + 1, text_bytes: out.text_bytes + node.payload.text.len() as i64,
+        words: out.words + node.payload.words.len() as i64, edges: out.edges + node.payload.edges.len() as i64,
+      };
+    }
+  }
+  return out;
+}

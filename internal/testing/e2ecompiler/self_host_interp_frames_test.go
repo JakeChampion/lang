@@ -10,7 +10,8 @@ import (
 )
 
 const interpScopeContractHook = `pub function contract_scope_frames(): i32 {
-  let root = new_env().bind_decl("outer", v_int(7), "i32").bind_decl("wide", v_wide(9000000000i64, false), "i64");
+  let heap = interpheap.create();
+  let root = new_env(heap).bind_decl("outer", v_int(7), "i32").bind_decl("wide", v_wide(9000000000i64, false), "i64");
   let first = scope_env(Env { ...root }, true).bind_decl("local", v_int(2), "i32");
   let second = scope_env(Env { ...first }, true).bind_decl("outer", VString { v: "shadow" }, "string");
   if (second.decl_type("outer") != "string" || second.decl_type("wide") != "i64" || !second.binds_name("local")) { return 1; }
@@ -26,9 +27,9 @@ const interpScopeContractHook = `pub function contract_scope_frames(): i32 {
   if (!is_cell(raw) || !cell_slot_set(raw, v_int(13))) { return 5; }
   if (value_text(boxed.lookup("outer")) != "13" || value_text(trim_env(nested, boxed.depth).lookup("outer")) != "13" || value_text(root.lookup("outer")) != "7") { return 6; }
   let witness_before = __heap_alloc_count();
-  let witness = new_env().bind("witness", v_int(17));
+  let witness = new_env(heap).bind("witness", v_int(17));
   if (value_text(witness.lookup("witness")) != "17" || __heap_alloc_count() <= witness_before) { return 7; }
-  let large = new_env();
+  let large = new_env(heap);
   for i in 0..2000 { large = large.bind("slot_" + util.i32_to_string(i), v_int(i)); }
   let child = scope_env(Env { ...scope_env(Env { ...large }, true).bind("a", v_int(3)) }, true).bind("b", v_int(5));
   let before = __heap_alloc_count();

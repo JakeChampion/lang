@@ -9,6 +9,7 @@ import "./checker";
 import "./aesref";
 import "./platforms";
 import "./typeinfo";
+import "./interpheap";
 import "std/utf8";
 import "std/f64";
 import "std/rand";
@@ -32,7 +33,7 @@ pub struct VFloat32 { v: f64 }
 // length, writes there. Empty until that first write, and from then on
 // [length, each slot of the capacity] and read in place of `items`. A view
 // keeps its own length and reads its parent's store from `offset`.
-pub struct VArr { items: Value[], elem: string, view: boolean, store: Cell[i64[]], offset: i32 }
+pub struct VArr { items: Value[], elem: string, view: boolean, store: interpheap.Root, offset: i32 }
 
 pub struct VTuple { elements: Value[] }
 
@@ -48,7 +49,7 @@ pub struct VCellI { c: Cell[i32], is_char: boolean, is_byte: boolean, is_bool: b
 
 pub struct VCellF { c: Cell[f64] }
 
-pub struct VCell { kind: string, ci: Cell[i32], cl: Cell[i64], cf: Cell[f64], cs: Cell[string] }
+pub struct VCell { kind: string, ci: Cell[i32], cl: Cell[i64], cf: Cell[f64], cs: Cell[string], value: Option[interpheap.Root] }
 
 pub struct VTry { box: Value }
 
@@ -59,7 +60,7 @@ pub struct VType { name: string }
 
 pub struct VHandle { r: Option[Reader], w: Option[Writer], d: Option[Dir] }
 
-pub struct VCellV { c: Cell[string] }
+pub struct VCellV { root: interpheap.Root }
 
 pub struct VLanes { width: i32, bits: i64[] }
 
@@ -163,12 +164,12 @@ function box_i64(n: i64): Value {
   return v_int64(n);
 }
 
-function zero_value_of(type_name: string): Value {
+function zero_value_of(heap: interpheap.Heap, type_name: string): Value {
   if (parser.spelling_is_view(type_name)) {
-    return v_view_of([], parser.array_method_element(type_name));
+    return v_view_of(heap, [], parser.array_method_element(type_name));
   }
   if (name_ends_with(type_name, "[]")) {
-    return v_arr_of([], slice_unchecked(type_name, 0, type_name.len() - 2) + "");
+    return v_arr_of(heap, [], slice_unchecked(type_name, 0, type_name.len() - 2) + "");
   }
   if (type_name == "f64" || type_name == "f32") {
     return v_float(0.0);
@@ -570,22 +571,22 @@ function v_float32(x: f64): Value {
   return VFloat32 { v: f32_round(x) };
 }
 
-function v_arr(elements: Value[]): Value {
-  return v_arr_of(elements, "");
+function v_arr(heap: interpheap.Heap, elements: Value[]): Value {
+  return v_arr_of(heap, elements, "");
 }
 
-function v_arr_of(elements: Value[], elem: string): Value {
+function v_arr_of(heap: interpheap.Heap, elements: Value[], elem: string): Value {
   let unwritten: i64[] = [];
-  return VArr { items: elements, elem: elem, view: false, store: cell_new(unwritten), offset: 0 };
+  return VArr { items: elements, elem: elem, view: false, store: interpheap.allocate(heap, "", unwritten, []), offset: 0 };
 }
 
-function v_view_of(elements: Value[], elem: string): Value {
+function v_view_of(heap: interpheap.Heap, elements: Value[], elem: string): Value {
   let unwritten: i64[] = [];
-  return VArr { items: elements, elem: elem, view: true, store: cell_new(unwritten), offset: 0 };
+  return VArr { items: elements, elem: elem, view: true, store: interpheap.allocate(heap, "", unwritten, []), offset: 0 };
 }
 
 function arr_len(a: VArr): i32 {
-  let st: i64[] = a.store.get();
+  let st: i64[] = interpheap.get(a.store).words;
   if (st.len() == 0 || a.view) {
     return a.items.len();
   }
@@ -593,7 +594,7 @@ function arr_len(a: VArr): i32 {
 }
 
 function arr_at(a: VArr, i: i32): Value {
-  let st: i64[] = a.store.get();
+  let st: i64[] = interpheap.get(a.store).words;
   if (st.len() == 0) {
     return coerce_int_width(a.items[i], a.elem);
   }
@@ -603,14 +604,14 @@ function arr_at(a: VArr, i: i32): Value {
 // The elements of an array the caller hands over, moved out when nothing
 // else holds them.
 function arr_take_els(own a: VArr): Value[] {
-  if (a.store.get().len() > 0) {
+  if (interpheap.get(a.store).words.len() > 0) {
     return arr_els(a);
   }
   return a.items;
 }
 
 function arr_els(a: VArr): Value[] {
-  let st: i64[] = a.store.get();
+  let st: i64[] = interpheap.get(a.store).words;
   if (st.len() == 0) {
     return a.items;
   }
@@ -633,7 +634,7 @@ function arr_retyped(a: VArr, elem: string, view: boolean): Value {
   if (view) {
     return arr_view(VArr { ...a, elem: elem }, 0, arr_len(a));
   }
-  return v_arr_of(arr_els(a), elem);
+  return v_arr_of(a.store.heap, arr_els(a), elem);
 }
 
 // A view of a[from:to], reading what a builtin later writes into `a`.
@@ -650,7 +651,7 @@ function arr_view(a: VArr, from: i32, to: i32): Value {
 
 // Every slot of the array's capacity, as the integers a builtin writes.
 function arr_slots(a: VArr): i64[] {
-  let st: i64[] = a.store.get();
+  let st: i64[] = interpheap.get(a.store).words;
   let out: i64[] = [];
   if (st.len() > 0) {
     let i: i32 = 1;
@@ -671,7 +672,7 @@ function arr_store_set(a: VArr, n: i32, slots: i64[]): void {
   for x in slots {
     st = st.append(x);
   }
-  a.store.set(st);
+  interpheap.replace(a.store, "", st, []);
 }
 
 // Writes xs over the array's first elements, for every holder of it.
@@ -924,23 +925,23 @@ function interp_char_boundary(s: string, i: i32): boolean {
   return icb < 128 || icb >= 192;
 }
 
-pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string }
+pub struct Env { outer: Option[Env], depth: i32, names: string[], values: Value[], types: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], ret: string, heap: interpheap.Heap }
 
-function new_env(): Env {
+function new_env(heap: interpheap.Heap): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
   let fs: parser.FuncDecl[] = [];
   let al: parser.TypeAlias[] = [];
   let no_structs: parser.StructDecl[] = [];
-  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), ret: "" };
+  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: module_type_decls(no_structs), ret: "", heap: heap };
 }
 
-function new_module_env(fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
+function new_module_env(heap: interpheap.Heap, fs: parser.FuncDecl[], al: parser.TypeAlias[], vd: parser.StructDecl[]): Env {
   let ns: string[] = [];
   let vs: Value[] = [];
   let ts: string[] = [];
-  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, ret: "" };
+  return Env { outer: None, depth: 0, names: ns, values: vs, types: ts, funcs: fs, aliases: al, type_decls: vd, ret: "", heap: heap };
 }
 
 function (e: Env) bind(name: string, v: Value): Env {
@@ -1108,7 +1109,7 @@ function deref_cell(v: Value): Value {
       return VFloat { v: cf.c.get() };
     },
     VCellV(cv) => {
-      return cell_any_value(cv.c.get(), cell_new(0));
+      return managed_cell_value(cv.root);
     },
     _ => {
       return v;
@@ -1149,11 +1150,11 @@ function cell_slot_set(slot: Value, v: Value): boolean {
       }
     },
     VCellV(cv) => {
-      let (ok, text) = encoded_text(v);
-      if (ok) {
-        cv.c.set(text);
+      let encoded = encoded_value(v);
+      if (encoded.ok) {
+        interpheap.replace(cv.root, encoded.text, [], encoded.edges);
       }
-      return ok;
+      return encoded.ok;
     },
     _ => {
       return false;
@@ -1289,13 +1290,14 @@ function (e: Env) raw_value(name: string): Option[Value] {
 }
 
 function cellify_env(own e: Env, names: string[]): Env {
+  let heap = e.heap;
   let out: Env = e;
   let i: i32 = 0;
   while (i < names.len()) {
     match (out.raw_value(names[i])) {
       Some(cur) => {
         if (!is_cell(cur)) {
-          out = out.update(names[i], cell_for(cur));
+          out = out.update(names[i], cell_for(heap, cur));
         }
       },
       None => {}
@@ -1322,7 +1324,7 @@ function is_cell(v: Value): boolean {
   }
 }
 
-function cell_for(v: Value): Value {
+function cell_for(heap: interpheap.Heap, v: Value): Value {
   match (v) {
     VInt(n) => {
       return VCellI { c: cell_new(n.v), is_char: n.is_char, is_byte: n.is_byte, is_bool: false };
@@ -1340,17 +1342,17 @@ function cell_for(v: Value): Value {
       return v;
     },
     _ => {
-      let (ok, text) = encoded_text(v);
-      if (ok) {
-        return VCellV { c: cell_new(text) };
+      let encoded = encoded_value(v);
+      if (encoded.ok) {
+        return VCellV { root: interpheap.allocate(heap, encoded.text, [], encoded.edges) };
       }
       return v;
     }
   }
 }
 
-function cell_value(v: Value): Value {
-  let c: VCell = VCell { kind: "", ci: cell_new(0), cl: cell_new(0 as i64), cf: cell_new(0.0), cs: cell_new("") };
+function cell_value(heap: interpheap.Heap, v: Value): Value {
+  let c: VCell = VCell { kind: "", ci: cell_new(0), cl: cell_new(0 as i64), cf: cell_new(0.0), cs: cell_new(""), value: None };
   match (v) {
     VInt(n) => {
       c.ci.set(n.v);
@@ -1395,12 +1397,11 @@ function cell_value(v: Value): Value {
       return VCell { ...c, kind: "string" };
     },
     _ => {
-      let encoded: Value = cell_value_text(v);
-      if let VString(s) = encoded {
-        c.cs.set(s.v);
-        return VCell { ...c, kind: "value" };
+      let encoded = encoded_value(v);
+      if (encoded.ok) {
+        return VCell { ...c, kind: "value", value: Some(interpheap.allocate(heap, encoded.text, [], encoded.edges)) };
       }
-      return encoded;
+      return v_err("Cell: the value holds a function or a cell, which E057 rejects");
     }
   }
 }
@@ -1473,30 +1474,45 @@ function cell_scalar_text(h: usize, v: Value): boolean {
   return true;
 }
 
-function cell_parts_text(h: usize, vs: Value[]): boolean {
+function cell_parts_text(h: usize, vs: Value[], own edges: interpheap.Root[]): (boolean, interpheap.Root[]) {
   cell_hex_text(h, vs.len() as i64);
   for v in vs {
-    if (!cell_any_text(h, v)) {
-      return false;
+    let (ok, next) = cell_any_text(h, v, edges);
+    edges = next;
+    if (!ok) {
+      return (false, edges);
     }
   }
-  return true;
+  return (true, edges);
 }
 
-function cell_any_text(h: usize, v: Value): boolean {
+function cell_any_text(h: usize, v: Value, own edges: interpheap.Root[]): (boolean, interpheap.Root[]) {
   match (v) {
     VArr(a) => {
       buf_push_byte(h, 97);
+      cell_hex_text(h, edges.len() as i64);
+      cell_hex_text(h, a.offset as i64);
+      let view: i64 = 0i64;
+      if (a.view) {
+        view = 1i64;
+      }
+      cell_hex_text(h, view);
       cell_name_text(h, a.elem);
-      return cell_parts_text(h, arr_els(a));
+      let store = a.store;
+      edges = edges.append(store);
+      return cell_parts_text(h, a.items, edges);
     },
     VTuple(t) => {
       buf_push_byte(h, 116);
-      return cell_parts_text(h, t.elements);
+      return cell_parts_text(h, t.elements, edges);
     },
     VMap(m) => {
       buf_push_byte(h, 109);
-      return cell_parts_text(h, m.keys) && cell_parts_text(h, m.values);
+      let (ok, next) = cell_parts_text(h, m.keys, edges);
+      if (!ok) {
+        return (false, next);
+      }
+      return cell_parts_text(h, m.values, next);
     },
     VStruct(st) => {
       buf_push_byte(h, 83);
@@ -1510,31 +1526,32 @@ function cell_any_text(h: usize, v: Value): boolean {
       for name in st.field_names {
         cell_name_text(h, name);
       }
-      return cell_parts_text(h, st.field_values);
+      return cell_parts_text(h, st.field_values, edges);
     },
     _ => {
-      return cell_scalar_text(h, v);
+      return (cell_scalar_text(h, v), edges);
     }
   }
 }
 
-function encoded_text(v: Value): (boolean, string) {
+struct EncodedValue { ok: boolean, text: string, edges: interpheap.Root[] }
+
+function encoded_value(v: Value): EncodedValue {
   let h: usize = buf_new(64);
-  if (!cell_any_text(h, v)) {
+  let (ok, edges) = cell_any_text(h, v, []);
+  if (!ok) {
     buf_free(h);
-    return (false, "");
+    return EncodedValue { ok: false, text: "", edges: [] };
   }
   let text: string = buf_take(h);
   buf_free(h);
-  return (true, text);
+  return EncodedValue { ok: true, text: text, edges: edges };
 }
 
-function cell_value_text(v: Value): Value {
-  let (ok, text) = encoded_text(v);
-  if (!ok) {
-    return v_err("Cell: the value holds a function or a cell, which E057 rejects");
-  }
-  return v_string(text);
+function managed_cell_value(root: interpheap.Root): Value {
+  let payload = interpheap.get(root);
+  let edges = interpheap.children(root);
+  return cell_any_value(payload.text, cell_new(0), edges);
 }
 
 function cell_scalar_value(tag: i32, bits: i64): Value {
@@ -1588,33 +1605,36 @@ function cell_name_value(s: string, at: Cell[i32]): string {
   return slice_unchecked(s, i, i + n) + "";
 }
 
-function cell_parts_value(s: string, at: Cell[i32]): Value[] {
+function cell_parts_value(s: string, at: Cell[i32], edges: interpheap.Root[]): Value[] {
   let n: i32 = cell_hex_value(s, at) as i32;
   let out: Value[] = [];
   let k: i32 = 0;
   while (k < n) {
-    out = out.append(cell_any_value(s, at));
+    out = out.append(cell_any_value(s, at, edges));
     k = k + 1;
   }
   return out;
 }
 
-function cell_any_value(s: string, at: Cell[i32]): Value {
+function cell_any_value(s: string, at: Cell[i32], edges: interpheap.Root[]): Value {
   let tag: i32 = s[at.get()] as i32;
   at.set(at.get() + 1);
   if (tag == 115) {
     return v_string(cell_name_value(s, at));
   }
   if (tag == 97) {
+    let edge: i32 = cell_hex_value(s, at) as i32;
+    let offset: i32 = cell_hex_value(s, at) as i32;
+    let view: boolean = cell_hex_value(s, at) != 0i64;
     let elem: string = cell_name_value(s, at);
-    return v_arr_of(cell_parts_value(s, at), elem);
+    return VArr { items: cell_parts_value(s, at, edges), elem: elem, view: view, store: edges[edge], offset: offset };
   }
   if (tag == 116) {
-    return v_tuple(cell_parts_value(s, at));
+    return v_tuple(cell_parts_value(s, at, edges));
   }
   if (tag == 109) {
-    let keys: Value[] = cell_parts_value(s, at);
-    return v_map(keys, cell_parts_value(s, at));
+    let keys: Value[] = cell_parts_value(s, at, edges);
+    return v_map(keys, cell_parts_value(s, at, edges));
   }
   if (tag == 83) {
     let type_name: string = cell_name_value(s, at);
@@ -1629,19 +1649,26 @@ function cell_any_value(s: string, at: Cell[i32]): Value {
     while (names.len() < n) {
       names = names.append(cell_name_value(s, at));
     }
-    return VStruct { type_name: type_name, field_names: names, field_values: cell_parts_value(s, at), owner: owner, targs: targs };
+    return VStruct { type_name: type_name, field_names: names, field_values: cell_parts_value(s, at, edges), owner: owner, targs: targs };
   }
   return cell_scalar_value(tag, cell_hex_value(s, at));
 }
 
 function cell_set_value(c: VCell, v: Value): Value {
   if (c.kind == "value") {
-    let encoded: Value = cell_value_text(v);
-    if let VString(s) = encoded {
-      c.cs.set(s.v);
-      return v_void();
+    let encoded = encoded_value(v);
+    if (encoded.ok) {
+      match (c.value) {
+        Some(root) => {
+          interpheap.replace(root, encoded.text, [], encoded.edges);
+          return v_void();
+        },
+        None => {
+          return v_err("Cell: missing managed value");
+        }
+      }
     }
-    return encoded;
+    return v_err("Cell: the value holds a function or a cell, which E057 rejects");
   }
   if ((c.kind == "i32" || c.kind == "u32" || c.kind == "char" || c.kind == "u8") && is_i32_arg(v)) {
     c.ci.set(vint_bits(v));
@@ -1720,7 +1747,14 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
       return v_float32(c.cf.get());
     }
     if (c.kind == "value") {
-      return cell_any_value(c.cs.get(), cell_new(0));
+      match (c.value) {
+        Some(root) => {
+          return managed_cell_value(root);
+        },
+        None => {
+          return v_err("Cell: missing managed value");
+        }
+      }
     }
     return v_string(c.cs.get());
   }
@@ -1733,17 +1767,17 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
   return v_err("undefined method `" + name + "` on `Cell`");
 }
 
-function byte_array_value(bytes: u8[]): Value {
+function byte_array_value(heap: interpheap.Heap, bytes: u8[]): Value {
   let out: Value[] = [];
   let i: i32 = 0;
   while (i < bytes.len()) {
     out = out.append(v_int(bytes[i] as i32));
     i = i + 1;
   }
-  return v_arr_of(out, "u8");
+  return v_arr_of(heap, out, "u8");
 }
 
-function call_xattr(name: string, args: Value[]): Value {
+function call_xattr(heap: interpheap.Heap, name: string, args: Value[]): Value {
   let reading: boolean = name == "getxattr" || name == "lgetxattr" || name == "getxattr_bytes" || name == "lgetxattr_bytes";
   let count: i32 = 3;
   if (reading) {
@@ -1768,7 +1802,7 @@ function call_xattr(name: string, args: Value[]): Value {
       }
       match (result) {
         Ok(bytes) => {
-          return v_variant("Ok", [byte_array_value(bytes)]);
+          return v_variant("Ok", [byte_array_value(heap, bytes)]);
         },
         Err(e) => {
           return v_variant("Err", [io_error_value(e)]);
@@ -1947,20 +1981,20 @@ function arg_strs(args: Value[], i: i32): string[] {
   return out;
 }
 
-function string_array_value(xs: string[]): Value {
+function string_array_value(heap: interpheap.Heap, xs: string[]): Value {
   let out: Value[] = [];
   for x in xs {
     out = out.append(v_string(x));
   }
-  return v_arr_of(out, "string");
+  return v_arr_of(heap, out, "string");
 }
 
-function i64_array_value(xs: i64[]): Value {
+function i64_array_value(heap: interpheap.Heap, xs: i64[]): Value {
   let out: Value[] = [];
   for x in xs {
     out = out.append(v_int64(x));
   }
-  return v_arr_of(out, "i64");
+  return v_arr_of(heap, out, "i64");
 }
 
 function ok_value(v: Value): Value {
@@ -1993,10 +2027,10 @@ function string_result_value(r: Result[string, IoError]): Value {
   }
 }
 
-function bytes_result_value(r: Result[u8[], IoError]): Value {
+function bytes_result_value(heap: interpheap.Heap, r: Result[u8[], IoError]): Value {
   match (r) {
     Ok(b) => {
-      return ok_value(byte_array_value(b));
+      return ok_value(byte_array_value(heap, b));
     },
     Err(e) => {
       return io_err_value(e);
@@ -2004,10 +2038,10 @@ function bytes_result_value(r: Result[u8[], IoError]): Value {
   }
 }
 
-function strings_result_value(r: Result[string[], IoError]): Value {
+function strings_result_value(heap: interpheap.Heap, r: Result[string[], IoError]): Value {
   match (r) {
     Ok(xs) => {
-      return ok_value(string_array_value(xs));
+      return ok_value(string_array_value(heap, xs));
     },
     Err(e) => {
       return io_err_value(e);
@@ -2015,10 +2049,10 @@ function strings_result_value(r: Result[string[], IoError]): Value {
   }
 }
 
-function i64s_result_value(r: Result[i64[], IoError]): Value {
+function i64s_result_value(heap: interpheap.Heap, r: Result[i64[], IoError]): Value {
   match (r) {
     Ok(xs) => {
-      return ok_value(i64_array_value(xs));
+      return ok_value(i64_array_value(heap, xs));
     },
     Err(e) => {
       return io_err_value(e);
@@ -2048,14 +2082,14 @@ function stat_result_value(r: Result[FileStat, IoError]): Value {
   }
 }
 
-function byte_arrays_result_value(r: Result[u8[][], IoError]): Value {
+function byte_arrays_result_value(heap: interpheap.Heap, r: Result[u8[][], IoError]): Value {
   match (r) {
     Ok(names) => {
       let out: Value[] = [];
       for name in names {
-        out = out.append(byte_array_value(name));
+        out = out.append(byte_array_value(heap, name));
       }
-      return ok_value(v_arr_of(out, "u8[]"));
+      return ok_value(v_arr_of(heap, out, "u8[]"));
     },
     Err(e) => {
       return io_err_value(e);
@@ -2063,14 +2097,14 @@ function byte_arrays_result_value(r: Result[u8[][], IoError]): Value {
   }
 }
 
-function dir_entries_result_value(r: Result[DirEntry[], IoError]): Value {
+function dir_entries_result_value(heap: interpheap.Heap, r: Result[DirEntry[], IoError]): Value {
   match (r) {
     Ok(es) => {
       let out: Value[] = [];
       for de in es {
         out = out.append(v_struct("DirEntry", ["name", "ino", "kind"], [v_string(de.name), v_int64(de.ino), v_uint(de.kind as i32)]));
       }
-      return ok_value(v_arr_of(out, "DirEntry"));
+      return ok_value(v_arr_of(heap, out, "DirEntry"));
     },
     Err(e) => {
       return io_err_value(e);
@@ -2095,14 +2129,14 @@ function fs_stat_result_value(r: Result[FsStat, IoError]): Value {
   }
 }
 
-function mounts_result_value(r: Result[MountEntry[], IoError]): Value {
+function mounts_result_value(heap: interpheap.Heap, r: Result[MountEntry[], IoError]): Value {
   match (r) {
     Ok(ms) => {
       let out: Value[] = [];
       for m in ms {
         out = out.append(v_struct("MountEntry", ["source", "target", "fstype", "dev"], [v_string(m.source), v_string(m.target), v_string(m.fstype), v_int64(m.dev)]));
       }
-      return ok_value(v_arr_of(out, "MountEntry"));
+      return ok_value(v_arr_of(heap, out, "MountEntry"));
     },
     Err(e) => {
       return io_err_value(e);
@@ -2229,7 +2263,7 @@ function enosys_error(path: string): Value {
   return io_err_value(Other(path, "Function not implemented", enosys_errno()));
 }
 
-function call_host(name: string, args: Value[]): Value {
+function call_host(heap: interpheap.Heap, name: string, args: Value[]): Value {
   if (is_raw_floor(name)) {
     return v_err(name + " takes machine addresses, and the interpreter has no address space");
   }
@@ -2239,12 +2273,12 @@ function call_host(name: string, args: Value[]): Value {
     return contract;
   }
   if (playground_provides(name, cap)) {
-    return call_host_portable(name, cap, args);
+    return call_host_portable(heap, name, cap, args);
   }
   if (target_arch() == "wasm32") {
     return v_err(name + ": the playground this interpreter runs in does not provide it");
   } else {
-    return call_host_native(name, cap, args);
+    return call_host_native(heap, name, cap, args);
   }
 }
 
@@ -2262,9 +2296,9 @@ function is_raw_floor(name: string): boolean {
     || util.has_str(["__raw_alloc", "__raw_string", "__raw_arr_box", "__raw_scratch", "__raw_environ", "__raw_splice_pipe", "__raw_cover", "__raw_task_state", "__raw_vdso", "__raw_vg_request"], name);
 }
 
-function call_runtime_intrinsic(name: string, args: Value[]): Value {
+function call_runtime_intrinsic(heap: interpheap.Heap, name: string, args: Value[]): Value {
   if (typeinfo.lane_builtin_width(name) > 0) {
-    return call_lane_builtin(name, typeinfo.lane_builtin_width(name), args);
+    return call_lane_builtin(heap, name, typeinfo.lane_builtin_width(name), args);
   }
   if (util.has_str(["__rc_underflow_count", "__arr_push_shared_count", "__arr_push_shared_bytes", "__heap_alloc_count", "__heap_bump_bytes"], name)) {
     return v_int(0);
@@ -2294,7 +2328,7 @@ function call_runtime_intrinsic(name: string, args: Value[]): Value {
     return v_int(1);
   }
   if (name == "__task_wait") {
-    return v_arr([]);
+    return v_arr(heap, []);
   }
   return v_err("not a runtime intrinsic");
 }
@@ -2482,7 +2516,7 @@ function lanes_load(width: i32, args: Value[]): Value {
   return v_err("lane load: expected an array");
 }
 
-function lanes_with(width: i32, args: Value[]): Value {
+function lanes_with(heap: interpheap.Heap, width: i32, args: Value[]): Value {
   let at: i32 = lane_window(width, args);
   let ls: VLanes[] = lane_args([args[2]]);
   if (at < 0 || ls.len() != 1) {
@@ -2496,14 +2530,14 @@ function lanes_with(width: i32, args: Value[]): Value {
       i = i + 1;
     }
     if (a.view) {
-      return v_view_of(out, a.elem);
+      return v_view_of(heap, out, a.elem);
     }
-    return v_arr_of(out, a.elem);
+    return v_arr_of(heap, out, a.elem);
   }
   return v_err("lane with: expected an array");
 }
 
-function call_lane_builtin(name: string, width: i32, args: Value[]): Value {
+function call_lane_builtin(heap: interpheap.Heap, name: string, width: i32, args: Value[]): Value {
   let verb: string = typeinfo.lane_builtin_verb(name);
   if (verb == "splat" && args.len() == 1) {
     return lanes_splat(width, vfloat_as_f64(args[0]));
@@ -2515,7 +2549,7 @@ function call_lane_builtin(name: string, width: i32, args: Value[]): Value {
     return lanes_load(width, args);
   }
   if (verb == "with" && args.len() == 3) {
-    return lanes_with(width, args);
+    return lanes_with(heap, width, args);
   }
   return call_lane_op(verb, width, args);
 }
@@ -2617,9 +2651,9 @@ function call_host_stub(name: string): Value {
   return v_err("not a contract builtin");
 }
 
-function call_host_portable(name: string, cap: string, args: Value[]): Value {
+function call_host_portable(heap: interpheap.Heap, name: string, cap: string, args: Value[]): Value {
   if (cap == "fs") {
-    return call_host_fs(name, args);
+    return call_host_fs(heap, name, args);
   }
   if (cap == "now") {
     return call_host_clock(name, args);
@@ -2630,7 +2664,7 @@ function call_host_portable(name: string, cap: string, args: Value[]): Value {
   if (cap == "stdin" || cap == "stdout") {
     return call_host_stdio(name, args);
   }
-  return call_host_process(name, args);
+  return call_host_process(heap, name, args);
 }
 
 function call_host_stdio(name: string, args: Value[]): Value {
@@ -2646,9 +2680,9 @@ function call_host_stdio(name: string, args: Value[]): Value {
   return v_err("undefined function: " + name);
 }
 
-function call_host_process(name: string, vals: Value[]): Value {
+function call_host_process(heap: interpheap.Heap, name: string, vals: Value[]): Value {
   if (name == "args") {
-    return string_array_value(args());
+    return string_array_value(heap, args());
   }
   if (name == "set_args") {
     set_args(arg_strs(vals, 0));
@@ -2658,13 +2692,13 @@ function call_host_process(name: string, vals: Value[]): Value {
     return option_string_value(env(arg_str(vals, 0)));
   }
   if (name == "environ") {
-    return string_array_value(environ());
+    return string_array_value(heap, environ());
   }
   if (name == "hostname") {
     return v_string(hostname());
   }
   if (name == "random_bytes") {
-    return byte_array_value(rand.bytes(arg_i32(vals, 0)));
+    return byte_array_value(heap, rand.bytes(arg_i32(vals, 0)));
   }
   if (name == "random_i32") {
     return v_int(rand.next_i32());
@@ -2762,7 +2796,7 @@ function call_host_reactor(name: string, args: Value[]): Value {
   return v_err("undefined function: " + name);
 }
 
-function call_host_fs(name: string, args: Value[]): Value {
+function call_host_fs(heap: interpheap.Heap, name: string, args: Value[]): Value {
   if (util.has_str(["remove_file", "remove_dir", "remove_dir_all", "create_dir_all"], name)) {
     return call_host_fs_path(name, arg_str(args, 0));
   }
@@ -2775,7 +2809,7 @@ function call_host_fs(name: string, args: Value[]): Value {
   if (util.has_str(["write_file", "write_file_bytes", "create_dir", "truncate", "set_file_times"], name)) {
     return call_host_fs_write(name, args);
   }
-  return call_host_fs_read(name, arg_str(args, 0));
+  return call_host_fs_read(heap, name, arg_str(args, 0));
 }
 
 function call_host_fs_path(name: string, path: string): Value {
@@ -2841,18 +2875,18 @@ function call_host_fs_write(name: string, args: Value[]): Value {
   return void_result_value(set_file_times(path, arg_i64(args, 1), arg_i64(args, 2), arg_i64(args, 3), arg_i64(args, 4), arg_i32(args, 5)));
 }
 
-function call_host_fs_read(name: string, path: string): Value {
+function call_host_fs_read(heap: interpheap.Heap, name: string, path: string): Value {
   if (name == "read_file") {
     return string_result_value(read_file(path));
   }
   if (name == "read_file_bytes") {
-    return bytes_result_value(read_file_bytes(path));
+    return bytes_result_value(heap, read_file_bytes(path));
   }
   if (name == "read_link") {
     return string_result_value(read_link(path));
   }
   if (name == "read_link_bytes") {
-    return bytes_result_value(read_link_bytes(path));
+    return bytes_result_value(heap, read_link_bytes(path));
   }
   if (name == "temp_dir") {
     return string_result_value(temp_dir(path));
@@ -2863,24 +2897,24 @@ function call_host_fs_read(name: string, path: string): Value {
   if (name == "lstat") {
     return stat_result_value(lstat(path));
   }
-  return call_host_fs_list(name, path);
+  return call_host_fs_list(heap, name, path);
 }
 
-function call_host_fs_list(name: string, path: string): Value {
+function call_host_fs_list(heap: interpheap.Heap, name: string, path: string): Value {
   if (name == "read_dir_bytes") {
-    return byte_arrays_result_value(read_dir_bytes(path));
+    return byte_arrays_result_value(heap, read_dir_bytes(path));
   }
   if (name == "read_dir") {
-    return strings_result_value(read_dir(path));
+    return strings_result_value(heap, read_dir(path));
   }
   if (name == "read_dir_all") {
-    return strings_result_value(read_dir_all(path));
+    return strings_result_value(heap, read_dir_all(path));
   }
   if (name == "read_dir_ino") {
-    return dir_entries_result_value(read_dir_ino(path));
+    return dir_entries_result_value(heap, read_dir_ino(path));
   }
   if (name == "read_dir_ino_all") {
-    return dir_entries_result_value(read_dir_ino_all(path));
+    return dir_entries_result_value(heap, read_dir_ino_all(path));
   }
   return v_err("undefined function: " + name);
 }
@@ -2979,7 +3013,7 @@ function call_host_tcp_fd(name: string, args: Value[]): Value {
   return v_err("undefined function: " + name);
 }
 
-function call_host_native(name: string, cap: string, args: Value[]): Value {
+function call_host_native(heap: interpheap.Heap, name: string, cap: string, args: Value[]): Value {
   if (cap == "tcp") {
     return call_host_net(name, args);
   }
@@ -2993,18 +3027,18 @@ function call_host_native(name: string, cap: string, args: Value[]): Value {
     return call_host_fsmode(name, args);
   }
   if (cap == "userid") {
-    return call_host_userid(name, args);
+    return call_host_userid(heap, name, args);
   }
   if (cap == "tty") {
-    return call_host_tty(name, args);
+    return call_host_tty(heap, name, args);
   }
   if (util.has_str(["proc", "rlimit", "sched", "subprocess"], cap)) {
     return call_host_proc(name, args);
   }
   if (util.has_str(["sysinfo", "cwd", "unix", "pollfd", "sysctl"], cap)) {
-    return call_host_system(name, args);
+    return call_host_system(heap, name, args);
   }
-  return call_host_fs_native(name, args);
+  return call_host_fs_native(heap, name, args);
 }
 
 function call_host_fsmode(name: string, args: Value[]): Value {
@@ -3027,7 +3061,7 @@ function call_host_fsmode(name: string, args: Value[]): Value {
   return v_err("undefined function: " + name);
 }
 
-function call_host_userid(name: string, args: Value[]): Value {
+function call_host_userid(heap: interpheap.Heap, name: string, args: Value[]): Value {
   if (name == "geteuid") {
     return v_uint(geteuid() as i32);
   }
@@ -3041,12 +3075,12 @@ function call_host_userid(name: string, args: Value[]): Value {
     return v_uint(getgid() as i32);
   }
   if (name == "getgroups") {
-    return i64_array_value(getgroups());
+    return i64_array_value(heap, getgroups());
   }
   return v_err("undefined function: " + name);
 }
 
-function call_host_tty(name: string, args: Value[]): Value {
+function call_host_tty(heap: interpheap.Heap, name: string, args: Value[]): Value {
   let fd: i32 = arg_i32(args, 0);
   if (name == "window_size") {
     return win_size_result_value(window_size(fd));
@@ -3055,7 +3089,7 @@ function call_host_tty(name: string, args: Value[]): Value {
     return void_result_value(set_window_size(fd, arg_i32(args, 1), arg_i32(args, 2)));
   }
   if (name == "termios_get") {
-    return i64s_result_value(termios_get(fd));
+    return i64s_result_value(heap, termios_get(fd));
   }
   if (name == "termios_set") {
     return void_result_value(termios_set(fd, arg_i32(args, 1), arg_i64s(args, 2)));
@@ -3099,7 +3133,7 @@ function call_host_limits(name: string, args: Value[]): Value {
   return v_err("undefined function: " + name);
 }
 
-function call_host_system(name: string, args: Value[]): Value {
+function call_host_system(heap: interpheap.Heap, name: string, args: Value[]): Value {
   if (name == "uname_field") {
     return v_string(uname_field(arg_i32(args, 0)));
   }
@@ -3125,20 +3159,20 @@ function call_host_system(name: string, args: Value[]): Value {
     return v_int(timer_fd(arg_i32(args, 0)));
   }
   if (name == "sysctl") {
-    return call_host_sysctl(arg_i32s(args, 0));
+    return call_host_sysctl(heap, arg_i32s(args, 0));
   }
   return v_err("undefined function: " + name);
 }
 
-function call_host_sysctl(mib: i32[]): Value {
+function call_host_sysctl(heap: interpheap.Heap, mib: i32[]): Value {
   if (target_os() == "darwin") {
-    return bytes_result_value(sysctl(mib));
+    return bytes_result_value(heap, sysctl(mib));
   } else {
     return enosys_error("");
   }
 }
 
-function call_host_fs_native(name: string, args: Value[]): Value {
+function call_host_fs_native(heap: interpheap.Heap, name: string, args: Value[]): Value {
   let path: string = arg_str(args, 0);
   if (name == "mknod") {
     return void_result_value(mknod(path, arg_i32(args, 1), arg_i32(args, 2), arg_i32(args, 3)));
@@ -3160,7 +3194,7 @@ function call_host_fs_native(name: string, args: Value[]): Value {
     return fs_stat_result_value(statfs(path));
   }
   if (name == "mounts") {
-    return mounts_result_value(mounts());
+    return mounts_result_value(heap, mounts());
   }
   if (name == "open_dir") {
     return dir_result_value(open_dir(path));
@@ -3186,10 +3220,10 @@ function is_handle_method(kind: string, name: string): boolean {
 
 // The guest program owns each handle. Its checker refuses a use after close,
 // so the interpreter closes the shared host handle through a borrow.
-function handle_method(h: VHandle, name: string, args: Value[]): Value {
+function handle_method(heap: interpheap.Heap, h: VHandle, name: string, args: Value[]): Value {
   match (h.r) {
     Some(r) => {
-      return reader_method(r, name, args);
+      return reader_method(heap, r, name, args);
     },
     None => {}
   }
@@ -3201,16 +3235,16 @@ function handle_method(h: VHandle, name: string, args: Value[]): Value {
   }
   match (h.d) {
     Some(d) => {
-      return call_dir_method(d, name, args);
+      return call_dir_method(heap, d, name, args);
     },
     None => {}
   }
   return v_err("empty host handle");
 }
 
-function reader_method(r: Reader, name: string, args: Value[]): Value {
+function reader_method(heap: interpheap.Heap, r: Reader, name: string, args: Value[]): Value {
   if (name == "read_chunk_bytes") {
-    return bytes_result_value(r.read_chunk_bytes(arg_i32(args, 0)));
+    return bytes_result_value(heap, r.read_chunk_bytes(arg_i32(args, 0)));
   }
   if (name == "read_chunk") {
     return read_chunk_value(r, arg_i32(args, 0));
@@ -3224,7 +3258,7 @@ function reader_method(r: Reader, name: string, args: Value[]): Value {
     return io_err_value(Unsupported);
   }
   if (util.has_str(["window_size", "set_window_size", "termios_get", "termios_set", "set_extproc"], name)) {
-    return call_host(name, with_fd_first(r.fd, args));
+    return call_host(heap, name, with_fd_first(r.fd, args));
   }
   return reader_fd_method(r, name, args);
 }
@@ -3338,24 +3372,24 @@ function writer_fd_method(w: Writer, name: string, args: Value[]): Value {
   return void_result_value(w.dup_onto(arg_i32(args, 0)));
 }
 
-function call_dir_method(d: Dir, name: string, args: Value[]): Value {
+function call_dir_method(heap: interpheap.Heap, d: Dir, name: string, args: Value[]): Value {
   if (target_arch() == "wasm32") {
     return v_err("Dir." + name + ": the host this interpreter runs on does not provide `fsdir`");
   } else {
-    return dir_method(d, name, args);
+    return dir_method(heap, d, name, args);
   }
 }
 
-function dir_method(d: Dir, name: string, args: Value[]): Value {
+function dir_method(heap: interpheap.Heap, d: Dir, name: string, args: Value[]): Value {
   let entry: string = arg_str(args, 0);
   if (name == "open_dir") {
     return dir_result_value(d.open_dir(entry));
   }
   if (name == "entries_bytes") {
-    return byte_arrays_result_value(d.entries_bytes());
+    return byte_arrays_result_value(heap, d.entries_bytes());
   }
   if (name == "entries") {
-    return strings_result_value(d.entries());
+    return strings_result_value(heap, d.entries());
   }
   if (name == "stat") {
     return stat_result_value(d.stat(entry));
@@ -4512,7 +4546,7 @@ function resolve_ident_value(name: string, env: Env): Value {
     while (ci < env.funcs.len()) {
       if (env.funcs[ci].name == name && env.funcs[ci].receiver_type.len() == 0 && env.funcs[ci].params.len() == 0 && env.funcs[ci].is_const) {
         let no_args: Value[] = [];
-        return call_func(name, no_args, env.funcs, env.aliases, env.type_decls);
+        return call_func(env.heap, name, no_args, env.funcs, env.aliases, env.type_decls);
       }
       ci = ci + 1;
     }
@@ -4575,13 +4609,13 @@ function eval_binary_expr(b: ast.ExprBinary, env: Env): Value {
   }
   let overload: string = struct_op_method(b.op, lv);
   if (overload.len() > 0) {
-    return call_method(lv, overload, [rv], env.funcs, env.aliases, env.type_decls);
+    return call_method(env.heap, lv, overload, [rv], env.funcs, env.aliases, env.type_decls);
   }
   if (is_checked_op(b.op)) {
     return eval_checked(b.op, lv, rv, checked_operand_type(b, lv));
   }
   if ((b.op == "<" || b.op == "<=" || b.op == ">" || b.op == ">=") && orders_by_cmp(lv)) {
-    let c: Value = call_method(lv, "cmp", [rv], env.funcs, env.aliases, env.type_decls);
+    let c: Value = call_method(env.heap, lv, "cmp", [rv], env.funcs, env.aliases, env.type_decls);
     if (is_err(c)) {
       return c;
     }
@@ -4695,7 +4729,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       }
       if (u.op == "-") {
         if let VStruct(_) = ov {
-          return call_method(ov, "neg", [], env.funcs, env.aliases, env.type_decls);
+          return call_method(env.heap, ov, "neg", [], env.funcs, env.aliases, env.type_decls);
         }
       }
       // Negate the wide magnitude before conversion to the checked result width.
@@ -4728,14 +4762,14 @@ function eval_expr(e: ast.Expr, env: Env): Value {
         elems = elems.append(ev);
         i = i + 1;
       }
-      return v_arr(elems);
+      return v_arr(env.heap, elems);
     },
     ast.ExprBytes(bs) => {
       let elems: Value[] = [];
       for b in bs.value {
         elems = elems.append(v_byte(b as i32));
       }
-      return v_arr_of(elems, "u8");
+      return v_arr_of(env.heap, elems, "u8");
     },
     ast.ExprIndex(x) => {
       return eval_expr_index(x, env);
@@ -4774,7 +4808,7 @@ function eval_expr(e: ast.Expr, env: Env): Value {
       return v_err("parser-side unknown: " + u.kind);
     },
     ast.ExprZero(z) => {
-      return zero_value_of(z.type_name);
+      return zero_value_of(env.heap, z.type_name);
     }
   }
   return v_err("unhandled Expr variant");
@@ -4918,7 +4952,7 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
     return v_variant_of(variant_enum, variant_name, arg_vals);
   }
   if (is_method) {
-    return call_method_targs(recv, recv_static, name, arg_vals, targs, env.funcs, env.aliases, env.type_decls);
+    return call_method_targs(env.heap, recv, recv_static, name, arg_vals, targs, env.funcs, env.aliases, env.type_decls);
   }
   if (targs.len() == 0 && callee_known && !is_closure) {
     targs = static_type_args(callee_fd, c.args, arg_vals, env);
@@ -4932,9 +4966,9 @@ function eval_expr_call_expect(c: ast.ExprCall, env: Env, expect: string): Value
         }
       }
     }
-    return call_closure_mode(closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, inline_value);
+    return call_closure_mode(env.heap, closure_val, arg_vals, env.funcs, env.aliases, env.type_decls, inline_value);
   }
-  return call_func_targs(name, arg_vals, targs, expect, env.funcs, env.aliases, env.type_decls);
+  return call_func_targs(env.heap, name, arg_vals, targs, expect, env.funcs, env.aliases, env.type_decls);
 }
 
 // static_type_args is the type arguments of a call to fd that writes none,
@@ -5401,11 +5435,11 @@ function aliases_with_enums(aliases: parser.TypeAlias[], types: parser.StructDec
   return out;
 }
 
-function call_closure(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
-  return call_closure_mode(cv, args, funcs, aliases, type_decls, false);
+function call_closure(heap: interpheap.Heap, cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+  return call_closure_mode(heap, cv, args, funcs, aliases, type_decls, false);
 }
 
-function call_closure_mode(cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], inline_value: boolean): Value {
+function call_closure_mode(heap: interpheap.Heap, cv: Value, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[], inline_value: boolean): Value {
   let fv: VFunc = VFunc { params: [], ret_type: "", body: [], captured_names: [], captured_values: [], captured_types: [], generic_name: "" };
   match (cv) {
     VFunc(v) => {
@@ -5416,12 +5450,12 @@ function call_closure_mode(cv: Value, args: Value[], funcs: parser.FuncDecl[], a
     }
   }
   if (fv.generic_name.len() > 0) {
-    return call_func_targs(fv.generic_name, args, [], "", funcs, aliases, type_decls);
+    return call_func_targs(heap, fv.generic_name, args, [], "", funcs, aliases, type_decls);
   }
   if (args.len() != fv.params.len()) {
     return v_err("arity mismatch calling closure");
   }
-  let env: Env = Env { outer: None, depth: 0, names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, ret: "" };
+  let env: Env = Env { outer: None, depth: 0, names: fv.captured_names, values: fv.captured_values, types: fv.captured_types, funcs: funcs, aliases: aliases, type_decls: type_decls, ret: "", heap: heap };
   let j: i32 = 0;
   while (j < fv.params.len()) {
     env = env.bind_decl(fv.params[j].name, args[j], fv.params[j].type_name);
@@ -5496,7 +5530,7 @@ function decl_type_params(decls: parser.StructDecl[], aliases: parser.TypeAlias[
   return none;
 }
 
-function call_assoc(type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_assoc(heap: interpheap.Heap, type_name: string, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let ai: i32 = assoc_index(funcs, type_name, name);
   if (ai < 0) {
     return v_err("undefined associated function `" + name + "` on `" + type_name + "`");
@@ -5505,7 +5539,7 @@ function call_assoc(type_name: string, name: string, args: Value[], funcs: parse
   if (args.len() != fd.params.len()) {
     return v_err("arity mismatch calling `" + type_name + "." + name + "`");
   }
-  let env: Env = Env { ...new_module_env(funcs, aliases, type_decls), ret: fd.ret_type };
+  let env: Env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type };
   let targs: parser.TypeRef[] = parser.parse_type_ref(type_name).args;
   let tps: string[] = fd.type_params;
   if (tps.len() == 0) {
@@ -5791,12 +5825,12 @@ function dispatch_type_name(v: Value): string {
   return value_type_name(v);
 }
 
-function map_key_index(m: VMap, k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): i32 {
+function map_key_index(heap: interpheap.Heap, m: VMap, k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): i32 {
   let by_eq: boolean = has_key_eq(k, funcs, aliases);
   let i: i32 = 0;
   while (i < m.keys.len()) {
     if (by_eq) {
-      if let VBool(b) = call_method(m.keys[i], "eq", [k], funcs, aliases, type_decls) {
+      if let VBool(b) = call_method(heap, m.keys[i], "eq", [k], funcs, aliases, type_decls) {
         if (b.v) {
           return i;
         }
@@ -5821,12 +5855,12 @@ function has_key_eq(k: Value, funcs: parser.FuncDecl[], aliases: parser.TypeAlia
   return false;
 }
 
-function call_method(recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
-  return call_method_targs(recv, "", name, args, [], funcs, aliases, type_decls);
+function call_method(heap: interpheap.Heap, recv: Value, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+  return call_method_targs(heap, recv, "", name, args, [], funcs, aliases, type_decls);
 }
 
 // .len, .bytes and .as_bytes on a string; None for any other method.
-function string_method(sv: VString, name: string, args: Value[]): Option[Value] {
+function string_method(heap: interpheap.Heap, sv: VString, name: string, args: Value[]): Option[Value] {
   if (name == "len") {
     if (args.len() != 0) {
       return Some(v_err("string.len: takes no arguments"));
@@ -5844,14 +5878,14 @@ function string_method(sv: VString, name: string, args: Value[]): Option[Value] 
       bi = bi + 1;
     }
     if (name == "as_bytes") {
-      return Some(v_view_of(bs, "u8"));
+      return Some(v_view_of(heap, bs, "u8"));
     }
-    return Some(v_arr_of(bs, "u8"));
+    return Some(v_arr_of(heap, bs, "u8"));
   }
   return None;
 }
 
-function array_with(own av: VArr, args: Value[]): Value {
+function array_with(heap: interpheap.Heap, own av: VArr, args: Value[]): Value {
   if (args.len() != 2) {
     return v_err("array.with: need 2 args");
   }
@@ -5864,10 +5898,10 @@ function array_with(own av: VArr, args: Value[]): Value {
   }
   let elem: string = av.elem;
   let items: Value[] = arr_take_els(av);
-  return v_arr_of(items.with(wi, args[1]), elem);
+  return v_arr_of(heap, items.with(wi, args[1]), elem);
 }
 
-function array_truncate(own av: VArr, args: Value[]): Value {
+function array_truncate(heap: interpheap.Heap, own av: VArr, args: Value[]): Value {
   if (args.len() != 1 || !is_i32_arg(args[0])) {
     return v_err("array.truncate: need an integer length");
   }
@@ -5882,11 +5916,11 @@ function array_truncate(own av: VArr, args: Value[]): Value {
   for i in 0..keep {
     kept = kept.append(items[i]);
   }
-  return v_arr_of(kept, elem);
+  return v_arr_of(heap, kept, elem);
 }
 
 // .len, .with, .truncate and .append on an array; None for any other method.
-function array_method(own av: VArr, name: string, args: Value[]): Option[Value] {
+function array_method(heap: interpheap.Heap, own av: VArr, name: string, args: Value[]): Option[Value] {
   if (name == "len") {
     if (args.len() != 0) {
       return Some(v_err("array.len: takes no arguments"));
@@ -5894,10 +5928,10 @@ function array_method(own av: VArr, name: string, args: Value[]): Option[Value] 
     return Some(v_int(arr_len(av)));
   }
   if (name == "with" && !av.view) {
-    return Some(array_with(av, args));
+    return Some(array_with(heap, av, args));
   }
   if (name == "truncate" && !av.view) {
-    return Some(array_truncate(av, args));
+    return Some(array_truncate(heap, av, args));
   }
   if (name == "append" && !av.view) {
     if (args.len() != 1) {
@@ -5905,34 +5939,34 @@ function array_method(own av: VArr, name: string, args: Value[]): Option[Value] 
     }
     let elem: string = av.elem;
     let items: Value[] = arr_take_els(av);
-    return Some(v_arr_of(items.append(args[0]), elem));
+    return Some(v_arr_of(heap, items.append(args[0]), elem));
   }
   return None;
 }
 
-function call_method_targs(recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_method_targs(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   match (recv) {
     VType(tv) => {
-      return call_assoc(tv.name, name, args, funcs, aliases, type_decls);
+      return call_assoc(heap, tv.name, name, args, funcs, aliases, type_decls);
     },
     VCell(uc) => {
       return cell_method(uc, name, args);
     },
     VHandle(hv) => {
       if (is_handle_method(handle_kind(hv), name)) {
-        return handle_method(hv, name, args);
+        return handle_method(heap, hv, name, args);
       }
     },
     _ => {}
   }
   match (recv) {
     VString(sv) => {
-      if let Some(r) = string_method(sv, name, args) {
+      if let Some(r) = string_method(heap, sv, name, args) {
         return r;
       }
     },
     VArr(av) => {
-      let found: Option[Value] = array_method(VArr { ...av }, name, args);
+      let found: Option[Value] = array_method(heap, VArr { ...av }, name, args);
       if let Some(r) = found {
         return r;
       }
@@ -5942,7 +5976,7 @@ function call_method_targs(recv: Value, recv_static: string, name: string, args:
         if (args.len() != 2) {
           return v_err("map.set: need 2 args");
         }
-        let i: i32 = map_key_index(m, args[0], funcs, aliases, type_decls);
+        let i: i32 = map_key_index(heap, m, args[0], funcs, aliases, type_decls);
         if (i >= 0) {
           let nvs: Value[] = [];
           let j: i32 = 0;
@@ -5962,7 +5996,7 @@ function call_method_targs(recv: Value, recv_static: string, name: string, args:
         if (args.len() != 1) {
           return v_err("map.get: need 1 arg");
         }
-        let oi: i32 = map_key_index(m, args[0], funcs, aliases, type_decls);
+        let oi: i32 = map_key_index(heap, m, args[0], funcs, aliases, type_decls);
         if (oi >= 0) {
           return v_variant("Some", [m.values[oi]]);
         }
@@ -5973,7 +6007,7 @@ function call_method_targs(recv: Value, recv_static: string, name: string, args:
         if (args.len() != 2) {
           return v_err("map.get_or: need 2 args");
         }
-        let gi: i32 = map_key_index(m, args[0], funcs, aliases, type_decls);
+        let gi: i32 = map_key_index(heap, m, args[0], funcs, aliases, type_decls);
         if (gi >= 0) {
           return m.values[gi];
         }
@@ -5983,13 +6017,13 @@ function call_method_targs(recv: Value, recv_static: string, name: string, args:
         if (args.len() != 1) {
           return v_err("map.contains: need 1 arg");
         }
-        return v_bool(map_key_index(m, args[0], funcs, aliases, type_decls) >= 0);
+        return v_bool(map_key_index(heap, m, args[0], funcs, aliases, type_decls) >= 0);
       }
       if (name == "remove") {
         if (args.len() != 1) {
           return v_err("map.remove: need 1 arg");
         }
-        let at: i32 = map_key_index(m, args[0], funcs, aliases, type_decls);
+        let at: i32 = map_key_index(heap, m, args[0], funcs, aliases, type_decls);
         let last: i32 = m.keys.len() - 1;
         let nk: Value[] = [];
         let nv: Value[] = [];
@@ -6010,10 +6044,10 @@ function call_method_targs(recv: Value, recv_static: string, name: string, args:
         return v_int(m.keys.len());
       }
       if (name == "keys") {
-        return v_arr(m.keys);
+        return v_arr(heap, m.keys);
       }
       if (name == "values") {
-        return v_arr(m.values);
+        return v_arr(heap, m.values);
       }
       if (name == "cleared") {
         return v_map_new();
@@ -6027,7 +6061,7 @@ function call_method_targs(recv: Value, recv_static: string, name: string, args:
       if (ti >= 0 && ti < tv.elements.len()) {
         match (tv.elements[ti]) {
           VFunc(_) => {
-            return call_closure(tv.elements[ti], args, funcs, aliases, type_decls);
+            return call_closure(heap, tv.elements[ti], args, funcs, aliases, type_decls);
           },
           _ => {}
         }
@@ -6035,10 +6069,10 @@ function call_method_targs(recv: Value, recv_static: string, name: string, args:
     },
     _ => {}
   }
-  return call_declared_method(recv, recv_static, name, args, type_args, funcs, aliases, type_decls);
+  return call_declared_method(heap, recv, recv_static, name, args, type_args, funcs, aliases, type_decls);
 }
 
-function call_declared_method(recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_declared_method(heap: interpheap.Heap, recv: Value, recv_static: string, name: string, args: Value[], type_args: string[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   let recv_type: string = dispatch_type_name(recv);
   if (recv_type.len() == 0) {
     return v_err("method `" + name + "`: receiver has no type name to dispatch on");
@@ -6059,7 +6093,7 @@ function call_declared_method(recv: Value, recv_static: string, name: string, ar
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling method `" + name + "`");
       }
-      let env: Env = Env { ...new_module_env(funcs, aliases, type_decls), ret: fd.ret_type };
+      let env: Env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type };
       env = bind_tyargs(env, fd, true, recv, args, type_args, "");
       env = bind_receiver_consts(env, fd.receiver_type, recv_static);
       env = env.bind(fd.receiver_name, recv);
@@ -6109,7 +6143,7 @@ function call_declared_method(recv: Value, recv_static: string, name: string, ar
         if (sv2.field_names[fi] == name) {
           match (sv2.field_values[fi]) {
             VFunc(_) => {
-              return call_closure(sv2.field_values[fi], args, funcs, aliases, type_decls);
+              return call_closure(heap, sv2.field_values[fi], args, funcs, aliases, type_decls);
             },
             _ => {}
           }
@@ -6230,15 +6264,15 @@ function byte_args(args: Value[]): u8[][] {
   return out;
 }
 
-function byte_value(b: u8[]): Value {
+function byte_value(heap: interpheap.Heap, b: u8[]): Value {
   let out: Value[] = [];
   for x in b {
     out = out.append(v_int(x as i32));
   }
-  return v_arr(out);
+  return v_arr(heap, out);
 }
 
-function call_bytes_into(args: Value[]): Value {
+function call_bytes_into(heap: interpheap.Heap, args: Value[]): Value {
   if (args.len() != 5) {
     return v_err("__bytes_into: expected 5 arguments");
   }
@@ -6255,10 +6289,10 @@ function call_bytes_into(args: Value[]): Value {
     out = out.with(at + i, bs[1][from + i]);
     i = i + 1;
   }
-  return byte_value(out);
+  return byte_value(heap, out);
 }
 
-function call_bytes_range(args: Value[]): Value {
+function call_bytes_range(heap: interpheap.Heap, args: Value[]): Value {
   if (args.len() != 3) {
     return v_err("__bytes_range: expected 3 arguments");
   }
@@ -6274,7 +6308,7 @@ function call_bytes_range(args: Value[]): Value {
     out = out.append(bs[0][i]);
     i = i + 1;
   }
-  return byte_value(out);
+  return byte_value(heap, out);
 }
 
 function aes_gcm_arity(name: string): i32 {
@@ -6296,7 +6330,7 @@ function sub_bytes(b: u8[], from: i32, n: i32): u8[] {
 }
 
 // The in-place pair over a copy of the buffer argument, as the compiled kernels leave it.
-function call_aes_gcm_into(name: string, args: Value[]): Value {
+function call_aes_gcm_into(heap: interpheap.Heap, name: string, args: Value[]): Value {
   if (args.len() != 9) {
     return v_err(name + ": expected rk, h, iv, seq, buf, aad_at, aad_n, at and n");
   }
@@ -6338,22 +6372,22 @@ function call_aes_gcm_into(name: string, args: Value[]): Value {
   } else {
     buf = buf.with(d + m, 1 as u8);
   }
-  return byte_value(buf);
+  return byte_value(heap, buf);
 }
 
-function call_aes_gcm(name: string, args: Value[]): Value {
+function call_aes_gcm(heap: interpheap.Heap, name: string, args: Value[]): Value {
   let want: i32 = aes_gcm_arity(name);
   let bs: u8[][] = byte_args(args);
   if (args.len() != want || bs.len() != want) {
     return v_err(name + ": expected " + util.i32_to_string(want) + " byte arrays");
   }
   if (want == 1) {
-    return byte_value(aesref.expand_key(bs[0]));
+    return byte_value(heap, aesref.expand_key(bs[0]));
   }
   if (name == "__ghash") {
-    return byte_value(aesref.ghash(bs[0], bs[1], bs[2]));
+    return byte_value(heap, aesref.ghash(bs[0], bs[1], bs[2]));
   }
-  return byte_value(aesref.ctr32(bs[0], bs[1], bs[2]));
+  return byte_value(heap, aesref.ctr32(bs[0], bs[1], bs[2]));
 }
 
 function crc32_cksum_byte(crc: i32, b: i32): i32 {
@@ -6413,7 +6447,7 @@ function call_crc32_array(name: string, args: Value[]): Value {
   return v_err(name + ": second arg must be an array");
 }
 
-function call_scale_f64(args: Value[]): Value {
+function call_scale_f64(heap: interpheap.Heap, args: Value[]): Value {
   if (args.len() != 2) {
     return v_err("__scale_f64: expected 2 args (xs, k)");
   }
@@ -6429,14 +6463,14 @@ function call_scale_f64(args: Value[]): Value {
         }
         sidx = sidx + 1;
       }
-      return v_arr_of(sout, "f64");
+      return v_arr_of(heap, sout, "f64");
     }
     return v_err("__scale_f64: k must be an f64");
   }
   return v_err("__scale_f64: first arg must be an array");
 }
 
-function inner_mul_values(a: Value[], b: Value[], rows: i32, extent: i32, columns: i32, init: f64): Value {
+function inner_mul_values(heap: interpheap.Heap, a: Value[], b: Value[], rows: i32, extent: i32, columns: i32, init: f64): Value {
   let m: i64 = rows as i64;
   let k: i64 = extent as i64;
   let n: i64 = columns as i64;
@@ -6445,12 +6479,12 @@ function inner_mul_values(a: Value[], b: Value[], rows: i32, extent: i32, column
     return v_err("__inner_mul_add_f64: invalid geometry");
   }
   if (rows == 0 || columns == 0) {
-    return v_arr_of([], "f64");
+    return v_arr_of(heap, [], "f64");
   }
-  return inner_mul_loop(a, b, rows, extent, columns, init);
+  return inner_mul_loop(heap, a, b, rows, extent, columns, init);
 }
 
-function inner_mul_loop(a: Value[], b: Value[], rows: i32, extent: i32, columns: i32, init: f64): Value {
+function inner_mul_loop(heap: interpheap.Heap, a: Value[], b: Value[], rows: i32, extent: i32, columns: i32, init: f64): Value {
   let out: Value[] = [];
   let row: i32 = 0;
   while (row < rows) {
@@ -6476,10 +6510,10 @@ function inner_mul_loop(a: Value[], b: Value[], rows: i32, extent: i32, columns:
     }
     row = row + 1;
   }
-  return v_arr_of(out, "f64");
+  return v_arr_of(heap, out, "f64");
 }
 
-function call_inner_mul_add_f64(args: Value[]): Value {
+function call_inner_mul_add_f64(heap: interpheap.Heap, args: Value[]): Value {
   if (args.len() != 6) {
     return v_err("__inner_mul_add_f64: expected 6 args");
   }
@@ -6489,7 +6523,7 @@ function call_inner_mul_add_f64(args: Value[]): Value {
         if let VInt(k) = args[3] {
           if let VInt(n) = args[4] {
             if let VFloat(init) = args[5] {
-              return inner_mul_values(arr_els(a), arr_els(b), m.v, k.v, n.v, init.v);
+              return inner_mul_values(heap, arr_els(a), arr_els(b), m.v, k.v, n.v, init.v);
             }
           }
         }
@@ -6499,7 +6533,7 @@ function call_inner_mul_add_f64(args: Value[]): Value {
   return v_err("__inner_mul_add_f64: invalid argument types");
 }
 
-function outer_mul_values(a: Value[], b: Value[]): Value {
+function outer_mul_values(heap: interpheap.Heap, a: Value[], b: Value[]): Value {
   if (b.len() > 0 && a.len() > 2147483647 / b.len()) {
     exit(134);
     return v_err("__outer_mul_f64: result length overflow");
@@ -6518,16 +6552,16 @@ function outer_mul_values(a: Value[], b: Value[]): Value {
       return v_err("__outer_mul_f64: elements must be f64");
     }
   }
-  return v_arr_of(out, "f64");
+  return v_arr_of(heap, out, "f64");
 }
 
-function call_outer_mul_f64(args: Value[]): Value {
+function call_outer_mul_f64(heap: interpheap.Heap, args: Value[]): Value {
   if (args.len() != 2) {
     return v_err("__outer_mul_f64: expected 2 args");
   }
   if let VArr(a) = args[0] {
     if let VArr(b) = args[1] {
-      return outer_mul_values(arr_els(a), arr_els(b));
+      return outer_mul_values(heap, arr_els(a), arr_els(b));
     }
   }
   return v_err("__outer_mul_f64: inputs must be arrays");
@@ -6917,7 +6951,7 @@ function call_buf_append(name: string, h: usize, args: Value[]): Value {
   return v_void();
 }
 
-function call_buf_read(name: string, h: usize, args: Value[]): Value {
+function call_buf_read(heap: interpheap.Heap, name: string, h: usize, args: Value[]): Value {
   if (args.len() != 1) {
     return v_err(name + ": expected 1 arg (b)");
   }
@@ -6928,7 +6962,7 @@ function call_buf_read(name: string, h: usize, args: Value[]): Value {
     return v_string(utf8.from_bytes_lossy(buf_take_bytes(h)));
   }
   if (name == "buf_take_bytes") {
-    return call_buf_take_bytes(h);
+    return call_buf_take_bytes(heap, h);
   }
   if (name == "buf_clear") {
     let dropped: u8[] = buf_take_bytes(h);
@@ -6941,8 +6975,8 @@ function call_buf_read(name: string, h: usize, args: Value[]): Value {
   return v_void();
 }
 
-function call_buf_take_bytes(h: usize): Value {
-  return byte_array_value(buf_take_bytes(h));
+function call_buf_take_bytes(heap: interpheap.Heap, h: usize): Value {
+  return byte_array_value(heap, buf_take_bytes(h));
 }
 
 function is_raw_mem_builtin(name: string): boolean {
@@ -7035,7 +7069,7 @@ function raw_mem_effect(name: string, w: i64[]): Value {
   return v_void();
 }
 
-function call_buf_builtin(name: string, args: Value[]): Value {
+function call_buf_builtin(heap: interpheap.Heap, name: string, args: Value[]): Value {
   if (name == "buf_new") {
     return call_buf_new(args);
   }
@@ -7055,7 +7089,7 @@ function call_buf_builtin(name: string, args: Value[]): Value {
   if (name == "buf_push" || name == "buf_push_byte" || name == "buf_push_u64" || name == "buf_push_decimal") {
     return call_buf_append(name, h, args);
   }
-  return call_buf_read(name, h, args);
+  return call_buf_read(heap, name, h, args);
 }
 
 function str_hash_word(s: string, at: i32, n: i32): i64 {
@@ -7084,11 +7118,11 @@ function str_hash_low32(h: i64): i32 {
   return lo as i32;
 }
 
-function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
-  return call_func_targs(name, args, [], "", funcs, aliases, type_decls);
+function call_func(heap: interpheap.Heap, name: string, args: Value[], funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+  return call_func_targs(heap, name, args, [], "", funcs, aliases, type_decls);
 }
 
-function call_func_targs(name: string, args: Value[], type_args: string[], expect: string, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
+function call_func_targs(heap: interpheap.Heap, name: string, args: Value[], type_args: string[], expect: string, funcs: parser.FuncDecl[], aliases: parser.TypeAlias[], type_decls: parser.StructDecl[]): Value {
   if (name == "print" || name == "write" || name == "eprint") {
     if (args.len() != 1) {
       return v_err(name + " takes exactly 1 argument");
@@ -7098,7 +7132,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
       VString(_) => {},
       _ => {
         let no_args: Value[] = [];
-        text_val = call_method(args[0], "to_string", no_args, funcs, aliases, type_decls);
+        text_val = call_method(heap, args[0], "to_string", no_args, funcs, aliases, type_decls);
       }
     }
     match (text_val) {
@@ -7167,7 +7201,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
       zs = zs.append(zero);
       zi = zi + 1;
     }
-    return v_arr(zs);
+    return v_arr(heap, zs);
   }
   if (name == "string_from_bytes_unchecked") {
     if (args.len() != 1) {
@@ -7237,12 +7271,12 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
     }
   }
   if (is_buf_builtin(name)) {
-    return call_buf_builtin(name, args);
+    return call_buf_builtin(heap, name, args);
   }
   if (is_raw_mem_builtin(name)) {
     return call_raw_mem_builtin(name, args);
   }
-  let rt: Value = call_runtime_intrinsic(name, args);
+  let rt: Value = call_runtime_intrinsic(heap, name, args);
   if (!is_err(rt)) {
     return rt;
   }
@@ -7282,7 +7316,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
     if (target_arch() == "wasm32") {
       return v_variant("Err", [io_error_value(Unsupported)]);
     } else {
-      return call_xattr(name, args);
+      return call_xattr(heap, name, args);
     }
   }
   if (name == "__count_byte_bytes") {
@@ -7313,10 +7347,10 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
     return call_mismatch_bytes_str(args);
   }
   if (name == "__outer_mul_f64") {
-    return call_outer_mul_f64(args);
+    return call_outer_mul_f64(heap, args);
   }
   if (name == "__inner_mul_add_f64") {
-    return call_inner_mul_add_f64(args);
+    return call_inner_mul_add_f64(heap, args);
   }
   if (name == "__ct_secret" || name == "__ct_public") {
     return v_void();
@@ -7326,28 +7360,28 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
     if (args.len() != 1 || bs.len() != 1) {
       return v_err("__bytes_owned: expected one byte array");
     }
-    return byte_value(bs[0]);
+    return byte_value(heap, bs[0]);
   }
   if (name == "__bytes_range") {
-    return call_bytes_range(args);
+    return call_bytes_range(heap, args);
   }
   if (name == "__bytes_into") {
-    return call_bytes_into(args);
+    return call_bytes_into(heap, args);
   }
   if (aes_gcm_arity(name) > 0) {
-    return call_aes_gcm(name, args);
+    return call_aes_gcm(heap, name, args);
   }
   if (name == "__aes_gcm_seal_into" || name == "__aes_gcm_open_into") {
-    return call_aes_gcm_into(name, args);
+    return call_aes_gcm_into(heap, name, args);
   }
   if (args.len() == 0 && is_sha_hw_name(name)) {
     return v_bool(false);
   }
   if (args.len() == 2 && is_sha_blocks_name(name)) {
-    return byte_value([]);
+    return byte_value(heap, []);
   }
   if (name == "__scale_f64") {
-    return call_scale_f64(args);
+    return call_scale_f64(heap, args);
   }
   if (name == "__scan_set") {
     if (args.len() != 3) {
@@ -7646,7 +7680,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
     if (args.len() != 1) {
       return v_err("cell_new takes exactly 1 argument");
     }
-    return cell_value(args[0]);
+    return cell_value(heap, args[0]);
   }
   if (name == "f64_bits") {
     if (args.len() != 1 || !is_float_like(args[0])) {
@@ -7679,7 +7713,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
       if (args.len() != fd.params.len()) {
         return v_err("arity mismatch calling `" + name + "`");
       }
-      let env: Env = Env { ...new_module_env(funcs, aliases, type_decls), ret: fd.ret_type };
+      let env: Env = Env { ...new_module_env(heap, funcs, aliases, type_decls), ret: fd.ret_type };
       let no_recv: Value = v_absent();
       env = bind_tyargs(env, fd, false, no_recv, args, type_args, expect);
       let j: i32 = 0;
@@ -7695,7 +7729,7 @@ function call_func_targs(name: string, args: Value[], type_args: string[], expec
     }
     i = i + 1;
   }
-  return call_host(name, args);
+  return call_host(heap, name, args);
 }
 
 function value_eq(a: Value, b: Value): boolean {
@@ -8330,7 +8364,7 @@ function in_place_array_write(a: ast.StmtAssign, env: Env): boolean {
   let VArr(av) = value else {
     return false;
   };
-  if (av.view || av.store.get().len() > 0) {
+  if (av.view || interpheap.get(av.store).words.len() > 0) {
     return false;
   }
   let (fd, known) = call_target("with", true, false, value, env);
@@ -8383,13 +8417,14 @@ function write_array_in_place(a: ast.StmtAssign, own env: Env): StepResult {
     args = args.append(vs);
   }
   let cur = match (env.raw_value(a.target)) { Some(v) => v, None => { return step_stop(env, v_err("in-place write: missing binding")); } };
+  let heap = env.heap;
   let released = env.update(a.target, v_int(0));
   let i: i32 = 0;
   while (i < names.len()) {
     let VArr(av) = cur else {
       return step_stop(released, v_err("in-place write: not an array"));
     };
-    let Some(out) = array_method(VArr { ...av }, names[i], args[i]) else {
+    let Some(out) = array_method(heap, VArr { ...av }, names[i], args[i]) else {
       return step_stop(released, v_err("in-place write: not an array method"));
     };
     if (is_err(out)) {
@@ -8544,7 +8579,8 @@ function eval_block(body: ast.Stmt[], own env: Env): StepResult {
 }
 
 function eval_program(prog: ast.Stmt[]): Value {
-  let env: Env = new_env();
+  let heap = interpheap.create();
+  let env: Env = new_env(heap);
   let preassigned: string[] = body_assign_names(prog, []);
   let i: i32 = 0;
   while (i < prog.len()) {
@@ -8589,6 +8625,7 @@ pub function eval_module(raw_mod: parser.Module): Value {
 }
 
 pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
+  let heap = interpheap.create();
   set_args(argv);
   let mod: parser.Module = lowered(raw_mod);
   let all_variants: parser.StructDecl[] = module_type_decls(mod.structs);
@@ -8597,11 +8634,11 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
   while (i < mod.funcs.len()) {
     if (mod.funcs[i].name == "main") {
       let empty_args: Value[] = [];
-      return call_func("main", empty_args, mod.funcs, all_aliases, all_variants);
+      return call_func(heap, "main", empty_args, mod.funcs, all_aliases, all_variants);
     }
     i = i + 1;
   }
-  let env: Env = new_module_env(mod.funcs, all_aliases, all_variants);
+  let env: Env = new_module_env(heap, mod.funcs, all_aliases, all_variants);
   let mreassigned: string[] = body_assign_names(mod.top_stmts, []);
   let j: i32 = 0;
   while (j < mod.top_stmts.len()) {
@@ -8619,8 +8656,9 @@ pub function eval_module_argv(raw_mod: parser.Module, argv: string[]): Value {
 pub struct Session { decls: parser.Module, env: Env }
 
 pub function new_session(): Session {
+  let heap = interpheap.create();
   set_args(["-"]);
-  return Session { decls: parser.parse_module(lexer.tokenize("")), env: new_module_env([], [], module_type_decls([])) };
+  return Session { decls: parser.parse_module(lexer.tokenize("")), env: new_module_env(heap, [], [], module_type_decls([])) };
 }
 
 function lowered(raw: parser.Module): parser.Module {
@@ -8728,7 +8766,7 @@ pub function (s: Session) show(v: Value): string {
     return value_text(v);
   }
   if (method_ret_type(s.env.funcs, value_type_name(v), "to_string") == "string") {
-    match (call_method(v, "to_string", [], s.env.funcs, s.env.aliases, s.env.type_decls)) {
+    match (call_method(s.env.heap, v, "to_string", [], s.env.funcs, s.env.aliases, s.env.type_decls)) {
       VString(t) => {
         let text: string = t.v;
         return text;

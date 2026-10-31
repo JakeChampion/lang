@@ -1,0 +1,134 @@
+import "./interpheap" as heap;
+import "std/i32";
+
+function require(ok: boolean): void {
+  if (!ok) {
+    print("heap module check failed");
+    exit(1);
+  }
+}
+
+@noinline
+function request(h: heap.Heap, n: i32): void {
+  let value = heap.allocate(h, n.to_string(), [n as i64], []);
+  let alias = value;
+  let payload = heap.get(alias);
+  require(payload.text == n.to_string() && payload.words[0] == n as i64);
+}
+
+@noinline
+function read(h: heap.Heap, r: heap.Ref): void {
+  match (heap.retain(h, r)) {
+    Some(value) => {
+      require(heap.get(value).text == "held");
+    },
+    None => {
+      require(false);
+    }
+  }
+}
+
+@noinline
+function repeated_reads(h: heap.Heap, rounds: i32): void {
+  let value = heap.allocate(h, "held", [], []);
+  let r = heap.reference(value);
+  for _ in 0..rounds {
+    read(h, r);
+  }
+  require(heap.get(value).text == "held");
+}
+
+@noinline
+function parent(h: heap.Heap): heap.Root {
+  let child = heap.allocate(h, "child", [7i64], []);
+  return heap.allocate(h, "parent", [], [child]);
+}
+
+@noinline
+function graph(h: heap.Heap, rounds: i32): void {
+  let value = parent(h);
+  heap.collect(h);
+  for i in 0..rounds {
+    request(h, i);
+  }
+  let children = heap.children(value);
+  require(children.len() == 1 && heap.get(children[0]).text == "child");
+  require(heap.get(children[0]).words[0] == 7i64);
+  heap.replace(children[0], "updated", [9i64], []);
+  require(heap.get(heap.children(value)[0]).text == "updated");
+  require(heap.get(heap.children(value)[0]).words[0] == 9i64);
+}
+
+@noinline
+function cycle(h: heap.Heap): void {
+  let a = heap.allocate(h, "a", [], []);
+  let b = heap.allocate(h, "b", [], [a]);
+  heap.replace(a, "a", [], [b]);
+  require(heap.get(heap.children(a)[0]).text == "b");
+}
+
+@noinline
+function stale(h: heap.Heap): heap.Ref {
+  return heap.reference(heap.allocate(h, "old", [], []));
+}
+
+@noinline
+function escaped(): heap.Root {
+  let h = heap.create();
+  return parent(h);
+}
+
+@noinline
+function escaped_graph(): void {
+  let value = escaped();
+  require(heap.get(value).text == "parent");
+  let children = heap.children(value);
+  require(heap.get(children[0]).text == "child");
+}
+
+function empty(h: heap.Heap): void {
+  heap.collect(h);
+  let stats = heap.stats(h);
+  require(stats.live == 0 && stats.text_bytes == 0i64 && stats.words == 0i64 && stats.edges == 0i64);
+}
+
+function main(): i32 {
+  let rounds: i32 = 8;
+  if let Some(value) = env("FERN_HEAP_PILOT_ROUNDS") {
+    match (i32.parse_i32(value)) {
+      Ok(n) => {
+        rounds = n;
+      },
+      Err(_) => {
+        return 2;
+      }
+    }
+  }
+  require(rounds > 0);
+  let h = heap.create();
+  for i in 0..rounds {
+    request(h, i);
+  }
+  empty(h);
+  require(heap.stats(h).slots == 1);
+  repeated_reads(h, rounds);
+  empty(h);
+  require(heap.stats(h).slots == 1);
+  let old = stale(h);
+  request(h, 99);
+  match (heap.retain(h, old)) {
+    Some(_) => {
+      require(false);
+    },
+    None => {}
+  }
+  graph(h, rounds);
+  empty(h);
+  require(heap.stats(h).slots == 4);
+  cycle(h);
+  empty(h);
+  require(heap.stats(h).slots == 4);
+  escaped_graph();
+  print(f"heap module rounds={rounds} slots={heap.stats(h).slots} pass");
+  return 0;
+}

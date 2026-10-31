@@ -1,0 +1,23 @@
+{
+  "control_commit": "09c9786fcc71db4ea344d8739f4cb45106686982",
+  "compiler_sha256": "4cf35fa78f1c64790a7197d465125e1ea4338f0437197b097cca2cbae961ef96",
+  "candidate_blobs": {
+    "compiler/interp.fern": "10df08a82404c1cb5c9e91e7ac66b532b7544b50",
+    "compiler/interpheap.fern": "5fab4109e191132149b172333c422f79dd56fae2",
+    "compiler/semsource.fern": "e9704189f8611eea0a443af55b4f6c6b8eb123c0",
+    "compiler/ssaunits.fern": "426f71f7941c654b539f021cf7e6ecf63fdb10ef"
+  },
+  "control_note": "Both builds use the same compiler and stdlib. The control restores all changed compiler files from the control commit and removes new compiler files. It includes the earlier Env ownership repair.",
+  "rows": [
+    {"artifact": "interpreter", "target": "arm64-darwin", "control_bytes": 2930497, "candidate_bytes": 2963697, "change_bytes": 33200},
+    {"artifact": "interpreter", "target": "wasm32-wasi", "control_bytes": 1730551, "candidate_bytes": 1744642, "change_bytes": 14091},
+    {"artifact": "compiler", "target": "x86-64-linux", "control_bytes": 15713728, "candidate_bytes": 15743088, "change_bytes": 29360}
+  ],
+  "self_tests": [
+    {"target": "arm64-darwin", "allocations": 75735, "frees": 75735, "live_bytes": 0, "verifier_skips": 0},
+    {"target": "wasm32-wasi", "allocations": 83054, "frees": 83054, "live_bytes": 0, "verifier_skips": 0}
+  ],
+  "compiler_image_verification": {"verified_functions": 8419, "modelled_functions": 8419, "skipped_functions": 0},
+  "compiler_image_baseline_bytes": 15881456,
+  "selfhost_static_metrics": {"measured": 117, "strict_comparator": "pass", "baseline_changed": false}
+}

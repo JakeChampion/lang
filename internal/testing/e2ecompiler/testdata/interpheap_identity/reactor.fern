@@ -1,0 +1,34 @@
+struct Poller { events: i32[][] }
+
+function main(): i32 {
+  unsafe {
+    let address: u8[] = [127u8, 0u8, 0u8, 1u8];
+    let listener: i32 = tcp_listen_with(address, 0, 16, false);
+    assert(listener >= 0);
+    let sender: i32 = tcp_connect_with(address, tcp_local_port(listener), false);
+    assert(sender >= 0);
+    let receiver: i32 = tcp_accept(listener);
+    assert(receiver >= 0);
+    let reactor: i32 = reactor_new();
+    assert(reactor >= 0 && reactor_ctl(reactor, 1, receiver, 1) == 0);
+    assert(tcp_send_bytes(sender, [65u8]) == 1);
+    let events: i32[] = __alloc_i32(4);
+    let slot: Cell[i32[]] = cell_new(events);
+    let captured: i32[] = events;
+    let read = (): i32 => captured[0];
+    assert(reactor_wait(reactor, events, 1000) == 1);
+    assert(slot.get()[0] == receiver && slot.get()[1] == 1 && read() == receiver);
+    let poller: Cell[Poller] = cell_new(Poller { events: [events] });
+    assert(reactor_wait(reactor, poller.get().events[0], 1000) == 1);
+    assert(events[0] == receiver && poller.get().events[0][1] == 1);
+    captured = __alloc_i32(4);
+    slot.set(captured);
+    assert(read() == 0);
+    assert(reactor_wait(reactor, slot.get(), 1000) == 1);
+    assert(read() == receiver && captured[1] == 1);
+    assert(reactor_ctl(reactor, 3, 0, 0) == 0);
+    assert(tcp_close(sender) == 0 && tcp_close(receiver) == 0 && tcp_close(listener) == 0);
+    print("managed interpreter reactor identity pass");
+    return 0;
+  }
+}

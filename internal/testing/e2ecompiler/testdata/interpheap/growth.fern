@@ -1,0 +1,50 @@
+import "./interpheap" as heap;
+import "std/i32";
+
+function require(ok: boolean): void {
+  if (!ok) {
+    print("heap growth check failed");
+    exit(1);
+  }
+}
+
+@noinline
+function graph(h: heap.Heap, count: i32): void {
+  let chain: heap.Root[] = [];
+  for i in 0..count {
+    let node = heap.allocate(h, "node", [i as i64], chain);
+    chain = [node];
+  }
+  heap.collect(h);
+  require(heap.stats(h).live == count);
+  let visited: i32 = 0;
+  while (chain.len() > 0) {
+    require(heap.get(chain[0]).words[0] == (count - visited - 1) as i64);
+    chain = heap.children(chain[0]);
+    visited = visited + 1;
+  }
+  require(visited == count);
+}
+
+function main(): i32 {
+  let count: i32 = 8;
+  if let Some(value) = env("FERN_HEAP_PILOT_ROUNDS") {
+    match (i32.parse_i32(value)) {
+      Ok(n) => {
+        count = n;
+      },
+      Err(_) => {
+        return 2;
+      }
+    }
+  }
+  require(count > 0);
+  let h = heap.create();
+  graph(h, count);
+  heap.collect(h);
+  let stats = heap.stats(h);
+  require(stats.slots == count && stats.live == 0 && stats.text_bytes == 0i64 && stats.words == 0i64 && stats.edges == 0i64);
+  require(stats.scanned <= count as i64 * 3i64);
+  print(f"heap growth nodes={count} slots={stats.slots} collections={stats.collections} scanned={stats.scanned} pass");
+  return 0;
+}

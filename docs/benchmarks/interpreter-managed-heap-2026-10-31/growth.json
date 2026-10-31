@@ -1,0 +1,130 @@
+[
+  {
+    "probe": "module",
+    "target": "native",
+    "count": 8,
+    "allocations": 199,
+    "frees": 199,
+    "live_bytes": 0
+  },
+  {
+    "probe": "module",
+    "target": "native",
+    "count": 4096,
+    "allocations": 85313,
+    "frees": 85313,
+    "live_bytes": 0
+  },
+  {
+    "probe": "module",
+    "target": "native",
+    "count": 100000,
+    "allocations": 2099297,
+    "frees": 2099297,
+    "live_bytes": 0
+  },
+  {
+    "probe": "module",
+    "target": "wasi",
+    "count": 8,
+    "allocations": 201,
+    "frees": 201,
+    "live_bytes": 0
+  },
+  {
+    "probe": "module",
+    "target": "wasi",
+    "count": 4096,
+    "allocations": 85315,
+    "frees": 85315,
+    "live_bytes": 0
+  },
+  {
+    "probe": "module",
+    "target": "wasi",
+    "count": 100000,
+    "allocations": 2099299,
+    "frees": 2099299,
+    "live_bytes": 0
+  },
+  {
+    "probe": "growth",
+    "target": "native",
+    "count": 8,
+    "allocations": 110,
+    "frees": 110,
+    "live_bytes": 0,
+    "collections": 5,
+    "scanned": 23
+  },
+  {
+    "probe": "growth",
+    "target": "native",
+    "count": 16384,
+    "allocations": 164095,
+    "frees": 164095,
+    "live_bytes": 0,
+    "collections": 16,
+    "scanned": 49151
+  },
+  {
+    "probe": "growth",
+    "target": "wasi",
+    "count": 8,
+    "allocations": 113,
+    "frees": 113,
+    "live_bytes": 0,
+    "collections": 5,
+    "scanned": 23
+  },
+  {
+    "probe": "growth",
+    "target": "wasi",
+    "count": 16384,
+    "allocations": 164097,
+    "frees": 164097,
+    "live_bytes": 0,
+    "collections": 16,
+    "scanned": 49151
+  },
+  {
+    "probe": "churn",
+    "target": "native",
+    "count": 8,
+    "allocations": 311,
+    "frees": 311,
+    "live_bytes": 0,
+    "collections": 9,
+    "scanned": 95
+  },
+  {
+    "probe": "churn",
+    "target": "native",
+    "count": 16384,
+    "allocations": 524656,
+    "frees": 524656,
+    "live_bytes": 0,
+    "collections": 20,
+    "scanned": 196607
+  },
+  {
+    "probe": "churn",
+    "target": "wasi",
+    "count": 8,
+    "allocations": 314,
+    "frees": 314,
+    "live_bytes": 0,
+    "collections": 9,
+    "scanned": 95
+  },
+  {
+    "probe": "churn",
+    "target": "wasi",
+    "count": 16384,
+    "allocations": 524658,
+    "frees": 524658,
+    "live_bytes": 0,
+    "collections": 20,
+    "scanned": 196607
+  }
+]

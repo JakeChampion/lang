@@ -1,0 +1,29 @@
+[
+  {
+    "rounds": 8,
+    "slots": 6,
+    "live": 1,
+    "collections": 6,
+    "allocations": 3363,
+    "frees": 3363,
+    "live_bytes": 0
+  },
+  {
+    "rounds": 4096,
+    "slots": 6,
+    "live": 1,
+    "collections": 1368,
+    "allocations": 612475,
+    "frees": 612475,
+    "live_bytes": 0
+  },
+  {
+    "rounds": 100000,
+    "slots": 6,
+    "live": 1,
+    "collections": 33336,
+    "allocations": 14902171,
+    "frees": 14902171,
+    "live_bytes": 0
+  }
+]
