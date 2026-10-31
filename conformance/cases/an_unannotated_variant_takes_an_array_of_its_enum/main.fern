@@ -1,0 +1,22 @@
+import "./tree";
+
+function main(): i32 {
+  let inline = tree.Node([tree.Leaf(1), tree.Leaf(2)]);
+  if (inline.count() != 2) {
+    return 1;
+  }
+  let kids = [tree.Leaf("a")];
+  let named = tree.Node(kids);
+  if (named.count() != 1) {
+    return 2;
+  }
+  let nested = tree.Node([tree.Node([tree.Leaf(1)]), tree.Leaf(2)]);
+  if (nested.count() != 2) {
+    return 3;
+  }
+  let group = tree.Group([tree.Pair("x", 1), tree.Pair("y", 2)]);
+  if (group.size() != 2) {
+    return 4;
+  }
+  return 0;
+}
