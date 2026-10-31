@@ -557,13 +557,15 @@ function module_helpers(built: semsource.Built): ssarc.Helpers {
   }
   let envs: ssasem.EnvRow[] = [];
   let dyns: ssasem.EnvRow[] = [];
+  let map_module: boolean = false;
   for p in util.append_all(built.decls, built.instances) {
     envs = helper_rows(envs, p.func.envs);
     dyns = helper_rows(dyns, p.func.dyns);
+    map_module = map_module || p.func.map_module;
   }
   let f = ssasem.Func {
     ...built.decls[0].func, records: built.records, enums: built.enums,
-    envs: envs, dyns: dyns, finalizers: built.finalizers,
+    envs: envs, dyns: dyns, finalizers: built.finalizers, map_module: map_module,
   };
   return ssarc.with_drop_helpers(ssarc.no_helpers(), f);
 }
