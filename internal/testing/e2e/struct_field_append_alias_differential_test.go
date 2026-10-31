@@ -12,7 +12,7 @@ func TestStructFieldAppendAliasDifferential(t *testing.T) {
 		{"generic_box_cow_shared", `import "std/i32";
 struct GBox[T] { xs: T[], }
 function gbox_new[T](): GBox[T] { return GBox { xs: [] }; }
-pub function (b: GBox[T]) push[T](x: T): GBox[T] { let ys: T[] = b.xs.append(x); return GBox { xs: ys }; }
+pub function (b: GBox[T]) push(x: T): GBox[T] { let ys: T[] = b.xs.append(x); return GBox { xs: ys }; }
 pub function (b: GBox[T]) size(): i32 { return b.xs.len(); }
 function main(): i32 {
     let a: GBox[i32] = gbox_new();

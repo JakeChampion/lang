@@ -3048,7 +3048,7 @@ impl[T: Display] Display for Box[T] {
 
 func TestParametricImplMethodOwnTypeParamsRejected(t *testing.T) {
 	if _, err := Parse(`trait T { function f(self: Self): void; }
-impl[A] T for Box[A] { function [B] (self: Self) f(): void {} }`); err == nil {
+impl[A] T for Box[A] { function f[B](self: Self): void {} }`); err == nil {
 		t.Error("impl-method with its own type params inside a parametric impl should be a parse error")
 	}
 }
