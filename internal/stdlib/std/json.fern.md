@@ -2750,7 +2750,7 @@ impl cmp.Eq for JsonValue {
       JArray(xs) => {
         match (other) {
           JArray(ys) => {
-            return (xs == ys);
+            return xs == ys;
           },
           _ => {
             return false;
