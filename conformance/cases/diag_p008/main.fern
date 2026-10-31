@@ -1,0 +1,12 @@
+// A function's type parameters come after its name. The list before the
+// name is refused: write `function (o: Opt[T]) map[U](...)`.
+
+enum Opt[T] { Some(T), None }
+
+function [U] (o: Opt[T]) map(f: (T) => U): Opt[U] {
+    return None;
+}
+
+function main(): i32 {
+    return 0;
+}
