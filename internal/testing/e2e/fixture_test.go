@@ -36,7 +36,7 @@ type fixtureSpec struct {
 	hasHTTP    bool
 }
 
-var allBackends = []string{"interp", "x86_64", "arm64", "wasm"}
+var allBackends = []string{"interp", "x86_64", "arm64", "arm64_android", "arm64_darwin", "wasm", "wasm_component", "wasi_http"}
 
 func (f *fixtureSpec) rejectionCase() bool { return f.compileError || f.loweringError }
 

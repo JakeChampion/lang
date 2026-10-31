@@ -1,1 +1,1 @@
-wasm
+wasm wasm_component wasi_http
