@@ -1,0 +1,24 @@
+{
+  "host": "arm64-darwin",
+  "control_commit": "31cdefec4ca005bf0c7db3a6dad8b1bc0b983616",
+  "control_interp_blob": "395c93f6424245bac9fb5fe993a72ee25799df85",
+  "candidate_interp_blob": "6f7f4d2fdb386701bab62d65336df440c3726059",
+  "compiler_sha256": "7d573e7f4206a227dc2e4c47baf442f9b89610ac66f6ce5e4d578af300f594d3",
+  "compiler_source_pr": 13959,
+  "compiler_source_head": "1cef3e6ec98eb6e4f0719b887bfed648fe0b1de4",
+  "timing_note": "Single process durations include startup and concurrent validation. The first scale checks the complete pipeline. These observations establish regression behavior, not stable throughput.",
+  "fill": [
+    {"elements": 8, "control_ns": 218986208, "candidate_ns": 277489250},
+    {"elements": 20000, "control_ns": 2478254292, "candidate_ns": 58299500},
+    {"elements": 80000, "control_ns": 47774998000, "candidate_ns": 180738417}
+  ],
+  "size": [
+    {"artifact": "interpreter", "target": "arm64-darwin", "control_bytes": 2930497, "candidate_bytes": 2930497},
+    {"artifact": "interpreter", "target": "wasm32-wasi", "control_bytes": 1723979, "candidate_bytes": 1730551},
+    {"artifact": "compiler", "target": "x86-64-linux", "control_bytes": 15701376, "candidate_bytes": 15713664}
+  ],
+  "self_tests": [
+    {"target": "arm64-darwin", "allocations": 75303, "frees": 75303, "live_bytes": 0},
+    {"target": "wasm32-wasi", "allocations": 82622, "frees": 82622, "live_bytes": 0}
+  ]
+}
