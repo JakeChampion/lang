@@ -214,7 +214,7 @@ try {
     .getByRole("button", { name: "Make something", exact: true })
     .click();
   assert.equal(await page.locator('.example[href="/uxn/"]:visible').count(), 1);
-  assert.equal(await page.locator(".example:visible").count(), 12);
+  assert.equal(await page.locator(".example:visible").count(), 13);
   await page.goto(base + "/_src/showcase/uxn.fern");
   assert.ok(
     await page

@@ -1293,7 +1293,8 @@ func rewriteType(t ast.Type, info *checker.Info, into map[instKey][]ast.Type) as
 			return ast.StructType{Name: x.Name, Args: args}
 		}
 		mang := ast.MangleInst(x.Name, args)
-		into[instKey{name: x.Name, mang: mang}] = args
+		// Implementation bounds need the original arguments before nominal types become concrete names.
+		into[instKey{name: x.Name, mang: mang}] = x.Args
 		return ast.StructType{Name: mang}
 	case ast.EnumType:
 		if len(x.Args) == 0 {
@@ -1311,7 +1312,7 @@ func rewriteType(t ast.Type, info *checker.Info, into map[instKey][]ast.Type) as
 		}
 		if ed := genericEnum(info, x.Name); ed != nil && enumNeedsClone(ed, info) {
 			mang := ast.MangleInst(x.Name, args)
-			into[instKey{name: x.Name, mang: mang}] = args
+			into[instKey{name: x.Name, mang: mang}] = x.Args
 			return ast.EnumType{Name: mang}
 		}
 		return ast.EnumType{Name: x.Name, Args: args}
