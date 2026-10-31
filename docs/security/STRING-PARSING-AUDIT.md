@@ -9,7 +9,7 @@ The string representation decisions are in `docs/STR-VIEW-CONTRACT.md`, and the 
 | Surface | Rule |
 |---|---|
 | String bytes | A string is UTF-8 with byte indices. A view keeps its storage alive, and an update to the owner copies for the view. |
-| UTF-8 at the boundary | `read_file` validates the file and answers `InvalidUtf8`, and `std/utf8.from_bytes` validates bytes and answers `None`. `string_from_bytes_unchecked` is the only way to hold invalid bytes, and its name says so. |
+| UTF-8 at the boundary | `read_file` validates the file and answers `InvalidUtf8`, and `std/utf8.from_bytes` validates bytes and answers `Err(Utf8Error)` with the offset of the first bad byte. `string_from_bytes_unchecked` is the only way to hold invalid bytes, and its name says so. |
 | Length | A string or array length is an `i32`, and a box holds at most 2^28 - 1 words, so a concatenation or a repeat past the ceiling aborts with the allocation size cause ([ARITHMETIC-AUDIT.md](ARITHMETIC-AUDIT.md)). |
 | Number parsing | Every parser answers `OutOfRange` above its type's range, `InvalidDigit(offset)` for a bad byte, and `EmptyInput` for nothing. There is no trim and no digit separator. |
 | JSON | The parser refuses a document nested deeper than 128 arrays or objects with a `JsonError`, so a hostile document cannot exhaust the stack. |

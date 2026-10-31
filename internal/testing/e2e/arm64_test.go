@@ -7025,11 +7025,11 @@ function main(): i32 {
     if ((4096).to_hex() != "1000") { return 12; }
 
     // parse_bool
-    match ("true".parse_bool()) { Some(b) => { if (!b) { return 13; } }, None => { return 14; }, }
-    match ("false".parse_bool()) { Some(b) => { if (b) { return 15; } }, None => { return 16; }, }
-    match ("1".parse_bool()) { Some(b) => { if (!b) { return 17; } }, None => { return 18; }, }
-    match ("yes".parse_bool()) { Some(_) => { return 19; }, None => { } }
-    match ("TRUE".parse_bool()) { Some(_) => { return 20; }, None => { } }
+    match ("true".parse_bool()) { Ok(b) => { if (!b) { return 13; } }, Err(_) => { return 14; }, }
+    match ("false".parse_bool()) { Ok(b) => { if (b) { return 15; } }, Err(_) => { return 16; }, }
+    match ("1".parse_bool()) { Ok(b) => { if (!b) { return 17; } }, Err(_) => { return 18; }, }
+    match ("yes".parse_bool()) { Ok(_) => { return 19; }, Err(_) => { } }
+    match ("TRUE".parse_bool()) { Ok(_) => { return 20; }, Err(_) => { } }
 
     // HTTP method classifiers
     if (!"GET".is_http_safe_method()) { return 21; }
