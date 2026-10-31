@@ -1161,7 +1161,7 @@ function main(): i32 {
 	{name: "a-callback-slot-keeps-its-instantiation", atLeast: 5, want: "3|big/lam\n", src: `
 struct Slot[T] { v: T }
 
-function (s: Slot[T]) through[T, U](f: (Slot[T]) => Slot[U]): Slot[U] {
+function (s: Slot[T]) through[U](f: (Slot[T]) => Slot[U]): Slot[U] {
     return f(s);
 }
 
@@ -2842,7 +2842,7 @@ function main(): i32 {
 `},
 	{name: "generic-struct-method-redeclares-receiver-vars", atLeast: 2, want: "27|", src: `
 struct Pair[T] { a: T, b: T }
-function (p: Pair[T]) put[T](v: T): Pair[T] { return Pair { a: p.b, b: v }; }
+function (p: Pair[T]) put(v: T): Pair[T] { return Pair { a: p.b, b: v }; }
 function main(): i32 {
     let p: Pair[i32] = Pair { a: 1, b: 2 };
     p = p.put(7);

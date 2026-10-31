@@ -93,7 +93,7 @@ function main(): i32 {
     return r;
 }`},
 	{"opt-transpose", `
-pub function (o: Option[Result[T, E]]) transpose[T, E](): Result[Option[T], E] {
+pub function (o: Option[Result[T, E]]) transpose(): Result[Option[T], E] {
     match (o) {
         Some(r) => { match (r) { Ok(x) => { return Ok(Some(x)); }, Err(e) => { return Err(e); } } },
         None => { return Ok(None); }
@@ -110,7 +110,7 @@ function main(): i32 {
     return r;                                  // 114
 }`},
 	{"res-transpose", `
-pub function (r: Result[Option[T], E]) transpose[T, E](): Option[Result[T, E]] {
+pub function (r: Result[Option[T], E]) transpose(): Option[Result[T, E]] {
     match (r) {
         Ok(inner) => { match (inner) { Some(x) => { return Some(Ok(x)); }, None => { return None; } } },
         Err(e) => { return Some(Err(e)); }

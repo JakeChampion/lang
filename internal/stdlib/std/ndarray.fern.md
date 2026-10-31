@@ -48,7 +48,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<9 function addr_of[T](a: NdArray[T], idx: i32[]): i32>>
 
-<<10 pub function (a: NdArray[T]) map[T, U](f: (T)>>
+<<10 pub function (a: NdArray[T]) map[U](f: (T)>>
 
 <<11 function packed_map[T, U](data: T[], f: (T)>>
 
@@ -56,19 +56,19 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<13 function packed_zip[T, U, V](x: T[], y: U[], f: (T, U)>>
 
-<<14 pub function (a: NdArray[T]) outer[T, U, V](b: NdArray[U], f: (T, U)>>
+<<14 pub function (a: NdArray[T]) outer[U, V](b: NdArray[U], f: (T, U)>>
 
 <<15 function packed_outer[T, U, V](a: T[], b: U[], shape: i32[], f: (T, U)>>
 
-<<16 pub function (a: NdArray[T]) inner[T, A](b: NdArray[T], init: A, mul: (T, T)>>
+<<16 pub function (a: NdArray[T]) inner[A](b: NdArray[T], init: A, mul: (T, T)>>
 
 <<17 function inner_shape(a: i32[], b: i32[]): i32[]>>
 
-<<18 pub function (a: NdArray[T]) fold_all[T, A](init: A, f: (A, T)>>
+<<18 pub function (a: NdArray[T]) fold_all[A](init: A, f: (A, T)>>
 
 <<19 function packed_fold[T, A](data: T[], init: A, f: (A, T)>>
 
-<<20 pub function (a: NdArray[T]) reduce_axis[T, A](axis: i32, init: A, f: (A, T)>>
+<<20 pub function (a: NdArray[T]) reduce_axis[A](axis: i32, init: A, f: (A, T)>>
 
 <<21 function copy_flat[T](a: NdArray[T]): T[]>>
 
@@ -373,11 +373,11 @@ function zeros(rank: i32): i32[] {
 }
 ```
 
-### `10 pub function (a: NdArray[T]) map[T, U](f: (T)`
+### `10 pub function (a: NdArray[T]) map[U](f: (T)`
 
 ```fern
-<<10 pub function (a: NdArray[T]) map[T, U](f: (T)>>=
-pub function (a: NdArray[T]) map[T, U](f: (T) => U): NdArray[U] {
+<<10 pub function (a: NdArray[T]) map[U](f: (T)>>=
+pub function (a: NdArray[T]) map[U](f: (T) => U): NdArray[U] {
   if (a.is_packed()) {
     return from_flat(packed_map(a.data, f), a.shape);
   }
@@ -478,7 +478,7 @@ pub function (a: NdArray[T]) broadcast_to(shape: i32[]): NdArray[T] {
   return NdArray { data: a.data, shape: shape, strides: strides, offset: a.offset };
 }
 
-pub function (a: NdArray[T]) zip_with[T, U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
+pub function (a: NdArray[T]) zip_with[U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
   let shape: i32[] = broadcast_shape(a.shape, b.shape);
   let x: NdArray[T] = a;
   let y: NdArray[U] = b;
@@ -520,11 +520,11 @@ function packed_zip[T, U, V](x: T[], y: U[], f: (T, U) => V): V[] {
 }
 ```
 
-### `14 pub function (a: NdArray[T]) outer[T, U, V](b: NdArray[U], f: (T, U)`
+### `14 pub function (a: NdArray[T]) outer[U, V](b: NdArray[U], f: (T, U)`
 
 ```fern
-<<14 pub function (a: NdArray[T]) outer[T, U, V](b: NdArray[U], f: (T, U)>>=
-pub function (a: NdArray[T]) outer[T, U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
+<<14 pub function (a: NdArray[T]) outer[U, V](b: NdArray[U], f: (T, U)>>=
+pub function (a: NdArray[T]) outer[U, V](b: NdArray[U], f: (T, U) => V): NdArray[V] {
   let shape: i32[] = join(a.shape, b.shape);
   check_shape(shape);
   if (a.is_packed() && b.is_packed()) {
@@ -595,11 +595,11 @@ function base_of[T](a: NdArray[T], idx: i32[], idx_from: i32, axis_from: i32, co
 }
 ```
 
-### `16 pub function (a: NdArray[T]) inner[T, A](b: NdArray[T], init: A, mul: (T, T)`
+### `16 pub function (a: NdArray[T]) inner[A](b: NdArray[T], init: A, mul: (T, T)`
 
 ```fern
-<<16 pub function (a: NdArray[T]) inner[T, A](b: NdArray[T], init: A, mul: (T, T)>>=
-pub function (a: NdArray[T]) inner[T, A](b: NdArray[T], init: A, mul: (T, T) => A, add: (A, A) => A): NdArray[A] {
+<<16 pub function (a: NdArray[T]) inner[A](b: NdArray[T], init: A, mul: (T, T)>>=
+pub function (a: NdArray[T]) inner[A](b: NdArray[T], init: A, mul: (T, T) => A, add: (A, A) => A): NdArray[A] {
   let ra: i32 = a.shape.len();
   let rb: i32 = b.shape.len();
   let shape: i32[] = inner_shape(a.shape, b.shape);
@@ -676,11 +676,11 @@ function packed_inner[T, A](xs: T[], ys: T[], rows: i32, extent: i32, columns: i
 }
 ```
 
-### `18 pub function (a: NdArray[T]) fold_all[T, A](init: A, f: (A, T)`
+### `18 pub function (a: NdArray[T]) fold_all[A](init: A, f: (A, T)`
 
 ```fern
-<<18 pub function (a: NdArray[T]) fold_all[T, A](init: A, f: (A, T)>>=
-pub function (a: NdArray[T]) fold_all[T, A](init: A, f: (A, T) => A): A {
+<<18 pub function (a: NdArray[T]) fold_all[A](init: A, f: (A, T)>>=
+pub function (a: NdArray[T]) fold_all[A](init: A, f: (A, T) => A): A {
   if (a.is_packed()) {
     return packed_fold(a.data, init, f);
   }
@@ -816,11 +816,11 @@ function packed_scan[T, A](data: T[], outer: i32, extent: i32, inner: i32, init:
 }
 ```
 
-### `20 pub function (a: NdArray[T]) reduce_axis[T, A](axis: i32, init: A, f: (A, T)`
+### `20 pub function (a: NdArray[T]) reduce_axis[A](axis: i32, init: A, f: (A, T)`
 
 ```fern
-<<20 pub function (a: NdArray[T]) reduce_axis[T, A](axis: i32, init: A, f: (A, T)>>=
-pub function (a: NdArray[T]) reduce_axis[T, A](axis: i32, init: A, f: (A, T) => A): NdArray[A] {
+<<20 pub function (a: NdArray[T]) reduce_axis[A](axis: i32, init: A, f: (A, T)>>=
+pub function (a: NdArray[T]) reduce_axis[A](axis: i32, init: A, f: (A, T) => A): NdArray[A] {
   check_axis(a, axis);
   let rshape: i32[] = drop_axis(a.shape, axis);
   let lane_strides: i32[] = row_major(rshape);
@@ -846,7 +846,7 @@ pub function (a: NdArray[T]) reduce_axis[T, A](axis: i32, init: A, f: (A, T) => 
   return from_flat(accs, rshape);
 }
 
-pub function (a: NdArray[T]) scan_axis[T, A](axis: i32, init: A, f: (A, T) => A): NdArray[A] {
+pub function (a: NdArray[T]) scan_axis[A](axis: i32, init: A, f: (A, T) => A): NdArray[A] {
   check_axis(a, axis);
   let rshape: i32[] = drop_axis(a.shape, axis);
   let lane_strides: i32[] = row_major(rshape);
@@ -875,7 +875,7 @@ pub function (a: NdArray[T]) scan_axis[T, A](axis: i32, init: A, f: (A, T) => A)
   return from_flat(out, a.shape);
 }
 
-pub function (a: NdArray[T]) map_rank[T, U](k: i32, f: (NdArray[T]) => NdArray[U]): NdArray[U] {
+pub function (a: NdArray[T]) map_rank[U](k: i32, f: (NdArray[T]) => NdArray[U]): NdArray[U] {
   if (k < 0 || k > a.shape.len()) {
     shape_error();
   }

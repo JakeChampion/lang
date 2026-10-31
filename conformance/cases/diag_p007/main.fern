@@ -1,0 +1,18 @@
+import "core/cmp";
+
+// The receiver introduces T. The method must not declare T again: its
+// bound goes in the receiver, as `(b: Box[T: cmp.Ord])`.
+
+struct Box[T] { v: T }
+
+function (b: Box[T]) larger[T: cmp.Ord](o: T): T {
+    if (b.v.cmp(o) > 0) {
+        return b.v;
+    }
+    return o;
+}
+
+function main(): i32 {
+    let b: Box[i32] = Box { v: 3 };
+    return b.larger(7);
+}
