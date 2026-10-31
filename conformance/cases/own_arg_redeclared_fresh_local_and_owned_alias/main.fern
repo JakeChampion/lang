@@ -1,0 +1,46 @@
+// A name declared twice is a fresh local when each declaration is fresh.
+// A local set from an own parameter at its last use, outside a loop, and
+// given only fresh values after that, is owned too. Both pass to an `own`
+// parameter at their last use, although the type holds a handle.
+
+struct Acc { items: i32[], w: Writer }
+
+function sink(own a: Acc): i32 {
+  return a.items.len();
+}
+
+function push(own a: Acc, v: i32): Acc {
+  return Acc { ...a, items: a.items.append(v) };
+}
+
+function mk(n: i32): Acc {
+  return Acc { items: [n], w: stdout() };
+}
+
+function redeclared(k: i32): i32 {
+  let t: i32 = 0;
+  let i: i32 = 0;
+  while (i < k) {
+    let a: Acc = mk(i);
+    t = t + a.items.len();
+    i = i + 1;
+  }
+  let a: Acc = mk(7);
+  let n: i32 = sink(a);
+  return t + n;
+}
+
+function aliased(own p: Acc, k: i32): i32 {
+  let first: i32 = p.items.len();
+  let q: Acc = p;
+  q = push(q, k);
+  q = push(q, first);
+  let n: i32 = sink(q);
+  return n;
+}
+
+function main(): i32 {
+  print(redeclared(3).to_string());
+  print(aliased(mk(1), 5).to_string());
+  return 0;
+}

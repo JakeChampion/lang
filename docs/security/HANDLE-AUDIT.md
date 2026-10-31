@@ -77,13 +77,34 @@ The `tcp_*` descriptors are plain `i32` values and still reach the hazard.
 | A function that returns `Some(h)` of a borrowed `h`, its result passed to an `own` parameter | `E051` | `diag_e051_variant_result_borrows_its_payload` |
 | A local initialised from a call that returns its borrowed argument, passed to an `own` parameter | `E051` | `diag_e051_local_from_borrowing_call` |
 | A local initialised from a call whose result cannot hold a handle, passed to an `own` parameter | accepted | `local_from_handle_free_call_is_fresh` |
+| A local read out of a borrowed structure, passed to an `own` parameter at its last use, when its type cannot hold a handle | accepted | `local_read_from_borrowed_struct_moves_at_last_use` |
+| A handle read out of a borrowed structure, passed to an `own` parameter at its last use | `E051` | `diag_e051_handle_local_read_from_borrowed_struct` |
 
-The two `E051` rows above the last row close two holes that the consuming close exposed.
+The rows for `diag_e051_variant_result_borrows_its_payload` and `diag_e051_local_from_borrowing_call` close two holes that the consuming close exposed.
 A variant constructor carries its payload, so its result borrows what the payload borrows.
 A local initialised from a plain call is fresh only when the call's result borrows nothing at that site.
 That rule applies only to a result that can hold a handle.
 A number, a string, or an array of them cannot hold one, so two names for such a value cannot close a handle twice.
 A match on a call follows the same rule as a local initialised from that call.
+
+A declared struct or enum whose fields cannot hold a handle cannot hold one either.
+At its last use, a fresh local passes to an `own` parameter.
+An unpack or an alias of a fresh local passes too.
+A local read out of a borrowed structure is none of these.
+
+That local passes too when its type cannot hold a handle, because the move costs only a retain.
+A `let`, an assignment and a `return` get the same answer.
+A handle read out of a borrowed structure stays refused in all three.
+The callee can close a handle that the structure still holds.
+
+## Admitted locals
+
+Both checkers admit a local before it passes to an `own` parameter at its last use.
+A name with more than one declaration is a fresh local when each of its declarations is fresh.
+An unpack still needs an owner with one declaration, because the checkers count the field reads by name.
+A local set from an `own` parameter at the parameter's last use is admitted when it is declared once and outside a loop.
+Each later assignment to that local must be a fresh value.
+The cases are `own_arg_redeclared_fresh_local_and_owned_alias` and `diag_e051_stale_redeclaration_and_reassigned_alias`.
 
 ## The defer rule and the field-move rule
 

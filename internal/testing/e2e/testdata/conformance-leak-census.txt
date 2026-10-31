@@ -494,6 +494,7 @@ literal_payload_pattern                              0
 literal_tree_takes_its_destination_width             0
 local_array_views_keep_their_storage                  0
 local_from_handle_free_call_is_fresh                 0
+local_read_from_borrowed_struct_moves_at_last_use    0
 log_leveled                                          0
 loop_form                                            0
 loop_rotation_shapes                                 0
@@ -616,6 +617,7 @@ option_str                                           0
 optresult_transpose                                  0
 ord_struct_enum                                      0
 override_scalar                                      0
+own_arg_redeclared_fresh_local_and_owned_alias       0
 own_consume_borrowed_tail                            0
 own_consuming_match                                  0
 own_fresh_result_from_a_borrowing_callee             0
@@ -1005,6 +1007,7 @@ rc_corpus_with_struct_elem_functional_update_loop    0
 rc_corpus_with_struct_string_elem_functional_update_loop 0
 read_all_stdin_chunks                                0
 read_line                                            0
+receiver_writes_its_bounds                           0
 recursive_tree                                       0
 regex_basic                                          0
 regex_captures                                       0

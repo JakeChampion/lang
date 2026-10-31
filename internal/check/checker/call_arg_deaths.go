@@ -134,7 +134,11 @@ type ArgDeaths struct {
 	// of one of its field paths: the match or the loop takes the payloads.
 	Moves map[ast.Expr]bool
 	// Bound names what a match arm or a for-each binds in the function.
-	Bound       map[string]bool
+	Bound map[string]bool
+	// Unadmitted names the locals in Dies that are not a fresh local, an
+	// unpack or an alias of one: they can be a read out of a borrowed
+	// structure, so only a type that cannot hold a handle may move.
+	Unadmitted  map[string]bool
 	Occurrences map[string]int
 }
 
@@ -164,7 +168,9 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		return true
 	})
+	// A name is a fresh local when each of its declarations is fresh.
 	freshInitLocal := map[string]bool{}
+	staleDecl := map[string]bool{}
 	declCount := map[string]int{}
 	ast.Walk(body, func(n ast.Node) bool {
 		switch v := n.(type) {
@@ -172,6 +178,8 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 			declCount[v.Name]++
 			if freshInit(info, v.Init) {
 				freshInitLocal[v.Name] = true
+			} else {
+				staleDecl[v.Name] = true
 			}
 		case *ast.Destructure:
 			fresh := v.AtName == "" && freshInit(info, v.Init)
@@ -179,15 +187,15 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 				declCount[name]++
 				if fresh && (i >= len(v.Nested) || v.Nested[i] == nil) {
 					freshInitLocal[name] = true
+				} else {
+					staleDecl[name] = true
 				}
 			}
 		}
 		return true
 	})
-	for name, n := range declCount {
-		if n > 1 {
-			delete(freshInitLocal, name)
-		}
+	for name := range staleDecl {
+		delete(freshInitLocal, name)
 	}
 	escaping := DeferOrLambdaNames(body)
 	order := IdentOrderOf(body)
@@ -261,7 +269,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		hid, isID := fa.Target.(*ast.Ident)
 		// An own parameter holds its fields as a fresh local does.
-		if !isID || !freshInitLocal[hid.Name] && !(ownParam[hid.Name] && declCount[hid.Name] == 0) {
+		if !isID || !(freshInitLocal[hid.Name] && declCount[hid.Name] == 1) && !(ownParam[hid.Name] && declCount[hid.Name] == 0) {
 			return true
 		}
 		if fieldSelections == nil {
@@ -293,6 +301,9 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		if isParam[root] || freshInitLocal[root] || unpackInitLocal[root] {
 			aliasInitLocal[name] = true
 		}
+	}
+	for name := range ownedAliases(info, body, ownParam, declCount, order) {
+		aliasInitLocal[name] = true
 	}
 	admitted := func(name string) bool {
 		return isParam[name] || freshInitLocal[name] || unpackInitLocal[name] || aliasInitLocal[name]
@@ -582,7 +593,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		for _, a := range c.Args {
 			aid, ok := a.(*ast.Ident)
-			if !ok || escaping[aid.Name] || !admitted(aid.Name) {
+			if !ok || escaping[aid.Name] || !admitted(aid.Name) && declCount[aid.Name] == 0 {
 				continue
 			}
 			if heldByEnclosingCall(body, c, aid.Name) {
@@ -680,7 +691,15 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		return true
 	})
-	return ArgDeaths{Dies: out, Repeating: repeating, Escaping: escaping, Occurrences: occurrences, Deferred: deferred, FieldDies: fieldDies, Moves: moves, Bound: bound}
+	unadmitted := map[string]bool{}
+	for _, dies := range out {
+		for name := range dies {
+			if !admitted(name) {
+				unadmitted[name] = true
+			}
+		}
+	}
+	return ArgDeaths{Dies: out, Repeating: repeating, Escaping: escaping, Occurrences: occurrences, Deferred: deferred, FieldDies: fieldDies, Moves: moves, Bound: bound, Unadmitted: unadmitted}
 }
 
 // mentionsBesideFields counts the mentions of name in c that are not reads
@@ -838,6 +857,45 @@ func freshInit(info *Info, init ast.Expr) bool {
 	return false
 }
 
+// ownedAliases names the locals declared once, outside a loop, from an own
+// parameter at its last use, and given only fresh values after that.
+func ownedAliases(info *Info, body *ast.Block, ownParam map[string]bool, declCount map[string]int, order IdentOrder) map[string]bool {
+	looped := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		switch n.(type) {
+		case *ast.While, *ast.Loop, *ast.For, *ast.ForEach:
+			ast.Walk(n, func(m ast.Node) bool {
+				if v, ok := m.(*ast.Var); ok {
+					looped[v.Name] = true
+				}
+				return true
+			})
+		}
+		return true
+	})
+	stale := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		if asn, ok := n.(*ast.Assign); ok {
+			if t, ok := asn.Target.(*ast.Ident); ok && !freshInit(info, asn.Value) {
+				stale[t.Name] = true
+			}
+		}
+		return true
+	})
+	out := map[string]bool{}
+	ast.Walk(body, func(n ast.Node) bool {
+		v, ok := n.(*ast.Var)
+		if !ok || declCount[v.Name] != 1 || looped[v.Name] || stale[v.Name] {
+			return true
+		}
+		if src, ok := v.Init.(*ast.Ident); ok && ownParam[src.Name] && declCount[src.Name] == 0 && order.IsLast(src) {
+			out[v.Name] = true
+		}
+		return true
+	})
+	return out
+}
+
 func heldByEnclosingCall(body ast.Node, c *ast.Call, name string) bool {
 	found := false
 	ast.Walk(body, func(n ast.Node) bool {
@@ -953,15 +1011,22 @@ func markSupersededFields(out map[*ast.Call]map[string]bool, sl *ast.StructLit, 
 	}
 }
 
-func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
+// lastUseArgs returns the arguments at their last use, and the subset of
+// them that are unadmitted locals (see ArgDeaths.Unadmitted).
+func lastUseArgs(fn *ast.FuncDecl, info *Info) (map[ast.Expr]bool, map[ast.Expr]bool) {
 	out := map[ast.Expr]bool{}
+	loose := map[ast.Expr]bool{}
 	if fn.Body == nil {
-		return out
+		return out, loose
 	}
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		if inner, ok := n.(*ast.FuncDecl); ok && inner != fn {
-			for e := range lastUseArgs(inner, info) {
+			innerOut, innerLoose := lastUseArgs(inner, info)
+			for e := range innerOut {
 				out[e] = true
+			}
+			for e := range innerLoose {
+				loose[e] = true
 			}
 			return false
 		}
@@ -1007,6 +1072,9 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
 		for _, a := range call.Args {
 			if id, ok := a.(*ast.Ident); ok && dies[id.Name] && (local[id.Name] || d.Bound[id.Name]) && (!d.Escaping[id.Name] || d.Deferred[call]) {
 				out[id] = true
+				if d.Unadmitted[id.Name] {
+					loose[id] = true
+				}
 			}
 		}
 	}
@@ -1049,7 +1117,7 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info) map[ast.Expr]bool {
 			}
 		}
 	}
-	return out
+	return out, loose
 }
 
 func storeTarget(st ast.Stmt) (string, *ast.Assign) {
