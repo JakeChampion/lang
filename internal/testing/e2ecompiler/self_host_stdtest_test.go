@@ -202,6 +202,7 @@ func selfHostStdTestCases(t *testing.T, tls bool) []selfHostStdTestCase {
 		{"pmap", langSrcAbs(t, "tests/stdlib/pmap_test.fern"), ""},
 		{"pset", langSrcAbs(t, "tests/stdlib/pset_test.fern"), ""},
 		{"pvec", langSrcAbs(t, "tests/stdlib/pvec_test.fern"), ""},
+		{"cmp_traits", langSrcAbs(t, "tests/stdlib/cmp_traits_test.fern"), ""},
 		{"collection_vocabulary", langSrcAbs(t, "tests/stdlib/collection_vocabulary_test.fern"), ""},
 		{"publicsuffix", langSrcAbs(t, "tests/stdlib/publicsuffix_test.fern"), ""},
 		{"float_math", langSrcAbs(t, "tests/stdlib/float_math_test.fern"), ""},

@@ -1,0 +1,195 @@
+import "core/cmp";
+import "std/json";
+import "std/ndarray";
+import "std/ordmap";
+import "std/ordset";
+import "std/pmap";
+import "std/pset";
+import "std/pvec";
+import "std/semver";
+import "std/test";
+
+function version(s: string): semver.SemVer {
+  let Ok(v) = semver.parse(s) else {
+    return semver.SemVer { major: 0 - 1, minor: 0, patch: 0, prerelease: "", build: "" };
+  };
+  return v;
+}
+
+function value(s: string): json.JsonValue {
+  let Ok(v) = json.parse(s) else {
+    return json.JString("unparsed: " + s);
+  };
+  return v;
+}
+
+function test_semver(): test.TestOutcome {
+  let a: semver.SemVer = version("1.2.3-alpha");
+  let b: semver.SemVer = version("1.2.3+build.7");
+  let c: semver.SemVer = version("1.2.3");
+  if (!(a < b) || a >= c || b != c || b.hash() != c.hash()) {
+    return test.fail("semver precedence ignores build metadata");
+  }
+  let sorted: semver.SemVer[] = cmp.sort([version("2.0.0"), c, a]);
+  if (sorted[0] != a || sorted[2] != version("2.0.0")) {
+    return test.fail("cmp.sort orders versions: " + sorted[0].to_string());
+  }
+  return test.assert_eq(a, version("1.2.3-alpha"));
+}
+
+function test_semver_display(): test.TestOutcome {
+  return test.assert_eq(version("1.2.3-rc.1+b5").to_string(), "1.2.3-rc.1+b5");
+}
+
+function test_pset(): test.TestOutcome {
+  let a: pset.PSet[i32] = pset.of([1, 2, 3]);
+  let b: pset.PSet[i32] = pset.of([3, 2, 1, 2]);
+  if (a != b || a.hash() != b.hash() || a == pset.of([1, 2])) {
+    return test.fail("pset equality ignores order");
+  }
+  return test.assert_eq(a, b);
+}
+
+function test_pset_nested(): test.TestOutcome {
+  let outer: pset.PSet[pset.PSet[i32]] = pset.of([pset.of([1, 2]), pset.of([2, 1]), pset.of([3])]);
+  return test.assert_true(outer.len() == 2 && outer.contains(pset.of([2, 1])) && !outer.contains(pset.of([1])));
+}
+
+function test_pset_display(): test.TestOutcome {
+  return test.assert_eq(pset.of([7]).to_string() + pset.of(["x"]).to_string(), "{7}{x}");
+}
+
+function test_ordset(): test.TestOutcome {
+  let a: ordset.OrdSet[i32] = ordset.of([3, 1, 2]);
+  if (a != ordset.of([1, 2, 3]) || a.hash() != ordset.of([2, 3, 1]).hash()) {
+    return test.fail("ordset equality ignores order");
+  }
+  if (!(ordset.of([1, 2]) < ordset.of([1, 3])) || !(ordset.of([1, 2]) < a) || a > ordset.of([2])) {
+    return test.fail("ordset order is lexicographic");
+  }
+  let outer: ordset.OrdSet[ordset.OrdSet[i32]] = ordset.of([a, ordset.of([0]), ordset.of([2, 1, 3])]);
+  if (outer.len() != 2) {
+    return test.fail("an ordset is an element of an ordset");
+  }
+  return test.assert_eq(outer.to_string(), "{{0}, {1, 2, 3}}");
+}
+
+function test_pmap(): test.TestOutcome {
+  let a: pmap.PMap[string, i32] = pmap.from([("a", 1), ("b", 2)]);
+  let b: pmap.PMap[string, i32] = pmap.from([("b", 2), ("a", 1)]);
+  if (a != b || a.hash() != b.hash()) {
+    return test.fail("pmap equality ignores order");
+  }
+  if (a == a.insert("a", 9) || a == a.remove("b")) {
+    return test.fail("pmap equality compares values and keys");
+  }
+  return test.assert_eq(pmap.from([(1, "x")]).to_string(), "{1: x}");
+}
+
+function test_ordmap(): test.TestOutcome {
+  let a: ordmap.OrdMap[i32, string] = ordmap.from([(2, "b"), (1, "a")]);
+  let b: ordmap.OrdMap[i32, string] = ordmap.from([(1, "a"), (2, "b")]);
+  if (a != b || a.hash() != b.hash() || a == a.insert(2, "c")) {
+    return test.fail("ordmap equality");
+  }
+  if (!(a < a.insert(3, "c")) || !(a < a.insert(2, "c")) || a.insert(0, "z") > a) {
+    return test.fail("ordmap order is lexicographic over entries");
+  }
+  return test.assert_eq(a, b);
+}
+
+function test_ordmap_display(): test.TestOutcome {
+  let a: ordmap.OrdMap[i32, string] = ordmap.from([(2, "b"), (1, "a")]);
+  return test.assert_eq(a.to_string(), "{1: a, 2: b}");
+}
+
+function test_pvec(): test.TestOutcome {
+  let a: pvec.PVec[i32] = pvec.from_array([1, 2, 3]);
+  let Some(popped) = pvec.from_array([1, 2, 3, 4]).pop() else {
+    return test.fail("pop");
+  };
+  let b: pvec.PVec[i32] = popped.0;
+  if (a != b || a.hash() != b.hash() || a == a.append(4)) {
+    return test.fail("pvec equality compares elements");
+  }
+  if (!(a < a.append(0)) || !(a < pvec.from_array([1, 3])) || a > pvec.from_array([2])) {
+    return test.fail("pvec order is lexicographic");
+  }
+  return test.assert_eq(a, b);
+}
+
+function test_pvec_display(): test.TestOutcome {
+  let e: pvec.PVec[i32] = pvec.new();
+  return test.assert_eq(pvec.from_array([1, 2, 3]).to_string() + e.to_string(), "[1, 2, 3][]");
+}
+
+function test_ndarray(): test.TestOutcome {
+  let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4], [2, 2]);
+  let t: ndarray.NdArray[i32] = ndarray.from_flat([1, 3, 2, 4], [2, 2]).transpose();
+  if (a != t || a.hash() != t.hash()) {
+    return test.fail("a view equals the packed array with the same elements");
+  }
+  if (a == ndarray.from_flat([1, 2, 3, 4], [4]) || a == ndarray.from_flat([1, 2, 3, 5], [2, 2])) {
+    return test.fail("ndarray equality compares shape and elements");
+  }
+  return test.assert_eq(a, t);
+}
+
+function test_ndarray_display(): test.TestOutcome {
+  let a: ndarray.NdArray[i32] = ndarray.from_flat([1, 2, 3, 4, 5, 6], [2, 3]);
+  let s: ndarray.NdArray[i32] = ndarray.from_flat([9], []);
+  return test.assert_eq(a.to_string() + " " + a.transpose().to_string() + " " + s.to_string(), "[[1, 2, 3], [4, 5, 6]] [[1, 4], [2, 5], [3, 6]] 9");
+}
+
+function test_json_value(): test.TestOutcome {
+  let a: json.JsonValue = value("{\"a\":[1,true,null],\"b\":\"x\"}");
+  let b: json.JsonValue = value("{\"b\":\"x\",\"a\":[1,true,null]}");
+  if (a != b || a.hash() != b.hash()) {
+    return test.fail("object equality ignores member order");
+  }
+  if (value("[1,2]") == value("[2,1]") || value("1") == value("1.0") || value("null") == value("false")) {
+    return test.fail("arrays keep order, numbers compare by text, kinds differ");
+  }
+  return test.assert_eq(a, b);
+}
+
+function test_json_display(): test.TestOutcome {
+  return test.assert_eq(value("{ \"a\" : [1, \"two\"] }").to_string(), "{\"a\":[1,\"two\"]}");
+}
+
+function test_json_error(): test.TestOutcome {
+  let Err(a) = json.parse("{") else {
+    return test.fail("parse accepted {");
+  };
+  let Err(b) = json.parse("{") else {
+    return test.fail("parse accepted {");
+  };
+  let Err(c) = json.parse("[1,") else {
+    return test.fail("parse accepted [1,");
+  };
+  if (a.hash() != b.hash()) {
+    return test.fail("equal errors give equal hashes");
+  }
+  return test.assert_true(a == b && a != c && a.to_string().len() > 0);
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("cmp traits on stdlib types");
+  r = r.it("SemVer Eq, Ord and Hash", test_semver);
+  r = r.it("SemVer Display", test_semver_display);
+  r = r.it("PSet Eq and Hash", test_pset);
+  r = r.it("PSet in a PSet", test_pset_nested);
+  r = r.it("PSet Display", test_pset_display);
+  r = r.it("OrdSet Eq, Ord, Hash and Display", test_ordset);
+  r = r.it("PMap Eq, Hash and Display", test_pmap);
+  r = r.it("OrdMap Eq, Ord and Hash", test_ordmap);
+  r = r.it("OrdMap Display", test_ordmap_display);
+  r = r.it("PVec Eq, Ord and Hash", test_pvec);
+  r = r.it("PVec Display", test_pvec_display);
+  r = r.it("NdArray Eq and Hash", test_ndarray);
+  r = r.it("NdArray Display", test_ndarray_display);
+  r = r.it("JsonValue Eq and Hash", test_json_value);
+  r = r.it("JsonValue Display", test_json_display);
+  r = r.it("JsonError Eq and Hash", test_json_error);
+  return r.finish();
+}

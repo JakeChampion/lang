@@ -66,7 +66,7 @@ function test_algebra(): test.TestOutcome {
   if (!x.contains(3) || !x.contains(4) || !d.contains(1) || d.contains(3) || !u.contains(6)) {
     return test.fail("members");
   }
-  if (!pset.of([3, 1]).is_subset(a) || a.is_subset(b) || !a.equals(pset.of([4, 3, 2, 1]))) {
+  if (!pset.of([3, 1]).is_subset(a) || a.is_subset(b) || a != pset.of([4, 3, 2, 1])) {
     return test.fail("subset/equals");
   }
   return test.assert_true(a.len() == 4 && b.len() == 4);
