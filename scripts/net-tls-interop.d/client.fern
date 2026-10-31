@@ -125,11 +125,11 @@ function answered(raw: u8[]): string {
 }
 
 function exchange(conn: client.Connection): Result[(client.Connection, u8[]), tls.TlsError] {
-  let c: client.Connection = conn.send("GET /hello HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n".bytes())?;
+  let c: client.Connection = conn.write("GET /hello HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n".bytes())?;
   let out: u8[] = [];
   let going: boolean = true;
   while (going) {
-    let got: client.Received = c.recv(time.duration_seconds(10 as i64))?;
+    let got: client.Received = c.read(time.duration_seconds(10 as i64))?;
     let i: i32 = 0;
     while (i < got.data.len()) {
       out = out.append(got.data[i]);
