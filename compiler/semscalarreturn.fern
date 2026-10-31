@@ -745,3 +745,40 @@ pub function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
   }
   return ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
 }
+
+function flag_constant(b: Build): Build {
+  let v: i32 = b.f.values.len();
+  let out: Build = Build { f: value(b.f, dummy_type()), insts: b.insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: 1, str: "" }), result: v };
+  return call(out, conversion(bits_name(), dummy_type()), v, dummy_type(), word_type());
+}
+
+pub function flag_pair(f: ssasem.Func, insts: ssa.SInst[], lo: i32, hi: i32, slot: i32): Lanes {
+  let t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
+  let b: Build = call(Build { f: f, insts: insts, result: -1 }, conversion(bits_name(), t), lo, t, word_type());
+  let low: i32 = b.result;
+  b = call(b, conversion(bits_name(), t), hi, t, word_type());
+  let high: i32 = b.result;
+  b = flag_constant(b);
+  let shifted: i32 = b.f.values.len();
+  b = Build { f: value(b.f, word_type()), insts: b.insts.append(ssa.SInst { kind_tag: 9, result: shifted, args: [high, b.result], imm: 0, str: "<<" }), result: shifted };
+  let packed: i32 = b.f.values.len();
+  b = Build { f: value(b.f, word_type()), insts: b.insts.append(ssa.SInst { kind_tag: 9, result: packed, args: [low, shifted], imm: 0, str: "|" }), result: packed };
+  b = call(b, set_prefix() + util.i32_to_string(slot), packed, word_type(), dummy_type());
+  return Lanes { f: b.f, insts: b.insts, value: -1 };
+}
+
+pub function flag_part(f: ssasem.Func, insts: ssa.SInst[], packed: i32, which: i32): Lanes {
+  let b: Build = flag_constant(Build { f: f, insts: insts, result: packed });
+  let one: i32 = b.result;
+  let source: i32 = packed;
+  if (which == 1) {
+    let shifted: i32 = b.f.values.len();
+    b = Build { f: value(b.f, word_type()), insts: b.insts.append(ssa.SInst { kind_tag: 9, result: shifted, args: [packed, one], imm: 0, str: ">>" }), result: shifted };
+    source = shifted;
+  }
+  let masked: i32 = b.f.values.len();
+  b = Build { f: value(b.f, word_type()), insts: b.insts.append(ssa.SInst { kind_tag: 9, result: masked, args: [source, one], imm: 0, str: "&" }), result: masked };
+  let t: typeinfo.Type = typeinfo.TypeBool { tag: 0 };
+  b = call(b, conversion(as_name(), t), masked, word_type(), t);
+  return Lanes { f: b.f, insts: b.insts, value: b.result };
+}
