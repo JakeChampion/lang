@@ -352,7 +352,7 @@ func CallArgDeaths(fn *ast.FuncDecl, info *Info) ArgDeaths {
 		}
 		switch it := v.Init.(type) {
 		case *ast.Ident:
-			if ownParam[it.Name] && declCount[it.Name] == 0 || admitted(it.Name) && !isParam[it.Name] && !escaping[it.Name] && !liveAfter(info, body, v, it, order) {
+			if (ownParam[it.Name] && declCount[it.Name] == 0 || admitted(it.Name) && !isParam[it.Name]) && !escaping[it.Name] && !liveAfter(info, body, v, it, order) {
 				iterOwned[v.Name] = true
 			}
 		case *ast.FieldAccess:
@@ -1108,7 +1108,7 @@ func lastUseArgs(fn *ast.FuncDecl, info *Info) (map[ast.Expr]bool, map[ast.Expr]
 		}
 		switch t := e.(type) {
 		case *ast.Ident:
-			if (local[t.Name] || d.Bound[t.Name]) && !d.Escaping[t.Name] {
+			if (local[t.Name] || d.Bound[t.Name] || ownParam[t.Name]) && !d.Escaping[t.Name] {
 				out[e] = true
 			}
 		case *ast.FieldAccess:

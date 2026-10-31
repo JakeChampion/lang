@@ -64,12 +64,12 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 1>>=
 // This module provides ECDSA operations for the NIST P-256 and P-384 curves.
-import "core/bigint";
+import "std/bigint";
 import "std/crypto";
 import "std/crypto/sha2";
 import "std/crypto/montgomery" as mont;
 import "std/crypto/p256";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

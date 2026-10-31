@@ -110,8 +110,8 @@ impl Eq for Point {
 - A **trait** is a named set of *signatures*. A **method**'s first
   parameter is `self: Self`; `Self` is a contextual type that stands for
   the implementing type. A signature with no leading `self` is an
-  **associated function** (`ast.TraitMethod.Assoc`) — `std/num`'s
-  `Num { function zero(): Self; }` and `std/convert`'s
+  **associated function** (`ast.TraitMethod.Assoc`) — `core/ops`'s
+  `Zero { function zero(): Self; }` and `core/convert`'s
   `From { function from(v: T): Self; }` are both this form. It is called
   as `T.zero()`, never on a value: `x.zero()` is E021.
 - An **impl** provides bodies for exactly the trait's methods, with `Self`
@@ -141,6 +141,10 @@ impl[A: Ord, B: Ord] Ord for (A, B) {
 
 No module declares an array, a slice or a tuple. Thus the orphan rule
 lets only the module of the trait implement it for them.
+
+`core/cmp` implements `Eq`, `Ord` and `Hash` for arrays and for tuples of
+2 to 4 elements, when their parts do. An array orders lexicographically, so
+a prefix comes first. A tuple orders by its first element, then by the next.
 
 A parametric impl covers a type only when the parts that its type
 parameters bind meet their bounds. `impl[T: Eq] Eq for T[]` covers
@@ -401,8 +405,10 @@ Importing `core/cmp` supplies `Eq`, `Ord`, `Hash`, and `Display` instances for
 all eleven primitives. Boolean order is `false < true`. Float hashes follow
 the total equality of those instances: both zero signs share a hash, and
 all NaN signs and payloads share a hash. IEEE operators retain their usual
-semantics. The arithmetic traits in `std/num` include `u8` and `usize`;
+semantics. The arithmetic traits in `core/ops` include `u8` and `usize`;
 unsigned types implement `Add`, `Sub`, `Mul`, `Div`, `Zero`, `One`, and `Num`.
+Every integer type also implements `Rem`, `BitAnd`, `BitOr`, `BitXor`, `Shl`,
+and `Shr`.
 
 The self-hosted compiler makes the same rewrite in `checker.annotate_module`
 and raises the same E038 in `check_module` (#9945;
@@ -548,7 +554,7 @@ traits in `MethodOwners["T.m"]`:
 
 Exactly one candidate at the best occupied rank resolves the call; two
 or more at that rank is `E074`. The ranking reads the *direct* import
-map, not the transitive closure — the closure would count `std/num` as
+map, not the transitive closure — the closure would count `core/ops` as
 in scope for a program that only ever wrote `import "std/i32"`, tying a
 user's own trait with one they never named. A lower-ranked trait is
 still a live candidate, never filtered out: a bounded generic is

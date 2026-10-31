@@ -1496,7 +1496,7 @@ impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self ==
 function main(): i32 { let a: P = P{x:1}; let b: P = P{x:1}; if (a == b) { return 1; } return 0; }`,
 			"does not implement `Eq`"},
 		{`function main(): i32 { let a: i32[] = [1,2]; let b: i32[] = [1,2]; if (a == b) { return 1; } return 0; }`,
-			"i32[] cannot implement `Eq`: compare its parts instead"},
+			"i32[] implements `Eq` in core/cmp: add `import \"core/cmp\";`"},
 	}
 	for _, c := range reject {
 		err := checkSource(t, c.src)
@@ -4664,9 +4664,9 @@ function respond_error(r: Result[HttpResponse, dyn Error], plat: platform__Host)
 		{"stateless", decls + `function handle(req: HttpRequest, plat: platform__Host): Result[HttpResponse, string] { return Err("no"); }`, "respond", 2, 1, false},
 		{"stateful", decls + `function init(): i32 { return 0; }
 function handle(n: i32, req: HttpRequest, plat: platform__Host): (i32, Result[HttpResponse, string]) { return (n + 1, Err("no")); }`, "respond_with", 3, 1, false},
-		{"dyn-error", `import "std/error" as err;
+		{"dyn-error", `import "core/error" as err;
 ` + dynDecls + `function handle(req: HttpRequest, plat: platform__Host): Result[HttpResponse, dyn err.Error] { return Err(Oops { why: "no" }); }`, "respond_error", 2, 2, true},
-		{"dyn-error-stateful", `import "std/error" as err;
+		{"dyn-error-stateful", `import "core/error" as err;
 ` + dynDecls + `function init(): i32 { return 0; }
 function handle(n: i32, req: HttpRequest, plat: platform__Host): (i32, Result[HttpResponse, dyn err.Error]) { return (n + 1, Err(Oops { why: "no" })); }`, "respond_error_with", 3, 2, true},
 		{"a program's own Error trait is not std/error's", ownErrorDecls + `function handle(req: HttpRequest, plat: platform__Host): Result[HttpResponse, dyn Error] { return Err(Oops { why: "no" }); }`, "respond", 2, 1, false},

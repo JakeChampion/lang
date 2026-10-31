@@ -3,7 +3,7 @@ import "./pkgfetch";
 import "./util";
 import "std/crypto";
 import "std/hex";
-import "std/error";
+import "core/error";
 import "std/rand";
 
 function main(): i32 {

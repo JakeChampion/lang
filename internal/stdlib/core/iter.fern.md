@@ -44,7 +44,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<8 impl[T] Iterator[T] for ArrayIter[T]>>
 
-<<9 pub function sum[T: num.Add + num.Zero, I: Iterator[T]](it: I): T>>
+<<9 pub function sum[T: ops.Add + ops.Zero, I: Iterator[T]](it: I): T>>
 
 <<10 pub function last[T, I: Iterator[T]](it: I): Option[T]>>
 ```
@@ -61,7 +61,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "core/cmp";
-import "std/num";
+import "core/ops";
 ```
 
 ### `3 pub trait Iterator[T]`
@@ -405,11 +405,11 @@ impl[T] Iterator[T] for ArrayIter[T] {
 }
 ```
 
-### `9 pub function sum[T: num.Add + num.Zero, I: Iterator[T]](it: I): T`
+### `9 pub function sum[T: ops.Add + ops.Zero, I: Iterator[T]](it: I): T`
 
 ```fern
-<<9 pub function sum[T: num.Add + num.Zero, I: Iterator[T]](it: I): T>>=
-pub function sum[T: num.Add + num.Zero, I: Iterator[T]](it: I): T {
+<<9 pub function sum[T: ops.Add + ops.Zero, I: Iterator[T]](it: I): T>>=
+pub function sum[T: ops.Add + ops.Zero, I: Iterator[T]](it: I): T {
   let total: T = T.zero();
   let cur = it;
   let go = true;
@@ -566,7 +566,7 @@ pub function last[T, I: Iterator[T]](it: I): Option[T] {
   return acc;
 }
 
-pub function product[T: num.Mul + num.One, I: Iterator[T]](it: I): T {
+pub function product[T: ops.Mul + ops.One, I: Iterator[T]](it: I): T {
   let p: T = T.one();
   let cur = it;
   let go = true;

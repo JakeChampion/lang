@@ -54,7 +54,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 2>>=
 import "core/cmp";
-import "std/error";
+import "core/error";
+import "std/array";
 ```
 
 ### `3 pub enum DecodeError`

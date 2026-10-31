@@ -1,7 +1,7 @@
 import "std/array";
 import "std/f64";
 import "std/simd" as simd;
-import "std/num" as num;
+import "core/ops";
 
 trait Tag {
   function tag(self: Self): f64;
@@ -13,7 +13,7 @@ impl Tag for f64 {
   }
 }
 
-function poly[T: num.Num + num.Neg](x: T): T {
+function poly[T: ops.Num + ops.Neg](x: T): T {
   return x.mul(x).sub(x);
 }
 
@@ -37,7 +37,7 @@ function via_head[T: simd.Lanes](x: T): T {
   return T.splat(head(x));
 }
 
-function tagged[T: Tag + num.Add](x: T): T {
+function tagged[T: Tag + ops.Add](x: T): T {
   return x.add(x);
 }
 
@@ -59,12 +59,12 @@ impl Trace for f64x2 {
   }
 }
 
-function noisy[T: num.Add](x: T): T {
+function noisy[T: ops.Add](x: T): T {
   print("noisy");
   return x.add(x);
 }
 
-function traced[T: Trace + num.Add](x: T): T {
+function traced[T: Trace + ops.Add](x: T): T {
   return x.trace().add(x);
 }
 

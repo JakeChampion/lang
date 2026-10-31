@@ -1,12 +1,12 @@
 import "std/array";
 import "std/f64";
-import "std/num" as num;
+import "core/ops";
 
-function neg[T: num.Neg](x: T): T {
+function neg[T: ops.Neg](x: T): T {
   return x.neg();
 }
 
-function one_plus[T: num.Add + num.One](x: T): T {
+function one_plus[T: ops.Add + ops.One](x: T): T {
   return T.one().add(x);
 }
 
@@ -14,7 +14,7 @@ function big(x: f64): boolean {
   return x > 0.75;
 }
 
-function plus[T: num.Add](a: T, b: T): T {
+function plus[T: ops.Add](a: T, b: T): T {
   return a.add(b);
 }
 

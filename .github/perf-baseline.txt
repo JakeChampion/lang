@@ -191,23 +191,23 @@ x86_64/http_hello.text	17921
 x86_64/http_hello.ir	22672408
 x86_64/int_loop.text	250
 x86_64/int_loop.ir	12000077
-x86_64/map_int.text	8650
+x86_64/map_int.text	8478
 x86_64/map_int.ir	24563319
-x86_64/map_probe_chain.text	8654
+x86_64/map_probe_chain.text	8482
 x86_64/map_probe_chain.ir	241010587
 x86_64/map_string.text	9591
 x86_64/map_string.ir	53037751	2
-x86_64/ordmap_insert.text	5739
+x86_64/ordmap_insert.text	5664
 x86_64/ordmap_insert.ir	82943055
 x86_64/pmap_insert.text	3145
 x86_64/pmap_insert.ir	53294866
-x86_64/pvec_with.text	3123
+x86_64/pvec_with.text	3048
 x86_64/pvec_with.ir	55174232
 x86_64/record_update.ir	37759160
 x86_64/record_update.text	1386
-x86_64/sort_inplace.text	1572
+x86_64/sort_inplace.text	1497
 x86_64/sort_inplace.ir	36583718
-x86_64/sort_ints.text	2039
+x86_64/sort_ints.text	1964
 x86_64/sort_ints.ir	28152806
 x86_64/sort_strings.text	3305
 x86_64/sort_strings.ir	105033157
@@ -477,25 +477,25 @@ aarch64/http_hello.text	19090
 aarch64/http_hello.ir	24448615
 aarch64/int_loop.text	330
 aarch64/int_loop.ir	18000085
-aarch64/map_int.text	8695
+aarch64/map_int.text	8504
 aarch64/map_int.ir	23869629
-aarch64/map_probe_chain.text	8705
+aarch64/map_probe_chain.text	8514
 aarch64/map_probe_chain.ir	233221143
 aarch64/map_string.text	9790
 # 2026-10-26 (#13496): CI40297899459 reports the current map instruction count.
 aarch64/map_string.ir	53247468	2
-aarch64/ordmap_insert.text	6141
+aarch64/ordmap_insert.text	6058
 aarch64/ordmap_insert.ir	98457462
 aarch64/pmap_insert.text	3433
 aarch64/pmap_insert.ir	63996220
-aarch64/pvec_with.text	3393
+aarch64/pvec_with.text	3310
 aarch64/pvec_with.ir	59221804
 aarch64/record_update.text	1608
 aarch64/record_update.ir	34494442
-aarch64/sort_inplace.text	1769
+aarch64/sort_inplace.text	1686
 # 2026-10-29: main 0c591828 (Perf, perf-aarch64 and perf-x86_64) reports sort_inplace.ir 4.9% and 7.3% lower.
 aarch64/sort_inplace.ir	43684079
-aarch64/sort_ints.text	2258
+aarch64/sort_ints.text	2175
 aarch64/sort_ints.ir	30178876
 aarch64/sort_strings.text	3677
 aarch64/sort_strings.ir	105486307

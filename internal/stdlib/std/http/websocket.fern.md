@@ -84,7 +84,7 @@ import "std/array";
 import "std/option";
 import "std/result";
 import "std/deflate";
-import "std/error";
+import "core/error";
 import "core/cmp";
 ```
 

@@ -25,7 +25,7 @@ function main(): i32 {
         if (!next.is_empty() || next.remaining() != 0) { return 9; }
         if (input.remaining() != bytes.len()) { return 10; }
         let (original, unused) = input.read_all();
-        if (!original.equal(bytes)) { return 11; }
+        if (!original.eq(bytes)) { return 11; }
         let (eof, after) = next.read_all_string();
         match (eof) { Ok(value) => { if (value != "") { return 12; } }, Err(_) => { return 13; }, }
     }

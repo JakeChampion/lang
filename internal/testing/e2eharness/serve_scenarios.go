@@ -752,11 +752,11 @@ function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse,
 }
 
 func DynErrorHandlerServerSource() string {
-	return dynErrorHandlerSource(`import "std/error";`, "error")
+	return dynErrorHandlerSource(`import "core/error";`, "error")
 }
 
 func DynErrorHandlerAliasedServerSource() string {
-	return dynErrorHandlerSource(`import "std/error" as err;`, "err")
+	return dynErrorHandlerSource(`import "core/error" as err;`, "err")
 }
 
 func dynErrorHandlerSource(imp, q string) string {

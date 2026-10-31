@@ -33,7 +33,7 @@ function test_bytes_parse_keeps_the_request(): test.TestOutcome {
       if (body_text(req) != "hello") {
         return test.fail("body: " + body_text(req));
       }
-      return test.assert_is_some_eq_string(req.headers.get("x-request-id"), "42");
+      return test.assert_is_some_eq(req.headers.get("x-request-id"), "42");
     },
     Err(_) => {
       return test.fail("parse failed on a well-formed request");

@@ -209,8 +209,8 @@ pub function main(): i32 {
     match (resolve(name, mode, links)) {
       Ok(p) => {
         let out: string = p;
-        if (have_rel_to && (!have_rel_base || under(base, p))) {
-          out = canon.relative(p, from);
+        if (have_rel_to && (!have_rel_base || under(base, out))) {
+          out = canon.relative(out, from);
         }
         o = gnu.put(o, out + term);
       },

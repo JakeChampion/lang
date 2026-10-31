@@ -1066,9 +1066,9 @@ function do_file(o: io_buffered.BufWriter, pieces: Piece[], device_pieces: Piece
       }
       let u: (string, pwdb.Names) = names.user(st.uid as i64);
       let g: (string, pwdb.Names) = u.1.group(st.gid as i64);
+      let fmt: u32 = st.mode & 61440 as u32;
       let it: Item = Item { name: name, st: st, link: link, is_link: is_link, deref: deref, owner: u.0, group: g.0 };
       let empty_fs: FsItem = FsItem { name: name, fs: fsstat_zero() };
-      let fmt: u32 = st.mode & 61440 as u32;
       let layout: Piece[] = pieces;
       if (fmt == 8192 as u32 || fmt == 24576 as u32) {
         layout = device_pieces;

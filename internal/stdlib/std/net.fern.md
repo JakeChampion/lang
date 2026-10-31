@@ -133,7 +133,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<dependencies 2>>=
 import "std/i32";
 import "std/errno";
-import "std/error";
+import "core/error";
 import "std/time";
 import "std/async";
 import "std/option";

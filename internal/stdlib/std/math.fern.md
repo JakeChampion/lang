@@ -42,7 +42,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<module introduction>>=
 // This module provides numeric constants and RGB operations.
 import "core/cmp";
-import "std/error";
+import "core/error";
 ```
 
 ### `2 constants and conversions`

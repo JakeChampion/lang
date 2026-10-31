@@ -2,7 +2,7 @@ import "std/test";
 import "std/hex";
 import "std/codec";
 import "std/string";
-import "core/bigint";
+import "std/bigint";
 import "std/crypto/montgomery" as mont;
 
 const P256: string = "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff";

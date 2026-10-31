@@ -25,7 +25,7 @@ function test_search_span(): test.TestOutcome {
 }
 
 function test_find_index(): test.TestOutcome {
-  return test.assert_is_some_eq_i32({ let __checked_regex_19: regex.Regex = match (regex.compile("world")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_19.index_of("hello world") }, 6);
+  return test.assert_is_some_eq({ let __checked_regex_19: regex.Regex = match (regex.compile("world")) { Ok(__compiled) => __compiled, Err(__error) => { return test.fail(__error.to_string()); } }; __checked_regex_19.index_of("hello world") }, 6);
 }
 
 function test_case_insensitive_flag(): test.TestOutcome {
@@ -102,7 +102,7 @@ function test_named_group_unknown(): test.TestOutcome {
   if (!match (m.group_named("nope")) { Ok(None()) => true, _ => false } || !m.has_group_named("w") || m.has_group_named("nope")) {
     return test.fail("named accessors");
   }
-  return test.assert_is_none_i32(m.group_index("nope"));
+  return test.assert_is_none(m.group_index("nope"));
 }
 
 function test_replace_groups_numeric(): test.TestOutcome {

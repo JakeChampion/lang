@@ -23,6 +23,7 @@ Materials are air, grass, dirt, stone, sand, wood, leaves, brick, glass, slate, 
 ```fern
 <<Terrain>>=
 import "std/f64";
+import "std/i32";
 
 pub const SIZE: i32 = 512;
 

@@ -1,7 +1,7 @@
 import "std/string";
 import "std/array";
 import "std/io_buffered";
-import "core/bigint";
+import "std/bigint";
 import "./lib/gnu";
 import "./lib/bre";
 

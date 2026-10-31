@@ -220,11 +220,11 @@ func TestSelfHostTreeshakeQualifiesArithmeticRootsX86_64(t *testing.T) {
 		t.Fatalf("stdlib path: %v", err)
 	}
 
-	const src = `import "std/num";
+	const src = `import "core/ops";
 
 struct V { n: i32 }
-impl num.Add for V { function add(self: Self, o: Self): Self { return V { n: self.n + o.n }; } }
-impl num.Neg for V { function neg(self: Self): V { return V { n: 0 - self.n }; } }
+impl ops.Add for V { function add(self: Self, o: Self): Self { return V { n: self.n + o.n }; } }
+impl ops.Neg for V { function neg(self: Self): V { return V { n: 0 - self.n }; } }
 
 function main(): i32 {
     let a: V = V { n: 3 };

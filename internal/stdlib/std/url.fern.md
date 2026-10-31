@@ -69,7 +69,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<dependencies 2>>=
 import "core/cmp";
 import "core/map";
-import "std/error";
+import "core/error";
 import "std/utf8" as utf8;
 ```
 

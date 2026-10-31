@@ -2,7 +2,7 @@ import "./byte_input";
 import "std/string";
 import "std/array";
 import "std/u64";
-import "core/bigint";
+import "std/bigint";
 import "./cached_powers";
 
 pub struct Format { mant: i32, emax: i32, explicit_bit: boolean }

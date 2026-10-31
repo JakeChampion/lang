@@ -5,7 +5,7 @@ import "std/headers";
 function test_case_insensitive_get(): test.TestOutcome {
   let h: HeaderMap = headers.new();
   h = h.set("Content-Type", "application/json");
-  return test.assert_is_some_eq_string(
+  return test.assert_is_some_eq(
     h.get("CONTENT-TYPE"),
     "application/json",
   );
@@ -37,7 +37,7 @@ function test_set_replaces_get_returns_new(): test.TestOutcome {
   h = h.append("Y", "y1");
   h = h.append("X", "second");
   h = h.set("x", "replaced");
-  return test.assert_is_some_eq_string(h.get("x"), "replaced");
+  return test.assert_is_some_eq(h.get("x"), "replaced");
 }
 
 function test_remove_drops_every_line(): test.TestOutcome {
@@ -85,7 +85,7 @@ function test_get_all_ignores_case(): test.TestOutcome {
 function test_fold_is_ascii_only(): test.TestOutcome {
   let h: HeaderMap = headers.new();
   h = h.append("x-K", "kelvin");
-  return test.assert_is_none_string(h.get("x-k"));
+  return test.assert_is_none(h.get("x-k"));
 }
 
 function joined(xs: string[]): string {

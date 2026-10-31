@@ -683,7 +683,7 @@ same code(s) the Go checker does — restricted to
   decl poisoned the whole program's code set. Real programs hit it once
   `core/cmp` gained `impl Display/Eq/Ord/Hash for bigint.BigInt`, which
   #6314 put in `std/string`'s closure: four spurious E021s on anything
-  reaching `core/bigint`, which `import "std/array"` does.
+  reaching `std/bigint`, which `import "std/array"` does.
   `flatten.mangle_impls` (#6398) maps `impl_type` through
   `rewrite_type_name` — trait names are global and `method_names` are bare,
   so only the target moves. The checker side does NOT work as an

@@ -1,7 +1,7 @@
 import "std/crypto";
 import "std/hex";
 import "std/deflate";
-import "std/error";
+import "core/error";
 import "std/fetch";
 import "std/http";
 import "./fern";

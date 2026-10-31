@@ -1,4 +1,5 @@
 import "core/cmp";
+import "std/option";
 import "./lib";
 
 struct Rev { v: i32 }

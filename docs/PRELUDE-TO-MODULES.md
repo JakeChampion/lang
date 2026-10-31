@@ -38,6 +38,9 @@ Replace the magic prelude with two explicit module trees:
   `core/runtime` for the `__method_…` dispatch helpers we don't
   want users calling directly).
 
+A `core/` module never imports a `std/` module. `TestCoreImportsNoStd`
+in `internal/stdlib` enforces this rule.
+
 Programs declare what they need:
 
 ```Fern

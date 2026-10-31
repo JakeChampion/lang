@@ -2,7 +2,7 @@ import "std/hex";
 import "std/base32";
 import "std/base64";
 import "std/codec";
-import "std/error";
+import "core/error";
 import "core/cmp";
 
 function matches(value: Result[u8[], codec.DecodeError], expected: u8[]): boolean {

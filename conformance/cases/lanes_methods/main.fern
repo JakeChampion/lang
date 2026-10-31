@@ -2,7 +2,7 @@
 
 
 import "std/f64";
-import "std/num" as num;
+import "core/ops";
 
 trait Scale {
   function scale(self: Self, k: f64): Self;
@@ -47,7 +47,7 @@ function twice[T: Scale](x: T): T {
   return x.scale(2.0);
 }
 
-function shifted[T: Scale + num.Add + num.Neg](x: T): T {
+function shifted[T: Scale + ops.Add + ops.Neg](x: T): T {
   return x.add(T.unit()).neg();
 }
 

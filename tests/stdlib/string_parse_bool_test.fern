@@ -1,0 +1,67 @@
+import "std/test";
+import "core/error";
+import "std/string";
+import "core/cmp";
+
+function equal_error[E: cmp.Eq](a: E, b: E): boolean {
+  return a == b;
+}
+
+function describe[E: error.Error](e: E): string {
+  return e.message();
+}
+
+function parsed(s: string): string {
+  match (s.parse_bool()) {
+    Ok(b) => {
+      if (b) {
+        return "true";
+      }
+      return "false";
+    },
+    Err(e) => {
+      return "error: " + describe(e);
+    }
+  }
+  return "";
+}
+
+function test_canonical_spellings(): test.TestOutcome {
+  return test.assert_eq(parsed("true") + " " + parsed("1") + " " + parsed("false") + " " + parsed("0"), "true true false false");
+}
+
+function test_empty_input(): test.TestOutcome {
+  return test.assert_eq(parsed(""), "error: boolean input is empty");
+}
+
+function test_invalid_text(): test.TestOutcome {
+  let msg: string = "error: invalid boolean: expected true, false, 1 or 0";
+  return test.assert_eq(parsed("yes") + "|" + parsed("TRUE") + "|" + parsed(" true"), msg + "|" + msg + "|" + msg);
+}
+
+function test_error_display(): test.TestOutcome {
+  match ("2".parse_bool()) {
+    Ok(_) => {
+      return test.fail("2 parsed as a boolean");
+    },
+    Err(e) => {
+      return test.assert_eq(e.to_string(), "invalid boolean: expected true, false, 1 or 0");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_error_equality(): test.TestOutcome {
+  return test.assert_true(equal_error(EmptyBool, EmptyBool) && equal_error(InvalidBool, InvalidBool)
+    && !equal_error(EmptyBool, InvalidBool) && !equal_error(InvalidBool, EmptyBool));
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.new("std/string parse_bool");
+  r = r.it("canonical spellings", test_canonical_spellings);
+  r = r.it("empty input", test_empty_input);
+  r = r.it("invalid text", test_invalid_text);
+  r = r.it("error to_string", test_error_display);
+  r = r.it("error equality", test_error_equality);
+  return r.finish();
+}

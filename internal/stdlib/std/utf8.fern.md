@@ -41,7 +41,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<dependencies 1>>=
 // This module encodes, decodes, and validates UTF-8 code points.
 import "core/cmp";
-import "std/error";
+import "core/error";
 import "std/string";
 import "core/utf8_scalar";
 ```
