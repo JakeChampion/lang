@@ -560,7 +560,7 @@ think they're free additions to make.
   u32 first.
 - **`(s: string) parse_bool()`**: accepts the canonical
   spellings `"true"` / `"false"` / `"1"` / `"0"`. Anything
-  else returns None — no implicit case-folding.
+  else returns `Err(ParseBoolError)`. There is no case folding.
 - **HTTP method classifiers**: `s.is_http_safe_method()` (GET
   / HEAD / OPTIONS / TRACE per RFC 9110 §9.2.1),
   `s.is_http_idempotent_method()` (safe set + PUT / DELETE).

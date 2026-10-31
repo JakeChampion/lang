@@ -101,7 +101,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 <<41 pub function (s: string) reverse_bytes(): u8[]>>
 
 <<42 pub function (s: string) between(start: string, end: string): Option[string]>>
-<<43 pub function (s: string) parse_bool(): Option[boolean]>>
+<<43 pub function (s: string) parse_bool(): Result[boolean, ParseBoolError]>>
 
 
 
@@ -116,6 +116,8 @@ The root chunk preserves the declaration order. The chunks below contain the com
 ```fern
 <<dependencies 1>>=
 // This module provides string methods.
+import "std/error";
+import "core/cmp";
 import "std/number_parse";
 import "core/int";
 import "core/utf8_scalar";
@@ -2590,19 +2592,48 @@ pub function (s: string) replace(old: string, new: string): string {
   return s.replace_n(old, new, 2147483647);
 }
 ```
-### `43 pub function (s: string) parse_bool(): Option[boolean]`
+### `43 pub function (s: string) parse_bool(): Result[boolean, ParseBoolError]`
 
 ```fern
-<<43 pub function (s: string) parse_bool(): Option[boolean]>>=
-pub function (s: string) parse_bool(): Option[boolean] {
+<<43 pub function (s: string) parse_bool(): Result[boolean, ParseBoolError]>>=
+pub function (s: string) parse_bool(): Result[boolean, ParseBoolError] {
   if (s == "true" || s == "1") {
-    return Some(true);
+    return Ok(true);
   }
   if (s == "false" || s == "0") {
-    return Some(false);
+    return Ok(false);
   }
-  return None;
+  if (s.len() == 0) {
+    return Err(EmptyBool);
+  }
+  return Err(InvalidBool);
 }
+
+@derive(cmp.Eq)
+pub enum ParseBoolError {
+  EmptyBool,
+  InvalidBool,
+}
+
+pub function (e: ParseBoolError) message(): string {
+  match (e) {
+    EmptyBool => {
+      return "boolean input is empty";
+    },
+    InvalidBool => {
+      return "invalid boolean: expected true, false, 1 or 0";
+    }
+  }
+  return "";
+}
+
+pub function (e: ParseBoolError) to_string(): string {
+  return e.message();
+}
+
+impl error.Error for ParseBoolError {}
+
+impl cmp.Display for ParseBoolError {}
 
 pub function (s: string) is_http_safe_method(): boolean {
   return s == "GET" || s == "HEAD" || s == "OPTIONS" || s == "TRACE";
