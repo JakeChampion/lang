@@ -1,0 +1,21 @@
+// impl[T: Eq] Eq for T[] covers an array only when its element type is Eq.
+trait Eq {
+  function eq(self: Self, other: Self): boolean;
+}
+
+impl[T: Eq] Eq for T[] {
+  function eq(self: T[], other: T[]): boolean {
+    return self.len() == other.len();
+  }
+}
+
+struct S { a: i32 }
+
+function same[T: Eq](a: T, b: T): boolean {
+  return a.eq(b);
+}
+
+function main(): i32 {
+  print(same([S { a: 1 }], [S { a: 1 }]).to_string());
+  return 0;
+}

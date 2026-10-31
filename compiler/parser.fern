@@ -21351,7 +21351,28 @@ function erase_str_names(ty: string): string {
 }
 
 pub function receiver_base(receiver: string): string {
+  let tuple: string = tuple_namespace(receiver);
+  if (tuple.len() > 0) {
+    return tuple;
+  }
   return util.base_type_name(erase_view_spelling(receiver));
+}
+
+// tuple_namespace names the method namespace of a tuple spelling, `tuple2`
+// for `(A, B)`, and is empty for any other spelling.
+pub function tuple_namespace(spelling: string): string {
+  if (!util.is_tuple_type_name(spelling)) {
+    return "";
+  }
+  let r: TypeRef = parse_type_ref(spelling);
+  if (!r.is_tuple || r.array_depth > 0) {
+    return "";
+  }
+  return tuple_arity_namespace(r.args.len());
+}
+
+pub function tuple_arity_namespace(arity: i32): string {
+  return "tuple" + util.i32_to_string(arity);
 }
 
 pub function decl_key(fd: FuncDecl): string {
