@@ -1839,10 +1839,10 @@ function routed_keyed_maps(maps: typeinfo.Type[], f: ssasem.Func): typeinfo.Type
   return out;
 }
 
-function append_keyed_closures(own out: irtables.LowerState[], t: typeinfo.Type, done: util.NameIndex): irtables.LowerState[] {
+function append_keyed_closures(own out: irtables.LowerState[], t: typeinfo.Type, done: util.NameIndex, contracts: ssasem.Contracts): irtables.LowerState[] {
   let k: typeinfo.Type = ssasem.map_key(t);
   let v: typeinfo.Type = ssasem.map_value(t);
-  let fresh: irtables.LowerState[] = [key_closure(k, "hash", 2), key_closure(k, "eq", 3), env_release_helper(k), value_env_helper(v)];
+  let fresh: irtables.LowerState[] = [key_closure(k, "hash", 2, contracts), key_closure(k, "eq", 3, contracts), env_release_helper(k), value_env_helper(v)];
   for h in fresh {
     if (!done.has(h.name) && util.index_of_str(result_names(out), h.name) < 0) {
       out = out.append(h);
@@ -1859,17 +1859,23 @@ function result_names(rows: irtables.LowerState[]): string[] {
   return out;
 }
 
-function key_closure(k: typeinfo.Type, which: string, nparams: i32): irtables.LowerState {
+// The closure borrows its keys, so it retains each key that the callee takes counted.
+function key_closure(k: typeinfo.Type, which: string, nparams: i32, contracts: ssasem.Contracts): irtables.LowerState {
+  let callee: string = ssasem.keyed_map_key_fn(k, which);
   let r: irtables.LowerState = irtables.LowerState {
     ...empty(""), ok: true,
     n_params: nparams, n_locals: nparams, name: key_closure_name(k, which),
   };
-  let p: i32 = 1;
-  while (p < nparams) {
-    r = emit(r, ir.op_load_local(p));
-    p = p + 1;
+  let at: i32 = ssasem.find_contract(contracts, callee);
+  for p in 1..nparams {
+    if (at >= 0 && p - 1 < contracts.list[at].modes.len() && contracts.list[at].modes[p - 1] == ssasem.counted_mode()) {
+      r = helper(r, p, "__fern_rc_inc");
+    }
   }
-  r = emit(r, ir.op_call_direct(ssasem.keyed_map_key_fn(k, which), nparams - 1));
+  for p in 1..nparams {
+    r = emit(r, ir.op_load_local(p));
+  }
+  r = emit(r, ir.op_call_direct(callee, nparams - 1));
   return emit(r, ir.op_return());
 }
 
@@ -1952,10 +1958,10 @@ function optimized_helper(h: irtables.LowerResult): irtables.LowerResult {
   return irtables.LowerResult { ...h, ops: optimized.ops, n_locals: optimized.n_locals };
 }
 
-pub function drop_helpers(f: ssasem.Func): Result[irtables.Lowered, irtables.LowerState][] {
+pub function drop_helpers(f: ssasem.Func, contracts: ssasem.Contracts): Result[irtables.Lowered, irtables.LowerState][] {
   let none: string[] = [];
   let out: Result[irtables.Lowered, irtables.LowerState][] = [];
-  for row in helpers_not_in(f, util.name_index(none), util.name_index(none)).rows {
+  for row in helpers_not_in(f, util.name_index(none), util.name_index(none), contracts).rows {
     out = out.append(irtables.helper_outcome(row));
   }
   return out;
@@ -1963,15 +1969,15 @@ pub function drop_helpers(f: ssasem.Func): Result[irtables.Lowered, irtables.Low
 
 pub struct HelperType { row: i32, ty: typeinfo.Type, children_only: boolean }
 
-pub struct Helpers { rows: Result[irtables.Lowered, irtables.LowerState][], types: HelperType[], done: util.NameIndex, seen: util.NameIndex }
+pub struct Helpers { rows: Result[irtables.Lowered, irtables.LowerState][], types: HelperType[], done: util.NameIndex, seen: util.NameIndex, contracts: ssasem.Contracts }
 
-pub function no_helpers(): Helpers {
+pub function no_helpers(contracts: ssasem.Contracts): Helpers {
   let none: string[] = [];
-  return Helpers { rows: [], types: [], done: util.name_index(none), seen: util.name_index(none) };
+  return Helpers { rows: [], types: [], done: util.name_index(none), seen: util.name_index(none), contracts: contracts };
 }
 
 pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
-  let fresh: Fresh = helpers_not_in(f, h.done, h.seen);
+  let fresh: Fresh = helpers_not_in(f, h.done, h.seen, h.contracts);
   let out: Helpers = Helpers { ...h, seen: fresh.seen };
   for row in fresh.rows {
     out = Helpers { ...out, rows: out.rows.append(irtables.helper_outcome(row)), done: out.done.added(row.name) };
@@ -1995,7 +2001,7 @@ function view_helpers(f: ssasem.Func, done: util.NameIndex, own rows: irtables.L
   return rows;
 }
 
-function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameIndex): Fresh {
+function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameIndex, contracts: ssasem.Contracts): Fresh {
   let out = Fresh { rows: [], types: [], seen: seen };
   let grown: util.NameIndex = seen;
   let sc: SchemaScan = schema_scan(f);
@@ -2035,7 +2041,7 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameInd
     }
   }
   for t in routed_keyed_maps(sc.maps, f) {
-    out = Fresh { ...out, rows: append_keyed_closures(out.rows, t, done) };
+    out = Fresh { ...out, rows: append_keyed_closures(out.rows, t, done, contracts) };
   }
   return Fresh { ...out, seen: grown };
 }
