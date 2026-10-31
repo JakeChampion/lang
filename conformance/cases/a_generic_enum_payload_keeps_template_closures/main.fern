@@ -1,0 +1,34 @@
+// A generic enum whose variant holds a generic struct does not keep the
+// generic templates past the last monomorphization pass. A kept template's
+// closure captures a value of a type variable, and nothing can lower it (#13951).
+
+struct Boxed[T] { f: T }
+
+enum Held[T] { Some1(Boxed[T]), Nothing1 }
+
+function hold[T](v: T): Held[T] {
+  return Some1(Boxed { f: v });
+}
+
+function call(f: () => i32): i32 {
+  return f();
+}
+
+function keep[P](p: P, n: i32): i32 {
+  return call((): i32 => {
+    let q: P = p;
+    return n;
+  });
+}
+
+function main(): i32 {
+  let got: i32 = 0;
+  match (hold(30)) {
+    Some1(b) => {
+      got = b.f;
+    },
+    Nothing1 => {}
+  }
+  print((got + keep("x", 12)).to_string());
+  return 0;
+}
