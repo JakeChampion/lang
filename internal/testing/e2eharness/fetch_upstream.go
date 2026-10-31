@@ -46,7 +46,7 @@ import "std/fetch";
 
 function body_of(url: string): string {
     match (fetch.send(fetch.get(url))) {
-        Ok(resp) => { return resp.body_string(); },
+        Ok(resp) => { return resp.body_text_lossy(); },
         Err(e) => { return e.message(); }
     }
     return "";

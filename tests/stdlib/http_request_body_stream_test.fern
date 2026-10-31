@@ -5,7 +5,7 @@ import "std/result";
 import "std/utf8" as utf8;
 
 function body_text(req: HttpRequest): string {
-  match (req.body_string()) {
+  match (req.body_text()) {
     Ok(text) => {
       return text;
     },
@@ -128,7 +128,7 @@ function test_read_n_leaves_the_remainder(): test.TestOutcome {
   return test.assert_is_some_eq_string(tail.ok(), " world");
 }
 
-function test_body_string_ignores_a_partial_walk(): test.TestOutcome {
+function test_body_text_ignores_a_partial_walk(): test.TestOutcome {
   let req: HttpRequest = parsed("hello world");
   let (head, rest) = req.body_stream().read_n(5);
   return test.assert_eq(body_text(req), "hello world");
@@ -183,9 +183,9 @@ function test_ill_formed_bytes_read_as_replacement(): test.TestOutcome {
       return test.fail("read_all_string refused the valid remainder");
     }
   }
-  match (req.body_string()) {
+  match (req.body_text()) {
     Ok(text) => {
-      return test.fail("body_string accepted ill-formed bytes");
+      return test.fail("body_text accepted ill-formed bytes");
     },
     Err(e) => {
       return test.assert_eq(e.to_response().status, 400);
@@ -283,7 +283,7 @@ function test_sourced_read_byte_ends(): test.TestOutcome {
   return test.assert_eq(got, "120,none");
 }
 
-function test_sourced_body_string_drains(): test.TestOutcome {
+function test_sourced_body_text_drains(): test.TestOutcome {
   return test.assert_eq(body_text(sourced(scripted(["hel", "lo"]), "5")), "hello");
 }
 
@@ -294,7 +294,7 @@ function test_sourced_body_len_is_declared(): test.TestOutcome {
 }
 
 function test_sourced_fault_is_ended_early(): test.TestOutcome {
-  match (sourced(faulting(["par", "tial"], StreamTooLarge), "99").body_string()) {
+  match (sourced(faulting(["par", "tial"], StreamTooLarge), "99").body_text()) {
     Ok(text) => {
       return test.fail("read " + text);
     },
@@ -387,7 +387,7 @@ function main(): i32 {
   r = r.it("read_line walks the body", test_read_line_walks_the_body);
   r = r.it("read_n takes a prefix", test_read_n_takes_a_prefix);
   r = r.it("read_n leaves the remainder", test_read_n_leaves_the_remainder);
-  r = r.it("body_string ignores a partial walk", test_body_string_ignores_a_partial_walk);
+  r = r.it("body_text ignores a partial walk", test_body_text_ignores_a_partial_walk);
   r = r.it("body_len ignores a partial walk", test_body_len_ignores_a_partial_walk);
   r = r.it("body_bytes matches body_len", test_body_bytes_matches_body_len);
   r = r.it("a bodyless request reads empty", test_bodyless_request_reads_empty);
@@ -397,7 +397,7 @@ function main(): i32 {
   r = r.it("read_n spans a chunk boundary", test_sourced_read_n_spans_chunks);
   r = r.it("read_n pulls only what it owes", test_sourced_read_n_pulls_only_what_it_owes);
   r = r.it("read_byte reaches the end of a sourced stream", test_sourced_read_byte_ends);
-  r = r.it("body_string drains a sourced body", test_sourced_body_string_drains);
+  r = r.it("body_text drains a sourced body", test_sourced_body_text_drains);
   r = r.it("body_len is the declared length of a sourced body", test_sourced_body_len_is_declared);
   r = r.it("a fault is EndedEarly with its StreamFault", test_sourced_fault_is_ended_early);
   r = r.it("EndedEarly answers each fault's status and detail", test_ended_early_to_response);

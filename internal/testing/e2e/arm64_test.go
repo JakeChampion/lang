@@ -6116,9 +6116,9 @@ function main(): i32 {
 
     // http builders
     let r1: HttpResponse = http.redirect("/login");
-    if (r1.status != 302 || r1.body_string() != "/login") { return 60; }
+    if (r1.status != 302 || r1.body_text_lossy() != "/login") { return 60; }
     let r2: HttpResponse = http.no_content();
-    if (r2.status != 204 || r2.body_string() != "") { return 61; }
+    if (r2.status != 204 || r2.body_text_lossy() != "") { return 61; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -6226,9 +6226,9 @@ function main(): i32 {
 
     // HTTP response builders
     let r1: HttpResponse = http.bad_request("missing field");
-    if (r1.status != 400 || r1.body_string() != "missing field") { return 50; }
+    if (r1.status != 400 || r1.body_text_lossy() != "missing field") { return 50; }
     let r2: HttpResponse = http.internal_error("server boom");
-    if (r2.status != 500 || r2.body_string() != "server boom") { return 51; }
+    if (r2.status != 500 || r2.body_text_lossy() != "server boom") { return 51; }
     return 0;
 }`
 	_, code := compileAndRunArm64(t, src)
@@ -6823,11 +6823,11 @@ function main(): i32 {
 
     // HTTP response builders
     let r1: HttpResponse = http.ok("hello");
-    if (r1.status != 200 || r1.body_string() != "hello") { return 21; }
+    if (r1.status != 200 || r1.body_text_lossy() != "hello") { return 21; }
     let r2: HttpResponse = http.not_found();
-    if (r2.status != 404 || r2.body_string() != "Not Found") { return 22; }
+    if (r2.status != 404 || r2.body_text_lossy() != "Not Found") { return 22; }
     let r3: HttpResponse = http.text(500, "boom");
-    if (r3.status != 500 || r3.body_string() != "boom") { return 23; }
+    if (r3.status != 500 || r3.body_text_lossy() != "boom") { return 23; }
 
     // Log helpers — sanity-check they don't crash; output
     // goes to stderr so the e2e harness exit-code check still

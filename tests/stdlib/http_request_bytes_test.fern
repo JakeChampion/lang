@@ -3,7 +3,7 @@ import "std/http";
 import "std/string";
 
 function body_text(req: HttpRequest): string {
-  match (req.body_string()) {
+  match (req.body_text()) {
     Ok(text) => {
       return text;
     },
