@@ -1,0 +1,8 @@
+enum Pace { Fast, Idle }
+enum Step { Fast, Halt }
+
+function main(): i32 {
+  let p: Pace = Idle;
+  let s = Fast;
+  return 0;
+}

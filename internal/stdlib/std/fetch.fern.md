@@ -2902,7 +2902,7 @@ function __unzstd(body: u8[], max_out: i32): Result[u8[], FetchError] {
     },
     Err(e) => {
       match (e) {
-        zstd.ZstdTooLarge => {
+        zstd.TooLarge => {
           return Err(BodyLimit);
         },
         _ => {
@@ -2921,7 +2921,7 @@ function __unbrotli(body: u8[], max_out: i32): Result[u8[], FetchError] {
     },
     Err(e) => {
       match (e) {
-        brotli.BrotliTooLarge => {
+        brotli.TooLarge => {
           return Err(BodyLimit);
         },
         _ => {

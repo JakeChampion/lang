@@ -46,6 +46,15 @@ pub struct Func {
   dbg_vals: i32[],
   dbg_names: string[],
   source_positions: sourcepos.SourceInfo,
+  schema_checked: boolean,
+}
+
+// schema_checked says the verifier passed records and enums; a change to either clears it.
+pub function checked_schema(f: Func, a: Analysis): Func {
+  if (!a.ok) {
+    return f;
+  }
+  return Func { ...f, schema_checked: true };
 }
 
 pub struct Anchor { name: string, params: i32[] }
@@ -3107,7 +3116,7 @@ function schema_error(f: Func): string {
   if (why != "") {
     return why;
   }
-  if (!util.verify_on()) {
+  if (!util.verify_on() || f.schema_checked) {
     return "";
   }
   return semrecords.verify(f.records, f.enums);
