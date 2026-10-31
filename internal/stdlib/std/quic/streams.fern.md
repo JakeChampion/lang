@@ -46,7 +46,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<15 function (s: Streams) __on_stop(id: i64, code: i64): Streams>>
 
-<<16 pub function (s: Streams) fill(out: u8[], room: i32): Streams>>
+<<16 pub function (s: Streams) fill(own out: u8[], room: i32): Streams>>
 
 <<17 function (s: Streams) __add(room: i32, f: frames.Frame): Streams>>
 
@@ -741,11 +741,11 @@ function __error(code: i64, kind: i64, reason: string): frames.FrameError {
 }
 ```
 
-### `16 pub function (s: Streams) fill(out: u8[], room: i32): Streams`
+### `16 pub function (s: Streams) fill(own out: u8[], room: i32): Streams`
 
 ```fern
-<<16 pub function (s: Streams) fill(out: u8[], room: i32): Streams>>=
-pub function (s: Streams) fill(out: u8[], room: i32): Streams {
+<<16 pub function (s: Streams) fill(own out: u8[], room: i32): Streams>>=
+pub function (s: Streams) fill(own out: u8[], room: i32): Streams {
   return Streams { ...s, filled: out, resend: [], fit: false }.__signals(room).__window_updates(room).__data(room);
 }
 

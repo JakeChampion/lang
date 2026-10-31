@@ -391,10 +391,7 @@ function bad_wrap(arg: string): void {
 }
 
 function fail(o: io_buffered.BufWriter, msg: string): void {
-  o.flush();
-  gnu.error(msg);
-  gnu.close_stdout(o, false);
-  exit(1);
+  gnu.die(o, msg, 1);
 }
 
 function read_block(r: Reader, o: io_buffered.BufWriter, cap: i32): u8[] {
@@ -946,7 +943,7 @@ function rebase(digits: u8[], from: i32, to: i32): u8[] {
   return out;
 }
 
-function b58_encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void {
+function b58_encode(r: Reader, c: Codec, wrap: i64, own o: io_buffered.BufWriter): void {
   unsafe {
     let data: u8[] = read_all(r, o);
     let zeros: i32 = 0;
@@ -971,9 +968,8 @@ function b58_encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): v
       text = text.append(__load_i32(c.alpha + digits[d] as usize) as u8);
       d = d + 1;
     }
-    let out: io_buffered.BufWriter = o;
-    out = gnu.put(out, wrapped(string_from_bytes_unchecked(text), wrap));
-    gnu.finish(out);
+    o = gnu.put(o, wrapped(string_from_bytes_unchecked(text), wrap));
+    gnu.finish(o);
   }
 }
 
@@ -997,7 +993,7 @@ function wrapped(text: string, wrap: i64): string {
   return out;
 }
 
-function b58_decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWriter): void {
+function b58_decode(r: Reader, c: Codec, ignore: boolean, own o: io_buffered.BufWriter): void {
   unsafe {
     let text: u8[] = read_all(r, o);
     let vals: u8[] = [];
@@ -1039,10 +1035,9 @@ function b58_decode(r: Reader, c: Codec, ignore: boolean, o: io_buffered.BufWrit
       all = all.append(bytes[d]);
       d = d + 1;
     }
-    let out: io_buffered.BufWriter = o;
     if (all.len() > 0) {
-      out = gnu.check(out.write_bytes(all));
+      o = gnu.check(o.write_bytes(all));
     }
-    gnu.finish(out);
+    gnu.finish(o);
   }
 }

@@ -5,6 +5,16 @@ import "github.com/jakechampion/lang/internal/syntax/ast"
 func (c *checker) computeResultBorrows(prog *ast.Program) {
 	c.resultBorrows = make(map[string]bool, len(prog.Funcs))
 	c.resultAnalysed = make(map[string]bool, len(prog.Funcs))
+	c.declaredMethods = map[string]bool{}
+	c.handleFreeResults = map[string]bool{}
+	for _, fn := range prog.Funcs {
+		if fn.MethodSimpleName != "" {
+			c.declaredMethods[fn.MethodSimpleName] = true
+		}
+		if fn.ReturnType != nil && c.holdsNoHandle(fn.ReturnType) {
+			c.handleFreeResults[fn.Name] = true
+		}
+	}
 	for _, fn := range prog.Funcs {
 		if fn.Body != nil {
 			c.resultAnalysed[fn.Name] = true
@@ -138,17 +148,67 @@ func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 
 func (c *checker) calleeResultBorrows(x *ast.Call) bool {
 	id, ok := x.Callee.(*ast.Ident)
-	if !ok {
-		return true
+	if !ok || x.Method != nil && c.freshMethodResult(x) {
+		return !c.freshMethodResult(x)
 	}
 	if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
-		return false
+		// A variant carries its payload, so the result borrows what the
+		// payload borrows.
+		return true
 	}
 	if c.resultAnalysed[id.Name] {
 		return c.resultBorrows[id.Name]
 	}
 	return c.signatureResultBorrows(id.Name)
 }
+
+// callSiteBorrows reports a plain call whose result can borrow: the callee's
+// result can hold a handle and borrows, and an argument is not a fresh value.
+func (c *checker) callSiteBorrows(x *ast.Call) bool {
+	if id, ok := x.Callee.(*ast.Ident); ok && c.handleFreeResults[id.Name] {
+		return false
+	}
+	if !c.calleeResultBorrows(x) {
+		return false
+	}
+	for _, a := range x.Args {
+		if c.argMayBorrow(a) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *checker) argMayBorrow(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.NumberLit, *ast.FloatLit, *ast.StringLit, *ast.BoolLit, *ast.CharLit, *ast.UnitLit,
+		*ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.EnumLit,
+		*ast.Binary, *ast.Unary, *ast.CastExpr:
+		return false
+	case *ast.Call:
+		if _, named := x.Callee.(*ast.Ident); !named || x.Method != nil {
+			return true
+		}
+		return c.callSiteBorrows(x)
+	}
+	return true
+}
+
+// freshMethodResult reports a call of a built-in method whose result is a
+// kernel descriptor, a directory opened under another directory, when no
+// method the program declares has the same name. The name decides, so the
+// answer is the same before and after the checker resolves the receiver.
+func (c *checker) freshMethodResult(x *ast.Call) bool {
+	field := ""
+	if x.Method != nil {
+		field = x.Method.Field
+	} else if fa, ok := x.Callee.(*ast.FieldAccess); ok {
+		field = fa.Field
+	}
+	return freshBuiltinMethods[field] && !c.declaredMethods[field]
+}
+
+var freshBuiltinMethods = map[string]bool{"open_dir": true}
 
 // A handle an open builtin returns is a kernel descriptor: it borrows nothing
 // from the path it was opened with.
@@ -179,11 +239,13 @@ func (c *checker) signatureResultBorrows(name string) bool {
 	return false
 }
 
+// A call scrutinee is owned when its result is fresh by signature: a
+// variant, a fresh method, or a function with no borrowed pointer parameter.
 func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) bool {
 	if call, ok := tag.(*ast.Call); ok {
 		id, isIdent := call.Callee.(*ast.Ident)
 		if !isIdent {
-			return false
+			return c.freshMethodResult(call)
 		}
 		if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
 			return true
@@ -192,7 +254,100 @@ func (c *checker) isOwnedScrutinee(tag ast.Expr, inferred func(ast.Expr) bool) b
 		if !known || sig.Result == nil || !ast.IsPointerType(sig.Result) {
 			return false
 		}
+		if call.Method != nil {
+			return c.freshMethodResult(call)
+		}
 		return !c.signatureResultBorrows(id.Name)
 	}
 	return inferred(tag)
+}
+
+// holdsNoHandle reports a type that cannot hold a handle: a number, a
+// boolean, a char, a string, a function, or an array, slice, tuple, option,
+// result, struct or enum whose parts are all such types. Reader, Writer and
+// Dir are handles, and so is a type with a method that consumes its
+// receiver. A function cannot consume what it captures, so it cannot close
+// a handle.
+func (c *checker) holdsNoHandle(t ast.Type) bool {
+	return c.noHandleIn(t, nil, map[string]bool{})
+}
+
+// noHandleIn decides t inside a declaration whose type parameters in free
+// stand for arguments that hold no handle. seen holds the declarations on
+// the path, so a recursive type is decided by its other parts.
+func (c *checker) noHandleIn(t ast.Type, free map[string]bool, seen map[string]bool) bool {
+	switch x := t.(type) {
+	case ast.NumberType, ast.FloatType, ast.BoolType, ast.VoidType, ast.StringType, ast.StrType, ast.CharType, ast.NeverType, ast.LanesType:
+		return true
+	case ast.ParamType:
+		return free[x.Name]
+	case *ast.FuncType:
+		return true
+	case ast.ArrayType:
+		return c.noHandleIn(x.Elem, free, seen)
+	case ast.SliceType:
+		return c.noHandleIn(x.Elem, free, seen)
+	case ast.TupleType:
+		return c.allNoHandleIn(x.Elems, free, seen)
+	case ast.EnumType:
+		if !c.allNoHandleIn(x.Args, free, seen) {
+			return false
+		}
+		if x.Name == "Option" || x.Name == "Result" {
+			return true
+		}
+		ed, ok := c.info.Enums[x.Name]
+		if !ok || c.consumingTypes[x.Name] {
+			return false
+		}
+		if seen[x.Name] {
+			return true
+		}
+		seen[x.Name] = true
+		inner := paramSet(ed.TypeParams)
+		for _, v := range ed.Variants {
+			if !c.allNoHandleIn(v.Payloads, inner, seen) {
+				return false
+			}
+		}
+		return true
+	case ast.StructType:
+		sd, ok := c.info.Structs[x.Name]
+		if !ok || builtinHandle(x.Name) || c.consumingTypes[x.Name] || !c.allNoHandleIn(x.Args, free, seen) {
+			return false
+		}
+		if seen[x.Name] {
+			return true
+		}
+		seen[x.Name] = true
+		inner := paramSet(sd.TypeParams)
+		for _, f := range sd.Fields {
+			if !c.noHandleIn(f.Type, inner, seen) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+func (c *checker) allNoHandleIn(ts []ast.Type, free map[string]bool, seen map[string]bool) bool {
+	for _, t := range ts {
+		if t == nil || !c.noHandleIn(t, free, seen) {
+			return false
+		}
+	}
+	return true
+}
+
+func builtinHandle(name string) bool {
+	return name == "Reader" || name == "Writer" || name == "Dir"
+}
+
+func paramSet(names []string) map[string]bool {
+	out := make(map[string]bool, len(names))
+	for _, n := range names {
+		out[n] = true
+	}
+	return out
 }

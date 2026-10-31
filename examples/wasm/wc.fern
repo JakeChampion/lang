@@ -22,7 +22,7 @@ function count_chunk(chunk: string, acc: Counts): Counts {
   };
 }
 
-function count_reader(r: Reader): Result[Counts, IoError] {
+function count_reader(own r: Reader): Result[Counts, IoError] {
   let acc: Counts = Counts { lines: 0, words: 0, bytes: 0 };
   defer r.close();
   let lr: io_buffered.LineReader = io_buffered.line_reader_new(r, 10, 65536);
