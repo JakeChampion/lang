@@ -29,7 +29,7 @@ func TestReadLockRejectsMalformedHash(t *testing.T) {
 			}
 			got, err := ReadLock(dir)
 			if err == nil {
-				t.Fatalf("hash %q parsed, giving source %+v", hash, got["evil"].Source)
+				t.Fatalf("hash %q parsed, giving source %+v", hash, got.Packages["evil"].Source)
 			}
 			if !strings.Contains(err.Error(), "hash") {
 				t.Errorf("error should name the field, got %v", err)

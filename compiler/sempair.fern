@@ -829,12 +829,12 @@ function word_contract(slot: i32): ssasem.Contract {
 function with_callee_enum(f0: ssasem.Func, callee: ssasem.Func, sh: Shape): ssasem.Func {
   let f: ssasem.Func = f0;
   if (semrecords.find_enum(f.enums, sh.ty) < 0) {
-    f = ssasem.Func { ...f, enums: f.enums.append(callee.enums[semrecords.find_enum(callee.enums, sh.ty)]) };
+    f = ssasem.Func { ...f, enums: f.enums.append(callee.enums[semrecords.find_enum(callee.enums, sh.ty)]), schema_checked: false };
   }
   for i in 0..sh.payloads.len() {
     let at: i32 = semrecords.find(callee.records, sh.payloads[i]);
     if (sh.parts[i].len() == 2 && at >= 0 && semrecords.find(f.records, sh.payloads[i]) < 0) {
-      f = ssasem.Func { ...f, records: semrecords.records_of(f.records.list.append(callee.records.list[at])) };
+      f = ssasem.Func { ...f, records: semrecords.records_of(f.records.list.append(callee.records.list[at])), schema_checked: false };
     }
   }
   return f;
@@ -1894,5 +1894,5 @@ function with_laid_records(f: ssasem.Func, lay: Layout): ssasem.Func {
   if (!changed) {
     return f;
   }
-  return ssasem.Func { ...f, records: semrecords.records_of(list) };
+  return ssasem.Func { ...f, records: semrecords.records_of(list), schema_checked: false };
 }

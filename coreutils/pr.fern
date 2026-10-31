@@ -665,7 +665,7 @@ function put_number(l0: Line, c: Cfg, cs: i32, n: i64): Line {
       buf_push_byte(f.buf, 48);
       zeros = zeros - 1;
     }
-    gnu.push_decimal(f.buf, v);
+    buf_push_decimal(f.buf, v);
     l = Line { ...f, pos: f.pos + len };
   } else {
     let s: string = n.to_string();

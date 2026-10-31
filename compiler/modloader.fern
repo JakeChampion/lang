@@ -496,7 +496,7 @@ function member_name(memdir: string): string {
 function locked_dir(dir: string, name: string, minimum: string): Result[string, string] {
   match (read_file(dir + "fern.lock")) {
     Ok(src) => {
-      let entries: fern_toml.LockEntry[] = match (fern_toml.parse_lock(src)) { Ok(es) => es, Err(message) => { return Err(dir + message); } };
+      let entries: fern_toml.LockEntry[] = match (fern_toml.parse_lock(src)) { Ok(lock) => lock.entries, Err(message) => { return Err(dir + message); } };
       for entry in entries {
         if (entry.name == name) {
           if (lock_below_minimum(entry.version, minimum)) {

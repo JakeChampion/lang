@@ -1477,6 +1477,10 @@ pub function op_buf_push_u64(): Op {
   return op0(306);
 }
 
+pub function op_buf_push_decimal(): Op {
+  return op0(485);
+}
+
 pub function op_buf_len(): Op {
   return op0(295);
 }
@@ -3439,6 +3443,9 @@ function kind_id_len16(name: string): i32 {
   if (name == "crc32_ieee_array") {
     return 481;
   }
+  if (name == "buf_push_decimal") {
+    return 485;
+  }
   if (name == "sha256_hw_blocks") {
     return 410;
   }
@@ -4173,6 +4180,9 @@ function kind_name_4(id: i32): string {
   }
   if (id == 306) {
     return "buf_push_u64";
+  }
+  if (id == 485) {
+    return "buf_push_decimal";
   }
   if (id == 304) {
     return "open_reader_with";
@@ -4947,7 +4957,7 @@ function pops_buf(t: i32): i32 {
   if (t == 347 || t == 386) {
     return 1;
   }
-  if (t == 306) {
+  if (t == 306 || t == 485) {
     return 2;
   }
   if (t == 325 || t == 326 || t == 328 || t == 370 || t == 371 || t == 372) {

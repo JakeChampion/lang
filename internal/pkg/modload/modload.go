@@ -621,7 +621,7 @@ func lockedDepDir(manDir, name, minimum string) (string, error) {
 	if locked == nil {
 		return "", fmt.Errorf("dependency %q is versioned but %s has no %s — run `fern -resolve %s`", name, manDir, mvs.LockFileName, filepath.Join(manDir, manifest.FileName))
 	}
-	sel, ok := locked[name]
+	sel, ok := locked.Packages[name]
 	if !ok {
 		return "", fmt.Errorf("dependency %q is not in %s — run `fern -resolve %s`", name, filepath.Join(manDir, mvs.LockFileName), filepath.Join(manDir, manifest.FileName))
 	}
