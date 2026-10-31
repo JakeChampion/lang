@@ -25,7 +25,7 @@ function test_hex_value(): test.TestOutcome {
   if (!hex_is((97 as u8).hex_value(), 10) || !hex_is((57 as u8).hex_value(), 9) || !hex_is((70 as u8).hex_value(), 15)) {
     return test.fail("hex digit value");
   }
-  return test.assert_is_none_i32((120 as u8).hex_value());
+  return test.assert_is_none((120 as u8).hex_value());
 }
 
 function hex_is(o: Option[i32], want: i32): boolean {

@@ -1,19 +1,19 @@
 import "std/test";
 
 function test_in_range_f64_pass(): test.TestOutcome {
-  return test.assert_in_range_f64(2.5, 1.0, 3.0);
+  return test.assert_in_range(2.5, 1.0, 3.0);
 }
 
 function test_in_range_f64_inclusive_lo(): test.TestOutcome {
-  return test.assert_in_range_f64(1.0, 1.0, 3.0);
+  return test.assert_in_range(1.0, 1.0, 3.0);
 }
 
 function test_in_range_f64_inclusive_hi(): test.TestOutcome {
-  return test.assert_in_range_f64(3.0, 1.0, 3.0);
+  return test.assert_in_range(3.0, 1.0, 3.0);
 }
 
 function test_in_range_f64_below(): test.TestOutcome {
-  match (test.assert_in_range_f64(0.5, 1.0, 3.0)) {
+  match (test.assert_in_range(0.5, 1.0, 3.0)) {
     Pass => {
       return test.fail("expected below-range fail");
     },
@@ -27,7 +27,7 @@ function test_in_range_f64_below(): test.TestOutcome {
 }
 
 function test_in_range_f64_above(): test.TestOutcome {
-  match (test.assert_in_range_f64(3.5, 1.0, 3.0)) {
+  match (test.assert_in_range(3.5, 1.0, 3.0)) {
     Pass => {
       return test.fail("expected above-range fail");
     },
@@ -43,7 +43,7 @@ function test_in_range_f64_above(): test.TestOutcome {
 function test_in_range_f64_nan_fails(): test.TestOutcome {
   let z: f64 = 0.0;
   let nan: f64 = z / z;
-  match (test.assert_in_range_f64(nan, 0.0, 1.0)) {
+  match (test.assert_in_range(nan, 0.0, 1.0)) {
     Pass => {
       return test.fail("NaN should fail range check");
     },

@@ -110,18 +110,18 @@ function is_even(n: i32): boolean {
 }
 
 function test_assert_all_i32_pass(): test.TestOutcome {
-  return test.assert_all_i32([2, 4, 6, 8], is_even);
+  return test.assert_all([2, 4, 6, 8], is_even);
 }
 
 function test_assert_all_i32_inline_lambda(): test.TestOutcome {
-  return test.assert_all_i32(
+  return test.assert_all(
     [1, 2, 3],
     (n: i32): boolean => n > 0,
   );
 }
 
 function test_assert_all_i32_fails_with_index(): test.TestOutcome {
-  match (test.assert_all_i32([2, 4, 5, 8], is_even)) {
+  match (test.assert_all([2, 4, 5, 8], is_even)) {
     Pass => {
       return test.fail("expected predicate fail");
     },
@@ -136,15 +136,15 @@ function test_assert_all_i32_fails_with_index(): test.TestOutcome {
 
 function test_assert_all_i32_empty_vacuous(): test.TestOutcome {
   let empty: i32[] = [];
-  return test.assert_all_i32(empty, is_positive);
+  return test.assert_all(empty, is_positive);
 }
 
 function test_assert_any_i32_pass(): test.TestOutcome {
-  return test.assert_any_i32([1, 3, 4, 7], is_even);
+  return test.assert_any([1, 3, 4, 7], is_even);
 }
 
 function test_assert_any_i32_fail(): test.TestOutcome {
-  match (test.assert_any_i32([1, 3, 5, 7], is_even)) {
+  match (test.assert_any([1, 3, 5, 7], is_even)) {
     Pass => {
       return test.fail("expected no-match fail");
     },
@@ -159,7 +159,7 @@ function test_assert_any_i32_fail(): test.TestOutcome {
 
 function test_assert_any_i32_empty_fails(): test.TestOutcome {
   let empty: i32[] = [];
-  match (test.assert_any_i32(empty, is_positive)) {
+  match (test.assert_any(empty, is_positive)) {
     Pass => {
       return test.fail("∃ over empty must fail");
     },
@@ -174,11 +174,11 @@ function is_non_empty(s: string): boolean {
 }
 
 function test_assert_all_string_pass(): test.TestOutcome {
-  return test.assert_all_string(["a", "bc", "def"], is_non_empty);
+  return test.assert_all(["a", "bc", "def"], is_non_empty);
 }
 
 function test_assert_any_string_pass(): test.TestOutcome {
-  return test.assert_any_string(["", "", "found-it"], is_non_empty);
+  return test.assert_any(["", "", "found-it"], is_non_empty);
 }
 
 function main(): i32 {

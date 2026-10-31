@@ -11,11 +11,11 @@ function lookup(k: i32): Option[i32] {
 }
 
 function test_is_some_i32_pass(): test.TestOutcome {
-  return test.assert_is_some_i32(lookup(1));
+  return test.assert_is_some(lookup(1));
 }
 
 function test_is_some_i32_none_fails(): test.TestOutcome {
-  match (test.assert_is_some_i32(lookup(99))) {
+  match (test.assert_is_some(lookup(99))) {
     Pass => {
       return test.fail("expected None to fail is_some");
     },
@@ -29,16 +29,16 @@ function test_is_some_i32_none_fails(): test.TestOutcome {
 }
 
 function test_is_none_i32_pass(): test.TestOutcome {
-  return test.assert_is_none_i32(lookup(99));
+  return test.assert_is_none(lookup(99));
 }
 
 function test_is_none_i32_some_fails_with_value(): test.TestOutcome {
-  match (test.assert_is_none_i32(lookup(1))) {
+  match (test.assert_is_none(lookup(1))) {
     Pass => {
       return test.fail("expected Some to fail is_none");
     },
     Fail(msg) => {
-      if (!msg.contains("Some(100)")) {
+      if (!msg.contains("Some(\"100\")")) {
         return test.fail("expected 'Some(100)' in failure: " + msg);
       }
       return test.pass();
@@ -47,16 +47,16 @@ function test_is_none_i32_some_fails_with_value(): test.TestOutcome {
 }
 
 function test_is_some_eq_i32_pass(): test.TestOutcome {
-  return test.assert_is_some_eq_i32(lookup(1), 100);
+  return test.assert_is_some_eq(lookup(1), 100);
 }
 
 function test_is_some_eq_i32_wrong_value(): test.TestOutcome {
-  match (test.assert_is_some_eq_i32(lookup(1), 999)) {
+  match (test.assert_is_some_eq(lookup(1), 999)) {
     Pass => {
       return test.fail("wrong-value should fail");
     },
     Fail(msg) => {
-      if (!msg.contains("got Some(100)") || !msg.contains("expected Some(999)")) {
+      if (!msg.contains("got Some(\"100\")") || !msg.contains("expected Some(\"999\")")) {
         return test.fail("expected both Somes in failure: " + msg);
       }
       return test.pass();
@@ -65,7 +65,7 @@ function test_is_some_eq_i32_wrong_value(): test.TestOutcome {
 }
 
 function test_is_some_eq_i32_none_fails(): test.TestOutcome {
-  match (test.assert_is_some_eq_i32(lookup(99), 1)) {
+  match (test.assert_is_some_eq(lookup(99), 1)) {
     Pass => {
       return test.fail("None should fail is_some_eq");
     },
@@ -86,19 +86,19 @@ function lookup_str(k: string): Option[string] {
 }
 
 function test_is_some_eq_string_pass(): test.TestOutcome {
-  return test.assert_is_some_eq_string(lookup_str("hi"), "hello");
+  return test.assert_is_some_eq(lookup_str("hi"), "hello");
 }
 
 function test_is_some_string_pass(): test.TestOutcome {
-  return test.assert_is_some_string(lookup_str("hi"));
+  return test.assert_is_some(lookup_str("hi"));
 }
 
 function test_is_none_string_pass(): test.TestOutcome {
-  return test.assert_is_none_string(lookup_str("nope"));
+  return test.assert_is_none(lookup_str("nope"));
 }
 
 function test_is_none_string_some_quotes_value(): test.TestOutcome {
-  match (test.assert_is_none_string(lookup_str("hi"))) {
+  match (test.assert_is_none(lookup_str("hi"))) {
     Pass => {
       return test.fail("Some should fail is_none_string");
     },

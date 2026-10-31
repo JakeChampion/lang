@@ -1496,7 +1496,7 @@ impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self ==
 function main(): i32 { let a: P = P{x:1}; let b: P = P{x:1}; if (a == b) { return 1; } return 0; }`,
 			"does not implement `Eq`"},
 		{`function main(): i32 { let a: i32[] = [1,2]; let b: i32[] = [1,2]; if (a == b) { return 1; } return 0; }`,
-			"i32[] cannot implement `Eq`: compare its parts instead"},
+			"i32[] implements `Eq` in core/cmp: add `import \"core/cmp\";`"},
 	}
 	for _, c := range reject {
 		err := checkSource(t, c.src)

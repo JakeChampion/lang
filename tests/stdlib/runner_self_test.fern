@@ -195,24 +195,24 @@ function test_eq_i32_array_fail_index(): test.TestOutcome {
 }
 
 function test_in_range_i32_pass(): test.TestOutcome {
-  return expect_pass(test.assert_in_range_i32(5, 0, 10));
+  return expect_pass(test.assert_in_range(5, 0, 10));
 }
 
 function test_in_range_i32_fail(): test.TestOutcome {
   return expect_fail_containing(
-    test.assert_in_range_i32(11, 0, 10),
-    "assert_in_range_i32: 11 > upper bound 10",
+    test.assert_in_range(11, 0, 10),
+    "assert_in_range: \"11\" > upper bound \"10\"",
   );
 }
 
 function test_in_range_i64_pass(): test.TestOutcome {
-  return expect_pass(test.assert_in_range_i64(5 as i64, 0 as i64, 10 as i64));
+  return expect_pass(test.assert_in_range(5 as i64, 0 as i64, 10 as i64));
 }
 
 function test_in_range_i64_fail(): test.TestOutcome {
   return expect_fail_containing(
-    test.assert_in_range_i64(0 as i64 - 1 as i64, 0 as i64, 10 as i64),
-    "assert_in_range_i64: -1 < lower bound 0",
+    test.assert_in_range(0 as i64 - 1 as i64, 0 as i64, 10 as i64),
+    "assert_in_range: \"-1\" < lower bound \"0\"",
   );
 }
 
@@ -239,20 +239,21 @@ function test_close_to_now_fail(): test.TestOutcome {
 }
 
 function test_in_range_f64_pass(): test.TestOutcome {
-  return expect_pass(test.assert_in_range_f64(0.5, 0.0, 1.0));
+  return expect_pass(test.assert_in_range(0.5, 0.0, 1.0));
 }
 
 function test_in_range_f64_fail(): test.TestOutcome {
   return expect_fail_containing(
-    test.assert_in_range_f64(1.5, 0.0, 1.0),
-    "assert_in_range_f64: 1.5 > upper bound 1",
+    test.assert_in_range(1.5, 0.0, 1.0),
+    "assert_in_range: \"1.5\" > upper bound \"1\"",
   );
 }
 
-function test_in_range_f64_nan_fails(): test.TestOutcome {
+// core/cmp orders NaN above every other value, as assert_le does.
+function test_in_range_f64_nan_orders_last(): test.TestOutcome {
   let nan: f64 = 0.0 / 0.0;
   let o: test.TestOutcome = expect_fail_containing(
-    test.assert_in_range_f64(nan, 0.0, 1.0), "value is NaN",
+    test.assert_in_range(nan, 0.0, 1.0), "\"NaN\" > upper bound",
   );
   match (o) {
     Fail(m) => {
@@ -261,8 +262,8 @@ function test_in_range_f64_nan_fails(): test.TestOutcome {
     Pass => {}
   }
   o = expect_fail_containing(
-    test.assert_in_range_f64(0.5, nan, 1.0),
-    "lower bound is NaN",
+    test.assert_in_range(0.5, nan, 1.0),
+    "inverted range",
   );
   match (o) {
     Fail(m) => {
@@ -270,30 +271,28 @@ function test_in_range_f64_nan_fails(): test.TestOutcome {
     },
     Pass => {}
   }
-  return expect_fail_containing(
-    test.assert_in_range_f64(0.5, 0.0, nan),
-    "upper bound is NaN",
-  );
+  return expect_pass(test.assert_in_range(0.5, 0.0, nan));
 }
 
 function test_in_range_f32_pass(): test.TestOutcome {
-  return expect_pass(test.assert_in_range_f32(0.5 as f32, 0.0 as f32, 1.0 as f32));
+  return expect_pass(test.assert_in_range(0.5 as f32, 0.0 as f32, 1.0 as f32));
 }
 
 function test_in_range_f32_fail(): test.TestOutcome {
   return expect_fail_containing(
-    test.assert_in_range_f32(1.5 as f32, 0.0 as f32, 1.0 as f32),
-    "assert_in_range_f32: 1.5 > upper bound 1",
+    test.assert_in_range(1.5 as f32, 0.0 as f32, 1.0 as f32),
+    "assert_in_range: \"1.5\" > upper bound \"1\"",
   );
 }
 
-function test_in_range_f32_nan_fails(): test.TestOutcome {
+// core/cmp orders NaN above every other value, as assert_le does.
+function test_in_range_f32_nan_orders_last(): test.TestOutcome {
   let z: f32 = 0.0 as f32;
   let nan: f32 = z / z;
   let one: f32 = 1.0 as f32;
   let half: f32 = 0.5 as f32;
   let o: test.TestOutcome = expect_fail_containing(
-    test.assert_in_range_f32(nan, z, one), "value is NaN",
+    test.assert_in_range(nan, z, one), "\"NaN\" > upper bound",
   );
   match (o) {
     Fail(m) => {
@@ -302,8 +301,8 @@ function test_in_range_f32_nan_fails(): test.TestOutcome {
     Pass => {}
   }
   o = expect_fail_containing(
-    test.assert_in_range_f32(half, nan, one),
-    "lower bound is NaN",
+    test.assert_in_range(half, nan, one),
+    "inverted range",
   );
   match (o) {
     Fail(m) => {
@@ -311,15 +310,12 @@ function test_in_range_f32_nan_fails(): test.TestOutcome {
     },
     Pass => {}
   }
-  return expect_fail_containing(
-    test.assert_in_range_f32(half, z, nan),
-    "upper bound is NaN",
-  );
+  return expect_pass(test.assert_in_range(half, z, nan));
 }
 
 function test_in_range_inverted_fails(): test.TestOutcome {
   let o: test.TestOutcome = expect_fail_containing(
-    test.assert_in_range_i32(5, 10, 0), "assert_in_range_i32: inverted range",
+    test.assert_in_range(5, 10, 0), "assert_in_range: inverted range",
   );
   match (o) {
     Fail(m) => {
@@ -328,8 +324,8 @@ function test_in_range_inverted_fails(): test.TestOutcome {
     Pass => {}
   }
   o = expect_fail_containing(
-    test.assert_in_range_i64(5 as i64, 10 as i64, 0 as i64),
-    "assert_in_range_i64: inverted range",
+    test.assert_in_range(5 as i64, 10 as i64, 0 as i64),
+    "assert_in_range: inverted range",
   );
   match (o) {
     Fail(m) => {
@@ -338,8 +334,8 @@ function test_in_range_inverted_fails(): test.TestOutcome {
     Pass => {}
   }
   o = expect_fail_containing(
-    test.assert_in_range_f64(0.5, 1.0, 0.0),
-    "assert_in_range_f64: inverted range",
+    test.assert_in_range(0.5, 1.0, 0.0),
+    "assert_in_range: inverted range",
   );
   match (o) {
     Fail(m) => {
@@ -348,8 +344,8 @@ function test_in_range_inverted_fails(): test.TestOutcome {
     Pass => {}
   }
   return expect_fail_containing(
-    test.assert_in_range_f32(0.5 as f32, 1.0 as f32, 0.0 as f32),
-    "assert_in_range_f32: inverted range",
+    test.assert_in_range(0.5 as f32, 1.0 as f32, 0.0 as f32),
+    "assert_in_range: inverted range",
   );
 }
 
@@ -499,6 +495,96 @@ function test_assert_body_fail(): test.TestOutcome {
   return expect_fail_containing(test.assert_body(http_resp(), "bye"), "assert_body: got \"hello\", expected \"bye\"");
 }
 
+function is_even(n: i32): boolean {
+  return n % 2 == 0;
+}
+
+function test_all_pass(): test.TestOutcome {
+  return expect_pass(test.assert_all([2, 4], is_even));
+}
+
+function test_all_fail(): test.TestOutcome {
+  return expect_fail_containing(test.assert_all([2, 3], is_even), "assert_all: predicate failed at index 1: value \"3\"");
+}
+
+function test_any_pass(): test.TestOutcome {
+  return expect_pass(test.assert_any([1, 2], is_even));
+}
+
+function test_any_fail(): test.TestOutcome {
+  return expect_fail_containing(test.assert_any([1, 3], is_even), "assert_any: no element of 2 matched");
+}
+
+function test_count_pass(): test.TestOutcome {
+  return expect_pass(test.assert_count([1, 2, 4], is_even, 2));
+}
+
+function test_count_fail(): test.TestOutcome {
+  return expect_fail_containing(test.assert_count([1, 2], is_even, 2), "assert_count: expected 2 matches, got 1");
+}
+
+function test_one_of_pass(): test.TestOutcome {
+  return expect_pass(test.assert_one_of("b", ["a", "b"]));
+}
+
+function test_one_of_fail(): test.TestOutcome {
+  return expect_fail_containing(test.assert_one_of("c", ["a", "b"]), "assert_one_of: \"c\" not in allowed set [\"a\", \"b\"]");
+}
+
+function test_none_of_pass(): test.TestOutcome {
+  return expect_pass(test.assert_none_of(3, [1, 2]));
+}
+
+function test_none_of_fail(): test.TestOutcome {
+  return expect_fail_containing(test.assert_none_of(2, [1, 2]), "assert_none_of: \"2\" matched forbidden value");
+}
+
+function test_is_some_pass(): test.TestOutcome {
+  return expect_pass(test.assert_is_some(Some("x")));
+}
+
+function test_is_some_fail(): test.TestOutcome {
+  let none: Option[string] = None;
+  return expect_fail_containing(test.assert_is_some(none), "assert_is_some: got None");
+}
+
+function test_is_none_pass(): test.TestOutcome {
+  let none: Option[string] = None;
+  return expect_pass(test.assert_is_none(none));
+}
+
+function test_is_none_fail(): test.TestOutcome {
+  return expect_fail_containing(test.assert_is_none(Some("x")), "assert_is_none: got Some(\"x\")");
+}
+
+function test_is_some_eq_pass(): test.TestOutcome {
+  return expect_pass(test.assert_is_some_eq(Some(7), 7));
+}
+
+function test_is_some_eq_fail(): test.TestOutcome {
+  return expect_fail_containing(test.assert_is_some_eq(Some(7), 8), "assert_is_some_eq: got Some(\"7\"), expected Some(\"8\")");
+}
+
+function test_is_ok_pass(): test.TestOutcome {
+  let ok: Result[i32, string] = Ok(1);
+  return expect_pass(test.assert_is_ok(ok));
+}
+
+function test_is_ok_fail(): test.TestOutcome {
+  let err: Result[i32, string] = Err("e");
+  return expect_fail_containing(test.assert_is_ok(err), "assert_is_ok: got Err");
+}
+
+function test_is_ok_eq_pass(): test.TestOutcome {
+  let ok: Result[string, string] = Ok("a");
+  return expect_pass(test.assert_is_ok_eq(ok, "a"));
+}
+
+function test_is_ok_eq_fail(): test.TestOutcome {
+  let ok: Result[string, string] = Ok("a");
+  return expect_fail_containing(test.assert_is_ok_eq(ok, "b"), "assert_is_ok_eq: got Ok(\"a\"), expected Ok(\"b\")");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.new("runner self-test");
   r = r.it("assert_status pass", test_assert_status_pass);
@@ -528,20 +614,20 @@ function main(): i32 {
   r = r.it("assert_gt fail quotes both values", test_gt_fail_quotes_both);
   r = r.it("assert_ge pass", test_ge_pass);
   r = r.it("assert_ge fail quotes both values", test_ge_fail_quotes_both);
-  r = r.it("assert_in_range_i32 pass", test_in_range_i32_pass);
-  r = r.it("assert_in_range_i32 fail", test_in_range_i32_fail);
-  r = r.it("assert_in_range_i64 pass", test_in_range_i64_pass);
-  r = r.it("assert_in_range_i64 fail", test_in_range_i64_fail);
+  r = r.it("assert_in_range pass", test_in_range_i32_pass);
+  r = r.it("assert_in_range fail", test_in_range_i32_fail);
+  r = r.it("assert_in_range pass", test_in_range_i64_pass);
+  r = r.it("assert_in_range fail", test_in_range_i64_fail);
   r = r.it("assert_elapsed_lt pass", test_elapsed_lt_pass);
   r = r.it("assert_elapsed_lt fail", test_elapsed_lt_fail);
   r = r.it("assert_close_to_now pass", test_close_to_now_pass);
   r = r.it("assert_close_to_now fail", test_close_to_now_fail);
-  r = r.it("assert_in_range_f64 pass", test_in_range_f64_pass);
-  r = r.it("assert_in_range_f64 fail", test_in_range_f64_fail);
-  r = r.it("assert_in_range_f64 fails on NaN value or bound", test_in_range_f64_nan_fails);
-  r = r.it("assert_in_range_f32 pass", test_in_range_f32_pass);
-  r = r.it("assert_in_range_f32 fail", test_in_range_f32_fail);
-  r = r.it("assert_in_range_f32 fails on NaN value or bound", test_in_range_f32_nan_fails);
+  r = r.it("assert_in_range pass", test_in_range_f64_pass);
+  r = r.it("assert_in_range fail", test_in_range_f64_fail);
+  r = r.it("assert_in_range orders a NaN f64 last", test_in_range_f64_nan_orders_last);
+  r = r.it("assert_in_range pass", test_in_range_f32_pass);
+  r = r.it("assert_in_range fail", test_in_range_f32_fail);
+  r = r.it("assert_in_range orders a NaN f32 last", test_in_range_f32_nan_orders_last);
   r = r.it("assert_in_range rejects an inverted range", test_in_range_inverted_fails);
   r = r.it("assert_contains pass", test_contains_pass);
   r = r.it("assert_contains fail", test_contains_fail);
@@ -569,5 +655,25 @@ function main(): i32 {
   r = r.it("assert_sorted_asc accepts NaN last", test_sorted_asc_nan_last_passes);
   r = r.it("assert_unique rejects two NaNs", test_unique_two_nans_fails);
   r = r.it("assert_unique accepts one NaN", test_unique_one_nan_passes);
+  r = r.it("assert_all pass", test_all_pass);
+  r = r.it("assert_all fail names the value", test_all_fail);
+  r = r.it("assert_any pass", test_any_pass);
+  r = r.it("assert_any fail names the value", test_any_fail);
+  r = r.it("assert_count pass", test_count_pass);
+  r = r.it("assert_count fail names the value", test_count_fail);
+  r = r.it("assert_one_of pass", test_one_of_pass);
+  r = r.it("assert_one_of fail names the value", test_one_of_fail);
+  r = r.it("assert_none_of pass", test_none_of_pass);
+  r = r.it("assert_none_of fail names the value", test_none_of_fail);
+  r = r.it("assert_is_some pass", test_is_some_pass);
+  r = r.it("assert_is_some fail names the value", test_is_some_fail);
+  r = r.it("assert_is_none pass", test_is_none_pass);
+  r = r.it("assert_is_none fail names the value", test_is_none_fail);
+  r = r.it("assert_is_some_eq pass", test_is_some_eq_pass);
+  r = r.it("assert_is_some_eq fail names the value", test_is_some_eq_fail);
+  r = r.it("assert_is_ok pass", test_is_ok_pass);
+  r = r.it("assert_is_ok fail names the value", test_is_ok_fail);
+  r = r.it("assert_is_ok_eq pass", test_is_ok_eq_pass);
+  r = r.it("assert_is_ok_eq fail names the value", test_is_ok_eq_fail);
   return r.finish();
 }

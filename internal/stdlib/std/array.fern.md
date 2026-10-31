@@ -1349,10 +1349,6 @@ pub function (xs: T[]) min_index[T: cmp.Ord](): Option[i32] {
   return min_index(xs);
 }
 
-pub function (xs: T[]) equal[T: cmp.Eq](other: T[]): boolean {
-  return cmp.eq_arrays(xs, other);
-}
-
 pub function (xs: T[]) dedup[T: cmp.Eq](): T[] {
   return dedup(xs);
 }

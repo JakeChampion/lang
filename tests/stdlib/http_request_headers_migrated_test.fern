@@ -17,7 +17,7 @@ function test_parsed_headers_reachable_on_req(): test.TestOutcome {
   let wire: string = "GET /x HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nContent-Length: 0\r\n\r\n";
   match (http.parse_request(wire)) {
     Ok(req) => {
-      return test.assert_is_some_eq_string(
+      return test.assert_is_some_eq(
         req.headers.get("content-type"),
         "application/json",
       );
@@ -62,7 +62,7 @@ function test_missing_header_returns_none(): test.TestOutcome {
   let wire: string = "GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n\r\n";
   match (http.parse_request(wire)) {
     Ok(req) => {
-      return test.assert_is_none_string(req.headers.get("X-Absent"));
+      return test.assert_is_none(req.headers.get("X-Absent"));
     },
     Err(_) => {
       return test.fail("parse failed");
@@ -125,20 +125,20 @@ function test_transfer_encoding_rejected(): test.TestOutcome {
 
 function test_http_header_value_via_headermap(): test.TestOutcome {
   let block: string = "Host: example.com\r\nContent-Type:  application/json  ";
-  return test.assert_is_some_eq_string(
+  return test.assert_is_some_eq(
     http.header_value(block, "content-type"),
     "application/json",
   );
 }
 
 function test_http_header_value_missing_is_none(): test.TestOutcome {
-  return test.assert_is_none_string(
+  return test.assert_is_none(
     http.header_value("Host: e\r\n", "X-Absent"),
   );
 }
 
 function test_http_header_value_refuses_a_malformed_block(): test.TestOutcome {
-  return test.assert_is_none_string(
+  return test.assert_is_none(
     http.header_value("Host: e\r\nno colon\r\n", "host"),
   );
 }
