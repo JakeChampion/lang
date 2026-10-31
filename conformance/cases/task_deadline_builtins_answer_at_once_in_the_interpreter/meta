@@ -1,0 +1,5 @@
+waiver: harness-limit
+reason: no task parks in an interpreter, so __task_park_until answers -1 at
+  once there. A compiled program parks, so its output is different.
+  TestSelfHostTaskDeadline runs the same program on x86-64, arm64 and wasm
+  and checks that each park keeps a deadline of 2^62 ns.

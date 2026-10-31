@@ -11,11 +11,23 @@ import (
 )
 
 func TestSelfHostTaskPortable(t *testing.T) {
+	checkTaskProgramOnTargets(t, e2eharness.TaskPortableProgram, e2eharness.TaskPortableWant)
+}
+
+// TestSelfHostTaskDeadline parks with a deadline beyond 32-bit milliseconds
+// and reads it back through the runtime on each target.
+func TestSelfHostTaskDeadline(t *testing.T) {
+	checkTaskProgramOnTargets(t, e2eharness.TaskDeadlineProgram, e2eharness.TaskDeadlineWant)
+}
+
+// checkTaskProgramOnTargets runs program on x86-64-linux, arm64-linux and
+// wasm32-wasi (composed against cmd/fern/wit) and compares its stdout with want.
+func checkTaskProgramOnTargets(t *testing.T, program, want string) {
 	cli := buildSelfHostCLI(t)
 	for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			src := filepath.Join(t.TempDir(), "main.fern")
-			if err := os.WriteFile(src, []byte(e2eharness.TaskPortableProgram), 0o644); err != nil {
+			if err := os.WriteFile(src, []byte(program), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			var cmd *exec.Cmd
@@ -70,8 +82,8 @@ func TestSelfHostTaskPortable(t *testing.T) {
 			if err := cmd.Run(); err != nil {
 				t.Fatalf("run: %v\nstdout:\n%s\nstderr:\n%s", err, out.String(), errb.String())
 			}
-			if out.String() != e2eharness.TaskPortableWant {
-				t.Fatalf("stdout:\n%s\nwant:\n%s\nstderr:\n%s", out.String(), e2eharness.TaskPortableWant, errb.String())
+			if out.String() != want {
+				t.Fatalf("stdout:\n%s\nwant:\n%s\nstderr:\n%s", out.String(), want, errb.String())
 			}
 		})
 	}
