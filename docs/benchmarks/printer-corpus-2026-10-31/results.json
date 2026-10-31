@@ -1,0 +1,17 @@
+{
+  "host": "arm64-darwin",
+  "source_commit": "80170ffc67",
+  "ci_failure": {"run": 41245971228, "job": 124669453387, "shard": "1/2", "files": 910, "corpus_files": 1821, "timeout_seconds": 1500},
+  "format_identity": {"files": 1821, "parsed": 1821, "identical": 1623, "elapsed_ns": 3693065125},
+  "small_slice": {
+    "shard": "1/64",
+    "selected_files": 29,
+    "control_checked": 17,
+    "candidate_checked": 17,
+    "candidate_unchanged": 16,
+    "candidate_rewritten": 1,
+    "control_seconds": 108.78,
+    "candidate_seconds": 56.73
+  },
+  "timing_note": "Observed single runs include concurrent local validation. Full CI slices retain the same 1500-second deadline. Their validation is separate from this small-slice measurement."
+}
