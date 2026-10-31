@@ -29,6 +29,6 @@ function main(): i32 {
     let m: mock_platform.MockPlatform = mock_platform.new();
     let resp: HttpResponse = handle(http.request("GET", "/"), m);
     print(resp.status.to_string());
-    print(resp.body_string());
+    print(resp.body_text_lossy());
     return 0;
 }

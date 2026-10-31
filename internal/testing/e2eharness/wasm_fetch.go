@@ -45,7 +45,7 @@ function parse(s: string): i32 {
 function port(key: string): i32 { match (env(key)) { Some(s) => { return parse(s); }, None => { return 0; } } }
 function body_at(key: string, path: string): string {
     match (fetch.send(fetch.get("http://127.0.0.1:" + port(key).to_string() + path))) {
-        Ok(resp) => { return resp.body_string(); },
+        Ok(resp) => { return resp.body_text_lossy(); },
         Err(e) => { return e.message(); }
     }
     return "";

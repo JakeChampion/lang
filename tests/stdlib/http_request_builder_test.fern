@@ -17,7 +17,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
         return http.text(415, "");
       }
     }
-    match (req.body_string()) {
+    match (req.body_text()) {
       Ok(text) => {
         plat.log("created " + text);
         return http.json(text).with_header("Location", "/items/1").with_header("X-Status", "created");
@@ -79,7 +79,7 @@ function test_json_body_is_created(): test.TestOutcome {
 
 function test_body_without_its_type_is_refused(): test.TestOutcome {
   let m: mock_platform.MockPlatform = mock_platform.new();
-  let resp: HttpResponse = handle(http.request("POST", "/items").with_body("{}"), m);
+  let resp: HttpResponse = handle(http.request("POST", "/items").with_text("{}"), m);
   match (test.assert_status(resp, 415)) {
     Fail(msg) => {
       return test.fail(msg);

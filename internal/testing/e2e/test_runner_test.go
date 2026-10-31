@@ -483,7 +483,7 @@ func TestRunnerHttpResponseBodyShimExample(t *testing.T) {
 	}
 	for _, w := range []string{
 		"# Suite: HTTP response body shim",
-		"ok 1 - body_string round-trips",
+		"ok 1 - body_text_lossy round-trips",
 		"ok 2 - body_len matches the string length",
 		"ok 5 - bytes constructor agrees with text",
 		"ok 7 - wire Content-Length matches the body",
