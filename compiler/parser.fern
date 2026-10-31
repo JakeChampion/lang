@@ -11057,6 +11057,14 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
   return "";
 }
 
+// An instance keyed by type variables reads those variables in its own body too.
+function instance_fns(funcs: MFns, key: string): MFns {
+  if (mono_ty_mentions_var(key)) {
+    return MFns { ...funcs, keep_vars: true };
+  }
+  return funcs;
+}
+
 function hides_var(t: string, funcs: MFns): boolean {
   return !funcs.keep_vars && mono_ty_mentions_var(t);
 }
@@ -13276,7 +13284,7 @@ function monomorphize_module(mod: Module, erased: string[]): Module {
     if (gi >= 0) {
       let cl: FuncDecl = clone_bg(funcs[gi], ct, mod.impls, mod.trait_reqs, fns);
       let cenv: MEnv = env_from_params(cl.params);
-      let crb: RStmts = mono_stmts(cl.body, cenv, fns, ins, fn_tag_spelling(cl.ret_type, cl.ret_fn_ret, cl.ret_fn_param_types));
+      let crb: RStmts = mono_stmts(cl.body, cenv, instance_fns(fns, ct), ins, fn_tag_spelling(cl.ret_type, cl.ret_fn_ret, cl.ret_fn_param_types));
       ins = crb.rins3;
       rewritten = rewritten.append(FuncDecl { ...cl, receiver_name: "", receiver_type: "", body: crb.rstmts });
     }
@@ -14829,7 +14837,7 @@ function ms_module(mod: Module): Module {
       let bgi: i32 = bg_find(sfns, base);
       if (bgi >= 0 && !has_func_named(mod.funcs, nfuncs, base + "__" + sanitize_key(key))) {
         let bcl: FuncDecl = clone_bg(sfns.decls[bgi], key, mod.impls, mod.trait_reqs, sfns);
-        let bcr: RStmts = mono_stmts(bcl.body, env_from_params(bcl.params), sfns, ins, fn_tag_spelling(bcl.ret_type, bcl.ret_fn_ret, bcl.ret_fn_param_types));
+        let bcr: RStmts = mono_stmts(bcl.body, env_from_params(bcl.params), instance_fns(sfns, key), ins, fn_tag_spelling(bcl.ret_type, bcl.ret_fn_ret, bcl.ret_fn_param_types));
         ins = bcr.rins3;
         let bfr: FRes = ms_func(FuncDecl { ...bcl, body: bcr.rstmts }, gstructs, sfns, ins);
         ins = bfr.fins;
@@ -14963,6 +14971,11 @@ function genum_key_from_anno(ty: string, base: string, enums: EnumDecl[]): strin
   if (parts.len() == 1) {
     return ge_targ_mangle(parts[0], enums);
   }
+  return ge_parts_key(parts, enums);
+}
+
+// The key of an instance with several type arguments, or "" when one part has no key form.
+function ge_parts_key(parts: string[], enums: EnumDecl[]): string {
   let key: string = "";
   let j: i32 = 0;
   while (j < parts.len()) {
@@ -14971,21 +14984,34 @@ function genum_key_from_anno(ty: string, base: string, enums: EnumDecl[]): strin
     }
     let p: string = parts[j];
     if (first_bracket(p) >= 0) {
+      let nested: string = ge_nested_key_part(p, enums);
+      if (nested.len() == 0) {
+        return "";
+      }
+      key = key + nested;
+    } else if (util.contains(p, " ") || util.contains(p, "(")) {
       return "";
+    } else {
+      key = key + p;
     }
-    if (util.contains(p, " ")) {
-      return "";
-    }
-    if (util.contains(p, "(")) {
-      return "";
-    }
-    key = key + p;
     j = j + 1;
   }
   return key;
 }
 
 struct GEInst { ok: boolean, base: string, key: string, mang: string }
+
+// The key part of a generic instance among several type arguments: the name its clone gets.
+function ge_nested_key_part(p: string, enums: EnumDecl[]): string {
+  let gi: GEInst = ge_inst_of(p, enums);
+  if (gi.ok) {
+    return gi.mang;
+  }
+  if (util.contains(p, "[]") || util.contains(p, "(") || util.contains(p, "=>")) {
+    return "";
+  }
+  return sanitize_plain_key(p);
+}
 
 function ge_inst_of(ty: string, enums: EnumDecl[]): GEInst {
   let lb: i32 = first_bracket(ty);
@@ -15276,26 +15302,24 @@ function me_infer_variant_key(ed: EnumDecl, vname: string, args: ast.Expr[], exp
     return "";
   }
   let binds: MEnv = me_variant_binds(ed, vname, args, env, structs, funcs);
-  let key: string = "";
-  let j: i32 = 0;
-  while (j < ed.type_params.len()) {
-    let b: string = binds.elook(ed.type_params[j]);
+  let parts: string[] = [];
+  for tp in ed.type_params {
+    let b: string = binds.elook(tp);
     if (b.len() == 0 || mono_ty_mentions_var(b)) {
       return "";
     }
-    if (j > 0) {
-      key = key + "__";
-    }
-    key = key + b;
-    j = j + 1;
+    parts = parts.append(b);
   }
-  if (ed.type_params.len() == 1 && keyed_by_mangle(key)) {
-    return ge_targ_mangle(key, enums);
+  if (parts.len() > 1) {
+    return ge_parts_key(parts, enums);
   }
-  if (!is_simple_key(key)) {
+  if (keyed_by_mangle(parts[0])) {
+    return ge_targ_mangle(parts[0], enums);
+  }
+  if (!is_simple_key(parts[0])) {
     return "";
   }
-  return key;
+  return parts[0];
 }
 
 function me_variant_binds(ed: EnumDecl, vname: string, args: ast.Expr[], env: MEnv, structs: StructDecl[], funcs: MFns): MEnv {
