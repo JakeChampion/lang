@@ -6,6 +6,8 @@ This module defines arithmetic traits for numeric types.
 
 Small traits describe addition, subtraction, multiplication, division, negation, zero, and one. Composite traits combine these requirements for generic numeric code.
 
+The `Gcd` trait gives `gcd` and `lcm` to i32, i64, u32 and u64. The integer modules import this module, so `import "std/i32"` also makes `n.gcd(m)` available. `xs.gcd_all()` and `xs.lcm_all()` in `std/array` use this trait for each width.
+
 ## Contracts
 
 A trait bound selects the operations available to a generic function. It does not change the overflow or precision rules of the concrete number type.
@@ -62,6 +64,12 @@ pub trait Zero {
 
 pub trait One {
   function one(): Self;
+}
+
+// The greatest common divisor and least common multiple of two integers.
+pub trait Gcd {
+  function gcd(self: Self, o: Self): Self;
+  function lcm(self: Self, o: Self): Self;
 }
 
 pub trait Num: Add + Sub + Mul + Div {}
@@ -413,6 +421,102 @@ impl One for u64 {
 }
 
 impl Num for u64 {}
+
+function __abs_i32(x: i32): i32 {
+  if (x < 0) {
+    return 0 - x;
+  }
+  return x;
+}
+
+function __abs_i64(x: i64): i64 {
+  if (x < 0 as i64) {
+    return 0 as i64 - x;
+  }
+  return x;
+}
+
+impl Gcd for i32 {
+  function gcd(self: i32, other: i32): i32 {
+    let a: i32 = __abs_i32(self);
+    let b: i32 = __abs_i32(other);
+    while (b != 0) {
+      let t: i32 = b;
+      b = a % b;
+      a = t;
+    }
+    return a;
+  }
+
+  function lcm(self: i32, other: i32): i32 {
+    if (self == 0 || other == 0) {
+      return 0;
+    }
+    let g: i32 = self.gcd(other);
+    return __abs_i32(self / g) * __abs_i32(other);
+  }
+}
+
+impl Gcd for i64 {
+  function gcd(self: i64, other: i64): i64 {
+    let a: i64 = __abs_i64(self);
+    let b: i64 = __abs_i64(other);
+    while (b != 0 as i64) {
+      let t: i64 = b;
+      b = a % b;
+      a = t;
+    }
+    return a;
+  }
+
+  function lcm(self: i64, other: i64): i64 {
+    if (self == 0 as i64 || other == 0 as i64) {
+      return 0 as i64;
+    }
+    let g: i64 = self.gcd(other);
+    return __abs_i64(self / g) * __abs_i64(other);
+  }
+}
+
+impl Gcd for u32 {
+  function gcd(self: u32, other: u32): u32 {
+    let a: u32 = self;
+    let b: u32 = other;
+    while (b != 0 as u32) {
+      let t: u32 = b;
+      b = a % b;
+      a = t;
+    }
+    return a;
+  }
+
+  function lcm(self: u32, other: u32): u32 {
+    if (self == 0 as u32 || other == 0 as u32) {
+      return 0 as u32;
+    }
+    return self / self.gcd(other) * other;
+  }
+}
+
+impl Gcd for u64 {
+  function gcd(self: u64, other: u64): u64 {
+    let a: u64 = self;
+    let b: u64 = other;
+    while (b != 0 as u64) {
+      let t: u64 = b;
+      b = a % b;
+      a = t;
+    }
+    return a;
+  }
+
+  function lcm(self: u64, other: u64): u64 {
+    if (self == 0 as u64 || other == 0 as u64) {
+      return 0 as u64;
+    }
+    return self / self.gcd(other) * other;
+  }
+}
 ```
 ### `5 pub function sum_with[T: Add](xs: T[], zero: T): T`
 

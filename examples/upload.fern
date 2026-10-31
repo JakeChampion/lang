@@ -1,7 +1,6 @@
 import "std/http";
 import "std/http/multipart";
 import "std/platform";
-import "core/int";
 
 function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   return http.respond(describe(req));
@@ -44,13 +43,13 @@ function sized(part: multipart.Part, r: multipart.Reader): Result[(string, multi
     done = piece.1;
     cur = piece.2;
   }
-  return Ok((part.name + " = " + part.filename + " (" + part.content_type + ", " + int.int_to_string(bytes) + " bytes in " + int.int_to_string(pieces) + " pieces)\n", cur));
+  return Ok((part.name + " = " + part.filename + " (" + part.content_type + ", " + bytes.to_string() + " bytes in " + pieces.to_string() + " pieces)\n", cur));
 }
 
 function main(): i32 {
   let body: multipart.Builder = multipart.builder_with("example").field("title", "holiday").file("photo", "beach.png", "image/png", "PNG image".bytes()).field("tags", "sea, sand");
   let resp: HttpResponse = handle(body.request("POST", "/upload"), platform.host());
-  print(resp.body_string());
+  print(resp.body_text_lossy());
   if (resp.status != 200) {
     return 1;
   }

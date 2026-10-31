@@ -291,7 +291,7 @@ function answer(c: server.Connection, line: string): Result[server.Connection, s
   } else {
     reply = ("echo " + line + "\n").bytes();
   }
-  match (conn.send(reply)) {
+  match (conn.write(reply)) {
     Ok(sent) => {
       return Ok(sent);
     },
@@ -315,7 +315,7 @@ function serve_conn(first: server.Connection): string {
   let report: string = where(c.offloaded());
   let held: string = "";
   while (true) {
-    match (c.recv(time.duration_seconds(20 as i64))) {
+    match (c.read(time.duration_seconds(20 as i64))) {
       Ok(got) => {
         c = got.conn;
         held = held + string_from_bytes_unchecked(got.data);
@@ -415,7 +415,7 @@ function await_bytes(first: client.Connection, n: i32): Result[(client.Connectio
   let c: client.Connection = first;
   let got: u8[] = [];
   while (got.len() < n) {
-    match (c.recv(time.duration_seconds(20 as i64))) {
+    match (c.read(time.duration_seconds(20 as i64))) {
       Ok(r) => {
         c = r.conn;
         for b in r.data {
@@ -435,7 +435,7 @@ function await_bytes(first: client.Connection, n: i32): Result[(client.Connectio
 
 function talk(first: client.Connection): Result[string, string] {
   let c: client.Connection = first;
-  match (c.send("hello\n".bytes())) {
+  match (c.write("hello\n".bytes())) {
     Ok(s) => {
       c = s;
     },
@@ -448,7 +448,7 @@ function talk(first: client.Connection): Result[string, string] {
   if (string_from_bytes_unchecked(echo.1) != "echo hello\n") {
     return Err("echo " + string_from_bytes_unchecked(echo.1));
   }
-  match (c.send("big 100000\n".bytes())) {
+  match (c.write("big 100000\n".bytes())) {
     Ok(s) => {
       c = s;
     },
@@ -467,7 +467,7 @@ function talk(first: client.Connection): Result[string, string] {
     i = i + 1;
   }
   let report: string = where(c.offloaded()) + " echo big";
-  match (c.recv(time.duration_millis(300 as i64))) {
+  match (c.read(time.duration_millis(300 as i64))) {
     Ok(r) => {
       c = r.conn;
     },

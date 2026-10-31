@@ -34,6 +34,7 @@ import "std/json";
 import "std/result";
 import "std/option";
 import "std/async";
+import "std/clock";
 import "./common";
 import "./blockyard_world" as model;
 import "./blockyard_store" as store;
@@ -311,7 +312,7 @@ pub function socket(state: State, request: HttpRequest): Result[HttpResponse, dy
   match (websocket.accept_with_push(request, options, handlers, (connection: websocket.Conn): void => {
     while (alive.get() && !async.task_cancelled()) {
       if (!opened.get()) {
-        let waited = async.wait_any([] as i32[], Some(time.duration_millis(1)));
+        let waited = async.wait_any([] as i32[], Some(clock.instant().add(time.duration_millis(1))));
         continue;
       }
       let now = monotonic_ns();
@@ -360,7 +361,7 @@ pub function socket(state: State, request: HttpRequest): Result[HttpResponse, dy
         break;
       }
       let delay = ((value.updated.get().unwrap_or(now) + model.PERIOD - monotonic_ns() + 999999) / 1000000).max(1).min(100) as i32;
-      let waited = async.wait_any([] as i32[], Some(time.duration_millis(delay)));
+      let waited = async.wait_any([] as i32[], Some(clock.instant().add(time.duration_millis(delay))));
     }
     alive.set(false);
     model.release(value, seat);

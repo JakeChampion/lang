@@ -1,0 +1,28 @@
+import "core/cmp";
+
+pub enum Bag[K, V] { Nil, One(K, V), Many(Bag[K, V][]) }
+
+pub function (b: Bag[K, V]) fold[K, V, A](init: A, f: (A, K, V) => A): A {
+  match (b) {
+    One(k, v) => {
+      return f(init, k, v);
+    },
+    Many(xs) => {
+      let acc: A = init;
+      let i: i32 = 0;
+      while (i < xs.len()) {
+        acc = xs[i].fold(acc, f);
+        i = i + 1;
+      }
+      return acc;
+    },
+    Nil => {}
+  }
+  return init;
+}
+
+impl[K, V: cmp.Hash] cmp.Hash for Bag[K, V] {
+  function hash(self: Bag[K, V]): i32 {
+    return self.fold(17, (h: i32, k: K, v: V) => h * 31 + v.hash());
+  }
+}

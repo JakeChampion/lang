@@ -10,7 +10,6 @@ import "std/http/static";
 import "std/http/compress";
 import "std/serve";
 import "std/platform";
-import "core/int";
 
 function hello(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
   return Ok(http.ok("hello"));
@@ -29,7 +28,7 @@ function missing(req: HttpRequest, params: router.Params, plat: platform.Host): 
 }
 
 function echo(req: HttpRequest, params: router.Params, plat: platform.Host): Result[HttpResponse, dyn http.ToResponse] {
-  let body: string = req.body_string()?;
+  let body: string = req.body_text()?;
   return Ok(http.text(200, body));
 }
 
@@ -38,7 +37,7 @@ function essay(req: HttpRequest, params: router.Params, plat: platform.Host): Re
   let text: string = "";
   let i: i32 = 0;
   while (i < 40) {
-    text = text + "Line " + int.int_to_string(i) + ": the quick brown fox jumps over the lazy dog.\n";
+    text = text + "Line " + i.to_string() + ": the quick brown fox jumps over the lazy dog.\n";
     i = i + 1;
   }
   return Ok(http.text(200, text).with_header("Content-Type", "text/plain; charset=utf-8"));

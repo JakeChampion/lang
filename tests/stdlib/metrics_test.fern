@@ -122,7 +122,7 @@ function test_frames_split_at_eof(): test.TestOutcome {
 function test_scrape_answers(): test.TestOutcome {
   let body: () => string = (): string => "x 1\n";
   let m: HttpResponse = metrics.scrape("/metrics", body, true);
-  if (m.status != 200 || m.body_string() != "x 1\n") {
+  if (m.status != 200 || m.body_text_lossy() != "x 1\n") {
     return test.fail("/metrics");
   }
   match (m.headers.get("content-type")) {

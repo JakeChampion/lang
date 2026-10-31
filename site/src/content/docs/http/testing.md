@@ -12,7 +12,7 @@ from quick to thorough.
 ## Call the handler
 
 `http.request(method, path)` builds a request, with `with_header`,
-`with_body` and `with_json` to fill it in. Pass a platform and assert on
+`with_text`, `with_bytes` and `with_json` to fill it in. Pass a platform and assert on
 what comes back. `std/test`'s HTTP assertions name the status, header or
 body they expected and what they got.
 
@@ -79,7 +79,7 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     match (plat.http(fetch.get("https://status.example.com/health"))) {
         Ok(resp) => {
             plat.log("upstream said " + resp.status.to_string());
-            return http.plain(region + " " + resp.body_string());
+            return http.plain(region + " " + resp.body_text_lossy());
         },
         Err(e) => { return http.text(502, region + " upstream down"); }
     }
@@ -147,7 +147,7 @@ import "std/platform";
 function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, fetch.FetchError] {
     let t: fetch.Timeouts = fetch.Timeouts { ...fetch.timeouts(), total: time.duration_millis(500 as i64) };
     let resp: HttpResponse = plat.http(fetch.get("http://api.test/price").with_timeouts(t))?;
-    return Ok(http.plain("price " + resp.body_string()));
+    return Ok(http.plain("price " + resp.body_text_lossy()));
 }
 
 const API: string = "93.184.216.34";

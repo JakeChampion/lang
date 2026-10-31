@@ -37,7 +37,7 @@ function main(): i32 {
             return 20;
         }
         if (pid == 0) {
-            let line: string = "worker " + int.int_to_string(w) + " " + pay;
+            let line: string = "worker " + w.to_string() + " " + pay;
             let i: i32 = 0;
             while (i < %d) {
                 eprint(line);

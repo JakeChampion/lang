@@ -25,7 +25,7 @@ function main(): i32 {
     let xs: u8[][] = [];
     xs = add(xs);
     let b: u8[] = xs[0];
-    print(int.int_to_string(b.len()));
+    print(b.len().to_string());
     return 0;
 }
 `, "1"},
@@ -39,7 +39,7 @@ function main(): i32 {
     let c: Conns = Conns { bufs: [] };
     c = add(c);
     let b: u8[] = c.bufs[0];
-    print(int.int_to_string(b.len()));
+    print(b.len().to_string());
     return 0;
 }
 `, "0"},
@@ -62,7 +62,7 @@ function main(): i32 {
     c = add(c, 6);
     c = grow(c, 1, chunk);
     c = grow(c, 0, chunk);
-    print(int.int_to_string(c.bufs[0].len() * 10 + c.bufs[1].len()));
+    print((c.bufs[0].len() * 10 + c.bufs[1].len()).to_string());
     return 0;
 }
 `, "21"},

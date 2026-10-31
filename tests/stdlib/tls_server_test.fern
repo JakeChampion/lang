@@ -266,7 +266,7 @@ function listening(cfg: server.Config): Result[server.Session, string] {
 function listening_with(cfg: server.Config, entropy: u8[]): Result[server.Session, string] {
   match (server.start(cfg, entropy)) {
     Ok(s) => {
-      return Ok(s);
+      return Ok(s.session);
     },
     Err(e) => {
       return Err("server: " + e.message());
@@ -416,7 +416,7 @@ function test_no_common_scheme(): test.TestOutcome {
     Ok(c0) => {
       match (server.start(sc, rand.bytes(server.entropy(sc)))) {
         Ok(s0) => {
-          match (s0.read(c0.output, time.timestamp_from_unix_millis(WALL_MS))) {
+          match (s0.session.read(c0.output, time.timestamp_from_unix_millis(WALL_MS))) {
             Ok(_) => {
               return test.fail("accepted");
             },
@@ -1040,8 +1040,36 @@ function __some_client(o: Option[client.Offloaded]): Result[client.Offloaded, st
   return Err("client");
 }
 
+function test_start_is_a_step(): test.TestOutcome {
+  let sc: server.Config = server.config(identity_of(P256_LEAF, P256_PKCS8), rand.bytes(32));
+  match (server.start(sc, rand.bytes(server.entropy(sc)))) {
+    Ok(step) => {
+      return test.assert_eq(step.output.len().to_string() + " " + step.data.len().to_string() + " " + step.closed.to_string(), "0 0 false");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_start_refuses_short_entropy(): test.TestOutcome {
+  let sc: server.Config = server.config(identity_of(P256_LEAF, P256_PKCS8), rand.bytes(32));
+  match (server.start(sc, rand.bytes(3))) {
+    Ok(_) => {
+      return test.fail("started");
+    },
+    Err(e) => {
+      return test.assert_contains(e.message(), "entropy");
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.new("std/tls/server");
+  r = r.it("start gives a Step with no output", test_start_is_a_step);
+  r = r.it("start refuses short entropy", test_start_refuses_short_entropy);
   r = r.it("keys from PKCS #8 and SEC 1", test_keys);
   r = r.it("key refusals", test_key_refusals);
   r = r.it("an identity and its leaf", test_identity);

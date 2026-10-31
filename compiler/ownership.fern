@@ -361,7 +361,10 @@ pub function lends(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Inde
   if (!a.ok) {
     return true;
   }
-  let lent: boolean[] = lent_out(f, a, rows, ix);
+  return lends_from(f, lent_out(f, a, rows, ix));
+}
+
+function lends_from(f: ssasem.Func, lent: boolean[]): boolean {
   let i: i32 = 0;
   while (i < f.params.len() && i < lent.len()) {
     if (lent[i]) {
@@ -398,8 +401,10 @@ pub function escaping(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: I
   if (!a.ok) {
     return all_true(f.params.len());
   }
-  let carried: boolean[] = carried_values(f, a, rows, ix);
-  let lent: boolean[] = lent_out(f, a, rows, ix);
+  return escaping_from(f, carried_values(f, a, rows, ix), lent_out(f, a, rows, ix));
+}
+
+function escaping_from(f: ssasem.Func, carried: boolean[], lent: boolean[]): boolean[] {
   let out: boolean[] = [];
   let i: i32 = 0;
   while (i < f.params.len()) {
@@ -407,4 +412,16 @@ pub function escaping(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: I
     i = i + 1;
   }
   return out;
+}
+
+pub struct Transfers { escapes: boolean[], lends: boolean }
+
+// Both summaries use the same lending facts from the current rows.
+pub function transfers(f: ssasem.Func, a: ssasem.Analysis, rows: Escapes[], ix: Index, escapes: boolean): Transfers {
+  if (!a.ok) {
+    return Transfers { escapes: all_true(f.params.len()), lends: true };
+  }
+  let lent: boolean[] = lent_out(f, a, rows, ix);
+  let bits: boolean[] = if (escapes) { escaping_from(f, carried_values(f, a, rows, ix), lent) } else { [] };
+  return Transfers { escapes: bits, lends: lends_from(f, lent) };
 }

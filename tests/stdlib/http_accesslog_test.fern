@@ -38,8 +38,8 @@ function test_a_produced_body_is_not_counted(): test.TestOutcome {
 function test_the_middleware_logs_and_passes_the_response_on(): test.TestOutcome {
   let m: mock_platform.MockPlatform = plat();
   let resp: HttpResponse = http.respond(accesslog.logged(get("/"), m, (r: HttpRequest): Result[HttpResponse, dyn http.ToResponse] => Ok(http.ok("done"))));
-  if (resp.body_string() != "done") {
-    return test.fail("the response changed: " + resp.body_string());
+  if (resp.body_text_lossy() != "done") {
+    return test.fail("the response changed: " + resp.body_text_lossy());
   }
   match (m.find_call("log")) {
     Some(c) => {

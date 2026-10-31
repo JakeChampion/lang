@@ -26,13 +26,13 @@ record; a closed epic alone is not validation evidence.
 | `hostname`, `uname_field` | kernel identity fields | empty text, as for a failed OS request |
 | `utf8.from_bytes` | anywhere | `None` |
 | `http` header values, request path | the peer | refused, 400 |
-| `HttpRequest.body_string` | the peer | `Err(BodyError.NotUtf8)`, 400 as a response; `body_bytes` is raw |
+| `HttpRequest.body_text`, `HttpResponse.body_text` | the peer | `Err(BodyError.NotUtf8)`, 400 as a response; `body_bytes` is raw |
 | `dns.decode_name` | the wire | `Err(Malformed)` |
 | `url.decode` / `form_decode` | an escape | U+FFFD per ill-formed unit; `*_decode_bytes` are raw |
 | `ByteStream.read_all_string` | a byte cursor | `None` (#10950); `read_all` is raw |
 | `ByteStream.read_line` | a byte cursor | U+FFFD, since its `None` means end of input |
 | `BytesWriter.into_string` | the program's own `write_byte` | `None` (#10950); `into_bytes` is raw |
-| `HttpResponse.body_string` | the program's own `BodyBytes` | U+FFFD; `body_bytes` is raw |
+| `HttpRequest.body_text_lossy`, `HttpResponse.body_text_lossy` | the caller asks for it | U+FFFD; `body_bytes` is raw |
 | Regex replacements, splits and captures | byte-oriented matches | `None` when text would be invalid; explicit byte variants preserve raw output |
 | `u8.to_ascii_string` | a byte value | empty text for bytes above 127; ASCII, including NUL, is preserved |
 | `rng_bytes` / `random_bytes` | pseudorandom or system random bytes | owned `u8[]`, with no text conversion |
@@ -1262,7 +1262,7 @@ The socket TRANSPORT followed. `tcp_recv_deadline` returns
 `Option[u8[]]`, and `std/fetch` is byte-domain end to end: `send(req)`
 and `plat.http(req)` answer `Result[HttpResponse, FetchError]` with the
 body as `BodyBytes`, `(resp).body_text()` is the checked decode that
-answers `Err(Utf8Error)` for bytes that are not UTF-8, and `(resp).body_bytes()`
+answers `Err(BodyError.NotUtf8)` for bytes that are not UTF-8, and `(resp).body_bytes()`
 the body as it came. An upstream serves whatever bytes it likes, so a
 text-typed response was a `string` this decision forbids.
 
@@ -1275,7 +1275,7 @@ ASCII by grammar; a header value may carry obs-text (RFC 9110 §5.5),
 and it is admitted when the octets spell UTF-8 and refused with 400
 when they do not; a path's escapes decode to bytes that have to spell
 UTF-8 the same way (`/caf%C3%A9` is `/café`, `/%FF` is 400). The body is
-read as text through `body_string(): Result[string, BodyError]`, whose
+read as text through `body_text(): Result[string, BodyError]`, whose
 `NotUtf8` answers 400 through `ToResponse`, and `body_json` reads
 through it; `body_bytes` is the body as it came.
 

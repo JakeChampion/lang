@@ -114,6 +114,7 @@ const tlsServerSource = `import "std/i32";
 import "std/net";
 import "std/string";
 import "std/time";
+import "std/tls";
 import "std/tls/identity";
 import "std/tls/server";
 import "std/tls/verify";
@@ -166,12 +167,12 @@ function serve_one(fd: i32, cfg: server.Config): string {
 
 function echo(c: server.Connection): string {
   let head: string = "[" + c.session.server_name() + "] [" + c.session.alpn() + "]";
-  match (c.recv(time.duration_seconds(10 as i64))) {
+  match (c.read(time.duration_seconds(10 as i64))) {
     Ok(got) => {
       let line: string = string_from_bytes_unchecked(got.data).trim();
-      match (got.conn.send(("echo " + line + "\n").bytes())) {
+      match (got.conn.write(("echo " + line + "\n").bytes())) {
         Ok(sent) => {
-          match (sent.recv(time.duration_seconds(10 as i64))) {
+          match (sent.read(time.duration_seconds(10 as i64))) {
             Ok(end) => {
               let how: string = "open";
               if (end.ended) {
@@ -184,7 +185,13 @@ function echo(c: server.Connection): string {
               if (c.session.client_chain().len() > 0) {
                 mode = mode + " client " + c.session.client_chain().len().to_string();
               }
-              end.conn.close();
+              let first: Result[void, tls.TlsError] = end.conn.close();
+              match (end.conn.close()) {
+                Ok(_) => {},
+                Err(e) => {
+                  return head + " " + line + " second close " + e.message();
+                }
+              }
               return head + " " + line + " " + how + " " + mode;
             },
             Err(e) => {

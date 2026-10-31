@@ -5,7 +5,7 @@ func SendQueueProbe() string {
 import "std/string";
 
 function fail(n: i32): i32 {
-    print(int.int_to_string(n));
+    print(n.to_string());
     return n;
 }
 

@@ -62,7 +62,6 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 ```fern
 <<dependencies 2>>=
-import "core/int";
 import "std/crypto/ecdsa";
 import "std/crypto/sha2";
 import "std/crypto/ed25519";
@@ -155,7 +154,7 @@ pub function (e: KeyError) message(): string {
       return "tls identity: the key is not the leaf certificate's";
     },
     CannotSign(scheme) => {
-      return "tls identity: the key does not make signature scheme " + int.int_to_string(scheme);
+      return "tls identity: the key does not make signature scheme " + scheme.to_string();
     }
   }
   return "";

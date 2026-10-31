@@ -28,7 +28,7 @@ The root chunk preserves the declaration order. The chunks below contain the com
 
 <<6 pub enum Read>>
 
-<<7 pub function recv(fd: i32, wait: Duration): Read>>
+<<7 pub function read(fd: i32, wait: Duration): Read>>
 
 <<8 function __ktls(fd: i32, op: i32, arg: i32, data: u8[]): i32>>
 ```
@@ -139,24 +139,28 @@ function __send_all(fd: i32, data: u8[]): i32 {
 pub enum Read { Opened(i32, u8[]), StreamEnded, NothingYet, WaitCancelled, ReadFailed(i32) }
 ```
 
-### `7 pub function recv(fd: i32, wait: Duration): Read`
+### `7 pub function read(fd: i32, wait: Duration): Read`
 
 ```fern
-<<7 pub function recv(fd: i32, wait: Duration): Read>>=
-pub function recv(fd: i32, wait: Duration): Read {
+<<7 pub function read(fd: i32, wait: Duration): Read>>=
+pub function read(fd: i32, wait: Duration): Read {
   let limit: Duration = wait;
   if (limit.cmp(time.duration_millis(1)) < 0) {
     limit = time.duration_millis(1);
   }
   let set: i32[] = [fd, 1];
-  let woke: i32 = async.wait_any(set, Some(limit));
-  if (woke == async.cancelled()) {
-    return Read.WaitCancelled;
+  match (async.wait_any(set, Some(time.instant_from_nanos(monotonic_ns()).add(limit)))) {
+    Woke(i) => {
+      return read_now(fd);
+    },
+    TimedOut => {
+      return Read.NothingYet;
+    },
+    Cancelled => {
+      return Read.WaitCancelled;
+    }
   }
-  if (woke != 0) {
-    return Read.NothingYet;
-  }
-  return read_now(fd);
+  return Read.NothingYet;
 }
 
 pub function read_now(fd: i32): Read {

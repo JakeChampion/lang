@@ -197,6 +197,31 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 			want: []string{"eprint@log"},
 		},
 		{
+			name: "a fan-out that waits on its scheduler is not a finding",
+			src: `import "std/http";
+import "std/platform";
+import "std/fetch";
+import "std/async";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    let calls: async.Future[Result[HttpResponse, fetch.FetchError]][] = [
+        async.spawn(() => plat.http(fetch.get("https://example.com/"))),
+        async.spawn(() => plat.http(fetch.get("https://example.org/"))),
+    ];
+    let all: Option[Result[HttpResponse, fetch.FetchError][]] = async.wait(async.gather(calls));
+    let first: Option[(i32, Result[HttpResponse, fetch.FetchError])] = async.wait(async.race(calls));
+    let timed: Option[Option[Result[HttpResponse, fetch.FetchError]][]] = async.wait(async.with_deadline(plat.instant(), calls));` + handlerTail,
+			want: nil,
+		},
+		{
+			name: "block_on waits on the machine's reactor and clock",
+			src: `import "std/http";
+import "std/platform";
+import "std/async";
+function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+    let one: Option[i32] = async.block_on(async.spawn((): i32 => 1));` + handlerTail,
+			want: []string{"monotonic_ns@now", "wasm_timer_pollable@pollable", "reactor_ctl@reactor", "tcp_pollable@tcp", "ring_ctl@uring"},
+		},
+		{
 			name: "a value whose target the walk cannot name charges nothing",
 			src: `import "std/http";
 import "std/platform";

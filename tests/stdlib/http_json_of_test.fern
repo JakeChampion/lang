@@ -19,17 +19,17 @@ function header(resp: HttpResponse, name: string): string {
 
 function test_json_of_answers_200(): test.TestOutcome {
   let resp: HttpResponse = http.json_of(User { id: 7, name: "Glóin", admin: true });
-  return test.assert_eq(resp.status.to_string() + " " + header(resp, "content-type") + " " + resp.body_string(), "200 application/json {\"id\":7,\"name\":\"Glóin\",\"admin\":true}");
+  return test.assert_eq(resp.status.to_string() + " " + header(resp, "content-type") + " " + resp.body_text_lossy(), "200 application/json {\"id\":7,\"name\":\"Glóin\",\"admin\":true}");
 }
 
 function test_json_of_status_names_its_status(): test.TestOutcome {
   let resp: HttpResponse = http.json_of_status(201, User { id: 8, name: "Ori", admin: false });
-  return test.assert_eq(resp.status.to_string() + " " + header(resp, "content-type") + " " + resp.body_string(), "201 application/json {\"id\":8,\"name\":\"Ori\",\"admin\":false}");
+  return test.assert_eq(resp.status.to_string() + " " + header(resp, "content-type") + " " + resp.body_text_lossy(), "201 application/json {\"id\":8,\"name\":\"Ori\",\"admin\":false}");
 }
 
 function test_a_scalar_is_json_too(): test.TestOutcome {
   let resp: HttpResponse = http.json_of("quoted \"text\"");
-  return test.assert_eq(resp.body_string() + " " + http.json_of(42).body_string() + " " + http.json_of(true).body_string(), "\"quoted \\\"text\\\"\" 42 true");
+  return test.assert_eq(resp.body_text_lossy() + " " + http.json_of(42).body_text_lossy() + " " + http.json_of(true).body_text_lossy(), "\"quoted \\\"text\\\"\" 42 true");
 }
 
 function main(): i32 {

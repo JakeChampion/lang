@@ -32,7 +32,7 @@ function summary(resp: HttpResponse): string {
 
 function test_no_origin_passes_through(): test.TestOutcome {
   let resp: HttpResponse = http.respond(cors.cors(http.request("GET", "/"), app(), ok_next));
-  return test.assert_eq(summary(resp) + " " + resp.body_string(), "200 origin=- vary=- creds=- hello GET");
+  return test.assert_eq(summary(resp) + " " + resp.body_text_lossy(), "200 origin=- vary=- creds=- hello GET");
 }
 
 function test_an_admitted_origin_is_marked(): test.TestOutcome {
@@ -51,7 +51,7 @@ function test_a_subdomain_wildcard(): test.TestOutcome {
 function test_another_origin_still_runs_unmarked(): test.TestOutcome {
   let req: HttpRequest = http.request("GET", "/").with_header("Origin", "https://evil.example");
   let resp: HttpResponse = http.respond(cors.cors(req, app(), ok_next));
-  return test.assert_eq(summary(resp) + " " + resp.body_string(), "200 origin=- vary=Origin creds=- hello GET");
+  return test.assert_eq(summary(resp) + " " + resp.body_text_lossy(), "200 origin=- vary=Origin creds=- hello GET");
 }
 
 function test_any_origin_is_the_wildcard(): test.TestOutcome {
@@ -71,7 +71,7 @@ function preflight(origin: string, method: string, asked: string): HttpRequest {
 
 function test_a_preflight_is_answered_here(): test.TestOutcome {
   let resp: HttpResponse = http.respond(cors.cors(preflight("https://app.example.com", "DELETE", "x-token, content-type"), app().with_headers(["X-Token", "Content-Type"]), never_next));
-  let got: string = resp.status.to_string() + " " + header(resp, "access-control-allow-origin") + " " + header(resp, "access-control-allow-methods") + " " + header(resp, "access-control-allow-headers") + " " + header(resp, "access-control-max-age") + " vary=" + header(resp, "vary") + " body=" + resp.body_string().len().to_string();
+  let got: string = resp.status.to_string() + " " + header(resp, "access-control-allow-origin") + " " + header(resp, "access-control-allow-methods") + " " + header(resp, "access-control-allow-headers") + " " + header(resp, "access-control-max-age") + " vary=" + header(resp, "vary") + " body=" + resp.body_text_lossy().len().to_string();
   return test.assert_eq(got, "204 https://app.example.com DELETE x-token, content-type 600 vary=Origin, Access-Control-Request-Method, Access-Control-Request-Headers body=0");
 }
 
@@ -102,7 +102,7 @@ function test_a_preflight_through_the_router(): test.TestOutcome {
   let pre: HttpResponse = r.handle(preflight("https://app.example.com", "DELETE", "x-token"), platform.host());
   let actual: HttpResponse = r.handle(http.request("DELETE", "/users/1").with_header("Origin", "https://app.example.com"), platform.host());
   let plain: HttpResponse = r.handle(http.request("OPTIONS", "/users/1"), platform.host());
-  let got: string = pre.status.to_string() + " " + header(pre, "access-control-allow-methods") + " " + header(pre, "allow") + "|" + summary(actual) + " " + actual.body_string() + "|" + plain.status.to_string() + " " + header(plain, "allow");
+  let got: string = pre.status.to_string() + " " + header(pre, "access-control-allow-methods") + " " + header(pre, "allow") + "|" + summary(actual) + " " + actual.body_text_lossy() + "|" + plain.status.to_string() + " " + header(plain, "allow");
   return test.assert_eq(got, "204 DELETE -|200 origin=https://app.example.com vary=Origin creds=- user 1|405 GET, HEAD, DELETE");
 }
 
